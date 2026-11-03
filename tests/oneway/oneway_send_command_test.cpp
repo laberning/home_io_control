@@ -634,6 +634,101 @@ TEST_F(OneWaySendCommandTest, PositionsAreEncodedAsTheBuilderWould) {
 }
 
 // ============================================================================
+// Inverted kinds: OPEN/CLOSE/position follow the kind's wire polarity (#196)
+// ============================================================================
+
+namespace {
+
+/// Sends `user_position` as `identity` and returns the wire main0 byte (position * 2) it carried,
+/// along with the report's intent label.
+struct InversionProbe {
+  uint8_t wire_main0{0xFF};
+  std::string intent;
+};
+
+InversionProbe send_user_position(OneWayControllerIdentity identity, uint8_t user_position, TuningConfig &tuning) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning);
+  identity.id = "id";
+  transmitter.add_identity(identity);
+  transmitter.setup();
+  InversionProbe probe;
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &r) { probe.intent = r.intent; });
+  EXPECT_TRUE(transmitter.send_position("id", user_position));
+  probe.wire_main0 = recorder.frames.at(0).data[2];
+  return probe;
+}
+
+}  // namespace
+
+TEST_F(OneWaySendCommandTest, InvertedKindMirrorsOpenAndCloseOnTheWire) {
+  const auto id = make_identity("id", OWN_NET_NODE, DeviceType::HORIZONTAL_AWNING, 0x11, 1);
+  EXPECT_EQ(send_user_position(id, 0, tuning_).wire_main0, 200) << "user OPEN is wire 100 on an inverted kind";
+  EXPECT_EQ(send_user_position(id, 100, tuning_).wire_main0, 0) << "user CLOSE is wire 0 on an inverted kind";
+  EXPECT_EQ(send_user_position(id, 30, tuning_).wire_main0, 140) << "intermediate positions mirror too";
+}
+
+TEST_F(OneWaySendCommandTest, InvertedKindStillReportsTheUsersIntent) {
+  const auto id = make_identity("id", OWN_NET_NODE, DeviceType::HORIZONTAL_AWNING, 0x11, 1);
+  EXPECT_EQ(send_user_position(id, 0, tuning_).intent, "OPEN");
+  EXPECT_EQ(send_user_position(id, 100, tuning_).intent, "CLOSE");
+  EXPECT_EQ(send_user_position(id, 30, tuning_).intent, "position 30%");
+  EXPECT_EQ(send_user_position(id, 50, tuning_).intent, "position 50%") << "a user 50% is not FORCE_OPEN";
+}
+
+TEST_F(OneWaySendCommandTest, InvertPositionFalseKeepsAnInvertedKindUnmirrored) {
+  auto id = make_identity("id", OWN_NET_NODE, DeviceType::HORIZONTAL_AWNING, 0x11, 1);
+  id.invert_override = false;
+  EXPECT_EQ(send_user_position(id, 0, tuning_).wire_main0, 0);
+  EXPECT_EQ(send_user_position(id, 100, tuning_).wire_main0, 200);
+}
+
+TEST_F(OneWaySendCommandTest, InvertPositionTrueMirrorsANonInvertedKind) {
+  auto id = make_identity("id", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1);
+  id.invert_override = true;
+  EXPECT_EQ(send_user_position(id, 0, tuning_).wire_main0, 200);
+}
+
+TEST_F(OneWaySendCommandTest, NonInvertedKindIsNotMirrored) {
+  const auto id = make_identity("id", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1);
+  EXPECT_EQ(send_user_position(id, 0, tuning_).wire_main0, 0);
+  EXPECT_EQ(send_user_position(id, 100, tuning_).wire_main0, 200);
+}
+
+TEST_F(OneWaySendCommandTest, InvertedKindLeavesNamedCommandsAlone) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  transmitter.add_identity(make_identity("id", OWN_NET_NODE, DeviceType::HORIZONTAL_AWNING, 0x11, 1));
+  transmitter.setup();
+  ASSERT_TRUE(transmitter.send_command("id", CoverCommand::STOP));
+  EXPECT_EQ(recorder.frames.at(0).data[2], POS_STOP);
+  ASSERT_TRUE(transmitter.send_command("id", CoverCommand::FAVORITE));
+  EXPECT_EQ(recorder.frames.at(ONEWAY_BURST_REPEATS).data[2], POS_FAVORITE);
+}
+
+TEST_F(OneWaySendCommandTest, InvertedKindMirrorRefusesOutOfRangeInsteadOfWrapping) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  transmitter.add_identity(make_identity("id", OWN_NET_NODE, DeviceType::HORIZONTAL_AWNING, 0x11, 1));
+  transmitter.setup();
+  EXPECT_FALSE(transmitter.send_position("id", 101));
+  EXPECT_TRUE(recorder.frames.empty());
+}
+
+TEST_F(OneWaySendCommandTest, VeluxEnrollmentDownStaysRawOnAnInvertedIdentity) {
+  // The STOP+DOWN follow-up is a gesture a real remote produces, not a user position.
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  auto id = make_velux_identity(1);
+  id.io_device_type = DeviceType::HORIZONTAL_AWNING;
+  id.invert_override = true;
+  transmitter.add_identity(id);
+  transmitter.setup();
+  ASSERT_TRUE(transmitter.send_enrollment("velux"));
+  EXPECT_EQ(recorder.frames.at(5 * ONEWAY_BURST_REPEATS).data[2], 0xC8) << "DOWN stays wire 100";
+}
+
+// ============================================================================
 // 1W wire profile (ADR 0031): manufacturer: -> CMD_EXECUTE ACEI; execute_broadcast: all -> dst.
 // ============================================================================
 

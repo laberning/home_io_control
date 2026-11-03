@@ -24,6 +24,7 @@ from esphome.const import (
 from esphome.core import ID
 
 from . import home_io_control_ns
+from .hub_names import CONF_INVERT_POSITION
 from .hub_validators import (
     DEFAULT_COVER_DEVICE_CLASS,
     FEATURE_EXTENDED_POSITION_FRAME,
@@ -50,7 +51,6 @@ from .platform_common import (
 
 DEPENDENCIES = ["home_io_control"]
 
-CONF_INVERT_POSITION = "invert_position"
 CONF_SILENT = "silent"
 CONF_SILENT_SWITCH_ID = "_silent_switch_id"
 CONF_OPTIMISTIC_STATE = "optimistic_state"

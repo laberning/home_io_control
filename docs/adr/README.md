@@ -44,7 +44,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0006](0006-management-actions-as-native-api-actions.md) | Admin ops as native API actions | Rarely-used operations get no permanent entity |
 | [0016](0016-sender-events-are-opt-in-by-allowlist.md) | Sender events are opt-in | The radio has no ownership marker, so nothing fires until named |
 | [0017](0017-device-poll-hint-shortens-but-never-stretches.md) | Poll hint shortens, never stretches | The configured interval is a ceiling, not a target |
-| [0024](0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md) | Diagnostic probes, gated and isolated (amended by 0060, 0062) | Undecoded opcodes only reach paired devices behind an opted-in config, and can never reach the status decoder |
+| [0024](0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md) | Diagnostic probes, gated and isolated (amended by 0060, 0062, 0063) | Undecoded opcodes only reach paired devices behind an opted-in config, and can never reach the status decoder |
 | [0030](0030-predictions-are-kept-apart-from-observations.md) | Predictions are kept apart from observations | An optimistic guess lives in its own overlay, withdrawn on failure and superseded per-axis by real data — never written into a reported field |
 | [0031](0031-oneway-vendor-wire-behaviour-is-driven-by-manufacturer.md) | 1W vendor wire behaviour is driven by `manufacturer:` | `manufacturer:` selects the 1W `CMD_EXECUTE` ACEI byte (`0x43` Somfy / `0x61` Velux); `execute_broadcast: typed\|all` is a separate handheld-vs-class-bound axis, not a vendor one |
 | [0032](0032-oneway-velux-enrollment-gesture.md) | 1W enrollment follows the gesture the target's `manufacturer:` expects | `velux` → `0x39` broadcast, a `0x30` sweep across `{roller_shutter, vertical_exterior_awning, dual_roller_shutter}` under one sequence, then STOP+DOWN; `somfy` path unchanged; `enrollment_classes:` overrides the sweep list |
@@ -78,6 +78,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0060](0060-a-state-changing-diagnostic-probe.md) | A state-changing diagnostic probe (amends 0024) | `subscribe_event` is allowlisted to two events, not sweepable, never re-sent after the device accepted it; reports are recorded on a diagnostic sensor and never applied to device state |
 | [0061](0061-a-moving-status-report-opens-the-follow-up-window.md) | A moving status report opens the follow-up window | A report that reads as moving opens the window when none is open; a report that finds it expired ends it instead of reopening it; only kinds that report motion through status may open one |
 | [0062](0062-a-read-only-data-transport-probe.md) | A read-only data-transport probe (amends 0024) | `read_object` opens, reads and closes five allowlisted objects over `0x46`/`0x4A`; read direction only by construction, capped, raw output never applied |
+| [0063](0063-a-read-only-register-probe.md) | A read-only register probe (amends 0024) | `register_00` / `register_01` read one register over `0x20`; the read direction byte is a constant no input changes; refused for every kind but register heaters and hot water |
 
 ### Security
 
@@ -168,6 +169,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0060: A state-changing diagnostic probe](0060-a-state-changing-diagnostic-probe.md)
 - [ADR 0061: A moving status report opens the follow-up window](0061-a-moving-status-report-opens-the-follow-up-window.md)
 - [ADR 0062: A read-only data-transport probe](0062-a-read-only-data-transport-probe.md)
+- [ADR 0063: A read-only register probe](0063-a-read-only-register-probe.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

@@ -33,7 +33,7 @@ match.
 
 | Device | Type | Status | Route that worked | Key config | Evidence |
 |---|---|---|---|---|---|
-| **Sunea IO awning motor** | `vertical_exterior_awning` | ✅ Confirmed | Discover & Pair | `io_device_type: vertical_exterior_awning` | 31 corpus captures, across all three radios |
+| **Sunea IO awning motor** | `vertical_exterior_awning` | ✅ Confirmed | Discover & Pair | `io_device_type: vertical_exterior_awning` | 31 corpus captures, across all three radios. Open, close and stop from a `horizontal_awning` 1W controller identity are reported to work, including STOP during travel, issue #196 |
 | **Sunea IO 70/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — |  |
 | **Sunea IO 40/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — |  |
 | **Sunilus IO 50/12** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — | corpus `somfy_sunilus_pairing_key_transfer_rejected_error` |
@@ -97,7 +97,7 @@ project controls.
 | **KLI 310 universal wall remote** | 1W remote | 🔍 Traffic captured only | — | — | Corpus `velux_kli310_discovery_alt_sweep` |
 | **KLI 312 interior-blind remote** | 1W remote | 🔍 Traffic reported only | — | — | Gear `0x2E` goes to `vertical_interior_blind` and `interior_venetian_blind`; no corpus capture |
 | **KUX 100 / PK03 / PK04 wired bridge** | Bridge | 🔍 Traffic captured only | — | — | 3 corpus captures of KLR200 ↔ KUX100 traffic |
-| **KLF 200** | Third-party hub | ✅ Key extraction succeeded (one reporter) | Key extraction: arm the hub, then press **SEARCH FOR PRODUCTS** in the KLF 200 web interface (Products page). Repeat the search while the switch is still armed if the first one ends with "No product was found" | `accept_foreign_pairing: true` | LilyGO T-ETH-Elite with the SX1276 LoRa shield; the third search delivered the key, two earlier ones ended with "No product was found". **COPY PRODUCTS** with Discover & Pair gets no answer at all. Control with the extracted key is not yet reported; issue #195 |
+| **KLF 200** | Third-party hub | ✅ Key extraction succeeded (one reporter) | Key extraction: arm the hub, then press **SEARCH FOR PRODUCTS** in the KLF 200 web interface (Products page). Repeat the search while the switch is still armed if the first one ends with "No product was found" | `accept_foreign_pairing: true` | LilyGO T-ETH-Elite with the SX1276 LoRa shield; repeat SEARCH FOR PRODUCTS while the switch is armed: it took several searches for the one reporter, and the earlier ones ended with "No product was found". With the extracted key, Scan Paired Devices found all of the reporter's motors. **COPY PRODUCTS** with Discover & Pair gets no answer at all; issue #195 |
 | **SML electric roller shutter** | `roller_shutter`, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1276) | 1W enrollment: Gear on the existing KLI 310, then Enroll. Two-way Discover & Pair finds nothing (issue #17) | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `low_power: false` | Mains-fed, e.g. through a KUX 110 power supply, which has no radio role; see [Sending 1W commands](configuration/oneway-transmit.md) |
 | **Interior blinds behind a KLI 312** | `interior_venetian_blind`, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1262) | 1W enrollment: Gear on the existing KLI 312, then Enroll | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`, `low_power: true` |  |
 
@@ -117,6 +117,7 @@ before pairing; the [device page](devices/simu-t35-bhz.md#check-the-motor-first)
 | Device | Status | Evidence |
 |---|---|---|
 | **AGILIA IO electric radiator** (Atlantic, display model) | ✅ Confirmed on three radiators — Discover & Pair from the display's "Paramètres" → "Connectivité" → "Connexion" menu, target temperature, Off / Heat / Auto, the `Program` and `Auto` presets, room temperature and heating / idle, all read back. Each radiator hands over its own key, and its heater sits one address above the node that pairs. Step-by-step: [Atlantic AGILIA IO](devices/atlantic-agilia-io.md) | Heltec V3 / SX1262, issue #165; corpus `atlantic_agilia_*` (pairing, roll-call, register reads and writes) |
+| **Atlantic Calypso Connecté** (thermodynamic water heater) | ⚠️ Partial — pairs with Discover & Pair and accepts the key push; no control yet, because its registers are not known | SX1276 board, issue #198 |
 | **Atlantic Thermor-style climate/heating actuator** | 🔍 Traffic captured only — the `climate:` platform is built against it but has never run on hardware | Corpus `atlantic_thermor_exchange_write_private_param` |
 | **Honeywell, Hörmann, Assa Abloy, Niko, WindowMaster, Renson, CIAT, Secuyou, Overkiz, Atlantic Group** | Untested — these are names the schema accepts, not devices anyone has reported | Only `somfy` and `velux` have a verified 1W wire profile |
 
@@ -193,7 +194,7 @@ device are marked experimental; declaring one in YAML logs a warning when the co
 | `0x1C` | zone control | | Not supported yet |
 | `0x1D` | bioclimatic pergola | | Cover |
 | `0x1E` | siren | | Not supported yet |
-| `0x33` | domestic hot water | | Not supported yet |
+| `0x33` | domestic hot water | | Not supported yet. An Atlantic Calypso Connecté water heater pairs with Discover & Pair and accepts the key push (issue #198); its registers are unknown, so there is no entity yet. The [register probes](diagnostic-probes.md#reading-registers) read them |
 | `0x34` | electrical heater | 1 with adjustable setpoint | Climate: subtype 1 over private registers with read-back, confirmed on the [Atlantic AGILIA IO](devices/atlantic-agilia-io.md), with a Window sensor and an Open Window Detection switch (both experimental); the plain heater (subtype 0) with heating levels (experimental, untested) |
 | `0x35` | heat recovery ventilation | | Not supported yet |
 | `0xFF` | central house control | | Not supported yet |

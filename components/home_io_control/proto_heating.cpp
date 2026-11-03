@@ -135,6 +135,16 @@ size_t encode_heating_read(HeatingFunction fn, uint8_t out[HEATING_PAYLOAD_MAX_S
   return PAYLOAD_LEN_HEADER;
 }
 
+size_t encode_heating_register_read(uint8_t reg_hi, uint8_t reg_lo, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
+  // The direction is the GET constant and nothing else: this is the one frame builder the register
+  // probes use, so it is where "read-only" is enforced.
+  out[0] = HEATING_PAYLOAD_PREFIX;
+  out[1] = HEATING_DIRECTION_GET;
+  out[2] = reg_hi;
+  out[3] = reg_lo;
+  return PAYLOAD_LEN_HEADER;
+}
+
 size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
   const HeatingFunctionDescriptor *d = descriptor_for(fn);
   // A read-only register is never written, whatever the caller asks: the heater's window sensor and

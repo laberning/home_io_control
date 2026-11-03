@@ -80,15 +80,28 @@ constexpr const char *PROBE_NAME_SUBSCRIBE_EVENT =
     "subscribe_event";  ///< create_subscribe_event(); index 0 = battery level event, 1 = local sensor event.
 constexpr const char *PROBE_NAME_READ_OBJECT =
     "read_object";  ///< Data-transport read of one device object (ADR 0062); index = TRANSFER_READABLE_OBJECTS row.
+constexpr const char *PROBE_NAME_REGISTER_00 =
+    "register_00";  ///< Read of register 0x00<index> over CMD_WRITE_PRIVATE (read direction only).
+constexpr const char *PROBE_NAME_REGISTER_01 =
+    "register_01";  ///< Read of register 0x01<index> over CMD_WRITE_PRIVATE (read direction only).
+/// Bytes of a register request that a `0x21` answer repeats: `0C 60 <hi> <lo>`.
+constexpr uint8_t PROBE_REGISTER_HEADER_LENGTH = 4;
+constexpr uint8_t PROBE_REGISTER_HIGH_00 = 0x00;  ///< High register byte of `register_00`; family untested.
+constexpr uint8_t PROBE_REGISTER_HIGH_01 =
+    0x01;  ///< High register byte of `register_01`; the family climate support reads.
 /// Highest `read_object` index: the last row of TRANSFER_READABLE_OBJECTS.
 constexpr uint8_t PROBE_READ_OBJECT_MAX_INDEX = TRANSFER_READABLE_OBJECT_COUNT - 1;
 /// Pause before each block request and before the close. An RS100 Solar io missed every block request sent
 /// right after its previous answer and answered every re-send, which left about 650 ms after that answer
 /// (issue #156). Waiting that long first saves one long-preamble transmission per block.
 constexpr uint32_t PROBE_READ_OBJECT_BLOCK_GAP_MS = 650;
-/// Longest object `read_object` pulls: 16 blocks. A device announcing more is closed again unread, so a
-/// misreading cannot turn into a long run of transmissions on the shared band.
-constexpr uint16_t PROBE_READ_OBJECT_MAX_BYTES = 16 * TRANSFER_BLOCK_SIZE;
+/// Longest object `read_object` pulls: 24 blocks (432 bytes), the smallest whole-block cap that covers the
+/// longest length a real device has announced (431 bytes, issue #156). A device announcing more is closed again
+/// unread, so a misreading cannot turn into a long run of transmissions on the shared band. The cost: on that
+/// low-power device a 14-block read blocked the loop for 16.4 s, so 24 blocks take about 28 s nominally and, with
+/// up to 3 tries per block, can pass 60 s. The ESPHome API tolerates that (its server only drops a client after
+/// 150 s without traffic), and the probe is manual, one object per call.
+constexpr uint16_t PROBE_READ_OBJECT_MAX_BYTES = 24 * TRANSFER_BLOCK_SIZE;
 /// Data bytes per log line when `read_object` prints what it read (short enough for the log's line limit).
 constexpr uint8_t PROBE_READ_OBJECT_LOG_BYTES_PER_LINE = 24;
 /// "object 0xNNNN class NNN handle 0xNN status NNN length NNNNN" plus the terminator.
@@ -196,6 +209,24 @@ bool build_probe_read_object(IoFrame &f, const uint8_t *own, const uint8_t *dst,
   return create_transfer_open(f, own, dst, TRANSFER_READABLE_OBJECTS[index], low_power);
 }
 
+/// Shared body of the register probes: frames a read of register `<reg_hi><index>`. The payload comes from
+/// encode_heating_register_read(), which cannot produce the write direction, so no probe input can put a
+/// register write on the air (ADR 0063).
+bool build_probe_register_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t reg_hi, uint8_t index,
+                               bool low_power) {
+  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
+  const size_t payload_len = encode_heating_register_read(reg_hi, index, payload);
+  return create_write_private(f, own, dst, low_power, payload, payload_len);
+}
+
+bool build_probe_register_00(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  return build_probe_register_read(f, own, dst, PROBE_REGISTER_HIGH_00, index, low_power);
+}
+
+bool build_probe_register_01(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  return build_probe_register_read(f, own, dst, PROBE_REGISTER_HIGH_01, index, low_power);
+}
+
 /// @brief One row per probe_device()/probe_sweep() `probe` argument value.
 struct ProbeDescriptor {
   const char *name;
@@ -206,6 +237,8 @@ struct ProbeDescriptor {
   uint8_t max_index;  ///< Highest index the probe accepts; the full byte range when index_help is null.
   bool sweepable;     ///< False for a probe that changes state in the device: probe_sweep() refuses it.
   bool reads_blocks{false};  ///< True for `read_object`: an accepted first reply is followed by block reads.
+  /// True for the register probes: refused unless device_accepts_register_probe() holds for the target.
+  bool register_read{false};
 };
 
 /// @brief The full set of probes probe_device()/probe_sweep() can dispatch to.
@@ -241,6 +274,10 @@ constexpr ProbeDescriptor PROBE_TABLE[] = {
      "index 0 (actuator capacity 0x8100), 1 (actuator state 0x8103), 2 (name record 0x8003), 3 (general info 1, "
      "0x8001), 4 (general info 2, 0x8002), or 5 to 29 (further objects, see the diagnostic probes documentation)",
      true, PROBE_READ_OBJECT_MAX_INDEX, false, true},
+    // The register reads (ADR 0063): one CMD_WRITE_PRIVATE frame in the read direction, for register-protocol
+    // heaters and domestic hot water devices only. Read-only, so they sweep like the other single-frame probes.
+    {PROBE_NAME_REGISTER_00, build_probe_register_00, nullptr, true, UINT8_MAX, true, false, true},
+    {PROBE_NAME_REGISTER_01, build_probe_register_01, nullptr, true, UINT8_MAX, true, false, true},
 };
 constexpr uint8_t PROBE_TABLE_SIZE = sizeof(PROBE_TABLE) / sizeof(PROBE_TABLE[0]);
 
@@ -1175,6 +1212,40 @@ void ManagementActions::api_probe_device(const std::string &device_id, const std
   publish_result(probe_device(device_id, probe, index));
 }
 
+/// A register read means something only to a register-protocol device; a cover, light or lock has no such register
+/// and is not sent the frame. By kind, not by name: IoDevice has no manufacturer. Terminal, because the kind does
+/// not change partway through a sweep.
+static bool register_probe_refused(const ProbeDescriptor &descriptor, const IoDevice &dev, const std::string &probe,
+                                   ManagementActionResult &result) {
+  if (!descriptor.register_read || device_accepts_register_probe(dev.type, dev.subtype))
+    return false;
+  result.message = "probe \"" + probe +
+                   "\" reads registers and only applies to a register-protocol heater or a domestic hot water "
+                   "device; this device is neither";
+  result.terminal_refusal = true;
+  return true;
+}
+
+/// Reports what a register probe drew back (nothing for any other probe). A `0x21` that repeats the request's `0C 60
+/// <hi> <lo>` header splits the value off it into `result.decoded` and the message; the bytes are not interpreted,
+/// because what a register holds is what the probe exists to find out. Always logs one line: device, register, outcome.
+static void report_register_reply(const ProbeDescriptor &descriptor, const IoFrame &request, const IoFrame &response,
+                                  const std::string &probe, ManagementActionResult &result) {
+  if (!descriptor.register_read)
+    return;
+  const bool echoed = response.cmd == CMD_WRITE_PRIVATE_ACK && response.data_len >= PROBE_REGISTER_HEADER_LENGTH &&
+                      std::memcmp(response.data, request.data, PROBE_REGISTER_HEADER_LENGTH) == 0;
+  if (echoed) {
+    std::string value;
+    for (uint8_t i = PROBE_REGISTER_HEADER_LENGTH; i < response.data_len; i++)
+      value += (i == PROBE_REGISTER_HEADER_LENGTH ? "" : " ") + format_hex_byte(response.data[i]);
+    result.decoded = "value: " + value;
+    result.message += " [" + result.decoded + "]";
+  }
+  ESP_LOGI(detail::TAG, "%s register 0x%02X%02X on %s: %s", probe.c_str(), request.data[2], request.data[3],
+           result.device_id.c_str(), echoed ? result.decoded.c_str() : command_name(response.cmd));
+}
+
 ManagementActionResult ManagementActions::probe_device(const std::string &device_id, const std::string &probe,
                                                        const std::string &index) {
   // resolve_device_() reassigns its `result` argument wholesale (via make_management_result()),
@@ -1207,6 +1278,9 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
 
   const ProbeDescriptor *descriptor = resolve_probe_descriptor(probe, result);
   if (descriptor == nullptr)
+    return result;
+
+  if (register_probe_refused(*descriptor, *dev, probe, result))
     return result;
 
   uint8_t index_byte = 0;
@@ -1287,6 +1361,7 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
     result.decoded = header;
     result.message += " [" + result.decoded + "]";
   }
+  report_register_reply(*descriptor, request, response, probe, result);
   // The data-transport read continues past its first answer; everything it reports is raw bytes.
   if (descriptor->reads_blocks)
     read_object_blocks_(*dev, response, TRANSFER_READABLE_OBJECTS[index_byte], result);

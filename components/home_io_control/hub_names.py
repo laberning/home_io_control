@@ -79,6 +79,10 @@ CONF_ENROLLMENT_CLASSES = "enrollment_classes"
 # imports this constant rather than keeping its own copy. See ONEWAY_CONTROLLER_SCHEMA's own
 # comment on this key for the full tri-state semantics, and ADR 0038.
 CONF_LOW_POWER = "low_power"
+# Shared by the cover platform (2W display inversion) and the 1W controller identity (wire
+# mirroring of OPEN/CLOSE/position). Defined here because platform modules and hub modules both
+# import from this leaf, and the yaml-emitter sync check resolves hub key constants from it.
+CONF_INVERT_POSITION = "invert_position"
 # Injected at schema time, never user-supplied: the generated buttons' IDs and the identity's
 # diagnostic sensor ID (ADR 0009).
 CONF_BUTTON_IDS = "button_ids"

@@ -252,6 +252,10 @@ bool device_uses_heating_registers(DeviceType type, uint8_t subtype) {
   return profile != nullptr && profile->path == HeatingControlPath::PRIVATE_REGISTERS;
 }
 
+bool device_accepts_register_probe(DeviceType type, uint8_t subtype) {
+  return type == DeviceType::DOMESTIC_HOT_WATER || device_uses_heating_registers(type, subtype);
+}
+
 bool device_uses_heating_levels(DeviceType type, uint8_t subtype) {
   const HeatingProfile *profile = find_heating_profile(type, subtype);
   return profile != nullptr && profile->path == HeatingControlPath::HEATING_LEVEL;

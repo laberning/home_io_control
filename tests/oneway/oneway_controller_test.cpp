@@ -297,3 +297,24 @@ TEST(OneWayController, PowerClassNamesEveryValue) {
   EXPECT_STREQ(oneway_power_class_name(OneWayPowerClass::ALWAYS_ALIVE), "always-alive");
   EXPECT_STREQ(oneway_power_class_name(OneWayPowerClass::LOW_POWER), "low-power");
 }
+
+// ============================================================================
+// effective_inverted(): explicit `invert_position:` wins, else the kind's INVERTED bit
+// ============================================================================
+
+TEST(OneWayControllerInversion, OverrideBeatsTheKindAndUnsetFollowsIt) {
+  OneWayControllerIdentity inverted_kind{};
+  inverted_kind.io_device_type = DeviceType::HORIZONTAL_AWNING;
+  OneWayControllerIdentity plain_kind{};
+  plain_kind.io_device_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
+
+  EXPECT_TRUE(effective_inverted(inverted_kind));
+  EXPECT_FALSE(effective_inverted(plain_kind));
+  EXPECT_FALSE(has_invert_override(inverted_kind));
+
+  inverted_kind.invert_override = false;
+  plain_kind.invert_override = true;
+  EXPECT_FALSE(effective_inverted(inverted_kind));
+  EXPECT_TRUE(effective_inverted(plain_kind));
+  EXPECT_TRUE(has_invert_override(plain_kind));
+}

@@ -17,6 +17,7 @@ the project's reference actuator; the shutter variants come from field reports.
 | Identify (jog) | ✅ Confirmed |
 | Discover & Pair | ✅ Confirmed |
 | Driven by a linked 1W Smoove remote | ✅ Confirmed |
+| Open, close, stop from a [1W controller identity](../configuration/oneway-transmit.md) | 📣 Reported, including STOP during travel (issue #196) |
 
 ## Onboarding route that worked
 

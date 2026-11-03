@@ -35,6 +35,7 @@ from .hub_names import (
     CONF_EXECUTE_ACEI,
     CONF_EXECUTE_BROADCAST,
     CONF_INITIAL_SEQUENCE,
+    CONF_INVERT_POSITION,
     CONF_IO_DEVICE_TYPE,
     CONF_LAST_COMMAND_SENSOR_ID,
     CONF_LOW_POWER,
@@ -52,8 +53,10 @@ from .hub_names import (
 from .hub_validators import (
     DEVICE_TYPE_MAX,
     DEVICE_TYPE_OPTIONS,
+    FEATURE_INVERTED,
     MANUFACTURER_OPTIONS,
     ONEWAY_WIRE_PROFILE_MANUFACTURERS,
+    device_features,
     validate_device_type,
     validate_manufacturer,
     validate_node_id,
@@ -175,6 +178,10 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # normal preamble -- a wake-up copy for a solar/battery receiver. Applies to every 1W TX of
         # the identity: commands, positions, both enrollment gestures, un-enrollment. See ADR 0038.
         cv.Optional(CONF_LOW_POWER): cv.boolean,
+        # Tri-state like low_power: unset = the device kind decides (an inverted kind such as a
+        # horizontal awning mirrors OPEN/CLOSE/position on the wire, as the 2W cover does);
+        # true/false force it. Resolved in C++ by effective_inverted().
+        cv.Optional(CONF_INVERT_POSITION): cv.boolean,
     }
 )
 
@@ -243,6 +250,17 @@ def _power_class_override_expression(identity):
     return f"esphome::home_io_control::OneWayPowerClass::{name}"
 
 
+def _invert_override_expression(identity):
+    """Map `invert_position:` to the C++ `std::optional<bool>` the identity stores.
+
+    Unset -> `{}`: the kind's INVERTED capability bit is looked up in C++ by
+    `effective_inverted()`, so the Python side never carries a copy of the type table.
+    """
+    if CONF_INVERT_POSITION not in identity:
+        return "{}"
+    return "true" if identity[CONF_INVERT_POSITION] else "false"
+
+
 def oneway_controller_expression(identity, hub_node_id):
     """Generate the C++ OneWayControllerIdentity initialiser for one configured identity.
 
@@ -266,6 +284,7 @@ def oneway_controller_expression(identity, hub_node_id):
             f"{'true' if identity[CONF_EXECUTE_BROADCAST] == 'all' else 'false'}",
             f".enrollment_classes = {_enrollment_classes_initialiser(identity)}",
             f".power_class_override = {_power_class_override_expression(identity)}",
+            f".invert_override = {_invert_override_expression(identity)}",
         ]
     )
     if derived:
@@ -433,6 +452,22 @@ def validate_oneway_controllers(config):
                     for name, value in DEVICE_TYPE_OPTIONS.items()
                     if value == identity[CONF_IO_DEVICE_TYPE]
                 ),
+            )
+
+        # An inverted kind mirrors open/close on the wire. A broadcast-to-all frame also reaches
+        # receivers of other kinds, so the mirror applies to them too -- legal, but worth a flag.
+        if (
+            identity_can_transmit
+            and CONF_INVERT_POSITION not in identity
+            and identity[CONF_EXECUTE_BROADCAST] == "all"
+            and device_features(identity[CONF_IO_DEVICE_TYPE]) & FEATURE_INVERTED
+        ):
+            _LOGGER.warning(
+                "home_io_control: oneway_controllers '%s' is an inverted device kind with "
+                "execute_broadcast: all -- open/close are mirrored for every receiver of this "
+                "broadcast; set invert_position explicitly if this identity also drives "
+                "non-awning devices.",
+                identity_id,
             )
 
         # enrollment_classes: only feeds the VELUX enrollment gesture. On a somfy/unprofiled

@@ -83,3 +83,16 @@ one hardware-validated class-bound configuration with no failing test);
   the confidence.
 - Nothing else on the wire changes: 6-byte payload form, originator, sequence,
   MAC span, repeat cadence, ctrl1 — all vendor-independent and untouched.
+
+## Amendment (2026-11): open, close and positions follow the kind's polarity
+
+Issue #196 reported open and close swapped for a `horizontal_awning` identity: the transmitter sent
+user OPEN as wire position 0, while the 2W cover path already treats wire 0 as closed for a kind
+with the `INVERTED` capability bit. `OneWayControllerIdentity::invert_override` (`invert_position:`)
+is a tri-state like `power_class_override`, resolved in C++ by `effective_inverted()`: an explicit
+value wins, else the kind's bit. `OneWayTransmitter::send_position()` mirrors the value
+(`100 - position`) and passes the user's intent, not the decoded wire value, to the report and the
+TX log. The VELUX enrollment STOP+DOWN keeps its raw wire value, because it reproduces a remote's
+gesture rather than a user position. With `execute_broadcast: all` the mirrored frame also reaches
+receivers of other kinds, so the build warns for that combination. Receive-side intent labels for
+overheard 1W traffic still print literal wire meanings.

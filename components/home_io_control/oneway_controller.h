@@ -22,6 +22,7 @@
 #include "proto_codecs.h"
 #include "proto_constants.h"
 #include "proto_device_model.h"
+#include "proto_device_types.h"
 #include "proto_sizes.h"
 
 #include <array>
@@ -133,6 +134,11 @@ struct OneWayControllerIdentity {
   /// enrollment (both gestures), un-enrollment. Last field: codegen emits a designated initialiser
   /// in declaration order. See ADR 0038 for the shapes themselves.
   std::optional<OneWayPowerClass> power_class_override;
+  /// `invert_position:` exactly as configured, or **empty when the key is absent** — in which case
+  /// the device kind decides (`INVERTED` capability bit). Never read this directly to transmit;
+  /// call effective_inverted(). Declared after `power_class_override` because codegen emits a
+  /// designated initialiser in declaration order.
+  std::optional<bool> invert_override;
 
   /// @brief Enrollment / typed-class destination address for this identity.
   ///
@@ -250,10 +256,31 @@ inline bool has_power_class_override(const OneWayControllerIdentity &identity) {
   return identity.power_class_override.has_value();
 }
 
+/// @brief Whether this identity's OPEN/CLOSE/position values are mirrored on the wire.
+///
+/// An inverted device kind (a horizontal awning, for example) treats wire position 0 as closed,
+/// the same way the 2W cover path handles `IoDevice::inverted`. An explicit `invert_position:`
+/// always wins; with the key absent the identity's `io_device_type` decides.
+/// \todo Confirm on a second inverted-kind 1W receiver.
+/// @param identity The controller identity.
+/// @return `invert_override` when set, else the kind's `INVERTED` capability bit.
+inline bool effective_inverted(const OneWayControllerIdentity &identity) {
+  return identity.invert_override.value_or(
+      has_feature(device_features(identity.io_device_type, 0), device_feature::INVERTED));
+}
+
+/// @brief Whether this identity's inversion comes from an explicit `invert_position:` rather than the kind.
+/// @param identity The controller identity.
+/// @return true when `invert_position:` was set in YAML.
+inline bool has_invert_override(const OneWayControllerIdentity &identity) {
+  return identity.invert_override.has_value();
+}
+
 // === Control surface ===
 
-/// Wire-scale position meaning "fully closed" (0 means fully open). Named here because the two
-/// values are what OPEN and CLOSE actually are — see encode_oneway_action().
+/// User-scale position meaning "fully closed" (0 means fully open). Named here because the two
+/// values are what OPEN and CLOSE are before OneWayTransmitter::send_position() mirrors them for an
+/// inverted identity — see encode_oneway_action() and effective_inverted().
 static constexpr uint8_t ONEWAY_POSITION_FULLY_OPEN = 0;
 static constexpr uint8_t ONEWAY_POSITION_FULLY_CLOSED = 100;
 
@@ -283,7 +310,8 @@ struct OneWayActionEncoding {
 ///
 /// Pure, so the mapping can be tested without a radio, an entity or a hub. OPEN and CLOSE resolve
 /// to positions because that is what they are on the wire — there is no distinct open/close
-/// opcode, and treating them as named commands would need a second encoding path for no gain.
+/// opcode, and treating them as named commands would need a second encoding path for no gain. The
+/// positions are user positions (0 = open); the transmitter mirrors them for an inverted identity.
 /// @param action Button action to encode.
 /// @return The position-or-command the transmitter should send.
 /// @ingroup hioc_protocol

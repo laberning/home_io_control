@@ -2154,7 +2154,7 @@ TEST(HubManagement, ProbeDeviceRejectsUnknownProbeName) {
   EXPECT_EQ(result.message,
             "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
             "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, limitation, "
-            "subscribe_event, unsubscribe_event, or read_object)");
+            "subscribe_event, unsubscribe_event, read_object, register_00, or register_01)");
   EXPECT_FALSE(result.terminal_refusal) << "an unrecognized probe name is validated up front by probe_sweep(), "
                                            "not by looping until this flag stops it";
 }
@@ -2582,7 +2582,7 @@ TEST(HubManagement, ProbeSweepRejectsUnknownProbeNameWithoutLooping) {
   EXPECT_EQ(result.message,
             "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
             "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, limitation, "
-            "subscribe_event, unsubscribe_event, or read_object)");
+            "subscribe_event, unsubscribe_event, read_object, register_00, or register_01)");
   EXPECT_EQ(result.message.find("index="), std::string::npos)
       << "an invalid probe name must not enter the per-index loop at all: " << result.message;
 }
@@ -2885,6 +2885,196 @@ uint8_t sent_cmd(const MockRadio &radio, size_t index) {
 
 }  // namespace
 
+// --- register_00 / register_01: read-only register probes (ADR 0063) -------------------------------
+
+namespace {
+
+/// A 0x21 from the probe device echoing `0C 60 <hi> <lo>` followed by `value`.
+IoFrame make_register_reply(const uint8_t dst[3], uint8_t reg_hi, uint8_t reg_lo, const std::vector<uint8_t> &value) {
+  std::vector<uint8_t> payload = {0x0C, 0x60, reg_hi, reg_lo};
+  payload.insert(payload.end(), value.begin(), value.end());
+  return make_transfer_reply(dst, CMD_WRITE_PRIVATE_ACK, payload);
+}
+
+void make_hot_water_device(TestableManagementComponent &component) {
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::DOMESTIC_HOT_WATER);
+}
+
+}  // namespace
+
+TEST(HubManagement, RegisterProbesSendTheReadRequestForTheirFamily) {
+  struct Case {
+    const char *probe;
+    const char *index;
+    std::vector<uint8_t> expected_payload;
+  };
+  const Case cases[] = {{"register_00", "0x2A", {0x0C, 0x60, 0x00, 0x2A}},
+                        {"register_01", "0x15", {0x0C, 0x60, 0x01, 0x15}},
+                        {"register_00", "0", {0x0C, 0x60, 0x00, 0x00}},
+                        {"register_01", "255", {0x0C, 0x60, 0x01, 0xFF}}};
+  for (const auto &c : cases) {
+    SCOPED_TRACE(std::string(c.probe) + " " + c.index);
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+    make_hot_water_device(component);
+
+    component.probe_device("ABC123", c.probe, c.index);
+
+    ASSERT_FALSE(radio.get_sent_data().empty());
+    const auto sent = sent_from_cmd(radio, 0);
+    ASSERT_EQ(sent.size(), 5u);
+    EXPECT_EQ(sent[0], CMD_WRITE_PRIVATE);
+    EXPECT_EQ(std::vector<uint8_t>(sent.begin() + 1, sent.end()), c.expected_payload);
+  }
+}
+
+TEST(HubManagement, RegisterProbesNeverSendTheWriteDirectionForAnyIndex) {
+  // 0x61 is the register write. Every index of both probes, on a device that accepts them, must frame 0x60.
+  for (const char *probe : {"register_00", "register_01"}) {
+    for (unsigned index = 0; index <= 255; index++) {
+      TestableManagementComponent component;
+      MockRadio radio;
+      setup_component(component, radio);
+      component.set_diagnostic_probes_enabled(true);
+      make_hot_water_device(component);
+
+      component.probe_device("ABC123", probe, std::to_string(index));
+
+      ASSERT_FALSE(radio.get_sent_data().empty()) << probe << " " << index;
+      for (size_t i = 0; i < radio.get_sent_data().size(); i++) {
+        const auto sent = sent_from_cmd(radio, i);
+        ASSERT_GE(sent.size(), 3u);
+        if (sent[0] == CMD_WRITE_PRIVATE) {
+          ASSERT_EQ(sent[2], HEATING_DIRECTION_GET) << probe << " " << index << ": never the write direction";
+        }
+      }
+    }
+  }
+}
+
+TEST(HubManagement, RegisterProbeReportsTheValueBytesOfAnEchoedRegister) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  make_hot_water_device(component);
+  radio.queue_rx(frame_to_packet(make_register_reply(component.node_id_, 0x01, 0x15, {0xD2, 0x00})));
+
+  const auto result = component.probe_device("ABC123", "register_01", "0x15");
+
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_EQ(result.response_cmd, CMD_WRITE_PRIVATE_ACK);
+  EXPECT_EQ(result.decoded, "value: D2 00");
+  EXPECT_NE(result.message.find("[value: D2 00]"), std::string::npos) << result.message;
+  EXPECT_FALSE(result.response_hex.empty()) << "the raw reply is still reported";
+}
+
+TEST(HubManagement, RegisterProbeDoesNotSplitAValueOffAnAckThatDoesNotEchoTheRegister) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  make_hot_water_device(component);
+  radio.queue_rx(frame_to_packet(make_register_reply(component.node_id_, 0x01, 0x16, {0xD2, 0x00})));
+
+  const auto result = component.probe_device("ABC123", "register_01", "0x15");
+
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_TRUE(result.decoded.empty());
+  EXPECT_EQ(result.message.find("value:"), std::string::npos) << result.message;
+}
+
+TEST(HubManagement, RegisterProbeDecodesAnErrorAnswer) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  make_hot_water_device(component);
+  radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  const auto result = component.probe_device("ABC123", "register_00", "1");
+
+  EXPECT_TRUE(result.success);
+  EXPECT_EQ(result.response_cmd, CMD_ERROR_RESP);
+  EXPECT_TRUE(result.has_result_code);
+  EXPECT_EQ(result.result_code, RESULT_COMMAND_UNKNOWN);
+  EXPECT_TRUE(result.decoded.empty());
+}
+
+TEST(HubManagement, RegisterProbeIsAcceptedOnARegisterHeater) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  make_climate_device(component);
+  radio.queue_rx(frame_to_packet(make_register_reply(component.node_id_, 0x01, 0x01, {0x01})));
+
+  const auto result = component.probe_device("ABC123", "register_01", "1");
+
+  EXPECT_TRUE(result.success) << result.message;
+  EXPECT_EQ(result.decoded, "value: 01");
+}
+
+TEST(HubManagement, RegisterProbeIsRefusedForEveryOtherKindWithoutTransmitting) {
+  for (const DeviceType kind : {DeviceType::ROLLER_SHUTTER, DeviceType::VERTICAL_EXTERIOR_AWNING, DeviceType::LIGHT,
+                                DeviceType::ON_OFF_SWITCH, DeviceType::LOCK, DeviceType::UNKNOWN}) {
+    SCOPED_TRACE(static_cast<unsigned>(kind));
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+    auto *dev = component.get_device("ABC123");
+    ASSERT_NE(dev, nullptr);
+    test::set_kind(*dev, kind);
+
+    const auto result = component.probe_device("ABC123", "register_01", "1");
+
+    EXPECT_FALSE(result.success);
+    EXPECT_TRUE(result.terminal_refusal) << "the kind does not change partway through a sweep";
+    EXPECT_NE(result.message.find("register-protocol heater or a domestic hot water device"), std::string::npos)
+        << result.message;
+    EXPECT_TRUE(radio.get_sent_data().empty());
+  }
+}
+
+TEST(HubManagement, RegisterProbesSweepAndStopAtTheSixteenIndexCap) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  make_hot_water_device(component);
+
+  const auto too_wide = component.probe_sweep("ABC123", "register_00", "0", "16");
+  EXPECT_FALSE(too_wide.success);
+  EXPECT_NE(too_wide.message.find("sweep range too wide"), std::string::npos) << too_wide.message;
+  EXPECT_TRUE(radio.get_sent_data().empty());
+
+  const auto swept = component.probe_sweep("ABC123", "register_00", "0", "1");
+  EXPECT_TRUE(swept.success) << swept.message;
+  EXPECT_NE(swept.message.find("index=0x00"), std::string::npos);
+  EXPECT_NE(swept.message.find("index=0x01"), std::string::npos);
+}
+
+TEST(HubManagement, RegisterProbeSweepOnACoverStopsAfterTheFirstRefusal) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::ROLLER_SHUTTER);
+
+  const auto swept = component.probe_sweep("ABC123", "register_01", "0", "5");
+
+  EXPECT_FALSE(swept.success);
+  EXPECT_NE(swept.message.find("stopping sweep"), std::string::npos) << swept.message;
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
 TEST(HubManagement, ReadObjectOpensPullsEveryBlockAndClosesTheTransfer) {
   TestableManagementComponent component;
   MockRadio radio;
@@ -3013,9 +3203,9 @@ TEST(HubManagement, ReadObjectClosesWithoutReadingAnObjectLongerThanTheCap) {
   MockRadio radio;
   setup_component(component, radio);
   component.set_diagnostic_probes_enabled(true);
-  // 0x0190 = 400 bytes, above the 288-byte cap.
+  // 0x01C2 = 450 bytes, above the 432-byte cap (24 blocks).
   radio.queue_rx(
-      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x01, 0x90})));
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x01, 0xC2})));
   radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 0, 0, 0)));
 
   const auto result = component.probe_device("ABC123", "read_object", "0");
@@ -3023,6 +3213,28 @@ TEST(HubManagement, ReadObjectClosesWithoutReadingAnObjectLongerThanTheCap) {
   ASSERT_EQ(radio.get_sent_data().size(), 2u);
   EXPECT_EQ(sent_cmd(radio, 0), CMD_TRANSFER_OPEN);
   EXPECT_EQ(sent_cmd(radio, 1), CMD_UNKNOWN4A_REQ);
+}
+
+TEST(HubManagement, ReadObjectReadsAnObjectOfTheLargestLengthARealDeviceAnnounced) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  // 431 bytes (0x01AF) = 24 blocks, the last one partial (17 bytes): the length that set the cap.
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x01, 0xAF})));
+  for (uint16_t chunk = 24; chunk >= 1; chunk--) {
+    const uint16_t first = static_cast<uint16_t>((24 - chunk) * 18);
+    radio.queue_rx(frame_to_packet(
+        make_block(component.node_id_, 0x10, chunk, static_cast<uint8_t>(first), chunk == 1 ? 17 : 18)));
+  }
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 0, 0, 0)));
+
+  const auto result = component.probe_device("ABC123", "read_object", "0");
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_EQ(radio.get_sent_data().size(), 26u) << "open, 24 block requests, close";
+  EXPECT_EQ(result.message.find("incomplete"), std::string::npos) << result.message;
+  EXPECT_EQ(result.response_hex.size(), 431u * 3 - 1) << "all 431 bytes, space separated";
 }
 
 TEST(HubManagement, ReadObjectClosesTheTransferAfterAFailedBlock) {
