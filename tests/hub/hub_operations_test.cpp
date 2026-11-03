@@ -2107,6 +2107,23 @@ TEST(HubOperations, QueueRequestDeviceStatusDeduplicatesPerDevice) {
   EXPECT_EQ(comp.op_queue_.front().device_id, "ABC123");
 }
 
+TEST(HubOperations, HotWaterDeclaredAsSwitchQueuesNoStatusRequestAndCountsNoFailure) {
+  // The switch declared with io_device_type: 0x33 schedules an initial status request; the guard
+  // drops it before anything is queued or sent, so no exchange failure is recorded.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::DOMESTIC_HOT_WATER);
+
+  comp.queue_request_device_status("ABC123");
+
+  EXPECT_TRUE(comp.op_queue_.empty());
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_TRUE(radio.get_sent_data().empty()) << "nothing is transmitted, so no exchange can fail";
+}
+
 // ========================================================================================
 // Queued operation dispatch
 // ========================================================================================

@@ -130,8 +130,11 @@ class OneWayTransmitter {
   /// @brief Send a numeric position as the identity's controller.
   ///
   /// Same contract as send_command(). Every position 0–100 is ordinary; none is a special code.
+  /// The position is a **user position**: for an identity where effective_inverted() is true the
+  /// wire value is mirrored (`100 - position`), while the report and the TX log still name the
+  /// user's intent (OPEN stays OPEN).
   /// @param controller_id YAML handle of the controller identity to transmit as.
-  /// @param position Target position 0–100 (0 = fully open, 100 = fully closed).
+  /// @param position Target position 0–100 (0 = fully open, 100 = fully closed), before any mirroring.
   /// @return true if at least one copy reached the radio.
   bool send_position(const std::string &controller_id, uint8_t position);
 
@@ -164,11 +167,13 @@ class OneWayTransmitter {
   /// let a queued 2W exchange interleave between copies of one command.
   /// @param frame Signed 1W frame to send.
   /// @param power_class Which preamble/CTRL1 shape each copy gets (ADR 0038).
+  /// @param intent_label Optional label for the TX log line when the frame's own decoded intent
+  ///        would mislead (a mirrored position). nullptr = log the decoded intent.
   /// @return true if at least one copy reached the radio. Partial success is still reported as
   ///         success because it is genuinely what the caller wants to know — with no reply frame,
   ///         "some copies went out" is the most any layer here can ever establish, and a device
   ///         needs only one of them.
-  bool send_burst(const IoFrame &frame, OneWayPowerClass power_class);
+  bool send_burst(const IoFrame &frame, OneWayPowerClass power_class, const char *intent_label = nullptr);
 
   /// @brief Register this identity as a controller on every device currently in association mode
   /// (the receiver's own association-mode gesture, ADR 0026: a multi-second PROG hold on a Somfy
@@ -229,9 +234,10 @@ class OneWayTransmitter {
   /// one sequence, then burst whatever `build` makes of it. The reservation happens **once per
   /// logical command** and outside the burst loop — a sequence per frame would turn one press into
   /// four commands, of which a device accepts one and rejects three.
-  /// @param explicit_intent Overrides the report's decoded intent (decode_1w_frame() cannot label
-  ///        a 0x30/0x39, so send_enrollment()/send_unenrollment() pass "ENROLL"/"UNENROLL" here;
-  ///        empty means "derive from the built frame as usual", every other caller's behavior).
+  /// @param explicit_intent Overrides the report's decoded intent and the TX log's (decode_1w_frame()
+  ///        cannot label a 0x30/0x39, so send_enrollment()/send_unenrollment() pass "ENROLL"/"UNENROLL"
+  ///        here; send_position() passes the user's intent because the frame carries the mirrored
+  ///        wire value). Empty means "derive from the built frame as usual".
   bool send_(const std::string &controller_id,
              const std::function<bool(IoFrame &, const OneWayControllerIdentity &, uint16_t)> &build,
              const char *explicit_intent = "");

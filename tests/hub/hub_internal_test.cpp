@@ -153,6 +153,13 @@ TEST(HubInternal, KnownDeviceSupportsStatusRequests) {
   test::set_kind(unknown_dev, DeviceType::UNKNOWN);
   EXPECT_TRUE(detail::known_device_supports_status_requests(unknown_dev))
       << "UNKNOWN type should support status requests";
+
+  // A switch entity declared with a hot-water type only exists to make the device probe-able: it takes
+  // neither toggles nor status requests.
+  IoDevice hot_water_dev{};
+  test::set_kind(hot_water_dev, DeviceType::DOMESTIC_HOT_WATER);
+  EXPECT_FALSE(detail::known_device_supports_status_requests(hot_water_dev));
+  EXPECT_FALSE(detail::known_device_matches_entity_class(hot_water_dev, DeviceCapabilityClass::SWITCH));
 }
 
 // ========================================================================================

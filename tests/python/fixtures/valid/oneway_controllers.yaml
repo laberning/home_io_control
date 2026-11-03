@@ -17,3 +17,15 @@ home_io_control:
       commands: [stop]
       enrollment: true
       enrollment_classes: [vertical_exterior_awning, roller_shutter]
+    # An inverted kind mirrors open/close by default; the key switches that off.
+    - id: patio_remote
+      io_device_type: horizontal_awning
+      commands: [open, close, stop]
+    - id: patio_remote_raw
+      io_device_type: horizontal_awning
+      invert_position: false
+      commands: [open, close]
+    - id: patio_remote_all
+      io_device_type: horizontal_awning
+      execute_broadcast: all
+      commands: [open, close]

@@ -36,6 +36,12 @@ switch:
   - platform: home_io_control
     name: "Plug"
     io_device_id: "2B3C4D"
+  # A domestic hot water device has no entity of its own; declaring it as a switch with its real type
+  # (a raw value, no YAML name exists) registers it so the diagnostic register probes can reach it.
+  - platform: home_io_control
+    name: "Water heater probe handle"
+    io_device_id: "2B3C4E"
+    io_device_type: 0x33
 
 lock:
   - platform: home_io_control

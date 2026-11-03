@@ -198,6 +198,17 @@ const HeatingProfile *find_heating_profile(DeviceType type, uint8_t subtype);
 /// @return true when the profile's control path is HeatingControlPath::PRIVATE_REGISTERS.
 bool device_uses_heating_registers(DeviceType type, uint8_t subtype);
 
+/// @brief May the diagnostic register-read probes (`register_00`, `register_01`) be sent to this device?
+/// @details A read of a register is the request climate support already sends to register-protocol
+///          heaters, so those are allowed, and so is a domestic hot water device (node type 0x33), whose
+///          registers are not known yet. Every other kind -- covers, lights, switches, locks, the
+///          standard-EXECUTE heaters -- is refused. This gates the probe only; it is not a gate for
+///          register writes, which stay behind device_uses_heating_registers().
+/// @param type Node type.
+/// @param subtype Subtype.
+/// @return true for a register-protocol heater or a domestic hot water device.
+bool device_accepts_register_probe(DeviceType type, uint8_t subtype);
+
 /// @brief Does a climate entity drive this device with heating levels?
 /// @param type Node type.
 /// @param subtype Subtype.

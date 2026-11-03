@@ -353,7 +353,8 @@ class IOHomeControlComponent : public Component,
 
   /// @brief Queue a 1W numeric position, sent as the given controller identity.
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
-  /// @param position Target position 0–100 (0 = fully open, 100 = fully closed).
+  /// @param position Target position 0–100 (0 = fully open, 100 = fully closed), as the user means it;
+  ///        the transmitter mirrors it on the wire for an inverted identity (effective_inverted()).
   void send_oneway_position(const std::string &controller_id, uint8_t position) {
     this->op_queue_.enqueue_oneway_position(controller_id, position);
   }
@@ -598,7 +599,8 @@ class IOHomeControlComponent : public Component,
   /// docs/diagnostic-probes.md and ADR 0024.
   /// @param device_id Target device ID.
   /// @param probe Probe name ("private_fn", "status_ext", "general_info3", "private2",
-  ///        "private2_short", "status_mp_fp", or "limitation").
+  ///        "private2_short", "status_mp_fp", "limitation", "register_00", or "register_01"; the full list is
+  ///        in ManagementActions::probe_device()).
   /// @param index Function ID / selector block / modifier, as a decimal or `0x`-prefixed hex
   ///        string; ignored for "general_info3" and "status_mp_fp"; 0 (minimum) or 1 (maximum) for "limitation".
   /// @return Structured result whose `message` carries the reply's command byte and raw hex.

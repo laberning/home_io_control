@@ -311,6 +311,12 @@ class ManagementActions {
   ///     bytes are reported raw in `response_hex` and logged, never interpreted or applied to the device record. Not
   ///     sweepable; an object announced longer than PROBE_READ_OBJECT_MAX_BYTES is closed unread. The write twin of the
   ///     block (0x48, and a 0x4A that carries data) has no builder.
+  ///   - "register_00" / "register_01": a read of register `0x00<index>` / `0x01<index>` over CMD_WRITE_PRIVATE
+  ///     (`0C 60 <hi> <lo>`, ADR 0063). The direction byte is the read constant and cannot be set to the write
+  ///     direction by any input (encode_heating_register_read()). Refused for a device that is neither a
+  ///     register-protocol heater nor a domestic hot water device (device_accepts_register_probe()); sweepable.
+  ///     A `0x21` that echoes the register also reports its value bytes raw in `decoded`. Family `0x00xx` is
+  ///     untested; `0x01xx` is the one climate support reads.
   ///
   /// `index` is a string, not an int, because ManagementServiceDescriptor::
   /// encode_list_service_response() hardcodes every native-API action argument as

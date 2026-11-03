@@ -145,6 +145,20 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[HEATING
 ///         out-of-range value.
 size_t encode_heating_read(HeatingFunction fn, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]);
 
+/// @brief Encode a read ("get") of an arbitrary register into a CMD_WRITE_PRIVATE (0x20) payload.
+///
+/// The diagnostic `register_00` / `register_01` probes ask a device for a register no
+/// HeatingFunction names. The request is always `0C 60 <reg_hi> <reg_lo>`: the direction byte is
+/// HEATING_DIRECTION_GET and this function has no parameter that could change it, so the write
+/// direction (HEATING_DIRECTION_SET) cannot be produced from here for any input.
+/// \todo Register family 0x00xx is untested on hardware. Family 0x01xx is the one encode_heating_read()
+///       already sends to Atlantic radiators.
+/// @param reg_hi High byte of the 16-bit register number.
+/// @param reg_lo Low byte of the 16-bit register number.
+/// @param out Output buffer of HEATING_PAYLOAD_MAX_SIZE bytes.
+/// @return Always 4 (`0C 60 <reg_hi> <reg_lo>`).
+size_t encode_heating_register_read(uint8_t reg_hi, uint8_t reg_lo, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]);
+
 /// @brief Encode the function the `heating_control` action runs: a read for a read-only register,
 /// a write for every other.
 ///

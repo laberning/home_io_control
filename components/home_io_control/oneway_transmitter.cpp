@@ -68,7 +68,8 @@ bool OneWayTransmitter::send_(const std::string &controller_id,
     return false;
   }
 
-  const bool transmitted = this->send_burst(frame, effective_power_class(*identity));
+  const bool transmitted =
+      this->send_burst(frame, effective_power_class(*identity), explicit_intent[0] != '\0' ? explicit_intent : nullptr);
 
   // 0x30/0x39 carry no intent decode_1w_frame() can read (it only understands
   // CMD_EXECUTE/CMD_ACTIVATE_MODE payloads) -- send_enrollment() etc. pass the label directly
@@ -117,12 +118,29 @@ bool OneWayTransmitter::send_command(const std::string &controller_id, CoverComm
 }
 
 bool OneWayTransmitter::send_position(const std::string &controller_id, uint8_t position) {
+  // The caller's position is the user's (0 = open). An inverted kind wants wire 0 = closed, so the
+  // value is mirrored here and only here. The intent label is computed from the user position
+  // before mirroring, because decoding the built frame would report CLOSE for a user OPEN.
+  // Spelled out rather than decoded from the wire byte: a user 50% would decode as FORCE_OPEN.
+  char intent[ONEWAY_INTENT_BUFFER_SIZE]{};
+  if (position == ONEWAY_POSITION_FULLY_OPEN) {
+    snprintf(intent, sizeof(intent), "OPEN");
+  } else if (position == ONEWAY_POSITION_FULLY_CLOSED) {
+    snprintf(intent, sizeof(intent), "CLOSE");
+  } else {
+    snprintf(intent, sizeof(intent), "position %u%%", static_cast<unsigned>(position));
+  }
   return this->send_(
-      controller_id, [position](IoFrame &frame, const OneWayControllerIdentity &identity, uint16_t sequence) {
-        return create_1w_execute_position(frame, identity.node_id, identity.io_device_type, position, sequence,
+      controller_id,
+      [position](IoFrame &frame, const OneWayControllerIdentity &identity, uint16_t sequence) {
+        // Out-of-range input is passed through so the builder refuses it, never wrapped by the mirror.
+        const bool mirror = effective_inverted(identity) && position <= ONEWAY_POSITION_FULLY_CLOSED;
+        const uint8_t wire_position = mirror ? static_cast<uint8_t>(ONEWAY_POSITION_FULLY_CLOSED - position) : position;
+        return create_1w_execute_position(frame, identity.node_id, identity.io_device_type, wire_position, sequence,
                                           identity.system_key, effective_execute_acei(identity),
                                           identity.execute_broadcast_all);
-      });
+      },
+      intent);
 }
 
 bool OneWayTransmitter::send_enrollment(const std::string &controller_id) {
@@ -214,6 +232,8 @@ bool OneWayTransmitter::send_velux_kli_enrollment_(const OneWayControllerIdentit
   const bool lowered = this->send_(
       identity.id,
       [acei](IoFrame &frame, const OneWayControllerIdentity &id, uint16_t sequence) {
+        // Raw wire value on purpose, not mirrored: this is the enrollment gesture a real KLI remote
+        // produces, not a user position.
         return create_1w_execute_position(frame, id.node_id, id.io_device_type, ONEWAY_POSITION_FULLY_CLOSED, sequence,
                                           id.system_key, acei, /*broadcast_all=*/true);
       },
@@ -265,7 +285,7 @@ bool OneWayTransmitter::send_unenrollment(const std::string &controller_id) {
       "UNENROLL");
 }
 
-bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_class) {
+bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_class, const char *intent_label) {
   // Logged once for the whole burst rather than once per copy: four log lines per button press
   // would suggest four commands, which is exactly the misreading the shared sequence exists to
   // prevent. Only frame-header facts are logged — never payload bytes — so this stays safe even
@@ -281,9 +301,9 @@ bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_
   // Built from the same oneway_burst_copy_shape() the transmit loop below calls, so this can never
   // claim a preamble shape the burst does not actually send.
   const std::string preambles = format_oneway_preamble_list(power_class, this->tuning_->normal_start_preamble);
-  if (info.has_intent) {
+  if (info.has_intent || intent_label != nullptr) {
     ESP_LOGI(TAG, "1W tx: from %s to %s intent %s (%ux, preamble %s)", node_id_to_string(frame.src).c_str(), target,
-             info.intent, ONEWAY_BURST_REPEATS, preambles.c_str());
+             intent_label != nullptr ? intent_label : info.intent, ONEWAY_BURST_REPEATS, preambles.c_str());
   } else {
     ESP_LOGI(TAG, "1W tx: from %s to %s cmd 0x%02X (%ux, preamble %s)", node_id_to_string(frame.src).c_str(), target,
              frame.cmd, ONEWAY_BURST_REPEATS, preambles.c_str());

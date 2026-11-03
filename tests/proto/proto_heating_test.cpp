@@ -321,3 +321,29 @@ TEST(ProtoHeating, ReadingsStartUnreadAndStoreOnlyTheirRegisters) {
   EXPECT_FALSE(r.store(HeatingFunction::SET_PRESENCE, 1.0f));
   EXPECT_FALSE(r.store(HeatingFunction::POWER_ON, 1.0f));
 }
+
+// === Register-read probe payload (diagnostic register_00 / register_01) ===
+
+TEST(HeatingRegisterRead, BuildsTheReadRequestForBothRegisterFamilies) {
+  uint8_t out[HEATING_PAYLOAD_MAX_SIZE] = {0};
+  ASSERT_EQ(encode_heating_register_read(0x00, 0x2A, out), 4U);
+  EXPECT_EQ(std::vector<uint8_t>(out, out + 4), (std::vector<uint8_t>{0x0C, 0x60, 0x00, 0x2A}));
+  ASSERT_EQ(encode_heating_register_read(0x01, 0x15, out), 4U);
+  EXPECT_EQ(std::vector<uint8_t>(out, out + 4), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x15}));
+}
+
+TEST(HeatingRegisterRead, NoRegisterNumberEverProducesTheWriteDirection) {
+  // The probe's read-only guarantee: the direction byte is the GET constant for every one of the
+  // 65536 register numbers, and the GET and SET constants really differ.
+  static_assert(HEATING_DIRECTION_GET != HEATING_DIRECTION_SET);
+  for (unsigned reg_hi = 0; reg_hi <= 0xFF; reg_hi++) {
+    for (unsigned reg_lo = 0; reg_lo <= 0xFF; reg_lo++) {
+      uint8_t out[HEATING_PAYLOAD_MAX_SIZE] = {0};
+      ASSERT_EQ(encode_heating_register_read(static_cast<uint8_t>(reg_hi), static_cast<uint8_t>(reg_lo), out), 4U);
+      ASSERT_EQ(out[0], HEATING_PAYLOAD_PREFIX);
+      ASSERT_EQ(out[1], HEATING_DIRECTION_GET);
+      ASSERT_EQ(out[2], reg_hi);
+      ASSERT_EQ(out[3], reg_lo);
+    }
+  }
+}

@@ -42,6 +42,13 @@ constexpr uint32_t BLOCKING_WARNING_THRESHOLD_MS =
 /// value in host tests.
 uint32_t poll_jitter_random() { return random_uint32(); }
 
+/// Boot-log wording for whether a 1W identity mirrors open/close/position, and who decided it.
+const char *oneway_inverted_label(const OneWayControllerIdentity &identity) {
+  if (!effective_inverted(identity))
+    return "no";
+  return has_invert_override(identity) ? "yes (configured)" : "yes (from kind)";
+}
+
 }  // namespace
 
 static const char *const TAG = detail::TAG;
@@ -521,6 +528,8 @@ void IOHomeControlComponent::dump_oneway_controllers_config_() const {
         profile.profile_is_a_guess ? " [no vendor profile — Somfy-shaped]" : "",
         oneway_power_class_name(effective_power_class(identity)),
         has_power_class_override(identity) ? "" : " (from profile)");
+    // Whether open/close are mirrored on the wire, and who decided: the kind or `invert_position:`.
+    ESP_LOGCONFIG(detail::TAG, "      inverted=%s", oneway_inverted_label(identity));
 
     // The VELUX enrollment gesture ignores io_device_type and sweeps a fixed class set instead —
     // the most surprising resolved value on the identity, so print it (ADR 0032).

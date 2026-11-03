@@ -29,8 +29,8 @@ this succeeded end to end on the first attempt, including the node verification 
 On a **KLF 200** gateway, arm the hub's **Recover System Key** switch, then open the KLF 200 web
 interface, go to the Products page and press **SEARCH FOR PRODUCTS**. The gateway also checks the
 products it already knows during that search, so it can end with "No product was found" without
-taking the ESP. Press the search again while the switch is still armed: in issue #195 the third
-search delivered the key. **COPY PRODUCTS** is not a route: the gateway sends nothing a Discover &
+taking the ESP. Press the search again while the switch is still armed: in issue #195 it took
+several searches to deliver the key, and with it Scan Paired Devices found all the reporter's motors. **COPY PRODUCTS** is not a route: the gateway sends nothing a Discover &
 Pair could answer.
 
 Once you hold the key, press **Scan Paired Devices** rather than pairing each device. Every device

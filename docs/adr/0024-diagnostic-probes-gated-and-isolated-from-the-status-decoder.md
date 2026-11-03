@@ -4,7 +4,8 @@
 **Status:** Accepted · **Recorded:** 2026-08
 
 Amended by [ADR 0060](0060-a-state-changing-diagnostic-probe.md) (a probe that changes state) and
-[ADR 0062](0062-a-read-only-data-transport-probe.md) (`0x4A` is sent, as a read).
+[ADR 0062](0062-a-read-only-data-transport-probe.md) (`0x4A` is sent, as a read) and
+[ADR 0063](0063-a-read-only-register-probe.md) (`0x20` is sent, as a register read).
 
 ## Context
 

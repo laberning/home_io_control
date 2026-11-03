@@ -231,6 +231,70 @@ def derived_oneway_node_id_is_stable_and_per_identity():
 
 
 @case()
+def oneway_invert_position_is_tri_state_in_codegen_and_warns_for_inverted_broadcast_all():
+    """`invert_position:` is emitted as an empty optional when absent (the kind decides in C++),
+    as true/false when present; an inverted kind on `execute_broadcast: all` without the key logs
+    one warning, and setting the key (or a non-inverted kind) logs none."""
+    import logging
+
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+    from esphome.components.home_io_control.hub_validators import DEVICE_TYPE_OPTIONS
+
+    def identity(kind, broadcast, **extra):
+        base = {
+            "id": "remote",
+            n.CONF_NODE_ID: "A11CE0",
+            n.CONF_SYSTEM_KEY: "00112233445566778899AABBCCDDEEFF",
+            n.CONF_MANUFACTURER: 0,
+            n.CONF_IO_DEVICE_TYPE: DEVICE_TYPE_OPTIONS[kind],
+            n.CONF_INITIAL_SEQUENCE: 0,
+            n.CONF_ENROLLMENT_WITH_MAC: False,
+            n.CONF_EXECUTE_BROADCAST: broadcast,
+            n.CONF_ENROLLMENT: False,
+            n.CONF_COMMANDS: ["open"],
+        }
+        base.update(extra)
+        return base
+
+    def expression(**extra):
+        return str(o.oneway_controller_expression(identity("horizontal_awning", "typed", **extra), "C0FFEE"))
+
+    assert ".invert_override = {}" in expression()
+    assert ".invert_override = true" in expression(**{n.CONF_INVERT_POSITION: True})
+    assert ".invert_override = false" in expression(**{n.CONF_INVERT_POSITION: False})
+
+    class Capture(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.messages = []
+
+        def emit(self, record):
+            self.messages.append(record.getMessage())
+
+    def warnings_for(entry):
+        capture = Capture()
+        o._LOGGER.addHandler(capture)
+        try:
+            o.validate_oneway_controllers(
+                {
+                    n.CONF_NODE_ID: "C0FFEE",
+                    n.CONF_SYSTEM_KEY: "00112233445566778899AABBCCDDEEFF",
+                    n.CONF_RADIO_TYPE: "sx1262",
+                    n.CONF_ONEWAY_CONTROLLERS: [entry],
+                }
+            )
+        finally:
+            o._LOGGER.removeHandler(capture)
+        return [m for m in capture.messages if "mirrored" in m]
+
+    assert len(warnings_for(identity("horizontal_awning", "all"))) == 1
+    assert warnings_for(identity("horizontal_awning", "all", **{n.CONF_INVERT_POSITION: False})) == []
+    assert warnings_for(identity("horizontal_awning", "typed")) == []
+    assert warnings_for(identity("vertical_exterior_awning", "all")) == []
+
+
+@case()
 def hub_entity_ids_are_declared_at_validation_time():
     """ESPHome 2026.x sizes its component vector from IDs known at the end of validation, so the
     hub-flag entities must get their IDs here, under names derived from the hub ID."""

@@ -488,3 +488,19 @@ TEST(HeatingTemperature, ExecuteFramesCarryTheMainParameterAndAtMostOneFunctiona
   EXPECT_EQ(fp16.data[6], 0x80);
   EXPECT_EQ(fp16.data[7], 0x00) << "FP16: off";
 }
+
+// === Register-read probe gate ===
+
+TEST(HeatingProfiles, RegisterProbeIsAllowedOnlyForRegisterHeatersAndHotWater) {
+  EXPECT_TRUE(device_accepts_register_probe(DeviceType::ELECTRICAL_HEATER, 1)) << "register-protocol heater";
+  EXPECT_TRUE(device_accepts_register_probe(DeviceType::DOMESTIC_HOT_WATER, 0));
+  EXPECT_TRUE(device_accepts_register_probe(DeviceType::DOMESTIC_HOT_WATER, 58)) << "any subtype of the type";
+
+  EXPECT_FALSE(device_accepts_register_probe(DeviceType::ELECTRICAL_HEATER, 0)) << "takes the standard EXECUTE";
+  EXPECT_FALSE(device_accepts_register_probe(DeviceType::ROLLER_SHUTTER, 0));
+  EXPECT_FALSE(device_accepts_register_probe(DeviceType::VERTICAL_EXTERIOR_AWNING, 0));
+  EXPECT_FALSE(device_accepts_register_probe(DeviceType::LIGHT, 0));
+  EXPECT_FALSE(device_accepts_register_probe(DeviceType::LOCK, 0));
+  EXPECT_FALSE(device_accepts_register_probe(DeviceType::ON_OFF_SWITCH, 0));
+  EXPECT_FALSE(device_accepts_register_probe(DeviceType::UNKNOWN, 0));
+}

@@ -41,7 +41,7 @@ build a plain whole-object read.
 4. **One call, one session.** The probe opens the object, pulls its blocks counting down from
    `ceil(length / 18)`, and closes the transfer with chunk `00 00`. A transfer the device opened is
    closed again on every path, including after a failed block and when the announced length is above
-   the 288-byte cap (16 blocks), in which case nothing is read.
+   the 432-byte cap (24 blocks), in which case nothing is read.
 5. **A pause before each block request and the close** (650 ms, *added 2026-11*). An RS100 Solar io
    missed every block request sent straight after its previous answer and answered every repeat
    (issue #156); waiting first saves one long-preamble transmission per block.
@@ -67,3 +67,11 @@ build a plain whole-object read.
 - A transfer that fails halfway leaves a handle open until the close succeeds; the close is attempted
   with the normal retries, and a device that does not hear it times the handle out by itself (not
   verified).
+
+## Amendment (2026-11): the length cap is 432 bytes
+
+An RS100 Solar io announced three objects of 341, 366 and 431 bytes, all above the original 288-byte
+cap (issue #156). The cap is now 24 blocks (432 bytes), the smallest whole-block cap that covers every
+length seen. A read of that size blocks the loop for about 28 s on the low-power device that set it,
+and for over 60 s when blocks need their retries; the ESPHome API server only drops a client after 150 s
+without traffic, and the probe stays manual, one object per call.
