@@ -1,12 +1,13 @@
 #pragma once
 
 /// @file periodic_poll_policy.h
-/// @brief Schedule and failure bookkeeping for the opt-in periodic sensor polls.
+/// @brief Schedule and failure bookkeeping for the opt-in periodic polls.
 /// @ingroup hioc_hub
 ///
-/// Owns the per-device periodic schedule of one opt-in sensor poll. The hub runs one instance per
-/// poll kind: the limitation read behind `rain_sensor_poll_interval`, and the event subscriptions
-/// behind `sun_level_poll_interval` and `battery_level_poll_interval` (ADR 0050, ADR 0064).
+/// Owns the per-device periodic schedule of one opt-in poll. The hub runs one instance per poll kind:
+/// the limitation read behind `rain_sensor_poll_interval`, the event subscriptions behind
+/// `sun_level_poll_interval` and `battery_level_poll_interval` (ADR 0050, ADR 0064), and the status
+/// read behind `status_refresh_interval` (ADR 0066).
 /// Kept apart from StatusPollPolicy on purpose: that one runs bounded tracking windows which end
 /// when a device stops, this one is an unbounded periodic schedule. Pure logic with injected
 /// timestamps and random numbers — fully host-testable without a clock or a random source.
@@ -85,6 +86,10 @@ class PeriodicPollPolicy {
 
   /// Pull the device's next poll forward to @p delay_ms after @p now. Never pushes it later.
   void defer(const std::string &device_id, uint32_t delay_ms, uint32_t now);
+  /// The device has just given what the poll asks for without being polled: schedule its next poll
+  /// periodic_poll_jittered_interval_ms() after @p now, earlier or later than it was, and drop an
+  /// armed retry. No-op for an unscheduled device.
+  void restart_interval(const std::string &device_id, uint32_t now, uint32_t random);
 
   /// Count one failed poll (saturating), with no retry: for a poll the device answered with
   /// something that is not a reading (an error reply, an unexpected shape), which asking again

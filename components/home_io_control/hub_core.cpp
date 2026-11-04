@@ -38,7 +38,7 @@ constexpr size_t ENROLLMENT_CLASS_HEX_BUFFER_SIZE = 8;
 constexpr uint32_t BLOCKING_WARNING_THRESHOLD_MS =
     250;  ///< setup() and exchanges can legitimately block longer than generic ESPHome components.
 
-/// Random number for the periodic sensor polls' jitter. ESPHome's random_uint32() on firmware, a settable
+/// Random number for the periodic polls' jitter. ESPHome's random_uint32() on firmware, a settable
 /// value in host tests.
 uint32_t poll_jitter_random() { return random_uint32(); }
 
@@ -349,6 +349,16 @@ void IOHomeControlComponent::set_device_battery_level_poll_interval(const std::s
   this->battery_level_poll_policy_.set_interval(device_id, interval_ms, millis(), poll_jitter_random());
 }
 
+void IOHomeControlComponent::set_device_status_refresh_interval(const std::string &device_id, uint32_t interval_ms) {
+  if (this->get_device(device_id) == nullptr)
+    return;
+  this->status_refresh_policy_.set_interval(device_id, interval_ms, millis(), poll_jitter_random());
+}
+
+void IOHomeControlComponent::note_status_reported_(const std::string &device_id) {
+  this->status_refresh_policy_.restart_interval(device_id, millis(), poll_jitter_random());
+}
+
 void IOHomeControlComponent::schedule_background_poll_backoff_(const std::string &device_id, bool auth_like,
                                                                bool device_moving) {
   uint32_t const now = millis();
@@ -467,6 +477,15 @@ void IOHomeControlComponent::queue_due_periodic_polls_() {
     if (const auto due = this->battery_level_poll_policy_.pop_due_device(millis(), poll_jitter_random());
         due.has_value())
       this->queue_request_device_battery_level(*due);
+  }
+  // A device that reported nothing for a whole interval is read. Each status it reports moves its
+  // refresh a whole interval out (note_status_reported_()), so a device read often enough never gets here.
+  if (this->status_refresh_policy_.has_due(millis())) {
+    if (const auto due = this->status_refresh_policy_.pop_due_device(millis(), poll_jitter_random()); due.has_value()) {
+      ESP_LOGD(TAG, "Device %s: no status reported for a refresh interval (%" PRIu32 " s): reading it", due->c_str(),
+               this->status_refresh_policy_.get_interval(*due) / 1000);
+      this->queue_request_device_status(*due);
+    }
   }
 }
 

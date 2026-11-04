@@ -1,5 +1,5 @@
 /// @file periodic_poll_policy.cpp
-/// @brief Periodic sensor poll schedule implementation.
+/// @brief Schedule and failure bookkeeping for the opt-in periodic polls.
 /// @ingroup hioc_hub
 
 #include "periodic_poll_policy.h"
@@ -61,6 +61,14 @@ void PeriodicPollPolicy::defer(const std::string &device_id, uint32_t delay_ms, 
   const uint32_t retry_at = now + delay_ms;
   if (reached(it->second.next_poll, retry_at))  // next_poll is at or after retry_at: pull it earlier
     it->second.next_poll = retry_at;
+}
+
+void PeriodicPollPolicy::restart_interval(const std::string &device_id, uint32_t now, uint32_t random) {
+  const auto it = entries_.find(device_id);
+  if (it == entries_.end())
+    return;
+  it->second.next_poll = now + periodic_poll_jittered_interval_ms(it->second.interval_ms, random);
+  it->second.retry_armed = false;
 }
 
 bool PeriodicPollPolicy::on_poll_failed(const std::string &device_id) {

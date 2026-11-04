@@ -533,6 +533,11 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
   virtual void set_device_battery_level_poll_interval(const std::string &device_id, uint32_t interval_ms);
+  /// Opt a registered device into the status refresh at rest: a status read whenever the device has
+  /// not reported its status for a whole interval.
+  /// @param device_id Target device ID.
+  /// @param interval_ms Refresh interval in milliseconds; zero removes the device from the schedule.
+  virtual void set_device_status_refresh_interval(const std::string &device_id, uint32_t interval_ms);
 
   // --- High-level operations ---
   /// Send a position command to a device.
@@ -943,6 +948,9 @@ class IOHomeControlComponent : public Component,
   /// tests/corpus/captures/exchange/somfy_awning_exchange_ack_reports_stale_target_*.yaml), so
   /// execute_request_and_update_() passes false there; every other caller trusts as before.
   void update_device_status_(const IoFrame &frame, bool trust_position = true);
+  /// The device just reported its status: move its status refresh (if it has one) a whole interval out.
+  /// @param device_id Device that reported.
+  void note_status_reported_(const std::string &device_id);
   /// Record that a 1W frame just went out on the radio — ours or someone else's — updating
   /// last_1w_activity_ms_ and — when this frame starts a new burst (see
   /// decisions::oneway_burst_started_fresh()) — first_1w_activity_ms_.
@@ -1112,7 +1120,8 @@ class IOHomeControlComponent : public Component,
   void apply_event_reading_(const std::string &device_id, EventReading kind, const std::optional<uint16_t> &reading,
                             bool unanswered);
 
-  /// Queue every periodic sensor poll (rain, sun level, battery level) that is due.
+  /// Queue every periodic poll that is due: the sensor polls (rain, sun level, battery level) and the
+  /// status refresh at rest.
   void queue_due_periodic_polls_();
 
   /// @brief What exchange_and_record_() found.
@@ -1413,6 +1422,7 @@ class IOHomeControlComponent : public Component,
   PeriodicPollPolicy rain_poll_policy_;           ///< Schedule of the opt-in rain sensor poll.
   PeriodicPollPolicy sun_poll_policy_;            ///< Schedule of the opt-in sun level poll.
   PeriodicPollPolicy battery_level_poll_policy_;  ///< Schedule of the opt-in battery level poll.
+  PeriodicPollPolicy status_refresh_policy_;      ///< Schedule of the opt-in status refresh at rest.
   OperationQueue op_queue_;
   /// Per-attempt pairing telemetry. PairingEngine records into it and, during an attempt, attaches it
   /// to ExchangeEngine as its TransmitObserver.

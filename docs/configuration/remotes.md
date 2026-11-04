@@ -106,7 +106,9 @@ polls the linked devices for a while, and a second press on another remote a few
 fall into one of those polls. The device moves, but the entity keeps its old state until the next
 press the hub hears, a Home Assistant command, or another controller's traffic to the device. Low-power devices
 make it likelier, because each wake-up preamble keeps the transmitter busy for about 0.2 s. See
-[issue #209](https://github.com/laberning/home_io_control/issues/209).
+[issue #209](https://github.com/laberning/home_io_control/issues/209). On a cover,
+`status_refresh_interval` limits how long the old state can stay: see
+[Refreshing the status at rest](cover.md#refreshing-the-status-at-rest).
 
 ### What the decoded log tells you
 

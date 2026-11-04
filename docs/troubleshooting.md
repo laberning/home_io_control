@@ -86,10 +86,11 @@ Pairing reported `paired`, the entity exists, and commands do nothing.
   one. This is expected on a fresh boot, not a fault.
 - **If state only updates when you command the device**, the change came from something the hub
   did not hear. The hub reads a cover after its own commands, after a linked remote's press and
-  after another controller's traffic to it, but never at rest; on a cover `status_poll_interval`
-  only paces the polls during a movement. Link the remotes that drive the device (next point). A change with no
-  traffic the hub hears, such as a move from a VELUX pad in issue #207, stays unseen until the next
-  command.
+  after another controller's traffic to it; on a cover `status_poll_interval` only paces the polls
+  during a movement. Link the remotes that drive the device (next point). For a change with no
+  traffic the hub hears, such as a move from a VELUX pad (issue #207) or a window its rain sensor
+  closed, set `status_refresh_interval` on the cover so the hub reads it at rest — see
+  [Refreshing the status at rest](configuration/cover.md#refreshing-the-status-at-rest).
 - **If a wall remote moves the device and Home Assistant does not notice**, the hub is not
   listening for that remote. Add it to `linked_remotes:` — see
   [Linked remotes](configuration/remotes.md#linked-remotes).
