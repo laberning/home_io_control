@@ -430,6 +430,42 @@ def cover_named_position_buttons_follow_the_declared_kind():
 
 
 @case()
+def cover_travel_speed_declares_its_select_and_names_the_cpp_options():
+    """`travel_speed:` adds the Travel Speed select and `silent:` the Silent Operation switch, never both;
+    the select's options are the names travel_speed_name() publishes in C++, in enum order."""
+    from esphome.const import CONF_ID, CONF_NAME
+    from esphome.core import ID
+    from esphome.components.home_io_control import cover as c
+
+    def config(**extra):
+        cfg = {CONF_ID: ID("living", is_declaration=True), CONF_NAME: "Living"}
+        cfg.update(extra)
+        return cfg
+
+    out = c._inject_companion_ids(config(**{c.CONF_TRAVEL_SPEED: "default"}))
+    # Home Assistant entity ids and names depend on these.
+    assert out[c.CONF_TRAVEL_SPEED_SELECT_ID].id == "living_travel_speed_select"
+    assert out[c.CONF_TRAVEL_SPEED_SELECT_ID].is_declaration
+    assert c.CONF_SILENT_SWITCH_ID not in out
+    assert c.travel_speed_select_name(out) == "Living Travel Speed"
+
+    out = c._inject_companion_ids(config(**{c.CONF_SILENT: False}))
+    assert out[c.CONF_SILENT_SWITCH_ID].id == "living_silent_switch"
+    assert c.CONF_TRAVEL_SPEED_SELECT_ID not in out
+
+    out = c._inject_companion_ids(config())
+    assert c.CONF_TRAVEL_SPEED_SELECT_ID not in out and c.CONF_SILENT_SWITCH_ID not in out
+
+    # tests/proto/proto_commands_test.cpp pins the same three names on the C++ side.
+    assert list(c.TRAVEL_SPEEDS) == ["default", "silent", "fast"]
+    assert [str(value) for value in c.TRAVEL_SPEEDS.values()] == [
+        "home_io_control::TravelSpeed::MOTOR_DEFAULT",
+        "home_io_control::TravelSpeed::SILENT",
+        "home_io_control::TravelSpeed::FAST",
+    ]
+
+
+@case()
 def cover_gets_its_kinds_default_device_class():
     """A declared kind gets its Home Assistant class unless the YAML sets one (even ""); a cover with
     no declared type, or a kind with no default, gets none. The table is checked against the cover
@@ -472,8 +508,9 @@ def cover_gets_its_kinds_default_device_class():
 
 @case("platform_common.require_feature")
 def keys_a_kind_cannot_use_are_rejected_when_the_config_is_built():
-    """`silent:` needs a kind that takes a travel-speed parameter; `dimmable: true` needs a light that
-    is not on/off only. A config that declares no kind, or a kind with the feature, passes."""
+    """`silent:` and `travel_speed:` need a kind that takes a travel-speed parameter; `dimmable: true`
+    needs a light that is not on/off only. A config that declares no kind, or a kind with the feature,
+    passes."""
     import esphome.config_validation as cv
     from esphome.components.home_io_control import cover as c
     from esphome.components.home_io_control import hub_validators as v
@@ -481,18 +518,23 @@ def keys_a_kind_cannot_use_are_rejected_when_the_config_is_built():
 
     t = v.DEVICE_TYPE_OPTIONS
 
-    def silent(device_type=None, subtype=None):
-        cfg = {c.CONF_SILENT: True}
+    def silent(device_type=None, subtype=None, key=c.CONF_SILENT, value=True):
+        cfg = {key: value}
         if device_type is not None:
             cfg["io_device_type"] = t[device_type]
         if subtype is not None:
             cfg["io_subtype"] = subtype
         return cfg
 
-    assert c._require_silent_kind(silent()) == silent(), "no declared kind: nothing says what the device takes"
-    c._require_silent_kind(silent("roller_shutter"))
-    c._require_silent_kind(silent("exterior_venetian_blind"))
-    c._require_silent_kind({"io_device_type": t["garage_opener"]})  # `silent:` not declared at all
+    def speed(device_type=None, subtype=None):
+        return silent(device_type, subtype, key=c.CONF_TRAVEL_SPEED, value="default")
+
+    assert c._require_travel_speed_kind(silent()) == silent(), "no declared kind: nothing says what the device takes"
+    assert c._require_travel_speed_kind(speed()) == speed()
+    c._require_travel_speed_kind(silent("roller_shutter"))
+    c._require_travel_speed_kind(silent("exterior_venetian_blind"))
+    c._require_travel_speed_kind(speed("window_opener"))
+    c._require_travel_speed_kind({"io_device_type": t["garage_opener"]})  # neither key declared
     kinds = (
         ("interior_venetian_blind", None),
         ("dual_roller_shutter", None),
@@ -503,10 +545,15 @@ def keys_a_kind_cannot_use_are_rejected_when_the_config_is_built():
     )
     for kind in kinds:
         try:
-            c._require_silent_kind(silent(*kind))
+            c._require_travel_speed_kind(silent(*kind))
             raise AssertionError(f"silent was accepted on {kind}")
         except cv.Invalid as err:
             assert "remove silent:" in str(err) and "travel-speed" in str(err), str(err)
+        try:
+            c._require_travel_speed_kind(speed(*kind))
+            raise AssertionError(f"travel_speed was accepted on {kind}")
+        except cv.Invalid as err:
+            assert "remove travel_speed:" in str(err) and "travel-speed" in str(err), str(err)
 
     def dimmable(device_type, subtype=None, value=True):
         cfg = {l.CONF_DIMMABLE: value, "io_device_type": t[device_type]}

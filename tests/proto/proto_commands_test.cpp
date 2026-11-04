@@ -752,6 +752,30 @@ TEST(ProtoCommands, BatteryStateNameLookup) {
   EXPECT_STREQ(battery_state_name(BatteryState::FULL_CHARGE), "full");
 }
 
+TEST(ProtoCommands, TravelSpeedNamesAreTheYamlValues) {
+  // cover.py's TRAVEL_SPEEDS uses the same three names, so the select's state reads back as YAML.
+  EXPECT_STREQ(travel_speed_name(TravelSpeed::MOTOR_DEFAULT), "default");
+  EXPECT_STREQ(travel_speed_name(TravelSpeed::SILENT), "silent");
+  EXPECT_STREQ(travel_speed_name(TravelSpeed::FAST), "fast");
+}
+
+TEST(ProtoCommands, ParseTravelSpeedAcceptsOnlyTheThreeNames) {
+  TravelSpeed speed = TravelSpeed::FAST;
+  EXPECT_TRUE(parse_travel_speed("default", speed));
+  EXPECT_EQ(speed, TravelSpeed::MOTOR_DEFAULT);
+  EXPECT_TRUE(parse_travel_speed("silent", speed));
+  EXPECT_EQ(speed, TravelSpeed::SILENT);
+  EXPECT_TRUE(parse_travel_speed("fast", speed));
+  EXPECT_EQ(speed, TravelSpeed::FAST);
+  EXPECT_FALSE(parse_travel_speed("Fast", speed));
+  EXPECT_FALSE(parse_travel_speed("", speed));
+  EXPECT_EQ(speed, TravelSpeed::FAST) << "a failed parse leaves the speed alone";
+}
+
+TEST(ProtoCommands, NewDeviceTravelsFast) {
+  EXPECT_EQ(IoDevice{}.travel_speed, TravelSpeed::FAST) << "the profile the hub sent before travel_speed existed";
+}
+
 TEST(ProtoCommands, DecodeBatteryStateReadsBitsFiveAndSix) {
   EXPECT_EQ(decode_battery_state(0x00), BatteryState::NOT_REPORTED);
   EXPECT_EQ(decode_battery_state(0x20), BatteryState::LOW_CHARGE);

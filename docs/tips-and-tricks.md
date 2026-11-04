@@ -28,7 +28,7 @@ cover:
 - Declare each sub-device once under `esphome: devices:`, then reference its `id:` from the
   entity's `device_id:`.
 - Every companion entity the platform generates — the favorite, ventilation, partial and pedestrian buttons (the last two are experimental and disabled by default), the silent
-  operation switch, the rain sensor and the diagnostic sensors — inherits the parent entity's sub-device.
+  operation switch, the travel speed select, the rain sensor and the diagnostic sensors — inherits the parent entity's sub-device.
 - **Give the entity an empty name.** Home Assistant displays an entity as
   `<device name> <entity name>`, so a device and an entity both called "Patio Awning" show up as
   "Patio Awning Patio Awning", and every companion gets that prefix too. `name: ""` is ESPHome's
@@ -83,4 +83,4 @@ ignores commands. Remove the line before you collect a log for an issue report.
 ## See also
 
 - [Sending 1W commands](configuration/oneway-transmit.md) — the buttons a slider is composed from
-- [Covers](configuration/cover.md) — `silent:`, `invert_position:` and the rest
+- [Covers](configuration/cover.md) — `travel_speed:`, `invert_position:` and the rest

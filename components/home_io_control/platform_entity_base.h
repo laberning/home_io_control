@@ -55,10 +55,10 @@ class DeviceBoundEntity {
   /// inert for entity types that never consult the effective target / movement state.
   /// @param optimistic_state False to disable optimistic state; default true.
   void set_optimistic_state(bool optimistic_state) { this->optimistic_state_ = optimistic_state; }
-  /// @brief Send this device's position moves in "silent operation" mode — the reference hub's
-  /// slower travel profile. Cover-only in practice; harmless on other platforms, which never
-  /// issue position moves.
-  void set_silent(bool silent) { this->silent_ = silent; }
+  /// @brief Set the speed profile of this device's position moves (from YAML `travel_speed:` or
+  /// `silent:`). Cover-only in practice; harmless on other platforms, which never issue position moves.
+  /// @param speed Speed profile; FAST unless the cover declares otherwise.
+  void set_travel_speed(TravelSpeed speed) { this->travel_speed_ = speed; }
   /// @brief Mark this device as a low-power / duty-cycled receiver. Directed frames to it then set
   /// CTRL1_LOW_POWER and use the long wake-up preamble; an always-alive device (the default) gets
   /// neither. Radio property of the device, shared by all four platforms.
@@ -103,7 +103,7 @@ class DeviceBoundEntity {
     config.invert_override = invert_override;
     config.dimmable = dimmable;
     config.optimistic_state = this->optimistic_state_;
-    config.silent = this->silent_;
+    config.travel_speed = this->travel_speed_;
     config.low_power = this->low_power_;
     config.battery_entities = this->battery_entities_;
     config.has_system_key = this->has_system_key_;
@@ -159,7 +159,7 @@ class DeviceBoundEntity {
   uint8_t subtype_{0};
   uint32_t status_poll_interval_ms_{0};
   bool optimistic_state_{true};
-  bool silent_{false};
+  TravelSpeed travel_speed_{TravelSpeed::FAST};
   bool low_power_{false};
   bool battery_entities_{false};
   bool has_system_key_{false};

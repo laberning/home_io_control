@@ -406,9 +406,12 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
       [position](const IoDevice &d) { return detail::known_device_accepts_execute_position(d, position); },
       position_rejection_profile(*dev, position),
       [this, position](IoFrame &request, const IoDevice &d) {
-        if (!has_feature(d.features, device_feature::EXTENDED_POSITION_FRAME))
+        // MOTOR_DEFAULT sends the 6-byte frame a wall pad sends, which carries no speed profile.
+        if (!has_feature(d.features, device_feature::EXTENDED_POSITION_FRAME) ||
+            d.travel_speed == TravelSpeed::MOTOR_DEFAULT)
           return create_execute_main_parameter(request, this->node_id_, d.node_id, d.low_power, position);
-        return create_execute_position(request, this->node_id_, d.node_id, d.low_power, position, d.silent);
+        return create_execute_position(request, this->node_id_, d.node_id, d.low_power, position,
+                                       d.travel_speed == TravelSpeed::SILENT);
       });
 }
 
@@ -434,7 +437,8 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
         // silent profile is a functional parameter, so only a device with the extended frame gets it.
         if (cmd != CoverCommand::FORCE_OPEN) {
           return create_execute_command(request, this->node_id_, d.node_id, d.low_power, cmd,
-                                        d.silent && has_feature(d.features, device_feature::EXTENDED_POSITION_FRAME));
+                                        d.travel_speed == TravelSpeed::SILENT &&
+                                            has_feature(d.features, device_feature::EXTENDED_POSITION_FRAME));
         }
         const uint8_t open_position = d.inverted ? FORCE_OPEN_WIRE_POSITION_INVERTED : FORCE_OPEN_WIRE_POSITION;
         return has_feature(d.features, device_feature::EXTENDED_POSITION_FRAME)

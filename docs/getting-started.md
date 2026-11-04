@@ -239,6 +239,9 @@ A few additional options worth knowing about:
 - **`silent: true`** — move at the manufacturer app's quieter, slower speed. Only kinds that take a
   travel-speed parameter accept it; config validation says so for the others, among them garage
   openers, interior venetian blinds and dual roller shutters.
+- **`travel_speed: default`** — move at the motor's own speed, as its wall control pad does, rather
+  than the fast profile the hub asks for otherwise; see
+  [Travel speed](configuration/cover.md#travel-speed). A cover takes either this or `silent:`.
 - **`rain_sensor_poll_interval: 15min`** — on a VELUX window with a wired rain sensor, adds a Rain
   sensor binary sensor; see [Polling for rain](configuration/cover.md#polling-for-rain).
 

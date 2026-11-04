@@ -1,5 +1,6 @@
 /// @file platform_cover_controls.cpp
-/// @brief Generated per-cover auxiliary entities: command button, silent-operation toggle, rain and battery sensors.
+/// @brief Generated per-cover auxiliary entities: command button, silent-operation toggle, travel speed select,
+/// rain and battery sensors.
 /// @ingroup hioc_platforms
 
 #include "platform_cover_controls.h"
@@ -16,6 +17,7 @@ namespace home_io_control {
 // name, not by log tag, and this reads correctly for either command.
 static const char *const TAG_COMMAND_BUTTON = "home_io_control.cover_command_button";
 static const char *const TAG_SILENT = "home_io_control.cover.silent";
+static const char *const TAG_TRAVEL_SPEED = "home_io_control.cover.travel_speed";
 static const char *const TAG_RAIN = "home_io_control.cover.rain_sensor";
 static const char *const TAG_BATTERY = "home_io_control.cover.battery";
 static const char *const TAG_SUN_LEVEL = "home_io_control.cover.sun_level";
@@ -48,13 +50,13 @@ void IOHomeCoverSilentSwitch::setup() {
   if (this->parent_ == nullptr)
     return;
   if (const IoDevice *dev = this->parent_->get_device(this->device_id_); dev != nullptr)
-    this->publish_state(dev->silent);
+    this->publish_state(dev->travel_speed == TravelSpeed::SILENT);
 }
 
 void IOHomeCoverSilentSwitch::write_state(bool state) {
   if (this->parent_ == nullptr)
     return;
-  this->parent_->set_device_silent(this->device_id_, state);
+  this->parent_->set_device_travel_speed(this->device_id_, state ? TravelSpeed::SILENT : TravelSpeed::FAST);
   this->publish_state(state);
   ESP_LOGI(TAG_SILENT, "Device %s: silent operation %s", this->device_id_.c_str(), state ? "on" : "off");
 }
@@ -62,6 +64,34 @@ void IOHomeCoverSilentSwitch::write_state(bool state) {
 void IOHomeCoverSilentSwitch::dump_config() {
   ESP_LOGCONFIG(TAG_SILENT, "IO-Homecontrol Silent Operation:");
   ESP_LOGCONFIG(TAG_SILENT, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeCoverTravelSpeedSelect::setup() {
+  // The YAML value was already applied to the device at registration; mirror it outward so Home
+  // Assistant does not start out disagreeing with what the hub will actually send.
+  if (this->parent_ == nullptr)
+    return;
+  if (const IoDevice *dev = this->parent_->get_device(this->device_id_); dev != nullptr)
+    this->publish_state(travel_speed_name(dev->travel_speed));
+}
+
+void IOHomeCoverTravelSpeedSelect::control(const std::string &value) {
+  if (this->parent_ == nullptr)
+    return;
+  TravelSpeed speed = TravelSpeed::FAST;
+  if (!parse_travel_speed(value, speed)) {
+    ESP_LOGW(TAG_TRAVEL_SPEED, "Device %s: ignoring unknown travel speed '%s'", this->device_id_.c_str(),
+             value.c_str());
+    return;
+  }
+  this->parent_->set_device_travel_speed(this->device_id_, speed);
+  this->publish_state(value);
+  ESP_LOGI(TAG_TRAVEL_SPEED, "Device %s: travel speed %s", this->device_id_.c_str(), travel_speed_name(speed));
+}
+
+void IOHomeCoverTravelSpeedSelect::dump_config() {
+  ESP_LOGCONFIG(TAG_TRAVEL_SPEED, "IO-Homecontrol Travel Speed:");
+  ESP_LOGCONFIG(TAG_TRAVEL_SPEED, "  Device ID: %s", this->device_id_.c_str());
 }
 
 void IOHomeRainBinarySensor::setup() {

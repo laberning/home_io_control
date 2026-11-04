@@ -375,8 +375,8 @@ void IOHomeControlComponent::add_device(const std::string &device_id, const Devi
 
 IoDevice *IOHomeControlComponent::get_device(const std::string &device_id) { return this->registry_.get(device_id); }
 
-void IOHomeControlComponent::set_device_silent(const std::string &device_id, bool silent) {
-  this->registry_.set_silent(device_id, silent);
+void IOHomeControlComponent::set_device_travel_speed(const std::string &device_id, TravelSpeed speed) {
+  this->registry_.set_travel_speed(device_id, speed);
 }
 
 // === Main loop ===

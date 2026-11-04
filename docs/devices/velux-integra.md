@@ -168,6 +168,15 @@ moves the window to its predefined air-exchange opening rather than fully open.
 - **VELUX uses a different 1W enrollment gesture from Somfy**, and a different priority byte on
   `CMD_EXECUTE`. Set `manufacturer: velux` on any 1W identity aimed at these devices — see
   [Sending 1W commands](../configuration/oneway-transmit.md).
+## Roof window travel speed
+
+A VELUX control pad moves a window with a short command that carries no speed, and the window
+travels at its own speed. The hub asks for the fast profile unless told otherwise, so a window it
+moves runs faster and louder than from its pad: a full travel of one roof window took 44.5 s from
+its KLR 200 and 26.5 s from the hub (issue #205). Set `travel_speed: default` on the window's
+cover for the pad's speed, or `silent` for the slowest, about 65 s; see
+[Travel speed](../configuration/cover.md#travel-speed).
+
 ## Rain protection
 
 A VELUX window with a wired rain sensor limits its own opening while it rains and then refuses to
@@ -222,7 +231,7 @@ with the long preamble ignored and the short one answered; a set-position ack; a
 polls that go unanswered while it moves).
 
 Field reports: #17 (SML discovery), #74 (SML roller shutter and KLI 312 blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
-screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction).
+screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed).
 
 ## See also
 

@@ -150,6 +150,9 @@ cover:
     # Same for the Sun level and Battery level sensors and their subscription polls (ADR 0064).
     sun_level_poll_interval: 30min
     battery_level_poll_interval: 6h
+    # Declaring `travel_speed:` is what generates the Travel Speed select; "Test Silent Cover"
+    # declares `silent:` instead (the two are exclusive), so the pair compiles both.
+    travel_speed: default
 
 light:
   - platform: home_io_control
