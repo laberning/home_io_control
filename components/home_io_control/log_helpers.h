@@ -30,6 +30,9 @@ namespace detail {
 // ============================================================================
 
 inline constexpr const char *TAG = "home_io_control";  ///< Shared log tag for hub-level messages.
+/// Log tag of the "received a frame we did not act on" lines (log_frame_issue()), separate from TAG so a
+/// user can filter them in `logger: logs:` without hiding every hub warning.
+inline constexpr const char *FRAME_TAG = "home_io_control.frame";
 
 // ============================================================================
 // Formatting helpers

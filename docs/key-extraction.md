@@ -51,6 +51,9 @@ The switch always boots off (`restore_mode: ALWAYS_OFF`), so a reboot can never 
    different control-point choice before concluding the extraction failed (issue #27). On a VELUX
    KLF 200, press **SEARCH FOR PRODUCTS** on the Products page of its web interface, and press it
    again while the switch is armed if it reports "No product was found" (issue #195).
+   When the controller searches for one device type only, as some Atlantic heaters do in their
+   connectivity menu (issue #199), the hub answers as that type. No key has been extracted this way
+   yet.
 4. Watch the ESPHome log. Within a few seconds of the hub's discovery you get a clearly delimited
    block with your installation's real `node_id` and `system_key`.
 5. Leave the switch alone until it turns itself off. Some hubs (the VELUX KLR200 and KLR300, confirmed) follow

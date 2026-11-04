@@ -289,6 +289,9 @@ class ManagementActions {
   ///   - "status_mp_fp": create_status_mp_fp_read() (CMD_PRIVATE function 0x01, FPI1 mask 0xFE:
   ///     main parameter plus FP1-FP7), `index` ignored. The reply is reported raw like every
   ///     probe reply and never applied to the device record (ADR 0024).
+  ///   - "status_fp_high": the same request with FPI1 0x00 (main parameter only) and `index` as the FPI2
+  ///     bitmap (bit 7 = FP9 ... bit 0 = FP16, 1 to 7 bits set; anything else is rejected). Not sweepable, an
+  ///     index is a bitmap. The FPI2 variant has not been seen on air; the reply is reported raw and never applied.
   ///   - "limitation": create_limitation_status_read() (CMD_LIMITATION_STATUS_REQ 0x25), `index` 0 =
   ///     resulting minimum, 1 = resulting maximum (any other index is rejected, a sweep reaching
   ///     past 1 is rejected whole). The reply is reported raw plus a decode labelled "assumed

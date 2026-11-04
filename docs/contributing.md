@@ -35,6 +35,10 @@ logger:
   level: DEBUG
 ```
 
+   Do not silence the `home_io_control.frame` log tag (see
+   [Tips and tricks](tips-and-tricks.md#quieting-frame-warnings-in-the-log)) in a log you attach to a
+   report: its lines show why the hub ignored a frame.
+
 2. Trigger the action that shows the problem.
    For new devices, put the device into pairing mode, press the Discover & Pair button, and capture
    the log from the button press until the pairing flow finishes.

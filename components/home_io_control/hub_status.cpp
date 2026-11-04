@@ -611,7 +611,7 @@ void IOHomeControlComponent::apply_status_update_(const std::string &id, IoDevic
     return;
   }
   if (frame.data_len < STATUS_UPDATE_MIN_DATA_LEN) {
-    detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
+    detail::log_frame_issue(this, this->node_id_, "rx", "unsupported_payload", frame, frame_length(frame));
     return;
   }
 
@@ -646,7 +646,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
   const std::string id = node_id_to_string(frame.src);
   IoDevice *device_ptr = this->registry_.get(id);
   if (device_ptr == nullptr) {
-    detail::log_frame_issue(this, "rx", "unregistered_device", frame, frame_length(frame));
+    detail::log_frame_issue(this, this->node_id_, "rx", "unregistered_device", frame, frame_length(frame));
     return;
   }
   IoDevice &dev = *device_ptr;
@@ -654,7 +654,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
 
   if (frame.cmd == CMD_PRIVATE_RESP) {
     if (frame.data_len < PRIVATE_RESPONSE_MIN_DATA_LEN) {
-      detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
+      detail::log_frame_issue(this, this->node_id_, "rx", "unsupported_payload", frame, frame_length(frame));
       return;
     }
 
@@ -691,7 +691,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
 
   if (frame.cmd == CMD_GET_NAME_RESP) {
     if (frame.data_len < GET_NAME_RESPONSE_MIN_DATA_LEN) {
-      detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
+      detail::log_frame_issue(this, this->node_id_, "rx", "unsupported_payload", frame, frame_length(frame));
       return;
     }
 
@@ -703,7 +703,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
 
   if (frame.cmd == CMD_GET_INFO2_RESP) {
     if (frame.data_len < GET_INFO2_RESPONSE_MIN_DATA_LEN) {
-      detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
+      detail::log_frame_issue(this, this->node_id_, "rx", "unsupported_payload", frame, frame_length(frame));
       return;
     }
 
@@ -725,7 +725,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
 
   if (frame.cmd == CMD_ERROR_RESP) {
     if (frame.data_len < ERROR_RESPONSE_MIN_DATA_LEN) {
-      detail::log_frame_issue(this, "rx", "unsupported_payload", frame, frame_length(frame));
+      detail::log_frame_issue(this, this->node_id_, "rx", "unsupported_payload", frame, frame_length(frame));
       return;
     }
 
@@ -902,19 +902,22 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     if (this->authenticate_request_(frame, packet.freq_hz)) {
       IoFrame resp;
       if (!create_status_update_resp(resp, this->node_id_, frame.src)) {
-        detail::log_frame_issue(this, "rx", "ack_build_failed", frame, packet.len);
+        detail::log_frame_issue(this, this->node_id_, "rx", "ack_build_failed", frame, packet.len);
         return;
       }
       // Device-originated updates may arrive while the sender and receiver are not aligned on the
       // same hop channel anymore. Broadcasting the ACK across all three IO-homecontrol channels
-      // matched the behavior of real controllers and made updates reliable in practice.
+      // matched the behavior of real controllers and made updates reliable in practice. The channel
+      // the exchange ran on goes first: the device is listening there, and in #163 a motor whose
+      // exchange ran on CH3 got its acknowledgement last and re-sent its challenge answer once.
       const uint16_t ack_preamble = this->radio_->response_preamble();
-      this->transmit_frame_(resp, FREQ_CH1, ack_preamble);
-      this->transmit_frame_(resp, FREQ_CH2, ack_preamble);
-      this->transmit_frame_(resp, FREQ_CH3, ack_preamble);
+      const auto ack_order = decisions::status_update_ack_channel_order(packet.freq_hz);
+      this->transmit_frame_(resp, ack_order[0], ack_preamble);
+      this->transmit_frame_(resp, ack_order[1], ack_preamble);
+      this->transmit_frame_(resp, ack_order[2], ack_preamble);
       this->update_device_status_(frame);
     } else {
-      detail::log_frame_issue(this, "rx", "auth_failed", frame, packet.len);
+      detail::log_frame_issue(this, this->node_id_, "rx", "auth_failed", frame, packet.len);
     }
     return;
   }
@@ -929,7 +932,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     // travel in the clear, see README.md's "Reporting Unsupported Devices"). Nothing here proves
     // the frame's source currently holds the system key, so its content is never applied -- see
     // ADR 0022. State goes stale until this hub's own next authenticated poll corrects it.
-    detail::log_frame_issue(this, "rx", "unauthenticated_status_ignored", frame, packet.len);
+    detail::log_frame_issue(this, this->node_id_, "rx", "unauthenticated_status_ignored", frame, packet.len);
     return;
   }
 
@@ -943,7 +946,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   if (this->act_on_overheard_request_(frame))
     return;
 
-  detail::log_frame_issue(this, "rx", "unhandled_cmd", frame, packet.len);
+  detail::log_frame_issue(this, this->node_id_, "rx", "unhandled_cmd", frame, packet.len);
 
   this->record_if_device_event_(frame, /*reached_unhandled_fallback=*/true);
 

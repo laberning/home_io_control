@@ -599,10 +599,11 @@ class IOHomeControlComponent : public Component,
   /// docs/diagnostic-probes.md and ADR 0024.
   /// @param device_id Target device ID.
   /// @param probe Probe name ("private_fn", "status_ext", "general_info3", "private2",
-  ///        "private2_short", "status_mp_fp", "limitation", "register_00", or "register_01"; the full list is
-  ///        in ManagementActions::probe_device()).
+  ///        "private2_short", "status_mp_fp", "status_fp_high", "limitation", "register_00", or "register_01"; the full
+  ///        list is in ManagementActions::probe_device()).
   /// @param index Function ID / selector block / modifier, as a decimal or `0x`-prefixed hex
-  ///        string; ignored for "general_info3" and "status_mp_fp"; 0 (minimum) or 1 (maximum) for "limitation".
+  ///        string; ignored for "general_info3" and "status_mp_fp"; the FPI2 bitmap for
+  ///        "status_fp_high"; 0 (minimum) or 1 (maximum) for "limitation".
   /// @return Structured result whose `message` carries the reply's command byte and raw hex.
   virtual ManagementActionResult probe_device(const std::string &device_id, const std::string &probe,
                                               const std::string &index) {

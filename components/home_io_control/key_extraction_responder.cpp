@@ -278,6 +278,16 @@ void KeyExtractionResponder::handle_discover_(const IoFrame &frame) {
   if (!pairing_responder::on_discover_request(this->key_extraction_ctx_, frame.src))
     return;
 
+  // A controller that searches for one device type (a typed discovery such as `00 FF FB`, sent by an
+  // Atlantic heater in its connectivity menu, #199) is expected to ignore answers of any other type, so
+  // answer as the type it asked for. Decided per request, not per attempt: a hub may send a typed and an open discovery
+  // in sequence. Without a typed request the default applies (an open `00 00 3B` discovery, or an undefined type). The
+  // manufacturer stays Somfy: one variable at a time.
+  const DeviceType requested_type = discovery_target_type(frame.dst);
+  const bool typed = requested_type != DeviceType::UNKNOWN;
+  this->key_extraction_ctx_.advertised_type = typed ? requested_type : KEY_EXTRACTION_ADVERTISED_TYPE;
+  this->key_extraction_ctx_.advertised_subtype = typed ? 0 : KEY_EXTRACTION_ADVERTISED_SUBTYPE;
+
   IoFrame resp;
   if (!create_discover_resp(resp, this->key_extraction_ctx_.throwaway_id, frame.src,
                             this->key_extraction_ctx_.advertised_type, this->key_extraction_ctx_.advertised_subtype,
@@ -293,8 +303,9 @@ void KeyExtractionResponder::handle_discover_(const IoFrame &frame) {
   }
   this->broadcast_reply_(resp);
   this->key_extraction_hold_deadline_ms_ = millis() + KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS;
-  ESP_LOGI(detail::TAG, "Key extraction: replied to discovery from hub %s with throwaway ID %s",
-           node_id_to_string(frame.src).c_str(), node_id_to_string(this->key_extraction_ctx_.throwaway_id).c_str());
+  ESP_LOGI(detail::TAG, "Key extraction: replied to discovery from hub %s as node type %u with throwaway ID %s",
+           node_id_to_string(frame.src).c_str(), static_cast<unsigned>(this->key_extraction_ctx_.advertised_type),
+           node_id_to_string(this->key_extraction_ctx_.throwaway_id).c_str());
 }
 
 void KeyExtractionResponder::handle_discover_confirm_(const IoFrame &frame) {

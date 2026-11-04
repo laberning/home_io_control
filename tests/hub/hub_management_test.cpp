@@ -2153,7 +2153,8 @@ TEST(HubManagement, ProbeDeviceRejectsUnknownProbeName) {
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message,
             "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
-            "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, limitation, "
+            "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, "
+            "status_fp_high, limitation, "
             "subscribe_event, unsubscribe_event, read_object, register_00, or register_01)");
   EXPECT_FALSE(result.terminal_refusal) << "an unrecognized probe name is validated up front by probe_sweep(), "
                                            "not by looping until this flag stops it";
@@ -2329,6 +2330,58 @@ TEST(HubManagement, ProbeDeviceStatusMpFpSendsKlfStatusReadAndReportsRawReply) {
   const uint8_t expected[] = {0x01, 0xFE, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00};
   ASSERT_EQ(frame.data_len, sizeof(expected));
   EXPECT_EQ(0, std::memcmp(frame.data, expected, sizeof(expected)));
+}
+
+TEST(HubManagement, ProbeDeviceStatusFpHighSendsTheSecondBitmap) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(frame_to_packet(make_private_function_reply(component.node_id_)));
+
+  const auto result = component.probe_device("ABC123", "status_fp_high", "0x43");
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_EQ(result.probe_name, "status_fp_high");
+
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  const auto &sent = radio.get_sent_data().front();
+  IoFrame frame{};
+  ASSERT_TRUE(parse(sent.data(), static_cast<uint8_t>(sent.size()), frame));
+  EXPECT_EQ(frame.cmd, CMD_PRIVATE);
+  const uint8_t expected[] = {0x01, 0x00, 0x43, 0x01, 0x01, 0x01};
+  ASSERT_EQ(frame.data_len, sizeof(expected));
+  EXPECT_EQ(0, std::memcmp(frame.data, expected, sizeof(expected)));
+}
+
+TEST(HubManagement, ProbeDeviceStatusFpHighRejectsInvalidBitmaps) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  for (const char *bad : {"0", "0xFF"}) {
+    const auto result = component.probe_device("ABC123", "status_fp_high", bad);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.message,
+              "probe \"status_fp_high\" takes FP9-FP16 bitmap, bit 7 = FP9 ... bit 0 = FP16, at most 7 bits "
+              "(e.g. 0x43 = FP10, FP15, FP16)");
+  }
+  const auto missing = component.probe_device("ABC123", "status_fp_high", "");
+  EXPECT_FALSE(missing.success);
+  EXPECT_EQ(missing.message, "index must be a decimal or 0x-prefixed byte value (0-255)");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, ProbeSweepRefusesStatusFpHigh) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto result = component.probe_sweep("ABC123", "status_fp_high", "1", "3");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "probe \"status_fp_high\" cannot be swept; use probe_device");
+  EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
 TEST(HubManagement, ProbeDeviceStatusMpFpReplyNeverUpdatesDeviceRecord) {
@@ -2581,7 +2634,8 @@ TEST(HubManagement, ProbeSweepRejectsUnknownProbeNameWithoutLooping) {
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message,
             "unknown probe \"unknown4a\" (expected private_fn, private_fn_sub, status_ext, status_ext_fn6, "
-            "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, limitation, "
+            "status_ext_fn9, get_info1, get_info2, general_info3, private2, private2_short, status_mp_fp, "
+            "status_fp_high, limitation, "
             "subscribe_event, unsubscribe_event, read_object, register_00, or register_01)");
   EXPECT_EQ(result.message.find("index="), std::string::npos)
       << "an invalid probe name must not enter the per-index loop at all: " << result.message;

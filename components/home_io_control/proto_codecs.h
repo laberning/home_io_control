@@ -123,6 +123,16 @@ const char *address_class_name(AddressClass address_class);
 /// @return DeviceType encoded in the address, or DeviceType::UNKNOWN for unicast.
 DeviceType broadcast_target_type(const uint8_t addr[NODE_ID_SIZE]);
 
+/// @brief Extract the device type a discovery request is restricted to.
+///
+/// A discovery address (suffix `0x3B`, see classify_address()) carries the same ten type bits as a
+/// typed broadcast: `00 00 3B` is the open 32-slot window and `00 FF FB` asks only type-1023 nodes
+/// to answer.
+/// @param addr Three-byte destination of a discovery request.
+/// @return The requested DeviceType, or DeviceType::UNKNOWN when the address is not a discovery
+///         address, carries no type bits, or names an undefined type.
+DeviceType discovery_target_type(const uint8_t addr[NODE_ID_SIZE]);
+
 /// @brief Encode a device type into its typed-broadcast destination address — the exact inverse
 /// of broadcast_target_type(), kept immediately beside it so the pair cannot drift apart.
 ///

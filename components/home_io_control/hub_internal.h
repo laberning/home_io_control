@@ -120,27 +120,36 @@ inline void log_rejected_operation(const std::string &device_id, const IoDevice 
 }
 
 /// @brief Log a frame‑level issue (unregistered endpoints, unsupported commands).
+///
+/// Logs on FRAME_TAG so the lines can be filtered on their own. The level follows
+/// decisions::frame_issue_is_warning(): WARN when the frame is addressed to a registered device or to
+/// this hub, DEBUG for overheard traffic. Reasons that are real problems (auth_failed, ack_build_failed,
+/// unsupported_payload) only arise behind a dst == own node ID check or on replies to our own requests,
+/// so they stay at WARN without an override.
 /// @param component Pointer to the component (for device lookup).
+/// @param own_node_id The hub's 3-byte node ID.
 /// @param direction "tx" or "rx".
 /// @param reason Short issue label (e.g., "unregistered_device").
 /// @param frame Parsed frame.
 /// @param len Serialized length.
-inline void log_frame_issue(IOHomeControlComponent *component, const char *direction, const char *reason,
-                            const IoFrame &frame, uint8_t len) {
+inline void log_frame_issue(IOHomeControlComponent *component, const uint8_t *own_node_id, const char *direction,
+                            const char *reason, const IoFrame &frame, uint8_t len) {
   const std::string src_id = node_id_to_string(frame.src);
   const std::string dst_id = node_id_to_string(frame.dst);
   const bool src_registered = component->get_device(src_id) != nullptr;
   const bool dst_registered = component->get_device(dst_id) != nullptr;
+  const bool dst_is_us = std::memcmp(frame.dst, own_node_id, NODE_ID_SIZE) == 0;
 
-  if (src_registered || dst_registered) {
-    ESP_LOGW(TAG, "%s issue=%s cmd=%s(0x%02X) src=%s%s dst=%s%s len=%u data_len=%u", direction, reason,
+  if (decisions::frame_issue_is_warning(dst_registered, dst_is_us)) {
+    ESP_LOGW(FRAME_TAG, "%s issue=%s cmd=%s(0x%02X) src=%s%s dst=%s%s len=%u data_len=%u", direction, reason,
              command_name(frame.cmd), frame.cmd, src_id.c_str(), src_registered ? " (registered)" : "", dst_id.c_str(),
              dst_registered ? " (registered)" : "", len, frame.data_len);
     return;
   }
 
-  ESP_LOGD(TAG, "%s issue=%s cmd=%s(0x%02X) src=%s dst=%s len=%u data_len=%u", direction, reason,
-           command_name(frame.cmd), frame.cmd, src_id.c_str(), dst_id.c_str(), len, frame.data_len);
+  ESP_LOGD(FRAME_TAG, "%s issue=%s cmd=%s(0x%02X) src=%s%s dst=%s len=%u data_len=%u", direction, reason,
+           command_name(frame.cmd), frame.cmd, src_id.c_str(), src_registered ? " (registered)" : "", dst_id.c_str(),
+           len, frame.data_len);
 }
 
 // ============================================================================

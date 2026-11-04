@@ -15,6 +15,7 @@
 #include "proto_timing.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -508,6 +509,36 @@ inline bool is_one_way_pairing_gesture(bool oneway, const uint8_t dst[NODE_ID_SI
     return false;
   return cmd == CMD_WRITE_PRIVATE || cmd == CMD_ONEWAY_REMOVE || cmd == CMD_DISCOVER_ALT_REQ;
 }
+
+/// The order in which a 0x72 status-update acknowledgement is sent on the three channels: the channel
+/// the 0x71 exchange ran on first, then the other two in their usual CH1, CH2, CH3 order. The device
+/// is still listening on the channel its exchange used, so the copy that matters is not left to the
+/// end of the sequence. A frequency that is not one of the three channels gives the usual order.
+///
+/// @param receive_freq_hz Frequency the 0x71 frame (and the challenge exchange) arrived on.
+/// @return The three channel frequencies in transmit order.
+inline std::array<uint32_t, 3> status_update_ack_channel_order(uint32_t receive_freq_hz) {
+  std::array<uint32_t, 3> order{FREQ_CH1, FREQ_CH2, FREQ_CH3};
+  if (receive_freq_hz != FREQ_CH1 && receive_freq_hz != FREQ_CH2 && receive_freq_hz != FREQ_CH3)
+    return order;
+  std::array<uint32_t, 3> result{receive_freq_hz, 0, 0};
+  size_t next = 1;
+  for (const uint32_t freq : order) {
+    if (freq != receive_freq_hz)
+      result[next++] = freq;
+  }
+  return result;
+}
+
+/// Whether a frame issue (a frame the hub did not act on) is logged at WARN rather than DEBUG. WARN only
+/// when the frame is addressed to a registered device or to the hub itself: those are exchanges the hub
+/// is part of, so an unhandled or rejected frame is worth a look. A frame from a registered device to a
+/// broadcast address or to another controller is traffic the hub merely overheard (a heater's menu
+/// beacon, a gateway polling the same device), so it stays at DEBUG however well the source is known.
+///
+/// @param dst_registered Frame destination is a registered device.
+/// @param dst_is_us      Frame destination is the hub's own node ID.
+inline bool frame_issue_is_warning(bool dst_registered, bool dst_is_us) { return dst_registered || dst_is_us; }
 
 /// Whether a 1W frame arriving at `now` starts a new burst rather than extending the current one
 /// — true if no frame has been seen yet, or the gap since the last one reached `quiet_ms` (the
