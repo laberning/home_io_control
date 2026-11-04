@@ -1,0 +1,38 @@
+id: wisniowski_moto1000_probe_private2_partial_position
+description: >
+  The Wisniowski garage opener (Somfy "MOTO 1000 io" drive, node 8D7633) answering the
+  `private2_short` diagnostic probe with modifier 0x09 on the reporter's Heltec V3 (SX1262) hub A9DBEC
+  (issue #163, comment of 2026-11-04, 17:01, door idle). Request CMD_PRIVATE2 (0x0C) `D8 09 00 00`,
+  the short form; answer CMD_PRIVATE2_RESP (0x0D) `05 64 00 00 00` 38 ms later, without a challenge.
+
+  The answer carries 64 00 where the other short-form reply in the corpus carries D4 00
+  (tests/corpus/captures/probe/multi_somfy_probe_private2_short_form.yaml). Read as a main
+  parameter on the 0x0000-0xC800 scale, 0x6400 is 50 %; the reporter reads the same 50 %. The drive
+  refuses a 50 % EXECUTE (tests/corpus/captures/exchange/wisniowski_moto1000_exchange_execute_partial_position_refused.yaml),
+  and the EXECUTE with main parameter D8 09 is challenged but never confirmed and does not move the
+  door, so what the stored value is used for is open.
+source:
+  device: "Wisniowski garage door opener, Somfy MOTO 1000 io drive (garage_opener, subtype 58)"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main as of 2026-11-04 (clean build), diagnostic_probes: true"
+  date: 2026-11-04
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/163"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4C 00 8D 76 33 A9 DB EC 0C D8 09 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2(0x0C), short form, modifier 0x09, START, CTRL1 0x00, preamble 48"
+  - dir: rx
+    t_ms: 38
+    freq: 868950000
+    hex: "8D 00 A9 DB EC 8D 76 33 0D 05 64 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D), 5 data bytes: 05, 64 00, 00 00. No challenge first"
+expect:
+  frames:
+    - {cmd: 0x0C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x0D, start: false, end: true, protocol: 2w}

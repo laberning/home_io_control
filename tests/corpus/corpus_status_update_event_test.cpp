@@ -3,7 +3,7 @@
 ///
 /// Every captured 0x71 is `<flags> <status> <event id> <length> <event data>` with a length byte that
 /// names exactly the bytes that follow. Position updates carry EVENT_STATUS_CHANGE with 11 data bytes;
-/// the RS100 Solar io's answer to a subscription carries EVENT_LOCAL_SENSOR with 5 (issue #156). The
+/// the RS100 Solar io's answers to a subscription carry EVENT_LOCAL_SENSOR with 5 (issue #156). The
 /// sweep pins the header on every 0x71 the corpus holds, so a capture of another shape fails here
 /// before the hub misroutes it.
 
@@ -15,6 +15,9 @@
 
 #include <gtest/gtest.h>
 
+#include <iterator>
+#include <string>
+
 using namespace esphome::home_io_control;
 
 namespace {
@@ -24,8 +27,22 @@ constexpr uint8_t STATUS_CHANGE_EVENT_DATA_LEN = 11;
 /// The subscription answer's event-data length and first data byte.
 constexpr uint8_t LOCAL_SENSOR_EVENT_DATA_LEN = 5;
 constexpr uint8_t LOCAL_SENSOR_FIRST_DATA_BYTE = 0x06;
-/// Fewest 0x71 frames the sweep must see: the 9 position updates plus the subscription answer.
-constexpr int MIN_STATUS_UPDATES_IN_CORPUS = 10;
+/// Fewest 0x71 frames the sweep must see: the 9 position updates plus the three subscription answers.
+constexpr int MIN_STATUS_UPDATES_IN_CORPUS = 12;
+/// The same motor's two daylight answers to the subscription (11:45 and 13:41, issue #156).
+constexpr const char *DAYLIGHT_SENSOR_EVENT_CAPTURE = "somfy_rs100_probe_subscribe_event_daylight_sx1262";
+/// Subscription answers in the corpus: one at night, two in daylight.
+constexpr int SENSOR_EVENT_REPORTS_IN_CORPUS = 3;
+/// Offset of the two value bytes the daylight answers carry, inside the event data (`06 00 <hi> <lo> B9`).
+constexpr uint8_t LOCAL_SENSOR_VALUE_OFFSET = 2;
+/// The daylight answers' values, in capture order: 0x00B7 at 11:45, 0x02E8 at 13:41.
+constexpr uint16_t DAYLIGHT_VALUES[] = {0x00B7, 0x02E8};
+
+/// True for a capture that holds the RS100's answers to the 0x2005 subscription.
+bool is_sensor_event_capture(const char *id) {
+  return std::string(id) == corpus_test::SENSOR_EVENT_REPORT_CAPTURE ||
+         std::string(id) == DAYLIGHT_SENSOR_EVENT_CAPTURE;
+}
 
 }  // namespace
 
@@ -42,7 +59,7 @@ TEST(CorpusStatusUpdateEvent, EveryCaptured0x71HasAWellFormedEventHeader) {
       StatusUpdateEvent event;
       ASSERT_TRUE(decode_status_update_event(frame, event)) << "length byte must name the rest of the payload";
       EXPECT_EQ(event.data_offset, STATUS_UPDATE_EVENT_DATA_OFFSET);
-      if (std::string(capture->id) == corpus_test::SENSOR_EVENT_REPORT_CAPTURE) {
+      if (is_sensor_event_capture(capture->id)) {
         event_reports++;
         EXPECT_EQ(event.event_id, EVENT_LOCAL_SENSOR);
         EXPECT_EQ(event.data_len, LOCAL_SENSOR_EVENT_DATA_LEN);
@@ -56,7 +73,29 @@ TEST(CorpusStatusUpdateEvent, EveryCaptured0x71HasAWellFormedEventHeader) {
     }
   }
   EXPECT_GE(status_updates, MIN_STATUS_UPDATES_IN_CORPUS);
-  EXPECT_EQ(event_reports, 1);
+  EXPECT_EQ(event_reports, SENSOR_EVENT_REPORTS_IN_CORPUS);
+}
+
+TEST(CorpusStatusUpdateEvent, DaylightAnswersCarryAValueTheNightAnswerDoesNot) {
+  // The night answer's value bytes are all zero; in daylight two of them are not. Their meaning is
+  // undecoded, so only the bytes are pinned, read from the frame through the event header.
+  const corpus::CorpusCapture *night = corpus_test::capture_by_id(corpus_test::SENSOR_EVENT_REPORT_CAPTURE);
+  const corpus::CorpusCapture *day = corpus_test::capture_by_id(DAYLIGHT_SENSOR_EVENT_CAPTURE);
+  ASSERT_NE(night, nullptr);
+  ASSERT_NE(day, nullptr);
+  ASSERT_EQ(day->frame_count, std::size(DAYLIGHT_VALUES));
+
+  const auto value_at = [](const IoFrame &frame) {
+    StatusUpdateEvent event;
+    EXPECT_TRUE(decode_status_update_event(frame, event));
+    const uint8_t at = event.data_offset + LOCAL_SENSOR_VALUE_OFFSET;
+    return static_cast<uint16_t>((frame.data[at] << 8) | frame.data[at + 1]);
+  };
+  EXPECT_EQ(value_at(corpus_test::parse_capture_frame(night->frames[0])), 0);
+  for (uint8_t i = 0; i < day->frame_count; i++) {
+    SCOPED_TRACE("daylight answer " + std::to_string(i));
+    EXPECT_EQ(value_at(corpus_test::parse_capture_frame(day->frames[i])), DAYLIGHT_VALUES[i]);
+  }
 }
 
 TEST(CorpusStatusUpdateEvent, SubscriptionAnswerCarriesTheBatteryByteOfAPositionUpdate) {

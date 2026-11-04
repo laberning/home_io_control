@@ -1,0 +1,61 @@
+id: wisniowski_moto1000_exchange_session_interrupted_after_unconfirmed_stop
+description: >
+  The Wisniowski garage opener (Somfy "MOTO 1000 io" drive, node 8D7633) on the reporter's Heltec V3
+  (SX1262) hub A9DBEC, with `low_power: false` (issue #163, comment of 2026-11-04, the 17:07 run). The
+  door was closing when a STOP was sent (17:09:40.063). Both tries were challenged (0x3C 17 ms and
+  33 ms after the EXECUTE) and our 0x3D (preamble 8) went out each time, but no final reply came within
+  500 ms; the hub logged the exchange as stage=success_auth_unconfirmed, tries=2, and the door did not
+  stop (per the reporter). The next 0x03 status poll (17:09:42.985) drew no answer on try 1; try 2 was
+  challenged (0x3C 29 ms after the poll), and our 0x3D drew ERROR_RESP FE 70, result 0x70
+  SESSION_INTERRUPTED. The same sequence followed the next two STOP presses (17:09:43.804 and
+  17:09:48.338); the fourth STOP (17:09:54.978) was confirmed.
+
+  Every 0x3C and 0x3D is masked in the hub's frame log, so those frames are omitted and this excerpt is
+  not replayed as an exchange; the notes give their log times. t_ms are the log line stamps relative
+  to the first EXECUTE (a TX line is stamped at the start of the transmission).
+source:
+  device: "Wisniowski garage door opener, Somfy MOTO 1000 io drive (garage_opener, subtype 58)"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main as of 2026-11-04 (clean build), low_power: false, DEBUG"
+  date: 2026-11-04
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/163"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4E 00 8D 76 33 A9 DB EC 00 01 63 D2 00 00 00"
+    crc: absent
+    note: "EXECUTE STOP (main parameter 0xD200), START, CTRL1 0x00, preamble 48. Challenge at +17 ms, our 0x3D (preamble 8) at +27 ms, both masked; no final reply within 500 ms"
+  - dir: tx
+    t_ms: 1297
+    freq: 868950000
+    hex: "4E 00 8D 76 33 A9 DB EC 00 01 63 D2 00 00 00"
+    crc: absent
+    note: "STOP try 2, same bytes. Challenge at +1333 ms, our 0x3D at +1341 ms, both masked; no final reply. Hub: success_auth_unconfirmed tries=2"
+  - dir: tx
+    t_ms: 2922
+    freq: 868950000
+    hex: "4B 00 8D 76 33 A9 DB EC 03 03 00 00"
+    crc: absent
+    note: "status poll 0x03 try 1, preamble 48: no first response within 400 ms"
+  - dir: tx
+    t_ms: 3609
+    freq: 868950000
+    hex: "4B 00 8D 76 33 A9 DB EC 03 03 00 00"
+    crc: absent
+    note: "status poll try 2. Challenge at +3638 ms, our 0x3D at +3643 ms, both masked"
+  - dir: rx
+    t_ms: 3662
+    freq: 868950000
+    hex: "89 00 A9 DB EC 8D 76 33 FE 70"
+    crc: absent
+    note: "ERROR_RESP, result 0x70 = SESSION_INTERRUPTED, the answer to our 0x3D for the status poll"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0xFE, start: false, end: true, protocol: 2w}

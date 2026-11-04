@@ -69,6 +69,28 @@ TEST(PlatformActiveIssueTextSensor, DeviceUpdatePublishesNewResultAndClears) {
   EXPECT_EQ(sensor.state, "") << "a device update after clearing should publish an empty string again";
 }
 
+TEST(PlatformActiveIssueTextSensor, SessionInterruptedIsNotShownAsAnIssue) {
+  // A garage drive answered status reads with SESSION_INTERRUPTED right after an unconfirmed
+  // command (issue #163); the code describes that exchange, not the device.
+  TestableActiveIssueHub hub;
+  hub.add_device("ABC123");
+  auto *device = hub.get_device("ABC123");
+  ASSERT_NE(device, nullptr);
+
+  IOHomeActiveIssueTextSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  device->last_result_code = RESULT_SESSION_INTERRUPTED;
+  hub.notify_device_update_("ABC123");
+  EXPECT_EQ(sensor.state, "");
+
+  device->limited_by_rain = true;
+  hub.notify_device_update_("ABC123");
+  EXPECT_EQ(sensor.state, "LIMITATION_BY_RAIN") << "a derived limitation still shows behind a transient result";
+}
+
 TEST(PlatformActiveIssueTextSensor, DerivedRainLimitationPublishesLimitationByRain) {
   TestableActiveIssueHub hub;
   hub.add_device("ABC123");

@@ -1,0 +1,45 @@
+id: somfy_rs100_probe_subscribe_event_daylight_sx1262
+description: >
+  The same RS100 Solar io awning motor (node 24635F) as
+  tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_sx1262.yaml answering the same
+  `subscribe_event` probe (CMD_SUBSCRIBE_EVENT 0x73, payload 01 20 05) twice in daylight, on the
+  reporter's Heltec V3.2 (SX1262) hub A1B2C3 (issue #156, comment of 2026-11-04): at 11:45:44 and at
+  13:41:14 local time. Each request went out behind a 1024-byte preamble and drew a 0x3C challenge on
+  the first try; the frame log has only the device's answers (stage=probe_rx), so the request, the
+  challenge and our 0x3D are not in this capture.
+
+  Both answers have the header of the night capture (flags 05, status 60, event 20 05, length 05,
+  first data byte 06), but the value bytes are no longer zero:
+    - 11:45: data[6..9] = 00 00 B7 B9
+    - 13:41: data[6..9] = 00 02 E8 B9
+  Read as 00 <hi> <lo> B9, the 16-bit value is 0x00B7 (183) at 11:45 and 0x02E8 (744) at 13:41; the
+  meaning, width and scale of the value are undecoded. The motor's object 0xA601, read three minutes
+  after the 13:41 answer, holds the same 02 E8 (record 0x94, see
+  tests/corpus/captures/probe/somfy_rs100_probe_read_object_a601_sx1262.yaml). The reporter's own
+  illuminance sensor read 2818 lx at 11:45 and 1388 lx at 13:41; it faces a different direction from
+  the motor, so its readings are context, not a calibration.
+
+  Community capture: no system key, HMAC not verifiable.
+source:
+  device: "Somfy RS100 Solar io awning motor (node 24635F)"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3.2, main around 2026-11-04 with the read_object probe, diagnostic_probes: true"
+  date: 2026-11-04
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/156"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "92 00 A1 B2 C3 24 63 5F 71 05 60 20 05 05 06 00 00 B7 B9"
+    crc: absent
+    note: "cmd=STATUS_UPDATE(0x71), answer to 0x73 01 20 05 at 11:45:44. Event 0x2005, 5 data bytes: 06 00 00 B7 B9"
+  - dir: rx
+    freq: 868950000
+    hex: "92 00 A1 B2 C3 24 63 5F 71 05 60 20 05 05 06 00 02 E8 B9"
+    crc: absent
+    note: "cmd=STATUS_UPDATE(0x71), answer to 0x73 01 20 05 at 13:41:14. Event 0x2005, 5 data bytes: 06 00 02 E8 B9"
+expect:
+  frames:
+    - {cmd: 0x71, start: false, end: true, protocol: 2w}
+    - {cmd: 0x71, start: false, end: true, protocol: 2w}

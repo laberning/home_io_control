@@ -1,0 +1,443 @@
+id: atlantic_adelis_probe_register_01_sweep
+description: >
+  An Atlantic Adelis 2 Digit towel dryer (node BB0B50) answering the `register_01` diagnostic sweep,
+  on the reporter's SX1276 hub C0FFEE (issue #202, comment of 2026-11-04). Each request is an
+  authenticated CMD_WRITE_PRIVATE (0x20) read `0C 60 01 <index>` of register 0x01<index>; each answer is
+  CMD_WRITE_PRIVATE_ACK (0x21) echoing the four header bytes, then the register's value bytes (none for
+  some registers). Only the answers were logged, in the probe_sweep summary, so the requests and the
+  0x3C/0x3D handshakes are not in this capture. Every index of every sweep was answered.
+
+  Five sweeps, in time order: 17:55 over 0x00-0x0F, then 18:15 over 0x30-0x3F, 18:17 over 0x00-0x0F,
+  18:18 over 0x10-0x1F and 18:19 over 0x20-0x2F. The reporter posted the 18:xx sweeps under the note that
+  the display showed BOOST after a setpoint change from the climate entity. The 17:55 sweep was taken
+  without boost or drying, in manual mode.
+
+  What the frames show:
+    - Registers 0x0100-0x010E read the same at 17:55 and 18:17. 0x0103 = 0x00C3 (19.5 C in tenths) and
+      0x0104 = 0x0023 (3.5 in tenths) equal FP12 and FP13 of the status read in
+      tests/corpus/captures/probe/atlantic_adelis_probe_status_mp_fp.yaml, decoded by us against these
+      registers.
+    - 0x010F (and 0x0110 at 18:18) carry 8 bytes ending in 04 02 0B EA 07; we read them as the
+      device's clock (seconds, minutes, hours, day 4, weekday 2, month 11, year 2026). Only the first
+      three bytes change between 17:55 and 18:17.
+    - 0x0119 is ASCII "ADELIS 2 DIGIT".
+    - 0x0132-0x0134 each hold two 7-byte records `<day> <t1> <t2> <t3> <t4> 00 00`, days 1-6; the day-0
+      record sits at the end of 0x0131 and again in 0x011E. Read as quarter hours from midnight with day
+      0 = Monday, the records match the weekly program the reporter read off the device's display
+      (posted in the same comment). The weekday 2 in the clock is consistent with that numbering
+      (2026-11-04 was a Wednesday).
+    - Read during the BOOST period: 0x013E = 01, 0x0126 = 0x64 (100), 0x0137 = 0x0001. No read of these
+      registers without boost exists, so nothing here says which of them encodes boost.
+
+  Community capture: no system key, and no authenticated bytes are included.
+source:
+  device: "Atlantic Adelis 2 Digit electric towel dryer (node BB0B50, display name ADELIS 2 DIGIT)"
+  captured_with: sx1276
+  firmware: "main around 2026-11-04 with the register_01 probe, diagnostic_probes: true"
+  date: 2026-11-04
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/202"
+key: unknown
+frames:
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 00 03"
+    crc: absent
+    note: "register 0x0100, sweep 17:55:39 [0x00,0x0F]: value 03"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 01 00"
+    crc: absent
+    note: "register 0x0101, sweep 17:55:39 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 02 18 01"
+    crc: absent
+    note: "register 0x0102, sweep 17:55:39 [0x00,0x0F]: value 18 01"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 03 C3 00"
+    crc: absent
+    note: "register 0x0103, sweep 17:55:39 [0x00,0x0F]: value C3 00; 0x00C3 = 195 tenths = 19.5 C, the value FP12 of the status_fp_high reply decodes to"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 04 23 00"
+    crc: absent
+    note: "register 0x0104, sweep 17:55:39 [0x00,0x0F]: value 23 00; 0x0023 = 35 tenths = 3.5, the value FP13 of the status_fp_high reply decodes to"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 05 1E 00"
+    crc: absent
+    note: "register 0x0105, sweep 17:55:39 [0x00,0x0F]: value 1E 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 06 00"
+    crc: absent
+    note: "register 0x0106, sweep 17:55:39 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 07 00"
+    crc: absent
+    note: "register 0x0107, sweep 17:55:39 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 08 00"
+    crc: absent
+    note: "register 0x0108, sweep 17:55:39 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "8F 00 C0 FF EE BB 0B 50 21 0C 60 01 09 00 00 00"
+    crc: absent
+    note: "register 0x0109, sweep 17:55:39 [0x00,0x0F]: value 00 00 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 0A 00"
+    crc: absent
+    note: "register 0x010A, sweep 17:55:39 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 0B 00"
+    crc: absent
+    note: "register 0x010B, sweep 17:55:39 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 0C 01"
+    crc: absent
+    note: "register 0x010C, sweep 17:55:39 [0x00,0x0F]: value 01"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 0D 01"
+    crc: absent
+    note: "register 0x010D, sweep 17:55:39 [0x00,0x0F]: value 01"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 0E 00"
+    crc: absent
+    note: "register 0x010E, sweep 17:55:39 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "94 00 C0 FF EE BB 0B 50 21 0C 60 01 0F 1C 2A 11 04 02 0B EA 07"
+    crc: absent
+    note: "register 0x010F, sweep 17:55:39 [0x00,0x0F]: value 1C 2A 11 04 02 0B EA 07; 8 bytes; read as seconds, minutes, hours, day 4, weekday 2, month 11, year 0x07EA = 2026 (our reading)"
+  - dir: rx
+    hex: "9D 00 C0 FF EE BB 0B 50 21 0C 60 01 30 00 00 11 04 02 0B 00 00 1C 28 03 50 00 02 00 00 00"
+    crc: absent
+    note: "register 0x0130, sweep 18:15:16 [0x30,0x3F]: value 00 00 11 04 02 0B 00 00 1C 28 03 50 00 02 00 00 00"
+  - dir: rx
+    hex: "99 00 C0 FF EE BB 0B 50 21 0C 60 01 31 00 00 00 04 02 00 00 19 20 44 50 00 00"
+    crc: absent
+    note: "register 0x0131, sweep 18:15:16 [0x30,0x3F]: value 00 00 00 04 02 00 00 19 20 44 50 00 00; 13 bytes; ends in the day-0 record 00 19 20 44 50 00 00"
+  - dir: rx
+    hex: "9A 00 C0 FF EE BB 0B 50 21 0C 60 01 32 01 18 20 46 50 00 00 02 18 20 46 50 00 00"
+    crc: absent
+    note: "register 0x0132, sweep 18:15:16 [0x30,0x3F]: value 01 18 20 46 50 00 00 02 18 20 46 50 00 00; day-1 and day-2 records (7 bytes each)"
+  - dir: rx
+    hex: "9A 00 C0 FF EE BB 0B 50 21 0C 60 01 33 03 18 20 46 50 00 00 04 18 20 46 50 00 00"
+    crc: absent
+    note: "register 0x0133, sweep 18:15:16 [0x30,0x3F]: value 03 18 20 46 50 00 00 04 18 20 46 50 00 00; day-3 and day-4 records"
+  - dir: rx
+    hex: "9C 00 C0 FF EE BB 0B 50 21 0C 60 01 34 05 1C 28 40 50 00 00 06 1C 28 40 50 00 00 00 01"
+    crc: absent
+    note: "register 0x0134, sweep 18:15:16 [0x30,0x3F]: value 05 1C 28 40 50 00 00 06 1C 28 40 50 00 00 00 01; day-5 and day-6 records, then 00 01"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BB 0B 50 21 0C 60 01 35"
+    crc: absent
+    note: "register 0x0135, sweep 18:15:16 [0x30,0x3F]: no value bytes"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 36 03"
+    crc: absent
+    note: "register 0x0136, sweep 18:15:16 [0x30,0x3F]: value 03"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 37 01 00"
+    crc: absent
+    note: "register 0x0137, sweep 18:15:16 [0x30,0x3F]: value 01 00; 0x0001 (little-endian), read under the reporter's BOOST note"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 38 C3 00"
+    crc: absent
+    note: "register 0x0138, sweep 18:15:16 [0x30,0x3F]: value C3 00; 0x00C3, the same value as register 0x0103"
+  - dir: rx
+    hex: "93 00 C0 FF EE BB 0B 50 21 0C 60 01 39 49 00 28 40 50 00 00"
+    crc: absent
+    note: "register 0x0139, sweep 18:15:16 [0x30,0x3F]: value 49 00 28 40 50 00 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 3A 1C"
+    crc: absent
+    note: "register 0x013A, sweep 18:15:16 [0x30,0x3F]: value 1C"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 3B 23 3C"
+    crc: absent
+    note: "register 0x013B, sweep 18:15:16 [0x30,0x3F]: value 23 3C"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 3C 00"
+    crc: absent
+    note: "register 0x013C, sweep 18:15:16 [0x30,0x3F]: value 00"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 3D 78 78"
+    crc: absent
+    note: "register 0x013D, sweep 18:15:16 [0x30,0x3F]: value 78 78"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 3E 01"
+    crc: absent
+    note: "register 0x013E, sweep 18:15:16 [0x30,0x3F]: value 01; 01, read under the reporter's BOOST note"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 3F 00 00"
+    crc: absent
+    note: "register 0x013F, sweep 18:15:16 [0x30,0x3F]: value 00 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 00 03"
+    crc: absent
+    note: "register 0x0100, sweep 18:17:58 [0x00,0x0F]: value 03"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 01 00"
+    crc: absent
+    note: "register 0x0101, sweep 18:17:58 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 02 18 01"
+    crc: absent
+    note: "register 0x0102, sweep 18:17:58 [0x00,0x0F]: value 18 01"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 03 C3 00"
+    crc: absent
+    note: "register 0x0103, sweep 18:17:58 [0x00,0x0F]: value C3 00; 0x00C3 = 195 tenths = 19.5 C, the value FP12 of the status_fp_high reply decodes to"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 04 23 00"
+    crc: absent
+    note: "register 0x0104, sweep 18:17:58 [0x00,0x0F]: value 23 00; 0x0023 = 35 tenths = 3.5, the value FP13 of the status_fp_high reply decodes to"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 05 1E 00"
+    crc: absent
+    note: "register 0x0105, sweep 18:17:58 [0x00,0x0F]: value 1E 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 06 00"
+    crc: absent
+    note: "register 0x0106, sweep 18:17:58 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 07 00"
+    crc: absent
+    note: "register 0x0107, sweep 18:17:58 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 08 00"
+    crc: absent
+    note: "register 0x0108, sweep 18:17:58 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "8F 00 C0 FF EE BB 0B 50 21 0C 60 01 09 00 00 00"
+    crc: absent
+    note: "register 0x0109, sweep 18:17:58 [0x00,0x0F]: value 00 00 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 0A 00"
+    crc: absent
+    note: "register 0x010A, sweep 18:17:58 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 0B 00"
+    crc: absent
+    note: "register 0x010B, sweep 18:17:58 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 0C 01"
+    crc: absent
+    note: "register 0x010C, sweep 18:17:58 [0x00,0x0F]: value 01"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 0D 01"
+    crc: absent
+    note: "register 0x010D, sweep 18:17:58 [0x00,0x0F]: value 01"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 0E 00"
+    crc: absent
+    note: "register 0x010E, sweep 18:17:58 [0x00,0x0F]: value 00"
+  - dir: rx
+    hex: "94 00 C0 FF EE BB 0B 50 21 0C 60 01 0F 2F 04 12 04 02 0B EA 07"
+    crc: absent
+    note: "register 0x010F, sweep 18:17:58 [0x00,0x0F]: value 2F 04 12 04 02 0B EA 07; 8 bytes; read as seconds, minutes, hours, day 4, weekday 2, month 11, year 0x07EA = 2026 (our reading)"
+  - dir: rx
+    hex: "94 00 C0 FF EE BB 0B 50 21 0C 60 01 10 2F 04 12 04 02 0B EA 07"
+    crc: absent
+    note: "register 0x0110, sweep 18:18:36 [0x10,0x1F]: value 2F 04 12 04 02 0B EA 07; same 8 bytes as register 0x010F"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BB 0B 50 21 0C 60 01 11"
+    crc: absent
+    note: "register 0x0111, sweep 18:18:36 [0x10,0x1F]: no value bytes"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BB 0B 50 21 0C 60 01 12"
+    crc: absent
+    note: "register 0x0112, sweep 18:18:36 [0x10,0x1F]: no value bytes"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 13 00"
+    crc: absent
+    note: "register 0x0113, sweep 18:18:36 [0x10,0x1F]: value 00"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 14 2E 0D"
+    crc: absent
+    note: "register 0x0114, sweep 18:18:36 [0x10,0x1F]: value 2E 0D"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 15 66 08"
+    crc: absent
+    note: "register 0x0115, sweep 18:18:36 [0x10,0x1F]: value 66 08"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 16 02 3F"
+    crc: absent
+    note: "register 0x0116, sweep 18:18:36 [0x10,0x1F]: value 02 3F"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 17 00"
+    crc: absent
+    note: "register 0x0117, sweep 18:18:36 [0x10,0x1F]: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 18 41"
+    crc: absent
+    note: "register 0x0118, sweep 18:18:36 [0x10,0x1F]: value 41"
+  - dir: rx
+    hex: "9D 00 C0 FF EE BB 0B 50 21 0C 60 01 19 41 44 45 4C 49 53 20 32 20 44 49 47 49 54 00 00 00"
+    crc: absent
+    note: "register 0x0119, sweep 18:18:36 [0x10,0x1F]: value 41 44 45 4C 49 53 20 32 20 44 49 47 49 54 00 00 00; ASCII ADELIS 2 DIGIT + 3 zero bytes"
+  - dir: rx
+    hex: "8F 00 C0 FF EE BB 0B 50 21 0C 60 01 1A F4 01 E6"
+    crc: absent
+    note: "register 0x011A, sweep 18:18:36 [0x10,0x1F]: value F4 01 E6"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BB 0B 50 21 0C 60 01 1B"
+    crc: absent
+    note: "register 0x011B, sweep 18:18:36 [0x10,0x1F]: no value bytes"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BB 0B 50 21 0C 60 01 1C"
+    crc: absent
+    note: "register 0x011C, sweep 18:18:36 [0x10,0x1F]: no value bytes"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 1D 00 00"
+    crc: absent
+    note: "register 0x011D, sweep 18:18:36 [0x10,0x1F]: value 00 00"
+  - dir: rx
+    hex: "93 00 C0 FF EE BB 0B 50 21 0C 60 01 1E 00 19 20 44 50 00 00"
+    crc: absent
+    note: "register 0x011E, sweep 18:18:36 [0x10,0x1F]: value 00 19 20 44 50 00 00; a 7-byte record of the 0x0131-0x0134 shape, day 0"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 1F 01"
+    crc: absent
+    note: "register 0x011F, sweep 18:18:36 [0x10,0x1F]: value 01"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 20 00"
+    crc: absent
+    note: "register 0x0120, sweep 18:19:13 [0x20,0x2F]: value 00"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BB 0B 50 21 0C 60 01 21"
+    crc: absent
+    note: "register 0x0121, sweep 18:19:13 [0x20,0x2F]: no value bytes"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 22 00 00"
+    crc: absent
+    note: "register 0x0122, sweep 18:19:13 [0x20,0x2F]: value 00 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 23 00"
+    crc: absent
+    note: "register 0x0123, sweep 18:19:13 [0x20,0x2F]: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 24 00"
+    crc: absent
+    note: "register 0x0124, sweep 18:19:13 [0x20,0x2F]: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 25 00"
+    crc: absent
+    note: "register 0x0125, sweep 18:19:13 [0x20,0x2F]: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 26 64"
+    crc: absent
+    note: "register 0x0126, sweep 18:19:13 [0x20,0x2F]: value 64; 0x64 = 100, read under the reporter's BOOST note"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 27 00 00"
+    crc: absent
+    note: "register 0x0127, sweep 18:19:13 [0x20,0x2F]: value 00 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 28 02"
+    crc: absent
+    note: "register 0x0128, sweep 18:19:13 [0x20,0x2F]: value 02"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 29 00"
+    crc: absent
+    note: "register 0x0129, sweep 18:19:13 [0x20,0x2F]: value 00"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 2A 01 00"
+    crc: absent
+    note: "register 0x012A, sweep 18:19:13 [0x20,0x2F]: value 01 00"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BB 0B 50 21 0C 60 01 2B"
+    crc: absent
+    note: "register 0x012B, sweep 18:19:13 [0x20,0x2F]: no value bytes"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BB 0B 50 21 0C 60 01 2C"
+    crc: absent
+    note: "register 0x012C, sweep 18:19:13 [0x20,0x2F]: no value bytes"
+  - dir: rx
+    hex: "8F 00 C0 FF EE BB 0B 50 21 0C 60 01 2D BB 0B 4F"
+    crc: absent
+    note: "register 0x012D, sweep 18:19:13 [0x20,0x2F]: value BB 0B 4F"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BB 0B 50 21 0C 60 01 2E 01"
+    crc: absent
+    note: "register 0x012E, sweep 18:19:13 [0x20,0x2F]: value 01"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BB 0B 50 21 0C 60 01 2F 00 00"
+    crc: absent
+    note: "register 0x012F, sweep 18:19:13 [0x20,0x2F]: value 00 00"
+expect:
+  frames:
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

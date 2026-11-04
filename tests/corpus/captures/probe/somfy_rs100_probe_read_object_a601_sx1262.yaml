@@ -1,0 +1,60 @@
+id: somfy_rs100_probe_read_object_a601_sx1262
+description: |
+  An RS100 Solar io awning motor (node 24635F) answering the `read_object` diagnostic probe for
+  object 0xA601 of class 2, on the reporter's Heltec V3.2 (SX1262) hub A1B2C3 (issue #156, comment of
+  2026-11-04, log taken 13:43:59-13:44:22 local time). The hub sent CMD_TRANSFER_OPEN (0x46) behind a
+  1024-byte preamble; it was challenged on the first try and the authenticated answer is the
+  CMD_TRANSFER_OPEN_RESP (0x47) below: handle 0x10, status 0 (accepted), length 0x016E = 366 bytes.
+  The hub then read ceil(366 / 18) = 21 blocks with CMD_UNKNOWN4A_REQ (0x4A) and closed the transfer
+  with a 22nd 0x4A (chunk 0); all 22 were answered, four of them on a second try, and the hub logged
+  the reassembled object, 366 of 366 bytes.
+
+  Only the 0x47 frame is in the frame log (stage=probe_rx). The 0x46 request, the 0x3C/0x3D
+  handshake, the 0x4A requests, the 0x4B blocks and the close are not, so this capture holds one frame
+  and the reassembled object as the hub logged it (offsets in hex):
+
+    +000: 01 00 03 03 00 00 05 00 04 06 00 05 80 11 03 FD 11 25 F2 81 11 03 FD 11
+    +018: 2F 60 83 01 01 00 00 87 00 00 00 88 01 01 00 00 8A 11 03 FD 11 26 F6 8C
+    +030: 11 33 00 16 1E 83 05 5E 08 A4 02 ED 04 F1 20 A1 21 D7 1E DD 09 2D 01 75
+    +048: 0B 42 15 49 0A A9 09 C7 0D 13 1D 79 19 0D 07 A4 14 44 0C 1C 19 A2 16 33
+    +060: 04 EA 19 B5 09 76 8D 11 33 FD 11 2D FA 2D D2 2C B5 2D C1 2D 88 2D D2 2D
+    +078: F2 2D A1 2D B9 2D 90 2E 0A 2D A1 2D F2 2D C1 2D E2 2D A1 2D A9 2E 1B 2D
+    +090: 68 2D B1 2D A1 2D A1 2D 99 2D EA 2E 6C 8E 11 33 FD 11 28 A5 2A E6 2A 84
+    +0A8: 28 D5 29 80 2A CD 29 B9 2A C5 2A CD 2A E6 2A FE 2A CD 2B 06 2A E6 2A EE
+    +0C0: 2A EE 2A DE 2B 16 28 E6 2A B5 2A E6 28 D5 2A E6 2B 0E 29 B1 90 11 33 00
+    +0D8: 16 00 97 00 00 00 00 00 FF 00 AE 00 1C 00 58 00 00 00 00 00 00 00 00 00
+    +0F0: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 87 00 00 00 00 00 89 00 00 00
+    +108: 00 00 8F 91 11 33 00 16 00 5C 00 00 00 00 00 8B 00 5A 00 11 00 34 00 00
+    +120: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 4A 00 00
+    +138: 00 00 00 4B 00 00 00 00 00 4C 92 11 03 FD 11 2D AA 93 11 03 FD 11 FF FF
+    +150: 94 11 03 00 10 02 E8 97 13 05 00 16 00 01 98 D4 98 13 05 00 16 00 00 1B
+    +168: D0 99 09 01 05 59
+
+  Our reading, unconfirmed beyond what the bytes show (the record boundaries are not decoded; the
+  record id is taken to be the byte before each `11 03` / `13 05` pair):
+    - Record 0x94 (+150) is 94 11 03 00 10 02 E8. Its last two bytes, 02 E8, equal the value bytes of
+      the 0x2005 subscription answer three minutes earlier, see
+      tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_daylight_sx1262.yaml.
+    - Record 0x92 (+142) is 92 11 03 FD 11 2D AA. Read with FD as a signed decimal exponent (-3),
+      0x2DAA = 11690 gives 11.690, i.e. 11690 in thousandths (mV if the unit is volts); the unit is
+      not confirmed.
+      Records 0x80, 0x81 and 0x8A carry the same FD 11 prefix (0x25F2, 0x2F60, 0x26F6).
+
+  Community capture: no system key, HMAC not verifiable.
+source:
+  device: "Somfy RS100 Solar io awning motor (node 24635F)"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3.2, main around 2026-11-04 with the read_object probe, diagnostic_probes: true"
+  date: 2026-11-04
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/156"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "8C 00 A1 B2 C3 24 63 5F 47 10 00 01 6E"
+    crc: absent
+    note: "cmd=TRANSFER_OPEN_RESP(0x47) at 13:43:59.608, answer to 0x46 for class 2 object 0xA601: handle 0x10, status 0, length 0x016E = 366"
+expect:
+  frames:
+    - {cmd: 0x47, start: false, end: true, protocol: 2w}

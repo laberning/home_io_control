@@ -1,0 +1,47 @@
+id: atlantic_adelis_probe_status_mp_fp
+description: >
+  An Atlantic Adelis 2 Digit towel dryer (node BB0B50) answering the two CMD_PRIVATE (0x03)
+  function-0x01 status reads of the diagnostic probes, on the reporter's SX1276 hub C0FFEE (issue
+  #202, comment of 2026-11-04). Both were answered at once without a challenge. Only the replies were
+  logged (stage=probe_rx). The requests are the ones create_status_mp_fp_read() builds:
+    - `status_mp_fp` (18:10): data 01 FE 01 01 01 01 01 01 01 00, FPI1 0xFE (FP1-FP7), FPI2 0x00.
+    - `status_fp_high` index 0x78 (18:12): data 01 00 78 01 01 01 01, FPI1 0x00, FPI2 0x78 (FP10-FP13,
+      bit 7 = FP9).
+
+  Reply layout, as both frames show it: [status][b1][MP hi lo][FPI1 echo][one 16-bit value per FPI1
+  bit][FPI2 echo][one 16-bit value per FPI2 bit].
+    - Main parameter 0xFC07 in both replies. The reporter reported BOOST on the device's display in
+      the same session; whether boost was already on at 18:10 is not stated.
+    - status_mp_fp: the dryer echoes FPI1 0x00 and FPI2 0x00 and sends no functional parameter, although
+      FP1-FP7 were asked for.
+    - status_fp_high: FPI2 echo 0x78, then FP10 = 0xD400, FP11 = 0x0000, FP12 = 0x770C, FP13 = 0x2ADB.
+  Decoded by us against the device's own registers: FP12 by 7 + raw/51200 x 21 = 19.5 C and FP13 by
+  2 + raw/51200 x 7 = 3.5 K, the same values as register 0x0103 (0x00C3 tenths = 19.5) and register
+  0x0104 (0x0023 tenths = 3.5) read in the same session, see
+  tests/corpus/captures/probe/atlantic_adelis_probe_register_01_sweep.yaml. The status byte differs
+  between the replies (0x2D, then 0x05) and is undecoded.
+
+  Community capture: no system key; nothing in these frames is authenticated.
+source:
+  device: "Atlantic Adelis 2 Digit electric towel dryer (node BB0B50, display name ADELIS 2 DIGIT)"
+  captured_with: sx1276
+  firmware: "main around 2026-11-04 with the status_fp_high probe, diagnostic_probes: true"
+  date: 2026-11-04
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/202"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BB 0B 50 04 2D 00 FC 07 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), answer to status_mp_fp (18:10:37). Status 0x2D, MP 0xFC07, FPI1 echo 00, FPI2 echo 00, no FP values"
+  - dir: rx
+    freq: 868950000
+    hex: "96 00 C0 FF EE BB 0B 50 04 05 00 FC 07 00 78 D4 00 00 00 77 0C 2A DB"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), answer to status_fp_high 0x78 (18:12:09). Status 0x05, MP 0xFC07, FPI1 echo 00, FPI2 echo 78: FP10 D400, FP11 0000, FP12 770C (19.5 C), FP13 2ADB (3.5 K)"
+expect:
+  frames:
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
