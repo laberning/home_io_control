@@ -35,6 +35,41 @@ cover::CoverOperation operation_toward(bool invert, float from_io_position, floa
   return opening ? cover::COVER_OPERATION_OPENING : cover::COVER_OPERATION_CLOSING;
 }
 
+/// The direction toward an end position, or IDLE for an intermediate or unknown target.
+/// @param invert True when the cover's IO scale runs the other way (0 = closed).
+/// @param to_io_position Target on the IO scale (0-100).
+cover::CoverOperation operation_toward_end(bool invert, float to_io_position) {
+  const float closed_position = invert ? IO_POSITION_OPEN : IO_POSITION_CLOSED;
+  const float open_position = invert ? IO_POSITION_CLOSED : IO_POSITION_OPEN;
+  if (to_io_position == closed_position)
+    return cover::COVER_OPERATION_CLOSING;
+  if (to_io_position == open_position)
+    return cover::COVER_OPERATION_OPENING;
+  return cover::COVER_OPERATION_IDLE;
+}
+
+/// Direction of a device that is moving with its live position withheld, from the last position
+/// seen to the target.
+///
+/// The last seen position says nothing when it equals the target: a door that opened from closed
+/// reports no position on the way, so a Close sent mid-travel compares 100 with 100 (issue #163). An
+/// end-position target still names the direction, but a device can also report its pre-command
+/// target while starting the other way, so it is trusted only when it is the hub's own command or the
+/// direction already shown. With no position seen at all there is no start point, and the direction
+/// stays unknown.
+/// @param invert True when the cover's IO scale runs the other way (0 = closed).
+/// @param previous_io_position Last position the device reported, or UNKNOWN_POSITION.
+/// @param target Effective target (prediction or observation).
+/// @param own_command True while the target is the hub's own prediction.
+/// @param shown Direction the entity showed before this report.
+cover::CoverOperation operation_with_withheld_position(bool invert, float previous_io_position, float target,
+                                                       bool own_command, cover::CoverOperation shown) {
+  if (previous_io_position != target)
+    return operation_toward(invert, previous_io_position, target);
+  const cover::CoverOperation toward_end = operation_toward_end(invert, target);
+  return own_command || toward_end == shown ? toward_end : cover::COVER_OPERATION_IDLE;
+}
+
 }  // namespace
 
 void IOHomeCover::setup() {
@@ -150,6 +185,7 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
 
   const bool invert = this->effective_invert_();
   const float previous_io_position = this->last_io_position_;
+  const cover::CoverOperation previous_operation = this->current_operation;
 
   // Predictions win over the last observation, per axis (see OptimisticState). `position` is
   // observed-only — the hub never guesses a live position — so it is read directly.
@@ -193,7 +229,8 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
     // The last position we *did* see is enough to say which way the device is going, and
     // `this->position` keeps displaying that value meanwhile rather than blanking, because the
     // assignment above is skipped for an unknown reading.
-    this->current_operation = operation_toward(invert, previous_io_position, eff_target);
+    this->current_operation = operation_with_withheld_position(
+        invert, previous_io_position, eff_target, dev.optimistic.target != UNKNOWN_POSITION, previous_operation);
   } else if (dev.position != UNKNOWN_POSITION) {
     // Either no target at all, or a target equal to the current position while the device says it
     // is moving. The second case is not a standstill: a device flags itself moving while still

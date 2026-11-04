@@ -3250,6 +3250,19 @@ TEST(HubManagement, ReadObjectStopsAtARefusedOpenAndAtAnEmptyObject) {
     EXPECT_NE(result.message.find("object is empty"), std::string::npos) << result.message;
     EXPECT_EQ(radio.get_sent_data().size(), 1u) << "length 0 ends the session; nothing to close";
   }
+  {
+    // Status 7 with length 0 (an RS100 Solar io's 0x6105): empty, not a refusal.
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+    radio.queue_rx(
+        frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x07, 0x00, 0x00})));
+    const auto result = component.probe_device("ABC123", "read_object", "0");
+    EXPECT_NE(result.message.find("object is empty (status 7)"), std::string::npos) << result.message;
+    EXPECT_EQ(result.message.find("refused"), std::string::npos) << result.message;
+    EXPECT_EQ(radio.get_sent_data().size(), 1u);
+  }
 }
 
 TEST(HubManagement, ReadObjectClosesWithoutReadingAnObjectLongerThanTheCap) {

@@ -916,6 +916,107 @@ TEST(PlatformCover, WithheldPositionDirectionRespectsInversion) {
       << "on an inverted device the same travel is the opposite direction";
 }
 
+// A door that opened from closed reports no position on the way, so the last position seen stays
+// 100. A Close sent while it travels then compares 100 with 100 (issue #163): the end-position
+// target names the direction when it is the hub's own command, and the direction stays shown when
+// the device's own report repeats that target.
+namespace {
+void report_closed_then_opening(MockHub &hub) {
+  IoDevice resting{};
+  resting.position = 100.0f;
+  resting.target = 100.0f;
+  resting.is_stopped = true;
+  hub.trigger_device_update("ABC123", resting);
+  IoDevice opening{};
+  opening.position = UNKNOWN_POSITION;
+  opening.target = 0.0f;
+  opening.is_stopped = false;
+  hub.trigger_device_update("ABC123", opening);
+}
+}  // namespace
+
+TEST(PlatformCover, CloseFromWithheldPositionIsShownAsClosing) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+  report_closed_then_opening(hub);
+  ASSERT_EQ(cover.current_operation, COVER_OPERATION_OPENING);
+
+  // Our Close is predicted while the device still reports its old target (0) mid-travel.
+  IoDevice predicted{};
+  predicted.position = UNKNOWN_POSITION;
+  predicted.target = 0.0f;
+  predicted.is_stopped = false;
+  predicted.optimistic.target = 100.0f;
+  predicted.optimistic.motion = OptimisticState::Motion::MOVING;
+  hub.trigger_device_update("ABC123", predicted);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING) << "our own Close names the direction";
+
+  // The device then reports the new target itself; the prediction is gone.
+  IoDevice observed{};
+  observed.position = UNKNOWN_POSITION;
+  observed.target = 100.0f;
+  observed.is_stopped = false;
+  hub.trigger_device_update("ABC123", observed);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING)
+      << "the device's matching report keeps the direction already shown";
+}
+
+TEST(PlatformCover, StaleEndTargetFromWithheldPositionStaysIdleWithoutOwnCommand) {
+  // A move started elsewhere (a remote), from closed: the first report repeats the old target 100
+  // with no position. That may be a device starting to open, so no direction is shown yet.
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.setup();
+
+  IoDevice resting{};
+  resting.position = 100.0f;
+  resting.target = 100.0f;
+  resting.is_stopped = true;
+  hub.trigger_device_update("ABC123", resting);
+
+  IoDevice stale{};
+  stale.position = UNKNOWN_POSITION;
+  stale.target = 100.0f;
+  stale.is_stopped = false;
+  hub.trigger_device_update("ABC123", stale);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+}
+
+TEST(PlatformCover, OwnCloseFromWithheldPositionRespectsInversion) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_invert_position(true);  // IO 0 = closed, IO 100 = open
+  cover.setup();
+
+  IoDevice resting{};
+  resting.position = 0.0f;  // closed
+  resting.target = 0.0f;
+  resting.is_stopped = true;
+  hub.trigger_device_update("ABC123", resting);
+  IoDevice opening{};
+  opening.position = UNKNOWN_POSITION;
+  opening.target = 100.0f;
+  opening.is_stopped = false;
+  hub.trigger_device_update("ABC123", opening);
+  ASSERT_EQ(cover.current_operation, COVER_OPERATION_OPENING);
+
+  IoDevice predicted{};
+  predicted.position = UNKNOWN_POSITION;
+  predicted.target = 100.0f;
+  predicted.is_stopped = false;
+  predicted.optimistic.target = 0.0f;
+  predicted.optimistic.motion = OptimisticState::Motion::MOVING;
+  hub.trigger_device_update("ABC123", predicted);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING) << "IO 0 is the closed end when inverted";
+}
+
 TEST(PlatformCover, WithheldPositionWithNoLastKnownStaysIdle) {
   // Nothing to compare against yet — inventing a direction would be worse than admitting none.
   MockHub hub;

@@ -248,7 +248,11 @@ static constexpr uint8_t TRANSFER_READ_REQ_DATA_SIZE = 3;   ///< CMD_UNKNOWN4A_R
 static constexpr uint8_t TRANSFER_BLOCK_SIZE = 18;  ///< Data bytes per CMD_UNKNOWN4A_RESP; 18 fills a 32-byte frame.
 static constexpr uint8_t TRANSFER_STATUS_ACCEPTED = 0;  ///< CMD_TRANSFER_OPEN_RESP status: request accepted.
 static constexpr uint8_t TRANSFER_STATUS_ADAPTED = 1;   ///< CMD_TRANSFER_OPEN_RESP status: accepted with changes.
-static constexpr uint16_t TRANSFER_CHUNK_CLOSE = 0;     ///< Chunk number of the closing CMD_UNKNOWN4A_REQ.
+/// CMD_TRANSFER_OPEN_RESP status 7 with length 0: nothing to send for this object. An RS100 Solar io
+/// answered its object 0x6105 this way twice, with no other transfer open, so it reads as an empty
+/// object rather than a refusal (issue #156).
+static constexpr uint8_t TRANSFER_STATUS_NOTHING_TO_READ = 7;
+static constexpr uint16_t TRANSFER_CHUNK_CLOSE = 0;  ///< Chunk number of the closing CMD_UNKNOWN4A_REQ.
 /// @}
 
 /// @brief One object a CMD_TRANSFER_OPEN can name: its class byte and its 16-bit id.
@@ -921,6 +925,15 @@ const char *command_result_name(uint8_t result);
 /// @param result Result byte from CMD_ERROR_RESP data[0].
 /// @return Short description suitable for warn-level logs.
 const char *command_result_description(uint8_t result);
+/// @brief Check whether a result code describes one exchange rather than the device's state.
+///
+/// SESSION_INTERRUPTED is the one such code: a garage drive answered three status reads with it
+/// right after a command it did not confirm, and the following exchanges worked normally (issue
+/// #163). It is logged and returned to an action like any other result, but a lasting view of the
+/// device (the Active Issue sensor) treats it as no result.
+/// @param result Result byte from CMD_ERROR_RESP data[0].
+/// @return true for a result that says nothing about the device once the exchange is over.
+constexpr bool command_result_is_transient(uint8_t result) { return result == RESULT_SESSION_INTERRUPTED; }
 /// @brief Check whether a result code represents an environmental or control limitation.
 /// @param result Result byte from CMD_ERROR_RESP data[0].
 /// @return true when the response reports a limitation rather than a generic execution error.

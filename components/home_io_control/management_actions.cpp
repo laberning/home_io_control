@@ -1421,6 +1421,10 @@ void ManagementActions::read_object_blocks_(const IoDevice &dev, const IoFrame &
            static_cast<unsigned>(open.handle), static_cast<unsigned>(open.status), static_cast<unsigned>(open.length));
   result.decoded = head;
   result.message += " [" + result.decoded + "]";
+  if (open.status == TRANSFER_STATUS_NOTHING_TO_READ && open.length == 0) {
+    result.message += " [object is empty (status 7)]";
+    return;
+  }
   if (!open.ok()) {
     result.message += " [device refused the read]";
     return;
