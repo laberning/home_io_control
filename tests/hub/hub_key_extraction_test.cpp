@@ -292,6 +292,81 @@ TEST(HubKeyExtraction, NonDefaultColdBroadcastReplyPreambleChangesDiscoveryReply
 // post-extraction grace window (not an immediate disarm any more -- see arm_post_extraction_grace_())
 // ========================================================================================
 
+namespace {
+
+/// Feeds one 0x28 from the foreign hub to `dst` and returns the first 0x29 data bytes (type/subtype)
+/// the responder broadcast in answer, or {0, 0} when it sent none.
+std::pair<uint8_t, uint8_t> discovery_answer_type_bytes(TestableHubComponent &comp, MockRadio &radio,
+                                                        const uint8_t (&dst)[NODE_ID_SIZE]) {
+  const size_t already_sent = radio.get_sent_data().size();
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  set_dst(discover, dst);
+  comp.process_received_packet_(make_rx_packet(discover));
+  const auto &all_sent = radio.get_sent_data();
+  for (size_t i = already_sent; i < all_sent.size(); i++) {
+    const auto &pkt = all_sent[i];
+    IoFrame sent{};
+    if (parse(pkt.data(), static_cast<uint8_t>(pkt.size()), sent) && sent.cmd == CMD_DISCOVER_RESP &&
+        sent.data_len >= 2)
+      return {sent.data[0], sent.data[1]};
+  }
+  return {0, 0};
+}
+
+constexpr uint8_t TYPED_DISCOVERY_REMOTE[NODE_ID_SIZE] = {0x00, 0xFF, 0xFB};  // type 1023
+constexpr uint8_t OPEN_DISCOVERY[NODE_ID_SIZE] = {0x00, 0x00, 0x3B};
+constexpr uint8_t TYPED_DISCOVERY_UNDEFINED[NODE_ID_SIZE] = {0x00, 0x06, 0x7B};  // type 25: undefined
+
+}  // namespace
+
+TEST(HubKeyExtraction, TypedDiscoveryIsAnsweredWithTheRequestedType) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+
+  const auto typed = discovery_answer_type_bytes(comp, radio, TYPED_DISCOVERY_REMOTE);
+  EXPECT_EQ(typed.first, 0xFF);
+  EXPECT_EQ(typed.second, 0xC0) << "type 1023, subtype 0";
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.advertised_type, DeviceType::REMOTE_CONTROLLER);
+}
+
+TEST(HubKeyExtraction, OpenDiscoveryAfterATypedOneIsAnsweredAsTheDefaultType) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+
+  (void) discovery_answer_type_bytes(comp, radio, TYPED_DISCOVERY_REMOTE);
+  const auto open = discovery_answer_type_bytes(comp, radio, OPEN_DISCOVERY);
+  const auto expected = static_cast<uint16_t>(static_cast<uint16_t>(DeviceType::ROLLER_SHUTTER) << 6);
+  EXPECT_EQ(open.first, expected >> 8);
+  EXPECT_EQ(open.second, expected & 0xFF);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.advertised_type, DeviceType::ROLLER_SHUTTER);
+}
+
+TEST(HubKeyExtraction, TypedDiscoveryOfAnUndefinedTypeIsAnsweredAsTheDefaultType) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+
+  (void) discovery_answer_type_bytes(comp, radio, TYPED_DISCOVERY_UNDEFINED);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.advertised_type, DeviceType::ROLLER_SHUTTER);
+}
+
+TEST(HubKeyExtraction, ReArmRestoresTheDefaultAdvertisedType) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+  (void) discovery_answer_type_bytes(comp, radio, TYPED_DISCOVERY_REMOTE);
+  comp.set_key_extraction_armed(false);
+  comp.set_key_extraction_armed(true);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.advertised_type, DeviceType::ROLLER_SHUTTER);
+}
+
 TEST(HubKeyExtraction, FullExchangeReachesExtractedThenGraceDisarms) {
   TestableHubComponent comp;
   MockRadio radio;

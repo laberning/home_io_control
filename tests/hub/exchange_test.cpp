@@ -1376,9 +1376,34 @@ TEST(Exchange, StatusUpdateAckUsesDriverResponsePreambleOnAllChannels) {
     EXPECT_EQ(tx[i].preamble_len, LongResponsePreambleMockRadio::RESPONSE_PREAMBLE)
         << "tx #" << i << " is a continuation frame and must use the driver's response preamble";
   }
-  EXPECT_EQ(tx[1].freq_hz, FREQ_CH1);
-  EXPECT_EQ(tx[2].freq_hz, FREQ_CH2);
+  // The receive channel (CH2) goes first, then the others in their usual order.
+  EXPECT_EQ(tx[1].freq_hz, FREQ_CH2);
+  EXPECT_EQ(tx[2].freq_hz, FREQ_CH1);
   EXPECT_EQ(tx[3].freq_hz, FREQ_CH3);
+}
+
+TEST(Exchange, StatusUpdateAckStartsOnTheChannelTheExchangeRanOn) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  LongResponsePreambleMockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+
+  IoFrame status_update = build_status_update_from_device(test::DST_ID, comp.node_id_);
+  radio.arm(status_update, test::TEST_SYSTEM_KEY, /*valid=*/true);
+
+  RadioRxPacket pkt{};
+  pkt.len = serialize(status_update, pkt.data, sizeof(pkt.data));
+  ASSERT_GT(pkt.len, 0);
+  pkt.freq_hz = FREQ_CH3;
+  comp.process_received_packet_(pkt);
+
+  const auto &tx = radio.get_tx_configs();
+  ASSERT_EQ(tx.size(), 4u);
+  EXPECT_EQ(tx[1].freq_hz, FREQ_CH3);
+  EXPECT_EQ(tx[2].freq_hz, FREQ_CH1);
+  EXPECT_EQ(tx[3].freq_hz, FREQ_CH2);
 }
 
 // ============================================================================

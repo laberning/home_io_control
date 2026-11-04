@@ -314,7 +314,7 @@ bool IOHomeControlComponent::handle_error_response_(const std::string &device_id
   if (dev != nullptr)
     detail::update_link_health(*dev, this->radio_);
   if (response.data_len == 0) {
-    detail::log_frame_issue(this, "rx", "unsupported_payload", response, frame_length(response));
+    detail::log_frame_issue(this, this->node_id_, "rx", "unsupported_payload", response, frame_length(response));
   } else if (dev != nullptr) {
     detail::record_command_result(*dev, device_id, response.data[0], request.cmd, true);
   } else {

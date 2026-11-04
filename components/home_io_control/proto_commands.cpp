@@ -642,17 +642,36 @@ bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *d
   return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
 }
 
-/// Build the KLF-style status read of the main parameter plus FP1-FP7 (see the header for the
-/// evidence). Read-only and unauthenticated.
-bool create_status_mp_fp_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
+/// Number of set bits in a bitmap byte (the component does not use the C++20 bit header yet).
+static uint8_t count_bits(uint8_t v) {
+  uint8_t n = 0;
+  for (; v != 0; v >>= 1)
+    n += v & 1U;
+  return n;
+}
+
+/// Build the KLF-style status read of the main parameter plus functional parameters (see the header
+/// for the evidence). Read-only and unauthenticated.
+bool create_status_mp_fp_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t fpi1,
+                              uint8_t fpi2) {
+  const uint8_t n1 = count_bits(fpi1);
+  const uint8_t n2 = count_bits(fpi2);
+  if (n1 + n2 == 0 || n1 + n2 > STATUS_MP_FP_PARAM_COUNT)
+    return false;
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
-  uint8_t d[2 + STATUS_MP_FP_PARAM_COUNT + 1] = {PRIVATE_STATUS_MP_FP, STATUS_MP_FP_FPI1_MASK};
-  for (uint8_t i = 0; i < STATUS_MP_FP_PARAM_COUNT; i++)
-    d[2 + i] = STATUS_MP_FP_PARAM_TYPE;
-  d[2 + STATUS_MP_FP_PARAM_COUNT] = STATUS_MP_FP_FPI2;
-  return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
+  // function ID + FPI1 + FPI2 + one status type per requested parameter.
+  uint8_t d[3 + STATUS_MP_FP_PARAM_COUNT];
+  size_t len = 0;
+  d[len++] = PRIVATE_STATUS_MP_FP;
+  d[len++] = fpi1;
+  for (uint8_t i = 0; i < n1; i++)
+    d[len++] = STATUS_MP_FP_PARAM_TYPE;
+  d[len++] = fpi2;
+  for (uint8_t i = 0; i < n2; i++)
+    d[len++] = STATUS_MP_FP_PARAM_TYPE;
+  return set_cmd(f, CMD_PRIVATE, d, len);
 }
 
 /// Build the limitation read (see the header for the evidence and the read-only guarantee).

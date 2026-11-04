@@ -70,6 +70,8 @@ constexpr const char *PROBE_NAME_GENERAL_INFO3 = "general_info3";    ///< Q2: cr
 constexpr const char *PROBE_NAME_PRIVATE2 = "private2";              ///< Q3 long form: create_private2_read().
 constexpr const char *PROBE_NAME_PRIVATE2_SHORT = "private2_short";  ///< Q3 short form: create_private2_read().
 constexpr const char *PROBE_NAME_STATUS_MP_FP = "status_mp_fp";      ///< create_status_mp_fp_read() (no index).
+constexpr const char *PROBE_NAME_STATUS_FP_HIGH =
+    "status_fp_high";  ///< create_status_mp_fp_read() with FPI1 0x00 and the index as the FPI2 bitmap.
 constexpr const char *PROBE_NAME_LIMITATION =
     "limitation";  ///< create_limitation_status_read(); index 0 = minimum, 1 = maximum.
 /// Highest `limitation` index: the two limit types of the KLF 200 API's get-limitation command
@@ -173,6 +175,19 @@ bool build_probe_private2_short(IoFrame &f, const uint8_t *own, const uint8_t *d
 bool build_probe_status_mp_fp(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t /*index*/, bool low_power) {
   return create_status_mp_fp_read(f, own, dst, low_power);
 }
+/// `status_fp_high`: main parameter plus the FP9-FP16 selected by the index bitmap. The builder itself
+/// refuses an empty or oversized selection, so the probe stays safe without probe_device()'s index_valid gate.
+bool build_probe_status_fp_high(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
+  return create_status_mp_fp_read(f, own, dst, low_power, /*fpi1=*/0x00, /*fpi2=*/index);
+}
+
+/// True when `bitmap` selects between 1 and STATUS_MP_FP_PARAM_COUNT parameters.
+bool status_fp_high_bitmap_valid(uint8_t bitmap) {
+  uint8_t bits = 0;
+  for (uint8_t v = bitmap; v != 0; v >>= 1)
+    bits += v & 1U;
+  return bits >= 1 && bits <= STATUS_MP_FP_PARAM_COUNT;
+}
 
 bool build_probe_limitation(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
   if (index > PROBE_LIMITATION_MAX_INDEX) {
@@ -235,10 +250,14 @@ struct ProbeDescriptor {
   bool needs_index;   ///< False for the probes whose builders take no index/selector ("general_info3", "get_info1",
                       ///< "get_info2", "status_mp_fp").
   uint8_t max_index;  ///< Highest index the probe accepts; the full byte range when index_help is null.
-  bool sweepable;     ///< False for a probe that changes state in the device: probe_sweep() refuses it.
+  bool sweepable;     ///< False for a probe that changes state in the device, or whose index is a bitmap rather than
+                      ///< an ordinal: probe_sweep() refuses it.
   bool reads_blocks{false};  ///< True for `read_object`: an accepted first reply is followed by block reads.
   /// True for the register probes: refused unless device_accepts_register_probe() holds for the target.
   bool register_read{false};
+  /// Optional check of the parsed index beyond max_index (a bitmap index); false is reported with
+  /// index_out_of_range_message().
+  bool (*index_valid)(uint8_t){nullptr};
 };
 
 /// @brief The full set of probes probe_device()/probe_sweep() can dispatch to.
@@ -258,6 +277,10 @@ constexpr ProbeDescriptor PROBE_TABLE[] = {
     {PROBE_NAME_PRIVATE2, build_probe_private2_long, nullptr, true, UINT8_MAX, true},
     {PROBE_NAME_PRIVATE2_SHORT, build_probe_private2_short, nullptr, true, UINT8_MAX, true},
     {PROBE_NAME_STATUS_MP_FP, build_probe_status_mp_fp, nullptr, false, UINT8_MAX, true},
+    // The FP9-FP16 twin of status_mp_fp: the index is the FPI2 bitmap, not an ordinal, so it is not swept.
+    {PROBE_NAME_STATUS_FP_HIGH, build_probe_status_fp_high,
+     "FP9-FP16 bitmap, bit 7 = FP9 ... bit 0 = FP16, at most 7 bits (e.g. 0x43 = FP10, FP15, FP16)", true, UINT8_MAX,
+     false, false, false, status_fp_high_bitmap_valid},
     {PROBE_NAME_LIMITATION, build_probe_limitation, "index 0 (minimum) or 1 (maximum)", true,
      PROBE_LIMITATION_MAX_INDEX, true},
     // The two probes that change device state (ADR 0060): one stores a subscription, the other is an
@@ -306,6 +329,13 @@ std::string unknown_probe_message(const std::string &probe) {
 /// @brief The error message for an index above a probe's max_index (probe_device() and probe_sweep()).
 std::string index_out_of_range_message(const ProbeDescriptor &descriptor) {
   return "probe \"" + std::string(descriptor.name) + "\" takes " + descriptor.index_help;
+}
+
+/// @brief True when `index` is within the probe's max_index and passes its optional bitmap check.
+bool probe_index_in_range(const ProbeDescriptor &descriptor, uint8_t index) {
+  if (index > descriptor.max_index)
+    return false;
+  return descriptor.index_valid == nullptr || descriptor.index_valid(index);
 }
 
 /// @brief Shared probe-name lookup for probe_device()/probe_sweep(): returns the descriptor, or
@@ -1288,7 +1318,7 @@ ManagementActionResult ManagementActions::probe_device(const std::string &device
     result.message = "index must be a decimal or 0x-prefixed byte value (0-255)";
     return result;
   }
-  if (descriptor->needs_index && index_byte > descriptor->max_index) {
+  if (descriptor->needs_index && !probe_index_in_range(*descriptor, index_byte)) {
     result.message = index_out_of_range_message(*descriptor);
     return result;
   }

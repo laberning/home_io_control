@@ -973,3 +973,20 @@ TEST(ProtoFrame, DecodeDiscoveryResponseEmptyPayload) {
   EXPECT_FALSE(device.inverted);
   EXPECT_EQ(device_id, "112233");
 }
+
+TEST(ProtoFrameExtended, DiscoveryTargetTypeReadsTheTypeBitsOfDiscoveryAddressesOnly) {
+  const uint8_t remote[3] = {0x00, 0xFF, 0xFB};
+  EXPECT_EQ(discovery_target_type(remote), DeviceType::REMOTE_CONTROLLER);
+  const uint8_t type11[3] = {0x00, 0x02, 0xFB};
+  EXPECT_EQ(discovery_target_type(type11), static_cast<DeviceType>(11));
+  const uint8_t open[3] = {0x00, 0x00, 0x3B};
+  EXPECT_EQ(discovery_target_type(open), DeviceType::UNKNOWN);
+  const uint8_t broadcast_all[3] = {0x00, 0x00, 0x3F};
+  EXPECT_EQ(discovery_target_type(broadcast_all), DeviceType::UNKNOWN);
+  const uint8_t unicast[3] = {0x01, 0xFF, 0xFB};
+  EXPECT_EQ(discovery_target_type(unicast), DeviceType::UNKNOWN);
+  const uint8_t other_suffix[3] = {0x00, 0xFF, 0xFC};
+  EXPECT_EQ(discovery_target_type(other_suffix), DeviceType::UNKNOWN);
+  const uint8_t undefined_type[3] = {0x00, 0x06, 0x7B};  // type 25
+  EXPECT_EQ(discovery_target_type(undefined_type), DeviceType::UNKNOWN);
+}

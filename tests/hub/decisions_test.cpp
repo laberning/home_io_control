@@ -925,3 +925,21 @@ TEST(Decisions, OverheardCommandWritesOnlyForTheWriteCommands) {
     EXPECT_EQ(decisions::overheard_command_writes(static_cast<uint8_t>(cmd)), expected) << "cmd " << cmd;
   }
 }
+
+TEST(Decisions, FrameIssueIsAWarningOnlyWhenAddressedToADeviceOrToUs) {
+  // dst is the hub: a real problem whoever the source is.
+  EXPECT_TRUE(decisions::frame_issue_is_warning(false, true));
+  // dst is a registered device.
+  EXPECT_TRUE(decisions::frame_issue_is_warning(true, false));
+  // dst is neither (a broadcast such as 00003F, or another controller), even from a registered
+  // source: overheard traffic, DEBUG.
+  EXPECT_FALSE(decisions::frame_issue_is_warning(false, false));
+}
+
+TEST(Decisions, StatusUpdateAckChannelOrderPutsTheReceiveChannelFirst) {
+  using Order = std::array<uint32_t, 3>;
+  EXPECT_EQ(decisions::status_update_ack_channel_order(FREQ_CH3), (Order{FREQ_CH3, FREQ_CH1, FREQ_CH2}));
+  EXPECT_EQ(decisions::status_update_ack_channel_order(FREQ_CH2), (Order{FREQ_CH2, FREQ_CH1, FREQ_CH3}));
+  EXPECT_EQ(decisions::status_update_ack_channel_order(FREQ_CH1), (Order{FREQ_CH1, FREQ_CH2, FREQ_CH3}));
+  EXPECT_EQ(decisions::status_update_ack_channel_order(0), (Order{FREQ_CH1, FREQ_CH2, FREQ_CH3}));
+}

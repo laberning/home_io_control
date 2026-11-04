@@ -150,6 +150,26 @@ TEST(ProtoCommandsProbeBuilders, StatusMpFpReadMatchesMainsRequestFromALiveKlf20
                              0x01, 0x01, 0x01, 0x00});
 }
 
+TEST(ProtoCommandsProbeBuilders, StatusMpFpReadWithSecondBitmapListsOneTypePerFpBit) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_status_mp_fp_read(frame, test::OWN_ID, test::DST_ID, false, 0x00, 0x43));
+  const uint8_t expected43[] = {0x01, 0x00, 0x43, 0x01, 0x01, 0x01};
+  ASSERT_EQ(frame.data_len, sizeof(expected43));
+  EXPECT_EQ(0, std::memcmp(frame.data, expected43, sizeof(expected43)));
+
+  ASSERT_TRUE(create_status_mp_fp_read(frame, test::OWN_ID, test::DST_ID, false, 0x00, 0x78));
+  const uint8_t expected78[] = {0x01, 0x00, 0x78, 0x01, 0x01, 0x01, 0x01};
+  ASSERT_EQ(frame.data_len, sizeof(expected78));
+  EXPECT_EQ(0, std::memcmp(frame.data, expected78, sizeof(expected78)));
+}
+
+TEST(ProtoCommandsProbeBuilders, StatusMpFpReadRejectsEmptyAndOversizedSelections) {
+  IoFrame frame{};
+  EXPECT_FALSE(create_status_mp_fp_read(frame, test::OWN_ID, test::DST_ID, false, 0x00, 0x00));
+  EXPECT_FALSE(create_status_mp_fp_read(frame, test::OWN_ID, test::DST_ID, false, 0x00, 0xFF));
+  EXPECT_FALSE(create_status_mp_fp_read(frame, test::OWN_ID, test::DST_ID, false, 0xFE, 0x01));
+}
+
 TEST(ProtoCommandsProbeBuilders, LimitationStatusReadMinimumMatchesKlf200Request) {
   IoFrame frame{};
   const uint8_t own[3] = {0x97, 0xDE, 0x1A};

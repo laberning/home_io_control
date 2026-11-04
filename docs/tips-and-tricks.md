@@ -62,6 +62,24 @@ cover:
 The position is an estimate. A press on the physical remote moves the device without telling Home
 Assistant, so the estimate drifts until the next full open or close re-synchronises it.
 
+## Quieting frame warnings in the log
+
+The hub logs a line when it receives a frame it did not act on, for example a command it does not
+handle or a rejected status update. These lines use their own log tag, `home_io_control.frame`, and
+appear as warnings only when the frame is addressed to one of your devices or to the hub. Frames the
+hub merely overheard, such as a heater broadcasting its menu state once a second, stay at debug level.
+
+If a device still floods the log, raise the level of that tag only:
+
+```yaml
+logger:
+  logs:
+    home_io_control.frame: ERROR
+```
+
+This also hides the `auth_failed` lines, which you need when you diagnose pairing or a device that
+ignores commands. Remove the line before you collect a log for an issue report.
+
 ## See also
 
 - [Sending 1W commands](configuration/oneway-transmit.md) — the buttons a slider is composed from

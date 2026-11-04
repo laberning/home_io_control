@@ -596,8 +596,10 @@ static constexpr uint8_t PRIVATE_GET_POSITION_STATUS = 0x03;
 static constexpr uint8_t PRIVATE_STATUS_MP_FP = 0x01;     ///< CMD_PRIVATE function ID at data[0].
 static constexpr uint8_t STATUS_MP_FP_FPI1_MASK = 0xFE;   ///< FPI1: FP1..FP7 requested (bit 7 = FP1 ... bit 1 = FP7).
 static constexpr uint8_t STATUS_MP_FP_PARAM_TYPE = 0x01;  ///< Status type per requested parameter: current value.
-static constexpr uint8_t STATUS_MP_FP_PARAM_COUNT = 7;    ///< FP1-FP7: the most one request can select.
-static constexpr uint8_t STATUS_MP_FP_FPI2 = 0x00;        ///< FPI2: no FP9-FP16 requested.
+static constexpr uint8_t STATUS_MP_FP_PARAM_COUNT =
+    7;  ///< Largest selection seen on air (FP1-FP7), kept as a conservative cap across both bitmaps.
+static constexpr uint8_t STATUS_MP_FP_FPI2 =
+    0x00;  ///< FPI2: no FP9-FP16 requested (bit 7 = FP9 ... bit 0 = FP16 otherwise).
 /// @}
 
 /// @name Limitation read (CMD_LIMITATION_STATUS_REQ / CMD_LIMITATION_STATUS_RESP)

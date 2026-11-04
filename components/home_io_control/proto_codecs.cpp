@@ -248,6 +248,12 @@ DeviceType broadcast_target_type(const uint8_t addr[NODE_ID_SIZE]) {
   return static_cast<DeviceType>(type_raw);
 }
 
+DeviceType discovery_target_type(const uint8_t addr[NODE_ID_SIZE]) {
+  if (classify_address(addr) != AddressClass::DISCOVERY)
+    return DeviceType::UNKNOWN;
+  return broadcast_target_type(addr);
+}
+
 void encode_broadcast_address(DeviceType type, uint8_t out[NODE_ID_SIZE]) {
   // Both bytes together carry the ten type bits, so a 16-bit enumerator is encoded exactly; bits
   // above the wire field are dropped explicitly rather than spilling into out[1].
