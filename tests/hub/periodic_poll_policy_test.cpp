@@ -3,8 +3,8 @@
 ///
 /// Covers: first-poll delay and jitter bounds (including overflow-prone 24 h intervals), periodic
 /// re-arm from the pop time, spreading of devices that share an interval, defer semantics, the
-/// one retry after an unanswered poll, the miss counter that turns a reading unusable, and millis()
-/// rollover.
+/// restart after a report the device gave unpolled, the one retry after an unanswered poll, the miss
+/// counter that turns a reading unusable, and millis() rollover.
 
 #include "periodic_poll_policy.h"
 
@@ -164,6 +164,67 @@ TEST(PeriodicPollPolicy, DeferIgnoresAnUnscheduledDevice) {
   PeriodicPollPolicy policy;
   policy.defer("DEV", PERIODIC_POLL_MOVING_RETRY_MS, T0);
   EXPECT_FALSE(policy.pop_due_device(T0 + 10 * INTERVAL, 0).has_value());
+}
+
+// ============================================================================
+// Restart after a report the device gave unpolled
+// ============================================================================
+
+TEST(PeriodicPollPolicy, RestartMovesTheNextPollAWholeIntervalOut) {
+  PeriodicPollPolicy policy;
+  policy.set_interval("DEV", INTERVAL, T0, 0);  // first poll at T0 + 15 s
+  const uint32_t reported_at = T0 + 10000;
+
+  policy.restart_interval("DEV", reported_at, 0);
+
+  EXPECT_EQ(policy.get_next_poll("DEV"), reported_at + 810000) << "15 min less 10 %, at random 0";
+  EXPECT_FALSE(policy.has_due(T0 + 15000)) << "the device reported 5 s before; no poll is needed";
+}
+
+TEST(PeriodicPollPolicy, RestartCountsFromTheReportEvenWhenThatIsEarlier) {
+  PeriodicPollPolicy policy;
+  policy.set_interval("DEV", INTERVAL, T0, 0);
+  const uint32_t now = T0 + 15000;
+  ASSERT_TRUE(policy.pop_due_device(now, RANDOM_MAX).has_value());  // next poll at now + 990 s
+
+  policy.restart_interval("DEV", now + 1000, 0);
+
+  EXPECT_EQ(policy.get_next_poll("DEV"), now + 1000 + 810000);
+}
+
+TEST(PeriodicPollPolicy, DevicesThatReportedTogetherComeDueAtDifferentTimes) {
+  PeriodicPollPolicy policy;
+  policy.set_interval("A", INTERVAL, T0, 0);
+  policy.set_interval("B", INTERVAL, T0, 0);
+
+  // A group command: both report in the same moment, the random draws differ.
+  policy.restart_interval("A", T0 + 1000, 0);
+  policy.restart_interval("B", T0 + 1000, RANDOM_MAX);
+
+  EXPECT_EQ(policy.get_next_poll("A"), T0 + 1000 + 810000);
+  EXPECT_EQ(policy.get_next_poll("B"), T0 + 1000 + 990000);
+}
+
+TEST(PeriodicPollPolicy, RestartDropsAnArmedRetry) {
+  PeriodicPollPolicy policy;
+  policy.set_interval("DEV", INTERVAL, T0, 0);
+  const uint32_t now = T0 + 15000;
+  ASSERT_TRUE(policy.pop_due_device(now, MID).has_value());
+  policy.on_poll_unanswered("DEV", now);
+  ASSERT_TRUE(policy.retry_armed("DEV"));
+
+  policy.restart_interval("DEV", now + 1000, 0);
+
+  EXPECT_FALSE(policy.retry_armed("DEV")) << "the device gave what the retry would have asked for";
+  EXPECT_EQ(policy.get_next_poll("DEV"), now + 1000 + 810000);
+}
+
+TEST(PeriodicPollPolicy, RestartIgnoresAnUnscheduledDevice) {
+  PeriodicPollPolicy policy;
+  policy.restart_interval("DEV", T0, 0);
+
+  EXPECT_EQ(policy.get_next_poll("DEV"), 0u);
+  EXPECT_FALSE(policy.has_due(T0 + 10 * INTERVAL));
 }
 
 // ============================================================================

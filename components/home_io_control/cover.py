@@ -7,8 +7,8 @@
 ## ``invert_position`` option, the named-position companion buttons (favorite, ventilation), the
 ## ``silent`` and ``travel_speed`` keys with their switch and select, the opt-in
 ## ``rain_sensor_poll_interval`` key with its rain binary sensor, the opt-in ``sun_level_poll_interval``
-## and ``battery_level_poll_interval`` keys with their sensors, and the opt-in ``battery`` key with its
-## two battery sensors — stay here.
+## and ``battery_level_poll_interval`` keys with their sensors, the opt-in ``status_refresh_interval``
+## key, and the opt-in ``battery`` key with its two battery sensors — stay here.
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
@@ -37,6 +37,7 @@ from .hub_validators import (
     device_type_name,
     validate_battery_level_poll_interval,
     validate_rain_sensor_poll_interval,
+    validate_status_refresh_interval,
     validate_sun_level_poll_interval,
 )
 from .platform_common import (
@@ -68,6 +69,7 @@ CONF_SUN_LEVEL_POLL_INTERVAL = "sun_level_poll_interval"
 CONF_SUN_LEVEL_SENSOR_ID = "_sun_level_sensor_id"
 CONF_BATTERY_LEVEL_POLL_INTERVAL = "battery_level_poll_interval"
 CONF_BATTERY_LEVEL_SENSOR_ID = "_battery_level_sensor_id"
+CONF_STATUS_REFRESH_INTERVAL = "status_refresh_interval"
 CONF_BATTERY = "battery"
 CONF_BATTERY_LOW_SENSOR_ID = "_battery_low_sensor_id"
 CONF_BATTERY_SENSOR_ID = "_battery_sensor_id"
@@ -308,6 +310,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(
                 CONF_BATTERY_LEVEL_POLL_INTERVAL
             ): validate_battery_level_poll_interval,
+            cv.Optional(CONF_STATUS_REFRESH_INTERVAL): validate_status_refresh_interval,
         }
     )
     .extend({cv.Optional(CONF_BATTERY): cv.boolean})
@@ -435,6 +438,13 @@ async def to_code(config):
             battery_level_sensor_name(config),
             unit_of_measurement=UNIT_PERCENT,
             device_class=DEVICE_CLASS_BATTERY,
+        )
+
+    if CONF_STATUS_REFRESH_INTERVAL in config:
+        cg.add(
+            var.set_status_refresh_interval(
+                config[CONF_STATUS_REFRESH_INTERVAL].total_milliseconds
+            )
         )
 
     if CONF_BATTERY_LOW_SENSOR_ID in config:

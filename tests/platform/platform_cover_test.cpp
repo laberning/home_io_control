@@ -327,6 +327,30 @@ TEST(PlatformCover, SetupSchedulesNoRainPollWithoutTheKey) {
   EXPECT_EQ(hub.rain_poll_policy_.get_interval("ABC123"), 0u) << "a cover that never opted in is never polled";
 }
 
+TEST(PlatformCover, SetupForwardsTheStatusRefreshInterval) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_status_refresh_interval(900000);
+
+  cover.setup();
+
+  EXPECT_EQ(hub.status_refresh_policy_.get_interval("ABC123"), 900000u)
+      << "the opt-in interval must reach the hub's status refresh schedule";
+}
+
+TEST(PlatformCover, SetupSchedulesNoStatusRefreshWithoutTheKey) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+
+  cover.setup();
+
+  EXPECT_EQ(hub.status_refresh_policy_.get_interval("ABC123"), 0u) << "a cover that never opted in is never read";
+}
+
 TEST(PlatformCover, SetupStoresLowPowerFlag) {
   MockHub hub;
   TestableCover cover;

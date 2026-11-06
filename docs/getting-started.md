@@ -262,6 +262,9 @@ A few additional options worth knowing about:
   [Travel speed](configuration/cover.md#travel-speed). A cover takes either this or `silent:`.
 - **`rain_sensor_poll_interval: 15min`** — on a VELUX window with a wired rain sensor, adds a Rain
   sensor binary sensor; see [Polling for rain](configuration/cover.md#polling-for-rain).
+- **`status_refresh_interval: 5min`** — reads a cover at rest once it has reported nothing for
+  that long, so a change the hub did not hear (another controller, a rain closure) shows up; see
+  [Refreshing the status at rest](configuration/cover.md#refreshing-the-status-at-rest).
 
 The rest are in [Covers](configuration/cover.md), and on each platform's own page.
 

@@ -619,6 +619,7 @@ void IOHomeControlComponent::apply_status_update_(const std::string &id, IoDevic
   // They use different offsets for the target/current fields and do not carry reliable tilt data.
   const float predicted_target = dev.optimistic.target;
   apply_unsolicited_status_update(id, dev, frame, this->poll_policy_);
+  this->note_status_reported_(id);
   const LastCommandRecord record = decode_last_command_record(frame, STATUS_UPDATE_LAST_COMMAND_OFFSET);
   detail::apply_last_command_record(dev, record);
   detail::update_rain_limitation(id, dev, predicted_target, record.valid, millis());
@@ -677,6 +678,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
       // Same reason as the record above: only a reply to a status poll is a status report.
       apply_battery_state(id, dev, frame);
       apply_heating_main_parameter(id, dev, frame);
+      this->note_status_reported_(id);
     }
     detail::clear_command_result(dev);
     detail::log_status_update(id, dev);

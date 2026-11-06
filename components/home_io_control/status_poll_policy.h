@@ -71,8 +71,9 @@ static constexpr uint32_t HEATING_POST_WRITE_POLL_DELAY_MS = 45000;
 static constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS = 2000;
 /// How long a device's authenticated status or this hub's own read-triggered poll keeps a further
 /// overheard read from triggering another poll (0 = never polled, so the first read polls). Covers
-/// have no background poll, so a read by another controller is the cue that something the hub did not
-/// hear (a rain closure, a local button) may have changed.
+/// have no background poll unless they opt into `status_refresh_interval`, so a read by another
+/// controller is the cue that something the hub did not hear (a rain closure, a local button) may have
+/// changed.
 static constexpr uint32_t FOREIGN_READ_RESYNC_MS = 600000;
 /// A device challenges a request 2.5-3.3 ms after it; 100 ms is far above that and far below the next
 /// request. A challenge within this window of a heard request from the same controller answers that

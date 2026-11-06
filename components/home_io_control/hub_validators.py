@@ -42,6 +42,7 @@ from .hub_names import (
     MIN_RAIN_SENSOR_POLL_INTERVAL_MS,
     MIN_SUN_LEVEL_POLL_INTERVAL_MS,
     MIN_STATUS_POLL_INTERVAL_MS,
+    MIN_STATUS_REFRESH_INTERVAL_MS,
     home_io_control_ns,
 )
 
@@ -604,4 +605,11 @@ def validate_battery_level_poll_interval(value):
     """Validate battery_level_poll_interval is at least MIN_BATTERY_LEVEL_POLL_INTERVAL_MS."""
     return _validate_min_interval(
         value, MIN_BATTERY_LEVEL_POLL_INTERVAL_MS, "battery_level_poll_interval"
+    )
+
+
+def validate_status_refresh_interval(value):
+    """Validate status_refresh_interval is at least MIN_STATUS_REFRESH_INTERVAL_MS."""
+    return _validate_min_interval(
+        value, MIN_STATUS_REFRESH_INTERVAL_MS, "status_refresh_interval"
     )

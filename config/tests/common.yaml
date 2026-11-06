@@ -153,6 +153,9 @@ cover:
     # Declaring `travel_speed:` is what generates the Travel Speed select; "Test Silent Cover"
     # declares `silent:` instead (the two are exclusive), so the pair compiles both.
     travel_speed: default
+    # `status_refresh_interval:` adds no entity, only the schedule; the covers above omit it, so this
+    # compiles both branches of the setter.
+    status_refresh_interval: 15min
 
 light:
   - platform: home_io_control
