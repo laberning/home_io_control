@@ -399,9 +399,13 @@ never was, or the switch is off):
 ```
 Try 1 ended: no first response for cmd=PRIVATE(0x03) within 400 ms preamble=32 age_ms=6712
 Try 3 answered: cmd=PRIVATE(0x03) wait_ms=231 preamble=1024 age_ms=8190
-Auth challenge try=1 wait_ms=26 req_cmd=0x00 req_len=6 preamble=32 age_ms=1034
-``` Off restores the old behaviour: the
-wake-up preamble on every try to a `low_power:` device.
+Auth challenge try=1 wait_ms=26 req_cmd=0x00 req_len=6 preamble=32 age_ms=1034 answer_us=8650
+```
+
+`answer_us=` on the challenge line is the time from receiving the device's challenge until the hub
+is listening again after its answer. It includes the answer's own airtime.
+
+With the switch off, every try to a `low_power:` device uses the wake-up preamble.
 
 #### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
 

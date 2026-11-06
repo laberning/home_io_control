@@ -590,6 +590,7 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
       return ReplyDisposition::IGNORE;
     }
     ctx.first_response_ms = millis();
+    ctx.first_response_us = micros();
     return ReplyDisposition::ACCEPT;
   });
 
@@ -614,17 +615,28 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
   // No challenge bytes here: the raw 0x3C payload plus the 0x3D response it provokes is a
   // known-plaintext/known-ciphertext pair under the system key (see redaction.h). The generic
   // frame-log helpers (log_frame()/log_component_capture()) already mask both commands.
-  char age[TRY_AGE_BUFFER_SIZE];
-  format_try_age(ctx, age);
-  ESP_LOGI(TAG, "Auth challenge try=%d wait_ms=%" PRIu32 " req_cmd=0x%02X req_len=%u preamble=%u age_ms=%s",
-           ctx.try_index, ctx.first_response_ms - ctx.try_start_ms, request.cmd, request.data_len, ctx.request_preamble,
-           age);
-
   ctx.state = exchange::OutboundExchangeState::TX_AUTH_RESPONSE;
   this->record_debug(outbound_stage_name(ctx.state), ctx.try_index, true);
+  // Nothing is logged before the 0x3D: some receivers drop the command when the answer comes late,
+  // and a log line here sits between challenge and answer (issue #163). The line below is printed
+  // after the send; every driver re-arms RX inside send_packet(), so the final reply is still
+  // received while it prints.
   // answer_challenge() covers both the 0x3D build and its transmit as one step, so a failure here
   // does not distinguish which of the two failed.
-  if (!this->answer_challenge(request, ctx.rx, freq)) {
+  const bool answered = this->answer_challenge(request, ctx.rx, freq);
+  const uint32_t answer_us = micros() - ctx.first_response_us;
+
+  char age[TRY_AGE_BUFFER_SIZE];
+  format_try_age(ctx, age);
+  // answer_us: from the challenge being accepted until answer_challenge() returned: the 0x3D's
+  // build, its airtime up to TxDone, and the driver's RX re-arm and post-TX settle.
+  ESP_LOGI(TAG,
+           "Auth challenge try=%d wait_ms=%" PRIu32
+           " req_cmd=0x%02X req_len=%u preamble=%u age_ms=%s answer_us=%" PRIu32,
+           ctx.try_index, ctx.first_response_ms - ctx.try_start_ms, request.cmd, request.data_len, ctx.request_preamble,
+           age, answer_us);
+
+  if (!answered) {
     ctx.state = exchange::OutboundExchangeState::FAILED;
     this->record_debug("auth_response_failed", ctx.try_index, true);
     return false;

@@ -79,6 +79,9 @@ Pairing reported `paired`, the entity exists, and commands do nothing.
 - **If a wall remote moves the device and Home Assistant does not notice**, the hub is not
   listening for that remote. Add it to `linked_remotes:` — see
   [Linked remotes](configuration/remotes.md#linked-remotes).
+- **If a linked remote's press is sometimes not noticed**, it probably arrived while the hub was
+  polling after an earlier press — see
+  [When a press is missed](configuration/remotes.md#when-a-press-is-missed).
 - [Diagnostic entities](diagnostic-entities.md) explains what each companion sensor reports.
 
 ## Commands are ignored mid-motion
@@ -206,6 +209,11 @@ is a general starting point, not a guarantee — different devices need differen
    sx1262_rx_bandwidth: 46.9        # then 39.0 — narrower, not wider
    sx1262_response_preamble: 12     # then 16
    ```
+
+   A longer response preamble also delays the hub's answer to the device's challenge. Some
+   devices reject a late answer: a Somfy MOTO 1000 io garage drive ignored all six test commands
+   with `sx1262_response_preamble: 32` ([issue #163](https://github.com/laberning/home_io_control/issues/163)).
+   If commands stop working after you raise it, set it back.
 
 9. **If the logs show LBT delaying transmissions** on a quiet channel, relax LBT — but read
    [Safety and compliance](configuration/tuning.md#safety-and-compliance) before you leave a

@@ -80,6 +80,7 @@ struct OutboundExchangeContext {
   uint32_t try_start_ms{0};         ///< millis() when this try's request transmit began, after any retry gap.
   uint32_t wait_ms{0};              ///< Current timeout window for the active wait (ms).
   uint32_t first_response_ms{0};    ///< Timestamp when the first valid response arrived (for RTT/timing).
+  uint32_t first_response_us{0};    ///< micros() at the same moment, for the sub-millisecond challenge-to-0x3D time.
   uint16_t request_preamble{0};     ///< Start preamble (bytes) this try's request went out with.
   uint32_t target_last_seen_ms{0};  ///< When the target was last heard (millis), 0 = unknown; logged as
                                     ///< the try's `age_ms=` so field logs can relate hits to wake state.

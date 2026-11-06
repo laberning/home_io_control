@@ -98,6 +98,16 @@ Notes:
 - **Tilt-only commands are not optimistic.** Setting only a tilt value (no position) queues the command normally but does not show an optimistic state change, since tilt has no equivalent "direction" concept in the cover UI. A combined position+tilt command *does* apply the optimistic position target.
 - **Class-linked devices are safety-filtered.** When a typed broadcast (e.g. "all awnings") also fans out to `class:`-linked devices, a device is only optimistically moved if its own declared `io_device_type` matches the broadcast's target type — it is never skipped for polling, only for the optimistic nudge. This prevents an "all awnings" press from optimistically moving a device you've linked to that class but declared as a different type.
 
+### When a press is missed
+
+The radio cannot listen while the hub transmits, so a remote press that arrives while the hub is in
+the middle of its own exchange is lost. This happens most often right after a press: the hub then
+polls the linked devices for a while, and a second press on another remote a few seconds later can
+fall into one of those polls. The device moves, but the entity keeps its old state until the next
+press the hub hears, a Home Assistant command, or a `status_poll_interval` poll. Low-power devices
+make it likelier, because each wake-up preamble keeps the transmitter busy for about 0.2 s. See
+[issue #209](https://github.com/laberning/home_io_control/issues/209).
+
 ### What the decoded log tells you
 
 | Field | Meaning |
