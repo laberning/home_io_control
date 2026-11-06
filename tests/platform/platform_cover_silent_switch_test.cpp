@@ -24,17 +24,17 @@ class SilentSwitchMockHub : public test::MockPlatformHubBase {
   SilentSwitchMockHub() = default;
   ~SilentSwitchMockHub() override = default;
 
-  void set_device_silent(const std::string &device_id, bool silent) override {
+  void set_device_travel_speed(const std::string &device_id, TravelSpeed speed) override {
     last_device_id_ = device_id;
-    last_silent_ = silent;
+    last_speed_ = speed;
     calls_++;
-    device_.silent = silent;
+    device_.travel_speed = speed;
   }
 
   IoDevice *get_device(const std::string &device_id) override { return device_id == known_id_ ? &device_ : nullptr; }
 
   std::string last_device_id_;
-  bool last_silent_{false};
+  TravelSpeed last_speed_{TravelSpeed::FAST};
   int calls_{0};
   std::string known_id_{"ABC123"};
   IoDevice device_{};
@@ -50,13 +50,13 @@ TEST(PlatformCoverSilentSwitch, ToggleOnSelectsSilentTravelForItsOwnDevice) {
 
   EXPECT_EQ(hub.calls_, 1);
   EXPECT_EQ(hub.last_device_id_, "ABC123") << "the toggle must only affect the cover it belongs to";
-  EXPECT_TRUE(hub.last_silent_);
+  EXPECT_EQ(hub.last_speed_, TravelSpeed::SILENT);
   EXPECT_TRUE(sw.get_state()) << "the switch reports the state it just applied";
 }
 
 TEST(PlatformCoverSilentSwitch, ToggleOffRestoresNormalTravel) {
   SilentSwitchMockHub hub;
-  hub.device_.silent = true;
+  hub.device_.travel_speed = TravelSpeed::SILENT;
   TestableIOHomeCoverSilentSwitch sw;
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");
@@ -64,7 +64,7 @@ TEST(PlatformCoverSilentSwitch, ToggleOffRestoresNormalTravel) {
   sw.trigger_write(false);
 
   EXPECT_EQ(hub.calls_, 1);
-  EXPECT_FALSE(hub.last_silent_);
+  EXPECT_EQ(hub.last_speed_, TravelSpeed::FAST) << "off is the speed the hub sends without `silent:`";
   EXPECT_FALSE(sw.get_state());
 }
 
@@ -72,7 +72,7 @@ TEST(PlatformCoverSilentSwitch, SetupPublishesTheYamlDeclaredBootState) {
   // Restore mode is DISABLED precisely so this, not flash, decides the boot state — otherwise Home
   // Assistant could start out disagreeing with what the hub will actually transmit.
   SilentSwitchMockHub hub;
-  hub.device_.silent = true;
+  hub.device_.travel_speed = TravelSpeed::SILENT;
   TestableIOHomeCoverSilentSwitch sw;
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");

@@ -1,0 +1,12 @@
+# expect-error: silent: and travel_speed: set the same thing
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+cover:
+  - platform: home_io_control
+    name: "Roof Window"
+    io_device_id: "8D7633"
+    io_device_type: window_opener
+    silent: true
+    travel_speed: default

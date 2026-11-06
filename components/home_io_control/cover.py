@@ -4,14 +4,15 @@
 ##
 ## Bridges the YAML ``cover:`` platform declaration to the runtime IOHomeCover entity.
 ## Shared device-binding logic lives in platform_common.py; cover-specific extras — the
-## ``invert_position`` option, the named-position companion buttons (favorite, ventilation), the opt-in
+## ``invert_position`` option, the named-position companion buttons (favorite, ventilation), the
+## ``silent`` and ``travel_speed`` keys with their switch and select, the opt-in
 ## ``rain_sensor_poll_interval`` key with its rain binary sensor, the opt-in ``sun_level_poll_interval``
 ## and ``battery_level_poll_interval`` keys with their sensors, and the opt-in ``battery`` key with its
 ## two battery sensors — stay here.
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, button, cover, sensor, switch, text_sensor
+from esphome.components import binary_sensor, button, cover, select, sensor, switch, text_sensor
 from esphome.const import (
     CONF_DEVICE_CLASS,
     CONF_DISABLED_BY_DEFAULT,
@@ -58,6 +59,8 @@ DEPENDENCIES = ["home_io_control"]
 
 CONF_SILENT = "silent"
 CONF_SILENT_SWITCH_ID = "_silent_switch_id"
+CONF_TRAVEL_SPEED = "travel_speed"
+CONF_TRAVEL_SPEED_SELECT_ID = "_travel_speed_select_id"
 CONF_OPTIMISTIC_STATE = "optimistic_state"
 CONF_RAIN_SENSOR_POLL_INTERVAL = "rain_sensor_poll_interval"
 CONF_RAIN_SENSOR_ID = "_rain_sensor_id"
@@ -78,6 +81,22 @@ CONF_PEDESTRIAN_BUTTON_ID = "_pedestrian_button_id"
 IOHomeCover = home_io_control_ns.class_("IOHomeCover", cover.Cover, cg.Component)
 IOHomeCoverSilentSwitch = home_io_control_ns.class_(
     "IOHomeCoverSilentSwitch", switch.Switch, cg.Component
+)
+IOHomeCoverTravelSpeedSelect = home_io_control_ns.class_(
+    "IOHomeCoverTravelSpeedSelect", select.Select, cg.Component
+)
+TravelSpeed = home_io_control_ns.enum("TravelSpeed", is_class=True)
+
+# The `travel_speed:` values, which are also the select's options in this order. The names are the
+# ones travel_speed_name() publishes in C++, so the select's state reads back as a valid YAML value.
+TRAVEL_SPEEDS = {
+    "default": TravelSpeed.MOTOR_DEFAULT,
+    "silent": TravelSpeed.SILENT,
+    "fast": TravelSpeed.FAST,
+}
+TRAVEL_SPEED_EXCLUSIVE_MESSAGE = (
+    "silent: and travel_speed: set the same thing; keep one "
+    "(silent: true is travel_speed: silent, silent: false is travel_speed: fast)"
 )
 IOHomeRainBinarySensor = home_io_control_ns.class_(
     "IOHomeRainBinarySensor", binary_sensor.BinarySensor, cg.Component
@@ -133,21 +152,27 @@ def _default_device_class(config):
     return config
 
 
-def _require_silent_kind(config):
-    """Reject `silent:` on a declared kind that takes no travel-speed parameter."""
-    require_feature(
-        config,
-        CONF_SILENT,
-        CONF_SILENT in config,
-        required=FEATURE_EXTENDED_POSITION_FRAME,
-        reason="this device takes no travel-speed parameter; remove silent:",
-    )
+def _require_travel_speed_kind(config):
+    """Reject `silent:` or `travel_speed:` on a declared kind that takes no travel-speed parameter."""
+    for key in (CONF_SILENT, CONF_TRAVEL_SPEED):
+        require_feature(
+            config,
+            key,
+            key in config,
+            required=FEATURE_EXTENDED_POSITION_FRAME,
+            reason=f"this device takes no travel-speed parameter; remove {key}:",
+        )
     return config
 
 
 def silent_switch_name(config):
     """Derive the silent-operation switch name from the parent cover name."""
     return companion_entity_name(config, "Silent Operation")
+
+
+def travel_speed_select_name(config):
+    """Derive the travel speed select name from the parent cover name."""
+    return companion_entity_name(config, "Travel Speed")
 
 
 def rain_sensor_name(config):
@@ -204,6 +229,15 @@ def _inject_companion_ids(config):
             type=IOHomeCoverSilentSwitch,
         )
 
+    # Travel speed select — likewise only when the cover declares `travel_speed:`, the three-way
+    # form of the same setting. The two keys are exclusive, so a cover has one entity or the other.
+    if CONF_TRAVEL_SPEED in config:
+        config[CONF_TRAVEL_SPEED_SELECT_ID] = ID(
+            f"{base}_travel_speed_select",
+            is_declaration=True,
+            type=IOHomeCoverTravelSpeedSelect,
+        )
+
     # Rain binary sensor — only when the cover declares `rain_sensor_poll_interval:`. The key is
     # the opt-in to the periodic limitation read, so a config without it gains no entity.
     if CONF_RAIN_SENSOR_POLL_INTERVAL in config:
@@ -250,7 +284,17 @@ CONFIG_SCHEMA = cv.All(
     cover.cover_schema(IOHomeCover)
     .extend(platform_schema_extension())
     .extend({cv.Optional(CONF_INVERT_POSITION): cv.boolean})
-    .extend({cv.Optional(CONF_SILENT): cv.boolean})
+    .extend(
+        {
+            # Both set the travel speed: `silent:` two-way, `travel_speed:` three-way.
+            cv.Exclusive(
+                CONF_SILENT, "travel_speed", msg=TRAVEL_SPEED_EXCLUSIVE_MESSAGE
+            ): cv.boolean,
+            cv.Exclusive(
+                CONF_TRAVEL_SPEED, "travel_speed", msg=TRAVEL_SPEED_EXCLUSIVE_MESSAGE
+            ): cv.enum(TRAVEL_SPEEDS, lower=True),
+        }
+    )
     .extend(
         {
             cv.Optional(
@@ -270,7 +314,7 @@ CONFIG_SCHEMA = cv.All(
     .extend({cv.Optional(CONF_OPTIMISTIC_STATE, default=True): cv.boolean})
     .extend(cv.COMPONENT_SCHEMA),
     _default_device_class,
-    _require_silent_kind,
+    _require_travel_speed_kind,
     warn_if_experimental_kind,
     _inject_companion_ids,
 )
@@ -288,7 +332,10 @@ async def to_code(config):
 
     cg.add(var.set_optimistic_state(config[CONF_OPTIMISTIC_STATE]))
     if CONF_SILENT in config:
-        cg.add(var.set_silent(config[CONF_SILENT]))
+        speed = TravelSpeed.SILENT if config[CONF_SILENT] else TravelSpeed.FAST
+        cg.add(var.set_travel_speed(speed))
+    if CONF_TRAVEL_SPEED in config:
+        cg.add(var.set_travel_speed(config[CONF_TRAVEL_SPEED]))
 
     if CONF_SILENT_SWITCH_ID in config:
         # Built through switch_schema()+COMPONENT_SCHEMA so it carries the entity/component
@@ -313,6 +360,28 @@ async def to_code(config):
         await cg.register_component(silent_switch, silent_config)
         cg.add(silent_switch.set_parent(parent))
         cg.add(silent_switch.set_device_id(config[CONF_IO_DEVICE_ID]))
+
+    if CONF_TRAVEL_SPEED_SELECT_ID in config:
+        # Nothing restores it: the YAML `travel_speed:` value is the boot state, as for the switch
+        # above, and setup() publishes it.
+        speed_config = select.select_schema(
+            IOHomeCoverTravelSpeedSelect,
+            entity_category=ENTITY_CATEGORY_CONFIG,
+        ).extend(cv.COMPONENT_SCHEMA)(
+            inherit_esphome_device(
+                {
+                    CONF_ID: config[CONF_TRAVEL_SPEED_SELECT_ID],
+                    CONF_NAME: travel_speed_select_name(config),
+                },
+                config,
+            )
+        )
+        speed_select = await select.new_select(
+            speed_config, options=list(TRAVEL_SPEEDS)
+        )
+        await cg.register_component(speed_select, speed_config)
+        cg.add(speed_select.set_parent(parent))
+        cg.add(speed_select.set_device_id(config[CONF_IO_DEVICE_ID]))
 
     if CONF_RAIN_SENSOR_ID in config:
         cg.add(

@@ -125,7 +125,9 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 /// For devices that refuse the block create_execute_position() appends. A Wisniowski / Somfy
 /// MOTO 1000 io garage opener answers that block with RESULT_PARAMETER_UNKNOWN before any
 /// challenge, accepts a 6-byte STOP, and is opened by its own 1W remote with exactly this shape
-/// (`01 43 00 00 00 00`, issue #163). Sent to devices without device_feature::EXTENDED_POSITION_FRAME.
+/// (`01 43 00 00 00 00`, issue #163). Sent to devices without device_feature::EXTENDED_POSITION_FRAME,
+/// and to covers set to TravelSpeed::MOTOR_DEFAULT: a VELUX KLR 200 control pad moves a window with
+/// this form, and the window then travels at its own speed rather than at a profile's (ADR 0065).
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID (source address).
 /// @param dst Target device's 3‑byte node ID (destination address).

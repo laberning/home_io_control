@@ -16,8 +16,13 @@ class Select {
  public:
   virtual void setup() {}
   virtual void control(const std::string &value) = 0;
-  void publish_state(const std::string &value) {}
+  void publish_state(const std::string &value) { this->state_ = value; }
+  /// Test-only accessor: the last published option (the real Select reads it through current_option()).
+  const std::string &get_state() const { return this->state_; }
   SelectTraits traits;
+
+ protected:
+  std::string state_;
 };
 
 }  // namespace select

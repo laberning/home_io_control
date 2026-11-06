@@ -281,6 +281,29 @@ enum class RainSensorState : uint8_t {
 /// @return Null-terminated lowercase string: "unknown", "dry" or "rain".
 const char *rain_sensor_state_name(RainSensorState state);
 
+/// @brief The speed a cover's position moves ask the motor for (ADR 0065).
+///
+/// The 8-byte execute frame carries a speed profile byte; the 6-byte frame a wall pad sends carries
+/// none and leaves the speed to the motor. Like `inverted`, a YAML-declared preference: nothing on
+/// the wire reports which one a device is moved with. The enumerator for "the motor's own speed" is
+/// not a bare `DEFAULT`, which the Arduino core defines as a macro on some targets.
+enum class TravelSpeed : uint8_t {
+  MOTOR_DEFAULT = 0,  ///< The 6-byte frame with no profile: the motor's own speed, as its wall pad moves it.
+  SILENT = 1,         ///< Profile 0x05, the manufacturer app's silent operation: slower than the motor's own.
+  FAST = 2,           ///< Profile 0x06, what the hub sends unless a cover says otherwise.
+};
+
+/// @brief Get the name a travel speed is configured and published under.
+/// @param speed The speed to name.
+/// @return "default", "silent" or "fast".
+const char *travel_speed_name(TravelSpeed speed);
+
+/// @brief Look up a travel speed by the name travel_speed_name() gives it.
+/// @param name "default", "silent" or "fast".
+/// @param speed Set to the matching speed on success, untouched otherwise.
+/// @return true when the name is one of the three.
+bool parse_travel_speed(const std::string &name, TravelSpeed &speed);
+
 /// @brief A device's coarse battery level, as it reports it in byte 1 of its status payload.
 ///
 /// Three levels, not a percentage. Only FULL_CHARGE has been seen on real hardware so far (every
@@ -434,14 +457,11 @@ struct IoDevice {
                                         ///< applies). Resolver input.
   std::optional<bool> invert_override = std::nullopt;  ///< YAML `invert_position:` when declared; wins over the kind's
                                                        ///< default. Resolver input.
-  bool inverted{false};           ///< True if open/close positions are swapped (e.g., horizontal awning).
-                                  ///< Resolved: `invert_override`, else device_feature::INVERTED.
-  bool silent{false};             ///< True to send position moves with the reference hub's "silent
-                                  ///< operation" extended block, which makes the motor travel more
-                                  ///< slowly. Like `inverted`/`dimmable` this is a YAML-declared
-                                  ///< preference, not a protocol-reported fact — nothing on the wire
-                                  ///< tells us whether a device is in that mode.
-  bool optimistic_state{true};    ///< True if `target` may be set ahead of a confirming poll/response.
+  bool inverted{false};                         ///< True if open/close positions are swapped (e.g., horizontal awning).
+                                                ///< Resolved: `invert_override`, else device_feature::INVERTED.
+  TravelSpeed travel_speed{TravelSpeed::FAST};  ///< Speed profile of position moves. Like `inverted`, a
+                                                ///< YAML-declared preference: nothing on the wire reports it.
+  bool optimistic_state{true};                  ///< True if `target` may be set ahead of a confirming poll/response.
   bool low_power{false};          ///< YAML-declared: this target is a low-power / duty-cycled receiver, so
                                   ///< directed frames set CTRL1_LOW_POWER and use the long wake-up preamble.
                                   ///< A protocol-reported class exists (discovery Multi Information Byte) but

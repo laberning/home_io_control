@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <utility>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -2437,7 +2438,7 @@ TEST(HubOperations, SilentDeviceSendsTheSilentExecutePayload) {
 
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  dev->silent = true;
+  dev->travel_speed = TravelSpeed::SILENT;
 
   comp.set_device_position("ABC123", 100);
 
@@ -2455,7 +2456,7 @@ TEST(HubOperations, NonSilentDeviceKeepsTheExistingExecutePayload) {
 
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  ASSERT_FALSE(dev->silent) << "silent is opt-in";
+  ASSERT_EQ(dev->travel_speed, TravelSpeed::FAST) << "a slower or the motor's own speed is opt-in";
 
   comp.set_device_position("ABC123", 100);
 
@@ -3338,7 +3339,7 @@ TEST(HubOperations, ASubtype58CoverHasNoTiltBecauseItTakesTheMainParameterOnly) 
 TEST(HubOperations, ASilentMoveToAnUnsilentableKindUsesTheShortFrame) {
   TestableComponent comp;
   MockRadio radio;
-  setup_declared_component(comp, radio, {.type = DeviceType::GARAGE_OPENER, .silent = true});
+  setup_declared_component(comp, radio, {.type = DeviceType::GARAGE_OPENER, .travel_speed = TravelSpeed::SILENT});
 
   comp.set_device_position("ABC123", 0);
   EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x00, 0x00, 0x00, 0x00}))
@@ -3351,7 +3352,7 @@ TEST(HubOperations, InteriorVenetianAndDualShutterPositionsUseTheShortFrameEvenW
   for (const DeviceType type : {DeviceType::INTERIOR_VENETIAN_BLIND, DeviceType::DUAL_ROLLER_SHUTTER}) {
     TestableComponent comp;
     MockRadio radio;
-    setup_declared_component(comp, radio, {.type = type, .silent = true});
+    setup_declared_component(comp, radio, {.type = type, .travel_speed = TravelSpeed::SILENT});
 
     comp.set_device_position("ABC123", 50);
     EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x00, 0x00}))
@@ -3378,6 +3379,52 @@ TEST(HubOperations, ARollerShutterStillSendsTheEightByteFrameAndItsSilentProfile
 
   comp.set_device_position("ABC123", 50);
   EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x80, 0xD8, 0x06, 0x00}));
+}
+
+TEST(HubOperations, EachTravelSpeedSendsItsOwnPositionFrame) {
+  // A VELUX KLR 200 pad moves a window with the 6-byte frame; the window then runs at its own speed
+  // (44.5 s full travel), against 26.5 s on profile 0x06 and about 65 s on 0x05.
+  const std::vector<std::pair<TravelSpeed, std::vector<uint8_t>>> cases = {
+      {TravelSpeed::MOTOR_DEFAULT, {0x01, 0x63, 0x64, 0x00, 0x00, 0x00}},
+      {TravelSpeed::SILENT, {0x01, 0x63, 0x64, 0x00, 0x80, 0xD8, 0x05, 0x00}},
+      {TravelSpeed::FAST, {0x01, 0x63, 0x64, 0x00, 0x80, 0xD8, 0x06, 0x00}},
+  };
+  for (const auto &[speed, payload] : cases) {
+    TestableComponent comp;
+    MockRadio radio;
+    setup_declared_component(comp, radio, {.type = DeviceType::WINDOW_OPENER, .travel_speed = speed});
+
+    comp.set_device_position("ABC123", 50);
+    EXPECT_EQ(first_sent_payload(radio), payload) << travel_speed_name(speed);
+  }
+}
+
+TEST(HubOperations, ASpeedSetAtRuntimeShapesTheNextMove) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_declared_component(comp, radio, {.type = DeviceType::WINDOW_OPENER});
+
+  comp.set_device_travel_speed("ABC123", TravelSpeed::MOTOR_DEFAULT);
+  comp.set_device_position("ABC123", 100);
+  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0xC8, 0x00, 0x00, 0x00}))
+      << "the select changes what the next move sends";
+}
+
+TEST(HubOperations, OnlyTheSilentSpeedExtendsTheFavoritePosition) {
+  // The favorite position goes out in the 6-byte form unless silent; a Somfy hub sends exactly that pair.
+  const std::vector<std::pair<TravelSpeed, std::vector<uint8_t>>> cases = {
+      {TravelSpeed::MOTOR_DEFAULT, {0x01, 0x63, 0xD8, 0x00, 0x00, 0x00}},
+      {TravelSpeed::SILENT, {0x01, 0x63, 0xD8, 0x00, 0x80, 0xD8, 0x05, 0x00}},
+      {TravelSpeed::FAST, {0x01, 0x63, 0xD8, 0x00, 0x00, 0x00}},
+  };
+  for (const auto &[speed, payload] : cases) {
+    TestableComponent comp;
+    MockRadio radio;
+    setup_declared_component(comp, radio, {.type = DeviceType::WINDOW_OPENER, .travel_speed = speed});
+
+    comp.execute_device_command_("ABC123", CoverCommand::FAVORITE);
+    EXPECT_EQ(first_sent_payload(radio), payload) << travel_speed_name(speed);
+  }
 }
 
 TEST(HubOperations, AnInteriorVenetianBlindKeepsTheTiltFrameOnFunctionalParameterThree) {

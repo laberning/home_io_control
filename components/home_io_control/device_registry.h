@@ -32,12 +32,12 @@ struct DeviceConfig {
       DeviceCapabilityClass::UNKNOWN};  ///< Class of the declaring entity; decides
                                         ///< the features of a kind the type table does not know.
   std::optional<bool> invert_override =
-      std::nullopt;                    ///< YAML `invert_position:` when declared; the kind's default otherwise.
-  bool dimmable{false};                ///< YAML `dimmable: true` of a light.
-  bool optimistic_state{true};         ///< Whether `apply_optimistic_target`/`apply_optimistic_stop` may fire.
-  bool silent{false};                  ///< Send position moves in "silent operation" (slower) mode.
-  bool low_power{false};               ///< Target is a low-power / duty-cycled receiver: directed frames set
-                                       ///< CTRL1_LOW_POWER and use the long wake-up preamble.
+      std::nullopt;             ///< YAML `invert_position:` when declared; the kind's default otherwise.
+  bool dimmable{false};         ///< YAML `dimmable: true` of a light.
+  bool optimistic_state{true};  ///< Whether `apply_optimistic_target`/`apply_optimistic_stop` may fire.
+  TravelSpeed travel_speed{TravelSpeed::FAST};  ///< Speed profile of position moves.
+  bool low_power{false};                        ///< Target is a low-power / duty-cycled receiver: directed frames set
+                                                ///< CTRL1_LOW_POWER and use the long wake-up preamble.
   bool battery_entities{false};        ///< `battery: true` declared: the battery entities exist for this device.
   bool has_system_key{false};          ///< `system_key:` declared: the device keeps a key of its own.
   uint8_t system_key[AES_KEY_SIZE]{};  ///< That key; meaningful only when `has_system_key`. Never logged.
@@ -88,11 +88,11 @@ class DeviceRegistry {
   /// @return true when a record was removed.
   bool remove_registered_by_pairing(const std::string &device_id);
 
-  /// Select a device's travel profile. A declared preference with no protocol readback — nothing on
-  /// the wire reports which profile a device is in.
+  /// Select a device's travel speed. A declared preference with no protocol readback — nothing on
+  /// the wire reports which speed a device is moved with.
   /// @param device_id Hexadecimal node ID string.
-  /// @param silent    True to send position moves in "silent operation" (slower) mode.
-  void set_silent(const std::string &device_id, bool silent);
+  /// @param speed     Speed profile of the device's position moves.
+  void set_travel_speed(const std::string &device_id, TravelSpeed speed);
 
   /// Register a callback that fires whenever a device's state changes.
   /// @param cb Callable with signature void(const std::string &device_id, const IoDevice &device).

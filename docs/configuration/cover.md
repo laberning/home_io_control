@@ -32,7 +32,8 @@ accepted and the cover is created; the warning asks you to
 
 - `invert_position` (Optional): Explicitly override the open/close position mapping. When omitted, the controller uses the learned device profile and automatically inverts families such as horizontal awnings once their type is known.
 - `optimistic_state` (Optional, default: `true`): Show the requested position/movement direction immediately in Home Assistant — for both HA-issued commands (open/close/set-position/stop) and commands from a linked 1W remote — instead of waiting for the confirming poll or device response. The confirming poll/response always still runs and is the source of truth; optimistic state is a UX bridge only. Set `false` for a device where you don't want HA to show assumed movement, for example one with an unreliable RF link where a stale optimistic state could be misleading.
-- `silent` (Optional): Move at the manufacturer app's "silent operation" speed — slower and quieter. Only a kind that takes a travel-speed parameter accepts it: config validation rejects `silent:` on garage openers, on interior venetian blinds, on dual roller shutters and on any device of subtype 58, and its message says to remove the key. On an interior venetian blind the first functional parameter is the slat orientation and on a dual roller shutter it is the upper curtain, so neither takes a speed there (experimental, see [Interior venetian blinds and dual roller shutters](cover.md#interior-venetian-blinds-and-dual-roller-shutters)). It selects the protocol's slow travel profile on position moves and on the favorite ("My") command. STOP is excluded because stopping has no travel speed, and ventilation and tilt because nothing has been captured for them yet — they keep their existing payloads rather than being guessed at. Nothing on the wire reports a device's current profile, so, like `invert_position`, this is a declared preference rather than a readback. Declaring the key also generates a `<Cover Name> Silent Operation` switch so the profile can be changed at runtime; the YAML value is the boot state. Omit the key entirely and no switch is created.
+- `silent` (Optional): Move at the manufacturer app's "silent operation" speed — slower and quieter. Only a kind that takes a travel-speed parameter accepts it: config validation rejects `silent:` on garage openers, on interior venetian blinds, on dual roller shutters and on any device of subtype 58, and its message says to remove the key. On an interior venetian blind the first functional parameter is the slat orientation and on a dual roller shutter it is the upper curtain, so neither takes a speed there (experimental, see [Interior venetian blinds and dual roller shutters](cover.md#interior-venetian-blinds-and-dual-roller-shutters)). It selects the protocol's slow travel profile on position moves and on the favorite ("My") command. STOP is excluded because stopping has no travel speed, and ventilation and tilt because nothing has been captured for them yet — they keep their existing payloads rather than being guessed at. Nothing on the wire reports a device's current profile, so, like `invert_position`, this is a declared preference rather than a readback. Declaring the key also generates a `<Cover Name> Silent Operation` switch so the profile can be changed at runtime; the YAML value is the boot state. Omit the key entirely and no switch is created. `travel_speed` is the three-way form of the same setting.
+- `travel_speed` (Optional): The speed a position move asks the motor for: `default`, `silent` or `fast`. `fast` is what the hub sends when neither this key nor `silent` is set. `default` sends the short frame a wall control pad sends, which leaves the speed to the motor. The kinds that accept `silent` accept this key, and the two are exclusive: `silent: true` is `travel_speed: silent`, `silent: false` is `travel_speed: fast`. Declaring the key generates a `<Cover Name> Travel Speed` select so the speed can be changed at runtime; the YAML value is the boot state. See [Travel speed](cover.md#travel-speed).
 - `rain_sensor_poll_interval` (Optional): Ask the device how far its own rain protection lets it open, once per interval, and report the answer as a binary sensor. The minimum is `1min` and there is no default: omit the key and nothing is sent and no entity is created. Declaring it generates a `<Cover Name> Rain sensor` binary sensor. Validated on VELUX windows with a wired rain sensor; a Somfy Sunea awning answers the request with a reply this project cannot read as an opening limit, so the sensor stays without state there. Read [Polling for rain](cover.md#polling-for-rain) before choosing an interval, because every poll uses transmit time that the hub shares with everything else it sends.
 - `sun_level_poll_interval` (Optional): Ask the device for the value of its built-in sun sensor once per interval, and publish it as a `<Cover Name> Sun level` sensor. The minimum is `1min` and there is no default: omit the key and nothing is sent and no entity is created. Experimental, confirmed on one Somfy RS100 Solar io. See [Sun level and battery level](cover.md#sun-level-and-battery-level) before choosing an interval.
 - `battery_level_poll_interval` (Optional): Ask the device for its battery level in percent once per interval, and publish it as a `<Cover Name> Battery level` sensor. The minimum is `1min` and there is no default. Experimental, confirmed on one Somfy RS100 Solar io. See [Sun level and battery level](cover.md#sun-level-and-battery-level).
@@ -61,7 +62,7 @@ Every other kind, including `bioclimatic_pergola`, has no default class.
 
 ## Companion entities
 
-Beyond the diagnostic companions every platform generates, covers add up to ten more:
+Beyond the diagnostic companions every platform generates, covers add up to eleven more:
 
 - **`<Cover Name> Favorite Position`** — a button, generated for any cover with a declared
   position-capable `io_device_type` except garage openers, whose motors refuse the favorite
@@ -74,6 +75,8 @@ Beyond the diagnostic companions every platform generates, covers add up to ten 
   (gate openers) — experimental buttons, disabled by default: enable them in Home Assistant before
   you use them. See [Partial and pedestrian position buttons](cover.md#partial-and-pedestrian-position-buttons).
 - **`<Cover Name> Silent Operation`** — a switch, generated only when `silent:` is declared.
+- **`<Cover Name> Travel Speed`** — a select with the options `default`, `silent` and `fast`,
+  generated only when `travel_speed:` is declared. See [Travel speed](cover.md#travel-speed).
 - **`<Cover Name> Rain sensor`** — a binary sensor with device class `moisture`, generated only
   when `rain_sensor_poll_interval:` is declared. See [Polling for rain](cover.md#polling-for-rain).
 - **`<Cover Name> Battery Low`** and **`<Cover Name> Battery`** — a binary sensor and a text
@@ -106,7 +109,8 @@ door does not move (issue #163, corpus
   whatever state the cover shows;
 - refuses a position between open and closed from a lambda or an action, without sending it, and
   logs why;
-- has no Favorite Position button when it is a garage opener, and takes no `silent:` key.
+- has no Favorite Position button when it is a garage opener, and takes no `silent:` or
+  `travel_speed:` key.
 
 Subtype 58 on a gate opener or a swinging shutter is inferred from the garage opener's behaviour
 and the shared subtype definition, so it is experimental: the Favorite Position button stays and
@@ -302,12 +306,48 @@ sequential exchanges.
 A vertical interior blind (`vertical_interior_blind`) has no slat parameter in the VELUX KLF 200 API
 specification, Appendix 2, so it is a plain cover without a tilt slider (experimental).
 
+## Travel speed
+
+A position move can carry a speed profile. A Somfy hub sends one with every move, and so does this
+hub unless the cover says otherwise; a VELUX control pad sends none, and the window then moves at
+its own speed. `travel_speed:` picks one of three:
+
+| `travel_speed` | What the hub sends | A VELUX roof window, full travel |
+|---|---|---|
+| `default` | the short frame with no profile, as a control pad | 44.5 s, as from its KLR 200 pad |
+| `silent` | the slow profile, as `silent: true` | about 65 s |
+| `fast` | the profile the hub sends without the key | 26.5 s |
+
+```yaml
+cover:
+  - platform: home_io_control
+    name: "Roof Window"
+    io_device_id: "123ABC"
+    io_device_type: window_opener
+    travel_speed: default
+```
+
+What to expect:
+
+- **Without the key nothing changes.** A cover with neither `travel_speed:` nor `silent:` moves on
+  the `fast` profile and gets no select.
+- **The speeds were measured on one VELUX roof window** (issue #205,
+  [ADR 0065](../adr/0065-a-covers-travel-speed-is-a-three-way-choice.md)). On a Somfy motor `fast`
+  is what a Somfy hub sends for a normal move; what `default` does there has not been measured.
+- **It applies to position moves, open and close included, and to the favorite position.** The
+  favorite position carries a profile only on `silent`, as a Somfy hub sends it. Stop, ventilation
+  and tilt ignore the setting, and force open always moves at the `fast` speed.
+- **The select shows what the hub sends**, not a reading: nothing on the wire reports a device's
+  speed. A move from the pad or another controller uses that controller's speed.
+- **`silent:` is the two-way form**, a switch between `silent` and `fast`. A cover takes one of
+  the two keys, not both.
+
 ## Interior venetian blinds and dual roller shutters
 
 (Experimental.) The VELUX KLF 200 API specification, Appendix 2 uses the first functional parameter for
 the slat orientation of an interior venetian blind and for the upper curtain of a dual roller shutter,
 not for a travel speed. The hub therefore sends position and force-open commands to both kinds in the
-short form that carries the main parameter only, and refuses `silent:` for them at config time. The
+short form that carries the main parameter only, and refuses `silent:` and `travel_speed:` for them at config time. The
 interior venetian blind keeps its tilt slider. No two-way device of either kind has confirmed this yet.
 
 ## Position and state

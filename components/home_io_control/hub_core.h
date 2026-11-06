@@ -507,11 +507,11 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Hexadecimal node ID.
   /// @return Pointer to IoDevice, or nullptr.
   virtual IoDevice *get_device(const std::string &device_id);
-  /// Select a device's travel profile at runtime (see IOHomeCoverSilentSwitch).
-  /// Virtual so platform tests can substitute a mock registry.
+  /// Select a device's travel speed at runtime (see IOHomeCoverTravelSpeedSelect and
+  /// IOHomeCoverSilentSwitch). Virtual so platform tests can substitute a mock registry.
   /// @param device_id Hexadecimal node ID string.
-  /// @param silent    True to send position moves in "silent operation" (slower) mode.
-  virtual void set_device_silent(const std::string &device_id, bool silent);
+  /// @param speed     Speed profile of the device's position moves.
+  virtual void set_device_travel_speed(const std::string &device_id, TravelSpeed speed);
   /// Register a callback invoked when any device updates.
   /// @param cb Callable with signature void(const std::string&, const IoDevice&).
   virtual void register_device_callback(DeviceUpdateCallback cb) { this->registry_.subscribe(std::move(cb)); }

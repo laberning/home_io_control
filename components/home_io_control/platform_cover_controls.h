@@ -2,7 +2,8 @@
 
 /// @file platform_cover_controls.h
 /// @brief Generated per-cover auxiliary entities: the command button (favorite / ventilation),
-/// the silent-operation toggle, the rain binary sensor and the battery sensors.
+/// the silent-operation toggle, the travel speed select, the rain binary sensor and the battery
+/// sensors.
 /// @ingroup hioc_platforms
 ///
 /// All are device-bound companions (DeviceBoundCompanion), generated alongside a `cover:` entity
@@ -15,6 +16,7 @@
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
+#include "esphome/components/select/select.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
@@ -70,9 +72,10 @@ class IOHomeCoverCommandButton : public button::Button, public Component, public
 /// @ingroup hioc_platforms
 ///
 /// ON sends position commands with the manufacturer app's "silent operation" extended block, which
-/// makes the motor travel more slowly; OFF sends the normal payload. Only generated when the cover
-/// declares `silent:` in YAML, so a config that never mentions it gains no entity — the YAML value
-/// is the boot state and this switch moves it afterwards.
+/// makes the motor travel more slowly (TravelSpeed::SILENT); OFF sends the normal payload
+/// (TravelSpeed::FAST). Only generated when the cover declares `silent:` in YAML, so a config that
+/// never mentions it gains no entity — the YAML value is the boot state and this switch moves it
+/// afterwards. IOHomeCoverTravelSpeedSelect is the three-way form of the same setting.
 ///
 /// Device-bound like IOHomeCoverCommandButton rather than hub-level like
 /// IOHomeAcceptForeignPairingSwitch: the setting is per actuator. Nothing on the wire reports a
@@ -94,6 +97,32 @@ class IOHomeCoverSilentSwitch : public switch_::Switch, public Component, public
   /// @brief Apply the requested travel profile to the bound device.
   /// @param state True for silent (slower) operation.
   void write_state(bool state) override;
+};
+
+/// @brief Select entity that sets a cover's travel speed at runtime: `default`, `silent` or `fast`.
+/// @ingroup hioc_platforms
+///
+/// `default` sends the 6-byte execute frame a wall pad sends, which carries no speed profile and
+/// leaves the speed to the motor; `silent` and `fast` send the 8-byte frame with profile 0x05 or
+/// 0x06 (TravelSpeed). Only generated when the cover declares `travel_speed:` in YAML, which is its
+/// boot state; this select moves it afterwards. Like IOHomeCoverSilentSwitch it reflects only what
+/// this hub has been told to send: nothing on the wire reports a device's speed.
+class IOHomeCoverTravelSpeedSelect : public select::Select, public Component, public DeviceBoundCompanion {
+ public:
+  /// @brief Publish the boot state declared in YAML so Home Assistant starts in sync.
+  void setup() override;
+
+  /// @brief Dump select configuration to the log.
+  void dump_config() override;
+
+  /// @brief Get setup priority so the parent hub is available first.
+  /// @return setup_priority::DATA.
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+
+ protected:
+  /// @brief Apply the selected travel speed to the bound device.
+  /// @param value "default", "silent" or "fast" (travel_speed_name()).
+  void control(const std::string &value) override;
 };
 
 /// @brief Binary sensor that reports whether the window currently limits its own opening for rain.

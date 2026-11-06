@@ -80,6 +80,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0062](0062-a-read-only-data-transport-probe.md) | A read-only data-transport probe (amends 0024) | `read_object` opens, reads and closes five allowlisted objects over `0x46`/`0x4A`; read direction only by construction, capped, raw output never applied |
 | [0063](0063-a-read-only-register-probe.md) | A read-only register probe (amends 0024) | `register_00` / `register_01` read one register over `0x20`; the read direction byte is a constant no input changes; refused for every kind but register heaters and hot water |
 | [0064](0064-a-sensor-reading-is-drawn-by-a-re-sent-event-subscription.md) | A sensor reading is drawn by a re-sent event subscription (amends 0060, 0050) | `sun_level_poll_interval` / `battery_level_poll_interval` re-send a subscription on a jittered interval and publish the value its answer carries; the answer is taken as the reply, one re-send after a lost answer, one retry a minute after an unanswered poll (rain too), strict decode, experimental on one RS100 Solar io |
+| [0065](0065-a-covers-travel-speed-is-a-three-way-choice.md) | A cover's travel speed is a three-way choice | `travel_speed:` `default` / `silent` / `fast` with a select; `default` sends the 6-byte frame a VELUX pad sends; without the key nothing changes; `silent:` stays as the two-way form |
 
 ### Security
 
@@ -172,6 +173,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0062: A read-only data-transport probe](0062-a-read-only-data-transport-probe.md)
 - [ADR 0063: A read-only register probe](0063-a-read-only-register-probe.md)
 - [ADR 0064: A sensor reading is drawn by a re-sent event subscription](0064-a-sensor-reading-is-drawn-by-a-re-sent-event-subscription.md)
+- [ADR 0065: A cover's travel speed is a three-way choice](0065-a-covers-travel-speed-is-a-three-way-choice.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

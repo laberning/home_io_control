@@ -55,6 +55,28 @@ const char *battery_state_name(BatteryState state) {
   return "not_reported";
 }
 
+const char *travel_speed_name(TravelSpeed speed) {
+  switch (speed) {
+    case TravelSpeed::MOTOR_DEFAULT:
+      return "default";
+    case TravelSpeed::SILENT:
+      return "silent";
+    case TravelSpeed::FAST:
+      return "fast";
+  }
+  return "fast";
+}
+
+bool parse_travel_speed(const std::string &name, TravelSpeed &speed) {
+  for (const TravelSpeed candidate : {TravelSpeed::MOTOR_DEFAULT, TravelSpeed::SILENT, TravelSpeed::FAST}) {
+    if (name == travel_speed_name(candidate)) {
+      speed = candidate;
+      return true;
+    }
+  }
+  return false;
+}
+
 BatteryState decode_battery_state(uint8_t status_byte) {
   // The mask leaves exactly two bits, so every result is a named enumerator.
   return static_cast<BatteryState>((status_byte & STATUS_BATTERY_MASK) >> STATUS_BATTERY_SHIFT);

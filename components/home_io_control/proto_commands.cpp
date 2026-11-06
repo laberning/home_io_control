@@ -106,7 +106,9 @@ constexpr uint16_t LOW_BYTE_MASK = 0xFF;
 constexpr size_t EXECUTE_PAYLOAD_SIZE = 8;
 /// Bit flag that marks the standard position payload layout after the encoded position byte.
 constexpr uint8_t EXECUTE_POSITION_LAYOUT_FLAG = 0x80;
-/// Travel-profile byte for a normal-speed move — the last field of the extended execute block.
+/// Travel-profile byte the hub sends unless a cover asks otherwise (TravelSpeed::FAST) — the last
+/// field of the extended execute block. A Somfy hub sends it for a normal-speed move; a VELUX
+/// window takes it as its fast speed and runs faster than its own pad moves it (ADR 0065).
 constexpr uint8_t EXECUTE_POSITION_PROFILE = 0x06;
 /// Travel-profile byte for a silent (slow) move — same field, selecting reduced motor speed.
 ///
@@ -114,7 +116,8 @@ constexpr uint8_t EXECUTE_POSITION_PROFILE = 0x06;
 /// operation" toggle flipped, differs by exactly this one byte (`... D8 06 00` normal vs.
 /// `... D8 05 00` silent); this hub follows Somfy's encoding rather than Velux's (which uses a
 /// different byte, `80 32 00 00`, and omits the extended block entirely for a normal move) because
-/// this hub's own hardware matches Somfy byte for byte.
+/// this hub's own hardware matches Somfy byte for byte. A cover set to TravelSpeed::MOTOR_DEFAULT
+/// gets that block-less form (create_execute_main_parameter()).
 constexpr uint8_t EXECUTE_PROFILE_SILENT = 0x05;
 /// Short payload length for special execute commands such as stop/favorite.
 constexpr size_t EXECUTE_SPECIAL_PAYLOAD_SIZE = 6;

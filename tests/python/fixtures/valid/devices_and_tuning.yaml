@@ -19,6 +19,7 @@ cover:
     sun_level_poll_interval: 30min
     battery_level_poll_interval: 6h
     battery: true
+    travel_speed: default
 
   # An open/close-only opener: no slider, no favourite button, `silent:` would be refused.
   - platform: home_io_control

@@ -32,7 +32,7 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
   dev.invert_override = cfg.invert_override;
   dev.dimmable = cfg.dimmable;
   dev.optimistic_state = cfg.optimistic_state;
-  dev.silent = cfg.silent;
+  dev.travel_speed = cfg.travel_speed;
   dev.low_power = cfg.low_power;
   dev.battery_entities = cfg.battery_entities;
   dev.has_system_key = cfg.has_system_key;
@@ -71,9 +71,9 @@ bool DeviceRegistry::remove_registered_by_pairing(const std::string &device_id) 
   return true;
 }
 
-void DeviceRegistry::set_silent(const std::string &device_id, bool silent) {
+void DeviceRegistry::set_travel_speed(const std::string &device_id, TravelSpeed speed) {
   if (IoDevice *dev = this->get(device_id))
-    dev->silent = silent;
+    dev->travel_speed = speed;
 }
 
 void DeviceRegistry::subscribe(DeviceUpdateCallback cb) { callbacks_.push_back(std::move(cb)); }
