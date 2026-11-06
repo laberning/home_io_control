@@ -308,13 +308,16 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
     const uint8_t try_number = tries + 1;
     decisions::PairingKeyConfirmDisposition disposition = listen_for_key_confirm_(context, try_number, false);
     if (disposition == decisions::PairingKeyConfirmDisposition::CHALLENGE) {
-      ESP_LOGI(TAG, "Key transfer: device challenged the key transfer, answering 0x3D");
       // "Rest of the window" would leave almost nothing after a late challenge plus the 0x3D TX,
       // so this is a fresh full window, same as ExchangeEngine::wait_for_final_response_() gets
       // after handle_authentication_(). A failed 0x3D build/TX leaves `disposition` at CHALLENGE,
       // which the checks below treat the same as a second challenge: this try ends without
       // confirming, and the next try re-sends 0x32.
-      if (engine_.answer_challenge(context.req, context.resp, FREQ_CH2))
+      // Logged after the 0x3D, not before: a log line between challenge and answer delays the
+      // answer, and some receivers drop a late one (issue #163). RX is already re-armed by then.
+      const bool answered = engine_.answer_challenge(context.req, context.resp, FREQ_CH2);
+      ESP_LOGI(TAG, "Key transfer: device challenged the key transfer, %s", answered ? "answered 0x3D" : "0x3D failed");
+      if (answered)
         disposition = listen_for_key_confirm_(context, try_number, true);
     }
 
