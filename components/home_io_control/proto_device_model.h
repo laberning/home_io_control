@@ -508,10 +508,18 @@ struct IoDevice {
                                                           ///< Set only from a limitation reply inside an exchange the
                                                           ///< hub started; independent of `limited_by_rain`, which is
                                                           ///< derived from status replies.
-  BatteryState battery{BatteryState::NOT_REPORTED};       ///< Coarse battery level from byte 1 of the device's own
-                                                          ///< status: a reply to a status poll or an authenticated
-                                                          ///< CMD_STATUS_UPDATE. Never from an execute ack (its layout
-                                                          ///< follows the request) or an overheard frame (ADR 0022).
+  std::optional<uint16_t> sun_level;                      ///< Raw sun value from the opt-in EVENT_LOCAL_SENSOR poll
+                                      ///< (decode_sun_level_event()); empty until the first answer and
+                                      ///< after PERIODIC_POLL_FAILURES_BEFORE_UNKNOWN misses. Set only
+                                      ///< from the answer to a subscription the hub sent.
+  std::optional<uint16_t>
+      battery_level;  ///< Battery level in percent (0-100) from the opt-in EVENT_BATTERY_LEVEL_CHANGE
+                      ///< poll (decode_battery_level_event()); same rules as `sun_level`.
+                      ///< Independent of `battery`, the coarse status-byte level.
+  BatteryState battery{BatteryState::NOT_REPORTED};  ///< Coarse battery level from byte 1 of the device's own
+                                                     ///< status: a reply to a status poll or an authenticated
+                                                     ///< CMD_STATUS_UPDATE. Never from an execute ack (its layout
+                                                     ///< follows the request) or an overheard frame (ADR 0022).
   float temperature_range_min_c{
       HEATING_TEMPERATURE_RANGE_MIN_C};  ///< Lower end of the temperature encoding range of a heater that
                                          ///< carries a temperature in its main parameter (YAML `min_temperature:`).

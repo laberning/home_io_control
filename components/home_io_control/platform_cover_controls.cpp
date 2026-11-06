@@ -6,6 +6,8 @@
 
 #include "esphome/core/log.h"
 
+#include <cmath>
+
 namespace esphome {
 namespace home_io_control {
 
@@ -16,6 +18,8 @@ static const char *const TAG_COMMAND_BUTTON = "home_io_control.cover_command_but
 static const char *const TAG_SILENT = "home_io_control.cover.silent";
 static const char *const TAG_RAIN = "home_io_control.cover.rain_sensor";
 static const char *const TAG_BATTERY = "home_io_control.cover.battery";
+static const char *const TAG_SUN_LEVEL = "home_io_control.cover.sun_level";
+static const char *const TAG_BATTERY_LEVEL = "home_io_control.cover.battery_level";
 
 void IOHomeCoverCommandButton::press_action() {
   if (this->parent_ == nullptr) {
@@ -82,6 +86,40 @@ void IOHomeRainBinarySensor::publish_rain_state_(RainSensorState state) {
 void IOHomeRainBinarySensor::dump_config() {
   ESP_LOGCONFIG(TAG_RAIN, "IO-Homecontrol Rain Sensor:");
   ESP_LOGCONFIG(TAG_RAIN, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeSunLevelSensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    // Every device update reaches here (link health, status, ...); publish only a change.
+    if (this->published_once_ && dev.sun_level == this->published_)
+      return;
+    this->published_once_ = true;
+    this->published_ = dev.sun_level;
+    // NAN is how an ESPHome sensor says "unknown": nothing read yet, or the last polls went unanswered.
+    this->publish_state(dev.sun_level.has_value() ? static_cast<float>(*dev.sun_level) : NAN);
+  });
+}
+
+void IOHomeSunLevelSensor::dump_config() {
+  const char *const TAG = TAG_SUN_LEVEL;  // LOG_SENSOR() logs under a local named TAG
+  LOG_SENSOR("", "IO-Homecontrol Sun Level", this);
+  ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeBatteryLevelSensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    if (this->published_once_ && dev.battery_level == this->published_)
+      return;
+    this->published_once_ = true;
+    this->published_ = dev.battery_level;
+    this->publish_state(dev.battery_level.has_value() ? static_cast<float>(*dev.battery_level) : NAN);
+  });
+}
+
+void IOHomeBatteryLevelSensor::dump_config() {
+  const char *const TAG = TAG_BATTERY_LEVEL;  // LOG_SENSOR() logs under a local named TAG
+  LOG_SENSOR("", "IO-Homecontrol Battery Level", this);
+  ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
 }
 
 void IOHomeBatteryLowBinarySensor::setup() {

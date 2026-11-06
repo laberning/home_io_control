@@ -528,7 +528,8 @@ class ExchangeEngine {
   /// @param next_tx_ms        The re-send's transmit time; a re-send whose transmission would not
   ///                          end inside the exchange budget is not attempted (try_fits_budget_()).
   /// @return 0 to end the exchange now; UNCONFIRMED_EXECUTE_MAX_RESENDS for a CMD_EXECUTE that is
-  ///         re-sent, which also caps the ordinary failure retries after it; EXCHANGE_RETRY_COUNT
+  ///         re-sent and UNCONFIRMED_SUBSCRIBE_MAX_RESENDS for a CMD_SUBSCRIBE_EVENT, either of which
+  ///         also caps the ordinary failure retries after it; EXCHANGE_RETRY_COUNT
   ///         (no cap beyond the exchange's own) for any other request.
   uint8_t tries_after_unconfirmed_(const IoFrame &request, uint8_t unconfirmed_tries, uint8_t try_index,
                                    uint32_t elapsed_ms, uint32_t next_tx_ms);

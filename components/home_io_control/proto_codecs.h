@@ -403,6 +403,29 @@ struct StatusUpdateEvent {
 /// @return false unless `frame` is a well-formed CMD_STATUS_UPDATE.
 bool decode_status_update_event(const IoFrame &frame, StatusUpdateEvent &out);
 
+/// @brief Decode the sun value of an EVENT_LOCAL_SENSOR report.
+///
+/// Accepts only the captured shape: a well-formed CMD_STATUS_UPDATE carrying EVENT_LOCAL_SENSOR with
+/// LOCAL_SENSOR_EVENT_DATA_LEN data bytes, the first one LOCAL_SENSOR_TYPE_SUN. The value is the
+/// big-endian 16-bit word at LOCAL_SENSOR_VALUE_OFFSET, published raw: 0 at night, 744 in sun on an
+/// RS100 Solar io (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_daylight_sx1262.yaml).
+/// \todo Unit and scale unknown; confirmed on one RS100 Solar io only.
+/// @param frame A parsed frame.
+/// @param out Receives the raw value on success.
+/// @return false for any other frame, event or shape.
+bool decode_sun_level_event(const IoFrame &frame, uint16_t &out);
+
+/// @brief Decode the level of an EVENT_BATTERY_LEVEL_CHANGE report as a percentage.
+///
+/// Accepts only a well-formed CMD_STATUS_UPDATE carrying EVENT_BATTERY_LEVEL_CHANGE with
+/// BATTERY_LEVEL_EVENT_DATA_LEN data byte, at most BATTERY_LEVEL_MAX_PERCENT
+/// (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_battery_sx1262.yaml).
+/// \todo Percent rests on one captured value (100, with the status byte reading full).
+/// @param frame A parsed frame.
+/// @param out Receives the level on success.
+/// @return false for any other frame, event, shape or a value above BATTERY_LEVEL_MAX_PERCENT.
+bool decode_battery_level_event(const IoFrame &frame, uint8_t &out);
+
 // ============================================================================
 // Data transport read (0x46 / 0x47 / 0x4A / 0x4B)
 // ============================================================================

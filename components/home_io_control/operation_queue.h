@@ -40,6 +40,9 @@ enum class PendingOperationType : uint8_t {
   REQUEST_STATUS,         ///< request_device_status call (poll for current position).
   REQUEST_NAME,           ///< request_device_name call (poll for stored device name).
   REQUEST_LIMITATION,     ///< request_device_limitation call (read the device's minimum limitation).
+  REQUEST_SUN_LEVEL,      ///< request_device_sun_level call (subscribe to EVENT_LOCAL_SENSOR, read the answer).
+  REQUEST_BATTERY_LEVEL,  ///< request_device_battery_level call (subscribe to EVENT_BATTERY_LEVEL_CHANGE, read the
+                          ///< answer).
   DISCOVER_AND_PAIR,      ///< discover_and_pair call (starts 3-phase pairing flow).
 };
 
@@ -61,12 +64,13 @@ struct PendingOperation {
 ///
 /// **Ordering:** DISCOVER_AND_PAIR > control operations > background polls.
 /// Control operations (SET_*, DEVICE_COMMAND) are inserted before any queued background polls
-/// (REQUEST_STATUS, REQUEST_NAME, REQUEST_LIMITATION) so user-visible commands execute with minimum queue latency.
+/// (REQUEST_STATUS, REQUEST_NAME, REQUEST_LIMITATION, REQUEST_SUN_LEVEL, REQUEST_BATTERY_LEVEL) so user-visible
+/// commands execute with minimum queue latency.
 /// DISCOVER_AND_PAIR always front-inserts ahead of all other entries.
 ///
 /// **Stale-poll drop:** enqueueing a control operation for device X drops any queued
 /// REQUEST_STATUS for X, since the command reply supersedes it and re-arms tracking. A queued
-/// REQUEST_LIMITATION is kept: a status reply does not answer it.
+/// REQUEST_LIMITATION, REQUEST_SUN_LEVEL or REQUEST_BATTERY_LEVEL is kept: a status reply does not answer it.
 ///
 /// Coalescing rules (both directions):
 /// - SET_POSITION arriving while SET_TILT is pending for the same device → SET_POSITION_AND_TILT.
@@ -75,7 +79,7 @@ struct PendingOperation {
 /// Deduplication rules:
 /// - At most one REQUEST_STATUS per device.
 /// - At most one REQUEST_NAME per device.
-/// - At most one REQUEST_LIMITATION per device.
+/// - At most one REQUEST_LIMITATION, one REQUEST_SUN_LEVEL and one REQUEST_BATTERY_LEVEL per device.
 /// - At most one DISCOVER_AND_PAIR (every pending background poll is flushed
 ///   and the discover entry is pushed to the front to minimize pairing-window latency).
 ///
@@ -150,6 +154,14 @@ class OperationQueue {
   /// @return true if pushed, false if a duplicate was already pending.
   bool enqueue_request_limitation(const std::string &device_id);
 
+  /// Enqueue REQUEST_SUN_LEVEL, suppressing duplicates.
+  /// @return true if pushed, false if a duplicate was already pending.
+  bool enqueue_request_sun_level(const std::string &device_id);
+
+  /// Enqueue REQUEST_BATTERY_LEVEL, suppressing duplicates.
+  /// @return true if pushed, false if a duplicate was already pending.
+  bool enqueue_request_battery_level(const std::string &device_id);
+
   // --- Pairing (dedup + priority front-push) ---
 
   /// Enqueue DISCOVER_AND_PAIR with elevated priority.
@@ -169,7 +181,7 @@ class OperationQueue {
   [[nodiscard]] std::deque<PendingOperation>::const_iterator begin() const;
   [[nodiscard]] std::deque<PendingOperation>::const_iterator end() const;
 
-  /// True for background poll types (REQUEST_STATUS, REQUEST_NAME, REQUEST_LIMITATION) that yield to control
+  /// True for background poll types (REQUEST_STATUS, REQUEST_NAME and the sensor polls) that yield to control
   /// operations. Public because the dispatch gate in loop() defers *only* background work when a 1W remote is
   /// transmitting; a user command must never be held back for it.
   [[nodiscard]] static bool is_background_op(PendingOperationType t);

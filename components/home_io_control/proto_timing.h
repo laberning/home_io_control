@@ -139,6 +139,12 @@ static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per comma
 /// third copy of a movement command would only lengthen the blocked loop. See
 /// decisions::retry_after_unconfirmed_accept_is_safe().
 static constexpr uint8_t UNCONFIRMED_EXECUTE_MAX_RESENDS = 1;
+/// Re-sends allowed for a CMD_SUBSCRIBE_EVENT the target accepted without a closing reply. The
+/// answer carries the reading (an RS100 Solar io answers the subscription with the event's current
+/// value), so a lost answer is worth one more copy; the device accepts repeated subscriptions
+/// (issue #156). One, as for an EXECUTE: a second silent try is not a one-off. See
+/// decisions::retry_after_unconfirmed_accept_is_safe().
+static constexpr uint8_t UNCONFIRMED_SUBSCRIBE_MAX_RESENDS = 1;
 /// Gap before that re-send, in place of EXCHANGE_RETRY_DELAY_MS. A device that did act on the first
 /// copy is often deaf for about a second while its motor or load switches: on a Somfy awning, a
 /// re-send 0.77 s after the first copy drew no challenge at all in 3 of 14 cases. With this gap the

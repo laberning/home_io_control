@@ -81,6 +81,10 @@ void IOHomeCover::setup() {
   // After the registration above: the hub only schedules a poll for a registered device.
   if (this->rain_sensor_poll_interval_ms_ != 0)
     this->parent_->set_device_rain_poll_interval(this->device_id_, this->rain_sensor_poll_interval_ms_);
+  if (this->sun_level_poll_interval_ms_ != 0)
+    this->parent_->set_device_sun_poll_interval(this->device_id_, this->sun_level_poll_interval_ms_);
+  if (this->battery_level_poll_interval_ms_ != 0)
+    this->parent_->set_device_battery_level_poll_interval(this->device_id_, this->battery_level_poll_interval_ms_);
 }
 
 cover::CoverTraits IOHomeCover::get_traits() {
@@ -256,6 +260,10 @@ void IOHomeCover::dump_config() {
   this->log_poll_interval_config_(TAG);
   if (this->rain_sensor_poll_interval_ms_ != 0)
     ESP_LOGCONFIG(TAG, "  Rain Sensor Poll Interval: %" PRIu32 " ms", this->rain_sensor_poll_interval_ms_);
+  if (this->sun_level_poll_interval_ms_ != 0)
+    ESP_LOGCONFIG(TAG, "  Sun Level Poll Interval: %" PRIu32 " ms", this->sun_level_poll_interval_ms_);
+  if (this->battery_level_poll_interval_ms_ != 0)
+    ESP_LOGCONFIG(TAG, "  Battery Level Poll Interval: %" PRIu32 " ms", this->battery_level_poll_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Supports Tilt: %s", YESNO(this->supports_tilt()));
 }
 

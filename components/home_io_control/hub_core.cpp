@@ -38,7 +38,7 @@ constexpr size_t ENROLLMENT_CLASS_HEX_BUFFER_SIZE = 8;
 constexpr uint32_t BLOCKING_WARNING_THRESHOLD_MS =
     250;  ///< setup() and exchanges can legitimately block longer than generic ESPHome components.
 
-/// Random number for the rain poll's jitter. ESPHome's random_uint32() on firmware, a settable
+/// Random number for the periodic sensor polls' jitter. ESPHome's random_uint32() on firmware, a settable
 /// value in host tests.
 uint32_t poll_jitter_random() { return random_uint32(); }
 
@@ -336,6 +336,19 @@ void IOHomeControlComponent::set_device_rain_poll_interval(const std::string &de
   this->rain_poll_policy_.set_interval(device_id, interval_ms, millis(), poll_jitter_random());
 }
 
+void IOHomeControlComponent::set_device_sun_poll_interval(const std::string &device_id, uint32_t interval_ms) {
+  if (this->get_device(device_id) == nullptr)
+    return;
+  this->sun_poll_policy_.set_interval(device_id, interval_ms, millis(), poll_jitter_random());
+}
+
+void IOHomeControlComponent::set_device_battery_level_poll_interval(const std::string &device_id,
+                                                                    uint32_t interval_ms) {
+  if (this->get_device(device_id) == nullptr)
+    return;
+  this->battery_level_poll_policy_.set_interval(device_id, interval_ms, millis(), poll_jitter_random());
+}
+
 void IOHomeControlComponent::schedule_background_poll_backoff_(const std::string &device_id, bool auth_like,
                                                                bool device_moving) {
   uint32_t const now = millis();
@@ -436,11 +449,24 @@ void IOHomeControlComponent::loop() {
     auto due = this->poll_policy_.pop_due_device(millis());
     if (due.has_value())
       this->queue_request_device_status(*due);
-    if (this->rain_poll_policy_.has_due(millis())) {
-      const auto rain_due = this->rain_poll_policy_.pop_due_device(millis(), poll_jitter_random());
-      if (rain_due.has_value())
-        this->queue_request_device_limitation(*rain_due);
-    }
+    this->queue_due_periodic_polls_();
+  }
+}
+
+void IOHomeControlComponent::queue_due_periodic_polls_() {
+  // has_due() first, so a random number is drawn only when pop_due_device() uses it.
+  if (this->rain_poll_policy_.has_due(millis())) {
+    if (const auto due = this->rain_poll_policy_.pop_due_device(millis(), poll_jitter_random()); due.has_value())
+      this->queue_request_device_limitation(*due);
+  }
+  if (this->sun_poll_policy_.has_due(millis())) {
+    if (const auto due = this->sun_poll_policy_.pop_due_device(millis(), poll_jitter_random()); due.has_value())
+      this->queue_request_device_sun_level(*due);
+  }
+  if (this->battery_level_poll_policy_.has_due(millis())) {
+    if (const auto due = this->battery_level_poll_policy_.pop_due_device(millis(), poll_jitter_random());
+        due.has_value())
+      this->queue_request_device_battery_level(*due);
   }
 }
 

@@ -10,6 +10,7 @@
 /// rather than owning one. They live together here because they are the cover platform's small
 /// auxiliary surface, not full entity platforms of their own.
 
+#include <optional>
 #include <string>
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
@@ -18,6 +19,7 @@
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
 #include "hub_core.h"
+#include "platform_companion_sensors.h"
 #include "platform_entity_base.h"
 #include "proto_device_model.h"
 
@@ -117,6 +119,48 @@ class IOHomeRainBinarySensor : public binary_sensor::BinarySensor, public Compon
  protected:
   /// @brief Publish a rain state: true for RAIN, false for DRY, no state for UNKNOWN.
   void publish_rain_state_(RainSensorState state);
+};
+
+/// @brief Sensor publishing the raw sun value a device answers its sun level poll with.
+/// @ingroup hioc_platforms
+///
+/// Only generated when the cover declares `sun_level_poll_interval:`, which also schedules the poll
+/// that feeds it (a subscription to EVENT_LOCAL_SENSOR, ADR 0064). Publishes the number as the device
+/// sends it, with no unit: 0 at night, rising with sun on the panel. No state until the first
+/// answered poll, and again after several unanswered polls.
+/// \todo Unit and scale unknown; confirmed on one Somfy RS100 Solar io only (issue #156).
+class IOHomeSunLevelSensor : public IOHomeCompanionSensor {
+ public:
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+
+  /// @brief Dump sensor configuration to the log.
+  void dump_config() override;
+
+ protected:
+  std::optional<uint16_t> published_;  ///< Last value handed to publish_state(); avoids re-publishing on every update.
+  bool published_once_{false};         ///< True once anything (a value or "unknown") was published.
+};
+
+/// @brief Sensor (`device_class: battery`, %) publishing the level a device answers its battery level
+/// poll with.
+/// @ingroup hioc_platforms
+///
+/// Only generated when the cover declares `battery_level_poll_interval:`, which also schedules the
+/// poll that feeds it (a subscription to EVENT_BATTERY_LEVEL_CHANGE, ADR 0064). Independent of the
+/// `battery: true` entities, which read the coarse level from status replies at no radio cost.
+/// \todo Percent rests on one captured value (100); confirmed on one Somfy RS100 Solar io only.
+class IOHomeBatteryLevelSensor : public IOHomeCompanionSensor {
+ public:
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+
+  /// @brief Dump sensor configuration to the log.
+  void dump_config() override;
+
+ protected:
+  std::optional<uint16_t> published_;  ///< Last value handed to publish_state(); avoids re-publishing on every update.
+  bool published_once_{false};         ///< True once anything (a value or "unknown") was published.
 };
 
 /// @brief Binary sensor (`device_class: battery`) that is ON while the device reports a low battery.

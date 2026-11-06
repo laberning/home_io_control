@@ -484,16 +484,19 @@ IoFrame stop_request() {
 
 }  // namespace
 
-TEST(Exchange, AcceptedSubscribeEventIsSentOnce) {
-  // The subscribe probe stores state in the device: once a try was challenged (accepted), silence
-  // after it ends the exchange instead of spending the other tries on further copies.
+TEST(Exchange, AcceptedSubscribeEventIsResentOnceAndNoMore) {
+  // A subscription's answer carries the reading: a try that was challenged (accepted) but whose
+  // answer never came is sent once more, then the exchange ends.
   ResendRig rig;
-  rig.queue_challenge();  // challenged, then the final wait stays silent
+  rig.queue_challenge();                  // try 1: challenged, then the final wait stays silent
+  rig.radio.queue_rx_hold_until_sent(3);  // silent until the re-sent request (send #3) is out
+  rig.queue_challenge();                  // try 2: challenged again, final silent again
   IoFrame request{};
   ASSERT_TRUE(create_subscribe_event(request, test::OWN_ID, test::DST_ID, EVENT_LOCAL_SENSOR, false));
 
   EXPECT_EQ(rig.send(request), ExchangeOutcome::SUCCESS_UNCONFIRMED);
-  EXPECT_EQ(rig.radio.get_send_count(), 2) << "the request and our 0x3D, no second request";
+  ASSERT_EQ(rig.radio.get_send_count(), 4) << "request, 0x3D, the same request again, 0x3D; no third copy";
+  EXPECT_EQ(rig.radio.get_sent_data()[0], rig.radio.get_sent_data()[2]) << "the re-send is the same subscription";
 }
 
 TEST(Exchange, UnansweredSubscribeEventKeepsTheNormalRetryBudget) {

@@ -5,12 +5,13 @@
 ## Bridges the YAML ``cover:`` platform declaration to the runtime IOHomeCover entity.
 ## Shared device-binding logic lives in platform_common.py; cover-specific extras — the
 ## ``invert_position`` option, the named-position companion buttons (favorite, ventilation), the opt-in
-## ``rain_sensor_poll_interval`` key with its rain binary sensor and the opt-in ``battery`` key with
-## its two battery sensors — stay here.
+## ``rain_sensor_poll_interval`` key with its rain binary sensor, the opt-in ``sun_level_poll_interval``
+## and ``battery_level_poll_interval`` keys with their sensors, and the opt-in ``battery`` key with its
+## two battery sensors — stay here.
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, button, cover, switch, text_sensor
+from esphome.components import binary_sensor, button, cover, sensor, switch, text_sensor
 from esphome.const import (
     CONF_DEVICE_CLASS,
     CONF_DISABLED_BY_DEFAULT,
@@ -20,6 +21,8 @@ from esphome.const import (
     DEVICE_CLASS_MOISTURE,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
+    STATE_CLASS_MEASUREMENT,
+    UNIT_PERCENT,
 )
 from esphome.core import ID
 
@@ -31,7 +34,9 @@ from .hub_validators import (
     NAMED_POSITION_FEATURES,
     device_features,
     device_type_name,
+    validate_battery_level_poll_interval,
     validate_rain_sensor_poll_interval,
+    validate_sun_level_poll_interval,
 )
 from .platform_common import (
     companion_entity_name,
@@ -56,6 +61,10 @@ CONF_SILENT_SWITCH_ID = "_silent_switch_id"
 CONF_OPTIMISTIC_STATE = "optimistic_state"
 CONF_RAIN_SENSOR_POLL_INTERVAL = "rain_sensor_poll_interval"
 CONF_RAIN_SENSOR_ID = "_rain_sensor_id"
+CONF_SUN_LEVEL_POLL_INTERVAL = "sun_level_poll_interval"
+CONF_SUN_LEVEL_SENSOR_ID = "_sun_level_sensor_id"
+CONF_BATTERY_LEVEL_POLL_INTERVAL = "battery_level_poll_interval"
+CONF_BATTERY_LEVEL_SENSOR_ID = "_battery_level_sensor_id"
 CONF_BATTERY = "battery"
 CONF_BATTERY_LOW_SENSOR_ID = "_battery_low_sensor_id"
 CONF_BATTERY_SENSOR_ID = "_battery_sensor_id"
@@ -72,6 +81,12 @@ IOHomeCoverSilentSwitch = home_io_control_ns.class_(
 )
 IOHomeRainBinarySensor = home_io_control_ns.class_(
     "IOHomeRainBinarySensor", binary_sensor.BinarySensor, cg.Component
+)
+IOHomeSunLevelSensor = home_io_control_ns.class_(
+    "IOHomeSunLevelSensor", sensor.Sensor, cg.Component
+)
+IOHomeBatteryLevelSensor = home_io_control_ns.class_(
+    "IOHomeBatteryLevelSensor", sensor.Sensor, cg.Component
 )
 IOHomeBatteryLowBinarySensor = home_io_control_ns.class_(
     "IOHomeBatteryLowBinarySensor", binary_sensor.BinarySensor, cg.Component
@@ -140,6 +155,16 @@ def rain_sensor_name(config):
     return companion_entity_name(config, "Rain sensor")
 
 
+def sun_level_sensor_name(config):
+    """Derive the sun level sensor name from the parent cover name."""
+    return companion_entity_name(config, "Sun level")
+
+
+def battery_level_sensor_name(config):
+    """Derive the battery level (percent) sensor name from the parent cover name."""
+    return companion_entity_name(config, "Battery level")
+
+
 def battery_low_sensor_name(config):
     """Derive the battery-low binary sensor name from the parent cover name."""
     return companion_entity_name(config, "Battery Low")
@@ -188,6 +213,21 @@ def _inject_companion_ids(config):
             type=IOHomeRainBinarySensor,
         )
 
+    # Sun level and battery level sensors — each only when the cover declares its poll interval,
+    # which is the opt-in to that poll (a subscription the device answers with the reading).
+    if CONF_SUN_LEVEL_POLL_INTERVAL in config:
+        config[CONF_SUN_LEVEL_SENSOR_ID] = ID(
+            f"{base}_sun_level_sensor",
+            is_declaration=True,
+            type=IOHomeSunLevelSensor,
+        )
+    if CONF_BATTERY_LEVEL_POLL_INTERVAL in config:
+        config[CONF_BATTERY_LEVEL_SENSOR_ID] = ID(
+            f"{base}_battery_level_sensor",
+            is_declaration=True,
+            type=IOHomeBatteryLevelSensor,
+        )
+
     # Battery sensors — only with `battery: true`. The level is decoded from status replies the hub
     # already receives, so the key adds entities but no radio traffic.
     if config.get(CONF_BATTERY, False):
@@ -216,6 +256,14 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(
                 CONF_RAIN_SENSOR_POLL_INTERVAL
             ): validate_rain_sensor_poll_interval
+        }
+    )
+    .extend(
+        {
+            cv.Optional(CONF_SUN_LEVEL_POLL_INTERVAL): validate_sun_level_poll_interval,
+            cv.Optional(
+                CONF_BATTERY_LEVEL_POLL_INTERVAL
+            ): validate_battery_level_poll_interval,
         }
     )
     .extend({cv.Optional(CONF_BATTERY): cv.boolean})
@@ -288,6 +336,38 @@ async def to_code(config):
         cg.add(rain_sensor.set_parent(parent))
         cg.add(rain_sensor.set_device_id(config[CONF_IO_DEVICE_ID]))
 
+    if CONF_SUN_LEVEL_SENSOR_ID in config:
+        cg.add(
+            var.set_sun_level_poll_interval(
+                config[CONF_SUN_LEVEL_POLL_INTERVAL].total_milliseconds
+            )
+        )
+        # No unit and no device class: the value is published raw until its unit is known.
+        await _create_reading_sensor(
+            config,
+            parent,
+            IOHomeSunLevelSensor,
+            CONF_SUN_LEVEL_SENSOR_ID,
+            sun_level_sensor_name(config),
+            icon="mdi:white-balance-sunny",
+        )
+
+    if CONF_BATTERY_LEVEL_SENSOR_ID in config:
+        cg.add(
+            var.set_battery_level_poll_interval(
+                config[CONF_BATTERY_LEVEL_POLL_INTERVAL].total_milliseconds
+            )
+        )
+        await _create_reading_sensor(
+            config,
+            parent,
+            IOHomeBatteryLevelSensor,
+            CONF_BATTERY_LEVEL_SENSOR_ID,
+            battery_level_sensor_name(config),
+            unit_of_measurement=UNIT_PERCENT,
+            device_class=DEVICE_CLASS_BATTERY,
+        )
+
     if CONF_BATTERY_LOW_SENSOR_ID in config:
         cg.add(var.set_battery_entities(True))
         await _create_battery_sensors(config, parent)
@@ -310,6 +390,28 @@ async def to_code(config):
         cg.add(position_button.set_command(getattr(CoverCommand, key)))
 
     await create_companion_sensors(config, parent)
+
+
+async def _create_reading_sensor(config, parent, cls, id_key, name, **schema_kwargs):
+    """Create one polled reading sensor (sun level, battery level) bound to the cover's device."""
+    sensor_config = sensor.sensor_schema(
+        cls,
+        accuracy_decimals=0,
+        state_class=STATE_CLASS_MEASUREMENT,
+        **schema_kwargs,
+    ).extend(cv.COMPONENT_SCHEMA)(
+        inherit_esphome_device(
+            {
+                CONF_ID: config[id_key],
+                CONF_NAME: name,
+            },
+            config,
+        )
+    )
+    reading_sensor = await sensor.new_sensor(sensor_config)
+    await cg.register_component(reading_sensor, sensor_config)
+    cg.add(reading_sensor.set_parent(parent))
+    cg.add(reading_sensor.set_device_id(config[CONF_IO_DEVICE_ID]))
 
 
 async def _create_battery_sensors(config, parent):

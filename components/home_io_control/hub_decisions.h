@@ -89,6 +89,25 @@ inline bool is_device_event_report(const IoFrame &frame) {
   return decode_status_update_event(frame, event) && event.event_id != EVENT_STATUS_CHANGE;
 }
 
+/// Returns true when @p response is the answer to the subscription @p request: the request is a
+/// CMD_SUBSCRIBE_EVENT with the subscribe action, and the response a well-formed CMD_STATUS_UPDATE
+/// carrying the same event, from the device the request went to. A device answers a subscription
+/// with the event's current value (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_*),
+/// so inside the exchange the hub started for that request this event report is the reply; every
+/// other event report is still recorded and never taken as a reply (is_device_event_report()).
+inline bool is_subscription_answer(const IoFrame &request, const IoFrame &response) {
+  if (request.cmd != CMD_SUBSCRIBE_EVENT || request.data_len != SUBSCRIBE_EVENT_DATA_SIZE ||
+      request.data[0] != EVENT_SUBSCRIPTION_SUBSCRIBE)
+    return false;
+  if (memcmp(response.src, request.dst, NODE_ID_SIZE) != 0)
+    return false;
+  StatusUpdateEvent event;
+  if (!decode_status_update_event(response, event))
+    return false;
+  const auto requested = static_cast<uint16_t>((request.data[1] << BITS_PER_BYTE) | request.data[2]);
+  return event.event_id == requested;
+}
+
 /// Returns true for the commands that write to a device: an execute, a mode activation or a private
 /// register write. A heard write changes the device's state, so this hub's view of it is stale; a heard
 /// read (any other command) changes nothing on the device. Deliberately a short list of writes rather
@@ -174,8 +193,11 @@ inline ExchangeFinalResponseDisposition classify_exchange_final_response(const I
 /// only when repeating it is harmless (is_repeatable_execute()), and at most
 /// UNCONFIRMED_EXECUTE_MAX_RESENDS times per exchange.
 ///
-/// CMD_SUBSCRIBE_EVENT stores a subscription in the device. A try the device authenticated is
-/// enough to have stored it, and a second accepted copy has no use, so it is never sent again.
+/// CMD_SUBSCRIBE_EVENT stores a subscription in the device, and the device answers it with the
+/// event's current value (is_subscription_answer()). A try the device authenticated has stored the
+/// subscription, but its answer may still have been lost, so it is sent once more
+/// (UNCONFIRMED_SUBSCRIBE_MAX_RESENDS), never more: the device has accepted repeated subscriptions
+/// (issue #156), and a reading is what the request is for.
 ///
 /// @param request                  Outbound request frame.
 /// @param target_confirms_execute  The target has closed an EXECUTE exchange with a reply before
@@ -186,7 +208,7 @@ inline ExchangeFinalResponseDisposition classify_exchange_final_response(const I
 [[nodiscard]] inline bool retry_after_unconfirmed_accept_is_safe(const IoFrame &request, bool target_confirms_execute,
                                                                  uint8_t unconfirmed_tries) {
   if (request.cmd == CMD_SUBSCRIBE_EVENT)
-    return false;
+    return unconfirmed_tries <= UNCONFIRMED_SUBSCRIBE_MAX_RESENDS;
   if (request.cmd != CMD_EXECUTE)
     return true;
   return target_confirms_execute && is_repeatable_execute(request) &&

@@ -16,6 +16,8 @@ cover:
     linked_remotes: ["class:vertical_exterior_awning", "class:0x14"]
     status_poll_interval: 60s
     rain_sensor_poll_interval: 15min
+    sun_level_poll_interval: 30min
+    battery_level_poll_interval: 6h
     battery: true
 
   # An open/close-only opener: no slider, no favourite button, `silent:` would be refused.

@@ -1,0 +1,34 @@
+id: somfy_rs100_probe_subscribe_event_battery_sx1262
+description: >
+  The same RS100 Solar io motor (node 24635F) as
+  tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_sx1262.yaml answering the
+  `subscribe_event` probe with index 0 (CMD_SUBSCRIBE_EVENT 0x73, payload 01 20 01: the battery level
+  event) on the reporter's Heltec V3.2 (SX1262) hub A1B2C3 (issue #156, comment of 2026-11-04), at
+  20:53:26 local time, after dark. Try 1 went out behind a 1024-byte preamble and drew no first
+  response within 400 ms; try 2 drew a 0x3C challenge after 234 ms and, after our 0x3D, this answer.
+  The frame log has only the device's answer (stage=probe_rx), so the request, the challenge and our
+  0x3D are not in this capture.
+
+  The answer has the header of the sun-sensor captures (flags 05, status 60), then event 20 01,
+  length 01 and one data byte 0x64 (100). Unlike the 0x2005 answers there is no leading type byte.
+  100 reads as a battery level in percent: the status byte's battery field reports full at the same
+  time. No other value has been captured, so the scale is not confirmed.
+
+  Community capture: no system key, HMAC not verifiable.
+source:
+  device: "Somfy RS100 Solar io motor (node 24635F)"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3.2, main around 2026-11-04 with the read_object probe, diagnostic_probes: true"
+  date: 2026-11-04
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/156"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 A1 B2 C3 24 63 5F 71 05 60 20 01 01 64"
+    crc: absent
+    note: "cmd=STATUS_UPDATE(0x71), answer to 0x73 01 20 01 at 20:53:26. Event 0x2001, 1 data byte: 64"
+expect:
+  frames:
+    - {cmd: 0x71, start: false, end: true, protocol: 2w}

@@ -34,6 +34,8 @@ accepted and the cover is created; the warning asks you to
 - `optimistic_state` (Optional, default: `true`): Show the requested position/movement direction immediately in Home Assistant — for both HA-issued commands (open/close/set-position/stop) and commands from a linked 1W remote — instead of waiting for the confirming poll or device response. The confirming poll/response always still runs and is the source of truth; optimistic state is a UX bridge only. Set `false` for a device where you don't want HA to show assumed movement, for example one with an unreliable RF link where a stale optimistic state could be misleading.
 - `silent` (Optional): Move at the manufacturer app's "silent operation" speed — slower and quieter. Only a kind that takes a travel-speed parameter accepts it: config validation rejects `silent:` on garage openers, on interior venetian blinds, on dual roller shutters and on any device of subtype 58, and its message says to remove the key. On an interior venetian blind the first functional parameter is the slat orientation and on a dual roller shutter it is the upper curtain, so neither takes a speed there (experimental, see [Interior venetian blinds and dual roller shutters](cover.md#interior-venetian-blinds-and-dual-roller-shutters)). It selects the protocol's slow travel profile on position moves and on the favorite ("My") command. STOP is excluded because stopping has no travel speed, and ventilation and tilt because nothing has been captured for them yet — they keep their existing payloads rather than being guessed at. Nothing on the wire reports a device's current profile, so, like `invert_position`, this is a declared preference rather than a readback. Declaring the key also generates a `<Cover Name> Silent Operation` switch so the profile can be changed at runtime; the YAML value is the boot state. Omit the key entirely and no switch is created.
 - `rain_sensor_poll_interval` (Optional): Ask the device how far its own rain protection lets it open, once per interval, and report the answer as a binary sensor. The minimum is `1min` and there is no default: omit the key and nothing is sent and no entity is created. Declaring it generates a `<Cover Name> Rain sensor` binary sensor. Validated on VELUX windows with a wired rain sensor; a Somfy Sunea awning answers the request with a reply this project cannot read as an opening limit, so the sensor stays without state there. Read [Polling for rain](cover.md#polling-for-rain) before choosing an interval, because every poll uses transmit time that the hub shares with everything else it sends.
+- `sun_level_poll_interval` (Optional): Ask the device for the value of its built-in sun sensor once per interval, and publish it as a `<Cover Name> Sun level` sensor. The minimum is `1min` and there is no default: omit the key and nothing is sent and no entity is created. Experimental, confirmed on one Somfy RS100 Solar io. See [Sun level and battery level](cover.md#sun-level-and-battery-level) before choosing an interval.
+- `battery_level_poll_interval` (Optional): Ask the device for its battery level in percent once per interval, and publish it as a `<Cover Name> Battery level` sensor. The minimum is `1min` and there is no default. Experimental, confirmed on one Somfy RS100 Solar io. See [Sun level and battery level](cover.md#sun-level-and-battery-level).
 - `battery` (Optional, default: `false`): Report the battery level a battery or solar device includes in its status replies. Generates a `<Cover Name> Battery Low` binary sensor and a `<Cover Name> Battery` text sensor. It sends nothing extra over the radio. See [Battery level](cover.md#battery-level).
 - All standard options from the ESPHome cover base schema also apply, including `id`, `device_class` (see [Home Assistant device class](cover.md#home-assistant-device-class)), `icon`, entity metadata, MQTT options, and cover automations such as `on_opening`, `on_closing`, and `on_idle`.
 
@@ -59,7 +61,7 @@ Every other kind, including `bioclimatic_pergola`, has no default class.
 
 ## Companion entities
 
-Beyond the diagnostic companions every platform generates, covers add up to eight more:
+Beyond the diagnostic companions every platform generates, covers add up to ten more:
 
 - **`<Cover Name> Favorite Position`** — a button, generated for any cover with a declared
   position-capable `io_device_type` except garage openers, whose motors refuse the favorite
@@ -76,6 +78,9 @@ Beyond the diagnostic companions every platform generates, covers add up to eigh
   when `rain_sensor_poll_interval:` is declared. See [Polling for rain](cover.md#polling-for-rain).
 - **`<Cover Name> Battery Low`** and **`<Cover Name> Battery`** — a binary sensor and a text
   sensor, generated only with `battery: true`. See [Battery level](cover.md#battery-level).
+- **`<Cover Name> Sun level`** and **`<Cover Name> Battery level`** — sensors, each generated only
+  when its poll interval is declared. See
+  [Sun level and battery level](cover.md#sun-level-and-battery-level).
 
 These follow the cover's own `device_id:`, if one is set, so they group under the same Home
 Assistant device as the cover itself.
@@ -138,7 +143,8 @@ What to expect from the sensor:
 
 - **No state until the first answer.** "Off" always means the window said so. The sensor goes back
   to no state after three polls in a row get no answer, so a window that is out of range does not
-  keep showing an old reading. A device whose reply is not in the VELUX layout never gives a
+  keep showing an old reading. A poll that gets no answer is asked once more a minute later, and
+  counts as unanswered only if that retry gets no answer either. A device whose reply is not in the VELUX layout never gives a
   state either. Set `logger: level: DEBUG` to see what each poll received: the log shows the
   decoded limitation reply, or the raw frame when it does not fit.
 - **A reading is as fresh as the interval.** A shower that starts right after a poll shows up at the
@@ -210,6 +216,77 @@ What to expect:
   capture we hold, in daylight. If yours ever shows `normal` or `low`, please add it to
   [issue #156](https://github.com/laberning/home_io_control/issues/156) along with the time and the
   weather.
+
+For a percentage, see [Sun level and battery level](cover.md#sun-level-and-battery-level).
+
+## Sun level and battery level
+
+A solar motor with a built-in sun sensor can tell the hub how much sun its panel gets and how full
+its battery is, but only when asked. With these keys set, the hub asks on each interval and
+publishes the answer:
+
+- **`<Cover Name> Sun level`**: the sun sensor's value as the motor sends it, with no unit. Over
+  a sunny November day an RS100 Solar io on a west-facing wall read 0 at night, 5 to 25 in shade
+  and at dusk, and 600 to 750 in direct sun on its panel. It is not lux: direct sunshine is tens of
+  thousands of lux. Treat it as a relative brightness for automations ("close above 500").
+- **`<Cover Name> Battery level`**: the battery level in percent, with device class `battery`.
+
+```yaml
+cover:
+  - platform: home_io_control
+    name: "Terrace Screen"
+    io_device_id: "123ABC"
+    io_device_type: roller_shutter
+    low_power: true
+    battery: true
+    sun_level_poll_interval: 30min
+    battery_level_poll_interval: 6h
+```
+
+What to expect:
+
+- **Both are experimental.** They are confirmed on one Somfy RS100 Solar io
+  ([issue #156](https://github.com/laberning/home_io_control/issues/156)). Only 100 % has been seen
+  so far. A device that refuses the request, or answers in another shape, keeps the sensor without
+  a state, and the log names its answer once. If you try them on another motor, please report the
+  result.
+- **Each poll writes a subscription into the motor.** The hub asks by subscribing the motor to the
+  value, and the motor answers with the value at once. The RS100 accepts a repeated subscription,
+  but no way to remove one is known.
+- **No state until the first answer**, and again after three polls in a row get no answer. The
+  RS100 missed about one poll in four in the reporter's log, so a poll that gets no answer is asked
+  once more a minute later; only a missed retry counts toward the three. A moving motor is not
+  asked; the poll waits 30 seconds and tries again. The interval varies by up
+  to 10 %, as for the rain poll.
+- **`battery: true` stays the low-battery signal.** It reads the coarse level from status replies
+  at no radio cost; the percentage costs a poll. Use both if you want a number on the dashboard
+  and a low-battery warning in automations.
+
+### Choosing intervals
+
+Use 30 minutes for the sun level and 6 hours for the battery level. The battery level moves over
+days, so polling it more often only spends transmit time.
+
+Each poll is a request the motor answers after a security check, on 868.95 MHz, which allows 3.6
+seconds of transmission per hour (0.1 % duty cycle, EN 300 220) for everything the hub sends. A
+solar motor is a `low_power` device: every poll carries the long wake-up preamble, and the motor
+often misses the first try, so a poll costs about 0.22 to 0.45 s. The table shows the cost per
+hour of one cover's poll. The retry a minute after a missed poll adds about a quarter on top for a
+motor that misses as often as the RS100.
+
+| Interval | `low_power` device | Always-alive device |
+|---|---|---|
+| 1 minute | 13 to 27 s | 0.9 to 1.1 s |
+| 5 minutes | 2.7 to 5.3 s | 0.18 to 0.22 s |
+| 15 minutes | 0.9 to 1.8 s | 0.06 to 0.07 s |
+| 30 minutes | 0.45 to 0.9 s | 0.03 to 0.04 s |
+| 60 minutes | 0.22 to 0.45 s | 0.02 s |
+| 6 hours | 0.04 to 0.07 s | under 0.01 s |
+
+Figures are approximate: they count one 12-byte request, the hub's answer to the security check,
+and for a `low_power` device one unanswered first try at most. On a `low_power` motor, do not poll
+the sun level more often than every 15 minutes: at one minute a single cover would use several
+times the whole hourly allowance, and it wakes the motor each time.
 
 ## Tilt
 

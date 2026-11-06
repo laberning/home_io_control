@@ -61,15 +61,24 @@ inline const corpus::CorpusCapture *capture_by_id(const char *id) {
 /// Id of the RS100 Solar io's answer to a subscription: a 0x71 carrying EVENT_LOCAL_SENSOR.
 inline constexpr const char *SENSOR_EVENT_REPORT_CAPTURE = "somfy_rs100_probe_subscribe_event_sx1262";
 
-/// The captured sensor event report (SENSOR_EVENT_REPORT_CAPTURE), re-addressed to the given
-/// endpoints so a test hub that registers other node IDs takes it as its own device's report.
-inline IoFrame sensor_event_report(const uint8_t src[NODE_ID_SIZE], const uint8_t dst[NODE_ID_SIZE]) {
-  const corpus::CorpusCapture *capture = capture_by_id(SENSOR_EVENT_REPORT_CAPTURE);
-  EXPECT_NE(capture, nullptr) << SENSOR_EVENT_REPORT_CAPTURE << " is missing from the corpus";
-  IoFrame frame = capture != nullptr ? parse_capture_frame(capture->frames[0]) : IoFrame{};
+/// Frame @p index of capture @p capture_id, re-addressed to the given endpoints so a test hub that
+/// registers other node IDs takes it as its own device's frame.
+inline IoFrame readdressed_capture_frame(const char *capture_id, uint8_t index, const uint8_t src[NODE_ID_SIZE],
+                                         const uint8_t dst[NODE_ID_SIZE]) {
+  const corpus::CorpusCapture *capture = capture_by_id(capture_id);
+  EXPECT_NE(capture, nullptr) << capture_id << " is missing from the corpus";
+  const bool present = capture != nullptr && index < capture->frame_count;
+  EXPECT_TRUE(present) << capture_id << " has no frame " << static_cast<unsigned>(index);
+  IoFrame frame = present ? parse_capture_frame(capture->frames[index]) : IoFrame{};
   set_src(frame, src);
   set_dst(frame, dst);
   return frame;
+}
+
+/// The captured sensor event report (SENSOR_EVENT_REPORT_CAPTURE), re-addressed to the given
+/// endpoints so a test hub that registers other node IDs takes it as its own device's report.
+inline IoFrame sensor_event_report(const uint8_t src[NODE_ID_SIZE], const uint8_t dst[NODE_ID_SIZE]) {
+  return readdressed_capture_frame(SENSOR_EVENT_REPORT_CAPTURE, 0, src, dst);
 }
 
 /// gtest instantiation name generator: uses the capture's own `id` as the test name.

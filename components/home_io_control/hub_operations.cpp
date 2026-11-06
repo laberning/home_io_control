@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <cinttypes>
 #include <cstdio>
 
 /// @file hub_operations.cpp
@@ -167,17 +168,21 @@ void IOHomeControlComponent::arm_execute_confirmation_poll_(const std::string &d
 // none of our requests, so it is recorded and never applied. The device is awake and transmitting,
 // so the request is asked once more rather than counted as a timeout (which would start the poll
 // backoff for a device that did answer, just with something else). An EXECUTE that is not safe to
-// repeat is not sent again: it ends as unanswered, like any lost exchange.
+// repeat is not sent again: it ends as unanswered, like any lost exchange. The one event report that
+// does answer the request is a subscription's answer (decisions::is_subscription_answer()): it is the
+// reading the sensor polls ask for, so it is returned as the reply.
 ExchangeOutcome IOHomeControlComponent::exchange_past_device_event_(const IoFrame &request, IoFrame &response,
                                                                     uint8_t max_tries) {
   ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
-  if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE || !decisions::is_device_event_report(response))
+  if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE || !decisions::is_device_event_report(response) ||
+      decisions::is_subscription_answer(request, response))
     return outcome;
   this->record_device_event_(response);
   if (request.cmd == CMD_EXECUTE && !decisions::is_repeatable_execute(request))
     return ExchangeOutcome::FAILED;
   outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
-  if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE || !decisions::is_device_event_report(response))
+  if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE || !decisions::is_device_event_report(response) ||
+      decisions::is_subscription_answer(request, response))
     return outcome;
   this->record_device_event_(response);
   return ExchangeOutcome::FAILED;
@@ -512,6 +517,25 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   return ok;
 }
 
+namespace {
+
+/// Count one periodic poll that brought no reading. A poll the device left unanswered is asked
+/// again after PERIODIC_POLL_MISS_RETRY_MS first and counts only if the retry is unanswered too;
+/// any other miss (an error reply, an answer of another shape) counts at once.
+/// @return True while the last reading is no longer usable.
+bool count_poll_miss(PeriodicPollPolicy &policy, const std::string &device_id, bool unanswered, const char *label) {
+  if (!unanswered)
+    return policy.on_poll_failed(device_id);
+  const bool unusable = policy.on_poll_unanswered(device_id, millis());
+  if (policy.retry_armed(device_id)) {
+    ESP_LOGD(detail::TAG, "Device %s: %s poll unanswered, asking again in %" PRIu32 " s", device_id.c_str(), label,
+             PERIODIC_POLL_MISS_RETRY_MS / 1000);
+  }
+  return unusable;
+}
+
+}  // namespace
+
 bool IOHomeControlComponent::request_device_limitation(const std::string &device_id) {
   IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr || !this->initialized_)
@@ -521,7 +545,7 @@ bool IOHomeControlComponent::request_device_limitation(const std::string &device
   // probe applies), and asking again soon is cheaper than waiting out a whole interval.
   if (!effective_is_stopped(*dev)) {
     ESP_LOGD(detail::TAG, "Device %s: rain sensor poll deferred, device is moving", device_id.c_str());
-    this->rain_poll_policy_.defer(device_id, RAIN_POLL_MOVING_RETRY_MS, millis());
+    this->rain_poll_policy_.defer(device_id, PERIODIC_POLL_MOVING_RETRY_MS, millis());
     return false;
   }
 
@@ -533,7 +557,7 @@ bool IOHomeControlComponent::request_device_limitation(const std::string &device
   // here is counted by the rain schedule instead.
   IoFrame response;
   const RequestResult result =
-      this->exchange_and_record_(device_id, request, response, {false, 0, RAIN_POLL_MAX_TRIES});
+      this->exchange_and_record_(device_id, request, response, {false, 0, PERIODIC_POLL_MAX_TRIES});
 
   // A reply consumed inside the blocking exchange never reaches the normal receive path.
   dev = this->registry_.get(device_id);
@@ -559,12 +583,12 @@ bool IOHomeControlComponent::request_device_limitation(const std::string &device
              device_id.c_str());
   }
 
-  this->apply_rain_poll_result_(device_id, reading, limit_text);
+  this->apply_rain_poll_result_(device_id, reading, limit_text, result == RequestResult::FAILED);
   return reading != RainSensorState::UNKNOWN;
 }
 
 void IOHomeControlComponent::apply_rain_poll_result_(const std::string &device_id, RainSensorState reading,
-                                                     const std::string &limit_text) {
+                                                     const std::string &limit_text, bool unanswered) {
   IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr)
     return;
@@ -572,7 +596,7 @@ void IOHomeControlComponent::apply_rain_poll_result_(const std::string &device_i
   if (reading != RainSensorState::UNKNOWN) {
     this->rain_poll_policy_.on_poll_succeeded(device_id);
     state = reading;
-  } else if (this->rain_poll_policy_.on_poll_failed(device_id)) {
+  } else if (count_poll_miss(this->rain_poll_policy_, device_id, unanswered, "rain sensor")) {
     state = RainSensorState::UNKNOWN;  // the last reading is too old to keep showing
   }
   if (state != dev->rain_sensor) {
@@ -580,6 +604,129 @@ void IOHomeControlComponent::apply_rain_poll_result_(const std::string &device_i
              rain_sensor_state_name(dev->rain_sensor), rain_sensor_state_name(state),
              limit_text.empty() ? "" : " (minimum limit ", limit_text.c_str(), limit_text.empty() ? "" : ")");
     dev->rain_sensor = state;
+  }
+  // Notify on every outcome: link health moved too, so the link sensors need the update.
+  this->notify_device_update_(device_id);
+}
+
+bool IOHomeControlComponent::request_device_sun_level(const std::string &device_id) {
+  return this->request_event_reading_(device_id, EventReading::SUN_LEVEL);
+}
+
+bool IOHomeControlComponent::request_device_battery_level(const std::string &device_id) {
+  return this->request_event_reading_(device_id, EventReading::BATTERY_LEVEL);
+}
+
+PeriodicPollPolicy &IOHomeControlComponent::event_reading_policy_(EventReading kind) {
+  return kind == EventReading::SUN_LEVEL ? this->sun_poll_policy_ : this->battery_level_poll_policy_;
+}
+
+namespace {
+
+/// The device record field a poll feeds: IoDevice::sun_level or IoDevice::battery_level.
+std::optional<uint16_t> &event_reading_field(IoDevice &dev, bool sun) {
+  return sun ? dev.sun_level : dev.battery_level;
+}
+
+/// The reading an answer carries, or nothing when it is not of the captured shape.
+std::optional<uint16_t> decode_event_reading(bool sun, const IoFrame &response) {
+  if (sun) {
+    uint16_t value = 0;
+    return decode_sun_level_event(response, value) ? std::optional<uint16_t>(value) : std::nullopt;
+  }
+  uint8_t level = 0;
+  return decode_battery_level_event(response, level) ? std::optional<uint16_t>(level) : std::nullopt;
+}
+
+/// A reading for the state-change log line: the number (with " %" for the battery) or "unknown".
+std::string format_event_reading(const std::optional<uint16_t> &reading, bool sun) {
+  if (!reading.has_value())
+    return "unknown";
+  return std::to_string(*reading) + (sun ? "" : " %");
+}
+
+}  // namespace
+
+// The request is a subscription: the device answers it with the event's current value, and that
+// answer is the reading (ADR 0064). Every poll sends the subscription again; the device stores it
+// each time, which the RS100 Solar io has accepted repeatedly (issue #156).
+bool IOHomeControlComponent::request_event_reading_(const std::string &device_id, EventReading kind) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+  const bool sun = kind == EventReading::SUN_LEVEL;
+  const char *const label = sun ? "sun level" : "battery level";
+  PeriodicPollPolicy &policy = this->event_reading_policy_(kind);
+
+  // Same caution as the rain poll: a moving device is left alone and asked again soon.
+  if (!effective_is_stopped(*dev)) {
+    ESP_LOGD(detail::TAG, "Device %s: %s poll deferred, device is moving", device_id.c_str(), label);
+    policy.defer(device_id, PERIODIC_POLL_MOVING_RETRY_MS, millis());
+    return false;
+  }
+
+  IoFrame request;
+  if (!create_subscribe_event(request, this->node_id_, dev->node_id,
+                              sun ? EVENT_LOCAL_SENSOR : EVENT_BATTERY_LEVEL_CHANGE, dev->low_power))
+    return false;
+
+  // retry_after_fail_ms = 0 keeps the status-poll backoff ladder out of the way; a miss is counted
+  // by this poll's own schedule instead.
+  IoFrame response;
+  const RequestResult result =
+      this->exchange_and_record_(device_id, request, response, {false, 0, PERIODIC_POLL_MAX_TRIES});
+
+  // A reply consumed inside the blocking exchange never reaches the normal receive path.
+  dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return false;
+  std::optional<uint16_t> reading;
+  if (result == RequestResult::REPLY) {
+    // The device transmitted, whatever it said: stamp link health the way the status path does.
+    detail::update_link_health(*dev, this->radio_);
+    uint8_t raw[FRAME_MAX_SIZE] = {0};
+    const uint8_t raw_len = serialize(response, raw, sizeof(raw));
+    detail::log_component_capture(this->radio_, "event_reading_rx", raw, raw_len, &response);
+    reading = decode_event_reading(sun, response);
+    if (!reading.has_value() && policy.first_error_reply(device_id)) {
+      char hex[FRAME_LOG_HEX_BUFFER_SIZE];
+      bytes_to_hex(response.data, response.data_len, hex, sizeof(hex));
+      ESP_LOGW(detail::TAG,
+               "Device %s answers the %s poll with cmd=0x%02X payload=%s, a shape not decoded; its %s "
+               "stays unknown",
+               device_id.c_str(), label, response.cmd, hex, label);
+    }
+  } else if (result == RequestResult::ERROR_REPLY && policy.first_error_reply(device_id)) {
+    ESP_LOGW(detail::TAG, "Device %s refuses the %s subscription; its %s stays unknown", device_id.c_str(), label,
+             label);
+  }
+
+  this->apply_event_reading_(device_id, kind, reading, result == RequestResult::FAILED);
+  return reading.has_value();
+}
+
+void IOHomeControlComponent::apply_event_reading_(const std::string &device_id, EventReading kind,
+                                                  const std::optional<uint16_t> &reading, bool unanswered) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return;
+  const bool sun = kind == EventReading::SUN_LEVEL;
+  PeriodicPollPolicy &policy = this->event_reading_policy_(kind);
+  std::optional<uint16_t> &field = event_reading_field(*dev, sun);
+  const std::optional<uint16_t> before = field;
+  const char *const label = sun ? "sun level" : "battery level";
+  if (reading.has_value()) {
+    policy.on_poll_succeeded(device_id);
+    field = reading;
+  } else if (count_poll_miss(policy, device_id, unanswered, label)) {
+    field.reset();  // the last reading is too old to keep showing
+  }
+  if (field != before) {
+    ESP_LOGI(detail::TAG, "Device %s: %s %s -> %s", device_id.c_str(), label, format_event_reading(before, sun).c_str(),
+             format_event_reading(field, sun).c_str());
+  } else if (reading.has_value()) {
+    ESP_LOGD(detail::TAG, "Device %s: %s %s (unchanged)", device_id.c_str(), label,
+             format_event_reading(reading, sun).c_str());
   }
   // Notify on every outcome: link health moved too, so the link sensors need the update.
   this->notify_device_update_(device_id);
@@ -976,6 +1123,18 @@ void IOHomeControlComponent::queue_request_device_limitation(const std::string &
   this->op_queue_.enqueue_request_limitation(device_id);
 }
 
+void IOHomeControlComponent::queue_request_device_sun_level(const std::string &device_id) {
+  if (this->get_device(device_id) == nullptr)
+    return;
+  this->op_queue_.enqueue_request_sun_level(device_id);
+}
+
+void IOHomeControlComponent::queue_request_device_battery_level(const std::string &device_id) {
+  if (this->get_device(device_id) == nullptr)
+    return;
+  this->op_queue_.enqueue_request_battery_level(device_id);
+}
+
 void IOHomeControlComponent::queue_request_device_name(const std::string &device_id) {
   if (this->get_device(device_id) == nullptr)
     return;
@@ -1121,6 +1280,12 @@ void IOHomeControlComponent::process_pending_operation_() {
       break;
     case PendingOperationType::REQUEST_LIMITATION:
       this->request_device_limitation(operation.device_id);
+      break;
+    case PendingOperationType::REQUEST_SUN_LEVEL:
+      this->request_device_sun_level(operation.device_id);
+      break;
+    case PendingOperationType::REQUEST_BATTERY_LEVEL:
+      this->request_device_battery_level(operation.device_id);
       break;
     case PendingOperationType::DISCOVER_AND_PAIR:
       this->discover_and_pair();

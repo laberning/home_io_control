@@ -289,6 +289,33 @@ TEST(PlatformCover, SetupForwardsTheRainSensorPollInterval) {
       << "the opt-in interval must reach the hub's rain poll schedule";
 }
 
+TEST(PlatformCover, SetupForwardsTheSunAndBatteryLevelPollIntervals) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+  cover.set_sun_level_poll_interval(1800000);
+  cover.set_battery_level_poll_interval(21600000);
+
+  cover.setup();
+
+  EXPECT_EQ(hub.sun_poll_policy_.get_interval("ABC123"), 1800000u);
+  EXPECT_EQ(hub.battery_level_poll_policy_.get_interval("ABC123"), 21600000u);
+  EXPECT_EQ(hub.rain_poll_policy_.get_interval("ABC123"), 0u) << "each key feeds only its own schedule";
+}
+
+TEST(PlatformCover, SetupSchedulesNoSunOrBatteryLevelPollWithoutTheKeys) {
+  MockHub hub;
+  TestableCover cover;
+  cover.set_parent(&hub);
+  cover.set_device_id("ABC123");
+
+  cover.setup();
+
+  EXPECT_EQ(hub.sun_poll_policy_.get_interval("ABC123"), 0u);
+  EXPECT_EQ(hub.battery_level_poll_policy_.get_interval("ABC123"), 0u);
+}
+
 TEST(PlatformCover, SetupSchedulesNoRainPollWithoutTheKey) {
   MockHub hub;
   TestableCover cover;
