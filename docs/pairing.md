@@ -137,7 +137,7 @@ v1; outcome=paired; phase=complete; node=30E1F2; type=vertical_exterior_awning; 
 
 | Field | Meaning |
 |-------|---------|
-| `outcome` | `paired`, `no_response`, `invalid_response`, `key_exchange_failed`, `key_transfer_refused` (the device answered the key with an error, see the advisor), `key_received` (a key pull got a different key and the device proved it, but no device that holds it could be registered; see [Radio tuning](configuration/tuning.md#pairing_key_transfer)), or `hub_key_returned` (a key pull got the hub's own key from a node no platform drives, and no device that holds the key answered). |
+| `outcome` | `paired`, `no_response`, `invalid_response`, `key_exchange_failed` (the key was sent but not confirmed; the device may hold it anyway, so run [Scan Paired Devices](#scan-paired-devices) before retrying, issue #161), `key_transfer_refused` (the device answered the key with an error, see the advisor), `key_received` (a key pull got a different key and the device proved it, but no device that holds it could be registered; see [Radio tuning](configuration/tuning.md#pairing_key_transfer)), or `hub_key_returned` (a key pull got the hub's own key from a node no platform drives, and no device that holds the key answered). |
 | `phase` | The furthest stage the pairing state machine reached. |
 | `node` / `type` | The node ID and type of the device that answered discovery, or `-` if nothing was paired. After a key pull this is the node that handed the key over; an AGILIA's heater appears only in the log report. |
 | `attempts` | Number of discovery command retries sent. |

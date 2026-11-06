@@ -22,10 +22,17 @@ Indexed by what you see, not by which subsystem is responsible.
 Discover & Pair reports `no_response`, and the "Last Pairing Result" sensor shows `heard=0` or only
 rejected frames.
 
-**The most common cause is that the device already belongs to a hub.** A device holding a hub's key
-has nothing left to answer a discovery with, so no amount of radio tuning will reach it. This has
-been the real cause in every field report so far where a device "never responds" — GitHub issues
-#27, #98 and #103.
+Two causes account for most reports, and neither is fixed by radio tuning:
+
+- **The device already holds a key.** A device paired to a two-way hub has nothing left to answer a
+  discovery with (issues #98, #103). The key can also be this hub's own: an attempt that ended in
+  `key_exchange_failed` may still have left the key on the device, which then stops answering
+  discovery (issue #161). Run [Scan Paired Devices](pairing.md#scan-paired-devices) before you
+  retry or reset anything.
+- **The gesture missed.** The device was not in pairing mode when the hub asked, or a different
+  device was. For some products the right gesture is not the obvious one: a SIMU motor paired only
+  through PROG on the remote that already drives it (issue #138), and each output of a Somfy White
+  LED Receiver io pairs separately from its own remote channel (issue #143).
 
 What to try, in order:
 
@@ -58,7 +65,10 @@ Pairing reported `paired`, the entity exists, and commands do nothing.
 
 - **Check `<Name> Active Issue`.** It is enabled by default and is the fastest read. A refusal such
   as `LIMITATION_BY_WIND`, `LIMITATION_BY_RAIN` or `THERMAL_PROTECTION` means the device received
-  the command and declined it — that is a device-side lockout, not a bug here.
+  the command and declined it — that is a device-side lockout, not a bug here. `BAD_MAC` is
+  different: the device rejected the hub's answer to its challenge, so it does not hold the key the
+  hub used. Check that the hub's `system_key`, or the entity's own `system_key` if the device has
+  its own key (as each Atlantic radiator does, issue #165), is the key this device was paired with.
 - **Check `low_power:`.** If this is a solar or battery actuator and `low_power: true` is not set,
   the hub addresses it with the wrong preamble and the device may never wake to hear the command.
   Pairing and Scan Paired Devices pre-fill the correct value in the snippet they print; if the
@@ -74,8 +84,12 @@ Pairing reported `paired`, the entity exists, and commands do nothing.
 - **Before the first move, position is genuinely unknown.** The protocol has no "report your
   position" command that works from cold, so the cover shows no percentage until the device reports
   one. This is expected on a fresh boot, not a fault.
-- **If state only updates when you command the device**, the device is not sending unsolicited
-  updates. Set `status_poll_interval` on the entity — see [Covers](configuration/cover.md).
+- **If state only updates when you command the device**, the change came from something the hub
+  did not hear. The hub reads a cover after its own commands, after a linked remote's press and
+  after another controller's traffic to it, but never at rest; on a cover `status_poll_interval`
+  only paces the polls during a movement. Link the remotes that drive the device (next point). A change with no
+  traffic the hub hears, such as a move from a VELUX pad in issue #207, stays unseen until the next
+  command.
 - **If a wall remote moves the device and Home Assistant does not notice**, the hub is not
   listening for that remote. Add it to `linked_remotes:` — see
   [Linked remotes](configuration/remotes.md#linked-remotes).

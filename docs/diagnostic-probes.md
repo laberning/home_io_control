@@ -119,7 +119,7 @@ data:
 | `subscribe_event` | `CMD_SUBSCRIBE_EVENT` (0x73) with data `01 <event hi> <event lo>` | `0` = battery level event `0x2001`, `1` = local sensor event `0x2005` (any other value is rejected; `probe_sweep` refuses this probe) | `1` | **Both indexes accepted by an RS100 Solar io** ([issue #156](https://github.com/laberning/home_io_control/issues/156)). The one probe that changes a device: it asks the device to report the event from now on, and no way to cancel that is known. Only those two events can be sent. A try the device authenticated but did not answer is sent once more, never a third time, so a device that takes the subscription and says nothing back ends as "accepted but no response". The RS100 answers at once with the event's current value, which the probe result names (`[event 0x2005, 5 data bytes]`) and puts on the "Last Device Event" sensor. To read these values regularly, use the cover keys `sun_level_poll_interval` and `battery_level_poll_interval` instead ([Sun level and battery level](configuration/cover.md#sun-level-and-battery-level)). |
 | `unsubscribe_event` | `CMD_SUBSCRIBE_EVENT` (0x73) with data `00 <event hi> <event lo>` | Same as `subscribe_event` (`probe_sweep` refuses it too) | `1` | **Untested guess.** The subscribe request with its first byte cleared, as an attempt to undo a subscription. Whether it works shows only in whether the device's reports stop on "Last Device Event" afterwards; an answer to the request alone proves nothing. Same guards and re-send rule as `subscribe_event`. |
 | `read_object` | `CMD_TRANSFER_OPEN` (0x46), then `CMD_UNKNOWN4A_REQ` (0x4A) blocks, then a close | `0` to `29`, one object each, listed in [Objects you can read](#objects-you-can-read) (any other value is rejected; `probe_sweep` refuses this probe) | `2` first, then `3`, `4`, `0`, `1` | Reads, never writes. See [Reading a device object](#reading-a-device-object). |
-| `register_00` | `CMD_WRITE_PRIVATE` (0x20) with data `0C 60 00 <index>`: a read of register `0x00<index>` | The low byte of the register number, `0` to `255` | `0`, then upward in blocks of 16 (`probe_sweep` accepts it) | **Untested.** Only for register-protocol heaters and domestic hot water devices; refused for every other kind. Read direction only: see [Reading registers](#reading-registers). |
+| `register_00` | `CMD_WRITE_PRIVATE` (0x20) with data `0C 60 00 <index>`: a read of register `0x00<index>` | The low byte of the register number, `0` to `255` | `0`, then upward in blocks of 16 (`probe_sweep` accepts it) | Swept on an Atlantic Calypso Connecté water heater ([issue #198](https://github.com/laberning/home_io_control/issues/198)). Only for register-protocol heaters and domestic hot water devices; refused for every other kind. Read direction only: see [Reading registers](#reading-registers). |
 | `register_01` | `CMD_WRITE_PRIVATE` (0x20) with data `0C 60 01 <index>`: a read of register `0x01<index>` | The low byte of the register number, `0` to `255` | `0`, then upward in blocks of 16 (`probe_sweep` accepts it) | The request shape climate support sends to Atlantic AGILIA IO radiators when it polls them ([issue #165](https://github.com/laberning/home_io_control/issues/165)). Same kind restriction and read-only guarantee as `register_00`. |
 
 A `get_info2` reply (`0x57`) leads with printable ASCII: paste the raw hex into the corpus and
@@ -143,7 +143,7 @@ A running record of what these frames actually draw back — as much as is under
 | `subscribe_event` (`0x73`) | On an RS100 Solar io, both indexes are accepted behind a challenge and answered with a `0x71`. Index `1`: event `0x2005` with five data bytes `06 00 <hi> <lo> B9`; the value in bytes 2–3 is 0 at night and 183 and 744 in daylight (corpus `somfy_rs100_probe_subscribe_event_sx1262`, `somfy_rs100_probe_subscribe_event_daylight_sx1262`). Index `0`: event `0x2001` with one data byte, 100, while the battery read full (corpus `somfy_rs100_probe_subscribe_event_battery_sx1262`). |
 | `unsubscribe_event` (`0x73`, action `00`) | Not yet sent to a device. Run it only after `subscribe_event` drew reports, then record whether they stop. |
 | `read_object` (`0x46`/`0x4A`) | Somfy Izymo dimmer, protocol version 3 (`get_info1` byte 11 = `03`): index `2` opened plainly (`47` accepted, 16 bytes), the block reads were challenged and answered, and the record is `00` + "MODULE DIMMER" + padding. Indexes `0` and `1` were refused with status 3 and length 0. Index `3` returned the 14 bytes of the `get_info1` answer and index `4` the 16 bytes of the `get_info2` answer, byte for byte. Somfy RS100 Solar io, protocol version 4 ([issue #156](https://github.com/laberning/home_io_control/issues/156)): index `0` returned all 150 bytes, index `1` 54 of 67 bytes (the last block got no answer), indexes `3` and `4` 14 and 16 bytes, index `3` equal to its `get_info1` answer. A later round on that RS100, with the 650 ms pause, read indexes `1`, `2` and `5` to `29`: 21 of the 27 reads came back in full (object ids `0x8103`, `0x8102`, `0x8104`, `0x8003`, `0x8000`, `0x8005`, `0xC001`, `0x6103`, `0xA602`, `0xA603`, `0xA604`, `0xA607`, `0xA609`, `0xA60B`, `0xA60D`, `0xA610`, `0xA611`, `0xA612`, `0xA614`, `0xA617` and `0xA618`); three are longer (`0xA601` 366 bytes, `0xA613` 431, `0xA615` 341) and have not been read yet; they fit the 432-byte cap; `0xA606` was challenged and then lost, `0x6104` was never answered, and `0x6105` answered status 7 with length 0, twice and with no other transfer open, which the probe reports as an empty object. With the pause, 71 of 82 block requests (87 %) were answered on the first try. The objects read in full ran from 3 to 247 bytes. |
-| `register_00` / `register_01` (`0x20`, read) | Not yet sent to a device. The first target is an Atlantic Calypso Connecté water heater, which pairs but has no known registers ([issue #198](https://github.com/laberning/home_io_control/issues/198)). Record every answer, including errors and silence, per register. |
+| `register_00` / `register_01` (`0x20`, read) | `register_00` swept 0x00–0x4F on an Atlantic Calypso Connecté water heater ([issue #198](https://github.com/laberning/home_io_control/issues/198)), `register_01` 0x00–0x3F on an Atlantic Adelis towel dryer ([issue #202](https://github.com/laberning/home_io_control/issues/202)). On both, a register the device lacks answers with an empty value. Record every answer per register, and retry silent ones closer. |
 | `general_info3` (`0x58`) | Dimmer answered a real `0x59`; a Somfy awning and a Velux window both replied `ERROR_RESP` result `0x08` (`COMMAND_UNKNOWN`: the device does not implement the command). Device-dependent. |
 | `private2` / `private2_short` (`0x0C`), index = modifier | `0x0D` reply; `D4 00` is the request's own leading bytes echoed back; optional `0x80` block is position family. Byte-identical day vs night across 17 solar devices, and byte-identical between two window positions on a Velux window (a stored parameter, not a live reading) — its short form at modifier `0x03` read back the stored ventilation position (`BA 00`). See "Reading a `private2` reply" below. |
 | `status_mp_fp` | Unauthenticated, answered with a `0x04` and no challenge. A reply heard from a window: `04 2D 60 00 00 80 00 00 00`. The main parameter is `00 00` for open and `C8 00` for closed, followed by `80 00 00 00`. Nothing is applied to the device record. |
@@ -222,9 +222,11 @@ register-protocol heater (such as an Atlantic AGILIA IO radiator) and to a domes
 anything is sent, and a sweep stops at that first refusal. See
 [ADR 0063](adr/0063-a-read-only-register-probe.md).
 
-`register_01` reads the family `0x01xx`, where climate support already finds the setpoint, mode and
-measurement registers of an AGILIA radiator. `register_00` reads the family `0x00xx`, which is
-untested.
+`register_01` reads the family `0x01xx`, where climate support finds the setpoint, mode and
+measurement registers of an AGILIA radiator; an Atlantic Adelis towel dryer answers it too
+([issue #202](https://github.com/laberning/home_io_control/issues/202)). `register_00` reads the
+family `0x00xx`, which an Atlantic Calypso Connecté water heater serves
+([issue #198](https://github.com/laberning/home_io_control/issues/198)).
 
 ```yaml
 action: esphome.<your_node>_probe_sweep
@@ -236,8 +238,11 @@ data:
 ```
 
 A device that serves the register answers with a `0x21` that repeats `0C 60 <family> <index>` and then
-carries the value. The result prints those bytes after the header as `value: xx xx`, raw. An error
-answer or no reply means the device does not serve that register, or does not serve it at this address.
+carries the value. The result prints those bytes after the header as `value: xx xx`, raw. A
+register the device does not have answers the same way with an empty value. No reply at all is a
+lost exchange, not a missing register: on a weak link whole runs of registers went unanswered and
+then answered with the board closer (issue #202), so retry those before you conclude anything. An
+error answer means the device does not serve that register at this address.
 
 **Domestic hot water devices.** The hub has no entity for node type `0x33`, so the device has to be
 registered before it can be probed. Declare it as a switch with its real type; the switch does nothing:

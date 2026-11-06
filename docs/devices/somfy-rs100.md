@@ -1,8 +1,9 @@
 # Somfy RS100 IO
 <!-- doxygen-label: dev_somfy_rs100 -->
 
-A solar-powered awning and shutter actuator. It works, but its pairing is the least reliable of any
-confirmed device here, and the reason is worth understanding before you start.
+A solar-powered awning and shutter actuator. It pairs and runs over two-way with `low_power: true`.
+Pairing usually works on the first press; when it doesn't, the key exchange is the step that
+stalls, and one motor has refused two-way altogether.
 
 ## What works
 
@@ -10,20 +11,27 @@ confirmed device here, and the reason is worth understanding before you start.
 |---|---|
 | Open, close, stop | ✅ Confirmed |
 | Position feedback | ✅ Confirmed |
-| Discover & Pair | ⚠️ Partial — the key exchange often needs a retry |
+| Discover & Pair | ⚠️ Partial — often first try; the key exchange can stall and need a retry |
 | Status poll while driven by another hub | 🔍 Captured, from a KIG 300 installation |
 | Battery level (`battery: true`) | ⚠️ Coarse level only (full / normal / low); only `full` observed so far |
 | Sun level and battery percentage (`sun_level_poll_interval`, `battery_level_poll_interval`) | ⚠️ Experimental — read on one RS100 Solar io (issue #156); the sun value has no known unit |
 
 ## Onboarding route that worked
 
-**Discover & Pair, retried.** The key-exchange step is what stalls, not discovery: the device
-answers the discovery, then the key transfer times out. Retrying the same button press has worked.
-The corpus holds both outcomes side by side — a successful retry and a stalled transfer — so this
-is a known, characterised failure rather than an unexplained one.
+**Discover & Pair, with `low_power: true`.** Two RS100 Solar io paired on the first press on a
+Heltec V3.2 (issue #156), and another on a Heltec V3 (issue #187). When it fails, the device has
+answered the discovery and the key transfer then times out. Pressing Discover & Pair again has
+worked; the corpus holds a successful retry and a stalled transfer side by side.
 
 If it will not pair after several attempts and the motor has ever belonged to a hub you still own,
 switch to [key extraction](../key-extraction.md).
+
+**If the motor answers discovery but nothing after it**, retries won't help. One RS100 Solar io
+answered every discovery and then ignored every frame addressed to it, through key retries,
+longer and shorter preambles and a cleared low-power flag, while an identical motor next to it
+paired normally (issue #187). It still obeys one-way commands: enroll the hub as a remote, see
+[Sending 1W commands](../configuration/oneway-transmit.md#enrolling-this-hub-as-a-controller).
+You get open, close and stop, without position feedback.
 
 ## Working YAML
 
@@ -41,11 +49,9 @@ cover:
 
 ## Known quirks
 
-- **`low_power: true` is the setting to start with.** This is a solar actuator, so it duty-cycles
-  its receiver and needs the long wake-up preamble. Be aware this is a reasoned starting point
-  rather than a confirmed fix: the option is documented for battery and solar devices generally,
-  and it is confirmed on VELUX hardware through issue #87, but no field report has yet said in so
-  many words that setting it fixed an RS100. If you try it either way, that is worth an issue.
+- **Set `low_power: true`.** This is a solar actuator: it duty-cycles its receiver and needs the
+  long wake-up preamble. Every RS100 that paired in a report so far ran with it (issues #156,
+  #187). No report has compared it against `false` on the same motor.
 - **Range matters more than on a mains-powered motor.** The corpus has near, far and failure
   captures at different distances against the same device, and the failure case is a range case.
 - **The battery level in status replies is coarse.** The motor reports full, normal or low, and
@@ -63,7 +69,7 @@ cover:
 300 hub, and a discovery attempt alongside 1W traffic. Three more captures hold an RS100 Solar
 io's answers to the sun level and battery level requests (`somfy_rs100_probe_subscribe_event_*`).
 
-Field reports: issues #16, #45 and #156.
+Field reports: issues #16, #45, #156 and #187.
 
 ## See also
 
