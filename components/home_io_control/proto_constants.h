@@ -345,9 +345,10 @@ static constexpr uint8_t CMD_SET_CONFIG1_RESP =
            ///< Logged under the name SET_CONFIG1_RESP whatever it carries.
 static constexpr uint8_t CMD_SUBSCRIBE_EVENT =
     0x73;  ///< Subscribe a device to one event: payload `<action> <event hi> <event lo>`, action
-           ///< EVENT_SUBSCRIPTION_SUBSCRIBE or EVENT_SUBSCRIPTION_UNSUBSCRIBE. Sent only by the
+           ///< EVENT_SUBSCRIPTION_SUBSCRIBE or EVENT_SUBSCRIPTION_UNSUBSCRIBE. Sent by the
            ///< `subscribe_event` / `unsubscribe_event` diagnostic probes (docs/diagnostic-probes.md,
-           ///< ADR 0060). An RS100 Solar io answered a subscription to EVENT_LOCAL_SENSOR with a
+           ///< ADR 0060) and by the opt-in sun level and battery level polls (ADR 0064), which read
+           ///< the answer. An RS100 Solar io answered a subscription to EVENT_LOCAL_SENSOR with a
            ///< CMD_STATUS_UPDATE carrying that event
            ///< (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_sx1262.yaml).
 /// Device status update, sent by the device on its own (authenticated, acknowledged with
@@ -365,6 +366,8 @@ static constexpr uint8_t EVENT_SUBSCRIPTION_SUBSCRIBE = 0x01;  ///< Ask the devi
 /// been seen to act on it. Kept only to test whether a subscription can be undone.
 static constexpr uint8_t EVENT_SUBSCRIPTION_UNSUBSCRIBE = 0x00;
 /// @}
+/// CMD_SUBSCRIBE_EVENT payload size: the action byte and the big-endian event id.
+static constexpr uint8_t SUBSCRIBE_EVENT_DATA_SIZE = 3;
 
 /// The event a position-bearing CMD_STATUS_UPDATE carries (every captured one, e.g.
 /// tests/corpus/captures/statuspoll/somfy_rs100_statuspoll_kig300_sx1276.yaml). The same two bytes
@@ -375,14 +378,29 @@ static constexpr uint16_t EVENT_STATUS_CHANGE = 0x100A;
 /// @name Subscribable device events (CMD_SUBSCRIBE_EVENT payload)
 /// The only two event ids the `subscribe_event` probe can send; create_subscribe_event() refuses every other id.
 /// @{
-/// A battery-powered device reports its charge level changing.
-/// \todo Needs confirmation on hardware: no device has been seen to accept or report it yet.
+/// A battery-powered device reports its charge level. An RS100 Solar io answered the subscription
+/// with this event and one data byte, 100, while its status byte read full
+/// (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_battery_sx1262.yaml); see
+/// decode_battery_level_event().
+/// \todo Percent is a reading of that one value: no level below 100 has been captured.
 static constexpr uint16_t EVENT_BATTERY_LEVEL_CHANGE = 0x2001;
 /// A device reports a sensor built into it (sun, window, ...). An RS100 Solar io accepted the
-/// subscription and answered with this event, first data byte 0x06, then four value bytes
-/// (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_sx1262.yaml).
-/// \todo The value bytes are undecoded: the only report captured is all zero, at night.
+/// subscription and answered with this event: first data byte LOCAL_SENSOR_TYPE_SUN, then a byte,
+/// a big-endian 16-bit value and a byte; the value is 0 at night and rises with sun on the panel
+/// (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_sx1262.yaml and
+/// somfy_rs100_probe_subscribe_event_daylight_sx1262.yaml); see decode_sun_level_event().
+/// \todo The value's unit and scale are unknown; the surrounding two bytes are undecoded.
 static constexpr uint16_t EVENT_LOCAL_SENSOR = 0x2005;
+/// @}
+
+/// @name Event data of the subscribable events
+/// Layouts captured from one RS100 Solar io (issue #156); a report of any other shape is not decoded.
+/// @{
+static constexpr uint8_t LOCAL_SENSOR_EVENT_DATA_LEN = 5;   ///< EVENT_LOCAL_SENSOR data: `06 xx <hi> <lo> yy`.
+static constexpr uint8_t LOCAL_SENSOR_TYPE_SUN = 0x06;      ///< First EVENT_LOCAL_SENSOR data byte on every capture.
+static constexpr uint8_t LOCAL_SENSOR_VALUE_OFFSET = 2;     ///< Offset of the big-endian value inside the event data.
+static constexpr uint8_t BATTERY_LEVEL_EVENT_DATA_LEN = 1;  ///< EVENT_BATTERY_LEVEL_CHANGE data: one level byte.
+static constexpr uint8_t BATTERY_LEVEL_MAX_PERCENT = 100;   ///< Highest level read as a percentage.
 /// @}
 
 static constexpr uint8_t CMD_SEND_RAW_MESSAGE =

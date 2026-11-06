@@ -481,6 +481,28 @@ bool decode_status_update_event(const IoFrame &frame, StatusUpdateEvent &out) {
   return true;
 }
 
+bool decode_sun_level_event(const IoFrame &frame, uint16_t &out) {
+  StatusUpdateEvent event;
+  if (!decode_status_update_event(frame, event) || event.event_id != EVENT_LOCAL_SENSOR ||
+      event.data_len != LOCAL_SENSOR_EVENT_DATA_LEN || frame.data[event.data_offset] != LOCAL_SENSOR_TYPE_SUN)
+    return false;
+  const uint8_t at = event.data_offset + LOCAL_SENSOR_VALUE_OFFSET;
+  out = static_cast<uint16_t>((frame.data[at] << BITS_PER_BYTE) | frame.data[at + 1]);
+  return true;
+}
+
+bool decode_battery_level_event(const IoFrame &frame, uint8_t &out) {
+  StatusUpdateEvent event;
+  if (!decode_status_update_event(frame, event) || event.event_id != EVENT_BATTERY_LEVEL_CHANGE ||
+      event.data_len != BATTERY_LEVEL_EVENT_DATA_LEN)
+    return false;
+  const uint8_t level = frame.data[event.data_offset];
+  if (level > BATTERY_LEVEL_MAX_PERCENT)
+    return false;
+  out = level;
+  return true;
+}
+
 bool decode_transfer_open_reply(const IoFrame &f, TransferOpenReply &out) {
   if (f.cmd != CMD_TRANSFER_OPEN_RESP || f.data_len != TRANSFER_OPEN_RESP_DATA_SIZE)
     return false;

@@ -445,7 +445,8 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       // reply came back and was lost on this side.
       // How many more tries to spend is tries_after_unconfirmed_(): a CMD_EXECUTE may already be
       // acting on this copy, so it is repeated only where that is harmless and the silence is an
-      // anomaly, and then only once; everything else keeps its full retry budget.
+      // anomaly, and then only once; a CMD_SUBSCRIBE_EVENT is sent once more, since its answer is the
+      // reading; everything else keeps its full retry budget.
       context.state = exchange::OutboundExchangeState::SUCCESS;
       this->record_debug("success_auth_unconfirmed", context.try_index, true);
       unconfirmed_tries++;
@@ -649,6 +650,10 @@ uint8_t ExchangeEngine::tries_after_unconfirmed_(const IoFrame &request, uint8_t
     this->target_evidence_provider_(request.dst, evidence);
   if (!decisions::retry_after_unconfirmed_accept_is_safe(request, evidence.confirms_execute, unconfirmed_tries))
     return 0;
+  // A subscription's answer carries the reading, so its one re-send goes out at the ordinary retry
+  // gap (nothing moves), and it is also the last copy: no ordinary failure retry after it.
+  if (request.cmd == CMD_SUBSCRIBE_EVENT)
+    return UNCONFIRMED_SUBSCRIBE_MAX_RESENDS;
   if (request.cmd != CMD_EXECUTE)
     return EXCHANGE_RETRY_COUNT;  // no cap of its own: the exchange's retry count and budget bound it
   // A re-send whose transmission could not end inside the exchange budget is not worth waiting for.

@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0050 -->
 
-**Status:** Accepted · **Recorded:** 2026-10
+**Status:** Accepted, amended by [ADR 0064](0064-a-sensor-reading-is-drawn-by-a-re-sent-event-subscription.md) (one retry a minute after an unanswered poll; the schedule class is `PeriodicPollPolicy`) · **Recorded:** 2026-10
 
 ## Context
 

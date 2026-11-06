@@ -97,6 +97,8 @@ CONF_CHECKSUM_MD5 = "checksum_md5"
 CONF_TARGET_VERSION = "target_version"
 MIN_STATUS_POLL_INTERVAL_MS = 500
 MIN_RAIN_SENSOR_POLL_INTERVAL_MS = 60000
+MIN_SUN_LEVEL_POLL_INTERVAL_MS = 60000
+MIN_BATTERY_LEVEL_POLL_INTERVAL_MS = 60000
 
 # Internal config key for the "Accept Foreign Pairing" companion switch ID (injected by
 # post-validator, same pattern as tuning.py's companion entity IDs — ESPHome 2026.x sizes the

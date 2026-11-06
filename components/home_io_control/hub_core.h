@@ -40,7 +40,7 @@
 #include "hub_pairing.h"
 #include "device_registry.h"
 #include "status_poll_policy.h"
-#include "rain_poll_policy.h"
+#include "periodic_poll_policy.h"
 #include "operation_queue.h"
 #include "exchange_engine.h"
 #include "pairing_engine.h"
@@ -523,6 +523,16 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
   virtual void set_device_rain_poll_interval(const std::string &device_id, uint32_t interval_ms);
+  /// Opt a registered device into the periodic sun level poll (a subscription to EVENT_LOCAL_SENSOR,
+  /// whose answer carries the value; ADR 0064).
+  /// @param device_id Target device ID.
+  /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
+  virtual void set_device_sun_poll_interval(const std::string &device_id, uint32_t interval_ms);
+  /// Opt a registered device into the periodic battery level poll (a subscription to
+  /// EVENT_BATTERY_LEVEL_CHANGE, whose answer carries the level; ADR 0064).
+  /// @param device_id Target device ID.
+  /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
+  virtual void set_device_battery_level_poll_interval(const std::string &device_id, uint32_t interval_ms);
 
   // --- High-level operations ---
   /// Send a position command to a device.
@@ -556,6 +566,19 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @return true if a usable limitation reply arrived and was applied.
   virtual bool request_device_limitation(const std::string &device_id);
+  /// Subscribe the device to EVENT_LOCAL_SENSOR and publish the sun value its answer carries.
+  ///
+  /// The answer is accepted only inside this exchange (decisions::is_subscription_answer(),
+  /// ADR 0064) and never reaches the position decode. A moving device is not asked: the poll is
+  /// deferred instead.
+  /// @param device_id Target device ID.
+  /// @return true if an answer of the captured shape arrived and was applied.
+  virtual bool request_device_sun_level(const std::string &device_id);
+  /// Subscribe the device to EVENT_BATTERY_LEVEL_CHANGE and publish the level its answer carries.
+  /// Same rules as request_device_sun_level().
+  /// @param device_id Target device ID.
+  /// @return true if an answer of the captured shape arrived and was applied.
+  virtual bool request_device_battery_level(const std::string &device_id);
   /// Request the stored device name from a device.
   /// @param device_id Target device ID.
   /// @return true if a name response frame was received and processed.
@@ -773,6 +796,12 @@ class IOHomeControlComponent : public Component,
   /// background operation (yields to commands and 1W activity).
   /// @param device_id Target device ID.
   virtual void queue_request_device_limitation(const std::string &device_id);
+  /// Queue an async sun level poll; executed in loop() as a background operation.
+  /// @param device_id Target device ID.
+  virtual void queue_request_device_sun_level(const std::string &device_id);
+  /// Queue an async battery level poll; executed in loop() as a background operation.
+  /// @param device_id Target device ID.
+  virtual void queue_request_device_battery_level(const std::string &device_id);
   /// Queue an async device-name request; returns immediately, executed in loop().
   /// @param device_id Target device ID.
   virtual void queue_request_device_name(const std::string &device_id);
@@ -1049,7 +1078,42 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param reading DRY or RAIN for an answered poll, UNKNOWN for a miss.
   /// @param limit_text Rendering of the reported limit for the state-change log, empty for a miss.
-  void apply_rain_poll_result_(const std::string &device_id, RainSensorState reading, const std::string &limit_text);
+  /// @param unanswered True when the device sent nothing usable back at all (no reply, no error),
+  ///        so the miss is retried once after PERIODIC_POLL_MISS_RETRY_MS before it counts.
+  void apply_rain_poll_result_(const std::string &device_id, RainSensorState reading, const std::string &limit_text,
+                               bool unanswered);
+
+  /// @brief The two subscription-answer sensor polls (ADR 0064).
+  enum class EventReading : uint8_t {
+    SUN_LEVEL,      ///< EVENT_LOCAL_SENSOR, IoDevice::sun_level.
+    BATTERY_LEVEL,  ///< EVENT_BATTERY_LEVEL_CHANGE, IoDevice::battery_level.
+  };
+
+  /// Shared body of request_device_sun_level() and request_device_battery_level(): defer while the
+  /// device moves, subscribe, decode the answer, fold the result into the device record.
+  /// @param device_id Target device ID.
+  /// @param kind Which reading to poll.
+  /// @return true if an answer of the captured shape arrived and was applied.
+  bool request_event_reading_(const std::string &device_id, EventReading kind);
+
+  /// The schedule of @p kind's poll.
+  /// @param kind Which reading.
+  /// @return The PeriodicPollPolicy instance that schedules it.
+  PeriodicPollPolicy &event_reading_policy_(EventReading kind);
+
+  /// Fold one poll outcome into the device record: a reading replaces the value and clears the miss
+  /// count; a miss keeps the last value until PERIODIC_POLL_FAILURES_BEFORE_UNKNOWN. Logs a change
+  /// at INFO and tells subscribers in every case.
+  /// @param device_id Target device ID.
+  /// @param kind Which reading.
+  /// @param reading The decoded value of an answered poll, empty for a miss.
+  /// @param unanswered True when the device sent nothing back at all, so the miss is retried once
+  ///        after PERIODIC_POLL_MISS_RETRY_MS before it counts.
+  void apply_event_reading_(const std::string &device_id, EventReading kind, const std::optional<uint16_t> &reading,
+                            bool unanswered);
+
+  /// Queue every periodic sensor poll (rain, sun level, battery level) that is due.
+  void queue_due_periodic_polls_();
 
   /// @brief What exchange_and_record_() found.
   enum class RequestResult : uint8_t {
@@ -1346,7 +1410,9 @@ class IOHomeControlComponent : public Component,
   /// undecoded probe opcode. See set_diagnostic_probes_enabled().
   bool diagnostic_probes_enabled_{false};
   StatusPollPolicy poll_policy_;
-  RainPollPolicy rain_poll_policy_;  ///< Schedule of the opt-in rain sensor poll.
+  PeriodicPollPolicy rain_poll_policy_;           ///< Schedule of the opt-in rain sensor poll.
+  PeriodicPollPolicy sun_poll_policy_;            ///< Schedule of the opt-in sun level poll.
+  PeriodicPollPolicy battery_level_poll_policy_;  ///< Schedule of the opt-in battery level poll.
   OperationQueue op_queue_;
   /// Per-attempt pairing telemetry. PairingEngine records into it and, during an attempt, attaches it
   /// to ExchangeEngine as its TransmitObserver.

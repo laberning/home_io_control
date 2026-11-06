@@ -74,6 +74,21 @@ class RainPollHub : public ::testing::Test {
     ASSERT_TRUE(comp.request_device_limitation(DEVICE_ID));
   }
 
+  /// One scheduled poll the device leaves unanswered, then its retry, unanswered too: one counted
+  /// miss. Both are popped from the schedule the way loop() would.
+  void miss_poll_and_retry() {
+    pop_due();
+    EXPECT_FALSE(comp.request_device_limitation(DEVICE_ID));
+    ASSERT_TRUE(comp.rain_poll_policy_.retry_armed(DEVICE_ID));
+    pop_due();
+    EXPECT_FALSE(comp.request_device_limitation(DEVICE_ID));
+  }
+
+  /// Take the device's next poll off the schedule, as loop() does before it queues the poll.
+  void pop_due() {
+    ASSERT_TRUE(comp.rain_poll_policy_.pop_due_device(comp.rain_poll_policy_.get_next_poll(DEVICE_ID), 0).has_value());
+  }
+
   TestableRainPollComponent comp;
   MockRadio radio;
   int notifications{0};
@@ -177,11 +192,26 @@ TEST_F(RainPollHub, UnknownDeviceAndUninitializedHubReadNothing) {
 // Misses
 // ============================================================================
 
+TEST_F(RainPollHub, AnUnansweredPollIsAskedAgainAfterAMinuteBeforeItCounts) {
+  poll_with_reply(0xBA00, 0x02, 0x1D);
+
+  pop_due();
+  const uint32_t before = esphome::millis();
+  EXPECT_FALSE(comp.request_device_limitation(DEVICE_ID)) << "nothing queued: the device stays silent";
+
+  EXPECT_EQ(device().rain_sensor, RainSensorState::RAIN);
+  EXPECT_EQ(comp.rain_poll_policy_.get_failures(DEVICE_ID), 0u);
+  EXPECT_TRUE(comp.rain_poll_policy_.retry_armed(DEVICE_ID));
+  const uint32_t retry_at = comp.rain_poll_policy_.get_next_poll(DEVICE_ID);
+  EXPECT_GE(retry_at, before + PERIODIC_POLL_MISS_RETRY_MS);
+  EXPECT_LE(retry_at, esphome::millis() + PERIODIC_POLL_MISS_RETRY_MS) << "a minute after the miss, not an interval";
+}
+
 TEST_F(RainPollHub, OneMissKeepsTheLastReading) {
   poll_with_reply(0xBA00, 0x02, 0x1D);
   ASSERT_EQ(device().rain_sensor, RainSensorState::RAIN);
 
-  EXPECT_FALSE(comp.request_device_limitation(DEVICE_ID)) << "nothing queued: the device stays silent";
+  miss_poll_and_retry();
 
   EXPECT_EQ(device().rain_sensor, RainSensorState::RAIN);
   EXPECT_EQ(comp.rain_poll_policy_.get_failures(DEVICE_ID), 1u);
@@ -190,11 +220,11 @@ TEST_F(RainPollHub, OneMissKeepsTheLastReading) {
 TEST_F(RainPollHub, ThreeMissesInARowMakeTheReadingUnknown) {
   poll_with_reply(0xBA00, 0x02, 0x1D);
 
-  for (int i = 0; i < RAIN_POLL_FAILURES_BEFORE_UNKNOWN - 1; ++i) {
-    EXPECT_FALSE(comp.request_device_limitation(DEVICE_ID));
+  for (int i = 0; i < PERIODIC_POLL_FAILURES_BEFORE_UNKNOWN - 1; ++i) {
+    miss_poll_and_retry();
     EXPECT_EQ(device().rain_sensor, RainSensorState::RAIN) << "miss " << i + 1;
   }
-  EXPECT_FALSE(comp.request_device_limitation(DEVICE_ID));
+  miss_poll_and_retry();
 
   EXPECT_EQ(device().rain_sensor, RainSensorState::UNKNOWN);
 }
@@ -285,7 +315,7 @@ TEST_F(RainPollHub, AMovingDeviceIsNotAskedAndTheNextPollMovesForward) {
   EXPECT_FALSE(comp.request_device_limitation(DEVICE_ID));
 
   EXPECT_TRUE(radio.get_sent_data().empty()) << "nothing is transmitted to a moving device";
-  EXPECT_EQ(comp.rain_poll_policy_.get_next_poll(DEVICE_ID), now + RAIN_POLL_MOVING_RETRY_MS);
+  EXPECT_EQ(comp.rain_poll_policy_.get_next_poll(DEVICE_ID), now + PERIODIC_POLL_MOVING_RETRY_MS);
   EXPECT_EQ(comp.rain_poll_policy_.get_failures(DEVICE_ID), 0u) << "waiting for a manoeuvre is not a miss";
 }
 
@@ -296,7 +326,7 @@ TEST_F(RainPollHub, AMovingDeviceIsNotAskedAndTheNextPollMovesForward) {
 TEST_F(RainPollHub, LoopQueuesALimitationReadWhenThePollIsDue) {
   esphome::test_clock::ManualClock clock;
   comp.set_device_rain_poll_interval(DEVICE_ID, POLL_INTERVAL_MS);
-  esphome::test_clock::advance_ms(RAIN_POLL_INITIAL_DELAY_MS + RAIN_POLL_INITIAL_SPREAD_MS);
+  esphome::test_clock::advance_ms(PERIODIC_POLL_INITIAL_DELAY_MS + PERIODIC_POLL_INITIAL_SPREAD_MS);
 
   comp.loop();
 
@@ -308,7 +338,7 @@ TEST_F(RainPollHub, LoopQueuesALimitationReadWhenThePollIsDue) {
 TEST_F(RainPollHub, LoopQueuesNothingBeforeThePollIsDue) {
   esphome::test_clock::ManualClock clock;
   comp.set_device_rain_poll_interval(DEVICE_ID, POLL_INTERVAL_MS);
-  esphome::test_clock::advance_ms(RAIN_POLL_INITIAL_DELAY_MS - 1);
+  esphome::test_clock::advance_ms(PERIODIC_POLL_INITIAL_DELAY_MS - 1);
 
   comp.loop();
 
@@ -336,7 +366,7 @@ TEST_F(RainPollHub, TwoCoversWithTheSameIntervalStartAndRepeatAtDifferentTimes) 
   comp.set_device_rain_poll_interval("ABC124", POLL_INTERVAL_MS);
   EXPECT_NE(comp.rain_poll_policy_.get_next_poll(DEVICE_ID), comp.rain_poll_policy_.get_next_poll("ABC124"));
 
-  esphome::test_clock::advance_ms(RAIN_POLL_INITIAL_DELAY_MS + RAIN_POLL_INITIAL_SPREAD_MS);
+  esphome::test_clock::advance_ms(PERIODIC_POLL_INITIAL_DELAY_MS + PERIODIC_POLL_INITIAL_SPREAD_MS);
   esphome::test_random::set(0);
   comp.loop();
   esphome::test_random::set(UINT32_MAX);

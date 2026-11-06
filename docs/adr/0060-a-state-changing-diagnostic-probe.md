@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0060 -->
 
-**Status:** Accepted · **Recorded:** 2026-10
+**Status:** Accepted, amended by [ADR 0064](0064-a-sensor-reading-is-drawn-by-a-re-sent-event-subscription.md) (point 4: an accepted subscription is re-sent once; its answer feeds the sun and battery level sensors) · **Recorded:** 2026-10
 
 Amends [ADR 0024](0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md): every probe
 it describes is read-shaped, and this one is not.

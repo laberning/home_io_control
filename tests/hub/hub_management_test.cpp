@@ -2884,7 +2884,7 @@ TEST(HubManagement, ProbeDeviceSubscribeEventRecordsAStatusUpdateAnswerAsTheFirs
   EXPECT_TRUE(dev->is_stopped);
 }
 
-TEST(HubManagement, ProbeDeviceSubscribeEventAcceptedWithoutAReplyIsReportedAndSentOnce) {
+TEST(HubManagement, ProbeDeviceSubscribeEventAcceptedWithoutAReplyIsReportedAndResentOnce) {
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
@@ -2900,7 +2900,8 @@ TEST(HubManagement, ProbeDeviceSubscribeEventAcceptedWithoutAReplyIsReportedAndS
   const auto result = component.probe_device("ABC123", "subscribe_event", "1");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device accepted the probe request but sent no response");
-  EXPECT_EQ(radio.get_send_count(), 2) << "the subscribe once, plus our challenge answer";
+  EXPECT_EQ(radio.get_send_count(), 3)
+      << "the subscribe, our challenge answer, and the one re-send (left unanswered here); no third copy";
 }
 
 // --- read_object: the data-transport read (ADR 0062) ----------------------------------------------

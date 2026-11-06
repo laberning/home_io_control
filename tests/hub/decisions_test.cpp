@@ -540,12 +540,51 @@ TEST(Decisions, UnconfirmedNonExecuteAlwaysKeepsItsRetryBudget) {
   EXPECT_TRUE(decisions::retry_after_unconfirmed_accept_is_safe(poll, false, 3));
 }
 
-TEST(Decisions, UnconfirmedSubscribeEventIsNeverResent) {
+TEST(Decisions, UnconfirmedSubscribeEventIsResentOnce) {
   IoFrame subscribe{};
   ASSERT_TRUE(create_subscribe_event(subscribe, OWN_ID, DST_ID, EVENT_LOCAL_SENSOR, false));
-  EXPECT_FALSE(decisions::retry_after_unconfirmed_accept_is_safe(subscribe, false, 1))
-      << "a try the device authenticated has stored the subscription; a second copy has no use";
-  EXPECT_FALSE(decisions::retry_after_unconfirmed_accept_is_safe(subscribe, true, 1));
+  EXPECT_TRUE(decisions::retry_after_unconfirmed_accept_is_safe(subscribe, false, 1))
+      << "the answer carries the reading, so a lost answer is worth one more copy";
+  EXPECT_FALSE(
+      decisions::retry_after_unconfirmed_accept_is_safe(subscribe, false, UNCONFIRMED_SUBSCRIBE_MAX_RESENDS + 1))
+      << "a second silent try is not a one-off";
+}
+
+namespace {
+
+/// The RS100's answer to a subscription of @p event_id, sent from DST_ID to OWN_ID.
+IoFrame subscription_answer(uint16_t event_id) {
+  IoFrame f{};
+  f.cmd = CMD_STATUS_UPDATE;
+  memcpy(f.src, DST_ID, NODE_ID_SIZE);
+  memcpy(f.dst, OWN_ID, NODE_ID_SIZE);
+  const uint8_t payload[] = {0x05, 0x60, static_cast<uint8_t>(event_id >> 8), static_cast<uint8_t>(event_id & 0xFF),
+                             0x01, 0x64};
+  memcpy(f.data, payload, sizeof(payload));
+  f.data_len = sizeof(payload);
+  return f;
+}
+
+}  // namespace
+
+TEST(Decisions, SubscriptionAnswerIsTheSameEventFromTheSameDevice) {
+  IoFrame subscribe{};
+  ASSERT_TRUE(create_subscribe_event(subscribe, OWN_ID, DST_ID, EVENT_BATTERY_LEVEL_CHANGE, false));
+  const IoFrame answer = subscription_answer(EVENT_BATTERY_LEVEL_CHANGE);
+  EXPECT_TRUE(decisions::is_subscription_answer(subscribe, answer));
+  EXPECT_TRUE(decisions::is_device_event_report(answer)) << "still an event report everywhere else";
+
+  EXPECT_FALSE(decisions::is_subscription_answer(subscribe, subscription_answer(EVENT_LOCAL_SENSOR)))
+      << "another event";
+  IoFrame other_device = answer;
+  other_device.src[2] ^= 0x01;
+  EXPECT_FALSE(decisions::is_subscription_answer(subscribe, other_device)) << "another device";
+
+  IoFrame unsubscribe{};
+  ASSERT_TRUE(create_unsubscribe_event(unsubscribe, OWN_ID, DST_ID, EVENT_BATTERY_LEVEL_CHANGE, false));
+  EXPECT_FALSE(decisions::is_subscription_answer(unsubscribe, answer)) << "only the subscribe action draws an answer";
+  const IoFrame poll = execute_frame(build_status_poll);
+  EXPECT_FALSE(decisions::is_subscription_answer(poll, answer)) << "not a subscription request";
 }
 
 TEST(Decisions, UnconfirmedExecuteIsResentOnceOnlyToADeviceThatConfirms) {

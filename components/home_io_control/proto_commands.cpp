@@ -695,7 +695,8 @@ bool create_event_subscription(IoFrame &f, const uint8_t *own, const uint8_t *ds
   set_dst(f, dst);
   set_src(f, own);
   // The event id follows the action byte, big-endian.
-  const uint8_t d[3] = {action, static_cast<uint8_t>(event_id >> 8), static_cast<uint8_t>(event_id & 0xFF)};
+  const uint8_t d[SUBSCRIBE_EVENT_DATA_SIZE] = {action, static_cast<uint8_t>(event_id >> 8),
+                                                static_cast<uint8_t>(event_id & 0xFF)};
   return set_cmd(f, CMD_SUBSCRIBE_EVENT, d, sizeof(d));
 }
 

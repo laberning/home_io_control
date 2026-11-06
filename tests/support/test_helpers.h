@@ -246,6 +246,8 @@ class MockPlatformHubBase : public IOHomeControlComponent {
 
   using IOHomeControlComponent::poll_policy_;
   using IOHomeControlComponent::rain_poll_policy_;
+  using IOHomeControlComponent::sun_poll_policy_;
+  using IOHomeControlComponent::battery_level_poll_policy_;
 
   /// Publish `dev` to the entity callbacks as if it had just arrived from the radio.
   /// @param device_id   Device the update is for; must already be registered via add_device().
