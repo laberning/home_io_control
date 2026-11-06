@@ -116,7 +116,13 @@ See
 [the ADR](adr/0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md) for the full
 design, including why no single static pin level works for any of these parts in both directions.
 
-To tell the two Heltec V4 revisions apart, check what version is written on the board.
+**Check the version printed on the board before you pick a config.** The two V4 revisions differ
+only there, and a V4.3 also looks much like a V3. A wrong pick gives no error: a V4.3.1 flashed with
+the V3 pin block boots normally, but its front-end module is never switched, so it sends and
+listens through an unpowered amplifier. Replies go missing and listen-before-talk reads the channel
+as busy (issue #196). On a V4.3, use
+[heltec-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/boards/heltec-v4-3.yaml)
+as it is, including its `tx_power: 1`.
 
 **Radiated power:** each FEM's PA turns `tx_power` into much more antenna-port power than a bare
 SX1262 would produce — roughly +11 dB (GC1109) / +13 dB (KCT8103L) at low drive, uncertain by

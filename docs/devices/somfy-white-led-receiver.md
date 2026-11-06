@@ -119,7 +119,9 @@ light:
 - [Issue #119](https://github.com/laberning/home_io_control/issues/119): a second installation on an
   SX1262, where the receive-filter sweep was done and the lost closing replies were measured.
 - [Issue #121](https://github.com/laberning/home_io_control/issues/121): a Pergola io kit whose
-  receiver never answered pairing at the default filter or at `117.3`.
+  receiver never answered pairing, neither at the default filter (`117.3`) nor at `156.2`, nor with
+  shorter discovery preambles. The filter that fixed the other two installations is not enough for
+  every unit.
 
 ## See also
 

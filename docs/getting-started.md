@@ -13,9 +13,8 @@ You need three things:
 - **A working ESPHome setup**, with Home Assistant already adopting ESPHome devices. If ESPHome is
   new to you, follow [their getting-started guide](https://esphome.io/guides/getting_started_hassio.html)
   first and come back once you can flash a blank node.
-- **An IO-Homecontrol device within radio range**, and — this is the part worth checking now —
-  either the ability to put it into pairing mode, or an existing hub that already controls it.
-  Which of those you have decides your route in step 3.
+- **An IO-Homecontrol device within radio range**, and either a way to put it into pairing mode or
+  an existing hub that already controls it. Which one you have decides your route in step 3.
 
 A short antenna and a device two rooms away is usually fine. The protocol is not fussy about
 signal, and [Link Health](diagnostic-entities.md#link-health) will tell you later if it is.
@@ -43,9 +42,8 @@ Two things worth knowing before you pick:
 
 ## 2. Flash the component
 
-This config gives you a working radio and the entities you need to go find your devices. There are
-no `cover:` or `light:` entries yet, because you do not know your devices' addresses — those come
-in step 3.
+This config gives you a working radio and the entities you need to find your devices. It has no
+`cover:` or `light:` entries yet: your devices' addresses come in step 3.
 
 The pin block is for a **Heltec WiFi LoRa 32 (V3)**. For any other board, swap in its pins from
 [Hardware](hardware.md#all-supported-boards).
@@ -88,8 +86,8 @@ home_io_control:
   node_id: "A1B2C3"                 # yours, from step 1
   system_key: !secret io_system_key # yours, from step 1
 
-  # Onboarding helpers. Each adds one or more Home Assistant entities that you need while
-  # setting up and will not touch again afterwards -- see "Tidying up" at the end of this page.
+  # Onboarding helpers for 2W devices (Routes A and B in step 3). A 1W-only device
+  # (Route C) needs none of them. Remove them once set up -- see "Tidying up".
   discover_and_pair_button: true    # "Discover & Pair" button, for Route A, plus its
                                     # "Last Pairing Result" sensor
   accept_foreign_pairing: true      # "Recover System Key" switch, for Route B
@@ -99,9 +97,17 @@ home_io_control:
 
 `logger:` at `DEBUG` matters here: every route below reads its result out of the log.
 
-Flash it and watch that log. You are looking for the radio to come up — a boot block naming your
-chip and its version. If it does not appear, the pins are wrong, and nothing later will work until
-that block is clean.
+Flash it and check two things in the log:
+
+1. **The radio starts.** A boot block names your chip and its version. If it is missing or reports
+   errors, the SPI, reset or BUSY pins are wrong.
+2. **The radio receives.** Press any button on an IO-Homecontrol remote near the board. Each press
+   logs a few lines starting with `rx 1W remote`, even with no devices configured. If the boot
+   block is clean but presses log nothing, check the interrupt pin (`dio0_pin` on SX1276,
+   `dio1_pin` on the others) and the antenna: the hub only notices a received packet through that
+   pin.
+
+Don't go on to step 3 until both work.
 
 ## 3. Get your devices onto the hub
 
@@ -114,16 +120,15 @@ IO-Homecontrol devices speak two dialects:
 - **2W (two-way)** is what a hub uses. Commands are authenticated with the system key, and the
   device replies with its real position and state.
 
-This component speaks both, but 2W is the one that gives you position feedback in Home Assistant,
-and it is what pairing sets up.
+This component speaks both. 2W gives you position feedback in Home Assistant, and it is what
+pairing sets up. Two questions pick your route:
 
-The two are independent of each other. A shutter can take orders from three wall remotes and still
-never have met a hub. So the question that picks your onboarding route is: **Is the device already
-paired to a hub?**
-
-That matters because a device that has been paired holds that hub's system key, and a device
-holding a key has nothing left to answer a fresh discovery with. Wall remotes do not claim a device
-this way; a hub does.
+1. **Does the device speak 2W at all?** Most do. Some only take 1W commands, for example the VELUX
+   SML roller shutter. [Supported devices](supported-devices.md) marks them `1W`. Those take
+   Route C.
+2. **Is a 2W device already paired to a hub?** A paired device holds that hub's system key and no
+   longer answers discovery, so it takes Route B. Wall remotes don't claim a device this way; a
+   shutter driven by three wall remotes but never by a hub takes Route A.
 
 ### Route A — no hub has claimed it
 
@@ -139,9 +144,8 @@ For a device that is new, factory reset, or has only ever been driven by wall re
 3. Read the log. On success it prints a ready-to-paste block with the device's `io_device_id`,
    `io_device_type` and `io_subtype`.
 
-**Expect this to take a few goes.** The device's pairing window is only a few seconds wide and the
-timing between the PROG press and the button press is genuinely fiddly — the hub makes three
-attempts per press, and it is still common to need two or three presses. Repeat the whole sequence
+**Expect this to take a few goes.** The pairing window is only a few seconds wide. The hub makes
+three attempts per press, and two or three presses are still common. Repeat the whole sequence
 before you change any settings, and give each attempt one PROG press: pressing PROG again while the
 device is still in pairing mode can close the window the first press opened. Pair one device at a
 time.
@@ -201,9 +205,23 @@ The reset is usually a Double Power Cut plus a device-specific sequence of butto
 the device's manual for the exact gesture. A Somfy device, for one, comes out of a reset waiting for
 its local remote, so register that again before starting Route A.
 
+### Route C — a 1W-only device
+
+The hub joins the device as one more remote. You get open, close and stop buttons, but no position
+feedback, because a 1W device never answers.
+
+1. Add a `oneway_controllers:` entry with `enrollment: true`.
+2. Put the device into its learn mode with a remote it already obeys. The gesture depends on the
+   vendor.
+3. Press **Enroll 1W Controller** in Home Assistant.
+
+[Sending 1W commands](configuration/oneway-transmit.md#enrolling-this-hub-as-a-controller) has
+the YAML, the gesture per vendor, and how to tell that it worked. Skip step 4 below: a 1W device
+has no `cover:` entry.
+
 ## 4. Add your devices to the YAML
 
-Either route leaves you with the same three values per device, printed in the log. Add one entity
+Routes A and B leave you with the same three values per device, printed in the log. Add one entity
 per device, on the platform that matches what it is: `cover:` for shutters, blinds, awnings and
 window openers, or `light:`, `lock:`, `switch:` and `climate:` for the rest.
 

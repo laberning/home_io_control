@@ -20,9 +20,10 @@ these configs are exercised on most. [Hardware](hardware.md) covers the alternat
 
 ## Discover & Pair finds nothing. What now?
 
-Almost always the device already holds another hub's key, and a device in that state cannot answer
-a discovery at all. Read [The device is never found](troubleshooting.md#the-device-is-never-found)
-before changing any radio settings.
+Usually one of two things: the device already holds a hub's key, so it cannot answer a discovery
+at all, or the pairing gesture missed the device's short window. Read
+[The device is never found](troubleshooting.md#the-device-is-never-found) before changing any radio
+settings.
 
 ## Do I have to reset my devices to use this?
 
