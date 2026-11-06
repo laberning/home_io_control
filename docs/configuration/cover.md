@@ -335,8 +335,8 @@ What to expect:
   [ADR 0065](../adr/0065-a-covers-travel-speed-is-a-three-way-choice.md)). On a Somfy motor `fast`
   is what a Somfy hub sends for a normal move; what `default` does there has not been measured.
 - **It applies to position moves, open and close included, and to the favorite position.** The
-  favorite position carries a profile only on `silent`, as a Somfy hub sends it. Stop, force open,
-  ventilation and tilt keep the frames they always had.
+  favorite position carries a profile only on `silent`, as a Somfy hub sends it. Stop, ventilation
+  and tilt ignore the setting, and force open always moves at the `fast` speed.
 - **The select shows what the hub sends**, not a reading: nothing on the wire reports a device's
   speed. A move from the pad or another controller uses that controller's speed.
 - **`silent:` is the two-way form**, a switch between `silent` and `fast`. A cover takes one of

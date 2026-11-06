@@ -168,6 +168,7 @@ moves the window to its predefined air-exchange opening rather than fully open.
 - **VELUX uses a different 1W enrollment gesture from Somfy**, and a different priority byte on
   `CMD_EXECUTE`. Set `manufacturer: velux` on any 1W identity aimed at these devices — see
   [Sending 1W commands](../configuration/oneway-transmit.md).
+
 ## Roof window travel speed
 
 A VELUX control pad moves a window with a short command that carries no speed, and the window

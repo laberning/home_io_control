@@ -773,7 +773,7 @@ TEST(ProtoCommands, ParseTravelSpeedAcceptsOnlyTheThreeNames) {
 }
 
 TEST(ProtoCommands, NewDeviceTravelsFast) {
-  EXPECT_EQ(IoDevice{}.travel_speed, TravelSpeed::FAST) << "the profile the hub sent before travel_speed existed";
+  EXPECT_EQ(IoDevice{}.travel_speed, TravelSpeed::FAST) << "a cover without travel_speed: moves on the fast profile";
 }
 
 TEST(ProtoCommands, DecodeBatteryStateReadsBitsFiveAndSix) {
