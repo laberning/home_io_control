@@ -612,6 +612,56 @@ inline uint32_t heating_poll_timer_id(const uint8_t node_id[NODE_ID_SIZE]) {
   return HEATING_POLL_TIMER_ID_TAG | (remote_poll_timer_id(node_id) & ~REMOTE_POLL_TIMER_ID_TAG);
 }
 
+// === Heater model check ===
+
+/// @brief Runs of the one-off heater model check before the hub gives up on it for this boot. Each run
+/// costs at most two register reads, and runs only on a poll the device answered.
+constexpr uint8_t HEATER_MODEL_CHECK_MAX_RUNS = 3;
+
+/// @brief What the model check suggests about a heater's declared `io_model:`.
+enum class HeaterModelHint : uint8_t {
+  NONE,                    ///< The answer fits the declaration: nothing to say.
+  LOOKS_LIKE_RADIATOR,     ///< Declared a towel dryer, but the towel-dryer mode register holds no value.
+  LOOKS_LIKE_TOWEL_DRYER,  ///< Declared without a model, but the towel-dryer mode register holds a value.
+};
+
+/// @brief Compare a heater's declared model with whether it answered the towel-dryer mode register
+/// (0x0136) with a value.
+/// @details Two Atlantic Adelis towel dryers answer that register with their mode; an AGILIA radiator
+///          has not been read there yet, so the hint is worded "looks like" and never changes behaviour.
+///          The caller only asks after the device answered the read (with or without a value).
+/// @param declared The YAML model.
+/// @param towel_mode_has_value True when the register's reply carried a value byte.
+/// @return The hint to log, or NONE.
+inline HeaterModelHint classify_heater_model_hint(DeviceModel declared, bool towel_mode_has_value) {
+  if (declared == DeviceModel::TOWEL_DRYER && !towel_mode_has_value)
+    return HeaterModelHint::LOOKS_LIKE_RADIATOR;
+  if (declared == DeviceModel::NONE && towel_mode_has_value)
+    return HeaterModelHint::LOOKS_LIKE_TOWEL_DRYER;
+  return HeaterModelHint::NONE;
+}
+
+/// First and last byte format_heater_model_name() prints as itself: printable ASCII, space to '~'.
+constexpr uint8_t MODEL_NAME_PRINTABLE_FIRST = 0x20;
+constexpr uint8_t MODEL_NAME_PRINTABLE_LAST = 0x7E;  ///< See MODEL_NAME_PRINTABLE_FIRST.
+
+/// @brief Render a heater's model-name register (0x0119, ASCII) for a log line.
+/// @details Stops at the first NUL, turns any other non-printable byte into '?', and trims trailing
+///          spaces, so a padded or garbled reply still logs as one readable line.
+/// @param bytes The value bytes of the reply.
+/// @param len Their number.
+/// @return The name; empty when the reply carried none.
+inline std::string format_heater_model_name(const uint8_t *bytes, size_t len) {
+  std::string name;
+  for (size_t i = 0; i < len && bytes[i] != 0; i++) {
+    const bool printable = bytes[i] >= MODEL_NAME_PRINTABLE_FIRST && bytes[i] <= MODEL_NAME_PRINTABLE_LAST;
+    name.push_back(printable ? static_cast<char>(bytes[i]) : '?');
+  }
+  while (!name.empty() && name.back() == ' ')
+    name.pop_back();
+  return name;
+}
+
 // === Pairing: the device behind a pairing node ===
 
 /// @brief Does a pairing node that answered discovery this way control a heater at the next address?

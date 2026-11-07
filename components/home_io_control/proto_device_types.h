@@ -10,9 +10,13 @@
 /// exactly one place to add a type or a subtype. A lookup falls back from (type, subtype) to
 /// (type, 0) to "not in the table".
 ///
-/// Subtype names agree across manufacturers, so rows are keyed on (type, subtype) only. A row names
-/// a wire type, not a product: products that share a (type, subtype) are told apart by data the wire
-/// does not carry, which is why the names stay generic.
+/// Subtype names agree across manufacturers, so rows are keyed on (type, subtype). A row names a wire
+/// type, not a product: products that share a (type, subtype) are told apart by data the wire does not
+/// carry, which is why the names stay generic. Where two such products need different handling, the
+/// (type, subtype) row has model rows below it (DeviceModel, YAML `io_model:`): a model row states its
+/// own whole capability word, exactly like a subtype row, and keeps the class and platform of the row
+/// above it. A model is declared, never learned, so a lookup takes it as an explicit argument and
+/// DeviceModel::NONE is the (type, subtype) row itself (ADR 0067).
 
 #include "proto_constants.h"
 #include "proto_device_features.h"
@@ -54,24 +58,43 @@ static constexpr uint8_t EXPERIMENTAL = 1U << 3U;
 struct DeviceTypeInfo {
   DeviceType type;                   ///< Node type.
   uint8_t subtype;                   ///< Subtype; 0 is the type's own row.
+  DeviceModel model;                 ///< NONE for a type or subtype row; the model of a model row.
   const char *name;                  ///< Type row: lowercase identifier ("roller_shutter"). Subtype row:
                                      ///< a description that follows the type name ("with projection").
+                                     ///< Model row: its YAML `io_model:` spelling ("towel_dryer").
   DeviceCapabilityClass capability;  ///< Entity family the device maps to.
   uint8_t flags;                     ///< device_type_flags bits.
   DeviceFeatures features;           ///< device_feature bits: the whole word, never merged with the type row's.
 };
 
-/// @brief Look up the table row for a (type, subtype) pair.
+/// @brief Look up the table row for a (type, subtype, model).
 /// @param type Node type.
 /// @param subtype Subtype; a subtype with no row of its own falls back to the type's row (subtype 0).
+/// @param model Declared model; a model the (type, subtype) has no row for falls back to the
+///        (type, subtype) row. DeviceModel::NONE for a device declared without one.
 /// @return The matching row, or nullptr when the type is not in the table.
-const DeviceTypeInfo *find_device_type_info(DeviceType type, uint8_t subtype);
+const DeviceTypeInfo *find_device_type_info(DeviceType type, uint8_t subtype, DeviceModel model);
 
 /// @brief Look up the table row with exactly this (type, subtype), without falling back.
 /// @param type Node type.
 /// @param subtype Subtype.
-/// @return The row, or nullptr when there is none.
+/// @return The (type, subtype) row itself (never a model row), or nullptr when there is none.
 const DeviceTypeInfo *find_exact_device_type_info(DeviceType type, uint8_t subtype);
+
+/// @brief Look up the model row with exactly this (type, subtype, model), without falling back.
+/// @param type Node type.
+/// @param subtype Subtype.
+/// @param model Model; DeviceModel::NONE has no model row.
+/// @return The model row, or nullptr when the (type, subtype) does not offer this model.
+const DeviceTypeInfo *find_device_model_info(DeviceType type, uint8_t subtype, DeviceModel model);
+
+/// @brief Does this exact (type, subtype) have model rows below it?
+/// @details True where products that share the wire type need telling apart; the hub then checks a
+///          device's declared model against what the device answers (a WARN-only hint).
+/// @param type Node type.
+/// @param subtype Subtype.
+/// @return true when at least one model row names this (type, subtype).
+bool device_offers_models(DeviceType type, uint8_t subtype);
 
 /// @brief Can an ESPHome platform drive this (type, subtype) today?
 /// @param type Node type.
@@ -100,15 +123,18 @@ bool device_is_experimental(DeviceType type, uint8_t subtype);
 /// @return The resolved row's class, or DeviceCapabilityClass::UNKNOWN when the type is not in the table.
 DeviceCapabilityClass device_capability_class(DeviceType type, uint8_t subtype);
 
-/// @brief Capability bits of a (type, subtype).
-/// @details The exact row; else, for subtype SUBTYPE_MAIN_PARAMETER_ONLY, main_parameter_only_variant()
-///          of the type's row (of no features when the type has no row); else the type's own row; else
-///          no features. Callers resolve a device's bits once, onto the device record, and read them
-///          from there; this lookup serves the resolver and checks that run before a device exists.
+/// @brief Capability bits of a (type, subtype, model).
+/// @details The model row; else the exact (type, subtype) row; else, for subtype
+///          SUBTYPE_MAIN_PARAMETER_ONLY, main_parameter_only_variant() of the type's row (of no features
+///          when the type has no row); else the type's own row; else no features. Callers resolve a
+///          device's bits once, onto the device record, and read them from there; this lookup serves
+///          the resolver and checks that run before a device exists.
 /// @param type Node type.
 /// @param subtype Subtype.
+/// @param model Declared model (IoDevice::model); DeviceModel::NONE where no model is declared, such
+///        as discovery and the paste-ready YAML, which only know the wire type.
 /// @return The feature word.
-DeviceFeatures device_features(DeviceType type, uint8_t subtype);
+DeviceFeatures device_features(DeviceType type, uint8_t subtype, DeviceModel model);
 
 /// @brief Features of a device kind that has no table row, or that is not declared at all.
 /// @details An undeclared device keeps the permissive behaviour its entity gives it until the type is

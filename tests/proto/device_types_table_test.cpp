@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <set>
+#include <string>
 #include <utility>
 
 #include "device_table_walk.h"
@@ -71,16 +72,16 @@ TEST(DeviceTypesTable, TypedBroadcastAddressCarriesTheFullTypeAndRoundTrips) {
 // ============================================================================
 
 TEST(DeviceTypesTable, ExactRowWinsAndAnUnnamedSubtypeFallsBackToTheTypeRow) {
-  const DeviceTypeInfo *exact = find_device_type_info(DeviceType::ELECTRICAL_HEATER, 1);
+  const DeviceTypeInfo *exact = find_device_type_info(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
   ASSERT_NE(exact, nullptr);
   EXPECT_EQ(exact->subtype, 1u);
 
-  const DeviceTypeInfo *fallback = find_device_type_info(DeviceType::ELECTRICAL_HEATER, 9);
+  const DeviceTypeInfo *fallback = find_device_type_info(DeviceType::ELECTRICAL_HEATER, 9, DeviceModel::NONE);
   ASSERT_NE(fallback, nullptr);
   EXPECT_EQ(fallback->subtype, 0u) << "subtype 9 has no row of its own";
 
   EXPECT_EQ(find_exact_device_type_info(DeviceType::ELECTRICAL_HEATER, 9), nullptr);
-  EXPECT_EQ(find_device_type_info(static_cast<DeviceType>(26), 0), nullptr) << "26 is undefined";
+  EXPECT_EQ(find_device_type_info(static_cast<DeviceType>(26), 0, DeviceModel::NONE), nullptr) << "26 is undefined";
 }
 
 TEST(DeviceTypesTable, EveryRowIsReachableAndTypeRowsComeFirst) {
@@ -166,7 +167,7 @@ TEST(DeviceTypesTable, CapabilityClassIsSubtypeAware) {
 
 TEST(DeviceTypesTable, MainParameterOnlyForSubtype58OfAnyTypeAndEveryGarageOpener) {
   const auto main_parameter_only = [](DeviceType type, uint8_t subtype) {
-    return has_feature(device_features(type, subtype), device_feature::MAIN_PARAMETER_ONLY);
+    return has_feature(device_features(type, subtype, DeviceModel::NONE), device_feature::MAIN_PARAMETER_ONLY);
   };
   EXPECT_TRUE(main_parameter_only(DeviceType::GARAGE_OPENER, 58));
   EXPECT_TRUE(main_parameter_only(DeviceType::GATE_OPENER, 58));
@@ -183,7 +184,7 @@ TEST(DeviceTypesTable, MainParameterOnlyForSubtype58OfAnyTypeAndEveryGarageOpene
 
 TEST(DeviceTypesTable, DimmableLightRowsAreTheRgbAndTunableWhiteSubtypes) {
   const auto has_levels = [](DeviceType type, uint8_t subtype) {
-    return has_feature(device_features(type, subtype), device_feature::LEVELS);
+    return has_feature(device_features(type, subtype, DeviceModel::NONE), device_feature::LEVELS);
   };
   EXPECT_TRUE(has_levels(DeviceType::LIGHT, 1));
   EXPECT_TRUE(has_levels(DeviceType::LIGHT, 2));
@@ -297,7 +298,7 @@ TEST(DeviceTypesTableFeatures, AnExplicitSubtype58RowIsTheVariantOfItsTypeRow) {
   test::for_each_table_row([](const DeviceTypeInfo &row) {
     if (row.subtype != SUBTYPE_MAIN_PARAMETER_ONLY)
       return;
-    EXPECT_EQ(row.features, main_parameter_only_variant(device_features(row.type, 0)))
+    EXPECT_EQ(row.features, main_parameter_only_variant(device_features(row.type, 0, DeviceModel::NONE)))
         << format_device_ids(row.type, row.subtype);
   });
 }
@@ -354,7 +355,7 @@ TEST(DeviceTypesTableFeatures,
     return std::find(list, list + count, fn) != list + count;
   };
   test::for_each_table_row([&contains](const DeviceTypeInfo &row) {
-    const HeatingProfile *profile = find_heating_profile(row.type, row.subtype);
+    const HeatingProfile *profile = find_heating_profile(row.type, row.subtype, DeviceModel::NONE);
     const bool profile_has_window =
         profile != nullptr &&
         contains(profile->poll_registers, profile->poll_register_count, HeatingFunction::WINDOW_OPEN) &&
@@ -446,4 +447,70 @@ TEST(DeviceTypesTableExperimental, TheLookupFlagsOnlyAnExactRow) {
        {DeviceType::INTERIOR_VENETIAN_BLIND, DeviceType::VERTICAL_INTERIOR_BLIND, DeviceType::DUAL_ROLLER_SHUTTER}) {
     EXPECT_FALSE(device_is_experimental(unflagged, 0)) << "its behaviour is experimental, not its identity";
   }
+}
+
+// ============================================================================
+// Model rows (a model below a (type, subtype), YAML io_model:)
+// ============================================================================
+
+TEST(DeviceTypesTableModels, TheTowelDryerIsAModelRowOfTheHeaterWithASetpoint) {
+  const DeviceTypeInfo *towel =
+      find_device_model_info(DeviceType::ELECTRICAL_HEATER, SUBTYPE_HEATER_WITH_SETPOINT, DeviceModel::TOWEL_DRYER);
+  ASSERT_NE(towel, nullptr);
+  EXPECT_STREQ(towel->name, "towel_dryer");
+  EXPECT_EQ(towel->model, DeviceModel::TOWEL_DRYER);
+  EXPECT_FALSE(has_feature(towel->features, device_feature::WINDOW_COMPANIONS)) << "no window function";
+  EXPECT_EQ(device_features(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER), towel->features);
+  EXPECT_TRUE(has_feature(device_features(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE),
+                          device_feature::WINDOW_COMPANIONS))
+      << "without a model, 52/1 is the radiator";
+
+  EXPECT_EQ(find_device_type_info(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER), towel);
+  EXPECT_EQ(find_exact_device_type_info(DeviceType::ELECTRICAL_HEATER, 1)->model, DeviceModel::NONE)
+      << "the exact (type, subtype) lookup never returns a model row";
+  EXPECT_EQ(find_device_model_info(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE), nullptr);
+}
+
+TEST(DeviceTypesTableModels, AModelTheKindDoesNotOfferFallsBackToTheKind) {
+  EXPECT_EQ(find_device_model_info(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::TOWEL_DRYER), nullptr);
+  EXPECT_EQ(find_device_type_info(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::TOWEL_DRYER),
+            find_exact_device_type_info(DeviceType::ELECTRICAL_HEATER, 0));
+  EXPECT_EQ(find_device_type_info(DeviceType::ELECTRICAL_HEATER, 9, DeviceModel::TOWEL_DRYER),
+            find_exact_device_type_info(DeviceType::ELECTRICAL_HEATER, 0))
+      << "an unnamed subtype falls back to the type row, model or not";
+  EXPECT_EQ(device_features(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::TOWEL_DRYER),
+            device_features(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
+}
+
+TEST(DeviceTypesTableModels, OnlyTheHeaterWithASetpointOffersModels) {
+  std::set<std::pair<DeviceType, uint8_t>> with_models;
+  test::for_each_table_row([&with_models](const DeviceTypeInfo &row) {
+    if (device_offers_models(row.type, row.subtype))
+      with_models.emplace(row.type, row.subtype);
+  });
+  EXPECT_EQ(with_models, (std::set<std::pair<DeviceType, uint8_t>>{{DeviceType::ELECTRICAL_HEATER, 1}}));
+}
+
+TEST(DeviceTypesTableModels, AModelRowKeepsTheIdentityOfTheRowAboveIt) {
+  size_t rows = 0;
+  std::set<std::string> names;
+  test::for_each_model_row([&rows, &names](const DeviceTypeInfo &model) {
+    rows++;
+    const DeviceTypeInfo *above = find_exact_device_type_info(model.type, model.subtype);
+    ASSERT_NE(above, nullptr) << model.name << ": a model row needs its (type, subtype) row";
+    EXPECT_EQ(model.capability, above->capability) << model.name;
+    EXPECT_EQ(model.flags, above->flags) << model.name << ": platform, naming and experimental flags are the row's";
+    EXPECT_NE(model.model, DeviceModel::NONE);
+    EXPECT_TRUE(names.insert(model.name).second) << model.name << " names two models";
+    for (const char *c = model.name; *c != '\0'; c++)
+      EXPECT_TRUE((*c >= 'a' && *c <= 'z') || *c == '_') << model.name << ": a model name is a YAML identifier";
+    // The window companions follow the heating profile of the model as they do for a subtype row.
+    const HeatingProfile *profile = find_heating_profile(model.type, model.subtype, model.model);
+    const bool polls_window =
+        profile != nullptr &&
+        std::find(profile->poll_registers, profile->poll_registers + profile->poll_register_count,
+                  HeatingFunction::WINDOW_OPEN) != profile->poll_registers + profile->poll_register_count;
+    EXPECT_EQ(has_feature(model.features, device_feature::WINDOW_COMPANIONS), polls_window) << model.name;
+  });
+  EXPECT_EQ(rows, 1u);
 }

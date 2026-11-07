@@ -101,23 +101,25 @@ TEST(PlatformCoverVentButton, PressIsSafeWhenParentNull) {
 // ========================================================================================
 
 TEST(DeviceProfile, VentSupportedForWindowOpeners) {
-  EXPECT_TRUE(has_feature(device_features(DeviceType::WINDOW_OPENER, 0), device_feature::VENT))
+  EXPECT_TRUE(has_feature(device_features(DeviceType::WINDOW_OPENER, 0, DeviceModel::NONE), device_feature::VENT))
       << "window opener should support vent";
-  EXPECT_FALSE(has_feature(device_features(DeviceType::VENTILATION_POINT, 0), device_feature::VENT))
+  EXPECT_FALSE(has_feature(device_features(DeviceType::VENTILATION_POINT, 0, DeviceModel::NONE), device_feature::VENT))
       << "a ventilation point is not a cover, so it offers no ventilation position";
 }
 
 TEST(DeviceProfile, VentNotSupportedForOtherTypes) {
-  EXPECT_FALSE(has_feature(device_features(DeviceType::ROLLER_SHUTTER, 0), device_feature::VENT))
+  EXPECT_FALSE(has_feature(device_features(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE), device_feature::VENT))
       << "roller shutter should not support vent";
-  EXPECT_FALSE(has_feature(device_features(DeviceType::VERTICAL_EXTERIOR_AWNING, 0), device_feature::VENT))
+  EXPECT_FALSE(
+      has_feature(device_features(DeviceType::VERTICAL_EXTERIOR_AWNING, 0, DeviceModel::NONE), device_feature::VENT))
       << "awning should not support vent";
-  EXPECT_FALSE(has_feature(device_features(DeviceType::LIGHT, 0), device_feature::VENT))
+  EXPECT_FALSE(has_feature(device_features(DeviceType::LIGHT, 0, DeviceModel::NONE), device_feature::VENT))
       << "light should not support vent";
-  EXPECT_FALSE(has_feature(device_features(DeviceType::INTERIOR_VENETIAN_BLIND, 0), device_feature::VENT))
+  EXPECT_FALSE(
+      has_feature(device_features(DeviceType::INTERIOR_VENETIAN_BLIND, 0, DeviceModel::NONE), device_feature::VENT))
       << "venetian blind should not support vent";
-  EXPECT_FALSE(has_feature(device_features(DeviceType::GARAGE_OPENER, 0), device_feature::VENT))
+  EXPECT_FALSE(has_feature(device_features(DeviceType::GARAGE_OPENER, 0, DeviceModel::NONE), device_feature::VENT))
       << "garage opener should not support vent";
-  EXPECT_FALSE(has_feature(device_features(DeviceType::UNKNOWN, 0), device_feature::VENT))
+  EXPECT_FALSE(has_feature(device_features(DeviceType::UNKNOWN, 0, DeviceModel::NONE), device_feature::VENT))
       << "unknown should not support vent";
 }

@@ -61,6 +61,64 @@ constexpr HeatingFunction SETPOINT_HEATER_BOOT[] = {
     HeatingFunction::SET_OPEN_WINDOW_DETECTION,
 };
 
+// === Towel dryer (52/1, model TOWEL_DRYER): private registers of its own ===
+//
+// Register values as two Atlantic Adelis units report them (issue #202, corpus
+// atlantic_adelis_probe_*): the mode in 0x0136, boost and drying in 0x013E, separate from the mode.
+
+/// PROG is the device's own program, so it is HVAC auto; there is no separate "Program" preset as on
+/// the radiator. Value 1 of the register has never been seen and is not offered.
+constexpr HeatingModeEntry TOWEL_DRYER_MODES[] = {
+    {HeatingHvacMode::OFF, static_cast<uint8_t>(TowelDryerMode::OFF)},
+    {HeatingHvacMode::HEAT, static_cast<uint8_t>(TowelDryerMode::MANUAL)},
+    {HeatingHvacMode::AUTO, static_cast<uint8_t>(TowelDryerMode::PROG)},
+};
+
+/// Index of the "none" entry in TOWEL_DRYER_PRESETS, named by TOWEL_DRYER_OBSERVED_PRESETS.
+constexpr int8_t TOWEL_DRYER_NONE_PRESET = 0;
+/// Index of the boost entry in TOWEL_DRYER_PRESETS.
+constexpr int8_t TOWEL_DRYER_BOOST_PRESET = 1;
+/// Index of the "Drying" entry in TOWEL_DRYER_PRESETS.
+constexpr int8_t TOWEL_DRYER_DRYING_PRESET = 2;
+
+/// Boost and drying are timed runs on top of the mode; "none" ends the one that runs.
+constexpr HeatingPresetEntry TOWEL_DRYER_PRESETS[] = {
+    {nullptr, HeatingPresetId::NONE, HeatingFunction::TEMPORARY_STATE,
+     static_cast<uint8_t>(HeatingTemporaryState::NONE), true},
+    {nullptr, HeatingPresetId::BOOST, HeatingFunction::TEMPORARY_STATE,
+     static_cast<uint8_t>(HeatingTemporaryState::BOOST), true},
+    {"Drying", HeatingPresetId::CUSTOM, HeatingFunction::TEMPORARY_STATE,
+     static_cast<uint8_t>(HeatingTemporaryState::DRYING), true},
+};
+
+/// The mode register names the mode only; TOWEL_DRYER_OBSERVED_PRESETS names the preset.
+constexpr HeatingObservedState TOWEL_DRYER_OBSERVED[] = {
+    {static_cast<uint8_t>(TowelDryerMode::OFF), HeatingHvacMode::OFF, -1},
+    {static_cast<uint8_t>(TowelDryerMode::PROG), HeatingHvacMode::AUTO, -1},
+    {static_cast<uint8_t>(TowelDryerMode::MANUAL), HeatingHvacMode::HEAT, -1},
+};
+
+/// Temporary state -> preset. The hvac column is not consulted for a preset table.
+constexpr HeatingObservedState TOWEL_DRYER_OBSERVED_PRESETS[] = {
+    {static_cast<uint8_t>(HeatingTemporaryState::NONE), HeatingHvacMode::HEAT, TOWEL_DRYER_NONE_PRESET},
+    {static_cast<uint8_t>(HeatingTemporaryState::BOOST), HeatingHvacMode::HEAT, TOWEL_DRYER_BOOST_PRESET},
+    {static_cast<uint8_t>(HeatingTemporaryState::DRYING), HeatingHvacMode::HEAT, TOWEL_DRYER_DRYING_PRESET},
+};
+
+/// Room temperature first, as on the radiator. The setpoint is 0x0103, which a climate write is known to
+/// change on this device (issue #202); the window registers are not read, the dryer has no window function.
+constexpr HeatingFunction TOWEL_DRYER_POLL[] = {
+    HeatingFunction::ROOM_TEMPERATURE, HeatingFunction::SET_TEMPERATURE, HeatingFunction::TOWEL_MODE,
+    HeatingFunction::TEMPORARY_STATE,  HeatingFunction::WORKING_RATE,
+};
+
+/// The maximum setpoint, and the dryer's second comfort setpoint, which only feeds a debug comparison
+/// with 0x0103 (both units hold the same value in both).
+constexpr HeatingFunction TOWEL_DRYER_BOOT[] = {
+    HeatingFunction::MAX_SETPOINT,
+    HeatingFunction::TOWEL_COMFORT_SETPOINT,
+};
+
 // === Plain electrical heater (52/0): heating levels ===
 
 constexpr HeatingModeEntry LEVEL_HEATER_MODES[] = {
@@ -152,6 +210,7 @@ constexpr float TEMPERATURE_VISUAL_MAX_C = 30.0F;  ///< Highest target the card 
 constexpr HeatingProfile HEATING_PROFILES[] = {
     {DeviceType::HEATING_TEMPERATURE_INTERFACE,
      0,
+     DeviceModel::NONE,
      HeatingControlPath::TEMPERATURE_EXECUTE,
      {/*target_temperature=*/true, /*current_temperature=*/false, /*action=*/false, /*mode_observed=*/false},
      HEATING_ALIAS_MP_PREFIX,
@@ -171,6 +230,7 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
      0},
     {DeviceType::HEAT_PUMP,
      0,
+     DeviceModel::NONE,
      HeatingControlPath::TEMPERATURE_EXECUTE,
      {/*target_temperature=*/true, /*current_temperature=*/false, /*action=*/false, /*mode_observed=*/false},
      HEATING_ALIAS_MP_PREFIX,
@@ -190,6 +250,7 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
      0},
     {DeviceType::ELECTRICAL_HEATER,
      0,
+     DeviceModel::NONE,
      HeatingControlPath::HEATING_LEVEL,
      {/*target_temperature=*/false, /*current_temperature=*/false, /*action=*/false, /*mode_observed=*/true},
      HEATING_LEVEL_MP_PREFIX,
@@ -209,6 +270,7 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
      0},
     {DeviceType::ELECTRICAL_HEATER,
      1,
+     DeviceModel::NONE,
      HeatingControlPath::PRIVATE_REGISTERS,
      {/*target_temperature=*/true, /*current_temperature=*/true, /*action=*/true, /*mode_observed=*/true},
      0,
@@ -226,11 +288,37 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
      std::size(SETPOINT_HEATER_POLL),
      SETPOINT_HEATER_BOOT,
      std::size(SETPOINT_HEATER_BOOT)},
+    {DeviceType::ELECTRICAL_HEATER,
+     1,
+     DeviceModel::TOWEL_DRYER,
+     HeatingControlPath::PRIVATE_REGISTERS,
+     {/*target_temperature=*/true, /*current_temperature=*/true, /*action=*/true, /*mode_observed=*/true},
+     0,
+     HEATING_TEMP_MIN_C,
+     HEATING_TEMP_MAX_C,
+     NO_FP,
+     /*fixed_range=*/false,
+     TOWEL_DRYER_MODES,
+     std::size(TOWEL_DRYER_MODES),
+     TOWEL_DRYER_PRESETS,
+     std::size(TOWEL_DRYER_PRESETS),
+     TOWEL_DRYER_OBSERVED,
+     std::size(TOWEL_DRYER_OBSERVED),
+     TOWEL_DRYER_POLL,
+     std::size(TOWEL_DRYER_POLL),
+     TOWEL_DRYER_BOOT,
+     std::size(TOWEL_DRYER_BOOT),
+     TOWEL_DRYER_OBSERVED_PRESETS,
+     std::size(TOWEL_DRYER_OBSERVED_PRESETS),
+     /*mode_fn=*/HeatingFunction::TOWEL_MODE,
+     /*preset_fn=*/HeatingFunction::TEMPORARY_STATE,
+     HeatingActionSource::WORKING_RATE,
+     /*experimental_writes=*/true},
 };
 
-const HeatingProfile *find_exact_profile(DeviceType type, uint8_t subtype) {
+const HeatingProfile *find_exact_profile(DeviceType type, uint8_t subtype, DeviceModel model) {
   for (const HeatingProfile &profile : HEATING_PROFILES) {
-    if (profile.type == type && profile.subtype == subtype)
+    if (profile.type == type && profile.subtype == subtype && profile.model == model)
       return &profile;
   }
   return nullptr;
@@ -238,17 +326,28 @@ const HeatingProfile *find_exact_profile(DeviceType type, uint8_t subtype) {
 
 }  // namespace
 
-const HeatingProfile *find_heating_profile(DeviceType type, uint8_t subtype) {
-  const HeatingProfile *profile = find_exact_profile(type, subtype);
+const HeatingProfile *find_heating_profile(DeviceType type, uint8_t subtype, DeviceModel model) {
+  if (model != DeviceModel::NONE) {
+    if (const HeatingProfile *model_profile = find_exact_profile(type, subtype, model))
+      return model_profile;
+  }
+  const HeatingProfile *profile = find_exact_profile(type, subtype, DeviceModel::NONE);
   if (profile != nullptr || subtype == 0)
     return profile;
   // A subtype the type table names on its own (the Atlantic heat pumps, 22/1 and 22/2) is a different
   // device from the type's own row and must not inherit its profile; only an unnamed subtype does.
-  return find_exact_device_type_info(type, subtype) == nullptr ? find_exact_profile(type, 0) : nullptr;
+  return find_exact_device_type_info(type, subtype) == nullptr ? find_exact_profile(type, 0, DeviceModel::NONE)
+                                                               : nullptr;
 }
 
+const HeatingProfile *find_heating_profile(const IoDevice &dev) {
+  return find_heating_profile(dev.type, dev.subtype, dev.model);
+}
+
+// The path predicates ask the (type, subtype) profile: a model's profile keeps its path.
+
 bool device_uses_heating_registers(DeviceType type, uint8_t subtype) {
-  const HeatingProfile *profile = find_heating_profile(type, subtype);
+  const HeatingProfile *profile = find_heating_profile(type, subtype, DeviceModel::NONE);
   return profile != nullptr && profile->path == HeatingControlPath::PRIVATE_REGISTERS;
 }
 
@@ -257,12 +356,12 @@ bool device_accepts_register_probe(DeviceType type, uint8_t subtype) {
 }
 
 bool device_uses_heating_levels(DeviceType type, uint8_t subtype) {
-  const HeatingProfile *profile = find_heating_profile(type, subtype);
+  const HeatingProfile *profile = find_heating_profile(type, subtype, DeviceModel::NONE);
   return profile != nullptr && profile->path == HeatingControlPath::HEATING_LEVEL;
 }
 
 bool device_uses_heating_temperature(DeviceType type, uint8_t subtype) {
-  const HeatingProfile *profile = find_heating_profile(type, subtype);
+  const HeatingProfile *profile = find_heating_profile(type, subtype, DeviceModel::NONE);
   return profile != nullptr && profile->path == HeatingControlPath::TEMPERATURE_EXECUTE;
 }
 
@@ -294,6 +393,14 @@ const HeatingObservedState *find_observed_state(const HeatingProfile &profile, u
   for (size_t i = 0; i < profile.observed_count; i++) {
     if (profile.observed[i].wire == wire)
       return &profile.observed[i];
+  }
+  return nullptr;
+}
+
+const HeatingObservedState *find_observed_preset(const HeatingProfile &profile, uint8_t wire) {
+  for (size_t i = 0; i < profile.preset_observed_count; i++) {
+    if (profile.preset_observed[i].wire == wire)
+      return &profile.preset_observed[i];
   }
   return nullptr;
 }

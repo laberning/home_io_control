@@ -1201,7 +1201,7 @@ TEST(HubStatus, GetInfo2RespResolvesTheFeaturesOfTheLearnedKind) {
 
   const IoDevice *dev = comp.get_device("054E17");
   ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->features, device_features(DeviceType::EXTERIOR_VENETIAN_BLIND, 0));
+  EXPECT_EQ(dev->features, device_features(DeviceType::EXTERIOR_VENETIAN_BLIND, 0, DeviceModel::NONE));
   EXPECT_TRUE(has_feature(dev->features, device_feature::TILT));
 }
 

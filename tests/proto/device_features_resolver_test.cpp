@@ -26,7 +26,7 @@ IoDevice make_device(DeviceType type, uint8_t subtype, DeviceCapabilityClass ent
 TEST(ResolveDeviceFeatures, ADeclaredKindTakesItsRowWhateverEntityDeclaredIt) {
   IoDevice dev = make_device(DeviceType::INTERIOR_VENETIAN_BLIND, 0, DeviceCapabilityClass::COVER);
   resolve_device_features(dev);
-  EXPECT_EQ(dev.features, device_features(DeviceType::INTERIOR_VENETIAN_BLIND, 0));
+  EXPECT_EQ(dev.features, device_features(DeviceType::INTERIOR_VENETIAN_BLIND, 0, DeviceModel::NONE));
 
   IoDevice without_entity = make_device(DeviceType::INTERIOR_VENETIAN_BLIND, 0, DeviceCapabilityClass::UNKNOWN);
   resolve_device_features(without_entity);
@@ -85,7 +85,7 @@ TEST(ResolveDeviceFeatures, DimmableOnACoverDoesNotChangeItsLevels) {
   IoDevice dev = make_device(DeviceType::ROLLER_SHUTTER, 0, DeviceCapabilityClass::COVER);
   dev.dimmable = true;
   resolve_device_features(dev);
-  EXPECT_EQ(dev.features, device_features(DeviceType::ROLLER_SHUTTER, 0));
+  EXPECT_EQ(dev.features, device_features(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
 }
 
 TEST(ResolveDeviceFeatures, InversionIsTheOverrideElseTheKindsDefault) {

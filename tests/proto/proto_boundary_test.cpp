@@ -106,43 +106,47 @@ TEST(ProtocolBoundary, IsExchangeInternalCommand_ZeroNotInternal) {
 // ========================================================================================
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_VenetianBlind) {
-  EXPECT_TRUE(has_feature(device_features(DeviceType::INTERIOR_VENETIAN_BLIND, 0), device_feature::TILT))
+  EXPECT_TRUE(
+      has_feature(device_features(DeviceType::INTERIOR_VENETIAN_BLIND, 0, DeviceModel::NONE), device_feature::TILT))
       << "INTERIOR_VENETIAN_BLIND should support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsNoTilt_VerticalInteriorBlind) {
   // VELUX KLF 200 API specification, Appendix 2 lists no slat parameter for type 10.
-  EXPECT_FALSE(has_feature(device_features(DeviceType::VERTICAL_INTERIOR_BLIND, 0), device_feature::TILT))
+  EXPECT_FALSE(
+      has_feature(device_features(DeviceType::VERTICAL_INTERIOR_BLIND, 0, DeviceModel::NONE), device_feature::TILT))
       << "VERTICAL_INTERIOR_BLIND has no slat angle";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_ExternalVenetianBlind) {
-  EXPECT_TRUE(has_feature(device_features(DeviceType::EXTERIOR_VENETIAN_BLIND, 0), device_feature::TILT))
+  EXPECT_TRUE(
+      has_feature(device_features(DeviceType::EXTERIOR_VENETIAN_BLIND, 0, DeviceModel::NONE), device_feature::TILT))
       << "EXTERIOR_VENETIAN_BLIND should support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_LouvreBlind) {
-  EXPECT_TRUE(has_feature(device_features(DeviceType::LOUVRE_BLIND, 0), device_feature::TILT))
+  EXPECT_TRUE(has_feature(device_features(DeviceType::LOUVRE_BLIND, 0, DeviceModel::NONE), device_feature::TILT))
       << "LOUVRE_BLIND should support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_RollerShutterNotTilt) {
-  EXPECT_FALSE(has_feature(device_features(DeviceType::ROLLER_SHUTTER, 0), device_feature::TILT))
+  EXPECT_FALSE(has_feature(device_features(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE), device_feature::TILT))
       << "ROLLER_SHUTTER must NOT support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_AwningNotTilt) {
-  EXPECT_FALSE(has_feature(device_features(DeviceType::VERTICAL_EXTERIOR_AWNING, 0), device_feature::TILT))
+  EXPECT_FALSE(
+      has_feature(device_features(DeviceType::VERTICAL_EXTERIOR_AWNING, 0, DeviceModel::NONE), device_feature::TILT))
       << "VERTICAL_EXTERIOR_AWNING must NOT support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_LightNotTilt) {
-  EXPECT_FALSE(has_feature(device_features(DeviceType::LIGHT, 0), device_feature::TILT))
+  EXPECT_FALSE(has_feature(device_features(DeviceType::LIGHT, 0, DeviceModel::NONE), device_feature::TILT))
       << "LIGHT must NOT support tilt";
 }
 
 TEST(ProtocolBoundary, DeviceSupportsTilt_UnknownNotTilt) {
-  EXPECT_FALSE(has_feature(device_features(DeviceType::UNKNOWN, 0), device_feature::TILT))
+  EXPECT_FALSE(has_feature(device_features(DeviceType::UNKNOWN, 0, DeviceModel::NONE), device_feature::TILT))
       << "UNKNOWN must NOT support tilt";
 }
 
@@ -225,10 +229,13 @@ TEST(ProtocolBoundary, DeviceCapabilityClass_PergolaIsPlainPositionCover) {
   // The louvres move on the main parameter (0x0000 open, 0xC800 closed).
   EXPECT_EQ(device_capability_class(DeviceType::BIOCLIMATIC_PERGOLA), DeviceCapabilityClass::COVER)
       << "BIOCLIMATIC_PERGOLA must be classified as COVER";
-  EXPECT_FALSE(has_feature(device_features(DeviceType::BIOCLIMATIC_PERGOLA, 0), device_feature::TILT))
+  EXPECT_FALSE(
+      has_feature(device_features(DeviceType::BIOCLIMATIC_PERGOLA, 0, DeviceModel::NONE), device_feature::TILT))
       << "BIOCLIMATIC_PERGOLA louvres move on the main parameter";
-  EXPECT_FALSE(has_feature(device_features(DeviceType::BIOCLIMATIC_PERGOLA, 0), device_feature::VENT));
-  EXPECT_FALSE(has_feature(device_features(DeviceType::BIOCLIMATIC_PERGOLA, 0), device_feature::INVERTED))
+  EXPECT_FALSE(
+      has_feature(device_features(DeviceType::BIOCLIMATIC_PERGOLA, 0, DeviceModel::NONE), device_feature::VENT));
+  EXPECT_FALSE(
+      has_feature(device_features(DeviceType::BIOCLIMATIC_PERGOLA, 0, DeviceModel::NONE), device_feature::INVERTED))
       << "0x0000 is open, as for a vertical cover";
   EXPECT_STREQ(yaml_device_type_name(DeviceType::BIOCLIMATIC_PERGOLA), "bioclimatic_pergola");
   EXPECT_STREQ(device_operation_profile_name(DeviceType::BIOCLIMATIC_PERGOLA, 0), "cover_position");

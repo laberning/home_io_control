@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0059 -->
 
-**Status:** Accepted · **Recorded:** 2026-10
+**Status:** Accepted, amended by [ADR 0067](0067-a-model-below-the-subtype-for-products-that-share-a-wire-type.md) (products that share a (type, subtype) are told apart by a model row below it, declared with `io_model:`) · **Recorded:** 2026-10
 
 Amends [ADR 0052](0052-device-types-follow-the-io-node-type-and-subtype-table.md) (behaviour keys on
 the row's capability word) and [ADR 0055](0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md)

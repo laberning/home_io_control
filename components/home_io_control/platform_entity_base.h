@@ -50,6 +50,9 @@ class DeviceBoundEntity {
   /// @brief Set the declared device subtype (from YAML).
   /// @param subtype Subtype value.
   void set_subtype(uint8_t subtype) { this->subtype_ = subtype; }
+  /// @brief Set the declared product model below the subtype (YAML `io_model:`).
+  /// @param model Model; the codegen only emits a model the declared (type, subtype) offers.
+  void set_device_model(DeviceModel model) { this->model_ = model; }
   /// @brief Enable or disable optimistic target updates for this device (from YAML).
   /// Only covers expose this in YAML today; other platforms keep the default (true), which is
   /// inert for entity types that never consult the effective target / movement state.
@@ -99,6 +102,7 @@ class DeviceBoundEntity {
     DeviceConfig config;
     config.type = this->device_type_;
     config.subtype = this->subtype_;
+    config.model = this->model_;
     config.entity_class = entity_class;
     config.invert_override = invert_override;
     config.dimmable = dimmable;
@@ -130,6 +134,7 @@ class DeviceBoundEntity {
     IoDevice declared{};
     declared.type = this->device_type_;
     declared.subtype = this->subtype_;
+    declared.model = this->model_;
     declared.entity_class = entity_class;
     resolve_device_features(declared);
     return declared.features;
@@ -157,6 +162,7 @@ class DeviceBoundEntity {
   std::string device_id_;
   DeviceType device_type_{DeviceType::UNKNOWN};
   uint8_t subtype_{0};
+  DeviceModel model_{DeviceModel::NONE};
   uint32_t status_poll_interval_ms_{0};
   bool optimistic_state_{true};
   TravelSpeed travel_speed_{TravelSpeed::FAST};

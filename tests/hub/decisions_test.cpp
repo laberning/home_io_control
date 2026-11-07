@@ -982,3 +982,24 @@ TEST(Decisions, StatusUpdateAckChannelOrderPutsTheReceiveChannelFirst) {
   EXPECT_EQ(decisions::status_update_ack_channel_order(FREQ_CH1), (Order{FREQ_CH1, FREQ_CH2, FREQ_CH3}));
   EXPECT_EQ(decisions::status_update_ack_channel_order(0), (Order{FREQ_CH1, FREQ_CH2, FREQ_CH3}));
 }
+
+// === Heater model check ===
+
+TEST(Decisions, HeaterModelHintFlagsOnlyADeclarationTheTowelModeRegisterContradicts) {
+  using decisions::HeaterModelHint;
+  EXPECT_EQ(decisions::classify_heater_model_hint(DeviceModel::TOWEL_DRYER, false),
+            HeaterModelHint::LOOKS_LIKE_RADIATOR);
+  EXPECT_EQ(decisions::classify_heater_model_hint(DeviceModel::NONE, true), HeaterModelHint::LOOKS_LIKE_TOWEL_DRYER);
+  EXPECT_EQ(decisions::classify_heater_model_hint(DeviceModel::TOWEL_DRYER, true), HeaterModelHint::NONE);
+  EXPECT_EQ(decisions::classify_heater_model_hint(DeviceModel::NONE, false), HeaterModelHint::NONE);
+}
+
+TEST(Decisions, HeaterModelNameIsOneReadableLine) {
+  const uint8_t adelis[] = {'A', 'D', 'E', 'L', 'I', 'S', ' ', '2', ' ', 'D', 'I', 'G', 'I', 'T'};
+  EXPECT_EQ(decisions::format_heater_model_name(adelis, sizeof(adelis)), "ADELIS 2 DIGIT");
+  const uint8_t padded[] = {'A', 'B', ' ', ' ', 0x00, 'Z'};
+  EXPECT_EQ(decisions::format_heater_model_name(padded, sizeof(padded)), "AB") << "stops at NUL, trims spaces";
+  const uint8_t garbled[] = {'A', 0x01, 0xC3, 'B'};
+  EXPECT_EQ(decisions::format_heater_model_name(garbled, sizeof(garbled)), "A??B");
+  EXPECT_EQ(decisions::format_heater_model_name(adelis, 0), "");
+}

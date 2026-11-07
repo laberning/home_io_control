@@ -28,6 +28,7 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
   }
   dev.type = cfg.type;
   dev.subtype = cfg.subtype;
+  dev.model = cfg.model;
   dev.entity_class = cfg.entity_class;
   dev.invert_override = cfg.invert_override;
   dev.dimmable = cfg.dimmable;
@@ -48,6 +49,7 @@ void DeviceRegistry::put(const std::string &device_id, IoDevice device) {
     device.entity_class = existing->second.entity_class;
     device.invert_override = existing->second.invert_override;
     device.dimmable = existing->second.dimmable;
+    device.model = existing->second.model;
   }
   resolve_device_features(device);
   devices_[device_id] = device;

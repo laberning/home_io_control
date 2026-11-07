@@ -28,12 +28,14 @@ from .hub_validators import (
     device_features,
 )
 from .platform_common import (
+    config_model,
     companion_entity_name,
     companion_id_base,
     create_companion_sensors,
     inherit_esphome_device,
     inject_companion_sensor_ids,
     platform_schema_extension,
+    validate_device_model,
     warn_if_experimental_kind,
     wire_device_binding,
     CONF_DEVICE_TYPE,
@@ -61,12 +63,13 @@ CONF_WINDOW_DETECTION_SWITCH_ID = "_window_detection_switch_id"
 def _has_window_companions(config):
     """True when the declared heater kind has a window sensor and a detection switch.
 
-    The kind is the declared io_device_type/io_subtype (subtype 0 when omitted); the answer is
-    the WINDOW_COMPANIONS bit of its table row. A heater declared without a type gets no companions:
-    nothing at validation time says what it is.
+    The kind is the declared io_device_type/io_subtype (subtype 0 when omitted) and io_model; the
+    answer is the WINDOW_COMPANIONS bit of its table row, so a towel dryer (a model row without it)
+    gets none. A heater declared without a type gets no companions: nothing at validation time says
+    what it is.
     """
     return CONF_DEVICE_TYPE in config and bool(
-        device_features(config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0))
+        device_features(config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0), config_model(config))
         & FEATURE_WINDOW_COMPANIONS
     )
 
@@ -150,6 +153,7 @@ CONFIG_SCHEMA = cv.All(
     .extend(cv.COMPONENT_SCHEMA),
     _validate_climate_poll_interval,
     _validate_temperature_range,
+    validate_device_model,
     warn_if_experimental_kind,
     _inject_companion_ids,
 )

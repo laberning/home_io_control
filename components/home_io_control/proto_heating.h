@@ -22,6 +22,11 @@
 /// regulator and maximum-setpoint registers. The presence register has been written and acknowledged,
 /// with no visible effect observed; the window and open-window-detection registers have only been read
 /// at rest.
+///
+/// An Atlantic Adelis towel dryer answers the same protocol and adds its own registers: its mode
+/// (0x0136), its temporary state (boost or drying, 0x013E), its working rate (0x0126) and a second
+/// comfort setpoint (0x0138). They have been read on two units in every state
+/// (tests/corpus/captures/probe/atlantic_adelis_probe_*.yaml); writing them has not been confirmed.
 
 #include "proto_frame.h"
 
@@ -47,6 +52,10 @@ enum class HeatingFunction : uint8_t {
   REGULATOR_STATE,            ///< Register 0x0117, read-only: 0 none, 1 standby, 2 heating.
   MAX_SETPOINT,               ///< Register 0x0102, read-only: highest setpoint the heater accepts, tenths of a degree.
   WINDOW_OPEN,                ///< Register 0x010E, read-only: the heater's window sensor, 0 closed / 1 open.
+  TOWEL_MODE,                 ///< Register 0x0136, read/write: a towel dryer's mode (TowelDryerMode).
+  TEMPORARY_STATE,            ///< Register 0x013E, read/write: a towel dryer's temporary state (HeatingTemporaryState).
+  WORKING_RATE,               ///< Register 0x0126, read-only: share of the time the element heats, 0-100 %.
+  TOWEL_COMFORT_SETPOINT,     ///< Register 0x0138, read-only: a towel dryer's comfort setpoint, tenths of a degree.
 };
 
 /// @brief Operating modes of the mode register (HeatingFunction::SET_MODE).
@@ -57,6 +66,24 @@ enum class HeatingMode : uint8_t {
   EXTERNAL_SETPOINT = 0x03,  ///< Setpoint comes from an external controller. Readable, never written by this
                              ///< component. Not named EXTERNAL: the Arduino core defines that as a macro.
   OFF = 0x04,                ///< Off / standby.
+};
+
+/// @brief Modes of a towel dryer's mode register (HeatingFunction::TOWEL_MODE).
+/// @details OFF, PROG and MANUAL are the values two Atlantic Adelis units report with their display
+///          showing off, PROG and MANUEL (issue #202, corpus atlantic_adelis_probe_mode_reads).
+enum class TowelDryerMode : uint8_t {
+  OFF = 0x00,     ///< Off (standby).
+  AUTO = 0x01,    ///< Defined by the register's range, never seen on a device; never written here.
+  PROG = 0x02,    ///< Program mode: the device runs its own weekly program.
+  MANUAL = 0x03,  ///< Manual mode: the device holds the comfort setpoint.
+};
+
+/// @brief Temporary states of a towel dryer (HeatingFunction::TEMPORARY_STATE): a timed run on top of
+/// the mode, which the mode register does not show.
+enum class HeatingTemporaryState : uint8_t {
+  NONE = 0x00,    ///< No temporary state: the mode applies.
+  BOOST = 0x01,   ///< Boost: full power for the boost duration.
+  DRYING = 0x02,  ///< Drying: full power for the drying duration.
 };
 
 /// @brief Regulator states of the regulator register (HeatingFunction::REGULATOR_STATE).
@@ -105,6 +132,14 @@ constexpr int16_t HEATING_SENSOR_FAULT_RAW = -1;
 static constexpr float HEATING_TEMPERATURE_RANGE_MIN_C = -40.0F;
 static constexpr float HEATING_TEMPERATURE_RANGE_MAX_C = 80.0F;  ///< See HEATING_TEMPERATURE_RANGE_MIN_C.
 
+/// @brief Offset of the first value byte in a register reply: the four header bytes it echoes.
+constexpr size_t HEATING_REPLY_VALUE_OFFSET = 4;
+
+/// @brief Register 0x0119: the heater's model name, ASCII, not terminated ("ADELIS 2 DIGIT" on an
+/// Atlantic Adelis, corpus atlantic_adelis_probe_register_01_sweep). Read raw for a log line; no
+/// HeatingFunction decodes it.
+constexpr uint8_t HEATING_REGISTER_MODEL_NAME = 0x19;
+
 /// @brief Stable lowercase name for a heating function ("power_on", "set_temperature", ...).
 /// @param fn Function.
 /// @return Null-terminated string; "unknown" for an out-of-range value.
@@ -122,6 +157,22 @@ bool heating_function_is_writable(HeatingFunction fn);
 ///         out-of-range value.
 bool heating_function_is_readable(HeatingFunction fn);
 
+/// @brief Low byte of the 0x01xx register behind a function.
+/// @param fn Function.
+/// @param[out] register_low The register's low byte; untouched when false is returned.
+/// @return false for an out-of-range value.
+bool heating_function_register(HeatingFunction fn, uint8_t &register_low);
+
+/// @brief Is this frame a register reply that echoes a request for this register?
+/// @details A CMD_WRITE_PRIVATE_ACK whose data starts with `0C 60 <reg_hi> <reg_lo>` (a read) or
+///          `0C 61 <reg_hi> <reg_lo>` (a write). The value bytes, if any, follow at
+///          HEATING_REPLY_VALUE_OFFSET; a register the device does not hold is answered with none.
+/// @param reply The device's reply frame.
+/// @param reg_hi High byte of the register the request addressed.
+/// @param reg_lo Low byte of the register the request addressed.
+/// @return true when the reply is the register's echo.
+bool heating_reply_echoes_register(const IoFrame &reply, uint8_t reg_hi, uint8_t reg_lo);
+
 /// @brief Encode a write ("set") of one register into a CMD_WRITE_PRIVATE (0x20) payload.
 ///
 /// `value` is interpreted by the register's encoding:
@@ -129,6 +180,8 @@ bool heating_function_is_readable(HeatingFunction fn);
 ///     a 16-bit little-endian value in tenths of a degree, round-half-away-from-zero(10 * value).
 ///   - SET_MODE: a HeatingMode value widened to float; must be AUTO, MANUAL, PROG or OFF.
 ///   - SET_PRESENCE, SET_OPEN_WINDOW_DETECTION: 0 or 1.
+///   - TOWEL_MODE: a TowelDryerMode value widened to float (0-3).
+///   - TEMPORARY_STATE: a HeatingTemporaryState value widened to float (0-2).
 /// A read-only register (including POWER_ON, MIDNIGHT_SYNC and the measurement registers) is never
 /// encoded as a write, and out-of-range, non-integral (for enum/binary encodings) or non-finite
 /// input is rejected: a byte derived from a truncating or wrapping cast is never emitted.
@@ -178,7 +231,8 @@ size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[HEATI
 /// decode such as POWER_ON) is "no value".
 ///
 /// The value is returned in natural units: degrees Celsius for the temperature registers, the raw
-/// byte for the others. A raw `-1` on the room-temperature register is a sensor fault: it decodes
+/// byte for the others. A byte above its register's range (a mode, a state, a percentage) is
+/// "no value". A raw `-1` on the room-temperature register is a sensor fault: it decodes
 /// as NaN with `true` returned, because the heater did answer.
 /// @param reply The device's reply frame.
 /// @param fn Register the request addressed.
@@ -191,20 +245,24 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
 /// Every field starts as "never read" (NaN, or -1 for the byte registers). Only a decoded reply
 /// changes a field, so what an entity shows from here is observed, never predicted.
 struct HeatingReadings {
-  float room_temperature_c{NAN};      ///< Measured room temperature; NaN until read or on a sensor fault.
-  float setpoint_c{NAN};              ///< Comfort setpoint as the heater holds it; NaN until read.
-  float max_setpoint_c{NAN};          ///< Highest setpoint the heater accepts; NaN until read.
-  int16_t mode{-1};                   ///< HeatingMode value; -1 until read.
-  int16_t regulator{-1};              ///< HeatingRegulatorState value; -1 until read.
-  int16_t window_open{-1};            ///< 0 closed / 1 open; -1 until read.
-  int16_t open_window_detection{-1};  ///< 1 detection on / 0 off; -1 until read.
-  int16_t level{-1};                  ///< Low byte of the main parameter of a heater commanded with a prefixed
-                                      ///< value: a heating level, or a setpoint alias. -1 until a status reply
-                                      ///< carried one, and again after a reply that carried a plain
-                                      ///< temperature. Set by the hub's status path, not by store().
-  int32_t main_parameter{-1};         ///< The raw current main parameter of a heater commanded with an EXECUTE
-                                      ///< (a temperature, an alias or a level); -1 until a status reply
-                                      ///< carried one. Set by the hub's status path, not by store().
+  float room_temperature_c{NAN};        ///< Measured room temperature; NaN until read or on a sensor fault.
+  float setpoint_c{NAN};                ///< Comfort setpoint as the heater holds it; NaN until read.
+  float max_setpoint_c{NAN};            ///< Highest setpoint the heater accepts; NaN until read.
+  int16_t mode{-1};                     ///< HeatingMode value; -1 until read.
+  int16_t regulator{-1};                ///< HeatingRegulatorState value; -1 until read.
+  int16_t window_open{-1};              ///< 0 closed / 1 open; -1 until read.
+  int16_t open_window_detection{-1};    ///< 1 detection on / 0 off; -1 until read.
+  int16_t towel_mode{-1};               ///< TowelDryerMode value; -1 until read.
+  int16_t temporary_state{-1};          ///< HeatingTemporaryState value; -1 until read.
+  int16_t working_rate{-1};             ///< Working rate, 0-100 %; -1 until read.
+  float towel_comfort_setpoint_c{NAN};  ///< A towel dryer's comfort setpoint (register 0x0138); NaN until read.
+  int16_t level{-1};                    ///< Low byte of the main parameter of a heater commanded with a prefixed
+                                        ///< value: a heating level, or a setpoint alias. -1 until a status reply
+                                        ///< carried one, and again after a reply that carried a plain
+                                        ///< temperature. Set by the hub's status path, not by store().
+  int32_t main_parameter{-1};           ///< The raw current main parameter of a heater commanded with an EXECUTE
+                                        ///< (a temperature, an alias or a level); -1 until a status reply
+                                        ///< carried one. Set by the hub's status path, not by store().
 
   /// @brief Fold one decoded register value into the readings.
   /// @param fn Register the value was read from.
@@ -217,6 +275,14 @@ struct HeatingReadings {
   /// @return true when the readings hold a value for `fn`; false for "never read" and for a function
   ///         the readings do not hold.
   [[nodiscard]] bool has(HeatingFunction fn) const;
+
+  /// @brief The stored wire byte of a one-byte register (a mode, a state, a flag, a percentage).
+  /// @details Lets a heating profile name the register its card reads (its mode or preset register)
+  ///          instead of the caller picking a field.
+  /// @param fn Register.
+  /// @return The value, or -1 when it has not been read or `fn` is not a one-byte register the
+  ///         readings hold.
+  [[nodiscard]] int16_t value_of(HeatingFunction fn) const;
 };
 
 }  // namespace home_io_control

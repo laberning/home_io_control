@@ -1,8 +1,8 @@
 /// @file docs_node_type_table_sync_test.cpp
 /// @brief Verifies that the node-type table in docs/supported-devices.md ("Node types and
 ///        subtypes") agrees with the C++ table (proto_device_types.cpp): every type value, its
-///        name, its named subtypes, and "(experimental)" on exactly the subtypes whose row carries
-///        device_type_flags::EXPERIMENTAL.
+///        name, its named subtypes, the models below a subtype ("(io_model: a / b)"), and
+///        "(experimental)" on exactly the subtypes whose row carries device_type_flags::EXPERIMENTAL.
 ///
 /// The C++ table is authoritative; the docs follow it. The test parses the Markdown table at
 /// runtime, like the other sync tests parse hub_validators.py (see device_type_sync_test.cpp and
@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,11 +30,14 @@ namespace {
 constexpr const char *DOCS_PAGE = "docs/supported-devices.md";
 constexpr const char *TABLE_HEADER = "| Type | Name | Named subtypes | Support |";
 constexpr const char *EXPERIMENTAL_SUFFIX = " (experimental)";
+constexpr const char *MODELS_PREFIX = " (io_model: ";
+constexpr const char *MODELS_SEPARATOR = " / ";
 
 /// A named subtype as the docs list it.
 struct DocsSubtype {
   std::string name;
   bool experimental = false;
+  std::set<std::string> models;  ///< The `io_model:` names listed after the subtype's name.
 };
 
 /// One row of the docs table.
@@ -78,6 +82,21 @@ std::map<unsigned, DocsSubtype> parse_subtypes(const std::string &cell) {
         subtype.name.compare(subtype.name.size() - suffix.size(), suffix.size(), suffix) == 0) {
       subtype.experimental = true;
       subtype.name.erase(subtype.name.size() - suffix.size());
+    }
+    // "<name> (io_model: a / b)": the models below this subtype.
+    const size_t models_at = subtype.name.find(MODELS_PREFIX);
+    if (models_at != std::string::npos && subtype.name.back() == ')') {
+      std::string list = subtype.name.substr(models_at + std::string(MODELS_PREFIX).size());
+      list.pop_back();
+      subtype.name.erase(models_at);
+      size_t from = 0;
+      while (from <= list.size()) {
+        size_t to = list.find(MODELS_SEPARATOR, from);
+        if (to == std::string::npos)
+          to = list.size();
+        subtype.models.insert(list.substr(from, to - from));
+        from = to + std::string(MODELS_SEPARATOR).size();
+      }
     }
     subtypes[static_cast<unsigned>(std::stoul(entry.substr(0, space)))] = subtype;
   }
@@ -171,5 +190,29 @@ TEST(DocsNodeTypeTableSync, NamedSubtypesMatchAndAreMarkedExperimentalExactlyWhe
           << "type 0x" << std::hex << value << " subtype " << std::dec << subtype << ": \"(experimental)\" must be on"
           << " exactly the rows flagged EXPERIMENTAL";
     }
+  }
+}
+
+TEST(DocsNodeTypeTableSync, TheModelsBelowASubtypeAreListedExactly) {
+  const std::map<unsigned, DocsRow> docs = parse_docs_table();
+  ASSERT_FALSE(docs.empty());
+  std::map<std::pair<unsigned, unsigned>, std::set<std::string>> expected;
+  test::for_each_model_row([&expected](const DeviceTypeInfo &row) {
+    expected[{static_cast<unsigned>(row.type), row.subtype}].insert(row.name);
+  });
+  ASSERT_FALSE(expected.empty()) << "the table has model rows";
+  for (const auto &[value, row] : docs) {
+    for (const auto &[subtype, named] : row.subtypes) {
+      const auto want = expected.find({value, subtype});
+      const std::set<std::string> none;
+      EXPECT_EQ(named.models, want == expected.end() ? none : want->second)
+          << "type 0x" << std::hex << value << " subtype " << std::dec << subtype;
+    }
+  }
+  for (const auto &[kind, models] : expected) {
+    const auto row = docs.find(kind.first);
+    ASSERT_NE(row, docs.end());
+    EXPECT_TRUE(row->second.subtypes.count(kind.second))
+        << "a subtype with models must be listed: type 0x" << std::hex << kind.first;
   }
 }

@@ -208,7 +208,8 @@ bool device_supports_heat_level_control(DeviceType type) {
 }
 
 bool device_has_no_motion(DeviceType type, uint8_t subtype) {
-  const HeatingProfile *profile = find_heating_profile(type, subtype);
+  // The control path is a fact of the (type, subtype); a model's profile keeps it.
+  const HeatingProfile *profile = find_heating_profile(type, subtype, DeviceModel::NONE);
   // A heater commanded with an EXECUTE (levels, temperatures) never moves; a register heater is not
   // polled with 0x03 at all.
   return (profile != nullptr && profile->path != HeatingControlPath::PRIVATE_REGISTERS) ||
@@ -216,7 +217,8 @@ bool device_has_no_motion(DeviceType type, uint8_t subtype) {
 }
 
 bool device_supports_climate_control(DeviceType type, uint8_t subtype) {
-  return find_heating_profile(type, subtype) != nullptr;
+  // A model never adds or removes a profile: it only replaces the (type, subtype) one.
+  return find_heating_profile(type, subtype, DeviceModel::NONE) != nullptr;
 }
 
 bool device_takes_execute_position(DeviceType type) {
@@ -228,7 +230,8 @@ bool device_supports_status_requests(DeviceType type) { return device_takes_exec
 
 const char *device_operation_profile_name(DeviceType type, uint8_t subtype) {
   if (device_supports_position_control(type)) {
-    const DeviceFeatures features = device_features(type, subtype);
+    // A cover has no model rows; the operation profile names the wire type.
+    const DeviceFeatures features = device_features(type, subtype, DeviceModel::NONE);
     if (!has_feature(features, device_feature::LEVELS))
       return "cover_discrete";
     return has_feature(features, device_feature::TILT) ? "cover_position_tilt" : "cover_position";
@@ -268,7 +271,7 @@ void resolve_device_features(IoDevice &dev) {
     if (dev.subtype == SUBTYPE_MAIN_PARAMETER_ONLY)
       features = main_parameter_only_variant(features);
   } else {
-    features = device_features(dev.type, dev.subtype);
+    features = device_features(dev.type, dev.subtype, dev.model);
   }
   // `dimmable:` has a schema default of false, so it decides a light's levels outright; the row's
   // LEVELS only drives the paste-ready snippet and the on/off-only rejection.
@@ -325,7 +328,8 @@ std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const st
     return "";
 
   std::string extra_lines;
-  const DeviceFeatures features = device_features(type, subtype);
+  // The snippet is built from what the device reported, which carries no model.
+  const DeviceFeatures features = device_features(type, subtype, DeviceModel::NONE);
   if (has_feature(features, device_feature::INVERTED))
     extra_lines += "    invert_position: true\n";
   if (device_capability_class(type, subtype) == DeviceCapabilityClass::LIGHT &&

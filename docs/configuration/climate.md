@@ -11,7 +11,8 @@
 > setpoint are all useful.
 
 The `climate:` entity drives electrical heaters, a heating temperature interface and a generic heat pump,
-and what its card offers follows the device kind. A heater with an adjustable setpoint (node type 52, subtype 1) is driven over its
+and what its card offers follows the device kind. A towel dryer reports the same kind as a radiator,
+so its entry adds `io_model: towel_dryer`; see [Towel dryers](#towel-dryers). A heater with an adjustable setpoint (node type 52, subtype 1) is driven over its
 private register protocol (`CMD_WRITE_PRIVATE`, 0x20): the hub reads and writes registers such as the
 setpoint, the mode and the room temperature, and the entity shows what the heater reports. A plain
 electrical heater (node type 52, subtype 0) is commanded with heating levels in the standard EXECUTE
@@ -71,6 +72,49 @@ What the card shows for each heater kind:
   the `Auto` preset, and its external mode as `heat`. Open-window detection is read once, at the
   first poll, so a change made at the heater's panel appears after a reboot.
 
+## Towel dryers
+
+An Atlantic Adelis towel dryer reports the same type and subtype as the AGILIA radiator (node type 52,
+subtype 1), so the hub cannot tell the two apart on the radio. Add `io_model: towel_dryer` to its
+entry to get the towel dryer's own card:
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Bathroom towel dryer"
+    io_device_id: "BD684B"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
+    io_model: towel_dryer
+    system_key: !secret towel_dryer_key
+```
+
+| | Towel dryer (`io_model: towel_dryer`) |
+|---|---|
+| Control path | Private registers, with the towel dryer's own mode and temporary-state registers |
+| Modes | `off`, `heat` (the display's MANUEL), `auto` (the display's PROG) |
+| Presets | `boost`; custom `Drying`; `none` ends a boost or a drying run |
+| Target temperature | As for the radiator: 7.0 °C up to the heater's own maximum, 0.5 °C step |
+| Current temperature | Yes |
+| Action | `heating` while the element runs (including boost and drying), `idle`, `off` |
+| Companion entities | None: the towel dryer has no window function |
+
+The readings are confirmed on two Adelis units: the mode, boost and drying, the room temperature, the
+setpoint and whether the element runs. Setting the target temperature is confirmed too. **Changing
+the mode and starting or ending boost and drying from Home Assistant are experimental**: those writes
+have not been checked against the display yet.
+
+The towel dryer is polled with five register reads (room temperature, setpoint, mode, temporary
+state, working rate); the first poll also reads its maximum setpoint. Boost and drying run for the
+duration set on the display.
+
+Without `io_model:` a towel dryer runs as a radiator: the target and the room temperature work, but
+the mode writes go to the radiator's register, boost and drying are missing, and the window entities
+do nothing. At the first poll the hub reads every 52/1 heater's model name and logs it, for example
+`Device BD684B reports model name "ADELIS 2 DIGIT"`. It also logs a warning when the declaration
+looks wrong: a heater declared as a towel dryer that holds no towel-dryer mode, or one declared
+without a model that does. The warning never changes what the hub does.
+
 ## Heating temperature interface and heat pump
 
 Experimental and untested: no capture or hardware report exists for either. A heating temperature
@@ -120,7 +164,8 @@ The usual companion diagnostic sensors (`Device Name`, `Active Issue`, `Last Con
 generated as for the other platforms. `Last Contact` shows when the heater last answered a poll.
 A heater with an adjustable setpoint also gets a `Window` binary sensor (`device_class: window`) and
 an `Open Window Detection` switch. Both are experimental, and they are generated only when the YAML
-names the heater kind with `io_device_type: "electrical_heater"` and `io_subtype: 1`.
+names the heater kind with `io_device_type: "electrical_heater"` and `io_subtype: 1`, and not for a
+towel dryer (`io_model: towel_dryer`).
 
 ## Temperature range — 7.0–28.0 °C
 

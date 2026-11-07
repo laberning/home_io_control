@@ -49,9 +49,13 @@ from . import (
 )
 from .hub_names import CONF_SYSTEM_KEY
 from .hub_validators import (
+    DEVICE_MODEL_OPTIONS,
     device_features,
+    device_model_expression,
+    device_models,
     device_type_name,
     kind_is_experimental,
+    validate_device_model_name,
     validate_system_key,
 )
 
@@ -71,6 +75,9 @@ CONF_IO_DEVICE_ID = "io_device_id"
 CONF_LINKED_REMOTES = "linked_remotes"
 CONF_DEVICE_TYPE = "io_device_type"
 CONF_SUBTYPE = "io_subtype"
+# A product model below io_device_type / io_subtype, for products that report the same wire type but
+# need different handling (ADR 0067). Only a few (type, subtype) offer one (hub_validators.device_models()).
+CONF_MODEL = "io_model"
 CONF_STATUS_POLL_INTERVAL = "status_poll_interval"
 
 # Internal config key for the companion device-name sensor ID (injected by post-validator).
@@ -229,6 +236,7 @@ def platform_schema_extension():
         cv.Required(CONF_IO_DEVICE_ID): validate_device_id,
         cv.Optional(CONF_DEVICE_TYPE): validate_device_type,
         cv.Optional(CONF_SUBTYPE): cv.int_range(min=0, max=63),
+        cv.Optional(CONF_MODEL): validate_device_model_name,
         cv.Optional(CONF_LINKED_REMOTES): cv.ensure_list(validate_linked_remote_entry),
         cv.Optional(CONF_STATUS_POLL_INTERVAL): validate_status_poll_interval,
         cv.Optional(CONF_LOW_POWER): cv.boolean,
@@ -238,10 +246,49 @@ def platform_schema_extension():
     }
 
 
-def _kind_label(device_type, subtype):
-    """The declared kind as a user wrote it: the io_device_type name (or hex value) and, when set, io_subtype."""
+def config_model(config):
+    """The DEVICE_MODEL_OPTIONS value of the entry's io_model:, 0 when it declares none."""
+    return DEVICE_MODEL_OPTIONS.get(config.get(CONF_MODEL), 0)
+
+
+def _kind_label(device_type, subtype, model=None):
+    """The declared kind as a user wrote it: the io_device_type name (or hex value) and, when set,
+    io_subtype and io_model."""
     name = device_type_name(device_type) or f"0x{device_type:02X}"
-    return name if subtype == 0 else f"{name} (io_subtype {subtype})"
+    details = []
+    if subtype != 0:
+        details.append(f"io_subtype {subtype}")
+    if model is not None:
+        details.append(f"io_model {model}")
+    return f"{name} ({', '.join(details)})" if details else name
+
+
+def validate_device_model(config):
+    """Accept io_model: only where the declared io_device_type / io_subtype offers that model.
+
+    A post-validator for every device-bound platform. A model is a row below a (type, subtype)
+    (ADR 0067), so it means nothing without both keys; the error names the models the declared kind
+    offers, or says it offers none.
+    """
+    if CONF_MODEL not in config:
+        return config
+    model = config[CONF_MODEL]
+    if CONF_DEVICE_TYPE not in config or CONF_SUBTYPE not in config:
+        raise cv.Invalid(
+            f"io_model: {model} needs io_device_type and io_subtype: a model is a product below a "
+            "device type and subtype",
+            path=[CONF_MODEL],
+        )
+    device_type = config[CONF_DEVICE_TYPE]
+    subtype = config[CONF_SUBTYPE]
+    offered = device_models(device_type, subtype)
+    if model not in offered:
+        choices = f"it offers: {', '.join(offered)}" if offered else "it has no models"
+        raise cv.Invalid(
+            f"io_model: {model} is not a model of {_kind_label(device_type, subtype)}; {choices}",
+            path=[CONF_MODEL],
+        )
+    return config
 
 
 def warn_if_experimental_kind(config):
@@ -254,11 +301,11 @@ def warn_if_experimental_kind(config):
     if CONF_DEVICE_TYPE in config:
         device_type = config[CONF_DEVICE_TYPE]
         subtype = config.get(CONF_SUBTYPE, 0)
-        if kind_is_experimental(device_type, subtype):
+        if kind_is_experimental(device_type, subtype, config_model(config)):
             _LOGGER.warning(
                 "home_io_control: %s is not yet confirmed on a real device, so it may not behave as "
                 "described. If you try it, please report the result: %s",
-                _kind_label(device_type, subtype),
+                _kind_label(device_type, subtype, config.get(CONF_MODEL)),
                 REPORTING_DEVICES_URL,
             )
     return config
@@ -277,16 +324,17 @@ def require_feature(config, key, active, *, required=0, forbidden=0, reason):
         return
     device_type = config[CONF_DEVICE_TYPE]
     subtype = config.get(CONF_SUBTYPE, 0)
-    features = device_features(device_type, subtype)
+    features = device_features(device_type, subtype, config_model(config))
     if (features & required) == required and (features & forbidden) == 0:
         return
-    raise cv.Invalid(f"{key} is not available on {_kind_label(device_type, subtype)}: {reason}")
+    label = _kind_label(device_type, subtype, config.get(CONF_MODEL))
+    raise cv.Invalid(f"{key} is not available on {label}: {reason}")
 
 
 async def wire_device_binding(var, parent, config):
     """Emit the shared to_code() wiring that binds an entity to its hub device.
 
-    Covers set_parent / set_device_id, the optional device type / subtype / status
+    Covers set_parent / set_device_id, the optional device type / subtype / model / status
     poll interval / low-power class, and the linked-remotes registration loop —
     identical across all four device-bound platforms.
     """
@@ -297,6 +345,8 @@ async def wire_device_binding(var, parent, config):
         cg.add(var.set_device_type(device_type_expression(config[CONF_DEVICE_TYPE])))
     if CONF_SUBTYPE in config:
         cg.add(var.set_subtype(config[CONF_SUBTYPE]))
+    if CONF_MODEL in config:
+        cg.add(var.set_device_model(device_model_expression(config_model(config))))
     if CONF_STATUS_POLL_INTERVAL in config:
         cg.add(
             var.set_status_poll_interval(
