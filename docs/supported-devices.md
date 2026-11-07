@@ -118,7 +118,7 @@ before pairing; the [device page](devices/simu-t35-bhz.md#check-the-motor-first)
 |---|---|---|
 | **AGILIA IO electric radiator** (Atlantic, display model) | ✅ Confirmed on three radiators — Discover & Pair from the display's "Paramètres" → "Connectivité" → "Connexion" menu, target temperature, Off / Heat / Auto, the `Program` and `Auto` presets, room temperature and heating / idle, all read back. Each radiator hands over its own key, and its heater sits one address above the node that pairs. Step-by-step: [Atlantic AGILIA IO](devices/atlantic-agilia-io.md) | Heltec V3 / SX1262, issue #165; corpus `atlantic_agilia_*` (pairing, roll-call, register reads and writes) |
 | **Atlantic Adelis** (towel dryer, "ADELIS 2 DIGIT") | ⚠️ Partial — pairs with Discover & Pair from "Paramètres" → "Connectivité" → "Connexion". It reports the same type and subtype as the AGILIA radiator (`0x34/1`, seen on two units), so its `climate:` entry adds `io_model: towel_dryer`. Off / MANUEL / PROG, boost and drying, room temperature and heating / idle read back correctly, and setting the target works. Changing the mode and starting boost or drying from Home Assistant are experimental. Step-by-step: [Atlantic Adelis](devices/atlantic-adelis.md) | SX1276 board, issue #202; corpus `atlantic_adelis_*` (register reads, status reads) |
-| **Atlantic Calypso Connecté** (thermodynamic water heater) | ⚠️ Partial — pairs with Discover & Pair and accepts the key push. Its registers show the water temperature, the mode and the energy counter, but not the target temperature, so there is no entity yet | SX1276 board, issue #198 |
+| **Atlantic Calypso Connecté** (thermodynamic water heater) | ⚠️ Partial — pairs with Discover & Pair and accepts the key push. A `water_heater:` entity reads the water temperature, the target, the mode (automatic / manual ECO on / manual ECO off), what is heating, boost and the energy since installation. Setting the target and the mode from Home Assistant is experimental. Step-by-step: [Atlantic Calypso Connecté](devices/atlantic-calypso.md) | SX1276 board, issue #198; corpus `atlantic_calypso_*` (register reads, status reads) |
 | **Atlantic Thermor-style climate/heating actuator** | 🔍 Traffic captured only — the `climate:` platform is built against it but has never run on hardware | Corpus `atlantic_thermor_exchange_write_private_param` |
 | **Honeywell, Hörmann, Assa Abloy, Niko, WindowMaster, Renson, CIAT, Secuyou, Overkiz, Atlantic Group** | Untested — these are names the schema accepts, not devices anyone has reported | Only `somfy` and `velux` have a verified 1W wire profile |
 
@@ -142,7 +142,7 @@ values:
 | `lock` | `0x09` | `bioclimatic_pergola` | `0x1D` |
 | `vertical_interior_blind` | `0x0A` | `heat_pump` | `0x16` |
 | `dual_roller_shutter` | `0x0D` | `electrical_heater` | `0x34` |
-| `heating_temperature_interface` | `0x0E` | | |
+| `heating_temperature_interface` | `0x0E` | `domestic_hot_water` | `0x33` |
 | `on_off_switch` | `0x0F` | | |
 
 A device type not in this table can still be declared as a raw hex ID, in either place:
@@ -199,7 +199,7 @@ device are marked experimental; declaring one in YAML logs a warning when the co
 | `0x1C` | zone control | | Not supported yet |
 | `0x1D` | bioclimatic pergola | | Cover |
 | `0x1E` | siren | | Not supported yet |
-| `0x33` | domestic hot water | | Not supported yet. An Atlantic Calypso Connecté water heater pairs with Discover & Pair and accepts the key push (issue #198); its registers show the water temperature, mode and energy counter but not the target temperature, so there is no entity yet. The [register probes](diagnostic-probes.md#reading-registers) read them |
+| `0x33` | domestic hot water | | Water heater (experimental): water temperature, target, mode and energy read on an [Atlantic Calypso Connecté](devices/atlantic-calypso.md) (issue #198); target and mode writes experimental; see [Water heaters](configuration/water-heater.md) |
 | `0x34` | electrical heater | 1 with adjustable setpoint (io_model: towel_dryer) | Climate: subtype 1 over private registers with read-back, confirmed on the [Atlantic AGILIA IO](devices/atlantic-agilia-io.md), with a Window sensor and an Open Window Detection switch (both experimental). An [Atlantic Adelis](devices/atlantic-adelis.md) towel dryer reports the same type and subtype (issue #202) and is declared with `io_model: towel_dryer`, which gives it its own modes, boost and drying (writes experimental) and no window entities. The plain heater (subtype 0) with heating levels (experimental, untested) |
 | `0x35` | heat recovery ventilation | | Not supported yet |
 | `0xFF` | central house control | | Not supported yet |
@@ -230,7 +230,7 @@ vendor.
 
 ## Device pages
 
-Eight devices have enough evidence behind them to be worth a page of their own.
+Nine devices have enough evidence behind them to be worth a page of their own.
 
 <!-- doxygen-subpages -->
 - [Somfy Izymo IO dimmer](devices/somfy-izymo-dimmer.md)
@@ -241,6 +241,7 @@ Eight devices have enough evidence behind them to be worth a page of their own.
 - [SIMU T3.5 E BHz DC solar shutter motor](devices/simu-t35-bhz.md)
 - [Atlantic AGILIA IO electric radiator](devices/atlantic-agilia-io.md)
 - [Atlantic Adelis towel dryer](devices/atlantic-adelis.md)
+- [Atlantic Calypso Connecté water heater](devices/atlantic-calypso.md)
 <!-- /doxygen-subpages -->
 
 ## Getting your device added

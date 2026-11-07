@@ -82,3 +82,19 @@ switch:
     io_device_id: "D0661E"
     io_device_type: "on_off_switch"
     io_subtype: 0
+
+water_heater:
+  - platform: home_io_control
+    home_io_control_id: home_io_hub
+    id: demo_water_heater
+    name: "Demo Hot Water"
+    io_device_id: "D0D4E0"
+    io_device_type: "domestic_hot_water"
+    energy:
+      name: "Demo Hot Water Energy"
+    heat_pump_running:
+      name: "Demo Hot Water Heat Pump"
+    electric_backup_running:
+      name: "Demo Hot Water Electric Backup"
+    boost:
+      name: "Demo Hot Water Boost"

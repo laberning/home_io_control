@@ -3,6 +3,7 @@
 
 #include "hub_decisions.h"
 #include "proto_commands.h"
+#include "proto_dhw.h"
 
 #include <cinttypes>
 #include <optional>
@@ -360,6 +361,33 @@ void apply_heating_main_parameter(const std::string &id, IoDevice &dev, const Io
   ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%04X is not a heating value", id.c_str(), current);
 }
 
+/// @brief Apply a water heater's status reply: its main parameter is the target temperature, nothing else.
+///
+/// A water heater has no position, no movement and no battery: the cover parts of the status path (the
+/// stopped flag, target/current position, the follow-up window, the moving evidence, the last-command
+/// record) must not touch it, so it never reaches them. Only a reply to a status read carries the target;
+/// the ack of the target EXECUTE echoes the request and is not decoded.
+/// @param id Device ID for the log line.
+/// @param dev Device record to update.
+/// @param frame A CMD_PRIVATE_RESP from the heater.
+/// @param trust_position True for a reply to a status read, false for the ack of an EXECUTE.
+void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame &frame, bool trust_position) {
+  if (!trust_position)
+    return;
+  float celsius = NAN;
+  if (decode_dhw_status_target(frame, celsius)) {
+    if (dev.dhw.target_c != celsius)
+      ESP_LOGI(detail::TAG, "Device %s: hot water target %.1f C", id.c_str(), static_cast<double>(celsius));
+    dev.dhw.target_c = celsius;
+    return;
+  }
+  // An alias or an out-of-range value is not a target temperature; what one means on a water heater
+  // has not been seen yet, so it is logged and the target shows unknown.
+  ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%02X%02X is not a hot water target", id.c_str(),
+           frame.data[DHW_STATUS_MAIN_PARAMETER_OFFSET], frame.data[DHW_STATUS_MAIN_PARAMETER_OFFSET + 1]);
+  dev.dhw.target_c = NAN;
+}
+
 /// @brief Record the coarse battery level a status payload carries, logging a change.
 /// @param id Device ID for the log line.
 /// @param dev Device record to update.
@@ -614,6 +642,12 @@ void IOHomeControlComponent::apply_status_update_(const std::string &id, IoDevic
     detail::log_frame_issue(this, this->node_id_, "rx", "unsupported_payload", frame, frame_length(frame));
     return;
   }
+  // A water heater has not been seen sending a status update, and its fields are a cover's: none of
+  // them is applied to it. Logged so a capture of the first one is not lost.
+  if (has_feature(dev.features, device_feature::WATER_HEATER)) {
+    detail::log_frame_issue(this, this->node_id_, "rx", "unsupported_payload", frame, frame_length(frame));
+    return;
+  }
 
   // Status-update frames come from the device itself rather than from a direct controller poll.
   // They use different offsets for the target/current fields and do not carry reliable tilt data.
@@ -656,6 +690,14 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
   if (frame.cmd == CMD_PRIVATE_RESP) {
     if (frame.data_len < PRIVATE_RESPONSE_MIN_DATA_LEN) {
       detail::log_frame_issue(this, this->node_id_, "rx", "unsupported_payload", frame, frame_length(frame));
+      return;
+    }
+
+    // A water heater's reply carries its target and nothing a cover has; it never enters the cover path.
+    if (has_feature(dev.features, device_feature::WATER_HEATER)) {
+      apply_dhw_status_reply(id, dev, frame, trust_position);
+      detail::clear_command_result(dev);
+      this->notify_device_update_(id);
       return;
     }
 

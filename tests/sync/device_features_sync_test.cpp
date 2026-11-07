@@ -42,6 +42,7 @@ const std::map<std::string, DeviceFeatures> CPP_FEATURE_BITS = {
     {"EXTENDED_POSITION_FRAME", device_feature::EXTENDED_POSITION_FRAME},
     {"WINDOW_COMPANIONS", device_feature::WINDOW_COMPANIONS},
     {"INVERTED", device_feature::INVERTED},
+    {"WATER_HEATER", device_feature::WATER_HEATER},
 };
 
 /// The word Python keeps for a row: the capability bits plus bit 15 for the row's EXPERIMENTAL flag.
@@ -78,8 +79,10 @@ DeviceFeatures python_features(const std::map<std::string, uint8_t> &type_values
     if (exact != table.end())
       return exact->second;
   }
+  // A subtype without a row takes the type row's capabilities, never its experimental marker.
   const auto base_it = name.empty() ? table.end() : table.find(name);
-  const DeviceFeatures base = base_it == table.end() ? DeviceFeatures{0} : base_it->second;
+  const auto base = static_cast<DeviceFeatures>((base_it == table.end() ? DeviceFeatures{0} : base_it->second) &
+                                                ~static_cast<unsigned>(KIND_EXPERIMENTAL_BIT));
   return subtype == SUBTYPE_MAIN_PARAMETER_ONLY ? main_parameter_only_variant(base) : base;
 }
 

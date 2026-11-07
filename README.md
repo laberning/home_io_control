@@ -45,6 +45,8 @@ do when yours is not there.
 - **Three radio chips supported** — SX1276, SX1262 and LR1121, all validated on real devices.
 - **Experimental support for locks, switches and climate/heating devices.** None of these has
   been exercised against real hardware yet; if you own one, try it and report back.
+- **Water heaters (experimental)** — a `water_heater:` entity reads an Atlantic Calypso Connecté's
+  water temperature, target, mode and energy; setting the target and the mode is experimental.
 
 ## Installation
 

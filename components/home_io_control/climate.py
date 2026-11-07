@@ -7,6 +7,8 @@
 ## switch. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
 ## construction/registration stays here.
 
+import functools
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import binary_sensor, climate, switch
@@ -36,12 +38,12 @@ from .platform_common import (
     inject_companion_sensor_ids,
     platform_schema_extension,
     validate_device_model,
+    validate_register_poll_interval,
     warn_if_experimental_kind,
     wire_device_binding,
     CONF_DEVICE_TYPE,
     CONF_HOME_IO_CONTROL_ID,
     CONF_IO_DEVICE_ID,
-    CONF_STATUS_POLL_INTERVAL,
     CONF_SUBTYPE,
 )
 
@@ -89,24 +91,6 @@ def _inject_companion_ids(config):
     return inject_companion_sensor_ids(config, CONF_ID)
 
 
-# A heater's state moves over minutes and a poll costs one exchange per register, so the interval floor is
-# well above the cover floor (hub_names.MIN_STATUS_POLL_INTERVAL_MS).
-MIN_CLIMATE_POLL_INTERVAL_MS = 60000
-
-
-def _validate_climate_poll_interval(config):
-    # The key is accepted by the shared platform schema; a climate entity raises its floor to one
-    # minute. Without it the hub polls every five minutes.
-    interval = config.get(CONF_STATUS_POLL_INTERVAL)
-    if interval is not None and interval.total_milliseconds < MIN_CLIMATE_POLL_INTERVAL_MS:
-        raise cv.Invalid(
-            f"status_poll_interval must be at least {MIN_CLIMATE_POLL_INTERVAL_MS}ms for the "
-            "climate platform: a heater is polled with one radio exchange per register",
-            path=[CONF_STATUS_POLL_INTERVAL],
-        )
-    return config
-
-
 # The range a heating temperature interface encodes its temperature over. It defaults to -40..+80 degrees
 # Celsius (proto_heating.h) as an assumption; a device that turns out to use another range is told here.
 # A heat pump uses the fixed range, so the keys do not apply to it. Mirrors
@@ -151,7 +135,7 @@ CONFIG_SCHEMA = cv.All(
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
-    _validate_climate_poll_interval,
+    functools.partial(validate_register_poll_interval, platform="climate"),
     _validate_temperature_range,
     validate_device_model,
     warn_if_experimental_kind,

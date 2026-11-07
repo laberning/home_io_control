@@ -216,6 +216,7 @@ DEVICE_TYPE_OPTIONS = {
     "swinging_shutter": 0x18,
     "sliding_window": 0x1B,
     "bioclimatic_pergola": 0x1D,
+    "domestic_hot_water": 0x33,
     "electrical_heater": 0x34,
 }
 
@@ -257,6 +258,7 @@ FEATURE_PEDESTRIAN = 0x0040
 FEATURE_EXTENDED_POSITION_FRAME = 0x0080
 FEATURE_WINDOW_COMPANIONS = 0x0100
 FEATURE_INVERTED = 0x0200
+FEATURE_WATER_HEATER = 0x0400
 # Not a capability: Python's copy of the row's EXPERIMENTAL identity flag (device_type_flags in
 # proto_device_types.h), carried in bit 15 of the same word so there is one table and one sync test.
 # Set on a kind no capture or report has confirmed on a real device.
@@ -314,6 +316,7 @@ DEVICE_FEATURES = {
     "sliding_window": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "sliding_window/1": 0x808A,  # KIND_EXPERIMENTAL LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "bioclimatic_pergola": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "domestic_hot_water": 0x8400,  # KIND_EXPERIMENTAL WATER_HEATER
     "electrical_heater/1": 0x0100,  # WINDOW_COMPANIONS
     "electrical_heater/1/towel_dryer": 0x0000,  # no window function
 }
@@ -355,7 +358,9 @@ def device_features(device_type, subtype=0, model=0):
     device_features() answers.
 
     The model row; else the exact row; else, for subtype 58, the main-parameter-only variant of the
-    type's row (of no capabilities when the type has none); else the type's own row. A node type YAML
+    type's row (of no capabilities when the type has none); else the type's own row. A subtype without
+    a row of its own takes the type row's capabilities but never its KIND_EXPERIMENTAL marker: C++
+    device_is_experimental() reads only the exact row, so the marker names a row, not a family. A node type YAML
     has no name for (a raw value) has no row here, so it has no capabilities beyond the subtype-58
     rule. ``model`` is a DEVICE_MODEL_OPTIONS value, 0 for none; codegen passes the config's model
     through platform_common.config_model().
@@ -370,7 +375,7 @@ def device_features(device_type, subtype=0, model=0):
         exact = DEVICE_FEATURES.get(name if subtype == 0 else f"{name}/{subtype}")
         if exact is not None:
             return exact
-    base = DEVICE_FEATURES.get(name, 0) if name is not None else 0
+    base = (DEVICE_FEATURES.get(name, 0) if name is not None else 0) & ~KIND_EXPERIMENTAL
     if subtype == SUBTYPE_MAIN_PARAMETER_ONLY:
         cleared = FEATURE_LEVELS | FEATURE_TILT | FEATURE_EXTENDED_POSITION_FRAME
         return (base & ~cleared) | FEATURE_MAIN_PARAMETER_ONLY
@@ -381,7 +386,8 @@ def kind_is_experimental(device_type, subtype=0, model=0):
     """True when no capture or report has confirmed (io_device_type value, io_subtype) on a real device.
 
     Reads KIND_EXPERIMENTAL from the same word as the capabilities, so it follows the same fallback as
-    device_features(); a type row is never experimental, so a subtype with no row of its own is not.
+    device_features(): only an exact row (or model row) carries the marker, and a subtype with no row of
+    its own never inherits it from its type row.
     """
     return bool(device_features(device_type, subtype, model) & KIND_EXPERIMENTAL)
 

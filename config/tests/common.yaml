@@ -216,3 +216,19 @@ climate:
     name: "Test Heat Pump"
     io_device_id: "FEEB27"
     io_device_type: "heat_pump"
+
+water_heater:
+  # Experimental water heater platform: a domestic hot water heater read over its family-0x00 registers,
+  # with every opt-in companion (ADR 0068).
+  - platform: home_io_control
+    name: "Test Hot Water"
+    io_device_id: "FEEB29"
+    io_device_type: "domestic_hot_water"
+    energy:
+      name: "Test Hot Water Energy"
+    heat_pump_running:
+      name: "Test Hot Water Heat Pump"
+    electric_backup_running:
+      name: "Test Hot Water Electric Backup"
+    boost:
+      name: "Test Hot Water Boost"

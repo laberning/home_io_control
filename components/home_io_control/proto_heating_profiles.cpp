@@ -352,7 +352,9 @@ bool device_uses_heating_registers(DeviceType type, uint8_t subtype) {
 }
 
 bool device_accepts_register_probe(DeviceType type, uint8_t subtype) {
-  return type == DeviceType::DOMESTIC_HOT_WATER || device_uses_heating_registers(type, subtype);
+  // A water heater's register family is a fact of the (type, subtype), as the heater's control path is.
+  return has_feature(device_features(type, subtype, DeviceModel::NONE), device_feature::WATER_HEATER) ||
+         device_uses_heating_registers(type, subtype);
 }
 
 bool device_uses_heating_levels(DeviceType type, uint8_t subtype) {

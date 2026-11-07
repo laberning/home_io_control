@@ -1,0 +1,11 @@
+# expect-error: the water_heater platform is not available on roller_shutter
+# covers: platform_common.require_feature
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+water_heater:
+  - platform: home_io_control
+    name: "Hot Water"
+    io_device_id: "F9CF0F"
+    io_device_type: roller_shutter

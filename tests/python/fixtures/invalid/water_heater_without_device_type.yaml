@@ -1,0 +1,10 @@
+# expect-error: io_device_type is required on the water_heater platform
+# covers: water_heater._validate_water_heater_kind
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+water_heater:
+  - platform: home_io_control
+    name: "Hot Water"
+    io_device_id: "F9CF0F"

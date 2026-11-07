@@ -3,6 +3,7 @@
 #include "hub_decisions.h"
 #include "proto_commands.h"
 #include "proto_device_types.h"
+#include "proto_dhw.h"
 #include "proto_heating_profiles.h"
 
 #include <cmath>
@@ -486,6 +487,9 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   const HeatingProfile *heating = find_heating_profile(*dev);
   if (heating != nullptr && heating->path == HeatingControlPath::PRIVATE_REGISTERS)
     return this->poll_heating_device_(device_id);
+  // A water heater answers a status read for its target, and keeps the rest in family-0x00 registers.
+  if (has_feature(dev->features, device_feature::WATER_HEATER))
+    return this->poll_dhw_device_(device_id);
 
   IoFrame request;
   // Tilt-capable covers need the extended 0x03200100 status request so the response includes
@@ -1132,6 +1136,212 @@ bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) 
   const uint32_t configured_ms = this->poll_policy_.get_interval(device_id);
   this->schedule_heating_poll_(device_id, configured_ms != 0 ? configured_ms : HEATING_POLL_DEFAULT_INTERVAL_MS);
   return ok;
+}
+
+// === Water heater (device_feature::WATER_HEATER) ===
+
+bool IOHomeControlComponent::read_dhw_register_(const std::string &device_id, uint8_t index, const char *label,
+                                                IoFrame &response, uint8_t max_tries) {
+  const IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+  // A family-0x00 read only ever goes to a water heater: a radiator's family is 0x01.
+  if (!has_feature(dev->features, device_feature::WATER_HEATER)) {
+    detail::log_rejected_operation(device_id, *dev, "hot water register read", "water heater");
+    return false;
+  }
+  return this->read_private_register_(device_id, DHW_REGISTER_HIGH_BYTE, index, label, response, max_tries);
+}
+
+namespace {
+
+/// The log label of a water heater register the poll reads.
+const char *dhw_register_label(uint8_t index) {
+  switch (index) {
+    case DHW_REG_WATER_TEMPERATURE:
+      return "dhw_water_temperature";
+    case DHW_REG_MODE:
+      return "dhw_mode";
+    case DHW_REG_HEATING:
+      return "dhw_heating";
+    case DHW_REG_BOOST:
+      return "dhw_boost";
+    case DHW_REG_ENERGY:
+      return "dhw_energy";
+    case DHW_REG_BRAND:
+      return "dhw_brand";
+    default:
+      return "dhw_register";
+  }
+}
+
+/// Fold one decoded water heater register into the readings.
+/// @return false when the value is not one the decoder takes (the reading is left as it was).
+bool store_dhw_reading(const std::string &device_id, DhwReadings &readings, uint8_t index, const uint8_t *value,
+                       size_t len) {
+  switch (index) {
+    case DHW_REG_WATER_TEMPERATURE:
+      return decode_dhw_water_temperature(value, len, readings.water_c);
+    case DHW_REG_MODE: {
+      DhwMode mode = DhwMode::AUTO;
+      if (!decode_dhw_mode(value, len, mode))
+        return false;
+      readings.mode = static_cast<int16_t>(mode);
+      return true;
+    }
+    case DHW_REG_HEATING: {
+      DhwHeatingState state;
+      if (!decode_dhw_heating_state(value, len, state))
+        return false;
+      readings.heating = state.heating ? 1 : 0;
+      readings.element = state.element ? 1 : 0;
+      readings.heat_pump = state.heat_pump ? 1 : 0;
+      return true;
+    }
+    case DHW_REG_BOOST: {
+      bool on = false;
+      if (!decode_dhw_boost(value, len, on))
+        return false;
+      readings.boost = on ? 1 : 0;
+      return true;
+    }
+    case DHW_REG_ENERGY: {
+      uint32_t wh = 0;
+      if (!decode_dhw_energy_wh(value, len, wh))
+        return false;
+      readings.energy_wh = wh;
+      return true;
+    }
+    case DHW_REG_BRAND:
+      if (len < 1)
+        return false;
+      if (readings.brand < 0) {
+        // One letter per brand; logged once so a field report says which make answered.
+        const char letter = (value[0] >= ' ' && value[0] <= '~') ? static_cast<char>(value[0]) : '?';
+        ESP_LOGI(detail::TAG, "Device %s reports hot water brand '%c' (0x%02X)", device_id.c_str(), letter, value[0]);
+      }
+      readings.brand = value[0];
+      return true;
+    default:
+      return false;
+  }
+}
+
+/// The registers every water heater poll reads, after the status read, in this order.
+constexpr uint8_t DHW_POLL_REGISTERS[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE, DHW_REG_HEATING, DHW_REG_BOOST,
+                                          DHW_REG_ENERGY};
+
+}  // namespace
+
+bool IOHomeControlComponent::read_dhw_reading_(const std::string &device_id, uint8_t index, uint8_t max_tries) {
+  IoFrame response;
+  const char *label = dhw_register_label(index);
+  if (!this->read_dhw_register_(device_id, index, label, response, max_tries))
+    return false;
+  const uint8_t *value = nullptr;
+  size_t len = 0;
+  // read_private_register_() has checked the echo, so this only locates the value bytes.
+  if (!decode_dhw_register_reply(response, index, value, len))
+    return false;
+  // The exchange blocks and the registry may have been touched by a callback meanwhile.
+  IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr)
+    return false;
+  if (!store_dhw_reading(device_id, dev->dhw, index, value, len)) {
+    char payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
+    bytes_to_hex(response.data, response.data_len, payload_hex, sizeof(payload_hex));
+    ESP_LOGD(detail::TAG, "%s reply from device %s carries no value this codec takes: %s", label, device_id.c_str(),
+             payload_hex);
+    return true;
+  }
+  this->notify_device_update_(device_id);
+  return true;
+}
+
+bool IOHomeControlComponent::poll_dhw_device_(const std::string &device_id) {
+  const IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr || !this->initialized_ || !has_feature(dev->features, device_feature::WATER_HEATER))
+    return false;
+
+  // The same ladder and try band as a heater poll (poll_heating_device_()).
+  if (!this->poll_policy_.is_tracking_active(device_id, millis()))
+    this->begin_status_poll_tracking_(device_id, 0);
+  const uint8_t max_tries = decisions::scheduled_poll_max_tries(this->poll_policy_.get_status_poll_failures(device_id),
+                                                                this->poll_policy_.get_auth_poll_failures(device_id));
+
+  // The target: the status read the heater has answered (FP1-FP7 asked, none held). Its reply goes
+  // through update_device_status_(), whose water heater branch stores the target and nothing else.
+  IoFrame request;
+  bool ok = create_status_mp_fp_read(request, this->node_id_, dev->node_id, dev->low_power) &&
+            this->execute_request_and_update_(device_id, request, false, 0, max_tries);
+
+  for (size_t i = 0; ok && i < sizeof(DHW_POLL_REGISTERS); i++)
+    ok = this->read_dhw_reading_(device_id, DHW_POLL_REGISTERS[i], max_tries);
+
+  // The brand never changes: read until it has been read once. A miss is not a poll failure.
+  dev = this->get_device(device_id);
+  if (ok && dev != nullptr && dev->dhw.brand < 0)
+    this->read_dhw_reading_(device_id, DHW_REG_BRAND, max_tries);
+
+  if (ok) {
+    this->poll_policy_.clear(device_id);
+  } else {
+    this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
+  }
+  const uint32_t configured_ms = this->poll_policy_.get_interval(device_id);
+  this->schedule_heating_poll_(device_id, configured_ms != 0 ? configured_ms : HEATING_POLL_DEFAULT_INTERVAL_MS);
+  return ok;
+}
+
+bool IOHomeControlComponent::set_water_heater_target(const std::string &device_id, float celsius) {
+  uint16_t main_parameter = 0;
+  if (!encode_dhw_target(celsius, main_parameter)) {
+    ESP_LOGW(detail::TAG, "Hot water target %.1f C for device %s rejected: outside %.0f-%.0f C",
+             static_cast<double>(celsius), device_id.c_str(), static_cast<double>(DHW_TARGET_MIN_C),
+             static_cast<double>(DHW_TARGET_MAX_C));
+    return false;
+  }
+  // try_execute_operation_() and not run_execute_operation_(): a water heater never moves, so the
+  // optimistic-overlay rollback and the moving evidence of a cover command do not apply. Its settle poll
+  // (arm_execute_confirmation_poll_()) reads the target back.
+  const bool accepted = this->try_execute_operation_(
+      device_id, {"hot water target", false},
+      [](const IoDevice &d) { return has_feature(d.features, device_feature::WATER_HEATER); }, "water heater",
+      [this, main_parameter](IoFrame &request, const IoDevice &d) {
+        return create_execute_heating_main_parameter(request, this->node_id_, d.node_id, d.low_power, main_parameter);
+      });
+  // The heating state follows a new target only after a while, as on a heater after a write.
+  if (accepted)
+    this->schedule_heating_poll_(device_id, HEATING_POST_WRITE_POLL_DELAY_MS);
+  return accepted;
+}
+
+bool IOHomeControlComponent::set_water_heater_mode(const std::string &device_id, DhwMode mode) {
+  const IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+  if (!has_feature(dev->features, device_feature::WATER_HEATER)) {
+    detail::log_rejected_operation(device_id, *dev, "hot water mode", "water heater");
+    return false;
+  }
+
+  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
+  const size_t payload_len = encode_dhw_mode_write(static_cast<uint8_t>(mode), payload);
+  IoFrame request;
+  if (payload_len == 0 ||
+      !create_write_private(request, this->node_id_, dev->node_id, dev->low_power, payload, payload_len)) {
+    ESP_LOGW(detail::TAG, "Hot water mode for device %s: failed to build frame", device_id.c_str());
+    return false;
+  }
+
+  IoFrame response;
+  // A write is something the user waits on: the full retry budget.
+  if (!this->exchange_heating_(device_id, dhw_register_label(DHW_REG_MODE), request, response, EXCHANGE_RETRY_COUNT))
+    return false;
+  // The entity shows what the heater holds, not what was sent; the heating state follows later.
+  this->read_dhw_reading_(device_id, DHW_REG_MODE, EXCHANGE_RETRY_COUNT);
+  this->schedule_heating_poll_(device_id, HEATING_POST_WRITE_POLL_DELAY_MS);
+  return true;
 }
 
 void IOHomeControlComponent::queue_set_device_position(const std::string &device_id, uint8_t position) {

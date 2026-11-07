@@ -1,0 +1,40 @@
+id: atlantic_calypso_probe_status_mp_fp
+description: >
+  An Atlantic Calypso Connecte 200 L heat-pump water heater (node F9CF0F, type 51 subtype 0) answering the
+  `status_mp_fp` probe (CMD_PRIVATE 0x03, function 0x01, FP1-FP7 requested) from the reporter's SX1276
+  hub C0FFEE in three display states (issue #198, comment of 2026-11-06). Only the answers were logged
+  (stage=probe_rx); the requests are not in this capture, and the reads were not challenged.
+
+  Each answer is CMD_PRIVATE_RESP (0x04) with the payload `2D 00 <MP hi> <MP lo> 00 00`. The main
+  parameter is the target temperature on the relative scale 0..0xC800 over 20-62 C:
+    - manual with ECO on, display 54 C: A1 E8 = 41 448, 20 + 42 x 41 448 / 51 200 = 54.0 C;
+    - manual with ECO off, display 62 C: C8 00 = the top of the scale, 62.0 C;
+    - AUTO: BE 7A = 48 762 = 60.0 C (the display was not read in AUTO; the heat pump stopped at a water
+      temperature of 59.9 C the same evening, consistent with a 60 C target).
+  The FPI1 echo is 00 although FP1-FP7 were asked for: the heater holds none of them.
+
+  Community capture: no system key, and no authenticated bytes are included.
+source:
+  device: "Atlantic Calypso Connecte 200 L heat-pump water heater (node F9CF0F)"
+  captured_with: sx1276
+  firmware: "main around 2026-11-06 with the status_mp_fp probe, diagnostic_probes: true"
+  date: 2026-11-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/198"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE F9 CF 0F 04 2D 00 A1 E8 00 00"
+    crc: absent
+    note: "status_mp_fp (22:05:39), display manual, ECO on, 54 C: main parameter A1 E8"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE F9 CF 0F 04 2D 00 C8 00 00 00"
+    crc: absent
+    note: "status_mp_fp (22:11:59), display manual, ECO off, 62 C: main parameter C8 00"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE F9 CF 0F 04 2D 00 BE 7A 00 00"
+    crc: absent
+    note: "status_mp_fp (22:02:22), display AUTO: main parameter BE 7A"

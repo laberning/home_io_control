@@ -311,6 +311,28 @@ def warn_if_experimental_kind(config):
     return config
 
 
+# A heater's or a water heater's state moves over minutes and its poll costs one radio exchange per register,
+# so these platforms raise the status_poll_interval floor well above the cover floor
+# (hub_names.MIN_STATUS_POLL_INTERVAL_MS). Without the key the hub polls them every five minutes.
+MIN_REGISTER_POLL_INTERVAL_MS = 60000
+
+
+def validate_register_poll_interval(config, platform):
+    """Raise the status_poll_interval floor to one minute on a platform whose poll reads registers.
+
+    A post-validator for climate and water_heater, bound to the platform name with functools.partial so the
+    message says which one. The key itself is accepted by the shared platform schema.
+    """
+    interval = config.get(CONF_STATUS_POLL_INTERVAL)
+    if interval is not None and interval.total_milliseconds < MIN_REGISTER_POLL_INTERVAL_MS:
+        raise cv.Invalid(
+            f"status_poll_interval must be at least {MIN_REGISTER_POLL_INTERVAL_MS}ms for the "
+            f"{platform} platform: its poll is one radio exchange per register",
+            path=[CONF_STATUS_POLL_INTERVAL],
+        )
+    return config
+
+
 def require_feature(config, key, active, *, required=0, forbidden=0, reason):
     """Reject a YAML key the declared device kind cannot use.
 

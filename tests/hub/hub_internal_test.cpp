@@ -157,9 +157,17 @@ TEST(HubInternal, KnownDeviceSupportsStatusRequests) {
   // A switch entity declared with a hot-water type only exists to make the device probe-able: it takes
   // neither toggles nor status requests.
   IoDevice hot_water_dev{};
+  hot_water_dev.entity_class = DeviceCapabilityClass::SWITCH;
   test::set_kind(hot_water_dev, DeviceType::DOMESTIC_HOT_WATER);
   EXPECT_FALSE(detail::known_device_supports_status_requests(hot_water_dev));
   EXPECT_FALSE(detail::known_device_matches_entity_class(hot_water_dev, DeviceCapabilityClass::SWITCH));
+
+  // Bound to a water heater entity, the same device is polled (IOHomeControlComponent::poll_dhw_device_()).
+  IoDevice water_heater_dev{};
+  water_heater_dev.entity_class = DeviceCapabilityClass::WATER_HEATER;
+  test::set_kind(water_heater_dev, DeviceType::DOMESTIC_HOT_WATER);
+  EXPECT_TRUE(detail::known_device_supports_status_requests(water_heater_dev));
+  EXPECT_TRUE(detail::known_device_matches_entity_class(water_heater_dev, DeviceCapabilityClass::WATER_HEATER));
 }
 
 // ========================================================================================
