@@ -28,6 +28,7 @@ using DeviceUpdateCallback = std::function<void(const std::string &device_id, co
 struct DeviceConfig {
   DeviceType type{DeviceType::UNKNOWN};  ///< Device type from YAML declaration.
   uint8_t subtype{0};                    ///< Device subtype byte.
+  DeviceModel model{DeviceModel::NONE};  ///< YAML `io_model:`; NONE when not declared.
   DeviceCapabilityClass entity_class{
       DeviceCapabilityClass::UNKNOWN};  ///< Class of the declaring entity; decides
                                         ///< the features of a kind the type table does not know.
@@ -65,7 +66,7 @@ class DeviceRegistry {
 
   /// Insert or overwrite a device entry without deduplication or hex-validation checks.
   /// Used by the pairing flow which already validated the device during discovery. A record already
-  /// stored under the ID hands its YAML overrides (entity class, `invert_position:`, `dimmable:`) to
+  /// stored under the ID hands its YAML overrides (entity class, `invert_position:`, `dimmable:`, `io_model:`) to
   /// the new one, and the new record's features are resolved before it is stored.
   /// @param device_id Hexadecimal node ID string.
   /// @param device    Fully-built device to store.

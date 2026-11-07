@@ -1,0 +1,34 @@
+id: atlantic_adelis_probe_boost_remaining
+description: >
+  An Atlantic Adelis 2 Digit towel dryer (node BD684B) answering two `register_01` reads of register
+  0x013A during a one-hour boost, on the reporter's SX1276 hub C0FFEE (issue #202, comment of
+  2026-11-06). Only the answers were logged (stage=probe_rx).
+
+  The reporter read the display's countdown at about the same time: 0x3C (60) with about 59:57 left,
+  0x37 (55) with about 54:50 left. Read together, 0x013A is the boost's remaining time in minutes,
+  rounded up. Nothing in this component reads 0x013A yet.
+
+  Community capture: no system key, and no authenticated bytes are included.
+source:
+  device: "Atlantic Adelis 2 Digit electric towel dryer (node BD684B, display name ADELIS 2 DIGIT)"
+  captured_with: sx1276
+  firmware: "main around 2026-11-06 with the register_01 probe, diagnostic_probes: true"
+  date: 2026-11-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/202"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 3A 3C"
+    crc: absent
+    note: "register 0x013A (18:27:51), about 59:57 of a 1 h boost left on the display: value 3C = 60"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 3A 37"
+    crc: absent
+    note: "register 0x013A (18:32:56), about 54:50 of a 1 h boost left on the display: value 37 = 55"
+expect:
+  frames:
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

@@ -8,7 +8,7 @@
 ## tables, and the validators for node IDs, system keys, device IDs, linked remotes and
 ## status-poll intervals that the hub schema and the platform modules share.
 ##
-## DEVICE_TYPE_OPTIONS, DEVICE_FEATURES (with the FEATURE_* bits, KIND_EXPERIMENTAL and
+## DEVICE_TYPE_OPTIONS, DEVICE_MODEL_OPTIONS, DEVICE_FEATURES (with the FEATURE_* bits, KIND_EXPERIMENTAL and
 ## NAMED_POSITION_FEATURES), MANUFACTURER_OPTIONS, PA_PIN_OPTIONS, TCXO_VOLTAGE_OPTIONS and
 ## FEM_TX_POWER_MAX_QUIET mirror C++ tables; the ``tests/sync/`` host tests and
 ## ``make yaml-emitter-sync`` read them from this file by name.
@@ -262,10 +262,19 @@ FEATURE_INVERTED = 0x0200
 # Set on a kind no capture or report has confirmed on a real device.
 KIND_EXPERIMENTAL = 0x8000
 
-# The capability word of each row whose type has a YAML name, keyed "<name>" for subtype 0 and
-# "<name>/<subtype>" otherwise. A row with no capability is left out, except a subtype row under a
-# type that has capabilities (without its explicit zero the lookup would give it the type's word) and
-# an experimental row (its word is KIND_EXPERIMENTAL at least).
+# The models a (type, subtype) can have below it (proto_device_model.h DeviceModel, the model rows of
+# proto_device_types.cpp), by their YAML io_model: name. Values mirror the C++ enum;
+# tests/sync/device_features_sync_test.cpp checks them. Which (type, subtype) offers a model is the
+# "<name>/<subtype>/<model>" key of DEVICE_FEATURES.
+DEVICE_MODEL_OPTIONS = {
+    "towel_dryer": 1,
+}
+
+# The capability word of each row whose type has a YAML name, keyed "<name>" for subtype 0,
+# "<name>/<subtype>" for a subtype row and "<name>/<subtype>/<model>" for a model row. A row with no
+# capability is left out, except a subtype row under a type that has capabilities (without its explicit
+# zero the lookup would give it the type's word), a model row (it is how the codegen knows the model is
+# offered) and an experimental row (its word is KIND_EXPERIMENTAL at least).
 DEVICE_FEATURES = {
     "interior_venetian_blind": 0x000E,  # LEVELS TILT FAVORITE
     "roller_shutter": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
@@ -306,6 +315,7 @@ DEVICE_FEATURES = {
     "sliding_window/1": 0x808A,  # KIND_EXPERIMENTAL LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "bioclimatic_pergola": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "electrical_heater/1": 0x0100,  # WINDOW_COMPANIONS
+    "electrical_heater/1/towel_dryer": 0x0000,  # no window function
 }
 
 # The named positions (proto_device_types.h NAMED_POSITIONS), keyed by the CoverCommand name
@@ -328,14 +338,34 @@ def device_type_name(device_type):
     return _DEVICE_TYPE_NAMES.get(device_type)
 
 
-def device_features(device_type, subtype=0):
-    """The capability word of (io_device_type value, io_subtype), as the C++ device_features() answers.
+_DEVICE_MODEL_NAMES = {value: name for name, value in DEVICE_MODEL_OPTIONS.items()}
 
-    The exact row; else, for subtype 58, the main-parameter-only variant of the type's row (of no
-    capabilities when the type has none); else the type's own row. A node type YAML has no name for
-    (a raw value) has no row here, so it has no capabilities beyond the subtype-58 rule.
+
+def device_models(device_type, subtype=0):
+    """The io_model names (io_device_type value, io_subtype) offers, sorted; empty for most kinds."""
+    name = device_type_name(device_type)
+    if name is None:
+        return []
+    prefix = f"{name}/{subtype}/"
+    return sorted(key[len(prefix):] for key in DEVICE_FEATURES if key.startswith(prefix))
+
+
+def device_features(device_type, subtype=0, model=0):
+    """The capability word of (io_device_type value, io_subtype, io_model value), as the C++
+    device_features() answers.
+
+    The model row; else the exact row; else, for subtype 58, the main-parameter-only variant of the
+    type's row (of no capabilities when the type has none); else the type's own row. A node type YAML
+    has no name for (a raw value) has no row here, so it has no capabilities beyond the subtype-58
+    rule. ``model`` is a DEVICE_MODEL_OPTIONS value, 0 for none; codegen passes the config's model
+    through platform_common.config_model().
     """
     name = device_type_name(device_type)
+    model_name = _DEVICE_MODEL_NAMES.get(model)
+    if name is not None and model_name is not None:
+        model_row = DEVICE_FEATURES.get(f"{name}/{subtype}/{model_name}")
+        if model_row is not None:
+            return model_row
     if name is not None:
         exact = DEVICE_FEATURES.get(name if subtype == 0 else f"{name}/{subtype}")
         if exact is not None:
@@ -347,13 +377,13 @@ def device_features(device_type, subtype=0):
     return base
 
 
-def kind_is_experimental(device_type, subtype=0):
+def kind_is_experimental(device_type, subtype=0, model=0):
     """True when no capture or report has confirmed (io_device_type value, io_subtype) on a real device.
 
     Reads KIND_EXPERIMENTAL from the same word as the capabilities, so it follows the same fallback as
     device_features(); a type row is never experimental, so a subtype with no row of its own is not.
     """
-    return bool(device_features(device_type, subtype) & KIND_EXPERIMENTAL)
+    return bool(device_features(device_type, subtype, model) & KIND_EXPERIMENTAL)
 
 
 # Device-type names that were renamed. Each maps to the message the validator raises, so a config
@@ -481,6 +511,25 @@ def device_type_expression(value):
     return cg.RawExpression(
         f"static_cast<esphome::home_io_control::DeviceType>(0x{value:02X})"
     )
+
+
+def device_model_expression(value):
+    """Generate a C++ static_cast expression for a validated DEVICE_MODEL_OPTIONS value."""
+    return cg.RawExpression(f"static_cast<esphome::home_io_control::DeviceModel>({value})")
+
+
+def validate_device_model_name(value):
+    """Validate io_model as one of the DEVICE_MODEL_OPTIONS names (lowercase).
+
+    Whether the declared io_device_type / io_subtype offers the model is
+    platform_common.validate_device_model()'s job: it needs the whole entry.
+    """
+    normalized = cv.string_strict(value).strip().lower()
+    if normalized not in DEVICE_MODEL_OPTIONS:
+        raise cv.Invalid(
+            f"Unknown io_model '{value}'; known models: {', '.join(sorted(DEVICE_MODEL_OPTIONS))}"
+        )
+    return normalized
 
 
 def validate_node_id(value):

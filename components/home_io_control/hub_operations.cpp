@@ -483,7 +483,7 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   }
 
   // A heater with private registers has no 0x03 status: its state is a handful of registers.
-  const HeatingProfile *heating = find_heating_profile(dev->type, dev->subtype);
+  const HeatingProfile *heating = find_heating_profile(*dev);
   if (heating != nullptr && heating->path == HeatingControlPath::PRIVATE_REGISTERS)
     return this->poll_heating_device_(device_id);
 
@@ -936,6 +936,38 @@ bool IOHomeControlComponent::send_heating_command(const std::string &device_id, 
   return true;
 }
 
+bool IOHomeControlComponent::read_private_register_(const std::string &device_id, uint8_t reg_hi, uint8_t reg_lo,
+                                                    const char *label, IoFrame &response, uint8_t max_tries) {
+  const IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+
+  // A read only ever goes to a device that takes register reads at all.
+  if (!device_accepts_register_probe(dev->type, dev->subtype)) {
+    detail::log_rejected_operation(device_id, *dev, "register read", "heater with private registers");
+    return false;
+  }
+
+  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
+  const size_t payload_len = encode_heating_register_read(reg_hi, reg_lo, payload);
+  IoFrame request;
+  if (!create_write_private(request, this->node_id_, dev->node_id, dev->low_power, payload, payload_len)) {
+    ESP_LOGW(detail::TAG, "Heating read %s for device %s: failed to build frame", label, device_id.c_str());
+    return false;
+  }
+
+  if (!this->exchange_heating_(device_id, label, request, response, max_tries))
+    return false;
+  if (!heating_reply_echoes_register(response, reg_hi, reg_lo)) {
+    char payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
+    bytes_to_hex(response.data, response.data_len, payload_hex, sizeof(payload_hex));
+    ESP_LOGD(detail::TAG, "heating %s reply from device %s is not for register 0x%02X%02X: %s", label,
+             device_id.c_str(), reg_hi, reg_lo, payload_hex);
+    return false;
+  }
+  return true;
+}
+
 bool IOHomeControlComponent::read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
                                                    uint8_t max_tries) {
   auto *dev = this->get_device(device_id);
@@ -947,23 +979,16 @@ bool IOHomeControlComponent::read_heating_register(const std::string &device_id,
     return false;
   }
 
-  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
-  const size_t payload_len = encode_heating_read(fn, payload);
-  if (payload_len == 0) {
+  uint8_t register_low = 0;
+  if (!heating_function_is_readable(fn) || !heating_function_register(fn, register_low)) {
     ESP_LOGW(detail::TAG, "Heating read %s for device %s rejected: not a readable register", heating_function_name(fn),
              device_id.c_str());
     return false;
   }
 
-  IoFrame request;
-  if (!create_write_private(request, this->node_id_, dev->node_id, dev->low_power, payload, payload_len)) {
-    ESP_LOGW(detail::TAG, "Heating read %s for device %s: failed to build frame", heating_function_name(fn),
-             device_id.c_str());
-    return false;
-  }
-
   IoFrame response;
-  if (!this->exchange_heating_(device_id, heating_function_name(fn), request, response, max_tries))
+  if (!this->read_private_register_(device_id, HEATING_REGISTER_HIGH_BYTE, register_low, heating_function_name(fn),
+                                    response, max_tries))
     return false;
 
   float value = NAN;
@@ -975,8 +1000,8 @@ bool IOHomeControlComponent::read_heating_register(const std::string &device_id,
     return false;
   }
 
-  // exchange_heating_() ran get_device() before the exchange; the pointer is re-resolved here
-  // because the exchange blocks and the registry may have been touched by a callback meanwhile.
+  // The exchange blocks and the registry may have been touched by a callback meanwhile, so the record
+  // is looked up again.
   dev = this->get_device(device_id);
   if (dev == nullptr)
     return false;
@@ -987,12 +1012,69 @@ bool IOHomeControlComponent::read_heating_register(const std::string &device_id,
   return true;
 }
 
+void IOHomeControlComponent::check_heater_model_(const std::string &device_id, uint8_t max_tries) {
+  IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr || dev->model_checked || dev->model_check_attempts >= decisions::HEATER_MODEL_CHECK_MAX_RUNS ||
+      !device_offers_models(dev->type, dev->subtype))
+    return;
+  dev->model_check_attempts++;
+
+  IoFrame name_reply;
+  const bool name_read = this->read_private_register_(device_id, HEATING_REGISTER_HIGH_BYTE,
+                                                      HEATING_REGISTER_MODEL_NAME, "model_name", name_reply, max_tries);
+
+  // A towel dryer's poll has already read its mode register; any other heater is asked once here.
+  dev = this->get_device(device_id);
+  if (dev == nullptr)
+    return;
+  bool mode_answered = dev->heating.towel_mode >= 0;
+  bool mode_has_value = mode_answered;
+  uint8_t mode_register = 0;
+  if (!mode_answered && heating_function_register(HeatingFunction::TOWEL_MODE, mode_register)) {
+    IoFrame mode_reply;
+    mode_answered = this->read_private_register_(device_id, HEATING_REGISTER_HIGH_BYTE, mode_register, "towel_mode",
+                                                 mode_reply, max_tries);
+    mode_has_value = mode_answered && mode_reply.data_len > HEATING_REPLY_VALUE_OFFSET;
+  }
+  // Report only from a run in which both reads were answered; otherwise the next poll tries again.
+  if (!name_read || !mode_answered)
+    return;
+  dev = this->get_device(device_id);
+  if (dev == nullptr)
+    return;
+  dev->model_checked = true;
+
+  const std::string name = decisions::format_heater_model_name(name_reply.data + HEATING_REPLY_VALUE_OFFSET,
+                                                               name_reply.data_len - HEATING_REPLY_VALUE_OFFSET);
+  ESP_LOGI(detail::TAG, "Device %s reports model name \"%s\"", device_id.c_str(),
+           name.empty() ? "(none)" : name.c_str());
+
+  const DeviceTypeInfo *towel = find_device_model_info(dev->type, dev->subtype, DeviceModel::TOWEL_DRYER);
+  const char *towel_name = towel != nullptr ? towel->name : "towel_dryer";
+  switch (decisions::classify_heater_model_hint(dev->model, mode_has_value)) {
+    case decisions::HeaterModelHint::LOOKS_LIKE_RADIATOR:
+      ESP_LOGW(detail::TAG,
+               "Device %s is declared with io_model: %s, but it holds no towel-dryer mode (register 0x0136 is "
+               "empty): it looks like a radiator. Remove io_model: from its climate entry",
+               device_id.c_str(), towel_name);
+      break;
+    case decisions::HeaterModelHint::LOOKS_LIKE_TOWEL_DRYER:
+      ESP_LOGW(detail::TAG,
+               "Device %s holds a towel-dryer mode (register 0x0136): it looks like a towel dryer. Add "
+               "io_model: %s to its climate entry for its modes, Boost and Drying",
+               device_id.c_str(), towel_name);
+      break;
+    case decisions::HeaterModelHint::NONE:
+      break;
+  }
+}
+
 bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) {
   const IoDevice *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
     return false;
   // The registers one poll reads come from the device's profile, so there is no per-device list here.
-  const HeatingProfile *profile = find_heating_profile(dev->type, dev->subtype);
+  const HeatingProfile *profile = find_heating_profile(*dev);
   if (profile == nullptr || profile->path != HeatingControlPath::PRIVATE_REGISTERS)
     return false;
 
@@ -1008,11 +1090,13 @@ bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) 
                                                                 this->poll_policy_.get_auth_poll_failures(device_id));
 
   bool ok = true;
+  size_t answered = 0;
   for (size_t i = 0; i < profile->poll_register_count; i++) {
     if (!this->read_heating_register(device_id, profile->poll_registers[i], nullptr, max_tries)) {
       ok = false;
       break;
     }
+    answered++;
   }
 
   // Properties and settings that rarely change are read until they have been read once. A miss here
@@ -1022,6 +1106,21 @@ bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) 
     if (dev != nullptr && !dev->heating.has(profile->boot_registers[i]))
       this->read_heating_register(device_id, profile->boot_registers[i], nullptr, max_tries);
   }
+
+  // A towel dryer holds its comfort setpoint in a second register too; both units seen hold the same
+  // value in both. A difference is worth a line for a field tester, nothing more.
+  dev = this->get_device(device_id);
+  if (dev != nullptr && !std::isnan(dev->heating.towel_comfort_setpoint_c) && !std::isnan(dev->heating.setpoint_c) &&
+      dev->heating.towel_comfort_setpoint_c != dev->heating.setpoint_c) {
+    ESP_LOGD(detail::TAG, "Device %s: comfort setpoint %.1f C in register 0x0103, %.1f C in register 0x0138",
+             device_id.c_str(), dev->heating.setpoint_c, dev->heating.towel_comfort_setpoint_c);
+  }
+
+  // Once the device has answered a read: the one-off model check. It runs even when a later register of
+  // the poll failed, because a towel dryer declared on a radiator fails exactly there (its mode register
+  // holds no value) and is what the check exists to point out.
+  if (answered > 0)
+    this->check_heater_model_(device_id, max_tries);
 
   if (ok) {
     this->poll_policy_.clear(device_id);

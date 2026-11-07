@@ -22,22 +22,22 @@ const uint8_t DST[NODE_ID_SIZE] = {0xAB, 0xC1, 0x23};
 // === Lookup ===
 
 TEST(HeatingProfiles, EachElectricalHeaterKindHasItsOwnControlPath) {
-  const HeatingProfile *setpoint = find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1);
+  const HeatingProfile *setpoint = find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
   ASSERT_NE(setpoint, nullptr);
   EXPECT_EQ(setpoint->path, HeatingControlPath::PRIVATE_REGISTERS);
 
-  const HeatingProfile *plain = find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0);
+  const HeatingProfile *plain = find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE);
   ASSERT_NE(plain, nullptr);
   EXPECT_EQ(plain->path, HeatingControlPath::HEATING_LEVEL);
 
-  EXPECT_EQ(find_heating_profile(DeviceType::ELECTRICAL_HEATER, 9), plain)
+  EXPECT_EQ(find_heating_profile(DeviceType::ELECTRICAL_HEATER, 9, DeviceModel::NONE), plain)
       << "an unnamed subtype falls back to subtype 0";
-  EXPECT_EQ(find_heating_profile(DeviceType::HEAT_PUMP, 1), nullptr)
+  EXPECT_EQ(find_heating_profile(DeviceType::HEAT_PUMP, 1, DeviceModel::NONE), nullptr)
       << "the Atlantic heat pump is a named row of its own and does not inherit the generic heat pump's profile";
-  EXPECT_EQ(find_heating_profile(DeviceType::HEAT_PUMP, 2), nullptr);
-  EXPECT_EQ(find_heating_profile(DeviceType::EXTERIOR_HEATING, 0), nullptr);
-  EXPECT_EQ(find_heating_profile(DeviceType::ROLLER_SHUTTER, 0), nullptr);
-  EXPECT_EQ(find_heating_profile(DeviceType::UNKNOWN, 0), nullptr);
+  EXPECT_EQ(find_heating_profile(DeviceType::HEAT_PUMP, 2, DeviceModel::NONE), nullptr);
+  EXPECT_EQ(find_heating_profile(DeviceType::EXTERIOR_HEATING, 0, DeviceModel::NONE), nullptr);
+  EXPECT_EQ(find_heating_profile(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE), nullptr);
+  EXPECT_EQ(find_heating_profile(DeviceType::UNKNOWN, 0, DeviceModel::NONE), nullptr);
 }
 
 TEST(HeatingProfiles, RegisterFramesAreForRegisterHeatersOnly) {
@@ -58,7 +58,7 @@ TEST(HeatingProfiles, ClimateGateAndTypeTableAgreeForEveryRow) {
       const bool table_says_climate_platform =
           device_capability_class(type, subtype) == DeviceCapabilityClass::CLIMATE &&
           device_has_platform(type, subtype);
-      EXPECT_EQ(find_heating_profile(type, subtype) != nullptr, table_says_climate_platform)
+      EXPECT_EQ(find_heating_profile(type, subtype, DeviceModel::NONE) != nullptr, table_says_climate_platform)
           << static_cast<unsigned>(type) << "/" << +subtype;
       EXPECT_EQ(device_supports_climate_control(type, subtype), table_says_climate_platform);
     }
@@ -68,7 +68,7 @@ TEST(HeatingProfiles, ClimateGateAndTypeTableAgreeForEveryRow) {
 // === Profile contents ===
 
 TEST(HeatingProfiles, SetpointHeaterOffersTheCardItsRegistersCanDrive) {
-  const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1);
+  const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
   EXPECT_TRUE(p.features.target_temperature);
   EXPECT_TRUE(p.features.current_temperature);
   EXPECT_TRUE(p.features.action);
@@ -104,7 +104,7 @@ TEST(HeatingProfiles, SetpointHeaterOffersTheCardItsRegistersCanDrive) {
 }
 
 TEST(HeatingProfiles, SetpointHeaterModeRegisterMapsBackToTheCard) {
-  const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1);
+  const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
   const auto *auto_mode = find_observed_state(p, 0);
   ASSERT_NE(auto_mode, nullptr);
   EXPECT_EQ(auto_mode->hvac, HeatingHvacMode::AUTO);
@@ -122,7 +122,7 @@ TEST(HeatingProfiles, SetpointHeaterModeRegisterMapsBackToTheCard) {
 }
 
 TEST(HeatingProfiles, PlainHeaterOffersLevelsAsModesAndPresets) {
-  const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0);
+  const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE);
   EXPECT_FALSE(p.features.target_temperature);
   EXPECT_FALSE(p.features.current_temperature);
   EXPECT_FALSE(p.features.action);
@@ -151,7 +151,7 @@ TEST(HeatingProfiles, PlainHeaterOffersLevelsAsModesAndPresets) {
 }
 
 TEST(HeatingProfiles, EveryLevelTheProfileCanCommandIsReadBackAsItself) {
-  const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0);
+  const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE);
   for (size_t i = 0; i < p.preset_count; i++) {
     const HeatingObservedState *state = find_observed_state(p, p.presets[i].wire);
     ASSERT_NE(state, nullptr) << "preset " << i;
@@ -175,7 +175,7 @@ TEST(HeatingProfiles, ObservedTablesAndPresetsAgreeInEveryProfile) {
                   {DeviceType::HEAT_PUMP, 0}};
   for (const auto &kind : profiles) {
     const std::string where = std::to_string(static_cast<unsigned>(kind.type)) + "/" + std::to_string(+kind.subtype);
-    const HeatingProfile *p = find_heating_profile(kind.type, kind.subtype);
+    const HeatingProfile *p = find_heating_profile(kind.type, kind.subtype, DeviceModel::NONE);
     ASSERT_NE(p, nullptr) << where;
     for (size_t r = 0; r < p->observed_count; r++) {
       const HeatingObservedState &row = p->observed[r];
@@ -351,7 +351,7 @@ TEST(HeatingTemperature, FunctionalParameterValuesAreTheDocumentedOnes) {
 }
 
 TEST(HeatingTemperature, ThermostatProfileSendsTheDevicesOwnCommands) {
-  const HeatingProfile *p = find_heating_profile(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  const HeatingProfile *p = find_heating_profile(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, DeviceModel::NONE);
   ASSERT_NE(p, nullptr);
   EXPECT_EQ(p->path, HeatingControlPath::TEMPERATURE_EXECUTE);
   EXPECT_TRUE(p->features.target_temperature);
@@ -389,7 +389,7 @@ TEST(HeatingTemperature, ThermostatProfileSendsTheDevicesOwnCommands) {
 }
 
 TEST(HeatingTemperature, HeatPumpProfileUsesFp16AndAFixedRange) {
-  const HeatingProfile *p = find_heating_profile(DeviceType::HEAT_PUMP, 0);
+  const HeatingProfile *p = find_heating_profile(DeviceType::HEAT_PUMP, 0, DeviceModel::NONE);
   ASSERT_NE(p, nullptr);
   EXPECT_EQ(p->path, HeatingControlPath::TEMPERATURE_EXECUTE);
   EXPECT_TRUE(p->fixed_range);
@@ -422,13 +422,13 @@ TEST(HeatingTemperature, HeatPumpProfileUsesFp16AndAFixedRange) {
 }
 
 TEST(HeatingTemperature, AliasesMapBackToTheirPresets) {
-  const HeatingProfile &t = *find_heating_profile(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  const HeatingProfile &t = *find_heating_profile(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, DeviceModel::NONE);
   EXPECT_EQ(t.presets[find_observed_state(t, heating_alias::COMFORT)->preset].id, HeatingPresetId::COMFORT);
   EXPECT_EQ(t.presets[find_observed_state(t, heating_alias::THERMOSTAT_ECO)->preset].id, HeatingPresetId::ECO);
   EXPECT_STREQ(t.presets[find_observed_state(t, heating_alias::SECURED)->preset].custom_name, "Secured");
   EXPECT_EQ(find_observed_state(t, 0x12), nullptr) << "D812 is the heat pump's eco, not a thermostat alias";
 
-  const HeatingProfile &h = *find_heating_profile(DeviceType::HEAT_PUMP, 0);
+  const HeatingProfile &h = *find_heating_profile(DeviceType::HEAT_PUMP, 0, DeviceModel::NONE);
   EXPECT_EQ(h.presets[find_observed_state(h, 0x12)->preset].id, HeatingPresetId::ECO);
   EXPECT_STREQ(h.presets[find_observed_state(h, 0x0E)->preset].custom_name, "Setback");
   EXPECT_STREQ(h.presets[find_observed_state(h, 0x13)->preset].custom_name, "Halted");
@@ -503,4 +503,132 @@ TEST(HeatingProfiles, RegisterProbeIsAllowedOnlyForRegisterHeatersAndHotWater) {
   EXPECT_FALSE(device_accepts_register_probe(DeviceType::LOCK, 0));
   EXPECT_FALSE(device_accepts_register_probe(DeviceType::ON_OFF_SWITCH, 0));
   EXPECT_FALSE(device_accepts_register_probe(DeviceType::UNKNOWN, 0));
+}
+
+// === Towel dryer (52/1, model TOWEL_DRYER) ===
+
+namespace {
+
+bool lists(const HeatingFunction *list, size_t count, HeatingFunction fn) {
+  return std::find(list, list + count, fn) != list + count;
+}
+
+}  // namespace
+
+TEST(HeatingProfilesTowelDryer, TheModelSelectsItsOwnProfileAndNoModelKeepsTheRadiator) {
+  const HeatingProfile *radiator = find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
+  const HeatingProfile *towel = find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
+  ASSERT_NE(radiator, nullptr);
+  ASSERT_NE(towel, nullptr);
+  EXPECT_NE(towel, radiator);
+  EXPECT_EQ(radiator->model, DeviceModel::NONE);
+  EXPECT_EQ(towel->model, DeviceModel::TOWEL_DRYER);
+  EXPECT_EQ(find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::TOWEL_DRYER),
+            find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE))
+      << "a model the (type, subtype) does not offer falls back to its profile";
+
+  IoDevice dev{};
+  dev.type = DeviceType::ELECTRICAL_HEATER;
+  dev.subtype = 1;
+  EXPECT_EQ(find_heating_profile(dev), radiator);
+  dev.model = DeviceModel::TOWEL_DRYER;
+  EXPECT_EQ(find_heating_profile(dev), towel) << "the device overload passes the declared model";
+}
+
+TEST(HeatingProfilesTowelDryer, AModelProfileKeepsTheControlPathOfTheProfileAboveIt) {
+  // The path predicates (device_uses_heating_registers() and friends) take no model: this is why.
+  for (const auto model : {DeviceModel::TOWEL_DRYER}) {
+    for (unsigned type = 0; type <= 0x3FF; type++) {
+      for (unsigned subtype = 0; subtype <= 0x3F; subtype++) {
+        const auto t = static_cast<DeviceType>(type);
+        const auto s = static_cast<uint8_t>(subtype);
+        const HeatingProfile *with = find_heating_profile(t, s, model);
+        const HeatingProfile *without = find_heating_profile(t, s, DeviceModel::NONE);
+        EXPECT_EQ(with != nullptr, without != nullptr) << format_device_ids(t, s);
+        if (with != nullptr && without != nullptr) {
+          EXPECT_EQ(with->path, without->path) << format_device_ids(t, s);
+        }
+      }
+    }
+  }
+}
+
+TEST(HeatingProfilesTowelDryer, ModesMapToTheTowelModeRegisterInBothDirections) {
+  const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
+  EXPECT_EQ(p.path, HeatingControlPath::PRIVATE_REGISTERS);
+  EXPECT_EQ(p.mode_fn, HeatingFunction::TOWEL_MODE);
+  ASSERT_EQ(p.mode_count, 3u);
+  const struct {
+    HeatingHvacMode hvac;
+    TowelDryerMode wire;
+  } expected[] = {{HeatingHvacMode::OFF, TowelDryerMode::OFF},
+                  {HeatingHvacMode::HEAT, TowelDryerMode::MANUAL},
+                  {HeatingHvacMode::AUTO, TowelDryerMode::PROG}};
+  for (size_t i = 0; i < 3; i++) {
+    EXPECT_EQ(p.modes[i].hvac, expected[i].hvac) << i;
+    EXPECT_EQ(p.modes[i].wire, static_cast<uint8_t>(expected[i].wire)) << i;
+    const HeatingObservedState *seen = find_observed_state(p, p.modes[i].wire);
+    ASSERT_NE(seen, nullptr) << i;
+    EXPECT_EQ(seen->hvac, expected[i].hvac) << "what is written reads back as the same mode";
+    EXPECT_EQ(seen->preset, -1) << "the mode register never names a preset";
+  }
+  EXPECT_EQ(find_observed_state(p, static_cast<uint8_t>(TowelDryerMode::AUTO)), nullptr)
+      << "value 1 has never been seen";
+}
+
+TEST(HeatingProfilesTowelDryer, PresetsWriteTheTemporaryStateAndReadBackAsThemselves) {
+  const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
+  EXPECT_EQ(p.preset_fn, HeatingFunction::TEMPORARY_STATE);
+  ASSERT_NE(p.preset_observed, nullptr);
+  ASSERT_EQ(p.preset_count, 3u);
+  EXPECT_EQ(p.presets[0].id, HeatingPresetId::NONE);
+  EXPECT_EQ(p.presets[1].id, HeatingPresetId::BOOST);
+  EXPECT_EQ(p.presets[2].id, HeatingPresetId::CUSTOM);
+  EXPECT_STREQ(p.presets[2].custom_name, "Drying");
+  for (size_t i = 0; i < p.preset_count; i++) {
+    EXPECT_EQ(p.presets[i].write_fn, HeatingFunction::TEMPORARY_STATE) << i;
+    EXPECT_TRUE(p.presets[i].commandable) << i;
+    const HeatingObservedState *seen = find_observed_preset(p, p.presets[i].wire);
+    ASSERT_NE(seen, nullptr) << i;
+    EXPECT_EQ(seen->preset, static_cast<int8_t>(i)) << "a written preset reads back as itself";
+  }
+  EXPECT_EQ(p.presets[1].wire, static_cast<uint8_t>(HeatingTemporaryState::BOOST));
+  EXPECT_EQ(p.presets[2].wire, static_cast<uint8_t>(HeatingTemporaryState::DRYING));
+  EXPECT_EQ(find_observed_preset(p, 3), nullptr);
+}
+
+TEST(HeatingProfilesTowelDryer, PollsItsOwnRegistersAndNoWindow) {
+  const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
+  const HeatingFunction poll[] = {HeatingFunction::ROOM_TEMPERATURE, HeatingFunction::SET_TEMPERATURE,
+                                  HeatingFunction::TOWEL_MODE, HeatingFunction::TEMPORARY_STATE,
+                                  HeatingFunction::WORKING_RATE};
+  ASSERT_EQ(p.poll_register_count, std::size(poll));
+  for (size_t i = 0; i < std::size(poll); i++)
+    EXPECT_EQ(p.poll_registers[i], poll[i]) << i;
+  EXPECT_TRUE(lists(p.boot_registers, p.boot_register_count, HeatingFunction::MAX_SETPOINT));
+  for (const HeatingFunction never : {HeatingFunction::WINDOW_OPEN, HeatingFunction::SET_OPEN_WINDOW_DETECTION,
+                                      HeatingFunction::SET_MODE, HeatingFunction::REGULATOR_STATE}) {
+    EXPECT_FALSE(lists(p.poll_registers, p.poll_register_count, never)) << heating_function_name(never);
+    EXPECT_FALSE(lists(p.boot_registers, p.boot_register_count, never)) << heating_function_name(never);
+  }
+  EXPECT_EQ(p.action_source, HeatingActionSource::WORKING_RATE);
+  EXPECT_TRUE(p.experimental_writes);
+}
+
+TEST(HeatingProfilesTowelDryer, TheRadiatorProfileIsUnchangedAndNeverTouchesTheTowelRegisters) {
+  const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
+  EXPECT_EQ(p.mode_fn, HeatingFunction::SET_MODE);
+  EXPECT_EQ(p.preset_observed, nullptr);
+  EXPECT_EQ(p.preset_observed_count, 0u);
+  EXPECT_EQ(p.action_source, HeatingActionSource::REGULATOR);
+  EXPECT_FALSE(p.experimental_writes);
+  for (const HeatingFunction towel : {HeatingFunction::TOWEL_MODE, HeatingFunction::TEMPORARY_STATE,
+                                      HeatingFunction::WORKING_RATE, HeatingFunction::TOWEL_COMFORT_SETPOINT}) {
+    EXPECT_FALSE(lists(p.poll_registers, p.poll_register_count, towel)) << heating_function_name(towel);
+    EXPECT_FALSE(lists(p.boot_registers, p.boot_register_count, towel)) << heating_function_name(towel);
+    for (size_t i = 0; i < p.preset_count; i++)
+      EXPECT_NE(p.presets[i].write_fn, towel) << heating_function_name(towel);
+  }
+  for (size_t i = 0; i < p.preset_count; i++)
+    EXPECT_NE(p.presets[i].id, HeatingPresetId::NONE) << "the radiator offers no 'none' preset";
 }

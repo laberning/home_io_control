@@ -43,6 +43,8 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::busy_;
   using IOHomeControlComponent::poll_policy_;
   using IOHomeControlComponent::poll_heating_device_;
+  using IOHomeControlComponent::read_private_register_;
+  using IOHomeControlComponent::check_heater_model_;
   using IOHomeControlComponent::schedule_status_poll_;
   using IOHomeControlComponent::tuning_;
 };
@@ -532,13 +534,18 @@ TEST(HubOperations, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnce) 
       test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01})));  // 28.0 C
   radio.queue_rx(
       test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x06, 0x01})));  // detection on
+  // The one-off model check: a model name (synthetic), and the towel-dryer mode register answered empty.
+  radio.queue_rx(
+      test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x19, 'R', 'A', 'D', 'I', 'A', 'T'})));
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x36})));
 
   EXPECT_TRUE(comp.request_device_status("ABC123")) << "a heater is polled over its registers, not with 0x03";
 
-  ASSERT_EQ(radio.get_sent_data().size(), 7u);
-  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x02, 0x06};
-  for (size_t i = 0; i < 7; i++)
+  ASSERT_EQ(radio.get_sent_data().size(), 9u);
+  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x02, 0x06, 0x19, 0x36};
+  for (size_t i = 0; i < 9; i++)
     EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
+  EXPECT_TRUE(dev->model_checked) << "both model-check reads were answered";
   EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 20.75F);
   EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.5F);
   EXPECT_EQ(dev->heating.mode, 1);
@@ -549,7 +556,8 @@ TEST(HubOperations, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnce) 
   EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()))
       << "a good poll closes its retry window";
 
-  // The maximum and the detection setting are read once: the next poll asks for the five registers only.
+  // The maximum, the detection setting and the model check run once: the next poll asks for the five
+  // registers only.
   const size_t sent_before = radio.get_sent_data().size();
   radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x59, 0x06})));
   radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00})));
@@ -3448,4 +3456,143 @@ TEST(HubOperations, AVerticalInteriorBlindHasNoTilt) {
 
   EXPECT_FALSE(comp.set_device_tilt("ABC123", 50));
   EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+// ============================================================================
+// Towel dryer (52/1, model TOWEL_DRYER), the raw register read and the model check
+// ============================================================================
+
+namespace {
+
+IoDevice *make_towel_dryer(TestableComponent &comp, MockRadio &radio) {
+  IoDevice *dev = make_heater(comp, radio);
+  dev->model = DeviceModel::TOWEL_DRYER;
+  resolve_device_features(*dev);
+  return dev;
+}
+
+void queue_register_reply(TestableComponent &comp, MockRadio &radio, const std::vector<uint8_t> &payload) {
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, payload)));
+}
+
+/// The model name an Atlantic Adelis reports in register 0x0119 (corpus atlantic_adelis_probe_register_01_sweep).
+const std::vector<uint8_t> ADELIS_NAME_REPLY = {0x0C, 0x60, 0x01, 0x19, 'A', 'D', 'E', 'L', 'I',
+                                                'S',  ' ',  '2',  ' ',  'D', 'I', 'G', 'I', 'T'};
+
+}  // namespace
+
+TEST(HubOperations, TowelDryerPollReadsItsOwnRegistersThenTheBootRegistersAndTheModelName) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_towel_dryer(comp, radio);
+  EXPECT_FALSE(has_feature(dev->features, device_feature::WINDOW_COMPANIONS)) << "the model row has no window";
+  // Values from the BD684B sweep with drying on (issue #202).
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x15, 0xB7, 0x07});  // 19.75 C
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x03, 0xBE, 0x00});  // 19.0 C
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x36, 0x03});        // MANUEL
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x3E, 0x02});        // drying
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x26, 0x64});        // 100 %
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01});  // 28.0 C
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x38, 0xBE, 0x00});  // 19.0 C
+  queue_register_reply(comp, radio, ADELIS_NAME_REPLY);
+
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+
+  const uint8_t expected_registers[] = {0x15, 0x03, 0x36, 0x3E, 0x26, 0x02, 0x38, 0x19};
+  ASSERT_EQ(radio.get_sent_data().size(), std::size(expected_registers))
+      << "no window registers, and the mode register is not asked twice for the model check";
+  for (size_t i = 0; i < std::size(expected_registers); i++)
+    EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
+  for (const auto &tx : radio.get_sent_data())
+    EXPECT_EQ(tx.at(10), HEATING_DIRECTION_GET) << "a poll only reads";
+  EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 19.75F);
+  EXPECT_EQ(dev->heating.towel_mode, 3);
+  EXPECT_EQ(dev->heating.temporary_state, 2);
+  EXPECT_EQ(dev->heating.working_rate, 100);
+  EXPECT_FLOAT_EQ(dev->heating.towel_comfort_setpoint_c, 19.0F);
+  EXPECT_EQ(dev->heating.mode, -1) << "the radiator's mode register is never read";
+  EXPECT_TRUE(dev->model_checked);
+
+  const size_t sent_before = radio.get_sent_data().size();
+  EXPECT_FALSE(comp.request_device_status("ABC123"));  // nothing queued: only the first register is tried
+  for (size_t i = sent_before; i < radio.get_sent_data().size(); i++)
+    EXPECT_EQ(sent_register(radio.get_sent_data()[i]), 0x15);
+}
+
+TEST(HubOperations, ATowelDryerDeclaredOnARadiatorStillGetsTheModelCheck) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_towel_dryer(comp, radio);
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x36});  // a radiator holds no towel-dryer mode
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x19, 'R', 'A', 'D'});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x36});
+
+  EXPECT_FALSE(comp.request_device_status("ABC123")) << "the poll fails at the empty mode register";
+
+  const uint8_t expected_registers[] = {0x15, 0x03, 0x36, 0x19, 0x36};
+  ASSERT_EQ(radio.get_sent_data().size(), std::size(expected_registers));
+  for (size_t i = 0; i < std::size(expected_registers); i++)
+    EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
+  EXPECT_TRUE(dev->model_checked) << "both reads answered: the radiator hint was logged";
+}
+
+TEST(HubOperations, TheModelCheckRunsABoundedNumberOfTimesAndOnlyOnAKindWithModels) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_heater(comp, radio);
+  // Nothing answers: each run asks for the name and the mode register once.
+  for (uint8_t run = 0; run < decisions::HEATER_MODEL_CHECK_MAX_RUNS + 1; run++)
+    comp.check_heater_model_("ABC123", 1);
+  EXPECT_EQ(radio.get_sent_data().size(), 2u * decisions::HEATER_MODEL_CHECK_MAX_RUNS);
+  EXPECT_FALSE(dev->model_checked);
+
+  TestableComponent plain;
+  MockRadio plain_radio;
+  IoDevice *plain_dev = make_heater(plain, plain_radio);
+  test::set_kind(*plain_dev, DeviceType::ELECTRICAL_HEATER, 0);
+  plain.check_heater_model_("ABC123", 1);
+  EXPECT_TRUE(plain_radio.get_sent_data().empty()) << "52/0 has no model rows";
+}
+
+TEST(HubOperations, ReadPrivateRegisterChecksTheEchoAndRefusesADeviceWithoutRegisters) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_heater(comp, radio);
+  queue_register_reply(comp, radio, ADELIS_NAME_REPLY);
+  IoFrame response{};
+  ASSERT_TRUE(comp.read_private_register_("ABC123", 0x01, 0x19, "model_name", response, 1));
+  EXPECT_EQ(response.data_len, ADELIS_NAME_REPLY.size());
+  EXPECT_EQ(response.data[HEATING_REPLY_VALUE_OFFSET], 'A');
+  const auto &tx = radio.get_sent_data().back();
+  EXPECT_EQ(std::vector<uint8_t>(tx.begin() + 9, tx.begin() + 13), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x19}));
+
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x18, 0x41});
+  EXPECT_FALSE(comp.read_private_register_("ABC123", 0x01, 0x19, "model_name", response, 1))
+      << "an answer for another register is not this register's";
+
+  TestableComponent cover;
+  MockRadio cover_radio;
+  setup_cover_component(cover, cover_radio);
+  EXPECT_FALSE(cover.read_private_register_("ABC123", 0x01, 0x19, "model_name", response, 1));
+  EXPECT_TRUE(cover_radio.get_sent_data().empty());
+}
+
+TEST(HubOperations, TowelDryerModeAndTemporaryStateWritesSendExactBytes) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_towel_dryer(comp, radio);
+  queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x36, 0x03});
+  ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::TOWEL_MODE, 3.0F));
+  queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x3E, 0x01});
+  ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::TEMPORARY_STATE, 1.0F));
+
+  ASSERT_EQ(radio.get_sent_data().size(), 2u);
+  // The payload starts at wire offset 9; a one-byte write is five bytes.
+  const auto payload = [](const std::vector<uint8_t> &tx) {
+    return std::vector<uint8_t>(tx.begin() + 9, tx.begin() + 14);
+  };
+  EXPECT_EQ(payload(radio.get_sent_data()[0]), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x36, 0x03}));
+  EXPECT_EQ(payload(radio.get_sent_data()[1]), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x3E, 0x01}));
 }

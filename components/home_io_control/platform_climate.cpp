@@ -38,9 +38,8 @@ struct ClimatePresetMapping {
   climate::ClimatePreset preset;
 };
 constexpr ClimatePresetMapping CLIMATE_PRESET_MAP[] = {
-    {HeatingPresetId::AWAY, climate::CLIMATE_PRESET_AWAY},
-    {HeatingPresetId::COMFORT, climate::CLIMATE_PRESET_COMFORT},
-    {HeatingPresetId::ECO, climate::CLIMATE_PRESET_ECO},
+    {HeatingPresetId::NONE, climate::CLIMATE_PRESET_NONE},       {HeatingPresetId::AWAY, climate::CLIMATE_PRESET_AWAY},
+    {HeatingPresetId::COMFORT, climate::CLIMATE_PRESET_COMFORT}, {HeatingPresetId::ECO, climate::CLIMATE_PRESET_ECO},
     {HeatingPresetId::BOOST, climate::CLIMATE_PRESET_BOOST},
 };
 
@@ -69,10 +68,10 @@ climate::ClimatePreset to_climate_preset(HeatingPresetId id) {
 
 const HeatingProfile *IOHomeClimate::profile_() const {
   if (this->device_type_ != DeviceType::UNKNOWN)
-    return find_heating_profile(this->device_type_, this->subtype_);
+    return find_heating_profile(this->device_type_, this->subtype_, this->model_);
   // Declared without a type: use the one the hub has learned from the device since.
   const IoDevice *dev = this->parent_ != nullptr ? this->parent_->get_device(this->device_id_) : nullptr;
-  return dev != nullptr ? find_heating_profile(dev->type, dev->subtype) : nullptr;
+  return dev != nullptr ? find_heating_profile(*dev) : nullptr;
 }
 
 void IOHomeClimate::setup() {
@@ -229,7 +228,7 @@ bool IOHomeClimate::apply_mode_(const HeatingProfile &profile, const climate::Cl
       continue;
     const bool sent = profile.path == HeatingControlPath::TEMPERATURE_EXECUTE
                           ? this->write_temperature_mode_(profile, entry)
-                          : this->write_(profile, HeatingFunction::SET_MODE, entry.wire);
+                          : this->write_(profile, profile.mode_fn, entry.wire);
     if (!sent)
       return false;
     // Until a read has succeeded there is nothing observed to show: the commanded mode stands in. A mode
@@ -239,14 +238,15 @@ bool IOHomeClimate::apply_mode_(const HeatingProfile &profile, const climate::Cl
     if (commanded) {
       this->mode = requested;
       // A real HVAC mode supersedes a preset on the register and level paths; a temperature heater's
-      // preset follows its status reply instead.
-      if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE) {
+      // preset follows its status reply instead, and so does a preset kept in a register of its own
+      // (a towel dryer's boost outlives a mode change).
+      if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE && profile.preset_observed == nullptr) {
         this->clear_custom_preset_();
         this->preset.reset();
       }
     }
     if (profile.path == HeatingControlPath::PRIVATE_REGISTERS) {
-      this->confirm_write_(HeatingFunction::SET_MODE);
+      this->confirm_write_(profile.mode_fn);
       return commanded && !this->observed_;
     }
     return commanded;
@@ -292,7 +292,10 @@ bool IOHomeClimate::commit_preset_(const HeatingProfile &profile, const HeatingP
   // Once a read has succeeded the card follows the read-back, not the command.
   const bool commanded = !this->observed_;
   if (commanded) {
-    if (profile.features.mode_observed) {
+    if (profile.preset_observed != nullptr) {
+      // The preset has a register and a table of its own: its value is never a mode value.
+      this->apply_observed_preset_(profile, entry.wire);
+    } else if (profile.features.mode_observed) {
       // The read-back uses the same table, so a commanded preset looks like a read one.
       this->apply_observed_state_(profile, entry.wire);
     } else if (entry.id == HeatingPresetId::CUSTOM) {
@@ -379,16 +382,19 @@ bool IOHomeClimate::sync_action_(const HeatingProfile &profile, const HeatingRea
                                  bool &seen) {
   if (!profile.features.action)
     return false;
-  // The action follows the mode: an off heater is not "idle". Until the regulator has been read only
-  // the off case is known.
+  // The action follows the mode: an off heater is not "idle". Until the profile's action source has
+  // been read only the off case is known.
   climate::ClimateAction action = this->action;
   if (this->mode == climate::CLIMATE_MODE_OFF && mode_known) {
     action = climate::CLIMATE_ACTION_OFF;
-  } else if (readings.regulator >= 0) {
+  } else if (profile.action_source == HeatingActionSource::REGULATOR && readings.regulator >= 0) {
     seen = true;
     action = readings.regulator == static_cast<int16_t>(HeatingRegulatorState::HEATING)
                  ? climate::CLIMATE_ACTION_HEATING
                  : climate::CLIMATE_ACTION_IDLE;
+  } else if (profile.action_source == HeatingActionSource::WORKING_RATE && readings.working_rate >= 0) {
+    seen = true;
+    action = readings.working_rate > 0 ? climate::CLIMATE_ACTION_HEATING : climate::CLIMATE_ACTION_IDLE;
   }
   if (action == this->action)
     return false;
@@ -400,12 +406,20 @@ bool IOHomeClimate::sync_from_readings_(const HeatingProfile &profile, const Hea
   bool seen = false;
   bool changed = this->sync_temperatures_(profile, readings, seen);
 
-  // The mode register, or the heating level, whichever this profile's device reports.
-  const int16_t wire = profile.path == HeatingControlPath::PRIVATE_REGISTERS ? readings.mode : readings.level;
+  // The profile's mode register, or the heating level, whichever this profile's device reports.
+  const int16_t wire =
+      profile.path == HeatingControlPath::PRIVATE_REGISTERS ? readings.value_of(profile.mode_fn) : readings.level;
   if (wire >= 0) {
     seen = true;
     changed = this->apply_observed_state_(profile, static_cast<uint8_t>(wire)) || changed;
-  } else if (profile.path == HeatingControlPath::TEMPERATURE_EXECUTE && !std::isnan(readings.setpoint_c)) {
+  }
+  // A preset kept in a register of its own (a towel dryer's temporary state).
+  const int16_t preset_wire = profile.preset_observed != nullptr ? readings.value_of(profile.preset_fn) : -1;
+  if (preset_wire >= 0) {
+    seen = true;
+    changed = this->apply_observed_preset_(profile, static_cast<uint8_t>(preset_wire)) || changed;
+  }
+  if (wire < 0 && profile.path == HeatingControlPath::TEMPERATURE_EXECUTE && !std::isnan(readings.setpoint_c)) {
     // The device reports a plain temperature, so it is on no alias preset.
     if (this->has_custom_preset()) {
       this->clear_custom_preset_();
@@ -441,8 +455,22 @@ bool IOHomeClimate::apply_observed_state_(const HeatingProfile &profile, uint8_t
     changed = mode != this->mode;
     this->mode = mode;
   }
+  // With a preset table of its own, the mode register says nothing about the preset.
+  if (profile.preset_observed != nullptr)
+    return changed;
+  return this->show_preset_(profile, observed->preset) || changed;
+}
 
-  const HeatingPresetEntry *shown = observed->preset >= 0 ? &profile.presets[observed->preset] : nullptr;
+bool IOHomeClimate::apply_observed_preset_(const HeatingProfile &profile, uint8_t wire) {
+  const HeatingObservedState *observed = find_observed_preset(profile, wire);
+  if (observed == nullptr)
+    return false;  // unknown value: leave the card as it was
+  return this->show_preset_(profile, observed->preset);
+}
+
+bool IOHomeClimate::show_preset_(const HeatingProfile &profile, int8_t preset_index) {
+  bool changed = false;
+  const HeatingPresetEntry *shown = preset_index >= 0 ? &profile.presets[preset_index] : nullptr;
   if (shown != nullptr && shown->id == HeatingPresetId::CUSTOM) {
     if (!this->has_custom_preset() || this->get_custom_preset() != shown->custom_name) {
       this->set_custom_preset_(shown->custom_name);
@@ -471,7 +499,7 @@ bool IOHomeClimate::apply_observed_state_(const HeatingProfile &profile, uint8_t
 void IOHomeClimate::on_device_update_(const std::string &id, const IoDevice &dev) {
   if (id != this->device_id_)
     return;
-  const HeatingProfile *profile = find_heating_profile(dev.type, dev.subtype);
+  const HeatingProfile *profile = find_heating_profile(dev);
   if (profile == nullptr)
     return;
   if (this->sync_from_readings_(*profile, dev.heating))
@@ -486,12 +514,19 @@ void IOHomeClimate::dump_config() {
   ESP_LOGCONFIG(
       TAG, "  Status Poll Interval: %" PRIu32 " ms",
       this->status_poll_interval_ms_ != 0 ? this->status_poll_interval_ms_ : HEATING_POLL_DEFAULT_INTERVAL_MS);
-  // Only the register profile has run on hardware (an Atlantic AGILIA IO radiator, issue #165).
+  if (const DeviceTypeInfo *model = find_device_model_info(this->device_type_, this->subtype_, this->model_))
+    ESP_LOGCONFIG(TAG, "  Model: %s", model->name);
+  // Only the register profiles have run on hardware: an Atlantic AGILIA IO radiator (issue #165) all the
+  // way, an Atlantic Adelis towel dryer (issue #202) for its reads and its setpoint write.
   const HeatingProfile *profile = this->profile_();
-  const bool confirmed = profile != nullptr && profile->path == HeatingControlPath::PRIVATE_REGISTERS;
-  ESP_LOGCONFIG(TAG, "  Status: %s",
-                confirmed ? "confirmed on hardware (setpoint, mode, presets, read-back)"
-                          : "experimental, unvalidated on hardware");
+  const bool registers = profile != nullptr && profile->path == HeatingControlPath::PRIVATE_REGISTERS;
+  const char *status = "experimental, unvalidated on hardware";
+  if (registers) {
+    status = profile->experimental_writes
+                 ? "readings and setpoint confirmed on hardware; mode and preset writes experimental"
+                 : "confirmed on hardware (setpoint, mode, presets, read-back)";
+  }
+  ESP_LOGCONFIG(TAG, "  Status: %s", status);
 }
 
 }  // namespace home_io_control

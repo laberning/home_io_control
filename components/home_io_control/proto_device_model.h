@@ -71,6 +71,18 @@ enum class DeviceType : uint16_t {
                                    ///< atlantic_agilia_pairing_key_transfer_command_unknown.yaml).
 };
 
+/// @brief A product model below a (node type, subtype): for products that report the same wire type
+/// but need different handling.
+/// @details The wire carries no model, so it comes from the YAML (`io_model:`) and is never learned.
+///          NONE is the (type, subtype) row itself, so every device declared without a model behaves as
+///          before. Each other value has a model row in the node-type table (proto_device_types.h) under
+///          the one (type, subtype) that offers it; the row's name is the YAML spelling. Values are
+///          stable: hub_validators.py `DEVICE_MODEL_OPTIONS` mirrors them (device_features_sync_test.cpp).
+enum class DeviceModel : uint8_t {
+  NONE = 0,         ///< No model: the (type, subtype) row.
+  TOWEL_DRYER = 1,  ///< Towel dryer under the electrical heater with an adjustable setpoint (52/1).
+};
+
 /// @brief High‑level capability class derived from DeviceType.
 enum class DeviceCapabilityClass : uint8_t {
   UNKNOWN = 0x00,       ///< Unknown capability.
@@ -441,6 +453,8 @@ struct IoDevice {
   uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
   DeviceType type{DeviceType::UNKNOWN};  ///< Device type (shutter, awning, etc.).
   uint8_t subtype{0};                    ///< Device subtype (manufacturer‑specific).
+  DeviceModel model{DeviceModel::NONE};  ///< YAML-declared product model below the subtype (`io_model:`); never
+                                         ///< on the wire. Resolver input, like `dimmable`.
   char name[DEVICE_NAME_BUFFER_SIZE]{};  ///< Cached UTF-8 device name decoded from Latin-1 wire payloads.
   float position{UNKNOWN_POSITION};      ///< Current position: 0=open, 100=closed, or UNKNOWN_POSITION.
   float tilt{UNKNOWN_POSITION};          ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION.
@@ -557,18 +571,22 @@ struct IoDevice {
   bool registered_by_pairing{false};   ///< Added by a pairing in this boot, not declared in YAML. The record is
                                        ///< lost at reboot, so reports still print its YAML block, and a later
                                        ///< pairing may replace it (DeviceRegistry::get_declared()).
+  uint8_t model_check_attempts{0};     ///< Runs of the hub's one-off model check (a heater kind with model rows:
+                                       ///< model name read, declared-model hint) so far; the check stops after
+                                       ///< it completes or after a bounded number of runs. Runtime only.
+  bool model_checked{false};           ///< The model check completed: both of its reads were answered.
 };
 
 /// @brief Resolve a device's capability bits and inversion from its kind and its YAML overrides.
-/// @details The one place a device's features are decided. The base is the (type, subtype) row
-///          (device_features()); a kind with no row, or an undeclared one, takes
+/// @details The one place a device's features are decided. The base is the (type, subtype, model) row
+///          (device_features(), with the declared IoDevice::model); a kind with no row, or an undeclared one, takes
 ///          undeclared_kind_features() of the declaring entity's class (the type's own class when no
 ///          entity declared the device), made main-parameter-only at subtype 58 like any other kind.
 ///          A light's LEVELS then come from the YAML `dimmable:` flag alone, and never on a kind that
 ///          takes the main parameter only. `inverted` is the YAML override, else the kind's default.
 ///          Called wherever a record gets or changes its kind: DeviceRegistry::add() and put(), and
 ///          when a status reply teaches an undeclared device its type.
-/// @param dev Device to resolve; reads type, subtype, entity_class, dimmable and invert_override and
+/// @param dev Device to resolve; reads type, subtype, model, entity_class, dimmable and invert_override and
 ///        writes features and inverted.
 void resolve_device_features(IoDevice &dev);
 

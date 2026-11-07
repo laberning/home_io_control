@@ -1,0 +1,76 @@
+id: atlantic_adelis_probe_mode_reads
+description: >
+  An Atlantic Adelis 2 Digit towel dryer (node BD684B) answering `register_01` reads of registers
+  0x0136 and 0x0100 after the reporter set its display to each mode, on the reporter's SX1276 hub
+  C0FFEE (issue #202, comment of 2026-11-06). Each answer is CMD_WRITE_PRIVATE_ACK (0x21) echoing
+  the four header bytes, then the value. Only the answers were logged (stage=probe_rx); the requests
+  and the 0x3C/0x3D handshakes are not in this capture.
+
+  What the frames show, in the order the reporter took them:
+    - MANUEL: 0x0136 = 03, 0x0100 = 03.
+    - PROG inside a comfort period: 0x0136 = 02, 0x0100 = 02.
+    - PROG inside an eco period: 0x0136 = 02, 0x0100 = 02; neither register tells comfort from eco.
+    - off, set from the display's main menu: 0x0136 = 00, 0x0100 = 04.
+  Value 01 of 0x0136 did not appear. The towel-dryer climate profile reads its mode from 0x0136 with
+  this mapping (off 0, PROG 2, MANUEL 3).
+
+  Community capture: no system key, and no authenticated bytes are included.
+source:
+  device: "Atlantic Adelis 2 Digit electric towel dryer (node BD684B, display name ADELIS 2 DIGIT)"
+  captured_with: sx1276
+  firmware: "main around 2026-11-06 with the register_01 probe, diagnostic_probes: true"
+  date: 2026-11-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/202"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 36 03"
+    crc: absent
+    note: "register 0x0136 (18:07:53), display set to MANUEL: value 03"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 00 03"
+    crc: absent
+    note: "register 0x0100 (18:08:05), display set to MANUEL: value 03"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 36 02"
+    crc: absent
+    note: "register 0x0136 (18:10:15), display set to PROG, inside a comfort period: value 02"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 00 02"
+    crc: absent
+    note: "register 0x0100 (18:10:21), display set to PROG, inside a comfort period: value 02"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 36 02"
+    crc: absent
+    note: "register 0x0136 (18:16:36), display set to PROG, inside an eco period: value 02"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 00 02"
+    crc: absent
+    note: "register 0x0100 (18:17:08), display set to PROG, inside an eco period: value 02"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 36 00"
+    crc: absent
+    note: "register 0x0136 (18:23:06), display set to off: value 00"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 00 04"
+    crc: absent
+    note: "register 0x0100 (18:23:27), display set to off: value 04"
+expect:
+  frames:
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

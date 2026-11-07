@@ -130,21 +130,25 @@ TEST(DeviceFeaturesTable, EveryRowStatesTheExpectedWord) {
 // ============================================================================
 
 TEST(DeviceFeaturesLookup, ASubtype58WithoutARowIsTheMainParameterOnlyVariantOfItsType) {
-  const DeviceFeatures roller = device_features(DeviceType::ROLLER_SHUTTER, 0);
-  EXPECT_EQ(device_features(DeviceType::ROLLER_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY),
+  const DeviceFeatures roller = device_features(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE);
+  EXPECT_EQ(device_features(DeviceType::ROLLER_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY, DeviceModel::NONE),
             main_parameter_only_variant(roller));
   EXPECT_FALSE(
-      has_feature(device_features(DeviceType::INTERIOR_VENETIAN_BLIND, SUBTYPE_MAIN_PARAMETER_ONLY), feature::TILT))
+      has_feature(device_features(DeviceType::INTERIOR_VENETIAN_BLIND, SUBTYPE_MAIN_PARAMETER_ONLY, DeviceModel::NONE),
+                  feature::TILT))
       << "a variant has no functional parameter, so no slat angle";
-  EXPECT_TRUE(has_feature(device_features(DeviceType::WINDOW_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY), feature::VENT))
+  EXPECT_TRUE(has_feature(device_features(DeviceType::WINDOW_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY, DeviceModel::NONE),
+                          feature::VENT))
       << "a named position is a main-parameter value and survives the variant";
 }
 
 TEST(DeviceFeaturesLookup, AnUnnamedSubtypeTakesTheTypeRowAndAnUnknownTypeHasNoFeatures) {
-  EXPECT_EQ(device_features(DeviceType::ROLLER_SHUTTER, 9), device_features(DeviceType::ROLLER_SHUTTER, 0));
-  EXPECT_EQ(device_features(static_cast<DeviceType>(26), 0), 0u);
-  EXPECT_EQ(device_features(static_cast<DeviceType>(26), 3), 0u);
-  EXPECT_EQ(device_features(static_cast<DeviceType>(26), SUBTYPE_MAIN_PARAMETER_ONLY), feature::MAIN_PARAMETER_ONLY)
+  EXPECT_EQ(device_features(DeviceType::ROLLER_SHUTTER, 9, DeviceModel::NONE),
+            device_features(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
+  EXPECT_EQ(device_features(static_cast<DeviceType>(26), 0, DeviceModel::NONE), 0u);
+  EXPECT_EQ(device_features(static_cast<DeviceType>(26), 3, DeviceModel::NONE), 0u);
+  EXPECT_EQ(device_features(static_cast<DeviceType>(26), SUBTYPE_MAIN_PARAMETER_ONLY, DeviceModel::NONE),
+            feature::MAIN_PARAMETER_ONLY)
       << "subtype 58 is main parameter only on any type, row or not";
 }
 

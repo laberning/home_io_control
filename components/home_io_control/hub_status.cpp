@@ -337,7 +337,7 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
 /// @param dev Device record to update; other devices are left alone.
 /// @param frame A reply to a status poll (the layout of a reply to an EXECUTE follows the request).
 void apply_heating_main_parameter(const std::string &id, IoDevice &dev, const IoFrame &frame) {
-  const HeatingProfile *profile = find_heating_profile(dev.type, dev.subtype);
+  const HeatingProfile *profile = find_heating_profile(dev);
   if (profile == nullptr || profile->path == HeatingControlPath::PRIVATE_REGISTERS)
     return;
   const auto current = static_cast<uint16_t>((frame.data[PRIVATE_RESPONSE_CURRENT_OFFSET] << BITS_PER_BYTE) |

@@ -117,7 +117,7 @@ before pairing; the [device page](devices/simu-t35-bhz.md#check-the-motor-first)
 | Device | Status | Evidence |
 |---|---|---|
 | **AGILIA IO electric radiator** (Atlantic, display model) | ✅ Confirmed on three radiators — Discover & Pair from the display's "Paramètres" → "Connectivité" → "Connexion" menu, target temperature, Off / Heat / Auto, the `Program` and `Auto` presets, room temperature and heating / idle, all read back. Each radiator hands over its own key, and its heater sits one address above the node that pairs. Step-by-step: [Atlantic AGILIA IO](devices/atlantic-agilia-io.md) | Heltec V3 / SX1262, issue #165; corpus `atlantic_agilia_*` (pairing, roll-call, register reads and writes) |
-| **Atlantic Adelis** (towel dryer, "ADELIS 2 DIGIT") | ⚠️ Partial — pairs with Discover & Pair from "Paramètres" → "Connectivité" → "Connexion"; target and room temperature work on the climate entity. Boost, drying and the dryer's own modes are not supported yet. The towel dryer has no open-window detection, so its Window sensor and Open Window Detection switch do nothing | SX1276 board, issue #202 |
+| **Atlantic Adelis** (towel dryer, "ADELIS 2 DIGIT") | ⚠️ Partial — pairs with Discover & Pair from "Paramètres" → "Connectivité" → "Connexion". It reports the same type and subtype as the AGILIA radiator (`0x34/1`, seen on two units), so its `climate:` entry adds `io_model: towel_dryer`. Off / MANUEL / PROG, boost and drying, room temperature and heating / idle read back correctly, and setting the target works. Changing the mode and starting boost or drying from Home Assistant are experimental. Step-by-step: [Atlantic Adelis](devices/atlantic-adelis.md) | SX1276 board, issue #202; corpus `atlantic_adelis_*` (register reads, status reads) |
 | **Atlantic Calypso Connecté** (thermodynamic water heater) | ⚠️ Partial — pairs with Discover & Pair and accepts the key push. Its registers show the water temperature, the mode and the energy counter, but not the target temperature, so there is no entity yet | SX1276 board, issue #198 |
 | **Atlantic Thermor-style climate/heating actuator** | 🔍 Traffic captured only — the `climate:` platform is built against it but has never run on hardware | Corpus `atlantic_thermor_exchange_write_private_param` |
 | **Honeywell, Hörmann, Assa Abloy, Niko, WindowMaster, Renson, CIAT, Secuyou, Overkiz, Atlantic Group** | Untested — these are names the schema accepts, not devices anyone has reported | Only `somfy` and `velux` have a verified 1W wire profile |
@@ -161,6 +161,10 @@ the wire values, for example `electrical heater, with adjustable setpoint (0x34/
 without a name prints as `subtype N`. A subtype the table does not list behaves like its type. Subtype 58 means "main parameter only" on
 every type: such a device takes position commands without the functional-parameter block. The component also reads it as "no intermediate positions", which the VELUX specification does not say; it rests on the garage opener of issue #163, so a gate opener or swinging shutter of subtype 58 is experimental. A cover of such a kind shows open, close and stop, and no slider; see [Covers that only open and close](configuration/cover.md#covers-that-only-open-and-close).
 
+A subtype can list the product models below it as `(io_model: name)`. Products of one model report the
+same type and subtype as the rest but need different handling, and the radio does not say which one a
+device is, so you declare it with [`io_model`](configuration/index.md#options-every-entity-shares).
+
 Types marked "not supported yet" are recognised and named, but no platform drives them, so
 discovery reports them and prints no YAML. Subtype names that have not been confirmed on a real
 device are marked experimental; declaring one in YAML logs a warning when the config is built.
@@ -196,7 +200,7 @@ device are marked experimental; declaring one in YAML logs a warning when the co
 | `0x1D` | bioclimatic pergola | | Cover |
 | `0x1E` | siren | | Not supported yet |
 | `0x33` | domestic hot water | | Not supported yet. An Atlantic Calypso Connecté water heater pairs with Discover & Pair and accepts the key push (issue #198); its registers show the water temperature, mode and energy counter but not the target temperature, so there is no entity yet. The [register probes](diagnostic-probes.md#reading-registers) read them |
-| `0x34` | electrical heater | 1 with adjustable setpoint | Climate: subtype 1 over private registers with read-back, confirmed on the [Atlantic AGILIA IO](devices/atlantic-agilia-io.md), with a Window sensor and an Open Window Detection switch (both experimental); the plain heater (subtype 0) with heating levels (experimental, untested) |
+| `0x34` | electrical heater | 1 with adjustable setpoint (io_model: towel_dryer) | Climate: subtype 1 over private registers with read-back, confirmed on the [Atlantic AGILIA IO](devices/atlantic-agilia-io.md), with a Window sensor and an Open Window Detection switch (both experimental). An [Atlantic Adelis](devices/atlantic-adelis.md) towel dryer reports the same type and subtype (issue #202) and is declared with `io_model: towel_dryer`, which gives it its own modes, boost and drying (writes experimental) and no window entities. The plain heater (subtype 0) with heating levels (experimental, untested) |
 | `0x35` | heat recovery ventilation | | Not supported yet |
 | `0xFF` | central house control | | Not supported yet |
 | `0x3F0` | test and evaluation | | Not supported yet |
@@ -226,7 +230,7 @@ vendor.
 
 ## Device pages
 
-Seven devices have enough evidence behind them to be worth a page of their own.
+Eight devices have enough evidence behind them to be worth a page of their own.
 
 <!-- doxygen-subpages -->
 - [Somfy Izymo IO dimmer](devices/somfy-izymo-dimmer.md)
@@ -236,6 +240,7 @@ Seven devices have enough evidence behind them to be worth a page of their own.
 - [Somfy White LED Receiver io](devices/somfy-white-led-receiver.md)
 - [SIMU T3.5 E BHz DC solar shutter motor](devices/simu-t35-bhz.md)
 - [Atlantic AGILIA IO electric radiator](devices/atlantic-agilia-io.md)
+- [Atlantic Adelis towel dryer](devices/atlantic-adelis.md)
 <!-- /doxygen-subpages -->
 
 ## Getting your device added

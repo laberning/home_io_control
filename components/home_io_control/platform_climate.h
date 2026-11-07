@@ -102,7 +102,8 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   /// @return true when a published field changed.
   bool sync_temperatures_(const HeatingProfile &profile, const HeatingReadings &readings, bool &seen);
 
-  /// @brief Fold the regulator state into the entity's action.
+  /// @brief Fold the profile's action source (the regulator state, or the working rate) into the entity's
+  /// action.
   /// @param profile The device's profile.
   /// @param readings What the hub has read from the heater.
   /// @param mode_known True when the mode or level has been read (an off heater is then not idle).
@@ -111,10 +112,24 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   bool sync_action_(const HeatingProfile &profile, const HeatingReadings &readings, bool mode_known, bool &seen);
 
   /// @brief Show a device-reported mode register value or heating level.
+  /// @details Sets the preset too, unless the profile keeps its preset in a register of its own
+  ///          (HeatingProfile::preset_observed), which apply_observed_preset_() shows.
   /// @param profile The device's profile.
   /// @param wire Value as the device reports it.
   /// @return true when the mode or a preset changed; a value the profile does not map changes nothing.
   bool apply_observed_state_(const HeatingProfile &profile, uint8_t wire);
+
+  /// @brief Show a device-reported value of the profile's preset register (HeatingProfile::preset_fn).
+  /// @param profile The device's profile; one without a preset table changes nothing.
+  /// @param wire Value as the device reports it.
+  /// @return true when the preset changed; a value the profile does not map changes nothing.
+  bool apply_observed_preset_(const HeatingProfile &profile, uint8_t wire);
+
+  /// @brief Show one of the profile's presets, or none.
+  /// @param profile The device's profile.
+  /// @param preset_index Index into the profile's presets, or -1 for "no preset".
+  /// @return true when the shown preset changed.
+  bool show_preset_(const HeatingProfile &profile, int8_t preset_index);
 
   /// @brief Send one preset value (or, on the register and level paths, one mode value) over the
   /// profile's control path.
@@ -155,7 +170,8 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   bool apply_mode_(const HeatingProfile &profile, const climate::ClimateCall &call);
   /// @brief Apply a custom preset, if present. @return true if published.
   bool apply_custom_preset_(const HeatingProfile &profile, const climate::ClimateCall &call);
-  /// @brief Apply a standard preset, if present. @return true if published.
+  /// @brief Apply a standard preset, if present; "none" selects the profile's NONE entry where it has one.
+  /// @return true if published.
   bool apply_preset_(const HeatingProfile &profile, const climate::ClimateCall &call);
   /// @brief Send one preset and show it: the tail both preset paths share.
   /// @details Refuses a preset the device only reports. Until a read has succeeded, a profile whose mode

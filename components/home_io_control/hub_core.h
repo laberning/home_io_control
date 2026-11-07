@@ -747,7 +747,7 @@ class IOHomeControlComponent : public Component,
   virtual void set_device_temperature_range(const std::string &device_id, float min_c, float max_c);
   /// @brief Read one register of a heater and fold the decoded value into IoDevice::heating.
   ///
-  /// Same gate, frame builder and exchange bookkeeping as send_heating_command(); a reply that
+  /// Same gate as send_heating_command(); the read itself is read_private_register_(). A reply that
   /// decodes (decode_heating_reply()) updates the device record and notifies the entity callbacks,
   /// so what an entity shows is what the heater reported.
   /// @param device_id Target device ID (hex string).
@@ -1264,8 +1264,35 @@ class IOHomeControlComponent : public Component,
   /// @return true only if the reply is a CMD_WRITE_PRIVATE_ACK.
   bool exchange_heating_(const std::string &device_id, const char *label, const IoFrame &request, IoFrame &response,
                          uint8_t max_tries);
-  /// @brief Poll a heater: read its room temperature, setpoint, mode and regulator state (stopping
-  /// at the first failure), plus its maximum setpoint until that has been read once.
+  /// @brief Read one private register raw: build the read request, run exchange_heating_() and check that
+  /// the reply echoes the register.
+  ///
+  /// The one place a register read is framed and sent; read_heating_register() decodes on top of it, and
+  /// the reads no HeatingFunction describes (a model name in ASCII, "is there a value at all") use it
+  /// directly. Gated by device_accepts_register_probe(); the request is built by
+  /// encode_heating_register_read(), which cannot produce a write.
+  /// @param device_id Target device ID.
+  /// @param reg_hi High byte of the register.
+  /// @param reg_lo Low byte of the register.
+  /// @param label What is read, for the log ("model_name").
+  /// @param[out] response The reply; its value bytes start at HEATING_REPLY_VALUE_OFFSET (none for a
+  ///        register the device does not hold).
+  /// @param max_tries Transmit-attempt cap forwarded to exchange_heating_().
+  /// @return true when the device answered with the register's echo.
+  bool read_private_register_(const std::string &device_id, uint8_t reg_hi, uint8_t reg_lo, const char *label,
+                              IoFrame &response, uint8_t max_tries);
+  /// @brief The one-off model check of a heater kind that has model rows (device_offers_models()).
+  ///
+  /// Reads the model name (register 0x0119) and logs it at INFO, and compares whether the towel-dryer mode
+  /// register (0x0136) holds a value with the declared `io_model:` (decisions::classify_heater_model_hint()),
+  /// logging a WARN when they disagree. Nothing it finds changes behaviour. Done once both reads were
+  /// answered, or after decisions::HEATER_MODEL_CHECK_MAX_RUNS runs.
+  /// @param device_id Target device ID.
+  /// @param max_tries Transmit-attempt cap of each read (the poll's).
+  void check_heater_model_(const std::string &device_id, uint8_t max_tries);
+  /// @brief Poll a heater: read its profile's poll registers (stopping at the first failure), then its
+  /// boot registers until each has been read once, then, on a heater kind with model rows, the one-off
+  /// model check (check_heater_model_()) once the device has answered a read.
   ///
   /// A failure moves the retry onto the StatusPollPolicy ladder; either way the next regular poll
   /// is armed one interval out (the device's `status_poll_interval`, else

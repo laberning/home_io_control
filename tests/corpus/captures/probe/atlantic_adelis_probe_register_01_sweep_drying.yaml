@@ -1,0 +1,353 @@
+id: atlantic_adelis_probe_register_01_sweep_drying
+description: >
+  An Atlantic Adelis 2 Digit towel dryer (node BD684B, the reporter's second unit) answering the
+  `register_01` diagnostic sweep over 0x00-0x3F while a 30-minute drying run was active, in base mode
+  MANUEL, on the reporter's SX1276 hub C0FFEE (issue #202, comment of 2026-11-06). Four sweeps
+  (18:36 0x00-0x0F, 18:37 0x10-0x1F and 0x20-0x2F, 18:38 0x30-0x3F), taken while the display's drying
+  timer ran from 30 to 27 minutes. Every index was answered; registers the device does not hold are
+  answered with no value bytes. Only the answers were logged, in the probe_sweep summary.
+
+  What the frames show, read against tests/corpus/captures/probe/atlantic_adelis_probe_register_01_sweep.yaml
+  (the first unit, BB0B50, in boost):
+    - 0x013E = 02 during drying (01 during boost on the first unit).
+    - 0x0126 = 0x64 (100) during drying, as during boost; 0x0117 = 00 in both.
+    - 0x0137 and 0x012A = 02 00 during drying (01 00 during boost).
+    - 0x0136 = 03 and 0x0100 = 03: drying leaves the base mode alone.
+    - 0x0103 = 0x0138 = 0x00BE (19.0 C in tenths); both units hold the same value in both registers.
+    - 0x0115 = 0x07B7 (19.75 C in hundredths).
+    - 0x013C = 0x1C (28), with the display between 30 and 27 minutes of drying left; 0x013D = 1E 78
+      (30, 120) with a 30-minute drying set; 0x013B = 3C 3C (60, 60) with a one-hour boost set.
+    - 0x0119 is ASCII "ADELIS 2 DIGIT" followed by three NUL bytes.
+
+  Community capture: no system key, and no authenticated bytes are included.
+source:
+  device: "Atlantic Adelis 2 Digit electric towel dryer (node BD684B, display name ADELIS 2 DIGIT)"
+  captured_with: sx1276
+  firmware: "main around 2026-11-06 with the register_01 probe, diagnostic_probes: true"
+  date: 2026-11-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/202"
+key: unknown
+frames:
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 00 03"
+    crc: absent
+    note: "register 0x0100: value 03"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 01 00"
+    crc: absent
+    note: "register 0x0101: value 00"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 02 18 01"
+    crc: absent
+    note: "register 0x0102: value 18 01"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 03 BE 00"
+    crc: absent
+    note: "register 0x0103: value BE 00"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 04 23 00"
+    crc: absent
+    note: "register 0x0104: value 23 00"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 05 1E 00"
+    crc: absent
+    note: "register 0x0105: value 1E 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 06 00"
+    crc: absent
+    note: "register 0x0106: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 07 00"
+    crc: absent
+    note: "register 0x0107: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 08 00"
+    crc: absent
+    note: "register 0x0108: value 00"
+  - dir: rx
+    hex: "8F 00 C0 FF EE BD 68 4B 21 0C 60 01 09 00 00 00"
+    crc: absent
+    note: "register 0x0109: value 00 00 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 0A 00"
+    crc: absent
+    note: "register 0x010A: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 0B 00"
+    crc: absent
+    note: "register 0x010B: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 0C 01"
+    crc: absent
+    note: "register 0x010C: value 01"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 0D 01"
+    crc: absent
+    note: "register 0x010D: value 01"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 0E 00"
+    crc: absent
+    note: "register 0x010E: value 00"
+  - dir: rx
+    hex: "94 00 C0 FF EE BD 68 4B 21 0C 60 01 0F 19 23 12 06 04 0B EA 07"
+    crc: absent
+    note: "register 0x010F: value 19 23 12 06 04 0B EA 07"
+  - dir: rx
+    hex: "94 00 C0 FF EE BD 68 4B 21 0C 60 01 10 19 23 12 06 04 0B EA 07"
+    crc: absent
+    note: "register 0x0110: value 19 23 12 06 04 0B EA 07"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BD 68 4B 21 0C 60 01 11"
+    crc: absent
+    note: "register 0x0111: value (none)"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BD 68 4B 21 0C 60 01 12"
+    crc: absent
+    note: "register 0x0112: value (none)"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 13 00"
+    crc: absent
+    note: "register 0x0113: value 00"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 14 C9 11"
+    crc: absent
+    note: "register 0x0114: value C9 11"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 15 B7 07"
+    crc: absent
+    note: "register 0x0115: value B7 07"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 16 03 B2"
+    crc: absent
+    note: "register 0x0116: value 03 B2"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 17 00"
+    crc: absent
+    note: "register 0x0117: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 18 41"
+    crc: absent
+    note: "register 0x0118: value 41"
+  - dir: rx
+    hex: "9D 00 C0 FF EE BD 68 4B 21 0C 60 01 19 41 44 45 4C 49 53 20 32 20 44 49 47 49 54 00 00 00"
+    crc: absent
+    note: "register 0x0119: value 41 44 45 4C 49 53 20 32 20 44 49 47 49 54 00 00 00"
+  - dir: rx
+    hex: "8F 00 C0 FF EE BD 68 4B 21 0C 60 01 1A F4 01 E6"
+    crc: absent
+    note: "register 0x011A: value F4 01 E6"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BD 68 4B 21 0C 60 01 1B"
+    crc: absent
+    note: "register 0x011B: value (none)"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BD 68 4B 21 0C 60 01 1C"
+    crc: absent
+    note: "register 0x011C: value (none)"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 1D 00 00"
+    crc: absent
+    note: "register 0x011D: value 00 00"
+  - dir: rx
+    hex: "93 00 C0 FF EE BD 68 4B 21 0C 60 01 1E 00 18 24 48 54 00 00"
+    crc: absent
+    note: "register 0x011E: value 00 18 24 48 54 00 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 1F 01"
+    crc: absent
+    note: "register 0x011F: value 01"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 20 00"
+    crc: absent
+    note: "register 0x0120: value 00"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BD 68 4B 21 0C 60 01 21"
+    crc: absent
+    note: "register 0x0121: value (none)"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 22 00 00"
+    crc: absent
+    note: "register 0x0122: value 00 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 23 00"
+    crc: absent
+    note: "register 0x0123: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 24 00"
+    crc: absent
+    note: "register 0x0124: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 25 00"
+    crc: absent
+    note: "register 0x0125: value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 26 64"
+    crc: absent
+    note: "register 0x0126: value 64"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 27 00 00"
+    crc: absent
+    note: "register 0x0127: value 00 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 28 02"
+    crc: absent
+    note: "register 0x0128: value 02"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 29 00"
+    crc: absent
+    note: "register 0x0129: value 00"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 2A 02 00"
+    crc: absent
+    note: "register 0x012A: value 02 00"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BD 68 4B 21 0C 60 01 2B"
+    crc: absent
+    note: "register 0x012B: value (none)"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BD 68 4B 21 0C 60 01 2C"
+    crc: absent
+    note: "register 0x012C: value (none)"
+  - dir: rx
+    hex: "8F 00 C0 FF EE BD 68 4B 21 0C 60 01 2D CA F2 2B"
+    crc: absent
+    note: "register 0x012D: value CA F2 2B"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 2E 01"
+    crc: absent
+    note: "register 0x012E: value 01"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 2F 00 00"
+    crc: absent
+    note: "register 0x012F: value 00 00"
+  - dir: rx
+    hex: "9D 00 C0 FF EE BD 68 4B 21 0C 60 01 30 00 00 2B 48 54 00 00 00 20 44 03 47 49 02 00 00 00"
+    crc: absent
+    note: "register 0x0130: value 00 00 2B 48 54 00 00 00 20 44 03 47 49 02 00 00 00"
+  - dir: rx
+    hex: "99 00 C0 FF EE BD 68 4B 21 0C 60 01 31 00 00 00 48 54 00 00 18 24 48 54 00 00"
+    crc: absent
+    note: "register 0x0131: value 00 00 00 48 54 00 00 18 24 48 54 00 00"
+  - dir: rx
+    hex: "9A 00 C0 FF EE BD 68 4B 21 0C 60 01 32 01 18 24 48 54 00 00 02 18 24 48 54 00 00"
+    crc: absent
+    note: "register 0x0132: value 01 18 24 48 54 00 00 02 18 24 48 54 00 00"
+  - dir: rx
+    hex: "9A 00 C0 FF EE BD 68 4B 21 0C 60 01 33 03 18 24 48 54 00 00 04 18 24 4A 54 00 00"
+    crc: absent
+    note: "register 0x0133: value 03 18 24 48 54 00 00 04 18 24 4A 54 00 00"
+  - dir: rx
+    hex: "9C 00 C0 FF EE BD 68 4B 21 0C 60 01 34 05 20 30 48 54 00 00 06 20 30 48 54 00 00 00 01"
+    crc: absent
+    note: "register 0x0134: value 05 20 30 48 54 00 00 06 20 30 48 54 00 00 00 01"
+  - dir: rx
+    hex: "8C 00 C0 FF EE BD 68 4B 21 0C 60 01 35"
+    crc: absent
+    note: "register 0x0135: value (none)"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 36 03"
+    crc: absent
+    note: "register 0x0136: value 03"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 37 02 00"
+    crc: absent
+    note: "register 0x0137: value 02 00"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 38 BE 00"
+    crc: absent
+    note: "register 0x0138: value BE 00"
+  - dir: rx
+    hex: "93 00 C0 FF EE BD 68 4B 21 0C 60 01 39 C3 00 30 48 54 00 00"
+    crc: absent
+    note: "register 0x0139: value C3 00 30 48 54 00 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 3A 00"
+    crc: absent
+    note: "register 0x013A: value 00"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 3B 3C 3C"
+    crc: absent
+    note: "register 0x013B: value 3C 3C"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 3C 1C"
+    crc: absent
+    note: "register 0x013C: value 1C"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 3D 1E 78"
+    crc: absent
+    note: "register 0x013D: value 1E 78"
+  - dir: rx
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 3E 02"
+    crc: absent
+    note: "register 0x013E: value 02"
+  - dir: rx
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 3F 00 00"
+    crc: absent
+    note: "register 0x013F: value 00 00"
+expect:
+  frames:
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

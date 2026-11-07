@@ -72,6 +72,14 @@ climate:
     status_poll_interval: 60s
     # A device that keeps a key of its own (ADR 0053); any device-bound platform takes it.
     system_key: "FEDCBA9876543210FEDCBA9876543210"
+  # A towel dryer reports the same type and subtype as the radiator above; io_model: picks its own
+  # profile, and it gets no window entities (ADR 0067).
+  - platform: home_io_control
+    name: "Towel Dryer"
+    io_device_id: "5E6F71"
+    io_device_type: electrical_heater
+    io_subtype: 1
+    io_model: towel_dryer
   - platform: home_io_control
     name: "Plain Heater"
     io_device_id: "5E6F70"

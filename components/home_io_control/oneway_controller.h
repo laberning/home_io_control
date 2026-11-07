@@ -266,7 +266,7 @@ inline bool has_power_class_override(const OneWayControllerIdentity &identity) {
 /// @return `invert_override` when set, else the kind's `INVERTED` capability bit.
 inline bool effective_inverted(const OneWayControllerIdentity &identity) {
   return identity.invert_override.value_or(
-      has_feature(device_features(identity.io_device_type, 0), device_feature::INVERTED));
+      has_feature(device_features(identity.io_device_type, 0, DeviceModel::NONE), device_feature::INVERTED));
 }
 
 /// @brief Whether this identity's inversion comes from an explicit `invert_position:` rather than the kind.

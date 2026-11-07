@@ -4,7 +4,7 @@
 /// @brief Heating profiles: what a climate card offers for each kind of heater, and how.
 /// @ingroup hioc_protocol
 ///
-/// A profile is one row per (node type, subtype) that a `climate:` entity can drive. It names the
+/// A profile is one row per (node type, subtype, model) that a `climate:` entity can drive. It names the
 /// control path (the private register protocol of proto_heating.h, or the standard EXECUTE with a
 /// heating level as the main parameter), the HVAC modes and presets the card shows, how each maps to
 /// a wire value in both directions, which registers a poll reads and which companion entities exist.
@@ -15,8 +15,10 @@
 ///
 /// \todo Heating-level control of the plain electrical heater (node type 52, subtype 0) has no capture
 ///       or hardware report yet. Confirm with one before calling it supported.
-/// \todo Every 52/1 seen is an Atlantic radiator. A non-Atlantic 52/1 would need the heating-level
-///       path instead; the profile keys on (type, subtype) only.
+/// \todo Every 52/1 seen is an Atlantic heater. A non-Atlantic 52/1 would need the heating-level
+///       path instead; the profile keys on (type, subtype, model), and the model is the YAML's.
+/// \todo Confirm on a real towel dryer that the TOWEL_DRYER profile's mode and preset writes (registers
+///       0x0136 and 0x013E) change what its display shows (experimental).
 
 #include "proto_device_model.h"
 #include "proto_heating.h"
@@ -44,6 +46,7 @@ enum class HeatingHvacMode : uint8_t {
 
 /// @brief Presets a profile can offer. CUSTOM entries carry their own name.
 enum class HeatingPresetId : uint8_t {
+  NONE,     ///< No preset: selecting it ends the one that runs (a towel dryer's boost or drying).
   AWAY,     ///< Nobody is in the room (the frost-protection level on a level heater).
   COMFORT,  ///< Comfort level.
   ECO,      ///< Economy level.
@@ -150,6 +153,13 @@ struct HeatingObservedState {
   int8_t preset;         ///< Index into the profile's presets shown with it, or -1 for none.
 };
 
+/// @brief Where a register heater's "heating" / "idle" comes from.
+enum class HeatingActionSource : uint8_t {
+  REGULATOR,     ///< The regulator register (HeatingFunction::REGULATOR_STATE): heating at state 2.
+  WORKING_RATE,  ///< The working rate (HeatingFunction::WORKING_RATE): heating above 0 %. A towel dryer's
+                 ///< regulator reads 0 during boost and drying, while the element runs at 100 %.
+};
+
 /// @brief Companion entities and traits a profile has.
 struct HeatingProfileFeatures {
   bool target_temperature;   ///< The card has a setpoint.
@@ -163,6 +173,7 @@ struct HeatingProfileFeatures {
 struct HeatingProfile {
   DeviceType type;                        ///< Node type.
   uint8_t subtype;                        ///< Subtype (0 = the type's own row).
+  DeviceModel model;                      ///< Model (NONE = the (type, subtype) row's own profile).
   HeatingControlPath path;                ///< How the heater is commanded and read.
   HeatingProfileFeatures features;        ///< What the card and its companions offer.
   uint8_t mp_prefix;                      ///< High byte of a level or alias main parameter (0 for registers).
@@ -181,18 +192,40 @@ struct HeatingProfile {
   size_t poll_register_count;             ///< Number of entries in `poll_registers`.
   const HeatingFunction *boot_registers;  ///< PRIVATE_REGISTERS: registers read once until they have been read.
   size_t boot_register_count;             ///< Number of entries in `boot_registers`.
+  /// Device-reported value of `preset_fn` -> preset; nullptr when the mode register names the preset too
+  /// (`observed`). With it, `observed` sets only the mode and this table alone sets the preset, since
+  /// mode and preset live in separate registers.
+  const HeatingObservedState *preset_observed{nullptr};
+  size_t preset_observed_count{0};  ///< Number of entries in `preset_observed`.
+  /// PRIVATE_REGISTERS: the register the HVAC modes write and the card's mode is read from.
+  HeatingFunction mode_fn{HeatingFunction::SET_MODE};
+  /// PRIVATE_REGISTERS with `preset_observed`: the register the card's preset is read from. The presets'
+  /// own `write_fn` say what each writes.
+  HeatingFunction preset_fn{HeatingFunction::SET_MODE};
+  HeatingActionSource action_source{HeatingActionSource::REGULATOR};  ///< Where `features.action` reads from.
+  bool experimental_writes{false};  ///< PRIVATE_REGISTERS: the mode and preset writes are unconfirmed on a device.
 };
 
-/// @brief Look up the heating profile for a (type, subtype).
+/// @brief Look up the heating profile for a (type, subtype, model).
 /// @param type Node type.
 /// @param subtype Subtype; one with no profile of its own falls back to the type's profile (subtype 0),
 ///        the same rule as find_device_type_info().
+/// @param model Declared model. A model with a profile of its own gets it; any other falls back to the
+///        (type, subtype) profile. No default: a caller that forgot the model would silently drive a
+///        towel dryer as a radiator.
 /// @return The profile, or nullptr when no climate entity drives this device.
-const HeatingProfile *find_heating_profile(DeviceType type, uint8_t subtype);
+const HeatingProfile *find_heating_profile(DeviceType type, uint8_t subtype, DeviceModel model);
+
+/// @brief Look up the heating profile of a device record: its type, subtype and declared model.
+/// @param dev The device.
+/// @return The profile, or nullptr when no climate entity drives this device.
+const HeatingProfile *find_heating_profile(const IoDevice &dev);
 
 /// @brief Does a climate entity drive this device over the private register protocol?
 /// @details The gate for every CMD_WRITE_PRIVATE frame the hub sends: a heater that takes the standard
-///          EXECUTE must never be sent a register write.
+///          EXECUTE must never be sent a register write. The control path is a fact of the
+///          (type, subtype): a model's profile keeps the path of the profile above it (checked by
+///          heating_profiles_test.cpp), so this and the other path predicates take no model.
 /// @param type Node type.
 /// @param subtype Subtype.
 /// @return true when the profile's control path is HeatingControlPath::PRIVATE_REGISTERS.
@@ -266,6 +299,12 @@ bool decode_heating_level(uint16_t main_parameter, uint8_t &level);
 /// @param wire Mode register value or level low byte.
 /// @return The matching entry, or nullptr when the value is not one the profile maps.
 const HeatingObservedState *find_observed_state(const HeatingProfile &profile, uint8_t wire);
+
+/// @brief Find what a device-reported value of the preset register (`preset_fn`) shows on the card.
+/// @param profile The device's profile.
+/// @param wire Value of the profile's preset register.
+/// @return The matching entry, or nullptr when the profile has no preset table or does not map the value.
+const HeatingObservedState *find_observed_preset(const HeatingProfile &profile, uint8_t wire);
 
 }  // namespace home_io_control
 }  // namespace esphome

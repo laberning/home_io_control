@@ -1,0 +1,12 @@
+# expect-error: io_model: towel_dryer needs io_device_type and io_subtype
+# covers: platform_common.validate_device_model
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+climate:
+  - platform: home_io_control
+    name: "Towel Dryer"
+    io_device_id: "4D5E6F"
+    io_device_type: electrical_heater
+    io_model: towel_dryer

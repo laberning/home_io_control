@@ -192,6 +192,13 @@ climate:
     io_device_id: "FEEB22"
     io_device_type: "electrical_heater"
     io_subtype: 1
+  # A towel dryer reports the same type and subtype; io_model selects its own profile (ADR 0067).
+  - platform: home_io_control
+    name: "Test Towel Dryer"
+    io_device_id: "FEEB28"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
+    io_model: towel_dryer
   # The plain electrical heater is commanded with heating levels (io_subtype 0).
   - platform: home_io_control
     name: "Test Plain Heating"

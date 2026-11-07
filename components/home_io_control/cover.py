@@ -48,6 +48,7 @@ from .platform_common import (
     inject_companion_sensor_ids,
     platform_schema_extension,
     require_feature,
+    validate_device_model,
     warn_if_experimental_kind,
     wire_device_binding,
     CONF_IO_DEVICE_ID,
@@ -316,6 +317,7 @@ CONFIG_SCHEMA = cv.All(
     .extend({cv.Optional(CONF_BATTERY): cv.boolean})
     .extend({cv.Optional(CONF_OPTIMISTIC_STATE, default=True): cv.boolean})
     .extend(cv.COMPONENT_SCHEMA),
+    validate_device_model,
     _default_device_class,
     _require_travel_speed_kind,
     warn_if_experimental_kind,

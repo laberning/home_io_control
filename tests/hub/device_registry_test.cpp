@@ -119,7 +119,7 @@ TEST(DeviceRegistry, AddResolvesTheDeclaredKindsFeatures) {
   reg.add("AABBCC", {DeviceType::INTERIOR_VENETIAN_BLIND, 0});
   const IoDevice *dev = reg.get("AABBCC");
   ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(dev->features, device_features(DeviceType::INTERIOR_VENETIAN_BLIND, 0));
+  EXPECT_EQ(dev->features, device_features(DeviceType::INTERIOR_VENETIAN_BLIND, 0, DeviceModel::NONE));
   EXPECT_TRUE(has_feature(dev->features, device_feature::TILT));
 }
 
@@ -149,7 +149,7 @@ TEST(DeviceRegistry, PutResolvesTheStoredRecordsFeatures) {
   paired.subtype = 0;
   reg.put("AABBCC", paired);
   EXPECT_TRUE(reg.get("AABBCC")->inverted);
-  EXPECT_EQ(reg.get("AABBCC")->features, device_features(DeviceType::HORIZONTAL_AWNING, 0));
+  EXPECT_EQ(reg.get("AABBCC")->features, device_features(DeviceType::HORIZONTAL_AWNING, 0, DeviceModel::NONE));
 }
 
 TEST(DeviceRegistry, PutKeepsTheYamlOverridesOfTheRecordItReplaces) {

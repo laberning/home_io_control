@@ -362,7 +362,15 @@ def heater_window_companions_are_declared_at_validation_time():
     assert with_window[c.CONF_WINDOW_SENSOR_ID].id == "living_window_sensor"
     assert with_window[c.CONF_WINDOW_SENSOR_ID].is_declaration
     assert with_window[c.CONF_WINDOW_DETECTION_SWITCH_ID].id == "living_window_detection_switch"
-    for cfg in (config(heater, 0), config(heater), config(), config(v.DEVICE_TYPE_OPTIONS["roller_shutter"], 1)):
+    towel = config(heater, 1)
+    towel["io_model"] = "towel_dryer"
+    for cfg in (
+        config(heater, 0),
+        config(heater),
+        config(),
+        config(v.DEVICE_TYPE_OPTIONS["roller_shutter"], 1),
+        towel,
+    ):
         out = c._inject_companion_ids(cfg)
         assert c.CONF_WINDOW_SENSOR_ID not in out, cfg
         assert c.CONF_WINDOW_DETECTION_SWITCH_ID not in out, cfg
@@ -598,6 +606,35 @@ def device_features_fall_back_like_the_cpp_lookup():
     assert v.device_features(t["electrical_heater"], 0) == 0
     assert v.device_features(0x14) == 0, "a raw type with no name has no capabilities"
     assert v.device_features(0x14, 58) == v.FEATURE_MAIN_PARAMETER_ONLY
+
+
+@case()
+def a_model_row_is_offered_only_by_its_kind_and_replaces_its_word():
+    """A model (io_model:) is a row below one (io_device_type, io_subtype): the mirror lists it there
+    only, its word replaces the kind's, a model the kind does not offer falls back to the kind, and
+    the codegen reads the value from the entry."""
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as p
+
+    t = v.DEVICE_TYPE_OPTIONS
+    towel = v.DEVICE_MODEL_OPTIONS["towel_dryer"]
+    assert towel == 1
+    assert v.device_models(t["electrical_heater"], 1) == ["towel_dryer"]
+    assert v.device_models(t["electrical_heater"], 0) == []
+    assert v.device_models(t["roller_shutter"]) == []
+    assert v.device_models(0x14, 1) == [], "a raw type with no name has no models"
+    assert v.device_features(t["electrical_heater"], 1, towel) & v.FEATURE_WINDOW_COMPANIONS == 0
+    assert v.device_features(t["electrical_heater"], 1) == v.FEATURE_WINDOW_COMPANIONS, "no model: the radiator"
+    assert v.device_features(t["roller_shutter"], 0, towel) == v.device_features(t["roller_shutter"])
+    assert not v.kind_is_experimental(t["electrical_heater"], 1, towel)
+    assert p.config_model({"io_model": "towel_dryer"}) == towel
+    assert p.config_model({}) == 0
+    assert v.validate_device_model_name(" Towel_Dryer ") == "towel_dryer"
+    entry = {"io_device_type": t["electrical_heater"], "io_subtype": 1, "io_model": "towel_dryer"}
+    assert p.validate_device_model(entry) is entry, "a post-validator returns its config"
+    assert p._kind_label(t["electrical_heater"], 1, "towel_dryer") == (
+        "electrical_heater (io_subtype 1, io_model towel_dryer)"
+    )
 
 
 @case()

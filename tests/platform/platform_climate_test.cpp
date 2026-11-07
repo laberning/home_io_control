@@ -979,3 +979,234 @@ TEST(PlatformClimate, TemperatureHeatersNeverGetARegisterWrite) {
     EXPECT_TRUE(hub.levels.empty());
   }
 }
+
+// ========================================================================================
+// Towel dryer (52/1, io_model: towel_dryer): its own mode register and a separate preset register
+// ========================================================================================
+
+namespace {
+
+IOHomeClimate make_towel_climate(MockHubClimate &hub) {
+  IOHomeClimate entity = make_bound_climate(hub);
+  entity.set_device_model(DeviceModel::TOWEL_DRYER);
+  return entity;
+}
+
+void perform_preset(IOHomeClimate &entity, ClimatePreset preset) {
+  auto call = entity.make_call();
+  call.set_preset(preset);
+  call.perform();
+}
+
+void perform_custom_preset(IOHomeClimate &entity, const char *name) {
+  auto call = entity.make_call();
+  call.set_preset(std::string(name));
+  call.perform();
+}
+
+}  // namespace
+
+TEST(PlatformClimate, TowelDryerTraitsAreExactlyItsProfileWithNoRadiatorPresets) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+  ASSERT_FALSE(entity.is_failed());
+  const ClimateTraits traits = entity.traits();
+
+  EXPECT_EQ(supported_modes(traits),
+            (std::vector<ClimateMode>{CLIMATE_MODE_OFF, CLIMATE_MODE_HEAT, CLIMATE_MODE_AUTO}));
+  EXPECT_EQ(supported_presets(traits), (std::vector<ClimatePreset>{CLIMATE_PRESET_NONE, CLIMATE_PRESET_BOOST}));
+  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Drying"}))
+      << "no Program / Auto: PROG is the dryer's auto mode";
+  EXPECT_TRUE(traits.get_supports_current_temperature());
+  EXPECT_TRUE(traits.get_supports_action());
+  EXPECT_EQ(hub.get_device("ABC123")->model, DeviceModel::TOWEL_DRYER) << "the model reaches the device record";
+}
+
+TEST(PlatformClimate, TowelDryerHvacModesWriteItsModeRegisterAndReadItBack) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+
+  perform_mode(entity, CLIMATE_MODE_HEAT);
+  perform_mode(entity, CLIMATE_MODE_AUTO);
+  perform_mode(entity, CLIMATE_MODE_OFF);
+
+  ASSERT_EQ(hub.calls.size(), 3u);
+  for (const auto &call : hub.calls)
+    EXPECT_EQ(call.fn, HeatingFunction::TOWEL_MODE) << "never the radiator's mode register";
+  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(TowelDryerMode::MANUAL));
+  EXPECT_FLOAT_EQ(hub.calls[1].value, static_cast<float>(TowelDryerMode::PROG));
+  EXPECT_FLOAT_EQ(hub.calls[2].value, static_cast<float>(TowelDryerMode::OFF));
+  EXPECT_EQ(hub.reads, (std::vector<HeatingFunction>(3, HeatingFunction::TOWEL_MODE))) << "each write is read back";
+}
+
+TEST(PlatformClimate, TowelDryerModeComesFromItsModeRegisterNotTheRadiators) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+
+  deliver_readings(hub, [](HeatingReadings &r) {
+    r.mode = static_cast<int16_t>(HeatingMode::OFF);  // register 0x0100 is not the dryer's mode
+    r.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
+  });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG); });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO);
+  EXPECT_FALSE(entity.has_custom_preset()) << "PROG is auto, with no Program preset";
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.towel_mode = static_cast<int16_t>(TowelDryerMode::OFF); });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF);
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.towel_mode = static_cast<int16_t>(TowelDryerMode::AUTO); });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF) << "value 1 has never been seen and maps to nothing";
+}
+
+TEST(PlatformClimate, TowelDryerBoostAndDryingAreShownFromTheTemporaryStateAndSurviveEveryPoll) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+
+  deliver_readings(hub, [](HeatingReadings &r) {
+    r.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
+    r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::BOOST);
+  });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_BOOST);
+
+  // The next poll reads the same mode: a mode entry without a preset must not wipe the boost.
+  const int published = entity.publish_count_;
+  deliver_readings(hub, [](HeatingReadings &) {});
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_BOOST);
+  EXPECT_EQ(entity.publish_count_, published) << "nothing changed, nothing published";
+
+  deliver_readings(hub,
+                   [](HeatingReadings &r) { r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::DRYING); });
+  EXPECT_TRUE(entity.has_custom_preset());
+  EXPECT_EQ(entity.get_custom_preset(), "Drying");
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT) << "drying does not change the base mode";
+
+  deliver_readings(hub,
+                   [](HeatingReadings &r) { r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE); });
+  EXPECT_FALSE(entity.has_custom_preset());
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE);
+}
+
+TEST(PlatformClimate, TowelDryerPresetsWriteTheTemporaryStateAndShowAsPresetsNotModes) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+  const ClimateMode before = entity.mode;
+
+  perform_preset(entity, CLIMATE_PRESET_BOOST);
+  ASSERT_EQ(hub.calls.size(), 1u);
+  EXPECT_EQ(hub.calls[0].fn, HeatingFunction::TEMPORARY_STATE);
+  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingTemporaryState::BOOST));
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_BOOST) << "shown until a read lands";
+  EXPECT_EQ(entity.mode, before) << "boost's value 1 is not a mode value";
+  EXPECT_EQ(hub.reads.back(), HeatingFunction::TEMPORARY_STATE) << "read back";
+
+  perform_custom_preset(entity, "Drying");
+  EXPECT_EQ(hub.calls.back().fn, HeatingFunction::TEMPORARY_STATE);
+  EXPECT_FLOAT_EQ(hub.calls.back().value, static_cast<float>(HeatingTemporaryState::DRYING));
+  EXPECT_EQ(entity.get_custom_preset(), "Drying");
+  EXPECT_NE(entity.mode, CLIMATE_MODE_AUTO) << "drying's value 2 is not PROG";
+}
+
+TEST(PlatformClimate, TowelDryerPresetNoneEndsTheBoost) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+  deliver_readings(hub, [](HeatingReadings &r) {
+    r.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
+    r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::BOOST);
+  });
+
+  perform_preset(entity, CLIMATE_PRESET_NONE);
+  ASSERT_EQ(hub.calls.size(), 1u);
+  EXPECT_EQ(hub.calls[0].fn, HeatingFunction::TEMPORARY_STATE);
+  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingTemporaryState::NONE));
+}
+
+TEST(PlatformClimate, TowelDryerModeCommandKeepsTheCommandedBoost) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+
+  perform_preset(entity, CLIMATE_PRESET_BOOST);
+  perform_mode(entity, CLIMATE_MODE_HEAT);
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_BOOST) << "the boost lives in its own register";
+}
+
+TEST(PlatformClimate, TowelDryerActionFollowsTheWorkingRateNotTheRegulator) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+
+  // Boost as two Adelis units report it: regulator 0, working rate 100 %.
+  deliver_readings(hub, [](HeatingReadings &r) {
+    r.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
+    r.regulator = static_cast<int16_t>(HeatingRegulatorState::NONE);
+    r.working_rate = 100;
+  });
+  EXPECT_EQ(entity.action, CLIMATE_ACTION_HEATING);
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.working_rate = 13; });
+  EXPECT_EQ(entity.action, CLIMATE_ACTION_HEATING) << "any working rate above 0 heats";
+
+  deliver_readings(hub, [](HeatingReadings &r) {
+    r.working_rate = 0;
+    r.regulator = static_cast<int16_t>(HeatingRegulatorState::HEATING);
+  });
+  EXPECT_EQ(entity.action, CLIMATE_ACTION_IDLE) << "the regulator is not the dryer's action source";
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.towel_mode = static_cast<int16_t>(TowelDryerMode::OFF); });
+  EXPECT_EQ(entity.action, CLIMATE_ACTION_OFF);
+}
+
+TEST(PlatformClimate, RadiatorIgnoresTheTowelRegistersAndTheNonePreset) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_bound_climate(hub);  // 52/1 without a model: the AGILIA radiator
+  entity.setup();
+
+  deliver_readings(hub, [](HeatingReadings &r) {
+    r.mode = static_cast<int16_t>(HeatingMode::MANUAL);
+    r.regulator = static_cast<int16_t>(HeatingRegulatorState::STANDBY);
+    r.towel_mode = static_cast<int16_t>(TowelDryerMode::OFF);
+    r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::BOOST);
+    r.working_rate = 100;
+  });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT) << "the mode is register 0x0100";
+  EXPECT_EQ(entity.action, CLIMATE_ACTION_IDLE) << "the action is the regulator";
+  EXPECT_FALSE(entity.preset.has_value());
+  EXPECT_FALSE(entity.has_custom_preset());
+
+  perform_preset(entity, CLIMATE_PRESET_NONE);
+  perform_preset(entity, CLIMATE_PRESET_BOOST);
+  EXPECT_TRUE(hub.calls.empty()) << "the radiator offers neither";
+
+  perform_mode(entity, CLIMATE_MODE_OFF);
+  ASSERT_EQ(hub.calls.size(), 1u);
+  EXPECT_EQ(hub.calls[0].fn, HeatingFunction::SET_MODE);
+  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingMode::OFF));
+}
+
+TEST(PlatformClimate, RadiatorProgramPresetStillComesFromTheModeRegister) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_bound_climate(hub);
+  entity.setup();
+
+  perform_custom_preset(entity, "Program");
+  ASSERT_EQ(hub.calls.size(), 1u);
+  EXPECT_EQ(hub.calls[0].fn, HeatingFunction::SET_MODE);
+  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingMode::PROG));
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO) << "a commanded preset shows through the mode table";
+  EXPECT_EQ(entity.get_custom_preset(), "Program");
+}
