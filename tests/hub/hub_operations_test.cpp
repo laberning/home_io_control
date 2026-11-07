@@ -2124,6 +2124,7 @@ TEST(HubOperations, HotWaterDeclaredAsSwitchQueuesNoStatusRequestAndCountsNoFail
   setup_cover_component(comp, radio);
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
+  dev->entity_class = DeviceCapabilityClass::SWITCH;
   test::set_kind(*dev, DeviceType::DOMESTIC_HOT_WATER);
 
   comp.queue_request_device_status("ABC123");

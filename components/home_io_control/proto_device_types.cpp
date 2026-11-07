@@ -34,6 +34,7 @@ constexpr DeviceCapabilityClass CAP_SWITCH = DeviceCapabilityClass::SWITCH;
 constexpr DeviceCapabilityClass CAP_LOCK = DeviceCapabilityClass::LOCK;
 constexpr DeviceCapabilityClass CAP_CLIMATE = DeviceCapabilityClass::CLIMATE;
 constexpr DeviceCapabilityClass CAP_HEATER_LEVEL = DeviceCapabilityClass::HEATER_LEVEL;
+constexpr DeviceCapabilityClass CAP_WATER_HEATER = DeviceCapabilityClass::WATER_HEATER;
 
 constexpr uint8_t SELECTABLE_PLATFORM =
     YAML_SELECTABLE | HAS_PLATFORM;                 ///< Type row that YAML can name and a platform drives.
@@ -101,7 +102,10 @@ constexpr size_t TYPE_HEX_BUFFER_SIZE = 24;  ///< "unknown type 0x3FF" plus marg
 /// 6/2, 7/58, 9/1, 9/2, 15/2, 22/1, 22/2, 24/58, 27/1 and 1023/2..5 subtype rows. Discovery and pairing
 /// log them as experimental and the codegen warns when a config declares one. The flag leaves with the
 /// \todo that names a row once a capture or a reporter confirms it. Rows 1, 10 and 13 are not flagged:
-/// their changed behaviour is experimental, their identity is not.
+/// their changed behaviour is experimental, their identity is not. The 51/0 type row is the one type row
+/// that carries the flag: one heater of one brand has been read, its writes are unconfirmed, and the flag
+/// is what makes the codegen warn a user of any other water heater. The flag names its row only: a
+/// subtype without a row of its own does not inherit it (device_is_experimental(), and the Python mirror).
 /// \todo Confirm 6/1 and 6/2 accept the brightness EXECUTE on a real device.
 /// \todo Confirm the 15/2, 9/1, 9/2, 22/x, 7/58, 24/58, 27/1 and 1023/2..5 subtype rows against a capture.
 constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
@@ -210,7 +214,13 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
 
     {DeviceType::SIREN, 0, NO_MODEL, "siren", CAP_NONE, 0, 0},
 
-    {DeviceType::DOMESTIC_HOT_WATER, 0, NO_MODEL, "domestic_hot_water", CAP_NONE, 0, 0},
+    // A domestic hot water heater: readings and mode in family-0x00 registers, the target in the status
+    // main parameter (proto_dhw.h). Read on one Atlantic Calypso Connecte (issue #198); its writes are
+    // unconfirmed.
+    // \todo Confirm on a real heater that the target EXECUTE and the mode write take effect, then drop
+    //       EXPERIMENTAL.
+    {DeviceType::DOMESTIC_HOT_WATER, 0, NO_MODEL, "domestic_hot_water", CAP_WATER_HEATER,
+     SELECTABLE_PLATFORM | EXPERIMENTAL, device_feature::WATER_HEATER},
 
     // Both rows have a heating profile (proto_heating_profiles.cpp): the plain heater is commanded with
     // heating levels in the standard EXECUTE, the one with an adjustable setpoint over the private
@@ -294,6 +304,8 @@ const char *device_platform_name(DeviceType type, uint8_t subtype) {
       return "climate";
     case DeviceCapabilityClass::HEATER_LEVEL:
       return "fan";
+    case DeviceCapabilityClass::WATER_HEATER:
+      return "water_heater";
     // No platform drives these classes; listed so -Wswitch flags a new class that needs a decision.
     case DeviceCapabilityClass::UNKNOWN:
     case DeviceCapabilityClass::SENSOR:
@@ -335,11 +347,13 @@ DeviceFeatures undeclared_kind_features(DeviceCapabilityClass entity_class) {
       return BINARY_COMMAND;
     case DeviceCapabilityClass::HEATER_LEVEL:
       return LEVELS | EXTENDED_POSITION_FRAME;
-    // No EXECUTE position path; listed so -Wswitch flags a new class that needs a decision.
+    // No EXECUTE position path; listed so -Wswitch flags a new class that needs a decision. A water
+    // heater must declare its kind (water_heater.py requires io_device_type), so it is never undeclared.
     case DeviceCapabilityClass::UNKNOWN:
     case DeviceCapabilityClass::SENSOR:
     case DeviceCapabilityClass::BEACON:
     case DeviceCapabilityClass::CLIMATE:
+    case DeviceCapabilityClass::WATER_HEATER:
       return 0;
   }
   return 0;

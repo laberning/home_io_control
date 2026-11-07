@@ -1,0 +1,82 @@
+id: atlantic_calypso_exchange_register_read
+description: >
+  An Atlantic Calypso Connecte 200 L heat-pump water heater (node F9CF0F, type 51 subtype 0) answering
+  `register_00` reads `0C 60 00 <index>` from the reporter's SX1276 hub C0FFEE (issue #198, comments of
+  2026-11-03 and 2026-11-06). Each answer is CMD_WRITE_PRIVATE_ACK (0x21) echoing the four header bytes,
+  then the value, big-endian. Only the answers were logged (the probe's `index=` lines); the requests are
+  not in this capture, and the reads were not challenged.
+
+  What the frames show, with what the display said at the time:
+    - 0x0017 water temperature, first two value bytes signed tenths: 01 F0 = 49.6 C (run A), 02 45 =
+      58.1 C (boost run); the four bytes after them never changed.
+    - 0x0006 mode: 00 in AUTO, 01 in manual with ECO on (54 C, 4 showers), 02 in manual with ECO off
+      (62 C, 5 showers).
+    - 0x0021 what is heating: idle 00 FF 00 00 00 ..., heat pump running 01 FF 00 01 01 ..., boost
+      (heat pump and electric element) 01 FF 01 01 01 ...
+    - 0x0004 energy since installation, 32-bit Wh: 00 1B F3 42 = 1 831 746 Wh, the display's
+      "since start" 1 831 kWh; 00 1B F3 97 after the heat pump ran.
+    - 0x0000 boost: 01 while a one-day boost ran, 00 otherwise.
+    - 0x0007 brand letter: 41 ('A').
+
+  Community capture: no system key, and no authenticated bytes are included.
+source:
+  device: "Atlantic Calypso Connecte 200 L heat-pump water heater (node F9CF0F)"
+  captured_with: sx1276
+  firmware: "main around 2026-11-03 and 2026-11-06 with the register_00 probe, diagnostic_probes: true"
+  date: 2026-11-06
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/198"
+key: unknown
+frames:
+  - dir: rx
+    hex: "92 00 C0 FF EE F9 CF 0F 21 0C 60 00 17 01 F0 00 5C 02 78"
+    crc: absent
+    note: "register 0x0017 (2026-11-03 22:27:59, run A, AUTO): water 01 F0 = 49.6 C"
+  - dir: rx
+    hex: "8D 00 C0 FF EE F9 CF 0F 21 0C 60 00 06 00"
+    crc: absent
+    note: "register 0x0006 (2026-11-03 22:25:56, run A): display AUTO, value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE F9 CF 0F 21 0C 60 00 06 01"
+    crc: absent
+    note: "register 0x0006 (2026-11-03 23:04:02, run B): display manual, ECO on, 54 C: value 01"
+  - dir: rx
+    hex: "8D 00 C0 FF EE F9 CF 0F 21 0C 60 00 06 02"
+    crc: absent
+    note: "register 0x0006 (2026-11-03 23:11:18, run C): display manual, ECO off, 62 C: value 02"
+  - dir: rx
+    hex: "94 00 C0 FF EE F9 CF 0F 21 0C 60 00 21 00 FF 00 00 00 00 00 00"
+    crc: absent
+    note: "register 0x0021 (2026-11-03 22:28:39, run A): idle"
+  - dir: rx
+    hex: "94 00 C0 FF EE F9 CF 0F 21 0C 60 00 21 01 FF 00 01 01 00 00 00"
+    crc: absent
+    note: "register 0x0021 (2026-11-03 23:12:27, run C): heat pump running"
+  - dir: rx
+    hex: "94 00 C0 FF EE F9 CF 0F 21 0C 60 00 21 01 FF 01 01 01 00 00 00"
+    crc: absent
+    note: "register 0x0021 (2026-11-06 22:22:33, boost on): heat pump and electric element"
+  - dir: rx
+    hex: "90 00 C0 FF EE F9 CF 0F 21 0C 60 00 04 00 1B F3 42"
+    crc: absent
+    note: "register 0x0004 (2026-11-03 22:25:56, run A): 1 831 746 Wh, display 'since start' 1 831 kWh"
+  - dir: rx
+    hex: "90 00 C0 FF EE F9 CF 0F 21 0C 60 00 04 00 1B F3 97"
+    crc: absent
+    note: "register 0x0004 (2026-11-03 23:21:41, run D): 1 831 831 Wh after the heat pump ran"
+  - dir: rx
+    hex: "8D 00 C0 FF EE F9 CF 0F 21 0C 60 00 00 01"
+    crc: absent
+    note: "register 0x0000 (2026-11-06 22:21:43): one-day boost on, value 01"
+  - dir: rx
+    hex: "8D 00 C0 FF EE F9 CF 0F 21 0C 60 00 00 00"
+    crc: absent
+    note: "register 0x0000 (2026-11-06 22:28:47): boost over, value 00"
+  - dir: rx
+    hex: "8D 00 C0 FF EE F9 CF 0F 21 0C 60 00 07 41"
+    crc: absent
+    note: "register 0x0007 (2026-11-03 22:25:56): brand letter 41 ('A')"
+  - dir: rx
+    hex: "92 00 C0 FF EE F9 CF 0F 21 0C 60 00 17 02 45 00 5C 02 78"
+    crc: absent
+    note: "register 0x0017 (2026-11-06 22:22:09, boost on): water 02 45 = 58.1 C"

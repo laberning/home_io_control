@@ -184,6 +184,8 @@ const char *device_capability_class_name(DeviceType type) {
       return "lock";
     case DeviceCapabilityClass::HEATER_LEVEL:
       return "heater_level";
+    case DeviceCapabilityClass::WATER_HEATER:
+      return "water_heater";
     case DeviceCapabilityClass::UNKNOWN:
       return "unknown";
   }
@@ -211,9 +213,10 @@ bool device_has_no_motion(DeviceType type, uint8_t subtype) {
   // The control path is a fact of the (type, subtype); a model's profile keeps it.
   const HeatingProfile *profile = find_heating_profile(type, subtype, DeviceModel::NONE);
   // A heater commanded with an EXECUTE (levels, temperatures) never moves; a register heater is not
-  // polled with 0x03 at all.
+  // polled with 0x03 at all. A water heater answers a status read but never moves either.
   return (profile != nullptr && profile->path != HeatingControlPath::PRIVATE_REGISTERS) ||
-         device_supports_heat_level_control(type);
+         device_supports_heat_level_control(type) ||
+         has_feature(device_features(type, subtype, DeviceModel::NONE), device_feature::WATER_HEATER);
 }
 
 bool device_supports_climate_control(DeviceType type, uint8_t subtype) {
@@ -244,6 +247,8 @@ const char *device_operation_profile_name(DeviceType type, uint8_t subtype) {
       return "lock";
     case DeviceCapabilityClass::HEATER_LEVEL:
       return "heat_level";
+    case DeviceCapabilityClass::WATER_HEATER:
+      return "water_heater";
     case DeviceCapabilityClass::CLIMATE:
       return "climate";
     case DeviceCapabilityClass::SENSOR:
@@ -280,6 +285,11 @@ void resolve_device_features(IoDevice &dev) {
     if (dev.dimmable && !has_feature(features, device_feature::MAIN_PARAMETER_ONLY))
       features |= device_feature::LEVELS;
   }
+  // The water heater path (its poll, its register reads and writes) belongs to a water heater entity. A
+  // device of that kind bound to another platform (a `switch:` some configs declare only to reach the
+  // register probes) keeps none of it, so its frames stay what they were before that path existed.
+  if (entity_class != DeviceCapabilityClass::WATER_HEATER)
+    features &= static_cast<DeviceFeatures>(~device_feature::WATER_HEATER);
   dev.features = features;
   dev.inverted = dev.invert_override.value_or(has_feature(features, device_feature::INVERTED));
 }

@@ -9,6 +9,7 @@
 /// runtime struct. The per-(type, subtype) names and flags live in the table in proto_device_types.h.
 
 #include "proto_device_features.h"
+#include "proto_dhw.h"
 #include "proto_heating.h"
 #include "proto_sizes.h"
 
@@ -94,6 +95,7 @@ enum class DeviceCapabilityClass : uint8_t {
   CLIMATE = 0x06,       ///< Climate device (heating/cooling).
   LOCK = 0x07,          ///< Lock.
   HEATER_LEVEL = 0x08,  ///< Heater with a heat level in the position field (exterior heating).
+  WATER_HEATER = 0x09,  ///< Domestic hot water heater (device_feature::WATER_HEATER).
 };
 
 /// @brief Convert a DeviceType to a lowercase string identifier.
@@ -562,6 +564,9 @@ struct IoDevice {
   HeatingReadings heating{};             ///< What the hub has read from a heater over the private register protocol
                                          ///< (room temperature, setpoint, mode, regulator state). Set only from decoded
                                          ///< replies; stays "never read" for every other device type.
+  DhwReadings dhw{};                     ///< What the hub has read from a water heater (device_feature::WATER_HEATER):
+                                         ///< family-0x00 registers and the status reply's target. Set only from
+                                         ///< decoded replies; stays "never read" for every other device type.
   bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
                                  ///< line names the level even when the device reports none.
   bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every

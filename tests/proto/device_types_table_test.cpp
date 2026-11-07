@@ -412,6 +412,7 @@ TEST(DeviceTypesTableExperimental, ExactlyTheRowsNoCaptureOrReportConfirmsAreFla
       {DeviceType::HEAT_PUMP, 2},
       {DeviceType::SWINGING_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY},
       {DeviceType::SLIDING_WINDOW, 1},
+      {DeviceType::DOMESTIC_HOT_WATER, 0},
       {DeviceType::REMOTE_CONTROLLER, 2},
       {DeviceType::REMOTE_CONTROLLER, 3},
       {DeviceType::REMOTE_CONTROLLER, 4},
@@ -425,14 +426,15 @@ TEST(DeviceTypesTableExperimental, ExactlyTheRowsNoCaptureOrReportConfirmsAreFla
   EXPECT_EQ(flagged, expected);
 }
 
-TEST(DeviceTypesTableExperimental, NoTypeRowIsExperimental) {
-  // The Python mirror falls back from a subtype to its type's word, so a type row that carried the
-  // marker would leak it onto every subtype.
-  test::for_each_table_row([](const DeviceTypeInfo &row) {
-    if (row.subtype == 0) {
-      EXPECT_EQ(row.flags & device_type_flags::EXPERIMENTAL, 0u) << format_device_ids(row.type, row.subtype);
-    }
-  });
+TEST(DeviceTypesTableExperimental, AnExperimentalTypeRowFlagsOnlyItself) {
+  // The water heater row is the one experimental type row. Its marker names that row: a subtype without
+  // a row of its own takes the type's capabilities but not the marker (the Python mirror drops it on the
+  // same fallback, device_features_sync_test.cpp).
+  EXPECT_TRUE(device_is_experimental(DeviceType::DOMESTIC_HOT_WATER, 0));
+  EXPECT_FALSE(device_is_experimental(DeviceType::DOMESTIC_HOT_WATER, 1));
+  EXPECT_FALSE(device_is_experimental(DeviceType::DOMESTIC_HOT_WATER, SUBTYPE_MAIN_PARAMETER_ONLY));
+  EXPECT_TRUE(
+      has_feature(device_features(DeviceType::DOMESTIC_HOT_WATER, 1, DeviceModel::NONE), device_feature::WATER_HEATER));
 }
 
 TEST(DeviceTypesTableExperimental, TheLookupFlagsOnlyAnExactRow) {

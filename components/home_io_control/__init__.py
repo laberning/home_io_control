@@ -102,7 +102,21 @@ from .hub_validators import (  # noqa: F401
 )
 
 DEPENDENCIES = ["api", "spi"]
-AUTO_LOAD = ["binary_sensor", "button", "climate", "cover", "fan", "light", "lock", "number", "select", "sensor", "switch", "text_sensor"]
+AUTO_LOAD = [
+    "binary_sensor",
+    "button",
+    "climate",
+    "cover",
+    "fan",
+    "light",
+    "lock",
+    "number",
+    "select",
+    "sensor",
+    "switch",
+    "text_sensor",
+    "water_heater",
+]
 MULTI_CONF = False
 
 

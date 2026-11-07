@@ -739,6 +739,27 @@ class IOHomeControlComponent : public Component,
   ///        EXECUTE).
   /// @return true when the device accepted the command.
   virtual bool set_heating_temperature(const std::string &device_id, uint16_t main_parameter, const HeatingFp &fp);
+  /// @brief Set a water heater's target temperature.
+  ///
+  /// A main-parameter-only EXECUTE with the target on the relative scale over DHW_TARGET_MIN_C..
+  /// DHW_TARGET_MAX_C (encode_dhw_target()), through the execute-family exchange without the cover's
+  /// movement bookkeeping. The settle poll that follows (poll_dhw_device_()) reads the target back from
+  /// the status reply. Gated on device_feature::WATER_HEATER.
+  /// \todo Experimental: confirm on a real water heater that the display follows the target.
+  /// @param device_id Target device ID (hex string).
+  /// @param celsius Target in degrees Celsius; a value outside the heater's range is refused, not clamped.
+  /// @return true when the device accepted the command.
+  virtual bool set_water_heater_target(const std::string &device_id, float celsius);
+  /// @brief Set a water heater's operating mode: a write of register 0x0006 (encode_dhw_mode_write()).
+  ///
+  /// The register is read back at once, so the entity shows what the heater then holds, and the next poll
+  /// moves to HEATING_POST_WRITE_POLL_DELAY_MS from now so the heating state follows the change. Gated on
+  /// device_feature::WATER_HEATER.
+  /// \todo Experimental: confirm on a real water heater that the display follows the mode.
+  /// @param device_id Target device ID (hex string).
+  /// @param mode Mode to write.
+  /// @return true only if the device acknowledged the write.
+  virtual bool set_water_heater_mode(const std::string &device_id, DhwMode mode);
   /// @brief Set the temperature encoding range of a heater that carries a temperature in its main
   /// parameter (YAML `min_temperature:` / `max_temperature:`).
   /// @param device_id Target device ID.
@@ -1300,6 +1321,34 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @return true when all four registers were read.
   bool poll_heating_device_(const std::string &device_id);
+  /// @brief Read one family-0x00 register of a water heater raw (read_private_register_() gated on
+  /// device_feature::WATER_HEATER).
+  /// @param device_id Target device ID.
+  /// @param index Low byte of the register.
+  /// @param label What is read, for the log ("dhw_water_temperature").
+  /// @param[out] response The reply; its value bytes start at HEATING_REPLY_VALUE_OFFSET.
+  /// @param max_tries Transmit-attempt cap forwarded to read_private_register_().
+  /// @return true when the device answered with the register's echo.
+  bool read_dhw_register_(const std::string &device_id, uint8_t index, const char *label, IoFrame &response,
+                          uint8_t max_tries);
+  /// @brief Read one family-0x00 register of a water heater and fold its value into IoDevice::dhw.
+  /// @details A value the decoder does not take (an empty value, a mode byte never seen) is logged at
+  ///          DEBUG and leaves the reading as it was; it is still an answer, not a failed read.
+  /// @param device_id Target device ID.
+  /// @param index One of the DHW_REG_* registers.
+  /// @param max_tries Transmit-attempt cap.
+  /// @return true when the device answered.
+  bool read_dhw_reading_(const std::string &device_id, uint8_t index, uint8_t max_tries);
+  /// @brief Poll a water heater: the status read for its target (create_status_mp_fp_read(), the read it has
+  /// answered), then its water temperature, mode, heating state, boost and energy registers (stopping at the
+  /// first failure), then its brand until it has been read once (logged at INFO).
+  ///
+  /// The same ladder, try band and cadence as poll_heating_device_(): a failure moves the retry onto the
+  /// StatusPollPolicy ladder, and the next regular poll is armed one interval out. Called from
+  /// request_device_status() for a device with device_feature::WATER_HEATER.
+  /// @param device_id Target device ID.
+  /// @return true when the status read and every register were answered.
+  bool poll_dhw_device_(const std::string &device_id);
   /// Pop next pending operation from the queue and execute it (set position, request status, discover).
   void process_pending_operation_();
 

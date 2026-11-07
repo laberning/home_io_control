@@ -1,5 +1,5 @@
 # expect-error: status_poll_interval must be at least 60000ms for the climate platform
-# covers: climate._validate_climate_poll_interval
+# covers: platform_common.validate_register_poll_interval
 packages:
   common: !include ../_common.yaml
   board: !include ../../../../config/boards/heltec-v3.yaml

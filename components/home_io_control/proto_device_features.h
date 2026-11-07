@@ -55,6 +55,10 @@ static constexpr DeviceFeatures EXTENDED_POSITION_FRAME = 1U << 7U;
 static constexpr DeviceFeatures WINDOW_COMPANIONS = 1U << 8U;
 /// Direction inverted by default (horizontal awnings: IO 0 is closed).
 static constexpr DeviceFeatures INVERTED = 1U << 9U;
+/// Read and commanded as a domestic hot water heater: family-0x00 registers (proto_dhw.h) for its
+/// readings and mode, the status main parameter for its target temperature. Gates the water heater
+/// poll, its register reads and writes, and the `water_heater:` platform.
+static constexpr DeviceFeatures WATER_HEATER = 1U << 10U;
 }  // namespace device_feature
 
 /// @brief True when every bit of `bit` is set in `set`.

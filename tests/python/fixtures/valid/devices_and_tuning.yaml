@@ -95,3 +95,19 @@ climate:
     name: "Heat Pump"
     io_device_id: "7081A3"
     io_device_type: heat_pump
+
+# A domestic hot water heater with every opt-in companion (ADR 0068).
+water_heater:
+  - platform: home_io_control
+    name: "Hot Water"
+    io_device_id: "F9CF0F"
+    io_device_type: domestic_hot_water
+    status_poll_interval: 120s
+    energy:
+      name: "Hot Water Energy"
+    heat_pump_running:
+      name: "Hot Water Heat Pump"
+    electric_backup_running:
+      name: "Hot Water Electric Backup"
+    boost:
+      name: "Hot Water Boost"

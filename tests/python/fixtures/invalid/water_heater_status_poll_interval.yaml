@@ -1,0 +1,12 @@
+# expect-error: status_poll_interval must be at least 60000ms for the water_heater platform
+# covers: platform_common.validate_register_poll_interval
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+water_heater:
+  - platform: home_io_control
+    name: "Hot Water"
+    io_device_id: "F9CF0F"
+    io_device_type: domestic_hot_water
+    status_poll_interval: 30s
