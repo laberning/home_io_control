@@ -744,22 +744,33 @@ class IOHomeControlComponent : public Component,
   /// A main-parameter-only EXECUTE with the target on the relative scale over DHW_TARGET_MIN_C..
   /// DHW_TARGET_MAX_C (encode_dhw_target()), through the execute-family exchange without the cover's
   /// movement bookkeeping. The settle poll that follows (poll_dhw_device_()) reads the target back from
-  /// the status reply. Gated on device_feature::WATER_HEATER.
-  /// \todo Experimental: confirm on a real water heater that the display follows the target.
+  /// the status reply. Gated on device_feature::WATER_HEATER. The heater's display follows the target
+  /// (issue #198).
   /// @param device_id Target device ID (hex string).
   /// @param celsius Target in degrees Celsius; a value outside the heater's range is refused, not clamped.
   /// @return true when the device accepted the command.
   virtual bool set_water_heater_target(const std::string &device_id, float celsius);
   /// @brief Set a water heater's operating mode: a write of register 0x0006 (encode_dhw_mode_write()).
   ///
-  /// The register is read back at once, so the entity shows what the heater then holds, and the next poll
-  /// moves to HEATING_POST_WRITE_POLL_DELAY_MS from now so the heating state follows the change. Gated on
-  /// device_feature::WATER_HEATER.
-  /// \todo Experimental: confirm on a real water heater that the display follows the mode.
+  /// The register is read back at once, so the entity shows what the heater then holds, and so is the
+  /// target (the status read of the poll), which the mode decides. The next poll moves to
+  /// HEATING_POST_WRITE_POLL_DELAY_MS from now so the heating state follows the change. Gated on
+  /// device_feature::WATER_HEATER. The heater's display follows the mode (issue #198).
   /// @param device_id Target device ID (hex string).
   /// @param mode Mode to write.
-  /// @return true only if the device acknowledged the write.
+  /// @return true only if the device acknowledged the write; a missed read-back does not change that.
   virtual bool set_water_heater_mode(const std::string &device_id, DhwMode mode);
+  /// @brief Start or end a water heater's boost: a write of register 0x0000 (encode_dhw_boost_write()).
+  ///
+  /// Starting writes the value the register held during a one-day boost, so it asks for one day. The
+  /// register is read back at once, so a switch shows what the heater then holds, and the next poll moves
+  /// to HEATING_POST_WRITE_POLL_DELAY_MS from now so the heating state follows. Gated on
+  /// device_feature::WATER_HEATER.
+  /// \todo Experimental: confirm on a real water heater that this write starts and ends a boost.
+  /// @param device_id Target device ID (hex string).
+  /// @param on true to start a boost, false to end it.
+  /// @return true only if the device acknowledged the write.
+  virtual bool set_water_heater_boost(const std::string &device_id, bool on);
   /// @brief Set the temperature encoding range of a heater that carries a temperature in its main
   /// parameter (YAML `min_temperature:` / `max_temperature:`).
   /// @param device_id Target device ID.
@@ -1339,6 +1350,25 @@ class IOHomeControlComponent : public Component,
   /// @param max_tries Transmit-attempt cap.
   /// @return true when the device answered.
   bool read_dhw_reading_(const std::string &device_id, uint8_t index, uint8_t max_tries);
+  /// @brief Read a water heater's target: the status read it has answered (create_status_mp_fp_read()),
+  /// whose reply update_device_status_() folds into IoDevice::dhw.
+  /// @param device_id Target device ID.
+  /// @param max_tries Transmit-attempt cap.
+  /// @return true when the device answered.
+  bool read_dhw_status_(const std::string &device_id, uint8_t max_tries);
+  /// @brief Write one family-0x00 register of a water heater, then read it back.
+  ///
+  /// Shared by the mode and boost setters, each of which encodes and checks its own payload first. Gated on
+  /// device_feature::WATER_HEATER; the write has the full retry budget, the read-back (read_dhw_reading_())
+  /// updates IoDevice::dhw, and the next poll moves to HEATING_POST_WRITE_POLL_DELAY_MS from now.
+  /// @param device_id Target device ID.
+  /// @param operation What is written, for the log ("hot water mode").
+  /// @param index The register written, which is also the one read back.
+  /// @param payload The encoded write (`0C 61 00 <index> <value>`).
+  /// @param payload_len Its length.
+  /// @return true only if the device acknowledged the write; a missed read-back does not change that.
+  bool write_dhw_register_(const std::string &device_id, const char *operation, uint8_t index, const uint8_t *payload,
+                           size_t payload_len);
   /// @brief Poll a water heater: the status read for its target (create_status_mp_fp_read(), the read it has
   /// answered), then its water temperature, mode, heating state, boost and energy registers (stopping at the
   /// first failure), then its brand until it has been read once (logged at INFO).

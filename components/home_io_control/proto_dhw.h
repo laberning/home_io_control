@@ -21,7 +21,8 @@
 /// tests/corpus/captures/probe/atlantic_calypso_probe_status_mp_fp.yaml, pinned by corpus_dhw_test.cpp).
 ///
 /// The mode write (`0C 61 00 06 <mode>`) and the target EXECUTE are confirmed by the owner of that heater:
-/// its display follows both (issue #198). No reply to either is in the corpus yet.
+/// its display follows both (issue #198). No reply to either is in the corpus yet. The boost write
+/// (`0C 61 00 00 <value>`) has the same form as the mode write but is not confirmed yet.
 
 #include "proto_frame.h"
 #include "proto_heating.h"
@@ -38,8 +39,14 @@ namespace home_io_control {
 /// @brief High byte of every register of a domestic hot water heater (family 0x00).
 static constexpr uint8_t DHW_REGISTER_HIGH_BYTE = 0x00;
 
-/// @brief Register 0x0000: boost. 1 while the owner's one-day boost ran, 0 before and after (one state each).
+/// @brief Register 0x0000: boost. Non-zero while a boost runs: it read 1 during the owner's one-day boost and
+/// 0 before and after it (one state each, issue #198).
 static constexpr uint8_t DHW_REG_BOOST = 0x00;
+/// @brief Value the boost write puts in register 0x0000 to start a boost: the value read during a one-day
+/// boost, the only non-zero value seen.
+static constexpr uint8_t DHW_BOOST_ON_VALUE = 1;
+/// @brief Value the boost write puts in register 0x0000 to end a boost: the value read with no boost running.
+static constexpr uint8_t DHW_BOOST_OFF_VALUE = 0;
 /// @brief Register 0x0004: energy consumed since the heater was installed, 32-bit big-endian, Wh. Matches the
 /// display's "since start" total to the kWh, and rose while the heat pump ran.
 static constexpr uint8_t DHW_REG_ENERGY = 0x04;
@@ -105,13 +112,22 @@ struct DhwReadings {
 /// @return Always 4.
 size_t encode_dhw_register_read(uint8_t index, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]);
 
-/// @brief Encode a write of the operating mode: `0C 61 00 06 <mode>`, the only family-0x00 write.
+/// @brief Encode a write of the operating mode: `0C 61 00 06 <mode>`.
 /// @details Only the three values the heater has reported (DhwMode) are encoded; anything else is refused, so
 ///          a byte the heater has never shown is never written to it.
 /// @param mode Mode value.
 /// @param out Output buffer of HEATING_PAYLOAD_MAX_SIZE bytes.
 /// @return 5, or 0 for a value other than 0, 1 or 2.
 size_t encode_dhw_mode_write(uint8_t mode, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]);
+
+/// @brief Encode a write of the boost register: `0C 61 00 00 <value>`.
+/// @details `on` writes DHW_BOOST_ON_VALUE, the value the register held during a one-day boost, so a boost
+///          started this way asks for one day; `off` writes DHW_BOOST_OFF_VALUE. Same form as the mode write.
+/// \todo Experimental: confirm on the heater that this write starts and ends a boost (issue #198).
+/// @param on true to start a boost, false to end it.
+/// @param out Output buffer of HEATING_PAYLOAD_MAX_SIZE bytes.
+/// @return Always 5.
+size_t encode_dhw_boost_write(bool on, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]);
 
 /// @brief Encode a target temperature as a main parameter over DHW_TARGET_MIN_C..DHW_TARGET_MAX_C.
 /// @param celsius Target; must be finite and within the range (nothing outside it is ever sent).

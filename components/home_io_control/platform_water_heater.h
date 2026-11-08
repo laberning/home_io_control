@@ -16,21 +16,25 @@
 ///
 /// OFF is not offered: no heater has been seen reporting an off state.
 ///
+/// In automatic mode the heater chooses its own target, and its display shows none, so the entity publishes
+/// no target while the heater reports automatic mode, and a target set then is not sent.
+///
 /// State is observed, not predicted, as on the climate entity: the hub polls the heater (default every 5
 /// minutes) and this entity publishes from IoDevice::dhw, which only a decoded reply changes. Until a reading
 /// has arrived an accepted write shows the commanded value; after that the read-back decides.
 ///
-/// The companions (energy, heat pump running, electric backup running, boost) show readings the same poll
-/// already stores and add no radio traffic.
+/// The companions (energy, heat pump running, electric backup running) show readings the same poll already
+/// stores and add no radio traffic; the boost switch shows the boost register the poll reads and writes it.
 ///
 /// The readings, the target EXECUTE and the mode write are confirmed on one Atlantic Calypso Connecte
 /// ([issue #198](https://github.com/laberning/home_io_control/issues/198)): its display follows both writes.
-/// That heater accepts only its own fixed targets (one per shower count), so a value between two steps is
-/// not taken.
+/// That heater accepts only its own fixed targets (one per shower count, all whole degrees), so a value
+/// between two steps is not taken.
 ///
 /// \todo The mode mapping and the target steps rest on that one heater; confirm them on a second one.
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/switch/switch.h"
 #include "esphome/components/water_heater/water_heater.h"
 #include "esphome/core/component.h"
 #include "platform_companion_sensors.h"
@@ -70,20 +74,23 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
   water_heater::WaterHeaterCallInternal make_call() override { return water_heater::WaterHeaterCallInternal(this); }
 
   /// @brief Apply a Home Assistant request: a mode is written to register 0x0006, a target is sent in an
-  /// EXECUTE. Each is independent; a failed send leaves its field as it was.
+  /// EXECUTE. The mode goes first; a target is then not sent while the heater holds automatic mode (it
+  /// chooses its own), judged on the mode read back after the mode write. A failed send leaves its field as
+  /// it was.
   /// @param call The requested changes, already checked against traits() by ESPHome.
   void control(const water_heater::WaterHeaterCall &call) override;
 
  protected:
   /// @brief Current and target temperature, the three modes, and the target range
-  /// DHW_TARGET_MIN_C..DHW_TARGET_MAX_C at a 0.5 C step.
+  /// DHW_TARGET_MIN_C..DHW_TARGET_MAX_C at a 1 C step.
   water_heater::WaterHeaterTraits traits() override;
 
   /// @brief Inbound device-update hook: fold IoDevice::dhw into the entity and publish when a shown field
   /// changed. Ignores updates for other devices.
   void on_device_update_(const std::string &id, const IoDevice &dev);
 
-  /// @brief Copy the readings into the entity's fields.
+  /// @brief Copy the readings into the entity's fields. The target is shown as unknown (NaN) while the
+  /// heater reports automatic mode.
   /// @param readings What the hub has read from the heater.
   /// @return true when a published field changed.
   bool sync_from_readings_(const DhwReadings &readings);
@@ -104,8 +111,7 @@ class IOHomeDhwEnergySensor : public IOHomeCompanionSensor {
   void dump_config() override;
 };
 
-/// @brief Binary sensor of one heating state of the heater: heat pump running, electric backup running, or
-/// boost on.
+/// @brief Binary sensor of one heating state of the heater: heat pump running or electric backup running.
 /// @ingroup hioc_platforms
 ///
 /// No state until the first poll has read the register it shows, so "off" always means the heater said so.
@@ -115,7 +121,6 @@ class IOHomeDhwBinarySensor : public binary_sensor::BinarySensor, public Compone
   enum class Reading : uint8_t {
     HEAT_PUMP,        ///< Register 0x0021 bytes 3/4: the heat pump runs.
     ELECTRIC_BACKUP,  ///< Register 0x0021 byte 2: the electric element heats.
-    BOOST,            ///< Register 0x0000: boost is on.
   };
 
   /// @brief Choose the reading (codegen sets it once).
@@ -132,6 +137,35 @@ class IOHomeDhwBinarySensor : public binary_sensor::BinarySensor, public Compone
 
  protected:
   Reading reading_{Reading::HEAT_PUMP};
+};
+
+/// @brief Switch that starts and ends the heater's boost.
+/// @ingroup hioc_platforms
+///
+/// A write goes through IOHomeControlComponent::set_water_heater_boost(), which writes register 0x0000 and
+/// reads it back; the switch shows what the heater reports (any non-zero value is on), so it has no state
+/// until the first poll and never shows a command the heater did not confirm. Switching on asks for a
+/// one-day boost, the only duration seen.
+///
+/// It never writes at boot: setup() restores nothing, and the codegen sets restore mode DISABLED, so a
+/// reboot cannot end a boost that is running.
+///
+/// \todo Experimental: confirm on a real water heater that switching on starts a boost and switching off
+/// ends it (issue #198).
+class IOHomeDhwBoostSwitch : public switch_::Switch, public Component, public DeviceBoundCompanion {
+ public:
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+  /// @brief Dump switch configuration to the log.
+  void dump_config() override;
+  /// @brief Get setup priority so the parent hub is available first.
+  /// @return setup_priority::DATA.
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+
+ protected:
+  /// @brief Start or end the boost; the read-back publishes the state.
+  /// @param state True to start a boost.
+  void write_state(bool state) override;
 };
 
 }  // namespace home_io_control

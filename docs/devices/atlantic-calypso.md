@@ -3,8 +3,8 @@
 
 A heat-pump water heater with an electric backup element, sold by Atlantic. It speaks io-homecontrol
 two-way, so the hub reads its water temperature, target, mode, what is heating and its energy, and
-sets the target and the mode. One 200 L unit is reported on an SX1276 board
-([issue #198](https://github.com/laberning/home_io_control/issues/198)); see
+sets the target and the mode. Starting a boost from Home Assistant is experimental. One 200 L unit is
+reported on an SX1276 board ([issue #198](https://github.com/laberning/home_io_control/issues/198)); see
 [Water heaters](../configuration/water-heater.md) for the options.
 
 ## What works
@@ -17,11 +17,12 @@ sets the target and the mode. One 200 L unit is reported on an SX1276 board
 | Mode read-back (automatic / manual ECO on / manual ECO off) | ✅ Read; follows the display |
 | Heat pump and electric element running | ✅ Read idle, with the heat pump running, and during a boost |
 | Boost on / off | ✅ Read during a one-day boost and after it |
+| Starting and ending a boost from Home Assistant | ⚠️ Experimental: asks for a one-day boost; not yet confirmed on the heater |
 | Energy since installation | ✅ Read; matches the display's "since start" total |
 | Setting the target from Home Assistant | ✅ Works for the heater's own temperature steps; see [Choosing a target](#choosing-a-calypso-target) |
 | Changing the mode from Home Assistant | ✅ The display follows all three modes |
 | Holiday absence | ✅ Read: the target drops to 20 °C and the heat pump stops |
-| Starting a boost or an absence from Home Assistant | ❌ Not offered yet |
+| Starting an absence from Home Assistant | ❌ Not offered yet |
 | Switching the heater off | ❌ Not offered: no off state has been seen |
 
 ## Modes in Home Assistant
@@ -33,8 +34,15 @@ sets the target and the mode. One 200 L unit is reported on an SX1276 board
 | Manual, ECO off | `performance` |
 
 The heater's manual mode heats to the target you set. In AUTO the heater chooses its own target
-between 50 and 62 °C and its display shows none. Home Assistant still shows the value the status
-reply carries in AUTO (60 °C on the reported unit), which is not a target you set.
+between 50 and 62 °C and its display shows none, so Home Assistant shows no target either. A target
+you set while the heater is in AUTO is not sent; the log says so:
+
+```text
+Device F9CF0F: target ignored in automatic mode, the heater chooses its own
+```
+
+Switch to `eco` or `performance` first. The hub reads the target again right after a mode change,
+so the card shows the heater's manual target within a second or two.
 
 ## Choosing a Calypso target
 
@@ -47,8 +55,19 @@ them; the heater does not take a value between two steps. The steps known for th
 | 4 | 54 °C |
 | 5 | 62 °C |
 
-The heater's manual lists every step for each tank size. The card offers 20 to 62 °C in 0.5 °C steps,
+The heater's manual lists every step for each tank size. The card offers 20 to 62 °C in 1 °C steps,
 so pick a listed value there.
+
+## Starting a boost
+
+> [!NOTE]
+> Boost from Home Assistant is experimental: the heater has not yet been seen to follow it.
+
+The `boost:` option creates a switch. Turn it on to start a boost and off to end it. A boost started
+from Home Assistant asks for one day, the duration seen when the owner started a boost on the display.
+The switch shows what the heater reports, read back right after each change and at every poll, so it
+stays off if the heater does not take the boost. The switch writes nothing when the board restarts,
+so a reboot does not end a running boost.
 
 ## Working YAML
 
@@ -66,7 +85,7 @@ water_heater:
       name: "Hot water heat pump"
     electric_backup_running:
       name: "Hot water electric backup"
-    boost:
+    boost:                            # a switch (experimental)
       name: "Hot water boost"
 ```
 
@@ -82,7 +101,8 @@ heater of one brand has been read so far.
 - **Energy** is the energy the heater has used since it was installed, in kWh, counted up by the
   heater. It fits the Home Assistant energy dashboard.
 - **Heat pump running** is on while the compressor runs, **electric backup running** while the electric
-  element heats (seen during boost only), and **boost** while a boost runs.
+  element heats (seen during boost only).
+- **Boost** is on while a boost runs: the heater's boost register reads non-zero.
 
 The hub polls the heater every five minutes by default: one status read and five register reads,
 each answered in about 10 ms. At the first poll it also reads the heater's brand letter and logs it
@@ -97,7 +117,11 @@ Device F9CF0F reports hot water brand 'A' (0x41)
 If you own this heater, these answers help:
 
 - The full list of targets and shower counts for your tank size, from the heater's manual.
+- Whether turning the boost switch on starts a boost on the display, and turning it off ends it.
+- Which boost durations the display offers.
+- What the heater does with a target between two of its steps.
 - What the entities show with the heater switched off.
+- What the entities show while a holiday absence runs.
 
 ## Evidence
 

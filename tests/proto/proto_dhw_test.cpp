@@ -59,6 +59,15 @@ TEST(ProtoDhw, ModeWriteRefusesAValueTheHeaterHasNeverShown) {
   EXPECT_EQ(encode_dhw_mode_write(0xFF, out), 0U);
 }
 
+TEST(ProtoDhw, BoostWriteIsFamilyZeroSetOfRegisterZero) {
+  uint8_t out[HEATING_PAYLOAD_MAX_SIZE] = {0};
+  ASSERT_EQ(encode_dhw_boost_write(true, out), 5U);
+  EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x00, 0x01}))
+      << "on writes the value read during a one-day boost";
+  ASSERT_EQ(encode_dhw_boost_write(false, out), 5U);
+  EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x00, 0x00}));
+}
+
 TEST(ProtoDhw, TargetEncodesOnTheRelativeScaleOverTwentyToSixtyTwo) {
   uint16_t mp = 0;
   ASSERT_TRUE(encode_dhw_target(54.0F, mp));
