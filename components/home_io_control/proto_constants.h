@@ -887,6 +887,9 @@ static constexpr uint8_t ATT_CLASS_20MS = 2;  ///< Response within 20 ms.
 static constexpr uint8_t ATT_CLASS_40MS = 3;  ///< Response within 40 ms.
 /// @}
 
+/// Turnaround time of ATT_CLASS_5MS, the shortest class; att_class_ms() doubles it per class.
+static constexpr uint32_t ATT_CLASS_5MS_TURNAROUND_MS = 5;
+
 /// @brief Power save mode values from the Multi Information Byte.
 ///
 /// Extracted from `flags & DISCOVERY_FLAGS_POWER_SAVE_MASK`.
@@ -899,8 +902,15 @@ static constexpr uint8_t POWER_SAVE_LOW_POWER = 1;     ///< Device sleeps — ne
 /// @brief Extract the ATT class field from a discovery response's Multi Information Byte.
 /// @param flags Multi Information Byte (data[DISCOVERY_RESP_FLAGS_OFFSET]).
 /// @return ATT class value (0–3); pass to att_class_name() for a human-readable string.
-inline uint8_t discovery_att_class(uint8_t flags) {
+constexpr uint8_t discovery_att_class(uint8_t flags) {
   return (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
+}
+
+/// @brief Turnaround time of an ATT class in milliseconds: 5, 10, 20 or 40 (each class doubles it).
+/// @param att_class ATT class (0–3), e.g. from discovery_att_class().
+/// @return The class's turnaround time in milliseconds.
+constexpr uint32_t att_class_ms(uint8_t att_class) {
+  return static_cast<uint32_t>(ATT_CLASS_5MS_TURNAROUND_MS) << att_class;
 }
 
 /// @brief Extract the power save mode field from a discovery response's Multi Information Byte.

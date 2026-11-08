@@ -13,8 +13,11 @@
 
 #include "hub_hooks.h"
 #include "pairing_responder.h"
+#include "proto_commands.h"
+#include "proto_constants.h"
 #include "proto_frame.h"
 #include "proto_sizes.h"
+#include "proto_timing.h"
 
 #include "esphome/core/hal.h"  // millis() for the inline awaiting_reply()
 
@@ -24,6 +27,17 @@
 
 namespace esphome {
 namespace home_io_control {
+
+/// How long after receiving a frame it answers the responder stays on that frame's channel: the
+/// window a device keeps a session open for the controller's next frame (DEVICE_SESSION_WAIT_BASE_MS
+/// plus the turnaround time the responder advertises in KEY_EXTRACTION_DISCOVER_RESP_FLAGS). The
+/// peer's in-session frame (the `0x32` after our `0x3C`, the `0x3C` after our `0x37`) comes on that
+/// channel within it, with a short preamble. After it the responder scans all three channels again,
+/// as a device does once its session ends: the peer's next *request* is a new transmission that may
+/// go out on any channel.
+/// \todo Measure on hardware how soon a third-party hub's in-session frame follows our reply.
+static constexpr uint32_t KEY_EXTRACTION_SESSION_WINDOW_MS =
+    DEVICE_SESSION_WAIT_BASE_MS + att_class_ms(discovery_att_class(KEY_EXTRACTION_DISCOVER_RESP_FLAGS));
 
 // Forward declarations — full definitions included only in key_extraction_responder.cpp.
 struct TuningConfig;
@@ -77,8 +91,22 @@ class KeyExtractionResponder {
   /// clang-tidy threshold, mirroring PairingEngine::record_discovery_rx_telemetry_()'s reason for
   /// existing.
   /// @param frame Parsed inbound frame.
+  /// @param rx_freq_hz Channel the frame was received on (RadioRxPacket::freq_hz); 0 if unknown,
+  ///                   which counts as CH2. Answering the frame makes it the session channel.
   /// @return true if the frame was handled (caller should stop further dispatch for it).
-  [[nodiscard]] bool try_handle_frame(const IoFrame &frame);
+  [[nodiscard]] bool try_handle_frame(const IoFrame &frame, uint32_t rx_freq_hz = 0);
+
+  /// Channel of the session the responder last replied in: the channel the frame it answered came
+  /// in on, CH2 until it has answered anything. Replies go out on it (the `0x29` ends on it), and
+  /// loop() stays on it while in_session_hold().
+  [[nodiscard]] uint32_t session_freq() const { return this->session_freq_; }
+
+  /// True while awaiting_reply() and the frame the responder last answered was received less than
+  /// KEY_EXTRACTION_SESSION_WINDOW_MS ago: loop() then stays on session_freq() for the peer's
+  /// in-session frame. Once false (while still awaiting a reply), loop() scans all three channels.
+  [[nodiscard]] bool in_session_hold() const {
+    return this->awaiting_reply() && (millis() - this->session_rx_ms_) < KEY_EXTRACTION_SESSION_WINDOW_MS;
+  }
 
   /// Generate a random throwaway node ID for one key-extraction arm cycle, avoiding collisions
   /// with the broadcast addresses, this hub's own real node ID, and any registered device.
@@ -96,19 +124,19 @@ class KeyExtractionResponder {
   /// True whenever the responder has replied at least once, is waiting on the hub's next step, and
   /// that wait is still within its bounded hold window — i.e. `key_extraction_ctx_.state` is
   /// neither DISARMED (feature unused) nor ARMED_IDLE (armed, but no discovery request seen yet),
-  /// AND `key_extraction_hold_deadline_ms_` has not yet passed. loop() uses this to hold CH2
-  /// instead of running the generic idle-hop scan, and to defer background status polls, while an
-  /// attempt is in flight.
+  /// AND `key_extraction_hold_deadline_ms_` has not yet passed. While it is true, loop() defers
+  /// background status polls and, instead of the generic idle hop, listens for the peer's next frame:
+  /// on session_freq() during in_session_hold(), then with a rotating listen over all three channels.
   ///
-  /// The deadline is a plain timestamp, not a named `set_timeout()` timer: releasing the CH2 hold
-  /// is purely a radio-scheduling optimization (see key_extraction_hold_deadline_ms_'s own doc
+  /// The deadline is a plain timestamp, not a named `set_timeout()` timer: ending this listen is
+  /// purely a radio-scheduling optimization (see key_extraction_hold_deadline_ms_'s own doc
   /// comment for why it is deliberately decoupled from `key_extraction_ctx_.state` itself), so
   /// nothing needs to fire a callback when it lapses — the next loop() iteration simply stops
-  /// taking the CH2-hold branch on its own. Default-constructed, the deadline is 0, which is always
-  /// in the past relative to any real `millis()` reading once the device has been running — so a
+  /// taking the responder-listen branch on its own. Default-constructed, the deadline is 0, which
+  /// is always in the past relative to any real `millis()` reading once the device has been running — so a
   /// mid-exchange state reached without the deadline having been (re)set (e.g. a reply-builder
-  /// failure between the state guard and the deadline update) safely never holds CH2, rather than
-  /// holding it unboundedly.
+  /// failure between the state guard and the deadline update) safely never takes the radio, rather
+  /// than holding it unboundedly.
   ///
   /// Defined inline: defer_background_poll_() calls this every loop() iteration.
   [[nodiscard]] bool awaiting_reply() const {
@@ -121,7 +149,7 @@ class KeyExtractionResponder {
   /// default so a fresh boot never responds to foreign pairing traffic. See pairing_responder.h.
   /// Public so the host tests that script individual RX branches can preset and inspect it.
   pairing_responder::ResponderContext key_extraction_ctx_;
-  /// Deadline (millis()) until which loop() should hold CH2 for the key-extraction responder,
+  /// Deadline (millis()) until which loop() listens for the key-extraction responder's peer,
   /// deliberately independent of `key_extraction_ctx_.state` itself. Set (not "armed" — this is a
   /// plain timestamp, not a named `set_timeout()` timer) on every sign of hub progress: the three
   /// pre-extraction reply handlers (handle_discover_(), handle_discover_confirm_(),
@@ -157,13 +185,13 @@ class KeyExtractionResponder {
   /// node-verification round a CMD_NODE_VERIFY_REQ opened. See
   /// pairing_responder::on_node_verify_challenge().
   void handle_node_verify_challenge_(const IoFrame &frame);
-  /// Transmit a key-extraction reply frame on all 3 IO-homecontrol channels, using the radio
-  /// driver's response_preamble() rather than a fixed SHORT_PREAMBLE/LONG_PREAMBLE constant —
-  /// long enough that a channel-hopping receiver reliably lands on it, short enough that 3
-  /// sequential transmissions don't block the main loop for the better part of a second (see the
+  /// Transmit a key-extraction reply and open the session hold (session_freq(), in_session_hold()).
+  /// A reply to a frame addressed to us goes out once, on the channel that frame came in on, with
+  /// the driver's response_preamble(); the `0x29` answer to a broadcast search goes out on all
+  /// three channels, ending on that channel, with `cold_broadcast_reply_preamble` (see the
   /// implementation comment in key_extraction_responder.cpp for the hardware-confirmed reasoning).
   /// Shared by every RX handler so the preamble choice and channel list are defined once.
-  void broadcast_reply_(const IoFrame &frame);
+  void send_reply_(const IoFrame &frame);
   /// Emit the security-sensitive "system key extracted" log block (see redaction.h — this is the
   /// one deliberate, explicit exception to that file's masking, not a loosening of it).
   void log_result_();
@@ -171,6 +199,15 @@ class KeyExtractionResponder {
   const uint8_t *node_id_;
   RadioDriver **radio_;
   const TuningConfig *tuning_;
+  /// Channel of the frame try_handle_frame() is dispatching, so the handler that answers it can
+  /// make that channel the session's (send_reply_()).
+  uint32_t rx_freq_hz_{FREQ_CH2};
+  /// millis() when try_handle_frame() received that frame.
+  uint32_t rx_ms_{0};
+  /// Channel of the session the responder last replied in; see session_freq().
+  uint32_t session_freq_{FREQ_CH2};
+  /// millis() when the frame the responder last answered was received; see in_session_hold().
+  uint32_t session_rx_ms_{0};
   DeviceRegistry &registry_;
   TransmitFrameFn transmit_;
   NamedTimeoutFn schedule_auto_off_;

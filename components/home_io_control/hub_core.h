@@ -965,11 +965,18 @@ class IOHomeControlComponent : public Component,
   /// @param frame The received frame; its source is a registered device.
   void record_device_event_(const IoFrame &frame);
 
-  /// True while the key-extraction responder is mid-attempt and still within its bounded CH2-hold
+  /// True while the key-extraction responder is mid-attempt and still within its bounded listen
   /// window. Thin forwarder to KeyExtractionResponder::awaiting_reply() (key_extraction_responder.h)
   /// — kept on the hub because defer_background_poll_() and tests/hub/hub_core_test.cpp reach it here,
   /// mirroring the two set_key_extraction_armed* bindings.
   [[nodiscard]] bool key_extraction_awaiting_reply_() const { return this->key_extraction_.awaiting_reply(); }
+
+  /// One idle pass of listening for the key-extraction responder's peer, in place of the generic idle
+  /// hop while key_extraction_awaiting_reply_(). Inside the session window
+  /// (KeyExtractionResponder::in_session_hold()) it keeps the radio on the session's channel, where
+  /// the peer's in-session frame comes; after it, a rotating listen over all three channels for one
+  /// KEY_EXTRACTION_SCAN_SLICE_MS slice, handing a received frame to process_received_packet_().
+  void listen_for_key_extraction_peer_();
 
   /// Extract supported position or metadata info from a response frame and merge it into the device record.
   /// @param frame IoFrame containing a supported inbound command such as CMD_PRIVATE_RESP,
@@ -1045,9 +1052,9 @@ class IOHomeControlComponent : public Component,
   /// is mid-flight. Thin wrapper binding the component's state to
   /// decisions::defer_background_poll_for_1w_activity(), plus a second, independent yield condition:
   /// a background poll is a blocking exchange that owns the radio for 1-3 s, and dispatching one
-  /// while the key-extraction responder is holding CH2 for an expected CMD_KEY_TRANSFER (0x32)
-  /// would swallow it just as thoroughly as a mistimed hop — see loop()'s hop branch (hub_core.cpp)
-  /// for the other half of that hold. Only background polls yield here, same as the 1W rule: a user
+  /// while the key-extraction responder is listening for its peer's next frame (an expected
+  /// CMD_KEY_TRANSFER (0x32), say) would swallow it — see listen_for_key_extraction_peer_() for the
+  /// other half of that listen. Only background polls yield here, same as the 1W rule: a user
   /// command must never wait on either kind of background activity.
   [[nodiscard]] bool defer_background_poll_() const {
     const bool next_op_is_background =

@@ -235,8 +235,8 @@ TEST_P(PairingLoopback, DefaultModeCompletesFullSequenceAndResponderRecoversHubK
       << "0x28, one 0x2C (answered on the first try), 0x31, 0x32";
 
   const std::vector<uint8_t> device_cmds = sent_cmds(device_radio_);
-  EXPECT_EQ(count_cmd(device_cmds, CMD_DISCOVER_CONFIRM_ACK), 3) << "one 0x2D, on all three channels";
-  EXPECT_EQ(count_cmd(device_cmds, CMD_KEY_CONFIRM), 3) << "one 0x33, on all three channels";
+  EXPECT_EQ(count_cmd(device_cmds, CMD_DISCOVER_CONFIRM_ACK), 1) << "one 0x2D, once, on the request's channel";
+  EXPECT_EQ(count_cmd(device_cmds, CMD_KEY_CONFIRM), 1) << "one 0x33, once, on the request's channel";
 
   expect_hub_key_extracted();
   expect_device_registered();
@@ -295,19 +295,19 @@ TEST_P(PairingLoopback, DeviceMissesFirstDiscoverConfirmSecondTryIsAnswered) {
   ASSERT_TRUE(hub_.discover_and_pair());
 
   EXPECT_EQ(count_cmd(sent_cmds(*hub_radio_), CMD_DISCOVER_CONFIRM), 2);
-  EXPECT_EQ(count_cmd(sent_cmds(device_radio_), CMD_DISCOVER_CONFIRM_ACK), 3) << "answered exactly once";
+  EXPECT_EQ(count_cmd(sent_cmds(device_radio_), CMD_DISCOVER_CONFIRM_ACK), 1) << "answered exactly once";
   expect_hub_key_extracted();
 }
 
-/// The hub misses every copy of the first 0x2D. It retries the 0x2C, and the responder, already
+/// The hub misses the first 0x2D. It retries the 0x2C, and the responder, already
 /// past that step, acknowledges again rather than ignoring the repeat.
 TEST_P(PairingLoopback, HubMissesTheAckAndResponderAcknowledgesTheRetry) {
-  drop_to_hub()[CMD_DISCOVER_CONFIRM_ACK] = 3;
+  drop_to_hub()[CMD_DISCOVER_CONFIRM_ACK] = 1;  // the one copy, sent on the 0x2C's channel
 
   ASSERT_TRUE(hub_.discover_and_pair());
 
   EXPECT_EQ(count_cmd(sent_cmds(*hub_radio_), CMD_DISCOVER_CONFIRM), 2);
-  EXPECT_EQ(count_cmd(sent_cmds(device_radio_), CMD_DISCOVER_CONFIRM_ACK), 6) << "one 0x2D per 0x2C";
+  EXPECT_EQ(count_cmd(sent_cmds(device_radio_), CMD_DISCOVER_CONFIRM_ACK), 2) << "one 0x2D per 0x2C";
   expect_hub_key_extracted();
 }
 
@@ -326,17 +326,17 @@ TEST_P(PairingLoopback, DeviceNeverHearsDiscoverConfirmAndPairingStillCompletes)
   expect_device_registered();
 }
 
-/// The hub misses every copy of the device's 0x33. Extraction has already happened on the device
+/// The hub misses the device's 0x33. Extraction has already happened on the device
 /// side, and the responder deliberately answers nothing once it holds a key (every responder guard
 /// rejects EXTRACTED), so the hub's retries go unanswered and its pairing attempt fails. The
 /// feature's goal, the recovered key, is unaffected.
 TEST_P(PairingLoopback, HubMissesKeyConfirmResponderKeepsTheKeyHubPairingFails) {
-  drop_to_hub()[CMD_KEY_CONFIRM] = 3;
+  drop_to_hub()[CMD_KEY_CONFIRM] = 1;  // the one copy, sent on the 0x32's channel
 
   EXPECT_FALSE(hub_.discover_and_pair()) << "a responder holding the key does not re-confirm a retried 0x32 or 0x31";
 
   expect_hub_key_extracted();
-  EXPECT_EQ(count_cmd(sent_cmds(device_radio_), CMD_KEY_CONFIRM), 3) << "the responder confirmed exactly once";
+  EXPECT_EQ(count_cmd(sent_cmds(device_radio_), CMD_KEY_CONFIRM), 1) << "the responder confirmed exactly once";
 }
 
 INSTANTIATE_TEST_SUITE_P(PairingLoopback, PairingLoopback,

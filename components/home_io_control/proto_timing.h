@@ -105,6 +105,14 @@ constexpr TxWake tx_wake_for(bool start, uint16_t preamble) {
 /// roll-call): both wait for the same class of short protocol frame, so there is no measured
 /// reason for them to differ.
 static constexpr uint32_t PREAMBLE_LINGER_DWELL_MS = 15;
+
+/// Base of the window a device in a session keeps open for the controller's next frame: the device
+/// listens on the session's channel for this long plus its own turnaround time (the ATT class it
+/// advertises in its `0x29`, att_class_ms()), counted from receiving the controller's frame, then
+/// ends the session.
+/// \todo Confirm on hardware with a capture of a device's in-session timing.
+static constexpr uint32_t DEVICE_SESSION_WAIT_BASE_MS = 35;
+
 // Chip-specific defaults (response preamble, post-TX settle, per-chip discovery hop slices
 // for SX1262 and LR1121) live beside their TuningConfig fields in tuning_config.h; the
 // SX1262/LR1121 exchange dwell constants live in radio_sx1262.h / radio_lr1121.h respectively.
