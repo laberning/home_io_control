@@ -3,8 +3,8 @@
 
 An electric towel dryer with a display, sold by Atlantic. Its display names the model
 "ADELIS 2 DIGIT". It speaks io-homecontrol two-way like the
-[Atlantic AGILIA IO](atlantic-agilia-io.md) radiator, so the hub sets its temperature and reads back
-its mode, boost and drying, the room temperature and whether it heats. Two units are reported on an
+[Atlantic AGILIA IO](atlantic-agilia-io.md) radiator, so the hub sets its temperature, mode, boost
+and drying, and reads back all of them with the room temperature and whether it heats. Two units are reported on an
 SX1276 board ([issue #202](https://github.com/laberning/home_io_control/issues/202)); see
 [Heating and climate](../configuration/climate.md#towel-dryers) for the options.
 
@@ -30,8 +30,9 @@ the `io_model:` line yourself.
 | Mode read-back (off / MANUEL / PROG) | ✅ Read on the display's three modes |
 | Boost and drying read-back | ✅ Read during a boost and during a drying run |
 | Heating / idle | ✅ Read: the element's working rate is 100 % in boost and drying |
-| Changing the mode from Home Assistant | ⚠️ Experimental: the write has not been checked against the display |
-| Starting or ending boost and drying from Home Assistant | ⚠️ Experimental: the write has not been checked against the display |
+| Changing the mode from Home Assistant | ✅ The display follows off, MANUEL and PROG at once |
+| Starting or ending boost and drying from Home Assistant | ✅ The display starts and ends both |
+| Boost started on the dryer itself | ✅ Shows as the `boost` preset and `heating` at the next poll |
 
 ## Modes and presets in Home Assistant
 
@@ -91,6 +92,12 @@ like".
   element's working rate instead, which reads 100 % in both.
 - **The remaining boost or drying time is not shown.** The dryer reports it in minutes (rounded up),
   but no entity exposes it yet.
+- **Changes made on the dryer show up at the next poll.** The hub reads the dryer every five minutes
+  by default, so a boost started on the dryer can take that long to appear in Home Assistant. Set
+  `status_poll_interval` on the entry to read it more often.
+- **The weekly program is edited on the dryer.** PROG runs the program stored on the dryer, and Home
+  Assistant cannot change it. To schedule from Home Assistant instead, use `heat` and change the
+  target or the mode from an automation.
 - **A distant unit misses replies.** One of the two units, received at about -90 dBm, answered three
   of six roll-call attempts; the near one, at about -35 dBm, answered every attempt.
 

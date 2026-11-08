@@ -99,10 +99,9 @@ climate:
 | Action | `heating` while the element runs (including boost and drying), `idle`, `off` |
 | Companion entities | None: the towel dryer has no window function |
 
-The readings are confirmed on two Adelis units: the mode, boost and drying, the room temperature, the
-setpoint and whether the element runs. Setting the target temperature is confirmed too. **Changing
-the mode and starting or ending boost and drying from Home Assistant are experimental**: those writes
-have not been checked against the display yet.
+Everything is confirmed on two Adelis units: the readings (mode, boost and drying, room temperature,
+setpoint, whether the element runs) and the writes (target, mode, starting and ending boost and
+drying), each checked against the dryer's display.
 
 The towel dryer is polled with five register reads (room temperature, setpoint, mode, temporary
 state, working rate); the first poll also reads its maximum setpoint. Boost and drying run for the

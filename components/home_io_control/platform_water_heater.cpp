@@ -162,7 +162,7 @@ void IOHomeWaterHeater::dump_config() {
   ESP_LOGCONFIG(
       TAG, "  Status Poll Interval: %" PRIu32 " ms",
       this->status_poll_interval_ms_ != 0 ? this->status_poll_interval_ms_ : HEATING_POLL_DEFAULT_INTERVAL_MS);
-  ESP_LOGCONFIG(TAG, "  Status: readings confirmed on hardware; target and mode writes experimental");
+  ESP_LOGCONFIG(TAG, "  Status: confirmed on hardware (readings, target, mode)");
 }
 
 // === Companions ===

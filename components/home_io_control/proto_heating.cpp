@@ -82,9 +82,8 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
      HeatingValueKind::BOUNDED_BYTE, REGULATOR_STATE_MAX},
     {"max_setpoint", HeatingFunction::MAX_SETPOINT, 0x02, HeatingAccess::READ_ONLY, HeatingValueKind::TENTHS_U16},
     {"window_open", HeatingFunction::WINDOW_OPEN, 0x0E, HeatingAccess::READ_ONLY, HeatingValueKind::BINARY},
-    // Towel-dryer registers: read on two Atlantic Adelis units (corpus atlantic_adelis_probe_*).
-    // \todo Confirm on a real towel dryer that writing 0x0136 changes the displayed mode and writing
-    //       0x013E starts and ends boost and drying (experimental).
+    // Towel-dryer registers: read on two Atlantic Adelis units (corpus atlantic_adelis_probe_*); writing
+    // 0x0136 (mode) and 0x013E (boost, drying) is confirmed against the display (issue #202).
     {"towel_mode", HeatingFunction::TOWEL_MODE, 0x36, HeatingAccess::READ_WRITE, HeatingValueKind::BOUNDED_BYTE,
      TOWEL_MODE_MAX},
     {"temporary_state", HeatingFunction::TEMPORARY_STATE, 0x3E, HeatingAccess::READ_WRITE,

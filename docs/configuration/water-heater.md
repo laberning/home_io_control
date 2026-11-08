@@ -2,9 +2,9 @@
 <!-- doxygen-label: cfg_water_heater -->
 
 > [!NOTE]
-> The water heater platform reads an [Atlantic Calypso Connecté](../devices/atlantic-calypso.md)
-> correctly. Setting the target and the mode is **experimental**: please report whether the heater's
-> display follows.
+> The water heater platform is confirmed on one heater, an
+> [Atlantic Calypso Connecté](../devices/atlantic-calypso.md): readings, target and mode. That heater
+> takes only its own fixed targets; see [Choosing a target](../devices/atlantic-calypso.md#choosing-a-calypso-target).
 
 The `water_heater:` entity drives a domestic hot water heater (node type 51, `domestic_hot_water`). It
 shows the water temperature, the target temperature and the operating mode, and four optional

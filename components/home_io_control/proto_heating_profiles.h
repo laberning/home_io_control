@@ -17,8 +17,6 @@
 ///       or hardware report yet. Confirm with one before calling it supported.
 /// \todo Every 52/1 seen is an Atlantic heater. A non-Atlantic 52/1 would need the heating-level
 ///       path instead; the profile keys on (type, subtype, model), and the model is the YAML's.
-/// \todo Confirm on a real towel dryer that the TOWEL_DRYER profile's mode and preset writes (registers
-///       0x0136 and 0x013E) change what its display shows (experimental).
 
 #include "proto_device_model.h"
 #include "proto_heating.h"

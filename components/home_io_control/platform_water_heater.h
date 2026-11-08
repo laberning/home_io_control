@@ -23,10 +23,12 @@
 /// The companions (energy, heat pump running, electric backup running, boost) show readings the same poll
 /// already stores and add no radio traffic.
 ///
-/// \todo Experimental: the target EXECUTE and the mode write are unconfirmed on hardware. The readings are
-///       confirmed on an Atlantic Calypso Connecte
-///       ([issue #198](https://github.com/laberning/home_io_control/issues/198)); confirm that its display
-///       follows both writes. The mode mapping rests on that one heater.
+/// The readings, the target EXECUTE and the mode write are confirmed on one Atlantic Calypso Connecte
+/// ([issue #198](https://github.com/laberning/home_io_control/issues/198)): its display follows both writes.
+/// That heater accepts only its own fixed targets (one per shower count), so a value between two steps is
+/// not taken.
+///
+/// \todo The mode mapping and the target steps rest on that one heater; confirm them on a second one.
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/water_heater/water_heater.h"
