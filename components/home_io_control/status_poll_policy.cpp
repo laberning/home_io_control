@@ -370,6 +370,28 @@ std::optional<std::string> StatusPollPolicy::pop_ended_device() {
   return id;
 }
 
+void StatusPollPolicy::on_linked_remote_activity() { catchup_burst_open_ = true; }
+
+void StatusPollPolicy::on_exchange_ended(uint32_t now, uint32_t delay_ms) {
+  if (!catchup_burst_open_)
+    return;
+  if (delay_ms == 0) {
+    catchup_burst_open_ = false;
+    catchup_due_ms_ = 0;
+    return;
+  }
+  catchup_due_ms_ = stamp(now + delay_ms);
+}
+
+bool StatusPollPolicy::take_due_catchup(uint32_t now) {
+  // Wrap-safe: before the due time `now - due` is a huge unsigned value (a negative distance).
+  if (!catchup_burst_open_ || catchup_due_ms_ == 0 || now - catchup_due_ms_ > INT32_MAX)
+    return false;
+  catchup_burst_open_ = false;
+  catchup_due_ms_ = 0;
+  return true;
+}
+
 void StatusPollPolicy::note_ended_(const std::string &device_id) {
   if (std::find(ended_.begin(), ended_.end(), device_id) == ended_.end())
     ended_.push_back(device_id);

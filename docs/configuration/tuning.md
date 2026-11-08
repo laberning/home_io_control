@@ -154,6 +154,8 @@ your device may differ.
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the 1024-byte wake-up preamble. See below. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk checks on the transmit channel before the first frame of an exchange is sent without one. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI on the transmit channel below which it counts as free. |
+| `remote_activity_poll_delay_ms` | both | `2000` | 0–120000 ms | Delay from a linked-remote press (not a STOP) to the first status poll of its devices. See below. |
+| `remote_activity_catchup_poll_ms` | both | `0` (off) | 0–600000 ms | Read every device with `linked_remotes` this long after the last exchange that followed a linked-remote press, to catch a press the hub missed. See below. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
 | `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` / `0x0001BB` / `0x0001BF` / `0x00FFFB` | Address the discovery frames are sent to. The last three are device-class addresses — see below. |
 | `pairing_discovery_payload` | both | `none` | `none` / `0x00` | Optional payload byte (used by the alternate command). |
@@ -538,6 +540,44 @@ hub transmit through that.
 > keep the hub from starting an exchange over traffic it can hear. A higher threshold or fewer
 > retries make it transmit over other devices on the band, and depending on your country's rules
 > for the 868 MHz band that may not be allowed. Loosen them for a brief experiment only.
+
+### Polls after a linked-remote press — in detail
+
+The radio cannot listen while the hub transmits, so a press that starts during one of the hub's
+own polls is lost (see [When a press is missed](remotes.md#when-a-press-is-missed)). These two
+parameters change what the hub does after a press on a remote in a device's `linked_remotes`
+([ADR 0069](../adr/0069-linked-remote-activity-is-followed-by-an-opt-in-catch-up-read.md)). Their
+defaults keep the behaviour without them.
+
+#### `remote_activity_poll_delay_ms`
+
+Delay from a linked-remote press to the first status poll of the devices it controls. The hub
+then follows the move as after any command. A STOP still polls at once. Polls after another
+two-way controller's traffic keep the 2-second delay.
+
+*Observations:* people press a remote several times, or press two remotes one after another, in
+the seconds after the first press, which is when the default polls run. On a `low_power` cover
+whose full travel takes long (about 35 s on a VELUX solar screen), a delay a little longer than
+that travel polls once at rest instead of tracking the move. That keeps the radio listening while
+someone is at the remotes and needs fewer exchanges, at the cost of a later position update.
+
+#### `remote_activity_catchup_poll_ms`
+
+Off at `0`, the default. Otherwise a linked-remote press opens a burst, and every exchange the hub
+runs while it is open moves its catch-up out to this many milliseconds after that exchange. When
+the catch-up is due, the hub reads every device with `linked_remotes`, by remote id or by
+`class:`, once, and the burst closes. A read the device does not answer is retried like a
+follow-up poll within the device's follow-up window, so a cover that a missed press set moving is
+read again once it rests.
+
+*Observations:* it costs one read per linked device per burst, and nothing while nobody touches a
+remote. That suits `low_power` covers, where
+[`status_refresh_interval`](cover.md#refreshing-the-status-at-rest) wakes the motor at every
+interval. A value longer than the covers' travel time avoids the retries: a moving VELUX solar
+screen answered none of the reads sent to it in
+[issue #209](https://github.com/laberning/home_io_control/issues/209). A press the hub missed
+without hearing any other press before it opens no burst, so `status_refresh_interval` remains the
+answer for that.
 
 ### Pairing protocol — in detail
 

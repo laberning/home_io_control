@@ -45,6 +45,8 @@ home_io_control:
     sx1262_discovery_hop_slice_ms: 250
     lbt_max_retries: 3
     lbt_rssi_threshold_dbm: -85
+    remote_activity_poll_delay_ms: 40000
+    remote_activity_catchup_poll_ms: 120000   # above 65535: needs the 32-bit field
     low_power_wake_belief: false
     pairing_discovery_commands:
       - "0x28"

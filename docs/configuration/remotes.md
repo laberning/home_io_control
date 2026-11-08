@@ -108,7 +108,10 @@ press the hub hears, a Home Assistant command, or another controller's traffic t
 make it likelier, because each wake-up preamble keeps the transmitter busy for about 0.2 s. See
 [issue #209](https://github.com/laberning/home_io_control/issues/209). On a cover,
 `status_refresh_interval` limits how long the old state can stay: see
-[Refreshing the status at rest](cover.md#refreshing-the-status-at-rest).
+[Refreshing the status at rest](cover.md#refreshing-the-status-at-rest). Two tuning parameters
+act on the press itself: `remote_activity_catchup_poll_ms` reads every linked device once after
+the hub's polls that followed a press, and `remote_activity_poll_delay_ms` delays those polls; see
+[Polls after a linked-remote press](tuning.md#polls-after-a-linked-remote-press--in-detail).
 
 ### What the decoded log tells you
 

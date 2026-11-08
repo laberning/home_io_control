@@ -126,6 +126,9 @@ class DeviceRegistry {
   /// @return Pointer to the device-ID list, or nullptr when no device is linked to that class.
   [[nodiscard]] const std::vector<std::string> *linked_devices_for_class(DeviceType type) const;
 
+  /// Every device with a `linked_remotes` entry, by remote id or by `class:`, once each, sorted.
+  [[nodiscard]] std::vector<std::string> all_linked_devices() const;
+
   /// Set an optimistic target position ahead of a confirming poll/response, and notify.
   ///
   /// No-op (and returns false) when the device is unknown or has `optimistic_state == false`.

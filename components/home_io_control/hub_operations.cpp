@@ -1660,6 +1660,9 @@ void IOHomeControlComponent::process_pending_operation_() {
       this->discover_and_pair();
       break;
   }
+  // Every operation blocks on the radio, so a press that started during it was not heard. While a
+  // burst of linked-remote activity is open, this moves its catch-up read out (ADR 0069).
+  this->poll_policy_.on_exchange_ended(millis(), this->tuning_.remote_activity_catchup_poll_ms);
 }
 
 }  // namespace home_io_control

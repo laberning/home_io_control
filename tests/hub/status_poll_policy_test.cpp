@@ -987,3 +987,80 @@ TEST(StatusPollFrozenCount, AMovingReportThatOpensTheWindowFixesItsDeadlineThere
   EXPECT_EQ(policy.get_poll_deadline("DEV"), T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS) << "a later report never moves it";
   EXPECT_EQ(policy.on_moving_report("DEV", T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS + 1, true), MovingReportAction::END);
 }
+
+// ============================================================================
+// Catch-up read after linked-remote activity (ADR 0069)
+// ============================================================================
+
+static constexpr uint32_t CATCHUP_DELAY_MS = 30000;
+
+TEST(StatusPollPolicy, CatchupIsDueTheDelayAfterTheLastExchangeOfTheBurst) {
+  StatusPollPolicy policy;
+  policy.on_linked_remote_activity();
+  policy.on_exchange_ended(T0, CATCHUP_DELAY_MS);
+  policy.on_exchange_ended(T0 + 3000, CATCHUP_DELAY_MS);
+
+  EXPECT_FALSE(policy.take_due_catchup(T0 + CATCHUP_DELAY_MS)) << "the later exchange moved it out";
+  EXPECT_FALSE(policy.take_due_catchup(T0 + 3000 + CATCHUP_DELAY_MS - 1));
+  EXPECT_TRUE(policy.take_due_catchup(T0 + 3000 + CATCHUP_DELAY_MS));
+  EXPECT_FALSE(policy.take_due_catchup(T0 + 3000 + CATCHUP_DELAY_MS + 1)) << "once per burst";
+}
+
+TEST(StatusPollPolicy, ExchangesWithoutLinkedRemoteActivityNeverDueACatchup) {
+  StatusPollPolicy policy;
+  policy.on_exchange_ended(T0, CATCHUP_DELAY_MS);
+
+  EXPECT_FALSE(policy.take_due_catchup(T0 + 10 * CATCHUP_DELAY_MS));
+}
+
+TEST(StatusPollPolicy, ABurstWithoutAnExchangeNeverComesDue) {
+  StatusPollPolicy policy;
+  policy.on_linked_remote_activity();
+
+  EXPECT_FALSE(policy.take_due_catchup(T0 + 10 * CATCHUP_DELAY_MS));
+}
+
+TEST(StatusPollPolicy, TheCatchupsOwnExchangesDoNotReopenTheBurst) {
+  StatusPollPolicy policy;
+  policy.on_linked_remote_activity();
+  policy.on_exchange_ended(T0, CATCHUP_DELAY_MS);
+  ASSERT_TRUE(policy.take_due_catchup(T0 + CATCHUP_DELAY_MS));
+
+  policy.on_exchange_ended(T0 + CATCHUP_DELAY_MS + 500, CATCHUP_DELAY_MS);  // a catch-up read
+
+  EXPECT_FALSE(policy.take_due_catchup(T0 + 10 * CATCHUP_DELAY_MS));
+}
+
+TEST(StatusPollPolicy, NewActivityAfterACatchupOpensANewBurst) {
+  StatusPollPolicy policy;
+  policy.on_linked_remote_activity();
+  policy.on_exchange_ended(T0, CATCHUP_DELAY_MS);
+  ASSERT_TRUE(policy.take_due_catchup(T0 + CATCHUP_DELAY_MS));
+
+  policy.on_linked_remote_activity();
+  policy.on_exchange_ended(T0 + 2 * CATCHUP_DELAY_MS, CATCHUP_DELAY_MS);
+
+  EXPECT_TRUE(policy.take_due_catchup(T0 + 3 * CATCHUP_DELAY_MS));
+}
+
+TEST(StatusPollPolicy, ACatchupSwitchedOffMidBurstClosesIt) {
+  StatusPollPolicy policy;
+  policy.on_linked_remote_activity();
+  policy.on_exchange_ended(T0, CATCHUP_DELAY_MS);
+  policy.on_exchange_ended(T0 + 1000, 0);                 // tuned to 0 from Home Assistant
+  policy.on_exchange_ended(T0 + 2000, CATCHUP_DELAY_MS);  // switched back on, no new activity
+
+  EXPECT_FALSE(policy.take_due_catchup(T0 + 10 * CATCHUP_DELAY_MS));
+}
+
+TEST(StatusPollPolicy, CatchupDueTimeIsWrapSafe) {
+  StatusPollPolicy policy;
+  const uint32_t ended = UINT32_MAX - 1000;  // the due time wraps past millis() rollover
+  policy.on_linked_remote_activity();
+  policy.on_exchange_ended(ended, CATCHUP_DELAY_MS);
+  const uint32_t due = ended + CATCHUP_DELAY_MS;
+
+  EXPECT_FALSE(policy.take_due_catchup(UINT32_MAX)) << "before the rollover it is not due yet";
+  EXPECT_FALSE(policy.take_due_catchup(due - 1));
+  EXPECT_TRUE(policy.take_due_catchup(due));
+}

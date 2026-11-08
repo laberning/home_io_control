@@ -1169,6 +1169,10 @@ class IOHomeControlComponent : public Component,
   /// Queue every periodic poll that is due: the sensor polls (rain, sun level, battery level) and the
   /// status refresh at rest.
   void queue_due_periodic_polls_();
+  /// Read every device with `linked_remotes` once, when a burst of linked-remote activity has been
+  /// followed by `remote_activity_catchup_poll_ms` without an exchange (ADR 0069). Each read starts
+  /// the device's follow-up window, so a read the device does not answer is retried on the ladder.
+  void queue_due_catchup_reads_();
 
   /// @brief What exchange_and_record_() found.
   enum class RequestResult : uint8_t {

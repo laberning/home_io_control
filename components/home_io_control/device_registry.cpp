@@ -10,6 +10,7 @@
 #include "esphome/core/log.h"
 
 #include <cstring>
+#include <set>
 
 namespace esphome {
 namespace home_io_control {
@@ -191,6 +192,15 @@ void DeviceRegistry::confirm_optimistic_stop(const std::string &device_id) {
   auto it = devices_.find(device_id);
   if (it != devices_.end())
     it->second.optimistic.forget_replaced_movement();
+}
+
+std::vector<std::string> DeviceRegistry::all_linked_devices() const {
+  std::set<std::string> ids;
+  for (const auto &pair : linked_remotes_)
+    ids.insert(pair.second.begin(), pair.second.end());
+  for (const auto &pair : linked_remote_classes_)
+    ids.insert(pair.second.begin(), pair.second.end());
+  return {ids.begin(), ids.end()};
 }
 
 void DeviceRegistry::for_each_linked_remote(

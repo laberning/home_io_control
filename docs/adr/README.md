@@ -69,6 +69,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0079](0079-a-cover-is-followed-by-its-execution-state.md) | A cover is followed by its execution state (amends 0013, 0040, 0061, 0074, 0076) | Byte 0 of a status reply is the KLF 200 execution state (2-4 moving, 0/1/5 not, 3 shows waiting for power); 240 s window fixed at opening; a frozen count backs off 10/15/20 s; a settling status read to a low-power cover in an unknown state leads with one short attempt, over the budget by at most its cost |
 | [0051](0051-pairing-reads-the-key-refusal-and-checks-an-unconfirmed-key.md) | Pairing reads the key refusal and checks an unconfirmed key (amended by 0071) | `0xFE` byte decoded as `code << 3 \| state`; a refused key transfer ends the attempt (`key_transfer_refused`); an unconfirmed one gets an authenticated name read before it fails; `pairing_key_transfer: auto` pulls a remote controller's key, rolls call under it and registers the devices that hold it |
 | [0071](0071-a-pulled-key-without-an-answer-is-proven-by-the-devices-that-hold-it.md) | A pulled key without an answer is proven by the devices that hold it | A pulled key whose giver sends no 0x3D is accepted when a device answers a roll-call under it; challenge bytes repeat within an attempt so late answers still verify; amends 0051 |
+| [0069](0069-linked-remote-activity-is-followed-by-an-opt-in-catch-up-read.md) | Linked-remote activity is followed by an opt-in catch-up read | `remote_activity_poll_delay_ms` sets the delay before the first poll after a linked-remote press; `remote_activity_catchup_poll_ms` reads every linked device once, that long after the last exchange of the burst, as tracked follow-up polls that retry; both under `tuning:`, defaults unchanged |
 | [0058](0058-pairing-reads-the-heater-behind-an-atlantic-pairing-node-directly.md) | Pairing reads the heater behind an Atlantic pairing node directly | After a pull from an Atlantic remote-controller node, one register read of the next address finds the heater; the roll-call is the fallback; a hub-key pull with nothing found ends `hub_key_returned`; pairing-registered devices keep getting their block; the key proof is retried |
 
 ### Interfaces and naming
@@ -202,6 +203,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0077: A moving cover stays awake-believed until its remaining time runs out](0077-a-moving-cover-stays-awake-believed-until-its-remaining-time-runs-out.md)
 - [ADR 0078: Discovery follows the start preamble](0078-discovery-follows-the-start-preamble.md)
 - [ADR 0079: A cover is followed by its execution state](0079-a-cover-is-followed-by-its-execution-state.md)
+- [ADR 0069: Linked-remote activity is followed by an opt-in catch-up read](0069-linked-remote-activity-is-followed-by-an-opt-in-catch-up-read.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one
