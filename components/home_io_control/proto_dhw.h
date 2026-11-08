@@ -20,8 +20,8 @@
 /// tests/corpus/captures/exchange/atlantic_calypso_exchange_register_read.yaml and
 /// tests/corpus/captures/probe/atlantic_calypso_probe_status_mp_fp.yaml, pinned by corpus_dhw_test.cpp).
 ///
-/// \todo The mode write (`0C 61 00 06 <mode>`) and the target EXECUTE are unconfirmed on hardware: no
-///       reply to either has been captured yet. Confirm that the heater's display follows both.
+/// The mode write (`0C 61 00 06 <mode>`) and the target EXECUTE are confirmed by the owner of that heater:
+/// its display follows both (issue #198). No reply to either is in the corpus yet.
 
 #include "proto_frame.h"
 #include "proto_heating.h"

@@ -612,7 +612,7 @@ TEST(HeatingProfilesTowelDryer, PollsItsOwnRegistersAndNoWindow) {
     EXPECT_FALSE(lists(p.boot_registers, p.boot_register_count, never)) << heating_function_name(never);
   }
   EXPECT_EQ(p.action_source, HeatingActionSource::WORKING_RATE);
-  EXPECT_TRUE(p.experimental_writes);
+  EXPECT_FALSE(p.experimental_writes);
 }
 
 TEST(HeatingProfilesTowelDryer, TheRadiatorProfileIsUnchangedAndNeverTouchesTheTowelRegisters) {

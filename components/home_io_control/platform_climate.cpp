@@ -516,8 +516,8 @@ void IOHomeClimate::dump_config() {
       this->status_poll_interval_ms_ != 0 ? this->status_poll_interval_ms_ : HEATING_POLL_DEFAULT_INTERVAL_MS);
   if (const DeviceTypeInfo *model = find_device_model_info(this->device_type_, this->subtype_, this->model_))
     ESP_LOGCONFIG(TAG, "  Model: %s", model->name);
-  // Only the register profiles have run on hardware: an Atlantic AGILIA IO radiator (issue #165) all the
-  // way, an Atlantic Adelis towel dryer (issue #202) for its reads and its setpoint write.
+  // Only the register profiles have run on hardware: an Atlantic AGILIA IO radiator (issue #165) and an
+  // Atlantic Adelis towel dryer (issue #202), both all the way.
   const HeatingProfile *profile = this->profile_();
   const bool registers = profile != nullptr && profile->path == HeatingControlPath::PRIVATE_REGISTERS;
   const char *status = "experimental, unvalidated on hardware";

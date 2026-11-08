@@ -313,7 +313,7 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
      /*mode_fn=*/HeatingFunction::TOWEL_MODE,
      /*preset_fn=*/HeatingFunction::TEMPORARY_STATE,
      HeatingActionSource::WORKING_RATE,
-     /*experimental_writes=*/true},
+     /*experimental_writes=*/false},
 };
 
 const HeatingProfile *find_exact_profile(DeviceType type, uint8_t subtype, DeviceModel model) {

@@ -7,11 +7,6 @@ sets the target and the mode. One 200 L unit is reported on an SX1276 board
 ([issue #198](https://github.com/laberning/home_io_control/issues/198)); see
 [Water heaters](../configuration/water-heater.md) for the options.
 
-> [!NOTE]
-> Changing the target and the mode from Home Assistant is **experimental**: the hub sends both, but
-> nobody has checked yet that the heater's display follows. If you own one, please report what
-> happens.
-
 ## What works
 
 | Capability | Status |
@@ -23,8 +18,9 @@ sets the target and the mode. One 200 L unit is reported on an SX1276 board
 | Heat pump and electric element running | ✅ Read idle, with the heat pump running, and during a boost |
 | Boost on / off | ✅ Read during a one-day boost and after it |
 | Energy since installation | ✅ Read; matches the display's "since start" total |
-| Setting the target from Home Assistant | ⚠️ Experimental |
-| Changing the mode from Home Assistant | ⚠️ Experimental |
+| Setting the target from Home Assistant | ✅ Works for the heater's own temperature steps; see [Choosing a target](#choosing-a-calypso-target) |
+| Changing the mode from Home Assistant | ✅ The display follows all three modes |
+| Holiday absence | ✅ Read: the target drops to 20 °C and the heat pump stops |
 | Starting a boost or an absence from Home Assistant | ❌ Not offered yet |
 | Switching the heater off | ❌ Not offered: no off state has been seen |
 
@@ -36,9 +32,23 @@ sets the target and the mode. One 200 L unit is reported on an SX1276 board
 | Manual, ECO on | `eco` |
 | Manual, ECO off | `performance` |
 
-The heater's manual mode heats to the target you set. In AUTO it picks its own target; the status
-read showed 60 °C there. The number of showers the display offers follows the target, so it has no
-entity of its own.
+The heater's manual mode heats to the target you set. In AUTO the heater chooses its own target
+between 50 and 62 °C and its display shows none. Home Assistant still shows the value the status
+reply carries in AUTO (60 °C on the reported unit), which is not a target you set.
+
+## Choosing a Calypso target
+
+The heater accepts only its own fixed targets, one per number of showers on its display. Set one of
+them; the heater does not take a value between two steps. The steps known for the 200 L unit:
+
+| Showers | Target |
+|---|---|
+| 3 | 50 °C |
+| 4 | 54 °C |
+| 5 | 62 °C |
+
+The heater's manual lists every step for each tank size. The card offers 20 to 62 °C in 0.5 °C steps,
+so pick a listed value there.
 
 ## Working YAML
 
@@ -67,7 +77,8 @@ heater of one brand has been read so far.
 ## What each value is
 
 - **Current temperature** is the water temperature at the tank's probe, in tenths of a degree.
-- **Target temperature** is what the heater reports in its status reply, between 20 and 62 °C.
+- **Target temperature** is what the heater reports in its status reply, between 20 and 62 °C. During
+  a holiday absence it reads 20 °C.
 - **Energy** is the energy the heater has used since it was installed, in kWh, counted up by the
   heater. It fits the Home Assistant energy dashboard.
 - **Heat pump running** is on while the compressor runs, **electric backup running** while the electric
@@ -85,10 +96,8 @@ Device F9CF0F reports hot water brand 'A' (0x41)
 
 If you own this heater, these answers help:
 
-- After setting the target and each mode from Home Assistant, does the display follow?
-- What target does the display show in AUTO?
-- What do the entities show while a holiday absence runs, after a boost ends, and with the heater
-  switched off?
+- The full list of targets and shower counts for your tank size, from the heater's manual.
+- What the entities show with the heater switched off.
 
 ## Evidence
 
