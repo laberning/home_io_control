@@ -578,10 +578,8 @@ def inherit_esphome_device(companion_config, parent_config):
     """Propagate the parent entity's ESPHome sub-device (YAML `device_id:`) onto a hand-built
     companion config dict, so the companion entity groups under the same HA device as its parent.
 
-    Lives here rather than in platform_common.py: it is needed by button.py's pairing-result
-    sensor, which is not a device-bound platform and would otherwise have to import the whole
-    platform-schema module for a four-line helper. platform_common.py re-exports it so cover.py's
-    existing import keeps working.
+    Lives here, a leaf module, so any platform module can import it without the whole
+    platform-schema module; platform_common.py re-exports it for cover.py.
 
     Companion entities (diagnostic sensors, cover favorite/vent buttons, ...) are built from
     dicts fed straight to e.g. new_text_sensor()/new_button() rather than through the platform's

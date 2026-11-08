@@ -242,7 +242,9 @@ def platform_schema_extension():
         cv.Optional(CONF_LOW_POWER): cv.boolean,
         # A key this one device keeps of its own, for a device that does not share the hub's
         # (ADR 0053). Same validator as the hub's system_key; `!secret` works as for any string.
-        cv.Optional(CONF_SYSTEM_KEY): validate_system_key,
+        # cv.sensitive, as on the hub and the 1W controllers, so `esphome config` and the
+        # dashboard mask the key instead of printing it.
+        cv.Optional(CONF_SYSTEM_KEY): cv.sensitive(validate_system_key),
     }
 
 
@@ -309,6 +311,32 @@ def warn_if_experimental_kind(config):
                 REPORTING_DEVICES_URL,
             )
     return config
+
+
+def deprecated_key(key, replacement):
+    """Build a post-validator that warns, without rejecting, about a key that is being retired.
+
+    The first stage of retiring a key: the config stays legal and behaves as before, and one
+    warning names the entity, says the key will become a config error, and gives the replacement.
+    The second stage swaps this validator for one that raises cv.Invalid with the same replacement.
+
+    @param key The YAML key being retired.
+    @param replacement Called with the validated config when the key is present; returns the
+        sentence(s) saying what to write instead and what changes in Home Assistant.
+    """
+
+    def validator(config):
+        if key in config:
+            _LOGGER.warning(
+                "home_io_control: '%s' uses '%s:', which is deprecated and will become a config "
+                "error. %s",
+                config.get(CONF_NAME) or config[CONF_ID].id or "this entity",
+                key,
+                replacement(config),
+            )
+        return config
+
+    return validator
 
 
 # A heater's or a water heater's state moves over minutes and its poll costs one radio exchange per register,

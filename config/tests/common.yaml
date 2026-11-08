@@ -118,7 +118,8 @@ cover:
     linked_remotes: ["class:vertical_exterior_awning", "class:0x14"]
     optimistic_state: false
   # Declaring `silent:` is what generates the runtime Silent Operation switch; the cover above
-  # omits it, so this pair compiles both branches of that codegen.
+  # omits it, so this pair compiles both branches of that codegen. `silent:` is deprecated (ADR
+  # 0069): this entry keeps the deprecated path compiled until the key becomes a config error.
   - platform: home_io_control
     name: "Test Silent Cover"
     io_device_id: "FEEB2E"

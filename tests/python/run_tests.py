@@ -517,6 +517,36 @@ def cover_gets_its_kinds_default_device_class():
     assert documented == v.DEFAULT_COVER_DEVICE_CLASS, "docs/configuration/cover.md device class table"
 
 
+@case()
+def every_key_holding_a_secret_is_masked_in_the_config_dump():
+    """Every system_key the component accepts (hub, device-bound entity, 1W controller) is marked
+    cv.sensitive, so `esphome config` and the dashboard mask it. ESPHome's substring fallback that
+    hid unmarked `*_key` fields goes away in 2026.12.0; an unmarked key would then print in clear."""
+    import esphome.config_validation as cv
+    from esphome.yaml_util import SensitiveStr
+
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+    from esphome.components.home_io_control import platform_common as p
+
+    def validator_for(schema, key):
+        return next(v for k, v in schema.items() if str(k) == key)
+
+    key = "0123456789ABCDEF0123456789ABCDEF"
+    for label, schema in (
+        ("device-bound entity", p.platform_schema_extension()),
+        ("1W controller", o.ONEWAY_CONTROLLER_SCHEMA.schema),
+    ):
+        validator = validator_for(schema, n.CONF_SYSTEM_KEY)
+        assert isinstance(validator, cv.SensitiveValidator), f"{label}: system_key is not cv.sensitive"
+        assert isinstance(validator(key), SensitiveStr), label
+
+    # The hub schema is a cv.All() chain; its first member holds the keys.
+    import esphome.components.home_io_control as hub
+    hub_schema = hub.CONFIG_SCHEMA.validators[0].schema
+    assert isinstance(validator_for(hub_schema, n.CONF_SYSTEM_KEY), cv.SensitiveValidator), "hub"
+
+
 @case("platform_common.require_feature")
 def keys_a_kind_cannot_use_are_rejected_when_the_config_is_built():
     """`silent:` and `travel_speed:` need a kind that takes a travel-speed parameter; `dimmable: true`
@@ -687,6 +717,54 @@ def experimental_kinds_are_marked_in_the_mirror_and_warned_about_once_at_config_
     assert warnings_for({"io_device_type": t["garage_opener"], "io_subtype": 58}) == []
     assert warnings_for({"io_device_type": t["roller_shutter"]}) == []
     assert warnings_for({}) == [], "no declared kind: nothing says what the device is"
+
+
+@case()
+def silent_key_still_works_and_warns_once_with_the_exact_travel_speed_replacement():
+    """`silent:` is deprecated: a cover that declares it is still valid and logs one warning that
+    gives the travel_speed: value matching its boolean (false is fast, not default) and says the
+    switch becomes a select. A cover without the key logs nothing."""
+    import logging
+
+    from esphome.components.home_io_control import cover as c
+    from esphome.components.home_io_control import platform_common as p
+    from esphome.core import ID
+
+    class Capture(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.messages = []
+
+        def emit(self, record):
+            self.messages.append(record.getMessage())
+
+    validator = p.deprecated_key(c.CONF_SILENT, c._silent_replacement)
+
+    def warnings_for(config):
+        capture = Capture()
+        p._LOGGER.addHandler(capture)
+        try:
+            assert validator(config) is config, "a warn-only validator returns its config unchanged"
+        finally:
+            p._LOGGER.removeHandler(capture)
+        return capture.messages
+
+    def cover(**keys):
+        return {"name": "Kitchen", "id": ID("kitchen", is_declaration=True), **keys}
+
+    messages = warnings_for(cover(silent=True))
+    assert len(messages) == 1, messages
+    assert "'Kitchen' uses 'silent:'" in messages[0]
+    assert "will become a config error" in messages[0]
+    assert "'silent: true' with 'travel_speed: silent'" in messages[0]
+    assert "'Kitchen Silent Operation' switch" in messages[0]
+    assert "'Kitchen Travel Speed' select" in messages[0]
+
+    messages = warnings_for(cover(silent=False))
+    assert "'silent: false' with 'travel_speed: fast'" in messages[0], messages
+
+    assert warnings_for(cover(travel_speed="silent")) == []
+    assert warnings_for(cover()) == []
 
 
 @case("platform_common.require_feature")

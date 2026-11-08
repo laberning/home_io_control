@@ -254,12 +254,11 @@ A few additional options worth knowing about:
 - **`low_power: true`** — set this on a solar or battery actuator. Leaving it off on such a device
   is a common reason a hub pairs successfully and then hears nothing back.
 - **`invert_position: true`** — if open and closed come out backwards.
-- **`silent: true`** — move at the manufacturer app's quieter, slower speed. Only kinds that take a
-  travel-speed parameter accept it; config validation says so for the others, among them garage
-  openers, interior venetian blinds and dual roller shutters.
-- **`travel_speed: default`** — move at the motor's own speed, as its wall control pad does, rather
-  than the fast profile the hub asks for otherwise; see
-  [Travel speed](configuration/cover.md#travel-speed). A cover takes either this or `silent:`.
+- **`travel_speed:`** — `silent` moves at the manufacturer app's quieter, slower speed; `default`
+  moves at the motor's own speed, as its wall control pad does, rather than the `fast` profile the
+  hub asks for otherwise. Only kinds that take a travel-speed parameter accept it; config validation
+  says so for the others, among them garage openers, interior venetian blinds and dual roller
+  shutters. See [Travel speed](configuration/cover.md#travel-speed).
 - **`rain_sensor_poll_interval: 15min`** — on a VELUX window with a wired rain sensor, adds a Rain
   sensor binary sensor; see [Polling for rain](configuration/cover.md#polling-for-rain).
 - **`status_refresh_interval: 5min`** — reads a cover at rest once it has reported nothing for
