@@ -176,8 +176,7 @@ async def create_discover_and_pair_button(config, var):
     you cannot read.
 
     inherit_esphome_device() is deliberately NOT called: the hub's own config has no `device_id:`
-    slot for these to inherit -- see that function's docstring. This is the one behaviour the
-    deprecated `button:` platform (button.py) had that this flag form cannot reproduce.
+    slot for these to inherit -- see that function's docstring.
     """
     button_schema = button_component.button_schema(IOHomeDiscoverButton, entity_category=ENTITY_CATEGORY_CONFIG)
     await _create_hub_entity(

@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0065 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0069](0069-a-config-key-is-retired-in-two-stages.md) (`silent:` is deprecated) · **Recorded:** 2026-11
 
 ## Context
 

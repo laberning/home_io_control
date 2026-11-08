@@ -120,10 +120,7 @@ CONF_SCAN_PAIRED_DEVICES_BUTTON_ID = "_scan_paired_devices_button_id"
 # rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above).
 CONF_DISCOVER_AND_PAIR_BUTTON_ID = "_discover_and_pair_button_id"
 # Internal config key for the "Last Pairing Result" companion sensor ID that ships with the button
-# above (injected by the same post-validator, gated on the same flag). Deliberately NOT shared
-# with button.py's identically-purposed CONF_PAIRING_RESULT_SENSOR_ID: during the deprecation
-# window (see button.py) both exist, keying different config dicts -- the hub block here, vs. a
-# legacy button: entry there.
+# above (injected by the same post-validator, gated on the same flag).
 CONF_DISCOVER_AND_PAIR_RESULT_SENSOR_ID = "_discover_and_pair_result_sensor_id"
 # Internal config key for the "Last Device Event" diagnostic sensor ID (injected by post-validator,
 # gated on `diagnostic_probes: true`; same rationale as CONF_ACCEPT_FOREIGN_PAIRING_SWITCH_ID above).
@@ -170,9 +167,7 @@ IOHomeScanPairedDevicesButton = home_io_control_ns.class_(
 )
 # Hub-level "Discover & Pair" button and its companion "Last Pairing Result" diagnostic sensor
 # (platform_hub_controls.h). Created from `home_io_control.discover_and_pair_button: true`, the
-# same shape as the entity above. Declared here (rather than in button.py, which historically owned
-# both) because the deprecated `button:` platform (button.py) also still instantiates them for the
-# duration of its deprecation window and imports both names from the package.
+# same shape as the entity above.
 IOHomeDiscoverButton = home_io_control_ns.class_(
     "IOHomeDiscoverButton", button_component.Button, cg.Component
 )

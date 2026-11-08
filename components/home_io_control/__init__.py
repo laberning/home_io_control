@@ -82,15 +82,12 @@ from .hub_entities import (
     inject_scan_paired_devices_button_id,
 )
 
-# Re-exported for the platform modules (button.py, cover.py, platform_common.py, ...), which
-# import these names from the package itself. CONF_DISCOVER_AND_PAIR_BUTTON,
-# IOHomeControlComponent and validate_device_id are re-exported too; this file already imports
-# them above for its own use.
+# Re-exported for the platform modules (cover.py, platform_common.py, ...), which
+# import these names from the package itself. IOHomeControlComponent and validate_device_id are
+# re-exported too; this file already imports them above for its own use.
 from .hub_names import (  # noqa: F401
     CONF_HOME_IO_CONTROL_ID,
     CONF_LOW_POWER,
-    IOHomeDiscoverButton,
-    IOHomePairingResultTextSensor,
     home_io_control_ns,
 )
 from .hub_validators import (  # noqa: F401

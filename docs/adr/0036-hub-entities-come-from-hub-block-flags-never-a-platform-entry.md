@@ -55,6 +55,10 @@ before, with two additions:
 Removal is deferred to a later release: turn `CONFIG_SCHEMA` into `cv.invalid(...)` (ESPHome's own
 idiom for a retired platform), then delete the file entirely once nobody's build depends on it.
 
+The first half is done (2026-11): `button.py` is only `CONFIG_SCHEMA = cv.invalid(...)`, so a
+leftover entry fails with a message naming `discover_and_pair_button: true`. The file stays for
+that message.
+
 ## Consequences
 
 - Every hub-level entity is now created the same way, from the same kind of flag — the whole point

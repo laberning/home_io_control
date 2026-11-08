@@ -72,7 +72,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0019](0019-declare-what-the-protocol-cannot-report.md) | Declare, don't guess | Undetectable capabilities are YAML options, not inferences |
 | [0025](0025-persist-monotonic-counters-as-the-only-exception-to-0018.md) | Counters are the one exception to 0018 | 1W's rolling sequence cannot be re-derived, so it is persisted — and nothing else is |
 | [0027](0027-controller-identities-replace-node-addressing-for-1w.md) | Controller identities for 1W | 1W is class-addressed, so the sending identity replaces node addressing |
-| [0036](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md) | Hub entities come from hub-block flags, never a platform entry | Discover & Pair joins its siblings behind `discover_and_pair_button:`; the old `button:` platform is deprecated, not deleted outright |
+| [0036](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md) | Hub entities come from hub-block flags, never a platform entry | Discover & Pair joins its siblings behind `discover_and_pair_button:`; the old `button:` platform is a config error that names the flag |
 | [0052](0052-device-types-follow-the-io-node-type-and-subtype-table.md) | Device types follow the IO node-type and subtype table | A 16-bit `DeviceType` and one (type, subtype) table drive names, entity class, platform and behaviour flags; six YAML names change and the old ones fail with the replacement |
 | [0053](0053-a-device-may-carry-its-own-system-key.md) | A device may carry its own system key | An optional `system_key:` on any device entity; the exchange engine picks the key per frame from the peer's node, falling back to the hub key; Scan Paired Devices sweeps once per distinct key |
 | [0059](0059-device-capabilities-come-from-the-type-table.md) | Device capabilities come from the type table (amended by 0067) | One capability word per (type, subtype) row, resolved once per device; the subtype-58 rule is one function; named positions are one table; the Python mirror is sync-tested; keys a kind cannot use fail validation; unconfirmed kinds are marked experimental and warned about |
@@ -83,7 +83,8 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0062](0062-a-read-only-data-transport-probe.md) | A read-only data-transport probe (amends 0024) | `read_object` opens, reads and closes five allowlisted objects over `0x46`/`0x4A`; read direction only by construction, capped, raw output never applied |
 | [0063](0063-a-read-only-register-probe.md) | A read-only register probe (amends 0024) | `register_00` / `register_01` read one register over `0x20`; the read direction byte is a constant no input changes; refused for every kind but register heaters and hot water |
 | [0064](0064-a-sensor-reading-is-drawn-by-a-re-sent-event-subscription.md) | A sensor reading is drawn by a re-sent event subscription (amends 0060, 0050) | `sun_level_poll_interval` / `battery_level_poll_interval` re-send a subscription on a jittered interval and publish the value its answer carries; the answer is taken as the reply, one re-send after a lost answer, one retry a minute after an unanswered poll (rain too), strict decode, experimental on one RS100 Solar io |
-| [0065](0065-a-covers-travel-speed-is-a-three-way-choice.md) | A cover's travel speed is a three-way choice | `travel_speed:` `default` / `silent` / `fast` with a select; `default` sends the 6-byte frame a VELUX pad sends; without the key nothing changes; `silent:` stays as the two-way form |
+| [0065](0065-a-covers-travel-speed-is-a-three-way-choice.md) | A cover's travel speed is a three-way choice (amended by 0069) | `travel_speed:` `default` / `silent` / `fast` with a select; `default` sends the 6-byte frame a VELUX pad sends; without the key nothing changes; `silent:` stays as the two-way form |
+| [0069](0069-a-config-key-is-retired-in-two-stages.md) | A config key is retired in two stages | Warn with the exact replacement, then a config error about two months later; `silent:` enters the warning stage, amending 0065 |
 
 ### Security
 
@@ -180,6 +181,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0066: A cover is read at rest by an opt-in status refresh](0066-a-cover-is-read-at-rest-by-an-opt-in-status-refresh.md)
 - [ADR 0067: A model below the subtype for products that share a wire type](0067-a-model-below-the-subtype-for-products-that-share-a-wire-type.md)
 - [ADR 0068: A domestic hot water device is a water heater](0068-a-domestic-hot-water-device-is-a-water-heater.md)
+- [ADR 0069: A config key is retired in two stages](0069-a-config-key-is-retired-in-two-stages.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

@@ -44,6 +44,7 @@ from .platform_common import (
     companion_entity_name,
     companion_id_base,
     create_companion_sensors,
+    deprecated_key,
     inherit_esphome_device,
     inject_companion_sensor_ids,
     platform_schema_extension,
@@ -283,6 +284,16 @@ def _inject_companion_ids(config):
     return inject_companion_sensor_ids(config, CONF_ID)
 
 
+def _silent_replacement(config):
+    """What a cover with `silent:` writes instead, and what changes in Home Assistant."""
+    speed = "silent" if config[CONF_SILENT] else "fast"
+    return (
+        f"Replace 'silent: {str(config[CONF_SILENT]).lower()}' with 'travel_speed: {speed}'. The "
+        f"'{silent_switch_name(config)}' switch is then replaced by a '{travel_speed_select_name(config)}' "
+        "select (default, silent, fast): update any automation or dashboard that uses the switch."
+    )
+
+
 CONFIG_SCHEMA = cv.All(
     cover.cover_schema(IOHomeCover)
     .extend(platform_schema_extension())
@@ -320,6 +331,7 @@ CONFIG_SCHEMA = cv.All(
     validate_device_model,
     _default_device_class,
     _require_travel_speed_kind,
+    deprecated_key(CONF_SILENT, _silent_replacement),
     warn_if_experimental_kind,
     _inject_companion_ids,
 )
