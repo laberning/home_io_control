@@ -15,8 +15,8 @@ namespace {
 
 /// Length of a register request header: prefix, direction, register high byte, register low byte.
 constexpr size_t DHW_HEADER_LEN = 4;
-/// Length of the mode write: the header plus one value byte.
-constexpr size_t DHW_MODE_WRITE_LEN = 5;
+/// Length of a one-byte register write (mode, boost): the header plus one value byte.
+constexpr size_t DHW_BYTE_WRITE_LEN = 5;
 /// Value bytes each typed decoder needs.
 constexpr size_t DHW_WATER_TEMPERATURE_LEN = 2;
 constexpr size_t DHW_ENERGY_LEN = 4;
@@ -31,6 +31,16 @@ constexpr float DHW_TENTHS_PER_DEGREE = 10.0F;
 /// Highest DhwMode value.
 constexpr uint8_t DHW_MODE_MAX = static_cast<uint8_t>(DhwMode::MANUAL_ECO_OFF);
 
+/// @brief Encode a one-byte write of a family-0x00 register: `0C 61 00 <index> <value>`.
+size_t encode_dhw_byte_write(uint8_t index, uint8_t value, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
+  out[0] = HEATING_PAYLOAD_PREFIX;
+  out[1] = HEATING_DIRECTION_SET;
+  out[2] = DHW_REGISTER_HIGH_BYTE;
+  out[3] = index;
+  out[DHW_HEADER_LEN] = value;
+  return DHW_BYTE_WRITE_LEN;
+}
+
 }  // namespace
 
 size_t encode_dhw_register_read(uint8_t index, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
@@ -40,12 +50,11 @@ size_t encode_dhw_register_read(uint8_t index, uint8_t out[HEATING_PAYLOAD_MAX_S
 size_t encode_dhw_mode_write(uint8_t mode, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
   if (mode > DHW_MODE_MAX)
     return 0;
-  out[0] = HEATING_PAYLOAD_PREFIX;
-  out[1] = HEATING_DIRECTION_SET;
-  out[2] = DHW_REGISTER_HIGH_BYTE;
-  out[3] = DHW_REG_MODE;
-  out[DHW_HEADER_LEN] = mode;
-  return DHW_MODE_WRITE_LEN;
+  return encode_dhw_byte_write(DHW_REG_MODE, mode, out);
+}
+
+size_t encode_dhw_boost_write(bool on, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
+  return encode_dhw_byte_write(DHW_REG_BOOST, on ? DHW_BOOST_ON_VALUE : DHW_BOOST_OFF_VALUE, out);
 }
 
 bool encode_dhw_target(float celsius, uint16_t &main_parameter) {

@@ -46,7 +46,8 @@ do when yours is not there.
 - **Experimental support for locks, switches and climate/heating devices.** None of these has
   been exercised against real hardware yet; if you own one, try it and report back.
 - **Water heaters (experimental)** — a `water_heater:` entity reads an Atlantic Calypso Connecté's
-  water temperature, target, mode and energy; setting the target and the mode is experimental.
+  water temperature, target, mode and energy, and sets the target and the mode; a boost switch is
+  experimental.
 
 ## Installation
 

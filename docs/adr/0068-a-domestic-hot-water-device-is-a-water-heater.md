@@ -71,10 +71,11 @@ What they show:
   water heater.
 - **The writes ship, marked experimental.** The target is a main-parameter-only EXECUTE; the mode is a
   write of register `0x0006` (`0C 61 00 06 <mode>`, only the values 0–2), read back at once. After either
-  write the hub polls the heater again 45 seconds later. Until the owner confirms that the display
-  follows both, they stay experimental in the docs and in a Doxygen `\todo`.
+  write the hub polls the heater again 45 seconds later. The owner has confirmed that the display
+  follows both (issue #198).
 - **Companions are opt-in**: energy (kWh, `total_increasing`, from register `0x0004`), heat pump
-  running, electric backup running and boost. They show what the poll already reads.
+  running and electric backup running. They show what the poll already reads. Boost is an opt-in
+  switch over register `0x0000` (see Consequences).
 - **The brand is logged, not enforced.** The hub reads register `0x0007` until it has an answer and logs
   the letter once at INFO. A heater of another brand is not refused at runtime.
 
@@ -85,8 +86,9 @@ What they show:
 - Each poll costs one status read and five register reads (the brand once more until read). The heater
   answers in about 10 ms, so the default five-minute cadence stays cheap; the interval floor is one
   minute, as for a heater.
-- Boost and away writes, and an off mode, are left until their wire states are seen: boost through
-  register `0x0000`, away once the holiday register reads non-zero, off once a heater reports it.
+- Boost is offered as an experimental switch that writes register `0x0000`, whose wire state has been
+  seen (`1` during a one-day boost, `0` before and after it). Away waits until the holiday register
+  reads non-zero while a holiday runs; off waits until a heater reports it.
 - A water heater of another brand that reports 51/0 gets the same reads. If its registers differ, the
   readings stay empty or wrong; the build-time warning and the brand line in the log are what tell the
   user.

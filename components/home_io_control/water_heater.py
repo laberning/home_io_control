@@ -4,9 +4,10 @@
 ##
 ## Binds an ESPHome water_heater entity to a domestic hot water heater (io_device_type: domestic_hot_water),
 ## with four opt-in companions: energy (kWh, for the energy dashboard), heat pump running, electric backup
-## running and boost. The heater is polled (default every five minutes); `status_poll_interval` sets the
-## cadence, with the same one-minute floor as climate. Shared device-binding logic lives in
-## platform_common.py; only the water heater's entity and companions are built here.
+## running, and a boost switch (experimental: the boost write is not confirmed on hardware yet). The heater
+## is polled (default every five minutes); `status_poll_interval` sets the cadence, with the same
+## one-minute floor as climate. Shared device-binding logic lives in platform_common.py; only the water
+## heater's entity and companions are built here.
 ##
 ## The kind is required: the codegen checks it carries the WATER_HEATER capability, so a config can never
 ## send the water heater's register frames to another device.
@@ -15,7 +16,7 @@ import functools
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, sensor, water_heater
+from esphome.components import binary_sensor, sensor, switch, water_heater
 from esphome.const import (
     CONF_DEVICE_ID,
     CONF_ENERGY,
@@ -50,6 +51,7 @@ IOHomeDhwEnergySensor = home_io_control_ns.class_("IOHomeDhwEnergySensor", senso
 IOHomeDhwBinarySensor = home_io_control_ns.class_(
     "IOHomeDhwBinarySensor", binary_sensor.BinarySensor, cg.Component
 )
+IOHomeDhwBoostSwitch = home_io_control_ns.class_("IOHomeDhwBoostSwitch", switch.Switch, cg.Component)
 DhwReading = IOHomeDhwBinarySensor.enum("Reading", is_class=True)
 
 CONF_HEAT_PUMP_RUNNING = "heat_pump_running"
@@ -60,7 +62,6 @@ CONF_BOOST = "boost"
 _BINARY_COMPANIONS = (
     (CONF_HEAT_PUMP_RUNNING, DhwReading.HEAT_PUMP),
     (CONF_ELECTRIC_BACKUP_RUNNING, DhwReading.ELECTRIC_BACKUP),
-    (CONF_BOOST, DhwReading.BOOST),
 )
 
 
@@ -88,7 +89,8 @@ def _validate_water_heater_kind(config):
 def _inject_companion_ids(config):
     """Declare the auto-generated companion IDs during validation (ESPHome 2026.x StaticVector sizing).
 
-    The opt-in companions are sensor schemas of their own, whose IDs are declared by their GenerateID.
+    The opt-in companions (sensors and the boost switch) are schemas of their own, whose IDs are declared by
+    their GenerateID.
     """
     return inject_companion_sensor_ids(config, CONF_ID)
 
@@ -111,9 +113,11 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ELECTRIC_BACKUP_RUNNING): binary_sensor.binary_sensor_schema(
                 IOHomeDhwBinarySensor, device_class=DEVICE_CLASS_RUNNING
             ).extend(cv.COMPONENT_SCHEMA),
-            cv.Optional(CONF_BOOST): binary_sensor.binary_sensor_schema(IOHomeDhwBinarySensor).extend(
-                cv.COMPONENT_SCHEMA
-            ),
+            # Restore mode DISABLED: the switch shows what the heater reports and never writes at boot, so a
+            # reboot cannot end a running boost.
+            cv.Optional(CONF_BOOST): switch.switch_schema(
+                IOHomeDhwBoostSwitch, default_restore_mode="DISABLED"
+            ).extend(cv.COMPONENT_SCHEMA),
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
@@ -157,3 +161,10 @@ async def to_code(config):
         cg.add(companion.set_parent(parent))
         cg.add(companion.set_device_id(config[CONF_IO_DEVICE_ID]))
         cg.add(companion.set_reading(reading))
+
+    if CONF_BOOST in config:
+        boost_config = _companion_config(config[CONF_BOOST], config)
+        boost = await switch.new_switch(boost_config)
+        await cg.register_component(boost, boost_config)
+        cg.add(boost.set_parent(parent))
+        cg.add(boost.set_device_id(config[CONF_IO_DEVICE_ID]))

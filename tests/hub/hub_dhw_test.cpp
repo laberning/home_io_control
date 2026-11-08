@@ -1,6 +1,6 @@
 /// @file hub_dhw_test.cpp
 /// @brief The hub's water heater path: the poll (status read plus family-0x00 registers), the status reply's
-/// target with no cover side effects, and the target and mode writes. Replies are shaped on the Atlantic
+/// target with no cover side effects, and the target, mode and boost writes. Replies are shaped on the Atlantic
 /// Calypso Connecte's (issue #198, corpus atlantic_calypso_*).
 
 #include "hub_core.h"
@@ -249,6 +249,7 @@ TEST(HubDhw, AWaterHeaterDeclaredOnAnotherPlatformGetsNoneOfIt) {
   EXPECT_FALSE(comp.poll_dhw_device_("ABC123"));
   EXPECT_FALSE(comp.set_water_heater_target("ABC123", 54.0F));
   EXPECT_FALSE(comp.set_water_heater_mode("ABC123", DhwMode::AUTO));
+  EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
   IoFrame response;
   EXPECT_FALSE(comp.read_dhw_register_("ABC123", DHW_REG_MODE, "dhw_mode", response, 1));
   EXPECT_TRUE(radio.get_sent_data().empty());
@@ -262,6 +263,7 @@ TEST(HubDhw, ARadiatorAndACoverAreNeverSentAFamilyZeroFrame) {
     EXPECT_FALSE(comp.poll_dhw_device_("ABC123"));
     EXPECT_FALSE(comp.set_water_heater_target("ABC123", 54.0F));
     EXPECT_FALSE(comp.set_water_heater_mode("ABC123", DhwMode::AUTO));
+    EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
     IoFrame response;
     EXPECT_FALSE(comp.read_dhw_register_("ABC123", DHW_REG_MODE, "dhw_mode", response, 1));
     EXPECT_TRUE(radio.get_sent_data().empty()) << static_cast<unsigned>(type);
@@ -306,24 +308,45 @@ TEST(HubDhw, ATargetOutsideTheHeatersRangeIsNeverSent) {
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
-TEST(HubDhw, TheModeIsARegisterWriteReadBackAtOnce) {
+TEST(HubDhw, TheModeIsARegisterWriteReadBackAtOnceWithTheTarget) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
   queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, 0x06, 0x02});
   queue_register(comp, radio, DHW_REG_MODE, {0x02});
+  queue_status(comp, radio, 0xA1E8);  // 54 C, the manual target the heater holds
 
   EXPECT_TRUE(comp.set_water_heater_mode("ABC123", DhwMode::MANUAL_ECO_OFF));
 
-  ASSERT_EQ(radio.get_sent_data().size(), 2u);
+  ASSERT_EQ(radio.get_sent_data().size(), 3u);
   const auto &write = radio.get_sent_data()[0];
   EXPECT_EQ(write[8], CMD_WRITE_PRIVATE);
   EXPECT_EQ(std::vector<uint8_t>(write.begin() + 9, write.begin() + 14),
             (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x06, 0x02}));
   const auto &read = radio.get_sent_data()[1];
   EXPECT_EQ(std::vector<uint8_t>(read.begin() + 9, read.begin() + 13), (std::vector<uint8_t>{0x0C, 0x60, 0x00, 0x06}));
+  const auto &status = radio.get_sent_data()[2];
+  EXPECT_EQ(status[8], CMD_PRIVATE) << "the target follows the mode: the poll's status read";
+  EXPECT_EQ(status[9], PRIVATE_STATUS_MP_FP);
   EXPECT_EQ(dev->dhw.mode, static_cast<int16_t>(DhwMode::MANUAL_ECO_OFF));
+  EXPECT_FLOAT_EQ(dev->dhw.target_c, 54.0F);
+  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
   EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS);
+}
+
+TEST(HubDhw, AMissedTargetReadAfterAModeWriteDoesNotFailTheWrite) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, 0x06, 0x00});
+  queue_register(comp, radio, DHW_REG_MODE, {0x00});
+  // The status read is never answered.
+
+  EXPECT_TRUE(comp.set_water_heater_mode("ABC123", DhwMode::AUTO));
+
+  EXPECT_EQ(dev->dhw.mode, static_cast<int16_t>(DhwMode::AUTO));
+  EXPECT_TRUE(std::isnan(dev->dhw.target_c));
+  EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS) << "the settle poll still reads it soon";
 }
 
 TEST(HubDhw, AnUnacknowledgedModeWriteIsNotReadBack) {
@@ -335,6 +358,43 @@ TEST(HubDhw, AnUnacknowledgedModeWriteIsNotReadBack) {
     EXPECT_EQ(tx[10], HEATING_DIRECTION_SET) << "only the write is tried";
   EXPECT_LE(radio.get_sent_data().size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
   EXPECT_EQ(dev->dhw.mode, -1);
+}
+
+TEST(HubDhw, BoostIsARegisterWriteReadBackAtOnce) {
+  for (const bool on : {true, false}) {
+    TestableComponent comp;
+    MockRadio radio;
+    IoDevice *dev = make_water_heater(comp, radio);
+    const uint8_t value = on ? 0x01 : 0x00;
+    queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, 0x00, value});
+    queue_register(comp, radio, DHW_REG_BOOST, {value});
+
+    EXPECT_TRUE(comp.set_water_heater_boost("ABC123", on));
+
+    ASSERT_EQ(radio.get_sent_data().size(), 2u) << on;
+    const auto &write = radio.get_sent_data()[0];
+    EXPECT_EQ(write[8], CMD_WRITE_PRIVATE);
+    EXPECT_EQ(std::vector<uint8_t>(write.begin() + 9, write.begin() + 14),
+              (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x00, value}));
+    const auto &read = radio.get_sent_data()[1];
+    EXPECT_EQ(std::vector<uint8_t>(read.begin() + 9, read.begin() + 13),
+              (std::vector<uint8_t>{0x0C, 0x60, 0x00, 0x00}));
+    EXPECT_EQ(dev->dhw.boost, on ? 1 : 0);
+    EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
+    EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS) << "the heating state follows soon";
+  }
+}
+
+TEST(HubDhw, AnUnacknowledgedBoostWriteIsNotReadBack) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  for (const auto &tx : radio.get_sent_data())
+    EXPECT_EQ(tx[10], HEATING_DIRECTION_SET) << "only the write is tried";
+  EXPECT_LE(radio.get_sent_data().size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
+  EXPECT_EQ(dev->dhw.boost, -1);
 }
 
 // === Discovery's YAML block ===

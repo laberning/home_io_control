@@ -30,8 +30,9 @@ constexpr WaterHeaterModeMapping WATER_HEATER_MODE_MAP[] = {
     {DhwMode::MANUAL_ECO_OFF, water_heater::WATER_HEATER_MODE_PERFORMANCE},
 };
 
-/// @brief UI target step. The main parameter resolves far finer; 0.5 C is a card choice.
-constexpr float WATER_HEATER_TARGET_STEP_C = 0.5F;
+/// @brief UI target step: every target the heater has shown is a whole degree (issue #198). The main
+/// parameter resolves far finer.
+constexpr float WATER_HEATER_TARGET_STEP_C = 1.0F;
 
 /// @brief Wh per kWh, for the energy sensor.
 constexpr float WH_PER_KWH = 1000.0F;
@@ -111,7 +112,12 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
   }
 
   const float target = call.get_target_temperature();
-  if (!std::isnan(target) && this->parent_->set_water_heater_target(this->device_id_, target) && !this->observed_) {
+  // Decided on the mode the heater holds after the mode write above (its read-back has already been folded
+  // in), not on the mode the call asked for: a refused mode write leaves the heater where it was.
+  if (!std::isnan(target) && this->observed_ && this->mode_ == water_heater::WATER_HEATER_MODE_HEAT_PUMP) {
+    ESP_LOGW(TAG, "Device %s: target ignored in automatic mode, the heater chooses its own", this->device_id_.c_str());
+  } else if (!std::isnan(target) && this->parent_->set_water_heater_target(this->device_id_, target) &&
+             !this->observed_) {
     // The settle poll reads the target back from the status reply.
     this->set_target_temperature_(target);
     changed = true;
@@ -130,9 +136,12 @@ bool IOHomeWaterHeater::sync_from_readings_(const DhwReadings &readings) {
     this->set_current_temperature(readings.water_c);
     changed = true;
   }
-  // A target that is not a temperature (an alias the heater has not been seen sending) shows as unknown.
-  if (differs(this->target_temperature_, readings.target_c)) {
-    this->set_target_temperature_(readings.target_c);
+  // A target that is not a temperature (an alias the heater has not been seen sending) shows as unknown, and
+  // so does the target in automatic mode: the heater chooses its own then and its display shows none.
+  const bool automatic = readings.mode == static_cast<int16_t>(DhwMode::AUTO);
+  const float target = automatic ? NAN : readings.target_c;
+  if (differs(this->target_temperature_, target)) {
+    this->set_target_temperature_(target);
     changed = true;
   }
   if (readings.mode >= 0) {
@@ -162,7 +171,7 @@ void IOHomeWaterHeater::dump_config() {
   ESP_LOGCONFIG(
       TAG, "  Status Poll Interval: %" PRIu32 " ms",
       this->status_poll_interval_ms_ != 0 ? this->status_poll_interval_ms_ : HEATING_POLL_DEFAULT_INTERVAL_MS);
-  ESP_LOGCONFIG(TAG, "  Status: confirmed on hardware (readings, target, mode)");
+  ESP_LOGCONFIG(TAG, "  Status: readings, target and mode confirmed on hardware; boost write experimental");
 }
 
 // === Companions ===
@@ -189,9 +198,6 @@ void IOHomeDhwBinarySensor::setup() {
       case Reading::ELECTRIC_BACKUP:
         value = dev.dhw.element;
         break;
-      case Reading::BOOST:
-        value = dev.dhw.boost;
-        break;
     }
     // "Off" must mean the heater said so: nothing read means no state.
     if (value < 0) {
@@ -210,12 +216,33 @@ void IOHomeDhwBinarySensor::dump_config() {
     case Reading::ELECTRIC_BACKUP:
       reading = "electric backup running";
       break;
-    case Reading::BOOST:
-      reading = "boost";
-      break;
   }
   ESP_LOGCONFIG(TAG, "IO-Homecontrol Water Heater %s:", reading);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeDhwBoostSwitch::setup() {
+  // No restore: the state comes only from the heater, and a reboot must not write the boost register.
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    // Shown only from a reply; a switch with no reading yet keeps its unknown state.
+    if (dev.dhw.boost >= 0)
+      this->publish_state(dev.dhw.boost != 0);
+  });
+}
+
+void IOHomeDhwBoostSwitch::write_state(bool state) {
+  if (this->parent_ == nullptr)
+    return;
+  // The read-back inside set_water_heater_boost() updates IoDevice::dhw, and the binding above publishes it.
+  if (!this->parent_->set_water_heater_boost(this->device_id_, state)) {
+    ESP_LOGW(TAG, "Device %s: boost %s was not acknowledged", this->device_id_.c_str(), state ? "on" : "off");
+  }
+}
+
+void IOHomeDhwBoostSwitch::dump_config() {
+  ESP_LOGCONFIG(TAG, "IO-Homecontrol Water Heater Boost:");
+  ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+  ESP_LOGCONFIG(TAG, "  Status: experimental (a boost started here asks for one day)");
 }
 
 }  // namespace home_io_control

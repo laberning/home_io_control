@@ -1258,6 +1258,17 @@ bool IOHomeControlComponent::read_dhw_reading_(const std::string &device_id, uin
   return true;
 }
 
+bool IOHomeControlComponent::read_dhw_status_(const std::string &device_id, uint8_t max_tries) {
+  const IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr)
+    return false;
+  // The status read the heater has answered (FP1-FP7 asked, none held). Its reply goes through
+  // update_device_status_(), whose water heater branch stores the target and nothing else.
+  IoFrame request;
+  return create_status_mp_fp_read(request, this->node_id_, dev->node_id, dev->low_power) &&
+         this->execute_request_and_update_(device_id, request, false, 0, max_tries);
+}
+
 bool IOHomeControlComponent::poll_dhw_device_(const std::string &device_id) {
   const IoDevice *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_ || !has_feature(dev->features, device_feature::WATER_HEATER))
@@ -1269,11 +1280,7 @@ bool IOHomeControlComponent::poll_dhw_device_(const std::string &device_id) {
   const uint8_t max_tries = decisions::scheduled_poll_max_tries(this->poll_policy_.get_status_poll_failures(device_id),
                                                                 this->poll_policy_.get_auth_poll_failures(device_id));
 
-  // The target: the status read the heater has answered (FP1-FP7 asked, none held). Its reply goes
-  // through update_device_status_(), whose water heater branch stores the target and nothing else.
-  IoFrame request;
-  bool ok = create_status_mp_fp_read(request, this->node_id_, dev->node_id, dev->low_power) &&
-            this->execute_request_and_update_(device_id, request, false, 0, max_tries);
+  bool ok = this->read_dhw_status_(device_id, max_tries);
 
   for (size_t i = 0; ok && i < sizeof(DHW_POLL_REGISTERS); i++)
     ok = this->read_dhw_reading_(device_id, DHW_POLL_REGISTERS[i], max_tries);
@@ -1316,32 +1323,52 @@ bool IOHomeControlComponent::set_water_heater_target(const std::string &device_i
   return accepted;
 }
 
-bool IOHomeControlComponent::set_water_heater_mode(const std::string &device_id, DhwMode mode) {
+bool IOHomeControlComponent::write_dhw_register_(const std::string &device_id, const char *operation, uint8_t index,
+                                                 const uint8_t *payload, size_t payload_len) {
   const IoDevice *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
     return false;
   if (!has_feature(dev->features, device_feature::WATER_HEATER)) {
-    detail::log_rejected_operation(device_id, *dev, "hot water mode", "water heater");
+    detail::log_rejected_operation(device_id, *dev, operation, "water heater");
     return false;
   }
 
-  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
-  const size_t payload_len = encode_dhw_mode_write(static_cast<uint8_t>(mode), payload);
   IoFrame request;
-  if (payload_len == 0 ||
-      !create_write_private(request, this->node_id_, dev->node_id, dev->low_power, payload, payload_len)) {
-    ESP_LOGW(detail::TAG, "Hot water mode for device %s: failed to build frame", device_id.c_str());
+  if (!create_write_private(request, this->node_id_, dev->node_id, dev->low_power, payload, payload_len)) {
+    ESP_LOGW(detail::TAG, "%s for device %s: failed to build frame", operation, device_id.c_str());
     return false;
   }
 
   IoFrame response;
   // A write is something the user waits on: the full retry budget.
-  if (!this->exchange_heating_(device_id, dhw_register_label(DHW_REG_MODE), request, response, EXCHANGE_RETRY_COUNT))
+  if (!this->exchange_heating_(device_id, dhw_register_label(index), request, response, EXCHANGE_RETRY_COUNT))
     return false;
   // The entity shows what the heater holds, not what was sent; the heating state follows later.
-  this->read_dhw_reading_(device_id, DHW_REG_MODE, EXCHANGE_RETRY_COUNT);
+  this->read_dhw_reading_(device_id, index, EXCHANGE_RETRY_COUNT);
   this->schedule_heating_poll_(device_id, HEATING_POST_WRITE_POLL_DELAY_MS);
   return true;
+}
+
+bool IOHomeControlComponent::set_water_heater_mode(const std::string &device_id, DhwMode mode) {
+  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
+  const size_t payload_len = encode_dhw_mode_write(static_cast<uint8_t>(mode), payload);
+  if (payload_len == 0) {
+    ESP_LOGW(detail::TAG, "Hot water mode %u for device %s rejected: not a mode the heater reports",
+             static_cast<unsigned>(mode), device_id.c_str());
+    return false;
+  }
+  if (!this->write_dhw_register_(device_id, "hot water mode", DHW_REG_MODE, payload, payload_len))
+    return false;
+  // The heater chooses its own target in AUTO and holds its manual one otherwise, so the target changes
+  // with the mode: read it now rather than at the next poll. A miss here does not undo the write.
+  this->read_dhw_status_(device_id, EXCHANGE_RETRY_COUNT);
+  return true;
+}
+
+bool IOHomeControlComponent::set_water_heater_boost(const std::string &device_id, bool on) {
+  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
+  const size_t payload_len = encode_dhw_boost_write(on, payload);  // every value encodes
+  return this->write_dhw_register_(device_id, "hot water boost", DHW_REG_BOOST, payload, payload_len);
 }
 
 void IOHomeControlComponent::queue_set_device_position(const std::string &device_id, uint8_t position) {
