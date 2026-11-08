@@ -9,6 +9,7 @@
 
 #include "esphome/core/log.h"
 #include <cinttypes>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -86,7 +87,142 @@ inline void render_frame_hex_redacted(const uint8_t *data, uint8_t len, char *ou
   bytes_to_hex(data, len, out, out_size);
 }
 
+// === Held frame-log lines ===
+
+/// @brief Log level of one frame-log line, kept with the line while it is held.
+enum class FrameLogLevel : uint8_t { WARN, INFO, DEBUG };
+
+/// Lines one hold can keep. A held window covers one received frame and the answer to it: the
+/// driver's reception lines (at most four, on a failed decode) plus the answer's TX line and the
+/// driver's re-arm line.
+inline constexpr size_t FRAME_LOG_HELD_LINES = 6;
+/// The overflow note flush() prints when lines did not fit.
+inline constexpr size_t FRAME_LOG_NOTE_SIZE = 64;
+/// One rendered frame-log line: the hex dump plus its prefix, frequency, command and flags.
+inline constexpr size_t FRAME_LOG_LINE_SIZE = FRAME_LOG_HEX_BUFFER_SIZE + 96;
+
+/// @brief Keeps frame-log lines back while the hub answers a device, and prints them afterwards.
+///
+/// Printing a log line takes milliseconds, and some receivers drop the hub's answer to their
+/// challenge when it comes that much later (issue #163). While held, write() stores each line
+/// instead of printing it; flush() prints the stored lines in order. Not holding, write() prints
+/// at once. A line that does not fit while held is counted, not printed, and flush() reports the
+/// count, so nothing is printed inside the window.
+///
+/// Kept outside the IOHOME_FRAME_LOG guard so its behaviour is unit-testable; firmware builds use
+/// the one instance behind frame_log_hold() / frame_log_release().
+class FrameLogBuffer {
+ public:
+  /// Prints one line. `tag` is the logging tag the line was written with.
+  using Sink = void (*)(FrameLogLevel level, const char *tag, const char *text);
+
+  explicit FrameLogBuffer(Sink sink) : sink_(sink) {}
+
+  /// Start keeping lines back. Holding again while held changes nothing.
+  void hold() { this->holding_ = true; }
+  /// @return true while lines are kept back.
+  [[nodiscard]] bool holding() const { return this->holding_; }
+  /// @return number of lines currently kept back.
+  [[nodiscard]] uint8_t held() const { return this->count_; }
+
+  /// Print `text` now, or keep it until the next flush() while holding.
+  /// @param level Level the line is printed at.
+  /// @param tag Must outlive the hold: a string literal, as every logging tag here is.
+  /// @param text The rendered line; copied (and truncated to FRAME_LOG_LINE_SIZE - 1) when held.
+  void write(FrameLogLevel level, const char *tag, const char *text) {
+    if (!this->holding_) {
+      this->sink_(level, tag, text);
+      return;
+    }
+    if (this->count_ >= FRAME_LOG_HELD_LINES) {
+      if (this->dropped_ < UINT8_MAX)
+        this->dropped_++;
+      return;
+    }
+    Line &line = this->lines_[this->count_++];
+    line.level = level;
+    line.tag = tag;
+    snprintf(line.text, sizeof(line.text), "%s", text);
+  }
+
+  /// Print the kept lines in the order they were written, then a note if any did not fit. Keeps
+  /// holding.
+  void flush() {
+    for (uint8_t i = 0; i < this->count_; i++)
+      this->sink_(this->lines_[i].level, this->lines_[i].tag, this->lines_[i].text);
+    this->count_ = 0;
+    if (this->dropped_ > 0) {
+      char note[FRAME_LOG_NOTE_SIZE];
+      snprintf(note, sizeof(note), "%u frame-log lines not printed (hold buffer full)", this->dropped_);
+      this->sink_(FrameLogLevel::WARN, "io_frame", note);
+      this->dropped_ = 0;
+    }
+  }
+
+  /// Print the kept lines and stop holding.
+  void release() {
+    this->flush();
+    this->holding_ = false;
+  }
+
+ private:
+  /// One kept line.
+  struct Line {
+    FrameLogLevel level{FrameLogLevel::INFO};
+    const char *tag{""};
+    char text[FRAME_LOG_LINE_SIZE]{};
+  };
+
+  Sink sink_;
+  bool holding_{false};
+  uint8_t count_{0};
+  uint8_t dropped_{0};
+  Line lines_[FRAME_LOG_HELD_LINES]{};
+};
+
 #ifdef IOHOME_FRAME_LOG
+/// @brief Print one frame-log line through ESPHome's logger at its level.
+inline void frame_log_print(FrameLogLevel level, const char *tag, const char *text) {
+  switch (level) {
+    case FrameLogLevel::WARN:
+      ESP_LOGW(tag, "%s", text);
+      break;
+    case FrameLogLevel::INFO:
+      ESP_LOGI(tag, "%s", text);
+      break;
+    case FrameLogLevel::DEBUG:
+      ESP_LOGD(tag, "%s", text);
+      break;
+  }
+}
+
+/// @brief The one hold buffer every frame-log line goes through (about 2 KB, frame-log builds only).
+inline FrameLogBuffer &frame_log_buffer() {
+  static FrameLogBuffer buffer(frame_log_print);
+  return buffer;
+}
+
+/// @brief Write a printf-style frame-log line; held while frame_log_hold() is in effect.
+/// Driver-level reception/transmission diagnostics use this instead of ESP_LOGx, so they are held
+/// with the frame lines they belong to.
+inline void frame_log_line(FrameLogLevel level, const char *tag, const char *format, ...)
+    __attribute__((format(printf, 3, 4)));
+inline void frame_log_line(FrameLogLevel level, const char *tag, const char *format, ...) {
+  char text[FRAME_LOG_LINE_SIZE];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(text, sizeof(text), format, args);
+  va_end(args);
+  frame_log_buffer().write(level, tag, text);
+}
+
+/// @brief Hold frame-log lines until frame_log_release() (see FrameLogBuffer).
+inline void frame_log_hold() { frame_log_buffer().hold(); }
+/// @brief Print the held lines; keep holding.
+inline void frame_log_flush() { frame_log_buffer().flush(); }
+/// @brief Print the held lines and stop holding.
+inline void frame_log_release() { frame_log_buffer().release(); }
+
 inline void log_frame(const char *prefix, const uint8_t *data, uint8_t len, uint32_t freq, uint16_t preamble = 0) {
   char hex[FRAME_LOG_HEX_BUFFER_SIZE];
   render_frame_hex_redacted(data, len, hex, sizeof(hex));
@@ -100,11 +236,17 @@ inline void log_frame(const char *prefix, const uint8_t *data, uint8_t len, uint
   }
 
   if (preamble > 0)
-    ESP_LOGI("io_frame", "%s [%u bytes] freq=%" PRIu32 " preamble=%u cmd=%s %s: %s", prefix, len, freq, preamble,
-             cmd_str, flags, hex);
+    frame_log_line(FrameLogLevel::INFO, "io_frame", "%s [%u bytes] freq=%" PRIu32 " preamble=%u cmd=%s %s: %s", prefix,
+                   len, freq, preamble, cmd_str, flags, hex);
   else
-    ESP_LOGI("io_frame", "%s [%u bytes] freq=%" PRIu32 " cmd=%s %s: %s", prefix, len, freq, cmd_str, flags, hex);
+    frame_log_line(FrameLogLevel::INFO, "io_frame", "%s [%u bytes] freq=%" PRIu32 " cmd=%s %s: %s", prefix, len, freq,
+                   cmd_str, flags, hex);
 }
+#else
+// Without the frame log nothing is ever held, so the exchange engine's calls compile to nothing.
+inline void frame_log_hold() {}
+inline void frame_log_flush() {}
+inline void frame_log_release() {}
 #endif
 
 }  // namespace home_io_control

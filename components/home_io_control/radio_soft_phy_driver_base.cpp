@@ -222,8 +222,8 @@ bool SoftPhyDriverBase::try_early_completion_(RadioRxPacket &packet, uint32_t sy
   this->fill_capture_info(true, irq_status, offset, read_len, raw, read_len, packet.data, packet.len);
 
 #ifdef IOHOME_FRAME_LOG
-  ESP_LOGD(TAG, "Early RX: frame_len=%u raw_len=%u air_us=%" PRIu32, frame_len, read_len,
-           (uint32_t) (micros() - sync_us));
+  frame_log_line(FrameLogLevel::DEBUG, TAG, "Early RX: frame_len=%u raw_len=%u air_us=%" PRIu32, frame_len, read_len,
+                 (uint32_t) (micros() - sync_us));
   log_frame("RX", packet.data, packet.len, this->current_freq_);
 #endif
 
@@ -338,8 +338,9 @@ bool SoftPhyDriverBase::read_rx_packet(RadioRxPacket &packet, bool blocking_wait
     // (issue #81) because it is otherwise populated by every driver's fill_capture_info() and read
     // by nothing, and it is the one fact that would confirm or correct LR1121_RX_BUFFER_BASE
     // against a real LR1121 (see RadioLR1121::early_rx_read_offset's doc comment).
-    ESP_LOGD(TAG, "UART probe: valid=1 bit_offset=%u frame_start=%u frame_len=%u decoded_len=%u rx_offset=%u",
-             probe.bit_offset, probe.frame_start, probe.frame_len, probe.decoded_len, rx_offset);
+    frame_log_line(FrameLogLevel::DEBUG, TAG,
+                   "UART probe: valid=1 bit_offset=%u frame_start=%u frame_len=%u decoded_len=%u rx_offset=%u",
+                   probe.bit_offset, probe.frame_start, probe.frame_len, probe.decoded_len, rx_offset);
 #endif
   } else {
 #ifdef IOHOME_FRAME_LOG
@@ -349,8 +350,9 @@ bool SoftPhyDriverBase::read_rx_packet(RadioRxPacket &packet, bool blocking_wait
     uint8_t dump_len = std::min(raw_probe_len, (uint8_t) 32);
     for (uint8_t i = 0; i < dump_len; i++)
       snprintf(hex_buf + (i * 3), 4, "%02X ", rx_buf[i]);
-    ESP_LOGW(TAG, "UART probe: valid=0 decoded_len=%u raw_probe_len=%u", probe.decoded_len, raw_probe_len);
-    ESP_LOGW(TAG, "  raw[0..%u]: %s", dump_len - 1, hex_buf);
+    frame_log_line(FrameLogLevel::WARN, TAG, "UART probe: valid=0 decoded_len=%u raw_probe_len=%u", probe.decoded_len,
+                   raw_probe_len);
+    frame_log_line(FrameLogLevel::WARN, TAG, "  raw[0..%u]: %s", dump_len - 1, hex_buf);
     // Try to show why CRC failed at best offset
     if (probe.decoded_len >= FRAME_MIN_SIZE) {
       // FRAME_MAX_WIRE_SIZE, not FRAME_MAX_SIZE: this is the diagnostic that explains *why* a CRC
@@ -366,8 +368,9 @@ bool SoftPhyDriverBase::read_rx_packet(RadioRxPacket &packet, bool blocking_wait
         if (cl + 2 <= (int) probe.decoded_len) {
           uint16_t computed = crc_ccitt(probe.decoded, cl);
           uint16_t received = (uint16_t) probe.decoded[cl] | ((uint16_t) probe.decoded[cl + 1] << 8);
-          ESP_LOGW(TAG, "  CRC check: candidate_len=%d cmd=0x%02X crc_computed=0x%04X crc_received=0x%04X %s", cl,
-                   test_frame.cmd, computed, received, computed == received ? "MATCH" : "MISMATCH");
+          frame_log_line(FrameLogLevel::WARN, TAG,
+                         "  CRC check: candidate_len=%d cmd=0x%02X crc_computed=0x%04X crc_received=0x%04X %s", cl,
+                         test_frame.cmd, computed, received, computed == received ? "MATCH" : "MISMATCH");
         }
         break;
       }
@@ -558,7 +561,8 @@ TxResult SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const 
   // frame-log flag with the rest of the PHY-level instrumentation because it fires on *every*
   // transmission; the timing calls compile out with it.
 #ifdef IOHOME_FRAME_LOG
-  ESP_LOGD(TAG, "TX->RX re-arm: %" PRIu32 " us (+%u us settle)", micros() - tx_done_us, this->post_tx_settle_us_);
+  frame_log_line(FrameLogLevel::DEBUG, TAG, "TX->RX re-arm: %" PRIu32 " us (+%u us settle)", micros() - tx_done_us,
+                 this->post_tx_settle_us_);
 #endif
 
   return TxResult::ok();

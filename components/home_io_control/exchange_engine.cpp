@@ -576,8 +576,15 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
 
   auto disp = decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED;
   RadioRxPacket packet{};
+  // The frame log holds its lines from here until the 0x3D has gone out (handle_authentication_()),
+  // so a challenge's RX line and the 0x3D's TX line print after the answer instead of delaying it:
+  // some receivers drop the command when the answer is late (issue #163). A rejected frame's lines
+  // are printed as soon as it is rejected, and any other outcome releases the hold below. No-ops
+  // without IOHOME_FRAME_LOG.
+  frame_log_hold();
   auto outcome = this->listen(spec, packet, ctx.rx, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
     if (parsed == nullptr) {
+      frame_log_flush();
       this->record_debug("first_parse_fail", ctx.try_index, false);
       this->counters_.parse_failures++;
       log_unparsable_frame("Unparsable first response", ctx.try_index, pkt);
@@ -585,6 +592,7 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
     }
     disp = decisions::classify_exchange_first_response(request, *parsed);
     if (disp == decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED) {
+      frame_log_flush();
       this->record_debug("first_wrong_exchange", ctx.try_index, false);
       log_exchange_frame("Ignored first response", ctx.try_index, *parsed, pkt.len);
       return ReplyDisposition::IGNORE;
@@ -594,6 +602,10 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
     return ReplyDisposition::ACCEPT;
   });
 
+  // Only a challenge keeps the hold: send_and_receive_() hands it straight to handle_authentication_(),
+  // which releases it after the 0x3D.
+  if (outcome != ListenOutcome::ACCEPTED || disp != decisions::ExchangeFirstResponseDisposition::REQUIRE_AUTH)
+    frame_log_release();
   if (outcome == ListenOutcome::ACCEPTED)
     return disp;
 
@@ -618,13 +630,14 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
   ctx.state = exchange::OutboundExchangeState::TX_AUTH_RESPONSE;
   this->record_debug(outbound_stage_name(ctx.state), ctx.try_index, true);
   // Nothing is logged before the 0x3D: some receivers drop the command when the answer comes late,
-  // and a log line here sits between challenge and answer (issue #163). The line below is printed
-  // after the send; every driver re-arms RX inside send_packet(), so the final reply is still
-  // received while it prints.
-  // answer_challenge() covers both the 0x3D build and its transmit as one step, so a failure here
-  // does not distinguish which of the two failed.
+  // and a log line here sits between challenge and answer (issue #163); the frame log is held for
+  // the same reason (wait_for_first_response_()). The line below is printed after the send; every driver re-arms RX
+  // inside send_packet(), so the final reply is still received while it prints. answer_challenge() covers both the 0x3D
+  // build and its transmit as one step, so a failure here does not distinguish which of the two failed.
   const bool answered = this->answer_challenge(request, ctx.rx, freq);
   const uint32_t answer_us = micros() - ctx.first_response_us;
+  // The challenge's and the 0x3D's frame-log lines, held since wait_for_first_response_().
+  frame_log_release();
 
   char age[TRY_AGE_BUFFER_SIZE];
   format_try_age(ctx, age);
