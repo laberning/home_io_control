@@ -242,7 +242,9 @@ def platform_schema_extension():
         cv.Optional(CONF_LOW_POWER): cv.boolean,
         # A key this one device keeps of its own, for a device that does not share the hub's
         # (ADR 0053). Same validator as the hub's system_key; `!secret` works as for any string.
-        cv.Optional(CONF_SYSTEM_KEY): validate_system_key,
+        # cv.sensitive, as on the hub and the 1W controllers, so `esphome config` and the
+        # dashboard mask the key instead of printing it.
+        cv.Optional(CONF_SYSTEM_KEY): cv.sensitive(validate_system_key),
     }
 
 

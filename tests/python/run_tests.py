@@ -517,6 +517,36 @@ def cover_gets_its_kinds_default_device_class():
     assert documented == v.DEFAULT_COVER_DEVICE_CLASS, "docs/configuration/cover.md device class table"
 
 
+@case()
+def every_key_holding_a_secret_is_masked_in_the_config_dump():
+    """Every system_key the component accepts (hub, device-bound entity, 1W controller) is marked
+    cv.sensitive, so `esphome config` and the dashboard mask it. ESPHome's substring fallback that
+    hid unmarked `*_key` fields goes away in 2026.12.0; an unmarked key would then print in clear."""
+    import esphome.config_validation as cv
+    from esphome.yaml_util import SensitiveStr
+
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+    from esphome.components.home_io_control import platform_common as p
+
+    def validator_for(schema, key):
+        return next(v for k, v in schema.items() if str(k) == key)
+
+    key = "0123456789ABCDEF0123456789ABCDEF"
+    for label, schema in (
+        ("device-bound entity", p.platform_schema_extension()),
+        ("1W controller", o.ONEWAY_CONTROLLER_SCHEMA.schema),
+    ):
+        validator = validator_for(schema, n.CONF_SYSTEM_KEY)
+        assert isinstance(validator, cv.SensitiveValidator), f"{label}: system_key is not cv.sensitive"
+        assert isinstance(validator(key), SensitiveStr), label
+
+    # The hub schema is a cv.All() chain; its first member holds the keys.
+    import esphome.components.home_io_control as hub
+    hub_schema = hub.CONFIG_SCHEMA.validators[0].schema
+    assert isinstance(validator_for(hub_schema, n.CONF_SYSTEM_KEY), cv.SensitiveValidator), "hub"
+
+
 @case("platform_common.require_feature")
 def keys_a_kind_cannot_use_are_rejected_when_the_config_is_built():
     """`silent:` and `travel_speed:` need a kind that takes a travel-speed parameter; `dimmable: true`
