@@ -90,6 +90,14 @@ void RadioSX1276::change_frequency(uint32_t freq_hz) {
   this->write_register_(REG_FRF_MID, (uint8_t) ((frf >> 8) & 0xFF));
   this->write_register_(REG_FRF_LSB, (uint8_t) (frf & 0xFF));
   this->current_freq_ = freq_hz;
+  // A retune in RX (FastHop: FRF only, no mode change) keeps the receiver's state from the old
+  // channel: PreambleDetect stays latched and AGC/AFC stay where a preamble, or noise, left them.
+  // Restarting the chain clears both, so the next channel's preamble detection is its own. Without
+  // it the idle hop cannot tell a preamble arriving here from one seen long ago, and on the bench a
+  // V2 waiting for a hub missed 30 of 52 clean 213 ms-preamble searches; with it and the preamble
+  // hold in reception_in_progress(), 0 of 41.
+  if ((this->read_register_(REG_OP_MODE) & MODE_MASK) == MODE_RX)
+    this->write_register_(REG_RX_CONFIG, RX_CONFIG_VALUE | RX_CONFIG_RESTART_RX_WITH_PLL_LOCK);
 }
 
 int16_t RadioSX1276::read_rssi() { return -(int16_t) this->read_register_(REG_RSSI_VALUE) / 2; }
@@ -102,11 +110,30 @@ bool RadioSX1276::is_preamble_detected() {
   return (this->read_register_(REG_IRQ_FLAGS1) & 0x02) != 0;  // Bit 1 = PreambleDetect
 }
 
+bool RadioSX1276::preamble_hold_() {
+  if (!this->is_preamble_detected()) {
+    this->preamble_hold_since_us_ = 0;
+    return false;
+  }
+  uint32_t const now = micros();
+  if (this->preamble_hold_since_us_ == 0) {
+    this->preamble_hold_since_us_ = now;  // first sighting of this preamble
+    return true;
+  }
+  if (now - this->preamble_hold_since_us_ < SX1276_PREAMBLE_HOLD_US)
+    return true;
+  // No sync word followed within the longest start preamble: noise or a frame we cannot have. Let
+  // the hop go on; its receiver restart (change_frequency()) clears the flag.
+  this->preamble_hold_since_us_ = 0;
+  return false;
+}
+
 bool RadioSX1276::reception_in_progress() {
   if (!this->is_sync_detected()) {
     this->sync_hold_since_us_ = 0;
-    return false;
+    return this->preamble_hold_();
   }
+  this->preamble_hold_since_us_ = 0;
   uint32_t const now = micros();
   if (this->sync_hold_since_us_ == 0) {
     this->sync_hold_since_us_ = now;  // first sighting of this reception
@@ -191,14 +218,14 @@ void RadioSX1276::configure_radio_() {
   this->write_register_(REG_DIO_MAPPING1, 0x3D);
   this->write_register_(REG_DIO_MAPPING2, 0xF1);                               // DIO4: PreambleDetect
   this->write_register_(REG_PLLHOP, this->read_register_(REG_PLLHOP) | 0x80);  // Fast hop
-  this->write_register_(REG_PA_RAMP, 0x2D);          // Gaussian BT=1.0 shaping (0x20) | 15μs ramp (0x0D)
-  this->write_register_(REG_FIFO_THRESH, 0x80);      // TX start FIFO not empty
-  this->write_register_(REG_PAYLOAD_LENGTH, 0xFF);   // Max payload
-  this->write_register_(REG_RSSI_CONFIG, 0x02);      // RSSI smoothing 8
-  this->write_register_(REG_RX_CONFIG, 0x9E);        // Restart collision, AFC, AGC, preamble
-  this->write_register_(REG_AFC_FEI, 0x01);          // AFC auto clear
-  this->write_register_(REG_LNA, 0x23);              // Max gain, boost on
-  this->write_register_(REG_PREAMBLE_DETECT, 0xAA);  // Detect on, 2 bytes, tol 10
+  this->write_register_(REG_PA_RAMP, 0x2D);               // Gaussian BT=1.0 shaping (0x20) | 15μs ramp (0x0D)
+  this->write_register_(REG_FIFO_THRESH, 0x80);           // TX start FIFO not empty
+  this->write_register_(REG_PAYLOAD_LENGTH, 0xFF);        // Max payload
+  this->write_register_(REG_RSSI_CONFIG, 0x02);           // RSSI smoothing 8
+  this->write_register_(REG_RX_CONFIG, RX_CONFIG_VALUE);  // Restart collision, AFC, AGC, preamble
+  this->write_register_(REG_AFC_FEI, 0x01);               // AFC auto clear
+  this->write_register_(REG_LNA, 0x23);                   // Max gain, boost on
+  this->write_register_(REG_PREAMBLE_DETECT, 0xAA);       // Detect on, 2 bytes, tol 10
   // RX/AFC bandwidth: sourced from the runtime-tunable rx_bandwidth_ (default BW_41_7_KHZ = 0x13).
   // Carson-rule bandwidth for 38400 bps + 19200 Hz deviation is ~77 kHz; the default is tighter
   // than theoretical but maximizes sensitivity by rejecting out-of-band noise. Validated against
