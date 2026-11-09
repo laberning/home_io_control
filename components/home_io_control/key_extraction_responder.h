@@ -185,13 +185,18 @@ class KeyExtractionResponder {
   /// node-verification round a CMD_NODE_VERIFY_REQ opened. See
   /// pairing_responder::on_node_verify_challenge().
   void handle_node_verify_challenge_(const IoFrame &frame);
-  /// Transmit a key-extraction reply and open the session hold (session_freq(), in_session_hold()).
-  /// A reply to a frame addressed to us goes out once, on the channel that frame came in on, with
-  /// the driver's response_preamble(); the `0x29` answer to a broadcast search goes out on all
-  /// three channels, ending on that channel, with `cold_broadcast_reply_preamble` (see the
-  /// implementation comment in key_extraction_responder.cpp for the hardware-confirmed reasoning).
-  /// Shared by every RX handler so the preamble choice and channel list are defined once.
+  /// Transmit a key-extraction reply to a frame addressed to us and open the session hold
+  /// (session_freq(), in_session_hold()). It goes out once, on the channel that frame came in on,
+  /// with the driver's response_preamble().
   void send_reply_(const IoFrame &frame);
+  /// Answer a broadcast search the way a device does: once, in a random slot from 1 to N of the
+  /// search's window (discovery_slot_count()), on a random one of the two channels the search did
+  /// not come in on, with `cold_broadcast_reply_preamble`. Timed through the named-timeout
+  /// scheduler, so the loop is never blocked while the slot runs down. The answer is dropped if
+  /// the attempt has moved on (disarm, re-arm) before its slot comes.
+  /// \todo Confirm on hardware that third-party controllers (TaHoma, KIG 300, KLR 200, Freebox)
+  /// accept a slotted answer.
+  void schedule_discover_reply_(const IoFrame &search, const IoFrame &resp);
   /// Emit the security-sensitive "system key extracted" log block (see redaction.h — this is the
   /// one deliberate, explicit exception to that file's masking, not a loosening of it).
   void log_result_();
@@ -208,6 +213,8 @@ class KeyExtractionResponder {
   uint32_t session_freq_{FREQ_CH2};
   /// millis() when the frame the responder last answered was received; see in_session_hold().
   uint32_t session_rx_ms_{0};
+  /// The `0x29` waiting for its slot (schedule_discover_reply_()).
+  IoFrame pending_discover_resp_{};
   DeviceRegistry &registry_;
   TransmitFrameFn transmit_;
   NamedTimeoutFn schedule_auto_off_;

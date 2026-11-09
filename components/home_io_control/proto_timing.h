@@ -22,6 +22,11 @@ static constexpr uint32_t FREQ_CH1 = 868250000;  ///< Channel 1: 868.25 MHz (2W 
 static constexpr uint32_t FREQ_CH2 = 868950000;  ///< Channel 2: 868.95 MHz (1W and 2W, TX channel)
 static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W only)
 
+/// Length of one discovery answer slot. A discovery request opens a window of N such slots and a
+/// device answers once, in a random slot from 1 to N (slot 0 is never used); the controller
+/// collects answers for the whole window before it confirms one.
+static constexpr uint32_t DISCOVERY_SLOT_MS = 41;
+
 /// Preamble is a sequence of 0xAA bytes that precedes every frame.
 /// Any start frame carrying `CTRL1_LOW_POWER` — a directed frame to a low-power target, or the
 /// SPE roll-call's low-power frame shape — uses the long preamble (1024 bytes = 8192 bits) as a
@@ -38,7 +43,7 @@ static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol default and floor
 /// a frame the peer caught via a rotating/hopping listen (currently: only the key-extraction
 /// responder's 0x29, the sole `start=true` frame any device-role builder in this codebase
 /// produces) — long enough to be reliably caught by a hopping receiver, short enough that
-/// broadcasting it across all 3 channels doesn't block the loop the way LONG_PREAMBLE does.
+/// sending it doesn't block the loop the way LONG_PREAMBLE does.
 ///
 /// Sized above the ~13.9 ms real-device discovery-reply preamble this project's own SX1262/LR1121
 /// discovery hop-slice tuning was measured against (issue #65 SDR analysis) — that measurement is

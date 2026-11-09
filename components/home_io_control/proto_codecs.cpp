@@ -254,6 +254,19 @@ DeviceType discovery_target_type(const uint8_t addr[NODE_ID_SIZE]) {
   return broadcast_target_type(addr);
 }
 
+uint8_t discovery_slot_count(const uint8_t addr[NODE_ID_SIZE]) {
+  switch (addr[2] & ADDRESS_SUFFIX_MASK) {
+    case ADDRESS_SUFFIX_DISCOVERY_64:
+      return DISCOVERY_SLOTS_64;
+    case ADDRESS_SUFFIX_DISCOVERY_128:
+      return DISCOVERY_SLOTS_128;
+    case ADDRESS_SUFFIX_DISCOVERY_255:
+      return DISCOVERY_SLOTS_255;
+    default:  // ADDRESS_SUFFIX_DISCOVERY and anything unrecognised: the smallest window
+      return DISCOVERY_SLOTS_32;
+  }
+}
+
 void encode_broadcast_address(DeviceType type, uint8_t out[NODE_ID_SIZE]) {
   // Both bytes together carry the ten type bits, so a 16-bit enumerator is encoded exactly; bits
   // above the wire field are dropped explicitly rather than spilling into out[1].

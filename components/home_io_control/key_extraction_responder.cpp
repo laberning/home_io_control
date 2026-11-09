@@ -71,6 +71,8 @@ constexpr uint8_t KEY_EXTRACTION_MANUFACTURER_ID = MANUFACTURER_SOMFY;  ///< Pla
 constexpr DeviceType KEY_EXTRACTION_ADVERTISED_TYPE = DeviceType::ROLLER_SHUTTER;  ///< Plausible default device type.
 constexpr uint8_t KEY_EXTRACTION_ADVERTISED_SUBTYPE = 0;
 constexpr uint8_t KEY_EXTRACTION_ID_GEN_MAX_ATTEMPTS = 16;  ///< Collision-retry budget for the throwaway node ID.
+constexpr size_t IO_CHANNEL_COUNT = 3;                      ///< FREQ_CH1..FREQ_CH3.
+constexpr const char *KEY_EXTRACTION_DISCOVER_REPLY_TIMER_NAME = "key_extraction_discover_reply";
 constexpr const char *KEY_EXTRACTION_TIMEOUT_NAME = "key_extraction_auto_off";
 constexpr uint32_t RANDOM_LOW_BYTE_MASK = 0xFF;  ///< Isolates one random byte from esp_random()'s 32-bit output.
 
@@ -247,39 +249,64 @@ void KeyExtractionResponder::send_reply_(const IoFrame &frame) {
   this->session_freq_ = this->rx_freq_hz_;
   this->session_rx_ms_ = this->rx_ms_;
 
-  // The preamble choice mirrors ExchangeEngine::send_and_receive() (exchange_engine.cpp), which
-  // already picks between a long and a short preamble via is_start() for the controller-role
-  // outbound path: a start-flagged frame (only 0x29, this responder's discovery reply) is the one
-  // reply a hopping/scanning peer has to catch cold, so it gets `cold_broadcast_reply_preamble` —
-  // long enough for that, short enough that sending it on 3 channels doesn't meaningfully block
-  // the loop (~12x cheaper per leg than LONG_PREAMBLE by default). Every other device-role reply
-  // (0x2D, 0x3C, 0x33, 0x37, 0x3D) is `start=false`: it lands on the channel the peer holds, so
-  // it keeps the driver's chip-tuned response_preamble(), same as every other in-exchange reply in
-  // this codebase.
+  // Every reply that reaches this path (0x2D, 0x3C, 0x33, 0x37, 0x3D) is `start=false`: it lands
+  // on the channel the peer holds, so it keeps the driver's chip-tuned response_preamble(), same
+  // as every other in-exchange reply in this codebase. The one start-flagged reply, the 0x29, goes
+  // out through schedule_discover_reply_() instead.
   //
   // Do NOT widen this to a flat LONG_PREAMBLE(1024) for every reply: hardware-confirmed
   // 2026-08-02, that blocked the main loop long enough to blow through the hub's tight per-try
   // wait windows and broke both directions.
-  const uint16_t preamble =
-      is_start(frame) ? this->tuning_->cold_broadcast_reply_preamble : (*this->radio_)->response_preamble();
+  const uint16_t preamble = (*this->radio_)->response_preamble();
 
-  if (!is_start(frame)) {
-    // An answer to a frame addressed to us goes out once, on that frame's channel, at once: the
-    // peer stays on the channel it sent on to wait for it (0 of 300 measured unicast replies came
-    // back on another channel, exchange_engine.cpp's first-response wait). Repeating it on the
-    // other channels would only keep this radio transmitting while the peer already answers.
-    this->transmit_(frame, this->session_freq_, preamble);
-    return;
-  }
-
-  // The 0x29 answers a broadcast search, whose sender listens across the channels for the window
-  // of its search, so it goes out on all three. The search's own channel goes last: a sender that
-  // hears it and goes on at once then finds this radio already listening there.
-  for (const uint32_t freq : {FREQ_CH1, FREQ_CH2, FREQ_CH3}) {
-    if (freq != this->session_freq_)
-      this->transmit_(frame, freq, preamble);
-  }
+  // An answer to a frame addressed to us goes out once, on that frame's channel, at once: the
+  // peer stays on the channel it sent on to wait for it (0 of 300 measured unicast replies came
+  // back on another channel, exchange_engine.cpp's first-response wait). Repeating it on the
+  // other channels would only keep this radio transmitting while the peer already answers.
   this->transmit_(frame, this->session_freq_, preamble);
+}
+
+void KeyExtractionResponder::schedule_discover_reply_(const IoFrame &search, const IoFrame &resp) {
+  // A device answers a search once, in a random slot from 1 to N (never slot 0), on one
+  // channel, and the searcher collects for the whole window before it confirms. The answer is
+  // therefore a timed transmission, not a reply at once: the searcher's window is N slots long.
+  const uint32_t slots = discovery_slot_count(search.dst);
+  const uint32_t slot = 1 + (esp_random() % slots);
+  const uint32_t delay_ms = slot * DISCOVERY_SLOT_MS;
+  // One random channel of the two the search did not come in on: a searcher listens on those for
+  // its answers (a discovery reply lands on the request channel in about 1 of 149 measured
+  // answers, ListenPolicy::ROTATE_SKIPPING_REQUEST), so a draw over all three would lose a third.
+  static constexpr uint32_t CHANNELS[IO_CHANNEL_COUNT] = {FREQ_CH1, FREQ_CH2, FREQ_CH3};
+  size_t search_index = 1;  // CH2, the channel a frame with no reported channel counts as
+  for (size_t i = 0; i < IO_CHANNEL_COUNT; i++) {
+    if (CHANNELS[i] == this->rx_freq_hz_)
+      search_index = i;
+  }
+  // One or two channels on from the search's: always one of the other two.
+  const size_t step = 1 + (esp_random() % (IO_CHANNEL_COUNT - 1));
+  const uint32_t freq = CHANNELS[(search_index + step) % IO_CHANNEL_COUNT];
+
+  // The 0x29 is no reply on the search's channel: the session (and its channel hold) opens only
+  // with the confirm that follows, which may come on any channel. Leave the hold expired.
+  this->session_freq_ = this->rx_freq_hz_;
+  this->session_rx_ms_ = this->rx_ms_ - KEY_EXTRACTION_SESSION_WINDOW_MS;
+
+  this->pending_discover_resp_ = resp;
+  // Same timer name: a repeated search replaces the answer still waiting for its slot.
+  this->schedule_auto_off_(KEY_EXTRACTION_DISCOVER_REPLY_TIMER_NAME, delay_ms, [this, freq]() {
+    // Only the attempt that scheduled it may send it: after a disarm, or a disarm and re-arm (a
+    // fresh throwaway ID, state back to ARMED_IDLE), this answer is stale.
+    if (this->key_extraction_ctx_.state != pairing_responder::ResponderState::SENT_DISCOVER_RESP)
+      return;
+    // The one reply a hopping/scanning peer has to catch cold, so `cold_broadcast_reply_preamble`:
+    // long enough for that, much shorter than LONG_PREAMBLE so the loop is not blocked.
+    this->transmit_(this->pending_discover_resp_, freq, this->tuning_->cold_broadcast_reply_preamble);
+  });
+  // Hold the radio (and defer background polls) through the slot and the confirm that follows it.
+  this->key_extraction_hold_deadline_ms_ = millis() + delay_ms + KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS;
+  ESP_LOGD(detail::TAG,
+           "Key extraction: discovery answer in slot %" PRIu32 " of %" PRIu32 " (%" PRIu32 " ms) on %" PRIu32 " Hz",
+           slot, slots, delay_ms, freq);
 }
 
 void KeyExtractionResponder::handle_discover_(const IoFrame &frame) {
@@ -309,9 +336,8 @@ void KeyExtractionResponder::handle_discover_(const IoFrame &frame) {
     // from either holding the radio unboundedly or clobbering a still-valid earlier deadline.
     return;
   }
-  this->send_reply_(resp);
-  this->key_extraction_hold_deadline_ms_ = millis() + KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS;
-  ESP_LOGI(detail::TAG, "Key extraction: replied to discovery from hub %s as node type %u with throwaway ID %s",
+  this->schedule_discover_reply_(frame, resp);
+  ESP_LOGI(detail::TAG, "Key extraction: answering discovery from hub %s as node type %u with throwaway ID %s",
            node_id_to_string(frame.src).c_str(), static_cast<unsigned>(this->key_extraction_ctx_.advertised_type),
            node_id_to_string(this->key_extraction_ctx_.throwaway_id).c_str());
 }

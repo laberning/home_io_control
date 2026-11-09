@@ -88,6 +88,9 @@ template<typename Base> class HubAirRadio : public Base {
   bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override {
     // Keeps the base mock's wait/timeout bookkeeping; its own rx queue is always empty here.
     Base::wait_for_packet(packet, timeout_ms);
+    // The device answers a search in a slot of the window the hub is now waiting through.
+    if (this->device != nullptr)
+      test::fire_discover_reply(*this->device);
     for (auto it = this->air_.begin(); it != this->air_.end(); ++it) {
       if (it->freq_hz != this->get_current_freq())
         continue;

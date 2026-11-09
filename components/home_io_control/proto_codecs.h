@@ -133,6 +133,24 @@ DeviceType broadcast_target_type(const uint8_t addr[NODE_ID_SIZE]);
 ///         address, carries no type bits, or names an undefined type.
 DeviceType discovery_target_type(const uint8_t addr[NODE_ID_SIZE]);
 
+// Discovery answer windows, selected by the discovery address's suffix (discovery_slot_count()).
+static constexpr uint8_t ADDRESS_SUFFIX_DISCOVERY_64 = 0x3C;   ///< Discovery suffix opening 64 slots.
+static constexpr uint8_t ADDRESS_SUFFIX_DISCOVERY_128 = 0x3D;  ///< Discovery suffix opening 128 slots.
+static constexpr uint8_t ADDRESS_SUFFIX_DISCOVERY_255 = 0x3E;  ///< Discovery suffix opening 255 slots.
+static constexpr uint8_t DISCOVERY_SLOTS_32 = 32;    ///< Window of ADDRESS_SUFFIX_DISCOVERY, and the fallback.
+static constexpr uint8_t DISCOVERY_SLOTS_64 = 64;    ///< Window of ADDRESS_SUFFIX_DISCOVERY_64.
+static constexpr uint8_t DISCOVERY_SLOTS_128 = 128;  ///< Window of ADDRESS_SUFFIX_DISCOVERY_128.
+static constexpr uint8_t DISCOVERY_SLOTS_255 = 255;  ///< Window of ADDRESS_SUFFIX_DISCOVERY_255.
+
+/// @brief Number of answer slots a discovery request opens.
+///
+/// The low bits of a discovery address's last byte select the window: `3B` = 32 slots, `3C` = 64,
+/// `3D` = 128, `3E` = 255 (the type bits above them do not matter). Any other suffix is read as the
+/// smallest window.
+/// @param addr Three-byte destination of a discovery request.
+/// @return Slot count, 32 to 255.
+uint8_t discovery_slot_count(const uint8_t addr[NODE_ID_SIZE]);
+
 /// @brief Encode a device type into its typed-broadcast destination address — the exact inverse
 /// of broadcast_target_type(), kept immediately beside it so the pair cannot drift apart.
 ///
