@@ -664,15 +664,64 @@ TEST(RadioSX1276, StaleSyncAddressMatchIsClearedByCyclingOutOfRx) {
   EXPECT_TRUE(saw_rx_after_standby) << "un-sticking must return to RX afterwards";
 }
 
-TEST(RadioSX1276, ReceptionInProgressIgnoresPreambleDetect) {
-  // PreambleDetect (bit 1) is write-1-to-clear and this driver never writes it, so gating on it
-  // would disable hopping permanently after the first preamble ever seen. Sync only.
+TEST(RadioSX1276, ReceptionInProgressHoldsWhileAFreshPreambleIsComing) {
+  // A start preamble is up to LONG_PREAMBLE long and its sync word comes at the end: the hop must
+  // stay on the channel for it, or the frame is caught only if the hop happens to be back here
+  // when the sync word arrives.
+  test::burn_micros(1);  // see StaleSyncAddressMatchIsClearedByCyclingOutOfRx: 0 is the "unarmed" sentinel
   RegisterModelSpi spi;
   MockPin rst, dio0, dio4(false);
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
-  spi.set_reg(REG_IRQ_FLAGS1, 0x02);  // PreambleDetect only, no SyncAddressMatch
+  spi.set_reg(REG_IRQ_FLAGS1, 0x02);  // PreambleDetect only, no SyncAddressMatch yet
 
-  EXPECT_FALSE(radio.reception_in_progress());
+  EXPECT_TRUE(radio.reception_in_progress()) << "first sighting of a preamble holds the channel";
+  test::burn_micros(SX1276_PREAMBLE_HOLD_US / 2);
+  EXPECT_TRUE(radio.reception_in_progress()) << "still inside the longest start preamble";
+}
+
+TEST(RadioSX1276, PreambleHoldEndsAfterTheLongestStartPreamble) {
+  // PreambleDetect latches until the receiver restarts, so a detection with no sync behind it
+  // (noise) must not stop the hop for good.
+  test::burn_micros(1);
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x02);
+
+  ASSERT_TRUE(radio.reception_in_progress());
+  test::burn_micros(SX1276_PREAMBLE_HOLD_US + 2);
+
+  EXPECT_FALSE(radio.reception_in_progress()) << "no sync word within the hold: the hop goes on";
+  EXPECT_TRUE(radio.reception_in_progress()) << "a flag still set after that counts as a new sighting";
+}
+
+TEST(RadioSX1276, ChangeFrequencyInRxRestartsTheReceiver) {
+  // A FastHop retune writes FRF only; restarting the chain clears PreambleDetect and re-arms
+  // AGC/AFC for the new channel, which is what makes the preamble hold above meaningful.
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_OP_MODE, MODE_RX);
+
+  radio.change_frequency(FREQ_CH3);
+
+  bool restarted = false;
+  for (const auto &entry : spi.write_log())
+    restarted |= entry.first == (REG_RX_CONFIG & 0x7F) && entry.second == (RX_CONFIG_VALUE | 0x20);
+  EXPECT_TRUE(restarted) << "RestartRxWithPllLock after the retune";
+}
+
+TEST(RadioSX1276, ChangeFrequencyOutsideRxDoesNotTouchTheReceiver) {
+  // send_packet() retunes in standby before TX; there is no receiver chain to restart then.
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_OP_MODE, MODE_STDBY);
+
+  radio.change_frequency(FREQ_CH3);
+
+  for (const auto &entry : spi.write_log())
+    EXPECT_NE(entry.first, REG_RX_CONFIG & 0x7F) << "no receiver restart outside RX";
 }
 
 // ============================================================================
