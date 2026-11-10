@@ -402,7 +402,8 @@ TEST(RadioSX1262, SendPacketSetsPacketParamsPreambleInBits) {
   // opcode; pp[1..9] are packet-param bytes 0..8.
   EXPECT_EQ(pp[1], static_cast<uint8_t>((LONG_PREAMBLE * 8) >> 8)) << "byte 0: preamble length MSB (bits)";
   EXPECT_EQ(pp[2], static_cast<uint8_t>(LONG_PREAMBLE * 8)) << "byte 1: preamble length LSB (bits)";
-  EXPECT_EQ(pp[3], 0x04) << "byte 2: preamble detector = 8 bits (SX1262 constant)";
+  EXPECT_EQ(pp[3], SX1262_PREAMBLE_DETECTOR_16_BIT) << "byte 2: preamble detector = 16 bits (0x05)";
+  EXPECT_EQ(SX1262_PREAMBLE_DETECTOR_16_BIT, 0x05) << "the SX126x code for a 16-bit detector";
   EXPECT_EQ(pp[4], 0x18) << "byte 3: sync-word length = 24 bits (SX1262_SYNC_WORD_PARAM_24_BITS)";
   EXPECT_EQ(pp[5], 0x00) << "byte 4: address comparison off";
   EXPECT_EQ(pp[6], SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH) << "byte 5: known-length packet type";

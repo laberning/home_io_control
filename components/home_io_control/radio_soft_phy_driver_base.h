@@ -88,6 +88,30 @@ static constexpr uint32_t SOFT_PHY_IDLE_RX_COMPLETION_BUDGET_MS = 20;
 /// against one taken after a long dwell on the same channel.
 static constexpr uint32_t SOFT_PHY_CCA_SETTLE_US = 1000;
 
+/// Longest a detected preamble keeps the receiver running across dwell timeouts, in milliseconds.
+///
+/// A dwell that times out while PreambleDetected is latched leaves RX and the latched bit alone, so
+/// the caller's linger guard keeps the channel (see SoftPhyDriverBase::preamble_hold_since_ms_).
+/// Restarting RX there throws the preamble away and, measured on the bench, lost frames whose sync
+/// arrived within a millisecond of the restart. The cap covers a preamble detected at the start of
+/// a dwell (one dwell, ~9 ms) plus the longest preamble-to-sync measured on air from a discovery
+/// answer (21 ms, the key-extraction responder's 80-byte answer; real devices ~14 ms), and bounds
+/// what a false detection on noise can cost.
+static constexpr uint32_t SOFT_PHY_PREAMBLE_HOLD_MS = 30;
+
+/// Microseconds per millisecond, for the air-time arithmetic below.
+static constexpr uint32_t SOFT_PHY_US_PER_MS = 1000;
+/// Polling granularity added on top of an air time: the receive loops poll once per millisecond.
+static constexpr uint32_t SOFT_PHY_POLL_MARGIN_MS = 2;
+
+/// Extra time a reception gets once its sync word is seen, past the caller's deadline, in
+/// milliseconds: the fixed-length probe's own air time after sync (48 raw bytes, 10 ms) plus the
+/// polling margin. Without it a frame whose sync lands near the end of a dwell or linger is
+/// abandoned mid-reception and lost.
+static constexpr uint32_t SOFT_PHY_POST_SYNC_GRACE_MS =
+    ((soft_phy_air_time_us(SOFT_PHY_RX_PROBE_PACKET_LEN) + SOFT_PHY_US_PER_MS - 1) / SOFT_PHY_US_PER_MS) +
+    SOFT_PHY_POLL_MARGIN_MS;
+
 static_assert(SOFT_PHY_IDLE_RX_COMPLETION_BUDGET_MS >= SOFT_PHY_EARLY_MIN_WINDOW_MS,
               "a budget below the minimum window makes try_early_completion_() decline every "
               "idle-path call, silently turning issue #81's fix into a no-op");
@@ -218,8 +242,8 @@ class SoftPhyDriverBase : public RadioDriver {
   bool is_sync_detected() override;
   /// @copydoc RadioDriver::is_preamble_detected
   ///
-  /// Consults the private `preamble_latched_at_timeout_` flag first; see that member's declaration
-  /// for why.
+  /// Reads the live, sticky PreambleDetected bit. A dwell that times out on a preamble keeps RX and
+  /// that bit (see `preamble_hold_since_ms_`), so this stays true for the rest of the hold.
   bool is_preamble_detected() override;
   /// @brief Preamble for response/continuation frames — shared storage, see the concrete
   /// drivers' constructors/tuning defaults for the chip-specific rationale and value.
@@ -461,6 +485,10 @@ class SoftPhyDriverBase : public RadioDriver {
   /// Poll for first *terminal* radio activity (IRQ pin or an IRQ status bit within
   /// @ref activity_irq_mask) within timeout.
   bool poll_until_activity_(uint32_t start, uint32_t timeout_ms, uint32_t &irq);
+  /// At a dwell timeout: start or continue a preamble hold when `irq` has PreambleDetected set and
+  /// the hold is younger than @ref SOFT_PHY_PREAMBLE_HOLD_MS. True means "leave RX running";
+  /// false means the caller resets RX, which also ends any hold.
+  bool hold_rx_for_preamble_(uint32_t irq);
   /// Resolve the SYNC_WORD_VALID → RX_DONE race condition common to both chips, and — on a chip
   /// that opts into @ref early_rx_read_offset — give the length-driven receive its chance first.
   /// @param early_completed Set when a whole CRC-valid frame was recovered without waiting for
@@ -483,32 +511,19 @@ class SoftPhyDriverBase : public RadioDriver {
   /// already ready; the diagnostic dump prints it so a field report shows how often it happens.
   uint32_t busy_overruns_{0};
 
-  /// @brief Whether `PreambleDetected` was latched at the exact moment a dwell's
-  /// `poll_until_activity_()` gave up waiting, captured before `reset_rx_state_()` wipes the IRQ
-  /// word out from under it.
+  /// @brief When the current preamble hold began (millis()); valid while `preamble_hold_active_`.
   ///
-  /// `PreambleDetected` is deliberately excluded from @ref activity_irq_mask (a bare preamble must
-  /// not look like terminal activity), and that exclusion is exactly why a dwell *can* time out
-  /// while the bit is still latched — the timeout branch has no way to notice, since
-  /// activity_irq_mask() never told it to look. What happens next is a separate problem:
-  /// `reset_rx_state_()` runs immediately afterward and clears the whole IRQ word, so a live
-  /// re-read a few tens of microseconds later (in `listen()`'s `preamble_or_sync_incoming()` guard)
-  /// would need the chip to re-observe a fresh preamble from scratch — which takes a little longer
-  /// on a chip with a longer preamble-detector length — and it almost never has done so by the time
-  /// the guard asks. This flag is the only way that information survives the reset long enough for
-  /// the guard to read it.
-  ///
-  /// `is_sync_detected()` needs no equivalent snapshot — not because no path clears sync before a
-  /// timeout (`resolve_sync_race_()` does exactly that: it clears `SYNC_WORD_VALID` up front once a
-  /// reception is underway, and can still time out later waiting for RX_DONE), but because that
-  /// path never calls `reset_rx_state_()` on its way out. Whatever `PreambleDetected` state existed
-  /// going into it survives untouched, which is all the guard actually depends on there.
-  ///
-  /// Lifetime is bounded to a single `poll_until_activity_()` call so a stale detection can never
-  /// suppress a later, unrelated hop: every exit from that function's loop sets this flag from
-  /// scratch (true only on the timeout branch, and only when the bit was actually set on that exact
-  /// read), and @ref is_preamble_detected consumes (clears) it the moment it is read as true.
-  bool preamble_latched_at_timeout_{false};
+  /// `PreambleDetected` is excluded from @ref activity_irq_mask (a bare preamble is not terminal
+  /// activity), so a dwell can time out while a frame's preamble is on air. Restarting RX there (the
+  /// normal timeout path, `reset_rx_state_()`) throws that preamble away; a restart within about a
+  /// millisecond of the sync loses the frame. So `poll_until_activity_()`'s timeout leaves RX and the
+  /// sticky bit alone while the bit is set, and `listen()`'s guard, reading the live bit through
+  /// @ref is_preamble_detected, keeps the channel. The hold ends when a frame arrives, when RX is
+  /// reset or re-armed (`reset_rx_state_()`, `rearm_rx_after_tx_()`), on a retune, or after
+  /// @ref SOFT_PHY_PREAMBLE_HOLD_MS, which bounds a false detection on noise.
+  uint32_t preamble_hold_since_ms_{0};
+  /// Whether a preamble hold is running.
+  bool preamble_hold_active_{false};
 };
 
 }  // namespace home_io_control

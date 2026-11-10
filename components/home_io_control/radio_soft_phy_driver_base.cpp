@@ -16,6 +16,7 @@
 #include "esphome/core/log.h"
 #include "esphome/core/application.h"
 
+#include <algorithm>
 #include <cinttypes>
 #include <cstdio>
 
@@ -109,17 +110,15 @@ bool SoftPhyDriverBase::poll_until_activity_(uint32_t start, uint32_t timeout_ms
       this->clear_dio_fired();
     irq = this->read_irq_status_raw();
     if ((irq & this->activity_irq_mask()) != 0) {
-      // The flag must never outlive the poll that set it, so every exit path resets it here too.
-      this->preamble_latched_at_timeout_ = false;
+      this->preamble_hold_active_ = false;  // the frame the hold was waiting for has arrived
       return true;
     }
     if (millis() - start > timeout_ms) {
-      // Snapshot before the reset below wipes it: reset_rx_state_() clears the whole IRQ word, so
-      // this is the last point PreambleDetected can be observed for this dwell (see
-      // preamble_latched_at_timeout_'s doc comment for why the bit can't just be re-read afterward).
-      this->preamble_latched_at_timeout_ = (irq & this->preamble_detected_bit()) != 0;
       this->clear_dio_fired();
-      this->reset_rx_state_();
+      // A preamble on air: keep RX (and the sticky bit the caller's linger guard reads) rather
+      // than restart it under the frame. See preamble_hold_since_ms_.
+      if (!this->hold_rx_for_preamble_(irq))
+        this->reset_rx_state_();
       return false;
     }
     App.feed_wdt();
@@ -127,9 +126,24 @@ bool SoftPhyDriverBase::poll_until_activity_(uint32_t start, uint32_t timeout_ms
   }
 }
 
+bool SoftPhyDriverBase::hold_rx_for_preamble_(uint32_t irq) {
+  if ((irq & this->preamble_detected_bit()) == 0)
+    return false;
+  const uint32_t now = millis();
+  if (!this->preamble_hold_active_) {
+    this->preamble_hold_active_ = true;
+    this->preamble_hold_since_ms_ = now;
+    return true;
+  }
+  // Past the cap the detection was noise, or a preamble too long to be an answer: let the caller
+  // reset RX (which ends the hold) and move on.
+  return now - this->preamble_hold_since_ms_ < SOFT_PHY_PREAMBLE_HOLD_MS;
+}
+
 /// Resolve the SYNC_WORD_VALID → RX_DONE race condition common to both chips: the sync-word IRQ
 /// can assert before the packet is fully received. If we observe SYNC without RX_DONE, clear the
-/// sticky SYNC flag and spin until RX_DONE arrives or the remaining timeout elapses.
+/// sticky SYNC flag and spin until RX_DONE arrives or the timeout, extended by
+/// SOFT_PHY_POST_SYNC_GRACE_MS once the sync is seen, elapses.
 bool SoftPhyDriverBase::resolve_sync_race_(uint32_t start, uint32_t timeout_ms, uint32_t &irq, RadioRxPacket &packet,
                                            bool &early_completed) {
   early_completed = false;
@@ -143,6 +157,9 @@ bool SoftPhyDriverBase::resolve_sync_race_(uint32_t start, uint32_t timeout_ms, 
   uint32_t const sync_us = micros();
   // SYNC seen without RX_DONE — clear sticky SYNC and wait for RX_DONE.
   this->clear_irq_status(this->sync_word_valid_bit());
+  // The frame has started: give it its air time even past the caller's deadline, or a sync that
+  // lands near the end of a dwell or linger loses the frame mid-reception.
+  timeout_ms = std::max(timeout_ms, (millis() - start) + SOFT_PHY_POST_SYNC_GRACE_MS);
 
   if (this->try_early_completion_(packet, sync_us, irq, start, timeout_ms)) {
     early_completed = true;
@@ -263,6 +280,7 @@ void SoftPhyDriverBase::rearm_rx_after_tx_() {
   // already keeps TX content away from where a length-driven receive reads), so this path pays
   // nothing extra there; only LR1121, whose shared buffer needs it, does real work here.
   this->clear_reception_in_progress_();
+  this->preamble_hold_active_ = false;
   this->clear_irq_status(0xFFFFFFFF);
   this->invalidate_stale_rx_content_after_tx();
   this->set_rx_packet_params();
@@ -296,6 +314,7 @@ void SoftPhyDriverBase::reset_rx_state_(bool force_standby) {
   // try_early_completion_()'s success, read_rx_packet()'s end, finalize_receive_()'s failure, and
   // check_for_packet()'s catch-all.
   this->clear_reception_in_progress_();
+  this->preamble_hold_active_ = false;
   if (force_standby)
     this->set_mode_standby();
   this->clear_irq_status(0xFFFFFFFF);
@@ -571,6 +590,7 @@ TxResult SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const 
 // === Frequency control ===
 
 void SoftPhyDriverBase::change_frequency(uint32_t freq_hz) {
+  this->preamble_hold_active_ = false;  // a preamble held on the old channel says nothing about this one
   this->set_mode_standby();
   this->set_frequency_register(freq_hz);
   this->clear_irq_status(0xFFFFFFFF);  // Clear stale preamble/sync bits from previous channel
@@ -585,10 +605,6 @@ int16_t SoftPhyDriverBase::read_rssi() { return this->raw_rssi_to_dbm_(this->rea
 bool SoftPhyDriverBase::is_sync_detected() { return (this->read_irq_status_raw() & this->sync_word_valid_bit()) != 0; }
 
 bool SoftPhyDriverBase::is_preamble_detected() {
-  if (this->preamble_latched_at_timeout_) {
-    this->preamble_latched_at_timeout_ = false;
-    return true;
-  }
   return (this->read_irq_status_raw() & this->preamble_detected_bit()) != 0;
 }
 

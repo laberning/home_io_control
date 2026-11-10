@@ -36,6 +36,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0040](0040-low-power-start-preamble-follows-the-wake-belief.md) | A low-power device's start preamble follows its wake belief | Tries ordered by per-device evidence (short first only while believed travelling, then the wake-up preamble; a silent exchange spends the evidence; the post-`stop` poll gets three tries); amends 0029; `low_power_wake_belief` switch, `low_power_wake_preamble` length |
 | [0044](0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md) | Chip-neutral transmit intent | Every transmission carries its wake level; a driver may scan idle channels by itself; a try starts only if its transmission ends inside the exchange budget |
 | [0045](0045-listen-before-talk-is-part-of-sending.md) | Listen-before-talk is part of sending | The radio checks the transmit channel inside `send_packet()`, retuning first when the idle receiver is elsewhere; the engine keeps the retry policy and, since the 2026-10 amendment, checks only frames with START set |
+| [0070](0070-a-preamble-on-air-keeps-the-soft-phy-receiver-running.md) | A preamble on air keeps the software-PHY receiver running | SX1262/LR1121: a dwell that times out on a preamble keeps RX until the frame, a retune or 30 ms; a started frame gets 12 ms past the deadline; the SX1262 preamble detector is 16 bits, as on the LR1121 |
 
 ### Behavior
 
@@ -182,6 +183,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0067: A model below the subtype for products that share a wire type](0067-a-model-below-the-subtype-for-products-that-share-a-wire-type.md)
 - [ADR 0068: A domestic hot water device is a water heater](0068-a-domestic-hot-water-device-is-a-water-heater.md)
 - [ADR 0069: A config key is retired in two stages](0069-a-config-key-is-retired-in-two-stages.md)
+- [ADR 0070: A preamble on air keeps the software-PHY receiver running](0070-a-preamble-on-air-keeps-the-soft-phy-receiver-running.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

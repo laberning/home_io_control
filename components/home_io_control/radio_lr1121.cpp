@@ -377,30 +377,29 @@ void RadioLR1121::configure_radio_() {
   uint8_t sync_word[8] = {0x57, 0xFD, 0x99, 0x00, 0x00, 0x00, 0x00, 0x00};
   this->write_command_(LR1121_CMD_SET_GFSK_SYNC_WORD, sync_word, sizeof(sync_word));
 
-  // 10. PA config: select LP or HP PA path based on the configured power — cross-checked against
-  //     RadioLib's LR1120::setOutputPower()/checkOutputPower(): the LP path only covers -17..14dBm
-  //     (regPaSupply=internal regulator); anything above requires the HP path (regPaSupply=VBAT,
-  //     -9..22dBm). This board's config requests 17dBm, which is out of the LP path's valid
-  //     range — always configuring LP here regardless of tx_power_ was invalid, and is the likely
-  //     reason TX completed digitally (TX_DONE fired, no error) while the awning never received
-  //     anything: the PA was asked to output power outside the range its selected path supports.
-  bool const use_hp_pa = this->tx_power_ > 14;
+  // 10. PA config: always the HP PA (paSel=1, regPaSupply=VBAT), whatever tx_power_ is. The
+  //     LR1121 has two sub-GHz PAs (cross-checked against RadioLib's LR1120::setOutputPower()/
+  //     checkOutputPower()): LP covers -17..14dBm, HP -9..22dBm. On the LilyGo T3-S3 the LP path
+  //     puts nothing on the air: at tx_power 10 the chip reports TX done, yet neither an SX1276
+  //     next to it nor an SDR sees a single frame, while 17dBm on the same build is clean. The
+  //     board most likely wires only the HP output to the antenna. HP's range covers the whole
+  //     YAML range (0..22), so low settings keep working through it.
   uint8_t pa_config[4] = {
-      (uint8_t) (use_hp_pa ? 0x01 : 0x00),  // paSel: 0=LP, 1=HP
-      (uint8_t) (use_hp_pa ? 0x01 : 0x00),  // regPaSupply: 0=internal regulator (LP), 1=VBAT (HP)
-      0x04,                                 // paDutyCycle
-      0x07,                                 // paHpSel — RadioLib always sets this, even for LP
+      0x01,  // paSel: 1 = HP
+      0x01,  // regPaSupply: 1 = VBAT (required by HP)
+      0x04,  // paDutyCycle
+      0x07,  // paHpSel
   };
   this->write_command_(LR1121_CMD_SET_PA_CONFIG, pa_config, sizeof(pa_config));
 
-  // 11. TX params: power in dBm, clamped to the selected PA path's valid range (see step 10).
+  // 11. TX params: power in dBm, clamped to the HP PA's valid range (see step 10).
   //     The ramp register is LR11x0-specific, not the SX126x encoding. RadioLib's
   //     LR1120::setOutputPower() passes `roundRampTime(us) - 3` — the shared ramp-time enum
   //     starts with three LR2021-only fast steps (2/4/8us) that don't exist on the LR11x0, so its
   //     own register value for a given ramp time is 3 less than the shared table's index. 0x0C is
   //     ~200us on this chip (0x04 would be ~80us).
-  int8_t const min_power = use_hp_pa ? -9 : -17;
-  int8_t const max_power = use_hp_pa ? 22 : 14;
+  int8_t const min_power = -9;  // HP PA's floor
+  int8_t const max_power = 22;  // HP PA's ceiling
   int8_t const power = std::max(min_power, std::min(max_power, (int8_t) this->tx_power_));
   uint8_t tx_params[2] = {(uint8_t) power, 0x0C};
   this->write_command_(LR1121_CMD_SET_TX_PARAMS, tx_params, sizeof(tx_params));

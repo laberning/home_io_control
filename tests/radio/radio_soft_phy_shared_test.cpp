@@ -539,25 +539,95 @@ TYPED_TEST(SoftPhyDriver, CheckForPacketSyncWithoutRxDoneFallsBackWhenCrcInvalid
 // so both chips now assert them.
 // ---------------------------------------------------------------------------
 
-TYPED_TEST(SoftPhyDriver, WaitForPacketTimeoutPreservesPreambleForGuard) {
-  // poll_until_activity_()'s timeout branch calls reset_rx_state_(), which clears the whole live
-  // IRQ word before listen()'s preamble_or_sync_incoming() guard can read it. The base class keeps
-  // a one-shot snapshot (preamble_latched_at_timeout_) so the guard still sees a preamble latched
-  // right up to the timeout, but that snapshot must not survive being read once.
-  MockSpi spi;
+namespace {
+/// A driver that cannot read its buffer mid-reception, so a receive always ends on RX_DONE. Keeps
+/// the post-sync grace test about the grace itself: the length-driven path would spend the host
+/// clock's per-call ticks on its own air-time wait.
+template<class Driver> class NoEarlyRxSoftPhy : public test::TestableSoftPhy<Driver> {
+ public:
+  using test::TestableSoftPhy<Driver>::TestableSoftPhy;
+  [[nodiscard]] int16_t early_rx_read_offset() const override { return -1; }
+};
+
+}  // namespace
+
+TYPED_TEST(SoftPhyDriver, WaitForPacketTimeoutOnPreambleKeepsRxAndTheBit) {
+  // A dwell that times out while a preamble is on air must not restart RX under it: a restart
+  // within a millisecond of the sync loses the frame (traced on a Heltec V3). RX and the sticky
+  // PreambleDetected bit stay, so listen()'s linger guard keeps the channel.
+  ScriptedSpi spi;
   MockPin rst, dio1, busy(false);
   typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
-
-  radio.set_irq_sequence({TypeParam::preamble(), TypeParam::preamble(), 0x0000});
+  radio.set_irq_sequence(std::vector<uint32_t>(64, TypeParam::preamble()));
 
   RadioRxPacket result{};
-  EXPECT_FALSE(radio.wait_for_packet(result, 1)) << "no RX_DONE/sync ever arrived, so this dwell must time out";
-  EXPECT_TRUE(radio.is_preamble_detected())
-      << "the guard must still see the preamble latched right up to the timeout, even though "
-         "reset_rx_state_() has already cleared the chip's live IRQ word";
-  EXPECT_FALSE(radio.is_preamble_detected())
-      << "the snapshot must not survive being read once — a stale detection must not suppress "
-         "hopping on a later, unrelated dwell";
+  EXPECT_FALSE(radio.wait_for_packet(result, 1)) << "a preamble alone is not a frame: the dwell times out";
+  EXPECT_FALSE(TypeParam::saw_standby(spi)) << "the timeout must not reset RX while a preamble is held";
+  EXPECT_FALSE(TypeParam::saw_cleared_irq(spi)) << "the sticky PreambleDetected bit must survive the timeout";
+  EXPECT_TRUE(radio.is_preamble_detected());
+  EXPECT_TRUE(radio.is_preamble_detected()) << "the guard reads the live bit, so it stays true while held";
+}
+
+TYPED_TEST(SoftPhyDriver, WaitForPacketTimeoutWithoutPreambleResetsRx) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  radio.set_irq_sequence({0x0000});
+
+  RadioRxPacket result{};
+  EXPECT_FALSE(radio.wait_for_packet(result, 1));
+  EXPECT_TRUE(TypeParam::saw_standby(spi)) << "an empty dwell still ends with the usual RX reset";
+  EXPECT_FALSE(radio.is_preamble_detected());
+}
+
+TYPED_TEST(SoftPhyDriver, PreambleHoldEndsAfterTheCap) {
+  // A detection that never becomes a frame (noise) must not pin the receiver: once the hold is
+  // SOFT_PHY_PREAMBLE_HOLD_MS old, the next timeout resets RX as before.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  radio.set_irq_sequence(std::vector<uint32_t>(4096, TypeParam::preamble()));
+
+  RadioRxPacket result{};
+  const uint32_t t0 = esphome::millis();
+  uint32_t reset_at = 0;
+  for (int i = 0; i < 200 && reset_at == 0; i++) {
+    EXPECT_FALSE(radio.wait_for_packet(result, 1));
+    if (TypeParam::saw_standby(spi))
+      reset_at = esphome::millis();
+  }
+  ASSERT_NE(reset_at, 0u) << "the hold must end";
+  EXPECT_GE(reset_at - t0, SOFT_PHY_PREAMBLE_HOLD_MS) << "and not before the cap";
+}
+
+TYPED_TEST(SoftPhyDriver, PreambleHoldEndsOnRetune) {
+  // A preamble held on one channel says nothing about the next: a retune clears the bit, so the
+  // guard sees no preamble until the new channel produces one.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  radio.set_irq_sequence({TypeParam::preamble(), TypeParam::preamble(), TypeParam::preamble()});
+
+  RadioRxPacket result{};
+  EXPECT_FALSE(radio.wait_for_packet(result, 1));
+  ASSERT_FALSE(TypeParam::saw_cleared_irq(spi)) << "held";
+  radio.change_frequency(FREQ_CH3);
+  EXPECT_TRUE(TypeParam::saw_cleared_irq(spi)) << "the retune clears the IRQ word, ending the hold";
+  radio.set_irq_sequence({0x0000});
+  EXPECT_FALSE(radio.is_preamble_detected());
+}
+
+TYPED_TEST(SoftPhyDriver, SyncNearTheDeadlineStillGetsItsFrame) {
+  // The sync lands at the very end of a short window; RX_DONE follows a few polls later. The
+  // frame must be delivered (post-sync grace), not abandoned mid-reception.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  NoEarlyRxSoftPhy<typename TypeParam::Driver> radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  radio.set_irq_sequence({TypeParam::sync_valid(), 0x0000, 0x0000, 0x0000, TypeParam::rx_done()});
+  radio.set_read_success(true);
+
+  RadioRxPacket result{};
+  EXPECT_TRUE(radio.wait_for_packet(result, 1)) << "a frame whose sync was seen must be given its air time";
 }
 
 TYPED_TEST(SoftPhyDriver, WaitForPacketCompletesOnAirTimeWithoutRxDone) {

@@ -265,11 +265,11 @@ void RadioSX1262::read_buffer_(uint8_t offset, uint8_t *data, uint8_t len) {
 void RadioSX1262::set_packet_params_(uint16_t preamble_len, uint8_t payload_len, uint8_t packet_type,
                                      uint8_t crc_type) {
   // Field order and the byte->bit preamble conversion are shared with LR1121 — see
-  // SoftPhyDriverBase::build_gfsk_packet_params. Only the detector length (8 bits / 1 byte here),
+  // SoftPhyDriverBase::build_gfsk_packet_params. Only the detector length,
   // the sync-word selector, and the opcode/transport are SX1262-specific.
   uint8_t params[GFSK_PACKET_PARAMS_LEN];
   build_gfsk_packet_params({.preamble_bytes = preamble_len,
-                            .preamble_detector = 0x04,  // 8 bits (1 byte)
+                            .preamble_detector = SX1262_PREAMBLE_DETECTOR_16_BIT,
                             .sync_word_param = SX1262_SYNC_WORD_PARAM_24_BITS,
                             .packet_type = packet_type,
                             .payload_len = payload_len,
