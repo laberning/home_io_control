@@ -252,6 +252,17 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
        return true;
      },
      false},
+    // false: read by the key-extraction responder each time it builds a discovery answer.
+    {"key_extraction_power_save",
+     [](const TuningConfig &t) { return key_extraction_power_save_to_string(t.key_extraction_power_save); },
+     [](TuningConfig &t, const std::string &v) -> bool {
+       auto mode = key_extraction_power_save_from_string(v);
+       if (!mode.has_value())
+         return false;
+       t.key_extraction_power_save = mode.value();
+       return true;
+     },
+     false},
 };
 
 const TuningNumberParam *find_tuning_number(const std::string &name) {

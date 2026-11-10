@@ -395,6 +395,49 @@ TEST(HubKeyExtraction, NonDefaultColdBroadcastReplyPreambleChangesDiscoveryReply
     EXPECT_EQ(tx_config.preamble_len, kNonDefaultPreamble);
 }
 
+namespace {
+/// Feeds one open 0x28 and returns the multi-information byte of the 0x29 the responder sent, or 0.
+uint8_t discovery_answer_flags(TestableHubComponent &comp, MockRadio &radio) {
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(make_rx_packet(discover));
+  test::fire_discover_reply(comp);
+  for (const auto &pkt : radio.get_sent_data()) {
+    IoFrame sent{};
+    if (parse(pkt.data(), static_cast<uint8_t>(pkt.size()), sent) && sent.cmd == CMD_DISCOVER_RESP &&
+        sent.data_len > DISCOVERY_RESP_FLAGS_OFFSET)
+      return sent.data[DISCOVERY_RESP_FLAGS_OFFSET];
+  }
+  return 0;
+}
+}  // namespace
+
+TEST(HubKeyExtraction, DiscoveryAnswerAdvertisesLowPowerByDefault) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+
+  EXPECT_EQ(discovery_answer_flags(comp, radio), KEY_EXTRACTION_DISCOVER_RESP_FLAGS);
+  EXPECT_EQ(KEY_EXTRACTION_DISCOVER_RESP_FLAGS & DISCOVERY_FLAGS_POWER_SAVE_MASK, POWER_SAVE_LOW_POWER);
+}
+
+TEST(HubKeyExtraction, AlwaysAlivePowerSaveAdvertisesTheIzymosByte) {
+  // key_extraction_power_save: always_alive sends the byte a real Somfy Izymo sends (0xDC): the
+  // same turnaround class, power-save always-alive (#215, Freebox Delta).
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.tuning_.key_extraction_power_save = KeyExtractionPowerSave::ALWAYS_ALIVE;
+  comp.set_key_extraction_armed(true);
+
+  const uint8_t flags = discovery_answer_flags(comp, radio);
+  EXPECT_EQ(flags, 0xDC);
+  EXPECT_EQ(discovery_power_save_mode(flags), POWER_SAVE_ALWAYS_ALIVE);
+  EXPECT_EQ(discovery_att_class(flags), discovery_att_class(KEY_EXTRACTION_DISCOVER_RESP_FLAGS))
+      << "only the power-save bits may change: the responder's session timing comes from the turnaround class";
+}
+
 // ========================================================================================
 // Full RX flow: 0x28 -> 0x29, 0x2C -> 0x2D, 0x31 -> 0x3C, 0x32 -> 0x33 + extraction, then the
 // post-extraction grace window (not an immediate disarm any more -- see arm_post_extraction_grace_())

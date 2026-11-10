@@ -132,6 +132,18 @@ enum class DiscoveryListenChannels : uint8_t {
                  ///< the other two; use it to rule out a responder that only answers on CH2.
 };
 
+/// @brief Power-save mode the key-extraction responder advertises in its discovery answer (0x29).
+///
+/// The answer's multi-information byte says whether the device sleeps (low power) or always listens.
+/// `low_power` (the default) is the byte the responder has always sent, accepted by a VELUX KLR 200,
+/// a KLF 200 and a TaHoma. `always_alive` sends the byte a real Somfy Izymo sends instead; the only
+/// answer that ever drew a discover-confirm from a Freebox Delta carried it (issue #215).
+/// \todo Confirm on a Freebox Delta which of the two it needs.
+enum class KeyExtractionPowerSave : uint8_t {
+  LOW_POWER,     ///< Default. Advertise a sleeping device (multi-info byte 0xDD).
+  ALWAYS_ALIVE,  ///< Advertise an always-listening device (0xDC, as a real Izymo does).
+};
+
 /// @brief Which direction PairingEngine moves the system key in after discovery.
 ///
 /// `auto` (the default) picks the direction from the device's discovery answer: a device that answers
@@ -286,6 +298,8 @@ struct TuningConfig {
       LR1121_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while LR1121 discovery hops.
   uint16_t cold_broadcast_reply_preamble{
       COLD_BROADCAST_REPLY_PREAMBLE};  ///< Preamble for a start-flagged key-extraction broadcast reply (0x29).
+  KeyExtractionPowerSave key_extraction_power_save{
+      KeyExtractionPowerSave::LOW_POWER};  ///< Power-save mode the key-extraction 0x29 advertises.
   uint16_t normal_start_preamble{
       NORMAL_START_PREAMBLE};  ///< Preamble for a directed start frame to a non-low-power target.
                                ///< Resolved at setup from RadioDriver::default_start_preamble()
@@ -575,6 +589,18 @@ std::string key_transfer_mode_to_string(KeyTransferMode value);
 /// @param value Option string to parse.
 /// @return The selection, or `std::nullopt` if `value` is not one of the options.
 std::optional<KeyTransferMode> key_transfer_mode_from_string(const std::string &value);
+
+/// @brief Render a KeyExtractionPowerSave as its YAML/select option string.
+/// @param value Mode to render.
+/// @return `"low_power"` or `"always_alive"`.
+std::string key_extraction_power_save_to_string(KeyExtractionPowerSave value);
+
+/// @brief Parse a KeyExtractionPowerSave from its YAML/select option string.
+///
+/// Exact, case-sensitive match against the strings key_extraction_power_save_to_string() emits.
+/// @param value Option string to parse.
+/// @return The mode, or `std::nullopt` if `value` is not one of the options.
+std::optional<KeyExtractionPowerSave> key_extraction_power_save_from_string(const std::string &value);
 
 }  // namespace home_io_control
 }  // namespace esphome

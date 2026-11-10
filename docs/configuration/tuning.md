@@ -146,6 +146,7 @@ your device may differ.
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
+| `key_extraction_power_save` | both | `low_power` | `low_power` / `always_alive` | Whether the key-extraction responder's discovery reply (0x29) says it is a sleeping or an always-listening device. Try `always_alive` when your hub never confirms the reply. |
 | `normal_start_preamble` | both | `48` on SX1262/LR1121, `32` on SX1276 | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices lead with `LONG_PREAMBLE` unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
 | `low_power_wake_preamble` | both | `1024` | 1024–4096 B | Wake-up preamble on a directed start frame to a `low_power:` device believed at rest. See below. |
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the 1024-byte wake-up preamble. See below. |
@@ -322,6 +323,24 @@ either leg of an exchange, which the existing per-command retry already absorbs.
 Sized independently of `response_preamble()`: it governs only the "Recover System Key" feature's
 discovery reply (0x29), the sole device-role reply that is `start=true` and therefore the one a
 hopping/scanning peer has to catch cold, rather than a peer already parked on a held channel.
+
+#### `key_extraction_power_save`
+
+Chooses one bit of the "Recover System Key" responder's discovery reply (0x29): whether the
+pretend device says it sleeps (`low_power`, byte `0xDD`) or always listens (`always_alive`, byte
+`0xDC`, what a real Somfy Izymo dimmer sends). Everything else in the reply stays the same.
+
+`low_power` is the default because a VELUX KLR 200, a VELUX KLF 200 and a Somfy TaHoma all hand over
+their key to it. Switch to `always_alive` when your hub keeps searching but never answers the reply
+with a discover-confirm (0x2C): the only reply a Freebox Delta has confirmed so far carried the
+always-alive byte ([#215](https://github.com/laberning/home_io_control/issues/215)). This is not yet
+confirmed to complete a key extraction on any hub; if you try it, please report the result either way.
+
+```yaml
+home_io_control:
+  tuning:
+    key_extraction_power_save: always_alive
+```
 
 #### `normal_start_preamble`
 

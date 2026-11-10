@@ -77,9 +77,20 @@ namespace home_io_control {
 /// transmitting its own replies) is genuinely closer to a low-power device's profile than to an
 /// always-listening one, so mirroring the capture's power-save bit would make the same false claim
 /// ATT_CLASS_5MS | POWER_SAVE_ALWAYS_ALIVE made above, just with the opposite polarity.
-/// TODO(hardware-verify): unconfirmed against a real hub — see create_discover_resp()'s callers'
-/// file-level @warning (key_extraction_responder.cpp) for the general caveat this falls under.
+/// This byte is accepted by a VELUX KLR 200, a VELUX KLF 200 and a Somfy TaHoma. A Freebox Delta
+/// (issue #215) has so far drawn a discover-confirm only from an answer with the Izymo's always-alive
+/// byte, KEY_EXTRACTION_DISCOVER_RESP_FLAGS_ALWAYS_ALIVE, which the `key_extraction_power_save`
+/// tuning option selects.
+/// \todo Confirm on a Freebox Delta which power-save mode it needs.
 static constexpr uint8_t KEY_EXTRACTION_DISCOVER_RESP_FLAGS = 0xDD;
+
+/// The same multi-information byte with the power-save bits set to always-alive: 0xDC, the exact byte a
+/// real Somfy Izymo sends (tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml).
+/// Only the power-save bits differ, so the turnaround class the responder's session timing is
+/// derived from stays the same.
+static constexpr uint8_t KEY_EXTRACTION_DISCOVER_RESP_FLAGS_ALWAYS_ALIVE =
+    (KEY_EXTRACTION_DISCOVER_RESP_FLAGS & static_cast<uint8_t>(~DISCOVERY_FLAGS_POWER_SAVE_MASK)) |
+    POWER_SAVE_ALWAYS_ALIVE;
 
 /// @brief Build a position execute command (0x00) to move a device to a numeric position.
 ///
@@ -799,9 +810,11 @@ bool create_discover(IoFrame &f, const uint8_t *own);
 ///       captured device rather than the honest-but-misleading ATT_CLASS_5MS/POWER_SAVE_ALWAYS_ALIVE
 ///       (0x00) — see KEY_EXTRACTION_DISCOVER_RESP_FLAGS (above) and _TIMESTAMP
 ///       (proto_commands.cpp) for the full reasoning. Still unverified against a real hub.
+/// @param flags Multi-information byte to advertise (turnaround class, power-save mode);
+///        KEY_EXTRACTION_DISCOVER_RESP_FLAGS or KEY_EXTRACTION_DISCOVER_RESP_FLAGS_ALWAYS_ALIVE.
 /// @return true on success.
 bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, DeviceType type, uint8_t subtype,
-                          uint8_t manufacturer_id);
+                          uint8_t manufacturer_id, uint8_t flags = KEY_EXTRACTION_DISCOVER_RESP_FLAGS);
 
 /// @brief Build a key-confirm frame (0x33) — the device's acknowledgement that it received and
 /// installed the system key, sent after decrypting a CMD_KEY_TRANSFER (0x32).

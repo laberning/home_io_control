@@ -821,7 +821,7 @@ bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, c
 /// Build a discovery response (0x29) — device side, used only by the key-extraction responder.
 /// See proto_commands.h for the full contract and the real-capture cross-check.
 bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, DeviceType type, uint8_t subtype,
-                          uint8_t manufacturer_id) {
+                          uint8_t manufacturer_id, uint8_t flags) {
   init_frame(f, true, true, true, false);
   set_dst(f, dst);
   set_src(f, own);
@@ -834,7 +834,7 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
   payload[DISCOVERY_RESP_MANUFACTURER_OFFSET] = manufacturer_id;
   // See KEY_EXTRACTION_DISCOVER_RESP_FLAGS (proto_commands.h) and _TIMESTAMP above for the
   // derivation of these two values.
-  payload[DISCOVERY_RESP_FLAGS_OFFSET] = KEY_EXTRACTION_DISCOVER_RESP_FLAGS;
+  payload[DISCOVERY_RESP_FLAGS_OFFSET] = flags;
   payload[DISCOVERY_RESP_TIMESTAMP_OFFSET] =
       static_cast<uint8_t>(KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP >> BITS_PER_BYTE);
   payload[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1] =

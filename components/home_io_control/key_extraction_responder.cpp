@@ -324,9 +324,14 @@ void KeyExtractionResponder::handle_discover_(const IoFrame &frame) {
   this->key_extraction_ctx_.advertised_subtype = typed ? 0 : KEY_EXTRACTION_ADVERTISED_SUBTYPE;
 
   IoFrame resp;
+  // The power-save mode the answer advertises is a tuning choice (key_extraction_power_save): low
+  // power by default, always-alive for a hub that ignores a sleeping device (#215).
+  const uint8_t flags = this->tuning_->key_extraction_power_save == KeyExtractionPowerSave::ALWAYS_ALIVE
+                            ? KEY_EXTRACTION_DISCOVER_RESP_FLAGS_ALWAYS_ALIVE
+                            : KEY_EXTRACTION_DISCOVER_RESP_FLAGS;
   if (!create_discover_resp(resp, this->key_extraction_ctx_.throwaway_id, frame.src,
                             this->key_extraction_ctx_.advertised_type, this->key_extraction_ctx_.advertised_subtype,
-                            KEY_EXTRACTION_MANUFACTURER_ID)) {
+                            KEY_EXTRACTION_MANUFACTURER_ID, flags)) {
     ESP_LOGW(detail::TAG, "Key extraction: failed to build discovery response");
     // Deliberately does NOT touch key_extraction_hold_deadline_ms_: on_discover_request() already
     // advanced ctx.state above, but a failed builder means no reply went out, so there is nothing

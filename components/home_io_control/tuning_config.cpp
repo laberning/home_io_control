@@ -317,6 +317,24 @@ std::optional<KeyTransferMode> key_transfer_mode_from_string(const std::string &
   return std::nullopt;
 }
 
+std::string key_extraction_power_save_to_string(KeyExtractionPowerSave value) {
+  switch (value) {
+    case KeyExtractionPowerSave::LOW_POWER:
+      return "low_power";
+    case KeyExtractionPowerSave::ALWAYS_ALIVE:
+      return "always_alive";
+  }
+  return "low_power";
+}
+
+std::optional<KeyExtractionPowerSave> key_extraction_power_save_from_string(const std::string &value) {
+  if (value == key_extraction_power_save_to_string(KeyExtractionPowerSave::LOW_POWER))
+    return KeyExtractionPowerSave::LOW_POWER;
+  if (value == key_extraction_power_save_to_string(KeyExtractionPowerSave::ALWAYS_ALIVE))
+    return KeyExtractionPowerSave::ALWAYS_ALIVE;
+  return std::nullopt;
+}
+
 std::string tuning_update_log_line(const std::string &name, const std::string &value) {
   return "Tuning updated via HA: " + name + "=" + value;
 }
@@ -385,6 +403,10 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
   // pairing_key_transfer is an enum SELECT_PARAMS row, same as the ones above.
   if (cfg.pairing_key_transfer != DEFAULTS.pairing_key_transfer)
     result += " pairing_key_transfer=" + key_transfer_mode_to_string(cfg.pairing_key_transfer);
+  // key_extraction_power_save is an enum SELECT_PARAMS row, same as the ones above.
+  if (cfg.key_extraction_power_save != DEFAULTS.key_extraction_power_save) {
+    result += " key_extraction_power_save=" + key_extraction_power_save_to_string(cfg.key_extraction_power_save);
+  }
   // pairing_discovery_preamble, pairing_discovery_wait_ms, pairing_discovery_initial_dwell_ms,
   // pairing_key_exchange_retries, and pairing_key_init_delay_ms are plain NUMBER_PARAMS entries —
   // covered by the loop above.
