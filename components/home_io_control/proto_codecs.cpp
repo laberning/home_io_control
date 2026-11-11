@@ -263,6 +263,12 @@ void encode_broadcast_address(DeviceType type, uint8_t out[NODE_ID_SIZE]) {
   out[2] = static_cast<uint8_t>((type_raw << DEVICE_TYPE_HIGH_BITS_SHIFT) | DEVICE_SUBTYPE_MASK);
 }
 
+void encode_discovery_address(DeviceType type, uint8_t out[NODE_ID_SIZE]) {
+  encode_broadcast_address(type, out);
+  // Only the subtype field differs from the broadcast form.
+  out[2] = static_cast<uint8_t>((out[2] & ~DEVICE_SUBTYPE_MASK) | ADDRESS_SUFFIX_DISCOVERY);
+}
+
 void decode_1w_main_intent(uint8_t main0, uint8_t main1, char *out, size_t out_size) {
   if (out_size == 0)
     return;

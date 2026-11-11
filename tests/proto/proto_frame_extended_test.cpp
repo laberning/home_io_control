@@ -992,3 +992,20 @@ TEST(ProtoFrameExtended, DiscoveryTargetTypeReadsTheTypeBitsOfDiscoveryAddresses
   const uint8_t undefined_type[3] = {0x00, 0x06, 0x7B};  // type 25
   EXPECT_EQ(discovery_target_type(undefined_type), DeviceType::UNKNOWN);
 }
+
+/// encode_discovery_address() is the inverse of discovery_target_type(): the class's ten type bits
+/// with the discovery suffix, e.g. `00 FF FB` for remote controllers and `00 01 BB` for lights.
+TEST(ProtoFrameExtended, EncodeDiscoveryAddressIsTheInverseOfDiscoveryTargetType) {
+  uint8_t addr[3] = {0};
+  encode_discovery_address(DeviceType::REMOTE_CONTROLLER, addr);
+  EXPECT_EQ(addr[0], 0x00);
+  EXPECT_EQ(addr[1], 0xFF);
+  EXPECT_EQ(addr[2], 0xFB);
+  EXPECT_EQ(discovery_target_type(addr), DeviceType::REMOTE_CONTROLLER);
+
+  encode_discovery_address(DeviceType::LIGHT, addr);
+  EXPECT_EQ(addr[0], 0x00);
+  EXPECT_EQ(addr[1], 0x01);
+  EXPECT_EQ(addr[2], 0xBB);
+  EXPECT_EQ(discovery_target_type(addr), DeviceType::LIGHT);
+}
