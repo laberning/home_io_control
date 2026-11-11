@@ -148,13 +148,18 @@ DISCOVERY_COMMAND_PRESETS = [
 # system-opening sweep in the corpus is typed by class — a VELUX KLI 313 hitting 0x0000BF /
 # 0x0000FF / 0x00037F (roller_shutter / vertical_exterior_awning / dual_roller_shutter) in
 # velux_ssl_discovery_tahoma_pairing — while every discovery this project sends is class-less.
-# No capture shows a *hub* sourcing a typed discovery, so these are an experiment, not a fix.
+# These two are an experiment, not a fix: no light has answered one.
+#
+# 0x00FFFB is the discovery form for remote controllers (type 1023). An Atlantic Tatou heater that
+# receives a key searches with it, and a Tatou offering its key answered that search (#199), so
+# Discover & Pair with this destination can find such a heater and pull its key.
 DISCOVERY_DESTINATION_OPTIONS = [
     "auto",
     "0x00003B",
     "0x00003F",
     "0x0001BB",
     "0x0001BF",
+    "0x00FFFB",
 ]
 
 PAIRING_DISCOVERY_PAYLOAD_OPTIONS = ["none", "0x00"]

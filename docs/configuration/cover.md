@@ -98,8 +98,9 @@ as the paste-ready YAML from [Discover & Pair](../pairing.md#discover--pair) pri
 
 ## Covers that only open and close
 
-Garage openers, gate openers and swinging shutters of subtype 58 take open, close and stop and
-nothing in between: a 50 % position gets the refusal `PARAMETER_UNKNOWN` from the motor, and the
+Garage openers, gate openers and swinging shutters of subtype 58 take open, close and stop, and no
+percentage (a stored position is a separate command, see
+[Partial and pedestrian position buttons](cover.md#partial-and-pedestrian-position-buttons)): a 50 % position gets the refusal `PARAMETER_UNKNOWN` from the motor, and the
 door does not move (issue #163, corpus
 `wisniowski_moto1000_exchange_execute_partial_position_refused`). For these kinds the cover:
 
@@ -124,10 +125,15 @@ A garage opener (`io_device_type: garage_opener`, subtype 0 or 58) gets a `Parti
 button, and a gate opener (`gate_opener`, subtype 0 or 58) gets a `Pedestrian Position` button
 (experimental). Both are created disabled: enable them under the entity's settings in Home Assistant.
 
-A press sends that named position to the motor. A motor that has no such position refuses it with
-`PARAMETER_UNKNOWN` before authenticating, and nothing moves, as for the favorite position in
-issue #163. The hub sends these two on 2W only, never from a one-way controller, and, like the
+A press sends that named position to the motor, which moves to the position stored in it. A Somfy
+MOTO 1000 io garage drive runs its stored partial position from closed and from open, and ignores
+the press when the door is stopped mid-travel (issue #163). A motor that has no such position
+refuses it with `PARAMETER_UNKNOWN` before authenticating, and nothing moves, as for the favorite
+position. The hub sends these two on 2W only, never from a one-way controller, and, like the
 favorite position, never repeats one that went unanswered.
+
+The hub cannot change a stored position. Set it the way the motor's manual describes, with a
+remote or an installer tool.
 
 ## Polling for rain
 

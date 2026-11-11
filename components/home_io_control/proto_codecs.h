@@ -148,6 +148,16 @@ DeviceType discovery_target_type(const uint8_t addr[NODE_ID_SIZE]);
 /// @param out Output: 3-byte typed-broadcast destination address.
 void encode_broadcast_address(DeviceType type, uint8_t out[NODE_ID_SIZE]);
 
+/// @brief Encode a device type into its typed discovery address, the inverse of
+/// discovery_target_type().
+///
+/// The same ten type bits as encode_broadcast_address(), with the discovery suffix
+/// (ADDRESS_SUFFIX_DISCOVERY) in place of the all-subtypes mask: light (0x06) gives `00 01 BB`,
+/// remote controller (1023) gives `00 FF FB`.
+/// @param type Device class the discovery asks to answer.
+/// @param out Output: 3-byte discovery destination address.
+void encode_discovery_address(DeviceType type, uint8_t out[NODE_ID_SIZE]);
+
 // ============================================================================
 // 1W Remote Frame Decode
 // ============================================================================
