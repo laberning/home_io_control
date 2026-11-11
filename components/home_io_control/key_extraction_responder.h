@@ -30,14 +30,21 @@ namespace home_io_control {
 
 /// How long after receiving a frame it answers the responder stays on that frame's channel: the
 /// window a device keeps a session open for the controller's next frame (DEVICE_SESSION_WAIT_BASE_MS
-/// plus the turnaround time the responder advertises in KEY_EXTRACTION_DISCOVER_RESP_FLAGS). The
+/// plus the turnaround time the responder advertises in its Multi Information Byte). The
 /// peer's in-session frame (the `0x32` after our `0x3C`, the `0x3C` after our `0x37`) comes on that
 /// channel within it, with a short preamble. After it the responder scans all three channels again,
 /// as a device does once its session ends: the peer's next *request* is a new transmission that may
 /// go out on any channel.
 /// \todo Measure on hardware how soon a third-party hub's in-session frame follows our reply.
+/// @param multi_info The Multi Information Byte the responder advertises.
+/// @return The session window in milliseconds.
+static constexpr uint32_t key_extraction_session_window_ms(uint8_t multi_info) {
+  return DEVICE_SESSION_WAIT_BASE_MS + att_class_ms(discovery_att_class(multi_info));
+}
+
+/// The session window for the default Multi Information Byte (KEY_EXTRACTION_DISCOVER_RESP_FLAGS).
 static constexpr uint32_t KEY_EXTRACTION_SESSION_WINDOW_MS =
-    DEVICE_SESSION_WAIT_BASE_MS + att_class_ms(discovery_att_class(KEY_EXTRACTION_DISCOVER_RESP_FLAGS));
+    key_extraction_session_window_ms(KEY_EXTRACTION_DISCOVER_RESP_FLAGS);
 
 // Forward declarations — full definitions included only in key_extraction_responder.cpp.
 struct TuningConfig;
@@ -102,11 +109,15 @@ class KeyExtractionResponder {
   [[nodiscard]] uint32_t session_freq() const { return this->session_freq_; }
 
   /// True while awaiting_reply() and the frame the responder last answered was received less than
-  /// KEY_EXTRACTION_SESSION_WINDOW_MS ago: loop() then stays on session_freq() for the peer's
-  /// in-session frame. Once false (while still awaiting a reply), loop() scans all three channels.
+  /// the session window ago (key_extraction_session_window_ms() of the byte the last discovery answer
+  /// advertised): loop() then stays on session_freq() for the peer's in-session frame. Once false
+  /// (while still awaiting a reply), loop() scans all three channels.
   [[nodiscard]] bool in_session_hold() const {
-    return this->awaiting_reply() && (millis() - this->session_rx_ms_) < KEY_EXTRACTION_SESSION_WINDOW_MS;
+    return this->awaiting_reply() && (millis() - this->session_rx_ms_) < this->session_window_ms_;
   }
+
+  /// Session window for the Multi Information Byte the last discovery answer advertised.
+  [[nodiscard]] uint32_t session_window_ms() const { return this->session_window_ms_; }
 
   /// Generate a random throwaway node ID for one key-extraction arm cycle, avoiding collisions
   /// with the broadcast addresses, this hub's own real node ID, and any registered device.
@@ -170,6 +181,8 @@ class KeyExtractionResponder {
  private:
   /// Handle an inbound CMD_DISCOVER_REQ (0x28) while the responder is armed.
   void handle_discover_(const IoFrame &frame);
+  /// Advertise the type word from `key_extraction_type_word` (the answer to an open discovery).
+  void set_configured_type_();
   /// Handle an inbound CMD_DISCOVER_CONFIRM (0x2C) addressed to our throwaway node ID while armed.
   void handle_discover_confirm_(const IoFrame &frame);
   /// Handle an inbound CMD_KEY_INIT (0x31) addressed to our throwaway node ID while armed.
@@ -213,6 +226,8 @@ class KeyExtractionResponder {
   uint32_t session_freq_{FREQ_CH2};
   /// millis() when the frame the responder last answered was received; see in_session_hold().
   uint32_t session_rx_ms_{0};
+  /// Session window for the Multi Information Byte the last discovery answer advertised.
+  uint32_t session_window_ms_{KEY_EXTRACTION_SESSION_WINDOW_MS};
   /// The `0x29` waiting for its slot (schedule_discover_reply_()).
   IoFrame pending_discover_resp_{};
   DeviceRegistry &registry_;

@@ -59,11 +59,11 @@ constexpr uint8_t EXECUTE_ACEI_FORCE_OPEN =
     (ACEI_LEVEL_PROTECTION_HUMAN << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
 
 /// Timestamp for our device-role CMD_DISCOVER_RESP (0x29), alongside KEY_EXTRACTION_DISCOVER_RESP_FLAGS
-/// (proto_commands.h). Set
+/// (proto_constants.h). Set
 /// to the same Somfy Izymo dimmer capture's value (0x000E) for the same reason: an unverified
 /// field is safer matched to a real device's exact bytes than left at the one value no real
 /// capture in this project's corpus ever shows (0x0000 — see KEY_EXTRACTION_DISCOVER_RESP_FLAGS
-/// in proto_commands.h for the flags half of the same reasoning).
+/// in proto_constants.h for the flags half of the same reasoning).
 /// TODO(hardware-verify): unconfirmed against a real hub — same caveat as KEY_EXTRACTION_DISCOVER_RESP_FLAGS.
 constexpr uint16_t KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP = 0x000E;
 
@@ -832,7 +832,7 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
   // device's own node ID here, so we mirror that rather than inventing a separate address.
   memcpy(&payload[DISCOVERY_RESP_BACKBONE_OFFSET], own, NODE_ID_SIZE);
   payload[DISCOVERY_RESP_MANUFACTURER_OFFSET] = manufacturer_id;
-  // See KEY_EXTRACTION_DISCOVER_RESP_FLAGS (proto_commands.h) and _TIMESTAMP above for the
+  // See KEY_EXTRACTION_DISCOVER_RESP_FLAGS (proto_constants.h) and _TIMESTAMP above for the
   // derivation of these two values.
   payload[DISCOVERY_RESP_FLAGS_OFFSET] = flags;
   payload[DISCOVERY_RESP_TIMESTAMP_OFFSET] =

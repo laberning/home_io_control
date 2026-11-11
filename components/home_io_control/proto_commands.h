@@ -54,44 +54,6 @@
 namespace esphome {
 namespace home_io_control {
 
-/// Multi Information Byte for our device-role CMD_DISCOVER_RESP (0x29) — the turnaround-time
-/// class and power-save mode this responder advertises to a foreign hub.
-///
-/// ATT_CLASS_5MS | POWER_SAVE_ALWAYS_ALIVE (0x00) would be an honest-looking but false claim: it
-/// promises the tightest 5 ms turnaround from a device that never sleeps, when this responder
-/// actually hops across 3 channels on the ESPHome loop cadence and is briefly deaf while
-/// transmitting its own replies. The loosest class, ATT_CLASS_40MS, is the honest claim for that profile.
-///
-/// 0xDD = 1101_1101: bits [7:6] are ATT_CLASS_40MS, bit [0] is POWER_SAVE_LOW_POWER, bit [3] is
-/// DISCOVERY_FLAGS_RF_SUPPORT (node has its own RF), bit [2] is DISCOVERY_FLAGS_IO_MEMBERSHIP
-/// (always 1), and bit [4] has no named constant (it is not in the VELUX KLF 200 API table). All of
-/// this byte except the power-save bit mirrors the exact byte a real Somfy Izymo dimmer advertised in
-/// this project's own corpus
-/// (tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml: flags=0xDC, ATT_CLASS_40MS |
-/// POWER_SAVE_ALWAYS_ALIVE), on the theory that matching a real device's full byte is safer than
-/// guessing at bits with no documented meaning — bit [4] is carried over unmodified for that reason.
-///
-/// The power-save bit is the one deliberate departure from that real capture: POWER_SAVE_LOW_POWER
-/// here, not the captured device's POWER_SAVE_ALWAYS_ALIVE. That is a reasoned choice, not a
-/// guess — this responder's own true behavior (hopping across 3 channels, briefly deaf while
-/// transmitting its own replies) is genuinely closer to a low-power device's profile than to an
-/// always-listening one, so mirroring the capture's power-save bit would make the same false claim
-/// ATT_CLASS_5MS | POWER_SAVE_ALWAYS_ALIVE made above, just with the opposite polarity.
-/// This byte is accepted by a VELUX KLR 200, a VELUX KLF 200 and a Somfy TaHoma. A Freebox Delta
-/// (issue #215) has so far drawn a discover-confirm only from an answer with the Izymo's always-alive
-/// byte, KEY_EXTRACTION_DISCOVER_RESP_FLAGS_ALWAYS_ALIVE, which the `key_extraction_power_save`
-/// tuning option selects.
-/// \todo Confirm on a Freebox Delta which power-save mode it needs.
-static constexpr uint8_t KEY_EXTRACTION_DISCOVER_RESP_FLAGS = 0xDD;
-
-/// The same multi-information byte with the power-save bits set to always-alive: 0xDC, the exact byte a
-/// real Somfy Izymo sends (tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml).
-/// Only the power-save bits differ, so the turnaround class the responder's session timing is
-/// derived from stays the same.
-static constexpr uint8_t KEY_EXTRACTION_DISCOVER_RESP_FLAGS_ALWAYS_ALIVE =
-    (KEY_EXTRACTION_DISCOVER_RESP_FLAGS & static_cast<uint8_t>(~DISCOVERY_FLAGS_POWER_SAVE_MASK)) |
-    POWER_SAVE_ALWAYS_ALIVE;
-
 /// @brief Build a position execute command (0x00) to move a device to a numeric position.
 ///
 /// Encodes a 0–100 position value into the standard 8-byte execute payload with
@@ -805,13 +767,10 @@ bool create_discover(IoFrame &f, const uint8_t *own);
 /// @param type Device type to advertise.
 /// @param subtype Device subtype to advertise.
 /// @param manufacturer_id Manufacturer ID to advertise (see MANUFACTURER_* in proto_constants.h).
-/// @note The flags byte (turnaround class, power-save) and timestamp are best-effort placeholder
-///       values — ATT_CLASS_40MS/POWER_SAVE_LOW_POWER and a non-zero timestamp, matching a real
-///       captured device rather than the honest-but-misleading ATT_CLASS_5MS/POWER_SAVE_ALWAYS_ALIVE
-///       (0x00) — see KEY_EXTRACTION_DISCOVER_RESP_FLAGS (above) and _TIMESTAMP
-///       (proto_commands.cpp) for the full reasoning. Still unverified against a real hub.
-/// @param flags Multi-information byte to advertise (turnaround class, power-save mode);
-///        KEY_EXTRACTION_DISCOVER_RESP_FLAGS or KEY_EXTRACTION_DISCOVER_RESP_FLAGS_ALWAYS_ALIVE.
+/// @note The timestamp is a best-effort placeholder copied from a real captured device; see
+///       KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP (proto_commands.cpp).
+/// @param flags Multi-information byte to advertise (turnaround class, power-save mode); default
+///        KEY_EXTRACTION_DISCOVER_RESP_FLAGS, the `key_extraction_multi_info` tuning value in use.
 /// @return true on success.
 bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, DeviceType type, uint8_t subtype,
                           uint8_t manufacturer_id, uint8_t flags = KEY_EXTRACTION_DISCOVER_RESP_FLAGS);
@@ -1062,10 +1021,9 @@ bool create_node_verify_resp_device_role(IoFrame &f, const uint8_t *own, const u
 /// hub opened with 0x36 (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml's `8E 08 …`, END
 /// set). LOW_POWER is clear because CTRL1_LOW_POWER describes a controller-originated frame's
 /// *target*, not the sender — irrelevant here, since this is a device-role frame sent to a
-/// mains-powered hub. Unrelated to create_discover_resp()'s own Multi Information Byte, which as of
-/// KEY_EXTRACTION_DISCOVER_RESP_FLAGS deliberately advertises
-/// POWER_SAVE_LOW_POWER for this responder's own (different) power-save self-description — the two
-/// bits answer different questions and are not expected to match. Neither
+/// mains-powered hub. Unrelated to the power-save bits of create_discover_resp()'s Multi Information
+/// Byte (KEY_EXTRACTION_DISCOVER_RESP_FLAGS), which describe the responder itself — the two bits
+/// answer different questions and are not expected to match. Neither
 /// bit is a blanket "device role" convention — real devices also send mid-exchange 0x3D frames with
 /// END clear and LOW_POWER set (somfy_oximo40_statuspoll_sx1262.yaml) — so this framing is
 /// specific to the terminal shape this feature needs, not a general device-role rule.

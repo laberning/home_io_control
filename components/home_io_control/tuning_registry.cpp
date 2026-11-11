@@ -18,7 +18,7 @@
 namespace esphome {
 namespace home_io_control {
 
-// === Numeric parameters (20) ===================================================
+// === Numeric parameters (23) ===================================================
 // Each row narrows the incoming float to the field's storage type, matching the
 // original static_cast in update_tuning_number().
 static constexpr TuningNumberParam NUMBER_PARAMS[] = {
@@ -83,6 +83,11 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
     // the point of the pause, the same as pairing_discovery_preamble/pairing_discovery_wait_ms above.
     {"pairing_key_init_delay_ms", [](const TuningConfig &t) { return static_cast<float>(t.pairing_key_init_delay_ms); },
      [](TuningConfig &t, float v) { t.pairing_key_init_delay_ms = static_cast<uint16_t>(v); }, false},
+    // false: both are read by the key-extraction responder each time it builds a discovery answer.
+    {"key_extraction_type_word", [](const TuningConfig &t) { return static_cast<float>(t.key_extraction_type_word); },
+     [](TuningConfig &t, float v) { t.key_extraction_type_word = static_cast<uint16_t>(v); }, false},
+    {"key_extraction_multi_info", [](const TuningConfig &t) { return static_cast<float>(t.key_extraction_multi_info); },
+     [](TuningConfig &t, float v) { t.key_extraction_multi_info = static_cast<uint8_t>(v); }, false},
 };
 
 // Boolean select rows share one get/set shape (an On/Off toggle over a single TuningConfig
@@ -99,7 +104,7 @@ template<bool TuningConfig::*Field> bool bool_select_set(TuningConfig &t, const 
   return true;
 }
 
-// === Select parameters (10) ====================================================
+// === Select parameters (13) ====================================================
 // The setters return false only when the option string is unparseable AND leaving the
 // value untouched is the intended behavior (currently the bandwidth enum and the boolean
 // rows). The destination/payload setters return false for unrecognized values so no radio
@@ -249,17 +254,6 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
        if (!mode.has_value())
          return false;
        t.pairing_key_transfer = mode.value();
-       return true;
-     },
-     false},
-    // false: read by the key-extraction responder each time it builds a discovery answer.
-    {"key_extraction_power_save",
-     [](const TuningConfig &t) { return key_extraction_power_save_to_string(t.key_extraction_power_save); },
-     [](TuningConfig &t, const std::string &v) -> bool {
-       auto mode = key_extraction_power_save_from_string(v);
-       if (!mode.has_value())
-         return false;
-       t.key_extraction_power_save = mode.value();
        return true;
      },
      false},

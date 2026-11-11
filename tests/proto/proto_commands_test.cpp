@@ -42,18 +42,17 @@ TEST(ProtoCommands, CreateDiscoverResp) {
   EXPECT_EQ(frame.data[DISCOVERY_RESP_MANUFACTURER_OFFSET], MANUFACTURER_SOMFY)
       << "manufacturer byte should be as supplied";
   EXPECT_EQ(frame.data[DISCOVERY_RESP_FLAGS_OFFSET], 0xDD)
-      << "flags byte is a best-effort placeholder (see proto_commands.h @note / "
-         "KEY_EXTRACTION_DISCOVER_RESP_FLAGS in proto_commands.cpp) — pinned here so a future change "
-         "to it is deliberate, not accidental";
+      << "default flags byte (KEY_EXTRACTION_DISCOVER_RESP_FLAGS, proto_constants.h) — "
+         "pinned here so a future change to it is deliberate, not accidental";
   EXPECT_EQ(frame.data[DISCOVERY_RESP_TIMESTAMP_OFFSET], 0x00);
   EXPECT_EQ(frame.data[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1], 0x0E);
 }
 
 TEST(ProtoCommands, CreateDiscoverRespCarriesTheGivenFlagsByte) {
   IoFrame frame{};
-  ASSERT_TRUE(create_discover_resp(frame, test::OWN_ID, test::DST_ID, DeviceType::ROLLER_SHUTTER, 0, MANUFACTURER_SOMFY,
-                                   KEY_EXTRACTION_DISCOVER_RESP_FLAGS_ALWAYS_ALIVE));
-  EXPECT_EQ(frame.data[DISCOVERY_RESP_FLAGS_OFFSET], 0xDC) << "the byte a real Izymo sends";
+  ASSERT_TRUE(
+      create_discover_resp(frame, test::OWN_ID, test::DST_ID, DeviceType::ROLLER_SHUTTER, 0, MANUFACTURER_SOMFY, 0x1C));
+  EXPECT_EQ(frame.data[DISCOVERY_RESP_FLAGS_OFFSET], 0x1C) << "the byte passed in";
   EXPECT_EQ(frame.data[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1], 0x0E) << "the rest of the answer is unchanged";
 }
 

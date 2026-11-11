@@ -58,7 +58,8 @@ TEST(TuningRegistry, NumberTableContainsExactlyExpectedParameters) {
       "pairing_discovery_wait_ms",     "pairing_discovery_initial_dwell_ms",
       "pairing_key_exchange_retries",  "exchange_start_response_wait_ms",
       "exchange_response_wait_ms",     "exchange_total_budget_ms",
-      "pairing_key_init_delay_ms",
+      "pairing_key_init_delay_ms",     "key_extraction_type_word",
+      "key_extraction_multi_info",
   };
   EXPECT_EQ(number_param_names(), expected) << "number table drifted from the expected inventory";
 }
@@ -69,13 +70,13 @@ TEST(TuningRegistry, SelectTableContainsExactlyExpectedParameters) {
       "pairing_discovery_commands",  "pairing_discovery_destination", "pairing_discovery_payload",
       "pairing_discovery_low_power", "pairing_discovery_ack_capable", "low_power_wake_belief",
       "scan_power_classes",          "pairing_discover_confirm",      "pairing_discovery_listen_channels",
-      "pairing_key_transfer",        "key_extraction_power_save",
+      "pairing_key_transfer",
   };
   EXPECT_EQ(select_param_names(), expected) << "select table drifted from the expected inventory";
 }
 
-TEST(TuningRegistry, TotalParameterCountIsThirtyFive) {
-  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 35u);
+TEST(TuningRegistry, TotalParameterCountIsThirtySix) {
+  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 36u);
 }
 
 // ============================================================================
@@ -146,7 +147,6 @@ TEST(TuningRegistry, EverySelectOptionRoundTrips) {
       {"pairing_discover_confirm", {"skip", "send", "send_with_ack"}},
       {"pairing_discovery_listen_channels", {"skip_request", "all"}},
       {"pairing_key_transfer", {"auto", "push", "pull"}},
-      {"key_extraction_power_save", {"low_power", "always_alive"}},
   };
 
   const std::set<std::string> bandwidth_params = {"sx1262_rx_bandwidth", "sx1276_rx_bandwidth", "lr1121_rx_bandwidth"};

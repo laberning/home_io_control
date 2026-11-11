@@ -47,7 +47,7 @@
 /// create_key_confirm(), create_discover_confirm_ack()) are each pinned against a real device's
 /// captured framing by tests/corpus/corpus_device_role_builder_test.cpp, including
 /// create_discover_resp()'s flags/timestamp bytes, which mirror a real Somfy Izymo dimmer's
-/// captured values (see KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP in proto_commands.h/.cpp for
+/// captured values (see KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP in proto_constants.h/proto_commands.cpp for
 /// the derivation) but remain unconfirmed against a real hub like every device-role field here.
 ///
 /// recover_system_key_from_transfer()'s IV-derivation formula itself is independently pinned
@@ -68,8 +68,6 @@ constexpr uint32_t KEY_EXTRACTION_AUTO_OFF_MS = 10 * 60 * 1000;  ///< Arm window
 // manufacturer/type against a known-device allowlist before completing key exchange —
 // Somfy/roller-shutter is a plausible but unconfirmed default.
 constexpr uint8_t KEY_EXTRACTION_MANUFACTURER_ID = MANUFACTURER_SOMFY;  ///< Plausible, widely-supported default.
-constexpr DeviceType KEY_EXTRACTION_ADVERTISED_TYPE = DeviceType::ROLLER_SHUTTER;  ///< Plausible default device type.
-constexpr uint8_t KEY_EXTRACTION_ADVERTISED_SUBTYPE = 0;
 constexpr uint8_t KEY_EXTRACTION_ID_GEN_MAX_ATTEMPTS = 16;  ///< Collision-retry budget for the throwaway node ID.
 constexpr size_t IO_CHANNEL_COUNT = 3;                      ///< FREQ_CH1..FREQ_CH3.
 constexpr const char *KEY_EXTRACTION_DISCOVER_REPLY_TIMER_NAME = "key_extraction_discover_reply";
@@ -173,8 +171,7 @@ void KeyExtractionResponder::set_armed(bool armed) {
 
   this->key_extraction_ctx_ = pairing_responder::ResponderContext{};
   this->generate_throwaway_id(this->key_extraction_ctx_.throwaway_id);
-  this->key_extraction_ctx_.advertised_type = KEY_EXTRACTION_ADVERTISED_TYPE;
-  this->key_extraction_ctx_.advertised_subtype = KEY_EXTRACTION_ADVERTISED_SUBTYPE;
+  this->set_configured_type_();
   this->key_extraction_ctx_.state = pairing_responder::ResponderState::ARMED_IDLE;
 
   ESP_LOGW(detail::TAG,
@@ -289,7 +286,7 @@ void KeyExtractionResponder::schedule_discover_reply_(const IoFrame &search, con
   // The 0x29 is no reply on the search's channel: the session (and its channel hold) opens only
   // with the confirm that follows, which may come on any channel. Leave the hold expired.
   this->session_freq_ = this->rx_freq_hz_;
-  this->session_rx_ms_ = this->rx_ms_ - KEY_EXTRACTION_SESSION_WINDOW_MS;
+  this->session_rx_ms_ = this->rx_ms_ - this->session_window_ms_;
 
   this->pending_discover_resp_ = resp;
   // Same timer name: a repeated search replaces the answer still waiting for its slot.
@@ -309,6 +306,16 @@ void KeyExtractionResponder::schedule_discover_reply_(const IoFrame &search, con
            slot, slots, delay_ms, freq);
 }
 
+void KeyExtractionResponder::set_configured_type_() {
+  // The word is the wire form (type << 6 | subtype), so a value copied from a real device's 0x29 is
+  // sent back byte for byte.
+  const uint16_t word = this->tuning_->key_extraction_type_word;
+  const auto msb = static_cast<uint8_t>(word >> BITS_PER_BYTE);
+  const auto lsb = static_cast<uint8_t>(word);  // low byte: top 2 type bits + 6-bit subtype
+  this->key_extraction_ctx_.advertised_type = decode_packed_device_type(msb, lsb);
+  this->key_extraction_ctx_.advertised_subtype = decode_packed_device_subtype(lsb);
+}
+
 void KeyExtractionResponder::handle_discover_(const IoFrame &frame) {
   if (!pairing_responder::on_discover_request(this->key_extraction_ctx_, frame.src))
     return;
@@ -316,19 +323,21 @@ void KeyExtractionResponder::handle_discover_(const IoFrame &frame) {
   // A controller that searches for one device type (a typed discovery such as `00 FF FB`, sent by an
   // Atlantic heater in its connectivity menu, #199) is expected to ignore answers of any other type, so
   // answer as the type it asked for. Decided per request, not per attempt: a hub may send a typed and an open discovery
-  // in sequence. Without a typed request the default applies (an open `00 00 3B` discovery, or an undefined type). The
-  // manufacturer stays Somfy: one variable at a time.
+  // in sequence. Without a typed request (an open `00 00 3B` discovery, or an undefined type) the configured
+  // `key_extraction_type_word` applies. The manufacturer stays Somfy: one variable at a time.
   const DeviceType requested_type = discovery_target_type(frame.dst);
-  const bool typed = requested_type != DeviceType::UNKNOWN;
-  this->key_extraction_ctx_.advertised_type = typed ? requested_type : KEY_EXTRACTION_ADVERTISED_TYPE;
-  this->key_extraction_ctx_.advertised_subtype = typed ? 0 : KEY_EXTRACTION_ADVERTISED_SUBTYPE;
+  if (requested_type != DeviceType::UNKNOWN) {
+    this->key_extraction_ctx_.advertised_type = requested_type;
+    this->key_extraction_ctx_.advertised_subtype = 0;
+  } else {
+    this->set_configured_type_();
+  }
 
   IoFrame resp;
-  // The power-save mode the answer advertises is a tuning choice (key_extraction_power_save): low
-  // power by default, always-alive for a hub that ignores a sleeping device (#215).
-  const uint8_t flags = this->tuning_->key_extraction_power_save == KeyExtractionPowerSave::ALWAYS_ALIVE
-                            ? KEY_EXTRACTION_DISCOVER_RESP_FLAGS_ALWAYS_ALIVE
-                            : KEY_EXTRACTION_DISCOVER_RESP_FLAGS;
+  // The Multi Information Byte is a tuning choice (key_extraction_multi_info): a hub may skip a
+  // device that advertises low power (#215). The session window follows its turnaround class.
+  const uint8_t flags = this->tuning_->key_extraction_multi_info;
+  this->session_window_ms_ = key_extraction_session_window_ms(flags);
   if (!create_discover_resp(resp, this->key_extraction_ctx_.throwaway_id, frame.src,
                             this->key_extraction_ctx_.advertised_type, this->key_extraction_ctx_.advertised_subtype,
                             KEY_EXTRACTION_MANUFACTURER_ID, flags)) {
@@ -342,8 +351,11 @@ void KeyExtractionResponder::handle_discover_(const IoFrame &frame) {
     return;
   }
   this->schedule_discover_reply_(frame, resp);
-  ESP_LOGI(detail::TAG, "Key extraction: answering discovery from hub %s as node type %u with throwaway ID %s",
+  ESP_LOGI(detail::TAG,
+           "Key extraction: answering discovery from hub %s as node type %u subtype %u (type word 0x%02X%02X, "
+           "multi info 0x%02X) with throwaway ID %s",
            node_id_to_string(frame.src).c_str(), static_cast<unsigned>(this->key_extraction_ctx_.advertised_type),
+           this->key_extraction_ctx_.advertised_subtype, resp.data[0], resp.data[1], flags,
            node_id_to_string(this->key_extraction_ctx_.throwaway_id).c_str());
 }
 

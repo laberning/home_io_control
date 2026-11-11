@@ -413,29 +413,45 @@ uint8_t discovery_answer_flags(TestableHubComponent &comp, MockRadio &radio) {
 }  // namespace
 
 TEST(HubKeyExtraction, DiscoveryAnswerAdvertisesLowPowerByDefault) {
+  // The default is 0xDD: turnaround class 40 ms, low power.
   TestableHubComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
 
-  EXPECT_EQ(discovery_answer_flags(comp, radio), KEY_EXTRACTION_DISCOVER_RESP_FLAGS);
-  EXPECT_EQ(KEY_EXTRACTION_DISCOVER_RESP_FLAGS & DISCOVERY_FLAGS_POWER_SAVE_MASK, POWER_SAVE_LOW_POWER);
+  const uint8_t flags = discovery_answer_flags(comp, radio);
+  EXPECT_EQ(flags, 0xDD);
+  EXPECT_EQ(discovery_power_save_mode(flags), POWER_SAVE_LOW_POWER);
+  EXPECT_EQ(discovery_att_class(flags), ATT_CLASS_40MS);
 }
 
-TEST(HubKeyExtraction, AlwaysAlivePowerSaveAdvertisesTheIzymosByte) {
-  // key_extraction_power_save: always_alive sends the byte a real Somfy Izymo sends (0xDC): the
-  // same turnaround class, power-save always-alive (#215, Freebox Delta).
+TEST(HubKeyExtraction, MultiInfoTuningReplacesTheByte) {
+  // key_extraction_multi_info: 0xDC sends the byte a real Somfy Izymo sends, always alive: the only
+  // answer a Freebox Delta confirms (#215).
   TestableHubComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
-  comp.tuning_.key_extraction_power_save = KeyExtractionPowerSave::ALWAYS_ALIVE;
+  comp.tuning_.key_extraction_multi_info = 0xDC;
   comp.set_key_extraction_armed(true);
 
   const uint8_t flags = discovery_answer_flags(comp, radio);
   EXPECT_EQ(flags, 0xDC);
   EXPECT_EQ(discovery_power_save_mode(flags), POWER_SAVE_ALWAYS_ALIVE);
-  EXPECT_EQ(discovery_att_class(flags), discovery_att_class(KEY_EXTRACTION_DISCOVER_RESP_FLAGS))
-      << "only the power-save bits may change: the responder's session timing comes from the turnaround class";
+}
+
+TEST(HubKeyExtraction, SessionWindowFollowsTheAdvertisedTurnaroundClass) {
+  // A device keeps its session open for 35 ms plus the turnaround it advertises, so the responder
+  // does too: 75 ms for the default class (40 ms), 40 ms for 0x1C (class 5 ms).
+  static_assert(key_extraction_session_window_ms(0xDD) == 75);
+  static_assert(key_extraction_session_window_ms(0x1C) == 40);
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.tuning_.key_extraction_multi_info = 0x1C;
+  comp.set_key_extraction_armed(true);
+
+  (void) discovery_answer_flags(comp, radio);
+  EXPECT_EQ(comp.key_extraction_.session_window_ms(), 40U);
 }
 
 // ========================================================================================
@@ -517,6 +533,47 @@ TEST(HubKeyExtraction, ReArmRestoresTheDefaultAdvertisedType) {
   comp.set_key_extraction_armed(false);
   comp.set_key_extraction_armed(true);
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.advertised_type, DeviceType::ROLLER_SHUTTER);
+}
+
+TEST(HubKeyExtraction, TypeWordTuningSetsTheOpenDiscoveryAnswer) {
+  // key_extraction_type_word is the answer's first two data bytes, sent as written: 0x0180 is the
+  // word a real Somfy Izymo dimmer sends (type 6, light).
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.tuning_.key_extraction_type_word = 0x0180;
+  comp.set_key_extraction_armed(true);
+
+  const auto open = discovery_answer_type_bytes(comp, radio, OPEN_DISCOVERY);
+  EXPECT_EQ(open.first, 0x01);
+  EXPECT_EQ(open.second, 0x80);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.advertised_type, DeviceType::LIGHT);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.advertised_subtype, 0);
+}
+
+TEST(HubKeyExtraction, TypeWordTuningKeepsTheSubtypeBits) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.tuning_.key_extraction_type_word = 0x0405;  // type 16 (horizontal awning), subtype 5
+  comp.set_key_extraction_armed(true);
+
+  const auto open = discovery_answer_type_bytes(comp, radio, OPEN_DISCOVERY);
+  EXPECT_EQ(open.first, 0x04);
+  EXPECT_EQ(open.second, 0x05);
+}
+
+TEST(HubKeyExtraction, TypedDiscoveryIgnoresTheTypeWordTuning) {
+  // A hub that searches for one type ignores answers of any other, so the requested type wins.
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.tuning_.key_extraction_type_word = 0x0180;
+  comp.set_key_extraction_armed(true);
+
+  const auto typed = discovery_answer_type_bytes(comp, radio, TYPED_DISCOVERY_REMOTE);
+  EXPECT_EQ(typed.first, 0xFF);
+  EXPECT_EQ(typed.second, 0xC0);
 }
 
 TEST(HubKeyExtraction, FullExchangeReachesExtractedThenGraceDisarms) {
@@ -741,6 +798,8 @@ TEST(HubKeyExtraction, LiteralKig300CaptureReplayThroughRealDispatchReproducesHi
   TestableHubComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
+  // The session was recorded while the responder advertised a sleeping device (0xDD).
+  comp.tuning_.key_extraction_multi_info = 0xDD;
 
   test_rng::reset();
   test_rng::enqueue_bytes(expected_discover_resp.src, NODE_ID_SIZE);
@@ -1528,7 +1587,7 @@ TEST(HubKeyExtraction, ReportNeverClaimsTheKeyIsConfirmed) {
 // deadline, handing what it receives to the normal receive path.
 // ========================================================================================
 
-// The window follows the advertised turnaround class: 35 ms plus ATT_CLASS_40MS's 40 ms.
+// The default window follows the default turnaround class: 35 ms plus ATT_CLASS_40MS's 40 ms.
 static_assert(KEY_EXTRACTION_SESSION_WINDOW_MS == 75);
 
 namespace {

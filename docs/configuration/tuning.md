@@ -146,7 +146,8 @@ your device may differ.
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
-| `key_extraction_power_save` | both | `low_power` | `low_power` / `always_alive` | Whether the key-extraction responder's discovery reply (0x29) says it is a sleeping or an always-listening device. Try `always_alive` when your hub never confirms the reply. |
+| `key_extraction_type_word` | both | `0x0080` | `0x0000`–`0xFFFF` | Device type the key-extraction responder's discovery reply (0x29) claims, as the reply's two type bytes. Applies to an open search only. See below. |
+| `key_extraction_multi_info` | both | `0xDD` | `0x00`–`0xFF` | The key-extraction responder's discovery reply (0x29) flags byte: reply speed and whether the device sleeps. See below. |
 | `normal_start_preamble` | both | `48` on SX1262/LR1121, `32` on SX1276 | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices lead with `LONG_PREAMBLE` unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
 | `low_power_wake_preamble` | both | `1024` | 1024–4096 B | Wake-up preamble on a directed start frame to a `low_power:` device believed at rest. See below. |
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the 1024-byte wake-up preamble. See below. |
@@ -324,22 +325,48 @@ Sized independently of `response_preamble()`: it governs only the "Recover Syste
 discovery reply (0x29), the sole device-role reply that is `start=true` and therefore the one a
 hopping/scanning peer has to catch cold, rather than a peer already parked on a held channel.
 
-#### `key_extraction_power_save`
+#### `key_extraction_type_word` and `key_extraction_multi_info`
 
-Chooses one bit of the "Recover System Key" responder's discovery reply (0x29): whether the
-pretend device says it sleeps (`low_power`, byte `0xDD`) or always listens (`always_alive`, byte
-`0xDC`, what a real Somfy Izymo dimmer sends). Everything else in the reply stays the same.
+These two set the bytes the "Recover System Key" responder uses to describe its pretend device in
+its discovery reply (0x29). Change them when your hub keeps searching but never takes the device:
+some hubs only list products they know, or skip a device that says it sleeps.
 
-`low_power` is the default because a VELUX KLR 200, a VELUX KLF 200 and a Somfy TaHoma all hand over
-their key to it. Switch to `always_alive` when your hub keeps searching but never answers the reply
-with a discover-confirm (0x2C): the only reply a Freebox Delta has confirmed so far carried the
-always-alive byte ([#215](https://github.com/laberning/home_io_control/issues/215)). This is not yet
-confirmed to complete a key extraction on any hub; if you try it, please report the result either way.
+- `key_extraction_type_word` is the reply's first two data bytes: the device type and subtype as
+  they appear on air. The default `0x0080` is a roller shutter. It applies when the hub searches
+  for any device; a hub that searches for one type gets that type in the reply.
+- `key_extraction_multi_info` is the reply's flags byte. Its top two bits promise how fast the
+  device answers, its lowest bit says whether it sleeps. The default `0xDD` says "answers within
+  40 ms, sleeps": a hub then wakes the device with a long preamble, which the responder catches
+  reliably.
+
+Values that real devices send:
+
+| Device | `key_extraction_type_word` | `key_extraction_multi_info` |
+|---|---|---|
+| Somfy Izymo dimmer (lighting receiver) | `0x0180` | `0xDC` |
+| Somfy Sunea io awning | `0x0400` | `0xDC` |
+| Somfy RS100 io roller shutter | `0x0080` | `0x1C` |
+
+To copy another device, take the bytes from its own discovery reply in a frame log: in
+`29 01 80 <address> 02 DC 00 0E`, the type word is `01 80` and the flags byte is `DC`.
+
+A VELUX KLR 200, a VELUX KLF 200 and a Somfy TaHoma hand over their key with the defaults. A
+Freebox Delta confirms the reply only with the always-listening byte `0xDC`
+([#215](https://github.com/laberning/home_io_control/issues/215)). `0x1C` promises an answer
+within 5 ms, which the responder cannot always keep, so use it only to test. If you change either
+value, please report the result either way.
+
+Write the values in hex: `0xDC`, or quoted as `"DC"` or `"01 80"` (quoted text is always read as
+hex). A bare number without `0x`, such as `10`, is read as decimal (0x0A), the way the Home
+Assistant entity shows it. With `ui_controls: true`, the
+two Home Assistant number entities show the same values in decimal (`0xDC` is 220, `0x0180` is 384),
+so you can try another value without reflashing.
 
 ```yaml
 home_io_control:
   tuning:
-    key_extraction_power_save: always_alive
+    key_extraction_type_word: 0x0180
+    key_extraction_multi_info: 0xDC
 ```
 
 #### `normal_start_preamble`

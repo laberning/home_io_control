@@ -899,6 +899,36 @@ static constexpr uint8_t POWER_SAVE_ALWAYS_ALIVE = 0;  ///< Device is always lis
 static constexpr uint8_t POWER_SAVE_LOW_POWER = 1;     ///< Device sleeps — needs long preamble to wake.
 /// @}
 
+/// Default Multi Information Byte for our device-role CMD_DISCOVER_RESP (0x29): the turnaround-time
+/// class and power-save mode the key-extraction responder advertises to a foreign hub. The
+/// `key_extraction_multi_info` tuning option replaces it.
+///
+/// 0xDD = 1101_1101: bits [7:6] ATT_CLASS_40MS, bit [3] DISCOVERY_FLAGS_RF_SUPPORT, bit [2]
+/// DISCOVERY_FLAGS_IO_MEMBERSHIP (always 1), bit [4] with no named constant (not in the VELUX KLF 200
+/// API table), power-save bits [1:0] POWER_SAVE_LOW_POWER. All but the power-save bits copy the byte
+/// a real Somfy Izymo dimmer sends, 0xDC
+/// (tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml): copying a real
+/// device's whole byte is safer than guessing at bits with no documented meaning.
+///
+/// ATT_CLASS_40MS is the honest class for this responder: it scans channels on the ESPHome loop
+/// cadence and is deaf while it transmits, so it cannot promise a 5 ms turnaround. Low power for the
+/// same reason: a controller wakes a low-power device with a long preamble, which the scanning
+/// responder catches reliably. A VELUX KLR 200, a KLF 200 and a Somfy TaHoma have handed over their
+/// key to this byte.
+///
+/// A controller that reads the power-save bit may skip a sleeping device: a Freebox Delta confirmed
+/// only answers with the Izymo's always-alive byte 0xDC (issue #215). Such a hub needs the tuning
+/// option set to 0xDC.
+static constexpr uint8_t KEY_EXTRACTION_DISCOVER_RESP_FLAGS = 0xDD;
+
+/// Default packed device type word (type in bits [15:6], subtype in bits [5:0]) the key-extraction
+/// responder advertises in its 0x29 to an open discovery: 0x0080, roller shutter subtype 0, the same
+/// word a real Somfy RS100 io sends
+/// (tests/corpus/captures/pairing/somfy_rs100_pairing_key_transfer_timeout.yaml). The
+/// `key_extraction_type_word` tuning option replaces it; a typed discovery is always answered with
+/// the type it asks for.
+static constexpr uint16_t KEY_EXTRACTION_DISCOVER_RESP_TYPE_WORD = 0x0080;
+
 /// @brief Extract the ATT class field from a discovery response's Multi Information Byte.
 /// @param flags Multi Information Byte (data[DISCOVERY_RESP_FLAGS_OFFSET]).
 /// @return ATT class value (0–3); pass to att_class_name() for a human-readable string.

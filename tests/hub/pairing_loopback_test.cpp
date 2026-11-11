@@ -245,9 +245,10 @@ TEST_P(PairingLoopback, DefaultModeCompletesFullSequenceAndResponderRecoversHubK
   expect_device_registered();
 }
 
-/// The responder advertises a low-power device, so the hub's 0x2C must take the low-power shape:
+/// A responder that advertises a low-power device (0xDD) must get the low-power 0x2C:
 /// CTRL1_LOW_POWER set, and the long wake-up preamble.
 TEST_P(PairingLoopback, DiscoverConfirmFollowsTheResponderAdvertisedPowerClass) {
+  device_.tuning_.key_extraction_multi_info = 0xDD;
   ASSERT_TRUE(hub_.discover_and_pair());
 
   const IoFrame confirm = first_discover_confirm_sent();
@@ -263,9 +264,10 @@ TEST_P(PairingLoopback, DiscoverConfirmFollowsTheResponderAdvertisedPowerClass) 
   }
 }
 
-/// `send_with_ack` only changes the frame for an always-alive target; to this low-power responder
-/// it sends the same 0x2C as `send`, and the pairing completes the same way.
+/// `send_with_ack` only changes the frame for an always-alive target; to a low-power responder
+/// (0xDD) it sends the same 0x2C as `send`, and the pairing completes the same way.
 TEST_P(PairingLoopback, SendWithAckSendsTheSameFrameToALowPowerTarget) {
+  device_.tuning_.key_extraction_multi_info = 0xDD;
   hub_.tuning_.pairing_discover_confirm = DiscoverConfirmMode::SEND_WITH_ACK;
 
   ASSERT_TRUE(hub_.discover_and_pair());

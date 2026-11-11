@@ -58,7 +58,8 @@ CONF_PAIRING_DISCOVER_CONFIRM = "pairing_discover_confirm"
 CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS = "pairing_discovery_listen_channels"
 CONF_PAIRING_KEY_INIT_DELAY_MS = "pairing_key_init_delay_ms"
 CONF_PAIRING_KEY_TRANSFER = "pairing_key_transfer"
-CONF_KEY_EXTRACTION_POWER_SAVE = "key_extraction_power_save"
+CONF_KEY_EXTRACTION_TYPE_WORD = "key_extraction_type_word"
+CONF_KEY_EXTRACTION_MULTI_INFO = "key_extraction_multi_info"
 
 # C++ type references
 TuningConfig = home_io_control_ns.class_("TuningConfig")
@@ -80,7 +81,6 @@ ScanPowerClasses = home_io_control_ns.enum("ScanPowerClasses", is_class=True)
 DiscoverConfirmMode = home_io_control_ns.enum("DiscoverConfirmMode", is_class=True)
 DiscoveryListenChannels = home_io_control_ns.enum("DiscoveryListenChannels", is_class=True)
 KeyTransferMode = home_io_control_ns.enum("KeyTransferMode", is_class=True)
-KeyExtractionPowerSave = home_io_control_ns.enum("KeyExtractionPowerSave", is_class=True)
 
 # Map each YAML option string to its C++ enum value. Options are bare kHz numbers (the "kHz"
 # unit lives in the entity name) for uniformity with the numeric parameters.
@@ -202,16 +202,6 @@ KEY_TRANSFER_MODE_OPTIONS = {
     "pull": KeyTransferMode.PULL,
 }
 
-# Power-save mode the key-extraction responder's discovery answer (0x29) advertises. `low_power`
-# (default) is the byte accepted by the VELUX KLR 200 / KLF 200 and a TaHoma; `always_alive` is the
-# byte a real Somfy Izymo sends. Option strings mirror key_extraction_power_save_to_string()
-# (tuning_config.h). See KeyExtractionPowerSave for the details.
-KEY_EXTRACTION_POWER_SAVE_OPTIONS = {
-    "low_power": KeyExtractionPowerSave.LOW_POWER,
-    "always_alive": KeyExtractionPowerSave.ALWAYS_ALIVE,
-}
-
-
 def _id_key(param_key):
     """Config-dict key under which a parameter's injected companion entity ID is stored."""
     return f"_{param_key}_id"
@@ -255,7 +245,8 @@ UI_NAMES = {
     CONF_PAIRING_KEY_INIT_DELAY_MS: "Pairing Key Init Delay",
     CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS: "Pairing Discovery Listen Channels",
     CONF_PAIRING_KEY_TRANSFER: "Pairing Key Transfer",
-    CONF_KEY_EXTRACTION_POWER_SAVE: "Key Extraction Power Save",
+    CONF_KEY_EXTRACTION_TYPE_WORD: "Key Extraction Type Word",
+    CONF_KEY_EXTRACTION_MULTI_INFO: "Key Extraction Multi Info",
 }
 
 # Numeric parameters: key -> (min, max, step, unit). Single source of truth for both the
@@ -321,6 +312,11 @@ _NUMBER_PARAMS = {
     # Ceiling covers KLR300's observed 0x2C -> 0x31 gap (~8.1 s) with headroom; step 100 matches
     # the other pairing-phase millisecond knobs.
     CONF_PAIRING_KEY_INIT_DELAY_MS: (0, 10000, 100, "ms"),
+    # The two bytes of the key-extraction responder's discovery answer (0x29) that describe the
+    # device: the packed type word and the Multi Information Byte. Written in hex in YAML (see
+    # _HEX_PARAMS); the Home Assistant number entity shows the same value in decimal.
+    CONF_KEY_EXTRACTION_TYPE_WORD: (0, 0xFFFF, 1, ""),
+    CONF_KEY_EXTRACTION_MULTI_INFO: (0, 0xFF, 1, ""),
 }
 
 # Plain boolean parameters: the C++ TuningConfig field name equals the YAML key, and every one is
@@ -355,7 +351,6 @@ _SELECT_OPTIONS = {
     CONF_PAIRING_DISCOVER_CONFIRM: list(DISCOVER_CONFIRM_MODE_OPTIONS),
     CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS: list(DISCOVERY_LISTEN_CHANNELS_OPTIONS),
     CONF_PAIRING_KEY_TRANSFER: list(KEY_TRANSFER_MODE_OPTIONS),
-    CONF_KEY_EXTRACTION_POWER_SAVE: list(KEY_EXTRACTION_POWER_SAVE_OPTIONS),
 }
 
 
@@ -409,9 +404,39 @@ _validate_discovery_listen_channels = _one_of_string(
 _validate_key_transfer_mode = _one_of_string(
     CONF_PAIRING_KEY_TRANSFER, KEY_TRANSFER_MODE_OPTIONS
 )
-_validate_key_extraction_power_save = _one_of_string(
-    CONF_KEY_EXTRACTION_POWER_SAVE, KEY_EXTRACTION_POWER_SAVE_OPTIONS
-)
+
+
+# Numeric parameters that are protocol bytes, written in hex in YAML: key -> hex digits.
+_HEX_PARAMS = {
+    CONF_KEY_EXTRACTION_TYPE_WORD: 4,
+    CONF_KEY_EXTRACTION_MULTI_INFO: 2,
+}
+
+
+def _hex_value(param_name, digits):
+    """Build a validator for a protocol byte or word: an int (YAML ``0xDC``) or a hex string.
+
+    Accepts ``0xDC``, ``"0xDC"`` and ``"DC"`` (spaces allowed, so ``"01 80"`` copied from a frame
+    dump works), and rejects anything wider than `digits` hex digits.
+    """
+    max_value = (1 << (4 * digits)) - 1
+
+    def validate(value):
+        if isinstance(value, bool):
+            raise cv.Invalid(f"{param_name} must be a hex value such as 0x{'0' * (digits - 2)}DC")
+        if isinstance(value, str):
+            text = value.replace(" ", "").lower()
+            text = text.removeprefix("0x")
+            try:
+                value = int(text, 16)
+            except ValueError as err:
+                raise cv.Invalid(f"{param_name} must be a hex value, got '{value}'") from err
+        if not isinstance(value, int) or not 0 <= value <= max_value:
+            raise cv.Invalid(f"{param_name} must be between 0x00 and 0x{max_value:0{digits}X}")
+        return value
+
+    return validate
+
 
 
 def _parse_destination_to_bytes(value):
@@ -449,15 +474,14 @@ TUNING_SCHEMA = cv.Schema(
             CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS
         ): _validate_discovery_listen_channels,
         cv.Optional(CONF_PAIRING_KEY_TRANSFER): _validate_key_transfer_mode,
-        cv.Optional(
-            CONF_KEY_EXTRACTION_POWER_SAVE
-        ): _validate_key_extraction_power_save,
         **{cv.Optional(key): cv.boolean for key in _BOOL_PARAMS},
         # Numeric parameters share their range with the number-entity bounds via _NUMBER_PARAMS.
         **{
             cv.Optional(key): cv.int_range(min=lo, max=hi)
             for key, (lo, hi, _step, _unit) in _NUMBER_PARAMS.items()
+            if key not in _HEX_PARAMS
         },
+        **{cv.Optional(key): _hex_value(key, digits) for key, digits in _HEX_PARAMS.items()},
     }
 )
 
@@ -567,13 +591,6 @@ def _apply_tuning_config(config, var):
             tuning,
             "pairing_key_transfer",
             KEY_TRANSFER_MODE_OPTIONS[config[CONF_PAIRING_KEY_TRANSFER]],
-        )
-
-    if CONF_KEY_EXTRACTION_POWER_SAVE in config:
-        _assign(
-            tuning,
-            "key_extraction_power_save",
-            KEY_EXTRACTION_POWER_SAVE_OPTIONS[config[CONF_KEY_EXTRACTION_POWER_SAVE]],
         )
 
     # Ordered discovery commands. Clear the struct default before appending so a
