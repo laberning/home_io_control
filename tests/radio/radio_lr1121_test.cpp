@@ -266,11 +266,9 @@ TEST(RadioLR1121, TcxoCommandEncodesYamlVoltageCode) {
   EXPECT_EQ(tx[2], TCXO_YAML_CODE_3_3V) << "TCXO voltage code must reach the chip unmapped";
 }
 
-TEST(RadioLR1121, PaConfigSelectsHpPathAndClampsPowerAboveLpRange) {
-  // tx_power=17 exceeds the LP path's -17..14dBm range, so configure_radio_() must select HP
-  // (paSel=1, regPaSupply=1/VBAT, paHpSel=0x07) and clamp TX power to HP's -9..22dBm range.
-  // Selecting the wrong path for the configured power produces an invalid/undefined analog PA
-  // output, so this must track tx_power_ rather than a fixed path.
+TEST(RadioLR1121, PaConfigSelectsHpPathAt17dBm) {
+  // The default tx_power=17: HP path (paSel=1, regPaSupply=1/VBAT, paHpSel=0x07), power passed
+  // through unclamped (HP covers -9..22dBm).
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
@@ -293,12 +291,11 @@ TEST(RadioLR1121, PaConfigSelectsHpPathAndClampsPowerAboveLpRange) {
   EXPECT_EQ((int8_t) tx_params_tx[2], 17) << "17dBm is within HP's range, so it must pass through unclamped";
 }
 
-TEST(RadioLR1121, PaConfigSelectsLpPathAndClampsPowerToLpRange) {
-  // tx_power=10 is within the LP path's -17..14dBm range, so configure_radio_() must select LP
-  // (paSel=0, regPaSupply=0/internal regulator).
+/// Asserts that `tx_power` reaches the chip through the HP PA, unclamped.
+static void expect_hp_path_with_power(int tx_power) {
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
-  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 10, TCXO_YAML_CODE_3_3V);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, tx_power, TCXO_YAML_CODE_3_3V);
   queue_valid_version_response(spi);
 
   ASSERT_TRUE(radio.init());
@@ -306,13 +303,25 @@ TEST(RadioLR1121, PaConfigSelectsLpPathAndClampsPowerToLpRange) {
   int pa_idx = spi.find_opcode(LR1121_CMD_SET_PA_CONFIG);
   ASSERT_GE(pa_idx, 0);
   const auto &pa_tx = spi.transactions()[pa_idx];
-  EXPECT_EQ(pa_tx[2], 0x00) << "paSel must select LP for 10dBm";
-  EXPECT_EQ(pa_tx[3], 0x00) << "regPaSupply must be the internal regulator (LP) for 10dBm";
+  EXPECT_EQ(pa_tx[2], 0x01) << "paSel must stay HP at " << tx_power << "dBm";
+  EXPECT_EQ(pa_tx[3], 0x01) << "regPaSupply must stay VBAT at " << tx_power << "dBm";
 
   int tx_params_idx = spi.find_opcode(LR1121_CMD_SET_TX_PARAMS);
   ASSERT_GE(tx_params_idx, 0);
   const auto &tx_params_tx = spi.transactions()[tx_params_idx];
-  EXPECT_EQ((int8_t) tx_params_tx[2], 10) << "10dBm is within LP's range, so it must pass through unclamped";
+  EXPECT_EQ((int8_t) tx_params_tx[2], tx_power) << "within HP's -9..22dBm, so it must pass through unclamped";
+}
+
+TEST(RadioLR1121, PaConfigKeepsHpPathAtLowPower) {
+  // On the T3-S3 the LP PA puts nothing on the air (tx_power 10 was silent to an SX1276 and an
+  // SDR, 17 was clean), so a low setting must still go through HP rather than switch to LP.
+  expect_hp_path_with_power(14);
+  expect_hp_path_with_power(10);
+}
+
+TEST(RadioLR1121, PaConfigKeepsHpPathAtSchemaMinimum) {
+  // The YAML schema's floor (tx_power 0) is inside HP's range too.
+  expect_hp_path_with_power(0);
 }
 
 TEST(RadioLR1121, PaConfigClampsPowerAboveHpMaximum) {

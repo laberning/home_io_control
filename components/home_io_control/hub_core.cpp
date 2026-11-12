@@ -22,6 +22,7 @@
 
 #include "esphome/core/helpers.h"
 
+#include <algorithm>
 #include <array>
 #include <cinttypes>
 #include <new>
@@ -446,19 +447,7 @@ void IOHomeControlComponent::loop() {
 #else
   if (!this->busy_) {
     if (this->key_extraction_awaiting_reply_()) {
-      // The key-extraction responder is mid-attempt and expecting the hub's next CH2-only unicast
-      // frame (see wait_for_key_confirm_()'s doc comment in pairing_engine.cpp) — hold CH2 instead
-      // of running the generic idle-hop scan, which would otherwise cycle away from CH2 for 2/3 of
-      // every hop cycle with no key-extraction awareness at all. Frequency test first, deliberately:
-      // reception_in_progress() is not a free predicate (on SX1276 it can force a
-      // set_mode_standby()/set_mode_rx() cycle), so this branch must be as sparing as maybe_hop()
-      // itself, which only consults it once the dwell timer has already decided to hop.
-      if (this->radio_->get_current_freq() != FREQ_CH2 && !this->radio_->reception_in_progress())
-        this->radio_->change_frequency(FREQ_CH2);
-      // exchange_engine_'s last_hop_us_ goes stale while the hold is active (it bypasses
-      // hop_frequency(), which is what normally updates that timestamp). Harmless: once the hold
-      // ends, maybe_hop() will very likely hop on its next call instead of waiting out a full
-      // HOP_TIME_US — resuming idle scanning a little early is not a bug.
+      this->listen_for_key_extraction_peer_();
     } else if (!this->radio_->run_idle_scan()) {
       this->exchange_engine_.maybe_hop();
     }
@@ -476,6 +465,50 @@ void IOHomeControlComponent::loop() {
       this->queue_request_device_status(*due);
     this->queue_due_periodic_polls_();
   }
+}
+
+// One listen slice of the key-extraction responder's scan. Long enough that the gap between two
+// slices (the rest of the loop pass, about one ESPHome loop interval, when the radio stays on one
+// channel) is a small part of the time, short enough that other components keep running.
+static constexpr uint32_t KEY_EXTRACTION_SCAN_SLICE_MS = 200;
+
+void IOHomeControlComponent::listen_for_key_extraction_peer_() {
+  if (this->key_extraction_.in_session_hold()) {
+    // The peer answers on the session's channel within the session window, with a short preamble,
+    // so the radio waits there. Frequency test first, deliberately: reception_in_progress() is not
+    // a free predicate (on SX1276 it can force a set_mode_standby()/set_mode_rx() cycle).
+    const uint32_t freq = this->key_extraction_.session_freq();
+    if (this->radio_->get_current_freq() != freq && !this->radio_->reception_in_progress())
+      this->radio_->change_frequency(freq);
+    return;
+  }
+  // Outside the window the peer's next frame is a new request, which may go out on any channel, so
+  // scan all three as a device does between sessions: the same rotating listen as discovery (the
+  // chip's own dwell, staying on a channel while a preamble or sync word is coming in). The idle hop
+  // is too coarse for this: it moves once per loop pass, so it can sit on one channel for longer
+  // than a start preamble lasts.
+  // A discovery answer waiting for its slot is sent by the scheduler, which runs only after this
+  // pass returns: end the slice by its slot, and skip it once the slot has come.
+  uint32_t window_ms = KEY_EXTRACTION_SCAN_SLICE_MS;
+  if (this->key_extraction_.discover_reply_pending()) {
+    window_ms = std::min(window_ms, this->key_extraction_.ms_until_discover_reply());
+    if (window_ms == 0)
+      return;
+  }
+  ListenSpec spec;
+  spec.window_ms = window_ms;
+  spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
+  spec.linger_on_preamble = true;
+  spec.linger_dwell_ms = PREAMBLE_LINGER_DWELL_MS;
+  RadioRxPacket packet{};
+  IoFrame frame;
+  // Every frame ends the slice and goes through the normal receive path, so the responder, 1W
+  // remotes and status reports see it exactly as they would from the idle hop.
+  const ListenOutcome outcome = this->exchange_engine_.listen(
+      spec, packet, frame,
+      [](const IoFrame * /*parsed*/, const RadioRxPacket & /*pkt*/) { return ReplyDisposition::ACCEPT; });
+  if (outcome == ListenOutcome::ACCEPTED)
+    this->process_received_packet_(packet);
 }
 
 void IOHomeControlComponent::queue_due_periodic_polls_() {

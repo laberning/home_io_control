@@ -636,6 +636,13 @@ TEST(ProtoFrame, DiscoveryAttClassExtractsBitsSixAndSeven) {
   EXPECT_EQ(discovery_att_class(0xEC), ATT_CLASS_40MS);
 }
 
+TEST(ProtoFrame, AttClassMsMatchesTheClassNames) {
+  EXPECT_EQ(att_class_ms(ATT_CLASS_5MS), 5U);
+  EXPECT_EQ(att_class_ms(ATT_CLASS_10MS), 10U);
+  EXPECT_EQ(att_class_ms(ATT_CLASS_20MS), 20U);
+  EXPECT_EQ(att_class_ms(ATT_CLASS_40MS), 40U);
+}
+
 TEST(ProtoFrame, DiscoveryPowerSaveModeExtractsBitsZeroAndOne) {
   EXPECT_EQ(discovery_power_save_mode(0x00), POWER_SAVE_ALWAYS_ALIVE);
   EXPECT_EQ(discovery_power_save_mode(0x01), POWER_SAVE_LOW_POWER);

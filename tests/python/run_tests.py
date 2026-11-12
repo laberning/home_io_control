@@ -75,6 +75,25 @@ def expect_invalid(fn, value, fragment):
 # =============================================================================================
 
 
+@case("tuning._hex_value")
+def key_extraction_bytes_are_hex():
+    import_component()
+    from esphome.components.home_io_control import tuning as t
+
+    multi_info = t._hex_value("key_extraction_multi_info", 2)
+    assert multi_info(0xDC) == 0xDC
+    assert multi_info("0xDD") == 0xDD
+    assert multi_info("1c") == 0x1C
+    type_word = t._hex_value("key_extraction_type_word", 4)
+    assert type_word("01 80") == 0x0180
+    assert type_word(0x0400) == 0x0400
+    expect_invalid(multi_info, 0x100, "between 0x00 and 0xFF")
+    expect_invalid(multi_info, "0x1DC", "between 0x00 and 0xFF")
+    expect_invalid(multi_info, "DX", "must be a hex value")
+    expect_invalid(multi_info, True, "must be a hex value")
+    expect_invalid(type_word, -1, "between 0x00 and 0xFFFF")
+
+
 @case("hub_validators.validate_node_id")
 def node_id_is_three_hex_bytes():
     from esphome.components.home_io_control import hub_validators as v

@@ -1650,7 +1650,9 @@ std::vector<uint16_t> tx_preambles_for(const MockRadio &radio, uint8_t cmd) {
 void queue_low_power_device_pairing(MockRadio &radio, const uint8_t hub[NODE_ID_SIZE],
                                     const uint8_t device[NODE_ID_SIZE]) {
   IoFrame discover_resp{};
-  ASSERT_TRUE(create_discover_resp(discover_resp, device, hub, DeviceType::ROLLER_SHUTTER, 0, MANUFACTURER_VELUX));
+  // 0xDD: the Multi Information Byte with the power-save bits set to low power.
+  ASSERT_TRUE(
+      create_discover_resp(discover_resp, device, hub, DeviceType::ROLLER_SHUTTER, 0, MANUFACTURER_VELUX, 0xDD));
   radio.queue_rx(frame_to_rx_packet(discover_resp));
   IoFrame confirm_ack{};
   ASSERT_TRUE(create_discover_confirm_ack(confirm_ack, device, hub));

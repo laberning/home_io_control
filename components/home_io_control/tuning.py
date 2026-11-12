@@ -58,6 +58,8 @@ CONF_PAIRING_DISCOVER_CONFIRM = "pairing_discover_confirm"
 CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS = "pairing_discovery_listen_channels"
 CONF_PAIRING_KEY_INIT_DELAY_MS = "pairing_key_init_delay_ms"
 CONF_PAIRING_KEY_TRANSFER = "pairing_key_transfer"
+CONF_KEY_EXTRACTION_TYPE_WORD = "key_extraction_type_word"
+CONF_KEY_EXTRACTION_MULTI_INFO = "key_extraction_multi_info"
 
 # C++ type references
 TuningConfig = home_io_control_ns.class_("TuningConfig")
@@ -249,6 +251,8 @@ UI_NAMES = {
     CONF_PAIRING_KEY_INIT_DELAY_MS: "Pairing Key Init Delay",
     CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS: "Pairing Discovery Listen Channels",
     CONF_PAIRING_KEY_TRANSFER: "Pairing Key Transfer",
+    CONF_KEY_EXTRACTION_TYPE_WORD: "Key Extraction Type Word",
+    CONF_KEY_EXTRACTION_MULTI_INFO: "Key Extraction Multi Info",
 }
 
 # Numeric parameters: key -> (min, max, step, unit). Single source of truth for both the
@@ -314,6 +318,11 @@ _NUMBER_PARAMS = {
     # Ceiling covers KLR300's observed 0x2C -> 0x31 gap (~8.1 s) with headroom; step 100 matches
     # the other pairing-phase millisecond knobs.
     CONF_PAIRING_KEY_INIT_DELAY_MS: (0, 10000, 100, "ms"),
+    # The two bytes of the key-extraction responder's discovery answer (0x29) that describe the
+    # device: the packed type word and the Multi Information Byte. Written in hex in YAML (see
+    # _HEX_PARAMS); the Home Assistant number entity shows the same value in decimal.
+    CONF_KEY_EXTRACTION_TYPE_WORD: (0, 0xFFFF, 1, ""),
+    CONF_KEY_EXTRACTION_MULTI_INFO: (0, 0xFF, 1, ""),
 }
 
 # Plain boolean parameters: the C++ TuningConfig field name equals the YAML key, and every one is
@@ -403,6 +412,38 @@ _validate_key_transfer_mode = _one_of_string(
 )
 
 
+# Numeric parameters that are protocol bytes, written in hex in YAML: key -> hex digits.
+_HEX_PARAMS = {
+    CONF_KEY_EXTRACTION_TYPE_WORD: 4,
+    CONF_KEY_EXTRACTION_MULTI_INFO: 2,
+}
+
+
+def _hex_value(param_name, digits):
+    """Build a validator for a protocol byte or word: an int (YAML ``0xDC``) or a hex string.
+
+    Accepts ``0xDC``, ``"0xDC"`` and ``"DC"`` (spaces allowed, so ``"01 80"`` copied from a frame
+    dump works), and rejects anything wider than `digits` hex digits.
+    """
+    max_value = (1 << (4 * digits)) - 1
+
+    def validate(value):
+        if isinstance(value, bool):
+            raise cv.Invalid(f"{param_name} must be a hex value such as 0x{'0' * (digits - 2)}DC")
+        if isinstance(value, str):
+            text = value.replace(" ", "").lower()
+            text = text.removeprefix("0x")
+            try:
+                value = int(text, 16)
+            except ValueError as err:
+                raise cv.Invalid(f"{param_name} must be a hex value, got '{value}'") from err
+        if not isinstance(value, int) or not 0 <= value <= max_value:
+            raise cv.Invalid(f"{param_name} must be between 0x00 and 0x{max_value:0{digits}X}")
+        return value
+
+    return validate
+
+
 def _parse_destination_to_bytes(value):
     """Convert an explicit destination string like '0x00003B' to a list of 3 byte values."""
     digits = value[2:]  # strip the '0x' prefix
@@ -443,7 +484,9 @@ TUNING_SCHEMA = cv.Schema(
         **{
             cv.Optional(key): cv.int_range(min=lo, max=hi)
             for key, (lo, hi, _step, _unit) in _NUMBER_PARAMS.items()
+            if key not in _HEX_PARAMS
         },
+        **{cv.Optional(key): _hex_value(key, digits) for key, digits in _HEX_PARAMS.items()},
     }
 )
 

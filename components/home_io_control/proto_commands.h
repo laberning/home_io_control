@@ -758,14 +758,13 @@ bool create_discover(IoFrame &f, const uint8_t *own);
 /// @param type Device type to advertise.
 /// @param subtype Device subtype to advertise.
 /// @param manufacturer_id Manufacturer ID to advertise (see MANUFACTURER_* in proto_constants.h).
-/// @note The flags byte (turnaround class, power-save) and timestamp are best-effort placeholder
-///       values — ATT_CLASS_40MS/POWER_SAVE_LOW_POWER and a non-zero timestamp, matching a real
-///       captured device rather than the honest-but-misleading ATT_CLASS_5MS/POWER_SAVE_ALWAYS_ALIVE
-///       (0x00) — see KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP in proto_commands.cpp for the
-///       full reasoning. Still unverified against a real hub.
+/// @note The timestamp is a best-effort placeholder copied from a real captured device; see
+///       KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP (proto_commands.cpp).
+/// @param flags Multi-information byte to advertise (turnaround class, power-save mode); default
+///        KEY_EXTRACTION_DISCOVER_RESP_FLAGS, the `key_extraction_multi_info` tuning value in use.
 /// @return true on success.
 bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, DeviceType type, uint8_t subtype,
-                          uint8_t manufacturer_id);
+                          uint8_t manufacturer_id, uint8_t flags = KEY_EXTRACTION_DISCOVER_RESP_FLAGS);
 
 /// @brief Build a key-confirm frame (0x33) — the device's acknowledgement that it received and
 /// installed the system key, sent after decrypting a CMD_KEY_TRANSFER (0x32).
@@ -1013,10 +1012,9 @@ bool create_node_verify_resp_device_role(IoFrame &f, const uint8_t *own, const u
 /// hub opened with 0x36 (tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml's `8E 08 …`, END
 /// set). LOW_POWER is clear because CTRL1_LOW_POWER describes a controller-originated frame's
 /// *target*, not the sender — irrelevant here, since this is a device-role frame sent to a
-/// mains-powered hub. Unrelated to create_discover_resp()'s own Multi Information Byte, which as of
-/// KEY_EXTRACTION_DISCOVER_RESP_FLAGS (proto_commands.cpp) deliberately advertises
-/// POWER_SAVE_LOW_POWER for this responder's own (different) power-save self-description — the two
-/// bits answer different questions and are not expected to match. Neither
+/// mains-powered hub. Unrelated to the power-save bits of create_discover_resp()'s Multi Information
+/// Byte (KEY_EXTRACTION_DISCOVER_RESP_FLAGS), which describe the responder itself — the two bits
+/// answer different questions and are not expected to match. Neither
 /// bit is a blanket "device role" convention — real devices also send mid-exchange 0x3D frames with
 /// END clear and LOW_POWER set (somfy_oximo40_statuspoll_sx1262.yaml) — so this framing is
 /// specific to the terminal shape this feature needs, not a general device-role rule.

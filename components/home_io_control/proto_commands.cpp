@@ -58,39 +58,13 @@ constexpr uint8_t EXECUTE_ACEI =
 constexpr uint8_t EXECUTE_ACEI_FORCE_OPEN =
     (ACEI_LEVEL_PROTECTION_HUMAN << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
 
-/// Multi Information Byte for our device-role CMD_DISCOVER_RESP (0x29) — the turnaround-time
-/// class and power-save mode this responder advertises to a foreign hub.
-///
-/// ATT_CLASS_5MS | POWER_SAVE_ALWAYS_ALIVE (0x00) would be an honest-looking but false claim: it
-/// promises the tightest 5 ms turnaround from a device that never sleeps, when this responder
-/// actually hops across 3 channels on the ESPHome loop cadence and is briefly deaf while
-/// transmitting its own replies. The loosest class, ATT_CLASS_40MS, is the honest claim for that profile.
-///
-/// 0xDD = 1101_1101: bits [7:6] are ATT_CLASS_40MS, bit [0] is POWER_SAVE_LOW_POWER, bit [3] is
-/// DISCOVERY_FLAGS_RF_SUPPORT (node has its own RF), bit [2] is DISCOVERY_FLAGS_IO_MEMBERSHIP
-/// (always 1), and bit [4] has no named constant (it is not in the VELUX KLF 200 API table). All of
-/// this byte except the power-save bit mirrors the exact byte a real Somfy Izymo dimmer advertised in
-/// this project's own corpus
-/// (tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml: flags=0xDC, ATT_CLASS_40MS |
-/// POWER_SAVE_ALWAYS_ALIVE), on the theory that matching a real device's full byte is safer than
-/// guessing at bits with no documented meaning — bit [4] is carried over unmodified for that reason.
-///
-/// The power-save bit is the one deliberate departure from that real capture: POWER_SAVE_LOW_POWER
-/// here, not the captured device's POWER_SAVE_ALWAYS_ALIVE. That is a reasoned choice, not a
-/// guess — this responder's own true behavior (hopping across 3 channels, briefly deaf while
-/// transmitting its own replies) is genuinely closer to a low-power device's profile than to an
-/// always-listening one, so mirroring the capture's power-save bit would make the same false claim
-/// ATT_CLASS_5MS | POWER_SAVE_ALWAYS_ALIVE made above, just with the opposite polarity.
-/// TODO(hardware-verify): unconfirmed against a real hub — see create_discover_resp()'s callers'
-/// file-level @warning (key_extraction_responder.cpp) for the general caveat this falls under.
-constexpr uint8_t KEY_EXTRACTION_DISCOVER_RESP_FLAGS = 0xDD;
-
-/// Timestamp for our device-role CMD_DISCOVER_RESP (0x29), alongside the flags constant above. Set
+/// Timestamp for our device-role CMD_DISCOVER_RESP (0x29), alongside KEY_EXTRACTION_DISCOVER_RESP_FLAGS
+/// (proto_constants.h). Set
 /// to the same Somfy Izymo dimmer capture's value (0x000E) for the same reason: an unverified
 /// field is safer matched to a real device's exact bytes than left at the one value no real
 /// capture in this project's corpus ever shows (0x0000 — see KEY_EXTRACTION_DISCOVER_RESP_FLAGS
-/// above for the flags half of the same reasoning).
-/// TODO(hardware-verify): unconfirmed against a real hub — same caveat as the flags constant above.
+/// in proto_constants.h for the flags half of the same reasoning).
+/// TODO(hardware-verify): unconfirmed against a real hub — same caveat as KEY_EXTRACTION_DISCOVER_RESP_FLAGS.
 constexpr uint16_t KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP = 0x000E;
 
 /// Mask for the low byte of a 16-bit field split across 2 wire bytes — same big-endian split
@@ -847,7 +821,7 @@ bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, c
 /// Build a discovery response (0x29) — device side, used only by the key-extraction responder.
 /// See proto_commands.h for the full contract and the real-capture cross-check.
 bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, DeviceType type, uint8_t subtype,
-                          uint8_t manufacturer_id) {
+                          uint8_t manufacturer_id, uint8_t flags) {
   init_frame(f, true, true, true, false);
   set_dst(f, dst);
   set_src(f, own);
@@ -858,8 +832,9 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
   // device's own node ID here, so we mirror that rather than inventing a separate address.
   memcpy(&payload[DISCOVERY_RESP_BACKBONE_OFFSET], own, NODE_ID_SIZE);
   payload[DISCOVERY_RESP_MANUFACTURER_OFFSET] = manufacturer_id;
-  // See KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP above for the derivation of these two values.
-  payload[DISCOVERY_RESP_FLAGS_OFFSET] = KEY_EXTRACTION_DISCOVER_RESP_FLAGS;
+  // See KEY_EXTRACTION_DISCOVER_RESP_FLAGS (proto_constants.h) and _TIMESTAMP above for the
+  // derivation of these two values.
+  payload[DISCOVERY_RESP_FLAGS_OFFSET] = flags;
   payload[DISCOVERY_RESP_TIMESTAMP_OFFSET] =
       static_cast<uint8_t>(KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP >> BITS_PER_BYTE);
   payload[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1] =

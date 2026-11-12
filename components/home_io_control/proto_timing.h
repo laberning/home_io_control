@@ -22,6 +22,15 @@ static constexpr uint32_t FREQ_CH1 = 868250000;  ///< Channel 1: 868.25 MHz (2W 
 static constexpr uint32_t FREQ_CH2 = 868950000;  ///< Channel 2: 868.95 MHz (1W and 2W, TX channel)
 static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W only)
 
+/// Length of one discovery answer slot. A discovery request opens a window of N such slots; the
+/// key-extraction responder answers once, in a random slot from 1 to N, so it never answers at
+/// once; the controller collects answers for the whole window before it confirms one.
+///
+/// Evidence: in our corpus's discovery captures, devices answer a 32-slot search between 13 and
+/// 1353 ms after it, inside 33 × 41 ms; a Freebox Delta repeats its 128-slot search about every
+/// 5.3 s, which is 128 × 41 ms plus its own turnaround (issue #215).
+static constexpr uint32_t DISCOVERY_SLOT_MS = 41;
+
 /// Preamble is a sequence of 0xAA bytes that precedes every frame.
 /// Any start frame carrying `CTRL1_LOW_POWER` — a directed frame to a low-power target, or the
 /// SPE roll-call's low-power frame shape — uses the long preamble (1024 bytes = 8192 bits) as a
@@ -38,7 +47,7 @@ static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol default and floor
 /// a frame the peer caught via a rotating/hopping listen (currently: only the key-extraction
 /// responder's 0x29, the sole `start=true` frame any device-role builder in this codebase
 /// produces) — long enough to be reliably caught by a hopping receiver, short enough that
-/// broadcasting it across all 3 channels doesn't block the loop the way LONG_PREAMBLE does.
+/// sending it doesn't block the loop the way LONG_PREAMBLE does.
 ///
 /// Sized above the ~13.9 ms real-device discovery-reply preamble this project's own SX1262/LR1121
 /// discovery hop-slice tuning was measured against (issue #65 SDR analysis) — that measurement is
@@ -103,6 +112,16 @@ constexpr TxWake tx_wake_for(bool start, uint16_t preamble) {
 /// roll-call): both wait for the same class of short protocol frame, so there is no measured
 /// reason for them to differ.
 static constexpr uint32_t PREAMBLE_LINGER_DWELL_MS = 15;
+
+/// Base of how long a node acting as a device holds the session's channel after answering a
+/// controller, before it scans all channels again. The full hold adds the turnaround time the node
+/// advertises in its `0x29` (att_class_ms()), so a controller that waits out that turnaround still
+/// finds the node listening. 35 ms is our margin, not a measured device timer: with the default
+/// advertised turnaround the hold is 75 ms, above the 16-52 ms in which third-party controllers
+/// answered a device's challenge in our corpus (`somfy_oximo40_statuspoll_sx1262`,
+/// `somfy_rs100_statuspoll_kig300_sx1276`).
+static constexpr uint32_t SESSION_HOLD_BASE_MS = 35;
+
 // Chip-specific defaults (response preamble, post-TX settle, per-chip discovery hop slices
 // for SX1262 and LR1121) live beside their TuningConfig fields in tuning_config.h; the
 // SX1262/LR1121 exchange dwell constants live in radio_sx1262.h / radio_lr1121.h respectively.

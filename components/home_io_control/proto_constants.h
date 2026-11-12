@@ -886,6 +886,9 @@ static constexpr uint8_t ATT_CLASS_20MS = 2;  ///< Response within 20 ms.
 static constexpr uint8_t ATT_CLASS_40MS = 3;  ///< Response within 40 ms.
 /// @}
 
+/// Turnaround time of ATT_CLASS_5MS, the shortest class; att_class_ms() doubles it per class.
+static constexpr uint32_t ATT_CLASS_5MS_TURNAROUND_MS = 5;
+
 /// @brief Power save mode values from the Multi Information Byte.
 ///
 /// Extracted from `flags & DISCOVERY_FLAGS_POWER_SAVE_MASK`.
@@ -895,11 +898,48 @@ static constexpr uint8_t POWER_SAVE_ALWAYS_ALIVE = 0;  ///< Device is always lis
 static constexpr uint8_t POWER_SAVE_LOW_POWER = 1;     ///< Device sleeps — needs long preamble to wake.
 /// @}
 
+/// Default Multi Information Byte for our device-role CMD_DISCOVER_RESP (0x29): the turnaround-time
+/// class and power-save mode the key-extraction responder advertises to a foreign hub. The
+/// `key_extraction_multi_info` tuning option replaces it.
+///
+/// 0xDD = 1101_1101: bits [7:6] ATT_CLASS_40MS, bit [3] DISCOVERY_FLAGS_RF_SUPPORT, bit [2]
+/// DISCOVERY_FLAGS_IO_MEMBERSHIP (always 1), bit [4] with no named constant (not in the VELUX KLF 200
+/// API table), power-save bits [1:0] POWER_SAVE_LOW_POWER. All but the power-save bits copy the byte
+/// a real Somfy Izymo dimmer sends, 0xDC
+/// (tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml): copying a real
+/// device's whole byte is safer than guessing at bits with no documented meaning.
+///
+/// ATT_CLASS_40MS is the honest class for this responder: it scans channels on the ESPHome loop
+/// cadence and is deaf while it transmits, so it cannot promise a 5 ms turnaround. Low power for the
+/// same reason: a controller wakes a low-power device with a long preamble, which the scanning
+/// responder catches reliably. A VELUX KLR 200, a KLF 200 and a Somfy TaHoma have handed over their
+/// key to this byte.
+///
+/// A controller that reads the power-save bit may skip a sleeping device: a Freebox Delta confirmed
+/// only answers with the Izymo's always-alive byte 0xDC (issue #215). Such a hub needs the tuning
+/// option set to 0xDC.
+static constexpr uint8_t KEY_EXTRACTION_DISCOVER_RESP_FLAGS = 0xDD;
+
+/// Default packed device type word (type in bits [15:6], subtype in bits [5:0]) the key-extraction
+/// responder advertises in its 0x29 to an open discovery: 0x0080, roller shutter subtype 0, the same
+/// word a real Somfy RS100 io sends
+/// (tests/corpus/captures/pairing/somfy_rs100_pairing_key_transfer_timeout.yaml). The
+/// `key_extraction_type_word` tuning option replaces it; a typed discovery is always answered with
+/// the type it asks for.
+static constexpr uint16_t KEY_EXTRACTION_DISCOVER_RESP_TYPE_WORD = 0x0080;
+
 /// @brief Extract the ATT class field from a discovery response's Multi Information Byte.
 /// @param flags Multi Information Byte (data[DISCOVERY_RESP_FLAGS_OFFSET]).
 /// @return ATT class value (0–3); pass to att_class_name() for a human-readable string.
-inline uint8_t discovery_att_class(uint8_t flags) {
+constexpr uint8_t discovery_att_class(uint8_t flags) {
   return (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
+}
+
+/// @brief Turnaround time of an ATT class in milliseconds: 5, 10, 20 or 40 (each class doubles it).
+/// @param att_class ATT class (0–3), e.g. from discovery_att_class().
+/// @return The class's turnaround time in milliseconds.
+constexpr uint32_t att_class_ms(uint8_t att_class) {
+  return static_cast<uint32_t>(ATT_CLASS_5MS_TURNAROUND_MS) << att_class;
 }
 
 /// @brief Extract the power save mode field from a discovery response's Multi Information Byte.

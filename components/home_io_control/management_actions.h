@@ -224,7 +224,7 @@ class ManagementActions {
   /// multi-channel-burst transmit caused elsewhere: firing several long-preamble transmits
   /// back-to-back with no listening in between blew through the tight per-try response wait
   /// windows and broke exchanges in both directions (see
-  /// `KeyExtractionResponder::broadcast_reply_()`'s doc comment).
+  /// `KeyExtractionResponder::send_reply_()`'s implementation comment).
   ///
   /// This still blocks the caller for the full six-window duration (roughly
   /// `6 × pairing_discovery_wait_ms` plus three ~213 ms LONG_PREAMBLE transmits, ~12.7 s at the
