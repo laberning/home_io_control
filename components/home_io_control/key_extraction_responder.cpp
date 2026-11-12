@@ -289,8 +289,11 @@ void KeyExtractionResponder::schedule_discover_reply_(const IoFrame &search, con
   this->session_rx_ms_ = this->rx_ms_ - this->session_window_ms_;
 
   this->pending_discover_resp_ = resp;
+  this->discover_reply_pending_ = true;
+  this->discover_reply_due_ms_ = millis() + delay_ms;
   // Same timer name: a repeated search replaces the answer still waiting for its slot.
   this->schedule_auto_off_(KEY_EXTRACTION_DISCOVER_REPLY_TIMER_NAME, delay_ms, [this, freq]() {
+    this->discover_reply_pending_ = false;
     // Only the attempt that scheduled it may send it: after a disarm, or a disarm and re-arm (a
     // fresh throwaway ID, state back to ARMED_IDLE), this answer is stale.
     if (this->key_extraction_ctx_.state != pairing_responder::ResponderState::SENT_DISCOVER_RESP)

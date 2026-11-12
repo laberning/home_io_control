@@ -702,7 +702,8 @@ and refuses a pushed key with `COMMAND_UNKNOWN`, so `auto` pulls it (issue #165)
 
 The device's answer to the challenge is a 6-byte code, and only the right key produces it, so a
 match proves the key. The hub challenges up to three times while no answer comes back; an answer
-that does not match ends the pull. The log shows one `Key pull check` line with the key's *key check value*:
+that does not match ends the pull. When no answer comes back at all, devices that answer a roll-call
+under the key prove it instead (see below). The log shows one `Key pull check` line with the key's *key check value*:
 six hex digits that identify a key without revealing it, so the line is safe to post. Two attempts
 with the same check value mean the device kept its key; two devices with the same check value
 share one key.
@@ -722,8 +723,13 @@ What happens next depends on that check:
   at least one device was registered. With no device registered it ends as `key_received`, the log
   prints the key once, and the advisor reports `pulled_key_received`. The key appears in the device
   log only, never in the Last Pairing Result sensor or a Home Assistant event.
-- The device sent a key it did not prove: the hub prints no key, and the advisor reports
-  `key_pull_unproven`. Post the `Key pull check` line in your issue.
+- The device sent a key and never answered the challenge: the hub runs a roll-call under that key.
+  Devices that answer it prove the key, and the hub registers and reports them as for a proven key.
+  When none answers, the hub prints no key, the attempt ends as `key_exchange_failed`, and the advisor
+  reports `key_pull_unproven`. Post the `Key pull check` line in your issue. See
+  [ADR 0071](../adr/0071-a-pulled-key-without-an-answer-is-proven-by-the-devices-that-hold-it.md).
+- The device answered the challenge wrongly: the hub prints no key, and the advisor reports
+  `key_pull_unproven`.
 
 A device that answers the key request with an error does not hand out its key: the advisor
 reports `key_pull_not_offered`. Set `pairing_key_transfer: push` to pair it the usual way.
@@ -736,6 +742,9 @@ under the key instead (about 13 seconds). See
 [ADR 0058](../adr/0058-pairing-reads-the-heater-behind-an-atlantic-pairing-node-directly.md).
 
 Pulling is proven on three Atlantic AGILIA IO radiators, each of which hands over its own key and proves it (issue #165, [Atlantic AGILIA IO](../devices/atlantic-agilia-io.md)).
+A Freebox Delta in its "Share your network" mode also hands over its key when pulled, but never
+answers the challenge; seven of the reporter's devices answered the roll-call under it, which proved
+the key (issue #215).
 
 ### Reading pairing results without the tuning UI
 

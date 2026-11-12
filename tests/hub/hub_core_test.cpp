@@ -734,7 +734,7 @@ TEST(HubCore, KeyExtractionHoldExpiresAfterInactivityWithoutTouchingState) {
   radio->clear();
   comp.exchange_engine_.reset_hop_timestamp();
   comp.loop();
-  EXPECT_TRUE(radio->freq_history().empty()) << "loop() must not hold CH2 once the hold has expired";
+  EXPECT_TRUE(radio->freq_history().empty()) << "loop() must not hold a channel once the hold has expired";
 
   delete comp.radio_;
 }

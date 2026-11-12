@@ -280,8 +280,9 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
       return std::string(buf);
     case PairingAdviceCode::PULLED_KEY_RECEIVED:
       snprintf(buf, sizeof(buf),
-               "Device %s handed over its key (printed above), but a roll-call under it found no device that holds "
-               "it. Put the key into the `system_key:` of the entity that controls the device, flash, then run Scan "
+               "Device %s handed over its key (printed above), but a roll-call under it found no device the hub "
+               "could register. Put the key into the `system_key:` of the entity that controls the device, flash, then "
+               "run Scan "
                "Paired Devices: the log prints its config block. Each device of this kind keeps its own key, so "
                "pull each one and compare the key check values.",
                node_id_to_string(advice.subject_node).c_str());

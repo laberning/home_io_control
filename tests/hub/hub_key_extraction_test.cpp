@@ -1696,6 +1696,37 @@ TEST(HubKeyExtraction, ScanHandsAFrameToTheResponderAndItAnswersOnThatChannel) {
   EXPECT_TRUE(comp.key_extraction_.in_session_hold()) << "the answer opens a new session window on CH1";
 }
 
+/// The 0x29 waiting for its slot is sent by the scheduler, which runs only between loop() passes: a
+/// scan slice must end at that slot, or the answer slips past it (and, from the last slots, out of
+/// the searcher's window).
+TEST(HubKeyExtraction, ScanSliceEndsAtThePendingDiscoveryAnswersSlot) {
+  esphome::test_clock::ManualClock clock;
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+  seed_rng({0, 0});  // slot 1: due DISCOVERY_SLOT_MS after the search
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(rx_on(discover, FREQ_CH2));
+  ASSERT_TRUE(comp.key_extraction_.discover_reply_pending());
+  ASSERT_TRUE(comp.key_extraction_awaiting_reply_());
+  radio.clear();
+
+  const uint32_t start = esphome::millis();
+  comp.loop();
+  EXPECT_LE(esphome::millis() - start, DISCOVERY_SLOT_MS) << "the slice must not run past the answer's slot";
+
+  // Once the slot has come, the pass leaves the radio to the scheduler.
+  esphome::test_clock::advance_ms(DISCOVERY_SLOT_MS);
+  radio.clear();
+  comp.loop();
+  EXPECT_TRUE(radio.wait_timeouts().empty()) << "no listen while the answer is due";
+
+  test::fire_discover_reply(comp);
+  EXPECT_FALSE(comp.key_extraction_.discover_reply_pending());
+}
+
 TEST(HubKeyExtraction, SessionHoldRespectsReceptionInProgress) {
   esphome::test_clock::ManualClock clock;
   TestableHubComponent comp;

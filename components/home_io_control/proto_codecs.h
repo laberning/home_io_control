@@ -146,7 +146,9 @@ static constexpr uint8_t DISCOVERY_SLOTS_255 = 255;  ///< Window of ADDRESS_SUFF
 ///
 /// The low bits of a discovery address's last byte select the window: `3B` = 32 slots, `3C` = 64,
 /// `3D` = 128, `3E` = 255 (the type bits above them do not matter). Any other suffix is read as the
-/// smallest window.
+/// smallest window. `3B` and `3D` are seen on air (corpus discovery captures; issue #215's
+/// Freebox searches `3D` with a ~5.3 s repeat).
+/// \todo `3C` = 64 and `3E` = 255 slots are unconfirmed: no capture of a search to either suffix yet.
 /// @param addr Three-byte destination of a discovery request.
 /// @return Slot count, 32 to 255.
 uint8_t discovery_slot_count(const uint8_t addr[NODE_ID_SIZE]);

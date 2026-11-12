@@ -22,9 +22,13 @@ static constexpr uint32_t FREQ_CH1 = 868250000;  ///< Channel 1: 868.25 MHz (2W 
 static constexpr uint32_t FREQ_CH2 = 868950000;  ///< Channel 2: 868.95 MHz (1W and 2W, TX channel)
 static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W only)
 
-/// Length of one discovery answer slot. A discovery request opens a window of N such slots and a
-/// device answers once, in a random slot from 1 to N (slot 0 is never used); the controller
-/// collects answers for the whole window before it confirms one.
+/// Length of one discovery answer slot. A discovery request opens a window of N such slots; the
+/// key-extraction responder answers once, in a random slot from 1 to N, so it never answers at
+/// once; the controller collects answers for the whole window before it confirms one.
+///
+/// Evidence: in our corpus's discovery captures, devices answer a 32-slot search between 13 and
+/// 1353 ms after it, inside 33 × 41 ms; a Freebox Delta repeats its 128-slot search about every
+/// 5.3 s, which is 128 × 41 ms plus its own turnaround (issue #215).
 static constexpr uint32_t DISCOVERY_SLOT_MS = 41;
 
 /// Preamble is a sequence of 0xAA bytes that precedes every frame.
@@ -109,12 +113,14 @@ constexpr TxWake tx_wake_for(bool start, uint16_t preamble) {
 /// reason for them to differ.
 static constexpr uint32_t PREAMBLE_LINGER_DWELL_MS = 15;
 
-/// Base of the window a device in a session keeps open for the controller's next frame: the device
-/// listens on the session's channel for this long plus its own turnaround time (the ATT class it
-/// advertises in its `0x29`, att_class_ms()), counted from receiving the controller's frame, then
-/// ends the session.
-/// \todo Confirm on hardware with a capture of a device's in-session timing.
-static constexpr uint32_t DEVICE_SESSION_WAIT_BASE_MS = 35;
+/// Base of how long a node acting as a device holds the session's channel after answering a
+/// controller, before it scans all channels again. The full hold adds the turnaround time the node
+/// advertises in its `0x29` (att_class_ms()), so a controller that waits out that turnaround still
+/// finds the node listening. 35 ms is our margin, not a measured device timer: with the default
+/// advertised turnaround the hold is 75 ms, above the 16-52 ms in which third-party controllers
+/// answered a device's challenge in our corpus (`somfy_oximo40_statuspoll_sx1262`,
+/// `somfy_rs100_statuspoll_kig300_sx1276`).
+static constexpr uint32_t SESSION_HOLD_BASE_MS = 35;
 
 // Chip-specific defaults (response preamble, post-TX settle, per-chip discovery hop slices
 // for SX1262 and LR1121) live beside their TuningConfig fields in tuning_config.h; the

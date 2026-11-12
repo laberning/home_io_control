@@ -22,6 +22,7 @@
 
 #include "esphome/core/helpers.h"
 
+#include <algorithm>
 #include <array>
 #include <cinttypes>
 #include <new>
@@ -486,8 +487,16 @@ void IOHomeControlComponent::listen_for_key_extraction_peer_() {
   // chip's own dwell, staying on a channel while a preamble or sync word is coming in). The idle hop
   // is too coarse for this: it moves once per loop pass, so it can sit on one channel for longer
   // than a start preamble lasts.
+  // A discovery answer waiting for its slot is sent by the scheduler, which runs only after this
+  // pass returns: end the slice by its slot, and skip it once the slot has come.
+  uint32_t window_ms = KEY_EXTRACTION_SCAN_SLICE_MS;
+  if (this->key_extraction_.discover_reply_pending()) {
+    window_ms = std::min(window_ms, this->key_extraction_.ms_until_discover_reply());
+    if (window_ms == 0)
+      return;
+  }
   ListenSpec spec;
-  spec.window_ms = KEY_EXTRACTION_SCAN_SLICE_MS;
+  spec.window_ms = window_ms;
   spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
   spec.linger_on_preamble = true;
   spec.linger_dwell_ms = PREAMBLE_LINGER_DWELL_MS;

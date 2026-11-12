@@ -28,18 +28,20 @@
 namespace esphome {
 namespace home_io_control {
 
-/// How long after receiving a frame it answers the responder stays on that frame's channel: the
-/// window a device keeps a session open for the controller's next frame (DEVICE_SESSION_WAIT_BASE_MS
-/// plus the turnaround time the responder advertises in its Multi Information Byte). The
+/// How long after receiving a frame it answers the responder stays on that frame's channel
+/// (SESSION_HOLD_BASE_MS plus the turnaround time the responder advertises in its Multi
+/// Information Byte). The
 /// peer's in-session frame (the `0x32` after our `0x3C`, the `0x3C` after our `0x37`) comes on that
 /// channel within it, with a short preamble. After it the responder scans all three channels again,
 /// as a device does once its session ends: the peer's next *request* is a new transmission that may
 /// go out on any channel.
-/// \todo Measure on hardware how soon a third-party hub's in-session frame follows our reply.
+/// \todo Measure on hardware how soon, and on which channel, a third-party hub's in-session frame
+/// follows our reply. Two passive community captures show a controller's 0x3D on another channel
+/// than the device's 0x3C; a hub that does so would be heard only once the hold ends.
 /// @param multi_info The Multi Information Byte the responder advertises.
 /// @return The session window in milliseconds.
 static constexpr uint32_t key_extraction_session_window_ms(uint8_t multi_info) {
-  return DEVICE_SESSION_WAIT_BASE_MS + att_class_ms(discovery_att_class(multi_info));
+  return SESSION_HOLD_BASE_MS + att_class_ms(discovery_att_class(multi_info));
 }
 
 /// The session window for the default Multi Information Byte (KEY_EXTRACTION_DISCOVER_RESP_FLAGS).
@@ -118,6 +120,21 @@ class KeyExtractionResponder {
 
   /// Session window for the Multi Information Byte the last discovery answer advertised.
   [[nodiscard]] uint32_t session_window_ms() const { return this->session_window_ms_; }
+
+  /// True while a discovery answer waits for its slot (schedule_discover_reply_()).
+  [[nodiscard]] bool discover_reply_pending() const {
+    return this->discover_reply_pending_ &&
+           this->key_extraction_ctx_.state == pairing_responder::ResponderState::SENT_DISCOVER_RESP;
+  }
+
+  /// Milliseconds until the pending discovery answer's slot, 0 once it is due. The answer goes out
+  /// from the scheduler, which runs only between loop() passes, so a blocking listen must end by
+  /// then or the answer slips past its slot and, for the last slots, out of the searcher's window.
+  /// Meaningful only while discover_reply_pending().
+  [[nodiscard]] uint32_t ms_until_discover_reply() const {
+    const auto remaining = static_cast<int32_t>(this->discover_reply_due_ms_ - millis());
+    return remaining > 0 ? static_cast<uint32_t>(remaining) : 0;
+  }
 
   /// Generate a random throwaway node ID for one key-extraction arm cycle, avoiding collisions
   /// with the broadcast addresses, this hub's own real node ID, and any registered device.
@@ -230,6 +247,10 @@ class KeyExtractionResponder {
   uint32_t session_window_ms_{KEY_EXTRACTION_SESSION_WINDOW_MS};
   /// The `0x29` waiting for its slot (schedule_discover_reply_()).
   IoFrame pending_discover_resp_{};
+  /// True from scheduling that `0x29` until its timer fires; see discover_reply_pending().
+  bool discover_reply_pending_{false};
+  /// millis() at which that `0x29`'s slot comes.
+  uint32_t discover_reply_due_ms_{0};
   DeviceRegistry &registry_;
   TransmitFrameFn transmit_;
   NamedTimeoutFn schedule_auto_off_;

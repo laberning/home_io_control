@@ -59,7 +59,8 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0049](0049-a-rain-limitation-is-derived-from-observed-status-never-predicted.md) | A rain limitation is derived from observed status, never predicted | A separate `limited_by_rain` flag from two evidence rules on ordinary status replies (rain-sensor originator; a clamped command while rain evidence is fresh); an explicit `CMD_ERROR_RESP` still wins; no extra polling |
 | [0050](0050-rain-is-read-by-an-opt-in-limitation-poll.md) | Rain is read by an opt-in limitation poll (amended by 0064) | `rain_sensor_poll_interval` reads the minimum limit on a jittered interval and drives a Rain sensor binary sensor (89 % rule, unknown after three misses, an unanswered poll retried once a minute later (0064)); independent of the derived flag; transmit time is the user's choice |
 | [0066](0066-a-cover-is-read-at-rest-by-an-opt-in-status-refresh.md) | A cover is read at rest by an opt-in status refresh | `status_refresh_interval` reads a cover with the ordinary status read once it has reported no status for a jittered interval; every status report moves the refresh out; transmit time is the user's choice |
-| [0051](0051-pairing-reads-the-key-refusal-and-checks-an-unconfirmed-key.md) | Pairing reads the key refusal and checks an unconfirmed key | `0xFE` byte decoded as `code << 3 \| state`; a refused key transfer ends the attempt (`key_transfer_refused`); an unconfirmed one gets an authenticated name read before it fails; `pairing_key_transfer: auto` pulls a remote controller's key, rolls call under it and registers the devices that hold it |
+| [0051](0051-pairing-reads-the-key-refusal-and-checks-an-unconfirmed-key.md) | Pairing reads the key refusal and checks an unconfirmed key (amended by 0071) | `0xFE` byte decoded as `code << 3 \| state`; a refused key transfer ends the attempt (`key_transfer_refused`); an unconfirmed one gets an authenticated name read before it fails; `pairing_key_transfer: auto` pulls a remote controller's key, rolls call under it and registers the devices that hold it |
+| [0071](0071-a-pulled-key-without-an-answer-is-proven-by-the-devices-that-hold-it.md) | A pulled key without an answer is proven by the devices that hold it | A pulled key whose giver sends no 0x3D is accepted when a device answers a roll-call under it; challenge bytes repeat within an attempt so late answers still verify; amends 0051 |
 | [0058](0058-pairing-reads-the-heater-behind-an-atlantic-pairing-node-directly.md) | Pairing reads the heater behind an Atlantic pairing node directly | After a pull from an Atlantic remote-controller node, one register read of the next address finds the heater; the roll-call is the fallback; a hub-key pull with nothing found ends `hub_key_returned`; pairing-registered devices keep getting their block; the key proof is retried |
 
 ### Interfaces and naming
@@ -184,6 +185,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0068: A domestic hot water device is a water heater](0068-a-domestic-hot-water-device-is-a-water-heater.md)
 - [ADR 0069: A config key is retired in two stages](0069-a-config-key-is-retired-in-two-stages.md)
 - [ADR 0070: A preamble on air keeps the software-PHY receiver running](0070-a-preamble-on-air-keeps-the-soft-phy-receiver-running.md)
+- [ADR 0071: A pulled key without an answer is proven by the devices that hold it](0071-a-pulled-key-without-an-answer-is-proven-by-the-devices-that-hold-it.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

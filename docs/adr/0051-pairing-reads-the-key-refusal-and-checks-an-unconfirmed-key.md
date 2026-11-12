@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0051 -->
 
-**Status:** Accepted · **Recorded:** 2026-10
+**Status:** Accepted, amended by [ADR 0071](0071-a-pulled-key-without-an-answer-is-proven-by-the-devices-that-hold-it.md) (an unanswered pulled key is proven by the devices that answer under it; challenge bytes repeat within an attempt) · **Recorded:** 2026-10
 
 ## Context
 

@@ -980,6 +980,8 @@ class IOHomeControlComponent : public Component,
   /// (KeyExtractionResponder::in_session_hold()) it keeps the radio on the session's channel, where
   /// the peer's in-session frame comes; after it, a rotating listen over all three channels for one
   /// KEY_EXTRACTION_SCAN_SLICE_MS slice, handing a received frame to process_received_packet_().
+  /// While a discovery answer waits for its slot, the slice ends at that slot (and is skipped once
+  /// it has come), so the scheduler sends the answer on time.
   void listen_for_key_extraction_peer_();
 
   /// Extract supported position or metadata info from a response frame and merge it into the device record.

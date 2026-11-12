@@ -207,6 +207,7 @@ KEY_TRANSFER_MODE_OPTIONS = {
     "pull": KeyTransferMode.PULL,
 }
 
+
 def _id_key(param_key):
     """Config-dict key under which a parameter's injected companion entity ID is stored."""
     return f"_{param_key}_id"
@@ -441,7 +442,6 @@ def _hex_value(param_name, digits):
         return value
 
     return validate
-
 
 
 def _parse_destination_to_bytes(value):
