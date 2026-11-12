@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
-"""Fail any tracked file that names the private working-notes folder.
+"""Fail any tracked file that names a local-only path.
 
-The maintainer's working notes live in a git-excluded folder at the repository root (`lab/`;
-`analysis/` is its earlier name and is matched too). A reader of the repository cannot open
-them, so a tracked file that points there -- a code comment, a corpus capture's provenance note,
-a test fixture's header, a doc -- points at nothing. Restate the fact and cite repository
-evidence instead (a corpus capture id, an ADR, a GitHub issue).
+Some paths exist only in a developer's own checkout and are never published. A tracked file that
+points there -- a code comment, a corpus capture's provenance note, a test fixture's header, a
+doc -- points at nothing for every other reader. Restate the fact and cite repository evidence
+instead (a corpus capture id, an ADR, a GitHub issue); an outside project is named by its public
+name and URL.
 
-`check-docs-prose.py` applies the same rule to the published docs' prose only; this check covers
-every tracked text file, which is where such citations slipped in unnoticed.
-
-A hit is a path: the folder name followed by `/`, not preceded by a word character, `.`, `/` or
-`-` -- unless what precedes it is a relative-path step (`./`, `../`) or the repository's own
-directory name, which still lead to the root folder. So the plain words "analysis" and "lab", and
-paths such as `hcio-analysis/`, `gitlab/` or `src/lab/`, pass. The scripts that implement this rule necessarily name the folders and are exempt as whole
-files; any other legitimate mention takes a narrow "<path>:<substring>" entry in ALLOWLIST.
+A hit is one of the names in PRIVATE_PATH_RE used as a path from the repository root: not
+preceded by a word character, `.`, `/` or `-`, unless what precedes it is a relative-path step
+(`./`, `../`) or the repository's own directory name. Plain words and longer paths that merely
+contain such a name pass. The checker scripts are exempt as whole files; any other legitimate
+mention takes a narrow "<path>:<substring>" entry in ALLOWLIST.
 
 Run via `make private-path-check`; part of the `lint` composite target.
 """
@@ -29,9 +26,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 PRIVATE_PATH_RE = re.compile(
-    r"(?:(?<![\w./-])|(?<=\./)|(?<=home_io_control/))(?:analysis|lab)/")
+    r"(?:(?<![\w./-])|(?<=\./)|(?<=home_io_control/))"
+    r"(?:(?:analysis|lab)/|reference/[A-Za-z]|AGENTS\.md)")
 
-# The guard scripts and their self-tests must name the folders to describe or exercise the rule.
+# The checker scripts and their self-tests must name the paths to apply or exercise the rule.
 EXEMPT_FILES = frozenset({
     "scripts/check-private-paths.py",
     "scripts/check_private_paths_test.py",
@@ -43,9 +41,6 @@ EXEMPT_FILES = frozenset({
 
 # "<repo-relative path>:<substring that must appear on the line>".
 ALLOWLIST = frozenset({
-    # Describes the folder's role in the workflow; sources no fact from it.
-    "docs/adr/0034-doxygen-syntax-generated-at-staging-time.md:"
-    "planning documents that drove this work will be deleted",
 })
 
 
@@ -85,9 +80,9 @@ def main() -> int:
         for n, line in find_hits(rel, text):
             errors.append(f"{rel}:{n}: {line.strip()[:110]}")
     if errors:
-        print("Private-path check failed: these tracked lines name the git-excluded working-notes "
-              "folder, which a reader cannot open. Restate the fact and cite repository evidence "
-              "(a corpus capture id, an ADR, a GitHub issue) instead:", file=sys.stderr)
+        print("Private-path check failed: these tracked lines name a local-only path, which a reader "
+              "cannot open. Restate the fact and cite repository evidence (a corpus capture id, an "
+              "ADR, a GitHub issue) instead:", file=sys.stderr)
         for e in errors:
             print(f"  - {e}", file=sys.stderr)
         return 1

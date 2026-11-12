@@ -433,7 +433,7 @@ OneWayAddControllerDecodeError decode_1w_add_controller(const IoFrame &frame, On
       (frame.data[ONEWAY_ADD_CONTROLLER_SEQUENCE_OFFSET] << ONEWAY_ADD_CONTROLLER_SEQUENCE_MSB_SHIFT) |
       frame.data[ONEWAY_ADD_CONTROLLER_SEQUENCE_OFFSET + 1]);
 
-  // A frame with no MAC is not an error (the reference _p0x30 struct omits the field entirely) --
+  // A frame with no MAC is not an error (real remotes send the 29-byte form without it) --
   // report NOT_PRESENT and stop; there is nothing to verify.
   if (!frame.has_mac) {
     out.mac_status = OneWayMacStatus::NOT_PRESENT;
@@ -526,8 +526,7 @@ bool decode_transfer_block(const IoFrame &f, uint8_t handle, uint16_t chunk, con
   if (f.cmd != CMD_UNKNOWN4A_RESP || f.data_len < TRANSFER_READ_REQ_DATA_SIZE ||
       f.data_len > TRANSFER_READ_REQ_DATA_SIZE + TRANSFER_BLOCK_SIZE)
     return false;
-  // The first byte is compared on its low seven bits only, as the vendor stack does: the top bit is
-  // not part of the handle.
+  // The first byte is compared on its low seven bits only: the top bit is not part of the handle.
   constexpr uint8_t handle_mask = 0x7F;
   constexpr uint16_t chunk_low_byte_mask = 0x00FF;
   if ((f.data[0] & handle_mask) != (handle & handle_mask) ||

@@ -97,7 +97,7 @@ def check_names_and_citations(seen_ids: dict) -> list:
     try:
         tracked = subprocess.run(
             ["git", "-C", str(REPO_ROOT), "ls-files",
-             "components", "tests", "scripts", "docs", "AGENTS.md", "README.md"],
+             "components", "tests", "scripts", "docs", "README.md"],
             capture_output=True, text=True, check=True,
         ).stdout.split()
     except (subprocess.CalledProcessError, FileNotFoundError):

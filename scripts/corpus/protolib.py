@@ -343,7 +343,7 @@ def oneway_add_controller_parts(frame) -> OneWayAddControllerParts:
     and optional out-of-length MAC trailer (IoFrame::has_mac, proto_frame.h).
 
     `trailer` is `b""` when the frame carries no MAC -- real Somfy hardware sends 29 bytes with no
-    trailer, even though the published linklayer.md vector is 35 bytes with a genuine MAC. Both
+    trailer, even though the published known-answer vector is 35 bytes with a genuine MAC. Both
     shapes are real; a rewriter must handle either.
     `frame.raw()` (via non_crc_bytes()) is expected to be exactly the declared 20 bytes, or that
     plus a 6-byte trailer -- anything else is a malformed capture.

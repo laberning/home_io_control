@@ -21,6 +21,8 @@ _spec.loader.exec_module(cpp)
 # The fixtures are built from parts so this file's own text never needs the exemption to pass.
 LAB = "lab" + "/"
 ANALYSIS = "analysis" + "/"
+REF = "reference" + "/"
+AGENTS = "AGENTS" + ".md"
 
 
 def test_hits_both_folder_names():
@@ -45,16 +47,42 @@ def test_plain_words_and_longer_paths_pass():
     assert cpp.find_hits("docs/a.md", text) == []
 
 
+def test_reference_checkout_paths_hit():
+    text = (f"see {REF}iohomecontrol/include/a.h\n(`{REF}iown-homecontrol`)\n"
+            f"../{REF}x\n/home/u/dev/home_io_control/{REF}y\n")
+    assert len(cpp.find_hits("tests/x.yaml", text)) == 4
+
+
+def test_reference_plain_words_pass():
+    text = (f"reference or software-version code\nthe reference implementation\n"
+            f"a {REF}\nsrc/{REF}x\nfoo.{REF}x\nmy-{REF}x\n")
+    assert cpp.find_hits("docs/a.md", text) == []
+
+
+def test_agents_file_hits():
+    text = f"({AGENTS} / plan)\n`{AGENTS}`\n{AGENTS}\n"
+    assert len(cpp.find_hits("config/x.yaml", text)) == 3
+    assert cpp.find_hits("docs/a.md", f"SUBAGENTS{AGENTS}\nfoo-{AGENTS}\n") == []
+
+
 def test_exempt_file_passes():
     assert cpp.find_hits("scripts/check-docs-prose.py", f"{ANALYSIS}") == []
+    for rel in ("scripts/check-docs-prose.py", "scripts/check-docs-links.py",
+                "scripts/check-key-material.py", "scripts/check-private-paths.py"):
+        assert cpp.find_hits(rel, f"{REF}foo and {AGENTS}") == []
 
 
 def test_allowlist_is_narrow():
-    rel = "docs/adr/0034-doxygen-syntax-generated-at-staging-time.md"
-    allowed = f"- The `{ANALYSIS}` planning documents that drove this work will be deleted; this"
+    rel = "docs/a.md"
+    allowed = f"the `{ANALYSIS}` sentence that is allowed"
     other = f"see `{ANALYSIS}foo.md`"
-    assert cpp.find_hits(rel, allowed + "\n" + other) == [(2, other)]
-    assert len(cpp.find_hits("docs/other.md", allowed)) == 1
+    saved = cpp.ALLOWLIST
+    cpp.ALLOWLIST = frozenset({rel + ":sentence that is allowed"})
+    try:
+        assert cpp.find_hits(rel, allowed + "\n" + other) == [(2, other)]
+        assert len(cpp.find_hits("docs/other.md", allowed)) == 1
+    finally:
+        cpp.ALLOWLIST = saved
 
 
 def main() -> int:

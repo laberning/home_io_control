@@ -16,8 +16,7 @@ description: >
     velux_kli310_discovery_alt_sweep.yaml frame-for-frame, and man_id 0x01 also matches the
     manufacturer byte in that session's "Recover 1W Controller Key" adoption block.
   - The 0x39-clear-then-0x30-sweep-then-STOP-then-DOWN ordering and the STOP+DOWN follow-up:
-    from samr037/iohc-flipper iohc_flipper/src/state/tx_runner.c (send_pair_with_identity),
-    built from real KLI 313 "rings" captures, and the VELUX KLI 310/311/312/313 manual
+    assumed from the VELUX KLI 310/311/312/313 manual
     ("press PAIR 1s, then STOP then DOWN within 3 seconds"). The STOP+DOWN half has NOT been
     confirmed against a Velux capture — if Phase 2 hardware testing shows it wrong or
     unnecessary, frames 5-6 get corrected (delete + re-add; hex is immutable).
@@ -26,7 +25,7 @@ description: >
 
   One logical sequence per command (0x39 seq 1, the 0x30 sweep shares seq 2, STOP seq 3,
   DOWN seq 4) — mirroring how OneWayTransmitter::send_() reserves one sequence per send call and
-  how iohc-flipper shares seq30 across the sweep. This is the golden reference the Phase 2
+  how real remotes share one sequence across the sweep. This is the golden reference the Phase 2
   send_enrollment() Velux-path unit test diffs its builder output against; the retransmit
   structure (4x/6x copies, LPM only on copy 1, 14/20/40 ms gaps) is a transmit-side concern and
   is documented in the plan, not modelled here.
@@ -68,7 +67,7 @@ frames:
     crc: absent
     note: >
       CMD_EXECUTE(0x00) STOP (main0 0xD2) -> 00 00 3F, originator 0x01, ACEI 0x61, seq 3 —
-      first of the KLI-manual STOP+DOWN registration completion (iohc-flipper, unconfirmed on Velux)
+      first of the KLI-manual STOP+DOWN registration completion (assumed, unconfirmed on Velux)
   - dir: tx
     freq: 868950000
     hex: "F6 00 00 00 3F AA BB CC 00 01 61 C8 00 00 00 00 04 5F 69 F7 F0 E4 0F"

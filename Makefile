@@ -203,18 +203,18 @@ docs-link-check:
 	@python3 scripts/check-docs-links.py
 	@python3 scripts/check_docs_links_test.py
 
-# Prose gate for the two writing rules a link checker cannot see: naming git-excluded
-# working notes as the source of a fact, and narrating this repo's own history.
+# Prose gate for the two writing rules a link checker cannot see: naming a local-only
+# path as the source of a fact, and narrating this repo's own history.
 # See scripts/check-docs-prose.py.
 docs-prose-check:
 	@echo "Checking documentation prose (provenance, history)..."
 	@python3 scripts/check-docs-prose.py
 
-# No tracked file may name the git-excluded working-notes folder: a reader cannot open it.
+# No tracked file may name a local-only path: a reader cannot open it.
 # Covers every tracked text file, not only the published docs.
 # See scripts/check-private-paths.py.
 private-path-check:
-	@echo "Checking tracked files for private working-notes paths..."
+	@echo "Checking tracked files for local-only paths..."
 	@python3 scripts/check-private-paths.py
 	@python3 scripts/check_private_paths_test.py
 

@@ -182,7 +182,7 @@ struct OneWayWireProfile {
 
 /// The default `0x30` sweep for `manufacturer: velux`: the exterior-shading classes a KLI 310/313
 /// names — roller shutter, vertical exterior awning, dual roller shutter (issue #74 capture, decoded with
-/// `broadcast_target_type()`; matches `samr037/iohc-flipper`'s `PAIR_DST_{WINDOW,SHUTTER,OTHER}`).
+/// `broadcast_target_type()`).
 /// Not universal: a KLI 312 interior blind uses vertical interior blind + interior venetian blind, so those identities
 /// set `enrollment_classes:` from the classes their remote's own `0x2E` names.
 static constexpr std::array<DeviceType, 3> VELUX_KLI_ENROLLMENT_CLASSES{

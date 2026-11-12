@@ -167,7 +167,7 @@ TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
   init_frame(heat_temp_ack, /*is_2w=*/true, /*start=*/false, /*end=*/true, /*low_power=*/false);
   set_dst(heat_temp_ack, test::OWN_ID);
   set_src(heat_temp_ack, test::DST_ID);
-  // CMD_WRITE_PRIVATE_ACK echoes the register write (see the Atlantic Thermor capture).
+  // CMD_WRITE_PRIVATE_ACK echoes the register write (see atlantic_agilia_exchange_setpoint_and_off_read_back).
   ASSERT_TRUE(set_cmd(heat_temp_ack, CMD_WRITE_PRIVATE_ACK, heat_temp_payload, sizeof(heat_temp_payload)));
   print_wire("synthetic_exchange_heating_set_temp ack", heat_temp_ack);
 

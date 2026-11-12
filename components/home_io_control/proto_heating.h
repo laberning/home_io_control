@@ -9,8 +9,7 @@
 /// device answers with CMD_WRITE_PRIVATE_ACK (0x21) echoing the header, followed by the value. Values
 /// are little-endian. An Atlantic AGILIA IO radiator answers every read and write this way
 /// (tests/corpus/captures/exchange/atlantic_agilia_exchange_{status_read,setpoint_and_off_read_back,mode_read_back}.yaml,
-/// pinned by corpus_heating_test.cpp); see also
-/// tests/corpus/captures/exchange/atlantic_thermor_exchange_write_private_param.yaml.
+/// pinned by corpus_heating_test.cpp).
 ///
 /// One descriptor table (`HEATING_FUNCTIONS` in the .cpp) lists every register this component
 /// uses: its access (read-only, read/write, write-only) and how its value is encoded. The same row

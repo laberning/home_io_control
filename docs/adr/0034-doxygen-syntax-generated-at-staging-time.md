@@ -92,6 +92,5 @@ flowchart LR
   removes a line breaks Doxygen's warning line numbers and the check that
   guards them, so any such transform has to pad back to the original height (as
   the YAML highlighter already does).
-- The `analysis/` planning documents that drove this work will be deleted; this
-  record is the durable answer to "why is the Doxygen syntax generated rather
+- This record is the durable answer to "why is the Doxygen syntax generated rather
   than written?".

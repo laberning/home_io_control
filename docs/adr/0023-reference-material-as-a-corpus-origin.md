@@ -100,9 +100,8 @@ The complete set of `source.origin` values, for reference:
 ## Consequences
 
 - Corpus coverage can now include real device families no one connected to this project has ever
-  owned, as long as someone has documented them precisely enough — the first uses covered a Velux
-  KLR200/KUX100 pairing exchange, an Atlantic Thermor-style climate device, and two unidentified
-  1W remotes.
+  owned, as long as someone has documented them precisely enough — such as a Velux
+  KLR200/KUX100 pairing exchange and published 1W known-answer vectors.
 - Every `reference-material` capture carries new obligations beyond what the other three
   origins require: it must say which of the two sub-cases applies, so a future reader can tell
   "wire-valid but reconstructed" from "literal bytes, independently verified" at a glance.
