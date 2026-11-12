@@ -224,7 +224,7 @@ is a general starting point, not a guarantee — different devices need differen
    ```yaml
    sx1262_post_tx_settle_us: 750    # then 1000
    sx1262_rx_bandwidth: 46.9        # then 39.0 — narrower, not wider
-   sx1262_response_preamble: 12     # then 16
+   sx1262_response_preamble: 16     # then 24
    ```
 
    A longer response preamble also delays the hub's answer to the device's challenge. Some

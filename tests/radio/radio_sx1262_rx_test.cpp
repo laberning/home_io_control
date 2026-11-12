@@ -357,6 +357,43 @@ TEST(RadioSX1262, UartDecodeFixedStride) {
 // set_packet_params_() must convert.
 // ============================================================================
 
+/// The default reply preamble (12 B) must reach the chip as 96 bits = 0x00 0x60; a drop back to 8 B
+/// (64 bits) fails here.
+TEST(RadioSX1262, DefaultResponsePreambleEncodesAs96Bits) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
+
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = radio.response_preamble();
+  radio.send_packet(frame, sizeof(frame), cfg);
+
+  // The TX's SetPacketParams is the last one issued before WriteBuffer.
+  int write_buffer_idx = -1;
+  for (size_t i = 0; i < spi.transactions().size(); i++) {
+    if (!spi.transactions()[i].empty() && spi.transactions()[i][0] == SX1262_WRITE_BUFFER) {
+      write_buffer_idx = static_cast<int>(i);
+      break;
+    }
+  }
+  ASSERT_GE(write_buffer_idx, 0);
+  int packet_params_idx = -1;
+  for (int i = write_buffer_idx - 1; i >= 0; i--) {
+    if (!spi.transactions()[i].empty() && spi.transactions()[i][0] == SX1262_SET_PACKET_PARAMS) {
+      packet_params_idx = i;
+      break;
+    }
+  }
+  ASSERT_GE(packet_params_idx, 0);
+  const auto &pp = spi.transactions()[packet_params_idx];
+  ASSERT_EQ(pp.size(), 10u);
+  EXPECT_EQ(radio.response_preamble(), 12u);
+  EXPECT_EQ(pp[1], 0x00);
+  EXPECT_EQ(pp[2], 0x60);
+}
+
 TEST(RadioSX1262, SendPacketSetsPacketParamsPreambleInBits) {
   ScriptedSpi spi;
   MockPin rst, dio1, busy(false);

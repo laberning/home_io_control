@@ -726,12 +726,10 @@ TEST(Exchange, ResponsePreamble_SX1262MatchesConfiguredValue) {
   MockRadioSX1262 radio;
   EXPECT_EQ(radio.response_preamble(), SX1262_RESPONSE_PREAMBLE)
       << "SX1262 should return the configured response preamble";
-  // SX1262_RESPONSE_PREAMBLE is byte-denominated, same as SHORT_PREAMBLE (set_packet_params_()
-  // converts to the chip's bit-denominated register at the SPI boundary), so the hardware-
-  // validated response preamble equals the protocol's nominal short preamble, not something
-  // longer than it.
-  EXPECT_EQ(radio.response_preamble(), SHORT_PREAMBLE)
-      << "SX1262's hardware-validated response preamble is the protocol's nominal 8 bytes";
+  // Byte-denominated like SHORT_PREAMBLE (set_packet_params_() converts to bits at the SPI
+  // boundary); the default sits above the protocol's nominal 8-byte floor.
+  EXPECT_EQ(radio.response_preamble(), 12u);
+  EXPECT_GE(radio.response_preamble(), SHORT_PREAMBLE);
 }
 
 TEST(Exchange, TxRxTurnaround_RealDriversDeclareExpectedCapability) {

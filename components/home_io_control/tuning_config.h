@@ -178,15 +178,18 @@ enum class DiscoveryCommand : uint8_t {
 /// frame in that position — giving the peer's receiver time to lock back on after the SX1262's
 /// own TX→RX turnaround.
 ///
-/// 8 bytes was validated on real hardware (Heltec V3.2 ↔ Device actuator) as the minimum that
-/// gives reliable lock-on without perturbing exchange timing; it matches the protocol's own
-/// nominal SHORT_PREAMBLE floor.
+/// Defaults to 12 bytes, which puts about 102 bits on air (8 bits per byte plus 6 of soft-PHY
+/// framing, ~2.6 ms): the continuation preamble a real controller was observed sending on air
+/// (101 bits). It also matches @ref SX1276_RESPONSE_PREAMBLE. In a field run (issue #119) a Somfy
+/// light's closing reply was lost after 13 of 38 challenges with an 8-byte preamble against 4 of
+/// 35 with 12. The cost is about 0.8 ms of extra delay before the reply. The protocol's own
+/// nominal SHORT_PREAMBLE (8 bytes) stays the floor for the runtime override.
 ///
 /// This constant is byte-denominated, like every other preamble value in this codebase
 /// (LONG_PREAMBLE, SHORT_PREAMBLE) — `RadioSX1262::set_packet_params_()` is the one place that
 /// converts to the chip's bit-denominated SetPacketParams field, right before the value leaves
 /// for the wire.
-static constexpr uint16_t SX1262_RESPONSE_PREAMBLE = 8;
+static constexpr uint16_t SX1262_RESPONSE_PREAMBLE = 12;
 
 /// SX1262-specific post-TX settling delay before re-entering RX.
 ///
@@ -225,9 +228,9 @@ static constexpr uint16_t SX1262_DISCOVERY_HOP_SLICE_MS = 7;
 
 /// LR1121-specific preamble for response/continuation frames within an exchange.
 ///
-/// Seeded from the SX1262-validated default, on the principle that a validated timing value
-/// encodes protocol-side reality more than a chip quirk. Not yet independently validated on
-/// LR1121 hardware; a value measured by loopback tuning would fold back here.
+/// Follows @ref SX1262_RESPONSE_PREAMBLE (12 bytes), on the principle that a validated timing
+/// value encodes protocol-side reality more than a chip quirk; see there for the evidence. A value
+/// measured by loopback tuning on LR1121 hardware would fold back here.
 static constexpr uint16_t LR1121_RESPONSE_PREAMBLE = SX1262_RESPONSE_PREAMBLE;
 
 /// LR1121-specific post-TX settling delay before re-entering RX.

@@ -689,6 +689,38 @@ TEST(RadioLR1121, SendPacketAppliesHighAcpWorkaroundBeforeSetTx) {
   EXPECT_EQ(addr, LR1121_REG_HIGH_ACP_WORKAROUND_ADDR);
 }
 
+/// The default reply preamble (12 B) must reach the chip as 96 bits = 0x00 0x60; a drop back to 8 B
+/// (64 bits) fails here.
+TEST(RadioLR1121, DefaultResponsePreambleEncodesAs96Bits) {
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, 0x07);
+
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = radio.response_preamble();
+  radio.send_packet(frame, sizeof(frame), cfg);
+
+  int write_idx = spi.find_opcode(LR1121_CMD_WRITE_BUFFER);
+  ASSERT_GE(write_idx, 0);
+  int packet_params_idx = -1;
+  for (int i = write_idx - 1; i >= 0; i--) {
+    const auto &t = spi.transactions()[i];
+    if (t.size() >= 2 && t[0] == ((LR1121_CMD_SET_PACKET_PARAMS >> 8) & 0xFF) &&
+        t[1] == (LR1121_CMD_SET_PACKET_PARAMS & 0xFF)) {
+      packet_params_idx = i;
+      break;
+    }
+  }
+  ASSERT_GE(packet_params_idx, 0);
+  const auto &pp = spi.transactions()[packet_params_idx];
+  ASSERT_EQ(pp.size(), 11u);
+  EXPECT_EQ(radio.response_preamble(), 12u);
+  EXPECT_EQ(pp[2], 0x00);
+  EXPECT_EQ(pp[3], 0x60);
+}
+
 TEST(RadioLR1121, SendPacketSetsPacketParamsLengthToEncodedLength) {
   const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
   const uint8_t frame_len = sizeof(frame);

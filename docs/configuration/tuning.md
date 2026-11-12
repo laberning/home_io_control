@@ -132,7 +132,7 @@ your device may differ.
 | Parameter | Radio | Default | Range / options | What it does |
 |---|---|---|---|---|
 | `sx1262_rx_bandwidth` | SX1262 | `58.6` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). Widen it when one device's replies are missed. |
-| `sx1262_response_preamble` | SX1262 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
+| `sx1262_response_preamble` | SX1262 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1262_post_tx_settle_us` | SX1262 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth (single-sideband, so `41.7` spans 83.4 kHz); wider tolerates LO offset, narrower rejects more noise. |
 | `sx1276_response_preamble` | SX1276 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
@@ -142,7 +142,7 @@ your device may differ.
 | `exchange_response_wait_ms` | both | `500` | 200–4000 ms | How long to listen for a reply to a continuation frame, and for the post-auth final response. |
 | `exchange_total_budget_ms` | both | `2500` | 500–12000 ms | Wall-clock ceiling on one whole exchange, including retries. |
 | `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). `117.3` is validated on real LR1121 hardware. |
-| `lr1121_response_preamble` | LR1121 | `8` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
+| `lr1121_response_preamble` | LR1121 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
@@ -203,12 +203,17 @@ when key exchange stalls right after discovery on an SX1262 board, especially wi
 has never been paired before.
 
 *Observations:* the SX1262's modulation is marginal for short preambles on the fast post-TX
-turnaround. Already-paired devices lock onto an on-air preamble of 8 bytes reliably. Brand-new
-devices often fail to decode on-air preambles of 1/4/8 bytes and need something substantially
-longer — exactly how much, up to the protocol's full 1024-byte long preamble, has not yet been
-independently validated on this chip, so treat any specific number above 8 as untested rather
-than known-good. The same "not below the tens of bytes" caution is why `normal_start_preamble`
-(below) defaults to 32 rather than 8.
+turnaround. The default of 12 bytes puts about the same preamble on air as a real controller's
+replies (about 2.6 ms) and matches the SX1276 default. In one field run a Somfy light's closing
+reply was lost after 13 of 38 challenges with 8 bytes, against 4 of 35 with 12
+([issue #119](https://github.com/laberning/home_io_control/issues/119)). 8 bytes is the
+protocol's nominal floor; already-paired devices lock onto it, but brand-new devices often fail
+to decode on-air preambles of 1/4/8 bytes and need something substantially longer. How much
+longer, up to the protocol's full 1024-byte long preamble, has not yet been independently
+validated on this chip, so treat any specific number above 12 as untested rather than
+known-good. A longer preamble also delays the reply, and some devices reject a late one (see
+[troubleshooting](../troubleshooting.md#a-tuning-plan)). The same "not below the tens of bytes"
+caution is why `normal_start_preamble` (below) defaults to 32 rather than 8.
 
 #### `sx1262_post_tx_settle_us`
 
@@ -276,11 +281,9 @@ authentication responses), giving the peer time to lock on after the hub transmi
 if key exchange stalls right after discovery on an SX1276 board.
 
 *Observations:* the default here is `12` bytes — longer than the protocol's 8-byte short
-preamble, which on hardware measurably improves the peer's lock-on at no timing cost. That is
-also longer than the SX1262's `8` (see the SX1262 section above: brand-new devices needed
-noticeably more than that on the SX1262, so don't read the SX1276's smaller number as evidence
-12 is generous; it has never needed raising in testing here). Lengthen it further for a
-stubborn or marginal-range device.
+preamble, which on hardware measurably improves the peer's lock-on at no timing cost. It is the
+same as the SX1262 default; it has never needed raising in testing here. Lengthen it further for
+a stubborn or marginal-range device.
 
 #### `sx1276_discovery_hop_slice_ms` / `sx1262_discovery_hop_slice_ms`
 
