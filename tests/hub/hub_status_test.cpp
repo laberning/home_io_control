@@ -185,6 +185,54 @@ TEST(HubStatus, StoppedOffTargetWithAFollowUpPollSettlesOnce) {
   EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u);
 }
 
+TEST(HubStatus, StoppedOffTargetMarksItsConfirmingPollAsASettlingRead) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+
+  EXPECT_TRUE(comp.poll_policy_.take_confirm_stopped("ABC123"))
+      << "the next poll decides whether the cover rests here, so it gets the settling plan";
+}
+
+TEST(HubStatus, AMovingReportBeforeTheConfirmingPollDropsItsSettlingMark) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+  comp.update_device_status_(make_moving_reply(10));  // moved again, e.g. by another controller
+
+  ASSERT_TRUE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+  EXPECT_FALSE(comp.poll_policy_.take_confirm_stopped("ABC123"))
+      << "the next poll looks at a moving cover: a progress read, not a settling one";
+}
+
+TEST(HubStatus, ReportsThatNeedNoConfirmationLeaveNoSettlingMark) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_moving_reply(10));
+  EXPECT_FALSE(comp.poll_policy_.take_confirm_stopped("ABC123")) << "a moving report is a progress look";
+  comp.update_device_status_(make_status_reply(true, 0x6400, 0x6400));
+  EXPECT_FALSE(comp.poll_policy_.take_confirm_stopped("ABC123")) << "stopped on target needs no confirmation";
+}
+
+TEST(HubStatus, StoppedOffTargetWithNoPollToConfirmByLeavesNoSettlingMark) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");  // not tracked
+
+  comp.update_device_status_(make_status_reply(true, 0xC800, 0x6400));
+
+  EXPECT_FALSE(comp.poll_policy_.take_confirm_stopped("ABC123"));
+}
+
 TEST(HubStatus, SecondIdenticalStoppedOffTargetReportIsAtRestAndEndsPolling) {
   esphome::test_clock::ManualClock clock(50000);
   TestableHubComponent comp;

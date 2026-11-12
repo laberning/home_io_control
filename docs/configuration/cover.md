@@ -222,8 +222,9 @@ What to expect:
 - **The interval varies by up to 10 %** from refresh to refresh, so covers that reported together,
   after a group command or at boot, do not stay in step.
 - **A refresh is a background read.** It waits for commands and 1W activity, and pairing drops it.
-  A read that gets no answer is tried three times, counts in the cover's Exchange Failures like
-  any other unanswered request, and is tried again one interval later.
+  A read that gets no answer is sent again as often as `exchange_total_budget_ms` allows (up to six
+  times in all to a mains-powered cover, three times to a `low_power` one), counts in the cover's
+  Exchange Failures like any other unanswered request, and is tried again one interval later.
 - **`status_poll_interval` sets the cadence while the cover moves**; the two keys work
   independently.
 
@@ -452,7 +453,7 @@ lambda: |-
 - The favorite command is one-way only: move to favorite. This component does not expose a sensor for reading the stored favorite position value, and it does not yet expose a save/delete favorite workflow, because no verified controller-side protocol command has been identified.
 - `status_poll_interval` is movement-scoped, not a continuous background refresh; for that, see [Refreshing the status at rest](cover.md#refreshing-the-status-at-rest). The hub polls only while a command or overheard remote activity suggests the device is still moving, and stops once the device reports a stable state or the bounded polling window expires. Many devices report their remaining travel time in seconds in their status replies, and the next poll comes after **min(remaining time + 1 s, configured interval)**, so the interval is a ceiling: a device can shorten it but never stretch it. Without `status_poll_interval`, the ceiling is 3 s. When a device that counts down reports 0 s left, the next poll comes about 1 s later, so the resting position shows up promptly. The remaining time and the chosen delay are visible at debug log level.
 - The hub reads a device itself after another controller moved or changed it, and at most every 10 minutes after another controller only read it. A status read changes nothing on the device; a write, or a challenge that follows no heard read, does. A gateway that polls its devices in the background therefore costs the device one extra read per 10 minutes at most, and lets the cover pick up a change the hub did not hear, such as a rain closure or a button on the motor, the next time that gateway reads it. Without such traffic the hub reads a cover at rest only when the cover sets `status_refresh_interval`; otherwise a change it heard nothing of stays unseen until the next command (issue #207).
-- After a STOP the settle poll is capped at about 1 s regardless of interval or hint, so Home Assistant gets the resting position quickly even if the device was mid-travel.
+- After a STOP the settle poll is capped at about 1 s regardless of interval or hint, so Home Assistant gets the resting position quickly even if the device was mid-travel. That poll, and the one confirming a cover that stopped short of its target, repeat a lost request as often as [`exchange_total_budget_ms`](tuning.md#exchange_total_budget_ms) allows, so one lost frame does not leave the position stale. The polls during a move stay single tries.
 - While the cover is moving, the hub does not back off when a poll gets no answer: the next poll comes at the usual cadence, at most 5 s later. Only a third miss in a row is retried after about 5 s, and after longer delays if it keeps failing. A poll of a cover at rest backs off from the first miss. A motor can drop its reply at the moment it stops at the end of its travel, so the final position can show up a poll later than expected (issue #178).
 - Unsolicited `0x71` device status updates are always applied to the entity state and extend settle polling while the device is still moving.
 

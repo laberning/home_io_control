@@ -78,22 +78,25 @@ std::unique_ptr<MockRadio> make_mock_radio(const corpus::CorpusCapture *capture)
   return std::make_unique<MockRadio>();
 }
 
-/// A capture's try budget when its real caller is not a plain send_and_receive_() call.
+/// A capture's attempt request when its real caller is not a plain send_and_receive_() call.
 struct ReplayContext {
   const char *capture_id;
-  uint8_t (*max_tries)();
+  decisions::AttemptRequest (*attempts)();
 };
 
 const ReplayContext REPLAY_CONTEXTS[] = {
     // The status poll the scheduler sends to settle a STOP; the device answered only the retry.
     {"velux_ssl_statuspoll_stop_settle_preamble_escalation",
-     [] { return decisions::scheduled_poll_max_tries(0, 0, /*settles_a_stop=*/true); }},
+     [] {
+       return decisions::AttemptRequest::of_kind(
+           decisions::scheduled_poll_read_kind(0, 0, /*settles_a_position=*/true));
+     }},
 };
 
-uint8_t max_tries_for(const corpus::CorpusCapture *capture) {
+decisions::AttemptRequest attempts_for(const corpus::CorpusCapture *capture) {
   for (const ReplayContext &context : REPLAY_CONTEXTS) {
     if (std::strcmp(context.capture_id, capture->id) == 0)
-      return context.max_tries();
+      return context.attempts();
   }
   return EXCHANGE_RETRY_COUNT;
 }
@@ -146,7 +149,7 @@ TEST_P(CorpusExchangeReplay, EngineReproducesCapturedExchange) {
 
   IoFrame response{};
   const uint32_t tx_freq = origin_cf->freq_hz != 0 ? origin_cf->freq_hz : FREQ_CH2;
-  const bool ok = comp.send_and_receive_(request, response, tx_freq, max_tries_for(capture)) ==
+  const bool ok = comp.send_and_receive_(request, response, tx_freq, attempts_for(capture)) ==
                   ExchangeOutcome::SUCCESS_WITH_RESPONSE;
 
   // On a timed replay, a failure names when the engine sent against when the capture did, and the

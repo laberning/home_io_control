@@ -931,10 +931,11 @@ class IOHomeControlComponent : public Component,
   /// @param request Outbound request IoFrame.
   /// @param response Output: received response IoFrame.
   /// @param freq RF frequency in Hz.
-  /// @param max_tries Transmit-attempt cap, forwarded to ExchangeEngine::send_and_receive().
+  /// @param attempts A transmit-attempt cap (forwarded to ExchangeEngine::send_and_receive()), or a
+  ///        read kind whose plan the engine builds for @p request (ExchangeEngine::plan_read()).
   /// @return true if exchange succeeded; false otherwise.
   ExchangeOutcome send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq,
-                                    uint8_t max_tries = EXCHANGE_RETRY_COUNT);
+                                    const decisions::AttemptRequest &attempts = EXCHANGE_RETRY_COUNT);
   /// Handle an inbound authenticated command from a device (status updates, etc.).
   /// @param request Inbound authenticated request (e.g., CMD_STATUS_UPDATE).
   /// @param freq RF frequency the packet arrived on.
@@ -1179,9 +1180,9 @@ class IOHomeControlComponent : public Component,
 
   /// @brief Per-request knobs of exchange_and_record_().
   struct RequestOptions {
-    bool warn_on_no_response;      ///< Log a warning when no response arrives.
-    uint32_t retry_after_fail_ms;  ///< If non-zero, drives the status-poll backoff and failure streaks.
-    uint8_t max_tries;             ///< Transmit-attempt cap forwarded to send_and_receive_().
+    bool warn_on_no_response;            ///< Log a warning when no response arrives.
+    uint32_t retry_after_fail_ms;        ///< If non-zero, drives the status-poll backoff and failure streaks.
+    decisions::AttemptRequest attempts;  ///< Attempt cap or read kind forwarded to send_and_receive_().
   };
 
   /// send_and_receive_() on the command channel, except that a device event report
@@ -1190,9 +1191,10 @@ class IOHomeControlComponent : public Component,
   /// not safe to repeat, ends it as FAILED.
   /// @param request Outbound request frame.
   /// @param response Filled with the reply on SUCCESS_WITH_RESPONSE; never a device event report then.
-  /// @param max_tries Try budget per send, as for send_and_receive_().
+  /// @param attempts Attempt budget per send, as for send_and_receive_().
   /// @return The exchange outcome.
-  ExchangeOutcome exchange_past_device_event_(const IoFrame &request, IoFrame &response, uint8_t max_tries);
+  ExchangeOutcome exchange_past_device_event_(const IoFrame &request, IoFrame &response,
+                                              const decisions::AttemptRequest &attempts);
 
   /// Run one authenticated request/response exchange on the standard command channel and record
   /// its outcome: exchange-outcome and timeout counters, link health, challenge-seen handling,
@@ -1212,13 +1214,15 @@ class IOHomeControlComponent : public Component,
   /// @param request Outbound request frame.
   /// @param warn_on_no_response If true, logs a warning when no response is received.
   /// @param retry_after_fail_ms If non-zero, schedules next status poll after this delay on failure.
-  /// @param max_tries Transmit-attempt cap, forwarded to send_and_receive_(). Defaults to the full
-  ///        EXCHANGE_RETRY_COUNT; a scheduler-owned poll passes SCHEDULED_POLL_MAX_TRIES.
+  /// @param attempts Attempt cap or read kind, forwarded to send_and_receive_(). Defaults to the full
+  ///        EXCHANGE_RETRY_COUNT; a cover's status poll passes its read kind
+  ///        (decisions::scheduled_poll_read_kind()).
   /// @return true when the device replied, or when a CMD_EXECUTE was accepted without a reply —
   ///         every other command's unconfirmed acceptance is still a failure here (see
   ///         @ref ExchangeOutcome and decisions::retry_after_unconfirmed_accept_is_safe()).
   bool execute_request_and_update_(const std::string &device_id, const IoFrame &request, bool warn_on_no_response,
-                                   uint32_t retry_after_fail_ms = 0, uint8_t max_tries = EXCHANGE_RETRY_COUNT);
+                                   uint32_t retry_after_fail_ms = 0,
+                                   const decisions::AttemptRequest &attempts = EXCHANGE_RETRY_COUNT);
 
   /// @brief Everything one execute-family operation needs beyond its own guard and frame builder.
   struct ExecuteRequestSpec {
@@ -1253,6 +1257,17 @@ class IOHomeControlComponent : public Component,
   bool try_execute_operation_(const std::string &device_id, const ExecuteRequestSpec &spec,
                               const std::function<bool(const IoDevice &)> &accepts, const char *rejection_profile,
                               const std::function<bool(IoFrame &, const IoDevice &)> &build);
+
+  /// Attempts for a cover's status read: its read kind (a settling read or a look at a busy device,
+  /// decisions::scheduled_poll_read_kind()), consuming the poll's STOP and confirming-read marks.
+  /// @param device_id Device being polled.
+  /// @param scheduler_managed True when StatusPollPolicy is tracking the device (a ladder stands behind the poll).
+  [[nodiscard]] decisions::AttemptRequest cover_poll_attempts_(const std::string &device_id, bool scheduler_managed);
+  /// Attempts for a heater's status read: the count-based budget heaters keep
+  /// (decisions::scheduled_poll_max_tries()).
+  /// @param device_id Device being polled.
+  /// @param scheduler_managed True when StatusPollPolicy is tracking the device.
+  [[nodiscard]] decisions::AttemptRequest heater_poll_attempts_(const std::string &device_id, bool scheduler_managed);
 
   /// Execute a named device command (STOP, FAVORITE, VENT, PARTIAL, PEDESTRIAN, FORCE_OPEN) via the
   /// authenticated exchange.

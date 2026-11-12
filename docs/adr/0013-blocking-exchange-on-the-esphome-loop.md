@@ -4,7 +4,8 @@
 **Status:** Accepted · **Recorded:** 2026-08
 
 Amended by [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
-(the budget arithmetic: an attempt costs its transmission and its windows).
+(the budget arithmetic: an attempt costs its transmission and its windows) and by [ADR 0074](0074-settling-reads-take-the-attempt-plan-and-progress-reads-stay-single-tries.md)
+(a settling read may block for nearly the whole budget).
 
 ## Context
 

@@ -311,9 +311,12 @@ bool IOHomeControlComponent::transmit_frame_(const IoFrame &frame, uint32_t freq
 
 /// Delegate outbound exchange to ExchangeEngine and manage the busy_ flag.
 ExchangeOutcome IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq,
-                                                          uint8_t max_tries) {
+                                                          const decisions::AttemptRequest &attempts) {
   this->busy_ = true;
-  ExchangeOutcome const outcome = this->exchange_engine_.send_and_receive(request, response, freq, max_tries);
+  ExchangeOutcome const outcome =
+      attempts.planned ? this->exchange_engine_.send_and_receive(
+                             request, response, freq, this->exchange_engine_.plan_read(attempts.kind, request, freq))
+                       : this->exchange_engine_.send_and_receive(request, response, freq, attempts.max_tries);
   this->busy_ = false;
   return outcome;
 }

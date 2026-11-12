@@ -29,6 +29,7 @@ void StatusPollPolicy::begin_tracking(const std::string &device_id, uint32_t ini
   t.auth_poll_failures = 0;
   t.moving_poll_misses = 0;
   t.stop_settle = false;
+  t.confirm_stopped = false;
 }
 
 void StatusPollPolicy::clear(const std::string &device_id) {
@@ -42,6 +43,7 @@ void StatusPollPolicy::clear(const std::string &device_id) {
   t.auth_poll_failures = 0;
   t.moving_poll_misses = 0;
   t.stop_settle = false;
+  t.confirm_stopped = false;
   // interval_ms is configuration — NOT cleared; remains set for future tracking cycles.
 }
 
@@ -151,6 +153,27 @@ bool StatusPollPolicy::take_stop_settle(const std::string &device_id) {
   const bool marked = it->second.stop_settle;
   it->second.stop_settle = false;
   return marked;
+}
+
+void StatusPollPolicy::set_confirm_stopped(const std::string &device_id, bool needed) {
+  auto it = tracking_.find(device_id);
+  if (it != tracking_.end())
+    it->second.confirm_stopped = needed;
+}
+
+bool StatusPollPolicy::take_confirm_stopped(const std::string &device_id) {
+  auto it = tracking_.find(device_id);
+  if (it == tracking_.end())
+    return false;
+  const bool marked = it->second.confirm_stopped;
+  it->second.confirm_stopped = false;
+  return marked;
+}
+
+bool StatusPollPolicy::take_settling_read(const std::string &device_id) {
+  const bool after_stop = take_stop_settle(device_id);
+  const bool confirms_stop = take_confirm_stopped(device_id);
+  return after_stop || confirms_stop;
 }
 
 uint8_t StatusPollPolicy::get_status_poll_failures(const std::string &device_id) const {

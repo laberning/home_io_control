@@ -398,7 +398,7 @@ TEST(StatusPollPolicy, StopSettleMarkIsConsumedByTheFirstPoll) {
   policy.begin_tracking("DEV", STOP_SETTLE_POLL_CAP_MS, T0);
   policy.mark_stop_settle("DEV");
   EXPECT_TRUE(policy.take_stop_settle("DEV"));
-  EXPECT_FALSE(policy.take_stop_settle("DEV")) << "only the first poll after the STOP gets the full budget";
+  EXPECT_FALSE(policy.take_stop_settle("DEV")) << "only the first poll after the STOP is a settling read";
 }
 
 TEST(StatusPollPolicy, StopSettleMarkIsDroppedByANewTrackingCycle) {
@@ -695,4 +695,46 @@ TEST(StatusPollPolicy, OnMovingReportUnknownDeviceIdOpensAndKeepsAKnownDevicesIn
   EXPECT_EQ(policy.on_moving_report("KNOWN", T0, true), MovingReportAction::OPEN);
   EXPECT_EQ(policy.get_interval("KNOWN"), 2000u) << "opening a window keeps the configured cadence";
   EXPECT_EQ(policy.get_interval("NEW"), 0u);
+}
+
+// ============================================================================
+// Confirming-read mark (a stop off target)
+// ============================================================================
+
+TEST(StatusPollPolicy, ConfirmStoppedMarkIsConsumedByTheFirstPoll) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", DEFAULT_SETTLE_POLL_DELAY_MS, T0);
+  policy.set_confirm_stopped("DEV", true);
+  EXPECT_TRUE(policy.take_confirm_stopped("DEV"));
+  EXPECT_FALSE(policy.take_confirm_stopped("DEV")) << "only the poll right after the report confirms it";
+}
+
+TEST(StatusPollPolicy, ConfirmStoppedMarkIsDroppedByANewTrackingCycleAndByClear) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", DEFAULT_SETTLE_POLL_DELAY_MS, T0);
+  policy.set_confirm_stopped("DEV", true);
+  policy.begin_tracking("DEV", DEFAULT_SETTLE_POLL_DELAY_MS, T0 + 500);  // a newer move command
+  EXPECT_FALSE(policy.take_confirm_stopped("DEV"));
+  policy.set_confirm_stopped("DEV", true);
+  policy.clear("DEV");
+  EXPECT_FALSE(policy.take_confirm_stopped("DEV"));
+}
+
+TEST(StatusPollPolicy, ConfirmStoppedMarkNeedsATrackedDevice) {
+  StatusPollPolicy policy;
+  policy.set_confirm_stopped("DEV", true);
+  EXPECT_FALSE(policy.take_confirm_stopped("DEV"));
+}
+
+TEST(StatusPollPolicy, TakeSettlingReadConsumesBothMarks) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", DEFAULT_SETTLE_POLL_DELAY_MS, T0);
+  EXPECT_FALSE(policy.take_settling_read("DEV")) << "a plain tracked poll settles nothing";
+  policy.mark_stop_settle("DEV");
+  policy.set_confirm_stopped("DEV", true);
+  EXPECT_TRUE(policy.take_settling_read("DEV"));
+  EXPECT_FALSE(policy.take_stop_settle("DEV")) << "neither mark survives the poll that took them";
+  EXPECT_FALSE(policy.take_confirm_stopped("DEV"));
+  policy.set_confirm_stopped("DEV", true);
+  EXPECT_TRUE(policy.take_settling_read("DEV")) << "either mark alone makes the poll settling";
 }

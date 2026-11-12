@@ -399,7 +399,7 @@ TEST(Decisions, DeferReleasesAtTheCapEvenMidBurst) {
 }
 
 // ============================================================================
-// Scheduled-poll retry budget — scheduled_poll_max_tries()
+// Scheduled-poll retry budget of a heater — scheduled_poll_max_tries()
 // ============================================================================
 
 TEST(Decisions, ScheduledPollTriesSettleSlotStaysSingleTry) {
@@ -433,12 +433,57 @@ TEST(Decisions, ScheduledPollTriesAuthStreakNeverGetsTheBand) {
          "and an auth try is the most expensive shape the engine runs";
 }
 
-TEST(Decisions, ScheduledPollTriesAfterAStopGetTheFullBudget) {
-  EXPECT_EQ(decisions::scheduled_poll_max_tries(0, 0, /*settles_a_stop=*/true), STOP_SETTLE_POLL_TRIES);
-  EXPECT_EQ(STOP_SETTLE_POLL_TRIES, EXCHANGE_RETRY_COUNT)
+TEST(Decisions, HeaterPollBandStaysThreeTries) {
+  // Heaters keep the count-based budget while a cover's polls take a read kind: the band is the
+  // same one, so a heater's band poll still gets EXCHANGE_RETRY_COUNT whatever the settling plan does.
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(1, 0), 3u);
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(3, 0), 3u);
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(0, 0), 1u);
+  EXPECT_EQ(decisions::scheduled_poll_max_tries(4, 0), 1u);
+}
+
+// ============================================================================
+// A cover's poll kind — scheduled_poll_read_kind()
+// ============================================================================
+
+TEST(Decisions, CoverPollAfterAStopIsSettlingWhateverTheCounters) {
+  EXPECT_EQ(decisions::scheduled_poll_read_kind(0, 0, /*settles_a_position=*/true), decisions::ReadKind::SETTLING)
       << "nothing is moving after an accepted STOP, and the user's reversal waits on this poll";
-  EXPECT_EQ(decisions::scheduled_poll_max_tries(0, 1, /*settles_a_stop=*/true), STOP_SETTLE_POLL_TRIES)
+  EXPECT_EQ(decisions::scheduled_poll_read_kind(0, 1, true), decisions::ReadKind::SETTLING)
       << "the mark wins over a stale auth streak; the streak is only history of earlier polls";
+  EXPECT_EQ(decisions::scheduled_poll_read_kind(5, 0, true), decisions::ReadKind::SETTLING);
+}
+
+TEST(Decisions, CoverPollProgressReadsStaySingleTries) {
+  EXPECT_EQ(decisions::scheduled_poll_read_kind(0, 0, false), decisions::ReadKind::PROGRESS)
+      << "the first poll after a command fires mid-manoeuvre; a STOP pressed then must not queue behind a burst";
+  EXPECT_EQ(decisions::scheduled_poll_read_kind(4, 0, false), decisions::ReadKind::PROGRESS)
+      << "past the band the device is unreachable, not asleep";
+  EXPECT_EQ(decisions::scheduled_poll_read_kind(0, 1, false), decisions::ReadKind::PROGRESS)
+      << "a challenge-answering device is awake; extra attempts buy no wake-up";
+  EXPECT_EQ(decisions::scheduled_poll_read_kind(2, 1, false), decisions::ReadKind::PROGRESS)
+      << "auth is checked before the status streak";
+}
+
+TEST(Decisions, CoverPollLadderBandIsSettling) {
+  for (uint8_t failures = SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE; failures <= SCHEDULED_POLL_RETRY_GRACE_LAST_FAILURE;
+       failures++)
+    EXPECT_EQ(decisions::scheduled_poll_read_kind(failures, 0, false), decisions::ReadKind::SETTLING)
+        << "failures=" << static_cast<int>(failures);
+}
+
+TEST(Decisions, AttemptRequestFromACountKeepsTheCountAndPlansNothing) {
+  const decisions::AttemptRequest counted = EXCHANGE_RETRY_COUNT;
+  EXPECT_EQ(counted.max_tries, EXCHANGE_RETRY_COUNT);
+  EXPECT_FALSE(counted.planned);
+  EXPECT_FALSE(counted.is_progress_look());
+  const decisions::AttemptRequest single = SCHEDULED_POLL_MAX_TRIES;
+  EXPECT_TRUE(single.is_progress_look());
+}
+
+TEST(Decisions, AttemptRequestOfKindIsAProgressLookOnlyForProgress) {
+  EXPECT_TRUE(decisions::AttemptRequest::of_kind(decisions::ReadKind::PROGRESS).is_progress_look());
+  EXPECT_FALSE(decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING).is_progress_look());
 }
 
 TEST(Decisions, ScheduledPollTriesAuthWinsOverAStatusStreak) {

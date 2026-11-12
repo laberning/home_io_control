@@ -209,52 +209,45 @@ static constexpr uint32_t LOW_POWER_MAX_TRAVEL_MS = 120000;
 /// with a silent device. A challenged try still completes its 0x3C/0x3D round within the one try.
 static constexpr uint8_t PAIRING_SET_CONFIG1_MAX_TRIES = 1;
 
-/// Exchange tries for a status poll the scheduler owns — every status poll issued while
-/// StatusPollPolicy is tracking the device, which today is every status poll this component can
-/// produce (there is no user-facing "refresh status" button or action; if one is ever added, it
-/// must not take this branch).
+/// Exchange tries for a status poll the scheduler owns that only looks at a device that is probably
+/// still busy: every poll of a tracked device that is not a settling read
+/// (decisions::scheduled_poll_read_kind()).
 ///
 /// Such a poll's failure is re-armed by the backoff ladder (STATUS_RETRY_AFTER_FAIL_MS and its
-/// successors), so the ladder *is* its retry mechanism; stacking EXCHANGE_RETRY_COUNT blocking
-/// in-exchange tries on top of it buys no freshness and costs ~1.6 s of blocked loop() while a
-/// device is unresponsive (e.g. an actuator mid-manoeuvre) — the settle poll fires seconds after a
-/// command, squarely inside the manoeuvre, so keeping it a single try is what lets a STOP a user
-/// presses mid-move dispatch promptly. A poll with no ladder behind it keeps the full
-/// EXCHANGE_RETRY_COUNT. SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE and STOP_SETTLE_POLL_TRIES below
-/// are the two places this trade-off is deliberately bought back.
+/// successors), so the ladder *is* its retry mechanism; stacking blocking in-exchange tries on top
+/// of it buys no freshness and costs blocked loop() time while a device is unresponsive (e.g. an
+/// actuator mid-manoeuvre). The progress poll fires seconds after a command, squarely inside the
+/// manoeuvre, so keeping it a single try is what lets a STOP a user presses mid-move dispatch
+/// promptly, and it spares the air a burst of requests the device cannot answer yet. This is a
+/// deliberate airtime choice, not a default. A heater's poll takes this count outside the ladder
+/// band too (decisions::scheduled_poll_max_tries()).
 static constexpr uint8_t SCHEDULED_POLL_MAX_TRIES = 1;
 
-/// Ladder positions at which a scheduler-owned status poll gets the full EXCHANGE_RETRY_COUNT back.
+/// Ladder positions at which a scheduler-owned status poll is a settling read again.
 ///
 /// The single try above is right at both ends of the backoff ladder and wrong in the middle. At the
 /// first slot after a command the device is still executing the manoeuvre: its silence is expected,
-/// retries cannot change that, and blocking loop() for the full retry product would delay a STOP
-/// the user presses mid-move. Once a device has missed several slots in a row it is unreachable
-/// rather than merely asleep, and retries are just as pointless. In between sits the slot where the
-/// manoeuvre has just ended and the device is awake again but duty-cycled — one 400 ms listen
-/// samples its receive window once; EXCHANGE_RETRY_COUNT tries sample it three times, ~870 ms apart,
-/// and a success there also clears the failure streak and ends the backoff.
+/// retries cannot change that, and blocking loop() would delay a STOP the user presses mid-move.
+/// Once a device has missed several slots in a row it is unreachable rather than merely asleep, and
+/// retries are just as pointless. In between sits the slot where the manoeuvre has just ended and
+/// the device is awake again but duty-cycled: one listen samples its receive window once, while a
+/// settling read (decisions::attempt_plan() with decisions::ReadKind::SETTLING) samples it as often
+/// as the exchange budget allows, and a success there also clears the failure streak and ends the
+/// backoff.
 ///
 /// Counted in consecutive silent failures already recorded when the poll is dispatched, so 0 is the
-/// post-command settle poll and 1..3 are the ~5 s / ~15 s / ~30 s ladder slots after it — roughly
+/// post-command settle poll and 1..3 are the ~5 s / ~15 s / ~30 s ladder slots after it, roughly
 /// t+8 s to t+53 s, spanning every cover travel time this project has measured. For a device
 /// believed travelling the ladder, and so this band, starts only after its first
-/// MOVING_POLL_MISSES_SKIPPED misses, which keep the normal cadence. An auth-shaped
-/// streak is excluded entirely: a device that answers with a 0x3C challenge is awake, so extra
-/// tries buy no wake-up, and an auth try is the most expensive shape the engine runs.
+/// MOVING_POLL_MISSES_SKIPPED misses, which keep the normal cadence. An auth-shaped streak is
+/// excluded entirely: a device that answers with a 0x3C challenge is awake, so extra attempts buy no
+/// wake-up, and an auth try is the most expensive shape the engine runs.
+///
+/// The poll after an accepted STOP and the poll confirming a stop off target are settling reads
+/// whatever the counters say: nothing is moving then, and the user's next action waits on exactly
+/// that reading.
 static constexpr uint8_t SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE = 1;
 static constexpr uint8_t SCHEDULED_POLL_RETRY_GRACE_LAST_FAILURE = 3;
-
-/// Exchange tries for the settle poll after an accepted STOP.
-///
-/// The single-try rule above protects a STOP pressed during a manoeuvre from a blocking poll. After
-/// an accepted STOP nothing is moving, and the user's next action — reversing the cover — waits on
-/// exactly this poll, because until it answers the entity still shows the last reported position.
-/// A single try bets that on one sample of a receiver whose state right after a STOP is uncertain
-/// (still running down, awake, or already back on its duty cycle); a miss costs the full
-/// STATUS_RETRY_AFTER_FAIL_MS backoff before the next look. The full budget samples it up to three
-/// times within one exchange (under EXCHANGE_TOTAL_BUDGET_MS), and blocks only when all of them miss.
-static constexpr uint8_t STOP_SETTLE_POLL_TRIES = EXCHANGE_RETRY_COUNT;
 
 /// Wall-clock ceiling on one whole exchange, retries included.
 ///
@@ -270,7 +263,8 @@ static constexpr uint8_t STOP_SETTLE_POLL_TRIES = EXCHANGE_RETRY_COUNT;
 /// budget. Counting the window and the final wait keeps a slow listen from running an exchange past
 /// the ceiling; counting the transmission keeps a radio with a long wake-up from starting an
 /// attempt it cannot finish in time. At the default 400 ms window three attempts with the retry gap
-/// still fit (~2.3 s); an exchange the target challenges does not always (ADR 0073).
+/// still fit (~2.3 s); an exchange the target challenges does not always (ADR 0073). A settling read
+/// of a mains device, with no gap, fits six (decisions::attempt_plan(), ADR 0074).
 static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 
 /// One-way (1W) transmit cadence.

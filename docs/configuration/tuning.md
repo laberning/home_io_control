@@ -257,6 +257,15 @@ for its final reply must together stay below it ([ADR 0073](../adr/0073-a-read-p
 That last part matters for a low-power device that challenges: two tries use the default budget, so
 a third is not started.
 
+The budget also sets how often a status read that decides where a cover ended up is repeated: the
+poll after a `stop`, the poll that confirms a cover that stopped short of its target, the polls
+about 5, 15 and 30 seconds after a miss, and a one-off or refresh read. Such a read repeats without
+a gap, as many times as fit (six for a mains-powered cover at the default budget, never more than
+nine; three for a `low_power` device). If every one of them is lost, the read blocks the hub for
+nearly the whole budget, and a `stop` pressed meanwhile waits behind it. The reads during a move
+stay single tries, so a `stop` pressed mid-move is not held up. See
+[ADR 0074](../adr/0074-settling-reads-take-the-attempt-plan-and-progress-reads-stay-single-tries.md).
+
 *Observations:* this exists to keep a failing command from blocking the ESPHome loop past its own
 "took a long time for an operation" warning threshold (2550 ms — see
 [ADR 0013](../adr/0013-blocking-exchange-on-the-esphome-loop.md)). If you raise either response-wait
@@ -440,9 +449,11 @@ does not count as moving: a resting VELUX SSL ignored the short preamble even 34
 answered. A move is "known to have ended" when a status says stopped (including the reply to a `stop`, which
 can still say "moving" while the motor winds down), or when an exchange sent while
 the device was believed moving (other than a `stop`) draws no frame at all; the next exchange then
-leads with the wake-up preamble. A status poll allowed only one try (most scheduled polls) sends the
-first try's preamble; if it misses, the next poll a few seconds later has three tries. The poll right
-after an accepted `stop` always gets all three. Devices not declared `low_power:` are unaffected, and the frame
+leads with the wake-up preamble. A status poll that only looks at a cover that is probably still moving (most scheduled polls) makes
+one try and sends the first try's preamble; if it misses, the next poll a few seconds later is a
+read that decides where the cover ended up, and repeats as often as the exchange budget allows
+(three times for a `low_power` device). So does the poll right after an accepted `stop`, the poll
+that confirms a cover that stopped short of its target, and a one-off or refresh read. Devices not declared `low_power:` are unaffected, and the frame
 itself never changes between tries. A mains-powered VELUX receiver that is always listening rejects the wake-up preamble, so declare it `low_power: false`.
 
 To see which preamble reaches a device how soon after it last answered, read the per-try log lines.

@@ -133,7 +133,9 @@ struct PollTracking {
   uint8_t auth_poll_failures{0};    ///< Consecutive background poll failures that saw a 0x3C challenge.
   uint8_t moving_poll_misses{0};    ///< Consecutive failed polls of a moving device skipped so far (see
                                     ///< MOVING_POLL_MISSES_SKIPPED); not counted in the two streaks above.
-  bool stop_settle{false};          ///< The next poll confirms an accepted STOP (see STOP_SETTLE_POLL_TRIES).
+  bool stop_settle{false};          ///< The next poll reads where an accepted STOP left the device (a settling read).
+  bool confirm_stopped{false};      ///< The next poll confirms a stop off target (a settling read, see
+                                    ///< decisions::StoppedReport::SETTLING).
 };
 
 /// @brief What an overheard frame of another controller is.
@@ -229,12 +231,25 @@ class StatusPollPolicy {
   [[nodiscard]] uint32_t get_poll_deadline(const std::string &device_id) const;
 
   // --- Post-STOP settle poll ---
-  /// Mark the device's next poll as the one confirming an accepted STOP, so it gets
-  /// STOP_SETTLE_POLL_TRIES. Only a tracked device can be marked; begin_tracking() and clear()
-  /// drop the mark, so a newer command or remote activity never inherits it.
+  /// Mark the device's next poll as the one reading where an accepted STOP left it, so it is a
+  /// settling read (decisions::ReadKind::SETTLING). Only a tracked device can be marked;
+  /// begin_tracking() and clear() drop the mark, so a newer command or remote activity never
+  /// inherits it.
   void mark_stop_settle(const std::string &device_id);
   /// Consume the mark set by mark_stop_settle(): true once, for the first poll dispatched after it.
   [[nodiscard]] bool take_stop_settle(const std::string &device_id);
+  /// Mark (or unmark) the device's next poll as the one confirming a stop off target, so it is a
+  /// settling read too. Every trusted status report sets it from its own verdict, so a report that
+  /// no longer needs confirming (moving again, or at rest) drops a mark an earlier one left. Only a
+  /// tracked device can be marked; begin_tracking() and clear() drop the mark as for the STOP mark.
+  /// @param device_id Device whose next poll is meant.
+  /// @param needed    True when the latest report stopped off target for the first time.
+  void set_confirm_stopped(const std::string &device_id, bool needed);
+  /// Consume the mark set by set_confirm_stopped(): true once, for the first poll dispatched after it.
+  [[nodiscard]] bool take_confirm_stopped(const std::string &device_id);
+  /// Consume both marks (neither short-circuits the other) for the poll being dispatched.
+  /// @return True when that poll settles a position: it follows an accepted STOP or a stop off target.
+  [[nodiscard]] bool take_settling_read(const std::string &device_id);
 
   // --- Queries ---
   /// True when the device has an active bounded polling window (deadline set and not expired).

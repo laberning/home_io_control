@@ -2163,6 +2163,59 @@ TEST(Exchange, ThreeUnansweredSlowWakeTriesStayInsideTheBudget) {
     EXPECT_EQ(cfg.wake, TxWake::LONG);
 }
 
+TEST(Exchange, PlanReadGivesTheSettlingPlanTheGuardAgreesWith) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  radio.set_model_tx_airtime(true);
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+
+  const decisions::AttemptPlan plan = engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+
+  EXPECT_EQ(plan.gap_ms, 0u);
+  // At the defaults one attempt is the short start frame on air (~10 ms) plus the 400 ms window, so
+  // six fit below the 2500 ms budget and a seventh would not (ADR 0074).
+  EXPECT_EQ(plan.max_attempts, 6u) << "a mains settling read makes six attempts at the defaults";
+  // A silent target gets exactly the planned attempts: the plan equals what the guard admits.
+  IoFrame response{};
+  const uint32_t start = esphome::test_clock::peek_ms();
+  EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+  EXPECT_EQ(radio.get_send_count(), plan.max_attempts);
+  EXPECT_LT(esphome::test_clock::peek_ms() - start, tuning.exchange_total_budget_ms);
+}
+
+TEST(Exchange, PlanReadForALowPowerTargetUsesTheLowPowerWindowAndThreeAttempts) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  radio.set_model_tx_airtime(true);
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/true);
+
+  const decisions::AttemptPlan plan = engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+
+  EXPECT_EQ(plan.window_ms, LOW_POWER_RESPONSE_WAIT_MS);
+  EXPECT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS)
+      << "wake-up preamble plus 550 ms window: three fit the default budget, the cap";
+}
+
+TEST(Exchange, PlanReadForAProgressLookIsASingleAttempt) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+
+  EXPECT_EQ(engine.plan_read(decisions::ReadKind::PROGRESS, request, FREQ_CH2).max_attempts, SCHEDULED_POLL_MAX_TRIES);
+}
+
 TEST(Exchange, ATryThatWouldEndAtTheBudgetIsNotStarted) {
   // Measure the third try's check time with budget to spare: its request goes out one retry gap
   // after the check.

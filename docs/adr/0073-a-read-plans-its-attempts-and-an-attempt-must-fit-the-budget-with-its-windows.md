@@ -4,6 +4,9 @@
 
 **Status:** Accepted · **Recorded:** 2026-11
 
+Amended by [ADR 0074](0074-settling-reads-take-the-attempt-plan-and-progress-reads-stay-single-tries.md)
+(which reads take the plan: settling reads do, progress reads stay single tries).
+
 Amends [ADR 0013](0013-blocking-exchange-on-the-esphome-loop.md) (the budget arithmetic: what an
 attempt costs), [ADR 0043](0043-an-unconfirmed-movement-command-is-resent-once-to-a-device-that-normally-confirms.md)
 (the re-send gap is the total wait, not an addition to the retry gap),

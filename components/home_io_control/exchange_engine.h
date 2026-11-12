@@ -124,6 +124,17 @@ class ExchangeEngine {
   ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
                                    const decisions::AttemptPlan &plan, uint16_t request_preamble_override = 0);
 
+  /// The attempt plan for a read of @p request's target, with the transmit time this engine would
+  /// plan for the request: the radio's air-time estimate for the request's start preamble
+  /// (request_preamble_for(), the long wake-up preamble for a low-power target) on @p freq. The
+  /// public way to ask decisions::attempt_plan() without knowing the radio's timing; the plan
+  /// then agrees with the guard that runs each attempt (try_fits_budget_()).
+  /// @param kind    What the read is for.
+  /// @param request The request that will be sent (its CTRL1 low-power bit selects the power class).
+  /// @param freq    RF channel the request goes out on (Hz).
+  /// @return The plan to hand to the plan overload of send_and_receive().
+  [[nodiscard]] decisions::AttemptPlan plan_read(decisions::ReadKind kind, const IoFrame &request, uint32_t freq) const;
+
   /// Authenticate an inbound device command via 0x3C challenge / 0x3D HMAC.
   /// @param request The received inbound frame (e.g., CMD_STATUS_UPDATE).
   /// @param freq    RF channel the frame arrived on.

@@ -5,7 +5,8 @@
 **Status:** Accepted · **Recorded:** 2026-11
 
 Amended by [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
-(the refresh keeps three tries until it takes the settling plan).
+(the refresh keeps three tries until it takes the settling plan) and by [ADR 0074](0074-settling-reads-take-the-attempt-plan-and-progress-reads-stay-single-tries.md)
+(it takes the settling plan).
 
 ## Context
 

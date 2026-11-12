@@ -95,7 +95,8 @@ hold from step 2 resets the motor again and removes the hub as well.
 
 **In use:** open, close, set position and status work from rest. A command can take up to three
 tries to reach a sleeping motor. A `stop` sent while the shutter moves reaches it, and so do the
-status polls that follow, so the shutter halts and its real position arrives about a second later.
+status polls that follow (the one right after the `stop` makes up to three tries), so the shutter
+halts and its real position arrives about a second later.
 It does not land on every attempt — press stop again if the shutter keeps moving, or use the wall
 remote.
 

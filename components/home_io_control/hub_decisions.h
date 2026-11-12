@@ -399,34 +399,35 @@ inline bool defer_background_poll_for_1w_activity(bool next_op_is_background, ui
   return (now - last_1w_activity_ms) < quiet_ms;
 }
 
-/// @brief Transmit-attempt budget for a scheduler-owned status poll, by backoff-ladder position.
+/// @brief True when a scheduler-owned status poll sits in the middle band of the backoff ladder.
 ///
-/// See SCHEDULED_POLL_MAX_TRIES and SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE (proto_timing.h) for
-/// why the full budget belongs to a middle band of the ladder rather than to its start or its tail.
+/// See SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE (proto_timing.h) for why the band is where a poll
+/// is worth more than one attempt: the slot that lands just after a manoeuvre ends, rather than the
+/// start or the tail of the ladder.
 ///
-/// The two counters are mutually exclusive by construction — StatusPollPolicy::on_exchange_failed()
-/// zeroes one while incrementing the other — so an auth-shaped streak reads status_poll_failures
-/// as 0 and would otherwise fall into the band's own "fresh window" case. It is rejected first,
+/// The two counters are mutually exclusive by construction (StatusPollPolicy::on_exchange_failed()
+/// zeroes one while incrementing the other), so an auth-shaped streak reads status_poll_failures as
+/// 0 and would otherwise fall into the band's own "fresh window" case. It is rejected first,
 /// deliberately, so the predicate stays correct even if that exclusivity is ever relaxed.
-///
-/// The settle poll after an accepted STOP (@p settles_a_stop) gets the full budget whatever the
-/// counters say: see STOP_SETTLE_POLL_TRIES (proto_timing.h).
 ///
 /// @param status_poll_failures Consecutive silent failures already recorded for this device.
 /// @param auth_poll_failures   Consecutive challenge-seen failures already recorded.
-/// @param settles_a_stop       True for the first poll after an accepted STOP
-///                             (StatusPollPolicy::take_stop_settle()).
-/// @return EXCHANGE_RETRY_COUNT inside the band or after a STOP, SCHEDULED_POLL_MAX_TRIES everywhere else.
-inline uint8_t scheduled_poll_max_tries(uint8_t status_poll_failures, uint8_t auth_poll_failures,
-                                        bool settles_a_stop = false) {
-  if (settles_a_stop)
-    return STOP_SETTLE_POLL_TRIES;
-  if (auth_poll_failures != 0)
-    return SCHEDULED_POLL_MAX_TRIES;
-  if (status_poll_failures < SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE ||
-      status_poll_failures > SCHEDULED_POLL_RETRY_GRACE_LAST_FAILURE)
-    return SCHEDULED_POLL_MAX_TRIES;
-  return EXCHANGE_RETRY_COUNT;
+[[nodiscard]] inline bool scheduled_poll_in_retry_band(uint8_t status_poll_failures, uint8_t auth_poll_failures) {
+  return auth_poll_failures == 0 && status_poll_failures >= SCHEDULED_POLL_RETRY_GRACE_FIRST_FAILURE &&
+         status_poll_failures <= SCHEDULED_POLL_RETRY_GRACE_LAST_FAILURE;
+}
+
+/// @brief Transmit-attempt budget for a scheduler-owned status poll of a heater, by ladder position.
+///
+/// Heaters keep this count-based budget; a cover's polls take their plan from
+/// scheduled_poll_read_kind() instead.
+///
+/// @param status_poll_failures Consecutive silent failures already recorded for this device.
+/// @param auth_poll_failures   Consecutive challenge-seen failures already recorded.
+/// @return EXCHANGE_RETRY_COUNT inside the band, SCHEDULED_POLL_MAX_TRIES everywhere else.
+inline uint8_t scheduled_poll_max_tries(uint8_t status_poll_failures, uint8_t auth_poll_failures) {
+  return scheduled_poll_in_retry_band(status_poll_failures, auth_poll_failures) ? EXCHANGE_RETRY_COUNT
+                                                                                : SCHEDULED_POLL_MAX_TRIES;
 }
 
 // == Attempt plan ==
@@ -495,6 +496,52 @@ struct AttemptPlan {
   plan.max_attempts = static_cast<uint8_t>(std::max<uint32_t>(1, std::min<uint32_t>(fitting, cap)));
   return plan;
 }
+
+/// @brief What a cover's status poll is for, from where it sits and what it settles.
+///
+/// A read that decides where the cover ended up is a SETTLING read: the poll after an accepted STOP,
+/// the one confirming a cover that stopped short of its target (@p settles_a_position), and the
+/// polls in the ladder's retry band (scheduled_poll_in_retry_band()). Every other scheduled poll is
+/// a look at a device that is probably still busy or unreachable (PROGRESS): the ladder is its
+/// retry.
+///
+/// @param status_poll_failures Consecutive silent failures already recorded for this device.
+/// @param auth_poll_failures   Consecutive challenge-seen failures already recorded.
+/// @param settles_a_position   True for the poll after an accepted STOP or one confirming a stop off
+///                             target (StatusPollPolicy::take_settling_read()).
+[[nodiscard]] inline ReadKind scheduled_poll_read_kind(uint8_t status_poll_failures, uint8_t auth_poll_failures,
+                                                       bool settles_a_position) {
+  return (settles_a_position || scheduled_poll_in_retry_band(status_poll_failures, auth_poll_failures))
+             ? ReadKind::SETTLING
+             : ReadKind::PROGRESS;
+}
+
+/// @brief What a caller asks of one exchange's attempts: a plain cap on tries (today's shape), or a
+/// read kind whose plan the engine builds for the request (ExchangeEngine::plan_read()).
+///
+/// Converts implicitly from a number of tries, so callers that only name a count are unchanged.
+struct AttemptRequest {
+  uint8_t max_tries{EXCHANGE_RETRY_COUNT};  ///< Cap on attempts; ignored once @ref kind is set.
+  bool planned{false};                      ///< True: build the plan for @ref kind instead of using a count.
+  ReadKind kind{ReadKind::COMMAND};         ///< What the read is for; only read when @ref planned.
+
+  AttemptRequest() = default;
+  /// @param tries Cap on attempts (the `max_tries` form of ExchangeEngine::send_and_receive()).
+  AttemptRequest(uint8_t tries)
+      : max_tries(tries) {}  // NOLINT(google-explicit-constructor): count callers stay as they are
+  /// @param read_kind What the read is for.
+  [[nodiscard]] static AttemptRequest of_kind(ReadKind read_kind) {
+    AttemptRequest request;
+    request.planned = true;
+    request.kind = read_kind;
+    return request;
+  }
+  /// True for a look at a device that is probably still busy: one attempt, the ladder is the retry
+  /// (ReadKind::PROGRESS, or a count of SCHEDULED_POLL_MAX_TRIES).
+  [[nodiscard]] bool is_progress_look() const {
+    return planned ? kind == ReadKind::PROGRESS : max_tries == SCHEDULED_POLL_MAX_TRIES;
+  }
+};
 
 // == Low-power wake belief ==
 

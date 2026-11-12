@@ -237,6 +237,13 @@ uint32_t ExchangeEngine::tx_time_ms_(const IoFrame &frame, uint32_t freq, uint16
   return (tx_us + US_PER_MS - 1) / US_PER_MS;
 }
 
+decisions::AttemptPlan ExchangeEngine::plan_read(decisions::ReadKind kind, const IoFrame &request,
+                                                 uint32_t freq) const {
+  const bool low_power = (request.ctrl1 & CTRL1_LOW_POWER) != 0;
+  return decisions::attempt_plan(kind, low_power, *this->tuning_,
+                                 this->tx_time_ms_(request, freq, this->request_preamble_for(request)));
+}
+
 bool ExchangeEngine::try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms, uint32_t window_ms,
                                       uint32_t auth_tail_ms) const {
   return elapsed_ms + gap_ms + tx_ms + window_ms + auth_tail_ms < this->tuning_->exchange_total_budget_ms;

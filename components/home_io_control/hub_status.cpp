@@ -84,7 +84,8 @@ constexpr uint32_t PRIVATE_RESPONSE_REMAINING_TIME_BIAS_MS =
 /// @param id Device ID, for the log line.
 /// @param dev Device record, with this report's target and position already decoded.
 /// @param follow_up_possible A tracked follow-up poll will run.
-void settle_stopped_report(const std::string &id, IoDevice &dev, bool follow_up_possible) {
+/// @return The verdict, so the caller can mark the confirming poll.
+decisions::StoppedReport settle_stopped_report(const std::string &id, IoDevice &dev, bool follow_up_possible) {
   decisions::StoppedReportInput in;
   in.reported_stopped = dev.is_stopped;
   in.target = dev.target;
@@ -113,6 +114,7 @@ void settle_stopped_report(const std::string &id, IoDevice &dev, bool follow_up_
     dev.stop_candidate.clear();
   }
   dev.is_stopped = decisions::stopped_report_at_rest(verdict);
+  return verdict;
 }
 
 /// @brief Decode the shared target/current position fields used by private response and status‑update frames.
@@ -123,13 +125,18 @@ void settle_stopped_report(const std::string &id, IoDevice &dev, bool follow_up_
 /// @param current_offset Byte offset of current MSB within frame.data.
 /// @param allow_tilt_from_extended_response If true and frame is extended, decode tilt from the extended tilt bytes.
 /// @param id Device ID, for the settle log line.
-/// @param follow_up_possible A tracked follow-up poll will run; see settle_stopped_report().
+/// @param policy Poll policy: a tracked device has a follow-up poll (see settle_stopped_report()), and
+/// the poll confirming a stop off target is marked on it as a settling read.
 void decode_status_fields(IoDevice &dev, const IoFrame &frame, uint8_t target_offset, uint8_t current_offset,
-                          bool allow_tilt_from_extended_response, const std::string &id, bool follow_up_possible) {
+                          bool allow_tilt_from_extended_response, const std::string &id, StatusPollPolicy &policy) {
   uint16_t const tgt = (frame.data[target_offset] << 8) | frame.data[target_offset + 1];
   uint16_t const cur = (frame.data[current_offset] << 8) | frame.data[current_offset + 1];
   decode_position_report(tgt, cur, dev.is_stopped, dev.target, dev.position);
-  settle_stopped_report(id, dev, follow_up_possible);
+  // After a first stop off target the next poll decides whether the cover really rests there: worth
+  // several attempts. Any other verdict drops a mark an earlier report left, so a cover that moves
+  // again before that poll is looked at with a progress read.
+  policy.set_confirm_stopped(id, settle_stopped_report(id, dev, policy.is_tracking_active(id, dev.last_status)) ==
+                                     decisions::StoppedReport::SETTLING);
   // A decoded position is the observation this prediction existed to stand in for.
   dev.optimistic.clear_position();
 
@@ -254,8 +261,7 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   dev.is_stopped = reported_stopped;
   dev.last_status = millis();
   if (trust_position) {
-    decode_status_fields(dev, frame, PRIVATE_RESPONSE_TARGET_OFFSET, PRIVATE_RESPONSE_CURRENT_OFFSET, true, id,
-                         policy.is_tracking_active(id, dev.last_status));
+    decode_status_fields(dev, frame, PRIVATE_RESPONSE_TARGET_OFFSET, PRIVATE_RESPONSE_CURRENT_OFFSET, true, id, policy);
   } else if (!detail::stop_candidate_matches_observation(dev)) {
     // An ack's own position bytes are not decoded, so it is held against the last trusted report.
     // When that report is a stop the hub already accepted off target, the gap is not movement. The
@@ -314,8 +320,7 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
   const bool reported_stopped = reports_stopped(dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
   dev.is_stopped = reported_stopped;
   dev.last_status = millis();
-  decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false, id,
-                       policy.is_tracking_active(id, dev.last_status));
+  decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false, id, policy);
   // The device's own flag, as on the poll path (apply_private_response_status()).
   track_motion_evidence(dev, !reported_stopped, dev.last_status);
 

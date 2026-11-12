@@ -300,7 +300,7 @@ _NUMBER_PARAMS = {
     # default is LONG_PREAMBLE (1024); a resting VELUX SSL solar roller shutter answered it on only
     # about half the tries, so the knob goes longer, not shorter. Floor 1024 (LONG_PREAMBLE) keeps it a wake-up burst
     # rather than a start preamble (and keeps every value a wake-up burst for tx_wake_for()); ceiling 4096 (~0.85 s on air) already needs a larger
-    # exchange_total_budget_ms to keep three tries.
+    # exchange_total_budget_ms to keep three tries (a settling read of a low-power device, ADR 0073 and 0074).
     CONF_LOW_POWER_WAKE_PREAMBLE: (1024, 4096, 64, "B"),
     CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),
     CONF_LBT_RSSI_THRESHOLD_DBM: (-95, -70, 1, "dBm"),

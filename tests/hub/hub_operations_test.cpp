@@ -1309,14 +1309,23 @@ TEST(HubOperations, RequestDeviceStatusTimeoutBackoffEscalatesDuringTrackedPolli
       << "second silent failure should continue the normal failure streak";
 }
 
+// Attempts the engine plans for a settling read of "ABC123" while it stays silent: the number a
+// read after a STOP, a confirming read, a ladder-band poll or a one-off poll sends.
+size_t planned_settling_attempts(TestableComponent &comp) {
+  const IoDevice *dev = comp.get_device("ABC123");
+  IoFrame request{};
+  EXPECT_TRUE(create_get_status(request, comp.node_id_, dev->node_id, dev->low_power));
+  return comp.exchange_engine_.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2).max_attempts;
+}
+
 // A scheduler-owned status poll (StatusPollPolicy is tracking the device) caps its exchange at
 // SCHEDULED_POLL_MAX_TRIES for most ladder slots: its failure is re-armed by the backoff ladder,
 // so extra blocking in-exchange tries only stall loop() while a device is unresponsive. The
-// exception is a middle band of the ladder (decisions::scheduled_poll_max_tries()), where the slot
-// right after a manoeuvre ends is the one chance to catch a duty-cycled receiver — see the tests
-// below this one. A one-off poll, and every user command, always keep the full
-// EXCHANGE_RETRY_COUNT. All cases here fail every transmit so the send count is exactly the try
-// count.
+// exception is a middle band of the ladder (decisions::scheduled_poll_read_kind()), where the slot
+// right after a manoeuvre ends is the one chance to catch a duty-cycled receiver: it is a settling
+// read, as are a one-off poll and the poll after a STOP — see the tests below this one. Every user
+// command keeps the full EXCHANGE_RETRY_COUNT. All cases here fail every transmit so the send count
+// is exactly the attempt count.
 TEST(HubOperations, TrackedStatusPollUsesASingleExchangeTry) {
   TestableComponent comp;
   MockRadio radio;
@@ -1340,11 +1349,11 @@ TEST(HubOperations, TrackedStatusPollRegainsRetriesAfterTheFirstMissedSlot) {
   comp.poll_policy_.on_exchange_failed("ABC123", /*auth_like=*/false, esphome::millis());
   ASSERT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
 
-  for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+  for (size_t i = 0; i < EXCHANGE_MAX_ATTEMPTS; ++i)
     radio.queue_tx_result(false);
 
   EXPECT_FALSE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT)
+  EXPECT_EQ(static_cast<size_t>(radio.get_send_count()), planned_settling_attempts(comp))
       << "the slot just after the first missed poll is the recovery-defining one — it must get the "
          "full retry budget back";
 }
@@ -1393,25 +1402,183 @@ TEST(HubOperations, GraceBandReopensAfterASuccessfulReply) {
   comp.poll_policy_.on_exchange_failed("ABC123", /*auth_like=*/false, esphome::millis());
   ASSERT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
 
-  for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+  for (size_t i = 0; i < EXCHANGE_MAX_ATTEMPTS; ++i)
     radio.queue_tx_result(false);
 
   EXPECT_FALSE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT)
+  EXPECT_EQ(static_cast<size_t>(radio.get_send_count()), planned_settling_attempts(comp))
       << "a device that replied resets the streak; its next miss is worth the same grace as a fresh one";
 }
 
-TEST(HubOperations, OneShotStatusPollKeepsTheFullRetryBudget) {
+TEST(HubOperations, OneShotStatusPollIsASettlingRead) {
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);
   // No begin_status_poll_tracking_(): nothing re-arms this request, so it keeps all its tries.
 
-  for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+  for (size_t i = 0; i < EXCHANGE_MAX_ATTEMPTS; ++i)
     radio.queue_tx_result(false);
 
   EXPECT_FALSE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT);
+  EXPECT_EQ(static_cast<size_t>(radio.get_send_count()), planned_settling_attempts(comp));
+}
+
+TEST(HubOperations, PollAfterAnAcceptedStopIsASettlingRead) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 1000);
+  comp.poll_policy_.mark_stop_settle("ABC123");
+  for (size_t i = 0; i < EXCHANGE_MAX_ATTEMPTS; ++i)
+    radio.queue_tx_result(false);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+
+  EXPECT_EQ(static_cast<size_t>(radio.get_send_count()), planned_settling_attempts(comp));
+  EXPECT_GT(planned_settling_attempts(comp), static_cast<size_t>(EXCHANGE_RETRY_COUNT))
+      << "a mains cover is asked more often than three times, with no gap between the attempts";
+}
+
+TEST(HubOperations, PollConfirmingAStopOffTargetIsASettlingRead) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 1000);
+  comp.poll_policy_.set_confirm_stopped("ABC123", true);
+  for (size_t i = 0; i < EXCHANGE_MAX_ATTEMPTS; ++i)
+    radio.queue_tx_result(false);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+
+  EXPECT_EQ(static_cast<size_t>(radio.get_send_count()), planned_settling_attempts(comp));
+  EXPECT_FALSE(comp.poll_policy_.take_confirm_stopped("ABC123")) << "the poll consumed the mark";
+}
+
+TEST(HubOperations, PollAfterTheBandAndWithoutAMarkStaysASingleTry) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 2000);
+  for (int i = 0; i < 4; ++i)
+    comp.poll_policy_.on_exchange_failed("ABC123", /*auth_like=*/false, esphome::millis());
+  ASSERT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 4u);
+  for (size_t i = 0; i < EXCHANGE_MAX_ATTEMPTS; ++i)
+    radio.queue_tx_result(false);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+
+  EXPECT_EQ(radio.get_send_count(), 1) << "progress reads stay single tries: the ladder is their retry";
+}
+
+TEST(HubOperations, HeaterPollKeepsThreeTriesInTheBandAndOneOutsideIt) {
+  // The heating-level heater shares the cover status path and keeps the count-based budget: the
+  // settling plan would give it six attempts in the band.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 0);
+  for (size_t i = 0; i < EXCHANGE_MAX_ATTEMPTS * 2; ++i)
+    radio.queue_tx_result(false);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(radio.get_send_count(), 1) << "the first slot after a start is a single try";
+
+  const int before = radio.get_send_count();
+  ASSERT_GE(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(radio.get_send_count() - before, static_cast<int>(EXCHANGE_RETRY_COUNT))
+      << "heater band stays 3: a heater is not a position-settling cover";
+}
+
+TEST(HubOperations, SettlingReadThatLosesAnAttemptSucceedsOnTheNext) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  radio.set_model_tx_airtime(true);
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 1000);
+  comp.poll_policy_.mark_stop_settle("ABC123");
+  // The first attempt hears nothing; the reply comes only once the second attempt is out.
+  radio.queue_rx_hold_until_sent(2);
+  radio.queue_rx(test::make_rx_packet(build_status_response(comp.node_id_)));
+
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+
+  EXPECT_EQ(radio.get_send_count(), 2) << "attempt 1 lost, attempt 2 answered, no further attempt";
+}
+
+TEST(HubOperations, ProgressReadThatLosesItsOnlyAttemptFails) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  radio.set_model_tx_airtime(true);
+  setup_cover_component(comp, radio);
+  comp.begin_status_poll_tracking_("ABC123", 1000);  // no mark: a look at a device that is busy
+  radio.queue_rx_hold_until_sent(2);
+  radio.queue_rx(test::make_rx_packet(build_status_response(comp.node_id_)));
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+
+  EXPECT_EQ(radio.get_send_count(), 1);
+}
+
+TEST(HubOperations, ThreeCoversSettlingTogetherEachStayInsideTheBudget) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  radio.set_model_tx_airtime(true);
+  setup_cover_component(comp, radio);
+  const char *const ids[] = {"ABC123", "ABC124", "ABC125"};  // none of them answers
+  for (const char *id : ids) {
+    if (comp.get_device(id) == nullptr) {
+      comp.add_device(id, DeviceConfig{});
+      test::set_kind(*comp.get_device(id), DeviceType::ROLLER_SHUTTER);
+    }
+    comp.begin_status_poll_tracking_(id, 1000);
+    comp.poll_policy_.mark_stop_settle(id);
+  }
+
+  for (const char *id : ids) {
+    const uint32_t start = esphome::test_clock::peek_ms();
+    EXPECT_FALSE(comp.request_device_status(id));
+    const uint32_t blocked_ms = esphome::test_clock::peek_ms() - start;
+    EXPECT_LT(blocked_ms, comp.tuning_.exchange_total_budget_ms) << "device " << id << " blocked the loop too long";
+  }
+  EXPECT_GE(static_cast<size_t>(radio.get_send_count()), 3u * 2u) << "every cover got several attempts";
+}
+
+TEST(HubOperations, UserCommandRunsRightAfterAFailingSettlingReadAheadOfTheNextPoll) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  radio.set_model_tx_airtime(true);
+  setup_cover_component(comp, radio);
+  comp.add_device("ABC124", DeviceConfig{});
+  test::set_kind(*comp.get_device("ABC124"), DeviceType::ROLLER_SHUTTER);
+  for (const char *id : {"ABC123", "ABC124"}) {
+    comp.begin_status_poll_tracking_(id, 1000);
+    comp.poll_policy_.mark_stop_settle(id);
+  }
+  comp.queue_request_device_status("ABC123");
+  comp.process_pending_operation_();  // the settling read: nobody answers, it uses up its attempts
+  const int reads = radio.get_send_count();
+  ASSERT_GT(reads, 1) << "a settling read tries again within its exchange";
+  const uint32_t read_end_ms = esphome::test_clock::peek_ms();
+
+  // The user pressed a button while that read blocked; the next scheduled poll is due too.
+  comp.queue_request_device_status("ABC124");
+  ASSERT_TRUE(comp.queue_device_command("ABC123", CoverCommand::FAVORITE));
+  comp.process_pending_operation_();
+
+  ASSERT_GT(radio.get_send_count(), reads) << "the user's command went out in the very next operation";
+  IoFrame first_after{};
+  ASSERT_TRUE(parse(radio.get_sent_data()[reads].data(), static_cast<uint8_t>(radio.get_sent_data()[reads].size()),
+                    first_after));
+  EXPECT_EQ(first_after.cmd, CMD_EXECUTE);
+  EXPECT_EQ(comp.op_queue_.size(), 1u) << "the second poll still waits behind it";
+  EXPECT_LT(esphome::test_clock::peek_ms() - read_end_ms, comp.tuning_.exchange_total_budget_ms);
 }
 
 TEST(HubOperations, UserCommandKeepsTheFullRetryBudgetWhilePollTrackingIsActive) {
@@ -2800,7 +2967,7 @@ TEST(HubOperations, StopAckThatReportsMovingKeepsTheSettlePollShortFirst) {
   const size_t before = radio.get_tx_configs().size();
   comp.request_device_status("ABC123");
 
-  ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(STOP_SETTLE_POLL_TRIES));
+  ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(LOW_POWER_SETTLING_ATTEMPTS));
   EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
   EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE);
   EXPECT_EQ(preamble_of_tx(radio, before + 2), LONG_PREAMBLE);
@@ -2916,7 +3083,7 @@ TEST(HubOperations, SettlePollAfterAnAcceptedMoveIsASingleTryLeadingWithTheShort
 
 TEST(HubOperations, SettlePollAfterAnAcceptedStopGetsEveryTryOnTheWakeUpPreamble) {
   // After an accepted STOP nothing moves and the user's reversal waits on this poll, so it gets the
-  // full budget instead of betting on one sample (STOP_SETTLE_POLL_TRIES). The STOP cleared the
+  // full budget instead of betting on one sample (a settling read, ADR 0074). The STOP cleared the
   // moving evidence: the receiver is at rest, which only the wake-up preamble reaches, even though
   // its reply was just heard (ADR 0040, amendment).
   esphome::test_clock::ManualClock clock(50000);
@@ -2934,7 +3101,7 @@ TEST(HubOperations, SettlePollAfterAnAcceptedStopGetsEveryTryOnTheWakeUpPreamble
 
   comp.request_device_status("ABC123");
 
-  ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(STOP_SETTLE_POLL_TRIES));
+  ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(LOW_POWER_SETTLING_ATTEMPTS));
   EXPECT_EQ(preamble_of_tx(radio, before), LONG_PREAMBLE);
   EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE);
   EXPECT_EQ(preamble_of_tx(radio, before + 2), LONG_PREAMBLE);
@@ -3108,7 +3275,7 @@ TEST(HubOperations, AlwaysAliveDeviceKeepsTheNormalStartPreambleOnEveryTryDespit
 
   comp.request_device_status("ABC123");
 
-  ASSERT_EQ(radio.get_tx_configs().size(), 3u);
+  ASSERT_EQ(radio.get_tx_configs().size(), planned_settling_attempts(comp));
   for (const auto &config : radio.get_tx_configs())
     EXPECT_EQ(config.preamble_len, comp.tuning_.normal_start_preamble);
 }

@@ -173,15 +173,15 @@ void IOHomeControlComponent::arm_execute_confirmation_poll_(const std::string &d
 // does answer the request is a subscription's answer (decisions::is_subscription_answer()): it is the
 // reading the sensor polls ask for, so it is returned as the reply.
 ExchangeOutcome IOHomeControlComponent::exchange_past_device_event_(const IoFrame &request, IoFrame &response,
-                                                                    uint8_t max_tries) {
-  ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
+                                                                    const decisions::AttemptRequest &attempts) {
+  ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, attempts);
   if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE || !decisions::is_device_event_report(response) ||
       decisions::is_subscription_answer(request, response))
     return outcome;
   this->record_device_event_(response);
   if (request.cmd == CMD_EXECUTE && !decisions::is_repeatable_execute(request))
     return ExchangeOutcome::FAILED;
-  outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
+  outcome = this->send_and_receive_(request, response, FREQ_CH2, attempts);
   if (outcome != ExchangeOutcome::SUCCESS_WITH_RESPONSE || !decisions::is_device_event_report(response) ||
       decisions::is_subscription_answer(request, response))
     return outcome;
@@ -197,7 +197,7 @@ IOHomeControlComponent::RequestResult IOHomeControlComponent::exchange_and_recor
                                                                                    const RequestOptions &options) {
   const bool warn_on_no_response = options.warn_on_no_response;
   const uint32_t retry_after_fail_ms = options.retry_after_fail_ms;
-  const ExchangeOutcome outcome = this->exchange_past_device_event_(request, response, options.max_tries);
+  const ExchangeOutcome outcome = this->exchange_past_device_event_(request, response, options.attempts);
   // An unconfirmed acceptance means the device authenticated the request but never closed the
   // exchange. Whether that counts as success depends entirely on what the request was *for*:
   //   - a command (CMD_EXECUTE) is treated as done. The device has it, and most devices that end
@@ -240,8 +240,8 @@ IOHomeControlComponent::RequestResult IOHomeControlComponent::exchange_and_recor
       // reported STOPPED off its target and awaits the confirming poll is at rest, not travelling,
       // and a poll that already had several tries keeps the ladder.
       const IoDevice *dev = this->registry_.get(device_id);
-      const bool device_moving = request.cmd == CMD_PRIVATE && options.max_tries == SCHEDULED_POLL_MAX_TRIES &&
-                                 dev != nullptr && !effective_is_stopped(*dev) && !detail::is_settling(*dev) &&
+      const bool device_moving = request.cmd == CMD_PRIVATE && options.attempts.is_progress_look() && dev != nullptr &&
+                                 !effective_is_stopped(*dev) && !detail::is_settling(*dev) &&
                                  !device_has_no_motion(dev->type, dev->subtype);
       this->schedule_background_poll_backoff_(device_id, dbg.saw_challenge, device_moving);
     }
@@ -290,10 +290,10 @@ IOHomeControlComponent::RequestResult IOHomeControlComponent::exchange_and_recor
 // parser so all state normalization stays in one place.
 bool IOHomeControlComponent::execute_request_and_update_(const std::string &device_id, const IoFrame &request,
                                                          bool warn_on_no_response, uint32_t retry_after_fail_ms,
-                                                         uint8_t max_tries) {
+                                                         const decisions::AttemptRequest &attempts) {
   IoFrame response;
   switch (
-      this->exchange_and_record_(device_id, request, response, {warn_on_no_response, retry_after_fail_ms, max_tries})) {
+      this->exchange_and_record_(device_id, request, response, {warn_on_no_response, retry_after_fail_ms, attempts})) {
     case RequestResult::FAILED:
     case RequestResult::ERROR_REPLY:
       return false;
@@ -473,6 +473,30 @@ bool IOHomeControlComponent::set_device_position_and_tilt(const std::string &dev
       });
 }
 
+// A cover's status poll is a settling read (several attempts inside the exchange budget) when it
+// decides where the cover ended up: after an accepted STOP, confirming a stop off target, in the
+// ladder's retry band, or with no ladder behind it (a one-off poll, the opt-in status refresh).
+// Every other poll the scheduler owns only looks at a device that is probably still busy: one
+// attempt, the backoff ladder is its retry.
+decisions::AttemptRequest IOHomeControlComponent::cover_poll_attempts_(const std::string &device_id,
+                                                                       bool scheduler_managed) {
+  if (!scheduler_managed)
+    return decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING);
+  return decisions::AttemptRequest::of_kind(decisions::scheduled_poll_read_kind(
+      this->poll_policy_.get_status_poll_failures(device_id), this->poll_policy_.get_auth_poll_failures(device_id),
+      this->poll_policy_.take_settling_read(device_id)));
+}
+
+// A heater keeps the count-based budget: a poll with no ladder behind it gets the full
+// EXCHANGE_RETRY_COUNT, a scheduler-owned one the ladder's band (decisions::scheduled_poll_max_tries()).
+decisions::AttemptRequest IOHomeControlComponent::heater_poll_attempts_(const std::string &device_id,
+                                                                        bool scheduler_managed) {
+  if (!scheduler_managed)
+    return EXCHANGE_RETRY_COUNT;
+  return decisions::scheduled_poll_max_tries(this->poll_policy_.get_status_poll_failures(device_id),
+                                             this->poll_policy_.get_auth_poll_failures(device_id));
+}
+
 bool IOHomeControlComponent::request_device_status(const std::string &device_id) {
   auto *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
@@ -499,24 +523,16 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
                               : create_get_status(request, this->node_id_, dev->node_id, dev->low_power);
   if (!request_ok)
     return false;
-  // A poll the scheduler owns (StatusPollPolicy is tracking this device) is re-armed by the backoff
-  // ladder on failure, so the ladder is its retry mechanism and most slots need only one try. The
-  // exception is the middle of the ladder, where the slot that lands just after a manoeuvre ends is
-  // the one chance to catch a duty-cycled receiver, and the poll confirming an accepted STOP — see
-  // decisions::scheduled_poll_max_tries(). A one-off poll with no ladder behind it keeps the full
-  // retry budget.
   // A heating-level heater is polled on the heater cadence with the same status read; its failure
   // ladder needs a tracking window, which a cover only has after a command.
   if (heating != nullptr && !this->poll_policy_.is_tracking_active(device_id, millis()))
     this->begin_status_poll_tracking_(device_id, 0);
   const bool scheduler_managed = this->poll_policy_.is_tracking_active(device_id, millis());
   const uint32_t retry_after_fail_ms = scheduler_managed ? STATUS_RETRY_AFTER_FAIL_MS : 0;
-  const uint8_t max_tries =
-      scheduler_managed ? decisions::scheduled_poll_max_tries(this->poll_policy_.get_status_poll_failures(device_id),
-                                                              this->poll_policy_.get_auth_poll_failures(device_id),
-                                                              this->poll_policy_.take_stop_settle(device_id))
-                        : EXCHANGE_RETRY_COUNT;
-  const bool ok = this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, max_tries);
+  const decisions::AttemptRequest attempts = heating != nullptr
+                                                 ? this->heater_poll_attempts_(device_id, scheduler_managed)
+                                                 : this->cover_poll_attempts_(device_id, scheduler_managed);
+  const bool ok = this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, attempts);
   if (heating != nullptr) {
     // The regular cadence continues whatever this poll found, as for a register heater.
     const uint32_t configured_ms = this->poll_policy_.get_interval(device_id);
@@ -1088,8 +1104,8 @@ bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) 
   if (!this->poll_policy_.is_tracking_active(device_id, millis()))
     this->begin_status_poll_tracking_(device_id, 0);
 
-  // A poll always runs inside a tracking window, so the ladder is its retry mechanism: the same try
-  // band as a scheduled cover poll (decisions::scheduled_poll_max_tries()).
+  // A poll always runs inside a tracking window, so the ladder is its retry mechanism: the heater
+  // try band (decisions::scheduled_poll_max_tries()), not a cover's settling plan.
   const uint8_t max_tries = decisions::scheduled_poll_max_tries(this->poll_policy_.get_status_poll_failures(device_id),
                                                                 this->poll_policy_.get_auth_poll_failures(device_id));
 
