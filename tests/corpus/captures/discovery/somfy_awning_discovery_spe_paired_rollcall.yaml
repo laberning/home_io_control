@@ -1,7 +1,7 @@
 id: somfy_awning_discovery_spe_paired_rollcall
 description: >
-  Broadcast CMD_DISCOVER_SPE_REQ (0x2A), bench follow-up to B11
-  (analysis/completed/spe_discovery_0x2a_next_steps.md §2.1): two already 2W-paired Somfy awnings (30E1F2, D268CE) each answer with a unicast
+  Broadcast CMD_DISCOVER_SPE_REQ (0x2A), bench follow-up to an earlier roll-call session:
+  two already 2W-paired Somfy awnings (30E1F2, D268CE) each answer with a unicast
   CMD_DISCOVER_SPE_RESP (0x2B). Same broadcast TX as somfy_izymo_dimmer_discovery_spe_paired_rollcall.yaml
   — a third device (a dimmer, different device type) answered the identical request, split into
   its own fixture by device family per corpus convention. Together the two fixtures confirm the

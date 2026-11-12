@@ -48,11 +48,13 @@ stage_docs = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(stage_docs)
 
 # --- rule 1: provenance -----------------------------------------------------
-# A path that identifies git-excluded working notes. `reference/` and `analysis/`
-# need the trailing slash: bare "reference" and "analysis" are ordinary English
-# words that appear constantly in these docs. Checked outside fenced blocks --
+# A path that identifies git-excluded working notes. `reference/`, `lab/` and
+# `analysis/` (the notes folder's earlier name) need the trailing slash: the bare
+# words are ordinary English that appears constantly in these docs. `lab/` is
+# anchored so that paths like `gitlab/` pass; check-private-paths.py applies the
+# notes-folder half of this rule to every tracked file. Checked outside fenced blocks --
 # a shell command or a YAML example may legitimately name a local path.
-PROVENANCE_RE = re.compile(r"analysis/|reference/|AGENTS\.md", re.I)
+PROVENANCE_RE = re.compile(r"analysis/|(?<![\w./-])lab/|reference/|AGENTS\.md", re.I)
 
 # The vendor-tool material is the strict half: it may not appear in this repo in
 # any form, so unlike the paths above it is matched against the *raw* file,

@@ -210,6 +210,14 @@ docs-prose-check:
 	@echo "Checking documentation prose (provenance, history)..."
 	@python3 scripts/check-docs-prose.py
 
+# No tracked file may name the git-excluded working-notes folder: a reader cannot open it.
+# Covers every tracked text file, not only the published docs.
+# See scripts/check-private-paths.py.
+private-path-check:
+	@echo "Checking tracked files for private working-notes paths..."
+	@python3 scripts/check-private-paths.py
+	@python3 scripts/check_private_paths_test.py
+
 # Wipes config/tests/.esphome/build/<env>/ for every config/tests/test-*.yaml config (the ones
 # make clang-tidy / firmware-test / check build against), plus config/tests/.esphome/storage/
 # (per-config validated-YAML cache, keyed by config filename rather than device_name, so it's
@@ -439,7 +447,8 @@ doxygen:
 #   corpus-validate     -> corpus-validate
 #   docs-link-check     -> docs-link-check
 #   key-material-scan   -> key-material-scan
-lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph stub-sync board-pinout-sync corpus-validate docs-link-check docs-prose-check key-material-scan
+#   private-path-check  -> private-path-check
+lint: format-check yamllint clang-tidy tuning-sync yaml-emitter-sync include-graph stub-sync board-pinout-sync corpus-validate docs-link-check docs-prose-check key-material-scan private-path-check
 test: unit-test unit-test-asan py-test firmware-test
 check: lint test doxygen
 
@@ -455,7 +464,7 @@ test-unit: unit-test
 		docs-link-check \
 		include-graph stub-sync \
 		docs-prose-check \
-		key-material-scan \
+		key-material-scan private-path-check \
 		fuzz-frame fuzz-soft-phy \
 		firmware-test firmware-test-group-1 firmware-test-group-2 firmware-test-groups-check \
 		unit-test unit-test-asan py-test host-run clean-host lint test check \

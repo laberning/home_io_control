@@ -7,7 +7,7 @@ Two groups of checks:
    or an in-page `#fragment` -- must resolve. A doc renamed or a heading reworded
    without updating what points at it is a silent break otherwise. http(s)/mailto
    links are not checked; nothing here can assert those stay live. A link to a
-   gitignored target (analysis/, reference/, AGENTS.md) is normally skipped --
+   gitignored target (lab/, reference/, AGENTS.md) is normally skipped --
    those are private working notes -- EXCEPT from a published doc, where it would
    ship a dead link (check C below).
 
