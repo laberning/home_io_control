@@ -61,6 +61,15 @@ constexpr HeatingFunction SETPOINT_HEATER_BOOT[] = {
     HeatingFunction::SET_OPEN_WINDOW_DETECTION,
 };
 
+// === Heater with a night light (52/1, model HEATER_WITH_LIGHT): the radiator plus its light ===
+
+/// The light's state and brightness, read after the radiator's own poll. Both change from the heater's
+/// own controller (issue #222: a Cozytouch switches the light), so they are read on every poll, not once.
+constexpr HeatingFunction HEATER_WITH_LIGHT_EXTRA_POLL[] = {
+    HeatingFunction::NIGHT_LIGHT,
+    HeatingFunction::NIGHT_LIGHT_BRIGHTNESS,
+};
+
 // === Towel dryer (52/1, model TOWEL_DRYER): private registers of its own ===
 //
 // Register values as two Atlantic Adelis units report them (issue #202, corpus
@@ -207,6 +216,44 @@ constexpr HeatingObservedState HEAT_PUMP_OBSERVED[] = {
 constexpr float TEMPERATURE_VISUAL_MIN_C = 5.0F;   ///< Lowest target the card offers for a temperature profile.
 constexpr float TEMPERATURE_VISUAL_MAX_C = 30.0F;  ///< Highest target the card offers for a temperature profile.
 
+/// The electrical heater with an adjustable setpoint (52/1), the AGILIA radiator: a table row, and the
+/// base of the model that adds a night light.
+constexpr HeatingProfile SETPOINT_HEATER_PROFILE = {DeviceType::ELECTRICAL_HEATER,
+                                                    1,
+                                                    DeviceModel::NONE,
+                                                    HeatingControlPath::PRIVATE_REGISTERS,
+                                                    {/*target_temperature=*/true, /*current_temperature=*/true,
+                                                     /*action=*/true, /*mode_observed=*/true},
+                                                    0,
+                                                    HEATING_TEMP_MIN_C,
+                                                    HEATING_TEMP_MAX_C,
+                                                    NO_FP,
+                                                    /*fixed_range=*/false,
+                                                    SETPOINT_HEATER_MODES,
+                                                    std::size(SETPOINT_HEATER_MODES),
+                                                    SETPOINT_HEATER_PRESETS,
+                                                    std::size(SETPOINT_HEATER_PRESETS),
+                                                    SETPOINT_HEATER_OBSERVED,
+                                                    std::size(SETPOINT_HEATER_OBSERVED),
+                                                    SETPOINT_HEATER_POLL,
+                                                    std::size(SETPOINT_HEATER_POLL),
+                                                    SETPOINT_HEATER_BOOT,
+                                                    std::size(SETPOINT_HEATER_BOOT)};
+
+/// @brief The radiator's profile under the HEATER_WITH_LIGHT model, with the light read after its poll.
+/// @details Built from SETPOINT_HEATER_PROFILE rather than restated, so the two stay one heater with one
+///          extra part.
+constexpr HeatingProfile heater_with_light_profile() {
+  HeatingProfile profile = SETPOINT_HEATER_PROFILE;
+  profile.model = DeviceModel::HEATER_WITH_LIGHT;
+  profile.extra_poll_registers = HEATER_WITH_LIGHT_EXTRA_POLL;
+  profile.extra_poll_register_count = std::size(HEATER_WITH_LIGHT_EXTRA_POLL);
+  return profile;
+}
+
+/// The heater with a night light (52/1, model HEATER_WITH_LIGHT).
+constexpr HeatingProfile HEATER_WITH_LIGHT_PROFILE = heater_with_light_profile();
+
 constexpr HeatingProfile HEATING_PROFILES[] = {
     {DeviceType::HEATING_TEMPERATURE_INTERFACE,
      0,
@@ -268,26 +315,8 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
      0,
      nullptr,
      0},
-    {DeviceType::ELECTRICAL_HEATER,
-     1,
-     DeviceModel::NONE,
-     HeatingControlPath::PRIVATE_REGISTERS,
-     {/*target_temperature=*/true, /*current_temperature=*/true, /*action=*/true, /*mode_observed=*/true},
-     0,
-     HEATING_TEMP_MIN_C,
-     HEATING_TEMP_MAX_C,
-     NO_FP,
-     /*fixed_range=*/false,
-     SETPOINT_HEATER_MODES,
-     std::size(SETPOINT_HEATER_MODES),
-     SETPOINT_HEATER_PRESETS,
-     std::size(SETPOINT_HEATER_PRESETS),
-     SETPOINT_HEATER_OBSERVED,
-     std::size(SETPOINT_HEATER_OBSERVED),
-     SETPOINT_HEATER_POLL,
-     std::size(SETPOINT_HEATER_POLL),
-     SETPOINT_HEATER_BOOT,
-     std::size(SETPOINT_HEATER_BOOT)},
+    SETPOINT_HEATER_PROFILE,
+    HEATER_WITH_LIGHT_PROFILE,
     {DeviceType::ELECTRICAL_HEATER,
      1,
      DeviceModel::TOWEL_DRYER,

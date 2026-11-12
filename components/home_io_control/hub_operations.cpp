@@ -1064,8 +1064,8 @@ void IOHomeControlComponent::check_heater_model_(const std::string &device_id, u
       break;
     case decisions::HeaterModelHint::LOOKS_LIKE_TOWEL_DRYER:
       ESP_LOGW(detail::TAG,
-               "Device %s holds a towel-dryer mode (register 0x0136): it looks like a towel dryer. Add "
-               "io_model: %s to its climate entry for its modes, Boost and Drying",
+               "Device %s holds a towel-dryer mode (register 0x0136): it looks like a towel dryer. Set "
+               "io_model: %s on its climate entry for its modes, Boost and Drying",
                device_id.c_str(), towel_name);
       break;
     case decisions::HeaterModelHint::NONE:
@@ -1102,6 +1102,11 @@ bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) 
     }
     answered++;
   }
+
+  // A part the heater may not have (a night light): read every poll once the core registers answered,
+  // and a miss is not a poll failure (the next poll asks again).
+  for (size_t i = 0; ok && i < profile->extra_poll_register_count; i++)
+    this->read_heating_register(device_id, profile->extra_poll_registers[i], nullptr, max_tries);
 
   // Properties and settings that rarely change are read until they have been read once. A miss here
   // is not a poll failure; the next poll asks again.

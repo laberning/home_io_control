@@ -80,8 +80,9 @@ enum class DeviceType : uint16_t {
 ///          the one (type, subtype) that offers it; the row's name is the YAML spelling. Values are
 ///          stable: hub_validators.py `DEVICE_MODEL_OPTIONS` mirrors them (device_features_sync_test.cpp).
 enum class DeviceModel : uint8_t {
-  NONE = 0,         ///< No model: the (type, subtype) row.
-  TOWEL_DRYER = 1,  ///< Towel dryer under the electrical heater with an adjustable setpoint (52/1).
+  NONE = 0,               ///< No model: the (type, subtype) row.
+  TOWEL_DRYER = 1,        ///< Towel dryer under the electrical heater with an adjustable setpoint (52/1).
+  HEATER_WITH_LIGHT = 2,  ///< Heater with a night light under the electrical heater with an adjustable setpoint (52/1).
 };
 
 /// @brief High‑level capability class derived from DeviceType.

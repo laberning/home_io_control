@@ -4,20 +4,23 @@
 ##
 ## Defines the experimental IO-Homecontrol heating/climate integration and wires it to the shared
 ## hub. Heaters with a window sensor also get a Window binary sensor and an Open Window Detection
-## switch. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
+## switch; a heater with a night light (io_model: heater_with_light) can add a dimmable `night_light:`
+## light. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
 ## construction/registration stays here.
 
 import functools
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, climate, switch
+from esphome.components import binary_sensor, climate, light, switch
 from esphome.const import (
+    CONF_DEVICE_ID,
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
     CONF_MAX_TEMPERATURE,
     CONF_MIN_TEMPERATURE,
     CONF_NAME,
+    CONF_OUTPUT_ID,
     DEVICE_CLASS_WINDOW,
     ENTITY_CATEGORY_CONFIG,
 )
@@ -26,11 +29,12 @@ from esphome.core import ID
 from . import home_io_control_ns
 from .hub_validators import (
     DEVICE_TYPE_OPTIONS,
+    FEATURE_NIGHT_LIGHT,
     FEATURE_WINDOW_COMPANIONS,
-    device_features,
 )
 from .platform_common import (
-    config_model,
+    INSTANT_LIGHT_TRANSITION,
+    declared_features,
     companion_entity_name,
     companion_id_base,
     create_companion_sensors,
@@ -44,7 +48,6 @@ from .platform_common import (
     CONF_DEVICE_TYPE,
     CONF_HOME_IO_CONTROL_ID,
     CONF_IO_DEVICE_ID,
-    CONF_SUBTYPE,
 )
 
 DEPENDENCIES = ["home_io_control"]
@@ -56,6 +59,11 @@ IOHomeWindowBinarySensor = home_io_control_ns.class_(
 IOHomeOpenWindowDetectionSwitch = home_io_control_ns.class_(
     "IOHomeOpenWindowDetectionSwitch", switch.Switch, cg.Component
 )
+IOHomeHeaterNightLight = home_io_control_ns.class_(
+    "IOHomeHeaterNightLight", light.LightOutput, cg.Component
+)
+
+CONF_NIGHT_LIGHT = "night_light"
 
 # Internal config keys for the heater-only companion IDs (injected by the post-validator).
 CONF_WINDOW_SENSOR_ID = "_window_sensor_id"
@@ -70,9 +78,21 @@ def _has_window_companions(config):
     gets none. A heater declared without a type gets no companions: nothing at validation time says
     what it is.
     """
-    return CONF_DEVICE_TYPE in config and bool(
-        device_features(config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0), config_model(config))
-        & FEATURE_WINDOW_COMPANIONS
+    return bool(declared_features(config) & FEATURE_WINDOW_COMPANIONS)
+
+
+def _validate_night_light(config):
+    """Accept `night_light:` only on a heater kind that has one (the NIGHT_LIGHT bit of its row).
+
+    Unlike require_feature(), this also rejects the key when no io_device_type is declared: the light's
+    registers would otherwise go to a heater nothing says has them.
+    """
+    if CONF_NIGHT_LIGHT not in config or declared_features(config) & FEATURE_NIGHT_LIGHT:
+        return config
+    raise cv.Invalid(
+        "night_light needs a heater with a night light: set io_device_type: electrical_heater, "
+        "io_subtype: 1 and io_model: heater_with_light",
+        path=[CONF_NIGHT_LIGHT],
     )
 
 
@@ -132,12 +152,19 @@ CONFIG_SCHEMA = cv.All(
         {
             cv.Optional(CONF_MIN_TEMPERATURE): cv.temperature,
             cv.Optional(CONF_MAX_TEMPERATURE): cv.temperature,
+            # A dimmable light; its IDs are declared by the schema's own GenerateIDs.
+            cv.Optional(CONF_NIGHT_LIGHT): light.light_schema(
+                IOHomeHeaterNightLight, light.LightType.BRIGHTNESS_ONLY
+            )
+            .extend(INSTANT_LIGHT_TRANSITION)
+            .extend(cv.COMPONENT_SCHEMA),
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
     functools.partial(validate_register_poll_interval, platform="climate"),
     _validate_temperature_range,
     validate_device_model,
+    _validate_night_light,
     warn_if_experimental_kind,
     _inject_companion_ids,
 )
@@ -197,3 +224,13 @@ async def to_code(config):
         await cg.register_component(detection_switch, detection_config)
         cg.add(detection_switch.set_parent(parent))
         cg.add(detection_switch.set_device_id(config[CONF_IO_DEVICE_ID]))
+
+    if CONF_NIGHT_LIGHT in config:
+        night_light_config = config[CONF_NIGHT_LIGHT]
+        if CONF_DEVICE_ID not in night_light_config:
+            inherit_esphome_device(night_light_config, config)
+        night_light = cg.new_Pvariable(night_light_config[CONF_OUTPUT_ID])
+        await cg.register_component(night_light, night_light_config)
+        await light.register_light(night_light, night_light_config)
+        cg.add(night_light.set_parent(parent))
+        cg.add(night_light.set_device_id(config[CONF_IO_DEVICE_ID]))

@@ -9,11 +9,12 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import light
-from esphome.const import CONF_DEFAULT_TRANSITION_LENGTH, CONF_OUTPUT_ID
+from esphome.const import CONF_OUTPUT_ID
 
 from . import home_io_control_ns
 from .hub_validators import FEATURE_MAIN_PARAMETER_ONLY
 from .platform_common import (
+    INSTANT_LIGHT_TRANSITION,
     create_companion_sensors,
     inject_companion_sensor_ids,
     platform_schema_extension,
@@ -66,17 +67,7 @@ def _validate(config):
         .extend(cv.COMPONENT_SCHEMA)
     )
     if light_type == light.LightType.BRIGHTNESS_ONLY:
-        # ESPHome's light_schema() default (1s) client-side-fades every brightness change by
-        # repeatedly calling write_state() over that window (LightState::loop()'s transformer).
-        # Each of those calls is a real radio command over IO-Homecontrol's ~300ms round trip —
-        # unlike a PWM/LED output, write_state() here is not cheap, and the resulting stream of
-        # stale/superseding commands (plus each device reply re-triggering on_device_update_(),
-        # which performs another call and can restart the transition) was observed on real
-        # hardware to loop indefinitely. Default to instant application instead; still overridable
-        # in YAML by anyone who understands the tradeoff.
-        schema = schema.extend(
-            {cv.Optional(CONF_DEFAULT_TRANSITION_LENGTH, default="0s"): cv.positive_time_period_milliseconds}
-        )
+        schema = schema.extend(INSTANT_LIGHT_TRANSITION)
     return schema(config)
 
 

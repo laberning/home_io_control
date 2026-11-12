@@ -3597,3 +3597,115 @@ TEST(HubOperations, TowelDryerModeAndTemporaryStateWritesSendExactBytes) {
   EXPECT_EQ(payload(radio.get_sent_data()[0]), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x36, 0x03}));
   EXPECT_EQ(payload(radio.get_sent_data()[1]), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x3E, 0x01}));
 }
+
+// ============================================================================
+// Heater with a night light (52/1, model HEATER_WITH_LIGHT)
+// ============================================================================
+
+namespace {
+
+IoDevice *make_heater_with_light(TestableComponent &comp, MockRadio &radio) {
+  IoDevice *dev = make_heater(comp, radio);
+  dev->model = DeviceModel::HEATER_WITH_LIGHT;
+  resolve_device_features(*dev);
+  return dev;
+}
+
+/// Answers the radiator's five poll registers.
+void queue_radiator_poll(TestableComponent &comp, MockRadio &radio) {
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});  // 20.75 C
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});  // 19.5 C
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x00, 0x01});        // manual
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x17, 0x02});        // heating
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x0E, 0x00});        // window closed
+}
+
+}  // namespace
+
+TEST(HubOperations, HeaterWithLightPollReadsTheLightAfterTheRadiatorRegisters) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_heater_with_light(comp, radio);
+  EXPECT_TRUE(has_feature(dev->features, device_feature::WINDOW_COMPANIONS));
+  EXPECT_TRUE(has_feature(dev->features, device_feature::NIGHT_LIGHT));
+  queue_radiator_poll(comp, radio);
+  // Values of the issue #222 sweep with the light on.
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x44, 0x01});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x42, 0x64, 0x00});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x06, 0x01});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x19, 'H', 'E', 'K', 'L', 'A'});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x36});
+
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+
+  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x44, 0x42, 0x02, 0x06, 0x19, 0x36};
+  ASSERT_EQ(radio.get_sent_data().size(), std::size(expected_registers));
+  for (size_t i = 0; i < std::size(expected_registers); i++)
+    EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
+  for (const auto &tx : radio.get_sent_data())
+    EXPECT_EQ(tx.at(10), HEATING_DIRECTION_GET) << "a poll only reads";
+  EXPECT_EQ(dev->heating.night_light, 1);
+  EXPECT_EQ(dev->heating.night_light_brightness, 100);
+
+  // Unlike the boot registers, the light is read again on the next poll.
+  const size_t sent_before = radio.get_sent_data().size();
+  queue_radiator_poll(comp, radio);
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x44, 0x00});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x42, 0x64, 0x00});
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(radio.get_sent_data().size() - sent_before, 7u);
+  EXPECT_EQ(dev->heating.night_light, 0);
+}
+
+TEST(HubOperations, AHeaterWithoutTheLightDoesNotFailItsPoll) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_heater_with_light(comp, radio);
+  // Boot registers and model check done, so the poll is the five registers plus the light.
+  dev->model_checked = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  dev->heating.open_window_detection = 1;
+  queue_radiator_poll(comp, radio);
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x44});  // no light: answered without a value
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x42});
+
+  EXPECT_TRUE(comp.request_device_status("ABC123")) << "a missing light costs a read, not the poll";
+
+  EXPECT_EQ(radio.get_sent_data().size(), 7u);
+  EXPECT_EQ(dev->heating.night_light, -1);
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 0u);
+}
+
+TEST(HubOperations, AFailedHeaterPollDoesNotGoOnToTheLight) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_heater_with_light(comp, radio);
+  // Nothing queued: the room temperature never answers.
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  for (const auto &tx : radio.get_sent_data())
+    EXPECT_EQ(sent_register(tx), 0x15) << "a heater that does not answer is not asked for its light";
+  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
+}
+
+TEST(HubOperations, NightLightWritesSendExactBytes) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_heater_with_light(comp, radio);
+  queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x42, 0x32, 0x00});
+  ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 50.0F));
+  queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x44, 0x01});
+  ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::NIGHT_LIGHT, 1.0F));
+
+  ASSERT_EQ(radio.get_sent_data().size(), 2u);
+  const auto &brightness = radio.get_sent_data()[0];
+  EXPECT_EQ(std::vector<uint8_t>(brightness.begin() + 9, brightness.begin() + 15),
+            (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x42, 0x32, 0x00}));
+  const auto &on = radio.get_sent_data()[1];
+  EXPECT_EQ(std::vector<uint8_t>(on.begin() + 9, on.begin() + 14),
+            (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x44, 0x01}));
+}
