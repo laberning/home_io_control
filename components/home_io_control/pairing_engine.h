@@ -229,7 +229,12 @@ class PairingEngine {
   /// never the key, so two attempts or two devices can be compared from the log alone.
   ///
   /// Every 0x38 try of the attempt carries the same challenge, so a 0x32 that answers an earlier try late
-  /// still decrypts to the key.
+  /// still decrypts to the key. The tries follow the command plan of the device's power class
+  /// (ExchangeEngine::plan_attempts()): to a mains device as many without a gap as fit
+  /// `exchange_total_budget_ms` (at most EXCHANGE_MAX_ATTEMPTS), the early ones listening
+  /// `exchange_early_response_wait_ms` and the last PAIRING_KEY_PULL_REPLY_TIMEOUT_MS; to a low-power
+  /// one EXCHANGE_RETRY_COUNT with the retry gap. A try that could not finish inside the budget is
+  /// not started (decisions::attempt_fits()).
   ///
   /// The hub's own key is accepted as is: no decrypt produces it by chance. A different key must be
   /// proven by the device's 0x3D to our challenge (ExchangeEngine::challenge_sender() under that key, up
@@ -362,10 +367,11 @@ class PairingEngine {
   void note_key_refusal_(pairing::PairingContext &context, const IoFrame &reply, const char *step);
 
   /// Wait for the device's 0x32 answer to our 0x38, holding the request channel.
-  /// @param context Pairing context; `context.rx` receives the accepted 0x32.
+  /// @param context   Pairing context; `context.rx` receives the accepted 0x32.
+  /// @param window_ms How long to listen.
   /// @return true if a well-formed 0x32 from the device arrived; false on timeout or refusal
   ///         (a refusal also sets `context.key_refused`).
-  bool wait_for_pulled_key_(pairing::PairingContext &context);
+  bool wait_for_pulled_key_(pairing::PairingContext &context, uint32_t window_ms);
 
   /// Run the push key exchange with its retry loop, then the key-held check if it did not confirm.
   /// @param context Pairing context populated by the discovery phase.

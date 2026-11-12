@@ -541,6 +541,74 @@ TEST(PairingKeyPull, AWrongProofIsNotChallengedAgain) {
       << "a 0x3D that does not verify proves the device lacks the key; asking again cannot change that";
 }
 
+TEST(PairingKeyPull, ASilentMainsDeviceIsAskedNineTimesListeningShortOnAllButTheLastTry) {
+  esphome::test_clock::ManualClock clock;
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+
+  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
+
+  EXPECT_EQ(sent_frames_of(radio, CMD_LAUNCH_KEY_TRANSFER).size(), static_cast<size_t>(EXCHANGE_MAX_ATTEMPTS));
+  const auto &waits = radio.wait_timeouts();
+  ASSERT_FALSE(waits.empty());
+  EXPECT_EQ(waits.front(), comp.tuning_.exchange_early_response_wait_ms) << "an early try listens the short window";
+  EXPECT_EQ(waits.back(), PAIRING_KEY_PULL_REPLY_TIMEOUT_MS) << "the last try listens the whole reply window";
+}
+
+TEST(PairingKeyPull, ALowPowerDeviceIsAskedThreeTimesWithTheRetryGap) {
+  esphome::test_clock::ManualClock clock;
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+  context.discovery_low_power = true;
+
+  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
+
+  EXPECT_EQ(sent_frames_of(radio, CMD_LAUNCH_KEY_TRANSFER).size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
+  const auto &times = radio.send_times_ms();
+  ASSERT_EQ(times.size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
+  EXPECT_EQ(times[1] - times[0], PAIRING_KEY_PULL_REPLY_TIMEOUT_MS + EXCHANGE_RETRY_DELAY_MS)
+      << "one reply window and the retry gap between tries";
+}
+
+TEST(PairingKeyPull, TheKeyPullNeverRunsPastTheExchangeBudget) {
+  for (const uint16_t budget_ms : {600, 1000, 2500, 5000}) {
+    esphome::test_clock::ManualClock clock;
+    RngGuard rng;
+    TestableComponent comp;
+    MockRadio radio;
+    setup(comp, radio);
+    comp.tuning_.exchange_total_budget_ms = budget_ms;
+    pairing::PairingContext context = context_for_device();
+    const uint32_t start = esphome::test_clock::peek_ms();
+
+    EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
+
+    EXPECT_LT(esphome::test_clock::peek_ms() - start, budget_ms) << "budget " << budget_ms;
+    EXPECT_GE(sent_frames_of(radio, CMD_LAUNCH_KEY_TRANSFER).size(), 1u);
+  }
+}
+
+TEST(PairingKeyPull, AReplyToALaterTryStopsTheTries) {
+  esphome::test_clock::ManualClock clock;
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+  radio.queue_rx_hold_until_sent(5);  // silent for four tries, then the key arrives
+  radio.queue_rx(to_packet(pulled_key_frame(comp.node_id_, test::TEST_SYSTEM_KEY)));
+
+  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OUR_KEY);
+
+  EXPECT_EQ(sent_frames_of(radio, CMD_LAUNCH_KEY_TRANSFER).size(), 5u);
+}
+
 TEST(PairingKeyPull, RefusalEndsThePull) {
   TestableComponent comp;
   MockRadio radio;

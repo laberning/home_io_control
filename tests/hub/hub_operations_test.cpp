@@ -1472,7 +1472,7 @@ TEST(HubOperations, PollAfterTheBandAndWithoutAMarkStaysASingleTry) {
 
 TEST(HubOperations, HeaterPollKeepsThreeTriesInTheBandAndOneOutsideIt) {
   // The heating-level heater shares the cover status path and keeps the count-based budget: the
-  // settling plan would give it six attempts in the band.
+  // settling plan would give it nine attempts in the band.
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);
@@ -1587,11 +1587,34 @@ TEST(HubOperations, UserCommandKeepsTheFullRetryBudgetWhilePollTrackingIsActive)
   setup_cover_component(comp, radio);
   comp.begin_status_poll_tracking_("ABC123", 2000);  // tracking on -- must not leak into commands
 
-  for (int i = 0; i < EXCHANGE_RETRY_COUNT; ++i)
+  for (int i = 0; i < EXCHANGE_MAX_ATTEMPTS; ++i)
     radio.queue_tx_result(false);
 
   EXPECT_FALSE(comp.execute_device_command_("ABC123", CoverCommand::STOP));
-  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT) << "the single-try rule must never extend to user commands";
+  EXPECT_EQ(radio.get_send_count(), EXCHANGE_MAX_ATTEMPTS)
+      << "the single-try rule must never extend to user commands: a stop takes the command plan";
+}
+
+TEST(HubOperations, RepeatSafeCommandToASilentMainsCoverMakesTheCommandPlansAttempts) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  EXPECT_FALSE(comp.set_device_position("ABC123", 40));
+
+  EXPECT_EQ(radio.get_send_count(), EXCHANGE_MAX_ATTEMPTS) << "an absolute position is harmless to repeat";
+}
+
+TEST(HubOperations, FavouriteCommandToASilentCoverKeepsTodaysThreeAttempts) {
+  // 'My' toggles a moving cover to a stop: a copy that arrives after the first was heard would undo
+  // it, so the favourite keeps the count-based exchange.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  EXPECT_FALSE(comp.execute_device_command_("ABC123", CoverCommand::FAVORITE));
+
+  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT);
 }
 
 TEST(HubOperations, ExchangeTimeoutIncrementsFailureCountersOnce) {

@@ -2176,15 +2176,36 @@ TEST(Exchange, PlanReadGivesTheSettlingPlanTheGuardAgreesWith) {
   const decisions::AttemptPlan plan = engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
 
   EXPECT_EQ(plan.gap_ms, 0u);
-  // At the defaults one attempt is the short start frame on air (~10 ms) plus the 400 ms window, so
-  // six fit below the 2500 ms budget and a seventh would not (ADR 0074).
-  EXPECT_EQ(plan.max_attempts, 6u) << "a mains settling read makes six attempts at the defaults";
+  // At the defaults one attempt is the short start frame on air (~10 ms) plus its overhead and the
+  // 200 ms early window, and the last one listens the whole 400 ms: nine fit below the 2500 ms
+  // budget (ADR 0075).
+  EXPECT_EQ(plan.max_attempts, EXCHANGE_MAX_ATTEMPTS) << "a mains settling read makes nine attempts at the defaults";
   // A silent target gets exactly the planned attempts: the plan equals what the guard admits.
   IoFrame response{};
   const uint32_t start = esphome::test_clock::peek_ms();
   EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
   EXPECT_EQ(radio.get_send_count(), plan.max_attempts);
   EXPECT_LT(esphome::test_clock::peek_ms() - start, tuning.exchange_total_budget_ms);
+}
+
+TEST(Exchange, PlanReadAgreesWithTheGuardWhenTheBudgetLimitsTheAttempts) {
+  // At a 1000 ms budget the plan is 3 (1 + (999 - 422) / 222) and a silent target gets exactly those.
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  radio.set_model_tx_airtime(true);
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  tuning.exchange_total_budget_ms = 1000;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+
+  const decisions::AttemptPlan plan = engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  IoFrame response{};
+  EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(plan.max_attempts, 3u);
+  EXPECT_EQ(radio.get_send_count(), plan.max_attempts) << "the plan promises what the guard admits, no more, no fewer";
 }
 
 TEST(Exchange, PlanReadForALowPowerTargetUsesTheLowPowerWindowAndThreeAttempts) {
@@ -2231,12 +2252,17 @@ TEST(Exchange, ATryThatWouldEndAtTheBudgetIsNotStarted) {
   ASSERT_GT(tx_ms, 0u);
 
   // The elapsed time alone is well inside the budget, but the third try would end exactly at it:
-  // its transmission, its first-reply window and, the target having challenged, its final-reply
-  // window. That try does not start.
+  // its transmission and overhead, its first-reply window and, the target having challenged, its
+  // final-reply window with the 0x3D. That try does not start.
+  // The tail is what a challenged try adds: the final-reply window, the 0x3D's air time (the request
+  // stands in for its size) and the overhead.
   const TuningConfig defaults;
+  MockRadio probe;
+  const uint32_t answer_tx_ms = (io868_tx_air_time_us(probe.response_preamble(), len) + 999) / 1000;
+  const uint32_t tail_ms = defaults.exchange_response_wait_ms + answer_tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS;
   const auto edge =
-      static_cast<uint16_t>(third_check_ms + EXCHANGE_RETRY_DELAY_MS + tx_ms +
-                            defaults.exchange_start_response_wait_ms + defaults.exchange_response_wait_ms);
+      static_cast<uint16_t>(third_check_ms + EXCHANGE_RETRY_DELAY_MS + tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS +
+                            defaults.exchange_start_response_wait_ms + tail_ms);
   const char *stage = nullptr;
   EXPECT_EQ(run_challenged_status_poll(edge, nullptr, &stage), 4);
   EXPECT_STREQ(stage, "retry_budget_exhausted");
@@ -4009,6 +4035,132 @@ TEST(Exchange, ChallengedMainsPollStillMakesItsThirdTry) {
   EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_UNCONFIRMED);
 
   EXPECT_EQ(rig.radio.get_send_count(), 2 * EXCHANGE_RETRY_COUNT);
+}
+
+TEST(Exchange, CommandToASilentMainsTargetMakesNineAttemptsListeningShortOnAllButTheLast) {
+  PlanRig rig;
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::COMMAND, false, rig.tuning, rig.attempt_tx_ms(false));
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, /*low_power=*/false, 40);
+  IoFrame response{};
+  const uint32_t start = esphome::test_clock::peek_ms();
+
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_MAX_ATTEMPTS) << "more than today's three for a silent mains target";
+  const auto &waits = rig.radio.wait_timeouts();
+  ASSERT_EQ(waits.size(), static_cast<size_t>(EXCHANGE_MAX_ATTEMPTS));
+  for (size_t i = 0; i + 1 < waits.size(); i++)
+    EXPECT_EQ(waits[i], rig.tuning.exchange_early_response_wait_ms) << "attempt " << i + 1;
+  EXPECT_EQ(waits.back(), rig.tuning.exchange_start_response_wait_ms) << "the last attempt listens the whole window";
+  EXPECT_LT(esphome::test_clock::peek_ms() - start, rig.tuning.exchange_total_budget_ms);
+}
+
+TEST(Exchange, CommandPlanNeverBlocksPastTheBudgetForAnyEarlyAndStartWindow) {
+  for (const uint16_t early_ms : {150, 200, 400, 1000}) {
+    for (const uint16_t start_ms : {200, 400, 1000}) {
+      for (const uint16_t budget_ms : {500, 1000, 2500, 12000}) {
+        PlanRig rig;
+        rig.tuning.exchange_early_response_wait_ms = early_ms;
+        rig.tuning.exchange_start_response_wait_ms = start_ms;
+        rig.tuning.exchange_total_budget_ms = budget_ms;
+        const auto plan =
+            decisions::attempt_plan(decisions::ReadKind::COMMAND, false, rig.tuning, rig.attempt_tx_ms(false));
+        const uint32_t blocked_ms = rig.run_silent_poll(plan, false);
+        const std::string where = "early=" + std::to_string(early_ms) + " start=" + std::to_string(start_ms) +
+                                  " budget=" + std::to_string(budget_ms);
+        EXPECT_EQ(rig.radio.get_send_count(), plan.max_attempts) << where << ": the plan is what the guard admits";
+        // The first attempt always runs, so a start window longer than the budget is the one exception.
+        if (start_ms < budget_ms) {
+          EXPECT_LT(blocked_ms, budget_ms) << where;
+        }
+      }
+    }
+  }
+}
+
+TEST(Exchange, ChallengedWriteIsNeverCopiedMoreThanTodaysThreeTimesWhateverThePlan) {
+  // The device challenged every copy, so it heard the write; a larger plan must not become up to
+  // nine copies of a register write it already holds.
+  PlanRig rig;
+  queue_challenges(rig.radio, EXCHANGE_MAX_ATTEMPTS);
+  const uint8_t payload[] = {0x01, 0x02, 0x03};
+  IoFrame request{};
+  ASSERT_TRUE(create_write_private(request, test::OWN_ID, test::DST_ID, /*low_power=*/false, payload,
+                                   static_cast<uint8_t>(sizeof(payload))));
+  decisions::AttemptPlan plan;
+  plan.max_attempts = EXCHANGE_MAX_ATTEMPTS;
+  plan.gap_ms = 0;
+  IoFrame response{};
+
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 2 * EXCHANGE_RETRY_COUNT) << "three requests, each with its 0x3D";
+}
+
+TEST(Exchange, ChallengedWriteAfterSilentAttemptsIsNotCopiedAgain) {
+  // Three silent attempts spend today's three copies; the fourth is the first the device challenges,
+  // and the exchange ends there instead of sending up to five more.
+  ResendRig rig;
+  rig.radio.queue_rx_hold_until_sent(4);  // nothing is heard until the fourth request is out
+  rig.queue_challenge();
+  const uint8_t payload[] = {0x01, 0x02, 0x03};
+  IoFrame request{};
+  ASSERT_TRUE(create_write_private(request, test::OWN_ID, test::DST_ID, /*low_power=*/false, payload,
+                                   static_cast<uint8_t>(sizeof(payload))));
+  decisions::AttemptPlan plan;
+  plan.max_attempts = EXCHANGE_MAX_ATTEMPTS;
+  plan.gap_ms = 0;
+  plan.early_window_ms = 200;  // short early listens leave the budget room for further copies
+  IoFrame response{};
+
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 5) << "four requests and the 0x3D answering the fourth's challenge";
+}
+
+TEST(Exchange, ExecuteChallengedWithoutAClosingReplyIsResentOnceWhateverThePlan) {
+  ResendRig rig;
+  rig.queue_challenge();
+  rig.radio.queue_rx_hold_until_sent(3);
+  rig.queue_challenge();
+  decisions::AttemptPlan plan;
+  plan.max_attempts = EXCHANGE_MAX_ATTEMPTS;
+  plan.gap_ms = 0;
+  plan.early_window_ms = 200;
+  IoFrame response{};
+
+  EXPECT_EQ(rig.engine.send_and_receive(stop_request(), response, FREQ_CH2, plan),
+            ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 4) << "request, 0x3D, one re-send, 0x3D; no third copy";
+  const auto &waits = rig.radio.wait_timeouts();
+  ASSERT_GE(waits.size(), 3u);
+  EXPECT_EQ(waits[0], 200u) << "the first attempt is an early one";
+}
+
+TEST(Exchange, FavouriteExecuteWhoseReplyIsLostAfterItWasChallengedIsNeverSentAgain) {
+  // 'My' stops a moving cover: a copy after a challenged one could undo what the first started.
+  ResendRig rig;
+  rig.queue_challenge();  // the device challenges, we answer, its closing reply never comes
+  IoFrame request{};
+  create_execute_command(request, test::OWN_ID, test::DST_ID, false, CoverCommand::FAVORITE);
+
+  EXPECT_EQ(rig.send(request), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 2) << "one request and its 0x3D";
+}
+
+TEST(Exchange, FavouriteExecuteToASilentTargetKeepsTodaysThreeAttempts) {
+  // Not repeat-safe, so the hub gives it no plan: the count-based exchange stays at three.
+  PlanRig rig;
+  IoFrame request{};
+  create_execute_command(request, test::OWN_ID, test::DST_ID, false, CoverCommand::FAVORITE);
+  IoFrame response{};
+
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_RETRY_COUNT);
 }
 
 TEST(Exchange, ResendKeepsItsLongGapWhenThePlanHasNoGap) {

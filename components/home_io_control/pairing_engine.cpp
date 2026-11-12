@@ -879,9 +879,9 @@ void PairingEngine::note_key_refusal_(pairing::PairingContext &context, const Io
            command_result_name(code), command_result_description(code), error_resp_code(code), error_resp_state(code));
 }
 
-bool PairingEngine::wait_for_pulled_key_(pairing::PairingContext &context) {
+bool PairingEngine::wait_for_pulled_key_(pairing::PairingContext &context, uint32_t window_ms) {
   ListenSpec spec;
-  spec.window_ms = PAIRING_KEY_PULL_REPLY_TIMEOUT_MS;
+  spec.window_ms = window_ms;
   spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;  // Unicast reply to a unicast request, as for 0x33.
 
   auto outcome =
@@ -1129,24 +1129,42 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
   // with the same request bytes a 0x32 that answers an earlier try late still decrypts to the key.
   uint8_t challenge[HMAC_SIZE];
   crypto::generate_challenge(challenge);
+  // The request is the same on every try (one challenge), so it is built once and its transmit time
+  // estimated once for the budget rule.
+  if (!create_launch_key_transfer(context.req, node_id_, context.device.node_id, challenge)) {
+    ESP_LOGW(TAG, "Key pull failed: could not build the key transfer request for %s", context.device_id.c_str());
+    return KeyPullResult::FAILED;
+  }
+  const uint16_t preamble = pairing_start_preamble_(context.req);
+  const decisions::AttemptPlan plan =
+      engine_.plan_attempts(decisions::ReadKind::COMMAND, context.discovery_low_power, context.req, FREQ_CH2, preamble,
+                            static_cast<uint16_t>(PAIRING_KEY_PULL_REPLY_TIMEOUT_MS));
+  const uint32_t tx_ms = engine_.tx_time_ms(context.req, FREQ_CH2, preamble);
+  const uint32_t begin_ms = millis();
   bool got_key = false;
-  for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT && !got_key && !context.key_refused; tries++) {
+  for (uint8_t tries = 0; tries < plan.max_attempts && !got_key && !context.key_refused; tries++) {
+    const uint16_t window_ms = plan.window_for_attempt(tries + 1, plan.max_attempts);
     if (tries > 0) {
+      if (!decisions::attempt_fits(millis() - begin_ms, plan.gap_ms, tx_ms, window_ms, 0,
+                                   tuning_->exchange_total_budget_ms)) {
+        ESP_LOGI(TAG, "Key pull budget exhausted after %u tries (%" PRIu32 " of %u ms)", tries, millis() - begin_ms,
+                 tuning_->exchange_total_budget_ms);
+        break;
+      }
       App.feed_wdt();
-      delay(EXCHANGE_RETRY_DELAY_MS);
+      delay(plan.gap_ms);  // 0 for a mains plan: a no-op that still yields
     }
     context.state = pairing::PairingState::TX_KEY_PULL;
     engine_.record_debug(pairing_stage_name(context.state), tries + 1, false);
     this->telemetry_.set_phase(context.state);
-    if (!create_launch_key_transfer(context.req, node_id_, context.device.node_id, challenge) ||
-        !engine_.transmit_frame(context.req, FREQ_CH2, pairing_start_preamble_(context.req)))
+    if (!engine_.transmit_frame(context.req, FREQ_CH2, preamble))
       continue;
     context.state = pairing::PairingState::WAIT_KEY_PULL_REPLY;
     this->telemetry_.set_phase(context.state);
-    got_key = wait_for_pulled_key_(context);
+    got_key = wait_for_pulled_key_(context, window_ms);
     if (!got_key && !context.key_refused) {
-      ESP_LOGI(TAG, "Key pull try %u: no key transfer (0x32) from %s within %" PRIu32 " ms", tries + 1,
-               context.device_id.c_str(), PAIRING_KEY_PULL_REPLY_TIMEOUT_MS);
+      ESP_LOGI(TAG, "Key pull try %u: no key transfer (0x32) from %s within %u ms", tries + 1,
+               context.device_id.c_str(), window_ms);
     }
   }
   if (!got_key) {

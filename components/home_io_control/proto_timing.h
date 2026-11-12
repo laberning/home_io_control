@@ -151,8 +151,10 @@ static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
     RESPONSE_WAIT_MS;                                    ///< Wait for final response after challenge response
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
 /// Attempts per exchange for every caller that has not asked for an attempt plan
-/// (decisions::attempt_plan()): commands, one-off reads, heater registers and the pairing loops.
-/// It is also the ceiling of the `max_tries` overload of ExchangeEngine::send_and_receive().
+/// (decisions::attempt_plan()): a command that is not repeat-safe (decisions::is_repeat_safe_command()),
+/// heater registers, management actions and the pairing loops. It is also the ceiling of the
+/// `max_tries` overload of ExchangeEngine::send_and_receive(), and the most copies a challenged
+/// request that never closes is followed by, whatever its plan.
 static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;
 /// Most attempts any exchange makes, whatever the budget allows: a plan with a long
 /// `exchange_total_budget_ms` still stops here, so a dead device is not hammered with 25 copies of
@@ -173,6 +175,29 @@ static constexpr uint8_t LOW_POWER_SETTLING_ATTEMPTS = 3;
 /// waiting for the outliers. Three such attempts with their wake-up preambles still fit
 /// EXCHANGE_TOTAL_BUDGET_MS when nothing is waited between them.
 static constexpr uint16_t LOW_POWER_RESPONSE_WAIT_MS = 550;
+/// How long an attempt listens for a mains device's reply when another attempt follows it, after
+/// the end of its own transmission.
+///
+/// A mains-powered device answers within a few tens of milliseconds or not at all. Across the
+/// corpus, 47 of the 52 start requests this hub sent to a device that is not declared low-power drew
+/// their first reply within 98 ms (median 66 ms, scripts/corpus/reply_latency.py --mains); the other
+/// five are a stalled key extraction and replies that belong to a later request. On the bench, an
+/// Izymo dimmer answered 36 to 42 ms after the start of the hub's transmission (400 exchanges, none
+/// retried), its carrier coming up within about 0.1 ms of the end of our frame; a Sunea awning, on
+/// every radio the hub drives, answered its challenged status reads 33 to 49 ms after it.
+/// 200 ms is twice the slowest of those corpus replies and about four times the bench maximum, and
+/// the largest round value for which nine attempts still fit EXCHANGE_TOTAL_BUDGET_MS: the early
+/// attempts listen this long and the last one listens the whole start window, so a device that does
+/// answer late still gets one full-length listen. Used by decisions::attempt_plan() for mains
+/// targets only (a low-power target keeps one window for every attempt).
+static constexpr uint16_t EXCHANGE_EARLY_RESPONSE_WAIT_MS = 200;
+/// Time an attempt costs beyond its transmission and its listen: the channel-busy check, the
+/// frequency hop and the SPI traffic around each transmit. Measured on the bench boards, one per
+/// radio the hub drives: a read to an address no device answers made attempts 422 ms apart where the
+/// transmit estimate and the 400 ms window add up to 412 ms. The budget guard and the attempt plan
+/// both add it to every attempt (decisions::attempt_fits()), so the plan promises exactly the
+/// attempts the guard admits.
+static constexpr uint32_t EXCHANGE_ATTEMPT_OVERHEAD_MS = 10;
 /// Re-sends allowed for a CMD_EXECUTE the target accepted without a closing reply, within the same
 /// exchange and its retry budget. One: a second silent try says the loss is not a one-off, and a
 /// third copy of a movement command would only lengthen the blocked loop. See
@@ -263,8 +288,9 @@ static constexpr uint8_t SCHEDULED_POLL_RETRY_GRACE_LAST_FAILURE = 3;
 /// budget. Counting the window and the final wait keeps a slow listen from running an exchange past
 /// the ceiling; counting the transmission keeps a radio with a long wake-up from starting an
 /// attempt it cannot finish in time. At the default 400 ms window three attempts with the retry gap
-/// still fit (~2.3 s); an exchange the target challenges does not always (ADR 0073). A settling read
-/// of a mains device, with no gap, fits six (decisions::attempt_plan(), ADR 0074).
+/// still fit (~2.3 s); an exchange the target challenges does not always (ADR 0073). A request to a
+/// mains device that makes several attempts with no gap listens EXCHANGE_EARLY_RESPONSE_WAIT_MS on
+/// all but the last and fits nine (decisions::attempt_plan(), ADR 0075).
 static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 
 /// One-way (1W) transmit cadence.

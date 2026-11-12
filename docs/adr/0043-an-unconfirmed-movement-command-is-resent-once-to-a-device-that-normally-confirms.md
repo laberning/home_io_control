@@ -5,7 +5,9 @@
 **Status:** Proposed · **Recorded:** 2026-09
 
 Amended by [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
-(the re-send gap is the total wait before the re-send).
+(the re-send gap is the total wait before the re-send) and by
+[ADR 0075](0075-commands-and-the-key-pull-take-the-attempt-plan-and-early-attempts-listen-short.md)
+(every other challenged request is capped at three attempts in all).
 
 ## Context
 

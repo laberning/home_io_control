@@ -432,20 +432,76 @@ inline uint8_t scheduled_poll_max_tries(uint8_t status_poll_failures, uint8_t au
 
 // == Attempt plan ==
 
-/// @brief What a read is for, which decides how its attempts are spent.
+/// @brief What a request is for, which decides how its attempts are spent.
 enum class ReadKind : uint8_t {
   PROGRESS,  ///< A look at a device that is probably still busy (a mid-travel poll): one attempt, the
              ///< backoff ladder is the retry.
   SETTLING,  ///< A read that decides where a device ended up: as many attempts as fit the budget.
-  COMMAND,   ///< A command or any other request not yet planned: today's few attempts with a gap.
+  COMMAND,   ///< A request that is harmless to repeat (is_repeat_safe_command()): to a mains device
+             ///< as many attempts as fit the budget, to a low-power one today's few with a gap.
 };
 
 /// @brief How one exchange spends its attempts. Handed to ExchangeEngine::send_and_receive().
 struct AttemptPlan {
   uint8_t max_attempts{EXCHANGE_RETRY_COUNT};  ///< Most transmissions of the request, `[1, EXCHANGE_MAX_ATTEMPTS]`.
   uint16_t gap_ms{EXCHANGE_RETRY_DELAY_MS};    ///< Wait before each attempt after the first; 0 for none.
-  uint16_t window_ms{RESPONSE_START_WAIT_MS};  ///< How long each attempt listens for the first reply.
+  uint16_t window_ms{RESPONSE_START_WAIT_MS};  ///< How long the last attempt listens for the first reply.
+  /// How long every attempt before the last listens; 0 means the same as @ref window_ms. A mains
+  /// target answers within tens of milliseconds or not at all, so the early attempts need not wait
+  /// the whole window: the last one does, to still catch a device that answers late.
+  uint16_t early_window_ms{0};
+
+  /// @param attempt  1-based number of the attempt about to listen.
+  /// @param attempts Attempts the exchange makes in all (the last one listens @ref window_ms).
+  /// @return How long that attempt listens for the first reply.
+  [[nodiscard]] uint16_t window_for_attempt(uint8_t attempt, uint8_t attempts) const {
+    return (attempt < attempts && early_window_ms != 0) ? early_window_ms : window_ms;
+  }
 };
+
+/// @brief The attempt budget rule: an attempt starts only if the whole attempt, up to the end of the
+/// last wait it can make, ends inside @p budget_ms.
+///
+/// Both the engine's guard (ExchangeEngine::try_fits_budget_()) and the plan that counts attempts
+/// (attempts_that_fit()) use it, so a plan never promises an attempt the guard would refuse for a
+/// target that stays silent. The attempt's overhead (EXCHANGE_ATTEMPT_OVERHEAD_MS) is counted here
+/// and nowhere else.
+///
+/// @param elapsed_ms   Time since the exchange began.
+/// @param gap_ms       Wait before the attempt is sent.
+/// @param tx_ms        The attempt's transmit time as the radio estimates it.
+/// @param window_ms    How long the attempt then listens for the first reply.
+/// @param auth_tail_ms The final-reply window a challenged attempt adds, 0 until the target has challenged.
+/// @param budget_ms    `exchange_total_budget_ms`.
+[[nodiscard]] inline bool attempt_fits(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms, uint32_t window_ms,
+                                       uint32_t auth_tail_ms, uint32_t budget_ms) {
+  return elapsed_ms + gap_ms + tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS + window_ms + auth_tail_ms < budget_ms;
+}
+
+/// @brief How many attempts to a silent target fit the budget when none waits a gap, capped at @p cap.
+///
+/// The first `n - 1` attempts listen @p early_window_ms and the last listens @p last_window_ms, and
+/// the last must still pass attempt_fits(), so n is the largest with
+/// `(n - 1) * (tx + overhead + early) + tx + overhead + last < budget`. At least one attempt: the
+/// first always runs. A zero budget is no limit the plan can honour (the engine's guard still
+/// applies), so it yields @p cap.
+///
+/// @param budget_ms        `exchange_total_budget_ms`.
+/// @param attempt_tx_ms    One attempt's transmit time as the radio estimates it.
+/// @param early_window_ms  Listen time of every attempt but the last.
+/// @param last_window_ms   Listen time of the last attempt.
+/// @param cap              Most attempts the caller allows.
+[[nodiscard]] inline uint8_t attempts_that_fit(uint32_t budget_ms, uint32_t attempt_tx_ms, uint32_t early_window_ms,
+                                               uint32_t last_window_ms, uint8_t cap) {
+  const uint32_t early_ms = attempt_tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS + early_window_ms;
+  const uint32_t last_ms = attempt_tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS + last_window_ms;
+  if (budget_ms == 0 || early_ms == 0)
+    return cap;
+  if (last_ms >= budget_ms)
+    return 1;
+  const uint32_t fitting = 1 + ((budget_ms - 1 - last_ms) / early_ms);
+  return static_cast<uint8_t>(std::max<uint32_t>(1, std::min<uint32_t>(fitting, cap)));
+}
 
 /// @brief The plan for a caller that names only a number of attempts: that many (at least one, at
 /// most EXCHANGE_RETRY_COUNT), the default gap, and @p window_ms.
@@ -458,43 +514,59 @@ struct AttemptPlan {
   return plan;
 }
 
-/// @brief The attempt plan for a read, from what it is for and who it asks.
+/// @brief The attempt plan for a request, from what it is for and who it asks.
 ///
-/// A settling read repeats without a gap: every attempt listens for the whole reply window from the
-/// end of its own transmission, so a silent attempt is already followed by the next one as soon as
-/// its window ends. How many fit is the budget divided by one attempt's transmission plus window,
-/// capped at EXCHANGE_MAX_ATTEMPTS for a mains device and LOW_POWER_SETTLING_ATTEMPTS for a
-/// low-power one (whose window is LOW_POWER_RESPONSE_WAIT_MS on every attempt). The same rule the
-/// engine's guard applies at run time, so a plan never promises an attempt the guard would refuse
-/// when the target stays silent. A challenged attempt costs more (the final reply window), so the
-/// guard can still stop a plan early.
+/// A settling read, and a repeat-safe command to a mains device, repeat without a gap: every attempt
+/// listens from the end of its own transmission, so a silent attempt is already followed by the next
+/// one as soon as its window ends. The attempts before the last listen only
+/// `exchange_early_response_wait_ms` (a mains device answers within tens of milliseconds or not at
+/// all) and the last listens the whole window, so how many fit is attempts_that_fit(), capped at
+/// EXCHANGE_MAX_ATTEMPTS. A settling read of a low-power device makes LOW_POWER_SETTLING_ATTEMPTS
+/// attempts of LOW_POWER_RESPONSE_WAIT_MS each. The same rule the engine's guard applies at run time,
+/// so a plan never promises an attempt the guard would refuse when the target stays silent. A
+/// challenged attempt costs more (the final reply window), so the guard can still stop a plan early.
 ///
-/// PROGRESS and COMMAND keep today's shapes: one attempt, and EXCHANGE_RETRY_COUNT attempts with the
-/// default gap, both with the tuned start window.
+/// PROGRESS and a COMMAND to a low-power device keep today's shapes: one attempt, and
+/// EXCHANGE_RETRY_COUNT attempts with the default gap, both with the tuned start window.
 ///
-/// @param kind           What the read is for.
+/// @param kind           What the request is for.
 /// @param low_power      The target is a low-power receiver (YAML `low_power`, CTRL1 low-power bit).
-/// @param tuning         Reply window and exchange budget.
+/// @param tuning         Reply windows and exchange budget.
 /// @param attempt_tx_ms  One attempt's transmit time as the radio estimates it (long wake-up
-///                       preamble for a low-power target); only a settling read uses it.
+///                       preamble for a low-power target); only a gapless plan uses it.
+/// @param last_window_ms Listen time of the last attempt of a mains target, or of every attempt of a
+///                       gapped plan; 0 for the tuned start window.
 [[nodiscard]] inline AttemptPlan attempt_plan(ReadKind kind, bool low_power, const TuningConfig &tuning,
-                                              uint32_t attempt_tx_ms) {
+                                              uint32_t attempt_tx_ms, uint16_t last_window_ms = 0) {
   AttemptPlan plan =
       attempt_plan_for_tries(kind == ReadKind::PROGRESS ? SCHEDULED_POLL_MAX_TRIES : EXCHANGE_RETRY_COUNT,
-                             tuning.exchange_start_response_wait_ms);
-  if (kind != ReadKind::SETTLING)
+                             last_window_ms != 0 ? last_window_ms : tuning.exchange_start_response_wait_ms);
+  if (kind == ReadKind::PROGRESS || (kind == ReadKind::COMMAND && low_power))
     return plan;
   plan.gap_ms = 0;
-  if (low_power)
+  if (low_power) {
     plan.window_ms = LOW_POWER_RESPONSE_WAIT_MS;
-  const uint8_t cap = low_power ? LOW_POWER_SETTLING_ATTEMPTS : EXCHANGE_MAX_ATTEMPTS;
-  const uint32_t attempt_ms = attempt_tx_ms + plan.window_ms;
-  // An attempt starts only while the budget is not reached (ExchangeEngine::try_fits_budget_()), so
-  // n silent attempts need n * attempt_ms < budget.
-  const uint32_t budget_ms = tuning.exchange_total_budget_ms;
-  const uint32_t fitting = (attempt_ms == 0 || budget_ms == 0) ? cap : (budget_ms - 1) / attempt_ms;
-  plan.max_attempts = static_cast<uint8_t>(std::max<uint32_t>(1, std::min<uint32_t>(fitting, cap)));
+    plan.max_attempts = attempts_that_fit(tuning.exchange_total_budget_ms, attempt_tx_ms, plan.window_ms,
+                                          plan.window_ms, LOW_POWER_SETTLING_ATTEMPTS);
+    return plan;
+  }
+  plan.early_window_ms = std::min(tuning.exchange_early_response_wait_ms, plan.window_ms);
+  plan.max_attempts = attempts_that_fit(tuning.exchange_total_budget_ms, attempt_tx_ms, plan.early_window_ms,
+                                        plan.window_ms, EXCHANGE_MAX_ATTEMPTS);
   return plan;
+}
+
+/// @brief Whether a request may be sent again to a device that said nothing, without a second action.
+///
+/// A device that hears a request acts on it and answers; silence therefore means it did not hear,
+/// or its reply was lost. For a request whose copies have one effect (an absolute position, open,
+/// close, STOP, a read) repeating it is harmless either way. CMD_EXECUTE with POS_FAVORITE is not
+/// (is_repeatable_execute()): on a Somfy motor it stops a moving cover, so a second copy can undo
+/// the first. Every request the hub sends that is not a CMD_EXECUTE is idempotent.
+///
+/// @param request Outbound request frame.
+[[nodiscard]] inline bool is_repeat_safe_command(const IoFrame &request) {
+  return request.cmd != CMD_EXECUTE || is_repeatable_execute(request);
 }
 
 /// @brief What a cover's status poll is for, from where it sits and what it settles.

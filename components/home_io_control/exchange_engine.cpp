@@ -228,7 +228,14 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
   return true;
 }
 
-uint32_t ExchangeEngine::tx_time_ms_(const IoFrame &frame, uint32_t freq, uint16_t preamble) const {
+uint32_t ExchangeEngine::final_reply_tail_ms_(const IoFrame &request, uint32_t freq) const {
+  // The 0x3D answer is not built before the guard runs, so the request stands in for its size (a
+  // 0x3D is no longer than a request); the overhead covers the answer's channel check and SPI.
+  return this->tuning_->exchange_response_wait_ms +
+         this->tx_time_ms(request, freq, (*this->radio_ptr_)->response_preamble()) + EXCHANGE_ATTEMPT_OVERHEAD_MS;
+}
+
+uint32_t ExchangeEngine::tx_time_ms(const IoFrame &frame, uint32_t freq, uint16_t preamble) const {
   uint8_t buf[FRAME_MAX_WIRE_SIZE];
   uint8_t const len = serialize(frame, buf, sizeof(buf));
   if (len == 0)
@@ -239,14 +246,20 @@ uint32_t ExchangeEngine::tx_time_ms_(const IoFrame &frame, uint32_t freq, uint16
 
 decisions::AttemptPlan ExchangeEngine::plan_read(decisions::ReadKind kind, const IoFrame &request,
                                                  uint32_t freq) const {
-  const bool low_power = (request.ctrl1 & CTRL1_LOW_POWER) != 0;
-  return decisions::attempt_plan(kind, low_power, *this->tuning_,
-                                 this->tx_time_ms_(request, freq, this->request_preamble_for(request)));
+  return this->plan_attempts(kind, (request.ctrl1 & CTRL1_LOW_POWER) != 0, request, freq,
+                             this->request_preamble_for(request));
+}
+
+decisions::AttemptPlan ExchangeEngine::plan_attempts(decisions::ReadKind kind, bool low_power, const IoFrame &request,
+                                                     uint32_t freq, uint16_t preamble, uint16_t last_window_ms) const {
+  return decisions::attempt_plan(kind, low_power, *this->tuning_, this->tx_time_ms(request, freq, preamble),
+                                 last_window_ms);
 }
 
 bool ExchangeEngine::try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms, uint32_t window_ms,
                                       uint32_t auth_tail_ms) const {
-  return elapsed_ms + gap_ms + tx_ms + window_ms + auth_tail_ms < this->tuning_->exchange_total_budget_ms;
+  return decisions::attempt_fits(elapsed_ms, gap_ms, tx_ms, window_ms, auth_tail_ms,
+                                 this->tuning_->exchange_total_budget_ms);
 }
 
 // ============================================================================
@@ -405,7 +418,10 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   for (uint8_t tries = 0; tries < tries_allowed; tries++) {
     exchange::OutboundExchangeContext context;
     context.try_index = tries + 1;
-    context.wait_ms = plan.window_ms;
+    // Every attempt but the last listens the early window; the last (and a re-send, which is always
+    // the last) the whole one.
+    const uint16_t window_ms = plan.window_for_attempt(context.try_index, tries_allowed);
+    context.wait_ms = window_ms;
     context.state = exchange::OutboundExchangeState::TX_REQUEST;
 
     if (tries > 0) {
@@ -414,8 +430,8 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       // final-reply window. See EXCHANGE_TOTAL_BUDGET_MS -- this is what keeps a failing command
       // from blocking the ESPHome loop for the full attempts x (transmission + window) product.
       if (!this->try_fits_budget_(millis() - exchange_begin_ms, plan.gap_ms,
-                                  this->tx_time_ms_(request, freq, preamble_plan.for_try(context.try_index)),
-                                  plan.window_ms, auth_tail_ms)) {
+                                  this->tx_time_ms(request, freq, preamble_plan.for_try(context.try_index)), window_ms,
+                                  auth_tail_ms)) {
         this->record_debug("retry_budget_exhausted", tries, false);
         ESP_LOGI(TAG, "Exchange budget exhausted after %u tries for cmd=%s(0x%02X) (%" PRIu32 " of %u ms)", tries,
                  command_name(request.cmd), request.cmd, millis() - exchange_begin_ms,
@@ -455,7 +471,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       return ExchangeOutcome::SUCCESS_WITH_RESPONSE;
     }
 
-    auth_tail_ms = this->tuning_->exchange_response_wait_ms;
+    auth_tail_ms = this->final_reply_tail_ms_(request, freq);
     if (!this->handle_authentication_(request, freq, context))
       continue;
 
@@ -480,7 +496,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       unconfirmed_tries++;
       const uint8_t further_tries = this->tries_after_unconfirmed_(
           request, unconfirmed_tries, context.try_index, static_cast<uint8_t>(tries_allowed - context.try_index),
-          millis() - exchange_begin_ms, this->tx_time_ms_(request, freq, preamble_plan.for_try(context.try_index + 1)),
+          millis() - exchange_begin_ms, this->tx_time_ms(request, freq, preamble_plan.for_try(context.try_index + 1)),
           plan);
       if (further_tries == 0)
         return ExchangeOutcome::SUCCESS_UNCONFIRMED;
@@ -714,8 +730,11 @@ uint8_t ExchangeEngine::tries_after_unconfirmed_(const IoFrame &request, uint8_t
   // gap (nothing moves), and it is also the last copy: no ordinary failure retry after it.
   if (request.cmd == CMD_SUBSCRIBE_EVENT)
     return UNCONFIRMED_SUBSCRIBE_MAX_RESENDS;
+  // Any other request is repeated, but never into more copies than EXCHANGE_RETRY_COUNT in all, a
+  // plan's larger attempt count notwithstanding: the target has heard this request, so more copies
+  // than that would only repeat a write it already holds.
   if (request.cmd != CMD_EXECUTE)
-    return plan.max_attempts;  // no cap of its own: the exchange's attempt count and budget bound it
+    return static_cast<uint8_t>(EXCHANGE_RETRY_COUNT - std::min<uint8_t>(try_index, EXCHANGE_RETRY_COUNT));
   // A re-send that could not finish its transmission and first-reply window inside the exchange
   // budget is not worth waiting for. Its final-reply window is left out: the re-send is the last
   // copy, and what a silent final wait costs is already the unconfirmed outcome this path ends in.

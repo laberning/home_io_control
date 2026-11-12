@@ -388,7 +388,12 @@ bool IOHomeControlComponent::try_execute_operation_(const std::string &device_id
     this->poll_policy_.clear(device_id);
     return false;
   }
-  if (!this->execute_request_and_update_(device_id, request, true, 0)) {
+  // A command whose copies have one effect takes the command plan (as many attempts as fit the
+  // budget to a mains device); a stored-position or toggle-like command keeps today's three.
+  const decisions::AttemptRequest attempts = decisions::is_repeat_safe_command(request)
+                                                 ? decisions::AttemptRequest::of_kind(decisions::ReadKind::COMMAND)
+                                                 : decisions::AttemptRequest{};
+  if (!this->execute_request_and_update_(device_id, request, true, 0, attempts)) {
     this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
     return false;
   }

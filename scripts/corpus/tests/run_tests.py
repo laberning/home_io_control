@@ -821,6 +821,7 @@ def test_reply_latency_pairs_low_power_tx_requests_with_their_replies() -> None:
     assert reply_latency_module.percentile([10, 20, 30, 40], 0.5) == 20
     assert reply_latency_module.percentile([10, 20, 30, 40], 1.0) == 40
     assert reply_latency_module.latencies_in_capture([{"dir": "tx", "hex": request}]) == [], "no stamp, no sample"
+    assert reply_latency_module.latencies_in_capture(frames, low_power=False) == [100], "mains: the plain request"
 
 
 TESTS = [

@@ -139,6 +139,7 @@ your device may differ.
 | `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `sx1262_discovery_hop_slice_ms` | SX1262 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `exchange_start_response_wait_ms` | both | `400` | 200–4000 ms | How long to listen for a reply to a *start* frame (the first frame of a command). |
+| `exchange_early_response_wait_ms` | both | `200` | 150–1000 ms | How long every attempt but the last listens when a mains device is asked more than once. The last attempt listens `exchange_start_response_wait_ms`. |
 | `exchange_response_wait_ms` | both | `500` | 200–4000 ms | How long to listen for a reply to a continuation frame, and for the post-auth final response. |
 | `exchange_total_budget_ms` | both | `2500` | 500–12000 ms | Wall-clock ceiling on one whole exchange, including retries. |
 | `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). `117.3` is validated on real LR1121 hardware. |
@@ -242,8 +243,29 @@ confirmed genuinely answers late.
 Every millisecond here is loop-blocking time on a *failed* exchange only (a successful one returns
 as soon as the reply lands, see
 [ADR 0013](../adr/0013-blocking-exchange-on-the-esphome-loop.md)), and a
-failure costs this window once per retry. Raise it for a stubborn device; lower it if slow failures
-are worse for you than missed commands.
+failure costs this window once per retry (once per request for a mains device whose earlier
+attempts listen [`exchange_early_response_wait_ms`](#exchange_early_response_wait_ms)). Raise it for
+a stubborn device; lower it if slow failures are worse for you than missed commands.
+
+#### `exchange_early_response_wait_ms`
+
+A mains-powered device answers within tens of milliseconds or not at all, so a command or a status
+read that gets no answer does not need to wait the whole `exchange_start_response_wait_ms` before it
+is sent again. The hub sends such a request again without a gap: every attempt but the last listens
+`exchange_early_response_wait_ms`, and the last listens the whole start window, so a device that
+answers late still gets one full-length listen. With the defaults that is up to nine attempts about
+220 ms apart, ending about 2.2 s after the first if none is answered. A `low_power` device keeps one
+window on every attempt, and a stored-position command (favourite, vent) is sent as before, three
+attempts with a gap, because a second copy can stop what the first started
+([ADR 0075](../adr/0075-commands-and-the-key-pull-take-the-attempt-plan-and-early-attempts-listen-short.md)).
+
+*Observations:* of the 52 start requests in the project's corpus that went to a device not declared
+`low_power`, 47 were answered within 98 ms (median 66 ms). On the bench, an Izymo dimmer answered
+36 to 42 ms after the start of the hub's transmission and a Sunea awning answered its status reads
+within 33 to 49 ms. `200` is twice the slowest of the corpus replies.
+Raise it for a mains device whose `wait_ms` in the `Try N answered` log line exceeds it; fewer attempts
+fit the budget the higher it goes, and a value above `exchange_start_response_wait_ms` has the same
+effect as that value.
 
 #### `exchange_total_budget_ms`
 
@@ -252,17 +274,22 @@ Wall-clock ceiling on one whole exchange, including retries. `exchange_start_res
 may run, so a try only starts if it can finish inside the budget. The time already spent, the gap
 before the try, the try's own transmission (about 220 ms with a 1024-byte wake-up preamble,
 [ADR 0044](../adr/0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)), the
-window the try then listens, and, when the device has already challenged in this exchange, the wait
-for its final reply must together stay below it ([ADR 0073](../adr/0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)).
+window the try then listens (about 10 ms of channel check and hop around each transmit are counted too),
+and, when the device has already challenged in this exchange, the wait for its final reply and the
+answer to its challenge must together stay below it ([ADR 0073](../adr/0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md),
+[ADR 0075](../adr/0075-commands-and-the-key-pull-take-the-attempt-plan-and-early-attempts-listen-short.md)).
 That last part matters for a low-power device that challenges: two tries use the default budget, so
 a third is not started.
 
 The budget also sets how often a status read that decides where a cover ended up is repeated: the
 poll after a `stop`, the poll that confirms a cover that stopped short of its target, the polls
 about 5, 15 and 30 seconds after a miss, and a one-off or refresh read. Such a read repeats without
-a gap, as many times as fit (six for a mains-powered cover at the default budget, never more than
-nine; three for a `low_power` device). If every one of them is lost, the read blocks the hub for
-nearly the whole budget, and a `stop` pressed meanwhile waits behind it. The reads during a move
+a gap, as many times as fit (nine for a mains-powered cover at the default budget, never more than
+nine; three for a `low_power` device), the early attempts listening
+[`exchange_early_response_wait_ms`](#exchange_early_response_wait_ms). A command that is harmless to
+repeat (a position, open, close, `stop`) is sent again the same way to a mains-powered device. If
+every attempt is lost, the request blocks the hub for up to about 2.2 s, and a `stop` pressed
+meanwhile waits behind a read. The reads during a move
 stay single tries, so a `stop` pressed mid-move is not held up. See
 [ADR 0074](../adr/0074-settling-reads-take-the-attempt-plan-and-progress-reads-stay-single-tries.md).
 
@@ -452,7 +479,7 @@ the device was believed moving (other than a `stop`) draws no frame at all; the 
 leads with the wake-up preamble. A status poll that only looks at a cover that is probably still moving (most scheduled polls) makes
 one try and sends the first try's preamble; if it misses, the next poll a few seconds later is a
 read that decides where the cover ended up, and repeats as often as the exchange budget allows
-(three times for a `low_power` device). So does the poll right after an accepted `stop`, the poll
+(three times for a `low_power` device, up to nine for a mains-powered one). So does the poll right after an accepted `stop`, the poll
 that confirms a cover that stopped short of its target, and a one-off or refresh read. Devices not declared `low_power:` are unaffected, and the frame
 itself never changes between tries. A mains-powered VELUX receiver that is always listening rejects the wake-up preamble, so declare it `low_power: false`.
 
@@ -714,9 +741,12 @@ direction with `push` or `pull` when `auto` guesses wrong.
 `push` is the normal pairing: the hub sends its own key to the device, and the device confirms it.
 
 `pull` asks the device for its own key instead. The hub sends a key request (0x38), the device
-answers with its key, and the hub then challenges the device to prove that it holds that key. An
-Atlantic AGILIA IO radiator in its display's pairing mode answers discovery as a remote controller
-and refuses a pushed key with `COMMAND_UNKNOWN`, so `auto` pulls it (issue #165).
+answers with its key, and the hub then challenges the device to prove that it holds that key. A key
+request that draws no answer is sent again, without a gap and up to nine times in all for a
+mains-powered device, three times with a gap for a `low_power` one, within
+[`exchange_total_budget_ms`](#exchange_total_budget_ms). An Atlantic AGILIA IO radiator in its
+display's pairing mode answers discovery as a remote controller and refuses a pushed key with
+`COMMAND_UNKNOWN`, so `auto` pulls it (issue #165).
 
 The device's answer to the challenge is a 6-byte code, and only the right key produces it, so a
 match proves the key. The hub challenges up to three times while no answer comes back; an answer

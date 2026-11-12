@@ -5,7 +5,10 @@
 **Status:** Accepted · **Recorded:** 2026-11
 
 Amended by [ADR 0074](0074-settling-reads-take-the-attempt-plan-and-progress-reads-stay-single-tries.md)
-(which reads take the plan: settling reads do, progress reads stay single tries).
+(which reads take the plan: settling reads do, progress reads stay single tries) and by
+[ADR 0075](0075-commands-and-the-key-pull-take-the-attempt-plan-and-early-attempts-listen-short.md)
+(commands and the key pull take it; early attempts to a mains device listen short; every attempt costs
+a measured overhead).
 
 Amends [ADR 0013](0013-blocking-exchange-on-the-esphome-loop.md) (the budget arithmetic: what an
 attempt costs), [ADR 0043](0043-an-unconfirmed-movement-command-is-resent-once-to-a-device-that-normally-confirms.md)

@@ -319,6 +319,13 @@ struct TuningConfig {
   // RESPONSE_START_WAIT_MS for the measurements behind the defaults.
   uint16_t exchange_start_response_wait_ms{
       RESPONSE_START_WAIT_MS};  ///< Reply window for a start frame (wakes a sleeping device).
+  /// Reply window of every attempt before the last when a mains target is asked more than once
+  /// (decisions::attempt_plan()); the last attempt listens `exchange_start_response_wait_ms`. A mains
+  /// device answers within tens of milliseconds or not at all, so a shorter early listen fits more
+  /// attempts into `exchange_total_budget_ms` (nine at the default). The default rests on corpus
+  /// reply latencies and bench measurements, see EXCHANGE_EARLY_RESPONSE_WAIT_MS. A value above the
+  /// start window is capped to it.
+  uint16_t exchange_early_response_wait_ms{EXCHANGE_EARLY_RESPONSE_WAIT_MS};
   uint16_t exchange_response_wait_ms{
       RESPONSE_WAIT_MS};  ///< Reply window for continuation frames and the post-auth final response.
   uint16_t exchange_total_budget_ms{EXCHANGE_TOTAL_BUDGET_MS};  ///< Ceiling on one whole exchange, retries included.

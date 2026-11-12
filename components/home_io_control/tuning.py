@@ -40,6 +40,7 @@ CONF_LBT_RSSI_THRESHOLD_DBM = "lbt_rssi_threshold_dbm"
 CONF_LOW_POWER_WAKE_BELIEF = "low_power_wake_belief"
 CONF_LOW_POWER_WAKE_PREAMBLE = "low_power_wake_preamble"
 CONF_EXCHANGE_START_RESPONSE_WAIT_MS = "exchange_start_response_wait_ms"
+CONF_EXCHANGE_EARLY_RESPONSE_WAIT_MS = "exchange_early_response_wait_ms"
 CONF_EXCHANGE_RESPONSE_WAIT_MS = "exchange_response_wait_ms"
 CONF_EXCHANGE_TOTAL_BUDGET_MS = "exchange_total_budget_ms"
 
@@ -235,6 +236,7 @@ UI_NAMES = {
     CONF_LOW_POWER_WAKE_BELIEF: "Radio Low Power Wake Belief",
     CONF_LOW_POWER_WAKE_PREAMBLE: "Radio Low Power Wake Preamble",
     CONF_EXCHANGE_START_RESPONSE_WAIT_MS: "Exchange Start Response Wait",
+    CONF_EXCHANGE_EARLY_RESPONSE_WAIT_MS: "Exchange Early Response Wait",
     CONF_EXCHANGE_RESPONSE_WAIT_MS: "Exchange Response Wait",
     CONF_EXCHANGE_TOTAL_BUDGET_MS: "Exchange Total Budget",
     CONF_PAIRING_DISCOVERY_COMMANDS: "Pairing Discovery Commands",
@@ -308,6 +310,12 @@ _NUMBER_PARAMS = {
     # the radio: measured RS100 solar reply latencies reach ~3 s (see RESPONSE_START_WAIT_MS).
     # Every millisecond here is loop-blocking time on a *failed* exchange only (ADR 0013).
     CONF_EXCHANGE_START_RESPONSE_WAIT_MS: (200, 4000, 50, "ms"),
+    # Listen time of every attempt but the last when a mains device is asked more than once. A
+    # mains device answers within ~100 ms or not at all (corpus replies; bench replies 33-49 ms), so
+    # the floor 150 keeps a margin over the slowest of them; the default (200) is the largest value
+    # at which nine attempts still fit the default budget (EXCHANGE_EARLY_RESPONSE_WAIT_MS). Ceiling
+    # 1000: above the start window it has no effect, and fewer attempts fit the higher it goes.
+    CONF_EXCHANGE_EARLY_RESPONSE_WAIT_MS: (150, 1000, 50, "ms"),
     CONF_EXCHANGE_RESPONSE_WAIT_MS: (200, 4000, 50, "ms"),
     # Ceiling on a whole exchange. Every millisecond over ~2550 blocks the ESPHome loop past its
     # own warning threshold, so raise this only when persistence matters more than responsiveness.

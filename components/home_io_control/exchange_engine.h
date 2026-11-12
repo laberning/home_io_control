@@ -117,12 +117,28 @@ class ExchangeEngine {
   /// @param response As for the `max_tries` overload.
   /// @param freq     As for the `max_tries` overload.
   /// @param plan Attempt count (clamped to [1, EXCHANGE_MAX_ATTEMPTS]), gap before each further
-  ///        attempt, and first-reply window of every attempt. An attempt that cannot finish inside
-  ///        `exchange_total_budget_ms` is not started whatever the plan says (try_fits_budget_()).
+  ///        attempt, and first-reply window (the early attempts' and the last one's). An attempt that cannot finish
+  ///        inside `exchange_total_budget_ms` is not started whatever the plan says (try_fits_budget_()).
   /// @param request_preamble_override As for the `max_tries` overload.
   /// @return As for the `max_tries` overload.
   ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
                                    const decisions::AttemptPlan &plan, uint16_t request_preamble_override = 0);
+
+  /// The radio's estimate of how long transmitting `frame` on `freq` with `preamble` takes, in
+  /// whole milliseconds rounded up; 0 for a frame that does not serialize (it is never sent).
+  [[nodiscard]] uint32_t tx_time_ms(const IoFrame &frame, uint32_t freq, uint16_t preamble) const;
+
+  /// The attempt plan for a request sent with an explicit preamble, for a loop that runs its own
+  /// attempts (the key pull) under the same budget rule as send_and_receive().
+  /// @param kind           What the request is for.
+  /// @param low_power      The target is a low-power receiver.
+  /// @param request        The request that will be sent (its size sets the transmit estimate).
+  /// @param freq           RF channel the request goes out on (Hz).
+  /// @param preamble       Preamble the request is sent with, in bytes.
+  /// @param last_window_ms Listen time of the last attempt, or 0 for `exchange_start_response_wait_ms`.
+  [[nodiscard]] decisions::AttemptPlan plan_attempts(decisions::ReadKind kind, bool low_power, const IoFrame &request,
+                                                     uint32_t freq, uint16_t preamble,
+                                                     uint16_t last_window_ms = 0) const;
 
   /// The attempt plan for a read of @p request's target, with the transmit time this engine would
   /// plan for the request: the radio's air-time estimate for the request's start preamble
@@ -528,18 +544,21 @@ class ExchangeEngine {
 
   // --- Transmission shape and the exchange budget ---------------------------
 
-  /// The radio's estimate of how long transmitting `frame` on `freq` with `preamble` takes, in
-  /// whole milliseconds rounded up; 0 for a frame that does not serialize (it is never sent).
-  [[nodiscard]] uint32_t tx_time_ms_(const IoFrame &frame, uint32_t freq, uint16_t preamble) const;
+  /// What a challenged try adds to the budget guard once the target has challenged: the final-reply
+  /// window, the 0x3D answer's own air time and its overhead. Counted for every later try of the
+  /// exchange (a silent target never adds it).
+  /// @param request The request being exchanged (stands in for the 0x3D's size).
+  /// @param freq    RF channel (Hz).
+  [[nodiscard]] uint32_t final_reply_tail_ms_(const IoFrame &request, uint32_t freq) const;
 
   /// The exchange budget rule: a try starts only if the whole try, up to the end of the last wait it
   /// can make, ends inside the budget.
   /// @param elapsed_ms   Time since the exchange began.
   /// @param gap_ms       Wait before the try is sent.
-  /// @param tx_ms        The try's transmit time (tx_time_ms_()).
+  /// @param tx_ms        The try's transmit time (tx_time_ms()).
   /// @param window_ms    How long the try then listens for the first reply.
-  /// @param auth_tail_ms The final-reply window a challenged try adds: `exchange_response_wait_ms`
-  ///                     once the target has challenged in this exchange, otherwise 0.
+  /// @param auth_tail_ms What a challenged try adds (final_reply_tail_ms_()) once the target has
+  ///                     challenged in this exchange, otherwise 0.
   [[nodiscard]] bool try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms, uint32_t window_ms,
                                       uint32_t auth_tail_ms) const;
 
@@ -574,13 +593,12 @@ class ExchangeEngine {
   ///                          reply window would not end inside the exchange budget is not attempted
   ///                          (try_fits_budget_()). The re-send is the last copy, so its final-reply
   ///                          window is not counted.
-  /// @param plan              The exchange's attempt plan: its gap is part of the re-send wait, its
-  ///                          window is the re-send's, its attempt count is the cap for any other
-  ///                          request.
+  /// @param plan              The exchange's attempt plan: its gap is part of the re-send wait and
+  ///                          its (full) window is the re-send's.
   /// @return 0 to end the exchange now; UNCONFIRMED_EXECUTE_MAX_RESENDS for a CMD_EXECUTE that is
   ///         re-sent and UNCONFIRMED_SUBSCRIBE_MAX_RESENDS for a CMD_SUBSCRIBE_EVENT, either of which
-  ///         also caps the ordinary failure retries after it; the plan's attempt count
-  ///         (no cap beyond the exchange's own) for any other request.
+  ///         also caps the ordinary failure retries after it; for any other request the tries that
+  ///         bring the exchange to EXCHANGE_RETRY_COUNT in all, whatever the plan's attempt count.
   uint8_t tries_after_unconfirmed_(const IoFrame &request, uint8_t unconfirmed_tries, uint8_t try_index,
                                    uint8_t tries_left, uint32_t elapsed_ms, uint32_t next_tx_ms,
                                    const decisions::AttemptPlan &plan);

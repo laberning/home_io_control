@@ -222,7 +222,7 @@ What to expect:
 - **The interval varies by up to 10 %** from refresh to refresh, so covers that reported together,
   after a group command or at boot, do not stay in step.
 - **A refresh is a background read.** It waits for commands and 1W activity, and pairing drops it.
-  A read that gets no answer is sent again as often as `exchange_total_budget_ms` allows (up to six
+  A read that gets no answer is sent again as often as `exchange_total_budget_ms` allows (up to nine
   times in all to a mains-powered cover, three times to a `low_power` one), counts in the cover's
   Exchange Failures like any other unanswered request, and is tried again one interval later.
 - **`status_poll_interval` sets the cadence while the cover moves**; the two keys work
