@@ -139,6 +139,18 @@ TEST(HubCore, SetupNamesTheRadioTypeWhenNoDriverCanBeBuilt) {
   EXPECT_NE(comp.radio_failure_reason_.find("not_a_chip"), std::string::npos) << comp.radio_failure_reason_;
 }
 
+TEST(HubCore, SetupRaisesTheBlockingWarningPastAWholeExchange) {
+  // ESPHome keeps warn_if_blocking_over_ in centiseconds: 250 means 2.5 s, not 250 ms. The threshold
+  // has to cover one whole exchange, or every failing command would log a blocking warning.
+  TestableHubComponent comp;
+  configure_hub_for_setup(comp, "not_a_chip");
+
+  comp.setup();
+
+  EXPECT_EQ(comp.warn_if_blocking_over_, 250u) << "2.5 s in centiseconds";
+  EXPECT_GE(comp.warn_if_blocking_over_ * 10u, esphome::home_io_control::EXCHANGE_TOTAL_BUDGET_MS);
+}
+
 TEST(HubCore, SetupReportsAMissingRequiredPinAsNoDriver) {
   TestableHubComponent comp;
   configure_hub_for_setup(comp, "sx1276");  // no dio0_pin configured

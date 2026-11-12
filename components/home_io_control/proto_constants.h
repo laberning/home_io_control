@@ -571,9 +571,8 @@ static constexpr uint8_t POS_VENT_MODIFIER = 0x03;
 static constexpr uint8_t POS_PEDESTRIAN_MODIFIER = 0x07;
 
 /// @brief Modifier byte for the partial-position command (POS_FAVORITE main byte, as for ventilation).
-/// Sent by the Partial Position button on garage openers.
-/// \todo Confirm on a real garage opener that main=0xD8, modifier=0x09 opens it to a partial position
-///       (experimental).
+/// Sent by the Partial Position button on garage openers, which run their stored partial position
+/// (issue #163).
 static constexpr uint8_t POS_PARTIAL_MODIFIER = 0x09;
 
 /// @brief Scale factor between a 0-100 percent position and its CMD_EXECUTE main-byte wire value.

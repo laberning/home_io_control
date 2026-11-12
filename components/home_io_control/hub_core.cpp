@@ -35,8 +35,11 @@ namespace {
 /// Room for "3FF" and the terminator: an enrollment class is a ten-bit node type.
 constexpr size_t ENROLLMENT_CLASS_HEX_BUFFER_SIZE = 8;
 
-constexpr uint32_t BLOCKING_WARNING_THRESHOLD_MS =
-    250;  ///< setup() and exchanges can legitimately block longer than generic ESPHome components.
+/// ESPHome's blocking-warning threshold for this component, in the unit of
+/// Component::warn_if_blocking_over_: centiseconds in a uint8_t. 250 cs = 2.5 s, the exchange
+/// budget (EXCHANGE_TOTAL_BUDGET_MS): a normal exchange blocks for a few hundred milliseconds and
+/// setup() for the radio init, so only a block longer than a whole exchange is worth a warning.
+constexpr uint8_t BLOCKING_WARNING_THRESHOLD_CS = 250;
 
 /// Random number for the periodic polls' jitter. ESPHome's random_uint32() on firmware, a settable
 /// value in host tests.
@@ -68,13 +71,12 @@ static const char *const TAG = detail::TAG;
 ///   5. Call radio_->init() which performs chip reset, calibration, and register configuration.
 ///   6. Enter normal loop() operation with radio in RX mode.
 ///
-/// @note Blocking operations in setup() temporarily raise the ESPHome WDT threshold
-///       to 250 ms (warn_if_blocking_over_) because radio init can
-///       exceed the default 30–50 ms budget.
+/// @note setup() raises ESPHome's blocking-warning threshold (warn_if_blocking_over_) for this
+///       component to 2.5 s, because radio init and every exchange exceed the default 30–50 ms.
 void IOHomeControlComponent::setup() {
   // IO-homecontrol exchanges are intentionally blocking and often take a few hundred
-  // milliseconds, so use a higher warning threshold than ESPHome's generic 30-50 ms.
-  this->warn_if_blocking_over_ = BLOCKING_WARNING_THRESHOLD_MS;
+  // milliseconds, so warn only past a whole exchange budget (the field is in centiseconds).
+  this->warn_if_blocking_over_ = BLOCKING_WARNING_THRESHOLD_CS;
 #ifdef IOHOME_UNSAFE_LOG_KEY_MATERIAL
   // Loud, unconditional, every-boot warning so a build left with this flag on by accident can
   // never stay quiet about it — see log_frame.h::render_frame_hex_redacted() for the full

@@ -80,7 +80,7 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 ///   - FAVORITE:   main=0xD8, modifier=0x00
 ///   - VENT:       main=0xD8, modifier=0x03
 ///   - PEDESTRIAN: main=0xD8, modifier=0x07 (experimental, gate openers)
-///   - PARTIAL:    main=0xD8, modifier=0x09 (experimental, garage openers)
+///   - PARTIAL:    main=0xD8, modifier=0x09 (garage openers)
 ///
 /// This cleanly separates "move to position X" from "execute named action"
 /// without overloading a single numeric parameter.

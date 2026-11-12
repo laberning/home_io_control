@@ -72,8 +72,8 @@ constexpr DeviceFeatures WINDOW = COVER | VENT;
 /// garage opener of issue #163 refuses the favourite alias with PARAMETER_UNKNOWN (corpus capture
 /// wisniowski_moto1000_exchange_execute_parameter_unknown); that rests on one device of this type,
 /// so it is applied to the whole family.
-/// It also carries PARTIAL, the Partial Position button (0xD809).
-/// \todo Confirm on a real garage opener that 0xD809 opens it to a partial position (experimental).
+/// It also carries PARTIAL, the Partial Position button (0xD809), which runs the opener's stored
+/// partial position (confirmed on the issue #163 opener).
 constexpr DeviceFeatures GARAGE = device_feature::MAIN_PARAMETER_ONLY | LEVELS | PARTIAL;
 /// Gate opener: a positionable cover that also carries PEDESTRIAN, the Pedestrian Position button
 /// (0xD807).

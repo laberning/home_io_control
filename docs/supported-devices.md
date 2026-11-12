@@ -176,7 +176,7 @@ device are marked experimental; declaring one in YAML logs a warning when the co
 | `0x02` | roller shutter | 1 with adjustable slats, 2 with projection | Cover |
 | `0x03` | vertical exterior awning | | Cover |
 | `0x04` | window opener | 1 with integrated rain sensor | Cover, with a ventilation position |
-| `0x05` | garage opener | 58 open/close only | Cover: percent positions on subtype 0, open / close / stop only on subtype 58; no favorite position (issue #163); Partial Position button (experimental) |
+| `0x05` | garage opener | 58 open/close only | Cover: percent positions on subtype 0, open / close / stop only on subtype 58; no favorite position (issue #163); Partial Position button |
 | `0x06` | light | 1 dimmable RGB (experimental), 2 tunable white (experimental), 58 on/off only | Light; subtypes 1 and 2 control brightness only (experimental) |
 | `0x07` | gate opener | 58 open/close only (experimental) | Cover; subtype 58 shows open / close / stop only (experimental); Pedestrian Position button (experimental) |
 | `0x08` | rolling door opener | | Cover |

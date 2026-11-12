@@ -73,7 +73,7 @@ Beyond the diagnostic companions every platform generates, covers add up to elev
   to `window_opener` or `ventilation_point`. It moves the actuator to a predefined partially-open
   position suitable for air exchange.
 - **`<Cover Name> Partial Position`** (garage openers) and **`<Cover Name> Pedestrian Position`**
-  (gate openers) — experimental buttons, disabled by default: enable them in Home Assistant before
+  (gate openers, experimental) — buttons disabled by default: enable them in Home Assistant before
   you use them. See [Partial and pedestrian position buttons](cover.md#partial-and-pedestrian-position-buttons).
 - **`<Cover Name> Silent Operation`** — a switch, generated only when the deprecated `silent:` is
   declared.

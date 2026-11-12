@@ -801,7 +801,7 @@ class IOHomeControlComponent : public Component,
   /// @param position Desired position (0–100).
   virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
   /// @brief Queue an async named command (STOP, FAVORITE, VENT, PARTIAL, PEDESTRIAN, FORCE_OPEN);
-  /// returns immediately, executed in loop(). PARTIAL and PEDESTRIAN are experimental.
+  /// returns immediately, executed in loop(). PEDESTRIAN is experimental.
   ///
   /// Existing entity/button callers (cover, favorite, vent, partial and pedestrian buttons) intentionally ignore
   /// the return value — they always target a known, already-registered device. It exists so
