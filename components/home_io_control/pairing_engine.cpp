@@ -922,7 +922,9 @@ bool PairingEngine::key_pull_selected_(const pairing::PairingContext &context) c
   return pull;
 }
 
-uint8_t PairingEngine::roll_call_and_register_(pairing::PairingContext &context, const uint8_t *key, bool device_key) {
+PairingEngine::KeyHolderSearch PairingEngine::roll_call_and_register_(pairing::PairingContext &context,
+                                                                      const uint8_t *key, bool device_key,
+                                                                      bool key_proven) {
   // Every device that holds the key answers a roll-call built with it. For an Atlantic AGILIA radiator
   // that is the heater at the next address up, not the node that handed the key over.
   context.state = pairing::PairingState::SCAN_PULLED_KEY;
@@ -946,7 +948,14 @@ uint8_t PairingEngine::roll_call_and_register_(pairing::PairingContext &context,
   // One report for the device log only: with a device key it carries the key, so the pairing summary, the
   // Last Pairing Result sensor and every Home Assistant event keep to the key check value. A hub-key report
   // carries no key and has no banner.
-  const PulledKeyReportInfo info{context.device_id, context.device.type, context.device.subtype, key, system_key_};
+  KeyHolderSearch found{};
+  found.answered = state.count;
+  // An unproven key that no device answered under proves nothing: no report, so it is never printed.
+  if (!key_proven && found.answered == 0)
+    return found;
+
+  const PulledKeyReportInfo info{context.device_id, context.device.type, context.device.subtype, key,
+                                 system_key_,       key_proven};
   if (device_key) {
     ESP_LOGW(TAG, "========================================");
     detail::log_multiline_result(TAG, /*is_warning=*/true, /*prefix=*/"",
@@ -961,7 +970,6 @@ uint8_t PairingEngine::roll_call_and_register_(pairing::PairingContext &context,
   // flashed: with the key it answered under when that is a device key, with the hub key otherwise. A
   // device the YAML declares keeps its record; one an earlier pairing in this boot added is replaced, so
   // pairing it again counts as paired. One of a type no platform drives yet is reported but not registered.
-  uint8_t registered = 0;
   for (uint8_t i = 0; i < state.count; i++) {
     const ScanResponder &responder = state.responders[i];
     const std::string responder_id = node_id_to_string(responder.src);
@@ -978,11 +986,11 @@ uint8_t PairingEngine::roll_call_and_register_(pairing::PairingContext &context,
     device.last_seen_ms = millis();
     device.registered_by_pairing = true;
     registry_.put(responder_id, device);
-    registered++;
+    found.registered++;
     ESP_LOGI(TAG, "Pairing: registered %s (%s) until reboot; paste its block above to keep it", responder_id.c_str(),
              format_device_kind(responder.type, responder.subtype).c_str());
   }
-  return registered;
+  return found;
 }
 
 bool PairingEngine::probe_heater_at_next_address_(const pairing::PairingContext &context, const uint8_t *key,
@@ -1067,8 +1075,8 @@ void PairingEngine::finish_paired_by_roll_call_(pairing::PairingContext &context
 bool PairingEngine::run_pull_and_finish_(pairing::PairingContext &context, bool &paired) {
   this->telemetry_.set_key_pull_attempted();
   const KeyPullResult pulled = run_key_pull_phase_(context);
-  if (pulled == KeyPullResult::OTHER_KEY) {
-    paired = this->register_pulled_key_devices_(context);
+  if (pulled == KeyPullResult::OTHER_KEY || pulled == KeyPullResult::UNPROVEN) {
+    paired = this->register_pulled_key_devices_(context, /*key_proven=*/pulled == KeyPullResult::OTHER_KEY);
     return true;
   }
   if (pulled == KeyPullResult::FAILED) {
@@ -1084,7 +1092,7 @@ bool PairingEngine::run_pull_and_finish_(pairing::PairingContext &context, bool 
   // key are elsewhere, so look for them, as after a foreign key, and register the ones found with the
   // hub key. With none found the attempt ends here: the node itself cannot be controlled, and it
   // refuses the SetConfig1 the push path sends.
-  if (this->roll_call_and_register_(context, system_key_, /*device_key=*/false) > 0) {
+  if (this->roll_call_and_register_(context, system_key_, /*device_key=*/false, /*key_proven=*/true).registered > 0) {
     this->finish_paired_by_roll_call_(context);
     paired = true;
     return true;
@@ -1096,11 +1104,18 @@ bool PairingEngine::run_pull_and_finish_(pairing::PairingContext &context, bool 
   return true;
 }
 
-bool PairingEngine::register_pulled_key_devices_(pairing::PairingContext &context) {
-  const uint8_t registered = this->roll_call_and_register_(context, context.pulled_key, /*device_key=*/true);
+bool PairingEngine::register_pulled_key_devices_(pairing::PairingContext &context, bool key_proven) {
+  const KeyHolderSearch found =
+      this->roll_call_and_register_(context, context.pulled_key, /*device_key=*/true, key_proven);
   memset(context.pulled_key, 0, AES_KEY_SIZE);
   context.has_pulled_key = false;
-  if (registered == 0) {
+  if (!key_proven && found.answered == 0) {
+    ESP_LOGW(TAG, "Key pull: no device answered under the unproven key from %s; it is not printed and must not be used",
+             context.device_id.c_str());
+    this->finish_pairing_attempt_(PairingOutcome::KEY_EXCHANGE_FAILED);
+    return false;
+  }
+  if (found.registered == 0) {
     this->finish_pairing_attempt_(PairingOutcome::KEY_RECEIVED);
     return false;
   }
@@ -1110,7 +1125,10 @@ bool PairingEngine::register_pulled_key_devices_(pairing::PairingContext &contex
 
 PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::PairingContext &context) {
   ESP_LOGW(TAG, "Key pull: asking %s for its key", context.device_id.c_str());
+  // One challenge for every try: the IV of the device's 0x32 is built from the request it answers, so
+  // with the same request bytes a 0x32 that answers an earlier try late still decrypts to the key.
   uint8_t challenge[HMAC_SIZE];
+  crypto::generate_challenge(challenge);
   bool got_key = false;
   for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT && !got_key && !context.key_refused; tries++) {
     if (tries > 0) {
@@ -1120,8 +1138,6 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
     context.state = pairing::PairingState::TX_KEY_PULL;
     engine_.record_debug(pairing_stage_name(context.state), tries + 1, false);
     this->telemetry_.set_phase(context.state);
-    // Fresh random bytes per try: the IV of the device's answer is built from the request it answers.
-    crypto::generate_challenge(challenge);
     if (!create_launch_key_transfer(context.req, node_id_, context.device.node_id, challenge) ||
         !engine_.transmit_frame(context.req, FREQ_CH2, pairing_start_preamble_(context.req)))
       continue;
@@ -1155,6 +1171,13 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
   this->telemetry_.set_phase(context.state);
   // The device's 0x3D over its own 0x32, under the key it sent, proves the decrypt and that it holds
   // the key (a chance match is 1 in 2^48). A lost answer is challenged again; a wrong one is final.
+  // Every challenge repeats the same bytes, so a 0x3D that arrives in the next try's window still
+  // verifies instead of reading as a wrong answer. The first challenge answers the 0x32 at once and
+  // goes out with the response preamble; a repeat follows a pause, by which time a device that hops or
+  // sleeps between frames may have left the channel, so it gets the 0x38's start preamble.
+  uint8_t verify_challenge[HMAC_SIZE];
+  crypto::generate_challenge(verify_challenge);
+  const uint16_t repeat_preamble = pairing_start_preamble_(context.req);
   ExchangeEngine::ChallengeResult proof = ExchangeEngine::ChallengeResult::NO_ANSWER;
   uint8_t challenges = 0;
   while (challenges < EXCHANGE_RETRY_COUNT && proof == ExchangeEngine::ChallengeResult::NO_ANSWER) {
@@ -1162,8 +1185,9 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
       App.feed_wdt();
       delay(EXCHANGE_RETRY_DELAY_MS);
     }
+    const uint16_t preamble = challenges == 0 ? radio_()->response_preamble() : repeat_preamble;
     challenges++;
-    proof = engine_.challenge_sender(context.rx, FREQ_CH2, key);
+    proof = engine_.challenge_sender(context.rx, FREQ_CH2, key, verify_challenge, preamble);
   }
   if (proof == ExchangeEngine::ChallengeResult::VERIFIED) {
     ESP_LOGI(TAG, "Key pull check: %s -> key check value %s, proven by its 0x3D", context.device_id.c_str(),
@@ -1178,13 +1202,17 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
              "Key pull check: %s -> key check value %s, not proven: its 0x3D does not match. The key is not "
              "printed and must not be used",
              context.device_id.c_str(), check_value.c_str());
-  } else {
-    ESP_LOGW(TAG,
-             "Key pull check: %s -> key check value %s, not proven: no 0x3D received after %u challenges. The key "
-             "is not printed and must not be used",
-             context.device_id.c_str(), check_value.c_str(), challenges);
+    return KeyPullResult::FAILED;
   }
-  return KeyPullResult::FAILED;
+  // No answer at all is not a wrong answer: devices that answer a roll-call under the key can still
+  // prove it (register_pulled_key_devices_()).
+  ESP_LOGW(TAG,
+           "Key pull check: %s -> key check value %s, not proven: no 0x3D received after %u challenges. The key "
+           "is not printed; a roll-call under it decides whether devices hold it",
+           context.device_id.c_str(), check_value.c_str(), challenges);
+  memcpy(context.pulled_key, key, AES_KEY_SIZE);
+  context.has_pulled_key = true;
+  return KeyPullResult::UNPROVEN;
 }
 
 void PairingEngine::finish_pairing_attempt_(PairingOutcome outcome) {

@@ -122,9 +122,10 @@ every radiator its own entry with its own `system_key:`.
 - **A radiator far from the hub misses some replies.** A radiator received at about -60 dBm lost
   several replies to the hub's challenge answer, so its Unconfirmed Exchanges counter rose and a
   setpoint change sometimes had to be repeated. A radiator at about -40 dBm had no such failures.
-- **The pairing can lose the radiator's proof of its key.** The hub challenges up to three times. If the
-  log still says `not proven: no 0x3D received`, press Discover & Pair again. The radiator hands over
-  the same key every time.
+- **The pairing can lose the radiator's proof of its key.** The hub challenges up to three times. If no
+  answer comes back, the log says `not proven: no 0x3D received` and the hub looks for the heater under
+  that key instead: a heater that answers proves the key, and the pairing completes. If nothing answers,
+  the key is not printed; press Discover & Pair again. The radiator hands over the same key every time.
 - **The device name is generic.** The heater reports its name as `I2G_Actuator`.
 
 ## Evidence

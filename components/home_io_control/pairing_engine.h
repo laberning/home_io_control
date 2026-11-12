@@ -87,6 +87,14 @@ class PairingEngine {
     FAILED,     ///< No key received, refused, or a different key the device did not prove (not printed).
     OUR_KEY,    ///< The device sent the hub's own key: it is paired with this hub.
     OTHER_KEY,  ///< The device sent a different key and proved it holds it (`context.pulled_key`).
+    UNPROVEN,   ///< The device sent a different key and no 0x3D to our challenges (`context.pulled_key`,
+                ///< not printed): only devices that answer a roll-call under it can prove it.
+  };
+
+  /// @brief What roll_call_and_register_() found under a key.
+  struct KeyHolderSearch {
+    uint8_t answered{0};    ///< Devices that answered under the key (registered or not).
+    uint8_t registered{0};  ///< Of those, the ones registered until reboot.
   };
 
   /// Construct the engine with all required collaborators.
@@ -220,12 +228,18 @@ class PairingEngine {
   /// key (recover_key_from_pull()). The log gets one "Key pull check" line with the key's check value,
   /// never the key, so two attempts or two devices can be compared from the log alone.
   ///
+  /// Every 0x38 try of the attempt carries the same challenge, so a 0x32 that answers an earlier try late
+  /// still decrypts to the key.
+  ///
   /// The hub's own key is accepted as is: no decrypt produces it by chance. A different key must be
-  /// proven by the device's 0x3D to our challenge (ExchangeEngine::authenticate_request() under that
-  /// key, up to EXCHANGE_RETRY_COUNT challenges while no 0x3D comes back; a 0x3D that does not verify ends
-  /// it); only then does it become `context.pulled_key`, for register_pulled_key_devices_(). The hub's
-  /// own key is never replaced. An unproven key is not printed. Hardware-validated on an Atlantic
-  /// AGILIA IO radiator (issue #165).
+  /// proven by the device's 0x3D to our challenge (ExchangeEngine::challenge_sender() under that key, up
+  /// to EXCHANGE_RETRY_COUNT challenges while no 0x3D comes back; a 0x3D that does not verify ends it).
+  /// The challenges repeat the same bytes, so a late 0x3D still verifies; the first goes out with the
+  /// response preamble, as an immediate answer to the 0x32, the repeats with the 0x38's start preamble,
+  /// since the device may no longer be listening on the channel by then. A proven key becomes
+  /// `context.pulled_key` (OTHER_KEY); one with no 0x3D at all is kept there unprinted (UNPROVEN) for a
+  /// roll-call to prove. The hub's own key is never replaced. Hardware-validated on an Atlantic AGILIA IO
+  /// radiator (issue #165).
   /// @param context Pairing context populated by run_discovery_phase_().
   /// @return See KeyPullResult.
   KeyPullResult run_key_pull_phase_(pairing::PairingContext &context);
@@ -246,11 +260,17 @@ class PairingEngine {
   /// boot added is replaced. With a device key the report is build_pulled_key_report() (device log
   /// only, one banner, the responders carry the key as their own `system_key`); with the hub key it is
   /// build_hub_key_pull_report() (no key, no banner, the responders use the hub key).
+  ///
+  /// With `key_proven` false (a pulled key its device did not prove), the devices that answer are the
+  /// proof: a device answers a roll-call, or the heater probe's authenticated read, only under the key it
+  /// holds. If none answers, nothing is reported or registered and the key stays unprinted.
   /// @param context Pairing context of the attempt.
   /// @param key AES_KEY_SIZE bytes the roll-call is built with.
   /// @param device_key true when `key` is a key the device handed over, false for the hub's own.
-  /// @return How many devices were registered.
-  uint8_t roll_call_and_register_(pairing::PairingContext &context, const uint8_t *key, bool device_key);
+  /// @param key_proven false when only the answers can prove `key` (a device key the device did not prove).
+  /// @return How many devices answered, and how many of them were registered.
+  KeyHolderSearch roll_call_and_register_(pairing::PairingContext &context, const uint8_t *key, bool device_key,
+                                          bool key_proven);
 
   /// @brief Ask the heater at the address after an Atlantic pairing node for its maximum setpoint.
   ///
@@ -271,22 +291,24 @@ class PairingEngine {
 
   /// @brief Pull the key and end the attempt wherever the pull decides it.
   ///
-  /// A foreign key goes to register_pulled_key_devices_(); a failed pull ends the attempt as refused or
-  /// failed. The hub's own key from a node no platform drives looks for the devices that hold it and
-  /// ends as `paired`, or as `hub_key_returned` with none found. The hub's own key from a device with a
+  /// A foreign key, proven or not, goes to register_pulled_key_devices_(); a failed pull ends the attempt
+  /// as refused or failed. The hub's own key from a node no platform drives looks for the devices that
+  /// hold it and ends as `paired`, or as `hub_key_returned` with none found. The hub's own key from a device with a
   /// platform is left to the caller, which pairs it as after a push.
   /// @param context Pairing context populated by run_discovery_phase_().
   /// @param[out] paired The attempt's result when it ended here.
   /// @return true when the attempt ended here; false when the caller continues with the push path's ending.
   bool run_pull_and_finish_(pairing::PairingContext &context, bool &paired);
 
-  /// @brief After a proven pull of a different key: find the devices that hold it, then end the attempt.
+  /// @brief After a pull of a different key: find the devices that hold it, then end the attempt.
   ///
   /// At least one registered responder ends the attempt as `paired`; none ends it as `key_received`.
-  /// Zeroes the pulled key afterwards.
+  /// For an unproven key (`key_proven` false) the responders are the proof: with no device answering, the
+  /// attempt ends as `key_exchange_failed` and the key is never printed. Zeroes the pulled key afterwards.
   /// @param context Pairing context holding the pulled key (`has_pulled_key`).
+  /// @param key_proven true when the device proved the key with its 0x3D.
   /// @return true when the attempt ended as `paired`.
-  bool register_pulled_key_devices_(pairing::PairingContext &context);
+  bool register_pulled_key_devices_(pairing::PairingContext &context, bool key_proven);
 
  private:
   /// Preamble for a directed pairing start frame (0x2C, 0x31, 0x6F) to the device discovery just

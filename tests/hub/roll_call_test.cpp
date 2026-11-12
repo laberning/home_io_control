@@ -87,6 +87,21 @@ TEST(PulledKeyReport, AResponderWithoutAPlatformGetsTheNotSupportedLineAndTheKey
   EXPECT_EQ(report.find("io_device_id"), std::string::npos) << "no snippet for a type without a platform";
 }
 
+TEST(PulledKeyReport, AKeyProvenOnlyByTheRespondersSaysSo) {
+  ScanState state{};
+  const uint8_t heater[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};
+  add_reply(state, heater, 0x0D, 0x01);
+  DeviceRegistry registry;
+  PulledKeyReportInfo info = report_info();
+  info.proven_by_sender = false;
+
+  const std::string report = build_pulled_key_report(info, state, registry);
+
+  EXPECT_EQ(report.find("and proved it holds it"), std::string::npos) << report;
+  EXPECT_NE(report.find("sent no proof of its own"), std::string::npos) << report;
+  EXPECT_NE(report.find("1 device that holds it answered"), std::string::npos);
+}
+
 TEST(PulledKeyReport, WithNoResponderTheKeyIsGivenOnceForThePairingNode) {
   ScanState state{};
   DeviceRegistry registry;

@@ -83,6 +83,17 @@ IoFrame atlantic_discovery_reply(const uint8_t dst[NODE_ID_SIZE]) {
   return f;
 }
 
+/// The frames we sent with command `cmd`, parsed.
+std::vector<IoFrame> sent_frames_of(const MockRadio &radio, uint8_t cmd) {
+  std::vector<IoFrame> frames;
+  for (const auto &raw : radio.get_sent_data()) {
+    IoFrame frame{};
+    if (parse(raw.data(), static_cast<uint8_t>(raw.size()), frame) && frame.cmd == cmd)
+      frames.push_back(frame);
+  }
+  return frames;
+}
+
 std::vector<uint8_t> sent_commands(const MockRadio &radio) {
   std::vector<uint8_t> cmds;
   for (const auto &frame : radio.get_sent_data())
@@ -376,7 +387,7 @@ TEST(PairingKeyPull, ProvenForeignKeyIsReportedNotAdopted) {
   EXPECT_EQ(0, memcmp(comp.system_key_, key_before, AES_KEY_SIZE)) << "a pulled key is never adopted automatically";
 }
 
-TEST(PairingKeyPull, UnprovenForeignKeyFails) {
+TEST(PairingKeyPull, AKeyWithNoProofIsKeptUnprovenForARollCall) {
   RngGuard rng;
   TestableComponent comp;
   MockRadio radio;
@@ -386,7 +397,90 @@ TEST(PairingKeyPull, UnprovenForeignKeyFails) {
   radio.queue_rx(to_packet(pulled_key_frame(comp.node_id_, OTHER_KEY)));
   // No 0x3D follows.
 
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
+  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::UNPROVEN);
+  EXPECT_TRUE(context.has_pulled_key);
+  EXPECT_EQ(0, memcmp(context.pulled_key, OTHER_KEY, AES_KEY_SIZE)) << "kept for the roll-call, never printed";
+  EXPECT_TRUE(comp.pairing_telemetry_.key_pull_unproven());
+}
+
+TEST(PairingKeyPull, A0x32ThatAnswersAnEarlierTryLateStillDecrypts) {
+  // Issue #215: a slow giver's 0x32 can land in the next try's window. Every 0x38 carries the same
+  // challenge, so the IV the hub decrypts with is the one the device encrypted with.
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+
+  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);  // answers a request with PULL_CHALLENGE
+  radio.queue_rx_hold_until_sent(2);                                 // nothing during try 1
+  radio.queue_rx(to_packet(reply));
+  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, OTHER_KEY)));
+
+  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OTHER_KEY);
+  const std::vector<IoFrame> pulls = sent_frames_of(radio, CMD_LAUNCH_KEY_TRANSFER);
+  ASSERT_EQ(pulls.size(), 2u);
+  EXPECT_EQ(0, memcmp(pulls[0].data, PULL_CHALLENGE, HMAC_SIZE));
+  EXPECT_EQ(0, memcmp(pulls[1].data, PULL_CHALLENGE, HMAC_SIZE)) << "the retry repeats the challenge";
+}
+
+TEST(PairingKeyPull, A0x3DThatAnswersAnEarlierChallengeLateStillVerifies) {
+  // Without repeated bytes, a 0x3D to challenge 1 arriving in challenge 2's window would read as a
+  // wrong answer, which ends the pull for good.
+  test_rng::reset();
+  test_rng::enqueue_bytes(PULL_CHALLENGE, HMAC_SIZE);
+  test_rng::enqueue_bytes(VERIFY_CHALLENGE, HMAC_SIZE);
+  const uint8_t other_challenge[HMAC_SIZE] = {0x31, 0x32, 0x33, 0x34, 0x35, 0x36};
+  test_rng::enqueue_bytes(other_challenge, HMAC_SIZE);
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+
+  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
+  radio.queue_rx(to_packet(reply));
+  radio.queue_rx_hold_until_sent(3);                                        // challenge 1 gets no answer in its window
+  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, OTHER_KEY)));  // signed over VERIFY_CHALLENGE
+
+  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OTHER_KEY);
+  const std::vector<IoFrame> challenges = sent_frames_of(radio, CMD_CHALLENGE_REQ);
+  ASSERT_EQ(challenges.size(), 2u);
+  EXPECT_EQ(0, memcmp(challenges[0].data, VERIFY_CHALLENGE, HMAC_SIZE));
+  EXPECT_EQ(0, memcmp(challenges[1].data, VERIFY_CHALLENGE, HMAC_SIZE));
+  test_rng::reset();
+}
+
+TEST(PairingKeyPull, ARepeatedChallengeGetsTheStartPreamble) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+
+  radio.queue_rx(to_packet(pulled_key_frame(comp.node_id_, OTHER_KEY)));
+  // No 0x3D: three challenges.
+
+  comp.pairing_engine_.run_key_pull_phase_(context);
+
+  const auto &sent = radio.get_sent_data();
+  const auto &configs = radio.get_tx_configs();
+  ASSERT_EQ(sent.size(), configs.size());
+  std::vector<uint16_t> challenge_preambles;
+  uint16_t pull_preamble = 0;
+  for (size_t i = 0; i < sent.size(); i++) {
+    IoFrame frame{};
+    if (!parse(sent[i].data(), static_cast<uint8_t>(sent[i].size()), frame))
+      continue;
+    if (frame.cmd == CMD_LAUNCH_KEY_TRANSFER)
+      pull_preamble = configs[i].preamble_len;
+    if (frame.cmd == CMD_CHALLENGE_REQ)
+      challenge_preambles.push_back(configs[i].preamble_len);
+  }
+  ASSERT_EQ(challenge_preambles.size(), 3u);
+  EXPECT_EQ(challenge_preambles[0], radio.response_preamble()) << "the first answers the 0x32 at once";
+  EXPECT_GT(pull_preamble, radio.response_preamble());
+  EXPECT_EQ(challenge_preambles[1], pull_preamble) << "a repeat follows a pause";
+  EXPECT_EQ(challenge_preambles[2], pull_preamble);
 }
 
 TEST(PairingKeyPull, WrongChallengeAnswerLeavesTheKeyUnproven) {
@@ -541,15 +635,33 @@ IoFrame heater_roll_call_reply(const uint8_t dst[NODE_ID_SIZE], uint8_t type_msb
   return f;
 }
 
-/// Queue discovery, discover-confirm ack and a proven pull of `key` (the Atlantic flow up to the key).
-void queue_proven_pull(MockRadio &radio, const uint8_t dst[NODE_ID_SIZE], const uint8_t key[AES_KEY_SIZE]) {
+/// Queue discovery, discover-confirm ack and a pull of `key` whose sender never answers our challenges
+/// (the Atlantic flow up to the key, issue #215's Freebox).
+void queue_unproven_pull(MockRadio &radio, const uint8_t dst[NODE_ID_SIZE], const uint8_t key[AES_KEY_SIZE]) {
   radio.queue_rx(to_packet(atlantic_discovery_reply(dst)));
   IoFrame ack{};
   create_discover_confirm_ack(ack, DEVICE_ID, dst);
   radio.queue_rx(to_packet(ack));
-  const IoFrame reply = pulled_key_frame(dst, key);
-  radio.queue_rx(to_packet(reply));
-  radio.queue_rx(to_packet(proof_frame(dst, reply, key)));
+  radio.queue_rx(to_packet(pulled_key_frame(dst, key)));
+}
+
+/// Queue discovery, discover-confirm ack and a proven pull of `key` (the Atlantic flow up to the key).
+void queue_proven_pull(MockRadio &radio, const uint8_t dst[NODE_ID_SIZE], const uint8_t key[AES_KEY_SIZE]) {
+  queue_unproven_pull(radio, dst, key);
+  radio.queue_rx(to_packet(proof_frame(dst, pulled_key_frame(dst, key), key)));
+}
+
+/// Sends before the first roll-call 0x2A of a foreign-key pull whose heater probe finds nothing: 0x28,
+/// 0x2C, 0x38, the 0x3C(s) that challenge the key, and three unanswered 0x20 probe tries.
+constexpr int SENDS_BEFORE_ROLL_CALL_PROVEN = 7;    // one 0x3C, answered
+constexpr int SENDS_BEFORE_ROLL_CALL_UNPROVEN = 9;  // three 0x3C, none answered
+/// Sends before the heater probe's 0x20 of an unproven pull: 0x28, 0x2C, 0x38, three 0x3C.
+constexpr int SENDS_BEFORE_PROBE_UNPROVEN = 6;
+
+/// Queue `frame` to arrive only once the hub has made its `sends_before + 1`-th send.
+void queue_rx_after_sends(MockRadio &radio, int sends_before, const IoFrame &frame) {
+  radio.queue_rx_hold_until_sent(sends_before + 1);
+  radio.queue_rx(to_packet(frame));
 }
 
 std::string key_hex(const uint8_t key[AES_KEY_SIZE]) { return detail::format_key_hex(key); }
@@ -560,16 +672,13 @@ constexpr uint8_t HEATER_ID[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};
 /// until the roll-call's first 0x2A goes out. Before it go 0x28, 0x2C, 0x38, the 0x3C that proves a
 /// foreign key, and three unanswered 0x20 probe tries.
 void queue_roll_call_reply_after_probe(MockRadio &radio, const uint8_t dst[NODE_ID_SIZE], bool foreign_key) {
-  const int sends_before_roll_call = foreign_key ? 7 : 6;
-  radio.queue_rx_hold_until_sent(sends_before_roll_call + 1);
-  radio.queue_rx(to_packet(heater_roll_call_reply(dst)));
+  queue_rx_after_sends(radio, foreign_key ? SENDS_BEFORE_ROLL_CALL_PROVEN : SENDS_BEFORE_ROLL_CALL_PROVEN - 1,
+                       heater_roll_call_reply(dst));
 }
 
 /// Queue `reply` behind the direct probe of a foreign-key pull, as queue_roll_call_reply_after_probe().
 void queue_roll_call_reply_after_probe(MockRadio &radio, const IoFrame &reply) {
-  constexpr int SENDS_BEFORE_ROLL_CALL = 7;
-  radio.queue_rx_hold_until_sent(SENDS_BEFORE_ROLL_CALL + 1);
-  radio.queue_rx(to_packet(reply));
+  queue_rx_after_sends(radio, SENDS_BEFORE_ROLL_CALL_PROVEN, reply);
 }
 
 /// A frame from the heater at the address after the pairing node.
@@ -590,17 +699,6 @@ void queue_heater_answers_probe(MockRadio &radio, const uint8_t dst[NODE_ID_SIZE
   radio.queue_rx(to_packet(heater_frame(dst, CMD_CHALLENGE_REQ, HEATER_CHALLENGE, HMAC_SIZE)));
   const uint8_t max_setpoint[] = {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01};
   radio.queue_rx(to_packet(heater_frame(dst, CMD_WRITE_PRIVATE_ACK, max_setpoint, sizeof(max_setpoint))));
-}
-
-/// The frames we sent with command `cmd`, parsed.
-std::vector<IoFrame> sent_frames_of(const MockRadio &radio, uint8_t cmd) {
-  std::vector<IoFrame> frames;
-  for (const auto &raw : radio.get_sent_data()) {
-    IoFrame frame{};
-    if (parse(raw.data(), static_cast<uint8_t>(raw.size()), frame) && frame.cmd == cmd)
-      frames.push_back(frame);
-  }
-  return frames;
 }
 
 }  // namespace
@@ -704,6 +802,100 @@ TEST(PairingKeyPullFlow, NoResponderEndsAsKeyReceivedAndRegistersNothing) {
   EXPECT_EQ(comp.get_device("B6BDFB"), nullptr);
 }
 
+TEST(PairingKeyPullFlow, AnUnprovenKeyIsProvenByADeviceThatAnswersTheRollCall) {
+  // Issue #215: a giver that sends its key but never answers our 0x3C. A device answers a roll-call
+  // only under the key it holds, so its answer proves the key.
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_unproven_pull(radio, comp.node_id_, OTHER_KEY);
+  queue_rx_after_sends(radio, SENDS_BEFORE_ROLL_CALL_UNPROVEN, heater_roll_call_reply(comp.node_id_));
+
+  EXPECT_TRUE(comp.discover_and_pair());
+
+  EXPECT_EQ(sent_frames_of(radio, CMD_CHALLENGE_REQ).size(), 3u);
+  const IoDevice *heater = comp.get_device("B6BDFC");
+  ASSERT_NE(heater, nullptr);
+  ASSERT_TRUE(heater->has_system_key);
+  EXPECT_EQ(0, memcmp(heater->system_key, OTHER_KEY, AES_KEY_SIZE));
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::PAIRED);
+  EXPECT_EQ(comp.pairing_telemetry().result_sensor_string().find(key_hex(OTHER_KEY)), std::string::npos);
+  EXPECT_EQ(0, memcmp(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE)) << "the hub key is never replaced";
+}
+
+TEST(PairingKeyPullFlow, AnUnprovenKeyWithNoDeviceAnsweringFailsAndRegistersNothing) {
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_unproven_pull(radio, comp.node_id_, OTHER_KEY);
+
+  EXPECT_FALSE(comp.discover_and_pair());
+
+  EXPECT_EQ(sent_frames_of(radio, CMD_DISCOVER_SPE_REQ).size(), 6u) << "the roll-call ran under the candidate key";
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::KEY_EXCHANGE_FAILED);
+  const std::string result = comp.pairing_telemetry().result_sensor_string();
+  EXPECT_NE(result.find("key_pull_unproven"), std::string::npos) << result;
+  EXPECT_EQ(result.find(key_hex(OTHER_KEY)), std::string::npos) << result;
+  EXPECT_EQ(comp.get_device("B6BDFC"), nullptr);
+  EXPECT_EQ(comp.get_device("B6BDFB"), nullptr);
+}
+
+TEST(PairingKeyPullFlow, ARollCallAnswerToAnotherControllerDoesNotProveAnUnprovenKey) {
+  // The giver may run its own roll-call at the same time; only 0x2B frames addressed to the hub count.
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_unproven_pull(radio, comp.node_id_, OTHER_KEY);
+  const uint8_t other_controller[NODE_ID_SIZE] = {0x12, 0x34, 0x56};
+  queue_rx_after_sends(radio, SENDS_BEFORE_ROLL_CALL_UNPROVEN, heater_roll_call_reply(other_controller));
+
+  EXPECT_FALSE(comp.discover_and_pair());
+
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::KEY_EXCHANGE_FAILED);
+  EXPECT_EQ(comp.get_device("B6BDFC"), nullptr);
+}
+
+TEST(PairingKeyPullFlow, AnUnprovenKeyIsProvenByTheHeaterProbe) {
+  // The heater's authenticated read succeeds only under the key it holds, so its answer proves the key
+  // as a roll-call reply would.
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_unproven_pull(radio, comp.node_id_, OTHER_KEY);
+  radio.queue_rx_hold_until_sent(SENDS_BEFORE_PROBE_UNPROVEN + 1);
+  queue_heater_answers_probe(radio, comp.node_id_);
+
+  EXPECT_TRUE(comp.discover_and_pair());
+
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::PAIRED);
+  const IoDevice *heater = comp.get_device("B6BDFC");
+  ASSERT_NE(heater, nullptr);
+  ASSERT_TRUE(heater->has_system_key);
+  EXPECT_EQ(0, memcmp(heater->system_key, OTHER_KEY, AES_KEY_SIZE));
+  EXPECT_TRUE(sent_frames_of(radio, CMD_DISCOVER_SPE_REQ).empty()) << "the probe found it: no roll-call";
+}
+
+TEST(PairingKeyPullFlow, AnUnprovenKeyAnsweredOnlyByADeviceWithoutAPlatformEndsAsKeyReceived) {
+  // The answer proves the key even though nothing can be registered: the report (with the key) is then
+  // the result, as after a proven pull.
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  queue_unproven_pull(radio, comp.node_id_, OTHER_KEY);
+  queue_rx_after_sends(radio, SENDS_BEFORE_ROLL_CALL_UNPROVEN, heater_roll_call_reply(comp.node_id_, 0x05, 0x81));
+
+  EXPECT_FALSE(comp.discover_and_pair());
+
+  EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::KEY_RECEIVED);
+  EXPECT_EQ(comp.get_device("B6BDFC"), nullptr);
+  EXPECT_EQ(comp.pairing_telemetry().result_sensor_string().find(key_hex(OTHER_KEY)), std::string::npos);
+}
+
 TEST(PairingKeyPullFlow, AResponderOfATypeWithoutAPlatformIsNotRegistered) {
   RngGuard rng;
   TestableComponent comp;
@@ -712,8 +904,7 @@ TEST(PairingKeyPullFlow, AResponderOfATypeWithoutAPlatformIsNotRegistered) {
   queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
   // Type 22 subtype 1 (packed 05 81): the Atlantic heat pump, which no platform drives yet. The probe of
   // the next address finds nothing, so the reply waits for the roll-call.
-  radio.queue_rx_hold_until_sent(8);
-  radio.queue_rx(to_packet(heater_roll_call_reply(comp.node_id_, 0x05, 0x81)));
+  queue_rx_after_sends(radio, SENDS_BEFORE_ROLL_CALL_PROVEN, heater_roll_call_reply(comp.node_id_, 0x05, 0x81));
 
   EXPECT_FALSE(comp.discover_and_pair());
   EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::KEY_RECEIVED);
