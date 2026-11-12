@@ -5,7 +5,9 @@
 
 Amended by [ADR 0060](0060-a-state-changing-diagnostic-probe.md) (a probe that changes state) and
 [ADR 0062](0062-a-read-only-data-transport-probe.md) (`0x4A` is sent, as a read) and
-[ADR 0063](0063-a-read-only-register-probe.md) (`0x20` is sent, as a register read).
+[ADR 0063](0063-a-read-only-register-probe.md) (`0x20` is sent, as a register read) and
+[ADR 0072](0072-diagnostic-probes-are-their-own-collaborator.md) (the isolation rests on a collaborator
+with three injected hub calls).
 
 ## Context
 

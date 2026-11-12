@@ -17,6 +17,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0001](0001-layered-protocol-radio-hub-architecture.md) | Layered protocol / radio / hub architecture | Three layers, one composition root; the protocol never names a chip |
 | [0004](0004-hub-collaborator-decomposition.md) | Hub split into collaborators | Ten single-purpose objects (eleven with the compile-gated LR1121 controller) instead of one large controller class |
 | [0005](0005-pure-decision-logic-separated-from-io.md) | Pure decisions separated from I/O | Frame classification is side-effect-free and host-testable |
+| [0072](0072-diagnostic-probes-are-their-own-collaborator.md) | Diagnostic probes are their own collaborator (amends 0024) | `DiagnosticProbes` holds no hub pointer, only three injected calls; the isolation from the status decoder rests on that boundary |
 
 ### Radio
 
@@ -45,7 +46,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0006](0006-management-actions-as-native-api-actions.md) | Admin ops as native API actions | Rarely-used operations get no permanent entity |
 | [0016](0016-sender-events-are-opt-in-by-allowlist.md) | Sender events are opt-in | The radio has no ownership marker, so nothing fires until named |
 | [0017](0017-device-poll-hint-shortens-but-never-stretches.md) | Poll hint shortens, never stretches | The configured interval is a ceiling, not a target |
-| [0024](0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md) | Diagnostic probes, gated and isolated (amended by 0060, 0062, 0063) | Undecoded opcodes only reach paired devices behind an opted-in config, and can never reach the status decoder |
+| [0024](0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md) | Diagnostic probes, gated and isolated (amended by 0060, 0062, 0063, 0072) | Undecoded opcodes only reach paired devices behind an opted-in config, and can never reach the status decoder |
 | [0030](0030-predictions-are-kept-apart-from-observations.md) | Predictions are kept apart from observations | An optimistic guess lives in its own overlay, withdrawn on failure and superseded per-axis by real data — never written into a reported field |
 | [0031](0031-oneway-vendor-wire-behaviour-is-driven-by-manufacturer.md) | 1W vendor wire behaviour is driven by `manufacturer:` | `manufacturer:` selects the 1W `CMD_EXECUTE` ACEI byte (`0x43` Somfy / `0x61` Velux); `execute_broadcast: typed\|all` is a separate handheld-vs-class-bound axis, not a vendor one |
 | [0032](0032-oneway-velux-enrollment-gesture.md) | 1W enrollment follows the gesture the target's `manufacturer:` expects | `velux` → `0x39` broadcast, a `0x30` sweep across `{roller_shutter, vertical_exterior_awning, dual_roller_shutter}` under one sequence, then STOP+DOWN; `somfy` path unchanged; `enrollment_classes:` overrides the sweep list |
@@ -186,6 +187,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0069: A config key is retired in two stages](0069-a-config-key-is-retired-in-two-stages.md)
 - [ADR 0070: A preamble on air keeps the software-PHY receiver running](0070-a-preamble-on-air-keeps-the-soft-phy-receiver-running.md)
 - [ADR 0071: A pulled key without an answer is proven by the devices that hold it](0071-a-pulled-key-without-an-answer-is-proven-by-the-devices-that-hold-it.md)
+- [ADR 0072: Diagnostic probes are their own collaborator](0072-diagnostic-probes-are-their-own-collaborator.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

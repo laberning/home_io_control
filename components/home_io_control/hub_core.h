@@ -481,7 +481,7 @@ class IOHomeControlComponent : public Component,
   /// @return true while armed.
   [[nodiscard]] bool oneway_key_adoption_armed() const { return this->oneway_key_adoption_.armed(); }
 
-  /// @brief Set whether ManagementActions::probe_device()/probe_sweep() are allowed to run.
+  /// @brief Set whether DiagnosticProbes::probe_device()/probe_sweep() are allowed to run.
   ///
   /// Set once from the `diagnostic_probes:` YAML boolean (`__init__.py`); off by default, so a
   /// build that doesn't opt in never sends an undecoded probe opcode. Not a runtime toggle: there
@@ -626,13 +626,13 @@ class IOHomeControlComponent : public Component,
   /// @return Structured result whose `message` is the full multi-line report.
   virtual ManagementActionResult scan_paired_devices() { return this->management_actions_.scan_paired_devices(); }
   /// Send a single diagnostic probe frame to a registered device and report the raw reply (see
-  /// ManagementActions::probe_device() for the full contract, argument formats, and safety
+  /// DiagnosticProbes::probe_device() for the full contract, argument formats, and safety
   /// gating). Protocol-research instrumentation for opcodes this codebase has not decoded — see
   /// docs/diagnostic-probes.md and ADR 0024.
   /// @param device_id Target device ID.
   /// @param probe Probe name ("private_fn", "status_ext", "general_info3", "private2",
   ///        "private2_short", "status_mp_fp", "status_fp_high", "limitation", "register_00", or "register_01"; the full
-  ///        list is in ManagementActions::probe_device()).
+  ///        list is in DiagnosticProbes::probe_device()).
   /// @param index Function ID / selector block / modifier, as a decimal or `0x`-prefixed hex
   ///        string; ignored for "general_info3" and "status_mp_fp"; the FPI2 bitmap for
   ///        "status_fp_high"; 0 (minimum) or 1 (maximum) for "limitation".
@@ -642,7 +642,7 @@ class IOHomeControlComponent : public Component,
     return this->management_actions_.probe_device(device_id, probe, index);
   }
   /// Walk a bounded index range, one probe_device() call per index (see
-  /// ManagementActions::probe_sweep()).
+  /// DiagnosticProbes::probe_sweep()).
   /// @param device_id Target device ID.
   /// @param probe Probe name, same as probe_device().
   /// @param first_index First index in the sweep (inclusive).
@@ -1537,7 +1537,7 @@ class IOHomeControlComponent : public Component,
   uint32_t device_event_count_{0};
   std::string last_device_event_;
   std::function<void()> device_event_callback_;
-  /// Whether diagnostic probes (ManagementActions::probe_device()/probe_sweep()) are enabled.
+  /// Whether diagnostic probes (DiagnosticProbes::probe_device()/probe_sweep()) are enabled.
   /// False by default so a build that didn't opt in via `diagnostic_probes: true` never sends an
   /// undecoded probe opcode. See set_diagnostic_probes_enabled().
   bool diagnostic_probes_enabled_{false};

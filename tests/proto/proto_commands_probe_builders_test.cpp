@@ -392,7 +392,7 @@ TEST(ProtoCommandsProbeBuilders, GetStatusExtendedMatchesOwnHardwareBlock01Probe
 
 TEST(ProtoCommandsProbeBuilders, GeneralInfo3MatchesOwnHardwareProbe) {
   // low_power=true, unlike GeneralInfo3MatchesFixture12CapturedRequest above -- every probe
-  // builder call sends low_power=true (see build_probe_general_info3() in management_actions.cpp).
+  // builder call sends low_power=true (see build_probe_general_info3() in diagnostic_probes.cpp).
   expect_builder_matches_capture("somfy_awning_probe_general_info3_lr1121", 0,
                                  [](IoFrame &f, const uint8_t *own, const uint8_t *dst) {
                                    return create_general_info3(f, own, dst, /*low_power=*/true);
