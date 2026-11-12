@@ -14,7 +14,8 @@ description: >
   target: 96 00 is the 75 % the shutter rested at, and a third reply from the same shutter, queued
   at 50 % with a target of 20 %, began 2B 00 64 00 (its remaining bytes were not recorded, so it is
   not a frame here). What the 5 in the upper bits means is not known, and no reply was read while
-  the motor ran, so state 4 (executing) is not in this capture.
+  the motor ran, so state 4 (executing) is not in this capture; it is in
+  tests/corpus/captures/probe/velux_sml_probe_execution_state_waiting_then_executing_sx1262.yaml.
 
   Only the eight data bytes of each reply were recorded. The frame headers are rebuilt around them
   (CTRL0 from the length, CTRL1 00, no CRC), the channel is unknown, and the node IDs are replaced

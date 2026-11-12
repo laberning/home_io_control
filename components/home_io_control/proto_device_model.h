@@ -459,25 +459,25 @@ enum class PowerWait : uint8_t {
 
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
-  uint8_t node_id[NODE_ID_SIZE]{};        ///< Device's 3‑byte radio address.
-  DeviceType type{DeviceType::UNKNOWN};   ///< Device type (shutter, awning, etc.).
-  uint8_t subtype{0};                     ///< Device subtype (manufacturer‑specific).
-  DeviceModel model{DeviceModel::NONE};   ///< YAML-declared product model below the subtype (`io_model:`); never
-                                          ///< on the wire. Resolver input, like `dimmable`.
-  char name[DEVICE_NAME_BUFFER_SIZE]{};   ///< Cached UTF-8 device name decoded from Latin-1 wire payloads.
-  float position{UNKNOWN_POSITION};       ///< Current position: 0=open, 100=closed, or UNKNOWN_POSITION.
-  float tilt{UNKNOWN_POSITION};           ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION.
-  float target{UNKNOWN_POSITION};         ///< Target position the device is moving toward.
-  bool is_stopped{true};                  ///< True if device is not moving.
-  StopCandidate stop_candidate{};         ///< Last off-target "stopped" report, to confirm the next one.
-  bool follows_waiting_for_power{false};  ///< YAML `follow_waiting_for_power: true` of a cover: a confirmed stop
-                                          ///< off the target is checked against the execution state first.
-  PowerWait power_wait{PowerWait::NONE};  ///< That check's progress; NONE on a cover without the option. While
-                                          ///< it is not NONE, `is_stopped` stays false.
-  bool reports_remaining_time{false};     ///< The device has sent a nonzero remaining time in a status reply, so
-                                          ///< its zero means "about to stop" rather than "not provided".
-  DeviceFeatures features{0};             ///< What this device can do, resolved by resolve_device_features(). Every
-                                          ///< capability check on a registered device reads this word.
+  uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
+  DeviceType type{DeviceType::UNKNOWN};  ///< Device type (shutter, awning, etc.).
+  uint8_t subtype{0};                    ///< Device subtype (manufacturer‑specific).
+  DeviceModel model{DeviceModel::NONE};  ///< YAML-declared product model below the subtype (`io_model:`); never
+                                         ///< on the wire. Resolver input, like `dimmable`.
+  char name[DEVICE_NAME_BUFFER_SIZE]{};  ///< Cached UTF-8 device name decoded from Latin-1 wire payloads.
+  float position{UNKNOWN_POSITION};      ///< Current position: 0=open, 100=closed, or UNKNOWN_POSITION.
+  float tilt{UNKNOWN_POSITION};          ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION.
+  float target{UNKNOWN_POSITION};        ///< Target position the device is moving toward.
+  bool is_stopped{true};                 ///< True if device is not moving.
+  StopCandidate stop_candidate{};        ///< Last off-target "stopped" report, to confirm the next one.
+  bool follows_power_wait{false};        ///< YAML `follow_waiting_for_power: true` of a cover: a confirmed stop
+                                         ///< off the target is checked against the execution state first.
+  PowerWait power_wait{};                ///< That check's progress; NONE on a cover without the option. While
+                                         ///< it is not NONE, `is_stopped` stays false.
+  bool reports_remaining_time{false};    ///< The device has sent a nonzero remaining time in a status reply, so
+                                         ///< its zero means "about to stop" rather than "not provided".
+  DeviceFeatures features{0};            ///< What this device can do, resolved by resolve_device_features(). Every
+                                         ///< capability check on a registered device reads this word.
   DeviceCapabilityClass entity_class{
       DeviceCapabilityClass::UNKNOWN};  ///< Class of the entity that declared the
                                         ///< device; UNKNOWN for a device no entity declared (the type's class then

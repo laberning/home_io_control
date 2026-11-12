@@ -1,8 +1,9 @@
 /// @file corpus_execution_state_test.cpp
 /// @brief The execution-state decode applied to real main-parameter status read replies.
 ///
-/// A VELUX SML roller shutter on a shared KUX 110 supply answered the read at rest and while queued
-/// behind the other shutter; covers polled by a KLF 200 gateway answered it at rest.
+/// A VELUX SML roller shutter on a shared KUX 110 supply answered the read at rest, while queued
+/// behind the other shutter and once its motor ran; covers polled by a KLF 200 gateway answered it
+/// at rest.
 
 #include "corpus_generated.h"
 #include "hub_decisions.h"
@@ -37,6 +38,19 @@ TEST(CorpusExecutionState, AShutterAtRestReadsDoneAndAQueuedOneWaitingForPower) 
   EXPECT_EQ(queued, ExecutionState::WAITING_FOR_POWER);
   EXPECT_EQ(decisions::power_wait_step(false, true, at_rest), decisions::PowerWaitStep::CONCLUDE);
   EXPECT_EQ(decisions::power_wait_step(false, true, queued), decisions::PowerWaitStep::WAIT);
+}
+
+TEST(CorpusExecutionState, AQueuedShutterReadsWaitingForPowerThenExecuting) {
+  using namespace corpus;
+  const ExecutionState queued =
+      execution_state_of(velux_sml_probe_execution_state_waiting_then_executing_sx1262_frame0_bytes);
+  const ExecutionState started =
+      execution_state_of(velux_sml_probe_execution_state_waiting_then_executing_sx1262_frame1_bytes);
+
+  EXPECT_EQ(queued, ExecutionState::WAITING_FOR_POWER);
+  EXPECT_EQ(started, ExecutionState::EXECUTING);
+  EXPECT_EQ(decisions::power_wait_step(true, true, queued), decisions::PowerWaitStep::WAIT);
+  EXPECT_EQ(decisions::power_wait_step(true, true, started), decisions::PowerWaitStep::FOLLOW);
 }
 
 TEST(CorpusExecutionState, ACoverPolledByAGatewayAtRestReadsDone) {

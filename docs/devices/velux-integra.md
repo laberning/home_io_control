@@ -161,6 +161,12 @@ moves the window to its predefined air-exchange opening rather than fully open.
   with no KUX at all. If several products share one supply, a reset that works by interrupting
   power resets every product connected to it — including their pairings with the hub.
   Disconnect the others first if only one should be reset.
+- **A KUX 110 runs one motor at a time.** With two SML shutters on one supply, the one commanded
+  second accepts its command and starts when the first has finished. Until then it reports
+  "stopped" away from its target, so the hub shows it at rest and misses the move. Set
+  `follow_waiting_for_power: true` on each such cover to have it shown as waiting and followed
+  until it moves; see
+  [Covers that wait for a shared power supply](../configuration/cover.md#covers-that-wait-for-a-shared-power-supply).
 - **One Gear press can open several products at once.** Gear opens registration on every product
   that KLI drives, and each of them then registers whatever control is enrolled next. For one Home
   Assistant cover per product, enroll one identity per product and press Gear on a control that

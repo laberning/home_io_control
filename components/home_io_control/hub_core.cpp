@@ -359,7 +359,7 @@ void IOHomeControlComponent::set_device_follow_waiting_for_power(const std::stri
   IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr)
     return;
-  dev->follows_waiting_for_power = follow;
+  dev->follows_power_wait = follow;
   if (!follow)
     dev->power_wait = PowerWait::NONE;
 }

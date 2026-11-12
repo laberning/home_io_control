@@ -287,19 +287,21 @@ numbers of the node states in the public KLF 200 API specification v3.18:
 | `28` | 0 | not executing | no |
 | `29` | 1 | error while executing | no |
 | `2B` | 3 | waiting for power | yes, a queued VELUX SML |
-| `2C` | 4 | executing | no |
+| `2C` | 4 | executing | yes, the same shutter once its motor ran |
 | `2D` | 5 | done | yes, every cover read at rest |
 
 Measured on a VELUX SML shutter, the reply at rest at 75 % is `2D 00 96 00 80 00 00 00` and the
 reply while queued is `2B 00 00 00 80 00 00 00`
 (`tests/corpus/captures/probe/velux_sml_probe_status_mp_fp_waiting_for_power.yaml`). The two bytes
 after `00` are the main parameter, which is the current position and not the target: a shutter
-queued at 50 % with a target of 20 % answered `2B 00 64 00`. The hub uses only the first byte and
-takes position and target from the ordinary status read.
+queued at 50 % with a target of 20 % answered `2B 00 64 00`. Once the motor of a queued shutter
+started, the reply was `2C 00 96 00 80 C8 00 00`
+(`tests/corpus/captures/probe/velux_sml_probe_execution_state_waiting_then_executing_sx1262.yaml`).
+The hub uses only the first byte and takes position and target from the ordinary status read.
 
-Three things rest on the specification and not on a measurement: the bytes for states 0, 1 and 4,
-that a moving shutter reports state 4 in this byte, and what the code 5 in the upper bits stands
-for. A first byte with another code is not read as a state, so such a cover is shown at rest. The
+Two things rest on the specification and not on a measurement: the bytes for states 0 and 1, and
+what the code 5 in the upper bits stands for. All measured replies come from one product. A first
+byte with another code is not read as a state, so such a cover is shown at rest. The
 ordinary status read (function `0x03`) is not used for the state: every reply to it in the corpus
 begins `04` or `05`, and none was captured from a waiting cover.
 

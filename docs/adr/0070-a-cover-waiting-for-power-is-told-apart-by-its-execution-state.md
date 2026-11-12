@@ -17,8 +17,9 @@ the move that follows is unseen until the next command or status refresh.
 
 The ordinary status read does not separate the two cases. The main-parameter status read a KLF 200
 gateway sends (`create_status_mp_fp_read()`) does: its reply begins `2D` on every cover read at
-rest and `2B` on a queued SML shutter. Read as `(code << 3) | state` with the node states of the
-KLF 200 API specification v3.18, that is state 5 (done) and state 3 (waiting for power).
+rest, `2B` on a queued SML shutter and `2C` once that shutter's motor runs. Read as
+`(code << 3) | state` with the node states of the KLF 200 API specification v3.18, that is state 5
+(done), state 3 (waiting for power) and state 4 (executing).
 
 ## Options considered
 
@@ -56,9 +57,9 @@ KLF 200 API specification v3.18, that is state 5 (done) and state 3 (waiting for
   unauthenticated read; a wait costs one every 10 seconds, about 60 at most.
 - **A waiting cover shows opening or closing while it stands still.** That is the pending
   direction, and the Active Issue sensor says why.
-- **The decode rests on two measured replies from one product.** The bytes for executing and for
-  an error come from the specification's state numbers, not from a capture. If a moving shutter
-  does not report state 4, a wait ends with the ordinary read that follows another state, or with
-  the window; it cannot outlast the window.
+- **The decode rests on replies from one product.** Done, waiting for power and executing were
+  measured on a VELUX SML; the byte for an error comes from the specification's state numbers, not
+  from a capture. A device that reports another state once it moves ends its wait with the
+  ordinary read that follows, or with the window; a wait cannot outlast the window.
 - **A STOP is not known to withdraw a queued command.** If the shutter still reports waiting after
   a STOP, the cover shows waiting again once the polls after the STOP have agreed.

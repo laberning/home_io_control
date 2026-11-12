@@ -4,10 +4,10 @@
 ///
 /// Two VELUX SML shutters on one KUX 110 supply run one at a time: the second accepts its command
 /// and reports "stopped" off its target until the first has finished. The execution-state replies
-/// 2D (done) and 2B (waiting for power) are the ones measured on that shutter
-/// (tests/corpus/captures/probe/velux_sml_probe_status_mp_fp_waiting_for_power.yaml); 2C
-/// (executing) and 29 (error while executing) are built from the same packing and the state
-/// numbers of the KLF 200 API specification.
+/// 2D (done), 2B (waiting for power) and 2C (executing) are the ones measured on that shutter
+/// (tests/corpus/captures/probe/velux_sml_probe_status_mp_fp_waiting_for_power.yaml,
+/// velux_sml_probe_execution_state_waiting_then_executing_sx1262.yaml); 29 (error while executing)
+/// is built from the same packing and the state numbers of the KLF 200 API specification.
 
 #include "hub_core.h"
 #include "platform_companion_sensors.h"
@@ -30,7 +30,7 @@ constexpr uint16_t RAW_60 = 0x7800;        ///< 60 %.
 constexpr uint16_t RAW_75 = 0x9600;        ///< 75 %.
 constexpr uint8_t STATE_DONE = 0x2D;       ///< (5 << 3) | 5, measured at rest.
 constexpr uint8_t STATE_WAITING = 0x2B;    ///< (5 << 3) | 3, measured while queued.
-constexpr uint8_t STATE_EXECUTING = 0x2C;  ///< (5 << 3) | 4, from the specification.
+constexpr uint8_t STATE_EXECUTING = 0x2C;  ///< (5 << 3) | 4, measured once the motor ran.
 constexpr uint8_t STATE_ERROR = 0x29;      ///< (5 << 3) | 1, from the specification.
 constexpr uint8_t FLAGS_MOVING = 0x04;     ///< An ordinary status reply without STATUS_STOPPED.
 constexpr uint8_t FLAGS_STOPPED = 0x05;    ///< An ordinary status reply with STATUS_STOPPED.
@@ -44,6 +44,7 @@ class TestablePowerWaitComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::process_pending_operation_;
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::schedule_device_polls_;
+  using IOHomeControlComponent::status_refresh_policy_;
   using IOHomeControlComponent::system_key_;
 };
 
@@ -205,6 +206,20 @@ TEST_F(PowerWaitHub, AWaitingCoverIsReadSlowlyAndFollowedOnceItMoves) {
   EXPECT_TRUE(device().is_stopped);
   EXPECT_FLOAT_EQ(device().position, 25.0F);
   EXPECT_EQ(state_reads(), 3u) << "no state read once the cover moves";
+}
+
+TEST_F(PowerWaitHub, AnAnsweredStateReadMovesTheStatusRefreshOut) {
+  // A wait can outlast a short status_refresh_interval; the refresh must not add reads to it.
+  esphome::test_clock::ManualClock clock;
+  constexpr uint32_t refresh_ms = 60000;
+  comp.set_device_follow_waiting_for_power(DEVICE_ID, true);
+  comp.set_device_status_refresh_interval(DEVICE_ID, refresh_ms);
+  command_and_wait();
+
+  run_due_poll(POWER_WAIT_POLL_INTERVAL_MS, {state_reply(STATE_WAITING)});
+
+  // The offset is up to 10 % of the interval either way (random 0 gives the shortest).
+  EXPECT_GE(comp.status_refresh_policy_.get_next_poll(DEVICE_ID), esphome::millis() + refresh_ms * 9 / 10);
 }
 
 TEST_F(PowerWaitHub, AnUnansweredReadDuringAWaitKeepsWaiting) {
@@ -434,5 +449,5 @@ TEST_F(PowerWaitHub, OptingOutEndsARunningWait) {
   comp.set_device_follow_waiting_for_power(DEVICE_ID, false);
 
   EXPECT_EQ(device().power_wait, PowerWait::NONE);
-  EXPECT_FALSE(device().follows_waiting_for_power);
+  EXPECT_FALSE(device().follows_power_wait);
 }

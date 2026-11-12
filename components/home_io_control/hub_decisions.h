@@ -894,7 +894,7 @@ enum class PowerWaitStep : uint8_t {
 /// Only inside a follow-up window (after a command or another controller's activity), and only for a
 /// cover that opted in: an untracked read of a cover resting off its target confirms on every
 /// report and must stay at rest.
-/// @param opted_in IoDevice::follows_waiting_for_power.
+/// @param opted_in IoDevice::follows_power_wait.
 /// @param verdict classify_stopped_report()'s verdict on the report.
 /// @param follow_up_possible A tracked follow-up poll will run.
 [[nodiscard]] inline bool stopped_report_needs_execution_state(bool opted_in, StoppedReport verdict,

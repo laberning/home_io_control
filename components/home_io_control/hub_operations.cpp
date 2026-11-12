@@ -570,6 +570,8 @@ bool IOHomeControlComponent::read_execution_state_(const std::string &device_id)
     detail::log_component_capture(this->radio_, "execution_state_rx", raw, raw_len, &response);
     if (response.cmd == CMD_PRIVATE_RESP && response.data_len >= 1) {
       answered = true;
+      // The device reported, so a status refresh at rest is not due on top of this read.
+      this->note_status_reported_(device_id);
       state = execution_state_from_status_read(response.data[0]);
       ESP_LOGD(detail::TAG, "Device %s: execution state %s (status byte 0x%02X)", device_id.c_str(),
                execution_state_name(state), response.data[0]);

@@ -100,7 +100,7 @@ void settle_stopped_report(const std::string &id, IoDevice &dev, bool follow_up_
   // froze or met an obstacle (request_device_status() reads it next). Every other verdict ends a
   // check or a wait: the device moves, reached its target, or reports another place.
   const bool hold =
-      decisions::stopped_report_needs_execution_state(dev.follows_waiting_for_power, verdict, follow_up_possible);
+      decisions::stopped_report_needs_execution_state(dev.follows_power_wait, verdict, follow_up_possible);
   if (hold && dev.power_wait == PowerWait::NONE) {
     dev.power_wait = PowerWait::CHECK;
     ESP_LOGD(detail::TAG, "Device %s: stopped at %.2f%% again, target %.2f%%: reading its execution state", id.c_str(),

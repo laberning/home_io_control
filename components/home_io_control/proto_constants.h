@@ -595,13 +595,14 @@ static constexpr uint8_t STATUS_STOPPED = 0x01;  ///< Byte 0 bit 0: device is no
 // The reply to create_status_mp_fp_read() (CMD_PRIVATE function 0x01, the status read of a VELUX
 // KLF 200 gateway) leads with a byte packed like the CMD_ERROR_RESP result byte above:
 // (code << 3) | state. Every such reply captured from a cover at rest reads 0x2D = code 5, state 5
-// (tests/corpus/captures/statuspoll/velux_klf200_statuspoll_roundrobin_868_sx1262.yaml), and a
-// VELUX SML roller shutter queued behind another shutter on a shared KUX 110 supply reads 0x2B =
-// code 5, state 3 (tests/corpus/captures/probe/velux_sml_probe_status_mp_fp_waiting_for_power.yaml).
+// (tests/corpus/captures/statuspoll/velux_klf200_statuspoll_roundrobin_868_sx1262.yaml). A VELUX
+// SML roller shutter queued behind another shutter on a shared KUX 110 supply reads 0x2B = code 5,
+// state 3, and 0x2C = code 5, state 4 once its motor runs
+// (tests/corpus/captures/probe/velux_sml_probe_execution_state_waiting_then_executing_sx1262.yaml).
 // The state numbers are the node states of the public KLF 200 API specification v3.18
-// (GW_GET_NODE_INFORMATION_NTF, "State"). Measured: 3 and 5. Taken from the specification, not
-// yet seen in this byte: 0, 1, 2 and 4. What code 5 means is not known; a byte with another code
-// is not read as a state.
+// (GW_GET_NODE_INFORMATION_NTF, "State"). Measured: 3, 4 and 5. Taken from the specification, not
+// yet seen in this byte: 0, 1 and 2. What code 5 means is not known; a byte with another code is
+// not read as a state.
 static constexpr uint8_t STATUS_READ_STATE_MASK = 0x07;  ///< Execution state sits in bits [2:0].
 static constexpr uint8_t STATUS_READ_CODE_SHIFT = 3;     ///< The undecoded code sits in bits [7:3].
 static constexpr uint8_t STATUS_READ_CODE = 5;           ///< The code of every reply whose state was measured.

@@ -1,0 +1,47 @@
+id: velux_sml_probe_execution_state_waiting_then_executing_sx1262
+description: >
+  2026-11 execution-state reads of a hub with `follow_waiting_for_power: true` (CMD_PRIVATE 0x03,
+  function 0x01, FP1-FP7 requested: the `status_mp_fp` read), answered by a VELUX SML roller shutter
+  that shares one KUX 110 power supply with a second SML shutter. The shutter rested at 75 % and was
+  commanded to open while the other shutter travelled. Only the replies were logged
+  (stage=execution_state_rx); none was challenged.
+    - frame 0, 6 s after the command, the shutter still in place: status 2B = (5 << 3) | 3, waiting
+      for power. A read 10 s later drew the same bytes and is not repeated here.
+    - frame 1, 20 s after frame 0, the motor just started: status 2C = (5 << 3) | 4, executing.
+      The ordinary status read 3 s later reported the shutter moving at 63 %.
+  The main parameter is 96 00 = 75 % in both, the current position (the target was 0 %). The value
+  after the FPI1 echo 80 (FP1) is 00 00 while waiting and C8 00 while executing; what it means is
+  not decoded. Together with
+  tests/corpus/captures/probe/velux_sml_probe_status_mp_fp_waiting_for_power.yaml (2D at rest) this
+  covers states 3, 4 and 5 of the KLF 200 API specification v3.18 on one device.
+
+  The bytes are as logged except for the node IDs, which are replaced (neither ID in this file is
+  the owner's); the frames are unauthenticated and carry no CRC, so nothing else depends on them.
+source:
+  device: "VELUX SML roller shutter on a KUX 110 power supply shared with a second SML shutter"
+  captured_with: sx1262
+  firmware: "commit 76afd03 plus follow_waiting_for_power (Heltec WiFi LoRa 32 V3.2)"
+  date: 2026-11-12
+  origin: own-hardware
+  issue: null
+key: unknown
+node_map:
+  hub: C0FFEE
+  shutter: 5A3C71
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "90 08 C0 FF EE 5A 3C 71 04 2B 00 96 00 80 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), queued behind the other shutter: status 2B (state 3, waiting for power), MP 96 00 = 75 %, FP1 00 00"
+  - dir: rx
+    t_ms: 20165
+    freq: 868950000
+    hex: "90 08 C0 FF EE 5A 3C 71 04 2C 00 96 00 80 C8 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), motor just started: status 2C (state 4, executing), MP 96 00 = 75 %, FP1 C8 00"
+expect:
+  frames:
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
