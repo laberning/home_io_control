@@ -4,6 +4,9 @@
 
 **Status:** Proposed · **Recorded:** 2026-09
 
+Amended by [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
+(the re-send gap is the total wait before the re-send).
+
 ## Context
 
 An authenticated command runs in four frames: the hub sends the command, the device answers with

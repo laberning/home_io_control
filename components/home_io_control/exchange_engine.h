@@ -99,7 +99,9 @@ class ExchangeEngine {
   /// @param max_tries Cap on transmit attempts for this exchange, clamped to
   ///        [1, EXCHANGE_RETRY_COUNT]. Callers whose failure is already re-armed elsewhere (a
   ///        scheduler-owned status poll) pass SCHEDULED_POLL_MAX_TRIES so a dead device does not
-  ///        block loop() for the full retry product.
+  ///        block loop() for the full retry product. The attempts keep the default gap and the
+  ///        tuned reply window; a caller that wants more attempts or other timing passes an
+  ///        decisions::AttemptPlan (the overload below).
   /// @param request_preamble_override Preamble for the request frame in bytes, or 0 (the default) for
   ///        request_preamble_for()'s rule. Only pairing passes a value: it sends its directed start
   ///        frames with a preamble the device has just proven it hears (see
@@ -109,6 +111,18 @@ class ExchangeEngine {
   /// @return What the device actually told us — see @ref ExchangeOutcome.
   ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
                                    uint8_t max_tries = EXCHANGE_RETRY_COUNT, uint16_t request_preamble_override = 0);
+
+  /// The same exchange with an explicit attempt plan (decisions::attempt_plan()).
+  /// @param request  As for the `max_tries` overload.
+  /// @param response As for the `max_tries` overload.
+  /// @param freq     As for the `max_tries` overload.
+  /// @param plan Attempt count (clamped to [1, EXCHANGE_MAX_ATTEMPTS]), gap before each further
+  ///        attempt, and first-reply window of every attempt. An attempt that cannot finish inside
+  ///        `exchange_total_budget_ms` is not started whatever the plan says (try_fits_budget_()).
+  /// @param request_preamble_override As for the `max_tries` overload.
+  /// @return As for the `max_tries` overload.
+  ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
+                                   const decisions::AttemptPlan &plan, uint16_t request_preamble_override = 0);
 
   /// Authenticate an inbound device command via 0x3C challenge / 0x3D HMAC.
   /// @param request The received inbound frame (e.g., CMD_STATUS_UPDATE).
@@ -507,11 +521,16 @@ class ExchangeEngine {
   /// whole milliseconds rounded up; 0 for a frame that does not serialize (it is never sent).
   [[nodiscard]] uint32_t tx_time_ms_(const IoFrame &frame, uint32_t freq, uint16_t preamble) const;
 
-  /// The exchange budget rule: a try starts only if its transmission ends inside the budget.
-  /// @param elapsed_ms Time since the exchange began.
-  /// @param gap_ms     Wait before the try is sent.
-  /// @param tx_ms      The try's transmit time (tx_time_ms_()).
-  [[nodiscard]] bool try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms) const;
+  /// The exchange budget rule: a try starts only if the whole try, up to the end of the last wait it
+  /// can make, ends inside the budget.
+  /// @param elapsed_ms   Time since the exchange began.
+  /// @param gap_ms       Wait before the try is sent.
+  /// @param tx_ms        The try's transmit time (tx_time_ms_()).
+  /// @param window_ms    How long the try then listens for the first reply.
+  /// @param auth_tail_ms The final-reply window a challenged try adds: `exchange_response_wait_ms`
+  ///                     once the target has challenged in this exchange, otherwise 0.
+  [[nodiscard]] bool try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms, uint32_t window_ms,
+                                      uint32_t auth_tail_ms) const;
 
   // --- Outbound exchange step helpers --------------------------------------
 
@@ -537,15 +556,23 @@ class ExchangeEngine {
   /// @param request           Outbound request frame.
   /// @param unconfirmed_tries Tries of this exchange so far that ended that way (1-based).
   /// @param try_index         The try that just ended, for the log line.
+  /// @param tries_left        Tries the exchange still allows after this one; 0 ends it here,
+  ///                          before any re-send gap is waited.
   /// @param elapsed_ms        Time since the exchange began.
-  /// @param next_tx_ms        The re-send's transmit time; a re-send whose transmission would not
-  ///                          end inside the exchange budget is not attempted (try_fits_budget_()).
+  /// @param next_tx_ms        The re-send's transmit time; a re-send whose transmission and first
+  ///                          reply window would not end inside the exchange budget is not attempted
+  ///                          (try_fits_budget_()). The re-send is the last copy, so its final-reply
+  ///                          window is not counted.
+  /// @param plan              The exchange's attempt plan: its gap is part of the re-send wait, its
+  ///                          window is the re-send's, its attempt count is the cap for any other
+  ///                          request.
   /// @return 0 to end the exchange now; UNCONFIRMED_EXECUTE_MAX_RESENDS for a CMD_EXECUTE that is
   ///         re-sent and UNCONFIRMED_SUBSCRIBE_MAX_RESENDS for a CMD_SUBSCRIBE_EVENT, either of which
-  ///         also caps the ordinary failure retries after it; EXCHANGE_RETRY_COUNT
+  ///         also caps the ordinary failure retries after it; the plan's attempt count
   ///         (no cap beyond the exchange's own) for any other request.
   uint8_t tries_after_unconfirmed_(const IoFrame &request, uint8_t unconfirmed_tries, uint8_t try_index,
-                                   uint32_t elapsed_ms, uint32_t next_tx_ms);
+                                   uint8_t tries_left, uint32_t elapsed_ms, uint32_t next_tx_ms,
+                                   const decisions::AttemptPlan &plan);
 
   /// Add one final-reply wait's ListenStats to the debug snapshot's `final_*` fields.
   /// @param stats What that wait heard without accepting it.

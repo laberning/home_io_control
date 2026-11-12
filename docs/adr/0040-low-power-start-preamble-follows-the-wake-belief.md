@@ -4,6 +4,9 @@
 
 **Status:** Accepted, amended 2026-09 (see [Amendment](#amendment-a-resting-receiver-hears-only-the-wake-up-preamble)) · **Recorded:** 2026-09
 
+Amended by [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
+(the post-`stop` poll keeps three tries until it takes the settling plan).
+
 Amends [ADR 0029](0029-start-preamble-is-a-property-of-the-target.md). Confirmed on a VELUX SSL
 solar roller shutter: a `stop` and the status poll after it both land while the motor is
 travelling, and the motor's own status report is what says it was moving.

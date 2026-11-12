@@ -13,6 +13,7 @@
 #include "proto_device_model.h"
 #include "proto_frame.h"
 #include "proto_timing.h"
+#include "tuning_config.h"
 
 #include <algorithm>
 #include <array>
@@ -426,6 +427,73 @@ inline uint8_t scheduled_poll_max_tries(uint8_t status_poll_failures, uint8_t au
       status_poll_failures > SCHEDULED_POLL_RETRY_GRACE_LAST_FAILURE)
     return SCHEDULED_POLL_MAX_TRIES;
   return EXCHANGE_RETRY_COUNT;
+}
+
+// == Attempt plan ==
+
+/// @brief What a read is for, which decides how its attempts are spent.
+enum class ReadKind : uint8_t {
+  PROGRESS,  ///< A look at a device that is probably still busy (a mid-travel poll): one attempt, the
+             ///< backoff ladder is the retry.
+  SETTLING,  ///< A read that decides where a device ended up: as many attempts as fit the budget.
+  COMMAND,   ///< A command or any other request not yet planned: today's few attempts with a gap.
+};
+
+/// @brief How one exchange spends its attempts. Handed to ExchangeEngine::send_and_receive().
+struct AttemptPlan {
+  uint8_t max_attempts{EXCHANGE_RETRY_COUNT};  ///< Most transmissions of the request, `[1, EXCHANGE_MAX_ATTEMPTS]`.
+  uint16_t gap_ms{EXCHANGE_RETRY_DELAY_MS};    ///< Wait before each attempt after the first; 0 for none.
+  uint16_t window_ms{RESPONSE_START_WAIT_MS};  ///< How long each attempt listens for the first reply.
+};
+
+/// @brief The plan for a caller that names only a number of attempts: that many (at least one, at
+/// most EXCHANGE_RETRY_COUNT), the default gap, and @p window_ms.
+/// @param max_tries Attempts the caller asks for.
+/// @param window_ms First-reply window of every attempt.
+[[nodiscard]] inline AttemptPlan attempt_plan_for_tries(uint8_t max_tries, uint16_t window_ms) {
+  AttemptPlan plan;
+  plan.max_attempts = std::max<uint8_t>(1, std::min<uint8_t>(max_tries, EXCHANGE_RETRY_COUNT));
+  plan.window_ms = window_ms;
+  return plan;
+}
+
+/// @brief The attempt plan for a read, from what it is for and who it asks.
+///
+/// A settling read repeats without a gap: every attempt listens for the whole reply window from the
+/// end of its own transmission, so a silent attempt is already followed by the next one as soon as
+/// its window ends. How many fit is the budget divided by one attempt's transmission plus window,
+/// capped at EXCHANGE_MAX_ATTEMPTS for a mains device and LOW_POWER_SETTLING_ATTEMPTS for a
+/// low-power one (whose window is LOW_POWER_RESPONSE_WAIT_MS on every attempt). The same rule the
+/// engine's guard applies at run time, so a plan never promises an attempt the guard would refuse
+/// when the target stays silent. A challenged attempt costs more (the final reply window), so the
+/// guard can still stop a plan early.
+///
+/// PROGRESS and COMMAND keep today's shapes: one attempt, and EXCHANGE_RETRY_COUNT attempts with the
+/// default gap, both with the tuned start window.
+///
+/// @param kind           What the read is for.
+/// @param low_power      The target is a low-power receiver (YAML `low_power`, CTRL1 low-power bit).
+/// @param tuning         Reply window and exchange budget.
+/// @param attempt_tx_ms  One attempt's transmit time as the radio estimates it (long wake-up
+///                       preamble for a low-power target); only a settling read uses it.
+[[nodiscard]] inline AttemptPlan attempt_plan(ReadKind kind, bool low_power, const TuningConfig &tuning,
+                                              uint32_t attempt_tx_ms) {
+  AttemptPlan plan =
+      attempt_plan_for_tries(kind == ReadKind::PROGRESS ? SCHEDULED_POLL_MAX_TRIES : EXCHANGE_RETRY_COUNT,
+                             tuning.exchange_start_response_wait_ms);
+  if (kind != ReadKind::SETTLING)
+    return plan;
+  plan.gap_ms = 0;
+  if (low_power)
+    plan.window_ms = LOW_POWER_RESPONSE_WAIT_MS;
+  const uint8_t cap = low_power ? LOW_POWER_SETTLING_ATTEMPTS : EXCHANGE_MAX_ATTEMPTS;
+  const uint32_t attempt_ms = attempt_tx_ms + plan.window_ms;
+  // An attempt starts only while the budget is not reached (ExchangeEngine::try_fits_budget_()), so
+  // n silent attempts need n * attempt_ms < budget.
+  const uint32_t budget_ms = tuning.exchange_total_budget_ms;
+  const uint32_t fitting = (attempt_ms == 0 || budget_ms == 0) ? cap : (budget_ms - 1) / attempt_ms;
+  plan.max_attempts = static_cast<uint8_t>(std::max<uint32_t>(1, std::min<uint32_t>(fitting, cap)));
+  return plan;
 }
 
 // == Low-power wake belief ==

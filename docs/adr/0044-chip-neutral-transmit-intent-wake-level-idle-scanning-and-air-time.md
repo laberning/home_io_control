@@ -4,6 +4,9 @@
 
 **Status:** Accepted · **Recorded:** 2026-09
 
+Amended by [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
+(a try starts only if its windows, not only its transmission, end inside the budget).
+
 ## Context
 
 Every transmission goes through one choke point, `ExchangeEngine::transmit_frame()`, which hands

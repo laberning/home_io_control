@@ -26,6 +26,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 import build as build_module  # noqa: E402
 import ingest as ingest_module  # noqa: E402
 import protolib  # noqa: E402
+import reply_latency as reply_latency_module  # noqa: E402
 import rekey_capture as rekey_capture_module  # noqa: E402
 import validate as validate_module  # noqa: E402
 
@@ -799,7 +800,31 @@ def test_validate_hard_fails_key_transfer_not_decrypting_to_corpus_key() -> None
         pass
 
 
+def test_reply_latency_pairs_low_power_tx_requests_with_their_replies() -> None:
+    dst, hub = "11 22 33", "AA BB CC"
+    request = f"4B 20 {dst} {hub} 03 03 00 00"
+    reply = f"96 00 {hub} {dst} 04 05 00 00"
+    plain_request = f"4B 00 {dst} {hub} 03 03 00 00"
+    frames = [
+        {"dir": "tx", "t_ms": 100, "hex": request},
+        {"dir": "rx", "t_ms": 350, "hex": reply},  # answered 250 ms after the request: counted
+        {"dir": "tx", "t_ms": 1000, "hex": plain_request},
+        {"dir": "rx", "t_ms": 1100, "hex": reply},  # request without the low-power bit: not counted
+        {"dir": "tx", "t_ms": 2000, "hex": request},
+        {"dir": "tx", "t_ms": 2700, "hex": request},  # a newer try replaces the unanswered one
+        {"dir": "rx", "t_ms": 2900, "hex": reply},  # 200 ms after the newest try
+        {"dir": "rx", "t_ms": 3000, "hex": request},  # an overheard request is not a hub request
+        {"dir": "rx", "t_ms": 3100, "hex": reply},
+        {"dir": "tx", "t_ms": 4000, "hex": request, "note": "never answered"},
+    ]
+    assert reply_latency_module.latencies_in_capture(frames) == [250, 200], "unexpected latencies"
+    assert reply_latency_module.percentile([10, 20, 30, 40], 0.5) == 20
+    assert reply_latency_module.percentile([10, 20, 30, 40], 1.0) == 40
+    assert reply_latency_module.latencies_in_capture([{"dir": "tx", "hex": request}]) == [], "no stamp, no sample"
+
+
 TESTS = [
+    test_reply_latency_pairs_low_power_tx_requests_with_their_replies,
     test_clean_io_capture_sx1262,
     test_io_frame_legacy_dedup_and_no_cmd_field,
     test_no_crc_write_private,

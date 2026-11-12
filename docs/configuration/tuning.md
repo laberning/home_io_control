@@ -249,9 +249,13 @@ are worse for you than missed commands.
 
 Wall-clock ceiling on one whole exchange, including retries. `exchange_start_response_wait_ms` and
 `exchange_response_wait_ms` set how long each try waits; this caps how long *all* of them together
-may run, so a try only starts if its transmission still ends inside the budget: the time already
-spent, the gap before the try and the try's own transmission (about 220 ms with a 1024-byte wake-up
-preamble) must stay below it ([ADR 0044](../adr/0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)).
+may run, so a try only starts if it can finish inside the budget. The time already spent, the gap
+before the try, the try's own transmission (about 220 ms with a 1024-byte wake-up preamble,
+[ADR 0044](../adr/0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)), the
+window the try then listens, and, when the device has already challenged in this exchange, the wait
+for its final reply must together stay below it ([ADR 0073](../adr/0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)).
+That last part matters for a low-power device that challenges: two tries use the default budget, so
+a third is not started.
 
 *Observations:* this exists to keep a failing command from blocking the ESPHome loop past its own
 "took a long time for an operation" warning threshold (2550 ms — see

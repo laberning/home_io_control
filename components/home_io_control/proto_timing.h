@@ -150,7 +150,29 @@ static constexpr int32_t RESPONSE_START_WAIT_MS = 400;
 static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
     RESPONSE_WAIT_MS;                                    ///< Wait for final response after challenge response
 static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
-static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;       ///< Attempts per command before reporting failure
+/// Attempts per exchange for every caller that has not asked for an attempt plan
+/// (decisions::attempt_plan()): commands, one-off reads, heater registers and the pairing loops.
+/// It is also the ceiling of the `max_tries` overload of ExchangeEngine::send_and_receive().
+static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;
+/// Most attempts any exchange makes, whatever the budget allows: a plan with a long
+/// `exchange_total_budget_ms` still stops here, so a dead device is not hammered with 25 copies of
+/// a read.
+static constexpr uint8_t EXCHANGE_MAX_ATTEMPTS = 9;
+/// Attempts a settling read makes to a low-power receiver. Each one leads with the wake-up
+/// preamble (~0.24 s on air), so three already fill the exchange budget.
+static constexpr uint8_t LOW_POWER_SETTLING_ATTEMPTS = 3;
+/// How long a read listens for a low-power receiver's reply after the end of its own transmission,
+/// on every attempt.
+///
+/// Of the 93 low-power-flagged requests this hub transmitted in the corpus (83 captures, see
+/// scripts/corpus/reply_latency.py), the median answer came 248 ms after the end of the request,
+/// the 90th percentile 299 ms, the 95th 354 ms; 89 came within 400 ms, and the four slower ones took
+/// 647 ms (a third-party gateway's pairing), 819 ms and 1639 ms (an RS100 io motor's key exchange)
+/// and 4375 ms (a stalled key extraction). 550 ms sits about 1.5 times above the 95th percentile and
+/// below every slower sample, so one attempt's window covers a reply that arrives late without
+/// waiting for the outliers. Three such attempts with their wake-up preambles still fit
+/// EXCHANGE_TOTAL_BUDGET_MS when nothing is waited between them.
+static constexpr uint16_t LOW_POWER_RESPONSE_WAIT_MS = 550;
 /// Re-sends allowed for a CMD_EXECUTE the target accepted without a closing reply, within the same
 /// exchange and its retry budget. One: a second silent try says the loss is not a one-off, and a
 /// third copy of a movement command would only lengthen the blocked loop. See
@@ -162,14 +184,16 @@ static constexpr uint8_t UNCONFIRMED_EXECUTE_MAX_RESENDS = 1;
 /// (issue #156). One, as for an EXECUTE: a second silent try is not a one-off. See
 /// decisions::retry_after_unconfirmed_accept_is_safe().
 static constexpr uint8_t UNCONFIRMED_SUBSCRIBE_MAX_RESENDS = 1;
-/// Gap before that re-send, in place of EXCHANGE_RETRY_DELAY_MS. A device that did act on the first
-/// copy is often deaf for about a second while its motor or load switches: on a Somfy awning, a
-/// re-send 0.77 s after the first copy drew no challenge at all in 3 of 14 cases. With this gap the
-/// re-send goes out about 1.3 s after the first copy, and the whole exchange still fits
-/// EXCHANGE_TOTAL_BUDGET_MS.
+/// Gap before that re-send, in place of the plan's retry gap (decisions::AttemptPlan::gap_ms). A
+/// device that did act on the first copy is often deaf for about a second while its motor or load
+/// switches: on a Somfy awning, a re-send 0.77 s after the first copy drew no challenge at all in
+/// 3 of 14 cases. With this gap the re-send goes out about 1.3 s after the first copy, and the
+/// whole exchange still fits EXCHANGE_TOTAL_BUDGET_MS. The gap is the total wait: the engine sleeps
+/// only the part the plan's own gap does not already cover, so a plan without a gap still re-sends
+/// at 750 ms.
 static constexpr uint32_t UNCONFIRMED_EXECUTE_RESEND_DELAY_MS = 750;
 static_assert(UNCONFIRMED_EXECUTE_RESEND_DELAY_MS >= EXCHANGE_RETRY_DELAY_MS,
-              "the re-send gap extends the ordinary retry gap, it never shortens it");
+              "the re-send gap extends the default retry gap, it never shortens it");
 
 /// How long evidence that a low-power receiver is moving keeps it believed awake enough to hear the
 /// short start preamble first. A moving VELUX solar receiver ignores the 1024-byte wake-up
@@ -234,18 +258,19 @@ static constexpr uint8_t STOP_SETTLE_POLL_TRIES = EXCHANGE_RETRY_COUNT;
 
 /// Wall-clock ceiling on one whole exchange, retries included.
 ///
-/// EXCHANGE_RETRY_COUNT tries x (long preamble + response window + retry gap) is what actually
-/// determines how long a failing command blocks the ESPHome loop, and that blocking also starves
-/// the receive path the rest of the exchange depends on. ESPHome itself warns when one operation
-/// takes longer than 2550 ms (ADR 0013); this budget must stay under that threshold.
+/// The attempt count times (long preamble + response window + retry gap) is what determines how
+/// long a failing command blocks the ESPHome loop, and that blocking also starves the receive path
+/// the rest of the exchange depends on. ESPHome itself warns when one operation takes longer than
+/// 2550 ms (ADR 0013); this budget must stay under that threshold.
 ///
-/// So the retry count is a maximum, not a promise: a try only starts if its transmission ends inside
-/// the budget — elapsed time, plus the gap before the try, plus the radio's estimate of the try's
-/// transmit time (`RadioDriver::tx_air_time_us()`), must stay below it. Counting the transmission
-/// keeps a radio with a long wake-up from starting a try it cannot finish in time. At the current
-/// 400 ms response window all three tries still fit (~2.3 s); raising the window well past the
-/// default is what starts trimming retries, since three full tries stop being affordable at that
-/// point — one long listen is the better trade there anyway.
+/// So the attempt count is a maximum, not a promise: an attempt only starts if it can finish inside
+/// the budget. Elapsed time, plus the gap before the attempt, plus the radio's estimate of its
+/// transmit time (`RadioDriver::tx_air_time_us()`), plus the window it then listens, plus the final
+/// reply window when the target has already challenged in this exchange, must stay below the
+/// budget. Counting the window and the final wait keeps a slow listen from running an exchange past
+/// the ceiling; counting the transmission keeps a radio with a long wake-up from starting an
+/// attempt it cannot finish in time. At the default 400 ms window three attempts with the retry gap
+/// still fit (~2.3 s); an exchange the target challenges does not always (ADR 0073).
 static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 
 /// One-way (1W) transmit cadence.

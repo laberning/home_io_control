@@ -2163,7 +2163,7 @@ TEST(Exchange, ThreeUnansweredSlowWakeTriesStayInsideTheBudget) {
     EXPECT_EQ(cfg.wake, TxWake::LONG);
 }
 
-TEST(Exchange, ATryWhoseTransmissionWouldEndAtTheBudgetIsNotStarted) {
+TEST(Exchange, ATryThatWouldEndAtTheBudgetIsNotStarted) {
   // Measure the third try's check time with budget to spare: its request goes out one retry gap
   // after the check.
   std::vector<uint32_t> t;
@@ -2177,9 +2177,13 @@ TEST(Exchange, ATryWhoseTransmissionWouldEndAtTheBudgetIsNotStarted) {
   const uint32_t tx_ms = (io868_tx_air_time_us(TuningConfig{}.normal_start_preamble, len) + 999) / 1000;
   ASSERT_GT(tx_ms, 0u);
 
-  // The elapsed time alone is well inside the budget, but the third try's transmission would end
-  // exactly at it: that try does not start.
-  const auto edge = static_cast<uint16_t>(third_check_ms + EXCHANGE_RETRY_DELAY_MS + tx_ms);
+  // The elapsed time alone is well inside the budget, but the third try would end exactly at it:
+  // its transmission, its first-reply window and, the target having challenged, its final-reply
+  // window. That try does not start.
+  const TuningConfig defaults;
+  const auto edge =
+      static_cast<uint16_t>(third_check_ms + EXCHANGE_RETRY_DELAY_MS + tx_ms +
+                            defaults.exchange_start_response_wait_ms + defaults.exchange_response_wait_ms);
   const char *stage = nullptr;
   EXPECT_EQ(run_challenged_status_poll(edge, nullptr, &stage), 4);
   EXPECT_STREQ(stage, "retry_budget_exhausted");
@@ -3805,4 +3809,225 @@ TEST(DeviceKey, InboundAuthenticationRejectsTheHubKeyFromAKeyedDevice) {
   radio.arm(status_update, test::TEST_SYSTEM_KEY, /*valid=*/true);
   EXPECT_FALSE(comp.authenticate_request_(status_update, FREQ_CH2))
       << "a device that keeps its own key is not authenticated by the hub key";
+}
+
+// ============================================================================
+// Attempt plans and the window-aware budget guard. A try starts only if its gap, transmission,
+// first-reply window and, once the target has challenged, the final-reply window all end inside
+// exchange_total_budget_ms. Every case runs on a ManualClock with modelled air time.
+// ============================================================================
+
+namespace {
+
+/// An exchange engine on a ManualClock with modelled air time and a configurable tuning.
+struct PlanRig {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr{&radio};
+  TuningConfig tuning{};
+  ExchangeEngine engine{&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning};
+
+  PlanRig() { radio.set_model_tx_airtime(true); }
+
+  /// One attempt's transmit time for a status poll to a mains or low-power target, as the engine
+  /// estimates it.
+  uint32_t attempt_tx_ms(bool low_power) const {
+    IoFrame request{};
+    create_get_status(request, test::OWN_ID, test::DST_ID, low_power);
+    uint8_t raw[64];
+    const uint8_t len = serialize(request, raw, sizeof(raw));
+    const uint16_t preamble = low_power ? LONG_PREAMBLE : tuning.normal_start_preamble;
+    return (io868_tx_air_time_us(preamble, len) + 999) / 1000;
+  }
+
+  /// Run a status poll to a target that never answers, with @p plan.
+  /// @return The wall-clock time the exchange blocked.
+  uint32_t run_silent_poll(const decisions::AttemptPlan &plan, bool low_power) {
+    IoFrame request{};
+    create_get_status(request, test::OWN_ID, test::DST_ID, low_power);
+    IoFrame response{};
+    const uint32_t start = esphome::test_clock::peek_ms();
+    EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+    return esphome::test_clock::peek_ms() - start;
+  }
+};
+
+}  // namespace
+
+TEST(Exchange, SettlingReadToASilentMainsTargetMakesTheFittingNumberOfAttemptsWithoutAGap) {
+  PlanRig rig;
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, false, rig.tuning, rig.attempt_tx_ms(false));
+  ASSERT_GT(plan.max_attempts, EXCHANGE_RETRY_COUNT) << "sanity: the plan is more than today's three";
+
+  const uint32_t blocked_ms = rig.run_silent_poll(plan, false);
+
+  EXPECT_EQ(rig.radio.get_send_count(), plan.max_attempts);
+  EXPECT_LT(blocked_ms, rig.tuning.exchange_total_budget_ms);
+  const auto &t = rig.radio.send_times_ms();
+  for (size_t i = 0; i + 1 < t.size(); i++)
+    EXPECT_LE(t[i + 1] - t[i], rig.attempt_tx_ms(false) + rig.radio.wait_timeouts()[i])
+        << "no gap: the next attempt follows the window (the estimate rounds the air time up)";
+}
+
+TEST(Exchange, SettlingReadIsCappedAtTheMostAttemptsWhateverTheBudget) {
+  PlanRig rig;
+  rig.tuning.exchange_total_budget_ms = 12000;
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, false, rig.tuning, rig.attempt_tx_ms(false));
+
+  rig.run_silent_poll(plan, false);
+
+  EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_MAX_ATTEMPTS);
+}
+
+TEST(Exchange, EngineClampsAPlanThatAsksForMoreThanTheMostAttempts) {
+  PlanRig rig;
+  rig.tuning.exchange_total_budget_ms = 12000;
+  decisions::AttemptPlan plan;
+  plan.max_attempts = 25;
+  plan.gap_ms = 0;
+
+  rig.run_silent_poll(plan, false);
+
+  EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_MAX_ATTEMPTS);
+}
+
+TEST(Exchange, SettlingReadToASilentLowPowerTargetListensTheLowPowerWindowOnEveryAttempt) {
+  PlanRig rig;
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, rig.tuning, rig.attempt_tx_ms(true));
+  ASSERT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS);
+
+  const uint32_t blocked_ms = rig.run_silent_poll(plan, true);
+
+  EXPECT_EQ(rig.radio.get_send_count(), LOW_POWER_SETTLING_ATTEMPTS);
+  ASSERT_EQ(rig.radio.wait_timeouts().size(), static_cast<size_t>(LOW_POWER_SETTLING_ATTEMPTS));
+  for (const auto wait : rig.radio.wait_timeouts())
+    EXPECT_EQ(wait, LOW_POWER_RESPONSE_WAIT_MS);
+  EXPECT_LT(blocked_ms, rig.tuning.exchange_total_budget_ms);
+}
+
+TEST(Exchange, NoPlanLetsASilentTargetBlockPastTheBudget) {
+  // Windows and budgets from short to long: whatever the plan asks for, the guard keeps the blocked
+  // time under the budget when the target never answers.
+  for (const bool low_power : {false, true}) {
+    for (const uint16_t window_ms : {200, 400, 550, 1000}) {
+      for (const uint16_t budget_ms : {1000, 2500, 5000, 12000}) {
+        PlanRig rig;
+        rig.tuning.exchange_start_response_wait_ms = window_ms;
+        rig.tuning.exchange_total_budget_ms = budget_ms;
+        decisions::AttemptPlan plan;
+        plan.max_attempts = EXCHANGE_MAX_ATTEMPTS;
+        plan.window_ms = window_ms;
+        plan.gap_ms = 0;
+        const uint32_t blocked_ms = rig.run_silent_poll(plan, low_power);
+        // The first attempt always runs, so a window longer than the budget is the one exception.
+        if (window_ms < budget_ms) {
+          EXPECT_LT(blocked_ms, budget_ms)
+              << "low_power=" << low_power << " window=" << window_ms << " budget=" << budget_ms;
+        }
+      }
+    }
+  }
+}
+
+TEST(Exchange, ChallengedLowPowerPollNoLongerStartsAThirdTryThatCannotFinish) {
+  // Each try is challenged and its final reply never comes: a try costs its wake-up transmission
+  // plus the 500 ms final window. After two the elapsed time plus a third's gap, wake-up, start
+  // window and final window is past the 2500 ms budget, so the third is not started. Counting only
+  // the elapsed time and the transmission, it would have started.
+  PlanRig rig;
+  queue_challenges(rig.radio, EXCHANGE_RETRY_COUNT);
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/true);
+  IoFrame response{};
+
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 4) << "two tries, each a request and a 0x3D";
+  EXPECT_STREQ(rig.engine.get_debug().stage, "retry_budget_exhausted");
+}
+
+TEST(Exchange, ChallengedMainsPollStillMakesItsThirdTry) {
+  PlanRig rig;
+  queue_challenges(rig.radio, EXCHANGE_RETRY_COUNT);
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+  IoFrame response{};
+
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 2 * EXCHANGE_RETRY_COUNT);
+}
+
+TEST(Exchange, ResendKeepsItsLongGapWhenThePlanHasNoGap) {
+  ResendRig rig;
+  rig.queue_challenge();
+  rig.radio.queue_rx_hold_until_sent(3);
+  rig.queue_challenge();
+  rig.radio.queue_rx_hold_until_sent(4);
+  rig.queue_final_reply();
+  decisions::AttemptPlan plan;
+  plan.gap_ms = 0;
+  IoFrame response{};
+
+  ASSERT_EQ(rig.engine.send_and_receive(stop_request(), response, FREQ_CH2, plan),
+            ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+
+  const auto &t = rig.radio.send_times_ms();
+  ASSERT_EQ(t.size(), 4u);
+  EXPECT_EQ(t[2] - t[1], rig.tuning.exchange_response_wait_ms + UNCONFIRMED_EXECUTE_RESEND_DELAY_MS)
+      << "the re-send waits 750 ms in total whether or not the plan has a gap of its own";
+}
+
+TEST(Exchange, ResendToALowPowerTargetStillFitsTheDefaultBudget) {
+  // A low-power EXECUTE accepted without a closing reply is still re-sent: its wake-up preamble and
+  // first-reply window end inside the budget after the 750 ms gap.
+  ResendRig rig;
+  rig.radio.set_model_tx_airtime(true);
+  rig.queue_challenge();
+  rig.radio.queue_rx_hold_until_sent(3);
+  rig.queue_challenge();
+  IoFrame request{};
+  create_execute_command(request, test::OWN_ID, test::DST_ID, /*low_power=*/true, CoverCommand::STOP);
+
+  EXPECT_EQ(rig.send(request), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+  EXPECT_EQ(rig.radio.get_send_count(), 4) << "request, 0x3D, the re-send, 0x3D";
+}
+
+TEST(Exchange, ResendBehindTheWakeUpPreambleIsSentOnceItsGapIsWaited) {
+  // Every try leads with the wake-up preamble. The re-send's own check (gap, transmission, window)
+  // admits it; the guard ahead of the re-sent try must not then refuse it for a final-reply window
+  // the re-send's check leaves out, after the long gap has already been waited.
+  ResendRig rig;
+  rig.tuning.low_power_wake_belief = false;
+  rig.radio.set_model_tx_airtime(true);
+  rig.queue_challenge();
+  rig.radio.queue_rx_hold_until_sent(3);
+  rig.queue_challenge();
+  IoFrame request{};
+  create_execute_command(request, test::OWN_ID, test::DST_ID, /*low_power=*/true, CoverCommand::STOP);
+  const uint32_t start = esphome::test_clock::peek_ms();
+
+  EXPECT_EQ(rig.send(request), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 4) << "request, 0x3D, the re-send, 0x3D";
+  EXPECT_STRNE(rig.engine.get_debug().stage, "retry_budget_exhausted");
+  EXPECT_LT(esphome::test_clock::peek_ms() - start, rig.tuning.exchange_total_budget_ms);
+}
+
+TEST(Exchange, UnconfirmedExecuteOnItsLastAllowedTryIsNotWaitedForAResend) {
+  // The challenged try is the last one the exchange allows, so no re-send can follow: the long
+  // re-send gap must not be waited and no re-send announced. The budget has room for a re-send,
+  // so only the attempt count stops it.
+  ResendRig rig;
+  rig.queue_challenge();
+  IoFrame response{};
+  const uint32_t start = esphome::test_clock::peek_ms();
+
+  EXPECT_EQ(rig.engine.send_and_receive(stop_request(), response, FREQ_CH2, /*max_tries=*/1),
+            ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 2) << "request, 0x3D; no re-send on a one-try exchange";
+  EXPECT_LT(esphome::test_clock::peek_ms() - start,
+            rig.tuning.exchange_start_response_wait_ms + rig.tuning.exchange_response_wait_ms)
+      << "the exchange ends with the final wait, not after the re-send gap";
 }

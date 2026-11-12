@@ -3,6 +3,9 @@
 
 **Status:** Accepted · **Recorded:** 2026-08
 
+Amended by [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
+(the budget arithmetic: an attempt costs its transmission and its windows).
+
 ## Context
 
 An authenticated exchange is not a single send: request, wait for a challenge,

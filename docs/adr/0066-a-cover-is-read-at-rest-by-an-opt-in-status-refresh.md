@@ -4,6 +4,9 @@
 
 **Status:** Accepted · **Recorded:** 2026-11
 
+Amended by [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
+(the refresh keeps three tries until it takes the settling plan).
+
 ## Context
 
 The hub learns a cover's state from its own commands and their follow-up polls (ADR 0061), from

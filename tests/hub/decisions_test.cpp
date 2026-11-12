@@ -1007,3 +1007,85 @@ TEST(Decisions, HeaterModelNameIsOneReadableLine) {
   EXPECT_EQ(decisions::format_heater_model_name(garbled, sizeof(garbled)), "A??B");
   EXPECT_EQ(decisions::format_heater_model_name(adelis, 0), "");
 }
+
+// ============================================================================
+// Attempt plan — attempt_plan()
+// ============================================================================
+
+namespace {
+constexpr uint32_t MAINS_TX_MS = 12;       // a status poll behind the default start preamble
+constexpr uint32_t LOW_POWER_TX_MS = 240;  // the same poll behind the 1024-byte wake-up preamble
+}  // namespace
+
+TEST(AttemptPlan, SettlingReadOfAMainsTargetFillsTheBudgetWithoutAGap) {
+  const TuningConfig tuning;  // 400 ms window, 2500 ms budget
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, MAINS_TX_MS);
+
+  EXPECT_EQ(plan.gap_ms, 0) << "silent attempts follow each other";
+  EXPECT_EQ(plan.window_ms, tuning.exchange_start_response_wait_ms);
+  EXPECT_EQ(plan.max_attempts, 6) << "6 x (12 + 400) = 2472 ms is the most that stays under 2500";
+}
+
+TEST(AttemptPlan, SettlingReadOfALowPowerTargetListensTheLowPowerWindowThreeTimes) {
+  const TuningConfig tuning;
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LOW_POWER_TX_MS);
+
+  EXPECT_EQ(plan.gap_ms, 0);
+  EXPECT_EQ(plan.window_ms, LOW_POWER_RESPONSE_WAIT_MS) << "not the tuned start window";
+  EXPECT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS);
+  EXPECT_LT(LOW_POWER_SETTLING_ATTEMPTS * (LOW_POWER_TX_MS + LOW_POWER_RESPONSE_WAIT_MS),
+            static_cast<uint32_t>(tuning.exchange_total_budget_ms))
+      << "three wake-up attempts fit the default budget without gaps";
+}
+
+TEST(AttemptPlan, SettlingReadIsCappedWhateverTheBudget) {
+  TuningConfig tuning;
+  tuning.exchange_total_budget_ms = 12000;  // the highest the YAML accepts
+  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, MAINS_TX_MS).max_attempts,
+            EXCHANGE_MAX_ATTEMPTS);
+  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LOW_POWER_TX_MS).max_attempts,
+            LOW_POWER_SETTLING_ATTEMPTS);
+}
+
+TEST(AttemptPlan, ABudgetBelowOneAttemptStillAllowsOne) {
+  TuningConfig tuning;
+  tuning.exchange_total_budget_ms = 300;
+  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, MAINS_TX_MS).max_attempts, 1);
+  tuning.exchange_total_budget_ms = 0;
+  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LOW_POWER_TX_MS).max_attempts,
+            LOW_POWER_SETTLING_ATTEMPTS)
+      << "a zero budget is no limit the plan can honour; the engine's guard still applies";
+}
+
+TEST(AttemptPlan, LongerWindowFitsFewerAttempts) {
+  TuningConfig tuning;
+  tuning.exchange_start_response_wait_ms = 1000;
+  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, MAINS_TX_MS).max_attempts, 2);
+}
+
+TEST(AttemptPlan, ProgressReadIsASingleAttempt) {
+  const TuningConfig tuning;
+  for (const bool low_power : {false, true}) {
+    const auto plan = decisions::attempt_plan(decisions::ReadKind::PROGRESS, low_power, tuning, MAINS_TX_MS);
+    EXPECT_EQ(plan.max_attempts, SCHEDULED_POLL_MAX_TRIES);
+    EXPECT_EQ(plan.gap_ms, EXCHANGE_RETRY_DELAY_MS);
+    EXPECT_EQ(plan.window_ms, tuning.exchange_start_response_wait_ms);
+  }
+}
+
+TEST(AttemptPlan, CommandKeepsTodaysThreeAttemptsWithTheRetryGap) {
+  const TuningConfig tuning;
+  for (const bool low_power : {false, true}) {
+    const auto plan = decisions::attempt_plan(decisions::ReadKind::COMMAND, low_power, tuning, MAINS_TX_MS);
+    EXPECT_EQ(plan.max_attempts, EXCHANGE_RETRY_COUNT);
+    EXPECT_EQ(plan.gap_ms, EXCHANGE_RETRY_DELAY_MS);
+    EXPECT_EQ(plan.window_ms, tuning.exchange_start_response_wait_ms);
+  }
+}
+
+TEST(AttemptPlan, PlanForTriesClampsToOneAndTheDefaultCount) {
+  EXPECT_EQ(decisions::attempt_plan_for_tries(0, 400).max_attempts, 1);
+  EXPECT_EQ(decisions::attempt_plan_for_tries(2, 400).max_attempts, 2);
+  EXPECT_EQ(decisions::attempt_plan_for_tries(9, 400).max_attempts, EXCHANGE_RETRY_COUNT);
+  EXPECT_EQ(decisions::attempt_plan_for_tries(2, 450).window_ms, 450);
+}
