@@ -27,6 +27,10 @@
 /// (0x0136), its temporary state (boost or drying, 0x013E), its working rate (0x0126) and a second
 /// comfort setpoint (0x0138). They have been read on two units in every state
 /// (tests/corpus/captures/probe/atlantic_adelis_probe_*.yaml); writing them has not been confirmed.
+///
+/// A Sauter Hekla heater adds a night light: on/off in register 0x0144 (`01` / `00`, read on a heater
+/// with the light on and off, and written as `0C 61 01 44 <value>` by the heater's own Cozytouch
+/// controller) and, most likely, its brightness in 0x0142 (reads 100 with the light at full) (issue #222).
 
 #include "proto_frame.h"
 
@@ -56,6 +60,10 @@ enum class HeatingFunction : uint8_t {
   TEMPORARY_STATE,            ///< Register 0x013E, read/write: a towel dryer's temporary state (HeatingTemporaryState).
   WORKING_RATE,               ///< Register 0x0126, read-only: share of the time the element heats, 0-100 %.
   TOWEL_COMFORT_SETPOINT,     ///< Register 0x0138, read-only: a towel dryer's comfort setpoint, tenths of a degree.
+  NIGHT_LIGHT,                ///< Register 0x0144, read/write: a heater's night light on (1) or off (0).
+  NIGHT_LIGHT_BRIGHTNESS,     ///< Register 0x0142, read/write: the night light's brightness, 0-100 %, 16-bit.
+                              ///< \todo Confirm on a real heater that the value is a percentage and that a
+                              ///<       write dims the light (issue #222).
 };
 
 /// @brief Operating modes of the mode register (HeatingFunction::SET_MODE).
@@ -132,6 +140,10 @@ constexpr int16_t HEATING_SENSOR_FAULT_RAW = -1;
 static constexpr float HEATING_TEMPERATURE_RANGE_MIN_C = -40.0F;
 static constexpr float HEATING_TEMPERATURE_RANGE_MAX_C = 80.0F;  ///< See HEATING_TEMPERATURE_RANGE_MIN_C.
 
+/// @brief Highest night light brightness (HeatingFunction::NIGHT_LIGHT_BRIGHTNESS): a percentage, so
+/// this value is full brightness.
+constexpr uint8_t HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX = 100;
+
 /// @brief Offset of the first value byte in a register reply: the four header bytes it echoes.
 constexpr size_t HEATING_REPLY_VALUE_OFFSET = 4;
 
@@ -182,6 +194,8 @@ bool heating_reply_echoes_register(const IoFrame &reply, uint8_t reg_hi, uint8_t
 ///   - SET_PRESENCE, SET_OPEN_WINDOW_DETECTION: 0 or 1.
 ///   - TOWEL_MODE: a TowelDryerMode value widened to float (0-3).
 ///   - TEMPORARY_STATE: a HeatingTemporaryState value widened to float (0-2).
+///   - NIGHT_LIGHT: 0 or 1.
+///   - NIGHT_LIGHT_BRIGHTNESS: an integral percentage 0-100, encoded as a 16-bit little-endian value.
 /// A read-only register (including POWER_ON, MIDNIGHT_SYNC and the measurement registers) is never
 /// encoded as a write, and out-of-range, non-integral (for enum/binary encodings) or non-finite
 /// input is rejected: a byte derived from a truncating or wrapping cast is never emitted.
@@ -256,6 +270,8 @@ struct HeatingReadings {
   int16_t temporary_state{-1};          ///< HeatingTemporaryState value; -1 until read.
   int16_t working_rate{-1};             ///< Working rate, 0-100 %; -1 until read.
   float towel_comfort_setpoint_c{NAN};  ///< A towel dryer's comfort setpoint (register 0x0138); NaN until read.
+  int16_t night_light{-1};              ///< Night light 1 on / 0 off; -1 until read.
+  int16_t night_light_brightness{-1};   ///< Night light brightness, 0-100 %; -1 until read.
   int16_t level{-1};                    ///< Low byte of the main parameter of a heater commanded with a prefixed
                                         ///< value: a heating level, or a setpoint alias. -1 until a status reply
                                         ///< carried one, and again after a reply that carried a plain
@@ -276,12 +292,12 @@ struct HeatingReadings {
   ///         the readings do not hold.
   [[nodiscard]] bool has(HeatingFunction fn) const;
 
-  /// @brief The stored wire byte of a one-byte register (a mode, a state, a flag, a percentage).
+  /// @brief The stored integer value of a register (a mode, a state, a flag, a percentage).
   /// @details Lets a heating profile name the register its card reads (its mode or preset register)
   ///          instead of the caller picking a field.
   /// @param fn Register.
-  /// @return The value, or -1 when it has not been read or `fn` is not a one-byte register the
-  ///         readings hold.
+  /// @return The value, or -1 when it has not been read or `fn` is not an integer register the
+  ///         readings hold (the temperatures are not).
   [[nodiscard]] int16_t value_of(HeatingFunction fn) const;
 };
 

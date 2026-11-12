@@ -45,6 +45,7 @@ enum class HeatingValueKind : uint8_t {
   MODE,            ///< One HeatingMode byte.
   BOUNDED_BYTE,    ///< One byte from 0 to the row's `max_value`: an enumeration (regulator state, towel-dryer
                    ///< mode, temporary state) or a percentage (working rate).
+  BOUNDED_U16,     ///< Unsigned 16-bit little-endian integer from 0 to the row's `max_value` (night light brightness).
 };
 
 /// @brief Who may do what with a register.
@@ -64,7 +65,7 @@ struct HeatingFunctionDescriptor {
   uint8_t register_low;   ///< Payload byte 3: low byte of the 0x01xx register number.
   HeatingAccess access;   ///< Whether the register may be read, written or both.
   HeatingValueKind kind;  ///< How the value maps onto the trailing bytes.
-  uint8_t max_value{0};   ///< BOUNDED_BYTE: highest value a reply may carry and a write may send.
+  uint8_t max_value{0};   ///< BOUNDED_BYTE, BOUNDED_U16: highest value a reply may carry and a write may send.
 };
 
 constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
@@ -92,6 +93,10 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
      WORKING_RATE_MAX},
     {"towel_comfort_setpoint", HeatingFunction::TOWEL_COMFORT_SETPOINT, 0x38, HeatingAccess::READ_ONLY,
      HeatingValueKind::TENTHS_U16},
+    // Night light registers: read on a Sauter Hekla with the light on and off (issue #222).
+    {"night_light", HeatingFunction::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, HeatingValueKind::BINARY},
+    {"night_light_brightness", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 0x42, HeatingAccess::READ_WRITE,
+     HeatingValueKind::BOUNDED_U16, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
 };
 
 /// @brief Look up the descriptor for a function.
@@ -120,6 +125,7 @@ size_t value_length(HeatingValueKind kind) {
       return 0;
     case HeatingValueKind::TENTHS_U16:
     case HeatingValueKind::HUNDREDTHS_S16:
+    case HeatingValueKind::BOUNDED_U16:
       return 2;
     case HeatingValueKind::BINARY:
     case HeatingValueKind::MODE:
@@ -127,6 +133,21 @@ size_t value_length(HeatingValueKind kind) {
       return 1;
   }
   return 0;
+}
+
+/// @brief Is `value` an integer from 0 to `max_value`? NaN fails every comparison, so it is refused too.
+bool is_bounded_integer(float value, uint8_t max_value) {
+  return std::isfinite(value) && value >= 0.0F && value <= static_cast<float>(max_value) && value == std::floor(value);
+}
+
+/// @brief Write a set request for a 16-bit register: the header, then the value low byte first, the
+/// order the register reads back in.
+/// @return PAYLOAD_LEN_TWO_VALUE.
+size_t write_u16_set(const HeatingFunctionDescriptor &d, uint16_t raw, uint8_t *out) {
+  write_header(d, HEATING_DIRECTION_SET, out);
+  out[4] = static_cast<uint8_t>(raw & LOW_BYTE_MASK);
+  out[PAYLOAD_LEN_TWO_VALUE - 1] = static_cast<uint8_t>(raw >> BITS_PER_BYTE);
+  return PAYLOAD_LEN_TWO_VALUE;
 }
 
 }  // namespace
@@ -201,11 +222,7 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[HEATING
       // precision, no hidden widening to double). That holds on x86-64 SSE and on Xtensa; the
       // proto_heating test pins 20.55 C, which is one ULP from flipping to 0xCD under any
       // excess-precision evaluation.
-      const auto tenths = static_cast<uint16_t>(std::round(value * DEGREES_TO_TENTHS));
-      write_header(*d, HEATING_DIRECTION_SET, out);
-      out[4] = static_cast<uint8_t>(tenths & LOW_BYTE_MASK);
-      out[PAYLOAD_LEN_TWO_VALUE - 1] = static_cast<uint8_t>(tenths >> BITS_PER_BYTE);
-      return PAYLOAD_LEN_TWO_VALUE;
+      return write_u16_set(*d, static_cast<uint16_t>(std::round(value * DEGREES_TO_TENTHS)), out);
     }
 
     case HeatingValueKind::MODE:
@@ -226,14 +243,18 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[HEATING
       return PAYLOAD_LEN_ONE_VALUE;
 
     case HeatingValueKind::BOUNDED_BYTE:
-      // An integral value inside the register's range; anything else is refused, never truncated. NaN
-      // fails every comparison, so it is refused too.
-      if (!std::isfinite(value) || value < 0.0F || value > static_cast<float>(d->max_value) ||
-          value != std::floor(value))
+      // An integral value inside the register's range; anything else is refused, never truncated.
+      if (!is_bounded_integer(value, d->max_value))
         return 0;
       write_header(*d, HEATING_DIRECTION_SET, out);
       out[4] = static_cast<uint8_t>(value);
       return PAYLOAD_LEN_ONE_VALUE;
+
+    case HeatingValueKind::BOUNDED_U16:
+      // The same rule, in the two-byte form.
+      if (!is_bounded_integer(value, d->max_value))
+        return 0;
+      return write_u16_set(*d, static_cast<uint16_t>(value), out);
 
     case HeatingValueKind::NONE:
     case HeatingValueKind::HUNDREDTHS_S16:
@@ -288,6 +309,12 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
       value = static_cast<float>(v[0]);
       return true;
 
+    case HeatingValueKind::BOUNDED_U16:
+      if (raw16 > d->max_value)
+        return false;
+      value = static_cast<float>(raw16);
+      return true;
+
     case HeatingValueKind::NONE:
       return false;
   }
@@ -329,6 +356,12 @@ bool HeatingReadings::store(HeatingFunction fn, float value) {
     case HeatingFunction::TOWEL_COMFORT_SETPOINT:
       this->towel_comfort_setpoint_c = value;
       return true;
+    case HeatingFunction::NIGHT_LIGHT:
+      this->night_light = static_cast<int16_t>(value);
+      return true;
+    case HeatingFunction::NIGHT_LIGHT_BRIGHTNESS:
+      this->night_light_brightness = static_cast<int16_t>(value);
+      return true;
     case HeatingFunction::POWER_ON:
     case HeatingFunction::SET_PRESENCE:
     case HeatingFunction::MIDNIGHT_SYNC:
@@ -354,6 +387,8 @@ bool HeatingReadings::has(HeatingFunction fn) const {
     case HeatingFunction::TOWEL_MODE:
     case HeatingFunction::TEMPORARY_STATE:
     case HeatingFunction::WORKING_RATE:
+    case HeatingFunction::NIGHT_LIGHT:
+    case HeatingFunction::NIGHT_LIGHT_BRIGHTNESS:
       return this->value_of(fn) >= 0;
     case HeatingFunction::POWER_ON:
     case HeatingFunction::SET_PRESENCE:
@@ -379,6 +414,10 @@ int16_t HeatingReadings::value_of(HeatingFunction fn) const {
       return this->temporary_state;
     case HeatingFunction::WORKING_RATE:
       return this->working_rate;
+    case HeatingFunction::NIGHT_LIGHT:
+      return this->night_light;
+    case HeatingFunction::NIGHT_LIGHT_BRIGHTNESS:
+      return this->night_light_brightness;
     // Temperatures and the registers the readings do not hold have no wire byte.
     case HeatingFunction::ROOM_TEMPERATURE:
     case HeatingFunction::SET_TEMPERATURE:

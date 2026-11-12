@@ -20,8 +20,36 @@
 #include "esphome/components/light/light_output.h"
 #include "platform_entity_base.h"
 
+#include <optional>
+
 namespace esphome {
 namespace home_io_control {
+
+/// @brief Show a device's light state on its LightState without sending it back to the device.
+/// @ingroup hioc_platforms
+///
+/// LightState::make_call().perform() makes the output's write_state() run, which on these lights is a
+/// radio command. This publishes `on` (and `brightness`, when given) only when the LightState does not
+/// already show it, and arms `suppress_write` so the output swallows that one write_state(). Shared by
+/// every light output of this component.
+/// @param state The LightState to update.
+/// @param on Whether the device reports the light on.
+/// @param brightness The device's brightness, 0.0-1.0; nullopt for an on/off light.
+/// @param[out] suppress_write The output's echo guard; set when a call is performed.
+inline void publish_light_reading(light::LightState *state, bool on, std::optional<float> brightness,
+                                  bool &suppress_write) {
+  if (state->current_values.is_on() == on && state->remote_values.is_on() == on &&
+      (!brightness.has_value() ||
+       (state->current_values.get_brightness() == *brightness && state->remote_values.get_brightness() == *brightness)))
+    return;
+  suppress_write = true;
+  auto call = state->make_call();
+  call.set_state(on);
+  if (brightness.has_value())
+    call.set_brightness(*brightness);
+  call.set_save(false);
+  call.perform();
+}
 
 /// @brief Binary or dimmable light entity for IO‑Homecontrol devices.
 /// @ingroup hioc_platforms

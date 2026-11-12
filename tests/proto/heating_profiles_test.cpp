@@ -537,7 +537,7 @@ TEST(HeatingProfilesTowelDryer, TheModelSelectsItsOwnProfileAndNoModelKeepsTheRa
 
 TEST(HeatingProfilesTowelDryer, AModelProfileKeepsTheControlPathOfTheProfileAboveIt) {
   // The path predicates (device_uses_heating_registers() and friends) take no model: this is why.
-  for (const auto model : {DeviceModel::TOWEL_DRYER}) {
+  for (const auto model : {DeviceModel::TOWEL_DRYER, DeviceModel::HEATER_WITH_LIGHT}) {
     for (unsigned type = 0; type <= 0x3FF; type++) {
       for (unsigned subtype = 0; subtype <= 0x3F; subtype++) {
         const auto t = static_cast<DeviceType>(type);
@@ -631,4 +631,36 @@ TEST(HeatingProfilesTowelDryer, TheRadiatorProfileIsUnchangedAndNeverTouchesTheT
   }
   for (size_t i = 0; i < p.preset_count; i++)
     EXPECT_NE(p.presets[i].id, HeatingPresetId::NONE) << "the radiator offers no 'none' preset";
+}
+
+// === Heater with a night light (52/1, model HEATER_WITH_LIGHT) ===
+
+TEST(HeatingProfilesHeaterWithLight, IsTheRadiatorPlusTheLightReadAfterItsPoll) {
+  const HeatingProfile &radiator = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
+  const HeatingProfile *light = find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT);
+  ASSERT_NE(light, nullptr);
+  ASSERT_NE(light, &radiator);
+  EXPECT_EQ(light->model, DeviceModel::HEATER_WITH_LIGHT);
+  EXPECT_EQ(light->path, radiator.path);
+  EXPECT_EQ(light->modes, radiator.modes);
+  EXPECT_EQ(light->presets, radiator.presets);
+  EXPECT_EQ(light->observed, radiator.observed);
+  EXPECT_EQ(light->poll_registers, radiator.poll_registers);
+  EXPECT_EQ(light->boot_registers, radiator.boot_registers);
+  EXPECT_EQ(light->mode_fn, radiator.mode_fn);
+  EXPECT_EQ(light->action_source, radiator.action_source);
+  EXPECT_EQ(light->experimental_writes, radiator.experimental_writes);
+
+  const HeatingFunction extra[] = {HeatingFunction::NIGHT_LIGHT, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS};
+  ASSERT_EQ(light->extra_poll_register_count, std::size(extra));
+  for (size_t i = 0; i < std::size(extra); i++)
+    EXPECT_EQ(light->extra_poll_registers[i], extra[i]) << i;
+}
+
+TEST(HeatingProfilesHeaterWithLight, NoOtherProfileReadsTheLight) {
+  for (const auto model : {DeviceModel::NONE, DeviceModel::TOWEL_DRYER}) {
+    const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, model);
+    EXPECT_EQ(p.extra_poll_register_count, 0u);
+    EXPECT_FALSE(lists(p.poll_registers, p.poll_register_count, HeatingFunction::NIGHT_LIGHT));
+  }
 }

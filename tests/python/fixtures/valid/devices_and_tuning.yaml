@@ -80,6 +80,15 @@ climate:
     io_device_type: electrical_heater
     io_subtype: 1
     io_model: towel_dryer
+  # A heater with a night light: the radiator plus a dimmable light companion.
+  - platform: home_io_control
+    name: "Hekla"
+    io_device_id: "5E6F72"
+    io_device_type: electrical_heater
+    io_subtype: 1
+    io_model: heater_with_light
+    night_light:
+      name: "Hekla Night Light"
   - platform: home_io_control
     name: "Plain Heater"
     io_device_id: "5E6F70"

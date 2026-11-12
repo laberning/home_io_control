@@ -232,6 +232,10 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // #202), so it is a model row: the YAML declares it (`io_model: towel_dryer`). It has no window
     // sensor and no open-window detection, and its own heating profile (proto_heating_profiles.cpp).
     {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER, "towel_dryer", CAP_CLIMATE, SUBTYPE_PLATFORM, 0},
+    // A heater with a night light (a Sauter Hekla, issue #222) reports the same 52/1 as well: everything the
+    // radiator has, plus the light's registers in its own heating profile.
+    {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT, "heater_with_light", CAP_CLIMATE,
+     SUBTYPE_PLATFORM, WINDOW_COMPANIONS | device_feature::NIGHT_LIGHT},
 
     {DeviceType::HEAT_RECOVERY_VENTILATION, 0, NO_MODEL, "heat_recovery_ventilation", CAP_NONE, 0, 0},
 

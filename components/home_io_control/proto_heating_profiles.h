@@ -202,6 +202,11 @@ struct HeatingProfile {
   HeatingFunction preset_fn{HeatingFunction::SET_MODE};
   HeatingActionSource action_source{HeatingActionSource::REGULATOR};  ///< Where `features.action` reads from.
   bool experimental_writes{false};  ///< PRIVATE_REGISTERS: the mode and preset writes are unconfirmed on a device.
+  /// PRIVATE_REGISTERS: registers every poll reads after `poll_registers`, for a part the heater may not
+  /// have (a night light). A miss here is not a poll failure, so a model declared on a heater without
+  /// the part costs a read, not the poll.
+  const HeatingFunction *extra_poll_registers{nullptr};
+  size_t extra_poll_register_count{0};  ///< Number of entries in `extra_poll_registers`.
 };
 
 /// @brief Look up the heating profile for a (type, subtype, model).

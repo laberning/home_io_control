@@ -513,6 +513,12 @@ TEST(DeviceTypesTableModels, AModelRowKeepsTheIdentityOfTheRowAboveIt) {
         std::find(profile->poll_registers, profile->poll_registers + profile->poll_register_count,
                   HeatingFunction::WINDOW_OPEN) != profile->poll_registers + profile->poll_register_count;
     EXPECT_EQ(has_feature(model.features, device_feature::WINDOW_COMPANIONS), polls_window) << model.name;
+    // The night light likewise follows the registers the model's poll reads.
+    const bool polls_light =
+        profile != nullptr &&
+        std::find(profile->extra_poll_registers, profile->extra_poll_registers + profile->extra_poll_register_count,
+                  HeatingFunction::NIGHT_LIGHT) != profile->extra_poll_registers + profile->extra_poll_register_count;
+    EXPECT_EQ(has_feature(model.features, device_feature::NIGHT_LIGHT), polls_light) << model.name;
   });
-  EXPECT_EQ(rows, 1u);
+  EXPECT_EQ(rows, 2u);
 }
