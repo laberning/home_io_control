@@ -1,6 +1,6 @@
-Trimmed excerpt of a real capture, analysis/issues/27.txt (SX1262 / Heltec V3). CTRL0=0xF5 implies
+Trimmed excerpt of a real capture from GitHub issue #27 (SX1262 / Heltec V3). CTRL0=0xF5 implies
 a 22-byte frame (0xF5 & 0x1F = 0x15 = 21, +1 = 22); exactly 22 bytes are logged with no trailing
-CRC — this is the "SX1262 UART-decoded RX frames are logged without CRC" rule from the
-implementation plan, pinned here as an explicit crc_present()==False assertion.
+CRC — the rule that SX1262 UART-decoded RX frames are logged without CRC,
+pinned here as an explicit crc_present()==False assertion.
 
 [08:56:12.507][I][io_frame:067]: RX [22 bytes] freq=868950000 cmd=WRITE_PRIVATE : F5 00 00 00 3F 2F 9A 98 20 02 03 05 02 00 0F 84 FF FC 46 0E AC 87

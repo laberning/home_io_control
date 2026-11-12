@@ -161,7 +161,7 @@ def _mini_repo(root: Path) -> None:
     (root / "docs" / "adr").mkdir(parents=True)
     (root / "config").mkdir()
     (root / "components" / "home_io_control").mkdir(parents=True)
-    (root / "analysis").mkdir()
+    (root / "local_only").mkdir()
 
     # The README is the mainpage and so the root of the tree: check E requires every *other*
     # staged page to be named in exactly one subpages block, so it parents the two docs/ pages.
@@ -185,7 +185,7 @@ def _mini_repo(root: Path) -> None:
     )
     (root / "docs" / "adr" / "0001-a.md").write_text("# ADR 0001\n<!-- doxygen-label: adr0001 -->\n")
     (root / "config" / "board.yaml").write_text("x: 1\n")
-    (root / "analysis" / "notes.md").write_text("secret notes\n")
+    (root / "local_only" / "notes.md").write_text("local notes\n")
 
     (root / "Doxyfile").write_text(
         "INPUT = components/home_io_control/ \\\n"
@@ -195,7 +195,7 @@ def _mini_repo(root: Path) -> None:
         "        build/docs/adr/\n"
         "FILE_PATTERNS = *.h *.md\n"
     )
-    (root / ".gitignore").write_text("analysis/\n")
+    (root / ".gitignore").write_text("local_only/\n")
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "add", "-A"], cwd=root, check=True)
     subprocess.run(
@@ -253,7 +253,7 @@ def test_each_violation_is_caught() -> None:
             "# ADR 0002\n<!-- doxygen-label: adr0002 -->\n"
         ),
         "published doc links git-excluded": lambda r: (r / "docs" / "guide.md").write_text(
-            "# Guide\n<!-- doxygen-label: guide -->\n\n[n](../analysis/notes.md)\n"
+            "# Guide\n<!-- doxygen-label: guide -->\n\n[n](../local_only/notes.md)\n"
         ),
         "github blob link to missing path": lambda r: (r / "docs" / "guide.md").write_text(
             "# Guide\n<!-- doxygen-label: guide -->\n\n"

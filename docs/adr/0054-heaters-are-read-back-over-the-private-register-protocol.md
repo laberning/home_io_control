@@ -12,7 +12,7 @@ premise held while the registers were known only as writes.
 
 An Atlantic AGILIA IO radiator (node type 52, subtype 1; issue #165) is expected to answer a
 register *read* (`0C 60 01 <reg>`) with the same 0x21 command, echoing the header followed by the
-value. The write acknowledgement in corpus `atlantic_thermor_exchange_write_private_param` has that
+value. The write acknowledgement in corpus `atlantic_agilia_exchange_setpoint_and_off_read_back` has that
 shape, and the public example lines of the register protocol show reads as `0c60 <reg> <value>`.
 The registers an entity needs are expected to be readable: the room temperature (0x0115, signed
 hundredths of a degree, raw `-1` for a sensor fault), the comfort setpoint (0x0103), the operating

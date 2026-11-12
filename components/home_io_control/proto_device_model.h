@@ -273,8 +273,7 @@ enum class CoverCommand : uint8_t {
                    ///< and environmental limits (confirmed on real hardware to move correctly;
                    ///< bypassing an active lock is still unconfirmed — see create_force_open()
                    ///< in proto_commands.cpp).
-  PARTIAL = 4,     ///< Move to the partial position (garage openers); experimental.
-                   ///< \todo Confirm on a real garage opener that 0xD809 opens it to a partial position.
+  PARTIAL = 4,     ///< Move to the stored partial position (garage openers; issue #163).
   PEDESTRIAN = 5,  ///< Move to the pedestrian position (gate openers); experimental.
                    ///< \todo Confirm on a real gate opener that 0xD807 opens it to a pedestrian position.
 };

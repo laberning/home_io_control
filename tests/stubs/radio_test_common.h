@@ -371,6 +371,14 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   bool emulate_capture_lifecycle_{false};
 };
 
+/// A MockRadio whose failure the test latches, the way a driver latches a runtime BUSY timeout after
+/// setup: is_failed() and failure_reason() then report it through RadioDriver's own bookkeeping.
+class LatchingRadio : public MockRadio {
+ public:
+  [[nodiscard]] bool is_failed() const override { return esphome::home_io_control::RadioDriver::is_failed(); }
+  void latch(const char *reason) { this->fail_(reason); }
+};
+
 // --- SX1262 mock — inherits MockRadio but overrides chip-specific behavior ----
 /// Simulates SX1262 response_preamble() returning the longer preamble.
 class MockRadioSX1262 : public MockRadio {

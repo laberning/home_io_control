@@ -38,16 +38,16 @@ namespace home_io_control {
 /// Partial Position button (garage openers) and CoverCommand::PEDESTRIAN for the Pedestrian
 /// Position button (gate openers). The press path, the parent/device guards and the log wording
 /// are identical for all of them; only the command byte differs.
-/// \todo Confirm on a real garage opener that PARTIAL (0xD809) and on a real gate opener that
-///       PEDESTRIAN (0xD807) move the motor to that position (experimental; the buttons are
-///       disabled by default).
+/// \todo Confirm on a real gate opener that PEDESTRIAN (0xD807) moves the motor to that position
+///       (experimental; the button is disabled by default). PARTIAL (0xD809) runs a garage opener's
+///       stored partial position (issue #163).
 /// @ingroup hioc_platforms
 class IOHomeCoverCommandButton : public button::Button, public Component, public DeviceBoundCompanion {
  public:
   /// @brief Set which cover command a press sends.
   /// @param command CoverCommand::FAVORITE for the favorite-position companion,
-  ///        CoverCommand::VENT for the ventilation companion, CoverCommand::PARTIAL or
-  ///        CoverCommand::PEDESTRIAN for the experimental partial / pedestrian companions.
+  ///        CoverCommand::VENT for the ventilation companion, CoverCommand::PARTIAL for the
+  ///        partial companion, CoverCommand::PEDESTRIAN for the experimental pedestrian companion.
   void set_command(CoverCommand command) { this->command_ = command; }
 
   /// @brief Initialize the generated button.

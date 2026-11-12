@@ -1,0 +1,46 @@
+id: unidentified_1w_remote_oneway_execute_open_and_stop_acei_61_sx1276
+description: >
+  1W CMD_EXECUTE (0x00) broadcasts (typed-broadcast to all, dst=00003F, originator=0x01,
+  ACEI=0x61) from an unidentified 1W remote (node 6757FB) overheard on the project's own bench
+  receiver: an OPEN (main 0x0000) heard on both the 868.95 and 869.85 MHz channels, then, nine
+  seconds later, a STOP (main 0xD2 00) on the 868.95 MHz channel (its 869.85 MHz repeat is
+  byte-identical and left out). Both carry two functional parameters (23 bytes), the second one
+  zero. The OPEN's first copy has CTRL1_LOW_POWER set (F6 20) and its repeat does not (F6 00),
+  the copy-1-only wake flag ADR 0038 describes. The remote's manufacturer is not established, so
+  the capture only pins the ACEI 0x61 shape (level 3, asserted below) and the 1W EXECUTE
+  framing. No trailing CRC is on the wire as logged (crc: absent).
+source:
+  device: "Unidentified 1W remote (ACEI 0x61, node 6757FB)"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-08-14
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F6 20 00 00 3F 67 57 FB 00 01 61 00 00 00 00 1F 44 06 60 03 45 E6 42"
+    crc: absent
+    note: "cmd=EXECUTE(0x00)"
+  - dir: rx
+    t_ms: 48
+    freq: 869850000
+    hex: "F6 00 00 00 3F 67 57 FB 00 01 61 00 00 00 00 1F 44 06 60 03 45 E6 42"
+    crc: absent
+    note: "cmd=EXECUTE(0x00)"
+  - dir: rx
+    t_ms: 9021
+    freq: 868950000
+    hex: "F6 00 00 00 3F 67 57 FB 00 01 61 D2 00 00 00 1F 47 F8 22 34 93 85 F3"
+    crc: absent
+    note: "cmd=EXECUTE(0x00)"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+  oneway:
+    originator: 0x01
+    acei: 3

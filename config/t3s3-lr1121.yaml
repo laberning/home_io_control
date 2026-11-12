@@ -5,13 +5,14 @@ substitutions:
 ## Home IO Control full hub config for the LilyGo T3-S3 (ESP32-S3 + Semtech LR1121).
 ## Not to be confused with the plain SX1276/SX1262 "LilyGO T3-S3" boards already in the
 ## README hardware table — same silkscreen/form factor, different radio chip, different
-## IRQ pin (design plan §1.1). Pins below are the T3-S3's radio-only SPI bus.
+## IRQ pin. Pins below are the T3-S3's radio-only SPI bus.
 ##
-## This config intentionally omits the board's onboard SSD1306 OLED: the design plan's
-## pin table only documents the I2C bus (SDA=18, SCL=17), not the reset/power-gate pins
+## This config intentionally omits the board's onboard SSD1306 OLED: the known pin
+## table for this board only documents the I2C bus (SDA=18, SCL=17), not the reset/power-gate pins
 ## the Heltec V3 config's display logic depends on, and those must not be guessed
-## (AGENTS.md / implementation plan §0.3 "never guess chip constants" applies equally to
-## undocumented board pins). Add display support once verified on hardware (Step 6/9).
+## (a guessed pin can drive a power-gate or reset line the wrong way, so, as with chip
+## constants, an undocumented board pin is never guessed). Add display support once
+## the pins are verified on hardware.
 
 esphome:
   name: ${device_name}

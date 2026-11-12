@@ -502,7 +502,8 @@ async def create_companion_sensors(config, parent):
     - Active Issue: the one enabled-by-default companion — it is the headline diagnostic
       value that turns a silently-ignored command into a self-explained one (e.g. a
       wind/rain lockout), so users should see it without an opt-in step. Empty except while
-      a CMD_ERROR_RESP reason is outstanding; see IOHomeActiveIssueTextSensor.
+      an issue is outstanding (a refusal, a derived rain limitation, or a radio that stopped
+      responding); see IOHomeActiveIssueTextSensor.
     - RSSI / Last Contact / Exchange Failures: numeric link-health diagnostics, disabled by
       default (noise control). Last Contact publishes seconds since the last frame from the
       device (an age, not a Home Assistant timestamp) and keeps counting up between frames via

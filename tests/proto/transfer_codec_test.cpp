@@ -87,7 +87,7 @@ TEST(TransferCodec, ABlockForAnotherChunkOrHandleIsRefused) {
 }
 
 TEST(TransferCodec, TheHandleIsComparedOnItsLowSevenBits) {
-  // The vendor stack compares only the low seven bits of the first byte (E-KIZ-054).
+  // Only the low seven bits of the first byte are the handle; the top bit is ignored.
   const IoFrame f = frame_with(CMD_UNKNOWN4A_RESP, {0x90, 0x00, 0x01, 0x41});
   const uint8_t *data = nullptr;
   uint8_t len = 0;

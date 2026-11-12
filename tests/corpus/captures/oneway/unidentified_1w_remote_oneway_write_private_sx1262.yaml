@@ -1,0 +1,34 @@
+id: unidentified_1w_remote_oneway_write_private_sx1262
+description: >
+  Two 1W CMD_WRITE_PRIVATE (0x20) broadcasts, 148 ms apart, from an unidentified 1W remote (node
+  0EE5EE) that also sent an EXECUTE STOP (ACEI 0x43) just before, captured by the reporter's own
+  hub on issue #156. The first carries data 02 FF 01 43 02 0C 00 00, the second the
+  favourite / 'My' pattern 02 FF 01 43 02 05 FF 00, as in somfy_smoove_oneway_favorite_sx1276. The
+  first differs from that pattern in bytes 5 and 6-7 and looks like the frame that starts a
+  gesture (somfy_smoove_oneway_hold_to_dim_sx1276 opens its hold the same way with sub-byte
+  0x0C). The semantics are not verified, so only structural fields are asserted.
+source:
+  device: "Unidentified 1W remote (node 0EE5EE)"
+  captured_with: sx1262
+  firmware: null
+  date: 2026-11-05
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/156"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F8 20 00 00 3F 0E E5 EE 20 02 FF 01 43 02 0C 00 00 85 E8 58 5B ED 1E FD 76"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE(0x20)"
+  - dir: rx
+    t_ms: 148
+    freq: 868950000
+    hex: "F8 00 00 00 3F 0E E5 EE 20 02 FF 01 43 02 05 FF 00 85 E9 75 37 9A A7 7A AA"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE(0x20)"
+expect:
+  frames:
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}

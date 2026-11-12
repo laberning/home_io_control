@@ -6,6 +6,7 @@
 #include "hub_core.h"
 #include "proto_constants.h"
 #include "test_helpers.h"
+#include "stubs/radio_test_common.h"
 
 using namespace esphome::home_io_control;
 
@@ -14,6 +15,8 @@ namespace {
 class TestableActiveIssueHub : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::notify_device_update_;
+  using IOHomeControlComponent::radio_;
+  using IOHomeControlComponent::initialized_;
 };
 
 }  // namespace
@@ -145,4 +148,33 @@ TEST(PlatformActiveIssueTextSensor, DeviceUpdateForOtherDeviceIsIgnored) {
   hub.notify_device_update_("DEF456");
 
   EXPECT_EQ(sensor.state, "") << "updates for a different device id must not change this sensor's published state";
+}
+
+TEST(PlatformActiveIssueTextSensor, RadioThatStopsRespondingShowsOnEveryDeviceAndWinsOverAResult) {
+  TestableActiveIssueHub hub;
+  hub.add_device("ABC123");
+  hub.add_device("DEF456");
+  hub.get_device("DEF456")->last_result_code = RESULT_LIMITATION_BY_RAIN;
+  auto *radio = new LatchingRadio();
+  hub.radio_ = radio;
+  hub.initialized_ = true;
+
+  IOHomeActiveIssueTextSensor first;
+  first.set_parent(&hub);
+  first.set_device_id("ABC123");
+  first.setup();
+  IOHomeActiveIssueTextSensor second;
+  second.set_parent(&hub);
+  second.set_device_id("DEF456");
+  second.setup();
+  ASSERT_EQ(first.state, "");
+  ASSERT_EQ(second.state, "LIMITATION_BY_RAIN");
+
+  radio->latch("BUSY stuck high");
+  hub.loop();
+
+  EXPECT_EQ(first.state, ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING) << "loop() must republish every device";
+  EXPECT_EQ(second.state, ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING) << "a dead radio outranks a device result";
+  delete hub.radio_;
+  hub.radio_ = nullptr;
 }

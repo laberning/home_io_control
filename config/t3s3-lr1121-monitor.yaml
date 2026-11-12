@@ -5,8 +5,8 @@ substitutions:
 ## Passive IO-Homecontrol monitor for the LilyGo T3-S3 (ESP32-S3 + Semtech LR1121).
 ## This config intentionally defines no IO entities and no pairing button.
 ## The component still keeps the radio in RX, hops channels, and logs parsed traffic.
-## This is the config Step 6 (design plan §4 rung 1-2) flashes first: identity/TCXO
-## bring-up and passive RX validation need no real io-homecontrol device or key.
+## Flash this config first on a new board: identity/TCXO bring-up and passive RX
+## validation need no real io-homecontrol device or key.
 
 esphome:
   name: ${device_name}

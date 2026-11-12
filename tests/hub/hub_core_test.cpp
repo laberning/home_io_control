@@ -139,6 +139,18 @@ TEST(HubCore, SetupNamesTheRadioTypeWhenNoDriverCanBeBuilt) {
   EXPECT_NE(comp.radio_failure_reason_.find("not_a_chip"), std::string::npos) << comp.radio_failure_reason_;
 }
 
+TEST(HubCore, SetupRaisesTheBlockingWarningPastAWholeExchange) {
+  // ESPHome keeps warn_if_blocking_over_ in centiseconds: 250 means 2.5 s, not 250 ms. The threshold
+  // has to cover one whole exchange, or every failing command would log a blocking warning.
+  TestableHubComponent comp;
+  configure_hub_for_setup(comp, "not_a_chip");
+
+  comp.setup();
+
+  EXPECT_EQ(comp.warn_if_blocking_over_, 250u) << "2.5 s in centiseconds";
+  EXPECT_GE(comp.warn_if_blocking_over_ * 10u, esphome::home_io_control::EXCHANGE_TOTAL_BUDGET_MS);
+}
+
 TEST(HubCore, SetupReportsAMissingRequiredPinAsNoDriver) {
   TestableHubComponent comp;
   configure_hub_for_setup(comp, "sx1276");  // no dio0_pin configured
@@ -197,6 +209,27 @@ TEST(HubCore, DumpConfigStillDumpsSectionsOfARadioThatFailedAfterSetup) {
   comp.dump_config();  // failure_reason() is null here: the "no recorded cause" branch
 
   EXPECT_EQ(radio->sections.size(), 2u);
+  delete comp.radio_;
+  comp.radio_ = nullptr;
+}
+
+TEST(HubCore, LoopReportsARadioThatFailsAfterSetupOnce) {
+  // A runtime BUSY timeout latches the driver failed while the component keeps running; loop() must
+  // raise ESPHome's warning status when that happens, and only once.
+  TestableHubComponent comp;
+  auto *radio = new LatchingRadio();
+  comp.radio_ = radio;
+  comp.initialized_ = true;
+
+  comp.loop();
+  EXPECT_FALSE(comp.status_has_warning()) << "a healthy radio raises no warning";
+
+  radio->latch("BUSY stuck high");
+  comp.loop();
+  comp.loop();
+
+  EXPECT_TRUE(comp.status_has_warning());
+  EXPECT_EQ(comp.status_warning_count_, 1u) << "reported once, not on every loop";
   delete comp.radio_;
   comp.radio_ = nullptr;
 }

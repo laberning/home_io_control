@@ -51,7 +51,7 @@ build a plain whole-object read.
    lines and to nothing else; it is not decoded and never reaches the device record. The decode comes
    after captures.
 8. **Not sweepable.** The probe is a multi-frame session and the sweep machinery is one request per index.
-9. **Plain request, as the vendor sends it.** The open carries the originator `SAAC` and is sent
+9. **Plain request.** The open carries the originator `SAAC` and is sent
    without a challenge. A device may challenge any request; the ordinary exchange answers. A Somfy
    Izymo accepted the open plainly and challenged every block read and the close.
 

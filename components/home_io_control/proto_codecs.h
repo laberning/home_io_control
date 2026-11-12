@@ -263,10 +263,10 @@ DiscoveryResponseInfo decode_discovery_response(const IoFrame &frame, IoDevice &
 /// CMD_ONEWAY_ADD_CONTROLLER frame.
 ///
 /// Kept distinct from a bare bool because a caller-facing report needs to tell these three
-/// situations apart: no MAC was ever present to check (the reference implementation's own
-/// `_p0x30` struct omits the MAC field entirely, so this is a normal, non-error outcome — not
-/// every 0x30 on the wire carries one), a MAC was present and matched, or a MAC was present and
-/// did not match (evidence the decrypted key is wrong, or the frame was corrupted/forged).
+/// situations apart: no MAC was ever present to check (real remotes send the 29-byte form without a
+/// trailer, so this is a normal, non-error outcome — not every 0x30 on the wire carries one), a MAC was present and
+/// matched, or a MAC was present and did not match (evidence the decrypted key is wrong, or the frame was
+/// corrupted/forged).
 enum class OneWayMacStatus : uint8_t {
   NOT_PRESENT = 0,  ///< `frame.has_mac` was false; nothing to verify.
   VERIFIED = 1,     ///< `frame.has_mac` was true and the MAC verified under the recovered key.
@@ -323,8 +323,8 @@ enum class OneWayAddControllerDecodeError : uint8_t {
 /// bytes) — the only span CMD_ONEWAY_ADD_CONTROLLER authenticates (see
 /// `crypto::create_1w_hmac()`'s `@warning`). A verifying MAC is strong evidence the decryption
 /// recovered the correct key: it is the decisive self-check available at adoption time, before
-/// any device is ever commanded. A frame with no MAC is not an error — the reference
-/// implementation's own `_p0x30` struct omits the MAC field entirely — so decoding still
+/// any device is ever commanded. A frame with no MAC is not an error — real remotes send the
+/// 29-byte form without one — so decoding still
 /// succeeds and `out.mac_status` simply reports `NOT_PRESENT`.
 ///
 /// Pure function of the frame: no logging, no timers, no I/O (ADR 0005). Never transmits.

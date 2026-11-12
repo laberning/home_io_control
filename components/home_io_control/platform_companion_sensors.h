@@ -157,22 +157,28 @@ class IOHomeDeviceNameTextSensor : public IOHomeCompanionTextSensor {
   void dump_config() override;
 };
 
+/// Active Issue value while the hub's radio has stopped responding, in the style of the symbolic
+/// result names the sensor otherwise publishes.
+inline constexpr const char *ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING = "RADIO_STOPPED_RESPONDING";
+
 /// @brief Diagnostic text sensor that names what is currently limiting a device (e.g.
 /// "LIMITATION_BY_RAIN"), letting a "nothing happened" command self-explain instead of only
-/// showing up in the log. Shared by every device-bound platform (cover, light, switch, lock) via
-/// platform_common.py's companion-sensor codegen.
+/// showing up in the log. Shared by every device-bound platform (cover, light, switch, lock, fan,
+/// climate, water_heater) via platform_common.py's companion-sensor codegen.
 ///
-/// Two sources, in this order:
-///   1. The symbolic name of the device's latest explicit CMD_ERROR_RESP result. Cleared by the
+/// Three sources, in this order:
+///   1. ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING once the hub's radio latched a failure after setup
+///      (IOHomeControlComponent::radio_stopped_responding()); sticky until a reboot.
+///   2. The symbolic name of the device's latest explicit CMD_ERROR_RESP result. Cleared by the
 ///      next successful status/command reply (see detail::clear_command_result()).
-///   2. "LIMITATION_BY_RAIN" while `IoDevice::limited_by_rain` is set. That flag is derived from
+///   3. "LIMITATION_BY_RAIN" while `IoDevice::limited_by_rain` is set. That flag is derived from
 ///      the device's own status replies (the last move was ordered by the rain sensor, or a
 ///      position command was clamped while rain protection was recently active), because windows
 ///      do not send an error for a rain clamp. It clears itself when the window stops reporting
 ///      the rain originator and a command is no longer clamped, so it is only as fresh as the
 ///      last status reply.
 ///
-/// Not a per-operation outcome. Publishes an empty string when neither source applies, so a
+/// Not a per-operation outcome. Publishes an empty string when no source applies, so a
 /// non-empty value always means "this is still going on" rather than "this is what happened
 /// last."
 /// @ingroup hioc_platforms

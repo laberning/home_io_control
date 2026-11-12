@@ -57,6 +57,16 @@ class Component {
   }
   bool is_failed() const { return this->failed_; }
 
+  // Real ESPHome sets a status flag and logs the message once; the stub records the calls.
+  void status_set_warning() { ++this->status_warning_count_; }
+  void status_set_warning(const char *message) {
+    (void) message;
+    ++this->status_warning_count_;
+  }
+  bool status_has_warning() const { return this->status_warning_count_ > 0; }
+  /// Test helper: how many times status_set_warning() was called.
+  uint32_t status_warning_count_{0};
+
  protected:
   bool failed_{false};
   /// Same type and unit as ESPHome's: centiseconds in a uint8_t, so 255 is the ~2550 ms ceiling.

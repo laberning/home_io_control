@@ -54,9 +54,7 @@ static constexpr uint16_t COLD_BROADCAST_REPLY_PREAMBLE = 80;
 /// receivers never lock onto one that long; a normal start frame gets this shorter preamble
 /// instead, matching what a reference hub sends to an always-alive device.
 ///
-/// 32 bytes = 256 bits sits inside the preamble band the iown-homecontrol documentation describes
-/// (256 bits in its radio notes; 128 bits is the "Long PPDU" preamble in its link-layer notes),
-/// well above the ~12-byte response preamble a
+/// 32 bytes = 256 bits is well above the ~12-byte response preamble a
 /// short-turnaround chip uses, ~6.7 ms of air time, and two orders of magnitude below the 1024-byte
 /// burst. 8 bytes is a proven lower bound against paired always-alive devices but nothing bounds
 /// where a start frame stops being heard, so 32 is the defensible middle — and `normal_start_preamble`
@@ -240,12 +238,10 @@ static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 /// transmitter, not radio tuning: they do not vary by chip and must not be moved into a driver or
 /// a TuningConfig field.
 ///
-/// Both values come from the reference implementation, which sets them on adjacent lines when it
-/// forges a 1W packet: `packet->repeat = 4` and `packet->repeatTime = 40` in its 1W remote. The
-/// capture logs embedded in that same source show
-/// consecutive copies of one burst arriving roughly 25 ms apart, which is not a contradiction:
-/// those are receive-side timestamps of a burst whose configured gap is 40 ms, so they measure
-/// something else. Do not "correct" 40 down to 25 on the strength of them.
+/// Both values are assumed, not measured on this project's hardware: four copies, 40 ms apart.
+/// Receive-side timestamps of consecutive copies in a capture log can show a smaller gap (roughly
+/// 25 ms), which is not a contradiction: they measure when the receiver heard each copy, not the
+/// configured gap. Do not "correct" 40 down to 25 on the strength of them.
 ///
 /// Erring long would in any case be the safe direction — a device needs only one of the four
 /// copies to land, so a wider spacing costs nothing and leaves more room on a shared band.

@@ -12,7 +12,7 @@ Indexed by what you see, not by which subsystem is responsible.
 | The cover shows no position, or a stale one | [Position is unknown or state is stale](#position-is-unknown-or-state-is-stale) |
 | `stop` does nothing while the device is moving | [Commands are ignored mid-motion](#commands-are-ignored-mid-motion) |
 | A 1W button press does nothing | [1W commands do nothing](#1w-commands-do-nothing) |
-| The log says `home_io_control is marked FAILED`, `Radio setup failed:` or `Radio failed after setup:` | [The radio does not start](#the-radio-does-not-start) |
+| The log says `home_io_control is marked FAILED`, `Radio setup failed:`, `Radio failed after setup:` or `Radio stopped responding:`, or an Active Issue sensor shows `RADIO_STOPPED_RESPONDING` | [The radio does not start](#the-radio-does-not-start) |
 | The boot log shows `XOSC_START_ERR` on an SX1262 board, or `HF_XOSC_START_ERR` on an LR1121 board | [`XOSC_START_ERR` at boot](#xosc_start_err-at-boot) |
 | The hub resets, or works differently on another USB port or cable | [Random resets or an unreliable link on USB power](#random-resets-or-an-unreliable-link-on-usb-power) |
 | Pairing works some of the time, or the link is unreliable | [A tuning plan](#a-tuning-plan) |
@@ -69,6 +69,8 @@ Pairing reported `paired`, the entity exists, and commands do nothing.
   different: the device rejected the hub's answer to its challenge, so it does not hold the key the
   hub used. Check that the hub's `system_key`, or the entity's own `system_key` if the device has
   its own key (as each Atlantic radiator does, issue #165), is the key this device was paired with.
+  `RADIO_STOPPED_RESPONDING` is not about the device: the hub's own radio stopped, see
+  [The radio does not start](#the-radio-does-not-start).
 - **Check `low_power:`.** If this is a solar or battery actuator and `low_power: true` is not set,
   the hub addresses it with the wrong preamble and the device may never wake to hear the command.
   Pairing and Scan Paired Devices pre-fill the correct value in the snippet they print; if the
@@ -257,7 +259,11 @@ you connected to the log after the boot.
   (typically a BUSY timeout). A short Wi-Fi stall or roam scan does not cause this, because the
   radio wait is judged on a fresh reading once the stall is over. A line like this therefore points
   at the chip, its wiring or its power. The component is not marked failed in that case, but
-  nothing the radio does works any more. Use the same table, and reset the board.
+  nothing the radio does works any more. When it happens the log also shows a one-time
+  `Radio stopped responding: <reason>; reboot the board` error, and the component sets ESPHome's
+  warning status, which makes a configured `status_led` blink. In Home Assistant, every device's
+  Active Issue sensor shows `RADIO_STOPPED_RESPONDING` until the board is rebooted. Use the same
+  table, and reset the board.
 
 | Reason in the log | What to check |
 |---|---|

@@ -8,8 +8,9 @@ description: >
   documentation worked example, not a real transmission:
 
   1. Real hardware's CMD_ONEWAY_ADD_CONTROLLER (0x30) carries NO out-of-length MAC trailer --
-     29 bytes on air, not 35. The published vector (35 bytes, MAC included) and the reference
-     `_p0x30` struct (iohcPacket.h, no MAC field) both turn out to be real: different real
+     29 bytes on air, not 35. The published vector (35 bytes, MAC included) and this remote's 29-byte form are both
+     real, and our own 35-byte form is accepted too
+     (somfy_izymo_dimmer_enrollment_add_controller_with_mac_sx1276): different real
      implementations chose differently, and this remote picked the no-MAC form. Confirmed twice
      independently on real captures before this one was re-keyed and committed.
   2. CMD_ONEWAY_REMOVE (0x39)'s MAC span -- unpinned by any vector when
