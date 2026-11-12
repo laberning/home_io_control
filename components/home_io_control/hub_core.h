@@ -507,6 +507,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Hexadecimal node ID.
   /// @return Pointer to IoDevice, or nullptr.
   virtual IoDevice *get_device(const std::string &device_id);
+  /// True once loop() has seen the radio latch a failure after setup (a runtime BUSY timeout, for
+  /// example). Sticky: a failed driver never recovers without a reboot. Every device's Active Issue
+  /// sensor reports it.
+  [[nodiscard]] bool radio_stopped_responding() const { return this->radio_failure_reported_; }
   /// Select a device's travel speed at runtime (see IOHomeCoverTravelSpeedSelect and
   /// IOHomeCoverSilentSwitch). Virtual so platform tests can substitute a mock registry.
   /// @param device_id Hexadecimal node ID string.
@@ -807,7 +811,7 @@ class IOHomeControlComponent : public Component,
   /// @param position Desired position (0–100).
   virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
   /// @brief Queue an async named command (STOP, FAVORITE, VENT, PARTIAL, PEDESTRIAN, FORCE_OPEN);
-  /// returns immediately, executed in loop(). PARTIAL and PEDESTRIAN are experimental.
+  /// returns immediately, executed in loop(). PEDESTRIAN is experimental.
   ///
   /// Existing entity/button callers (cover, favorite, vent, partial and pedestrian buttons) intentionally ignore
   /// the return value — they always target a known, already-registered device. It exists so
@@ -971,11 +975,20 @@ class IOHomeControlComponent : public Component,
   /// @param frame The received frame; its source is a registered device.
   void record_device_event_(const IoFrame &frame);
 
-  /// True while the key-extraction responder is mid-attempt and still within its bounded CH2-hold
+  /// True while the key-extraction responder is mid-attempt and still within its bounded listen
   /// window. Thin forwarder to KeyExtractionResponder::awaiting_reply() (key_extraction_responder.h)
   /// — kept on the hub because defer_background_poll_() and tests/hub/hub_core_test.cpp reach it here,
   /// mirroring the two set_key_extraction_armed* bindings.
   [[nodiscard]] bool key_extraction_awaiting_reply_() const { return this->key_extraction_.awaiting_reply(); }
+
+  /// One idle pass of listening for the key-extraction responder's peer, in place of the generic idle
+  /// hop while key_extraction_awaiting_reply_(). Inside the session window
+  /// (KeyExtractionResponder::in_session_hold()) it keeps the radio on the session's channel, where
+  /// the peer's in-session frame comes; after it, a rotating listen over all three channels for one
+  /// KEY_EXTRACTION_SCAN_SLICE_MS slice, handing a received frame to process_received_packet_().
+  /// While a discovery answer waits for its slot, the slice ends at that slot (and is skipped once
+  /// it has come), so the scheduler sends the answer on time.
+  void listen_for_key_extraction_peer_();
 
   /// Extract supported position or metadata info from a response frame and merge it into the device record.
   /// @param frame IoFrame containing a supported inbound command such as CMD_PRIVATE_RESP,
@@ -1065,9 +1078,9 @@ class IOHomeControlComponent : public Component,
   /// is mid-flight. Thin wrapper binding the component's state to
   /// decisions::defer_background_poll_for_1w_activity(), plus a second, independent yield condition:
   /// a background poll is a blocking exchange that owns the radio for 1-3 s, and dispatching one
-  /// while the key-extraction responder is holding CH2 for an expected CMD_KEY_TRANSFER (0x32)
-  /// would swallow it just as thoroughly as a mistimed hop — see loop()'s hop branch (hub_core.cpp)
-  /// for the other half of that hold. Only background polls yield here, same as the 1W rule: a user
+  /// while the key-extraction responder is listening for its peer's next frame (an expected
+  /// CMD_KEY_TRANSFER (0x32), say) would swallow it — see listen_for_key_extraction_peer_() for the
+  /// other half of that listen. Only background polls yield here, same as the 1W rule: a user
   /// command must never wait on either kind of background activity.
   [[nodiscard]] bool defer_background_poll_() const {
     const bool next_op_is_background =
@@ -1517,6 +1530,10 @@ class IOHomeControlComponent : public Component,
   /// Why setup() gave up on the radio, or empty. Printed by dump_config so log clients that connect
   /// after boot see the cause, not only ESPHome's generic "marked FAILED" line.
   std::string radio_failure_reason_;
+  /// Set once loop() has reported a radio that latched a failure after setup, so the report (an
+  /// error line, ESPHome's warning status and a republish of every device) is made once, not on
+  /// every loop.
+  bool radio_failure_reported_{false};
   uint8_t node_id_[NODE_ID_SIZE]{};
   uint8_t system_key_[AES_KEY_SIZE]{};
   uint8_t tx_power_{DEFAULT_TX_POWER_DBM};

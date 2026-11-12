@@ -13,8 +13,8 @@ description: >
   misfire_elevated_priority_wrong_direction_sx1276.yaml) as the first confirmed-correct
   force-open exchange. Still NOT confirmed: whether elevated priority actually overrides an
   *active* wind/rain lock — this device was not under one during any of the three 2026-07-16
-  test sessions (all got a clean ack, never RESULT_PRIORITY_LEVEL_LOCKED), so that part of
-  analysis/reference_combined_integration.md item 5 remains open.
+  test sessions (all got a clean ack, never RESULT_PRIORITY_LEVEL_LOCKED), so the locked
+  case remains unverified.
 source:
   device: "Somfy Sunea IO awning motor (\"Patio Awning\")"
   captured_with: sx1276

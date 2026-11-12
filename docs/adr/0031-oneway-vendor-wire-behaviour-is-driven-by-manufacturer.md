@@ -10,10 +10,8 @@ bytes they emit are not vendor-neutral:
 
 - **The ACEI byte** (payload position 1 of a `CMD_EXECUTE` frame). Somfy 1W
   remotes carry `0x43` (priority level 2); a VELUX KLI-class remote carries
-  `0x61` (level 3) — verified against one corpus frame
-  (`velux_kli313_oneway_stop.yaml`), `samr037/iohc-flipper`'s README (which
-  names this exact byte the "vendor byte", `0x43` Somfy / `0x61` Velux), and
-  `iown-homecontrol`'s generic `ACEI_DEFAULT` of `0x61`. `ONEWAY_EXECUTE_ACEI`
+  `0x61` (level 3) — seen in one corpus frame
+  (`velux_kli313_oneway_stop.yaml`). `ONEWAY_EXECUTE_ACEI`
   was a hardcoded `0x43`, so the hub could not mimic a VELUX remote — issue #95
   (`stop_via_oneway:` on a VELUX screen) and issue #74 (VELUX 1W enrollment)
   both fail on it.
@@ -77,8 +75,8 @@ one hardware-validated class-bound configuration with no failing test);
   capture. Phase 1 (this ADR) makes the *control*
   bytes right; it cannot make a device that has never registered the hub obey
   it.
-- **The VELUX ACEI rests on n=1.** `0x61` is also `iown-homecontrol`'s generic
-  default, equally consistent with "VELUX uses it" and "non-Somfy remotes use
+- **The VELUX ACEI rests on n=1.** `0x61` may just as well be a generic
+  non-Somfy default, equally consistent with "VELUX uses it" and "non-Somfy remotes use
   it". `execute_acei:` is the escape hatch; the constant's doc comment records
   the confidence.
 - Nothing else on the wire changes: 6-byte payload form, originator, sequence,

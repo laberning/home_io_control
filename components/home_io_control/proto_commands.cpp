@@ -29,7 +29,7 @@ constexpr uint8_t EXECUTE_ORIGINATOR = ORIGINATOR_USER_REMOTE;
 ///
 /// Level=3 (user_default), matching what a real 2W hub puts on the air: a third-party capture of a
 /// Velux KIG300 commanding a Somfy RS100 shows its EXECUTE payload as `01 63 C8 00 80 32 00 00` —
-/// ACEI 0x63, level 3. The 0x43 (user_high) alternative comes from a 1W remote reference vector
+/// ACEI 0x63, level 3. The 0x43 (user_high) alternative comes from a 1W remote's published vector
 /// (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml), not a 2W hub, and a
 /// handheld remote claiming a higher priority than a home-automation hub is unsurprising.
 ///
@@ -58,39 +58,13 @@ constexpr uint8_t EXECUTE_ACEI =
 constexpr uint8_t EXECUTE_ACEI_FORCE_OPEN =
     (ACEI_LEVEL_PROTECTION_HUMAN << ACEI_LEVEL_SHIFT) | (1 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
 
-/// Multi Information Byte for our device-role CMD_DISCOVER_RESP (0x29) — the turnaround-time
-/// class and power-save mode this responder advertises to a foreign hub.
-///
-/// ATT_CLASS_5MS | POWER_SAVE_ALWAYS_ALIVE (0x00) would be an honest-looking but false claim: it
-/// promises the tightest 5 ms turnaround from a device that never sleeps, when this responder
-/// actually hops across 3 channels on the ESPHome loop cadence and is briefly deaf while
-/// transmitting its own replies. The loosest class, ATT_CLASS_40MS, is the honest claim for that profile.
-///
-/// 0xDD = 1101_1101: bits [7:6] are ATT_CLASS_40MS, bit [0] is POWER_SAVE_LOW_POWER, bit [3] is
-/// DISCOVERY_FLAGS_RF_SUPPORT (node has its own RF), bit [2] is DISCOVERY_FLAGS_IO_MEMBERSHIP
-/// (always 1), and bit [4] has no named constant (it is not in the VELUX KLF 200 API table). All of
-/// this byte except the power-save bit mirrors the exact byte a real Somfy Izymo dimmer advertised in
-/// this project's own corpus
-/// (tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml: flags=0xDC, ATT_CLASS_40MS |
-/// POWER_SAVE_ALWAYS_ALIVE), on the theory that matching a real device's full byte is safer than
-/// guessing at bits with no documented meaning — bit [4] is carried over unmodified for that reason.
-///
-/// The power-save bit is the one deliberate departure from that real capture: POWER_SAVE_LOW_POWER
-/// here, not the captured device's POWER_SAVE_ALWAYS_ALIVE. That is a reasoned choice, not a
-/// guess — this responder's own true behavior (hopping across 3 channels, briefly deaf while
-/// transmitting its own replies) is genuinely closer to a low-power device's profile than to an
-/// always-listening one, so mirroring the capture's power-save bit would make the same false claim
-/// ATT_CLASS_5MS | POWER_SAVE_ALWAYS_ALIVE made above, just with the opposite polarity.
-/// TODO(hardware-verify): unconfirmed against a real hub — see create_discover_resp()'s callers'
-/// file-level @warning (key_extraction_responder.cpp) for the general caveat this falls under.
-constexpr uint8_t KEY_EXTRACTION_DISCOVER_RESP_FLAGS = 0xDD;
-
-/// Timestamp for our device-role CMD_DISCOVER_RESP (0x29), alongside the flags constant above. Set
+/// Timestamp for our device-role CMD_DISCOVER_RESP (0x29), alongside KEY_EXTRACTION_DISCOVER_RESP_FLAGS
+/// (proto_constants.h). Set
 /// to the same Somfy Izymo dimmer capture's value (0x000E) for the same reason: an unverified
 /// field is safer matched to a real device's exact bytes than left at the one value no real
 /// capture in this project's corpus ever shows (0x0000 — see KEY_EXTRACTION_DISCOVER_RESP_FLAGS
-/// above for the flags half of the same reasoning).
-/// TODO(hardware-verify): unconfirmed against a real hub — same caveat as the flags constant above.
+/// in proto_constants.h for the flags half of the same reasoning).
+/// TODO(hardware-verify): unconfirmed against a real hub — same caveat as KEY_EXTRACTION_DISCOVER_RESP_FLAGS.
 constexpr uint16_t KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP = 0x000E;
 
 /// Mask for the low byte of a 16-bit field split across 2 wire bytes — same big-endian split
@@ -184,15 +158,14 @@ constexpr uint8_t ONEWAY_EXECUTE_PARAMS_SIZE = 6;
 constexpr uint8_t ONEWAY_SEQUENCE_SIZE = 2;
 /// 1W execute MAC span: the command byte followed by all ONEWAY_EXECUTE_PARAMS_SIZE parameter
 /// bytes, stopping before the sequence. See create_1w_execute_command()'s doxygen
-/// (proto_commands.h) for the published-vector and reference-implementation citations pinning
+/// (proto_commands.h) for the published-vector citation pinning
 /// this span; it is command-specific and must not be reused for any other 1W command.
 constexpr uint8_t ONEWAY_EXECUTE_MAC_SPAN_SIZE = 1 + ONEWAY_EXECUTE_PARAMS_SIZE;
 /// Offsets of the sequence and MAC within the payload, derived from the field widths above so
 /// the layout cannot be restated inconsistently.
 constexpr uint8_t ONEWAY_EXECUTE_SEQUENCE_OFFSET = ONEWAY_EXECUTE_PARAMS_SIZE;
 constexpr uint8_t ONEWAY_EXECUTE_MAC_OFFSET = ONEWAY_EXECUTE_SEQUENCE_OFFSET + ONEWAY_SEQUENCE_SIZE;
-/// 1W execute declared payload: parameters + sequence + MAC = 14 bytes, matching the reference
-/// `_p0x00_14` struct.
+/// 1W execute declared payload: parameters + sequence + MAC = 14 bytes.
 constexpr uint8_t ONEWAY_EXECUTE_PAYLOAD_SIZE = ONEWAY_EXECUTE_MAC_OFFSET + HMAC_SIZE;
 /// 1W execute functional-parameter bytes; always zero for the frames this codebase builds.
 constexpr uint8_t ONEWAY_EXECUTE_FP1 = 0x00;
@@ -203,12 +176,14 @@ constexpr uint8_t ONEWAY_EXECUTE_FP2 = 0x00;
 /// broadcast rather than an individual node, and none set LOW_POWER here.
 ///
 /// ctrl1 is deliberately left at 0 (LOW_POWER / CTRL1_LOW_POWER NOT set) by every builder in this
-/// file, unlike every 2W builder. The reference `forgePacket` sets it, but five independently
-/// captured real 1W frames all disagree: this project's own Somfy awning remote
-/// (tests/corpus/captures/oneway/somfy_smoove_oneway_{open,close,stop}_sx1276.yaml), an
-/// unidentified 1W remote (tests/corpus/captures/oneway/unidentified_1w_remote_oneway_execute.yaml), and
-/// the published vector (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml)
-/// all carry ctrl1=0x00. Followed the captures over the reference source on this point.
+/// file, unlike every 2W builder. Real 1W frames in the corpus carry ctrl1=0x00 except on the first
+/// copy of a burst: this project's own Somfy awning remote
+/// (tests/corpus/captures/oneway/somfy_smoove_oneway_{open,close,stop}_sx1276.yaml) and the
+/// published vector (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml) carry
+/// 0x00, while an unidentified 1W remote sets CTRL1_LOW_POWER on copy 1 of its OPEN and clears it
+/// on the repeat
+/// (tests/corpus/captures/oneway/unidentified_1w_remote_oneway_execute_open_and_stop_acei_61_sx1276.yaml).
+/// The wake flag is therefore a per-copy burst concern, not part of the frame a builder signs.
 ///
 /// `OneWayTransmitter::send_burst()` (ADR 0038) is what may later put CTRL1_LOW_POWER on the wire
 /// for a `low_power: true` identity — on copy 1 of the burst only, never here: this builder layer
@@ -268,14 +243,14 @@ constexpr uint8_t ONEWAY_ADD_MANUFACTURER_OFFSET = AES_KEY_SIZE;  // 16
 constexpr uint8_t ONEWAY_ADD_DATA_OFFSET = AES_KEY_SIZE + 1;      // 17
 constexpr uint8_t ONEWAY_ADD_SEQUENCE_OFFSET = AES_KEY_SIZE + 2;  // 18
 constexpr uint8_t ONEWAY_ADD_PAYLOAD_SIZE = AES_KEY_SIZE + 4;     // 20
-/// `data` field of CMD 0x30's payload — every source (published vector, reference `Add` case)
-/// shows 0x01 here; its meaning beyond "add" is undocumented.
+/// `data` field of CMD 0x30's payload — every source (the published vector and every real
+/// remote capture) shows 0x01 here; its meaning beyond "add" is undocumented.
 constexpr uint8_t ONEWAY_ADD_DATA_VALUE = 0x01;
 /// CMD 0x30's MAC span: cmd + enc_key only (17 bytes) — verified against the published vector
 /// (create_1w_hmac()'s `@warning`), NOT the whole declared payload.
 constexpr uint8_t ONEWAY_ADD_MAC_SPAN_SIZE = 1 + AES_KEY_SIZE;
 
-/// CMD 0x39 declared-payload layout, matching the reference `_p0x2e` struct: data[1] + sequence[2]
+/// CMD 0x39 declared-payload layout, data[1] + sequence[2]
 /// + mac[6] = 9 bytes, MAC inside the declared length (unlike CMD 0x30's out-of-length trailer).
 constexpr uint8_t ONEWAY_REMOVE_DATA_OFFSET = 0;
 constexpr uint8_t ONEWAY_REMOVE_SEQUENCE_OFFSET = 1;
@@ -574,9 +549,8 @@ bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 }
 
 /// Build a generic CMD_WRITE_PRIVATE (0x20) frame around a caller-supplied payload — the one
-/// builder behind every heating/climate function. Framing per the iohomecontrol reference
-/// implementation's `forgePacket()` (start=1, end=0) and the
-/// atlantic_thermor_exchange_write_private_param.yaml capture (frame 1: start, not end).
+/// builder behind every heating/climate function. Framing (start=1, end=0) matches
+/// every real heater write in the corpus (atlantic_agilia_exchange_*.yaml: start, not end).
 bool create_write_private(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, const uint8_t *payload,
                           size_t payload_len) {
   if (payload == nullptr || payload_len == 0 || payload_len > FRAME_MAX_DATA_SIZE)
@@ -847,7 +821,7 @@ bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, c
 /// Build a discovery response (0x29) — device side, used only by the key-extraction responder.
 /// See proto_commands.h for the full contract and the real-capture cross-check.
 bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, DeviceType type, uint8_t subtype,
-                          uint8_t manufacturer_id) {
+                          uint8_t manufacturer_id, uint8_t flags) {
   init_frame(f, true, true, true, false);
   set_dst(f, dst);
   set_src(f, own);
@@ -858,8 +832,9 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
   // device's own node ID here, so we mirror that rather than inventing a separate address.
   memcpy(&payload[DISCOVERY_RESP_BACKBONE_OFFSET], own, NODE_ID_SIZE);
   payload[DISCOVERY_RESP_MANUFACTURER_OFFSET] = manufacturer_id;
-  // See KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP above for the derivation of these two values.
-  payload[DISCOVERY_RESP_FLAGS_OFFSET] = KEY_EXTRACTION_DISCOVER_RESP_FLAGS;
+  // See KEY_EXTRACTION_DISCOVER_RESP_FLAGS (proto_constants.h) and _TIMESTAMP above for the
+  // derivation of these two values.
+  payload[DISCOVERY_RESP_FLAGS_OFFSET] = flags;
   payload[DISCOVERY_RESP_TIMESTAMP_OFFSET] =
       static_cast<uint8_t>(KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP >> BITS_PER_BYTE);
   payload[DISCOVERY_RESP_TIMESTAMP_OFFSET + 1] =

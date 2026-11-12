@@ -959,17 +959,25 @@ bool ExchangeEngine::authenticate_request(const IoFrame &request, uint32_t freq,
 
 ExchangeEngine::ChallengeResult ExchangeEngine::challenge_sender(const IoFrame &request, uint32_t freq,
                                                                  const uint8_t *key) {
+  uint8_t challenge[HMAC_SIZE];
+  crypto::generate_challenge(challenge);
+  return this->challenge_sender(request, freq, key, challenge, (*this->radio_ptr_)->response_preamble());
+}
+
+ExchangeEngine::ChallengeResult ExchangeEngine::challenge_sender(const IoFrame &request, uint32_t freq,
+                                                                 const uint8_t *key, const uint8_t challenge[HMAC_SIZE],
+                                                                 uint16_t preamble) {
   RadioDriver *radio = *this->radio_ptr_;
   exchange::InboundAuthContext context;
   context.state = exchange::InboundAuthState::TX_CHALLENGE;
   this->record_debug(inbound_stage_name(context.state), 1, true);
 
-  if (!create_challenge_req(context.challenge, request.src, this->node_id_)) {
+  if (!create_challenge_req(context.challenge, request.src, this->node_id_, challenge)) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);
     return ChallengeResult::NO_ANSWER;
   }
-  if (!this->transmit_frame(context.challenge, freq, radio->response_preamble())) {
+  if (!this->transmit_frame(context.challenge, freq, preamble)) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);
     return ChallengeResult::NO_ANSWER;

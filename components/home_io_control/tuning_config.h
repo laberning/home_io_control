@@ -8,6 +8,7 @@
 /// drivers. The `TuningConfig` struct carries all tunable parameters and helpers
 /// for logging and applying defaults.
 
+#include "proto_constants.h"
 #include "proto_frame.h"
 #include "proto_timing.h"
 
@@ -286,6 +287,11 @@ struct TuningConfig {
       LR1121_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while LR1121 discovery hops.
   uint16_t cold_broadcast_reply_preamble{
       COLD_BROADCAST_REPLY_PREAMBLE};  ///< Preamble for a start-flagged key-extraction broadcast reply (0x29).
+  uint16_t key_extraction_type_word{
+      KEY_EXTRACTION_DISCOVER_RESP_TYPE_WORD};  ///< Packed type word the key-extraction 0x29 advertises
+                                                ///< to an open discovery (type << 6 | subtype).
+  uint8_t key_extraction_multi_info{
+      KEY_EXTRACTION_DISCOVER_RESP_FLAGS};  ///< Multi Information Byte the key-extraction 0x29 advertises.
   uint16_t normal_start_preamble{
       NORMAL_START_PREAMBLE};  ///< Preamble for a directed start frame to a non-low-power target.
                                ///< Resolved at setup from RadioDriver::default_start_preamble()

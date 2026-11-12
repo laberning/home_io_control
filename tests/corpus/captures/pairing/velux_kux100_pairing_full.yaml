@@ -78,7 +78,7 @@ frames:
   - dir: tx
     hex: "D4 30 00 00 3B 43 8D 43 2A 4A 15 C2 1F 97 33 F4 97 FD 5A C2 6E 3D 0D"
     crc: present
-    note: "cmd=DISCOVER_SPE_REQ(0x2A), broadcast to backbone group 00003B; CTRL1=0x30. The 12-byte payload is a complete self-contained challenge-response: 6 random challenge bytes followed by a 6-byte HMAC over the command byte alone, confirmed by recomputation under the key recovered from the 0x32 above — the first real evidence for the shape the io-rts-esp32 reference builds for SPE discovery. RE-KEYED accordingly: the challenge half is the captured value (random, not key-derived), the HMAC half was rewritten under the corpus key. The source shows two further 0x2A transmissions immediately before this one whose trailing CRC does not verify (one with a corrupted SRC and cmd byte) — SPI-trace bit errors, omitted rather than committed as bytes no device could have sent"
+    note: "cmd=DISCOVER_SPE_REQ(0x2A), broadcast to backbone group 00003B; CTRL1=0x30. The 12-byte payload is a complete self-contained challenge-response: 6 random challenge bytes followed by a 6-byte HMAC over the command byte alone, confirmed by recomputation under the key recovered from the 0x32 above — the first real evidence of the SPE discovery payload shape. RE-KEYED accordingly: the challenge half is the captured value (random, not key-derived), the HMAC half was rewritten under the corpus key. The source shows two further 0x2A transmissions immediately before this one whose trailing CRC does not verify (one with a corrupted SRC and cmd byte) — SPI-trace bit errors, omitted rather than committed as bytes no device could have sent"
   - dir: tx
     hex: "48 14 38 ED A1 43 8D 43 36 B7 72"
     crc: present

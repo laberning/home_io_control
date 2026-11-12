@@ -196,8 +196,9 @@ TEST(HubKeyExtraction, DiscoveryReplyUsesColdBroadcastPreambleNotFixedShortConst
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
+  test::fire_discover_reply(comp);
 
-  ASSERT_EQ(radio.get_tx_configs().size(), 3u) << "0x29 should be sent on all 3 channels";
+  ASSERT_EQ(radio.get_tx_configs().size(), 1u) << "0x29 is sent once, on one channel";
   for (const auto &tx_config : radio.get_tx_configs()) {
     EXPECT_EQ(tx_config.preamble_len, comp.tuning_.cold_broadcast_reply_preamble)
         << "discovery reply (start=true) must use cold_broadcast_reply_preamble, not "
@@ -209,24 +210,128 @@ TEST(HubKeyExtraction, DiscoveryReplyUsesColdBroadcastPreambleNotFixedShortConst
   }
 }
 
-/// Pins the CH2-last broadcast order: the peer's next frame after hearing our CH2 leg must not
-/// land while we're still transmitting a later leg. CH1/CH3 must go out before CH2, in either
-/// relative order — only CH2's position (last) is load-bearing.
-TEST(HubKeyExtraction, BroadcastReplyTransmitsCh2Last) {
+namespace {
+RadioRxPacket rx_on(const IoFrame &frame, uint32_t freq_hz);  // defined with the session-hold helpers below
+
+/// Script the next esp_random() draws (slot, then channel) of a discovery answer.
+void seed_rng(std::initializer_list<uint32_t> draws) {
+  test_rng::reset();
+  for (const uint32_t d : draws)
+    test_rng::enqueue(d);
+}
+}  // namespace
+
+/// A device answers a search once, in a random slot from 1 to N, never at once: nothing goes out
+/// when the search arrives, and the answer is scheduled DISCOVERY_SLOT_MS * (1..N) later.
+TEST(HubKeyExtraction, DiscoveryAnswerWaitsForARandomSlotAndGoesOutOnce) {
+  for (const uint32_t random : {0u, 1u, 31u, 32u, 1000u}) {
+    TestableHubComponent comp;
+    MockRadioSX1262 radio;
+    setup_component(comp, radio);
+    comp.set_key_extraction_armed(true);
+    seed_rng({random, 0});  // slot draw, then channel draw
+
+    IoFrame discover{};
+    create_discover(discover, FOREIGN_HUB_ID);  // 00 00 3B: 32 slots
+    comp.process_received_packet_(make_rx_packet(discover));
+
+    EXPECT_EQ(radio.get_tx_configs().size(), 0u) << "the answer must wait for its slot";
+    EXPECT_EQ(comp.last_timeout_name_, "key_extraction_discover_reply");
+    const uint32_t slot = 1 + random % 32;
+    EXPECT_EQ(comp.last_timeout_ms_, slot * DISCOVERY_SLOT_MS);
+    EXPECT_GE(comp.last_timeout_ms_, DISCOVERY_SLOT_MS) << "slot 0 is never used";
+    EXPECT_LE(comp.last_timeout_ms_, 32 * DISCOVERY_SLOT_MS);
+
+    test::fire_discover_reply(comp);
+    ASSERT_EQ(radio.get_tx_configs().size(), 1u);
+    EXPECT_EQ(radio.get_tx_configs()[0].freq_hz, FREQ_CH3)
+        << "channel draw 0 is the next channel on from the search's (CH2)";
+  }
+}
+
+/// The answer goes on one of the two channels the search did not come in on, never back on it.
+TEST(HubKeyExtraction, DiscoveryAnswerNeverUsesTheSearchChannel) {
+  for (const uint32_t search_freq : {FREQ_CH1, FREQ_CH2, FREQ_CH3}) {
+    for (uint32_t draw = 0; draw < 2; draw++) {
+      TestableHubComponent comp;
+      MockRadioSX1262 radio;
+      setup_component(comp, radio);
+      comp.set_key_extraction_armed(true);
+      seed_rng({0, draw});
+      IoFrame discover{};
+      create_discover(discover, FOREIGN_HUB_ID);
+      comp.process_received_packet_(rx_on(discover, search_freq));
+      test::fire_discover_reply(comp);
+      ASSERT_EQ(radio.get_tx_configs().size(), 1u);
+      EXPECT_NE(radio.get_tx_configs()[0].freq_hz, search_freq);
+    }
+  }
+}
+
+/// The last byte of the search address sets the window: 3B = 32 slots, 3C = 64, 3D = 128, 3E = 255.
+TEST(HubKeyExtraction, DiscoverySlotCountFollowsTheSearchAddress) {
+  const struct {
+    uint8_t suffix;
+    uint32_t slots;
+  } cases[] = {{0x3B, 32}, {0xFB, 32}, {0x3C, 64}, {0x3D, 128}, {0x3E, 255}};
+  for (const auto &c : cases) {
+    TestableHubComponent comp;
+    MockRadioSX1262 radio;
+    setup_component(comp, radio);
+    comp.set_key_extraction_armed(true);
+    seed_rng({0xFFFFFFFFu, 0});  // as high as the draw goes
+    IoFrame discover{};
+    create_discover(discover, FOREIGN_HUB_ID);
+    const uint8_t dst[NODE_ID_SIZE] = {0x00, 0x00, c.suffix};
+    set_dst(discover, dst);
+    comp.process_received_packet_(make_rx_packet(discover));
+    EXPECT_EQ(comp.last_timeout_ms_, (1 + 0xFFFFFFFFu % c.slots) * DISCOVERY_SLOT_MS) << "suffix " << int(c.suffix);
+  }
+}
+
+/// A repeated search before the slot has run replaces the waiting answer instead of doubling it.
+TEST(HubKeyExtraction, RepeatedSearchReplacesTheWaitingAnswer) {
   TestableHubComponent comp;
   MockRadioSX1262 radio;
   setup_component(comp, radio);
   comp.set_key_extraction_armed(true);
-
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
+  comp.process_received_packet_(make_rx_packet(discover));
+  test::fire_discover_reply(comp);
+  test::fire_discover_reply(comp);
+  EXPECT_EQ(radio.get_tx_configs().size(), 1u);
+}
 
-  const auto &tx_configs = radio.get_tx_configs();
-  ASSERT_EQ(tx_configs.size(), 3u) << "0x29 should be sent on all 3 channels";
-  EXPECT_EQ(tx_configs[2].freq_hz, FREQ_CH2) << "CH2 must be the last leg transmitted";
-  EXPECT_NE(tx_configs[0].freq_hz, FREQ_CH2) << "CH2 must not be transmitted first";
-  EXPECT_NE(tx_configs[1].freq_hz, FREQ_CH2) << "CH2 must not be transmitted second";
+/// A disarm and re-arm before the slot comes starts a fresh attempt with a new throwaway ID: the
+/// old attempt's answer, still waiting for its slot, must not go out with the old ID.
+TEST(HubKeyExtraction, RearmBeforeTheSlotDropsTheStaleAnswer) {
+  TestableHubComponent comp;
+  MockRadioSX1262 radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(make_rx_packet(discover));
+  comp.set_key_extraction_armed(false);
+  comp.set_key_extraction_armed(true);
+  test::fire_discover_reply(comp);
+  EXPECT_EQ(radio.get_tx_configs().size(), 0u);
+}
+
+/// Disarming before the slot runs cancels the answer's effect: a disarmed responder never transmits.
+TEST(HubKeyExtraction, DisarmBeforeTheSlotSuppressesTheAnswer) {
+  TestableHubComponent comp;
+  MockRadioSX1262 radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(make_rx_packet(discover));
+  comp.set_key_extraction_armed(false);
+  test::fire_discover_reply(comp);
+  EXPECT_EQ(radio.get_tx_configs().size(), 0u);
 }
 
 /// Companion to the test above: a non-start device-role reply must still use the driver's
@@ -245,6 +350,7 @@ TEST(HubKeyExtraction, DiscoverConfirmAckStillUsesRadioResponsePreamble) {
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
+  test::fire_discover_reply(comp);
   ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
 
   IoFrame discover_confirm{};
@@ -254,10 +360,11 @@ TEST(HubKeyExtraction, DiscoverConfirmAckStillUsesRadioResponsePreamble) {
   ASSERT_TRUE(set_cmd(discover_confirm, CMD_DISCOVER_CONFIRM));
   comp.process_received_packet_(make_rx_packet(discover_confirm));
 
-  // The prior 0x29 broadcast already emitted 3 tx_configs; the 0x2D broadcast appends 3 more.
+  // The prior 0x29 already emitted one tx_config; the 0x2D appends one, on the channel the 0x2C
+  // came in on.
   const auto &tx_configs = radio.get_tx_configs();
-  ASSERT_EQ(tx_configs.size(), 6u) << "0x29 (3 legs) + 0x2D (3 legs) should be sent";
-  for (size_t i = 3; i < tx_configs.size(); i++) {
+  ASSERT_EQ(tx_configs.size(), 2u) << "0x29 (1 leg) + 0x2D (1 leg) should be sent";
+  for (size_t i = 1; i < tx_configs.size(); i++) {
     EXPECT_EQ(tx_configs[i].preamble_len, radio.response_preamble())
         << "0x2D (start=false) must keep using response_preamble(), not cold_broadcast_reply_preamble";
   }
@@ -281,10 +388,70 @@ TEST(HubKeyExtraction, NonDefaultColdBroadcastReplyPreambleChangesDiscoveryReply
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
+  test::fire_discover_reply(comp);
 
-  ASSERT_EQ(radio.get_tx_configs().size(), 3u) << "0x29 should be sent on all 3 channels";
+  ASSERT_EQ(radio.get_tx_configs().size(), 1u) << "0x29 is sent once, on one channel";
   for (const auto &tx_config : radio.get_tx_configs())
     EXPECT_EQ(tx_config.preamble_len, kNonDefaultPreamble);
+}
+
+namespace {
+/// Feeds one open 0x28 and returns the multi-information byte of the 0x29 the responder sent, or 0.
+uint8_t discovery_answer_flags(TestableHubComponent &comp, MockRadio &radio) {
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(make_rx_packet(discover));
+  test::fire_discover_reply(comp);
+  for (const auto &pkt : radio.get_sent_data()) {
+    IoFrame sent{};
+    if (parse(pkt.data(), static_cast<uint8_t>(pkt.size()), sent) && sent.cmd == CMD_DISCOVER_RESP &&
+        sent.data_len > DISCOVERY_RESP_FLAGS_OFFSET)
+      return sent.data[DISCOVERY_RESP_FLAGS_OFFSET];
+  }
+  return 0;
+}
+}  // namespace
+
+TEST(HubKeyExtraction, DiscoveryAnswerAdvertisesLowPowerByDefault) {
+  // The default is 0xDD: turnaround class 40 ms, low power.
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+
+  const uint8_t flags = discovery_answer_flags(comp, radio);
+  EXPECT_EQ(flags, 0xDD);
+  EXPECT_EQ(discovery_power_save_mode(flags), POWER_SAVE_LOW_POWER);
+  EXPECT_EQ(discovery_att_class(flags), ATT_CLASS_40MS);
+}
+
+TEST(HubKeyExtraction, MultiInfoTuningReplacesTheByte) {
+  // key_extraction_multi_info: 0xDC sends the byte a real Somfy Izymo sends, always alive: the only
+  // answer a Freebox Delta confirms (#215).
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.tuning_.key_extraction_multi_info = 0xDC;
+  comp.set_key_extraction_armed(true);
+
+  const uint8_t flags = discovery_answer_flags(comp, radio);
+  EXPECT_EQ(flags, 0xDC);
+  EXPECT_EQ(discovery_power_save_mode(flags), POWER_SAVE_ALWAYS_ALIVE);
+}
+
+TEST(HubKeyExtraction, SessionWindowFollowsTheAdvertisedTurnaroundClass) {
+  // A device keeps its session open for 35 ms plus the turnaround it advertises, so the responder
+  // does too: 75 ms for the default class (40 ms), 40 ms for 0x1C (class 5 ms).
+  static_assert(key_extraction_session_window_ms(0xDD) == 75);
+  static_assert(key_extraction_session_window_ms(0x1C) == 40);
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.tuning_.key_extraction_multi_info = 0x1C;
+  comp.set_key_extraction_armed(true);
+
+  (void) discovery_answer_flags(comp, radio);
+  EXPECT_EQ(comp.key_extraction_.session_window_ms(), 40U);
 }
 
 // ========================================================================================
@@ -303,6 +470,7 @@ std::pair<uint8_t, uint8_t> discovery_answer_type_bytes(TestableHubComponent &co
   create_discover(discover, FOREIGN_HUB_ID);
   set_dst(discover, dst);
   comp.process_received_packet_(make_rx_packet(discover));
+  test::fire_discover_reply(comp);
   const auto &all_sent = radio.get_sent_data();
   for (size_t i = already_sent; i < all_sent.size(); i++) {
     const auto &pkt = all_sent[i];
@@ -367,6 +535,47 @@ TEST(HubKeyExtraction, ReArmRestoresTheDefaultAdvertisedType) {
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.advertised_type, DeviceType::ROLLER_SHUTTER);
 }
 
+TEST(HubKeyExtraction, TypeWordTuningSetsTheOpenDiscoveryAnswer) {
+  // key_extraction_type_word is the answer's first two data bytes, sent as written: 0x0180 is the
+  // word a real Somfy Izymo dimmer sends (type 6, light).
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.tuning_.key_extraction_type_word = 0x0180;
+  comp.set_key_extraction_armed(true);
+
+  const auto open = discovery_answer_type_bytes(comp, radio, OPEN_DISCOVERY);
+  EXPECT_EQ(open.first, 0x01);
+  EXPECT_EQ(open.second, 0x80);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.advertised_type, DeviceType::LIGHT);
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.advertised_subtype, 0);
+}
+
+TEST(HubKeyExtraction, TypeWordTuningKeepsTheSubtypeBits) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.tuning_.key_extraction_type_word = 0x0405;  // type 16 (horizontal awning), subtype 5
+  comp.set_key_extraction_armed(true);
+
+  const auto open = discovery_answer_type_bytes(comp, radio, OPEN_DISCOVERY);
+  EXPECT_EQ(open.first, 0x04);
+  EXPECT_EQ(open.second, 0x05);
+}
+
+TEST(HubKeyExtraction, TypedDiscoveryIgnoresTheTypeWordTuning) {
+  // A hub that searches for one type ignores answers of any other, so the requested type wins.
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.tuning_.key_extraction_type_word = 0x0180;
+  comp.set_key_extraction_armed(true);
+
+  const auto typed = discovery_answer_type_bytes(comp, radio, TYPED_DISCOVERY_REMOTE);
+  EXPECT_EQ(typed.first, 0xFF);
+  EXPECT_EQ(typed.second, 0xC0);
+}
+
 TEST(HubKeyExtraction, FullExchangeReachesExtractedThenGraceDisarms) {
   TestableHubComponent comp;
   MockRadio radio;
@@ -379,8 +588,9 @@ TEST(HubKeyExtraction, FullExchangeReachesExtractedThenGraceDisarms) {
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
+  test::fire_discover_reply(comp);
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
-  EXPECT_EQ(count_sent_cmd(radio, CMD_DISCOVER_RESP), 3) << "0x29 should be sent on all 3 channels";
+  EXPECT_EQ(count_sent_cmd(radio, CMD_DISCOVER_RESP), 1) << "0x29 is sent once";
 
   // Hub confirms the discovery directly to us; most hubs will not start the key exchange until
   // this is acknowledged. (A hub that skips it is covered by the pure-responder suite.)
@@ -391,14 +601,14 @@ TEST(HubKeyExtraction, FullExchangeReachesExtractedThenGraceDisarms) {
   ASSERT_TRUE(set_cmd(discover_confirm, CMD_DISCOVER_CONFIRM));
   comp.process_received_packet_(make_rx_packet(discover_confirm));
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CONFIRM_ACK);
-  EXPECT_EQ(count_sent_cmd(radio, CMD_DISCOVER_CONFIRM_ACK), 3) << "0x2D should be sent on all 3 channels";
+  EXPECT_EQ(count_sent_cmd(radio, CMD_DISCOVER_CONFIRM_ACK), 1) << "0x2D should be sent once, on the request's channel";
 
   // Hub sends key-init to our throwaway ID.
   IoFrame key_init{};
   create_key_init(key_init, FOREIGN_HUB_ID, throwaway_id);
   comp.process_received_packet_(make_rx_packet(key_init));
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE);
-  EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_REQ), 3) << "0x3C should be sent on all 3 channels";
+  EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_REQ), 1) << "0x3C should be sent once, on the request's channel";
   EXPECT_EQ(0, memcmp(comp.key_extraction_.key_extraction_ctx_.hub_node_id, FOREIGN_HUB_ID, NODE_ID_SIZE));
 
   // Hub sends the real key-transfer, encrypted the way create_key_transfer() does.
@@ -411,7 +621,7 @@ TEST(HubKeyExtraction, FullExchangeReachesExtractedThenGraceDisarms) {
                                   comp.key_extraction_.key_extraction_ctx_.challenge));
   comp.process_received_packet_(make_rx_packet(key_transfer));
 
-  EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3) << "0x33 should be sent on all 3 channels";
+  EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 1) << "0x33 should be sent once, on the request's channel";
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
       << "responder should stay armed (not disarm immediately) in case the hub follows up with a "
          "node verification request";
@@ -441,6 +651,7 @@ TEST(HubKeyExtraction, ExchangeWithoutDiscoverConfirmStillExtractsKey) {
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
+  test::fire_discover_reply(comp);
   ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
 
   // No 0x2C at all — straight to key-init.
@@ -448,7 +659,7 @@ TEST(HubKeyExtraction, ExchangeWithoutDiscoverConfirmStillExtractsKey) {
   create_key_init(key_init, FOREIGN_HUB_ID, throwaway_id);
   comp.process_received_packet_(make_rx_packet(key_init));
   ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CHALLENGE);
-  EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_REQ), 3);
+  EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_REQ), 1);
 
   IoFrame key_transfer{};
   const uint8_t foreign_system_key[AES_KEY_SIZE] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
@@ -457,7 +668,7 @@ TEST(HubKeyExtraction, ExchangeWithoutDiscoverConfirmStillExtractsKey) {
                                   comp.key_extraction_.key_extraction_ctx_.challenge));
   comp.process_received_packet_(make_rx_packet(key_transfer));
 
-  EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3) << "0x33 should still be sent on all 3 channels";
+  EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 1) << "0x33 should still be sent once, on the request's channel";
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
       << "a hub that skips the discovery-confirm step must still complete the extraction";
 }
@@ -481,6 +692,7 @@ TEST(HubKeyExtraction, LateKeyTransferAfterHoldExpiryStillCompletesExtraction) {
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
+  test::fire_discover_reply(comp);
   ASSERT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_DISCOVER_RESP);
 
   IoFrame key_init{};
@@ -504,7 +716,7 @@ TEST(HubKeyExtraction, LateKeyTransferAfterHoldExpiryStillCompletesExtraction) {
 
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED)
       << "a key-transfer arriving after the CH2 hold has expired must still complete the extraction";
-  EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3) << "0x33 should still be sent on all 3 channels";
+  EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 1) << "0x33 should still be sent once, on the request's channel";
   EXPECT_EQ(0, memcmp(comp.key_extraction_.key_extraction_ctx_.recovered_key, foreign_system_key, AES_KEY_SIZE))
       << "the recovered key should match what the late key-transfer actually carried";
 }
@@ -527,6 +739,7 @@ TEST(HubKeyExtraction, EachPreExtractionReplyAdvancesTheHoldDeadline) {
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
+  test::fire_discover_reply(comp);
   EXPECT_GT(comp.key_extraction_.key_extraction_hold_deadline_ms_, esphome::millis())
       << "the discovery reply (0x29) must arm the CH2 hold";
 
@@ -585,6 +798,8 @@ TEST(HubKeyExtraction, LiteralKig300CaptureReplayThroughRealDispatchReproducesHi
   TestableHubComponent comp;
   MockRadio radio;
   setup_component(comp, radio);
+  // The session was recorded while the responder advertised a sleeping device (0xDD).
+  comp.tuning_.key_extraction_multi_info = 0xDD;
 
   test_rng::reset();
   test_rng::enqueue_bytes(expected_discover_resp.src, NODE_ID_SIZE);
@@ -595,6 +810,7 @@ TEST(HubKeyExtraction, LiteralKig300CaptureReplayThroughRealDispatchReproducesHi
          "number of esp_random() draws";
 
   comp.process_received_packet_(make_rx_packet(hub_discover));
+  test::fire_discover_reply(comp);
   {
     bool found = false;
     for (const auto &pkt : radio.get_sent_data()) {
@@ -661,7 +877,7 @@ TEST(HubKeyExtraction, LiteralKig300CaptureReplayThroughRealDispatchReproducesHi
                                   comp.key_extraction_.key_extraction_ctx_.challenge));
   comp.process_received_packet_(make_rx_packet(key_transfer));
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::EXTRACTED);
-  EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 3);
+  EXPECT_EQ(count_sent_cmd(radio, CMD_KEY_CONFIRM), 1);
 }
 
 /// A second, independent extraction attempt from the same hub, in the same armed window, must
@@ -682,6 +898,7 @@ TEST(HubKeyExtraction, SecondExtractionAttemptSucceedsWithoutRearmingAfterFirstS
     IoFrame discover{};
     create_discover(discover, FOREIGN_HUB_ID);
     comp.process_received_packet_(make_rx_packet(discover));
+    test::fire_discover_reply(comp);
     IoFrame key_init{};
     create_key_init(key_init, FOREIGN_HUB_ID, throwaway_id);
     comp.process_received_packet_(make_rx_packet(key_init));
@@ -1025,7 +1242,7 @@ TEST(HubKeyExtraction, ChallengeReqReachesResponderBeforeExchangeInternalDrop) {
                                    test::TEST_CHALLENGE));
   comp.process_received_packet_(make_rx_packet(challenge_req));
 
-  EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_RESP), 3)
+  EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_RESP), 1)
       << "a hub-issued 0x3C addressed to our throwaway ID while SENT_NODE_VERIFY_RESP must draw a 0x3D "
          "-- if this is 0, the reorder in process_received_packet_() regressed";
 }
@@ -1049,6 +1266,7 @@ TEST(HubKeyExtraction, FullExchangeThroughAddressVerificationDisarmsAfterChallen
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);
   comp.process_received_packet_(make_rx_packet(discover));
+  test::fire_discover_reply(comp);
 
   IoFrame key_init{};
   create_key_init(key_init, FOREIGN_HUB_ID, throwaway_id);
@@ -1070,14 +1288,14 @@ TEST(HubKeyExtraction, FullExchangeThroughAddressVerificationDisarmsAfterChallen
   set_src(node_verify_req, FOREIGN_HUB_ID);
   ASSERT_TRUE(set_cmd(node_verify_req, CMD_NODE_VERIFY_REQ));
   comp.process_received_packet_(make_rx_packet(node_verify_req));
-  EXPECT_EQ(count_sent_cmd(radio, CMD_NODE_VERIFY_RESP), 3) << "0x37 should be sent on all 3 channels";
+  EXPECT_EQ(count_sent_cmd(radio, CMD_NODE_VERIFY_RESP), 1) << "0x37 should be sent once, on the request's channel";
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_NODE_VERIFY_RESP);
 
   // Hub challenges the 0x37 it got back: CMD_CHALLENGE_REQ (0x3C), controller-issued this time.
   IoFrame node_verify_challenge{};
   ASSERT_TRUE(create_challenge_req(node_verify_challenge, throwaway_id, FOREIGN_HUB_ID, test::TEST_CHALLENGE));
   comp.process_received_packet_(make_rx_packet(node_verify_challenge));
-  EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_RESP), 3) << "0x3D should be sent on all 3 channels";
+  EXPECT_EQ(count_sent_cmd(radio, CMD_CHALLENGE_RESP), 1) << "0x3D should be sent once, on the request's channel";
   EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_NODE_VERIFY_RESP)
       << "must not disarm on the spot -- the grace timer does that";
 
@@ -1360,4 +1578,181 @@ TEST(HubKeyExtraction, ReportNeverClaimsTheKeyIsConfirmed) {
   EXPECT_NE(report.find("has not been independently confirmed"), std::string::npos);
   for (const char *forbidden : {"success", "confirmed key", "verified key"})
     EXPECT_EQ(report.find(forbidden), std::string::npos) << "the report must not contain '" << forbidden << "'";
+}
+
+// ========================================================================================
+// Session channel and listening after a reply: a reply to a frame addressed to us goes out once,
+// on the channel that frame came in on; afterwards loop() stays on that channel for the session
+// window (KEY_EXTRACTION_SESSION_WINDOW_MS), then scans all three channels until the hold
+// deadline, handing what it receives to the normal receive path.
+// ========================================================================================
+
+// The default window follows the default turnaround class: 35 ms plus ATT_CLASS_40MS's 40 ms.
+static_assert(KEY_EXTRACTION_SESSION_WINDOW_MS == 75);
+
+namespace {
+
+RadioRxPacket rx_on(const IoFrame &frame, uint32_t freq_hz) {
+  RadioRxPacket pkt = make_rx_packet(frame);
+  pkt.freq_hz = freq_hz;
+  return pkt;
+}
+
+IoFrame discover_confirm_to(const uint8_t *throwaway_id) {
+  IoFrame f{};
+  init_frame(f, true, true, false, false);
+  set_dst(f, throwaway_id);
+  set_src(f, FOREIGN_HUB_ID);
+  EXPECT_TRUE(set_cmd(f, CMD_DISCOVER_CONFIRM));
+  return f;
+}
+
+/// Arm the responder and have a foreign hub's discovery arrive on `freq_hz`.
+void answer_discovery_on(TestableHubComponent &comp, MockRadio &radio, uint32_t freq_hz) {
+  comp.set_key_extraction_armed(true);
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(rx_on(discover, freq_hz));
+  test::fire_discover_reply(comp);
+  ASSERT_TRUE(comp.key_extraction_awaiting_reply_());
+  radio.clear();
+}
+
+/// Like answer_discovery_on(), and the peer's 0x2C then arrives on `freq_hz` and is answered: that
+/// answer opens the session whose channel the loop holds.
+void open_session_on(TestableHubComponent &comp, MockRadio &radio, uint32_t freq_hz) {
+  answer_discovery_on(comp, radio, FREQ_CH2);
+  comp.process_received_packet_(
+      rx_on(discover_confirm_to(comp.key_extraction_.key_extraction_ctx_.throwaway_id), freq_hz));
+  radio.clear();
+}
+
+}  // namespace
+
+TEST(HubKeyExtraction, UnicastReplyGoesOutOnceOnTheRequestChannel) {
+  TestableHubComponent comp;
+  MockRadioSX1262 radio;
+  setup_component(comp, radio);
+  answer_discovery_on(comp, radio, FREQ_CH2);
+
+  comp.process_received_packet_(
+      rx_on(discover_confirm_to(comp.key_extraction_.key_extraction_ctx_.throwaway_id), FREQ_CH1));
+
+  const auto &tx = radio.get_tx_configs();
+  ASSERT_EQ(tx.size(), 1u) << "a reply to a frame addressed to us is sent once";
+  EXPECT_EQ(tx[0].freq_hz, FREQ_CH1) << "on the channel the 0x2C came in on";
+  EXPECT_EQ(comp.key_extraction_.session_freq(), FREQ_CH1);
+}
+
+TEST(HubKeyExtraction, LoopStaysOnTheSessionChannelInsideTheSessionWindow) {
+  esphome::test_clock::ManualClock clock;
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  open_session_on(comp, radio, FREQ_CH3);
+  radio.change_frequency(FREQ_CH1);  // where the last leg of some other transmission left it
+  radio.clear();
+  ASSERT_TRUE(comp.key_extraction_.in_session_hold());
+
+  comp.loop();
+
+  EXPECT_EQ(radio.freq_history(), std::vector<uint32_t>{FREQ_CH3}) << "retune to the session channel and stay";
+  EXPECT_TRUE(radio.wait_timeouts().empty()) << "no rotating listen inside the session window";
+}
+
+TEST(HubKeyExtraction, LoopScansAllThreeChannelsAfterTheSessionWindow) {
+  esphome::test_clock::ManualClock clock;
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  answer_discovery_on(comp, radio, FREQ_CH2);
+  esphome::test_clock::advance_ms(KEY_EXTRACTION_SESSION_WINDOW_MS);
+  ASSERT_FALSE(comp.key_extraction_.in_session_hold());
+  ASSERT_TRUE(comp.key_extraction_awaiting_reply_()) << "still inside the 5 s hold deadline";
+
+  comp.loop();
+
+  const auto &hops = radio.freq_history();
+  for (const uint32_t freq : {FREQ_CH1, FREQ_CH2, FREQ_CH3})
+    EXPECT_NE(std::find(hops.begin(), hops.end(), freq), hops.end())
+        << "the scan must visit channel " << freq << ": a peer's next request may go out on any channel";
+}
+
+TEST(HubKeyExtraction, ScanHandsAFrameToTheResponderAndItAnswersOnThatChannel) {
+  esphome::test_clock::ManualClock clock;
+  TestableHubComponent comp;
+  MockRadioSX1262 radio;
+  setup_component(comp, radio);
+  answer_discovery_on(comp, radio, FREQ_CH2);
+  esphome::test_clock::advance_ms(KEY_EXTRACTION_SESSION_WINDOW_MS);
+  // The peer's 0x2C comes on CH1, not on the channel of its search.
+  radio.queue_rx(rx_on(discover_confirm_to(comp.key_extraction_.key_extraction_ctx_.throwaway_id), FREQ_CH1));
+
+  comp.loop();
+
+  EXPECT_EQ(comp.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::SENT_CONFIRM_ACK);
+  ASSERT_EQ(count_sent_cmd(radio, CMD_DISCOVER_CONFIRM_ACK), 1);
+  EXPECT_EQ(radio.get_tx_configs().back().freq_hz, FREQ_CH1);
+  EXPECT_TRUE(comp.key_extraction_.in_session_hold()) << "the answer opens a new session window on CH1";
+}
+
+/// The 0x29 waiting for its slot is sent by the scheduler, which runs only between loop() passes: a
+/// scan slice must end at that slot, or the answer slips past it (and, from the last slots, out of
+/// the searcher's window).
+TEST(HubKeyExtraction, ScanSliceEndsAtThePendingDiscoveryAnswersSlot) {
+  esphome::test_clock::ManualClock clock;
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.set_key_extraction_armed(true);
+  seed_rng({0, 0});  // slot 1: due DISCOVERY_SLOT_MS after the search
+  IoFrame discover{};
+  create_discover(discover, FOREIGN_HUB_ID);
+  comp.process_received_packet_(rx_on(discover, FREQ_CH2));
+  ASSERT_TRUE(comp.key_extraction_.discover_reply_pending());
+  ASSERT_TRUE(comp.key_extraction_awaiting_reply_());
+  radio.clear();
+
+  const uint32_t start = esphome::millis();
+  comp.loop();
+  EXPECT_LE(esphome::millis() - start, DISCOVERY_SLOT_MS) << "the slice must not run past the answer's slot";
+
+  // Once the slot has come, the pass leaves the radio to the scheduler.
+  esphome::test_clock::advance_ms(DISCOVERY_SLOT_MS);
+  radio.clear();
+  comp.loop();
+  EXPECT_TRUE(radio.wait_timeouts().empty()) << "no listen while the answer is due";
+
+  test::fire_discover_reply(comp);
+  EXPECT_FALSE(comp.key_extraction_.discover_reply_pending());
+}
+
+TEST(HubKeyExtraction, SessionHoldRespectsReceptionInProgress) {
+  esphome::test_clock::ManualClock clock;
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  open_session_on(comp, radio, FREQ_CH3);
+  radio.change_frequency(FREQ_CH1);
+  radio.clear();
+  radio.note_reception_from_test();  // a frame is coming in on CH1 right now
+
+  comp.loop();
+
+  EXPECT_TRUE(radio.freq_history().empty()) << "retuning under a running demodulator would destroy the frame (#81)";
+}
+
+TEST(HubKeyExtraction, LoopFallsBackToTheIdleHopOnceTheHoldDeadlinePasses) {
+  esphome::test_clock::ManualClock clock;
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  answer_discovery_on(comp, radio, FREQ_CH2);
+  comp.key_extraction_.key_extraction_hold_deadline_ms_ = 0;
+  ASSERT_FALSE(comp.key_extraction_awaiting_reply_());
+  comp.exchange_engine_.reset_hop_timestamp();  // pin maybe_hop()'s dwell gate closed
+
+  comp.loop();
+
+  EXPECT_TRUE(radio.wait_timeouts().empty()) << "no responder listen once the hold deadline has passed";
 }

@@ -13,8 +13,11 @@
 
 #include "hub_hooks.h"
 #include "pairing_responder.h"
+#include "proto_commands.h"
+#include "proto_constants.h"
 #include "proto_frame.h"
 #include "proto_sizes.h"
+#include "proto_timing.h"
 
 #include "esphome/core/hal.h"  // millis() for the inline awaiting_reply()
 
@@ -24,6 +27,26 @@
 
 namespace esphome {
 namespace home_io_control {
+
+/// How long after receiving a frame it answers the responder stays on that frame's channel
+/// (SESSION_HOLD_BASE_MS plus the turnaround time the responder advertises in its Multi
+/// Information Byte). The
+/// peer's in-session frame (the `0x32` after our `0x3C`, the `0x3C` after our `0x37`) comes on that
+/// channel within it, with a short preamble. After it the responder scans all three channels again,
+/// as a device does once its session ends: the peer's next *request* is a new transmission that may
+/// go out on any channel.
+/// \todo Measure on hardware how soon, and on which channel, a third-party hub's in-session frame
+/// follows our reply. Two passive community captures show a controller's 0x3D on another channel
+/// than the device's 0x3C; a hub that does so would be heard only once the hold ends.
+/// @param multi_info The Multi Information Byte the responder advertises.
+/// @return The session window in milliseconds.
+static constexpr uint32_t key_extraction_session_window_ms(uint8_t multi_info) {
+  return SESSION_HOLD_BASE_MS + att_class_ms(discovery_att_class(multi_info));
+}
+
+/// The session window for the default Multi Information Byte (KEY_EXTRACTION_DISCOVER_RESP_FLAGS).
+static constexpr uint32_t KEY_EXTRACTION_SESSION_WINDOW_MS =
+    key_extraction_session_window_ms(KEY_EXTRACTION_DISCOVER_RESP_FLAGS);
 
 // Forward declarations — full definitions included only in key_extraction_responder.cpp.
 struct TuningConfig;
@@ -77,8 +100,41 @@ class KeyExtractionResponder {
   /// clang-tidy threshold, mirroring PairingEngine::record_discovery_rx_telemetry_()'s reason for
   /// existing.
   /// @param frame Parsed inbound frame.
+  /// @param rx_freq_hz Channel the frame was received on (RadioRxPacket::freq_hz); 0 if unknown,
+  ///                   which counts as CH2. Answering the frame makes it the session channel.
   /// @return true if the frame was handled (caller should stop further dispatch for it).
-  [[nodiscard]] bool try_handle_frame(const IoFrame &frame);
+  [[nodiscard]] bool try_handle_frame(const IoFrame &frame, uint32_t rx_freq_hz = 0);
+
+  /// Channel of the session the responder last replied in: the channel the frame it answered came
+  /// in on, CH2 until it has answered anything. Replies go out on it (the `0x29` ends on it), and
+  /// loop() stays on it while in_session_hold().
+  [[nodiscard]] uint32_t session_freq() const { return this->session_freq_; }
+
+  /// True while awaiting_reply() and the frame the responder last answered was received less than
+  /// the session window ago (key_extraction_session_window_ms() of the byte the last discovery answer
+  /// advertised): loop() then stays on session_freq() for the peer's in-session frame. Once false
+  /// (while still awaiting a reply), loop() scans all three channels.
+  [[nodiscard]] bool in_session_hold() const {
+    return this->awaiting_reply() && (millis() - this->session_rx_ms_) < this->session_window_ms_;
+  }
+
+  /// Session window for the Multi Information Byte the last discovery answer advertised.
+  [[nodiscard]] uint32_t session_window_ms() const { return this->session_window_ms_; }
+
+  /// True while a discovery answer waits for its slot (schedule_discover_reply_()).
+  [[nodiscard]] bool discover_reply_pending() const {
+    return this->discover_reply_pending_ &&
+           this->key_extraction_ctx_.state == pairing_responder::ResponderState::SENT_DISCOVER_RESP;
+  }
+
+  /// Milliseconds until the pending discovery answer's slot, 0 once it is due. The answer goes out
+  /// from the scheduler, which runs only between loop() passes, so a blocking listen must end by
+  /// then or the answer slips past its slot and, for the last slots, out of the searcher's window.
+  /// Meaningful only while discover_reply_pending().
+  [[nodiscard]] uint32_t ms_until_discover_reply() const {
+    const auto remaining = static_cast<int32_t>(this->discover_reply_due_ms_ - millis());
+    return remaining > 0 ? static_cast<uint32_t>(remaining) : 0;
+  }
 
   /// Generate a random throwaway node ID for one key-extraction arm cycle, avoiding collisions
   /// with the broadcast addresses, this hub's own real node ID, and any registered device.
@@ -96,19 +152,19 @@ class KeyExtractionResponder {
   /// True whenever the responder has replied at least once, is waiting on the hub's next step, and
   /// that wait is still within its bounded hold window — i.e. `key_extraction_ctx_.state` is
   /// neither DISARMED (feature unused) nor ARMED_IDLE (armed, but no discovery request seen yet),
-  /// AND `key_extraction_hold_deadline_ms_` has not yet passed. loop() uses this to hold CH2
-  /// instead of running the generic idle-hop scan, and to defer background status polls, while an
-  /// attempt is in flight.
+  /// AND `key_extraction_hold_deadline_ms_` has not yet passed. While it is true, loop() defers
+  /// background status polls and, instead of the generic idle hop, listens for the peer's next frame:
+  /// on session_freq() during in_session_hold(), then with a rotating listen over all three channels.
   ///
-  /// The deadline is a plain timestamp, not a named `set_timeout()` timer: releasing the CH2 hold
-  /// is purely a radio-scheduling optimization (see key_extraction_hold_deadline_ms_'s own doc
+  /// The deadline is a plain timestamp, not a named `set_timeout()` timer: ending this listen is
+  /// purely a radio-scheduling optimization (see key_extraction_hold_deadline_ms_'s own doc
   /// comment for why it is deliberately decoupled from `key_extraction_ctx_.state` itself), so
   /// nothing needs to fire a callback when it lapses — the next loop() iteration simply stops
-  /// taking the CH2-hold branch on its own. Default-constructed, the deadline is 0, which is always
-  /// in the past relative to any real `millis()` reading once the device has been running — so a
+  /// taking the responder-listen branch on its own. Default-constructed, the deadline is 0, which
+  /// is always in the past relative to any real `millis()` reading once the device has been running — so a
   /// mid-exchange state reached without the deadline having been (re)set (e.g. a reply-builder
-  /// failure between the state guard and the deadline update) safely never holds CH2, rather than
-  /// holding it unboundedly.
+  /// failure between the state guard and the deadline update) safely never takes the radio, rather
+  /// than holding it unboundedly.
   ///
   /// Defined inline: defer_background_poll_() calls this every loop() iteration.
   [[nodiscard]] bool awaiting_reply() const {
@@ -121,7 +177,7 @@ class KeyExtractionResponder {
   /// default so a fresh boot never responds to foreign pairing traffic. See pairing_responder.h.
   /// Public so the host tests that script individual RX branches can preset and inspect it.
   pairing_responder::ResponderContext key_extraction_ctx_;
-  /// Deadline (millis()) until which loop() should hold CH2 for the key-extraction responder,
+  /// Deadline (millis()) until which loop() listens for the key-extraction responder's peer,
   /// deliberately independent of `key_extraction_ctx_.state` itself. Set (not "armed" — this is a
   /// plain timestamp, not a named `set_timeout()` timer) on every sign of hub progress: the three
   /// pre-extraction reply handlers (handle_discover_(), handle_discover_confirm_(),
@@ -142,6 +198,8 @@ class KeyExtractionResponder {
  private:
   /// Handle an inbound CMD_DISCOVER_REQ (0x28) while the responder is armed.
   void handle_discover_(const IoFrame &frame);
+  /// Advertise the type word from `key_extraction_type_word` (the answer to an open discovery).
+  void set_configured_type_();
   /// Handle an inbound CMD_DISCOVER_CONFIRM (0x2C) addressed to our throwaway node ID while armed.
   void handle_discover_confirm_(const IoFrame &frame);
   /// Handle an inbound CMD_KEY_INIT (0x31) addressed to our throwaway node ID while armed.
@@ -157,13 +215,18 @@ class KeyExtractionResponder {
   /// node-verification round a CMD_NODE_VERIFY_REQ opened. See
   /// pairing_responder::on_node_verify_challenge().
   void handle_node_verify_challenge_(const IoFrame &frame);
-  /// Transmit a key-extraction reply frame on all 3 IO-homecontrol channels, using the radio
-  /// driver's response_preamble() rather than a fixed SHORT_PREAMBLE/LONG_PREAMBLE constant —
-  /// long enough that a channel-hopping receiver reliably lands on it, short enough that 3
-  /// sequential transmissions don't block the main loop for the better part of a second (see the
-  /// implementation comment in key_extraction_responder.cpp for the hardware-confirmed reasoning).
-  /// Shared by every RX handler so the preamble choice and channel list are defined once.
-  void broadcast_reply_(const IoFrame &frame);
+  /// Transmit a key-extraction reply to a frame addressed to us and open the session hold
+  /// (session_freq(), in_session_hold()). It goes out once, on the channel that frame came in on,
+  /// with the driver's response_preamble().
+  void send_reply_(const IoFrame &frame);
+  /// Answer a broadcast search the way a device does: once, in a random slot from 1 to N of the
+  /// search's window (discovery_slot_count()), on a random one of the two channels the search did
+  /// not come in on, with `cold_broadcast_reply_preamble`. Timed through the named-timeout
+  /// scheduler, so the loop is never blocked while the slot runs down. The answer is dropped if
+  /// the attempt has moved on (disarm, re-arm) before its slot comes.
+  /// \todo Confirm on hardware that third-party controllers (TaHoma, KIG 300, KLR 200, Freebox)
+  /// accept a slotted answer.
+  void schedule_discover_reply_(const IoFrame &search, const IoFrame &resp);
   /// Emit the security-sensitive "system key extracted" log block (see redaction.h — this is the
   /// one deliberate, explicit exception to that file's masking, not a loosening of it).
   void log_result_();
@@ -171,6 +234,23 @@ class KeyExtractionResponder {
   const uint8_t *node_id_;
   RadioDriver **radio_;
   const TuningConfig *tuning_;
+  /// Channel of the frame try_handle_frame() is dispatching, so the handler that answers it can
+  /// make that channel the session's (send_reply_()).
+  uint32_t rx_freq_hz_{FREQ_CH2};
+  /// millis() when try_handle_frame() received that frame.
+  uint32_t rx_ms_{0};
+  /// Channel of the session the responder last replied in; see session_freq().
+  uint32_t session_freq_{FREQ_CH2};
+  /// millis() when the frame the responder last answered was received; see in_session_hold().
+  uint32_t session_rx_ms_{0};
+  /// Session window for the Multi Information Byte the last discovery answer advertised.
+  uint32_t session_window_ms_{KEY_EXTRACTION_SESSION_WINDOW_MS};
+  /// The `0x29` waiting for its slot (schedule_discover_reply_()).
+  IoFrame pending_discover_resp_{};
+  /// True from scheduling that `0x29` until its timer fires; see discover_reply_pending().
+  bool discover_reply_pending_{false};
+  /// millis() at which that `0x29`'s slot comes.
+  uint32_t discover_reply_due_ms_{0};
   DeviceRegistry &registry_;
   TransmitFrameFn transmit_;
   NamedTimeoutFn schedule_auto_off_;

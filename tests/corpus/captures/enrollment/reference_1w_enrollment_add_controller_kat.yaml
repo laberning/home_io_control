@@ -15,10 +15,10 @@ description: >
 
     1. CRC-CCITT over all 35 non-CRC bytes = 0xF29B, matching the published trailing "9B F2"
        (little-endian on air). CRC-CCITT over just the 29 declared bytes = 0x1139 — no match.
-    2. reference/iohomecontrol/include/iohcPacket.h's `_p0x30` struct is exactly those 20 data
-       bytes with no `hmac` field at all, unlike its `_p0x2e`, whose MAC sits inside the
-       declared length. The struct's silence on the MAC is why an earlier reading of this frame
-       assumed it was unauthenticated — it's authenticated, just not inside the declared span.
+    2. Real hardware sends this frame without the trailer (29 bytes,
+       somfy_smoove_enrollment_add_and_remove_controller_sx1276), so both forms exist. A reading
+       that takes the 29-byte form as complete assumes the frame is unauthenticated; it is
+       authenticated, just not inside the declared span.
 
   The encrypted key (enc_key, 7E60...A201) was independently reproduced byte-exact both
   directions against this project's own TRANSFER_KEY (proto_constants.h): encrypting the

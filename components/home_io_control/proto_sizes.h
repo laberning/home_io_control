@@ -58,9 +58,9 @@ static constexpr uint8_t FRAME_CRC_SIZE = 2;
 /// (enc_key[16] + man_id[1] + data[1] + sequence[2] = 20 bytes) plus its 9-byte header is 29
 /// bytes — already representable in CTRL0's 5-bit field — but its 6-byte MAC does not fit inside
 /// the same field's remaining headroom (29 declared + 6 MAC = 35, unrepresentable in 5 bits), so
-/// the MAC rides after the declared length instead, still under the CRC. The iohomecontrol
-/// reference implementation's `_p0x30` packet struct omits an `hmac` field entirely (unlike its
-/// `_p0x2e`, whose MAC sits inside the declared length).
+/// the MAC rides after the declared length instead, still under the CRC. Real remotes send the
+/// 29-byte form with no trailer (somfy_smoove_enrollment_add_and_remove_controller_sx1276); the
+/// trailer form is the published vector's.
 static constexpr uint8_t FRAME_MAX_TRAILER_SIZE = HMAC_SIZE;
 
 /// Largest number of bytes a buffer must hold to receive or transmit any frame this project

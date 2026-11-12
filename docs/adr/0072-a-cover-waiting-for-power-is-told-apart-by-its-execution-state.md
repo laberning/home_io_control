@@ -1,6 +1,6 @@
-# ADR 0070: A cover waiting for power is told apart by its execution state
+# ADR 0072: A cover waiting for power is told apart by its execution state
 
-<!-- doxygen-label: adr0070 -->
+<!-- doxygen-label: adr0072 -->
 
 **Status:** Accepted · **Recorded:** 2026-11
 

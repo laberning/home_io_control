@@ -202,6 +202,15 @@ climate:
     io_device_type: "electrical_heater"
     io_subtype: 1
     io_model: towel_dryer
+  # A heater with a night light: io_model adds the light's registers, night_light: its light entity.
+  - platform: home_io_control
+    name: "Test Heater With Light"
+    io_device_id: "FEEB2A"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
+    io_model: heater_with_light
+    night_light:
+      name: "Test Night Light"
   # The plain electrical heater is commanded with heating levels (io_subtype 0).
   - platform: home_io_control
     name: "Test Plain Heating"

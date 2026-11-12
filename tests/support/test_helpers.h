@@ -10,6 +10,8 @@
 
 #include <cstring>
 
+#include "esphome/core/application.h"
+
 namespace test {
 using namespace esphome::home_io_control;
 
@@ -120,6 +122,7 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::busy_;
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::radio_failure_reason_;
+  using IOHomeControlComponent::warn_if_blocking_over_;
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
   using IOHomeControlComponent::tuning_;
@@ -270,4 +273,11 @@ class MockPlatformHubBase : public IOHomeControlComponent {
       this->registry_.put(device_id, previous);
   }
 };
+/// Let the key-extraction responder's pending discovery answer have its slot: fire the timer that
+/// transmits the 0x29. No-op when none is pending.
+template<typename Hub> void fire_discover_reply(Hub &comp) {
+  if (const auto pending = esphome::test_scheduler::pending(&comp, "key_extraction_discover_reply"))
+    pending->fire();
+}
+
 }  // namespace test

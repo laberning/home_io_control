@@ -456,3 +456,76 @@ TEST(ProtoHeatingTowelDryer, ARegisterReplyEchoesItsRegister) {
   EXPECT_EQ(reg, 0x00);
   EXPECT_FALSE(heating_function_register(static_cast<HeatingFunction>(0xEE), reg));
 }
+
+// --- Night light (Sauter Hekla, issue #222) ---
+
+TEST(ProtoHeatingNightLight, WritesAreByteExact) {
+  // On/off is the write the heater's own Cozytouch controller sends.
+  EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT, 1.0F), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x44, 0x01}));
+  EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT, 0.0F), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x44, 0x00}));
+  // The brightness is written in the two-byte form it reads back in.
+  EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 50.0F),
+            (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x42, 0x32, 0x00}));
+  EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 100.0F),
+            (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x42, 0x64, 0x00}));
+}
+
+TEST(ProtoHeatingNightLight, WritesOutsideTheRangeOrNotIntegralAreRefused) {
+  EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT, 2.0F), 0u);
+  EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 101.0F), 0u);
+  EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, -1.0F), 0u);
+  EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 50.5F), 0u);
+  EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, NAN), 0u);
+  EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 0.0F), 6u);
+}
+
+TEST(ProtoHeatingNightLight, ReadsAddressTheirRegisters) {
+  EXPECT_EQ(encode_read(HeatingFunction::NIGHT_LIGHT), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x44}));
+  EXPECT_EQ(encode_read(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x42}));
+  EXPECT_STREQ(heating_function_name(HeatingFunction::NIGHT_LIGHT), "night_light");
+  EXPECT_STREQ(heating_function_name(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS), "night_light_brightness");
+}
+
+TEST(ProtoHeatingNightLight, DecodesWhatTheHeklaReports) {
+  // The register_01 sweeps of issue #222: 0x0144 reads 01 with the light on and 00 with it off; 0x0142
+  // reads 64 00 either way.
+  float value = -1.0F;
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x44, 0x01}), HeatingFunction::NIGHT_LIGHT, value));
+  EXPECT_FLOAT_EQ(value, 1.0F);
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x44, 0x00}), HeatingFunction::NIGHT_LIGHT, value));
+  EXPECT_FLOAT_EQ(value, 0.0F);
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0x64, 0x00}),
+                                   HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, value));
+  EXPECT_FLOAT_EQ(value, 100.0F);
+  // The heater's answer to the Cozytouch's write carries the new value too.
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x61, 0x01, 0x44, 0x01}), HeatingFunction::NIGHT_LIGHT, value));
+  EXPECT_FLOAT_EQ(value, 1.0F);
+}
+
+TEST(ProtoHeatingNightLight, OutOfRangeShortAndEmptyRepliesAreNoValue) {
+  float value = -1.0F;
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0x65, 0x00}),
+                                    HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, value));
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0x32, 0x01}),
+                                    HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, value))
+      << "the high byte counts: 0x0132 is out of range";
+  EXPECT_FALSE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0x32}), HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, value))
+      << "a two-byte register answered with one byte";
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x44}), HeatingFunction::NIGHT_LIGHT, value))
+      << "a heater without the light answers without a value";
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x44, 0x02}), HeatingFunction::NIGHT_LIGHT, value));
+  EXPECT_FLOAT_EQ(value, -1.0F);
+}
+
+TEST(ProtoHeatingNightLight, ReadingsStoreAndReportTheLightRegisters) {
+  HeatingReadings readings;
+  EXPECT_FALSE(readings.has(HeatingFunction::NIGHT_LIGHT));
+  EXPECT_FALSE(readings.has(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS));
+  EXPECT_TRUE(readings.store(HeatingFunction::NIGHT_LIGHT, 1.0F));
+  EXPECT_TRUE(readings.store(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 40.0F));
+  EXPECT_EQ(readings.night_light, 1);
+  EXPECT_EQ(readings.night_light_brightness, 40);
+  EXPECT_TRUE(readings.has(HeatingFunction::NIGHT_LIGHT));
+  EXPECT_EQ(readings.value_of(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS), 40);
+}

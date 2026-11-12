@@ -43,8 +43,8 @@ constexpr uint8_t EXECUTE_FRAME_LEN = 23;
 /// Offset of the MAC within the data payload (after the parameters and the sequence).
 constexpr uint8_t EXECUTE_MAC_OFFSET = 8;
 
-/// tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml — the worked
-/// initial-value example from Velocet/iown-homecontrol docs/linklayer.md. STOP from node
+/// tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml — the published
+/// initial-value example (CC0 known-answer vector). STOP from node
 /// 385762, typed-broadcast to all. Only the node address is transcribed here; everything else
 /// (sequence, prefix bytes, MAC, CRC) is read from the corpus by load_captured_execute() below —
 /// see its comment for why.
@@ -62,7 +62,7 @@ const uint8_t SOMFY_REMOTE_SRC[NODE_ID_SIZE] = {0x9D, 0x60, 0x85};
 const uint8_t VELUX_KLI313_SRC[NODE_ID_SIZE] = {0xDA, 0x2C, 0x93};
 
 /// tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml — the published
-/// CMD 0x30 known-answer example (Velocet/iown-homecontrol docs/linklayer.md). Only the inputs a
+/// CMD 0x30 known-answer example (CC0 known-answer vector). Only the inputs a
 /// caller of create_1w_add_controller() must supply are transcribed here; the frame it must
 /// reproduce is read from the corpus by id, same discipline as the execute vectors above.
 const uint8_t ADD_CONTROLLER_VECTOR_SRC[NODE_ID_SIZE] = {0xAB, 0xCD, 0xEF};
@@ -328,13 +328,13 @@ TEST(OneWayCommands, FrameCarriesTheOneWayShape) {
 }
 
 TEST(OneWayCommands, LowPowerBitIsNeverSet) {
-  // Real remotes leave CTRL1 at zero: three own-hardware captures, one third-party capture and
-  // the published example all carry ctrl1=0x00. (The reference implementation's forgePacket()
-  // sets its LPM bit; the captures outvote it.) Setting it would put a byte on air that no
-  // observed 1W transmitter sends.
+  // Real remotes leave CTRL1 at zero on every copy but the first of a burst: three own-hardware
+  // captures and the published example carry ctrl1=0x00, and the one remote seen setting
+  // CTRL1_LOW_POWER does so on copy 1 only. That per-copy flag is send_burst()'s job (ADR 0038);
+  // the builder always hands back the plain frame.
   IoFrame frame{};
   ASSERT_TRUE(create_1w_execute_position(frame, SOMFY_REMOTE_SRC, DeviceType::UNKNOWN, 50, 1, test::TEST_SYSTEM_KEY));
-  EXPECT_EQ(frame.ctrl1, 0x00) << "CTRL1 must be zero, matching every captured 1W execute";
+  EXPECT_EQ(frame.ctrl1, 0x00) << "CTRL1 must be zero; only send_burst() may set the wake flag on copy 1";
 }
 
 // ========================================================================================
@@ -728,8 +728,7 @@ TEST(OneWayEnrollment, RemoveControllerReproducesRealHardwareCapture) {
 TEST(OneWayEnrollment, AddControllerRoundTripsThroughAdoptionDecoder) {
   // Closes the loop with decode_1w_add_controller(): our own 0x30 must decode back to the key we
   // put in, with a verifying MAC — which would catch a key-wrap IV derived from the wrong node
-  // (e.g. the destination, like the rejected reference divergence this builder's doxygen warns
-  // against) just as surely as a hardware test would.
+  // (e.g. the destination, which this builder's doxygen warns against) just as surely as a hardware test would.
   IoFrame frame{};
   ASSERT_TRUE(create_1w_add_controller(frame, SOMFY_REMOTE_SRC, DeviceType::LIGHT, 0x07, 42, test::TEST_SYSTEM_KEY));
 
@@ -748,8 +747,7 @@ TEST(OneWayEnrollment, AddControllerRoundTripsThroughAdoptionDecoder) {
 
 TEST(OneWayEnrollment, LowPowerBitIsNeverSet) {
   // Same rule as every other 1W builder in this file (OneWayCommands.LowPowerBitIsNeverSet) —
-  // stated here too because it is easy to reintroduce by analogy with the reference
-  // implementation's forgePacket(), which does set it.
+  // stated here too because it is easy to reintroduce by analogy with the 2W builders, which do set it.
   IoFrame add{};
   ASSERT_TRUE(create_1w_add_controller(add, ADD_CONTROLLER_VECTOR_SRC, DeviceType::UNKNOWN,
                                        ADD_CONTROLLER_VECTOR_MANUFACTURER, ADD_CONTROLLER_VECTOR_SEQUENCE,

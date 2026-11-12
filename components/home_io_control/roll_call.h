@@ -220,8 +220,10 @@ struct PulledKeyReportInfo {
   std::string pairing_device_id;  ///< Hex node ID of the device that sent the key.
   DeviceType type;                ///< Its node type from discovery.
   uint8_t subtype;                ///< Its subtype from discovery.
-  const uint8_t *key;             ///< The pulled key (AES_KEY_SIZE bytes) it proved it holds.
+  const uint8_t *key;             ///< The pulled key (AES_KEY_SIZE bytes).
   const uint8_t *hub_key;         ///< The hub's own key.
+  bool proven_by_sender{true};    ///< true: the sender proved the key with its 0x3D; false: only the
+                                  ///< responders prove it (the report is then built only with responders).
 };
 
 /// @brief Build the report for a pull that returned the hub's own key from a node no platform drives.

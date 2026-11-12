@@ -3,8 +3,8 @@ description: >
   Companion to somfy_awning_discovery_spe_paired_rollcall.yaml: the exact same broadcast
   CMD_DISCOVER_SPE_REQ (0x2A) TX, but showing the reply from a third, differently-typed
   already-paired device — the Somfy Izymo dimmer, re-paired via normal 0x28/0x29 discovery just
-  before this run (node 415CE4) rather than left over from the original B11 session. Confirms the
-  SPE roll-call finding (analysis/completed/spe_discovery_0x2a_next_steps.md §2.1) across a second device *type*
+  before this run (node 415CE4) rather than left over from the earlier roll-call session. Confirms the
+  SPE roll-call finding across a second device *type*
   (LIGHT, not just HORIZONTAL_AWNING): any device holding the controller's system key answers,
   regardless of what kind of actuator it is.
 source:

@@ -636,6 +636,13 @@ TEST(ProtoFrame, DiscoveryAttClassExtractsBitsSixAndSeven) {
   EXPECT_EQ(discovery_att_class(0xEC), ATT_CLASS_40MS);
 }
 
+TEST(ProtoFrame, AttClassMsMatchesTheClassNames) {
+  EXPECT_EQ(att_class_ms(ATT_CLASS_5MS), 5U);
+  EXPECT_EQ(att_class_ms(ATT_CLASS_10MS), 10U);
+  EXPECT_EQ(att_class_ms(ATT_CLASS_20MS), 20U);
+  EXPECT_EQ(att_class_ms(ATT_CLASS_40MS), 40U);
+}
+
 TEST(ProtoFrame, DiscoveryPowerSaveModeExtractsBitsZeroAndOne) {
   EXPECT_EQ(discovery_power_save_mode(0x00), POWER_SAVE_ALWAYS_ALIVE);
   EXPECT_EQ(discovery_power_save_mode(0x01), POWER_SAVE_LOW_POWER);
@@ -991,4 +998,21 @@ TEST(ProtoFrameExtended, DiscoveryTargetTypeReadsTheTypeBitsOfDiscoveryAddresses
   EXPECT_EQ(discovery_target_type(other_suffix), DeviceType::UNKNOWN);
   const uint8_t undefined_type[3] = {0x00, 0x06, 0x7B};  // type 25
   EXPECT_EQ(discovery_target_type(undefined_type), DeviceType::UNKNOWN);
+}
+
+/// encode_discovery_address() is the inverse of discovery_target_type(): the class's ten type bits
+/// with the discovery suffix, e.g. `00 FF FB` for remote controllers and `00 01 BB` for lights.
+TEST(ProtoFrameExtended, EncodeDiscoveryAddressIsTheInverseOfDiscoveryTargetType) {
+  uint8_t addr[3] = {0};
+  encode_discovery_address(DeviceType::REMOTE_CONTROLLER, addr);
+  EXPECT_EQ(addr[0], 0x00);
+  EXPECT_EQ(addr[1], 0xFF);
+  EXPECT_EQ(addr[2], 0xFB);
+  EXPECT_EQ(discovery_target_type(addr), DeviceType::REMOTE_CONTROLLER);
+
+  encode_discovery_address(DeviceType::LIGHT, addr);
+  EXPECT_EQ(addr[0], 0x00);
+  EXPECT_EQ(addr[1], 0x01);
+  EXPECT_EQ(addr[2], 0xBB);
+  EXPECT_EQ(discovery_target_type(addr), DeviceType::LIGHT);
 }

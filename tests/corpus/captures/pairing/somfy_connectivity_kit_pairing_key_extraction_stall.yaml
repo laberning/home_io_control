@@ -11,8 +11,7 @@ description: >
   support is only that both hubs send this step and neither reliably continues without the answer.
   To make the missing step undeniable, this capture also includes -- from the exact same
   short window, same hub -- a real already-paired device correctly answering the identical 0x2C
-  with 0x2D within 4.4 seconds. See analysis/issue_45_key_extraction_stall_analysis.md (Finding 1)
-  for the full write-up. Original on-air log has since been deleted; this capture is the durable
+  with 0x2D within 4.4 seconds. Original on-air log has since been deleted; this capture is the durable
   record of what it showed. tx-frame timestamps (what the device sent) are wall-clock-second
   derived approximations; rx-frame timestamps (what the hub sent) use the precise on-device ts=
   tick counter.
@@ -48,7 +47,7 @@ frames:
     freq: 869850000
     hex: "48 20 E2 AE 39 CA 0A 18 2C"
     crc: absent
-    note: "cmd=DISCOVER_CONFIRM(0x2C) to a real, already-paired device (E2AE39) on this same hub, ~12s after the frame above -- included for direct contrast. ctrl1=0x20 (CTRL1_LOW_POWER) here vs 0x10 (CTRL1_ACK) for our own throwaway device above; the hub appears to mirror back a per-device flag rather than using one fixed value, plausibly derived from what each device's own CMD_DISCOVER_RESP (0x29) advertised in its flags byte (see analysis/issue_45_key_extraction_stall_analysis.md Finding 5 -- our own 0x29 leaves that byte at 0x00)"
+    note: "cmd=DISCOVER_CONFIRM(0x2C) to a real, already-paired device (E2AE39) on this same hub, ~12s after the frame above -- included for direct contrast. ctrl1=0x20 (CTRL1_LOW_POWER) here vs 0x10 (CTRL1_ACK) for our own throwaway device above; the hub appears to mirror back a per-device flag rather than using one fixed value, plausibly derived from what each device's own CMD_DISCOVER_RESP (0x29) advertised in its flags byte (our own 0x29 leaves that byte at 0x00)"
   - dir: rx
     t_ms: 18421
     freq: 868950000

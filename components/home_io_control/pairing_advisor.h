@@ -40,9 +40,11 @@ enum class PairingAdviceCode : uint8_t {
   KEY_PULL_NOT_OFFERED,        ///< `pairing_key_transfer: pull` was refused with CMD_ERROR_RESP: the
                                ///< device does not hand out its key. Suggests forcing `pairing_key_transfer: push`.
   KEY_PULL_UNPROVEN,           ///< The device answered the pull with a key, but sent no 0x3D that
-                               ///< verifies under it; the key is not printed.
-  PULLED_KEY_RECEIVED,         ///< The pull got a different key that the device proved, and a roll-call
-                               ///< under it found no registrable device (outcome KEY_RECEIVED). Says to
+                               ///< verifies under it, and no device answered a roll-call under it
+                               ///< either; the key is not printed.
+  PULLED_KEY_RECEIVED,         ///< The pull got a different key, proven by the device or by the devices
+                               ///< that answered under it, and a roll-call under it found no registrable
+                               ///< device (outcome KEY_RECEIVED). Says to
                                ///< put the key into the controlling entity's `system_key:`.
   HUB_KEY_NO_RESPONDER,        ///< The pull returned the hub's own key from a node no platform drives, and no
                                ///< device that holds it answered (outcome HUB_KEY_RETURNED). Says to run Scan

@@ -5,19 +5,15 @@
 independent pattern sets, deliberately small and high-precision -- a gate that
 cries wolf gets disabled, and these rules are mostly upheld by review.
 
-1. **Provenance.** A published page must never name git-excluded working notes as
-   the source of a fact: they are deleted or never shipped, so a reader cannot
-   open them. Check C in check-docs-links.py already fails a *link* into that
+1. **Provenance.** A published page must never name a local-only path as the
+   source of a fact: it exists only in a developer's own checkout, so a reader
+   cannot open it. Check C in check-docs-links.py already fails a *link* into that
    territory -- this catches the far commoner shape, a backticked path in prose,
    which no link checker sees. Matched outside fenced blocks, so an example may
    still name a local path.
 
-   The vendor configuration-tool material is the strict half of this rule: it
-   must not appear in the repository in any form, so it is matched against the
-   raw file, fences included.
-
-   Unlike the history rule below, neither has a `docs/adr/` exemption: an ADR is
-   a published page and its reader is in exactly the same position.
+   Unlike the history rule below, it has no `docs/adr/` exemption: an ADR is a
+   published page and its reader is in exactly the same position.
 
 2. **History.** The docs describe what is true now, so "used to be", "no longer"
    and friends are usually a sentence that should have been deleted or rewritten
@@ -48,16 +44,12 @@ stage_docs = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(stage_docs)
 
 # --- rule 1: provenance -----------------------------------------------------
-# A path that identifies git-excluded working notes. `reference/` and `analysis/`
-# need the trailing slash: bare "reference" and "analysis" are ordinary English
-# words that appear constantly in these docs. Checked outside fenced blocks --
+# A local-only path. Each name needs its trailing slash: the bare words are
+# ordinary English that appears constantly in these docs, and one is anchored so
+# that longer paths containing it pass. check-private-paths.py applies the same
+# rule to every tracked file. Checked outside fenced blocks --
 # a shell command or a YAML example may legitimately name a local path.
-PROVENANCE_RE = re.compile(r"analysis/|reference/|AGENTS\.md", re.I)
-
-# The vendor-tool material is the strict half: it may not appear in this repo in
-# any form, so unlike the paths above it is matched against the *raw* file,
-# fenced blocks included. A code example is not an exemption from that rule.
-VENDOR_DATA_RE = re.compile(r"setgo|set&go|set_go", re.I)
+PROVENANCE_RE = re.compile(r"analysis/|(?<![\w./-])lab/|reference/|AGENTS\.md", re.I)
 
 # --- rule 2: history --------------------------------------------------------
 HISTORY_RE = re.compile(
@@ -97,13 +89,6 @@ def main() -> int:
         checked += 1
         is_adr = src.parent.name == "adr"
         raw = src.read_text(encoding="utf-8")
-        for n, line in enumerate(raw.split("\n"), 1):
-            if not _allowed(src, line) and VENDOR_DATA_RE.search(line):
-                errors.append(
-                    f"{_rel(src)}:{n}: names the vendor configuration-tool material, which must "
-                    f"not appear in this repository in any form -- not cited, quoted, paraphrased, "
-                    f"or alluded to.\n      {line.strip()[:110]}"
-                )
         # Fenced blocks are examples, not prose -- a YAML snippet or a shell
         # command may legitimately mention any of the paths below.
         text = strip_fenced_blocks(raw)
@@ -112,8 +97,8 @@ def main() -> int:
                 continue
             if PROVENANCE_RE.search(line):
                 errors.append(
-                    f"{_rel(src)}:{n}: names git-excluded working notes as a source -- a reader "
-                    f"cannot open them. Restate the fact and cite repo evidence (a corpus capture "
+                    f"{_rel(src)}:{n}: names a local-only path as a source -- a reader "
+                    f"cannot open it. Restate the fact and cite repo evidence (a corpus capture "
                     f"id, an ADR, a GitHub issue) instead.\n      {line.strip()[:110]}"
                 )
             # A decision record is about change by design; the history rule does not apply.

@@ -20,6 +20,7 @@ import esphome.config_validation as cv
 from esphome.components import sensor, text_sensor
 from esphome.const import (
     CONF_ACCURACY_DECIMALS,
+    CONF_DEFAULT_TRANSITION_LENGTH,
     CONF_DEVICE_CLASS,
     CONF_DISABLED_BY_DEFAULT,
     CONF_ENTITY_CATEGORY,
@@ -339,6 +340,27 @@ def deprecated_key(key, replacement):
     return validator
 
 
+# ESPHome's light_schema() defaults to a 1 s transition, which fades a brightness change client-side by
+# calling write_state() repeatedly over that window. Here each write_state() is a radio exchange (about
+# 300 ms), so a fade becomes a stream of superseding commands, and each device reply can restart it: on real
+# hardware (the Izymo dimmer) it looped indefinitely. Every brightness light of this component extends its
+# schema with this, so changes apply at once unless the YAML asks for a fade.
+INSTANT_LIGHT_TRANSITION = {
+    cv.Optional(CONF_DEFAULT_TRANSITION_LENGTH, default="0s"): cv.positive_time_period_milliseconds
+}
+
+
+def declared_features(config):
+    """The capability word of the kind an entry declares (io_device_type, io_subtype, io_model).
+
+    0 when the entry declares no io_device_type: nothing at validation time says what the device is,
+    so it has no feature a validator may rely on.
+    """
+    if CONF_DEVICE_TYPE not in config:
+        return 0
+    return device_features(config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0), config_model(config))
+
+
 # A heater's or a water heater's state moves over minutes and its poll costs one radio exchange per register,
 # so these platforms raise the status_poll_interval floor well above the cover floor
 # (hub_names.MIN_STATUS_POLL_INTERVAL_MS). Without the key the hub polls them every five minutes.
@@ -372,12 +394,10 @@ def require_feature(config, key, active, *, required=0, forbidden=0, reason):
     """
     if not active or CONF_DEVICE_TYPE not in config:
         return
-    device_type = config[CONF_DEVICE_TYPE]
-    subtype = config.get(CONF_SUBTYPE, 0)
-    features = device_features(device_type, subtype, config_model(config))
+    features = declared_features(config)
     if (features & required) == required and (features & forbidden) == 0:
         return
-    label = _kind_label(device_type, subtype, config.get(CONF_MODEL))
+    label = _kind_label(config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0), config.get(CONF_MODEL))
     raise cv.Invalid(f"{key} is not available on {label}: {reason}")
 
 
@@ -482,7 +502,8 @@ async def create_companion_sensors(config, parent):
     - Active Issue: the one enabled-by-default companion — it is the headline diagnostic
       value that turns a silently-ignored command into a self-explained one (e.g. a
       wind/rain lockout), so users should see it without an opt-in step. Empty except while
-      a CMD_ERROR_RESP reason is outstanding; see IOHomeActiveIssueTextSensor.
+      an issue is outstanding (a refusal, a derived rain limitation, or a radio that stopped
+      responding); see IOHomeActiveIssueTextSensor.
     - RSSI / Last Contact / Exchange Failures: numeric link-health diagnostics, disabled by
       default (noise control). Last Contact publishes seconds since the last frame from the
       device (an age, not a Home Assistant timestamp) and keeps counting up between frames via

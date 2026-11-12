@@ -902,7 +902,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   // whenever it doesn't apply, and this reorder can only affect frames where BOTH this call and
   // the is_exchange_internal_command() check below would otherwise fire, i.e. only 0x3C/0x3D (that
   // predicate's entire domain, hub_decisions.h).
-  if (this->key_extraction_.try_handle_frame(frame))
+  if (this->key_extraction_.try_handle_frame(frame, packet.freq_hz))
     return;
 
   // Exchange-internal frames (0x3C challenge request, 0x3D challenge response) belonging to

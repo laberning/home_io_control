@@ -47,7 +47,7 @@
 /// create_key_confirm(), create_discover_confirm_ack()) are each pinned against a real device's
 /// captured framing by tests/corpus/corpus_device_role_builder_test.cpp, including
 /// create_discover_resp()'s flags/timestamp bytes, which mirror a real Somfy Izymo dimmer's
-/// captured values (see KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP in proto_commands.cpp for
+/// captured values (see KEY_EXTRACTION_DISCOVER_RESP_FLAGS/_TIMESTAMP in proto_constants.h/proto_commands.cpp for
 /// the derivation) but remain unconfirmed against a real hub like every device-role field here.
 ///
 /// recover_system_key_from_transfer()'s IV-derivation formula itself is independently pinned
@@ -68,26 +68,27 @@ constexpr uint32_t KEY_EXTRACTION_AUTO_OFF_MS = 10 * 60 * 1000;  ///< Arm window
 // manufacturer/type against a known-device allowlist before completing key exchange —
 // Somfy/roller-shutter is a plausible but unconfirmed default.
 constexpr uint8_t KEY_EXTRACTION_MANUFACTURER_ID = MANUFACTURER_SOMFY;  ///< Plausible, widely-supported default.
-constexpr DeviceType KEY_EXTRACTION_ADVERTISED_TYPE = DeviceType::ROLLER_SHUTTER;  ///< Plausible default device type.
-constexpr uint8_t KEY_EXTRACTION_ADVERTISED_SUBTYPE = 0;
 constexpr uint8_t KEY_EXTRACTION_ID_GEN_MAX_ATTEMPTS = 16;  ///< Collision-retry budget for the throwaway node ID.
+constexpr size_t IO_CHANNEL_COUNT = 3;                      ///< FREQ_CH1..FREQ_CH3.
+constexpr const char *KEY_EXTRACTION_DISCOVER_REPLY_TIMER_NAME = "key_extraction_discover_reply";
 constexpr const char *KEY_EXTRACTION_TIMEOUT_NAME = "key_extraction_auto_off";
 constexpr uint32_t RANDOM_LOW_BYTE_MASK = 0xFF;  ///< Isolates one random byte from esp_random()'s 32-bit output.
 
 constexpr uint32_t KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS = 5000;  ///< 5 seconds.
-// Bounds the CH2 hold (key_extraction_responder.h's key_extraction_hold_deadline_ms_ /
+// Bounds the responder listen (key_extraction_responder.h's key_extraction_hold_deadline_ms_ /
 // awaiting_reply()) for the 3 pre-extraction states (SENT_DISCOVER_RESP, SENT_CONFIRM_ACK,
 // SENT_CHALLENGE), none of which has a hold bound of its own otherwise -- CMD_DISCOVER_REQ is
 // handled before the throwaway-ID dst filter (try_handle_frame()), so *any* 0x28 from any hub in
-// range that then goes silent would otherwise pin CH2 for the rest of the arm window.
+// range that then goes silent would otherwise keep the radio listening for the rest of the arm
+// window, with background polls deferred.
 //
 // This is purely a radio-scheduling optimization, not a protocol-recovery deadline: expiry only
-// stops loop() from holding CH2 for this responder (see key_extraction_hold_deadline_ms_'s doc
+// stops loop() from listening for this responder (see key_extraction_hold_deadline_ms_'s doc
 // comment in key_extraction_responder.h) -- it does NOT touch key_extraction_ctx_.state, so a real
 // hub's frame arriving even slightly late is still accepted by the pure guards in
-// pairing_responder.cpp exactly as if the hold were still active, just without the CH2-parking
-// benefit for that one frame. That makes the cost of sizing this too small merely "occasionally
-// idle-hops away from CH2 a little early," not "silently drops a live attempt" -- so 5s is sized
+// pairing_responder.cpp exactly as if the listen were still active, just caught by the coarser
+// idle hop instead. That makes the cost of sizing this too small merely "occasionally falls back
+// to the idle hop a little early," not "silently drops a live attempt" -- so 5s is sized
 // generously rather than tightly: a real hub that's still trying should have its very next frame
 // land well inside this window -- comfortably above a single retry gap (EXCHANGE_RETRY_DELAY_MS=250ms)
 // plus the request/response windows either side of it
@@ -170,8 +171,7 @@ void KeyExtractionResponder::set_armed(bool armed) {
 
   this->key_extraction_ctx_ = pairing_responder::ResponderContext{};
   this->generate_throwaway_id(this->key_extraction_ctx_.throwaway_id);
-  this->key_extraction_ctx_.advertised_type = KEY_EXTRACTION_ADVERTISED_TYPE;
-  this->key_extraction_ctx_.advertised_subtype = KEY_EXTRACTION_ADVERTISED_SUBTYPE;
+  this->set_configured_type_();
   this->key_extraction_ctx_.state = pairing_responder::ResponderState::ARMED_IDLE;
 
   ESP_LOGW(detail::TAG,
@@ -203,9 +203,13 @@ void KeyExtractionResponder::set_armed(bool armed) {
     this->armed_callback_(true);
 }
 
-bool KeyExtractionResponder::try_handle_frame(const IoFrame &frame) {
+bool KeyExtractionResponder::try_handle_frame(const IoFrame &frame, uint32_t rx_freq_hz) {
   if (this->key_extraction_ctx_.state == pairing_responder::ResponderState::DISARMED)
     return false;
+  // Kept for the handler that answers this frame: answering makes this channel the session's
+  // (send_reply_()). An unanswered frame leaves the session channel as it was.
+  this->rx_freq_hz_ = rx_freq_hz != 0 ? rx_freq_hz : FREQ_CH2;
+  this->rx_ms_ = millis();
 
   if (frame.cmd == CMD_DISCOVER_REQ) {
     this->handle_discover_(frame);
@@ -236,42 +240,83 @@ bool KeyExtractionResponder::try_handle_frame(const IoFrame &frame) {
   return false;
 }
 
-void KeyExtractionResponder::broadcast_reply_(const IoFrame &frame) {
-  // Broadcast on all 3 channels like the CMD_STATUS_UPDATE_RESP ack in hub_status.cpp: we don't
-  // know which channel the foreign hub is listening on after transmitting its own frame.
-  //
-  // The preamble choice mirrors ExchangeEngine::send_and_receive() (exchange_engine.cpp), which
-  // already picks between a long and a short preamble via is_start() for the controller-role
-  // outbound path: a start-flagged frame (currently only 0x29, this responder's discovery reply)
-  // is the one reply a hopping/scanning peer has to catch cold, so it gets
-  // `cold_broadcast_reply_preamble` — long enough for that, short enough that broadcasting it on
-  // 3 channels doesn't meaningfully block the loop (~12x cheaper per leg than LONG_PREAMBLE by
-  // default). Every other device-role reply (0x2D, 0x3C, 0x33, 0x37, 0x3D) is `start=false` — it lands
-  // on a channel the peer already holds, so it keeps the driver's chip-tuned response_preamble()
-  // (12 bytes for SX1276, 8 for SX1262/LR1121), same as every other in-exchange reply in this
-  // codebase.
+void KeyExtractionResponder::send_reply_(const IoFrame &frame) {
+  // The frame being answered opens (or continues) the session on its channel: the peer sent it
+  // there and waits there for our answer, and its in-session follow-up comes on the same channel.
+  this->session_freq_ = this->rx_freq_hz_;
+  this->session_rx_ms_ = this->rx_ms_;
+
+  // Every reply that reaches this path (0x2D, 0x3C, 0x33, 0x37, 0x3D) is `start=false`: it lands
+  // on the channel the peer holds, so it keeps the driver's chip-tuned response_preamble(), same
+  // as every other in-exchange reply in this codebase. The one start-flagged reply, the 0x29, goes
+  // out through schedule_discover_reply_() instead.
   //
   // Do NOT widen this to a flat LONG_PREAMBLE(1024) for every reply: hardware-confirmed
   // 2026-08-02, that blocked the main loop long enough to blow through the hub's tight per-try
-  // wait windows and broke both directions. Scoping the long preamble to only the start-flagged
-  // reply is what keeps that regression from recurring while still fixing the hopping-catch case.
-  //
-  // CH2 goes last, deliberately: CH2 is the channel every non-discovery peer listen holds still
-  // on (unicast requests always go out on CH2 — see wait_for_key_challenge_()'s and
-  // wait_for_key_confirm_()'s own doc comments), so it's the one leg whose *completion* the peer
-  // is waiting to react to. Transmitting it mid-sequence would let a peer that hears it and
-  // replies immediately land its next frame while this responder is still transmitting a later
-  // leg — a structural TX-deafness miss, regardless of hop timing. Firing it last avoids that: by
-  // the time the peer reacts to hearing CH2, this responder has already finished transmitting and
-  // re-armed RX. This doesn't cost the one reply that behaves differently (0x29 discovery, whose
-  // peer listen explicitly *skips* CH2 — ROTATE_SKIPPING_REQUEST) anything either: CH1/CH3 (the
-  // channels that listen actually scans) both go out before CH2 instead of straddling it, so
-  // discovery reaches its useful channels sooner.
-  const uint16_t preamble =
-      is_start(frame) ? this->tuning_->cold_broadcast_reply_preamble : (*this->radio_)->response_preamble();
-  this->transmit_(frame, FREQ_CH1, preamble);
-  this->transmit_(frame, FREQ_CH3, preamble);
-  this->transmit_(frame, FREQ_CH2, preamble);
+  // wait windows and broke both directions.
+  const uint16_t preamble = (*this->radio_)->response_preamble();
+
+  // An answer to a frame addressed to us goes out once, on that frame's channel, at once: the
+  // peer stays on the channel it sent on to wait for it (0 of 300 measured unicast replies came
+  // back on another channel, exchange_engine.cpp's first-response wait). Repeating it on the
+  // other channels would only keep this radio transmitting while the peer already answers.
+  this->transmit_(frame, this->session_freq_, preamble);
+}
+
+void KeyExtractionResponder::schedule_discover_reply_(const IoFrame &search, const IoFrame &resp) {
+  // A device answers a search once, in a random slot from 1 to N (never slot 0), on one
+  // channel, and the searcher collects for the whole window before it confirms. The answer is
+  // therefore a timed transmission, not a reply at once: the searcher's window is N slots long.
+  const uint32_t slots = discovery_slot_count(search.dst);
+  const uint32_t slot = 1 + (esp_random() % slots);
+  const uint32_t delay_ms = slot * DISCOVERY_SLOT_MS;
+  // One random channel of the two the search did not come in on: a searcher listens on those for
+  // its answers (a discovery reply lands on the request channel in about 1 of 149 measured
+  // answers, ListenPolicy::ROTATE_SKIPPING_REQUEST), so a draw over all three would lose a third.
+  static constexpr uint32_t CHANNELS[IO_CHANNEL_COUNT] = {FREQ_CH1, FREQ_CH2, FREQ_CH3};
+  size_t search_index = 1;  // CH2, the channel a frame with no reported channel counts as
+  for (size_t i = 0; i < IO_CHANNEL_COUNT; i++) {
+    if (CHANNELS[i] == this->rx_freq_hz_)
+      search_index = i;
+  }
+  // One or two channels on from the search's: always one of the other two.
+  const size_t step = 1 + (esp_random() % (IO_CHANNEL_COUNT - 1));
+  const uint32_t freq = CHANNELS[(search_index + step) % IO_CHANNEL_COUNT];
+
+  // The 0x29 is no reply on the search's channel: the session (and its channel hold) opens only
+  // with the confirm that follows, which may come on any channel. Leave the hold expired.
+  this->session_freq_ = this->rx_freq_hz_;
+  this->session_rx_ms_ = this->rx_ms_ - this->session_window_ms_;
+
+  this->pending_discover_resp_ = resp;
+  this->discover_reply_pending_ = true;
+  this->discover_reply_due_ms_ = millis() + delay_ms;
+  // Same timer name: a repeated search replaces the answer still waiting for its slot.
+  this->schedule_auto_off_(KEY_EXTRACTION_DISCOVER_REPLY_TIMER_NAME, delay_ms, [this, freq]() {
+    this->discover_reply_pending_ = false;
+    // Only the attempt that scheduled it may send it: after a disarm, or a disarm and re-arm (a
+    // fresh throwaway ID, state back to ARMED_IDLE), this answer is stale.
+    if (this->key_extraction_ctx_.state != pairing_responder::ResponderState::SENT_DISCOVER_RESP)
+      return;
+    // The one reply a hopping/scanning peer has to catch cold, so `cold_broadcast_reply_preamble`:
+    // long enough for that, much shorter than LONG_PREAMBLE so the loop is not blocked.
+    this->transmit_(this->pending_discover_resp_, freq, this->tuning_->cold_broadcast_reply_preamble);
+  });
+  // Hold the radio (and defer background polls) through the slot and the confirm that follows it.
+  this->key_extraction_hold_deadline_ms_ = millis() + delay_ms + KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS;
+  ESP_LOGD(detail::TAG,
+           "Key extraction: discovery answer in slot %" PRIu32 " of %" PRIu32 " (%" PRIu32 " ms) on %" PRIu32 " Hz",
+           slot, slots, delay_ms, freq);
+}
+
+void KeyExtractionResponder::set_configured_type_() {
+  // The word is the wire form (type << 6 | subtype), so a value copied from a real device's 0x29 is
+  // sent back byte for byte.
+  const uint16_t word = this->tuning_->key_extraction_type_word;
+  const auto msb = static_cast<uint8_t>(word >> BITS_PER_BYTE);
+  const auto lsb = static_cast<uint8_t>(word);  // low byte: top 2 type bits + 6-bit subtype
+  this->key_extraction_ctx_.advertised_type = decode_packed_device_type(msb, lsb);
+  this->key_extraction_ctx_.advertised_subtype = decode_packed_device_subtype(lsb);
 }
 
 void KeyExtractionResponder::handle_discover_(const IoFrame &frame) {
@@ -281,30 +326,39 @@ void KeyExtractionResponder::handle_discover_(const IoFrame &frame) {
   // A controller that searches for one device type (a typed discovery such as `00 FF FB`, sent by an
   // Atlantic heater in its connectivity menu, #199) is expected to ignore answers of any other type, so
   // answer as the type it asked for. Decided per request, not per attempt: a hub may send a typed and an open discovery
-  // in sequence. Without a typed request the default applies (an open `00 00 3B` discovery, or an undefined type). The
-  // manufacturer stays Somfy: one variable at a time.
+  // in sequence. Without a typed request (an open `00 00 3B` discovery, or an undefined type) the configured
+  // `key_extraction_type_word` applies. The manufacturer stays Somfy: one variable at a time.
   const DeviceType requested_type = discovery_target_type(frame.dst);
-  const bool typed = requested_type != DeviceType::UNKNOWN;
-  this->key_extraction_ctx_.advertised_type = typed ? requested_type : KEY_EXTRACTION_ADVERTISED_TYPE;
-  this->key_extraction_ctx_.advertised_subtype = typed ? 0 : KEY_EXTRACTION_ADVERTISED_SUBTYPE;
+  if (requested_type != DeviceType::UNKNOWN) {
+    this->key_extraction_ctx_.advertised_type = requested_type;
+    this->key_extraction_ctx_.advertised_subtype = 0;
+  } else {
+    this->set_configured_type_();
+  }
 
   IoFrame resp;
+  // The Multi Information Byte is a tuning choice (key_extraction_multi_info): a hub may skip a
+  // device that advertises low power (#215). The session window follows its turnaround class.
+  const uint8_t flags = this->tuning_->key_extraction_multi_info;
+  this->session_window_ms_ = key_extraction_session_window_ms(flags);
   if (!create_discover_resp(resp, this->key_extraction_ctx_.throwaway_id, frame.src,
                             this->key_extraction_ctx_.advertised_type, this->key_extraction_ctx_.advertised_subtype,
-                            KEY_EXTRACTION_MANUFACTURER_ID)) {
+                            KEY_EXTRACTION_MANUFACTURER_ID, flags)) {
     ESP_LOGW(detail::TAG, "Key extraction: failed to build discovery response");
     // Deliberately does NOT touch key_extraction_hold_deadline_ms_: on_discover_request() already
     // advanced ctx.state above, but a failed builder means no reply went out, so there is nothing
     // for the hub to be replying to yet. Leaving the deadline exactly as it was (0 on a fresh arm,
     // safely "already expired" per key_extraction_hold_deadline_ms_'s doc comment; or whatever an
     // earlier successful reply set it to, still correctly bounded) is what keeps a builder failure
-    // from either holding CH2 unboundedly or clobbering a still-valid earlier deadline.
+    // from either holding the radio unboundedly or clobbering a still-valid earlier deadline.
     return;
   }
-  this->broadcast_reply_(resp);
-  this->key_extraction_hold_deadline_ms_ = millis() + KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS;
-  ESP_LOGI(detail::TAG, "Key extraction: replied to discovery from hub %s as node type %u with throwaway ID %s",
+  this->schedule_discover_reply_(frame, resp);
+  ESP_LOGI(detail::TAG,
+           "Key extraction: answering discovery from hub %s as node type %u subtype %u (type word 0x%02X%02X, "
+           "multi info 0x%02X) with throwaway ID %s",
            node_id_to_string(frame.src).c_str(), static_cast<unsigned>(this->key_extraction_ctx_.advertised_type),
+           this->key_extraction_ctx_.advertised_subtype, resp.data[0], resp.data[1], flags,
            node_id_to_string(this->key_extraction_ctx_.throwaway_id).c_str());
 }
 
@@ -319,7 +373,7 @@ void KeyExtractionResponder::handle_discover_confirm_(const IoFrame &frame) {
     // failure is deliberate, not an oversight.
     return;
   }
-  this->broadcast_reply_(resp);
+  this->send_reply_(resp);
   this->key_extraction_hold_deadline_ms_ = millis() + KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS;
   ESP_LOGI(detail::TAG, "Key extraction: acknowledged discovery confirm from hub %s",
            node_id_to_string(frame.src).c_str());
@@ -339,7 +393,7 @@ void KeyExtractionResponder::handle_key_init_(const IoFrame &frame) {
     // failure is deliberate, not an oversight.
     return;
   }
-  this->broadcast_reply_(resp);
+  this->send_reply_(resp);
   this->key_extraction_hold_deadline_ms_ = millis() + KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS;
   ESP_LOGI(detail::TAG, "Key extraction: sent challenge to hub %s", node_id_to_string(frame.src).c_str());
 }
@@ -354,7 +408,7 @@ void KeyExtractionResponder::handle_key_transfer_(const IoFrame &frame) {
 
   IoFrame resp;
   if (create_key_confirm(resp, this->key_extraction_ctx_.throwaway_id, frame.src)) {
-    this->broadcast_reply_(resp);
+    this->send_reply_(resp);
   } else {
     ESP_LOGW(detail::TAG, "Key extraction: failed to build key confirm");
   }
@@ -395,7 +449,7 @@ void KeyExtractionResponder::handle_node_verify_req_(const IoFrame &frame) {
     ESP_LOGW(detail::TAG, "Key extraction: failed to build address response");
     return;
   }
-  this->broadcast_reply_(resp);
+  this->send_reply_(resp);
   this->arm_post_extraction_grace();  // Hub is still progressing — push the disarm back out.
   ESP_LOGI(detail::TAG, "Key extraction: answered node verification request from hub %s",
            node_id_to_string(frame.src).c_str());
@@ -429,7 +483,7 @@ void KeyExtractionResponder::handle_node_verify_challenge_(const IoFrame &frame)
     ESP_LOGW(detail::TAG, "Key extraction: failed to build address challenge response");
     return;
   }
-  this->broadcast_reply_(resp);
+  this->send_reply_(resp);
   ESP_LOGI(detail::TAG, "Key extraction: answered address challenge from hub %s", node_id_to_string(frame.src).c_str());
   // Do NOT disarm here — re-arm the grace window instead and stay in SENT_NODE_VERIFY_RESP so a
   // retried 0x3C is answered (on_node_verify_challenge() deliberately never advances state).
@@ -445,14 +499,13 @@ void KeyExtractionResponder::arm_post_extraction_grace() {
   // 10 minutes the switch entity documents.
   //
   // Also pushes out key_extraction_hold_deadline_ms_ (key_extraction_responder.h) by the same
-  // window: the CH2 hold that field governs is not just for the 3 pre-extraction states
+  // window: the listen that field governs is not just for the 3 pre-extraction states
   // KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS bounds -- EXTRACTED/SENT_NODE_VERIFY_RESP are "awaiting
   // reply" too (a hub may still send 0x36/0x3C to verify the address it was handed), and this
-  // grace window, not the 5s mid-attempt one, is what should bound the hold during that phase.
-  // Without this, the hold would (per key_extraction_hold_deadline_ms_'s default-past-if-unset
-  // behavior) never actually engage once the responder reaches EXTRACTED, silently losing the
-  // CH2-hold benefit for the very phase whose whole point is catching a hub's follow-up unicast
-  // frame.
+  // grace window, not the 5s mid-attempt one, is what should bound the listen during that phase.
+  // Without this, the listen would (per key_extraction_hold_deadline_ms_'s default-past-if-unset
+  // behavior) never actually engage once the responder reaches EXTRACTED, for the very phase whose
+  // whole point is catching a hub's follow-up unicast frame.
   this->schedule_auto_off_(KEY_EXTRACTION_GRACE_TIMER_NAME, KEY_EXTRACTION_POST_EXTRACT_GRACE_MS, [this]() {
     // Only a still-running post-extraction cycle may be disarmed from here. Checking DISARMED
     // alone is NOT enough: a user who toggles the switch off and back on inside the grace window

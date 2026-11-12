@@ -22,6 +22,15 @@ static constexpr uint32_t FREQ_CH1 = 868250000;  ///< Channel 1: 868.25 MHz (2W 
 static constexpr uint32_t FREQ_CH2 = 868950000;  ///< Channel 2: 868.95 MHz (1W and 2W, TX channel)
 static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W only)
 
+/// Length of one discovery answer slot. A discovery request opens a window of N such slots; the
+/// key-extraction responder answers once, in a random slot from 1 to N, so it never answers at
+/// once; the controller collects answers for the whole window before it confirms one.
+///
+/// Evidence: in our corpus's discovery captures, devices answer a 32-slot search between 13 and
+/// 1353 ms after it, inside 33 × 41 ms; a Freebox Delta repeats its 128-slot search about every
+/// 5.3 s, which is 128 × 41 ms plus its own turnaround (issue #215).
+static constexpr uint32_t DISCOVERY_SLOT_MS = 41;
+
 /// Preamble is a sequence of 0xAA bytes that precedes every frame.
 /// Any start frame carrying `CTRL1_LOW_POWER` — a directed frame to a low-power target, or the
 /// SPE roll-call's low-power frame shape — uses the long preamble (1024 bytes = 8192 bits) as a
@@ -38,7 +47,7 @@ static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol default and floor
 /// a frame the peer caught via a rotating/hopping listen (currently: only the key-extraction
 /// responder's 0x29, the sole `start=true` frame any device-role builder in this codebase
 /// produces) — long enough to be reliably caught by a hopping receiver, short enough that
-/// broadcasting it across all 3 channels doesn't block the loop the way LONG_PREAMBLE does.
+/// sending it doesn't block the loop the way LONG_PREAMBLE does.
 ///
 /// Sized above the ~13.9 ms real-device discovery-reply preamble this project's own SX1262/LR1121
 /// discovery hop-slice tuning was measured against (issue #65 SDR analysis) — that measurement is
@@ -54,9 +63,7 @@ static constexpr uint16_t COLD_BROADCAST_REPLY_PREAMBLE = 80;
 /// receivers never lock onto one that long; a normal start frame gets this shorter preamble
 /// instead, matching what a reference hub sends to an always-alive device.
 ///
-/// 32 bytes = 256 bits sits inside the preamble band the iown-homecontrol documentation describes
-/// (256 bits in its radio notes; 128 bits is the "Long PPDU" preamble in its link-layer notes),
-/// well above the ~12-byte response preamble a
+/// 32 bytes = 256 bits is well above the ~12-byte response preamble a
 /// short-turnaround chip uses, ~6.7 ms of air time, and two orders of magnitude below the 1024-byte
 /// burst. 8 bytes is a proven lower bound against paired always-alive devices but nothing bounds
 /// where a start frame stops being heard, so 32 is the defensible middle — and `normal_start_preamble`
@@ -105,6 +112,16 @@ constexpr TxWake tx_wake_for(bool start, uint16_t preamble) {
 /// roll-call): both wait for the same class of short protocol frame, so there is no measured
 /// reason for them to differ.
 static constexpr uint32_t PREAMBLE_LINGER_DWELL_MS = 15;
+
+/// Base of how long a node acting as a device holds the session's channel after answering a
+/// controller, before it scans all channels again. The full hold adds the turnaround time the node
+/// advertises in its `0x29` (att_class_ms()), so a controller that waits out that turnaround still
+/// finds the node listening. 35 ms is our margin, not a measured device timer: with the default
+/// advertised turnaround the hold is 75 ms, above the 16-52 ms in which third-party controllers
+/// answered a device's challenge in our corpus (`somfy_oximo40_statuspoll_sx1262`,
+/// `somfy_rs100_statuspoll_kig300_sx1276`).
+static constexpr uint32_t SESSION_HOLD_BASE_MS = 35;
+
 // Chip-specific defaults (response preamble, post-TX settle, per-chip discovery hop slices
 // for SX1262 and LR1121) live beside their TuningConfig fields in tuning_config.h; the
 // SX1262/LR1121 exchange dwell constants live in radio_sx1262.h / radio_lr1121.h respectively.
@@ -240,12 +257,10 @@ static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 /// transmitter, not radio tuning: they do not vary by chip and must not be moved into a driver or
 /// a TuningConfig field.
 ///
-/// Both values come from the reference implementation, which sets them on adjacent lines when it
-/// forges a 1W packet: `packet->repeat = 4` and `packet->repeatTime = 40` in its 1W remote. The
-/// capture logs embedded in that same source show
-/// consecutive copies of one burst arriving roughly 25 ms apart, which is not a contradiction:
-/// those are receive-side timestamps of a burst whose configured gap is 40 ms, so they measure
-/// something else. Do not "correct" 40 down to 25 on the strength of them.
+/// Both values are assumed, not measured on this project's hardware: four copies, 40 ms apart.
+/// Receive-side timestamps of consecutive copies in a capture log can show a smaller gap (roughly
+/// 25 ms), which is not a contradiction: they measure when the receiver heard each copy, not the
+/// configured gap. Do not "correct" 40 down to 25 on the strength of them.
 ///
 /// Erring long would in any case be the safe direction — a device needs only one of the four
 /// copies to land, so a wider spacing costs nothing and leaves more room on a shared band.

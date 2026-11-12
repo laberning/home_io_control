@@ -31,6 +31,11 @@ template<class Base> class TestableSoftPhy : public Base {
     irq_seq_.assign(seq);
     irq_idx_ = 0;
   }
+  /// Same, for a sequence built at run time (e.g. a long run of one value).
+  void set_irq_sequence(const std::vector<uint32_t> &seq) {
+    irq_seq_ = seq;
+    irq_idx_ = 0;
+  }
 
   /// Set the packet read_rx_packet() should hand back when not dispatching to the real path.
   void set_expected_packet(const esphome::home_io_control::RadioRxPacket &pkt) { expected_packet_ = pkt; }

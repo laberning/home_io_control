@@ -133,8 +133,9 @@ CoverCommand = home_io_control_ns.enum("CoverCommand", is_class=True)
 NAMED_POSITION_BUTTONS = {
     "FAVORITE": (CONF_FAVORITE_BUTTON_ID, "favorite_button", "Favorite Position", False),
     "VENT": (CONF_VENT_BUTTON_ID, "vent_button", "Ventilation Position", False),
-    # Experimental: no public source for the values, so both buttons start disabled and the user
-    # enables them in Home Assistant.
+    # Disabled by default: the pedestrian value is experimental (no public source), and a garage
+    # opener runs only the partial position stored in it (issue #163). The user enables them in
+    # Home Assistant.
     "PEDESTRIAN": (CONF_PEDESTRIAN_BUTTON_ID, "pedestrian_button", "Pedestrian Position", True),
     "PARTIAL": (CONF_PARTIAL_BUTTON_ID, "partial_button", "Partial Position", True),
 }

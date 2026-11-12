@@ -88,6 +88,9 @@ template<typename Base> class HubAirRadio : public Base {
   bool wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) override {
     // Keeps the base mock's wait/timeout bookkeeping; its own rx queue is always empty here.
     Base::wait_for_packet(packet, timeout_ms);
+    // The device answers a search in a slot of the window the hub is now waiting through.
+    if (this->device != nullptr)
+      test::fire_discover_reply(*this->device);
     for (auto it = this->air_.begin(); it != this->air_.end(); ++it) {
       if (it->freq_hz != this->get_current_freq())
         continue;
@@ -235,16 +238,17 @@ TEST_P(PairingLoopback, DefaultModeCompletesFullSequenceAndResponderRecoversHubK
       << "0x28, one 0x2C (answered on the first try), 0x31, 0x32";
 
   const std::vector<uint8_t> device_cmds = sent_cmds(device_radio_);
-  EXPECT_EQ(count_cmd(device_cmds, CMD_DISCOVER_CONFIRM_ACK), 3) << "one 0x2D, on all three channels";
-  EXPECT_EQ(count_cmd(device_cmds, CMD_KEY_CONFIRM), 3) << "one 0x33, on all three channels";
+  EXPECT_EQ(count_cmd(device_cmds, CMD_DISCOVER_CONFIRM_ACK), 1) << "one 0x2D, once, on the request's channel";
+  EXPECT_EQ(count_cmd(device_cmds, CMD_KEY_CONFIRM), 1) << "one 0x33, once, on the request's channel";
 
   expect_hub_key_extracted();
   expect_device_registered();
 }
 
-/// The responder advertises a low-power device, so the hub's 0x2C must take the low-power shape:
+/// A responder that advertises a low-power device (0xDD) must get the low-power 0x2C:
 /// CTRL1_LOW_POWER set, and the long wake-up preamble.
 TEST_P(PairingLoopback, DiscoverConfirmFollowsTheResponderAdvertisedPowerClass) {
+  device_.tuning_.key_extraction_multi_info = 0xDD;
   ASSERT_TRUE(hub_.discover_and_pair());
 
   const IoFrame confirm = first_discover_confirm_sent();
@@ -260,9 +264,10 @@ TEST_P(PairingLoopback, DiscoverConfirmFollowsTheResponderAdvertisedPowerClass) 
   }
 }
 
-/// `send_with_ack` only changes the frame for an always-alive target; to this low-power responder
-/// it sends the same 0x2C as `send`, and the pairing completes the same way.
+/// `send_with_ack` only changes the frame for an always-alive target; to a low-power responder
+/// (0xDD) it sends the same 0x2C as `send`, and the pairing completes the same way.
 TEST_P(PairingLoopback, SendWithAckSendsTheSameFrameToALowPowerTarget) {
+  device_.tuning_.key_extraction_multi_info = 0xDD;
   hub_.tuning_.pairing_discover_confirm = DiscoverConfirmMode::SEND_WITH_ACK;
 
   ASSERT_TRUE(hub_.discover_and_pair());
@@ -295,19 +300,19 @@ TEST_P(PairingLoopback, DeviceMissesFirstDiscoverConfirmSecondTryIsAnswered) {
   ASSERT_TRUE(hub_.discover_and_pair());
 
   EXPECT_EQ(count_cmd(sent_cmds(*hub_radio_), CMD_DISCOVER_CONFIRM), 2);
-  EXPECT_EQ(count_cmd(sent_cmds(device_radio_), CMD_DISCOVER_CONFIRM_ACK), 3) << "answered exactly once";
+  EXPECT_EQ(count_cmd(sent_cmds(device_radio_), CMD_DISCOVER_CONFIRM_ACK), 1) << "answered exactly once";
   expect_hub_key_extracted();
 }
 
-/// The hub misses every copy of the first 0x2D. It retries the 0x2C, and the responder, already
+/// The hub misses the first 0x2D. It retries the 0x2C, and the responder, already
 /// past that step, acknowledges again rather than ignoring the repeat.
 TEST_P(PairingLoopback, HubMissesTheAckAndResponderAcknowledgesTheRetry) {
-  drop_to_hub()[CMD_DISCOVER_CONFIRM_ACK] = 3;
+  drop_to_hub()[CMD_DISCOVER_CONFIRM_ACK] = 1;  // the one copy, sent on the 0x2C's channel
 
   ASSERT_TRUE(hub_.discover_and_pair());
 
   EXPECT_EQ(count_cmd(sent_cmds(*hub_radio_), CMD_DISCOVER_CONFIRM), 2);
-  EXPECT_EQ(count_cmd(sent_cmds(device_radio_), CMD_DISCOVER_CONFIRM_ACK), 6) << "one 0x2D per 0x2C";
+  EXPECT_EQ(count_cmd(sent_cmds(device_radio_), CMD_DISCOVER_CONFIRM_ACK), 2) << "one 0x2D per 0x2C";
   expect_hub_key_extracted();
 }
 
@@ -326,17 +331,17 @@ TEST_P(PairingLoopback, DeviceNeverHearsDiscoverConfirmAndPairingStillCompletes)
   expect_device_registered();
 }
 
-/// The hub misses every copy of the device's 0x33. Extraction has already happened on the device
+/// The hub misses the device's 0x33. Extraction has already happened on the device
 /// side, and the responder deliberately answers nothing once it holds a key (every responder guard
 /// rejects EXTRACTED), so the hub's retries go unanswered and its pairing attempt fails. The
 /// feature's goal, the recovered key, is unaffected.
 TEST_P(PairingLoopback, HubMissesKeyConfirmResponderKeepsTheKeyHubPairingFails) {
-  drop_to_hub()[CMD_KEY_CONFIRM] = 3;
+  drop_to_hub()[CMD_KEY_CONFIRM] = 1;  // the one copy, sent on the 0x32's channel
 
   EXPECT_FALSE(hub_.discover_and_pair()) << "a responder holding the key does not re-confirm a retried 0x32 or 0x31";
 
   expect_hub_key_extracted();
-  EXPECT_EQ(count_cmd(sent_cmds(device_radio_), CMD_KEY_CONFIRM), 3) << "the responder confirmed exactly once";
+  EXPECT_EQ(count_cmd(sent_cmds(device_radio_), CMD_KEY_CONFIRM), 1) << "the responder confirmed exactly once";
 }
 
 INSTANTIATE_TEST_SUITE_P(PairingLoopback, PairingLoopback,

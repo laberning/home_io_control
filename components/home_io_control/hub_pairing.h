@@ -82,7 +82,7 @@ struct PairingContext {
   bool saw_key_challenge{false};            ///< True once the device challenged our key-init this attempt.
   bool key_refused{false};                  ///< True once the device answered the key step with CMD_ERROR_RESP.
   uint8_t key_refusal_code{0};              ///< That CMD_ERROR_RESP byte; only meaningful if key_refused.
-  bool has_pulled_key{false};               ///< True once a pull produced a different key the device proved.
+  bool has_pulled_key{false};               ///< True once a pull produced a different key (proven or not).
   uint8_t pulled_key[AES_KEY_SIZE]{};       ///< That key. Key material: never logged outside the pull report.
 };
 

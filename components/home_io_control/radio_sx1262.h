@@ -154,6 +154,13 @@ static constexpr uint8_t SX1262_RX_BUFFER_BASE = 0x80;
 
 static constexpr uint8_t SX1262_GFSK_PACKET_TYPE_KNOWN_LENGTH = 0x00;
 static constexpr uint8_t SX1262_GFSK_CRC_OFF = 0x01;
+/// Preamble detector length selector: 16 bits (0x04 = 8, 0x05 = 16, 0x06 = 24, 0x07 = 32 bits).
+/// The 8-bit detector fired on noise 3-4 times per second of listening on a Heltec V3, and each
+/// false detection held a rotating listen on an empty channel for 25-35 ms; at 16 bits those were
+/// gone and every answer was still caught. A real preamble runs 14 ms or more (500+ bits), so 16
+/// bits costs it nothing. 24 bits stopped all sync detection on the same bench (cause not known),
+/// so do not raise this further without measuring. The LR1121 driver uses the same 16-bit value.
+static constexpr uint8_t SX1262_PREAMBLE_DETECTOR_16_BIT = 0x05;
 static constexpr uint8_t SX1262_FALLBACK_STDBY_XOSC = 0x30;
 
 /// Ceiling on how long SoftPhyDriverBase::wait_busy_() waits for BUSY to drop before declaring the

@@ -137,12 +137,25 @@ class ExchangeEngine {
   };
 
   /// One challenge of `request`'s sender under `key`, telling a lost answer from a wrong one. A caller
-  /// may retry a NO_ANSWER; a MISMATCH means the device does not hold `key`.
+  /// may retry a NO_ANSWER; a MISMATCH means the device does not hold `key`. Sends a fresh random
+  /// challenge with the radio's response preamble.
   /// @param request The device's frame the challenge is about (its cmd + data are the transcript).
   /// @param freq    RF channel to challenge on.
   /// @param key     16-byte key the device's 0x3D must verify against.
   /// @return See ChallengeResult.
   ChallengeResult challenge_sender(const IoFrame &request, uint32_t freq, const uint8_t *key);
+
+  /// The same, with the caller's challenge bytes and preamble. A caller that challenges again after a
+  /// NO_ANSWER passes the same bytes each time, so a 0x3D that arrives late, in the next try's window,
+  /// still verifies; a fresh challenge would turn that late answer into a MISMATCH.
+  /// @param request   The device's frame the challenge is about (its cmd + data are the transcript).
+  /// @param freq      RF channel to challenge on.
+  /// @param key       16-byte key the device's 0x3D must verify against.
+  /// @param challenge The 6 challenge bytes to send.
+  /// @param preamble  Preamble of our 0x3C, in bytes.
+  /// @return See ChallengeResult.
+  ChallengeResult challenge_sender(const IoFrame &request, uint32_t freq, const uint8_t *key,
+                                   const uint8_t challenge[HMAC_SIZE], uint16_t preamble);
 
   /// @brief Per-reply facts collect_broadcast_responses() hands its caller alongside the frame.
   ///

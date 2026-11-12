@@ -571,9 +571,8 @@ static constexpr uint8_t POS_VENT_MODIFIER = 0x03;
 static constexpr uint8_t POS_PEDESTRIAN_MODIFIER = 0x07;
 
 /// @brief Modifier byte for the partial-position command (POS_FAVORITE main byte, as for ventilation).
-/// Sent by the Partial Position button on garage openers.
-/// \todo Confirm on a real garage opener that main=0xD8, modifier=0x09 opens it to a partial position
-///       (experimental).
+/// Sent by the Partial Position button on garage openers, which run their stored partial position
+/// (issue #163).
 static constexpr uint8_t POS_PARTIAL_MODIFIER = 0x09;
 
 /// @brief Scale factor between a 0-100 percent position and its CMD_EXECUTE main-byte wire value.
@@ -881,7 +880,7 @@ const char *acei_level_name(uint8_t level);
 /// Level 2 (user_high), extended-info bit set. The 2W EXECUTE_ACEI (proto_commands.cpp) pins
 /// level 3 to a real captured 2W hub; this level-2 value is what the published 1W reference
 /// vector (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml) and every
-/// Somfy 1W remote frame in the corpus (7+ frames across 3 nodes: 9D6085, 485B37, 7B8240) carry.
+/// Somfy 1W remote frame in the corpus (7+ frames across several nodes) carry.
 /// Lives here (not proto_commands.cpp) so oneway_controller.h's resolve_oneway_wire_profile() can
 /// name it without the protocol layer depending on the controller layer.
 /// Composition: (ACEI_LEVEL_USER_HIGH << 5) | (1 << 1) | 1 = 0x43.
@@ -890,13 +889,13 @@ static constexpr uint8_t ONEWAY_EXECUTE_ACEI =
 
 /// @brief ACEI byte for a 1W CMD_EXECUTE frame from a VELUX KLI-class remote.
 ///
-/// Level 3 (user_default), extended-info bits clear. This is also iown-homecontrol's generic
-/// `ACEI_DEFAULT`. **Confidence: n=1** — one corpus frame
-/// (tests/corpus/captures/oneway/velux_kli313_oneway_stop.yaml) plus samr037/iohc-flipper's
-/// README, which names cmd 0x00 payload[1] the "vendor byte" (`0x43` Somfy / `0x61` Velux).
-/// The `unidentified_1w_remote_*` frames also carry 0x61 but their manufacturer is unknown, so
-/// they can't corroborate the VELUX attribution. `execute_acei:` on the identity is the escape
-/// hatch. Composition: (ACEI_LEVEL_USER_DEFAULT << 5) | ACEI_VALID_BIT = 0x61.
+/// Level 3 (user_default), extended-info bits clear. **Confidence: n=1** — one corpus frame
+/// (tests/corpus/captures/oneway/velux_kli313_oneway_stop.yaml).
+/// An unidentified remote's frames also carry 0x61
+/// (tests/corpus/captures/oneway/unidentified_1w_remote_oneway_execute_open_and_stop_acei_61_sx1276.yaml),
+/// but its manufacturer is unknown, so they can't corroborate the VELUX attribution.
+/// `execute_acei:` on the identity is the escape hatch.
+/// Composition: (ACEI_LEVEL_USER_DEFAULT << 5) | ACEI_VALID_BIT = 0x61.
 static constexpr uint8_t ONEWAY_EXECUTE_ACEI_VELUX = (ACEI_LEVEL_USER_DEFAULT << ACEI_LEVEL_SHIFT) | ACEI_VALID_BIT;
 
 // ============================================================================
@@ -949,6 +948,9 @@ static constexpr uint8_t ATT_CLASS_20MS = 2;  ///< Response within 20 ms.
 static constexpr uint8_t ATT_CLASS_40MS = 3;  ///< Response within 40 ms.
 /// @}
 
+/// Turnaround time of ATT_CLASS_5MS, the shortest class; att_class_ms() doubles it per class.
+static constexpr uint32_t ATT_CLASS_5MS_TURNAROUND_MS = 5;
+
 /// @brief Power save mode values from the Multi Information Byte.
 ///
 /// Extracted from `flags & DISCOVERY_FLAGS_POWER_SAVE_MASK`.
@@ -958,11 +960,48 @@ static constexpr uint8_t POWER_SAVE_ALWAYS_ALIVE = 0;  ///< Device is always lis
 static constexpr uint8_t POWER_SAVE_LOW_POWER = 1;     ///< Device sleeps — needs long preamble to wake.
 /// @}
 
+/// Default Multi Information Byte for our device-role CMD_DISCOVER_RESP (0x29): the turnaround-time
+/// class and power-save mode the key-extraction responder advertises to a foreign hub. The
+/// `key_extraction_multi_info` tuning option replaces it.
+///
+/// 0xDD = 1101_1101: bits [7:6] ATT_CLASS_40MS, bit [3] DISCOVERY_FLAGS_RF_SUPPORT, bit [2]
+/// DISCOVERY_FLAGS_IO_MEMBERSHIP (always 1), bit [4] with no named constant (not in the VELUX KLF 200
+/// API table), power-save bits [1:0] POWER_SAVE_LOW_POWER. All but the power-save bits copy the byte
+/// a real Somfy Izymo dimmer sends, 0xDC
+/// (tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml): copying a real
+/// device's whole byte is safer than guessing at bits with no documented meaning.
+///
+/// ATT_CLASS_40MS is the honest class for this responder: it scans channels on the ESPHome loop
+/// cadence and is deaf while it transmits, so it cannot promise a 5 ms turnaround. Low power for the
+/// same reason: a controller wakes a low-power device with a long preamble, which the scanning
+/// responder catches reliably. A VELUX KLR 200, a KLF 200 and a Somfy TaHoma have handed over their
+/// key to this byte.
+///
+/// A controller that reads the power-save bit may skip a sleeping device: a Freebox Delta confirmed
+/// only answers with the Izymo's always-alive byte 0xDC (issue #215). Such a hub needs the tuning
+/// option set to 0xDC.
+static constexpr uint8_t KEY_EXTRACTION_DISCOVER_RESP_FLAGS = 0xDD;
+
+/// Default packed device type word (type in bits [15:6], subtype in bits [5:0]) the key-extraction
+/// responder advertises in its 0x29 to an open discovery: 0x0080, roller shutter subtype 0, the same
+/// word a real Somfy RS100 io sends
+/// (tests/corpus/captures/pairing/somfy_rs100_pairing_key_transfer_timeout.yaml). The
+/// `key_extraction_type_word` tuning option replaces it; a typed discovery is always answered with
+/// the type it asks for.
+static constexpr uint16_t KEY_EXTRACTION_DISCOVER_RESP_TYPE_WORD = 0x0080;
+
 /// @brief Extract the ATT class field from a discovery response's Multi Information Byte.
 /// @param flags Multi Information Byte (data[DISCOVERY_RESP_FLAGS_OFFSET]).
 /// @return ATT class value (0–3); pass to att_class_name() for a human-readable string.
-inline uint8_t discovery_att_class(uint8_t flags) {
+constexpr uint8_t discovery_att_class(uint8_t flags) {
   return (flags & DISCOVERY_FLAGS_ATT_MASK) >> DISCOVERY_FLAGS_ATT_SHIFT;
+}
+
+/// @brief Turnaround time of an ATT class in milliseconds: 5, 10, 20 or 40 (each class doubles it).
+/// @param att_class ATT class (0–3), e.g. from discovery_att_class().
+/// @return The class's turnaround time in milliseconds.
+constexpr uint32_t att_class_ms(uint8_t att_class) {
+  return static_cast<uint32_t>(ATT_CLASS_5MS_TURNAROUND_MS) << att_class;
 }
 
 /// @brief Extract the power save mode field from a discovery response's Multi Information Byte.

@@ -68,6 +68,11 @@ It is not a per-command result. It is set only while an issue is outstanding:
   opening limit, set `rain_sensor_poll_interval` and use the Rain sensor binary sensor — see
   [Polling for rain](configuration/cover.md#polling-for-rain).
 
+- **A radio that stops responding shows on every device.** When the board's radio fails after
+  boot (typically a BUSY timeout), every device's Active Issue reads `RADIO_STOPPED_RESPONDING` and
+  stays so until the board is rebooted: no command reaches any device until then. See
+  [The radio does not start](troubleshooting.md#the-radio-does-not-start).
+
 A refused command also reverts the entity to the device's last reported state — see
 [Position and state](configuration/cover.md#position-and-state).
 

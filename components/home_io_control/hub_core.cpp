@@ -22,6 +22,7 @@
 
 #include "esphome/core/helpers.h"
 
+#include <algorithm>
 #include <array>
 #include <cinttypes>
 #include <new>
@@ -35,8 +36,11 @@ namespace {
 /// Room for "3FF" and the terminator: an enrollment class is a ten-bit node type.
 constexpr size_t ENROLLMENT_CLASS_HEX_BUFFER_SIZE = 8;
 
-constexpr uint32_t BLOCKING_WARNING_THRESHOLD_MS =
-    250;  ///< setup() and exchanges can legitimately block longer than generic ESPHome components.
+/// ESPHome's blocking-warning threshold for this component, in the unit of
+/// Component::warn_if_blocking_over_: centiseconds in a uint8_t. 250 cs = 2.5 s, the exchange
+/// budget (EXCHANGE_TOTAL_BUDGET_MS): a normal exchange blocks for a few hundred milliseconds and
+/// setup() for the radio init, so only a block longer than a whole exchange is worth a warning.
+constexpr uint8_t BLOCKING_WARNING_THRESHOLD_CS = 250;
 
 /// Random number for the periodic polls' jitter. ESPHome's random_uint32() on firmware, a settable
 /// value in host tests.
@@ -68,13 +72,12 @@ static const char *const TAG = detail::TAG;
 ///   5. Call radio_->init() which performs chip reset, calibration, and register configuration.
 ///   6. Enter normal loop() operation with radio in RX mode.
 ///
-/// @note Blocking operations in setup() temporarily raise the ESPHome WDT threshold
-///       to 250 ms (warn_if_blocking_over_) because radio init can
-///       exceed the default 30–50 ms budget.
+/// @note setup() raises ESPHome's blocking-warning threshold (warn_if_blocking_over_) for this
+///       component to 2.5 s, because radio init and every exchange exceed the default 30–50 ms.
 void IOHomeControlComponent::setup() {
   // IO-homecontrol exchanges are intentionally blocking and often take a few hundred
-  // milliseconds, so use a higher warning threshold than ESPHome's generic 30-50 ms.
-  this->warn_if_blocking_over_ = BLOCKING_WARNING_THRESHOLD_MS;
+  // milliseconds, so warn only past a whole exchange budget (the field is in centiseconds).
+  this->warn_if_blocking_over_ = BLOCKING_WARNING_THRESHOLD_CS;
 #ifdef IOHOME_UNSAFE_LOG_KEY_MATERIAL
   // Loud, unconditional, every-boot warning so a build left with this flag on by accident can
   // never stay quiet about it — see log_frame.h::render_frame_hex_redacted() for the full
@@ -415,6 +418,19 @@ void IOHomeControlComponent::set_device_travel_speed(const std::string &device_i
 void IOHomeControlComponent::loop() {
   if (!this->initialized_)
     return;
+  // A driver that latches a failure after setup (a runtime BUSY timeout) short-circuits every later
+  // command while the component keeps running. Say so once, when it happens: an error line, ESPHome's
+  // warning status (which drives a configured status_led) and every device's Active Issue sensor,
+  // rather than only in dump_config().
+  if (!this->radio_failure_reported_ && this->radio_->is_failed()) {
+    this->radio_failure_reported_ = true;
+    const char *const reason = this->radio_->failure_reason();
+    ESP_LOGE(TAG, "Radio stopped responding: %s; reboot the board", reason != nullptr ? reason : "no recorded cause");
+    this->status_set_warning("radio stopped responding");
+    // Every device's Active Issue sensor shows it: a dead radio breaks every device.
+    for (const auto &entry : this->registry_)
+      this->notify_device_update_(entry.first);
+  }
   if (this->radio_test_mode_)
     return;
 
@@ -452,19 +468,7 @@ void IOHomeControlComponent::loop() {
 #else
   if (!this->busy_) {
     if (this->key_extraction_awaiting_reply_()) {
-      // The key-extraction responder is mid-attempt and expecting the hub's next CH2-only unicast
-      // frame (see wait_for_key_confirm_()'s doc comment in pairing_engine.cpp) — hold CH2 instead
-      // of running the generic idle-hop scan, which would otherwise cycle away from CH2 for 2/3 of
-      // every hop cycle with no key-extraction awareness at all. Frequency test first, deliberately:
-      // reception_in_progress() is not a free predicate (on SX1276 it can force a
-      // set_mode_standby()/set_mode_rx() cycle), so this branch must be as sparing as maybe_hop()
-      // itself, which only consults it once the dwell timer has already decided to hop.
-      if (this->radio_->get_current_freq() != FREQ_CH2 && !this->radio_->reception_in_progress())
-        this->radio_->change_frequency(FREQ_CH2);
-      // exchange_engine_'s last_hop_us_ goes stale while the hold is active (it bypasses
-      // hop_frequency(), which is what normally updates that timestamp). Harmless: once the hold
-      // ends, maybe_hop() will very likely hop on its next call instead of waiting out a full
-      // HOP_TIME_US — resuming idle scanning a little early is not a bug.
+      this->listen_for_key_extraction_peer_();
     } else if (!this->radio_->run_idle_scan()) {
       this->exchange_engine_.maybe_hop();
     }
@@ -482,6 +486,50 @@ void IOHomeControlComponent::loop() {
       this->queue_request_device_status(*due);
     this->queue_due_periodic_polls_();
   }
+}
+
+// One listen slice of the key-extraction responder's scan. Long enough that the gap between two
+// slices (the rest of the loop pass, about one ESPHome loop interval, when the radio stays on one
+// channel) is a small part of the time, short enough that other components keep running.
+static constexpr uint32_t KEY_EXTRACTION_SCAN_SLICE_MS = 200;
+
+void IOHomeControlComponent::listen_for_key_extraction_peer_() {
+  if (this->key_extraction_.in_session_hold()) {
+    // The peer answers on the session's channel within the session window, with a short preamble,
+    // so the radio waits there. Frequency test first, deliberately: reception_in_progress() is not
+    // a free predicate (on SX1276 it can force a set_mode_standby()/set_mode_rx() cycle).
+    const uint32_t freq = this->key_extraction_.session_freq();
+    if (this->radio_->get_current_freq() != freq && !this->radio_->reception_in_progress())
+      this->radio_->change_frequency(freq);
+    return;
+  }
+  // Outside the window the peer's next frame is a new request, which may go out on any channel, so
+  // scan all three as a device does between sessions: the same rotating listen as discovery (the
+  // chip's own dwell, staying on a channel while a preamble or sync word is coming in). The idle hop
+  // is too coarse for this: it moves once per loop pass, so it can sit on one channel for longer
+  // than a start preamble lasts.
+  // A discovery answer waiting for its slot is sent by the scheduler, which runs only after this
+  // pass returns: end the slice by its slot, and skip it once the slot has come.
+  uint32_t window_ms = KEY_EXTRACTION_SCAN_SLICE_MS;
+  if (this->key_extraction_.discover_reply_pending()) {
+    window_ms = std::min(window_ms, this->key_extraction_.ms_until_discover_reply());
+    if (window_ms == 0)
+      return;
+  }
+  ListenSpec spec;
+  spec.window_ms = window_ms;
+  spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
+  spec.linger_on_preamble = true;
+  spec.linger_dwell_ms = PREAMBLE_LINGER_DWELL_MS;
+  RadioRxPacket packet{};
+  IoFrame frame;
+  // Every frame ends the slice and goes through the normal receive path, so the responder, 1W
+  // remotes and status reports see it exactly as they would from the idle hop.
+  const ListenOutcome outcome = this->exchange_engine_.listen(
+      spec, packet, frame,
+      [](const IoFrame * /*parsed*/, const RadioRxPacket & /*pkt*/) { return ReplyDisposition::ACCEPT; });
+  if (outcome == ListenOutcome::ACCEPTED)
+    this->process_received_packet_(packet);
 }
 
 void IOHomeControlComponent::queue_due_periodic_polls_() {
@@ -557,8 +605,9 @@ void IOHomeControlComponent::dump_config() {
   this->dump_oneway_controllers_config_();
 
   if (this->radio_ != nullptr) {
-    // A driver that latched a failure after setup (a runtime BUSY timeout) stays silent otherwise:
-    // it short-circuits every later command while the component itself is not marked failed.
+    // A driver that latched a failure after setup (a runtime BUSY timeout) short-circuits every
+    // later command while the component itself is not marked failed. loop() reports it once when it
+    // happens; repeat it here for log clients that connect later.
     if (this->radio_->is_failed()) {
       const char *const reason = this->radio_->failure_reason();
       ESP_LOGE(detail::TAG, "  Radio failed after setup: %s", reason != nullptr ? reason : "no recorded cause");

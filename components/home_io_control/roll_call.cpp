@@ -266,7 +266,10 @@ std::string build_pulled_key_report(const PulledKeyReportInfo &info, const ScanS
   report += "Device " + info.pairing_device_id + " (" + format_device_kind(info.type, info.subtype) + ", " +
             format_device_ids(info.type, info.subtype) +
             ") holds a different system key than this hub (key check value " +
-            detail::format_key_check_value(info.key) + ") and proved it holds it.\n";
+            detail::format_key_check_value(info.key) + ")" +
+            (info.proven_by_sender ? " and proved it holds it.\n"
+                                   : ". It sent no proof of its own; the devices below answered under the key, "
+                                     "which proves it.\n");
   report += "Anyone with this key can control every device that holds it. Keep it in secrets.yaml and write\n"
             "`system_key: !secret ...` in the entity of each device.\n";
   if (state.count == 0) {

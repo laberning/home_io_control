@@ -77,6 +77,11 @@ The switch always boots off (`restore_mode: ALWAYS_OFF`), so a reboot can never 
   and on SX1262 boards a slower transmit-to-receive turnaround makes that a little more likely.
   Give it a few more seconds before deciding it has failed. If the whole attempt times out, start
   it again; a repeat from the same hub works without toggling the switch off and on.
+- **Some hubs may ignore the pretend device's reply.** By default the pretend device is a roller
+  shutter that says it sleeps, which the VELUX KLR 200, KLF 200 and a TaHoma accept. If your hub
+  keeps searching and never takes it, change the type or the flags byte the reply carries with
+  [`key_extraction_type_word` and `key_extraction_multi_info`](configuration/tuning.md#key_extraction_type_word-and-key_extraction_multi_info)
+  and try again.
 - **Your existing hub now lists a device that will never answer it.** After a successful run the
   hub believes it added a new actuator and may show one in its app. Nothing here can remove that
   entry from the hub's side; delete it through the hub's own app when you are done.

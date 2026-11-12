@@ -992,6 +992,10 @@ TEST(Decisions, HeaterModelHintFlagsOnlyADeclarationTheTowelModeRegisterContradi
   EXPECT_EQ(decisions::classify_heater_model_hint(DeviceModel::NONE, true), HeaterModelHint::LOOKS_LIKE_TOWEL_DRYER);
   EXPECT_EQ(decisions::classify_heater_model_hint(DeviceModel::TOWEL_DRYER, true), HeaterModelHint::NONE);
   EXPECT_EQ(decisions::classify_heater_model_hint(DeviceModel::NONE, false), HeaterModelHint::NONE);
+  // A heater with a night light is a radiator as far as the towel-dryer register goes.
+  EXPECT_EQ(decisions::classify_heater_model_hint(DeviceModel::HEATER_WITH_LIGHT, true),
+            HeaterModelHint::LOOKS_LIKE_TOWEL_DRYER);
+  EXPECT_EQ(decisions::classify_heater_model_hint(DeviceModel::HEATER_WITH_LIGHT, false), HeaterModelHint::NONE);
 }
 
 TEST(Decisions, HeaterModelNameIsOneReadableLine) {

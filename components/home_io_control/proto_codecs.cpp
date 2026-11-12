@@ -254,6 +254,19 @@ DeviceType discovery_target_type(const uint8_t addr[NODE_ID_SIZE]) {
   return broadcast_target_type(addr);
 }
 
+uint8_t discovery_slot_count(const uint8_t addr[NODE_ID_SIZE]) {
+  switch (addr[2] & ADDRESS_SUFFIX_MASK) {
+    case ADDRESS_SUFFIX_DISCOVERY_64:
+      return DISCOVERY_SLOTS_64;
+    case ADDRESS_SUFFIX_DISCOVERY_128:
+      return DISCOVERY_SLOTS_128;
+    case ADDRESS_SUFFIX_DISCOVERY_255:
+      return DISCOVERY_SLOTS_255;
+    default:  // ADDRESS_SUFFIX_DISCOVERY and anything unrecognised: the smallest window
+      return DISCOVERY_SLOTS_32;
+  }
+}
+
 void encode_broadcast_address(DeviceType type, uint8_t out[NODE_ID_SIZE]) {
   // Both bytes together carry the ten type bits, so a 16-bit enumerator is encoded exactly; bits
   // above the wire field are dropped explicitly rather than spilling into out[1].
@@ -261,6 +274,12 @@ void encode_broadcast_address(DeviceType type, uint8_t out[NODE_ID_SIZE]) {
   out[0] = 0;
   out[1] = static_cast<uint8_t>(type_raw >> DEVICE_TYPE_LOW_BITS_SHIFT);
   out[2] = static_cast<uint8_t>((type_raw << DEVICE_TYPE_HIGH_BITS_SHIFT) | DEVICE_SUBTYPE_MASK);
+}
+
+void encode_discovery_address(DeviceType type, uint8_t out[NODE_ID_SIZE]) {
+  encode_broadcast_address(type, out);
+  // Only the subtype field differs from the broadcast form.
+  out[2] = static_cast<uint8_t>((out[2] & ~DEVICE_SUBTYPE_MASK) | ADDRESS_SUFFIX_DISCOVERY);
 }
 
 void decode_1w_main_intent(uint8_t main0, uint8_t main1, char *out, size_t out_size) {
@@ -427,7 +446,7 @@ OneWayAddControllerDecodeError decode_1w_add_controller(const IoFrame &frame, On
       (frame.data[ONEWAY_ADD_CONTROLLER_SEQUENCE_OFFSET] << ONEWAY_ADD_CONTROLLER_SEQUENCE_MSB_SHIFT) |
       frame.data[ONEWAY_ADD_CONTROLLER_SEQUENCE_OFFSET + 1]);
 
-  // A frame with no MAC is not an error (the reference _p0x30 struct omits the field entirely) --
+  // A frame with no MAC is not an error (real remotes send the 29-byte form without it) --
   // report NOT_PRESENT and stop; there is nothing to verify.
   if (!frame.has_mac) {
     out.mac_status = OneWayMacStatus::NOT_PRESENT;
@@ -520,8 +539,7 @@ bool decode_transfer_block(const IoFrame &f, uint8_t handle, uint16_t chunk, con
   if (f.cmd != CMD_UNKNOWN4A_RESP || f.data_len < TRANSFER_READ_REQ_DATA_SIZE ||
       f.data_len > TRANSFER_READ_REQ_DATA_SIZE + TRANSFER_BLOCK_SIZE)
     return false;
-  // The first byte is compared on its low seven bits only, as the vendor stack does: the top bit is
-  // not part of the handle.
+  // The first byte is compared on its low seven bits only: the top bit is not part of the handle.
   constexpr uint8_t handle_mask = 0x7F;
   constexpr uint16_t chunk_low_byte_mask = 0x00FF;
   if ((f.data[0] & handle_mask) != (handle & handle_mask) ||

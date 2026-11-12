@@ -622,21 +622,21 @@ constexpr uint8_t HEATER_MODEL_CHECK_MAX_RUNS = 3;
 enum class HeaterModelHint : uint8_t {
   NONE,                    ///< The answer fits the declaration: nothing to say.
   LOOKS_LIKE_RADIATOR,     ///< Declared a towel dryer, but the towel-dryer mode register holds no value.
-  LOOKS_LIKE_TOWEL_DRYER,  ///< Declared without a model, but the towel-dryer mode register holds a value.
+  LOOKS_LIKE_TOWEL_DRYER,  ///< Declared as no towel dryer, but the towel-dryer mode register holds a value.
 };
 
 /// @brief Compare a heater's declared model with whether it answered the towel-dryer mode register
 /// (0x0136) with a value.
 /// @details Two Atlantic Adelis towel dryers answer that register with their mode; an AGILIA radiator
-///          has not been read there yet, so the hint is worded "looks like" and never changes behaviour.
-///          The caller only asks after the device answered the read (with or without a value).
+///          and a heater with a night light have not been read there yet, so the hint is worded "looks like" and never
+///          changes behaviour. The caller only asks after the device answered the read (with or without a value).
 /// @param declared The YAML model.
 /// @param towel_mode_has_value True when the register's reply carried a value byte.
 /// @return The hint to log, or NONE.
 inline HeaterModelHint classify_heater_model_hint(DeviceModel declared, bool towel_mode_has_value) {
   if (declared == DeviceModel::TOWEL_DRYER && !towel_mode_has_value)
     return HeaterModelHint::LOOKS_LIKE_RADIATOR;
-  if (declared == DeviceModel::NONE && towel_mode_has_value)
+  if (declared != DeviceModel::TOWEL_DRYER && towel_mode_has_value)
     return HeaterModelHint::LOOKS_LIKE_TOWEL_DRYER;
   return HeaterModelHint::NONE;
 }

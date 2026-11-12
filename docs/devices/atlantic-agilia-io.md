@@ -114,6 +114,39 @@ climate:
 `io_device_id` is the heater's address as the printed block shows it. Give
 every radiator its own entry with its own `system_key:`.
 
+## Sauter Hekla
+
+The Sauter Hekla, an electric heater from the same group, pairs and works the same way. It is
+confirmed on three heaters that were already paired with a Sauter Cozytouch, on a Heltec V3 (issue
+#222). The differences:
+
+- **The pairing menu** is in the expert menu: **Menu expert** → **Paramétrages** → **Connectivité** →
+  **Envoyer clé**. Choose it on the heater, then press **Discover & Pair** on the hub.
+- **One key for all heaters on a Cozytouch.** A heater paired with a Cozytouch holds the key of the
+  Cozytouch installation, so every heater on it hands over the same key. Pair one heater; for the
+  others you need only their address, which you can take from the hub's log while the Cozytouch
+  talks to them, and the same `system_key:`.
+- **The Cozytouch keeps working.** Pairing with the hub reads the heater's key and leaves it
+  unchanged, so the heater stays controllable from the Cozytouch app. A change made in the app shows
+  in Home Assistant at the next poll: the hub polls each heater every `status_poll_interval`, and
+  shortly after it hears the Cozytouch talk to a heater.
+- **The night light** gets a light entity with `io_model: heater_with_light` and a `night_light:`
+  block; see [Heaters with a night light](../configuration/climate.md#heaters-with-a-night-light).
+  Reading it is confirmed; switching and dimming it from Home Assistant are experimental.
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Kids' room heater"
+    io_device_id: "29FB38"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
+    io_model: heater_with_light
+    system_key: !secret cozytouch_key
+    night_light:
+      name: "Kids' room night light"
+```
+
 ## Known quirks
 
 - **Heating / idle trails the radiator.** The hub reads the regulator when it polls: 45 seconds after
@@ -122,9 +155,10 @@ every radiator its own entry with its own `system_key:`.
 - **A radiator far from the hub misses some replies.** A radiator received at about -60 dBm lost
   several replies to the hub's challenge answer, so its Unconfirmed Exchanges counter rose and a
   setpoint change sometimes had to be repeated. A radiator at about -40 dBm had no such failures.
-- **The pairing can lose the radiator's proof of its key.** The hub challenges up to three times. If the
-  log still says `not proven: no 0x3D received`, press Discover & Pair again. The radiator hands over
-  the same key every time.
+- **The pairing can lose the radiator's proof of its key.** The hub challenges up to three times. If no
+  answer comes back, the log says `not proven: no 0x3D received` and the hub looks for the heater under
+  that key instead: a heater that answers proves the key, and the pairing completes. If nothing answers,
+  the key is not printed; press Discover & Pair again. The radiator hands over the same key every time.
 - **The device name is generic.** The heater reports its name as `I2G_Actuator`.
 
 ## Evidence

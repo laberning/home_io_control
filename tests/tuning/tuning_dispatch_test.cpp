@@ -13,6 +13,11 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
+
 using namespace esphome::home_io_control;
 using test::TestableHubComponent;
 
@@ -142,6 +147,27 @@ TEST(TuningDispatch, SelectDestinationExplicitAndAuto) {
 
   comp.update_tuning_select("pairing_discovery_destination", "auto");
   EXPECT_TRUE(comp.tuning_.pairing_discovery_destination_auto);
+}
+
+/// The typed class destinations resolve to the class's broadcast address with the requested
+/// suffix: lighting (type 6) and remote controllers (type 1023, the search an Atlantic heater
+/// answers when it offers its key).
+TEST(TuningDispatch, SelectDestinationTypedClasses) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+
+  const std::vector<std::pair<std::string, std::vector<uint8_t>>> cases = {
+      {"0x0001BB", {0x00, 0x01, 0xBB}},
+      {"0x0001BF", {0x00, 0x01, 0xBF}},
+      {"0x00FFFB", {0x00, 0xFF, 0xFB}},
+  };
+  for (const auto &[option, bytes] : cases) {
+    comp.update_tuning_select("pairing_discovery_destination", option);
+    EXPECT_FALSE(comp.tuning_.pairing_discovery_destination_auto) << option;
+    EXPECT_EQ(comp.tuning_.pairing_discovery_destination, bytes) << option;
+    EXPECT_EQ(comp.get_tuning_select_value("pairing_discovery_destination"), option);
+  }
 }
 
 TEST(TuningDispatch, SelectPayload) {

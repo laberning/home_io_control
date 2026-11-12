@@ -157,17 +157,23 @@ class IOHomeDeviceNameTextSensor : public IOHomeCompanionTextSensor {
   void dump_config() override;
 };
 
+/// Active Issue value while the hub's radio has stopped responding, in the style of the symbolic
+/// result names the sensor otherwise publishes.
+inline constexpr const char *ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING = "RADIO_STOPPED_RESPONDING";
+
 /// @brief Diagnostic text sensor that names what is currently limiting a device (e.g.
 /// "LIMITATION_BY_RAIN"), letting a "nothing happened" command self-explain instead of only
-/// showing up in the log. Shared by every device-bound platform (cover, light, switch, lock) via
-/// platform_common.py's companion-sensor codegen.
+/// showing up in the log. Shared by every device-bound platform (cover, light, switch, lock, fan,
+/// climate, water_heater) via platform_common.py's companion-sensor codegen.
 ///
-/// Three sources, in this order:
-///   1. The symbolic name of the device's latest explicit CMD_ERROR_RESP result. Cleared by the
+/// Four sources, in this order:
+///   1. ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING once the hub's radio latched a failure after setup
+///      (IOHomeControlComponent::radio_stopped_responding()); sticky until a reboot.
+///   2. The symbolic name of the device's latest explicit CMD_ERROR_RESP result. Cleared by the
 ///      next successful status/command reply (see detail::clear_command_result()).
-///   2. "NODE_WAITING_FOR_POWER" while a cover with `follow_waiting_for_power` is queued on a
+///   3. "NODE_WAITING_FOR_POWER" while a cover with `follow_waiting_for_power` is queued on a
 ///      shared power supply (IoDevice::power_wait): it has accepted its command and has not moved yet.
-///   3. "LIMITATION_BY_RAIN" while `IoDevice::limited_by_rain` is set. That flag is derived from
+///   4. "LIMITATION_BY_RAIN" while `IoDevice::limited_by_rain` is set. That flag is derived from
 ///      the device's own status replies (the last move was ordered by the rain sensor, or a
 ///      position command was clamped while rain protection was recently active), because windows
 ///      do not send an error for a rain clamp. It clears itself when the window stops reporting

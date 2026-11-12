@@ -8,8 +8,7 @@ description: >
   eventually sends CMD_KEY_INIT (0x31) anyway. The responder's CMD_CHALLENGE_REQ (0x3C) reply then
   sets CTRL0_START and CTRL1_LOW_POWER, which a real device's genuine pairing 0x3C does not (see
   tests/corpus/captures/pairing/somfy_izymo_dimmer_pairing_full_sx1276.yaml for the contrast) -- the hub never answers
-  it, and CMD_KEY_TRANSFER (0x32) never arrives. See analysis/issue_45_key_extraction_stall_analysis.md
-  for the full write-up (Findings 1 and 3). Original on-air log has since been deleted per the
+  it, and CMD_KEY_TRANSFER (0x32) never arrives. Original on-air log has since been deleted per the
   reporter/maintainer's usual key-extraction-log-hygiene practice; this capture is the durable
   record of what it showed. Timestamps for tx frames (what the device sent) are wall-clock-second
   derived approximations -- the device-role log has no per-frame tick counter for its own
