@@ -396,6 +396,19 @@ void IOHomeControlComponent::set_device_travel_speed(const std::string &device_i
 void IOHomeControlComponent::loop() {
   if (!this->initialized_)
     return;
+  // A driver that latches a failure after setup (a runtime BUSY timeout) short-circuits every later
+  // command while the component keeps running. Say so once, when it happens: an error line, ESPHome's
+  // warning status (which drives a configured status_led) and every device's Active Issue sensor,
+  // rather than only in dump_config().
+  if (!this->radio_failure_reported_ && this->radio_->is_failed()) {
+    this->radio_failure_reported_ = true;
+    const char *const reason = this->radio_->failure_reason();
+    ESP_LOGE(TAG, "Radio stopped responding: %s; reboot the board", reason != nullptr ? reason : "no recorded cause");
+    this->status_set_warning("radio stopped responding");
+    // Every device's Active Issue sensor shows it: a dead radio breaks every device.
+    for (const auto &entry : this->registry_)
+      this->notify_device_update_(entry.first);
+  }
   if (this->radio_test_mode_)
     return;
 
@@ -538,8 +551,9 @@ void IOHomeControlComponent::dump_config() {
   this->dump_oneway_controllers_config_();
 
   if (this->radio_ != nullptr) {
-    // A driver that latched a failure after setup (a runtime BUSY timeout) stays silent otherwise:
-    // it short-circuits every later command while the component itself is not marked failed.
+    // A driver that latched a failure after setup (a runtime BUSY timeout) short-circuits every
+    // later command while the component itself is not marked failed. loop() reports it once when it
+    // happens; repeat it here for log clients that connect later.
     if (this->radio_->is_failed()) {
       const char *const reason = this->radio_->failure_reason();
       ESP_LOGE(detail::TAG, "  Radio failed after setup: %s", reason != nullptr ? reason : "no recorded cause");

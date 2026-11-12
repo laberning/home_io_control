@@ -507,6 +507,10 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Hexadecimal node ID.
   /// @return Pointer to IoDevice, or nullptr.
   virtual IoDevice *get_device(const std::string &device_id);
+  /// True once loop() has seen the radio latch a failure after setup (a runtime BUSY timeout, for
+  /// example). Sticky: a failed driver never recovers without a reboot. Every device's Active Issue
+  /// sensor reports it.
+  [[nodiscard]] bool radio_stopped_responding() const { return this->radio_failure_reported_; }
   /// Select a device's travel speed at runtime (see IOHomeCoverTravelSpeedSelect and
   /// IOHomeCoverSilentSwitch). Virtual so platform tests can substitute a mock registry.
   /// @param device_id Hexadecimal node ID string.
@@ -1497,6 +1501,10 @@ class IOHomeControlComponent : public Component,
   /// Why setup() gave up on the radio, or empty. Printed by dump_config so log clients that connect
   /// after boot see the cause, not only ESPHome's generic "marked FAILED" line.
   std::string radio_failure_reason_;
+  /// Set once loop() has reported a radio that latched a failure after setup, so the report (an
+  /// error line, ESPHome's warning status and a republish of every device) is made once, not on
+  /// every loop.
+  bool radio_failure_reported_{false};
   uint8_t node_id_[NODE_ID_SIZE]{};
   uint8_t system_key_[AES_KEY_SIZE]{};
   uint8_t tx_power_{DEFAULT_TX_POWER_DBM};

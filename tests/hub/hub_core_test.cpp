@@ -213,6 +213,27 @@ TEST(HubCore, DumpConfigStillDumpsSectionsOfARadioThatFailedAfterSetup) {
   comp.radio_ = nullptr;
 }
 
+TEST(HubCore, LoopReportsARadioThatFailsAfterSetupOnce) {
+  // A runtime BUSY timeout latches the driver failed while the component keeps running; loop() must
+  // raise ESPHome's warning status when that happens, and only once.
+  TestableHubComponent comp;
+  auto *radio = new LatchingRadio();
+  comp.radio_ = radio;
+  comp.initialized_ = true;
+
+  comp.loop();
+  EXPECT_FALSE(comp.status_has_warning()) << "a healthy radio raises no warning";
+
+  radio->latch("BUSY stuck high");
+  comp.loop();
+  comp.loop();
+
+  EXPECT_TRUE(comp.status_has_warning());
+  EXPECT_EQ(comp.status_warning_count_, 1u) << "reported once, not on every loop";
+  delete comp.radio_;
+  comp.radio_ = nullptr;
+}
+
 TEST(HubCore, DumpConfigSurvivesAFailedSetupWithNoRadio) {
   TestableHubComponent comp;
   configure_hub_for_setup(comp, "not_a_chip");
