@@ -32,8 +32,8 @@ literals in source text, so the theoretical noise never actually materializes. I
 hand-built literal ever does trip this, the fix is to build it the way the rest of the codebase
 already does -- a helper function or a corpus fixture -- not to add the exclusion back.
 
-`reference/` and `analysis/` are both listed in `.git/info/exclude`, so `git ls-files` never
-sees either directory -- this scanner has no dependency on and does not consult either one.
+Git-excluded local folders are never listed by `git ls-files`, so this scanner never sees
+them and does not depend on them.
 
 Policy: no allowlist. Any frame matching either detection tier below, in an in-scope file, is a
 hard failure, unconditionally. There is no legitimate reason for prose documentation to embed a
@@ -322,8 +322,8 @@ def _is_corpus_captures_path(rel_path: str) -> bool:
 
 def in_scope_files() -> "list[str]":
     """Tracked *.md/*.txt/*.yaml/*.yml/*.cpp/*.h/*.hpp paths (repo-relative, forward-slashed),
-    excluding tests/corpus/captures/. `git ls-files` structurally never sees reference/ or
-    analysis/ (both git-excluded), so no code-level exclusion for either is needed here.
+    excluding tests/corpus/captures/. `git ls-files` never lists git-excluded folders, so no
+    code-level exclusion is needed for them here.
     """
     result = subprocess.run(["git", "ls-files", "--", *SCAN_PATTERNS], cwd=REPO_ROOT, check=True,
                             capture_output=True, text=True)

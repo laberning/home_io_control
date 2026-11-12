@@ -30,7 +30,7 @@ frames:
     crc: absent
     note: >
       cmd=PRIVATE2_RESP(0x0D), short form (5 data bytes), from an unrelated session/device — no
-      adjacent request captured for this particular reply. This short request/reply shape
-      matches iown-homecontrol's own worked 0x0C example (DATA(4) d8 00 00 00 -> DATA(5) 05 aa
-      0a 00 00): the D4 00 80 block the long-form pair carries is an optional wrapper carried
+      adjacent request captured for this particular reply. The same short request/reply
+      pair appears in one session in wisniowski_moto1000_probe_private2_partial_position (0C D8 09
+      00 00 -> 0D 05 64 00 00 00): the D4 00 80 block the long-form pair carries is an optional wrapper carried
       symmetrically on both sides, not a fixed header.

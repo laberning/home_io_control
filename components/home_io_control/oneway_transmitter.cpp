@@ -156,9 +156,8 @@ bool OneWayTransmitter::send_enrollment(const std::string &controller_id) {
 }
 
 bool OneWayTransmitter::send_somfy_enrollment_(const OneWayControllerIdentity &identity) {
-  // The documented 1W pairing handshake (the iown-homecontrol link-layer notes, "1W Discovery") is
-  // `0x39` immediately followed by `0x30`, both from the same controller, back to back within one
-  // gesture -- a real Smoove capture landed them 128 ms apart, same burst (see
+  // The 1W pairing handshake is `0x39` immediately followed by `0x30`, both from the same controller, back to back
+  // within one gesture -- a real Smoove capture landed them 128 ms apart, same burst (see
   // tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml).
   // Both go to the all-devices broadcast (00 00 3F), as every real Somfy remote we hold sends them
   // (Smoove, Situo 5, Situo 1): only a receiver already in association mode reacts, so naming a
@@ -191,8 +190,8 @@ bool OneWayTransmitter::send_somfy_enrollment_(const OneWayControllerIdentity &i
 }
 
 bool OneWayTransmitter::send_velux_kli_enrollment_(const OneWayControllerIdentity &identity) {
-  // The gesture a real KLI 310/313 PROG press produces (issue #74 capture + samr037/iohc-flipper
-  // tx_runner.c + the KLI manual):
+  // The gesture a real KLI 310/313 PROG press produces (issue #74 capture + the KLI
+  // manual):
   //   0x39 -> 00 00 3F  (clear self, to the all-devices address like the Somfy gesture's)
   //   0x30 -> each of {roller_shutter, vertical_exterior_awning, dual_roller_shutter} under one sequence
   //           (the class sweep)

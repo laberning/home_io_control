@@ -39,8 +39,8 @@ static constexpr DeviceFeatures FAVORITE = 1U << 3U;
 /// Named position 0xD803, the window opener's secured ventilation position (VELUX KLF 200 API
 /// specification, section 14.2).
 static constexpr DeviceFeatures VENT = 1U << 4U;
-/// Named position 0xD809, sent by the Partial Position button.
-/// \todo Confirm on a real garage opener that 0xD809 opens it to a partial position (experimental).
+/// Named position 0xD809, sent by the Partial Position button: a garage opener runs its stored
+/// partial position (issue #163).
 static constexpr DeviceFeatures PARTIAL = 1U << 5U;
 /// Named position 0xD807, sent by the Pedestrian Position button.
 /// \todo Confirm on a real gate opener that 0xD807 opens it to a pedestrian position (experimental).
@@ -59,6 +59,9 @@ static constexpr DeviceFeatures INVERTED = 1U << 9U;
 /// readings and mode, the status main parameter for its target temperature. Gates the water heater
 /// poll, its register reads and writes, and the `water_heater:` platform.
 static constexpr DeviceFeatures WATER_HEATER = 1U << 10U;
+/// A night light built into a heater with private registers: on/off in register 0x0144, brightness in
+/// 0x0142 (proto_heating.h). Gates the heater's `night_light:` light entity.
+static constexpr DeviceFeatures NIGHT_LIGHT = 1U << 11U;
 }  // namespace device_feature
 
 /// @brief True when every bit of `bit` is set in `set`.

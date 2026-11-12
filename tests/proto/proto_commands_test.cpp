@@ -304,8 +304,8 @@ TEST(ProtoCommands, CreateWritePrivate) {
   EXPECT_EQ(frame.cmd, CMD_WRITE_PRIVATE) << "command should be CMD_WRITE_PRIVATE (0x20)";
   EXPECT_EQ(frame.data_len, sizeof(payload)) << "payload length should pass through unchanged";
   EXPECT_EQ(0, memcmp(frame.data, payload, sizeof(payload))) << "payload bytes should pass through unchanged";
-  // forgePacket() (iohcCozyDevice2W.cpp:49-50) sets StartFrame=1, EndFrame=0; the Atlantic Thermor
-  // capture's first frame matches (start:true, end:false).
+  // Every real heater write in the corpus (atlantic_agilia_exchange_*) is a start frame, not an end
+  // frame.
   EXPECT_TRUE(is_start(frame)) << "write-private should be a start frame";
   EXPECT_FALSE(is_end(frame)) << "write-private should not be an end frame";
   EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "low_power=true must set CTRL1_LOW_POWER";

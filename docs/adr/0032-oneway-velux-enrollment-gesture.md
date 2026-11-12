@@ -11,10 +11,9 @@ ADR 0031 made the 1W *control* frames (`CMD_EXECUTE`) vendor-correct via
 sent one `0x39` then one `0x30`, both to the identity's own `io_device_type`.
 
 A real VELUX KLI 310/311/312/313 registration gesture does something structurally
-different. Reconstructed from two independent sources — the issue #74 capture of a
-real KLI 310 gesture (decoded with this project's own `broadcast_target_type()`) and
-`samr037/iohc-flipper`'s `tx_runner.c` (`send_pair_with_identity`, built from real
-KLI 313 "rings" captures), cross-checked against the KLI manual:
+different. Reconstructed from the issue #74 capture of a
+real KLI 310 gesture (decoded with this project's own `broadcast_target_type()`) and the KLI
+manual:
 
 1. **`0x39` clear** goes to the all-devices broadcast `00 00 3F`, not a typed class.
 2. **`0x30` add-controller is swept** across several typed classes under **one shared
@@ -43,7 +42,7 @@ flow that starts with P on the product itself, not to this add-a-control flow.
 
 The `0x39` prelude itself is **not** vendor-specific — a real Somfy Smoove capture
 (`somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`) and the KLI 310
-both send it, and `iohc-flipper` sends it for both vendors, so it is not opt-in.
+both send it, so it is not opt-in.
 
 ## Decision
 
@@ -113,7 +112,7 @@ after Gear.
   are the way to find it rather than a table in this project.
 - Which single class of a sweep a given actuator registers on is not known. Both
   confirmed enrollments swept a set.
-- The STOP+DOWN frames are single-sourced (`iohc-flipper`) and not byte-matched
+- The STOP+DOWN frames are assumed from the KLI manual and not byte-matched
   against a VELUX capture, even though the gesture as a whole works.
 - The Somfy enrollment path is untouched — same code, moved into a named method.
 - `synthetic_enrollment_velux_kli_prog_sweep.yaml` is the golden reference for the

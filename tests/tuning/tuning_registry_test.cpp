@@ -138,7 +138,7 @@ TEST(TuningRegistry, EverySelectOptionRoundTrips) {
       {"sx1276_rx_bandwidth", bandwidth_options(sx1276_bandwidth_table())},
       {"lr1121_rx_bandwidth", bandwidth_options(lr1121_bandwidth_table())},
       {"pairing_discovery_commands", {"0x28", "0x2E", "0x28,0x2E"}},
-      {"pairing_discovery_destination", {"auto", "0x00003B", "0x00003F", "0x0001BB", "0x0001BF"}},
+      {"pairing_discovery_destination", {"auto", "0x00003B", "0x00003F", "0x0001BB", "0x0001BF", "0x00FFFB"}},
       {"pairing_discovery_payload", {"none", "0x00"}},
       {"pairing_discovery_low_power", {"Off", "On"}},
       {"pairing_discovery_ack_capable", {"Off", "On"}},

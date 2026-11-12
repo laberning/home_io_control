@@ -1,4 +1,4 @@
-Trimmed excerpt of a real capture, analysis/issues/23.txt (SX1276 / Heltec V2). Exercises three
+Trimmed excerpt of a real capture (SX1276 / Heltec V2). Exercises three
 things at once: (1) the legacy `io_frame` tag's older shape with no `cmd=`/flags field at all
 (observed on this firmware build — log_frame.h's current shape always includes it, but real
 issue pastes carry older builds too); (2) an `io_capture`/`io_frame` pair describing the exact

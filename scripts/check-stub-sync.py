@@ -64,6 +64,8 @@ ROWS = (
             "get_setup_priority",
             "mark_failed",
             "is_failed",
+            "status_set_warning",
+            "status_has_warning",
         ),
         members=("warn_if_blocking_over_",),
     ),

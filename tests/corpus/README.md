@@ -34,7 +34,7 @@ id = <subject>_<phase>[_<scenario>][_<chip>]
 
 - **`subject`** — the capture source. A real device family (`somfy_awning`, `somfy_izymo_dimmer`,
   `velux_window`, `somfy_rs100`, …), a third-party controller whose traffic this is
-  (`velux_kig300`, `somfy_connectivity_kit`), a lab/synthetic device (`tilt_cover`, `synthetic`,
+  (`velux_kig300`, `somfy_connectivity_kit`), a lab or synthetic device (`tilt_cover`, `synthetic`,
   `reference_1w`, `selfpair`), `wind_sensor` / `unidentified_1w_remote` for an overheard device
   whose vendor is not established, or `multi_somfy` for a passive capture of several foreign
   devices at once. **For a 1W capture the subject is the *transmitting* device, not the

@@ -80,7 +80,7 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 ///   - FAVORITE:   main=0xD8, modifier=0x00
 ///   - VENT:       main=0xD8, modifier=0x03
 ///   - PEDESTRIAN: main=0xD8, modifier=0x07 (experimental, gate openers)
-///   - PARTIAL:    main=0xD8, modifier=0x09 (experimental, garage openers)
+///   - PARTIAL:    main=0xD8, modifier=0x09 (garage openers)
 ///
 /// This cleanly separates "move to position X" from "execute named action"
 /// without overloading a single numeric parameter.
@@ -289,15 +289,12 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 ///   - VENT:       main=POS_FAVORITE (0xD8),   modifier=POS_VENT_MODIFIER (0x03)
 ///
 /// @warning **These three do not rest on the same evidence, even though they read as a uniform
-/// list.** STOP is the only one a real frame pins: the published IV vector
-/// (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml) is a documented
-/// worked example carrying main=0xD2. VENT is not captured anywhere in this project, but it does
-/// match the reference implementation's own 1W remote byte-for-byte — its `RemoteButton::Vent`
-/// emits exactly main=0xD8/mod=0x03. FAVORITE has
-/// neither kind of support: that same reference remote has no distinct favorite/My button at all
-/// (its RemoteButton set is Open/Close/Stop/Vent/ForceOpen/Position/Absolute/Pair/Add/Remove/
-/// Mode1-4 — no Favorite), so main=0xD8/mod=0x00 here is extrapolated purely by analogy with the
-/// 2W builder's FAVORITE encoding, with no source behind it at all. Worse, the one real capture
+/// list.** STOP is the only one a real frame pins: own captures
+/// (tests/corpus/captures/oneway/somfy_smoove_oneway_stop_sx1276.yaml) and the published IV vector
+/// (tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml) carry main=0xD2. VENT
+/// is not captured anywhere in this project, so main=0xD8/mod=0x03 is assumed. FAVORITE has
+/// no support either: main=0xD8/mod=0x00 here is extrapolated purely by analogy with the
+/// 2W builder's FAVORITE encoding. Worse, the one real capture
 /// this project has of an actual My/favorite button press —
 /// tests/corpus/captures/oneway/somfy_smoove_oneway_favorite_sx1276.yaml, pinned by
 /// `OneWayCommands.FavoriteButtonCaptureIsWritePrivateNotExecute` in tests/oneway/oneway_commands_test.cpp
@@ -309,10 +306,8 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 /// "My" position vs. some fixed value — is unconfirmed; a 2W status-poll readback would settle
 /// it. Treat FAVORITE as "does something, target unverified", not "plausibly wrong".
 ///
-/// FORCE_OPEN is deliberately absent rather than merely untested. The reference remote's
-/// `RemoteButton::ForceOpen` emits main=0x64/mod=0x00 — the same bytes this project labels
-/// POS_FORCE_OPEN — so it would "match the reference implementation byte-for-byte" the same way
-/// VENT does above. But matching the reference is not evidence it works: this project
+/// FORCE_OPEN is deliberately absent rather than merely untested. Its natural encoding would be
+/// main=0x64/mod=0x00 — the same bytes this project labels POS_FORCE_OPEN — but this project
 /// hardware-tested that exact main byte as an outbound CMD_EXECUTE and confirmed it moves a real
 /// device to 50% open (see POS_FORCE_OPEN in proto_constants.h), not past any lock. There is no
 /// known 1W encoding for a real force-open, so it is unimplemented rather than shipped on a
@@ -321,8 +316,7 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 /// The MAC span is the 7 bytes `cmd, origin, acei, main0, main1, fp1, fp2` — the command byte
 /// through fp2, stopping before the sequence, which is not frame data and never enters the MAC.
 /// Pinned by the published IV vector at
-/// tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml and by the reference
-/// implementation's own 1W-remote span (`toAdd = 6 + 1`).
+/// tests/corpus/captures/oneway/reference_1w_oneway_execute_iv_vector.yaml.
 /// This span is command-specific and does not generalise: CMD 0x30's span is `cmd + enc_key`
 /// only — see crypto::create_1w_hmac()'s `@warning`.
 /// @param f IoFrame to populate.
@@ -385,23 +379,20 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
 ///
 /// @warning **Real hardware and the published documentation vector disagree on whether the MAC
 /// trailer exists at all — this is why `with_mac` is a parameter, not a fixed choice.** The
-/// published `linklayer.md` vector (`with_mac=true`, 35 bytes) is what `with_mac` defaults to,
+/// published known-answer vector
+/// (tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml,
+/// `with_mac=true`, 35 bytes) is what `with_mac` defaults to,
 /// for compatibility with that vector's own pinning tests. Most real hardware captures instead
 /// show 29 bytes with **no trailer at all** — see
-/// `tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml` — matching
-/// the reference `_p0x30` struct (`iohcPacket.h`, no `hmac` field). **The enroll button calls
-/// this with `with_mac=false`** to match that shape, but this is a preference rather than a
-/// hardware requirement: a real Somfy Izymo dimmer has separately been shown to accept the
-/// `with_mac=true` form as well, enrolling successfully and remaining controllable afterward —
-/// both shapes are safe to send.
+/// `tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`. **The enroll
+/// button calls this with `with_mac=false`** to match that shape, but this is a preference rather than a hardware
+/// requirement: a real Somfy Izymo dimmer has separately been shown to accept the `with_mac=true` form as well,
+/// enrolling successfully and remaining controllable afterward — both shapes are safe to send.
 ///
-/// @warning Reference divergences, deliberately not followed:
-/// the iown-homecontrol project's `create_key_transfer_1w` derives the key-wrap
-/// IV from the *destination* node, which contradicts the published frame this builder is pinned
-/// against (a broadcast destination carries no identity, so `src` is the only value that
-/// reproduces it); and its comment claims "key transfer carries no MAC", which the same published
-/// frame also contradicts (its MAC is genuine and verifies) — that claim is a coincidental match
-/// for what real hardware turned out to do, not evidence the comment's reasoning was right.
+/// @warning The key-wrap IV comes from `src`, not the destination: a broadcast destination carries
+/// no identity, and `src` is the only value that reproduces the published frame this builder is
+/// pinned against. That frame's MAC is genuine and verifies, so a missing trailer on real hardware
+/// is not evidence that the frame is unauthenticated.
 /// @param f IoFrame to populate.
 /// @param src Our 3-byte controller node address (the 1W controller identity's `node_id`) — also
 ///        the key-wrap IV's only input, so this must be the identity actually being registered.
@@ -425,10 +416,10 @@ bool create_1w_add_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devic
 
 /// @brief Build a 1W remove-controller frame (CMD 0x39) that un-registers this identity from every
 /// device of `target_type` currently in association mode — the un-enroll counterpart to
-/// create_1w_add_controller(), and (per the documented `0x39` → `0x30` flow, `linklayer.md:396`)
+/// create_1w_add_controller(), and (the `0x39` → `0x30` flow real remotes send)
 /// also the prelude OneWayTransmitter::send_enrollment() fires immediately before it.
 ///
-/// Declared payload (9 bytes), shape matching the reference `_p0x2e` struct: `data[1]=0x00 +
+/// Declared payload (9 bytes), shape: `data[1]=0x00 +
 /// sequence[2] + mac[6]`. **The MAC sits inside the declared payload here** — the opposite
 /// placement from create_1w_add_controller() above, whose MAC is an out-of-length trailer because
 /// its longer payload has no room left in CTRL0's 5-bit length field. `f.has_mac` stays false.
@@ -530,10 +521,10 @@ bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 /// The single builder behind every heating/climate register read and write (power, setpoint, mode,
 /// presence, open-window detection, the measurement and sensor reads). The payload is produced by
 /// encode_heating_payload(), encode_heating_read() or encode_heating_write() in proto_heating.h; this
-/// builder only frames it. Framing (StartFrame=1, EndFrame=0, Protocol=0) is cross-checked against the real
-/// Atlantic Thermor exchange capture
-/// tests/corpus/captures/exchange/atlantic_thermor_exchange_write_private_param.yaml (frame 1:
-/// start=true, end=false). The device answers with CMD_WRITE_PRIVATE_ACK (0x21) after an
+/// builder only frames it. Framing (StartFrame=1, EndFrame=0, Protocol=0) is cross-checked against real
+/// Atlantic AGILIA heater writes
+/// (tests/corpus/captures/exchange/atlantic_agilia_exchange_setpoint_and_off_read_back.yaml: start,
+/// not end). The device answers with CMD_WRITE_PRIVATE_ACK (0x21) after an
 /// authenticated 0x3C/0x3D leg the exchange engine handles transparently.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID (source address).

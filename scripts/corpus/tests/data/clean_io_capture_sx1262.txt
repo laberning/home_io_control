@@ -1,4 +1,4 @@
-Trimmed excerpt of a real capture, analysis/issues/3.txt (SX1262 / Heltec V3, passive RX only).
+Trimmed excerpt of a real capture (SX1262 / Heltec V3, passive RX only).
 Pure structured `io_capture` tag, no legacy `io_frame` duplicates in this excerpt.
 
 [12:11:10.566][D][io_capture:062]: chip=sx1262 phase=component stage=parse_ok freq=868250000 ts=17488985 len=23 cmd=0x04 src=E67334 dst=269411 payload=96 00 26 94 11 E6 73 34 04 05 00 00 00 C8 00 00 19 E6 73 34 00 00 00

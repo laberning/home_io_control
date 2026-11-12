@@ -9,8 +9,8 @@
 
 #include "tuning_registry.h"
 
-#include "proto_codecs.h"        // ADDRESS_SUFFIX_DISCOVERY / ADDRESS_SUFFIX_BROADCAST
-#include "proto_device_model.h"  // DeviceType / DEVICE_SUBTYPE_MASK / encode_broadcast_address()
+#include "proto_codecs.h"        // ADDRESS_SUFFIX_* / encode_broadcast_address() / encode_discovery_address()
+#include "proto_device_model.h"  // DeviceType
 
 #include <cstddef>
 #include <iterator>
@@ -181,14 +181,26 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
          t.pairing_discovery_destination = {0x00, 0x00, ADDRESS_SUFFIX_BROADCAST};
          return true;
        }
-       // Typed lighting-class broadcasts. encode_broadcast_address() builds the ADDRESS_SUFFIX_
-       // BROADCAST form; the discovery form differs only in that suffix, so it is re-masked rather
-       // than hand-written as literal bytes.
-       if (v == "0x0001BF" || v == "0x0001BB") {
+       // Typed class addresses: the class's broadcast (all subtypes) or discovery form. The option
+       // string goes last because check-tuning-sync.py reads any row in this table that opens with
+       // a string literal as a parameter name.
+       struct TypedDestination {
+         DeviceType type;
+         void (*encode)(DeviceType, uint8_t[NODE_ID_SIZE]);
+         const char *option;
+       };
+       static constexpr TypedDestination TYPED_DESTINATIONS[] = {
+           {DeviceType::LIGHT, encode_discovery_address, "0x0001BB"},
+           {DeviceType::LIGHT, encode_broadcast_address, "0x0001BF"},
+           // Remote controllers: the search an Atlantic Tatou heater sends to receive a key, and the
+           // one a Tatou offering its key answered (#199).
+           {DeviceType::REMOTE_CONTROLLER, encode_discovery_address, "0x00FFFB"},
+       };
+       for (const TypedDestination &entry : TYPED_DESTINATIONS) {
+         if (v != entry.option)
+           continue;
          uint8_t typed[NODE_ID_SIZE] = {0};
-         encode_broadcast_address(DeviceType::LIGHT, typed);
-         if (v == "0x0001BB")
-           typed[2] = static_cast<uint8_t>((typed[2] & ~DEVICE_SUBTYPE_MASK) | ADDRESS_SUFFIX_DISCOVERY);
+         entry.encode(entry.type, typed);
          t.pairing_discovery_destination_auto = false;
          t.pairing_discovery_destination.assign(std::begin(typed), std::end(typed));
          return true;

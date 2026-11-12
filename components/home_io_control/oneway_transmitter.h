@@ -182,9 +182,8 @@ class OneWayTransmitter {
   /// manufacturer expects (`resolve_oneway_wire_profile()`, ADR 0032).
   ///
   /// **`EnrollGesture::SOMFY`** (somfy / unset / any unprofiled vendor): `0x39` (remove,
-  /// self-directed) then `0x30` (add) — the documented 1W handshake (the iown-homecontrol
-  /// link-layer notes), both to the identity's own `io_device_type`, one burst each, matched by a
-  /// real Smoove capture landing the two 128 ms apart
+  /// self-directed) then `0x30` (add) — the 1W handshake real remotes send, both to the identity's own
+  /// `io_device_type`, one burst each, matched by a real Smoove capture landing the two 128 ms apart
   /// (`tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`).
   ///
   /// **`EnrollGesture::VELUX_KLI`** (manufacturer velux): `0x39` to the all-devices address, then

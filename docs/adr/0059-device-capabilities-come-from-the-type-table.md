@@ -53,7 +53,8 @@ others, and adding a capability meant finding all of them.
    them. `NAMED_POSITIONS` is the one table that pairs a position's feature bit, its main-parameter
    value and the command that sends it; the frame builder, the value check
    (`device_accepts_main_parameter()`), the command names and the Python companion buttons all read it.
-   `PARTIAL` (`0xD809`) and `PEDESTRIAN` (`0xD807`) have no public source and are experimental.
+   `PARTIAL` (`0xD809`) runs the partial position stored in a garage opener, confirmed on the
+   opener of issue #163. `PEDESTRIAN` (`0xD807`) has no public source and is experimental.
 
 5. **`EXTENDED_POSITION_FRAME` decides the frame shape.** A position or force-open EXECUTE uses the
    8-byte form with functional parameter 1 set only when the row has the bit; otherwise it uses the
@@ -137,7 +138,7 @@ What existing configurations see:
 - **A cover declared with the raw `io_device_type: 0x14`** (a ventilation point, not a cover) loses
   the ventilation button it was given.
 - **Garage openers get a disabled Partial Position button and gate openers a disabled Pedestrian
-  Position button** (experimental); enable them in Home Assistant.
+  Position button** (the latter experimental); enable them in Home Assistant.
 - **Covers that declare a kind get its default `device_class`.** A user who wanted no class sets
   `device_class: ""`.
 - **Declaring an experimental kind logs a warning** when the config is built. It does not stop the
@@ -155,8 +156,8 @@ What it costs:
   the kind, and the docs say to keep it.
 - The subtype-58 reading as "no intermediate positions" rests on one device. A 58 device that does
   take positions needs a row of its own.
-- The `PARTIAL` and `PEDESTRIAN` values rest on no public source. A motor without the position refuses
-  it and nothing moves.
+- The `PEDESTRIAN` value rests on no public source, and `PARTIAL` on one garage opener. A motor
+  without the position refuses it and nothing moves.
 
 Extending it:
 

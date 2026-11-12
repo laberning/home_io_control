@@ -12,7 +12,7 @@ description: >
   Two structural observations from this capture, offered as hypotheses rather than confirmed
   semantics: the first beacon after OPEN carries a distinct sub-byte (0x0C) that every later
   beacon in the same hold replaces with 0x05 -- cross-confirmed by an unrelated device/session's
-  somfy_smoove_oneway_write_private_a.yaml, which also uses 0x0C on what looks like a
+  unidentified_1w_remote_oneway_write_private_sx1262.yaml, which also uses 0x0C on what looks like a
   gesture-starting frame -- and the last two payload bytes climb by roughly one count per
   beacon (0x02, 0x05, 0x06, 0x08, 0x0A, 0x0B here), consistent with a hold-duration or ramp-step
   tick. Neither is asserted in `expect` below, only structural fields (cmd/start/end/protocol).

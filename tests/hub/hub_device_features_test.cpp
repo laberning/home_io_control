@@ -168,8 +168,9 @@ TEST(HubDeviceFeatures, AVentPositionIsSentOnlyToAKindWithTheVentBit) {
 }
 
 // ============================================================================
-// Partial and pedestrian positions (experimental: no public source; a motor without the position
-// refuses it with PARAMETER_UNKNOWN, as the favourite is refused in issue #163)
+// Partial and pedestrian positions (partial confirmed on the issue #163 garage opener, pedestrian
+// experimental; a motor without the position refuses it with PARAMETER_UNKNOWN, as the favourite is
+// refused in issue #163)
 // ============================================================================
 
 TEST(HubDeviceFeatures, GarageOpenersSendThePartialPositionAndRefuseThePedestrianPosition) {

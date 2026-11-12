@@ -94,6 +94,9 @@ class LightState {
 
 inline void Call::perform() {
   if (state_) {
+    // Like the real LightState: the call's target becomes the remote values at once (and, with no
+    // transition, the current values too).
+    state_->remote_values.set(target_);
     state_->set_current_on(target_);
     if (has_brightness_)
       state_->set_current_brightness(brightness_);

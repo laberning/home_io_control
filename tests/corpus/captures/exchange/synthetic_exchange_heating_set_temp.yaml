@@ -3,17 +3,16 @@ description: >
   Synthetic authenticated CMD_WRITE_PRIVATE (0x20) heating exchange: set_temperature 20.5 C ->
   0x3C challenge -> 0x3D challenge-response -> CMD_WRITE_PRIVATE_ACK (0x21) echo (END). Bootstrap
   fixture for the CMD 0x20 heating codec (proto_heating.{h,cpp}) and the hub heating send path.
-  The 0x20 payload {0C 61 01 03 CD 00} is encode_heating_payload(SET_TEMPERATURE, 20.5) — byte
-  layout from reference/iohomecontrol/src/iohcCozyDevice2W.cpp:125-128, setpoint field a 16-bit
-  little-endian value in tenths of a degree per
-  reference/iown-homecontrol/docs/devices/misc/AtlanticThermor/README.md (low byte 0xCD = 205,
-  high byte 0x00) = 20.5 C. HMAC on the 0x3D frame is computed under the public corpus key
+  The 0x20 payload {0C 61 01 03 CD 00} is encode_heating_payload(SET_TEMPERATURE, 20.5); the
+  setpoint field is a 16-bit little-endian value in tenths of a degree (low byte 0xCD = 205, high
+  byte 0x00 = 20.5 C), as the real AGILIA write {0C 61 01 03 AF 00} = 17.5 C shows
+  (atlantic_agilia_exchange_setpoint_and_off_read_back). HMAC on the 0x3D frame is computed under the public corpus key
   (tests/support/test_helpers.h :: TEST_SYSTEM_KEY), so this fixture's crypto is safe to commit —
   see tests/corpus/corpus_bootstrap_dump_test.cpp (DISABLED_PrintSyntheticFrames) for how these bytes
   were generated from real serialize()/crc_ccitt()/create_challenge_resp() output. No Atlantic /
   Thermor / Sauter hardware exists in this project; the exchange *shape* is cross-checked against
   the real-device capture
-  tests/corpus/captures/exchange/atlantic_thermor_exchange_write_private_param.yaml.
+  tests/corpus/captures/exchange/atlantic_agilia_exchange_setpoint_and_off_read_back.yaml.
 source:
   device: "synthetic controller <-> synthetic climate device"
   captured_with: synthetic

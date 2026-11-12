@@ -66,33 +66,14 @@ void IOHomeLight::on_device_update_(const std::string &id, const IoDevice &dev) 
     // Same inverted 0-100 IO position field as the binary path, just read as a continuous value
     // instead of collapsed at the <50 threshold.
     const float brightness = 1.0F - (dev.position / 100.0F);
-    const bool on = brightness > 0.0F;
-    if (this->state_->current_values.is_on() == on && this->state_->remote_values.is_on() == on &&
-        this->state_->current_values.get_brightness() == brightness &&
-        this->state_->remote_values.get_brightness() == brightness)
-      return;
-
-    this->suppress_write_ = true;
-    auto call = this->state_->make_call();
-    call.set_state(on);
-    call.set_brightness(brightness);
-    call.set_save(false);
-    call.perform();
+    publish_light_reading(this->state_, brightness > 0.0F, brightness, this->suppress_write_);
     return;
   }
 
   // Binary endpoints report on/off via the shared 0-100 position field.
   // Position < 50 is treated as "on", >= 50 as "off".
-  const bool on = dev.position < detail::BINARY_ENTITY_ON_POSITION_THRESHOLD;
-  if (this->state_->current_values.is_on() == on && this->state_->remote_values.is_on() == on)
-    return;
-
-  // Update via LightState's call API, suppressing the write_state() echo to avoid re-sending.
-  this->suppress_write_ = true;
-  auto call = this->state_->make_call();
-  call.set_state(on);
-  call.set_save(false);
-  call.perform();
+  publish_light_reading(this->state_, dev.position < detail::BINARY_ENTITY_ON_POSITION_THRESHOLD, std::nullopt,
+                        this->suppress_write_);
 }
 
 void IOHomeLight::dump_config() {

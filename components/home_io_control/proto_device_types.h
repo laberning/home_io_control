@@ -205,9 +205,10 @@ struct NamedPosition {
 };
 
 /// @brief The named positions.
-/// @details PEDESTRIAN and PARTIAL are experimental: their values rest on no public source, a motor
-///          without the position refuses them (PARAMETER_UNKNOWN) and nothing moves.
-///          \todo Confirm 0xD807 on a real gate opener and 0xD809 on a real garage opener.
+/// @details PARTIAL (0xD809) runs a garage opener's stored partial position (issue #163). PEDESTRIAN
+///          is experimental: its value rests on no public source. A motor without the position
+///          refuses either (PARAMETER_UNKNOWN) and nothing moves.
+///          \todo Confirm 0xD807 on a real gate opener.
 ///          Adding one is a bit (with its evidence), a row here, a CoverCommand value, the rows that
 ///          have it in the type table, and a companion button in the Python codegen.
 inline constexpr NamedPosition NAMED_POSITIONS[] = {

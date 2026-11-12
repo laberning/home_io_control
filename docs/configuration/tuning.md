@@ -154,7 +154,7 @@ your device may differ.
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk checks on the transmit channel before the first frame of an exchange is sent without one. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI on the transmit channel below which it counts as free. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
-| `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` / `0x0001BB` / `0x0001BF` | Address the discovery frames are sent to. The last two are lighting-class addresses — see below. |
+| `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` / `0x0001BB` / `0x0001BF` / `0x00FFFB` | Address the discovery frames are sent to. The last three are device-class addresses — see below. |
 | `pairing_discovery_payload` | both | `none` | `none` / `0x00` | Optional payload byte (used by the alternate command). |
 | `pairing_discovery_low_power` | both | `false` | `true` / `false` | Sets the LOW_POWER flag in discovery frames. |
 | `pairing_discovery_ack_capable` | both | `false` | `true` / `false` | Sets the ACK (CTRL1_ACK) flag on the discovery broadcast only. Off by default — see note below. |
@@ -525,6 +525,14 @@ for one only when a light or dimmer never answers the ordinary class-less discov
 nothing from it on any other device — a class-typed address is, by construction, ignored by
 everything outside that class. Report what happens either way; no light has yet been confirmed to
 answer one.
+
+`0x00FFFB` is the same kind of address for the **remote controller** class (type 1023, discovery's
+mask). An Atlantic Tatou heater that receives a key searches with this address, and a Tatou that
+offers its key answers that search as a remote controller
+([issue #199](https://github.com/laberning/home_io_control/issues/199)). To take such a heater's key,
+start its key-sending function, then press Discover & Pair with this destination. The key comes by
+pull: `pairing_key_transfer: auto` already pulls from a device that answers as a remote controller,
+and `pull` forces it. No heater has yet handed its key to the hub this way.
 
 #### `pairing_discovery_payload` / `pairing_discovery_low_power`
 

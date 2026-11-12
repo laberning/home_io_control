@@ -225,8 +225,8 @@ TEST_F(OneWaySendCommandTest, SequencesSurviveAReboot) {
 // ============================================================================
 // Same seam as send_command()/send_position() above -- one sequence per burst, per-identity
 // keys, unknown-identity refusal -- plus properties specific to enrollment: it is two bursts back
-// to back (0x39 self-directed remove, then 0x30 add -- the documented 1W pairing handshake, see
-// linklayer.md:396 and ADR 0026), with_mac=false on the 0x30 half (see create_1w_add_controller()'s
+// to back (0x39 self-directed remove, then 0x30 add -- the 1W pairing handshake, see
+// ADR 0026), with_mac=false on the 0x30 half (see create_1w_add_controller()'s
 // @warning, proto_commands.h), and explicit "ENROLL"/"UNENROLL" report labels, since
 // decode_1w_frame() cannot read an intent out of a 0x30/0x39.
 
@@ -294,7 +294,7 @@ TEST_F(OneWaySendCommandTest, EnrollmentSendsNoMacTrailerOnTheAddHalf) {
 }
 
 TEST_F(OneWaySendCommandTest, EnrollmentSendsRemoveThenAddBackToBack) {
-  // The documented 1W pairing handshake (linklayer.md:396, "1W Discovery"): 0x39 then 0x30, both
+  // The 1W pairing handshake (ADR 0026): 0x39 then 0x30, both
   // from the same identity, one burst each, no gap beyond the bursts' own airtime.
   BurstRecorder recorder;
   OneWayTransmitter transmitter(recorder.fn(), &tuning_);
