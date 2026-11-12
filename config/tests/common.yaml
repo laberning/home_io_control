@@ -157,6 +157,8 @@ cover:
     # `status_refresh_interval:` adds no entity, only the schedule; the covers above omit it, so this
     # compiles both branches of the setter.
     status_refresh_interval: 15min
+    # `follow_waiting_for_power:` adds no entity either; the covers above omit it.
+    follow_waiting_for_power: true
 
 light:
   - platform: home_io_control

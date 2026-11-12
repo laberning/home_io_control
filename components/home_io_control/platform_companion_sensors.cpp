@@ -98,11 +98,15 @@ void IOHomeDeviceNameTextSensor::dump_config() {
 
 void IOHomeActiveIssueTextSensor::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {
-    // An explicit CMD_ERROR_RESP result wins; otherwise the rain limitation the hub derived from
-    // the window's own status replies; otherwise empty. A result about one exchange only
-    // (command_result_is_transient()) is not an issue of the device.
+    // An explicit CMD_ERROR_RESP result wins; then a wait for power the hub is following; otherwise
+    // the rain limitation the hub derived from the window's own status replies; otherwise empty. A result about one
+    // exchange only (command_result_is_transient()) is not an issue of the device.
     if (dev.last_result_code != 0 && !command_result_is_transient(dev.last_result_code)) {
       this->publish_state(command_result_name(dev.last_result_code));
+    } else if (dev.power_wait == PowerWait::WAITING) {
+      // A cover queued on a shared power supply (`follow_waiting_for_power`), by the name the
+      // same state has as a command result.
+      this->publish_state(command_result_name(RESULT_NODE_WAITING_FOR_POWER));
     } else if (dev.limited_by_rain) {
       this->publish_state(command_result_name(RESULT_LIMITATION_BY_RAIN));
     } else {

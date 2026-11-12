@@ -87,6 +87,8 @@ void IOHomeCover::setup() {
     this->parent_->set_device_battery_level_poll_interval(this->device_id_, this->battery_level_poll_interval_ms_);
   if (this->status_refresh_interval_ms_ != 0)
     this->parent_->set_device_status_refresh_interval(this->device_id_, this->status_refresh_interval_ms_);
+  if (this->follow_waiting_for_power_)
+    this->parent_->set_device_follow_waiting_for_power(this->device_id_, true);
 }
 
 cover::CoverTraits IOHomeCover::get_traits() {
@@ -268,6 +270,8 @@ void IOHomeCover::dump_config() {
     ESP_LOGCONFIG(TAG, "  Battery Level Poll Interval: %" PRIu32 " ms", this->battery_level_poll_interval_ms_);
   if (this->status_refresh_interval_ms_ != 0)
     ESP_LOGCONFIG(TAG, "  Status Refresh Interval: %" PRIu32 " ms", this->status_refresh_interval_ms_);
+  if (this->follow_waiting_for_power_)
+    ESP_LOGCONFIG(TAG, "  Follow Waiting For Power: YES");
   ESP_LOGCONFIG(TAG, "  Supports Tilt: %s", YESNO(this->supports_tilt()));
 }
 

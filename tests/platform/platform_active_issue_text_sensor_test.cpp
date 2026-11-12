@@ -146,3 +146,32 @@ TEST(PlatformActiveIssueTextSensor, DeviceUpdateForOtherDeviceIsIgnored) {
 
   EXPECT_EQ(sensor.state, "") << "updates for a different device id must not change this sensor's published state";
 }
+
+TEST(PlatformActiveIssueTextSensor, AWaitForPowerIsShownWhileItLasts) {
+  TestableActiveIssueHub hub;
+  hub.add_device("ABC123");
+  auto *device = hub.get_device("ABC123");
+  ASSERT_NE(device, nullptr);
+
+  IOHomeActiveIssueTextSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  device->power_wait = PowerWait::CHECK;
+  hub.notify_device_update_("ABC123");
+  EXPECT_EQ(sensor.state, "") << "the state has not been read yet";
+
+  device->power_wait = PowerWait::WAITING;
+  hub.notify_device_update_("ABC123");
+  EXPECT_EQ(sensor.state, "NODE_WAITING_FOR_POWER");
+
+  device->last_result_code = RESULT_LIMITATION_BY_WIND;
+  hub.notify_device_update_("ABC123");
+  EXPECT_EQ(sensor.state, "LIMITATION_BY_WIND") << "an explicit refusal from the device wins";
+
+  device->last_result_code = 0;
+  device->power_wait = PowerWait::NONE;
+  hub.notify_device_update_("ABC123");
+  EXPECT_EQ(sensor.state, "");
+}

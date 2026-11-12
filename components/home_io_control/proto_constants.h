@@ -588,7 +588,68 @@ static constexpr uint8_t POSITION_WIRE_SCALE = 2;
 static constexpr uint8_t POSITION_WIRE_MAX = 200;
 
 /// Status byte flags in CMD_PRIVATE_RESP and CMD_STATUS_UPDATE.
-static constexpr uint8_t STATUS_STOPPED = 0x01;   ///< Byte 0 bit 0: device is not moving
+static constexpr uint8_t STATUS_STOPPED = 0x01;  ///< Byte 0 bit 0: device is not moving
+
+// === Execution state in the reply to the main-parameter status read ===
+//
+// The reply to create_status_mp_fp_read() (CMD_PRIVATE function 0x01, the status read of a VELUX
+// KLF 200 gateway) leads with a byte packed like the CMD_ERROR_RESP result byte above:
+// (code << 3) | state. Every such reply captured from a cover at rest reads 0x2D = code 5, state 5
+// (tests/corpus/captures/statuspoll/velux_klf200_statuspoll_roundrobin_868_sx1262.yaml), and a
+// VELUX SML roller shutter queued behind another shutter on a shared KUX 110 supply reads 0x2B =
+// code 5, state 3 (tests/corpus/captures/probe/velux_sml_probe_status_mp_fp_waiting_for_power.yaml).
+// The state numbers are the node states of the public KLF 200 API specification v3.18
+// (GW_GET_NODE_INFORMATION_NTF, "State"). Measured: 3 and 5. Taken from the specification, not
+// yet seen in this byte: 0, 1, 2 and 4. What code 5 means is not known; a byte with another code
+// is not read as a state.
+static constexpr uint8_t STATUS_READ_STATE_MASK = 0x07;  ///< Execution state sits in bits [2:0].
+static constexpr uint8_t STATUS_READ_CODE_SHIFT = 3;     ///< The undecoded code sits in bits [7:3].
+static constexpr uint8_t STATUS_READ_CODE = 5;           ///< The code of every reply whose state was measured.
+
+/// @brief A node's execution state, numbered as in the KLF 200 API specification.
+enum class ExecutionState : uint8_t {
+  NON_EXECUTING = 0,          ///< Nothing is being executed.
+  ERROR_WHILE_EXECUTING = 1,  ///< The last execution ended in an error.
+  NOT_USED = 2,               ///< Reserved by the specification.
+  WAITING_FOR_POWER = 3,      ///< The command is accepted and waits for the shared power supply.
+  EXECUTING = 4,              ///< The node is carrying its command out.
+  DONE = 5,                   ///< The last execution is complete.
+  UNKNOWN = 0xFF,             ///< Not a status-read byte of the measured shape, or a state above 5.
+};
+
+/// @brief Read the execution state from the first byte of a main-parameter status read reply.
+/// @param status data[0] of the CMD_PRIVATE_RESP answering create_status_mp_fp_read().
+/// @return The state, or ExecutionState::UNKNOWN when the byte's code is not STATUS_READ_CODE or its
+///         state is above ExecutionState::DONE.
+constexpr ExecutionState execution_state_from_status_read(uint8_t status) {
+  const uint8_t state = status & STATUS_READ_STATE_MASK;
+  if ((status >> STATUS_READ_CODE_SHIFT) != STATUS_READ_CODE || state > static_cast<uint8_t>(ExecutionState::DONE))
+    return ExecutionState::UNKNOWN;
+  return static_cast<ExecutionState>(state);
+}
+
+/// @brief Name an execution state for the log.
+/// @param state The state to name.
+/// @return A lowercase name such as "waiting_for_power".
+constexpr const char *execution_state_name(ExecutionState state) {
+  switch (state) {
+    case ExecutionState::NON_EXECUTING:
+      return "non_executing";
+    case ExecutionState::ERROR_WHILE_EXECUTING:
+      return "error_while_executing";
+    case ExecutionState::NOT_USED:
+      return "not_used";
+    case ExecutionState::WAITING_FOR_POWER:
+      return "waiting_for_power";
+    case ExecutionState::EXECUTING:
+      return "executing";
+    case ExecutionState::DONE:
+      return "done";
+    case ExecutionState::UNKNOWN:
+      break;
+  }
+  return "unknown";
+}
 static constexpr uint8_t STATUS_EXPECTED = 0x80;  ///< Byte 1 bit 7: device will send auto status update
 /// Byte 1 bits 5-6: the device's coarse battery level (BatteryState). Every solar Somfy actuator
 /// captured reports 3 here and every mains one 0 (tests/corpus/captures/statuspoll/

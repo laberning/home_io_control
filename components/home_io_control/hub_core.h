@@ -538,6 +538,12 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param interval_ms Refresh interval in milliseconds; zero removes the device from the schedule.
   virtual void set_device_status_refresh_interval(const std::string &device_id, uint32_t interval_ms);
+  /// Opt a registered device into following a wait for power: a stop off the target that two
+  /// status reports agree on is checked against the device's execution state before it is taken as
+  /// at rest (read_execution_state_()).
+  /// @param device_id Target device ID.
+  /// @param follow True to opt in; false restores the behaviour without the option.
+  virtual void set_device_follow_waiting_for_power(const std::string &device_id, bool follow);
 
   // --- High-level operations ---
   /// Send a position command to a device.
@@ -983,6 +989,20 @@ class IOHomeControlComponent : public Component,
   /// The device just reported its status: move its status refresh (if it has one) a whole interval out.
   /// @param device_id Device that reported.
   void note_status_reported_(const std::string &device_id);
+  /// End a device's execution-state check or wait for power without a verdict: a new command or
+  /// another controller's activity supersedes it, and the follow-up polls that come with those
+  /// decide afresh. No-op for a device that is not checking or waiting.
+  /// @param device_id Target device ID.
+  void cancel_power_wait_(const std::string &device_id);
+  /// Read the execution state of a cover that reported stopped off its target (IoDevice::power_wait
+  /// is CHECK or WAITING) and act on it (decisions::power_wait_step()): keep waiting and read again
+  /// after POWER_WAIT_POLL_INTERVAL_MS, hand over to the ordinary follow-up polls, or take the cover
+  /// as at rest. The read is the unauthenticated main-parameter status read
+  /// (create_status_mp_fp_read()); its reply is used inside this exchange only and never reaches
+  /// update_device_status_(), so it cannot move the device's position or target.
+  /// @param device_id Target device ID.
+  /// @return true when the device answered with a status reply.
+  bool read_execution_state_(const std::string &device_id);
   /// Record that a 1W frame just went out on the radio — ours or someone else's — updating
   /// last_1w_activity_ms_ and — when this frame starts a new burst (see
   /// decisions::oneway_burst_started_fresh()) — first_1w_activity_ms_.

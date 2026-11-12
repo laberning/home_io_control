@@ -378,6 +378,11 @@ bool IOHomeControlComponent::try_execute_operation_(const std::string &device_id
     return false;
   }
 
+  // A STOP or a new command supersedes a wait for power: its own follow-up polls decide afresh.
+  this->cancel_power_wait_(device_id);
+  dev = this->get_device(device_id);
+  if (dev == nullptr)
+    return false;
   this->begin_status_poll_tracking_(device_id, this->poll_policy_.get_interval(device_id));
 
   ESP_LOGI(detail::TAG, "Sending %s to device %s (profile=%s)", spec.action, device_id.c_str(),
@@ -491,6 +496,11 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   if (has_feature(dev->features, device_feature::WATER_HEATER))
     return this->poll_dhw_device_(device_id);
 
+  // A cover that reported stopped off its target and may be waiting for power is asked for its
+  // execution state instead: the ordinary read cannot tell a queued cover from one at rest.
+  if (dev->power_wait != PowerWait::NONE)
+    return this->read_execution_state_(device_id);
+
   IoFrame request;
   // Tilt-capable covers need the extended 0x03200100 status request so the response includes
   // the reliable 16-byte tilt block. Other devices stay on the shorter generic request.
@@ -517,12 +527,101 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
                                                               this->poll_policy_.take_stop_settle(device_id))
                         : EXCHANGE_RETRY_COUNT;
   const bool ok = this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, max_tries);
+  // This reply was the second to report the same stop off the target (settle_stopped_report()): the
+  // execution state is read at once, so a cover at rest is shown at rest without a further delay.
+  dev = this->get_device(device_id);
+  if (ok && dev != nullptr && dev->power_wait == PowerWait::CHECK)
+    this->read_execution_state_(device_id);
   if (heating != nullptr) {
     // The regular cadence continues whatever this poll found, as for a register heater.
     const uint32_t configured_ms = this->poll_policy_.get_interval(device_id);
     this->schedule_heating_poll_(device_id, configured_ms != 0 ? configured_ms : HEATING_POLL_DEFAULT_INTERVAL_MS);
   }
   return ok;
+}
+
+bool IOHomeControlComponent::read_execution_state_(const std::string &device_id) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr || !this->initialized_)
+    return false;
+
+  // retry_after_fail_ms = 0 keeps the status-poll backoff ladder out of the way: a wait has its own
+  // cadence, and an unanswered first read concludes at once.
+  IoFrame request;
+  IoFrame response;
+  RequestResult result = RequestResult::FAILED;
+  if (create_status_mp_fp_read(request, this->node_id_, dev->node_id, dev->low_power))
+    result = this->exchange_and_record_(device_id, request, response, {false, 0, PERIODIC_POLL_MAX_TRIES});
+
+  // A reply consumed inside the blocking exchange never reaches the normal receive path.
+  dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return false;
+  // A command or another controller's activity that ended the check meanwhile decides for itself.
+  if (dev->power_wait == PowerWait::NONE)
+    return false;
+  bool answered = false;
+  ExecutionState state = ExecutionState::UNKNOWN;
+  if (result == RequestResult::REPLY) {
+    // The device transmitted, whatever it said: stamp link health the way the status path does.
+    detail::update_link_health(*dev, this->radio_);
+    uint8_t raw[FRAME_MAX_SIZE] = {0};
+    const uint8_t raw_len = serialize(response, raw, sizeof(raw));
+    detail::log_component_capture(this->radio_, "execution_state_rx", raw, raw_len, &response);
+    if (response.cmd == CMD_PRIVATE_RESP && response.data_len >= 1) {
+      answered = true;
+      state = execution_state_from_status_read(response.data[0]);
+      ESP_LOGD(detail::TAG, "Device %s: execution state %s (status byte 0x%02X)", device_id.c_str(),
+               execution_state_name(state), response.data[0]);
+    } else {
+      ESP_LOGD(detail::TAG, "Device %s: unexpected reply 0x%02X to the execution state read", device_id.c_str(),
+               response.cmd);
+    }
+  }
+
+  const bool waiting = dev->power_wait == PowerWait::WAITING;
+  const uint32_t now = millis();
+  switch (decisions::power_wait_step(waiting, answered, state)) {
+    case decisions::PowerWaitStep::WAIT:
+      if (!waiting) {
+        ESP_LOGI(detail::TAG, "Device %s: waiting for power at %.0f%%, target %.0f%%: following it", device_id.c_str(),
+                 static_cast<double>(dev->position), static_cast<double>(dev->target));
+      } else if (!answered) {
+        ESP_LOGD(detail::TAG, "Device %s: execution state read unanswered while waiting for power", device_id.c_str());
+      }
+      dev->power_wait = PowerWait::WAITING;
+      // A window that has run out takes the device from here (settle_ended_status_tracking_()).
+      this->poll_policy_.set_next_update(device_id, now + POWER_WAIT_POLL_INTERVAL_MS);
+      break;
+    case decisions::PowerWaitStep::FOLLOW:
+      ESP_LOGI(detail::TAG, "Device %s: got power and is moving", device_id.c_str());
+      dev->power_wait = PowerWait::NONE;
+      // The remembered stop is over: the next "stopped" off the target must be confirmed afresh.
+      dev->stop_candidate.clear();
+      note_moving_evidence(*dev, now);
+      this->poll_policy_.set_next_update(
+          device_id, now + settle_delay_ms(this->poll_policy_.get_interval(device_id), 0, /*cap_for_stop=*/false));
+      break;
+    case decisions::PowerWaitStep::REPOLL:
+      // The wait ended between two reads (a short travel, or the command was withdrawn): the
+      // ordinary read reports where the device is now and settles it the usual way.
+      ESP_LOGD(detail::TAG, "Device %s: no longer waiting for power: reading its status", device_id.c_str());
+      dev->power_wait = PowerWait::NONE;
+      this->notify_device_update_(device_id);
+      this->request_device_status(device_id);
+      return answered;
+    case decisions::PowerWaitStep::CONCLUDE:
+      ESP_LOGD(detail::TAG, "Device %s: stopped at %.2f%%, target %.2f%%, %s: at rest off target", device_id.c_str(),
+               static_cast<double>(dev->position), static_cast<double>(dev->target),
+               answered ? execution_state_name(state) : "execution state read unanswered");
+      dev->power_wait = PowerWait::NONE;
+      dev->is_stopped = true;
+      this->poll_policy_.clear(device_id);
+      break;
+  }
+  detail::log_status_update(device_id, *dev);
+  this->notify_device_update_(device_id);
+  return answered;
 }
 
 namespace {

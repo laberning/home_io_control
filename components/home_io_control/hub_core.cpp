@@ -355,6 +355,27 @@ void IOHomeControlComponent::set_device_status_refresh_interval(const std::strin
   this->status_refresh_policy_.set_interval(device_id, interval_ms, millis(), poll_jitter_random());
 }
 
+void IOHomeControlComponent::set_device_follow_waiting_for_power(const std::string &device_id, bool follow) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return;
+  dev->follows_waiting_for_power = follow;
+  if (!follow)
+    dev->power_wait = PowerWait::NONE;
+}
+
+void IOHomeControlComponent::cancel_power_wait_(const std::string &device_id) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr || dev->power_wait == PowerWait::NONE)
+    return;
+  const bool was_waiting = dev->power_wait == PowerWait::WAITING;
+  dev->power_wait = PowerWait::NONE;
+  if (was_waiting) {
+    ESP_LOGD(TAG, "Device %s: wait for power superseded", device_id.c_str());
+    this->notify_device_update_(device_id);  // the Active Issue sensor shows the wait
+  }
+}
+
 void IOHomeControlComponent::note_status_reported_(const std::string &device_id) {
   this->status_refresh_policy_.restart_interval(device_id, millis(), poll_jitter_random());
 }

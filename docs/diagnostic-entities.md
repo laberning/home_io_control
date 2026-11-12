@@ -54,6 +54,10 @@ It is not a per-command result. It is set only while an issue is outstanding:
   linger once the device is confirmed working.
 - Both an unsolicited report (a device announcing a limitation on its own, after a wind gust) and a
   refusal in direct reply to a Home Assistant command are recorded.
+- **A cover waiting for a shared power supply shows `NODE_WAITING_FOR_POWER`.** Only for a cover
+  with `follow_waiting_for_power: true`, and only while it waits; an explicit refusal from the
+  device takes precedence. See
+  [Covers that wait for a shared power supply](configuration/cover.md#covers-that-wait-for-a-shared-power-supply).
 - **Rain on a VELUX window is derived, not reported.** A VELUX window sends no error when rain
   protection clamps an `open`; it stops at its ventilation position. The hub reads `LIMITATION_BY_RAIN`
   from the window's own status replies instead: the last move was ordered by the rain sensor, or an

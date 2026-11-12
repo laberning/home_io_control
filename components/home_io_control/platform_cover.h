@@ -65,6 +65,9 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
   /// @brief Opt this cover into the status refresh at rest (from YAML `status_refresh_interval`).
   /// @param interval_ms Refresh interval in milliseconds; zero (the default) means no refresh.
   void set_status_refresh_interval(uint32_t interval_ms) { this->status_refresh_interval_ms_ = interval_ms; }
+  /// @brief Opt this cover into following a wait for power (from YAML `follow_waiting_for_power`).
+  /// @param follow True to read the execution state before a stop off the target is taken as at rest.
+  void set_follow_waiting_for_power(bool follow) { this->follow_waiting_for_power_ = follow; }
   /// @brief Query whether this device takes intermediate positions (a slider) or only open / close / stop.
   /// @return true if the device has device_feature::LEVELS.
   [[nodiscard]] bool supports_intermediate_positions() const;
@@ -97,6 +100,7 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
   uint32_t sun_level_poll_interval_ms_{0};      ///< 0 = not opted in; no sun level poll is scheduled.
   uint32_t battery_level_poll_interval_ms_{0};  ///< 0 = not opted in; no battery level poll is scheduled.
   uint32_t status_refresh_interval_ms_{0};      ///< 0 = not opted in; no status refresh is scheduled.
+  bool follow_waiting_for_power_{false};        ///< false = not opted in; a stop off the target settles as before.
 };
 
 }  // namespace home_io_control

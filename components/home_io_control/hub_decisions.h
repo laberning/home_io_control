@@ -858,6 +858,50 @@ struct StoppedReportInput {
          report == StoppedReport::SETTLING;
 }
 
+// === Waiting for power ===
+
+/// @brief What the hub does with the execution state it read from a cover stopped off its target.
+enum class PowerWaitStep : uint8_t {
+  WAIT,      ///< Waiting for power: keep the cover's direction and read the state again later.
+  FOLLOW,    ///< Executing: the motor runs, so the ordinary follow-up polls take over.
+  CONCLUDE,  ///< At rest off its target, as the two agreeing reports said.
+  REPOLL,    ///< The wait ended unseen: read the ordinary status for the position it ended at.
+};
+
+/// @brief Decide the next step from one execution-state read.
+///
+/// Only ExecutionState::WAITING_FOR_POWER keeps a cover waiting, so a frozen or obstructed cover (done
+/// or error while executing), a limited awning and a stopped cover conclude exactly as without the
+/// read. An unanswered read concludes the first time, because the ordinary reports already agreed;
+/// during a wait it changes nothing, because the device said it waits and the follow-up window
+/// bounds the wait.
+/// @param waiting True when an earlier read already found the device waiting for power.
+/// @param answered True when the device answered this read with a status reply.
+/// @param state The state the reply carried; ignored when not answered.
+/// @return The step to take.
+[[nodiscard]] inline PowerWaitStep power_wait_step(bool waiting, bool answered, ExecutionState state) {
+  if (!answered)
+    return waiting ? PowerWaitStep::WAIT : PowerWaitStep::CONCLUDE;
+  if (state == ExecutionState::WAITING_FOR_POWER)
+    return PowerWaitStep::WAIT;
+  if (state == ExecutionState::EXECUTING)
+    return PowerWaitStep::FOLLOW;
+  return waiting ? PowerWaitStep::REPOLL : PowerWaitStep::CONCLUDE;
+}
+
+/// @brief True when a confirmed stop off the target is held back for an execution-state read.
+///
+/// Only inside a follow-up window (after a command or another controller's activity), and only for a
+/// cover that opted in: an untracked read of a cover resting off its target confirms on every
+/// report and must stay at rest.
+/// @param opted_in IoDevice::follows_waiting_for_power.
+/// @param verdict classify_stopped_report()'s verdict on the report.
+/// @param follow_up_possible A tracked follow-up poll will run.
+[[nodiscard]] inline bool stopped_report_needs_execution_state(bool opted_in, StoppedReport verdict,
+                                                               bool follow_up_possible) {
+  return opted_in && follow_up_possible && verdict == StoppedReport::STOPPED_CONFIRMED;
+}
+
 }  // namespace decisions
 }  // namespace home_io_control
 }  // namespace esphome

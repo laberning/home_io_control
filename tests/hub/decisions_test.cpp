@@ -1003,3 +1003,50 @@ TEST(Decisions, HeaterModelNameIsOneReadableLine) {
   EXPECT_EQ(decisions::format_heater_model_name(garbled, sizeof(garbled)), "A??B");
   EXPECT_EQ(decisions::format_heater_model_name(adelis, 0), "");
 }
+
+// === Waiting for power ===
+
+TEST(Decisions, ExecutionStateIsReadFromTheMeasuredStatusBytes) {
+  EXPECT_EQ(execution_state_from_status_read(0x2D), ExecutionState::DONE) << "measured at rest";
+  EXPECT_EQ(execution_state_from_status_read(0x2B), ExecutionState::WAITING_FOR_POWER) << "measured while queued";
+  EXPECT_EQ(execution_state_from_status_read(0x2C), ExecutionState::EXECUTING);
+  EXPECT_EQ(execution_state_from_status_read(0x29), ExecutionState::ERROR_WHILE_EXECUTING);
+  EXPECT_EQ(execution_state_from_status_read(0x28), ExecutionState::NON_EXECUTING);
+}
+
+TEST(Decisions, AStatusByteOfAnotherShapeHasNoExecutionState) {
+  EXPECT_EQ(execution_state_from_status_read(0x05), ExecutionState::UNKNOWN) << "an ordinary stopped-flags byte";
+  EXPECT_EQ(execution_state_from_status_read(0x03), ExecutionState::UNKNOWN) << "state 3 under another code";
+  EXPECT_EQ(execution_state_from_status_read(0x2E), ExecutionState::UNKNOWN) << "state 6 is not defined";
+  EXPECT_EQ(execution_state_from_status_read(0x2F), ExecutionState::UNKNOWN);
+}
+
+TEST(Decisions, OnlyWaitingForPowerKeepsACoverWaiting) {
+  using decisions::PowerWaitStep;
+  for (const bool waiting : {false, true}) {
+    EXPECT_EQ(decisions::power_wait_step(waiting, true, ExecutionState::WAITING_FOR_POWER), PowerWaitStep::WAIT);
+    EXPECT_EQ(decisions::power_wait_step(waiting, true, ExecutionState::EXECUTING), PowerWaitStep::FOLLOW);
+  }
+  for (const ExecutionState state :
+       {ExecutionState::DONE, ExecutionState::ERROR_WHILE_EXECUTING, ExecutionState::NON_EXECUTING,
+        ExecutionState::NOT_USED, ExecutionState::UNKNOWN}) {
+    EXPECT_EQ(decisions::power_wait_step(false, true, state), PowerWaitStep::CONCLUDE) << execution_state_name(state);
+    EXPECT_EQ(decisions::power_wait_step(true, true, state), PowerWaitStep::REPOLL) << execution_state_name(state);
+  }
+}
+
+TEST(Decisions, AnUnansweredExecutionStateReadConcludesOnlyBeforeAWait) {
+  using decisions::PowerWaitStep;
+  EXPECT_EQ(decisions::power_wait_step(false, false, ExecutionState::WAITING_FOR_POWER), PowerWaitStep::CONCLUDE);
+  EXPECT_EQ(decisions::power_wait_step(true, false, ExecutionState::DONE), PowerWaitStep::WAIT);
+}
+
+TEST(Decisions, OnlyAConfirmedStopInsideAWindowOfAnOptedInCoverNeedsTheExecutionState) {
+  using decisions::StoppedReport;
+  EXPECT_TRUE(decisions::stopped_report_needs_execution_state(true, StoppedReport::STOPPED_CONFIRMED, true));
+  EXPECT_FALSE(decisions::stopped_report_needs_execution_state(false, StoppedReport::STOPPED_CONFIRMED, true));
+  EXPECT_FALSE(decisions::stopped_report_needs_execution_state(true, StoppedReport::STOPPED_CONFIRMED, false));
+  for (const StoppedReport verdict :
+       {StoppedReport::MOVING, StoppedReport::STOPPED, StoppedReport::SETTLING, StoppedReport::STOPPED_UNCONFIRMABLE})
+    EXPECT_FALSE(decisions::stopped_report_needs_execution_state(true, verdict, true));
+}

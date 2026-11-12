@@ -485,10 +485,13 @@ inline bool stop_candidate_matches_observation(const IoDevice &dev) {
 /// "settling" is a device that reported stopped off its target and waits for the confirming poll
 /// (decisions::classify_stopped_report()); it is still handled as moving.
 /// @param dev Device record to read.
-/// @return "stopped", "settling" or "moving".
+/// @return "stopped", "waiting_for_power" (a cover queued on a shared supply, IoDevice::power_wait),
+///         "settling" or "moving".
 inline const char *describe_motion(const IoDevice &dev) {
   if (dev.is_stopped)
     return "stopped";
+  if (dev.power_wait == PowerWait::WAITING)
+    return "waiting_for_power";
   return is_settling(dev) ? "settling" : "moving";
 }
 

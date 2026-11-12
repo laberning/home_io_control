@@ -80,7 +80,9 @@ constexpr uint32_t PRIVATE_RESPONSE_REMAINING_TIME_BIAS_MS =
 /// Runs on every trusted report (a reply to a status poll, a device-originated status update).
 /// `dev.is_stopped` holds the report's own flag on entry and the verdict on return; see
 /// decisions::classify_stopped_report() for the rule. A cover that comes to rest off its target
-/// reads moving for one more poll, then stopped, instead of moving for good.
+/// reads moving for one more poll, then stopped, instead of moving for good. A cover with
+/// `follow_waiting_for_power` reads moving beyond that, until its execution state is read
+/// (IoDevice::power_wait).
 /// @param id Device ID, for the log line.
 /// @param dev Device record, with this report's target and position already decoded.
 /// @param follow_up_possible A tracked follow-up poll will run.
@@ -93,6 +95,24 @@ void settle_stopped_report(const std::string &id, IoDevice &dev, bool follow_up_
   in.follow_up_possible = follow_up_possible;
   in.has_motion = !device_has_no_motion(dev.type, dev.subtype);
   const decisions::StoppedReport verdict = decisions::classify_stopped_report(in);
+  // A cover that opted in is not taken as at rest on the two agreeing reports alone: it may be
+  // queued on a shared power supply, which only its execution state tells apart from a cover that
+  // froze or met an obstacle (request_device_status() reads it next). Every other verdict ends a
+  // check or a wait: the device moves, reached its target, or reports another place.
+  const bool hold =
+      decisions::stopped_report_needs_execution_state(dev.follows_waiting_for_power, verdict, follow_up_possible);
+  if (hold && dev.power_wait == PowerWait::NONE) {
+    dev.power_wait = PowerWait::CHECK;
+    ESP_LOGD(detail::TAG, "Device %s: stopped at %.2f%% again, target %.2f%%: reading its execution state", id.c_str(),
+             static_cast<double>(dev.position), static_cast<double>(dev.target));
+  } else if (!hold) {
+    dev.power_wait = PowerWait::NONE;
+  }
+  if (hold) {
+    // Still handled as moving toward the target, so the entity keeps its direction.
+    dev.is_stopped = false;
+    return;
+  }
   if (verdict == decisions::StoppedReport::SETTLING) {
     ESP_LOGD(detail::TAG, "Device %s: reports stopped at %.2f%%, target %.2f%%: confirming with one more poll",
              id.c_str(), static_cast<double>(dev.position), static_cast<double>(dev.target));
@@ -438,7 +458,13 @@ void IOHomeControlComponent::settle_ended_status_tracking_() {
     IoDevice *dev = this->registry_.get(*ended);
     if (dev == nullptr)
       continue;
-    if (detail::is_settling(*dev)) {
+    if (dev->power_wait == PowerWait::WAITING) {
+      // The safety bound of the wait: the device still said it waits for power when the window ran out.
+      ESP_LOGI(detail::TAG,
+               "Device %s: still waiting for power when its follow-up window ran out; shown at rest at %.0f%%",
+               ended->c_str(), static_cast<double>(dev->position));
+      clear_moving_evidence(*dev);
+    } else if (detail::is_settling(*dev)) {
       // The device's own last word was "stopped"; nothing is left to confirm it.
       ESP_LOGD(detail::TAG, "Device %s: no poll left to confirm its stop at %.2f%%, target %.2f%%: taken as at rest",
                ended->c_str(), static_cast<double>(dev->position), static_cast<double>(dev->target));
@@ -460,6 +486,7 @@ void IOHomeControlComponent::settle_ended_status_tracking_() {
     } else {
       continue;
     }
+    dev->power_wait = PowerWait::NONE;
     dev->is_stopped = true;
     detail::log_status_update(*ended, *dev);
     this->notify_device_update_(*ended);
@@ -491,6 +518,7 @@ void IOHomeControlComponent::schedule_heating_poll_(const std::string &device_id
 
 void IOHomeControlComponent::schedule_device_polls_(const std::vector<std::string> &device_ids, uint32_t delay_ms) {
   for (const auto &device_id : device_ids) {
+    this->cancel_power_wait_(device_id);
     this->begin_status_poll_tracking_(device_id, 0);
     this->schedule_status_poll_(device_id, delay_ms);
   }
@@ -507,6 +535,7 @@ void IOHomeControlComponent::act_on_foreign_frame_(const std::string &device_id,
     case ForeignAction::ARM:
       ESP_LOGD(detail::TAG, "rx remote_activity device=%s controller=%s %s(0x%02X): scheduling status poll",
                device_id.c_str(), controller.c_str(), what, cmd);
+      this->cancel_power_wait_(device_id);
       this->begin_status_poll_tracking_(device_id, 0);
       this->schedule_status_poll_(device_id, REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS);
       break;

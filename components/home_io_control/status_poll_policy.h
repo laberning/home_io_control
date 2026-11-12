@@ -92,6 +92,12 @@ static constexpr uint32_t ONEWAY_QUIET_PERIOD_MS = 700;
 /// without meaningfully affecting normal operation.
 static constexpr uint32_t ONEWAY_POLL_DEFER_CAP_MS = 5000;
 
+/// Interval between execution-state reads of a cover that waits for power (`follow_waiting_for_power`).
+/// Slow on purpose: the cover waits for another one to finish a travel of tens of seconds, and each
+/// read is a transmission. The wait ends with the follow-up window (MAX_TRACKED_STATUS_POLL_WINDOW_MS
+/// after the command) at the latest.
+static constexpr uint32_t POWER_WAIT_POLL_INTERVAL_MS = 10000;
+
 /// Default follow-up settle-poll delay used while a device may still be moving, when no explicit
 /// poll interval is configured (interval_ms == 0). Short on purpose so devices without a remaining time are
 /// re-checked promptly and the motion-tracking loop terminates soon after the device comes to rest.

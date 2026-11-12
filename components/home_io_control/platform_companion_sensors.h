@@ -162,17 +162,19 @@ class IOHomeDeviceNameTextSensor : public IOHomeCompanionTextSensor {
 /// showing up in the log. Shared by every device-bound platform (cover, light, switch, lock) via
 /// platform_common.py's companion-sensor codegen.
 ///
-/// Two sources, in this order:
+/// Three sources, in this order:
 ///   1. The symbolic name of the device's latest explicit CMD_ERROR_RESP result. Cleared by the
 ///      next successful status/command reply (see detail::clear_command_result()).
-///   2. "LIMITATION_BY_RAIN" while `IoDevice::limited_by_rain` is set. That flag is derived from
+///   2. "NODE_WAITING_FOR_POWER" while a cover with `follow_waiting_for_power` is queued on a
+///      shared power supply (IoDevice::power_wait): it has accepted its command and has not moved yet.
+///   3. "LIMITATION_BY_RAIN" while `IoDevice::limited_by_rain` is set. That flag is derived from
 ///      the device's own status replies (the last move was ordered by the rain sensor, or a
 ///      position command was clamped while rain protection was recently active), because windows
 ///      do not send an error for a rain clamp. It clears itself when the window stops reporting
 ///      the rain originator and a command is no longer clamped, so it is only as fresh as the
 ///      last status reply.
 ///
-/// Not a per-operation outcome. Publishes an empty string when neither source applies, so a
+/// Not a per-operation outcome. Publishes an empty string when no source applies, so a
 /// non-empty value always means "this is still going on" rather than "this is what happened
 /// last."
 /// @ingroup hioc_platforms

@@ -19,6 +19,7 @@ cover:
     sun_level_poll_interval: 30min
     battery_level_poll_interval: 6h
     status_refresh_interval: 15min
+    follow_waiting_for_power: true
     battery: true
     travel_speed: default
 

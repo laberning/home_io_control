@@ -38,6 +38,7 @@ accepted and the cover is created; the warning asks you to
 - `sun_level_poll_interval` (Optional): Ask the device for the value of its built-in sun sensor once per interval, and publish it as a `<Cover Name> Sun level` sensor. The minimum is `1min` and there is no default: omit the key and nothing is sent and no entity is created. Experimental, confirmed on one Somfy RS100 Solar io. See [Sun level and battery level](cover.md#sun-level-and-battery-level) before choosing an interval.
 - `battery_level_poll_interval` (Optional): Ask the device for its battery level in percent once per interval, and publish it as a `<Cover Name> Battery level` sensor. The minimum is `1min` and there is no default. Experimental, confirmed on one Somfy RS100 Solar io. See [Sun level and battery level](cover.md#sun-level-and-battery-level).
 - `status_refresh_interval` (Optional): Read the device's status whenever it has reported none for this long, so a change the hub did not hear shows up within the interval. The minimum is `1min` and there is no default: omit the key and the hub reads a cover at rest only when something prompts it. It creates no entity. See [Refreshing the status at rest](cover.md#refreshing-the-status-at-rest).
+- `follow_waiting_for_power` (Optional, default: `false`): For covers that share a power supply which runs one motor at a time, such as two VELUX SML shutters on one KUX 110. A cover that has accepted a command and waits for the supply shows as opening or closing, with `NODE_WAITING_FOR_POWER` in its Active Issue sensor, and is followed until it moves. It creates no entity. See [Covers that wait for a shared power supply](cover.md#covers-that-wait-for-a-shared-power-supply).
 - `battery` (Optional, default: `false`): Report the battery level a battery or solar device includes in its status replies. Generates a `<Cover Name> Battery Low` binary sensor and a `<Cover Name> Battery` text sensor. It sends nothing extra over the radio. See [Battery level](cover.md#battery-level).
 - All standard options from the ESPHome cover base schema also apply, including `id`, `device_class` (see [Home Assistant device class](cover.md#home-assistant-device-class)), `icon`, entity metadata, MQTT options, and cover automations such as `on_opening`, `on_closing`, and `on_idle`.
 
@@ -228,6 +229,79 @@ and six such covers on one hub use about a quarter of the hourly allowance. Add 
 the hub before going shorter, since commands and their polls share the same allowance. A
 `low_power` device is woken with the long preamble on every read, which draws on its battery:
 refresh it every hour or more, or not at all.
+
+## Covers that wait for a shared power supply
+
+Some power supplies run one motor at a time. Two VELUX SML roller shutters on one KUX 110 are the
+measured case: a shutter commanded while the other one travels accepts the command, stays where it
+is, and starts once the other has finished. To an ordinary status read the waiting shutter is
+stopped away from its target, exactly like a shutter that froze or met an obstacle, so after two
+such reports the hub shows it at rest and stops reading it. The later move then goes unseen until
+the next command or [status refresh](cover.md#refreshing-the-status-at-rest).
+
+With `follow_waiting_for_power: true` the hub asks one more question before it takes such a cover
+as at rest: it reads the cover's execution state.
+
+```yaml
+cover:
+  - platform: home_io_control
+    name: "Shutter Left"
+    io_device_id: "123ABC"
+    io_device_type: roller_shutter
+    follow_waiting_for_power: true
+```
+
+What to expect:
+
+- **A waiting cover keeps its direction.** Home Assistant shows it opening or closing at its old
+  position, and its Active Issue sensor shows `NODE_WAITING_FOR_POWER` for as long as the wait
+  lasts. See [Diagnostic entities](../diagnostic-entities.md).
+- **It is read every 10 seconds while it waits.** Once it reports that it is executing, the
+  ordinary follow-up polls take over and the position moves as usual. A read that gets no answer
+  during a wait changes nothing.
+- **The wait ends with the follow-up window**, 10 minutes after the command or the remote press
+  that started it. A cover still waiting then is shown at rest.
+- **Only the state "waiting for power" keeps a cover waiting.** A cover that froze, met an
+  obstacle or was limited by a sensor reports another state and is shown at rest at once, as
+  without the key. So is a cover that does not answer the read, or answers it in another form.
+- **A STOP or a new command ends the wait**, and so does a press on a linked remote. The polls
+  that follow them decide afresh.
+- **It applies after a command or another controller's activity**, where the hub follows the
+  cover anyway. A cover that a status refresh finds resting away from its target is not asked.
+
+The extra read is sent only when two status reports in a row say "stopped away from the target",
+so an ordinary move costs nothing more. A cover at rest away from its target costs one read. A
+wait costs one short read every 10 seconds, at most about 60 per wait. The read is the status
+read a VELUX KLF 200 gateway sends to its devices; it is not authenticated and changes nothing on
+the device.
+
+### The execution state
+
+The read is `CMD_PRIVATE` (`0x03`) function `0x01`, the `status_mp_fp` read of the
+[diagnostic probes](../diagnostic-probes.md). The first byte of its reply packs a code and a state
+as `(code << 3) | state`, the packing of an error reply's result byte. The states carry the
+numbers of the node states in the public KLF 200 API specification v3.18:
+
+| byte | state | meaning | seen on a device |
+|---|---|---|---|
+| `28` | 0 | not executing | no |
+| `29` | 1 | error while executing | no |
+| `2B` | 3 | waiting for power | yes, a queued VELUX SML |
+| `2C` | 4 | executing | no |
+| `2D` | 5 | done | yes, every cover read at rest |
+
+Measured on a VELUX SML shutter, the reply at rest at 75 % is `2D 00 96 00 80 00 00 00` and the
+reply while queued is `2B 00 00 00 80 00 00 00`
+(`tests/corpus/captures/probe/velux_sml_probe_status_mp_fp_waiting_for_power.yaml`). The two bytes
+after `00` are the main parameter, which is the current position and not the target: a shutter
+queued at 50 % with a target of 20 % answered `2B 00 64 00`. The hub uses only the first byte and
+takes position and target from the ordinary status read.
+
+Three things rest on the specification and not on a measurement: the bytes for states 0, 1 and 4,
+that a moving shutter reports state 4 in this byte, and what the code 5 in the upper bits stands
+for. A first byte with another code is not read as a state, so such a cover is shown at rest. The
+ordinary status read (function `0x03`) is not used for the state: every reply to it in the corpus
+begins `04` or `05`, and none was captured from a waiting cover.
 
 ## Battery level
 
