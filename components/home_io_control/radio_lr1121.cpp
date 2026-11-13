@@ -44,6 +44,14 @@ void lr1121_format_device_errors(uint16_t errors, char *buf, size_t buf_size) {
   format_device_error_bits(errors, LR1121_DEVICE_ERROR_BITS, buf, buf_size);
 }
 
+const char *lr1121_chip_mode_name(uint8_t stat2) {
+  // Stat2 bits 3:1 = chip mode; bit 0 = running from flash; bits 7:4 = reset cause, which every
+  // GetStatus clears (see log_tx_timeout_state()).
+  static constexpr const char *NAMES[] = {"SLEEP", "STDBY_RC", "STDBY_XOSC", "FS", "RX", "TX", "LOC"};
+  uint8_t const mode = (stat2 >> 1) & 0x07;
+  return mode < sizeof(NAMES) / sizeof(NAMES[0]) ? NAMES[mode] : "?";
+}
+
 // === SPI Communication (16-bit opcode, two-transaction) ===
 
 void RadioLR1121::write_command_(uint16_t opcode, const uint8_t *params, uint8_t len) {
@@ -128,13 +136,20 @@ void RadioLR1121::read_buffer_(uint8_t offset, uint8_t len, uint8_t *data) {
 }
 
 uint32_t RadioLR1121::read_irq_status_raw() {
-  // GetStatus reads the IRQ status non-destructively: it returns Stat1, Stat2, then the 32-bit
+  uint8_t stat2 = 0;
+  return this->read_status_(stat2);
+}
+
+uint32_t RadioLR1121::read_status_(uint8_t &stat2) {
+  // GetStatus reads the IRQ status non-destructively (it clears only Stat2's reset-cause bits, so
+  // they read back cleared here): it returns Stat1, Stat2, then the 32-bit
   // IRQ status word — cross-checked against RadioLib's
   // LRxxxx::getIrqStatus(): 6 bytes total [Stat1, Stat2, IRQ_b3..IRQ_b0]. read_command_
-  // already consumes Stat1 into last_stat1_, so only 5 more bytes remain: Stat2 (resp[0],
-  // unused) followed by the 4 IRQ bytes (resp[1..4]).
+  // already consumes Stat1 into last_stat1_, so only 5 more bytes remain: Stat2 (resp[0])
+  // followed by the 4 IRQ bytes (resp[1..4]).
   uint8_t resp[5] = {0};
   this->read_command_(LR1121_CMD_GET_STATUS, nullptr, 0, resp, sizeof(resp));
+  stat2 = resp[0];
   return (static_cast<uint32_t>(resp[1]) << 24) | (static_cast<uint32_t>(resp[2]) << 16) |
          (static_cast<uint32_t>(resp[3]) << 8) | static_cast<uint32_t>(resp[4]);
 }
@@ -278,6 +293,23 @@ bool RadioLR1121::init() {
 
   ESP_LOGI(TAG, "LR1121 initialized");
   return true;
+}
+
+void RadioLR1121::log_tx_timeout_state(uint32_t irq_status) {
+  uint8_t stat2 = 0;
+  (void) this->read_status_(stat2);
+  uint16_t const errors = this->get_errors_();
+  char errbuf[DEVICE_ERROR_STR_SIZE];
+  lr1121_format_device_errors(errors, errbuf, sizeof(errbuf));
+  // configure_radio_() sets the TX fallback to STDBY_XOSC, so: STDBY_XOSC with TX-done flagged = the
+  // frame ended and only the interrupt went missing (DIO1 path); STDBY_XOSC without it = SetTx never
+  // took effect; STDBY_RC = the chip reset or browned out and lost that setting with the rest of its
+  // configuration; TX = still sending long past the air time. A set error flag names the block that
+  // failed. The reset-cause bits of Stat2 are not decoded: GetStatus clears them, and the TX wait
+  // polls GetStatus right up to this call, so they would read "cleared" even after a reset.
+  ESP_LOGE(TAG, "TX timeout chip state: stat2 0x%02X (mode=%s), tx_done=%d, device errors 0x%04X (%s), DIO1=%d BUSY=%d",
+           stat2, lr1121_chip_mode_name(stat2), (irq_status & this->tx_done_bit()) != 0, errors, errbuf,
+           this->irq_pin_->digital_read(), this->busy_pin_->digital_read());
 }
 
 void RadioLR1121::dump_debug() {

@@ -301,12 +301,12 @@ end of a transmission within the frame's own air time plus a quarter of a second
 that copy up. The frame may still have gone out: a cover can move even though every copy logs a
 timeout.
 
-On an SX1262 board the next line, `TX timeout chip state: status 0x.. (mode=..., cmd=...), tx_done=...`,
+On an SX1262 or LR1121 board the next line, `TX timeout chip state: ... (mode=...), tx_done=...`,
 tells you where to look:
 
 - **`mode=STDBY_XOSC` and `tx_done=1`**: the transmission finished, but its interrupt never reached
-  the ESP32. Check the `dio1_pin` wiring and solder joint, and that the pin is not a strapping pin
-  such as GPIO12.
+  the ESP32. Check the `dio1_pin` wiring and solder joint (`DIO1=` shows the pin's level), and that
+  the pin is not a strapping pin such as GPIO12.
 - **`mode=STDBY_XOSC` and `tx_done=0`**: the radio never started the transmission. Post the log in
   an issue.
 - **`mode=STDBY_RC`**: the chip reset during the transmission and lost its settings. That points

@@ -887,3 +887,52 @@ TEST(RadioLR1121, DefaultStartPreambleComesFromTheSharedSoftPhy) {
   EXPECT_GT(radio.default_start_preamble(), NORMAL_START_PREAMBLE)
       << "the soft PHY needs more than the protocol's documented preamble";
 }
+
+// ============================================================================
+// TX timeout: the chip state is read before standby
+// ============================================================================
+
+TEST(Lr1121StatusDecoder, NamesTheChipMode) {
+  // Stat2: bits 7:4 reset cause, bits 3:1 chip mode, bit 0 running from flash.
+  EXPECT_STREQ(lr1121_chip_mode_name(0x1 << 1), "STDBY_RC");
+  EXPECT_STREQ(lr1121_chip_mode_name((0x2 << 1) | 0x01), "STDBY_XOSC") << "the flash bit is not part of the mode";
+  EXPECT_STREQ(lr1121_chip_mode_name(0x5 << 1), "TX");
+  EXPECT_STREQ(lr1121_chip_mode_name(0x7 << 1), "?");
+  EXPECT_STREQ(lr1121_chip_mode_name((0x2 << 4) | (0x5 << 1)), "TX") << "the reset-cause bits are not part of the mode";
+}
+
+TEST(RadioLR1121, TxTimeoutReadsStatusAndErrorsBeforeStandby) {
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  ScriptedSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, 0x07);
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  // The host harness never raises TxDone, so the send ends in the timeout branch.
+  EXPECT_FALSE(radio.send_packet(frame, sizeof(frame), cfg).sent());
+
+  // After SetTx: GetStatus, GetErrors, then SetStandby, so the log shows the state the transmission
+  // left the chip in rather than the one standby puts it in.
+  const auto opcode_at = [&](size_t i) -> int {
+    const auto &tx = spi.transactions()[i];
+    return tx.size() >= 2 ? (tx[0] << 8) | tx[1] : -1;
+  };
+  int set_tx = -1, status = -1, errors = -1, standby = -1;
+  for (size_t i = 0; i < spi.transactions().size(); i++) {
+    const int op = opcode_at(i);
+    const int idx = static_cast<int>(i);
+    if (op == LR1121_CMD_SET_TX)
+      set_tx = idx;
+    else if (set_tx >= 0 && status < 0 && op == LR1121_CMD_GET_STATUS)
+      status = idx;
+    else if (status >= 0 && errors < 0 && op == LR1121_CMD_GET_ERRORS)
+      errors = idx;
+    else if (errors >= 0 && standby < 0 && op == LR1121_CMD_SET_STANDBY)
+      standby = idx;
+  }
+  ASSERT_GE(set_tx, 0);
+  EXPECT_GT(status, set_tx) << "GetStatus must follow the timed-out SetTx";
+  EXPECT_GT(errors, status) << "GetErrors must follow GetStatus";
+  EXPECT_GT(standby, errors) << "standby comes last, after the chip state is read";
+}

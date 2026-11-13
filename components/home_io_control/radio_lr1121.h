@@ -126,6 +126,11 @@ static constexpr uint16_t LR1121_ERR_PLL_LOCK = 0x0080;       ///< PLL failed to
 /// name in the table so an undocumented flag still shows up in the log.
 void lr1121_format_device_errors(uint16_t errors, char *buf, size_t buf_size);
 
+/// @brief Name of the chip mode in a Stat2 byte (bits 3:1, LR1121 user manual "Status Registers").
+/// @param stat2 The Stat2 byte GetStatus returned.
+/// @return `SLEEP`, `STDBY_RC`, `STDBY_XOSC`, `FS`, `RX`, `TX`, `LOC` (Wi-Fi/GNSS scan), or `?`.
+const char *lr1121_chip_mode_name(uint8_t stat2);
+
 /// Newest LR1121 transceiver firmware known at the time this file was last updated, per the
 /// version-numbered filenames and CHANGELOG.md at
 /// https://github.com/Lora-net/radio_firmware_images/tree/master/lr1121/transceiver — the same
@@ -377,6 +382,14 @@ class RadioLR1121 : public SoftPhyDriverBase {
   /// @brief Read device error flags (for diagnostics only — see dump_debug()).
   /// @return Error bitmask (2-byte response, cross-checked against RadioLib).
   uint16_t get_errors_();
+  /// @brief Read GetStatus.
+  /// @param stat2 Receives the Stat2 byte (chip mode; its reset-cause bits read back cleared, since
+  ///        the GetStatus command clears them).
+  /// @return The 32-bit IRQ status word that follows it.
+  uint32_t read_status_(uint8_t &stat2);
+  /// @brief Log Stat2 with the chip mode, whether the IRQ word holds TX-done, the device errors and
+  /// the DIO1/BUSY pin levels after a TX that never reported TX-done.
+  void log_tx_timeout_state(uint32_t irq_status) override;
   /// @brief Clear device error flags. Called both during init (after TCXO configuration, before
   ///        calibration) and at the end of configure_radio_(), which records them first.
   void clear_errors_();
