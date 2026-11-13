@@ -17,7 +17,8 @@ and hubs that make good key sources, the wired bridges, and the products control
 | MSU 100100 solar awning screen | ⚠️ Partial — open and close work; `stop` has no effect while it moves |
 | SSL solar roller shutter | ⚠️ Partial — Discover & Pair, open, close, position and status work; `stop` reaches it mid-travel, but not on every attempt |
 | INTEGRA SOLAR blinds | 📣 Reported, no capture |
-| SML electric roller shutter, 1W enrollment + control | ✅ Confirmed — Gear on the KLI, wait for the ready sequence, then Enroll, `low_power: false`. Two-way Discover & Pair finds nothing |
+| SML electric roller shutter, 1W enrollment + control | ✅ Confirmed — Gear on the KLI, wait for the ready sequence, then Enroll, `low_power: false` |
+| SML electric roller shutter, two-way | 📣 Reported (one reporter) — Discover & Pair after Gear, with a 32-byte discovery preamble; open, close, stop mid-travel, set position and status |
 | Interior blinds behind a KLI 312, 1W enrollment + control | ✅ Confirmed — `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`, `low_power: true` |
 
 ## Onboarding routes
@@ -42,7 +43,8 @@ try **1W enrollment**, the route confirmed on an SML roller shutter and on KLI 3
 Gear button on that remote, wait for the product's ready sequence to finish, then press the hub's
 Enroll button. It gives open/close/stop without status (see
 [Sending 1W commands](../configuration/oneway-transmit.md)). An SSL solar roller shutter pairs
-two-way directly instead; see [SSL solar roller shutter](#ssl-solar-roller-shutter) below.
+two-way directly instead; see [SSL solar roller shutter](#ssl-solar-roller-shutter) below. An SML
+roller shutter has been reported to pair two-way too; see the SML section below.
 
 ## SSL solar roller shutter
 
@@ -99,6 +101,40 @@ status polls that follow (the one right after the `stop` makes up to three tries
 halts and its real position arrives about a second later.
 It does not land on every attempt — press stop again if the shutter keeps moving, or use the wall
 remote.
+
+## SML electric roller shutter
+
+The mains-powered SML takes either route. 1W enrollment gives open, close and stop without
+status, as described under Onboarding routes above. Two-way pairing, reported by one user
+on an SX1262 board (issue #230), gives status, position and a working stop mid-travel as well.
+
+**Two-way pairing.** Set the discovery preamble short, as for the SSL:
+
+```yaml
+home_io_control:
+  tuning:
+    pairing_discovery_preamble: 32
+    pairing_discovery_ack_capable: true
+```
+
+Press Gear on the shutter's own KLI 310 for about one second; the shutter starts to jog. While it
+jogs, press **Discover & Pair**. Press it again if the first search gets no answer: in the report
+the second search found the shutter. Pairing ends the registration window, so the shutter stops
+jogging. No motor reset is needed, and the KLI remotes and a 1W enrollment of the same shutter
+keep working. With the default discovery settings Discover & Pair found nothing (issue #17), and
+it is not known yet which of the two settings above is the one that matters.
+
+Once paired, the shutter answers status reads while it moves, with the time left to its target,
+so the position in Home Assistant follows the move. Stop mid-travel works, set position lands
+within a few percent, and a press on a linked KLI shows up as described in
+[Linked remotes](../configuration/remotes.md).
+
+**Several shutters on one KUX 110 run one at a time.** A shutter commanded while another one on
+the same KUX 110 moves accepts the command and starts when the first has finished. While it waits,
+it reports itself stopped at its old position, so Home Assistant can show it idle and miss the move
+that follows. The next status read shows where it ended up; set
+[`status_refresh_interval`](../configuration/cover.md#refreshing-the-status-at-rest) to have one
+within a known time. The group KLI moves the shutters one after the other.
 
 ## Working YAML
 
@@ -159,11 +195,13 @@ moves the window to its predefined air-exchange opening rather than fully open.
   `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`. The remote's own `0x2E` log lines after Gear name
   the classes. Confirmed in issue #74 (see
   [Sending 1W commands](../configuration/oneway-transmit.md)).
-- **The KUX 110 is a power supply, not a radio bridge.** It feeds 24 V DC to a mains-powered product
-  such as an SML roller shutter; the io-homecontrol receiver is in the product's own motor, and each
-  KLI pairs with each product directly. An SML can equally be powered from an electric roof window
-  with no KUX at all. If several products share one supply, a reset that works by interrupting
-  power resets every product connected to it — including their pairings with the hub.
+- **The KUX 110 powers the products; each KLI pairs with each product directly.** It feeds 24 V DC
+  to mains-powered products such as SML roller shutters, and the io-homecontrol receiver that the
+  hub and the KLIs talk to is in each product's own motor. The KUX 110 also has an RF unit of its
+  own according to its instructions, and products on one KUX 110 run one at a time (see the SML
+  section above); what that RF unit does is not known. An SML can equally be powered from an
+  electric roof window with no KUX at all. If several products share one supply, a reset that works
+  by interrupting power resets every product connected to it — including their pairings with the hub.
   Disconnect the others first if only one should be reset.
 - **One Gear press can open several products at once.** Gear opens registration on every product
   that KLI drives, and each of them then registers whatever control is enrolled next. For one Home
@@ -241,7 +279,7 @@ with the long preamble ignored and the short one answered; a set-position ack; a
 polls that go unanswered while it moves).
 
 Field reports: #17 (SML discovery), #74 (SML roller shutter and KLI 312 blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
-screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed).
+screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #230 (SML two-way pairing, shutters queued on one KUX 110).
 
 ## See also
 
