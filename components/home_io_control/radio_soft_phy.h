@@ -97,6 +97,25 @@ static constexpr uint16_t IO868_SYNC_WORD_BYTES = 3;
 /// @return Air time in microseconds, rounded up.
 uint32_t io868_tx_air_time_us(uint16_t preamble_len, uint8_t frame_len);
 
+/// @brief Slack a driver allows past a transmission's own air time before it gives up waiting for
+/// the chip's TX-done interrupt.
+///
+/// Covers what happens around the air time on every 868 MHz chip: PLL lock and PA ramp before the
+/// first bit, the front-end switch, the 100 µs poll step and task preemption on the ESP32 loop.
+/// Each of these is milliseconds at most, so a chip that has not reported TX-done this long after
+/// its frame should have ended has stopped transmitting (reset, brown-out, lost interrupt mapping)
+/// and waiting longer only blocks the loop: a 1W command sends four copies, each of which would
+/// otherwise wait out a fixed multi-second guard.
+static constexpr uint32_t TX_DONE_GUARD_MS = 250;
+
+/// @brief How long a driver waits for TX-done after starting a transmission.
+/// @param air_time_us The transmission's air time (`RadioDriver::tx_air_time_us()`).
+/// @return The air time rounded up to whole milliseconds, plus @ref TX_DONE_GUARD_MS.
+constexpr uint32_t tx_done_timeout_ms(uint32_t air_time_us) {
+  constexpr uint32_t us_per_ms = 1000;
+  return ((air_time_us + us_per_ms - 1) / us_per_ms) + TX_DONE_GUARD_MS;
+}
+
 /// @brief Recover a frame's total length from the very first UART cell of a reception.
 ///
 /// CTRL0 bits [4:0] hold `frame_length - 1` (see proto_frame.h), and CTRL0 is the first byte

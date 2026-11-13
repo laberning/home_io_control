@@ -185,6 +185,29 @@ FemTxEstimate sx1262_fem_tx_estimate(FemProfile profile, uint8_t tx_power) {
   return {clamped, sx1262_fem_estimated_antenna_dbm(profile, clamped)};
 }
 
+const char *sx1262_chip_mode_name(uint8_t chip_status) {
+  // GetStatus bits 6:4 = chip mode (datasheet "Status Bytes" table).
+  switch ((chip_status >> 4) & 0x07) {
+    case 2:
+      return "STDBY_RC";
+    case 3:
+      return "STDBY_XOSC";
+    case 4:
+      return "FS";
+    case 5:
+      return "RX";
+    case 6:
+      return "TX";
+    default:
+      return "?";
+  }
+}
+
+uint8_t sx1262_command_status(uint8_t chip_status) {
+  // GetStatus bits 3:1 = status of the last command.
+  return (chip_status >> 1) & 0x07;
+}
+
 void sx1262_format_device_errors(uint16_t errors, char *buf, size_t buf_size) {
   format_device_error_bits(errors, SX1262_DEVICE_ERROR_BITS, buf, buf_size);
 }
@@ -437,35 +460,36 @@ bool RadioSX1262::init() {
   return true;
 }
 
-void RadioSX1262::dump_debug() {
+uint8_t RadioSX1262::read_chip_status_() {
   this->wait_busy_();
   this->spi_->spi_enable();
+  // GetStatus answers on the opcode byte itself; the trailing NOP completes the command.
   uint8_t const chip_status = this->spi_->spi_transfer(SX1262_GET_STATUS);
   this->spi_->spi_transfer(0x00);
   this->spi_->spi_disable();
+  return chip_status;
+}
 
-  uint8_t const chip_mode = (chip_status >> 4) & 0x07;
-  uint8_t const cmd_status = (chip_status >> 1) & 0x07;
-  const char *mode_str = "?";
-  switch (chip_mode) {
-    case 2:
-      mode_str = "STDBY_RC";
-      break;
-    case 3:
-      mode_str = "STDBY_XOSC";
-      break;
-    case 4:
-      mode_str = "FS";
-      break;
-    case 5:
-      mode_str = "RX";
-      break;
-    case 6:
-      mode_str = "TX";
-      break;
-    default:
-      break;
-  }
+void RadioSX1262::log_tx_timeout_state(uint32_t irq_status) {
+  uint8_t const chip_status = this->read_chip_status_();
+  uint16_t const errors = this->get_device_errors_();
+  char errbuf[DEVICE_ERROR_STR_SIZE];
+  sx1262_format_device_errors(errors, errbuf, sizeof(errbuf));
+  // configure_radio_() sets the TX fallback to STDBY_XOSC, so: STDBY_XOSC with TX-done flagged = the
+  // frame ended and only the interrupt went missing (DIO1 path); STDBY_XOSC without it = SetTx never
+  // took effect; STDBY_RC = the chip reset or browned out and lost that setting with the rest of its
+  // configuration; TX = still sending long past the air time. A set error flag names the block that
+  // failed. The command-status field reflects the GetIrqStatus read just before, not the TX.
+  ESP_LOGE(TAG,
+           "TX timeout chip state: status 0x%02X (mode=%s, cmd=%u), tx_done=%d, device errors 0x%04X (%s), DIO1=%d "
+           "BUSY=%d",
+           chip_status, sx1262_chip_mode_name(chip_status), sx1262_command_status(chip_status),
+           (irq_status & this->tx_done_bit()) != 0, errors, errbuf, this->dio1_pin_->digital_read(),
+           this->busy_pin_->digital_read());
+}
+
+void RadioSX1262::dump_debug() {
+  uint8_t const chip_status = this->read_chip_status_();
 
   uint8_t sync[3];
   this->read_register_(SX1262_REG_SYNC_WORD, sync, 3);
@@ -477,7 +501,8 @@ void RadioSX1262::dump_debug() {
 
   ESP_LOGCONFIG(TAG, "  SX1262 Diagnostic:");
   ESP_LOGCONFIG(TAG, "    TCXO voltage: %s", tcxo_voltage_label(this->tcxo_voltage_));
-  ESP_LOGCONFIG(TAG, "    Chip status: 0x%02X (mode=%s, cmd=%u)", chip_status, mode_str, cmd_status);
+  ESP_LOGCONFIG(TAG, "    Chip status: 0x%02X (mode=%s, cmd=%u)", chip_status, sx1262_chip_mode_name(chip_status),
+                sx1262_command_status(chip_status));
   ESP_LOGCONFIG(TAG, "    BUSY=%d DIO1=%d", this->busy_pin_->digital_read(), this->dio1_pin_->digital_read());
   ESP_LOGCONFIG(TAG, "    BUSY wait overruns (task preempted, chip ready): %" PRIu32, this->get_busy_overruns_());
   ESP_LOGCONFIG(TAG, "    Sync word: %02X %02X %02X (expect 57 FD 99)", sync[0], sync[1], sync[2]);

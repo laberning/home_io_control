@@ -298,5 +298,16 @@ press in normal operation.
   fires a Home Assistant automation — see
   [Linked remotes](configuration/remotes.md#linked-remotes).
 - **Read the full reference** at [Configuration](configuration/index.md) for every option.
+- **Pick up a fix as soon as it lands.** ESPHome downloads the component from GitHub at most once a
+  day, so a rebuild right after a change can still use the old copy. Add `refresh: always` to the
+  `external_components:` entry to download it on every build:
+
+```yaml
+external_components:
+  - source: github://laberning/home_io_control
+    refresh: always
+```
+
+  Remove the line again afterwards, since every build then waits for the download.
 - **If the radio is unreliable**, [Radio tuning](configuration/tuning.md) covers timing
   and discovery parameters.

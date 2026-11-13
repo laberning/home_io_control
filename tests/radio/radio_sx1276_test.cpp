@@ -392,8 +392,8 @@ TEST(RadioSX1276, SendPacketWritesPreambleFrequencyAndFifoBeforeTxWait) {
 
   // send_packet() clears the DIO latch right before its TX-done wait loop (by design — it must
   // ignore any stale flag from before the TX started), so a synchronous host test can't make
-  // that loop observe a "fired" edge and the call reliably times out (~4000 fake-millis
-  // iterations, still fast) and returns false. The bytes this test cares about — preamble,
+  // that loop observe a "fired" edge and the call reliably times out (after the frame's air time
+  // plus TX_DONE_GUARD_MS of fake millis, still fast) and returns false. The bytes this test cares about — preamble,
   // frequency, FIFO — are all written before that wait starts, so the timeout doesn't affect
   // what's being asserted here (mirrors radio_lr1121_test.cpp's SendPacketWritesUartEncodedBytes).
   TxResult result = radio.send_packet(payload, sizeof(payload), cfg);
@@ -408,6 +408,30 @@ TEST(RadioSX1276, SendPacketWritesPreambleFrequencyAndFifoBeforeTxWait) {
 
   ASSERT_EQ(spi.tx_fifo().size(), sizeof(payload));
   EXPECT_TRUE(std::equal(spi.tx_fifo().begin(), spi.tx_fifo().end(), payload));
+}
+
+TEST(RadioSX1276, TxDoneWaitGivesUpOneGuardAfterTheFrameShouldHaveEnded) {
+  // ManualClock is safe: the wait loop's delayMicroseconds() step advances it on every pass, and the
+  // register model reflects every mode write, so no poll can spin without time advancing.
+  esphome::test_clock::ManualClock clock;
+  for (uint16_t preamble : {SHORT_PREAMBLE, LONG_PREAMBLE}) {
+    RegisterModelSpi spi;
+    MockPin rst, dio0, dio4(false);
+    RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+    const uint8_t payload[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+    RadioTxConfig cfg;
+    cfg.freq_hz = FREQ_CH2;
+    cfg.preamble_len = preamble;
+    uint32_t const air_ms = (radio.tx_air_time_us(sizeof(payload), cfg) + 999) / 1000;
+
+    uint32_t const start = esphome::millis();
+    EXPECT_FALSE(radio.send_packet(payload, sizeof(payload), cfg).sent());
+    uint32_t const elapsed = esphome::millis() - start;
+
+    EXPECT_GT(elapsed, air_ms) << "a frame still on air must not be declared lost (preamble " << preamble << ")";
+    EXPECT_LE(elapsed, tx_done_timeout_ms(air_ms * 1000) + 2)
+        << "a chip that never reports TX-done costs one guard past the air time (preamble " << preamble << ")";
+  }
 }
 
 namespace {

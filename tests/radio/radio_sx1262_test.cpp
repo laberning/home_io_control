@@ -489,3 +489,56 @@ TEST(Sx1262DeviceErrorDecoder, TinyBufferStaysNulTerminatedWithoutOverflow) {
   EXPECT_EQ(buf[sizeof(buf) - 1], '\0') << "must never write past the caller's buffer";
   EXPECT_LT(std::string(buf).size(), sizeof(buf));
 }
+
+// ============================================================================
+// TX timeout: the chip state is read before standby
+// ============================================================================
+
+TEST(Sx1262StatusDecoder, NamesTheChipModeAndCommandStatus) {
+  // GetStatus: bits 6:4 chip mode, bits 3:1 command status.
+  EXPECT_STREQ(sx1262_chip_mode_name(0x2 << 4), "STDBY_RC");
+  EXPECT_STREQ(sx1262_chip_mode_name(0x3 << 4), "STDBY_XOSC");
+  EXPECT_STREQ(sx1262_chip_mode_name(0x4 << 4), "FS");
+  EXPECT_STREQ(sx1262_chip_mode_name(0x5 << 4), "RX");
+  EXPECT_STREQ(sx1262_chip_mode_name((0x6 << 4) | (0x6 << 1)), "TX");
+  EXPECT_STREQ(sx1262_chip_mode_name(0x0), "?");
+  EXPECT_EQ(sx1262_command_status((0x6 << 4) | (0x6 << 1)), 6u);
+  EXPECT_EQ(sx1262_command_status(0x2 << 4), 0u);
+}
+
+TEST(RadioSX1262Tx, TimeoutReadsChipStatusAndErrorsBeforeStandby) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, TCXO_CODE_1_8V);
+  ASSERT_TRUE(radio.init());
+
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  const size_t before_tx = spi.transactions().size();
+  // The host harness never raises TxDone, so the send ends in the timeout branch.
+  EXPECT_FALSE(radio.send_packet(frame, sizeof(frame), cfg).sent());
+
+  // The order after SetTx: GetStatus, GetDeviceErrors, then SetStandby, so the log shows the state
+  // the transmission left the chip in rather than the one standby puts it in.
+  int set_tx = -1, status = -1, errors = -1, standby = -1;
+  const auto &txs = spi.transactions();
+  for (size_t i = before_tx; i < txs.size(); i++) {
+    if (txs[i].empty())
+      continue;
+    const int idx = static_cast<int>(i);
+    if (txs[i][0] == SX1262_SET_TX)
+      set_tx = idx;
+    else if (set_tx >= 0 && status < 0 && txs[i][0] == SX1262_GET_STATUS)
+      status = idx;
+    else if (status >= 0 && errors < 0 && txs[i][0] == SX1262_GET_DEVICE_ERRORS)
+      errors = idx;
+    else if (errors >= 0 && standby < 0 && txs[i][0] == SX1262_SET_STANDBY)
+      standby = idx;
+  }
+  ASSERT_GE(set_tx, 0);
+  EXPECT_GT(status, set_tx) << "GetStatus must follow the timed-out SetTx";
+  EXPECT_GT(errors, status) << "GetDeviceErrors must follow GetStatus";
+  EXPECT_GT(standby, errors) << "standby comes last, after the chip state is read";
+}

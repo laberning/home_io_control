@@ -293,6 +293,32 @@ The radio's TCXO is not coming up on the control voltage it is being given.
   radio is working, but the first startup window was marginal; raising `tcxo_voltage` one step
   removes the retry.
 
+## The log shows a TX timeout
+
+A command takes a second or more, a STOP arrives late, and the log shows
+`TX timeout after N ms (air time N us) — DIO/IRQ pin never fired`. The radio did not report the
+end of a transmission within the frame's own air time plus a quarter of a second, so the hub gave
+that copy up. The frame may still have gone out: a cover can move even though every copy logs a
+timeout.
+
+On an SX1262 board the next line, `TX timeout chip state: status 0x.. (mode=..., cmd=...), tx_done=...`,
+tells you where to look:
+
+- **`mode=STDBY_XOSC` and `tx_done=1`**: the transmission finished, but its interrupt never reached
+  the ESP32. Check the `dio1_pin` wiring and solder joint, and that the pin is not a strapping pin
+  such as GPIO12.
+- **`mode=STDBY_XOSC` and `tx_done=0`**: the radio never started the transmission. Post the log in
+  an issue.
+- **`mode=STDBY_RC`**: the chip reset during the transmission and lost its settings. That points
+  at the power supply; see the next section.
+- **`mode=TX`**: the chip is still transmitting long after the frame should have ended. Post the
+  log in an issue.
+- **A named device error** such as `PLL_LOCK_ERR` or `PA_RAMP_ERR`: the chip could not lock its
+  frequency or ramp its amplifier. Check `tcxo_voltage` and the supply.
+
+Lowering `tx_power` by a few steps is a quick test: if the timeouts stop, the supply cannot deliver
+the transmit burst.
+
 ## Random resets or an unreliable link on USB power
 
 Exchanges fail for no clear reason, the hub reboots in the middle of a command, or the same setup

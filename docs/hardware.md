@@ -78,8 +78,9 @@ hardware bring-up.
 | LilyGO LoRa32 V1.3 SX1276 | SX1276 | 📣 Reported to work | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | |
 | LilyGO T3 V1.6.1 (TTGO LoRa32 V2.1) SX1276 | SX1276 | 📣 Reported to work | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 23`, `dio0_pin: 26` | Same pins as the Heltec V2 except `rst_pin: 23`. Three users report it working: one with VELUX SSL solar roller shutters, one with VELUX roof windows including position and the rain sensor (issue #225), one with Thermor EMOTION 3 H radiators (issue #228). Its OLED sits on I2C SDA 21 / SCL 22 with no reset pin according to LilyGO's pinout, so the Heltec example's display block (SDA 4 / SCL 15 / reset 16) leaves it dark until you change the pins |
 | LilyGO T-Beam 1W SX1262 | SX1262 | Untested | `clk_pin: 13`, `mosi_pin: 11`, `miso_pin: 12` | `cs_pin: 15`, `rst_pin: 3`, `dio1_pin: 1`, `busy_pin: 38` | Use `fem: xy16p35`, `vfem_pin: 40` ("LDO EN"), `fem_pa_pin: 21` ("LoRa Ctrl") — per LilyGO's own T-Beam 1W SX1262 docs and schematic; see [Front-end module (FEM) support](#front-end-module-fem-support) below. TCXO control voltage not yet confirmed; do not build from this row until a board package ships |
-| Heltec WiFi LoRa32 V4.2 | SX1262 | Untested | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `tcxo_voltage: 1_8V`, `fem: gc1109`; see [Front-end module (FEM) support](#front-end-module-fem-support) below; matches [heltec-wifi-lora-32-v4-2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-2.yaml) |
+| Heltec WiFi LoRa32 V4.2 | SX1262 | 📣 Reported to work (1W) | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `tcxo_voltage: 1_8V`, `fem: gc1109`; see [Front-end module (FEM) support](#front-end-module-fem-support) below; matches [heltec-wifi-lora-32-v4-2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-2.yaml). One user enrolls and drives a VELUX FSC solar pleated blind over 1W with it (issue #74); two-way use is not reported yet |
 | Heltec WiFi LoRa32 V4.3 | SX1262 | ✅ Confirmed to work | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `tcxo_voltage: 1_8V`, `fem: kct8103l`; also covers the `heltec_v4_r8` variant; see [Front-end module (FEM) support](#front-end-module-fem-support) below; matches [heltec-wifi-lora-32-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-3.yaml) |
+| ESP32 DevKit + XL1262-P01 module (LLCC68, hand-wired) | LLCC68, as `sx1262` | 📣 Reported (receive and 1W enrollment work; transmit under investigation) | `clk_pin: 18`, `mosi_pin: 23`, `miso_pin: 19` (the reporter's wiring) | `cs_pin: 26`, `rst_pin: 25`, `dio1_pin: 32`, `busy_pin: 27` | The LLCC68 is a reduced SX1262 that keeps the GFSK modem this project uses, so `radio_type: sx1262` drives it. The module has a plain crystal: set `tcxo_voltage: none` and widen the receive filter to 156.2 kHz with [`sx1262_rx_bandwidth`](configuration/tuning.md#sx1262_rx_bandwidth), without which it heard no remote. Keep DIO1 off GPIO12, a strapping pin. Frames go out and the shutter moves, but the radio never reports the end of a transmission, so each copy runs into the TX timeout; see [The log shows a TX timeout](troubleshooting.md#the-log-shows-a-tx-timeout). Issue #177 |
 | Any other ESP32 + SX1276/SX1262/LR1121 | Any | Untested | Board-specific | Board-specific | Use the chip pinout and set the appropriate `sx1276`, `sx1262`, or `lr1121` `radio_type` |
 
 GPIO5 (`clk_pin` on the classic-ESP32 boards above) and GPIO3 (`miso_pin` on the ESP32-S3 T3-S3
@@ -189,7 +190,7 @@ home_io_control:
   tx_power: 1
 ```
 
-The V4.3 is validated against real IO-Homecontrol hardware; the V4.2 is not — see
+The V4.3 is validated against real IO-Homecontrol hardware; the V4.2 has one 1W field report — see
 [Board notes](#board-notes). Keep `tx_power: 1` on both, whatever your radio range, and read
 [Radiated power](#front-end-module-fem-support) before raising it.
 
@@ -214,10 +215,10 @@ command set.
   is developed on. The V4.3's FEM makes `tx_power` mean something different from every other board
   here: keep the `tx_power: 1` its board package ships and read
   [Front-end module (FEM) support](#front-end-module-fem-support) above before changing it.
-- **Heltec V4.2** (`fem: gc1109`) has not been run against real IO-Homecontrol hardware. Its FEM is
-  a different part, wired the other way round from the V4.3's, so the V4.3 result does not carry
-  over. The board package and the FEM switching logic are complete; prefer the V3 or the V4.3
-  until a field report lands.
+- **Heltec V4.2** (`fem: gc1109`) has one field report: a user enrolls and drives a VELUX solar
+  pleated blind over 1W with it (issue #74). Two-way use is not reported yet. Its FEM is a
+  different part, wired the other way round from the V4.3's, so the V4.3 result does not carry
+  over; prefer the V3 or the V4.3 for a two-way setup until a report lands.
 - **V2 / V3 clones** (non-Heltec boards with the same silkscreen and pin map) are common and
   generally work if the SPI and radio pins match the corresponding row above — treat them as
   `Untested` until confirmed.

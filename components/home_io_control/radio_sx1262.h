@@ -127,6 +127,17 @@ FemTxEstimate sx1262_fem_tx_estimate(FemProfile profile, uint8_t tx_power);
 /// name in the table so an undocumented flag still shows up in the log.
 void sx1262_format_device_errors(uint16_t errors, char *buf, size_t buf_size);
 
+/// @brief Name of the chip mode in a GetStatus byte (bits 6:4).
+/// @param chip_status The byte GetStatus returned.
+/// @return `STDBY_RC`, `STDBY_XOSC`, `FS`, `RX`, `TX`, or `?` for a reserved or unused value.
+const char *sx1262_chip_mode_name(uint8_t chip_status);
+
+/// @brief Command status field of a GetStatus byte (bits 3:1).
+/// @param chip_status The byte GetStatus returned.
+/// @return The 3-bit field (2 = data available, 3 = command timeout, 4 = processing error,
+///         5 = execution failure, 6 = TX done).
+uint8_t sx1262_command_status(uint8_t chip_status);
+
 // Sync word register base address
 static constexpr uint16_t SX1262_REG_SYNC_WORD = 0x06C0;
 static constexpr uint16_t SX1262_REG_RX_GAIN = 0x08AC;
@@ -314,6 +325,11 @@ class RadioSX1262 : public SoftPhyDriverBase {
   /// @brief Read device error flags (and clear them).
   /// @return Error bitmask.
   uint16_t get_device_errors_();
+  /// @brief Read the GetStatus byte (chip mode and last command status).
+  uint8_t read_chip_status_();
+  /// @brief Log GetStatus, whether the IRQ word holds TX-done, the device errors and the DIO1/BUSY
+  /// pin levels after a TX that never reported TX-done.
+  void log_tx_timeout_state(uint32_t irq_status) override;
   /// @brief Clear device error flags.
   void clear_device_errors_();
   /// @copydoc SoftPhyDriverBase::front_end_rx_gain_db

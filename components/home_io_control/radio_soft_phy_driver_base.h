@@ -457,6 +457,15 @@ class SoftPhyDriverBase : public RadioDriver {
   /// apply its high-ACP TX-quality workaround, which Semtech's own reference applies unconditionally
   /// before every SetRx/SetTx.
   virtual void before_tx_arm() {}
+  /// @brief Log the chip's own state after a transmission that never reported TX-done, before the
+  /// driver forces standby. No-op by default.
+  ///
+  /// The shared flow already logs the IRQ word; a chip with a status or error register adds what
+  /// tells the cases apart: sent but the interrupt never reached the host, never started, still
+  /// transmitting, back in standby after a reset or brown-out, or stopped by a device error.
+  /// @param irq_status The IRQ word read after the wait gave up (@ref read_irq_status_raw), so the
+  ///        override can say whether the chip itself flagged TX-done (@ref tx_done_bit).
+  virtual void log_tx_timeout_state(uint32_t irq_status) { (void) irq_status; }
   /// @brief Hook run as part of @ref reset_rx_state_, before re-entering RX. No-op by default;
   /// SX1262 overrides this to (re-)write its buffer base address, which LR1121 doesn't need.
   virtual void configure_buffer_base() {}

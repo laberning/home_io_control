@@ -528,13 +528,22 @@ TxResult SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const 
   this->start_tx();
 
   // Wait for an actual TxDone IRQ. The IRQ pin is shared with RX-related events, so a stale or
-  // unrelated interrupt must not be treated as TX completion.
+  // unrelated interrupt must not be treated as TX completion. The wait is bounded by the frame's
+  // own air time plus a guard, so a chip that stopped transmitting costs a fraction of a second.
+  uint32_t const air_time_us = this->tx_air_time_us(len, tx_config);
+  uint32_t const timeout_ms = tx_done_timeout_ms(air_time_us);
   uint32_t const start = millis();
   uint32_t tx_irq = 0;
   while (true) {
     if (!this->is_dio_fired()) {
-      if (millis() - start > 4000) {
-        ESP_LOGE(TAG, "TX timeout — DIO/IRQ pin never fired");
+      if (millis() - start > timeout_ms) {
+        // Read before standby, so the log shows the state the chip was left in by the TX.
+        tx_irq = this->read_irq_status_raw();
+        ESP_LOGE(TAG,
+                 "TX timeout after %" PRIu32 " ms (air time %" PRIu32 " us) — DIO/IRQ pin never fired, IRQ status "
+                 "0x%08" PRIX32,
+                 timeout_ms, air_time_us, tx_irq);
+        this->log_tx_timeout_state(tx_irq);
         this->set_mode_standby();
         return TxResult::failed();
       }
@@ -552,8 +561,9 @@ TxResult SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const 
       this->clear_irq_status(tx_irq);
     }
 
-    if (millis() - start > 4000) {
-      ESP_LOGE(TAG, "TX timeout — no TX_DONE IRQ (last_irq=0x%08" PRIX32 ")", tx_irq);
+    if (millis() - start > timeout_ms) {
+      ESP_LOGE(TAG, "TX timeout after %" PRIu32 " ms — no TX_DONE IRQ (last_irq=0x%08" PRIX32 ")", timeout_ms, tx_irq);
+      this->log_tx_timeout_state(tx_irq);
       this->set_mode_standby();
       return TxResult::failed();
     }

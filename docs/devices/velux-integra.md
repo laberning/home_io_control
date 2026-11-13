@@ -20,6 +20,7 @@ and hubs that make good key sources, the wired bridges, and the products control
 | SML electric roller shutter, 1W enrollment + control | ✅ Confirmed — Gear on the KLI, wait for the ready sequence, then Enroll, `low_power: false` |
 | SML electric roller shutter, two-way | 📣 Reported (one reporter) — Discover & Pair after Gear, with a short discovery preamble; open, close, stop mid-travel, set position and status |
 | Interior blinds behind a KLI 312, 1W enrollment + control | ✅ Confirmed — `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`, `low_power: true` |
+| FSC solar pleated blind, 1W enrollment + control | 📣 Reported (one reporter) — reset, pair the KLI, Gear, wait for the ready sequence, then Enroll; `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`, `low_power: true`. Discover & Pair got no answer |
 
 ## Onboarding routes
 
@@ -283,7 +284,7 @@ and KLI 313 remotes, and 6 for the SSL solar roller shutter (a TaHoma pairing it
 with the long preamble ignored and the short one answered; a set-position ack; a stop and status
 polls that go unanswered while it moves).
 
-Field reports: #17 (SML discovery), #74 (SML roller shutter and KLI 312 blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
+Field reports: #17 (SML discovery), #74 (SML roller shutter, KLI 312 blind and FSC pleated blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
 screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #230 (SML two-way pairing, shutters queued on one KUX 110).
 
 ## See also

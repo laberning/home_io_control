@@ -874,3 +874,37 @@ TYPED_TEST(SoftPhyDriver, NoThresholdMeansNoMeasurement) {
   radio.send_packet(kCcaFrame, sizeof(kCcaFrame), cfg);
   EXPECT_TRUE(radio.read_freqs.empty());
 }
+
+// ---------------------------------------------------------------------------
+// send_packet(): the TX-done wait is bounded by the frame's own air time
+// ---------------------------------------------------------------------------
+
+TEST(TxDoneTimeout, IsTheAirTimeInWholeMillisecondsPlusTheGuard) {
+  EXPECT_EQ(tx_done_timeout_ms(0), TX_DONE_GUARD_MS);
+  EXPECT_EQ(tx_done_timeout_ms(1), TX_DONE_GUARD_MS + 1) << "a partial millisecond rounds up";
+  EXPECT_EQ(tx_done_timeout_ms(1000), TX_DONE_GUARD_MS + 1);
+  EXPECT_EQ(tx_done_timeout_ms(1001), TX_DONE_GUARD_MS + 2);
+}
+
+TYPED_TEST(SoftPhyDriver, TxDoneWaitGivesUpOneGuardAfterTheFrameShouldHaveEnded) {
+  // ManualClock is safe: the wait loop's delayMicroseconds() step advances it on every pass.
+  esphome::test_clock::ManualClock clock;
+  for (uint16_t preamble : {SHORT_PREAMBLE, LONG_PREAMBLE}) {
+    MockSpi spi;
+    MockPin rst, dio1, busy(false);
+    typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+    RadioTxConfig cfg{};
+    cfg.freq_hz = FREQ_CH2;
+    cfg.preamble_len = preamble;
+    uint32_t const air_ms = (radio.tx_air_time_us(sizeof(kCcaFrame), cfg) + 999) / 1000;
+
+    uint32_t const start = esphome::millis();
+    // The host harness never raises TxDone, so every send here ends in the timeout branch.
+    EXPECT_EQ(radio.send_packet(kCcaFrame, sizeof(kCcaFrame), cfg).status, TxResult::Status::FAILED);
+    uint32_t const elapsed = esphome::millis() - start;
+
+    EXPECT_GT(elapsed, air_ms) << "a frame still on air must not be declared lost (preamble " << preamble << ")";
+    EXPECT_LE(elapsed, tx_done_timeout_ms(air_ms * 1000) + 2)
+        << "a chip that never reports TX-done costs one guard past the air time (preamble " << preamble << ")";
+  }
+}

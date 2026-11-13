@@ -302,10 +302,14 @@ TxResult RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioT
   uint8_t const opmode = this->read_register_(REG_OP_MODE);
   this->write_register_(REG_OP_MODE, (opmode & 0xF8) | MODE_TX);
 
+  // Bounded by the frame's own air time plus a guard, so a chip that stopped transmitting costs a
+  // fraction of a second instead of blocking the loop.
+  uint32_t const timeout_ms = tx_done_timeout_ms(this->tx_air_time_us(len, tx_config));
   uint32_t const start = millis();
   while (!this->is_dio_fired()) {
-    if (millis() - start > 4000) {
-      ESP_LOGE(TAG, "TX timeout");
+    if (millis() - start > timeout_ms) {
+      ESP_LOGE(TAG, "TX timeout after %" PRIu32 " ms — DIO0 never fired (RegOpMode 0x%02X, RegIrqFlags2 0x%02X)",
+               timeout_ms, this->read_register_(REG_OP_MODE), this->read_register_(REG_IRQ_FLAGS2));
       this->set_mode_standby();
       return TxResult::failed();
     }

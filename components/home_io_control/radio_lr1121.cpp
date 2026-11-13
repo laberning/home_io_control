@@ -249,7 +249,7 @@ void RadioLR1121::get_rx_buffer_status(uint8_t &reported_len, uint8_t &rx_offset
 
 void RadioLR1121::start_tx() {
   // Tick base is 30.52us (32.768kHz RTC), so 0x03E800 is ~7.8s. TX is actually bounded by the
-  // software 4000ms guard in the shared send_packet(), independent of this chip-level value.
+  // shared send_packet()'s air-time-based guard (tx_done_timeout_ms()), independent of this chip-level value.
   uint8_t tx_timeout[3] = {0x03, 0xE8, 0x00};
   this->write_command_(LR1121_CMD_SET_TX, tx_timeout, sizeof(tx_timeout));
 }
