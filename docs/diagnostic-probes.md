@@ -86,7 +86,9 @@ data:
 - `probe` (required, both actions): which frame to send — see the table below.
 - `index` (`probe_device`) / `first_index` + `last_index` (`probe_sweep`): always plain strings —
   `"6"` and `"0x06"` are both accepted; anything else is rejected with a clear error rather than
-  silently defaulting to `0`. `probe_sweep` is bounded to 16 indices per call, spaced a second
+  silently defaulting to `0`. Home Assistant requires every field of an action, so pass
+  `index: "0"` to a probe that takes no index (`get_info1`, `get_info2`, `general_info3`,
+  `status_mp_fp`): the hub ignores the value. `probe_sweep` is bounded to 16 indices per call, spaced a second
   apart, and reports one line per index (answered / error-coded / silent / refused).
 - Every reply is reported as raw hex plus its command byte, deliberately uninterpreted, because
   the point of a probe is that the reply's meaning is not yet known. The one exception is a
