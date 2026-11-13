@@ -44,6 +44,10 @@ CONF_EXCHANGE_EARLY_RESPONSE_WAIT_MS = "exchange_early_response_wait_ms"
 CONF_EXCHANGE_RESPONSE_WAIT_MS = "exchange_response_wait_ms"
 CONF_EXCHANGE_TOTAL_BUDGET_MS = "exchange_total_budget_ms"
 
+# --- Polls after a linked-remote press (ADR 0080) ---
+CONF_REMOTE_ACTIVITY_POLL_DELAY_MS = "remote_activity_poll_delay_ms"
+CONF_REMOTE_ACTIVITY_CATCHUP_POLL_MS = "remote_activity_catchup_poll_ms"
+
 # --- Pairing protocol ---
 CONF_PAIRING_DISCOVERY_COMMANDS = "pairing_discovery_commands"
 CONF_PAIRING_DISCOVERY_DESTINATION = "pairing_discovery_destination"
@@ -239,6 +243,8 @@ UI_NAMES = {
     CONF_EXCHANGE_EARLY_RESPONSE_WAIT_MS: "Exchange Early Response Wait",
     CONF_EXCHANGE_RESPONSE_WAIT_MS: "Exchange Response Wait",
     CONF_EXCHANGE_TOTAL_BUDGET_MS: "Exchange Total Budget",
+    CONF_REMOTE_ACTIVITY_POLL_DELAY_MS: "Remote Activity Poll Delay",
+    CONF_REMOTE_ACTIVITY_CATCHUP_POLL_MS: "Remote Activity Catch-up Poll",
     CONF_PAIRING_DISCOVERY_COMMANDS: "Pairing Discovery Commands",
     CONF_PAIRING_DISCOVERY_DESTINATION: "Pairing Discovery Destination",
     CONF_PAIRING_DISCOVERY_PAYLOAD: "Pairing Discovery Payload",
@@ -320,6 +326,11 @@ _NUMBER_PARAMS = {
     # Ceiling on a whole exchange. Every millisecond over ~2550 blocks the ESPHome loop past its
     # own warning threshold, so raise this only when persistence matters more than responsiveness.
     CONF_EXCHANGE_TOTAL_BUDGET_MS: (500, 12000, 100, "ms"),
+    # Up to two minutes: long enough to poll once after a slow solar screen's whole travel instead of
+    # tracking it. 0 polls as soon as the 1W quiet period lets it.
+    CONF_REMOTE_ACTIVITY_POLL_DELAY_MS: (0, 120000, 100, "ms"),
+    # 0 = off (the default). Up to ten minutes, the follow-up window's length (ADR 0061).
+    CONF_REMOTE_ACTIVITY_CATCHUP_POLL_MS: (0, 600000, 1000, "ms"),
     CONF_PAIRING_DISCOVERY_WAIT_MS: (500, 5000, 50, "ms"),
     CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS: (0, 500, 10, "ms"),
     CONF_PAIRING_KEY_EXCHANGE_RETRIES: (1, 5, 1, ""),

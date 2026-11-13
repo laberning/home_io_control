@@ -60,6 +60,7 @@ TEST(TuningRegistry, NumberTableContainsExactlyExpectedParameters) {
       "exchange_response_wait_ms",       "exchange_total_budget_ms",
       "exchange_early_response_wait_ms", "pairing_key_init_delay_ms",
       "key_extraction_type_word",        "key_extraction_multi_info",
+      "remote_activity_poll_delay_ms",   "remote_activity_catchup_poll_ms",
   };
   EXPECT_EQ(number_param_names(), expected) << "number table drifted from the expected inventory";
 }
@@ -75,8 +76,8 @@ TEST(TuningRegistry, SelectTableContainsExactlyExpectedParameters) {
   EXPECT_EQ(select_param_names(), expected) << "select table drifted from the expected inventory";
 }
 
-TEST(TuningRegistry, TotalParameterCountIsThirtySeven) {
-  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 37u);
+TEST(TuningRegistry, TotalParameterCountIsThirtyNine) {
+  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 39u);
 }
 
 // ============================================================================

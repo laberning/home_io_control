@@ -7,10 +7,13 @@
 /// Owns all per-device poll bookkeeping (intervals, deadlines, failure counters).
 /// Pure logic with injected timestamps — fully host-testable without a clock mock.
 
+#include "proto_timing.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -77,8 +80,8 @@ static constexpr uint32_t HEATING_POLL_DEFAULT_INTERVAL_MS = 300000;
 /// setpoint change by up to one poll interval, and longer when a poll fails (issue #165). The
 /// regular cadence restarts from this poll.
 static constexpr uint32_t HEATING_POST_WRITE_POLL_DELAY_MS = 45000;
-/// Delay before polling after overheard remote traffic.
-static constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS = 2000;
+// REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS lives in proto_timing.h: it is also the default of the
+// `remote_activity_poll_delay_ms` tuning parameter, whose header may not include this one.
 /// How long a device's authenticated status or this hub's own read-triggered poll keeps a further
 /// overheard read from triggering another poll (0 = never polled, so the first read polls). Covers
 /// have no background poll unless they opt into `status_refresh_interval`, so a read by another
@@ -379,8 +382,31 @@ class StatusPollPolicy {
   /// build — is not "ran out" and is never returned. Returns nullopt when there is none.
   [[nodiscard]] std::optional<std::string> pop_ended_device();
 
+  // --- Catch-up read after linked-remote activity (ADR 0080) ---
+  /// A linked remote was heard: open a burst, or keep the open one. Only the exchanges that end
+  /// while it is open set its due time (on_exchange_ended()), so a burst during which the hub never
+  /// used the radio never comes due.
+  void on_linked_remote_activity();
+  /// An exchange ended at @p now. While a burst is open its catch-up becomes due @p delay_ms after
+  /// @p now, later or earlier than before; a @p delay_ms of 0 (the catch-up is switched off) closes
+  /// the burst instead. No-op without an open burst.
+  void on_exchange_ended(uint32_t now, uint32_t delay_ms);
+  /// True once when the open burst's catch-up is due at @p now. The burst is closed first, so the
+  /// catch-up's own reads, which are exchanges too, do not reopen it. Wrap-safe across a millis() rollover.
+  [[nodiscard]] bool take_due_catchup(uint32_t now);
+  /// Mark the device's next status read as a catch-up read: a press the hub missed may have set it
+  /// moving since its last report, so the read treats its state as unknown
+  /// (decisions::AttemptRequest::with_state_unknown()). Needs no tracked device; begin_tracking() and
+  /// clear() drop the mark, since heard activity or a report is news again.
+  void mark_state_unknown(const std::string &device_id);
+  /// Consume the mark set by mark_state_unknown(): true once, for the status read dispatched after it.
+  [[nodiscard]] bool take_state_unknown(const std::string &device_id);
+
  private:
   std::map<std::string, PollTracking> tracking_;
+  bool catchup_burst_open_{false};  ///< A linked remote was heard and its catch-up has not run yet.
+  uint32_t catchup_due_ms_{0};      ///< When the open burst's catch-up is due; 0 = no exchange has ended in it yet.
+  std::set<std::string> state_unknown_;            ///< Devices whose next status read is a catch-up read.
   std::map<std::string, ForeignTraffic> foreign_;  ///< Overheard-traffic state, outside the tracking lifecycle.
   std::vector<std::string> ended_;  ///< Devices whose window ran out, for pop_ended_device(); no duplicates.
 

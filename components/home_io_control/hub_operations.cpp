@@ -484,9 +484,11 @@ bool IOHomeControlComponent::set_device_position_and_tilt(const std::string &dev
 // Every other poll the scheduler owns only looks at a device that is probably still busy: one
 // attempt, the backoff ladder is its retry.
 decisions::AttemptRequest IOHomeControlComponent::cover_poll_attempts_(const std::string &device_id,
-                                                                       bool scheduler_managed) {
-  if (!scheduler_managed)
-    return decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING);
+                                                                       bool scheduler_managed, bool state_unknown) {
+  if (!scheduler_managed) {
+    const auto attempts = decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING);
+    return state_unknown ? attempts.with_state_unknown() : attempts;
+  }
   // Asked before take_settling_read(), which consumes the mark.
   const bool predicted_end = this->poll_policy_.is_predicted_end_read(device_id);
   const decisions::AttemptRequest attempts = decisions::AttemptRequest::of_kind(decisions::scheduled_poll_read_kind(
@@ -514,6 +516,10 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
     detail::log_rejected_operation(device_id, *dev, "status request", "status-capable actuator");
     return false;
   }
+  // Consumed by every status read, so a catch-up mark never outlives the read it was meant for. It
+  // shapes only a cover's one-off read: a heater keeps its budget, and a device the follow-up window
+  // tracks keeps the ladder's plan (cover_poll_attempts_()).
+  const bool state_unknown = this->poll_policy_.take_state_unknown(device_id);
 
   // A heater with private registers has no 0x03 status: its state is a handful of registers.
   const HeatingProfile *heating = find_heating_profile(*dev);
@@ -537,9 +543,9 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
     this->begin_status_poll_tracking_(device_id, 0);
   const bool scheduler_managed = this->poll_policy_.is_tracking_active(device_id, millis());
   const uint32_t retry_after_fail_ms = scheduler_managed ? STATUS_RETRY_AFTER_FAIL_MS : 0;
-  const decisions::AttemptRequest attempts = heating != nullptr
-                                                 ? this->heater_poll_attempts_(device_id, scheduler_managed)
-                                                 : this->cover_poll_attempts_(device_id, scheduler_managed);
+  const decisions::AttemptRequest attempts =
+      heating != nullptr ? this->heater_poll_attempts_(device_id, scheduler_managed)
+                         : this->cover_poll_attempts_(device_id, scheduler_managed, state_unknown);
   const bool ok = this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, attempts);
   if (heating != nullptr) {
     // The regular cadence continues whatever this poll found, as for a register heater.
@@ -1660,6 +1666,9 @@ void IOHomeControlComponent::process_pending_operation_() {
       this->discover_and_pair();
       break;
   }
+  // Every operation blocks on the radio, so a press that started during it was not heard. While a
+  // burst of linked-remote activity is open, this moves its catch-up read out (ADR 0080).
+  this->poll_policy_.on_exchange_ended(millis(), this->tuning_.remote_activity_catchup_poll_ms);
 }
 
 }  // namespace home_io_control

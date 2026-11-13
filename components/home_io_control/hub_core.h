@@ -1109,6 +1109,13 @@ class IOHomeControlComponent : public Component,
   /// @param device_ids Devices to apply optimistic state to (see resolve_1w_target_devices_()).
   /// @return true if the intent resolved to a STOP (caller should poll immediately).
   bool apply_optimistic_linked_state_(const OneWayFrameInfo &info, const std::vector<std::string> &device_ids);
+  /// React to a deduplicated 1W press from a remote: apply the optimistic state to the devices it
+  /// controls (resolve_1w_target_devices_()), schedule their status polls (at once after a STOP,
+  /// otherwise after `remote_activity_poll_delay_ms`) and, when switched on, open the catch-up burst
+  /// (StatusPollPolicy::on_linked_remote_activity(), ADR 0080). No-op for a remote that controls none.
+  /// @param info Already-decoded 1W frame info (see decode_1w_frame()).
+  /// @param src_id Sender's node ID as a string (already computed by the caller).
+  void follow_linked_remote_press_(const OneWayFrameInfo &info, const std::string &src_id);
   /// Fire the sender HA event for a decoded 1W frame, if the sender is exposed.
   /// DEBUG-logs the reason when it does not fire (API disconnected / sender not exposed) so a
   /// live log capture can distinguish "never reached this check" from "reached it and skipped".
@@ -1169,6 +1176,11 @@ class IOHomeControlComponent : public Component,
   /// Queue every periodic poll that is due: the sensor polls (rain, sun level, battery level) and the
   /// status refresh at rest.
   void queue_due_periodic_polls_();
+  /// Read every device with `linked_remotes` once, when a burst of linked-remote activity has been
+  /// followed by `remote_activity_catchup_poll_ms` without an exchange (ADR 0080). Each read is a
+  /// one-off status read marked state-unknown (StatusPollPolicy::mark_state_unknown()); it opens no
+  /// follow-up window of its own, an answer that says moving does.
+  void queue_due_catchup_reads_();
 
   /// @brief What exchange_and_record_() found.
   enum class RequestResult : uint8_t {
@@ -1262,7 +1274,9 @@ class IOHomeControlComponent : public Component,
   /// decisions::scheduled_poll_read_kind()), consuming the poll's STOP and confirming-read marks.
   /// @param device_id Device being polled.
   /// @param scheduler_managed True when StatusPollPolicy is tracking the device (a ladder stands behind the poll).
-  [[nodiscard]] decisions::AttemptRequest cover_poll_attempts_(const std::string &device_id, bool scheduler_managed);
+  /// @param state_unknown True for a catch-up read (StatusPollPolicy::take_state_unknown()).
+  [[nodiscard]] decisions::AttemptRequest cover_poll_attempts_(const std::string &device_id, bool scheduler_managed,
+                                                               bool state_unknown = false);
   /// Attempts for a heater's status read: the count-based budget heaters keep
   /// (decisions::scheduled_poll_max_tries()).
   /// @param device_id Device being polled.
