@@ -655,6 +655,11 @@ def _apply_tuning_config(config, var):
     if CONF_NORMAL_START_PREAMBLE in config:
         _assign(tuning, "normal_start_preamble_from_yaml", "true")
 
+    # Same reasoning: without the flag, discovery follows the radio's start preamble (or the
+    # wake-up preamble under pairing_discovery_low_power) instead of using the emitted value.
+    if CONF_PAIRING_DISCOVERY_PREAMBLE in config:
+        _assign(tuning, "pairing_discovery_preamble_set", "true")
+
     cg.add(var.set_tuning_config(tuning))
 
 

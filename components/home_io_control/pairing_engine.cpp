@@ -82,7 +82,7 @@ PairingEngine::PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, co
       recent_oneway_sighting_(recent_oneway_sighting) {}
 
 uint16_t PairingEngine::pairing_start_preamble_(const IoFrame &frame) const {
-  return std::min(engine_.request_preamble_for(frame), tuning_->pairing_discovery_preamble);
+  return std::min(engine_.request_preamble_for(frame), effective_discovery_preamble(*tuning_));
 }
 
 // --- Low-level waiters ---
@@ -458,7 +458,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
       if (!create_discovery_request(context.req, node_id_, command, destination, tuning_->pairing_discovery_low_power,
                                     tuning_->pairing_discovery_ack_capable, tuning_->pairing_discovery_payload_enabled,
                                     tuning_->pairing_discovery_payload, system_key_) ||
-          !engine_.transmit_frame(context.req, FREQ_CH2, tuning_->pairing_discovery_preamble)) {
+          !engine_.transmit_frame(context.req, FREQ_CH2, effective_discovery_preamble(*tuning_))) {
         return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
       }
 
@@ -717,9 +717,9 @@ bool PairingEngine::discover_and_pair() {
     return false;
   }
 
-  if (tuning_->pairing_discovery_preamble < LONG_PREAMBLE) {
-    ESP_LOGI(TAG, "Pairing: directed frames to %s use the %u-byte discovery preamble it just answered",
-             context.device_id.c_str(), tuning_->pairing_discovery_preamble);
+  if (tuning_->pairing_discovery_preamble_set) {
+    ESP_LOGI(TAG, "Pairing: discovery preamble %u B (set in tuning); directed frames to %s are capped to it",
+             effective_discovery_preamble(*tuning_), context.device_id.c_str());
   }
 
   // Discover-confirm (0x2C -> 0x2D): once per attempt, before the key-exchange retry loop below,

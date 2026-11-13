@@ -191,11 +191,12 @@ is a general starting point, not a guarantee — different devices need differen
    listening on — which is not always the command's conventional one.
 
 5. **If the device is confirmed genuinely unpaired and still doesn't answer** any of the above,
-   try shortening the discovery broadcast's preamble — see
-   [`pairing_discovery_preamble`](configuration/tuning.md#pairing_discovery_preamble). A VELUX SSL
-   solar roller shutter answers only at the short setting:
+   change the discovery broadcast's preamble — see
+   [`pairing_discovery_preamble`](configuration/tuning.md#pairing_discovery_preamble). Discovery
+   goes out behind the short start preamble by default, which VELUX shutters answer. A device that
+   may be a duty-cycled receiver can need the long wake-up burst instead:
    ```yaml
-   pairing_discovery_preamble: 32   # then 8
+   pairing_discovery_preamble: 1024   # or go shorter: 8
    ```
 
 6. **As a last resort, try the ACK-capable flag.** Real VELUX hubs send their discovery broadcast

@@ -18,7 +18,7 @@ and hubs that make good key sources, the wired bridges, and the products control
 | SSL solar roller shutter | ⚠️ Partial — Discover & Pair, open, close, position and status work; `stop` reaches it mid-travel, but not on every attempt |
 | INTEGRA SOLAR blinds | 📣 Reported, no capture |
 | SML electric roller shutter, 1W enrollment + control | ✅ Confirmed — Gear on the KLI, wait for the ready sequence, then Enroll, `low_power: false` |
-| SML electric roller shutter, two-way | 📣 Reported (one reporter) — Discover & Pair after Gear, with a 32-byte discovery preamble; open, close, stop mid-travel, set position and status |
+| SML electric roller shutter, two-way | 📣 Reported (one reporter) — Discover & Pair after Gear, with a short discovery preamble; open, close, stop mid-travel, set position and status |
 | Interior blinds behind a KLI 312, 1W enrollment + control | ✅ Confirmed — `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`, `low_power: true` |
 
 ## Onboarding routes
@@ -49,19 +49,19 @@ roller shutter has been reported to pair two-way too; see the SML section below.
 ## SSL solar roller shutter
 
 The SSL pairs two-way directly with Discover & Pair. It needs no hub to extract a key from, only a
-motor-side reset and a short discovery preamble.
+motor-side reset.
 
-**1. Tuning.** The motor ignores the default 1024-byte discovery preamble and answers at 32 bytes:
+**1. Tuning.** No tuning is required: the default discovery goes out behind a short preamble,
+which the motor answers (it ignores a 1024-byte one), and pairing uses the same length for every
+frame it sends to the motor afterwards. The reporters' setup also set these two lines; they are
+not known to be required:
 
 ```yaml
 home_io_control:
   tuning:
-    pairing_discovery_preamble: 32              # required
     pairing_discovery_destination: "0x00003F"   # confirmed setup; not known to be required
     pairing_discovery_ack_capable: true         # confirmed setup; not known to be required
 ```
-
-Pairing reuses the 32-byte preamble for every frame it sends to the motor after discovery.
 
 **2. Reset the motor.** An SSL ships registered to its KLI wall switch. Pair it right after a reset,
 which clears the motor's registrations and opens a registration window (10 minutes on the P-button
@@ -108,12 +108,13 @@ The mains-powered SML takes either route. 1W enrollment gives open, close and st
 status, as described under Onboarding routes above. Two-way pairing, reported by one user
 on an SX1262 board (issue #230), gives status, position and a working stop mid-travel as well.
 
-**Two-way pairing.** Set the discovery preamble short, as for the SSL:
+**Two-way pairing.** The shutter needs a short discovery preamble, as the SSL does, and the default
+is short: 48 bytes on an SX1262, where the reporter paired at 32. The reporter also set this line,
+which is not known to be required:
 
 ```yaml
 home_io_control:
   tuning:
-    pairing_discovery_preamble: 32
     pairing_discovery_ack_capable: true
 ```
 
@@ -121,8 +122,9 @@ Press Gear on the shutter's own KLI 310 for about one second; the shutter starts
 jogs, press **Discover & Pair**. Press it again if the first search gets no answer: in the report
 the second search found the shutter. Pairing ends the registration window, so the shutter stops
 jogging. No motor reset is needed, and the KLI remotes and a 1W enrollment of the same shutter
-keep working. With the default discovery settings Discover & Pair found nothing (issue #17), and
-it is not known yet which of the two settings above is the one that matters.
+keep working. Discover & Pair found nothing in issue #17, which ran with a 1024-byte discovery
+preamble; the reporter of issue #230 paired with a 32-byte one.
+It is not known yet whether `pairing_discovery_ack_capable` matters.
 
 Once paired, the shutter answers status reads while it moves, with the time left to its target,
 so the position in Home Assistant follows the move. Stop mid-travel works, set position lands

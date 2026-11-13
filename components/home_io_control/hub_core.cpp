@@ -558,6 +558,11 @@ void IOHomeControlComponent::dump_config() {
   // log is usually captured after boot, where setup()'s output is already gone.
   ESP_LOGCONFIG(detail::TAG, "  Start preamble: %u bytes (%s)", this->tuning_.normal_start_preamble,
                 this->tuning_.normal_start_preamble_from_yaml ? "set in YAML" : "from the radio driver");
+  ESP_LOGCONFIG(detail::TAG, "  Discovery preamble: %u bytes (%s)", effective_discovery_preamble(this->tuning_),
+                this->tuning_.pairing_discovery_preamble_set
+                    ? "set in tuning"
+                    : (this->tuning_.pairing_discovery_low_power ? "wake-up preamble, discovery is low-power"
+                                                                 : "follows the start preamble"));
   if (!this->radio_failure_reason_.empty())
     ESP_LOGE(detail::TAG, "  Radio setup failed: %s", this->radio_failure_reason_.c_str());
 #ifdef IOHOME_UNSAFE_LOG_KEY_MATERIAL

@@ -30,7 +30,8 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0021](0021-flash-the-lr1121-bootloader-behind-an-arming-switch.md) | Flash the bootloader, behind an arming switch | Reach the CVE-fixing `0x0104`; gate the one unrecoverable write behind visible armed state and a build-time recovery image |
 | [0042](0042-start-preamble-default-comes-from-the-radio-driver.md) | The start preamble's default comes from the radio driver | Measured: the software PHY (SX1262/LR1121) needs 48 bytes where the SX1276's register PHY is answered every time at the protocol's 32; an explicit `normal_start_preamble:` still wins, including downward |
 | [0028](0028-channel-policy-is-a-property-of-the-frame-not-of-the-chip.md) | Channel policy is a property of the frame | One shared listen primitive, three named policies picked by reply shape — not by chip |
-| [0029](0029-start-preamble-is-a-property-of-the-target.md) | Start preamble is a property of the target's power class (amended by 0040) | `LONG_PREAMBLE` iff `CTRL1_LOW_POWER`, iff the per-device `low_power` YAML property (default false) — not iff the frame is a start frame (roll-call: ADR 0037) |
+| [0029](0029-start-preamble-is-a-property-of-the-target.md) | Start preamble is a property of the target's power class (amended by 0040, 0078) | `LONG_PREAMBLE` iff `CTRL1_LOW_POWER`, iff the per-device `low_power` YAML property (default false) — not iff the frame is a start frame (roll-call: ADR 0037) |
+| [0078](0078-discovery-follows-the-start-preamble.md) | Discovery follows the start preamble (amends 0029) | Discovery (`0x28`/`0x2E`) and the pairing frames after it use `normal_start_preamble` unless `pairing_discovery_preamble` is set; the low-power discovery flag takes the wake-up preamble; a set value wins, 1024 included |
 | [0035](0035-fem-support-is-a-behaviour-profile-boards-always-supply-pins.md) | FEM support is a behaviour profile; boards always supply pins | `fem:` selects front-end switching behaviour only; every board package spells out every pin its profile needs, no implicit defaulting |
 | [0037](0037-the-roll-call-sweeps-both-power-classes.md) | The roll-call sweeps both power classes | A low-power pass (CTRL1=0x30, long preamble, all channels) then the unchanged always-alive pass; scan_power_classes narrows it |
 | [0039](0039-pairing-sends-discover-confirm-and-tolerates-no-answer.md) | Pairing sends a discover-confirm (0x2C) and tolerates no answer | Universal `pairing_discover_confirm` mode (`skip`/`send`/`send_with_ack`); the step never fails the attempt; try 2 alone rotates channels (deviates from ADR 0028) |
@@ -198,6 +199,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0075: Commands and the key pull take the attempt plan, and early attempts to a mains device listen short](0075-commands-and-the-key-pull-take-the-attempt-plan-and-early-attempts-listen-short.md)
 - [ADR 0076: A moving cover is read once at its predicted end of travel](0076-a-moving-cover-is-read-once-at-its-predicted-end-of-travel.md)
 - [ADR 0077: A moving cover stays awake-believed until its remaining time runs out](0077-a-moving-cover-stays-awake-believed-until-its-remaining-time-runs-out.md)
+- [ADR 0078: Discovery follows the start preamble](0078-discovery-follows-the-start-preamble.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

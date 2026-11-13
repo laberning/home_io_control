@@ -341,8 +341,13 @@ struct TuningConfig {
   bool pairing_discovery_ack_capable{false};      ///< Set ACK (CTRL1_ACK) on the discovery broadcast only.
                                                   ///< Opt-in — see the init_frame() doc in
                                                   ///< proto_frame.h; default off.
-  uint16_t pairing_discovery_preamble{
-      PAIRING_DISCOVERY_PREAMBLE};  ///< Preamble for the discovery broadcast (0x28/0x2E) start frame.
+  /// Preamble (bytes) of the discovery broadcast (0x28/0x2E) when the user chose one. Read through
+  /// `effective_discovery_preamble()`, never directly: it counts only while
+  /// `pairing_discovery_preamble_set` is true, otherwise discovery follows the start preamble.
+  uint16_t pairing_discovery_preamble{NORMAL_START_PREAMBLE};
+  /// True when `pairing_discovery_preamble` was set, from YAML or by a write through the Home
+  /// Assistant number (it stays set until the next restart). Codegen emits it next to the value.
+  bool pairing_discovery_preamble_set{false};
   uint16_t pairing_discovery_wait_ms{
       PAIRING_DISCOVERY_WAIT_MS};  ///< Total wait window after sending discovery commands.
   uint16_t pairing_discovery_initial_dwell_ms{
@@ -362,6 +367,26 @@ struct TuningConfig {
   // --- Internal state ---
   bool active{false};  ///< True when the YAML `tuning:` block is present.
 };
+
+/// @brief The preamble length (bytes) of the pairing discovery broadcast (`0x28`, `0x2E`).
+///
+/// Discovery has no length of its own: it is a first frame like any other, so it goes out behind
+/// the same preamble as a directed start frame to a target of the same power class. Order of
+/// precedence:
+///  1. the user's `pairing_discovery_preamble`, when set (any value, up to the wake-up burst);
+///  2. `low_power_wake_preamble` when `pairing_discovery_low_power` flags the discovery frame, since
+///     a first frame carrying the low-power flag takes the wake-up preamble;
+///  3. `normal_start_preamble`, resolved from the radio driver (a short preamble that always-awake
+///     receivers lock onto, where some never lock onto the wake-up burst).
+///
+/// Read at send time, so a live change of `normal_start_preamble` moves discovery with it.
+/// `PairingEngine` also caps the pairing START frames that follow at this length, so the frames to
+/// the discovered device never outlast the discovery it answered.
+inline uint16_t effective_discovery_preamble(const TuningConfig &cfg) {
+  if (cfg.pairing_discovery_preamble_set)
+    return cfg.pairing_discovery_preamble;
+  return cfg.pairing_discovery_low_power ? cfg.low_power_wake_preamble : cfg.normal_start_preamble;
+}
 
 /// @brief One selectable RX bandwidth: the chip's register byte and its nominal kHz value.
 ///

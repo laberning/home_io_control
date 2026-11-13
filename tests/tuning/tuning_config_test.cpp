@@ -144,6 +144,7 @@ TEST(TuningConfig, SnapshotIncludesNonDefaults) {
   cfg.pairing_discovery_low_power = true;
   cfg.pairing_discovery_ack_capable = true;
   cfg.pairing_discovery_preamble = 64;
+  cfg.pairing_discovery_preamble_set = true;
   cfg.lbt_max_retries = 1;
   cfg.lr1121_rx_bandwidth = LR1121RxBandwidth::BW_187_2_KHZ;
   cfg.lr1121_discovery_hop_slice_ms = 150;
@@ -164,6 +165,38 @@ TEST(TuningConfig, SnapshotIncludesNonDefaults) {
   EXPECT_NE(snapshot.find("pairing_discovery_ack_capable=true"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_preamble=64"), std::string::npos);
   EXPECT_NE(snapshot.find("lbt_max_retries=1"), std::string::npos);
+}
+
+TEST(TuningConfig, SnapshotNamesTheDiscoveryPreambleOnlyWhenSet) {
+  // A driver start preamble that differs from the compiled default (SX1262/LR1121: 48) changes
+  // the effective discovery preamble without the user having set anything.
+  TuningConfig cfg{};
+  cfg.normal_start_preamble = 48;
+  EXPECT_EQ(tuning_config_snapshot(cfg).find("pairing_discovery_preamble"), std::string::npos);
+
+  cfg.pairing_discovery_preamble = 32;  // a set value equal to the SX1276 default still shows
+  cfg.pairing_discovery_preamble_set = true;
+  EXPECT_NE(tuning_config_snapshot(cfg).find("pairing_discovery_preamble=32"), std::string::npos);
+}
+
+TEST(TuningConfig, EffectiveDiscoveryPreambleFollowsStartPreambleUnlessSet) {
+  TuningConfig cfg{};
+  cfg.normal_start_preamble = 32;
+  EXPECT_EQ(effective_discovery_preamble(cfg), 32);
+  cfg.normal_start_preamble = 48;
+  EXPECT_EQ(effective_discovery_preamble(cfg), 48) << "read at send time, so a live change moves it";
+
+  cfg.pairing_discovery_low_power = true;
+  EXPECT_EQ(effective_discovery_preamble(cfg), cfg.low_power_wake_preamble);
+  cfg.low_power_wake_preamble = 900;
+  EXPECT_EQ(effective_discovery_preamble(cfg), 900);
+
+  cfg.pairing_discovery_preamble = 1024;
+  cfg.pairing_discovery_preamble_set = true;
+  EXPECT_EQ(effective_discovery_preamble(cfg), 1024) << "a set value wins over the low-power wake-up";
+  cfg.pairing_discovery_low_power = false;
+  cfg.pairing_discovery_preamble = 32;
+  EXPECT_EQ(effective_discovery_preamble(cfg), 32);
 }
 
 TEST(TuningConfig, SnapshotOmitsUnchangedDefaults) {

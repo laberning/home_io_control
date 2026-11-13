@@ -70,17 +70,6 @@ static constexpr uint16_t COLD_BROADCAST_REPLY_PREAMBLE = 80;
 /// is a live tuning knob so a wrong guess costs a number change, not a rebuild.
 static constexpr uint16_t NORMAL_START_PREAMBLE = 32;
 
-/// Default for `TuningConfig::pairing_discovery_preamble` — the preamble on the pairing discovery
-/// broadcast (`CMD_DISCOVER_REQ`/`CMD_DISCOVER_ALT_REQ`, 0x28/0x2E). `LONG_PREAMBLE`, because a
-/// device in learning mode may be a duty-cycled receiver that needs the wake-up burst. Unlike a
-/// directed start frame (see `NORMAL_START_PREAMBLE`), the discovery broadcast can't follow the
-/// target's power class: discovery runs before anything is known about the device. Some awake
-/// receivers never lock onto a preamble this long — a VELUX SSL solar roller shutter answers
-/// discovery only at a short preamble — so the value is runtime-tunable via
-/// `pairing_discovery_preamble`, and pairing reuses the tuned value for the frames it then sends
-/// to the discovered device (`PairingEngine::pairing_start_preamble_()`).
-static constexpr uint16_t PAIRING_DISCOVERY_PREAMBLE = LONG_PREAMBLE;
-
 /// How hard a transmission has to work to be heard: the wake-up level the receiver needs. A radio
 /// that wakes receivers by preamble length gets the same information from
 /// `RadioTxConfig::preamble_len` and may ignore this; a radio that wakes them some other way (a
@@ -93,7 +82,9 @@ enum class TxWake : uint8_t {
 
 /// True when a preamble this long is the wake-up burst for a duty-cycled receiver. Every preamble
 /// tunable except `pairing_discovery_preamble` is capped well below `LONG_PREAMBLE`, and that one
-/// is capped at it, so only a real wake-up burst reaches the threshold.
+/// is capped at it (an explicit opt-in to the wake-up burst for discovery), so only a real wake-up
+/// burst reaches the threshold. The discovery preamble has no compiled default: it follows
+/// `normal_start_preamble` (see `effective_discovery_preamble()` in tuning_config.h).
 constexpr bool is_wake_preamble(uint16_t len) { return len >= LONG_PREAMBLE; }
 
 /// The wake-up level of a frame, from the two facts that decide it: whether it starts an exchange

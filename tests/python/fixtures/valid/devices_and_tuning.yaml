@@ -1,5 +1,5 @@
 # expect: valid
-# One entity of each device-bound platform plus a tuning block with a select-style option.
+# One entity of each device-bound platform plus a tuning block with a select-style option and a set discovery preamble.
 packages:
   common: !include ../_common.yaml
   board: !include ../../../../config/boards/heltec-v3.yaml
@@ -9,6 +9,7 @@ home_io_control:
     sx1262_rx_bandwidth: "117.3"
     key_extraction_type_word: 0x0180
     key_extraction_multi_info: "DD"
+    pairing_discovery_preamble: 32
 
 cover:
   - platform: home_io_control

@@ -120,6 +120,12 @@ see [Radio tuning](configuration/tuning.md).
 still common to need two or three presses because the timing between PROG and the button matters.
 Press PROG again and repeat before you change any settings.
 
+Discovery goes out behind a short preamble, the same length a directed command to an always-awake
+device gets, because some devices (VELUX solar roller shutters among them) answer nothing else. The
+hub uses that length for the pairing frames that follow as well. A device that needs the 1024-byte
+wake-up burst takes it through
+[`pairing_discovery_preamble`](configuration/tuning.md#pairing_discovery_preamble).
+
 **If the device never answers**, read
 [The device is never found](troubleshooting.md#the-device-is-never-found) before touching
 [Radio tuning](configuration/tuning.md). A device that already belongs to a hub has nothing left

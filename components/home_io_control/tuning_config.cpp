@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <cstdio>
 
 namespace esphome {
@@ -321,6 +322,36 @@ std::string tuning_update_log_line(const std::string &name, const std::string &v
   return "Tuning updated via HA: " + name + "=" + value;
 }
 
+namespace {
+
+/// Append every plain numeric tuning field that differs from `defaults` to `result`.
+void append_changed_numbers(std::string &result, const TuningConfig &cfg, const TuningConfig &defaults) {
+  // Every plain numeric field is driven off the same NUMBER_PARAMS table the HA `number` entities
+  // and `make tuning-sync` use (tuning_registry.cpp) — not a second, independently-maintained list
+  // of field names. A hand-written per-field if-chain here once let a real, shipped knob
+  // (`pairing_discovery_preamble`) go completely missing from this exact diagnostic line — the one
+  // `discover_and_pair()` logs at the start of every attempt specifically so a user's bug report
+  // records which knobs were actually in effect — while still working everywhere else (HA entity,
+  // YAML, `make tuning-sync`). Table-driven means a new numeric knob can't repeat that: it either
+  // has a NUMBER_PARAMS row (and is covered) or it doesn't (and can't be set from HA at all).
+  //
+  // `pairing_discovery_preamble` is the one exception: its registry getter reports the *effective*
+  // value (what discovery will send), which follows the radio driver's start preamble and so differs
+  // from a default-constructed config on SX1262/LR1121 with nothing set. It is named below, and only
+  // when it was set.
+  for (const TuningNumberParam *p = tuning_number_params_begin(); p != tuning_number_params_end(); ++p) {
+    if (std::strcmp(p->name, "pairing_discovery_preamble") == 0)
+      continue;
+    const float current = p->get(cfg);
+    if (current != p->get(defaults))
+      result += " " + std::string(p->name) + "=" + std::to_string(static_cast<int64_t>(current));
+  }
+  if (cfg.pairing_discovery_preamble_set)
+    result += " pairing_discovery_preamble=" + std::to_string(cfg.pairing_discovery_preamble);
+}
+
+}  // namespace
+
 std::string tuning_config_snapshot(const TuningConfig &cfg) {
   std::string result;
 
@@ -334,19 +365,7 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
   if (cfg.lr1121_rx_bandwidth != DEFAULTS.lr1121_rx_bandwidth)
     result += " lr1121_rx_bandwidth=" + lr1121_bandwidth_to_string(cfg.lr1121_rx_bandwidth);
 
-  // Every plain numeric field is driven off the same NUMBER_PARAMS table the HA `number` entities
-  // and `make tuning-sync` use (tuning_registry.cpp) — not a second, independently-maintained list
-  // of field names. A hand-written per-field if-chain here once let a real, shipped knob
-  // (`pairing_discovery_preamble`) go completely missing from this exact diagnostic line — the one
-  // `discover_and_pair()` logs at the start of every attempt specifically so a user's bug report
-  // records which knobs were actually in effect — while still working everywhere else (HA entity,
-  // YAML, `make tuning-sync`). Table-driven means a new numeric knob can't repeat that: it either
-  // has a NUMBER_PARAMS row (and is covered) or it doesn't (and can't be set from HA at all).
-  for (const TuningNumberParam *p = tuning_number_params_begin(); p != tuning_number_params_end(); ++p) {
-    const float current = p->get(cfg);
-    if (current != p->get(DEFAULTS))
-      result += " " + std::string(p->name) + "=" + std::to_string(static_cast<int64_t>(current));
-  }
+  append_changed_numbers(result, cfg, DEFAULTS);
 
   if (cfg.low_power_wake_belief != DEFAULTS.low_power_wake_belief)
     result += " low_power_wake_belief=" + std::string(cfg.low_power_wake_belief ? "true" : "false");
@@ -385,9 +404,8 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
   // pairing_key_transfer is an enum SELECT_PARAMS row, same as the ones above.
   if (cfg.pairing_key_transfer != DEFAULTS.pairing_key_transfer)
     result += " pairing_key_transfer=" + key_transfer_mode_to_string(cfg.pairing_key_transfer);
-  // pairing_discovery_preamble, pairing_discovery_wait_ms, pairing_discovery_initial_dwell_ms,
-  // pairing_key_exchange_retries, and pairing_key_init_delay_ms are plain NUMBER_PARAMS entries —
-  // covered by the loop above.
+  // pairing_discovery_wait_ms, pairing_discovery_initial_dwell_ms, pairing_key_exchange_retries,
+  // and pairing_key_init_delay_ms are plain NUMBER_PARAMS entries — covered by the loop above.
 
   return result;
 }

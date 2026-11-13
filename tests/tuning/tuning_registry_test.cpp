@@ -97,6 +97,26 @@ TEST(TuningRegistry, EveryNumberParameterRoundTrips) {
   }
 }
 
+TEST(TuningRegistry, DiscoveryPreambleGetterIsEffectiveAndSetterMarksItSet) {
+  const TuningNumberParam *param = nullptr;
+  for (const TuningNumberParam *p = tuning_number_params_begin(); p != tuning_number_params_end(); ++p) {
+    if (std::string(p->name) == "pairing_discovery_preamble")
+      param = p;
+  }
+  ASSERT_NE(param, nullptr);
+
+  TuningConfig cfg{};
+  cfg.normal_start_preamble = 48;
+  EXPECT_FLOAT_EQ(param->get(cfg), 48.0F) << "unset: the getter shows what discovery will send";
+  EXPECT_FALSE(cfg.pairing_discovery_preamble_set);
+
+  param->set(cfg, 1024.0F);
+  EXPECT_TRUE(cfg.pairing_discovery_preamble_set);
+  EXPECT_FLOAT_EQ(param->get(cfg), 1024.0F);
+  cfg.normal_start_preamble = 32;
+  EXPECT_FLOAT_EQ(param->get(cfg), 1024.0F) << "stays set when the start preamble changes";
+}
+
 TEST(TuningRegistry, EveryNumberParameterAppearsInSnapshotWhenNonDefault) {
   // Regression test: tuning_config_snapshot() is a hand-written if-chain, one line per field, that
   // does not derive from this registry table — a new NUMBER_PARAMS entry can round-trip through

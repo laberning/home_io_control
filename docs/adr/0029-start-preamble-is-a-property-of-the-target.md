@@ -1,7 +1,7 @@
 # ADR 0029: The start preamble is a property of the target's power class, not of the frame's position
 <!-- doxygen-label: adr0029 -->
 
-**Status:** Accepted · **Recorded:** 2026-08
+**Status:** Accepted, amended by [ADR 0040](0040-low-power-start-preamble-follows-the-wake-belief.md) (a low-power target believed awake leads with the short preamble) and [ADR 0078](0078-discovery-follows-the-start-preamble.md) (discovery follows the start preamble, not a 1024-byte default) · **Recorded:** 2026-08
 
 ## Context
 

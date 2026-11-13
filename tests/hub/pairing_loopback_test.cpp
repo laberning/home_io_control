@@ -246,9 +246,12 @@ TEST_P(PairingLoopback, DefaultModeCompletesFullSequenceAndResponderRecoversHubK
 }
 
 /// A responder that advertises a low-power device (0xDD) must get the low-power 0x2C:
-/// CTRL1_LOW_POWER set, and the long wake-up preamble.
+/// CTRL1_LOW_POWER set, and the long wake-up preamble. The discovery preamble is tuned to the
+/// wake-up burst here: with the default (the start preamble) the cap would shorten the 0x2C.
 TEST_P(PairingLoopback, DiscoverConfirmFollowsTheResponderAdvertisedPowerClass) {
   device_.tuning_.key_extraction_multi_info = 0xDD;
+  hub_.tuning_.pairing_discovery_preamble = LONG_PREAMBLE;
+  hub_.tuning_.pairing_discovery_preamble_set = true;
   ASSERT_TRUE(hub_.discover_and_pair());
 
   const IoFrame confirm = first_discover_confirm_sent();

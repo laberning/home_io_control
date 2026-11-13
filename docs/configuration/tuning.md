@@ -609,34 +609,43 @@ on only to test a device that never answers `0x28`, and turn it back off if it d
 
 #### `pairing_discovery_preamble`
 
-The preamble length (in bytes) on the discovery broadcast itself (`0x28`/`0x2E`). Defaults to
-`1024` (`LONG_PREAMBLE`): a factory-fresh device in learning mode is exactly the kind of
-duty-cycled receiver that wake-up burst exists for.
+The preamble length (in bytes) on the discovery broadcast itself (`0x28`/`0x2E`). Unset by default:
+discovery then follows [`normal_start_preamble`](#normal_start_preamble), the same length every
+first frame to an always-awake device gets (32 bytes on an SX1276, 48 on an SX1262 or LR1121). A
+short discovery is what VELUX SSL and SML shutters answer, so Discover & Pair needs no tuning entry
+for them. Some awake receivers never lock onto the 1024-byte wake-up burst, which is why the default
+is short.
 
-Some receivers never lock onto a preamble this long while they are awake, which is why every
-directed start frame derives its preamble from the target's power class (see
-`normal_start_preamble` above). The discovery broadcast can't do that: discovery runs before
-anything is known about the device, so it uses this setting.
+Two cases change the default without setting this value. With
+[`pairing_discovery_low_power: true`](#pairing_discovery_payload--pairing_discovery_low_power) the
+discovery frame carries the low-power flag, and a first frame with that flag takes the wake-up
+preamble (`low_power_wake_preamble`). Changing `normal_start_preamble` moves discovery with it.
 
-**A VELUX SSL solar roller shutter needs `32`.** It answers nothing at `1024` and answers within
-~80 ms at `32`. Somfy devices answer either way. Try it for any genuinely unpaired device that
-doesn't answer `0x28` (see [A tuning plan](../troubleshooting.md#a-tuning-plan)):
+Setting a value overrides both, `1024` included. Use `1024` for a device that stays silent behind
+the short discovery and may be a duty-cycled receiver (see
+[A tuning plan](../troubleshooting.md#a-tuning-plan)); try `8` for one that wants it shorter still:
 
 ```yaml
 tuning:
   ui_controls: true
-  pairing_discovery_preamble: 32   # NORMAL_START_PREAMBLE's value; try 8 (SHORT_PREAMBLE) too
+  pairing_discovery_preamble: 1024   # the wake-up burst; 8 (SHORT_PREAMBLE) goes the other way
 ```
 
-**It also shortens the rest of pairing.** The frames the hub then sends directly to the discovered
+A value written through the Home Assistant number stays set until the next restart. While nothing
+is set, the number shows the length discovery uses at boot; discovery follows a later change of
+`normal_start_preamble` or `pairing_discovery_low_power` at once, the number only after a restart.
+The log line `Tuning overrides active` names this setting only when it was set.
+
+**It also bounds the rest of pairing.** The frames the hub then sends directly to the discovered
 device (discover-confirm `0x2C`, key-init `0x31`, and the phase-3 `SetConfig1` `0x6F`) never use a
-longer preamble than this setting. The device has just answered a discovery with this preamble, so
+longer preamble than discovery did. The device has just answered a discovery with that preamble, so
 it is listening and hears it, and some VELUX receivers ignore every frame behind the 1024-byte
 wake-up burst those frames would otherwise carry
-([ADR 0029](../adr/0029-start-preamble-is-a-property-of-the-target.md)). The log says so when it
-happens (`Pairing: directed frames to … use the 32-byte discovery preamble it just answered`). At
-the default `1024` nothing changes. Normal operation after pairing is not affected: it follows the
-device's own `low_power` setting and its wake belief (see [`low_power_wake_belief`](#low_power_wake_belief)).
+([ADR 0029](../adr/0029-start-preamble-is-a-property-of-the-target.md),
+[ADR 0078](../adr/0078-discovery-follows-the-start-preamble.md)). With a set value the log says so
+(`Pairing: discovery preamble … B (set in tuning); directed frames to … are capped to it`).
+Normal operation after pairing is not affected: it follows the device's own `low_power` setting and
+its wake belief (see [`low_power_wake_belief`](#low_power_wake_belief)).
 
 #### `pairing_discovery_wait_ms` / `pairing_discovery_initial_dwell_ms`
 

@@ -8,8 +8,8 @@
 ///   - every `*_PREAMBLE` tunable's ceiling is below LONG_PREAMBLE, so its frames are never
 ///     treated as a wake-up burst;
 ///   - `low_power_wake_preamble`'s floor is LONG_PREAMBLE, so it is always a wake-up burst;
-///   - `pairing_discovery_preamble`'s ceiling is exactly LONG_PREAMBLE, its default and its only
-///     wake-up value.
+///   - `pairing_discovery_preamble`'s ceiling is exactly LONG_PREAMBLE, its only wake-up value
+///     (it has no default of its own: discovery follows the start preamble).
 /// A new preamble tunable or a raised ceiling fails here, which forces a decision about its wake
 /// level.
 
