@@ -113,8 +113,8 @@ data:
 | `get_info1` | `CMD_GET_INFO1` (0x54), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | Field-observed: a real hub sends `0x54` on air. Two `0x55` answers are in the corpus (`velux_window_probe_metadata_replies`, `somfy_rs100_probe_get_info1_sx1262`); their layout is not decoded. A device may also draw an `0xFE` "opcode not supported" or nothing at all — that is itself a result worth recording. |
 | `get_info2` | `CMD_GET_INFO2` (0x56), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | The **request** has never been captured; it rests on the protocol's even=request / odd=answer pairing rule. The **answer** `0x57` is captured and carries a leading ASCII reference string followed by the packed type/subtype bytes this component already decodes. Reply strings are wire-observable and citable as-is; do not attempt to resolve one to a model name from any non-public source. |
 | `general_info3` | `CMD_GET_GENERAL_INFO3` (0x58), no payload | — (`probe_device` only; `probe_sweep` rejects it) | — | — |
-| `private2` | `CMD_PRIVATE2` (0x0C), long wire form | The modifier byte | `0x06`, then `0x05`, `0x09` | Field-observed: a real hub sends exactly these modifier bytes in the long form to real motors (e.g. request data `D4 00 80 D8 06 00`). This component's own `POS_FAVORITE`/`POS_VENT_MODIFIER` values (`0x00`/`0x03`) are not what a hub sends, and never draw the extended block described below. |
-| `private2_short` | `CMD_PRIVATE2` (0x0C), short wire form | Same as `private2` | `0x03`, then `0x09` | Field-observed: a real hub sends the short form with these modifiers (e.g. request data `D8 03 00 00`). |
+| `private2` | `CMD_PRIVATE2` (0x0C), long wire form | The modifier byte | `0x06`, then `0x05`, `0x09` | Field-observed: a real hub sends exactly these modifier bytes in the long form to real motors (e.g. request data `D4 00 80 D8 06 00`). On the Sunea awning and the Izymo dimmer the long form at modifier `0x00` or `0x03` draws only `D4 00` in place of a value, also after a My change; use `private2_short` to read a stored favourite. |
+| `private2_short` | `CMD_PRIVATE2` (0x0C), short wire form | Same as `private2` | `0x03`, then `0x09` | Field-observed: a real hub sends the short form with these modifiers (e.g. request data `D8 03 00 00`). Index `0x00` (request `D8 00 00 00`) read the stored favourite position of a Somfy Sunea awning: the reply's main value followed the My position saved with the remote (see "Reading a `private2` / `private2_short` reply" below). Experimental on any other device. |
 | `status_mp_fp` | `CMD_PRIVATE` (0x03) function `0x01`, FPI mask `0xFE` (main parameter plus FP1-FP7), no index | — (`probe_device` only; `probe_sweep` rejects it) | — | The same read-only status request a VELUX KLF 200 gateway sends to its devices (public KLF 200 API specification v3.18, section 10.3.1.4), heard on air at 868 MHz and 2.4 GHz. This is the gateway's position and status poll: it does not read a limitation, so it cannot show rain protection (use `limitation` for that). The probe reports the reply raw: flags `2D`, the main parameter, then the parameter values. The [water heater](configuration/water-heater.md) poll sends the same read and takes the main parameter as the target temperature (corpus `atlantic_calypso_probe_status_mp_fp`). |
 | `status_fp_high` | `CMD_PRIVATE` (0x03) function `0x01`, FPI1 `0x00` (main parameter only), FPI2 set to the index, one status type per set bit | The FPI2 bitmap, `0x01` to `0xFF` with at most 7 bits set: bit 7 = FP9 down to bit 0 = FP16 (`0x43` reads FP10, FP15 and FP16; `0x78` reads FP10 to FP13; any other value is rejected; `probe_sweep` refuses this probe because the index is a bitmap) | `0x43` | The `status_mp_fp` request with the second parameter bitmap of the KLF 200 API specification v3.18, section 10.3.1.4. A device that does not know it may answer `0xFE` or stay silent. **Answered on air:** an Atlantic Adelis towel dryer answers index `0x78` with FP10 to FP13 ([issue #202](https://github.com/laberning/home_io_control/issues/202), corpus `atlantic_adelis_probe_status_mp_fp`). In the towel dryer's reply FP12 is the comfort setpoint and FP13 the eco setback, each a big-endian value scaled over a range like a temperature main parameter (FP12 `0x770C` = 19.5 °C over 7–28 °C, FP13 `0x2ADB` = 3.5 K over 2–9 K), equal to the dryer's own registers `0x0103` and `0x0104`. An Atlantic Calypso Connecté water heater answers index `0x43` with FP10, FP15 and FP16, unauthenticated; its main parameter is the target temperature, as in its `status_mp_fp` reply ([issue #198](https://github.com/laberning/home_io_control/issues/198)). The probe reports the reply raw: flags, the main parameter, the FPI2 echo, then one 16-bit value per set bit; nothing decodes it. |
 | `limitation` | `CMD_LIMITATION_STATUS_REQ` (0x25) with data `{selector, 00, 00}` | `0` = resulting minimum, `1` = resulting maximum (any other value is rejected; `probe_sweep` accepts `0` to `1`) | `0`, then `1` | The request pair a VELUX KLF 200 gateway sends to its windows every five minutes, heard on air at 868 MHz in issue #98 (selector `80`, then `C0`). Its purpose follows the KLF 200 API specification v3.18, section 10.5 (get limitation: resulting minimum and maximum). The value layout is confirmed on a VELUX window dry and under rain; the originator and remaining-time bytes are unverified. |
@@ -147,7 +147,7 @@ A running record of what these frames actually draw back — as much as is under
 | `read_object` (`0x46`/`0x4A`) | Somfy Izymo dimmer, protocol version 3 (`get_info1` byte 11 = `03`): index `2` opened plainly (`47` accepted, 16 bytes), the block reads were challenged and answered, and the record is `00` + "MODULE DIMMER" + padding. Indexes `0` and `1` were refused with status 3 and length 0. Index `3` returned the 14 bytes of the `get_info1` answer and index `4` the 16 bytes of the `get_info2` answer, byte for byte. Somfy RS100 Solar io, protocol version 4 ([issue #156](https://github.com/laberning/home_io_control/issues/156)): index `0` returned all 150 bytes, index `1` 54 of 67 bytes (the last block got no answer), indexes `3` and `4` 14 and 16 bytes, index `3` equal to its `get_info1` answer. A later round on that RS100, with the 650 ms pause, read indexes `1`, `2` and `5` to `29`: 21 of the 27 reads came back in full (object ids `0x8103`, `0x8102`, `0x8104`, `0x8003`, `0x8000`, `0x8005`, `0xC001`, `0x6103`, `0xA602`, `0xA603`, `0xA604`, `0xA607`, `0xA609`, `0xA60B`, `0xA60D`, `0xA610`, `0xA611`, `0xA612`, `0xA614`, `0xA617` and `0xA618`); three are longer (`0xA601` 366 bytes, `0xA613` 431, `0xA615` 341) and have not been read yet; they fit the 432-byte cap; `0xA606` was challenged and then lost, `0x6104` was never answered, and `0x6105` answered status 7 with length 0, twice and with no other transfer open, which the probe reports as an empty object. With the pause, 71 of 82 block requests (87 %) were answered on the first try. The objects read in full ran from 3 to 247 bytes. |
 | `register_00` / `register_01` (`0x20`, read) | `register_00` swept 0x00–0x4F on an Atlantic Calypso Connecté water heater ([issue #198](https://github.com/laberning/home_io_control/issues/198)), `register_01` 0x00–0x3F on an Atlantic Adelis towel dryer ([issue #202](https://github.com/laberning/home_io_control/issues/202)). On both, a register the device lacks answers with an empty value. Record every answer per register, and retry silent ones closer. |
 | `general_info3` (`0x58`) | Dimmer answered a real `0x59`; a Somfy awning and a Velux window both replied `ERROR_RESP` result `0x08` (`COMMAND_UNKNOWN`: the device does not implement the command). Device-dependent. |
-| `private2` / `private2_short` (`0x0C`), index = modifier | `0x0D` reply; `D4 00` is the request's own leading bytes echoed back; optional `0x80` block is position family. Byte-identical day vs night across 17 solar devices, and byte-identical between two window positions on a Velux window (a stored parameter, not a live reading) — its short form at modifier `0x03` read back the stored ventilation position (`BA 00`). See "Reading a `private2` reply" below. |
+| `private2` / `private2_short` (`0x0C`), index = modifier | `0x0D` reply; the main value is a stored parameter, not a live reading, and `D4 00` in its place means no stored value. Byte-identical day vs night across 17 solar devices, and byte-identical between two window positions on a Velux window — its short form at modifier `0x03` read back the stored ventilation position (`BA 00`). The Sunea awning's short form at index `0x00` returned its stored favourite position. See "Reading a `private2` / `private2_short` reply" below. |
 | `status_mp_fp` | Unauthenticated, answered with a `0x04` and no challenge. A reply heard from a window: `04 2D 60 00 00 80 00 00 00`. The main parameter is `00 00` for open and `C8 00` for closed, followed by `80 00 00 00`. Nothing is applied to the device record. |
 | `status_fp_high` | Unauthenticated, like `status_mp_fp`. The reply is reported raw (flags, the main parameter, then the parameter values) and nothing is applied to the device record. |
 | `limitation` | Unauthenticated, as heard from a KLF 200. Two replies heard from a window with no limitation active: `26 00 00 00 00 00` after the minimum request and `26 00 C8 00 00 00` after the maximum request. The result message adds a decoded line, `limitation (assumed layout): param=MP value=100% (C8 00) originator=local_user(0x00) time=0x00 (30 s)`, which reads the five data bytes as parameter, value, originator and remaining time. Under rain protection the same window answered the minimum request with `26 00 BA 00 00 00` (93 %) and the maximum request unchanged. The value bytes read as described; the originator and remaining-time bytes were `00` even then, so those two stay an assumption, and the raw bytes stay beside every decoded value. A Somfy awning answers behind an authentication challenge with `26 05 00 00 00 00` (minimum) and `26 05 C8 00 00 00` (maximum) at every awning position: the first byte is `05`, so the decode shows a non-main parameter. Nothing is applied to the device record. |
@@ -297,18 +297,41 @@ reports be decoded.
 
 ## Reading a `private2` / `private2_short` reply
 
-The reply command byte is `CMD_PRIVATE2_RESP` (**0x0D**), not `0x04`. In every reply captured so
-far the two bytes right after the flags byte are `D4 00` — this is the **request's own leading
-payload bytes echoed back**, not a `POS_UNKNOWN` position reading. The per-device content, when
-there is any, rides in an optional `0x80`-tagged block after that echo:
+The reply command byte is `CMD_PRIVATE2_RESP` (**0x0D**), not `0x04`. The reply data is a flags
+byte, a two-byte main value, and further bytes: `05 <main value> 00 00` in the short-form replies
+below. The main value is a stored parameter on the same `0x0000`-`0xC800` scale as a position
+(`0xC800` is 100 %), not a live position reading. `D4 00` in its place (`POS_UNKNOWN`) carries no
+value; the awning answers it at the indices it holds nothing for. It is not an echo of the
+request: the short-form request starts with `D8`.
 
-- Our `0x00` / `0x03` modifiers have only ever drawn the bare echo (`… D4 00 00 00`).
-- A real hub's `0x06` modifier draws the block: e.g. `1F3807` answers with `05 D4 00 80 C8 00 00`
-  where this component's probe at `0x00` gets `6D D4 00 00 00`.
+- **Short form, index 0 (`D8 00 00 00`), favourite position.** A Somfy Sunea awning answered
+  `05 48 78 00 00` (about 36 %) while it stood at 0 %, so the value is not its current position.
+  After the awning was moved to 25 % and that position was saved as My with the remote, the reply
+  was `05 32 00 00 00` (`0x3200`, exactly 25 %). The Favorite Position button then drove the
+  awning from 0 % to 25 %. After the awning was moved back to about 36 % and that position was
+  saved as My again, the reply was `05 48 27 00 00`, the position it stood at. Captures:
+  `somfy_awning_probe_private2_short_favorite_sx1262`,
+  `somfy_awning_probe_private2_short_favorite_after_reprogram_sx1262` and
+  `somfy_awning_probe_private2_short_favorite_restored_sx1262`.
+- **Other indices.** On the same awning index 7 and index 9 answered `6D D4 00 00 00`: no stored
+  value (`somfy_awning_probe_private2_short_index7_sx1262`,
+  `somfy_awning_probe_private2_short_index9_sx1262`). A Somfy garage drive answered index 9 with
+  `05 64 00 00 00` (50 %, the partial position its owner had set;
+  `wisniowski_moto1000_probe_private2_partial_position`).
+- **Long form (`D4 00 80 D8 <modifier> 00`).** The Sunea awning and the Izymo dimmer answered
+  `6D D4 00 00 00` at modifier `0x00` and `0x03`, also after the My position was changed
+  (`somfy_awning_probe_private2_favorite_after_reprogram_lr1121`). A real hub's `0x06` modifier
+  draws a longer reply, for example `05 D4 00 80 C8 00 00` for `1F3807`; the bytes after `80`
+  look position-shaped and match the `status_ext` last-command tail. They are not battery or
+  charge telemetry, and they do not vary over a day/night cycle (checked on 17 solar devices).
+  `0x0C` is not a live-telemetry read.
+- **Izymo dimmer.** Its short form at index 0 answered `05 70 00 00 00` (56 %), so a light replies
+  with a value too (`somfy_izymo_dimmer_probe_private2_short_favorite_sx1262`). The dimmer's
+  remote was not used, so it is not confirmed that this value is its stored favourite level.
 
-The block content observed to date is position-family (`C8 00 00`, `72 49 00`) and matches the
-`status_ext` last-command tail — it is **not** battery/charge telemetry, and it does not vary over
-a day/night cycle (checked on 17 solar devices). `0x0C` is not a live-telemetry read.
+The favourite-position reading is confirmed on the Sunea only. Treat it as experimental on any
+other device until a second device confirms it. The component does not read or show it; the probe
+only logs the reply.
 
 ## Widen carefully
 

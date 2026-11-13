@@ -1,0 +1,33 @@
+id: somfy_awning_probe_private2_short_favorite_restored_sx1262
+description: >
+  The same probe after the awning was moved back to about 36 % and that position was saved as My
+  again with the remote. The reply data 05 48 27 00 00 carries 48 27, 36.1 % on the 0x0000-0xC800
+  scale and the position the awning stood at, 0.2 percentage points from the first read (48 78,
+  36.2 %); the stored value follows the My position saved with the remote.
+  The awning challenged the request first; the challenge pair is not kept here, the reply
+  followed the answered challenge.
+source:
+  device: "Somfy Sunea IO awning motor (Patio Awning, node 30E1F2)"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main with diagnostic_probes: true"
+  date: 2026-11-13
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4C 00 30 E1 F2 C0 FF EE 0C D8 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2(0x0C), short form"
+  - dir: rx
+    t_ms: 65
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 30 E1 F2 0D 05 48 27 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D)"
+expect:
+  frames:
+    - {cmd: 0x0C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x0D, start: false, end: true, protocol: 2w}

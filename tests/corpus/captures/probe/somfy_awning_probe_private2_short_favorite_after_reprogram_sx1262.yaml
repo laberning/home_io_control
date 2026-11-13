@@ -1,0 +1,35 @@
+id: somfy_awning_probe_private2_short_favorite_after_reprogram_sx1262
+description: >
+  The same probe as somfy_awning_probe_private2_short_favorite_sx1262 after the awning was moved
+  to 25 % and that position was saved as My with the remote. The reply data 05 32 00 00 00 carries
+  32 00, which is 25 % on the 0x0000-0xC800 scale and equals the saved position, where the first
+  read carried 36 %. The Favorite Position button then drove the awning from 0 % to 25 % and it
+  stopped there. The long-form probe stayed at D4 00 after a My change
+  (somfy_awning_probe_private2_favorite_after_reprogram_lr1121.yaml); the short form follows it.
+  The awning challenged the request first; the challenge pair is not kept here, the reply
+  followed the answered challenge.
+source:
+  device: "Somfy Sunea IO awning motor (Patio Awning, node 30E1F2)"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main with diagnostic_probes: true"
+  date: 2026-11-13
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4C 00 30 E1 F2 C0 FF EE 0C D8 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2(0x0C), short form"
+  - dir: rx
+    t_ms: 74
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 30 E1 F2 0D 05 32 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D)"
+expect:
+  frames:
+    - {cmd: 0x0C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x0D, start: false, end: true, protocol: 2w}

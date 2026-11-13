@@ -1,0 +1,33 @@
+id: somfy_awning_probe_private2_short_index9_sx1262
+description: >
+  The awning's reply to the private2_short probe with index 9 (request D8 09 00 00). The reply
+  data 6D D4 00 00 00 carries D4 00 in place of a value: the awning has nothing stored for this
+  index. Compare somfy_awning_probe_private2_short_index7_sx1262.yaml; a Somfy garage drive
+  answers index 9 with a stored value (wisniowski_moto1000_probe_private2_partial_position.yaml).
+  The awning challenged the request first; the challenge pair is not kept here, the reply
+  followed the answered challenge.
+source:
+  device: "Somfy Sunea IO awning motor (Patio Awning, node 30E1F2)"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main with diagnostic_probes: true"
+  date: 2026-11-13
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4C 00 30 E1 F2 C0 FF EE 0C D8 09 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2(0x0C), short form"
+  - dir: rx
+    t_ms: 64
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 30 E1 F2 0D 6D D4 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D)"
+expect:
+  frames:
+    - {cmd: 0x0C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x0D, start: false, end: true, protocol: 2w}

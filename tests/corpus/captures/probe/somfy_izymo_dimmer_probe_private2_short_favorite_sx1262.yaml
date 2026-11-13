@@ -1,0 +1,32 @@
+id: somfy_izymo_dimmer_probe_private2_short_favorite_sx1262
+description: >
+  The dimmer's reply to the private2_short probe, index 0 (request D8 00 00 00). The reply data 05
+  70 00 00 00 carries 70 00, 56 % on the 0x0000-0xC800 scale: a light answers with a value too,
+  where the long-form probe drew D4 00 (somfy_izymo_dimmer_probe_private2_favorite_lr1121.yaml).
+  Whether this value is the dimmer's stored favourite level was not checked against its remote.
+  The dimmer answered without a challenge.
+source:
+  device: "Somfy Izymo dimmer (Dimmable Light, node 87FF2F)"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main with diagnostic_probes: true"
+  date: 2026-11-13
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4C 00 87 FF 2F C0 FF EE 0C D8 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2(0x0C), short form"
+  - dir: rx
+    t_ms: 36
+    freq: 868950000
+    hex: "8D 00 C0 FF EE 87 FF 2F 0D 05 70 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D)"
+expect:
+  frames:
+    - {cmd: 0x0C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x0D, start: false, end: true, protocol: 2w}
