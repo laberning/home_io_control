@@ -387,9 +387,9 @@ class IOHomeControlComponent : public Component,
   /// identity, reached only through the explicitly-named `oneway_remove_controller` native API
   /// action — the same `0x39` send_oneway_enroll() also fires as its own prelude, but here alone.
   ///
-  /// @warning **Unconfirmed standalone on real hardware.** Firing `0x39` alone has had no
-  /// observable effect on this project's test hardware; the leading hypothesis is that it needs
-  /// the same association-mode window enrollment does. See ADR 0026 § Consequences.
+  /// @warning **Works only inside the receiver's programming window.** Confirmed on a Somfy Izymo
+  /// dimmer only: put the receiver in its programming mode first, then fire this; with no window
+  /// open it changes nothing. Other receivers are untested. See ADR 0026 § Consequences.
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
   void send_oneway_unenroll(const std::string &controller_id) {
     this->op_queue_.enqueue_oneway_unenroll(controller_id);

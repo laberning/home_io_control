@@ -1,0 +1,50 @@
+id: somfy_izymo_dimmer_enrollment_remove_controller_in_prog_window_sx1276
+description: >
+  This project's own hub un-enrolling its emulated 1W controller (0x39 alone, class-addressed, 4 copies) from a
+  Somfy Izymo dimmer while the Izymo was in its PROG association window. The Izymo blinked during the remove and
+  ignored the 1W Close (EXECUTE, light class, 4 copies) the same controller identity sent 54 s later. The
+  identical remove sent with no PROG window open changed nothing: the Izymo kept obeying the same controller's
+  Close and Open. So a standalone 0x39 removed this 1W controller only while the receiver was in its programming
+  mode. The controller had been enrolled with this project's enrollment gesture (0x39 then 0x30) and controlled
+  the light beforehand. The 0x39 MACs are re-keyed to the corpus key. The ignored Close is not included: its
+  MAC is signed under the hub's real network key and no tool re-keys a 1W EXECUTE, so only its effect is
+  recorded here.
+source:
+  device: "Somfy Izymo dimmer, 1W remove-controller sent by this project's hub inside the receiver's PROG window"
+  captured_with: sx1276
+  firmware: null
+  date: 2026-11-13
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "F1 00 00 00 3F B5 18 E5 39 00 00 08 28 22 23 F0 C3 F9"
+    crc: absent
+    note: "cmd=ONEWAY_REMOVE(0x39) -- sent inside the receiver's PROG window; the Izymo blinked"
+  - dir: tx
+    t_ms: 322
+    freq: 868950000
+    hex: "F1 00 00 00 3F B5 18 E5 39 00 00 08 28 22 23 F0 C3 F9"
+    crc: absent
+    note: "cmd=ONEWAY_REMOVE(0x39) -- sent inside the receiver's PROG window; the Izymo blinked"
+  - dir: tx
+    t_ms: 643
+    freq: 868950000
+    hex: "F1 00 00 00 3F B5 18 E5 39 00 00 08 28 22 23 F0 C3 F9"
+    crc: absent
+    note: "cmd=ONEWAY_REMOVE(0x39) -- sent inside the receiver's PROG window; the Izymo blinked"
+  - dir: tx
+    t_ms: 963
+    freq: 868950000
+    hex: "F1 00 00 00 3F B5 18 E5 39 00 00 08 28 22 23 F0 C3 F9"
+    crc: absent
+    note: "cmd=ONEWAY_REMOVE(0x39) -- sent inside the receiver's PROG window; the Izymo blinked"
+expect:
+  frames:
+    - {cmd: 0x39, start: true, end: true, protocol: 1w}
+    - {cmd: 0x39, start: true, end: true, protocol: 1w}
+    - {cmd: 0x39, start: true, end: true, protocol: 1w}
+    - {cmd: 0x39, start: true, end: true, protocol: 1w}

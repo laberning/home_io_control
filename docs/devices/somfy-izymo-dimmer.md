@@ -46,16 +46,20 @@ the wire says whether a light device supports intermediate positions.
 - **A 1W Smoove remote can be enrolled onto it**, and this was captured both with and without the
   MAC-bearing form of the enrollment frame. If your own enrollment does not take, `enrollment_with_mac`
   is the option to flip — see [Sending 1W commands](../configuration/oneway-transmit.md).
+- **Removing an enrolled 1W controller needs the PROG window.** The `oneway_remove_controller`
+  action takes effect only when you press PROG first: the light blinks and then ignores that
+  controller. Sent with no window open, it changes nothing.
 - **Probes return data that is not decoded.** `CMD_GET_INFO2`, `CMD_GET_GENERAL_INFO3` and the
   private-function reads all answer, but nothing in those replies has been mapped to a useful
   value yet.
 
 ## Evidence
 
-39 corpus captures on the maintainer's own hardware, nodes `1DAF16` and `4200E0` — the largest
+41 corpus captures on the maintainer's own hardware, nodes `1DAF16`, `4200E0` and `87FF2F` (the
+dimmer takes a new address each time it is reset) — the largest
 single-device set in the corpus. They cover pairing, on/off, brightness at 50% and 75%, status
-polls for each of those states, roll-call discovery, 1W enrollment, and six probe scenarios, across
-all three radio chips.
+polls for each of those states, roll-call discovery, 1W enrollment and removal, and seven probe
+scenarios, across all three radio chips.
 
 ## See also
 

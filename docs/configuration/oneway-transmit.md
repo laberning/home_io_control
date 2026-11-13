@@ -251,12 +251,12 @@ This sends `0x39` alone, nothing else. It carries only this identity's own sourc
 cannot remove a different remote's registration — the same property that makes the Enroll button's
 `0x39` prelude safe to send automatically.
 
-> **⚠️ Un-enrollment is unconfirmed on real hardware.** This action has not been shown to have any
-> effect on real hardware — the hub keeps controlling the device afterwards regardless. The most
-> likely explanation, by analogy with enrollment itself, is that a device only acts on `0x39`
-> while its receiver is in the same physical association-mode gesture enrollment needs (a PROG hold
-> for Somfy, Gear for VELUX). Treat "un-enroll" as the documented design intent, not a confirmed
-> rollback, until this is retested with that gesture.
+> **⚠️ Put the receiver in its programming mode first.** Press the receiver's PROG button, then
+> call `oneway_remove_controller` inside its association window. On a Somfy Izymo dimmer the light
+> blinks during the remove and then ignores the controller (corpus capture
+> `somfy_izymo_dimmer_enrollment_remove_controller_in_prog_window_sx1276`); sent with no window
+> open, the action changes nothing and the hub keeps controlling the dimmer. The Izymo is the only
+> receiver this is confirmed on; other receivers are untested.
 
 **When you are done enrolling**, remove `enrollment: true` from the identity and reflash. A build
 that can put a device into someone else's controller table should not be the build that runs

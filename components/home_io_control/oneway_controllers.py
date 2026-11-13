@@ -628,9 +628,9 @@ async def create_oneway_controller_entities(identity, var):
         #
         # No "(May Replace Existing Remotes)" caveat: enrolling a new identity onto a device is
         # additive, not destructive -- an existing remote keeps working alongside a newly enrolled
-        # hub. Un-enrollment (`0x39`, the `oneway_remove_controller` action) has not been confirmed
-        # to work on real hardware yet -- see that action's own doxygen (management_actions.h) --
-        # so "reversible" is the design intent, not yet a demonstrated fact.
+        # hub. Un-enrollment (`0x39`, the `oneway_remove_controller` action) reverses it only while
+        # the receiver is in its programming window, confirmed on one receiver so far -- see that
+        # action's own doxygen (management_actions.h).
         enroll_config = button_component.button_schema(
             IOHomeOneWayEnrollButton,
             entity_category=ENTITY_CATEGORY_CONFIG,

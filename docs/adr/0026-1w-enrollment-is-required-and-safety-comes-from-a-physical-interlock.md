@@ -116,12 +116,12 @@ undo it afterward.
   code.
 - **No second entity, no confirmation state to reason about.** The enroll button's only guard is
   the YAML build flag; whether a press does anything at all is decided entirely by the receiver.
-- **Removal (`oneway_remove_controller`, 0x39) is not confirmed working on this project's test
-  hardware.** Repeated attempts had no observable effect. The leading hypothesis, by analogy with
-  enrollment's own physical gate, is that `0x39` also needs the receiver in its association-mode
-  window and the failed attempts were fired without it — but this is untested, not ruled out.
-  Treat "enrollment is reversible" as design intent, not a demonstrated fact, until this is
-  retested and confirmed.
+- **Removal (`oneway_remove_controller`, 0x39) needs the same physical gate as enrollment.** On a
+  Somfy Izymo dimmer the remove takes effect only while the receiver is in its programming mode:
+  it blinks, and afterwards ignores this identity's 1W commands. Sent outside programming mode it
+  changes nothing (corpus `somfy_izymo_dimmer_enrollment_remove_controller_in_prog_window_sx1276`).
+  So enrollment is reversible by the same gesture that made it, and an accidental remove is as hard
+  to trigger as an accidental enroll. Other receivers are untested.
 - **Both enrollment failures traced to real users in the same week (2026-08-21: an external
   tester's Velux SML roller shutter report, and this project's own Izymo retest) turned out to share one
   root cause: a device-class mismatch in `oneway_controllers`' `io_device_type`, not the

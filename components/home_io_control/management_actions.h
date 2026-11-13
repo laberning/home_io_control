@@ -137,13 +137,10 @@ class ManagementActions {
   /// not confirmed" framing as api_oneway_set_position() — 1W has no reply, so nothing here can
   /// ever say a device actually forgot this identity.
   ///
-  /// @warning **Unconfirmed standalone on real hardware.** An enrolled device has been observed
-  /// to ignore this frame sent alone — the hub kept controlling it afterwards. The frame itself
-  /// matches every real captured `0x39` this project holds (payload shape, MAC span), so the most
-  /// likely explanation is the same physical gate enrollment has: a device may only act on `0x39`
-  /// while its receiver is in the 2 s PROG association-mode window, and the failed attempt was
-  /// fired without it — untested, not ruled out. Do not treat this action as a confirmed rollback
-  /// until it is retested with that gesture.
+  /// @warning **Works only inside the receiver's programming window.** Confirmed on a Somfy Izymo
+  /// dimmer only: put the receiver in its programming mode (PROG window), then call this action;
+  /// the Izymo blinks and stops obeying this identity. With no window open the frame changes
+  /// nothing, and the hub keeps controlling the Izymo. Other receivers are untested.
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
   void api_oneway_remove_controller(const std::string &controller_id);
 

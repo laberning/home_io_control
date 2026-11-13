@@ -220,10 +220,11 @@ class OneWayTransmitter {
   /// Reachable directly through the explicitly-named `oneway_remove_controller` native API
   /// action, for un-enrolling without immediately re-enrolling.
   ///
-  /// @warning **Unconfirmed standalone on real hardware.** Firing `0x39` alone (outside the
-  /// enrollment handshake) has had no observable effect on this project's test hardware; the
-  /// leading hypothesis is that it needs the same association-mode window enrollment does. See
-  /// ADR 0026 § Consequences.
+  /// @warning **Works only inside the receiver's programming window.** Confirmed on a Somfy Izymo
+  /// dimmer: sent while the Izymo was in its PROG association window, the Izymo blinked and then
+  /// ignored this identity's commands; sent with no window open, it changed nothing
+  /// (`tests/corpus/captures/enrollment/somfy_izymo_dimmer_enrollment_remove_controller_in_prog_window_sx1276.yaml`).
+  /// Other receivers are untested. See ADR 0026 § Consequences.
   /// @param controller_id YAML handle of the controller identity to remove.
   /// @return true if at least one copy reached the radio.
   bool send_unenrollment(const std::string &controller_id);
