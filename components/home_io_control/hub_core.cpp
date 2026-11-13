@@ -313,10 +313,18 @@ bool IOHomeControlComponent::transmit_frame_(const IoFrame &frame, uint32_t freq
 ExchangeOutcome IOHomeControlComponent::send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq,
                                                           const decisions::AttemptRequest &attempts) {
   this->busy_ = true;
+  // The read at a cover's predicted end leads with the wake-up preamble: the cover has come to rest
+  // by its own count, and a resting receiver hears only that one. The override also takes the wake
+  // belief out of the exchange, which would lead short while the moving evidence is still fresh.
+  const uint16_t preamble_override = (attempts.wake_preamble_first && (request.ctrl1 & CTRL1_LOW_POWER) != 0)
+                                         ? this->tuning_.low_power_wake_preamble
+                                         : 0;
   ExchangeOutcome const outcome =
-      attempts.planned ? this->exchange_engine_.send_and_receive(
-                             request, response, freq, this->exchange_engine_.plan_read(attempts.kind, request, freq))
-                       : this->exchange_engine_.send_and_receive(request, response, freq, attempts.max_tries);
+      attempts.planned
+          ? this->exchange_engine_.send_and_receive(request, response, freq,
+                                                    this->exchange_engine_.plan_read(attempts.kind, request, freq),
+                                                    preamble_override)
+          : this->exchange_engine_.send_and_receive(request, response, freq, attempts.max_tries, preamble_override);
   this->busy_ = false;
   return outcome;
 }

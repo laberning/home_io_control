@@ -6,7 +6,8 @@
 
 Amended by [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
 (the post-`stop` poll keeps three tries until it takes the settling plan) and by [ADR 0074](0074-settling-reads-take-the-attempt-plan-and-progress-reads-stay-single-tries.md)
-(it takes the settling plan).
+(it takes the settling plan), and by [ADR 0077](0077-a-moving-cover-stays-awake-believed-until-its-remaining-time-runs-out.md)
+(a silent exchange before the reported remaining time has run out keeps the evidence; the predicted-end read leads with the wake-up preamble).
 
 Amends [ADR 0029](0029-start-preamble-is-a-property-of-the-target.md). Confirmed on a VELUX SSL
 solar roller shutter: a `stop` and the status poll after it both land while the motor is

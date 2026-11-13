@@ -3974,6 +3974,126 @@ TEST(HubOperations, MovingCoverIsReadOnceAtItsPredictedEndWithTheSettlingPlan) {
   EXPECT_GT(planned_settling_attempts(comp), 1u);
 }
 
+namespace {
+
+/// Preambles of the transmissions @p radio made after its first @p already_sent.
+std::vector<uint16_t> preambles_since(const MockRadio &radio, size_t already_sent) {
+  std::vector<uint16_t> preambles;
+  const auto &configs = radio.get_tx_configs();
+  for (size_t i = already_sent; i < configs.size(); ++i)
+    preambles.push_back(configs[i].preamble_len);
+  return preambles;
+}
+
+}  // namespace
+
+// \todo Untested on hardware: needs a low-power cover that reports a remaining time (ADR 0077).
+TEST(HubOperations, MissedShortTryMidMoveKeepsTheShortPreambleUntilTheCountRunsOut) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(moving_report(comp, 12));
+  const uint32_t t0 = esphome::millis();
+  const uint16_t short_preamble = comp.tuning_.normal_start_preamble;
+  const IoDevice *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+
+  // A progress read, lost: by its own count the cover is still moving, so the next one is short again.
+  esphome::test_clock::advance_ms(3001);
+  size_t sent = radio.get_tx_configs().size();
+  EXPECT_EQ(run_due_poll_against_silence(comp, radio), 1);
+  EXPECT_EQ(preambles_since(radio, sent), (std::vector<uint16_t>{short_preamble}));
+  EXPECT_NE(dev->last_moving_evidence_ms, 0u) << "one missed frame is not proof that it has come to rest";
+
+  esphome::test_clock::advance_ms(3001);
+  sent = radio.get_tx_configs().size();
+  EXPECT_EQ(run_due_poll_against_silence(comp, radio), 1);
+  EXPECT_EQ(preambles_since(radio, sent), (std::vector<uint16_t>{short_preamble}));
+
+  // The count has run out and the cover is silent: now it has most likely come to rest.
+  esphome::test_clock::set_ms(t0 + 12000u + PREDICTED_END_MARGIN_MS + 1);
+  sent = radio.get_tx_configs().size();
+  for (size_t i = 0; i < EXCHANGE_MAX_ATTEMPTS; ++i)
+    radio.queue_tx_result(false);
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  ASSERT_FALSE(preambles_since(radio, sent).empty());
+  EXPECT_EQ(preambles_since(radio, sent).front(), short_preamble) << "the belief still leads short...";
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "...and a silent try after the count spends the evidence";
+}
+
+TEST(HubOperations, PredictedEndReadToALowPowerCoverLeadsWithTheWakeUpPreamble) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(moving_report(comp, 12));
+  const uint32_t t0 = esphome::millis();
+  const IoDevice *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_NE(dev->last_moving_evidence_ms, 0u) << "the belief would lead short: moving evidence is fresh";
+
+  esphome::test_clock::set_ms(t0 + 13002u);
+  const size_t sent = radio.get_tx_configs().size();
+  const int attempts = run_due_poll_against_silence(comp, radio);
+
+  EXPECT_GT(attempts, 1) << "a settling read";
+  const std::vector<uint16_t> preambles = preambles_since(radio, sent);
+  ASSERT_EQ(preambles.size(), static_cast<size_t>(attempts));
+  for (const uint16_t preamble : preambles)
+    EXPECT_EQ(preamble, comp.tuning_.low_power_wake_preamble) << "at its predicted end the cover rests";
+}
+
+TEST(HubOperations, ReadAfterASilentPredictedEndReadLeadsShortThenWakes) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/true);
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(moving_report(comp, 12));
+  const uint32_t t0 = esphome::millis();
+  const IoDevice *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  const uint16_t short_preamble = comp.tuning_.normal_start_preamble;
+  const uint16_t wake_preamble = comp.tuning_.low_power_wake_preamble;
+
+  esphome::test_clock::set_ms(t0 + 13002u);
+  ASSERT_GT(run_due_poll_against_silence(comp, radio), 1);
+  EXPECT_NE(dev->last_moving_evidence_ms, 0u)
+      << "the wake-only read took the belief out of the exchange: it spends nothing";
+
+  // Still moving past its count, or at rest: the next read covers both, and its silence decides.
+  const uint32_t next = comp.poll_policy_.get_next_update("ABC123");
+  ASSERT_NE(next, 0u) << "a missed read is retried";
+  esphome::test_clock::set_ms(next + 1);
+  const size_t sent = radio.get_tx_configs().size();
+  const int attempts = run_due_poll_against_silence(comp, radio);
+  ASSERT_GT(attempts, 1) << "the read after a missed one is a settling read";
+  const std::vector<uint16_t> preambles = preambles_since(radio, sent);
+  EXPECT_EQ(preambles.front(), short_preamble) << "a cover still travelling past its count hears the first try";
+  for (size_t i = 1; i < preambles.size(); ++i)
+    EXPECT_EQ(preambles[i], wake_preamble) << "a resting cover hears the later ones";
+  EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "silent after its count: the evidence is spent";
+}
+
+TEST(HubOperations, PredictedEndReadToAMainsCoverKeepsTheNormalStartPreamble) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableComponent comp;
+  MockRadio radio;
+  setup_low_power_cover(comp, radio, /*low_power=*/false);
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(moving_report(comp, 12));
+  const uint32_t t0 = esphome::millis();
+
+  esphome::test_clock::set_ms(t0 + 13002u);
+  const size_t sent = radio.get_tx_configs().size();
+  ASSERT_GT(run_due_poll_against_silence(comp, radio), 0);
+  for (const uint16_t preamble : preambles_since(radio, sent))
+    EXPECT_EQ(preamble, comp.tuning_.normal_start_preamble);
+}
+
 TEST(HubOperations, StaleRemainingTimeFallsBackToSingleTryProgressReads) {
   esphome::test_clock::ManualClock clock(50000);
   TestableComponent comp;

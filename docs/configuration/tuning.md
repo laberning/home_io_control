@@ -476,7 +476,12 @@ does not count as moving: a resting VELUX SSL ignored the short preamble even 34
 answered. A move is "known to have ended" when a status says stopped (including the reply to a `stop`, which
 can still say "moving" while the motor winds down), or when an exchange sent while
 the device was believed moving (other than a `stop`) draws no frame at all; the next exchange then
-leads with the wake-up preamble. A status poll that only looks at a cover that is probably still moving (most scheduled polls) makes
+leads with the wake-up preamble. An exchange that draws no frame does not end the move while the
+remaining travel time the device last reported has not run out: a moving receiver that missed one
+frame is still moving, so the next poll leads short again. The read at the predicted end of travel
+(described on the [cover page](cover.md)) leads with the wake-up
+preamble, since the cover has come to rest by its own count. Experimental: no low-power cover that
+reports a remaining time has confirmed this on hardware. A status poll that only looks at a cover that is probably still moving (most scheduled polls) makes
 one try and sends the first try's preamble; if it misses, the next poll a few seconds later is a
 read that decides where the cover ended up, and repeats as often as the exchange budget allows
 (three times for a `low_power` device, up to nine for a mains-powered one). So does the poll right after an accepted `stop`, the poll

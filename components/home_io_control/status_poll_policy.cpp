@@ -221,6 +221,11 @@ bool StatusPollPolicy::take_confirm_stopped(const std::string &device_id) {
   return marked;
 }
 
+bool StatusPollPolicy::is_predicted_end_read(const std::string &device_id) const {
+  auto it = tracking_.find(device_id);
+  return it != tracking_.end() && it->second.predicted_end_read;
+}
+
 bool StatusPollPolicy::take_settling_read(const std::string &device_id) {
   const bool after_stop = take_stop_settle(device_id);
   const bool confirms_stop = take_confirm_stopped(device_id);

@@ -596,6 +596,8 @@ struct AttemptRequest {
   uint8_t max_tries{EXCHANGE_RETRY_COUNT};  ///< Cap on attempts; ignored once @ref kind is set.
   bool planned{false};                      ///< True: build the plan for @ref kind instead of using a count.
   ReadKind kind{ReadKind::COMMAND};         ///< What the read is for; only read when @ref planned.
+  /// True for the read at a moving cover's predicted end of travel (@ref with_wake_preamble_first()).
+  bool wake_preamble_first{false};
 
   AttemptRequest() = default;
   /// @param tries Cap on attempts (the `max_tries` form of ExchangeEngine::send_and_receive()).
@@ -606,6 +608,15 @@ struct AttemptRequest {
     AttemptRequest request;
     request.planned = true;
     request.kind = read_kind;
+    return request;
+  }
+  /// @brief Mark the read as aimed at the moment the receiver has just come to rest: to a low-power
+  /// target every attempt sends the wake-up preamble, which a resting receiver hears, whatever the
+  /// wake belief says (ADR 0077). Without effect for a target that is not low-power.
+  /// \todo Untested on hardware: needs a low-power cover that reports a remaining time.
+  [[nodiscard]] AttemptRequest with_wake_preamble_first() const {
+    AttemptRequest request = *this;
+    request.wake_preamble_first = true;
     return request;
   }
   /// True for a look at a device that is probably still busy: one attempt, the ladder is the retry
@@ -640,12 +651,24 @@ struct TargetEvidence {
   uint32_t last_seen_ms;             ///< Last frame received from the receiver, any command. Only logged
                                      ///< (`age_ms=`); it does not feed the belief.
   bool confirms_execute;             ///< The device has closed a CMD_EXECUTE exchange with a reply before.
+  uint32_t moving_until_ms{0};       ///< When the remaining time of its last trusted moving report has run
+                                     ///< out (`millis()`), 0 = unknown (see moving_until_holds()).
 };
 
 /// Build the exchange engine's view of a device record.
 /// @param dev Device record to read.
 [[nodiscard]] inline TargetEvidence target_evidence(const IoDevice &dev) {
-  return {dev.last_moving_evidence_ms, dev.last_seen_ms, dev.confirms_execute};
+  return {dev.last_moving_evidence_ms, dev.last_seen_ms, dev.confirms_execute, dev.moving_until_ms};
+}
+
+/// True while the remaining time the receiver last reported has not run out: by its own account it
+/// is still travelling, so a silent exchange is not evidence that it has come to rest. False when no
+/// remaining time is known (0). Wrap-safe.
+/// \todo Untested on hardware: needs a low-power cover that reports a remaining time (ADR 0077).
+/// @param evidence Stamps for the target device.
+/// @param now      Current millis().
+[[nodiscard]] inline bool moving_until_holds(const TargetEvidence &evidence, uint32_t now) {
+  return evidence.moving_until_ms != 0 && static_cast<int32_t>(evidence.moving_until_ms - now) > 0;
 }
 
 /// True for a CMD_EXECUTE whose main byte is POS_STOP. A STOP is only ever sent to a receiver that

@@ -521,11 +521,14 @@ struct IoDevice {
   uint32_t last_moving_evidence_ms{
       0};  ///< millis() of the last sign this device is travelling (see
            ///< note_moving_evidence(), clear_moving_evidence()), 0 = never. Hub-side belief, not observation.
-  uint16_t exchange_timeout_count{0};      ///< Cumulative count of outbound exchanges to this device with no valid
-                                           ///< response (see detail::record_exchange_timeout() in hub_internal.h).
-  uint16_t exchange_attempt_count{0};      ///< Cumulative attempts (`ExchangeEngine::DebugInfo::tries`, 1-based per
-                                           ///< exchange) across those timed-out exchanges only — attempts within an
-                                           ///< ultimately successful exchange are not counted (deliberate scope limit).
+  uint32_t moving_until_ms{0};         ///< millis() at which the remaining time of the last trusted moving report has
+                                       ///< run out (plus PREDICTED_END_MARGIN_MS), 0 = unknown. Written by
+                                       ///< note_moving_until(); dropped with the moving evidence.
+  uint16_t exchange_timeout_count{0};  ///< Cumulative count of outbound exchanges to this device with no valid
+                                       ///< response (see detail::record_exchange_timeout() in hub_internal.h).
+  uint16_t exchange_attempt_count{0};  ///< Cumulative attempts (`ExchangeEngine::DebugInfo::tries`, 1-based per
+                                       ///< exchange) across those timed-out exchanges only — attempts within an
+                                       ///< ultimately successful exchange are not counted (deliberate scope limit).
   uint16_t exchange_unconfirmed_count{0};  ///< Cumulative count of exchanges this device authenticated and then never
                                            ///< closed: it answered with a 0x3C challenge, we answered that, and no
                                            ///< final reply arrived. Counted separately from exchange_timeout_count
@@ -607,7 +610,19 @@ void resolve_device_features(IoDevice &dev);
 /// one first (decisions::wake_belief()).
 /// @param dev    Device to stamp.
 /// @param now_ms Current millis(). Must be non-zero in practice; 0 would read as "never".
-inline void note_moving_evidence(IoDevice &dev, uint32_t now_ms) { dev.last_moving_evidence_ms = now_ms; }
+inline void note_moving_evidence(IoDevice &dev, uint32_t now_ms) {
+  dev.last_moving_evidence_ms = now_ms;
+  dev.moving_until_ms = 0;  // A fresh sign of travel says nothing about when it ends until a count says so.
+}
+
+/// @brief Record when the travel the device is reporting should be over, from its own remaining time.
+///
+/// Call after note_moving_evidence() for the same report: that call forgets an earlier end. While
+/// the end has not been reached the receiver is still travelling by its own account, so a silent
+/// exchange is not taken as proof that it has come to rest (decisions::moving_until_holds()).
+/// @param dev      Device to stamp.
+/// @param until_ms millis() at which the reported remaining time, plus a margin, has run out. Non-zero.
+inline void note_moving_until(IoDevice &dev, uint32_t until_ms) { dev.moving_until_ms = until_ms; }
 
 /// @brief Forget that a device was travelling: it reported itself stopped (including in the ack to a
 /// STOP), a linked remote was heard stopping it, or it stayed silent to an exchange sent while it
@@ -617,7 +632,10 @@ inline void note_moving_evidence(IoDevice &dev, uint32_t now_ms) { dev.last_movi
 /// would keep reading as "moving" for the rest of LOW_POWER_MAX_TRAVEL_MS, although it goes back to
 /// duty-cycling within seconds and then hears only the wake-up preamble.
 /// @param dev Device to clear.
-inline void clear_moving_evidence(IoDevice &dev) { dev.last_moving_evidence_ms = 0; }
+inline void clear_moving_evidence(IoDevice &dev) {
+  dev.last_moving_evidence_ms = 0;
+  dev.moving_until_ms = 0;
+}
 
 /// @brief Convert an `rssi_ema_scaled` fixed-point value to whole dBm (round half away from zero).
 /// @param scaled Fixed-point EMA value in 1/RSSI_EMA_SCALE dBm units (not the sentinel).

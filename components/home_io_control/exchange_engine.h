@@ -641,6 +641,8 @@ class ExchangeEngine {
   /// @param request The exchange's request frame (a STOP never spends the evidence).
   /// @param plan    The preamble plan the exchange was sent with.
   void spend_wake_evidence_if_silent_(const IoFrame &request, const PreamblePlan &plan);
+  /// True while the remaining time the target last reported has not run out (decisions::moving_until_holds()).
+  [[nodiscard]] bool still_travelling_by_its_own_count_(const IoFrame &request) const;
 
   // --- Dependencies (back-references into the hub) -------------------------
 

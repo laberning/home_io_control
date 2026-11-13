@@ -3410,6 +3410,22 @@ TEST(WakeBelief, SilentAwakeExchangeSpendsTheMovingEvidence) {
   EXPECT_EQ(spent, 1) << "a receiver believed moving that answers nothing has most likely come to rest";
 }
 
+TEST(WakeBelief, SilentAwakeExchangeKeepsTheEvidenceWhileTheReportedRemainingTimeHasNotRunOut) {
+  WakeBeliefRig rig;
+  rig.moved_ago(1000);
+  rig.evidence.moving_until_ms = esphome::millis() + 5000;
+  int spent = 0;
+  rig.engine.set_wake_evidence_spent_handler([&spent](const uint8_t *) { spent++; });
+
+  rig.send(low_power_position_request(), /*max_tries=*/1);
+  EXPECT_EQ(spent, 0) << "by its own count it is still travelling: one missed frame says nothing";
+
+  esphome::test_clock::advance_ms(5000);
+  rig.moved_ago(1000);
+  rig.send(low_power_position_request(), /*max_tries=*/1);
+  EXPECT_EQ(spent, 1) << "once the count has run out a silent short try does spend the evidence";
+}
+
 TEST(WakeBelief, SilentStopLeavesTheEvidenceAlone) {
   WakeBeliefRig rig;
   rig.moved_ago(1000);

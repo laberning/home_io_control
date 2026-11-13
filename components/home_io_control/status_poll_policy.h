@@ -293,6 +293,8 @@ class StatusPollPolicy {
   void set_confirm_stopped(const std::string &device_id, bool needed);
   /// Consume the mark set by set_confirm_stopped(): true once, for the first poll dispatched after it.
   [[nodiscard]] bool take_confirm_stopped(const std::string &device_id);
+  /// True when the next poll is the predicted-end read (the mark take_settling_read() consumes).
+  [[nodiscard]] bool is_predicted_end_read(const std::string &device_id) const;
   /// Consume the marks (none short-circuits another) for the poll being dispatched.
   /// @return True when that poll settles a position: it follows an accepted STOP, confirms a stop off
   ///         target, or is the predicted-end read.

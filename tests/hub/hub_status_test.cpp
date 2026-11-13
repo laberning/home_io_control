@@ -1157,6 +1157,51 @@ TEST(HubStatus, UnsolicitedMovingStatusUpdateStampsMovingEvidence) {
       << "a decoded 'not stopped' status is evidence the receiver is travelling";
 }
 
+TEST(HubStatus, TrustedMovingReportWithACountStampsWhenTheCountRunsOut) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_moving_reply(12));
+
+  const IoDevice *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_EQ(dev->moving_until_ms, 50000u + 12000u + PREDICTED_END_MARGIN_MS) << "last report + R + a second";
+}
+
+TEST(HubStatus, TheEndOfTravelIsForgottenWithTheMovingEvidence) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+  comp.update_device_status_(make_moving_reply(12));
+  IoDevice *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_NE(dev->moving_until_ms, 0u);
+
+  note_moving_evidence(*dev, esphome::millis());
+  EXPECT_EQ(dev->moving_until_ms, 0u) << "a new sign of travel says nothing about when it ends";
+
+  note_moving_until(*dev, 99999);
+  comp.update_device_status_(make_status_reply(true, 0x6400, 0x6400));
+  EXPECT_EQ(dev->moving_until_ms, 0u) << "a stopped report spends it";
+}
+
+TEST(HubStatus, MovingReportWithoutACountOrAnAckLeavesTheEndUnknown) {
+  esphome::test_clock::ManualClock clock(50000);
+  TestableHubComponent comp;
+  comp.add_device("ABC123");
+  comp.begin_status_poll_tracking_("ABC123", 0);
+
+  comp.update_device_status_(make_moving_reply(0xFFFF));  // "no remaining time provided"
+  EXPECT_EQ(comp.get_device("ABC123")->moving_until_ms, 0u);
+
+  comp.update_device_status_(make_moving_reply(12),
+                             /*trust_position=*/false);  // an execute ack's bytes mean something else
+  EXPECT_EQ(comp.get_device("ABC123")->moving_until_ms, 0u);
+}
+
 TEST(HubStatus, UnsolicitedStoppedStatusUpdateClearsMovingEvidence) {
   esphome::test_clock::ManualClock clock(7000);
   TestableHubComponent comp;

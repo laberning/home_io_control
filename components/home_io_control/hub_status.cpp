@@ -294,6 +294,12 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   // assumes (decisions::classify_stopped_report(), "known bound"), whatever count the reply carries.
   if (reported_stopped)
     remaining_s.reset();
+  // A moving receiver that counts is moving until its count has run out: a silent exchange before
+  // then does not spend the wake belief's evidence (ADR 0077).
+  if (trust_position && remaining_s.has_value()) {
+    note_moving_until(
+        dev, dev.last_status + (*remaining_s * PRIVATE_RESPONSE_REMAINING_TIME_SCALE_MS) + PREDICTED_END_MARGIN_MS);
+  }
 
   if (effective_is_stopped(dev)) {
     policy.clear(id);

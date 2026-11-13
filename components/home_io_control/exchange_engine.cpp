@@ -526,12 +526,22 @@ void ExchangeEngine::spend_wake_evidence_if_silent_(const IoFrame &request, cons
   // leads with the wake-up preamble instead of losing its first try (or, for a single-try poll, its
   // only one) to the short preamble again. A challenge means it heard us, so that keeps the evidence.
   // So does a silent STOP: nothing was stopped, and the receiver may well still be travelling.
+  // Nor does silence while the remaining time it reported has not run out: a moving receiver that
+  // missed one frame is still moving, and spending the evidence would send the next try with the
+  // wake-up preamble it ignores (ADR 0077).
   if (plan.use == WakeBeliefUse::APPLIED && plan.belief == decisions::WakeBelief::AWAKE &&
-      !this->debug_.saw_challenge && !decisions::is_stop_request(request) && this->wake_evidence_spent_handler_) {
+      !this->debug_.saw_challenge && !decisions::is_stop_request(request) && this->wake_evidence_spent_handler_ &&
+      !this->still_travelling_by_its_own_count_(request)) {
     ESP_LOGD(TAG, "Low-power target %s silent while believed awake: next exchange leads with the wake-up preamble",
              node_id_to_string(request.dst).c_str());
     this->wake_evidence_spent_handler_(request.dst);
   }
+}
+
+bool ExchangeEngine::still_travelling_by_its_own_count_(const IoFrame &request) const {
+  decisions::TargetEvidence evidence{};
+  return this->target_evidence_provider_ && this->target_evidence_provider_(request.dst, evidence) &&
+         decisions::moving_until_holds(evidence, millis());
 }
 
 // ============================================================================

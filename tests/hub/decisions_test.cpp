@@ -533,10 +533,28 @@ TEST(Decisions, TargetEvidenceCarriesTheDeviceStamps) {
   dev.last_moving_evidence_ms = 1234;
   dev.last_seen_ms = 5678;
   dev.confirms_execute = true;
+  dev.moving_until_ms = 9012;
   const decisions::TargetEvidence ev = decisions::target_evidence(dev);
   EXPECT_EQ(ev.last_moving_evidence_ms, 1234u);
   EXPECT_EQ(ev.last_seen_ms, 5678u);
   EXPECT_TRUE(ev.confirms_execute);
+  EXPECT_EQ(ev.moving_until_ms, 9012u);
+}
+
+TEST(Decisions, MovingUntilHoldsOnlyWhileTheReportedRemainingTimeHasNotRunOut) {
+  decisions::TargetEvidence ev{};
+  EXPECT_FALSE(decisions::moving_until_holds(ev, WAKE_NOW)) << "0 = no remaining time known";
+  ev.moving_until_ms = WAKE_NOW + 1;
+  EXPECT_TRUE(decisions::moving_until_holds(ev, WAKE_NOW));
+  EXPECT_FALSE(decisions::moving_until_holds(ev, WAKE_NOW + 1)) << "run out at the instant itself";
+  EXPECT_FALSE(decisions::moving_until_holds(ev, WAKE_NOW + 5000));
+}
+
+TEST(Decisions, MovingUntilSurvivesMillisWrap) {
+  decisions::TargetEvidence ev{};
+  ev.moving_until_ms = 500u;  // an end 1 s after the wrap, judged from 0.5 s before it
+  EXPECT_TRUE(decisions::moving_until_holds(ev, 0xFFFFFFFFu - 499u));
+  EXPECT_FALSE(decisions::moving_until_holds(ev, 600u));
 }
 
 // ============================================================================

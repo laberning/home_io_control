@@ -136,7 +136,10 @@ moves the window to its predefined air-exchange opening rather than fully open.
   preamble whenever it has reason to believe the motor is awake — see
   [`low_power_wake_belief`](../configuration/tuning.md#low_power_wake_belief). On the SSL solar
   roller shutter that is what lets a `stop`, and the status polls after it, land mid-travel; it
-  does not land on every attempt, so press stop again if the shutter keeps moving. Leave
+  does not land on every attempt, so press stop again if the shutter keeps moving. A status poll that
+  goes unanswered while the shutter's own remaining time says it is still travelling does not
+  switch the hub to the wake-up preamble; the read at the predicted end of travel leads with it
+  (experimental: not yet confirmed on a solar shutter). Leave
   `low_power_wake_belief` on: with it off, every `stop` goes out with the long preamble and never
   lands mid-travel. The boot log states it (`Low-power wake belief: on`). At rest the SSL answers
   only the wake-up preamble, and only on about half the tries; if commands to a resting shutter

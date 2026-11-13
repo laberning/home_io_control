@@ -487,9 +487,12 @@ decisions::AttemptRequest IOHomeControlComponent::cover_poll_attempts_(const std
                                                                        bool scheduler_managed) {
   if (!scheduler_managed)
     return decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING);
-  return decisions::AttemptRequest::of_kind(decisions::scheduled_poll_read_kind(
+  // Asked before take_settling_read(), which consumes the mark.
+  const bool predicted_end = this->poll_policy_.is_predicted_end_read(device_id);
+  const decisions::AttemptRequest attempts = decisions::AttemptRequest::of_kind(decisions::scheduled_poll_read_kind(
       this->poll_policy_.get_status_poll_failures(device_id), this->poll_policy_.get_auth_poll_failures(device_id),
       this->poll_policy_.take_settling_read(device_id)));
+  return predicted_end ? attempts.with_wake_preamble_first() : attempts;
 }
 
 // A heater keeps the count-based budget: a poll with no ladder behind it gets the full
