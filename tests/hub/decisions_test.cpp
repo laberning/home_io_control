@@ -842,6 +842,37 @@ TEST(Decisions, AStatusReportOlderThanTheLongestTravelIsNoNews) {
       << "expires at exactly LOW_POWER_MAX_TRAVEL_MS";
 }
 
+TEST(Decisions, AReadMarkedStateUnknownIsUnknownDespiteARecentStatusReport) {
+  // A catch-up read: activity the hub may have missed can have set the receiver moving after it
+  // reported "stopped", so that report is no proof it rests.
+  decisions::TargetEvidence reported = evidence(0, 0);
+  reported.last_status_ms = WAKE_NOW - 1000;
+  EXPECT_EQ(decisions::wake_belief(reported, WAKE_NOW, false, true, /*state_unknown=*/true),
+            decisions::WakeBelief::UNKNOWN);
+  EXPECT_EQ(decisions::wake_belief(reported, WAKE_NOW, false, true, /*state_unknown=*/false),
+            decisions::WakeBelief::ASLEEP)
+      << "unmarked, the same report keeps the read ASLEEP";
+}
+
+TEST(Decisions, StateUnknownNeverOverridesMovingEvidenceAStopOrACommand) {
+  EXPECT_EQ(decisions::wake_belief(evidence(1000, 0), WAKE_NOW, false, true, true), decisions::WakeBelief::AWAKE)
+      << "fresh moving evidence already leads short";
+  EXPECT_EQ(decisions::wake_belief(evidence(0, 0), WAKE_NOW, true, true, true), decisions::WakeBelief::AWAKE);
+  EXPECT_EQ(decisions::wake_belief(evidence(0, 0), WAKE_NOW, false, /*is_status_read=*/false, true),
+            decisions::WakeBelief::ASLEEP)
+      << "only a status read takes the mark";
+}
+
+TEST(Decisions, WithStateUnknownKeepsTheReadKindAndTheOtherMarks) {
+  const auto request =
+      decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING).with_wake_preamble_first().with_state_unknown();
+  EXPECT_TRUE(request.planned);
+  EXPECT_EQ(request.kind, decisions::ReadKind::SETTLING);
+  EXPECT_TRUE(request.wake_preamble_first);
+  EXPECT_TRUE(request.state_unknown);
+  EXPECT_FALSE(decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING).state_unknown);
+}
+
 TEST(Decisions, TheAgeOfAStatusReportSurvivesAMillisWrap) {
   decisions::TargetEvidence reported = evidence(0, 0);
   reported.last_status_ms = 0xFFFFFFFFu - 999u;  // one second before the wrap; now is one second after it

@@ -4322,6 +4322,29 @@ TEST(ShortLead, PlanLeadsAnUnknownLowPowerSettlingReadWithOneShortAttempt) {
   EXPECT_EQ(plan.window_for_attempt(2, plan.max_attempts), LOW_POWER_RESPONSE_WAIT_MS);
 }
 
+TEST(ShortLead, AReadMarkedStateUnknownLeadsShortDespiteARecentStoppedReport) {
+  ShortLeadRig rig;
+  // The target reported a second ago (a "stopped" report clears the moving evidence): unmarked, the
+  // read believes it asleep and sends only wake-up attempts.
+  rig.evidence.last_status_ms = esphome::test_clock::peek_ms() - 1000;
+  const IoFrame request = ShortLeadRig::status_read();
+
+  const auto unmarked = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  EXPECT_FALSE(unmarked.short_lead);
+  EXPECT_FALSE(unmarked.state_unknown);
+
+  const auto marked = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2, 0, /*state_unknown=*/true);
+  EXPECT_TRUE(marked.short_lead);
+  EXPECT_TRUE(marked.state_unknown) << "the plan carries the mark to the exchange";
+
+  IoFrame response{};
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, marked), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.preambles(),
+            (std::vector<uint16_t>{rig.tuning.normal_start_preamble, LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::UNKNOWN)
+      << "the exchange resolves the same belief the plan was built on";
+}
+
 TEST(ShortLead, FourAttemptsToASilentTargetFitTheDefaultBudget) {
   ShortLeadRig rig;
   const IoFrame request = ShortLeadRig::status_read();

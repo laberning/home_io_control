@@ -323,7 +323,9 @@ ExchangeOutcome IOHomeControlComponent::send_and_receive_(const IoFrame &request
       attempts.planned
           ? this->exchange_engine_.send_and_receive(
                 request, response, freq,
-                this->exchange_engine_.plan_read(attempts.kind, request, freq, preamble_override), preamble_override)
+                this->exchange_engine_.plan_read(attempts.kind, request, freq, preamble_override,
+                                                 attempts.state_unknown),
+                preamble_override)
           : this->exchange_engine_.send_and_receive(request, response, freq, attempts.max_tries, preamble_override);
   this->busy_ = false;
   return outcome;

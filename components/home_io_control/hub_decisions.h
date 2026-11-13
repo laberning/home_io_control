@@ -456,6 +456,10 @@ struct AttemptPlan {
   /// (LOW_POWER_SHORT_LEAD_WINDOW_MS), and the wake-up attempts after it. A moving receiver hears
   /// the short one and a resting one the wake-up. It counts in @ref max_attempts.
   bool short_lead{false};
+  /// True when the caller asked for the read to treat the receiver's state as unknown
+  /// (AttemptRequest::with_state_unknown()). The exchange engine resolves the wake belief with it on
+  /// sending too, so the plan and the tries agree (wake_belief()).
+  bool state_unknown{false};
   /// Time the exchange may run past `exchange_total_budget_ms`. 0 unless the short lead does not fit
   /// with its wake-up attempts inside the budget; then the cost of the lead (short_lead_cost_ms()), so
   /// the attempts after it get the budget the plan without it had and none is dropped. The engine's
@@ -639,6 +643,8 @@ struct AttemptRequest {
   ReadKind kind{ReadKind::COMMAND};         ///< What the read is for; only read when @ref planned.
   /// True for the read at a moving cover's predicted end of travel (@ref with_wake_preamble_first()).
   bool wake_preamble_first{false};
+  /// True for a read whose evidence about the receiver may be stale (@ref with_state_unknown()).
+  bool state_unknown{false};
 
   AttemptRequest() = default;
   /// @param tries Cap on attempts (the `max_tries` form of ExchangeEngine::send_and_receive()).
@@ -660,6 +666,19 @@ struct AttemptRequest {
     request.wake_preamble_first = true;
     return request;
   }
+  /// @brief Mark a status read as made without trustworthy news of the receiver: activity the hub
+  /// may have missed can have set it moving since its last report, so a recent "stopped" report
+  /// does not prove it rests. The wake belief is then UNKNOWN unless fresh moving evidence says
+  /// AWAKE (wake_belief()), and a settling read leads with one short attempt before the wake-up
+  /// attempts. Only a planned read (@ref of_kind) carries it to the engine; without effect for a
+  /// target that is not low-power, for a command, and wherever the belief is not applied: a fixed
+  /// preamble (@ref with_wake_preamble_first() wins) or `low_power_wake_belief` switched off.
+  /// \todo Untested on hardware, like WakeBelief::UNKNOWN itself.
+  [[nodiscard]] AttemptRequest with_state_unknown() const {
+    AttemptRequest request = *this;
+    request.state_unknown = true;
+    return request;
+  }
   /// True for a look at a device that is probably still busy: one attempt, the ladder is the retry
   /// (ReadKind::PROGRESS, or a count of SCHEDULED_POLL_MAX_TRIES).
   [[nodiscard]] bool is_progress_look() const {
@@ -679,8 +698,9 @@ struct AttemptRequest {
 enum class WakeBelief : uint8_t {
   ASLEEP,  ///< Not known to be moving — lead with the wake-up preamble.
   AWAKE,   ///< Moving, or about to be stopped — the short preamble is the one it hears.
-  /// A status read to a receiver the hub has no recent news of (no moving evidence, no status report
-  /// within LOW_POWER_MAX_TRAVEL_MS: boot, a status refresh, a catch-up read): it may be travelling,
+  /// A status read to a receiver the hub has no recent news of (no moving evidence, and either no status
+  /// report within LOW_POWER_MAX_TRAVEL_MS — boot, a status refresh — or a read its caller marked with
+  /// AttemptRequest::with_state_unknown(), such as a catch-up read): it may be travelling,
   /// when it ignores the wake-up preamble, or at rest, when it hears only that one. Every try of a
   /// single-try read keeps the wake-up preamble; a settling read leads with one short attempt of its
   /// own (AttemptPlan::short_lead) and then sends the wake-up attempts.
@@ -739,13 +759,16 @@ struct TargetEvidence {
 /// @param is_stop  True when the request being sent is a STOP (see is_stop_request()).
 /// @param is_status_read True when the request is a status read (CMD_PRIVATE): only a read can be
 ///                 UNKNOWN, a command keeps the rule it had.
+/// @param state_unknown True when the caller marked the read as made without trustworthy news
+///                 (AttemptRequest::with_state_unknown()): a recent status report then does not make
+///                 the belief ASLEEP. Only a status read takes it; fresh moving evidence still wins.
 [[nodiscard]] inline WakeBelief wake_belief(const TargetEvidence &evidence, uint32_t now, bool is_stop,
-                                            bool is_status_read = false) {
+                                            bool is_status_read = false, bool state_unknown = false) {
   const uint32_t moving = evidence.last_moving_evidence_ms;
   if (is_stop || (moving != 0 && (now - moving) < LOW_POWER_MAX_TRAVEL_MS))
     return WakeBelief::AWAKE;
   const uint32_t reported = evidence.last_status_ms;
-  if (is_status_read && (reported == 0 || (now - reported) >= LOW_POWER_MAX_TRAVEL_MS))
+  if (is_status_read && (state_unknown || reported == 0 || (now - reported) >= LOW_POWER_MAX_TRAVEL_MS))
     return WakeBelief::UNKNOWN;
   return WakeBelief::ASLEEP;
 }

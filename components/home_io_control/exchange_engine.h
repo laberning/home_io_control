@@ -160,9 +160,13 @@ class ExchangeEngine {
   /// @param freq    RF channel the request goes out on (Hz).
   /// @param request_preamble_override The preamble the caller will fix for the exchange (as for
   ///        send_and_receive()), or 0; a fixed preamble leaves no lead.
+  /// @param state_unknown The caller has no trustworthy news of the target
+  ///        (decisions::AttemptRequest::with_state_unknown()); carried in the plan so the exchange
+  ///        resolves the same belief when it sends.
   /// @return The plan to hand to the plan overload of send_and_receive().
   [[nodiscard]] decisions::AttemptPlan plan_read(decisions::ReadKind kind, const IoFrame &request, uint32_t freq,
-                                                 uint16_t request_preamble_override = 0) const;
+                                                 uint16_t request_preamble_override = 0,
+                                                 bool state_unknown = false) const;
 
   /// Authenticate an inbound device command via 0x3C challenge / 0x3D HMAC.
   /// @param request The received inbound frame (e.g., CMD_STATUS_UPDATE).
@@ -649,7 +653,9 @@ class ExchangeEngine {
   /// so a belief is stable within an exchange.
   /// @param request           Frame being sent.
   /// @param override_preamble Caller-forced preamble in bytes, or 0 for none.
-  [[nodiscard]] PreamblePlan plan_request_preamble_(const IoFrame &request, uint16_t override_preamble) const;
+  /// @param state_unknown     The caller has no trustworthy news of the target (decisions::wake_belief()).
+  [[nodiscard]] PreamblePlan plan_request_preamble_(const IoFrame &request, uint16_t override_preamble,
+                                                    bool state_unknown = false) const;
 
   /// The start preamble of one try of an exchange run on @p plan: the short start preamble for the
   /// plan's short lead (try 1), otherwise the preamble plan's.

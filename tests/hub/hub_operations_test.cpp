@@ -2732,6 +2732,33 @@ TEST(HubOperations, DefaultDeviceExecuteUsesNormalStartPreambleAndClearsLowPower
       << "an always-alive target's frame must leave CTRL1_LOW_POWER clear";
 }
 
+TEST(HubOperations, AStatusReadMarkedStateUnknownLeadsShortDespiteARecentStoppedReport) {
+  // The hub carries AttemptRequest::with_state_unknown() to the exchange: a catch-up read of a cover
+  // that reported "stopped" a second ago still leads with the short attempt a moving receiver hears.
+  for (const bool marked : {false, true}) {
+    TestableComponent comp;
+    MockRadio radio;
+    setup_low_power_cover(comp, radio, /*low_power=*/true);
+    IoDevice *dev = comp.get_device("ABC123");
+    ASSERT_NE(dev, nullptr);
+    dev->last_status = esphome::millis();  // a report from just now: the read is not UNKNOWN by age
+
+    IoFrame request{};
+    create_get_status(request, comp.node_id_, dev->node_id, /*low_power=*/true);
+    auto attempts = decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING);
+    if (marked)
+      attempts = attempts.with_state_unknown();
+    IoFrame response{};
+    comp.send_and_receive_(request, response, FREQ_CH2, attempts);
+
+    ASSERT_GE(radio.get_tx_configs().size(), 1u);
+    EXPECT_EQ(radio.get_tx_configs()[0].preamble_len,
+              marked ? comp.tuning_.normal_start_preamble : comp.tuning_.low_power_wake_preamble)
+        << (marked ? "marked: the short lead first"
+                   : "unmarked: a recent report keeps the read on the wake-up preamble");
+  }
+}
+
 TEST(HubOperations, LowPowerDeviceStatusPollUsesLongPreambleAndSetsLowPowerBit) {
   // create_get_status is the frame the issue #87 reporter watched time out — cover it explicitly.
   TestableComponent comp;

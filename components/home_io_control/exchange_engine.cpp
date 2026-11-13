@@ -245,17 +245,20 @@ uint32_t ExchangeEngine::tx_time_ms(const IoFrame &frame, uint32_t freq, uint16_
 }
 
 decisions::AttemptPlan ExchangeEngine::plan_read(decisions::ReadKind kind, const IoFrame &request, uint32_t freq,
-                                                 uint16_t request_preamble_override) const {
+                                                 uint16_t request_preamble_override, bool state_unknown) const {
   const bool low_power = (request.ctrl1 & CTRL1_LOW_POWER) != 0;
   // A settling read of a low-power receiver the hub has no news of leads with one short attempt
   // (WakeBelief::UNKNOWN). Every other read, and any read whose preamble the caller fixed, has none.
   std::optional<uint32_t> short_lead_tx_ms;
   if (kind == decisions::ReadKind::SETTLING && low_power) {
-    const PreamblePlan preamble_plan = this->plan_request_preamble_(request, request_preamble_override);
+    const PreamblePlan preamble_plan = this->plan_request_preamble_(request, request_preamble_override, state_unknown);
     if (preamble_plan.use == WakeBeliefUse::APPLIED && preamble_plan.belief == decisions::WakeBelief::UNKNOWN)
       short_lead_tx_ms = this->tx_time_ms(request, freq, preamble_plan.short_preamble);
   }
-  return this->plan_attempts(kind, low_power, request, freq, this->request_preamble_for(request), 0, short_lead_tx_ms);
+  decisions::AttemptPlan plan =
+      this->plan_attempts(kind, low_power, request, freq, this->request_preamble_for(request), 0, short_lead_tx_ms);
+  plan.state_unknown = state_unknown;
+  return plan;
 }
 
 decisions::AttemptPlan ExchangeEngine::plan_attempts(decisions::ReadKind kind, bool low_power, const IoFrame &request,
@@ -411,7 +414,8 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   // Clamp once: never below 1 and never above EXCHANGE_MAX_ATTEMPTS, whatever the plan says.
   uint8_t tries_allowed = std::max<uint8_t>(1, std::min<uint8_t>(plan.max_attempts, EXCHANGE_MAX_ATTEMPTS));
   this->debug_.max_tries = tries_allowed;
-  const PreamblePlan preamble_plan = this->plan_request_preamble_(request, request_preamble_override);
+  const PreamblePlan preamble_plan =
+      this->plan_request_preamble_(request, request_preamble_override, plan.state_unknown);
   this->debug_.wake_belief_use = preamble_plan.use;
   if (preamble_plan.use == WakeBeliefUse::APPLIED) {
     this->debug_.wake_belief = preamble_plan.belief;
@@ -592,8 +596,8 @@ const char *ExchangeEngine::wake_belief_use_name(WakeBeliefUse use) {
   }
 }
 
-ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFrame &request,
-                                                                    uint16_t override_preamble) const {
+ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFrame &request, uint16_t override_preamble,
+                                                                    bool state_unknown) const {
   PreamblePlan plan;
   plan.fixed = override_preamble != 0 ? override_preamble : this->request_preamble_for(request);
   // Every reason not to apply the belief keeps the fixed preamble and is recorded, so the
@@ -625,7 +629,7 @@ ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFram
   plan.wake_preamble = this->tuning_->low_power_wake_preamble;
   plan.last_seen_ms = known ? evidence.last_seen_ms : 0;
   plan.belief = known ? decisions::wake_belief(evidence, millis(), decisions::is_stop_request(request),
-                                               request.cmd == CMD_PRIVATE)
+                                               request.cmd == CMD_PRIVATE, state_unknown)
                       : decisions::WakeBelief::ASLEEP;
   return plan;
 }
