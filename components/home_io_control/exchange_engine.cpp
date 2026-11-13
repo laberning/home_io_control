@@ -244,22 +244,31 @@ uint32_t ExchangeEngine::tx_time_ms(const IoFrame &frame, uint32_t freq, uint16_
   return (tx_us + US_PER_MS - 1) / US_PER_MS;
 }
 
-decisions::AttemptPlan ExchangeEngine::plan_read(decisions::ReadKind kind, const IoFrame &request,
-                                                 uint32_t freq) const {
-  return this->plan_attempts(kind, (request.ctrl1 & CTRL1_LOW_POWER) != 0, request, freq,
-                             this->request_preamble_for(request));
+decisions::AttemptPlan ExchangeEngine::plan_read(decisions::ReadKind kind, const IoFrame &request, uint32_t freq,
+                                                 uint16_t request_preamble_override) const {
+  const bool low_power = (request.ctrl1 & CTRL1_LOW_POWER) != 0;
+  // A settling read of a low-power receiver the hub has no news of leads with one short attempt
+  // (WakeBelief::UNKNOWN). Every other read, and any read whose preamble the caller fixed, has none.
+  std::optional<uint32_t> short_lead_tx_ms;
+  if (kind == decisions::ReadKind::SETTLING && low_power) {
+    const PreamblePlan preamble_plan = this->plan_request_preamble_(request, request_preamble_override);
+    if (preamble_plan.use == WakeBeliefUse::APPLIED && preamble_plan.belief == decisions::WakeBelief::UNKNOWN)
+      short_lead_tx_ms = this->tx_time_ms(request, freq, preamble_plan.short_preamble);
+  }
+  return this->plan_attempts(kind, low_power, request, freq, this->request_preamble_for(request), 0, short_lead_tx_ms);
 }
 
 decisions::AttemptPlan ExchangeEngine::plan_attempts(decisions::ReadKind kind, bool low_power, const IoFrame &request,
-                                                     uint32_t freq, uint16_t preamble, uint16_t last_window_ms) const {
+                                                     uint32_t freq, uint16_t preamble, uint16_t last_window_ms,
+                                                     std::optional<uint32_t> short_lead_tx_ms) const {
   return decisions::attempt_plan(kind, low_power, *this->tuning_, this->tx_time_ms(request, freq, preamble),
-                                 last_window_ms);
+                                 last_window_ms, short_lead_tx_ms);
 }
 
 bool ExchangeEngine::try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms, uint32_t window_ms,
-                                      uint32_t auth_tail_ms) const {
+                                      uint32_t auth_tail_ms, uint32_t allowance_ms) const {
   return decisions::attempt_fits(elapsed_ms, gap_ms, tx_ms, window_ms, auth_tail_ms,
-                                 this->tuning_->exchange_total_budget_ms);
+                                 this->tuning_->exchange_total_budget_ms + allowance_ms);
 }
 
 // ============================================================================
@@ -429,9 +438,10 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       // inside the budget, counting the window it listens and, once the target has challenged, the
       // final-reply window. See EXCHANGE_TOTAL_BUDGET_MS -- this is what keeps a failing command
       // from blocking the ESPHome loop for the full attempts x (transmission + window) product.
-      if (!this->try_fits_budget_(millis() - exchange_begin_ms, plan.gap_ms,
-                                  this->tx_time_ms(request, freq, preamble_plan.for_try(context.try_index)), window_ms,
-                                  auth_tail_ms)) {
+      if (!this->try_fits_budget_(
+              millis() - exchange_begin_ms, plan.gap_ms,
+              this->tx_time_ms(request, freq, this->try_preamble_(plan, preamble_plan, context.try_index)), window_ms,
+              auth_tail_ms, plan.budget_allowance_ms)) {
         this->record_debug("retry_budget_exhausted", tries, false);
         ESP_LOGI(TAG, "Exchange budget exhausted after %u tries for cmd=%s(0x%02X) (%" PRIu32 " of %u ms)", tries,
                  command_name(request.cmd), request.cmd, millis() - exchange_begin_ms,
@@ -446,7 +456,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     // Stamped after the retry gap, so a try's wait_ms and age_ms measure from its own transmit and
     // not from the end of the previous try.
     context.try_start_ms = millis();
-    context.request_preamble = preamble_plan.for_try(context.try_index);
+    context.request_preamble = this->try_preamble_(plan, preamble_plan, context.try_index);
     context.target_last_seen_ms = preamble_plan.last_seen_ms;
     this->debug_.last_try_preamble = context.request_preamble;
     if (!this->transmit_request_(request, freq, context.request_preamble, context))
@@ -496,8 +506,8 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       unconfirmed_tries++;
       const uint8_t further_tries = this->tries_after_unconfirmed_(
           request, unconfirmed_tries, context.try_index, static_cast<uint8_t>(tries_allowed - context.try_index),
-          millis() - exchange_begin_ms, this->tx_time_ms(request, freq, preamble_plan.for_try(context.try_index + 1)),
-          plan);
+          millis() - exchange_begin_ms,
+          this->tx_time_ms(request, freq, this->try_preamble_(plan, preamble_plan, context.try_index + 1)), plan);
       if (further_tries == 0)
         return ExchangeOutcome::SUCCESS_UNCONFIRMED;
       auth_tail_ms = auth_tail_after_unconfirmed(request, auth_tail_ms);
@@ -518,6 +528,15 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     return ExchangeOutcome::SUCCESS_UNCONFIRMED;
   this->spend_wake_evidence_if_silent_(request, preamble_plan);
   return ExchangeOutcome::FAILED;
+}
+
+uint16_t ExchangeEngine::try_preamble_(const decisions::AttemptPlan &plan, const PreamblePlan &preamble_plan,
+                                       uint8_t try_index) const {
+  // The plan's short lead is try 1 (a receiver in an unknown state, WakeBelief::UNKNOWN); every later
+  // try follows the belief.
+  if (plan.short_lead && try_index == 1)
+    return this->tuning_->normal_start_preamble;
+  return preamble_plan.for_try(try_index);
 }
 
 void ExchangeEngine::spend_wake_evidence_if_silent_(const IoFrame &request, const PreamblePlan &plan) {
@@ -605,7 +624,8 @@ ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFram
   plan.short_preamble = this->tuning_->normal_start_preamble;
   plan.wake_preamble = this->tuning_->low_power_wake_preamble;
   plan.last_seen_ms = known ? evidence.last_seen_ms : 0;
-  plan.belief = known ? decisions::wake_belief(evidence, millis(), decisions::is_stop_request(request))
+  plan.belief = known ? decisions::wake_belief(evidence, millis(), decisions::is_stop_request(request),
+                                               request.cmd == CMD_PRIVATE)
                       : decisions::WakeBelief::ASLEEP;
   return plan;
 }
@@ -748,7 +768,8 @@ uint8_t ExchangeEngine::tries_after_unconfirmed_(const IoFrame &request, uint8_t
   // A re-send that could not finish its transmission and first-reply window inside the exchange
   // budget is not worth waiting for. Its final-reply window is left out: the re-send is the last
   // copy, and what a silent final wait costs is already the unconfirmed outcome this path ends in.
-  if (!this->try_fits_budget_(elapsed_ms, UNCONFIRMED_EXECUTE_RESEND_DELAY_MS, next_tx_ms, plan.window_ms, 0))
+  if (!this->try_fits_budget_(elapsed_ms, UNCONFIRMED_EXECUTE_RESEND_DELAY_MS, next_tx_ms, plan.window_ms, 0,
+                              plan.budget_allowance_ms))
     return 0;
   // The re-send may well succeed, and then no exchange-failure or unconfirmed line is printed at
   // all, so this is the one record that the first copy's reply went missing.

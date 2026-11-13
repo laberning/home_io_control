@@ -41,6 +41,32 @@ const char *rain_sensor_state_name(RainSensorState state) {
   return "unknown";
 }
 
+ExecutionState execution_state_of(uint8_t status_byte) {
+  const uint8_t state = error_resp_state(status_byte);
+  return state <= static_cast<uint8_t>(ExecutionState::DONE) ? static_cast<ExecutionState>(state)
+                                                             : ExecutionState::UNDEFINED;
+}
+
+const char *execution_state_name(ExecutionState state) {
+  switch (state) {
+    case ExecutionState::NON_EXECUTING:
+      return "non_executing";
+    case ExecutionState::EXECUTION_ERROR:
+      return "error";
+    case ExecutionState::WAITING_FOR_EXECUTING:
+      return "waiting_for_executing";
+    case ExecutionState::WAITING_FOR_POWER:
+      return "waiting_for_power";
+    case ExecutionState::EXECUTING:
+      return "executing";
+    case ExecutionState::DONE:
+      return "done";
+    case ExecutionState::UNDEFINED:
+    default:
+      return "undefined";
+  }
+}
+
 const char *battery_state_name(BatteryState state) {
   switch (state) {
     case BatteryState::NOT_REPORTED:

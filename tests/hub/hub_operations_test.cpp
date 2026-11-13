@@ -57,7 +57,7 @@ static IoFrame build_status_response(const uint8_t dst[3]) {
   uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
   set_dst(f, dst);
   set_src(f, device_node_id);
-  uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  uint8_t payload[8] = {test::STATUS_BYTE_AT_REST, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
   set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
   return f;
 }
@@ -68,7 +68,8 @@ static IoFrame build_moving_status_response(const uint8_t dst[3], uint8_t remain
   uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
   set_dst(f, dst);
   set_src(f, device_node_id);
-  uint8_t payload[8] = {0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, remaining_s};  // bytes 6-7: remaining time
+  uint8_t payload[8] = {
+      test::STATUS_BYTE_MOVING, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, remaining_s};  // bytes 6-7: remaining time
   set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
   return f;
 }
@@ -82,7 +83,7 @@ static IoFrame build_short_moving_status_response(const uint8_t dst[3]) {
   set_dst(f, dst);
   set_src(f, device_node_id);
   // Bytes 0=flags(moving), 1=0, 2-3=target(0x0000=0%), 4-5=current(0x6400=50%)
-  uint8_t payload[6] = {0x00, 0x00, 0x00, 0x00, 0x64, 0x00};
+  uint8_t payload[6] = {test::STATUS_BYTE_MOVING, 0x00, 0x00, 0x00, 0x64, 0x00};
   set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
   return f;
 }
@@ -629,13 +630,13 @@ IoDevice *make_level_heater(TestableComponent &comp, MockRadio &radio) {
 }
 
 // A 0x04 status reply whose current main parameter is `mp`.
-IoFrame build_level_status_response(const uint8_t dst[3], uint16_t mp, uint8_t flags = STATUS_STOPPED) {
+IoFrame build_level_status_response(const uint8_t dst[3], uint16_t mp, uint8_t flags = test::STATUS_BYTE_AT_REST) {
   IoFrame f{};
   init_frame(f, true, false, true, false);
   uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
   set_dst(f, dst);
   set_src(f, device_node_id);
-  const uint8_t payload[8] = {STATUS_STOPPED,
+  const uint8_t payload[8] = {test::STATUS_BYTE_AT_REST,
                               0x00,
                               static_cast<uint8_t>(mp >> 8U),
                               static_cast<uint8_t>(mp),
@@ -720,13 +721,15 @@ TEST(HubOperations, ALevelHeaterIsNeverInTheMovementSettleLoop) {
   // Both replies say "moving" (no STATUS_STOPPED bit); a heater has no motion, so that must not
   // start a series of follow-up polls.
   const uint16_t mp = heating_level_main_parameter(heating_level::COMFORT);
-  radio.queue_rx(test::make_rx_packet(build_level_status_response(comp.node_id_, mp, /*flags=*/0x00)));
+  radio.queue_rx(
+      test::make_rx_packet(build_level_status_response(comp.node_id_, mp, /*flags=*/test::STATUS_BYTE_MOVING)));
 
   EXPECT_TRUE(comp.set_heating_level("ABC123", heating_level::COMFORT));
   EXPECT_TRUE(dev->is_stopped) << "the heater is at rest whatever its flags byte says";
   EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u) << "exactly one read-back poll is scheduled";
 
-  radio.queue_rx(test::make_rx_packet(build_level_status_response(comp.node_id_, mp, /*flags=*/0x00)));
+  radio.queue_rx(
+      test::make_rx_packet(build_level_status_response(comp.node_id_, mp, /*flags=*/test::STATUS_BYTE_MOVING)));
   EXPECT_TRUE(comp.request_device_status("ABC123"));
   EXPECT_EQ(dev->heating.level, heating_level::COMFORT);
   EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u) << "the read-back ends the settle loop";
@@ -771,7 +774,8 @@ TEST(HubOperations, ExteriorHeatingHeatLevelTravelsAsTheInvertedPosition) {
     TestableComponent comp;
     MockRadio radio;
     make_exterior_heater(comp, radio, 0);
-    radio.queue_rx(test::make_rx_packet(build_position_status_response(comp.node_id_, tc.position, STATUS_STOPPED)));
+    radio.queue_rx(
+        test::make_rx_packet(build_position_status_response(comp.node_id_, tc.position, test::STATUS_BYTE_AT_REST)));
 
     EXPECT_TRUE(comp.set_fan_position("ABC123", tc.position)) << +tc.heat;
 
@@ -788,7 +792,7 @@ TEST(HubOperations, EveryExteriorHeaterIsSentTheMainParameterOnly) {
     TestableComponent comp;
     MockRadio radio;
     make_exterior_heater(comp, radio, subtype);
-    radio.queue_rx(test::make_rx_packet(build_position_status_response(comp.node_id_, 0, STATUS_STOPPED)));
+    radio.queue_rx(test::make_rx_packet(build_position_status_response(comp.node_id_, 0, test::STATUS_BYTE_AT_REST)));
 
     EXPECT_TRUE(comp.set_fan_position("ABC123", 0)) << +subtype;
 
@@ -832,7 +836,7 @@ TEST(HubOperations, ExteriorHeatingIsPolledWithTheStatusReadAndDecodedLikeALight
   TestableComponent comp;
   MockRadio radio;
   auto *dev = make_exterior_heater(comp, radio, 0);
-  radio.queue_rx(test::make_rx_packet(build_position_status_response(comp.node_id_, 30, STATUS_STOPPED)));
+  radio.queue_rx(test::make_rx_packet(build_position_status_response(comp.node_id_, 30, test::STATUS_BYTE_AT_REST)));
 
   EXPECT_TRUE(comp.request_device_status("ABC123"));
 
@@ -845,13 +849,15 @@ TEST(HubOperations, ExteriorHeatingReplyThatSaysMovingGetsOneFollowUpPollNotASer
   TestableComponent comp;
   MockRadio radio;
   auto *dev = make_exterior_heater(comp, radio, 0);
-  radio.queue_rx(test::make_rx_packet(build_position_status_response(comp.node_id_, 0, /*flags=*/0x00)));
+  radio.queue_rx(
+      test::make_rx_packet(build_position_status_response(comp.node_id_, 0, /*flags=*/test::STATUS_BYTE_MOVING)));
 
   EXPECT_TRUE(comp.set_fan_position("ABC123", 0));
   EXPECT_TRUE(dev->is_stopped) << "an exterior heater has no motion, whatever its flags byte says";
   EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u) << "one read-back poll is scheduled";
 
-  radio.queue_rx(test::make_rx_packet(build_position_status_response(comp.node_id_, 0, /*flags=*/0x00)));
+  radio.queue_rx(
+      test::make_rx_packet(build_position_status_response(comp.node_id_, 0, /*flags=*/test::STATUS_BYTE_MOVING)));
   EXPECT_TRUE(comp.request_device_status("ABC123"));
   EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u) << "the read-back ends the settle loop";
   EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
@@ -861,7 +867,7 @@ TEST(HubOperations, QueuedFanPositionIsDispatchedToTheHeater) {
   TestableComponent comp;
   MockRadio radio;
   make_exterior_heater(comp, radio, 0);
-  radio.queue_rx(test::make_rx_packet(build_position_status_response(comp.node_id_, 40, STATUS_STOPPED)));
+  radio.queue_rx(test::make_rx_packet(build_position_status_response(comp.node_id_, 40, test::STATUS_BYTE_AT_REST)));
 
   comp.queue_set_fan_position("ABC123", 40);
   ASSERT_EQ(comp.op_queue_.size(), 1u);
@@ -1006,13 +1012,15 @@ TEST(HubOperations, ATemperatureHeaterReplyThatSaysMovingGetsOneFollowUpPoll) {
   TestableComponent comp;
   MockRadio radio;
   auto *dev = make_temperature_heater(comp, radio, DeviceType::HEATING_TEMPERATURE_INTERFACE);
-  radio.queue_rx(test::make_rx_packet(build_level_status_response(comp.node_id_, 25600, /*flags=*/0x00)));
+  radio.queue_rx(
+      test::make_rx_packet(build_level_status_response(comp.node_id_, 25600, /*flags=*/test::STATUS_BYTE_MOVING)));
 
   EXPECT_TRUE(comp.set_heating_temperature("ABC123", 25600, HeatingFp{HeatingFpKind::FP9, heating_mode_flags::MANUAL}));
   EXPECT_TRUE(dev->is_stopped) << "a thermostat has no motion, whatever its flags byte says";
   EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u) << "one read-back poll is scheduled";
 
-  radio.queue_rx(test::make_rx_packet(build_level_status_response(comp.node_id_, 25600, /*flags=*/0x00)));
+  radio.queue_rx(
+      test::make_rx_packet(build_level_status_response(comp.node_id_, 25600, /*flags=*/test::STATUS_BYTE_MOVING)));
   EXPECT_TRUE(comp.request_device_status("ABC123"));
   EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u);
   EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
@@ -2732,9 +2740,11 @@ TEST(HubOperations, LowPowerDeviceStatusPollUsesLongPreambleAndSetsLowPowerBit) 
 
   comp.request_device_status("ABC123");
 
-  ASSERT_GE(radio.get_tx_configs().size(), 1u) << "the status poll start frame should have been transmitted";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, LONG_PREAMBLE)
-      << "a low_power target's status poll must use the wake-up preamble";
+  ASSERT_GE(radio.get_tx_configs().size(), 2u) << "the status poll start frames should have been transmitted";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, comp.tuning_.normal_start_preamble)
+      << "a read to a receiver with no news of its state leads with one short attempt (ADR 0079)";
+  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, LONG_PREAMBLE)
+      << "a low_power target's status poll must use the wake-up preamble after the short lead";
   ASSERT_FALSE(radio.get_sent_data().empty());
   EXPECT_NE(radio.get_sent_data().front()[1] & CTRL1_LOW_POWER, 0)
       << "a low_power target's status poll must carry CTRL1_LOW_POWER";
@@ -3105,11 +3115,12 @@ TEST(HubOperations, SettlePollAfterAnAcceptedMoveIsASingleTryLeadingWithTheShort
   EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
 }
 
-TEST(HubOperations, SettlePollAfterAnAcceptedStopGetsEveryTryOnTheWakeUpPreamble) {
+TEST(HubOperations, SettlePollAfterAnAcceptedStopLeadsShortThenGetsEveryTryOnTheWakeUpPreamble) {
   // After an accepted STOP nothing moves and the user's reversal waits on this poll, so it gets the
   // full budget instead of betting on one sample (a settling read, ADR 0074). The STOP cleared the
-  // moving evidence: the receiver is at rest, which only the wake-up preamble reaches, even though
-  // its reply was just heard (ADR 0040, amendment).
+  // moving evidence and no status report has come since, so the receiver's state is unknown: one short
+  // attempt reaches it while it still winds down, then every wake-up try, which a resting receiver
+  // hears, even though its reply was just heard (ADR 0040, amendment; ADR 0079).
   esphome::test_clock::ManualClock clock(50000);
   TestableComponent comp;
   MockRadio radio;
@@ -3125,10 +3136,11 @@ TEST(HubOperations, SettlePollAfterAnAcceptedStopGetsEveryTryOnTheWakeUpPreamble
 
   comp.request_device_status("ABC123");
 
-  ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(LOW_POWER_SETTLING_ATTEMPTS));
-  EXPECT_EQ(preamble_of_tx(radio, before), LONG_PREAMBLE);
+  ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(LOW_POWER_SETTLING_ATTEMPTS) + 1);
+  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
   EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE);
   EXPECT_EQ(preamble_of_tx(radio, before + 2), LONG_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before + 3), LONG_PREAMBLE);
 }
 
 TEST(HubOperations, OnlyTheFirstPollAfterAStopGetsTheStopBudget) {
@@ -3208,10 +3220,11 @@ TEST(HubOperations, SilentPollWhileBelievedMovingSpendsTheMovingEvidence) {
 
 TEST(HubOperations, SpentEvidenceStaysSpentUntilMovementIsStampedAgain) {
   // Pins a known trade-off: a travelling receiver that misses one short try looks like one at rest,
-  // so its evidence is spent and the following polls lead with the wake-up preamble, which a moving
-  // receiver ignores. Nothing re-promotes it until something stamps movement again -- a decoded
-  // status that says "moving", an overheard remote, or a movement command the device accepts. If a
-  // field report shows positions freezing mid-travel, this is the behaviour to revisit.
+  // so its evidence is spent. Nothing re-promotes it until something stamps movement again -- a decoded
+  // status that says "moving", an overheard remote, or a movement command the device accepts. The
+  // reads that follow still lead with one short attempt (the state is unknown, ADR 0079) before the
+  // wake-up attempts, so a receiver that is in fact still moving is reached by them. If a field report
+  // shows positions freezing mid-travel, this is the behaviour to revisit.
   esphome::test_clock::ManualClock clock(50000);
   TestableComponent comp;
   MockRadio radio;
@@ -3227,7 +3240,10 @@ TEST(HubOperations, SpentEvidenceStaysSpentUntilMovementIsStampedAgain) {
     const size_t before = radio.get_tx_configs().size();
     esphome::test_clock::advance_ms(1000);
     comp.request_device_status("ABC123");
-    EXPECT_EQ(preamble_of_tx(radio, before), LONG_PREAMBLE) << "poll " << poll << " after the evidence was spent";
+    EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble)
+        << "poll " << poll << " after the evidence was spent: the short lead";
+    EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE)
+        << "poll " << poll << " after the evidence was spent: then the wake-up preamble";
     EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "silence does not bring the evidence back";
   }
 
@@ -3254,8 +3270,9 @@ TEST(HubOperations, MovingEvidenceExpiresAfterMaxTravel) {
   const size_t before = radio.get_tx_configs().size();
   esphome::test_clock::advance_ms(2000);  // now past LOW_POWER_MAX_TRAVEL_MS since the move
   comp.request_device_status("ABC123");
-  EXPECT_EQ(preamble_of_tx(radio, before), LONG_PREAMBLE)
-      << "no reply since the move and the window is over: the receiver is presumed asleep again";
+  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble)
+      << "no news since the move and the window is over: its state is unknown, so the read leads short";
+  EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE) << "then the wake-up preamble a resting receiver hears";
 }
 
 TEST(HubOperations, RecentReplyAloneKeepsTheWakeUpPreamble) {
@@ -3920,7 +3937,7 @@ IoFrame moving_report(const TestableComponent &comp, uint16_t remaining_s) {
 /// @p remaining_s at bytes 6-7.
 IoFrame stopped_off_target_report(const TestableComponent &comp, uint16_t remaining_s) {
   IoFrame f = build_moving_status_response(comp.node_id_, 0);
-  f.data[0] = STATUS_STOPPED;
+  f.data[0] = test::STATUS_BYTE_AT_REST;
   f.data[2] = 0xC8;
   f.data[3] = 0x00;
   f.data[6] = static_cast<uint8_t>(remaining_s >> 8);

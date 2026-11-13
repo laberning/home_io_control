@@ -161,12 +161,19 @@ class IOHomeDeviceNameTextSensor : public IOHomeCompanionTextSensor {
 /// result names the sensor otherwise publishes.
 inline constexpr const char *ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING = "RADIO_STOPPED_RESPONDING";
 
+/// Active Issue value while a device's status reports execution state 0: it cannot run its last command
+/// under the current conditions (example: temperature too high). Shown until its next state 2..5.
+inline constexpr const char *ACTIVE_ISSUE_NOT_EXECUTING = "NOT_EXECUTING";
+/// Active Issue value while a device's status reports execution state 1: an error occurred during its
+/// last move. Shown until its next state 2..5.
+inline constexpr const char *ACTIVE_ISSUE_EXECUTION_ERROR = "EXECUTION_ERROR";
+
 /// @brief Diagnostic text sensor that names what is currently limiting a device (e.g.
 /// "LIMITATION_BY_RAIN"), letting a "nothing happened" command self-explain instead of only
 /// showing up in the log. Shared by every device-bound platform (cover, light, switch, lock, fan,
 /// climate, water_heater) via platform_common.py's companion-sensor codegen.
 ///
-/// Three sources, in this order:
+/// Four sources, in this order:
 ///   1. ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING once the hub's radio latched a failure after setup
 ///      (IOHomeControlComponent::radio_stopped_responding()); sticky until a reboot.
 ///   2. The symbolic name of the device's latest explicit CMD_ERROR_RESP result. Cleared by the
@@ -177,6 +184,11 @@ inline constexpr const char *ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING = "RADIO_STOP
 ///      do not send an error for a rain clamp. It clears itself when the window stops reporting
 ///      the rain originator and a command is no longer clamped, so it is only as fresh as the
 ///      last status reply.
+///   4. The device's execution state (`IoDevice::execution_state`, byte 0 of its status replies):
+///      "NODE_WAITING_FOR_POWER" while it waits for power (state 3), ACTIVE_ISSUE_NOT_EXECUTING after
+///      state 0 and ACTIVE_ISSUE_EXECUTION_ERROR after state 1, until its next reply says 2..5.
+///      Waiting for power is experimental: it has been captured in a main-parameter read, not yet in
+///      an ordinary status reply.
 ///
 /// Not a per-operation outcome. Publishes an empty string when no source applies, so a
 /// non-empty value always means "this is still going on" rather than "this is what happened

@@ -133,10 +133,13 @@ within a few percent, and a press on a linked KLI shows up as described in
 
 **Several shutters on one KUX 110 run one at a time.** A shutter commanded while another one on
 the same KUX 110 moves accepts the command and starts when the first has finished. While it waits,
-it reports itself stopped at its old position, so Home Assistant can show it idle and miss the move
-that follows. The next status read shows where it ended up; set
-[`status_refresh_interval`](../configuration/cover.md#refreshing-the-status-at-rest) to have one
-within a known time. The group KLI moves the shutters one after the other.
+it reports that it waits for power, and the hub follows it: Home Assistant shows the cover opening
+or closing toward its target, `Active Issue` reads `NODE_WAITING_FOR_POWER`, and the position
+follows once the motor runs. The hub follows a cover for 4 minutes after the command, which covers
+two shutters one after the other. This is experimental: the waiting state was captured in a
+main-parameter status read of an SML shutter, not yet in an ordinary status read (see
+[Position and state](../configuration/cover.md#position-and-state)). The group KLI moves the
+shutters one after the other.
 
 ## Working YAML
 

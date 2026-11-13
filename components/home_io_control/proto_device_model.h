@@ -318,6 +318,37 @@ const char *travel_speed_name(TravelSpeed speed);
 /// @return true when the name is one of the three.
 bool parse_travel_speed(const std::string &name, TravelSpeed &speed);
 
+/// @brief What a device says it is doing, from bits [2:0] of byte 0 of a status reply (CMD_PRIVATE_RESP,
+/// CMD_STATUS_UPDATE).
+///
+/// The numbering is the public KLF 200 API's node state (v3.18, Table 105 "State"). The byte packs the
+/// state under a result code, `(code << 3) | state`, the same layout as a CMD_ERROR_RESP result byte
+/// (error_resp_state()); every ordinary status reply in the corpus carries 4 while a cover travels and 5
+/// once it is at rest.
+/// \todo Experimental: WAITING_FOR_POWER and WAITING_FOR_EXECUTING are not yet captured in an ordinary
+///       status reply, only WAITING_FOR_POWER in a main-parameter read of a shutter queued behind another
+///       on one supply. Following such a cover rests on that and on the API; it needs a captured ordinary
+///       status reply from a waiting cover.
+enum class ExecutionState : uint8_t {
+  NON_EXECUTING = 0,          ///< Unable to execute under the given conditions (example: temperature too high).
+  EXECUTION_ERROR = 1,        ///< An error occurred during the previous execution; cleared when the next starts.
+  WAITING_FOR_EXECUTING = 2,  ///< Accepted, waiting for its turn to run.
+  WAITING_FOR_POWER = 3,      ///< Accepted, waiting for power (queued behind another device on a shared supply).
+  EXECUTING = 4,              ///< Running.
+  DONE = 5,                   ///< Not executing, no error, ready.
+  UNDEFINED = 0xFF,           ///< Bits [2:0] hold 6 or 7, which no source defines.
+};
+
+/// @brief Read the execution state out of byte 0 of a status reply.
+/// @param status_byte Byte 0 of the reply's payload.
+/// @return The state, or ExecutionState::UNDEFINED when bits [2:0] hold 6 or 7.
+ExecutionState execution_state_of(uint8_t status_byte);
+
+/// @brief Get a human-readable name for an ExecutionState.
+/// @param state The state to name.
+/// @return Null-terminated lowercase string such as "executing", "waiting_for_power" or "undefined".
+const char *execution_state_name(ExecutionState state);
+
 /// @brief A device's coarse battery level, as it reports it in byte 1 of its status payload.
 ///
 /// Three levels, not a percentage. Only FULL_CHARGE has been seen on real hardware so far (every
@@ -462,11 +493,14 @@ struct IoDevice {
   float tilt{UNKNOWN_POSITION};          ///< Current tilt: 0=closed, 100=open, or UNKNOWN_POSITION.
   float target{UNKNOWN_POSITION};        ///< Target position the device is moving toward.
   bool is_stopped{true};                 ///< True if device is not moving.
-  StopCandidate stop_candidate{};        ///< Last off-target "stopped" report, to confirm the next one.
-  bool reports_remaining_time{false};    ///< The device has sent a nonzero remaining time in a status reply, so
-                                         ///< its zero means "about to stop" rather than "not provided".
-  DeviceFeatures features{0};            ///< What this device can do, resolved by resolve_device_features(). Every
-                                         ///< capability check on a registered device reads this word.
+  ExecutionState execution_state{ExecutionState::UNDEFINED};  ///< Execution state of the last status report that
+                                                              ///< carried one; UNDEFINED until then, and for a
+                                                              ///< device that has no motion.
+  StopCandidate stop_candidate{};      ///< Last off-target "stopped" report, to confirm the next one.
+  bool reports_remaining_time{false};  ///< The device has sent a nonzero remaining time in a status reply, so
+                                       ///< its zero means "about to stop" rather than "not provided".
+  DeviceFeatures features{0};          ///< What this device can do, resolved by resolve_device_features(). Every
+                                       ///< capability check on a registered device reads this word.
   DeviceCapabilityClass entity_class{
       DeviceCapabilityClass::UNKNOWN};  ///< Class of the entity that declared the
                                         ///< device; UNKNOWN for a device no entity declared (the type's class then

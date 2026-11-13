@@ -154,6 +154,15 @@ static constexpr uint8_t EXCHANGE_MAX_ATTEMPTS = 9;
 /// Attempts a settling read makes to a low-power receiver. Each one leads with the wake-up
 /// preamble (~0.24 s on air), so three already fill the exchange budget.
 static constexpr uint8_t LOW_POWER_SETTLING_ATTEMPTS = 3;
+/// How long the short lead attempt of a read to a low-power receiver in an unknown state listens after
+/// the end of its own transmission (decisions::WakeBelief::UNKNOWN, ADR 0079).
+///
+/// The lead attempt is aimed at a receiver that is travelling: such a VELUX screen answered a short
+/// start frame 41 to 47 ms after it (issue #114), and a resting one does
+/// not answer it at all, so a longer wait is spent on silence. 100 ms is about twice the slowest of
+/// those answers, and keeps the cost of the lead (its transmission, this window and
+/// EXCHANGE_ATTEMPT_OVERHEAD_MS) near 0.12 s.
+static constexpr uint16_t LOW_POWER_SHORT_LEAD_WINDOW_MS = 100;
 /// How long a read listens for a low-power receiver's reply after the end of its own transmission,
 /// on every attempt.
 ///

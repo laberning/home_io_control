@@ -110,7 +110,7 @@ TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
   set_src(status, test::DST_ID);
   // STATUS_STOPPED, originator=LOCAL_USER, target MSB/LSB=0x64/0x00 (50%), current MSB/LSB=0x64/0x00, remaining
   // time=0x0000
-  const uint8_t status_payload[8] = {STATUS_STOPPED, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
+  const uint8_t status_payload[8] = {test::STATUS_BYTE_AT_REST, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
   ASSERT_TRUE(set_cmd(status, CMD_PRIVATE_RESP, status_payload, sizeof(status_payload)));
   print_wire("synthetic_exchange_auth status", status);
 

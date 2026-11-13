@@ -774,6 +774,96 @@ TEST(Decisions, WakeBeliefNamesAreDistinct) {
 }
 
 // ========================================================================================
+// Execution state (byte 0 of a status reply)
+// ========================================================================================
+
+TEST(Decisions, WaitingForItsTurnWaitingForPowerAndExecutingAreMoving) {
+  EXPECT_TRUE(decisions::is_executing(ExecutionState::WAITING_FOR_EXECUTING));
+  EXPECT_TRUE(decisions::is_executing(ExecutionState::WAITING_FOR_POWER));
+  EXPECT_TRUE(decisions::is_executing(ExecutionState::EXECUTING));
+  EXPECT_FALSE(decisions::is_executing(ExecutionState::NON_EXECUTING));
+  EXPECT_FALSE(decisions::is_executing(ExecutionState::EXECUTION_ERROR));
+  EXPECT_FALSE(decisions::is_executing(ExecutionState::DONE));
+  EXPECT_FALSE(decisions::is_executing(ExecutionState::UNDEFINED));
+}
+
+TEST(Decisions, StatusByteReadsAsStoppedByItsStateForEveryOfTheEightValues) {
+  // Result code 0 and result code 5 (as an SML answers) over each state.
+  for (const uint8_t code_bits : {0x00, 0x28}) {
+    EXPECT_TRUE(decisions::reads_stopped_by_status_byte(code_bits | 0)) << "state 0: unable to execute, at rest";
+    EXPECT_TRUE(decisions::reads_stopped_by_status_byte(code_bits | 1)) << "state 1: error, at rest";
+    EXPECT_FALSE(decisions::reads_stopped_by_status_byte(code_bits | 2)) << "state 2: waiting for its turn";
+    EXPECT_FALSE(decisions::reads_stopped_by_status_byte(code_bits | 3)) << "state 3: waiting for power";
+    EXPECT_FALSE(decisions::reads_stopped_by_status_byte(code_bits | 4)) << "state 4: executing";
+    EXPECT_TRUE(decisions::reads_stopped_by_status_byte(code_bits | 5)) << "state 5: done";
+    EXPECT_FALSE(decisions::reads_stopped_by_status_byte(code_bits | 6)) << "state 6: undefined, bit 0 clear";
+    EXPECT_TRUE(decisions::reads_stopped_by_status_byte(code_bits | 7)) << "state 7: undefined, bit 0 set";
+  }
+}
+
+TEST(Decisions, StateThreeDisagreesWithTheStoppedBitItReplaced) {
+  // Why the state is read: waiting for power has bit 0 set, which read as at rest.
+  EXPECT_NE(decisions::reads_stopped_by_status_byte(0x03), (0x03 & STATUS_STOPPED) != 0);
+  EXPECT_NE(decisions::reads_stopped_by_status_byte(0x00), (0x00 & STATUS_STOPPED) != 0)
+      << "and state 0 has it clear, which read as moving";
+  EXPECT_EQ(decisions::reads_stopped_by_status_byte(0x04), (0x04 & STATUS_STOPPED) != 0) << "4 and 5 agree";
+  EXPECT_EQ(decisions::reads_stopped_by_status_byte(0x05), (0x05 & STATUS_STOPPED) != 0);
+}
+
+// ========================================================================================
+// Wake belief of a receiver the hub has no news of (UNKNOWN), and the short lead
+// ========================================================================================
+
+TEST(Decisions, StatusReadWithNoNewsOfTheReceiverIsUnknown) {
+  EXPECT_EQ(decisions::wake_belief(evidence(0, 0), WAKE_NOW, false, /*is_status_read=*/true),
+            decisions::WakeBelief::UNKNOWN);
+  EXPECT_EQ(decisions::wake_belief(evidence(0, 0), WAKE_NOW, false, /*is_status_read=*/false),
+            decisions::WakeBelief::ASLEEP)
+      << "a command keeps the rule it had";
+}
+
+TEST(Decisions, MovingEvidenceOrAStopStillMakesAReadAwake) {
+  EXPECT_EQ(decisions::wake_belief(evidence(1000, 0), WAKE_NOW, false, true), decisions::WakeBelief::AWAKE);
+  EXPECT_EQ(decisions::wake_belief(evidence(0, 0), WAKE_NOW, true, true), decisions::WakeBelief::AWAKE);
+}
+
+TEST(Decisions, ARecentStatusReportIsNewsSoTheReadIsAsleepNotUnknown) {
+  decisions::TargetEvidence reported = evidence(0, 0);
+  reported.last_status_ms = WAKE_NOW - 1000;
+  EXPECT_EQ(decisions::wake_belief(reported, WAKE_NOW, false, true), decisions::WakeBelief::ASLEEP);
+  reported.last_status_ms = WAKE_NOW - (LOW_POWER_MAX_TRAVEL_MS - 1);
+  EXPECT_EQ(decisions::wake_belief(reported, WAKE_NOW, false, true), decisions::WakeBelief::ASLEEP);
+}
+
+TEST(Decisions, AStatusReportOlderThanTheLongestTravelIsNoNews) {
+  decisions::TargetEvidence reported = evidence(0, 0);
+  reported.last_status_ms = WAKE_NOW - LOW_POWER_MAX_TRAVEL_MS;
+  EXPECT_EQ(decisions::wake_belief(reported, WAKE_NOW, false, true), decisions::WakeBelief::UNKNOWN)
+      << "expires at exactly LOW_POWER_MAX_TRAVEL_MS";
+}
+
+TEST(Decisions, TheAgeOfAStatusReportSurvivesAMillisWrap) {
+  decisions::TargetEvidence reported = evidence(0, 0);
+  reported.last_status_ms = 0xFFFFFFFFu - 999u;  // one second before the wrap; now is one second after it
+  EXPECT_EQ(decisions::wake_belief(reported, 1000u, false, true), decisions::WakeBelief::ASLEEP);
+}
+
+TEST(Decisions, UnknownSendsTheWakeUpPreambleOnEveryTryOfAnExchangeWithoutALead) {
+  // The lead of an unknown state is an attempt of the plan, not a preamble rule: a single try, or a
+  // count of tries, keeps the preamble a resting receiver hears.
+  for (uint8_t try_index = 1; try_index <= EXCHANGE_RETRY_COUNT; try_index++)
+    EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::UNKNOWN, try_index, 32, LONG_PREAMBLE),
+              LONG_PREAMBLE);
+  EXPECT_STREQ(decisions::wake_belief_name(decisions::WakeBelief::UNKNOWN), "unknown");
+}
+
+TEST(Decisions, TargetEvidenceCarriesTheLastStatusReport) {
+  IoDevice dev{};
+  dev.last_status = 4242;
+  EXPECT_EQ(decisions::target_evidence(dev).last_status_ms, 4242u);
+}
+
+// ========================================================================================
 // Rain limitation (derived from observed status)
 // ========================================================================================
 
@@ -1235,4 +1325,63 @@ TEST(AttemptPlan, PlanForTriesClampsToOneAndTheDefaultCount) {
   EXPECT_EQ(decisions::attempt_plan_for_tries(2, 400).max_attempts, 2);
   EXPECT_EQ(decisions::attempt_plan_for_tries(9, 400).max_attempts, EXCHANGE_RETRY_COUNT);
   EXPECT_EQ(decisions::attempt_plan_for_tries(2, 450).window_ms, 450);
+}
+// ========================================================================================
+// Short lead of a settling read to a low-power receiver in an unknown state (ADR 0079)
+// ========================================================================================
+
+namespace {
+constexpr uint32_t LEAD_WAKE_TX_MS =
+    218;  // a status read behind the 1024-byte wake-up preamble, as the radios estimate it
+constexpr uint32_t LEAD_SHORT_TX_MS = 12;  // the same read behind the 32-byte start preamble
+}  // namespace
+
+TEST(Decisions, ASettlingReadToAnUnknownLowPowerTargetLeadsWithOneShortAttempt) {
+  TuningConfig tuning;
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LEAD_WAKE_TX_MS,
+                                            /*last_window_ms=*/0, /*short_lead_tx_ms=*/LEAD_SHORT_TX_MS);
+  EXPECT_TRUE(plan.short_lead);
+  EXPECT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS + 1u);
+  EXPECT_EQ(plan.window_for_attempt(1, plan.max_attempts), LOW_POWER_SHORT_LEAD_WINDOW_MS);
+  EXPECT_EQ(plan.window_for_attempt(2, plan.max_attempts), LOW_POWER_RESPONSE_WAIT_MS);
+  EXPECT_EQ(plan.window_for_attempt(plan.max_attempts, plan.max_attempts), LOW_POWER_RESPONSE_WAIT_MS);
+}
+
+TEST(Decisions, ALeadThatFitsWithTheWakeUpAttemptsNeedsNoAllowance) {
+  TuningConfig tuning;  // 2500 ms
+  const auto plan =
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LEAD_WAKE_TX_MS, 0, LEAD_SHORT_TX_MS);
+  EXPECT_EQ(plan.budget_allowance_ms, 0u) << "lead 122 ms + three 778 ms attempts (218 + 10 + 550) end inside 2500 ms";
+}
+
+TEST(Decisions, ALeadThatDoesNotFitGetsItsCostAsTheAllowanceAndKeepsEveryWakeUpAttempt) {
+  TuningConfig tuning;
+  tuning.exchange_total_budget_ms = 2400;
+  const auto without = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LEAD_WAKE_TX_MS);
+  const auto with =
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LEAD_WAKE_TX_MS, 0, LEAD_SHORT_TX_MS);
+
+  EXPECT_EQ(with.max_attempts, without.max_attempts + 1u) << "no wake-up attempt is dropped";
+  EXPECT_EQ(with.budget_allowance_ms, decisions::short_lead_cost_ms(LEAD_SHORT_TX_MS));
+  EXPECT_EQ(with.budget_allowance_ms, LEAD_SHORT_TX_MS + EXCHANGE_ATTEMPT_OVERHEAD_MS + LOW_POWER_SHORT_LEAD_WINDOW_MS)
+      << "its transmission, its brief listen and the attempt overhead";
+}
+
+TEST(Decisions, NoLeadWhenOnlyOneWakeUpAttemptFitsOrForAnotherKindOfRead) {
+  TuningConfig tuning;
+  tuning.exchange_total_budget_ms = 600;
+  const auto tight =
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LEAD_WAKE_TX_MS, 0, LEAD_SHORT_TX_MS);
+  EXPECT_FALSE(tight.short_lead) << "the lead never replaces the only wake-up attempt";
+  EXPECT_EQ(tight.max_attempts, 1u);
+
+  tuning.exchange_total_budget_ms = EXCHANGE_TOTAL_BUDGET_MS;
+  EXPECT_FALSE(
+      decisions::attempt_plan(decisions::ReadKind::PROGRESS, true, tuning, LEAD_WAKE_TX_MS, 0, LEAD_SHORT_TX_MS)
+          .short_lead);
+  EXPECT_FALSE(decisions::attempt_plan(decisions::ReadKind::COMMAND, true, tuning, LEAD_WAKE_TX_MS, 0, LEAD_SHORT_TX_MS)
+                   .short_lead);
+  EXPECT_FALSE(
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, LEAD_WAKE_TX_MS, 0, LEAD_SHORT_TX_MS)
+          .short_lead);
 }

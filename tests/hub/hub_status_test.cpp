@@ -39,7 +39,7 @@ TEST(HubStatus, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
   uint8_t device[3] = {0xAB, 0xC1, 0x23};
   set_dst(frame, own);
   set_src(frame, device);
-  uint8_t payload[8] = {STATUS_STOPPED, 0x00, POS_UNKNOWN, 0x00, 0x64, 0x00, 0x00, 0x00};
+  uint8_t payload[8] = {test::STATUS_BYTE_AT_REST, 0x00, POS_UNKNOWN, 0x00, 0x64, 0x00, 0x00, 0x00};
   ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
 
   comp.update_device_status_(frame);
@@ -53,7 +53,7 @@ TEST(HubStatus, PrivateResponseMarkerTargetUsesCurrentWhenStopped) {
 
 namespace {
 
-/// A trusted 0x04 status reply from ABC123: STATUS_STOPPED or moving, target and current raw.
+/// A trusted 0x04 status reply from ABC123: at rest or moving, target and current raw.
 IoFrame make_status_reply(bool stopped, uint16_t target_raw, uint16_t current_raw) {
   IoFrame frame{};
   init_frame(frame, true, false, false, false);
@@ -61,7 +61,7 @@ IoFrame make_status_reply(bool stopped, uint16_t target_raw, uint16_t current_ra
   uint8_t device[3] = {0xAB, 0xC1, 0x23};
   set_dst(frame, own);
   set_src(frame, device);
-  uint8_t payload[8] = {static_cast<uint8_t>(stopped ? STATUS_STOPPED : 0x00),
+  uint8_t payload[8] = {static_cast<uint8_t>(stopped ? test::STATUS_BYTE_AT_REST : test::STATUS_BYTE_MOVING),
                         0x00,
                         static_cast<uint8_t>(target_raw >> 8),
                         static_cast<uint8_t>(target_raw & 0xFF),
@@ -482,7 +482,7 @@ TEST(HubStatus, UntrackedMovingStatusUpdateSchedulesAPoll) {
   uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
   set_src(f, src);
   set_dst(f, dst);
-  uint8_t payload[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x32, 0x00, 0x00, 0x00};
+  uint8_t payload[11] = {test::STATUS_BYTE_MOVING, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x32, 0x00, 0x00, 0x00};
   set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
 
   comp.update_device_status_(f);
@@ -522,7 +522,7 @@ TEST(HubStatus, StuckMovingDeviceIsAtRestWhenItsWindowRunsOutAndAFreshReadOpensA
   comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));  // a read opens the window
   ASSERT_TRUE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
   const uint32_t deadline = comp.poll_policy_.get_poll_deadline("ABC123");
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 3; i++) {
     esphome::test_clock::advance_ms(60000);
     comp.update_device_status_(make_status_reply(false, 0xC800, 0x6400));  // every reply still moving
   }
@@ -673,7 +673,7 @@ TEST(HubStatus, UnsolicitedStatusUpdateStoppedOffTargetSettlesThenConfirms) {
   set_src(f, src);
   set_dst(f, dst);
   // Stopped, target [5..6] = 0xC800 (100 %), current [7..8] = 0xC755 (171 raw short).
-  uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC7, 0x55, 0x00, 0x00};
+  uint8_t payload[11] = {test::STATUS_BYTE_AT_REST, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC7, 0x55, 0x00, 0x00};
   set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
 
   comp.update_device_status_(f);
@@ -724,7 +724,7 @@ TEST(HubStatus, TrustedStatusObservationSupersedesPositionPrediction) {
   set_dst(frame, own);
   set_src(frame, device);
   // stopped, target=0xC800 (100%), current=0xC800 (100%)
-  uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  uint8_t payload[8] = {test::STATUS_BYTE_AT_REST, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
   ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
 
   comp.update_device_status_(frame);
@@ -751,8 +751,8 @@ TEST(HubStatus, TrustedExtendedStatusObservationSupersedesTiltPrediction) {
   set_dst(frame, own);
   set_src(frame, device);
   // stopped, target/current 0xC800, then the extended tilt block: selector at [12], raw 0x6400 -> 50%.
-  uint8_t payload[15] = {STATUS_STOPPED,       0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                         STATUS_TILT_SELECTOR, 0x64, 0x00};
+  uint8_t payload[15] = {test::STATUS_BYTE_AT_REST, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                         STATUS_TILT_SELECTOR,      0x64, 0x00};
   ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
 
   comp.update_device_status_(frame);
@@ -778,7 +778,7 @@ TEST(HubStatus, ExecuteAckWithoutTrustedPositionSupersedesNothing) {
   set_dst(frame, own);
   set_src(frame, device);
   // The ack reports stopped and echoes pre-command (here: zeroed) target/current.
-  uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  uint8_t payload[8] = {test::STATUS_BYTE_AT_REST, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
   ASSERT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
 
   comp.update_device_status_(frame, /*trust_position=*/false);
@@ -806,7 +806,7 @@ TEST(HubStatus, UnsolicitedStatusUpdateSupersedesPositionButNotTilt) {
   set_dst(frame, own);
   set_src(frame, device);
   // 0x71 layout: stopped flag at [0], target MSB at [5], current MSB at [7]; both 0xC800 -> 100%.
-  uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  uint8_t payload[11] = {test::STATUS_BYTE_AT_REST, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
   ASSERT_TRUE(set_cmd(frame, CMD_STATUS_UPDATE, payload, sizeof(payload)));
 
   comp.update_device_status_(frame);
@@ -883,7 +883,7 @@ TEST(HubStatus, RemoteActivityWithoutConfiguredIntervalArmsTrackedSettlePolling)
   uint8_t own[3] = {0xC0, 0xFF, 0xEE};
   set_src(moving, device);
   set_dst(moving, own);
-  uint8_t payload[8] = {0x00, 0x00, 0xC8, 0x00, 0x32, 0x00, 0x00, 0x05};
+  uint8_t payload[8] = {test::STATUS_BYTE_MOVING, 0x00, 0xC8, 0x00, 0x32, 0x00, 0x00, 0x05};
   set_cmd(moving, CMD_PRIVATE_RESP, payload, sizeof(payload));
 
   comp.update_device_status_(moving);
@@ -1103,7 +1103,7 @@ TEST(HubStatus, StatusUpdateFrameHandling) {
   set_src(f, src);
   set_dst(f, dst);
   // Status update payload: stopped, target at [5..6]=0xC800 (100%), current at [7..8]=0xC800 (100%)
-  uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  uint8_t payload[11] = {test::STATUS_BYTE_AT_REST, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
   set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
 
   comp.update_device_status_(f);
@@ -1125,7 +1125,7 @@ TEST(HubStatus, StatusUpdateMovingFrameHandling) {
   set_src(f, src);
   set_dst(f, dst);
   // Status update: moving (STATUS_STOPPED NOT set), target at [5..6]=0xC800 (100%), current at [7..8]=0x3200 (25%)
-  uint8_t payload[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x32, 0x00, 0x00, 0x00};
+  uint8_t payload[11] = {test::STATUS_BYTE_MOVING, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x32, 0x00, 0x00, 0x00};
   set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
 
   comp.update_device_status_(f);
@@ -1148,7 +1148,7 @@ TEST(HubStatus, UnsolicitedMovingStatusUpdateStampsMovingEvidence) {
   uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
   set_src(f, src);
   set_dst(f, dst);
-  uint8_t moving[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x32, 0x00, 0x00, 0x00};
+  uint8_t moving[11] = {test::STATUS_BYTE_MOVING, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0x32, 0x00, 0x00, 0x00};
   set_cmd(f, CMD_STATUS_UPDATE, moving, sizeof(moving));
 
   comp.update_device_status_(f);
@@ -1214,7 +1214,7 @@ TEST(HubStatus, UnsolicitedStoppedStatusUpdateClearsMovingEvidence) {
   uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
   set_src(f, src);
   set_dst(f, dst);
-  uint8_t stopped[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  uint8_t stopped[11] = {test::STATUS_BYTE_AT_REST, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
   set_cmd(f, CMD_STATUS_UPDATE, stopped, sizeof(stopped));
 
   comp.update_device_status_(f);
@@ -1429,7 +1429,7 @@ TEST(HubStatus, SuccessfulPrivateResponseClearsLastResultCode) {
   set_src(f, src);
   set_dst(f, dst);
   // Bytes 0=flags(stopped), 2-3=target(0x0000=0%), 4-5=current(0x0000=0%).
-  uint8_t payload[6] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0x00};
+  uint8_t payload[6] = {test::STATUS_BYTE_AT_REST, 0x00, 0x00, 0x00, 0x00, 0x00};
   set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
 
   comp.update_device_status_(f);
@@ -1453,7 +1453,7 @@ TEST(HubStatus, SuccessfulStatusUpdateClearsLastResultCode) {
   set_src(f, src);
   set_dst(f, dst);
   // 0x71 status update: byte0=flags(stopped), byte1=status byte, bytes5-6=target, bytes7-8=current.
-  uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  uint8_t payload[11] = {test::STATUS_BYTE_AT_REST, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
   set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
 
   comp.update_device_status_(f);
@@ -1492,7 +1492,7 @@ TEST(HubStatus, StatusUpdateOriginatorIsAtOffset14AndDecodePathUndisturbed) {
   ASSERT_NE(dev, nullptr);
   EXPECT_FLOAT_EQ(dev->target, 100.0f) << "target at data[5..6]=C8 00 should still decode to 100%";
   EXPECT_FLOAT_EQ(dev->position, UNKNOWN_POSITION) << "current at data[7..8]=D4 00 is unknown, unchanged by the fix";
-  EXPECT_FALSE(dev->is_stopped) << "data[0]=0x04 has STATUS_STOPPED clear";
+  EXPECT_FALSE(dev->is_stopped) << "data[0]=0x04 is execution state 4 (executing)";
 
   // The production log line's own argument. Reading data[1] instead would render
   // "unknown(0x61)" here, which is exactly the bug this pins.
@@ -1513,7 +1513,7 @@ TEST(HubStatus, StatusUpdateMinimumLengthFrameStillApplied) {
   // 11-byte 0x71 (== STATUS_UPDATE_MIN_DATA_LEN): stopped, target [5..6]=C8 00, current [7..8]=C8 00.
   // Too short to carry data[14], so the originator log line is skipped — but the frame must still
   // be decoded and applied.
-  uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  uint8_t payload[11] = {test::STATUS_BYTE_AT_REST, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
   set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
 
   EXPECT_TRUE(detail::describe_status_update_originator(f).empty())
@@ -2000,7 +2000,8 @@ TEST(HubStatus, UnauthenticatedForeignPrivateResponseDoesNotUpdateDeviceState) {
   uint8_t dst[3] = {0x43, 0x44, 0xE3};  // some other controller, not us
   set_src(f, src);
   set_dst(f, dst);
-  uint8_t payload[8] = {0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};  // moving, target/current=100%
+  uint8_t payload[8] = {
+      test::STATUS_BYTE_MOVING, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};  // moving, target/current=100%
   set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
 
   RadioRxPacket pkt = make_rx_packet(f);
@@ -2029,7 +2030,7 @@ TEST(HubStatus, UnauthenticatedForeignStatusUpdateDoesNotUpdateDeviceState) {
   set_src(f, src);
   set_dst(f, dst);
   // moving, target at [5..6]=0xC800 (100%), current at [7..8]=0xC800 (100%)
-  uint8_t payload[11] = {0x00, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  uint8_t payload[11] = {test::STATUS_BYTE_MOVING, 0x00, 0x00, 0x00, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
   set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
 
   RadioRxPacket pkt = make_rx_packet(f);
@@ -2720,7 +2721,7 @@ TEST(HubStatus, DeviceEventInsideAPollExchangeIsRecordedAndThePollAskedAgain) {
   init_frame(reply, true, false, false, false);
   set_src(reply, EVENT_DEVICE_ID);
   set_dst(reply, comp.node_id_);
-  const uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
+  const uint8_t payload[8] = {test::STATUS_BYTE_AT_REST, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
   ASSERT_TRUE(set_cmd(reply, CMD_PRIVATE_RESP, payload, sizeof(payload)));
   radio.queue_rx_hold_until_sent(2);
   radio.queue_rx(make_rx_packet(reply));
@@ -2791,8 +2792,22 @@ TEST(HubStatus, PositionStatusUpdateIsStillAppliedAndNotRecorded) {
   init_frame(f, true, false, true, false);
   set_src(f, EVENT_DEVICE_ID);
   set_dst(f, comp.node_id_);
-  const uint8_t payload[16] = {STATUS_STOPPED, 0x60, 0x10, 0x0A, 0x0B, 0x64, 0x00, 0x64,
-                               0x00,           0x00, 0x00, 0xBE, 0xFE, 0xDB, 0x01, 0x00};
+  const uint8_t payload[16] = {test::STATUS_BYTE_AT_REST,
+                               0x60,
+                               0x10,
+                               0x0A,
+                               0x0B,
+                               0x64,
+                               0x00,
+                               0x64,
+                               0x00,
+                               0x00,
+                               0x00,
+                               0xBE,
+                               0xFE,
+                               0xDB,
+                               0x01,
+                               0x00};
   set_cmd(f, CMD_STATUS_UPDATE, payload, sizeof(payload));
 
   comp.update_device_status_(f);
@@ -2830,7 +2845,7 @@ TEST(HubStatus, SensorEventStatusUpdateInsideAPollExchangeIsRecordedAndThePollAs
   init_frame(reply, true, false, false, false);
   set_src(reply, EVENT_DEVICE_ID);
   set_dst(reply, comp.node_id_);
-  const uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
+  const uint8_t payload[8] = {test::STATUS_BYTE_AT_REST, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
   ASSERT_TRUE(set_cmd(reply, CMD_PRIVATE_RESP, payload, sizeof(payload)));
   radio.queue_rx_hold_until_sent(2);
   radio.queue_rx(make_rx_packet(reply));

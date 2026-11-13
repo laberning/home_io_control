@@ -4252,3 +4252,241 @@ TEST(Exchange, UnconfirmedExecuteOnItsLastAllowedTryIsNotWaitedForAResend) {
             rig.tuning.exchange_start_response_wait_ms + rig.tuning.exchange_response_wait_ms)
       << "the exchange ends with the final wait, not after the re-send gap";
 }
+
+// ============================================================================
+// A settling read of a low-power receiver in an unknown state leads with one short attempt
+// (decisions::WakeBelief::UNKNOWN, ADR 0079). The exchange runs on a ManualClock with modelled air
+// time, to a MockRadio that is silent unless a test queues a reply for a given send.
+// ============================================================================
+
+namespace {
+
+/// A PlanRig whose target-evidence provider is scripted: all-zero stamps are a receiver the hub has
+/// no news of.
+struct ShortLeadRig : PlanRig {
+  decisions::TargetEvidence evidence{};
+  int evidence_spent{0};
+
+  ShortLeadRig() {
+    engine.set_target_evidence_provider([this](const uint8_t *, decisions::TargetEvidence &out) {
+      out = evidence;
+      return true;
+    });
+    engine.set_wake_evidence_spent_handler([this](const uint8_t *) { evidence_spent++; });
+  }
+
+  /// A status read of the low-power target.
+  static IoFrame status_read() {
+    IoFrame request{};
+    create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/true);
+    return request;
+  }
+
+  /// The target's answer to a status read.
+  static RadioRxPacket status_reply() {
+    const IoFrame reply = build_status_response(test::DST_ID, test::OWN_ID);
+    uint8_t raw[64];
+    RadioRxPacket pkt{};
+    pkt.len = serialize(reply, raw, sizeof(raw));
+    memcpy(pkt.data, raw, pkt.len);
+    return pkt;
+  }
+
+  /// The transmit time the engine plans for the short lead of status_read().
+  uint32_t short_tx_ms() const {
+    IoFrame request = status_read();
+    uint8_t raw[64];
+    const uint8_t len = serialize(request, raw, sizeof(raw));
+    return (io868_tx_air_time_us(tuning.normal_start_preamble, len) + 999) / 1000;
+  }
+
+  std::vector<uint16_t> preambles() const {
+    std::vector<uint16_t> result;
+    for (const auto &config : radio.get_tx_configs())
+      result.push_back(config.preamble_len);
+    return result;
+  }
+};
+
+}  // namespace
+
+TEST(ShortLead, PlanLeadsAnUnknownLowPowerSettlingReadWithOneShortAttempt) {
+  ShortLeadRig rig;
+
+  const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, ShortLeadRig::status_read(), FREQ_CH2);
+
+  EXPECT_TRUE(plan.short_lead);
+  EXPECT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS + 1u) << "the three wake-up attempts are kept";
+  EXPECT_EQ(plan.budget_allowance_ms, 0u) << "at the default budget the lead and the three wake-up attempts fit";
+  EXPECT_EQ(plan.window_for_attempt(1, plan.max_attempts), LOW_POWER_SHORT_LEAD_WINDOW_MS);
+  EXPECT_EQ(plan.window_for_attempt(2, plan.max_attempts), LOW_POWER_RESPONSE_WAIT_MS);
+}
+
+TEST(ShortLead, FourAttemptsToASilentTargetFitTheDefaultBudget) {
+  ShortLeadRig rig;
+  const IoFrame request = ShortLeadRig::status_read();
+  const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  IoFrame response{};
+
+  const uint32_t start = esphome::test_clock::peek_ms();
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+  const uint32_t blocked_ms = esphome::test_clock::peek_ms() - start;
+
+  EXPECT_EQ(rig.radio.get_send_count(), static_cast<int>(plan.max_attempts))
+      << "the guard admits every attempt the plan promised, the wake-up attempts included";
+  EXPECT_EQ(rig.preambles(),
+            (std::vector<uint16_t>{rig.tuning.normal_start_preamble, LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  const auto &waits = rig.radio.wait_timeouts();
+  ASSERT_EQ(waits.size(), 4u);
+  EXPECT_EQ(waits[0], LOW_POWER_SHORT_LEAD_WINDOW_MS) << "the lead listens briefly";
+  EXPECT_EQ(waits[1], LOW_POWER_RESPONSE_WAIT_MS);
+  EXPECT_LT(blocked_ms, rig.tuning.exchange_total_budget_ms) << "with the default timing no allowance is needed";
+}
+
+TEST(ShortLead, AShorterBudgetGrantsTheLeadsCostAndKeepsEveryWakeUpAttempt) {
+  // 2400 ms admits the three wake-up attempts (3 x 778 ms at the defaults) but not the lead before them.
+  // The read may then run past the budget by the lead's cost and by no more.
+  ShortLeadRig rig;
+  rig.tuning.exchange_total_budget_ms = 2400;
+  const IoFrame request = ShortLeadRig::status_read();
+  const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  ASSERT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS + 1u);
+  EXPECT_EQ(plan.budget_allowance_ms, decisions::short_lead_cost_ms(rig.short_tx_ms()));
+  IoFrame response{};
+
+  const uint32_t start = esphome::test_clock::peek_ms();
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+  const uint32_t blocked_ms = esphome::test_clock::peek_ms() - start;
+
+  EXPECT_EQ(rig.radio.get_send_count(), static_cast<int>(plan.max_attempts))
+      << "no wake-up attempt is dropped for the lead";
+  EXPECT_GT(blocked_ms, rig.tuning.exchange_total_budget_ms) << "the allowance is what these attempts needed";
+  EXPECT_LE(blocked_ms, rig.tuning.exchange_total_budget_ms + plan.budget_allowance_ms);
+}
+
+TEST(ShortLead, WithoutTheAllowanceTheGuardDropsTheThirdWakeUpAttempt) {
+  // The same plan with the allowance withdrawn: the lead's cost pushes the last wake-up attempt past
+  // the budget, which is what the allowance is for.
+  ShortLeadRig rig;
+  rig.tuning.exchange_total_budget_ms = 2400;
+  const IoFrame request = ShortLeadRig::status_read();
+  auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  plan.budget_allowance_ms = 0;
+  IoFrame response{};
+
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 3) << "the short lead and two wake-up attempts";
+}
+
+TEST(ShortLead, ACoverAnsweringOnlyTheShortPreambleIsReachedOnTheLead) {
+  // A moving VELUX screen answers the short start frame and ignores the wake-up one.
+  ShortLeadRig rig;
+  rig.radio.queue_rx(ShortLeadRig::status_reply());
+  const IoFrame request = ShortLeadRig::status_read();
+  const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  IoFrame response{};
+
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 1);
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{rig.tuning.normal_start_preamble}));
+}
+
+TEST(ShortLead, ACoverAnsweringOnlyTheWakeUpPreambleIsReachedOnTheSecondAttempt) {
+  // A resting receiver ignores the short start frame and hears the wake-up one.
+  ShortLeadRig rig;
+  rig.radio.queue_rx_hold_until_sent(2);
+  rig.radio.queue_rx(ShortLeadRig::status_reply());
+  const IoFrame request = ShortLeadRig::status_read();
+  const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  IoFrame response{};
+
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 2);
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{rig.tuning.normal_start_preamble, LONG_PREAMBLE}));
+}
+
+TEST(ShortLead, ASilentLeadSpendsNoEvidence) {
+  // Only an exchange planned on AWAKE spends the moving evidence when it goes unanswered; the lead of an
+  // unknown state has none to spend.
+  ShortLeadRig rig;
+  const IoFrame request = ShortLeadRig::status_read();
+  const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  IoFrame response{};
+
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.evidence_spent, 0);
+}
+
+TEST(ShortLead, ASingleTryReadKeepsTheWakeUpPreamble) {
+  // The lead never replaces the only try: a progress read goes to a receiver whose state is unknown
+  // with the preamble that reaches a resting one.
+  ShortLeadRig rig;
+  const IoFrame request = ShortLeadRig::status_read();
+  const auto plan = rig.engine.plan_read(decisions::ReadKind::PROGRESS, request, FREQ_CH2);
+  IoFrame response{};
+
+  EXPECT_FALSE(plan.short_lead);
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{LONG_PREAMBLE}));
+  EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::UNKNOWN);
+}
+
+TEST(ShortLead, ACountedStatusReadKeepsTheWakeUpPreambleOnEveryTry) {
+  ShortLeadRig rig;
+  IoFrame response{};
+
+  EXPECT_EQ(rig.engine.send_and_receive(ShortLeadRig::status_read(), response, FREQ_CH2, EXCHANGE_RETRY_COUNT),
+            ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}))
+      << "a caller that names only a number of tries gets no lead";
+}
+
+TEST(ShortLead, NewsOfTheReceiversStateLeavesNoLead) {
+  ShortLeadRig rig;
+  const IoFrame request = ShortLeadRig::status_read();
+
+  rig.evidence.last_status_ms = esphome::millis() - 1000;  // a status report a second ago: at rest, known
+  EXPECT_FALSE(rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2).short_lead);
+
+  rig.evidence.last_status_ms = 0;
+  rig.evidence.last_moving_evidence_ms = esphome::millis() - 1000;  // believed moving: the belief itself leads short
+  const auto awake = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  EXPECT_FALSE(awake.short_lead);
+  EXPECT_EQ(awake.max_attempts, LOW_POWER_SETTLING_ATTEMPTS);
+}
+
+TEST(ShortLead, AFixedPreambleOrACommandHasNoLead) {
+  ShortLeadRig rig;
+  const IoFrame request = ShortLeadRig::status_read();
+
+  EXPECT_FALSE(rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2, LONG_PREAMBLE).short_lead)
+      << "the read at a cover's predicted end fixes the wake-up preamble";
+
+  IoFrame move{};
+  create_execute_position(move, test::OWN_ID, test::DST_ID, /*low_power=*/true, 40);
+  const auto plan = rig.engine.plan_read(decisions::ReadKind::COMMAND, move, FREQ_CH2);
+  EXPECT_FALSE(plan.short_lead);
+  EXPECT_EQ(plan.max_attempts, EXCHANGE_RETRY_COUNT);
+}
+
+TEST(ShortLead, ANonLowPowerTargetHasNoLead) {
+  ShortLeadRig rig;
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+
+  EXPECT_FALSE(rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2).short_lead);
+}
+
+TEST(ShortLead, SwitchedOffWithTheWakeBeliefTuning) {
+  ShortLeadRig rig;
+  rig.tuning.low_power_wake_belief = false;
+
+  EXPECT_FALSE(rig.engine.plan_read(decisions::ReadKind::SETTLING, ShortLeadRig::status_read(), FREQ_CH2).short_lead)
+      << "with the belief off every try keeps the wake-up preamble";
+}

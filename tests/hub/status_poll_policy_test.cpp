@@ -26,7 +26,7 @@ TEST(StatusPollPolicy, BackoffLadderSilentFailures) {
   policy.set_interval("DEV", 2000);
   policy.begin_tracking("DEV", 0, T0);
 
-  // All failures at T0 — the deadline is T0 + MAX_TRACKED (600s), so all fit.
+  // All failures at T0: the deadline is T0 + MAX_TRACKED (240 s), so the first four rungs fit.
   uint32_t b1 = policy.on_exchange_failed("DEV", false, T0);
   EXPECT_EQ(b1, STATUS_RETRY_AFTER_FAIL_MS);
   EXPECT_EQ(policy.get_status_poll_failures("DEV"), 1u);
@@ -42,8 +42,11 @@ TEST(StatusPollPolicy, BackoffLadderSilentFailures) {
   uint32_t b4 = policy.on_exchange_failed("DEV", false, T0);
   EXPECT_EQ(b4, STATUS_RETRY_AFTER_FAIL_STEP4_MS);
 
+  // The fifth rung (300 s) would end past the 240 s window: the window runs out instead.
+  EXPECT_GT(STATUS_RETRY_AFTER_FAIL_MAX_MS, MAX_TRACKED_STATUS_POLL_WINDOW_MS);
   uint32_t b5 = policy.on_exchange_failed("DEV", false, T0);
-  EXPECT_EQ(b5, STATUS_RETRY_AFTER_FAIL_MAX_MS);
+  EXPECT_EQ(b5, 0u);
+  EXPECT_FALSE(policy.is_tracking_active("DEV", T0));
 }
 
 // ============================================================================
@@ -66,8 +69,11 @@ TEST(StatusPollPolicy, BackoffLadderAuthShapedFailures) {
   uint32_t b3 = policy.on_exchange_failed("DEV", true, T0);
   EXPECT_EQ(b3, STATUS_AUTH_RETRY_AFTER_FAIL_STEP3_MS);
 
+  // The fourth rung (300 s) would end past the 240 s window: the window runs out instead.
+  EXPECT_GT(STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS, MAX_TRACKED_STATUS_POLL_WINDOW_MS);
   uint32_t b4 = policy.on_exchange_failed("DEV", true, T0);
-  EXPECT_EQ(b4, STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS);
+  EXPECT_EQ(b4, 0u);
+  EXPECT_FALSE(policy.is_tracking_active("DEV", T0));
 }
 
 // A single lost closing reply (the device challenged, then switched its motor off and never
@@ -897,9 +903,9 @@ TEST(StatusPollPredictedEnd, AnAimBeyondTheWindowIsNotPlanned) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
 
-  policy.on_trusted_report("DEV", 0xFFF0, T0);  // far longer than the 600 s window
+  policy.on_trusted_report("DEV", 0xFFF0, T0);  // far longer than the 240 s window
   EXPECT_EQ(policy.get_settle_update("DEV"), 0u) << "the window ends first: progress reads and its end handling stay";
-  policy.on_trusted_report("DEV", 590, T0);
+  policy.on_trusted_report("DEV", 230, T0);
   EXPECT_NE(policy.get_settle_update("DEV"), 0u) << "an aim inside the window is kept";
 }
 
@@ -913,4 +919,71 @@ TEST(StatusPollPredictedEnd, TheAimSurvivesAMillisWrap) {
 
   EXPECT_EQ(policy.pop_due_device(now + 3000u), std::nullopt) << "not due before the wrapped aim";
   EXPECT_TRUE(policy.pop_due_device(aim + 1u).has_value());
+}
+
+// ============================================================================
+// Frozen-count back-off and the follow-up window (ADR 0079)
+// ============================================================================
+
+TEST(StatusPollFrozenCount, NoBackOffWhileTheCountFalls) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  for (uint16_t remaining = 40; remaining > 30; remaining--) {
+    policy.on_trusted_report("DEV", remaining, T0);
+    EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), 0u) << remaining;
+  }
+}
+
+TEST(StatusPollFrozenCount, StepsGrowFromTheThirdReportThatDidNotFallAndStopAtTheLast) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_trusted_report("DEV", 30, T0);  // nothing to compare with
+  policy.on_trusted_report("DEV", 30, T0);
+  policy.on_trusted_report("DEV", 30, T0);
+  EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), 0u) << "two reports that did not fall";
+  policy.on_trusted_report("DEV", 30, T0);
+  EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), FROZEN_COUNT_BACKOFF_FIRST_MS);
+  policy.on_trusted_report("DEV", 31, T0);  // a rising count is no fall either
+  EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), FROZEN_COUNT_BACKOFF_SECOND_MS);
+  policy.on_trusted_report("DEV", 31, T0);
+  EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), FROZEN_COUNT_BACKOFF_MAX_MS);
+  policy.on_trusted_report("DEV", 31, T0);
+  EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), FROZEN_COUNT_BACKOFF_MAX_MS);
+}
+
+TEST(StatusPollFrozenCount, AFallingCountOrNoCountResetsTheSteps) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  for (int i = 0; i < 5; i++)
+    policy.on_trusted_report("DEV", 30, T0);
+  ASSERT_GT(policy.frozen_count_delay_ms("DEV"), 0u);
+  policy.on_trusted_report("DEV", 29, T0);
+  EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), 0u);
+
+  for (int i = 0; i < 5; i++)
+    policy.on_trusted_report("DEV", 29, T0);
+  ASSERT_GT(policy.frozen_count_delay_ms("DEV"), 0u);
+  policy.on_trusted_report("DEV", std::nullopt, T0);
+  EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), 0u);
+}
+
+TEST(StatusPollFrozenCount, AnUnknownDeviceHasNone) {
+  StatusPollPolicy policy;
+  EXPECT_EQ(policy.frozen_count_delay_ms("NOPE"), 0u);
+}
+
+TEST(StatusPollFrozenCount, TheStepsAreLongerThanTheShortCadenceAndNeverShrink) {
+  static_assert(FROZEN_COUNT_BACKOFF_FIRST_MS > DEFAULT_SETTLE_POLL_DELAY_MS);
+  static_assert(FROZEN_COUNT_BACKOFF_FIRST_MS < FROZEN_COUNT_BACKOFF_SECOND_MS);
+  static_assert(FROZEN_COUNT_BACKOFF_SECOND_MS < FROZEN_COUNT_BACKOFF_MAX_MS);
+  static_assert(MAX_TRACKED_STATUS_POLL_WINDOW_MS == 240000);
+}
+
+TEST(StatusPollFrozenCount, AMovingReportThatOpensTheWindowFixesItsDeadlineThere) {
+  StatusPollPolicy policy;
+  ASSERT_EQ(policy.on_moving_report("DEV", T0, true), MovingReportAction::OPEN);
+  EXPECT_EQ(policy.get_poll_deadline("DEV"), T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS);
+  EXPECT_EQ(policy.on_moving_report("DEV", T0 + 200000, true), MovingReportAction::FOLLOW);
+  EXPECT_EQ(policy.get_poll_deadline("DEV"), T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS) << "a later report never moves it";
+  EXPECT_EQ(policy.on_moving_report("DEV", T0 + MAX_TRACKED_STATUS_POLL_WINDOW_MS + 1, true), MovingReportAction::END);
 }

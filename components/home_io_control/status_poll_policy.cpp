@@ -108,6 +108,20 @@ void StatusPollPolicy::on_trusted_report(const std::string &device_id, std::opti
   t.settle_update = beyond_window ? 0 : stamp(aim);
 }
 
+uint32_t StatusPollPolicy::frozen_count_delay_ms(const std::string &device_id) const {
+  auto it = tracking_.find(device_id);
+  if (it == tracking_.end() || it->second.stale_reports < PREDICTED_END_STALE_REPORTS)
+    return 0;
+  switch (it->second.stale_reports - PREDICTED_END_STALE_REPORTS) {
+    case 0:
+      return FROZEN_COUNT_BACKOFF_FIRST_MS;
+    case 1:
+      return FROZEN_COUNT_BACKOFF_SECOND_MS;
+    default:
+      return FROZEN_COUNT_BACKOFF_MAX_MS;
+  }
+}
+
 uint32_t StatusPollPolicy::get_settle_update(const std::string &device_id) const {
   auto it = tracking_.find(device_id);
   return (it != tracking_.end()) ? it->second.settle_update : 0;

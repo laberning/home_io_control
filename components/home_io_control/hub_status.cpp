@@ -5,6 +5,7 @@
 #include "proto_commands.h"
 #include "proto_dhw.h"
 
+#include <algorithm>
 #include <cinttypes>
 #include <optional>
 
@@ -39,7 +40,7 @@ constexpr uint8_t GET_INFO2_RESPONSE_MIN_DATA_LEN = 12;  ///< Minimum payload le
 constexpr uint8_t ERROR_RESPONSE_MIN_DATA_LEN = 1;       ///< Minimum payload length for 0xFE result-bearing replies.
 constexpr uint8_t EXTENDED_TILT_RESPONSE_MIN_DATA_LEN =
     15;  ///< Minimum payload length for tilt-capable extended status replies.
-constexpr uint8_t STATUS_STOPPED_FLAGS_OFFSET = 0;  ///< Byte containing STATUS_STOPPED.
+constexpr uint8_t STATUS_STOPPED_FLAGS_OFFSET = 0;  ///< Byte holding the execution state (and STATUS_STOPPED).
 constexpr uint8_t STATUS_BATTERY_OFFSET = 1;  ///< Byte holding STATUS_BATTERY_MASK, the same in 0x04 and 0x71 payloads.
 constexpr uint8_t PRIVATE_RESPONSE_REMAINING_TIME_OFFSET =
     6;  ///< MSB of the 16-bit remaining travel time (seconds) in a status reply (0x04 to a 0x03 poll).
@@ -215,17 +216,34 @@ uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPol
   return settle_delay_ms(policy.get_interval(id), /*remaining_delay_ms=*/0, /*cap_for_stop=*/false);
 }
 
-/// @brief Does a status reply's flags byte say the device is at rest?
+/// @brief Read a status reply's byte 0: record the device's execution state and say whether it is at rest.
 ///
-/// A heater has no motion, so a heating-level heater and an exterior heater are always at rest
-/// whatever their flags byte says (device_has_no_motion()): the movement settle loop (follow-up
-/// polls while "moving") must never run for them, and what that byte holds on a heater is
-/// unconfirmed. Every other device reports it in STATUS_STOPPED.
-/// @param dev Device the reply came from.
-/// @param flags The reply's stopped-flags byte.
+/// The execution state decides (decisions::reads_stopped_by_status_byte()): waiting for its turn,
+/// waiting for power and executing are moving; unable to execute, error and done are at rest. A
+/// heater has no motion, so a heating-level heater and an exterior heater are always at rest whatever
+/// their byte says (device_has_no_motion()): the movement settle loop (follow-up polls while
+/// "moving") must never run for them, and what that byte holds on a heater is unconfirmed; they keep
+/// no execution state. A byte with no defined state (bits [2:0] hold 6 or 7) falls back on
+/// STATUS_STOPPED and is logged. A change of state is logged with the raw byte.
+/// \todo The waiting states are experimental: only a main-parameter read of a queued shutter has
+///       captured WAITING_FOR_POWER so far, not an ordinary status reply.
+/// @param id Device ID for the log lines.
+/// @param dev Device the reply came from; its `execution_state` is updated.
+/// @param flags The reply's byte 0.
 /// @return true when the device is at rest.
-bool reports_stopped(const IoDevice &dev, uint8_t flags) {
-  return device_has_no_motion(dev.type, dev.subtype) || (flags & STATUS_STOPPED) != 0;
+bool read_status_byte(const std::string &id, IoDevice &dev, uint8_t flags) {
+  if (device_has_no_motion(dev.type, dev.subtype))
+    return true;
+  const ExecutionState state = execution_state_of(flags);
+  if (state == ExecutionState::UNDEFINED) {
+    ESP_LOGW(detail::TAG, "Device %s: status byte 0x%02X has no defined execution state: read by its stopped bit",
+             id.c_str(), flags);
+  } else if (state != dev.execution_state) {
+    ESP_LOGD(detail::TAG, "Device %s: execution state %s (status byte 0x%02X)", id.c_str(), execution_state_name(state),
+             flags);
+  }
+  dev.execution_state = state;
+  return decisions::reads_stopped_by_status_byte(flags);
 }
 
 /// @brief Decide whether a report that reads as moving schedules a follow-up poll.
@@ -257,7 +275,7 @@ bool follow_moving_report(const std::string &id, const IoDevice &dev, StatusPoll
 /// status poll a few seconds later) remains the source of truth for target/current in that case.
 void apply_private_response_status(const std::string &id, IoDevice &dev, const IoFrame &frame, StatusPollPolicy &policy,
                                    bool trust_position = true) {
-  const bool reported_stopped = reports_stopped(dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
+  const bool reported_stopped = read_status_byte(id, dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
   dev.is_stopped = reported_stopped;
   dev.last_status = millis();
   if (trust_position) {
@@ -312,7 +330,10 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   if (trust_position)
     policy.on_trusted_report(id, remaining_s, dev.last_status);
 
-  uint32_t const delay_ms = compute_private_response_delay_ms(dev, remaining_s, policy, id);
+  // A count that stopped falling backs the progress reads off (StatusPollPolicy::frozen_count_delay_ms());
+  // a cadence that is longer already stays.
+  uint32_t const delay_ms =
+      std::max(compute_private_response_delay_ms(dev, remaining_s, policy, id), policy.frozen_count_delay_ms(id));
   ESP_LOGD(detail::TAG,
            "Device %s: next status poll in %" PRIu32 " ms (remaining time=%s, configured interval=%" PRIu32 " ms)",
            id.c_str(), delay_ms, remaining_s.has_value() ? std::to_string(*remaining_s).append("s").c_str() : "none",
@@ -332,7 +353,7 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
 /// @param policy Poll policy for scheduling follow-up polls.
 void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const IoFrame &frame,
                                      StatusPollPolicy &policy) {
-  const bool reported_stopped = reports_stopped(dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
+  const bool reported_stopped = read_status_byte(id, dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
   dev.is_stopped = reported_stopped;
   dev.last_status = millis();
   decode_status_fields(dev, frame, STATUS_UPDATE_TARGET_OFFSET, STATUS_UPDATE_CURRENT_OFFSET, false, id, policy);
@@ -477,6 +498,8 @@ void IOHomeControlComponent::settle_ended_status_tracking_() {
       // A resting device needs the wake-up preamble again, so the next request must not assume the
       // device is still awake from the movement.
       clear_moving_evidence(*dev);
+      // Its last word (waiting, running) is no longer news: an Active Issue it raised is withdrawn.
+      dev->execution_state = ExecutionState::UNDEFINED;
     } else {
       continue;
     }

@@ -313,7 +313,7 @@ TEST(OnewayRx, OptimisticState_OneWayPredictionSupersededByStatusObservation) {
   uint8_t device[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
   set_dst(obs, test::OWN_ID);
   set_src(obs, device);
-  uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  uint8_t payload[8] = {test::STATUS_BYTE_AT_REST, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
   ASSERT_TRUE(set_cmd(obs, CMD_PRIVATE_RESP, payload, sizeof(payload)));
   comp.update_device_status_(obs);
 

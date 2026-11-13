@@ -15,6 +15,12 @@
 namespace test {
 using namespace esphome::home_io_control;
 
+// Byte 0 of a status reply as real devices send it: a result code of 0 over execution state 4 (executing)
+// or 5 (done). Every captured status reply carries one of the two (with a result code above 0 on some
+// devices, such as 0x2C and 0x2D).
+constexpr uint8_t STATUS_BYTE_MOVING = 0x04;
+constexpr uint8_t STATUS_BYTE_AT_REST = 0x05;
+
 // Node identifiers (non-zero, not all-ones)
 const uint8_t OWN_ID[3] = {0x11, 0x22, 0x33};
 const uint8_t DST_ID[3] = {0x44, 0x55, 0x66};

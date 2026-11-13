@@ -1,0 +1,45 @@
+id: velux_sml_probe_status_mp_fp_waiting_for_power
+description: >
+  Two replies of a VELUX SML roller shutter to the main-parameter status read (`status_mp_fp`:
+  CMD_PRIVATE 0x03, function 0x01, FP1-FP7 requested), read on a Heltec V3.2 (SX1262) hub through
+  `probe_device`. The shutter shares one KUX 110 power supply with a second SML shutter, which runs
+  one motor at a time: a shutter commanded while the other one travels accepts its command and
+  waits. Both replies are unchallenged. Reported in issue #230 by martinhladil (his pull request #231
+  carried the same bytes).
+    - frame 0, the shutter at rest at 75 %: data 2D 00 96 00 80 00 00 00;
+    - frame 1, the shutter commanded and queued behind the other one, before its motor started:
+      data 2B 00 00 00 80 00 00 00.
+  Read as [status][b1][MP hi lo][FPI1 echo 80 = FP1][FP1 hi lo][FPI2 echo], the layout of
+  tests/corpus/captures/probe/atlantic_adelis_probe_status_mp_fp.yaml. The status byte is
+  (5 << 3) | state with the node states of the KLF 200 API specification v3.18: 2D = state 5 (done),
+  2B = state 3 (waiting for power). The main parameter is 96 00 at rest, the value of the 75 % the
+  shutter rested at, and 00 00 while queued; what it carries is not decoded (a position would not
+  read 00 00 before the motor started). What the 5 in the upper bits means is not known. State 4
+  (executing) is in tests/corpus/captures/probe/velux_sml_probe_execution_state_waiting_then_executing_sx1262.yaml.
+
+  Only the eight data bytes of each reply were logged, so the frame headers are rebuilt around them
+  (CTRL0 from the length, CTRL1 00, no CRC) and the channel is unknown. Node IDs are replaced.
+source:
+  device: "VELUX SML roller shutter on a KUX 110 power supply shared with a second SML shutter"
+  captured_with: sx1262
+  firmware: "commit 76afd03, diagnostic_probes: true (Heltec WiFi LoRa 32 V3.2)"
+  date: 2026-11-12
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/230"
+key: unknown
+node_map:
+  hub: C0FFEE
+  shutter: 5A3C71
+frames:
+  - dir: rx
+    hex: "90 00 C0 FF EE 5A 3C 71 04 2D 00 96 00 80 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), answer to status_mp_fp at rest at 75 %: status 2D (state 5, done), MP 96 00"
+  - dir: rx
+    hex: "90 00 C0 FF EE 5A 3C 71 04 2B 00 00 00 80 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), answer to status_mp_fp while queued behind the other shutter: status 2B (state 3, waiting for power), MP 00 00"
+expect:
+  frames:
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

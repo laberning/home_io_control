@@ -68,7 +68,7 @@ class StatusRefreshHub : public ::testing::Test {
     init_frame(frame, true, false, true, false);
     set_dst(frame, comp.node_id_);
     set_src(frame, DEVICE_NODE_ID);
-    const uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
+    const uint8_t payload[8] = {test::STATUS_BYTE_AT_REST, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
     EXPECT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
     return frame;
   }
@@ -79,7 +79,7 @@ class StatusRefreshHub : public ::testing::Test {
     init_frame(frame, true, false, true, false);
     set_dst(frame, comp.node_id_);
     set_src(frame, DEVICE_NODE_ID);
-    const uint8_t payload[11] = {STATUS_STOPPED, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
+    const uint8_t payload[11] = {test::STATUS_BYTE_AT_REST, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x64, 0x00, 0x00, 0x00};
     EXPECT_TRUE(set_cmd(frame, CMD_STATUS_UPDATE, payload, sizeof(payload)));
     return frame;
   }

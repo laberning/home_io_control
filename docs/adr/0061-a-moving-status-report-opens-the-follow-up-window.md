@@ -4,6 +4,9 @@
 
 **Status:** Accepted · **Recorded:** 2026-10
 
+Amended by [ADR 0079](0079-a-cover-is-followed-by-its-execution-state.md) (the window lasts 240 s, still fixed when it
+opens).
+
 ## Context
 
 After a move the hub polls the device until it reports stopped, inside a bounded window of 10

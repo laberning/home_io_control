@@ -281,7 +281,7 @@ TEST_F(RainPollHub, AnotherCommandAnswersAsAMissAndIsNeverAppliedAsStatus) {
   init_frame(status, true, false, true, false);
   set_dst(status, comp.node_id_);
   set_src(status, DEVICE_NODE_ID);
-  const uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  const uint8_t payload[8] = {test::STATUS_BYTE_AT_REST, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
   set_cmd(status, CMD_PRIVATE_RESP, payload, sizeof(payload));
   radio.queue_rx(test::make_rx_packet(status));
 

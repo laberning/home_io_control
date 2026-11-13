@@ -19,6 +19,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
 
 namespace esphome {
@@ -450,14 +451,34 @@ struct AttemptPlan {
   /// target answers within tens of milliseconds or not at all, so the early attempts need not wait
   /// the whole window: the last one does, to still catch a device that answers late.
   uint16_t early_window_ms{0};
+  /// True when the first attempt is a short lead to a low-power receiver in an unknown state
+  /// (WakeBelief::UNKNOWN): the short start preamble, a brief window of its own
+  /// (LOW_POWER_SHORT_LEAD_WINDOW_MS), and the wake-up attempts after it. A moving receiver hears
+  /// the short one and a resting one the wake-up. It counts in @ref max_attempts.
+  bool short_lead{false};
+  /// Time the exchange may run past `exchange_total_budget_ms`. 0 unless the short lead does not fit
+  /// with its wake-up attempts inside the budget; then the cost of the lead (short_lead_cost_ms()), so
+  /// the attempts after it get the budget the plan without it had and none is dropped. The engine's
+  /// guard adds it to the budget, so plan and guard agree. The exchange never runs past the budget by
+  /// more than this.
+  uint32_t budget_allowance_ms{0};
 
   /// @param attempt  1-based number of the attempt about to listen.
   /// @param attempts Attempts the exchange makes in all (the last one listens @ref window_ms).
   /// @return How long that attempt listens for the first reply.
   [[nodiscard]] uint16_t window_for_attempt(uint8_t attempt, uint8_t attempts) const {
+    if (short_lead && attempt == 1)
+      return LOW_POWER_SHORT_LEAD_WINDOW_MS;
     return (attempt < attempts && early_window_ms != 0) ? early_window_ms : window_ms;
   }
 };
+
+/// @brief What the short lead attempt costs the exchange: its transmission, its brief listen and the
+/// attempt overhead (the same terms attempt_fits() counts for any attempt).
+/// @param short_tx_ms The lead's transmit time as the radio estimates it (short start preamble).
+[[nodiscard]] inline uint32_t short_lead_cost_ms(uint32_t short_tx_ms) {
+  return short_tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS + LOW_POWER_SHORT_LEAD_WINDOW_MS;
+}
 
 /// @brief The attempt budget rule: an attempt starts only if the whole attempt, up to the end of the
 /// last wait it can make, ends inside @p budget_ms.
@@ -536,8 +557,16 @@ struct AttemptPlan {
 ///                       preamble for a low-power target); only a gapless plan uses it.
 /// @param last_window_ms Listen time of the last attempt of a mains target, or of every attempt of a
 ///                       gapped plan; 0 for the tuned start window.
+/// @param short_lead_tx_ms Set to lead a settling read of a low-power target with one short attempt
+///                       (the receiver's state is unknown, see WakeBelief::UNKNOWN): that attempt's
+///                       transmit time. The lead is added to the wake-up attempts the budget admits,
+///                       which are the same as without it; when all of them do not fit with the lead,
+///                       the exchange may run past the budget by the lead's cost
+///                       (AttemptPlan::budget_allowance_ms). No lead when only one wake-up attempt
+///                       fits, or for any other read.
 [[nodiscard]] inline AttemptPlan attempt_plan(ReadKind kind, bool low_power, const TuningConfig &tuning,
-                                              uint32_t attempt_tx_ms, uint16_t last_window_ms = 0) {
+                                              uint32_t attempt_tx_ms, uint16_t last_window_ms = 0,
+                                              std::optional<uint32_t> short_lead_tx_ms = std::nullopt) {
   AttemptPlan plan =
       attempt_plan_for_tries(kind == ReadKind::PROGRESS ? SCHEDULED_POLL_MAX_TRIES : EXCHANGE_RETRY_COUNT,
                              last_window_ms != 0 ? last_window_ms : tuning.exchange_start_response_wait_ms);
@@ -548,6 +577,18 @@ struct AttemptPlan {
     plan.window_ms = LOW_POWER_RESPONSE_WAIT_MS;
     plan.max_attempts = attempts_that_fit(tuning.exchange_total_budget_ms, attempt_tx_ms, plan.window_ms,
                                           plan.window_ms, LOW_POWER_SETTLING_ATTEMPTS);
+    if (short_lead_tx_ms.has_value() && plan.max_attempts > 1) {
+      const uint32_t lead_cost_ms = short_lead_cost_ms(*short_lead_tx_ms);
+      const uint32_t budget_ms = tuning.exchange_total_budget_ms;
+      // The wake-up attempts start after the lead, so they see the budget less its cost.
+      const bool all_fit_with_lead =
+          budget_ms == 0 || (budget_ms > lead_cost_ms &&
+                             attempts_that_fit(budget_ms - lead_cost_ms, attempt_tx_ms, plan.window_ms, plan.window_ms,
+                                               LOW_POWER_SETTLING_ATTEMPTS) >= plan.max_attempts);
+      plan.short_lead = true;
+      plan.max_attempts++;
+      plan.budget_allowance_ms = all_fit_with_lead ? 0 : lead_cost_ms;
+    }
     return plan;
   }
   plan.early_window_ms = std::min(tuning.exchange_early_response_wait_ms, plan.window_ms);
@@ -638,6 +679,14 @@ struct AttemptRequest {
 enum class WakeBelief : uint8_t {
   ASLEEP,  ///< Not known to be moving — lead with the wake-up preamble.
   AWAKE,   ///< Moving, or about to be stopped — the short preamble is the one it hears.
+  /// A status read to a receiver the hub has no recent news of (no moving evidence, no status report
+  /// within LOW_POWER_MAX_TRAVEL_MS: boot, a status refresh, a catch-up read): it may be travelling,
+  /// when it ignores the wake-up preamble, or at rest, when it hears only that one. Every try of a
+  /// single-try read keeps the wake-up preamble; a settling read leads with one short attempt of its
+  /// own (AttemptPlan::short_lead) and then sends the wake-up attempts.
+  /// \todo Experimental: rests on a moving VELUX screen ignoring the wake-up preamble (issues #114
+  ///       and #209); no bench run has met a read to a receiver in this state yet.
+  UNKNOWN,
 };
 
 /// @brief What the hub knows about the device an exchange is addressed to, as the exchange engine
@@ -653,12 +702,14 @@ struct TargetEvidence {
   bool confirms_execute;             ///< The device has closed a CMD_EXECUTE exchange with a reply before.
   uint32_t moving_until_ms{0};       ///< When the remaining time of its last trusted moving report has run
                                      ///< out (`millis()`), 0 = unknown (see moving_until_holds()).
+  uint32_t last_status_ms{0};        ///< Last status report from the receiver (`millis()`), 0 = never. A recent
+                                     ///< one is news of its state, so a status read is not UNKNOWN then.
 };
 
 /// Build the exchange engine's view of a device record.
 /// @param dev Device record to read.
 [[nodiscard]] inline TargetEvidence target_evidence(const IoDevice &dev) {
-  return {dev.last_moving_evidence_ms, dev.last_seen_ms, dev.confirms_execute, dev.moving_until_ms};
+  return {dev.last_moving_evidence_ms, dev.last_seen_ms, dev.confirms_execute, dev.moving_until_ms, dev.last_status};
 }
 
 /// True while the remaining time the receiver last reported has not run out: by its own account it
@@ -680,25 +731,32 @@ struct TargetEvidence {
 }
 
 /// Judge whether a low-power receiver is travelling. `AWAKE` for a STOP request or while moving
-/// evidence is younger than LOW_POWER_MAX_TRAVEL_MS; `ASLEEP` otherwise. A zero stamp means never and
-/// is never recent. Ages use unsigned subtraction, so `millis()` wrap-around is safe.
+/// evidence is younger than LOW_POWER_MAX_TRAVEL_MS. For a status read with neither moving evidence nor
+/// a status report within that time the answer is `UNKNOWN`; otherwise `ASLEEP`. A zero stamp means
+/// never and is never recent. Ages use unsigned subtraction, so `millis()` wrap-around is safe.
 /// @param evidence Stamps for the target device.
 /// @param now      Current millis().
 /// @param is_stop  True when the request being sent is a STOP (see is_stop_request()).
-[[nodiscard]] inline WakeBelief wake_belief(const TargetEvidence &evidence, uint32_t now, bool is_stop) {
+/// @param is_status_read True when the request is a status read (CMD_PRIVATE): only a read can be
+///                 UNKNOWN, a command keeps the rule it had.
+[[nodiscard]] inline WakeBelief wake_belief(const TargetEvidence &evidence, uint32_t now, bool is_stop,
+                                            bool is_status_read = false) {
   const uint32_t moving = evidence.last_moving_evidence_ms;
   if (is_stop || (moving != 0 && (now - moving) < LOW_POWER_MAX_TRAVEL_MS))
     return WakeBelief::AWAKE;
+  const uint32_t reported = evidence.last_status_ms;
+  if (is_status_read && (reported == 0 || (now - reported) >= LOW_POWER_MAX_TRAVEL_MS))
+    return WakeBelief::UNKNOWN;
   return WakeBelief::ASLEEP;
 }
 
 /// Start-preamble length for one try of a directed exchange to a low-power receiver. The plans
-/// (short = `short_preamble`, wake = `wake_preamble`): AWAKE short/wake/wake, ASLEEP wake on every
-/// try. A moving receiver answers the first short try; when it does not, it has most likely come to
-/// rest, where only the wake-up preamble reaches it, so every later try uses that one. A single-try
-/// exchange (most scheduler-owned status polls) sends only try 1's preamble; its backoff ladder, and
-/// the evidence a silent AWAKE exchange spends (ExchangeEngine::set_wake_evidence_spent_handler()),
-/// cover a wrong belief there.
+/// (short = `short_preamble`, wake = `wake_preamble`): AWAKE short/wake/wake, ASLEEP and UNKNOWN wake on
+/// every try (the short lead of an UNKNOWN settling read is an attempt of its own, AttemptPlan::short_lead). A moving
+/// receiver answers the first short try; when it does not, it has most likely come to rest, where only the wake-up
+/// preamble reaches it, so every later try uses that one. A single-try exchange (most scheduler-owned status polls)
+/// sends only try 1's preamble; its backoff ladder, and the evidence a silent AWAKE exchange spends
+/// (ExchangeEngine::set_wake_evidence_spent_handler()), cover a wrong belief there.
 /// @param belief         See wake_belief().
 /// @param try_index      1-based try number, clamped to [1, EXCHANGE_RETRY_COUNT].
 /// @param short_preamble Preamble for a receiver known to be moving (`normal_start_preamble`).
@@ -716,6 +774,8 @@ struct TargetEvidence {
   switch (belief) {
     case WakeBelief::AWAKE:
       return "awake";
+    case WakeBelief::UNKNOWN:
+      return "unknown";
     case WakeBelief::ASLEEP:
     default:
       return "asleep";
@@ -999,6 +1059,32 @@ static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = POSITION_RAW_PER_PERCENT * RA
   return rain_state_from_minimum_limit(status.value_raw);
 }
 
+// === Execution state ===
+
+/// @brief True when a device in this state is moving or about to: waiting for its turn (2), waiting for
+/// power (3) or executing (4).
+///
+/// A queued cover is part of the move that follows, so it is followed like a running one. 0 (unable to
+/// execute), 1 (error during the last move) and 5 (done) are at rest. UNDEFINED is not a state; the
+/// caller falls back on the stopped bit (reads_stopped_by_status_byte()).
+/// @param state State read from byte 0 of a status reply (execution_state_of()).
+[[nodiscard]] inline bool is_executing(ExecutionState state) {
+  return state == ExecutionState::WAITING_FOR_EXECUTING || state == ExecutionState::WAITING_FOR_POWER ||
+         state == ExecutionState::EXECUTING;
+}
+
+/// @brief Does byte 0 of a status reply say the device is at rest?
+///
+/// The execution state decides (is_executing()). A byte whose bits [2:0] hold 6 or 7 has no state, and
+/// its STATUS_STOPPED bit decides as it did before the state was read.
+/// @param status_byte Byte 0 of the reply's payload.
+[[nodiscard]] inline bool reads_stopped_by_status_byte(uint8_t status_byte) {
+  const ExecutionState state = execution_state_of(status_byte);
+  if (state == ExecutionState::UNDEFINED)
+    return (status_byte & STATUS_STOPPED) != 0;
+  return !is_executing(state);
+}
+
 // === Stopped reports ===
 
 /// @brief What the hub makes of one status report's movement state.
@@ -1015,7 +1101,7 @@ enum class StoppedReport : uint8_t {
 
 /// @brief One decoded status report, plus what the hub remembers and whether it will poll again.
 struct StoppedReportInput {
-  bool reported_stopped{true};       ///< The report's STATUS_STOPPED flag (reports_stopped()).
+  bool reported_stopped{true};       ///< The report says at rest (decisions::reads_stopped_by_status_byte()).
   float target{UNKNOWN_POSITION};    ///< Decoded target, or UNKNOWN_POSITION.
   float position{UNKNOWN_POSITION};  ///< Decoded current position, or UNKNOWN_POSITION.
   StopCandidate candidate{};         ///< The last off-target "stopped" report, if any.

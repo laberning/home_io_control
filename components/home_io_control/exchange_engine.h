@@ -31,6 +31,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <utility>
 
 namespace esphome {
@@ -136,9 +137,11 @@ class ExchangeEngine {
   /// @param freq           RF channel the request goes out on (Hz).
   /// @param preamble       Preamble the request is sent with, in bytes.
   /// @param last_window_ms Listen time of the last attempt, or 0 for `exchange_start_response_wait_ms`.
+  /// @param short_lead_tx_ms Transmit time of a short lead attempt when the plan leads with one
+  ///                       (decisions::attempt_plan()); empty for none.
   [[nodiscard]] decisions::AttemptPlan plan_attempts(decisions::ReadKind kind, bool low_power, const IoFrame &request,
-                                                     uint32_t freq, uint16_t preamble,
-                                                     uint16_t last_window_ms = 0) const;
+                                                     uint32_t freq, uint16_t preamble, uint16_t last_window_ms = 0,
+                                                     std::optional<uint32_t> short_lead_tx_ms = std::nullopt) const;
 
   /// The attempt plan for a read of @p request's target, with the transmit time this engine would
   /// plan for the request: the radio's air-time estimate for the request's start preamble
@@ -147,9 +150,19 @@ class ExchangeEngine {
   /// then agrees with the guard that runs each attempt (try_fits_budget_()).
   /// @param kind    What the read is for.
   /// @param request The request that will be sent (its CTRL1 low-power bit selects the power class).
+  ///
+  /// A settling read of a low-power receiver whose state the hub has no news of
+  /// (decisions::WakeBelief::UNKNOWN, a status read only) leads with one short attempt before the
+  /// wake-up attempts, and when all of them do not fit the exchange budget with it, may run past
+  /// the budget by that attempt's cost (decisions::AttemptPlan::short_lead, budget_allowance_ms); the
+  /// engine's guard honours the same allowance. A read with a fixed preamble, a single-try read and a command have no
+  /// lead.
   /// @param freq    RF channel the request goes out on (Hz).
+  /// @param request_preamble_override The preamble the caller will fix for the exchange (as for
+  ///        send_and_receive()), or 0; a fixed preamble leaves no lead.
   /// @return The plan to hand to the plan overload of send_and_receive().
-  [[nodiscard]] decisions::AttemptPlan plan_read(decisions::ReadKind kind, const IoFrame &request, uint32_t freq) const;
+  [[nodiscard]] decisions::AttemptPlan plan_read(decisions::ReadKind kind, const IoFrame &request, uint32_t freq,
+                                                 uint16_t request_preamble_override = 0) const;
 
   /// Authenticate an inbound device command via 0x3C challenge / 0x3D HMAC.
   /// @param request The received inbound frame (e.g., CMD_STATUS_UPDATE).
@@ -559,8 +572,10 @@ class ExchangeEngine {
   /// @param window_ms    How long the try then listens for the first reply.
   /// @param auth_tail_ms What a challenged try adds (final_reply_tail_ms_()) once the target has
   ///                     challenged in this exchange, otherwise 0.
+  /// @param allowance_ms What the plan lets the exchange run past the budget
+  ///                     (decisions::AttemptPlan::budget_allowance_ms), 0 for none.
   [[nodiscard]] bool try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms, uint32_t window_ms,
-                                      uint32_t auth_tail_ms) const;
+                                      uint32_t auth_tail_ms, uint32_t allowance_ms = 0) const;
 
   // --- Outbound exchange step helpers --------------------------------------
 
@@ -635,6 +650,14 @@ class ExchangeEngine {
   /// @param request           Frame being sent.
   /// @param override_preamble Caller-forced preamble in bytes, or 0 for none.
   [[nodiscard]] PreamblePlan plan_request_preamble_(const IoFrame &request, uint16_t override_preamble) const;
+
+  /// The start preamble of one try of an exchange run on @p plan: the short start preamble for the
+  /// plan's short lead (try 1), otherwise the preamble plan's.
+  /// @param plan          The exchange's attempt plan.
+  /// @param preamble_plan How the request's preamble is chosen across tries.
+  /// @param try_index     1-based try number.
+  [[nodiscard]] uint16_t try_preamble_(const decisions::AttemptPlan &plan, const PreamblePlan &preamble_plan,
+                                       uint8_t try_index) const;
 
   /// Spends a device's moving evidence when an exchange planned on an `AWAKE` belief drew no frame at
   /// all (see set_wake_evidence_spent_handler()). Called once, when the exchange has failed.

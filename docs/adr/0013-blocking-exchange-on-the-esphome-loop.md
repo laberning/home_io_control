@@ -6,7 +6,8 @@
 Amended by [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
 (the budget arithmetic: an attempt costs its transmission and its windows) and by [ADR 0074](0074-settling-reads-take-the-attempt-plan-and-progress-reads-stay-single-tries.md)
 (a settling read may block for nearly the whole budget) and by [ADR 0075](0075-commands-and-the-key-pull-take-the-attempt-plan-and-early-attempts-listen-short.md)
-(commands and the key pull take the plan too).
+(commands and the key pull take the plan too), and by [ADR 0079](0079-a-cover-is-followed-by-its-execution-state.md)
+(a settling status read to a low-power cover in an unknown state may run past the budget by its short lead attempt).
 
 ## Context
 

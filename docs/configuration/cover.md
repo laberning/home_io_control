@@ -427,14 +427,42 @@ interior venetian blind keeps its tilt slider. No two-way device of either kind 
   its position; it is never rounded to the target.
 - **A cover whose device goes quiet after a move goes idle once the hub stops polling.** If the
   device never reports again after a move, the cover shows idle at the last position it reported
-  when the hub gives up polling, about 7 to 8 minutes after the move. The hub retries a missed poll
-  at growing gaps and stops once the next gap would end more than 10 minutes after the move. The
-  same holds for a move the hub found by reading the device.
+  when the hub gives up polling, about 2 minutes after the move. The hub retries a missed poll
+  at growing gaps (5 s, 15 s, 30 s, 60 s) and stops once the next gap would end more than 4 minutes
+  after the move. The same holds for a move the hub found by reading the device. Four minutes
+  cover two of the slowest travels measured (a VELUX roof window at its silent speed takes about
+  65 s), which is what a shutter queued behind another one needs.
 - **A cover found moving by a read is followed until it reports stopped.** A read that finds the
   device moving starts the same bounded polling as a command does. That covers a reboot in the
-  middle of a move and a move by a remote the hub did not hear. A reply that arrives after the
-  10 minutes ran out ends the polling and shows the cover at rest at its last reported position;
-  the next read that finds it moving starts polling again.
+  middle of a move and a move by a remote the hub did not hear. The 4 minutes count from the moment
+  the polling starts and later replies do not extend them. A reply that arrives after they ran out
+  ends the polling and shows the cover at rest at its last reported position; the next read that
+  finds it moving starts polling again.
+- **A cover tells the hub what it is doing, and the hub follows it by that.** Every status reply
+  carries one of six states: not executing (0), error during the last move (1), waiting for its
+  turn (2), waiting for power (3), executing (4) and done (5). The hub treats 2, 3 and 4 as moving
+  and 0, 1 and 5 as at rest. A cover that has accepted a command but waits, such as a VELUX shutter
+  queued behind another one on a shared KUX 110, therefore shows as opening or closing toward its
+  target instead of idle, and the hub keeps polling it until it has run. While it waits for power
+  the `Active Issue` sensor shows `NODE_WAITING_FOR_POWER`. A cover that reports 0 or 1 settles at
+  the position it reports and `Active Issue` shows `NOT_EXECUTING` or `EXECUTION_ERROR` until its
+  next report says it runs or is done. A state byte the hub does not know (6 or 7) is read by its
+  stopped bit (bit 0), and a warning goes to the log.
+  Following a waiting cover is experimental: a shutter that waits was captured answering a
+  main-parameter status read, not yet an ordinary status read, so the hub's reading of the ordinary
+  reply of a waiting cover rests on the same byte layout and has not been confirmed on hardware.
+- **A cover whose remaining time stops falling is polled less often.** A cover that reports how
+  long it has left normally falls by about as much as the hub waits between polls. When the time
+  has not fallen on three reports in a row, the cover is waiting or stuck, so the hub waits 10 s,
+  then 15 s, then 20 s between polls instead of 3 s, and goes back to the short gap as soon as the
+  time falls again. Still experimental: no frozen count has been captured on hardware.
+- **A read that finds a `low_power` cover in an unknown state tries a short start frame first.**
+  A read with no recent news of the cover (at boot, a status refresh, a read after overheard
+  traffic) leads with one short attempt that listens for 100 ms, then sends the usual three
+  wake-up attempts. A moving VELUX shutter hears only the short one, a resting shutter only the
+  wake-up one, so the read reaches either. The extra attempt costs about 0.12 s on a cover that
+  is at rest. Polls the hub schedules while a move runs stay single tries with the wake-up frame
+  and commands are unchanged. Experimental until a bench run has met such a read.
 
 A lambda that respects the position contract:
 
@@ -452,7 +480,7 @@ lambda: |-
 
 - The favorite command is one-way only: move to favorite. This component does not expose a sensor for reading the stored favorite position value, and it does not yet expose a save/delete favorite workflow, because no verified controller-side protocol command has been identified.
 - `status_poll_interval` is movement-scoped, not a continuous background refresh; for that, see [Refreshing the status at rest](cover.md#refreshing-the-status-at-rest). The hub polls only while a command or overheard remote activity suggests the device is still moving, and stops once the device reports a stable state or the bounded polling window expires. Many devices report their remaining travel time in seconds in their status replies, and the next poll comes after **min(remaining time + 1 s, configured interval)**, so the interval is a ceiling: a device can shorten it but never stretch it. Without `status_poll_interval`, the ceiling is 3 s. When a device that counts down reports 0 s left, the next poll comes about 1 s later, so the resting position shows up promptly. The remaining time and the chosen delay are visible at debug log level.
-- **A cover that reports its remaining travel time is read once more at the end of its count (confirmed on a Somfy Sunea io awning, experimental for other devices).** The hub plans one read for 1 s after the remaining time runs out and re-aims it with every report that carries a count, a short count or 0 s included. That read repeats a lost request as often as [`exchange_total_budget_ms`](tuning.md#exchange_total_budget_ms) allows, because a motor can drop its reply in the second it switches its load at the end of the travel (issue #178). The polls in between stay single tries. A poll due within 1 s before that read is skipped, and the read is given up when the count has not fallen for three reports in a row, which leaves the usual polls. On the Sunea the count falls by one per second and the awning is at rest within a second of it reaching 0: in `tests/corpus/captures/statuspoll/somfy_awning_statuspoll_close_with_remaining_time_predicted_end_read_sx1262.yaml` the hub reads a close with five progress reads, then one read 4 s after the report that said 3 s left, and that read finds the awning at rest. On a `low_power` cover that read leads with the wake-up preamble, because the cover has come to rest by its own count, and a poll that goes unanswered before the count has run out does not make the hub switch to the wake-up preamble, which a moving receiver ignores (see [`low_power_wake_belief`](tuning.md#low_power_wake_belief)). This low-power part has not run on hardware yet.
+- **A cover that reports its remaining travel time is read once more at the end of its count (confirmed on a Somfy Sunea io awning, experimental for other devices).** The hub plans one read for 1 s after the remaining time runs out and re-aims it with every report that carries a count, a short count or 0 s included. That read repeats a lost request as often as [`exchange_total_budget_ms`](tuning.md#exchange_total_budget_ms) allows, because a motor can drop its reply in the second it switches its load at the end of the travel (issue #178). The polls in between stay single tries. A poll due within 1 s before that read is skipped, and the read is given up when the count has not fallen for three reports in a row; the polls then back off to 10 s, 15 s and 20 s. On the Sunea the count falls by one per second and the awning is at rest within a second of it reaching 0: in `tests/corpus/captures/statuspoll/somfy_awning_statuspoll_close_with_remaining_time_predicted_end_read_sx1262.yaml` the hub reads a close with five progress reads, then one read 4 s after the report that said 3 s left, and that read finds the awning at rest. On a `low_power` cover that read leads with the wake-up preamble, because the cover has come to rest by its own count, and a poll that goes unanswered before the count has run out does not make the hub switch to the wake-up preamble, which a moving receiver ignores (see [`low_power_wake_belief`](tuning.md#low_power_wake_belief)). This low-power part has not run on hardware yet.
 - The hub reads a device itself after another controller moved or changed it, and at most every 10 minutes after another controller only read it. A status read changes nothing on the device; a write, or a challenge that follows no heard read, does. A gateway that polls its devices in the background therefore costs the device one extra read per 10 minutes at most, and lets the cover pick up a change the hub did not hear, such as a rain closure or a button on the motor, the next time that gateway reads it. Without such traffic the hub reads a cover at rest only when the cover sets `status_refresh_interval`; otherwise a change it heard nothing of stays unseen until the next command (issue #207).
 - After a STOP the settle poll is capped at about 1 s regardless of interval or hint, so Home Assistant gets the resting position quickly even if the device was mid-travel. That poll, and the one confirming a cover that stopped short of its target, repeat a lost request as often as [`exchange_total_budget_ms`](tuning.md#exchange_total_budget_ms) allows, so one lost frame does not leave the position stale. The polls during a move stay single tries.
 - While the cover is moving, the hub does not back off when a poll gets no answer: the next poll comes at the usual cadence, at most 5 s later. Only a third miss in a row is retried after about 5 s, and after longer delays if it keeps failing. A poll of a cover at rest backs off from the first miss. A motor can drop its reply at the moment it stops at the end of its travel, so the final position can show up a poll later than expected (issue #178).

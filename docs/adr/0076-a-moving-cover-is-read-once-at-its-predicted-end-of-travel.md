@@ -4,6 +4,9 @@
 
 **Status:** Accepted · **Recorded:** 2026-11
 
+Amended by [ADR 0079](0079-a-cover-is-followed-by-its-execution-state.md) (after a frozen count the progress reads back off
+to 10 s, 15 s, then 20 s).
+
 Amends [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
 and [ADR 0074](0074-settling-reads-take-the-attempt-plan-and-progress-reads-stay-single-tries.md)
 (a further read that settles: the predicted-end read) and states the precedence between the reads

@@ -23,8 +23,10 @@ static constexpr uint32_t STATUS_RETRY_AFTER_FAIL_MS = 5000;         ///< First 
 static constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP2_MS = 15000;  ///< Second retry after a silent failure.
 static constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP3_MS = 30000;  ///< Third retry after a silent failure.
 static constexpr uint32_t STATUS_RETRY_AFTER_FAIL_STEP4_MS = 60000;  ///< Fourth retry after a silent failure.
-static constexpr uint32_t STATUS_RETRY_AFTER_FAIL_MAX_MS =
-    300000;  ///< Steady-state backoff after many silent failures.
+/// Steady-state backoff after many silent failures. Longer than what is left of a follow-up window
+/// (MAX_TRACKED_STATUS_POLL_WINDOW_MS) by the time it is reached, so inside a window this step ends
+/// the window (StatusPollPolicy::on_exchange_failed()).
+static constexpr uint32_t STATUS_RETRY_AFTER_FAIL_MAX_MS = 300000;
 /// @}
 
 /// @name Background-poll retry delays after auth-shaped failures (0x3C challenge seen)
@@ -39,7 +41,9 @@ static constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MS =
     STATUS_RETRY_AFTER_FAIL_MS;  ///< First retry after a challenge-seen failure.
 static constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_STEP2_MS = 30000;   ///< Second retry.
 static constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_STEP3_MS = 120000;  ///< Third retry.
-static constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS = 300000;  ///< Steady-state after repeated auth failures.
+/// Steady-state after repeated auth failures. Like STATUS_RETRY_AFTER_FAIL_MAX_MS, it ends a follow-up
+/// window rather than wait inside it.
+static constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS = 300000;
 /// @}
 
 /// Consecutive failed polls of a moving device that are skipped rather than backed off.
@@ -52,8 +56,14 @@ static constexpr uint32_t STATUS_AUTH_RETRY_AFTER_FAIL_MAX_MS = 300000;  ///< St
 /// ladder failures, so the next poll stays a single try.
 static constexpr uint8_t MOVING_POLL_MISSES_SKIPPED = 2;
 
-/// Hard stop for bounded follow-up polling after a command or remote activity.
-static constexpr uint32_t MAX_TRACKED_STATUS_POLL_WINDOW_MS = 600000;
+/// Hard stop for bounded follow-up polling after a command, remote activity or the first moving report,
+/// measured from the moment the window opens (ADR 0061, amended by ADR 0079).
+///
+/// The longest cover travel measured is about 65 s, a VELUX roof window at its silent speed
+/// (docs/configuration/cover.md, travel speeds). A cover queued behind another on a shared supply
+/// runs after that one, so the worst case is two such travels, about 130 s: 240 s covers it with
+/// almost twice the margin, and a cover that is still reporting moving after that is shown at rest.
+static constexpr uint32_t MAX_TRACKED_STATUS_POLL_WINDOW_MS = 240000;
 /// Delay before the first post-boot status request from an entity.
 static constexpr uint32_t INITIAL_STATUS_REQUEST_DELAY_MS = 5000;
 /// Interval between regular polls of a heater (its `status_poll_interval` overrides it). Slow on
@@ -123,6 +133,23 @@ static constexpr uint32_t PREDICTED_END_DROPS_PROGRESS_WITHIN_MS = 1000;
 /// Reports in a row whose remaining time did not fall below the previous one before the count is
 /// taken as frozen and the predicted-end read is given up (progress reads only).
 static constexpr uint8_t PREDICTED_END_STALE_REPORTS = 3;
+/// @}
+
+/// @name Frozen-count back-off
+///
+/// A count that has stopped falling is a cover that is waiting or stuck, not one that is nearly there,
+/// so the progress reads that follow back off instead of returning to the 3 s cadence (ADR 0079,
+/// amending ADR 0076). The steps grow with each further report whose count did not fall and stop at
+/// the last; a falling count starts over. The back-off only begins after PREDICTED_END_STALE_REPORTS
+/// reports in a row that did not fall, and the slowest falling counts seen drop at every poll (3 s
+/// between two polls on a VELUX SML, 1 s per second on a Somfy awning), so a slow but alive count
+/// is not taken as frozen. 10 s, 15 s and 20 s keep a cover that starts after waiting within 20 s of
+/// being seen, while a stuck one costs a read per 20 s instead of one per 3 s.
+/// \todo Experimental: no frozen count has been captured on hardware yet.
+/// @{
+static constexpr uint32_t FROZEN_COUNT_BACKOFF_FIRST_MS = 10000;   ///< Delay after the first frozen report.
+static constexpr uint32_t FROZEN_COUNT_BACKOFF_SECOND_MS = 15000;  ///< Delay after the second.
+static constexpr uint32_t FROZEN_COUNT_BACKOFF_MAX_MS = 20000;     ///< Delay after the third and every later one.
 /// @}
 
 /// @brief Resolve the follow-up settle-poll delay while a device may still be moving.
@@ -247,6 +274,13 @@ class StatusPollPolicy {
   /// @param remaining_s Usable remaining travel time in seconds, empty when there is none.
   /// @param now Current millis().
   void on_trusted_report(const std::string &device_id, std::optional<uint16_t> remaining_s, uint32_t now);
+  /// How long the next progress read waits when the device's remaining time has stopped falling.
+  ///
+  /// Zero while the count falls or none is known. From the PREDICTED_END_STALE_REPORTS-th report in a row
+  /// whose count did not fall: FROZEN_COUNT_BACKOFF_FIRST_MS, then FROZEN_COUNT_BACKOFF_SECOND_MS, then
+  /// FROZEN_COUNT_BACKOFF_MAX_MS for every further one. A caller whose own cadence is longer keeps it.
+  /// @param device_id Device whose last trusted report was passed to on_trusted_report().
+  [[nodiscard]] uint32_t frozen_count_delay_ms(const std::string &device_id) const;
   /// The planned predicted-end read's timestamp (0 = none).
   [[nodiscard]] uint32_t get_settle_update(const std::string &device_id) const;
 

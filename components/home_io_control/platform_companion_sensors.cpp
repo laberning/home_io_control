@@ -26,6 +26,21 @@ constexpr float MS_PER_SECOND = 1000.0F;
 // traffic stopped; without this it can't count up in Home Assistant between frames.
 constexpr uint32_t HEARTBEAT_INTERVAL_MS = 60000;
 
+/// What a device's execution state adds to the Active Issue, or nullptr when it is no issue (waiting
+/// for its turn, running and done are the normal course of a move).
+const char *execution_state_issue(ExecutionState state) {
+  switch (state) {
+    case ExecutionState::WAITING_FOR_POWER:
+      return command_result_name(RESULT_NODE_WAITING_FOR_POWER);
+    case ExecutionState::NON_EXECUTING:
+      return ACTIVE_ISSUE_NOT_EXECUTING;
+    case ExecutionState::EXECUTION_ERROR:
+      return ACTIVE_ISSUE_EXECUTION_ERROR;
+    default:
+      return nullptr;
+  }
+}
+
 }  // namespace
 
 void IOHomeRssiSensor::setup() {
@@ -100,14 +115,17 @@ void IOHomeActiveIssueTextSensor::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {
     // A radio that stopped responding wins: nothing reaches any device until a reboot. Then an
     // explicit CMD_ERROR_RESP result; otherwise the rain limitation the hub derived from the
-    // window's own status replies; otherwise empty. A result about one exchange only
-    // (command_result_is_transient()) is not an issue of the device.
+    // window's own status replies; otherwise what the device's execution state says (waiting for
+    // power, unable to run, error during the last move); otherwise empty. A result about one
+    // exchange only (command_result_is_transient()) is not an issue of the device.
     if (this->parent_->radio_stopped_responding()) {
       this->publish_state(ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING);
     } else if (dev.last_result_code != 0 && !command_result_is_transient(dev.last_result_code)) {
       this->publish_state(command_result_name(dev.last_result_code));
     } else if (dev.limited_by_rain) {
       this->publish_state(command_result_name(RESULT_LIMITATION_BY_RAIN));
+    } else if (const char *issue = execution_state_issue(dev.execution_state)) {
+      this->publish_state(issue);
     } else {
       this->publish_state("");
     }

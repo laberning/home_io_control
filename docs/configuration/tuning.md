@@ -285,7 +285,8 @@ The budget also sets how often a status read that decides where a cover ended up
 poll after a `stop`, the poll that confirms a cover that stopped short of its target, the polls
 about 5, 15 and 30 seconds after a miss, and a one-off or refresh read. Such a read repeats without
 a gap, as many times as fit (nine for a mains-powered cover at the default budget, never more than
-nine; three for a `low_power` device), the early attempts listening
+nine; three for a `low_power` device, plus one short attempt when the hub has no recent news of
+it, see [`low_power_wake_belief`](#low_power_wake_belief)), the early attempts listening
 [`exchange_early_response_wait_ms`](#exchange_early_response_wait_ms). A command that is harmless to
 repeat (a position, open, close, `stop`) is sent again the same way to a mains-powered device. If
 every attempt is lost, the request blocks the hub for up to about 2.2 s, and a `stop` pressed
@@ -469,6 +470,17 @@ exchange accordingly:
 |---|---|---|---|
 | moving (a `stop`, or a move the device accepted in the last 2 minutes that is not yet known to have ended) | short | wake-up | wake-up |
 | at rest | wake-up | wake-up | wake-up |
+
+A read that decides where a cover ended up (described below), sent to a `low_power` cover that has
+sent no status for 2 minutes and is not believed moving, cannot tell which of the two it will meet:
+after a reboot, a refresh read or a read after overheard traffic, the cover may be travelling or at
+rest. That read makes one extra attempt first, with the short preamble and a 100 ms listen, and
+then the three wake-up attempts, so it reaches a moving cover and a resting one alike. A silent
+short attempt changes nothing the hub believes. At the default timing the four attempts fit
+[`exchange_total_budget_ms`](#exchange_total_budget_ms); with a tighter one the read may run past
+it by the cost of the short attempt, about 0.12 s, and no more
+([ADR 0079](../adr/0079-a-cover-is-followed-by-its-execution-state.md)). Experimental: no bench run
+has met such a read yet.
 
 "Short" is [`normal_start_preamble`](#normal_start_preamble), "wake-up" is
 [`low_power_wake_preamble`](#low_power_wake_preamble). Having merely heard from the device recently
