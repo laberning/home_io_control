@@ -1,0 +1,220 @@
+id: somfy_awning_statuspoll_close_with_remaining_time_predicted_end_read_sx1262
+description: >
+  A whole move of a Somfy Sunea io awning, from the close command to the report that it is at
+  rest: the hub sends EXECUTE, then polls the position with a single-try 0x03 every 3 s while the
+  awning moves. Every moving report carries the awning's own remaining-time count (bytes 15..16
+  of the 23-byte reply): 15, 12, 9, 6, 3 s, falling by one per second. When the count reads 3 s the
+  hub aims its next read at the predicted end instead of 3 s ahead: the one read is sent 4 s later
+  (count plus one second), 23.3 s after the command, and finds the awning at rest on its target
+  (state 0x05, current = target = 0x0000, count 0). The poll that would have been due 1 s before
+  that read is skipped. Bench capture 2026-11-13: Somfy Sunea io awning, Heltec V3 (SX1262), hub
+  firmware with the predicted-end read. The awning moved from about 50 % to closed.
+  t_ms are the on-air start of each burst (preamble included), decoded from a software-defined-radio
+  recording of the move; the hub's own log shows the same frames and the same 3 s cadence.
+source:
+  device: "Somfy Sunea IO awning motor (node 30E1F2), paired two-way to the hub C0FFEE"
+  captured_with: sx1262
+  firmware: "hub build with the predicted-end read (2026-11-13)"
+  date: 2026-11-13
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "50 00 30 E1 F2 C0 FF EE 00 01 63 00 00 80 D8 06 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00), the close command from the hub; the cover was at rest at about 50 %"
+  - dir: rx
+    t_ms: 18
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 30 E1 F2 3C 09 5F 74 6B 0B 5E"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 31
+    freq: 868950000
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D B8 FE 58 9B F5 73"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+  - dir: rx
+    t_ms: 42
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 30 E1 F2 04 2C 80 63 D7 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), the immediate reply to the EXECUTE: 15 bytes, no remaining time"
+  - dir: tx
+    t_ms: 3113
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03) position poll, single try"
+  - dir: rx
+    t_ms: 3129
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 30 E1 F2 3C B2 AE B7 CA B7 95"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 3142
+    freq: 868950000
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D 1C CA 68 15 5C DB"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+  - dir: rx
+    t_ms: 3152
+    freq: 868950000
+    hex: "96 00 C0 FF EE 30 E1 F2 04 04 00 00 00 53 B4 00 0F C0 FF EE 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), moving, current raw 0x53B4, remaining time 15 s"
+  - dir: tx
+    t_ms: 6204
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03) position poll, single try"
+  - dir: rx
+    t_ms: 6221
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 30 E1 F2 3C 17 64 CB 11 48 85"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 6234
+    freq: 868950000
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D 13 8E 1F 91 33 CA"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+  - dir: rx
+    t_ms: 6245
+    freq: 868950000
+    hex: "96 00 C0 FF EE 30 E1 F2 04 04 00 00 00 43 68 00 0C C0 FF EE 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), moving, current raw 0x4368, remaining time 12 s"
+  - dir: tx
+    t_ms: 9297
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03) position poll, single try"
+  - dir: rx
+    t_ms: 9313
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 30 E1 F2 3C E0 9C 1D 0A 6A 1F"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 9327
+    freq: 868950000
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D 90 C0 04 81 D4 6D"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+  - dir: rx
+    t_ms: 9337
+    freq: 868950000
+    hex: "96 00 C0 FF EE 30 E1 F2 04 04 00 00 00 32 F3 00 09 C0 FF EE 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), moving, current raw 0x32F3, remaining time 9 s"
+  - dir: tx
+    t_ms: 12385
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03) position poll, single try"
+  - dir: rx
+    t_ms: 12401
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 30 E1 F2 3C 6B 87 B9 EA 77 4B"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 12415
+    freq: 868950000
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D 74 FE F8 70 A9 38"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+  - dir: rx
+    t_ms: 12425
+    freq: 868950000
+    hex: "96 00 C0 FF EE 30 E1 F2 04 04 00 00 00 22 7E 00 06 C0 FF EE 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), moving, current raw 0x227E, remaining time 6 s"
+  - dir: tx
+    t_ms: 15482
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03) position poll, single try"
+  - dir: rx
+    t_ms: 15498
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 30 E1 F2 3C 41 63 18 A8 65 AC"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 15512
+    freq: 868950000
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D DB AD 6C 57 95 4F"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+  - dir: rx
+    t_ms: 15522
+    freq: 868950000
+    hex: "96 00 C0 FF EE 30 E1 F2 04 04 00 00 00 12 0A 00 03 C0 FF EE 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), moving, current raw 0x120A, remaining time 3 s"
+  - dir: tx
+    t_ms: 19575
+    freq: 868950000
+    hex: "4B 00 30 E1 F2 C0 FF EE 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03), the read at the predicted end: 4 s after the report with count 3 s"
+  - dir: rx
+    t_ms: 19592
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 30 E1 F2 3C 7B 4B 41 3E AF DC"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 19606
+    freq: 868950000
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D DB 08 AC 5B 85 42"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D)"
+  - dir: rx
+    t_ms: 19616
+    freq: 868950000
+    hex: "96 00 C0 FF EE 30 E1 F2 04 05 00 00 00 00 00 00 00 C0 FF EE 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), at rest (state 0x05) on the target, current raw 0x0000, remaining time 0 s"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

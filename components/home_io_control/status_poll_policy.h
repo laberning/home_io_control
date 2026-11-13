@@ -101,6 +101,30 @@ static constexpr uint32_t DEFAULT_SETTLE_POLL_DELAY_MS = 3000;
 /// interval or remaining time.
 static constexpr uint32_t STOP_SETTLE_POLL_CAP_MS = 1000;
 
+/// @name Predicted-end read
+///
+/// A moving cover that reports how long it has left is read once more, with the settling plan, a
+/// second after that time has run out: the position it reports then is the final one. That holds for
+/// every count, a short one or 0 included: the read at the end is the one most likely to meet the
+/// second in which the motor switches its load and a reply is lost. The ordinary progress reads keep
+/// running in between and stay single tries.
+/// The aim, the dropped progress read and the final-position read at count + 1 s are confirmed on a
+/// Somfy Sunea io awning
+/// (tests/corpus/captures/statuspoll/somfy_awning_statuspoll_close_with_remaining_time_predicted_end_read_sx1262.yaml).
+/// \todo Experimental: the stale-count rule has not met a frozen count on hardware, and a
+///       battery-powered cover's read at the end of its count has not run on one (ADR 0076).
+/// @{
+/// The predicted-end read is aimed this long after the remaining time has run out. The motor takes up
+/// to about a second after its count reaches zero to stop and switch its load.
+static constexpr uint32_t PREDICTED_END_MARGIN_MS = 1000;
+/// A progress read due within this long before the predicted-end read is dropped: the settling read
+/// follows at once and a read of its own in front of it only fills the air.
+static constexpr uint32_t PREDICTED_END_DROPS_PROGRESS_WITHIN_MS = 1000;
+/// Reports in a row whose remaining time did not fall below the previous one before the count is
+/// taken as frozen and the predicted-end read is given up (progress reads only).
+static constexpr uint8_t PREDICTED_END_STALE_REPORTS = 3;
+/// @}
+
 /// @brief Resolve the follow-up settle-poll delay while a device may still be moving.
 ///
 /// This is the single source of truth for the motion-tracking cadence. The delay is the configured
@@ -136,6 +160,10 @@ struct PollTracking {
   bool stop_settle{false};          ///< The next poll reads where an accepted STOP left the device (a settling read).
   bool confirm_stopped{false};      ///< The next poll confirms a stop off target (a settling read, see
                                     ///< decisions::StoppedReport::SETTLING).
+  uint32_t settle_update{0};        ///< Absolute millis() timestamp of the predicted-end read; 0 = none planned.
+  std::optional<uint16_t> last_remaining_s;  ///< Remaining time of the last report that was aimed at (> 2 s).
+  uint8_t stale_reports{0};                  ///< Reports in a row whose remaining time did not fall.
+  bool predicted_end_read{false};            ///< The next poll is the predicted-end read (a settling read).
 };
 
 /// @brief What an overheard frame of another controller is.
@@ -204,6 +232,24 @@ class StatusPollPolicy {
   /// @param may_open True when this kind of device may start tracking from a report alone.
   MovingReportAction on_moving_report(const std::string &device_id, uint32_t now, bool may_open);
 
+  /// Aim or re-aim the predicted-end read from a trusted status report of a moving device.
+  ///
+  /// A remaining time, whatever its size (0 included), plans the read at @p now + remaining time +
+  /// PREDICTED_END_MARGIN_MS, replacing an earlier aim; an aim past the end of the follow-up window is not planned. A
+  /// count that did not fall since the last aimed report counts as stale; after PREDICTED_END_STALE_REPORTS in a row
+  /// the read is given up and only progress reads remain (a falling count aims again). No count (@p remaining_s empty)
+  /// drops the aim: a report that stopped, or a device that sends none. A report also withdraws a predicted-end read
+  /// already popped but not yet sent, since it replaces the prediction that called for it.
+  ///
+  /// The poll that confirms a stop off target is never predicted: its report passes no count, and its
+  /// delay stays the default one (see decisions::classify_stopped_report()).
+  /// @param device_id Device the report belongs to; tracked devices only.
+  /// @param remaining_s Usable remaining travel time in seconds, empty when there is none.
+  /// @param now Current millis().
+  void on_trusted_report(const std::string &device_id, std::optional<uint16_t> remaining_s, uint32_t now);
+  /// The planned predicted-end read's timestamp (0 = none).
+  [[nodiscard]] uint32_t get_settle_update(const std::string &device_id) const;
+
   // --- Next-update scheduling ---
   /// Schedule the next poll at an absolute millis() timestamp.
   void set_next_update(const std::string &device_id, uint32_t abs_time);
@@ -247,8 +293,9 @@ class StatusPollPolicy {
   void set_confirm_stopped(const std::string &device_id, bool needed);
   /// Consume the mark set by set_confirm_stopped(): true once, for the first poll dispatched after it.
   [[nodiscard]] bool take_confirm_stopped(const std::string &device_id);
-  /// Consume both marks (neither short-circuits the other) for the poll being dispatched.
-  /// @return True when that poll settles a position: it follows an accepted STOP or a stop off target.
+  /// Consume the marks (none short-circuits another) for the poll being dispatched.
+  /// @return True when that poll settles a position: it follows an accepted STOP, confirms a stop off
+  ///         target, or is the predicted-end read.
   [[nodiscard]] bool take_settling_read(const std::string &device_id);
 
   // --- Queries ---
@@ -256,7 +303,12 @@ class StatusPollPolicy {
   [[nodiscard]] bool is_tracking_active(const std::string &device_id, uint32_t now) const;
 
   // --- Due-device scan ---
-  /// Return and consume the first device whose next_update is overdue.
+  /// Return and consume the first device with a poll overdue.
+  ///
+  /// A device's predicted-end read (on_trusted_report()) wins over its progress read: when it is due,
+  /// the device is returned with its predicted-end mark set (take_settling_read()) and a progress
+  /// read due too is dropped. A progress read due while the predicted-end read follows within
+  /// PREDICTED_END_DROPS_PROGRESS_WITHIN_MS is dropped as well; the predicted-end read stays planned.
   /// Clears expired tracking entries as a side effect. Returns nullopt if nothing is due.
   [[nodiscard]] std::optional<std::string> pop_due_device(uint32_t now);
 

@@ -303,9 +303,15 @@ When the replayed side sends a longer preamble than the capture did, a captured 
 before this side's own transmission does. The reply is then delivered as soon as the engine
 listens, not dropped. The capture never showed a loss, and a replay must not invent one.
 
-A capture is replayed only when it has `expect.exchange`. `validate.py` warns about a capture in a
-replayed phase (`exchange`, `statuspoll`, `pairing`, `discovery`) that has `tx` frames but no
-`expect.exchange`. The warning is expected for:
+A capture of a whole move (a command and the status reads that follow it, several exchanges) has no
+`expect.exchange`; `corpus_move_replay_test.cpp` replays it through the hub's status poll policy
+instead. The hub sends the command and then reads when its policy says a read is due, each device
+reply arrives its captured gap after the matching send, and the test asserts how many reads the move
+costs and when the last one goes out.
+
+A capture is replayed by the exchange suites only when it has `expect.exchange`. `validate.py`
+warns about a capture in a replayed phase (`exchange`, `statuspoll`, `pairing`, `discovery`) that
+has `tx` frames but no `expect.exchange`. The warning is expected for:
 
 - an excerpt that is missing frames the engine needs (for example a challenge);
 - a log that spans several exchanges;

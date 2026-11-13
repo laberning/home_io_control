@@ -132,7 +132,8 @@ capture sits in its phase directory), and that every `tests/corpus/captures/<pha
 path cited across the tree resolves. Five host test suites replay the corpus
 through the real protocol/crypto/codec/decision/exchange code
 (`tests/corpus/corpus_frame_test.cpp`, `corpus_crypto_test.cpp`, `corpus_decode_test.cpp`,
-`corpus_classification_test.cpp`, `corpus_exchange_replay_test.cpp`) — an issue-derived capture
+`corpus_classification_test.cpp`, `corpus_exchange_replay_test.cpp`; `corpus_move_replay_test.cpp`
+replays a whole move through the status poll policy) — an issue-derived capture
 becomes a permanent parser/decoder regression fixture the day it's ingested.
 
 ## Navigation Notes

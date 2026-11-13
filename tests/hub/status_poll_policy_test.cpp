@@ -738,3 +738,179 @@ TEST(StatusPollPolicy, TakeSettlingReadConsumesBothMarks) {
   policy.set_confirm_stopped("DEV", true);
   EXPECT_TRUE(policy.take_settling_read("DEV")) << "either mark alone makes the poll settling";
 }
+
+// ============================================================================
+// Predicted-end read (on_trusted_report, pop_due_device)
+// ============================================================================
+
+TEST(StatusPollPredictedEnd, ALongRemainingTimeAimsAtTheEndPlusAMargin) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+
+  policy.on_trusted_report("DEV", 12, T0);
+
+  EXPECT_EQ(policy.get_settle_update("DEV"), T0 + 12000u + PREDICTED_END_MARGIN_MS);
+}
+
+TEST(StatusPollPredictedEnd, AShortOrZeroCountAimsAtItsEndToo) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+
+  for (const uint16_t remaining : {uint16_t{2}, uint16_t{1}, uint16_t{0}}) {
+    policy.on_trusted_report("DEV", remaining, T0);
+    EXPECT_EQ(policy.get_settle_update("DEV"), T0 + remaining * 1000u + PREDICTED_END_MARGIN_MS)
+        << "the end read of a count of " << remaining << " s is a settling read";
+  }
+}
+
+TEST(StatusPollPredictedEnd, AShortCountReAimsNearerAndPopsAsASettlingRead) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_trusted_report("DEV", 12, T0);
+  policy.on_trusted_report("DEV", 2, T0 + 10500);
+  EXPECT_EQ(policy.get_settle_update("DEV"), T0 + 13500u);
+
+  EXPECT_FALSE(policy.pop_due_device(T0 + 13500).has_value());
+  ASSERT_EQ(policy.pop_due_device(T0 + 13501).value_or(""), "DEV");
+  EXPECT_TRUE(policy.take_settling_read("DEV"));
+}
+
+TEST(StatusPollPredictedEnd, AStaleCountDropsTheAimAndAFallingOneRestoresIt) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_trusted_report("DEV", 12, T0);
+  for (uint8_t i = 1; i < PREDICTED_END_STALE_REPORTS; ++i) {
+    policy.on_trusted_report("DEV", 12, T0 + i * 3000u);
+    EXPECT_NE(policy.get_settle_update("DEV"), 0u) << "stale report " << static_cast<int>(i) << " of the limit";
+  }
+
+  policy.on_trusted_report("DEV", 12, T0 + 20000);
+  EXPECT_EQ(policy.get_settle_update("DEV"), 0u)
+      << "the count has not fallen for " << PREDICTED_END_STALE_REPORTS << " reports: progress reads only";
+  policy.on_trusted_report("DEV", 12, T0 + 23000);
+  EXPECT_EQ(policy.get_settle_update("DEV"), 0u) << "it stays given up while the count stays frozen";
+  policy.on_trusted_report("DEV", 11, T0 + 26000);
+  EXPECT_EQ(policy.get_settle_update("DEV"), T0 + 26000u + 12000u) << "a falling count aims again";
+}
+
+TEST(StatusPollPredictedEnd, ARisingCountCountsAsStaleToo) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  uint16_t remaining = 10;
+  for (uint8_t i = 0; i <= PREDICTED_END_STALE_REPORTS; ++i)
+    policy.on_trusted_report("DEV", remaining++, T0 + i * 3000u);
+  EXPECT_EQ(policy.get_settle_update("DEV"), 0u);
+}
+
+TEST(StatusPollPredictedEnd, NoCountDropsTheAimAndAnUntrackedDeviceHasNone) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_trusted_report("DEV", 12, T0);
+
+  policy.on_trusted_report("DEV", std::nullopt, T0 + 1000);
+  EXPECT_EQ(policy.get_settle_update("DEV"), 0u);
+
+  policy.on_trusted_report("OTHER", 12, T0);
+  EXPECT_EQ(policy.get_settle_update("OTHER"), 0u) << "only a tracked device is aimed at";
+}
+
+TEST(StatusPollPredictedEnd, ANewTrackingCycleAndClearForgetTheAim) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_trusted_report("DEV", 12, T0);
+  policy.begin_tracking("DEV", 3000, T0 + 500);  // a newer command
+  EXPECT_EQ(policy.get_settle_update("DEV"), 0u);
+
+  policy.on_trusted_report("DEV", 12, T0);
+  policy.clear("DEV");
+  EXPECT_EQ(policy.get_settle_update("DEV"), 0u);
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_trusted_report("DEV", 12, T0);
+  policy.on_trusted_report("DEV", 12, T0 + 1);
+  policy.begin_tracking("DEV", 0, T0 + 2);
+  policy.on_trusted_report("DEV", 12, T0 + 3);
+  EXPECT_NE(policy.get_settle_update("DEV"), 0u) << "the stale count of the earlier move does not carry over";
+}
+
+TEST(StatusPollPredictedEnd, ADueAimWinsAndMarksTheReadAsSettling) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_trusted_report("DEV", 12, T0);
+  const uint32_t aim = policy.get_settle_update("DEV");
+
+  EXPECT_EQ(policy.pop_due_device(aim - 1), std::nullopt) << "not due yet";
+  const auto due = policy.pop_due_device(aim + 1);
+  ASSERT_TRUE(due.has_value());
+  EXPECT_EQ(policy.get_settle_update("DEV"), 0u) << "the aim is consumed";
+  EXPECT_TRUE(policy.take_settling_read("DEV"));
+  EXPECT_FALSE(policy.take_settling_read("DEV")) << "the mark belongs to that one poll";
+}
+
+TEST(StatusPollPredictedEnd, ADueAimDropsAProgressReadDueAtTheSameTime) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_trusted_report("DEV", 12, T0);
+  policy.set_next_update("DEV", T0 + 12500);
+  const uint32_t aim = policy.get_settle_update("DEV");
+
+  ASSERT_TRUE(policy.pop_due_device(aim + 1).has_value());
+  EXPECT_EQ(policy.get_next_update("DEV"), 0u) << "one read, not a progress read and a settling read";
+  EXPECT_EQ(policy.pop_due_device(aim + 2), std::nullopt);
+}
+
+TEST(StatusPollPredictedEnd, AProgressReadJustBeforeTheAimIsDroppedAndTheAimStays) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_trusted_report("DEV", 12, T0);
+  const uint32_t aim = policy.get_settle_update("DEV");
+  policy.set_next_update("DEV", aim - PREDICTED_END_DROPS_PROGRESS_WITHIN_MS);
+
+  EXPECT_EQ(policy.pop_due_device(aim - PREDICTED_END_DROPS_PROGRESS_WITHIN_MS + 1), std::nullopt);
+  EXPECT_EQ(policy.get_next_update("DEV"), 0u) << "the progress read is dropped";
+  EXPECT_EQ(policy.get_settle_update("DEV"), aim) << "the predicted-end read stays planned";
+  EXPECT_FALSE(policy.take_settling_read("DEV")) << "the dropped read marked nothing";
+  EXPECT_TRUE(policy.pop_due_device(aim + 1).has_value());
+}
+
+TEST(StatusPollPredictedEnd, AProgressReadWellBeforeTheAimIsServedAsUsual) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_trusted_report("DEV", 12, T0);
+  policy.set_next_update("DEV", T0 + 3000);
+
+  ASSERT_TRUE(policy.pop_due_device(T0 + 3001).has_value());
+  EXPECT_FALSE(policy.take_settling_read("DEV")) << "a progress read stays a progress read";
+  EXPECT_NE(policy.get_settle_update("DEV"), 0u);
+}
+
+TEST(StatusPollPredictedEnd, ATrustedReportWithdrawsAPoppedReadThatHasNotRunYet) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_trusted_report("DEV", 12, T0);
+  ASSERT_TRUE(policy.pop_due_device(policy.get_settle_update("DEV") + 1).has_value());
+
+  policy.on_trusted_report("DEV", 20, T0 + 13000);  // moved again before the queued read ran
+  EXPECT_FALSE(policy.take_settling_read("DEV"));
+}
+
+TEST(StatusPollPredictedEnd, AnAimBeyondTheWindowIsNotPlanned) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+
+  policy.on_trusted_report("DEV", 0xFFF0, T0);  // far longer than the 600 s window
+  EXPECT_EQ(policy.get_settle_update("DEV"), 0u) << "the window ends first: progress reads and its end handling stay";
+  policy.on_trusted_report("DEV", 590, T0);
+  EXPECT_NE(policy.get_settle_update("DEV"), 0u) << "an aim inside the window is kept";
+}
+
+TEST(StatusPollPredictedEnd, TheAimSurvivesAMillisWrap) {
+  StatusPollPolicy policy;
+  const uint32_t now = 0xFFFFFFFFu - 5000u;
+  policy.begin_tracking("DEV", 0, now);
+  policy.on_trusted_report("DEV", 12, now);
+  const uint32_t aim = policy.get_settle_update("DEV");
+  ASSERT_LT(aim, now) << "the aim wrapped past zero";
+
+  EXPECT_EQ(policy.pop_due_device(now + 3000u), std::nullopt) << "not due before the wrapped aim";
+  EXPECT_TRUE(policy.pop_due_device(aim + 1u).has_value());
+}

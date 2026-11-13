@@ -12,6 +12,21 @@
 namespace esphome {
 namespace home_io_control {
 
+namespace {
+/// Stamp value for "now": millis() == 0 would read as "never", so it is nudged to 1.
+uint32_t stamp(uint32_t now) { return now == 0 ? 1 : now; }
+/// True when @p t has been reached at @p now (wrap-safe; @p t is assumed within half the range).
+bool reached(uint32_t now, uint32_t t) { return static_cast<int32_t>(now - t) > 0; }
+
+/// Forget everything about the predicted-end read: the aim, the count it came from and the mark.
+void drop_predicted_end(PollTracking &t) {
+  t.settle_update = 0;
+  t.last_remaining_s.reset();
+  t.stale_reports = 0;
+  t.predicted_end_read = false;
+}
+}  // namespace
+
 void StatusPollPolicy::set_interval(const std::string &device_id, uint32_t interval_ms) {
   tracking_[device_id].interval_ms = interval_ms;
 }
@@ -30,6 +45,7 @@ void StatusPollPolicy::begin_tracking(const std::string &device_id, uint32_t ini
   t.moving_poll_misses = 0;
   t.stop_settle = false;
   t.confirm_stopped = false;
+  drop_predicted_end(t);
 }
 
 void StatusPollPolicy::clear(const std::string &device_id) {
@@ -44,6 +60,7 @@ void StatusPollPolicy::clear(const std::string &device_id) {
   t.moving_poll_misses = 0;
   t.stop_settle = false;
   t.confirm_stopped = false;
+  drop_predicted_end(t);
   // interval_ms is configuration — NOT cleared; remains set for future tracking cycles.
 }
 
@@ -60,6 +77,40 @@ MovingReportAction StatusPollPolicy::on_moving_report(const std::string &device_
     return MovingReportAction::NONE;
   begin_tracking(device_id, 0, now);
   return MovingReportAction::OPEN;
+}
+
+void StatusPollPolicy::on_trusted_report(const std::string &device_id, std::optional<uint16_t> remaining_s,
+                                         uint32_t now) {
+  auto it = tracking_.find(device_id);
+  if (it == tracking_.end())
+    return;
+  PollTracking &t = it->second;
+  t.predicted_end_read = false;
+  if (!remaining_s.has_value()) {
+    drop_predicted_end(t);
+    return;
+  }
+  if (t.last_remaining_s.has_value() && *remaining_s >= *t.last_remaining_s) {
+    if (t.stale_reports < UINT8_MAX)
+      t.stale_reports++;
+  } else {
+    t.stale_reports = 0;
+  }
+  t.last_remaining_s = remaining_s;
+  if (t.stale_reports >= PREDICTED_END_STALE_REPORTS) {
+    t.settle_update = 0;
+    return;
+  }
+  const uint32_t aim = now + (*remaining_s * 1000U) + PREDICTED_END_MARGIN_MS;
+  // A read the window would not live to see is not planned: the progress reads and the window's own
+  // end handling stand.
+  const bool beyond_window = t.poll_deadline != 0 && static_cast<int32_t>(aim - t.poll_deadline) > 0;
+  t.settle_update = beyond_window ? 0 : stamp(aim);
+}
+
+uint32_t StatusPollPolicy::get_settle_update(const std::string &device_id) const {
+  auto it = tracking_.find(device_id);
+  return (it != tracking_.end()) ? it->second.settle_update : 0;
 }
 
 void StatusPollPolicy::set_next_update(const std::string &device_id, uint32_t abs_time) {
@@ -173,7 +224,13 @@ bool StatusPollPolicy::take_confirm_stopped(const std::string &device_id) {
 bool StatusPollPolicy::take_settling_read(const std::string &device_id) {
   const bool after_stop = take_stop_settle(device_id);
   const bool confirms_stop = take_confirm_stopped(device_id);
-  return after_stop || confirms_stop;
+  bool predicted_end = false;
+  auto it = tracking_.find(device_id);
+  if (it != tracking_.end()) {
+    predicted_end = it->second.predicted_end_read;
+    it->second.predicted_end_read = false;
+  }
+  return after_stop || confirms_stop || predicted_end;
 }
 
 uint8_t StatusPollPolicy::get_status_poll_failures(const std::string &device_id) const {
@@ -192,8 +249,6 @@ uint8_t StatusPollPolicy::get_moving_poll_misses(const std::string &device_id) c
 }
 
 namespace {
-/// Stamp value for "now": millis() == 0 would read as "never", so it is nudged to 1.
-uint32_t stamp(uint32_t now) { return now == 0 ? 1 : now; }
 /// True when @p t is 0 (never) or at least @p span_ms old (wrap-safe).
 bool older_than(uint32_t now, uint32_t t, uint32_t span_ms) { return t == 0 || now - t >= span_ms; }
 }  // namespace
@@ -260,12 +315,26 @@ ForeignAction StatusPollPolicy::on_foreign_frame(const std::string &device_id, F
 std::optional<std::string> StatusPollPolicy::pop_due_device(uint32_t now) {
   for (auto &pair : tracking_) {
     PollTracking &t = pair.second;
-    if (t.next_update == 0 || now <= t.next_update)
+    const bool predicted_end_due = t.settle_update != 0 && reached(now, t.settle_update);
+    const bool progress_due = t.next_update != 0 && now > t.next_update;
+    if (!predicted_end_due && !progress_due)
       continue;
     if (!is_tracking_active(pair.first, now)) {
       if (t.poll_deadline != 0)
         note_ended_(pair.first);
       clear(pair.first);
+      continue;
+    }
+    if (predicted_end_due) {
+      t.settle_update = 0;
+      t.next_update = 0;
+      t.predicted_end_read = true;
+      return pair.first;
+    }
+    // A progress read right in front of the predicted-end read is not worth its own exchange.
+    if (t.settle_update != 0 &&
+        static_cast<int32_t>(t.settle_update - now) <= static_cast<int32_t>(PREDICTED_END_DROPS_PROGRESS_WITHIN_MS)) {
+      t.next_update = 0;
       continue;
     }
     t.next_update = 0;

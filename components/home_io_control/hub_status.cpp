@@ -287,7 +287,12 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   std::optional<uint16_t> remaining_s = decode_remaining_time_s(frame, trust_position);
   if (remaining_s.has_value() && *remaining_s != 0)
     dev.reports_remaining_time = true;
-  if (remaining_s.has_value() && *remaining_s == 0 && (reported_stopped || !dev.reports_remaining_time))
+  if (remaining_s.has_value() && *remaining_s == 0 && !dev.reports_remaining_time)
+    remaining_s.reset();
+  // A report that says stopped schedules from the default delay, never from a remaining time: it is
+  // either at rest or the first stop off target, whose confirming poll keeps the delay the verdict
+  // assumes (decisions::classify_stopped_report(), "known bound"), whatever count the reply carries.
+  if (reported_stopped)
     remaining_s.reset();
 
   if (effective_is_stopped(dev)) {
@@ -296,6 +301,10 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   }
   if (!follow_moving_report(id, dev, policy))
     return;
+  // A moving device that counts down is read once more, with the settling plan, at the end of its
+  // count (a count of 0 included); the progress read below keeps its own cadence until then.
+  if (trust_position)
+    policy.on_trusted_report(id, remaining_s, dev.last_status);
 
   uint32_t const delay_ms = compute_private_response_delay_ms(dev, remaining_s, policy, id);
   ESP_LOGD(detail::TAG,

@@ -5,7 +5,9 @@
 **Status:** Accepted · **Recorded:** 2026-11
 
 Amended by [ADR 0075](0075-commands-and-the-key-pull-take-the-attempt-plan-and-early-attempts-listen-short.md)
-(a mains settling read makes up to nine attempts, early ones listening a shorter window).
+(a mains settling read makes up to nine attempts, early ones listening a shorter window) and by
+[ADR 0076](0076-a-moving-cover-is-read-once-at-its-predicted-end-of-travel.md) (the read at the predicted end of a
+move is a settling read; a stopped report never schedules from its count).
 
 Amends [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
 (which reads take the plan), [ADR 0066](0066-a-cover-is-read-at-rest-by-an-opt-in-status-refresh.md)

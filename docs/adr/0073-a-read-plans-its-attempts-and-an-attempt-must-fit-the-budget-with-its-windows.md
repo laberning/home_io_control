@@ -8,7 +8,9 @@ Amended by [ADR 0074](0074-settling-reads-take-the-attempt-plan-and-progress-rea
 (which reads take the plan: settling reads do, progress reads stay single tries) and by
 [ADR 0075](0075-commands-and-the-key-pull-take-the-attempt-plan-and-early-attempts-listen-short.md)
 (commands and the key pull take it; early attempts to a mains device listen short; every attempt costs
-a measured overhead).
+a measured overhead) and by
+[ADR 0076](0076-a-moving-cover-is-read-once-at-its-predicted-end-of-travel.md) (a read at the predicted end of
+a move takes the settling plan).
 
 Amends [ADR 0013](0013-blocking-exchange-on-the-esphome-loop.md) (the budget arithmetic: what an
 attempt costs), [ADR 0043](0043-an-unconfirmed-movement-command-is-resent-once-to-a-device-that-normally-confirms.md)

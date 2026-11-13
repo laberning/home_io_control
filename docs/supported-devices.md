@@ -33,7 +33,7 @@ match.
 
 | Device | Type | Status | Route that worked | Key config | Evidence |
 |---|---|---|---|---|---|
-| **Sunea IO awning motor** | `vertical_exterior_awning` | ✅ Confirmed | Discover & Pair | `io_device_type: vertical_exterior_awning` | 31 corpus captures, across all three radios. Open, close and stop from a `horizontal_awning` 1W controller identity are reported to work, including STOP during travel, issue #196 |
+| **Sunea IO awning motor** | `vertical_exterior_awning` | ✅ Confirmed | Discover & Pair | `io_device_type: vertical_exterior_awning` | 31 corpus captures, across all three radios. Open, close and stop from a `horizontal_awning` 1W controller identity are reported to work, including STOP during travel, issue #196. The read at the end of its reported travel time is confirmed on it (corpus `somfy_awning_statuspoll_close_with_remaining_time_predicted_end_read_sx1262`), see [Cover](configuration/cover.md) |
 | **Sunea IO 70/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — |  |
 | **Sunea IO 40/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — |  |
 | **Sunilus IO 50/12** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — | corpus `somfy_sunilus_pairing_key_transfer_rejected_error` |
