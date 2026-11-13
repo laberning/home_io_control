@@ -800,6 +800,86 @@ def test_validate_hard_fails_key_transfer_not_decrypting_to_corpus_key() -> None
         pass
 
 
+def _make_oneway_mac_frame(key: bytes, cmd: int, data: bytes, sequence: int = 0x0123) -> "protolib.RawFrame":
+    """A 1W frame (`cmd + data + seq(2) + mac(6)`) signed under `key` over `cmd + data`."""
+    mac = protolib.create_1w_hmac(bytes([cmd]) + data, sequence, key)
+    return _make_raw_frame("tx", 0xE0, bytes.fromhex("00003B"), _REKEY_CONTROLLER_ID, cmd,
+                           data + bytes([sequence >> 8, sequence & 0xFF]) + mac)
+
+
+def _make_oneway_unknown_shape_frame() -> "protolib.RawFrame":
+    """A 1W frame whose payload is too short to carry seq + mac."""
+    return _make_raw_frame("tx", 0xE0, bytes.fromhex("00003B"), _REKEY_CONTROLLER_ID, 0x5A, bytes(3))
+
+
+def test_oneway_mac_parts_slices_execute_0x20_and_remove_frames() -> None:
+    """One span rule for every 1W command: `cmd + data`, with seq and mac as the last 8 bytes."""
+    key = bytes([0xA5] * 16)
+    for cmd, data in ((0x00, bytes([0x03, 0xC8, 0x00, 0x00, 0x00, 0x00])), (0x20, b"\x01\x02"), (0x39, b"\x01"),
+                      (0x20, b"")):
+        frame = _make_oneway_mac_frame(key, cmd, data)
+        assert protolib.find_oneway_mac_frames([frame]) == [frame]
+        parts = protolib.oneway_mac_parts(frame)
+        assert parts is not None and parts.data == data and parts.span == bytes([cmd]) + data
+        assert parts.sequence == 0x0123
+        assert protolib.create_1w_hmac(parts.span, parts.sequence, key) == parts.mac
+
+
+def test_oneway_mac_parts_unknown_shape_and_exclusions() -> None:
+    """Too short, or longer than declared: no parts (None). 0x30 and 2W frames are not in the set."""
+    assert protolib.oneway_mac_parts(_make_oneway_unknown_shape_frame()) is None
+    frame = _make_oneway_mac_frame(bytes(16), 0x00, b"\x01")
+    frame.hex_bytes += "00"  # a stray byte beyond the declared length
+    assert protolib.oneway_mac_parts(frame) is None
+    key_wrap = _make_raw_frame("tx", 0xE0, _REKEY_DEVICE_ID, _REKEY_CONTROLLER_ID, protolib.CMD_ONEWAY_ADD_CONTROLLER,
+                               bytes(20))
+    two_way = _make_raw_frame("tx", 0x40, _REKEY_DEVICE_ID, _REKEY_CONTROLLER_ID, 0x00, bytes(10))
+    assert protolib.find_oneway_mac_frames([key_wrap, two_way]) == []
+
+
+def test_rekey_oneway_mac_frames_rewrites_execute_under_corpus_key() -> None:
+    real_key = bytes([0xA5] * 16)
+    data = bytes([0x03, 0xC8, 0x00, 0x00, 0x00, 0x00])
+    frame = _make_oneway_mac_frame(real_key, 0x00, data)
+    before = frame.raw()
+    assert ingest_module.rekey_oneway_mac_frames([frame], real_key, protolib.CORPUS_SYSTEM_KEY) == 1
+    after = frame.raw()
+    assert after[:-protolib.HMAC_SIZE] == before[:-protolib.HMAC_SIZE], "only the MAC may change"
+    parts = protolib.oneway_mac_parts(frame)
+    assert protolib.create_1w_hmac(parts.span, parts.sequence, protolib.CORPUS_SYSTEM_KEY) == parts.mac
+    assert protolib.create_1w_hmac(parts.span, parts.sequence, real_key) != parts.mac
+
+
+def test_rekey_oneway_mac_frames_aborts_on_wrong_key_or_unknown_shape() -> None:
+    real_key = bytes([0xA5] * 16)
+    wrong = _make_oneway_mac_frame(bytes([0x5A] * 16), 0x00, b"\x01")
+    for frame in (wrong, _make_oneway_unknown_shape_frame()):
+        original = frame.hex_bytes
+        try:
+            ingest_module.rekey_oneway_mac_frames([frame], real_key, protolib.CORPUS_SYSTEM_KEY)
+            raise AssertionError("expected RekeyError")
+        except ingest_module.RekeyError:
+            pass
+        assert frame.hex_bytes == original, "an aborted re-key must not touch the frame"
+
+
+def _oneway_capture(key_mode: str, frame: "protolib.RawFrame") -> dict:
+    return {"key": key_mode, "frames": [{"dir": "tx", "hex": frame.hex_bytes, "crc": "absent"}]}
+
+
+def test_validate_checks_oneway_mac_for_key_corpus_only() -> None:
+    """key: corpus: a re-keyed 1W EXECUTE passes, a real-key one and an unknown shape fail;
+    key: unknown captures of real remotes are left alone."""
+    good = _make_oneway_mac_frame(protolib.CORPUS_SYSTEM_KEY, 0x00, b"\x01\x02")
+    real = _make_oneway_mac_frame(bytes([0x5A] * 16), 0x00, b"\x01\x02")
+    unknown = _make_oneway_unknown_shape_frame()
+    validate_module.validate_crypto(_oneway_capture("corpus", good), "self_test_ok")
+    _assert_validation_fails_crypto(_oneway_capture("corpus", real), "does not verify under the public corpus key")
+    _assert_validation_fails_crypto(_oneway_capture("corpus", unknown), "does not end seq(2) + mac(6)")
+    validate_module.validate_crypto(_oneway_capture("unknown", real), "self_test_unknown")
+    validate_module.validate_crypto(_oneway_capture("unknown", unknown), "self_test_unknown")
+
+
 def test_reply_latency_pairs_low_power_tx_requests_with_their_replies() -> None:
     dst, hub = "11 22 33", "AA BB CC"
     request = f"4B 20 {dst} {hub} 03 03 00 00"
@@ -861,6 +941,11 @@ TESTS = [
     test_validate_enforces_self_authenticated_hmac_for_key_corpus,
     test_validate_hard_fails_key_transfer_not_decrypting_to_corpus_key,
     test_io_frame_only_retry_not_merged,
+    test_oneway_mac_parts_slices_execute_0x20_and_remove_frames,
+    test_oneway_mac_parts_unknown_shape_and_exclusions,
+    test_rekey_oneway_mac_frames_rewrites_execute_under_corpus_key,
+    test_rekey_oneway_mac_frames_aborts_on_wrong_key_or_unknown_shape,
+    test_validate_checks_oneway_mac_for_key_corpus_only,
 ]
 
 

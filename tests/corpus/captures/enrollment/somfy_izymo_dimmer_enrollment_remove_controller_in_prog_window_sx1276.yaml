@@ -6,9 +6,7 @@ description: >
   identical remove sent with no PROG window open changed nothing: the Izymo kept obeying the same controller's
   Close and Open. So a standalone 0x39 removed this 1W controller only while the receiver was in its programming
   mode. The controller had been enrolled with this project's enrollment gesture (0x39 then 0x30) and controlled
-  the light beforehand. The 0x39 MACs are re-keyed to the corpus key. The ignored Close is not included: its
-  MAC is signed under the hub's real network key and no tool re-keys a 1W EXECUTE, so only its effect is
-  recorded here.
+  the light beforehand. The MACs of the 0x39 and EXECUTE frames are re-keyed to the corpus key.
 source:
   device: "Somfy Izymo dimmer, 1W remove-controller sent by this project's hub inside the receiver's PROG window"
   captured_with: sx1276
@@ -23,28 +21,56 @@ frames:
     freq: 868950000
     hex: "F1 00 00 00 3F B5 18 E5 39 00 00 08 28 22 23 F0 C3 F9"
     crc: absent
-    note: "cmd=ONEWAY_REMOVE(0x39) -- sent inside the receiver's PROG window; the Izymo blinked"
+    note: "cmd=ONEWAY_REMOVE(0x39) -- sent inside the receiver's PROG window; the Izymo blinked. MAC RE-KEYED"
   - dir: tx
     t_ms: 322
     freq: 868950000
     hex: "F1 00 00 00 3F B5 18 E5 39 00 00 08 28 22 23 F0 C3 F9"
     crc: absent
-    note: "cmd=ONEWAY_REMOVE(0x39) -- sent inside the receiver's PROG window; the Izymo blinked"
+    note: "cmd=ONEWAY_REMOVE(0x39) -- sent inside the receiver's PROG window; the Izymo blinked. MAC RE-KEYED"
   - dir: tx
     t_ms: 643
     freq: 868950000
     hex: "F1 00 00 00 3F B5 18 E5 39 00 00 08 28 22 23 F0 C3 F9"
     crc: absent
-    note: "cmd=ONEWAY_REMOVE(0x39) -- sent inside the receiver's PROG window; the Izymo blinked"
+    note: "cmd=ONEWAY_REMOVE(0x39) -- sent inside the receiver's PROG window; the Izymo blinked. MAC RE-KEYED"
   - dir: tx
     t_ms: 963
     freq: 868950000
     hex: "F1 00 00 00 3F B5 18 E5 39 00 00 08 28 22 23 F0 C3 F9"
     crc: absent
-    note: "cmd=ONEWAY_REMOVE(0x39) -- sent inside the receiver's PROG window; the Izymo blinked"
+    note: "cmd=ONEWAY_REMOVE(0x39) -- sent inside the receiver's PROG window; the Izymo blinked. MAC RE-KEYED"
+  - dir: tx
+    t_ms: 54045
+    freq: 868950000
+    hex: "F6 00 00 01 BF B5 18 E5 00 01 43 C8 00 00 00 00 09 FB 6C 95 21 5B B8"
+    crc: absent
+    note: "cmd=EXECUTE(0x00) -- 1W Close (light class) 54 s after the remove; the Izymo ignored it. MAC RE-KEYED"
+  - dir: tx
+    t_ms: 54259
+    freq: 868950000
+    hex: "F6 00 00 01 BF B5 18 E5 00 01 43 C8 00 00 00 00 09 FB 6C 95 21 5B B8"
+    crc: absent
+    note: "cmd=EXECUTE(0x00) -- 1W Close (light class) 54 s after the remove; the Izymo ignored it. MAC RE-KEYED"
+  - dir: tx
+    t_ms: 54581
+    freq: 868950000
+    hex: "F6 00 00 01 BF B5 18 E5 00 01 43 C8 00 00 00 00 09 FB 6C 95 21 5B B8"
+    crc: absent
+    note: "cmd=EXECUTE(0x00) -- 1W Close (light class) 54 s after the remove; the Izymo ignored it. MAC RE-KEYED"
+  - dir: tx
+    t_ms: 54908
+    freq: 868950000
+    hex: "F6 00 00 01 BF B5 18 E5 00 01 43 C8 00 00 00 00 09 FB 6C 95 21 5B B8"
+    crc: absent
+    note: "cmd=EXECUTE(0x00) -- 1W Close (light class) 54 s after the remove; the Izymo ignored it. MAC RE-KEYED"
 expect:
   frames:
     - {cmd: 0x39, start: true, end: true, protocol: 1w}
     - {cmd: 0x39, start: true, end: true, protocol: 1w}
     - {cmd: 0x39, start: true, end: true, protocol: 1w}
     - {cmd: 0x39, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}

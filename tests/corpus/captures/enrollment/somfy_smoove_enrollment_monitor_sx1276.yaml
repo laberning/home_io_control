@@ -22,9 +22,9 @@ frames:
   - dir: rx
     t_ms: 1424
     freq: 868950000
-    hex: "F5 00 00 00 3F 2F 9A 98 20 02 03 0C 00 00 17 46 B1 1F B0 BE 07 30"
+    hex: "F5 00 00 00 3F 2F 9A 98 20 02 03 0C 00 00 17 46 AD 91 EC BA F4 C1"
     crc: absent
-    note: "cmd=0x20 WRITE_PRIVATE pairing-mode beacon"
+    note: "cmd=0x20 WRITE_PRIVATE pairing-mode beacon; its MAC is RE-KEYED, not the captured bytes"
 expect:
   frames:
     - {cmd: 0x30, start: true, end: true, protocol: 1w}

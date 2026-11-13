@@ -229,8 +229,8 @@ directly, unconstrained by the golden-frame corpus's "these are real captured wi
 
 - The real system key must never appear in any committed file, generated file, test, log
   output, or step report.
-- `key: corpus` promises the capture's HMAC / key-transfer bytes verify under the public
-  corpus key (`tests/support/test_helpers.h::TEST_SYSTEM_KEY`) — never the real key.
+- `key: corpus` promises the capture's HMAC / key-transfer bytes and every 1W frame's MAC verify
+  under the public corpus key (`tests/support/test_helpers.h::TEST_SYSTEM_KEY`) — never the real key.
 - **Pairing captures (containing a `0x32` key-transfer frame) leak the real system key** if
   committed as captured — the transfer key is public and hardcoded, so anyone with the raw
   bytes can recover the real key. Pairing captures should be re-keyed before they are ever
@@ -270,6 +270,18 @@ field claims:
   un-re-keyed one can slip through review still carrying real-key-derived bytes.
   `scripts/corpus/protolib.py :: SELF_AUTHENTICATED_COMMANDS` lists the commands with this
   shape; only add one there once a capture verifies under a known key.
+- `key: corpus` captures also have their **one-way (1W) frames** checked, by one rule rather
+  than a list per command. A 0x30 add-controller frame is checked on its own: its wrapped key
+  must unwrap to the corpus key (in any capture, see below) and its optional MAC trailer must
+  verify. Every other 1W frame (protocol bit set in CTRL0: remove-controller 0x39, the hub's own
+  EXECUTE 0x00 commands, a remote's 0x20, ...) must end `seq(2) + mac(6)` inside its declared
+  length, and that MAC, taken over `cmd + data` with the sequence, must verify under the
+  corpus key (`scripts/corpus/protolib.py :: oneway_mac_parts()`). A 1W frame of any other
+  shape fails, so a new 1W command cannot slip through unchecked: teach `oneway_mac_parts()` the
+  shape, or leave the capture `key: unknown`. `--rekey` verifies each such frame under the real
+  1W key (`--oneway-key-from` or `IOHOME_ONEWAY_KEY`; for the hub's own commands that is its
+  system key) and re-signs it. `key: unknown` captures of real remotes are not checked, because
+  they are signed with keys that are not ours.
 - **Any** capture, regardless of `key:` mode, containing a 0x32 key-transfer frame whose
   payload does not decrypt to the corpus key is a hard validation failure — this is the safety
   net that stops an un-re-keyed raw pairing capture from ever being committed.

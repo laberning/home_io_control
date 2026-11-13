@@ -308,23 +308,26 @@ def create_1w_hmac(data: bytes, sequence: int, controller_key: bytes) -> bytes:
     construct_iv_1w_sequence(), AES-128-ECB with `controller_key`, truncate to HMAC_SIZE bytes.
     `data` is a command-specific span with NO default; the caller must supply exactly what the
     target command authenticates (see proto_crypto.h's `@warning` -- spans do not generalise
-    across commands, e.g. CMD_ONEWAY_ADD_CONTROLLER signs only `cmd + enc_key`, while
-    CMD_ONEWAY_REMOVE signs `cmd + data` -- verified against real hardware captures, not merely
-    assumed; see tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml).
+    across commands, e.g. CMD_ONEWAY_ADD_CONTROLLER signs only `cmd + enc_key`, while every
+    other 1W command signs `cmd + data` (oneway_mac_parts()) -- verified against real hardware
+    captures, not merely assumed; see tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml).
     """
     iv = construct_iv_1w_sequence(data, sequence)
     encrypted = aes128_ecb_encrypt_block(iv, controller_key)
     return encrypted[:HMAC_SIZE]
 
 
-# --- 1W frame slicing (CMD_ONEWAY_ADD_CONTROLLER / CMD_ONEWAY_REMOVE) -----------------------
-# Declared-payload sizes mirror proto_codecs.cpp's ONEWAY_ADD_CONTROLLER_PAYLOAD_SIZE and
-# proto_commands.cpp's ONEWAY_REMOVE_PAYLOAD_SIZE.
+# --- 1W frame slicing -----------------------------------------------------------------------
+# CMD_ONEWAY_ADD_CONTROLLER (0x30) is the one 1W command with its own layout (key-wrap plus an
+# optional out-of-length MAC trailer). Every other 1W command ends `seq(2) + mac(6)` inside its
+# declared length and signs `cmd + data` (see oneway_mac_parts()).
+# The 0x30 declared-payload size mirrors proto_codecs.cpp's ONEWAY_ADD_CONTROLLER_PAYLOAD_SIZE.
 ONEWAY_ADD_CONTROLLER_DECLARED_PAYLOAD_SIZE = AES_KEY_SIZE + 4  # enc_key(16) + man(1) + data(1) + seq(2)
-ONEWAY_REMOVE_DECLARED_PAYLOAD_SIZE = 9  # data(1) + seq(2) + mac(6)
+ONEWAY_SEQUENCE_SIZE = 2
+ONEWAY_MAC_TAIL_SIZE = ONEWAY_SEQUENCE_SIZE + HMAC_SIZE  # seq(2) + mac(6) closing every MAC-bearing 1W frame
 
 OneWayAddControllerParts = namedtuple("OneWayAddControllerParts", ["src", "enc_key", "rest", "sequence", "trailer"])
-OneWayRemoveControllerParts = namedtuple("OneWayRemoveControllerParts", ["data", "span", "sequence", "mac"])
+OneWayMacParts = namedtuple("OneWayMacParts", ["data", "span", "sequence", "mac"])
 
 
 def find_oneway_add_controller_frames(frames):
@@ -333,9 +336,13 @@ def find_oneway_add_controller_frames(frames):
     return [f for f in frames if _frame_cmd(f) == CMD_ONEWAY_ADD_CONTROLLER]
 
 
-def find_oneway_remove_controller_frames(frames):
-    """Locate CMD_ONEWAY_REMOVE (0x39) frames."""
-    return [f for f in frames if _frame_cmd(f) == CMD_ONEWAY_REMOVE]
+def find_oneway_mac_frames(frames):
+    """Locate every 1W frame the uniform `seq + mac` rule applies to: any frame with the 1W
+    protocol bit set except CMD_ONEWAY_ADD_CONTROLLER (0x30, its own slicer). The list also holds
+    frames whose shape oneway_mac_parts() does not recognise, so a caller can fail closed on them
+    instead of silently skipping a command nobody modelled."""
+    return [f for f in frames
+            if len(f.raw()) >= FRAME_MIN_SIZE and is_oneway(f.raw()[0]) and _frame_cmd(f) != CMD_ONEWAY_ADD_CONTROLLER]
 
 
 def oneway_add_controller_parts(frame) -> OneWayAddControllerParts:
@@ -361,19 +368,25 @@ def oneway_add_controller_parts(frame) -> OneWayAddControllerParts:
     return OneWayAddControllerParts(src, enc_key, rest, sequence, trailer)
 
 
-def oneway_remove_controller_parts(frame) -> OneWayRemoveControllerParts:
-    """Slice a CMD_ONEWAY_REMOVE frame into the signed span (`cmd + data` -- see
-    create_1w_hmac()'s doxygen for why this span and not another), sequence, and MAC.
+def oneway_mac_parts(frame) -> "OneWayMacParts | None":
+    """Slice a 1W frame (any command except 0x30) into the signed span, sequence and MAC, or
+    return None when it does not have the known shape.
+
+    The shape: the frame is exactly as long as its CTRL0 declares and its payload ends
+    `seq(2) + mac(6)`, so `data` is whatever precedes that tail (it may be empty). The MAC covers
+    `cmd + data` with the sequence (create_1w_hmac()'s doxygen). Confirmed on real hardware for
+    CMD_ONEWAY_REMOVE (0x39) and on the hub's own EXECUTE (0x00) frames, assumed uniform for the
+    rest -- which is why a caller must verify, never trust: a frame that does not verify under the
+    key it should is a hard error, not a skipped frame.
     """
     raw = non_crc_bytes(frame)
+    if len(raw) < FRAME_MIN_SIZE + ONEWAY_MAC_TAIL_SIZE or len(raw) != ctrl0_implied_length(raw[0]):
+        return None
     payload = raw[FRAME_MIN_SIZE:]
-    if len(payload) != ONEWAY_REMOVE_DECLARED_PAYLOAD_SIZE:
-        raise ValueError(f"0x39 payload is {len(payload)} bytes, expected {ONEWAY_REMOVE_DECLARED_PAYLOAD_SIZE}")
-    data_byte = payload[0:1]
-    sequence = (payload[1] << 8) | payload[2]
-    mac = payload[3:9]
-    span = bytes([CMD_ONEWAY_REMOVE]) + data_byte
-    return OneWayRemoveControllerParts(data_byte, span, sequence, mac)
+    data = payload[:-ONEWAY_MAC_TAIL_SIZE]
+    sequence = (payload[-ONEWAY_MAC_TAIL_SIZE] << 8) | payload[-ONEWAY_MAC_TAIL_SIZE + 1]
+    mac = payload[-HMAC_SIZE:]
+    return OneWayMacParts(data, raw[8:9] + data, sequence, mac)
 
 
 # The public corpus key (must byte-for-byte match tests/support/test_helpers.h ::

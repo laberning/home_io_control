@@ -36,12 +36,12 @@ secret (see tests/corpus/README.md :: "Key hygiene") — node IDs are kept as ca
 default; `--remap OLDHEX=NEWHEX`/`--role NEWHEX=name` exist if you want to anonymize a specific
 node ID for some other reason, but are optional, not required for privacy.
 
-A capture containing a CMD_ONEWAY_ADD_CONTROLLER (0x30) / CMD_ONEWAY_REMOVE (0x39) frame also
-needs `--oneway-key-from <path>` — a 1W controller's key is frequently NOT the same as the hub's
-own `hub_system_key`, so it is resolved and verified independently. Point it at wherever you
-pasted the "Recover 1W Controller Key" switch's report —
-it emits the recovered key inline in a ready-to-paste `oneway_controllers:` block, so any
-git-ignored file containing that block works, `config/secrets.yaml` or otherwise:
+A capture containing a 1W frame that carries a code also needs `--oneway-key-from <path>` — a
+1W controller's key is frequently NOT the same as the hub's own `hub_system_key`, so it is
+resolved and verified independently. Point it at wherever you pasted the "Recover 1W Controller
+Key" switch's report — it emits the recovered key inline in a ready-to-paste
+`oneway_controllers:` block, so any git-ignored file containing that block works,
+`config/secrets.yaml` or otherwise:
   python3 scripts/corpus/ingest.py my_1w_capture.log --rekey \\
       --oneway-key-from config/secrets.yaml \\
       --id somfy_smoove_enrollment_add_and_remove_controller_sx1276 --device "Somfy Smoove io 1W remote" \\
@@ -49,6 +49,12 @@ git-ignored file containing that block works, `config/secrets.yaml` or otherwise
 `--system-key-from` and `--oneway-key-from` are each only required when a capture actually needs
 them — a pure-1W capture with no 0x3C/0x3D/0x32/0x2A frames needs no `--system-key-from`, and vice
 versa.
+
+The 1W rule: a CMD_ONEWAY_ADD_CONTROLLER (0x30) frame is re-keyed in its own way (key-wrap plus
+optional MAC trailer); every OTHER 1W frame -- remove-controller (0x39), the hub's own EXECUTE
+(0x00) commands, a remote's 0x20 and so on -- ends `seq(2) + mac(6)` and is verified under the real
+1W key, then re-signed under the corpus key (rekey_oneway_mac_frames()). A 1W frame that does not
+have that shape aborts the run, so a new 1W command is never silently left carrying a real-key code.
 """
 
 import argparse
@@ -221,7 +227,7 @@ def resolve_oneway_key(args) -> bytes:
     Deliberately separate from resolve_system_key(), not a fallback to it: a 1W controller's key
     is frequently NOT the hub's own 2W hub_system_key -- a real Smoove remote's adopted 1W key has
     been observed to differ from its own hub's hub_system_key. Silently reusing the wrong key here
-    would make rekey_oneway_*_frames() below either hard-abort (if the frames happen not to
+    would make the rekey_oneway_* rewriters below either hard-abort (if the frames happen not to
     verify) or, worse, succeed against the wrong key by coincidence. Same git-ignore refusal as
     resolve_system_key().
     """
@@ -229,7 +235,7 @@ def resolve_oneway_key(args) -> bytes:
         env_value = os.environ.get("IOHOME_ONEWAY_KEY")
         if env_value is None:
             raise RekeyError(
-                "this capture contains a CMD_ONEWAY_ADD_CONTROLLER/CMD_ONEWAY_REMOVE frame, which needs the "
+                "this capture contains a 1W frame that carries a code, which needs the "
                 "real 1W controller key -- pass --oneway-key-from <path> or set IOHOME_ONEWAY_KEY "
                 "(this is frequently NOT the same value as hub_system_key)")
         try:
@@ -409,29 +415,36 @@ def rekey_oneway_add_controller_frames(frames, real_oneway_key: bytes, corpus_ke
     return rewritten
 
 
-def rekey_oneway_remove_controller_frames(frames, real_oneway_key: bytes, corpus_key: bytes) -> int:
-    """Verify + rewrite every CMD_ONEWAY_REMOVE (0x39) frame's MAC.
+def rekey_oneway_mac_frames(frames, real_oneway_key: bytes, corpus_key: bytes) -> int:
+    """Verify + rewrite the MAC of every 1W frame that ends `seq + mac` (every 1W command except
+    0x30: CMD_ONEWAY_REMOVE, the hub's own EXECUTE copies, a remote's 0x20 and so on --
+    protolib.find_oneway_mac_frames()).
 
-    Unlike 0x30's enc_key, this MAC does not directly encode key material — it is a truncated
-    block-cipher output, not recoverable back to the key — but it is rewritten under the corpus
+    Unlike 0x30's enc_key, this MAC does not directly encode key material -- it is a truncated
+    block-cipher output, not recoverable back to the key -- but it is rewritten under the corpus
     key anyway, for the same reason every other captured HMAC in this pipeline is: `key: corpus`
-    promises every signature in the capture verifies under the public key, not the real one.
-    Span is `cmd + data` (protolib.create_1w_hmac()'s doxygen) — confirmed against 11 real
-    CMD_ONEWAY_REMOVE captures from the same real-hardware session this function was built to
-    re-key, not merely assumed.
+    promises every signature in the capture verifies under the public key, not the real one, and
+    a committed MAC is a permanent offline oracle for the key that made it.
+    The span is `cmd + data` (protolib.oneway_mac_parts()). Hard aborts, writing nothing, on a
+    frame of unknown shape or one whose MAC does not verify under the real 1W key: either the
+    wrong key was given, or the frame is not what this rule assumes, and rewriting it would
+    replace real capture data with fiction.
     """
     rewritten = 0
-    for frame in protolib.find_oneway_remove_controller_frames(frames):
-        parts = protolib.oneway_remove_controller_parts(frame)
+    for frame in protolib.find_oneway_mac_frames(frames):
+        parts = protolib.oneway_mac_parts(frame)
+        if parts is None:
+            raise RekeyError(f"1W frame {frame.raw().hex().upper()} does not end seq(2) + mac(6) inside its "
+                             "declared length -- unknown shape, cannot be verified or re-keyed. Aborting; "
+                             "nothing was written.")
         expected_mac = protolib.create_1w_hmac(parts.span, parts.sequence, real_oneway_key)
         if expected_mac != parts.mac:
-            raise RekeyError(f"0x39 MAC does NOT verify under the real 1W key for frame "
-                             f"{frame.raw().hex().upper()} — aborting; nothing was written.")
+            raise RekeyError(f"1W MAC does NOT verify under the real 1W key (fingerprint sha256="
+                             f"{key_fingerprint(real_oneway_key)}) for frame {frame.raw().hex().upper()} -- "
+                             "wrong key or a frame of another shape. Aborting; nothing was written.")
         new_mac = protolib.create_1w_hmac(parts.span, parts.sequence, corpus_key)
-        sequence_bytes = bytes([(parts.sequence >> 8) & 0xFF, parts.sequence & 0xFF])
-        new_payload = parts.data + sequence_bytes + new_mac
-        new_raw = protolib.non_crc_bytes(frame)[:protolib.FRAME_MIN_SIZE] + new_payload
-        _set_frame_raw(frame, new_raw)
+        raw = protolib.non_crc_bytes(frame)
+        _set_frame_raw(frame, raw[:-protolib.HMAC_SIZE] + new_mac)
         rewritten += 1
     return rewritten
 
@@ -498,7 +511,7 @@ def apply_rekey(frames, args) -> "tuple[bytes, list[str], dict[str, str]]":
                          protolib.find_challenge_response_triples(frames) or
                          protolib.find_self_authenticated_frames(frames))
     has_oneway = bool(protolib.find_oneway_add_controller_frames(frames) or
-                      protolib.find_oneway_remove_controller_frames(frames))
+                      protolib.find_oneway_mac_frames(frames))
 
     real_key = resolve_system_key(args) if has_2w_crypto else None
     real_oneway_key = resolve_oneway_key(args) if has_oneway else None
@@ -512,9 +525,9 @@ def apply_rekey(frames, args) -> "tuple[bytes, list[str], dict[str, str]]":
                              f"system key (fingerprint sha256={key_fingerprint(real_key)})")
     if has_oneway:
         add_count = rekey_oneway_add_controller_frames(frames, real_oneway_key, corpus_key)
-        remove_count = rekey_oneway_remove_controller_frames(frames, real_oneway_key, corpus_key)
-        summary_parts.append(f"{add_count} 1W add-controller frame(s), {remove_count} 1W remove-controller "
-                             f"frame(s) under real 1W key (fingerprint sha256="
+        mac_count = rekey_oneway_mac_frames(frames, real_oneway_key, corpus_key)
+        summary_parts.append(f"{add_count} 1W add-controller frame(s), {mac_count} other 1W MAC frame(s) "
+                             f"under real 1W key (fingerprint sha256="
                              f"{key_fingerprint(real_oneway_key)})")
 
     warnings = apply_node_remap(frames, remap)
@@ -557,8 +570,8 @@ def main() -> int:
                         help="path to a git-ignored file containing the real system key (32 hex digits)")
     parser.add_argument("--oneway-key-from", default=None,
                         help="path to a git-ignored file containing the real 1W controller key (32 hex digits) "
-                             "-- only needed if the capture contains a CMD_ONEWAY_ADD_CONTROLLER/"
-                             "CMD_ONEWAY_REMOVE frame; not necessarily the same key as --system-key-from")
+                             "-- only needed if the capture contains a 1W frame carrying a code; "
+                             "not necessarily the same key as --system-key-from")
     parser.add_argument("--remap", action="append", default=[], metavar="OLDHEX=NEWHEX",
                         help="remap a 3-byte node ID (repeatable)")
     parser.add_argument("--role", action="append", default=[], metavar="NEWHEX=name",

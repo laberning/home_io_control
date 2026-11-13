@@ -27,8 +27,13 @@ key) from ever being committed, regardless of what its `key:` field claims.
 The same two-tier treatment applies to 1W: a CMD_ONEWAY_ADD_CONTROLLER (0x30) frame's `enc_key`
 directly encodes recoverable key material (wrapped only under the public TRANSFER_KEY, same as
 0x32), so it is checked unconditionally, same severity as the 0x32 check. Its optional
-out-of-length MAC trailer and every CMD_ONEWAY_REMOVE (0x39) frame's MAC do not encode the key
-directly, so they follow the 0x3D tier: enforced only for `key: corpus` captures.
+out-of-length MAC trailer and the MAC of every other 1W frame do not encode the key directly, so
+they follow the 0x3D tier: enforced only for `key: corpus` captures. "Every other 1W frame" is one
+rule, not a list per command: any frame with the 1W protocol bit set that is not 0x30 must end
+`seq(2) + mac(6)` inside its declared length (remove-controller 0x39, the hub's EXECUTE 0x00
+commands, a remote's 0x20, ...) and its MAC, over `cmd + data` with the sequence, must verify under
+the corpus key. A 1W frame of any other shape fails (fail closed). `key: unknown` captures hold real
+remotes' frames, signed with keys that are not ours to check, and are left alone.
 
 Run via `make corpus-validate` (part of the `lint` composite). Dependencies: PyYAML, cryptography.
 """
@@ -413,12 +418,23 @@ def validate_crypto(data: dict, capture_id: str) -> None:
             "verify under the public corpus key",
         )
 
-    for frame in protolib.find_oneway_remove_controller_frames(frames):
-        parts = protolib.oneway_remove_controller_parts(frame)
+    # Every other 1W frame ends `seq + mac` (protolib.oneway_mac_parts()). Fail closed: a 1W
+    # frame of a shape the tools do not know cannot be checked, so it cannot be committed as
+    # `key: corpus` either -- a new 1W command must be modelled (or its capture left `key:
+    # unknown`) rather than slip through unchecked.
+    for frame in protolib.find_oneway_mac_frames(frames):
+        parts = protolib.oneway_mac_parts(frame)
+        require(
+            parts is not None,
+            f"{capture_id}: key: corpus capture holds a 1W frame ({frame.raw().hex().upper()}) that does "
+            "not end seq(2) + mac(6) inside its declared length, so its MAC cannot be checked -- teach "
+            "protolib.oneway_mac_parts() the shape, or mark the capture `key: unknown`",
+        )
         require(
             protolib.create_1w_hmac(parts.span, parts.sequence, protolib.CORPUS_SYSTEM_KEY) == parts.mac,
-            f"{capture_id}: key: corpus promise broken — a 0x39 remove-controller frame's MAC does not "
-            "verify under the public corpus key",
+            f"{capture_id}: key: corpus promise broken -- the MAC of a 1W 0x{frame.raw()[8]:02X} frame does "
+            "not verify under the public corpus key (re-key it with scripts/corpus/ingest.py --rekey "
+            "--oneway-key-from <path>)",
         )
 
 
