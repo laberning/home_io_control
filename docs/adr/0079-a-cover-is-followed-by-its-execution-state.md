@@ -4,6 +4,9 @@
 
 **Status:** Accepted · **Recorded:** 2026-11
 
+Amended by [ADR 0080](0080-linked-remote-activity-is-followed-by-an-opt-in-catch-up-read.md) (a catch-up read after
+linked-remote activity treats a low-power cover's state as unknown even after a recent report).
+
 Amends [ADR 0061](0061-a-moving-status-report-opens-the-follow-up-window.md) (the window's length),
 [ADR 0076](0076-a-moving-cover-is-read-once-at-its-predicted-end-of-travel.md) (what follows a frozen
 count), [ADR 0040](0040-low-power-start-preamble-follows-the-wake-belief.md) and

@@ -989,7 +989,7 @@ TEST(StatusPollFrozenCount, AMovingReportThatOpensTheWindowFixesItsDeadlineThere
 }
 
 // ============================================================================
-// Catch-up read after linked-remote activity (ADR 0069)
+// Catch-up read after linked-remote activity (ADR 0080)
 // ============================================================================
 
 static constexpr uint32_t CATCHUP_DELAY_MS = 30000;
@@ -1063,4 +1063,22 @@ TEST(StatusPollPolicy, CatchupDueTimeIsWrapSafe) {
   EXPECT_FALSE(policy.take_due_catchup(UINT32_MAX)) << "before the rollover it is not due yet";
   EXPECT_FALSE(policy.take_due_catchup(due - 1));
   EXPECT_TRUE(policy.take_due_catchup(due));
+}
+
+TEST(StatusPollPolicy, AStateUnknownMarkIsConsumedOnceAndNeedsNoTracking) {
+  StatusPollPolicy policy;
+  policy.mark_state_unknown("DEV");
+  EXPECT_TRUE(policy.take_state_unknown("DEV")) << "a catch-up read of an untracked device";
+  EXPECT_FALSE(policy.take_state_unknown("DEV"));
+  EXPECT_FALSE(policy.take_state_unknown("OTHER"));
+}
+
+TEST(StatusPollPolicy, HeardActivityOrAReportDropsTheStateUnknownMark) {
+  StatusPollPolicy policy;
+  policy.mark_state_unknown("DEV");
+  policy.begin_tracking("DEV", DEFAULT_SETTLE_POLL_DELAY_MS, T0);  // a command or a heard press
+  EXPECT_FALSE(policy.take_state_unknown("DEV"));
+  policy.mark_state_unknown("DEV");
+  policy.clear("DEV");  // a report that ends the tracking
+  EXPECT_FALSE(policy.take_state_unknown("DEV"));
 }

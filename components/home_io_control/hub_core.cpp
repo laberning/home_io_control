@@ -531,7 +531,13 @@ void IOHomeControlComponent::queue_due_catchup_reads_() {
   const std::vector<std::string> devices = this->registry_.all_linked_devices();
   ESP_LOGD(TAG, "No exchange for %" PRIu32 " ms after linked-remote activity: reading %zu linked device(s)",
            this->tuning_.remote_activity_catchup_poll_ms, devices.size());
-  this->schedule_device_polls_(devices, 0);
+  // One ordinary status read each, no follow-up window: a missed press may have set a device moving,
+  // so the read treats its state as unknown and leads with the short attempt a moving receiver hears;
+  // an answer that says moving opens the follow-up window by itself (follow_moving_report()).
+  for (const std::string &device_id : devices) {
+    this->poll_policy_.mark_state_unknown(device_id);
+    this->queue_request_device_status(device_id);
+  }
 }
 
 void IOHomeControlComponent::queue_due_periodic_polls_() {

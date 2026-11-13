@@ -288,8 +288,8 @@ poll after a `stop`, the poll that confirms a cover that stopped short of its ta
 about 5, 15 and 30 seconds after a miss, and a one-off or refresh read. Such a read repeats without
 a gap, as many times as fit (nine for a mains-powered cover at the default budget, never more than
 nine; three for a `low_power` device, plus one short attempt when the hub has no recent news of
-it, see [`low_power_wake_belief`](#low_power_wake_belief)), the early attempts listening
-[`exchange_early_response_wait_ms`](#exchange_early_response_wait_ms). A command that is harmless to
+it or the read is a catch-up read, see [`low_power_wake_belief`](#low_power_wake_belief)), the
+early attempts listening [`exchange_early_response_wait_ms`](#exchange_early_response_wait_ms). A command that is harmless to
 repeat (a position, open, close, `stop`) is sent again the same way to a mains-powered device. If
 every attempt is lost, the request blocks the hub for up to about 2.2 s, and a `stop` pressed
 meanwhile waits behind a read. The reads during a move
@@ -476,9 +476,12 @@ exchange accordingly:
 A read that decides where a cover ended up (described below), sent to a `low_power` cover that has
 sent no status for 2 minutes and is not believed moving, cannot tell which of the two it will meet:
 after a reboot, a refresh read or a read after overheard traffic, the cover may be travelling or at
-rest. That read makes one extra attempt first, with the short preamble and a 100 ms listen, and
-then the three wake-up attempts, so it reaches a moving cover and a resting one alike. A silent
-short attempt changes nothing the hub believes. At the default timing the four attempts fit
+rest. Neither can the catch-up read after linked-remote activity
+([`remote_activity_catchup_poll_ms`](#remote_activity_catchup_poll_ms)), even when the cover
+reported a moment ago, because a press the hub missed may have set it moving. Such a read makes
+one extra attempt first, with the short preamble and a 100 ms listen, and then the three wake-up
+attempts, so it reaches a moving cover and a resting one alike. A silent short attempt changes
+nothing the hub believes. At the default timing the four attempts fit
 [`exchange_total_budget_ms`](#exchange_total_budget_ms); with a tighter one the read may run past
 it by the cost of the short attempt, about 0.12 s, and no more
 ([ADR 0079](../adr/0079-a-cover-is-followed-by-its-execution-state.md)). Experimental: no bench run
@@ -546,7 +549,7 @@ hub transmit through that.
 The radio cannot listen while the hub transmits, so a press that starts during one of the hub's
 own polls is lost (see [When a press is missed](remotes.md#when-a-press-is-missed)). These two
 parameters change what the hub does after a press on a remote in a device's `linked_remotes`
-([ADR 0069](../adr/0069-linked-remote-activity-is-followed-by-an-opt-in-catch-up-read.md)). Their
+([ADR 0080](../adr/0080-linked-remote-activity-is-followed-by-an-opt-in-catch-up-read.md)). Their
 defaults keep the behaviour without them.
 
 #### `remote_activity_poll_delay_ms`
@@ -566,18 +569,23 @@ someone is at the remotes and needs fewer exchanges, at the cost of a later posi
 Off at `0`, the default. Otherwise a linked-remote press opens a burst, and every exchange the hub
 runs while it is open moves its catch-up out to this many milliseconds after that exchange. When
 the catch-up is due, the hub reads every device with `linked_remotes`, by remote id or by
-`class:`, once, and the burst closes. A read the device does not answer is retried like a
-follow-up poll within the device's follow-up window, so a cover that a missed press set moving is
-read again once it rests.
+`class:`, once, and the burst closes. A cover that a missed press set moving answers "moving", and
+the hub then follows it to rest as after any command. A read the device does not answer is not
+repeated until the next burst.
+
+The hub cannot know whether a missed press set a `low_power` cover moving, so the catch-up read
+treats its state as unknown even when it reported a moment ago: it sends one short attempt, which
+a moving cover hears, then the wake-up attempts a resting one hears (see
+[`low_power_wake_belief`](#low_power_wake_belief)). This part has not run on hardware yet.
 
 *Observations:* it costs one read per linked device per burst, and nothing while nobody touches a
 remote. That suits `low_power` covers, where
 [`status_refresh_interval`](cover.md#refreshing-the-status-at-rest) wakes the motor at every
-interval. A value longer than the covers' travel time avoids the retries: a moving VELUX solar
-screen answered none of the reads sent to it in
-[issue #209](https://github.com/laberning/home_io_control/issues/209). A press the hub missed
-without hearing any other press before it opens no burst, so `status_refresh_interval` remains the
-answer for that.
+interval. A few seconds, `5000` to `10000`, catch a cover while it still moves, so Home Assistant
+shows the move as it happens; a value longer than the covers' travel time reads them once at rest
+instead. A press the hub missed without hearing any other press before it opens no burst, so
+`status_refresh_interval` remains the answer for that
+([issue #209](https://github.com/laberning/home_io_control/issues/209)).
 
 ### Pairing protocol — in detail
 

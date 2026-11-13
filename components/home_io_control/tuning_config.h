@@ -330,7 +330,7 @@ struct TuningConfig {
       RESPONSE_WAIT_MS};  ///< Reply window for continuation frames and the post-auth final response.
   uint16_t exchange_total_budget_ms{EXCHANGE_TOTAL_BUDGET_MS};  ///< Ceiling on one whole exchange, retries included.
 
-  // --- Polls after a linked-remote press (ADR 0069) ---
+  // --- Polls after a linked-remote press (ADR 0080) ---
   // The radio is deaf while the hub polls, so a press that starts during one of its polls is missed.
   uint32_t remote_activity_poll_delay_ms{
       REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS};    ///< Delay from a linked-remote press (not a STOP) to the

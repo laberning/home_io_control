@@ -1,5 +1,5 @@
 /// @file hub_remote_activity_catchup_test.cpp
-/// @brief Tests for the polls after a linked-remote press (ADR 0069): the configurable delay before
+/// @brief Tests for the polls after a linked-remote press (ADR 0080): the configurable delay before
 ///        the first poll, and the opt-in catch-up read of every linked device after the burst.
 ///
 /// The radio is deaf while the hub polls, so a press on another remote during those polls is
@@ -33,6 +33,7 @@ class TestableCatchupComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::initialized_;
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::op_queue_;
+  using IOHomeControlComponent::poll_policy_;
   using IOHomeControlComponent::process_pending_operation_;
   using IOHomeControlComponent::process_received_packet_;
   using IOHomeControlComponent::radio_;
@@ -77,11 +78,21 @@ class RemoteActivityCatchupHub : public ::testing::Test {
 
   /// A 0x04 reply from @p node_id (PRESSED_DEVICE by default): at rest, fully closed.
   IoFrame status_reply(const uint8_t *node_id = PRESSED_DEVICE_NODE_ID) const {
+    const uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+    return reply_with(node_id, payload);
+  }
+
+  /// A 0x04 reply from @p node_id: executing (state 4), closing from open, 20 s left.
+  IoFrame moving_reply(const uint8_t *node_id = PRESSED_DEVICE_NODE_ID) const {
+    const uint8_t payload[8] = {0x04, 0x00, 0xC8, 0x00, 0x00, 0x00, 0x00, 0x14};
+    return reply_with(node_id, payload);
+  }
+
+  IoFrame reply_with(const uint8_t *node_id, const uint8_t (&payload)[8]) const {
     IoFrame frame{};
     init_frame(frame, true, false, true, false);
     set_dst(frame, comp.node_id_);
     set_src(frame, node_id);
-    const uint8_t payload[8] = {STATUS_STOPPED, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
     EXPECT_TRUE(set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload)));
     return frame;
   }
@@ -163,7 +174,7 @@ TEST_F(RemoteActivityCatchupHub, TheCatchupIsOffByDefault) {
   EXPECT_TRUE(queued_status_reads().empty());
 }
 
-TEST_F(RemoteActivityCatchupHub, ACatchupReadTheDeviceDoesNotAnswerIsRetried) {
+TEST_F(RemoteActivityCatchupHub, AnUnansweredCatchupReadOpensNoFollowUpWindow) {
   esphome::test_clock::ManualClock clock;
   comp.tuning_.remote_activity_catchup_poll_ms = CATCHUP_MS;
 
@@ -171,15 +182,69 @@ TEST_F(RemoteActivityCatchupHub, ACatchupReadTheDeviceDoesNotAnswerIsRetried) {
   const uint32_t ended = run_answered_first_poll();
   loop_at(ended + CATCHUP_MS);
   ASSERT_EQ(comp.op_queue_.size(), 3u);
-  // Nothing queued on the radio: none of the three reads is answered, as when a missed press has
-  // set the screens moving and they ignore reads until they rest.
+  // Nothing queued on the radio: none of the three reads is answered.
   for (int i = 0; i < 3; i++)
     comp.process_pending_operation_();
   const uint32_t missed = esphome::millis();
 
+  for (const char *id : {PRESSED_DEVICE, OTHER_DEVICE, CLASS_DEVICE})
+    EXPECT_FALSE(comp.poll_policy_.is_tracking_active(id, missed)) << id << ": a catch-up read is a one-off read";
   loop_at(missed + STATUS_RETRY_AFTER_FAIL_MS);
-  EXPECT_EQ(queued_status_reads(), std::vector<std::string>{PRESSED_DEVICE})
-      << "the first unanswered read is retried on the backoff ladder rather than dropped";
+  EXPECT_TRUE(queued_status_reads().empty()) << "its attempts are its retry; no ladder follows it";
+}
+
+TEST_F(RemoteActivityCatchupHub, AMovingAnswerToACatchupReadIsFollowed) {
+  esphome::test_clock::ManualClock clock;
+  comp.tuning_.remote_activity_catchup_poll_ms = CATCHUP_MS;
+
+  press_linked_remote();
+  const uint32_t ended = run_answered_first_poll();
+  loop_at(ended + CATCHUP_MS);
+  ASSERT_EQ(comp.op_queue_.size(), 3u);
+  // OTHER_DEVICE was set moving by a press the hub missed; it answers "executing".
+  for (const uint8_t *node_id : {PRESSED_DEVICE_NODE_ID, OTHER_DEVICE_NODE_ID, CLASS_DEVICE_NODE_ID}) {
+    const bool moving = node_id == OTHER_DEVICE_NODE_ID;
+    radio.queue_rx(test::make_rx_packet(moving ? moving_reply(node_id) : status_reply(node_id)));
+    comp.process_pending_operation_();
+  }
+
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active(OTHER_DEVICE, esphome::millis()))
+      << "a moving answer opens the follow-up window by itself";
+  EXPECT_FALSE(comp.poll_policy_.is_tracking_active(PRESSED_DEVICE, esphome::millis()));
+}
+
+TEST_F(RemoteActivityCatchupHub, ACatchupReadLeadsShortToALowPowerDeviceThatJustReportedStopped) {
+  // The #209 case: a solar screen answered "stopped" moments ago, then a press the hub missed set it
+  // moving. A moving screen ignores the wake-up preamble, so the catch-up read leads short.
+  esphome::test_clock::ManualClock clock;
+  comp.tuning_.remote_activity_catchup_poll_ms = CATCHUP_MS;
+  comp.get_device(PRESSED_DEVICE)->low_power = true;
+
+  press_linked_remote();
+  const uint32_t ended = run_answered_first_poll();  // the "stopped" report, CATCHUP_MS before the read
+  loop_at(ended + CATCHUP_MS);
+  const size_t sent_before = radio.get_tx_configs().size();
+  comp.process_pending_operation_();  // PRESSED_DEVICE sorts first
+
+  ASSERT_GT(radio.get_tx_configs().size(), sent_before + 1);
+  EXPECT_EQ(radio.get_tx_configs()[sent_before].preamble_len, comp.tuning_.normal_start_preamble)
+      << "the short lead a moving receiver hears";
+  EXPECT_EQ(radio.get_tx_configs()[sent_before + 1].preamble_len, comp.tuning_.low_power_wake_preamble)
+      << "then the wake-up attempts a resting one hears";
+}
+
+TEST_F(RemoteActivityCatchupHub, TheStateUnknownMarkIsConsumedByTheCatchupRead) {
+  esphome::test_clock::ManualClock clock;
+  comp.tuning_.remote_activity_catchup_poll_ms = CATCHUP_MS;
+
+  press_linked_remote();
+  const uint32_t ended = run_answered_first_poll();
+  loop_at(ended + CATCHUP_MS);
+  while (!comp.op_queue_.empty())
+    comp.process_pending_operation_();
+
+  for (const char *id : {PRESSED_DEVICE, OTHER_DEVICE, CLASS_DEVICE})
+    EXPECT_FALSE(comp.poll_policy_.take_state_unknown(id)) << id << ": a later read is an ordinary one";
 }
 
 TEST_F(RemoteActivityCatchupHub, TheCatchupReadsDoNotStartAnotherCatchup) {

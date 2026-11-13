@@ -70,7 +70,7 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
     {"exchange_total_budget_ms", [](const TuningConfig &t) { return static_cast<float>(t.exchange_total_budget_ms); },
      [](TuningConfig &t, float v) { t.exchange_total_budget_ms = static_cast<uint16_t>(v); }, false},
     // false: read straight out of TuningConfig by the hub when a linked remote is heard and when an
-    // operation ends (ADR 0069), never applied to a radio driver.
+    // operation ends (ADR 0080), never applied to a radio driver.
     {"remote_activity_poll_delay_ms",
      [](const TuningConfig &t) { return static_cast<float>(t.remote_activity_poll_delay_ms); },
      [](TuningConfig &t, float v) { t.remote_activity_poll_delay_ms = static_cast<uint32_t>(v); }, false},

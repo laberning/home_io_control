@@ -44,7 +44,7 @@ CONF_EXCHANGE_EARLY_RESPONSE_WAIT_MS = "exchange_early_response_wait_ms"
 CONF_EXCHANGE_RESPONSE_WAIT_MS = "exchange_response_wait_ms"
 CONF_EXCHANGE_TOTAL_BUDGET_MS = "exchange_total_budget_ms"
 
-# --- Polls after a linked-remote press (ADR 0069) ---
+# --- Polls after a linked-remote press (ADR 0080) ---
 CONF_REMOTE_ACTIVITY_POLL_DELAY_MS = "remote_activity_poll_delay_ms"
 CONF_REMOTE_ACTIVITY_CATCHUP_POLL_MS = "remote_activity_catchup_poll_ms"
 

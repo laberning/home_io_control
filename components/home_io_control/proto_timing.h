@@ -276,7 +276,7 @@ static constexpr uint8_t SCHEDULED_POLL_RETRY_GRACE_LAST_FAILURE = 3;
 
 /// Delay before polling after overheard remote traffic: another controller's frame to a registered
 /// device, and, by default, a linked-remote press (its `remote_activity_poll_delay_ms` tuning
-/// default; ADR 0069).
+/// default; ADR 0080).
 static constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS = 2000;
 
 /// Wall-clock ceiling on one whole exchange, retries included.

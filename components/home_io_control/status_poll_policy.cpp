@@ -37,6 +37,7 @@ uint32_t StatusPollPolicy::get_interval(const std::string &device_id) const {
 }
 
 void StatusPollPolicy::begin_tracking(const std::string &device_id, uint32_t initial_delay_ms, uint32_t now) {
+  state_unknown_.erase(device_id);
   PollTracking &t = tracking_[device_id];
   t.poll_deadline = now + MAX_TRACKED_STATUS_POLL_WINDOW_MS;
   t.next_update = (initial_delay_ms == 0) ? 0 : (now + initial_delay_ms);
@@ -49,6 +50,7 @@ void StatusPollPolicy::begin_tracking(const std::string &device_id, uint32_t ini
 }
 
 void StatusPollPolicy::clear(const std::string &device_id) {
+  state_unknown_.erase(device_id);
   auto it = tracking_.find(device_id);
   if (it == tracking_.end())
     return;
@@ -382,6 +384,10 @@ void StatusPollPolicy::on_exchange_ended(uint32_t now, uint32_t delay_ms) {
   }
   catchup_due_ms_ = stamp(now + delay_ms);
 }
+
+void StatusPollPolicy::mark_state_unknown(const std::string &device_id) { state_unknown_.insert(device_id); }
+
+bool StatusPollPolicy::take_state_unknown(const std::string &device_id) { return state_unknown_.erase(device_id) != 0; }
 
 bool StatusPollPolicy::take_due_catchup(uint32_t now) {
   // Wrap-safe: before the due time `now - due` is a huge unsigned value (a negative distance).

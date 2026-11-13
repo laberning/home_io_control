@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -381,7 +382,7 @@ class StatusPollPolicy {
   /// build — is not "ran out" and is never returned. Returns nullopt when there is none.
   [[nodiscard]] std::optional<std::string> pop_ended_device();
 
-  // --- Catch-up read after linked-remote activity (ADR 0069) ---
+  // --- Catch-up read after linked-remote activity (ADR 0080) ---
   /// A linked remote was heard: open a burst, or keep the open one. Only the exchanges that end
   /// while it is open set its due time (on_exchange_ended()), so a burst during which the hub never
   /// used the radio never comes due.
@@ -393,11 +394,19 @@ class StatusPollPolicy {
   /// True once when the open burst's catch-up is due at @p now. The burst is closed first, so the
   /// catch-up's own reads, which are exchanges too, do not reopen it. Wrap-safe across a millis() rollover.
   [[nodiscard]] bool take_due_catchup(uint32_t now);
+  /// Mark the device's next status read as a catch-up read: a press the hub missed may have set it
+  /// moving since its last report, so the read treats its state as unknown
+  /// (decisions::AttemptRequest::with_state_unknown()). Needs no tracked device; begin_tracking() and
+  /// clear() drop the mark, since heard activity or a report is news again.
+  void mark_state_unknown(const std::string &device_id);
+  /// Consume the mark set by mark_state_unknown(): true once, for the status read dispatched after it.
+  [[nodiscard]] bool take_state_unknown(const std::string &device_id);
 
  private:
   std::map<std::string, PollTracking> tracking_;
   bool catchup_burst_open_{false};  ///< A linked remote was heard and its catch-up has not run yet.
   uint32_t catchup_due_ms_{0};      ///< When the open burst's catch-up is due; 0 = no exchange has ended in it yet.
+  std::set<std::string> state_unknown_;            ///< Devices whose next status read is a catch-up read.
   std::map<std::string, ForeignTraffic> foreign_;  ///< Overheard-traffic state, outside the tracking lifecycle.
   std::vector<std::string> ended_;  ///< Devices whose window ran out, for pop_ended_device(); no duplicates.
 
