@@ -51,6 +51,8 @@
 #include "oneway_controller.h"
 #include "oneway_transmitter.h"
 #include "oneway_key_adoption.h"
+#include "oneway_receiver.h"
+#include "device_event_log.h"
 // lr1121_firmware_update_controller.h forward-declares FlashDecision / BootloaderUpgradePath /
 // Lr1121FirmwareUpdater so lr1121_firmware_decisions.h and radio_lr1121_firmware_updater.h are
 // NOT pulled into hub_core.h — that header weight stays in the collaborator's .cpp alone.
@@ -107,7 +109,7 @@ class IOHomeControlComponent : public Component,
   IOHomeControlComponent()
       : exchange_engine_(&radio_, node_id_, system_key_, &tuning_),
         pairing_engine_(&radio_, node_id_, system_key_, &tuning_, exchange_engine_, registry_, pairing_telemetry_,
-                        recent_oneway_pairing_sighting_),
+                        oneway_receiver_.recent_pairing_sighting()),
         management_actions_(node_id_, system_key_, &tuning_, exchange_engine_, registry_, &initialized_, this),
         heater_controller_(node_id_, &initialized_, &radio_, registry_, poll_policy_, exchange_engine_,
                            this->make_heater_controller_hub_()),
@@ -324,7 +326,7 @@ class IOHomeControlComponent : public Component,
   /// also linked to a device via `add_linked_remote`. Empty by default — a sender must be explicitly
   /// opted in.
   /// @param sender_id Node ID of the 1W sender (remote or sensor).
-  void add_exposed_sender(const std::string &sender_id) { this->exposed_senders_.push_back(sender_id); }
+  void add_exposed_sender(const std::string &sender_id) { this->oneway_receiver_.add_exposed_sender(sender_id); }
 
   /// Register a configured 1W controller identity (see oneway_controller.h). Called once per
   /// `oneway_controllers:` entry from generated code. Both the source address and the key are
@@ -420,13 +422,13 @@ class IOHomeControlComponent : public Component,
   /// @param cb Callable with no arguments.
   void set_pairing_result_callback(std::function<void()> cb) { this->pairing_result_callback_ = std::move(cb); }
 
-  /// @return How many device events record_device_event_() has recorded since boot.
-  [[nodiscard]] uint32_t device_event_count() const { return this->device_event_count_; }
+  /// @return How many device events the DeviceEventLog has recorded since boot.
+  [[nodiscard]] uint32_t device_event_count() const { return this->device_event_log_.count(); }
 
   /// @return The most recent device event rendered as `#<n> t=<uptime s> <SRC> <cmd> <payload hex>`,
   /// or an empty string before the first one. The counter makes a repeated identical report a new
   /// value, which Home Assistant's history needs (it records state changes only).
-  [[nodiscard]] const std::string &last_device_event() const { return this->last_device_event_; }
+  [[nodiscard]] const std::string &last_device_event() const { return this->device_event_log_.last(); }
 
   /// Record a diagnostic probe's reply on the "Last Device Event" sensor when it is a device event
   /// report (decisions::is_device_event_report()), such as the event a `subscribe_event` probe draws
@@ -438,7 +440,7 @@ class IOHomeControlComponent : public Component,
   /// Register a callback invoked after every recorded device event, used by the "Last Device Event"
   /// text sensor. Single-slot, mirrors set_pairing_result_callback().
   /// @param cb Callable with no arguments.
-  void set_device_event_callback(std::function<void()> cb) { this->device_event_callback_ = std::move(cb); }
+  void set_device_event_callback(std::function<void()> cb) { this->device_event_log_.set_callback(std::move(cb)); }
 
   /// @brief Arm or disarm the "Recover System Key" (key extraction) responder.
   ///
@@ -912,6 +914,13 @@ class IOHomeControlComponent : public Component,
   /// @param packet Raw radio packet containing a parsed IoFrame.
   void process_received_packet_(const RadioRxPacket &packet);
 
+  /// The 1W branch of process_received_packet_(): note the frame in the OneWayReceiver, decode it, let key
+  /// adoption observe it, drop a repeat of the previous press, then log it, fire the sender event and
+  /// follow a linked remote's press. That order is load-bearing: activity and pairing gestures count
+  /// repeats, and key adoption sees every frame before the duplicate filter.
+  /// @param frame Parsed frame with the CTRL0 1W bit set.
+  void handle_oneway_frame_(const IoFrame &frame);
+
   /// Handle an authenticated CMD_STATUS_UPDATE from a registered device: a device event report
   /// (decisions::is_device_event_report()) is recorded, any other 0x71 is applied as a position update.
   /// @param id The device's node ID string.
@@ -919,23 +928,24 @@ class IOHomeControlComponent : public Component,
   /// @param frame The status update.
   void apply_status_update_(const std::string &id, IoDevice &dev, const IoFrame &frame);
 
-  /// Record @p frame as a device event when it qualifies: its source is a registered device and it is
-  /// either a device event report (decisions::is_device_event_report()), or any frame that reached
-  /// the unhandled-command fallback while `diagnostic_probes` is on.
+  /// Record @p frame as a device event when decisions::should_record_device_event() says it
+  /// qualifies. The receive path's single decision point; the exchange paths record a device event
+  /// report they took off the air through record_device_event_() directly.
   /// @param frame The received frame.
   /// @param reached_unhandled_fallback True from the fallback after every other handler declined.
   /// @return true when the frame was recorded.
   bool record_if_device_event_(const IoFrame &frame, bool reached_unhandled_fallback);
 
   /// Record a device event report, or a frame from a registered device that nothing else here
-  /// handles: log it raw, count it, and publish it on the "Last Device Event" sensor. The recording
-  /// never answers the frame and never applies it to the device record, whatever it claims to carry
-  /// (ADR 0022, ADR 0060). The one acknowledgement is the ordinary one: a CMD_STATUS_UPDATE addressed
-  /// to this hub is authenticated and acknowledged with CMD_STATUS_UPDATE_RESP before it gets here,
-  /// whatever event it carries. Logs at INFO with `diagnostic_probes: true` and at DEBUG otherwise, since a
-  /// subscription outlives the build that made it and must not fill a normal build's log.
+  /// handles, in the DeviceEventLog; INFO with `diagnostic_probes: true`, DEBUG otherwise. The
+  /// recording never answers the frame and never applies it to the device record, whatever it claims
+  /// to carry (ADR 0022, ADR 0060). The one acknowledgement is the ordinary one: a CMD_STATUS_UPDATE
+  /// addressed to this hub is authenticated and acknowledged with CMD_STATUS_UPDATE_RESP before it
+  /// gets here, whatever event it carries.
   /// @param frame The received frame; its source is a registered device.
-  void record_device_event_(const IoFrame &frame);
+  void record_device_event_(const IoFrame &frame) {
+    this->device_event_log_.record(frame, this->diagnostic_probes_enabled_);
+  }
 
   /// True while the key-extraction responder is mid-attempt and still within its bounded listen
   /// window. Thin forwarder to KeyExtractionResponder::awaiting_reply() (key_extraction_responder.h)
@@ -964,28 +974,6 @@ class IOHomeControlComponent : public Component,
   /// The device just reported its status: move its status refresh (if it has one) a whole interval out.
   /// @param device_id Device that reported.
   void note_status_reported_(const std::string &device_id);
-  /// Record that a 1W frame just went out on the radio — ours or someone else's — updating
-  /// last_1w_activity_ms_ and — when this frame starts a new burst (see
-  /// decisions::oneway_burst_started_fresh()) — first_1w_activity_ms_.
-  ///
-  /// Called both from process_received_packet_() for an overheard remote's frame and from
-  /// execute_oneway_command_()/execute_oneway_position_() (hub_operations.cpp) for a frame this
-  /// hub just transmitted itself. That second case is deliberate, not a misuse of a receive-path
-  /// hook: our own burst should defer background polls exactly like a remote's does, because it
-  /// puts the same 1W traffic on the same shared channel the polls would otherwise use, and the
-  /// devices it targets need the same settling time either way.
-  /// @param now millis() at which this frame was seen or sent.
-  void record_1w_activity_(uint32_t now);
-  /// If `frame` matches a 1W remote's pairing gesture (decisions::is_one_way_pairing_gesture()),
-  /// remember it (src/dst/cmd plus the radio's last-capture RSSI) in
-  /// recent_oneway_pairing_sighting_ so a fresh discover_and_pair() attempt can seed its telemetry
-  /// with it — see RecentOneWayPairingSighting's doc comment (issue #27/#65). A no-op for any
-  /// other frame. Called from process_received_packet_()'s 1W-frame path, unconditionally (before
-  /// the burst-dedup check, like record_1w_activity_()) so a repeated gesture frame still
-  /// refreshes the timestamp (and RSSI).
-  /// @param frame Parsed 1W frame (CTRL0 1W bit already confirmed set by the caller).
-  /// @param now millis() at which this frame was seen.
-  void record_oneway_pairing_gesture_(const IoFrame &frame, uint32_t now);
   /// Schedule a delayed status poll for a registered device using the Component timeout API.
   /// @param device_id ID of the device to poll.
   /// @param delay_ms Delay in milliseconds before polling.
@@ -1018,21 +1006,17 @@ class IOHomeControlComponent : public Component,
   void schedule_device_polls_(const std::vector<std::string> &device_ids, uint32_t delay_ms);
   /// Whether loop() should skip dispatching the queue this iteration because the pending work is a
   /// background poll and either a 1W remote transmitted very recently, or a key-extraction attempt
-  /// is mid-flight. Thin wrapper binding the component's state to
-  /// decisions::defer_background_poll_for_1w_activity(), plus a second, independent yield condition:
-  /// a background poll is a blocking exchange that owns the radio for 1-3 s, and dispatching one
-  /// while the key-extraction responder is listening for its peer's next frame (an expected
-  /// CMD_KEY_TRANSFER (0x32), say) would swallow it — see listen_for_key_extraction_peer_() for the
-  /// other half of that listen. Only background polls yield here, same as the 1W rule: a user
-  /// command must never wait on either kind of background activity.
+  /// is mid-flight. Thin wrapper binding OneWayReceiver::defers_background_poll(), plus a second, independent yield
+  /// condition: a background poll is a blocking exchange that owns the radio for 1-3 s, and dispatching one while the
+  /// key-extraction responder is listening for its peer's next frame (an expected CMD_KEY_TRANSFER (0x32), say) would
+  /// swallow it — see listen_for_key_extraction_peer_() for the other half of that listen. Only background polls yield
+  /// here, same as the 1W rule: a user command must never wait on either kind of background activity.
   [[nodiscard]] bool defer_background_poll_() const {
     const bool next_op_is_background =
         !this->op_queue_.empty() && OperationQueue::is_background_op(this->op_queue_.front().type);
     if (next_op_is_background && this->key_extraction_awaiting_reply_())
       return true;
-    return decisions::defer_background_poll_for_1w_activity(next_op_is_background, this->first_1w_activity_ms_,
-                                                            this->last_1w_activity_ms_, millis(),
-                                                            ONEWAY_QUIET_PERIOD_MS, ONEWAY_POLL_DEFER_CAP_MS);
+    return this->oneway_receiver_.defers_background_poll(next_op_is_background, millis());
   }
   /// Decide, and act on, what a frame of another controller means for one registered device: a
   /// heard write, or a device challenge that follows no heard read, arms a tracked poll; any other
@@ -1254,7 +1238,7 @@ class IOHomeControlComponent : public Component,
     this->busy_ = true;
     send();
     this->busy_ = false;
-    this->record_1w_activity_(millis());
+    this->oneway_receiver_.note_activity(millis());
   }
   /// Send a queued 1W named command. Unlike its 2W sibling this returns nothing: there is no
   /// acknowledgement to report, and success here would only mean "bytes left the radio".
@@ -1423,15 +1407,10 @@ class IOHomeControlComponent : public Component,
   bool radio_test_mode_{false};  ///< When true, loop() is suspended for loopback testing.
   TuningConfig tuning_{};        ///< Runtime tuning overrides.
   DeviceRegistry registry_;
-  /// 1W sender node IDs (remotes or sensors) allowed to fire the sender HA event
-  /// (`add_exposed_sender`). Config-time list (populated once from YAML), not a per-frame allocation.
-  std::vector<std::string> exposed_senders_;
   /// Invoked once after every pairing attempt completes; see set_pairing_result_callback().
   std::function<void()> pairing_result_callback_;
-  /// Device events recorded since boot, the last one's text and its subscriber; see record_device_event_().
-  uint32_t device_event_count_{0};
-  std::string last_device_event_;
-  std::function<void()> device_event_callback_;
+  /// Device events recorded since boot, the last one's text and its subscriber.
+  DeviceEventLog device_event_log_;
   /// Whether diagnostic probes (DiagnosticProbes::probe_device()/probe_sweep()) are enabled.
   /// False by default so a build that didn't opt in via `diagnostic_probes: true` never sends an
   /// undecoded probe opcode. See set_diagnostic_probes_enabled().
@@ -1445,12 +1424,10 @@ class IOHomeControlComponent : public Component,
   /// Per-attempt pairing telemetry. PairingEngine records into it and, during an attempt, attaches it
   /// to ExchangeEngine as its TransmitObserver.
   PairingTelemetry pairing_telemetry_;
-  /// Most recent 1W pairing-gesture frame seen on the hub's normal passive RX path (e.g. a PROG
-  /// press's WRITE_PRIVATE/1W-remove/discover-alt broadcast), remembered so PairingEngine can seed
-  /// a fresh discover_and_pair() attempt's telemetry with it — see record_oneway_pairing_gesture_()
-  /// and RecentOneWayPairingSighting's doc comment (issue #27/#65). Declared before pairing_engine_,
-  /// which holds a reference to it, so member-init order matches the initializer list.
-  RecentOneWayPairingSighting recent_oneway_pairing_sighting_{};
+  /// Receive-side state of overheard 1W frames: burst window, duplicate filter, pairing-gesture sighting
+  /// and sender allowlist. Declared before pairing_engine_, which holds a reference to its sighting, so
+  /// member-init order matches the initializer list.
+  OneWayReceiver oneway_receiver_;
   ExchangeEngine exchange_engine_;        ///< Owns all authenticated exchange and LBT/hop logic.
   PairingEngine pairing_engine_;          ///< Owns the three-phase device pairing flow.
   ManagementActions management_actions_;  ///< Owns rename, identify, force-open, scan_paired_devices, and other
@@ -1484,19 +1461,6 @@ class IOHomeControlComponent : public Component,
 #endif
   /// Subscribers to the per-command 1W report; one per "Last 1W Command" sensor.
   std::vector<OneWayCommandReportFn> oneway_report_callbacks_;
-
-  /// Identity of the last processed 1W frame, for burst suppression; see
-  /// decisions::is_duplicate_1w_frame() for why the intent bytes are part of the key.
-  decisions::OneWayDedupState last_1w_logged_{};
-  /// millis() of the most recent 1W frame of any kind, including ones dropped as duplicates —
-  /// a repeat still means the remote is transmitting. 0 until the first is seen. Gates background
-  /// polls in loop(); see decisions::defer_background_poll_for_1w_activity().
-  uint32_t last_1w_activity_ms_{0};
-  /// millis() of the first 1W frame in the current burst. Advances to the new frame's timestamp
-  /// whenever the gap since last_1w_activity_ms_ reaches ONEWAY_QUIET_PERIOD_MS (the previous burst
-  /// has already released any deferred poll, so this one starts fresh); otherwise holds at the
-  /// burst's start. Bounds defer_background_poll_() via ONEWAY_POLL_DEFER_CAP_MS.
-  uint32_t first_1w_activity_ms_{0};
 };
 
 // ----------------------------------------------------------------------------

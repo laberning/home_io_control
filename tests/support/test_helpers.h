@@ -151,8 +151,7 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::authenticate_request_;
   using IOHomeControlComponent::api_rename_device_;
   using IOHomeControlComponent::register_management_actions_;
-  using IOHomeControlComponent::last_1w_activity_ms_;
-  using IOHomeControlComponent::first_1w_activity_ms_;
+  using IOHomeControlComponent::oneway_receiver_;
   using IOHomeControlComponent::defer_background_poll_;
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
   // The LR1121 feature moved to the Lr1121FirmwareUpdateController collaborator (F5). Its state
@@ -178,7 +177,7 @@ class RxTestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::op_queue_;
   using IOHomeControlComponent::poll_policy_;
-  using IOHomeControlComponent::last_1w_activity_ms_;
+  using IOHomeControlComponent::oneway_receiver_;
 };
 
 /// Build a RadioRxPacket from a constructed IoFrame.

@@ -313,7 +313,7 @@ static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 ///
 /// The resulting burst duration — see ONEWAY_BURST_INTERVAL_MS's own comment and send_burst()'s
 /// doxygen (oneway_transmitter.h) for what it decomposes into per power class — is what
-/// ONEWAY_QUIET_PERIOD_MS (status_poll_policy.h) is sized against when it holds background polls
+/// ONEWAY_QUIET_PERIOD_MS (oneway_receiver.h) is sized against when it holds background polls
 /// back during 1W activity.
 static constexpr uint8_t ONEWAY_BURST_REPEATS = 4;  ///< Copies of each 1W command sent per press.
 /// Gap between those copies. Three gaps between four copies is 3 * 40 = 120 ms of pure *delay*,

@@ -70,7 +70,7 @@ inline constexpr uint32_t PAIRING_KEY_PULL_REPLY_TIMEOUT_MS = PAIRING_KEY_CONFIR
 /// to still count as evidence for this attempt. Generous relative to the doc's "a few seconds"
 /// PROG-then-press guidance: real field reports (issue #27) show gaps up to ~4-7 s between the
 /// PROG gesture and pressing "Discover & Pair" in the app, so a tight window would reintroduce
-/// the same miss it's meant to fix. Not tied to ONEWAY_QUIET_PERIOD_MS (status_poll_policy.h,
+/// the same miss it's meant to fix. Not tied to ONEWAY_QUIET_PERIOD_MS (oneway_receiver.h,
 /// 700 ms) — that constant is about collapsing one remote's repeat burst, a different, much
 /// shorter timescale than "how long ago did the user press PROG."
 inline constexpr uint32_t PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS = 15000;

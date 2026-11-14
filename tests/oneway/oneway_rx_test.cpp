@@ -106,22 +106,6 @@ TEST(OnewayRx, BuildEventData_StopIntent) {
 }
 
 // ============================================================================
-// is_exposed_sender() — the exposed_senders allowlist check
-// ============================================================================
-
-TEST(OnewayRx, IsExposedSender_EmptyAllowlistRejectsEverything) {
-  const std::vector<std::string> exposed_senders;
-  EXPECT_FALSE(detail::is_exposed_sender(exposed_senders, "AABBCC"));
-}
-
-TEST(OnewayRx, IsExposedSender_MatchesOnlyListedIds) {
-  const std::vector<std::string> exposed_senders{"AABBCC", "9D6085"};
-  EXPECT_TRUE(detail::is_exposed_sender(exposed_senders, "AABBCC"));
-  EXPECT_TRUE(detail::is_exposed_sender(exposed_senders, "9D6085"));
-  EXPECT_FALSE(detail::is_exposed_sender(exposed_senders, "112233"));
-}
-
-// ============================================================================
 // End-to-end: process_received_packet_() -> fire_homeassistant_event()
 // ============================================================================
 

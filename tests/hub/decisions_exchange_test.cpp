@@ -190,3 +190,31 @@ TEST(Decisions, BroadcastReplyIgnoresTheSource) {
   EXPECT_TRUE(decisions::is_broadcast_reply_for(from_b, CMD_DISCOVER_SPE_RESP, OWN_ID))
       << "any device in range may answer; which ones did is the point of the roll-call";
 }
+
+// ============================================================================
+// should_record_device_event(): the one rule for the "Last Device Event" sensor
+// ============================================================================
+
+TEST(Decisions, ADeviceEventReportFromARegisteredDeviceIsAlwaysRecorded) {
+  const IoFrame report = subscription_answer(EVENT_LOCAL_SENSOR);
+  ASSERT_TRUE(decisions::is_device_event_report(report));
+
+  EXPECT_TRUE(decisions::should_record_device_event(report, /*source_is_registered=*/true,
+                                                    /*reached_unhandled_fallback=*/false, /*probes_enabled=*/false));
+}
+
+TEST(Decisions, NothingFromAnUnregisteredSourceIsRecorded) {
+  const IoFrame report = subscription_answer(EVENT_LOCAL_SENSOR);
+
+  EXPECT_FALSE(decisions::should_record_device_event(report, false, false, false));
+  EXPECT_FALSE(decisions::should_record_device_event(report, false, true, true));
+}
+
+TEST(Decisions, AnUnhandledFrameIsRecordedOnlyFromTheFallbackWithProbesOn) {
+  const IoFrame other = make_frame(DST_ID, OWN_ID, CMD_PRIVATE_RESP, 6);
+  ASSERT_FALSE(decisions::is_device_event_report(other));
+
+  EXPECT_FALSE(decisions::should_record_device_event(other, true, /*fallback=*/false, /*probes=*/true));
+  EXPECT_FALSE(decisions::should_record_device_event(other, true, /*fallback=*/true, /*probes=*/false));
+  EXPECT_TRUE(decisions::should_record_device_event(other, true, /*fallback=*/true, /*probes=*/true));
+}

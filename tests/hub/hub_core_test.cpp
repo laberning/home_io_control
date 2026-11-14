@@ -531,7 +531,7 @@ TEST(HubCore, LoopDefersQueuedPollWhileRemoteIsStillTransmitting) {
   comp.add_device("ABC123");
 
   ASSERT_TRUE(comp.op_queue_.enqueue_request_status("ABC123"));
-  comp.first_1w_activity_ms_ = comp.last_1w_activity_ms_ = esphome::millis();
+  comp.oneway_receiver_.note_activity(esphome::millis());
 
   EXPECT_TRUE(comp.defer_background_poll_()) << "a queued poll must yield during the remote's burst";
   comp.loop();
@@ -547,7 +547,7 @@ TEST(HubCore, LoopDoesNotDeferQueuedPollWithoutRecentRemoteActivity) {
   comp.add_device("ABC123");
 
   ASSERT_TRUE(comp.op_queue_.enqueue_request_status("ABC123"));
-  ASSERT_EQ(comp.last_1w_activity_ms_, 0u) << "precondition: no 1W frame seen since boot";
+  ASSERT_EQ(comp.oneway_receiver_.last_activity_ms(), 0u) << "precondition: no 1W frame seen since boot";
 
   EXPECT_FALSE(comp.defer_background_poll_()) << "polls must dispatch normally when no remote is active";
 
@@ -561,7 +561,7 @@ TEST(HubCore, LoopNeverDefersAUserCommandForRemoteActivity) {
   comp.add_device("ABC123");
 
   comp.op_queue_.enqueue_device_command("ABC123", CoverCommand::STOP);
-  comp.first_1w_activity_ms_ = comp.last_1w_activity_ms_ = esphome::millis();
+  comp.oneway_receiver_.note_activity(esphome::millis());
 
   EXPECT_FALSE(comp.defer_background_poll_())
       << "1W broadcasts carry no ownership marker, so a neighbour's remote must not delay a user command";
@@ -578,9 +578,12 @@ TEST(HubCore, LoopReleasesQueuedPollAtTheDeferCapDespiteOngoingRemoteActivity) {
   ASSERT_TRUE(comp.op_queue_.enqueue_request_status("ABC123"));
   // Burst "started" ONEWAY_POLL_DEFER_CAP_MS ago and a frame just arrived — without the cap this
   // would defer indefinitely as long as frames keep arriving inside the quiet period.
+  // Frames 600 ms apart (inside the quiet period) from the burst's start up to now.
   const uint32_t now = esphome::millis();
-  comp.first_1w_activity_ms_ = now - ONEWAY_POLL_DEFER_CAP_MS;
-  comp.last_1w_activity_ms_ = now;
+  const uint32_t burst_start = now - ONEWAY_POLL_DEFER_CAP_MS;
+  for (uint32_t t = burst_start; t <= now - 200; t += 600)
+    comp.oneway_receiver_.note_activity(t);
+  comp.oneway_receiver_.note_activity(now);
 
   EXPECT_FALSE(comp.defer_background_poll_())
       << "sustained 1W traffic must not starve a background poll past the defer cap";
@@ -748,7 +751,7 @@ TEST(HubCore, LoopDefersQueuedPollWhileKeyExtractionAwaitingReply) {
   ASSERT_TRUE(comp.op_queue_.enqueue_request_status("ABC123"));
   comp.key_extraction_.key_extraction_ctx_.state = pairing_responder::ResponderState::SENT_CHALLENGE;
   comp.key_extraction_.key_extraction_hold_deadline_ms_ = esphome::millis() + 5000;
-  ASSERT_EQ(comp.last_1w_activity_ms_, 0u) << "precondition: this is not the 1W defer path";
+  ASSERT_EQ(comp.oneway_receiver_.last_activity_ms(), 0u) << "precondition: this is not the 1W defer path";
 
   EXPECT_TRUE(comp.defer_background_poll_())
       << "a queued background poll must yield while a key-extraction attempt is mid-flight -- a "
@@ -779,6 +782,7 @@ TEST(HubCore, LoopNeverDefersAUserCommandForKeyExtraction) {
 TEST(HubCore, RemoteActivityTimestampIsRecordedEvenForSuppressedRepeats) {
   // A duplicate frame still means the remote is transmitting, so the quiet period must extend
   // across the whole burst rather than only its first frame.
+  esphome::test_clock::ManualClock clock;
   RxTestableComponent comp;
   MockRadio radio;
   setup_rx_test_component(comp, radio);
@@ -794,11 +798,36 @@ TEST(HubCore, RemoteActivityTimestampIsRecordedEvenForSuppressedRepeats) {
 
   RadioRxPacket pkt = make_rx_packet(f);
   comp.process_received_packet_(pkt);
-  const uint32_t after_first = comp.last_1w_activity_ms_;
+  const uint32_t after_first = comp.oneway_receiver_.last_activity_ms();
   ASSERT_NE(after_first, 0u) << "the first frame must record activity";
 
-  comp.last_1w_activity_ms_ = 0;
+  esphome::test_clock::advance_us(300 * 1000);
   comp.process_received_packet_(pkt);  // suppressed as a burst repeat
-  EXPECT_NE(comp.last_1w_activity_ms_, 0u)
+  EXPECT_EQ(comp.oneway_receiver_.last_activity_ms(), after_first + 300)
       << "activity is recorded before the dedup check, so repeats keep the radio reserved";
+}
+
+TEST(HubCore, APairingGestureIsRememberedWithTheCaptureRssi) {
+  // The receive path hands the radio's capture RSSI to the one-way receiver, so a later
+  // discover_and_pair() attempt can report how strongly the PROG press was heard.
+  esphome::test_clock::ManualClock clock(50000);
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+
+  IoFrame f{};
+  init_frame(f, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
+  const uint8_t remote_id[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
+  set_dst(f, BROADCAST_DISCOVER_ALT);
+  set_src(f, remote_id);
+  set_cmd(f, CMD_WRITE_PRIVATE, nullptr, 0);
+
+  radio.set_last_capture_rssi(-71);
+  RadioRxPacket pkt = make_rx_packet(f);
+  comp.process_received_packet_(pkt);
+
+  const RecentOneWayPairingSighting &sighting = comp.oneway_receiver_.recent_pairing_sighting();
+  EXPECT_EQ(sighting.seen_ms, 50000u);
+  EXPECT_EQ(sighting.rssi, -71);
+  EXPECT_EQ(memcmp(sighting.src, remote_id, NODE_ID_SIZE), 0);
 }

@@ -99,18 +99,6 @@ static constexpr uint32_t FOREIGN_READ_RESYNC_MS = 600000;
 /// request. A challenge within this window of a heard request from the same controller answers that
 /// request; a challenge with no such request means the request frame was missed.
 static constexpr uint32_t FOREIGN_CHALLENGE_AFTER_REQUEST_MS = 100;
-/// Hold queued background polls back for this long after any 1W frame, so a poll the hub itself
-/// scheduled does not occupy the (half-duplex) radio while the remote is still transmitting.
-/// Comfortably longer than the ~160ms reliability burst; short enough to barely shift poll timing
-/// otherwise. Only background polls yield — see decisions::defer_background_poll_for_1w_activity().
-static constexpr uint32_t ONEWAY_QUIET_PERIOD_MS = 700;
-/// Hard cap on how long sustained 1W traffic may hold a background poll back in total, measured
-/// from the start of the burst rather than the most recent frame. ONEWAY_QUIET_PERIOD_MS re-arms on
-/// every frame, so without this cap traffic arriving faster than the quiet period apart — a stuck
-/// remote, a chatty neighbour's sensor — could starve background polls, and therefore device state
-/// freshness, indefinitely. Comfortably above a legitimate ~160ms burst; bounds the worst case
-/// without meaningfully affecting normal operation.
-static constexpr uint32_t ONEWAY_POLL_DEFER_CAP_MS = 5000;
 
 /// Default follow-up settle-poll delay used while a device may still be moving, when no explicit
 /// poll interval is configured (interval_ms == 0). Short on purpose so devices without a remaining time are

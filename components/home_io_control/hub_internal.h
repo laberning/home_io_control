@@ -35,12 +35,6 @@ namespace detail {
 // Shared constants
 // ============================================================================
 
-/// Suppress a repeated 1W log/poll for the same remote *and the same intent* within this window.
-/// Wide on purpose: it collapses both the 4×/40ms reliability burst and a held button into one
-/// logical press. A *different* intent from the same remote (a stop after a move) is not a
-/// duplicate and passes through immediately — see decisions::is_duplicate_1w_frame().
-inline constexpr uint32_t ONEWAY_DEDUP_WINDOW_MS = 2000;
-
 // ============================================================================
 // Capability and entity-profile helpers
 // ============================================================================
@@ -196,22 +190,6 @@ inline void log_1w_remote_frame(const OneWayFrameInfo &info, const std::vector<s
 /// @brief Home Assistant event fired when a decoded 1W frame carries a command intent from an
 /// exposed sender (a physical remote button press, or a wind/rain sensor's triggered command).
 inline constexpr const char *ONEWAY_SENDER_EVENT = "esphome.home_io_control_sender_event";
-
-/// @brief Whether a 1W sender is on the `exposed_senders` allowlist for the sender HA event.
-///
-/// "Sender" covers both remotes and wind/rain sensors — they use the identical 1W broadcast
-/// mechanism and differ only in the `originator` byte inside the payload, not in addressing.
-/// Overheard 1W traffic is always DEBUG-logged regardless of this check (see
-/// log_1w_remote_frame()); this only gates whether the event reaches Home Assistant. Deliberately
-/// separate from `linked_devices` — a sender can be event-enabled without controlling any
-/// registered device (e.g. to trigger an HA automation with no matching cover/light/switch), or
-/// vice versa.
-/// @param exposed_senders Configured allowlist (`exposed_senders` YAML key, empty by default).
-/// @param sender_id Node ID of the 1W sender that sent the frame.
-/// @return true if the sender is in the allowlist.
-inline bool is_exposed_sender(const std::vector<std::string> &exposed_senders, const std::string &sender_id) {
-  return std::find(exposed_senders.begin(), exposed_senders.end(), sender_id) != exposed_senders.end();
-}
 
 /// Buffer size for describe_learned_device_type()'s hex fallback: "io_device_type: 0xXX" plus margin.
 inline constexpr size_t LEARNED_DEVICE_TYPE_HEX_BUFFER_SIZE = 24;

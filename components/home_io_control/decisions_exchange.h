@@ -57,6 +57,21 @@ inline bool is_device_event_report(const IoFrame &frame) {
   return decode_status_update_event(frame, event) && event.event_id != EVENT_STATUS_CHANGE;
 }
 
+/// Decide whether a received frame goes on the "Last Device Event" sensor. The one place that
+/// decides: a device event report (is_device_event_report()) from a registered device always
+/// qualifies; any other frame from one only when it reached the unhandled-command fallback with
+/// `diagnostic_probes` on, so a report of an unexpected shape is not lost.
+/// @param frame The received frame.
+/// @param source_is_registered Whether the frame's source is a registered device.
+/// @param reached_unhandled_fallback True from the fallback, after every other handler declined.
+/// @param probes_enabled Whether `diagnostic_probes` is on.
+inline bool should_record_device_event(const IoFrame &frame, bool source_is_registered, bool reached_unhandled_fallback,
+                                       bool probes_enabled) {
+  if (!source_is_registered)
+    return false;
+  return is_device_event_report(frame) || (reached_unhandled_fallback && probes_enabled);
+}
+
 /// Returns true when @p response is the answer to the subscription @p request: the request is a
 /// CMD_SUBSCRIBE_EVENT with the subscribe action, and the response a well-formed CMD_STATUS_UPDATE
 /// carrying the same event, from the device the request went to. A device answers a subscription

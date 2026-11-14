@@ -608,7 +608,7 @@ void IOHomeControlComponent::maybe_fire_sender_event_(const OneWayFrameInfo &inf
              detail::ONEWAY_SENDER_EVENT);
     return;
   }
-  if (!detail::is_exposed_sender(this->exposed_senders_, src_id)) {
+  if (!this->oneway_receiver_.is_exposed(src_id)) {
     ESP_LOGD(detail::TAG, "1W sender %s has intent but is not in exposed_senders, skipping %s", src_id.c_str(),
              detail::ONEWAY_SENDER_EVENT);
     return;
@@ -770,25 +770,6 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
   }
 }
 
-void IOHomeControlComponent::record_1w_activity_(uint32_t now) {
-  // A gap of a full quiet period or more since the last frame means the previous burst already
-  // released any deferred poll, so this frame starts a new burst window rather than extending the
-  // old one (which would make ONEWAY_POLL_DEFER_CAP_MS fire on the very next frame).
-  if (decisions::oneway_burst_started_fresh(this->last_1w_activity_ms_, now, ONEWAY_QUIET_PERIOD_MS))
-    this->first_1w_activity_ms_ = now;
-  this->last_1w_activity_ms_ = now;
-}
-
-void IOHomeControlComponent::record_oneway_pairing_gesture_(const IoFrame &frame, uint32_t now) {
-  if (!decisions::is_one_way_pairing_gesture((frame.ctrl0 & CTRL0_PROTOCOL_1W) != 0, frame.dst, frame.cmd))
-    return;
-  memcpy(this->recent_oneway_pairing_sighting_.src, frame.src, NODE_ID_SIZE);
-  memcpy(this->recent_oneway_pairing_sighting_.dst, frame.dst, NODE_ID_SIZE);
-  this->recent_oneway_pairing_sighting_.cmd = frame.cmd;
-  this->recent_oneway_pairing_sighting_.rssi = this->radio_->get_last_capture().rssi_dbm;
-  this->recent_oneway_pairing_sighting_.seen_ms = now;
-}
-
 /// @brief Log an overheard limitation request/reply decoded at DEBUG; any other frame is ignored.
 static void log_overheard_limitation_read(const IoFrame &frame) {
   if (frame.cmd == CMD_LIMITATION_STATUS_REQ) {
@@ -798,19 +779,9 @@ static void log_overheard_limitation_read(const IoFrame &frame) {
   }
 }
 
-namespace {
-constexpr size_t DEVICE_EVENT_HEAD_BUFFER_SIZE = 48;  ///< "#<n> t=<s> ": two uint32 values and punctuation.
-constexpr size_t DEVICE_EVENT_CMD_BUFFER_SIZE = 8;    ///< " 0xNN" plus the terminator.
-constexpr uint32_t DEVICE_EVENT_MS_PER_SECOND = 1000;
-}  // namespace
-
 bool IOHomeControlComponent::record_if_device_event_(const IoFrame &frame, bool reached_unhandled_fallback) {
-  if (this->get_device(node_id_to_string(frame.src)) == nullptr)
-    return false;
-  // A device event report (decisions::is_device_event_report()) is always recorded; any other frame
-  // only with probes on, once nothing else here claimed it, so a report of an unexpected shape is
-  // not lost.
-  if (!decisions::is_device_event_report(frame) && !(reached_unhandled_fallback && this->diagnostic_probes_enabled_))
+  if (!decisions::should_record_device_event(frame, this->get_device(node_id_to_string(frame.src)) != nullptr,
+                                             reached_unhandled_fallback, this->diagnostic_probes_enabled_))
     return false;
   this->record_device_event_(frame);
   return true;
@@ -820,31 +791,45 @@ bool IOHomeControlComponent::record_probe_reply_event(const IoFrame &reply) {
   return this->record_if_device_event_(reply, /*reached_unhandled_fallback=*/false);
 }
 
-void IOHomeControlComponent::record_device_event_(const IoFrame &frame) {
-  std::string payload;
-  char byte_hex[4];
-  for (uint8_t i = 0; i < frame.data_len; i++) {
-    snprintf(byte_hex, sizeof(byte_hex), i == 0 ? "%02X" : " %02X", frame.data[i]);
-    payload += byte_hex;
-  }
+// A 1W remote broadcasts commands to a typed device-class address (e.g., "all awnings"). The frame is
+// decoded for logging and the sender event, then follows linked_remotes handling, which may schedule
+// a status poll for devices this remote controls. The order of the steps matters and is kept: see the
+// comments inline.
+void IOHomeControlComponent::handle_oneway_frame_(const IoFrame &frame) {
   const std::string src_id = node_id_to_string(frame.src);
-  const std::string dst_id = node_id_to_string(frame.dst);
-  this->device_event_count_++;
-  if (this->diagnostic_probes_enabled_) {
-    ESP_LOGI(detail::TAG, "Device event from %s: cmd=0x%02X dst=%s payload=%s", src_id.c_str(), frame.cmd,
-             dst_id.c_str(), payload.c_str());
-  } else {
-    ESP_LOGD(detail::TAG, "Device event from %s: cmd=0x%02X dst=%s payload=%s", src_id.c_str(), frame.cmd,
-             dst_id.c_str(), payload.c_str());
-  }
-  char head[DEVICE_EVENT_HEAD_BUFFER_SIZE];
-  snprintf(head, sizeof(head), "#%" PRIu32 " t=%" PRIu32 " ", this->device_event_count_,
-           millis() / DEVICE_EVENT_MS_PER_SECOND);
-  char cmd_hex[DEVICE_EVENT_CMD_BUFFER_SIZE];
-  snprintf(cmd_hex, sizeof(cmd_hex), " 0x%02X", frame.cmd);
-  this->last_device_event_ = std::string(head) + src_id + cmd_hex + (payload.empty() ? "" : " ") + payload;
-  if (this->device_event_callback_)
-    this->device_event_callback_();
+  const uint32_t now = millis();
+
+  // Any 1W frame means a remote is transmitting right now, duplicate or not — note it before the
+  // duplicate filter so loop() keeps background polls off the radio for the rest of the burst. A
+  // pairing-gesture sighting is remembered the same way, so a repeated gesture frame still refreshes
+  // its timestamp (issue #27/#65; OneWayReceiver::note_frame() explains why the discovery
+  // telemetry window alone does not catch it).
+  this->oneway_receiver_.note_frame(frame, now, this->radio_->get_last_capture().rssi_dbm);
+
+  // Decode once and reuse for the duplicate key, logging and (when it carries a command intent) the
+  // sender HA event, so a physical remote press (or sensor trigger) can drive automations directly.
+  // The decode must happen *before* the duplicate filter: a move and a stop share the CMD_EXECUTE
+  // command byte and are told apart only by the decoded intent, which is part of the key.
+  const OneWayFrameInfo info = decode_1w_frame(frame);
+
+  // Opt-in, receive-only 1W key adoption (oneway_key_adoption.cpp). Both calls sit after
+  // the parse and before the duplicate filter so an add-controller broadcast is seen even when its
+  // repeats would collapse into one logical press. Both self-gate on armed, so the disarmed
+  // path is unchanged; they observe the frame rather than consuming it, and execution always
+  // continues into the normal logging path below. Order matters only in that the class
+  // observation must be recorded before an adoption can consume it.
+  this->oneway_key_adoption_.record_observed_class(info);
+  this->oneway_key_adoption_.try_adopt(frame);
+
+  // 1W remotes repeat each command 4× at 40ms intervals across channels, and a held button keeps
+  // resending: one logical press per remote+command+intent reaches the steps below.
+  if (!this->oneway_receiver_.is_new_press(frame, info, now))
+    return;
+
+  const std::vector<std::string> *linked = this->registry_.linked_devices(src_id);
+  detail::log_1w_remote_frame(info, linked);
+  this->maybe_fire_sender_event_(info, linked != nullptr && !linked->empty(), src_id);
+  this->follow_linked_remote_press_(info, src_id);
 }
 
 void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packet) {
@@ -877,50 +862,8 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     return;
   }
 
-  // === 1W remote frame decode ===
-  // 1W remotes broadcast commands to a typed device-class address (e.g., "all awnings").
-  // Decode the frame content for diagnostic logging, then fall through to linked_remotes
-  // handling which may schedule a status poll for devices this remote controls.
   if ((frame.ctrl0 & CTRL0_PROTOCOL_1W) != 0) {
-    const std::string src_id = node_id_to_string(frame.src);
-    const uint32_t now = millis();
-
-    // Any 1W frame means a remote is transmitting right now, duplicate or not — record it before
-    // the dedup check so loop() keeps background polls off the radio for the rest of the burst.
-    this->record_1w_activity_(now);
-    // Remember a pairing-gesture sighting the same way, before dedup, so a repeated gesture frame
-    // still refreshes the timestamp (issue #27/#65) — see record_oneway_pairing_gesture_()'s doc
-    // comment for why the discovery telemetry window alone isn't enough to catch this.
-    this->record_oneway_pairing_gesture_(frame, now);
-
-    // Decode once and reuse for the dedup key, logging, and (when it carries a command intent) the
-    // sender HA event, so a physical remote press (or sensor trigger) can drive automations directly.
-    // The decode must happen *before* the dedup check: a move and a stop share the CMD_EXECUTE
-    // command byte and are told apart only by the decoded intent, which is part of the key.
-    const OneWayFrameInfo info = decode_1w_frame(frame);
-
-    // Opt-in, receive-only 1W key adoption (oneway_key_adoption.cpp). Both calls sit after
-    // the parse and before the dedup check so an add-controller broadcast is seen even when its
-    // repeats would collapse into one logical press. Both self-gate on armed, so the disarmed
-    // path is unchanged; they observe the frame rather than consuming it, and execution always
-    // continues into the normal logging path below. Order matters only in that the class
-    // observation must be recorded before an adoption can consume it.
-    this->oneway_key_adoption_.record_observed_class(info);
-    this->oneway_key_adoption_.try_adopt(frame);
-
-    // 1W remotes repeat each command 4× at 40ms intervals across channels, and a held button keeps
-    // resending. Collapse that into one logical press per remote+command+intent (plus destination for
-    // intent-less frames, so each class of a multi-class sweep is kept).
-    decisions::OneWayDedupState incoming{src_id, frame.cmd, info.has_intent, info.main0, info.main1, now};
-    memcpy(incoming.dst, frame.dst, NODE_ID_SIZE);
-    if (decisions::is_duplicate_1w_frame(this->last_1w_logged_, incoming, detail::ONEWAY_DEDUP_WINDOW_MS))
-      return;
-    this->last_1w_logged_ = incoming;
-
-    const std::vector<std::string> *linked = this->registry_.linked_devices(src_id);
-    detail::log_1w_remote_frame(info, linked);
-    this->maybe_fire_sender_event_(info, linked != nullptr && !linked->empty(), src_id);
-    this->follow_linked_remote_press_(info, src_id);
+    this->handle_oneway_frame_(frame);
     return;
   }
 
@@ -953,11 +896,13 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     return;
   }
 
+  // A device event report from a registered device is recorded whoever it is addressed to, before
+  // anything below can treat it as someone else's traffic (a 0x71 to another controller, a 0x70 for
+  // act_on_overheard_request_()). Recording only: nothing is transmitted, no state is touched.
+  if (this->record_if_device_event_(frame, /*reached_unhandled_fallback=*/false))
+    return;
+
   if (frame.cmd == CMD_PRIVATE_RESP || frame.cmd == CMD_STATUS_UPDATE) {
-    // An event report from a registered device to another controller is recorded like a 0x70 below:
-    // recording only, nothing is transmitted or applied.
-    if (this->record_if_device_event_(frame, /*reached_unhandled_fallback=*/false))
-      return;
     // Passive receive mode can still observe replies/status from other exchanges (another
     // controller sharing a device, or an attacker who knows the device's node ID -- node IDs
     // travel in the clear, see README.md's "Reporting Unsupported Devices"). Nothing here proves
@@ -966,11 +911,6 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     detail::log_frame_issue(this, this->node_id_, "rx", "unauthenticated_status_ignored", frame, packet.len);
     return;
   }
-
-  // A device's 0x70 is recorded whoever it is addressed to, before act_on_overheard_request_() can
-  // treat it as someone else's traffic. Recording only: nothing is transmitted, no state is touched.
-  if (this->record_if_device_event_(frame, /*reached_unhandled_fallback=*/false))
-    return;
 
   // A frame of another controller to one of our registered devices, or from a linked 2W
   // controller: act_on_overheard_request_() decides whether it warrants a poll of our own.
