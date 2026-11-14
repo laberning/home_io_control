@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <optional>
 #include <span>
 
 namespace esphome {
@@ -535,6 +536,19 @@ ProgrammePeriodState resolve_programme_period(const HeatingProfile &profile, con
     state.preset_index = period.eco_preset;
   }
   return state;
+}
+
+std::optional<float> in_force_after_comfort_change(const HeatingProfile &profile, const HeatingReadings &before,
+                                                   float new_comfort_c) {
+  const ProgrammePeriodState state = resolve_programme_period(profile, before);
+  if (!state.active || state.preset_index < 0)
+    return std::nullopt;  // not running, not read, or neither period: nothing to carry over
+  const HeatingProgrammePeriod &period = *profile.programme_period;
+  if (state.preset_index == period.comfort_preset)
+    return new_comfort_c;
+  // The eco period: preset_index is the eco one and the setback has been read (resolve matched it).
+  const int32_t shifted_tenths = to_tenths(new_comfort_c) - to_tenths(before.temperature_of(period.setback_fn));
+  return static_cast<float>(shifted_tenths) / TENTHS_PER_DEGREE;
 }
 
 void clear_inactive_programme_reading(const HeatingProfile &profile, HeatingReadings &readings) {

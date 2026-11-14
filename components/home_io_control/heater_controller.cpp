@@ -23,6 +23,7 @@
 
 #include <cmath>
 #include <iterator>
+#include <optional>
 
 namespace esphome {
 namespace home_io_control {
@@ -202,7 +203,7 @@ bool HeaterController::execute_heating_plan(const std::string &device_id, const 
   if (on_accepted)
     on_accepted();
   if (plan.read_back)
-    this->read_heating_register(device_id, plan.read_back_fn, nullptr, EXCHANGE_RETRY_COUNT);
+    this->read_back_heating_register_(device_id, plan.read_back_fn);
   return true;
 }
 
@@ -322,6 +323,15 @@ bool HeaterController::read_private_register(const std::string &device_id, uint8
 
 bool HeaterController::read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
                                              uint8_t max_tries) {
+  return this->read_and_store_heating_register_(device_id, fn, value_out, max_tries, /*follow_comfort=*/false);
+}
+
+void HeaterController::read_back_heating_register_(const std::string &device_id, HeatingFunction fn) {
+  this->read_and_store_heating_register_(device_id, fn, nullptr, EXCHANGE_RETRY_COUNT, /*follow_comfort=*/true);
+}
+
+bool HeaterController::read_and_store_heating_register_(const std::string &device_id, HeatingFunction fn,
+                                                        float *value_out, uint8_t max_tries, bool follow_comfort) {
   const IoDevice *gate = this->registry_.get(device_id);
   if (gate == nullptr || !*this->initialized_)
     return false;
@@ -357,9 +367,18 @@ bool HeaterController::read_heating_register(const std::string &device_id, Heati
   IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr)
     return false;
+  const HeatingProfile *profile = find_heating_profile(*dev);
+  // The read-back of a comfort write carries the temperature in force along, so the card shows the new
+  // target now instead of after the next poll of that register.
+  std::optional<float> in_force;
+  if (follow_comfort && profile != nullptr && profile->programme_period != nullptr &&
+      fn == profile->programme_period->comfort_fn)
+    in_force = in_force_after_comfort_change(*profile, dev->heating, value);
   dev->heating.store(fn, value);
+  if (in_force.has_value())
+    dev->heating.store(profile->programme_period->in_force_fn, *in_force);
   // A reading that left the programme drops the temperature in force before anything shows it.
-  if (const HeatingProfile *profile = find_heating_profile(*dev); profile != nullptr)
+  if (profile != nullptr)
     clear_inactive_programme_reading(*profile, dev->heating);
   this->registry_.notify(device_id);
   if (value_out != nullptr)

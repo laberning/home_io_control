@@ -10,6 +10,7 @@ home_io_control:
     key_extraction_type_word: 0x0180
     key_extraction_multi_info: "DD"
     pairing_discovery_preamble: 32
+    pairing_discovery_send_channels: all
 
 cover:
   - platform: home_io_control

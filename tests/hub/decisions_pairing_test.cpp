@@ -14,6 +14,19 @@ using namespace test;
 // Pairing discovery response classification
 // ========================================================================================
 
+TEST(Decisions, DiscoveryRequestStaysOnCh2UnlessTheChannelsRotate) {
+  for (uint8_t attempt = 0; attempt <= 6; attempt++)
+    EXPECT_EQ(decisions::discovery_request_freq(false, attempt), FREQ_CH2) << "attempt " << static_cast<int>(attempt);
+}
+
+TEST(Decisions, DiscoveryRequestRotatesCh2Ch1Ch3AndStartsOver) {
+  EXPECT_EQ(decisions::discovery_request_freq(true, 1), FREQ_CH2);
+  EXPECT_EQ(decisions::discovery_request_freq(true, 2), FREQ_CH1);
+  EXPECT_EQ(decisions::discovery_request_freq(true, 3), FREQ_CH3);
+  EXPECT_EQ(decisions::discovery_request_freq(true, 4), FREQ_CH2);
+  EXPECT_EQ(decisions::discovery_request_freq(true, 0), FREQ_CH2) << "attempts count from 1";
+}
+
 TEST(Decisions, PairingDiscoveryAccept) {
   const IoFrame discovery = make_frame(DST_ID, OWN_ID, CMD_DISCOVER_RESP, 2);
 

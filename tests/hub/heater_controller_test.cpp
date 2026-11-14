@@ -359,6 +359,77 @@ TEST(HeaterController, APlannedRegisterWriteSendsItsBytesAppliesTheHookThenReads
   EXPECT_EQ(sent_register(fx.radio.get_sent_data()[1]), 0x03);
 }
 
+namespace {
+
+/// A towel dryer in its programme, comfort 19.0 C with a setback of 3.5 K, holding @p in_force_c.
+IoDevice *make_towel_dryer_in_programme(HeaterControllerFixture &fx, float in_force_c) {
+  IoDevice *dev = make_towel_dryer(fx);
+  dev->heating.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
+  dev->heating.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE);
+  dev->heating.setpoint_c = 19.0F;
+  dev->heating.eco_setback_k = 3.5F;
+  dev->heating.in_force_temperature_c = in_force_c;
+  return dev;
+}
+
+/// The temperature in force the entities see in the last notification of the write: the one the
+/// read-back's own reading raises.
+float in_force_seen_after_comfort_write(HeaterControllerFixture &fx, float new_comfort_c, uint8_t value_lo) {
+  float seen = NAN;
+  fx.registry.subscribe(
+      [&seen](const std::string &, const IoDevice &dev) { seen = dev.heating.in_force_temperature_c; });
+  fx.queue_register_ack({0x0C, 0x61, 0x01, 0x03, value_lo, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, value_lo, 0x00});
+  EXPECT_TRUE(fx.controller.execute_heating_plan(
+      "ABC123", register_plan(HeatingFunction::SET_TEMPERATURE, new_comfort_c), nullptr));
+  return seen;
+}
+
+}  // namespace
+
+TEST(HeaterController, AComfortWriteInAComfortPeriodShowsTheNewTargetAtTheReadBack) {
+  HeaterControllerFixture fx;
+  const IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F);
+
+  EXPECT_FLOAT_EQ(in_force_seen_after_comfort_write(fx, 20.0F, 0xC8), 20.0F) << "before the 45 s poll";
+
+  const ProgrammePeriodState period = resolve_programme_period(*find_heating_profile(*dev), dev->heating);
+  EXPECT_EQ(period.preset_index, find_heating_profile(*dev)->programme_period->comfort_preset);
+  EXPECT_FLOAT_EQ(period.target_c, 20.0F);
+}
+
+TEST(HeaterController, AComfortWriteInAnEcoPeriodShowsTheNewComfortMinusTheSetback) {
+  HeaterControllerFixture fx;
+  const IoDevice *dev = make_towel_dryer_in_programme(fx, 15.5F);
+
+  EXPECT_FLOAT_EQ(in_force_seen_after_comfort_write(fx, 20.0F, 0xC8), 16.5F);
+
+  EXPECT_EQ(resolve_programme_period(*find_heating_profile(*dev), dev->heating).preset_index,
+            find_heating_profile(*dev)->programme_period->eco_preset);
+}
+
+TEST(HeaterController, AComfortWriteOutsideTheProgrammeLeavesTheTemperatureInForceAlone) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F);
+  dev->heating.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
+
+  in_force_seen_after_comfort_write(fx, 20.0F, 0xC8);
+
+  EXPECT_TRUE(std::isnan(dev->heating.in_force_temperature_c)) << "cleared outside the programme, never shifted";
+}
+
+TEST(HeaterController, AComfortReadOutsideAWriteDoesNotMoveTheTemperatureInForce) {
+  HeaterControllerFixture fx;
+  const IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC8, 0x00});
+
+  ASSERT_TRUE(
+      fx.controller.read_heating_register("ABC123", HeatingFunction::SET_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
+
+  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 20.0F);
+  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 19.0F) << "only the poll's own read of 0x37 changes it";
+}
+
 TEST(HeaterController, APlannedRegisterWriteWithoutReadBackSendsOnlyTheWrite) {
   HeaterControllerFixture fx;
   make_heater(fx);

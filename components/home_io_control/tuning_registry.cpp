@@ -276,6 +276,16 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
        return true;
      },
      false},
+    {"pairing_discovery_send_channels",
+     [](const TuningConfig &t) { return discovery_send_channels_to_string(t.pairing_discovery_send_channels); },
+     [](TuningConfig &t, const std::string &v) -> bool {
+       auto channels = discovery_send_channels_from_string(v);
+       if (!channels.has_value())
+         return false;
+       t.pairing_discovery_send_channels = channels.value();
+       return true;
+     },
+     false},
     // false: read straight out of TuningConfig by PairingEngine::discover_and_pair() when the key
     // step starts, so a change applies to the next pairing attempt without a re-apply.
     {"pairing_key_transfer", [](const TuningConfig &t) { return key_transfer_mode_to_string(t.pairing_key_transfer); },

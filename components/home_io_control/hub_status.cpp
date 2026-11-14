@@ -223,17 +223,19 @@ uint32_t compute_status_update_delay_ms(const IoDevice &dev, const StatusPollPol
 /// their byte says (device_has_no_motion()): the movement settle loop (follow-up polls while
 /// "moving") must never run for them, and what that byte holds on a heater is unconfirmed; they keep
 /// no execution state. A byte with no defined state (bits [2:0] hold 6 or 7) falls back on
-/// STATUS_STOPPED and is logged. A change of state is logged with the raw byte.
-/// \todo The waiting states are experimental: only a main-parameter read of a queued shutter has
-///       captured WAITING_FOR_POWER so far, not an ordinary status reply.
+/// STATUS_STOPPED and is logged. A change of state is logged with the raw byte. A waiting state in the
+/// acknowledgement of the hub's own command reads as moving but is recorded as executing
+/// (decisions::shown_execution_state()).
 /// @param id Device ID for the log lines.
 /// @param dev Device the reply came from; its `execution_state` is updated.
 /// @param flags The reply's byte 0.
+/// @param from_command_ack True when the reply is the acknowledgement of the hub's own command.
 /// @return true when the device is at rest.
-bool read_status_byte(const std::string &id, IoDevice &dev, uint8_t flags) {
+bool read_status_byte(const std::string &id, IoDevice &dev, uint8_t flags, bool from_command_ack = false) {
   if (device_has_no_motion(dev.type, dev.subtype))
     return true;
-  const ExecutionState state = execution_state_of(flags);
+  const ExecutionState read_state = execution_state_of(flags);
+  const ExecutionState state = decisions::shown_execution_state(read_state, from_command_ack);
   if (state == ExecutionState::UNDEFINED) {
     ESP_LOGW(detail::TAG, "Device %s: status byte 0x%02X has no defined execution state: read by its stopped bit",
              id.c_str(), flags);
@@ -274,7 +276,8 @@ bool follow_moving_report(const std::string &id, const IoDevice &dev, StatusPoll
 /// status poll a few seconds later) remains the source of truth for target/current in that case.
 void apply_private_response_status(const std::string &id, IoDevice &dev, const IoFrame &frame, StatusPollPolicy &policy,
                                    bool trust_position = true) {
-  const bool reported_stopped = read_status_byte(id, dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET]);
+  const bool reported_stopped =
+      read_status_byte(id, dev, frame.data[STATUS_STOPPED_FLAGS_OFFSET], /*from_command_ack=*/!trust_position);
   dev.is_stopped = reported_stopped;
   dev.last_status = millis();
   if (trust_position) {
@@ -329,10 +332,13 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   if (trust_position)
     policy.on_trusted_report(id, remaining_s, dev.last_status);
 
-  // A count that stopped falling backs the progress reads off (StatusPollPolicy::frozen_count_delay_ms());
-  // a cadence that is longer already stays.
+  // A count that stopped falling backs the progress reads off (StatusPollPolicy::frozen_count_delay_ms()),
+  // except while the cover waits: it holds its count by design (ADR 0085). A cadence that is longer
+  // already stays.
+  const uint32_t frozen_backoff_ms =
+      decisions::backs_off_frozen_count(dev.execution_state) ? policy.frozen_count_delay_ms(id) : 0;
   uint32_t const delay_ms =
-      std::max(compute_private_response_delay_ms(dev, remaining_s, policy, id), policy.frozen_count_delay_ms(id));
+      std::max(compute_private_response_delay_ms(dev, remaining_s, policy, id), frozen_backoff_ms);
   ESP_LOGD(detail::TAG,
            "Device %s: next status poll in %" PRIu32 " ms (remaining time=%s, configured interval=%" PRIu32 " ms)",
            id.c_str(), delay_ms, remaining_s.has_value() ? std::to_string(*remaining_s).append("s").c_str() : "none",

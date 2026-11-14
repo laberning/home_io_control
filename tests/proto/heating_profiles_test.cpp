@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -729,6 +730,53 @@ TEST(HeatingProfilesTowelDryer, WithoutTheTemperatureInForceThereIsNoTargetToSho
   HeatingReadings no_comfort = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
   no_comfort.clear(HeatingFunction::SET_TEMPERATURE);
   EXPECT_EQ(resolve_programme_period(towel(), no_comfort).preset_index, -1);
+}
+
+// --- the temperature in force follows a comfort change -------------------------------------
+
+TEST(HeatingProfilesTowelDryer, AComfortPeriodFollowsTheNewComfortSetpoint) {
+  const HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
+  const std::optional<float> shifted = in_force_after_comfort_change(towel(), r, 21.5F);
+  ASSERT_TRUE(shifted.has_value());
+  EXPECT_FLOAT_EQ(*shifted, 21.5F);
+}
+
+TEST(HeatingProfilesTowelDryer, AnEcoPeriodFollowsTheNewComfortSetpointMinusTheSetback) {
+  const HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F);
+  const std::optional<float> shifted = in_force_after_comfort_change(towel(), r, 19.0F);
+  ASSERT_TRUE(shifted.has_value());
+  EXPECT_FLOAT_EQ(*shifted, 15.5F) << "19.0 - 3.5, in tenths";
+}
+
+TEST(HeatingProfilesTowelDryer, ATemperatureInForceThatFitsNeitherPeriodIsNotShifted) {
+  const HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 7.0F);
+  EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 21.0F).has_value());
+}
+
+TEST(HeatingProfilesTowelDryer, NothingIsShiftedOutsideTheProgramme) {
+  for (const TowelDryerMode mode : {TowelDryerMode::MANUAL, TowelDryerMode::OFF}) {
+    const HeatingReadings r = towel_readings(mode, HeatingTemporaryState::NONE, 20.0F);
+    EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 21.0F).has_value());
+  }
+  const HeatingReadings boost = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::BOOST, 20.0F);
+  EXPECT_FALSE(in_force_after_comfort_change(towel(), boost, 21.0F).has_value()) << "a timed run is on top";
+}
+
+TEST(HeatingProfilesTowelDryer, NothingIsShiftedWhenARegisterItNeedsIsUnread) {
+  HeatingReadings no_in_force = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
+  no_in_force.clear(HeatingFunction::TEMPERATURE_IN_FORCE);
+  EXPECT_FALSE(in_force_after_comfort_change(towel(), no_in_force, 21.0F).has_value());
+
+  HeatingReadings no_setback = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F);
+  no_setback.clear(HeatingFunction::ECO_SETBACK);
+  EXPECT_FALSE(in_force_after_comfort_change(towel(), no_setback, 21.0F).has_value());
+}
+
+TEST(HeatingProfilesTowelDryer, AProfileWithoutAProgrammePeriodShiftsNothing) {
+  const HeatingProfile &radiator = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
+  EXPECT_FALSE(in_force_after_comfort_change(
+                   radiator, towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F), 21.0F)
+                   .has_value());
 }
 
 TEST(HeatingProfilesTowelDryer, TheProgrammeIsActiveOnlyInProgWithNoTimedRunOnTop) {

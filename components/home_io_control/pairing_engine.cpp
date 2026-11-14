@@ -95,16 +95,16 @@ uint16_t PairingEngine::pairing_start_preamble_(const IoFrame &frame) const {
 /// NO_RESPONSE (no packets at all) and INVALID (packets seen but none valid).
 ///
 /// Frequency hopping: hops between the 2 non-request IO-homecontrol channels after each slice —
-/// the request always goes out on FREQ_CH2 (see run_discovery_phase_()), and a discovery reply
-/// essentially never lands back on that channel (see ListenPolicy's own doc comment for why), so
-/// dwelling there is wasted listening time. Same policy as collect_broadcast_responses()'s
-/// default. The slice length comes from
-/// RadioDriver::hop_dwell_ms() (spec.dwell_ms left at 0, so listen() asks the driver). When
-/// preamble or sync detection fires, the dwell extends by PREAMBLE_LINGER_DWELL_MS so the
-/// incoming frame can complete without interruption.
+/// the request channel (FREQ_CH2 unless pairing_discovery_send_channels rotates it, see
+/// run_discovery_phase_()), and a discovery reply essentially never lands back on that channel
+/// (see ListenPolicy's own doc comment for why), so dwelling there is wasted listening time. Same policy as
+/// collect_broadcast_responses()'s default. The slice length comes from RadioDriver::hop_dwell_ms() (spec.dwell_ms left
+/// at 0, so listen() asks the driver). When preamble or sync detection fires, the dwell extends by
+/// PREAMBLE_LINGER_DWELL_MS so the incoming frame can complete without interruption.
 decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_response_(uint32_t timeout_ms,
                                                                                    RadioRxPacket &packet,
-                                                                                   IoFrame &response_frame) {
+                                                                                   IoFrame &response_frame,
+                                                                                   uint32_t request_freq) {
   ListenSpec spec;
   spec.window_ms = timeout_ms;
   // Skipping the request channel is the default because a broadcast's answers are almost never
@@ -114,7 +114,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_respons
   spec.policy = tuning_->pairing_discovery_listen_channels == DiscoveryListenChannels::ALL
                     ? ListenPolicy::ROTATE_ALL_CHANNELS
                     : ListenPolicy::ROTATE_SKIPPING_REQUEST;
-  spec.request_freq = FREQ_CH2;
+  spec.request_freq = request_freq;
   // dwell_ms left at 0: no measured reason to dwell differently from the roll-call, so listen()
   // asks the driver (radio_()->hop_dwell_ms(*tuning_)) the same way collect_broadcast_responses()
   // does.
@@ -431,7 +431,9 @@ static void log_discovered_device(const pairing::PairingContext &context) {
 ///
 /// Sends each configured discovery command in order, waiting up to
 /// `pairing_discovery_wait_ms` for a valid response after each TX.
-/// Retries up to PAIRING_DISCOVERY_MAX_ATTEMPTS times per command.
+/// Retries up to PAIRING_DISCOVERY_MAX_ATTEMPTS times per command. Each attempt goes out on the
+/// channel decisions::discovery_request_freq() names (CH2, or CH2/CH1/CH3 in turn with
+/// `pairing_discovery_send_channels: all`) and its reply wait skips that channel.
 decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairing::PairingContext &context) {
   if (tuning_->pairing_discovery_initial_dwell_ms > 0) {
     ESP_LOGD(TAG, "Discovery: initial dwell %u ms", tuning_->pairing_discovery_initial_dwell_ms);
@@ -456,17 +458,20 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
       context.state = pairing::PairingState::TX_DISCOVER;
       engine_.record_debug(pairing_stage_name(context.state), attempt, false);
       this->telemetry_.set_phase(context.state);
+      const uint32_t request_freq = decisions::discovery_request_freq(
+          tuning_->pairing_discovery_send_channels == DiscoverySendChannels::ALL, attempt);
       if (!create_discovery_request(context.req, node_id_, command, destination, tuning_->pairing_discovery_low_power,
                                     tuning_->pairing_discovery_ack_capable, tuning_->pairing_discovery_payload_enabled,
                                     tuning_->pairing_discovery_payload, system_key_) ||
-          !engine_.transmit_frame(context.req, FREQ_CH2, effective_discovery_preamble(*tuning_))) {
+          !engine_.transmit_frame(context.req, request_freq, effective_discovery_preamble(*tuning_))) {
         return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
       }
 
       context.state = pairing::PairingState::WAIT_DISCOVER_RESPONSE;
       engine_.record_debug(pairing_stage_name(context.state), attempt, false);
       this->telemetry_.set_phase(context.state);
-      auto result = wait_for_discovery_response_(tuning_->pairing_discovery_wait_ms, context.packet, context.rx);
+      auto result =
+          wait_for_discovery_response_(tuning_->pairing_discovery_wait_ms, context.packet, context.rx, request_freq);
       if (result == decisions::PairingDiscoveryDisposition::ACCEPT) {
         const DiscoveryResponseInfo info = parse_device_from_discovery(context.rx, context.device, context.device_id);
         context.discovery_metadata_complete = context.rx.data_len >= DEVICE_METADATA_SIZE;

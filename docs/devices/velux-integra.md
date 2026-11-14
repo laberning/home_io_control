@@ -109,23 +109,22 @@ The mains-powered SML takes either route. 1W enrollment gives open, close and st
 status, as described under Onboarding routes above. Two-way pairing, reported by one user
 on an SX1262 board (issue #230), gives status, position and a working stop mid-travel as well.
 
-**Two-way pairing.** The shutter needs a short discovery preamble, as the SSL does, and the default
-is short: 48 bytes on an SX1262, where the reporter paired at 32. The reporter also set this line,
-which is not known to be required:
+**Two-way pairing.** The shutter needs a short discovery preamble, as the SSL does. Set
+`pairing_discovery_preamble: 32`; with that line alone the reporter of issue #230 paired, and
+`pairing_discovery_ack_capable` is not needed:
 
 ```yaml
 home_io_control:
   tuning:
-    pairing_discovery_ack_capable: true
+    pairing_discovery_preamble: 32
 ```
 
 Press Gear on the shutter's own KLI 310 for about one second; the shutter starts to jog. While it
-jogs, press **Discover & Pair**. Press it again if the first search gets no answer: in the report
-the second search found the shutter. Pairing ends the registration window, so the shutter stops
-jogging. No motor reset is needed, and the KLI remotes and a 1W enrollment of the same shutter
-keep working. Discover & Pair found nothing in issue #17, which ran with a 1024-byte discovery
-preamble; the reporter of issue #230 paired with a 32-byte one.
-It is not known yet whether `pairing_discovery_ack_capable` matters.
+jogs, press **Discover & Pair** once. One press is enough: the search sends the discovery request
+up to three times, and in the report the shutter answered the second one. Pairing ends the
+registration window, so the shutter stops jogging. No motor reset is needed, and the KLI remotes and
+a 1W enrollment of the same shutter keep working. Discover & Pair found nothing in issue #17, which
+ran with a 1024-byte discovery preamble.
 
 Once paired, the shutter answers status reads while it moves, with the time left to its target,
 so the position in Home Assistant follows the move. Stop mid-travel works, set position lands
@@ -135,12 +134,14 @@ within a few percent, and a press on a linked KLI shows up as described in
 **Several shutters on one KUX 110 run one at a time.** A shutter commanded while another one on
 the same KUX 110 moves accepts the command and starts when the first has finished. While it waits,
 it reports that it waits for power, and the hub follows it: Home Assistant shows the cover opening
-or closing toward its target, `Active Issue` reads `NODE_WAITING_FOR_POWER`, and the position
-follows once the motor runs. The hub follows a cover for 4 minutes after the command, which covers
-two shutters one after the other. This is experimental: the waiting state was captured in a
-main-parameter status read of an SML shutter, not yet in an ordinary status read (see
-[Position and state](../configuration/cover.md#position-and-state)). The group KLI moves the
-shutters one after the other.
+or closing toward its target, `Active Issue` reads `NODE_WAITING_FOR_POWER` from the first status
+read, and the position follows once the motor runs. The shutter says "waiting for power" in the
+answer to every command, also when nothing else moves, so the hub shows the waiting state only from
+a status read, never from that answer. It keeps reading every few seconds while the shutter waits,
+so a short move is seen. The hub follows a cover for 4 minutes after the command, which covers two
+shutters one after the other. This is confirmed on a VELUX SML shutter behind a KUX 110 (issue
+#230; see [Position and state](../configuration/cover.md#position-and-state)). The group KLI moves
+the shutters one after the other.
 
 ## Working YAML
 

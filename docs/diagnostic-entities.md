@@ -58,8 +58,9 @@ It is not a per-command result. It is set only while an issue is outstanding:
   for power (a VELUX shutter queued behind another one on a shared KUX 110), `NOT_EXECUTING` after
   it reported that it cannot run its command under the current conditions, `EXECUTION_ERROR` after
   it reported an error during its last move. Each stays until the cover's next status reply says it
-  runs or is done. A rain limit or an explicit refusal takes precedence. Waiting for power is
-  experimental, see [Position and state](configuration/cover.md#position-and-state).
+  runs or is done. A rain limit or an explicit refusal takes precedence. Only a status read or report
+  shows a waiting state, not the answer to a command, see
+  [Position and state](configuration/cover.md#position-and-state).
 - **Rain on a VELUX window is derived, not reported.** A VELUX window sends no error when rain
   protection clamps an `open`; it stops at its ventilation position. The hub reads `LIMITATION_BY_RAIN`
   from the window's own status replies instead: the last move was ordered by the rain sensor, or an

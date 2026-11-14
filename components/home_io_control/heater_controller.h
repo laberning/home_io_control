@@ -268,7 +268,7 @@ class HeaterController {
   ///
   /// See set_dhw_operating_mode_() for the sequence. Ending a boost also ends away, because the off word
   /// switches both (ADR 0081). Gated on device_feature::WATER_HEATER.
-  /// \todo Experimental: confirm on a real water heater that this starts and ends a boost.
+  /// Confirmed on an Atlantic Calypso Connecté (issue #198).
   /// @param device_id Target device ID (hex string).
   /// @param on true to start a boost, false to end it.
   /// @return true when the device accepted the EXECUTE; false for a refused or unacknowledged command.
@@ -280,7 +280,7 @@ class HeaterController {
   ///
   /// See set_dhw_operating_mode_() for the sequence. Ending away also ends a boost (ADR 0081). Gated on
   /// device_feature::WATER_HEATER.
-  /// \todo Experimental: confirm on a real water heater that this starts and ends the holiday mode.
+  /// Confirmed on an Atlantic Calypso Connecté (issue #198).
   /// @param device_id Target device ID (hex string).
   /// @param on true to start away, false to end it.
   /// @return true when the device accepted the EXECUTE; false for a refused or unacknowledged command.
@@ -315,6 +315,26 @@ class HeaterController {
   bool read_dhw_status(const std::string &device_id, uint8_t max_tries);
 
  private:
+  /// @brief Read back the register a write changed.
+  ///
+  /// Like read_heating_register() with the read-back's tries, and for the comfort setpoint of a heater
+  /// whose programme runs it also moves the stored temperature in force with it
+  /// (in_force_after_comfort_change()), so what the card shows is the new target before the poll that
+  /// reads that register.
+  /// @param device_id Target device ID (hex string).
+  /// @param fn Register to read back.
+  void read_back_heating_register_(const std::string &device_id, HeatingFunction fn);
+
+  /// @brief The read and store behind read_heating_register() and read_back_heating_register_().
+  /// @param device_id Target device ID (hex string).
+  /// @param fn Register to read.
+  /// @param[out] value_out Decoded value; nullptr when only the stored reading is wanted.
+  /// @param max_tries Transmit-attempt cap.
+  /// @param follow_comfort True to carry the temperature in force along with a comfort setpoint read.
+  /// @return true only if the device answered and the reply decoded to a value for `fn`.
+  bool read_and_store_heating_register_(const std::string &device_id, HeatingFunction fn, float *value_out,
+                                        uint8_t max_tries, bool follow_comfort);
+
   /// @brief The exchange every heating frame shares: run it through HeaterControllerHub::exchange (the
   /// shared bookkeeping, no poll backoff since the heater poll keeps its own), stamp link health of a
   /// reply, notify the entities and report whether the device answered with CMD_WRITE_PRIVATE_ACK

@@ -4,9 +4,10 @@
 /// A cover that waits for its turn or for power is followed like a running one, states 0 and 1 settle
 /// it, and a count that stops falling backs the progress reads off. The sequences model a VELUX SML
 /// shutter queued behind another on one supply: 0x2B (state 3), 0x2C (state 4), 0x2D (state 5) are
-/// the status bytes it answered a main-parameter read with.
-/// \todo An ordinary status reply carrying state 3 is not captured yet; these tests feed one as a
-///       synthetic frame and fail the day a capture contradicts the assumption.
+/// the status bytes it answered a main-parameter read with. An ordinary status reply and a command
+/// acknowledgement carrying state 3 are in the corpus
+/// (tests/corpus/captures/statuspoll/velux_sml_statuspoll_queued_by_hub_sx1262.yaml), replayed in
+/// corpus_execution_state_test.cpp; these tests feed synthetic frames for the sequences.
 
 #include "hub_core.h"
 #include "hub_internal.h"
@@ -234,19 +235,22 @@ TEST(HubExecutionState, AHeaterKeepsNoStateAndIsAlwaysAtRest) {
 }
 
 TEST(HubExecutionState, AWaitingCoverThatNeverRunsIsShownAtRestWhenTheWindowRunsOut) {
+  // The count stays at 5 s, as a queued VELUX SML holds it: no back-off while it waits (ADR 0085), and
+  // the window alone ends the follow-up.
+  constexpr uint16_t HELD_COUNT_S = 5;
   QueuedCoverRig rig;
-  rig.feed(status_reply(BYTE_WAITING_FOR_POWER, TARGET_OPEN_RAW, AT_75_PERCENT_RAW));
+  rig.feed(status_reply(BYTE_WAITING_FOR_POWER, TARGET_OPEN_RAW, AT_75_PERCENT_RAW, HELD_COUNT_S));
   const uint32_t deadline = rig.comp.poll_policy_.get_poll_deadline("ABC123");
   EXPECT_EQ(deadline - esphome::millis(), MAX_TRACKED_STATUS_POLL_WINDOW_MS) << "the hub's own command opened it";
 
   for (int i = 0; i < 3; i++) {
     esphome::test_clock::advance_ms(60000);
-    rig.feed(status_reply(BYTE_WAITING_FOR_POWER, TARGET_OPEN_RAW, AT_75_PERCENT_RAW));
+    rig.feed(status_reply(BYTE_WAITING_FOR_POWER, TARGET_OPEN_RAW, AT_75_PERCENT_RAW, HELD_COUNT_S));
   }
   EXPECT_EQ(rig.comp.poll_policy_.get_poll_deadline("ABC123"), deadline) << "later reports never move the deadline";
 
   esphome::test_clock::advance_ms(MAX_TRACKED_STATUS_POLL_WINDOW_MS);
-  rig.feed(status_reply(BYTE_WAITING_FOR_POWER, TARGET_OPEN_RAW, AT_75_PERCENT_RAW));
+  rig.feed(status_reply(BYTE_WAITING_FOR_POWER, TARGET_OPEN_RAW, AT_75_PERCENT_RAW, HELD_COUNT_S));
   rig.comp.settle_ended_status_tracking_();
 
   EXPECT_TRUE(rig.dev->is_stopped) << "still reporting waiting after the give-up time";
@@ -280,10 +284,11 @@ TEST(HubExecutionState, AWindowOpenedByTheFirstMovingReportIsMeasuredFromThatRep
 
 namespace {
 
-/// Delay to the next read after a trusted moving report of ABC123 carrying a count of @p remaining_s.
-uint32_t delay_after_count(QueuedCoverRig &rig, uint16_t remaining_s) {
+/// Delay to the next read after a trusted report of ABC123 in @p status_byte carrying a count of
+/// @p remaining_s.
+uint32_t delay_after_count(QueuedCoverRig &rig, uint16_t remaining_s, uint8_t status_byte = BYTE_EXECUTING) {
   rig.comp.poll_policy_.set_next_update("ABC123", 0);
-  rig.feed(status_reply(BYTE_WAITING_FOR_POWER, TARGET_OPEN_RAW, AT_75_PERCENT_RAW, remaining_s));
+  rig.feed(status_reply(status_byte, TARGET_OPEN_RAW, AT_75_PERCENT_RAW, remaining_s));
   return rig.comp.poll_policy_.get_next_update("ABC123") - esphome::millis();
 }
 
@@ -300,6 +305,20 @@ TEST(HubExecutionState, AFrozenCountBacksTheReadsOffInGrowingSteps) {
   EXPECT_EQ(delay_after_count(rig, 30), FROZEN_COUNT_BACKOFF_MAX_MS) << "the last step stays";
 }
 
+TEST(HubExecutionState, AFrozenCountWhileTheCoverWaitsNeverBacksTheReadsOff) {
+  QueuedCoverRig rig;
+  for (int i = 0; i < 10; i++)
+    EXPECT_EQ(delay_after_count(rig, 5, BYTE_WAITING_FOR_POWER), DEFAULT_SETTLE_POLL_DELAY_MS) << "report " << i;
+}
+
+TEST(HubExecutionState, AFrozenCountBacksOffOnceTheWaitingCoverRunsWithoutItsCountFalling) {
+  QueuedCoverRig rig;
+  for (int i = 0; i < 3; i++)
+    delay_after_count(rig, 5, BYTE_WAITING_FOR_POWER);
+  EXPECT_EQ(delay_after_count(rig, 5, BYTE_EXECUTING), FROZEN_COUNT_BACKOFF_FIRST_MS)
+      << "the count held while it waited; a cover that runs on a held count is stuck";
+}
+
 TEST(HubExecutionState, AFallingCountReturnsToTheShortCadence) {
   QueuedCoverRig rig;
   for (int i = 0; i < 6; i++)
@@ -314,6 +333,52 @@ TEST(HubExecutionState, ASlowButFallingCountIsNeverBackedOff) {
   QueuedCoverRig rig;
   for (uint16_t remaining = 40; remaining > 20; remaining--)
     EXPECT_EQ(delay_after_count(rig, remaining), DEFAULT_SETTLE_POLL_DELAY_MS) << remaining << " s left";
+}
+
+// --- acknowledgement of the hub's own command ---------------------------------------------
+
+TEST(HubExecutionState, AWaitingStateInACommandAckReadsAsMovingButSetsNoActiveIssue) {
+  QueuedCoverRig rig;
+  IOHomeActiveIssueTextSensor sensor;
+  sensor.set_parent(&rig.comp);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  rig.comp.update_device_status_(status_reply(BYTE_WAITING_FOR_POWER, TARGET_OPEN_RAW, AT_75_PERCENT_RAW),
+                                 /*trust_position=*/false);
+  rig.comp.notify_device_update_("ABC123");
+
+  EXPECT_FALSE(rig.dev->is_stopped) << "the command was accepted: the cover is followed";
+  EXPECT_EQ(rig.dev->execution_state, ExecutionState::EXECUTING);
+  EXPECT_EQ(sensor.state, "");
+  EXPECT_TRUE(rig.tracking());
+}
+
+TEST(HubExecutionState, AStatusReadThatSaysWaitingAfterTheAckShowsTheIssue) {
+  QueuedCoverRig rig;
+  IOHomeActiveIssueTextSensor sensor;
+  sensor.set_parent(&rig.comp);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+  rig.comp.update_device_status_(status_reply(BYTE_WAITING_FOR_POWER, TARGET_OPEN_RAW, AT_75_PERCENT_RAW), false);
+
+  rig.feed(status_reply(BYTE_WAITING_FOR_POWER, TARGET_OPEN_RAW, AT_75_PERCENT_RAW));
+  rig.comp.notify_device_update_("ABC123");
+
+  EXPECT_EQ(sensor.state, "NODE_WAITING_FOR_POWER");
+}
+
+TEST(HubExecutionState, AStatusReportThatSaysWaitingShowsTheIssue) {
+  QueuedCoverRig rig;
+  IOHomeActiveIssueTextSensor sensor;
+  sensor.set_parent(&rig.comp);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  rig.comp.update_device_status_(status_update(BYTE_WAITING_FOR_POWER, TARGET_OPEN_RAW, AT_75_PERCENT_RAW));
+  rig.comp.notify_device_update_("ABC123");
+
+  EXPECT_EQ(sensor.state, "NODE_WAITING_FOR_POWER");
 }
 
 // --- Active Issue --------------------------------------------------------------------------

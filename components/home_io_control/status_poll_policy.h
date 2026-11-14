@@ -119,8 +119,8 @@ static constexpr uint32_t STOP_SETTLE_POLL_CAP_MS = 1000;
 /// The aim, the dropped progress read and the final-position read at count + 1 s are confirmed on a
 /// Somfy Sunea io awning
 /// (tests/corpus/captures/statuspoll/somfy_awning_statuspoll_close_with_remaining_time_predicted_end_read_sx1262.yaml).
-/// \todo Experimental: the stale-count rule has not met a frozen count on hardware, and a
-///       battery-powered cover's read at the end of its count has not run on one (ADR 0076).
+/// \todo Experimental: a battery-powered cover's read at the end of its count has not run on one
+///       (ADR 0076).
 /// @{
 /// The predicted-end read is aimed this long after the remaining time has run out. The motor takes up
 /// to about a second after its count reaches zero to stop and switch its load.
@@ -142,8 +142,10 @@ static constexpr uint8_t PREDICTED_END_STALE_REPORTS = 3;
 /// reports in a row that did not fall, and the slowest falling counts seen drop at every poll (3 s
 /// between two polls on a VELUX SML, 1 s per second on a Somfy awning), so a slow but alive count
 /// is not taken as frozen. 10 s, 15 s and 20 s keep a cover that starts after waiting within 20 s of
-/// being seen, while a stuck one costs a read per 20 s instead of one per 3 s.
-/// \todo Experimental: no frozen count has been captured on hardware yet.
+/// being seen, while a stuck one costs a read per 20 s instead of one per 3 s. A cover whose execution
+/// state is waiting (2 or 3) holds its count by design and is not backed off
+/// (decisions::backs_off_frozen_count(), ADR 0085); a frozen count in state 4 backs off.
+/// \todo Experimental: a frozen count in state 4 has not been captured on hardware yet.
 /// @{
 static constexpr uint32_t FROZEN_COUNT_BACKOFF_FIRST_MS = 10000;   ///< Delay after the first frozen report.
 static constexpr uint32_t FROZEN_COUNT_BACKOFF_SECOND_MS = 15000;  ///< Delay after the second.

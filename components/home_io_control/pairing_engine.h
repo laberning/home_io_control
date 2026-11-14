@@ -166,9 +166,11 @@ class PairingEngine {
   /// @param timeout_ms     Maximum wait window.
   /// @param packet         Output: raw RadioRxPacket of the accepted discovery frame.
   /// @param response_frame Output: parsed IoFrame of the accepted discovery frame.
+  /// @param request_freq   Channel the discovery request went out on; the default listen policy skips it.
   /// @return ACCEPT on success; NO_RESPONSE (no traffic) or INVALID (wrong frames) otherwise.
   decisions::PairingDiscoveryDisposition wait_for_discovery_response_(uint32_t timeout_ms, RadioRxPacket &packet,
-                                                                      IoFrame &response_frame);
+                                                                      IoFrame &response_frame,
+                                                                      uint32_t request_freq = FREQ_CH2);
 
   /// Wait for a key-challenge (0x3C) or direct key-confirm (0x33) from the target device.
   /// @param timeout_ms        Maximum wait window.

@@ -269,6 +269,30 @@ static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = POSITION_RAW_PER_PERCENT * RA
   return !is_executing(state);
 }
 
+/// @brief The execution state the hub records and shows for a state read from a status answer.
+///
+/// A device on a shared power supply may answer every command with "waiting for power" in the
+/// acknowledgement, even when nothing else is moving, and report its real state at the first status
+/// read. A waiting state in a command acknowledgement therefore counts as moving but is recorded as
+/// EXECUTING, so it never shows as a waiting issue; a status reply or report shows its state as read
+/// (ADR 0085).
+/// @param state State read from byte 0 (execution_state_of()).
+/// @param from_command_ack True for the acknowledgement of the hub's own command.
+[[nodiscard]] inline ExecutionState shown_execution_state(ExecutionState state, bool from_command_ack) {
+  const bool waiting = state == ExecutionState::WAITING_FOR_EXECUTING || state == ExecutionState::WAITING_FOR_POWER;
+  return (from_command_ack && waiting) ? ExecutionState::EXECUTING : state;
+}
+
+/// @brief True when a count in the remaining time that does not fall should back the progress reads off.
+///
+/// A cover that waits (state 2 or 3) holds its count by design, so it keeps the cadence the count
+/// gives; only a frozen count while the cover claims to execute (or has no state) is a stuck one
+/// (ADR 0085). The follow-up window still ends a cover that never settles.
+/// @param state The device's recorded execution state.
+[[nodiscard]] inline bool backs_off_frozen_count(ExecutionState state) {
+  return state != ExecutionState::WAITING_FOR_EXECUTING && state != ExecutionState::WAITING_FOR_POWER;
+}
+
 // === Result code of an EXECUTE reply ===
 
 /// @brief What the hub does about the result code in the reply to an EXECUTE.

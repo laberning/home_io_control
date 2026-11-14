@@ -1,0 +1,100 @@
+id: velux_sml_statuspoll_queued_by_remote_sx1262
+description: >
+  Five ordinary status reads (CMD_PRIVATE 0x03, function 0x03) of a VELUX SML roller shutter that is
+  queued behind a second shutter on the same KUX 110, after a press of the shutter's own KLI 310 remote
+  (issue #230). The remote's close EXECUTE (a 1W frame, first frame; the hub heard it and followed the
+  linked shutter) is followed 2 s later by the first read. Every reply carries status byte 03 (state 3,
+  waiting for power), the shutter at 0 %, the target 100 % and a remaining time of 5 s that does not
+  count down; the trailing node id C1 84 6D is the KLI that commanded it last.
+  The log of this run ends while the shutter still waits, after the fifth reply: a reply at rest is not in
+  the capture. The second and third bursts of the same press, and the read that collided with the third
+  (no reply), are left out.
+  t_ms are from the log line timestamps (the KLI frame at 09:35:02.655).
+source:
+  device: "VELUX SML roller shutter on a KUX 110 power supply shared with a second SML shutter"
+  captured_with: sx1262
+  firmware: "main at 822979c with the frame log on (Heltec WiFi LoRa 32 V3.2)"
+  date: 2026-11-14
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/230"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F6 00 00 00 3F C1 84 6D 00 01 61 C8 00 00 00 05 83 FF 99 2A 09 D1 CD"
+    crc: absent
+    note: "cmd=EXECUTE(0x00)"
+  - dir: tx
+    t_ms: 2019
+    freq: 868950000
+    hex: "4B 00 FB 42 88 73 B5 8E 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: rx
+    t_ms: 2072
+    freq: 868950000
+    hex: "96 08 73 B5 8E FB 42 88 04 03 00 C8 00 00 00 00 05 C1 84 6D 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+  - dir: tx
+    t_ms: 5108
+    freq: 868950000
+    hex: "4B 00 FB 42 88 73 B5 8E 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: rx
+    t_ms: 5162
+    freq: 868950000
+    hex: "96 08 73 B5 8E FB 42 88 04 03 00 C8 00 00 00 00 05 C1 84 6D 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+  - dir: tx
+    t_ms: 7723
+    freq: 868950000
+    hex: "4B 00 FB 42 88 73 B5 8E 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: rx
+    t_ms: 7775
+    freq: 868950000
+    hex: "96 08 73 B5 8E FB 42 88 04 03 00 C8 00 00 00 00 05 C1 84 6D 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+  - dir: tx
+    t_ms: 10807
+    freq: 868950000
+    hex: "4B 00 FB 42 88 73 B5 8E 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: rx
+    t_ms: 10869
+    freq: 868950000
+    hex: "96 08 73 B5 8E FB 42 88 04 03 00 C8 00 00 00 00 05 C1 84 6D 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+  - dir: tx
+    t_ms: 16893
+    freq: 868950000
+    hex: "4B 00 FB 42 88 73 B5 8E 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: rx
+    t_ms: 16945
+    freq: 868950000
+    hex: "96 08 73 B5 8E FB 42 88 04 03 00 C8 00 00 00 00 05 C1 84 6D 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

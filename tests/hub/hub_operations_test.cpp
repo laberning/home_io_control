@@ -2043,7 +2043,7 @@ TEST(HubOperations, ACoverThatAnswersTheSpeedBlockWithCodeFiveIsNotedOnce) {
   comp.get_device("ABC123")->travel_speed = TravelSpeed::FAST;
   ASSERT_FALSE(comp.get_device("ABC123")->speed_block_warned);
 
-  queue_execute_answer(radio, comp.node_id_, 0x2C);  // code 5 over state 4, as every device in the corpus answers
+  queue_execute_answer(radio, comp.node_id_, 0x2C);  // code 5 over state 4, as a Somfy motor answers
   EXPECT_TRUE(comp.set_device_position("ABC123", 100));
   EXPECT_TRUE(comp.get_device("ABC123")->speed_block_warned) << "the first refusal is logged and remembered";
   EXPECT_EQ(comp.get_device("ABC123")->last_result_code, 0)

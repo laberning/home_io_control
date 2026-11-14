@@ -299,10 +299,8 @@ bool parse_travel_speed(const std::string &name, TravelSpeed &speed);
 /// state under a result code, `(code << 3) | state`, the same layout as a CMD_ERROR_RESP result byte
 /// (error_resp_state()); every ordinary status reply in the corpus carries 4 while a cover travels and 5
 /// once it is at rest.
-/// \todo Experimental: WAITING_FOR_POWER and WAITING_FOR_EXECUTING are not yet captured in an ordinary
-///       status reply, only WAITING_FOR_POWER in a main-parameter read of a shutter queued behind another
-///       on one supply. Following such a cover rests on that and on the API; it needs a captured ordinary
-///       status reply from a waiting cover.
+/// WAITING_FOR_POWER is confirmed in ordinary status replies and in command acknowledgements of a VELUX
+/// SML shutter behind a KUX 110 (issue #230); WAITING_FOR_EXECUTING rests on the API.
 enum class ExecutionState : uint8_t {
   NON_EXECUTING = 0,          ///< Unable to execute under the given conditions (example: temperature too high).
   EXECUTION_ERROR = 1,        ///< An error occurred during the previous execution; cleared when the next starts.

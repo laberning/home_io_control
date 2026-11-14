@@ -4,6 +4,8 @@
 
 **Status:** Accepted, amended by [ADR 0069](0069-a-config-key-is-retired-in-two-stages.md) (`silent:` is deprecated); amends [ADR 0059](0059-device-capabilities-come-from-the-type-table.md) (lights, switches, locks and an undeclared heater-level device get the 6-byte frame); decision 2 and the consequences revised in place (the 6-byte form is the default) · **Recorded:** 2026-11
 
+Amended by [ADR 0085](0085-a-waiting-cover-is-shown-from-its-status-and-read-without-back-off.md) (the Context's claim that every device answers the 8-byte form with code 5 does not hold for a VELUX SML, which answers it with code 0).
+
 ## Context
 
 An execute frame in the 8-byte form ends in a speed profile byte. `06` and `05` are the two values a

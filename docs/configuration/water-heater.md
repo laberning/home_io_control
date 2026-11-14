@@ -3,8 +3,8 @@
 
 > [!NOTE]
 > The water heater platform is confirmed on one heater, an
-> [Atlantic Calypso Connecté](../devices/atlantic-calypso.md): readings, target and mode. The boost
-> switch and away mode are experimental. That heater takes only its own fixed targets; see
+> [Atlantic Calypso Connecté](../devices/atlantic-calypso.md): readings, target, mode, boost and away.
+> That heater takes only its own fixed targets; see
 > [Choosing a target](../devices/atlantic-calypso.md#choosing-a-calypso-target).
 
 The `water_heater:` entity drives a domestic hot water heater (node type 51, `domestic_hot_water`). It
@@ -32,7 +32,7 @@ water_heater:
       name: "Hot water heat pump"
     electric_backup_running:
       name: "Hot water electric backup"
-    boost:                      # a switch (experimental)
+    boost:                      # a switch
       name: "Hot water boost"
 ```
 
@@ -51,7 +51,7 @@ water_heater:
   electric element heats.
 - `boost` (Optional): A switch, on while a boost runs. Turning it on starts a boost and turning it off
   ends it; a boost started here asks for a duration of 1, the value the heater showed during a boost
-  started on its display. Experimental: the heater has not yet been seen to follow it. The switch shows
+  started on its display. Confirmed on an Atlantic Calypso Connecté. The switch shows
   what the heater reports in its operating-mode word and writes nothing at boot, so a reboot does not
   end a running boost; `restore_mode` has no effect. Turning it off ends away mode too. Takes the other
   [switch](https://esphome.io/components/switch/) options.
@@ -63,7 +63,7 @@ water_heater:
 | Current temperature | The water temperature the heater reports |
 | Target temperature | The target in the heater's status reply, 20–62 °C, step 1 °C; none in the heater's automatic mode |
 | Mode | `heat_pump` (the heater's automatic mode), `eco` (manual, ECO on), `performance` (manual, ECO off) |
-| Away | The heater's holiday mode, as its operating-mode word reports it (experimental) |
+| Away | The heater's holiday mode, as its operating-mode word reports it |
 
 - Every value comes from the heater's replies; Home Assistant shows them after the first poll, about
   five seconds after boot. Each companion stays without a state until the heater has reported its
@@ -81,9 +81,10 @@ water_heater:
 
 ## Boost and away
 
-Boost and away are experimental: they follow the heater's operating-mode setting, and no heater has
-been seen to take them yet. Writing the boost duration register alone did nothing on the one heater reported
-([issue #198](https://github.com/laberning/home_io_control/issues/198)), so the hub sets the mode itself.
+Boost and away follow the heater's operating-mode setting. Both are confirmed on an Atlantic Calypso
+Connecté ([issue #198](https://github.com/laberning/home_io_control/issues/198)): boost on and off and
+away on and off from Home Assistant work, and a boost started on the display shows in Home Assistant.
+Writing the boost duration register alone did nothing on that heater, so the hub sets the mode itself.
 
 - **Starting** a boost writes its duration register (1) and then sets the operating mode; starting away
   writes its duration register (255, until turned off) and then sets the operating mode. The log shows

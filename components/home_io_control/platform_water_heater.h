@@ -32,14 +32,13 @@
 /// stores and add no radio traffic; the boost switch shows the boost state of the operating-mode word the poll
 /// reads and writes it.
 ///
-/// The readings, the target EXECUTE and the mode write are confirmed on one Atlantic Calypso Connecte
-/// ([issue #198](https://github.com/laberning/home_io_control/issues/198)): its display follows both writes.
+/// The readings, the target EXECUTE, the mode write, boost and away are confirmed on one Atlantic Calypso
+/// Connecte ([issue #198](https://github.com/laberning/home_io_control/issues/198)): its display follows the
+/// target and mode writes, and boost and away start and end from Home Assistant.
 /// That heater accepts only its own fixed targets (one per shower count, all whole degrees), so a value
 /// between two steps is not taken.
 ///
 /// \todo The mode mapping and the target steps rest on that one heater; confirm them on a second one.
-/// \todo Experimental: confirm on a real water heater that away mode starts and ends the holiday mode and that
-/// the state follows the heater's operating-mode word (issue #198).
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/switch/switch.h"
@@ -159,8 +158,7 @@ class IOHomeDhwBinarySensor : public binary_sensor::BinarySensor, public Compone
 /// It never writes at boot: setup() restores nothing, and the codegen sets restore mode DISABLED, so a
 /// reboot cannot end a boost that is running.
 ///
-/// \todo Experimental: confirm on a real water heater that switching on starts a boost and switching off
-/// ends it (issue #198).
+/// Boost on and off are confirmed on an Atlantic Calypso Connecté (issue #198).
 class IOHomeDhwBoostSwitch : public switch_::Switch, public Component, public DeviceBoundCompanion {
  public:
   /// @brief Subscribe to the device's updates and publish what is already known.

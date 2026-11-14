@@ -754,6 +754,65 @@ TEST(PairingHelpers, RunDiscoveryPhase_RetriesOnNoResponse) {
       << "should transmit discovery frame once per retry attempt";
 }
 
+namespace {
+
+/// The channels one failed discovery phase sent its requests on and listened on for the replies.
+struct DiscoveryChannels {
+  std::vector<uint32_t> sent;
+  std::vector<uint32_t> listened;
+};
+
+DiscoveryChannels run_failed_discovery(DiscoverySendChannels send_channels) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  comp.tuning_.pairing_discovery_send_channels = send_channels;
+  pairing::PairingContext context;
+  comp.pairing_engine_.run_discovery_phase_(context);
+  DiscoveryChannels channels;
+  for (const RadioTxConfig &config : radio.get_tx_configs())
+    channels.sent.push_back(config.freq_hz);
+  channels.listened = radio.freq_history();
+  return channels;
+}
+
+}  // namespace
+
+TEST(PairingHelpers, RunDiscoveryPhase_SendsEveryAttemptOnCh2ByDefault) {
+  const DiscoveryChannels channels = run_failed_discovery(DiscoverySendChannels::REQUEST);
+  EXPECT_EQ(channels.sent, (std::vector<uint32_t>{FREQ_CH2, FREQ_CH2, FREQ_CH2}));
+  ASSERT_FALSE(channels.listened.empty());
+  EXPECT_EQ(std::count(channels.listened.begin(), channels.listened.end(), FREQ_CH2), 0)
+      << "every reply wait skips CH2, the channel of every request";
+}
+
+TEST(PairingHelpers, RunDiscoveryPhase_SendChannelsAllSendsTheAttemptsOnCh2Ch1Ch3) {
+  const DiscoveryChannels channels = run_failed_discovery(DiscoverySendChannels::ALL);
+  EXPECT_EQ(channels.sent, (std::vector<uint32_t>{FREQ_CH2, FREQ_CH1, FREQ_CH3}));
+  EXPECT_GT(std::count(channels.listened.begin(), channels.listened.end(), FREQ_CH2), 0)
+      << "the waits after the CH1 and CH3 requests listen on CH2: each skips its own attempt's channel";
+}
+
+TEST(PairingHelpers, RunDiscoveryPhase_TheReplyWaitSkipsTheChannelOfItsOwnAttempt) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  RadioRxPacket out_pkt{};
+  IoFrame out_frame{};
+
+  comp.pairing_engine_.wait_for_discovery_response_(PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS, out_pkt, out_frame,
+                                                    FREQ_CH1);
+
+  const auto &hops = radio.freq_history();
+  ASSERT_FALSE(hops.empty());
+  EXPECT_EQ(std::count(hops.begin(), hops.end(), FREQ_CH1), 0) << "a request sent on CH1 is not listened for on CH1";
+  EXPECT_GT(std::count(hops.begin(), hops.end(), FREQ_CH2), 0) << "CH2 is an ordinary listen channel then";
+}
+
 TEST(PairingHelpers, RunDiscoveryPhase_SucceedsOnFirstAttempt) {
   TestableComponent comp;
   comp.initialized_ = true;

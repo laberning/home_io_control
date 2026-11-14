@@ -128,8 +128,10 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 /// (`01 43 00 00 00 00`, issue #163). Sent to devices without device_feature::EXTENDED_POSITION_FRAME
 /// and to every device set to TravelSpeed::MOTOR_DEFAULT, which is the default: a VELUX KLR 200 control
 /// pad moves a window with this form, and the window then travels at its own speed rather than at a
-/// profile's (ADR 0065). Every device in the corpus answers the 8-byte form with a result code that
-/// says one of its parameters is unknown (see execute_carries_speed_block()) and the 6-byte form cleanly.
+/// profile's (ADR 0065). Every device in the corpus answers the 6-byte form cleanly. The Somfy devices, a
+/// VELUX SSL roller shutter and a tilt cover answer the 8-byte form with a result code that says one of
+/// its parameters is unknown (see execute_carries_speed_block()); a VELUX SML roller shutter behind a
+/// KUX 110 accepts it with code 0 (issue #230).
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID (source address).
 /// @param dst Target device's 3‑byte node ID (destination address).

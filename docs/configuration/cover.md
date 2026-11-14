@@ -364,9 +364,11 @@ specification, Appendix 2, so it is a plain cover without a tilt slider (experim
 
 A position move can carry a speed profile. The hub sends one only when you choose a speed: without a
 choice it sends the short frame a wall control pad sends, which names the main parameter only, and the
-motor moves at its own speed. Every device in the corpus answers that short frame without complaint,
-and answers the longer frame with the speed profile by saying one of its parameters is unknown (result
-code 5), although it still moves. `travel_speed:` picks one of three:
+motor moves at its own speed. Every device in the corpus answers that short frame without complaint.
+The Somfy devices, a VELUX SSL roller shutter and a tilt cover answer the longer frame with the speed
+profile by saying one of its parameters is unknown (result code 5), although they still run it; a VELUX
+SML roller shutter behind a KUX 110 takes it without complaint (issue #230). `travel_speed:` picks one
+of three:
 
 | `travel_speed` | What the hub sends | A VELUX roof window, full travel |
 |---|---|---|
@@ -455,15 +457,19 @@ interior venetian blind keeps its tilt slider. No two-way device of either kind 
   the `Active Issue` sensor shows `NODE_WAITING_FOR_POWER`. A cover that reports 0 or 1 settles at
   the position it reports and `Active Issue` shows `NOT_EXECUTING` or `EXECUTION_ERROR` until its
   next report says it runs or is done. A state byte the hub does not know (6 or 7) is read by its
-  stopped bit (bit 0), and a warning goes to the log.
-  Following a waiting cover is experimental: a shutter that waits was captured answering a
-  main-parameter status read, not yet an ordinary status read, so the hub's reading of the ordinary
-  reply of a waiting cover rests on the same byte layout and has not been confirmed on hardware.
+  stopped bit (bit 0), and a warning goes to the log. A VELUX SML shutter behind a KUX 110 answers
+  every command with "waiting for power", even when no other shutter moves, so the answer to a
+  command does not show it: `Active Issue` shows the waiting state only after a status read or
+  report says it, which a queued shutter does at the first read 3 s later. Following a waiting
+  cover is confirmed on that shutter (issue #230).
 - **A cover whose remaining time stops falling is polled less often.** A cover that reports how
   long it has left normally falls by about as much as the hub waits between polls. When the time
-  has not fallen on three reports in a row, the cover is waiting or stuck, so the hub waits 10 s,
+  has not fallen on three reports in a row while it runs, the cover is stuck, so the hub waits 10 s,
   then 15 s, then 20 s between polls instead of 3 s, and goes back to the short gap as soon as the
-  time falls again. Still experimental: no frozen count has been captured on hardware.
+  time falls again. A cover that waits for its turn or for power holds its count by design: the hub
+  keeps the short gap, so a short move that starts after the wait is seen as it happens, and the
+  4-minute follow-up ends a cover that never starts. Backing off a stuck count that is running has
+  not been captured on hardware yet.
 - **A read that finds a `low_power` cover in an unknown state tries a short start frame first.**
   A read with no recent news of the cover (at boot, a status refresh, a read after overheard
   traffic) leads with one short attempt that listens for 100 ms, then sends the usual three

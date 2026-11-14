@@ -298,6 +298,22 @@ TEST(TuningConfig, DiscoverConfirmModeSnapshotOnlyWhenNonDefault) {
   EXPECT_NE(tuning_config_snapshot(cfg).find("pairing_discover_confirm=skip"), std::string::npos);
 }
 
+TEST(TuningConfig, DiscoverySendChannelsDefaultsToTheRequestChannelAndRoundTrips) {
+  EXPECT_EQ(TuningConfig{}.pairing_discovery_send_channels, DiscoverySendChannels::REQUEST);
+  EXPECT_EQ(discovery_send_channels_to_string(DiscoverySendChannels::REQUEST), "request");
+  EXPECT_EQ(discovery_send_channels_to_string(DiscoverySendChannels::ALL), "all");
+  EXPECT_EQ(discovery_send_channels_from_string("request"), DiscoverySendChannels::REQUEST);
+  EXPECT_EQ(discovery_send_channels_from_string("all"), DiscoverySendChannels::ALL);
+  EXPECT_FALSE(discovery_send_channels_from_string("nonsense").has_value());
+}
+
+TEST(TuningConfig, DiscoverySendChannelsSnapshotOnlyWhenNonDefault) {
+  EXPECT_EQ(tuning_config_snapshot(TuningConfig{}).find("pairing_discovery_send_channels"), std::string::npos);
+  TuningConfig cfg{};
+  cfg.pairing_discovery_send_channels = DiscoverySendChannels::ALL;
+  EXPECT_NE(tuning_config_snapshot(cfg).find("pairing_discovery_send_channels=all"), std::string::npos);
+}
+
 TEST(TuningConfig, UpdateLogLineFormat) {
   EXPECT_EQ(tuning_update_log_line("sx1262_post_tx_settle_us", "750"),
             "Tuning updated via HA: sx1262_post_tx_settle_us=750");

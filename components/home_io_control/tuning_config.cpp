@@ -296,6 +296,24 @@ std::optional<DiscoveryListenChannels> discovery_listen_channels_from_string(con
   return std::nullopt;
 }
 
+std::string discovery_send_channels_to_string(DiscoverySendChannels value) {
+  switch (value) {
+    case DiscoverySendChannels::REQUEST:
+      return "request";
+    case DiscoverySendChannels::ALL:
+      return "all";
+  }
+  return "request";
+}
+
+std::optional<DiscoverySendChannels> discovery_send_channels_from_string(const std::string &value) {
+  if (value == discovery_send_channels_to_string(DiscoverySendChannels::REQUEST))
+    return DiscoverySendChannels::REQUEST;
+  if (value == discovery_send_channels_to_string(DiscoverySendChannels::ALL))
+    return DiscoverySendChannels::ALL;
+  return std::nullopt;
+}
+
 std::string key_transfer_mode_to_string(KeyTransferMode value) {
   switch (value) {
     case KeyTransferMode::AUTO:
@@ -400,6 +418,10 @@ std::string tuning_config_snapshot(const TuningConfig &cfg) {
   if (cfg.pairing_discovery_listen_channels != DEFAULTS.pairing_discovery_listen_channels) {
     result += " pairing_discovery_listen_channels=" +
               discovery_listen_channels_to_string(cfg.pairing_discovery_listen_channels);
+  }
+  if (cfg.pairing_discovery_send_channels != DEFAULTS.pairing_discovery_send_channels) {
+    result +=
+        " pairing_discovery_send_channels=" + discovery_send_channels_to_string(cfg.pairing_discovery_send_channels);
   }
   // pairing_key_transfer is an enum SELECT_PARAMS row, same as the ones above.
   if (cfg.pairing_key_transfer != DEFAULTS.pairing_key_transfer)

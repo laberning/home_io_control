@@ -25,6 +25,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 namespace esphome {
@@ -362,6 +363,22 @@ bool programme_period_active(const HeatingProfile &profile, const HeatingReading
 /// @return `active` false when the programme does not run; otherwise the period's preset index and the
 ///         temperature in force.
 ProgrammePeriodState resolve_programme_period(const HeatingProfile &profile, const HeatingReadings &readings);
+
+/// @brief The temperature in force a heater holds after its comfort setpoint changed, from the readings
+///        before the change.
+/// @details While the programme runs, the temperature in force follows the comfort setpoint: it equals
+///          it in a comfort period and equals it minus the setback in an eco period. A value that matched
+///          the old comfort setpoint becomes the new one; a value that matched the old one minus the
+///          setback becomes the new one minus the setback. The hub uses it to show a new target at once,
+///          before the next read of the register; the heater's own value replaces it when read. Compares
+///          in whole tenths, as resolve_programme_period() does.
+/// @param profile The device's profile.
+/// @param before What the hub had read before the change.
+/// @param new_comfort_c The comfort setpoint the heater now holds.
+/// @return The shifted temperature, or nothing when the profile has no programme period, the programme
+///         does not run, a register it needs has not been read, or the old value fits neither period.
+std::optional<float> in_force_after_comfort_change(const HeatingProfile &profile, const HeatingReadings &before,
+                                                   float new_comfort_c);
 
 /// @brief Drop the temperature in force from the readings when the programme does not run.
 /// @details Keeps a value from an earlier run of the programme from being shown when the heater returns to it.

@@ -61,6 +61,7 @@ CONF_PAIRING_KEY_EXCHANGE_RETRIES = "pairing_key_exchange_retries"
 CONF_SCAN_POWER_CLASSES = "scan_power_classes"
 CONF_PAIRING_DISCOVER_CONFIRM = "pairing_discover_confirm"
 CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS = "pairing_discovery_listen_channels"
+CONF_PAIRING_DISCOVERY_SEND_CHANNELS = "pairing_discovery_send_channels"
 CONF_PAIRING_KEY_INIT_DELAY_MS = "pairing_key_init_delay_ms"
 CONF_PAIRING_KEY_TRANSFER = "pairing_key_transfer"
 CONF_KEY_EXTRACTION_TYPE_WORD = "key_extraction_type_word"
@@ -85,6 +86,7 @@ DiscoveryCommand = home_io_control_ns.enum("DiscoveryCommand", is_class=True)
 ScanPowerClasses = home_io_control_ns.enum("ScanPowerClasses", is_class=True)
 DiscoverConfirmMode = home_io_control_ns.enum("DiscoverConfirmMode", is_class=True)
 DiscoveryListenChannels = home_io_control_ns.enum("DiscoveryListenChannels", is_class=True)
+DiscoverySendChannels = home_io_control_ns.enum("DiscoverySendChannels", is_class=True)
 KeyTransferMode = home_io_control_ns.enum("KeyTransferMode", is_class=True)
 
 # Map each YAML option string to its C++ enum value. Options are bare kHz numbers (the "kHz"
@@ -202,6 +204,14 @@ DISCOVERY_LISTEN_CHANNELS_OPTIONS = {
     "all": DiscoveryListenChannels.ALL,
 }
 
+# Which channels the discovery requests go out on. `request` (default) sends every attempt on CH2;
+# `all` sends the attempts of one command on CH2, CH1 and CH3 in turn. Option strings mirror
+# discovery_send_channels_to_string() (tuning_config.h), pinned by tuning_registry_test.cpp.
+DISCOVERY_SEND_CHANNELS_OPTIONS = {
+    "request": DiscoverySendChannels.REQUEST,
+    "all": DiscoverySendChannels.ALL,
+}
+
 # Which direction pairing moves the system key in. `auto` (default) pulls from a device that answers
 # discovery as a remote controller and pushes to any other; `push` sends our key; `pull` asks the
 # device for its own key. Option strings mirror key_transfer_mode_to_string() (tuning_config.h),
@@ -258,6 +268,7 @@ UI_NAMES = {
     CONF_PAIRING_DISCOVER_CONFIRM: "Pairing Discover Confirm",
     CONF_PAIRING_KEY_INIT_DELAY_MS: "Pairing Key Init Delay",
     CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS: "Pairing Discovery Listen Channels",
+    CONF_PAIRING_DISCOVERY_SEND_CHANNELS: "Pairing Discovery Send Channels",
     CONF_PAIRING_KEY_TRANSFER: "Pairing Key Transfer",
     CONF_KEY_EXTRACTION_TYPE_WORD: "Key Extraction Type Word",
     CONF_KEY_EXTRACTION_MULTI_INFO: "Key Extraction Multi Info",
@@ -375,6 +386,7 @@ _SELECT_OPTIONS = {
     CONF_SCAN_POWER_CLASSES: list(SCAN_POWER_CLASSES_OPTIONS),
     CONF_PAIRING_DISCOVER_CONFIRM: list(DISCOVER_CONFIRM_MODE_OPTIONS),
     CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS: list(DISCOVERY_LISTEN_CHANNELS_OPTIONS),
+    CONF_PAIRING_DISCOVERY_SEND_CHANNELS: list(DISCOVERY_SEND_CHANNELS_OPTIONS),
     CONF_PAIRING_KEY_TRANSFER: list(KEY_TRANSFER_MODE_OPTIONS),
 }
 
@@ -425,6 +437,9 @@ _validate_discover_confirm_mode = _one_of_string(
 )
 _validate_discovery_listen_channels = _one_of_string(
     CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS, DISCOVERY_LISTEN_CHANNELS_OPTIONS
+)
+_validate_discovery_send_channels = _one_of_string(
+    CONF_PAIRING_DISCOVERY_SEND_CHANNELS, DISCOVERY_SEND_CHANNELS_OPTIONS
 )
 _validate_key_transfer_mode = _one_of_string(
     CONF_PAIRING_KEY_TRANSFER, KEY_TRANSFER_MODE_OPTIONS
@@ -497,6 +512,9 @@ TUNING_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS
         ): _validate_discovery_listen_channels,
+        cv.Optional(
+            CONF_PAIRING_DISCOVERY_SEND_CHANNELS
+        ): _validate_discovery_send_channels,
         cv.Optional(CONF_PAIRING_KEY_TRANSFER): _validate_key_transfer_mode,
         **{cv.Optional(key): cv.boolean for key in _BOOL_PARAMS},
         # Numeric parameters share their range with the number-entity bounds via _NUMBER_PARAMS.
@@ -608,6 +626,13 @@ def _apply_tuning_config(config, var):
             DISCOVERY_LISTEN_CHANNELS_OPTIONS[
                 config[CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS]
             ],
+        )
+
+    if CONF_PAIRING_DISCOVERY_SEND_CHANNELS in config:
+        _assign(
+            tuning,
+            "pairing_discovery_send_channels",
+            DISCOVERY_SEND_CHANNELS_OPTIONS[config[CONF_PAIRING_DISCOVERY_SEND_CHANNELS]],
         )
 
     if CONF_PAIRING_KEY_TRANSFER in config:

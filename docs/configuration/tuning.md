@@ -168,6 +168,7 @@ your device may differ.
 | `pairing_discover_confirm` | both | `send` | `skip` / `send` / `send_with_ack` | Whether/how to send `DISCOVER_CONFIRM` (0x2C) to a freshly-discovered device before the key exchange. |
 | `pairing_key_init_delay_ms` | both | `300` | 0–10000 ms | Pause after the discover-confirm step (ACKed, refused, or silent) and before `KEY_INIT` (0x31). |
 | `pairing_discovery_listen_channels` | both | `skip_request` | `skip_request` / `all` | Which channels the wait for a discovery response covers. |
+| `pairing_discovery_send_channels` | both | `request` | `request` / `all` | Which channels the discovery requests go out on: `request` sends every attempt on 868.95 MHz, `all` rotates 868.95, 868.25 and 869.85 MHz (experimental). |
 | `pairing_key_transfer` | both | `auto` | `auto` / `push` / `pull` | Send the hub's key to the device, or ask the device for its own key. `auto` pulls from a device that answers discovery as a remote controller and pushes to any other. |
 
 `ui_controls` itself is a feature toggle (default `false`) that exposes these as entities; it is
@@ -802,6 +803,22 @@ on the two channels that carry nearly all of them — a third more dwell on each
 Set `all` when a device never answers discovery at all. That measurement comes from devices we
 already hear, so it cannot speak for one whose replies we might be missing entirely; `all` costs a
 third of the dwell on the other two channels and removes the only blind spot the default has.
+
+#### `pairing_discovery_send_channels`
+
+Which of the three channels the hub sends its discovery requests on. Experimental.
+
+With the default `request`, every discovery attempt goes out on 868.95 MHz, the channel a two-way
+command uses. The key search of a vendor controller repeats its discovery request on all three
+channels (868.25, 868.95 and 869.85 MHz), and a device that listens on one channel only hears the
+search when it lands there. Set `all` and the three attempts of one Discover & Pair run go out on
+868.95, 868.25 and 869.85 MHz in turn, so a device on any of them is reached within one run. The wait
+for the reply after each attempt skips the channel that attempt used, as
+`pairing_discovery_listen_channels` describes.
+
+Try it on a device that never answers discovery, with the frame log on so the channel of each attempt
+shows in the log. No device has been confirmed to need it yet; an Atlantic Tatou heater is the
+candidate.
 
 #### `pairing_key_transfer`
 

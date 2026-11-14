@@ -1,0 +1,123 @@
+id: velux_sml_exchange_execute_ack_waiting_for_power_sx1262
+description: >
+  The reply of a VELUX SML roller shutter to the hub's own set-position EXECUTE (75 %), issue #230.
+  The shutter shares a KUX 110 power supply with a second SML shutter that was idle. Its CMD_PRIVATE_RESP
+  acknowledgement carries status byte 03 = (0 << 3) | 3: state 3, waiting for power, although nothing else
+  moved. The six status reads that follow, 3 s apart, report state 4 (executing) with a falling remaining
+  time while the shutter runs from 0 % to 75 %, then state 5 (done) at 75 %. So an acknowledgement with
+  state 3 says nothing about a queue; only a status read does.
+  The EXECUTE is the 8-byte form with the speed block, and the shutter answers it with result code 0:
+  unlike the other devices in the corpus it does not call a parameter unknown.
+  The 0x3C CHALLENGE_REQ and the hub's 0x3D response between the two frames are omitted: their payloads
+  are masked by this project's own redaction before the log is written. The position bytes of the
+  acknowledgement (target and current 00 00 here, the 75 % the command asked for is in the EXECUTE) are not
+  decoded by the hub. t_ms are from the log line timestamps (TX at 09:16:40.965).
+source:
+  device: "VELUX SML roller shutter on a KUX 110 power supply shared with a second SML shutter"
+  captured_with: sx1262
+  firmware: "main at 822979c with the frame log on (Heltec WiFi LoRa 32 V3.2)"
+  date: 2026-11-14
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/230"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "50 00 FB 42 88 73 B5 8E 00 01 63 96 00 80 D8 06 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00)"
+  - dir: rx
+    t_ms: 88
+    freq: 868950000
+    hex: "90 08 73 B5 8E FB 42 88 04 03 00 00 00 80 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+  - dir: tx
+    t_ms: 3126
+    freq: 868950000
+    hex: "4B 00 FB 42 88 73 B5 8E 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: rx
+    t_ms: 3176
+    freq: 868950000
+    hex: "96 08 73 B5 8E FB 42 88 04 04 00 96 00 18 7F 00 0F 73 B5 8E 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+  - dir: tx
+    t_ms: 6211
+    freq: 868950000
+    hex: "4B 00 FB 42 88 73 B5 8E 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: rx
+    t_ms: 6263
+    freq: 868950000
+    hex: "96 08 73 B5 8E FB 42 88 04 04 00 96 00 32 04 00 0C 73 B5 8E 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+  - dir: tx
+    t_ms: 9297
+    freq: 868950000
+    hex: "4B 00 FB 42 88 73 B5 8E 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: rx
+    t_ms: 9350
+    freq: 868950000
+    hex: "96 08 73 B5 8E FB 42 88 04 04 00 96 00 4B 89 00 09 73 B5 8E 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+  - dir: tx
+    t_ms: 12384
+    freq: 868950000
+    hex: "4B 00 FB 42 88 73 B5 8E 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: rx
+    t_ms: 12436
+    freq: 868950000
+    hex: "96 08 73 B5 8E FB 42 88 04 04 00 96 00 64 FD 00 06 73 B5 8E 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+  - dir: tx
+    t_ms: 15471
+    freq: 868950000
+    hex: "4B 00 FB 42 88 73 B5 8E 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: rx
+    t_ms: 15524
+    freq: 868950000
+    hex: "96 08 73 B5 8E FB 42 88 04 04 00 96 00 7E 82 00 03 73 B5 8E 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+  - dir: tx
+    t_ms: 19566
+    freq: 868950000
+    hex: "4B 00 FB 42 88 73 B5 8E 03 03 00 00"
+    crc: absent
+    note: "cmd=PRIVATE(0x03)"
+  - dir: rx
+    t_ms: 19631
+    freq: 868950000
+    hex: "96 08 73 B5 8E FB 42 88 04 05 00 96 00 96 00 00 00 73 B5 8E 01 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04)"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x03, start: true, end: false, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

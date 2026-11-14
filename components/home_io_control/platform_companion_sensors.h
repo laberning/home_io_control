@@ -187,8 +187,8 @@ inline constexpr const char *ACTIVE_ISSUE_EXECUTION_ERROR = "EXECUTION_ERROR";
 ///   4. The device's execution state (`IoDevice::execution_state`, byte 0 of its status replies):
 ///      "NODE_WAITING_FOR_POWER" while it waits for power (state 3), ACTIVE_ISSUE_NOT_EXECUTING after
 ///      state 0 and ACTIVE_ISSUE_EXECUTION_ERROR after state 1, until its next reply says 2..5.
-///      Waiting for power is experimental: it has been captured in a main-parameter read, not yet in
-///      an ordinary status reply.
+///      Only a status reply or report shows a waiting state: the acknowledgement of the hub's own
+///      command does not (decisions::shown_execution_state()).
 ///
 /// Not a per-operation outcome. Publishes an empty string when no source applies, so a
 /// non-empty value always means "this is still going on" rather than "this is what happened

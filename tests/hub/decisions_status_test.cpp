@@ -344,3 +344,26 @@ TEST(Decisions, EveryOtherNonZeroCodeIsReported) {
         << static_cast<unsigned>(byte);
   }
 }
+
+// === ADR 0085: a waiting state in a command acknowledgement, and the frozen-count back-off ===
+
+TEST(DecisionsStatus, ShownExecutionStateHidesAWaitingStateOnlyInACommandAck) {
+  using decisions::shown_execution_state;
+  EXPECT_EQ(shown_execution_state(ExecutionState::WAITING_FOR_POWER, true), ExecutionState::EXECUTING);
+  EXPECT_EQ(shown_execution_state(ExecutionState::WAITING_FOR_EXECUTING, true), ExecutionState::EXECUTING);
+  EXPECT_EQ(shown_execution_state(ExecutionState::WAITING_FOR_POWER, false), ExecutionState::WAITING_FOR_POWER);
+  EXPECT_EQ(shown_execution_state(ExecutionState::WAITING_FOR_EXECUTING, false), ExecutionState::WAITING_FOR_EXECUTING);
+  for (ExecutionState other : {ExecutionState::NON_EXECUTING, ExecutionState::EXECUTION_ERROR,
+                               ExecutionState::EXECUTING, ExecutionState::DONE, ExecutionState::UNDEFINED}) {
+    EXPECT_EQ(shown_execution_state(other, true), other);
+    EXPECT_EQ(shown_execution_state(other, false), other);
+  }
+}
+
+TEST(DecisionsStatus, AFrozenCountBacksOffExceptWhileTheCoverWaits) {
+  using decisions::backs_off_frozen_count;
+  EXPECT_FALSE(backs_off_frozen_count(ExecutionState::WAITING_FOR_EXECUTING));
+  EXPECT_FALSE(backs_off_frozen_count(ExecutionState::WAITING_FOR_POWER));
+  EXPECT_TRUE(backs_off_frozen_count(ExecutionState::EXECUTING));
+  EXPECT_TRUE(backs_off_frozen_count(ExecutionState::UNDEFINED));
+}

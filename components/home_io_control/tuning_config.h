@@ -133,6 +133,20 @@ enum class DiscoveryListenChannels : uint8_t {
                  ///< the other two; use it to rule out a responder that only answers on CH2.
 };
 
+/// @brief Which channels PairingEngine transmits its discovery requests on.
+///
+/// The request goes out on the 2W transmit channel, CH2, on every attempt. Another controller's own
+/// key search repeats its `0x28` on all three channels, and a device that listens for it on one
+/// channel only hears the search when it lands there; `all` sends attempt 1 on CH2, attempt 2 on CH1
+/// and attempt 3 on CH3, so one Discover & Pair run reaches a device on any of them. The reply wait of
+/// each attempt skips that attempt's own request channel as before (DiscoveryListenChannels).
+/// \todo Experimental: no device has been confirmed to need it; an Atlantic Tatou heater is the
+///       candidate (needs a hardware run with the frame log on).
+enum class DiscoverySendChannels : uint8_t {
+  REQUEST,  ///< Default. Every attempt goes out on CH2.
+  ALL,      ///< Attempts rotate CH2, CH1, CH3.
+};
+
 /// @brief Which direction PairingEngine moves the system key in after discovery.
 ///
 /// `auto` (the default) picks the direction from the device's discovery answer: a device that answers
@@ -371,7 +385,9 @@ struct TuningConfig {
   DiscoverConfirmMode pairing_discover_confirm{
       DiscoverConfirmMode::SEND};  ///< Whether/how to send CMD_DISCOVER_CONFIRM (0x2C) during pairing.
   DiscoveryListenChannels pairing_discovery_listen_channels{
-      DiscoveryListenChannels::SKIP_REQUEST};                   ///< Channels the discovery response wait covers.
+      DiscoveryListenChannels::SKIP_REQUEST};  ///< Channels the discovery response wait covers.
+  DiscoverySendChannels pairing_discovery_send_channels{
+      DiscoverySendChannels::REQUEST};                          ///< Channels the discovery requests go out on.
   KeyTransferMode pairing_key_transfer{KeyTransferMode::AUTO};  ///< Push our key, or pull the device's key.
   uint16_t pairing_key_init_delay_ms{
       PAIRING_KEY_INIT_DELAY_MS};  ///< Pause after the discover-confirm step, before CMD_KEY_INIT (0x31).
@@ -616,6 +632,18 @@ std::string discovery_listen_channels_to_string(DiscoveryListenChannels value);
 /// @param value Option string to parse.
 /// @return The selection, or `std::nullopt` if `value` is not one of the options.
 std::optional<DiscoveryListenChannels> discovery_listen_channels_from_string(const std::string &value);
+
+/// @brief Render a DiscoverySendChannels as its YAML/select option string.
+/// @param value Selection to render.
+/// @return `"request"` or `"all"`.
+std::string discovery_send_channels_to_string(DiscoverySendChannels value);
+
+/// @brief Parse a DiscoverySendChannels from its YAML/select option string.
+///
+/// Exact, case-sensitive match against the strings discovery_send_channels_to_string() emits.
+/// @param value Option string to parse.
+/// @return The selection, or `std::nullopt` if `value` is not one of the options.
+std::optional<DiscoverySendChannels> discovery_send_channels_from_string(const std::string &value);
 
 /// @brief Render a KeyTransferMode as its YAML/select option string.
 /// @param value Selection to render.

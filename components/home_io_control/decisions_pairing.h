@@ -27,6 +27,22 @@ enum class PairingDiscoveryDisposition : uint8_t {
   ACCEPT,       ///< Valid discovery response received.
 };
 
+/// @brief The channel a discovery request goes out on.
+///
+/// The default sends every attempt on CH2, the 2W transmit channel. With @p rotate_channels the
+/// attempts of one discovery command take CH2, CH1 and CH3 in turn and start over after the third, so
+/// a device that hears the search on one channel only is reached within three attempts.
+/// @param rotate_channels True to rotate the channels (TuningConfig::pairing_discovery_send_channels
+///        `all`); false to stay on CH2.
+/// @param attempt Attempt number of the command, counted from 1.
+/// @return The request frequency in Hz.
+[[nodiscard]] inline uint32_t discovery_request_freq(bool rotate_channels, uint8_t attempt) {
+  static constexpr uint32_t ROTATION[] = {FREQ_CH2, FREQ_CH1, FREQ_CH3};
+  if (!rotate_channels || attempt == 0)
+    return FREQ_CH2;
+  return ROTATION[(attempt - 1U) % (sizeof(ROTATION) / sizeof(ROTATION[0]))];
+}
+
 /// @brief Disposition during pairing key-challenge phase.
 enum class PairingKeyChallengeDisposition : uint8_t {
   IGNORE,  ///< Not a valid challenge (wrong cmd, length, or sender).

@@ -29,8 +29,8 @@
 /// DHW_STATUS_FPI1 / DHW_STATUS_FPI2 (corpus
 /// tests/corpus/captures/probe/atlantic_calypso_probe_status_fp_high.yaml). Registers 0x0000 and 0x0005 hold
 /// the boost and away durations; a write of a duration alone starts nothing.
-/// \todo Experimental: confirm on a real water heater that the three FP16 values start and end a boost and
-/// the holiday mode (issue #198).
+/// The three FP16 values start and end a boost and the holiday mode on an Atlantic Calypso Connecté
+/// (issue #198).
 
 #include "proto_constants.h"
 #include "proto_frame.h"
