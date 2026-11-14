@@ -65,6 +65,30 @@ climate::ClimatePreset to_climate_preset(HeatingPresetId id) {
   return climate::CLIMATE_PRESET_NONE;
 }
 
+/// @param[out] hvac The profile mode of an ESPHome mode.
+/// @return false for a mode no profile offers (cool, dry, fan only, heat/cool).
+bool to_hvac_mode(climate::ClimateMode mode, HeatingHvacMode &hvac) {
+  for (const auto &mapping : CLIMATE_MODE_MAP) {
+    if (mapping.climate_mode == mode) {
+      hvac = mapping.hvac;
+      return true;
+    }
+  }
+  return false;
+}
+
+/// @param[out] id The profile preset of an ESPHome standard preset.
+/// @return false for a preset no profile offers.
+bool to_preset_id(climate::ClimatePreset preset, HeatingPresetId &id) {
+  for (const auto &mapping : CLIMATE_PRESET_MAP) {
+    if (mapping.preset == preset) {
+      id = mapping.id;
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 const HeatingProfile *IOHomeClimate::profile_() const {
@@ -159,58 +183,34 @@ void IOHomeClimate::control(const climate::ClimateCall &call) {
     this->publish_state();
 }
 
-bool IOHomeClimate::write_(const HeatingProfile &profile, HeatingFunction fn, uint8_t wire) {
-  switch (profile.path) {
-    case HeatingControlPath::HEATING_LEVEL:
-      return this->parent_->set_heating_level(this->device_id_, wire);
-    case HeatingControlPath::PRIVATE_REGISTERS:
-      return this->parent_->send_heating_command(this->device_id_, fn, static_cast<float>(wire));
-    case HeatingControlPath::TEMPERATURE_EXECUTE:
-      break;  // its commands carry a main parameter and a functional parameter: write_preset_() and friends
-  }
-  return false;
+HeatingWritePlan IOHomeClimate::plan_write_(const HeatingProfile &profile, const HeatingWriteRequest &request) {
+  const HeatingWritePlan plan =
+      plan_heating_write(profile, request, heating_device_facts(this->parent_->get_device(this->device_id_)));
+  if (!plan.is_write())
+    this->log_refusal_(profile, plan);
+  return plan;
 }
 
-bool IOHomeClimate::write_preset_(const HeatingProfile &profile, const HeatingPresetEntry &entry) {
-  if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE)
-    return this->write_(profile, entry.write_fn, entry.wire);
-  // A setpoint alias is a main parameter, with the functional parameter the profile names for it.
-  return this->parent_->set_heating_temperature(
-      this->device_id_, heating_prefixed_main_parameter(profile.mp_prefix, entry.wire), entry.fp);
-}
-
-bool IOHomeClimate::encode_target_(const HeatingProfile &profile, float celsius, uint16_t &main_parameter) {
-  const IoDevice *dev = this->parent_->get_device(this->device_id_);
-  if (dev == nullptr)
-    return false;
-  // A profile with a fixed range never takes the YAML range, whatever the record holds.
-  const float min_c = profile.fixed_range ? HEATING_TEMPERATURE_RANGE_MIN_C : dev->temperature_range_min_c;
-  const float max_c = profile.fixed_range ? HEATING_TEMPERATURE_RANGE_MAX_C : dev->temperature_range_max_c;
-  return encode_temperature_main_parameter(celsius, min_c, max_c, main_parameter);
-}
-
-bool IOHomeClimate::write_temperature_mode_(const HeatingProfile &profile, const HeatingModeEntry &entry) {
-  uint16_t main_parameter = entry.main_parameter;
-  if (main_parameter == HEATING_MP_FROM_TARGET) {
-    // Heat (manual) is the current target temperature with the manual flag: the target the card shows,
-    // else the one the device last reported.
-    const IoDevice *dev = this->parent_->get_device(this->device_id_);
-    float target = this->target_temperature;
-    if (std::isnan(target) && dev != nullptr)
-      target = dev->heating.setpoint_c;
-    if (std::isnan(target) || !this->encode_target_(profile, target, main_parameter)) {
+void IOHomeClimate::log_refusal_(const HeatingProfile &profile, const HeatingWritePlan &plan) const {
+  switch (plan.refusal) {
+    case HeatingRefusal::NOT_COMMANDABLE: {
+      const char *name = profile.presets[plan.preset_index].custom_name;
+      ESP_LOGW(TAG, "Device %s: preset '%s' is reported by the device and cannot be set", this->device_id_.c_str(),
+               name != nullptr ? name : "(standard)");
+      break;
+    }
+    case HeatingRefusal::NO_SETPOINT:
+      ESP_LOGW(TAG, "Device %s has no adjustable setpoint; the request is ignored", this->device_id_.c_str());
+      break;
+    case HeatingRefusal::NO_TARGET:
       ESP_LOGW(TAG, "Device %s: no target temperature known yet, set one before selecting heat",
                this->device_id_.c_str());
-      return false;
-    }
+      break;
+    case HeatingRefusal::NO_MATCH:     // the request names nothing this profile offers: nothing to say
+    case HeatingRefusal::UNENCODABLE:  // the setpoint is dropped silently, as the card keeps its value
+    case HeatingRefusal::NONE:
+      break;
   }
-  return this->parent_->set_heating_temperature(this->device_id_, main_parameter, entry.fp);
-}
-
-void IOHomeClimate::confirm_write_(HeatingFunction fn) {
-  // A failed read is already logged by the hub, and the poll will find the register again; the
-  // entity keeps whatever it showed. A level write needs no call here: the hub arms a settle poll.
-  this->parent_->read_heating_register(this->device_id_, fn, nullptr, EXCHANGE_RETRY_COUNT);
 }
 
 bool IOHomeClimate::apply_mode_(const HeatingProfile &profile, const climate::ClimateCall &call) {
@@ -218,73 +218,67 @@ bool IOHomeClimate::apply_mode_(const HeatingProfile &profile, const climate::Cl
   if (!mode_opt.has_value())
     return false;
   const climate::ClimateMode requested = *mode_opt;
-  for (const HeatingModeEntry &entry : profile.modes) {
-    if (to_climate_mode(entry.hvac) != requested)
-      continue;
-    const bool sent = profile.path == HeatingControlPath::TEMPERATURE_EXECUTE
-                          ? this->write_temperature_mode_(profile, entry)
-                          : this->write_(profile, profile.mode_fn, entry.wire);
-    if (!sent)
-      return false;
+  HeatingHvacMode hvac{};
+  if (!to_hvac_mode(requested, hvac))
+    return false;
+  const HeatingWritePlan plan = this->plan_write_(
+      profile, {.kind = HeatingWriteKind::MODE, .hvac = hvac, .shown_target_c = this->target_temperature});
+  if (!plan.is_write())
+    return false;
+
+  bool commanded = false;
+  const bool sent = this->parent_->execute_heating_plan(this->device_id_, plan, [&] {
     // Until a read has succeeded there is nothing observed to show: the commanded mode stands in. A mode
     // that nothing reads back stays the last command.
-    const bool commanded = !this->observed_ || !profile.features.mode_observed;
+    commanded = !this->observed_ || !profile.features.mode_observed;
     this->mode_commanded_ = true;
-    if (commanded) {
-      this->mode = requested;
-      // A real HVAC mode supersedes a preset on the register and level paths; a temperature heater's
-      // preset follows its status reply instead, and so does a preset kept in a register of its own
-      // (a towel dryer's boost outlives a mode change).
-      if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE && profile.preset_observed.empty()) {
-        this->clear_custom_preset_();
-        this->preset.reset();
-      }
+    if (!commanded)
+      return;
+    this->mode = requested;
+    // A real HVAC mode supersedes a preset on the register and level paths; a temperature heater's
+    // preset follows its status reply instead, and so does a preset kept in a register of its own
+    // (a towel dryer's boost outlives a mode change).
+    if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE && profile.preset_observed.empty()) {
+      this->clear_custom_preset_();
+      this->preset.reset();
     }
-    if (profile.path == HeatingControlPath::PRIVATE_REGISTERS) {
-      this->confirm_write_(profile.mode_fn);
-      return commanded && !this->observed_;
-    }
-    return commanded;
-  }
-  return false;
+  });
+  if (!sent)
+    return false;
+  // A read-back may have made the card observed in the meantime: then it publishes itself.
+  return plan.read_back ? commanded && !this->observed_ : commanded;
 }
 
 bool IOHomeClimate::apply_custom_preset_(const HeatingProfile &profile, const climate::ClimateCall &call) {
   if (!call.has_custom_preset())
     return false;
   const std::string custom = std::string(call.get_custom_preset());
-  for (const HeatingPresetEntry &entry : profile.presets) {
-    if (entry.id != HeatingPresetId::CUSTOM || custom != entry.custom_name)
-      continue;
-    return this->commit_preset_(profile, entry);
-  }
-  return false;
+  return this->commit_preset_(
+      profile, {.kind = HeatingWriteKind::PRESET, .preset = HeatingPresetId::CUSTOM, .custom_name = custom.c_str()});
 }
 
 bool IOHomeClimate::apply_preset_(const HeatingProfile &profile, const climate::ClimateCall &call) {
   const auto &preset_opt = call.get_preset();
   if (!preset_opt.has_value())
     return false;
-  const climate::ClimatePreset requested = *preset_opt;
-  for (const HeatingPresetEntry &entry : profile.presets) {
-    if (entry.id == HeatingPresetId::CUSTOM || to_climate_preset(entry.id) != requested)
-      continue;
-    return this->commit_preset_(profile, entry);
-  }
-  return false;
+  HeatingPresetId id{};
+  if (!to_preset_id(*preset_opt, id))
+    return false;
+  return this->commit_preset_(profile, {.kind = HeatingWriteKind::PRESET, .preset = id});
 }
 
-bool IOHomeClimate::commit_preset_(const HeatingProfile &profile, const HeatingPresetEntry &entry) {
-  if (!entry.commandable) {
-    ESP_LOGW(TAG, "Device %s: preset '%s' is reported by the device and cannot be set", this->device_id_.c_str(),
-             entry.custom_name != nullptr ? entry.custom_name : "(standard)");
+bool IOHomeClimate::commit_preset_(const HeatingProfile &profile, const HeatingWriteRequest &request) {
+  const HeatingWritePlan plan = this->plan_write_(profile, request);
+  if (!plan.is_write())
     return false;
-  }
-  if (!this->write_preset_(profile, entry))
-    return false;
-  // Once a read has succeeded the card follows the read-back, not the command.
-  const bool commanded = !this->observed_;
-  if (commanded) {
+  const HeatingPresetEntry &entry = profile.presets[plan.preset_index];
+
+  bool commanded = false;
+  const bool sent = this->parent_->execute_heating_plan(this->device_id_, plan, [&] {
+    // Once a read has succeeded the card follows the read-back, not the command.
+    commanded = !this->observed_;
+    if (!commanded)
+      return;
     if (!profile.preset_observed.empty()) {
       // The preset has a register and a table of its own: its value is never a mode value.
       this->apply_observed_preset_(profile, entry.wire);
@@ -298,43 +292,34 @@ bool IOHomeClimate::commit_preset_(const HeatingProfile &profile, const HeatingP
       this->clear_custom_preset_();             // a standard preset supersedes a custom one
       this->mode = climate::CLIMATE_MODE_HEAT;  // every alias preset heats
     }
-  }
-  if (profile.path == HeatingControlPath::PRIVATE_REGISTERS)
-    this->confirm_write_(entry.write_fn);
-  return commanded;
+  });
+  return sent && commanded;
 }
 
 bool IOHomeClimate::apply_target_temperature_(const HeatingProfile &profile, const climate::ClimateCall &call) {
   const auto &target_opt = call.get_target_temperature();
   if (!target_opt.has_value())
     return false;
-  if (!profile.features.target_temperature) {
-    ESP_LOGW(TAG, "Device %s has no adjustable setpoint; the request is ignored", this->device_id_.c_str());
-    return false;
-  }
   const float target = *target_opt;
-  if (profile.path == HeatingControlPath::TEMPERATURE_EXECUTE) {
-    // The temperature travels in the main parameter, encoded over the device's range; the settle poll
-    // reads it back.
-    uint16_t main_parameter = 0;
-    if (!this->encode_target_(profile, target, main_parameter) ||
-        !this->parent_->set_heating_temperature(this->device_id_, main_parameter, profile.setpoint_fp))
-      return false;
-    const bool commanded = !this->observed_;
-    if (commanded) {
-      this->target_temperature = target;
+  const HeatingWritePlan plan = this->plan_write_(profile, {.kind = HeatingWriteKind::TARGET, .target_c = target});
+  if (!plan.is_write())
+    return false;
+
+  bool commanded = false;
+  const bool sent = this->parent_->execute_heating_plan(this->device_id_, plan, [&] {
+    commanded = !this->observed_;
+    if (!commanded)
+      return;
+    this->target_temperature = target;
+    if (plan.kind == HeatingPlanKind::TEMPERATURE) {
+      // A temperature heater's alias preset ends with the explicit setpoint; the settle poll reads it back.
       this->clear_custom_preset_();
       this->preset.reset();
     }
-    return commanded;
-  }
-  if (!this->parent_->send_heating_command(this->device_id_, HeatingFunction::SET_TEMPERATURE, target))
+  });
+  if (!sent)
     return false;
-  const bool commanded = !this->observed_;
-  if (commanded)
-    this->target_temperature = target;
-  this->confirm_write_(HeatingFunction::SET_TEMPERATURE);
-  return commanded && !this->observed_;
+  return plan.read_back ? commanded && !this->observed_ : commanded;
 }
 
 bool IOHomeClimate::sync_temperatures_(const HeatingProfile &profile, const HeatingReadings &readings, float target_c,

@@ -542,5 +542,144 @@ void clear_inactive_programme_reading(const HeatingProfile &profile, HeatingRead
     readings.clear(profile.programme_period->in_force_fn);
 }
 
+// === Heater writes ===
+
+namespace {
+
+/// Plan the write of one wire value on the register or level path.
+HeatingWritePlan plan_wire_write(const HeatingProfile &profile, HeatingFunction fn, uint8_t wire) {
+  HeatingWritePlan plan;
+  if (profile.path == HeatingControlPath::HEATING_LEVEL) {
+    plan.kind = HeatingPlanKind::LEVEL;
+    plan.level = wire;  // the settle poll of the level write reads it back
+  } else {
+    plan.kind = HeatingPlanKind::REGISTER;
+    plan.register_fn = fn;
+    plan.register_value = static_cast<float>(wire);
+    plan.read_back = true;
+    plan.read_back_fn = fn;
+  }
+  return plan;
+}
+
+/// Plan a write of a main parameter with a functional parameter on the temperature path.
+HeatingWritePlan plan_temperature_write(uint16_t main_parameter, const HeatingFp &fp) {
+  HeatingWritePlan plan;
+  plan.kind = HeatingPlanKind::TEMPERATURE;
+  plan.main_parameter = main_parameter;
+  plan.fp = fp;
+  return plan;
+}
+
+/// A plan that writes nothing, with the reason and, for a preset, the entry it matched.
+HeatingWritePlan refused(HeatingRefusal refusal, int8_t preset_index = -1) {
+  HeatingWritePlan plan;
+  plan.refusal = refusal;
+  plan.preset_index = preset_index;
+  return plan;
+}
+
+/// Encode a target over the range the profile calls for: a profile with a fixed range never takes the
+/// YAML range, whatever the record holds.
+bool encode_target(const HeatingProfile &profile, const HeatingDeviceFacts &facts, float celsius,
+                   uint16_t &main_parameter) {
+  if (!facts.has_record)
+    return false;
+  const float min_c = profile.fixed_range ? HEATING_TEMPERATURE_RANGE_MIN_C : facts.range_min_c;
+  const float max_c = profile.fixed_range ? HEATING_TEMPERATURE_RANGE_MAX_C : facts.range_max_c;
+  return encode_temperature_main_parameter(celsius, min_c, max_c, main_parameter);
+}
+
+HeatingWritePlan plan_mode_write(const HeatingProfile &profile, const HeatingWriteRequest &request,
+                                 const HeatingDeviceFacts &facts) {
+  const auto entry = std::find_if(profile.modes.begin(), profile.modes.end(),
+                                  [&](const HeatingModeEntry &mode) { return mode.hvac == request.hvac; });
+  if (entry == profile.modes.end())
+    return refused(HeatingRefusal::NO_MATCH);
+  if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE)
+    return plan_wire_write(profile, profile.mode_fn, entry->wire);
+
+  uint16_t main_parameter = entry->main_parameter;
+  if (main_parameter == HEATING_MP_FROM_TARGET) {
+    // Heat (manual) is the current target temperature with the manual flag: the target the card shows,
+    // else the one the device last reported.
+    const float target = std::isnan(request.shown_target_c) ? facts.reported_setpoint_c : request.shown_target_c;
+    if (std::isnan(target) || !encode_target(profile, facts, target, main_parameter))
+      return refused(HeatingRefusal::NO_TARGET);
+  }
+  return plan_temperature_write(main_parameter, entry->fp);
+}
+
+HeatingWritePlan plan_preset_write(const HeatingProfile &profile, const HeatingWriteRequest &request) {
+  int8_t index = -1;
+  for (size_t i = 0; i < profile.presets.size(); i++) {
+    const HeatingPresetEntry &entry = profile.presets[i];
+    const bool custom = request.preset == HeatingPresetId::CUSTOM;
+    if (entry.id == request.preset && (!custom || same_name(entry.custom_name, request.custom_name))) {
+      index = static_cast<int8_t>(i);
+      break;
+    }
+  }
+  if (index < 0)
+    return refused(HeatingRefusal::NO_MATCH);
+  const HeatingPresetEntry &entry = profile.presets[index];
+  if (!entry.commandable)
+    return refused(HeatingRefusal::NOT_COMMANDABLE, index);
+
+  // A setpoint alias is a main parameter, with the functional parameter the profile names for it.
+  HeatingWritePlan plan =
+      profile.path == HeatingControlPath::TEMPERATURE_EXECUTE
+          ? plan_temperature_write(heating_prefixed_main_parameter(profile.mp_prefix, entry.wire), entry.fp)
+          : plan_wire_write(profile, entry.write_fn, entry.wire);
+  plan.preset_index = index;
+  return plan;
+}
+
+HeatingWritePlan plan_target_write(const HeatingProfile &profile, const HeatingWriteRequest &request,
+                                   const HeatingDeviceFacts &facts) {
+  if (!profile.features.target_temperature)
+    return refused(HeatingRefusal::NO_SETPOINT);
+  if (profile.path == HeatingControlPath::TEMPERATURE_EXECUTE) {
+    // The temperature travels in the main parameter, encoded over the device's range.
+    uint16_t main_parameter = 0;
+    if (!encode_target(profile, facts, request.target_c, main_parameter))
+      return refused(HeatingRefusal::UNENCODABLE);
+    return plan_temperature_write(main_parameter, profile.setpoint_fp);
+  }
+  HeatingWritePlan plan;
+  plan.kind = HeatingPlanKind::REGISTER;
+  plan.register_fn = HeatingFunction::SET_TEMPERATURE;
+  plan.register_value = request.target_c;
+  plan.read_back = true;
+  plan.read_back_fn = HeatingFunction::SET_TEMPERATURE;
+  return plan;
+}
+
+}  // namespace
+
+HeatingDeviceFacts heating_device_facts(const IoDevice *dev) {
+  HeatingDeviceFacts facts;
+  if (dev == nullptr)
+    return facts;
+  facts.has_record = true;
+  facts.range_min_c = dev->temperature_range_min_c;
+  facts.range_max_c = dev->temperature_range_max_c;
+  facts.reported_setpoint_c = dev->heating.setpoint_c;
+  return facts;
+}
+
+HeatingWritePlan plan_heating_write(const HeatingProfile &profile, const HeatingWriteRequest &request,
+                                    const HeatingDeviceFacts &facts) {
+  switch (request.kind) {
+    case HeatingWriteKind::MODE:
+      return plan_mode_write(profile, request, facts);
+    case HeatingWriteKind::PRESET:
+      return plan_preset_write(profile, request);
+    case HeatingWriteKind::TARGET:
+      return plan_target_write(profile, request, facts);
+  }
+  return refused(HeatingRefusal::NO_MATCH);
+}
+
 }  // namespace home_io_control
 }  // namespace esphome

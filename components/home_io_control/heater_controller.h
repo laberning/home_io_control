@@ -178,6 +178,20 @@ class HeaterController {
   /// @return true when the device accepted the command.
   bool set_heating_temperature(const std::string &device_id, uint16_t main_parameter, const HeatingFp &fp);
 
+  /// @brief Send a planned climate write (plan_heating_write()) and read the register back.
+  ///
+  /// Dispatches to send_heating_command(), set_heating_level() or set_heating_temperature() by the plan's
+  /// kind. When the device accepted, `on_accepted` runs first, then the plan's register is read back
+  /// (EXCHANGE_RETRY_COUNT tries), so the caller has applied the commanded state before the read-back
+  /// notifies it. A refused plan or a rejected write sends no read-back and runs no hook. A failed
+  /// read-back is already logged by read_heating_register(); the next poll finds the register again.
+  /// @param device_id Target device ID (hex string).
+  /// @param plan The plan; one with no write (HeatingWritePlan::is_write()) is not sent.
+  /// @param on_accepted Called once after an accepted write; may be empty.
+  /// @return true when the device accepted the write.
+  bool execute_heating_plan(const std::string &device_id, const HeatingWritePlan &plan,
+                            const std::function<void()> &on_accepted);
+
   /// @brief Set the temperature encoding range of a heater that carries a temperature in its main
   /// parameter (YAML `min_temperature:` / `max_temperature:`).
   /// @param device_id Target device ID.

@@ -735,6 +735,12 @@ class IOHomeControlComponent : public Component,
   virtual bool set_heating_temperature(const std::string &device_id, uint16_t main_parameter, const HeatingFp &fp) {
     return this->heater_controller_.set_heating_temperature(device_id, main_parameter, fp);
   }
+  /// @brief Send a planned climate write and read the register back; the climate entity's one entry point.
+  /// @see HeaterController::execute_heating_plan()
+  virtual bool execute_heating_plan(const std::string &device_id, const HeatingWritePlan &plan,
+                                    const std::function<void()> &on_accepted) {
+    return this->heater_controller_.execute_heating_plan(device_id, plan, on_accepted);
+  }
   /// @brief Set a water heater's target temperature. @see HeaterController::set_water_heater_target()
   virtual bool set_water_heater_target(const std::string &device_id, float celsius) {
     return this->heater_controller_.set_water_heater_target(device_id, celsius);

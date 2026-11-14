@@ -72,6 +72,36 @@ class MockHubClimate : public test::MockPlatformHubBase {
     return true;
   }
 
+  /// Every plan the entity handed over, in order; a refused plan is never handed over.
+  std::vector<HeatingWritePlan> plans;
+
+  /// The real executor's dispatch, replayed through the overrides above so each expectation reads the
+  /// register, level or temperature call it always did.
+  bool execute_heating_plan(const std::string &device_id, const HeatingWritePlan &plan,
+                            const std::function<void()> &on_accepted) override {
+    this->plans.push_back(plan);
+    bool accepted = false;
+    switch (plan.kind) {
+      case HeatingPlanKind::REGISTER:
+        accepted = this->send_heating_command(device_id, plan.register_fn, plan.register_value);
+        break;
+      case HeatingPlanKind::LEVEL:
+        accepted = this->set_heating_level(device_id, plan.level);
+        break;
+      case HeatingPlanKind::TEMPERATURE:
+        accepted = this->set_heating_temperature(device_id, plan.main_parameter, plan.fp);
+        break;
+      case HeatingPlanKind::NONE:
+        break;
+    }
+    if (!accepted)
+      return false;
+    on_accepted();
+    if (plan.read_back)
+      this->read_heating_register(device_id, plan.read_back_fn, nullptr, EXCHANGE_RETRY_COUNT);
+    return true;
+  }
+
   bool send_heating_command(const std::string &device_id, HeatingFunction fn, float value) override {
     this->calls.push_back({device_id, fn, value});
     return this->send_result;
@@ -1321,4 +1351,26 @@ TEST(PlatformClimate, RadiatorProgramPresetStillComesFromTheModeRegister) {
   EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingMode::PROG));
   EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO) << "a commanded preset shows through the mode table";
   EXPECT_EQ(entity.get_custom_preset(), "Program");
+}
+
+TEST(PlatformClimate, EveryWriteIsOnePlanHandedToTheHubAndARefusedRequestHandsNoneOver) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_bound_climate(hub);
+  entity.setup();
+
+  perform_mode(entity, CLIMATE_MODE_HEAT);
+  auto target = entity.make_call();
+  target.set_target_temperature(20.5F);
+  target.perform();
+  perform_custom_preset(entity, "Program");
+
+  ASSERT_EQ(hub.plans.size(), 3u) << "each write reaches the hub as one plan";
+  EXPECT_EQ(hub.plans.size(), hub.calls.size());
+  EXPECT_EQ(hub.plans[0].register_fn, HeatingFunction::SET_MODE);
+  EXPECT_EQ(hub.plans[1].register_fn, HeatingFunction::SET_TEMPERATURE);
+  EXPECT_EQ(hub.plans[2].register_fn, HeatingFunction::SET_MODE);
+
+  perform_mode(entity, CLIMATE_MODE_COOL);
+  perform_custom_preset(entity, "Drying");
+  EXPECT_EQ(hub.plans.size(), 3u) << "a request the profile does not offer is never handed over";
 }

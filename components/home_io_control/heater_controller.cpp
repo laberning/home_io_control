@@ -181,6 +181,31 @@ bool HeaterController::set_heating_temperature(const std::string &device_id, uin
       HeaterExecuteKind::WITH_ROLLBACK);
 }
 
+bool HeaterController::execute_heating_plan(const std::string &device_id, const HeatingWritePlan &plan,
+                                            const std::function<void()> &on_accepted) {
+  bool accepted = false;
+  switch (plan.kind) {
+    case HeatingPlanKind::REGISTER:
+      accepted = this->send_heating_command(device_id, plan.register_fn, plan.register_value);
+      break;
+    case HeatingPlanKind::LEVEL:
+      accepted = this->set_heating_level(device_id, plan.level);
+      break;
+    case HeatingPlanKind::TEMPERATURE:
+      accepted = this->set_heating_temperature(device_id, plan.main_parameter, plan.fp);
+      break;
+    case HeatingPlanKind::NONE:
+      break;
+  }
+  if (!accepted)
+    return false;
+  if (on_accepted)
+    on_accepted();
+  if (plan.read_back)
+    this->read_heating_register(device_id, plan.read_back_fn, nullptr, EXCHANGE_RETRY_COUNT);
+  return true;
+}
+
 void HeaterController::set_device_temperature_range(const std::string &device_id, float min_c, float max_c) {
   IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr)

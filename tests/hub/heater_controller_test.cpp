@@ -319,6 +319,136 @@ TEST(HeaterController, ALevelAndATemperatureHeaterAreCommandedThroughTheCoverSha
   EXPECT_TRUE(temperature.executes[0].built);
 }
 
+// === Planned climate writes ===
+
+namespace {
+
+/// A plan that writes one register and reads it back.
+HeatingWritePlan register_plan(HeatingFunction fn, float value) {
+  HeatingWritePlan plan;
+  plan.kind = HeatingPlanKind::REGISTER;
+  plan.register_fn = fn;
+  plan.register_value = value;
+  plan.read_back = true;
+  plan.read_back_fn = fn;
+  return plan;
+}
+
+}  // namespace
+
+TEST(HeaterController, APlannedRegisterWriteSendsItsBytesAppliesTheHookThenReadsBack) {
+  HeaterControllerFixture fx;
+  make_heater(fx);
+  fx.queue_register_ack({0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xCD, 0x00});
+  size_t frames_when_accepted = 0;
+  int hook_calls = 0;
+
+  const bool accepted =
+      fx.controller.execute_heating_plan("ABC123", register_plan(HeatingFunction::SET_TEMPERATURE, 20.5F), [&] {
+        hook_calls++;
+        frames_when_accepted = fx.radio.get_sent_data().size();
+      });
+
+  EXPECT_TRUE(accepted);
+  EXPECT_EQ(hook_calls, 1);
+  EXPECT_EQ(frames_when_accepted, 1u) << "the hook runs after the write and before the read-back";
+  ASSERT_EQ(fx.radio.get_sent_data().size(), 2u);
+  EXPECT_EQ(sent_payload(fx.radio.get_sent_data()[0], 6), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}));
+  EXPECT_EQ(fx.radio.get_sent_data()[1][10], 0x60) << "the read-back is a get of the same register";
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data()[1]), 0x03);
+}
+
+TEST(HeaterController, APlannedRegisterWriteWithoutReadBackSendsOnlyTheWrite) {
+  HeaterControllerFixture fx;
+  make_heater(fx);
+  fx.queue_register_ack({0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00});
+  HeatingWritePlan plan = register_plan(HeatingFunction::SET_TEMPERATURE, 20.5F);
+  plan.read_back = false;
+
+  EXPECT_TRUE(fx.controller.execute_heating_plan("ABC123", plan, nullptr));
+  EXPECT_EQ(fx.radio.get_sent_data().size(), 1u);
+}
+
+TEST(HeaterController, AnUnacknowledgedPlannedWriteRunsNoHookAndSendsNoReadBack) {
+  HeaterControllerFixture fx;
+  make_heater(fx);
+  int hook_calls = 0;
+
+  EXPECT_FALSE(fx.controller.execute_heating_plan("ABC123", register_plan(HeatingFunction::SET_TEMPERATURE, 20.5F),
+                                                  [&] { hook_calls++; }));
+
+  EXPECT_EQ(hook_calls, 0);
+  for (const auto &tx : fx.radio.get_sent_data())
+    EXPECT_EQ(tx[10], 0x61) << "only write attempts, no read-back";
+}
+
+TEST(HeaterController, ARefusedPlanSendsNothing) {
+  HeaterControllerFixture fx;
+  make_heater(fx);
+  HeatingWritePlan refused;
+  refused.refusal = HeatingRefusal::NO_MATCH;
+  int hook_calls = 0;
+
+  EXPECT_FALSE(fx.controller.execute_heating_plan("ABC123", refused, [&] { hook_calls++; }));
+
+  EXPECT_EQ(hook_calls, 0);
+  EXPECT_TRUE(fx.radio.get_sent_data().empty());
+  EXPECT_TRUE(fx.executes.empty());
+}
+
+TEST(HeaterController, APlannedLevelWriteIsTheLevelExecuteAndIsNotReadBack) {
+  HeaterControllerFixture fx;
+  ASSERT_NE(fx.add_device_of_kind(DeviceType::ELECTRICAL_HEATER, 0), nullptr);
+  HeatingWritePlan plan;
+  plan.kind = HeatingPlanKind::LEVEL;
+  plan.level = heating_level::ECO;
+  int hook_calls = 0;
+
+  EXPECT_TRUE(fx.controller.execute_heating_plan("ABC123", plan, [&] { hook_calls++; }));
+
+  EXPECT_EQ(hook_calls, 1);
+  ASSERT_EQ(fx.executes.size(), 1u);
+  EXPECT_EQ(fx.executes[0].action, "heating level");
+  ASSERT_TRUE(fx.executes[0].built);
+  IoFrame expected;
+  const IoDevice *dev = fx.registry.get("ABC123");
+  ASSERT_TRUE(create_execute_heating_level(expected, fx.node_id, dev->node_id, dev->low_power, heating_level::ECO));
+  uint8_t expected_raw[64];
+  uint8_t got_raw[64];
+  const uint8_t expected_len = serialize(expected, expected_raw, sizeof(expected_raw));
+  const uint8_t got_len = serialize(fx.executes[0].request, got_raw, sizeof(got_raw));
+  EXPECT_EQ(std::vector<uint8_t>(got_raw, got_raw + got_len),
+            std::vector<uint8_t>(expected_raw, expected_raw + expected_len));
+  EXPECT_TRUE(fx.radio.get_sent_data().empty()) << "no register read-back after a level write";
+}
+
+TEST(HeaterController, APlannedTemperatureWriteCarriesItsMainParameterAndFunctionalParameter) {
+  HeaterControllerFixture fx;
+  fx.add_device_of_kind(DeviceType::HEAT_PUMP);
+  HeatingWritePlan plan;
+  plan.kind = HeatingPlanKind::TEMPERATURE;
+  plan.main_parameter = 0xD80F;
+  plan.fp = HeatingFp{HeatingFpKind::FP16, heating_fp16::ON};
+
+  EXPECT_TRUE(fx.controller.execute_heating_plan("ABC123", plan, nullptr));
+
+  ASSERT_EQ(fx.executes.size(), 1u);
+  EXPECT_EQ(fx.executes[0].action, "heating temperature");
+  ASSERT_TRUE(fx.executes[0].built);
+  IoFrame expected;
+  const IoDevice *dev = fx.registry.get("ABC123");
+  ASSERT_TRUE(
+      create_execute_heating_with_fp16(expected, fx.node_id, dev->node_id, dev->low_power, 0xD80F, heating_fp16::ON));
+  uint8_t expected_raw[64];
+  uint8_t got_raw[64];
+  const uint8_t expected_len = serialize(expected, expected_raw, sizeof(expected_raw));
+  const uint8_t got_len = serialize(fx.executes[0].request, got_raw, sizeof(got_raw));
+  EXPECT_EQ(std::vector<uint8_t>(got_raw, got_raw + got_len),
+            std::vector<uint8_t>(expected_raw, expected_raw + expected_len));
+  EXPECT_TRUE(fx.radio.get_sent_data().empty());
+}
+
 TEST(HeaterController, AHeatingLevelIsNeverBuiltForADeviceTheGuardRefuses) {
   HeaterControllerFixture fx;
   make_heater(fx);  // a register heater, not a level heater

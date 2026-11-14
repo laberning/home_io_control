@@ -369,5 +369,87 @@ ProgrammePeriodState resolve_programme_period(const HeatingProfile &profile, con
 /// @param[in,out] readings What the hub has read from the heater.
 void clear_inactive_programme_reading(const HeatingProfile &profile, HeatingReadings &readings);
 
+// === Heater writes: what a request turns into ===
+
+/// @brief What a climate request asks for.
+enum class HeatingWriteKind : uint8_t {
+  MODE,    ///< Select an HVAC mode.
+  PRESET,  ///< Select a preset, standard or custom.
+  TARGET,  ///< Set the target temperature.
+};
+
+/// @brief One climate request, in profile terms: no ESPHome type.
+struct HeatingWriteRequest {
+  HeatingWriteKind kind{HeatingWriteKind::MODE};  ///< What the request asks for.
+  HeatingHvacMode hvac{HeatingHvacMode::OFF};     ///< MODE: the mode.
+  HeatingPresetId preset{HeatingPresetId::NONE};  ///< PRESET: the standard preset, or CUSTOM.
+  const char *custom_name{nullptr};               ///< PRESET with CUSTOM: the preset's name.
+  float target_c{NAN};                            ///< TARGET: the requested temperature.
+  float shown_target_c{NAN};                      ///< MODE: the target the card shows now (NaN when none), for a
+                                                  ///< mode that sends the target (HEATING_MP_FROM_TARGET).
+};
+
+/// @brief What the hub knows about the device a request goes to.
+struct HeatingDeviceFacts {
+  bool has_record{false};                              ///< The hub has a record of the device.
+  float range_min_c{HEATING_TEMPERATURE_RANGE_MIN_C};  ///< Lower end of the YAML temperature range.
+  float range_max_c{HEATING_TEMPERATURE_RANGE_MAX_C};  ///< Upper end of the YAML temperature range.
+  float reported_setpoint_c{NAN};                      ///< The setpoint the device last reported (NaN until read).
+};
+
+/// @brief Why a request becomes no write.
+enum class HeatingRefusal : uint8_t {
+  NONE,             ///< The request becomes a write.
+  NO_MATCH,         ///< The profile offers no such mode or preset.
+  NOT_COMMANDABLE,  ///< A preset the device only reports.
+  NO_SETPOINT,      ///< The profile has no adjustable setpoint.
+  NO_TARGET,        ///< The mode sends the target temperature and none is known or encodable.
+  UNENCODABLE,      ///< The target temperature cannot be encoded over the device's range.
+};
+
+/// @brief How a planned write reaches the device.
+enum class HeatingPlanKind : uint8_t {
+  NONE,         ///< No write: see HeatingWritePlan::refusal.
+  REGISTER,     ///< A private register write.
+  LEVEL,        ///< A heating-level EXECUTE.
+  TEMPERATURE,  ///< An EXECUTE with a temperature or an alias as the main parameter.
+};
+
+/// @brief The write a request turns into, with everything needed to send it and to read it back.
+struct HeatingWritePlan {
+  HeatingPlanKind kind{HeatingPlanKind::NONE};             ///< How to send it.
+  HeatingRefusal refusal{HeatingRefusal::NONE};            ///< Why there is no write (kind NONE).
+  HeatingFunction register_fn{HeatingFunction::SET_MODE};  ///< REGISTER: the register.
+  float register_value{0.0F};  ///< REGISTER: the value, as encode_heating_payload() takes it.
+  uint8_t level{0};            ///< LEVEL: the level low byte.
+  uint16_t main_parameter{0};  ///< TEMPERATURE: the main parameter.
+  HeatingFp fp{};              ///< TEMPERATURE: the functional parameter that accompanies it.
+  bool read_back{false};       ///< Read `read_back_fn` after an accepted write.
+  HeatingFunction read_back_fn{HeatingFunction::SET_MODE};  ///< The register to read back.
+  int8_t preset_index{-1};  ///< PRESET: index into the profile's presets of the matched entry, also for a
+                            ///< refusal that names one (NOT_COMMANDABLE); -1 otherwise.
+
+  /// @return Whether the request became a write.
+  [[nodiscard]] bool is_write() const { return this->kind != HeatingPlanKind::NONE; }
+};
+
+/// @brief Collect what the hub knows about a device, for plan_heating_write().
+/// @param dev The device record, or nullptr when the hub has none.
+/// @return The facts; `has_record` false for nullptr.
+HeatingDeviceFacts heating_device_facts(const IoDevice *dev);
+
+/// @brief Decide what one climate request writes to a heater.
+/// @details The single place that turns a mode, preset or target into a register write, a heating level or a
+///          temperature EXECUTE: which of the three the profile's control path calls for, with which value
+///          (including the main parameter of a level, an alias or an encoded temperature, and the target a
+///          mode sends), and whether the register is read back afterwards. The temperature is encoded over
+///          the fixed range of a profile that has one, else over the device's YAML range.
+/// @param profile The device's profile.
+/// @param request What the card asks for.
+/// @param facts What the hub knows about the device.
+/// @return The plan; `kind` NONE with a `refusal` when the request is no write.
+HeatingWritePlan plan_heating_write(const HeatingProfile &profile, const HeatingWriteRequest &request,
+                                    const HeatingDeviceFacts &facts);
+
 }  // namespace home_io_control
 }  // namespace esphome

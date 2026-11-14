@@ -8,8 +8,10 @@
 /// heating profile (proto_heating_profiles.h). The profile says what the card offers and how each
 /// choice reaches the device: as private registers (proto_heating.h, sent through
 /// IOHomeControlComponent::send_heating_command() and read_heating_register()) or as a heating level
-/// in the standard EXECUTE (IOHomeControlComponent::set_heating_level()). This class has no
-/// per-device-type branch; the `heating_control` hub action shares the register send path.
+/// or a temperature in the standard EXECUTE. The entity maps ESPHome's call to a HeatingWriteRequest,
+/// plan_heating_write() decides which of those it becomes, and IOHomeControlComponent::execute_heating_plan()
+/// sends it and reads the register back. This class has no per-device-type branch; the `heating_control`
+/// hub action shares the register send path.
 ///
 /// State is observed, not predicted. The hub polls the heater (default every 5 minutes) and this
 /// entity publishes from IoDevice::heating, which only a decoded reply changes. After an accepted
@@ -133,40 +135,15 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   /// @return true when the shown preset changed.
   bool show_preset_(const HeatingProfile &profile, int8_t preset_index);
 
-  /// @brief Send one preset value (or, on the register and level paths, one mode value) over the
-  /// profile's control path.
+  /// @brief Plan one request with plan_heating_write() and log why it is no write.
   /// @param profile The device's profile.
-  /// @param fn Register to write (PRIVATE_REGISTERS only).
-  /// @param wire Register value, or the low byte of a level or alias.
-  /// @return true when the device accepted it.
-  bool write_(const HeatingProfile &profile, HeatingFunction fn, uint8_t wire);
+  /// @param request What the card asks for.
+  /// @return The plan; HeatingWritePlan::is_write() false when it was refused.
+  HeatingWritePlan plan_write_(const HeatingProfile &profile, const HeatingWriteRequest &request);
 
-  /// @brief Send one preset over the profile's control path: a register or level write, or, for a
-  /// TEMPERATURE_EXECUTE heater, its alias as the main parameter with the entry's functional parameter.
-  /// @param profile The device's profile.
-  /// @param entry The preset entry.
-  /// @return true when the device accepted it.
-  bool write_preset_(const HeatingProfile &profile, const HeatingPresetEntry &entry);
-
-  /// @brief Encode a target temperature as a main parameter over the device's range (the fixed range
-  /// for a profile that has one).
-  /// @param profile The device's profile.
-  /// @param celsius The target.
-  /// @param[out] main_parameter The encoded value.
-  /// @return false when the temperature or the range cannot be encoded.
-  bool encode_target_(const HeatingProfile &profile, float celsius, uint16_t &main_parameter);
-
-  /// @brief Send an HVAC mode to a TEMPERATURE_EXECUTE heater: the mode entry's main parameter (the
-  /// target temperature for heat on a thermostat) with its functional parameter.
-  /// @param profile The device's profile.
-  /// @param entry The mode entry.
-  /// @return true when the device accepted it; false when it did not, or when heat needs a target
-  ///         temperature that is not known yet.
-  bool write_temperature_mode_(const HeatingProfile &profile, const HeatingModeEntry &entry);
-
-  /// @brief Read one register back after an accepted write so the entity shows the heater's value.
-  /// @param fn Register that was just written.
-  void confirm_write_(HeatingFunction fn);
+  /// @brief Log the refusal of a plan that is the user's to fix (a preset the device only reports, no
+  /// setpoint, no target temperature for heat); the other refusals are silent.
+  void log_refusal_(const HeatingProfile &profile, const HeatingWritePlan &plan) const;
 
   /// @brief Apply the request's HVAC mode, if present. @return true if state was published.
   bool apply_mode_(const HeatingProfile &profile, const climate::ClimateCall &call);
@@ -176,11 +153,12 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   /// @return true if published.
   bool apply_preset_(const HeatingProfile &profile, const climate::ClimateCall &call);
   /// @brief Send one preset and show it: the tail both preset paths share.
-  /// @details Refuses a preset the device only reports. Until a read has succeeded, a profile whose mode
-  ///          is observed shows the preset through apply_observed_state_(); a temperature profile shows
-  ///          the preset and, for a standard one, mode heat. A register write is read back.
+  /// @details Plans the request; a preset the device only reports is refused. Until a read has succeeded,
+  ///          a profile whose mode is observed shows the preset through apply_observed_state_(); a
+  ///          temperature profile shows the preset and, for a standard one, mode heat. A register write is
+  ///          read back.
   /// @return true if the card changed and must be published.
-  bool commit_preset_(const HeatingProfile &profile, const HeatingPresetEntry &entry);
+  bool commit_preset_(const HeatingProfile &profile, const HeatingWriteRequest &request);
   /// @brief Apply the target temperature, if present. @return true if published.
   bool apply_target_temperature_(const HeatingProfile &profile, const climate::ClimateCall &call);
 
