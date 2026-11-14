@@ -523,6 +523,17 @@ class IOHomeControlComponent : public Component,
   /// Register a callback invoked when any device updates.
   /// @param cb Callable with signature void(const std::string&, const IoDevice&).
   virtual void register_device_callback(DeviceUpdateCallback cb) { this->registry_.subscribe(std::move(cb)); }
+  /// @brief The periodic polls, each with its own opt-in schedule (PeriodicPollPolicy).
+  ///
+  /// The first three read a value off the device (a PeriodicReading row in hub_operations.cpp
+  /// describes how); STATUS_REFRESH reads nothing of its own and queues an ordinary status request.
+  enum class PeriodicPoll : uint8_t {
+    RAIN_SENSOR,     ///< The device's minimum limitation, read as rain or dry (IoDevice::rain_sensor).
+    SUN_LEVEL,       ///< EVENT_LOCAL_SENSOR subscription answer (IoDevice::sun_level, ADR 0064).
+    BATTERY_LEVEL,   ///< EVENT_BATTERY_LEVEL_CHANGE subscription answer (IoDevice::battery_level, ADR 0064).
+    STATUS_REFRESH,  ///< A status read for a device that reported nothing for a whole interval.
+  };
+
   /// Configure the optional follow-up polling interval for a registered device.
   /// @param device_id Target device ID.
   /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the legacy one-shot settle poll only.
@@ -1086,46 +1097,43 @@ class IOHomeControlComponent : public Component,
   bool handle_error_response_(const std::string &device_id, const IoFrame &request, const IoFrame &response,
                               uint32_t retry_after_fail_ms);
 
-  /// Fold one rain poll outcome into the device's rain sensor state and tell subscribers.
-  /// @param device_id Target device ID.
-  /// @param reading DRY or RAIN for an answered poll, UNKNOWN for a miss.
-  /// @param limit_text Rendering of the reported limit for the state-change log, empty for a miss.
-  /// @param unanswered True when the device sent nothing usable back at all (no reply, no error),
-  ///        so the miss is retried once after PERIODIC_POLL_MISS_RETRY_MS before it counts.
-  void apply_rain_poll_result_(const std::string &device_id, RainSensorState reading, const std::string &limit_text,
-                               bool unanswered);
-
-  /// @brief The two subscription-answer sensor polls (ADR 0064).
-  enum class EventReading : uint8_t {
-    SUN_LEVEL,      ///< EVENT_LOCAL_SENSOR, IoDevice::sun_level.
-    BATTERY_LEVEL,  ///< EVENT_BATTERY_LEVEL_CHANGE, IoDevice::battery_level.
-  };
-
-  /// Shared body of request_device_sun_level() and request_device_battery_level(): defer while the
-  /// device moves, subscribe, decode the answer, fold the result into the device record.
-  /// @param device_id Target device ID.
-  /// @param kind Which reading to poll.
-  /// @return true if an answer of the captured shape arrived and was applied.
-  bool request_event_reading_(const std::string &device_id, EventReading kind);
-
-  /// The schedule of @p kind's poll.
-  /// @param kind Which reading.
+  /// The schedule of one periodic poll.
+  /// @param poll Which poll.
   /// @return The PeriodicPollPolicy instance that schedules it.
-  PeriodicPollPolicy &event_reading_policy_(EventReading kind);
+  PeriodicPollPolicy &periodic_poll_policy_(PeriodicPoll poll);
+
+  /// Opt a registered device into one periodic poll; the public set_device_*_interval() setters
+  /// forward here. Does nothing for an unknown device.
+  /// @param poll Which poll.
+  /// @param device_id Target device ID.
+  /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
+  void set_periodic_poll_interval_(PeriodicPoll poll, const std::string &device_id, uint32_t interval_ms);
+
+  /// Shared body of request_device_limitation(), request_device_sun_level() and
+  /// request_device_battery_level(): defer while the device moves, send the row's request, decode
+  /// the answer, fold the result into the device record.
+  /// @param device_id Target device ID.
+  /// @param reading Which reading to poll (RAIN_SENSOR, SUN_LEVEL or BATTERY_LEVEL).
+  /// @return true if an answer of the captured shape arrived and was applied.
+  bool request_periodic_reading_(const std::string &device_id, PeriodicPoll reading);
 
   /// Fold one poll outcome into the device record: a reading replaces the value and clears the miss
   /// count; a miss keeps the last value until PERIODIC_POLL_FAILURES_BEFORE_UNKNOWN. Logs a change
   /// at INFO and tells subscribers in every case.
   /// @param device_id Target device ID.
-  /// @param kind Which reading.
+  /// @param reading_kind Which reading.
   /// @param reading The decoded value of an answered poll, empty for a miss.
+  /// @param detail_text Extra text for the state-change log line, empty for a miss.
   /// @param unanswered True when the device sent nothing back at all, so the miss is retried once
   ///        after PERIODIC_POLL_MISS_RETRY_MS before it counts.
-  void apply_event_reading_(const std::string &device_id, EventReading kind, const std::optional<uint16_t> &reading,
-                            bool unanswered);
+  void apply_periodic_reading_(const std::string &device_id, PeriodicPoll reading_kind,
+                               const std::optional<uint16_t> &reading, const std::string &detail_text, bool unanswered);
 
-  /// Queue every periodic poll that is due: the sensor polls (rain, sun level, battery level) and the
-  /// status refresh at rest.
+  /// Log that @p device_id reported nothing for a refresh interval and queue its status read.
+  void queue_status_refresh_(const std::string &device_id);
+
+  /// Queue every periodic poll that is due: walks one list of PeriodicPoll rows, each with what to
+  /// queue for its due device.
   void queue_due_periodic_polls_();
   /// Read every device with `linked_remotes` once, when a burst of linked-remote activity has been
   /// followed by `remote_activity_catchup_poll_ms` without an exchange (ADR 0080). Each read is a

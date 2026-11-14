@@ -378,29 +378,39 @@ void IOHomeControlComponent::set_device_status_poll_interval(const std::string &
   this->poll_policy_.set_interval(device_id, poll_interval_ms);
 }
 
-void IOHomeControlComponent::set_device_rain_poll_interval(const std::string &device_id, uint32_t interval_ms) {
+PeriodicPollPolicy &IOHomeControlComponent::periodic_poll_policy_(PeriodicPoll poll) {
+  // Indexed by PeriodicPoll.
+  static constexpr PeriodicPollPolicy IOHomeControlComponent::*const SCHEDULES[] = {
+      &IOHomeControlComponent::rain_poll_policy_,
+      &IOHomeControlComponent::sun_poll_policy_,
+      &IOHomeControlComponent::battery_level_poll_policy_,
+      &IOHomeControlComponent::status_refresh_policy_,
+  };
+  return this->*SCHEDULES[static_cast<size_t>(poll)];
+}
+
+void IOHomeControlComponent::set_periodic_poll_interval_(PeriodicPoll poll, const std::string &device_id,
+                                                         uint32_t interval_ms) {
   if (this->get_device(device_id) == nullptr)
     return;
-  this->rain_poll_policy_.set_interval(device_id, interval_ms, millis(), poll_jitter_random());
+  this->periodic_poll_policy_(poll).set_interval(device_id, interval_ms, millis(), poll_jitter_random());
+}
+
+void IOHomeControlComponent::set_device_rain_poll_interval(const std::string &device_id, uint32_t interval_ms) {
+  this->set_periodic_poll_interval_(PeriodicPoll::RAIN_SENSOR, device_id, interval_ms);
 }
 
 void IOHomeControlComponent::set_device_sun_poll_interval(const std::string &device_id, uint32_t interval_ms) {
-  if (this->get_device(device_id) == nullptr)
-    return;
-  this->sun_poll_policy_.set_interval(device_id, interval_ms, millis(), poll_jitter_random());
+  this->set_periodic_poll_interval_(PeriodicPoll::SUN_LEVEL, device_id, interval_ms);
 }
 
 void IOHomeControlComponent::set_device_battery_level_poll_interval(const std::string &device_id,
                                                                     uint32_t interval_ms) {
-  if (this->get_device(device_id) == nullptr)
-    return;
-  this->battery_level_poll_policy_.set_interval(device_id, interval_ms, millis(), poll_jitter_random());
+  this->set_periodic_poll_interval_(PeriodicPoll::BATTERY_LEVEL, device_id, interval_ms);
 }
 
 void IOHomeControlComponent::set_device_status_refresh_interval(const std::string &device_id, uint32_t interval_ms) {
-  if (this->get_device(device_id) == nullptr)
-    return;
-  this->status_refresh_policy_.set_interval(device_id, interval_ms, millis(), poll_jitter_random());
+  this->set_periodic_poll_interval_(PeriodicPoll::STATUS_REFRESH, device_id, interval_ms);
 }
 
 void IOHomeControlComponent::note_status_reported_(const std::string &device_id) {
@@ -572,29 +582,34 @@ void IOHomeControlComponent::queue_due_catchup_reads_() {
   }
 }
 
+void IOHomeControlComponent::queue_status_refresh_(const std::string &device_id) {
+  ESP_LOGD(TAG, "Device %s: no status reported for a refresh interval (%" PRIu32 " s): reading it", device_id.c_str(),
+           this->status_refresh_policy_.get_interval(device_id) / 1000);
+  this->queue_request_device_status(device_id);
+}
+
 void IOHomeControlComponent::queue_due_periodic_polls_() {
-  // has_due() first, so a random number is drawn only when pop_due_device() uses it.
-  if (this->rain_poll_policy_.has_due(millis())) {
-    if (const auto due = this->rain_poll_policy_.pop_due_device(millis(), poll_jitter_random()); due.has_value())
-      this->queue_request_device_limitation(*due);
-  }
-  if (this->sun_poll_policy_.has_due(millis())) {
-    if (const auto due = this->sun_poll_policy_.pop_due_device(millis(), poll_jitter_random()); due.has_value())
-      this->queue_request_device_sun_level(*due);
-  }
-  if (this->battery_level_poll_policy_.has_due(millis())) {
-    if (const auto due = this->battery_level_poll_policy_.pop_due_device(millis(), poll_jitter_random());
-        due.has_value())
-      this->queue_request_device_battery_level(*due);
-  }
-  // A device that reported nothing for a whole interval is read. Each status it reports moves its
-  // refresh a whole interval out (note_status_reported_()), so a device read often enough never gets here.
-  if (this->status_refresh_policy_.has_due(millis())) {
-    if (const auto due = this->status_refresh_policy_.pop_due_device(millis(), poll_jitter_random()); due.has_value()) {
-      ESP_LOGD(TAG, "Device %s: no status reported for a refresh interval (%" PRIu32 " s): reading it", due->c_str(),
-               this->status_refresh_policy_.get_interval(*due) / 1000);
-      this->queue_request_device_status(*due);
-    }
+  /// One periodic poll: its schedule and what to queue for a device that comes due.
+  struct DuePoll {
+    PeriodicPoll poll;
+    void (IOHomeControlComponent::*queue)(const std::string &device_id);
+  };
+  // A device that reported nothing for a whole refresh interval is read. Each status it reports moves
+  // its refresh a whole interval out (note_status_reported_()), so a device read often enough never
+  // gets here.
+  static constexpr DuePoll DUE_POLLS[] = {
+      {PeriodicPoll::RAIN_SENSOR, &IOHomeControlComponent::queue_request_device_limitation},
+      {PeriodicPoll::SUN_LEVEL, &IOHomeControlComponent::queue_request_device_sun_level},
+      {PeriodicPoll::BATTERY_LEVEL, &IOHomeControlComponent::queue_request_device_battery_level},
+      {PeriodicPoll::STATUS_REFRESH, &IOHomeControlComponent::queue_status_refresh_},
+  };
+  for (const DuePoll &entry : DUE_POLLS) {
+    PeriodicPollPolicy &schedule = this->periodic_poll_policy_(entry.poll);
+    // has_due() first, so a random number is drawn only when pop_due_device() uses it.
+    if (!schedule.has_due(millis()))
+      continue;
+    if (const auto due = schedule.pop_due_device(millis(), poll_jitter_random()); due.has_value())
+      (this->*entry.queue)(*due);
   }
 }
 

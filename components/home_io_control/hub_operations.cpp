@@ -562,138 +562,174 @@ bool count_poll_miss(PeriodicPollPolicy &policy, const std::string &device_id, b
 
 }  // namespace
 
-bool IOHomeControlComponent::request_device_limitation(const std::string &device_id) {
-  IoDevice *dev = this->registry_.get(device_id);
-  if (dev == nullptr || !this->initialized_)
-    return false;
-
-  // Not a failure and not a reading: a moving device is left alone (the same caution the diagnostic
-  // probe applies), and asking again soon is cheaper than waiting out a whole interval.
-  if (!effective_is_stopped(*dev)) {
-    ESP_LOGD(detail::TAG, "Device %s: rain sensor poll deferred, device is moving", device_id.c_str());
-    this->rain_poll_policy_.defer(device_id, PERIODIC_POLL_MOVING_RETRY_MS, millis());
-    return false;
-  }
-
-  IoFrame request;
-  if (!create_limitation_status_read(request, this->node_id_, dev->node_id, LimitationType::MINIMUM, dev->low_power))
-    return false;
-
-  // retry_after_fail_ms = 0 keeps the status-poll backoff ladder out of a rain poll's way; a miss
-  // here is counted by the rain schedule instead.
-  IoFrame response;
-  const RequestResult result =
-      this->exchange_and_record_(device_id, request, response, {false, 0, PERIODIC_POLL_MAX_TRIES});
-
-  // A reply consumed inside the blocking exchange never reaches the normal receive path.
-  dev = this->registry_.get(device_id);
-  RainSensorState reading = RainSensorState::UNKNOWN;
-  std::string limit_text;
-  if (result == RequestResult::REPLY && dev != nullptr) {
-    // The device transmitted, whatever it said: stamp link health the way the status path does.
-    detail::update_link_health(*dev, this->radio_);
-    uint8_t raw[FRAME_MAX_SIZE] = {0};
-    const uint8_t raw_len = serialize(response, raw, sizeof(raw));
-    detail::log_component_capture(this->radio_, "limitation_rx", raw, raw_len, &response);
-    LimitationStatus status;
-    if (response.cmd == CMD_LIMITATION_STATUS_RESP && decode_limitation_status(response, status)) {
-      ESP_LOGD(detail::TAG, "Device %s: %s", device_id.c_str(), detail::describe_limitation_reply(response).c_str());
-      reading = decisions::rain_state_from_limitation_reply(status);
-      limit_text = detail::format_limitation_value(status.value_raw);
-    } else {
-      ESP_LOGD(detail::TAG, "Device %s: unexpected reply 0x%02X to the limitation read", device_id.c_str(),
-               response.cmd);
-    }
-  } else if (result == RequestResult::ERROR_REPLY && this->rain_poll_policy_.first_error_reply(device_id)) {
-    ESP_LOGW(detail::TAG, "Device %s answers the limitation read with an error; its rain sensor stays unknown",
-             device_id.c_str());
-  }
-
-  this->apply_rain_poll_result_(device_id, reading, limit_text, result == RequestResult::FAILED);
-  return reading != RainSensorState::UNKNOWN;
-}
-
-void IOHomeControlComponent::apply_rain_poll_result_(const std::string &device_id, RainSensorState reading,
-                                                     const std::string &limit_text, bool unanswered) {
-  IoDevice *dev = this->registry_.get(device_id);
-  if (dev == nullptr)
-    return;
-  RainSensorState state = dev->rain_sensor;
-  if (reading != RainSensorState::UNKNOWN) {
-    this->rain_poll_policy_.on_poll_succeeded(device_id);
-    state = reading;
-  } else if (count_poll_miss(this->rain_poll_policy_, device_id, unanswered, "rain sensor")) {
-    state = RainSensorState::UNKNOWN;  // the last reading is too old to keep showing
-  }
-  if (state != dev->rain_sensor) {
-    ESP_LOGI(detail::TAG, "Device %s: rain sensor %s -> %s%s%s%s", device_id.c_str(),
-             rain_sensor_state_name(dev->rain_sensor), rain_sensor_state_name(state),
-             limit_text.empty() ? "" : " (minimum limit ", limit_text.c_str(), limit_text.empty() ? "" : ")");
-    dev->rain_sensor = state;
-  }
-  // Notify on every outcome: link health moved too, so the link sensors need the update.
-  this->notify_device_update_(device_id);
-}
-
-bool IOHomeControlComponent::request_device_sun_level(const std::string &device_id) {
-  return this->request_event_reading_(device_id, EventReading::SUN_LEVEL);
-}
-
-bool IOHomeControlComponent::request_device_battery_level(const std::string &device_id) {
-  return this->request_event_reading_(device_id, EventReading::BATTERY_LEVEL);
-}
-
-PeriodicPollPolicy &IOHomeControlComponent::event_reading_policy_(EventReading kind) {
-  return kind == EventReading::SUN_LEVEL ? this->sun_poll_policy_ : this->battery_level_poll_policy_;
-}
+// === Periodic readings ===
 
 namespace {
 
-/// The device record field a poll feeds: IoDevice::sun_level or IoDevice::battery_level.
-std::optional<uint16_t> &event_reading_field(IoDevice &dev, bool sun) {
-  return sun ? dev.sun_level : dev.battery_level;
+/// @brief How one periodic reading is asked for, decoded, stored and logged.
+///
+/// One row per reading; request_periodic_reading_() and apply_periodic_reading_() hold the rules
+/// every reading shares (wait while the device moves, stamp link health, count misses), and a row
+/// holds only what differs. A reading is a number, `std::nullopt` standing for "no usable reading".
+struct PeriodicReading {
+  const char *label;        ///< Names the reading in log lines ("sun level") and in count_poll_miss().
+  const char *capture_tag;  ///< Tag of the captured reply frame in the component capture log.
+  /// Build the request for @p dev.
+  bool (*build)(IoFrame &request, const uint8_t *own, const IoDevice &dev);
+  /// Decode an answered poll; @p detail_text receives text for the state-change log line.
+  std::optional<uint16_t> (*decode)(const std::string &device_id, const IoFrame &response, std::string &detail_text);
+  /// Whether an answer of another shape than the decoder reads is warned about once (else it is a
+  /// quiet miss; the decoder logs it).
+  bool warn_undecoded;
+  /// Warn that the device answered the request with an error.
+  void (*warn_refused)(const std::string &device_id);
+  /// The value the device record shows now.
+  std::optional<uint16_t> (*shown)(const IoDevice &dev);
+  /// Replace the value the device record shows.
+  void (*store)(IoDevice &dev, const std::optional<uint16_t> &reading);
+  /// A value as the state-change log line prints it.
+  std::string (*format)(const std::optional<uint16_t> &reading);
+  /// Whether an answer equal to the shown value is logged at debug level.
+  bool log_unchanged;
+};
+
+/// A numeric reading for the state-change log line: the number followed by @p unit, or "unknown".
+std::string format_level(const std::optional<uint16_t> &reading, const char *unit) {
+  return reading.has_value() ? std::to_string(*reading) + unit : "unknown";
 }
 
-/// The reading an answer carries, or nothing when it is not of the captured shape.
-std::optional<uint16_t> decode_event_reading(bool sun, const IoFrame &response) {
-  if (sun) {
-    uint16_t value = 0;
-    return decode_sun_level_event(response, value) ? std::optional<uint16_t>(value) : std::nullopt;
+const PeriodicReading RAIN_READING = {
+    .label = "rain sensor",
+    .capture_tag = "limitation_rx",
+    .build =
+        [](IoFrame &request, const uint8_t *own, const IoDevice &dev) {
+          return create_limitation_status_read(request, own, dev.node_id, LimitationType::MINIMUM, dev.low_power);
+        },
+    .decode = [](const std::string &device_id, const IoFrame &response,
+                 std::string &detail_text) -> std::optional<uint16_t> {
+      LimitationStatus status;
+      if (response.cmd != CMD_LIMITATION_STATUS_RESP || !decode_limitation_status(response, status)) {
+        ESP_LOGD(detail::TAG, "Device %s: unexpected reply 0x%02X to the limitation read", device_id.c_str(),
+                 response.cmd);
+        return std::nullopt;
+      }
+      ESP_LOGD(detail::TAG, "Device %s: %s", device_id.c_str(), detail::describe_limitation_reply(response).c_str());
+      detail_text = " (minimum limit " + detail::format_limitation_value(status.value_raw) + ")";
+      const RainSensorState state = decisions::rain_state_from_limitation_reply(status);
+      return state == RainSensorState::UNKNOWN ? std::nullopt : std::optional<uint16_t>(static_cast<uint16_t>(state));
+    },
+    .warn_undecoded = false,
+    .warn_refused =
+        [](const std::string &device_id) {
+          ESP_LOGW(detail::TAG, "Device %s answers the limitation read with an error; its rain sensor stays unknown",
+                   device_id.c_str());
+        },
+    .shown = [](const IoDevice &dev) -> std::optional<uint16_t> {
+      return dev.rain_sensor == RainSensorState::UNKNOWN
+                 ? std::nullopt
+                 : std::optional<uint16_t>(static_cast<uint16_t>(dev.rain_sensor));
+    },
+    .store =
+        [](IoDevice &dev, const std::optional<uint16_t> &reading) {
+          dev.rain_sensor = reading.has_value() ? static_cast<RainSensorState>(*reading) : RainSensorState::UNKNOWN;
+        },
+    .format =
+        [](const std::optional<uint16_t> &reading) {
+          return std::string(rain_sensor_state_name(reading.has_value() ? static_cast<RainSensorState>(*reading)
+                                                                        : RainSensorState::UNKNOWN));
+        },
+    .log_unchanged = false,
+};
+
+/// Warn that the device refused an event subscription (the sun and battery polls).
+void warn_event_refused(const std::string &device_id, const char *label) {
+  ESP_LOGW(detail::TAG, "Device %s refuses the %s subscription; its %s stays unknown", device_id.c_str(), label, label);
+}
+
+const PeriodicReading SUN_READING = {
+    .label = "sun level",
+    .capture_tag = "event_reading_rx",
+    .build =
+        [](IoFrame &request, const uint8_t *own, const IoDevice &dev) {
+          return create_subscribe_event(request, own, dev.node_id, EVENT_LOCAL_SENSOR, dev.low_power);
+        },
+    .decode = [](const std::string &, const IoFrame &response, std::string &) -> std::optional<uint16_t> {
+      uint16_t value = 0;
+      return decode_sun_level_event(response, value) ? std::optional<uint16_t>(value) : std::nullopt;
+    },
+    .warn_undecoded = true,
+    .warn_refused = [](const std::string &device_id) { warn_event_refused(device_id, "sun level"); },
+    .shown = [](const IoDevice &dev) { return dev.sun_level; },
+    .store = [](IoDevice &dev, const std::optional<uint16_t> &reading) { dev.sun_level = reading; },
+    .format = [](const std::optional<uint16_t> &reading) { return format_level(reading, ""); },
+    .log_unchanged = true,
+};
+
+const PeriodicReading BATTERY_READING = {
+    .label = "battery level",
+    .capture_tag = "event_reading_rx",
+    .build =
+        [](IoFrame &request, const uint8_t *own, const IoDevice &dev) {
+          return create_subscribe_event(request, own, dev.node_id, EVENT_BATTERY_LEVEL_CHANGE, dev.low_power);
+        },
+    .decode = [](const std::string &, const IoFrame &response, std::string &) -> std::optional<uint16_t> {
+      uint8_t level = 0;
+      return decode_battery_level_event(response, level) ? std::optional<uint16_t>(level) : std::nullopt;
+    },
+    .warn_undecoded = true,
+    .warn_refused = [](const std::string &device_id) { warn_event_refused(device_id, "battery level"); },
+    .shown = [](const IoDevice &dev) { return dev.battery_level; },
+    .store = [](IoDevice &dev, const std::optional<uint16_t> &reading) { dev.battery_level = reading; },
+    .format = [](const std::optional<uint16_t> &reading) { return format_level(reading, " %"); },
+    .log_unchanged = true,
+};
+
+/// The row of a reading poll (RAIN_SENSOR, SUN_LEVEL or BATTERY_LEVEL).
+const PeriodicReading &periodic_reading_row(IOHomeControlComponent::PeriodicPoll reading) {
+  switch (reading) {
+    case IOHomeControlComponent::PeriodicPoll::RAIN_SENSOR:
+      return RAIN_READING;
+    case IOHomeControlComponent::PeriodicPoll::SUN_LEVEL:
+      return SUN_READING;
+    default:
+      return BATTERY_READING;
   }
-  uint8_t level = 0;
-  return decode_battery_level_event(response, level) ? std::optional<uint16_t>(level) : std::nullopt;
-}
-
-/// A reading for the state-change log line: the number (with " %" for the battery) or "unknown".
-std::string format_event_reading(const std::optional<uint16_t> &reading, bool sun) {
-  if (!reading.has_value())
-    return "unknown";
-  return std::to_string(*reading) + (sun ? "" : " %");
 }
 
 }  // namespace
 
-// The request is a subscription: the device answers it with the event's current value, and that
-// answer is the reading (ADR 0064). Every poll sends the subscription again; the device stores it
-// each time, which the RS100 Solar io has accepted repeatedly (issue #156).
-bool IOHomeControlComponent::request_event_reading_(const std::string &device_id, EventReading kind) {
+bool IOHomeControlComponent::request_device_limitation(const std::string &device_id) {
+  return this->request_periodic_reading_(device_id, PeriodicPoll::RAIN_SENSOR);
+}
+
+bool IOHomeControlComponent::request_device_sun_level(const std::string &device_id) {
+  return this->request_periodic_reading_(device_id, PeriodicPoll::SUN_LEVEL);
+}
+
+bool IOHomeControlComponent::request_device_battery_level(const std::string &device_id) {
+  return this->request_periodic_reading_(device_id, PeriodicPoll::BATTERY_LEVEL);
+}
+
+// The sun and battery requests are subscriptions: the device answers with the event's current value,
+// and that answer is the reading (ADR 0064). Every poll sends the subscription again; the device
+// stores it each time, which the RS100 Solar io has accepted repeatedly (issue #156).
+bool IOHomeControlComponent::request_periodic_reading_(const std::string &device_id, PeriodicPoll reading_kind) {
   IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr || !this->initialized_)
     return false;
-  const bool sun = kind == EventReading::SUN_LEVEL;
-  const char *const label = sun ? "sun level" : "battery level";
-  PeriodicPollPolicy &policy = this->event_reading_policy_(kind);
+  const PeriodicReading &row = periodic_reading_row(reading_kind);
+  PeriodicPollPolicy &policy = this->periodic_poll_policy_(reading_kind);
 
-  // Same caution as the rain poll: a moving device is left alone and asked again soon.
+  // Not a failure and not a reading: a moving device is left alone (the same caution the diagnostic
+  // probe applies), and asking again soon is cheaper than waiting out a whole interval.
   if (!effective_is_stopped(*dev)) {
-    ESP_LOGD(detail::TAG, "Device %s: %s poll deferred, device is moving", device_id.c_str(), label);
+    ESP_LOGD(detail::TAG, "Device %s: %s poll deferred, device is moving", device_id.c_str(), row.label);
     policy.defer(device_id, PERIODIC_POLL_MOVING_RETRY_MS, millis());
     return false;
   }
 
   IoFrame request;
-  if (!create_subscribe_event(request, this->node_id_, dev->node_id,
-                              sun ? EVENT_LOCAL_SENSOR : EVENT_BATTERY_LEVEL_CHANGE, dev->low_power))
+  if (!row.build(request, this->node_id_, *dev))
     return false;
 
   // retry_after_fail_ms = 0 keeps the status-poll backoff ladder out of the way; a miss is counted
@@ -707,52 +743,52 @@ bool IOHomeControlComponent::request_event_reading_(const std::string &device_id
   if (dev == nullptr)
     return false;
   std::optional<uint16_t> reading;
+  std::string detail_text;
   if (result == RequestResult::REPLY) {
     // The device transmitted, whatever it said: stamp link health the way the status path does.
     detail::update_link_health(*dev, this->radio_);
     uint8_t raw[FRAME_MAX_SIZE] = {0};
     const uint8_t raw_len = serialize(response, raw, sizeof(raw));
-    detail::log_component_capture(this->radio_, "event_reading_rx", raw, raw_len, &response);
-    reading = decode_event_reading(sun, response);
-    if (!reading.has_value() && policy.first_error_reply(device_id)) {
+    detail::log_component_capture(this->radio_, row.capture_tag, raw, raw_len, &response);
+    reading = row.decode(device_id, response, detail_text);
+    if (!reading.has_value() && row.warn_undecoded && policy.first_error_reply(device_id)) {
       char hex[FRAME_LOG_HEX_BUFFER_SIZE];
       bytes_to_hex(response.data, response.data_len, hex, sizeof(hex));
       ESP_LOGW(detail::TAG,
                "Device %s answers the %s poll with cmd=0x%02X payload=%s, a shape not decoded; its %s "
                "stays unknown",
-               device_id.c_str(), label, response.cmd, hex, label);
+               device_id.c_str(), row.label, response.cmd, hex, row.label);
     }
   } else if (result == RequestResult::ERROR_REPLY && policy.first_error_reply(device_id)) {
-    ESP_LOGW(detail::TAG, "Device %s refuses the %s subscription; its %s stays unknown", device_id.c_str(), label,
-             label);
+    row.warn_refused(device_id);
   }
 
-  this->apply_event_reading_(device_id, kind, reading, result == RequestResult::FAILED);
+  this->apply_periodic_reading_(device_id, reading_kind, reading, detail_text, result == RequestResult::FAILED);
   return reading.has_value();
 }
 
-void IOHomeControlComponent::apply_event_reading_(const std::string &device_id, EventReading kind,
-                                                  const std::optional<uint16_t> &reading, bool unanswered) {
+void IOHomeControlComponent::apply_periodic_reading_(const std::string &device_id, PeriodicPoll reading_kind,
+                                                     const std::optional<uint16_t> &reading,
+                                                     const std::string &detail_text, bool unanswered) {
   IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr)
     return;
-  const bool sun = kind == EventReading::SUN_LEVEL;
-  PeriodicPollPolicy &policy = this->event_reading_policy_(kind);
-  std::optional<uint16_t> &field = event_reading_field(*dev, sun);
-  const std::optional<uint16_t> before = field;
-  const char *const label = sun ? "sun level" : "battery level";
+  const PeriodicReading &row = periodic_reading_row(reading_kind);
+  PeriodicPollPolicy &policy = this->periodic_poll_policy_(reading_kind);
+  const std::optional<uint16_t> before = row.shown(*dev);
+  std::optional<uint16_t> now = before;
   if (reading.has_value()) {
     policy.on_poll_succeeded(device_id);
-    field = reading;
-  } else if (count_poll_miss(policy, device_id, unanswered, label)) {
-    field.reset();  // the last reading is too old to keep showing
+    now = reading;
+  } else if (count_poll_miss(policy, device_id, unanswered, row.label)) {
+    now.reset();  // the last reading is too old to keep showing
   }
-  if (field != before) {
-    ESP_LOGI(detail::TAG, "Device %s: %s %s -> %s", device_id.c_str(), label, format_event_reading(before, sun).c_str(),
-             format_event_reading(field, sun).c_str());
-  } else if (reading.has_value()) {
-    ESP_LOGD(detail::TAG, "Device %s: %s %s (unchanged)", device_id.c_str(), label,
-             format_event_reading(reading, sun).c_str());
+  if (now != before) {
+    ESP_LOGI(detail::TAG, "Device %s: %s %s -> %s%s", device_id.c_str(), row.label, row.format(before).c_str(),
+             row.format(now).c_str(), detail_text.c_str());
+    row.store(*dev, now);
+  } else if (reading.has_value() && row.log_unchanged) {
+    ESP_LOGD(detail::TAG, "Device %s: %s %s (unchanged)", device_id.c_str(), row.label, row.format(reading).c_str());
   }
   // Notify on every outcome: link health moved too, so the link sensors need the update.
   this->notify_device_update_(device_id);

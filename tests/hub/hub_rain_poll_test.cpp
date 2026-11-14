@@ -30,7 +30,10 @@ class TestableRainPollComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::poll_policy_;
   using IOHomeControlComponent::process_pending_operation_;
   using IOHomeControlComponent::radio_;
+  using IOHomeControlComponent::battery_level_poll_policy_;
   using IOHomeControlComponent::rain_poll_policy_;
+  using IOHomeControlComponent::status_refresh_policy_;
+  using IOHomeControlComponent::sun_poll_policy_;
   using IOHomeControlComponent::system_key_;
 };
 
@@ -291,6 +294,21 @@ TEST_F(RainPollHub, AnotherCommandAnswersAsAMissAndIsNeverAppliedAsStatus) {
   EXPECT_EQ(device().position, 40.0f) << "a limitation read's reply is never parsed as a status";
 }
 
+TEST_F(RainPollHub, AnotherCommandAnswerIsAQuietMissThatKeepsTheErrorWarning) {
+  IoFrame status{};
+  init_frame(status, true, false, true, false);
+  set_dst(status, comp.node_id_);
+  set_src(status, DEVICE_NODE_ID);
+  const uint8_t payload[8] = {test::STATUS_BYTE_AT_REST, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  set_cmd(status, CMD_PRIVATE_RESP, payload, sizeof(payload));
+  radio.queue_rx(test::make_rx_packet(status));
+
+  EXPECT_FALSE(comp.request_device_limitation(DEVICE_ID));
+
+  EXPECT_TRUE(comp.rain_poll_policy_.first_error_reply(DEVICE_ID))
+      << "an answer of another shape is logged at debug only; the one warning stays for an error reply";
+}
+
 TEST_F(RainPollHub, ALimitationReplyForAnotherParameterIsAMiss) {
   radio.queue_rx(test::make_rx_packet(
       test::make_limitation_reply(comp.node_id_, DEVICE_NODE_ID, 0xBA00, 0x02, 0x1D, LIMITATION_PARAM_FP_FIRST)));
@@ -355,6 +373,18 @@ TEST_F(RainPollHub, ACoverWithoutAnIntervalIsNeverPolled) {
 
   EXPECT_TRUE(comp.op_queue_.empty());
   EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST_F(RainPollHub, EveryPollIntervalSetterIgnoresAnUnknownDevice) {
+  comp.set_device_rain_poll_interval("NOPE00", POLL_INTERVAL_MS);
+  comp.set_device_sun_poll_interval("NOPE00", POLL_INTERVAL_MS);
+  comp.set_device_battery_level_poll_interval("NOPE00", POLL_INTERVAL_MS);
+  comp.set_device_status_refresh_interval("NOPE00", POLL_INTERVAL_MS);
+
+  EXPECT_EQ(comp.rain_poll_policy_.get_interval("NOPE00"), 0u);
+  EXPECT_EQ(comp.sun_poll_policy_.get_interval("NOPE00"), 0u);
+  EXPECT_EQ(comp.battery_level_poll_policy_.get_interval("NOPE00"), 0u);
+  EXPECT_EQ(comp.status_refresh_policy_.get_interval("NOPE00"), 0u);
 }
 
 TEST_F(RainPollHub, TwoCoversWithTheSameIntervalStartAndRepeatAtDifferentTimes) {
