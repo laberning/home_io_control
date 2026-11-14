@@ -6,9 +6,9 @@ Three C++ functions build a YAML snippet as a plain string, for a user to copy i
 config: build_oneway_adoption_report() (components/home_io_control/oneway_key_adoption.cpp),
 build_key_extraction_report() (components/home_io_control/key_extraction_responder.cpp) and
 build_device_yaml_snippet() (components/home_io_control/proto_device_model.cpp). Each one's emitted key names must track a
-Python schema (ONEWAY_CONTROLLER_SCHEMA, the hub's own CONFIG_SCHEMA, and the four device-bound
-platform schemas respectively) by hand -- nothing else keeps the two in step, so a schema key
-rename or a newly-required key drifts silently until a user's paste fails to validate.
+Python schema (ONEWAY_CONTROLLER_SCHEMA, the hub's own CONFIG_SCHEMA, and the device-bound
+platform schemas in PLATFORM_PY_FILES respectively) by hand -- nothing else keeps the two in step, so a
+schema key rename or a newly-required key drifts silently until a user's paste fails to validate.
 
 Separately, DEVICE_TYPE_OPTIONS and MANUFACTURER_OPTIONS (hub_validators.py) are each hand-transcribed a
 second time as a markdown table in the published docs (see ``DOCS_MD`` below), for users picking a
@@ -43,9 +43,10 @@ COVER_PY = COMPONENT_DIR / "cover.py"
 LIGHT_PY = COMPONENT_DIR / "light.py"
 SWITCH_PY = COMPONENT_DIR / "switch.py"
 LOCK_PY = COMPONENT_DIR / "lock.py"
+WATER_HEATER_PY = COMPONENT_DIR / "water_heater.py"
 CLIMATE_PY = COMPONENT_DIR / "climate.py"
 FAN_PY = COMPONENT_DIR / "fan.py"
-PLATFORM_PY_FILES = [PLATFORM_COMMON_PY, COVER_PY, LIGHT_PY, SWITCH_PY, LOCK_PY, CLIMATE_PY, FAN_PY]
+PLATFORM_PY_FILES = [PLATFORM_COMMON_PY, COVER_PY, LIGHT_PY, SWITCH_PY, LOCK_PY, CLIMATE_PY, FAN_PY, WATER_HEATER_PY]
 
 ONEWAY_KEY_ADOPTION_CPP = COMPONENT_DIR / "oneway_key_adoption.cpp"
 KEY_EXTRACTION_RESPONDER_CPP = COMPONENT_DIR / "key_extraction_responder.cpp"
@@ -64,22 +65,34 @@ ESPHOME_CONST_FALLBACK = {"CONF_ID": "id", "CONF_NAME": "name"}
 # =====================================================================================
 
 
-def _string_constants(module: ast.Module) -> dict:
-    """Map top-level ``NAME = "literal"`` assignments to their string values."""
+def _string_constants(module: ast.Module, known: "dict | None" = None) -> dict:
+    """Map top-level ``NAME = "literal"`` assignments to their string values.
+
+    ``ALIAS = NAME`` is followed when NAME is defined earlier in the module or in ``known``
+    (constants of modules loaded before, which the module imports).
+    """
     constants = {}
+    lookup = dict(known or {})
     for node in module.body:
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
-            if isinstance(node.value.value, str):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        constants[target.id] = node.value.value
+        if not isinstance(node, ast.Assign):
+            continue
+        value = None
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            value = node.value.value
+        elif isinstance(node.value, ast.Name):
+            value = lookup.get(node.value.id)
+        if value is None:
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                constants[target.id] = lookup[target.id] = value
     return constants
 
 
 def _load_constants(files: "list[Path]") -> dict:
     constants = dict(ESPHOME_CONST_FALLBACK)
     for path in files:
-        constants.update(_string_constants(ast.parse(path.read_text(encoding="utf-8"))))
+        constants.update(_string_constants(ast.parse(path.read_text(encoding="utf-8")), constants))
     return constants
 
 
@@ -154,7 +167,7 @@ def device_platform_schema_keys() -> dict:
     A whole-module dict walk (rather than the named-assignment lookup above) because
     light.py's CONFIG_SCHEMA builds its dict inside a helper function (_validate()), not in a
     top-level `CONFIG_SCHEMA = ...` assignment the way cover.py/switch.py/lock.py do -- each of
-    these five files is narrowly scoped to one platform's schema, so a whole-file walk carries
+    these files is narrowly scoped to one platform's schema, so a whole-file walk carries
     none of the hub modules' multi-schema cross-contamination risk.
     """
     constants = _load_constants([HUB_NAMES_PY] + PLATFORM_PY_FILES)

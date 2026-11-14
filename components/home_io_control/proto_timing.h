@@ -49,12 +49,10 @@ static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol default and floor
 /// produces) — long enough to be reliably caught by a hopping receiver, short enough that
 /// sending it doesn't block the loop the way LONG_PREAMBLE does.
 ///
-/// Sized above the ~13.9 ms real-device discovery-reply preamble this project's own SX1262/LR1121
-/// discovery hop-slice tuning was measured against (issue #65 SDR analysis) — that measurement is
-/// what "reliably caught by a hopping receiver" is calibrated to here. 80 bytes ≈ 16.7 ms at the
-/// protocol's 38400 bps line rate (soft_phy_air_time_us()),
-/// budgeted as a starting point, not yet hardware-validated for this exact chip/scenario
-/// combination. Runtime-tunable via `cold_broadcast_reply_preamble` for exactly that reason.
+/// 80 bytes ≈ 16.7 ms at the protocol's 38400 bps line rate (soft_phy_air_time_us()), sized above
+/// the ~13.9 ms preamble real devices put on a discovery reply. A starting point, not yet
+/// hardware-validated for every radio. Runtime-tunable via `cold_broadcast_reply_preamble` for
+/// exactly that reason.
 static constexpr uint16_t COLD_BROADCAST_REPLY_PREAMBLE = 80;
 
 /// Default for `TuningConfig::normal_start_preamble` — the preamble in front of a directed *start*
@@ -113,11 +111,9 @@ static constexpr uint32_t PREAMBLE_LINGER_DWELL_MS = 15;
 /// `somfy_rs100_statuspoll_kig300_sx1276`).
 static constexpr uint32_t SESSION_HOLD_BASE_MS = 35;
 
-// Chip-specific defaults (response preamble, post-TX settle, per-chip discovery hop slices
-// for SX1262 and LR1121) live beside their TuningConfig fields in tuning_config.h; the
-// SX1262/LR1121 exchange dwell constants live in radio_sx1262.h / radio_lr1121.h respectively.
-// Kept out of the generic protocol layer per the radio-timing layering cleanup — this header
-// holds only chip-neutral protocol values.
+// This header holds only chip-neutral protocol values. Chip-specific defaults (response
+// preamble, post-TX settle, discovery hop slices) live beside their TuningConfig fields in
+// tuning_config.h; each driver's exchange dwell constants live in its own header.
 
 /// Timing constants for frequency hopping and response waiting.
 static constexpr int32_t HOP_TIME_US = 2700;      ///< Time per channel when hopping (2.7ms)

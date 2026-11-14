@@ -288,6 +288,10 @@ struct TuningConfig {
   uint16_t lr1121_post_tx_settle_us{LR1121_POST_TX_SETTLE_US};             ///< Delay after LR1121 TX before RX (µs).
   uint16_t lr1121_discovery_hop_slice_ms{
       LR1121_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while LR1121 discovery hops.
+  // The SX1262 and LR1121 discovery hop-slice defaults above were tuned against the ~13.9 ms
+  // preamble real devices put on a discovery reply (SDR capture analysis, issue #65). The default
+  // here is sized above that preamble, so a hopping receiver catches this reply at least as
+  // reliably as a real device's.
   uint16_t cold_broadcast_reply_preamble{
       COLD_BROADCAST_REPLY_PREAMBLE};  ///< Preamble for a start-flagged key-extraction broadcast reply (0x29).
   uint16_t key_extraction_type_word{

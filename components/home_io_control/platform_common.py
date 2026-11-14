@@ -2,12 +2,12 @@
 ## @brief Shared ESPHome codegen for IO-Homecontrol device-bound platforms.
 ## @ingroup hioc_codegen
 ##
-## cover.py, light.py, switch.py and lock.py all bind an ESPHome entity to a hub
+## The cover, light, switch, lock, fan, climate and water_heater platforms all bind an ESPHome entity to a hub
 ## device: the same config keys, the same auto-generated companion diagnostic sensors
 ## (device name, active issue, RSSI, last contact, exchange failures), and the same
 ## to_code() wiring (set_parent / set_device_id / device type / subtype / poll
 ## interval / linked remotes). This module is the single home for that shared logic so
-## a change lands in one place instead of four — platform files call one
+## a change lands in one place instead of in each — platform files call one
 ## inject_companion_sensor_ids() post-validator and one create_companion_sensors()
 ## to_code() helper. Platform-specific pieces — entity construction/registration, the
 ## cover's ``invert_position`` option, and the cover's favorite/vent companion
@@ -48,7 +48,12 @@ from . import (
     validate_linked_remote_entry,
     validate_status_poll_interval,
 )
-from .hub_names import CONF_SYSTEM_KEY
+from .hub_names import (
+    CONF_IO_DEVICE_ID,
+    CONF_IO_DEVICE_TYPE,
+    CONF_LINKED_REMOTES,
+    CONF_SYSTEM_KEY,
+)
 from .hub_validators import (
     DEVICE_MODEL_OPTIONS,
     device_features,
@@ -68,13 +73,9 @@ REPORTING_DEVICES_URL = (
     "https://laberning.github.io/home_io_control/contributing.html#reporting-unsupported-devices"
 )
 
-# Shared YAML config keys used by every device-bound platform.
-# Named CONF_IO_DEVICE_ID (not CONF_DEVICE_ID) to stay distinct from ESPHome's own
-# CONF_DEVICE_ID ("device_id", the sub-device UI-grouping key from esphome.const) — same string
-# elsewhere in ESPHome, unrelated protocol-address concept here.
-CONF_IO_DEVICE_ID = "io_device_id"
-CONF_LINKED_REMOTES = "linked_remotes"
-CONF_DEVICE_TYPE = "io_device_type"
+# Shared YAML config keys used by every device-bound platform (CONF_IO_DEVICE_ID and
+# CONF_LINKED_REMOTES come from hub_names.py).
+CONF_DEVICE_TYPE = CONF_IO_DEVICE_TYPE
 CONF_SUBTYPE = "io_subtype"
 # A product model below io_device_type / io_subtype, for products that report the same wire type but
 # need different handling (ADR 0067). Only a few (type, subtype) offer one (hub_validators.device_models()).
@@ -406,7 +407,7 @@ async def wire_device_binding(var, parent, config):
 
     Covers set_parent / set_device_id, the optional device type / subtype / model / status
     poll interval / low-power class, and the linked-remotes registration loop —
-    identical across all four device-bound platforms.
+    identical across every device-bound platform.
     """
     cg.add(var.set_parent(parent))
     cg.add(var.set_device_id(config[CONF_IO_DEVICE_ID]))

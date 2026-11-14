@@ -50,10 +50,17 @@ CONF_ONEWAY_CONTROLLERS = "oneway_controllers"
 # validation errors and the boot log can say which it was.
 CONF_NODE_ID_DERIVED = "_node_id_derived"
 CONF_MANUFACTURER = "manufacturer"
-# Same YAML key as platform_common.py's CONF_DEVICE_TYPE, spelled here rather than imported:
-# platform_common imports from this package, whose modules import this one, so the dependency
-# cannot run the other way.
+# Config keys every device-bound platform entry carries. Named CONF_IO_DEVICE_ID (not
+# CONF_DEVICE_ID) to stay distinct from ESPHome's own sub-device `device_id:`. They live here, not
+# in platform_common.py, because platform_common imports from this package, whose modules import
+# this one, so the dependency cannot run the other way.
+CONF_IO_DEVICE_ID = "io_device_id"
+CONF_LINKED_REMOTES = "linked_remotes"
 CONF_IO_DEVICE_TYPE = "io_device_type"
+# The ESPHome platform domains whose entries bind to a hub device and so carry an io_device_id: or
+# a linked_remotes: entry. button:/number:/select:/sensor:/text_sensor: are either not
+# device-bound or, for this component, hub-level only.
+DEVICE_BOUND_DOMAINS = ("cover", "light", "lock", "switch", "fan", "climate", "water_heater")
 CONF_INITIAL_SEQUENCE = "initial_sequence"
 CONF_COMMANDS = "commands"
 # Per-identity 1W wire overrides (ADR 0031). execute_acei: overrides the manufacturer-derived

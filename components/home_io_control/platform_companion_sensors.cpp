@@ -14,9 +14,8 @@ namespace home_io_control {
 
 // Each dump_config() keeps its own log tag as a `static` function-local constant: the ESPHome
 // LOG_SENSOR / LOG_TEXT_SENSOR macros expand to a bare `TAG` identifier, so one shared file-scope
-// constant could not carry a different value per sensor. Values are unchanged from the former per-sensor
-// files. (`static` so the name resolves as a StaticConstant, i.e. UPPER_CASE, under clang-tidy's
-// identifier-naming check rather than as a lower_case local.)
+// constant could not carry a different value per sensor. (`static` so the name resolves as a StaticConstant, i.e.
+// UPPER_CASE, under clang-tidy's identifier-naming check rather than as a lower_case local.)
 
 namespace {
 

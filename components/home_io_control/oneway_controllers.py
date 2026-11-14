@@ -36,8 +36,10 @@ from .hub_names import (
     CONF_EXECUTE_BROADCAST,
     CONF_INITIAL_SEQUENCE,
     CONF_INVERT_POSITION,
+    CONF_IO_DEVICE_ID,
     CONF_IO_DEVICE_TYPE,
     CONF_LAST_COMMAND_SENSOR_ID,
+    CONF_LINKED_REMOTES,
     CONF_LOW_POWER,
     CONF_MANUFACTURER,
     CONF_NODE_ID,
@@ -45,6 +47,7 @@ from .hub_names import (
     CONF_ONEWAY_CONTROLLERS,
     CONF_RADIO_TYPE,
     CONF_SYSTEM_KEY,
+    DEVICE_BOUND_DOMAINS,
     IOHomeOneWayCommandButton,
     IOHomeOneWayEnrollButton,
     IOHomeOneWayLastCommandTextSensor,
@@ -511,32 +514,18 @@ def validate_oneway_controllers(config):
     return config
 
 
-# cover:/light:/lock:/switch: are the device-bound platforms that can carry an io_device_id: or a
-# linked_remotes: entry (platform_common.py). button:/number:/select:/sensor:/text_sensor: are
-# either not device-bound or, for this component, hub-level only.
-_DEVICE_BOUND_DOMAINS = ("cover", "light", "lock", "switch")
-
-
 def _collect_declared_device_addresses(full_config):
     """Map every node ID declared as an `io_device_id:` or a bare `linked_remotes:` entry, across
     every `home_io_control` entity in `full_config`, to a human-readable owner string.
 
     Only entries with `platform: home_io_control` are considered — the domains in
-    _DEVICE_BOUND_DOMAINS are shared with every other component that provides a cover/light/
-    lock/switch platform, and those have nothing to do with this component's address space.
+    DEVICE_BOUND_DOMAINS are shared with every other component that provides such a
+    platform, and those have nothing to do with this component's address space.
     `class:` linked_remotes entries name a device *type*, not a node, so they carry no address to
     collide with and are skipped.
-
-    CONF_IO_DEVICE_ID/CONF_LINKED_REMOTES are imported locally from platform_common rather than at
-    module level: platform_common imports from the package (`from . import ...`), whose
-    __init__.py imports this module, so a module-level import here would be circular. By the time
-    this function actually runs (final validation, after every used platform module has already
-    been imported), the cycle has already resolved and the import is a plain cache hit.
     """
-    from .platform_common import CONF_IO_DEVICE_ID, CONF_LINKED_REMOTES
-
     addresses = {}
-    for domain in _DEVICE_BOUND_DOMAINS:
+    for domain in DEVICE_BOUND_DOMAINS:
         for entry in full_config.get(domain, []):
             if not isinstance(entry, dict) or entry.get(CONF_PLATFORM) != "home_io_control":
                 continue
@@ -558,7 +547,7 @@ def final_validate_oneway_controller_addresses(config):
 
     Runs as FINAL_VALIDATE_SCHEMA rather than inside validate_oneway_controllers() because only
     final validation has access to the full cross-component config (`fv.full_config`) —
-    `cover:`/`light:`/`lock:`/`switch:` entries are validated independently of
+    entries of the DEVICE_BOUND_DOMAINS platforms are validated independently of
     `home_io_control:`'s own CONFIG_SCHEMA and are not visible to it. By this point
     validate_oneway_controllers() has already run, so every identity's `node_id` (derived or
     explicit) is resolved.

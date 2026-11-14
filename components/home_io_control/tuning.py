@@ -13,7 +13,7 @@ from esphome.components import number, select
 from esphome.const import CONF_ID, CONF_NAME, ENTITY_CATEGORY_CONFIG
 from esphome.core import ID
 
-home_io_control_ns = cg.esphome_ns.namespace("home_io_control")
+from .hub_names import home_io_control_ns
 
 CONF_TUNING = "tuning"
 CONF_UI_CONTROLS = "ui_controls"

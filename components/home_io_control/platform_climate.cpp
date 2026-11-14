@@ -84,8 +84,8 @@ void IOHomeClimate::setup() {
   if (this->device_type_ != DeviceType::UNKNOWN &&
       !device_supports_climate_control(this->device_type_, this->subtype_)) {
     ESP_LOGE(TAG,
-             "Device %s is declared as %s, which this climate entity cannot drive yet (it drives an electrical "
-             "heater: io_device_type: electrical_heater, io_subtype: 0 or 1) — disabling it",
+             "Device %s is declared as %s, which has no heating profile, so this climate entity cannot drive "
+             "it — disabling it",
              this->device_id_.c_str(), format_device_kind(this->device_type_, this->subtype_).c_str());
     this->mark_failed();
     return;

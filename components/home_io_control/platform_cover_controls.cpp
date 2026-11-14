@@ -12,9 +12,8 @@
 namespace esphome {
 namespace home_io_control {
 
-// One tag for the merged command button. The former per-button tags (home_io_control.favorite_button
-// / home_io_control.vent_button) both retire with the class merge; a user greps for the entity by
-// name, not by log tag, and this reads correctly for either command.
+// One tag for the command button, shared by every command (favorite, vent, ...): a user greps for
+// the entity by name, not by log tag, so the tag need not name the command.
 static const char *const TAG_COMMAND_BUTTON = "home_io_control.cover_command_button";
 static const char *const TAG_SILENT = "home_io_control.cover.silent";
 static const char *const TAG_TRAVEL_SPEED = "home_io_control.cover.travel_speed";

@@ -33,7 +33,6 @@ from .hub_validators import (
     DEFAULT_COVER_DEVICE_CLASS,
     FEATURE_EXTENDED_POSITION_FRAME,
     NAMED_POSITION_FEATURES,
-    device_features,
     device_type_name,
     validate_battery_level_poll_interval,
     validate_rain_sensor_poll_interval,
@@ -44,6 +43,7 @@ from .platform_common import (
     companion_entity_name,
     companion_id_base,
     create_companion_sensors,
+    declared_features,
     deprecated_key,
     inherit_esphome_device,
     inject_companion_sensor_ids,
@@ -55,7 +55,6 @@ from .platform_common import (
     CONF_IO_DEVICE_ID,
     CONF_DEVICE_TYPE,
     CONF_HOME_IO_CONTROL_ID,
-    CONF_SUBTYPE,
 )
 
 DEPENDENCIES = ["home_io_control"]
@@ -140,13 +139,6 @@ NAMED_POSITION_BUTTONS = {
 }
 
 
-def _declared_features(config):
-    """The capability word of the declared io_device_type / io_subtype, or 0 when no type is declared."""
-    if CONF_DEVICE_TYPE not in config:
-        return 0
-    return device_features(config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0))
-
-
 def _default_device_class(config):
     """Give a cover that declares io_device_type and sets no `device_class:` the kind's Home
     Assistant class; an explicit value, including "", is kept."""
@@ -215,7 +207,7 @@ def _inject_companion_ids(config):
     base = companion_id_base(config, CONF_ID)
 
     # Named-position buttons (favourite, ventilation, ...): one per position the declared kind has.
-    features = _declared_features(config)
+    features = declared_features(config)
     for key, (config_key, suffix, _name, _disabled) in NAMED_POSITION_BUTTONS.items():
         if features & NAMED_POSITION_FEATURES[key]:
             config[config_key] = ID(
