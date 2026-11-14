@@ -122,6 +122,20 @@ def device_id_is_three_hex_bytes():
     expect_invalid(v.validate_device_id, "FEEB1X", "valid hexadecimal")
 
 
+@case()
+def companion_joins_its_parents_sub_device_unless_it_names_its_own():
+    """A companion groups under the parent entity's ESPHome sub-device; a nested user companion
+    that sets its own `device_id:` keeps it; without a parent sub-device the key stays absent."""
+    from esphome.const import CONF_DEVICE_ID
+    from esphome.components.home_io_control import hub_validators as v
+
+    parent = {CONF_DEVICE_ID: "dev_parent"}
+    assert v.inherit_esphome_device({}, parent) == {CONF_DEVICE_ID: "dev_parent"}
+    own = {CONF_DEVICE_ID: "dev_own"}
+    assert v.inherit_esphome_device(own, parent) == {CONF_DEVICE_ID: "dev_own"}
+    assert v.inherit_esphome_device({}, {}) == {}
+
+
 @case("hub_validators.validate_device_type")
 def device_type_takes_a_name_or_a_byte():
     from esphome.components.home_io_control import hub_validators as v
@@ -493,6 +507,38 @@ def cover_travel_speed_declares_its_select_and_names_the_cpp_options():
         "home_io_control::TravelSpeed::SILENT",
         "home_io_control::TravelSpeed::FAST",
     ]
+
+
+@case()
+def cover_opt_in_companions_are_declared_only_with_their_key():
+    """Each opt-in cover companion exists only when its key is set (`battery:` when true), under the id
+    suffix Home Assistant entity ids are built from."""
+    from esphome.const import CONF_ID, CONF_NAME
+    from esphome.core import ID
+    from esphome.components.home_io_control import cover as c
+
+    def declared(**extra):
+        cfg = {CONF_ID: ID("living", is_declaration=True), CONF_NAME: "Living", **extra}
+        return c._inject_companion_ids(cfg)
+
+    opt_ins = {
+        c.CONF_RAIN_SENSOR_ID: ("living_rain_sensor", {c.CONF_RAIN_SENSOR_POLL_INTERVAL: 1}),
+        c.CONF_SUN_LEVEL_SENSOR_ID: ("living_sun_level_sensor", {c.CONF_SUN_LEVEL_POLL_INTERVAL: 1}),
+        c.CONF_BATTERY_LEVEL_SENSOR_ID: (
+            "living_battery_level_sensor",
+            {c.CONF_BATTERY_LEVEL_POLL_INTERVAL: 1},
+        ),
+        c.CONF_BATTERY_LOW_SENSOR_ID: ("living_battery_low_sensor", {c.CONF_BATTERY: True}),
+        c.CONF_BATTERY_SENSOR_ID: ("living_battery_sensor", {c.CONF_BATTERY: True}),
+    }
+    bare = declared()
+    for id_key, (expected_id, extra) in opt_ins.items():
+        assert id_key not in bare
+        out = declared(**extra)
+        assert out[id_key].id == expected_id and out[id_key].is_declaration
+    # `battery: false` is a key that is present but declares nothing.
+    off = declared(**{c.CONF_BATTERY: False})
+    assert c.CONF_BATTERY_LOW_SENSOR_ID not in off and c.CONF_BATTERY_SENSOR_ID not in off
 
 
 @case()

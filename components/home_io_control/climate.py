@@ -14,17 +14,14 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import binary_sensor, climate, light, switch
 from esphome.const import (
-    CONF_DEVICE_ID,
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
     CONF_MAX_TEMPERATURE,
     CONF_MIN_TEMPERATURE,
-    CONF_NAME,
     CONF_OUTPUT_ID,
     DEVICE_CLASS_WINDOW,
     ENTITY_CATEGORY_CONFIG,
 )
-from esphome.core import ID
 
 from . import home_io_control_ns
 from .hub_validators import (
@@ -36,9 +33,11 @@ from .platform_common import (
     INSTANT_LIGHT_TRANSITION,
     declared_features,
     companion_entity_name,
-    companion_id_base,
+    create_companion,
     create_companion_sensors,
+    has_feature,
     inherit_esphome_device,
+    inject_companion_ids,
     inject_companion_sensor_ids,
     platform_schema_extension,
     validate_device_model,
@@ -69,17 +68,6 @@ CONF_WINDOW_SENSOR_ID = "_window_sensor_id"
 CONF_WINDOW_DETECTION_SWITCH_ID = "_window_detection_switch_id"
 
 
-def _has_window_companions(config):
-    """True when the declared heater kind has a window sensor and a detection switch.
-
-    The kind is the declared io_device_type/io_subtype (subtype 0 when omitted) and io_model; the
-    answer is the WINDOW_COMPANIONS bit of its table row, so a towel dryer (a model row without it)
-    gets none. A heater declared without a type gets no companions: nothing at validation time says
-    what it is.
-    """
-    return bool(declared_features(config) & FEATURE_WINDOW_COMPANIONS)
-
-
 def _validate_night_light(config):
     """Accept `night_light:` only on a heater kind that has one (the NIGHT_LIGHT bit of its row).
 
@@ -95,18 +83,24 @@ def _validate_night_light(config):
     )
 
 
+# The heater companions: (id key, ID suffix, class, condition). The window sensor and its detection
+# switch exist when the declared kind's row has the WINDOW_COMPANIONS bit, so a towel dryer (a model row
+# without it) gets none. A heater declared without a type gets none: nothing at validation time says what
+# it is.
+CLIMATE_COMPANIONS = (
+    (CONF_WINDOW_SENSOR_ID, "window_sensor", IOHomeWindowBinarySensor, has_feature(FEATURE_WINDOW_COMPANIONS)),
+    (
+        CONF_WINDOW_DETECTION_SWITCH_ID,
+        "window_detection_switch",
+        IOHomeOpenWindowDetectionSwitch,
+        has_feature(FEATURE_WINDOW_COMPANIONS),
+    ),
+)
+
+
 def _inject_companion_ids(config):
     """Declare the heater companion IDs during validation (ESPHome 2026.x StaticVector sizing)."""
-    if _has_window_companions(config):
-        base = companion_id_base(config, CONF_ID)
-        config[CONF_WINDOW_SENSOR_ID] = ID(
-            f"{base}_window_sensor", is_declaration=True, type=IOHomeWindowBinarySensor
-        )
-        config[CONF_WINDOW_DETECTION_SWITCH_ID] = ID(
-            f"{base}_window_detection_switch",
-            is_declaration=True,
-            type=IOHomeOpenWindowDetectionSwitch,
-        )
+    inject_companion_ids(config, CLIMATE_COMPANIONS, CONF_ID)
     return inject_companion_sensor_ids(config, CONF_ID)
 
 
@@ -189,47 +183,36 @@ async def to_code(config):
         )
 
     if CONF_WINDOW_SENSOR_ID in config:
-        window_config = binary_sensor.binary_sensor_schema(
-            IOHomeWindowBinarySensor, device_class=DEVICE_CLASS_WINDOW
-        ).extend(cv.COMPONENT_SCHEMA)(
-            inherit_esphome_device(
-                {
-                    CONF_ID: config[CONF_WINDOW_SENSOR_ID],
-                    CONF_NAME: companion_entity_name(config, "Window"),
-                },
-                config,
-            )
+        await create_companion(
+            config,
+            parent,
+            schema=binary_sensor.binary_sensor_schema(
+                IOHomeWindowBinarySensor, device_class=DEVICE_CLASS_WINDOW
+            ),
+            new_entity=binary_sensor.new_binary_sensor,
+            id_key=CONF_WINDOW_SENSOR_ID,
+            name=companion_entity_name(config, "Window"),
         )
-        window_sensor = await binary_sensor.new_binary_sensor(window_config)
-        await cg.register_component(window_sensor, window_config)
-        cg.add(window_sensor.set_parent(parent))
-        cg.add(window_sensor.set_device_id(config[CONF_IO_DEVICE_ID]))
 
     if CONF_WINDOW_DETECTION_SWITCH_ID in config:
         # Restore mode DISABLED: the switch shows what the heater reports, never a restored guess.
-        detection_config = switch.switch_schema(
-            IOHomeOpenWindowDetectionSwitch,
-            default_restore_mode="DISABLED",
-            entity_category=ENTITY_CATEGORY_CONFIG,
-        ).extend(cv.COMPONENT_SCHEMA)(
-            inherit_esphome_device(
-                {
-                    CONF_ID: config[CONF_WINDOW_DETECTION_SWITCH_ID],
-                    CONF_NAME: companion_entity_name(config, "Open Window Detection"),
-                    CONF_DISABLED_BY_DEFAULT: True,
-                },
-                config,
-            )
+        await create_companion(
+            config,
+            parent,
+            schema=switch.switch_schema(
+                IOHomeOpenWindowDetectionSwitch,
+                default_restore_mode="DISABLED",
+                entity_category=ENTITY_CATEGORY_CONFIG,
+            ),
+            new_entity=switch.new_switch,
+            id_key=CONF_WINDOW_DETECTION_SWITCH_ID,
+            name=companion_entity_name(config, "Open Window Detection"),
+            overrides={CONF_DISABLED_BY_DEFAULT: True},
         )
-        detection_switch = await switch.new_switch(detection_config)
-        await cg.register_component(detection_switch, detection_config)
-        cg.add(detection_switch.set_parent(parent))
-        cg.add(detection_switch.set_device_id(config[CONF_IO_DEVICE_ID]))
 
     if CONF_NIGHT_LIGHT in config:
         night_light_config = config[CONF_NIGHT_LIGHT]
-        if CONF_DEVICE_ID not in night_light_config:
-            inherit_esphome_device(night_light_config, config)
+        inherit_esphome_device(night_light_config, config)
         night_light = cg.new_Pvariable(night_light_config[CONF_OUTPUT_ID])
         await cg.register_component(night_light, night_light_config)
         await light.register_light(night_light, night_light_config)

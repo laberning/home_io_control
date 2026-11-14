@@ -575,26 +575,27 @@ def validate_device_id(value):
 
 
 def inherit_esphome_device(companion_config, parent_config):
-    """Propagate the parent entity's ESPHome sub-device (YAML `device_id:`) onto a hand-built
-    companion config dict, so the companion entity groups under the same HA device as its parent.
+    """Group a companion entity under its parent entity's ESPHome sub-device (YAML `device_id:`),
+    unless the companion names its own.
 
     Lives here, a leaf module, so any platform module can import it without the whole
-    platform-schema module; platform_common.py re-exports it for cover.py.
+    platform-schema module; platform_common.py re-exports it for the platform files.
 
-    Companion entities (diagnostic sensors, cover favorite/vent buttons, ...) are built from
-    dicts fed straight to e.g. new_text_sensor()/new_button() rather than through the platform's
-    own cv.Schema(), so they never go through ENTITY_BASE_SCHEMA and never pick up `device_id:`
-    on their own. esphome.core.entity_helpers.setup_entity() reads it with
-    `config.get(CONF_DEVICE_ID)`, a truthiness check, so an explicit `None` and an absent key
-    behave identically; omitted here rather than set to None just to keep the dict shape
-    identical to a companion with no sub-device at all.
+    A companion's config (a diagnostic sensor, a cover command button, a water heater's energy
+    sensor, the heater's night light, ...) comes from its own entity schema, which has no
+    `device_id:` default, so without this it would land on ESPHome's main device. A companion the
+    user configures as a nested schema may set `device_id:` itself; that choice is kept.
+    esphome.core.entity_helpers.setup_entity() reads the key with `config.get(CONF_DEVICE_ID)`, a
+    truthiness check, so a parent without a sub-device leaves the key absent rather than None.
 
     Deliberately not called anywhere for the hub-level dynamic entities (1W identity buttons/
     sensors, the arming switches, LR1121 firmware controls, tuning numbers/selects): none of their
     parent configs carry a `device_id:` schema slot, since those entities aren't attached to a
     single cover/light/switch/lock to inherit one from. `device_id:` grouping is scoped to the
-    four device-bound platforms; hub-level entities always live on ESPHome's main device.
+    device-bound platforms; hub-level entities always live on ESPHome's main device.
     """
+    if CONF_DEVICE_ID in companion_config:
+        return companion_config
     if (esphome_device_id := parent_config.get(CONF_DEVICE_ID)) is not None:
         companion_config[CONF_DEVICE_ID] = esphome_device_id
     return companion_config

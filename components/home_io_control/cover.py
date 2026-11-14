@@ -17,7 +17,6 @@ from esphome.const import (
     CONF_DEVICE_CLASS,
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
-    CONF_NAME,
     DEVICE_CLASS_BATTERY,
     DEVICE_CLASS_MOISTURE,
     ENTITY_CATEGORY_CONFIG,
@@ -25,7 +24,6 @@ from esphome.const import (
     STATE_CLASS_MEASUREMENT,
     UNIT_PERCENT,
 )
-from esphome.core import ID
 
 from . import home_io_control_ns
 from .hub_names import CONF_INVERT_POSITION
@@ -41,18 +39,18 @@ from .hub_validators import (
 )
 from .platform_common import (
     companion_entity_name,
-    companion_id_base,
+    create_companion,
     create_companion_sensors,
     declared_features,
     deprecated_key,
-    inherit_esphome_device,
+    has_feature,
+    inject_companion_ids,
     inject_companion_sensor_ids,
     platform_schema_extension,
     require_feature,
     validate_device_model,
     warn_if_experimental_kind,
     wire_device_binding,
-    CONF_IO_DEVICE_ID,
     CONF_DEVICE_TYPE,
     CONF_HOME_IO_CONTROL_ID,
 )
@@ -197,83 +195,59 @@ def battery_sensor_name(config):
     return companion_entity_name(config, "Battery")
 
 
-def _inject_companion_ids(config):
-    """Declare cover companion entity IDs during schema validation for StaticVector sizing.
-
-    The named-position buttons are cover-only and gated on the declared kind's capability bits, so
-    their injection stays here. The always-present companion sensor IDs are delegated to the
-    shared helper. See platform_common.companion_id_base() for the StaticVector rationale.
-    """
-    base = companion_id_base(config, CONF_ID)
-
+# The cover's companion entities: (id key, ID suffix, class, condition), declared at validation time
+# and created in to_code() from the same id key. The shared diagnostic sensors are not listed; they
+# come from inject_companion_sensor_ids(). The ID suffixes are Home Assistant entity ids, so they are
+# pinned by the py-tests.
+COVER_COMPANIONS = (
     # Named-position buttons (favourite, ventilation, ...): one per position the declared kind has.
-    features = declared_features(config)
-    for key, (config_key, suffix, _name, _disabled) in NAMED_POSITION_BUTTONS.items():
-        if features & NAMED_POSITION_FEATURES[key]:
-            config[config_key] = ID(
-                f"{base}_{suffix}",
-                is_declaration=True,
-                type=IOHomeCoverCommandButton,
-            )
-
-    # Silent-operation toggle — only when the cover declares `silent:` at all. Declaring the key
-    # is what opts a cover into runtime control of its travel profile; a config that never mentions
-    # it gains no entity, and the YAML value is simply the boot state.
-    if CONF_SILENT in config:
-        config[CONF_SILENT_SWITCH_ID] = ID(
-            f"{base}_silent_switch",
-            is_declaration=True,
-            type=IOHomeCoverSilentSwitch,
-        )
-
-    # Travel speed select — likewise only when the cover declares `travel_speed:`, the three-way
-    # form of the same setting. The two keys are exclusive, so a cover has one entity or the other.
-    if CONF_TRAVEL_SPEED in config:
-        config[CONF_TRAVEL_SPEED_SELECT_ID] = ID(
-            f"{base}_travel_speed_select",
-            is_declaration=True,
-            type=IOHomeCoverTravelSpeedSelect,
-        )
-
-    # Rain binary sensor — only when the cover declares `rain_sensor_poll_interval:`. The key is
-    # the opt-in to the periodic limitation read, so a config without it gains no entity.
-    if CONF_RAIN_SENSOR_POLL_INTERVAL in config:
-        config[CONF_RAIN_SENSOR_ID] = ID(
-            f"{base}_rain_sensor",
-            is_declaration=True,
-            type=IOHomeRainBinarySensor,
-        )
-
-    # Sun level and battery level sensors — each only when the cover declares its poll interval,
-    # which is the opt-in to that poll (a subscription the device answers with the reading).
-    if CONF_SUN_LEVEL_POLL_INTERVAL in config:
-        config[CONF_SUN_LEVEL_SENSOR_ID] = ID(
-            f"{base}_sun_level_sensor",
-            is_declaration=True,
-            type=IOHomeSunLevelSensor,
-        )
-    if CONF_BATTERY_LEVEL_POLL_INTERVAL in config:
-        config[CONF_BATTERY_LEVEL_SENSOR_ID] = ID(
-            f"{base}_battery_level_sensor",
-            is_declaration=True,
-            type=IOHomeBatteryLevelSensor,
-        )
-
-    # Battery sensors — only with `battery: true`. The level is decoded from status replies the hub
+    *(
+        (config_key, suffix, IOHomeCoverCommandButton, has_feature(NAMED_POSITION_FEATURES[key]))
+        for key, (config_key, suffix, _name, _disabled) in NAMED_POSITION_BUTTONS.items()
+    ),
+    # Silent-operation toggle: only when the cover declares `silent:` at all. Declaring the key is
+    # what opts a cover into runtime control of its travel profile; a config that never mentions it
+    # gains no entity, and the YAML value is simply the boot state.
+    (CONF_SILENT_SWITCH_ID, "silent_switch", IOHomeCoverSilentSwitch, CONF_SILENT),
+    # Travel speed select: likewise only with `travel_speed:`, the three-way form of the same
+    # setting. The two keys are exclusive, so a cover has one entity or the other.
+    (CONF_TRAVEL_SPEED_SELECT_ID, "travel_speed_select", IOHomeCoverTravelSpeedSelect, CONF_TRAVEL_SPEED),
+    # Rain binary sensor: only with `rain_sensor_poll_interval:`, the opt-in to the periodic
+    # limitation read, so a config without it gains no entity.
+    (CONF_RAIN_SENSOR_ID, "rain_sensor", IOHomeRainBinarySensor, CONF_RAIN_SENSOR_POLL_INTERVAL),
+    # Sun level and battery level sensors: each only with its poll interval, the opt-in to that poll
+    # (a subscription the device answers with the reading).
+    (CONF_SUN_LEVEL_SENSOR_ID, "sun_level_sensor", IOHomeSunLevelSensor, CONF_SUN_LEVEL_POLL_INTERVAL),
+    (
+        CONF_BATTERY_LEVEL_SENSOR_ID,
+        "battery_level_sensor",
+        IOHomeBatteryLevelSensor,
+        CONF_BATTERY_LEVEL_POLL_INTERVAL,
+    ),
+    # Battery sensors: only with `battery: true`. The level is decoded from status replies the hub
     # already receives, so the key adds entities but no radio traffic.
-    if config.get(CONF_BATTERY, False):
-        config[CONF_BATTERY_LOW_SENSOR_ID] = ID(
-            f"{base}_battery_low_sensor",
-            is_declaration=True,
-            type=IOHomeBatteryLowBinarySensor,
-        )
-        config[CONF_BATTERY_SENSOR_ID] = ID(
-            f"{base}_battery_sensor",
-            is_declaration=True,
-            type=IOHomeBatteryTextSensor,
-        )
+    (
+        CONF_BATTERY_LOW_SENSOR_ID,
+        "battery_low_sensor",
+        IOHomeBatteryLowBinarySensor,
+        lambda config: config.get(CONF_BATTERY, False),
+    ),
+    (
+        CONF_BATTERY_SENSOR_ID,
+        "battery_sensor",
+        IOHomeBatteryTextSensor,
+        lambda config: config.get(CONF_BATTERY, False),
+    ),
+)
 
-    # Companion diagnostic sensors — always generated (shared with other platforms).
+
+def _inject_companion_ids(config):
+    """Declare the cover companion entity IDs during schema validation for StaticVector sizing.
+
+    The cover's own companions come from COVER_COMPANIONS, the always-present diagnostic sensors
+    from the shared table. See platform_common.companion_id_base() for the StaticVector rationale.
+    """
+    inject_companion_ids(config, COVER_COMPANIONS, CONF_ID)
     return inject_companion_sensor_ids(config, CONF_ID)
 
 
@@ -348,50 +322,36 @@ async def to_code(config):
         cg.add(var.set_travel_speed(config[CONF_TRAVEL_SPEED]))
 
     if CONF_SILENT_SWITCH_ID in config:
-        # Built through switch_schema()+COMPONENT_SCHEMA so it carries the entity/component
-        # defaults register_switch() requires, matching _create_accept_foreign_pairing_switch().
         # Restore mode DISABLED on purpose: the YAML `silent:` value is the boot state, and
         # setup() publishes it. Any restoring mode would either fight that or drive write_state()
         # before the device is even registered.
-        silent_config = switch.switch_schema(
-            IOHomeCoverSilentSwitch,
-            default_restore_mode="DISABLED",
-            entity_category=ENTITY_CATEGORY_CONFIG,
-        ).extend(cv.COMPONENT_SCHEMA)(
-            inherit_esphome_device(
-                {
-                    CONF_ID: config[CONF_SILENT_SWITCH_ID],
-                    CONF_NAME: silent_switch_name(config),
-                },
-                config,
-            )
+        await create_companion(
+            config,
+            parent,
+            schema=switch.switch_schema(
+                IOHomeCoverSilentSwitch,
+                default_restore_mode="DISABLED",
+                entity_category=ENTITY_CATEGORY_CONFIG,
+            ),
+            new_entity=switch.new_switch,
+            id_key=CONF_SILENT_SWITCH_ID,
+            name=silent_switch_name(config),
         )
-        silent_switch = await switch.new_switch(silent_config)
-        await cg.register_component(silent_switch, silent_config)
-        cg.add(silent_switch.set_parent(parent))
-        cg.add(silent_switch.set_device_id(config[CONF_IO_DEVICE_ID]))
 
     if CONF_TRAVEL_SPEED_SELECT_ID in config:
         # Nothing restores it: the YAML `travel_speed:` value is the boot state, as for the switch
         # above, and setup() publishes it.
-        speed_config = select.select_schema(
-            IOHomeCoverTravelSpeedSelect,
-            entity_category=ENTITY_CATEGORY_CONFIG,
-        ).extend(cv.COMPONENT_SCHEMA)(
-            inherit_esphome_device(
-                {
-                    CONF_ID: config[CONF_TRAVEL_SPEED_SELECT_ID],
-                    CONF_NAME: travel_speed_select_name(config),
-                },
-                config,
-            )
+        await create_companion(
+            config,
+            parent,
+            schema=select.select_schema(
+                IOHomeCoverTravelSpeedSelect, entity_category=ENTITY_CATEGORY_CONFIG
+            ),
+            new_entity=select.new_select,
+            id_key=CONF_TRAVEL_SPEED_SELECT_ID,
+            name=travel_speed_select_name(config),
+            options=list(TRAVEL_SPEEDS),
         )
-        speed_select = await select.new_select(
-            speed_config, options=list(TRAVEL_SPEEDS)
-        )
-        await cg.register_component(speed_select, speed_config)
-        cg.add(speed_select.set_parent(parent))
-        cg.add(speed_select.set_device_id(config[CONF_IO_DEVICE_ID]))
 
     if CONF_RAIN_SENSOR_ID in config:
         cg.add(
@@ -399,21 +359,16 @@ async def to_code(config):
                 config[CONF_RAIN_SENSOR_POLL_INTERVAL].total_milliseconds
             )
         )
-        rain_config = binary_sensor.binary_sensor_schema(
-            IOHomeRainBinarySensor, device_class=DEVICE_CLASS_MOISTURE
-        ).extend(cv.COMPONENT_SCHEMA)(
-            inherit_esphome_device(
-                {
-                    CONF_ID: config[CONF_RAIN_SENSOR_ID],
-                    CONF_NAME: rain_sensor_name(config),
-                },
-                config,
-            )
+        await create_companion(
+            config,
+            parent,
+            schema=binary_sensor.binary_sensor_schema(
+                IOHomeRainBinarySensor, device_class=DEVICE_CLASS_MOISTURE
+            ),
+            new_entity=binary_sensor.new_binary_sensor,
+            id_key=CONF_RAIN_SENSOR_ID,
+            name=rain_sensor_name(config),
         )
-        rain_sensor = await binary_sensor.new_binary_sensor(rain_config)
-        await cg.register_component(rain_sensor, rain_config)
-        cg.add(rain_sensor.set_parent(parent))
-        cg.add(rain_sensor.set_device_id(config[CONF_IO_DEVICE_ID]))
 
     if CONF_SUN_LEVEL_SENSOR_ID in config:
         cg.add(
@@ -461,18 +416,15 @@ async def to_code(config):
     for key, (config_key, _suffix, name, disabled) in NAMED_POSITION_BUTTONS.items():
         if config_key not in config:
             continue
-        button_config = inherit_esphome_device(
-            {
-                CONF_ID: config[config_key],
-                CONF_NAME: companion_entity_name(config, name),
-                CONF_DISABLED_BY_DEFAULT: disabled,
-            },
+        position_button = await create_companion(
             config,
+            parent,
+            schema=button.button_schema(IOHomeCoverCommandButton),
+            new_entity=button.new_button,
+            id_key=config_key,
+            name=companion_entity_name(config, name),
+            overrides={CONF_DISABLED_BY_DEFAULT: disabled},
         )
-        position_button = await button.new_button(button_config)
-        await cg.register_component(position_button, button_config)
-        cg.add(position_button.set_parent(parent))
-        cg.add(position_button.set_device_id(config[CONF_IO_DEVICE_ID]))
         cg.add(position_button.set_command(getattr(CoverCommand, key)))
 
     await create_companion_sensors(config, parent)
@@ -480,24 +432,19 @@ async def to_code(config):
 
 async def _create_reading_sensor(config, parent, cls, id_key, name, **schema_kwargs):
     """Create one polled reading sensor (sun level, battery level) bound to the cover's device."""
-    sensor_config = sensor.sensor_schema(
-        cls,
-        accuracy_decimals=0,
-        state_class=STATE_CLASS_MEASUREMENT,
-        **schema_kwargs,
-    ).extend(cv.COMPONENT_SCHEMA)(
-        inherit_esphome_device(
-            {
-                CONF_ID: config[id_key],
-                CONF_NAME: name,
-            },
-            config,
-        )
+    await create_companion(
+        config,
+        parent,
+        schema=sensor.sensor_schema(
+            cls,
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            **schema_kwargs,
+        ),
+        new_entity=sensor.new_sensor,
+        id_key=id_key,
+        name=name,
     )
-    reading_sensor = await sensor.new_sensor(sensor_config)
-    await cg.register_component(reading_sensor, sensor_config)
-    cg.add(reading_sensor.set_parent(parent))
-    cg.add(reading_sensor.set_device_id(config[CONF_IO_DEVICE_ID]))
 
 
 async def _create_battery_sensors(config, parent):
@@ -507,39 +454,28 @@ async def _create_battery_sensors(config, parent):
     low-battery signal. Battery (full/normal/low) is diagnostic and disabled by default; ESPHome
     text sensors carry no battery device class, so nothing generic reads it.
     """
-    low_config = binary_sensor.binary_sensor_schema(
-        IOHomeBatteryLowBinarySensor,
-        device_class=DEVICE_CLASS_BATTERY,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-    ).extend(cv.COMPONENT_SCHEMA)(
-        inherit_esphome_device(
-            {
-                CONF_ID: config[CONF_BATTERY_LOW_SENSOR_ID],
-                CONF_NAME: battery_low_sensor_name(config),
-            },
-            config,
-        )
+    await create_companion(
+        config,
+        parent,
+        schema=binary_sensor.binary_sensor_schema(
+            IOHomeBatteryLowBinarySensor,
+            device_class=DEVICE_CLASS_BATTERY,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        new_entity=binary_sensor.new_binary_sensor,
+        id_key=CONF_BATTERY_LOW_SENSOR_ID,
+        name=battery_low_sensor_name(config),
     )
-    low_sensor = await binary_sensor.new_binary_sensor(low_config)
-    await cg.register_component(low_sensor, low_config)
-    cg.add(low_sensor.set_parent(parent))
-    cg.add(low_sensor.set_device_id(config[CONF_IO_DEVICE_ID]))
-
-    level_config = text_sensor.text_sensor_schema(
-        IOHomeBatteryTextSensor,
-        entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        icon="mdi:battery",
-    ).extend(cv.COMPONENT_SCHEMA)(
-        inherit_esphome_device(
-            {
-                CONF_ID: config[CONF_BATTERY_SENSOR_ID],
-                CONF_NAME: battery_sensor_name(config),
-                CONF_DISABLED_BY_DEFAULT: True,
-            },
-            config,
-        )
+    await create_companion(
+        config,
+        parent,
+        schema=text_sensor.text_sensor_schema(
+            IOHomeBatteryTextSensor,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:battery",
+        ),
+        new_entity=text_sensor.new_text_sensor,
+        id_key=CONF_BATTERY_SENSOR_ID,
+        name=battery_sensor_name(config),
+        overrides={CONF_DISABLED_BY_DEFAULT: True},
     )
-    level_sensor = await text_sensor.new_text_sensor(level_config)
-    await cg.register_component(level_sensor, level_config)
-    cg.add(level_sensor.set_parent(parent))
-    cg.add(level_sensor.set_device_id(config[CONF_IO_DEVICE_ID]))

@@ -9,9 +9,9 @@
 ## interval / linked remotes). This module is the single home for that shared logic so
 ## a change lands in one place instead of in each — platform files call one
 ## inject_companion_sensor_ids() post-validator and one create_companion_sensors()
-## to_code() helper. Platform-specific pieces — entity construction/registration, the
-## cover's ``invert_position`` option, and the cover's favorite/vent companion
-## buttons — deliberately stay in the platform files.
+## to_code() helper. Any other device-bound companion (a button, switch, select or extra sensor)
+## is declared by a platform table through inject_companion_ids() and created with
+## create_companion(); the platform files keep their tables, schema arguments and extra setters.
 
 import logging
 
@@ -19,16 +19,10 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import sensor, text_sensor
 from esphome.const import (
-    CONF_ACCURACY_DECIMALS,
     CONF_DEFAULT_TRANSITION_LENGTH,
-    CONF_DEVICE_CLASS,
     CONF_DISABLED_BY_DEFAULT,
-    CONF_ENTITY_CATEGORY,
-    CONF_FORCE_UPDATE,
     CONF_ID,
     CONF_NAME,
-    CONF_STATE_CLASS,
-    CONF_UNIT_OF_MEASUREMENT,
     ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
     STATE_CLASS_TOTAL_INCREASING,
@@ -119,20 +113,37 @@ IOHomeLastCommandSourceTextSensor = home_io_control_ns.class_(
 )
 
 
-# (config key, ID suffix, codegen class) for every auto-generated companion sensor.
+# (id key, ID suffix, codegen class, condition) of every auto-generated companion sensor. The
+# condition is None: they exist for every device-bound entity.
 _COMPANION_SENSOR_IDS = (
-    (CONF_DEVICE_NAME_SENSOR_ID, "device_name_sensor", IOHomeDeviceNameTextSensor),
-    (CONF_ACTIVE_ISSUE_SENSOR_ID, "active_issue_sensor", IOHomeActiveIssueTextSensor),
-    (CONF_RSSI_SENSOR_ID, "rssi_sensor", IOHomeRssiSensor),
-    (CONF_LAST_CONTACT_SENSOR_ID, "last_contact_sensor", IOHomeLastContactSensor),
-    (CONF_EXCHANGE_FAILURES_SENSOR_ID, "exchange_failures_sensor", IOHomeExchangeFailuresSensor),
+    (CONF_DEVICE_NAME_SENSOR_ID, "device_name_sensor", IOHomeDeviceNameTextSensor, None),
+    (CONF_ACTIVE_ISSUE_SENSOR_ID, "active_issue_sensor", IOHomeActiveIssueTextSensor, None),
+    (CONF_RSSI_SENSOR_ID, "rssi_sensor", IOHomeRssiSensor, None),
+    (CONF_LAST_CONTACT_SENSOR_ID, "last_contact_sensor", IOHomeLastContactSensor, None),
+    (
+        CONF_EXCHANGE_FAILURES_SENSOR_ID,
+        "exchange_failures_sensor",
+        IOHomeExchangeFailuresSensor,
+        None,
+    ),
     (
         CONF_UNCONFIRMED_EXCHANGES_SENSOR_ID,
         "unconfirmed_exchanges_sensor",
         IOHomeUnconfirmedExchangesSensor,
+        None,
     ),
-    (CONF_LAST_COMMANDED_BY_SENSOR_ID, "last_commanded_by_sensor", IOHomeLastCommandedByTextSensor),
-    (CONF_LAST_COMMAND_SOURCE_SENSOR_ID, "last_command_source_sensor", IOHomeLastCommandSourceTextSensor),
+    (
+        CONF_LAST_COMMANDED_BY_SENSOR_ID,
+        "last_commanded_by_sensor",
+        IOHomeLastCommandedByTextSensor,
+        None,
+    ),
+    (
+        CONF_LAST_COMMAND_SOURCE_SENSOR_ID,
+        "last_command_source_sensor",
+        IOHomeLastCommandSourceTextSensor,
+        None,
+    ),
 )
 
 
@@ -194,19 +205,49 @@ def companion_id_base(config, parent_id_key):
     return sanitize(config[CONF_NAME]).lower()
 
 
+def has_feature(feature_bit):
+    """Condition for a companion spec: the declared kind's capability word has `feature_bit`.
+
+    A config that declares no io_device_type has no capability word, so the companion is not created
+    (see declared_features()).
+    """
+
+    def condition(config):
+        return bool(declared_features(config) & feature_bit)
+
+    return condition
+
+
+def inject_companion_ids(config, specs, parent_id_key):
+    """Declare a platform's companion entity IDs during schema validation.
+
+    ``specs`` is a tuple of ``(id key, ID suffix, codegen class, condition)``; each row whose
+    condition holds puts an ``ID`` declared as ``<base>_<suffix>`` under ``config[id key]``, where
+    ``<base>`` is companion_id_base(). The condition is ``None`` (always), a config key that must be
+    present, or a function of the config (has_feature(), or e.g. a boolean option). The platform
+    creates the entity from the same id key in to_code(), see create_companion(). See
+    companion_id_base() for why the IDs must be declared at validation time.
+    """
+    base = companion_id_base(config, parent_id_key)
+    for id_key, id_suffix, entity_class, condition in specs:
+        if condition is None:
+            wanted = True
+        elif callable(condition):
+            wanted = condition(config)
+        else:
+            wanted = condition in config
+        if wanted:
+            config[id_key] = ID(f"{base}_{id_suffix}", is_declaration=True, type=entity_class)
+    return config
+
+
 def inject_companion_sensor_ids(config, parent_id_key):
     """Declare every auto-generated companion sensor ID during schema validation.
 
-    Shared post-validator body for every device-bound platform, covering all entries in
-    _COMPANION_SENSOR_IDS. See companion_id_base() for why the IDs must be declared at
-    validation time rather than in to_code().
+    Shared post-validator body for every device-bound platform: inject_companion_ids() over
+    _COMPANION_SENSOR_IDS.
     """
-    base = companion_id_base(config, parent_id_key)
-    for conf_key, id_suffix, sensor_class in _COMPANION_SENSOR_IDS:
-        config[conf_key] = ID(
-            f"{base}_{id_suffix}", is_declaration=True, type=sensor_class
-        )
-    return config
+    return inject_companion_ids(config, _COMPANION_SENSOR_IDS, parent_id_key)
 
 
 def validate_entity_name(value):
@@ -444,53 +485,78 @@ async def wire_device_binding(var, parent, config):
                 cg.add(parent.add_linked_remote(remote_id, config[CONF_IO_DEVICE_ID]))
 
 
-async def _create_companion_text_sensor(config, parent, sensor_id, name, disabled_by_default):
-    """Shared body for the auto-generated companion `text_sensor:` entities."""
-    companion_config = inherit_esphome_device(
-        {
-            CONF_ID: sensor_id,
-            CONF_NAME: name,
-            CONF_DISABLED_BY_DEFAULT: disabled_by_default,
-            CONF_ENTITY_CATEGORY: ENTITY_CATEGORY_DIAGNOSTIC,
-        },
-        config,
+async def _bind_companion(config, parent, new_entity, entity_config, **new_kwargs):
+    """Create, register and bind one companion from its validated config; return the entity."""
+    inherit_esphome_device(entity_config, config)
+    entity = await new_entity(entity_config, **new_kwargs)
+    await cg.register_component(entity, entity_config)
+    cg.add(entity.set_parent(parent))
+    cg.add(entity.set_device_id(config[CONF_IO_DEVICE_ID]))
+    return entity
+
+
+async def create_companion(
+    config, parent, *, schema, new_entity, id_key, name, overrides=None, **new_kwargs
+):
+    """Create one device-bound companion entity and return it, so a caller can add its own setters.
+
+    The entity is built from the platform's schema for its kind (``schema``, e.g.
+    ``sensor.sensor_schema(IOHomeRssiSensor, ...)``, extended here with ``cv.COMPONENT_SCHEMA``) over
+    ``{id, name, **overrides}``. Its ID is the one inject_companion_ids() declared under ``id_key`` in
+    ``config``. The entity joins the parent's ESPHome sub-device, is registered as a component and
+    bound to the hub (``set_parent``, ``set_device_id``). ``new_entity`` is the platform's
+    ``new_<kind>()`` coroutine and receives ``new_kwargs`` (the select's options).
+    """
+    entity_config = schema.extend(cv.COMPONENT_SCHEMA)(
+        {CONF_ID: config[id_key], CONF_NAME: name, **(overrides or {})}
     )
-    companion = await text_sensor.new_text_sensor(companion_config)
-    await cg.register_component(companion, companion_config)
-    cg.add(companion.set_parent(parent))
-    cg.add(companion.set_device_id(config[CONF_IO_DEVICE_ID]))
+    return await _bind_companion(config, parent, new_entity, entity_config, **new_kwargs)
 
 
-async def _create_link_health_sensor(config, parent, sensor_id, name, **sensor_kwargs):
-    """Shared body for the auto-generated link-health `sensor:` companions.
+async def create_user_companion(config, parent, *, new_entity, entity_config):
+    """Create one device-bound companion whose config the user's YAML already supplied.
+
+    For opt-in companions declared as nested schemas of the platform (the water heater's energy
+    sensor, ...): they carry their own ID, name and options, so only the shared binding of
+    create_companion() applies. A sub-device the companion sets itself is kept.
+    """
+    return await _bind_companion(config, parent, new_entity, entity_config)
+
+
+async def _create_diagnostic_text_sensor(config, parent, id_key, suffix, disabled_by_default):
+    """Create one companion diagnostic `text_sensor:`."""
+    await create_companion(
+        config,
+        parent,
+        schema=text_sensor.text_sensor_schema(
+            config[id_key].type, entity_category=ENTITY_CATEGORY_DIAGNOSTIC
+        ),
+        new_entity=text_sensor.new_text_sensor,
+        id_key=id_key,
+        name=companion_entity_name(config, suffix),
+        overrides={CONF_DISABLED_BY_DEFAULT: disabled_by_default},
+    )
+
+
+async def _create_link_health_sensor(config, parent, id_key, suffix, **sensor_kwargs):
+    """Create one link-health `sensor:` companion.
 
     All of them (RSSI, Last Contact, Exchange Failures, Unconfirmed Exchanges) are numeric,
     diagnostic, and disabled by default (noise control); only the name and sensor-specific schema keys
     (unit/device_class/state_class/accuracy_decimals) differ between them, so those are the
     only things each call in create_companion_sensors() supplies.
     """
-    if CONF_STATE_CLASS in sensor_kwargs:
-        # set_state_class() takes a C++ enum, not a raw string; validate_state_class() is what
-        # normal YAML schema validation would apply to turn the string constant into the
-        # EnumValue codegen expects. We build this dict by hand rather than running it through
-        # sensor_schema(), so it must be applied here.
-        sensor_kwargs[CONF_STATE_CLASS] = sensor.validate_state_class(sensor_kwargs[CONF_STATE_CLASS])
-
-    link_health_config = inherit_esphome_device(
-        {
-            CONF_ID: sensor_id,
-            CONF_NAME: name,
-            CONF_DISABLED_BY_DEFAULT: True,
-            CONF_ENTITY_CATEGORY: ENTITY_CATEGORY_DIAGNOSTIC,
-            CONF_FORCE_UPDATE: False,
-            **sensor_kwargs,
-        },
+    await create_companion(
         config,
+        parent,
+        schema=sensor.sensor_schema(
+            config[id_key].type, entity_category=ENTITY_CATEGORY_DIAGNOSTIC, **sensor_kwargs
+        ),
+        new_entity=sensor.new_sensor,
+        id_key=id_key,
+        name=companion_entity_name(config, suffix),
+        overrides={CONF_DISABLED_BY_DEFAULT: True},
     )
-    var = await sensor.new_sensor(link_health_config)
-    await cg.register_component(var, link_health_config)
-    cg.add(var.set_parent(parent))
-    cg.add(var.set_device_id(config[CONF_IO_DEVICE_ID]))
 
 
 async def create_companion_sensors(config, parent):
@@ -513,74 +579,50 @@ async def create_companion_sensors(config, parent):
       default (noise control). Free — decoded from bytes already present in every status reply,
       no extra radio traffic; see IOHomeLastCommandedByTextSensor.
     """
-    await _create_companion_text_sensor(
-        config,
-        parent,
-        config[CONF_DEVICE_NAME_SENSOR_ID],
-        companion_entity_name(config, "Device Name"),
-        disabled_by_default=True,
+    await _create_diagnostic_text_sensor(
+        config, parent, CONF_DEVICE_NAME_SENSOR_ID, "Device Name", disabled_by_default=True
     )
-    await _create_companion_text_sensor(
-        config,
-        parent,
-        config[CONF_ACTIVE_ISSUE_SENSOR_ID],
-        companion_entity_name(config, "Active Issue"),
-        disabled_by_default=False,
+    await _create_diagnostic_text_sensor(
+        config, parent, CONF_ACTIVE_ISSUE_SENSOR_ID, "Active Issue", disabled_by_default=False
     )
     await _create_link_health_sensor(
         config,
         parent,
-        config[CONF_RSSI_SENSOR_ID],
-        companion_entity_name(config, "RSSI"),
-        **{
-            CONF_UNIT_OF_MEASUREMENT: "dBm",
-            CONF_DEVICE_CLASS: DEVICE_CLASS_SIGNAL_STRENGTH,
-            CONF_STATE_CLASS: STATE_CLASS_MEASUREMENT,
-            CONF_ACCURACY_DECIMALS: 0,
-        },
+        CONF_RSSI_SENSOR_ID,
+        "RSSI",
+        unit_of_measurement="dBm",
+        device_class=DEVICE_CLASS_SIGNAL_STRENGTH,
+        state_class=STATE_CLASS_MEASUREMENT,
+        accuracy_decimals=0,
     )
     await _create_link_health_sensor(
         config,
         parent,
-        config[CONF_LAST_CONTACT_SENSOR_ID],
-        companion_entity_name(config, "Last Contact"),
-        **{
-            CONF_UNIT_OF_MEASUREMENT: "s",
-            CONF_STATE_CLASS: STATE_CLASS_MEASUREMENT,
-            CONF_ACCURACY_DECIMALS: 0,
-        },
+        CONF_LAST_CONTACT_SENSOR_ID,
+        "Last Contact",
+        unit_of_measurement="s",
+        state_class=STATE_CLASS_MEASUREMENT,
+        accuracy_decimals=0,
     )
     await _create_link_health_sensor(
         config,
         parent,
-        config[CONF_EXCHANGE_FAILURES_SENSOR_ID],
-        companion_entity_name(config, "Exchange Failures"),
-        **{
-            CONF_STATE_CLASS: STATE_CLASS_TOTAL_INCREASING,
-            CONF_ACCURACY_DECIMALS: 0,
-        },
+        CONF_EXCHANGE_FAILURES_SENSOR_ID,
+        "Exchange Failures",
+        state_class=STATE_CLASS_TOTAL_INCREASING,
+        accuracy_decimals=0,
     )
     await _create_link_health_sensor(
         config,
         parent,
-        config[CONF_UNCONFIRMED_EXCHANGES_SENSOR_ID],
-        companion_entity_name(config, "Unconfirmed Exchanges"),
-        **{
-            CONF_STATE_CLASS: STATE_CLASS_TOTAL_INCREASING,
-            CONF_ACCURACY_DECIMALS: 0,
-        },
+        CONF_UNCONFIRMED_EXCHANGES_SENSOR_ID,
+        "Unconfirmed Exchanges",
+        state_class=STATE_CLASS_TOTAL_INCREASING,
+        accuracy_decimals=0,
     )
-    await _create_companion_text_sensor(
-        config,
-        parent,
-        config[CONF_LAST_COMMANDED_BY_SENSOR_ID],
-        companion_entity_name(config, "Last Commanded By"),
-        disabled_by_default=True,
+    await _create_diagnostic_text_sensor(
+        config, parent, CONF_LAST_COMMANDED_BY_SENSOR_ID, "Last Commanded By", disabled_by_default=True
     )
-    await _create_companion_text_sensor(
-        config,
-        parent,
-        config[CONF_LAST_COMMAND_SOURCE_SENSOR_ID],
-        companion_entity_name(config, "Last Command Source"),
-        disabled_by_default=True,
+    await _create_diagnostic_text_sensor(
+        config, parent, CONF_LAST_COMMAND_SOURCE_SENSOR_ID, "Last Command Source", disabled_by_default=True
     )

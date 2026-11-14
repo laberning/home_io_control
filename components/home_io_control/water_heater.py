@@ -18,7 +18,6 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import binary_sensor, sensor, switch, water_heater
 from esphome.const import (
-    CONF_DEVICE_ID,
     CONF_ENERGY,
     CONF_ID,
     DEVICE_CLASS_ENERGY,
@@ -31,7 +30,7 @@ from . import home_io_control_ns
 from .hub_validators import FEATURE_WATER_HEATER
 from .platform_common import (
     create_companion_sensors,
-    inherit_esphome_device,
+    create_user_companion,
     inject_companion_sensor_ids,
     platform_schema_extension,
     require_feature,
@@ -41,7 +40,6 @@ from .platform_common import (
     wire_device_binding,
     CONF_DEVICE_TYPE,
     CONF_HOME_IO_CONTROL_ID,
-    CONF_IO_DEVICE_ID,
 )
 
 DEPENDENCIES = ["home_io_control"]
@@ -129,13 +127,6 @@ CONFIG_SCHEMA = cv.All(
 )
 
 
-def _companion_config(companion, config):
-    """A companion's config, grouped under the entity's ESPHome sub-device unless it names its own."""
-    if CONF_DEVICE_ID not in companion:
-        inherit_esphome_device(companion, config)
-    return companion
-
-
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
@@ -146,25 +137,19 @@ async def to_code(config):
     await create_companion_sensors(config, parent)
 
     if CONF_ENERGY in config:
-        energy_config = _companion_config(config[CONF_ENERGY], config)
-        energy = await sensor.new_sensor(energy_config)
-        await cg.register_component(energy, energy_config)
-        cg.add(energy.set_parent(parent))
-        cg.add(energy.set_device_id(config[CONF_IO_DEVICE_ID]))
+        await create_user_companion(
+            config, parent, new_entity=sensor.new_sensor, entity_config=config[CONF_ENERGY]
+        )
 
     for key, reading in _BINARY_COMPANIONS:
         if key not in config:
             continue
-        companion_config = _companion_config(config[key], config)
-        companion = await binary_sensor.new_binary_sensor(companion_config)
-        await cg.register_component(companion, companion_config)
-        cg.add(companion.set_parent(parent))
-        cg.add(companion.set_device_id(config[CONF_IO_DEVICE_ID]))
+        companion = await create_user_companion(
+            config, parent, new_entity=binary_sensor.new_binary_sensor, entity_config=config[key]
+        )
         cg.add(companion.set_reading(reading))
 
     if CONF_BOOST in config:
-        boost_config = _companion_config(config[CONF_BOOST], config)
-        boost = await switch.new_switch(boost_config)
-        await cg.register_component(boost, boost_config)
-        cg.add(boost.set_parent(parent))
-        cg.add(boost.set_device_id(config[CONF_IO_DEVICE_ID]))
+        await create_user_companion(
+            config, parent, new_entity=switch.new_switch, entity_config=config[CONF_BOOST]
+        )
