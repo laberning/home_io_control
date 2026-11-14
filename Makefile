@@ -361,8 +361,9 @@ HOST_EXTRA_FLAGS ?=
 # which meant C++20 library calls the device build accepts -- and that clang-tidy's device-side
 # analysis actively recommends, e.g. modernize-use-starts-ends-with -- would not compile here.
 # -Werror: every host warning fails the build, so warnings cannot pile up between clang-tidy runs.
-# Safe because every CI job is pinned to ubuntu-24.04, whose g++ is the local dev toolchain's (13.3);
-# a warning that appears only in CI means that pin drifted. It also makes -Wswitch hard: several
+# Safe because every CI job is pinned to ubuntu-26.04, the release the local dev toolchain runs, so CI
+# and local builds use the same distribution g++ (the CodeQL build, host-component-objs, too); a warning
+# that appears only in CI means that pin drifted. It also makes -Wswitch hard: several
 # switches over DeviceType / capability-class enums deliberately omit a default: label so an
 # unhandled new enumerator is caught at build time rather than silently mapping to UNKNOWN, and the
 # reverse cross-language sync tests (device_type_sync_test.cpp) rely on every enumerator being
@@ -410,6 +411,12 @@ unit-test-asan: corpus-gen
 	@echo "Building Google Test unit tests for home_io_control (ASan/UBSan)..."
 	@$(MAKE) --no-print-directory -j$(shell nproc) \
 		HOST_VARIANT=asan HOST_EXTRA_FLAGS="$(ASAN_HOST_FLAGS)" host-run
+
+# CodeQL's build (.github/workflows/codeql.yml): the component's translation units only, compiled in
+# parallel with the unit-test flags and not linked. CodeQL analyses what it sees compiled, so leaving out
+# the test sources and gtest keeps the scan on the shipped code and its run short.
+host-component-objs:
+	@$(MAKE) --no-print-directory -j$(shell nproc) $(patsubst %.cpp,$(HOST_OBJ_DIR)/%.o,$(COMPONENT_SRCS))
 
 clean-host:
 	rm -rf build/host
@@ -467,6 +474,6 @@ test-unit: unit-test
 		key-material-scan private-path-check \
 		fuzz-frame fuzz-soft-phy \
 		firmware-test firmware-test-group-1 firmware-test-group-2 firmware-test-groups-check \
-		unit-test unit-test-asan py-test host-run clean-host lint test check \
+		unit-test unit-test-asan py-test host-run host-component-objs clean-host lint test check \
 		test-compile test-unit \
 		doxygen clean-docs clean-test-cache

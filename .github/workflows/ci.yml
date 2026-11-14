@@ -21,8 +21,16 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y yamllint
       - run: make yamllint
 
+  # Two parallel halves of `make clang-tidy`: each shard builds the compile database and analyzes
+  # every second translation unit (CLANG_TIDY_SHARD in scripts/run-clang-tidy.sh), so together they
+  # cover every file once. Locally `make clang-tidy` still runs them all.
   tidy:
+    name: tidy (shard ${{ matrix.shard }}/2)
     runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v7
       - run: clang-tidy-21 --version
@@ -30,6 +38,7 @@ jobs:
         env:
           CLANG_TIDY: clang-tidy-21
           RUN_CLANG_TIDY: run-clang-tidy-21
+          CLANG_TIDY_SHARD: ${{ matrix.shard }}/2
 
   tuning-sync:
     runs-on: ubuntu-26.04
