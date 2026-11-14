@@ -17,6 +17,7 @@ light adds `io_model: heater_with_light`; see [Heaters with a night light](#heat
 private register protocol (`CMD_WRITE_PRIVATE`, 0x20): the hub reads and writes registers such as the
 setpoint, the mode and the room temperature, and the entity shows what the heater reports. A plain
 electrical heater (node type 52, subtype 0) is commanded with heating levels in the standard EXECUTE
+(the eight-byte frame a Cozytouch bridge was heard sending in issue #228, with the level in the main parameter)
 and read with the ordinary status request. Reads and writes of the register protocol are confirmed
 on an Atlantic AGILIA IO radiator (see
 [ADR 0054](../adr/0054-heaters-are-read-back-over-the-private-register-protocol.md) for the

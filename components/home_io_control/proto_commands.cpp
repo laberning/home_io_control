@@ -104,6 +104,19 @@ constexpr size_t EXECUTE_SECOND_BITMAP_FP_PAYLOAD_SIZE = 8;
 constexpr uint8_t EXECUTE_FP9_BITMAP = fp_bitmap_bit(9);
 /// FP9-FP16 bitmap with only FP16 set (the last bit).
 constexpr uint8_t EXECUTE_FP16_BITMAP = fp_bitmap_bit(16);
+/// @brief ACEI byte of the heating-level EXECUTE: priority level 7 (auto default), extended bits 11, valid bit.
+///
+/// The ACEI a vendor bridge puts on every heating level it sends to a pilot-wire interface
+/// (corpus `thermor_pilot_wire_interface_exchange_heating_level_execute`, issue #228).
+///
+/// Composition: (ACEI_LEVEL_AUTO_DEFAULT << 5) | (3 << 1) | 1 = 0xE7.
+constexpr uint8_t EXECUTE_ACEI_HEATING_LEVEL =
+    (ACEI_LEVEL_AUTO_DEFAULT << ACEI_LEVEL_SHIFT) | (0x3 << ACEI_EXTENDED_SHIFT) | ACEI_VALID_BIT;
+/// FP9-FP16 bitmap of the heating-level EXECUTE: only FP11 set (0x20), as the vendor bridge sends it.
+constexpr uint8_t EXECUTE_HEATING_LEVEL_FP_BITMAP = fp_bitmap_bit(11);
+/// Value of FP11 in the heating-level EXECUTE: 0xFFFF in every captured bridge frame. The captures do
+/// not establish what it means; it is sent unchanged because the bridge does.
+constexpr uint16_t EXECUTE_HEATING_LEVEL_FP_VALUE = 0xFFFF;
 /// Long-form CMD_PRIVATE2 (0x0C) payload length. Coincides numerically with
 /// EXECUTE_SPECIAL_PAYLOAD_SIZE but is a distinct command's payload shape — do not merge the two
 /// constants; a change to one must not silently change the other.
@@ -352,17 +365,19 @@ bool create_execute_heating_main_parameter(IoFrame &f, const uint8_t *own, const
                                       static_cast<uint8_t>(main_parameter & MAIN_PARAMETER_LOW_BYTE_MASK));
 }
 
-/// Build a temperature / alias execute frame (0x00) carrying one functional parameter of the second
-/// bitmap (FP9-FP16). A functional-parameter value is two bytes, high byte first, like the main parameter.
+/// Build an execute frame (0x00) with a main parameter (a temperature, an alias or a heating level) and one
+/// functional parameter of the second bitmap (FP9-FP16). A functional-parameter value is two bytes, high byte first,
+/// like the main parameter.
 static bool build_execute_with_second_bitmap_fp(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
-                                                uint16_t main_parameter, uint8_t second_bitmap, uint16_t value) {
+                                                uint8_t acei, uint16_t main_parameter, uint8_t second_bitmap,
+                                                uint16_t value) {
   init_frame(f, true, true, false, low_power);
   set_dst(f, dst);
   set_src(f, own);
   // FP1-FP8 bitmap (none), the FP9-FP16 bitmap with the one parameter's bit, then its value.
   const uint8_t payload[EXECUTE_SECOND_BITMAP_FP_PAYLOAD_SIZE] = {
       EXECUTE_ORIGINATOR,
-      EXECUTE_ACEI,
+      acei,
       static_cast<uint8_t>(main_parameter >> BITS_PER_BYTE),
       static_cast<uint8_t>(main_parameter & MAIN_PARAMETER_LOW_BYTE_MASK),
       0x00,
@@ -375,20 +390,24 @@ static bool build_execute_with_second_bitmap_fp(IoFrame &f, const uint8_t *own, 
 /// Build a temperature / alias execute frame (0x00) carrying functional parameter 9. See proto_commands.h.
 bool create_execute_heating_with_mode_flags(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
                                             uint16_t main_parameter, uint16_t mode_flags) {
-  return build_execute_with_second_bitmap_fp(f, own, dst, low_power, main_parameter, EXECUTE_FP9_BITMAP, mode_flags);
+  return build_execute_with_second_bitmap_fp(f, own, dst, low_power, EXECUTE_ACEI, main_parameter, EXECUTE_FP9_BITMAP,
+                                             mode_flags);
 }
 
 /// Build a temperature / alias execute frame (0x00) carrying functional parameter 16. See proto_commands.h.
 bool create_execute_heating_with_fp16(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
                                       uint16_t main_parameter, uint16_t fp16) {
-  return build_execute_with_second_bitmap_fp(f, own, dst, low_power, main_parameter, EXECUTE_FP16_BITMAP, fp16);
+  return build_execute_with_second_bitmap_fp(f, own, dst, low_power, EXECUTE_ACEI, main_parameter, EXECUTE_FP16_BITMAP,
+                                             fp16);
 }
 
 /// Build a heating-level execute frame (0x00). See proto_commands.h.
 bool create_execute_heating_level(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t level) {
   if (level > HEATING_LEVEL_MAX)
     return false;
-  return build_main_parameter_execute(f, own, dst, low_power, EXECUTE_ACEI, HEATING_LEVEL_MP_PREFIX, level);
+  return build_execute_with_second_bitmap_fp(f, own, dst, low_power, EXECUTE_ACEI_HEATING_LEVEL,
+                                             heating_level_main_parameter(level), EXECUTE_HEATING_LEVEL_FP_BITMAP,
+                                             EXECUTE_HEATING_LEVEL_FP_VALUE);
 }
 
 /// Build a 1W position execute frame (CMD 0x00) targeting a device class. See proto_commands.h

@@ -32,8 +32,11 @@ may bind" can no longer also mean "the private register protocol may be sent".
    poll) asks it. A plain heater therefore never receives a register frame from any entry point.
 
 3. **Heating levels travel in the main parameter.** A level is the low byte of a main parameter
-   whose high byte is `0xFC`, sent in a main-parameter-only EXECUTE through the same funnel as the
-   other execute-family operations. The status request returns the current level the same way; the
+   whose high byte is `0xFC`, sent in an EXECUTE through the same funnel as the other
+   execute-family operations. The EXECUTE has the shape a vendor bridge was captured sending with a
+   level ([issue #228](https://github.com/laberning/home_io_control/issues/228), corpus
+   `thermor_pilot_wire_interface_exchange_heating_level_execute`): ACEI `0xE7` and functional
+   parameter 11 set to `0xFFFF` after the main parameter. The status request returns the current level the same way; the
    hub stores it in `IoDevice::heating.level`, and the settle poll after a level write reads it back.
    A main parameter that is not a level is logged and leaves the level unread.
 

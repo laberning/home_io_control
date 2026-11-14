@@ -712,6 +712,7 @@ TEST(HubOperations, SetHeatingLevelSendsTheLevelInTheMainParameter) {
   EXPECT_EQ(tx[8], CMD_EXECUTE);
   EXPECT_EQ(tx[11], 0xFC) << "main parameter high byte";
   EXPECT_EQ(tx[12], heating_level::COMFORT);
+  EXPECT_EQ(tx[10], 0xE7) << "ACEI of the vendor bridge's level frame";
 }
 
 TEST(HubOperations, ALevelHeaterIsNeverInTheMovementSettleLoop) {

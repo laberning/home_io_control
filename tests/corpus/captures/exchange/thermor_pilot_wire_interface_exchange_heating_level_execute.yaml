@@ -1,0 +1,35 @@
+id: thermor_pilot_wire_interface_exchange_heating_level_execute
+description: >
+  An Atlantic/Thermor Cozytouch bridge (8F5BA3) setting the heating level of a Thermor "Interface
+  Cozytouch" pilot-wire actuator (91105B, node type 0x34 subtype 0), overheard by the reporter's hub:
+  Eco, then about 77 s later Comfort. Each level is an EXECUTE (0x00) of eight data bytes,
+  `01 E7 FC <level> 00 20 FF FF`: originator 1, ACEI 0xE7 (priority level 7, extended bits 11, valid),
+  main parameter 0xFC00 plus the heating level (0x02 Eco, 0x05 Comfort), an empty FP1-FP8 bitmap, the
+  FP9-FP16 bitmap 0x20 (FP11 present) and FP11 = 0xFFFF. The captures do not establish what FP11
+  0xFFFF means.
+
+  After each EXECUTE the bridge sends a 0x3D challenge response on two channels (869.850 then 868.250 MHz
+  for Eco, 868.250 then 868.950 MHz for Comfort), so the interface challenged it. The reporter's log
+  masked the six HMAC bytes of the 0x3D frames and holds neither the interface's 0x3C challenge nor its
+  final reply, so only the EXECUTE frames are kept.
+source:
+  device: "Thermor Interface Cozytouch pilot-wire actuator (ref. 450 251), commanded by a Cozytouch bridge"
+  captured_with: sx1276
+  firmware: "LilyGO T3 V1.6.1, hub in overhearing mode"
+  date: 2026-11-14
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/228"
+key: unknown
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 869850000
+    hex: "50 00 91 10 5B 8F 5B A3 00 01 E7 FC 02 00 20 FF FF"
+    crc: absent
+    note: "cmd=EXECUTE(0x00), heating level Eco (0x02), ACEI 0xE7, FP11 = 0xFFFF"
+  - dir: tx
+    t_ms: 77150
+    freq: 868250000
+    hex: "50 00 91 10 5B 8F 5B A3 00 01 E7 FC 05 00 20 FF FF"
+    crc: absent
+    note: "cmd=EXECUTE(0x00), heating level Comfort (0x05), ACEI 0xE7, FP11 = 0xFFFF"

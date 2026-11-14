@@ -231,31 +231,20 @@ TEST(HeatingLevels, APositionIsNotALevel) {
 
 // === Level EXECUTE frame ===
 
-TEST(HeatingLevels, ExecuteFrameIsMainParameterOnlyWithTheLevelInIt) {
+TEST(HeatingLevels, ExecuteFrameCarriesTheLevelAndTheBridgeBytes) {
   for (const uint8_t level :
        {heating_level::OFF, heating_level::FROST_PROTECTION, heating_level::ECO, heating_level::COMFORT_MINUS_2,
         heating_level::COMFORT_MINUS_1, heating_level::COMFORT, heating_level::BOOST}) {
     IoFrame f{};
     ASSERT_TRUE(create_execute_heating_level(f, OWN, DST, false, level)) << +level;
     EXPECT_EQ(f.cmd, CMD_EXECUTE);
-    ASSERT_EQ(f.data_len, 6u);
-    EXPECT_EQ(f.data[2], 0xFC) << "main parameter high byte";
-    EXPECT_EQ(f.data[3], level) << "main parameter low byte";
-    EXPECT_EQ(f.data[4], 0x00) << "no functional parameters";
-    EXPECT_EQ(f.data[5], 0x00);
+    // The eight data bytes a vendor bridge sends with every level (corpus: issue #228).
+    const uint8_t expected[] = {0x01, 0xE7, 0xFC, level, 0x00, 0x20, 0xFF, 0xFF};
+    ASSERT_EQ(f.data_len, sizeof(expected));
+    EXPECT_EQ(0, memcmp(f.data, expected, sizeof(expected))) << "level 0x" << std::hex << +level;
     EXPECT_EQ(0, memcmp(f.dst, DST, NODE_ID_SIZE));
     EXPECT_EQ(0, memcmp(f.src, OWN, NODE_ID_SIZE));
   }
-}
-
-TEST(HeatingLevels, ExecuteFrameSharesOriginatorAndPriorityWithThePositionFrame) {
-  IoFrame level{};
-  IoFrame position{};
-  ASSERT_TRUE(create_execute_heating_level(level, OWN, DST, false, heating_level::COMFORT));
-  ASSERT_TRUE(create_execute_main_parameter(position, OWN, DST, false, 50));
-  EXPECT_EQ(level.data[0], position.data[0]) << "originator";
-  EXPECT_EQ(level.data[1], position.data[1]) << "ACEI";
-  EXPECT_EQ(level.data_len, position.data_len);
 }
 
 TEST(HeatingLevels, ExecuteFrameHonoursTheLowPowerFlagAndRejectsAnUndefinedLevel) {

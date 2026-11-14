@@ -142,11 +142,15 @@ bool create_execute_main_parameter(IoFrame &f, const uint8_t *own, const uint8_t
 /// @brief Highest heating level low byte create_execute_heating_level() will frame (the secured level).
 static constexpr uint8_t HEATING_LEVEL_MAX = 0x3F;
 
-/// @brief Build a main-parameter-only EXECUTE (0x00) that sets a heater's heating level.
+/// @brief Build an EXECUTE (0x00) that sets a heater's heating level.
 ///
-/// Same 6-byte shape as create_execute_main_parameter(), with the heating level in the main
-/// parameter (high byte HEATING_LEVEL_MP_PREFIX, low byte the level; see proto_heating_profiles.h).
-/// Experimental: unconfirmed on hardware until a capture or a reporter's heater confirms it.
+/// The heating level sits in the main parameter (high byte HEATING_LEVEL_MP_PREFIX, low byte the
+/// level; see proto_heating_profiles.h). The frame has the eight data bytes a vendor bridge sends with
+/// every heating level (corpus `thermor_pilot_wire_interface_exchange_heating_level_execute`, issue #228):
+/// ACEI 0xE7, FP11 present in the FP9-FP16 bitmap, FP11 = 0xFFFF. That evidence does not establish what
+/// FP11 = 0xFFFF means; it is sent as the bridge sends it.
+/// \todo Experimental: no level change has been seen on a heater's display or read back yet, so the
+/// frame stays unconfirmed on hardware until a reporter's heater does.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID (source address).
 /// @param dst Target device's 3-byte node ID (destination address).
@@ -157,7 +161,7 @@ bool create_execute_heating_level(IoFrame &f, const uint8_t *own, const uint8_t 
 
 /// @brief Build a main-parameter-only EXECUTE (0x00) whose main parameter is a temperature or an alias.
 ///
-/// Same 6-byte shape as create_execute_heating_level(); the caller encodes the value
+/// Same 6-byte shape as create_execute_main_parameter(); the caller encodes the value
 /// (encode_temperature_main_parameter(), or heating_prefixed_main_parameter() for an alias).
 /// Experimental: unconfirmed on hardware.
 /// @param f IoFrame to populate.

@@ -10,10 +10,12 @@
 #include "corpus_generated.h"
 #include "corpus_test_helpers.h"
 #include "proto_codecs.h"
+#include "proto_commands.h"
 #include "proto_constants.h"
 #include "proto_device_model.h"
 #include "proto_frame.h"
 #include "proto_heating.h"
+#include "proto_heating_profiles.h"
 
 #include <gtest/gtest.h>
 
@@ -220,4 +222,27 @@ TEST(CorpusHeating, AfterAConnectionResetTheHeaterIsNotAtTheNextAddress) {
   EXPECT_EQ(device_id, "F519DD");
   EXPECT_EQ(device.type, DeviceType::ELECTRICAL_HEATER);
   EXPECT_EQ(device.subtype, 1);
+}
+
+// === Heating-level EXECUTE of a vendor bridge (issue #228) ===
+
+TEST(CorpusHeating, HeatingLevelExecuteIsTheFrameAVendorBridgeSends) {
+  using namespace corpus;
+  // The bridge 8F5BA3 commanding the pilot-wire interface 91105B; the capture holds no CRC.
+  const uint8_t bridge[NODE_ID_SIZE] = {0x8F, 0x5B, 0xA3};
+  const uint8_t interface[NODE_ID_SIZE] = {0x91, 0x10, 0x5B};
+  const std::pair<IoFrame, uint8_t> levels[] = {
+      {frame_of(thermor_pilot_wire_interface_exchange_heating_level_execute_frame0_bytes), heating_level::ECO},
+      {frame_of(thermor_pilot_wire_interface_exchange_heating_level_execute_frame1_bytes), heating_level::COMFORT}};
+  for (const auto &[captured, level] : levels) {
+    IoFrame built{};
+    ASSERT_TRUE(create_execute_heating_level(built, bridge, interface, false, level)) << +level;
+    uint8_t built_bytes[64];
+    uint8_t captured_bytes[64];
+    const uint8_t built_len = serialize(built, built_bytes, sizeof(built_bytes));
+    const uint8_t captured_len = serialize(captured, captured_bytes, sizeof(captured_bytes));
+    ASSERT_GT(built_len, 0U);
+    ASSERT_EQ(built_len, captured_len) << +level;
+    EXPECT_EQ(0, memcmp(built_bytes, captured_bytes, built_len)) << "level 0x" << std::hex << +level;
+  }
 }
