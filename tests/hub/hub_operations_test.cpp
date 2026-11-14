@@ -3730,12 +3730,12 @@ TEST(HubOperations, TowelDryerPollReadsItsOwnRegistersThenTheBootRegistersAndThe
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x3E, 0x02});        // drying
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x26, 0x64});        // 100 %
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01});  // 28.0 C
-  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x38, 0xBE, 0x00});  // 19.0 C
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x04, 0x23, 0x00});  // 3.5 K setback
   queue_register_reply(comp, radio, ADELIS_NAME_REPLY);
 
   EXPECT_TRUE(comp.request_device_status("ABC123"));
 
-  const uint8_t expected_registers[] = {0x15, 0x03, 0x36, 0x3E, 0x26, 0x02, 0x38, 0x19};
+  const uint8_t expected_registers[] = {0x15, 0x03, 0x36, 0x3E, 0x26, 0x02, 0x04, 0x19};
   ASSERT_EQ(radio.get_sent_data().size(), std::size(expected_registers))
       << "no window registers, and the mode register is not asked twice for the model check";
   for (size_t i = 0; i < std::size(expected_registers); i++)
@@ -3746,7 +3746,8 @@ TEST(HubOperations, TowelDryerPollReadsItsOwnRegistersThenTheBootRegistersAndThe
   EXPECT_EQ(dev->heating.towel_mode, 3);
   EXPECT_EQ(dev->heating.temporary_state, 2);
   EXPECT_EQ(dev->heating.working_rate, 100);
-  EXPECT_FLOAT_EQ(dev->heating.towel_comfort_setpoint_c, 19.0F);
+  EXPECT_FLOAT_EQ(dev->heating.eco_setback_k, 3.5F);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::TEMPERATURE_IN_FORCE)) << "drying: no temperature in force is read";
   EXPECT_EQ(dev->heating.mode, -1) << "the radiator's mode register is never read";
   EXPECT_TRUE(dev->model_checked);
 
@@ -3754,6 +3755,122 @@ TEST(HubOperations, TowelDryerPollReadsItsOwnRegistersThenTheBootRegistersAndThe
   EXPECT_FALSE(comp.request_device_status("ABC123"));  // nothing queued: only the first register is tried
   for (size_t i = sent_before; i < radio.get_sent_data().size(); i++)
     EXPECT_EQ(sent_register(radio.get_sent_data()[i]), 0x15);
+}
+
+namespace {
+
+/// One towel-dryer poll: the five core registers (mode and temporary state as given), answered, and the
+/// frames it sent.
+struct TowelPoll {
+  TowelDryerMode mode;
+  HeatingTemporaryState state;
+  std::vector<uint8_t> in_force_reply;              ///< Answer to register 0x0137 when it is asked; empty queues none.
+  std::vector<std::vector<uint8_t>> later_replies;  ///< Answers queued after it (boot registers, the model name).
+};
+
+/// Run one poll of the towel dryer; returns the low bytes of the registers it read, in order.
+std::vector<uint8_t> run_towel_poll(TestableComponent &comp, MockRadio &radio, const TowelPoll &poll) {
+  const size_t before = radio.get_sent_data().size();
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x15, 0xB7, 0x07});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x03, 0xC8, 0x00});  // comfort setpoint 20.0 C
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x36, static_cast<uint8_t>(poll.mode)});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x3E, static_cast<uint8_t>(poll.state)});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x26, 0x00});
+  if (!poll.in_force_reply.empty())
+    queue_register_reply(comp, radio, poll.in_force_reply);
+  for (const auto &reply : poll.later_replies)
+    queue_register_reply(comp, radio, reply);
+  comp.request_device_status("ABC123");
+  std::vector<uint8_t> registers;
+  for (size_t i = before; i < radio.get_sent_data().size(); i++)
+    registers.push_back(sent_register(radio.get_sent_data()[i]));
+  return registers;
+}
+
+const std::vector<uint8_t> IN_FORCE_COMFORT = {0x0C, 0x60, 0x01, 0x37, 0xC8, 0x00};  // 20.0 C
+const std::vector<uint8_t> IN_FORCE_ECO = {0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00};      // 16.5 C
+const std::vector<uint8_t> IN_FORCE_BOOST = {0x0C, 0x60, 0x01, 0x37, 0x01, 0x00};    // a count, not a temperature
+
+}  // namespace
+
+TEST(HubOperations, TowelDryerPollReadsTheTemperatureInForceOnlyWhileTheProgrammeRuns) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_towel_dryer(comp, radio);
+  const auto PROG = TowelDryerMode::PROG;
+  const auto NONE = HeatingTemporaryState::NONE;
+  const std::vector<uint8_t> boot_max = {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01};
+  const std::vector<uint8_t> boot_setback = {0x0C, 0x60, 0x01, 0x04, 0x23, 0x00};  // 3.5 K
+
+  // A comfort period: the core registers, 0x0137, the boot registers (first poll only), the model name.
+  EXPECT_EQ(run_towel_poll(comp, radio, {PROG, NONE, IN_FORCE_COMFORT, {boot_max, boot_setback, ADELIS_NAME_REPLY}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x02, 0x04, 0x19}));
+  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 20.0F);
+  EXPECT_FLOAT_EQ(dev->heating.eco_setback_k, 3.5F);
+  EXPECT_EQ(resolve_programme_period(*find_heating_profile(*dev), dev->heating).preset_index,
+            find_heating_profile(*dev)->programme_period->comfort_preset);
+
+  // An eco period: one extra read per poll, nothing else.
+  EXPECT_EQ(run_towel_poll(comp, radio, {PROG, NONE, IN_FORCE_ECO, {}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37}));
+  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 16.5F);
+  EXPECT_EQ(resolve_programme_period(*find_heating_profile(*dev), dev->heating).preset_index,
+            find_heating_profile(*dev)->programme_period->eco_preset);
+
+  // Boost on top of the programme: exactly the frames of today's poll, and the temperature in force goes.
+  EXPECT_EQ(run_towel_poll(comp, radio, {PROG, HeatingTemporaryState::BOOST, {}, {}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26}));
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::TEMPERATURE_IN_FORCE));
+
+  // Back in the programme: read again, and the earlier eco value is not what shows.
+  EXPECT_EQ(run_towel_poll(comp, radio, {PROG, NONE, IN_FORCE_COMFORT, {}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37}));
+  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 20.0F);
+
+  // MANUEL: no extra frame, and the value from the programme is dropped.
+  EXPECT_EQ(run_towel_poll(comp, radio, {TowelDryerMode::MANUAL, NONE, {}, {}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26}));
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::TEMPERATURE_IN_FORCE));
+  for (const auto &tx : radio.get_sent_data())
+    EXPECT_EQ(tx.at(10), HEATING_DIRECTION_GET) << "a poll only reads";
+}
+
+TEST(HubOperations, ATowelDryerInBoostIsNeverAskedForItsTemperatureAndAStaleValueIsNotKept) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_towel_dryer(comp, radio);
+  dev->model_checked = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  dev->heating.eco_setback_k = 3.5F;
+  dev->heating.in_force_temperature_c = 16.5F;  // from an earlier programme run
+  EXPECT_EQ(run_towel_poll(comp, radio, {TowelDryerMode::PROG, HeatingTemporaryState::DRYING, {}, {}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26}))
+      << "no 0x0137 read while drying";
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::TEMPERATURE_IN_FORCE));
+}
+
+TEST(HubOperations, ATemperatureThatFitsNeitherPeriodMakesTheNextBootReadAskForTheSetbackAgain) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_towel_dryer(comp, radio);
+  dev->model_checked = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  dev->heating.eco_setback_k = 3.5F;  // read at boot; the user has since changed it on the display
+  const std::vector<uint8_t> new_setback = {0x0C, 0x60, 0x01, 0x04, 0x2D, 0x00};  // 4.5 K
+  // 15.5 = 20.0 - 4.5: an eco period under the new setback, but neither period under the old one.
+  const std::vector<uint8_t> in_force = {0x0C, 0x60, 0x01, 0x37, 0x9B, 0x00};
+
+  EXPECT_EQ(run_towel_poll(comp, radio, {TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force, {new_setback}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x04}))
+      << "the setback is read once more, in the same poll";
+  EXPECT_FLOAT_EQ(dev->heating.eco_setback_k, 4.5F);
+  EXPECT_EQ(resolve_programme_period(*find_heating_profile(*dev), dev->heating).preset_index,
+            find_heating_profile(*dev)->programme_period->eco_preset)
+      << "the next sync shows eco";
+
+  // A value that fits the setback in hand costs no read.
+  EXPECT_EQ(run_towel_poll(comp, radio, {TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force, {}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37}));
 }
 
 TEST(HubOperations, ATowelDryerDeclaredOnARadiatorStillGetsTheModelCheck) {

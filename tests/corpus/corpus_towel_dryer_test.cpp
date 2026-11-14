@@ -57,7 +57,96 @@ template<size_t N> HeatingPresetEntry shown_preset(const uint8_t (&bytes)[N]) {
   return state != nullptr ? profile.presets[state->preset] : profile.presets[0];
 }
 
+/// The heating level a captured status reply (`status_mp_fp`) carries as its main parameter.
+template<size_t N> uint8_t status_level(const uint8_t (&bytes)[N]) {
+  const IoFrame frame = frame_of(bytes);
+  // data: [status][b1][MP hi][MP lo]...
+  EXPECT_GE(frame.data_len, 4u);
+  uint8_t level = 0xFF;
+  EXPECT_TRUE(decode_heating_level(static_cast<uint16_t>((frame.data[2] << 8) | frame.data[3]), level));
+  return level;
+}
+
+/// A towel dryer in PROG with no timed run, holding comfort setpoint `comfort_c` and the setback read on a unit
+/// (frame 4 of the sweep), reporting `in_force` in register 0x0137.
+template<size_t N> HeatingReadings programme_readings(float comfort_c, const uint8_t (&in_force)[N]) {
+  HeatingReadings readings;
+  readings.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
+  readings.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE);
+  readings.setpoint_c = comfort_c;
+  readings.store(
+      HeatingFunction::ECO_SETBACK,
+      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame4_bytes, HeatingFunction::ECO_SETBACK));
+  readings.store(HeatingFunction::TEMPERATURE_IN_FORCE, value_of(in_force, HeatingFunction::TEMPERATURE_IN_FORCE));
+  return readings;
+}
+
 }  // namespace
+
+TEST(CorpusTowelDryer, TheStatusReadNamesTheProgrammePeriodAsAHeatingLevel) {
+  EXPECT_EQ(status_level(corpus::atlantic_adelis_probe_status_mp_fp_programme_frame0_bytes), heating_level::COMFORT);
+  EXPECT_EQ(status_level(corpus::atlantic_adelis_probe_status_mp_fp_programme_frame1_bytes), heating_level::COMFORT)
+      << "the same at 18 C as at 19 C: the level names the period, not the temperature";
+  EXPECT_EQ(status_level(corpus::atlantic_adelis_probe_status_mp_fp_programme_frame2_bytes), heating_level::ECO);
+}
+
+TEST(CorpusTowelDryer, Register0137HoldsTheTemperatureInForceAndTheSetbackIsInTenths) {
+  EXPECT_FLOAT_EQ(
+      value_of(corpus::atlantic_adelis_probe_temperature_in_force_frame0_bytes, HeatingFunction::TEMPERATURE_IN_FORCE),
+      20.0F)
+      << "comfort period";
+  EXPECT_FLOAT_EQ(
+      value_of(corpus::atlantic_adelis_probe_temperature_in_force_frame1_bytes, HeatingFunction::TEMPERATURE_IN_FORCE),
+      16.5F)
+      << "eco period";
+  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_register_01_sweep_frame4_bytes, HeatingFunction::ECO_SETBACK),
+                  3.5F);
+  EXPECT_FLOAT_EQ(
+      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame4_bytes, HeatingFunction::ECO_SETBACK), 3.5F)
+      << "both units hold the same setback";
+}
+
+TEST(CorpusTowelDryer, TheProgrammePeriodResolvesToComfortAndEcoFromTheCapturedReads) {
+  const HeatingProfile &profile = towel_profile();
+  const ProgrammePeriodState comfort = resolve_programme_period(
+      profile, programme_readings(20.0F, corpus::atlantic_adelis_probe_temperature_in_force_frame0_bytes));
+  EXPECT_TRUE(comfort.active);
+  EXPECT_EQ(comfort.preset_index, profile.programme_period->comfort_preset);
+  EXPECT_FLOAT_EQ(comfort.target_c, 20.0F);
+
+  const ProgrammePeriodState eco = resolve_programme_period(
+      profile, programme_readings(20.0F, corpus::atlantic_adelis_probe_temperature_in_force_frame1_bytes));
+  EXPECT_TRUE(eco.active);
+  EXPECT_EQ(eco.preset_index, profile.programme_period->eco_preset) << "20.0 - 3.5 = 16.5";
+  EXPECT_FLOAT_EQ(eco.target_c, 16.5F);
+}
+
+TEST(CorpusTowelDryer, TheRegisterIsNoTemperatureInBoostOrDryingAndTheProfileNeverShowsIt) {
+  // 0x0137 reads 1 in boost (first unit) and 2 in drying (second unit).
+  const HeatingProfile &profile = towel_profile();
+  struct Run {
+    float in_force;
+    HeatingTemporaryState state;
+  };
+  const Run runs[] = {
+      {value_of(corpus::atlantic_adelis_probe_register_01_sweep_frame23_bytes, HeatingFunction::TEMPERATURE_IN_FORCE),
+       HeatingTemporaryState::BOOST},
+      {value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame55_bytes,
+                HeatingFunction::TEMPERATURE_IN_FORCE),
+       HeatingTemporaryState::DRYING},
+  };
+  for (const Run &run : runs) {
+    HeatingReadings readings;
+    readings.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
+    readings.temporary_state = static_cast<int16_t>(run.state);
+    readings.setpoint_c = 19.5F;
+    readings.in_force_temperature_c = run.in_force;
+    EXPECT_LT(run.in_force, 1.0F) << "a count, not a temperature";
+    const ProgrammePeriodState state = resolve_programme_period(profile, readings);
+    EXPECT_FALSE(state.active);
+    EXPECT_TRUE(std::isnan(state.target_c));
+  }
+}
 
 TEST(CorpusTowelDryer, EachDisplayedModeIsTheModeTheCardShows) {
   EXPECT_EQ(shown_mode(corpus::atlantic_adelis_probe_mode_reads_frame0_bytes), HeatingHvacMode::HEAT) << "MANUEL";
@@ -105,10 +194,6 @@ TEST(CorpusTowelDryer, DryingLeavesTheBaseModeAndThePolledTemperaturesReadable) 
   const float setpoint =
       value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame3_bytes, HeatingFunction::SET_TEMPERATURE);
   EXPECT_FLOAT_EQ(setpoint, 19.0F);
-  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame56_bytes,
-                           HeatingFunction::TOWEL_COMFORT_SETPOINT),
-                  setpoint)
-      << "0x0138 holds the same comfort setpoint as 0x0103";
   EXPECT_FLOAT_EQ(
       value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame2_bytes, HeatingFunction::MAX_SETPOINT),
       28.0F);

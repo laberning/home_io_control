@@ -33,6 +33,7 @@ the `io_model:` line yourself.
 | Changing the mode from Home Assistant | ✅ The display follows off, MANUEL and PROG at once |
 | Starting or ending boost and drying from Home Assistant | ✅ The display starts and ends both |
 | Boost started on the dryer itself | ✅ Shows as the `boost` preset and `heating` at the next poll |
+| Comfort or eco period of PROG | ⚠️ Experimental: read on one unit, in a comfort period and in an eco period; no second unit has confirmed it yet |
 
 ## Modes and presets in Home Assistant
 
@@ -40,13 +41,24 @@ the `io_model:` line yourself.
 |---|---|
 | Off | `off` |
 | MANUEL — holds the set temperature | `heat` |
-| PROG — follows the dryer's weekly program | `auto` |
+| PROG — follows the dryer's weekly program | `auto`, with the `comfort` or `eco` preset of the period that runs (experimental) |
 | BOOST | the `boost` preset, on top of the mode |
 | Drying | the custom `Drying` preset, on top of the mode |
 
 Boost and drying run for the duration set on the display, and the mode underneath stays as it was.
-Select the `none` preset to end a boost or a drying run from Home Assistant. Inside PROG the card
-does not tell a comfort period from an eco period: the mode register reads PROG in both.
+Select the `none` preset to end a boost or a drying run from Home Assistant.
+
+While PROG runs with no boost or drying on top, the card shows the period the program is in: the
+`comfort` or `eco` preset, and the temperature the dryer heats to right now as the target. The hub
+reads the dryer's temperature in force at each poll and compares it with the comfort setpoint (comfort)
+and with the comfort setpoint minus the eco setback (eco). A temperature that fits neither, such as a
+frost-protection value, shows as the target with no `comfort` or `eco` preset. The `comfort` and `eco`
+presets are shown only: selecting one sends nothing and the hub logs a warning.
+
+> [!NOTE]
+> **Comfort and eco are experimental.** They were read on one unit, in one comfort period and one eco
+> period (issue #202). If you run a dryer in PROG, please
+> [report](https://github.com/laberning/home_io_control/issues) whether the card follows the display.
 
 ## Working YAML
 
@@ -95,6 +107,12 @@ like".
 - **Changes made on the dryer show up at the next poll.** The hub reads the dryer every five minutes
   by default, so a boost started on the dryer can take that long to appear in Home Assistant. Set
   `status_poll_interval` on the entry to read it more often.
+- **The target in an eco period is the eco temperature.** Setting a target from Home Assistant in
+  `auto` writes the comfort setpoint, so the card keeps showing the eco temperature until the dryer
+  returns to a comfort period, where it shows the new setpoint.
+- **A change of the eco setback on the dryer shows at the next poll that the temperature fits neither
+  period.** The hub reads the setback at the first poll and again when the temperature in force fits
+  neither period.
 - **The weekly program is edited on the dryer.** PROG runs the program stored on the dryer, and Home
   Assistant cannot change it. To schedule from Home Assistant instead, use `heat` and change the
   target or the mode from an automation.
@@ -109,6 +127,8 @@ Corpus captures from issue #202, on an SX1276 board:
 - [A register sweep of the second unit during a drying run](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_register_01_sweep_drying.yaml)
 - [The mode registers read in MANUEL, PROG and off](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_mode_reads.yaml)
 - [The remaining boost time read twice during a one-hour boost](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_boost_remaining.yaml)
+- [Register 0x0137, the temperature in force, in a comfort period and in an eco period](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_temperature_in_force.yaml)
+- [The status read in a comfort period, twice, and in an eco period](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_status_mp_fp_programme.yaml)
 - [Two status reads, one with the comfort setpoint and the eco setback](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_status_mp_fp.yaml)
 
 ## See also

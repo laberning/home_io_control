@@ -168,6 +168,23 @@ struct HeatingProfileFeatures {
                              ///< last command (nothing reads it back).
 };
 
+/// @brief How a heater's own weekly programme shows which period runs: the registers that tell, and the
+/// presets that name the periods.
+/// @details While the mode register reads `programme_mode` and the preset register reads
+///          `idle_preset_state` (no timed run on top), `in_force_fn` holds the temperature the heater
+///          heats to. It equals the `comfort_fn` temperature in a comfort period and that temperature
+///          minus the `setback_fn` one in an eco period. Outside the programme `in_force_fn` is not a
+///          temperature (it reads 1 in boost and 2 in drying on a towel dryer).
+struct HeatingProgrammePeriod {
+  uint8_t programme_mode;       ///< Value of HeatingProfile::mode_fn while the programme runs.
+  uint8_t idle_preset_state;    ///< Value of HeatingProfile::preset_fn with no timed run on top.
+  HeatingFunction in_force_fn;  ///< Register of the temperature in force.
+  HeatingFunction comfort_fn;   ///< Register of the comfort setpoint.
+  HeatingFunction setback_fn;   ///< Register of the eco setback, a distance below the comfort setpoint.
+  int8_t comfort_preset;        ///< Index into HeatingProfile::presets shown in a comfort period.
+  int8_t eco_preset;            ///< Index into HeatingProfile::presets shown in an eco period.
+};
+
 /// @brief One heater kind.
 struct HeatingProfile {
   DeviceType type;                        ///< Node type.
@@ -208,6 +225,17 @@ struct HeatingProfile {
   /// the part costs a read, not the poll.
   const HeatingFunction *extra_poll_registers{nullptr};
   size_t extra_poll_register_count{0};  ///< Number of entries in `extra_poll_registers`.
+  /// PRIVATE_REGISTERS: how the heater's own programme names the comfort or eco period it is in;
+  /// nullptr for a heater that does not report it.
+  const HeatingProgrammePeriod *programme_period{nullptr};
+};
+
+/// @brief What a heater's programme period resolves to, from its readings.
+struct ProgrammePeriodState {
+  bool active{false};       ///< The programme runs (and no timed run is on top of it).
+  int8_t preset_index{-1};  ///< Index into the profile's presets of the period, or -1 when the temperature
+                            ///< in force fits neither period or the readings cannot say.
+  float target_c{NAN};      ///< The temperature in force; NaN until it has been read.
 };
 
 /// @brief Look up the heating profile for a (type, subtype, model).
@@ -310,6 +338,30 @@ const HeatingObservedState *find_observed_state(const HeatingProfile &profile, u
 /// @param wire Value of the profile's preset register.
 /// @return The matching entry, or nullptr when the profile has no preset table or does not map the value.
 const HeatingObservedState *find_observed_preset(const HeatingProfile &profile, uint8_t wire);
+
+/// @brief Does the heater's own programme run right now, with no timed run on top of it?
+/// @details True when the profile has a programme period, its mode register reads the programme value and
+///          its preset register reads the idle value. An unread register is not the programme.
+/// @param profile The device's profile.
+/// @param readings What the hub has read from the heater.
+/// @return false for a profile without a programme period.
+bool programme_period_active(const HeatingProfile &profile, const HeatingReadings &readings);
+
+/// @brief Which period of its programme a heater is in, and the temperature it heats to.
+/// @details Compares in whole tenths of a degree: the temperature in force equals the comfort setpoint
+///          (comfort period) or the comfort setpoint minus the setback (eco period). Anything else, or a
+///          register not read yet, names no period but still reports the temperature in force.
+/// @param profile The device's profile.
+/// @param readings What the hub has read from the heater.
+/// @return `active` false when the programme does not run; otherwise the period's preset index and the
+///         temperature in force.
+ProgrammePeriodState resolve_programme_period(const HeatingProfile &profile, const HeatingReadings &readings);
+
+/// @brief Drop the temperature in force from the readings when the programme does not run.
+/// @details Keeps a value from an earlier run of the programme from being shown when the heater returns to it.
+/// @param profile The device's profile.
+/// @param[in,out] readings What the hub has read from the heater.
+void clear_inactive_programme_reading(const HeatingProfile &profile, HeatingReadings &readings);
 
 }  // namespace home_io_control
 }  // namespace esphome

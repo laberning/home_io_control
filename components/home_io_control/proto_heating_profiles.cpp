@@ -19,6 +19,9 @@ namespace {
 /// Mask for the low byte of a main parameter, where a heating level sits.
 constexpr uint16_t LOW_BYTE_MASK = 0xFF;
 
+/// Wire scale of the temperature registers: the device holds whole tenths of a degree.
+constexpr float TENTHS_PER_DEGREE = 10.0F;
+
 // === Electrical heater with an adjustable setpoint (52/1): private registers ===
 
 constexpr HeatingModeEntry SETPOINT_HEATER_MODES[] = {
@@ -89,8 +92,16 @@ constexpr int8_t TOWEL_DRYER_NONE_PRESET = 0;
 constexpr int8_t TOWEL_DRYER_BOOST_PRESET = 1;
 /// Index of the "Drying" entry in TOWEL_DRYER_PRESETS.
 constexpr int8_t TOWEL_DRYER_DRYING_PRESET = 2;
+/// Index of the comfort entry in TOWEL_DRYER_PRESETS, named by TOWEL_DRYER_PROGRAMME_PERIOD.
+constexpr int8_t TOWEL_DRYER_COMFORT_PRESET = 3;
+/// Index of the eco entry in TOWEL_DRYER_PRESETS, named by TOWEL_DRYER_PROGRAMME_PERIOD.
+constexpr int8_t TOWEL_DRYER_ECO_PRESET = 4;
+/// The wire value of a preset the device only reports: it has no register value of its own (the period
+/// comes from TOWEL_DRYER_PROGRAMME_PERIOD) and is never written.
+constexpr uint8_t TOWEL_DRYER_NO_WIRE = 0;
 
-/// Boost and drying are timed runs on top of the mode; "none" ends the one that runs.
+/// Boost and drying are timed runs on top of the mode; "none" ends the one that runs. Comfort and eco are
+/// the periods of the device's own programme: shown while it runs, never commanded.
 constexpr HeatingPresetEntry TOWEL_DRYER_PRESETS[] = {
     {nullptr, HeatingPresetId::NONE, HeatingFunction::TEMPORARY_STATE,
      static_cast<uint8_t>(HeatingTemporaryState::NONE), true},
@@ -98,6 +109,8 @@ constexpr HeatingPresetEntry TOWEL_DRYER_PRESETS[] = {
      static_cast<uint8_t>(HeatingTemporaryState::BOOST), true},
     {"Drying", HeatingPresetId::CUSTOM, HeatingFunction::TEMPORARY_STATE,
      static_cast<uint8_t>(HeatingTemporaryState::DRYING), true},
+    {nullptr, HeatingPresetId::COMFORT, HeatingFunction::TEMPORARY_STATE, TOWEL_DRYER_NO_WIRE, false},
+    {nullptr, HeatingPresetId::ECO, HeatingFunction::TEMPORARY_STATE, TOWEL_DRYER_NO_WIRE, false},
 };
 
 /// The mode register names the mode only; TOWEL_DRYER_OBSERVED_PRESETS names the preset.
@@ -107,7 +120,8 @@ constexpr HeatingObservedState TOWEL_DRYER_OBSERVED[] = {
     {static_cast<uint8_t>(TowelDryerMode::MANUAL), HeatingHvacMode::HEAT, -1},
 };
 
-/// Temporary state -> preset. The hvac column is not consulted for a preset table.
+/// Temporary state -> preset. The hvac column is not consulted for a preset table. Comfort and eco have no
+/// row: the temporary state does not tell them apart.
 constexpr HeatingObservedState TOWEL_DRYER_OBSERVED_PRESETS[] = {
     {static_cast<uint8_t>(HeatingTemporaryState::NONE), HeatingHvacMode::HEAT, TOWEL_DRYER_NONE_PRESET},
     {static_cast<uint8_t>(HeatingTemporaryState::BOOST), HeatingHvacMode::HEAT, TOWEL_DRYER_BOOST_PRESET},
@@ -121,11 +135,26 @@ constexpr HeatingFunction TOWEL_DRYER_POLL[] = {
     HeatingFunction::TEMPORARY_STATE,  HeatingFunction::WORKING_RATE,
 };
 
-/// The maximum setpoint, and the dryer's second comfort setpoint, which only feeds a debug comparison
-/// with 0x0103 (both units hold the same value in both).
+/// The maximum setpoint, and the eco setback that tells an eco period from a comfort one. The setback is
+/// read again when the temperature in force fits neither period (the user changed it on the display).
 constexpr HeatingFunction TOWEL_DRYER_BOOT[] = {
     HeatingFunction::MAX_SETPOINT,
-    HeatingFunction::TOWEL_COMFORT_SETPOINT,
+    HeatingFunction::ECO_SETBACK,
+};
+
+/// The programme runs when the mode register reads PROG and no boost or drying is on top of it. The
+/// temperature in force then is the comfort setpoint in a comfort period and the comfort setpoint minus the
+/// setback in an eco period.
+/// \todo Both periods are read on one unit (BD684B); a second unit or a second read confirms them. Until
+///       then the card shows them as experimental.
+constexpr HeatingProgrammePeriod TOWEL_DRYER_PROGRAMME_PERIOD = {
+    static_cast<uint8_t>(TowelDryerMode::PROG),
+    static_cast<uint8_t>(HeatingTemporaryState::NONE),
+    HeatingFunction::TEMPERATURE_IN_FORCE,
+    HeatingFunction::SET_TEMPERATURE,
+    HeatingFunction::ECO_SETBACK,
+    TOWEL_DRYER_COMFORT_PRESET,
+    TOWEL_DRYER_ECO_PRESET,
 };
 
 // === Plain electrical heater (52/0): heating levels ===
@@ -342,7 +371,10 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
      /*mode_fn=*/HeatingFunction::TOWEL_MODE,
      /*preset_fn=*/HeatingFunction::TEMPORARY_STATE,
      HeatingActionSource::WORKING_RATE,
-     /*experimental_writes=*/false},
+     /*experimental_writes=*/false,
+     /*extra_poll_registers=*/nullptr,
+     /*extra_poll_register_count=*/0,
+     &TOWEL_DRYER_PROGRAMME_PERIOD},
 };
 
 const HeatingProfile *find_exact_profile(DeviceType type, uint8_t subtype, DeviceModel model) {
@@ -420,20 +452,74 @@ bool decode_heating_level(uint16_t main_parameter, uint8_t &level) {
   return true;
 }
 
-const HeatingObservedState *find_observed_state(const HeatingProfile &profile, uint8_t wire) {
-  for (size_t i = 0; i < profile.observed_count; i++) {
-    if (profile.observed[i].wire == wire)
-      return &profile.observed[i];
+namespace {
+
+/// @return The row of `rows` for a wire value, or nullptr when there is none.
+const HeatingObservedState *find_observed_row(const HeatingObservedState *rows, size_t count, uint8_t wire) {
+  for (size_t i = 0; i < count; i++) {
+    if (rows[i].wire == wire)
+      return &rows[i];
   }
   return nullptr;
 }
 
+}  // namespace
+
+const HeatingObservedState *find_observed_state(const HeatingProfile &profile, uint8_t wire) {
+  return find_observed_row(profile.observed, profile.observed_count, wire);
+}
+
 const HeatingObservedState *find_observed_preset(const HeatingProfile &profile, uint8_t wire) {
-  for (size_t i = 0; i < profile.preset_observed_count; i++) {
-    if (profile.preset_observed[i].wire == wire)
-      return &profile.preset_observed[i];
+  return find_observed_row(profile.preset_observed, profile.preset_observed_count, wire);
+}
+
+// === Programme period ===
+
+bool programme_period_active(const HeatingProfile &profile, const HeatingReadings &readings) {
+  const HeatingProgrammePeriod *period = profile.programme_period;
+  if (period == nullptr)
+    return false;
+  // value_of() is -1 for an unread register, which never equals a (non-negative) register value.
+  const auto is_value = [&readings](HeatingFunction fn, uint8_t value) {
+    return readings.value_of(fn) == static_cast<int16_t>(value);
+  };
+  return is_value(profile.mode_fn, period->programme_mode) && is_value(profile.preset_fn, period->idle_preset_state);
+}
+
+namespace {
+
+/// @return A temperature in whole tenths of a degree, the resolution the device holds it in.
+int32_t to_tenths(float celsius) { return static_cast<int32_t>(std::lround(celsius * TENTHS_PER_DEGREE)); }
+
+}  // namespace
+
+ProgrammePeriodState resolve_programme_period(const HeatingProfile &profile, const HeatingReadings &readings) {
+  ProgrammePeriodState state;
+  if (!programme_period_active(profile, readings))
+    return state;
+  const HeatingProgrammePeriod &period = *profile.programme_period;
+  state.active = true;
+  if (!readings.has(period.in_force_fn))
+    return state;
+  // The temperature in force is held in whole tenths, so the comparison is on whole tenths: 20.0 - 3.5 is
+  // 16.5 only there, not in float.
+  state.target_c = readings.temperature_of(period.in_force_fn);
+  if (!readings.has(period.comfort_fn))
+    return state;
+  const int32_t in_force = to_tenths(state.target_c);
+  const int32_t comfort = to_tenths(readings.temperature_of(period.comfort_fn));
+  if (in_force == comfort) {
+    state.preset_index = period.comfort_preset;
+  } else if (readings.has(period.setback_fn) &&
+             in_force == comfort - to_tenths(readings.temperature_of(period.setback_fn))) {
+    state.preset_index = period.eco_preset;
   }
-  return nullptr;
+  return state;
+}
+
+void clear_inactive_programme_reading(const HeatingProfile &profile, HeatingReadings &readings) {
+  if (profile.programme_period != nullptr && !programme_period_active(profile, readings))
+    readings.clear(profile.programme_period->in_force_fn);
 }
 
 }  // namespace home_io_control

@@ -1373,7 +1373,16 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param max_tries Transmit-attempt cap of each read (the poll's).
   void check_heater_model_(const std::string &device_id, uint8_t max_tries);
-  /// @brief Poll a heater: read its profile's poll registers (stopping at the first failure), then its
+  /// @brief Read the temperature in force of a heater's programme, when the programme runs.
+  /// @details Sends nothing unless programme_period_active() holds for the readings the poll just made.
+  ///          When the temperature fits neither period it forgets the eco setback, so the boot registers
+  ///          read it again.
+  /// @param device_id Target device ID.
+  /// @param profile The device's profile; its programme_period must not be nullptr.
+  /// @param max_tries Transmit-attempt cap of the read (the poll's).
+  void poll_programme_period_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
+  /// @brief Poll a heater: read its profile's poll registers (stopping at the first failure), then the
+  /// programme's temperature in force (poll_programme_period_()), then its
   /// boot registers until each has been read once, then, on a heater kind with model rows, the one-off
   /// model check (check_heater_model_()) once the device has answered a read.
   ///

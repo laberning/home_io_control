@@ -91,8 +91,11 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
      HeatingValueKind::BOUNDED_BYTE, TEMPORARY_STATE_MAX},
     {"working_rate", HeatingFunction::WORKING_RATE, 0x26, HeatingAccess::READ_ONLY, HeatingValueKind::BOUNDED_BYTE,
      WORKING_RATE_MAX},
-    {"towel_comfort_setpoint", HeatingFunction::TOWEL_COMFORT_SETPOINT, 0x38, HeatingAccess::READ_ONLY,
+    // Read on a towel dryer in a programme period (issue #202): the temperature in force in 0x0137 and the
+    // eco setback in 0x0104.
+    {"temperature_in_force", HeatingFunction::TEMPERATURE_IN_FORCE, 0x37, HeatingAccess::READ_ONLY,
      HeatingValueKind::TENTHS_U16},
+    {"eco_setback", HeatingFunction::ECO_SETBACK, 0x04, HeatingAccess::READ_ONLY, HeatingValueKind::TENTHS_U16},
     // Night light registers: read on a Sauter Hekla with the light on and off (issue #222).
     {"night_light", HeatingFunction::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, HeatingValueKind::BINARY},
     {"night_light_brightness", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 0x42, HeatingAccess::READ_WRITE,
@@ -321,114 +324,88 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
   return false;
 }
 
-bool HeatingReadings::store(HeatingFunction fn, float value) {
-  switch (fn) {
-    case HeatingFunction::ROOM_TEMPERATURE:
-      this->room_temperature_c = value;
-      return true;
-    case HeatingFunction::SET_TEMPERATURE:
-      this->setpoint_c = value;
-      return true;
-    case HeatingFunction::MAX_SETPOINT:
-      this->max_setpoint_c = value;
-      return true;
-    case HeatingFunction::SET_MODE:
-      this->mode = static_cast<int16_t>(value);
-      return true;
-    case HeatingFunction::REGULATOR_STATE:
-      this->regulator = static_cast<int16_t>(value);
-      return true;
-    case HeatingFunction::WINDOW_OPEN:
-      this->window_open = static_cast<int16_t>(value);
-      return true;
-    case HeatingFunction::SET_OPEN_WINDOW_DETECTION:
-      this->open_window_detection = static_cast<int16_t>(value);
-      return true;
-    case HeatingFunction::TOWEL_MODE:
-      this->towel_mode = static_cast<int16_t>(value);
-      return true;
-    case HeatingFunction::TEMPORARY_STATE:
-      this->temporary_state = static_cast<int16_t>(value);
-      return true;
-    case HeatingFunction::WORKING_RATE:
-      this->working_rate = static_cast<int16_t>(value);
-      return true;
-    case HeatingFunction::TOWEL_COMFORT_SETPOINT:
-      this->towel_comfort_setpoint_c = value;
-      return true;
-    case HeatingFunction::NIGHT_LIGHT:
-      this->night_light = static_cast<int16_t>(value);
-      return true;
-    case HeatingFunction::NIGHT_LIGHT_BRIGHTNESS:
-      this->night_light_brightness = static_cast<int16_t>(value);
-      return true;
-    case HeatingFunction::POWER_ON:
-    case HeatingFunction::SET_PRESENCE:
-    case HeatingFunction::MIDNIGHT_SYNC:
-      return false;
+// === HeatingReadings: one table from register to field ===
+
+namespace {
+
+/// @brief Which field of HeatingReadings holds a register, and how its value is kept.
+struct HeatingReadingField {
+  HeatingFunction fn;                   ///< Register.
+  float HeatingReadings::*temperature;  ///< The field of a register read in degrees (NaN until read), else nullptr.
+  int16_t HeatingReadings::*
+      integer;  ///< The field of a register read as a byte or a flag (-1 until read), else nullptr.
+};
+
+/// Every register the readings hold. POWER_ON, SET_PRESENCE and MIDNIGHT_SYNC have no row: they are logged or
+/// written, never kept.
+constexpr HeatingReadingField HEATING_READING_FIELDS[] = {
+    {HeatingFunction::ROOM_TEMPERATURE, &HeatingReadings::room_temperature_c, nullptr},
+    {HeatingFunction::SET_TEMPERATURE, &HeatingReadings::setpoint_c, nullptr},
+    {HeatingFunction::MAX_SETPOINT, &HeatingReadings::max_setpoint_c, nullptr},
+    {HeatingFunction::TEMPERATURE_IN_FORCE, &HeatingReadings::in_force_temperature_c, nullptr},
+    {HeatingFunction::ECO_SETBACK, &HeatingReadings::eco_setback_k, nullptr},
+    {HeatingFunction::SET_MODE, nullptr, &HeatingReadings::mode},
+    {HeatingFunction::REGULATOR_STATE, nullptr, &HeatingReadings::regulator},
+    {HeatingFunction::WINDOW_OPEN, nullptr, &HeatingReadings::window_open},
+    {HeatingFunction::SET_OPEN_WINDOW_DETECTION, nullptr, &HeatingReadings::open_window_detection},
+    {HeatingFunction::TOWEL_MODE, nullptr, &HeatingReadings::towel_mode},
+    {HeatingFunction::TEMPORARY_STATE, nullptr, &HeatingReadings::temporary_state},
+    {HeatingFunction::WORKING_RATE, nullptr, &HeatingReadings::working_rate},
+    {HeatingFunction::NIGHT_LIGHT, nullptr, &HeatingReadings::night_light},
+    {HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, nullptr, &HeatingReadings::night_light_brightness},
+};
+
+/// @return The row of a register, or nullptr for one the readings do not hold.
+const HeatingReadingField *reading_field_for(HeatingFunction fn) {
+  for (const auto &field : HEATING_READING_FIELDS) {
+    if (field.fn == fn)
+      return &field;
   }
-  return false;
+  return nullptr;
+}
+
+}  // namespace
+
+bool HeatingReadings::store(HeatingFunction fn, float value) {
+  const HeatingReadingField *field = reading_field_for(fn);
+  if (field == nullptr)
+    return false;
+  if (field->temperature != nullptr) {
+    this->*field->temperature = value;
+  } else {
+    this->*field->integer = static_cast<int16_t>(value);
+  }
+  return true;
+}
+
+bool HeatingReadings::clear(HeatingFunction fn) {
+  const HeatingReadingField *field = reading_field_for(fn);
+  if (field == nullptr)
+    return false;
+  if (field->temperature != nullptr) {
+    this->*field->temperature = NAN;
+  } else {
+    this->*field->integer = -1;
+  }
+  return true;
 }
 
 bool HeatingReadings::has(HeatingFunction fn) const {
-  switch (fn) {
-    case HeatingFunction::ROOM_TEMPERATURE:
-      return !std::isnan(this->room_temperature_c);
-    case HeatingFunction::SET_TEMPERATURE:
-      return !std::isnan(this->setpoint_c);
-    case HeatingFunction::MAX_SETPOINT:
-      return !std::isnan(this->max_setpoint_c);
-    case HeatingFunction::TOWEL_COMFORT_SETPOINT:
-      return !std::isnan(this->towel_comfort_setpoint_c);
-    case HeatingFunction::SET_MODE:
-    case HeatingFunction::REGULATOR_STATE:
-    case HeatingFunction::WINDOW_OPEN:
-    case HeatingFunction::SET_OPEN_WINDOW_DETECTION:
-    case HeatingFunction::TOWEL_MODE:
-    case HeatingFunction::TEMPORARY_STATE:
-    case HeatingFunction::WORKING_RATE:
-    case HeatingFunction::NIGHT_LIGHT:
-    case HeatingFunction::NIGHT_LIGHT_BRIGHTNESS:
-      return this->value_of(fn) >= 0;
-    case HeatingFunction::POWER_ON:
-    case HeatingFunction::SET_PRESENCE:
-    case HeatingFunction::MIDNIGHT_SYNC:
-      return false;
-  }
-  return false;
+  const HeatingReadingField *field = reading_field_for(fn);
+  if (field == nullptr)
+    return false;
+  return field->temperature != nullptr ? !std::isnan(this->*field->temperature) : this->*field->integer >= 0;
+}
+
+float HeatingReadings::temperature_of(HeatingFunction fn) const {
+  const HeatingReadingField *field = reading_field_for(fn);
+  return field != nullptr && field->temperature != nullptr ? this->*field->temperature : NAN;
 }
 
 int16_t HeatingReadings::value_of(HeatingFunction fn) const {
-  switch (fn) {
-    case HeatingFunction::SET_MODE:
-      return this->mode;
-    case HeatingFunction::REGULATOR_STATE:
-      return this->regulator;
-    case HeatingFunction::WINDOW_OPEN:
-      return this->window_open;
-    case HeatingFunction::SET_OPEN_WINDOW_DETECTION:
-      return this->open_window_detection;
-    case HeatingFunction::TOWEL_MODE:
-      return this->towel_mode;
-    case HeatingFunction::TEMPORARY_STATE:
-      return this->temporary_state;
-    case HeatingFunction::WORKING_RATE:
-      return this->working_rate;
-    case HeatingFunction::NIGHT_LIGHT:
-      return this->night_light;
-    case HeatingFunction::NIGHT_LIGHT_BRIGHTNESS:
-      return this->night_light_brightness;
-    // Temperatures and the registers the readings do not hold have no wire byte.
-    case HeatingFunction::ROOM_TEMPERATURE:
-    case HeatingFunction::SET_TEMPERATURE:
-    case HeatingFunction::MAX_SETPOINT:
-    case HeatingFunction::TOWEL_COMFORT_SETPOINT:
-    case HeatingFunction::POWER_ON:
-    case HeatingFunction::SET_PRESENCE:
-    case HeatingFunction::MIDNIGHT_SYNC:
-      return -1;
-  }
-  return -1;
+  // Temperatures and the registers the readings do not hold have no wire byte.
+  const HeatingReadingField *field = reading_field_for(fn);
+  return field != nullptr && field->integer != nullptr ? this->*field->integer : -1;
 }
 
 }  // namespace home_io_control

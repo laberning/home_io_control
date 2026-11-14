@@ -1015,7 +1015,9 @@ TEST(PlatformClimate, TowelDryerTraitsAreExactlyItsProfileWithNoRadiatorPresets)
 
   EXPECT_EQ(supported_modes(traits),
             (std::vector<ClimateMode>{CLIMATE_MODE_OFF, CLIMATE_MODE_HEAT, CLIMATE_MODE_AUTO}));
-  EXPECT_EQ(supported_presets(traits), (std::vector<ClimatePreset>{CLIMATE_PRESET_NONE, CLIMATE_PRESET_BOOST}));
+  EXPECT_EQ(supported_presets(traits), (std::vector<ClimatePreset>{CLIMATE_PRESET_NONE, CLIMATE_PRESET_BOOST,
+                                                                   CLIMATE_PRESET_COMFORT, CLIMATE_PRESET_ECO}))
+      << "comfort and eco are listed so the card can show them";
   EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Drying"}))
       << "no Program / Auto: PROG is the dryer's auto mode";
   EXPECT_TRUE(traits.get_supports_current_temperature());
@@ -1116,6 +1118,116 @@ TEST(PlatformClimate, TowelDryerPresetsWriteTheTemporaryStateAndShowAsPresetsNot
   EXPECT_FLOAT_EQ(hub.calls.back().value, static_cast<float>(HeatingTemporaryState::DRYING));
   EXPECT_EQ(entity.get_custom_preset(), "Drying");
   EXPECT_NE(entity.mode, CLIMATE_MODE_AUTO) << "drying's value 2 is not PROG";
+}
+
+namespace {
+
+/// The readings of a towel dryer in PROG with comfort setpoint 20.0 and setback 3.5, `in_force` in 0x0137.
+void programme_readings(HeatingReadings &r, TowelDryerMode mode, HeatingTemporaryState state, float in_force) {
+  r.towel_mode = static_cast<int16_t>(mode);
+  r.temporary_state = static_cast<int16_t>(state);
+  r.setpoint_c = 20.0F;
+  r.eco_setback_k = 3.5F;
+  r.in_force_temperature_c = in_force;
+}
+
+}  // namespace
+
+TEST(PlatformClimate, TowelDryerShowsComfortOrEcoAndTheTemperatureInForceWhileItsProgrammeRuns) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+
+  deliver_readings(
+      hub, [](HeatingReadings &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F); });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO);
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_COMFORT);
+  EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F);
+
+  deliver_readings(hub, [](HeatingReadings &r) { r.in_force_temperature_c = 16.5F; });
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_ECO);
+  EXPECT_FLOAT_EQ(entity.target_temperature, 16.5F) << "the temperature the dryer heats to now";
+
+  // A frost or holiday value: the temperature, and no period.
+  deliver_readings(hub, [](HeatingReadings &r) { r.in_force_temperature_c = 7.0F; });
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE);
+  EXPECT_FLOAT_EQ(entity.target_temperature, 7.0F);
+}
+
+TEST(PlatformClimate, TowelDryerPeriodFollowsComfortEcoBoostComfortWithoutAFlickerOrAStaleValue) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+  const auto in_period = [&](float in_force) {
+    deliver_readings(hub, [in_force](HeatingReadings &r) {
+      programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force);
+    });
+  };
+
+  in_period(20.0F);
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_COMFORT);
+  in_period(16.5F);
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_ECO);
+
+  // Boost on top: the card shows boost and the comfort setpoint again, as without a programme period.
+  deliver_readings(hub, [](HeatingReadings &r) {
+    r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::BOOST);
+    r.in_force_temperature_c = NAN;  // what the hub does the moment the programme stops
+  });
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_BOOST);
+  EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F);
+
+  // Back in the programme, before 0x0137 is read again: no preset of the old period, today's target.
+  deliver_readings(hub,
+                   [](HeatingReadings &r) { r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE); });
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE);
+  EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F);
+
+  const int published = entity.publish_count_;
+  in_period(20.0F);
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_COMFORT);
+  EXPECT_EQ(entity.publish_count_, published + 1) << "one publish for the period, not one per register";
+}
+
+TEST(PlatformClimate, TowelDryerOutsideTheProgrammeNeverShowsTheTemperatureInForce) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+  // 0x0137 reads 1 in boost and 2 in drying; a stale reading must not reach the card even if one slips in.
+  for (const auto state : {HeatingTemporaryState::BOOST, HeatingTemporaryState::DRYING}) {
+    deliver_readings(hub, [state](HeatingReadings &r) { programme_readings(r, TowelDryerMode::PROG, state, 0.1F); });
+    EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F);
+  }
+  deliver_readings(hub, [](HeatingReadings &r) {
+    programme_readings(r, TowelDryerMode::MANUAL, HeatingTemporaryState::NONE, 16.5F);
+  });
+  EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
+  EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F) << "MANUEL holds the comfort setpoint";
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE);
+}
+
+TEST(PlatformClimate, TowelDryerComfortAndEcoCannotBeSelectedAndSendNothing) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+  deliver_readings(
+      hub, [](HeatingReadings &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F); });
+  const int published = entity.publish_count_;
+
+  perform_preset(entity, CLIMATE_PRESET_COMFORT);
+  perform_preset(entity, CLIMATE_PRESET_ECO);
+
+  EXPECT_TRUE(hub.calls.empty()) << "no frame";
+  EXPECT_TRUE(hub.reads.empty());
+  ASSERT_TRUE(entity.preset.has_value());
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_ECO) << "the card keeps what the dryer reports";
+  EXPECT_EQ(entity.publish_count_, published);
 }
 
 TEST(PlatformClimate, TowelDryerPresetNoneEndsTheBoost) {

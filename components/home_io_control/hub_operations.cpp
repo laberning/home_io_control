@@ -1041,6 +1041,9 @@ bool IOHomeControlComponent::read_heating_register(const std::string &device_id,
   if (dev == nullptr)
     return false;
   dev->heating.store(fn, value);
+  // A reading that left the programme drops the temperature in force before anything shows it.
+  if (const HeatingProfile *profile = find_heating_profile(*dev); profile != nullptr)
+    clear_inactive_programme_reading(*profile, dev->heating);
   this->notify_device_update_(device_id);
   if (value_out != nullptr)
     *value_out = value;
@@ -1104,6 +1107,21 @@ void IOHomeControlComponent::check_heater_model_(const std::string &device_id, u
   }
 }
 
+void IOHomeControlComponent::poll_programme_period_(const std::string &device_id, const HeatingProfile &profile,
+                                                    uint8_t max_tries) {
+  const IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr || !programme_period_active(profile, dev->heating))
+    return;
+  const HeatingProgrammePeriod &period = *profile.programme_period;
+  if (!this->read_heating_register(device_id, period.in_force_fn, nullptr, max_tries))
+    return;
+  // A temperature that fits neither period means the eco setback is not what the heater holds now (it was
+  // changed on the display): forget it, so the boot registers read it again.
+  IoDevice *updated = this->get_device(device_id);
+  if (updated != nullptr && resolve_programme_period(profile, updated->heating).preset_index < 0)
+    updated->heating.clear(period.setback_fn);
+}
+
 bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) {
   const IoDevice *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)
@@ -1134,6 +1152,11 @@ bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) 
     answered++;
   }
 
+  // The temperature in force is read only while the heater's own programme runs: outside it the register
+  // holds no temperature, and the card needs no read.
+  if (ok && profile->programme_period != nullptr)
+    this->poll_programme_period_(device_id, *profile, max_tries);
+
   // A part the heater may not have (a night light): read every poll once the core registers answered,
   // and a miss is not a poll failure (the next poll asks again).
   for (size_t i = 0; ok && i < profile->extra_poll_register_count; i++)
@@ -1145,15 +1168,6 @@ bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) 
     dev = this->get_device(device_id);
     if (dev != nullptr && !dev->heating.has(profile->boot_registers[i]))
       this->read_heating_register(device_id, profile->boot_registers[i], nullptr, max_tries);
-  }
-
-  // A towel dryer holds its comfort setpoint in a second register too; both units seen hold the same
-  // value in both. A difference is worth a line for a field tester, nothing more.
-  dev = this->get_device(device_id);
-  if (dev != nullptr && !std::isnan(dev->heating.towel_comfort_setpoint_c) && !std::isnan(dev->heating.setpoint_c) &&
-      dev->heating.towel_comfort_setpoint_c != dev->heating.setpoint_c) {
-    ESP_LOGD(detail::TAG, "Device %s: comfort setpoint %.1f C in register 0x0103, %.1f C in register 0x0138",
-             device_id.c_str(), dev->heating.setpoint_c, dev->heating.towel_comfort_setpoint_c);
   }
 
   // Once the device has answered a read: the one-off model check. It runs even when a later register of

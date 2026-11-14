@@ -372,7 +372,8 @@ TEST(ProtoHeatingTowelDryer, WritesOutsideTheRegisterRangeOrNotIntegralAreRefuse
   EXPECT_EQ(write_len(HeatingFunction::TOWEL_MODE, NAN), 0u);
   EXPECT_EQ(write_len(HeatingFunction::TEMPORARY_STATE, 3.0F), 0u);
   EXPECT_EQ(write_len(HeatingFunction::WORKING_RATE, 50.0F), 0u) << "read-only";
-  EXPECT_EQ(write_len(HeatingFunction::TOWEL_COMFORT_SETPOINT, 19.0F), 0u) << "read-only";
+  EXPECT_EQ(write_len(HeatingFunction::TEMPERATURE_IN_FORCE, 19.0F), 0u) << "read-only";
+  EXPECT_EQ(write_len(HeatingFunction::ECO_SETBACK, 3.5F), 0u) << "read-only";
   EXPECT_EQ(write_len(HeatingFunction::REGULATOR_STATE, 1.0F), 0u) << "still read-only";
 }
 
@@ -380,13 +381,15 @@ TEST(ProtoHeatingTowelDryer, ReadsAddressTheirRegisters) {
   EXPECT_EQ(encode_read(HeatingFunction::TOWEL_MODE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x36}));
   EXPECT_EQ(encode_read(HeatingFunction::TEMPORARY_STATE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x3E}));
   EXPECT_EQ(encode_read(HeatingFunction::WORKING_RATE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x26}));
-  EXPECT_EQ(encode_read(HeatingFunction::TOWEL_COMFORT_SETPOINT), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x38}));
+  EXPECT_EQ(encode_read(HeatingFunction::TEMPERATURE_IN_FORCE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x37}));
+  EXPECT_EQ(encode_read(HeatingFunction::ECO_SETBACK), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x04}));
   EXPECT_EQ(encode(HeatingFunction::WORKING_RATE, 0.0F), encode_read(HeatingFunction::WORKING_RATE))
       << "the action payload of a read-only register is its read";
   EXPECT_STREQ(heating_function_name(HeatingFunction::TOWEL_MODE), "towel_mode");
   EXPECT_STREQ(heating_function_name(HeatingFunction::TEMPORARY_STATE), "temporary_state");
   EXPECT_STREQ(heating_function_name(HeatingFunction::WORKING_RATE), "working_rate");
-  EXPECT_STREQ(heating_function_name(HeatingFunction::TOWEL_COMFORT_SETPOINT), "towel_comfort_setpoint");
+  EXPECT_STREQ(heating_function_name(HeatingFunction::TEMPERATURE_IN_FORCE), "temperature_in_force");
+  EXPECT_STREQ(heating_function_name(HeatingFunction::ECO_SETBACK), "eco_setback");
 }
 
 TEST(ProtoHeatingTowelDryer, DecodesWhatTheAdelisReports) {
@@ -399,9 +402,26 @@ TEST(ProtoHeatingTowelDryer, DecodesWhatTheAdelisReports) {
   EXPECT_FLOAT_EQ(value, 100.0F);
   ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x26, 0x0D}), HeatingFunction::WORKING_RATE, value));
   EXPECT_FLOAT_EQ(value, 13.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x38, 0xBE, 0x00}),
-                                   HeatingFunction::TOWEL_COMFORT_SETPOINT, value));
-  EXPECT_FLOAT_EQ(value, 19.0F);
+}
+
+TEST(ProtoHeatingTowelDryer, DecodesTheTemperatureInForceAndTheEcoSetbackInTenths) {
+  // Replies of unit BD684B in PROG (issue #202, corpus atlantic_adelis_probe_temperature_in_force) and the
+  // setback of unit BB0B50 (corpus atlantic_adelis_probe_register_01_sweep).
+  float value = -1.0F;
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xC8, 0x00}),
+                                   HeatingFunction::TEMPERATURE_IN_FORCE, value));
+  EXPECT_FLOAT_EQ(value, 20.0F) << "comfort period";
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00}),
+                                   HeatingFunction::TEMPERATURE_IN_FORCE, value));
+  EXPECT_FLOAT_EQ(value, 16.5F) << "eco period";
+  ASSERT_TRUE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x04, 0x23, 0x00}), HeatingFunction::ECO_SETBACK, value));
+  EXPECT_FLOAT_EQ(value, 3.5F);
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0x01, 0x00}),
+                                   HeatingFunction::TEMPERATURE_IN_FORCE, value));
+  EXPECT_FLOAT_EQ(value, 0.1F) << "in boost the register is not a temperature; the profile's gate keeps it unshown";
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37}), HeatingFunction::TEMPERATURE_IN_FORCE, value))
+      << "empty is no value";
 }
 
 TEST(ProtoHeatingTowelDryer, OutOfRangeAndEmptyRepliesAreNoValue) {
@@ -418,25 +438,62 @@ TEST(ProtoHeatingTowelDryer, OutOfRangeAndEmptyRepliesAreNoValue) {
 
 TEST(ProtoHeatingTowelDryer, ReadingsStoreAndReportTheTowelRegisters) {
   HeatingReadings readings;
-  for (const HeatingFunction fn : {HeatingFunction::TOWEL_MODE, HeatingFunction::TEMPORARY_STATE,
-                                   HeatingFunction::WORKING_RATE, HeatingFunction::TOWEL_COMFORT_SETPOINT}) {
+  for (const HeatingFunction fn :
+       {HeatingFunction::TOWEL_MODE, HeatingFunction::TEMPORARY_STATE, HeatingFunction::WORKING_RATE,
+        HeatingFunction::TEMPERATURE_IN_FORCE, HeatingFunction::ECO_SETBACK}) {
     EXPECT_FALSE(readings.has(fn));
     EXPECT_EQ(readings.value_of(fn), -1);
   }
   EXPECT_TRUE(readings.store(HeatingFunction::TOWEL_MODE, 2.0F));
   EXPECT_TRUE(readings.store(HeatingFunction::TEMPORARY_STATE, 1.0F));
   EXPECT_TRUE(readings.store(HeatingFunction::WORKING_RATE, 100.0F));
-  EXPECT_TRUE(readings.store(HeatingFunction::TOWEL_COMFORT_SETPOINT, 19.5F));
+  EXPECT_TRUE(readings.store(HeatingFunction::TEMPERATURE_IN_FORCE, 19.5F));
   EXPECT_EQ(readings.value_of(HeatingFunction::TOWEL_MODE), 2);
   EXPECT_EQ(readings.value_of(HeatingFunction::TEMPORARY_STATE), 1);
   EXPECT_EQ(readings.value_of(HeatingFunction::WORKING_RATE), 100);
-  EXPECT_EQ(readings.value_of(HeatingFunction::TOWEL_COMFORT_SETPOINT), -1) << "a temperature has no wire byte";
-  EXPECT_TRUE(readings.has(HeatingFunction::TOWEL_COMFORT_SETPOINT));
+  EXPECT_EQ(readings.value_of(HeatingFunction::TEMPERATURE_IN_FORCE), -1) << "a temperature has no wire byte";
+  EXPECT_TRUE(readings.has(HeatingFunction::TEMPERATURE_IN_FORCE));
+  EXPECT_FLOAT_EQ(readings.temperature_of(HeatingFunction::TEMPERATURE_IN_FORCE), 19.5F);
   EXPECT_EQ(readings.mode, -1) << "the radiator's mode field is untouched";
 
   readings.store(HeatingFunction::SET_MODE, 3.0F);
   EXPECT_EQ(readings.value_of(HeatingFunction::SET_MODE), readings.mode);
   EXPECT_EQ(readings.value_of(HeatingFunction::REGULATOR_STATE), readings.regulator);
+}
+
+TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnField) {
+  // Walks every function, so a register added to the enum without a row in the readings table (or the
+  // descriptor table) fails here.
+  constexpr auto LAST = static_cast<unsigned>(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS);  // the last enumerator
+  unsigned held = 0;
+  for (unsigned i = 0; i <= LAST; i++) {
+    const auto fn = static_cast<HeatingFunction>(i);
+    ASSERT_STRNE(heating_function_name(fn), "unknown") << i << " has no descriptor row";
+    HeatingReadings readings;
+    EXPECT_FALSE(readings.has(fn)) << heating_function_name(fn) << " starts unread";
+    if (!readings.store(fn, 1.0F)) {
+      // POWER_ON, SET_PRESENCE and MIDNIGHT_SYNC are logged or written, never kept.
+      EXPECT_FALSE(readings.has(fn)) << heating_function_name(fn);
+      EXPECT_FALSE(readings.clear(fn)) << heating_function_name(fn);
+      EXPECT_EQ(readings.value_of(fn), -1) << heating_function_name(fn);
+      continue;
+    }
+    held++;
+    EXPECT_TRUE(readings.has(fn)) << heating_function_name(fn);
+    const bool temperature = !std::isnan(readings.temperature_of(fn));
+    if (temperature) {
+      EXPECT_FLOAT_EQ(readings.temperature_of(fn), 1.0F) << heating_function_name(fn);
+      EXPECT_EQ(readings.value_of(fn), -1) << "a temperature has no wire byte";
+    } else {
+      EXPECT_EQ(readings.value_of(fn), 1) << heating_function_name(fn);
+    }
+    EXPECT_TRUE(readings.clear(fn)) << heating_function_name(fn);
+    EXPECT_FALSE(readings.has(fn)) << heating_function_name(fn) << " is unread again after clear";
+    // Nothing else changed: a cleared register leaves a fresh record.
+    for (unsigned j = 0; j <= LAST; j++)
+      EXPECT_FALSE(readings.has(static_cast<HeatingFunction>(j))) << heating_function_name(fn) << " touched " << j;
+  }
+  EXPECT_EQ(held, 14u);
 }
 
 TEST(ProtoHeatingTowelDryer, ARegisterReplyEchoesItsRegister) {

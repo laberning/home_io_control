@@ -1,0 +1,48 @@
+id: atlantic_adelis_probe_status_mp_fp_programme
+description: >
+  An Atlantic Adelis 2 Digit towel dryer (node BD684B) in PROG answering the CMD_PRIVATE (0x03)
+  function-0x01 status read of the `status_mp_fp` probe, on the reporter's SX1276 hub C0FFEE (issue #202,
+  comment of 2026-11-08), once in a comfort period at 19 C, once in a comfort period at 18 C and once in
+  an eco period at 15.5 C, each with the display showing the temperature in force. The read was
+  challenged (authenticated); the second comfort read and the eco read needed a second try. Only the
+  replies were logged (stage=probe_rx), so the requests and the challenge exchange are not in this
+  capture.
+
+  Reply layout as in tests/corpus/captures/probe/atlantic_adelis_probe_status_mp_fp.yaml: status byte
+  0x2D, then the main parameter, then the two functional-parameter index echoes (both 0x00).
+    - Comfort period (19 C, then 18 C): main parameter 0xFC05, the heating level the standard heating
+      level table names comfort.
+    - Eco period (15.5 C): main parameter 0xFC02, the level the table names eco.
+  The comfort replies are identical at two display temperatures: the main parameter names the period,
+  not the temperature.
+
+  Community capture: no system key; the replies carry no authenticated bytes.
+source:
+  device: "Atlantic Adelis 2 Digit electric towel dryer (node BD684B, display name ADELIS 2 DIGIT)"
+  captured_with: sx1276
+  firmware: "main around 2026-11-08 with the status_mp_fp probe, diagnostic_probes: true"
+  date: 2026-11-08
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/202"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 04 2D 00 FC 05 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), answer to status_mp_fp (18:40:32), PROG, comfort period, display 19 C: MP 0xFC05"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 04 2D 00 FC 05 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), answer to status_mp_fp (18:45:26, second try), PROG, comfort period, display 18 C: MP 0xFC05"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 04 2D 00 FC 02 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), answer to status_mp_fp (18:43:32, second try), PROG, eco period, display 15.5 C: MP 0xFC02"
+expect:
+  frames:
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w}

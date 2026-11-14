@@ -95,12 +95,14 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   /// @return true when a published field (including the traits' maximum) changed.
   bool sync_from_readings_(const HeatingProfile &profile, const HeatingReadings &readings);
 
-  /// @brief Fold the temperatures (current, setpoint, maximum) of the readings into the entity.
+  /// @brief Fold the temperatures (current, target, maximum) of the readings into the entity.
   /// @param profile The device's profile.
   /// @param readings What the hub has read from the heater.
+  /// @param target_c The target the card shows: the comfort setpoint, or the temperature in force while the
+  ///        heater's own programme runs; NaN when none has been read.
   /// @param[in,out] seen Set when a reading was present.
   /// @return true when a published field changed.
-  bool sync_temperatures_(const HeatingProfile &profile, const HeatingReadings &readings, bool &seen);
+  bool sync_temperatures_(const HeatingProfile &profile, const HeatingReadings &readings, float target_c, bool &seen);
 
   /// @brief Fold the profile's action source (the regulator state, or the working rate) into the entity's
   /// action.

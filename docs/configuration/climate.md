@@ -95,8 +95,8 @@ climate:
 |---|---|
 | Control path | Private registers, with the towel dryer's own mode and temporary-state registers |
 | Modes | `off`, `heat` (the display's MANUEL), `auto` (the display's PROG) |
-| Presets | `boost`; custom `Drying`; `none` ends a boost or a drying run |
-| Target temperature | As for the radiator: 7.0 °C up to the heater's own maximum, 0.5 °C step |
+| Presets | `boost`; custom `Drying`; `none` ends a boost or a drying run; `comfort` and `eco` are shown while the dryer's program runs (experimental, not selectable) |
+| Target temperature | As for the radiator: 7.0 °C up to the heater's own maximum, 0.5 °C step; while the dryer's program runs, the temperature it heats to right now |
 | Current temperature | Yes |
 | Action | `heating` while the element runs (including boost and drying), `idle`, `off` |
 | Companion entities | None: the towel dryer has no window function |
@@ -106,8 +106,18 @@ setpoint, whether the element runs) and the writes (target, mode, starting and e
 drying), each checked against the dryer's display.
 
 The towel dryer is polled with five register reads (room temperature, setpoint, mode, temporary
-state, working rate); the first poll also reads its maximum setpoint. Boost and drying run for the
-duration set on the display.
+state, working rate); the first poll also reads its maximum setpoint and its eco setback. Boost and
+drying run for the duration set on the display.
+
+While the mode is PROG and no boost or drying runs, each poll adds a sixth read, of the temperature the
+dryer holds right now. The card then shows that temperature as the target and the `comfort` or `eco`
+preset of the period that runs: `comfort` when the temperature equals the comfort setpoint, `eco` when
+it equals the comfort setpoint minus the eco setback. Selecting either preset sends nothing. A
+temperature that fits neither shows as the target with no preset, and the hub reads the setback again.
+Setting a target from Home Assistant still writes the comfort setpoint, so during an eco period the
+card keeps showing the eco temperature. This is experimental: it was read on one unit, in one comfort
+period and one eco period; the [Atlantic Adelis page](../devices/atlantic-adelis.md#modes-and-presets-in-home-assistant)
+has the detail.
 
 Without `io_model:` a towel dryer runs as a radiator: the target and the room temperature work, but
 the mode writes go to the radiator's register, boost and drying are missing, and the window entities
@@ -155,6 +165,9 @@ heater without `io_model: heater_with_light`.
   good.
 - The light changes at once: `default_transition_length` is 0 s, because each step of a fade would
   be a radio command.
+- A Hekla shares its node type with the Adelis towel dryer, so the comfort or eco period of its
+  weekly program may be visible too. If you run one in its program, please
+  [open an issue](https://github.com/laberning/home_io_control/issues) so we can check it.
 
 ## Heating temperature interface and heat pump
 

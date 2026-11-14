@@ -1,0 +1,40 @@
+id: atlantic_adelis_probe_temperature_in_force
+description: >
+  An Atlantic Adelis 2 Digit towel dryer (node BD684B) in PROG answering `register_01` reads of register
+  0x0137, once in a comfort period with the display at 20.0 C and once in an eco period with the display
+  at 16.5 C, on the reporter's SX1276 hub C0FFEE (issue #202, comment of 2026-11-13). Each answer is
+  CMD_WRITE_PRIVATE_ACK (0x21) echoing the four header bytes, then a 16-bit little-endian value in tenths
+  of a degree: C8 00 is 20.0 C and A5 00 is 16.5 C, the temperature the dryer heats to in that period.
+  The eco read needed a second try (the unit loses frames now and then). Only the answers were logged
+  (stage=probe_rx).
+
+  Register 0x0137 is a temperature only while no boost or drying runs: it reads 0x0001 in boost and 0x0002
+  in drying (tests/corpus/captures/probe/atlantic_adelis_probe_register_01_sweep.yaml and
+  tests/corpus/captures/probe/atlantic_adelis_probe_register_01_sweep_drying.yaml). The eco value is the
+  comfort value minus the eco setback of register 0x0104 (3.5 K on the other unit, BB0B50): 20.0 - 3.5 =
+  16.5.
+
+  Community capture: no system key; the replies carry no authenticated bytes.
+source:
+  device: "Atlantic Adelis 2 Digit electric towel dryer (node BD684B, display name ADELIS 2 DIGIT)"
+  captured_with: sx1276
+  firmware: "main around 2026-11-13 with the register_01 probe, diagnostic_probes: true"
+  date: 2026-11-13
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/202"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 37 C8 00"
+    crc: absent
+    note: "register 0x0137 (20:34:44), PROG, comfort period, display 20.0 C: value C8 00"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 37 A5 00"
+    crc: absent
+    note: "register 0x0137 (20:36:44, second try), PROG, eco period, display 16.5 C: value A5 00"
+expect:
+  frames:
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

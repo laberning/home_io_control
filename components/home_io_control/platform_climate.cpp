@@ -344,7 +344,8 @@ bool IOHomeClimate::apply_target_temperature_(const HeatingProfile &profile, con
   return commanded && !this->observed_;
 }
 
-bool IOHomeClimate::sync_temperatures_(const HeatingProfile &profile, const HeatingReadings &readings, bool &seen) {
+bool IOHomeClimate::sync_temperatures_(const HeatingProfile &profile, const HeatingReadings &readings, float target_c,
+                                       bool &seen) {
   bool changed = false;
   // NaN means "never read" (or a sensor fault): two NaNs are the same state, not a change.
   const auto differs = [](float a, float b) { return !(std::isnan(a) && std::isnan(b)) && a != b; };
@@ -357,10 +358,10 @@ bool IOHomeClimate::sync_temperatures_(const HeatingProfile &profile, const Heat
     seen = seen || !std::isnan(readings.room_temperature_c);
   }
 
-  if (profile.features.target_temperature && !std::isnan(readings.setpoint_c)) {
+  if (profile.features.target_temperature && !std::isnan(target_c)) {
     seen = true;
-    if (differs(this->target_temperature, readings.setpoint_c)) {
-      this->target_temperature = readings.setpoint_c;
+    if (differs(this->target_temperature, target_c)) {
+      this->target_temperature = target_c;
       changed = true;
     }
   }
@@ -404,7 +405,12 @@ bool IOHomeClimate::sync_action_(const HeatingProfile &profile, const HeatingRea
 
 bool IOHomeClimate::sync_from_readings_(const HeatingProfile &profile, const HeatingReadings &readings) {
   bool seen = false;
-  bool changed = this->sync_temperatures_(profile, readings, seen);
+  // While the heater's own programme runs, its comfort or eco period and the temperature it heats to
+  // replace the temporary-state preset and the comfort setpoint.
+  const ProgrammePeriodState period = resolve_programme_period(profile, readings);
+  const bool period_shown = period.active && !std::isnan(period.target_c);
+  bool changed =
+      this->sync_temperatures_(profile, readings, period_shown ? period.target_c : readings.setpoint_c, seen);
 
   // The profile's mode register, or the heating level, whichever this profile's device reports.
   const int16_t wire =
@@ -413,9 +419,13 @@ bool IOHomeClimate::sync_from_readings_(const HeatingProfile &profile, const Hea
     seen = true;
     changed = this->apply_observed_state_(profile, static_cast<uint8_t>(wire)) || changed;
   }
-  // A preset kept in a register of its own (a towel dryer's temporary state).
+  // The period of the programme that runs, else the preset kept in a register of its own (a towel dryer's
+  // temporary state; with the programme running and no period named, that is "none").
   const int16_t preset_wire = profile.preset_observed != nullptr ? readings.value_of(profile.preset_fn) : -1;
-  if (preset_wire >= 0) {
+  if (period_shown && period.preset_index >= 0) {
+    seen = true;
+    changed = this->show_preset_(profile, period.preset_index) || changed;
+  } else if (preset_wire >= 0) {
     seen = true;
     changed = this->apply_observed_preset_(profile, static_cast<uint8_t>(preset_wire)) || changed;
   }
