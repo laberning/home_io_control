@@ -100,10 +100,10 @@ constexpr uint16_t MAIN_PARAMETER_LOW_BYTE_MASK = 0xFF;
 /// Length of an EXECUTE payload with one functional parameter of the second bitmap: originator, ACEI,
 /// MP(2), FP1-FP8 bitmap, FP9-FP16 bitmap, the value (two bytes).
 constexpr size_t EXECUTE_SECOND_BITMAP_FP_PAYLOAD_SIZE = 8;
-/// FP9-FP16 bitmap with only FP9 set: FP n has the bit `0x80 >> ((n - 1) % 8)` of its bitmap.
-constexpr uint8_t EXECUTE_FP9_BITMAP = 0x80;
+/// FP9-FP16 bitmap with only FP9 set.
+constexpr uint8_t EXECUTE_FP9_BITMAP = fp_bitmap_bit(9);
 /// FP9-FP16 bitmap with only FP16 set (the last bit).
-constexpr uint8_t EXECUTE_FP16_BITMAP = 0x01;
+constexpr uint8_t EXECUTE_FP16_BITMAP = fp_bitmap_bit(16);
 /// Long-form CMD_PRIVATE2 (0x0C) payload length. Coincides numerically with
 /// EXECUTE_SPECIAL_PAYLOAD_SIZE but is a distinct command's payload shape — do not merge the two
 /// constants; a change to one must not silently change the other.

@@ -527,6 +527,9 @@ static constexpr uint8_t RESULT_LIMITATION_BY_EMERGENCY = 0xEE;        ///< Para
 static constexpr uint8_t POS_STOP = 0xD2;      ///< Wire value: stop movement.
 static constexpr uint8_t POS_UNKNOWN = 0xD4;   ///< Wire value: position unknown / keep current.
 static constexpr uint8_t POS_FAVORITE = 0xD8;  ///< Wire value: move to favorite/"My" position.
+/// 16-bit main parameter `D400` (POS_UNKNOWN in the high byte): keep the current value. Sent with a
+/// functional parameter that carries the actual change (a heat pump's off, a water heater's operating mode).
+static constexpr uint16_t MAIN_PARAMETER_KEEP = static_cast<uint16_t>(POS_UNKNOWN) << BITS_PER_BYTE;
 
 /// Offset of the main position/command byte in a CMD_EXECUTE payload — after the originator (first
 /// byte) and the ACEI (second byte). Holds a 0-100 position scale value or one of the POS_* codes.
@@ -622,6 +625,15 @@ static constexpr uint8_t STATUS_MP_FP_PARAM_COUNT =
 static constexpr uint8_t STATUS_MP_FP_FPI2 =
     0x00;  ///< FPI2: no FP9-FP16 requested (bit 7 = FP9 ... bit 0 = FP16 otherwise).
 /// @}
+
+/// @brief Bit of functional parameter `fp` (1-16) in its bitmap: FPI1 holds FP1-FP8 and FPI2 FP9-FP16,
+/// each with the lowest-numbered parameter in bit 7. One rule for EXECUTE and status bitmaps alike.
+/// @param fp Functional parameter number, 1-16.
+/// @return The single bit of `fp` in its bitmap.
+constexpr uint8_t fp_bitmap_bit(uint8_t fp) {
+  constexpr unsigned first_parameter_bit = 1U << (BITS_PER_BYTE - 1U);
+  return static_cast<uint8_t>(first_parameter_bit >> ((fp - 1U) % BITS_PER_BYTE));
+}
 
 /// @name Limitation read (CMD_LIMITATION_STATUS_REQ / CMD_LIMITATION_STATUS_RESP)
 /// The layout is a hypothesis built from frames a VELUX KLF 200 was heard sending (issue #98) and

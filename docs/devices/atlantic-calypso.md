@@ -3,8 +3,8 @@
 
 A heat-pump water heater with an electric backup element, sold by Atlantic. It speaks io-homecontrol
 two-way, so the hub reads its water temperature, target, mode, what is heating and its energy, and
-sets the target and the mode. Starting a boost from Home Assistant is experimental. One 200 L unit is
-reported on an SX1276 board ([issue #198](https://github.com/laberning/home_io_control/issues/198)); see
+sets the target and the mode. Starting a boost and away mode from Home Assistant are experimental.
+One 200 L unit is reported on an SX1276 board ([issue #198](https://github.com/laberning/home_io_control/issues/198)); see
 [Water heaters](../configuration/water-heater.md) for the options.
 
 ## What works
@@ -16,13 +16,15 @@ reported on an SX1276 board ([issue #198](https://github.com/laberning/home_io_c
 | Target temperature | ✅ Read: 54 °C and 62 °C match the display |
 | Mode read-back (automatic / manual ECO on / manual ECO off) | ✅ Read; follows the display |
 | Heat pump and electric element running | ✅ Read idle, with the heat pump running, and during a boost |
-| Boost on / off | ✅ Read during a one-day boost and after it |
-| Starting and ending a boost from Home Assistant | ⚠️ Experimental: asks for a one-day boost; not yet confirmed on the heater |
+| Boost duration register | ✅ Reads 1 during a boost started on the display and 0 after it |
+| Boost and away state | ⚠️ Experimental: read from the heater's operating-mode word, which reads "both off" at rest; not yet seen during a boost |
+| Starting and ending a boost from Home Assistant | ⚠️ Experimental: sets the operating mode with a duration of 1; not yet confirmed on the heater |
 | Energy since installation | ✅ Read; matches the display's "since start" total |
 | Setting the target from Home Assistant | ✅ Works for the heater's own temperature steps; see [Choosing a target](#choosing-a-calypso-target) |
 | Changing the mode from Home Assistant | ✅ The display follows all three modes |
-| Holiday absence | ✅ Read: the target drops to 20 °C and the heat pump stops |
-| Starting an absence from Home Assistant | ❌ Not offered yet |
+| Holiday absence | ✅ Read: the heater reports no target and the heat pump stops; the card shows no target |
+| Holiday days left | ✅ Read: register `0x05` counts the days still to run (`FF` for a holiday with no end date); logged at DEBUG ([issue #198](https://github.com/laberning/home_io_control/issues/198)) |
+| Starting and ending the holiday mode from Home Assistant | ⚠️ Experimental: the card's away mode; runs until turned off; not yet confirmed on the heater |
 | Switching the heater off | ❌ Not offered: no off state has been seen |
 
 ## Modes in Home Assistant
@@ -58,16 +60,17 @@ them; the heater does not take a value between two steps. The steps known for th
 The heater's manual lists every step for each tank size. The card offers 20 to 62 °C in 1 °C steps,
 so pick a listed value there.
 
-## Starting a boost
+## Starting a boost or away mode
 
 > [!NOTE]
-> Boost from Home Assistant is experimental: the heater has not yet been seen to follow it.
+> Boost and away from Home Assistant are experimental: the heater has not yet been seen to follow them.
 
-The `boost:` option creates a switch. Turn it on to start a boost and off to end it. A boost started
-from Home Assistant asks for one day, the duration seen when the owner started a boost on the display.
-The switch shows what the heater reports, read back right after each change and at every poll, so it
-stays off if the heater does not take the boost. The switch writes nothing when the board restarts,
-so a reboot does not end a running boost.
+The `boost:` option creates a switch. Turn it on to start a boost and off to end it. The card's away
+mode starts and ends the heater's holiday mode, which runs until you turn it off. Both are set through
+the heater's operating-mode setting; turning either off ends both. The switch and the card show what
+the heater reports, read back right after each change and at every poll, so they stay off if the heater
+does not take the setting. The switch writes nothing when the board restarts, so a reboot does not end
+a running boost. Details: [Boost and away](../configuration/water-heater.md#boost-and-away).
 
 ## Working YAML
 
@@ -97,14 +100,16 @@ heater of one brand has been read so far.
 
 - **Current temperature** is the water temperature at the tank's probe, in tenths of a degree.
 - **Target temperature** is what the heater reports in its status reply, between 20 and 62 °C. During
-  a holiday absence it reads 20 °C.
+  a holiday absence the heater reports a main parameter of 0, the bottom of that range, which is no
+  target: the card shows none, and a target set from Home Assistant then is not sent.
 - **Energy** is the energy the heater has used since it was installed, in kWh, counted up by the
   heater. It fits the Home Assistant energy dashboard.
 - **Heat pump running** is on while the compressor runs, **electric backup running** while the electric
   element heats (seen during boost only).
-- **Boost** is on while a boost runs: the heater's boost register reads non-zero.
+- **Boost** and **away** are on while the heater's operating-mode word says so. Its boost and away
+  duration registers are read and logged, but they do not decide the state.
 
-The hub polls the heater every five minutes by default: one status read and five register reads,
+The hub polls the heater every five minutes by default: one status read and six register reads,
 each answered in about 10 ms. At the first poll it also reads the heater's brand letter and logs it
 once:
 
@@ -117,7 +122,10 @@ Device F9CF0F reports hot water brand 'A' (0x41)
 If you own this heater, these answers help:
 
 - The full list of targets and shower counts for your tank size, from the heater's manual.
-- Whether turning the boost switch on starts a boost on the display, and turning it off ends it.
+- Whether turning the boost switch on starts a boost on the display, and turning it off ends it. The
+  log lines "write acknowledged with value" show what the heater did with the duration writes.
+- Whether the card's away mode starts the holiday mode on the display, and what the display shows.
+- Whether the boost and away state follows a boost or holiday started on the display.
 - Which boost durations the display offers.
 - What the heater does with a target between two of its steps.
 - What the entities show with the heater switched off.
@@ -129,9 +137,11 @@ Corpus captures from issue #198, on an SX1276 board:
 
 - [Register reads in the display's states](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/exchange/atlantic_calypso_exchange_register_read.yaml)
 - [The status reads that carry the target](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_calypso_probe_status_mp_fp.yaml)
+- [The status reads that carry the operating-mode capabilities and word](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_calypso_probe_status_fp_high.yaml)
 
 The design is recorded in
-[ADR 0068](../adr/0068-a-domestic-hot-water-device-is-a-water-heater.md).
+[ADR 0068](../adr/0068-a-domestic-hot-water-device-is-a-water-heater.md) and
+[ADR 0081](../adr/0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md).
 
 ## See also
 

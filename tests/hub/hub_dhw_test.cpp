@@ -1,6 +1,6 @@
 /// @file hub_dhw_test.cpp
 /// @brief The hub's water heater path: the poll (status read plus family-0x00 registers), the status reply's
-/// target with no cover side effects, and the target, mode and boost writes. Replies are shaped on the Atlantic
+/// target with no cover side effects, and the target, mode, boost and away writes. Replies are shaped on the Atlantic
 /// Calypso Connecte's (issue #198, corpus atlantic_calypso_*).
 
 #include "hub_core.h"
@@ -16,6 +16,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <string>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -78,6 +79,16 @@ void queue_status(TestableComponent &comp, MockRadio &radio, uint16_t mp, uint8_
         {flags, 0x00, static_cast<uint8_t>(mp >> 8U), static_cast<uint8_t>(mp & 0xFFU), 0x00, 0x00});
 }
 
+/// The reply to the poll's status read (FPI1 00 / FPI2 43): main parameter, FP10, FP15 and FP16, the layout of
+/// corpus atlantic_calypso_probe_status_fp_high.
+void queue_operating_status(TestableComponent &comp, MockRadio &radio, uint16_t mp, uint16_t fp16,
+                            uint16_t fp15 = DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST, uint8_t flags = 0x05) {
+  queue(comp, radio, CMD_PRIVATE_RESP,
+        {flags, 0x00, static_cast<uint8_t>(mp >> 8U), static_cast<uint8_t>(mp & 0xFFU), DHW_STATUS_FPI1,
+         DHW_STATUS_FPI2, 0x00, 0x00, static_cast<uint8_t>(fp15 >> 8U), static_cast<uint8_t>(fp15 & 0xFFU),
+         static_cast<uint8_t>(fp16 >> 8U), static_cast<uint8_t>(fp16 & 0xFFU)});
+}
+
 void queue_register(TestableComponent &comp, MockRadio &radio, uint8_t index, const std::vector<uint8_t> &value) {
   std::vector<uint8_t> payload = {0x0C, 0x60, 0x00, index};
   payload.insert(payload.end(), value.begin(), value.end());
@@ -85,13 +96,16 @@ void queue_register(TestableComponent &comp, MockRadio &radio, uint8_t index, co
 }
 
 /// Queue one whole poll's replies with the values of the reporter's boost run (corpus).
-/// @param status_flags Flags byte of the status reply; the Calypso's is 0x2D.
-void queue_full_poll(TestableComponent &comp, MockRadio &radio, bool with_brand, uint8_t status_flags = 0x2D) {
-  queue_status(comp, radio, 0xA1E8, status_flags);                                               // 54 C
+/// @param status_flags Flags byte of the status reply; the Calypso's is 0x05.
+/// @param fp16 The operating-mode word the status reply carries; at rest by default.
+void queue_full_poll(TestableComponent &comp, MockRadio &radio, bool with_brand, uint8_t status_flags = 0x05,
+                     uint16_t fp16 = DHW_OPERATING_MODE_OFF) {
+  queue_operating_status(comp, radio, 0xA1E8, fp16, DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST, status_flags);  // 54 C
   queue_register(comp, radio, DHW_REG_WATER_TEMPERATURE, {0x02, 0x45, 0x00, 0x5C, 0x02, 0x78});  // 58.1 C
   queue_register(comp, radio, DHW_REG_MODE, {0x01});                                             // manual, ECO on
   queue_register(comp, radio, DHW_REG_HEATING, {0x01, 0xFF, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00});
-  queue_register(comp, radio, DHW_REG_BOOST, {0x01});
+  queue_register(comp, radio, DHW_REG_BOOST_DURATION, {0x01});
+  queue_register(comp, radio, DHW_REG_AWAY_DURATION, {0x00});
   queue_register(comp, radio, DHW_REG_ENERGY, {0x00, 0x1B, 0xF3, 0x42});
   if (with_brand)
     queue_register(comp, radio, DHW_REG_BRAND, {0x41});
@@ -104,7 +118,7 @@ uint8_t sent_register(const std::vector<uint8_t> &tx) { return tx.at(12); }
 
 // === The poll ===
 
-TEST(HubDhw, ThePollReadsTheStatusThenTheRegistersThenTheBrandOnce) {
+TEST(HubDhw, ThePollReadsTheOperatingStatusThenTheRegistersThenTheBrandOnce) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
@@ -114,11 +128,13 @@ TEST(HubDhw, ThePollReadsTheStatusThenTheRegistersThenTheBrandOnce) {
   EXPECT_TRUE(comp.request_device_status("ABC123"));
 
   const auto &sent = radio.get_sent_data();
-  ASSERT_EQ(sent.size(), 7u);
+  ASSERT_EQ(sent.size(), 8u);
   EXPECT_EQ(sent[0][8], CMD_PRIVATE) << "the target comes from the status read";
   EXPECT_EQ(sent[0][9], PRIVATE_STATUS_MP_FP) << "the status read the heater has answered";
-  const uint8_t expected[] = {
-      DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE, DHW_REG_HEATING, DHW_REG_BOOST, DHW_REG_ENERGY, DHW_REG_BRAND};
+  EXPECT_EQ(sent[0][10], DHW_STATUS_FPI1) << "no FP1-FP7: the heater answers them with code 5";
+  EXPECT_EQ(sent[0][11], DHW_STATUS_FPI2) << "FP15 and FP16 come with the target";
+  const uint8_t expected[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,   DHW_REG_HEATING, DHW_REG_BOOST_DURATION,
+                              DHW_REG_AWAY_DURATION,     DHW_REG_ENERGY, DHW_REG_BRAND};
   for (size_t i = 0; i < std::size(expected); i++) {
     const auto &tx = sent[i + 1];
     EXPECT_EQ(tx[8], CMD_WRITE_PRIVATE) << i;
@@ -134,18 +150,22 @@ TEST(HubDhw, ThePollReadsTheStatusThenTheRegistersThenTheBrandOnce) {
   EXPECT_EQ(dev->dhw.heating, 1);
   EXPECT_EQ(dev->dhw.element, 1);
   EXPECT_EQ(dev->dhw.heat_pump, 1);
-  EXPECT_EQ(dev->dhw.boost, 1);
+  EXPECT_EQ(dev->dhw.capabilities, DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST);
+  EXPECT_EQ(dev->dhw.boost, 0) << "the state is FP16, not the duration register that read 1";
+  EXPECT_EQ(dev->dhw.away, 0);
+  EXPECT_EQ(dev->dhw.boost_duration, 1);
+  EXPECT_EQ(dev->dhw.away_duration, 0);
   EXPECT_EQ(dev->dhw.energy_wh, 1831746);
   EXPECT_EQ(dev->dhw.brand, 'A');
   EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis())) << "a good poll closes its window";
   EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id)) << "the cadence is armed";
   EXPECT_EQ(comp.last_timeout_ms_, HEATING_POLL_DEFAULT_INTERVAL_MS);
 
-  // The brand is read once: the next poll asks for the status and the five registers only.
+  // The brand is read once: the next poll asks for the status and the six registers only.
   const size_t before = sent.size();
   queue_full_poll(comp, radio, /*with_brand=*/false);
   EXPECT_TRUE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(radio.get_sent_data().size() - before, 6u);
+  EXPECT_EQ(radio.get_sent_data().size() - before, 7u);
 }
 
 TEST(HubDhw, AStatusReplyChangesOnlyTheWaterHeaterReadings) {
@@ -224,7 +244,8 @@ TEST(HubDhw, AModeValueNeverSeenLeavesTheModeAndThePollGoesOn) {
   queue_register(comp, radio, DHW_REG_WATER_TEMPERATURE, {0x01, 0xF0});
   queue_register(comp, radio, DHW_REG_MODE, {0x03});
   queue_register(comp, radio, DHW_REG_HEATING, {0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
-  queue_register(comp, radio, DHW_REG_BOOST, {0x00});
+  queue_register(comp, radio, DHW_REG_BOOST_DURATION, {0x00});
+  queue_register(comp, radio, DHW_REG_AWAY_DURATION, {0x00});
   queue_register(comp, radio, DHW_REG_ENERGY, {0x00, 0x1B, 0xF3, 0x97});
   queue_register(comp, radio, DHW_REG_BRAND, {});  // an empty answer: still an answer
 
@@ -360,41 +381,183 @@ TEST(HubDhw, AnUnacknowledgedModeWriteIsNotReadBack) {
   EXPECT_EQ(dev->dhw.mode, -1);
 }
 
-TEST(HubDhw, BoostIsARegisterWriteReadBackAtOnce) {
-  for (const bool on : {true, false}) {
-    TestableComponent comp;
-    MockRadio radio;
-    IoDevice *dev = make_water_heater(comp, radio);
-    const uint8_t value = on ? 0x01 : 0x00;
-    queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, 0x00, value});
-    queue_register(comp, radio, DHW_REG_BOOST, {value});
+// === Boost and away through the operating-mode word ===
 
-    EXPECT_TRUE(comp.set_water_heater_boost("ABC123", on));
+namespace {
 
-    ASSERT_EQ(radio.get_sent_data().size(), 2u) << on;
-    const auto &write = radio.get_sent_data()[0];
-    EXPECT_EQ(write[8], CMD_WRITE_PRIVATE);
-    EXPECT_EQ(std::vector<uint8_t>(write.begin() + 9, write.begin() + 14),
-              (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x00, value}));
-    const auto &read = radio.get_sent_data()[1];
-    EXPECT_EQ(std::vector<uint8_t>(read.begin() + 9, read.begin() + 13),
-              (std::vector<uint8_t>{0x0C, 0x60, 0x00, 0x00}));
-    EXPECT_EQ(dev->dhw.boost, on ? 1 : 0);
-    EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
-    EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS) << "the heating state follows soon";
-  }
+/// The data bytes of a sent EXECUTE: ... MP(2) 00 01 FP16(2).
+std::vector<uint8_t> execute_tail(const std::vector<uint8_t> &tx) {
+  // 9 header bytes before the data; the tail is the last six data bytes (no CRC in the mock's capture).
+  return std::vector<uint8_t>(tx.end() - 6, tx.end());
 }
 
-TEST(HubDhw, AnUnacknowledgedBoostWriteIsNotReadBack) {
+/// Queue the replies of a successful switch-on: duration ack, EXECUTE ack, the duration read-back, the status.
+void queue_on_sequence(TestableComponent &comp, MockRadio &radio, uint8_t duration_register, uint8_t duration,
+                       uint16_t fp16) {
+  queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, duration_register, 0x00});  // ignored: acks 00
+  queue_register(comp, radio, duration_register, {duration});
+  queue_status(comp, radio, 0x0000);  // the EXECUTE's ack
+  queue_operating_status(comp, radio, 0xA1E8, fp16);
+}
+
+}  // namespace
+
+TEST(HubDhw, BoostOnWritesTheDurationThenTheBoostWordThenReadsTheStatus) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
+  queue_on_sequence(comp, radio, DHW_REG_BOOST_DURATION, 1, DHW_OPERATING_MODE_BOOST_ON);
+
+  EXPECT_TRUE(comp.set_water_heater_boost("ABC123", true));
+
+  const auto &sent = radio.get_sent_data();
+  ASSERT_EQ(sent.size(), 4u);
+  EXPECT_EQ(std::vector<uint8_t>(sent[0].begin() + 9, sent[0].begin() + 14),
+            (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x00, 0x01}))
+      << "the duration goes first, although the heater ignores it on its own";
+  EXPECT_EQ(sent[1][8], CMD_WRITE_PRIVATE) << "its read-back";
+  EXPECT_EQ(sent[2][8], CMD_EXECUTE);
+  EXPECT_EQ(execute_tail(sent[2]), (std::vector<uint8_t>{0xD4, 0x00, 0x00, 0x01, 0x49, 0x00}));
+  EXPECT_EQ(sent[3][8], CMD_PRIVATE) << "the status is read at once";
+  EXPECT_EQ(sent[3][11], DHW_STATUS_FPI2);
+  EXPECT_EQ(dev->dhw.boost, 1) << "shown from FP16";
+  EXPECT_EQ(dev->dhw.away, 0);
+  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
+  EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS) << "the poll follows 45 s later";
+}
+
+TEST(HubDhw, AwayOnWritesTwoFiftyFiveToTheAwayDurationThenTheAwayWord) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  queue_on_sequence(comp, radio, DHW_REG_AWAY_DURATION, 0xFF, DHW_OPERATING_MODE_AWAY_ON);
+
+  EXPECT_TRUE(comp.set_water_heater_away("ABC123", true));
+
+  const auto &sent = radio.get_sent_data();
+  ASSERT_EQ(sent.size(), 4u);
+  EXPECT_EQ(std::vector<uint8_t>(sent[0].begin() + 9, sent[0].begin() + 14),
+            (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x05, 0xFF}));
+  EXPECT_EQ(execute_tail(sent[2]), (std::vector<uint8_t>{0xD4, 0x00, 0x00, 0x01, 0x46, 0x00}));
+  EXPECT_EQ(dev->dhw.away, 1);
+  EXPECT_EQ(dev->dhw.boost, 0);
+  EXPECT_EQ(dev->dhw.away_duration, 255);
+}
+
+TEST(HubDhw, SwitchingOffSendsTheOffWordOnlyAndReadsTheStatus) {
+  for (const bool boost : {true, false}) {
+    TestableComponent comp;
+    MockRadio radio;
+    IoDevice *dev = make_water_heater(comp, radio);
+    dev->dhw.boost = 1;
+    dev->dhw.away = 1;
+    queue_status(comp, radio, 0x0000);  // the EXECUTE's ack
+    queue_operating_status(comp, radio, 0xA1E8, DHW_OPERATING_MODE_OFF);
+
+    EXPECT_TRUE(boost ? comp.set_water_heater_boost("ABC123", false) : comp.set_water_heater_away("ABC123", false));
+
+    const auto &sent = radio.get_sent_data();
+    ASSERT_EQ(sent.size(), 2u) << boost << ": no duration write, no read-back of one";
+    EXPECT_EQ(sent[0][8], CMD_EXECUTE);
+    EXPECT_EQ(execute_tail(sent[0]), (std::vector<uint8_t>{0xD4, 0x00, 0x00, 0x01, 0x4A, 0x00}));
+    EXPECT_EQ(dev->dhw.boost, 0) << "off ends both";
+    EXPECT_EQ(dev->dhw.away, 0) << "off ends both";
+  }
+}
+
+TEST(HubDhw, AnUnacknowledgedDurationWriteDoesNotStopTheModeWord) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  radio.queue_rx_hold_until_sent(EXCHANGE_RETRY_COUNT + 1);  // silent through every try of the duration write
+  queue_status(comp, radio, 0x0000);                         // the EXECUTE's ack
+  queue_operating_status(comp, radio, 0xA1E8, DHW_OPERATING_MODE_BOOST_ON);
+
+  EXPECT_TRUE(comp.set_water_heater_boost("ABC123", true));
+
+  const auto &sent = radio.get_sent_data();
+  std::string cmds;
+  for (const auto &tx : sent)
+    cmds += std::to_string(tx[8]) + " ";
+  ASSERT_GT(sent.size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT)) << cmds;
+  for (size_t i = 0; i < EXCHANGE_RETRY_COUNT; i++)
+    EXPECT_EQ(sent[i][8], CMD_WRITE_PRIVATE) << "every try of the duration write: " << cmds;
+  EXPECT_EQ(sent[EXCHANGE_RETRY_COUNT][8], CMD_EXECUTE) << cmds;
+  EXPECT_EQ(dev->dhw.boost, 1) << cmds;
+}
+
+TEST(HubDhw, AWriteWhoseCapabilityBitIsClearIsRefusedOnceFp15IsRead) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  dev->dhw.capabilities = DHW_CAPABILITY_AWAY;  // no boost
   EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
-  ASSERT_FALSE(radio.get_sent_data().empty());
+  EXPECT_FALSE(comp.set_water_heater_boost("ABC123", false)) << "off is refused too: the word is not supported";
+  dev->dhw.capabilities = DHW_CAPABILITY_BOOST;  // no away
+  EXPECT_FALSE(comp.set_water_heater_away("ABC123", true));
+  EXPECT_TRUE(radio.get_sent_data().empty()) << "nothing reaches the radio";
+}
+
+TEST(HubDhw, BeforeFp15IsReadAWriteIsTried) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  ASSERT_EQ(dev->dhw.capabilities, -1);
+  EXPECT_FALSE(comp.set_water_heater_away("ABC123", false)) << "no answer here, but it was tried";
+  EXPECT_FALSE(radio.get_sent_data().empty());
+}
+
+TEST(HubDhw, AnUnacknowledgedModeWordIsNotReadBackAndLeavesTheStateAlone) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  EXPECT_FALSE(comp.set_water_heater_boost("ABC123", false));
   for (const auto &tx : radio.get_sent_data())
-    EXPECT_EQ(tx[10], HEATING_DIRECTION_SET) << "only the write is tried";
-  EXPECT_LE(radio.get_sent_data().size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
+    EXPECT_EQ(tx[8], CMD_EXECUTE) << "only the EXECUTE is tried";
   EXPECT_EQ(dev->dhw.boost, -1);
+}
+
+TEST(HubDhw, AStatusReplyWithoutTheOperatingWordsKeepsBoostAndAway) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  dev->dhw.boost = 1;
+  dev->dhw.away = 1;
+  queue_status(comp, radio, 0xA1E8);  // the plain FP1-FP7-shaped reply
+
+  comp.request_device_status("ABC123");
+
+  EXPECT_FLOAT_EQ(dev->dhw.target_c, 54.0F);
+  EXPECT_EQ(dev->dhw.boost, 1);
+  EXPECT_EQ(dev->dhw.away, 1);
+}
+
+TEST(HubDhw, ABoostOrHolidayStartedOnTheDisplayShowsWithinOnePoll) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  queue_full_poll(comp, radio, /*with_brand=*/false, 0x05, DHW_OPERATING_MODE_AWAY_ON);
+  comp.request_device_status("ABC123");
+  EXPECT_EQ(dev->dhw.away, 1);
+  EXPECT_EQ(dev->dhw.boost, 0);
+
+  queue_full_poll(comp, radio, /*with_brand=*/false, 0x05, DHW_OPERATING_MODE_BOOST_ON);
+  comp.request_device_status("ABC123");
+  EXPECT_EQ(dev->dhw.away, 0);
+  EXPECT_EQ(dev->dhw.boost, 1);
+}
+
+TEST(HubDhw, AHeaterInAwayModeThatReportsNoTargetShowsItUnknown) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  dev->dhw.target_c = 54.0F;
+  queue_operating_status(comp, radio, 0xD812, DHW_OPERATING_MODE_AWAY_ON);
+
+  comp.request_device_status("ABC123");
+
+  EXPECT_TRUE(std::isnan(dev->dhw.target_c));
+  EXPECT_EQ(dev->dhw.away, 1);
 }
 
 // === Discovery's YAML block ===

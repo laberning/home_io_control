@@ -52,6 +52,12 @@ enum WaterHeaterFeature : uint32_t {
   WATER_HEATER_SUPPORTS_TWO_POINT_TARGET_TEMPERATURE = 1 << 5,
 };
 
+/// State flags of a water heater (bitmask), as in the real header.
+enum WaterHeaterStateFlag : uint32_t {
+  WATER_HEATER_STATE_AWAY = 1 << 0,
+  WATER_HEATER_STATE_ON = 1 << 1,
+};
+
 class WaterHeater;
 
 class WaterHeaterCall {
@@ -68,15 +74,32 @@ class WaterHeaterCall {
     return *this;
   }
 
+  WaterHeaterCall &set_away(bool away) {
+    if (away) {
+      this->state_ |= WATER_HEATER_STATE_AWAY;
+    } else {
+      this->state_ &= ~WATER_HEATER_STATE_AWAY;
+    }
+    this->state_mask_ |= WATER_HEATER_STATE_AWAY;
+    return *this;
+  }
+
   void perform();
 
   const optional<WaterHeaterMode> &get_mode() const { return this->mode_; }
   float get_target_temperature() const { return this->target_temperature_; }
+  optional<bool> get_away() const {
+    if (this->state_mask_ & WATER_HEATER_STATE_AWAY)
+      return (this->state_ & WATER_HEATER_STATE_AWAY) != 0;
+    return {};
+  }
 
  protected:
   WaterHeater *parent_;
   optional<WaterHeaterMode> mode_;
   float target_temperature_{NAN};
+  uint32_t state_{0};
+  uint32_t state_mask_{0};
 };
 
 struct WaterHeaterCallInternal : public WaterHeaterCall {
@@ -117,6 +140,7 @@ class WaterHeater {
   WaterHeaterMode get_mode() const { return this->mode_; }
   float get_current_temperature() const { return this->current_temperature_; }
   float get_target_temperature() const { return this->target_temperature_; }
+  bool is_away() const { return (this->state_ & WATER_HEATER_STATE_AWAY) != 0; }
 
   void set_current_temperature(float current_temperature) { this->current_temperature_ = current_temperature; }
 
@@ -133,10 +157,18 @@ class WaterHeater {
 
   void set_mode_(WaterHeaterMode mode) { this->mode_ = mode; }
   void set_target_temperature_(float target_temperature) { this->target_temperature_ = target_temperature; }
+  void set_state_flag_(uint32_t flag, bool value) {
+    if (value) {
+      this->state_ |= flag;
+    } else {
+      this->state_ &= ~flag;
+    }
+  }
 
   WaterHeaterMode mode_{WATER_HEATER_MODE_OFF};
   float current_temperature_{NAN};
   float target_temperature_{NAN};
+  uint32_t state_{0};
 };
 
 // The real perform() validates against the traits first (an unsupported mode is dropped, a target is clamped

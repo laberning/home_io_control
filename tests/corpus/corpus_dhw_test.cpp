@@ -48,6 +48,13 @@ template<size_t N> DhwHeatingState heating_of(const uint8_t (&bytes)[N]) {
   return state;
 }
 
+template<size_t N> uint8_t duration_of(const uint8_t (&bytes)[N], uint8_t index) {
+  const auto value = value_of(bytes, index);
+  uint8_t duration = 0;
+  EXPECT_TRUE(decode_dhw_duration(value.data(), value.size(), duration)) << "register 0x" << std::hex << +index;
+  return duration;
+}
+
 template<size_t N> float target_of(const uint8_t (&bytes)[N]) {
   float celsius = NAN;
   EXPECT_TRUE(decode_dhw_status_target(frame_of(bytes), celsius));
@@ -100,14 +107,23 @@ TEST(CorpusDhw, EnergyIsTheDisplaysSinceStartTotalAndRisesWhileHeating) {
   EXPECT_EQ(after_wh - before_wh, 85U);
 }
 
-TEST(CorpusDhw, BoostReadsOnWhileItRunsAndOffAfter) {
-  bool on = false;
-  const auto during = value_of(corpus::atlantic_calypso_exchange_register_read_frame9_bytes, DHW_REG_BOOST);
-  ASSERT_TRUE(decode_dhw_boost(during.data(), during.size(), on));
-  EXPECT_TRUE(on);
-  const auto after = value_of(corpus::atlantic_calypso_exchange_register_read_frame10_bytes, DHW_REG_BOOST);
-  ASSERT_TRUE(decode_dhw_boost(after.data(), after.size(), on));
-  EXPECT_FALSE(on);
+TEST(CorpusDhw, TheBoostDurationReadsOneDuringABoostAndZeroAfter) {
+  EXPECT_EQ(duration_of(corpus::atlantic_calypso_exchange_register_read_frame9_bytes, DHW_REG_BOOST_DURATION),
+            DHW_BOOST_START_DURATION)
+      << "the value a boost start writes is the one a display-started boost holds";
+  EXPECT_EQ(duration_of(corpus::atlantic_calypso_exchange_register_read_frame10_bytes, DHW_REG_BOOST_DURATION), 0);
+}
+
+TEST(CorpusDhw, TheHolidayDurationCountsTheDaysLeftAndFfHasNoEnd) {
+  EXPECT_EQ(duration_of(corpus::atlantic_calypso_exchange_register_read_frame13_bytes, DHW_REG_AWAY_DURATION), 0)
+      << "a holiday scheduled for later has not started";
+  EXPECT_EQ(duration_of(corpus::atlantic_calypso_exchange_register_read_frame14_bytes, DHW_REG_AWAY_DURATION), 2)
+      << "two days before the end";
+  EXPECT_EQ(duration_of(corpus::atlantic_calypso_exchange_register_read_frame16_bytes, DHW_REG_AWAY_DURATION), 4)
+      << "four days before the end";
+  EXPECT_EQ(duration_of(corpus::atlantic_calypso_exchange_register_read_frame15_bytes, DHW_REG_AWAY_DURATION),
+            DHW_AWAY_UNTIL_TURNED_OFF)
+      << "the value an away start writes is the one the heater holds for a holiday with no end date";
 }
 
 TEST(CorpusDhw, BrandIsOneLetter) {
@@ -120,6 +136,38 @@ TEST(CorpusDhw, StatusMainParameterIsTheDisplayedTarget) {
   EXPECT_FLOAT_EQ(target_of(corpus::atlantic_calypso_probe_status_mp_fp_frame0_bytes), 54.0F) << "manual, ECO on";
   EXPECT_FLOAT_EQ(target_of(corpus::atlantic_calypso_probe_status_mp_fp_frame1_bytes), 62.0F) << "manual, ECO off";
   EXPECT_FLOAT_EQ(target_of(corpus::atlantic_calypso_probe_status_mp_fp_frame2_bytes), 60.0F) << "AUTO";
+}
+
+TEST(CorpusDhw, DuringAHolidayTheMainParameterIsTheBottomOfTheScale) {
+  // 00 00 decodes as the bottom of the range; it is no target, which is why the entity hides it while away.
+  EXPECT_FLOAT_EQ(target_of(corpus::atlantic_calypso_probe_status_mp_fp_frame3_bytes), DHW_TARGET_MIN_C);
+}
+
+TEST(CorpusDhw, TheOperatingStatusReadReportsCapabilitiesAndBothFieldsOffAtRest) {
+  const struct {
+    IoFrame frame;
+    float target_c;
+    const char *display;
+  } cases[] = {
+      {frame_of(corpus::atlantic_calypso_probe_status_fp_high_frame0_bytes), 60.0F, "AUTO"},
+      {frame_of(corpus::atlantic_calypso_probe_status_fp_high_frame1_bytes), 54.0F, "manual, ECO on"},
+      {frame_of(corpus::atlantic_calypso_probe_status_fp_high_frame2_bytes), 62.0F, "manual, ECO off"},
+  };
+  for (const auto &c : cases) {
+    DhwOperatingStatus status;
+    ASSERT_TRUE(decode_dhw_operating_status(c.frame, status)) << c.display;
+    float target = NAN;
+    ASSERT_TRUE(decode_dhw_status_target(c.frame, target)) << "the main parameter stays in place: " << c.display;
+    EXPECT_FLOAT_EQ(target, c.target_c) << c.display;
+    EXPECT_EQ(status.capabilities, DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST) << "FP15 000C: " << c.display;
+    EXPECT_FALSE(status.boost) << "FP16 4A00 reads both fields off: " << c.display;
+    EXPECT_FALSE(status.away) << c.display;
+  }
+}
+
+TEST(CorpusDhw, TheOffWordIsTheFp16TheHeaterReportsAtRest) {
+  const auto &bytes = corpus::atlantic_calypso_probe_status_fp_high_frame0_bytes;
+  EXPECT_EQ((bytes[19] << 8) | bytes[20], DHW_OPERATING_MODE_OFF);
 }
 
 TEST(CorpusDhw, TargetEncoderReproducesTheCapturedMainParameters) {

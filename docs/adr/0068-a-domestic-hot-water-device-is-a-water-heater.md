@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0068 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0081](0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md) · **Recorded:** 2026-11
 
 Builds on [ADR 0059](0059-device-capabilities-come-from-the-type-table.md) (capabilities come from the
 type table) and [ADR 0067](0067-a-model-below-the-subtype-for-products-that-share-a-wire-type.md)

@@ -402,12 +402,13 @@ void apply_heating_main_parameter(const std::string &id, IoDevice &dev, const Io
   ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%04X is not a heating value", id.c_str(), current);
 }
 
-/// @brief Apply a water heater's status reply: its main parameter is the target temperature, nothing else.
+/// @brief Apply a water heater's status reply: its main parameter is the target temperature; the operating-mode
+/// read (FP15, FP16) adds its capabilities and the boost and away state.
 ///
 /// A water heater has no position, no movement and no battery: the cover parts of the status path (the
 /// stopped flag, target/current position, the follow-up window, the moving evidence, the last-command
 /// record) must not touch it, so it never reaches them. Only a reply to a status read carries the target;
-/// the ack of the target EXECUTE echoes the request and is not decoded.
+/// the ack of an EXECUTE echoes the request and is not decoded.
 /// @param id Device ID for the log line.
 /// @param dev Device record to update.
 /// @param frame A CMD_PRIVATE_RESP from the heater.
@@ -415,6 +416,16 @@ void apply_heating_main_parameter(const std::string &id, IoDevice &dev, const Io
 void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame &frame, bool trust_position) {
   if (!trust_position)
     return;
+  DhwOperatingStatus status;
+  if (decode_dhw_operating_status(frame, status)) {
+    if (dev.dhw.boost != (status.boost ? 1 : 0) || dev.dhw.away != (status.away ? 1 : 0)) {
+      ESP_LOGI(detail::TAG, "Device %s: hot water boost %s, away %s (FP15 0x%04X)", id.c_str(),
+               status.boost ? "on" : "off", status.away ? "on" : "off", static_cast<unsigned>(status.capabilities));
+    }
+    dev.dhw.capabilities = status.capabilities;
+    dev.dhw.boost = status.boost ? 1 : 0;
+    dev.dhw.away = status.away ? 1 : 0;
+  }
   float celsius = NAN;
   if (decode_dhw_status_target(frame, celsius)) {
     if (dev.dhw.target_c != celsius)
@@ -422,8 +433,7 @@ void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame 
     dev.dhw.target_c = celsius;
     return;
   }
-  // An alias or an out-of-range value is not a target temperature; what one means on a water heater
-  // has not been seen yet, so it is logged and the target shows unknown.
+  // An alias or an out-of-range value is not a target temperature: it is logged and the target shows unknown.
   ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%02X%02X is not a hot water target", id.c_str(),
            frame.data[DHW_STATUS_MAIN_PARAMETER_OFFSET], frame.data[DHW_STATUS_MAIN_PARAMETER_OFFSET + 1]);
   dev.dhw.target_c = NAN;

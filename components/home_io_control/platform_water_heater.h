@@ -23,8 +23,14 @@
 /// minutes) and this entity publishes from IoDevice::dhw, which only a decoded reply changes. Until a reading
 /// has arrived an accepted write shows the commanded value; after that the read-back decides.
 ///
+/// Away mode is part of the entity: Home Assistant's away switch starts and ends the heater's holiday mode
+/// (ADR 0081). The heater reports it, and boost, in the operating-mode word the poll reads, so the entity
+/// shows away only once the heater said so. While away no target is shown (the heater reports a main parameter
+/// of 0, which is no target) and a target set then is logged and dropped.
+///
 /// The companions (energy, heat pump running, electric backup running) show readings the same poll already
-/// stores and add no radio traffic; the boost switch shows the boost register the poll reads and writes it.
+/// stores and add no radio traffic; the boost switch shows the boost state of the operating-mode word the poll
+/// reads and writes it.
 ///
 /// The readings, the target EXECUTE and the mode write are confirmed on one Atlantic Calypso Connecte
 /// ([issue #198](https://github.com/laberning/home_io_control/issues/198)): its display follows both writes.
@@ -32,6 +38,8 @@
 /// between two steps is not taken.
 ///
 /// \todo The mode mapping and the target steps rest on that one heater; confirm them on a second one.
+/// \todo Experimental: confirm on a real water heater that away mode starts and ends the holiday mode and that
+/// the state follows the heater's operating-mode word (issue #198).
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/switch/switch.h"
@@ -73,10 +81,10 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
   /// @return A new call.
   water_heater::WaterHeaterCallInternal make_call() override { return water_heater::WaterHeaterCallInternal(this); }
 
-  /// @brief Apply a Home Assistant request: a mode is written to register 0x0006, a target is sent in an
-  /// EXECUTE. The mode goes first; a target is then not sent while the heater holds automatic mode (it
-  /// chooses its own), judged on the mode read back after the mode write. A failed send leaves its field as
-  /// it was.
+  /// @brief Apply a Home Assistant request: a mode is written to register 0x0006, away mode goes through the
+  /// operating-mode word, a target is sent in an EXECUTE. The mode and away go first; a target is then not sent while
+  /// the heater holds automatic mode (it chooses its own), judged on the mode read back after the mode write. A failed
+  /// send leaves its field as it was.
   /// @param call The requested changes, already checked against traits() by ESPHome.
   void control(const water_heater::WaterHeaterCall &call) override;
 
@@ -90,7 +98,7 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
   void on_device_update_(const std::string &id, const IoDevice &dev);
 
   /// @brief Copy the readings into the entity's fields. The target is shown as unknown (NaN) while the
-  /// heater reports automatic mode.
+  /// heater reports automatic mode or away; away follows the heater's report.
   /// @param readings What the hub has read from the heater.
   /// @return true when a published field changed.
   bool sync_from_readings_(const DhwReadings &readings);
@@ -142,10 +150,11 @@ class IOHomeDhwBinarySensor : public binary_sensor::BinarySensor, public Compone
 /// @brief Switch that starts and ends the heater's boost.
 /// @ingroup hioc_platforms
 ///
-/// A write goes through IOHomeControlComponent::set_water_heater_boost(), which writes register 0x0000 and
-/// reads it back; the switch shows what the heater reports (any non-zero value is on), so it has no state
-/// until the first poll and never shows a command the heater did not confirm. Switching on asks for a
-/// one-day boost, the only duration seen.
+/// A write goes through IOHomeControlComponent::set_water_heater_boost(), which writes the boost duration and
+/// the operating-mode word and reads the status back; the switch shows what the heater reports in that word
+/// (ADR 0081), so it has no state until the first poll and never shows a command the heater did not confirm.
+/// Switching on asks for a boost of duration 1, the only value seen. Switching off sends the word that ends
+/// both boost and away.
 ///
 /// It never writes at boot: setup() restores nothing, and the codegen sets restore mode DISABLED, so a
 /// reboot cannot end a boost that is running.

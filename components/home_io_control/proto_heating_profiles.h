@@ -18,6 +18,7 @@
 /// \todo Every 52/1 seen is an Atlantic heater. A non-Atlantic 52/1 would need the heating-level
 ///       path instead; the profile keys on (type, subtype, model), and the model is the YAML's.
 
+#include "proto_constants.h"
 #include "proto_device_model.h"
 #include "proto_heating.h"
 #include "proto_sizes.h"
@@ -80,9 +81,9 @@ static constexpr uint8_t HEAT_PUMP_ECO = 0x12;      ///< Heat pump: the economy 
 static constexpr uint8_t HEAT_PUMP_HALTED = 0x13;   ///< Heat pump: halted.
 }  // namespace heating_alias
 
-/// @brief Main parameter that means "off": the unknown-position marker, which a command uses together
-/// with a functional parameter to switch a device off.
-static constexpr uint16_t HEATING_OFF_MP = 0xD400;
+/// @brief Main parameter of a heat pump's off command: MAIN_PARAMETER_KEEP, which the command pairs with the
+/// off value of a functional parameter.
+static constexpr uint16_t HEATING_OFF_MP = MAIN_PARAMETER_KEEP;
 
 /// @brief Sentinel for HeatingModeEntry::main_parameter: send the entity's target temperature, encoded
 /// over the device's range, as the main parameter.
