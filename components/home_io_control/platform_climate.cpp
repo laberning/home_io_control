@@ -518,9 +518,7 @@ void IOHomeClimate::dump_config() {
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
   ESP_LOGCONFIG(TAG, "  Target temperature range: %.1f-%.1f C (maximum from the heater once read)", HEATING_TEMP_MIN_C,
                 this->max_temperature_c_);
-  ESP_LOGCONFIG(
-      TAG, "  Status Poll Interval: %" PRIu32 " ms",
-      this->status_poll_interval_ms_ != 0 ? this->status_poll_interval_ms_ : HEATING_POLL_DEFAULT_INTERVAL_MS);
+  ESP_LOGCONFIG(TAG, "  Status Poll Interval: %" PRIu32 " ms", heater_poll_interval_ms(this->status_poll_interval_ms_));
   if (const DeviceTypeInfo *model = find_device_model_info(this->device_type_, this->subtype_, this->model_))
     ESP_LOGCONFIG(TAG, "  Model: %s", model->name);
   // Only the register profiles have run on hardware: an Atlantic AGILIA IO radiator (issue #165) and an

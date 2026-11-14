@@ -73,6 +73,13 @@ static constexpr uint32_t INITIAL_STATUS_REQUEST_DELAY_MS = 5000;
 /// purpose: a heater's state moves over minutes, and a poll costs one exchange per register.
 static constexpr uint32_t HEATING_POLL_DEFAULT_INTERVAL_MS = 300000;
 
+/// Interval of the next regular heater poll.
+/// @param configured_ms The device's `status_poll_interval` in ms, 0 when it sets none.
+/// @return The configured interval, else HEATING_POLL_DEFAULT_INTERVAL_MS.
+constexpr uint32_t heater_poll_interval_ms(uint32_t configured_ms) {
+  return configured_ms != 0 ? configured_ms : HEATING_POLL_DEFAULT_INTERVAL_MS;
+}
+
 /// @brief Delay of the extra heater poll after a register write the heater acknowledged.
 ///
 /// The write is read back at once, but whether the heater now heats shows only in its regulator

@@ -508,30 +508,13 @@ decisions::AttemptRequest IOHomeControlComponent::cover_poll_attempts_(const std
   return predicted_end ? attempts.with_wake_preamble_first() : attempts;
 }
 
-// A heater keeps the count-based budget: a poll with no ladder behind it gets the full
-// EXCHANGE_RETRY_COUNT, a scheduler-owned one the ladder's band (decisions::scheduled_poll_max_tries()).
-decisions::AttemptRequest IOHomeControlComponent::heater_poll_attempts_(const std::string &device_id,
-                                                                        bool scheduler_managed) {
-  if (!scheduler_managed)
-    return EXCHANGE_RETRY_COUNT;
-  return decisions::scheduled_poll_max_tries(this->poll_policy_.get_status_poll_failures(device_id),
-                                             this->poll_policy_.get_auth_poll_failures(device_id));
-}
-
 bool IOHomeControlComponent::request_device_status(const std::string &device_id) {
   auto *dev = this->get_device(device_id);
-  if (dev == nullptr || !this->initialized_)
+  if (dev == nullptr)
     return false;
 
-  if (!detail::known_device_supports_status_requests(*dev)) {
-    detail::log_rejected_operation(device_id, *dev, "status request", "status-capable actuator");
-    return false;
-  }
-  // Consumed by every status read, so a catch-up mark never outlives the read it was meant for. It
-  // shapes only a cover's one-off read: a heater keeps its budget, and a device the follow-up window
-  // tracks keeps the ladder's plan (cover_poll_attempts_()).
-  const bool state_unknown = this->poll_policy_.take_state_unknown(device_id);
-
+  // A heater is polled on its own cadence, which continues even when this poll can not run (the hub
+  // is not initialised yet): run_heater_poll_() owns that, the poll only chooses which body to run.
   // A heater with private registers has no 0x03 status: its state is a handful of registers.
   const HeatingProfile *heating = find_heating_profile(*dev);
   if (heating != nullptr && heating->path == HeatingControlPath::PRIVATE_REGISTERS)
@@ -539,6 +522,21 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   // A water heater answers a status read for its target, and keeps the rest in family-0x00 registers.
   if (has_feature(dev->features, device_feature::WATER_HEATER))
     return this->poll_dhw_device_(device_id);
+  // A heating-level or temperature heater is polled with the ordinary status read.
+  if (heating != nullptr)
+    return this->poll_status_read_heater_(device_id);
+
+  if (!this->initialized_)
+    return false;
+  if (!detail::known_device_supports_status_requests(*dev)) {
+    detail::log_rejected_operation(device_id, *dev, "status request", "status-capable actuator");
+    return false;
+  }
+  // Consumed by every ordinary status read, so a catch-up mark never outlives the read it was meant
+  // for. It shapes only a cover's one-off read: a device the follow-up window tracks keeps the ladder's
+  // plan (cover_poll_attempts_()). A heater's poll leaves it, as its try band ignores it; the tracking
+  // window that poll opens or clears drops it.
+  const bool state_unknown = this->poll_policy_.take_state_unknown(device_id);
 
   IoFrame request;
   // Tilt-capable covers need the extended 0x03200100 status request so the response includes
@@ -548,22 +546,10 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
                               : create_get_status(request, this->node_id_, dev->node_id, dev->low_power);
   if (!request_ok)
     return false;
-  // A heating-level heater is polled on the heater cadence with the same status read; its failure
-  // ladder needs a tracking window, which a cover only has after a command.
-  if (heating != nullptr && !this->poll_policy_.is_tracking_active(device_id, millis()))
-    this->begin_status_poll_tracking_(device_id, 0);
   const bool scheduler_managed = this->poll_policy_.is_tracking_active(device_id, millis());
   const uint32_t retry_after_fail_ms = scheduler_managed ? STATUS_RETRY_AFTER_FAIL_MS : 0;
-  const decisions::AttemptRequest attempts =
-      heating != nullptr ? this->heater_poll_attempts_(device_id, scheduler_managed)
-                         : this->cover_poll_attempts_(device_id, scheduler_managed, state_unknown);
-  const bool ok = this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, attempts);
-  if (heating != nullptr) {
-    // The regular cadence continues whatever this poll found, as for a register heater.
-    const uint32_t configured_ms = this->poll_policy_.get_interval(device_id);
-    this->schedule_heating_poll_(device_id, configured_ms != 0 ? configured_ms : HEATING_POLL_DEFAULT_INTERVAL_MS);
-  }
-  return ok;
+  const decisions::AttemptRequest attempts = this->cover_poll_attempts_(device_id, scheduler_managed, state_unknown);
+  return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, attempts);
 }
 
 namespace {
@@ -1122,27 +1108,24 @@ void IOHomeControlComponent::poll_programme_period_(const std::string &device_id
 
 bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) {
   const IoDevice *dev = this->get_device(device_id);
-  if (dev == nullptr || !this->initialized_)
+  if (dev == nullptr)
     return false;
   // The registers one poll reads come from the device's profile, so there is no per-device list here.
   const HeatingProfile *profile = find_heating_profile(*dev);
   if (profile == nullptr || profile->path != HeatingControlPath::PRIVATE_REGISTERS)
     return false;
 
-  // The failure ladder lives in StatusPollPolicy and only runs inside a tracking window. Open one
-  // unless one is already running: begin_tracking() resets the failure counters, which would flatten
-  // the ladder to its first step on every retry.
-  if (!this->poll_policy_.is_tracking_active(device_id, millis()))
-    this->begin_status_poll_tracking_(device_id, 0);
+  return this->run_heater_poll_(device_id, HeaterPollLadder::RUN_BY_POLL,
+                                [this, &device_id, profile](uint8_t max_tries) {
+                                  return this->read_heater_poll_registers_(device_id, *profile, max_tries);
+                                });
+}
 
-  // A poll always runs inside a tracking window, so the ladder is its retry mechanism: the heater
-  // try band (decisions::scheduled_poll_max_tries()), not a cover's settling plan.
-  const uint8_t max_tries = decisions::scheduled_poll_max_tries(this->poll_policy_.get_status_poll_failures(device_id),
-                                                                this->poll_policy_.get_auth_poll_failures(device_id));
-
+bool IOHomeControlComponent::read_heater_poll_registers_(const std::string &device_id, const HeatingProfile &profile,
+                                                         uint8_t max_tries) {
   bool ok = true;
   size_t answered = 0;
-  for (const HeatingFunction fn : profile->poll_registers) {
+  for (const HeatingFunction fn : profile.poll_registers) {
     if (!this->read_heating_register(device_id, fn, nullptr, max_tries)) {
       ok = false;
       break;
@@ -1152,12 +1135,12 @@ bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) 
 
   // The temperature in force is read only while the heater's own programme runs: outside it the register
   // holds no temperature, and the card needs no read.
-  if (ok && profile->programme_period != nullptr)
-    this->poll_programme_period_(device_id, *profile, max_tries);
+  if (ok && profile.programme_period != nullptr)
+    this->poll_programme_period_(device_id, profile, max_tries);
 
   // A part the heater may not have (a night light): read every poll once the core registers answered,
   // and a miss is not a poll failure (the next poll asks again).
-  for (const HeatingFunction fn : profile->extra_poll_registers) {
+  for (const HeatingFunction fn : profile.extra_poll_registers) {
     if (!ok)
       break;
     this->read_heating_register(device_id, fn, nullptr, max_tries);
@@ -1165,11 +1148,11 @@ bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) 
 
   // Properties and settings that rarely change are read until they have been read once. A miss here
   // is not a poll failure; the next poll asks again.
-  for (const HeatingFunction fn : profile->boot_registers) {
+  for (const HeatingFunction fn : profile.boot_registers) {
     if (!ok)
       break;
-    dev = this->get_device(device_id);
-    if (dev != nullptr && !dev->heating.has(fn))
+    const IoDevice *current = this->get_device(device_id);
+    if (current != nullptr && !current->heating.has(fn))
       this->read_heating_register(device_id, fn, nullptr, max_tries);
   }
 
@@ -1178,17 +1161,55 @@ bool IOHomeControlComponent::poll_heating_device_(const std::string &device_id) 
   // holds no value) and is what the check exists to point out.
   if (answered > 0)
     this->check_heater_model_(device_id, max_tries);
-
-  if (ok) {
-    this->poll_policy_.clear(device_id);
-  } else {
-    this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
-  }
-  // The regular cadence continues whatever this poll found; a failed poll is additionally retried
-  // sooner by the ladder above.
-  const uint32_t configured_ms = this->poll_policy_.get_interval(device_id);
-  this->schedule_heating_poll_(device_id, configured_ms != 0 ? configured_ms : HEATING_POLL_DEFAULT_INTERVAL_MS);
   return ok;
+}
+
+// === Heater poll cadence ===
+
+bool IOHomeControlComponent::run_heater_poll_(const std::string &device_id, HeaterPollLadder ladder,
+                                              const std::function<bool(uint8_t max_tries)> &body) {
+  const IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr)
+    return false;  // no longer registered: no timer either
+
+  bool ok = false;
+  if (this->initialized_) {
+    // The failure ladder lives in StatusPollPolicy and only runs inside a tracking window. Open one
+    // unless one is already running: begin_tracking() resets the failure counters, which would flatten
+    // the ladder to its first step on every retry.
+    if (!this->poll_policy_.is_tracking_active(device_id, millis()))
+      this->begin_status_poll_tracking_(device_id, 0);
+
+    // A poll always runs inside a tracking window, so the ladder is its retry mechanism: the heater
+    // try band (decisions::scheduled_poll_max_tries()), not a cover's settling plan.
+    const uint8_t max_tries = decisions::scheduled_poll_max_tries(
+        this->poll_policy_.get_status_poll_failures(device_id), this->poll_policy_.get_auth_poll_failures(device_id));
+    ok = body(max_tries);
+    if (ladder == HeaterPollLadder::RUN_BY_POLL) {
+      if (ok) {
+        this->poll_policy_.clear(device_id);
+      } else {
+        this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
+      }
+    }
+  }
+  // The regular cadence continues whatever this poll found, or whether it could run at all; a failed
+  // poll is additionally retried sooner by the ladder above.
+  this->schedule_heating_poll_(device_id, heater_poll_interval_ms(this->poll_policy_.get_interval(device_id)));
+  return ok;
+}
+
+bool IOHomeControlComponent::poll_status_read_heater_(const std::string &device_id) {
+  // The status read's own failure ladder (execute_request_and_update_()) is the retry, so the poll
+  // leaves the ladder to the body.
+  return this->run_heater_poll_(device_id, HeaterPollLadder::RUN_BY_BODY, [this, &device_id](uint8_t max_tries) {
+    const IoDevice *current = this->get_device(device_id);
+    IoFrame request;
+    // The generic status request: no heater row carries TILT, so the cover's tilt variant never applies.
+    if (current == nullptr || !create_get_status(request, this->node_id_, current->node_id, current->low_power))
+      return false;
+    return this->execute_request_and_update_(device_id, request, false, STATUS_RETRY_AFTER_FAIL_MS, max_tries);
+  });
 }
 
 // === Water heater (device_feature::WATER_HEATER) ===
@@ -1342,33 +1363,21 @@ bool IOHomeControlComponent::read_dhw_status_(const std::string &device_id, uint
 
 bool IOHomeControlComponent::poll_dhw_device_(const std::string &device_id) {
   const IoDevice *dev = this->get_device(device_id);
-  if (dev == nullptr || !this->initialized_ || !has_feature(dev->features, device_feature::WATER_HEATER))
+  if (dev == nullptr || !has_feature(dev->features, device_feature::WATER_HEATER))
     return false;
 
-  // The same ladder and try band as a heater poll (poll_heating_device_()).
-  if (!this->poll_policy_.is_tracking_active(device_id, millis()))
-    this->begin_status_poll_tracking_(device_id, 0);
-  const uint8_t max_tries = decisions::scheduled_poll_max_tries(this->poll_policy_.get_status_poll_failures(device_id),
-                                                                this->poll_policy_.get_auth_poll_failures(device_id));
+  return this->run_heater_poll_(device_id, HeaterPollLadder::RUN_BY_POLL, [this, &device_id](uint8_t max_tries) {
+    bool ok = this->read_dhw_status_(device_id, max_tries);
 
-  bool ok = this->read_dhw_status_(device_id, max_tries);
+    for (size_t i = 0; ok && i < sizeof(DHW_POLL_REGISTERS); i++)
+      ok = this->read_dhw_reading_(device_id, DHW_POLL_REGISTERS[i], max_tries);
 
-  for (size_t i = 0; ok && i < sizeof(DHW_POLL_REGISTERS); i++)
-    ok = this->read_dhw_reading_(device_id, DHW_POLL_REGISTERS[i], max_tries);
-
-  // The brand never changes: read until it has been read once. A miss is not a poll failure.
-  dev = this->get_device(device_id);
-  if (ok && dev != nullptr && dev->dhw.brand < 0)
-    this->read_dhw_reading_(device_id, DHW_REG_BRAND, max_tries);
-
-  if (ok) {
-    this->poll_policy_.clear(device_id);
-  } else {
-    this->schedule_background_poll_backoff_(device_id, this->exchange_engine_.get_debug().saw_challenge);
-  }
-  const uint32_t configured_ms = this->poll_policy_.get_interval(device_id);
-  this->schedule_heating_poll_(device_id, configured_ms != 0 ? configured_ms : HEATING_POLL_DEFAULT_INTERVAL_MS);
-  return ok;
+    // The brand never changes: read until it has been read once. A miss is not a poll failure.
+    const IoDevice *current = this->get_device(device_id);
+    if (ok && current != nullptr && current->dhw.brand < 0)
+      this->read_dhw_reading_(device_id, DHW_REG_BRAND, max_tries);
+    return ok;
+  });
 }
 
 bool IOHomeControlComponent::set_water_heater_target(const std::string &device_id, float celsius) {

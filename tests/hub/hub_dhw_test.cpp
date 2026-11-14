@@ -291,6 +291,27 @@ TEST(HubDhw, ARadiatorAndACoverAreNeverSentAFamilyZeroFrame) {
   }
 }
 
+TEST(HubDhw, AWaterHeaterPollBeforeTheHubIsInitialisedStillArmsTheNextPoll) {
+  TestableComponent comp;
+  MockRadio radio;
+  const IoDevice *dev = make_water_heater(comp, radio);
+  comp.initialized_ = false;
+
+  EXPECT_FALSE(comp.poll_dhw_device_("ABC123"));
+  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
+  EXPECT_EQ(comp.last_timeout_ms_, HEATING_POLL_DEFAULT_INTERVAL_MS);
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubDhw, AWaterHeaterPollOfAnUnregisteredDeviceArmsNoTimer) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_water_heater(comp, radio);
+
+  EXPECT_FALSE(comp.poll_dhw_device_("DEF456"));
+  EXPECT_EQ(comp.last_timeout_id_, 0u);
+}
+
 // === Writes ===
 
 TEST(HubDhw, TheTargetIsAMainParameterOnlyExecute) {

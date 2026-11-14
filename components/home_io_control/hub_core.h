@@ -1289,11 +1289,6 @@ class IOHomeControlComponent : public Component,
   /// @param state_unknown True for a catch-up read (StatusPollPolicy::take_state_unknown()).
   [[nodiscard]] decisions::AttemptRequest cover_poll_attempts_(const std::string &device_id, bool scheduler_managed,
                                                                bool state_unknown = false);
-  /// Attempts for a heater's status read: the count-based budget heaters keep
-  /// (decisions::scheduled_poll_max_tries()).
-  /// @param device_id Device being polled.
-  /// @param scheduler_managed True when StatusPollPolicy is tracking the device.
-  [[nodiscard]] decisions::AttemptRequest heater_poll_attempts_(const std::string &device_id, bool scheduler_managed);
 
   /// Execute a named device command (STOP, FAVORITE, VENT, PARTIAL, PEDESTRIAN, FORCE_OPEN) via the
   /// authenticated exchange.
@@ -1392,10 +1387,43 @@ class IOHomeControlComponent : public Component,
   ///
   /// A failure moves the retry onto the StatusPollPolicy ladder; either way the next regular poll
   /// is armed one interval out (the device's `status_poll_interval`, else
-  /// HEATING_POLL_DEFAULT_INTERVAL_MS). Called from request_device_status() for climate devices.
+  /// HEATING_POLL_DEFAULT_INTERVAL_MS, see heater_poll_interval_ms()). Called from request_device_status() for
+  /// climate devices.
   /// @param device_id Target device ID.
   /// @return true when all four registers were read.
   bool poll_heating_device_(const std::string &device_id);
+  /// @brief The reads of one register-heater poll (poll_heating_device_()'s body on run_heater_poll_()),
+  /// in the order poll_heating_device_() describes.
+  /// @param device_id Target device ID.
+  /// @param profile The device's register profile.
+  /// @param max_tries Transmit-attempt cap of each read (the poll's try band).
+  /// @return true when every poll register answered.
+  bool read_heater_poll_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
+  /// Who runs the failure ladder after a heater poll (run_heater_poll_()).
+  enum class HeaterPollLadder : uint8_t {
+    RUN_BY_POLL,  ///< The wrapper: clear the ladder on success, back off on failure (register and water heater).
+    RUN_BY_BODY,  ///< The body's own status read already runs it (poll_status_read_heater_()).
+  };
+  /// @brief Run one heater poll: everything around the body that the register heater, the water heater
+  /// and the heaters read with the ordinary status read share.
+  ///
+  /// Returns false without a timer when the device is not registered. Otherwise, when the hub is
+  /// initialised, it opens the tracking window unless one is running, computes the try band
+  /// (decisions::scheduled_poll_max_tries()), calls `body` and applies the ladder as `ladder` says. It
+  /// always ends by arming the next regular poll (heater_poll_interval_ms()), also when the hub is not
+  /// initialised yet or the body found nothing, so no way out of a poll stops the cadence.
+  /// @param device_id Target device ID.
+  /// @param ladder Who clears or backs off the failure ladder.
+  /// @param body The reads of one poll; receives the try cap of each read and returns true when all answered.
+  /// @return The body's result; false when the poll could not run.
+  bool run_heater_poll_(const std::string &device_id, HeaterPollLadder ladder,
+                        const std::function<bool(uint8_t max_tries)> &body);
+  /// @brief Poll a heater without private registers with the ordinary status read, on the heater cadence
+  /// (run_heater_poll_()): a heating-level heater (its level in the position field) and a temperature
+  /// heater (its setpoint in the main parameter). Called from request_device_status().
+  /// @param device_id Target device ID.
+  /// @return true when the status read was answered.
+  bool poll_status_read_heater_(const std::string &device_id);
   /// @brief Read one family-0x00 register of a water heater raw (read_private_register_() gated on
   /// device_feature::WATER_HEATER).
   /// @param device_id Target device ID.

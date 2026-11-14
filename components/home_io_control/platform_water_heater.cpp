@@ -182,9 +182,7 @@ void IOHomeWaterHeater::dump_config() {
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
   ESP_LOGCONFIG(TAG, "  Target temperature range: %.0f-%.0f C", static_cast<double>(DHW_TARGET_MIN_C),
                 static_cast<double>(DHW_TARGET_MAX_C));
-  ESP_LOGCONFIG(
-      TAG, "  Status Poll Interval: %" PRIu32 " ms",
-      this->status_poll_interval_ms_ != 0 ? this->status_poll_interval_ms_ : HEATING_POLL_DEFAULT_INTERVAL_MS);
+  ESP_LOGCONFIG(TAG, "  Status Poll Interval: %" PRIu32 " ms", heater_poll_interval_ms(this->status_poll_interval_ms_));
   ESP_LOGCONFIG(TAG, "  Status: readings, target and mode confirmed on hardware; away mode experimental");
 }
 

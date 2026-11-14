@@ -684,6 +684,46 @@ TEST(HubOperations, HeaterCadenceTimerHasItsOwnIdAndARemotePollDoesNotCancelIt) 
   EXPECT_NE(comp.last_timeout_id_, decisions::heating_poll_timer_id(node));
 }
 
+// === Heater poll cadence ===
+
+TEST(HubOperations, ARegisterHeaterPollBeforeTheHubIsInitialisedStillArmsTheNextPoll) {
+  TestableComponent comp;
+  MockRadio radio;
+  const IoDevice *dev = make_heater(comp, radio);
+  comp.initialized_ = false;
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
+  EXPECT_EQ(comp.last_timeout_ms_, HEATING_POLL_DEFAULT_INTERVAL_MS);
+  EXPECT_TRUE(radio.get_sent_data().empty()) << "nothing is sent while the hub is not initialised";
+}
+
+TEST(HubOperations, ARegisterHeaterPollOfAnUnregisteredDeviceArmsNoTimer) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_heater(comp, radio);
+
+  EXPECT_FALSE(comp.poll_heating_device_("DEF456"));
+  EXPECT_FALSE(comp.request_device_status("DEF456"));
+  EXPECT_EQ(comp.last_timeout_id_, 0u);
+}
+
+TEST(HubOperations, ASucceededRegisterHeaterPollArmsTheNextPollAtTheConfiguredInterval) {
+  TestableComponent comp;
+  MockRadio radio;
+  const IoDevice *dev = make_heater(comp, radio);
+  comp.poll_policy_.set_interval("ABC123", 120000);
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08})));
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00})));
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x00, 0x01})));
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x17, 0x02})));
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x0E, 0x01})));
+
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
+  EXPECT_EQ(comp.last_timeout_ms_, 120000u) << "the configured interval, not the default";
+}
+
 // === Heating-level heater (52/0) ===
 
 namespace {
@@ -763,6 +803,49 @@ TEST(HubOperations, AFailedLevelHeaterPollMovesOntoTheRetryLadder) {
   EXPECT_FALSE(comp.request_device_status("ABC123"));
   EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
   EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u);
+}
+
+TEST(HubOperations, ALevelHeaterPollBeforeTheHubIsInitialisedStillArmsTheNextPoll) {
+  TestableComponent comp;
+  MockRadio radio;
+  const IoDevice *dev = make_level_heater(comp, radio);
+  comp.initialized_ = false;
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
+  EXPECT_EQ(comp.last_timeout_ms_, HEATING_POLL_DEFAULT_INTERVAL_MS);
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubOperations, ALevelHeaterPollOfAnUnregisteredDeviceArmsNoTimer) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_level_heater(comp, radio);
+
+  EXPECT_FALSE(comp.request_device_status("DEF456"));
+  EXPECT_EQ(comp.last_timeout_id_, 0u);
+}
+
+TEST(HubOperations, ALevelHeaterPollArmsTheNextPollWhetherItSucceedsOrFails) {
+  const uint8_t node[3] = {0xAB, 0xC1, 0x23};
+  {
+    TestableComponent comp;
+    MockRadio radio;
+    make_level_heater(comp, radio);
+    radio.queue_rx(test::make_rx_packet(
+        build_level_status_response(comp.node_id_, heating_level_main_parameter(heating_level::ECO))));
+    EXPECT_TRUE(comp.request_device_status("ABC123"));
+    EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(node));
+    EXPECT_EQ(comp.last_timeout_ms_, HEATING_POLL_DEFAULT_INTERVAL_MS);
+  }
+  {
+    TestableComponent comp;
+    MockRadio radio;
+    make_level_heater(comp, radio);
+    EXPECT_FALSE(comp.request_device_status("ABC123"));
+    EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(node));
+    EXPECT_EQ(comp.last_timeout_ms_, HEATING_POLL_DEFAULT_INTERVAL_MS);
+  }
 }
 
 TEST(HubOperations, SetHeatingLevelSendsTheLevelInTheMainParameter) {
@@ -1092,6 +1175,40 @@ TEST(HubOperations, ATemperatureHeaterReplyThatSaysMovingGetsOneFollowUpPoll) {
   EXPECT_TRUE(comp.request_device_status("ABC123"));
   EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u);
   EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
+}
+
+TEST(HubOperations, ATemperatureHeaterPollIsTheGenericStatusReadOnTheHeaterCadence) {
+  for (const DeviceType type : {DeviceType::HEATING_TEMPERATURE_INTERFACE, DeviceType::HEAT_PUMP}) {
+    {
+      TestableComponent comp;
+      MockRadio radio;
+      const IoDevice *dev = make_temperature_heater(comp, radio, type);
+      comp.initialized_ = false;
+      EXPECT_FALSE(comp.request_device_status("ABC123"));
+      EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id))
+          << "the cadence continues before the hub is initialised";
+      EXPECT_EQ(comp.last_timeout_ms_, HEATING_POLL_DEFAULT_INTERVAL_MS);
+      EXPECT_TRUE(radio.get_sent_data().empty());
+    }
+    {
+      TestableComponent comp;
+      MockRadio radio;
+      const IoDevice *dev = make_temperature_heater(comp, radio, type);
+      // Nothing queued: the read fails, and the cadence continues all the same.
+      EXPECT_FALSE(comp.request_device_status("ABC123"));
+      EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
+
+      IoFrame generic{};
+      ASSERT_TRUE(create_get_status(generic, comp.node_id_, dev->node_id, dev->low_power));
+      ASSERT_FALSE(radio.get_sent_data().empty());
+      for (const auto &tx : radio.get_sent_data()) {
+        ASSERT_EQ(tx.size(), FRAME_MIN_SIZE + generic.data_len) << "the generic status request, not the tilt variant";
+        EXPECT_EQ(tx[8], CMD_PRIVATE);
+        EXPECT_EQ(std::vector<uint8_t>(tx.begin() + 9, tx.end()),
+                  std::vector<uint8_t>(generic.data, generic.data + generic.data_len));
+      }
+    }
+  }
 }
 
 TEST(HubOperations, SetHeatingLevelRefusesARegisterHeaterAndACover) {
