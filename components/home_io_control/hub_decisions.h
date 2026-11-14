@@ -39,6 +39,12 @@ enum class ExchangeFinalResponseDisposition : uint8_t {
   ACCEPT,            ///< Frame matches expected response — exchange succeeds.
 };
 
+/// @brief Disposition for a frame heard while waiting for the answer to our 0x3C challenge.
+enum class ChallengeAnswerDisposition : uint8_t {
+  IGNORE_UNRELATED,  ///< Not the challenged device's answer to us — keep listening.
+  ACCEPT,            ///< The challenged device's 0x3D — verify it.
+};
+
 /// @brief Disposition during pairing discovery phase.
 enum class PairingDiscoveryDisposition : uint8_t {
   NO_RESPONSE,  ///< No packets received on the channel within timeout.
@@ -167,6 +173,23 @@ inline ExchangeFinalResponseDisposition classify_exchange_final_response(const I
                                                                          const IoFrame &candidate) {
   return frame_matches_exchange_endpoints(request, candidate) ? ExchangeFinalResponseDisposition::ACCEPT
                                                               : ExchangeFinalResponseDisposition::IGNORE_UNRELATED;
+}
+
+/// Decide if a frame heard after our 0x3C challenge is the challenged device's answer: a 0x3D with a
+/// full HMAC, sent by `challenged_node` to `own_node`. Anything else (a frame from a neighbouring
+/// installation, the device's own repeated report, a 0x3D for someone else) is not the answer, and
+/// the wait keeps listening. Whether the answer verifies is a separate question for the caller.
+///
+/// @param frame            Parsed frame heard during the challenge wait.
+/// @param challenged_node  The device whose frame we challenged.
+/// @param own_node         This hub's node id.
+/// @return ACCEPT for the challenged device's complete 0x3D; IGNORE_UNRELATED otherwise.
+inline ChallengeAnswerDisposition classify_challenge_answer(const IoFrame &frame,
+                                                            const uint8_t challenged_node[NODE_ID_SIZE],
+                                                            const uint8_t own_node[NODE_ID_SIZE]) {
+  const bool answer = frame.cmd == CMD_CHALLENGE_RESP && frame.data_len >= HMAC_SIZE &&
+                      frame_matches_nodes(frame, challenged_node, own_node);
+  return answer ? ChallengeAnswerDisposition::ACCEPT : ChallengeAnswerDisposition::IGNORE_UNRELATED;
 }
 
 /// True for a CMD_EXECUTE that has the same effect sent twice as sent once. Every EXECUTE this hub

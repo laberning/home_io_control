@@ -3907,6 +3907,109 @@ TEST(DeviceKey, InboundAuthenticationRejectsTheHubKeyFromAKeyedDevice) {
 }
 
 // ============================================================================
+// The wait for a challenge answer listens for the whole response window and judges only the
+// challenged device's 0x3D: a frame from anyone else neither ends the wait nor counts as a wrong key.
+// ============================================================================
+
+namespace {
+
+/// Everything one challenge-wait test needs: an engine on a ManualClock, the request being
+/// authenticated (a status update from DST_ID) and the fixed challenge bytes the hub will send,
+/// so the answers can be built and queued before the call.
+struct ChallengeWaitFixture {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr{&radio};
+  TuningConfig tuning;
+  ExchangeEngine engine{&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning};
+  IoFrame request{build_status_update_from_device(test::DST_ID, test::OWN_ID)};
+  uint8_t challenge[HMAC_SIZE]{0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+
+  /// Queue `frame` as the next received packet.
+  void queue(const IoFrame &frame) {
+    RadioRxPacket pkt{};
+    pkt.len = serialize(frame, pkt.data, sizeof(pkt.data));
+    radio.queue_rx(pkt);
+  }
+
+  /// A 0x3D from `from` to the hub, signed with `key` over `request`; garbage bytes when `key` is null.
+  IoFrame answer(const uint8_t from[NODE_ID_SIZE], const uint8_t *key) const {
+    IoFrame frame{};
+    if (key != nullptr) {
+      EXPECT_TRUE(create_challenge_resp_device_role(frame, test::OWN_ID, from, challenge, request, key));
+      return frame;
+    }
+    uint8_t garbage[HMAC_SIZE];
+    memset(garbage, 0xAB, sizeof(garbage));
+    init_frame(frame);
+    set_dst(frame, test::OWN_ID);
+    set_src(frame, from);
+    set_cmd(frame, CMD_CHALLENGE_RESP, garbage, HMAC_SIZE);
+    return frame;
+  }
+
+  ExchangeEngine::ChallengeResult run() {
+    return engine.challenge_sender(request, FREQ_CH2, test::TEST_SYSTEM_KEY, challenge, 0);
+  }
+};
+
+}  // namespace
+
+TEST(ChallengeWait, AnUnrelatedFrameBeforeTheGenuineAnswerStillVerifies) {
+  ChallengeWaitFixture f;
+  f.queue(build_status_update_from_device(test::FOREIGN_ID, test::OWN_ID));
+  f.queue(f.answer(test::DST_ID, test::TEST_SYSTEM_KEY));
+
+  EXPECT_EQ(f.run(), ExchangeEngine::ChallengeResult::VERIFIED)
+      << "a frame from another party must not end the wait before the device answers";
+}
+
+TEST(ChallengeWait, AnswerFromAnotherDeviceAloneIsNoAnswerNotAMismatch) {
+  ChallengeWaitFixture f;
+  f.queue(f.answer(test::FOREIGN_ID, nullptr));
+
+  EXPECT_EQ(f.run(), ExchangeEngine::ChallengeResult::NO_ANSWER)
+      << "a 0x3D from a neighbouring device says nothing about the challenged device's key";
+}
+
+TEST(ChallengeWait, AnswerFromTheChallengedDeviceThatDoesNotVerifyIsAMismatch) {
+  ChallengeWaitFixture f;
+  f.queue(f.answer(test::DST_ID, nullptr));
+
+  EXPECT_EQ(f.run(), ExchangeEngine::ChallengeResult::MISMATCH);
+}
+
+TEST(ChallengeWait, TheChallengedDevicesOtherFrameIsIgnoredAndTheAnswerStillCounts) {
+  ChallengeWaitFixture f;
+  f.queue(build_status_update_from_device(test::DST_ID, test::OWN_ID));
+  f.queue(f.answer(test::DST_ID, test::TEST_SYSTEM_KEY));
+
+  EXPECT_EQ(f.run(), ExchangeEngine::ChallengeResult::VERIFIED);
+}
+
+TEST(ChallengeWait, FramesIgnoredDuringTheWaitAreCountedInTheDebugSnapshot) {
+  ChallengeWaitFixture f;
+  f.radio.queue_rx_failed_reception(0x0084);
+  f.queue(build_status_update_from_device(test::FOREIGN_ID, test::OWN_ID));
+
+  ASSERT_EQ(f.run(), ExchangeEngine::ChallengeResult::NO_ANSWER);
+  const auto &d = f.engine.get_debug();
+  EXPECT_EQ(d.final_waits, 1u) << "the challenge wait is counted as one wait for a closing frame";
+  EXPECT_EQ(d.final_rx_ignored, 1u) << "the other device's frame was heard and not taken as the answer";
+  EXPECT_EQ(d.final_rx_failed, 1u);
+  EXPECT_EQ(d.final_rx_irq, 0x0084u);
+}
+
+TEST(ChallengeWait, SilenceEndsAsNoAnswerAfterTheWholeWindow) {
+  ChallengeWaitFixture f;
+  f.tuning.exchange_response_wait_ms = 250;
+
+  EXPECT_EQ(f.run(), ExchangeEngine::ChallengeResult::NO_ANSWER);
+  ASSERT_FALSE(f.radio.wait_timeouts().empty());
+  EXPECT_EQ(f.radio.wait_timeouts().front(), 250u) << "the wait spends the configured response window";
+}
+
+// ============================================================================
 // Attempt plans and the window-aware budget guard. A try starts only if its gap, transmission,
 // first-reply window and, once the target has challenged, the final-reply window all end inside
 // exchange_total_budget_ms. Every case runs on a ManualClock with modelled air time.

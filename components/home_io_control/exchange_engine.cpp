@@ -324,9 +324,6 @@ const char *inbound_stage_name(exchange::InboundAuthState state) {
   }
 }
 
-/// Check if frame is a 0x3D challenge response.
-bool frame_is_challenge_response(const IoFrame &frame) { return frame.cmd == CMD_CHALLENGE_RESP; }
-
 /// Log a frame that arrived but could not be parsed. Printing it distinguishes "the radio heard
 /// nothing" from "we heard something and rejected it" in a failure report — the two need opposite
 /// fixes: a device that never transmitted needs a longer wait or a link check, while one that
@@ -894,11 +891,11 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
 // Shared listen primitive
 //
 // The one listen loop every radio wait in this project runs through: send_and_receive()'s
-// first/final-response waits, collect_broadcast_responses(), and PairingEngine's discovery/
-// key-transfer/key-confirm waits all call listen() below with a ListenSpec that picks one of
-// the three ListenPolicy values (hold the request channel, rotate all three, or rotate skipping
-// the request channel). Per-loop behavior — what counts as a match, what aborts, what gets
-// logged — lives entirely in the caller's ReplyHandler; this function owns only the
+// first/final-response waits, challenge_sender()'s wait for the 0x3D, collect_broadcast_responses(),
+// and PairingEngine's discovery/key-transfer/key-confirm waits all call listen() below with a
+// ListenSpec that picks one of the three ListenPolicy values (hold the request channel, rotate all
+// three, or rotate skipping the request channel). Per-loop behavior — what counts as a match, what
+// aborts, what gets logged — lives entirely in the caller's ReplyHandler; this function owns only the
 // slice/hop/deadline mechanics common to all of them.
 // ============================================================================
 
@@ -1058,7 +1055,6 @@ ExchangeEngine::ChallengeResult ExchangeEngine::challenge_sender(const IoFrame &
 ExchangeEngine::ChallengeResult ExchangeEngine::challenge_sender(const IoFrame &request, uint32_t freq,
                                                                  const uint8_t *key, const uint8_t challenge[HMAC_SIZE],
                                                                  uint16_t preamble) {
-  RadioDriver *radio = *this->radio_ptr_;
   exchange::InboundAuthContext context;
   context.state = exchange::InboundAuthState::TX_CHALLENGE;
   this->record_debug(inbound_stage_name(context.state), 1, true);
@@ -1077,8 +1073,31 @@ ExchangeEngine::ChallengeResult ExchangeEngine::challenge_sender(const IoFrame &
   context.state = exchange::InboundAuthState::WAIT_CHALLENGE_RESPONSE;
   this->record_debug(inbound_stage_name(context.state), 1, true);
 
+  // A holding listen on the challenge channel: the device answers on it, and a frame from anyone
+  // else (a neighbouring installation, the device repeating its own report) must not end the wait.
+  ListenSpec spec;
+  spec.window_ms = this->tuning_->exchange_response_wait_ms;
+  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
+  ListenStats stats;
+  spec.stats = &stats;
+
   RadioRxPacket packet{};
-  if (!radio->wait_for_packet(packet, this->tuning_->exchange_response_wait_ms)) {
+  IoFrame rx{};
+  const ListenOutcome outcome = this->listen(spec, packet, rx, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
+    // Each frame that does not end the wait is logged like one in a final-reply wait, so a log
+    // shows what the wait heard when the answer never came.
+    if (parsed == nullptr) {
+      log_unparsable_frame("Unparsable challenge answer", 1, pkt);
+      return ReplyDisposition::IGNORE;
+    }
+    if (decisions::classify_challenge_answer(*parsed, request.src, this->node_id_) ==
+        decisions::ChallengeAnswerDisposition::ACCEPT)
+      return ReplyDisposition::ACCEPT;
+    log_exchange_frame("Ignored challenge answer", 1, *parsed, pkt.len);
+    return ReplyDisposition::IGNORE;
+  });
+  this->note_final_wait_(stats);
+  if (outcome != ListenOutcome::ACCEPTED) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);
     return ChallengeResult::NO_ANSWER;
@@ -1087,13 +1106,7 @@ ExchangeEngine::ChallengeResult ExchangeEngine::challenge_sender(const IoFrame &
   // Transcript is the *device's* own frame (cmd + data), not our challenge — the challenged
   // party authenticates what it said. Confirmed against real hardware bytes by the device-side
   // 0x3D in tests/corpus/captures/pairing/velux_kux100_pairing_full.yaml.
-  // Anything but a 0x3D counts as no answer; a 0x3D that does not verify is a wrong one.
-  IoFrame rx;
-  if (!parse(packet.data, packet.len, rx) || !frame_is_challenge_response(rx) || rx.data_len < HMAC_SIZE) {
-    context.state = exchange::InboundAuthState::FAILED;
-    this->record_debug(inbound_stage_name(context.state), 1, true);
-    return ChallengeResult::NO_ANSWER;
-  }
+  // A 0x3D from the challenged device that does not verify is a wrong answer.
   if (!verify_challenge_resp(request, context.challenge.data, rx.data, key)) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);

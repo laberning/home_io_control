@@ -515,7 +515,8 @@ TEST(PairingKeyPull, ALostProofIsChallengedAgain) {
 
   const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
   radio.queue_rx(to_packet(reply));
-  radio.queue_rx_silence();
+  // The first challenge's wait is silent for its whole window; the proof arrives after the second one.
+  radio.queue_rx_hold_until_sent(3);
   radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, OTHER_KEY)));
 
   EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OTHER_KEY);

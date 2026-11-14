@@ -197,8 +197,9 @@ struct ListenSpec {
   /// exchange loops do not). Empty by default, in which case no callback fires.
   std::function<void()> on_hop;
   /// Where to count what this listen heard without accepting it; null (the default) counts
-  /// nothing. The final-reply wait of an authenticated exchange is the one caller today: its
-  /// counts are what separates a device that never replied from a reply this side lost.
+  /// nothing. The final-reply wait of an authenticated exchange and the wait for a challenge answer
+  /// pass one: their counts are what separates a device that never replied from a reply this side
+  /// lost.
   ListenStats *stats{nullptr};
 };
 

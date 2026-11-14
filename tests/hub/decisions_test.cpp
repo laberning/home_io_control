@@ -1416,3 +1416,42 @@ TEST(Decisions, NoLeadWhenOnlyOneWakeUpAttemptFitsOrForAnotherKindOfRead) {
       decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, LEAD_WAKE_TX_MS, 0, LEAD_SHORT_TX_MS)
           .short_lead);
 }
+
+// ========================================================================================
+// Challenge answer classification
+// ========================================================================================
+
+TEST(Decisions, ChallengeAnswerFromTheChallengedDeviceToUsIsAccepted) {
+  const IoFrame answer = make_frame(DST_ID, OWN_ID, CMD_CHALLENGE_RESP, HMAC_SIZE);
+
+  EXPECT_EQ(decisions::classify_challenge_answer(answer, DST_ID, OWN_ID),
+            decisions::ChallengeAnswerDisposition::ACCEPT);
+}
+
+TEST(Decisions, ChallengeAnswerFromAnotherDeviceIsIgnored) {
+  const IoFrame answer = make_frame(FOREIGN_ID, OWN_ID, CMD_CHALLENGE_RESP, HMAC_SIZE);
+
+  EXPECT_EQ(decisions::classify_challenge_answer(answer, DST_ID, OWN_ID),
+            decisions::ChallengeAnswerDisposition::IGNORE_UNRELATED);
+}
+
+TEST(Decisions, ChallengeAnswerAddressedToAnotherControllerIsIgnored) {
+  const IoFrame answer = make_frame(DST_ID, FOREIGN_ID, CMD_CHALLENGE_RESP, HMAC_SIZE);
+
+  EXPECT_EQ(decisions::classify_challenge_answer(answer, DST_ID, OWN_ID),
+            decisions::ChallengeAnswerDisposition::IGNORE_UNRELATED);
+}
+
+TEST(Decisions, ChallengeAnswerThatIsNotA0x3DIsIgnored) {
+  const IoFrame status = make_frame(DST_ID, OWN_ID, CMD_STATUS_UPDATE, HMAC_SIZE);
+
+  EXPECT_EQ(decisions::classify_challenge_answer(status, DST_ID, OWN_ID),
+            decisions::ChallengeAnswerDisposition::IGNORE_UNRELATED);
+}
+
+TEST(Decisions, ChallengeAnswerShorterThanAFullHmacIsIgnored) {
+  const IoFrame answer = make_frame(DST_ID, OWN_ID, CMD_CHALLENGE_RESP, HMAC_SIZE - 1);
+
+  EXPECT_EQ(decisions::classify_challenge_answer(answer, DST_ID, OWN_ID),
+            decisions::ChallengeAnswerDisposition::IGNORE_UNRELATED);
+}

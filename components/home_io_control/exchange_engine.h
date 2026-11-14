@@ -196,7 +196,9 @@ class ExchangeEngine {
 
   /// One challenge of `request`'s sender under `key`, telling a lost answer from a wrong one. A caller
   /// may retry a NO_ANSWER; a MISMATCH means the device does not hold `key`. Sends a fresh random
-  /// challenge with the radio's response preamble.
+  /// challenge with the radio's response preamble, then listens on the same channel for the whole
+  /// response window: only a 0x3D from `request`'s sender to this hub counts (see
+  /// decisions::classify_challenge_answer()); any other frame is ignored and the wait goes on.
   /// @param request The device's frame the challenge is about (its cmd + data are the transcript).
   /// @param freq    RF channel to challenge on.
   /// @param key     16-byte key the device's 0x3D must verify against.
@@ -477,7 +479,7 @@ class ExchangeEngine {
     // What the final-reply waits of this exchange heard, counted per event (see ListenStats). The
     // capture fields above keep the *first* informative reception, which in an authenticated
     // exchange is the device's challenge, so they cannot describe the wait for the final reply.
-    uint8_t final_waits{0};       ///< Final-reply waits run (one per try that got as far as our 0x3D).
+    uint8_t final_waits{0};       ///< Final-reply and challenge-answer waits run.
     uint8_t final_rx_ignored{0};  ///< Frames received during those waits and not accepted as the reply.
     uint8_t final_rx_failed{0};   ///< Receptions started during those waits that could not be decoded.
     uint16_t final_rx_irq{0};     ///< Radio IRQ status at the most recent of those failed receptions.
@@ -622,7 +624,7 @@ class ExchangeEngine {
                                    uint8_t tries_left, uint32_t elapsed_ms, uint32_t next_tx_ms,
                                    const decisions::AttemptPlan &plan);
 
-  /// Add one final-reply wait's ListenStats to the debug snapshot's `final_*` fields.
+  /// Add one final-reply or challenge-answer wait's ListenStats to the debug snapshot's `final_*` fields.
   /// @param stats What that wait heard without accepting it.
   void note_final_wait_(const ListenStats &stats);
 
