@@ -451,5 +451,90 @@ HeatingDeviceFacts heating_device_facts(const IoDevice *dev);
 HeatingWritePlan plan_heating_write(const HeatingProfile &profile, const HeatingWriteRequest &request,
                                     const HeatingDeviceFacts &facts);
 
+// === The climate card: what it shows ===
+
+/// @brief The heating / idle state a card shows.
+enum class HeatingAction : uint8_t {
+  OFF,      ///< The heater is off.
+  HEATING,  ///< The element is heating.
+  IDLE,     ///< On, and the element is not heating.
+};
+
+/// @brief What a climate card shows, in profile terms: no ESPHome type.
+/// @details Folded from the heater's readings (reduce_heating_card()) and from the last command
+///          (command_heating_card()). The two bookkeeping flags decide how the two meet: until a reading has
+///          arrived the card shows what was commanded, afterwards only what the heater reports.
+struct HeatingCardState {
+  HeatingHvacMode mode{HeatingHvacMode::OFF};  ///< The HVAC mode shown.
+  int8_t preset_index{-1};                     ///< Index into the profile's presets shown, or -1 for none.
+  float target_c{NAN};                         ///< The target temperature shown; NaN when none is known.
+  float current_c{NAN};                        ///< The measured temperature; NaN until read or on a sensor fault.
+  float max_target_c{HEATING_TEMP_MAX_C};      ///< Upper end of the target range the card offers.
+  HeatingAction action{HeatingAction::OFF};    ///< Heating, idle or off.
+  bool observed{false};                        ///< A reading has been folded in: readings, not commands, decide.
+  bool mode_commanded{false};                  ///< A mode was commanded (matters where nothing reads the mode).
+
+  /// @brief Do the two cards show the same thing?
+  /// @details Compares what a card displays (mode, preset, temperatures, range, action), not the two
+  ///          bookkeeping flags, so a flag flipping alone is no change to publish. Two NaN temperatures are
+  ///          the same state, not a change.
+  /// @param other The card to compare with.
+  [[nodiscard]] bool shows_same_as(const HeatingCardState &other) const;
+};
+
+/// @brief What a command leaves on the card.
+struct HeatingCardCommand {
+  HeatingCardState card;  ///< The card after the command.
+  bool shown{false};      ///< The command is shown: no reading has been folded in yet, so the card takes it.
+                          ///< False when the heater's own report decides what the card shows.
+};
+
+/// @brief The card of a heater nothing has been read from yet.
+/// @details Its target range reaches up to the profile's own upper end where the profile has a setpoint.
+/// @param profile The device's profile.
+HeatingCardState initial_heating_card(const HeatingProfile &profile);
+
+/// @brief Fold a heater's readings into the card.
+/// @details The mode or level, the preset kept in a register of its own or named by the heater's programme
+///          period, the temperatures (while the programme runs, the temperature in force replaces the
+///          comfort setpoint), the action and the heater's own maximum setpoint, never past the profile's
+///          upper end. A value the profile does not map leaves the card as it was. Where nothing reads the
+///          mode, a device that reports a setpoint or an alias is evidently on, so the card shows heat until
+///          a mode is commanded. Sets `observed` once any reading was present.
+/// @param profile The device's profile.
+/// @param readings What the hub has read from the heater.
+/// @param prior The card before the readings.
+/// @return The card after them.
+HeatingCardState reduce_heating_card(const HeatingProfile &profile, const HeatingReadings &readings,
+                                     const HeatingCardState &prior);
+
+/// @brief What the card shows after a command the heater accepted.
+/// @details The one place the commanded and the observed state meet. Once a reading has been folded in, the
+///          card follows the read-back and the command changes nothing (a mode on a profile that never reads
+///          its mode back is the exception: the command stands). Before that the card takes the command:
+///          a mode, which on the register and level paths supersedes the preset; a preset, shown as the
+///          read-back would show it (through the profile's observed tables) or, where nothing is read back,
+///          as the preset itself with heat for an alias preset; a target, which on a temperature heater ends
+///          an alias preset. A mode command always sets `mode_commanded`.
+/// @param profile The device's profile.
+/// @param request The request that was sent.
+/// @param plan The plan it became; its `preset_index` names the preset a preset request matched.
+/// @param prior The card before the command.
+/// @return The card after it and whether the command is shown.
+HeatingCardCommand command_heating_card(const HeatingProfile &profile, const HeatingWriteRequest &request,
+                                        const HeatingWritePlan &plan, const HeatingCardState &prior);
+
+/// @brief How far a profile's heater has been confirmed on hardware.
+enum class HeatingHardwareStatus : uint8_t {
+  UNVALIDATED,          ///< Not run on hardware: the standard EXECUTE paths, or no profile.
+  WRITES_EXPERIMENTAL,  ///< Readings and setpoint confirmed; the mode and preset writes are not.
+  CONFIRMED,            ///< Setpoint, mode, presets and read-back confirmed.
+};
+
+/// @brief How far a heater's profile has been confirmed on hardware.
+/// @param profile The device's profile, or nullptr while the type is unknown.
+/// @return UNVALIDATED for nullptr and for every profile that is not a register profile.
+HeatingHardwareStatus heating_hardware_status(const HeatingProfile *profile);
+
 }  // namespace home_io_control
 }  // namespace esphome

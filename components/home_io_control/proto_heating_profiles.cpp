@@ -681,5 +681,203 @@ HeatingWritePlan plan_heating_write(const HeatingProfile &profile, const Heating
   return refused(HeatingRefusal::NO_MATCH);
 }
 
+// === The climate card: what it shows ===
+
+bool HeatingCardState::shows_same_as(const HeatingCardState &other) const {
+  const auto same_temperature = [](float a, float b) { return (std::isnan(a) && std::isnan(b)) || a == b; };
+  return this->mode == other.mode && this->preset_index == other.preset_index && this->action == other.action &&
+         same_temperature(this->target_c, other.target_c) && same_temperature(this->current_c, other.current_c) &&
+         same_temperature(this->max_target_c, other.max_target_c);
+}
+
+HeatingCardState initial_heating_card(const HeatingProfile &profile) {
+  HeatingCardState card;
+  if (profile.features.target_temperature)
+    card.max_target_c = profile.visual_max_c;
+  return card;
+}
+
+namespace {
+
+/// Show a device-reported mode register value or heating level. Sets the preset too, unless the profile keeps
+/// its preset in a register of its own.
+void apply_observed_state(const HeatingProfile &profile, uint8_t wire, HeatingCardState &card) {
+  const HeatingObservedState *observed = find_observed_state(profile, wire);
+  if (observed == nullptr)
+    return;  // unknown value: leave the card as it was
+  // A mode nothing reads back stays the last command; the table then only names the preset.
+  if (profile.features.mode_observed)
+    card.mode = observed->hvac;
+  // With a preset table of its own, the mode register says nothing about the preset.
+  if (profile.preset_observed.empty())
+    card.preset_index = observed->preset;
+}
+
+/// Show a device-reported value of the profile's preset register.
+void apply_observed_preset(const HeatingProfile &profile, uint8_t wire, HeatingCardState &card) {
+  const HeatingObservedState *observed = find_observed_preset(profile, wire);
+  if (observed != nullptr)
+    card.preset_index = observed->preset;
+}
+
+/// Fold the temperatures of the readings into the card; sets `seen` when a reading was present.
+void reduce_temperatures(const HeatingProfile &profile, const HeatingReadings &readings, float target_c,
+                         HeatingCardState &card, bool &seen) {
+  if (profile.features.current_temperature) {
+    card.current_c = readings.room_temperature_c;
+    seen = seen || !std::isnan(readings.room_temperature_c);
+  }
+  if (profile.features.target_temperature && !std::isnan(target_c)) {
+    seen = true;
+    card.target_c = target_c;
+  }
+  // The heater's own ceiling, but never past what a write can encode.
+  if (profile.features.target_temperature && !std::isnan(readings.max_setpoint_c) &&
+      readings.max_setpoint_c > HEATING_TEMP_MIN_C) {
+    seen = true;
+    card.max_target_c = std::min(readings.max_setpoint_c, profile.visual_max_c);
+  }
+}
+
+/// Fold the profile's action source (the regulator state, or the working rate) into the card.
+void reduce_action(const HeatingProfile &profile, const HeatingReadings &readings, bool mode_known,
+                   HeatingCardState &card, bool &seen) {
+  if (!profile.features.action)
+    return;
+  // The action follows the mode: an off heater is not "idle". Until the profile's action source has been read
+  // only the off case is known.
+  if (card.mode == HeatingHvacMode::OFF && mode_known) {
+    card.action = HeatingAction::OFF;
+  } else if (profile.action_source == HeatingActionSource::REGULATOR && readings.regulator >= 0) {
+    seen = true;
+    card.action = readings.regulator == static_cast<int16_t>(HeatingRegulatorState::HEATING) ? HeatingAction::HEATING
+                                                                                             : HeatingAction::IDLE;
+  } else if (profile.action_source == HeatingActionSource::WORKING_RATE && readings.working_rate >= 0) {
+    seen = true;
+    card.action = readings.working_rate > 0 ? HeatingAction::HEATING : HeatingAction::IDLE;
+  }
+}
+
+}  // namespace
+
+HeatingCardState reduce_heating_card(const HeatingProfile &profile, const HeatingReadings &readings,
+                                     const HeatingCardState &prior) {
+  HeatingCardState card = prior;
+  bool seen = false;
+  // While the heater's own programme runs, its comfort or eco period and the temperature it heats to
+  // replace the temporary-state preset and the comfort setpoint.
+  const ProgrammePeriodState period = resolve_programme_period(profile, readings);
+  const bool period_shown = period.active && !std::isnan(period.target_c);
+  reduce_temperatures(profile, readings, period_shown ? period.target_c : readings.setpoint_c, card, seen);
+
+  // The profile's mode register, or the heating level, whichever this profile's device reports.
+  const int16_t wire =
+      profile.path == HeatingControlPath::PRIVATE_REGISTERS ? readings.value_of(profile.mode_fn) : readings.level;
+  if (wire >= 0) {
+    seen = true;
+    apply_observed_state(profile, static_cast<uint8_t>(wire), card);
+  }
+  // The period of the programme that runs, else the preset kept in a register of its own (a towel dryer's
+  // temporary state; with the programme running and no period named, that is "none").
+  const int16_t preset_wire = !profile.preset_observed.empty() ? readings.value_of(profile.preset_fn) : -1;
+  if (period_shown && period.preset_index >= 0) {
+    seen = true;
+    card.preset_index = period.preset_index;
+  } else if (preset_wire >= 0) {
+    seen = true;
+    apply_observed_preset(profile, static_cast<uint8_t>(preset_wire), card);
+  }
+  if (wire < 0 && profile.path == HeatingControlPath::TEMPERATURE_EXECUTE && !std::isnan(readings.setpoint_c)) {
+    // The device reports a plain temperature, so it is on no alias preset.
+    card.preset_index = NO_PRESET;
+  }
+  reduce_action(profile, readings, wire >= 0, card, seen);
+
+  // Where nothing reads the mode back, a device that reports a setpoint or an alias is evidently on: show
+  // heat until a mode is commanded, instead of the card's default "off".
+  if (!profile.features.mode_observed && !card.mode_commanded && seen && card.mode == HeatingHvacMode::OFF)
+    card.mode = HeatingHvacMode::HEAT;
+
+  card.observed = card.observed || seen;
+  return card;
+}
+
+namespace {
+
+/// A mode command: the commanded mode stands in until a read has succeeded, and always where nothing reads
+/// the mode back.
+HeatingCardCommand command_mode(const HeatingProfile &profile, const HeatingWriteRequest &request,
+                                const HeatingCardState &prior) {
+  HeatingCardCommand result{.card = prior};
+  result.shown = !prior.observed || !profile.features.mode_observed;
+  result.card.mode_commanded = true;
+  if (!result.shown)
+    return result;
+  result.card.mode = request.hvac;
+  // A real HVAC mode supersedes a preset on the register and level paths; a temperature heater's preset
+  // follows its status reply instead, and so does a preset kept in a register of its own (a towel dryer's
+  // boost outlives a mode change).
+  if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE && profile.preset_observed.empty())
+    result.card.preset_index = NO_PRESET;
+  return result;
+}
+
+/// A preset command: once a read has succeeded the card follows the read-back, not the command.
+HeatingCardCommand command_preset(const HeatingProfile &profile, const HeatingWritePlan &plan,
+                                  const HeatingCardState &prior) {
+  HeatingCardCommand result{.card = prior};
+  result.shown = !prior.observed;
+  if (!result.shown)
+    return result;
+  const HeatingPresetEntry &entry = profile.presets[plan.preset_index];
+  if (!profile.preset_observed.empty()) {
+    // The preset has a register and a table of its own: its value is never a mode value.
+    apply_observed_preset(profile, entry.wire, result.card);
+  } else if (profile.features.mode_observed) {
+    // The read-back uses the same table, so a commanded preset looks like a read one.
+    apply_observed_state(profile, entry.wire, result.card);
+  } else {
+    result.card.preset_index = plan.preset_index;
+    if (entry.id != HeatingPresetId::CUSTOM)
+      result.card.mode = HeatingHvacMode::HEAT;  // every standard alias preset heats
+  }
+  return result;
+}
+
+/// A target command: shown until a read has succeeded.
+HeatingCardCommand command_target(const HeatingWriteRequest &request, const HeatingWritePlan &plan,
+                                  const HeatingCardState &prior) {
+  HeatingCardCommand result{.card = prior};
+  result.shown = !prior.observed;
+  if (!result.shown)
+    return result;
+  result.card.target_c = request.target_c;
+  // A temperature heater's alias preset ends with the explicit setpoint; the settle poll reads it back.
+  if (plan.kind == HeatingPlanKind::TEMPERATURE)
+    result.card.preset_index = NO_PRESET;
+  return result;
+}
+
+}  // namespace
+
+HeatingCardCommand command_heating_card(const HeatingProfile &profile, const HeatingWriteRequest &request,
+                                        const HeatingWritePlan &plan, const HeatingCardState &prior) {
+  switch (request.kind) {
+    case HeatingWriteKind::MODE:
+      return command_mode(profile, request, prior);
+    case HeatingWriteKind::PRESET:
+      return command_preset(profile, plan, prior);
+    case HeatingWriteKind::TARGET:
+      return command_target(request, plan, prior);
+  }
+  return {.card = prior};
+}
+
+HeatingHardwareStatus heating_hardware_status(const HeatingProfile *profile) {
+  if (profile == nullptr || profile->path != HeatingControlPath::PRIVATE_REGISTERS)
+    return HeatingHardwareStatus::UNVALIDATED;
+  return profile->experimental_writes ? HeatingHardwareStatus::WRITES_EXPERIMENTAL : HeatingHardwareStatus::CONFIRMED;
+}
+
 }  // namespace home_io_control
 }  // namespace esphome

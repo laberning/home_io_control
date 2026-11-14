@@ -13,6 +13,10 @@
 /// sends it and reads the register back. This class has no per-device-type branch; the `heating_control`
 /// hub action shares the register send path.
 ///
+/// What the card shows is a HeatingCardState that reduce_heating_card() folds from the readings and
+/// command_heating_card() from an accepted command; the entity holds it in one member and maps it to
+/// ESPHome's fields. It reads no profile control path.
+///
 /// State is observed, not predicted. The hub polls the heater (default every 5 minutes) and this
 /// entity publishes from IoDevice::heating, which only a decoded reply changes. After an accepted
 /// register write the register is read back; after a level write the hub's settle poll reads the
@@ -87,53 +91,16 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   /// @return The profile, or nullptr while the type is unknown.
   [[nodiscard]] const HeatingProfile *profile_() const;
 
-  /// @brief Inbound device-update hook: fold IoDevice::heating into the entity and publish when
+  /// @brief Inbound device-update hook: fold IoDevice::heating into the card and publish when
   /// something it shows changed.
   void on_device_update_(const IoDevice &dev);
 
-  /// @brief Copy the readings into the entity's fields.
-  /// @param profile The device's profile.
-  /// @param readings What the hub has read from the heater.
-  /// @return true when a published field (including the traits' maximum) changed.
-  bool sync_from_readings_(const HeatingProfile &profile, const HeatingReadings &readings);
-
-  /// @brief Fold the temperatures (current, target, maximum) of the readings into the entity.
-  /// @param profile The device's profile.
-  /// @param readings What the hub has read from the heater.
-  /// @param target_c The target the card shows: the comfort setpoint, or the temperature in force while the
-  ///        heater's own programme runs; NaN when none has been read.
-  /// @param[in,out] seen Set when a reading was present.
-  /// @return true when a published field changed.
-  bool sync_temperatures_(const HeatingProfile &profile, const HeatingReadings &readings, float target_c, bool &seen);
-
-  /// @brief Fold the profile's action source (the regulator state, or the working rate) into the entity's
-  /// action.
-  /// @param profile The device's profile.
-  /// @param readings What the hub has read from the heater.
-  /// @param mode_known True when the mode or level has been read (an off heater is then not idle).
-  /// @param[in,out] seen Set when a reading was present.
-  /// @return true when the action changed.
-  bool sync_action_(const HeatingProfile &profile, const HeatingReadings &readings, bool mode_known, bool &seen);
-
-  /// @brief Show a device-reported mode register value or heating level.
-  /// @details Sets the preset too, unless the profile keeps its preset in a register of its own
-  ///          (HeatingProfile::preset_observed), which apply_observed_preset_() shows.
-  /// @param profile The device's profile.
-  /// @param wire Value as the device reports it.
-  /// @return true when the mode or a preset changed; a value the profile does not map changes nothing.
-  bool apply_observed_state_(const HeatingProfile &profile, uint8_t wire);
-
-  /// @brief Show a device-reported value of the profile's preset register (HeatingProfile::preset_fn).
-  /// @param profile The device's profile; one without a preset table changes nothing.
-  /// @param wire Value as the device reports it.
-  /// @return true when the preset changed; a value the profile does not map changes nothing.
-  bool apply_observed_preset_(const HeatingProfile &profile, uint8_t wire);
-
-  /// @brief Show one of the profile's presets, or none.
-  /// @param profile The device's profile.
-  /// @param preset_index Index into the profile's presets, or -1 for "no preset".
-  /// @return true when the shown preset changed.
-  bool show_preset_(const HeatingProfile &profile, int8_t preset_index);
+  /// @brief Show the card state through ESPHome's fields: mode, preset or custom preset, action and
+  /// temperatures.
+  /// @details The one place the card (HeatingCardState, computed by reduce_heating_card() and
+  ///          command_heating_card()) meets ESPHome's types.
+  /// @param profile The device's profile; it names the presets the card's index selects.
+  void show_card_(const HeatingProfile &profile);
 
   /// @brief Plan one request with plan_heating_write() and log why it is no write.
   /// @param profile The device's profile.
@@ -152,23 +119,21 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   /// @brief Apply a standard preset, if present; "none" selects the profile's NONE entry where it has one.
   /// @return true if published.
   bool apply_preset_(const HeatingProfile &profile, const climate::ClimateCall &call);
-  /// @brief Send one preset and show it: the tail both preset paths share.
-  /// @details Plans the request; a preset the device only reports is refused. Until a read has succeeded,
-  ///          a profile whose mode is observed shows the preset through apply_observed_state_(); a
-  ///          temperature profile shows the preset and, for a standard one, mode heat. A register write is
+  /// @brief Send one request and show it: the tail every apply path shares.
+  /// @details Plans the request (a request the device cannot take is refused and logged), hands the plan to
+  ///          the hub and, once the device accepted it, lets command_heating_card() say what the card
+  ///          shows: before a read has succeeded the command, afterwards the read-back. A register write is
   ///          read back.
   /// @return true if the card changed and must be published.
-  bool commit_preset_(const HeatingProfile &profile, const HeatingWriteRequest &request);
+  bool send_and_show_(const HeatingProfile &profile, const HeatingWriteRequest &request);
   /// @brief Apply the target temperature, if present. @return true if published.
   bool apply_target_temperature_(const HeatingProfile &profile, const climate::ClimateCall &call);
 
-  bool observed_{false};                                ///< True once a reading has been folded in.
+  HeatingCardState card_;                               ///< What the card shows; the entity's ESPHome fields follow it.
   bool has_range_{false};                               ///< YAML overrode the temperature encoding range.
   float range_min_c_{HEATING_TEMPERATURE_RANGE_MIN_C};  ///< YAML `min_temperature:`.
   float range_max_c_{HEATING_TEMPERATURE_RANGE_MAX_C};  ///< YAML `max_temperature:`.
-  bool mode_commanded_{false};                   ///< A mode was commanded (matters where nothing reads the mode back).
-  float max_temperature_c_{HEATING_TEMP_MAX_C};  ///< Upper end of the target range (heater's own maximum once read).
-  std::vector<const char *> custom_presets_;     ///< Custom preset names of the profile, registered in setup().
+  std::vector<const char *> custom_presets_;            ///< Custom preset names of the profile, registered in setup().
 };
 
 }  // namespace home_io_control
