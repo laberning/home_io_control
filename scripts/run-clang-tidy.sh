@@ -7,6 +7,19 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$REPO_ROOT"
 
+# Optional CI shard (see "Optional shard" below), checked before the minutes-long compile-database build.
+SHARD_INDEX=""
+SHARD_COUNT=""
+if [ -n "${CLANG_TIDY_SHARD:-}" ]; then
+  if ! [[ "$CLANG_TIDY_SHARD" =~ ^([0-9]+)/([0-9]+)$ ]] || [ "${BASH_REMATCH[1]}" -lt 1 ] ||
+     [ "${BASH_REMATCH[1]}" -gt "${BASH_REMATCH[2]}" ]; then
+    echo "ERROR: CLANG_TIDY_SHARD must be <index>/<count> with 1 <= index <= count, got '$CLANG_TIDY_SHARD'"
+    exit 1
+  fi
+  SHARD_INDEX=${BASH_REMATCH[1]}
+  SHARD_COUNT=${BASH_REMATCH[2]}
+fi
+
 # Config file to build (default: stable test config)
 CONFIG_FILE="${1:-config/tests/test-esp32-esp-idf.yaml}"
 # Container path: host's config/... maps to /config/...
@@ -278,6 +291,29 @@ if [ ${#FILES_ARRAY[@]} -eq 0 ]; then
   exit 1
 fi
 
+# Optional shard: CLANG_TIDY_SHARD=<index>/<count> (index 1-based) keeps every count-th translation unit
+# of the sorted list, starting at index, so <count> parallel CI jobs together analyze every file exactly
+# once. A header is checked by whichever shard holds a translation unit that includes it. Unset (the
+# local default) analyzes everything.
+if [ -n "$SHARD_COUNT" ]; then
+  SHARD_FILES=()
+  for i in "${!FILES_ARRAY[@]}"; do
+    if [ $(( i % SHARD_COUNT + 1 )) -eq "$SHARD_INDEX" ]; then
+      SHARD_FILES+=("${FILES_ARRAY[$i]}")
+    fi
+  done
+  FILES_ARRAY=("${SHARD_FILES[@]}")
+  echo "==> Shard $SHARD_INDEX of $SHARD_COUNT: ${#FILES_ARRAY[@]} translation units"
+  if [ ${#FILES_ARRAY[@]} -eq 0 ]; then
+    echo "Nothing to analyze in this shard (more shards than translation units)."
+    exit 0
+  fi
+fi
+
+# run-clang-tidy takes regexes over the database's files: one anchored alternative per selected file,
+# with every regex metacharacter in the path escaped so a checkout path cannot widen or break the match.
+FILE_REGEX="^($(printf '%s\n' "${FILES_ARRAY[@]}" | sed -e 's/[][\\.*^$+?(){}|]/\\&/g' | paste -sd'|'))$"
+
 HEADER_FILTER='(^|.*/)components/home_io_control/.*'
 JOBS="${CLANG_TIDY_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)}"
 
@@ -321,7 +357,8 @@ if command -v "$RUN_CLANG_TIDY" >/dev/null 2>&1; then
     -header-filter "$HEADER_FILTER" \
     -use-color \
     -quiet \
-    "${CLANG_TIDY_EXTRA[@]}" 2>&1 | filter_tidy_output
+    "${CLANG_TIDY_EXTRA[@]}" \
+    "$FILE_REGEX" 2>&1 | filter_tidy_output
   status=${PIPESTATUS[0]}
   set -e
   if [ "$status" -ne 0 ]; then
