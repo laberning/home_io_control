@@ -2,8 +2,7 @@
 /// @brief Heating and hot water: the register heater's writes and reads, the water heater's reads and writes.
 /// @ingroup hioc_hub
 ///
-/// See heater_controller.h. The poll cadence, the poll bodies and the decoding of a heater's status answer
-/// are not here; the hub reaches this class's public reads and schedule_poll() for them.
+/// See heater_controller.h. The decoding of a heater's status answer is in heater_controller_status.cpp.
 
 #include "heater_controller.h"
 
@@ -135,11 +134,13 @@ static_assert(std::size(DHW_OPERATING_FEATURE_NAMES) == static_cast<size_t>(DhwO
 }  // namespace
 
 HeaterController::HeaterController(const uint8_t *node_id, const bool *initialized, RadioDriver *const *radio,
-                                   DeviceRegistry &registry, ExchangeEngine &engine, HeaterControllerHub hub)
+                                   DeviceRegistry &registry, StatusPollPolicy &poll_policy, ExchangeEngine &engine,
+                                   HeaterControllerHub hub)
     : node_id_(node_id),
       initialized_(initialized),
       radio_(radio),
       registry_(registry),
+      policy_(poll_policy),
       engine_(engine),
       hub_(std::move(hub)) {}
 
@@ -532,6 +533,234 @@ bool HeaterController::set_water_heater_boost(const std::string &device_id, bool
 
 bool HeaterController::set_water_heater_away(const std::string &device_id, bool on) {
   return this->set_dhw_operating_mode_(device_id, DhwOperatingFeature::AWAY, on);
+}
+
+// === Regular polls ===
+
+bool HeaterController::polls(const IoDevice &dev) {
+  return find_heating_profile(dev) != nullptr || has_feature(dev.features, device_feature::WATER_HEATER);
+}
+
+bool HeaterController::poll(const std::string &device_id) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return false;
+  // A heater with private registers has no 0x03 status: its state is a handful of registers.
+  const HeatingProfile *heating = find_heating_profile(*dev);
+  if (heating != nullptr && heating->path == HeatingControlPath::PRIVATE_REGISTERS)
+    return this->poll_registers_(device_id);
+  // A water heater answers a status read for its target, and keeps the rest in family-0x00 registers.
+  if (has_feature(dev->features, device_feature::WATER_HEATER))
+    return this->poll_dhw_(device_id);
+  // A heating-level or temperature heater is polled with the ordinary status read.
+  if (heating != nullptr)
+    return this->poll_status_read_(device_id);
+  return false;
+}
+
+void HeaterController::check_heater_model(const std::string &device_id, uint8_t max_tries) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr || dev->model_checked || dev->model_check_attempts >= decisions::HEATER_MODEL_CHECK_MAX_RUNS ||
+      !device_offers_models(dev->type, dev->subtype))
+    return;
+  dev->model_check_attempts++;
+
+  IoFrame name_reply;
+  const bool name_read = this->read_private_register(device_id, HEATING_REGISTER_HIGH_BYTE, HEATING_REGISTER_MODEL_NAME,
+                                                     "model_name", name_reply, max_tries);
+
+  // A towel dryer's poll has already read its mode register; any other heater is asked once here.
+  dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return;
+  bool mode_answered = dev->heating.towel_mode >= 0;
+  bool mode_has_value = mode_answered;
+  uint8_t mode_register = 0;
+  if (!mode_answered && heating_function_register(HeatingFunction::TOWEL_MODE, mode_register)) {
+    IoFrame mode_reply;
+    mode_answered = this->read_private_register(device_id, HEATING_REGISTER_HIGH_BYTE, mode_register, "towel_mode",
+                                                mode_reply, max_tries);
+    mode_has_value = mode_answered && mode_reply.data_len > HEATING_REPLY_VALUE_OFFSET;
+  }
+  // Report only from a run in which both reads were answered; otherwise the next poll tries again.
+  if (!name_read || !mode_answered)
+    return;
+  dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return;
+  dev->model_checked = true;
+
+  const std::string name = decisions::format_heater_model_name(name_reply.data + HEATING_REPLY_VALUE_OFFSET,
+                                                               name_reply.data_len - HEATING_REPLY_VALUE_OFFSET);
+  ESP_LOGI(detail::TAG, "Device %s reports model name \"%s\"", device_id.c_str(),
+           name.empty() ? "(none)" : name.c_str());
+
+  const DeviceTypeInfo *towel = find_device_model_info(dev->type, dev->subtype, DeviceModel::TOWEL_DRYER);
+  const char *towel_name = towel != nullptr ? towel->name : "towel_dryer";
+  switch (decisions::classify_heater_model_hint(dev->model, mode_has_value)) {
+    case decisions::HeaterModelHint::LOOKS_LIKE_RADIATOR:
+      ESP_LOGW(detail::TAG,
+               "Device %s is declared with io_model: %s, but it holds no towel-dryer mode (register 0x0136 is "
+               "empty): it looks like a radiator. Remove io_model: from its climate entry",
+               device_id.c_str(), towel_name);
+      break;
+    case decisions::HeaterModelHint::LOOKS_LIKE_TOWEL_DRYER:
+      ESP_LOGW(detail::TAG,
+               "Device %s holds a towel-dryer mode (register 0x0136): it looks like a towel dryer. Set "
+               "io_model: %s on its climate entry for its modes, Boost and Drying",
+               device_id.c_str(), towel_name);
+      break;
+    case decisions::HeaterModelHint::NONE:
+      break;
+  }
+}
+
+void HeaterController::poll_programme_period_(const std::string &device_id, const HeatingProfile &profile,
+                                              uint8_t max_tries) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr || !programme_period_active(profile, dev->heating))
+    return;
+  const HeatingProgrammePeriod &period = *profile.programme_period;
+  if (!this->read_heating_register(device_id, period.in_force_fn, nullptr, max_tries))
+    return;
+  // A temperature that fits neither period means the eco setback is not what the heater holds now (it was
+  // changed on the display): forget it, so the boot registers read it again.
+  IoDevice *updated = this->registry_.get(device_id);
+  if (updated != nullptr && resolve_programme_period(profile, updated->heating).preset_index < 0)
+    updated->heating.clear(period.setback_fn);
+}
+
+bool HeaterController::poll_registers_(const std::string &device_id) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return false;
+  // The registers one poll reads come from the device's profile, so there is no per-device list here.
+  const HeatingProfile *profile = find_heating_profile(*dev);
+  if (profile == nullptr || profile->path != HeatingControlPath::PRIVATE_REGISTERS)
+    return false;
+
+  return this->run_poll_(device_id, PollLadder::RUN_BY_POLL, [this, &device_id, profile](uint8_t max_tries) {
+    return this->read_poll_registers_(device_id, *profile, max_tries);
+  });
+}
+
+bool HeaterController::read_poll_registers_(const std::string &device_id, const HeatingProfile &profile,
+                                            uint8_t max_tries) {
+  bool ok = true;
+  size_t answered = 0;
+  for (const HeatingFunction fn : profile.poll_registers) {
+    if (!this->read_heating_register(device_id, fn, nullptr, max_tries)) {
+      ok = false;
+      break;
+    }
+    answered++;
+  }
+
+  // The temperature in force is read only while the heater's own programme runs: outside it the register
+  // holds no temperature, and the card needs no read.
+  if (ok && profile.programme_period != nullptr)
+    this->poll_programme_period_(device_id, profile, max_tries);
+
+  // A part the heater may not have (a night light): read every poll once the core registers answered,
+  // and a miss is not a poll failure (the next poll asks again).
+  for (const HeatingFunction fn : profile.extra_poll_registers) {
+    if (!ok)
+      break;
+    this->read_heating_register(device_id, fn, nullptr, max_tries);
+  }
+
+  // Properties and settings that rarely change are read until they have been read once. A miss here
+  // is not a poll failure; the next poll asks again.
+  for (const HeatingFunction fn : profile.boot_registers) {
+    if (!ok)
+      break;
+    const IoDevice *current = this->registry_.get(device_id);
+    if (current != nullptr && !current->heating.has(fn))
+      this->read_heating_register(device_id, fn, nullptr, max_tries);
+  }
+
+  // Once the device has answered a read: the one-off model check. It runs even when a later register of
+  // the poll failed, because a towel dryer declared on a radiator fails exactly there (its mode register
+  // holds no value) and is what the check exists to point out.
+  if (answered > 0)
+    this->check_heater_model(device_id, max_tries);
+  return ok;
+}
+
+// === Poll cadence ===
+
+bool HeaterController::run_poll_(const std::string &device_id, PollLadder ladder, const PollBody &body) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return false;  // no longer registered: no timer either
+
+  bool ok = false;
+  if (*this->initialized_) {
+    // The failure ladder lives in StatusPollPolicy and only runs inside a tracking window. Open one
+    // unless one is already running: begin_tracking() resets the failure counters, which would flatten
+    // the ladder to its first step on every retry.
+    if (!this->policy_.is_tracking_active(device_id, millis()))
+      this->policy_.begin_tracking(device_id, 0, millis());
+
+    // A poll always runs inside a tracking window, so the ladder is its retry mechanism: the heater
+    // try band (decisions::scheduled_poll_max_tries()), not a cover's settling plan.
+    const uint8_t max_tries = decisions::scheduled_poll_max_tries(this->policy_.get_status_poll_failures(device_id),
+                                                                  this->policy_.get_auth_poll_failures(device_id));
+    ok = body(max_tries);
+    if (ladder == PollLadder::RUN_BY_POLL) {
+      if (ok) {
+        this->policy_.clear(device_id);
+      } else {
+        this->hub_.poll_backoff(device_id, this->engine_.get_debug().saw_challenge);
+      }
+    }
+  }
+  // The regular cadence continues whatever this poll found, or whether it could run at all; a failed
+  // poll is additionally retried sooner by the ladder above.
+  this->schedule_poll(device_id, heater_poll_interval_ms(this->policy_.get_interval(device_id)));
+  return ok;
+}
+
+bool HeaterController::poll_status_read_(const std::string &device_id) {
+  // The status read's own failure ladder (execute_request_and_update_()) is the retry, so the poll
+  // leaves the ladder to the body.
+  return this->run_poll_(device_id, PollLadder::RUN_BY_BODY, [this, &device_id](uint8_t max_tries) {
+    const IoDevice *current = this->registry_.get(device_id);
+    IoFrame request;
+    // The generic status request: no heater row carries TILT, so the cover's tilt variant never applies.
+    if (current == nullptr || !create_get_status(request, this->node_id_, current->node_id, current->low_power))
+      return false;
+    return this->hub_.status_read(device_id, request, STATUS_RETRY_AFTER_FAIL_MS, max_tries);
+  });
+}
+
+// === Water heater poll ===
+
+namespace {
+
+/// The registers every water heater poll reads, after the status read, in this order.
+constexpr uint8_t DHW_POLL_REGISTERS[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,          DHW_REG_HEATING,
+                                          DHW_REG_BOOST_DURATION,    DHW_REG_AWAY_DURATION, DHW_REG_ENERGY};
+
+}  // namespace
+
+bool HeaterController::poll_dhw_(const std::string &device_id) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr || !has_feature(dev->features, device_feature::WATER_HEATER))
+    return false;
+
+  return this->run_poll_(device_id, PollLadder::RUN_BY_POLL, [this, &device_id](uint8_t max_tries) {
+    bool ok = this->read_dhw_status(device_id, max_tries);
+
+    for (size_t i = 0; ok && i < sizeof(DHW_POLL_REGISTERS); i++)
+      ok = this->read_dhw_reading(device_id, DHW_POLL_REGISTERS[i], max_tries);
+
+    // The brand never changes: read until it has been read once. A miss is not a poll failure.
+    const IoDevice *current = this->registry_.get(device_id);
+    if (ok && current != nullptr && current->dhw.brand < 0)
+      this->read_dhw_reading(device_id, DHW_REG_BRAND, max_tries);
+    return ok;
+  });
 }
 
 }  // namespace home_io_control

@@ -27,7 +27,6 @@ class TestableComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::initialized_;
   using IOHomeControlComponent::node_id_;
-  using IOHomeControlComponent::poll_dhw_device_;
   using IOHomeControlComponent::poll_policy_;
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::heater_controller_;
@@ -267,7 +266,6 @@ TEST(HubDhw, AWaterHeaterDeclaredOnAnotherPlatformGetsNoneOfIt) {
   EXPECT_FALSE(has_feature(dev->features, device_feature::WATER_HEATER));
 
   EXPECT_FALSE(comp.request_device_status("ABC123"));
-  EXPECT_FALSE(comp.poll_dhw_device_("ABC123"));
   EXPECT_FALSE(comp.set_water_heater_target("ABC123", 54.0F));
   EXPECT_FALSE(comp.set_water_heater_mode("ABC123", DhwMode::AUTO));
   EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
@@ -281,7 +279,6 @@ TEST(HubDhw, ARadiatorAndACoverAreNeverSentAFamilyZeroFrame) {
     TestableComponent comp;
     MockRadio radio;
     make_device(comp, radio, type, DeviceCapabilityClass::UNKNOWN, type == DeviceType::ELECTRICAL_HEATER ? 1 : 0);
-    EXPECT_FALSE(comp.poll_dhw_device_("ABC123"));
     EXPECT_FALSE(comp.set_water_heater_target("ABC123", 54.0F));
     EXPECT_FALSE(comp.set_water_heater_mode("ABC123", DhwMode::AUTO));
     EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
@@ -289,27 +286,6 @@ TEST(HubDhw, ARadiatorAndACoverAreNeverSentAFamilyZeroFrame) {
     EXPECT_FALSE(comp.heater_controller_.read_dhw_register("ABC123", DHW_REG_MODE, "dhw_mode", response, 1));
     EXPECT_TRUE(radio.get_sent_data().empty()) << static_cast<unsigned>(type);
   }
-}
-
-TEST(HubDhw, AWaterHeaterPollBeforeTheHubIsInitialisedStillArmsTheNextPoll) {
-  TestableComponent comp;
-  MockRadio radio;
-  const IoDevice *dev = make_water_heater(comp, radio);
-  comp.initialized_ = false;
-
-  EXPECT_FALSE(comp.poll_dhw_device_("ABC123"));
-  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
-  EXPECT_EQ(comp.last_timeout_ms_, HEATING_POLL_DEFAULT_INTERVAL_MS);
-  EXPECT_TRUE(radio.get_sent_data().empty());
-}
-
-TEST(HubDhw, AWaterHeaterPollOfAnUnregisteredDeviceArmsNoTimer) {
-  TestableComponent comp;
-  MockRadio radio;
-  make_water_heater(comp, radio);
-
-  EXPECT_FALSE(comp.poll_dhw_device_("DEF456"));
-  EXPECT_EQ(comp.last_timeout_id_, 0u);
 }
 
 // === Writes ===

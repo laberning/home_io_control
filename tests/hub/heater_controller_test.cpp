@@ -13,6 +13,7 @@
 #include "proto_heating.h"
 
 #include "heater_controller_fixture.h"
+#include "heating_test_data.h"
 
 #include <cmath>
 #include <functional>
@@ -47,9 +48,7 @@ IoDevice *make_water_heater(HeaterControllerFixture &fx) {
 
 IoDevice *make_cover(HeaterControllerFixture &fx) { return fx.add_device_of_kind(DeviceType::ROLLER_SHUTTER); }
 
-/// The model name an Atlantic Adelis reports in register 0x0119 (corpus atlantic_adelis_probe_register_01_sweep).
-const std::vector<uint8_t> ADELIS_NAME_REPLY = {0x0C, 0x60, 0x01, 0x19, 'A', 'D', 'E', 'L', 'I',
-                                                'S',  ' ',  '2',  ' ',  'D', 'I', 'G', 'I', 'T'};
+using heating_test_data::ADELIS_NAME_REPLY;
 
 /// Run send_heating_command against an electrical heater with an adjustable setpoint with a single reply frame
 /// (`cmd` and `payload`) queued as the device's answer.
@@ -58,6 +57,19 @@ bool run_heating_command_with_reply(uint8_t cmd, const std::vector<uint8_t> &pay
   make_heater(fx);
   fx.queue_reply(cmd, payload);
   return fx.controller.send_heating_command("ABC123", HeatingFunction::POWER_ON, 0.0F);
+}
+
+/// Register low byte of a sent CMD_WRITE_PRIVATE frame (payload `0C <dir> 01 <reg>` starts at offset 9).
+uint8_t sent_register(const std::vector<uint8_t> &tx) { return tx.at(12); }
+
+/// Queue the replies of one answered register-heater poll of the radiator (the five core registers).
+void queue_radiator_poll(HeaterControllerFixture &fx, uint8_t room_hi, uint8_t room_lo, uint8_t regulator,
+                         uint8_t window) {
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, room_hi, room_lo});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x00, 0x01});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x17, regulator});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x0E, window});
 }
 
 /// The payload bytes (from wire offset 9) of a sent frame.
@@ -538,4 +550,332 @@ TEST(HeaterController, ADhwStatusReadAsksForTheMainParameterAndFp15AndFp16) {
   EXPECT_FALSE(fx.controller.read_dhw_status("ABC123", 2));
   EXPECT_FALSE(fx.controller.read_dhw_status("DEF456", 2)) << "an unknown device is never asked";
   EXPECT_EQ(fx.status_reads.size(), 2u);
+}
+
+// === Regular polls ===
+
+TEST(HeaterController, PollsIsTrueForARegisterHeaterAWaterHeaterAndAStatusReadHeaterOnly) {
+  HeaterControllerFixture radiator;
+  EXPECT_TRUE(HeaterController::polls(*make_heater(radiator)));
+  HeaterControllerFixture water;
+  EXPECT_TRUE(HeaterController::polls(*make_water_heater(water)));
+  for (const DeviceType type : {DeviceType::HEATING_TEMPERATURE_INTERFACE, DeviceType::HEAT_PUMP}) {
+    HeaterControllerFixture fx;
+    EXPECT_TRUE(HeaterController::polls(*fx.add_device_of_kind(type))) << static_cast<unsigned>(type);
+  }
+  HeaterControllerFixture level;
+  EXPECT_TRUE(HeaterController::polls(*level.add_device_of_kind(DeviceType::ELECTRICAL_HEATER, 0)));
+  HeaterControllerFixture cover;
+  EXPECT_FALSE(HeaterController::polls(*make_cover(cover)));
+}
+
+TEST(HeaterController, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnce) {
+  HeaterControllerFixture fx;
+  auto *dev = make_heater(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});  // 20.75 C
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});  // 19.5 C
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x00, 0x01});        // manual
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x17, 0x02});        // heating
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x0E, 0x01});        // window open
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x02, 0x18, 0x01});  // 28.0 C
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x06, 0x01});        // detection on
+  // The one-off model check: a model name (synthetic), and the towel-dryer mode register answered empty.
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x19, 'R', 'A', 'D', 'I', 'A', 'T'});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x36});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123")) << "a heater is polled over its registers, not with 0x03";
+
+  ASSERT_EQ(fx.radio.get_sent_data().size(), 9u);
+  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x02, 0x06, 0x19, 0x36};
+  for (size_t i = 0; i < 9; i++)
+    EXPECT_EQ(sent_register(fx.radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
+  EXPECT_TRUE(dev->model_checked) << "both model-check reads were answered";
+  EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 20.75F);
+  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.5F);
+  EXPECT_EQ(dev->heating.mode, 1);
+  EXPECT_EQ(dev->heating.regulator, 2);
+  EXPECT_EQ(dev->heating.window_open, 1);
+  EXPECT_FLOAT_EQ(dev->heating.max_setpoint_c, 28.0F);
+  EXPECT_EQ(dev->heating.open_window_detection, 1);
+  EXPECT_FALSE(fx.poll_policy.is_tracking_active("ABC123", esphome::millis())) << "a good poll closes its retry window";
+
+  // The maximum, the detection setting and the model check run once: the next poll asks for the five
+  // registers only.
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_radiator_poll(fx, 0x59, 0x06, 0x01, 0x00);
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(fx.radio.get_sent_data().size() - sent_before, 5u);
+  EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 16.25F);
+  EXPECT_EQ(dev->heating.window_open, 0);
+}
+
+TEST(HeaterController, HeaterPollStopsAtTheFirstFailureAndBacksOff) {
+  HeaterControllerFixture fx;
+  auto *dev = make_heater(fx);
+  // Nothing queued: the first register never answers.
+
+  EXPECT_FALSE(fx.controller.poll("ABC123"));
+
+  ASSERT_FALSE(fx.radio.get_sent_data().empty());
+  for (const auto &tx : fx.radio.get_sent_data())
+    EXPECT_EQ(sent_register(tx), 0x15) << "only the first register is asked for (retries of it)";
+  EXPECT_LE(fx.radio.get_sent_data().size(), SCHEDULED_POLL_MAX_TRIES)
+      << "a background poll is held to the scheduled-poll band; the ladder is its retry";
+  EXPECT_EQ(fx.poll_policy.get_status_poll_failures("ABC123"), 1u) << "the failure moves onto the retry ladder";
+  EXPECT_NE(fx.poll_policy.get_next_update("ABC123"), 0u) << "and a retry is scheduled";
+  EXPECT_TRUE(std::isnan(dev->heating.setpoint_c));
+  ASSERT_EQ(fx.backoffs.size(), 1u);
+  EXPECT_EQ(fx.backoffs[0].first, "ABC123");
+  EXPECT_FALSE(fx.backoffs[0].second) << "no challenge was seen, so the failure is not auth-like";
+}
+
+TEST(HeaterController, ASucceededRegisterHeaterPollClearsTheLadderAndArmsTheNextPollAtTheConfiguredInterval) {
+  HeaterControllerFixture fx;
+  const IoDevice *dev = make_heater(fx);
+  fx.poll_policy.set_interval("ABC123", 120000);
+  queue_radiator_poll(fx, 0x1B, 0x08, 0x02, 0x01);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+
+  EXPECT_TRUE(fx.backoffs.empty());
+  ASSERT_FALSE(fx.timers.empty());
+  EXPECT_EQ(fx.timers.back().id, decisions::heating_poll_timer_id(dev->node_id));
+  EXPECT_EQ(fx.timers.back().delay_ms, 120000u) << "the configured interval, not the default";
+}
+
+TEST(HeaterController, ARegisterHeaterPollBeforeTheHubIsInitialisedSendsNothingAndStillArmsTheNextPoll) {
+  HeaterControllerFixture fx;
+  const IoDevice *dev = make_heater(fx);
+  fx.initialized = false;
+
+  EXPECT_FALSE(fx.controller.poll("ABC123"));
+
+  ASSERT_EQ(fx.timers.size(), 1u);
+  EXPECT_EQ(fx.timers[0].id, decisions::heating_poll_timer_id(dev->node_id));
+  EXPECT_EQ(fx.timers[0].delay_ms, HEATING_POLL_DEFAULT_INTERVAL_MS);
+  EXPECT_TRUE(fx.radio.get_sent_data().empty());
+  EXPECT_TRUE(fx.backoffs.empty());
+}
+
+TEST(HeaterController, ARegisterHeaterPollOfAnUnregisteredDeviceArmsNoTimer) {
+  HeaterControllerFixture fx;
+  make_heater(fx);
+
+  EXPECT_FALSE(fx.controller.poll("DEF456"));
+  EXPECT_TRUE(fx.timers.empty());
+}
+
+TEST(HeaterController, TheModelCheckRunsABoundedNumberOfTimesAndOnlyOnAKindWithModels) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_heater(fx);
+  // Nothing answers: each run asks for the name and the mode register once.
+  for (uint8_t run = 0; run < decisions::HEATER_MODEL_CHECK_MAX_RUNS + 1; run++)
+    fx.controller.check_heater_model("ABC123", 1);
+  EXPECT_EQ(fx.radio.get_sent_data().size(), 2u * decisions::HEATER_MODEL_CHECK_MAX_RUNS);
+  EXPECT_FALSE(dev->model_checked);
+
+  HeaterControllerFixture plain;
+  IoDevice *plain_dev = make_heater(plain);
+  test::set_kind(*plain_dev, DeviceType::ELECTRICAL_HEATER, 0);
+  plain.controller.check_heater_model("ABC123", 1);
+  EXPECT_TRUE(plain.radio.get_sent_data().empty()) << "52/0 has no model rows";
+}
+
+TEST(HeaterController, ALevelAndATemperatureHeaterArePolledWithTheGenericStatusReadAndNoRegisterFrame) {
+  for (const auto &kind :
+       {std::make_pair(DeviceType::ELECTRICAL_HEATER, 0), std::make_pair(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0),
+        std::make_pair(DeviceType::HEAT_PUMP, 0)}) {
+    HeaterControllerFixture fx;
+    const IoDevice *dev = fx.add_device_of_kind(kind.first, static_cast<uint8_t>(kind.second));
+    fx.poll_policy.set_interval("ABC123", 90000);
+
+    EXPECT_TRUE(fx.controller.poll("ABC123"));
+
+    EXPECT_TRUE(fx.radio.get_sent_data().empty())
+        << "no CMD_WRITE_PRIVATE frame for a heater with the standard EXECUTE";
+    ASSERT_EQ(fx.status_reads.size(), 1u);
+    IoFrame expected;
+    ASSERT_TRUE(create_get_status(expected, fx.node_id, dev->node_id, dev->low_power));
+    EXPECT_EQ(fx.status_reads[0].request.cmd, expected.cmd);
+    EXPECT_EQ(fx.status_reads[0].request.data_len, expected.data_len) << "the generic request, never the tilt one";
+    EXPECT_EQ(fx.status_reads[0].retry_after_fail_ms, STATUS_RETRY_AFTER_FAIL_MS);
+    EXPECT_EQ(fx.timers.back().delay_ms, 90000u);
+  }
+}
+
+TEST(HeaterController, AFailedStatusReadPollLeavesTheLadderToTheStatusRead) {
+  HeaterControllerFixture fx;
+  fx.add_device_of_kind(DeviceType::ELECTRICAL_HEATER, 0);
+  fx.status_read_result = false;
+
+  EXPECT_FALSE(fx.controller.poll("ABC123"));
+
+  EXPECT_TRUE(fx.backoffs.empty()) << "the status read runs its own failure ladder";
+  ASSERT_EQ(fx.timers.size(), 1u) << "the cadence continues";
+}
+
+TEST(HeaterController, ADeviceThatIsNoHeaterIsNotPolledAndArmsNoTimer) {
+  HeaterControllerFixture fx;
+  make_cover(fx);
+
+  EXPECT_FALSE(fx.controller.poll("ABC123"));
+
+  EXPECT_TRUE(fx.radio.get_sent_data().empty());
+  EXPECT_TRUE(fx.status_reads.empty());
+  EXPECT_TRUE(fx.timers.empty());
+}
+
+TEST(HeaterController, AWaterHeaterPollReadsTheStatusThenTheRegistersThenTheBrandOnce) {
+  HeaterControllerFixture fx;
+  make_water_heater(fx);
+  const auto queue_poll = [&fx](bool with_brand) {
+    const uint8_t registers[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,          DHW_REG_HEATING,
+                                 DHW_REG_BOOST_DURATION,    DHW_REG_AWAY_DURATION, DHW_REG_ENERGY};
+    const std::vector<std::vector<uint8_t>> values = {{0x02, 0x45, 0x00, 0x5C, 0x02, 0x78},
+                                                      {0x01},
+                                                      {0x01, 0xFF, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00},
+                                                      {0x01},
+                                                      {0x00},
+                                                      {0x00, 0x1B, 0xF3, 0x42}};
+    for (size_t i = 0; i < std::size(registers); i++) {
+      std::vector<uint8_t> payload = {0x0C, 0x60, 0x00, registers[i]};
+      payload.insert(payload.end(), values[i].begin(), values[i].end());
+      fx.queue_register_ack(payload);
+    }
+    if (with_brand)
+      fx.queue_register_ack({0x0C, 0x60, 0x00, DHW_REG_BRAND, 0x41});
+  };
+  queue_poll(true);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+
+  ASSERT_EQ(fx.status_reads.size(), 1u) << "the status read comes first";
+  const auto &sent = fx.radio.get_sent_data();
+  ASSERT_EQ(sent.size(), 7u);
+  const uint8_t expected[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,   DHW_REG_HEATING, DHW_REG_BOOST_DURATION,
+                              DHW_REG_AWAY_DURATION,     DHW_REG_ENERGY, DHW_REG_BRAND};
+  for (size_t i = 0; i < std::size(expected); i++)
+    EXPECT_EQ(sent_register(sent[i]), expected[i]) << i;
+  EXPECT_EQ(fx.registry.get("ABC123")->dhw.brand, 'A');
+  EXPECT_FALSE(fx.poll_policy.is_tracking_active("ABC123", esphome::millis())) << "a good poll closes its window";
+  EXPECT_EQ(fx.timers.back().delay_ms, HEATING_POLL_DEFAULT_INTERVAL_MS);
+
+  // The brand is read once: the next poll asks for the six registers only.
+  const size_t before = sent.size();
+  queue_poll(false);
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(fx.radio.get_sent_data().size() - before, 6u);
+}
+
+TEST(HeaterController, AnUnansweredWaterHeaterStatusReadFailsThePollAndMovesItOntoTheLadder) {
+  HeaterControllerFixture fx;
+  make_water_heater(fx);
+  fx.status_read_result = false;
+
+  EXPECT_FALSE(fx.controller.poll("ABC123"));
+
+  EXPECT_TRUE(fx.radio.get_sent_data().empty()) << "no register is read after a failed status read";
+  ASSERT_EQ(fx.backoffs.size(), 1u);
+  EXPECT_EQ(fx.poll_policy.get_status_poll_failures("ABC123"), 1u);
+  EXPECT_EQ(fx.timers.size(), 1u);
+}
+
+TEST(HeaterController, AWaterHeaterPollBeforeTheHubIsInitialisedStillArmsTheNextPoll) {
+  HeaterControllerFixture fx;
+  const IoDevice *dev = make_water_heater(fx);
+  fx.initialized = false;
+
+  EXPECT_FALSE(fx.controller.poll("ABC123"));
+
+  ASSERT_EQ(fx.timers.size(), 1u);
+  EXPECT_EQ(fx.timers[0].id, decisions::heating_poll_timer_id(dev->node_id));
+  EXPECT_EQ(fx.timers[0].delay_ms, HEATING_POLL_DEFAULT_INTERVAL_MS);
+  EXPECT_TRUE(fx.radio.get_sent_data().empty());
+}
+
+TEST(HeaterController, AWaterHeaterPollOfAnUnregisteredDeviceArmsNoTimer) {
+  HeaterControllerFixture fx;
+  make_water_heater(fx);
+
+  EXPECT_FALSE(fx.controller.poll("DEF456"));
+  EXPECT_TRUE(fx.timers.empty());
+}
+
+// === Decoding a status answer ===
+
+TEST(HeaterStatusDecoding, ALevelHeaterKeepsTheLevelTheReplyCarries) {
+  IoDevice dev;
+  test::set_kind(dev, DeviceType::ELECTRICAL_HEATER, 0);
+
+  apply_heating_main_parameter("ABC123", dev, heating_level_main_parameter(heating_level::ECO));
+
+  EXPECT_EQ(dev.heating.level, heating_level::ECO);
+  EXPECT_EQ(dev.heating.main_parameter, heating_level_main_parameter(heating_level::ECO));
+}
+
+TEST(HeaterStatusDecoding, ATemperatureHeaterKeepsTheSetpointAndClearsAStaleAlias) {
+  IoDevice dev;
+  test::set_kind(dev, DeviceType::HEAT_PUMP, 0);
+  dev.heating.level = 3;
+  uint16_t mp = 0;
+  ASSERT_TRUE(encode_temperature_main_parameter(21.0F, dev.temperature_range_min_c, dev.temperature_range_max_c, mp));
+
+  apply_heating_main_parameter("ABC123", dev, mp);
+
+  EXPECT_NEAR(dev.heating.setpoint_c, 21.0F, 0.1F);
+  EXPECT_EQ(dev.heating.level, -1) << "a plain temperature clears a stale alias";
+  EXPECT_EQ(dev.heating.main_parameter, mp);
+}
+
+TEST(HeaterStatusDecoding, ARegisterHeaterAndADeviceWithoutAProfileAreLeftAlone) {
+  IoDevice radiator;
+  test::set_kind(radiator, DeviceType::ELECTRICAL_HEATER, 1);
+  apply_heating_main_parameter("ABC123", radiator, 0x1234);
+  EXPECT_EQ(radiator.heating.main_parameter, -1);
+
+  IoDevice cover;
+  test::set_kind(cover, DeviceType::ROLLER_SHUTTER, 0);
+  apply_heating_main_parameter("ABC123", cover, 0x1234);
+  EXPECT_EQ(cover.heating.main_parameter, -1);
+}
+
+TEST(HeaterStatusDecoding, AWaterHeaterStatusReplyGivesTheTargetCapabilitiesAndBoostAndAway) {
+  IoDevice dev;
+  test::set_kind(dev, DeviceType::DOMESTIC_HOT_WATER, 0);
+  IoFrame frame{};
+  const uint8_t payload[] = {0x05,
+                             0x00,
+                             0xA1,
+                             0xE8,
+                             DHW_STATUS_FPI1,
+                             DHW_STATUS_FPI2,
+                             0x00,
+                             0x00,
+                             static_cast<uint8_t>(DHW_CAPABILITY_BOOST >> 8U),
+                             static_cast<uint8_t>(DHW_CAPABILITY_BOOST),
+                             static_cast<uint8_t>(DHW_OPERATING_MODE_BOOST_ON >> 8U),
+                             static_cast<uint8_t>(DHW_OPERATING_MODE_BOOST_ON)};
+  set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload));
+
+  apply_dhw_status_reply("ABC123", dev, frame, true);
+
+  EXPECT_FLOAT_EQ(dev.dhw.target_c, 54.0F);
+  EXPECT_EQ(dev.dhw.capabilities, DHW_CAPABILITY_BOOST);
+  EXPECT_EQ(dev.dhw.boost, 1);
+  EXPECT_EQ(dev.dhw.away, 0);
+}
+
+TEST(HeaterStatusDecoding, TheAckOfAnExecuteIsNotDecodedAndANonTemperatureLeavesTheTargetUnknown) {
+  IoDevice dev;
+  test::set_kind(dev, DeviceType::DOMESTIC_HOT_WATER, 0);
+  dev.dhw.target_c = 54.0F;
+  IoFrame frame{};
+  const uint8_t payload[] = {0x2D, 0x00, 0xD8, 0x12, 0x00, 0x00};
+  set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload));
+
+  apply_dhw_status_reply("ABC123", dev, frame, false);
+  EXPECT_FLOAT_EQ(dev.dhw.target_c, 54.0F) << "an EXECUTE ack echoes the request and carries no report";
+
+  apply_dhw_status_reply("ABC123", dev, frame, true);
+  EXPECT_TRUE(std::isnan(dev.dhw.target_c)) << "an alias is not a target temperature";
 }

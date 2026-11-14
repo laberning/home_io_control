@@ -6,6 +6,7 @@
 #include "proto_frame.h"
 #include "proto_commands.h"
 
+#include "heating_test_data.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
@@ -43,8 +44,6 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::op_queue_;
   using IOHomeControlComponent::busy_;
   using IOHomeControlComponent::poll_policy_;
-  using IOHomeControlComponent::poll_heating_device_;
-  using IOHomeControlComponent::check_heater_model_;
   using IOHomeControlComponent::schedule_status_poll_;
   using IOHomeControlComponent::tuning_;
 };
@@ -385,76 +384,6 @@ TEST(HubOperations, ADeviceEventDuringAHeatingRegisterReadIsRecordedAndTheReadAn
   EXPECT_EQ(dev->exchange_timeout_count, 0u);
 }
 
-TEST(HubOperations, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnce) {
-  TestableComponent comp;
-  MockRadio radio;
-  auto *dev = make_heater(comp, radio);
-  radio.queue_rx(
-      test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08})));  // 20.75 C
-  radio.queue_rx(
-      test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00})));       // 19.5 C
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x00, 0x01})));  // manual
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x17, 0x02})));  // heating
-  radio.queue_rx(
-      test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x0E, 0x01})));  // window open
-  radio.queue_rx(
-      test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01})));  // 28.0 C
-  radio.queue_rx(
-      test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x06, 0x01})));  // detection on
-  // The one-off model check: a model name (synthetic), and the towel-dryer mode register answered empty.
-  radio.queue_rx(
-      test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x19, 'R', 'A', 'D', 'I', 'A', 'T'})));
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x36})));
-
-  EXPECT_TRUE(comp.request_device_status("ABC123")) << "a heater is polled over its registers, not with 0x03";
-
-  ASSERT_EQ(radio.get_sent_data().size(), 9u);
-  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x02, 0x06, 0x19, 0x36};
-  for (size_t i = 0; i < 9; i++)
-    EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
-  EXPECT_TRUE(dev->model_checked) << "both model-check reads were answered";
-  EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 20.75F);
-  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.5F);
-  EXPECT_EQ(dev->heating.mode, 1);
-  EXPECT_EQ(dev->heating.regulator, 2);
-  EXPECT_EQ(dev->heating.window_open, 1);
-  EXPECT_FLOAT_EQ(dev->heating.max_setpoint_c, 28.0F);
-  EXPECT_EQ(dev->heating.open_window_detection, 1);
-  EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()))
-      << "a good poll closes its retry window";
-
-  // The maximum, the detection setting and the model check run once: the next poll asks for the five
-  // registers only.
-  const size_t sent_before = radio.get_sent_data().size();
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x59, 0x06})));
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00})));
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x00, 0x01})));
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x17, 0x01})));
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x0E, 0x00})));
-  EXPECT_TRUE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(radio.get_sent_data().size() - sent_before, 5u);
-  EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 16.25F);
-  EXPECT_EQ(dev->heating.window_open, 0);
-}
-
-TEST(HubOperations, HeaterPollStopsAtTheFirstFailureAndBacksOff) {
-  TestableComponent comp;
-  MockRadio radio;
-  auto *dev = make_heater(comp, radio);
-  // Nothing queued: the first register never answers.
-
-  EXPECT_FALSE(comp.request_device_status("ABC123"));
-
-  ASSERT_FALSE(radio.get_sent_data().empty());
-  for (const auto &tx : radio.get_sent_data())
-    EXPECT_EQ(sent_register(tx), 0x15) << "only the first register is asked for (retries of it)";
-  EXPECT_LE(radio.get_sent_data().size(), SCHEDULED_POLL_MAX_TRIES)
-      << "a background poll is held to the scheduled-poll band; the ladder is its retry";
-  EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u) << "the failure moves onto the retry ladder";
-  EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u) << "and a retry is scheduled";
-  EXPECT_TRUE(std::isnan(dev->heating.setpoint_c));
-}
-
 TEST(HubOperations, HeaterCadenceTimerHasItsOwnIdAndARemotePollDoesNotCancelIt) {
   const uint8_t node[3] = {0xAB, 0xC1, 0x23};
   EXPECT_NE(decisions::heating_poll_timer_id(node), decisions::remote_poll_timer_id(node));
@@ -484,32 +413,6 @@ TEST(HubOperations, ARegisterHeaterPollBeforeTheHubIsInitialisedStillArmsTheNext
   EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
   EXPECT_EQ(comp.last_timeout_ms_, HEATING_POLL_DEFAULT_INTERVAL_MS);
   EXPECT_TRUE(radio.get_sent_data().empty()) << "nothing is sent while the hub is not initialised";
-}
-
-TEST(HubOperations, ARegisterHeaterPollOfAnUnregisteredDeviceArmsNoTimer) {
-  TestableComponent comp;
-  MockRadio radio;
-  make_heater(comp, radio);
-
-  EXPECT_FALSE(comp.poll_heating_device_("DEF456"));
-  EXPECT_FALSE(comp.request_device_status("DEF456"));
-  EXPECT_EQ(comp.last_timeout_id_, 0u);
-}
-
-TEST(HubOperations, ASucceededRegisterHeaterPollArmsTheNextPollAtTheConfiguredInterval) {
-  TestableComponent comp;
-  MockRadio radio;
-  const IoDevice *dev = make_heater(comp, radio);
-  comp.poll_policy_.set_interval("ABC123", 120000);
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08})));
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00})));
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x00, 0x01})));
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x17, 0x02})));
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x0E, 0x01})));
-
-  EXPECT_TRUE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
-  EXPECT_EQ(comp.last_timeout_ms_, 120000u) << "the configured interval, not the default";
 }
 
 // === Heating-level heater (52/0) ===
@@ -553,7 +456,6 @@ TEST(HubOperations, ALevelHeaterGetsNoRegisterFrameFromAnyEntryPoint) {
   EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5F));
   EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::POWER_ON, 0.0F));
   EXPECT_FALSE(comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
-  EXPECT_FALSE(comp.poll_heating_device_("ABC123"));
   EXPECT_TRUE(radio.get_sent_data().empty())
       << "no CMD_WRITE_PRIVATE frame for a heater that takes the standard EXECUTE";
 }
@@ -847,7 +749,6 @@ TEST(HubOperations, TemperatureHeatersGetNoRegisterFrameFromAnyEntryPoint) {
     EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5F));
     EXPECT_FALSE(
         comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
-    EXPECT_FALSE(comp.poll_heating_device_("ABC123"));
     EXPECT_FALSE(comp.set_heating_level("ABC123", heating_level::COMFORT));
     EXPECT_TRUE(radio.get_sent_data().empty())
         << "no CMD_WRITE_PRIVATE frame for a heater that takes the standard EXECUTE";
@@ -3776,9 +3677,7 @@ void queue_register_reply(TestableComponent &comp, MockRadio &radio, const std::
   radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, payload)));
 }
 
-/// The model name an Atlantic Adelis reports in register 0x0119 (corpus atlantic_adelis_probe_register_01_sweep).
-const std::vector<uint8_t> ADELIS_NAME_REPLY = {0x0C, 0x60, 0x01, 0x19, 'A', 'D', 'E', 'L', 'I',
-                                                'S',  ' ',  '2',  ' ',  'D', 'I', 'G', 'I', 'T'};
+using heating_test_data::ADELIS_NAME_REPLY;
 
 }  // namespace
 
@@ -3954,24 +3853,6 @@ TEST(HubOperations, ATowelDryerDeclaredOnARadiatorStillGetsTheModelCheck) {
   for (size_t i = 0; i < std::size(expected_registers); i++)
     EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
   EXPECT_TRUE(dev->model_checked) << "both reads answered: the radiator hint was logged";
-}
-
-TEST(HubOperations, TheModelCheckRunsABoundedNumberOfTimesAndOnlyOnAKindWithModels) {
-  TestableComponent comp;
-  MockRadio radio;
-  IoDevice *dev = make_heater(comp, radio);
-  // Nothing answers: each run asks for the name and the mode register once.
-  for (uint8_t run = 0; run < decisions::HEATER_MODEL_CHECK_MAX_RUNS + 1; run++)
-    comp.check_heater_model_("ABC123", 1);
-  EXPECT_EQ(radio.get_sent_data().size(), 2u * decisions::HEATER_MODEL_CHECK_MAX_RUNS);
-  EXPECT_FALSE(dev->model_checked);
-
-  TestableComponent plain;
-  MockRadio plain_radio;
-  IoDevice *plain_dev = make_heater(plain, plain_radio);
-  test::set_kind(*plain_dev, DeviceType::ELECTRICAL_HEATER, 0);
-  plain.check_heater_model_("ABC123", 1);
-  EXPECT_TRUE(plain_radio.get_sent_data().empty()) << "52/0 has no model rows";
 }
 
 // ============================================================================

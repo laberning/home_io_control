@@ -67,8 +67,7 @@ inline bool known_device_matches_entity_class(const IoDevice &dev, DeviceCapabil
 /// @return true if device type supports status requests or is UNKNOWN.
 inline bool known_device_supports_status_requests(const IoDevice &dev) {
   // A heater is polled over its register protocol rather than with the 0x03 status request, but it
-  // is polled all the same (IOHomeControlComponent::poll_heating_device_()); so is a water heater
-  // (IOHomeControlComponent::poll_dhw_device_()).
+  // is polled all the same, and so is a water heater (HeaterController::poll()).
   return dev.type == DeviceType::UNKNOWN || device_supports_status_requests(dev.type) ||
          device_supports_climate_control(dev.type, dev.subtype) ||
          has_feature(dev.features, device_feature::WATER_HEATER);

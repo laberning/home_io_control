@@ -1,9 +1,7 @@
 #include "hub_internal.h"
-#include "proto_heating_profiles.h"
 
 #include "hub_decisions.h"
 #include "proto_commands.h"
-#include "proto_dhw.h"
 
 #include <algorithm>
 #include <cinttypes>
@@ -54,11 +52,10 @@ constexpr uint8_t PRIVATE_RESPONSE_REMAINING_TIME_OFFSET =
 // first would blank real readings from any cover resting near 16%. The request-derived
 // `trust_position` parameter on update_device_status_() is the discriminator, and the only
 // correct one. See tests/corpus/captures/exchange/tilt_cover_exchange_ack_tilt_block*.yaml.
-constexpr uint16_t MAIN_PARAMETER_LOW_BYTE_MASK = 0xFF;  ///< Low byte of a 16-bit main parameter.
-constexpr uint8_t PRIVATE_RESPONSE_TARGET_OFFSET = 2;    ///< Target-position MSB offset in 0x04 replies.
-constexpr uint8_t PRIVATE_RESPONSE_CURRENT_OFFSET = 4;   ///< Current-position MSB offset in 0x04 replies.
-constexpr uint8_t STATUS_UPDATE_TARGET_OFFSET = 5;       ///< Target-position MSB offset in 0x71 updates.
-constexpr uint8_t STATUS_UPDATE_CURRENT_OFFSET = 7;      ///< Current-position MSB offset in 0x71 updates.
+constexpr uint8_t PRIVATE_RESPONSE_TARGET_OFFSET = 2;   ///< Target-position MSB offset in 0x04 replies.
+constexpr uint8_t PRIVATE_RESPONSE_CURRENT_OFFSET = 4;  ///< Current-position MSB offset in 0x04 replies.
+constexpr uint8_t STATUS_UPDATE_TARGET_OFFSET = 5;      ///< Target-position MSB offset in 0x71 updates.
+constexpr uint8_t STATUS_UPDATE_CURRENT_OFFSET = 7;     ///< Current-position MSB offset in 0x71 updates.
 // The 0x71 position fields sit inside the EVENT_STATUS_CHANGE event data (decode_status_update_event()).
 static_assert(STATUS_UPDATE_TARGET_OFFSET == STATUS_UPDATE_EVENT_DATA_OFFSET,
               "the target position is the first byte of the status-change event data");
@@ -368,75 +365,6 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
     return;
 
   policy.set_next_update(id, dev.last_status + compute_status_update_delay_ms(dev, policy, id));
-}
-
-/// @brief Record what a heater commanded with an EXECUTE reports as its current main parameter.
-///
-/// A heating-level heater reports a level; a temperature heater reports an alias (kept in
-/// HeatingReadings::level) or a plain temperature (HeatingReadings::setpoint_c, decoded over the
-/// device's encoding range, which also clears a stale alias).
-/// @param id Device ID for the log line.
-/// @param dev Device record to update; other devices are left alone.
-/// @param frame A reply to a status poll (the layout of a reply to an EXECUTE follows the request).
-void apply_heating_main_parameter(const std::string &id, IoDevice &dev, const IoFrame &frame) {
-  const HeatingProfile *profile = find_heating_profile(dev);
-  if (profile == nullptr || profile->path == HeatingControlPath::PRIVATE_REGISTERS)
-    return;
-  const auto current = static_cast<uint16_t>((frame.data[PRIVATE_RESPONSE_CURRENT_OFFSET] << BITS_PER_BYTE) |
-                                             frame.data[PRIVATE_RESPONSE_CURRENT_OFFSET + 1]);
-  dev.heating.main_parameter = current;
-  if ((current >> BITS_PER_BYTE) == profile->mp_prefix) {
-    const auto wire = static_cast<int16_t>(current & MAIN_PARAMETER_LOW_BYTE_MASK);
-    if (dev.heating.level != wire)
-      ESP_LOGI(detail::TAG, "Device %s: heating value 0x%02X", id.c_str(), static_cast<unsigned>(wire));
-    dev.heating.level = wire;
-    return;
-  }
-  float celsius = 0.0F;
-  if (profile->path == HeatingControlPath::TEMPERATURE_EXECUTE &&
-      decode_temperature_main_parameter(current, dev.temperature_range_min_c, dev.temperature_range_max_c, celsius)) {
-    dev.heating.setpoint_c = celsius;
-    dev.heating.level = -1;
-    return;
-  }
-  ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%04X is not a heating value", id.c_str(), current);
-}
-
-/// @brief Apply a water heater's status reply: its main parameter is the target temperature; the operating-mode
-/// read (FP15, FP16) adds its capabilities and the boost and away state.
-///
-/// A water heater has no position, no movement and no battery: the cover parts of the status path (the
-/// stopped flag, target/current position, the follow-up window, the moving evidence, the last-command
-/// record) must not touch it, so it never reaches them. Only a reply to a status read carries the target;
-/// the ack of an EXECUTE echoes the request and is not decoded.
-/// @param id Device ID for the log line.
-/// @param dev Device record to update.
-/// @param frame A CMD_PRIVATE_RESP from the heater.
-/// @param trust_position True for a reply to a status read, false for the ack of an EXECUTE.
-void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame &frame, bool trust_position) {
-  if (!trust_position)
-    return;
-  DhwOperatingStatus status;
-  if (decode_dhw_operating_status(frame, status)) {
-    if (dev.dhw.boost != (status.boost ? 1 : 0) || dev.dhw.away != (status.away ? 1 : 0)) {
-      ESP_LOGI(detail::TAG, "Device %s: hot water boost %s, away %s (FP15 0x%04X)", id.c_str(),
-               status.boost ? "on" : "off", status.away ? "on" : "off", static_cast<unsigned>(status.capabilities));
-    }
-    dev.dhw.capabilities = status.capabilities;
-    dev.dhw.boost = status.boost ? 1 : 0;
-    dev.dhw.away = status.away ? 1 : 0;
-  }
-  float celsius = NAN;
-  if (decode_dhw_status_target(frame, celsius)) {
-    if (dev.dhw.target_c != celsius)
-      ESP_LOGI(detail::TAG, "Device %s: hot water target %.1f C", id.c_str(), static_cast<double>(celsius));
-    dev.dhw.target_c = celsius;
-    return;
-  }
-  // An alias or an out-of-range value is not a target temperature: it is logged and the target shows unknown.
-  ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%02X%02X is not a hot water target", id.c_str(),
-           frame.data[DHW_STATUS_MAIN_PARAMETER_OFFSET], frame.data[DHW_STATUS_MAIN_PARAMETER_OFFSET + 1]);
-  dev.dhw.target_c = NAN;
 }
 
 /// @brief Record the coarse battery level a status payload carries, logging a change.
@@ -776,7 +704,10 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
       detail::update_rain_limitation(id, dev, predicted_target, record.valid, millis());
       // Same reason as the record above: only a reply to a status poll is a status report.
       apply_battery_state(id, dev, frame);
-      apply_heating_main_parameter(id, dev, frame);
+      apply_heating_main_parameter(
+          id, dev,
+          static_cast<uint16_t>((frame.data[PRIVATE_RESPONSE_CURRENT_OFFSET] << BITS_PER_BYTE) |
+                                frame.data[PRIVATE_RESPONSE_CURRENT_OFFSET + 1]));
       this->note_status_reported_(id);
     }
     detail::clear_command_result(dev);

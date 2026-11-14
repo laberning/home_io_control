@@ -162,7 +162,7 @@ TEST(HubInternal, KnownDeviceSupportsStatusRequests) {
   EXPECT_FALSE(detail::known_device_supports_status_requests(hot_water_dev));
   EXPECT_FALSE(detail::known_device_matches_entity_class(hot_water_dev, DeviceCapabilityClass::SWITCH));
 
-  // Bound to a water heater entity, the same device is polled (IOHomeControlComponent::poll_dhw_device_()).
+  // Bound to a water heater entity, the same device is polled (HeaterController::poll()).
   IoDevice water_heater_dev{};
   water_heater_dev.entity_class = DeviceCapabilityClass::WATER_HEATER;
   test::set_kind(water_heater_dev, DeviceType::DOMESTIC_HOT_WATER);

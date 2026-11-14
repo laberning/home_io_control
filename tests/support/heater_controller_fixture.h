@@ -11,6 +11,7 @@
 ///     test that needs it goes through the hub's forwarders.
 ///   - `execute` applies the operation's guard, builds the request and records it; it does not transmit.
 ///   - `status_read` records the request and answers with a configured result; it decodes nothing.
+///   - `poll_backoff` records the call and moves the real StatusPollPolicy onto its retry ladder, as the hub does.
 ///   - the timer and the queued status request are recorded.
 /// A test needs no hub object.
 
@@ -19,6 +20,7 @@
 #include "heater_controller.h"
 #include "proto_commands.h"
 #include "proto_frame.h"
+#include "status_poll_policy.h"
 #include "tuning_config.h"
 
 #include "test_helpers.h"
@@ -28,6 +30,7 @@
 #include <cstring>
 #include <functional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace heater_controller_test {
@@ -65,7 +68,7 @@ class HeaterControllerFixture {
   HeaterControllerFixture()
       : radio_ptr(&radio),
         engine(&radio_ptr, node_id, system_key, &tuning),
-        controller(node_id, &initialized, &radio_ptr, registry, engine, make_hub()) {}
+        controller(node_id, &initialized, &radio_ptr, registry, poll_policy, engine, make_hub()) {}
 
   HeaterControllerFixture(const HeaterControllerFixture &) = delete;
   HeaterControllerFixture &operator=(const HeaterControllerFixture &) = delete;
@@ -110,6 +113,7 @@ class HeaterControllerFixture {
                                       0xAC, 0x43, 0x50, 0xEE, 0xFF, 0x34, 0x29, 0x34};
   bool initialized{true};
   DeviceRegistry registry;
+  StatusPollPolicy poll_policy;
   ExchangeEngine engine;
   HeaterController controller;
 
@@ -118,6 +122,7 @@ class HeaterControllerFixture {
   std::vector<RecordedExecute> executes;
   std::vector<RecordedStatusRead> status_reads;
   std::vector<RecordedTimer> timers;
+  std::vector<std::pair<std::string, bool>> backoffs;  ///< The `poll_backoff` calls: device and auth_like.
   std::vector<std::string> queued_status_requests;
 
  private:
@@ -140,6 +145,10 @@ class HeaterControllerFixture {
                              uint8_t max_tries) {
       status_reads.push_back({device_id, request, retry_after_fail_ms, max_tries});
       return status_read_result;
+    };
+    hub.poll_backoff = [this](const std::string &device_id, bool auth_like) {
+      backoffs.emplace_back(device_id, auth_like);
+      poll_policy.on_exchange_failed(device_id, auth_like, esphome::millis(), false);
     };
     hub.set_timeout_by_id = [this](uint32_t id, uint32_t delay_ms, std::function<void()> callback) {
       timers.push_back({id, delay_ms, std::move(callback)});

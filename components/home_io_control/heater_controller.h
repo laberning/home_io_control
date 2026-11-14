@@ -4,15 +4,21 @@
 /// @brief Heating and hot water: the register heater's writes and reads, the water heater's reads and writes.
 /// @ingroup hioc_hub
 ///
-/// HeaterController owns every frame the hub sends to a heater or a water heater on the climate and
-/// water heater entities' behalf: the register heater's CMD_WRITE_PRIVATE writes and register reads
-/// (ADR 0054), the level and temperature heaters' EXECUTEs, and the water heater's target, mode, boost
-/// and away writes with their read-backs. IOHomeControlComponent owns one instance and forwards the
-/// entities' and the `heating_control` action's calls to it (ADR 0083).
+/// HeaterController owns every frame the hub sends to a heater or a water heater: the register heater's
+/// CMD_WRITE_PRIVATE writes and register reads (ADR 0054), the level and temperature heaters' EXECUTEs, the
+/// water heater's target, mode, boost and away writes with their read-backs, and the regular polls of all of
+/// them. IOHomeControlComponent owns one instance, forwards the entities' and the `heating_control` action's
+/// calls to it and hands a heater's regular poll to it (ADR 0083). The decoding of a heater's or water
+/// heater's status answer is the stateless pair of functions at the end of this header.
 ///
 /// The class reaches the hub through HeaterControllerHub, a handful of injected calls, and includes no
 /// hub header. Unlike DiagnosticProbes (ADR 0072), one of those calls, HeaterControllerHub::status_read,
 /// reaches the hub's status decoder: a water heater's status answer is an ordinary status reply.
+///
+/// The single-register reads (read_private_register(), read_dhw_register(), read_dhw_reading(),
+/// read_dhw_status()), schedule_poll() and check_heater_model() are steps of the polls and writes; the hub
+/// calls none of them. They are public so that their gates, timer keying and bounded runs are tested on
+/// their own.
 
 #include "device_registry.h"
 #include "exchange_engine.h"
@@ -21,6 +27,7 @@
 #include "proto_frame.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"
+#include "status_poll_policy.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -60,6 +67,9 @@ struct HeaterControllerHub {
   std::function<bool(const std::string &device_id, const IoFrame &request, uint32_t retry_after_fail_ms,
                      uint8_t max_tries)>
       status_read;
+  /// Schedules the retry of a failed poll on the hub's backoff ladder (StatusPollPolicy::on_exchange_failed()
+  /// and its log line); `auth_like` is true when the failed exchange saw a 0x3C challenge.
+  std::function<void(const std::string &device_id, bool auth_like)> poll_backoff;
   NumericTimeoutFn set_timeout_by_id;  ///< Arms a numeric, replace-on-same-id timer on the hub's scheduler.
   std::function<void(const std::string &device_id)> queue_status_request;  ///< Queues a status poll of a device.
 };
@@ -74,13 +84,50 @@ class HeaterController {
   /// @param initialized  Pointer to the hub's initialized flag.
   /// @param radio        Pointer to the hub's radio pointer (read per call, so a later assignment is seen).
   /// @param registry     Device registry for device lookups and entity notification.
+  /// @param poll_policy  The status poll ladder and the tracking window a poll runs in.
   /// @param engine       Shared exchange engine, read for its debug snapshot only.
   /// @param hub          The injected hub calls.
   HeaterController(const uint8_t *node_id, const bool *initialized, RadioDriver *const *radio, DeviceRegistry &registry,
-                   ExchangeEngine &engine, HeaterControllerHub hub);
+                   StatusPollPolicy &poll_policy, ExchangeEngine &engine, HeaterControllerHub hub);
 
   HeaterController(const HeaterController &) = delete;
   HeaterController &operator=(const HeaterController &) = delete;
+
+  // === Regular polls ===
+
+  /// @brief Is the device's regular poll a heater poll: a register heater, a water heater or a heater read
+  /// with the ordinary status read.
+  /// @param dev The device record.
+  /// @return true when poll() runs the device's poll.
+  [[nodiscard]] static bool polls(const IoDevice &dev);
+
+  /// @brief Run one regular poll of a heater or water heater and arm the next one.
+  ///
+  /// The body depends on the device: a register heater reads its profile's poll registers (stopping at the
+  /// first failure), then the programme's temperature in force, its boot registers until each has been read
+  /// once, and on a kind with model rows the one-off model check once it has answered a read; a water heater
+  /// reads its status (target, capabilities, boost and away), then its water temperature, mode, heating
+  /// state, boost and away duration and energy registers, then its brand until it has been read once; any
+  /// other heater is polled with the generic status read. A register or water heater failure moves the
+  /// retry onto the StatusPollPolicy ladder; a status-read heater leaves that to the status read itself.
+  /// Whatever the poll finds, or whether it could run at all (the hub is not initialised yet), the next
+  /// regular poll is armed one interval out (the device's `status_poll_interval`, else
+  /// HEATING_POLL_DEFAULT_INTERVAL_MS, see heater_poll_interval_ms()). A device that is not registered
+  /// arms no timer. Called by the hub's request_device_status() for a device polls() accepts.
+  /// @param device_id Target device ID (hex string).
+  /// @return true when every read of the poll was answered; false when it could not run.
+  bool poll(const std::string &device_id);
+
+  /// @brief The one-off model check of a heater kind that has model rows (device_offers_models()).
+  ///
+  /// Reads the model name (register 0x0119) and logs it at INFO, and compares whether the towel-dryer mode
+  /// register (0x0136) holds a value with the declared `io_model:` (decisions::classify_heater_model_hint()),
+  /// logging a WARN when they disagree. Nothing it finds changes behaviour. Done once both reads were
+  /// answered, or after decisions::HEATER_MODEL_CHECK_MAX_RUNS runs. A step of the register poll; public so
+  /// its bounded-run contract is tested on its own.
+  /// @param device_id Target device ID.
+  /// @param max_tries Transmit-attempt cap of each read (the poll's).
+  void check_heater_model(const std::string &device_id, uint8_t max_tries);
 
   // === Register heater ===
 
@@ -170,7 +217,7 @@ class HeaterController {
   bool read_private_register(const std::string &device_id, uint8_t reg_hi, uint8_t reg_lo, const char *label,
                              IoFrame &response, uint8_t max_tries);
 
-  /// @brief Arm the heater's regular-cadence poll timer.
+  /// @brief Arm the heater's regular-cadence poll timer (run by poll() and moved by an acknowledged write).
   ///
   /// Own timer id (decisions::heating_poll_timer_id()), so a remote-activity poll scheduled for the same
   /// device never replaces it. The callback queues a status poll through HeaterControllerHub.
@@ -311,13 +358,98 @@ class HeaterController {
   /// @return true when the device accepted the EXECUTE.
   bool execute_dhw_(const std::string &device_id, const char *action, const HeaterExecuteBuildFn &build);
 
+  /// @brief What runs inside run_poll_(): the reads of one poll; receives the try cap of each read and
+  /// returns true when all were answered.
+  using PollBody = std::function<bool(uint8_t max_tries)>;
+
+  /// Who runs the failure ladder after a poll (run_poll_()).
+  enum class PollLadder : uint8_t {
+    RUN_BY_POLL,  ///< The wrapper: clear the ladder on success, back off on failure (register and water heater).
+    RUN_BY_BODY,  ///< The body's own status read already runs it (a heater read with the ordinary status read).
+  };
+
+  /// @brief Run one poll: everything around the body that the three heater polls share.
+  ///
+  /// Returns false without a timer when the device is not registered. Otherwise, when the hub is
+  /// initialised, it opens the tracking window unless one is running, computes the try band
+  /// (decisions::scheduled_poll_max_tries()), calls `body` and applies the ladder as `ladder` says. It
+  /// always ends by arming the next regular poll (heater_poll_interval_ms()), also when the hub is not
+  /// initialised yet or the body found nothing, so no way out of a poll stops the cadence.
+  /// @param device_id Target device ID.
+  /// @param ladder Who clears or backs off the failure ladder.
+  /// @param body The reads of one poll.
+  /// @return The body's result; false when the poll could not run.
+  bool run_poll_(const std::string &device_id, PollLadder ladder, const PollBody &body);
+
+  /// @brief Poll a register heater: its profile's poll registers (stopping at the first failure), the
+  /// programme's temperature in force, the boot registers until each has been read once, and on a heater
+  /// kind with model rows the one-off model check once the device has answered a read.
+  /// @param device_id Target device ID.
+  /// @return true when every poll register answered.
+  bool poll_registers_(const std::string &device_id);
+
+  /// @brief The reads of one register-heater poll, in the order poll_registers_() describes.
+  /// @param device_id Target device ID.
+  /// @param profile The device's register profile.
+  /// @param max_tries Transmit-attempt cap of each read (the poll's try band).
+  /// @return true when every poll register answered.
+  bool read_poll_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
+
+  /// @brief Read the temperature in force of a heater's programme, when the programme runs.
+  /// @details Sends nothing unless programme_period_active() holds for the readings the poll just made.
+  ///          When the temperature fits neither period it forgets the eco setback, so the boot registers
+  ///          read it again.
+  /// @param device_id Target device ID.
+  /// @param profile The device's profile; its programme_period must not be nullptr.
+  /// @param max_tries Transmit-attempt cap of the read (the poll's).
+  void poll_programme_period_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
+
+  /// @brief Poll a heater without private registers with the ordinary status read: a heating-level heater
+  /// (its level in the position field) and a temperature heater (its setpoint in the main parameter).
+  /// @param device_id Target device ID.
+  /// @return true when the status read was answered.
+  bool poll_status_read_(const std::string &device_id);
+
+  /// @brief Poll a water heater: the status read, then its registers (stopping at the first failure), then
+  /// its brand until it has been read once (logged at INFO).
+  /// @param device_id Target device ID.
+  /// @return true when the status read and every register were answered.
+  bool poll_dhw_(const std::string &device_id);
+
   const uint8_t *node_id_;     ///< Controller node ID, owned by the hub.
   const bool *initialized_;    ///< The hub's initialized flag.
   RadioDriver *const *radio_;  ///< The hub's radio pointer, for link-health stamps.
   DeviceRegistry &registry_;   ///< Device records and entity notification.
+  StatusPollPolicy &policy_;   ///< The poll ladder and tracking window.
   ExchangeEngine &engine_;     ///< Debug snapshot of the last exchange, logged on a failed one.
   HeaterControllerHub hub_;    ///< The injected hub calls.
 };
+
+// === Decoding a heater's status answer ===
+
+/// @brief Record what a heater commanded with an EXECUTE reports as its current main parameter.
+///
+/// A heating-level heater reports a level; a temperature heater reports an alias (kept in
+/// HeatingReadings::level) or a plain temperature (HeatingReadings::setpoint_c, decoded over the
+/// device's encoding range, which also clears a stale alias). A device without a heating profile and a
+/// register heater are left alone.
+/// @param id Device ID for the log line.
+/// @param dev Device record to update.
+/// @param current_main_parameter The 16-bit current main parameter of a reply to a status poll.
+void apply_heating_main_parameter(const std::string &id, IoDevice &dev, uint16_t current_main_parameter);
+
+/// @brief Apply a water heater's status reply: its main parameter is the target temperature; the operating-mode
+/// read (FP15, FP16) adds its capabilities and the boost and away state.
+///
+/// A water heater has no position, no movement and no battery: the cover parts of the status path (the
+/// stopped flag, target/current position, the follow-up window, the moving evidence, the last-command
+/// record) must not touch it, so it never reaches them. Only a reply to a status read carries the target;
+/// the ack of an EXECUTE echoes the request and is not decoded.
+/// @param id Device ID for the log line.
+/// @param dev Device record to update.
+/// @param frame A CMD_PRIVATE_RESP from the heater.
+/// @param trust_position True for a reply to a status read, false for the ack of an EXECUTE.
+void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame &frame, bool trust_position);
 
 }  // namespace home_io_control
 }  // namespace esphome

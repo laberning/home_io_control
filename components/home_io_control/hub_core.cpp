@@ -360,6 +360,9 @@ HeaterControllerHub IOHomeControlComponent::make_heater_controller_hub_() {
     return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, max_tries);
   };
   // set_timeout() is protected on the real ESPHome Component, so the lambda defined here is the legitimate caller.
+  hub.poll_backoff = [this](const std::string &device_id, bool auth_like) {
+    this->schedule_background_poll_backoff_(device_id, auth_like);
+  };
   hub.set_timeout_by_id = [this](uint32_t id, uint32_t delay_ms, std::function<void()> callback) {
     this->set_timeout(id, delay_ms, std::move(callback));
   };

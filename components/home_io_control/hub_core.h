@@ -108,7 +108,7 @@ class IOHomeControlComponent : public Component,
         pairing_engine_(&radio_, node_id_, system_key_, &tuning_, exchange_engine_, registry_, pairing_telemetry_,
                         recent_oneway_pairing_sighting_),
         management_actions_(node_id_, system_key_, &tuning_, exchange_engine_, registry_, &initialized_, this),
-        heater_controller_(node_id_, &initialized_, &radio_, registry_, exchange_engine_,
+        heater_controller_(node_id_, &initialized_, &radio_, registry_, poll_policy_, exchange_engine_,
                            this->make_heater_controller_hub_()),
         // Capturing `this` is safe here: the callback is only ever invoked from send_burst(),
         // long after construction. It injects the *ability* to transmit rather than a reference
@@ -1278,77 +1278,6 @@ class IOHomeControlComponent : public Component,
   ///        the hub believes is travelling; its first misses keep the normal cadence
   ///        (StatusPollPolicy::on_exchange_failed()).
   void schedule_background_poll_backoff_(const std::string &device_id, bool auth_like, bool device_moving = false);
-  /// @brief The one-off model check of a heater kind that has model rows (device_offers_models()).
-  ///
-  /// Reads the model name (register 0x0119) and logs it at INFO, and compares whether the towel-dryer mode
-  /// register (0x0136) holds a value with the declared `io_model:` (decisions::classify_heater_model_hint()),
-  /// logging a WARN when they disagree. Nothing it finds changes behaviour. Done once both reads were
-  /// answered, or after decisions::HEATER_MODEL_CHECK_MAX_RUNS runs.
-  /// @param device_id Target device ID.
-  /// @param max_tries Transmit-attempt cap of each read (the poll's).
-  void check_heater_model_(const std::string &device_id, uint8_t max_tries);
-  /// @brief Read the temperature in force of a heater's programme, when the programme runs.
-  /// @details Sends nothing unless programme_period_active() holds for the readings the poll just made.
-  ///          When the temperature fits neither period it forgets the eco setback, so the boot registers
-  ///          read it again.
-  /// @param device_id Target device ID.
-  /// @param profile The device's profile; its programme_period must not be nullptr.
-  /// @param max_tries Transmit-attempt cap of the read (the poll's).
-  void poll_programme_period_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
-  /// @brief Poll a heater: read its profile's poll registers (stopping at the first failure), then the
-  /// programme's temperature in force (poll_programme_period_()), then its
-  /// boot registers until each has been read once, then, on a heater kind with model rows, the one-off
-  /// model check (check_heater_model_()) once the device has answered a read.
-  ///
-  /// A failure moves the retry onto the StatusPollPolicy ladder; either way the next regular poll
-  /// is armed one interval out (the device's `status_poll_interval`, else
-  /// HEATING_POLL_DEFAULT_INTERVAL_MS, see heater_poll_interval_ms()). Called from request_device_status() for
-  /// climate devices.
-  /// @param device_id Target device ID.
-  /// @return true when all four registers were read.
-  bool poll_heating_device_(const std::string &device_id);
-  /// @brief The reads of one register-heater poll (poll_heating_device_()'s body on run_heater_poll_()),
-  /// in the order poll_heating_device_() describes.
-  /// @param device_id Target device ID.
-  /// @param profile The device's register profile.
-  /// @param max_tries Transmit-attempt cap of each read (the poll's try band).
-  /// @return true when every poll register answered.
-  bool read_heater_poll_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
-  /// Who runs the failure ladder after a heater poll (run_heater_poll_()).
-  enum class HeaterPollLadder : uint8_t {
-    RUN_BY_POLL,  ///< The wrapper: clear the ladder on success, back off on failure (register and water heater).
-    RUN_BY_BODY,  ///< The body's own status read already runs it (poll_status_read_heater_()).
-  };
-  /// @brief Run one heater poll: everything around the body that the register heater, the water heater
-  /// and the heaters read with the ordinary status read share.
-  ///
-  /// Returns false without a timer when the device is not registered. Otherwise, when the hub is
-  /// initialised, it opens the tracking window unless one is running, computes the try band
-  /// (decisions::scheduled_poll_max_tries()), calls `body` and applies the ladder as `ladder` says. It
-  /// always ends by arming the next regular poll (heater_poll_interval_ms()), also when the hub is not
-  /// initialised yet or the body found nothing, so no way out of a poll stops the cadence.
-  /// @param device_id Target device ID.
-  /// @param ladder Who clears or backs off the failure ladder.
-  /// @param body The reads of one poll; receives the try cap of each read and returns true when all answered.
-  /// @return The body's result; false when the poll could not run.
-  bool run_heater_poll_(const std::string &device_id, HeaterPollLadder ladder,
-                        const std::function<bool(uint8_t max_tries)> &body);
-  /// @brief Poll a heater without private registers with the ordinary status read, on the heater cadence
-  /// (run_heater_poll_()): a heating-level heater (its level in the position field) and a temperature
-  /// heater (its setpoint in the main parameter). Called from request_device_status().
-  /// @param device_id Target device ID.
-  /// @return true when the status read was answered.
-  bool poll_status_read_heater_(const std::string &device_id);
-  /// @brief Poll a water heater: the status read for its target, capabilities and boost and away state
-  /// (HeaterController::read_dhw_status()), then its water temperature, mode, heating state, boost and away duration
-  /// and energy registers (stopping at the first failure), then its brand until it has been read once (logged at INFO).
-  ///
-  /// The same ladder, try band and cadence as poll_heating_device_(): a failure moves the retry onto the
-  /// StatusPollPolicy ladder, and the next regular poll is armed one interval out. Called from
-  /// request_device_status() for a device with device_feature::WATER_HEATER.
-  /// @param device_id Target device ID.
-  /// @return true when the status read and every register were answered.
-  bool poll_dhw_device_(const std::string &device_id);
   /// Pop next pending operation from the queue and execute it (set position, request status, discover).
   void process_pending_operation_();
 
