@@ -25,6 +25,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace esphome {
 namespace home_io_control {
@@ -186,33 +187,46 @@ struct HeatingProgrammePeriod {
 };
 
 /// @brief One heater kind.
+/// @details A row is written with designated initializers, in declaration order. The fields before
+///          `setpoint_fp` have no default, so a row that leaves one out does not compile; every other field has
+///          one and is left out where unused. Each list is a span over a `constexpr` array, which carries its
+///          own length.
 struct HeatingProfile {
-  DeviceType type;                        ///< Node type.
-  uint8_t subtype;                        ///< Subtype (0 = the type's own row).
-  DeviceModel model;                      ///< Model (NONE = the (type, subtype) row's own profile).
-  HeatingControlPath path;                ///< How the heater is commanded and read.
-  HeatingProfileFeatures features;        ///< What the card and its companions offer.
-  uint8_t mp_prefix;                      ///< High byte of a level or alias main parameter (0 for registers).
-  float visual_min_c;                     ///< Lowest target temperature the card offers (0 without a setpoint).
-  float visual_max_c;                     ///< Highest target temperature the card offers (0 without a setpoint).
-  HeatingFp setpoint_fp;                  ///< TEMPERATURE_EXECUTE: the functional parameter sent with a setpoint.
-  bool fixed_range;                       ///< TEMPERATURE_EXECUTE: the temperature range is fixed, so the YAML
-                                          ///< `min_temperature:` / `max_temperature:` do not apply.
-  const HeatingModeEntry *modes;          ///< HVAC modes offered, with the value each writes.
-  size_t mode_count;                      ///< Number of entries in `modes`.
-  const HeatingPresetEntry *presets;      ///< Presets offered.
-  size_t preset_count;                    ///< Number of entries in `presets`.
-  const HeatingObservedState *observed;   ///< Device-reported value -> card state.
-  size_t observed_count;                  ///< Number of entries in `observed`.
-  const HeatingFunction *poll_registers;  ///< PRIVATE_REGISTERS: registers every poll reads, in order.
-  size_t poll_register_count;             ///< Number of entries in `poll_registers`.
-  const HeatingFunction *boot_registers;  ///< PRIVATE_REGISTERS: registers read once until they have been read.
-  size_t boot_register_count;             ///< Number of entries in `boot_registers`.
-  /// Device-reported value of `preset_fn` -> preset; nullptr when the mode register names the preset too
+  // --- Required: every row states these ---
+  DeviceType type;                          ///< Node type.
+  uint8_t subtype;                          ///< Subtype (0 = the type's own row).
+  DeviceModel model;                        ///< Model (NONE = the (type, subtype) row's own profile).
+  HeatingControlPath path;                  ///< How the heater is commanded and read.
+  HeatingProfileFeatures features;          ///< What the card and its companions offer.
+  std::span<const HeatingModeEntry> modes;  ///< HVAC modes offered, with the value each writes.
+
+  // --- Optional: a default stands for "unused". The byte-sized fields come last, so they pack. ---
+  HeatingFp setpoint_fp{};   ///< TEMPERATURE_EXECUTE: the functional parameter sent with a setpoint.
+  float visual_min_c{0.0F};  ///< Lowest target temperature the card offers (0 without a setpoint).
+  float visual_max_c{0.0F};  ///< Highest target temperature the card offers (0 without a setpoint).
+  /// PRIVATE_REGISTERS: how the heater's own programme names the comfort or eco period it is in;
+  /// nullptr for a heater that does not report it.
+  const HeatingProgrammePeriod *programme_period{nullptr};
+  // NOLINTBEGIN(readability-redundant-member-init): a span's own default is empty, but g++'s
+  // -Wmissing-field-initializers still wants the member initializer before a row may leave it out.
+  std::span<const HeatingPresetEntry> presets{};     ///< Presets offered.
+  std::span<const HeatingObservedState> observed{};  ///< Device-reported value -> card state.
+  /// PRIVATE_REGISTERS: registers every poll reads, in order.
+  std::span<const HeatingFunction> poll_registers{};
+  /// PRIVATE_REGISTERS: registers read once until they have been read.
+  std::span<const HeatingFunction> boot_registers{};
+  /// Device-reported value of `preset_fn` -> preset; empty when the mode register names the preset too
   /// (`observed`). With it, `observed` sets only the mode and this table alone sets the preset, since
   /// mode and preset live in separate registers.
-  const HeatingObservedState *preset_observed{nullptr};
-  size_t preset_observed_count{0};  ///< Number of entries in `preset_observed`.
+  std::span<const HeatingObservedState> preset_observed{};
+  /// PRIVATE_REGISTERS: registers every poll reads after `poll_registers`, for a part the heater may not
+  /// have (a night light). A miss here is not a poll failure, so a model declared on a heater without
+  /// the part costs a read, not the poll.
+  std::span<const HeatingFunction> extra_poll_registers{};
+  // NOLINTEND(readability-redundant-member-init)
+  uint8_t mp_prefix{0};     ///< High byte of a level or alias main parameter (0 for registers).
+  bool fixed_range{false};  ///< TEMPERATURE_EXECUTE: the temperature range is fixed, so the YAML
+                            ///< `min_temperature:` / `max_temperature:` do not apply.
   /// PRIVATE_REGISTERS: the register the HVAC modes write and the card's mode is read from.
   HeatingFunction mode_fn{HeatingFunction::SET_MODE};
   /// PRIVATE_REGISTERS with `preset_observed`: the register the card's preset is read from. The presets'
@@ -220,14 +234,6 @@ struct HeatingProfile {
   HeatingFunction preset_fn{HeatingFunction::SET_MODE};
   HeatingActionSource action_source{HeatingActionSource::REGULATOR};  ///< Where `features.action` reads from.
   bool experimental_writes{false};  ///< PRIVATE_REGISTERS: the mode and preset writes are unconfirmed on a device.
-  /// PRIVATE_REGISTERS: registers every poll reads after `poll_registers`, for a part the heater may not
-  /// have (a night light). A miss here is not a poll failure, so a model declared on a heater without
-  /// the part costs a read, not the poll.
-  const HeatingFunction *extra_poll_registers{nullptr};
-  size_t extra_poll_register_count{0};  ///< Number of entries in `extra_poll_registers`.
-  /// PRIVATE_REGISTERS: how the heater's own programme names the comfort or eco period it is in;
-  /// nullptr for a heater that does not report it.
-  const HeatingProgrammePeriod *programme_period{nullptr};
 };
 
 /// @brief What a heater's programme period resolves to, from its readings.

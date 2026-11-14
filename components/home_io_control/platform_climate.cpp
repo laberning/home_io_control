@@ -105,9 +105,9 @@ void IOHomeClimate::setup() {
   if (const HeatingProfile *profile = this->profile_(); profile != nullptr) {
     if (profile->features.target_temperature)
       this->max_temperature_c_ = profile->visual_max_c;
-    for (size_t i = 0; i < profile->preset_count; i++) {
-      if (profile->presets[i].id == HeatingPresetId::CUSTOM)
-        this->custom_presets_.push_back(profile->presets[i].custom_name);
+    for (const HeatingPresetEntry &entry : profile->presets) {
+      if (entry.id == HeatingPresetId::CUSTOM)
+        this->custom_presets_.push_back(entry.custom_name);
     }
     this->set_supported_custom_presets(this->custom_presets_);
   }
@@ -128,11 +128,11 @@ climate::ClimateTraits IOHomeClimate::traits() {
     traits.add_feature_flags(climate::CLIMATE_SUPPORTS_CURRENT_TEMPERATURE);
   if (profile->features.action)
     traits.add_feature_flags(climate::CLIMATE_SUPPORTS_ACTION);
-  for (size_t i = 0; i < profile->mode_count; i++)
-    traits.add_supported_mode(to_climate_mode(profile->modes[i].hvac));
-  for (size_t i = 0; i < profile->preset_count; i++) {
-    if (profile->presets[i].id != HeatingPresetId::CUSTOM)
-      traits.add_supported_preset(to_climate_preset(profile->presets[i].id));
+  for (const HeatingModeEntry &entry : profile->modes)
+    traits.add_supported_mode(to_climate_mode(entry.hvac));
+  for (const HeatingPresetEntry &entry : profile->presets) {
+    if (entry.id != HeatingPresetId::CUSTOM)
+      traits.add_supported_preset(to_climate_preset(entry.id));
   }
   // HEATING_TEMP_MIN_C up to the heater's own maximum setpoint once read, never past what
   // encode_heating_write() accepts (HEATING_TEMP_MAX_C).
@@ -222,8 +222,7 @@ bool IOHomeClimate::apply_mode_(const HeatingProfile &profile, const climate::Cl
   if (!mode_opt.has_value())
     return false;
   const climate::ClimateMode requested = *mode_opt;
-  for (size_t i = 0; i < profile.mode_count; i++) {
-    const HeatingModeEntry &entry = profile.modes[i];
+  for (const HeatingModeEntry &entry : profile.modes) {
     if (to_climate_mode(entry.hvac) != requested)
       continue;
     const bool sent = profile.path == HeatingControlPath::TEMPERATURE_EXECUTE
@@ -240,7 +239,7 @@ bool IOHomeClimate::apply_mode_(const HeatingProfile &profile, const climate::Cl
       // A real HVAC mode supersedes a preset on the register and level paths; a temperature heater's
       // preset follows its status reply instead, and so does a preset kept in a register of its own
       // (a towel dryer's boost outlives a mode change).
-      if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE && profile.preset_observed == nullptr) {
+      if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE && profile.preset_observed.empty()) {
         this->clear_custom_preset_();
         this->preset.reset();
       }
@@ -258,8 +257,7 @@ bool IOHomeClimate::apply_custom_preset_(const HeatingProfile &profile, const cl
   if (!call.has_custom_preset())
     return false;
   const std::string custom = std::string(call.get_custom_preset());
-  for (size_t i = 0; i < profile.preset_count; i++) {
-    const HeatingPresetEntry &entry = profile.presets[i];
+  for (const HeatingPresetEntry &entry : profile.presets) {
     if (entry.id != HeatingPresetId::CUSTOM || custom != entry.custom_name)
       continue;
     return this->commit_preset_(profile, entry);
@@ -272,8 +270,7 @@ bool IOHomeClimate::apply_preset_(const HeatingProfile &profile, const climate::
   if (!preset_opt.has_value())
     return false;
   const climate::ClimatePreset requested = *preset_opt;
-  for (size_t i = 0; i < profile.preset_count; i++) {
-    const HeatingPresetEntry &entry = profile.presets[i];
+  for (const HeatingPresetEntry &entry : profile.presets) {
     if (entry.id == HeatingPresetId::CUSTOM || to_climate_preset(entry.id) != requested)
       continue;
     return this->commit_preset_(profile, entry);
@@ -292,7 +289,7 @@ bool IOHomeClimate::commit_preset_(const HeatingProfile &profile, const HeatingP
   // Once a read has succeeded the card follows the read-back, not the command.
   const bool commanded = !this->observed_;
   if (commanded) {
-    if (profile.preset_observed != nullptr) {
+    if (!profile.preset_observed.empty()) {
       // The preset has a register and a table of its own: its value is never a mode value.
       this->apply_observed_preset_(profile, entry.wire);
     } else if (profile.features.mode_observed) {
@@ -421,7 +418,7 @@ bool IOHomeClimate::sync_from_readings_(const HeatingProfile &profile, const Hea
   }
   // The period of the programme that runs, else the preset kept in a register of its own (a towel dryer's
   // temporary state; with the programme running and no period named, that is "none").
-  const int16_t preset_wire = profile.preset_observed != nullptr ? readings.value_of(profile.preset_fn) : -1;
+  const int16_t preset_wire = !profile.preset_observed.empty() ? readings.value_of(profile.preset_fn) : -1;
   if (period_shown && period.preset_index >= 0) {
     seen = true;
     changed = this->show_preset_(profile, period.preset_index) || changed;
@@ -466,7 +463,7 @@ bool IOHomeClimate::apply_observed_state_(const HeatingProfile &profile, uint8_t
     this->mode = mode;
   }
   // With a preset table of its own, the mode register says nothing about the preset.
-  if (profile.preset_observed != nullptr)
+  if (!profile.preset_observed.empty())
     return changed;
   return this->show_preset_(profile, observed->preset) || changed;
 }

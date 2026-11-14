@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <set>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -351,15 +352,14 @@ TEST(DeviceTypesTableFeatures, TiltNamedPositionsAndInversionBelongToCoverRowsOn
 
 TEST(DeviceTypesTableFeatures,
      WindowCompanionsAreExactlyWhereTheHeatingProfilePollsTheWindowAndOffersTheDetectionSwitch) {
-  const auto contains = [](const HeatingFunction *list, size_t count, HeatingFunction fn) {
-    return std::find(list, list + count, fn) != list + count;
+  const auto contains = [](std::span<const HeatingFunction> list, HeatingFunction fn) {
+    return std::find(list.begin(), list.end(), fn) != list.end();
   };
   test::for_each_table_row([&contains](const DeviceTypeInfo &row) {
     const HeatingProfile *profile = find_heating_profile(row.type, row.subtype, DeviceModel::NONE);
-    const bool profile_has_window =
-        profile != nullptr &&
-        contains(profile->poll_registers, profile->poll_register_count, HeatingFunction::WINDOW_OPEN) &&
-        contains(profile->boot_registers, profile->boot_register_count, HeatingFunction::SET_OPEN_WINDOW_DETECTION);
+    const bool profile_has_window = profile != nullptr &&
+                                    contains(profile->poll_registers, HeatingFunction::WINDOW_OPEN) &&
+                                    contains(profile->boot_registers, HeatingFunction::SET_OPEN_WINDOW_DETECTION);
     EXPECT_EQ(has_feature(row.features, device_feature::WINDOW_COMPANIONS), profile_has_window)
         << format_device_ids(row.type, row.subtype);
   });
@@ -509,15 +509,13 @@ TEST(DeviceTypesTableModels, AModelRowKeepsTheIdentityOfTheRowAboveIt) {
     // The window companions follow the heating profile of the model as they do for a subtype row.
     const HeatingProfile *profile = find_heating_profile(model.type, model.subtype, model.model);
     const bool polls_window =
-        profile != nullptr &&
-        std::find(profile->poll_registers, profile->poll_registers + profile->poll_register_count,
-                  HeatingFunction::WINDOW_OPEN) != profile->poll_registers + profile->poll_register_count;
+        profile != nullptr && std::find(profile->poll_registers.begin(), profile->poll_registers.end(),
+                                        HeatingFunction::WINDOW_OPEN) != profile->poll_registers.end();
     EXPECT_EQ(has_feature(model.features, device_feature::WINDOW_COMPANIONS), polls_window) << model.name;
     // The night light likewise follows the registers the model's poll reads.
     const bool polls_light =
-        profile != nullptr &&
-        std::find(profile->extra_poll_registers, profile->extra_poll_registers + profile->extra_poll_register_count,
-                  HeatingFunction::NIGHT_LIGHT) != profile->extra_poll_registers + profile->extra_poll_register_count;
+        profile != nullptr && std::find(profile->extra_poll_registers.begin(), profile->extra_poll_registers.end(),
+                                        HeatingFunction::NIGHT_LIGHT) != profile->extra_poll_registers.end();
     EXPECT_EQ(has_feature(model.features, device_feature::NIGHT_LIGHT), polls_light) << model.name;
   });
   EXPECT_EQ(rows, 2u);

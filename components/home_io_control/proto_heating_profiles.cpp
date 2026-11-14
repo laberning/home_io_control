@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <span>
 
 namespace esphome {
 namespace home_io_control {
@@ -22,6 +23,40 @@ constexpr uint16_t LOW_BYTE_MASK = 0xFF;
 /// Wire scale of the temperature registers: the device holds whole tenths of a degree.
 constexpr float TENTHS_PER_DEGREE = 10.0F;
 
+/// The card shows no preset for a device-reported value.
+constexpr int8_t NO_PRESET = -1;
+
+/// Compile-time failure for preset_index(): a non-constexpr call is not a constant expression, so a
+/// lookup that reaches it stops the build.
+void preset_missing_from_list() {}
+
+/// @return Whether two optional names are the same text (nullptr equals nullptr only).
+constexpr bool same_name(const char *a, const char *b) {
+  if (a == nullptr || b == nullptr)
+    return a == b;
+  while (*a != '\0' && *a == *b) {
+    a++;
+    b++;
+  }
+  return *a == *b;
+}
+
+/// @brief Index of a preset in a profile's preset list, found by its id and, for CUSTOM, its name.
+/// @details Evaluated at compile time, so an observed state that names a preset the list lacks (or a
+///          misspelled custom name) fails the build, and reordering the list moves every index with it.
+/// @param presets The profile's presets.
+/// @param id Preset id to find.
+/// @param custom_name Name of a CUSTOM preset; nullptr for a standard one.
+consteval int8_t preset_index(std::span<const HeatingPresetEntry> presets, HeatingPresetId id,
+                              const char *custom_name = nullptr) {
+  for (size_t i = 0; i < presets.size(); i++) {
+    if (presets[i].id == id && same_name(presets[i].custom_name, custom_name))
+      return static_cast<int8_t>(i);
+  }
+  preset_missing_from_list();
+  return NO_PRESET;
+}
+
 // === Electrical heater with an adjustable setpoint (52/1): private registers ===
 
 constexpr HeatingModeEntry SETPOINT_HEATER_MODES[] = {
@@ -30,11 +65,6 @@ constexpr HeatingModeEntry SETPOINT_HEATER_MODES[] = {
     {HeatingHvacMode::AUTO, static_cast<uint8_t>(HeatingMode::AUTO)},
 };
 
-/// Index of the "Program" entry in SETPOINT_HEATER_PRESETS, named by SETPOINT_HEATER_OBSERVED.
-constexpr int8_t SETPOINT_HEATER_PROGRAM_PRESET = 0;
-/// Index of the "Auto" entry in SETPOINT_HEATER_PRESETS, named by SETPOINT_HEATER_OBSERVED.
-constexpr int8_t SETPOINT_HEATER_AUTO_PRESET = 1;
-
 /// Both automatic modes show as HVAC auto; these presets are how a user picks between them.
 constexpr HeatingPresetEntry SETPOINT_HEATER_PRESETS[] = {
     {"Program", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, static_cast<uint8_t>(HeatingMode::PROG), true},
@@ -42,13 +72,15 @@ constexpr HeatingPresetEntry SETPOINT_HEATER_PRESETS[] = {
 };
 
 constexpr HeatingObservedState SETPOINT_HEATER_OBSERVED[] = {
-    {static_cast<uint8_t>(HeatingMode::AUTO), HeatingHvacMode::AUTO, SETPOINT_HEATER_AUTO_PRESET},
-    {static_cast<uint8_t>(HeatingMode::MANUAL), HeatingHvacMode::HEAT, -1},
+    {static_cast<uint8_t>(HeatingMode::AUTO), HeatingHvacMode::AUTO,
+     preset_index(SETPOINT_HEATER_PRESETS, HeatingPresetId::CUSTOM, "Auto")},
+    {static_cast<uint8_t>(HeatingMode::MANUAL), HeatingHvacMode::HEAT, NO_PRESET},
     // AUTO and PROG both show as HVAC auto; the preset tells them apart.
-    {static_cast<uint8_t>(HeatingMode::PROG), HeatingHvacMode::AUTO, SETPOINT_HEATER_PROGRAM_PRESET},
+    {static_cast<uint8_t>(HeatingMode::PROG), HeatingHvacMode::AUTO,
+     preset_index(SETPOINT_HEATER_PRESETS, HeatingPresetId::CUSTOM, "Program")},
     // The setpoint comes from another controller; heat is the nearest mode. Never written here.
-    {static_cast<uint8_t>(HeatingMode::EXTERNAL_SETPOINT), HeatingHvacMode::HEAT, -1},
-    {static_cast<uint8_t>(HeatingMode::OFF), HeatingHvacMode::OFF, -1},
+    {static_cast<uint8_t>(HeatingMode::EXTERNAL_SETPOINT), HeatingHvacMode::HEAT, NO_PRESET},
+    {static_cast<uint8_t>(HeatingMode::OFF), HeatingHvacMode::OFF, NO_PRESET},
 };
 
 /// The room temperature leads: it is the value a user looks at, so a poll that dies half-way still
@@ -86,16 +118,6 @@ constexpr HeatingModeEntry TOWEL_DRYER_MODES[] = {
     {HeatingHvacMode::AUTO, static_cast<uint8_t>(TowelDryerMode::PROG)},
 };
 
-/// Index of the "none" entry in TOWEL_DRYER_PRESETS, named by TOWEL_DRYER_OBSERVED_PRESETS.
-constexpr int8_t TOWEL_DRYER_NONE_PRESET = 0;
-/// Index of the boost entry in TOWEL_DRYER_PRESETS.
-constexpr int8_t TOWEL_DRYER_BOOST_PRESET = 1;
-/// Index of the "Drying" entry in TOWEL_DRYER_PRESETS.
-constexpr int8_t TOWEL_DRYER_DRYING_PRESET = 2;
-/// Index of the comfort entry in TOWEL_DRYER_PRESETS, named by TOWEL_DRYER_PROGRAMME_PERIOD.
-constexpr int8_t TOWEL_DRYER_COMFORT_PRESET = 3;
-/// Index of the eco entry in TOWEL_DRYER_PRESETS, named by TOWEL_DRYER_PROGRAMME_PERIOD.
-constexpr int8_t TOWEL_DRYER_ECO_PRESET = 4;
 /// The wire value of a preset the device only reports: it has no register value of its own (the period
 /// comes from TOWEL_DRYER_PROGRAMME_PERIOD) and is never written.
 constexpr uint8_t TOWEL_DRYER_NO_WIRE = 0;
@@ -115,17 +137,20 @@ constexpr HeatingPresetEntry TOWEL_DRYER_PRESETS[] = {
 
 /// The mode register names the mode only; TOWEL_DRYER_OBSERVED_PRESETS names the preset.
 constexpr HeatingObservedState TOWEL_DRYER_OBSERVED[] = {
-    {static_cast<uint8_t>(TowelDryerMode::OFF), HeatingHvacMode::OFF, -1},
-    {static_cast<uint8_t>(TowelDryerMode::PROG), HeatingHvacMode::AUTO, -1},
-    {static_cast<uint8_t>(TowelDryerMode::MANUAL), HeatingHvacMode::HEAT, -1},
+    {static_cast<uint8_t>(TowelDryerMode::OFF), HeatingHvacMode::OFF, NO_PRESET},
+    {static_cast<uint8_t>(TowelDryerMode::PROG), HeatingHvacMode::AUTO, NO_PRESET},
+    {static_cast<uint8_t>(TowelDryerMode::MANUAL), HeatingHvacMode::HEAT, NO_PRESET},
 };
 
 /// Temporary state -> preset. The hvac column is not consulted for a preset table. Comfort and eco have no
 /// row: the temporary state does not tell them apart.
 constexpr HeatingObservedState TOWEL_DRYER_OBSERVED_PRESETS[] = {
-    {static_cast<uint8_t>(HeatingTemporaryState::NONE), HeatingHvacMode::HEAT, TOWEL_DRYER_NONE_PRESET},
-    {static_cast<uint8_t>(HeatingTemporaryState::BOOST), HeatingHvacMode::HEAT, TOWEL_DRYER_BOOST_PRESET},
-    {static_cast<uint8_t>(HeatingTemporaryState::DRYING), HeatingHvacMode::HEAT, TOWEL_DRYER_DRYING_PRESET},
+    {static_cast<uint8_t>(HeatingTemporaryState::NONE), HeatingHvacMode::HEAT,
+     preset_index(TOWEL_DRYER_PRESETS, HeatingPresetId::NONE)},
+    {static_cast<uint8_t>(HeatingTemporaryState::BOOST), HeatingHvacMode::HEAT,
+     preset_index(TOWEL_DRYER_PRESETS, HeatingPresetId::BOOST)},
+    {static_cast<uint8_t>(HeatingTemporaryState::DRYING), HeatingHvacMode::HEAT,
+     preset_index(TOWEL_DRYER_PRESETS, HeatingPresetId::CUSTOM, "Drying")},
 };
 
 /// Room temperature first, as on the radiator. The setpoint is 0x0103, which a climate write is known to
@@ -153,8 +178,8 @@ constexpr HeatingProgrammePeriod TOWEL_DRYER_PROGRAMME_PERIOD = {
     HeatingFunction::TEMPERATURE_IN_FORCE,
     HeatingFunction::SET_TEMPERATURE,
     HeatingFunction::ECO_SETBACK,
-    TOWEL_DRYER_COMFORT_PRESET,
-    TOWEL_DRYER_ECO_PRESET,
+    preset_index(TOWEL_DRYER_PRESETS, HeatingPresetId::COMFORT),
+    preset_index(TOWEL_DRYER_PRESETS, HeatingPresetId::ECO),
 };
 
 // === Plain electrical heater (52/0): heating levels ===
@@ -177,14 +202,17 @@ constexpr HeatingPresetEntry LEVEL_HEATER_PRESETS[] = {
 };
 
 constexpr HeatingObservedState LEVEL_HEATER_OBSERVED[] = {
-    {heating_level::OFF, HeatingHvacMode::OFF, -1},
-    {heating_level::FROST_PROTECTION, HeatingHvacMode::HEAT, 0},
-    {heating_level::ECO, HeatingHvacMode::HEAT, 1},
-    {heating_level::COMFORT, HeatingHvacMode::HEAT, 2},
-    {heating_level::BOOST, HeatingHvacMode::HEAT, 3},
-    {heating_level::COMFORT_MINUS_1, HeatingHvacMode::HEAT, 4},
-    {heating_level::COMFORT_MINUS_2, HeatingHvacMode::HEAT, 5},
-    {heating_level::SECURED, HeatingHvacMode::HEAT, 6},
+    {heating_level::OFF, HeatingHvacMode::OFF, NO_PRESET},
+    {heating_level::FROST_PROTECTION, HeatingHvacMode::HEAT, preset_index(LEVEL_HEATER_PRESETS, HeatingPresetId::AWAY)},
+    {heating_level::ECO, HeatingHvacMode::HEAT, preset_index(LEVEL_HEATER_PRESETS, HeatingPresetId::ECO)},
+    {heating_level::COMFORT, HeatingHvacMode::HEAT, preset_index(LEVEL_HEATER_PRESETS, HeatingPresetId::COMFORT)},
+    {heating_level::BOOST, HeatingHvacMode::HEAT, preset_index(LEVEL_HEATER_PRESETS, HeatingPresetId::BOOST)},
+    {heating_level::COMFORT_MINUS_1, HeatingHvacMode::HEAT,
+     preset_index(LEVEL_HEATER_PRESETS, HeatingPresetId::CUSTOM, "Comfort -1")},
+    {heating_level::COMFORT_MINUS_2, HeatingHvacMode::HEAT,
+     preset_index(LEVEL_HEATER_PRESETS, HeatingPresetId::CUSTOM, "Comfort -2")},
+    {heating_level::SECURED, HeatingHvacMode::HEAT,
+     preset_index(LEVEL_HEATER_PRESETS, HeatingPresetId::CUSTOM, "Secured")},
 };
 
 // === Heating temperature interface (14/0) and heat pump (22/0): temperature in the main parameter ===
@@ -214,9 +242,12 @@ constexpr HeatingPresetEntry TEMPERATURE_INTERFACE_PRESETS[] = {
 /// The mode is the last command (nothing reads it back), so the hvac column is not consulted; the rows
 /// only name the preset an alias stands for.
 constexpr HeatingObservedState TEMPERATURE_INTERFACE_OBSERVED[] = {
-    {heating_alias::COMFORT, HeatingHvacMode::HEAT, 0},
-    {heating_alias::THERMOSTAT_ECO, HeatingHvacMode::HEAT, 1},
-    {heating_alias::SECURED, HeatingHvacMode::HEAT, 2},
+    {heating_alias::COMFORT, HeatingHvacMode::HEAT,
+     preset_index(TEMPERATURE_INTERFACE_PRESETS, HeatingPresetId::COMFORT)},
+    {heating_alias::THERMOSTAT_ECO, HeatingHvacMode::HEAT,
+     preset_index(TEMPERATURE_INTERFACE_PRESETS, HeatingPresetId::ECO)},
+    {heating_alias::SECURED, HeatingHvacMode::HEAT,
+     preset_index(TEMPERATURE_INTERFACE_PRESETS, HeatingPresetId::CUSTOM, "Secured")},
 };
 
 /// Heat pump: off is the off marker with FP16 off; on is the comfort alias with FP16 on, which is also
@@ -236,10 +267,12 @@ constexpr HeatingPresetEntry HEAT_PUMP_PRESETS[] = {
 };
 
 constexpr HeatingObservedState HEAT_PUMP_OBSERVED[] = {
-    {heating_alias::COMFORT, HeatingHvacMode::HEAT, 0},
-    {heating_alias::HEAT_PUMP_ECO, HeatingHvacMode::HEAT, 1},
-    {heating_alias::HEAT_PUMP_SETBACK, HeatingHvacMode::HEAT, 2},
-    {heating_alias::HEAT_PUMP_HALTED, HeatingHvacMode::HEAT, 3},
+    {heating_alias::COMFORT, HeatingHvacMode::HEAT, preset_index(HEAT_PUMP_PRESETS, HeatingPresetId::COMFORT)},
+    {heating_alias::HEAT_PUMP_ECO, HeatingHvacMode::HEAT, preset_index(HEAT_PUMP_PRESETS, HeatingPresetId::ECO)},
+    {heating_alias::HEAT_PUMP_SETBACK, HeatingHvacMode::HEAT,
+     preset_index(HEAT_PUMP_PRESETS, HeatingPresetId::CUSTOM, "Setback")},
+    {heating_alias::HEAT_PUMP_HALTED, HeatingHvacMode::HEAT,
+     preset_index(HEAT_PUMP_PRESETS, HeatingPresetId::CUSTOM, "Halted")},
 };
 
 constexpr float TEMPERATURE_VISUAL_MIN_C = 5.0F;   ///< Lowest target the card offers for a temperature profile.
@@ -247,27 +280,20 @@ constexpr float TEMPERATURE_VISUAL_MAX_C = 30.0F;  ///< Highest target the card 
 
 /// The electrical heater with an adjustable setpoint (52/1), the AGILIA radiator: a table row, and the
 /// base of the model that adds a night light.
-constexpr HeatingProfile SETPOINT_HEATER_PROFILE = {DeviceType::ELECTRICAL_HEATER,
-                                                    1,
-                                                    DeviceModel::NONE,
-                                                    HeatingControlPath::PRIVATE_REGISTERS,
-                                                    {/*target_temperature=*/true, /*current_temperature=*/true,
-                                                     /*action=*/true, /*mode_observed=*/true},
-                                                    0,
-                                                    HEATING_TEMP_MIN_C,
-                                                    HEATING_TEMP_MAX_C,
-                                                    NO_FP,
-                                                    /*fixed_range=*/false,
-                                                    SETPOINT_HEATER_MODES,
-                                                    std::size(SETPOINT_HEATER_MODES),
-                                                    SETPOINT_HEATER_PRESETS,
-                                                    std::size(SETPOINT_HEATER_PRESETS),
-                                                    SETPOINT_HEATER_OBSERVED,
-                                                    std::size(SETPOINT_HEATER_OBSERVED),
-                                                    SETPOINT_HEATER_POLL,
-                                                    std::size(SETPOINT_HEATER_POLL),
-                                                    SETPOINT_HEATER_BOOT,
-                                                    std::size(SETPOINT_HEATER_BOOT)};
+constexpr HeatingProfile SETPOINT_HEATER_PROFILE = {
+    .type = DeviceType::ELECTRICAL_HEATER,
+    .subtype = 1,
+    .model = DeviceModel::NONE,
+    .path = HeatingControlPath::PRIVATE_REGISTERS,
+    .features = {.target_temperature = true, .current_temperature = true, .action = true, .mode_observed = true},
+    .modes = SETPOINT_HEATER_MODES,
+    .visual_min_c = HEATING_TEMP_MIN_C,
+    .visual_max_c = HEATING_TEMP_MAX_C,
+    .presets = SETPOINT_HEATER_PRESETS,
+    .observed = SETPOINT_HEATER_OBSERVED,
+    .poll_registers = SETPOINT_HEATER_POLL,
+    .boot_registers = SETPOINT_HEATER_BOOT,
+};
 
 /// @brief The radiator's profile under the HEATER_WITH_LIGHT model, with the light read after its poll.
 /// @details Built from SETPOINT_HEATER_PROFILE rather than restated, so the two stay one heater with one
@@ -276,7 +302,6 @@ constexpr HeatingProfile heater_with_light_profile() {
   HeatingProfile profile = SETPOINT_HEATER_PROFILE;
   profile.model = DeviceModel::HEATER_WITH_LIGHT;
   profile.extra_poll_registers = HEATER_WITH_LIGHT_EXTRA_POLL;
-  profile.extra_poll_register_count = std::size(HEATER_WITH_LIGHT_EXTRA_POLL);
   return profile;
 }
 
@@ -284,98 +309,93 @@ constexpr HeatingProfile heater_with_light_profile() {
 constexpr HeatingProfile HEATER_WITH_LIGHT_PROFILE = heater_with_light_profile();
 
 constexpr HeatingProfile HEATING_PROFILES[] = {
-    {DeviceType::HEATING_TEMPERATURE_INTERFACE,
-     0,
-     DeviceModel::NONE,
-     HeatingControlPath::TEMPERATURE_EXECUTE,
-     {/*target_temperature=*/true, /*current_temperature=*/false, /*action=*/false, /*mode_observed=*/false},
-     HEATING_ALIAS_MP_PREFIX,
-     TEMPERATURE_VISUAL_MIN_C,
-     TEMPERATURE_VISUAL_MAX_C,
-     THERMOSTAT_MANUAL,
-     /*fixed_range=*/false,
-     TEMPERATURE_INTERFACE_MODES,
-     std::size(TEMPERATURE_INTERFACE_MODES),
-     TEMPERATURE_INTERFACE_PRESETS,
-     std::size(TEMPERATURE_INTERFACE_PRESETS),
-     TEMPERATURE_INTERFACE_OBSERVED,
-     std::size(TEMPERATURE_INTERFACE_OBSERVED),
-     nullptr,
-     0,
-     nullptr,
-     0},
-    {DeviceType::HEAT_PUMP,
-     0,
-     DeviceModel::NONE,
-     HeatingControlPath::TEMPERATURE_EXECUTE,
-     {/*target_temperature=*/true, /*current_temperature=*/false, /*action=*/false, /*mode_observed=*/false},
-     HEATING_ALIAS_MP_PREFIX,
-     TEMPERATURE_VISUAL_MIN_C,
-     TEMPERATURE_VISUAL_MAX_C,
-     NO_FP,
-     /*fixed_range=*/true,
-     HEAT_PUMP_MODES,
-     std::size(HEAT_PUMP_MODES),
-     HEAT_PUMP_PRESETS,
-     std::size(HEAT_PUMP_PRESETS),
-     HEAT_PUMP_OBSERVED,
-     std::size(HEAT_PUMP_OBSERVED),
-     nullptr,
-     0,
-     nullptr,
-     0},
-    {DeviceType::ELECTRICAL_HEATER,
-     0,
-     DeviceModel::NONE,
-     HeatingControlPath::HEATING_LEVEL,
-     {/*target_temperature=*/false, /*current_temperature=*/false, /*action=*/false, /*mode_observed=*/true},
-     HEATING_LEVEL_MP_PREFIX,
-     0.0F,
-     0.0F,
-     NO_FP,
-     /*fixed_range=*/false,
-     LEVEL_HEATER_MODES,
-     std::size(LEVEL_HEATER_MODES),
-     LEVEL_HEATER_PRESETS,
-     std::size(LEVEL_HEATER_PRESETS),
-     LEVEL_HEATER_OBSERVED,
-     std::size(LEVEL_HEATER_OBSERVED),
-     nullptr,
-     0,
-     nullptr,
-     0},
+    {
+        .type = DeviceType::HEATING_TEMPERATURE_INTERFACE,
+        .subtype = 0,
+        .model = DeviceModel::NONE,
+        .path = HeatingControlPath::TEMPERATURE_EXECUTE,
+        .features = {.target_temperature = true, .current_temperature = false, .action = false, .mode_observed = false},
+        .modes = TEMPERATURE_INTERFACE_MODES,
+        .setpoint_fp = THERMOSTAT_MANUAL,
+        .visual_min_c = TEMPERATURE_VISUAL_MIN_C,
+        .visual_max_c = TEMPERATURE_VISUAL_MAX_C,
+        .presets = TEMPERATURE_INTERFACE_PRESETS,
+        .observed = TEMPERATURE_INTERFACE_OBSERVED,
+        .mp_prefix = HEATING_ALIAS_MP_PREFIX,
+    },
+    {
+        .type = DeviceType::HEAT_PUMP,
+        .subtype = 0,
+        .model = DeviceModel::NONE,
+        .path = HeatingControlPath::TEMPERATURE_EXECUTE,
+        .features = {.target_temperature = true, .current_temperature = false, .action = false, .mode_observed = false},
+        .modes = HEAT_PUMP_MODES,
+        .visual_min_c = TEMPERATURE_VISUAL_MIN_C,
+        .visual_max_c = TEMPERATURE_VISUAL_MAX_C,
+        .presets = HEAT_PUMP_PRESETS,
+        .observed = HEAT_PUMP_OBSERVED,
+        .mp_prefix = HEATING_ALIAS_MP_PREFIX,
+        .fixed_range = true,
+    },
+    {
+        .type = DeviceType::ELECTRICAL_HEATER,
+        .subtype = 0,
+        .model = DeviceModel::NONE,
+        .path = HeatingControlPath::HEATING_LEVEL,
+        .features = {.target_temperature = false, .current_temperature = false, .action = false, .mode_observed = true},
+        .modes = LEVEL_HEATER_MODES,
+        .presets = LEVEL_HEATER_PRESETS,
+        .observed = LEVEL_HEATER_OBSERVED,
+        .mp_prefix = HEATING_LEVEL_MP_PREFIX,
+    },
     SETPOINT_HEATER_PROFILE,
     HEATER_WITH_LIGHT_PROFILE,
-    {DeviceType::ELECTRICAL_HEATER,
-     1,
-     DeviceModel::TOWEL_DRYER,
-     HeatingControlPath::PRIVATE_REGISTERS,
-     {/*target_temperature=*/true, /*current_temperature=*/true, /*action=*/true, /*mode_observed=*/true},
-     0,
-     HEATING_TEMP_MIN_C,
-     HEATING_TEMP_MAX_C,
-     NO_FP,
-     /*fixed_range=*/false,
-     TOWEL_DRYER_MODES,
-     std::size(TOWEL_DRYER_MODES),
-     TOWEL_DRYER_PRESETS,
-     std::size(TOWEL_DRYER_PRESETS),
-     TOWEL_DRYER_OBSERVED,
-     std::size(TOWEL_DRYER_OBSERVED),
-     TOWEL_DRYER_POLL,
-     std::size(TOWEL_DRYER_POLL),
-     TOWEL_DRYER_BOOT,
-     std::size(TOWEL_DRYER_BOOT),
-     TOWEL_DRYER_OBSERVED_PRESETS,
-     std::size(TOWEL_DRYER_OBSERVED_PRESETS),
-     /*mode_fn=*/HeatingFunction::TOWEL_MODE,
-     /*preset_fn=*/HeatingFunction::TEMPORARY_STATE,
-     HeatingActionSource::WORKING_RATE,
-     /*experimental_writes=*/false,
-     /*extra_poll_registers=*/nullptr,
-     /*extra_poll_register_count=*/0,
-     &TOWEL_DRYER_PROGRAMME_PERIOD},
+    {
+        .type = DeviceType::ELECTRICAL_HEATER,
+        .subtype = 1,
+        .model = DeviceModel::TOWEL_DRYER,
+        .path = HeatingControlPath::PRIVATE_REGISTERS,
+        .features = {.target_temperature = true, .current_temperature = true, .action = true, .mode_observed = true},
+        .modes = TOWEL_DRYER_MODES,
+        .visual_min_c = HEATING_TEMP_MIN_C,
+        .visual_max_c = HEATING_TEMP_MAX_C,
+        .programme_period = &TOWEL_DRYER_PROGRAMME_PERIOD,
+        .presets = TOWEL_DRYER_PRESETS,
+        .observed = TOWEL_DRYER_OBSERVED,
+        .poll_registers = TOWEL_DRYER_POLL,
+        .boot_registers = TOWEL_DRYER_BOOT,
+        .preset_observed = TOWEL_DRYER_OBSERVED_PRESETS,
+        .mode_fn = HeatingFunction::TOWEL_MODE,
+        .preset_fn = HeatingFunction::TEMPORARY_STATE,
+        .action_source = HeatingActionSource::WORKING_RATE,
+    },
 };
+
+// === Table consistency, checked at build time ===
+
+/// @return Whether every observed row of `rows` shows no preset or one inside a list of `preset_count`.
+constexpr bool observed_within(std::span<const HeatingObservedState> rows, size_t preset_count) {
+  return std::ranges::all_of(rows, [preset_count](const HeatingObservedState &row) {
+    return row.preset >= NO_PRESET && row.preset < static_cast<int8_t>(preset_count);
+  });
+}
+
+/// @return Whether a profile's programme period (if any) names presets inside its preset list.
+constexpr bool programme_period_within(const HeatingProfile &profile) {
+  const HeatingProgrammePeriod *period = profile.programme_period;
+  const auto count = static_cast<int8_t>(profile.presets.size());
+  return period == nullptr || (period->comfort_preset < count && period->eco_preset < count);
+}
+
+/// @return Whether every preset index a profile names lies inside its preset list.
+constexpr bool preset_indices_within_lists() {
+  return std::ranges::all_of(HEATING_PROFILES, [](const HeatingProfile &profile) {
+    return observed_within(profile.observed, profile.presets.size()) &&
+           observed_within(profile.preset_observed, profile.presets.size()) && programme_period_within(profile);
+  });
+}
+
+static_assert(preset_indices_within_lists(), "a profile names a preset index outside its preset list");
 
 const HeatingProfile *find_exact_profile(DeviceType type, uint8_t subtype, DeviceModel model) {
   for (const HeatingProfile &profile : HEATING_PROFILES) {
@@ -455,10 +475,10 @@ bool decode_heating_level(uint16_t main_parameter, uint8_t &level) {
 namespace {
 
 /// @return The row of `rows` for a wire value, or nullptr when there is none.
-const HeatingObservedState *find_observed_row(const HeatingObservedState *rows, size_t count, uint8_t wire) {
-  for (size_t i = 0; i < count; i++) {
-    if (rows[i].wire == wire)
-      return &rows[i];
+const HeatingObservedState *find_observed_row(std::span<const HeatingObservedState> rows, uint8_t wire) {
+  for (const HeatingObservedState &row : rows) {
+    if (row.wire == wire)
+      return &row;
   }
   return nullptr;
 }
@@ -466,11 +486,11 @@ const HeatingObservedState *find_observed_row(const HeatingObservedState *rows, 
 }  // namespace
 
 const HeatingObservedState *find_observed_state(const HeatingProfile &profile, uint8_t wire) {
-  return find_observed_row(profile.observed, profile.observed_count, wire);
+  return find_observed_row(profile.observed, wire);
 }
 
 const HeatingObservedState *find_observed_preset(const HeatingProfile &profile, uint8_t wire) {
-  return find_observed_row(profile.preset_observed, profile.preset_observed_count, wire);
+  return find_observed_row(profile.preset_observed, wire);
 }
 
 // === Programme period ===
