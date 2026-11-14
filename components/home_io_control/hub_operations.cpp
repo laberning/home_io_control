@@ -903,32 +903,20 @@ bool IOHomeControlComponent::exchange_heating_(const std::string &device_id, con
   const char *direction = is_read ? "read" : "write";
   ESP_LOGI(detail::TAG, "Sending heating %s %s to device %s", direction, label, device_id.c_str());
 
-  const ExchangeOutcome outcome = this->send_and_receive_(request, response, FREQ_CH2, max_tries);
-  const bool got_reply = outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE;
-  const bool acknowledged = got_reply && response.cmd == CMD_WRITE_PRIVATE_ACK;
-
-  // Feed the device-agnostic link-health / exchange-failure companion sensors either way, so a
-  // climate device is never silently invisible to the Last Contact / Exchange Failures
-  // diagnostics. A CMD_ERROR_RESP is still a reply — record its result code on the device so the
-  // "Last Result Code" diagnostic surfaces it, exactly as the cover path does.
+  // The shared bookkeeping (exchange counters, link health of a failed or unconfirmed ending, the
+  // result code of an error reply, device event reports) runs inside exchange_and_record_(). The
+  // heater poll keeps its own backoff ladder, so the helper schedules none (retry_after_fail_ms = 0).
+  const RequestResult result = this->exchange_and_record_(device_id, request, response, {false, 0, max_tries});
   IoDevice *dev = this->get_device(device_id);
-  if (dev == nullptr)
-    return false;
-  // Same rule as execute_request_and_update_(): an unconfirmed acceptance is counted wherever it
-  // happens, or a climate device that authenticates and then goes silent stays invisible in the
-  // very diagnostic built to surface that, while a cover doing the same thing is counted.
-  detail::record_exchange_outcome(*dev, request.cmd, outcome);
-  if (outcome == ExchangeOutcome::FAILED) {
-    detail::record_exchange_timeout(*dev, this->exchange_engine_.get_debug().tries);
-  } else {
+  if (result == RequestResult::REPLY && dev != nullptr) {
+    // A plain reply is not stamped by the helper (covers get it from the status decoder, which a
+    // heater reply never reaches), so a heater that answers still counts as heard.
     detail::update_link_health(*dev, this->radio_);
-    if (got_reply && response.cmd == CMD_ERROR_RESP && response.data_len > 0) {
-      detail::record_command_result(*dev, device_id, response.data[0], CMD_WRITE_PRIVATE, true);
-    } else if (acknowledged) {
+    if (response.cmd == CMD_WRITE_PRIVATE_ACK)
       detail::clear_command_result(*dev);
-    }
+    this->notify_device_update_(device_id);
   }
-  this->notify_device_update_(device_id);
+  const bool acknowledged = result == RequestResult::REPLY && response.cmd == CMD_WRITE_PRIVATE_ACK;
 
   if (!acknowledged) {
     this->log_exchange_debug_(device_id.c_str());

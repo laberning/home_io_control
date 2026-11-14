@@ -26,6 +26,8 @@ constexpr uint8_t OTHER_DEVICE_NODE_ID[3] = {0xAB, 0xC1, 0x23};
 constexpr const char *CLASS_DEVICE = "ABC124";  ///< Linked by `class:` only.
 constexpr uint8_t CLASS_DEVICE_NODE_ID[3] = {0xAB, 0xC1, 0x24};
 constexpr const char *UNLINKED_DEVICE = "ABC125";
+constexpr const char *HEATER_DEVICE = "ABC126";  ///< A register-protocol radiator, written by its climate entity.
+constexpr uint8_t HEATER_NODE_ID[3] = {0xAB, 0xC1, 0x26};
 constexpr uint32_t CATCHUP_MS = 30000;
 
 class TestableCatchupComponent : public IOHomeControlComponent {
@@ -40,6 +42,16 @@ class TestableCatchupComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::system_key_;
   using IOHomeControlComponent::tuning_;
 };
+
+/// A reply from the heater with command @p cmd and @p payload.
+template<size_t N> IoFrame heater_reply(const uint8_t *hub_node_id, uint8_t cmd, const uint8_t (&payload)[N]) {
+  IoFrame frame{};
+  init_frame(frame, true, false, true, false);
+  set_dst(frame, hub_node_id);
+  set_src(frame, HEATER_NODE_ID);
+  EXPECT_TRUE(set_cmd(frame, cmd, payload, N));
+  return frame;
+}
 
 /// One hub with four roller shutters: one linked to the remote the test presses, one linked to
 /// another remote, one linked by class, and one not linked at all.
@@ -264,4 +276,55 @@ TEST_F(RemoteActivityCatchupHub, TheCatchupReadsDoNotStartAnotherCatchup) {
 
   loop_at(esphome::millis() + CATCHUP_MS);
   EXPECT_TRUE(queued_status_reads().empty());
+}
+
+TEST_F(RemoteActivityCatchupHub, AHeaterWriteDuringTheBurstMovesTheCatchupOut) {
+  esphome::test_clock::ManualClock clock;
+  comp.tuning_.remote_activity_catchup_poll_ms = CATCHUP_MS;
+  DeviceConfig heater;
+  heater.type = DeviceType::ELECTRICAL_HEATER;
+  heater.subtype = 1;
+  comp.add_device(HEATER_DEVICE, heater);
+
+  press_linked_remote();
+  const uint32_t ended = run_answered_first_poll();
+  esphome::test_clock::advance_ms(CATCHUP_MS / 2);
+  const uint8_t ack[] = {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00};
+  radio.queue_rx(test::make_rx_packet(heater_reply(comp.node_id_, CMD_WRITE_PRIVATE_ACK, ack)));
+  ASSERT_TRUE(comp.send_heating_command(HEATER_DEVICE, HeatingFunction::SET_TEMPERATURE, 20.5F));
+  const uint32_t written = esphome::millis();
+  ASSERT_GT(written, ended);
+
+  loop_at(ended + CATCHUP_MS);
+  EXPECT_TRUE(queued_status_reads().empty()) << "the write ended later, so the catch-up is not due yet";
+  loop_at(written + CATCHUP_MS);
+  EXPECT_EQ(queued_status_reads().size(), 3u);
+}
+
+TEST_F(RemoteActivityCatchupHub, AWaterHeaterWriteDuringTheBurstMovesTheCatchupOut) {
+  esphome::test_clock::ManualClock clock;
+  comp.tuning_.remote_activity_catchup_poll_ms = CATCHUP_MS;
+  DeviceConfig water_heater;
+  water_heater.type = DeviceType::DOMESTIC_HOT_WATER;
+  water_heater.entity_class = DeviceCapabilityClass::WATER_HEATER;
+  comp.add_device(HEATER_DEVICE, water_heater);
+
+  press_linked_remote();
+  const uint32_t ended = run_answered_first_poll();
+  esphome::test_clock::advance_ms(CATCHUP_MS / 2);
+  // The mode write, its register read-back and the status read that follows it.
+  const uint8_t write_ack[] = {0x0C, 0x61, 0x00, 0x06, 0x02};
+  const uint8_t read_ack[] = {0x0C, 0x60, 0x00, 0x06, 0x02};
+  const uint8_t status[] = {0x2D, 0x00, 0xA1, 0xE8, 0x00, 0x00};
+  radio.queue_rx(test::make_rx_packet(heater_reply(comp.node_id_, CMD_WRITE_PRIVATE_ACK, write_ack)));
+  radio.queue_rx(test::make_rx_packet(heater_reply(comp.node_id_, CMD_WRITE_PRIVATE_ACK, read_ack)));
+  radio.queue_rx(test::make_rx_packet(heater_reply(comp.node_id_, CMD_PRIVATE_RESP, status)));
+  ASSERT_TRUE(comp.set_water_heater_mode(HEATER_DEVICE, DhwMode::MANUAL_ECO_OFF));
+  const uint32_t written = esphome::millis();
+  ASSERT_GT(written, ended);
+
+  loop_at(ended + CATCHUP_MS);
+  EXPECT_TRUE(queued_status_reads().empty()) << "the write ended later, so the catch-up is not due yet";
+  loop_at(written + CATCHUP_MS);
+  EXPECT_EQ(queued_status_reads().size(), 3u);
 }

@@ -262,10 +262,22 @@ static IoFrame build_write_private_ack(const uint8_t dst[3]) {
   return f;
 }
 
-TEST(HubOperations, HeatingCommandAuthenticatedWithoutFinalResponseIsCountedToo) {
-  // A climate write is write-only: an unconfirmed acceptance reports success and records no
-  // failure, exactly as a movement command does. Without this the counter would be a cover-only
-  // diagnostic, and a climate device that authenticates then goes silent would look perfectly fine.
+/// A device event report (a 0x71 nobody subscribed to) from the heater ABC123 to the hub.
+static IoFrame build_device_event_report(const uint8_t dst[3]) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  const uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_src(f, device_node_id);
+  set_dst(f, dst);
+  const uint8_t payload[4] = {0x20, 0x05, 0x06, 0x2A};
+  set_cmd(f, CMD_SET_CONFIG1_RESP, payload, sizeof(payload));
+  return f;
+}
+
+TEST(HubOperations, HeatingCommandAuthenticatedWithoutFinalResponseIsCountedAsAFailure) {
+  // A register write is not an EXECUTE, so a challenged exchange that is never closed counts one
+  // exchange failure, as for a status poll that got no payload. The challenge is still a frame from
+  // the heater, so last contact is stamped, and the unconfirmed count records it too.
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);
@@ -286,7 +298,44 @@ TEST(HubOperations, HeatingCommandAuthenticatedWithoutFinalResponseIsCountedToo)
   comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f);
 
   EXPECT_EQ(dev->exchange_unconfirmed_count, 1u);
-  EXPECT_EQ(dev->exchange_timeout_count, 0u) << "an accepted write is not a timeout";
+  EXPECT_EQ(dev->exchange_timeout_count, 1u);
+  EXPECT_NE(dev->last_seen_ms, 0u) << "the challenge came from the heater";
+}
+
+TEST(HubOperations, AnErrorReplyToAHeatingWriteRecordsItsResultCode) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
+  ASSERT_EQ(dev->last_seen_ms, 0u);
+  radio.queue_rx(test::make_rx_packet(build_error_response(comp.node_id_, RESULT_LIMITATION_BY_WIND)));
+
+  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f));
+
+  EXPECT_EQ(dev->last_result_code, RESULT_LIMITATION_BY_WIND);
+  EXPECT_NE(dev->last_seen_ms, 0u) << "a refusal is still a frame from the heater";
+  EXPECT_EQ(dev->exchange_timeout_count, 0u);
+}
+
+TEST(HubOperations, ADeviceEventDuringAHeatingWriteIsRecordedAndTheWriteAskedAgain) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
+
+  radio.queue_rx(test::make_rx_packet(build_device_event_report(comp.node_id_)));
+  radio.queue_rx(test::make_rx_packet(build_write_private_ack(comp.node_id_)));
+
+  EXPECT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f));
+
+  EXPECT_EQ(comp.device_event_count(), 1u);
+  EXPECT_NE(comp.last_device_event().find(" ABC123 0x"), std::string::npos) << comp.last_device_event();
+  EXPECT_EQ(radio.get_sent_data().size(), 2u) << "the request is sent once more after the report";
+  EXPECT_EQ(dev->exchange_timeout_count, 0u) << "the device answered, just with something else first";
 }
 
 TEST(HubOperations, SendHeatingCommandAcceptsClimateDeviceAndSendsExactBytes) {
@@ -493,6 +542,24 @@ TEST(HubOperations, ReadHeatingRegisterDecodesAndStoresTheValue) {
   EXPECT_EQ(tx[10], 0x60) << "a read is a get";
   EXPECT_EQ(tx[11], 0x01);
   EXPECT_EQ(tx[12], 0x15);
+}
+
+TEST(HubOperations, ADeviceEventDuringAHeatingRegisterReadIsRecordedAndTheReadAnswerUsed) {
+  TestableComponent comp;
+  MockRadio radio;
+  auto *dev = make_heater(comp, radio);
+  radio.queue_rx(test::make_rx_packet(build_device_event_report(comp.node_id_)));
+  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08})));
+
+  float value = 0.0F;
+  ASSERT_TRUE(comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, &value, EXCHANGE_RETRY_COUNT));
+
+  EXPECT_FLOAT_EQ(value, 20.75F) << "the answer to the repeated read is decoded";
+  EXPECT_EQ(comp.device_event_count(), 1u);
+  EXPECT_NE(comp.last_device_event().find(" ABC123 0x"), std::string::npos) << comp.last_device_event();
+  ASSERT_EQ(radio.get_sent_data().size(), 2u) << "the read is sent once more after the report";
+  EXPECT_EQ(radio.get_sent_data()[1].at(10), HEATING_DIRECTION_GET) << "the repeat is the same read";
+  EXPECT_EQ(dev->exchange_timeout_count, 0u);
 }
 
 TEST(HubOperations, ReadHeatingRegisterWithoutAValueInTheReplyFails) {

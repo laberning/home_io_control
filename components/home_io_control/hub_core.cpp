@@ -328,6 +328,9 @@ ExchangeOutcome IOHomeControlComponent::send_and_receive_(const IoFrame &request
                 preamble_override)
           : this->exchange_engine_.send_and_receive(request, response, freq, attempts.max_tries, preamble_override);
   this->busy_ = false;
+  // Every exchange ends here, so a heater or water heater write moves the catch-up read of a
+  // linked-remote burst like any other (ADR 0080, ADR 0082); a no-op while no burst is open.
+  this->poll_policy_.on_exchange_ended(millis(), this->tuning_.remote_activity_catchup_poll_ms);
   return outcome;
 }
 

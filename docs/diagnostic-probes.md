@@ -290,7 +290,8 @@ a build without `diagnostic_probes: true` logs it at DEBUG only.
   authenticated and acknowledged like every status update before it is recorded; any other recorded
   frame is never answered.
 - A report that arrives while the hub waits for the reply to its own request is recorded, and the
-  hub asks once more for the reply it was waiting for.
+  hub asks once more for the reply it was waiting for. That holds for heater and water heater
+  register reads and writes too; writing the same register value twice changes nothing.
 
 Paste the `Device event` log lines and the sensor's history into an issue; they are what lets the
 reports be decoded.

@@ -97,7 +97,8 @@ rather than everyday values, which is why they are disabled by default.
 - **Exchange Failures** (count): cumulative outbound exchanges to this device (position, tilt,
   status and name requests) that received no valid response. Zero is a real, always-published
   value here. A rising count on an otherwise-working device points at a marginal link — weak
-  signal, interference, distance — worth checking against RSSI.
+  signal, interference, distance — worth checking against RSSI. Heater and water heater register
+  reads and writes count the same way, including an exchange the device challenged but never closed.
 - **Unconfirmed Exchanges** (count): cumulative exchanges where the device answered with an
   authentication challenge, the hub answered that, and the closing reply never came. Zero is a
   real, always-published value here too.

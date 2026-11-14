@@ -708,11 +708,12 @@ class IOHomeControlComponent : public Component,
   ///
   /// Flow: registry lookup -> device_supports_climate_control() gate (rejected via
   /// detail::log_rejected_operation()) -> encode_heating_payload() -> create_write_private() (with
-  /// the device's `low_power` flag) -> a plain send_and_receive_(). Deliberately NOT routed
-  /// through execute_request_and_update_(): that helper is cover/position-shaped (status decode,
-  /// poll backoff). A CMD_WRITE_PRIVATE_ACK (0x21) reply is success; anything else (including
-  /// CMD_ERROR_RESP) is failure. The exchange still feeds the device-agnostic Last Contact /
-  /// Exchange Failures link-health sensors. The ack carries no state: a caller that wants the
+  /// the device's `low_power` flag) -> exchange_heating_(). Deliberately NOT routed through
+  /// execute_request_and_update_(): that helper is cover/position-shaped (status decode, poll
+  /// backoff). A CMD_WRITE_PRIVATE_ACK (0x21) reply is success; anything else (including
+  /// CMD_ERROR_RESP) is failure. The exchange keeps the bookkeeping every exchange shares
+  /// (exchange_and_record_(): Last Contact, Exchange Failures, Last Result Code, device event
+  /// reports; ADR 0082). The ack carries no state: a caller that wants the
   /// value the heater now holds reads it back with read_heating_register(). An acknowledged write
   /// also moves the heater's next poll to HEATING_POST_WRITE_POLL_DELAY_MS from now, so the regulator
   /// state (heating / idle) follows the change.
@@ -936,7 +937,9 @@ class IOHomeControlComponent : public Component,
   /// @param preamble Preamble length in bytes (e.g. `LONG_PREAMBLE`, `SHORT_PREAMBLE`, or a
   ///        tuning-configured value such as `normal_start_preamble`).
   bool transmit_frame_(const IoFrame &frame, uint32_t freq, uint16_t preamble);
-  /// Main request/response exchange with retry and automatic authentication.
+  /// Main request/response exchange with retry and automatic authentication. Every exchange ends
+  /// with StatusPollPolicy::on_exchange_ended(), so it moves an open catch-up burst's read out
+  /// (ADR 0080).
   /// @param request Outbound request IoFrame.
   /// @param response Output: received response IoFrame.
   /// @param freq RF frequency in Hz.
@@ -1336,9 +1339,10 @@ class IOHomeControlComponent : public Component,
   ///        the hub believes is travelling; its first misses keep the normal cadence
   ///        (StatusPollPolicy::on_exchange_failed()).
   void schedule_background_poll_backoff_(const std::string &device_id, bool auth_like, bool device_moving = false);
-  /// @brief The exchange every heating frame shares: send on the command channel, record the
-  /// outcome (exchange counters, link health, error result code), notify the entities and report
-  /// whether the device answered with CMD_WRITE_PRIVATE_ACK.
+  /// @brief The exchange every heating frame shares: run it through exchange_and_record_() (exchange
+  /// counters, link health, error result code, device event reports; no poll backoff, the heater
+  /// poll keeps its own), notify the entities and report whether the device answered with
+  /// CMD_WRITE_PRIVATE_ACK (ADR 0082).
   /// @param device_id Target device ID.
   /// @param label What was sent, for the log ("set_temperature", "read room_temperature").
   /// @param request The framed CMD_WRITE_PRIVATE request.
