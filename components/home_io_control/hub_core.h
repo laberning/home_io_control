@@ -764,17 +764,26 @@ class IOHomeControlComponent : public Component,
   /// @param mode Mode to write.
   /// @return true only if the device acknowledged the write; a missed read-back does not change that.
   virtual bool set_water_heater_mode(const std::string &device_id, DhwMode mode);
-  /// @brief Start or end a water heater's boost: a write of register 0x0000 (encode_dhw_boost_write()).
+  /// @brief Start or end a water heater's boost: a duration write of register 0x0000, then an EXECUTE with
+  /// the operating-mode word FP16 (DHW_OPERATING_MODE_BOOST_ON, or DHW_OPERATING_MODE_OFF to end).
   ///
-  /// Starting writes the value the register held during a one-day boost, so it asks for one day. The
-  /// register is read back at once, so a switch shows what the heater then holds, and the next poll moves
-  /// to HEATING_POST_WRITE_POLL_DELAY_MS from now so the heating state follows. Gated on
-  /// device_feature::WATER_HEATER.
-  /// \todo Experimental: confirm on a real water heater that this write starts and ends a boost.
+  /// See set_dhw_operating_mode_() for the sequence. Ending a boost also ends away, because the off word
+  /// switches both (ADR 0081). Gated on device_feature::WATER_HEATER.
+  /// \todo Experimental: confirm on a real water heater that this starts and ends a boost.
   /// @param device_id Target device ID (hex string).
   /// @param on true to start a boost, false to end it.
-  /// @return true only if the device acknowledged the write.
+  /// @return true when the device accepted the EXECUTE; false for a refused or unacknowledged command.
   virtual bool set_water_heater_boost(const std::string &device_id, bool on);
+  /// @brief Start or end a water heater's away (holiday) mode: a duration write of register 0x0005 (255, until
+  /// turned off), then an EXECUTE with FP16 DHW_OPERATING_MODE_AWAY_ON, or DHW_OPERATING_MODE_OFF to end.
+  ///
+  /// See set_dhw_operating_mode_() for the sequence. Ending away also ends a boost (ADR 0081). Gated on
+  /// device_feature::WATER_HEATER.
+  /// \todo Experimental: confirm on a real water heater that this starts and ends the holiday mode.
+  /// @param device_id Target device ID (hex string).
+  /// @param on true to start away, false to end it.
+  /// @return true when the device accepted the EXECUTE; false for a refused or unacknowledged command.
+  virtual bool set_water_heater_away(const std::string &device_id, bool on);
   /// @brief Set the temperature encoding range of a heater that carries a temperature in its main
   /// parameter (YAML `min_temperature:` / `max_temperature:`).
   /// @param device_id Target device ID.
@@ -1392,15 +1401,16 @@ class IOHomeControlComponent : public Component,
   /// @param max_tries Transmit-attempt cap.
   /// @return true when the device answered.
   bool read_dhw_reading_(const std::string &device_id, uint8_t index, uint8_t max_tries);
-  /// @brief Read a water heater's target: the status read it has answered (create_status_mp_fp_read()),
-  /// whose reply update_device_status_() folds into IoDevice::dhw.
+  /// @brief Read a water heater's target, capabilities and boost and away state: the status read
+  /// DHW_STATUS_FPI1 / DHW_STATUS_FPI2 (create_status_mp_fp_read()), whose reply update_device_status_()
+  /// folds into IoDevice::dhw.
   /// @param device_id Target device ID.
   /// @param max_tries Transmit-attempt cap.
   /// @return true when the device answered.
   bool read_dhw_status_(const std::string &device_id, uint8_t max_tries);
   /// @brief Write one family-0x00 register of a water heater, then read it back.
   ///
-  /// Shared by the mode and boost setters, each of which encodes and checks its own payload first. Gated on
+  /// Shared by the mode setter and the boost and away duration writes, each of which encodes its own payload. Gated on
   /// device_feature::WATER_HEATER; the write has the full retry budget, the read-back (read_dhw_reading_())
   /// updates IoDevice::dhw, and the next poll moves to HEATING_POST_WRITE_POLL_DELAY_MS from now.
   /// @param device_id Target device ID.
@@ -1411,9 +1421,36 @@ class IOHomeControlComponent : public Component,
   /// @return true only if the device acknowledged the write; a missed read-back does not change that.
   bool write_dhw_register_(const std::string &device_id, const char *operation, uint8_t index, const uint8_t *payload,
                            size_t payload_len);
-  /// @brief Poll a water heater: the status read for its target (create_status_mp_fp_read(), the read it has
-  /// answered), then its water temperature, mode, heating state, boost and energy registers (stopping at the
-  /// first failure), then its brand until it has been read once (logged at INFO).
+  /// @brief Switch a water heater's boost or away through the operating-mode word (ADR 0081).
+  ///
+  /// Refused and logged when FP15 has been read and lacks the feature's capability bit. On: the duration
+  /// register write (its ack is logged, a missed one does not stop the sequence), then one EXECUTE with
+  /// MAIN_PARAMETER_KEEP and the feature's FP16. Off: the EXECUTE with DHW_OPERATING_MODE_OFF only. After
+  /// an accepted EXECUTE the status is read at once and the next poll moves to HEATING_POST_WRITE_POLL_DELAY_MS
+  /// from now.
+  /// @param device_id Target device ID.
+  /// @param which Boost or away.
+  /// @param on true to start it, false to end it (which ends the other too).
+  /// @return true when the device accepted the EXECUTE.
+  bool set_dhw_operating_mode_(const std::string &device_id, DhwOperatingFeature which, bool on);
+  /// @brief The water heater `device_id` names, or nullptr when it is unknown, the hub is not set up yet, or
+  /// the device is no water heater (that case is logged). The gate of every water heater write.
+  /// @param device_id Target device ID.
+  /// @param operation What is being written, for the rejection log line.
+  /// @return The device record, or nullptr.
+  const IoDevice *water_heater_for_write_(const std::string &device_id, const char *operation);
+  /// @brief Send one water heater EXECUTE (target or operating mode) through try_execute_operation_(), which
+  /// gates on device_feature::WATER_HEATER and arms the settle poll; on acceptance the next poll moves to
+  /// HEATING_POST_WRITE_POLL_DELAY_MS from now so the heating state follows.
+  /// @param device_id Target device ID.
+  /// @param action Operation name for the logs.
+  /// @param build Builds the EXECUTE for the device.
+  /// @return true when the device accepted the EXECUTE.
+  bool execute_dhw_(const std::string &device_id, const char *action,
+                    const std::function<bool(IoFrame &, const IoDevice &)> &build);
+  /// @brief Poll a water heater: the status read for its target, capabilities and boost and away state
+  /// (read_dhw_status_()), then its water temperature, mode, heating state, boost and away duration and
+  /// energy registers (stopping at the first failure), then its brand until it has been read once (logged at INFO).
   ///
   /// The same ladder, try band and cadence as poll_heating_device_(): a failure moves the retry onto the
   /// StatusPollPolicy ladder, and the next regular poll is armed one interval out. Called from

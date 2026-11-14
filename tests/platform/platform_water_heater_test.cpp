@@ -20,6 +20,10 @@ class MockHubWaterHeater : public test::MockPlatformHubBase {
   std::vector<DhwMode> modes;  ///< Modes sent through set_water_heater_mode(), in order.
   std::vector<float> targets;  ///< Targets sent through set_water_heater_target(), in order.
   std::vector<bool> boosts;    ///< Values sent through set_water_heater_boost(), in order.
+  std::vector<bool> aways;     ///< Values sent through set_water_heater_away(), in order.
+  bool away_result{true};
+  /// What the status read after an away write finds; -1 for no read-back.
+  int8_t away_read_back{-1};
   bool mode_result{true};
   bool target_result{true};
   bool boost_result{true};
@@ -43,6 +47,17 @@ class MockHubWaterHeater : public test::MockPlatformHubBase {
   bool set_water_heater_target(const std::string & /*device_id*/, float celsius) override {
     this->targets.push_back(celsius);
     return this->target_result;
+  }
+
+  bool set_water_heater_away(const std::string &device_id, bool on) override {
+    this->aways.push_back(on);
+    if (this->away_result && this->away_read_back >= 0) {
+      if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
+        dev->dhw.away = this->away_read_back;
+        this->registry_.notify(device_id);
+      }
+    }
+    return this->away_result;
   }
 
   bool set_water_heater_boost(const std::string &device_id, bool on) override {
@@ -117,7 +132,7 @@ TEST(PlatformWaterHeater, TraitsOfferTheReadingsTheThreeModesAndTheHeatersRange)
   EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_CURRENT_TEMPERATURE));
   EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_TARGET_TEMPERATURE));
   EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_OPERATION_MODE));
-  EXPECT_FALSE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_AWAY_MODE)) << "away writes are not offered yet";
+  EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_AWAY_MODE)) << "away mode is offered (experimental)";
   EXPECT_FALSE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_ON_OFF)) << "no off state has been seen";
   EXPECT_FLOAT_EQ(traits.get_min_temperature(), 20.0F);
   EXPECT_FLOAT_EQ(traits.get_max_temperature(), 62.0F);
@@ -360,6 +375,147 @@ TEST(PlatformWaterHeater, AModeTheHeaterDoesNotOfferIsNeverSent) {
   EXPECT_TRUE(hub.modes.empty());
 }
 
+// === Away mode ===
+
+TEST(PlatformWaterHeater, AwayIsSentToTheHubAndTheHeatersReportIsWhatIsShown) {
+  MockHubWaterHeater hub;
+  hub.away_read_back = 1;
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+  EXPECT_FALSE(entity.is_away());
+
+  auto call = entity.make_call();
+  call.set_away(true);
+  call.perform();
+
+  ASSERT_EQ(hub.aways.size(), 1u);
+  EXPECT_TRUE(hub.aways[0]);
+  EXPECT_TRUE(entity.is_away()) << "FP16 reported it";
+
+  hub.away_read_back = 0;
+  auto off = entity.make_call();
+  off.set_away(false);
+  off.perform();
+  ASSERT_EQ(hub.aways.size(), 2u);
+  EXPECT_FALSE(hub.aways[1]);
+  EXPECT_FALSE(entity.is_away());
+}
+
+TEST(PlatformWaterHeater, AwayIsNeverShownFromTheCommandAlone) {
+  MockHubWaterHeater hub;  // the heater reports nothing back
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+
+  auto call = entity.make_call();
+  call.set_away(true);
+  call.perform();
+
+  ASSERT_EQ(hub.aways.size(), 1u);
+  EXPECT_FALSE(entity.is_away());
+}
+
+TEST(PlatformWaterHeater, AwayFollowsTheHeatersReportAndPublishesOnlyAChange) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+  DhwReadings readings;
+  readings.away = 1;  // a holiday set on the display
+  const int before = entity.publish_count_;
+  publish(hub, readings);
+  EXPECT_TRUE(entity.is_away());
+  EXPECT_EQ(entity.publish_count_, before + 1);
+
+  publish(hub, readings);
+  EXPECT_EQ(entity.publish_count_, before + 1) << "the same report publishes nothing";
+
+  readings.away = 0;  // the holiday ended
+  publish(hub, readings);
+  EXPECT_FALSE(entity.is_away());
+  EXPECT_EQ(entity.publish_count_, before + 2);
+}
+
+TEST(PlatformWaterHeater, AwayShowsNoTargetAndTheTargetComesBackAfterIt) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+  DhwReadings readings;
+  readings.mode = static_cast<int16_t>(DhwMode::MANUAL_ECO_ON);
+  readings.target_c = 54.0F;
+  publish(hub, readings);
+  ASSERT_FLOAT_EQ(entity.get_target_temperature(), 54.0F);
+
+  // During a holiday the heater reports main parameter 0, which decodes as the bottom of the range (issue #198).
+  readings.away = 1;
+  readings.target_c = 20.0F;
+  publish(hub, readings);
+  EXPECT_TRUE(std::isnan(entity.get_target_temperature())) << "20 C while away is no target";
+
+  readings.away = 0;
+  readings.target_c = 54.0F;
+  publish(hub, readings);
+  EXPECT_FLOAT_EQ(entity.get_target_temperature(), 54.0F);
+}
+
+TEST(PlatformWaterHeater, ARefusedAwayWriteChangesNothing) {
+  MockHubWaterHeater hub;
+  hub.away_result = false;
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+  auto call = entity.make_call();
+  call.set_away(true);
+  call.perform();
+  EXPECT_EQ(hub.aways.size(), 1u);
+  EXPECT_FALSE(entity.is_away());
+}
+
+TEST(PlatformWaterHeater, ATargetIsNotSentWhileAway) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+  DhwReadings readings;
+  readings.away = 1;
+  readings.mode = static_cast<int16_t>(DhwMode::MANUAL_ECO_ON);
+  publish(hub, readings);
+
+  auto call = entity.make_call();
+  call.set_target_temperature(50.0F);
+  call.perform();
+
+  EXPECT_TRUE(hub.targets.empty()) << "logged instead of sent";
+}
+
+TEST(PlatformWaterHeater, ATargetInTheCallThatStartsAwayIsNotSent) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+
+  auto call = entity.make_call();
+  call.set_away(true);
+  call.set_target_temperature(50.0F);
+  call.perform();
+
+  EXPECT_EQ(hub.aways.size(), 1u);
+  EXPECT_TRUE(hub.targets.empty());
+}
+
+TEST(PlatformWaterHeater, ATargetInTheCallThatEndsAwayIsSent) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+  DhwReadings readings;
+  readings.away = 1;
+  publish(hub, readings);
+
+  auto call = entity.make_call();
+  call.set_away(false);
+  call.set_target_temperature(50.0F);
+  call.perform();
+
+  EXPECT_EQ(hub.aways.size(), 1u);
+  ASSERT_EQ(hub.targets.size(), 1u);
+  EXPECT_FLOAT_EQ(hub.targets[0], 50.0F);
+}
+
 // === Companions ===
 
 TEST(PlatformWaterHeater, EnergyIsPublishedInKilowattHoursOnceRead) {
@@ -421,7 +577,7 @@ TEST(PlatformDhwBoostSwitch, SetupWritesNothingAndShowsNothingBeforeTheFirstRead
   EXPECT_FALSE(sw.get_state());
 }
 
-TEST(PlatformDhwBoostSwitch, FollowsThePollReading) {
+TEST(PlatformDhwBoostSwitch, FollowsTheOperatingModeReading) {
   MockHubWaterHeater hub;
   IOHomeWaterHeater entity;
   bind_water_heater(entity, hub);

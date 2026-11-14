@@ -82,9 +82,9 @@ water_heater::WaterHeaterTraits IOHomeWaterHeater::traits() {
   water_heater::WaterHeaterTraits traits;
   // Both temperatures are filled only from a polled reply: until the first poll lands the card shows them
   // empty, which is the honest state.
-  traits.add_feature_flags(water_heater::WATER_HEATER_SUPPORTS_CURRENT_TEMPERATURE |
-                           water_heater::WATER_HEATER_SUPPORTS_TARGET_TEMPERATURE |
-                           water_heater::WATER_HEATER_SUPPORTS_OPERATION_MODE);
+  traits.add_feature_flags(
+      water_heater::WATER_HEATER_SUPPORTS_CURRENT_TEMPERATURE | water_heater::WATER_HEATER_SUPPORTS_TARGET_TEMPERATURE |
+      water_heater::WATER_HEATER_SUPPORTS_OPERATION_MODE | water_heater::WATER_HEATER_SUPPORTS_AWAY_MODE);
   traits.set_min_temperature(DHW_TARGET_MIN_C);
   traits.set_max_temperature(DHW_TARGET_MAX_C);
   traits.set_target_temperature_step(WATER_HEATER_TARGET_STEP_C);
@@ -111,10 +111,19 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
     }
   }
 
+  // The heater reports away from FP16 in the read-back, which publishes it; the command is never shown.
+  if (call.get_away().has_value())
+    this->parent_->set_water_heater_away(this->device_id_, *call.get_away());
+
   const float target = call.get_target_temperature();
-  // Decided on the mode the heater holds after the mode write above (its read-back has already been folded
-  // in), not on the mode the call asked for: a refused mode write leaves the heater where it was.
-  if (!std::isnan(target) && this->observed_ && this->mode_ == water_heater::WATER_HEATER_MODE_HEAT_PUMP) {
+  // Away is judged on the call's request (a call that starts away sends no target), or else on what the
+  // heater reports. The mode is judged on what the heater holds after the mode write above (its read-back
+  // has already been folded in), not on the mode the call asked for: a refused mode write leaves the heater
+  // where it was.
+  const bool away = call.get_away().value_or(this->is_away());
+  if (!std::isnan(target) && away) {
+    ESP_LOGW(TAG, "Device %s: target ignored while away, the heater holds no target then", this->device_id_.c_str());
+  } else if (!std::isnan(target) && this->observed_ && this->mode_ == water_heater::WATER_HEATER_MODE_HEAT_PUMP) {
     ESP_LOGW(TAG, "Device %s: target ignored in automatic mode, the heater chooses its own", this->device_id_.c_str());
   } else if (!std::isnan(target) && this->parent_->set_water_heater_target(this->device_id_, target) &&
              !this->observed_) {
@@ -137,9 +146,10 @@ bool IOHomeWaterHeater::sync_from_readings_(const DhwReadings &readings) {
     changed = true;
   }
   // A target that is not a temperature (an alias the heater has not been seen sending) shows as unknown, and
-  // so does the target in automatic mode: the heater chooses its own then and its display shows none.
+  // so does the target in automatic mode (the heater chooses its own) and while away (the heater reports a
+  // main parameter of 0 then, which would read as 20 degrees but is no target).
   const bool automatic = readings.mode == static_cast<int16_t>(DhwMode::AUTO);
-  const float target = automatic ? NAN : readings.target_c;
+  const float target = (automatic || readings.away == 1) ? NAN : readings.target_c;
   if (differs(this->target_temperature_, target)) {
     this->set_target_temperature_(target);
     changed = true;
@@ -150,6 +160,10 @@ bool IOHomeWaterHeater::sync_from_readings_(const DhwReadings &readings) {
       this->set_mode_(mode);
       changed = true;
     }
+  }
+  if (readings.away >= 0 && (readings.away != 0) != this->is_away()) {
+    this->set_state_flag_(water_heater::WATER_HEATER_STATE_AWAY, readings.away != 0);
+    changed = true;
   }
   this->observed_ =
       this->observed_ || !std::isnan(readings.water_c) || !std::isnan(readings.target_c) || readings.mode >= 0;
@@ -171,7 +185,7 @@ void IOHomeWaterHeater::dump_config() {
   ESP_LOGCONFIG(
       TAG, "  Status Poll Interval: %" PRIu32 " ms",
       this->status_poll_interval_ms_ != 0 ? this->status_poll_interval_ms_ : HEATING_POLL_DEFAULT_INTERVAL_MS);
-  ESP_LOGCONFIG(TAG, "  Status: readings, target and mode confirmed on hardware; boost write experimental");
+  ESP_LOGCONFIG(TAG, "  Status: readings, target and mode confirmed on hardware; away mode experimental");
 }
 
 // === Companions ===
@@ -222,9 +236,9 @@ void IOHomeDhwBinarySensor::dump_config() {
 }
 
 void IOHomeDhwBoostSwitch::setup() {
-  // No restore: the state comes only from the heater, and a reboot must not write the boost register.
+  // No restore: the state comes only from the heater, and a reboot must not start or end a boost.
   this->register_companion_binding_([this](const IoDevice &dev) {
-    // Shown only from a reply; a switch with no reading yet keeps its unknown state.
+    // Shown only from the heater's FP16 report; a switch with no reading yet keeps its unknown state.
     if (dev.dhw.boost >= 0)
       this->publish_state(dev.dhw.boost != 0);
   });
@@ -233,7 +247,7 @@ void IOHomeDhwBoostSwitch::setup() {
 void IOHomeDhwBoostSwitch::write_state(bool state) {
   if (this->parent_ == nullptr)
     return;
-  // The read-back inside set_water_heater_boost() updates IoDevice::dhw, and the binding above publishes it.
+  // The status read inside set_water_heater_boost() updates IoDevice::dhw, and the binding above publishes it.
   if (!this->parent_->set_water_heater_boost(this->device_id_, state)) {
     ESP_LOGW(TAG, "Device %s: boost %s was not acknowledged", this->device_id_.c_str(), state ? "on" : "off");
   }
@@ -242,7 +256,7 @@ void IOHomeDhwBoostSwitch::write_state(bool state) {
 void IOHomeDhwBoostSwitch::dump_config() {
   ESP_LOGCONFIG(TAG, "IO-Homecontrol Water Heater Boost:");
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
-  ESP_LOGCONFIG(TAG, "  Status: experimental (a boost started here asks for one day)");
+  ESP_LOGCONFIG(TAG, "  Status: experimental (a boost started here writes duration 1; the state is the heater's FP16)");
 }
 
 }  // namespace home_io_control
