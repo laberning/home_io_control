@@ -12,7 +12,8 @@
 
 #include "pairing_engine.h"
 
-#include "hub_decisions.h"
+#include "decisions_pairing.h"
+#include "decisions_attempts.h"
 #include "log_helpers.h"
 #include "proto_commands.h"
 #include "proto_crypto.h"
@@ -165,8 +166,7 @@ bool PairingEngine::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &
         if (parsed == nullptr)
           return ReplyDisposition::IGNORE;
         const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
-        if (parsed->cmd == CMD_KEY_CONFIRM && memcmp(parsed->src, device_node_id, NODE_ID_SIZE) == 0 &&
-            memcmp(parsed->dst, node_id_, NODE_ID_SIZE) == 0) {
+        if (decisions::is_direct_key_confirm(*parsed, device_node_id, node_id_)) {
           this->telemetry_.record_rx(*parsed, rssi);
           return ReplyDisposition::ACCEPT;
         }
@@ -850,15 +850,15 @@ bool PairingEngine::verify_device_holds_key_(pairing::PairingContext &context) {
     return false;
   const ExchangeOutcome outcome = engine_.send_and_receive(
       context.req, context.resp, FREQ_CH2, PAIRING_KEY_VERIFY_MAX_TRIES, pairing_start_preamble_(context.req));
-  const bool held = outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE && engine_.get_debug().saw_challenge &&
-                    context.resp.cmd == CMD_GET_NAME_RESP;
+  const auto verdict = decisions::classify_key_verify_reply(outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE,
+                                                            engine_.get_debug().saw_challenge, context.resp);
+  const bool held = verdict == decisions::PairingKeyVerifyDisposition::HELD;
   if (held) {
     ESP_LOGW(TAG,
              "Key exchange: %s never confirmed the key, but it answered an authenticated request with it. "
              "Treating it as paired.",
              context.device_id.c_str());
-  } else if (outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE && context.resp.cmd == CMD_ERROR_RESP &&
-             context.resp.data_len > 0) {
+  } else if (verdict == decisions::PairingKeyVerifyDisposition::REFUSED) {
     // Refused outright: the device never got as far as checking a key.
     const uint8_t code = context.resp.data[0];
     ESP_LOGW(TAG,
@@ -888,16 +888,18 @@ bool PairingEngine::wait_for_pulled_key_(pairing::PairingContext &context, uint3
 
   auto outcome =
       engine_.listen(spec, context.packet, context.rx, [&](const IoFrame *parsed, const RadioRxPacket & /*packet*/) {
-        if (parsed == nullptr || memcmp(parsed->src, context.device.node_id, NODE_ID_SIZE) != 0 ||
-            memcmp(parsed->dst, node_id_, NODE_ID_SIZE) != 0)
+        if (parsed == nullptr)
+          return ReplyDisposition::IGNORE;
+        const auto disposition = decisions::classify_key_pull_reply(*parsed, context.device.node_id, node_id_);
+        if (disposition == decisions::PairingKeyPullReplyDisposition::IGNORE)
           return ReplyDisposition::IGNORE;
         const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
-        if (parsed->cmd == CMD_KEY_TRANSFER && parsed->data_len >= AES_KEY_SIZE) {
+        if (disposition == decisions::PairingKeyPullReplyDisposition::KEY) {
           this->telemetry_.record_rx(*parsed, rssi);
           return ReplyDisposition::ACCEPT;
         }
         this->telemetry_.record_rx_reject(*parsed, rssi);
-        if (parsed->cmd == CMD_ERROR_RESP) {
+        if (disposition == decisions::PairingKeyPullReplyDisposition::REFUSE) {
           this->note_key_refusal_(context, *parsed, "Key pull");
           return ReplyDisposition::ABORT;
         }

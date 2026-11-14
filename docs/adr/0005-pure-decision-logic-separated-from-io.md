@@ -28,7 +28,7 @@ flowchart LR
         KE["key-extraction wiring<br/><i>arming, timers, TX</i>"]
     end
     subgraph Pure["Pure decisions — host-testable, no I/O"]
-        HD["hub_decisions.h<br/><i>frame classification,<br/>shared timing helpers</i>"]
+        HD["decisions_*.h<br/><i>frame classification,<br/>shared timing helpers</i>"]
         PR["pairing_responder.h<br/><i>responder state transitions</i>"]
     end
     T["Host unit tests<br/>+ replayed real captures"]
@@ -43,7 +43,7 @@ flowchart LR
 ```
 
 This applies in both directions: the hub's outbound flows
-(`hub_decisions.h`) and the device-role responder of ADR 0012
+(`decisions_exchange.h`, `decisions_pairing.h`, `decisions_attempts.h`) and the device-role responder of ADR 0012
 (`pairing_responder.h`), which mirrors the split for the reverse role.
 
 ## Consequences

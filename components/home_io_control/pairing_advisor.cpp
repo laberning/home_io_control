@@ -4,7 +4,7 @@
 
 #include "pairing_advisor.h"
 
-#include "hub_decisions.h"
+#include "decisions_oneway.h"
 #include "proto_constants.h"
 #include "proto_device_types.h"
 #include "proto_timing.h"
@@ -39,7 +39,7 @@ bool is_seeded_sighting(const PairingTelemetryEvent &event) {
   return event.kind == PairingTelemetryEventKind::RX && event.aux == 1;
 }
 
-/// 1W pairing traffic (issue #27 case). Thin wrapper over the shared predicate (hub_decisions.h)
+/// 1W pairing traffic (issue #27 case). Thin wrapper over the shared predicate (decisions_oneway.h)
 /// so the hub's passive RX path can classify the same frame shape without duplicating it — see
 /// decisions::is_one_way_pairing_gesture()'s doc comment for the frame shape itself.
 bool is_oneway_pairing_frame(const PairingTelemetryEvent &event) {

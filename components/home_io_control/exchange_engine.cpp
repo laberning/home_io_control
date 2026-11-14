@@ -8,7 +8,8 @@
 
 #include "exchange_engine.h"
 
-#include "hub_decisions.h"
+#include "decisions_exchange.h"
+#include "decisions_attempts.h"
 #include "log_frame.h"
 #include "proto_commands.h"
 #include "proto_constants.h"
@@ -868,7 +869,7 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
   RadioRxPacket packet{};
   IoFrame frame{};
   this->listen(spec, packet, frame, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
-    if (parsed == nullptr || parsed->cmd != expected_cmd || memcmp(parsed->dst, this->node_id_, NODE_ID_SIZE) != 0)
+    if (parsed == nullptr || !decisions::is_broadcast_reply_for(*parsed, expected_cmd, this->node_id_))
       return ReplyDisposition::IGNORE;
 
     BroadcastReplyInfo info{};

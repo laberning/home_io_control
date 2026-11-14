@@ -8,7 +8,7 @@
 /// expectation below compares with.
 
 #include "corpus_generated.h"
-#include "hub_decisions.h"
+#include "decisions_status.h"
 #include "proto_frame.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"

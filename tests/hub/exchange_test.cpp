@@ -40,7 +40,7 @@ exchange::OutboundExchangeContext make_outbound_context() {
 TEST(Exchange, OutboundStateTransitions) {
   // This tests the state transition logic in hub_exchange.cpp (simplified here).
   // The actual implementation is in send_and_receive_ but the decisions are data-driven.
-  // We'll test the decision helpers from hub_decisions.h which we already have.
+  // We'll test the decision helpers from the decisions_*.h headers.
   // Additionally test the context structs are well-defined.
   exchange::OutboundExchangeContext ctx = make_outbound_context();
   EXPECT_EQ(ctx.state, exchange::OutboundExchangeState::IDLE) << "initial state should be IDLE";

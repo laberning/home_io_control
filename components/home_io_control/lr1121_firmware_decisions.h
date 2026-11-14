@@ -4,11 +4,11 @@
 /// @brief Pure decision logic for the LR1121 transceiver-firmware-update feature.
 /// @ingroup hioc_radio
 ///
-/// Header-only pure functions, no I/O — same style as hub_decisions.h and
+/// Header-only pure functions, no I/O — same style as the decisions_*.h headers and
 /// radio_lr1121.h::lr1121_firmware_is_outdated(), fully host-testable without radio hardware.
 /// Deliberately does not include radio_lr1121.h: LR1121_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS below
 /// is a local copy of that file's LR1121_DEVICE_TYPE (0x03), kept independent so this header pulls
-/// in nothing but cstdint — the same reasoning that keeps hub_decisions.h free of driver headers.
+/// in nothing but cstdint — the same reasoning that keeps the decisions_*.h headers free of driver headers.
 
 #include <cstdint>
 

@@ -1,6 +1,8 @@
 #include "hub_internal.h"
 
-#include "hub_decisions.h"
+#include "decisions_exchange.h"
+#include "decisions_oneway.h"
+#include "decisions_status.h"
 #include "proto_commands.h"
 
 #include <algorithm>
@@ -861,7 +863,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   // is bit-for-bit unchanged by this ordering — try_handle_frame() returns false immediately
   // whenever it doesn't apply, and this reorder can only affect frames where BOTH this call and
   // the is_exchange_internal_command() check below would otherwise fire, i.e. only 0x3C/0x3D (that
-  // predicate's entire domain, hub_decisions.h).
+  // predicate's entire domain, decisions_exchange.h).
   if (this->key_extraction_.try_handle_frame(frame, packet.freq_hz))
     return;
 

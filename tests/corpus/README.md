@@ -166,7 +166,7 @@ expect:                              # deliberately sparse — only assert what 
   only what a human has verified against real behavior — see "Expectations are
   human-verified" below.
   - `frames[].classification` (optional): a symbolic name from one of the `decisions::`
-    disposition enums in `hub_decisions.h`, checked by `corpus_classification_test.cpp` against
+    disposition enums in `decisions_exchange.h` and `decisions_pairing.h`, checked by `corpus_classification_test.cpp` against
     the pure classifier ExchangeEngine/PairingEngine actually call. Allowed names: `REQUIRE_AUTH`,
     `COMPLETE_DIRECT`, `IGNORE_UNRELATED`, `ACCEPT`, `NO_RESPONSE`, `INVALID`, `IGNORE`, and
     `DISCOVERY_ACCEPT` (`PairingDiscoveryDisposition::ACCEPT` specifically — disambiguated from

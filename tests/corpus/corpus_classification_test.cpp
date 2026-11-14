@@ -13,11 +13,12 @@
 ///
 /// Name<->value pinning: the generated header stores `classification` as a bare `uint8_t`
 /// (scripts/corpus/build.py :: CLASSIFICATION_ENUM). The static_asserts below pin every name in
-/// that table against the real enum in hub_decisions.h, so a reorder there breaks the build
-/// instead of silently mis-scoring a capture.
+/// that table against the real enums in decisions_exchange.h and decisions_pairing.h, so a reorder there breaks the
+/// build instead of silently mis-scoring a capture.
 
 #include "corpus_generated.h"
-#include "hub_decisions.h"
+#include "decisions_exchange.h"
+#include "decisions_pairing.h"
 #include "proto_constants.h"
 #include "proto_frame.h"
 

@@ -39,7 +39,7 @@
 #include "radio_sx1262.h"
 
 #include "corpus_test_helpers.h"
-#include "hub_decisions.h"
+#include "decisions_attempts.h"
 #include "test_helpers.h"
 #include "timed_replay.h"
 #include "stubs/radio_test_common.h"

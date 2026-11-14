@@ -43,13 +43,13 @@ EXCHANGE_OUTCOME_ENUM = {
 }
 
 # `classification` expectations name a value from one of the four decisions::*Disposition
-# enums in components/home_io_control/hub_decisions.h. Names are bare (not enum-qualified) to
+# enums in components/home_io_control/decisions_exchange.h and decisions_pairing.h. Names are bare (not enum-qualified) to
 # match the design vocabulary (REQUIRE_AUTH, ACCEPT, IGNORE_UNRELATED, ...), except where two
 # enums give the same name a *different* numeric value: PairingDiscoveryDisposition::ACCEPT is
 # 2, while ExchangeFinalResponseDisposition::ACCEPT and PairingKeyChallengeDisposition::ACCEPT
 # are both 1 — that one case is disambiguated as DISCOVERY_ACCEPT. Every value here is pinned
 # against the real enum by a static_assert in tests/corpus/corpus_classification_test.cpp, so a reorder
-# of hub_decisions.h breaks the build instead of silently mis-scoring a capture.
+# of those enums breaks the build instead of silently mis-scoring a capture.
 CLASSIFICATION_ENUM = {
     "IGNORE_UNRELATED": 0,  # ExchangeFirstResponseDisposition / ExchangeFinalResponseDisposition
     "COMPLETE_DIRECT": 1,  # ExchangeFirstResponseDisposition

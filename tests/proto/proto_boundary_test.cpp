@@ -1,4 +1,4 @@
-#include "hub_decisions.h"
+#include "decisions_exchange.h"
 #include "proto_device_types.h"
 #include "proto_frame.h"
 
@@ -14,8 +14,8 @@ using namespace esphome::home_io_control::decisions;
 // doxygen comments that are NOT covered by the existing 141 passing tests.
 
 // ========================================================================================
-// HubDecisions: frame_matches_nodes (not tested directly, only indirectly via
-// frame_matches_exchange_endpoints in decisions_test.cpp)
+// decisions_exchange.h: frame_matches_nodes (not tested directly, only indirectly via
+// frame_matches_exchange_endpoints in decisions_exchange_test.cpp)
 // ========================================================================================
 
 TEST(ProtocolBoundary, FrameMatchesNodes_Positive) {

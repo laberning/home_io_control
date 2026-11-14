@@ -9,7 +9,7 @@
 /// before the hub misroutes it.
 
 #include "corpus_test_helpers.h"
-#include "hub_decisions.h"
+#include "decisions_exchange.h"
 #include "proto_codecs.h"
 #include "proto_constants.h"
 #include "proto_frame.h"

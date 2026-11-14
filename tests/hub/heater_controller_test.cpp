@@ -6,7 +6,7 @@
 /// settle poll) is tested through the hub's forwarders in hub_operations_test.cpp and hub_dhw_test.cpp.
 
 #include "heater_controller.h"
-#include "hub_decisions.h"
+#include "decisions_status.h"
 #include "proto_commands.h"
 #include "proto_dhw.h"
 #include "proto_frame.h"

@@ -2,7 +2,7 @@
 /// @brief decode_status_update_event() and decisions::is_device_event_report() on the edges of the
 /// well-formed test; the corpus side lives in corpus_status_update_event_test.cpp.
 
-#include "hub_decisions.h"
+#include "decisions_exchange.h"
 #include "proto_codecs.h"
 #include "proto_constants.h"
 #include "proto_frame.h"

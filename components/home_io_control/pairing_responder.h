@@ -11,7 +11,7 @@
 /// own without a separate sniffing tool or a device reset.
 ///
 /// This header holds only the pure state-transition decisions (no radio I/O, no timers), matching
-/// hub_decisions.h's split, so it is directly host-testable. The impure orchestration — arming,
+/// the split of the decisions_*.h headers, so it is directly host-testable. The impure orchestration — arming,
 /// throwaway node-ID generation, transmitting replies, the auto-off timer, and the security log
 /// block — lives in the `KeyExtractionResponder` collaborator (`key_extraction_responder.h`/`.cpp`),
 /// which calls into this header from the 0x28/0x2C/0x31/0x32 branches in process_received_packet_()

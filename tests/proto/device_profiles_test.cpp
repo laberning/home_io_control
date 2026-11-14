@@ -1,6 +1,5 @@
 #include "proto_device_model.h"
 #include "proto_device_types.h"
-#include "hub_decisions.h"
 
 #include "test_helpers.h"
 

@@ -4,7 +4,7 @@
 /// Calypso Connecte's (issue #198, corpus atlantic_calypso_*).
 
 #include "hub_core.h"
-#include "hub_decisions.h"
+#include "decisions_status.h"
 #include "hub_internal.h"
 #include "proto_commands.h"
 #include "proto_dhw.h"

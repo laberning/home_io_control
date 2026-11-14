@@ -1517,7 +1517,7 @@ TEST(PairingHelpers, DiscoverConfirm_OnlyTheRotatingTryRetunes) {
 
     // Nothing queued: all three tries are silent, so try 2's rotating listen must retune at least
     // once even though nothing was ever heard. The per-try hold/rotate mapping itself (which try
-    // is which) is pinned directly in decisions_test.cpp; this only checks the visible effect.
+    // is which) is pinned directly in decisions_attempts_test.cpp; this only checks the visible effect.
     EXPECT_EQ(comp.pairing_engine_.run_discover_confirm_step_(context), pairing::DiscoverConfirmResult::NO_REPLY);
     EXPECT_FALSE(radio.freq_history().empty()) << "try 2 rotates all channels even with nothing to hear";
   }

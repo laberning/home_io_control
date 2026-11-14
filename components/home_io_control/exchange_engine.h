@@ -22,7 +22,8 @@
 /// `PairingEngine` holds a direct reference for its own exchanges.
 
 #include "hub_exchange.h"
-#include "hub_decisions.h"
+#include "decisions_exchange.h"
+#include "decisions_attempts.h"
 #include "proto_frame.h"
 #include "proto_timing.h"
 #include "radio_interface.h"

@@ -6,7 +6,7 @@
 /// main parameter, so the same rule must call it unknown.
 
 #include "corpus_generated.h"
-#include "hub_decisions.h"
+#include "decisions_status.h"
 #include "proto_codecs.h"
 #include "proto_frame.h"
 

@@ -29,7 +29,7 @@ read in the climate test.
    heater with an adjustable setpoint, the only device that speaks this register protocol, and it is
    reported and registered exactly as a roll-call responder would be. The read is read-only and uses
    the normal exchange retry budget. The predicate and the address arithmetic are pure functions in
-   `hub_decisions.h`.
+   `decisions_pairing.h`.
 2. **The roll-call stays the fallback** when the read gets no answer, and the only search for any other
    kind of device. A device the YAML already declares at that address is not probed.
 3. **A hub-key pull that finds no device ends as `hub_key_returned`**, with the advice to run Scan

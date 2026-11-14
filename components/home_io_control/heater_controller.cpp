@@ -7,7 +7,8 @@
 #include "heater_controller.h"
 
 #include "entity_helpers.h"
-#include "hub_decisions.h"
+#include "decisions_attempts.h"
+#include "decisions_status.h"
 #include "log_frame.h"
 #include "proto_commands.h"
 #include "proto_constants.h"
