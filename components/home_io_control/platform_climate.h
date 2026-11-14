@@ -7,9 +7,9 @@
 /// Maps Home Assistant climate semantics (HVAC mode, target temperature, presets) onto the device's
 /// heating profile (proto_heating_profiles.h). The profile says what the card offers and how each
 /// choice reaches the device: as private registers (proto_heating.h, sent through
-/// IOHomeControlComponent::send_heating_command() and read_heating_register()) or as a heating level
+/// HubHeatingPort::send_heating_command() and HubHeatingPort::read_heating_register()) or as a heating level
 /// or a temperature in the standard EXECUTE. The entity maps ESPHome's call to a HeatingWriteRequest,
-/// plan_heating_write() decides which of those it becomes, and IOHomeControlComponent::execute_heating_plan()
+/// plan_heating_write() decides which of those it becomes, and HubHeatingPort::execute_heating_plan()
 /// sends it and reads the register back. This class has no per-device-type branch; the `heating_control`
 /// hub action shares the register send path.
 ///

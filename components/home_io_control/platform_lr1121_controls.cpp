@@ -21,8 +21,8 @@ static const char *const TAG = "home_io_control.lr1121_bootloader_switch";
 void IOHomeLr1121BootloaderRewriteSwitch::setup() { this->publish_state(false); }
 
 void IOHomeLr1121BootloaderRewriteSwitch::write_state(bool state) {
-  if (this->parent_ != nullptr)
-    this->parent_->set_bootloader_rewrite_allowed(state);
+  if (this->control_port_ != nullptr)
+    this->control_port_->set_bootloader_rewrite_allowed(state);
   this->publish_state(state);
 }
 

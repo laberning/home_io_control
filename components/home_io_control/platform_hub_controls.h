@@ -22,7 +22,6 @@
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
-#include "hub_core.h"
 #include "platform_entity_base.h"
 
 namespace esphome {
@@ -74,9 +73,9 @@ class HubArmingSwitch : public switch_::Switch, public Component, public HubBoun
 /// @ingroup hioc_platforms
 class IOHomeAcceptForeignPairingSwitch : public HubArmingSwitch {
  protected:
-  void arm(bool state) override { this->parent_->set_key_extraction_armed(state); }
+  void arm(bool state) override { this->control_port_->set_key_extraction_armed(state); }
   void subscribe_armed(std::function<void(bool)> callback) override {
-    this->parent_->set_key_extraction_armed_callback(std::move(callback));
+    this->control_port_->set_key_extraction_armed_callback(std::move(callback));
   }
 
   /// @brief Dump configuration to the log.
@@ -97,9 +96,9 @@ class IOHomeAcceptForeignPairingSwitch : public HubArmingSwitch {
 /// @ingroup hioc_platforms
 class IOHomeRecoverOneWayKeySwitch : public HubArmingSwitch {
  protected:
-  void arm(bool state) override { this->parent_->set_oneway_key_adoption_armed(state); }
+  void arm(bool state) override { this->control_port_->set_oneway_key_adoption_armed(state); }
   void subscribe_armed(std::function<void(bool)> callback) override {
-    this->parent_->set_oneway_key_adoption_armed_callback(std::move(callback));
+    this->control_port_->set_oneway_key_adoption_armed_callback(std::move(callback));
   }
 
   /// @brief Dump configuration to the log.
@@ -118,7 +117,7 @@ class IOHomeDiscoverButton : public button::Button, public Component, public Hub
 
  protected:
   /// @brief When button is pressed, queue a discovery/pair operation.
-  void press_action() override { this->parent_->queue_discover_and_pair(); }
+  void press_action() override { this->control_port_->queue_discover_and_pair(); }
 };
 
 /// @brief Button entity that runs the `scan_paired_devices` roll-call when pressed.
@@ -145,8 +144,8 @@ class IOHomeScanPairedDevicesButton : public button::Button, public Component, p
 
  protected:
   /// @brief When pressed, run the roll-call — see
-  /// IOHomeControlComponent::trigger_scan_paired_devices() for the busy-guard rationale.
-  void press_action() override { this->parent_->trigger_scan_paired_devices(); }
+  /// HubControlPort::trigger_scan_paired_devices() for the busy-guard rationale.
+  void press_action() override { this->control_port_->trigger_scan_paired_devices(); }
 };
 
 /// @brief Diagnostic text sensor that publishes PairingTelemetry::result_sensor_string()
@@ -173,7 +172,7 @@ class IOHomePairingResultTextSensor : public text_sensor::TextSensor, public Com
   void on_pairing_result_();
 };
 
-/// @brief Diagnostic text sensor that publishes IOHomeControlComponent::last_device_event() after
+/// @brief Diagnostic text sensor that publishes HubControlPort::last_device_event() after
 /// every recorded device event.
 ///
 /// Only created with `diagnostic_probes: true`. The value is raw data from a registered device,

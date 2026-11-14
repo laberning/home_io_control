@@ -59,9 +59,9 @@ void IOHomeLastContactSensor::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) { this->publish_age_(dev); });
 
   this->set_interval("heartbeat", HEARTBEAT_INTERVAL_MS, [this]() {
-    if (this->parent_ == nullptr)
+    if (this->device_port_ == nullptr)
       return;
-    if (const auto *dev = this->parent_->get_device(this->device_id_); dev != nullptr)
+    if (const auto *dev = this->device_port_->get_device(this->device_id_); dev != nullptr)
       this->publish_age_(*dev);
   });
 }
@@ -95,13 +95,13 @@ void IOHomeUnconfirmedExchangesSensor::dump_config() {
 }
 
 void IOHomeDeviceNameTextSensor::setup() {
-  if (this->parent_ == nullptr)
+  if (this->device_port_ == nullptr)
     return;
 
   this->register_companion_binding_([this](const IoDevice &dev) { this->publish_state(dev.name); });
 
   this->set_timeout("init_name", INITIAL_STATUS_REQUEST_DELAY_MS,
-                    [this]() { this->parent_->queue_request_device_name(this->device_id_); });
+                    [this]() { this->device_port_->queue_request_device_name(this->device_id_); });
 }
 
 void IOHomeDeviceNameTextSensor::dump_config() {
@@ -117,7 +117,7 @@ void IOHomeActiveIssueTextSensor::setup() {
     // window's own status replies; otherwise what the device's execution state says (waiting for
     // power, unable to run, error during the last move); otherwise empty. A result about one
     // exchange only (command_result_is_transient()) is not an issue of the device.
-    if (this->parent_->radio_stopped_responding()) {
+    if (this->device_port_->radio_stopped_responding()) {
       this->publish_state(ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING);
     } else if (dev.last_result_code != 0 && !command_result_is_transient(dev.last_result_code)) {
       this->publish_state(command_result_name(dev.last_result_code));
@@ -138,12 +138,11 @@ void IOHomeActiveIssueTextSensor::dump_config() {
 }
 
 void IOHomeLastCommandedByTextSensor::setup() {
-  // No parent_ == nullptr guard needed here (unlike IOHomeDeviceNameTextSensor, which dereferences
-  // parent_ a second time outside the binding, in a set_timeout lambda): register_companion_binding_()
-  // already no-ops on a null parent before this lambda is ever invoked, so parent_ is guaranteed
-  // non-null every time it runs.
+  // No null check of device_port_ needed here (unlike IOHomeDeviceNameTextSensor, which uses it a second
+  // time outside the binding, in a set_timeout lambda): register_companion_binding_() already no-ops
+  // without a device port before this lambda is ever invoked, so the port is non-null every time it runs.
   this->register_companion_binding_(
-      [this](const IoDevice &dev) { this->publish_state(this->parent_->describe_last_commander(dev)); });
+      [this](const IoDevice &dev) { this->publish_state(this->device_port_->describe_last_commander(dev)); });
 }
 
 void IOHomeLastCommandedByTextSensor::dump_config() {

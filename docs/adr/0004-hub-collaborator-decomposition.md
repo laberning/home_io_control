@@ -1,7 +1,7 @@
 # ADR 0004: Hub responsibilities split into single-purpose collaborators
 <!-- doxygen-label: adr0004 -->
 
-**Status:** Accepted, amended by [ADR 0083](0083-heating-and-hot-water-live-in-their-own-collaborator.md) (`HeaterController` joins the collaborators) · **Recorded:** 2026-08
+**Status:** Accepted, amended by [ADR 0083](0083-heating-and-hot-water-live-in-their-own-collaborator.md) (`HeaterController` joins the collaborators) and [ADR 0084](0084-entities-reach-the-hub-only-through-ports.md) (entities reach the hub through ports) · **Recorded:** 2026-08
 
 ## Context
 

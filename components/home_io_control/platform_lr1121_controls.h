@@ -15,13 +15,12 @@
 /// IOHOME_LR1121_FIRMWARE_UPDATE and the two guards nest.
 
 // IOHOME_LR1121_FIRMWARE_UPDATE / IOHOME_LR1121_BOOTLOADER_UPDATE are only visible after
-// something pulls in esphome/core/defines.h (via hub_core.h's own #include "esphome/core/hal.h")
+// something pulls in esphome/core/defines.h (via hub_ports.h's own #include "esphome/core/hal.h")
 // — these #includes must run before the #ifdef check, not after (see
 // radio_lr1121_firmware_updater.h for the fuller explanation of why this ordering matters and how
 // it stayed invisible in host unit tests).
 #include "esphome/components/button/button.h"
 #include "esphome/components/switch/switch.h"
-#include "hub_core.h"
 #include "platform_entity_base.h"
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
@@ -30,7 +29,7 @@ namespace esphome {
 namespace home_io_control {
 
 /// @brief Hub-level button entity: press dispatches to
-/// IOHomeControlComponent::trigger_lr1121_firmware_update().
+/// HubControlPort::trigger_lr1121_firmware_update().
 ///
 /// See lr1121_firmware_update_controller.cpp for what a press actually does — every rejection path
 /// is a cached-verdict log, not a fresh bootloader entry. Once a press does proceed, ADR 0020's
@@ -43,7 +42,7 @@ class IOHomeLr1121FirmwareUpdateButton : public button::Button, public Component
  protected:
   /// @brief When pressed, hand off to the hub — see lr1121_firmware_update_controller.cpp for the
   /// full guard/decision/flash sequence.
-  void press_action() override { this->parent_->trigger_lr1121_firmware_update(); }
+  void press_action() override { this->control_port_->trigger_lr1121_firmware_update(); }
 };
 
 #ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
@@ -59,7 +58,7 @@ class IOHomeLr1121FirmwareUpdateButton : public button::Button, public Component
 /// another invisible two-press window for the one operation in this component with no undo. It
 /// can only convert a cached `BootloaderUpgradePath::AVAILABLE` verdict into "run the three-stage
 /// sequence"; it never affects any other verdict or guard (see
-/// IOHomeControlComponent::set_bootloader_rewrite_allowed()).
+/// HubControlPort::set_bootloader_rewrite_allowed()).
 /// @ingroup hioc_platforms
 class IOHomeLr1121BootloaderRewriteSwitch : public switch_::Switch, public Component, public HubBoundEntity {
  public:
@@ -82,7 +81,7 @@ class IOHomeLr1121BootloaderRewriteSwitch : public switch_::Switch, public Compo
 
  protected:
   /// @brief Forward the toggle to the hub as a permission -- see
-  /// IOHomeControlComponent::set_bootloader_rewrite_allowed().
+  /// HubControlPort::set_bootloader_rewrite_allowed().
   /// @param state Desired switch state.
   void write_state(bool state) override;
 };

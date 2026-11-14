@@ -23,19 +23,19 @@ static const char *const TAG_SUN_LEVEL = "home_io_control.cover.sun_level";
 static const char *const TAG_BATTERY_LEVEL = "home_io_control.cover.battery_level";
 
 void IOHomeCoverCommandButton::press_action() {
-  if (this->parent_ == nullptr) {
+  if (this->device_port_ == nullptr) {
     ESP_LOGW(TAG_COMMAND_BUTTON, "Ignoring %s press because the parent hub is not configured",
              cover_command_name(this->command_));
     return;
   }
 
-  if (this->parent_->get_device(this->device_id_) == nullptr) {
+  if (this->device_port_->get_device(this->device_id_) == nullptr) {
     ESP_LOGW(TAG_COMMAND_BUTTON, "Ignoring %s press for %s because the device is not registered yet",
              cover_command_name(this->command_), this->device_id_.c_str());
     return;
   }
 
-  this->parent_->queue_device_command(this->device_id_, this->command_);
+  this->device_port_->queue_device_command(this->device_id_, this->command_);
 }
 
 void IOHomeCoverCommandButton::dump_config() {
@@ -46,16 +46,16 @@ void IOHomeCoverCommandButton::dump_config() {
 void IOHomeCoverSilentSwitch::setup() {
   // The YAML value was already applied to the device at registration; mirror it outward so Home
   // Assistant does not start out disagreeing with what the hub will actually send.
-  if (this->parent_ == nullptr)
+  if (this->device_port_ == nullptr)
     return;
-  if (const IoDevice *dev = this->parent_->get_device(this->device_id_); dev != nullptr)
+  if (const IoDevice *dev = this->device_port_->get_device(this->device_id_); dev != nullptr)
     this->publish_state(dev->travel_speed == TravelSpeed::SILENT);
 }
 
 void IOHomeCoverSilentSwitch::write_state(bool state) {
-  if (this->parent_ == nullptr)
+  if (this->device_port_ == nullptr)
     return;
-  this->parent_->set_device_travel_speed(this->device_id_, state ? TravelSpeed::SILENT : TravelSpeed::FAST);
+  this->device_port_->set_device_travel_speed(this->device_id_, state ? TravelSpeed::SILENT : TravelSpeed::FAST);
   this->publish_state(state);
   ESP_LOGI(TAG_SILENT, "Device %s: silent operation %s", this->device_id_.c_str(), state ? "on" : "off");
 }
@@ -68,14 +68,14 @@ void IOHomeCoverSilentSwitch::dump_config() {
 void IOHomeCoverTravelSpeedSelect::setup() {
   // The YAML value was already applied to the device at registration; mirror it outward so Home
   // Assistant does not start out disagreeing with what the hub will actually send.
-  if (this->parent_ == nullptr)
+  if (this->device_port_ == nullptr)
     return;
-  if (const IoDevice *dev = this->parent_->get_device(this->device_id_); dev != nullptr)
+  if (const IoDevice *dev = this->device_port_->get_device(this->device_id_); dev != nullptr)
     this->publish_state(travel_speed_name(dev->travel_speed));
 }
 
 void IOHomeCoverTravelSpeedSelect::control(const std::string &value) {
-  if (this->parent_ == nullptr)
+  if (this->device_port_ == nullptr)
     return;
   TravelSpeed speed = TravelSpeed::FAST;
   if (!parse_travel_speed(value, speed)) {
@@ -83,7 +83,7 @@ void IOHomeCoverTravelSpeedSelect::control(const std::string &value) {
              value.c_str());
     return;
   }
-  this->parent_->set_device_travel_speed(this->device_id_, speed);
+  this->device_port_->set_device_travel_speed(this->device_id_, speed);
   this->publish_state(value);
   ESP_LOGI(TAG_TRAVEL_SPEED, "Device %s: travel speed %s", this->device_id_.c_str(), travel_speed_name(speed));
 }

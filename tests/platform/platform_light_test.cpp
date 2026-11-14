@@ -1,7 +1,7 @@
 #include "platform_light.h"
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
 
 #include <cstring>
 
@@ -13,28 +13,21 @@ using namespace esphome::home_io_control;
 // IOHomeLight binary entity: position-based on/off mapping, write_state() command
 // queuing, and inbound status updates. Covers moving vs stopped filtering.
 
-// Mock hub similar to test_platform_cover.cpp but with light state
-class MockHubLight : public test::MockPlatformHubBase {
+// Device-port double that also keeps the last light state and level the entity asked for.
+class MockHubLight : public test::DevicePortDouble {
  public:
-  MockHubLight() {}
-  ~MockHubLight() override = default;
-
-  bool set_light_state(const std::string &device_id, bool on) override {
-    last_light_device_id_ = device_id;
-    last_light_on_ = on;
-    return true;
-  }
-
   void queue_set_light_state(const std::string &device_id, bool on) override {
     last_light_device_id_ = device_id;
     last_light_on_ = on;
     queued_light_ops_.push_back({device_id, on});
+    DevicePortDouble::queue_set_light_state(device_id, on);
   }
 
   void queue_set_light_position(const std::string &device_id, uint8_t position) override {
     last_light_device_id_ = device_id;
     last_light_position_ = position;
     queued_light_positions_.push_back({device_id, position});
+    DevicePortDouble::queue_set_light_position(device_id, position);
   }
 
   // Test accessors
@@ -43,10 +36,6 @@ class MockHubLight : public test::MockPlatformHubBase {
   uint8_t last_light_position() const { return last_light_position_; }
   const std::deque<std::pair<std::string, bool>> &queued_light_ops() const { return queued_light_ops_; }
   const std::deque<std::pair<std::string, uint8_t>> &queued_light_positions() const { return queued_light_positions_; }
-
-  void trigger_device_update(const std::string &device_id, const IoDevice &dev) {
-    test::MockPlatformHubBase::trigger_device_update(device_id, dev);
-  }
 
  private:
   std::string last_light_device_id_;

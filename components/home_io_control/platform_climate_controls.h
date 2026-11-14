@@ -21,7 +21,6 @@
 #include "esphome/components/light/light_output.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/core/component.h"
-#include "hub_core.h"
 #include "platform_entity_base.h"
 #include "platform_light.h"
 #include "proto_device_model.h"

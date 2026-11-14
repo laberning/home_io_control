@@ -20,7 +20,6 @@
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
-#include "hub_core.h"
 #include "platform_companion_sensors.h"
 #include "platform_entity_base.h"
 #include "proto_device_model.h"

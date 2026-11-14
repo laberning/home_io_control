@@ -15,7 +15,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | # | Decision | In short |
 |---|---|---|
 | [0001](0001-layered-protocol-radio-hub-architecture.md) | Layered protocol / radio / hub architecture | Three layers, one composition root; the protocol never names a chip |
-| [0004](0004-hub-collaborator-decomposition.md) | Hub split into collaborators (amended by 0083) | Ten single-purpose objects (eleven with the compile-gated LR1121 controller) instead of one large controller class |
+| [0004](0004-hub-collaborator-decomposition.md) | Hub split into collaborators (amended by 0083, 0084) | Ten single-purpose objects (eleven with the compile-gated LR1121 controller) instead of one large controller class |
 | [0005](0005-pure-decision-logic-separated-from-io.md) | Pure decisions separated from I/O | Frame classification is side-effect-free and host-testable |
 | [0072](0072-diagnostic-probes-are-their-own-collaborator.md) | Diagnostic probes are their own collaborator (amends 0024) | `DiagnosticProbes` holds no hub pointer, only three injected calls; the isolation from the status decoder rests on that boundary |
 
@@ -55,6 +55,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0033](0033-heating-send-path-bypasses-the-cover-machinery.md) | Heating send path bypasses the cover machinery (amended by 0082, superseded by 0083) | 2W heating does a plain send-and-receive — no status decode, no poll backoff, no ADR 0030 overlay (heating has no observation stream); the write-only premise is superseded by 0054 |
 | [0082](0082-heater-exchanges-share-the-exchange-bookkeeping.md) | Heater exchanges share the exchange bookkeeping (amends 0033) | Heater and water heater exchanges run through the shared exchange helper: a challenged exchange never closed counts a failure, a device event report is recorded and the request sent once more, every exchange moves the catch-up read; the private-register ack check stays heater-specific |
 | [0083](0083-heating-and-hot-water-live-in-their-own-collaborator.md) | Heating and hot water live in their own collaborator (supersedes 0033, amends 0004) | `HeaterController` owns heater and water heater reads, writes, polls and status decoding; no hub pointer, injected calls as for 0072; its status read reaches the status decoder; the hub keeps one-line forwarders; 0033's remaining points restated |
+| [0084](0084-entities-reach-the-hub-only-through-ports.md) | Entities reach the hub only through ports (amends 0004) | `HubDevicePort`, `HubHeatingPort`, `HubControlPort` in `hub_ports.h`; entities hold port pointers, never the hub class; the hub implements all three (heating forwards to `HeaterController`); generated `set_parent(hub)` unchanged; platform tests use port doubles |
 | [0054](0054-heaters-are-read-back-over-the-private-register-protocol.md) | Heaters are read back over the private register protocol | One register table drives get, set and decode; a climate entity polls room temperature, setpoint, mode and regulator state (default 5 min) and shows only what the heater answered; a write is confirmed by a read; the window functions are `set_open_window_detection` and a `window_open` read; amended 2026-10: the setpoint heater offers no presence preset, its automatic modes are the presets `Auto` and `Program` |
 | [0055](0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md) | A climate entity's traits come from the device's heating profile | One profile row per heater kind (control path, modes, presets, observed-state table, poll registers, features); `device_supports_climate_control()` means a profile exists, `device_uses_heating_registers()` gates every register frame; the plain heater is commanded with heating levels in the standard EXECUTE; window companions are declared at validation from the declared kind; amended 2026-10: every preset is observed, a profile carries no last-commanded marker |
 | [0056](0056-exterior-heating-is-a-fan-entity.md) | Exterior heating is a fan entity | Type 21 gets the `HEATER_LEVEL` capability class and the `fan:` platform; heat `p` % is IO position `100 - p` like a dimmable light; no motion, one follow-up poll per command; no restored state |
@@ -210,6 +211,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0081: A water heater's boost and away travel in the operating-mode word](0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md)
 - [ADR 0082: Heater exchanges share the exchange bookkeeping](0082-heater-exchanges-share-the-exchange-bookkeeping.md)
 - [ADR 0083: Heating and hot water live in their own collaborator](0083-heating-and-hot-water-live-in-their-own-collaborator.md)
+- [ADR 0084: Entities reach the hub only through ports](0084-entities-reach-the-hub-only-through-ports.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

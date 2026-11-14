@@ -150,7 +150,7 @@ class IOHomeDhwBinarySensor : public binary_sensor::BinarySensor, public Compone
 /// @brief Switch that starts and ends the heater's boost.
 /// @ingroup hioc_platforms
 ///
-/// A write goes through IOHomeControlComponent::set_water_heater_boost(), which writes the boost duration and
+/// A write goes through HubHeatingPort::set_water_heater_boost(), which writes the boost duration and
 /// the operating-mode word and reads the status back; the switch shows what the heater reports in that word
 /// (ADR 0081), so it has no state until the first poll and never shows a command the heater did not confirm.
 /// Switching on asks for a boost of duration 1, the only value seen. Switching off sends the word that ends

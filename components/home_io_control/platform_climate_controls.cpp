@@ -47,17 +47,17 @@ void IOHomeOpenWindowDetectionSwitch::setup() {
 }
 
 void IOHomeOpenWindowDetectionSwitch::write_state(bool state) {
-  if (this->parent_ == nullptr)
+  if (this->heating_port_ == nullptr)
     return;
-  if (!this->parent_->send_heating_command(this->device_id_, HeatingFunction::SET_OPEN_WINDOW_DETECTION,
-                                           state ? 1.0F : 0.0F)) {
+  if (!this->heating_port_->send_heating_command(this->device_id_, HeatingFunction::SET_OPEN_WINDOW_DETECTION,
+                                                 state ? 1.0F : 0.0F)) {
     ESP_LOGW(TAG_DETECTION, "Device %s: open-window detection %s was not acknowledged", this->device_id_.c_str(),
              state ? "on" : "off");
     return;
   }
   // The read-back updates IoDevice::heating, and the companion binding above publishes it.
-  this->parent_->read_heating_register(this->device_id_, HeatingFunction::SET_OPEN_WINDOW_DETECTION, nullptr,
-                                       EXCHANGE_RETRY_COUNT);
+  this->heating_port_->read_heating_register(this->device_id_, HeatingFunction::SET_OPEN_WINDOW_DETECTION, nullptr,
+                                             EXCHANGE_RETRY_COUNT);
 }
 
 void IOHomeOpenWindowDetectionSwitch::dump_config() {
@@ -90,7 +90,7 @@ void IOHomeHeaterNightLight::on_device_update_(const IoDevice &dev) {
 }
 
 bool IOHomeHeaterNightLight::write_register_(HeatingFunction fn, float value) {
-  if (this->parent_->send_heating_command(this->device_id_, fn, value))
+  if (this->heating_port_->send_heating_command(this->device_id_, fn, value))
     return true;
   ESP_LOGW(TAG_NIGHT_LIGHT, "Device %s: %s %.0f was not acknowledged", this->device_id_.c_str(),
            heating_function_name(fn), value);
@@ -102,7 +102,7 @@ void IOHomeHeaterNightLight::write_state(light::LightState *state) {
     this->suppress_write_ = false;
     return;
   }
-  if (this->parent_ == nullptr)
+  if (this->heating_port_ == nullptr || this->device_port_ == nullptr)
     return;
 
   this->writing_ = true;
@@ -113,7 +113,7 @@ void IOHomeHeaterNightLight::write_state(light::LightState *state) {
     // PWM output, and would send a different percentage than the one the user picked.
     const uint8_t percent = std::clamp<uint8_t>(detail::round_percent(state->current_values.get_brightness()),
                                                 NIGHT_LIGHT_MIN_ON_PERCENT, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
-    const IoDevice *dev = this->parent_->get_device(this->device_id_);
+    const IoDevice *dev = this->device_port_->get_device(this->device_id_);
     if (dev == nullptr || std::cmp_not_equal(dev->heating.night_light_brightness, percent))
       brightness_written = this->write_register_(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, percent);
   }
@@ -122,14 +122,16 @@ void IOHomeHeaterNightLight::write_state(light::LightState *state) {
 
   // The read-backs update IoDevice::heating; what the heater then holds is published once, below. A write
   // the heater did not acknowledge is not read back: the light then shows the heater's last reading again.
-  if (switched)
-    this->parent_->read_heating_register(this->device_id_, HeatingFunction::NIGHT_LIGHT, nullptr, EXCHANGE_RETRY_COUNT);
+  if (switched) {
+    this->heating_port_->read_heating_register(this->device_id_, HeatingFunction::NIGHT_LIGHT, nullptr,
+                                               EXCHANGE_RETRY_COUNT);
+  }
   if (brightness_written) {
-    this->parent_->read_heating_register(this->device_id_, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, nullptr,
-                                         EXCHANGE_RETRY_COUNT);
+    this->heating_port_->read_heating_register(this->device_id_, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, nullptr,
+                                               EXCHANGE_RETRY_COUNT);
   }
   this->writing_ = false;
-  if (const IoDevice *dev = this->parent_->get_device(this->device_id_); dev != nullptr)
+  if (const IoDevice *dev = this->device_port_->get_device(this->device_id_); dev != nullptr)
     this->on_device_update_(*dev);
 }
 

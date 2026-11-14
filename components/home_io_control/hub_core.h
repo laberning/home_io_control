@@ -47,6 +47,7 @@
 #include "pairing_engine.h"
 #include "management_actions.h"
 #include "heater_controller.h"
+#include "hub_ports.h"
 #include "key_extraction_responder.h"
 #include "oneway_controller.h"
 #include "oneway_transmitter.h"
@@ -96,12 +97,17 @@ static constexpr uint32_t PAIRING_STALE_PRESS_MS = 1000;
 ///
 /// Inherits SPIDevice so that ESPHome's Python codegen can configure SPI pins.
 /// Implements SpiAccess to provide the radio driver with SPI bus access.
+/// Implements the three entity ports of hub_ports.h (HubDevicePort, HubHeatingPort, HubControlPort): the
+/// entity platforms reach the hub only through them.
 /// @ingroup hioc_hub
 class IOHomeControlComponent : public Component,
                                public api::CustomAPIDevice,
                                public spi::SPIDevice<spi::BIT_ORDER_MSB_FIRST, spi::CLOCK_POLARITY_LOW,
                                                      spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_8MHZ>,
-                               public SpiAccess {
+                               public SpiAccess,
+                               public HubDevicePort,
+                               public HubHeatingPort,
+                               public HubControlPort {
  public:
   /// Initialize ExchangeEngine, PairingEngine, and ManagementActions with double-pointer/
   /// reference indirection so that test assignments (`comp.radio_ = &mock`) propagate
@@ -262,7 +268,7 @@ class IOHomeControlComponent : public Component,
   /// hub's node ID is not reachable from a companion entity.
   /// @param dev Device record to read.
   /// @return See detail::describe_last_commander().
-  [[nodiscard]] std::string describe_last_commander(const IoDevice &dev) const;
+  [[nodiscard]] std::string describe_last_commander(const IoDevice &dev) const override;
 
   /// Declare that a remote (identified by its node ID) controls a registered device.
   /// When activity from this remote is overheard, a status poll is scheduled for the device.
@@ -288,7 +294,7 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param target_io_position Target position in IO units (0=open, 100=closed).
   /// @return true if the optimistic state was applied.
-  virtual bool apply_optimistic_target(const std::string &device_id, float target_io_position) {
+  bool apply_optimistic_target(const std::string &device_id, float target_io_position) override {
     return this->registry_.apply_optimistic_target(device_id, target_io_position);
   }
 
@@ -299,7 +305,7 @@ class IOHomeControlComponent : public Component,
   /// Virtual (like add_device/get_device) so platform unit tests can substitute a mock registry.
   /// @param device_id Target device ID.
   /// @return true if the optimistic stop was applied.
-  virtual bool apply_optimistic_stop(const std::string &device_id) {
+  bool apply_optimistic_stop(const std::string &device_id) override {
     // Restorable: this is the entity's own STOP, which the hub is about to send and which can fail.
     return this->registry_.apply_optimistic_stop(device_id, /*restorable=*/true);
   }
@@ -313,7 +319,7 @@ class IOHomeControlComponent : public Component,
   /// @param device_id    Target device ID.
   /// @param tilt_percent Slat angle in the same percent scale as `IoDevice::tilt` (0-100).
   /// @return true if the optimistic tilt was applied.
-  virtual bool apply_optimistic_tilt(const std::string &device_id, float tilt_percent) {
+  bool apply_optimistic_tilt(const std::string &device_id, float tilt_percent) override {
     return this->registry_.apply_optimistic_tilt(device_id, tilt_percent);
   }
 
@@ -372,7 +378,7 @@ class IOHomeControlComponent : public Component,
   /// should have to know that twice.
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
   /// @param action Button action to send.
-  void send_oneway_action(const std::string &controller_id, OneWayButtonAction action) {
+  void send_oneway_action(const std::string &controller_id, OneWayButtonAction action) override {
     const OneWayActionEncoding encoding = encode_oneway_action(action);
     if (encoding.is_position) {
       this->send_oneway_position(controller_id, encoding.position);
@@ -387,7 +393,9 @@ class IOHomeControlComponent : public Component,
   /// Sends `0x39` (self-directed) then `0x30`, back to back — see
   /// OneWayTransmitter::send_enrollment().
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
-  void send_oneway_enroll(const std::string &controller_id) { this->op_queue_.enqueue_oneway_enroll(controller_id); }
+  void send_oneway_enroll(const std::string &controller_id) override {
+    this->op_queue_.enqueue_oneway_enroll(controller_id);
+  }
 
   /// @brief Queue a standalone 1W un-enrollment (remove-controller) for the given controller
   /// identity, reached only through the explicitly-named `oneway_remove_controller` native API
@@ -406,7 +414,7 @@ class IOHomeControlComponent : public Component,
   /// A list rather than a single slot: each identity gets its own "Last 1W Command" sensor, and
   /// each filters the reports down to its own handle.
   /// @param callback Invoked for every attempt, successful or not.
-  void add_oneway_command_report_callback(OneWayCommandReportFn callback) {
+  void add_oneway_command_report_callback(OneWayCommandReportFn callback) override {
     this->oneway_report_callbacks_.push_back(std::move(callback));
   }
 
@@ -416,11 +424,18 @@ class IOHomeControlComponent : public Component,
   /// @return The telemetry recorded for the most recent (or in-progress) pairing attempt.
   [[nodiscard]] const PairingTelemetry &pairing_telemetry() const { return this->pairing_telemetry_; }
 
+  /// @return The most recent pairing attempt as the structured line of PairingTelemetry::result_sensor_string().
+  [[nodiscard]] std::string pairing_result_text() const override {
+    return this->pairing_telemetry_.result_sensor_string();
+  }
+
   /// Register a callback invoked once, right after every `discover_and_pair()` attempt
   /// completes — used by the "Last Pairing Result" text sensor to publish a fresh value.
   /// Single-slot: only one platform instance is expected per hub.
   /// @param cb Callable with no arguments.
-  void set_pairing_result_callback(std::function<void()> cb) { this->pairing_result_callback_ = std::move(cb); }
+  void set_pairing_result_callback(std::function<void()> cb) override {
+    this->pairing_result_callback_ = std::move(cb);
+  }
 
   /// @return How many device events the DeviceEventLog has recorded since boot.
   [[nodiscard]] uint32_t device_event_count() const { return this->device_event_log_.count(); }
@@ -428,7 +443,7 @@ class IOHomeControlComponent : public Component,
   /// @return The most recent device event rendered as `#<n> t=<uptime s> <SRC> <cmd> <payload hex>`,
   /// or an empty string before the first one. The counter makes a repeated identical report a new
   /// value, which Home Assistant's history needs (it records state changes only).
-  [[nodiscard]] const std::string &last_device_event() const { return this->device_event_log_.last(); }
+  [[nodiscard]] const std::string &last_device_event() const override { return this->device_event_log_.last(); }
 
   /// Record a diagnostic probe's reply on the "Last Device Event" sensor when it is a device event
   /// report (decisions::is_device_event_report()), such as the event a `subscribe_event` probe draws
@@ -440,7 +455,9 @@ class IOHomeControlComponent : public Component,
   /// Register a callback invoked after every recorded device event, used by the "Last Device Event"
   /// text sensor. Single-slot, mirrors set_pairing_result_callback().
   /// @param cb Callable with no arguments.
-  void set_device_event_callback(std::function<void()> cb) { this->device_event_log_.set_callback(std::move(cb)); }
+  void set_device_event_callback(std::function<void()> cb) override {
+    this->device_event_log_.set_callback(std::move(cb));
+  }
 
   /// @brief Arm or disarm the "Recover System Key" (key extraction) responder.
   ///
@@ -454,14 +471,14 @@ class IOHomeControlComponent : public Component,
   /// system_key_. Virtual so platform unit tests can substitute a mock hub, matching every other
   /// queue_*/set_* entry point on this component.
   /// @param armed Desired state.
-  virtual void set_key_extraction_armed(bool armed) { this->key_extraction_.set_armed(armed); }
+  void set_key_extraction_armed(bool armed) override { this->key_extraction_.set_armed(armed); }
 
   /// Register a callback invoked whenever the key-extraction armed state changes — manual
   /// toggle, successful extraction, or auto-off timeout — so the switch entity can keep its
   /// displayed state in sync when the hub disarms itself rather than the user. Single-slot,
   /// mirrors set_pairing_result_callback().
   /// @param cb Callable receiving the new armed state.
-  void set_key_extraction_armed_callback(std::function<void(bool)> cb) {
+  void set_key_extraction_armed_callback(std::function<void(bool)> cb) override {
     this->key_extraction_.set_armed_callback(std::move(cb));
   }
 
@@ -472,14 +489,14 @@ class IOHomeControlComponent : public Component,
   /// listens for a frame a 1W device broadcasts of its own accord. Virtual so platform unit tests
   /// can substitute a mock hub, matching every other queue_*/set_* entry point on this component.
   /// @param armed Desired state.
-  virtual void set_oneway_key_adoption_armed(bool armed) { this->oneway_key_adoption_.set_armed(armed); }
+  void set_oneway_key_adoption_armed(bool armed) override { this->oneway_key_adoption_.set_armed(armed); }
 
   /// Register a callback invoked whenever the 1W key-adoption armed state changes — manual
   /// toggle, successful adoption, or auto-off timeout — so the switch entity stays in sync when
   /// the hub disarms itself rather than the user. Single-slot, mirrors
   /// set_key_extraction_armed_callback().
   /// @param cb Callable receiving the new armed state.
-  void set_oneway_key_adoption_armed_callback(std::function<void(bool)> cb) {
+  void set_oneway_key_adoption_armed_callback(std::function<void(bool)> cb) override {
     this->oneway_key_adoption_.set_armed_callback(std::move(cb));
   }
 
@@ -504,27 +521,27 @@ class IOHomeControlComponent : public Component,
   /// Type, subtype and optimistic_state default to UNKNOWN / 0 / true, with no overrides; use the
   /// `DeviceConfig` overload when metadata comes from a YAML declaration.
   /// @param device_id Hexadecimal node ID string.
-  virtual void add_device(const std::string &device_id);
+  void add_device(const std::string &device_id) override;
   /// Add a device to the registry with full metadata from a YAML declaration.
   /// @param device_id Hexadecimal node ID string.
   /// @param cfg Device type/subtype/overrides/optimistic-state metadata.
-  virtual void add_device(const std::string &device_id, const DeviceConfig &cfg);
+  void add_device(const std::string &device_id, const DeviceConfig &cfg) override;
   /// Retrieve a device by ID; returns nullptr if not found.
   /// @param device_id Hexadecimal node ID.
   /// @return Pointer to IoDevice, or nullptr.
-  virtual IoDevice *get_device(const std::string &device_id);
+  IoDevice *get_device(const std::string &device_id) override;
   /// True once loop() has seen the radio latch a failure after setup (a runtime BUSY timeout, for
   /// example). Sticky: a failed driver never recovers without a reboot. Every device's Active Issue
   /// sensor reports it.
-  [[nodiscard]] bool radio_stopped_responding() const { return this->radio_failure_reported_; }
+  [[nodiscard]] bool radio_stopped_responding() const override { return this->radio_failure_reported_; }
   /// Select a device's travel speed at runtime (see IOHomeCoverTravelSpeedSelect and
   /// IOHomeCoverSilentSwitch). Virtual so platform tests can substitute a mock registry.
   /// @param device_id Hexadecimal node ID string.
   /// @param speed     Speed profile of the device's position moves.
-  virtual void set_device_travel_speed(const std::string &device_id, TravelSpeed speed);
+  void set_device_travel_speed(const std::string &device_id, TravelSpeed speed) override;
   /// Register a callback invoked when any device updates.
   /// @param cb Callable with signature void(const std::string&, const IoDevice&).
-  virtual void register_device_callback(DeviceUpdateCallback cb) { this->registry_.subscribe(std::move(cb)); }
+  void register_device_callback(DeviceUpdateCallback cb) override { this->registry_.subscribe(std::move(cb)); }
   /// @brief The periodic polls, each with its own opt-in schedule (PeriodicPollPolicy).
   ///
   /// The first three read a value off the device (a PeriodicReading row in hub_operations.cpp
@@ -539,26 +556,26 @@ class IOHomeControlComponent : public Component,
   /// Configure the optional follow-up polling interval for a registered device.
   /// @param device_id Target device ID.
   /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the legacy one-shot settle poll only.
-  virtual void set_device_status_poll_interval(const std::string &device_id, uint32_t poll_interval_ms);
+  void set_device_status_poll_interval(const std::string &device_id, uint32_t poll_interval_ms) override;
   /// Opt a registered device into the periodic rain sensor poll (a read of its minimum limitation).
   /// @param device_id Target device ID.
   /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
-  virtual void set_device_rain_poll_interval(const std::string &device_id, uint32_t interval_ms);
+  void set_device_rain_poll_interval(const std::string &device_id, uint32_t interval_ms) override;
   /// Opt a registered device into the periodic sun level poll (a subscription to EVENT_LOCAL_SENSOR,
   /// whose answer carries the value; ADR 0064).
   /// @param device_id Target device ID.
   /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
-  virtual void set_device_sun_poll_interval(const std::string &device_id, uint32_t interval_ms);
+  void set_device_sun_poll_interval(const std::string &device_id, uint32_t interval_ms) override;
   /// Opt a registered device into the periodic battery level poll (a subscription to
   /// EVENT_BATTERY_LEVEL_CHANGE, whose answer carries the level; ADR 0064).
   /// @param device_id Target device ID.
   /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
-  virtual void set_device_battery_level_poll_interval(const std::string &device_id, uint32_t interval_ms);
+  void set_device_battery_level_poll_interval(const std::string &device_id, uint32_t interval_ms) override;
   /// Opt a registered device into the status refresh at rest: a status read whenever the device has
   /// not reported its status for a whole interval.
   /// @param device_id Target device ID.
   /// @param interval_ms Refresh interval in milliseconds; zero removes the device from the schedule.
-  virtual void set_device_status_refresh_interval(const std::string &device_id, uint32_t interval_ms);
+  void set_device_status_refresh_interval(const std::string &device_id, uint32_t interval_ms) override;
 
   // --- High-level operations ---
   /// Send a position command to a device.
@@ -723,7 +740,7 @@ class IOHomeControlComponent : public Component,
   /// @brief Run one heating function on the heater's private register protocol (a write for a settable
   /// register, a read for a read-only one). The `heating_control` action and the climate entity call this.
   /// @see HeaterController::send_heating_command()
-  virtual bool send_heating_command(const std::string &device_id, HeatingFunction fn, float value) {
+  bool send_heating_command(const std::string &device_id, HeatingFunction fn, float value) override {
     return this->heater_controller_.send_heating_command(device_id, fn, value);
   }
   /// @brief Set the heating level of a heater commanded with levels. @see HeaterController::set_heating_level()
@@ -737,35 +754,35 @@ class IOHomeControlComponent : public Component,
   }
   /// @brief Send a planned climate write and read the register back; the climate entity's one entry point.
   /// @see HeaterController::execute_heating_plan()
-  virtual bool execute_heating_plan(const std::string &device_id, const HeatingWritePlan &plan,
-                                    const std::function<void()> &on_accepted) {
+  bool execute_heating_plan(const std::string &device_id, const HeatingWritePlan &plan,
+                            const std::function<void()> &on_accepted) override {
     return this->heater_controller_.execute_heating_plan(device_id, plan, on_accepted);
   }
   /// @brief Set a water heater's target temperature. @see HeaterController::set_water_heater_target()
-  virtual bool set_water_heater_target(const std::string &device_id, float celsius) {
+  bool set_water_heater_target(const std::string &device_id, float celsius) override {
     return this->heater_controller_.set_water_heater_target(device_id, celsius);
   }
   /// @brief Set a water heater's operating mode. @see HeaterController::set_water_heater_mode()
-  virtual bool set_water_heater_mode(const std::string &device_id, DhwMode mode) {
+  bool set_water_heater_mode(const std::string &device_id, DhwMode mode) override {
     return this->heater_controller_.set_water_heater_mode(device_id, mode);
   }
   /// @brief Start or end a water heater's boost. @see HeaterController::set_water_heater_boost()
-  virtual bool set_water_heater_boost(const std::string &device_id, bool on) {
+  bool set_water_heater_boost(const std::string &device_id, bool on) override {
     return this->heater_controller_.set_water_heater_boost(device_id, on);
   }
   /// @brief Start or end a water heater's away mode. @see HeaterController::set_water_heater_away()
-  virtual bool set_water_heater_away(const std::string &device_id, bool on) {
+  bool set_water_heater_away(const std::string &device_id, bool on) override {
     return this->heater_controller_.set_water_heater_away(device_id, on);
   }
   /// @brief Set the temperature encoding range of a heater (YAML `min_temperature:` / `max_temperature:`).
   /// @see HeaterController::set_device_temperature_range()
-  virtual void set_device_temperature_range(const std::string &device_id, float min_c, float max_c) {
+  void set_device_temperature_range(const std::string &device_id, float min_c, float max_c) override {
     this->heater_controller_.set_device_temperature_range(device_id, min_c, max_c);
   }
   /// @brief Read one register of a heater and fold the decoded value into IoDevice::heating.
   /// @see HeaterController::read_heating_register()
-  virtual bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
-                                     uint8_t max_tries) {
+  bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
+                             uint8_t max_tries) override {
     return this->heater_controller_.read_heating_register(device_id, fn, value_out, max_tries);
   }
   /// @brief Queue an async position update; returns immediately, executed in loop().
@@ -776,7 +793,7 @@ class IOHomeControlComponent : public Component,
   /// cover.set_cover_tilt_position as separate rapid calls.
   /// @param device_id Target device ID.
   /// @param position Desired position (0–100).
-  virtual void queue_set_device_position(const std::string &device_id, uint8_t position);
+  void queue_set_device_position(const std::string &device_id, uint8_t position) override;
   /// @brief Queue an async named command (STOP, FAVORITE, VENT, PARTIAL, PEDESTRIAN, FORCE_OPEN);
   /// returns immediately, executed in loop(). PEDESTRIAN is experimental.
   ///
@@ -788,7 +805,7 @@ class IOHomeControlComponent : public Component,
   /// @param cmd Named command to send.
   /// @return true if the hub is initialized, the device is registered, and the command matches
   ///         its capability class (so the command was enqueued); false otherwise.
-  virtual bool queue_device_command(const std::string &device_id, CoverCommand cmd);
+  bool queue_device_command(const std::string &device_id, CoverCommand cmd) override;
   /// @brief Queue an async tilt update; returns immediately, executed in loop().
   ///
   /// If a pending SET_POSITION operation for the same device is already in the queue, the two are
@@ -797,15 +814,16 @@ class IOHomeControlComponent : public Component,
   /// cover.set_cover_tilt_position as separate rapid calls.
   /// @param device_id Target device ID.
   /// @param tilt_percent Desired tilt (0–100).
-  virtual void queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent);
+  void queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) override;
   /// Queue an async combined position+tilt update; returns immediately, executed in loop().
   /// @param device_id Target device ID.
   /// @param position Desired position (0–100).
   /// @param tilt_percent Desired tilt (0–100).
-  virtual void queue_set_device_position_and_tilt(const std::string &device_id, uint8_t position, uint8_t tilt_percent);
+  void queue_set_device_position_and_tilt(const std::string &device_id, uint8_t position,
+                                          uint8_t tilt_percent) override;
   /// Queue an async status request; returns immediately, executed in loop().
   /// @param device_id Target device ID.
-  virtual void queue_request_device_status(const std::string &device_id);
+  void queue_request_device_status(const std::string &device_id) override;
   /// Queue an async minimum-limitation read for the rain sensor poll; executed in loop() as a
   /// background operation (yields to commands and 1W activity).
   /// @param device_id Target device ID.
@@ -818,13 +836,13 @@ class IOHomeControlComponent : public Component,
   virtual void queue_request_device_battery_level(const std::string &device_id);
   /// Queue an async device-name request; returns immediately, executed in loop().
   /// @param device_id Target device ID.
-  virtual void queue_request_device_name(const std::string &device_id);
+  void queue_request_device_name(const std::string &device_id) override;
   /// Queue a pairing operation; executed in loop() when radio idle.
   ///
   /// A press handled within PAIRING_STALE_PRESS_MS of the end of an attempt is dropped with a log
   /// line: pairing blocks loop(), so a press made while it ran is only handled once it ends, when the
   /// device has usually left its pairing mode.
-  virtual void queue_discover_and_pair();
+  void queue_discover_and_pair() override;
   /// @brief Entry point for the "Scan Paired Devices" button: run the roll-call and publish its
   /// report to the log and the Home Assistant result event, exactly as the native API action does.
   ///
@@ -841,28 +859,28 @@ class IOHomeControlComponent : public Component,
   /// Blocks the ESPHome loop for up to roughly 6 × `pairing_discovery_wait_ms` (both power-class
   /// passes, three channels each; fewer if `scan_power_classes` narrows the sweep) and will log the
   /// "operation took a long time" warning, same as the action — see docs/pairing.md.
-  void trigger_scan_paired_devices();
+  void trigger_scan_paired_devices() override;
   /// Async form of set_light_position() that keeps radio work serialized on the main loop.
   /// queue_set_light_state() is a thin binary-position wrapper around this.
   /// @param device_id Target device ID.
   /// @param position Desired IO position (0-100).
-  virtual void queue_set_light_position(const std::string &device_id, uint8_t position);
+  void queue_set_light_position(const std::string &device_id, uint8_t position) override;
   /// Async form of set_fan_position() that keeps radio work serialized on the main loop.
   /// @param device_id Target device ID.
   /// @param position Desired IO position (0-100).
-  virtual void queue_set_fan_position(const std::string &device_id, uint8_t position);
+  void queue_set_fan_position(const std::string &device_id, uint8_t position) override;
   /// Async form of set_light_state() that keeps radio work serialized on the main loop.
   /// @param device_id Target device ID.
   /// @param on Desired on/off state.
-  virtual void queue_set_light_state(const std::string &device_id, bool on);
+  void queue_set_light_state(const std::string &device_id, bool on) override;
   /// Async form of set_switch_state() that keeps radio work serialized on the main loop.
   /// @param device_id Target device ID.
   /// @param on Desired on/off state.
-  virtual void queue_set_switch_state(const std::string &device_id, bool on);
+  void queue_set_switch_state(const std::string &device_id, bool on) override;
   /// Async form of set_lock_state() that keeps radio work serialized on the main loop.
   /// @param device_id Target device ID.
   /// @param locked Desired locked/unlocked state.
-  virtual void queue_set_lock_state(const std::string &device_id, bool locked);
+  void queue_set_lock_state(const std::string &device_id, bool locked) override;
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
   /// @brief Entry point for the "Flash LR1121 Radio Firmware" button. Thin forwarder to the
@@ -872,7 +890,7 @@ class IOHomeControlComponent : public Component,
   /// lr1121_firmware_update_controller.cpp for the full contract, including the safety invariant
   /// that every bootloader excursion this triggers must end in either radio_->init() or
   /// App.safe_reboot() — there is no third option.
-  void trigger_lr1121_firmware_update() { this->lr1121_firmware_update_.trigger(); }
+  void trigger_lr1121_firmware_update() override { this->lr1121_firmware_update_.trigger(); }
 
 #ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
   /// @brief Set by the "Allow LR1121 Bootloader Rewrite (Irreversible)" switch's write_state().
@@ -886,7 +904,7 @@ class IOHomeControlComponent : public Component,
   /// sequence once it starts, so the switch cannot change mid-flash. Deliberately not named
   /// anything with "armed" -- lr1121_flash_confirmation_armed_ already means the two-press window
   /// this switch *replaces* for its own path, and a reader must never have to guess which is meant.
-  void set_bootloader_rewrite_allowed(bool allowed) {
+  void set_bootloader_rewrite_allowed(bool allowed) override {
     this->lr1121_firmware_update_.set_bootloader_rewrite_allowed(allowed);
   }
 #endif

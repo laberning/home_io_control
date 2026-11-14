@@ -71,7 +71,7 @@ void IOHomeWaterHeater::setup() {
     return;
   }
 
-  // The initial poll reads the heater (IOHomeControlComponent::request_device_status()).
+  // The initial poll reads the heater (HubDevicePort::queue_request_device_status()).
   this->register_device_binding_(this, DeviceCapabilityClass::WATER_HEATER,
                                  [this](const IoDevice &dev) { this->on_device_update_(dev); });
 }
@@ -92,7 +92,7 @@ water_heater::WaterHeaterTraits IOHomeWaterHeater::traits() {
 }
 
 void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
-  if (this->parent_ == nullptr)
+  if (this->heating_port_ == nullptr)
     return;
   bool changed = false;
 
@@ -102,7 +102,7 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
       // ESPHome drops a mode the traits do not list before control(); this guards a direct caller.
       ESP_LOGW(TAG, "Device %s: mode %" PRIu32 " is not one this heater offers", this->device_id_.c_str(),
                static_cast<uint32_t>(*call.get_mode()));
-    } else if (this->parent_->set_water_heater_mode(this->device_id_, mode) && !this->observed_) {
+    } else if (this->heating_port_->set_water_heater_mode(this->device_id_, mode) && !this->observed_) {
       // The read-back publishes through on_device_update_(); only before any reading the command is shown.
       this->set_mode_(*call.get_mode());
       changed = true;
@@ -111,7 +111,7 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
 
   // The heater reports away from FP16 in the read-back, which publishes it; the command is never shown.
   if (call.get_away().has_value())
-    this->parent_->set_water_heater_away(this->device_id_, *call.get_away());
+    this->heating_port_->set_water_heater_away(this->device_id_, *call.get_away());
 
   const float target = call.get_target_temperature();
   // Away is judged on the call's request (a call that starts away sends no target), or else on what the
@@ -123,7 +123,7 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
     ESP_LOGW(TAG, "Device %s: target ignored while away, the heater holds no target then", this->device_id_.c_str());
   } else if (!std::isnan(target) && this->observed_ && this->mode_ == water_heater::WATER_HEATER_MODE_HEAT_PUMP) {
     ESP_LOGW(TAG, "Device %s: target ignored in automatic mode, the heater chooses its own", this->device_id_.c_str());
-  } else if (!std::isnan(target) && this->parent_->set_water_heater_target(this->device_id_, target) &&
+  } else if (!std::isnan(target) && this->heating_port_->set_water_heater_target(this->device_id_, target) &&
              !this->observed_) {
     // The settle poll reads the target back from the status reply.
     this->set_target_temperature_(target);
@@ -236,10 +236,11 @@ void IOHomeDhwBoostSwitch::setup() {
 }
 
 void IOHomeDhwBoostSwitch::write_state(bool state) {
-  if (this->parent_ == nullptr)
+  if (this->heating_port_ == nullptr)
     return;
-  // The status read inside set_water_heater_boost() updates IoDevice::dhw, and the binding above publishes it.
-  if (!this->parent_->set_water_heater_boost(this->device_id_, state)) {
+  // The status read inside HubHeatingPort::set_water_heater_boost() updates IoDevice::dhw, and the binding above
+  // publishes it.
+  if (!this->heating_port_->set_water_heater_boost(this->device_id_, state)) {
     ESP_LOGW(TAG, "Device %s: boost %s was not acknowledged", this->device_id_.c_str(), state ? "on" : "off");
   }
 }

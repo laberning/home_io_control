@@ -16,7 +16,6 @@
 #include "esphome/components/button/button.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
-#include "hub_core.h"
 #include "oneway_controller.h"
 #include "oneway_transmitter.h"
 #include "platform_entity_base.h"
@@ -54,7 +53,7 @@ class IOHomeOneWayCommandButton : public button::Button, public Component, publi
  protected:
   /// @brief Queue the command. It goes through the operation queue like all radio work, so it
   /// cannot interleave with a 2W exchange (ADR 0013).
-  void press_action() override { this->parent_->send_oneway_action(this->controller_id_, this->action_); }
+  void press_action() override { this->control_port_->send_oneway_action(this->controller_id_, this->action_); }
 
   OneWayButtonAction action_{OneWayButtonAction::STOP};
 };
@@ -79,7 +78,7 @@ class IOHomeOneWayEnrollButton : public button::Button, public Component, public
  protected:
   /// @brief Queue the enrollment. It goes through the operation queue like all radio work, so it
   /// cannot interleave with a 2W exchange (ADR 0013).
-  void press_action() override { this->parent_->send_oneway_enroll(this->controller_id_); }
+  void press_action() override { this->control_port_->send_oneway_enroll(this->controller_id_); }
 };
 
 /// @brief Diagnostic text sensor: what this identity last put on air.

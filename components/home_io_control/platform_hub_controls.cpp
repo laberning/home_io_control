@@ -15,13 +15,13 @@ namespace home_io_control {
 // files. (`static` so clang-tidy's identifier-naming check treats it as a StaticConstant.)
 
 void HubArmingSwitch::setup() {
-  if (this->parent_ == nullptr)
+  if (this->control_port_ == nullptr)
     return;
   this->subscribe_armed([this](bool armed) { this->publish_state(armed); });
 }
 
 void HubArmingSwitch::write_state(bool state) {
-  if (this->parent_ != nullptr)
+  if (this->control_port_ != nullptr)
     this->arm(state);
   this->publish_state(state);
 }
@@ -39,10 +39,10 @@ void IOHomeRecoverOneWayKeySwitch::dump_config() {
 }
 
 void IOHomePairingResultTextSensor::setup() {
-  if (this->parent_ == nullptr)
+  if (this->control_port_ == nullptr)
     return;
 
-  this->parent_->set_pairing_result_callback([this]() { this->on_pairing_result_(); });
+  this->control_port_->set_pairing_result_callback([this]() { this->on_pairing_result_(); });
 }
 
 void IOHomePairingResultTextSensor::dump_config() {
@@ -53,16 +53,16 @@ void IOHomePairingResultTextSensor::dump_config() {
 }
 
 void IOHomePairingResultTextSensor::on_pairing_result_() {
-  if (this->parent_ == nullptr)
+  if (this->control_port_ == nullptr)
     return;
-  this->publish_state(this->parent_->pairing_telemetry().result_sensor_string());
+  this->publish_state(this->control_port_->pairing_result_text());
 }
 
 void IOHomeDeviceEventTextSensor::setup() {
-  if (this->parent_ == nullptr)
+  if (this->control_port_ == nullptr)
     return;
 
-  this->parent_->set_device_event_callback([this]() { this->on_device_event_(); });
+  this->control_port_->set_device_event_callback([this]() { this->on_device_event_(); });
 }
 
 void IOHomeDeviceEventTextSensor::dump_config() {
@@ -72,9 +72,9 @@ void IOHomeDeviceEventTextSensor::dump_config() {
 }
 
 void IOHomeDeviceEventTextSensor::on_device_event_() {
-  if (this->parent_ == nullptr)
+  if (this->control_port_ == nullptr)
     return;
-  this->publish_state(this->parent_->last_device_event());
+  this->publish_state(this->control_port_->last_device_event());
 }
 
 }  // namespace home_io_control

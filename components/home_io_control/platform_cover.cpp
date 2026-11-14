@@ -85,13 +85,13 @@ void IOHomeCover::setup() {
       });
   // After the registration above: the hub only schedules a poll for a registered device.
   if (this->rain_sensor_poll_interval_ms_ != 0)
-    this->parent_->set_device_rain_poll_interval(this->device_id_, this->rain_sensor_poll_interval_ms_);
+    this->device_port_->set_device_rain_poll_interval(this->device_id_, this->rain_sensor_poll_interval_ms_);
   if (this->sun_level_poll_interval_ms_ != 0)
-    this->parent_->set_device_sun_poll_interval(this->device_id_, this->sun_level_poll_interval_ms_);
+    this->device_port_->set_device_sun_poll_interval(this->device_id_, this->sun_level_poll_interval_ms_);
   if (this->battery_level_poll_interval_ms_ != 0)
-    this->parent_->set_device_battery_level_poll_interval(this->device_id_, this->battery_level_poll_interval_ms_);
+    this->device_port_->set_device_battery_level_poll_interval(this->device_id_, this->battery_level_poll_interval_ms_);
   if (this->status_refresh_interval_ms_ != 0)
-    this->parent_->set_device_status_refresh_interval(this->device_id_, this->status_refresh_interval_ms_);
+    this->device_port_->set_device_status_refresh_interval(this->device_id_, this->status_refresh_interval_ms_);
 }
 
 cover::CoverTraits IOHomeCover::get_traits() {
@@ -119,9 +119,9 @@ bool IOHomeCover::supports_tilt() const {
 bool IOHomeCover::effective_invert_() const {
   if (this->invert_explicit_)
     return this->invert_;
-  if (this->parent_ == nullptr)
+  if (this->device_port_ == nullptr)
     return false;
-  const auto *dev = this->parent_->get_device(this->device_id_);
+  const auto *dev = this->device_port_->get_device(this->device_id_);
   return dev != nullptr && dev->inverted;
 }
 
@@ -136,8 +136,8 @@ void IOHomeCover::control(const cover::CoverCall &call) {
   // has optimistic_state=false (see
   // DeviceRegistry::apply_optimistic_target()/apply_optimistic_stop()).
   if (call.get_stop()) {
-    this->parent_->apply_optimistic_stop(this->device_id_);
-    this->parent_->queue_device_command(this->device_id_, CoverCommand::STOP);
+    this->device_port_->apply_optimistic_stop(this->device_id_);
+    this->device_port_->queue_device_command(this->device_id_, CoverCommand::STOP);
     return;
   }
 
@@ -159,9 +159,9 @@ void IOHomeCover::control(const cover::CoverCall &call) {
     const bool invert = this->effective_invert_();
     uint8_t const io_pos = detail::io_from_fraction(ha_pos, invert);
     auto const tilt = detail::round_percent(*tilt_opt);
-    this->parent_->apply_optimistic_target(this->device_id_, io_pos);
-    this->parent_->apply_optimistic_tilt(this->device_id_, tilt);
-    this->parent_->queue_set_device_position_and_tilt(this->device_id_, io_pos, tilt);
+    this->device_port_->apply_optimistic_target(this->device_id_, io_pos);
+    this->device_port_->apply_optimistic_tilt(this->device_id_, tilt);
+    this->device_port_->queue_set_device_position_and_tilt(this->device_id_, io_pos, tilt);
     return;
   }
 
@@ -170,8 +170,8 @@ void IOHomeCover::control(const cover::CoverCall &call) {
     // Position commands get their optimistic feedback from apply_optimistic_target() above; tilt
     // needs its own because a tilt command's reply carries no usable slat angle, so without this
     // the slider snaps back to the pre-command angle until the next status poll.
-    this->parent_->apply_optimistic_tilt(this->device_id_, tilt);
-    this->parent_->queue_set_device_tilt(this->device_id_, tilt);
+    this->device_port_->apply_optimistic_tilt(this->device_id_, tilt);
+    this->device_port_->queue_set_device_tilt(this->device_id_, tilt);
     return;
   }
 
@@ -185,8 +185,8 @@ void IOHomeCover::control(const cover::CoverCall &call) {
     // (used for devices like horizontal awnings where the IO convention is reversed)
     const uint8_t io_pos = detail::io_from_fraction(ha_pos, invert);
 
-    this->parent_->apply_optimistic_target(this->device_id_, io_pos);
-    this->parent_->queue_set_device_position(this->device_id_, io_pos);
+    this->device_port_->apply_optimistic_target(this->device_id_, io_pos);
+    this->device_port_->queue_set_device_position(this->device_id_, io_pos);
   }
 }
 

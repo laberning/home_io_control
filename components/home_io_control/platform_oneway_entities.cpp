@@ -37,9 +37,9 @@ void IOHomeOneWayEnrollButton::dump_config() {
 }
 
 void IOHomeOneWayLastCommandTextSensor::setup() {
-  if (this->parent_ == nullptr)
+  if (this->control_port_ == nullptr)
     return;
-  this->parent_->add_oneway_command_report_callback([this](const OneWayCommandReport &report) {
+  this->control_port_->add_oneway_command_report_callback([this](const OneWayCommandReport &report) {
     // Every sensor sees every report; each keeps only its own identity's. Filtering here rather
     // than at the hub keeps the hub from having to know which sensors exist.
     if (report.controller_id != this->controller_id_)

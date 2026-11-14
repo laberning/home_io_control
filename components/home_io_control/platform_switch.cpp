@@ -21,7 +21,7 @@ void IOHomeSwitch::setup() {
 void IOHomeSwitch::write_state(bool state) {
   // Switches stay semantic at the entity boundary and let the controller translate them to the
   // transport-level 0/100 representation.
-  this->parent_->queue_set_switch_state(this->device_id_, state);
+  this->device_port_->queue_set_switch_state(this->device_id_, state);
 }
 
 void IOHomeSwitch::on_device_update_(const IoDevice &dev) {

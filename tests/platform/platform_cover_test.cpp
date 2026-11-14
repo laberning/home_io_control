@@ -1,7 +1,7 @@
 #include "platform_cover.h"
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
 
 #include <cstring>
 
@@ -20,103 +20,38 @@ class TestableCover : public IOHomeCover {
 // IOHomeCover entity: HA ↔ IO position conversion, command queuing, and device update
 // callbacks. Covers standard/inverted mapping, movement state, and unknown-position handling.
 
-// Mock IOHomeControlComponent with minimal implementation for testing IOHomeCover
-class MockHub : public test::MockPlatformHubBase {
+// Device-port double that also keeps the last target, position and tilt the cover asked for.
+class MockHub : public test::DevicePortDouble {
  public:
-  MockHub() {}
-  ~MockHub() override = default;
-
-  bool set_device_position(const std::string &device_id, uint8_t position) override {
-    last_set_device_id_ = device_id;
-    last_set_position_ = position;
-    return true;
-  }
-  bool set_device_tilt(const std::string &device_id, uint8_t tilt_percent) override {
-    last_set_device_id_ = device_id;
-    last_set_tilt_ = tilt_percent;
-    return true;
-  }
-  bool request_device_status(const std::string &device_id) override {
-    last_request_device_id_ = device_id;
-    return true;
-  }
-  bool discover_and_pair() override { return false; }
-  bool set_light_state(const std::string &device_id, bool on) override {
-    (void) device_id;
-    (void) on;
-    return false;
-  }
-  bool set_lock_state(const std::string &device_id, bool locked) override {
-    (void) device_id;
-    (void) locked;
-    return false;
-  }
-  bool set_switch_state(const std::string &device_id, bool on) override {
-    (void) device_id;
-    (void) on;
-    return false;
-  }
-
   void queue_set_device_position(const std::string &device_id, uint8_t position) override {
     last_set_device_id_ = device_id;
     last_set_position_ = position;
-    queued_operations_.push_back({PendingOperationType::SET_POSITION, device_id, position});
+    DevicePortDouble::queue_set_device_position(device_id, position);
   }
   bool queue_device_command(const std::string &device_id, CoverCommand cmd) override {
     last_set_device_id_ = device_id;
-    PendingOperation op{};
-    op.type = PendingOperationType::DEVICE_COMMAND;
-    op.device_id = device_id;
-    op.command = cmd;
-    queued_operations_.push_back(op);
-    return true;
+    return DevicePortDouble::queue_device_command(device_id, cmd);
   }
   void queue_set_device_tilt(const std::string &device_id, uint8_t tilt_percent) override {
     last_set_device_id_ = device_id;
     last_set_tilt_ = tilt_percent;
-    queued_operations_.push_back({PendingOperationType::SET_TILT, device_id, tilt_percent});
-  }
-  void queue_request_device_status(const std::string &device_id) override {
-    queued_operations_.push_back({PendingOperationType::REQUEST_STATUS, device_id, 0});
-  }
-  void queue_discover_and_pair() override {
-    queued_operations_.push_back({PendingOperationType::DISCOVER_AND_PAIR, "", 0});
-  }
-  void queue_set_light_state(const std::string &device_id, bool on) override {
-    queued_operations_.push_back(
-        {PendingOperationType::SET_LIGHT_STATE, device_id, static_cast<uint8_t>(on ? 0 : 100)});
-  }
-  void queue_set_lock_state(const std::string &device_id, bool locked) override {
-    queued_operations_.push_back(
-        {PendingOperationType::SET_LOCK_STATE, device_id, static_cast<uint8_t>(locked ? 100 : 0)});
-  }
-  void queue_set_switch_state(const std::string &device_id, bool on) override {
-    queued_operations_.push_back(
-        {PendingOperationType::SET_SWITCH_STATE, device_id, static_cast<uint8_t>(on ? 0 : 100)});
+    DevicePortDouble::queue_set_device_tilt(device_id, tilt_percent);
   }
 
   // Test accessors
   const std::string &last_set_device_id() const { return last_set_device_id_; }
   uint8_t last_set_position() const { return last_set_position_; }
   uint8_t last_set_tilt() const { return last_set_tilt_; }
-  const std::string &last_request_device_id() const { return last_request_device_id_; }
-  const std::deque<PendingOperation> &queued_operations() const { return queued_operations_; }
 
   // Helpers for tests
   void trigger_device_update(const std::string &device_id, const IoDevice &dev) {
-    test::MockPlatformHubBase::trigger_device_update(device_id, dev, true);
+    test::DevicePortDouble::trigger_device_update(device_id, dev, true);
   }
-
-  // Stands in for run_execute_operation_()'s failure path, which is what withdraws the overlay in
-  // production. DeviceRegistry::rollback_optimistic() has no hub wrapper, so reach it directly.
-  bool rollback_optimistic(const std::string &device_id) { return this->registry_.rollback_optimistic(device_id); }
 
  private:
   std::string last_set_device_id_;
   uint8_t last_set_position_{0};
   uint8_t last_set_tilt_{0};
-  std::string last_request_device_id_;
-  std::deque<PendingOperation> queued_operations_;
 };
 
 // ========================================================================================
@@ -272,7 +207,7 @@ TEST(PlatformCover, SetupStoresConfiguredStatusPollInterval) {
 
   auto *dev = hub.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  EXPECT_EQ(hub.poll_policy_.get_interval("ABC123"), 3000u)
+  EXPECT_EQ(hub.status_poll_interval("ABC123"), 3000u)
       << "entity setup should store the configured status poll interval in the shared device registry";
 }
 
@@ -285,8 +220,7 @@ TEST(PlatformCover, SetupForwardsTheRainSensorPollInterval) {
 
   cover.setup();
 
-  EXPECT_EQ(hub.rain_poll_policy_.get_interval("ABC123"), 900000u)
-      << "the opt-in interval must reach the hub's rain poll schedule";
+  EXPECT_EQ(hub.rain_poll_interval("ABC123"), 900000u) << "the opt-in interval must reach the hub's rain poll schedule";
 }
 
 TEST(PlatformCover, SetupForwardsTheSunAndBatteryLevelPollIntervals) {
@@ -299,9 +233,9 @@ TEST(PlatformCover, SetupForwardsTheSunAndBatteryLevelPollIntervals) {
 
   cover.setup();
 
-  EXPECT_EQ(hub.sun_poll_policy_.get_interval("ABC123"), 1800000u);
-  EXPECT_EQ(hub.battery_level_poll_policy_.get_interval("ABC123"), 21600000u);
-  EXPECT_EQ(hub.rain_poll_policy_.get_interval("ABC123"), 0u) << "each key feeds only its own schedule";
+  EXPECT_EQ(hub.sun_poll_interval("ABC123"), 1800000u);
+  EXPECT_EQ(hub.battery_level_poll_interval("ABC123"), 21600000u);
+  EXPECT_EQ(hub.rain_poll_interval("ABC123"), 0u) << "each key feeds only its own schedule";
 }
 
 TEST(PlatformCover, SetupSchedulesNoSunOrBatteryLevelPollWithoutTheKeys) {
@@ -312,8 +246,8 @@ TEST(PlatformCover, SetupSchedulesNoSunOrBatteryLevelPollWithoutTheKeys) {
 
   cover.setup();
 
-  EXPECT_EQ(hub.sun_poll_policy_.get_interval("ABC123"), 0u);
-  EXPECT_EQ(hub.battery_level_poll_policy_.get_interval("ABC123"), 0u);
+  EXPECT_EQ(hub.sun_poll_interval("ABC123"), 0u);
+  EXPECT_EQ(hub.battery_level_poll_interval("ABC123"), 0u);
 }
 
 TEST(PlatformCover, SetupSchedulesNoRainPollWithoutTheKey) {
@@ -324,7 +258,7 @@ TEST(PlatformCover, SetupSchedulesNoRainPollWithoutTheKey) {
 
   cover.setup();
 
-  EXPECT_EQ(hub.rain_poll_policy_.get_interval("ABC123"), 0u) << "a cover that never opted in is never polled";
+  EXPECT_EQ(hub.rain_poll_interval("ABC123"), 0u) << "a cover that never opted in is never polled";
 }
 
 TEST(PlatformCover, SetupForwardsTheStatusRefreshInterval) {
@@ -336,7 +270,7 @@ TEST(PlatformCover, SetupForwardsTheStatusRefreshInterval) {
 
   cover.setup();
 
-  EXPECT_EQ(hub.status_refresh_policy_.get_interval("ABC123"), 900000u)
+  EXPECT_EQ(hub.status_refresh_interval("ABC123"), 900000u)
       << "the opt-in interval must reach the hub's status refresh schedule";
 }
 
@@ -348,7 +282,7 @@ TEST(PlatformCover, SetupSchedulesNoStatusRefreshWithoutTheKey) {
 
   cover.setup();
 
-  EXPECT_EQ(hub.status_refresh_policy_.get_interval("ABC123"), 0u) << "a cover that never opted in is never read";
+  EXPECT_EQ(hub.status_refresh_interval("ABC123"), 0u) << "a cover that never opted in is never read";
 }
 
 TEST(PlatformCover, SetupStoresLowPowerFlag) {

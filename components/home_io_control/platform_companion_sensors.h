@@ -26,7 +26,7 @@ namespace home_io_control {
 /// @brief Shared base for the numeric per-device diagnostic companions.
 ///
 /// Carries the three-base inheritance and the setup priority every one of them needs. DATA keeps
-/// them behind the hub, so `parent_` is usable by the time their setup() runs.
+/// them behind the hub, so `device_port_` is usable by the time their setup() runs.
 /// @ingroup hioc_platforms
 class IOHomeCompanionSensor : public sensor::Sensor, public Component, public DeviceBoundCompanion {
  public:
@@ -175,7 +175,7 @@ inline constexpr const char *ACTIVE_ISSUE_EXECUTION_ERROR = "EXECUTION_ERROR";
 ///
 /// Four sources, in this order:
 ///   1. ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING once the hub's radio latched a failure after setup
-///      (IOHomeControlComponent::radio_stopped_responding()); sticky until a reboot.
+///      (HubDevicePort::radio_stopped_responding()); sticky until a reboot.
 ///   2. The symbolic name of the device's latest explicit CMD_ERROR_RESP result. Cleared by the
 ///      next successful status/command reply (see detail::clear_command_result()).
 ///   3. "LIMITATION_BY_RAIN" while `IoDevice::limited_by_rain` is set. That flag is derived from

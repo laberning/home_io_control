@@ -12,7 +12,7 @@
 /// shared state and wiring. The auto-generated companion diagnostic sensors share a smaller, observe-only binding;
 /// DeviceBoundCompanion centralizes that one. A third mixin, HubBoundEntity, holds the single parent pointer that the
 /// hub-level control entities (which act on the hub as a whole and have no device to bind to) would otherwise each
-/// restate.
+/// restate. The mixins hold the ports of hub_ports.h that their entities use, never the hub class itself.
 ///
 /// All three are intentionally NOT ESPHome base classes — they are plain mixins the entities inherit
 /// alongside their real ESPHome base (cover::Cover, light::LightOutput, switch_::Switch,
@@ -20,7 +20,8 @@
 /// position/tilt/movement inference, binary on/off decoding, each companion's value rendering)
 /// deliberately stays in the entities; only the device-binding plumbing lives here.
 
-#include "hub_core.h"
+#include "hub_ports.h"
+#include "status_poll_policy.h"
 #include "proto_frame.h"
 
 #include "esphome/core/application.h"
@@ -31,18 +32,44 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace esphome {
 namespace home_io_control {
 
+namespace detail {
+
+/// @brief The port of type @p Port that a hub provides, or null when its type does not implement it.
+///
+/// Lets an entity's `set_parent(hub)` take the ports it uses from whatever the generated code (or a test)
+/// passes, without the entity naming the hub class: the real hub implements all three ports, a test double
+/// only the ones its test needs.
+/// @tparam Port Port interface to take.
+/// @tparam Hub Type of the object passed to `set_parent()`.
+/// @param hub Object to take the port from.
+template<typename Port, typename Hub> [[nodiscard]] Port *port_of(Hub *hub) {
+  if constexpr (std::is_convertible_v<Hub *, Port *>) {
+    return hub;
+  } else {
+    return nullptr;
+  }
+}
+
+}  // namespace detail
+
 /// @brief Mixin holding the hub-device binding shared by all IO-Homecontrol entity platforms.
 /// @ingroup hioc_platforms
 class DeviceBoundEntity {
  public:
-  /// @brief Set the parent controller component.
-  /// @param parent Pointer to the IOHomeControlComponent instance.
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
+  /// @brief Wire the entity to the hub (called by the generated code).
+  /// @details Takes the device port and the heating port from @p hub, whichever it implements.
+  /// @tparam Hub Type of the hub; IOHomeControlComponent, or a test double of the ports.
+  /// @param hub Hub to take the ports from.
+  template<typename Hub> void set_parent(Hub *hub) {
+    this->device_port_ = detail::port_of<HubDevicePort>(hub);
+    this->heating_port_ = detail::port_of<HubHeatingPort>(hub);
+  }
   /// @brief Set the unique IO-homecontrol device ID (from YAML).
   /// @param id Hexadecimal node ID string (e.g., "123ABC").
   void set_device_id(const std::string &id) { this->device_id_ = id; }
@@ -98,9 +125,9 @@ class DeviceBoundEntity {
       memcpy(config.system_key, this->system_key_, AES_KEY_SIZE);
     if (configure)
       configure(config);
-    this->parent_->add_device(this->device_id_, config);
-    this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
-    this->parent_->register_device_callback(
+    this->device_port_->add_device(this->device_id_, config);
+    this->device_port_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
+    this->device_port_->register_device_callback(
         [this, on_update = std::move(on_update)](const std::string &id, const IoDevice &dev) {
           if (id == this->device_id_)
             on_update(dev);
@@ -109,15 +136,15 @@ class DeviceBoundEntity {
     // protected, and DeviceBoundEntity is a mixin, not a Component subclass, so it cannot call it
     // through `self`. App.scheduler.set_timeout is the public entry point set_timeout wraps.
     App.scheduler.set_timeout(self, "init_status", INITIAL_STATUS_REQUEST_DELAY_MS,
-                              [this]() { this->parent_->queue_request_device_status(this->device_id_); });
+                              [this]() { this->device_port_->queue_request_device_status(this->device_id_); });
   }
 
   /// @brief What this entity's device can do: the registered device's features, or, before it is
   /// registered, the features its declared kind resolves to.
   /// @param entity_class Capability class of the asking entity.
   [[nodiscard]] DeviceFeatures device_features_(DeviceCapabilityClass entity_class) const {
-    if (this->parent_ != nullptr) {
-      if (const IoDevice *dev = this->parent_->get_device(this->device_id_))
+    if (this->device_port_ != nullptr) {
+      if (const IoDevice *dev = this->device_port_->get_device(this->device_id_))
         return dev->features;
     }
     IoDevice declared{};
@@ -163,7 +190,8 @@ class DeviceBoundEntity {
     }
   }
 
-  IOHomeControlComponent *parent_{nullptr};
+  HubDevicePort *device_port_{nullptr};
+  HubHeatingPort *heating_port_{nullptr};  ///< Null unless the hub passed to set_parent() implements it.
   std::string device_id_;
   DeviceType device_type_{DeviceType::UNKNOWN};
   uint8_t subtype_{0};
@@ -190,9 +218,14 @@ class DeviceBoundEntity {
 /// publishable at all).
 class DeviceBoundCompanion {
  public:
-  /// @brief Set the parent controller component.
-  /// @param parent Pointer to the IOHomeControlComponent instance.
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
+  /// @brief Wire the entity to the hub (called by the generated code).
+  /// @details Takes the device port and the heating port from @p hub, whichever it implements.
+  /// @tparam Hub Type of the hub; IOHomeControlComponent, or a test double of the ports.
+  /// @param hub Hub to take the ports from.
+  template<typename Hub> void set_parent(Hub *hub) {
+    this->device_port_ = detail::port_of<HubDevicePort>(hub);
+    this->heating_port_ = detail::port_of<HubHeatingPort>(hub);
+  }
   /// @brief Set the device ID whose state this companion sensor exposes.
   /// @param id Hexadecimal node ID string (for example "123ABC").
   void set_device_id(const std::string &id) { this->device_id_ = id; }
@@ -205,19 +238,20 @@ class DeviceBoundCompanion {
   /// publishing when the record has no meaningful value yet. Runs once immediately when the
   /// device is already registered, then again on every update notification for this device.
   void register_companion_binding_(const std::function<void(const IoDevice &)> &publish) {
-    if (this->parent_ == nullptr)
+    if (this->device_port_ == nullptr)
       return;
 
-    this->parent_->register_device_callback([this, publish](const std::string &id, const IoDevice &dev) {
+    this->device_port_->register_device_callback([this, publish](const std::string &id, const IoDevice &dev) {
       if (id == this->device_id_)
         publish(dev);
     });
 
-    if (const auto *dev = this->parent_->get_device(this->device_id_); dev != nullptr)
+    if (const auto *dev = this->device_port_->get_device(this->device_id_); dev != nullptr)
       publish(*dev);
   }
 
-  IOHomeControlComponent *parent_{nullptr};
+  HubDevicePort *device_port_{nullptr};
+  HubHeatingPort *heating_port_{nullptr};  ///< Null unless the hub passed to set_parent() implements it.
   std::string device_id_;
 };
 
@@ -226,12 +260,11 @@ class DeviceBoundCompanion {
 ///
 /// The hub-level control entities (discover button, scan-paired-devices button, arming switches,
 /// firmware-update button, 1W command/enroll buttons, pairing-result and 1W-last-command text
-/// sensors) need only a parent
-/// pointer — they act on the hub as a whole and have no device to bind to. This holds that one
+/// sensors) need only the control
+/// port — they act on the hub as a whole and have no device to bind to. This holds that one
 /// setter and one member so each entity does not restate it. The tuning number/select entities
 /// are deliberately not migrated: they take the parent by constructor injection and keep
-/// hub_core.h out of their header via a forward declaration, which this mixin's include of
-/// hub_core.h would defeat.
+/// hub_core.h out of their header via a forward declaration.
 ///
 /// Why every one of these is created from the `home_io_control:` block (or a dedicated `button:`
 /// entry) and never from a device-bound `switch:`/`button:` platform entry: a user-declared
@@ -245,12 +278,14 @@ class DeviceBoundCompanion {
 /// argument, the "2W extraction and 1W adoption are deliberately independent" note, and so on).
 class HubBoundEntity {
  public:
-  /// @brief Set the parent controller component.
-  /// @param parent Pointer to the IOHomeControlComponent instance.
-  void set_parent(IOHomeControlComponent *parent) { this->parent_ = parent; }
+  /// @brief Wire the entity to the hub (called by the generated code).
+  /// @details Takes the control port from @p hub when it implements it.
+  /// @tparam Hub Type of the hub; IOHomeControlComponent, or a test double of the control port.
+  /// @param hub Hub to take the port from.
+  template<typename Hub> void set_parent(Hub *hub) { this->control_port_ = detail::port_of<HubControlPort>(hub); }
 
  protected:
-  IOHomeControlComponent *parent_{nullptr};
+  HubControlPort *control_port_{nullptr};
 };
 
 /// @brief Mixin for the hub-level entities that additionally scope themselves to one

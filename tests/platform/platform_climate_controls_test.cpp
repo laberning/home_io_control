@@ -4,48 +4,29 @@
 
 #include "platform_climate_controls.h"
 
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 
-#include "test_helpers.h"
-
-#include <map>
-#include <set>
-#include <vector>
+#include <gtest/gtest.h>
 
 using namespace esphome::home_io_control;
 
 namespace {
 
-/// Serves a heater, records the register traffic and answers reads from a script.
-class ClimateControlsHub : public test::MockPlatformHubBase {
+/// Serves a heater: the device port holds it, the heating port records the register traffic and answers
+/// reads from a script. A read that has a scripted reply also stores it in the heater's record, as the
+/// hub's read-back does.
+class ClimateControlsHub : public test::DevicePortDouble, public test::HeatingPortDouble {
  public:
-  struct Write {
-    HeatingFunction fn;
-    float value;
-  };
-  std::vector<Write> writes;
-  std::vector<HeatingFunction> reads;
-  std::vector<uint8_t> read_tries;
-  bool write_result{true};
-  std::set<HeatingFunction> refused_writes;  ///< Writes the heater does not acknowledge, on top of write_result.
-  std::map<HeatingFunction, float> read_replies;
-
-  bool send_heating_command(const std::string &, HeatingFunction fn, float value) override {
-    this->writes.push_back({fn, value});
-    return this->write_result && this->refused_writes.count(fn) == 0;
-  }
-
-  bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *, uint8_t max_tries) override {
-    this->reads.push_back(fn);
-    this->read_tries.push_back(max_tries);
-    const auto reply = this->read_replies.find(fn);
-    if (reply == this->read_replies.end())
-      return false;
-    if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
-      dev->heating.store(fn, reply->second);
-      this->registry_.notify(device_id);
+  bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
+                             uint8_t max_tries) override {
+    const bool read = HeatingPortDouble::read_heating_register(device_id, fn, value_out, max_tries);
+    if (read) {
+      if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
+        dev->heating.store(fn, this->read_replies.at(fn));
+        this->registry_.notify(device_id);
+      }
     }
-    return true;
+    return read;
   }
 
   void add_heater() {

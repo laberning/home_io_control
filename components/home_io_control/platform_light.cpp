@@ -47,13 +47,13 @@ void IOHomeLight::write_state(light::LightState *state) {
     // convention is 0=full brightness, 100=off — the same inverted mapping platform_cover.cpp
     // uses for non-inverted covers (HA 1.0 open -> IO 0), confirmed on real dimmable hardware.
     auto const io_pos = detail::io_from_fraction(brightness, /*invert=*/false);
-    this->parent_->queue_set_light_position(this->device_id_, io_pos);
+    this->device_port_->queue_set_light_position(this->device_id_, io_pos);
     return;
   }
 
   bool on = false;
   state->current_values_as_binary(&on);
-  this->parent_->queue_set_light_state(this->device_id_, on);
+  this->device_port_->queue_set_light_state(this->device_id_, on);
 }
 
 void IOHomeLight::on_device_update_(const IoDevice &dev) {

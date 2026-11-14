@@ -32,11 +32,11 @@ void IOHomeLock::control(const lock::LockCall &call) {
   switch (state.value()) {
     case lock::LOCK_STATE_LOCKED:
     case lock::LOCK_STATE_LOCKING:
-      this->parent_->queue_set_lock_state(this->device_id_, true);
+      this->device_port_->queue_set_lock_state(this->device_id_, true);
       break;
     case lock::LOCK_STATE_UNLOCKED:
     case lock::LOCK_STATE_UNLOCKING:
-      this->parent_->queue_set_lock_state(this->device_id_, false);
+      this->device_port_->queue_set_lock_state(this->device_id_, false);
       break;
     case lock::LOCK_STATE_NONE:
     case lock::LOCK_STATE_JAMMED:

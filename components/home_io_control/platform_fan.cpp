@@ -64,7 +64,7 @@ void IOHomeFan::control(const fan::FanCall &call) {
   // Heat p % is IO position 100 - p, the dimmable light's mapping.
   const auto io_position =
       detail::io_from_fraction(static_cast<float>(heat) / static_cast<float>(HEAT_STEPS), /*invert=*/false);
-  this->parent_->queue_set_fan_position(this->device_id_, io_position);
+  this->device_port_->queue_set_fan_position(this->device_id_, io_position);
 
   // The commanded state stands in until the device's status reply replaces it.
   this->state = heat > 0;

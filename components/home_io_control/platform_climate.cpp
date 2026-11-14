@@ -107,7 +107,7 @@ const HeatingProfile *IOHomeClimate::profile_() const {
   if (this->device_type_ != DeviceType::UNKNOWN)
     return find_heating_profile(this->device_type_, this->subtype_, this->model_);
   // Declared without a type: use the one the hub has learned from the device since.
-  const IoDevice *dev = this->parent_ != nullptr ? this->parent_->get_device(this->device_id_) : nullptr;
+  const IoDevice *dev = this->device_port_ != nullptr ? this->device_port_->get_device(this->device_id_) : nullptr;
   return dev != nullptr ? find_heating_profile(*dev) : nullptr;
 }
 
@@ -124,13 +124,13 @@ void IOHomeClimate::setup() {
     return;
   }
 
-  // The initial poll reads the heater (IOHomeControlComponent::request_device_status()), so the card
+  // The initial poll reads the heater (HubDevicePort::queue_request_device_status()), so the card
   // shows measured values from the first minute instead of nothing.
   this->register_device_binding_(this, DeviceCapabilityClass::CLIMATE,
                                  [this](const IoDevice &dev) { this->on_device_update_(dev); });
 
   if (this->has_range_)
-    this->parent_->set_device_temperature_range(this->device_id_, this->range_min_c_, this->range_max_c_);
+    this->heating_port_->set_device_temperature_range(this->device_id_, this->range_min_c_, this->range_max_c_);
 
   // Custom presets are registered on the entity and referenced by the traits; IO's program mode,
   // the comfort offsets and the secured level have no standard preset.
@@ -197,7 +197,7 @@ void IOHomeClimate::control(const climate::ClimateCall &call) {
 
 HeatingWritePlan IOHomeClimate::plan_write_(const HeatingProfile &profile, const HeatingWriteRequest &request) {
   const HeatingWritePlan plan =
-      plan_heating_write(profile, request, heating_device_facts(this->parent_->get_device(this->device_id_)));
+      plan_heating_write(profile, request, heating_device_facts(this->device_port_->get_device(this->device_id_)));
   if (!plan.is_write())
     this->log_refusal_(profile, plan);
   return plan;
@@ -268,7 +268,7 @@ bool IOHomeClimate::send_and_show_(const HeatingProfile &profile, const HeatingW
     return false;
 
   bool shown = false;
-  const bool sent = this->parent_->execute_heating_plan(this->device_id_, plan, [&] {
+  const bool sent = this->heating_port_->execute_heating_plan(this->device_id_, plan, [&] {
     const HeatingCardCommand command = command_heating_card(profile, request, plan, this->card_);
     this->card_ = command.card;
     shown = command.shown;
