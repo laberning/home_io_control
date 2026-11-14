@@ -260,6 +260,7 @@ FEATURE_WINDOW_COMPANIONS = 0x0100
 FEATURE_INVERTED = 0x0200
 FEATURE_WATER_HEATER = 0x0400
 FEATURE_NIGHT_LIGHT = 0x0800
+FEATURE_TEMPERATURE_RANGE = 0x1000
 # Not a capability: Python's copy of the row's EXPERIMENTAL identity flag (device_type_flags in
 # proto_device_types.h), carried in bit 15 of the same word so there is one table and one sync test.
 # Set on a kind no capture or report has confirmed on a real device.
@@ -305,6 +306,7 @@ DEVICE_FEATURES = {
     "exterior_venetian_blind": 0x008E,  # LEVELS TILT FAVORITE EXTENDED_POSITION_FRAME
     "louvre_blind": 0x008E,  # LEVELS TILT FAVORITE EXTENDED_POSITION_FRAME
     "curtain_track": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
+    "heating_temperature_interface": 0x1000,  # TEMPERATURE_RANGE
     "exterior_heating": 0x0003,  # MAIN_PARAMETER_ONLY LEVELS
     "exterior_heating/58": 0x0001,  # MAIN_PARAMETER_ONLY
     "heat_pump/1": 0x8000,  # KIND_EXPERIMENTAL
@@ -430,13 +432,11 @@ MANUFACTURER_OPTIONS = {
     "atlantic_group": 0x0C,
 }
 
-# Manufacturer bytes for which oneway_controller.h's resolve_oneway_wire_profile() has a real 1W
-# wire profile. Keep this set in sync with that C++ switch — two values, and there is no automated
-# check (scripts/check-yaml-emitters.py compares key names, not table contents).
-ONEWAY_WIRE_PROFILE_MANUFACTURERS = {
-    MANUFACTURER_OPTIONS["somfy"],
-    MANUFACTURER_OPTIONS["velux"],
-}
+# Manufacturers for which oneway_controller.h's ONEWAY_WIRE_PROFILES has a real 1W wire profile, by their
+# MANUFACTURER_OPTIONS name. tests/sync/oneway_wire_profile_sync_test.cpp checks this tuple against that
+# table. Literals only: the sync test parses this file and reads no expressions.
+ONEWAY_WIRE_PROFILE_MANUFACTURER_NAMES = ("somfy", "velux")
+ONEWAY_WIRE_PROFILE_MANUFACTURERS = {MANUFACTURER_OPTIONS[name] for name in ONEWAY_WIRE_PROFILE_MANUFACTURER_NAMES}
 
 
 def _resolve_named_or_raw_token(token, options, max_value=0xFF):

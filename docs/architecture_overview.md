@@ -84,7 +84,8 @@ How to call each action from Home Assistant, with its fields and result event, i
 - Pairing telemetry recorder: [pairing_telemetry.h](../components/home_io_control/pairing_telemetry.h)
 - Pairing traffic advisor: [pairing_advisor.h](../components/home_io_control/pairing_advisor.h)
 - Key-material redaction helpers: [redaction.h](../components/home_io_control/redaction.h)
-- Pure frame-classification helpers: [hub_decisions.h](../components/home_io_control/hub_decisions.h)
+- Pure frame-classification helpers, including the heater a pairing node controls at the next address: [hub_decisions.h](../components/home_io_control/hub_decisions.h)
+- One-way wire profiles per manufacturer (`ONEWAY_WIRE_PROFILES`, checked against the codegen's list by a sync test): [oneway_controller.h](../components/home_io_control/oneway_controller.h)
 - Hub log/format helpers: [log_helpers.h](../components/home_io_control/log_helpers.h)
 - Hub/collaborator/entity shared conversions and device bookkeeping (link health, last result code, rejected-operation log): [entity_helpers.h](../components/home_io_control/entity_helpers.h)
 - Device registry: [device_registry.h](../components/home_io_control/device_registry.h)
@@ -102,7 +103,7 @@ How to call each action from Home Assistant, with its fields and result event, i
 - Shared software-PHY driver flow (IRQ-driven RX/TX orchestration base class for SX1262/LR1121): [radio_soft_phy_driver_base.h](../components/home_io_control/radio_soft_phy_driver_base.h)
 - Preemption-safe poll helper for blocking radio waits (decides on a sample read after the deadline): [radio_poll.h](../components/home_io_control/radio_poll.h)
 - Protocol frame model: [proto_frame.h](../components/home_io_control/proto_frame.h)
-- Device capability bits (what a node type and subtype can do): [proto_device_features.h](../components/home_io_control/proto_device_features.h); the rows, the lookup and the named-position table are in [proto_device_types.h](../components/home_io_control/proto_device_types.h); the Python mirror of the capability word and the experimental marker is `DEVICE_FEATURES` / `KIND_EXPERIMENTAL` in [hub_validators.py](../components/home_io_control/hub_validators.py)
+- Device capability bits (what a node type and subtype can do): [proto_device_features.h](../components/home_io_control/proto_device_features.h); the rows, the lookup and the named-position table are in [proto_device_types.h](../components/home_io_control/proto_device_types.h); the Python mirror of the capability word and the experimental marker is `DEVICE_FEATURES` / `KIND_EXPERIMENTAL` in [hub_validators.py](../components/home_io_control/hub_validators.py). The `TEMPERATURE_RANGE` bit decides which kinds take a YAML temperature range, and the `HANDS_OUT_KEY` type flag (`device_hands_out_key()`) decides which discovery type makes pairing pull the key
 - Runtime tuning config: [tuning_config.h](../components/home_io_control/tuning_config.h)
 - Tuning parameter registry: [tuning_registry.h](../components/home_io_control/tuning_registry.h)
 - Shared entity mixins: [platform_entity_base.h](../components/home_io_control/platform_entity_base.h)

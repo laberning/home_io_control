@@ -11,6 +11,7 @@
 #include "proto_codecs.h"
 #include "proto_constants.h"
 #include "proto_device_model.h"
+#include "proto_device_types.h"
 #include "proto_frame.h"
 #include "proto_timing.h"
 #include "tuning_config.h"
@@ -980,18 +981,26 @@ inline std::string format_heater_model_name(const uint8_t *bytes, size_t len) {
 
 // === Pairing: the device behind a pairing node ===
 
-/// @brief Does a pairing node that answered discovery this way control a heater at the next address?
+/// @brief The (type, subtype) of a device.
+struct DeviceKind {
+  DeviceType type;  ///< Node type.
+  uint8_t subtype;  ///< Subtype.
+};
+
+/// @brief The heater a pairing node that answered discovery this way controls at the next address.
 ///
 /// An Atlantic radiator in its display's pairing mode answers discovery as a remote controller (node
-/// type 1023), hands over its key, and is controlled at the next node address up: three AGILIA IO
-/// radiators follow this (issue #165,
+/// type 1023), hands over its key, and is controlled at the next node address up, as the electrical
+/// heater with an adjustable setpoint: three AGILIA IO radiators follow this (issue #165,
 /// tests/corpus/captures/pairing/atlantic_agilia_pairing_key_pull_heater_rollcall.yaml). The heater
 /// answers a roll-call only now and then, so the pairing asks that address directly first.
 /// @param type Node type the pairing node answered discovery with.
 /// @param manufacturer Manufacturer byte of that discovery reply (0 when the reply carried none).
-/// @return true for an Atlantic remote-controller node.
-inline bool pairing_node_has_heater_at_next_address(DeviceType type, uint8_t manufacturer) {
-  return type == DeviceType::REMOTE_CONTROLLER && manufacturer == MANUFACTURER_ATLANTIC_GROUP;
+/// @return The heater's kind for an Atlantic remote-controller node; nothing for any other node.
+inline std::optional<DeviceKind> heater_behind_pairing_node(DeviceType type, uint8_t manufacturer) {
+  if (type != DeviceType::REMOTE_CONTROLLER || manufacturer != MANUFACTURER_ATLANTIC_GROUP)
+    return std::nullopt;
+  return DeviceKind{DeviceType::ELECTRICAL_HEATER, SUBTYPE_HEATER_WITH_SETPOINT};
 }
 
 /// @brief The node address one above `node`, as a 24-bit number (`B6BDFB` -> `B6BDFC`).

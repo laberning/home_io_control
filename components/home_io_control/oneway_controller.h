@@ -188,29 +188,49 @@ struct OneWayWireProfile {
 static constexpr std::array<DeviceType, 3> VELUX_KLI_ENROLLMENT_CLASSES{
     DeviceType::ROLLER_SHUTTER, DeviceType::VERTICAL_EXTERIOR_AWNING, DeviceType::DUAL_ROLLER_SHUTTER};
 
+/// @brief One manufacturer with a known 1W wire profile.
+struct OneWayWireProfileRow {
+  uint8_t manufacturer;       ///< The identity's manufacturer byte (`MANUFACTURER_*`).
+  OneWayWireProfile profile;  ///< Its wire profile; never a guess.
+};
+
+/// The historical Somfy-shaped profile (`ONEWAY_EXECUTE_ACEI`, `EnrollGesture::SOMFY`). It is also what
+/// an unset or unprofiled manufacturer transmits with.
+static constexpr OneWayWireProfile SOMFY_WIRE_PROFILE{ONEWAY_EXECUTE_ACEI,
+                                                      /*profile_is_a_guess=*/false,
+                                                      EnrollGesture::SOMFY,
+                                                      {DeviceType::UNKNOWN, DeviceType::UNKNOWN, DeviceType::UNKNOWN},
+                                                      OneWayPowerClass::LEGACY_LONG};
+
+/// The 1W wire profiles this project knows, one row per manufacturer. The YAML codegen warns for a
+/// manufacturer without a row (`ONEWAY_WIRE_PROFILE_MANUFACTURER_NAMES` in hub_validators.py);
+/// tests/sync/oneway_wire_profile_sync_test.cpp checks that both sides list the same manufacturers.
+/// VELUX takes `ONEWAY_EXECUTE_ACEI_VELUX`, `EnrollGesture::VELUX_KLI` and the class sweep.
+static constexpr std::array<OneWayWireProfileRow, 2> ONEWAY_WIRE_PROFILES{{
+    {MANUFACTURER_SOMFY, SOMFY_WIRE_PROFILE},
+    {MANUFACTURER_VELUX,
+     {ONEWAY_EXECUTE_ACEI_VELUX, /*profile_is_a_guess=*/false, EnrollGesture::VELUX_KLI, VELUX_KLI_ENROLLMENT_CLASSES,
+      OneWayPowerClass::ALWAYS_ALIVE}},
+}};
+
+/// Manufacturer byte of an identity that sets none; it transmits with the Somfy profile.
+static constexpr uint8_t UNSET_MANUFACTURER = 0x00;
+
 /// @brief Resolve an identity's 1W wire profile from its manufacturer byte.
 ///
-/// Pure. Somfy (0x02) and unset (0x00) both map to the historical Somfy-shaped default
-/// (`ONEWAY_EXECUTE_ACEI`, `EnrollGesture::SOMFY`); only VELUX (0x01) is special so far
-/// (`ONEWAY_EXECUTE_ACEI_VELUX`, `EnrollGesture::VELUX_KLI`, the class sweep). Any other
-/// explicitly-set manufacturer returns the Somfy default with `profile_is_a_guess=true` so the
-/// Python schema can warn (`oneway_controllers.py` `validate_oneway_controllers()` — keep the {somfy,
-/// velux} set here in sync with the warning there; there is no automated check).
+/// Pure. A manufacturer with a row in ONEWAY_WIRE_PROFILES gets it; an unset manufacturer (0x00) gets
+/// the Somfy profile, the historical default. Any other explicitly-set manufacturer returns the Somfy
+/// profile with `profile_is_a_guess=true` so the Python schema can warn (`oneway_controllers.py`
+/// `validate_oneway_controllers()`).
 /// @param manufacturer The identity's manufacturer byte (`MANUFACTURER_*`, or a raw value).
 inline OneWayWireProfile resolve_oneway_wire_profile(uint8_t manufacturer) {
-  constexpr std::array<DeviceType, 3> none{DeviceType::UNKNOWN, DeviceType::UNKNOWN, DeviceType::UNKNOWN};
-  switch (manufacturer) {
-    case MANUFACTURER_VELUX:
-      return {ONEWAY_EXECUTE_ACEI_VELUX, /*profile_is_a_guess=*/false, EnrollGesture::VELUX_KLI,
-              VELUX_KLI_ENROLLMENT_CLASSES, OneWayPowerClass::ALWAYS_ALIVE};
-    case MANUFACTURER_SOMFY:
-    case 0x00:
-      return {ONEWAY_EXECUTE_ACEI, /*profile_is_a_guess=*/false, EnrollGesture::SOMFY, none,
-              OneWayPowerClass::LEGACY_LONG};
-    default:
-      return {ONEWAY_EXECUTE_ACEI, /*profile_is_a_guess=*/true, EnrollGesture::SOMFY, none,
-              OneWayPowerClass::LEGACY_LONG};
+  for (const OneWayWireProfileRow &row : ONEWAY_WIRE_PROFILES) {
+    if (row.manufacturer == manufacturer)
+      return row.profile;
   }
+  OneWayWireProfile fallback = SOMFY_WIRE_PROFILE;
+  fallback.profile_is_a_guess = manufacturer != UNSET_MANUFACTURER;
+  return fallback;
 }
 
 /// @brief The device classes this identity's `0x30` enrollment sweep will actually target.

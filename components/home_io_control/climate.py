@@ -28,8 +28,8 @@ from esphome.core import ID
 
 from . import home_io_control_ns
 from .hub_validators import (
-    DEVICE_TYPE_OPTIONS,
     FEATURE_NIGHT_LIGHT,
+    FEATURE_TEMPERATURE_RANGE,
     FEATURE_WINDOW_COMPANIONS,
 )
 from .platform_common import (
@@ -45,7 +45,6 @@ from .platform_common import (
     validate_register_poll_interval,
     warn_if_experimental_kind,
     wire_device_binding,
-    CONF_DEVICE_TYPE,
     CONF_HOME_IO_CONTROL_ID,
     CONF_IO_DEVICE_ID,
 )
@@ -113,7 +112,7 @@ def _inject_companion_ids(config):
 
 # The range a heating temperature interface encodes its temperature over. It defaults to -40..+80 degrees
 # Celsius (proto_heating.h) as an assumption; a device that turns out to use another range is told here.
-# A heat pump uses the fixed range, so the keys do not apply to it. Mirrors
+# A heat pump uses the fixed range, so the keys do not apply to it (the TEMPERATURE_RANGE bit). Mirrors
 # HEATING_TEMPERATURE_RANGE_MIN_C / _MAX_C.
 DEFAULT_TEMPERATURE_RANGE_C = (-40.0, 80.0)
 TEMPERATURE_RANGE_BOUNDS_C = (-50.0, 100.0)
@@ -123,7 +122,9 @@ def _validate_temperature_range(config):
     # Applies to the two keys only when one is given; the other keeps its default.
     if CONF_MIN_TEMPERATURE not in config and CONF_MAX_TEMPERATURE not in config:
         return config
-    if config.get(CONF_DEVICE_TYPE) != DEVICE_TYPE_OPTIONS["heating_temperature_interface"]:
+    # The TEMPERATURE_RANGE bit of the declared kind; no declared kind has no bit, so the keys stay rejected
+    # there as well (the range would otherwise go to a device nothing says has one).
+    if not declared_features(config) & FEATURE_TEMPERATURE_RANGE:
         raise cv.Invalid(
             "min_temperature and max_temperature apply to io_device_type: heating_temperature_interface "
             "only: a heat pump uses a fixed range, and every other device has no temperature range"

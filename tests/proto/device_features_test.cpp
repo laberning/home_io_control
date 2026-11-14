@@ -64,7 +64,7 @@ const std::vector<ExpectedRow> EXPECTED_ROWS = {
     {DeviceType::SECURE_CONFIGURATION_DEVICE, 0, 0},
     {DeviceType::BEACON, 0, 0},
     {DeviceType::DUAL_ROLLER_SHUTTER, 0, LV | FAV},
-    {DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, 0},
+    {DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, feature::TEMPERATURE_RANGE},
     {DeviceType::ON_OFF_SWITCH, 0, 0},
     {DeviceType::ON_OFF_SWITCH, 2, 0},
     {DeviceType::HORIZONTAL_AWNING, 0, LV | FAV | EXT | INV},

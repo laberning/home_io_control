@@ -279,7 +279,7 @@ class PairingEngine {
 
   /// @brief Ask the heater at the address after an Atlantic pairing node for its maximum setpoint.
   ///
-  /// Runs only for a node decisions::pairing_node_has_heater_at_next_address() names, and only when the
+  /// Runs only for a node decisions::heater_behind_pairing_node() names, and only when the
   /// YAML declares no device at that address. One authenticated register read under `key` (the full
   /// retry budget); an answer means the electrical heater with an adjustable setpoint is there, and it
   /// becomes the only entry of `state`, as if a roll-call had found it. Leaves the registry as it was.

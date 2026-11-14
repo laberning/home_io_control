@@ -3,6 +3,8 @@
 
 **Status:** Accepted · **Recorded:** 2026-09
 
+Note (2026-11): the manufacturer list is now checked against the C++ table by `tests/sync/oneway_wire_profile_sync_test.cpp`; the sentence below about no automated sync check no longer holds.
+
 ## Context
 
 The 1W transmit builders were shaped entirely from Somfy captures. Two of the

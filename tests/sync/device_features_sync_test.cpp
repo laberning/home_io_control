@@ -44,6 +44,7 @@ const std::map<std::string, DeviceFeatures> CPP_FEATURE_BITS = {
     {"INVERTED", device_feature::INVERTED},
     {"WATER_HEATER", device_feature::WATER_HEATER},
     {"NIGHT_LIGHT", device_feature::NIGHT_LIGHT},
+    {"TEMPERATURE_RANGE", device_feature::TEMPERATURE_RANGE},
 };
 
 /// The word Python keeps for a row: the capability bits plus bit 15 for the row's EXPERIMENTAL flag.

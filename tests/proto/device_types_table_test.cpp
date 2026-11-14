@@ -28,6 +28,21 @@ TEST(DeviceTypesTable, RemoteControllerDecodesAsTypeNot255) {
   EXPECT_EQ(decode_packed_device_subtype(0xC0), 0u);
 }
 
+TEST(DeviceTypesTable, OnlyTheRemoteControllerTypeHandsOutItsKey) {
+  EXPECT_TRUE(device_hands_out_key(DeviceType::REMOTE_CONTROLLER));
+  EXPECT_FALSE(device_hands_out_key(DeviceType::ROLLER_SHUTTER));
+  EXPECT_FALSE(device_hands_out_key(DeviceType::ELECTRICAL_HEATER));
+  EXPECT_FALSE(device_hands_out_key(DeviceType::UNKNOWN)) << "a type with no row hands out nothing";
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    const bool flagged = (row.flags & device_type_flags::HANDS_OUT_KEY) != 0;
+    EXPECT_EQ(flagged, row.type == DeviceType::REMOTE_CONTROLLER && row.subtype == 0)
+        << format_device_ids(row.type, row.subtype) << ": the flag sits on the type row only";
+    // A subtype answers like its type: the decision reads the type row, never the subtype's.
+    EXPECT_EQ(device_hands_out_key(row.type), row.type == DeviceType::REMOTE_CONTROLLER)
+        << format_device_ids(row.type, row.subtype);
+  });
+}
+
 TEST(DeviceTypesTable, TestTypeDecodesAs1008) {
   EXPECT_EQ(decode_packed_device_type(0xFC, 0x00), DeviceType::TEST_AND_EVALUATION);
   EXPECT_EQ(decode_packed_device_type(0x3F, 0xC0), DeviceType::CENTRAL_HOUSE_CONTROL)

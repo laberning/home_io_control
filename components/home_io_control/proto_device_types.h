@@ -52,6 +52,10 @@ static constexpr uint8_t STANDALONE_NAME = 1U << 2U;
 /// config declares it (hub_validators.py `KIND_EXPERIMENTAL` is Python's copy of this flag), and
 /// the node-type table in the published docs marks it. A type row (subtype 0) is never experimental.
 static constexpr uint8_t EXPERIMENTAL = 1U << 3U;
+/// Type rows only: a device that answers discovery as this type hands out its own system key and
+/// refuses a pushed one, so key transfer pulls (device_hands_out_key()). Every subtype of the type
+/// shares it.
+static constexpr uint8_t HANDS_OUT_KEY = 1U << 4U;
 }  // namespace device_type_flags
 
 /// @brief One row of the node-type / subtype table.
@@ -114,6 +118,13 @@ const char *device_platform_name(DeviceType type, uint8_t subtype);
 /// @return true when the exact row carries device_type_flags::EXPERIMENTAL; a subtype with no row of
 ///         its own is not experimental, because it behaves like its (confirmed) type.
 bool device_is_experimental(DeviceType type, uint8_t subtype);
+
+/// @brief Does a device that answers discovery as this node type hand out its own key?
+/// @details Reads the type's own row (subtype 0), so every subtype of the type answers alike. Pairing
+///          then pulls the key instead of pushing one.
+/// @param type Node type the device answered discovery with.
+/// @return true when the type row carries device_type_flags::HANDS_OUT_KEY.
+bool device_hands_out_key(DeviceType type);
 
 /// @brief Capability class of a (type, subtype), the entity family of the resolved row.
 /// @details A subtype row can differ from its type's row (for example a heater with an adjustable

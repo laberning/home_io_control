@@ -27,6 +27,7 @@
 #include <cinttypes>
 #include <cmath>
 #include <cstring>
+#include <optional>
 
 namespace esphome {
 namespace home_io_control {
@@ -418,7 +419,7 @@ static void log_discovered_device(const pairing::PairingContext &context) {
              experimental_note(context.device.type, context.device.subtype),
              device_has_platform(context.device.type, context.device.subtype) ? "" : " (not supported yet)");
   }
-  if (context.device.type == DeviceType::REMOTE_CONTROLLER) {
+  if (device_hands_out_key(context.device.type)) {
     ESP_LOGW(TAG,
              "Discovery: device %s answered as a remote controller (node type %u), not as an actuator. "
              "It may not accept a pushed key; the pairing advisor says what to try if the key step fails.",
@@ -917,7 +918,7 @@ bool PairingEngine::key_pull_selected_(const pairing::PairingContext &context) c
   // A device that answers discovery as a remote controller (node type 1023) hands out its own key and
   // refuses a pushed one; every other device takes a push. No switch to the other direction inside the
   // attempt: a refusal repeats deterministically, and a retry only costs pairing time.
-  const bool pull = context.device.type == DeviceType::REMOTE_CONTROLLER;
+  const bool pull = device_hands_out_key(context.device.type);
   ESP_LOGI(TAG, "Key transfer: auto -> %s (%s answered discovery as %s)", pull ? "pull" : "push",
            context.device_id.c_str(), format_device_kind(context.device.type, context.device.subtype).c_str());
   return pull;
@@ -997,8 +998,9 @@ PairingEngine::KeyHolderSearch PairingEngine::roll_call_and_register_(pairing::P
 bool PairingEngine::probe_heater_at_next_address_(const pairing::PairingContext &context, const uint8_t *key,
                                                   bool device_key, ScanState &state) {
   uint8_t heater[NODE_ID_SIZE];
-  if (!decisions::pairing_node_has_heater_at_next_address(context.device.type, context.discovery_manufacturer) ||
-      !decisions::next_node_id(context.device.node_id, heater))
+  const std::optional<decisions::DeviceKind> heater_kind =
+      decisions::heater_behind_pairing_node(context.device.type, context.discovery_manufacturer);
+  if (!heater_kind || !decisions::next_node_id(context.device.node_id, heater))
     return false;
   const std::string heater_id = node_id_to_string(heater);
   // A YAML entry keeps its own key; the roll-call reports it against that.
@@ -1013,8 +1015,8 @@ bool PairingEngine::probe_heater_at_next_address_(const pairing::PairingContext 
   const IoDevice previous = had_earlier ? *earlier : IoDevice{};
   IoDevice candidate{};
   memcpy(candidate.node_id, heater, NODE_ID_SIZE);
-  candidate.type = DeviceType::ELECTRICAL_HEATER;
-  candidate.subtype = SUBTYPE_HEATER_WITH_SETPOINT;
+  candidate.type = heater_kind->type;
+  candidate.subtype = heater_kind->subtype;
   candidate.has_system_key = device_key;
   if (device_key)
     memcpy(candidate.system_key, key, AES_KEY_SIZE);
@@ -1050,8 +1052,8 @@ bool PairingEngine::probe_heater_at_next_address_(const pairing::PairingContext 
   // speaks it; manufacturer and flags come from no reply of its own, so the report omits them.
   ScanResponder &responder = state.responders[0];
   memcpy(responder.src, heater, NODE_ID_SIZE);
-  responder.type = DeviceType::ELECTRICAL_HEATER;
-  responder.subtype = SUBTYPE_HEATER_WITH_SETPOINT;
+  responder.type = heater_kind->type;
+  responder.subtype = heater_kind->subtype;
   responder.rssi_dbm = rssi;
   responder.manufacturer = context.discovery_manufacturer;
   responder.flags = 0;

@@ -1028,12 +1028,13 @@ TEST(Decisions, RainStateFromLimitationReplyUsesOnlyTheMainParameterValue) {
 // === Pairing: the device behind a pairing node ===
 
 TEST(PairingNextAddress, OnlyAnAtlanticRemoteControllerHasAHeaterAtTheNextAddress) {
-  EXPECT_TRUE(
-      decisions::pairing_node_has_heater_at_next_address(DeviceType::REMOTE_CONTROLLER, MANUFACTURER_ATLANTIC_GROUP));
-  EXPECT_FALSE(decisions::pairing_node_has_heater_at_next_address(DeviceType::REMOTE_CONTROLLER, MANUFACTURER_SOMFY));
-  EXPECT_FALSE(decisions::pairing_node_has_heater_at_next_address(DeviceType::REMOTE_CONTROLLER, 0));
-  EXPECT_FALSE(
-      decisions::pairing_node_has_heater_at_next_address(DeviceType::ELECTRICAL_HEATER, MANUFACTURER_ATLANTIC_GROUP));
+  const auto heater = decisions::heater_behind_pairing_node(DeviceType::REMOTE_CONTROLLER, MANUFACTURER_ATLANTIC_GROUP);
+  ASSERT_TRUE(heater.has_value());
+  EXPECT_EQ(heater->type, DeviceType::ELECTRICAL_HEATER);
+  EXPECT_EQ(heater->subtype, SUBTYPE_HEATER_WITH_SETPOINT);
+  EXPECT_FALSE(decisions::heater_behind_pairing_node(DeviceType::REMOTE_CONTROLLER, MANUFACTURER_SOMFY));
+  EXPECT_FALSE(decisions::heater_behind_pairing_node(DeviceType::REMOTE_CONTROLLER, 0));
+  EXPECT_FALSE(decisions::heater_behind_pairing_node(DeviceType::ELECTRICAL_HEATER, MANUFACTURER_ATLANTIC_GROUP));
 }
 
 TEST(PairingNextAddress, NextNodeIdCountsUpAsOneTwentyFourBitNumber) {

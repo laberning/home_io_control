@@ -12,6 +12,8 @@
 #include <span>
 #include <string>
 
+#include "device_table_walk.h"
+
 using namespace esphome::home_io_control;
 
 namespace {
@@ -65,6 +67,25 @@ TEST(HeatingProfiles, ClimateGateAndTypeTableAgreeForEveryRow) {
       EXPECT_EQ(device_supports_climate_control(type, subtype), table_says_climate_platform);
     }
   }
+}
+
+TEST(HeatingProfiles, TheTemperatureRangeBitMarksTheProfilesThatTakeATemperatureWithoutAFixedRange) {
+  // The YAML `min_temperature:` / `max_temperature:` keys are accepted by this bit, so it must be set
+  // exactly where the climate platform uses the configured range (platform_climate.cpp reads
+  // `fixed_range`).
+  const auto check = [](const DeviceTypeInfo &row) {
+    const HeatingProfile *profile = find_heating_profile(row.type, row.subtype, row.model);
+    const bool takes_range = profile != nullptr && profile->path == HeatingControlPath::TEMPERATURE_EXECUTE &&
+                             profile->features.target_temperature && !profile->fixed_range;
+    EXPECT_EQ(has_feature(row.features, device_feature::TEMPERATURE_RANGE), takes_range)
+        << format_device_ids(row.type, row.subtype);
+  };
+  test::for_each_table_row(check);
+  test::for_each_model_row(check);
+  EXPECT_TRUE(has_feature(device_features(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, DeviceModel::NONE),
+                          device_feature::TEMPERATURE_RANGE));
+  EXPECT_FALSE(
+      has_feature(device_features(DeviceType::HEAT_PUMP, 0, DeviceModel::NONE), device_feature::TEMPERATURE_RANGE));
 }
 
 // === Profile contents ===

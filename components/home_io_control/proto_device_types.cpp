@@ -23,6 +23,7 @@ using device_feature::TILT;
 using device_feature::VENT;
 using device_feature::WINDOW_COMPANIONS;
 using device_type_flags::EXPERIMENTAL;
+using device_type_flags::HANDS_OUT_KEY;
 using device_type_flags::HAS_PLATFORM;
 using device_type_flags::STANDALONE_NAME;
 using device_type_flags::YAML_SELECTABLE;
@@ -162,7 +163,7 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::DUAL_ROLLER_SHUTTER, 0, NO_MODEL, "dual_roller_shutter", CAP_COVER, SELECTABLE_PLATFORM, DUAL_SHUTTER},
 
     {DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, NO_MODEL, "heating_temperature_interface", CAP_CLIMATE,
-     SELECTABLE_PLATFORM, 0},
+     SELECTABLE_PLATFORM, device_feature::TEMPERATURE_RANGE},
 
     {DeviceType::ON_OFF_SWITCH, 0, NO_MODEL, "on_off_switch", CAP_SWITCH, SELECTABLE_PLATFORM, BINARY_COMMAND},
     {DeviceType::ON_OFF_SWITCH, 2, NO_MODEL, "micromodule", CAP_SWITCH, EXPERIMENTAL_SUBTYPE_PLATFORM, BINARY_COMMAND},
@@ -244,7 +245,7 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
 
     {DeviceType::TEST_AND_EVALUATION, 0, NO_MODEL, "test_and_evaluation", CAP_NONE, 0, 0},
 
-    {DeviceType::REMOTE_CONTROLLER, 0, NO_MODEL, "remote_controller", CAP_NONE, 0, 0},
+    {DeviceType::REMOTE_CONTROLLER, 0, NO_MODEL, "remote_controller", CAP_NONE, HANDS_OUT_KEY, 0},
     {DeviceType::REMOTE_CONTROLLER, 2, NO_MODEL, "Keygo", CAP_NONE, EXPERIMENTAL, 0},
     {DeviceType::REMOTE_CONTROLLER, 3, NO_MODEL, "Izymo", CAP_NONE, EXPERIMENTAL, 0},
     {DeviceType::REMOTE_CONTROLLER, 4, NO_MODEL, "public frame", CAP_NONE, EXPERIMENTAL, 0},
@@ -323,6 +324,11 @@ const char *device_platform_name(DeviceType type, uint8_t subtype) {
 bool device_is_experimental(DeviceType type, uint8_t subtype) {
   const DeviceTypeInfo *row = find_exact_device_type_info(type, subtype);
   return row != nullptr && (row->flags & device_type_flags::EXPERIMENTAL) != 0;
+}
+
+bool device_hands_out_key(DeviceType type) {
+  const DeviceTypeInfo *row = find_exact_device_type_info(type, 0);
+  return row != nullptr && (row->flags & device_type_flags::HANDS_OUT_KEY) != 0;
 }
 
 DeviceCapabilityClass device_capability_class(DeviceType type, uint8_t subtype) {
