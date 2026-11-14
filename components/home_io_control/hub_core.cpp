@@ -341,6 +341,32 @@ bool IOHomeControlComponent::authenticate_request_(const IoFrame &request, uint3
 
 void IOHomeControlComponent::notify_device_update_(const std::string &id) { this->registry_.notify(id); }
 
+HeaterControllerHub IOHomeControlComponent::make_heater_controller_hub_() {
+  HeaterControllerHub hub;
+  // A heater exchange keeps the shared bookkeeping but schedules no poll backoff: the heater poll runs its own
+  // failure ladder (retry_after_fail_ms = 0).
+  hub.exchange = [this](const std::string &device_id, const IoFrame &request, IoFrame &response, uint8_t max_tries) {
+    return this->exchange_and_record_(device_id, request, response, {false, 0, max_tries}) == RequestResult::REPLY;
+  };
+  hub.execute = [this](const std::string &device_id, const char *action, const HeaterExecuteAcceptsFn &accepts,
+                       const char *rejection_profile, const HeaterExecuteBuildFn &build, HeaterExecuteKind kind) {
+    const ExecuteRequestSpec spec{action, false};
+    return kind == HeaterExecuteKind::WITH_ROLLBACK
+               ? this->run_execute_operation_(device_id, spec, accepts, rejection_profile, build)
+               : this->try_execute_operation_(device_id, spec, accepts, rejection_profile, build);
+  };
+  hub.status_read = [this](const std::string &device_id, const IoFrame &request, uint32_t retry_after_fail_ms,
+                           uint8_t max_tries) {
+    return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, max_tries);
+  };
+  // set_timeout() is protected on the real ESPHome Component, so the lambda defined here is the legitimate caller.
+  hub.set_timeout_by_id = [this](uint32_t id, uint32_t delay_ms, std::function<void()> callback) {
+    this->set_timeout(id, delay_ms, std::move(callback));
+  };
+  hub.queue_status_request = [this](const std::string &device_id) { this->queue_request_device_status(device_id); };
+  return hub;
+}
+
 // === Device management ===
 
 void IOHomeControlComponent::set_device_status_poll_interval(const std::string &device_id, uint32_t poll_interval_ms) {

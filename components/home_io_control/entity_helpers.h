@@ -1,7 +1,8 @@
 #pragma once
 
 /// @file entity_helpers.h
-/// @brief Conversions and renderers shared by the hub and its Home Assistant entities.
+/// @brief Conversions, renderers and device bookkeeping shared by the hub, its collaborators and its Home
+/// Assistant entities.
 /// @ingroup hioc_hub
 ///
 /// Carries no dependency on the hub itself, so an entity can include this header instead of the
@@ -11,8 +12,11 @@
 #include "proto_codecs.h"
 #include "proto_constants.h"
 #include "proto_device_model.h"
+#include "proto_device_types.h"
 #include "proto_frame.h"
 #include "proto_sizes.h"
+
+#include "esphome/core/hal.h"
 
 #include <array>
 #include <cinttypes>
@@ -194,6 +198,74 @@ inline std::string describe_limitation_request(const IoFrame &frame) {
     return "limitation request (assumed layout): unexpected payload";
   return std::string("limitation request (assumed layout): type=") +
          (type == LimitationType::MINIMUM ? "minimum" : "maximum") + " param=" + format_limitation_param(parameter_id);
+}
+
+// ============================================================================
+// Device bookkeeping shared by the hub and the heater controller
+// ============================================================================
+
+/// @brief Log a rejected operation with capability mismatch details.
+/// @param device_id Device ID string.
+/// @param dev IoDevice that rejected the command.
+/// @param operation Human‑readable operation name (e.g., "set position").
+/// @param expected Expected capability class or profile name.
+inline void log_rejected_operation(const std::string &device_id, const IoDevice &dev, const char *operation,
+                                   const char *expected) {
+  ESP_LOGW(TAG, "Rejecting %s for device %s: type=%s (%u) class=%s profile=%s expected=%s", operation,
+           device_id.c_str(), device_type_name(dev.type), static_cast<unsigned>(dev.type),
+           device_capability_class_name(dev.type), device_operation_profile_name(dev.type, dev.subtype), expected);
+}
+
+/// @brief Update per-device link-health stats from the radio's last capture.
+///
+/// Called for every frame whose `src` is a registered device, regardless of command type or
+/// whether that command's own payload was well-formed — any such frame is real evidence the
+/// device is reachable and at this signal strength. The call sites cover every way such a frame
+/// arrives: update_device_status_() (inbound status path), exchange_and_record_()'s
+/// explicit-refusal branch (a CMD_ERROR_RESP reply to our own request, which returns before
+/// reaching the status path), and its failure branch when a 0x3C challenge was seen (the device
+/// transmitted, even though the exchange did not complete). Always stamps `last_seen_ms`; only
+/// touches the RSSI fields when `radio` is non-null and its last capture is valid (real drivers
+/// always populate a valid capture before a frame is handed off, but tests calling this path
+/// directly without a radio, or without exercising RX through it, must not crash or fabricate
+/// an RSSI).
+/// @param dev Device that sent the frame.
+/// @param radio Radio driver to read the last capture from; may be nullptr.
+inline void update_link_health(IoDevice &dev, RadioDriver *radio) {
+  dev.last_seen_ms = millis();
+  if (radio == nullptr)
+    return;
+
+  const RadioCaptureInfo &capture = radio->get_last_capture();
+  if (!capture.valid)
+    return;
+
+  dev.last_rssi_dbm = capture.rssi_dbm;
+  if (dev.rssi_ema_scaled == RSSI_UNKNOWN_DBM) {
+    // First sample: seed the EMA directly instead of blending from 0.
+    dev.rssi_ema_scaled = static_cast<int16_t>(capture.rssi_dbm * RSSI_EMA_SCALE);
+    return;
+  }
+  // Integer EMA kept in fixed point: `S += x − round(S/N)` blends each sample at weight 1/N
+  // while S stays scaled by N, so sub-dBm contributions accumulate instead of truncating to
+  // zero — a whole-dBm EMA would stall as soon as |sample − EMA| < N and never converge.
+  dev.rssi_ema_scaled =
+      static_cast<int16_t>(dev.rssi_ema_scaled + capture.rssi_dbm - rssi_scaled_to_dbm(dev.rssi_ema_scaled));
+}
+
+/// @brief Clear a previously recorded CMD_ERROR_RESP result, if any.
+///
+/// A stale limitation reason (e.g. a rain lockout from an hour ago) is worse than none once the
+/// device has since replied normally, so every successful status/command reply for a device
+/// clears it. Called from the CMD_PRIVATE_RESP and CMD_STATUS_UPDATE branches of
+/// update_device_status_() — not from CMD_GET_NAME_RESP/CMD_GET_INFO2_RESP, which are metadata
+/// lookups unrelated to whether the device's last movement command succeeded. Like
+/// record_command_result(), does not notify subscribers itself — both existing call sites clear
+/// before their own notify_device_update_() call, which is what actually publishes this change.
+/// @param dev Device to clear.
+inline void clear_command_result(IoDevice &dev) {
+  dev.last_result_code = 0;
+  dev.last_result_at_ms = 0;
 }
 
 }  // namespace detail

@@ -1,7 +1,7 @@
 # ADR 0033: The heating send path bypasses the cover status/optimistic machinery
 <!-- doxygen-label: adr0033 -->
 
-**Status:** Accepted, superseded in part by [ADR 0054](0054-heaters-are-read-back-over-the-private-register-protocol.md) (the write-only premise; the send-path decision stands), amended by [ADR 0082](0082-heater-exchanges-share-the-exchange-bookkeeping.md) (decision 1: heater exchanges share the exchange bookkeeping) · **Recorded:** 2026-09
+**Status:** Superseded by [ADR 0083](0083-heating-and-hot-water-live-in-their-own-collaborator.md); earlier superseded in part by [ADR 0054](0054-heaters-are-read-back-over-the-private-register-protocol.md) (the write-only premise; the send-path decision stands), amended by [ADR 0082](0082-heater-exchanges-share-the-exchange-bookkeeping.md) (decision 1: heater exchanges share the exchange bookkeeping) · **Recorded:** 2026-09
 
 ## Context
 

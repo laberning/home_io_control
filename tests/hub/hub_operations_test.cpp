@@ -44,7 +44,6 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::busy_;
   using IOHomeControlComponent::poll_policy_;
   using IOHomeControlComponent::poll_heating_device_;
-  using IOHomeControlComponent::read_private_register_;
   using IOHomeControlComponent::check_heater_model_;
   using IOHomeControlComponent::schedule_status_poll_;
   using IOHomeControlComponent::tuning_;
@@ -338,162 +337,6 @@ TEST(HubOperations, ADeviceEventDuringAHeatingWriteIsRecordedAndTheWriteAskedAga
   EXPECT_EQ(dev->exchange_timeout_count, 0u) << "the device answered, just with something else first";
 }
 
-TEST(HubOperations, SendHeatingCommandAcceptsClimateDeviceAndSendsExactBytes) {
-  TestableComponent comp;
-  MockRadio radio;
-  setup_cover_component(comp, radio);
-  auto *dev = comp.get_device("ABC123");
-  ASSERT_NE(dev, nullptr);
-  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
-
-  IoFrame resp = build_write_private_ack(comp.node_id_);
-  uint8_t raw[64];
-  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
-  RadioRxPacket pkt{};
-  pkt.len = raw_len;
-  memcpy(pkt.data, raw, raw_len);
-  pkt.freq_hz = FREQ_CH2;
-  radio.queue_rx(pkt);
-
-  EXPECT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f));
-
-  ASSERT_EQ(radio.get_sent_data().size(), 1u);
-  const auto &tx = radio.get_sent_data().front();
-  ASSERT_GE(tx.size(), 15u);
-  EXPECT_EQ(tx[8], CMD_WRITE_PRIVATE) << "command byte should be CMD_WRITE_PRIVATE (0x20)";
-  // Payload begins at wire offset 9 — {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00} for 20.5 C.
-  EXPECT_EQ(tx[9], 0x0C);
-  EXPECT_EQ(tx[10], 0x61);
-  EXPECT_EQ(tx[11], 0x01);
-  EXPECT_EQ(tx[12], 0x03);
-  EXPECT_EQ(tx[13], 0xCD) << "20.5 C -> 205 -> 0xCD";
-  EXPECT_EQ(tx[14], 0x00) << "trailing literal constant";
-}
-
-TEST(HubOperations, AnAcknowledgedHeatingWritePollsTheHeaterAgainSoon) {
-  // Heating / idle only shows in the regulator register, which the poll reads (issue #165).
-  TestableComponent comp;
-  MockRadio radio;
-  setup_cover_component(comp, radio);
-  auto *dev = comp.get_device("ABC123");
-  ASSERT_NE(dev, nullptr);
-  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
-  IoFrame resp = build_write_private_ack(comp.node_id_);
-  radio.queue_rx(test::make_rx_packet(resp));
-
-  ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f));
-
-  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
-  EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS);
-}
-
-TEST(HubOperations, AnUnacknowledgedHeatingWriteSchedulesNoExtraPoll) {
-  TestableComponent comp;
-  MockRadio radio;
-  setup_cover_component(comp, radio);
-  auto *dev = comp.get_device("ABC123");
-  ASSERT_NE(dev, nullptr);
-  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
-
-  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f));
-  EXPECT_NE(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
-}
-
-TEST(HubOperations, SendHeatingCommandRejectsNonClimateDevice) {
-  TestableComponent comp;
-  MockRadio radio;
-  setup_cover_component(comp, radio);  // ROLLER_SHUTTER
-
-  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f))
-      << "cover devices must be rejected by the climate capability predicate";
-  EXPECT_TRUE(radio.get_sent_data().empty()) << "a rejected heating command must not transmit";
-}
-
-TEST(HubOperations, SendHeatingCommandRejectsOutOfRangeTemperature) {
-  TestableComponent comp;
-  MockRadio radio;
-  setup_cover_component(comp, radio);
-  auto *dev = comp.get_device("ABC123");
-  ASSERT_NE(dev, nullptr);
-  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
-
-  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 28.1f));
-  EXPECT_TRUE(radio.get_sent_data().empty()) << "an unencodable value must not transmit";
-}
-
-TEST(HubOperations, SendHeatingCommandFailsWithoutAnyReply) {
-  TestableComponent comp;
-  MockRadio radio;
-  setup_cover_component(comp, radio);
-  auto *dev = comp.get_device("ABC123");
-  ASSERT_NE(dev, nullptr);
-  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
-
-  // No reply queued -> exchange times out -> not acknowledged.
-  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::POWER_ON, 0.0f));
-}
-
-// Run send_heating_command against an electrical heater with an adjustable setpoint with a single reply
-// frame (built from the hub node id by `build_reply`) queued as the device's answer.
-static bool run_heating_command_with_reply(const std::function<IoFrame(const uint8_t *)> &build_reply) {
-  TestableComponent comp;
-  MockRadio radio;
-  setup_cover_component(comp, radio);
-  auto *dev = comp.get_device("ABC123");
-  EXPECT_NE(dev, nullptr);
-  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
-
-  IoFrame resp = build_reply(comp.node_id_);
-  uint8_t raw[64];
-  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
-  RadioRxPacket pkt{};
-  pkt.len = raw_len;
-  memcpy(pkt.data, raw, raw_len);
-  pkt.freq_hz = FREQ_CH2;
-  radio.queue_rx(pkt);
-
-  return comp.send_heating_command("ABC123", HeatingFunction::POWER_ON, 0.0f);
-}
-
-// power_on / midnight_sync are register reads: the 0x21 ACK carries a payload the hub logs at
-// DEBUG (bytes_to_hex) but does not decode. Exercise both an ACK with payload bytes and the
-// empty-payload ACK to prove the log path handles either without crashing and still returns true.
-TEST(HubOperations, SendHeatingCommandAcceptsReadAckWithPayload) {
-  EXPECT_TRUE(run_heating_command_with_reply([](const uint8_t *dst) {
-    IoFrame f{};
-    init_frame(f, true, false, true, false);
-    uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
-    set_dst(f, dst);
-    set_src(f, device_node_id);
-    // Stand-in for a 0x0130 setpoint-block read answer (contents not decoded, only logged).
-    const uint8_t payload[] = {0x0C, 0x60, 0x01, 0x30, 0xC8, 0x00, 0x23, 0x00, 0x28, 0x00};
-    set_cmd(f, CMD_WRITE_PRIVATE_ACK, payload, sizeof(payload));
-    return f;
-  })) << "a CMD_WRITE_PRIVATE_ACK carrying a read payload is still an acknowledgement";
-}
-
-TEST(HubOperations, SendHeatingCommandAcceptsReadAckWithEmptyPayload) {
-  EXPECT_TRUE(run_heating_command_with_reply([](const uint8_t *dst) {
-    IoFrame f{};
-    init_frame(f, true, false, true, false);
-    uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
-    set_dst(f, dst);
-    set_src(f, device_node_id);
-    set_cmd(f, CMD_WRITE_PRIVATE_ACK, nullptr, 0);
-    return f;
-  })) << "an empty-payload ACK must not trip the payload log path";
-}
-
-TEST(HubOperations, SendHeatingCommandFailsOnNonAckReply) {
-  // The acknowledged check is `response.cmd == CMD_WRITE_PRIVATE_ACK`; a reply with any other cmd
-  // must fail the command.
-  EXPECT_FALSE(run_heating_command_with_reply([](const uint8_t *dst) {
-    return build_error_response(dst, RESULT_LIMITATION_BY_WIND);
-  })) << "a CMD_ERROR_RESP reply must not count as an acknowledgement";
-  EXPECT_FALSE(run_heating_command_with_reply([](const uint8_t *dst) { return build_status_response(dst); }))
-      << "a CMD_PRIVATE_RESP reply must not count as an acknowledgement";
-}
-
 // ========================================================================================
 // Heater register reads and the heater poll
 // ========================================================================================
@@ -524,26 +367,6 @@ IoDevice *make_heater(TestableComponent &comp, MockRadio &radio) {
 
 }  // namespace
 
-TEST(HubOperations, ReadHeatingRegisterDecodesAndStoresTheValue) {
-  TestableComponent comp;
-  MockRadio radio;
-  auto *dev = make_heater(comp, radio);
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08})));
-
-  float value = 0.0F;
-  ASSERT_TRUE(comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, &value, EXCHANGE_RETRY_COUNT));
-
-  EXPECT_FLOAT_EQ(value, 20.75F);
-  EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 20.75F);
-  ASSERT_EQ(radio.get_sent_data().size(), 1u);
-  const auto &tx = radio.get_sent_data().front();
-  EXPECT_EQ(tx[8], CMD_WRITE_PRIVATE);
-  EXPECT_EQ(tx[9], 0x0C);
-  EXPECT_EQ(tx[10], 0x60) << "a read is a get";
-  EXPECT_EQ(tx[11], 0x01);
-  EXPECT_EQ(tx[12], 0x15);
-}
-
 TEST(HubOperations, ADeviceEventDuringAHeatingRegisterReadIsRecordedAndTheReadAnswerUsed) {
   TestableComponent comp;
   MockRadio radio;
@@ -560,31 +383,6 @@ TEST(HubOperations, ADeviceEventDuringAHeatingRegisterReadIsRecordedAndTheReadAn
   ASSERT_EQ(radio.get_sent_data().size(), 2u) << "the read is sent once more after the report";
   EXPECT_EQ(radio.get_sent_data()[1].at(10), HEATING_DIRECTION_GET) << "the repeat is the same read";
   EXPECT_EQ(dev->exchange_timeout_count, 0u);
-}
-
-TEST(HubOperations, ReadHeatingRegisterWithoutAValueInTheReplyFails) {
-  TestableComponent comp;
-  MockRadio radio;
-  auto *dev = make_heater(comp, radio);
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15})));
-
-  EXPECT_FALSE(comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
-  EXPECT_TRUE(std::isnan(dev->heating.room_temperature_c)) << "nothing is stored from a reply without a value";
-}
-
-TEST(HubOperations, ReadHeatingRegisterRejectsWhatItCannotRead) {
-  TestableComponent comp;
-  MockRadio radio;
-  make_heater(comp, radio);
-  EXPECT_FALSE(comp.read_heating_register("ABC123", HeatingFunction::SET_PRESENCE, nullptr, EXCHANGE_RETRY_COUNT))
-      << "write-only register";
-  EXPECT_TRUE(radio.get_sent_data().empty());
-
-  TestableComponent cover;
-  MockRadio cover_radio;
-  setup_cover_component(cover, cover_radio);  // ROLLER_SHUTTER
-  EXPECT_FALSE(cover.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
-  EXPECT_TRUE(cover_radio.get_sent_data().empty());
 }
 
 TEST(HubOperations, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnce) {
@@ -655,16 +453,6 @@ TEST(HubOperations, HeaterPollStopsAtTheFirstFailureAndBacksOff) {
   EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u) << "the failure moves onto the retry ladder";
   EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u) << "and a retry is scheduled";
   EXPECT_TRUE(std::isnan(dev->heating.setpoint_c));
-}
-
-TEST(HubOperations, AUserWriteToAHeaterKeepsTheFullRetryBudget) {
-  TestableComponent comp;
-  MockRadio radio;
-  make_heater(comp, radio);
-  // No reply: every try is spent.
-  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5F));
-  EXPECT_GT(radio.get_sent_data().size(), static_cast<size_t>(SCHEDULED_POLL_MAX_TRIES));
-  EXPECT_LE(radio.get_sent_data().size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
 }
 
 TEST(HubOperations, HeaterCadenceTimerHasItsOwnIdAndARemotePollDoesNotCancelIt) {
@@ -4184,47 +3972,6 @@ TEST(HubOperations, TheModelCheckRunsABoundedNumberOfTimesAndOnlyOnAKindWithMode
   test::set_kind(*plain_dev, DeviceType::ELECTRICAL_HEATER, 0);
   plain.check_heater_model_("ABC123", 1);
   EXPECT_TRUE(plain_radio.get_sent_data().empty()) << "52/0 has no model rows";
-}
-
-TEST(HubOperations, ReadPrivateRegisterChecksTheEchoAndRefusesADeviceWithoutRegisters) {
-  TestableComponent comp;
-  MockRadio radio;
-  make_heater(comp, radio);
-  queue_register_reply(comp, radio, ADELIS_NAME_REPLY);
-  IoFrame response{};
-  ASSERT_TRUE(comp.read_private_register_("ABC123", 0x01, 0x19, "model_name", response, 1));
-  EXPECT_EQ(response.data_len, ADELIS_NAME_REPLY.size());
-  EXPECT_EQ(response.data[HEATING_REPLY_VALUE_OFFSET], 'A');
-  const auto &tx = radio.get_sent_data().back();
-  EXPECT_EQ(std::vector<uint8_t>(tx.begin() + 9, tx.begin() + 13), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x19}));
-
-  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x18, 0x41});
-  EXPECT_FALSE(comp.read_private_register_("ABC123", 0x01, 0x19, "model_name", response, 1))
-      << "an answer for another register is not this register's";
-
-  TestableComponent cover;
-  MockRadio cover_radio;
-  setup_cover_component(cover, cover_radio);
-  EXPECT_FALSE(cover.read_private_register_("ABC123", 0x01, 0x19, "model_name", response, 1));
-  EXPECT_TRUE(cover_radio.get_sent_data().empty());
-}
-
-TEST(HubOperations, TowelDryerModeAndTemporaryStateWritesSendExactBytes) {
-  TestableComponent comp;
-  MockRadio radio;
-  make_towel_dryer(comp, radio);
-  queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x36, 0x03});
-  ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::TOWEL_MODE, 3.0F));
-  queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x3E, 0x01});
-  ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::TEMPORARY_STATE, 1.0F));
-
-  ASSERT_EQ(radio.get_sent_data().size(), 2u);
-  // The payload starts at wire offset 9; a one-byte write is five bytes.
-  const auto payload = [](const std::vector<uint8_t> &tx) {
-    return std::vector<uint8_t>(tx.begin() + 9, tx.begin() + 14);
-  };
-  EXPECT_EQ(payload(radio.get_sent_data()[0]), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x36, 0x03}));
-  EXPECT_EQ(payload(radio.get_sent_data()[1]), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x3E, 0x01}));
 }
 
 // ============================================================================

@@ -68,7 +68,7 @@ class IOHomeDeviceCounterSensor : public IOHomeCompanionSensor {
 /// @brief Diagnostic sensor that publishes a device's smoothed (EMA) RSSI in dBm.
 ///
 /// Publishes nothing until the first RX from this device seeds the EMA (see
-/// detail::update_link_health() in hub_internal.h) — Home Assistant shows the entity as
+/// detail::update_link_health() in entity_helpers.h) — Home Assistant shows the entity as
 /// unavailable until then, rather than a misleading 0 dBm.
 /// @ingroup hioc_platforms
 class IOHomeRssiSensor : public IOHomeCompanionSensor {
@@ -81,7 +81,7 @@ class IOHomeRssiSensor : public IOHomeCompanionSensor {
 };
 
 /// @brief Diagnostic sensor that publishes seconds elapsed since the last frame received from a
-/// device (see detail::update_link_health() in hub_internal.h).
+/// device (see detail::update_link_health() in entity_helpers.h).
 ///
 /// This is an age, not a timestamp: it resets to ~0 on every frame from the device — including
 /// replies to the hub's own status polls and commands, not just traffic the device sends

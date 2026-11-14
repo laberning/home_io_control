@@ -26,6 +26,15 @@ namespace home_io_control {
 /// @param callback Work to run in loop() context after the delay.
 using NamedTimeoutFn = std::function<void(const char *name, uint32_t delay_ms, std::function<void()> callback)>;
 
+/// @brief Schedules a numeric-id, replace-on-same-id timeout on the hub's ESPHome scheduler.
+///
+/// The id form of NamedTimeoutFn, for a timer keyed by a device's node address, where a name built per
+/// device would dangle (`Component::set_timeout(const char *, ...)` keeps the caller's pointer).
+/// @param id       Timer id; a later call with the same id replaces the pending callback.
+/// @param delay_ms Delay before the callback runs.
+/// @param callback Work to run in loop() context after the delay.
+using NumericTimeoutFn = std::function<void(uint32_t id, uint32_t delay_ms, std::function<void()> callback)>;
+
 /// @brief Puts a frame on air on a given channel via the hub's protected transmit_frame_().
 /// @param frame    Frame to serialize and transmit.
 /// @param freq_hz  RF channel frequency in Hz.

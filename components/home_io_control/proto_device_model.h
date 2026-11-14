@@ -556,7 +556,7 @@ struct IoDevice {
   int16_t last_rssi_dbm{RSSI_UNKNOWN_DBM};    ///< Most recent raw RSSI sample (dBm), or RSSI_UNKNOWN_DBM.
   int16_t rssi_ema_scaled{RSSI_UNKNOWN_DBM};  ///< Smoothed RSSI as fixed point in 1/RSSI_EMA_SCALE dBm — read
                                               ///< through device_rssi_ema_dbm(), updated by
-                                              ///< detail::update_link_health() in hub_internal.h. Fixed point
+                                              ///< detail::update_link_health() in entity_helpers.h. Fixed point
                                               ///< (rather than whole dBm) keeps sub-dBm EMA contributions from
                                               ///< vanishing to integer truncation, so the average converges on a
                                               ///< stable signal instead of stalling up to RSSI_EMA_SCALE−1 dBm

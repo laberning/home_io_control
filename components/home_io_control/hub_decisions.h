@@ -920,7 +920,7 @@ inline uint32_t remote_poll_timer_id(const uint8_t node_id[NODE_ID_SIZE]) {
 }
 
 /// @brief Numeric `set_timeout()` id for a heater's regular-cadence poll timer
-/// (`IOHomeControlComponent::schedule_heating_poll_()`). Same keying as remote_poll_timer_id(), in
+/// (`HeaterController::schedule_poll()`). Same keying as remote_poll_timer_id(), in
 /// the HEATING_POLL_TIMER_ID_TAG namespace, so a poll that a linked remote triggers cannot cancel it.
 /// @param node_id 3-byte device node address.
 /// @return Numeric timer id, unique per device and distinct from remote_poll_timer_id().

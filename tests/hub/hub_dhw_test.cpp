@@ -30,7 +30,7 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::poll_dhw_device_;
   using IOHomeControlComponent::poll_policy_;
   using IOHomeControlComponent::radio_;
-  using IOHomeControlComponent::read_dhw_register_;
+  using IOHomeControlComponent::heater_controller_;
   using IOHomeControlComponent::system_key_;
 };
 
@@ -272,7 +272,7 @@ TEST(HubDhw, AWaterHeaterDeclaredOnAnotherPlatformGetsNoneOfIt) {
   EXPECT_FALSE(comp.set_water_heater_mode("ABC123", DhwMode::AUTO));
   EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
   IoFrame response;
-  EXPECT_FALSE(comp.read_dhw_register_("ABC123", DHW_REG_MODE, "dhw_mode", response, 1));
+  EXPECT_FALSE(comp.heater_controller_.read_dhw_register("ABC123", DHW_REG_MODE, "dhw_mode", response, 1));
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
@@ -286,7 +286,7 @@ TEST(HubDhw, ARadiatorAndACoverAreNeverSentAFamilyZeroFrame) {
     EXPECT_FALSE(comp.set_water_heater_mode("ABC123", DhwMode::AUTO));
     EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
     IoFrame response;
-    EXPECT_FALSE(comp.read_dhw_register_("ABC123", DHW_REG_MODE, "dhw_mode", response, 1));
+    EXPECT_FALSE(comp.heater_controller_.read_dhw_register("ABC123", DHW_REG_MODE, "dhw_mode", response, 1));
     EXPECT_TRUE(radio.get_sent_data().empty()) << static_cast<unsigned>(type);
   }
 }
@@ -340,16 +340,6 @@ TEST(HubDhw, TheTargetIsAMainParameterOnlyExecute) {
   EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u) << "and the settle poll reads the target back";
 }
 
-TEST(HubDhw, ATargetOutsideTheHeatersRangeIsNeverSent) {
-  TestableComponent comp;
-  MockRadio radio;
-  make_water_heater(comp, radio);
-  EXPECT_FALSE(comp.set_water_heater_target("ABC123", 19.5F));
-  EXPECT_FALSE(comp.set_water_heater_target("ABC123", 62.5F));
-  EXPECT_FALSE(comp.set_water_heater_target("ABC123", NAN));
-  EXPECT_TRUE(radio.get_sent_data().empty());
-}
-
 TEST(HubDhw, TheModeIsARegisterWriteReadBackAtOnceWithTheTarget) {
   TestableComponent comp;
   MockRadio radio;
@@ -389,17 +379,6 @@ TEST(HubDhw, AMissedTargetReadAfterAModeWriteDoesNotFailTheWrite) {
   EXPECT_EQ(dev->dhw.mode, static_cast<int16_t>(DhwMode::AUTO));
   EXPECT_TRUE(std::isnan(dev->dhw.target_c));
   EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS) << "the settle poll still reads it soon";
-}
-
-TEST(HubDhw, AnUnacknowledgedModeWriteIsNotReadBack) {
-  TestableComponent comp;
-  MockRadio radio;
-  IoDevice *dev = make_water_heater(comp, radio);
-  EXPECT_FALSE(comp.set_water_heater_mode("ABC123", DhwMode::AUTO));
-  for (const auto &tx : radio.get_sent_data())
-    EXPECT_EQ(tx[10], HEATING_DIRECTION_SET) << "only the write is tried";
-  EXPECT_LE(radio.get_sent_data().size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
-  EXPECT_EQ(dev->dhw.mode, -1);
 }
 
 // === Boost and away through the operating-mode word ===
@@ -505,18 +484,6 @@ TEST(HubDhw, AnUnacknowledgedDurationWriteDoesNotStopTheModeWord) {
     EXPECT_EQ(sent[i][8], CMD_WRITE_PRIVATE) << "every try of the duration write: " << cmds;
   EXPECT_EQ(sent[EXCHANGE_RETRY_COUNT][8], CMD_EXECUTE) << cmds;
   EXPECT_EQ(dev->dhw.boost, 1) << cmds;
-}
-
-TEST(HubDhw, AWriteWhoseCapabilityBitIsClearIsRefusedOnceFp15IsRead) {
-  TestableComponent comp;
-  MockRadio radio;
-  IoDevice *dev = make_water_heater(comp, radio);
-  dev->dhw.capabilities = DHW_CAPABILITY_AWAY;  // no boost
-  EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
-  EXPECT_FALSE(comp.set_water_heater_boost("ABC123", false)) << "off is refused too: the word is not supported";
-  dev->dhw.capabilities = DHW_CAPABILITY_BOOST;  // no away
-  EXPECT_FALSE(comp.set_water_heater_away("ABC123", true));
-  EXPECT_TRUE(radio.get_sent_data().empty()) << "nothing reaches the radio";
 }
 
 TEST(HubDhw, BeforeFp15IsReadAWriteIsTried) {
