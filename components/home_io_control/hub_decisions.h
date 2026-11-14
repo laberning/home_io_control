@@ -1131,6 +1131,33 @@ static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = POSITION_RAW_PER_PERCENT * RA
   return !is_executing(state);
 }
 
+// === Result code of an EXECUTE reply ===
+
+/// @brief What the hub does about the result code in the reply to an EXECUTE.
+enum class ExecuteResultCodeReport : uint8_t {
+  NONE,                 ///< Code 0: the command was taken without complaint.
+  SPEED_BLOCK_UNKNOWN,  ///< Code 5 after a frame with the speed block: the device has no speed parameter.
+  OTHER_CODE,           ///< Any other non-zero code, logged with its name and number.
+};
+
+/// @brief Classify the result code of a reply to an EXECUTE.
+///
+/// The state in the same byte is unaffected: a device that answers `2C` (code 5, state 4) is running the
+/// move. Code 5 after the 6-byte form names a parameter the request did not carry, so it is not
+/// attributed to the speed block.
+/// @param status_byte Byte 0 of the reply's payload.
+/// @param request_had_speed_block True when the EXECUTE carried functional parameter 1
+///        (execute_carries_speed_block()).
+[[nodiscard]] inline ExecuteResultCodeReport classify_execute_result_code(uint8_t status_byte,
+                                                                          bool request_had_speed_block) {
+  const uint8_t code = result_code_of(status_byte);
+  if (code == 0)
+    return ExecuteResultCodeReport::NONE;
+  if (code == error_resp_code(RESULT_PARAMETER_UNKNOWN) && request_had_speed_block)
+    return ExecuteResultCodeReport::SPEED_BLOCK_UNKNOWN;
+  return ExecuteResultCodeReport::OTHER_CODE;
+}
+
 // === Stopped reports ===
 
 /// @brief What the hub makes of one status report's movement state.

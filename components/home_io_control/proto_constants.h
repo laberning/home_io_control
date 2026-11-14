@@ -990,6 +990,14 @@ constexpr uint8_t error_resp_state(uint8_t result) { return result & ERROR_RESP_
 /// @param result Result byte from CMD_ERROR_RESP data[0].
 /// @return Uppercase symbolic name, or "UNKNOWN_RESULT_CODE" when unmapped.
 const char *command_result_name(uint8_t result);
+/// @brief Return the symbolic name of a result code of the split byte (error_resp_code()).
+///
+/// The numbers here are the codes of bits [7:3], not whole-byte RESULT_* values: code 5 is
+/// RESULT_PARAMETER_UNKNOWN, 9 RESULT_PARAMETER_LIMITATION_ADJUSTMENT and 10
+/// RESULT_PARAMETER_INCOHERENCE_ADJUSTMENT.
+/// @param code Result code 1..ERROR_RESP_CODE_MAX.
+/// @return Uppercase symbolic name, or "UNKNOWN_RESULT_CODE" for 0 and codes above ERROR_RESP_CODE_MAX.
+const char *result_code_name(uint8_t code);
 /// @brief Return a human-readable explanation for a CMD_ERROR_RESP result code.
 /// @param result Result byte from CMD_ERROR_RESP data[0].
 /// @return Short description suitable for warn-level logs.

@@ -1,0 +1,58 @@
+id: somfy_awning_exchange_set_position_25_short_sx1262
+description: >
+  Sunea awning set position 25 % (cover.set_cover_position 25), sent in the 6-byte main-parameter
+  EXECUTE form (originator, ACEI, main parameter, two zero bytes; no FP1 speed block), the form the hub
+  sends to covers without a chosen travel speed (ADR 0065). The awning is a horizontal awning configured
+  with invert_position, so IO position 0 is retracted and the Home Assistant position equals the IO
+  position. Own bench, Heltec WiFi LoRa 32 V3 (sx1262). The answer's byte 0 is 0x04: result code 0 in
+  bits 7..3, execution state 4 in bits 2..0. A set-position 25 % in the 8-byte form with the speed
+  block, main parameter 0x3200
+  (tests/corpus/captures/exchange/somfy_awning_exchange_set_position_25_sx1262.yaml), is answered with
+  code 5 (byte 0 0x2C). The hub's follow-up status reads polled the awning while it moved; the last,
+  31.2 s after the command, reported execution done (status byte 0x05) at current position raw 0x3200
+  (25.0 %, Home Assistant position 25 %), the position commanded. Frame bytes come from the hub's frame
+  log; the 0x3C/0x3D payloads, which that log masks, and the timestamps (start of each burst on air)
+  come from an SDR receiver recording the same exchange, CRC-checked; every unmasked byte agreed between
+  the two.
+source:
+  device: "Somfy Sunea IO awning motor (\"Patio Awning\")"
+  captured_with: sx1262
+  firmware: "main, 6-byte EXECUTE default"
+  date: 2026-11-15
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4E 00 30 E1 F2 C0 FF EE 00 01 63 32 00 00 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00), 6-byte data: originator 0x01, ACEI 0x63, main parameter 0x3200 (position 25 %), 00 00; no speed block"
+  - dir: rx
+    t_ms: 17
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 30 E1 F2 3C 1E E1 C1 46 66 BB"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 33
+    freq: 868950000
+    hex: "0E 20 30 E1 F2 C0 FF EE 3D 1F A9 02 CA C5 00"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D), HMAC re-keyed to the corpus key at ingest"
+  - dir: rx
+    t_ms: 42
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 30 E1 F2 04 04 80 C8 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), EXECUTE answer; byte 0 = 0x04: result code 0, execution state 4"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w, hmac_valid: true}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w, classification: ACCEPT}

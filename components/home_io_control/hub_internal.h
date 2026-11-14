@@ -10,9 +10,11 @@
 
 #include "hub_core.h"
 #include "entity_helpers.h"
+#include "hub_decisions.h"
 #include "log_frame.h"
 #include "log_helpers.h"
 #include "proto_codecs.h"
+#include "proto_commands.h"
 #include "proto_device_types.h"
 
 #include "esphome/core/log.h"
@@ -539,6 +541,36 @@ inline void record_command_result(IoDevice &dev, const std::string &id, uint8_t 
   dev.last_result_code = result;
   dev.last_result_at_ms = millis();
   log_command_result(id, result, request_cmd, include_request_cmd);
+}
+
+/// @brief Log the result code in the reply to an EXECUTE, when it is not 0.
+///
+/// A device that does not take the speed block says so with code 5 on every move, so that case warns
+/// once per device and boot (IoDevice::speed_block_warned); every other non-zero code warns each time.
+/// Nothing is stored: the Last Result Code and Active Issue sensors keep the meaning of a 0xFE result.
+/// @param dev Device that replied (its warned flag is set).
+/// @param id Device ID (for the log line).
+/// @param request The EXECUTE the reply answers.
+/// @param status_byte Byte 0 of the reply's payload.
+inline void log_execute_result_code(IoDevice &dev, const std::string &id, const IoFrame &request, uint8_t status_byte) {
+  const uint8_t code = result_code_of(status_byte);
+  switch (decisions::classify_execute_result_code(status_byte, execute_carries_speed_block(request))) {
+    case decisions::ExecuteResultCodeReport::NONE:
+      return;
+    case decisions::ExecuteResultCodeReport::SPEED_BLOCK_UNKNOWN:
+      if (!dev.speed_block_warned) {
+        dev.speed_block_warned = true;
+        ESP_LOGW(
+            TAG,
+            "Device %s: does not take a speed setting (result code %u %s); remove travel_speed or set it to default",
+            id.c_str(), code, result_code_name(code));
+      }
+      return;
+    case decisions::ExecuteResultCodeReport::OTHER_CODE:
+      ESP_LOGW(TAG, "Device %s: EXECUTE answered with result code %u %s (reply byte 0x%02X)", id.c_str(), code,
+               result_code_name(code), status_byte);
+      return;
+  }
 }
 
 /// @brief Clear a previously recorded CMD_ERROR_RESP result, if any.

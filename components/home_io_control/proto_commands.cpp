@@ -78,11 +78,14 @@ constexpr uint16_t KEY_EXTRACTION_DISCOVER_RESP_TIMESTAMP = 0x000E;
 constexpr uint16_t LOW_BYTE_MASK = 0xFF;
 /// Standard payload length for full execute-family commands.
 constexpr size_t EXECUTE_PAYLOAD_SIZE = 8;
-/// Bit flag that marks the standard position payload layout after the encoded position byte.
+/// Index of the functional-parameter bitmap in an EXECUTE payload (after originator, ACEI, main parameter).
+constexpr size_t EXECUTE_BITMAP_INDEX = 4;
+/// Bit flag that marks the standard position payload layout after the encoded position byte (the
+/// bitmap bit of functional parameter 1, the speed).
 constexpr uint8_t EXECUTE_POSITION_LAYOUT_FLAG = 0x80;
-/// Travel-profile byte the hub sends unless a cover asks otherwise (TravelSpeed::FAST) — the last
-/// field of the extended execute block. A Somfy hub sends it for a normal-speed move; a VELUX
-/// window takes it as its fast speed and runs faster than its own pad moves it (ADR 0065).
+/// Travel-profile byte of TravelSpeed::FAST — the last field of the extended execute block, sent
+/// only to a cover set to that speed. A Somfy hub sends it for a normal-speed move; a VELUX window
+/// takes it as its fast speed and runs faster than its own pad moves it (ADR 0065).
 constexpr uint8_t EXECUTE_POSITION_PROFILE = 0x06;
 /// Travel-profile byte for a silent (slow) move — same field, selecting reduced motor speed.
 ///
@@ -296,6 +299,11 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
   set_src(f, own);
   const auto payload = make_position_payload(EXECUTE_ACEI, position, silent);
   return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
+}
+
+bool execute_carries_speed_block(const IoFrame &f) {
+  return f.cmd == CMD_EXECUTE && f.data_len == EXECUTE_PAYLOAD_SIZE &&
+         (f.data[EXECUTE_BITMAP_INDEX] & EXECUTE_POSITION_LAYOUT_FLAG) != 0;
 }
 
 /// Build a named-command execute frame (0x00) for STOP or a named position (NAMED_POSITIONS).

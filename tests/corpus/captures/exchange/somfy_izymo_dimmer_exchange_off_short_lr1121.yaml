@@ -1,0 +1,55 @@
+id: somfy_izymo_dimmer_exchange_off_short_lr1121
+description: >
+  Izymo dimmer turn-off (light.turn_off), sent in the 6-byte main-parameter EXECUTE form (originator, ACEI, main
+  parameter, two zero bytes; no FP1 speed block), the form the hub sends to lights and to covers
+  without a chosen travel speed (ADR 0065). Own bench, LilyGO T3-S3 LR1121 (lr1121). The answer's byte 0 is
+  0x04: result code 0 in bits 7..3, execution state 4 in bits 2..0. The same command
+  in the 8-byte form with the speed block is answered with code 5 (compare
+  tests/corpus/captures/exchange/somfy_izymo_dimmer_exchange_off_lr1121.yaml). The hub's
+  follow-up status read 3 s later reported the dimmer at brightness 0 % (current position raw
+  0xC800), the level commanded. Frame bytes come from the hub's frame log; the
+  0x3C/0x3D payloads, which that log masks, and the timestamps (start of each burst on air) come
+  from an SDR receiver recording the same exchange, CRC-checked; every unmasked byte agreed between
+  the two.
+source:
+  device: "Somfy Izymo dimmer (io light actuator)"
+  captured_with: lr1121
+  firmware: "main cb24b94 plus the short-EXECUTE change"
+  date: 2026-11-14
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "4E 00 87 FF 2F C0 FF EE 00 01 63 C8 00 00 00"
+    crc: absent
+    note: "cmd=EXECUTE(0x00), 6-byte data: originator 0x01, ACEI 0x63, main parameter 0xC800 (position 100 %, brightness 0 %), 00 00; no speed block"
+  - dir: rx
+    t_ms: 18
+    freq: 868950000
+    hex: "0E 00 C0 FF EE 87 FF 2F 3C 7A 02 51 2D 52 D0"
+    crc: absent
+    note: "cmd=CHALLENGE_REQ(0x3C)"
+  - dir: tx
+    t_ms: 34
+    freq: 868950000
+    hex: "0E 20 87 FF 2F C0 FF EE 3D 10 70 91 F6 9B F2"
+    crc: absent
+    note: "cmd=CHALLENGE_RESP(0x3D), HMAC re-keyed to the corpus key at ingest"
+  - dir: rx
+    t_ms: 44
+    freq: 868950000
+    hex: "8E 00 C0 FF EE 87 FF 2F 04 04 00 64 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE_RESP(0x04), EXECUTE answer; byte 0 = 0x04: result code 0, execution state 4"
+expect:
+  exchange:
+    kind: authenticated_command
+    outcome: success
+  frames:
+    - {cmd: 0x00, start: true, end: false, protocol: 2w}
+    - {cmd: 0x3C, start: false, end: false, protocol: 2w, classification: REQUIRE_AUTH}
+    - {cmd: 0x3D, start: false, end: false, protocol: 2w, hmac_valid: true}
+    - {cmd: 0x04, start: false, end: true, protocol: 2w, classification: ACCEPT}

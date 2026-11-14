@@ -36,9 +36,9 @@ struct DeviceConfig {
       std::nullopt;             ///< YAML `invert_position:` when declared; the kind's default otherwise.
   bool dimmable{false};         ///< YAML `dimmable: true` of a light.
   bool optimistic_state{true};  ///< Whether `apply_optimistic_target`/`apply_optimistic_stop` may fire.
-  TravelSpeed travel_speed{TravelSpeed::FAST};  ///< Speed profile of position moves.
-  bool low_power{false};                        ///< Target is a low-power / duty-cycled receiver: directed frames set
-                                                ///< CTRL1_LOW_POWER and use the long wake-up preamble.
+  TravelSpeed travel_speed{TravelSpeed::MOTOR_DEFAULT};  ///< Speed profile of position moves.
+  bool low_power{false};               ///< Target is a low-power / duty-cycled receiver: directed frames set
+                                       ///< CTRL1_LOW_POWER and use the long wake-up preamble.
   bool battery_entities{false};        ///< `battery: true` declared: the battery entities exist for this device.
   bool has_system_key{false};          ///< `system_key:` declared: the device keeps a key of its own.
   uint8_t system_key[AES_KEY_SIZE]{};  ///< That key; meaningful only when `has_system_key`. Never logged.

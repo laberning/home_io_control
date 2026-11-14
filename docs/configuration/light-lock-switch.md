@@ -7,6 +7,10 @@ The keys every entity platform shares — `name`, `io_device_id`, `io_device_typ
 [the configuration reference](index.md), along with the seven diagnostic companion entities each of
 these platforms generates.
 
+A command to a light, lock or switch carries the main parameter only (the short execute frame), because
+these devices have no speed to choose. They take no `travel_speed:` or `silent:` key, and the hub logs a
+warning if a device answers a command with a result code that says one of its parameters is unknown.
+
 ## Lights
 
 Use the light platform for IO-Homecontrol light devices. It defaults to binary on/off; set

@@ -779,8 +779,9 @@ TEST(ProtoCommands, ParseTravelSpeedAcceptsOnlyTheThreeNames) {
   EXPECT_EQ(speed, TravelSpeed::FAST) << "a failed parse leaves the speed alone";
 }
 
-TEST(ProtoCommands, NewDeviceTravelsFast) {
-  EXPECT_EQ(IoDevice{}.travel_speed, TravelSpeed::FAST) << "a cover without travel_speed: moves on the fast profile";
+TEST(ProtoCommands, NewDeviceTravelsAtTheMotorsOwnSpeed) {
+  EXPECT_EQ(IoDevice{}.travel_speed, TravelSpeed::MOTOR_DEFAULT)
+      << "a cover without travel_speed: gets the short frame, with no speed block";
 }
 
 TEST(ProtoCommands, DecodeBatteryStateReadsBitsFiveAndSix) {

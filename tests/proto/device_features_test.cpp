@@ -50,23 +50,23 @@ const std::vector<ExpectedRow> EXPECTED_ROWS = {
     {DeviceType::WINDOW_OPENER, 1, LV | FAV | VENT | EXT},
     {DeviceType::GARAGE_OPENER, 0, MPO | LV | PAR},
     {DeviceType::GARAGE_OPENER, 58, MPO | PAR},
-    {DeviceType::LIGHT, 0, EXT},
-    {DeviceType::LIGHT, 1, LV | EXT},
-    {DeviceType::LIGHT, 2, LV | EXT},
+    {DeviceType::LIGHT, 0, 0},
+    {DeviceType::LIGHT, 1, LV},
+    {DeviceType::LIGHT, 2, LV},
     {DeviceType::LIGHT, 58, MPO},
     {DeviceType::GATE_OPENER, 0, LV | FAV | PED | EXT},
     {DeviceType::GATE_OPENER, 58, MPO | FAV | PED},
     {DeviceType::ROLLING_DOOR_OPENER, 0, LV | FAV | EXT},
-    {DeviceType::LOCK, 0, EXT},
-    {DeviceType::LOCK, 1, EXT},
+    {DeviceType::LOCK, 0, 0},
+    {DeviceType::LOCK, 1, 0},
     {DeviceType::LOCK, 2, 0},
     {DeviceType::VERTICAL_INTERIOR_BLIND, 0, LV | FAV | EXT},
     {DeviceType::SECURE_CONFIGURATION_DEVICE, 0, 0},
     {DeviceType::BEACON, 0, 0},
     {DeviceType::DUAL_ROLLER_SHUTTER, 0, LV | FAV},
     {DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, 0},
-    {DeviceType::ON_OFF_SWITCH, 0, EXT},
-    {DeviceType::ON_OFF_SWITCH, 2, EXT},
+    {DeviceType::ON_OFF_SWITCH, 0, 0},
+    {DeviceType::ON_OFF_SWITCH, 2, 0},
     {DeviceType::HORIZONTAL_AWNING, 0, LV | FAV | EXT | INV},
     {DeviceType::HORIZONTAL_AWNING, 1, LV | FAV | EXT | INV},
     {DeviceType::EXTERIOR_VENETIAN_BLIND, 0, LV | FAV | TI | EXT},
@@ -171,16 +171,15 @@ TEST(UndeclaredKindFeatures, ACoverKeepsASliderFavouriteVentAndTheLongFrameButNo
   EXPECT_FALSE(has_feature(bits, feature::MAIN_PARAMETER_ONLY));
 }
 
-TEST(UndeclaredKindFeatures, ALightSwitchOrLockSendsTheLongFrameOnly) {
+TEST(UndeclaredKindFeatures, ALightSwitchOrLockHasNoCapabilityAndNeverTakesTheSpeedBlock) {
   for (const DeviceCapabilityClass capability :
        {DeviceCapabilityClass::LIGHT, DeviceCapabilityClass::SWITCH, DeviceCapabilityClass::LOCK}) {
-    EXPECT_EQ(undeclared_kind_features(capability), feature::EXTENDED_POSITION_FRAME);
+    EXPECT_EQ(undeclared_kind_features(capability), 0u);
   }
 }
 
-TEST(UndeclaredKindFeatures, AnExteriorHeatingFanGetsLevelsInTheLongFrame) {
-  EXPECT_EQ(undeclared_kind_features(DeviceCapabilityClass::HEATER_LEVEL),
-            feature::LEVELS | feature::EXTENDED_POSITION_FRAME);
+TEST(UndeclaredKindFeatures, AnExteriorHeatingFanGetsLevelsOnly) {
+  EXPECT_EQ(undeclared_kind_features(DeviceCapabilityClass::HEATER_LEVEL), feature::LEVELS);
 }
 
 TEST(UndeclaredKindFeatures, AClassWithNoExecutePositionPathHasNoFeatures) {

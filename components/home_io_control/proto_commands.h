@@ -125,9 +125,11 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 /// For devices that refuse the block create_execute_position() appends. A Wisniowski / Somfy
 /// MOTO 1000 io garage opener answers that block with RESULT_PARAMETER_UNKNOWN before any
 /// challenge, accepts a 6-byte STOP, and is opened by its own 1W remote with exactly this shape
-/// (`01 43 00 00 00 00`, issue #163). Sent to devices without device_feature::EXTENDED_POSITION_FRAME,
-/// and to covers set to TravelSpeed::MOTOR_DEFAULT: a VELUX KLR 200 control pad moves a window with
-/// this form, and the window then travels at its own speed rather than at a profile's (ADR 0065).
+/// (`01 43 00 00 00 00`, issue #163). Sent to devices without device_feature::EXTENDED_POSITION_FRAME
+/// and to every device set to TravelSpeed::MOTOR_DEFAULT, which is the default: a VELUX KLR 200 control
+/// pad moves a window with this form, and the window then travels at its own speed rather than at a
+/// profile's (ADR 0065). Every device in the corpus answers the 8-byte form with a result code that
+/// says one of its parameters is unknown (see execute_carries_speed_block()) and the 6-byte form cleanly.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3‑byte node ID (source address).
 /// @param dst Target device's 3‑byte node ID (destination address).
@@ -138,6 +140,13 @@ bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool 
 /// @return true on success; false for a position above 100.
 bool create_execute_main_parameter(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position,
                                    bool force_open_priority = false);
+
+/// @brief Does an EXECUTE frame carry the speed block, functional parameter 1 (the 8-byte position form
+/// of create_execute_position() and create_force_open())?
+/// @param f Outbound frame.
+/// @return true for a CMD_EXECUTE of the full 8-byte layout whose functional-parameter bitmap names
+///         parameter 1; false for the 6-byte form, a tilt frame (parameter 3) and every other command.
+bool execute_carries_speed_block(const IoFrame &f);
 
 /// @brief Highest heating level low byte create_execute_heating_level() will frame (the secured level).
 static constexpr uint8_t HEATING_LEVEL_MAX = 0x3F;

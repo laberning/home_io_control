@@ -1455,3 +1455,32 @@ TEST(Decisions, ChallengeAnswerShorterThanAFullHmacIsIgnored) {
   EXPECT_EQ(decisions::classify_challenge_answer(answer, DST_ID, OWN_ID),
             decisions::ChallengeAnswerDisposition::IGNORE_UNRELATED);
 }
+
+// ========================================================================================
+// Result code of an EXECUTE reply
+// ========================================================================================
+
+TEST(Decisions, AnExecuteReplyWithCodeZeroIsNotReported) {
+  for (const uint8_t byte : {0x04, 0x05}) {
+    EXPECT_EQ(decisions::classify_execute_result_code(byte, true), decisions::ExecuteResultCodeReport::NONE);
+    EXPECT_EQ(decisions::classify_execute_result_code(byte, false), decisions::ExecuteResultCodeReport::NONE);
+  }
+}
+
+TEST(Decisions, CodeFiveAfterTheSpeedBlockSaysTheDeviceHasNoSpeedSetting) {
+  EXPECT_EQ(decisions::classify_execute_result_code(0x2C, true),
+            decisions::ExecuteResultCodeReport::SPEED_BLOCK_UNKNOWN);
+  EXPECT_EQ(decisions::classify_execute_result_code(0x2D, true),
+            decisions::ExecuteResultCodeReport::SPEED_BLOCK_UNKNOWN);
+}
+
+TEST(Decisions, CodeFiveAfterTheShortFrameIsNotBlamedOnTheSpeedBlock) {
+  EXPECT_EQ(decisions::classify_execute_result_code(0x2C, false), decisions::ExecuteResultCodeReport::OTHER_CODE);
+}
+
+TEST(Decisions, EveryOtherNonZeroCodeIsReported) {
+  for (const uint8_t byte : {0x48, 0x50, 0x08, 0xFC}) {
+    EXPECT_EQ(decisions::classify_execute_result_code(byte, true), decisions::ExecuteResultCodeReport::OTHER_CODE)
+        << static_cast<unsigned>(byte);
+  }
+}

@@ -2101,6 +2101,58 @@ TEST(HubOperations, ConfirmingPollStopsOnceATrustedReplyReportsStopped) {
       << "a trusted stopped reply must clear the tracking window entirely";
 }
 
+// A CMD_PRIVATE_RESP from ABC123 answering an EXECUTE, with @p result_byte as byte 0.
+static void queue_execute_answer(MockRadio &radio, const uint8_t dst[3], uint8_t result_byte) {
+  IoFrame f = build_status_response(dst);
+  f.data[0] = result_byte;
+  uint8_t raw[64];
+  const uint8_t raw_len = serialize(f, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+}
+
+TEST(HubOperations, ACoverThatAnswersTheSpeedBlockWithCodeFiveIsNotedOnce) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.get_device("ABC123")->travel_speed = TravelSpeed::FAST;
+  ASSERT_FALSE(comp.get_device("ABC123")->speed_block_warned);
+
+  queue_execute_answer(radio, comp.node_id_, 0x2C);  // code 5 over state 4, as every device in the corpus answers
+  EXPECT_TRUE(comp.set_device_position("ABC123", 100));
+  EXPECT_TRUE(comp.get_device("ABC123")->speed_block_warned) << "the first refusal is logged and remembered";
+  EXPECT_EQ(comp.get_device("ABC123")->last_result_code, 0)
+      << "the Last Result Code sensor keeps the meaning of a 0xFE result";
+
+  queue_execute_answer(radio, comp.node_id_, 0x2C);
+  EXPECT_TRUE(comp.set_device_position("ABC123", 0));
+  EXPECT_TRUE(comp.get_device("ABC123")->speed_block_warned) << "later refusals add nothing";
+}
+
+TEST(HubOperations, TheShortFrameAnsweredCleanlyLogsNothing) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  queue_execute_answer(radio, comp.node_id_, 0x04);
+  EXPECT_TRUE(comp.set_device_position("ABC123", 100));
+  EXPECT_FALSE(comp.get_device("ABC123")->speed_block_warned);
+  EXPECT_EQ(comp.get_device("ABC123")->last_result_code, 0);
+}
+
+TEST(HubOperations, CodeFiveAfterTheShortFrameDoesNotCountAsASpeedBlockRefusal) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);  // default speed: the 6-byte frame
+
+  queue_execute_answer(radio, comp.node_id_, 0x2C);
+  EXPECT_TRUE(comp.set_device_position("ABC123", 100));
+  EXPECT_FALSE(comp.get_device("ABC123")->speed_block_warned);
+}
+
 TEST(HubOperations, ForceOpenSendsPositionZeroForNonInvertedDevice) {
   TestableComponent comp;
   MockRadio radio;
@@ -2658,21 +2710,32 @@ TEST(HubOperations, SilentDeviceSendsTheSilentExecutePayload) {
   EXPECT_EQ(frame[15], 0x05) << "silent devices travel on the slow profile";
 }
 
-TEST(HubOperations, NonSilentDeviceKeepsTheExistingExecutePayload) {
+TEST(HubOperations, ACoverWithoutAChosenSpeedSendsTheShortFrame) {
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);
 
   auto *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  ASSERT_EQ(dev->travel_speed, TravelSpeed::FAST) << "a slower or the motor's own speed is opt-in";
+  ASSERT_EQ(dev->travel_speed, TravelSpeed::MOTOR_DEFAULT) << "a speed block is opt-in";
 
   comp.set_device_position("ABC123", 100);
 
   ASSERT_FALSE(radio.get_sent_data().empty());
+  EXPECT_EQ(radio.get_sent_data().front().size(), 15u) << "9 header bytes plus the 6-byte main-parameter payload";
+}
+
+TEST(HubOperations, AFastCoverSendsTheSpeedBlockWithTheFastProfile) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  comp.get_device("ABC123")->travel_speed = TravelSpeed::FAST;
+
+  comp.set_device_position("ABC123", 100);
+
   const auto &frame = radio.get_sent_data().front();
-  ASSERT_GE(frame.size(), 17u);
-  EXPECT_EQ(frame[14], POS_FAVORITE) << "the default payload is unchanged by this feature";
+  ASSERT_GE(frame.size(), 17u) << "an execute frame is 9 header bytes plus an 8-byte payload";
+  EXPECT_EQ(frame[14], POS_FAVORITE);
   EXPECT_EQ(frame[15], 0x06);
 }
 
@@ -3490,10 +3553,11 @@ TEST(HubOperations, GarageOpenerPositionSendsMainParameterOnly) {
       << "a garage opener gets the 6-byte form, without the functional-parameter block";
 }
 
-TEST(HubOperations, RollerShutterPositionKeepsExtendedBlock) {
+TEST(HubOperations, RollerShutterPositionAtFastSpeedCarriesTheExtendedBlock) {
   TestableComponent comp;
   MockRadio radio;
   setup_cover_component(comp, radio);
+  comp.get_device("ABC123")->travel_speed = TravelSpeed::FAST;
 
   comp.set_device_position("ABC123", 0);
 
@@ -3538,7 +3602,7 @@ TEST(HubOperations, GarageOpenerForceOpenUsesMainParameterAtForcePriority) {
 // Capability bits decide the frame shape (device_feature::EXTENDED_POSITION_FRAME)
 // ========================================================================================
 
-TEST(HubOperations, AnUndeclaredCoverKeepsTheSliderTheLongFrameAndTheFavourite) {
+TEST(HubOperations, AnUndeclaredCoverKeepsTheSliderTheSpeedBlockOnRequestAndTheFavourite) {
   TestableComponent comp;
   MockRadio radio;
   setup_declared_component(comp, radio, {.entity_class = DeviceCapabilityClass::COVER});
@@ -3547,8 +3611,16 @@ TEST(HubOperations, AnUndeclaredCoverKeepsTheSliderTheLongFrameAndTheFavourite) 
   EXPECT_EQ(dev->type, DeviceType::UNKNOWN);
 
   comp.set_device_position("ABC123", 50);
-  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x80, 0xD8, 0x06, 0x00}))
-      << "a cover that has not learned its type still gets a slider position in the 8-byte form";
+  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x00, 0x00}))
+      << "a cover that has not learned its type still gets a slider position, in the short form";
+
+  MockRadio fast_radio;
+  TestableComponent fast_comp;
+  setup_declared_component(fast_comp, fast_radio,
+                           {.entity_class = DeviceCapabilityClass::COVER, .travel_speed = TravelSpeed::FAST});
+  fast_comp.set_device_position("ABC123", 50);
+  EXPECT_EQ(first_sent_payload(fast_radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x80, 0xD8, 0x06, 0x00}))
+      << "a chosen speed puts the speed block on the frame";
 
   MockRadio favourite_radio;
   TestableComponent favourite_comp;
@@ -3557,14 +3629,34 @@ TEST(HubOperations, AnUndeclaredCoverKeepsTheSliderTheLongFrameAndTheFavourite) 
   EXPECT_EQ(first_sent_payload(favourite_radio), (std::vector<uint8_t>{0x01, 0x63, 0xD8, 0x00, 0x00, 0x00}));
 }
 
-TEST(HubOperations, AnUndeclaredSwitchOrLockStillSendsZeroAndHundredInTheLongFrame) {
-  for (const DeviceCapabilityClass entity_class : {DeviceCapabilityClass::SWITCH, DeviceCapabilityClass::LOCK}) {
+TEST(HubOperations, ALightSwitchOrLockSendsZeroAndHundredInTheShortFrameWhateverTheSpeed) {
+  // These kinds have no speed to choose, so even a stray FAST never puts the speed block on the frame.
+  for (const DeviceCapabilityClass entity_class :
+       {DeviceCapabilityClass::LIGHT, DeviceCapabilityClass::SWITCH, DeviceCapabilityClass::LOCK}) {
+    for (const TravelSpeed speed : {TravelSpeed::MOTOR_DEFAULT, TravelSpeed::FAST}) {
+      TestableComponent comp;
+      MockRadio radio;
+      setup_declared_component(comp, radio, {.entity_class = entity_class, .travel_speed = speed});
+
+      comp.set_device_position("ABC123", 100);
+      EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0xC8, 0x00, 0x00, 0x00}))
+          << static_cast<unsigned>(entity_class) << " " << travel_speed_name(speed);
+    }
+  }
+}
+
+TEST(HubOperations, AFastCoverForceOpensWithTheSpeedBlockAndADefaultCoverWithoutIt) {
+  const std::vector<std::pair<TravelSpeed, std::vector<uint8_t>>> cases = {
+      {TravelSpeed::MOTOR_DEFAULT, {0x01, 0x03, 0x00, 0x00, 0x00, 0x00}},
+      {TravelSpeed::FAST, {0x01, 0x03, 0x00, 0x00, 0x80, 0xD8, 0x06, 0x00}},
+  };
+  for (const auto &[speed, payload] : cases) {
     TestableComponent comp;
     MockRadio radio;
-    setup_declared_component(comp, radio, {.entity_class = entity_class});
+    setup_declared_component(comp, radio, {.type = DeviceType::ROLLER_SHUTTER, .travel_speed = speed});
 
-    comp.set_device_position("ABC123", 100);
-    EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0xC8, 0x00, 0x80, 0xD8, 0x06, 0x00}));
+    comp.execute_device_command_("ABC123", CoverCommand::FORCE_OPEN);
+    EXPECT_EQ(first_sent_payload(radio), payload) << travel_speed_name(speed);
   }
 }
 
@@ -3617,10 +3709,10 @@ TEST(HubOperations, InteriorVenetianAndDualShutterForceOpenUsesTheShortFrameAtFo
   }
 }
 
-TEST(HubOperations, ARollerShutterStillSendsTheEightByteFrameAndItsSilentProfile) {
+TEST(HubOperations, ARollerShutterAtFastSpeedStillSendsTheEightByteFrame) {
   TestableComponent comp;
   MockRadio radio;
-  setup_declared_component(comp, radio, {.type = DeviceType::ROLLER_SHUTTER});
+  setup_declared_component(comp, radio, {.type = DeviceType::ROLLER_SHUTTER, .travel_speed = TravelSpeed::FAST});
 
   comp.set_device_position("ABC123", 50);
   EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x80, 0xD8, 0x06, 0x00}));

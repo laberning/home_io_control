@@ -220,10 +220,10 @@ moves the window to its predefined air-exchange opening rather than fully open.
 ## Roof window travel speed
 
 A VELUX control pad moves a window with a short command that carries no speed, and the window
-travels at its own speed. The hub asks for the fast profile unless told otherwise, so a window it
-moves runs faster and louder than from its pad: a full travel of one roof window took 44.5 s from
-its KLR 200 and 26.5 s from the hub (issue #205). Set `travel_speed: default` on the window's
-cover for the pad's speed, or `silent` for the slowest, about 65 s; see
+travels at its own speed. Without a `travel_speed:` key the hub sends the same short command, so the
+window moves alike from the pad and from the hub: a full travel of one roof window took 44.5 s.
+Set `travel_speed: fast` on the window's cover for its fast speed, 26.5 s and audibly louder, or
+`silent` for the slowest, about 65 s (issue #205); see
 [Travel speed](../configuration/cover.md#travel-speed).
 
 ## Rain protection

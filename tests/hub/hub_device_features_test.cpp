@@ -215,7 +215,7 @@ TEST(HubDeviceFeatures, ARollerShutterKeepsItsSliderAndItsFavourite) {
   setup_kind(comp, radio, DeviceType::ROLLER_SHUTTER, 0);
 
   comp.set_device_position("ABC123", 50);
-  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x80, 0xD8, 0x06, 0x00}));
+  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, 0x64, 0x00, 0x00, 0x00}));
 
   MockRadio favourite_radio;
   TestableComponent favourite_comp;

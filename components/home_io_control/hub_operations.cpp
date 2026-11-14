@@ -40,6 +40,14 @@ constexpr size_t EXECUTE_ACTION_BUF_SIZE = 40;
 constexpr uint8_t FORCE_OPEN_WIRE_POSITION = 0;
 constexpr uint8_t FORCE_OPEN_WIRE_POSITION_INVERTED = 100;
 
+/// Does a position or force-open EXECUTE to this device carry the speed block (the 8-byte form)?
+/// Only when the kind may take it and a speed was chosen: without a choice the frame is the 6-byte
+/// main-parameter form a wall pad sends, which leaves the speed to the motor.
+bool sends_speed_block(const IoDevice &d) {
+  return has_feature(d.features, device_feature::EXTENDED_POSITION_FRAME) &&
+         d.travel_speed != TravelSpeed::MOTOR_DEFAULT;
+}
+
 /// @brief Return the human-readable verb for a position-style command.
 /// @param dev Device receiving the command.
 /// @param position Requested execute position.
@@ -309,6 +317,10 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
   // update_device_status_()'s trust_position doc comment. Every other request we send
   // (status poll, get name, ...) keeps trusting its reply as before.
   this->update_device_status_(response, request.cmd != CMD_EXECUTE);
+  if (request.cmd == CMD_EXECUTE && response.data_len > 0) {
+    if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr)
+      detail::log_execute_result_code(*dev, device_id, request, response.data[0]);
+  }
   return true;
 }
 
@@ -413,9 +425,7 @@ bool IOHomeControlComponent::set_device_position(const std::string &device_id, u
       [position](const IoDevice &d) { return detail::known_device_accepts_execute_position(d, position); },
       position_rejection_profile(*dev, position),
       [this, position](IoFrame &request, const IoDevice &d) {
-        // MOTOR_DEFAULT sends the 6-byte frame a wall pad sends, which carries no speed profile.
-        if (!has_feature(d.features, device_feature::EXTENDED_POSITION_FRAME) ||
-            d.travel_speed == TravelSpeed::MOTOR_DEFAULT)
+        if (!sends_speed_block(d))
           return create_execute_main_parameter(request, this->node_id_, d.node_id, d.low_power, position);
         return create_execute_position(request, this->node_id_, d.node_id, d.low_power, position,
                                        d.travel_speed == TravelSpeed::SILENT);
@@ -448,7 +458,7 @@ bool IOHomeControlComponent::execute_device_command_(const std::string &device_i
                                             has_feature(d.features, device_feature::EXTENDED_POSITION_FRAME));
         }
         const uint8_t open_position = d.inverted ? FORCE_OPEN_WIRE_POSITION_INVERTED : FORCE_OPEN_WIRE_POSITION;
-        return has_feature(d.features, device_feature::EXTENDED_POSITION_FRAME)
+        return sends_speed_block(d)
                    ? create_force_open(request, this->node_id_, d.node_id, d.low_power, open_position)
                    : create_execute_main_parameter(request, this->node_id_, d.node_id, d.low_power, open_position,
                                                    /*force_open_priority=*/true);

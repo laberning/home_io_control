@@ -60,7 +60,7 @@ class DeviceBoundEntity {
   void set_optimistic_state(bool optimistic_state) { this->optimistic_state_ = optimistic_state; }
   /// @brief Set the speed profile of this device's position moves (from YAML `travel_speed:` or
   /// `silent:`). Cover-only in practice; harmless on other platforms, which never issue position moves.
-  /// @param speed Speed profile; FAST unless the cover declares otherwise.
+  /// @param speed Speed profile; MOTOR_DEFAULT (the 6-byte frame) unless the cover declares otherwise.
   void set_travel_speed(TravelSpeed speed) { this->travel_speed_ = speed; }
   /// @brief Mark this device as a low-power / duty-cycled receiver. Directed frames to it then set
   /// CTRL1_LOW_POWER and use the long wake-up preamble; an always-alive device (the default) gets
@@ -165,7 +165,7 @@ class DeviceBoundEntity {
   DeviceModel model_{DeviceModel::NONE};
   uint32_t status_poll_interval_ms_{0};
   bool optimistic_state_{true};
-  TravelSpeed travel_speed_{TravelSpeed::FAST};
+  TravelSpeed travel_speed_{TravelSpeed::MOTOR_DEFAULT};
   bool low_power_{false};
   bool battery_entities_{false};
   bool has_system_key_{false};

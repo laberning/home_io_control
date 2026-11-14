@@ -32,7 +32,7 @@ accepted and the cover is created; the warning asks you to
 
 - `invert_position` (Optional): Explicitly override the open/close position mapping. When omitted, the controller uses the learned device profile and automatically inverts families such as horizontal awnings once their type is known.
 - `optimistic_state` (Optional, default: `true`): Show the requested position/movement direction immediately in Home Assistant — for both HA-issued commands (open/close/set-position/stop) and commands from a linked 1W remote — instead of waiting for the confirming poll or device response. The confirming poll/response always still runs and is the source of truth; optimistic state is a UX bridge only. Set `false` for a device where you don't want HA to show assumed movement, for example one with an unreliable RF link where a stale optimistic state could be misleading.
-- `travel_speed` (Optional): The speed a position move asks the motor for: `default`, `silent` or `fast`. `fast` is what the hub sends without the key. `silent` is the manufacturer app's "silent operation" speed, slower and quieter. `default` sends the short frame a wall control pad sends, which leaves the speed to the motor. Only a kind that takes a travel-speed parameter accepts the key: config validation rejects it on garage openers, on interior venetian blinds, on dual roller shutters and on any device of subtype 58, and its message says to remove the key. On an interior venetian blind the first functional parameter is the slat orientation and on a dual roller shutter it is the upper curtain, so neither takes a speed there (experimental, see [Interior venetian blinds and dual roller shutters](cover.md#interior-venetian-blinds-and-dual-roller-shutters)). Nothing on the wire reports a device's current speed, so, like `invert_position`, this is a declared preference rather than a readback. Declaring the key generates a `<Cover Name> Travel Speed` select so the speed can be changed at runtime; the YAML value is the boot state. See [Travel speed](cover.md#travel-speed).
+- `travel_speed` (Optional): The speed a position move asks the motor for: `default`, `silent` or `fast`. Without the key the hub sends the short frame a wall control pad sends, which leaves the speed to the motor (`default`). `silent` is the manufacturer app's "silent operation" speed, slower and quieter. `fast` asks for the fast speed profile. Only a kind that takes a travel-speed parameter accepts the key: config validation rejects it on garage openers, on interior venetian blinds, on dual roller shutters and on any device of subtype 58, and its message says to remove the key. On an interior venetian blind the first functional parameter is the slat orientation and on a dual roller shutter it is the upper curtain, so neither takes a speed there (experimental, see [Interior venetian blinds and dual roller shutters](cover.md#interior-venetian-blinds-and-dual-roller-shutters)). Nothing on the wire reports a device's current speed, so, like `invert_position`, this is a declared preference rather than a readback. Declaring the key generates a `<Cover Name> Travel Speed` select so the speed can be changed at runtime; the YAML value is the boot state. See [Travel speed](cover.md#travel-speed).
 - `silent` (Optional, deprecated): The two-way form of `travel_speed`, with a `<Cover Name> Silent Operation` switch instead of the select. It still works but logs a warning, and it will become a config error. Replace `silent: true` with `travel_speed: silent` and `silent: false` with `travel_speed: fast`, then point any automation or dashboard that used the switch at the `<Cover Name> Travel Speed` select. A cover takes one of the two keys, not both.
 - `rain_sensor_poll_interval` (Optional): Ask the device how far its own rain protection lets it open, once per interval, and report the answer as a binary sensor. The minimum is `1min` and there is no default: omit the key and nothing is sent and no entity is created. Declaring it generates a `<Cover Name> Rain sensor` binary sensor. Validated on VELUX windows with a wired rain sensor; a Somfy Sunea awning answers the request with a reply this project cannot read as an opening limit, so the sensor stays without state there. Read [Polling for rain](cover.md#polling-for-rain) before choosing an interval, because every poll uses transmit time that the hub shares with everything else it sends.
 - `sun_level_poll_interval` (Optional): Ask the device for the value of its built-in sun sensor once per interval, and publish it as a `<Cover Name> Sun level` sensor. The minimum is `1min` and there is no default: omit the key and nothing is sent and no entity is created. Experimental, confirmed on one Somfy RS100 Solar io. See [Sun level and battery level](cover.md#sun-level-and-battery-level) before choosing an interval.
@@ -362,15 +362,17 @@ specification, Appendix 2, so it is a plain cover without a tilt slider (experim
 
 ## Travel speed
 
-A position move can carry a speed profile. A Somfy hub sends one with every move, and so does this
-hub unless the cover says otherwise; a VELUX control pad sends none, and the window then moves at
-its own speed. `travel_speed:` picks one of three:
+A position move can carry a speed profile. The hub sends one only when you choose a speed: without a
+choice it sends the short frame a wall control pad sends, which names the main parameter only, and the
+motor moves at its own speed. Every device in the corpus answers that short frame without complaint,
+and answers the longer frame with the speed profile by saying one of its parameters is unknown (result
+code 5), although it still moves. `travel_speed:` picks one of three:
 
 | `travel_speed` | What the hub sends | A VELUX roof window, full travel |
 |---|---|---|
 | `default` | the short frame with no profile, as a control pad | 44.5 s, as from its KLR 200 pad |
 | `silent` | the slow profile, the manufacturer app's silent operation | about 65 s |
-| `fast` | the profile the hub sends without the key | 26.5 s |
+| `fast` | the fast profile | 26.5 s |
 
 ```yaml
 cover:
@@ -383,14 +385,20 @@ cover:
 
 What to expect:
 
-- **Without the key nothing changes.** A cover without `travel_speed:` moves on the `fast` profile
-  and gets no select.
+- **Without the key the cover moves at the motor's own speed** (`default`) and gets no select. Only
+  `silent` and `fast` send the speed profile.
+- **A device that does not take a speed says so in the log.** If a cover set to `silent` or `fast`
+  answers with result code 5 (`PARAMETER_UNKNOWN`), the hub logs one warning per device and boot that
+  it does not take a speed setting; remove `travel_speed:` or set it to `default`. Result codes 9
+  (`PARAMETER_LIMITATION_ADJUSTMENT`) and 10 (`PARAMETER_INCOHERENCE_ADJUSTMENT`) and any other
+  non-zero code in the answer to a command are logged as warnings too. The Last Result Code and Active
+  Issue sensors keep reporting only results a device sent as an error.
 - **The speeds were measured on one VELUX roof window** (issue #205,
   [ADR 0065](../adr/0065-a-covers-travel-speed-is-a-three-way-choice.md)). On a Somfy motor `fast`
-  is what a Somfy hub sends for a normal move; what `default` does there has not been measured.
+  is what a Somfy hub sends for a normal move, and the motor answers it with result code 5.
 - **It applies to position moves, open and close included, and to the favorite position.** The
   favorite position carries a profile only on `silent`, as a Somfy hub sends it. Stop, ventilation
-  and tilt ignore the setting, and force open always moves at the `fast` speed.
+  and tilt ignore the setting, and force open carries the speed profile only for `silent` and `fast`.
 - **The select shows what the hub sends**, not a reading: nothing on the wire reports a device's
   speed. A move from the pad or another controller uses that controller's speed.
 - **`silent:` is deprecated.** It still works and logs a warning; replace `silent: true` with

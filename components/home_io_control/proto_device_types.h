@@ -138,9 +138,9 @@ DeviceFeatures device_features(DeviceType type, uint8_t subtype, DeviceModel mod
 
 /// @brief Features of a device kind that has no table row, or that is not declared at all.
 /// @details An undeclared device keeps the permissive behaviour its entity gives it until the type is
-///          learned and a row takes over: a cover accepts a slider, favourite and vent and sends the
-///          8-byte position frame; a light, switch or lock sends the 8-byte frame; an exterior-heating
-///          fan takes levels in that frame. No class has tilt.
+///          learned and a row takes over: a cover accepts a slider, favourite and vent and may take the
+///          speed block of the 8-byte position frame; a light, switch or lock has no capability and
+///          sends the 6-byte frame; an exterior-heating fan takes levels in that frame. No class has tilt.
 /// @param entity_class Capability class of the entity that registered the device.
 /// @return The feature word, or no features for a class with no EXECUTE position path.
 DeviceFeatures undeclared_kind_features(DeviceCapabilityClass entity_class);

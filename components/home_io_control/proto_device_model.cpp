@@ -47,6 +47,8 @@ ExecutionState execution_state_of(uint8_t status_byte) {
                                                              : ExecutionState::UNDEFINED;
 }
 
+uint8_t result_code_of(uint8_t status_byte) { return error_resp_code(status_byte); }
+
 const char *execution_state_name(ExecutionState state) {
   switch (state) {
     case ExecutionState::NON_EXECUTING:

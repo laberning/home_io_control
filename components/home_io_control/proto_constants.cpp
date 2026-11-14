@@ -376,6 +376,12 @@ const char *command_result_name(uint8_t result) {
   }
 }
 
+const char *result_code_name(uint8_t code) {
+  if (code == 0 || code > ERROR_RESP_CODE_MAX)
+    return "UNKNOWN_RESULT_CODE";
+  return command_result_name(static_cast<uint8_t>(code << ERROR_RESP_CODE_SHIFT));
+}
+
 const char *command_result_description(uint8_t result) {
   switch (result) {
     case RESULT_UNKNOWN_STATUS_REPLY:

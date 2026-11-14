@@ -45,11 +45,11 @@ static constexpr DeviceFeatures PARTIAL = 1U << 5U;
 /// Named position 0xD807, sent by the Pedestrian Position button.
 /// \todo Confirm on a real gate opener that 0xD807 opens it to a pedestrian position (experimental).
 static constexpr DeviceFeatures PEDESTRIAN = 1U << 6U;
-/// Position and force-open EXECUTEs use the 8-byte form with functional parameter 1 set (the form
-/// validated on roller shutters, awnings, the Izymo dimmer and the pergola); without it they use the
-/// 6-byte main-parameter form. On covers functional parameter 1 is the travel speed (VELUX KLF 200
-/// API specification, Appendix 2), so `silent:` (the slow profile in that parameter) needs this bit;
-/// that proxy holds only for covers, which are the only kinds with `silent:`.
+/// The kind may take the 8-byte position and force-open EXECUTE with functional parameter 1 set, which
+/// is sent only when a travel speed (`silent` or `fast`) is chosen; otherwise, and for a kind without
+/// the bit, they use the 6-byte main-parameter form. On covers functional parameter 1 is the travel
+/// speed (VELUX KLF 200 API specification, Appendix 2), so the `travel_speed:` and `silent:` keys need
+/// this bit; that proxy holds only for covers, which are the only kinds with those keys.
 static constexpr DeviceFeatures EXTENDED_POSITION_FRAME = 1U << 7U;
 /// Heater window sensor and open-window-detection switch.
 static constexpr DeviceFeatures WINDOW_COMPANIONS = 1U << 8U;

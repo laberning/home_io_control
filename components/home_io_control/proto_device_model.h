@@ -304,7 +304,7 @@ const char *rain_sensor_state_name(RainSensorState state);
 enum class TravelSpeed : uint8_t {
   MOTOR_DEFAULT = 0,  ///< The 6-byte frame with no profile: the motor's own speed, as its wall pad moves it.
   SILENT = 1,         ///< Profile 0x05, the manufacturer app's silent operation: slower than the motor's own.
-  FAST = 2,           ///< Profile 0x06, what the hub sends unless a cover says otherwise.
+  FAST = 2,           ///< Profile 0x06: the 8-byte frame with the fast speed block, sent only when chosen.
 };
 
 /// @brief Get the name a travel speed is configured and published under.
@@ -343,6 +343,14 @@ enum class ExecutionState : uint8_t {
 /// @param status_byte Byte 0 of the reply's payload.
 /// @return The state, or ExecutionState::UNDEFINED when bits [2:0] hold 6 or 7.
 ExecutionState execution_state_of(uint8_t status_byte);
+
+/// @brief Read the result code out of byte 0 of a reply to an EXECUTE.
+///
+/// The same byte as execution_state_of() reads, bits [7:3]: 0 for a command taken without complaint,
+/// otherwise a code named by result_code_name() (5 says a parameter of the request is unknown).
+/// @param status_byte Byte 0 of the reply's payload.
+/// @return Code 0..31.
+uint8_t result_code_of(uint8_t status_byte);
 
 /// @brief Get a human-readable name for an ExecutionState.
 /// @param state The state to name.
@@ -507,25 +515,27 @@ struct IoDevice {
                                         ///< applies). Resolver input.
   std::optional<bool> invert_override = std::nullopt;  ///< YAML `invert_position:` when declared; wins over the kind's
                                                        ///< default. Resolver input.
-  bool inverted{false};                         ///< True if open/close positions are swapped (e.g., horizontal awning).
-                                                ///< Resolved: `invert_override`, else device_feature::INVERTED.
-  TravelSpeed travel_speed{TravelSpeed::FAST};  ///< Speed profile of position moves. Like `inverted`, a
-                                                ///< YAML-declared preference: nothing on the wire reports it.
-  bool optimistic_state{true};                  ///< True if `target` may be set ahead of a confirming poll/response.
-  bool low_power{false};          ///< YAML-declared: this target is a low-power / duty-cycled receiver, so
-                                  ///< directed frames set CTRL1_LOW_POWER and use the long wake-up preamble.
-                                  ///< A protocol-reported class exists (discovery Multi Information Byte) but
-                                  ///< is surfaced through the pairing/scan snippet, never applied at runtime.
-  bool dimmable{false};           ///< YAML-declared `dimmable: true` of a LIGHT entity. Resolver input: it
-                                  ///< alone decides a light's device_feature::LEVELS (unless the kind is main
-                                  ///< parameter only; light subtype 58 is on/off only, VELUX KLF 200 API v3.18,
-                                  ///< App. 2).
-  uint8_t last_result_code{0};    ///< Last CMD_ERROR_RESP result byte (0 = none recorded). See
-                                  ///< command_result_name()/is_limitation_result() in proto_constants.h. Cleared by
-                                  ///< the next successful status/command reply for this device. Note: 0 is also the
-                                  ///< real RESULT_UNKNOWN_STATUS_REPLY wire value, so that specific explicit reply is
-                                  ///< indistinguishable here from "nothing recorded yet" — a known, accepted tradeoff.
-  uint32_t last_result_at_ms{0};  ///< millis() timestamp of last_result_code, 0 when none recorded.
+  bool inverted{false};  ///< True if open/close positions are swapped (e.g., horizontal awning).
+                         ///< Resolved: `invert_override`, else device_feature::INVERTED.
+  TravelSpeed travel_speed{TravelSpeed::MOTOR_DEFAULT};  ///< Speed profile of position moves. Like `inverted`, a
+                                                         ///< YAML-declared preference: nothing on the wire reports it.
+  bool optimistic_state{true};     ///< True if `target` may be set ahead of a confirming poll/response.
+  bool low_power{false};           ///< YAML-declared: this target is a low-power / duty-cycled receiver, so
+                                   ///< directed frames set CTRL1_LOW_POWER and use the long wake-up preamble.
+                                   ///< A protocol-reported class exists (discovery Multi Information Byte) but
+                                   ///< is surfaced through the pairing/scan snippet, never applied at runtime.
+  bool dimmable{false};            ///< YAML-declared `dimmable: true` of a LIGHT entity. Resolver input: it
+                                   ///< alone decides a light's device_feature::LEVELS (unless the kind is main
+                                   ///< parameter only; light subtype 58 is on/off only, VELUX KLF 200 API v3.18,
+                                   ///< App. 2).
+  uint8_t last_result_code{0};     ///< Last CMD_ERROR_RESP result byte (0 = none recorded). See
+                                   ///< command_result_name()/is_limitation_result() in proto_constants.h. Cleared by
+                                   ///< the next successful status/command reply for this device. Note: 0 is also the
+                                   ///< real RESULT_UNKNOWN_STATUS_REPLY wire value, so that specific explicit reply is
+                                   ///< indistinguishable here from "nothing recorded yet" — a known, accepted tradeoff.
+  uint32_t last_result_at_ms{0};   ///< millis() timestamp of last_result_code, 0 when none recorded.
+  bool speed_block_warned{false};  ///< The hub has logged, in this boot, that this device answered the speed
+                                   ///< block with "parameter unknown". Run-time only, never persisted.
   uint8_t last_commander[NODE_ID_SIZE]{};     ///< Node ID of the controller that last commanded this device, as
                                               ///< reported verbatim by the device in its own status payload. All
                                               ///< zeroes until a status reply carrying the record has been decoded

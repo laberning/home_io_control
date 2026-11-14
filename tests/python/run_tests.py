@@ -649,8 +649,11 @@ def device_features_fall_back_like_the_cpp_lookup():
     assert v.device_features(t["vertical_interior_blind"]) & v.FEATURE_TILT == 0
     assert v.device_features(t["window_opener"], 58) & v.FEATURE_VENT
     capability = ~v.KIND_EXPERIMENTAL  # the experimental marker is not a capability
-    assert v.device_features(t["lock"], 2) & capability == 0, "an explicit subtype row beats the type row, even at zero"
-    assert v.device_features(t["lock"], 1) & capability == v.FEATURE_EXTENDED_POSITION_FRAME
+    # Lights, switches and locks have no speed to choose, so they never take the speed block.
+    for binary_kind in ("light", "on_off_switch", "lock"):
+        assert v.device_features(t[binary_kind]) & capability == 0, binary_kind
+        assert v.device_features(t[binary_kind], 1) & v.FEATURE_EXTENDED_POSITION_FRAME == 0, binary_kind
+    assert v.device_features(t["light"], 1) & capability == v.FEATURE_LEVELS
     assert v.device_features(t["electrical_heater"], 1) == v.FEATURE_WINDOW_COMPANIONS
     assert v.device_features(t["electrical_heater"], 0) == 0
     assert v.device_features(0x14) == 0, "a raw type with no name has no capabilities"

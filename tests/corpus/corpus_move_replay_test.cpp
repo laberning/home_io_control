@@ -70,6 +70,8 @@ MoveRun replay_move(const corpus::CorpusCapture &capture) {
   comp.add_device(id);
   // The type the Sunea io awning reports and docs/supported-devices.md lists.
   test::set_kind(*comp.get_device(id), DeviceType::VERTICAL_EXTERIOR_AWNING);
+  // The capture is a move commanded with the speed block, which the hub sends only when asked to.
+  comp.get_device(id)->travel_speed = TravelSpeed::FAST;
 
   MoveRun run;
   EXPECT_TRUE(comp.set_device_position(id, 0)) << "the command exchange of the capture succeeds";

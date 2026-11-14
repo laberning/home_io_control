@@ -79,10 +79,11 @@ constexpr DeviceFeatures GARAGE = device_feature::MAIN_PARAMETER_ONLY | LEVELS |
 /// (0xD807).
 /// \todo Confirm on a real gate opener that 0xD807 opens it to a pedestrian position (experimental).
 constexpr DeviceFeatures GATE = COVER | PEDESTRIAN;
-/// On/off command in the 8-byte frame: a plain light, a switch, a lock.
-constexpr DeviceFeatures BINARY_COMMAND = EXTENDED_POSITION_FRAME;
+/// On/off command in the 6-byte main-parameter frame: a plain light, a switch, a lock. These kinds
+/// have no speed to choose, so they never take the speed block (no EXTENDED_POSITION_FRAME).
+constexpr DeviceFeatures BINARY_COMMAND = DeviceFeatures{0};
 /// Light whose brightness is controllable (the 6/1 and 6/2 rows).
-constexpr DeviceFeatures DIMMABLE_LIGHT = LEVELS | EXTENDED_POSITION_FRAME;
+constexpr DeviceFeatures DIMMABLE_LIGHT = LEVELS;
 /// Exterior heating: a heat level in the main parameter, main parameter only.
 constexpr DeviceFeatures HEAT_LEVEL_DEVICE = device_feature::MAIN_PARAMETER_ONLY | LEVELS;
 
@@ -350,7 +351,7 @@ DeviceFeatures undeclared_kind_features(DeviceCapabilityClass entity_class) {
     case DeviceCapabilityClass::LOCK:
       return BINARY_COMMAND;
     case DeviceCapabilityClass::HEATER_LEVEL:
-      return LEVELS | EXTENDED_POSITION_FRAME;
+      return LEVELS;
     // No EXECUTE position path; listed so -Wswitch flags a new class that needs a decision. A water
     // heater must declare its kind (water_heater.py requires io_device_type), so it is never undeclared.
     case DeviceCapabilityClass::UNKNOWN:
