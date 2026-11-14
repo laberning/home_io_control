@@ -1,8 +1,8 @@
 #include "platform_cover_controls.h"
 
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
 
 #include <string>
 #include <utility>
@@ -22,12 +22,9 @@ class TestableIOHomeCoverTravelSpeedSelect : public IOHomeCoverTravelSpeedSelect
 };
 
 /// Records the runtime setter and serves a device back, so the select's boot-state publish and its
-/// control path can both be observed. Everything else comes from MockPlatformHubBase.
-class TravelSpeedSelectMockHub : public test::MockPlatformHubBase {
+/// control path can both be observed. Everything else comes from DevicePortDouble.
+class TravelSpeedSelectMockHub : public test::DevicePortDouble {
  public:
-  TravelSpeedSelectMockHub() = default;
-  ~TravelSpeedSelectMockHub() override = default;
-
   void set_device_travel_speed(const std::string &device_id, TravelSpeed speed) override {
     last_device_id_ = device_id;
     last_speed_ = speed;

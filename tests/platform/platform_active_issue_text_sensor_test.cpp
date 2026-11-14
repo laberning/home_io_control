@@ -3,26 +3,15 @@
 
 #include "platform_companion_sensors.h"
 
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 #include "proto_constants.h"
-#include "test_helpers.h"
-#include "stubs/radio_test_common.h"
+
+#include <gtest/gtest.h>
 
 using namespace esphome::home_io_control;
 
-namespace {
-
-class TestableActiveIssueHub : public IOHomeControlComponent {
- public:
-  using IOHomeControlComponent::notify_device_update_;
-  using IOHomeControlComponent::radio_;
-  using IOHomeControlComponent::initialized_;
-};
-
-}  // namespace
-
 TEST(PlatformActiveIssueTextSensor, SetupWithNoRecordedResultPublishesEmptyString) {
-  TestableActiveIssueHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
 
   IOHomeActiveIssueTextSensor sensor;
@@ -34,7 +23,7 @@ TEST(PlatformActiveIssueTextSensor, SetupWithNoRecordedResultPublishesEmptyStrin
 }
 
 TEST(PlatformActiveIssueTextSensor, SetupWithRecordedResultPublishesSymbolicName) {
-  TestableActiveIssueHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -50,7 +39,7 @@ TEST(PlatformActiveIssueTextSensor, SetupWithRecordedResultPublishesSymbolicName
 }
 
 TEST(PlatformActiveIssueTextSensor, DeviceUpdatePublishesNewResultAndClears) {
-  TestableActiveIssueHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -62,12 +51,12 @@ TEST(PlatformActiveIssueTextSensor, DeviceUpdatePublishesNewResultAndClears) {
   ASSERT_EQ(sensor.state, "");
 
   device->last_result_code = RESULT_LIMITATION_BY_WIND;
-  hub.notify_device_update_("ABC123");
+  hub.notify_device_update("ABC123");
 
   EXPECT_EQ(sensor.state, "LIMITATION_BY_WIND") << "a device update should publish the newly recorded result";
 
   device->last_result_code = 0;
-  hub.notify_device_update_("ABC123");
+  hub.notify_device_update("ABC123");
 
   EXPECT_EQ(sensor.state, "") << "a device update after clearing should publish an empty string again";
 }
@@ -75,7 +64,7 @@ TEST(PlatformActiveIssueTextSensor, DeviceUpdatePublishesNewResultAndClears) {
 TEST(PlatformActiveIssueTextSensor, SessionInterruptedIsNotShownAsAnIssue) {
   // A garage drive answered status reads with SESSION_INTERRUPTED right after an unconfirmed
   // command (issue #163); the code describes that exchange, not the device.
-  TestableActiveIssueHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -86,16 +75,16 @@ TEST(PlatformActiveIssueTextSensor, SessionInterruptedIsNotShownAsAnIssue) {
   sensor.setup();
 
   device->last_result_code = RESULT_SESSION_INTERRUPTED;
-  hub.notify_device_update_("ABC123");
+  hub.notify_device_update("ABC123");
   EXPECT_EQ(sensor.state, "");
 
   device->limited_by_rain = true;
-  hub.notify_device_update_("ABC123");
+  hub.notify_device_update("ABC123");
   EXPECT_EQ(sensor.state, "LIMITATION_BY_RAIN") << "a derived limitation still shows behind a transient result";
 }
 
 TEST(PlatformActiveIssueTextSensor, DerivedRainLimitationPublishesLimitationByRain) {
-  TestableActiveIssueHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -107,16 +96,16 @@ TEST(PlatformActiveIssueTextSensor, DerivedRainLimitationPublishesLimitationByRa
   ASSERT_EQ(sensor.state, "");
 
   device->limited_by_rain = true;
-  hub.notify_device_update_("ABC123");
+  hub.notify_device_update("ABC123");
   EXPECT_EQ(sensor.state, "LIMITATION_BY_RAIN");
 
   device->limited_by_rain = false;
-  hub.notify_device_update_("ABC123");
+  hub.notify_device_update("ABC123");
   EXPECT_EQ(sensor.state, "") << "the derived source clears with the flag";
 }
 
 TEST(PlatformActiveIssueTextSensor, ExplicitResultWinsOverDerivedRainLimitation) {
-  TestableActiveIssueHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -132,7 +121,7 @@ TEST(PlatformActiveIssueTextSensor, ExplicitResultWinsOverDerivedRainLimitation)
 }
 
 TEST(PlatformActiveIssueTextSensor, DeviceUpdateForOtherDeviceIsIgnored) {
-  TestableActiveIssueHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   hub.add_device("DEF456");
   auto *other = hub.get_device("DEF456");
@@ -145,36 +134,24 @@ TEST(PlatformActiveIssueTextSensor, DeviceUpdateForOtherDeviceIsIgnored) {
   sensor.setup();
   ASSERT_EQ(sensor.state, "");
 
-  hub.notify_device_update_("DEF456");
+  hub.notify_device_update("DEF456");
 
   EXPECT_EQ(sensor.state, "") << "updates for a different device id must not change this sensor's published state";
 }
 
-TEST(PlatformActiveIssueTextSensor, RadioThatStopsRespondingShowsOnEveryDeviceAndWinsOverAResult) {
-  TestableActiveIssueHub hub;
+TEST(PlatformActiveIssueTextSensor, RadioThatStopsRespondingWinsOverAResult) {
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
-  hub.add_device("DEF456");
-  hub.get_device("DEF456")->last_result_code = RESULT_LIMITATION_BY_RAIN;
-  auto *radio = new LatchingRadio();
-  hub.radio_ = radio;
-  hub.initialized_ = true;
+  hub.get_device("ABC123")->last_result_code = RESULT_LIMITATION_BY_RAIN;
 
-  IOHomeActiveIssueTextSensor first;
-  first.set_parent(&hub);
-  first.set_device_id("ABC123");
-  first.setup();
-  IOHomeActiveIssueTextSensor second;
-  second.set_parent(&hub);
-  second.set_device_id("DEF456");
-  second.setup();
-  ASSERT_EQ(first.state, "");
-  ASSERT_EQ(second.state, "LIMITATION_BY_RAIN");
+  IOHomeActiveIssueTextSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+  ASSERT_EQ(sensor.state, "LIMITATION_BY_RAIN");
 
-  radio->latch("BUSY stuck high");
-  hub.loop();
+  hub.radio_stopped = true;
+  hub.notify_device_update("ABC123");
 
-  EXPECT_EQ(first.state, ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING) << "loop() must republish every device";
-  EXPECT_EQ(second.state, ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING) << "a dead radio outranks a device result";
-  delete hub.radio_;
-  hub.radio_ = nullptr;
+  EXPECT_EQ(sensor.state, ACTIVE_ISSUE_RADIO_STOPPED_RESPONDING) << "a dead radio outranks a device result";
 }

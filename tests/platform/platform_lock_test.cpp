@@ -1,23 +1,16 @@
 #include "platform_lock.h"
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
 
 using namespace esphome::home_io_control;
 using namespace esphome::lock;
 
 namespace {
 
-class MockHubLock : public test::MockPlatformHubBase {
+class MockHubLock : public test::DevicePortDouble {
  public:
   MockHubLock() {}
-  ~MockHubLock() override = default;
-
-  bool set_lock_state(const std::string &device_id, bool locked) override {
-    this->last_lock_device_id_ = device_id;
-    this->last_locked_ = locked;
-    return true;
-  }
 
   void queue_set_lock_state(const std::string &device_id, bool locked) override {
     this->last_lock_device_id_ = device_id;
@@ -26,7 +19,7 @@ class MockHubLock : public test::MockPlatformHubBase {
   }
 
   void trigger_device_update(const std::string &device_id, const IoDevice &dev) {
-    test::MockPlatformHubBase::trigger_device_update(device_id, dev);
+    test::DevicePortDouble::trigger_device_update(device_id, dev);
   }
 
   const std::string &last_lock_device_id() const { return this->last_lock_device_id_; }

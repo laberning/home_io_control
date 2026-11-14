@@ -4,15 +4,15 @@
 
 #include "platform_companion_sensors.h"
 
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 #include "proto_constants.h"
-#include "test_helpers.h"
+
+#include <gtest/gtest.h>
 
 using namespace esphome::home_io_control;
-using test::TestableHubComponent;
 
 TEST(PlatformLastCommandTextSensors, SetupWithNoRecordPublishesEmptyString) {
-  TestableHubComponent hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
 
   IOHomeLastCommandedByTextSensor by_sensor;
@@ -30,7 +30,7 @@ TEST(PlatformLastCommandTextSensors, SetupWithNoRecordPublishesEmptyString) {
 }
 
 TEST(PlatformLastCommandTextSensors, SetupWithRecordPublishesTheStoredValue) {
-  TestableHubComponent hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -55,7 +55,7 @@ TEST(PlatformLastCommandTextSensors, SetupWithRecordPublishesTheStoredValue) {
 }
 
 TEST(PlatformLastCommandTextSensors, DeviceUpdateRepublishes) {
-  TestableHubComponent hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -77,14 +77,14 @@ TEST(PlatformLastCommandTextSensors, DeviceUpdateRepublishes) {
   device->last_commander[2] = 0xD2;
   device->last_command_originator = 0x00;
   device->has_last_command = true;
-  hub.notify_device_update_("ABC123");
+  hub.notify_device_update("ABC123");
 
   EXPECT_EQ(by_sensor.state, "2FE2D2") << "a device update should publish the newly decoded commander";
   EXPECT_EQ(source_sensor.state, "local_user(0x00)") << "a device update should publish the newly decoded originator";
 }
 
 TEST(PlatformLastCommandTextSensors, DeviceUpdateForOtherDeviceIsIgnored) {
-  TestableHubComponent hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   hub.add_device("DEF456");
   auto *other = hub.get_device("DEF456");
@@ -101,22 +101,22 @@ TEST(PlatformLastCommandTextSensors, DeviceUpdateForOtherDeviceIsIgnored) {
   by_sensor.setup();
   ASSERT_EQ(by_sensor.state, "");
 
-  hub.notify_device_update_("DEF456");
+  hub.notify_device_update("DEF456");
 
   EXPECT_EQ(by_sensor.state, "") << "updates for a different device id must not change this sensor's published state";
 }
 
-TEST(PlatformLastCommandTextSensors, ThisHubQualifierUsesTheHubsConfiguredNodeId) {
-  TestableHubComponent hub;
-  hub.node_id_[0] = 0xC0;
-  hub.node_id_[1] = 0xFF;
-  hub.node_id_[2] = 0xEE;
+TEST(PlatformLastCommandTextSensors, ThisHubQualifierNamesTheCommanderThePortReportsAsTheHub) {
+  test::DevicePortDouble hub;
+  hub.hub_node_id[0] = 0x0A;
+  hub.hub_node_id[1] = 0x0B;
+  hub.hub_node_id[2] = 0x0C;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
-  device->last_commander[0] = 0xC0;
-  device->last_commander[1] = 0xFF;
-  device->last_commander[2] = 0xEE;
+  device->last_commander[0] = 0x0A;
+  device->last_commander[1] = 0x0B;
+  device->last_commander[2] = 0x0C;
   device->last_command_originator = 0x01;
   device->has_last_command = true;
 
@@ -125,6 +125,5 @@ TEST(PlatformLastCommandTextSensors, ThisHubQualifierUsesTheHubsConfiguredNodeId
   by_sensor.set_device_id("ABC123");
   by_sensor.setup();
 
-  EXPECT_EQ(by_sensor.state, "C0FFEE (this hub)")
-      << "the qualifier must resolve against this hub's own configured node_id_, not a hardcoded value";
+  EXPECT_EQ(by_sensor.state, "0A0B0C (this hub)");
 }

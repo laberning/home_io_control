@@ -54,7 +54,8 @@ BASE = {
     "proto_sizes.h": [],
     "radio_interface.h": ["proto_frame.h", "tuning_config.h"],
     "tuning_config.h": [],
-    "platform_entity_base.h": ["hub_core.h"],
+    "hub_ports.h": ["proto_frame.h"],
+    "platform_entity_base.h": ["hub_ports.h"],
     "platform_cover.cpp": ["platform_entity_base.h", "entity_helpers.h"],
     "entity_helpers.h": ["log_helpers.h"],
 }
@@ -85,6 +86,19 @@ def test_r2_transitive_reach_is_caught_with_its_chain() -> None:
 def test_r2_allowlist_admits_listed_files() -> None:
     violations, _, _ = run({**BASE, "management_actions.cpp": ["hub_core.h"], "tuning_entities.cpp": ["hub_core.h"]})
     check(violations == [], f"R2 allowlist: unexpected violations {violations}")
+
+
+def test_r2_entity_file_including_the_hub_directly_is_caught() -> None:
+    violations, _, _ = run({**BASE, "platform_light.cpp": ["platform_entity_base.h", "hub_core.h"]})
+    r2 = [v for v in violations if v.startswith("R2 platform_light.cpp")]
+    check(len(r2) == 1, f"entity direct include: expected one R2 hit, got {violations}")
+
+
+def test_r2_entity_file_reaching_the_hub_through_the_entity_base_is_caught() -> None:
+    violations, _, _ = run({**BASE, "platform_entity_base.h": ["hub_ports.h", "hub_core.h"]})
+    got = rules(violations)
+    for want in ("R2 platform_entity_base.h", "R2 platform_cover.cpp"):
+        check(want in got, f"entity via base: expected {want!r} in {got}")
 
 
 def test_r2_stale_allowlist_entry_warns_without_failing() -> None:

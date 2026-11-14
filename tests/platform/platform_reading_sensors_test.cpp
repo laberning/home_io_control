@@ -6,9 +6,9 @@
 
 #include "platform_cover_controls.h"
 
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
 
 #include <cmath>
 
@@ -17,8 +17,6 @@ using namespace esphome::home_io_control;
 namespace {
 
 constexpr const char *DEVICE_ID = "ABC123";
-
-class ReadingSensorHub : public test::MockPlatformHubBase {};
 
 /// A hub with the device registered and both reading sensors bound to it.
 class PlatformReadingSensors : public ::testing::Test {
@@ -40,7 +38,7 @@ class PlatformReadingSensors : public ::testing::Test {
     hub.trigger_device_update(id, dev, /*cache_device=*/true);
   }
 
-  ReadingSensorHub hub;
+  test::DevicePortDouble hub;
   IOHomeSunLevelSensor sun;
   IOHomeBatteryLevelSensor battery;
 };

@@ -290,7 +290,7 @@ class IOHomeControlComponent : public Component,
   /// Set an optimistic target position ahead of a confirming poll/response, and notify.
   /// No-op when the device is unknown or has `optimistic_state == false`. See
   /// DeviceRegistry::apply_optimistic_target() for the full contract.
-  /// Virtual (like add_device/get_device) so platform unit tests can substitute a mock registry.
+  /// Part of HubDevicePort; platform tests drive the entity against a port double instead.
   /// @param device_id Target device ID.
   /// @param target_io_position Target position in IO units (0=open, 100=closed).
   /// @return true if the optimistic state was applied.
@@ -302,7 +302,7 @@ class IOHomeControlComponent : public Component,
   /// No-op when the device is unknown or has `optimistic_state == false`. See
   /// DeviceRegistry::apply_optimistic_stop() for why this records a prediction rather than a clear.
   /// Restorable: if the STOP then fails, the movement prediction it replaced comes back.
-  /// Virtual (like add_device/get_device) so platform unit tests can substitute a mock registry.
+  /// Part of HubDevicePort; platform tests drive the entity against a port double instead.
   /// @param device_id Target device ID.
   /// @return true if the optimistic stop was applied.
   bool apply_optimistic_stop(const std::string &device_id) override {
@@ -314,8 +314,7 @@ class IOHomeControlComponent : public Component,
   /// No-op when the device is unknown, has `optimistic_state == false`, or is not tilt-capable.
   /// See DeviceRegistry::apply_optimistic_tilt() for the full contract and for why a tilt
   /// command cannot rely on its own reply the way a position command can.
-  /// Virtual like the other device-registry accessors so a test double can override it if it
-  /// needs to; MockPlatformHubBase deliberately does not, and exercises the real registry.
+  /// Part of HubDevicePort; platform tests drive the entity against a port double instead.
   /// @param device_id    Target device ID.
   /// @param tilt_percent Slat angle in the same percent scale as `IoDevice::tilt` (0-100).
   /// @return true if the optimistic tilt was applied.
@@ -468,8 +467,7 @@ class IOHomeControlComponent : public Component,
   /// it and hand over its node_id/system_key (see pairing_responder.h). Disarming — manual, via
   /// the HA switch, on successful extraction, or on auto-off — immediately stops those branches
   /// from responding; it never touches the real device registry or the hub's own node_id_/
-  /// system_key_. Virtual so platform unit tests can substitute a mock hub, matching every other
-  /// queue_*/set_* entry point on this component.
+  /// system_key_. Part of HubControlPort, through which the hub-level switch arms it.
   /// @param armed Desired state.
   void set_key_extraction_armed(bool armed) override { this->key_extraction_.set_armed(armed); }
 
@@ -486,8 +484,8 @@ class IOHomeControlComponent : public Component,
   /// collaborator (oneway_key_adoption.h) — while armed, an overheard CMD_ONEWAY_ADD_CONTROLLER
   /// broadcast is decrypted and reported once, after which the listener disarms itself (one
   /// adoption per arm). Receive-only: unlike 2W key extraction this never transmits, it only
-  /// listens for a frame a 1W device broadcasts of its own accord. Virtual so platform unit tests
-  /// can substitute a mock hub, matching every other queue_*/set_* entry point on this component.
+  /// listens for a frame a 1W device broadcasts of its own accord. Part of HubControlPort, through
+  /// which the hub-level switch arms it.
   /// @param armed Desired state.
   void set_oneway_key_adoption_armed(bool armed) override { this->oneway_key_adoption_.set_armed(armed); }
 
@@ -535,7 +533,7 @@ class IOHomeControlComponent : public Component,
   /// sensor reports it.
   [[nodiscard]] bool radio_stopped_responding() const override { return this->radio_failure_reported_; }
   /// Select a device's travel speed at runtime (see IOHomeCoverTravelSpeedSelect and
-  /// IOHomeCoverSilentSwitch). Virtual so platform tests can substitute a mock registry.
+  /// IOHomeCoverSilentSwitch). Part of HubDevicePort.
   /// @param device_id Hexadecimal node ID string.
   /// @param speed     Speed profile of the device's position moves.
   void set_device_travel_speed(const std::string &device_id, TravelSpeed speed) override;

@@ -1,18 +1,17 @@
 #include "platform_hub_controls.h"
-#include "hub_core.h"
-#include "pairing_responder.h"
 
-#include "test_helpers.h"
+#include "hub_port_doubles.h"
+
+#include <gtest/gtest.h>
 
 using namespace esphome::home_io_control;
-using test::TestableHubComponent;
 
 // ============================================================================
 // PlatformAcceptForeignPairingSwitch test suite
 // ============================================================================
-// Hub-level switch: on/off arms/disarms the key-extraction responder, and the entity mirrors
-// the hub's own auto-disarm (successful extraction / timeout) rather than only reacting to a
-// user-initiated toggle.
+// Hub-level switch: on/off arms/disarms the key-extraction responder through the control port, and the
+// entity mirrors the hub's own auto-disarm (successful extraction / timeout) rather than only reacting to a
+// user-initiated toggle. How the real hub arms and auto-disarms is covered in hub_ports_test.cpp.
 
 /// Exposes protected write_state(bool) for direct invocation in tests.
 class TestableAcceptForeignPairingSwitch : public IOHomeAcceptForeignPairingSwitch {
@@ -21,45 +20,43 @@ class TestableAcceptForeignPairingSwitch : public IOHomeAcceptForeignPairingSwit
 };
 
 TEST(PlatformAcceptForeignPairingSwitch, WriteStateTrueArmsHubAndPublishesOn) {
-  TestableHubComponent hub;
+  test::ControlPortDouble hub;
   TestableAcceptForeignPairingSwitch sw;
   sw.set_parent(&hub);
 
   sw.write_state(true);
 
-  EXPECT_EQ(hub.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::ARMED_IDLE)
-      << "write_state(true) should arm the hub's key-extraction responder";
+  EXPECT_TRUE(hub.key_extraction_armed) << "write_state(true) should arm the hub's key-extraction responder";
+  EXPECT_FALSE(hub.oneway_key_adoption_armed) << "it must not arm the 1W adoption listener";
   EXPECT_TRUE(sw.get_state()) << "switch should publish on immediately";
 }
 
 TEST(PlatformAcceptForeignPairingSwitch, WriteStateFalseDisarmsHubAndPublishesOff) {
-  TestableHubComponent hub;
+  test::ControlPortDouble hub;
   TestableAcceptForeignPairingSwitch sw;
   sw.set_parent(&hub);
 
   sw.write_state(true);
   sw.write_state(false);
 
-  EXPECT_EQ(hub.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
-      << "write_state(false) should disarm the hub's key-extraction responder";
+  EXPECT_FALSE(hub.key_extraction_armed) << "write_state(false) should disarm the hub's key-extraction responder";
   EXPECT_FALSE(sw.get_state());
 }
 
 TEST(PlatformAcceptForeignPairingSwitch, AutoDisarmUpdatesDisplayedStateWithoutWriteState) {
-  TestableHubComponent hub;
+  test::ControlPortDouble hub;
   TestableAcceptForeignPairingSwitch sw;
   sw.set_parent(&hub);
   sw.setup();  // registers the armed-state callback
 
   sw.write_state(true);
   ASSERT_TRUE(sw.get_state());
-  ASSERT_TRUE(static_cast<bool>(hub.last_timeout_callback_)) << "arming should schedule the auto-off timeout";
+  ASSERT_TRUE(static_cast<bool>(hub.key_extraction_armed_callback)) << "setup() should subscribe to the armed state";
 
-  // Simulate the auto-off timeout firing (extraction window expired) — the hub disarms itself,
-  // and the switch should follow via the armed-state callback, not a write_state() call.
-  hub.last_timeout_callback_();
+  // The hub disarms itself (extraction window expired) and tells its subscribers; the switch follows
+  // through the callback, not a write_state() call.
+  hub.key_extraction_armed_callback(false);
 
-  EXPECT_EQ(hub.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED);
   EXPECT_FALSE(sw.get_state()) << "switch should publish off when the hub auto-disarms";
 }
 
@@ -83,43 +80,42 @@ class TestableRecoverOneWayKeySwitch : public IOHomeRecoverOneWayKeySwitch {
 };
 
 TEST(PlatformRecoverOneWayKeySwitch, WriteStateTrueArmsOneWayAdoptionAndPublishesOn) {
-  TestableHubComponent hub;
+  test::ControlPortDouble hub;
   TestableRecoverOneWayKeySwitch sw;
   sw.set_parent(&hub);
 
   sw.write_state(true);
 
-  EXPECT_TRUE(hub.oneway_key_adoption_armed()) << "write_state(true) should arm the 1W adoption listener";
-  EXPECT_EQ(hub.key_extraction_.key_extraction_ctx_.state, pairing_responder::ResponderState::DISARMED)
-      << "it must NOT arm the 2W key-extraction responder";
+  EXPECT_TRUE(hub.oneway_key_adoption_armed) << "write_state(true) should arm the 1W adoption listener";
+  EXPECT_FALSE(hub.key_extraction_armed) << "it must NOT arm the 2W key-extraction responder";
   EXPECT_TRUE(sw.get_state()) << "switch should publish on immediately";
 }
 
 TEST(PlatformRecoverOneWayKeySwitch, WriteStateFalseDisarmsOneWayAdoptionAndPublishesOff) {
-  TestableHubComponent hub;
+  test::ControlPortDouble hub;
   TestableRecoverOneWayKeySwitch sw;
   sw.set_parent(&hub);
 
   sw.write_state(true);
   sw.write_state(false);
 
-  EXPECT_FALSE(hub.oneway_key_adoption_armed()) << "write_state(false) should disarm the 1W adoption listener";
+  EXPECT_FALSE(hub.oneway_key_adoption_armed) << "write_state(false) should disarm the 1W adoption listener";
   EXPECT_FALSE(sw.get_state());
 }
 
 TEST(PlatformRecoverOneWayKeySwitch, AutoDisarmUpdatesDisplayedStateWithoutWriteState) {
-  TestableHubComponent hub;
+  test::ControlPortDouble hub;
   TestableRecoverOneWayKeySwitch sw;
   sw.set_parent(&hub);
   sw.setup();  // registers the armed-state callback through HubArmingSwitch::setup()
 
   sw.write_state(true);
   ASSERT_TRUE(sw.get_state());
-  ASSERT_TRUE(static_cast<bool>(hub.last_timeout_callback_)) << "arming should schedule the auto-off timeout";
+  ASSERT_TRUE(static_cast<bool>(hub.oneway_key_adoption_armed_callback))
+      << "setup() should subscribe to the armed state";
 
-  hub.last_timeout_callback_();  // auto-off window expires; the hub disarms itself
+  hub.oneway_key_adoption_armed_callback(false);  // auto-off window expires; the hub disarms itself
 
-  EXPECT_FALSE(hub.oneway_key_adoption_armed());
   EXPECT_FALSE(sw.get_state()) << "switch should publish off when the hub auto-disarms";
 }
 

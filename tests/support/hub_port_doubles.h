@@ -161,6 +161,11 @@ class DevicePortDouble : public HubDevicePort {
       this->registry_.put(device_id, previous);
   }
 
+  /// Publish what the registry holds for the device to the entity callbacks, as the hub does when a field
+  /// the test set on the stored record changes.
+  /// @param device_id Device whose stored record is published.
+  void notify_device_update(const std::string &device_id) { this->registry_.notify(device_id); }
+
   /// Withdraw an optimistic prediction, as the hub does when the command it predicted fails.
   bool rollback_optimistic(const std::string &device_id) { return this->registry_.rollback_optimistic(device_id); }
 

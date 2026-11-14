@@ -1,8 +1,8 @@
 #include "platform_cover_controls.h"
 
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
 
 using namespace esphome::home_io_control;
 
@@ -18,12 +18,9 @@ class TestableIOHomeCoverSilentSwitch : public IOHomeCoverSilentSwitch {
 };
 
 /// Records the runtime setter and serves a device back, so the switch's boot-state publish and its
-/// toggle path can both be observed. Everything else comes from MockPlatformHubBase.
-class SilentSwitchMockHub : public test::MockPlatformHubBase {
+/// toggle path can both be observed. Everything else comes from DevicePortDouble.
+class SilentSwitchMockHub : public test::DevicePortDouble {
  public:
-  SilentSwitchMockHub() = default;
-  ~SilentSwitchMockHub() override = default;
-
   void set_device_travel_speed(const std::string &device_id, TravelSpeed speed) override {
     last_device_id_ = device_id;
     last_speed_ = speed;

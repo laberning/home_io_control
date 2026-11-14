@@ -3,9 +3,9 @@
 
 #include "platform_fan.h"
 
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
 
 #include <string>
 #include <vector>
@@ -15,7 +15,7 @@ using namespace esphome::fan;
 
 namespace {
 
-class MockHubFan : public test::MockPlatformHubBase {
+class MockHubFan : public test::DevicePortDouble {
  public:
   struct Queued {
     std::string device_id;

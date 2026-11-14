@@ -1,10 +1,10 @@
 #include "platform_cover_controls.h"
 
-#include "hub_core.h"
-
 #include <deque>
 
-#include "test_helpers.h"
+#include "hub_port_doubles.h"
+
+#include <gtest/gtest.h>
 
 using namespace esphome::home_io_control;
 
@@ -19,19 +19,10 @@ class TestableIOHomeCoverFavoriteButton : public IOHomeCoverCommandButton {
 };
 
 /// Only overrides the methods this test suite actually exercises; device registry, callback
-/// fan-out, and every other command path are inherited from MockPlatformHubBase so they don't
-/// need to be re-stubbed here (see test_helpers.h).
-class FavoriteButtonMockHub : public test::MockPlatformHubBase {
+/// fan-out, and every other command path are inherited from DevicePortDouble so they don't
+/// need to be re-stubbed here (see hub_port_doubles.h).
+class FavoriteButtonMockHub : public test::DevicePortDouble {
  public:
-  FavoriteButtonMockHub() = default;
-  ~FavoriteButtonMockHub() override = default;
-
-  bool set_device_position(const std::string &device_id, uint8_t position) override {
-    last_set_device_id_ = device_id;
-    last_set_position_ = position;
-    return true;
-  }
-
   void queue_set_device_position(const std::string &device_id, uint8_t position) override {
     last_set_device_id_ = device_id;
     last_set_position_ = position;

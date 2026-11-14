@@ -1,8 +1,8 @@
 #include "platform_cover_controls.h"
 
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
 
 using namespace esphome::home_io_control;
 
@@ -15,8 +15,6 @@ using namespace esphome::home_io_control;
 namespace {
 
 constexpr const char *DEVICE_ID = "ABC123";
-
-class RainSensorHub : public test::MockPlatformHubBase {};
 
 /// A hub with the device registered and a rain sensor bound to it.
 class PlatformRainBinarySensor : public ::testing::Test {
@@ -34,7 +32,7 @@ class PlatformRainBinarySensor : public ::testing::Test {
     hub.trigger_device_update(id, dev, /*cache_device=*/true);
   }
 
-  RainSensorHub hub;
+  test::DevicePortDouble hub;
   IOHomeRainBinarySensor sensor;
 };
 

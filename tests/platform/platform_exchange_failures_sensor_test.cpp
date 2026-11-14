@@ -3,23 +3,14 @@
 
 #include "platform_companion_sensors.h"
 
-#include "hub_core.h"
-#include "hub_internal.h"
-#include "test_helpers.h"
+#include "hub_port_doubles.h"
+
+#include <gtest/gtest.h>
 
 using namespace esphome::home_io_control;
 
-namespace {
-
-class TestableExchangeFailuresHub : public IOHomeControlComponent {
- public:
-  using IOHomeControlComponent::notify_device_update_;
-};
-
-}  // namespace
-
 TEST(PlatformExchangeFailuresSensor, SetupWithNoFailuresPublishesZero) {
-  TestableExchangeFailuresHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
 
   IOHomeExchangeFailuresSensor sensor;
@@ -31,7 +22,7 @@ TEST(PlatformExchangeFailuresSensor, SetupWithNoFailuresPublishesZero) {
 }
 
 TEST(PlatformExchangeFailuresSensor, SetupWithRecordedFailuresPublishesCount) {
-  TestableExchangeFailuresHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -46,7 +37,7 @@ TEST(PlatformExchangeFailuresSensor, SetupWithRecordedFailuresPublishesCount) {
 }
 
 TEST(PlatformExchangeFailuresSensor, DeviceUpdatePublishesNewCount) {
-  TestableExchangeFailuresHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -58,13 +49,13 @@ TEST(PlatformExchangeFailuresSensor, DeviceUpdatePublishesNewCount) {
   ASSERT_FLOAT_EQ(sensor.state, 0.0f);
 
   device->exchange_timeout_count = 1;
-  hub.notify_device_update_("ABC123");
+  hub.notify_device_update("ABC123");
 
   EXPECT_FLOAT_EQ(sensor.state, 1.0f) << "a device update should publish the newly recorded failure count";
 }
 
 TEST(PlatformExchangeFailuresSensor, DeviceUpdateForOtherDeviceIsIgnored) {
-  TestableExchangeFailuresHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   hub.add_device("DEF456");
   auto *other = hub.get_device("DEF456");
@@ -77,7 +68,7 @@ TEST(PlatformExchangeFailuresSensor, DeviceUpdateForOtherDeviceIsIgnored) {
   sensor.setup();
   ASSERT_FLOAT_EQ(sensor.state, 0.0f);
 
-  hub.notify_device_update_("DEF456");
+  hub.notify_device_update("DEF456");
 
   EXPECT_FLOAT_EQ(sensor.state, 0.0f) << "updates for a different device id must not change this sensor's state";
 }
@@ -87,7 +78,7 @@ TEST(PlatformExchangeFailuresSensor, DeviceUpdateForOtherDeviceIsIgnored) {
 // ============================================================================
 
 TEST(PlatformUnconfirmedExchangesSensor, SetupWithNoneRecordedPublishesZero) {
-  TestableExchangeFailuresHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
 
   IOHomeUnconfirmedExchangesSensor sensor;
@@ -101,7 +92,7 @@ TEST(PlatformUnconfirmedExchangesSensor, SetupWithNoneRecordedPublishesZero) {
 TEST(PlatformUnconfirmedExchangesSensor, PublishesItsOwnCounterNotTheFailureOne) {
   // The two counters answer different questions — "the device never heard us" versus "it heard us
   // and the reply was lost" — so reading the wrong field would make the new sensor useless.
-  TestableExchangeFailuresHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -117,7 +108,7 @@ TEST(PlatformUnconfirmedExchangesSensor, PublishesItsOwnCounterNotTheFailureOne)
 }
 
 TEST(PlatformUnconfirmedExchangesSensor, DeviceUpdatePublishesNewCount) {
-  TestableExchangeFailuresHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -127,8 +118,8 @@ TEST(PlatformUnconfirmedExchangesSensor, DeviceUpdatePublishesNewCount) {
   sensor.set_device_id("ABC123");
   sensor.setup();
 
-  detail::record_exchange_outcome(*device, CMD_EXECUTE, ExchangeOutcome::SUCCESS_UNCONFIRMED);
-  hub.notify_device_update_("ABC123");
+  device->exchange_unconfirmed_count = 1;
+  hub.notify_device_update("ABC123");
 
   EXPECT_FLOAT_EQ(sensor.state, 1.0f);
 }

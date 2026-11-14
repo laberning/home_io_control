@@ -1,7 +1,7 @@
 #include "platform_switch.h"
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
 
 #include <cstring>
 
@@ -14,16 +14,9 @@ using namespace esphome::home_io_control;
 // updates. Simple on/off mapping based on position < 50.
 
 // Minimal mock hub for switch tests
-class MockHubSwitch : public test::MockPlatformHubBase {
+class MockHubSwitch : public test::DevicePortDouble {
  public:
   MockHubSwitch() {}
-  ~MockHubSwitch() override = default;
-
-  bool set_switch_state(const std::string &device_id, bool on) override {
-    last_switch_device_id_ = device_id;
-    last_switch_on_ = on;
-    return true;
-  }
 
   void queue_set_switch_state(const std::string &device_id, bool on) override {
     last_switch_device_id_ = device_id;
@@ -36,7 +29,7 @@ class MockHubSwitch : public test::MockPlatformHubBase {
   const std::deque<std::pair<std::string, bool>> &queued_switch_ops() const { return queued_switch_ops_; }
 
   void trigger_device_update(const std::string &device_id, const IoDevice &dev) {
-    test::MockPlatformHubBase::trigger_device_update(device_id, dev);
+    test::DevicePortDouble::trigger_device_update(device_id, dev);
   }
 
  private:

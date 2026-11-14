@@ -45,8 +45,6 @@ HUB_CORE_ALLOWLIST = [
     ("hub_core.h", "the hub itself"),
     ("hub_internal.h", "the hub's private helpers"),
     ("hub_*.cpp", "the hub's own implementation files"),
-    ("platform_*.h", "entities bind to the hub through platform_entity_base.h"),
-    ("platform_*.cpp", "entities bind to the hub through platform_entity_base.h"),
     ("tuning_entities.cpp", "the tuning entities call the hub's tuning API"),
     ("management_actions.cpp", "drives hub-level operations through IOHomeControlComponent *"),
 ]

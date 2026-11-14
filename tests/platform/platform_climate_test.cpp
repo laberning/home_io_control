@@ -2,9 +2,9 @@
 /// @brief Tests for the experimental IO-Homecontrol climate platform (CMD_WRITE_PRIVATE 0x20).
 
 #include "platform_climate.h"
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
 
 #include <cmath>
 #include <functional>
@@ -17,18 +17,11 @@ using namespace esphome::climate;
 
 namespace {
 
-class MockHubClimate : public test::MockPlatformHubBase {
+/// The heater's hub: the device port holds the device, the heating port records the register writes, plans
+/// and reads. A plan is replayed by kind so the level and temperature paths can be refused on their own;
+/// a read with a scripted reply also stores it in the heater's record, as the hub's read-back does.
+class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDouble {
  public:
-  struct HeatingCall {
-    std::string device_id;
-    HeatingFunction fn;
-    float value;
-  };
-
-  std::vector<HeatingCall> calls;
-  bool send_result{true};
-  /// Registers read through read_heating_register(), in order.
-  std::vector<HeatingFunction> reads;
   /// One set_heating_temperature() call.
   struct TemperatureCall {
     uint16_t main_parameter;
@@ -39,43 +32,31 @@ class MockHubClimate : public test::MockPlatformHubBase {
   /// Heating levels sent through set_heating_level(), in order.
   std::vector<uint8_t> levels;
   bool level_result{true};
-  /// The try cap each read was asked with.
-  std::vector<uint8_t> read_tries;
-  /// What the heater answers a read with; a register not listed here does not answer.
-  std::map<HeatingFunction, float> read_replies;
 
-  bool set_heating_temperature(const std::string & /*device_id*/, uint16_t main_parameter,
-                               const HeatingFp &fp) override {
+  bool set_heating_temperature(uint16_t main_parameter, const HeatingFp &fp) {
     this->temperature_calls.push_back({main_parameter, fp});
     return this->temperature_result;
   }
 
-  bool set_heating_level(const std::string & /*device_id*/, uint8_t level) override {
+  bool set_heating_level(uint8_t level) {
     this->levels.push_back(level);
     return this->level_result;
   }
 
   bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
                              uint8_t max_tries) override {
-    this->reads.push_back(fn);
-    this->read_tries.push_back(max_tries);
-    const auto reply = this->read_replies.find(fn);
-    if (reply == this->read_replies.end())
-      return false;
-    // What the real hub does with a decoded reply: store it on the device record and notify.
-    if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
-      dev->heating.store(fn, reply->second);
-      this->registry_.notify(device_id);
+    const bool read = HeatingPortDouble::read_heating_register(device_id, fn, value_out, max_tries);
+    if (read) {
+      // What the real hub does with a decoded reply: store it on the device record and notify.
+      if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
+        dev->heating.store(fn, this->read_replies.at(fn));
+        this->registry_.notify(device_id);
+      }
     }
-    if (value_out != nullptr)
-      *value_out = reply->second;
-    return true;
+    return read;
   }
 
-  /// Every plan the entity handed over, in order; a refused plan is never handed over.
-  std::vector<HeatingWritePlan> plans;
-
-  /// The real executor's dispatch, replayed through the overrides above so each expectation reads the
+  /// The real executor's dispatch, replayed through the helpers above so each expectation reads the
   /// register, level or temperature call it always did.
   bool execute_heating_plan(const std::string &device_id, const HeatingWritePlan &plan,
                             const std::function<void()> &on_accepted) override {
@@ -86,10 +67,10 @@ class MockHubClimate : public test::MockPlatformHubBase {
         accepted = this->send_heating_command(device_id, plan.register_fn, plan.register_value);
         break;
       case HeatingPlanKind::LEVEL:
-        accepted = this->set_heating_level(device_id, plan.level);
+        accepted = this->set_heating_level(plan.level);
         break;
       case HeatingPlanKind::TEMPERATURE:
-        accepted = this->set_heating_temperature(device_id, plan.main_parameter, plan.fp);
+        accepted = this->set_heating_temperature(plan.main_parameter, plan.fp);
         break;
       case HeatingPlanKind::NONE:
         break;
@@ -100,11 +81,6 @@ class MockHubClimate : public test::MockPlatformHubBase {
     if (plan.read_back)
       this->read_heating_register(device_id, plan.read_back_fn, nullptr, EXCHANGE_RETRY_COUNT);
     return true;
-  }
-
-  bool send_heating_command(const std::string &device_id, HeatingFunction fn, float value) override {
-    this->calls.push_back({device_id, fn, value});
-    return this->send_result;
   }
 };
 
@@ -157,19 +133,19 @@ TEST(PlatformClimate, HvacModesMapToHeatingModesAndPublish) {
   IOHomeClimate entity = make_bound_climate(hub);
 
   perform_mode(entity, CLIMATE_MODE_HEAT);
-  ASSERT_EQ(hub.calls.size(), 1u);
-  EXPECT_EQ(hub.calls[0].device_id, "ABC123");
-  EXPECT_EQ(hub.calls[0].fn, HeatingFunction::SET_MODE);
-  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingMode::MANUAL));
+  ASSERT_EQ(hub.writes.size(), 1u);
+  EXPECT_EQ(hub.writes[0].device_id, "ABC123");
+  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::SET_MODE);
+  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingMode::MANUAL));
   EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
 
   perform_mode(entity, CLIMATE_MODE_AUTO);
-  EXPECT_EQ(hub.calls.back().fn, HeatingFunction::SET_MODE);
-  EXPECT_FLOAT_EQ(hub.calls.back().value, static_cast<float>(HeatingMode::AUTO));
+  EXPECT_EQ(hub.writes.back().fn, HeatingFunction::SET_MODE);
+  EXPECT_FLOAT_EQ(hub.writes.back().value, static_cast<float>(HeatingMode::AUTO));
   EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO);
 
   perform_mode(entity, CLIMATE_MODE_OFF);
-  EXPECT_FLOAT_EQ(hub.calls.back().value, static_cast<float>(HeatingMode::OFF));
+  EXPECT_FLOAT_EQ(hub.writes.back().value, static_cast<float>(HeatingMode::OFF));
   EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF);
 
   EXPECT_EQ(entity.publish_count_, 3);
@@ -183,9 +159,9 @@ TEST(PlatformClimate, TargetTemperatureSendsSetTemperature) {
   call.set_target_temperature(20.5F);
   call.perform();
 
-  ASSERT_EQ(hub.calls.size(), 1u);
-  EXPECT_EQ(hub.calls[0].fn, HeatingFunction::SET_TEMPERATURE);
-  EXPECT_FLOAT_EQ(hub.calls[0].value, 20.5F);
+  ASSERT_EQ(hub.writes.size(), 1u);
+  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::SET_TEMPERATURE);
+  EXPECT_FLOAT_EQ(hub.writes[0].value, 20.5F);
   EXPECT_FLOAT_EQ(entity.target_temperature, 20.5F);
   EXPECT_EQ(entity.publish_count_, 1);
 }
@@ -204,9 +180,9 @@ TEST(PlatformClimate, AutomaticModePresetsSendTheirModeAndShowAtOnce) {
     call.set_preset(std::string(c.name));
     call.perform();
 
-    ASSERT_EQ(hub.calls.size(), 1u) << c.name;
-    EXPECT_EQ(hub.calls[0].fn, HeatingFunction::SET_MODE) << c.name;
-    EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(c.mode)) << c.name;
+    ASSERT_EQ(hub.writes.size(), 1u) << c.name;
+    EXPECT_EQ(hub.writes[0].fn, HeatingFunction::SET_MODE) << c.name;
+    EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(c.mode)) << c.name;
     EXPECT_EQ(hub.reads, (std::vector<HeatingFunction>{HeatingFunction::SET_MODE})) << c.name << ": confirm read";
     // Nothing has been read yet, so the command stands in: both modes show as HVAC auto.
     EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO) << c.name;
@@ -218,19 +194,19 @@ TEST(PlatformClimate, AutomaticModePresetsSendTheirModeAndShowAtOnce) {
 
 TEST(PlatformClimate, FailedSendDoesNotPublishOrUpdateState) {
   MockHubClimate hub;
-  hub.send_result = false;
+  hub.write_result = false;
   IOHomeClimate entity = make_bound_climate(hub);
 
   perform_mode(entity, CLIMATE_MODE_HEAT);
 
-  ASSERT_EQ(hub.calls.size(), 1u) << "the send is still attempted";
+  ASSERT_EQ(hub.writes.size(), 1u) << "the send is still attempted";
   EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF) << "state must not advance past a failed send";
   EXPECT_EQ(entity.publish_count_, 0) << "no publish on a failed send";
 }
 
 TEST(PlatformClimate, FailedSendDoesNotAdvanceTemperatureOrPreset) {
   MockHubClimate hub;
-  hub.send_result = false;
+  hub.write_result = false;
   IOHomeClimate entity = make_bound_climate(hub);
 
   auto temp = entity.make_call();
@@ -252,7 +228,7 @@ TEST(PlatformClimate, UnsupportedHvacModeSendsNothing) {
 
   perform_mode(entity, CLIMATE_MODE_COOL);  // no mapping to a HeatingMode
 
-  EXPECT_TRUE(hub.calls.empty()) << "a mode with no HeatingMode mapping must not transmit";
+  EXPECT_TRUE(hub.writes.empty()) << "a mode with no HeatingMode mapping must not transmit";
   EXPECT_EQ(entity.publish_count_, 0);
 }
 
@@ -489,7 +465,7 @@ TEST(PlatformClimate, AfterTheFirstReadAWriteWhoseReadBackFailsShowsNothingNew) 
   call.set_target_temperature(22.0F);
   call.perform();
 
-  EXPECT_EQ(hub.calls.size(), 2u) << "both writes were sent";
+  EXPECT_EQ(hub.writes.size(), 2u) << "both writes were sent";
   EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT) << "no prediction: the entity keeps the last observed mode";
   EXPECT_FLOAT_EQ(entity.target_temperature, 19.5F);
   EXPECT_EQ(entity.publish_count_, published);
@@ -497,7 +473,7 @@ TEST(PlatformClimate, AfterTheFirstReadAWriteWhoseReadBackFailsShowsNothingNew) 
 
 TEST(PlatformClimate, NothingIsReadBackAfterAFailedWrite) {
   MockHubClimate hub;
-  hub.send_result = false;
+  hub.write_result = false;
   IOHomeClimate entity = make_bound_climate(hub);
   perform_mode(entity, CLIMATE_MODE_HEAT);
   EXPECT_TRUE(hub.reads.empty());
@@ -513,8 +489,8 @@ TEST(PlatformClimate, ObservedProgramThenAutoPresetWaitsForTheReadBack) {
   auto call = entity.make_call();
   call.set_preset(std::string("Auto"));
   call.perform();
-  ASSERT_EQ(hub.calls.size(), 1u);
-  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingMode::AUTO));
+  ASSERT_EQ(hub.writes.size(), 1u);
+  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingMode::AUTO));
   EXPECT_EQ(entity.get_custom_preset(), "Program") << "a read has succeeded: the card waits for the read-back";
   EXPECT_EQ(entity.publish_count_, published);
 
@@ -555,7 +531,7 @@ TEST(PlatformClimate, SetupPollsTheHeaterLikeTheOtherPlatforms) {
   IOHomeClimate entity = make_bound_climate(hub);
   entity.set_status_poll_interval(120000);
   entity.setup();
-  EXPECT_EQ(hub.poll_policy_.get_interval("ABC123"), 120000u);
+  EXPECT_EQ(hub.status_poll_interval("ABC123"), 120000u);
 }
 
 // ========================================================================================
@@ -627,7 +603,7 @@ TEST(PlatformClimate, ATypeNotKnownYetOffersOnlyOff) {
   EXPECT_EQ(supported_modes(entity.traits()), (std::vector<ClimateMode>{CLIMATE_MODE_OFF}));
 
   perform_mode(entity, CLIMATE_MODE_HEAT);
-  EXPECT_TRUE(hub.calls.empty());
+  EXPECT_TRUE(hub.writes.empty());
   EXPECT_TRUE(hub.levels.empty());
 }
 
@@ -644,7 +620,7 @@ TEST(PlatformClimate, LevelHeaterModesSendLevelsAndNeverRegisters) {
   perform_mode(entity, CLIMATE_MODE_HEAT);
 
   EXPECT_EQ(hub.levels, (std::vector<uint8_t>{heating_level::OFF, heating_level::COMFORT}));
-  EXPECT_TRUE(hub.calls.empty()) << "no register write for a heater commanded with levels";
+  EXPECT_TRUE(hub.writes.empty()) << "no register write for a heater commanded with levels";
   EXPECT_TRUE(hub.reads.empty()) << "the hub's settle poll reads the level, not the entity";
   EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT) << "the commanded mode stands in until a level has been read";
 }
@@ -709,7 +685,7 @@ TEST(PlatformClimate, ALevelHeaterIgnoresATargetTemperature) {
   auto call = entity.make_call();
   call.set_target_temperature(21.0F);
   call.perform();
-  EXPECT_TRUE(hub.calls.empty());
+  EXPECT_TRUE(hub.writes.empty());
   EXPECT_TRUE(hub.levels.empty());
   EXPECT_EQ(entity.publish_count_, 0);
 }
@@ -823,7 +799,7 @@ TEST(PlatformClimate, ThermostatSetpointIsTheTemperatureWithTheManualFlag) {
 
   ASSERT_EQ(hub.temperature_calls.size(), 1u);
   expect_call(hub.temperature_calls[0], 25600, HeatingFpKind::FP9, heating_mode_flags::MANUAL);
-  EXPECT_TRUE(hub.calls.empty()) << "no register write";
+  EXPECT_TRUE(hub.writes.empty()) << "no register write";
   EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F) << "the commanded value stands in until a reading";
 }
 
@@ -1004,7 +980,7 @@ TEST(PlatformClimate, TemperatureHeatersNeverGetARegisterWrite) {
     auto away = entity.make_call();
     away.set_preset(CLIMATE_PRESET_AWAY);
     away.perform();
-    EXPECT_TRUE(hub.calls.empty());
+    EXPECT_TRUE(hub.writes.empty());
     EXPECT_TRUE(hub.reads.empty());
     EXPECT_TRUE(hub.levels.empty());
   }
@@ -1064,12 +1040,12 @@ TEST(PlatformClimate, TowelDryerHvacModesWriteItsModeRegisterAndReadItBack) {
   perform_mode(entity, CLIMATE_MODE_AUTO);
   perform_mode(entity, CLIMATE_MODE_OFF);
 
-  ASSERT_EQ(hub.calls.size(), 3u);
-  for (const auto &call : hub.calls)
+  ASSERT_EQ(hub.writes.size(), 3u);
+  for (const auto &call : hub.writes)
     EXPECT_EQ(call.fn, HeatingFunction::TOWEL_MODE) << "never the radiator's mode register";
-  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(TowelDryerMode::MANUAL));
-  EXPECT_FLOAT_EQ(hub.calls[1].value, static_cast<float>(TowelDryerMode::PROG));
-  EXPECT_FLOAT_EQ(hub.calls[2].value, static_cast<float>(TowelDryerMode::OFF));
+  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(TowelDryerMode::MANUAL));
+  EXPECT_FLOAT_EQ(hub.writes[1].value, static_cast<float>(TowelDryerMode::PROG));
+  EXPECT_FLOAT_EQ(hub.writes[2].value, static_cast<float>(TowelDryerMode::OFF));
   EXPECT_EQ(hub.reads, (std::vector<HeatingFunction>(3, HeatingFunction::TOWEL_MODE))) << "each write is read back";
 }
 
@@ -1135,17 +1111,17 @@ TEST(PlatformClimate, TowelDryerPresetsWriteTheTemporaryStateAndShowAsPresetsNot
   const ClimateMode before = entity.mode;
 
   perform_preset(entity, CLIMATE_PRESET_BOOST);
-  ASSERT_EQ(hub.calls.size(), 1u);
-  EXPECT_EQ(hub.calls[0].fn, HeatingFunction::TEMPORARY_STATE);
-  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingTemporaryState::BOOST));
+  ASSERT_EQ(hub.writes.size(), 1u);
+  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::TEMPORARY_STATE);
+  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingTemporaryState::BOOST));
   ASSERT_TRUE(entity.preset.has_value());
   EXPECT_EQ(*entity.preset, CLIMATE_PRESET_BOOST) << "shown until a read lands";
   EXPECT_EQ(entity.mode, before) << "boost's value 1 is not a mode value";
   EXPECT_EQ(hub.reads.back(), HeatingFunction::TEMPORARY_STATE) << "read back";
 
   perform_custom_preset(entity, "Drying");
-  EXPECT_EQ(hub.calls.back().fn, HeatingFunction::TEMPORARY_STATE);
-  EXPECT_FLOAT_EQ(hub.calls.back().value, static_cast<float>(HeatingTemporaryState::DRYING));
+  EXPECT_EQ(hub.writes.back().fn, HeatingFunction::TEMPORARY_STATE);
+  EXPECT_FLOAT_EQ(hub.writes.back().value, static_cast<float>(HeatingTemporaryState::DRYING));
   EXPECT_EQ(entity.get_custom_preset(), "Drying");
   EXPECT_NE(entity.mode, CLIMATE_MODE_AUTO) << "drying's value 2 is not PROG";
 }
@@ -1253,7 +1229,7 @@ TEST(PlatformClimate, TowelDryerComfortAndEcoCannotBeSelectedAndSendNothing) {
   perform_preset(entity, CLIMATE_PRESET_COMFORT);
   perform_preset(entity, CLIMATE_PRESET_ECO);
 
-  EXPECT_TRUE(hub.calls.empty()) << "no frame";
+  EXPECT_TRUE(hub.writes.empty()) << "no frame";
   EXPECT_TRUE(hub.reads.empty());
   ASSERT_TRUE(entity.preset.has_value());
   EXPECT_EQ(*entity.preset, CLIMATE_PRESET_ECO) << "the card keeps what the dryer reports";
@@ -1270,9 +1246,9 @@ TEST(PlatformClimate, TowelDryerPresetNoneEndsTheBoost) {
   });
 
   perform_preset(entity, CLIMATE_PRESET_NONE);
-  ASSERT_EQ(hub.calls.size(), 1u);
-  EXPECT_EQ(hub.calls[0].fn, HeatingFunction::TEMPORARY_STATE);
-  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingTemporaryState::NONE));
+  ASSERT_EQ(hub.writes.size(), 1u);
+  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::TEMPORARY_STATE);
+  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingTemporaryState::NONE));
 }
 
 TEST(PlatformClimate, TowelDryerModeCommandKeepsTheCommandedBoost) {
@@ -1332,12 +1308,12 @@ TEST(PlatformClimate, RadiatorIgnoresTheTowelRegistersAndTheNonePreset) {
 
   perform_preset(entity, CLIMATE_PRESET_NONE);
   perform_preset(entity, CLIMATE_PRESET_BOOST);
-  EXPECT_TRUE(hub.calls.empty()) << "the radiator offers neither";
+  EXPECT_TRUE(hub.writes.empty()) << "the radiator offers neither";
 
   perform_mode(entity, CLIMATE_MODE_OFF);
-  ASSERT_EQ(hub.calls.size(), 1u);
-  EXPECT_EQ(hub.calls[0].fn, HeatingFunction::SET_MODE);
-  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingMode::OFF));
+  ASSERT_EQ(hub.writes.size(), 1u);
+  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::SET_MODE);
+  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingMode::OFF));
 }
 
 TEST(PlatformClimate, RadiatorProgramPresetStillComesFromTheModeRegister) {
@@ -1346,9 +1322,9 @@ TEST(PlatformClimate, RadiatorProgramPresetStillComesFromTheModeRegister) {
   entity.setup();
 
   perform_custom_preset(entity, "Program");
-  ASSERT_EQ(hub.calls.size(), 1u);
-  EXPECT_EQ(hub.calls[0].fn, HeatingFunction::SET_MODE);
-  EXPECT_FLOAT_EQ(hub.calls[0].value, static_cast<float>(HeatingMode::PROG));
+  ASSERT_EQ(hub.writes.size(), 1u);
+  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::SET_MODE);
+  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingMode::PROG));
   EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO) << "a commanded preset shows through the mode table";
   EXPECT_EQ(entity.get_custom_preset(), "Program");
 }
@@ -1365,7 +1341,7 @@ TEST(PlatformClimate, EveryWriteIsOnePlanHandedToTheHubAndARefusedRequestHandsNo
   perform_custom_preset(entity, "Program");
 
   ASSERT_EQ(hub.plans.size(), 3u) << "each write reaches the hub as one plan";
-  EXPECT_EQ(hub.plans.size(), hub.calls.size());
+  EXPECT_EQ(hub.plans.size(), hub.writes.size());
   EXPECT_EQ(hub.plans[0].register_fn, HeatingFunction::SET_MODE);
   EXPECT_EQ(hub.plans[1].register_fn, HeatingFunction::SET_TEMPERATURE);
   EXPECT_EQ(hub.plans[2].register_fn, HeatingFunction::SET_MODE);

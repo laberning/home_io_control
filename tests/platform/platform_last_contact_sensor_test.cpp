@@ -3,24 +3,16 @@
 
 #include "platform_companion_sensors.h"
 
-#include "hub_core.h"
-#include "test_helpers.h"
+#include "hub_port_doubles.h"
+
+#include <gtest/gtest.h>
 
 #include <cmath>
 
 using namespace esphome::home_io_control;
 
-namespace {
-
-class TestableLastContactHub : public IOHomeControlComponent {
- public:
-  using IOHomeControlComponent::notify_device_update_;
-};
-
-}  // namespace
-
 TEST(PlatformLastContactSensor, SetupWithNoFrameSeenDoesNotPublish) {
-  TestableLastContactHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
 
   IOHomeLastContactSensor sensor;
@@ -32,7 +24,7 @@ TEST(PlatformLastContactSensor, SetupWithNoFrameSeenDoesNotPublish) {
 }
 
 TEST(PlatformLastContactSensor, SetupWithPriorContactPublishesAgeInSeconds) {
-  TestableLastContactHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -52,7 +44,7 @@ TEST(PlatformLastContactSensor, SetupWithPriorContactPublishesAgeInSeconds) {
 }
 
 TEST(PlatformLastContactSensor, DeviceUpdateResetsAgeToNearZero) {
-  TestableLastContactHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -69,14 +61,14 @@ TEST(PlatformLastContactSensor, DeviceUpdateResetsAgeToNearZero) {
     esphome::millis();  // advance the fake clock without a fresh frame
   uint32_t const contact_ms = esphome::millis();
   device->last_seen_ms = contact_ms;
-  hub.notify_device_update_("ABC123");
+  hub.notify_device_update("ABC123");
 
   EXPECT_LE(sensor.state, static_cast<float>(esphome::millis() - contact_ms) / 1000.0f)
       << "a fresh frame should reset the published age back down near zero";
 }
 
 TEST(PlatformLastContactSensor, DeviceUpdateForOtherDeviceIsIgnored) {
-  TestableLastContactHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   hub.add_device("DEF456");
   auto *other = hub.get_device("DEF456");
@@ -89,13 +81,13 @@ TEST(PlatformLastContactSensor, DeviceUpdateForOtherDeviceIsIgnored) {
   sensor.setup();
   ASSERT_TRUE(std::isnan(sensor.state));
 
-  hub.notify_device_update_("DEF456");
+  hub.notify_device_update("DEF456");
 
   EXPECT_TRUE(std::isnan(sensor.state)) << "updates for a different device id must not change this sensor's state";
 }
 
 TEST(PlatformLastContactSensor, HeartbeatRepublishesAgeWithoutNewFrame) {
-  TestableLastContactHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);

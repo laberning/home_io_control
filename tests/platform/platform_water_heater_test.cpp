@@ -2,9 +2,9 @@
 /// @brief Tests for the water heater entity (platform_water_heater.h), its companion sensors and its boost switch.
 
 #include "platform_water_heater.h"
-#include "hub_core.h"
+#include "hub_port_doubles.h"
 
-#include "test_helpers.h"
+#include <gtest/gtest.h>
 
 #include <cmath>
 #include <string>
@@ -15,12 +15,10 @@ using namespace esphome::water_heater;
 
 namespace {
 
-class MockHubWaterHeater : public test::MockPlatformHubBase {
+/// The water heater's hub: the device port holds the device, the heating port records the writes. Each write
+/// kind has its own scripted result, and a scripted read-back is stored in the device record as the hub does.
+class MockHubWaterHeater : public test::DevicePortDouble, public test::HeatingPortDouble {
  public:
-  std::vector<DhwMode> modes;  ///< Modes sent through set_water_heater_mode(), in order.
-  std::vector<float> targets;  ///< Targets sent through set_water_heater_target(), in order.
-  std::vector<bool> boosts;    ///< Values sent through set_water_heater_boost(), in order.
-  std::vector<bool> aways;     ///< Values sent through set_water_heater_away(), in order.
   bool away_result{true};
   /// What the status read after an away write finds; -1 for no read-back.
   int8_t away_read_back{-1};
@@ -33,7 +31,7 @@ class MockHubWaterHeater : public test::MockPlatformHubBase {
   int8_t boost_read_back{-1};
 
   bool set_water_heater_mode(const std::string &device_id, DhwMode mode) override {
-    this->modes.push_back(mode);
+    HeatingPortDouble::set_water_heater_mode(device_id, mode);
     if (this->mode_result && this->mode_read_back >= 0) {
       // What the real hub does on a read-back: store it on the record and notify.
       if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
@@ -44,13 +42,13 @@ class MockHubWaterHeater : public test::MockPlatformHubBase {
     return this->mode_result;
   }
 
-  bool set_water_heater_target(const std::string & /*device_id*/, float celsius) override {
-    this->targets.push_back(celsius);
+  bool set_water_heater_target(const std::string &device_id, float celsius) override {
+    HeatingPortDouble::set_water_heater_target(device_id, celsius);
     return this->target_result;
   }
 
   bool set_water_heater_away(const std::string &device_id, bool on) override {
-    this->aways.push_back(on);
+    HeatingPortDouble::set_water_heater_away(device_id, on);
     if (this->away_result && this->away_read_back >= 0) {
       if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
         dev->dhw.away = this->away_read_back;
@@ -61,7 +59,7 @@ class MockHubWaterHeater : public test::MockPlatformHubBase {
   }
 
   bool set_water_heater_boost(const std::string &device_id, bool on) override {
-    this->boosts.push_back(on);
+    HeatingPortDouble::set_water_heater_boost(device_id, on);
     if (this->boost_result && this->boost_read_back >= 0) {
       if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
         dev->dhw.boost = this->boost_read_back;
@@ -251,8 +249,8 @@ TEST(PlatformWaterHeater, AModeIsSentAndTheReadBackIsWhatIsShown) {
   call.set_mode(WATER_HEATER_MODE_PERFORMANCE);
   call.perform();
 
-  ASSERT_EQ(hub.modes.size(), 1u);
-  EXPECT_EQ(hub.modes[0], DhwMode::MANUAL_ECO_OFF);
+  ASSERT_EQ(hub.water_heater_modes.size(), 1u);
+  EXPECT_EQ(hub.water_heater_modes[0], DhwMode::MANUAL_ECO_OFF);
   EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_HEAT_PUMP) << "the read-back wins over the command";
 }
 
@@ -266,8 +264,8 @@ TEST(PlatformWaterHeater, BeforeAnyReadingAnAcceptedWriteShowsTheCommand) {
   call.set_target_temperature(55.0F);
   call.perform();
 
-  ASSERT_EQ(hub.targets.size(), 1u);
-  EXPECT_FLOAT_EQ(hub.targets[0], 55.0F);
+  ASSERT_EQ(hub.water_heater_targets.size(), 1u);
+  EXPECT_FLOAT_EQ(hub.water_heater_targets[0], 55.0F);
   EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_ECO);
   EXPECT_FLOAT_EQ(entity.get_target_temperature(), 55.0F);
 }
@@ -284,7 +282,7 @@ TEST(PlatformWaterHeater, AfterAReadingAnAcceptedTargetWaitsForTheSettlePoll) {
   call.set_target_temperature(50.0F);
   call.perform();
 
-  ASSERT_EQ(hub.targets.size(), 1u);
+  ASSERT_EQ(hub.water_heater_targets.size(), 1u);
   EXPECT_FLOAT_EQ(entity.get_target_temperature(), 60.0F) << "the settle poll decides what is shown";
 }
 
@@ -301,7 +299,7 @@ TEST(PlatformWaterHeater, ATargetIsNotSentWhileTheHeaterHoldsAutomaticMode) {
   call.set_target_temperature(50.0F);
   call.perform();
 
-  EXPECT_TRUE(hub.targets.empty()) << "the heater chooses its own target in AUTO";
+  EXPECT_TRUE(hub.water_heater_targets.empty()) << "the heater chooses its own target in AUTO";
   EXPECT_TRUE(std::isnan(entity.get_target_temperature()));
 }
 
@@ -319,8 +317,8 @@ TEST(PlatformWaterHeater, AFailedModeWriteKeepsTheTargetFromBeingSentInAutomatic
   call.set_target_temperature(54.0F);
   call.perform();
 
-  ASSERT_EQ(hub.modes.size(), 1u);
-  EXPECT_TRUE(hub.targets.empty()) << "decided on the mode the heater holds, not the one asked for";
+  ASSERT_EQ(hub.water_heater_modes.size(), 1u);
+  EXPECT_TRUE(hub.water_heater_targets.empty()) << "decided on the mode the heater holds, not the one asked for";
 }
 
 TEST(PlatformWaterHeater, AModeChangeToManualLetsTheTargetOfTheSameCallThrough) {
@@ -337,8 +335,8 @@ TEST(PlatformWaterHeater, AModeChangeToManualLetsTheTargetOfTheSameCallThrough) 
   call.set_target_temperature(54.0F);
   call.perform();
 
-  ASSERT_EQ(hub.targets.size(), 1u);
-  EXPECT_FLOAT_EQ(hub.targets[0], 54.0F);
+  ASSERT_EQ(hub.water_heater_targets.size(), 1u);
+  EXPECT_FLOAT_EQ(hub.water_heater_targets[0], 54.0F);
 }
 
 TEST(PlatformWaterHeater, ARefusedWriteChangesNothing) {
@@ -366,13 +364,13 @@ TEST(PlatformWaterHeater, AModeTheHeaterDoesNotOfferIsNeverSent) {
   auto call = entity.make_call();
   call.set_mode(WATER_HEATER_MODE_OFF);
   call.perform();
-  EXPECT_TRUE(hub.modes.empty());
+  EXPECT_TRUE(hub.water_heater_modes.empty());
 
   // A direct control() that skips the traits check is refused by the mapping too.
   WaterHeaterCall direct(&entity);
   direct.set_mode(WATER_HEATER_MODE_GAS);
   entity.control(direct);
-  EXPECT_TRUE(hub.modes.empty());
+  EXPECT_TRUE(hub.water_heater_modes.empty());
 }
 
 // === Away mode ===
@@ -388,16 +386,16 @@ TEST(PlatformWaterHeater, AwayIsSentToTheHubAndTheHeatersReportIsWhatIsShown) {
   call.set_away(true);
   call.perform();
 
-  ASSERT_EQ(hub.aways.size(), 1u);
-  EXPECT_TRUE(hub.aways[0]);
+  ASSERT_EQ(hub.water_heater_aways.size(), 1u);
+  EXPECT_TRUE(hub.water_heater_aways[0]);
   EXPECT_TRUE(entity.is_away()) << "FP16 reported it";
 
   hub.away_read_back = 0;
   auto off = entity.make_call();
   off.set_away(false);
   off.perform();
-  ASSERT_EQ(hub.aways.size(), 2u);
-  EXPECT_FALSE(hub.aways[1]);
+  ASSERT_EQ(hub.water_heater_aways.size(), 2u);
+  EXPECT_FALSE(hub.water_heater_aways[1]);
   EXPECT_FALSE(entity.is_away());
 }
 
@@ -410,7 +408,7 @@ TEST(PlatformWaterHeater, AwayIsNeverShownFromTheCommandAlone) {
   call.set_away(true);
   call.perform();
 
-  ASSERT_EQ(hub.aways.size(), 1u);
+  ASSERT_EQ(hub.water_heater_aways.size(), 1u);
   EXPECT_FALSE(entity.is_away());
 }
 
@@ -464,7 +462,7 @@ TEST(PlatformWaterHeater, ARefusedAwayWriteChangesNothing) {
   auto call = entity.make_call();
   call.set_away(true);
   call.perform();
-  EXPECT_EQ(hub.aways.size(), 1u);
+  EXPECT_EQ(hub.water_heater_aways.size(), 1u);
   EXPECT_FALSE(entity.is_away());
 }
 
@@ -481,7 +479,7 @@ TEST(PlatformWaterHeater, ATargetIsNotSentWhileAway) {
   call.set_target_temperature(50.0F);
   call.perform();
 
-  EXPECT_TRUE(hub.targets.empty()) << "logged instead of sent";
+  EXPECT_TRUE(hub.water_heater_targets.empty()) << "logged instead of sent";
 }
 
 TEST(PlatformWaterHeater, ATargetInTheCallThatStartsAwayIsNotSent) {
@@ -494,8 +492,8 @@ TEST(PlatformWaterHeater, ATargetInTheCallThatStartsAwayIsNotSent) {
   call.set_target_temperature(50.0F);
   call.perform();
 
-  EXPECT_EQ(hub.aways.size(), 1u);
-  EXPECT_TRUE(hub.targets.empty());
+  EXPECT_EQ(hub.water_heater_aways.size(), 1u);
+  EXPECT_TRUE(hub.water_heater_targets.empty());
 }
 
 TEST(PlatformWaterHeater, ATargetInTheCallThatEndsAwayIsSent) {
@@ -511,9 +509,9 @@ TEST(PlatformWaterHeater, ATargetInTheCallThatEndsAwayIsSent) {
   call.set_target_temperature(50.0F);
   call.perform();
 
-  EXPECT_EQ(hub.aways.size(), 1u);
-  ASSERT_EQ(hub.targets.size(), 1u);
-  EXPECT_FLOAT_EQ(hub.targets[0], 50.0F);
+  EXPECT_EQ(hub.water_heater_aways.size(), 1u);
+  ASSERT_EQ(hub.water_heater_targets.size(), 1u);
+  EXPECT_FLOAT_EQ(hub.water_heater_targets[0], 50.0F);
 }
 
 // === Companions ===
@@ -573,7 +571,7 @@ TEST(PlatformDhwBoostSwitch, SetupWritesNothingAndShowsNothingBeforeTheFirstRead
   TestableBoostSwitch sw;
   bind_boost(sw, hub);
 
-  EXPECT_TRUE(hub.boosts.empty()) << "a reboot must not end a running boost";
+  EXPECT_TRUE(hub.water_heater_boosts.empty()) << "a reboot must not end a running boost";
   EXPECT_FALSE(sw.get_state());
 }
 
@@ -591,7 +589,7 @@ TEST(PlatformDhwBoostSwitch, FollowsTheOperatingModeReading) {
   readings.boost = 0;
   publish(hub, readings);
   EXPECT_FALSE(sw.get_state());
-  EXPECT_TRUE(hub.boosts.empty()) << "showing a reading writes nothing";
+  EXPECT_TRUE(hub.water_heater_boosts.empty()) << "showing a reading writes nothing";
 }
 
 TEST(PlatformDhwBoostSwitch, AWriteCallsTheHubAndTheReadBackIsShown) {
@@ -603,14 +601,14 @@ TEST(PlatformDhwBoostSwitch, AWriteCallsTheHubAndTheReadBackIsShown) {
   bind_boost(sw, hub);
 
   sw.trigger_write(true);
-  ASSERT_EQ(hub.boosts.size(), 1u);
-  EXPECT_TRUE(hub.boosts[0]);
+  ASSERT_EQ(hub.water_heater_boosts.size(), 1u);
+  EXPECT_TRUE(hub.water_heater_boosts[0]);
   EXPECT_TRUE(sw.get_state()) << "shown from the read-back";
 
   hub.boost_read_back = 1;  // the heater kept its boost
   sw.trigger_write(false);
-  ASSERT_EQ(hub.boosts.size(), 2u);
-  EXPECT_FALSE(hub.boosts[1]);
+  ASSERT_EQ(hub.water_heater_boosts.size(), 2u);
+  EXPECT_FALSE(hub.water_heater_boosts[1]);
   EXPECT_TRUE(sw.get_state()) << "the heater's answer wins over the command";
 }
 
@@ -623,6 +621,6 @@ TEST(PlatformDhwBoostSwitch, AnUnacknowledgedWriteIsNotShown) {
   bind_boost(sw, hub);
 
   sw.trigger_write(true);
-  EXPECT_EQ(hub.boosts.size(), 1u);
+  EXPECT_EQ(hub.water_heater_boosts.size(), 1u);
   EXPECT_FALSE(sw.get_state());
 }

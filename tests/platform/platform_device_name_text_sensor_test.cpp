@@ -3,31 +3,16 @@
 
 #include "platform_companion_sensors.h"
 
-#include "hub_core.h"
-#include "test_helpers.h"
+#include "hub_port_doubles.h"
+
+#include <gtest/gtest.h>
 
 #include <cstring>
 
 using namespace esphome::home_io_control;
 
-namespace {
-
-class TestableDeviceNameHub : public IOHomeControlComponent {
- public:
-  using IOHomeControlComponent::notify_device_update_;
-
-  void queue_request_device_name(const std::string &device_id) override { this->last_requested_device_id_ = device_id; }
-
-  const std::string &last_requested_device_id() const { return this->last_requested_device_id_; }
-
- private:
-  std::string last_requested_device_id_;
-};
-
-}  // namespace
-
 TEST(PlatformDeviceNameTextSensor, SetupPublishesCachedNameAndSchedulesFetch) {
-  TestableDeviceNameHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
@@ -44,7 +29,7 @@ TEST(PlatformDeviceNameTextSensor, SetupPublishesCachedNameAndSchedulesFetch) {
 }
 
 TEST(PlatformDeviceNameTextSensor, InitialFetchTimeoutQueuesNameRequest) {
-  TestableDeviceNameHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
 
   IOHomeDeviceNameTextSensor sensor;
@@ -54,11 +39,13 @@ TEST(PlatformDeviceNameTextSensor, InitialFetchTimeoutQueuesNameRequest) {
 
   ASSERT_TRUE(static_cast<bool>(sensor.last_timeout_callback_));
   sensor.last_timeout_callback_();
-  EXPECT_EQ(hub.last_requested_device_id(), "ABC123");
+  ASSERT_EQ(hub.queued_operations().size(), 1u);
+  EXPECT_EQ(hub.queued_operations().back().type, PendingOperationType::REQUEST_NAME);
+  EXPECT_EQ(hub.queued_operations().back().device_id, "ABC123");
 }
 
 TEST(PlatformDeviceNameTextSensor, DeviceUpdatePublishesLatestName) {
-  TestableDeviceNameHub hub;
+  test::DevicePortDouble hub;
   hub.add_device("ABC123");
 
   IOHomeDeviceNameTextSensor sensor;
@@ -69,7 +56,7 @@ TEST(PlatformDeviceNameTextSensor, DeviceUpdatePublishesLatestName) {
   auto *device = hub.get_device("ABC123");
   ASSERT_NE(device, nullptr);
   std::strcpy(device->name, "Dexxo");
-  hub.notify_device_update_("ABC123");
+  hub.notify_device_update("ABC123");
 
   EXPECT_EQ(sensor.state, "Dexxo");
 }
