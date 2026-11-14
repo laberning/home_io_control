@@ -289,6 +289,36 @@ TEST(DeviceTypesTableFeatures, ASubtypeRowKeepsItsTypesCapabilityClassUnlessItHa
   });
 }
 
+TEST(DeviceTypesTableFeatures, EveryPredicateAgreesWithTheRowsOwnClass) {
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    const std::string where = format_device_ids(row.type, row.subtype);
+    const DeviceCapabilityClass cls = row.capability;
+    EXPECT_EQ(device_capability_class(row.type, row.subtype), cls) << where;
+
+    const bool takes_position = cls == DeviceCapabilityClass::COVER || cls == DeviceCapabilityClass::LIGHT ||
+                                cls == DeviceCapabilityClass::SWITCH || cls == DeviceCapabilityClass::LOCK ||
+                                cls == DeviceCapabilityClass::HEATER_LEVEL;
+    EXPECT_EQ(device_takes_execute_position(row.type, row.subtype), takes_position) << where;
+
+    if (cls == DeviceCapabilityClass::COVER || cls == DeviceCapabilityClass::LIGHT ||
+        cls == DeviceCapabilityClass::SWITCH || cls == DeviceCapabilityClass::LOCK) {
+      EXPECT_FALSE(device_has_no_motion(row.type, row.subtype)) << where << ": it moves";
+    } else if (cls == DeviceCapabilityClass::HEATER_LEVEL || cls == DeviceCapabilityClass::WATER_HEATER) {
+      EXPECT_TRUE(device_has_no_motion(row.type, row.subtype)) << where << ": it never moves";
+    } else if (cls == DeviceCapabilityClass::CLIMATE) {
+      // A heater commanded with an EXECUTE never moves. A register heater is read by its own poll,
+      // never with the 0x03 status request whose reply could start the settle loop, so the
+      // predicate leaves it out.
+      const HeatingProfile *profile = find_heating_profile(row.type, row.subtype, DeviceModel::NONE);
+      const bool execute_heater = profile != nullptr && profile->path != HeatingControlPath::PRIVATE_REGISTERS;
+      EXPECT_EQ(device_has_no_motion(row.type, row.subtype), execute_heater) << where;
+    }
+
+    const std::string name = device_capability_class_name(row.type, row.subtype);
+    EXPECT_EQ(name == "unknown", cls == DeviceCapabilityClass::UNKNOWN) << where;
+  });
+}
+
 TEST(DeviceTypesTableFeatures, NoRowUsesBit15) {
   test::for_each_table_row([](const DeviceTypeInfo &row) {
     EXPECT_EQ(row.features & (1U << 15U), 0u) << "bit 15 is the Python mirror's experimental marker";

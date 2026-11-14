@@ -245,6 +245,55 @@ TEST(HubOperations, SetLockStateRejectsLightDevice) {
   EXPECT_FALSE(comp.set_lock_state("ABC123", true)) << "non-lock devices should be rejected by lock entity gating";
 }
 
+TEST(HubOperations, SetLockStateRejectsTheCarControllerSubtypeOfTheLockType) {
+  // The table gives lock subtype 2 (car controller) no entity class, so a `lock:` entry bound to it
+  // is refused although the bare lock type would be accepted.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::LOCK, 2);
+
+  EXPECT_FALSE(comp.set_lock_state("ABC123", true));
+  EXPECT_TRUE(radio.get_tx_configs().empty()) << "a refused command puts no frame on air";
+}
+
+TEST(HubOperations, SetLockStateAcceptsTheWindowLockSubtypeOfTheLockType) {
+  // Lock subtype 1 (window lock) keeps the lock class of its type, so it is driven like a lock.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::LOCK, 1);
+
+  IoFrame resp = build_status_response(comp.node_id_);
+  uint8_t raw[64];
+  uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  pkt.freq_hz = FREQ_CH2;
+  radio.queue_rx(pkt);
+
+  EXPECT_TRUE(comp.set_lock_state("ABC123", true));
+  EXPECT_FALSE(radio.get_tx_configs().empty());
+}
+
+TEST(HubOperations, StatusRequestIsRefusedForTheCarControllerSubtypeOfTheLockType) {
+  // A kind with no entity class takes no EXECUTE position and is not polled with a status request.
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  test::set_kind(*dev, DeviceType::LOCK, 2);
+
+  EXPECT_FALSE(comp.request_device_status("ABC123"));
+  EXPECT_TRUE(radio.get_tx_configs().empty()) << "a refused status request puts no frame on air";
+}
+
 // ========================================================================================
 // send_heating_command tests (CMD_WRITE_PRIVATE 0x20)
 // ========================================================================================

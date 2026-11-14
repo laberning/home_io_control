@@ -57,7 +57,7 @@ const char *position_command_action(const IoDevice &dev, uint8_t position) {
     return "set position";
 
   bool const active_state = position == BINARY_ENTITY_ON_POSITION;
-  switch (device_capability_class(dev.type)) {
+  switch (device_capability_class(dev.type, dev.subtype)) {
     case DeviceCapabilityClass::LIGHT:
     case DeviceCapabilityClass::SWITCH:
     case DeviceCapabilityClass::HEATER_LEVEL:
@@ -95,8 +95,8 @@ const char *position_rejection_profile(const IoDevice &dev, uint8_t position) {
   // A LIGHT-class device only reaches rejection for a genuinely out-of-range value or, without
   // `dimmable:`, an intermediate one — the fix there isn't "needs cover_position", it's "needs a
   // value in 0-100" (or `dimmable: true`).
-  if (device_capability_class(dev.type) == DeviceCapabilityClass::LIGHT ||
-      device_capability_class(dev.type) == DeviceCapabilityClass::HEATER_LEVEL)
+  DeviceCapabilityClass const capability_class = device_capability_class(dev.type, dev.subtype);
+  if (capability_class == DeviceCapabilityClass::LIGHT || capability_class == DeviceCapabilityClass::HEATER_LEVEL)
     return "0-100";
   if (!has_feature(dev.features, device_feature::LEVELS) && position != POS_STOP &&
       !detail::is_binary_entity_position(position))

@@ -115,9 +115,9 @@ const char *device_platform_name(DeviceType type, uint8_t subtype);
 ///         its own is not experimental, because it behaves like its (confirmed) type.
 bool device_is_experimental(DeviceType type, uint8_t subtype);
 
-/// @brief Capability class of a (type, subtype), subtype-aware.
-/// @details device_capability_class(DeviceType) answers for the type alone; this overload lets a
-///          subtype row differ from its type (for example a heater with an adjustable setpoint).
+/// @brief Capability class of a (type, subtype), the entity family of the resolved row.
+/// @details A subtype row can differ from its type's row (for example a heater with an adjustable
+///          setpoint), so every read passes the subtype.
 /// @param type Node type.
 /// @param subtype Subtype.
 /// @return The resolved row's class, or DeviceCapabilityClass::UNKNOWN when the type is not in the table.

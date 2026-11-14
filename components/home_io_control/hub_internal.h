@@ -52,23 +52,24 @@ inline bool is_binary_entity_position(uint8_t position) {
   return position == BINARY_ENTITY_ON_POSITION || position == BINARY_ENTITY_OFF_POSITION;
 }
 
-/// @brief Does the device's type match the expected HA entity class?
+/// @brief Does the device's (type, subtype) row match the expected HA entity class?
 /// UNKNOWN devices always match to keep imported/discovered devices working.
 /// @param dev IoDevice to check.
 /// @param expected Desired capability class (COVER, LIGHT, SWITCH, etc.).
-/// @return true if device type matches or is UNKNOWN.
+/// @return true if the device's row class matches or the type is UNKNOWN.
 inline bool known_device_matches_entity_class(const IoDevice &dev, DeviceCapabilityClass expected) {
-  return dev.type == DeviceType::UNKNOWN || device_capability_class(dev.type) == expected;
+  return dev.type == DeviceType::UNKNOWN || device_capability_class(dev.type, dev.subtype) == expected;
 }
 
 /// @brief Does the device support status requests?
 /// UNKNOWN devices pass through.
 /// @param dev IoDevice to check.
-/// @return true if device type supports status requests or is UNKNOWN.
+/// @return true if the device's (type, subtype) row is polled (status request or heater poll), or
+///         the type is UNKNOWN.
 inline bool known_device_supports_status_requests(const IoDevice &dev) {
   // A heater is polled over its register protocol rather than with the 0x03 status request, but it
   // is polled all the same, and so is a water heater (HeaterController::poll()).
-  return dev.type == DeviceType::UNKNOWN || device_supports_status_requests(dev.type) ||
+  return dev.type == DeviceType::UNKNOWN || device_takes_execute_position(dev.type, dev.subtype) ||
          device_supports_climate_control(dev.type, dev.subtype) ||
          has_feature(dev.features, device_feature::WATER_HEATER);
 }
@@ -81,7 +82,7 @@ inline bool known_device_supports_status_requests(const IoDevice &dev) {
 /// @return true if the device takes execute positions and can move, or is UNKNOWN.
 inline bool known_device_reports_motion_through_status(const IoDevice &dev) {
   return dev.type == DeviceType::UNKNOWN ||
-         (device_takes_execute_position(dev.type) && !device_has_no_motion(dev.type, dev.subtype));
+         (device_takes_execute_position(dev.type, dev.subtype) && !device_has_no_motion(dev.type, dev.subtype));
 }
 
 /// @brief Can this device accept an execute (position) command?
@@ -94,7 +95,7 @@ inline bool known_device_reports_motion_through_status(const IoDevice &dev) {
 /// @param position Position value being sent (percent, or POS_STOP).
 /// @return true if operation is appropriate for this device.
 inline bool known_device_accepts_execute_position(const IoDevice &dev, uint8_t position) {
-  if (dev.type != DeviceType::UNKNOWN && !device_takes_execute_position(dev.type))
+  if (dev.type != DeviceType::UNKNOWN && !device_takes_execute_position(dev.type, dev.subtype))
     return false;
   return device_accepts_main_parameter(dev.features, position_main_parameter(position));
 }

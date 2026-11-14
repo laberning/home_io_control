@@ -767,7 +767,8 @@ bool PairingEngine::discover_and_pair() {
              "Device %s paired successfully (%s), but no ESPHome platform drives it yet: type=%s "
              "class=%s subtype=%u.",
              context.device_id.c_str(), format_device_kind(context.device.type, context.device.subtype).c_str(),
-             type_diag.c_str(), device_capability_class_name(context.device.type), context.device.subtype);
+             type_diag.c_str(), device_capability_class_name(context.device.type, context.device.subtype),
+             context.device.subtype);
     ESP_LOGW(TAG,
              "No ready-to-paste YAML was generated. If you want to experiment manually, choose the most likely "
              "platform and set io_device_type: %s.",

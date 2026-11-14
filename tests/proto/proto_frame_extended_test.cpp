@@ -221,36 +221,36 @@ TEST(ProtoFrame, CrcCcittAllOnes) {
 // ========================================================================================
 
 TEST(ProtoFrame, DeviceCapabilityClassClassification) {
-  EXPECT_EQ(device_capability_class(DeviceType::UNKNOWN), DeviceCapabilityClass::UNKNOWN)
+  EXPECT_EQ(device_capability_class(DeviceType::UNKNOWN, 0), DeviceCapabilityClass::UNKNOWN)
       << "UNKNOWN should map to UNKNOWN";
-  EXPECT_EQ(device_capability_class(DeviceType::VERTICAL_INTERIOR_BLIND), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::VERTICAL_INTERIOR_BLIND, 0), DeviceCapabilityClass::COVER)
       << "blind should be COVER";
-  EXPECT_EQ(device_capability_class(DeviceType::INTERIOR_VENETIAN_BLIND), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::INTERIOR_VENETIAN_BLIND, 0), DeviceCapabilityClass::COVER)
       << "venetian blind should be COVER";
-  EXPECT_EQ(device_capability_class(DeviceType::ROLLER_SHUTTER), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::ROLLER_SHUTTER, 0), DeviceCapabilityClass::COVER)
       << "roller shutter should be COVER";
-  EXPECT_EQ(device_capability_class(DeviceType::SECURE_CONFIGURATION_DEVICE), DeviceCapabilityClass::UNKNOWN)
+  EXPECT_EQ(device_capability_class(DeviceType::SECURE_CONFIGURATION_DEVICE, 0), DeviceCapabilityClass::UNKNOWN)
       << "a secure configuration device is no entity class";
-  EXPECT_EQ(device_capability_class(DeviceType::VERTICAL_EXTERIOR_AWNING), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::VERTICAL_EXTERIOR_AWNING, 0), DeviceCapabilityClass::COVER)
       << "awning should be COVER";
-  EXPECT_EQ(device_capability_class(DeviceType::LIGHT), DeviceCapabilityClass::LIGHT) << "light should be LIGHT";
-  EXPECT_EQ(device_capability_class(DeviceType::ON_OFF_SWITCH), DeviceCapabilityClass::SWITCH)
+  EXPECT_EQ(device_capability_class(DeviceType::LIGHT, 0), DeviceCapabilityClass::LIGHT) << "light should be LIGHT";
+  EXPECT_EQ(device_capability_class(DeviceType::ON_OFF_SWITCH, 0), DeviceCapabilityClass::SWITCH)
       << "on/off switch should be SWITCH";
-  EXPECT_EQ(device_capability_class(DeviceType::LOCK), DeviceCapabilityClass::LOCK) << "lock should be LOCK";
-  EXPECT_EQ(device_capability_class(DeviceType::HEATING_TEMPERATURE_INTERFACE), DeviceCapabilityClass::CLIMATE)
+  EXPECT_EQ(device_capability_class(DeviceType::LOCK, 0), DeviceCapabilityClass::LOCK) << "lock should be LOCK";
+  EXPECT_EQ(device_capability_class(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0), DeviceCapabilityClass::CLIMATE)
       << "heating temperature interface should be CLIMATE";
-  EXPECT_EQ(device_capability_class(DeviceType::BEACON), DeviceCapabilityClass::BEACON) << "beacon should be BEACON";
-  EXPECT_EQ(device_capability_class(DeviceType::INTRUSION_ALARM), DeviceCapabilityClass::SENSOR)
+  EXPECT_EQ(device_capability_class(DeviceType::BEACON, 0), DeviceCapabilityClass::BEACON) << "beacon should be BEACON";
+  EXPECT_EQ(device_capability_class(DeviceType::INTRUSION_ALARM, 0), DeviceCapabilityClass::SENSOR)
       << "intrusion alarm should be SENSOR";
 }
 
 TEST(ProtoFrame, DeviceCapabilityClassName) {
-  EXPECT_STREQ(device_capability_class_name(DeviceType::ROLLER_SHUTTER), "cover")
+  EXPECT_STREQ(device_capability_class_name(DeviceType::ROLLER_SHUTTER, 0), "cover")
       << "roller shutter class name should be 'cover'";
-  EXPECT_STREQ(device_capability_class_name(DeviceType::LIGHT), "light") << "light class name should be 'light'";
-  EXPECT_STREQ(device_capability_class_name(DeviceType::ON_OFF_SWITCH), "switch")
+  EXPECT_STREQ(device_capability_class_name(DeviceType::LIGHT, 0), "light") << "light class name should be 'light'";
+  EXPECT_STREQ(device_capability_class_name(DeviceType::ON_OFF_SWITCH, 0), "switch")
       << "switch class name should be 'switch'";
-  EXPECT_STREQ(device_capability_class_name(DeviceType::UNKNOWN), "unknown")
+  EXPECT_STREQ(device_capability_class_name(DeviceType::UNKNOWN, 0), "unknown")
       << "unknown class name should be 'unknown'";
 }
 

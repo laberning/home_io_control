@@ -176,7 +176,7 @@ TEST(DeviceTypeSync, EveryEnumValueIsYamlSelectableOrAllowlisted) {
 TEST(DeviceTypeSync, DeviceCapabilityClassCoversAllEnumValues) {
   // Every named node type maps to an entity class, unless it is listed in kNoEntityClass with a reason.
   for (const DeviceType type : kAllTypes) {
-    const auto cap = device_capability_class(type);
+    const auto cap = device_capability_class(type, 0);
     if (listed(kNoEntityClass, type)) {
       EXPECT_EQ(cap, DeviceCapabilityClass::UNKNOWN)
           << device_type_name(type) << " is allowlisted as having no entity class but the table gives it one.";

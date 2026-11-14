@@ -15,35 +15,40 @@ using namespace esphome::home_io_control;
 // ========================================================================================
 
 TEST(DeviceProfile, PositionControlSupportedForCovers) {
-  EXPECT_TRUE(device_supports_position_control(DeviceType::VERTICAL_EXTERIOR_AWNING))
+  EXPECT_TRUE((device_capability_class(DeviceType::VERTICAL_EXTERIOR_AWNING, 0) == DeviceCapabilityClass::COVER))
       << "awning should support position control";
-  EXPECT_TRUE(device_supports_position_control(DeviceType::ROLLER_SHUTTER))
+  EXPECT_TRUE((device_capability_class(DeviceType::ROLLER_SHUTTER, 0) == DeviceCapabilityClass::COVER))
       << "roller shutter should support position control";
-  EXPECT_TRUE(device_supports_position_control(DeviceType::INTERIOR_VENETIAN_BLIND))
+  EXPECT_TRUE((device_capability_class(DeviceType::INTERIOR_VENETIAN_BLIND, 0) == DeviceCapabilityClass::COVER))
       << "venetian blind should support position control";
-  EXPECT_FALSE(device_supports_position_control(DeviceType::SECURE_CONFIGURATION_DEVICE))
+  EXPECT_FALSE((device_capability_class(DeviceType::SECURE_CONFIGURATION_DEVICE, 0) == DeviceCapabilityClass::COVER))
       << "a secure configuration device is a commissioning tool, not a cover";
 }
 
 TEST(DeviceProfile, PositionControlNotSupportedForLights) {
-  EXPECT_FALSE(device_supports_position_control(DeviceType::LIGHT)) << "light should not report position control";
-  EXPECT_FALSE(device_supports_position_control(DeviceType::ON_OFF_SWITCH))
+  EXPECT_FALSE((device_capability_class(DeviceType::LIGHT, 0) == DeviceCapabilityClass::COVER))
+      << "light should not report position control";
+  EXPECT_FALSE((device_capability_class(DeviceType::ON_OFF_SWITCH, 0) == DeviceCapabilityClass::COVER))
       << "switch should not report position control";
 }
 
 TEST(DeviceProfile, BinaryControlSupportedForLightsAndSwitches) {
-  EXPECT_TRUE(device_supports_binary_control(DeviceType::LIGHT)) << "light should support binary control";
-  EXPECT_TRUE(device_supports_binary_control(DeviceType::ON_OFF_SWITCH)) << "switch should support binary control";
+  EXPECT_EQ(device_capability_class(DeviceType::LIGHT, 0), DeviceCapabilityClass::LIGHT)
+      << "light should support binary control";
+  EXPECT_EQ(device_capability_class(DeviceType::ON_OFF_SWITCH, 0), DeviceCapabilityClass::SWITCH)
+      << "switch should support binary control";
 }
 
 TEST(DeviceProfile, BinaryControlNotSupportedForCovers) {
-  EXPECT_FALSE(device_supports_binary_control(DeviceType::VERTICAL_EXTERIOR_AWNING))
+  EXPECT_EQ(device_capability_class(DeviceType::VERTICAL_EXTERIOR_AWNING, 0), DeviceCapabilityClass::COVER)
       << "cover should not support binary control";
 }
 
 TEST(DeviceProfile, LockControlSupportedForLocksOnly) {
-  EXPECT_TRUE(device_supports_lock_control(DeviceType::LOCK)) << "lock should support lock control";
-  EXPECT_FALSE(device_supports_lock_control(DeviceType::LIGHT)) << "light should not report lock control";
+  EXPECT_TRUE((device_capability_class(DeviceType::LOCK, 0) == DeviceCapabilityClass::LOCK))
+      << "lock should support lock control";
+  EXPECT_FALSE((device_capability_class(DeviceType::LIGHT, 0) == DeviceCapabilityClass::LOCK))
+      << "light should not report lock control";
 }
 
 TEST(DeviceProfile, ClimateControlSupportedForTheTwoElectricalHeaters) {
@@ -64,11 +69,11 @@ TEST(DeviceProfile, ClimateControlSupportedForTheTwoElectricalHeaters) {
 }
 
 TEST(DeviceProfile, StatusRequestsSupportedForControllableDevices) {
-  EXPECT_TRUE(device_supports_status_requests(DeviceType::VERTICAL_EXTERIOR_AWNING))
+  EXPECT_TRUE(device_takes_execute_position(DeviceType::VERTICAL_EXTERIOR_AWNING, 0))
       << "cover should support status requests";
-  EXPECT_TRUE(device_supports_status_requests(DeviceType::LIGHT)) << "light should support status requests";
-  EXPECT_TRUE(device_supports_status_requests(DeviceType::ON_OFF_SWITCH)) << "switch should support status requests";
-  EXPECT_TRUE(device_supports_status_requests(DeviceType::LOCK)) << "lock should support status requests";
+  EXPECT_TRUE(device_takes_execute_position(DeviceType::LIGHT, 0)) << "light should support status requests";
+  EXPECT_TRUE(device_takes_execute_position(DeviceType::ON_OFF_SWITCH, 0)) << "switch should support status requests";
+  EXPECT_TRUE(device_takes_execute_position(DeviceType::LOCK, 0)) << "lock should support status requests";
 }
 
 TEST(DeviceProfile, OperationProfileNames) {

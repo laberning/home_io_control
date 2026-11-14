@@ -192,10 +192,8 @@ const char *yaml_device_type_name(DeviceType type) {
   return row != nullptr && (row->flags & device_type_flags::YAML_SELECTABLE) != 0 ? row->name : nullptr;
 }
 
-DeviceCapabilityClass device_capability_class(DeviceType type) { return device_capability_class(type, 0); }
-
-const char *device_capability_class_name(DeviceType type) {
-  switch (device_capability_class(type)) {
+const char *device_capability_class_name(DeviceType type, uint8_t subtype) {
+  switch (device_capability_class(type, subtype)) {
     case DeviceCapabilityClass::COVER:
       return "cover";
     case DeviceCapabilityClass::LIGHT:
@@ -220,22 +218,28 @@ const char *device_capability_class_name(DeviceType type) {
   return "unknown";
 }
 
-bool device_supports_position_control(DeviceType type) {
-  return device_capability_class(type) == DeviceCapabilityClass::COVER;
+// === Single-class predicates (file-local) ===
+
+namespace {
+
+bool is_position_control(DeviceType type, uint8_t subtype) {
+  return device_capability_class(type, subtype) == DeviceCapabilityClass::COVER;
 }
 
-bool device_supports_binary_control(DeviceType type) {
-  DeviceCapabilityClass const capability_class = device_capability_class(type);
+bool is_binary_control(DeviceType type, uint8_t subtype) {
+  DeviceCapabilityClass const capability_class = device_capability_class(type, subtype);
   return capability_class == DeviceCapabilityClass::LIGHT || capability_class == DeviceCapabilityClass::SWITCH;
 }
 
-bool device_supports_lock_control(DeviceType type) {
-  return device_capability_class(type) == DeviceCapabilityClass::LOCK;
+bool is_lock_control(DeviceType type, uint8_t subtype) {
+  return device_capability_class(type, subtype) == DeviceCapabilityClass::LOCK;
 }
 
-bool device_supports_heat_level_control(DeviceType type) {
-  return device_capability_class(type) == DeviceCapabilityClass::HEATER_LEVEL;
+bool is_heat_level_control(DeviceType type, uint8_t subtype) {
+  return device_capability_class(type, subtype) == DeviceCapabilityClass::HEATER_LEVEL;
 }
+
+}  // namespace
 
 bool device_has_no_motion(DeviceType type, uint8_t subtype) {
   // The control path is a fact of the (type, subtype); a model's profile keeps it.
@@ -243,7 +247,7 @@ bool device_has_no_motion(DeviceType type, uint8_t subtype) {
   // A heater commanded with an EXECUTE (levels, temperatures) never moves; a register heater is not
   // polled with 0x03 at all. A water heater answers a status read but never moves either.
   return (profile != nullptr && profile->path != HeatingControlPath::PRIVATE_REGISTERS) ||
-         device_supports_heat_level_control(type) ||
+         is_heat_level_control(type, subtype) ||
          has_feature(device_features(type, subtype, DeviceModel::NONE), device_feature::WATER_HEATER);
 }
 
@@ -252,25 +256,23 @@ bool device_supports_climate_control(DeviceType type, uint8_t subtype) {
   return find_heating_profile(type, subtype, DeviceModel::NONE) != nullptr;
 }
 
-bool device_takes_execute_position(DeviceType type) {
-  return device_supports_position_control(type) || device_supports_binary_control(type) ||
-         device_supports_lock_control(type) || device_supports_heat_level_control(type);
+bool device_takes_execute_position(DeviceType type, uint8_t subtype) {
+  return is_position_control(type, subtype) || is_binary_control(type, subtype) || is_lock_control(type, subtype) ||
+         is_heat_level_control(type, subtype);
 }
 
-bool device_supports_status_requests(DeviceType type) { return device_takes_execute_position(type); }
-
 const char *device_operation_profile_name(DeviceType type, uint8_t subtype) {
-  if (device_supports_position_control(type)) {
+  if (is_position_control(type, subtype)) {
     // A cover has no model rows; the operation profile names the wire type.
     const DeviceFeatures features = device_features(type, subtype, DeviceModel::NONE);
     if (!has_feature(features, device_feature::LEVELS))
       return "cover_discrete";
     return has_feature(features, device_feature::TILT) ? "cover_position_tilt" : "cover_position";
   }
-  if (device_supports_binary_control(type))
+  if (is_binary_control(type, subtype))
     return "binary_on_off";
 
-  switch (device_capability_class(type)) {
+  switch (device_capability_class(type, subtype)) {
     case DeviceCapabilityClass::LOCK:
       return "lock";
     case DeviceCapabilityClass::HEATER_LEVEL:

@@ -117,47 +117,21 @@ bool is_known_device_type(uint16_t raw);
 ///         has no symbolic YAML alias (user must use a raw numeric value).
 const char *yaml_device_type_name(DeviceType type);
 
-/// @brief Map a raw IO‑Homecontrol type to the closest ESPHome/Home Assistant entity family.
-/// @param type Raw device type.
-/// @return Capability class (COVER, LIGHT, SWITCH, etc.).
-DeviceCapabilityClass device_capability_class(DeviceType type);
-
-/// @brief Get a human‑readable name for a capability class.
-/// @param type Device type (unused, kept for signature compatibility).
+/// @brief Get a human‑readable name for the capability class of a (type, subtype) row.
+/// @param type Device type.
+/// @param subtype Device subtype; a subtype row can differ from its type's row.
 /// @return String like "cover", "light", "switch", "unknown".
-const char *device_capability_class_name(DeviceType type);
+const char *device_capability_class_name(DeviceType type, uint8_t subtype);
 
-/// @brief Does this device type support precise position control (0–100)?
+/// @brief Does this device take position EXECUTEs (a percent, on / off, or stop in the main
+/// parameter) and answer status requests (0x03)?
+/// @details Read from the capability class of the (type, subtype) row; one rule serves both
+///          questions because every kind that takes position EXECUTEs reports its state with a
+///          status request.
 /// @param type Device type.
-/// @return true for cover‑family devices.
-bool device_supports_position_control(DeviceType type);
-
-/// @brief Does this device type support binary on/off control?
-/// @param type Device type.
-/// @return true for lights and switches.
-bool device_supports_binary_control(DeviceType type);
-
-/// @brief Does this device type take position EXECUTEs (a percent, on / off, or stop in the main
-/// parameter)?
-/// @param type Device type.
+/// @param subtype Device subtype.
 /// @return true for covers, lights, switches, locks and heat-level heaters.
-bool device_takes_execute_position(DeviceType type);
-
-/// @brief Does this device type support status request commands (0x03)?
-/// @details Every kind that takes position EXECUTEs reports its state with a status request.
-/// @param type Device type.
-/// @return true exactly where device_takes_execute_position() is.
-bool device_supports_status_requests(DeviceType type);
-
-/// @brief Does this device type support binary lock/unlock control via execute commands?
-/// @param type Device type.
-/// @return true for lock devices.
-bool device_supports_lock_control(DeviceType type);
-
-/// @brief Does this device take a heat level as its position (exterior heating)?
-/// @param type Device type.
-/// @return true for the HEATER_LEVEL capability class.
-bool device_supports_heat_level_control(DeviceType type);
+bool device_takes_execute_position(DeviceType type, uint8_t subtype);
 
 /// @brief Does this device never move, so a status reply must not start the movement settle loop?
 /// @details Heaters commanded with an EXECUTE (heating levels or temperatures; climate profile) and exterior heating (a

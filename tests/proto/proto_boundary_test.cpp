@@ -156,43 +156,44 @@ TEST(ProtocolBoundary, DeviceSupportsTilt_UnknownNotTilt) {
 // ========================================================================================
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_WindowOpenerIsCover) {
-  EXPECT_EQ(device_capability_class(DeviceType::WINDOW_OPENER), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::WINDOW_OPENER, 0), DeviceCapabilityClass::COVER)
       << "WINDOW_OPENER must be classified as COVER";
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_GarageOpenerIsCover) {
-  EXPECT_EQ(device_capability_class(DeviceType::GARAGE_OPENER), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::GARAGE_OPENER, 0), DeviceCapabilityClass::COVER)
       << "GARAGE_OPENER must be classified as COVER";
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_GateOpenerIsCover) {
-  EXPECT_EQ(device_capability_class(DeviceType::GATE_OPENER), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::GATE_OPENER, 0), DeviceCapabilityClass::COVER)
       << "GATE_OPENER must be classified as COVER";
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_RollingDoorOpenerIsCover) {
-  EXPECT_EQ(device_capability_class(DeviceType::ROLLING_DOOR_OPENER), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::ROLLING_DOOR_OPENER, 0), DeviceCapabilityClass::COVER)
       << "ROLLING_DOOR_OPENER must be classified as COVER";
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_DualShutterIsCover) {
-  EXPECT_EQ(device_capability_class(DeviceType::DUAL_ROLLER_SHUTTER), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::DUAL_ROLLER_SHUTTER, 0), DeviceCapabilityClass::COVER)
       << "DUAL_ROLLER_SHUTTER must be classified as COVER";
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_VentilationPointIsSwitch) {
-  EXPECT_EQ(device_capability_class(DeviceType::VENTILATION_POINT), DeviceCapabilityClass::SWITCH)
+  EXPECT_EQ(device_capability_class(DeviceType::VENTILATION_POINT, 0), DeviceCapabilityClass::SWITCH)
       << "VENTILATION_POINT must be classified as SWITCH (binary on/off)";
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_ExteriorHeatingIsAHeatLevelNotClimate) {
-  EXPECT_EQ(device_capability_class(DeviceType::EXTERIOR_HEATING), DeviceCapabilityClass::HEATER_LEVEL)
+  EXPECT_EQ(device_capability_class(DeviceType::EXTERIOR_HEATING, 0), DeviceCapabilityClass::HEATER_LEVEL)
       << "EXTERIOR_HEATING takes a heat level in the position field, so the climate gate must not reach it";
   EXPECT_FALSE(device_supports_climate_control(DeviceType::EXTERIOR_HEATING, 0));
-  EXPECT_TRUE(device_supports_heat_level_control(DeviceType::EXTERIOR_HEATING));
-  EXPECT_TRUE(device_supports_status_requests(DeviceType::EXTERIOR_HEATING));
-  EXPECT_FALSE(device_supports_position_control(DeviceType::EXTERIOR_HEATING)) << "not a cover";
-  EXPECT_FALSE(device_supports_binary_control(DeviceType::EXTERIOR_HEATING));
+  EXPECT_TRUE((device_capability_class(DeviceType::EXTERIOR_HEATING, 0) == DeviceCapabilityClass::HEATER_LEVEL));
+  EXPECT_TRUE(device_takes_execute_position(DeviceType::EXTERIOR_HEATING, 0));
+  EXPECT_FALSE((device_capability_class(DeviceType::EXTERIOR_HEATING, 0) == DeviceCapabilityClass::COVER))
+      << "not a cover";
+  EXPECT_NE(device_capability_class(DeviceType::EXTERIOR_HEATING, 0), DeviceCapabilityClass::LIGHT);
 }
 
 TEST(ProtocolBoundary, DevicesWithoutMotion) {
@@ -205,29 +206,29 @@ TEST(ProtocolBoundary, DevicesWithoutMotion) {
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_HeatPumpIsClimate) {
-  EXPECT_EQ(device_capability_class(DeviceType::HEAT_PUMP), DeviceCapabilityClass::CLIMATE)
+  EXPECT_EQ(device_capability_class(DeviceType::HEAT_PUMP, 0), DeviceCapabilityClass::CLIMATE)
       << "HEAT_PUMP must be classified as CLIMATE";
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_VerticalDescending) {
   // ExternalVenetianBlind is explicitly in the COVER switch arm of device_capability_class
-  EXPECT_EQ(device_capability_class(DeviceType::EXTERIOR_VENETIAN_BLIND), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::EXTERIOR_VENETIAN_BLIND, 0), DeviceCapabilityClass::COVER)
       << "EXTERIOR_VENETIAN_BLIND must be classified as COVER";
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_CurtainTrackIsCover) {
-  EXPECT_EQ(device_capability_class(DeviceType::CURTAIN_TRACK), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::CURTAIN_TRACK, 0), DeviceCapabilityClass::COVER)
       << "CURTAIN_TRACK must be classified as COVER";
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_SwingingShutterIsCover) {
-  EXPECT_EQ(device_capability_class(DeviceType::SWINGING_SHUTTER), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::SWINGING_SHUTTER, 0), DeviceCapabilityClass::COVER)
       << "SWINGING_SHUTTER must be classified as COVER";
 }
 
 TEST(ProtocolBoundary, DeviceCapabilityClass_PergolaIsPlainPositionCover) {
   // The louvres move on the main parameter (0x0000 open, 0xC800 closed).
-  EXPECT_EQ(device_capability_class(DeviceType::BIOCLIMATIC_PERGOLA), DeviceCapabilityClass::COVER)
+  EXPECT_EQ(device_capability_class(DeviceType::BIOCLIMATIC_PERGOLA, 0), DeviceCapabilityClass::COVER)
       << "BIOCLIMATIC_PERGOLA must be classified as COVER";
   EXPECT_FALSE(
       has_feature(device_features(DeviceType::BIOCLIMATIC_PERGOLA, 0, DeviceModel::NONE), device_feature::TILT))

@@ -213,7 +213,8 @@ inline void log_rejected_operation(const std::string &device_id, const IoDevice 
                                    const char *expected) {
   ESP_LOGW(TAG, "Rejecting %s for device %s: type=%s (%u) class=%s profile=%s expected=%s", operation,
            device_id.c_str(), device_type_name(dev.type), static_cast<unsigned>(dev.type),
-           device_capability_class_name(dev.type), device_operation_profile_name(dev.type, dev.subtype), expected);
+           device_capability_class_name(dev.type, dev.subtype), device_operation_profile_name(dev.type, dev.subtype),
+           expected);
 }
 
 /// @brief Update per-device link-health stats from the radio's last capture.
