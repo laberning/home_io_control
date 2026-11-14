@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <string>
 
@@ -212,16 +213,29 @@ bool build_probe_register_01(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 }
 
 /// @brief One row per probe_device()/probe_sweep() `probe` argument value.
+///
+/// A row names the fields it sets; every field after `sweepable` defaults to the plain case (an
+/// unbounded index that the probe needs, no register gate), so a row states only what it changes.
+/// Rows list their fields in declaration order (C++20 designated initializers).
 struct ProbeDescriptor {
+  // --- Required: no default, so a row that leaves one out fails the host build
+  // (-Wmissing-field-initializers under -Werror). ---
   const char *name;
   ProbeBuilderFn builder;
-  const char *index_help;  ///< Wording for the rejection when an index exceeds max_index (null: unbounded).
-  bool needs_index;   ///< False for the probes whose builders take no index/selector ("general_info3", "get_info1",
-                      ///< "get_info2", "status_mp_fp").
-  uint8_t max_index;  ///< Highest index the probe accepts; the full byte range when index_help is null.
-  bool sweepable;     ///< False for a probe that changes state in the device, or whose index is a bitmap rather than
-                      ///< an ordinal: probe_sweep() refuses it.
-  bool reads_blocks{false};  ///< True for `read_object`: an accepted first reply is followed by block reads.
+  /// False for a probe that changes state in the device (ADR 0060), or whose index is a bitmap rather
+  /// than an ordinal: probe_sweep() refuses it. Required so a new state-changing probe is never swept
+  /// because its author forgot a line. It decides only for probes that take an index: probe_sweep()
+  /// refuses a probe without one through `needs_index` either way.
+  bool sweepable;
+
+  // --- Optional: a default stands for the plain case. ---
+  /// Wording for the rejection when an index exceeds `max_index` or fails `index_valid`. Set exactly when
+  /// the index is bounded or has a bitmap check (probe_table_consistent()); null for an unbounded index.
+  const char *index_help{nullptr};
+  bool needs_index{true};        ///< False for the probes whose builders take no index/selector ("general_info3",
+                                 ///< "get_info1", "get_info2", "status_mp_fp").
+  uint8_t max_index{UINT8_MAX};  ///< Highest index the probe accepts; the full byte range when `index_help` is null.
+  bool reads_blocks{false};      ///< True for `read_object`: an accepted first reply is followed by block reads.
   /// True for the register probes: refused unless device_accepts_register_probe() holds for the target.
   bool register_read{false};
   /// Optional check of the parsed index beyond max_index (a bitmap index); false is reported with
@@ -235,43 +249,66 @@ struct ProbeDescriptor {
 /// change here rather than a change to both probe_device()'s dispatch and its "index must be..."
 /// error message. Deliberately has no "unknown4a" row -- see ADR 0024.
 constexpr ProbeDescriptor PROBE_TABLE[] = {
-    {PROBE_NAME_PRIVATE_FN, build_probe_private_fn, nullptr, true, UINT8_MAX, true},
-    {PROBE_NAME_PRIVATE_FN_SUB, build_probe_private_fn_sub, nullptr, true, UINT8_MAX, true},
-    {PROBE_NAME_STATUS_EXT, build_probe_status_ext, nullptr, true, UINT8_MAX, true},
-    {PROBE_NAME_STATUS_EXT_FN6, build_probe_status_ext_fn6, nullptr, true, UINT8_MAX, true},
-    {PROBE_NAME_STATUS_EXT_FN9, build_probe_status_ext_fn9, nullptr, true, UINT8_MAX, true},
-    {PROBE_NAME_GET_INFO1, build_probe_get_info1, nullptr, false, UINT8_MAX, true},
-    {PROBE_NAME_GET_INFO2, build_probe_get_info2, nullptr, false, UINT8_MAX, true},
-    {PROBE_NAME_GENERAL_INFO3, build_probe_general_info3, nullptr, false, UINT8_MAX, true},
-    {PROBE_NAME_PRIVATE2, build_probe_private2_long, nullptr, true, UINT8_MAX, true},
-    {PROBE_NAME_PRIVATE2_SHORT, build_probe_private2_short, nullptr, true, UINT8_MAX, true},
-    {PROBE_NAME_STATUS_MP_FP, build_probe_status_mp_fp, nullptr, false, UINT8_MAX, true},
+    {.name = PROBE_NAME_PRIVATE_FN, .builder = build_probe_private_fn, .sweepable = true},
+    {.name = PROBE_NAME_PRIVATE_FN_SUB, .builder = build_probe_private_fn_sub, .sweepable = true},
+    {.name = PROBE_NAME_STATUS_EXT, .builder = build_probe_status_ext, .sweepable = true},
+    {.name = PROBE_NAME_STATUS_EXT_FN6, .builder = build_probe_status_ext_fn6, .sweepable = true},
+    {.name = PROBE_NAME_STATUS_EXT_FN9, .builder = build_probe_status_ext_fn9, .sweepable = true},
+    {.name = PROBE_NAME_GET_INFO1, .builder = build_probe_get_info1, .sweepable = true, .needs_index = false},
+    {.name = PROBE_NAME_GET_INFO2, .builder = build_probe_get_info2, .sweepable = true, .needs_index = false},
+    {.name = PROBE_NAME_GENERAL_INFO3, .builder = build_probe_general_info3, .sweepable = true, .needs_index = false},
+    {.name = PROBE_NAME_PRIVATE2, .builder = build_probe_private2_long, .sweepable = true},
+    {.name = PROBE_NAME_PRIVATE2_SHORT, .builder = build_probe_private2_short, .sweepable = true},
+    {.name = PROBE_NAME_STATUS_MP_FP, .builder = build_probe_status_mp_fp, .sweepable = true, .needs_index = false},
     // The FP9-FP16 twin of status_mp_fp: the index is the FPI2 bitmap, not an ordinal, so it is not swept.
-    {PROBE_NAME_STATUS_FP_HIGH, build_probe_status_fp_high,
-     "FP9-FP16 bitmap, bit 7 = FP9 ... bit 0 = FP16, at most 7 bits (e.g. 0x43 = FP10, FP15, FP16)", true, UINT8_MAX,
-     false, false, false, status_fp_high_bitmap_valid},
-    {PROBE_NAME_LIMITATION, build_probe_limitation, "index 0 (minimum) or 1 (maximum)", true,
-     PROBE_LIMITATION_MAX_INDEX, true},
+    {.name = PROBE_NAME_STATUS_FP_HIGH,
+     .builder = build_probe_status_fp_high,
+     .sweepable = false,
+     .index_help = "FP9-FP16 bitmap, bit 7 = FP9 ... bit 0 = FP16, at most 7 bits (e.g. 0x43 = FP10, FP15, FP16)",
+     .index_valid = status_fp_high_bitmap_valid},
+    {.name = PROBE_NAME_LIMITATION,
+     .builder = build_probe_limitation,
+     .sweepable = true,
+     .index_help = "index 0 (minimum) or 1 (maximum)",
+     .max_index = PROBE_LIMITATION_MAX_INDEX},
     // The two probes that change device state (ADR 0060): one stores a subscription, the other is an
     // untested guess at removing one. Hence the two-event allowlist behind the index, and no sweeping.
-    {PROBE_NAME_SUBSCRIBE_EVENT, build_probe_subscribe_event,
-     "index 0 (battery level event 0x2001) or 1 (local sensor event 0x2005)", true, PROBE_SUBSCRIBE_EVENT_MAX_INDEX,
-     false},
-    {PROBE_NAME_UNSUBSCRIBE_EVENT, build_probe_unsubscribe_event,
-     "index 0 (battery level event 0x2001) or 1 (local sensor event 0x2005)", true, PROBE_SUBSCRIBE_EVENT_MAX_INDEX,
-     false},
+    {.name = PROBE_NAME_SUBSCRIBE_EVENT,
+     .builder = build_probe_subscribe_event,
+     .sweepable = false,
+     .index_help = "index 0 (battery level event 0x2001) or 1 (local sensor event 0x2005)",
+     .max_index = PROBE_SUBSCRIBE_EVENT_MAX_INDEX},
+    {.name = PROBE_NAME_UNSUBSCRIBE_EVENT,
+     .builder = build_probe_unsubscribe_event,
+     .sweepable = false,
+     .index_help = "index 0 (battery level event 0x2001) or 1 (local sensor event 0x2005)",
+     .max_index = PROBE_SUBSCRIBE_EVENT_MAX_INDEX},
     // The data-transport read (ADR 0062): a multi-frame session, so it is not swept; it changes nothing in
     // the device but a transfer handle that the probe closes again.
-    {PROBE_NAME_READ_OBJECT, build_probe_read_object,
-     "index 0 (actuator capacity 0x8100), 1 (actuator state 0x8103), 2 (name record 0x8003), 3 (general info 1, "
-     "0x8001), 4 (general info 2, 0x8002), or 5 to 29 (further objects, see the diagnostic probes documentation)",
-     true, PROBE_READ_OBJECT_MAX_INDEX, false, true},
+    {.name = PROBE_NAME_READ_OBJECT,
+     .builder = build_probe_read_object,
+     .sweepable = false,
+     .index_help = "index 0 (actuator capacity 0x8100), 1 (actuator state 0x8103), 2 (name record 0x8003), 3 (general "
+                   "info 1, 0x8001), 4 (general info 2, 0x8002), or 5 to 29 (further objects, see the diagnostic "
+                   "probes documentation)",
+     .max_index = PROBE_READ_OBJECT_MAX_INDEX,
+     .reads_blocks = true},
     // The register reads (ADR 0063): one CMD_WRITE_PRIVATE frame in the read direction, for register-protocol
     // heaters and domestic hot water devices only. Read-only, so they sweep like the other single-frame probes.
-    {PROBE_NAME_REGISTER_00, build_probe_register_00, nullptr, true, UINT8_MAX, true, false, true},
-    {PROBE_NAME_REGISTER_01, build_probe_register_01, nullptr, true, UINT8_MAX, true, false, true},
+    {.name = PROBE_NAME_REGISTER_00, .builder = build_probe_register_00, .sweepable = true, .register_read = true},
+    {.name = PROBE_NAME_REGISTER_01, .builder = build_probe_register_01, .sweepable = true, .register_read = true},
 };
-constexpr uint8_t PROBE_TABLE_SIZE = sizeof(PROBE_TABLE) / sizeof(PROBE_TABLE[0]);
+constexpr uint8_t PROBE_TABLE_SIZE = std::size(PROBE_TABLE);
+
+/// @brief True when every row has `index_help` exactly when its index is bounded below UINT8_MAX or has a
+/// bitmap check, so index_out_of_range_message() never has to describe an index without help text.
+consteval bool probe_table_consistent() {
+  return std::ranges::all_of(PROBE_TABLE, [](const ProbeDescriptor &row) {
+    const bool restricted = row.max_index < UINT8_MAX || row.index_valid != nullptr;
+    return restricted == (row.index_help != nullptr);
+  });
+}
+static_assert(probe_table_consistent(), "a probe row has index_help exactly when its index is restricted");
 
 /// @brief Look up a probe by name.
 /// @return Pointer into PROBE_TABLE, or nullptr if `probe` names none of its rows.
