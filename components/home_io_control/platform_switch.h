@@ -41,9 +41,8 @@ class IOHomeSwitch : public switch_::Switch, public Component, public DeviceBoun
   /// @param state Desired on/off state.
   void write_state(bool state) override;
   /// @brief Callback when device state changes (e.g., from a remote).
-  /// @param id Device ID.
   /// @param dev Updated IoDevice state.
-  void on_device_update_(const std::string &id, const IoDevice &dev);
+  void on_device_update_(const IoDevice &dev);
 };
 
 }  // namespace home_io_control

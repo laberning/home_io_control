@@ -76,8 +76,13 @@ void IOHomeCover::setup() {
   // A cover passes its explicit YAML inversion; without one the kind's default applies. The rest of
   // the registration ritual is shared with the other entity types.
   this->register_device_binding_(
-      this, DeviceCapabilityClass::COVER, this->invert_explicit_ ? std::optional<bool>(this->invert_) : std::nullopt,
-      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
+      this, DeviceCapabilityClass::COVER, [this](const IoDevice &dev) { this->on_device_update_(dev); },
+      [this](DeviceConfig &config) {
+        config.invert_override = this->invert_explicit_ ? std::optional<bool>(this->invert_) : std::nullopt;
+        config.optimistic_state = this->optimistic_state_;
+        config.travel_speed = this->travel_speed_;
+        config.battery_entities = this->battery_entities_;
+      });
   // After the registration above: the hub only schedules a poll for a registered device.
   if (this->rain_sensor_poll_interval_ms_ != 0)
     this->parent_->set_device_rain_poll_interval(this->device_id_, this->rain_sensor_poll_interval_ms_);
@@ -152,7 +157,7 @@ void IOHomeCover::control(const cover::CoverCall &call) {
   if (position_opt.has_value() && tilt_opt.has_value() && this->supports_tilt()) {
     float const ha_pos = *position_opt;
     const bool invert = this->effective_invert_();
-    uint8_t const io_pos = invert ? detail::round_percent(ha_pos) : detail::round_percent(1.0F - ha_pos);
+    uint8_t const io_pos = detail::io_from_fraction(ha_pos, invert);
     auto const tilt = detail::round_percent(*tilt_opt);
     this->parent_->apply_optimistic_target(this->device_id_, io_pos);
     this->parent_->apply_optimistic_tilt(this->device_id_, tilt);
@@ -178,17 +183,14 @@ void IOHomeCover::control(const cover::CoverCall &call) {
     // Standard: HA 1.0 (open) → IO 0 (open), HA 0.0 (closed) → IO 100 (closed)
     // Inverted: HA 1.0 (open) → IO 100, HA 0.0 (closed) → IO 0
     // (used for devices like horizontal awnings where the IO convention is reversed)
-    const uint8_t io_pos = invert ? detail::round_percent(ha_pos) : detail::round_percent(1.0F - ha_pos);
+    const uint8_t io_pos = detail::io_from_fraction(ha_pos, invert);
 
     this->parent_->apply_optimistic_target(this->device_id_, io_pos);
     this->parent_->queue_set_device_position(this->device_id_, io_pos);
   }
 }
 
-void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) {
-  if (id != this->device_id_)
-    return;
-
+void IOHomeCover::on_device_update_(const IoDevice &dev) {
   const bool invert = this->effective_invert_();
   const float previous_io_position = this->last_io_position_;
   const cover::CoverOperation previous_operation = this->current_operation;
@@ -208,14 +210,7 @@ void IOHomeCover::on_device_update_(const std::string &id, const IoDevice &dev) 
     this->position = dev.position == closed_position ? cover::COVER_CLOSED : cover::COVER_OPEN;
   } else if (dev.position != UNKNOWN_POSITION) {
     // Convert IO position (0-100) back to HA position (0.0-1.0)
-    float ha_pos;
-    if (invert) {
-      ha_pos = detail::whole_percent(dev.position) / 100.0F;
-    } else {
-      ha_pos = 1.0F - (detail::whole_percent(dev.position) / 100.0F);
-    }
-
-    this->position = ha_pos;
+    this->position = detail::fraction_from_io(detail::whole_percent(dev.position), invert);
   }
 
   if (this->supports_tilt() && eff_tilt != UNKNOWN_POSITION) {

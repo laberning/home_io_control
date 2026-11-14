@@ -17,8 +17,8 @@ void IOHomeLight::setup() {
   // `dimmable` is a light-only YAML choice; it travels in the device declaration so the registry can
   // resolve the light's levels from it.
   this->register_device_binding_(
-      this, DeviceCapabilityClass::LIGHT, std::nullopt,
-      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); }, this->dimmable_);
+      this, DeviceCapabilityClass::LIGHT, [this](const IoDevice &dev) { this->on_device_update_(dev); },
+      [this](DeviceConfig &config) { config.dimmable = this->dimmable_; });
 }
 
 light::LightTraits IOHomeLight::get_traits() {
@@ -42,11 +42,11 @@ void IOHomeLight::write_state(light::LightState *state) {
     // want the exact linear percentage the user set — the Somfy device has its own dimming
     // behavior, if any, and gamma-correcting on top of that would be wrong regardless of curve.
     state->current_values.as_brightness(&brightness);
-    // Convert HA brightness (0.0-1.0) to IO position (0-100) via detail::round_percent()
-    // (entity_helpers.h — rounds rather than truncates, see its doc comment): this device family's
+    // Convert HA brightness (0.0-1.0) to IO position (0-100) via detail::io_from_fraction()
+    // (entity_helpers.h — rounds rather than truncates, see round_percent()): this device family's
     // convention is 0=full brightness, 100=off — the same inverted mapping platform_cover.cpp
     // uses for non-inverted covers (HA 1.0 open -> IO 0), confirmed on real dimmable hardware.
-    auto const io_pos = detail::round_percent(1.0F - brightness);
+    auto const io_pos = detail::io_from_fraction(brightness, /*invert=*/false);
     this->parent_->queue_set_light_position(this->device_id_, io_pos);
     return;
   }
@@ -56,16 +56,16 @@ void IOHomeLight::write_state(light::LightState *state) {
   this->parent_->queue_set_light_state(this->device_id_, on);
 }
 
-void IOHomeLight::on_device_update_(const std::string &id, const IoDevice &dev) {
+void IOHomeLight::on_device_update_(const IoDevice &dev) {
   // We only publish a stable HA state once the device reports a settled status (shared filter),
   // and only once the LightState object is available.
-  if (this->state_ == nullptr || !this->passes_binary_update_filter_(id, dev))
+  if (this->state_ == nullptr || !detail::is_settled_with_position(dev))
     return;
 
   if (this->dimmable_) {
     // Same inverted 0-100 IO position field as the binary path, just read as a continuous value
     // instead of collapsed at the <50 threshold.
-    const float brightness = 1.0F - (dev.position / 100.0F);
+    const float brightness = detail::fraction_from_io(dev.position, /*invert=*/false);
     publish_light_reading(this->state_, brightness > 0.0F, brightness, this->suppress_write_);
     return;
   }

@@ -4,6 +4,7 @@
 
 #include "platform_climate.h"
 
+#include "entity_helpers.h"
 #include "proto_device_types.h"
 #include "status_poll_policy.h"
 
@@ -81,21 +82,16 @@ void IOHomeClimate::setup() {
   // may still resolve it to a climate type, exactly as the other platforms tolerate unknown bindings.
   // This runs BEFORE register_device_binding_() so a misconfigured binding never injects a device
   // into the hub registry and never leaves a live callback on a failed entity.
-  if (this->device_type_ != DeviceType::UNKNOWN &&
-      !device_supports_climate_control(this->device_type_, this->subtype_)) {
-    ESP_LOGE(TAG,
-             "Device %s is declared as %s, which has no heating profile, so this climate entity cannot drive "
-             "it — disabling it",
-             this->device_id_.c_str(), format_device_kind(this->device_type_, this->subtype_).c_str());
+  if (this->reject_undrivable_kind_(TAG, device_supports_climate_control(this->device_type_, this->subtype_),
+                                    "which has no heating profile, so this climate entity cannot drive it")) {
     this->mark_failed();
     return;
   }
 
   // The initial poll reads the heater (IOHomeControlComponent::request_device_status()), so the card
   // shows measured values from the first minute instead of nothing.
-  this->register_device_binding_(
-      this, DeviceCapabilityClass::CLIMATE, std::nullopt,
-      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
+  this->register_device_binding_(this, DeviceCapabilityClass::CLIMATE,
+                                 [this](const IoDevice &dev) { this->on_device_update_(dev); });
 
   if (this->has_range_)
     this->parent_->set_device_temperature_range(this->device_id_, this->range_min_c_, this->range_max_c_);
@@ -344,11 +340,8 @@ bool IOHomeClimate::apply_target_temperature_(const HeatingProfile &profile, con
 bool IOHomeClimate::sync_temperatures_(const HeatingProfile &profile, const HeatingReadings &readings, float target_c,
                                        bool &seen) {
   bool changed = false;
-  // NaN means "never read" (or a sensor fault): two NaNs are the same state, not a change.
-  const auto differs = [](float a, float b) { return !(std::isnan(a) && std::isnan(b)) && a != b; };
-
   if (profile.features.current_temperature) {
-    if (differs(this->current_temperature, readings.room_temperature_c)) {
+    if (detail::reading_changed(this->current_temperature, readings.room_temperature_c)) {
       this->current_temperature = readings.room_temperature_c;
       changed = true;
     }
@@ -357,7 +350,7 @@ bool IOHomeClimate::sync_temperatures_(const HeatingProfile &profile, const Heat
 
   if (profile.features.target_temperature && !std::isnan(target_c)) {
     seen = true;
-    if (differs(this->target_temperature, target_c)) {
+    if (detail::reading_changed(this->target_temperature, target_c)) {
       this->target_temperature = target_c;
       changed = true;
     }
@@ -503,9 +496,7 @@ bool IOHomeClimate::show_preset_(const HeatingProfile &profile, int8_t preset_in
   return changed;
 }
 
-void IOHomeClimate::on_device_update_(const std::string &id, const IoDevice &dev) {
-  if (id != this->device_id_)
-    return;
+void IOHomeClimate::on_device_update_(const IoDevice &dev) {
   const HeatingProfile *profile = find_heating_profile(dev);
   if (profile == nullptr)
     return;
@@ -518,7 +509,7 @@ void IOHomeClimate::dump_config() {
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
   ESP_LOGCONFIG(TAG, "  Target temperature range: %.1f-%.1f C (maximum from the heater once read)", HEATING_TEMP_MIN_C,
                 this->max_temperature_c_);
-  ESP_LOGCONFIG(TAG, "  Status Poll Interval: %" PRIu32 " ms", heater_poll_interval_ms(this->status_poll_interval_ms_));
+  this->log_poll_interval_config_(TAG, heater_poll_interval_ms);
   if (const DeviceTypeInfo *model = find_device_model_info(this->device_type_, this->subtype_, this->model_))
     ESP_LOGCONFIG(TAG, "  Model: %s", model->name);
   // Only the register profiles have run on hardware: an Atlantic AGILIA IO radiator (issue #165) and an

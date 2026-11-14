@@ -5,12 +5,14 @@
 /// @ingroup hioc_platforms
 ///
 /// IOHomeCover, IOHomeLight, IOHomeSwitch and IOHomeLock all bind an ESPHome entity to a hub
-/// device: the same five YAML setters, the same registration ritual in setup(), and the same
-/// poll-interval dump_config line. DeviceBoundEntity centralizes exactly that shared state and
-/// wiring. The auto-generated companion diagnostic sensors share a smaller, observe-only
-/// binding; DeviceBoundCompanion centralizes that one. A third mixin, HubBoundEntity, holds the
-/// single parent pointer that the hub-level control entities (which act on the hub as a whole and
-/// have no device to bind to) would otherwise each restate.
+/// device: the same YAML setters, the same registration ritual in setup() (which delivers only
+/// that device's updates to the entity), the same setup gate for a declared kind the entity cannot
+/// drive, and the same poll-interval dump_config line. Settings only one platform has stay on that
+/// platform and reach the registration through its configuration hook. DeviceBoundEntity centralizes exactly that
+/// shared state and wiring. The auto-generated companion diagnostic sensors share a smaller, observe-only binding;
+/// DeviceBoundCompanion centralizes that one. A third mixin, HubBoundEntity, holds the single parent pointer that the
+/// hub-level control entities (which act on the hub as a whole and have no device to bind to) would otherwise each
+/// restate.
 ///
 /// All three are intentionally NOT ESPHome base classes — they are plain mixins the entities inherit
 /// alongside their real ESPHome base (cover::Cover, light::LightOutput, switch_::Switch,
@@ -53,15 +55,6 @@ class DeviceBoundEntity {
   /// @brief Set the declared product model below the subtype (YAML `io_model:`).
   /// @param model Model; the codegen only emits a model the declared (type, subtype) offers.
   void set_device_model(DeviceModel model) { this->model_ = model; }
-  /// @brief Enable or disable optimistic target updates for this device (from YAML).
-  /// Only covers expose this in YAML today; other platforms keep the default (true), which is
-  /// inert for entity types that never consult the effective target / movement state.
-  /// @param optimistic_state False to disable optimistic state; default true.
-  void set_optimistic_state(bool optimistic_state) { this->optimistic_state_ = optimistic_state; }
-  /// @brief Set the speed profile of this device's position moves (from YAML `travel_speed:` or
-  /// `silent:`). Cover-only in practice; harmless on other platforms, which never issue position moves.
-  /// @param speed Speed profile; MOTOR_DEFAULT (the 6-byte frame) unless the cover declares otherwise.
-  void set_travel_speed(TravelSpeed speed) { this->travel_speed_ = speed; }
   /// @brief Mark this device as a low-power / duty-cycled receiver. Directed frames to it then set
   /// CTRL1_LOW_POWER and use the long wake-up preamble; an always-alive device (the default) gets
   /// neither. Radio property of the device, shared by all four platforms.
@@ -75,9 +68,6 @@ class DeviceBoundEntity {
   void set_system_key(const std::string &key) {
     this->has_system_key_ = hex_to_bytes(key, this->system_key_, AES_KEY_SIZE);
   }
-  /// @brief Record that the YAML declared `battery: true`, so the status log line names the battery
-  /// level even when the device reports none. Cover-only in practice.
-  void set_battery_entities(bool battery_entities) { this->battery_entities_ = battery_entities; }
   /// @brief Configure bounded follow-up polling while a state change is expected.
   /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the default single settle poll only.
   void set_status_poll_interval(uint32_t poll_interval_ms) { this->status_poll_interval_ms_ = poll_interval_ms; }
@@ -91,31 +81,30 @@ class DeviceBoundEntity {
   /// @param self The entity itself; used for set_timeout(), since DeviceBoundEntity is not a Component.
   /// @param entity_class Capability class of the registering entity; decides the features of a device
   ///        whose kind the type table does not know.
-  /// @param invert_override The YAML `invert_position:` when declared (covers only), else nullopt so the
-  ///        kind's default applies.
-  /// @param on_update The entity's device-update callback.
-  /// @param dimmable The YAML `dimmable: true` of a light; false for every other entity.
+  /// @param on_update The entity's device-update handler; called only for this entity's device.
+  /// @param configure Optional hook that fills the declaration with the entity's own settings (a cover's
+  ///        inversion and travel speed, a light's `dimmable`) after the shared fields are set.
   void register_device_binding_(Component *self, DeviceCapabilityClass entity_class,
-                                std::optional<bool> invert_override,
-                                std::function<void(const std::string &, const IoDevice &)> on_update,
-                                bool dimmable = false) {
+                                std::function<void(const IoDevice &)> on_update,
+                                const std::function<void(DeviceConfig &)> &configure = {}) {
     DeviceConfig config;
     config.type = this->device_type_;
     config.subtype = this->subtype_;
     config.model = this->model_;
     config.entity_class = entity_class;
-    config.invert_override = invert_override;
-    config.dimmable = dimmable;
-    config.optimistic_state = this->optimistic_state_;
-    config.travel_speed = this->travel_speed_;
     config.low_power = this->low_power_;
-    config.battery_entities = this->battery_entities_;
     config.has_system_key = this->has_system_key_;
     if (this->has_system_key_)
       memcpy(config.system_key, this->system_key_, AES_KEY_SIZE);
+    if (configure)
+      configure(config);
     this->parent_->add_device(this->device_id_, config);
     this->parent_->set_device_status_poll_interval(this->device_id_, this->status_poll_interval_ms_);
-    this->parent_->register_device_callback(std::move(on_update));
+    this->parent_->register_device_callback(
+        [this, on_update = std::move(on_update)](const std::string &id, const IoDevice &dev) {
+          if (id == this->device_id_)
+            on_update(dev);
+        });
     // Schedule the delayed initial poll through the public scheduler: Component::set_timeout is
     // protected, and DeviceBoundEntity is a mixin, not a Component subclass, so it cannot call it
     // through `self`. App.scheduler.set_timeout is the public entry point set_timeout wraps.
@@ -140,21 +129,37 @@ class DeviceBoundEntity {
     return declared.features;
   }
 
-  /// @brief Shared inbound-update guard for binary endpoints.
+  /// @brief Setup gate shared by the entities that drive one family of devices: logs why a declared
+  /// device kind can not be driven by this entity.
   ///
-  /// Matches this device and accepts only a settled (stopped) status with a known position.
-  /// Covers and locks intentionally use their own richer guards instead of this filter.
-  [[nodiscard]] bool passes_binary_update_filter_(const std::string &id, const IoDevice &dev) const {
-    return id == this->device_id_ && dev.position != UNKNOWN_POSITION && effective_is_stopped(dev);
+  /// A device declared with no type passes: discovery may still resolve it, as on the other platforms.
+  /// The caller marks the entity failed when this returns true (Component::mark_failed() is not
+  /// reachable from a mixin) and returns before registering the binding, so a misconfigured entity never
+  /// injects a device into the hub registry.
+  /// @param tag Log tag of the calling entity.
+  /// @param drivable Whether the declared kind is one the entity can drive; ignored when no type is declared.
+  /// @param hint Clause completing "Device X is declared as Y, <hint> — disabling it".
+  /// @return True when a declared kind is not drivable and the line was logged.
+  [[nodiscard]] bool reject_undrivable_kind_(const char *tag, bool drivable, const char *hint) const {
+    if (this->device_type_ == DeviceType::UNKNOWN || drivable)
+      return false;
+    ESP_LOGE(tag, "Device %s is declared as %s, %s — disabling it", this->device_id_.c_str(),
+             format_device_kind(this->device_type_, this->subtype_).c_str(), hint);
+    return true;
   }
 
   /// @brief Emit the shared two-branch poll-interval line for dump_config().
   /// @param tag Log tag of the calling entity.
-  void log_poll_interval_config_(const char *tag) const {
-    if (this->status_poll_interval_ms_ == 0) {
+  /// @param resolve_interval For an entity with a fixed cadence of its own, the rule that turns the YAML
+  ///        interval (zero when unset) into the interval it polls at, e.g. heater_poll_interval_ms(); null
+  ///        (the default) prints the YAML interval as set.
+  void log_poll_interval_config_(const char *tag, uint32_t (*resolve_interval)(uint32_t) = nullptr) const {
+    const uint32_t interval_ms =
+        resolve_interval != nullptr ? resolve_interval(this->status_poll_interval_ms_) : this->status_poll_interval_ms_;
+    if (interval_ms == 0) {
       ESP_LOGCONFIG(tag, "  Status Poll Interval: device-hinted settle polling (no fixed interval)");
     } else {
-      ESP_LOGCONFIG(tag, "  Status Poll Interval: %" PRIu32 " ms", this->status_poll_interval_ms_);
+      ESP_LOGCONFIG(tag, "  Status Poll Interval: %" PRIu32 " ms", interval_ms);
     }
   }
 
@@ -164,10 +169,7 @@ class DeviceBoundEntity {
   uint8_t subtype_{0};
   DeviceModel model_{DeviceModel::NONE};
   uint32_t status_poll_interval_ms_{0};
-  bool optimistic_state_{true};
-  TravelSpeed travel_speed_{TravelSpeed::MOTOR_DEFAULT};
   bool low_power_{false};
-  bool battery_entities_{false};
   bool has_system_key_{false};
   uint8_t system_key_[AES_KEY_SIZE]{};  ///< Key material: never logged.
 };

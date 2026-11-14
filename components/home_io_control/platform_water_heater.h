@@ -94,8 +94,8 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
   water_heater::WaterHeaterTraits traits() override;
 
   /// @brief Inbound device-update hook: fold IoDevice::dhw into the entity and publish when a shown field
-  /// changed. Ignores updates for other devices.
-  void on_device_update_(const std::string &id, const IoDevice &dev);
+  /// changed.
+  void on_device_update_(const IoDevice &dev);
 
   /// @brief Copy the readings into the entity's fields. The target is shown as unknown (NaN) while the
   /// heater reports automatic mode or away; away follows the heater's report.

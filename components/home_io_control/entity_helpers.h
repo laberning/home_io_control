@@ -37,6 +37,15 @@ namespace detail {
 inline constexpr float BINARY_ENTITY_ON_POSITION_THRESHOLD =
     50.0F;  ///< Shared 0-100 cutoff: values below this mean binary "on".
 
+/// @brief Shared inbound-update guard for binary endpoints (light, switch, fan).
+///
+/// Accepts only a settled (stopped) status with a known position. Covers and locks intentionally use
+/// their own richer guards instead of this filter.
+/// @param dev Updated device record.
+inline bool is_settled_with_position(const IoDevice &dev) {
+  return dev.position != UNKNOWN_POSITION && effective_is_stopped(dev);
+}
+
 // ============================================================================
 // Percent conversion helpers
 // ============================================================================
@@ -60,6 +69,40 @@ inline uint8_t round_percent(float fraction) { return static_cast<uint8_t>(std::
 /// @param io_percent IO percent in [0.0, 100.0].
 /// @return The same percent rounded to the nearest whole number.
 inline float whole_percent(float io_percent) { return std::round(io_percent); }
+
+/// @brief Convert a Home Assistant fraction (cover position, light brightness, fan heat) to the device's
+/// 0-100 position value.
+///
+/// The one place the inversion meets the rounding. The standard IO convention is 0 = open / full, 100 =
+/// closed / off, so Home Assistant's 1.0 maps to IO 0; a device with the reversed convention (a horizontal
+/// awning, say) maps 1.0 to IO 100.
+/// @param fraction Value in [0.0, 1.0] where 1.0 is open / full.
+/// @param invert True when the device's IO scale runs the other way (0 = closed).
+/// @return Rounded 0-100 IO percent.
+inline uint8_t io_from_fraction(float fraction, bool invert) {
+  return invert ? round_percent(fraction) : round_percent(1.0F - fraction);
+}
+
+/// @brief Convert a device's 0-100 position value to a Home Assistant fraction; the inverse of
+/// io_from_fraction() apart from the rounding.
+///
+/// Does not round: a caller that publishes whole percent passes whole_percent(io_percent), one that
+/// publishes the device's own resolution passes the raw value.
+/// @param io_percent IO percent in [0.0, 100.0].
+/// @param invert True when the device's IO scale runs the other way (0 = closed).
+/// @return Fraction in [0.0, 1.0] where 1.0 is open / full.
+inline float fraction_from_io(float io_percent, bool invert) {
+  return invert ? io_percent / 100.0F : 1.0F - (io_percent / 100.0F);
+}
+
+/// @brief Whether a freshly read value differs from the one an entity holds.
+///
+/// NaN means "never read" (or a sensor fault), so two NaNs are the same state, not a change.
+/// @param held Value the entity shows now.
+/// @param reading Value just read.
+inline bool reading_changed(float held, float reading) {
+  return !(std::isnan(held) && std::isnan(reading)) && held != reading;
+}
 
 // ============================================================================
 // Last-command record rendering

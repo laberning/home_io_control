@@ -90,10 +90,9 @@ class IOHomeLight : public light::LightOutput, public Component, public DeviceBo
   void write_state(light::LightState *state) override;
 
  protected:
-  /// @brief Handle inbound device status updates.
-  /// @param id Device ID.
+  /// @brief Handle inbound status updates of this light's device.
   /// @param dev Updated device state.
-  void on_device_update_(const std::string &id, const IoDevice &dev);
+  void on_device_update_(const IoDevice &dev);
 
   light::LightState *state_{nullptr};
   bool dimmable_{false};

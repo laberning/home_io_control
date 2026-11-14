@@ -50,9 +50,8 @@ class IOHomeFan : public fan::Fan, public Component, public DeviceBoundEntity {
   void control(const fan::FanCall &call) override;
 
   /// @brief Show a settled device status: heat level = 100 - position.
-  /// @param id Device ID.
   /// @param dev Updated device state.
-  void on_device_update_(const std::string &id, const IoDevice &dev);
+  void on_device_update_(const IoDevice &dev);
 };
 
 }  // namespace home_io_control

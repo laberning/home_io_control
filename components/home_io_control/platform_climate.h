@@ -86,8 +86,8 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   [[nodiscard]] const HeatingProfile *profile_() const;
 
   /// @brief Inbound device-update hook: fold IoDevice::heating into the entity and publish when
-  /// something it shows changed. Ignores updates for other devices.
-  void on_device_update_(const std::string &id, const IoDevice &dev);
+  /// something it shows changed.
+  void on_device_update_(const IoDevice &dev);
 
   /// @brief Copy the readings into the entity's fields.
   /// @param profile The device's profile.

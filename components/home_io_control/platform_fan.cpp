@@ -27,17 +27,14 @@ constexpr int HEAT_STEPS = 100;
 void IOHomeFan::setup() {
   // A known device of another family is a configuration mistake; an unknown type may still resolve
   // at discovery, as on the other platforms.
-  if (this->device_type_ != DeviceType::UNKNOWN &&
-      device_capability_class(this->device_type_, this->subtype_) != DeviceCapabilityClass::HEATER_LEVEL) {
-    ESP_LOGE(TAG,
-             "Device %s is declared as %s, which a fan entity cannot drive (it drives exterior heating) — disabling it",
-             this->device_id_.c_str(), format_device_kind(this->device_type_, this->subtype_).c_str());
+  if (this->reject_undrivable_kind_(
+          TAG, device_capability_class(this->device_type_, this->subtype_) == DeviceCapabilityClass::HEATER_LEVEL,
+          "which a fan entity cannot drive (it drives exterior heating)")) {
     this->mark_failed();
     return;
   }
-  this->register_device_binding_(
-      this, DeviceCapabilityClass::HEATER_LEVEL, std::nullopt,
-      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
+  this->register_device_binding_(this, DeviceCapabilityClass::HEATER_LEVEL,
+                                 [this](const IoDevice &dev) { this->on_device_update_(dev); });
 }
 
 fan::FanTraits IOHomeFan::get_traits() {
@@ -64,8 +61,9 @@ void IOHomeFan::control(const fan::FanCall &call) {
     return;
   }
 
-  // Heat p % is IO position 100 - p, the dimmable light's mapping (detail::round_percent rounds).
-  const auto io_position = detail::round_percent(1.0F - (static_cast<float>(heat) / static_cast<float>(HEAT_STEPS)));
+  // Heat p % is IO position 100 - p, the dimmable light's mapping.
+  const auto io_position =
+      detail::io_from_fraction(static_cast<float>(heat) / static_cast<float>(HEAT_STEPS), /*invert=*/false);
   this->parent_->queue_set_fan_position(this->device_id_, io_position);
 
   // The commanded state stands in until the device's status reply replaces it.
@@ -75,10 +73,10 @@ void IOHomeFan::control(const fan::FanCall &call) {
   this->publish_state();
 }
 
-void IOHomeFan::on_device_update_(const std::string &id, const IoDevice &dev) {
+void IOHomeFan::on_device_update_(const IoDevice &dev) {
   // Publish a stable state only: the shared filter wants a known position and a device at rest
   // (an exterior heater has no motion, so a status reply always counts as settled).
-  if (!this->passes_binary_update_filter_(id, dev))
+  if (!detail::is_settled_with_position(dev))
     return;
   const int heat = std::clamp(static_cast<int>(std::lround(100.0F - dev.position)), 0, HEAT_STEPS);
   const bool on = heat > 0;

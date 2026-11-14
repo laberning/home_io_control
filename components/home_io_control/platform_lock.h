@@ -40,9 +40,8 @@ class IOHomeLock : public lock::Lock, public Component, public DeviceBoundEntity
   /// @param call Desired state change.
   void control(const lock::LockCall &call) override;
   /// @brief Handle inbound device status updates.
-  /// @param id Device ID.
   /// @param dev Updated device state.
-  void on_device_update_(const std::string &id, const IoDevice &dev);
+  void on_device_update_(const IoDevice &dev);
 };
 
 }  // namespace home_io_control

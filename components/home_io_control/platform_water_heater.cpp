@@ -4,6 +4,7 @@
 
 #include "platform_water_heater.h"
 
+#include "entity_helpers.h"
 #include "proto_device_types.h"
 #include "status_poll_policy.h"
 
@@ -62,20 +63,17 @@ bool dhw_mode_for(water_heater::WaterHeaterMode mode, DhwMode &out) {
 void IOHomeWaterHeater::setup() {
   // A known device that is no water heater is a configuration mistake the codegen already refuses; fail
   // loudly rather than let every command be rejected downstream, and before the binding registers it.
-  if (this->device_type_ != DeviceType::UNKNOWN &&
-      !has_feature(device_features(this->device_type_, this->subtype_, this->model_), device_feature::WATER_HEATER)) {
-    ESP_LOGE(TAG,
-             "Device %s is declared as %s, which is not a water heater (io_device_type: domestic_hot_water) — "
-             "disabling it",
-             this->device_id_.c_str(), format_device_kind(this->device_type_, this->subtype_).c_str());
+  if (this->reject_undrivable_kind_(
+          TAG,
+          has_feature(device_features(this->device_type_, this->subtype_, this->model_), device_feature::WATER_HEATER),
+          "which is not a water heater (io_device_type: domestic_hot_water)")) {
     this->mark_failed();
     return;
   }
 
   // The initial poll reads the heater (IOHomeControlComponent::request_device_status()).
-  this->register_device_binding_(
-      this, DeviceCapabilityClass::WATER_HEATER, std::nullopt,
-      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
+  this->register_device_binding_(this, DeviceCapabilityClass::WATER_HEATER,
+                                 [this](const IoDevice &dev) { this->on_device_update_(dev); });
 }
 
 water_heater::WaterHeaterTraits IOHomeWaterHeater::traits() {
@@ -138,10 +136,7 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
 
 bool IOHomeWaterHeater::sync_from_readings_(const DhwReadings &readings) {
   bool changed = false;
-  // NaN means "never read": two NaNs are the same state, not a change.
-  const auto differs = [](float a, float b) { return !(std::isnan(a) && std::isnan(b)) && a != b; };
-
-  if (differs(this->current_temperature_, readings.water_c)) {
+  if (detail::reading_changed(this->current_temperature_, readings.water_c)) {
     this->set_current_temperature(readings.water_c);
     changed = true;
   }
@@ -150,7 +145,7 @@ bool IOHomeWaterHeater::sync_from_readings_(const DhwReadings &readings) {
   // main parameter of 0 then, which would read as 20 degrees but is no target).
   const bool automatic = readings.mode == static_cast<int16_t>(DhwMode::AUTO);
   const float target = (automatic || readings.away == 1) ? NAN : readings.target_c;
-  if (differs(this->target_temperature_, target)) {
+  if (detail::reading_changed(this->target_temperature_, target)) {
     this->set_target_temperature_(target);
     changed = true;
   }
@@ -170,9 +165,7 @@ bool IOHomeWaterHeater::sync_from_readings_(const DhwReadings &readings) {
   return changed;
 }
 
-void IOHomeWaterHeater::on_device_update_(const std::string &id, const IoDevice &dev) {
-  if (id != this->device_id_)
-    return;
+void IOHomeWaterHeater::on_device_update_(const IoDevice &dev) {
   if (this->sync_from_readings_(dev.dhw))
     this->publish_state();
 }
@@ -182,7 +175,7 @@ void IOHomeWaterHeater::dump_config() {
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
   ESP_LOGCONFIG(TAG, "  Target temperature range: %.0f-%.0f C", static_cast<double>(DHW_TARGET_MIN_C),
                 static_cast<double>(DHW_TARGET_MAX_C));
-  ESP_LOGCONFIG(TAG, "  Status Poll Interval: %" PRIu32 " ms", heater_poll_interval_ms(this->status_poll_interval_ms_));
+  this->log_poll_interval_config_(TAG, heater_poll_interval_ms);
   ESP_LOGCONFIG(TAG, "  Status: readings, target and mode confirmed on hardware; away mode experimental");
 }
 

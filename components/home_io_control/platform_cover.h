@@ -53,6 +53,15 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
     this->invert_ = invert;
     this->invert_explicit_ = true;
   }
+  /// @brief Enable or disable optimistic target updates for this cover (from YAML `optimistic_state:`).
+  /// @param optimistic_state False to disable optimistic state; default true.
+  void set_optimistic_state(bool optimistic_state) { this->optimistic_state_ = optimistic_state; }
+  /// @brief Set the speed profile of this cover's position moves (from YAML `travel_speed:` or `silent:`).
+  /// @param speed Speed profile; MOTOR_DEFAULT (the 6-byte frame) unless the cover declares otherwise.
+  void set_travel_speed(TravelSpeed speed) { this->travel_speed_ = speed; }
+  /// @brief Record that the YAML declared `battery: true`, so the status log line names the battery
+  /// level even when the device reports none.
+  void set_battery_entities(bool battery_entities) { this->battery_entities_ = battery_entities; }
   /// @brief Opt this cover into the periodic rain sensor poll (from YAML `rain_sensor_poll_interval`).
   /// @param interval_ms Poll interval in milliseconds; zero (the default) means no poll.
   void set_rain_sensor_poll_interval(uint32_t interval_ms) { this->rain_sensor_poll_interval_ms_ = interval_ms; }
@@ -76,10 +85,9 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
   /// @brief Handle cover commands from Home Assistant (open/close/stop/set_position).
   /// @param call CoverCall containing the requested operation.
   void control(const cover::CoverCall &call) override;
-  /// @brief Callback invoked when the underlying device state changes.
-  /// @param id Device ID that updated.
+  /// @brief Callback invoked when this cover's device state changes.
   /// @param dev Updated IoDevice state.
-  void on_device_update_(const std::string &id, const IoDevice &dev);
+  void on_device_update_(const IoDevice &dev);
   /// @brief Resolve the current inversion mode.
   /// @return Explicit YAML override when set, otherwise the runtime device profile.
   [[nodiscard]] bool effective_invert_() const;
@@ -92,6 +100,9 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
 
   bool invert_{false};
   bool invert_explicit_{false};
+  bool optimistic_state_{true};
+  TravelSpeed travel_speed_{TravelSpeed::MOTOR_DEFAULT};
+  bool battery_entities_{false};
   float last_io_position_{UNKNOWN_POSITION};
   uint32_t rain_sensor_poll_interval_ms_{0};    ///< 0 = not opted in; no rain poll is scheduled.
   uint32_t sun_level_poll_interval_ms_{0};      ///< 0 = not opted in; no sun level poll is scheduled.

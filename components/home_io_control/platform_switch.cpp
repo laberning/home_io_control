@@ -14,9 +14,8 @@ static const char *const TAG = "home_io_control.switch";
 void IOHomeSwitch::setup() {
   // Register and subscribe exactly like covers so the controller keeps one shared view of all
   // known IO-homecontrol devices, regardless of which ESPHome entity type wraps them.
-  this->register_device_binding_(
-      this, DeviceCapabilityClass::SWITCH, std::nullopt,
-      [this](const std::string &id, const IoDevice &dev) { this->on_device_update_(id, dev); });
+  this->register_device_binding_(this, DeviceCapabilityClass::SWITCH,
+                                 [this](const IoDevice &dev) { this->on_device_update_(dev); });
 }
 
 void IOHomeSwitch::write_state(bool state) {
@@ -25,9 +24,9 @@ void IOHomeSwitch::write_state(bool state) {
   this->parent_->queue_set_switch_state(this->device_id_, state);
 }
 
-void IOHomeSwitch::on_device_update_(const std::string &id, const IoDevice &dev) {
+void IOHomeSwitch::on_device_update_(const IoDevice &dev) {
   // Only publish a stable state for this device once it has stopped moving with a known position.
-  if (!this->passes_binary_update_filter_(id, dev))
+  if (!detail::is_settled_with_position(dev))
     return;
 
   // Binary endpoints share the same on/off encoding as the light wrapper.

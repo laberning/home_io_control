@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstring>
 
 using namespace esphome::home_io_control;
@@ -24,6 +25,45 @@ TEST(EntityHelpers, RoundPercentRoundsRatherThanTruncates) {
   EXPECT_EQ(detail::round_percent(1.0F), 100);
   EXPECT_EQ(detail::round_percent(0.504F), 50) << "just past the rounding boundary should round up";
   EXPECT_EQ(detail::round_percent(0.494F), 49) << "just below the rounding boundary should round down";
+}
+
+TEST(EntityHelpers, IoFromFractionMapsOpenToZeroUnlessInverted) {
+  EXPECT_EQ(detail::io_from_fraction(1.0F, false), 0) << "standard: HA fully open is IO 0";
+  EXPECT_EQ(detail::io_from_fraction(0.0F, false), 100);
+  EXPECT_EQ(detail::io_from_fraction(1.0F, true), 100) << "inverted: HA fully open is IO 100";
+  EXPECT_EQ(detail::io_from_fraction(0.0F, true), 0);
+}
+
+TEST(EntityHelpers, IoFromFractionRoundsQuantizedValues) {
+  // HA's "50%" arrives as 128/255; both directions must round to 50, not truncate to 49.
+  EXPECT_EQ(detail::io_from_fraction(128.0F / 255.0F, true), 50);
+  EXPECT_EQ(detail::io_from_fraction(1.0F - 128.0F / 255.0F, false), 50);
+  EXPECT_EQ(detail::io_from_fraction(0.504F, true), 50);
+  EXPECT_EQ(detail::io_from_fraction(0.494F, true), 49);
+}
+
+TEST(EntityHelpers, FractionFromIoInvertsTheMapping) {
+  EXPECT_FLOAT_EQ(detail::fraction_from_io(0.0F, false), 1.0F);
+  EXPECT_FLOAT_EQ(detail::fraction_from_io(100.0F, false), 0.0F);
+  EXPECT_FLOAT_EQ(detail::fraction_from_io(30.0F, false), 0.7F);
+  EXPECT_FLOAT_EQ(detail::fraction_from_io(100.0F, true), 1.0F);
+  EXPECT_FLOAT_EQ(detail::fraction_from_io(30.0F, true), 0.3F);
+}
+
+TEST(EntityHelpers, FractionFromIoKeepsTheDevicesResolution) {
+  // The conversion does not round: a half-percent position stays a half-percent fraction, and a caller
+  // that wants whole percent (the cover) rounds first.
+  EXPECT_FLOAT_EQ(detail::fraction_from_io(33.5F, true), 0.335F);
+  EXPECT_FLOAT_EQ(detail::fraction_from_io(detail::whole_percent(99.68F), false), 0.0F)
+      << "a cover resting at 99.68 % closed publishes exactly closed";
+}
+
+TEST(EntityHelpers, ReadingChangedTreatsTwoNansAsEqual) {
+  EXPECT_FALSE(detail::reading_changed(NAN, NAN)) << "never read twice is no change";
+  EXPECT_TRUE(detail::reading_changed(NAN, 21.5F));
+  EXPECT_TRUE(detail::reading_changed(21.5F, NAN)) << "a sensor fault after a value is a change";
+  EXPECT_TRUE(detail::reading_changed(21.0F, 21.5F));
+  EXPECT_FALSE(detail::reading_changed(21.5F, 21.5F));
 }
 
 TEST(EntityHelpers, FormatOriginatorRendersNameAndHex) {
