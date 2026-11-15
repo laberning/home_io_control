@@ -248,3 +248,55 @@ TEST(OneWayReceiver, OnlyListedSendersAreExposed) {
   EXPECT_TRUE(rx.is_exposed("9D6085"));
   EXPECT_FALSE(rx.is_exposed("112233"));
 }
+
+// ============================================================================
+// Frames heard during an exchange
+// ============================================================================
+
+TEST(OneWayReceiver, KeptFramesComeBackOldestFirstWithTheirArrivalAndRssi) {
+  OneWayReceiver rx;
+  rx.keep_overheard(execute_frame(MOVE_CLOSE), T0, -80);
+  rx.keep_overheard(execute_frame(MOVE_STOP), T0 + 40, -75);
+
+  const auto kept = rx.take_kept();
+  ASSERT_EQ(kept.size(), 2u);
+  EXPECT_EQ(decode_1w_frame(kept[0].frame).main0, MOVE_CLOSE);
+  EXPECT_EQ(kept[0].heard_ms, T0);
+  EXPECT_EQ(kept[0].rssi_dbm, -80);
+  EXPECT_EQ(decode_1w_frame(kept[1].frame).main0, MOVE_STOP);
+  EXPECT_EQ(kept[1].heard_ms, T0 + 40);
+}
+
+TEST(OneWayReceiver, TakingTheKeptFramesEmptiesThem) {
+  OneWayReceiver rx;
+  rx.keep_overheard(execute_frame(MOVE_CLOSE), T0, -80);
+  ASSERT_TRUE(rx.has_kept());
+
+  EXPECT_EQ(rx.take_kept().size(), 1u);
+  EXPECT_FALSE(rx.has_kept());
+  EXPECT_TRUE(rx.take_kept().empty());
+}
+
+TEST(OneWayReceiver, AFifthKeptFrameDropsTheOldest) {
+  OneWayReceiver rx;
+  for (uint32_t i = 0; i < ONEWAY_KEPT_FRAMES_MAX + 1; i++)
+    rx.keep_overheard(execute_frame(MOVE_CLOSE), T0 + i, -80);
+
+  const auto kept = rx.take_kept();
+  ASSERT_EQ(kept.size(), ONEWAY_KEPT_FRAMES_MAX);
+  EXPECT_EQ(kept.front().heard_ms, T0 + 1) << "the first frame was dropped";
+  EXPECT_EQ(kept.back().heard_ms, T0 + ONEWAY_KEPT_FRAMES_MAX);
+}
+
+TEST(OneWayReceiver, ATwoWayFrameIsNotKept) {
+  OneWayReceiver rx;
+  IoFrame two_way{};
+  init_frame(two_way, /*is_2w=*/true, /*start=*/true, /*end=*/true, /*low_power=*/false);
+  set_src(two_way, REMOTE_ID);
+  set_dst(two_way, ROLLER_CLASS);
+  set_cmd(two_way, CMD_PRIVATE_RESP, nullptr, 0);
+
+  rx.keep_overheard(two_way, T0, -80);
+
+  EXPECT_FALSE(rx.has_kept());
+}

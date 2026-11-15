@@ -475,6 +475,11 @@ void IOHomeControlComponent::loop() {
   if (this->radio_test_mode_)
     return;
 
+  // 1W frames an exchange heard and ignored are handled first: they are older than anything the
+  // idle receiver can hold, and the burst window they open gates the operation dispatched below.
+  if (!this->busy_)
+    this->drain_overheard_oneway_frames_();
+
   // Check for received packets (non-blocking)
   if (!this->busy_) {
     RadioRxPacket packet{};

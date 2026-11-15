@@ -185,3 +185,19 @@ TEST(Decisions, BurstContinuesWithinQuietGap) {
   EXPECT_FALSE(decisions::oneway_burst_started_fresh(/*last_1w_activity_ms=*/1000, /*now=*/1699, /*quiet_ms=*/700))
       << "a frame arriving just inside quiet_ms extends the current burst rather than starting a new one";
 }
+
+// ============================================================================
+// Frames heard during an exchange — keep_overheard_frame_for_oneway_handling()
+// ============================================================================
+
+TEST(Decisions, OverheardOneWayFrameIsKeptForTheRemoteHandling) {
+  IoFrame f{};
+  init_frame(f, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
+  EXPECT_TRUE(decisions::keep_overheard_frame_for_oneway_handling(f));
+}
+
+TEST(Decisions, OverheardTwoWayFrameIsNotKept) {
+  IoFrame f{};
+  init_frame(f, /*is_2w=*/true, /*start=*/true, /*end=*/true, /*low_power=*/false);
+  EXPECT_FALSE(decisions::keep_overheard_frame_for_oneway_handling(f));
+}

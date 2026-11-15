@@ -802,16 +802,15 @@ bool IOHomeControlComponent::record_probe_reply_event(const IoFrame &reply) {
 // decoded for logging and the sender event, then follows linked_remotes handling, which may schedule
 // a status poll for devices this remote controls. The order of the steps matters and is kept: see the
 // comments inline.
-void IOHomeControlComponent::handle_oneway_frame_(const IoFrame &frame) {
+void IOHomeControlComponent::handle_oneway_frame_(const IoFrame &frame, uint32_t now, int16_t rssi_dbm) {
   const std::string src_id = node_id_to_string(frame.src);
-  const uint32_t now = millis();
 
   // Any 1W frame means a remote is transmitting right now, duplicate or not — note it before the
   // duplicate filter so loop() keeps background polls off the radio for the rest of the burst. A
   // pairing-gesture sighting is remembered the same way, so a repeated gesture frame still refreshes
   // its timestamp (issue #27/#65; OneWayReceiver::note_frame() explains why the discovery
   // telemetry window alone does not catch it).
-  this->oneway_receiver_.note_frame(frame, now, this->radio_->get_last_capture().rssi_dbm);
+  this->oneway_receiver_.note_frame(frame, now, rssi_dbm);
 
   // Decode once and reuse for the duplicate key, logging and (when it carries a command intent) the
   // sender HA event, so a physical remote press (or sensor trigger) can drive automations directly.
@@ -837,6 +836,18 @@ void IOHomeControlComponent::handle_oneway_frame_(const IoFrame &frame) {
   detail::log_1w_remote_frame(info, linked);
   this->maybe_fire_sender_event_(info, linked != nullptr && !linked->empty(), src_id);
   this->follow_linked_remote_press_(info, src_id);
+}
+
+void IOHomeControlComponent::on_overheard_frame(const IoFrame &frame, const RadioRxPacket & /*packet*/, uint32_t now) {
+  // The wait has just received this frame, so the radio's last capture is its own.
+  this->oneway_receiver_.keep_overheard(frame, now, this->radio_->get_last_capture().rssi_dbm);
+}
+
+void IOHomeControlComponent::drain_overheard_oneway_frames_() {
+  if (!this->oneway_receiver_.has_kept())
+    return;
+  for (const KeptOneWayFrame &kept : this->oneway_receiver_.take_kept())
+    this->handle_oneway_frame_(kept.frame, kept.heard_ms, kept.rssi_dbm);
 }
 
 void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packet) {
@@ -870,7 +881,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   }
 
   if ((frame.ctrl0 & CTRL0_PROTOCOL_1W) != 0) {
-    this->handle_oneway_frame_(frame);
+    this->handle_oneway_frame_(frame, millis(), this->radio_->get_last_capture().rssi_dbm);
     return;
   }
 

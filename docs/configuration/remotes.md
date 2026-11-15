@@ -100,12 +100,13 @@ Notes:
 
 ### When a press is missed
 
-The radio cannot listen while the hub transmits, so a remote press that arrives while the hub is in
-the middle of its own exchange is lost. This happens most often right after a press: the hub then
-polls the linked devices for a while, and a second press on another remote a few seconds later can
-fall into one of those polls. The device moves, but the entity keeps its old state until the next
-press the hub hears, a Home Assistant command, or another controller's traffic to the device. Low-power devices
-make it likelier, because each wake-up preamble keeps the transmitter busy for about 0.2 s. See
+The radio cannot listen while the hub transmits, so a remote press that falls inside the hub's own
+transmission is lost. A remote frame the hub hears while it waits for a device's reply is kept and
+handled as soon as that exchange ends, like any other press. A press can still be missed right after
+another one: the hub then polls the linked devices for a while, and a second press on another remote
+a few seconds later can fall into the hub's own transmissions. The device moves, but the entity keeps
+its old state until the next press the hub hears, a Home Assistant command, or another controller's
+traffic to the device. Low-power devices make it likelier, because each wake-up preamble keeps the transmitter busy for about 0.2 s. See
 [issue #209](https://github.com/laberning/home_io_control/issues/209). On a cover,
 `status_refresh_interval` limits how long the old state can stay: see
 [Refreshing the status at rest](cover.md#refreshing-the-status-at-rest). Two tuning parameters

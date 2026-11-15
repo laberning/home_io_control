@@ -1,7 +1,10 @@
 #include "oneway_receiver.h"
 
+#include "esphome/core/log.h"
+
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 /// @file oneway_receiver.cpp
 /// @brief State and rules for frames overheard from one-way (1W) remotes.
@@ -9,6 +12,10 @@
 
 namespace esphome {
 namespace home_io_control {
+
+namespace {
+constexpr const char *const TAG = "home_io_control.oneway_rx";
+}  // namespace
 
 void OneWayReceiver::note_activity(uint32_t now) {
   if (decisions::oneway_burst_started_fresh(this->last_activity_ms_, now, ONEWAY_QUIET_PERIOD_MS))
@@ -26,6 +33,18 @@ void OneWayReceiver::note_frame(const IoFrame &frame, uint32_t now, int16_t rssi
   this->sighting_.rssi = rssi_dbm;
   this->sighting_.seen_ms = now;
 }
+
+void OneWayReceiver::keep_overheard(const IoFrame &frame, uint32_t now, int16_t rssi_dbm) {
+  if (!decisions::keep_overheard_frame_for_oneway_handling(frame))
+    return;
+  if (this->kept_.size() >= ONEWAY_KEPT_FRAMES_MAX) {
+    ESP_LOGD(TAG, "Kept 1W frames full (%u): dropping the oldest", static_cast<unsigned>(ONEWAY_KEPT_FRAMES_MAX));
+    this->kept_.erase(this->kept_.begin());
+  }
+  this->kept_.push_back(KeptOneWayFrame{frame, now, rssi_dbm});
+}
+
+std::vector<KeptOneWayFrame> OneWayReceiver::take_kept() { return std::exchange(this->kept_, {}); }
 
 bool OneWayReceiver::is_new_press(const IoFrame &frame, const OneWayFrameInfo &info, uint32_t now) {
   decisions::OneWayDedupState incoming{

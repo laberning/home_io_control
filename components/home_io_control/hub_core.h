@@ -55,6 +55,7 @@
 #include "oneway_transmitter.h"
 #include "oneway_key_adoption.h"
 #include "oneway_receiver.h"
+#include "overheard_frame_observer.h"
 #include "device_event_log.h"
 // lr1121_firmware_update_controller.h forward-declares FlashDecision / BootloaderUpgradePath /
 // Lr1121FirmwareUpdater so lr1121_firmware_decisions.h and radio_lr1121_firmware_updater.h are
@@ -109,7 +110,8 @@ class IOHomeControlComponent : public Component,
                                public SpiAccess,
                                public HubDevicePort,
                                public HubHeatingPort,
-                               public HubControlPort {
+                               public HubControlPort,
+                               public OverheardFrameObserver {
  public:
   /// Initialize ExchangeEngine, PairingEngine, and ManagementActions with double-pointer/
   /// reference indirection so that test assignments (`comp.radio_ = &mock`) propagate
@@ -173,12 +175,17 @@ class IOHomeControlComponent : public Component,
       if (IoDevice *dev = this->registry_.get(node_id_to_string(dst)); dev != nullptr)
         clear_moving_evidence(*dev);
     });
+    this->exchange_engine_.set_overheard_frame_observer(this);
   }
 
   /// @brief Result payload used by hub-level management actions such as rename.
   /// Alias of the standalone esphome::home_io_control::ManagementActionResult struct so that
   /// callers using the nested name IOHomeControlComponent::ManagementActionResult continue to work.
   using ManagementActionResult = esphome::home_io_control::ManagementActionResult;
+
+  /// OverheardFrameObserver: keep a 1W frame an exchange wait ignored as unrelated, for
+  /// drain_overheard_oneway_frames_() once the exchange has ended. A two-way frame is not kept.
+  void on_overheard_frame(const IoFrame &frame, const RadioRxPacket &packet, uint32_t now) override;
 
   /// @brief Initialize hardware (radio and device registry).
   void setup() override;
@@ -854,7 +861,15 @@ class IOHomeControlComponent : public Component,
   /// follow a linked remote's press. That order is load-bearing: activity and pairing gestures count
   /// repeats, and key adoption sees every frame before the duplicate filter.
   /// @param frame Parsed frame with the CTRL0 1W bit set.
-  void handle_oneway_frame_(const IoFrame &frame);
+  /// @param now millis() when the frame was heard: now for an idle frame, the wait's time for one an
+  ///        exchange kept, so the duplicate filter and burst window see the real arrival.
+  /// @param rssi_dbm RSSI of the capture, in dBm.
+  void handle_oneway_frame_(const IoFrame &frame, uint32_t now, int16_t rssi_dbm);
+
+  /// Run the 1W frames heard inside an exchange through handle_oneway_frame_(), oldest first, at
+  /// their arrival times. Called at the top of loop(), so it precedes the idle receive, the
+  /// burst-window check and the next queued operation.
+  void drain_overheard_oneway_frames_();
 
   /// Handle an authenticated CMD_STATUS_UPDATE from a registered device: a device event report
   /// (decisions::is_device_event_report()) is recorded, any other 0x71 is applied as a position update.

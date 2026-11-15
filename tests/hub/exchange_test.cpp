@@ -4911,3 +4911,126 @@ TEST(ExchangeOptions, UnconfirmedStatusReadKeepsItsPlanGapAndIsNotGivenTheLongRe
   ASSERT_GE(t.size(), 3u);
   EXPECT_EQ(t[2] - t[1], rig.tuning.exchange_response_wait_ms + EXCHANGE_RETRY_DELAY_MS);
 }
+
+// ============================================================================
+// Overheard-frame observer: a frame the first-response or final-response wait ignores as unrelated
+// is reported to the attached OverheardFrameObserver, and the exchange itself runs as without it.
+// ============================================================================
+
+namespace {
+
+struct RecordingOverheardObserver : OverheardFrameObserver {
+  std::vector<IoFrame> frames;
+  std::vector<uint32_t> times;
+  void on_overheard_frame(const IoFrame &frame, const RadioRxPacket &, uint32_t now) override {
+    this->frames.push_back(frame);
+    this->times.push_back(now);
+  }
+};
+
+/// A wall remote's CLOSE press: a 1W frame to a device class.
+IoFrame remote_press_frame() {
+  const uint8_t remote[NODE_ID_SIZE] = {0x9D, 0x60, 0x85};
+  const uint8_t roller_class[NODE_ID_SIZE] = {0x00, 0x01, 0xBF};
+  const uint8_t close[3] = {0x00, 0x00, 0xC8};
+  IoFrame f{};
+  init_frame(f, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
+  set_src(f, remote);
+  set_dst(f, roller_class);
+  set_cmd(f, CMD_EXECUTE, close, sizeof(close));
+  return f;
+}
+
+/// What an exchange did, for comparing a run with and without an overheard frame.
+struct ExchangeRun {
+  ExchangeOutcome outcome;
+  size_t send_count;
+  std::vector<uint32_t> send_times_ms;
+  uint32_t ended_ms;
+  bool operator==(const ExchangeRun &o) const {
+    return outcome == o.outcome && send_count == o.send_count && send_times_ms == o.send_times_ms &&
+           ended_ms == o.ended_ms;
+  }
+};
+
+/// One exchange where `noise` (if any) is queued at the given point: before the first reply (a direct
+/// answer follows) or between the challenge and the final reply.
+ExchangeRun run_with_noise(const IoFrame *noise, bool challenged, RecordingOverheardObserver &observer) {
+  ResendRig rig;
+  rig.engine.set_overheard_frame_observer(&observer);
+  if (challenged) {
+    rig.queue_challenge();
+    if (noise != nullptr)
+      rig.queue(*noise);
+    rig.queue_final_reply();
+  } else {
+    if (noise != nullptr)
+      rig.queue(*noise);
+    rig.queue(build_status_response(test::DST_ID, test::OWN_ID));
+  }
+  const ExchangeOutcome outcome = rig.send(stop_request());
+  return {outcome, rig.radio.get_sent_data().size(), rig.radio.send_times_ms(), esphome::millis()};
+}
+
+}  // namespace
+
+TEST(ExchangeOverheard, RemotePressInTheFirstResponseWaitReachesTheObserverOnce) {
+  const IoFrame press = remote_press_frame();
+  RecordingOverheardObserver quiet;
+  RecordingOverheardObserver heard;
+  const ExchangeRun without = run_with_noise(nullptr, false, quiet);
+  const ExchangeRun with = run_with_noise(&press, false, heard);
+
+  ASSERT_EQ(heard.frames.size(), 1u);
+  EXPECT_EQ(heard.frames[0].cmd, CMD_EXECUTE);
+  EXPECT_EQ(memcmp(heard.frames[0].src, press.src, NODE_ID_SIZE), 0);
+  EXPECT_TRUE(quiet.frames.empty());
+  EXPECT_EQ(with.outcome, ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  EXPECT_TRUE(with == without) << "the exchange's outcome, sends and timing do not depend on the frame";
+}
+
+TEST(ExchangeOverheard, RemotePressInTheFinalResponseWaitReachesTheObserverOnce) {
+  const IoFrame press = remote_press_frame();
+  RecordingOverheardObserver quiet;
+  RecordingOverheardObserver heard;
+  const ExchangeRun without = run_with_noise(nullptr, true, quiet);
+  const ExchangeRun with = run_with_noise(&press, true, heard);
+
+  ASSERT_EQ(heard.frames.size(), 1u);
+  EXPECT_EQ(heard.frames[0].cmd, CMD_EXECUTE);
+  EXPECT_TRUE(quiet.frames.empty());
+  EXPECT_TRUE(with == without);
+}
+
+TEST(ExchangeOverheard, ForeignTwoWayFrameAlsoReachesTheObserverBecauseTheEngineDoesNotFilter) {
+  const IoFrame foreign = build_status_response(test::FOREIGN_ID, test::OWN_ID);
+  RecordingOverheardObserver heard;
+  const ExchangeRun run = run_with_noise(&foreign, false, heard);
+
+  ASSERT_EQ(heard.frames.size(), 1u);
+  EXPECT_EQ(heard.frames[0].cmd, CMD_PRIVATE_RESP);
+  EXPECT_EQ(run.outcome, ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+}
+
+TEST(ExchangeOverheard, FramesTheExchangeAcceptsAreNotReported) {
+  RecordingOverheardObserver heard;
+  const ExchangeRun run = run_with_noise(nullptr, true, heard);
+
+  EXPECT_EQ(run.outcome, ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  EXPECT_TRUE(heard.frames.empty());
+}
+
+TEST(ExchangeOverheard, InboundAuthenticationWaitDoesNotReport) {
+  // challenge_sender() serves a device-initiated command and the pairing key pull; its wait is
+  // not an exchange wait, so a remote press heard there is not handed to the observer.
+  ResendRig rig;
+  RecordingOverheardObserver heard;
+  rig.engine.set_overheard_frame_observer(&heard);
+  rig.queue(remote_press_frame());
+
+  IoFrame request{};
+  create_execute_position(request, test::DST_ID, test::OWN_ID, false, 100);
+  EXPECT_NE(rig.engine.challenge_sender(request, FREQ_CH2, test::TEST_SYSTEM_KEY),
+            ExchangeEngine::ChallengeResult::VERIFIED);
+  EXPECT_TRUE(heard.frames.empty());
+}

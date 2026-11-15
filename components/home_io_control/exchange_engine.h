@@ -24,6 +24,7 @@
 #include "hub_exchange.h"
 #include "decisions_exchange.h"
 #include "decisions_attempts.h"
+#include "overheard_frame_observer.h"
 #include "proto_frame.h"
 #include "proto_timing.h"
 #include "radio_interface.h"
@@ -377,6 +378,17 @@ class ExchangeEngine {
   void set_transmit_observer(TransmitObserver *observer) { this->transmit_observer_ = observer; }
 
   // -------------------------------------------------------------------------
+  // Overheard-frame observer
+  // -------------------------------------------------------------------------
+
+  /// Attach the observer told about each parsed frame an exchange's first-response or final-response
+  /// wait ignores as unrelated (a wall remote's press, a neighbour's traffic). The waits behave
+  /// exactly as without an observer. Discovery, pairing, key extraction and inbound authentication
+  /// waits do not report. One slot; the hub attaches itself once.
+  /// @param observer Non-owning pointer, or nullptr to detach.
+  void set_overheard_frame_observer(OverheardFrameObserver *observer) { this->overheard_frame_observer_ = observer; }
+
+  // -------------------------------------------------------------------------
   // Per-target evidence
   // -------------------------------------------------------------------------
 
@@ -597,6 +609,9 @@ class ExchangeEngine {
 
   // --- Outbound exchange step helpers --------------------------------------
 
+  /// Tell the overheard-frame observer, if one is attached, about a frame a wait ignored as unrelated.
+  void report_overheard_(const IoFrame &frame, const RadioRxPacket &packet);
+
   /// Transmit one request attempt and update context state on failure.
   bool transmit_request_(const IoFrame &request, uint32_t freq, uint16_t preamble,
                          exchange::OutboundExchangeContext &ctx);
@@ -713,14 +728,15 @@ class ExchangeEngine {
 
   // --- Dependencies (back-references into the hub) -------------------------
 
-  RadioDriver **radio_ptr_;                          ///< Double-pointer: *radio_ptr_ is always the hub's active driver.
-  const uint8_t *node_id_;                           ///< Hub's node_id_[NODE_ID_SIZE] array.
-  const uint8_t *system_key_;                        ///< Hub's system_key_[AES_KEY_SIZE] array.
-  const TuningConfig *tuning_;                       ///< Hub's live TuningConfig (read on every LBT check).
-  TransmitObserver *transmit_observer_{nullptr};     ///< Non-owning; see set_transmit_observer().
-  TargetEvidenceProvider target_evidence_provider_;  ///< See set_target_evidence_provider().
-  DeviceKeyProvider device_key_provider_;            ///< See set_device_key_provider().
-  WakeEvidenceSpentHandler wake_evidence_spent_handler_;  ///< See set_wake_evidence_spent_handler().
+  RadioDriver **radio_ptr_;                       ///< Double-pointer: *radio_ptr_ is always the hub's active driver.
+  const uint8_t *node_id_;                        ///< Hub's node_id_[NODE_ID_SIZE] array.
+  const uint8_t *system_key_;                     ///< Hub's system_key_[AES_KEY_SIZE] array.
+  const TuningConfig *tuning_;                    ///< Hub's live TuningConfig (read on every LBT check).
+  TransmitObserver *transmit_observer_{nullptr};  ///< Non-owning; see set_transmit_observer().
+  OverheardFrameObserver *overheard_frame_observer_{nullptr};  ///< Non-owning; see set_overheard_frame_observer().
+  TargetEvidenceProvider target_evidence_provider_;            ///< See set_target_evidence_provider().
+  DeviceKeyProvider device_key_provider_;                      ///< See set_device_key_provider().
+  WakeEvidenceSpentHandler wake_evidence_spent_handler_;       ///< See set_wake_evidence_spent_handler().
 
   // --- Engine state --------------------------------------------------------
 

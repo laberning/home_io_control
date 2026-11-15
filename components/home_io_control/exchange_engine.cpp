@@ -694,6 +694,11 @@ bool ExchangeEngine::transmit_request_(const IoFrame &request, uint32_t freq, ui
   return true;
 }
 
+void ExchangeEngine::report_overheard_(const IoFrame &frame, const RadioRxPacket &packet) {
+  if (this->overheard_frame_observer_ != nullptr)
+    this->overheard_frame_observer_->on_overheard_frame(frame, packet, millis());
+}
+
 decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_response_(
     const IoFrame &request, exchange::OutboundExchangeContext &ctx) {
   ListenSpec spec;
@@ -725,6 +730,7 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
       frame_log_flush();
       this->record_debug("first_wrong_exchange", ctx.try_index, false);
       log_exchange_frame("Ignored first response", ctx.try_index, *parsed, pkt.len);
+      this->report_overheard_(*parsed, pkt);
       return ReplyDisposition::IGNORE;
     }
     ctx.first_response_ms = millis();
@@ -854,6 +860,7 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
       return ReplyDisposition::ACCEPT;
     this->record_debug("final_wrong_exchange", ctx.try_index, true);
     log_exchange_frame("Ignored final response", ctx.try_index, *parsed, pkt.len);
+    this->report_overheard_(*parsed, pkt);
     return ReplyDisposition::IGNORE;
   });
 
