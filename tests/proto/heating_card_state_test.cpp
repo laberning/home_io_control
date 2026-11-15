@@ -284,6 +284,25 @@ TEST(HeatingCardReduce, ObservedLevelsDriveModeAndPreset) {
   EXPECT_TRUE(std::isnan(card.target_c));
 }
 
+TEST(HeatingCardReduce, ALevelHeaterWhoseStatusCarriesNoLevelKeepsShowingTheCommand) {
+  // A status main parameter outside the level prefix (0xC800, issue #228) leaves the level unread.
+  const int8_t eco = preset_of(level_heater(), HeatingPresetId::ECO);
+  HeatingCardState card = commanded(level_heater(), preset_command(level_heater(), eco), HeatingCardState{}).card;
+  HeatingReadings r;
+  r.main_parameter = 0xC800;
+
+  card = reduced(level_heater(), r, card);
+  EXPECT_FALSE(card.observed) << "no level was read, so the commands keep deciding";
+  EXPECT_EQ(card.mode, HeatingHvacMode::HEAT);
+  EXPECT_EQ(card.preset_index, eco);
+
+  const HeatingCardCommand off = commanded_mode(level_heater(), HeatingHvacMode::OFF, card);
+  EXPECT_TRUE(off.shown);
+  EXPECT_EQ(off.card.mode, HeatingHvacMode::OFF);
+  EXPECT_EQ(off.card.preset_index, -1);
+  EXPECT_EQ(initial_heating_card(level_heater()).mode, HeatingHvacMode::OFF) << "off after a reboot";
+}
+
 TEST(HeatingCardReduce, WithoutACommandedModeAThermostatThatReportsIsShownAsHeating) {
   HeatingReadings r;
   r.setpoint_c = 21.0F;
@@ -470,10 +489,10 @@ TEST(HeatingCard, TwoCardsDifferingInABookkeepingFlagShowTheSame) {
   EXPECT_FALSE(a.shows_same_as(b));
 }
 
-TEST(HeatingCard, OnlyTheRegisterProfilesHaveBeenRunOnHardware) {
+TEST(HeatingCard, TheRegisterAndLevelProfilesHaveBeenRunOnHardware) {
   EXPECT_EQ(heating_hardware_status(nullptr), HeatingHardwareStatus::UNVALIDATED);
   EXPECT_EQ(heating_hardware_status(&thermostat()), HeatingHardwareStatus::UNVALIDATED);
-  EXPECT_EQ(heating_hardware_status(&level_heater()), HeatingHardwareStatus::UNVALIDATED);
+  EXPECT_EQ(heating_hardware_status(&level_heater()), HeatingHardwareStatus::LEVELS_CONFIRMED);
   EXPECT_EQ(heating_hardware_status(&radiator()), HeatingHardwareStatus::CONFIRMED);
   EXPECT_EQ(heating_hardware_status(&towel_dryer()), HeatingHardwareStatus::CONFIRMED);
 

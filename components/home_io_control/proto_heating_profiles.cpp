@@ -875,7 +875,11 @@ HeatingCardCommand command_heating_card(const HeatingProfile &profile, const Hea
 }
 
 HeatingHardwareStatus heating_hardware_status(const HeatingProfile *profile) {
-  if (profile == nullptr || profile->path != HeatingControlPath::PRIVATE_REGISTERS)
+  if (profile == nullptr)
+    return HeatingHardwareStatus::UNVALIDATED;
+  if (profile->path == HeatingControlPath::HEATING_LEVEL)
+    return HeatingHardwareStatus::LEVELS_CONFIRMED;
+  if (profile->path != HeatingControlPath::PRIVATE_REGISTERS)
     return HeatingHardwareStatus::UNVALIDATED;
   return profile->experimental_writes ? HeatingHardwareStatus::WRITES_EXPERIMENTAL : HeatingHardwareStatus::CONFIRMED;
 }
