@@ -36,6 +36,13 @@
 /// significant byte first, unlike the temperatures. It equals the total each heater's own display shows on
 /// two Atlantic/Sauter Tahual radiators (`0D 5E` = 3422 kWh and `01 08` = 264 kWh); a TaHoma reads it on
 /// every cycle. The two Adelis sweeps in the corpus carry it too (`02 3F` and `03 B2`).
+///
+/// Register 0x011A holds the heater's ratings in three bytes: its rated power in watts, 16-bit
+/// little-endian, then its rated voltage in volts. A 2000 W Tahual reads `D0 07 E6` (2000 W, 230 V) and both
+/// 500 W Adelis units `F4 01 E6` (500 W, 230 V). The voltage is a rating, not a measurement: it reads 230 on
+/// every unit. Two functions name the two values, and one read stores both
+/// (store_shared_register_values()). The rated power and the working rate (0x0126) give an estimate of the
+/// power the heater draws (heating_power_estimate_w()).
 
 #include "proto_frame.h"
 #include "proto_private_registers.h"
@@ -76,6 +83,8 @@ enum class HeatingFunction : uint8_t {
                            ///< \todo Confirm on a real heater that a write from the hub dims the light and
                            ///<       that values between its panel's four levels are accepted (issue #222).
   ENERGY,                  ///< Register 0x0116, read-only: energy consumed, whole kWh, 16-bit big-endian.
+  RATED_POWER,             ///< Register 0x011A bytes 0-1, read-only: rated power in watts, 16-bit little-endian.
+  RATED_VOLTAGE,           ///< Register 0x011A byte 2, read-only: rated voltage in volts.
 };
 
 /// @brief Operating modes of the mode register (HeatingFunction::SET_MODE).
@@ -271,6 +280,8 @@ struct HeatingReadings {
   int16_t night_light{-1};             ///< Night light 1 on / 0 off; -1 until read.
   int16_t night_light_brightness{-1};  ///< Night light brightness register, 0-10000; -1 until read.
   float energy_kwh{NAN};               ///< Energy consumed (register 0x0116), whole kWh; NaN until read.
+  float rated_power_w{NAN};            ///< Rated power (register 0x011A), watts; NaN until read.
+  int16_t rated_voltage_v{-1};         ///< Rated voltage (register 0x011A), volts; -1 until read.
   int16_t level{-1};                   ///< Low byte of the main parameter of a heater commanded with a prefixed
                                        ///< value: a heating level, or a setpoint alias. -1 until a status reply
                                        ///< carried one, and again after a reply that carried a plain
@@ -315,6 +326,24 @@ struct HeatingReadings {
   ///         readings hold (the temperatures and the energy are not).
   [[nodiscard]] int16_t value_of(HeatingFunction fn) const;
 };
+
+/// @brief Store every other value a register reply carries.
+/// @details A register can hold several values (0x011A: the rated power and the rated voltage), each with a
+///          function of its own. After the caller has decoded and stored `fn`, this decodes and stores each
+///          other function whose register the reply echoes, so one read fills them all.
+/// @param reply The device's reply frame.
+/// @param fn The function the request read (already stored by the caller; skipped here).
+/// @param readings Readings to store into.
+/// @return Number of further values stored.
+size_t store_shared_register_values(const IoFrame &reply, HeatingFunction fn, HeatingReadings &readings);
+
+/// @brief Estimate of the power a heater draws now: its rated power times its working rate.
+/// @details The element is either on or off; the working rate is the share of the time it is on, so the
+///          estimate is the average draw over the heater's own regulation cycle. A 2000 W heater at 100 %
+///          draws 2000 W, at 0 % none.
+/// @param readings What the hub has read from the heater.
+/// @return Watts, or NaN until both the rated power and the working rate have been read.
+float heating_power_estimate_w(const HeatingReadings &readings);
 
 }  // namespace home_io_control
 }  // namespace esphome

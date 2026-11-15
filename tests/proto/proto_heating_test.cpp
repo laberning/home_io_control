@@ -439,7 +439,7 @@ TEST(ProtoHeatingTowelDryer, ReadingsStoreAndReportTheTowelRegisters) {
 TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnField) {
   // Walks every function, so a register added to the enum without a row in the readings table (or the
   // descriptor table) fails here.
-  constexpr auto LAST = static_cast<unsigned>(HeatingFunction::ENERGY);  // the last enumerator
+  constexpr auto LAST = static_cast<unsigned>(HeatingFunction::RATED_VOLTAGE);  // the last enumerator
   unsigned held = 0;
   for (unsigned i = 0; i <= LAST; i++) {
     const auto fn = static_cast<HeatingFunction>(i);
@@ -473,7 +473,7 @@ TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnF
     for (unsigned j = 0; j <= LAST; j++)
       EXPECT_FALSE(readings.has(static_cast<HeatingFunction>(j))) << heating_function_name(fn) << " touched " << j;
   }
-  EXPECT_EQ(held, 15u);
+  EXPECT_EQ(held, 17u);
 }
 
 TEST(ProtoHeatingEnergy, ReadsRegister0x0116AndNeverWritesIt) {
@@ -507,6 +507,68 @@ TEST(ProtoHeatingEnergy, AnEmptyOrTruncatedReplyIsNoValue) {
   EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x15, 0x0D, 0x5E}), HeatingFunction::ENERGY, value))
       << "another register";
   EXPECT_FLOAT_EQ(value, -1.0F);
+}
+
+TEST(ProtoHeatingRatings, BothRatingsAreReadsOfRegister0x011AAndNeverWritten) {
+  EXPECT_EQ(encode_read(HeatingFunction::RATED_POWER), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x1A}));
+  EXPECT_EQ(encode_read(HeatingFunction::RATED_VOLTAGE), encode_read(HeatingFunction::RATED_POWER))
+      << "one register holds both";
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {};
+  EXPECT_EQ(encode_heating_write(HeatingFunction::RATED_POWER, 2000.0F, out), 0u);
+  EXPECT_EQ(encode_heating_write(HeatingFunction::RATED_VOLTAGE, 230.0F, out), 0u);
+  EXPECT_STREQ(heating_function_name(HeatingFunction::RATED_POWER), "rated_power");
+  EXPECT_STREQ(heating_function_name(HeatingFunction::RATED_VOLTAGE), "rated_voltage");
+}
+
+TEST(ProtoHeatingRatings, DecodesTheRatedPowerLittleEndianThenTheRatedVoltage) {
+  float value = -1.0F;
+  // A 2000 W Tahual and a 500 W Adelis.
+  ASSERT_TRUE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x1A, 0xD0, 0x07, 0xE6}), HeatingFunction::RATED_POWER, value));
+  EXPECT_FLOAT_EQ(value, 2000.0F);
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x1A, 0xD0, 0x07, 0xE6}), HeatingFunction::RATED_VOLTAGE,
+                                   value));
+  EXPECT_FLOAT_EQ(value, 230.0F);
+  ASSERT_TRUE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x1A, 0xF4, 0x01, 0xE6}), HeatingFunction::RATED_POWER, value));
+  EXPECT_FLOAT_EQ(value, 500.0F);
+  value = -1.0F;
+  EXPECT_FALSE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x1A, 0xD0, 0x07}), HeatingFunction::RATED_VOLTAGE, value))
+      << "a reply that stops after the power holds no voltage";
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x1A}), HeatingFunction::RATED_POWER, value));
+  EXPECT_FLOAT_EQ(value, -1.0F);
+}
+
+TEST(ProtoHeatingRatings, OneReplyStoresEveryValueItsRegisterHolds) {
+  const IoFrame reply = ack_with({0x0C, 0x60, 0x01, 0x1A, 0xD0, 0x07, 0xE6});
+  HeatingReadings readings;
+  readings.store(HeatingFunction::RATED_POWER, 2000.0F);
+  EXPECT_EQ(store_shared_register_values(reply, HeatingFunction::RATED_POWER, readings), 1u);
+  EXPECT_EQ(readings.rated_voltage_v, 230);
+  EXPECT_FLOAT_EQ(readings.rated_power_w, 2000.0F);
+
+  HeatingReadings other;
+  EXPECT_EQ(
+      store_shared_register_values(ack_with({0x0C, 0x60, 0x01, 0x16, 0x0D, 0x5E}), HeatingFunction::ENERGY, other), 0u)
+      << "a register with one value stores nothing more";
+  EXPECT_FALSE(other.has(HeatingFunction::ENERGY)) << "the caller stores the value it read";
+}
+
+TEST(ProtoHeatingRatings, ThePowerEstimateIsTheRatedPowerTimesTheWorkingRate) {
+  HeatingReadings readings;
+  EXPECT_TRUE(std::isnan(heating_power_estimate_w(readings)));
+  readings.rated_power_w = 2000.0F;
+  EXPECT_TRUE(std::isnan(heating_power_estimate_w(readings))) << "the working rate is still unread";
+  readings.working_rate = 100;
+  EXPECT_FLOAT_EQ(heating_power_estimate_w(readings), 2000.0F);
+  readings.working_rate = 0;
+  EXPECT_FLOAT_EQ(heating_power_estimate_w(readings), 0.0F) << "idle is a reading, not no value";
+  readings.rated_power_w = 500.0F;
+  readings.working_rate = 13;
+  EXPECT_FLOAT_EQ(heating_power_estimate_w(readings), 65.0F);
+  readings.rated_power_w = NAN;
+  EXPECT_TRUE(std::isnan(heating_power_estimate_w(readings))) << "the rated power is still unread";
 }
 
 TEST(ProtoHeatingEnergy, ReadingsKeepTheEnergyAsAQuantity) {

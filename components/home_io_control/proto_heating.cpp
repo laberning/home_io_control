@@ -36,6 +36,13 @@ constexpr uint8_t TOWEL_MODE_MAX = static_cast<uint8_t>(TowelDryerMode::MANUAL);
 constexpr uint8_t TEMPORARY_STATE_MAX = static_cast<uint8_t>(HeatingTemporaryState::DRYING);
 /// Highest working rate: a percentage.
 constexpr uint8_t WORKING_RATE_MAX = 100;
+/// Highest value of an unbounded byte or 16-bit register.
+constexpr uint16_t REGISTER_BYTE_MAX = 0xFF;
+constexpr uint16_t REGISTER_U16_MAX = 0xFFFF;  ///< See REGISTER_BYTE_MAX.
+/// Offset of the rated voltage in register 0x011A, after the 16-bit rated power.
+constexpr uint8_t RATED_VOLTAGE_OFFSET = 2;
+/// Working rate of an element that heats all the time.
+constexpr float WORKING_RATE_FULL = 100.0F;
 
 /// @brief How a register's value maps onto the bytes after the 4-byte header.
 enum class HeatingValueKind : uint8_t {
@@ -69,6 +76,8 @@ struct HeatingFunctionDescriptor {
   HeatingAccess access;   ///< Whether the register may be read, written or both.
   HeatingValueKind kind;  ///< How the value maps onto the trailing bytes.
   uint16_t max_value{0};  ///< BOUNDED_BYTE, BOUNDED_U16: highest value a reply may carry and a write may send.
+  uint8_t offset{0};      ///< Offset of the value in the register's value bytes: non-zero for a register
+                          ///< holding several values (0x011A). Only read-only rows use it.
 };
 
 constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
@@ -105,6 +114,11 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
      HeatingValueKind::BOUNDED_U16, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
     // Energy consumed: equal to the display of two Tahual radiators (3422 and 264 kWh).
     {"energy", HeatingFunction::ENERGY, 0x16, HeatingAccess::READ_ONLY, HeatingValueKind::KWH_U16_BE},
+    // Ratings: 2000 W / 230 V on a Tahual, 500 W / 230 V on both Adelis units.
+    {"rated_power", HeatingFunction::RATED_POWER, 0x1A, HeatingAccess::READ_ONLY, HeatingValueKind::BOUNDED_U16,
+     REGISTER_U16_MAX},
+    {"rated_voltage", HeatingFunction::RATED_VOLTAGE, 0x1A, HeatingAccess::READ_ONLY, HeatingValueKind::BOUNDED_BYTE,
+     REGISTER_BYTE_MAX, RATED_VOLTAGE_OFFSET},
 };
 
 /// @brief Look up the descriptor for a function.
@@ -263,10 +277,10 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
   if (d == nullptr || d->kind == HeatingValueKind::NONE ||
       !private_reply_echoes_register(reply, HEATING_REGISTER_HIGH_BYTE, d->register_low))
     return false;
-  if (reply.data_len < PRIVATE_REGISTER_VALUE_OFFSET + value_length(d->kind))
+  if (reply.data_len < PRIVATE_REGISTER_VALUE_OFFSET + d->offset + value_length(d->kind))
     return false;
 
-  const uint8_t *v = reply.data + PRIVATE_REGISTER_VALUE_OFFSET;
+  const uint8_t *v = reply.data + PRIVATE_REGISTER_VALUE_OFFSET + d->offset;
   const auto raw16 = static_cast<uint16_t>(v[0] | (v[1] << BITS_PER_BYTE));
   switch (d->kind) {
     case HeatingValueKind::TENTHS_U16:
@@ -313,6 +327,26 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
   return false;
 }
 
+size_t store_shared_register_values(const IoFrame &reply, HeatingFunction fn, HeatingReadings &readings) {
+  const HeatingFunctionDescriptor *read = descriptor_for(fn);
+  if (read == nullptr)
+    return 0;
+  size_t stored = 0;
+  for (const auto &d : HEATING_FUNCTIONS) {
+    float value = NAN;
+    if (d.fn != fn && d.register_low == read->register_low && decode_heating_reply(reply, d.fn, value) &&
+        readings.store(d.fn, value))
+      stored++;
+  }
+  return stored;
+}
+
+float heating_power_estimate_w(const HeatingReadings &readings) {
+  if (std::isnan(readings.rated_power_w) || readings.working_rate < 0)
+    return NAN;
+  return readings.rated_power_w * static_cast<float>(readings.working_rate) / WORKING_RATE_FULL;
+}
+
 // === HeatingReadings: one table from register to field ===
 
 namespace {
@@ -325,7 +359,8 @@ struct HeatingReadingField {
   int16_t HeatingReadings::*
       integer;  ///< The field of a register read as a byte or a flag (-1 until read), else nullptr.
   float HeatingReadings::*quantity{nullptr};  ///< The field of another measured quantity, kept as a float (NaN until
-                                              ///< read): the energy, which does not fit an int16_t. Else nullptr.
+                                              ///< read): the energy and the rated power, which may not fit an
+                                              ///< int16_t. Else nullptr.
 };
 
 /// Every register the readings hold. POWER_ON, SET_PRESENCE and MIDNIGHT_SYNC have no row: they are logged or
@@ -346,6 +381,8 @@ constexpr HeatingReadingField HEATING_READING_FIELDS[] = {
     {HeatingFunction::NIGHT_LIGHT, nullptr, &HeatingReadings::night_light},
     {HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, nullptr, &HeatingReadings::night_light_brightness},
     {HeatingFunction::ENERGY, nullptr, nullptr, &HeatingReadings::energy_kwh},
+    {HeatingFunction::RATED_POWER, nullptr, nullptr, &HeatingReadings::rated_power_w},
+    {HeatingFunction::RATED_VOLTAGE, nullptr, &HeatingReadings::rated_voltage_v},
 };
 
 /// @return The row of a register, or nullptr for one the readings do not hold.

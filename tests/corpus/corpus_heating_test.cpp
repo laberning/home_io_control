@@ -1,7 +1,7 @@
 /// @file corpus_heating_test.cpp
 /// @brief The heater register codec (proto_heating.h) against real frames from an Atlantic AGILIA IO
 /// radiator (issue #165), a Sauter Hekla's night light (issue #222) and the energy meter of a Sauter Tahual
-/// radiator and two Atlantic Adelis towel dryers (issue #202).
+/// radiator and two Atlantic Adelis towel dryers, with the Adelis' ratings (issue #202).
 ///
 /// Every request the hub sent is compared byte for byte with what the encoder builds for the same
 /// function and value, and every reply is decoded and compared with the value the climate entity
@@ -273,4 +273,16 @@ TEST(CorpusHeating, TheEnergyMeterIsReadAndDecodedInWholeKilowattHoursMostSignif
   EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame54_bytes, HeatingFunction::ENERGY), 575.0F);
   EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_drying_frame22_bytes, HeatingFunction::ENERGY),
                   946.0F);
+}
+
+TEST(CorpusHeating, BothAdelisUnitsRate500WattsAt230Volts) {
+  using namespace corpus;
+  for (const IoFrame &reply : {frame_of(atlantic_adelis_probe_register_01_sweep_frame58_bytes),
+                               frame_of(atlantic_adelis_probe_register_01_sweep_drying_frame26_bytes)}) {
+    float value = NAN;
+    ASSERT_TRUE(decode_heating_reply(reply, HeatingFunction::RATED_POWER, value));
+    EXPECT_FLOAT_EQ(value, 500.0F) << "a 500 W towel dryer";
+    ASSERT_TRUE(decode_heating_reply(reply, HeatingFunction::RATED_VOLTAGE, value));
+    EXPECT_FLOAT_EQ(value, 230.0F);
+  }
 }
