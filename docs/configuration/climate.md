@@ -12,10 +12,10 @@
 
 The `climate:` entity drives electrical heaters, a heating temperature interface and a generic heat pump,
 and what its card offers follows the device kind. A towel dryer reports the same kind as a radiator,
-so its entry adds `io_model: towel_dryer`; see [Towel dryers](#towel-dryers). A heater with a night
-light adds `io_model: heater_with_light`; see [Heaters with a night light](#heaters-with-a-night-light). An
-interface for pilot-wire heaters adds `io_model: pilot_wire_interface`; see
-[Pilot-wire interfaces](#pilot-wire-interfaces). A heater with an adjustable setpoint (node type 52, subtype 1) is driven over its
+so its entry adds `io_model: towel_dryer`. A heater with a night light adds
+`io_model: heater_with_light`, and an interface for pilot-wire heaters adds
+`io_model: pilot_wire_interface`; each of the three has its own section below. A heater with an
+adjustable setpoint (node type 52, subtype 1) is driven over its
 private register protocol (`CMD_WRITE_PRIVATE`, 0x20): the hub reads and writes registers such as the
 setpoint, the mode and the room temperature, and the entity shows what the heater reports. A plain
 electrical heater (node type 52, subtype 0) is commanded with heating levels in the standard EXECUTE
@@ -24,7 +24,7 @@ and read with the ordinary status request. Reads and writes of the register prot
 on an Atlantic AGILIA IO radiator (see
 [ADR 0054](../adr/0054-heaters-are-read-back-over-the-private-register-protocol.md) for the
 design). The heating-level control of the plain heater is confirmed on a Thermor pilot-wire
-interface (issue #228; see [Pilot-wire interfaces](#pilot-wire-interfaces)). The interface reports no
+interface (issue #228; section "Pilot-wire interfaces" below). The interface reports no
 level, so Home Assistant cannot read the level back (see
 [ADR 0055](../adr/0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md)).
 
@@ -251,7 +251,7 @@ A heater with an adjustable setpoint also gets a `Window` binary sensor (`device
 an `Open Window Detection` switch. Both are experimental, and they are generated only when the YAML
 names the heater kind with `io_device_type: "electrical_heater"` and `io_subtype: 1`, and not for a
 towel dryer (`io_model: towel_dryer`). A heater with a night light gets a light entity when its entry
-has a `night_light:` block; see [Heaters with a night light](#heaters-with-a-night-light).
+has a `night_light:` block (section "Heaters with a night light" above).
 
 ## Temperature range — 7.0–28.0 °C
 

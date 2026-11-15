@@ -29,8 +29,8 @@ constexpr float TENTHS_PER_DEGREE = 10.0F;
 /// The card shows no preset for a device-reported value.
 constexpr int8_t NO_PRESET = -1;
 
-/// Compile-time failure for preset_index(): a non-constexpr call is not a constant expression, so a
-/// lookup that reaches it stops the build.
+/// Compile-time failure for preset_index() and level_heater_preset(): a non-constexpr call is not a constant
+/// expression, so a lookup that reaches it stops the build.
 void preset_missing_from_list() {}
 
 /// @return Whether two optional names are the same text (nullptr equals nullptr only).
@@ -218,16 +218,33 @@ constexpr HeatingObservedState LEVEL_HEATER_OBSERVED[] = {
      preset_index(LEVEL_HEATER_PRESETS, HeatingPresetId::CUSTOM, "Secured")},
 };
 
+/// @brief The plain heater's preset entry for one heating level.
+/// @details Picks the entry by its level rather than by its position, so a reordered LEVEL_HEATER_PRESETS cannot
+///          hand a model the wrong preset. Evaluated at compile time, so a level the list does not hold fails
+///          the build, as in preset_index().
+/// @param level Heating level (heating_level) of the wanted entry.
+consteval HeatingPresetEntry level_heater_preset(uint8_t level) {
+  for (const HeatingPresetEntry &entry : LEVEL_HEATER_PRESETS) {
+    if (entry.wire == level)
+      return entry;
+  }
+  preset_missing_from_list();
+  return LEVEL_HEATER_PRESETS[0];
+}
+
 /// The pilot-wire interface's presets: the six orders the pilot wire carries, so the level list without Boost.
 /// The interface drops a boost it is sent, so it is not offered.
 constexpr HeatingPresetEntry PILOT_WIRE_PRESETS[] = {
-    LEVEL_HEATER_PRESETS[0],  // Away
-    LEVEL_HEATER_PRESETS[1],  // Eco
-    LEVEL_HEATER_PRESETS[2],  // Comfort
-    LEVEL_HEATER_PRESETS[4],  // Comfort -1
-    LEVEL_HEATER_PRESETS[5],  // Comfort -2
-    LEVEL_HEATER_PRESETS[6],  // Secured
+    level_heater_preset(heating_level::FROST_PROTECTION), level_heater_preset(heating_level::ECO),
+    level_heater_preset(heating_level::COMFORT),          level_heater_preset(heating_level::COMFORT_MINUS_1),
+    level_heater_preset(heating_level::COMFORT_MINUS_2),  level_heater_preset(heating_level::SECURED),
 };
+
+static_assert(std::ranges::none_of(PILOT_WIRE_PRESETS,
+                                   [](const HeatingPresetEntry &entry) { return entry.id == HeatingPresetId::BOOST; }),
+              "the pilot-wire interface offers no boost");
+static_assert(std::size(PILOT_WIRE_PRESETS) + 1 == std::size(LEVEL_HEATER_PRESETS),
+              "the pilot-wire presets are the plain heater's without exactly one (boost)");
 
 /// The levels the pilot-wire interface could report, mapped onto its own preset list: the plain heater's
 /// observed states without Boost (the indices differ, so the rows are restated).
