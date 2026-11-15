@@ -748,11 +748,11 @@ void HeaterController::read_meter_registers_(const std::string &device_id, const
   // Copied: each read may touch the registry.
   const bool energy = dev->meter_sensors.energy;
   const bool power = dev->meter_sensors.power;
-  const bool ratings = power || dev->meter_sensors.ratings;
   const bool ratings_read = dev->heating.has(HeatingFunction::RATED_POWER);
 
-  // The ratings never change: read until read once. One read stores the power and the voltage.
-  if (ratings && !ratings_read)
+  // The power needs the rated power, and its sensor brings the ratings along. They never change: read until read
+  // once. One read stores the power and the voltage.
+  if (power && !ratings_read)
     this->read_heating_register(device_id, HeatingFunction::RATED_POWER, nullptr, max_tries);
   // The estimate needs the working rate; a towel dryer's poll already reads it.
   const bool rate_polled = std::find(profile.poll_registers.begin(), profile.poll_registers.end(),

@@ -295,9 +295,9 @@ struct StopCandidate {
 /// @brief The meter sensors a heater's YAML declares. Each one opts the device into the reads it shows
 /// (HeaterController::read_meter_registers_()); nothing declared reads none of them.
 struct HeatingMeterSensors {
-  bool energy{false};   ///< `meter:` `energy`: register 0x0116 on every poll.
-  bool power{false};    ///< `meter:` `power`: the ratings once and the working rate on every poll.
-  bool ratings{false};  ///< `meter:` `rated_power` or `rated_voltage`: register 0x011A once.
+  bool energy{false};  ///< `meter:` `energy`: register 0x0116 on every poll.
+  bool power{false};   ///< `meter:` `power`, with its rating sensors: register 0x011A once and the working rate
+                       ///< on every poll.
 };
 
 /// @brief Runtime state of a paired IO‑Homecontrol device.

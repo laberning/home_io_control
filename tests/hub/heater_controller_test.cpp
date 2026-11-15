@@ -901,22 +901,6 @@ TEST(HeaterController, APowerSensorReadsTheRatingsOnceAndTheWorkingRateOnEveryPo
   EXPECT_FLOAT_EQ(heating_power_estimate_w(dev->heating), 0.0F);
 }
 
-TEST(HeaterController, RatingSensorsReadTheRatingsOnceAndNothingElse) {
-  HeaterControllerFixture fx;
-  auto *dev = make_booted_heater(fx);
-  dev->meter_sensors.ratings = true;
-  queue_radiator_poll(fx, 0x5D, 0x07, 0x00, 0x00);
-  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x1A, 0xD0, 0x07, 0xE6});
-
-  EXPECT_TRUE(fx.controller.poll("ABC123"));
-  ASSERT_EQ(fx.radio.get_sent_data().size(), 6u);
-  EXPECT_EQ(dev->heating.rated_voltage_v, 230);
-
-  queue_radiator_poll(fx, 0x5D, 0x07, 0x00, 0x00);
-  EXPECT_TRUE(fx.controller.poll("ABC123"));
-  EXPECT_EQ(fx.radio.get_sent_data().size(), 11u) << "no working rate, no energy, no second ratings read";
-}
-
 TEST(HeaterController, ATowelDryersPowerSensorDoesNotReadTheWorkingRateTwice) {
   HeaterControllerFixture fx;
   auto *dev = make_towel_dryer(fx);

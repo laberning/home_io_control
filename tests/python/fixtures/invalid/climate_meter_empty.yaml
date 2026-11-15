@@ -1,4 +1,4 @@
-# expect-error: Must contain at least one of energy, power, rated_power, rated_voltage.
+# expect-error: Must contain at least one of energy, power.
 packages:
   common: !include ../_common.yaml
   board: !include ../../../../config/boards/heltec-v2.yaml

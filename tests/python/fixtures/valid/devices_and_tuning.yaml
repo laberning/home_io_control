@@ -89,10 +89,6 @@ climate:
         name: "Towel Dryer Energy"
       power:
         name: "Towel Dryer Power"
-      rated_power:
-        name: "Towel Dryer Rated Power"
-      rated_voltage:
-        name: "Towel Dryer Rated Voltage"
   # A heater with a night light: the radiator plus a dimmable light companion.
   - platform: home_io_control
     name: "Hekla"

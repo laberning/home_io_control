@@ -199,10 +199,6 @@ climate:
         name: "Test Heating Energy"
       power:
         name: "Test Heating Power"
-      rated_power:
-        name: "Test Heating Rated Power"
-      rated_voltage:
-        name: "Test Heating Rated Voltage"
   # A towel dryer reports the same type and subtype; io_model selects its own profile (ADR 0067).
   - platform: home_io_control
     name: "Test Towel Dryer"

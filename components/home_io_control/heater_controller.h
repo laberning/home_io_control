@@ -432,10 +432,9 @@ class HeaterController {
   /// @return true when every poll register answered.
   bool read_poll_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
 
-  /// @brief The reads the YAML's meter sensors opt a heater into, on a kind with ENERGY_METER: the ratings
-  /// until read once (`meter:` `power`, `rated_power`, `rated_voltage`), the working rate on every poll (`power`,
-  /// unless the profile already polls it) and the energy on every poll (`energy`). A miss is not a poll
-  /// failure; the next poll asks again.
+  /// @brief The reads the YAML's meter sensors opt a heater into, on a kind with ENERGY_METER. `meter:` `power`
+  /// reads the ratings until read once and the working rate on every poll (unless the profile already polls
+  /// it); `energy` reads the energy on every poll. A miss is not a poll failure; the next poll asks again.
   /// @param device_id Target device ID (hex string).
   /// @param profile The device's heating profile.
   /// @param max_tries Attempt budget of each read.

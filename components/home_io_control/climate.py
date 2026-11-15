@@ -5,8 +5,8 @@
 ## Defines the experimental IO-Homecontrol heating/climate integration and wires it to the shared
 ## hub. Heaters with a window sensor also get a Window binary sensor and an Open Window Detection
 ## switch; a heater with a night light (io_model: heater_with_light) can add a dimmable `night_light:`
-## light, and a heater with an energy meter (every electrical_heater/1 kind) a `meter:` block with the
-## `energy`, `power`, `rated_power` and `rated_voltage` sensors. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
+## light, and a heater with an energy meter (every electrical_heater/1 kind) a `meter:` block with an
+## `energy` sensor and a `power` sensor, which brings its rated power and rated voltage along. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
 ## construction/registration stays here.
 
 import functools
@@ -20,6 +20,7 @@ from esphome.const import (
     CONF_ID,
     CONF_MAX_TEMPERATURE,
     CONF_MIN_TEMPERATURE,
+    CONF_NAME,
     CONF_OUTPUT_ID,
     CONF_POWER,
     DEVICE_CLASS_ENERGY,
@@ -102,11 +103,13 @@ def _validate_night_light(config):
 
 
 CONF_METER = "meter"
-CONF_RATED_POWER = "rated_power"
-CONF_RATED_VOLTAGE = "rated_voltage"
 
-# The meter sensors, the keys of the `meter:` block: (YAML key, IOHomeHeaterMeterSensor::Reading, IOHomeClimate setter of the reads it opts the
-# device into, sensor schema options).
+# Internal config keys of the two rating sensors `meter: power:` brings along (injected by the post-validator).
+CONF_RATED_POWER_ID = "_rated_power_id"
+CONF_RATED_VOLTAGE_ID = "_rated_voltage_id"
+
+# The meter sensors, the keys of the `meter:` block: (YAML key, IOHomeHeaterMeterSensor::Reading,
+# IOHomeClimate setter of the reads it opts the device into, sensor schema options).
 METER_SENSORS = (
     # Whole kWh (register 0x0116), so no decimals.
     (
@@ -131,10 +134,16 @@ METER_SENSORS = (
             "state_class": STATE_CLASS_MEASUREMENT,
         },
     ),
+)
+
+# The ratings `meter: power:` brings along, named after it: (id key, ID suffix, name suffix, reading, sensor
+# schema options). The power reads register 0x011A anyway, so they cost no radio traffic.
+POWER_RATING_SENSORS = (
     (
-        CONF_RATED_POWER,
+        CONF_RATED_POWER_ID,
+        "rated_power",
+        "rated",
         MeterReading.RATED_POWER,
-        "set_ratings_sensor",
         {
             "unit_of_measurement": UNIT_WATT,
             "accuracy_decimals": 0,
@@ -143,9 +152,10 @@ METER_SENSORS = (
         },
     ),
     (
-        CONF_RATED_VOLTAGE,
+        CONF_RATED_VOLTAGE_ID,
+        "rated_voltage",
+        "rated voltage",
         MeterReading.RATED_VOLTAGE,
-        "set_ratings_sensor",
         {
             "unit_of_measurement": UNIT_VOLT,
             "accuracy_decimals": 0,
@@ -154,6 +164,11 @@ METER_SENSORS = (
         },
     ),
 )
+
+
+def _declares_power(config):
+    """True when the entry's `meter:` block has a `power` sensor."""
+    return CONF_POWER in config.get(CONF_METER, {})
 
 
 def _validate_meter(config):
@@ -181,6 +196,10 @@ CLIMATE_COMPANIONS = (
         "window_detection_switch",
         IOHomeOpenWindowDetectionSwitch,
         has_feature(FEATURE_WINDOW_COMPANIONS),
+    ),
+    *(
+        (id_key, id_suffix, IOHomeHeaterMeterSensor, _declares_power)
+        for id_key, id_suffix, _, _, _ in POWER_RATING_SENSORS
     ),
 )
 
@@ -291,6 +310,20 @@ async def to_code(config):
             config, parent, new_entity=sensor.new_sensor, entity_config=meter_config[key]
         )
         cg.add(meter.set_reading(reading))
+
+    if _declares_power(config):
+        # The ratings take their names from the power sensor's, or from the entity's when it has none.
+        power_name = meter_config[CONF_POWER].get(CONF_NAME) or companion_entity_name(config, "Power")
+        for id_key, _, name_suffix, reading, options in POWER_RATING_SENSORS:
+            rating = await create_companion(
+                config,
+                parent,
+                schema=sensor.sensor_schema(IOHomeHeaterMeterSensor, **options),
+                new_entity=sensor.new_sensor,
+                id_key=id_key,
+                name=f"{power_name} {name_suffix}",
+            )
+            cg.add(rating.set_reading(reading))
 
     if CONF_WINDOW_SENSOR_ID in config:
         await create_companion(

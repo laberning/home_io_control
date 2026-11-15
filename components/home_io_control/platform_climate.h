@@ -95,14 +95,10 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   /// (register 0x0116); without it the register is never read.
   /// @param declared True when the sensor is declared.
   void set_energy_sensor(bool declared) { this->meter_sensors_.energy = declared; }
-  /// @brief The YAML's `meter:` block declares `power`, so the poll reads its ratings once and its working
-  /// rate every time.
+  /// @brief The YAML's `meter:` block declares `power` (with its rating sensors), so the poll reads the ratings
+  /// once and the working rate every time.
   /// @param declared True when the sensor is declared.
   void set_power_sensor(bool declared) { this->meter_sensors_.power = declared; }
-  /// @brief The YAML's `meter:` block declares `rated_power` or `rated_voltage`, so the poll reads register 0x011A
-  /// once.
-  /// @param declared True when either sensor is declared.
-  void set_ratings_sensor(bool declared) { this->meter_sensors_.ratings = declared; }
 
  protected:
   /// @brief The device's heating profile: from the declared type, else from the type the hub learned.
