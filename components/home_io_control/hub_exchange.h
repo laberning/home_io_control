@@ -34,11 +34,13 @@
 /// wait loop both ExchangeEngine's outbound waits and PairingEngine's waits are built on. See
 /// ExchangeEngine::listen() (exchange_engine.h) for the loop itself.
 
+#include "decisions_attempts.h"
 #include "proto_frame.h"
 #include "proto_timing.h"
 #include "radio_interface.h"
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace esphome {
@@ -143,6 +145,58 @@ enum class ListenOutcome : uint8_t {
 /// Keep captures to a few pointers: small callables avoid `std::function`'s heap fallback on the
 /// implementations this project builds against.
 using ReplyHandler = std::function<ReplyDisposition(const IoFrame *parsed, const RadioRxPacket &packet)>;
+
+/// @brief How one outbound exchange is to run, as the caller states it: one value for
+/// ExchangeEngine::send_and_receive() whatever the caller (the hub, pairing, a probe, a test).
+///
+/// Converts implicitly from a number of tries, an @ref decisions::AttemptRequest and a ready
+/// @ref decisions::AttemptPlan, so a caller that names only its attempts says only that; the other
+/// fields default to what an ordinary exchange wants.
+struct ExchangeOptions {
+  /// Attempt cap or read kind; the engine builds the plan from it at the start of the exchange.
+  /// Ignored once @ref plan is set.
+  decisions::AttemptRequest attempts;
+  /// A ready attempt plan (decisions::attempt_plan()); it wins over @ref attempts. The engine still
+  /// clamps its attempt count.
+  /// A test seam: production code always plans from the request (@ref attempts). This entry exists
+  /// so a test can pin an exact plan (an attempt clamp, a hand-set gap or window, a zero budget
+  /// allowance).
+  std::optional<decisions::AttemptPlan> plan;
+  /// Preamble for the request frame in bytes, or 0 for ExchangeEngine::request_preamble_for()'s rule.
+  /// An override also switches the low-power wake belief off for the exchange: the caller has
+  /// already chosen the preamble. The 0x3D challenge response keeps the driver's response_preamble().
+  uint16_t preamble_override{0};
+  /// 16-byte key the exchange answers the device's challenge under, or nullptr for
+  /// ExchangeEngine::key_for(request.dst). Only a caller that talks to a node the registry has no
+  /// record of passes one.
+  const uint8_t *key{nullptr};
+
+  ExchangeOptions() = default;
+  // NOLINTBEGIN(google-explicit-constructor): the three ways to name attempts convert implicitly, so
+  // a caller that only names its attempts is not wrapped in boilerplate
+  ExchangeOptions(uint8_t tries) : attempts(tries) {}
+  ExchangeOptions(const decisions::AttemptRequest &request) : attempts(request) {}
+  ExchangeOptions(const decisions::AttemptPlan &ready_plan) : plan(ready_plan) {}
+  // NOLINTEND(google-explicit-constructor)
+
+  /// @brief Whether the exchange treats the receiver's state as unknown (the wake belief,
+  /// decisions::wake_belief()): the ready plan says so, or a planned read was marked so.
+  [[nodiscard]] bool state_unknown() const {
+    return plan.has_value() ? plan->state_unknown : (attempts.planned && attempts.state_unknown);
+  }
+  /// @brief These options with the request's preamble fixed to @p preamble_bytes.
+  [[nodiscard]] ExchangeOptions with_preamble(uint16_t preamble_bytes) const {
+    ExchangeOptions options = *this;
+    options.preamble_override = preamble_bytes;
+    return options;
+  }
+  /// @brief These options with the challenge answered under @p exchange_key.
+  [[nodiscard]] ExchangeOptions with_key(const uint8_t *exchange_key) const {
+    ExchangeOptions options = *this;
+    options.key = exchange_key;
+    return options;
+  }
+};
 
 /// @brief What a caller of @ref ExchangeEngine::run_attempts() says after one try.
 enum class AttemptVerdict : uint8_t {

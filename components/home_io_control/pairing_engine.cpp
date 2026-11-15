@@ -662,8 +662,9 @@ void PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &con
   if (!create_set_config1(context.req, node_id_, context.device.node_id))
     return;
   // Its reply is never read: an explicit refusal and silence are equally harmless here.
-  if (engine_.send_and_receive(context.req, context.resp, FREQ_CH2, PAIRING_SET_CONFIG1_MAX_TRIES,
-                               pairing_start_preamble(engine_, *tuning_, context.req)) == ExchangeOutcome::FAILED) {
+  if (engine_.send_and_receive(context.req, context.resp, FREQ_CH2,
+                               ExchangeOptions{PAIRING_SET_CONFIG1_MAX_TRIES}.with_preamble(pairing_start_preamble(
+                                   engine_, *tuning_, context.req))) == ExchangeOutcome::FAILED) {
     ESP_LOGI(TAG, "Pairing: no reply from %s to the optional SetConfig1 (0x6F); the pairing is complete",
              context.device_id.c_str());
   }
@@ -836,9 +837,9 @@ bool PairingEngine::verify_device_holds_key_(pairing::PairingContext &context) {
            context.device_id.c_str());
   if (!create_get_name(context.req, node_id_, context.device.node_id, context.discovery_low_power))
     return false;
-  const ExchangeOutcome outcome =
-      engine_.send_and_receive(context.req, context.resp, FREQ_CH2, PAIRING_KEY_VERIFY_MAX_TRIES,
-                               pairing_start_preamble(engine_, *tuning_, context.req));
+  const ExchangeOutcome outcome = engine_.send_and_receive(context.req, context.resp, FREQ_CH2,
+                                                           ExchangeOptions{PAIRING_KEY_VERIFY_MAX_TRIES}.with_preamble(
+                                                               pairing_start_preamble(engine_, *tuning_, context.req)));
   const auto verdict = decisions::classify_key_verify_reply(outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE,
                                                             engine_.get_debug().saw_challenge, context.resp);
   const bool held = verdict == decisions::PairingKeyVerifyDisposition::HELD;

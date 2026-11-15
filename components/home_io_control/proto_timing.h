@@ -140,7 +140,7 @@ static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retrie
 /// Attempts per exchange for every caller that has not asked for an attempt plan
 /// (decisions::attempt_plan()): a command that is not repeat-safe (decisions::is_repeat_safe_command()),
 /// heater registers, management actions and the pairing loops. It is also the ceiling of the
-/// `max_tries` overload of ExchangeEngine::send_and_receive(), and the most copies a challenged
+/// count form of ExchangeOptions, and the most copies a challenged
 /// request that never closes is followed by, whatever its plan.
 static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;
 /// Most attempts any exchange makes, whatever the budget allows: a plan with a long
@@ -209,9 +209,8 @@ static constexpr uint8_t UNCONFIRMED_SUBSCRIBE_MAX_RESENDS = 1;
 /// device that did act on the first copy is often deaf for about a second while its motor or load
 /// switches: on a Somfy awning, a re-send 0.77 s after the first copy drew no challenge at all in
 /// 3 of 14 cases. With this gap the re-send goes out about 1.3 s after the first copy, and the
-/// whole exchange still fits EXCHANGE_TOTAL_BUDGET_MS. The gap is the total wait: the engine sleeps
-/// only the part the plan's own gap does not already cover, so a plan without a gap still re-sends
-/// at 750 ms.
+/// whole exchange still fits EXCHANGE_TOTAL_BUDGET_MS. The gap is the total wait: the exchange waits
+/// the longer of it and the plan's own gap, so a plan without a gap still re-sends at 750 ms.
 static constexpr uint32_t UNCONFIRMED_EXECUTE_RESEND_DELAY_MS = 750;
 static_assert(UNCONFIRMED_EXECUTE_RESEND_DELAY_MS >= EXCHANGE_RETRY_DELAY_MS,
               "the re-send gap extends the default retry gap, it never shortens it");

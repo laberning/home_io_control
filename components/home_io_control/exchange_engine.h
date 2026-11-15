@@ -98,39 +98,17 @@ class ExchangeEngine {
   /// @param request  Frame to transmit (cmd + endpoints already filled).
   /// @param response Populated only for @ref ExchangeOutcome::SUCCESS_WITH_RESPONSE.
   /// @param freq     RF channel frequency (Hz).
-  /// @param max_tries Cap on transmit attempts for this exchange, clamped to
-  ///        [1, EXCHANGE_RETRY_COUNT]. Callers whose failure is already re-armed elsewhere (a
-  ///        scheduler-owned status poll) pass SCHEDULED_POLL_MAX_TRIES so a dead device does not
-  ///        block loop() for the full retry product. The attempts keep the default gap and the
-  ///        tuned reply window; a caller that wants more attempts or other timing passes an
-  ///        decisions::AttemptPlan (the overload below).
-  /// @param request_preamble_override Preamble for the request frame in bytes, or 0 (the default) for
-  ///        request_preamble_for()'s rule. Only pairing passes a value: it sends its directed start
-  ///        frames with a preamble the device has just proven it hears (see
-  ///        pairing_start_preamble()). The 0x3D challenge response keeps the
-  ///        driver's response_preamble() either way. An override also switches the low-power wake
-  ///        belief off for that exchange: the caller has already chosen the preamble.
-  /// @param key 16-byte key the exchange answers the device's challenge under, or nullptr (the
-  ///        default) for key_for(request.dst). Only a caller that talks to a node the registry has no
-  ///        record of (pairing's heater probe) passes one.
+  /// @param options  How the exchange runs (see @ref ExchangeOptions). Its attempts are a cap on
+  ///        transmit attempts (clamped to [1, EXCHANGE_RETRY_COUNT]; callers whose failure is
+  ///        already re-armed elsewhere, a scheduler-owned status poll, pass SCHEDULED_POLL_MAX_TRIES
+  ///        so a dead device does not block loop() for the full retry product) or a read kind whose
+  ///        plan the engine builds for the request (plan_read()), or a ready decisions::AttemptPlan
+  ///        with its own count, gap and windows. An attempt that cannot finish inside
+  ///        `exchange_total_budget_ms` is not started whatever the plan says (try_fits_budget_()).
+  ///        The attempt plan and the preamble choice are made once, here, from the options.
   /// @return What the device actually told us — see @ref ExchangeOutcome.
   ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
-                                   uint8_t max_tries = EXCHANGE_RETRY_COUNT, uint16_t request_preamble_override = 0,
-                                   const uint8_t *key = nullptr);
-
-  /// The same exchange with an explicit attempt plan (decisions::attempt_plan()).
-  /// @param request  As for the `max_tries` overload.
-  /// @param response As for the `max_tries` overload.
-  /// @param freq     As for the `max_tries` overload.
-  /// @param plan Attempt count (clamped to [1, EXCHANGE_MAX_ATTEMPTS]), gap before each further
-  ///        attempt, and first-reply window (the early attempts' and the last one's). An attempt that cannot finish
-  ///        inside `exchange_total_budget_ms` is not started whatever the plan says (try_fits_budget_()).
-  /// @param request_preamble_override As for the `max_tries` overload.
-  /// @param key As for the `max_tries` overload.
-  /// @return As for the `max_tries` overload.
-  ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
-                                   const decisions::AttemptPlan &plan, uint16_t request_preamble_override = 0,
-                                   const uint8_t *key = nullptr);
+                                   const ExchangeOptions &options = {});
 
   /// @brief The shape of a loop of tries run by run_attempts().
   struct AttemptRun {
@@ -194,11 +172,16 @@ class ExchangeEngine {
   /// lead.
   /// @param freq    RF channel the request goes out on (Hz).
   /// @param request_preamble_override The preamble the caller will fix for the exchange (as for
-  ///        send_and_receive()), or 0; a fixed preamble leaves no lead.
+  ///        ExchangeOptions::preamble_override), or 0; a fixed preamble leaves no lead.
   /// @param state_unknown The caller has no trustworthy news of the target
   ///        (decisions::AttemptRequest::with_state_unknown()); carried in the plan so the exchange
   ///        resolves the same belief when it sends.
-  /// @return The plan to hand to the plan overload of send_and_receive().
+  /// @return The plan send_and_receive() builds itself for the same read kind; handed to it as
+  ///         ExchangeOptions::plan, it runs that exchange.
+  ///
+  /// A test seam: production code always lets send_and_receive() plan from the request. This entry
+  /// exists so a test can take the engine's plan and pin an exact one with it (a clamped attempt
+  /// count, a hand-set gap or window, a zero budget allowance).
   [[nodiscard]] decisions::AttemptPlan plan_read(decisions::ReadKind kind, const IoFrame &request, uint32_t freq,
                                                  uint16_t request_preamble_override = 0,
                                                  bool state_unknown = false) const;
@@ -659,29 +642,31 @@ class ExchangeEngine {
   decisions::ExchangeFinalResponseDisposition wait_for_final_response_(const IoFrame &request,
                                                                        exchange::OutboundExchangeContext &ctx);
 
-  /// Decide how many more tries follow a try that ended accepted without a closing reply. When
-  /// that repeats a CMD_EXECUTE, log it and wait out the part of UNCONFIRMED_EXECUTE_RESEND_DELAY_MS
-  /// that the loop's own retry gap does not cover. For a CMD_EXECUTE, looks the target up through the
-  /// evidence provider; then applies decisions::retry_after_unconfirmed_accept_is_safe().
+  /// What follows a try that ended accepted without a closing reply (after_unconfirmed_()).
+  struct UnconfirmedFollowUp {
+    uint8_t further_tries{0};  ///< Tries the exchange still spends; 0 ends it now.
+    /// Least wait before the next try, in ms; the loop waits the longer of this and the plan's gap.
+    /// A device still busy acting on the first copy of a CMD_EXECUTE needs it long.
+    uint32_t gap_ms{0};
+    bool announce{false};  ///< The next try repeats a CMD_EXECUTE: the loop logs it once it starts.
+  };
+
+  /// Decide how many more tries follow a try that ended accepted without a closing reply, and how
+  /// long the next one waits. Pure apart from the target-evidence lookup: it neither waits nor
+  /// checks the budget; the exchange loop does both through begin_try_(). For a CMD_EXECUTE, looks
+  /// the target up through the evidence provider; then applies
+  /// decisions::retry_after_unconfirmed_accept_is_safe().
   /// @param request           Outbound request frame.
   /// @param unconfirmed_tries Tries of this exchange so far that ended that way (1-based).
-  /// @param try_index         The try that just ended, for the log line.
-  /// @param tries_left        Tries the exchange still allows after this one; 0 ends it here,
-  ///                          before any re-send gap is waited.
-  /// @param elapsed_ms        Time since the exchange began.
-  /// @param next_tx_ms        The re-send's transmit time; a re-send whose transmission and first
-  ///                          reply window would not end inside the exchange budget is not attempted
-  ///                          (try_fits_budget_()). The re-send is the last copy, so its final-reply
-  ///                          window is not counted.
-  /// @param plan              The exchange's attempt plan: its gap is part of the re-send wait and
-  ///                          its (full) window is the re-send's.
-  /// @return 0 to end the exchange now; UNCONFIRMED_EXECUTE_MAX_RESENDS for a CMD_EXECUTE that is
-  ///         re-sent and UNCONFIRMED_SUBSCRIBE_MAX_RESENDS for a CMD_SUBSCRIBE_EVENT, either of which
-  ///         also caps the ordinary failure retries after it; for any other request the tries that
-  ///         bring the exchange to EXCHANGE_RETRY_COUNT in all, whatever the plan's attempt count.
-  uint8_t tries_after_unconfirmed_(const IoFrame &request, uint8_t unconfirmed_tries, uint8_t try_index,
-                                   uint8_t tries_left, uint32_t elapsed_ms, uint32_t next_tx_ms,
-                                   const decisions::AttemptPlan &plan);
+  /// @param try_index         The try that just ended (1-based).
+  /// @param tries_left        Tries the exchange still allows after this one; 0 ends it here.
+  /// @return `further_tries` 0 to end the exchange now; UNCONFIRMED_EXECUTE_MAX_RESENDS for a
+  ///         CMD_EXECUTE that is re-sent (with UNCONFIRMED_EXECUTE_RESEND_DELAY_MS as `gap_ms`) and
+  ///         UNCONFIRMED_SUBSCRIBE_MAX_RESENDS for a CMD_SUBSCRIBE_EVENT, either of which also caps
+  ///         the ordinary failure retries after it; for any other request the tries that bring the
+  ///         exchange to EXCHANGE_RETRY_COUNT in all, whatever the plan's attempt count.
+  [[nodiscard]] UnconfirmedFollowUp after_unconfirmed_(const IoFrame &request, uint8_t unconfirmed_tries,
+                                                       uint8_t try_index, uint8_t tries_left) const;
 
   /// Add one final-reply or challenge-answer wait's ListenStats to the debug snapshot's `final_*` fields.
   /// @param stats What that wait heard without accepting it.
@@ -717,6 +702,16 @@ class ExchangeEngine {
   /// @param state_unknown     The caller has no trustworthy news of the target (decisions::wake_belief()).
   [[nodiscard]] PreamblePlan plan_request_preamble_(const IoFrame &request, uint16_t override_preamble,
                                                     bool state_unknown = false) const;
+
+  /// The attempt plan an exchange runs on: the options' ready plan, else a cap on tries from their
+  /// count, else the plan of their read kind (the lead of a settling read of a low-power receiver in
+  /// an unknown state costs the short preamble's transmit time).
+  /// @param request       Frame being sent.
+  /// @param freq          RF channel it goes out on (Hz).
+  /// @param options       What the caller asked of the exchange.
+  /// @param preamble_plan The exchange's preamble plan, already made.
+  [[nodiscard]] decisions::AttemptPlan plan_for_(const IoFrame &request, uint32_t freq, const ExchangeOptions &options,
+                                                 const PreamblePlan &preamble_plan) const;
 
   /// The start preamble of one try of an exchange run on @p plan: the short start preamble for the
   /// plan's short lead (try 1), otherwise the preamble plan's.

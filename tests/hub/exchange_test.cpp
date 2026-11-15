@@ -448,9 +448,11 @@ struct ResendRig {
   TuningConfig tuning{};
   ExchangeEngine engine{&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning};
   bool confirms{true};
+  int lookups{0};  ///< Target-evidence lookups of the exchange so far.
 
   ResendRig() {
     engine.set_target_evidence_provider([this](const uint8_t *, decisions::TargetEvidence &out) {
+      lookups++;
       out = decisions::TargetEvidence{};
       out.confirms_execute = confirms;
       return true;
@@ -588,6 +590,8 @@ TEST(Exchange, UnconfirmedExecuteResendStaysInsideTheExchangeBudget) {
   EXPECT_EQ(rig.radio.get_send_count(), 2);
   EXPECT_LT(esphome::millis() - start, rig.tuning.exchange_total_budget_ms)
       << "a re-send that cannot start inside the budget must not be waited for";
+  EXPECT_STREQ(rig.engine.get_debug().stage, "retry_budget_exhausted")
+      << "the exchange loop's budget guard refused the re-send, like any other try";
 }
 
 TEST(Exchange, SendAndReceive_StatusPollRetriesAfterUnconfirmedAccept) {
@@ -925,7 +929,7 @@ TEST(Exchange, SendAndReceive_RequestPreambleOverrideAppliesToRequestOnly) {
   radio.queue_rx(chal_pkt);
 
   IoFrame response{};
-  comp.exchange_engine_.send_and_receive(request, response, FREQ_CH2, EXCHANGE_RETRY_COUNT, 32);
+  comp.exchange_engine_.send_and_receive(request, response, FREQ_CH2, ExchangeOptions{}.with_preamble(32));
 
   ASSERT_GE(radio.get_tx_configs().size(), 2u);
   EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, 32u)
@@ -2238,7 +2242,7 @@ void exchange_and_read_0x3d(const uint8_t *explicit_key, uint8_t out_hmac[HMAC_S
   radio.queue_rx(to_rx_packet(build_status_response(test::DST_ID, test::OWN_ID)));
 
   IoFrame response{};
-  ASSERT_EQ(engine.send_and_receive(request, response, FREQ_CH2, EXCHANGE_RETRY_COUNT, 0, explicit_key),
+  ASSERT_EQ(engine.send_and_receive(request, response, FREQ_CH2, ExchangeOptions{}.with_key(explicit_key)),
             ExchangeOutcome::SUCCESS_WITH_RESPONSE);
   ASSERT_GE(radio.get_sent_data().size(), 2u);
   IoFrame answer{};
@@ -3386,7 +3390,7 @@ struct WakeBeliefRig {
   std::vector<uint16_t> send(const IoFrame &request, uint8_t max_tries = EXCHANGE_RETRY_COUNT,
                              uint16_t override_preamble = 0) {
     IoFrame response{};
-    engine.send_and_receive(request, response, FREQ_CH2, max_tries, override_preamble);
+    engine.send_and_receive(request, response, FREQ_CH2, ExchangeOptions{max_tries}.with_preamble(override_preamble));
     std::vector<uint16_t> preambles;
     for (const auto &config : radio.get_tx_configs())
       preambles.push_back(config.preamble_len);
@@ -4806,4 +4810,133 @@ TEST(ShortLead, SwitchedOffWithTheWakeBeliefTuning) {
 
   EXPECT_FALSE(rig.engine.plan_read(decisions::ReadKind::SETTLING, ShortLeadRig::status_read(), FREQ_CH2).short_lead)
       << "with the belief off every try keeps the wake-up preamble";
+}
+
+// ============================================================================
+// One options value; each exchange is planned once
+// ============================================================================
+
+TEST(ExchangeOptions, SettlingReadOfALowPowerTargetLooksTheTargetUpOnce) {
+  WakeBeliefRig rig;
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/true);
+  IoFrame response{};
+
+  rig.engine.send_and_receive(request, response, FREQ_CH2,
+                              decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING));
+
+  EXPECT_EQ(rig.provider_calls, 1) << "the preamble plan and the attempt plan share one lookup";
+}
+
+TEST(ExchangeOptions, EveryWayOfNamingTheAttemptsLooksTheTargetUpOnce) {
+  const IoFrame request = low_power_position_request();
+  IoFrame response{};
+  {
+    WakeBeliefRig rig;
+    rig.engine.send_and_receive(request, response, FREQ_CH2, ExchangeOptions{2});
+    EXPECT_EQ(rig.provider_calls, 1) << "a count";
+  }
+  {
+    WakeBeliefRig rig;
+    rig.engine.send_and_receive(request, response, FREQ_CH2,
+                                decisions::AttemptRequest::of_kind(decisions::ReadKind::COMMAND));
+    EXPECT_EQ(rig.provider_calls, 1) << "a command read kind";
+  }
+  {
+    WakeBeliefRig rig;
+    rig.engine.send_and_receive(request, response, FREQ_CH2, decisions::AttemptPlan{});
+    EXPECT_EQ(rig.provider_calls, 1) << "a ready plan";
+  }
+}
+
+TEST(ExchangeOptions, ReadKindRunsTheSameExchangeAsThePlanReadBuilds) {
+  // The exchange builds the plan of a read kind itself; handing it plan_read()'s plan instead must
+  // transmit the same frames with the same preambles, windows and timing.
+  const IoFrame request = [] {
+    IoFrame frame{};
+    create_get_status(frame, test::OWN_ID, test::DST_ID, /*low_power=*/true);
+    return frame;
+  }();
+  IoFrame response{};
+  uint32_t kind_elapsed_ms = 0;
+  uint32_t plan_elapsed_ms = 0;
+  std::vector<uint16_t> kind_preambles;
+  std::vector<uint16_t> plan_preambles;
+  std::vector<uint16_t> kind_windows;
+  std::vector<uint16_t> plan_windows;
+  {
+    WakeBeliefRig rig;
+    rig.moved_ago(1000);
+    const uint32_t start = esphome::millis();
+    rig.engine.send_and_receive(request, response, FREQ_CH2,
+                                decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING));
+    kind_elapsed_ms = esphome::millis() - start;
+    for (const auto &config : rig.radio.get_tx_configs())
+      kind_preambles.push_back(config.preamble_len);
+    for (const auto wait : rig.radio.wait_timeouts())
+      kind_windows.push_back(static_cast<uint16_t>(wait));
+  }
+  {
+    WakeBeliefRig rig;
+    rig.moved_ago(1000);
+    const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+    const uint32_t start = esphome::millis();
+    rig.engine.send_and_receive(request, response, FREQ_CH2, plan);
+    plan_elapsed_ms = esphome::millis() - start;
+    for (const auto &config : rig.radio.get_tx_configs())
+      plan_preambles.push_back(config.preamble_len);
+    for (const auto wait : rig.radio.wait_timeouts())
+      plan_windows.push_back(static_cast<uint16_t>(wait));
+  }
+  EXPECT_FALSE(kind_preambles.empty());
+  EXPECT_EQ(kind_preambles, plan_preambles);
+  EXPECT_EQ(kind_windows, plan_windows);
+  EXPECT_EQ(kind_elapsed_ms, plan_elapsed_ms);
+}
+
+TEST(ExchangeOptions, OptionsKeepEachFieldWhenAnotherIsSet) {
+  const uint8_t key[AES_KEY_SIZE] = {};
+  const ExchangeOptions options = ExchangeOptions{3}.with_preamble(40).with_key(key);
+  EXPECT_EQ(options.attempts.max_tries, 3);
+  EXPECT_EQ(options.preamble_override, 40);
+  EXPECT_EQ(options.key, key);
+  EXPECT_FALSE(options.plan.has_value());
+}
+
+TEST(ExchangeOptions, OnlyAnExecuteLooksTheTargetUpWhenItsTryIsUnconfirmed) {
+  {
+    ResendRig rig;
+    rig.queue_challenge();  // challenged, never closed
+    EXPECT_EQ(rig.send(stop_request()), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+    EXPECT_EQ(rig.lookups, 1) << "an EXECUTE asks whether the device confirms";
+  }
+  {
+    ResendRig rig;
+    rig.queue_challenge();
+    IoFrame request{};
+    ASSERT_TRUE(create_subscribe_event(request, test::OWN_ID, test::DST_ID, EVENT_LOCAL_SENSOR, false));
+    EXPECT_EQ(rig.send(request), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+    EXPECT_EQ(rig.lookups, 0) << "a subscription's answer does not depend on the target";
+  }
+  {
+    ResendRig rig;
+    rig.queue_challenge();
+    IoFrame request{};
+    create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+    EXPECT_EQ(rig.send(request), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+    EXPECT_EQ(rig.lookups, 0);
+  }
+}
+
+TEST(ExchangeOptions, UnconfirmedStatusReadKeepsItsPlanGapAndIsNotGivenTheLongResendGap) {
+  ResendRig rig;
+  rig.queue_challenge();
+  IoFrame request{};
+  create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+
+  ASSERT_EQ(rig.send(request), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+
+  const auto &t = rig.radio.send_times_ms();
+  ASSERT_GE(t.size(), 3u);
+  EXPECT_EQ(t[2] - t[1], rig.tuning.exchange_response_wait_ms + EXCHANGE_RETRY_DELAY_MS);
 }

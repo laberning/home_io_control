@@ -834,7 +834,7 @@ class IOHomeControlComponent : public Component,
   /// @param response Output: received response IoFrame.
   /// @param freq RF frequency in Hz.
   /// @param attempts A transmit-attempt cap (forwarded to ExchangeEngine::send_and_receive()), or a
-  ///        read kind whose plan the engine builds for @p request (ExchangeEngine::plan_read()).
+  ///        read kind whose plan the engine builds for @p request (the engine builds the plan itself, once).
   /// @return true if exchange succeeded; false otherwise.
   ExchangeOutcome send_and_receive_(const IoFrame &request, IoFrame &response, uint32_t freq,
                                     const decisions::AttemptRequest &attempts = EXCHANGE_RETRY_COUNT);

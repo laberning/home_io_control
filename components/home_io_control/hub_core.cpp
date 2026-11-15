@@ -319,14 +319,9 @@ ExchangeOutcome IOHomeControlComponent::send_and_receive_(const IoFrame &request
   const uint16_t preamble_override = (attempts.wake_preamble_first && (request.ctrl1 & CTRL1_LOW_POWER) != 0)
                                          ? this->tuning_.low_power_wake_preamble
                                          : 0;
-  ExchangeOutcome const outcome =
-      attempts.planned
-          ? this->exchange_engine_.send_and_receive(
-                request, response, freq,
-                this->exchange_engine_.plan_read(attempts.kind, request, freq, preamble_override,
-                                                 attempts.state_unknown),
-                preamble_override)
-          : this->exchange_engine_.send_and_receive(request, response, freq, attempts.max_tries, preamble_override);
+  ExchangeOptions options{attempts};
+  options.preamble_override = preamble_override;
+  ExchangeOutcome const outcome = this->exchange_engine_.send_and_receive(request, response, freq, options);
   this->busy_ = false;
   // Every exchange ends here, so a heater or water heater write moves the catch-up read of a
   // linked-remote burst like any other (ADR 0080, ADR 0082); a no-op while no burst is open.
