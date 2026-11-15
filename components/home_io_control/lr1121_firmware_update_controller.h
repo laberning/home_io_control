@@ -169,7 +169,7 @@ class Lr1121FirmwareUpdateController {
   void arm_flash_confirmation_();
 
   /// @brief The bootloader-entry-through-post-flash-verify sequence, run only once trigger() has
-  /// decided to actually flash. Split out from that method to keep its own cognitive complexity
+  /// decided to actually flash. Kept apart from that method to hold its own cognitive complexity
   /// within clang-tidy's threshold.
   ///
   /// Per the safety invariant: once this method's bootloader entry succeeds, every exit —

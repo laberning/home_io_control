@@ -1,5 +1,5 @@
 /// @file platform_hub_controls.cpp
-/// @brief Hub-level control entities: arming switches and the pairing-result text sensor.
+/// @brief Hub-level control entities: the arming switches and the pairing-result and device-event text sensors.
 /// @ingroup hioc_platforms
 
 #include "platform_hub_controls.h"

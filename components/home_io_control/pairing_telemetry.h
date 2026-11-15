@@ -130,16 +130,14 @@ class PairingTelemetry : public TransmitObserver {
   /// index a hop landed on, so this only marks that a hop happened, not where to.
   ///
   /// Counted via hop_count() only, deliberately **not** stored in the fixed event array: at the
-  /// current 5-7 ms hop slice, a multi-second discovery window produces far more hops than
-  /// PAIRING_TELEMETRY_MAX_EVENTS, which used to exhaust the buffer with hop events alone within
-  /// about a second of essentially every real attempt (issue #27). This did **not** produce a false
-  /// `rf_silent` — heard_count() is incremented in record_() before the capacity check, so it still
-  /// counts an RX/RX_REJECT that arrives after the array is full. What it did do: once the array
-  /// was full, PairingAdvisor's `1w_traffic`/`channel_busy`/`foreign_controller` passes — which all
-  /// scan events(), not heard_count() — could only ever see whatever RX/RX_REJECT evidence had
-  /// landed in roughly the first ~200 ms of the attempt, and truncated() was true on nearly every
-  /// real pairing attempt. A hop carries no per-event information worth itemizing (no channel
-  /// index, no RSSI) anyway; the total count is enough.
+  /// hop slice of 5-7 ms, a multi-second discovery window produces far more hops than
+  /// PAIRING_TELEMETRY_MAX_EVENTS, so itemized hops would fill the buffer within about a second of
+  /// essentially every real attempt (issue #27). PairingAdvisor's `1w_traffic`/`channel_busy`/
+  /// `foreign_controller` passes scan events(), not heard_count(), so a full array would leave them
+  /// only the RX/RX_REJECT evidence of roughly the first ~200 ms and truncated() true on nearly
+  /// every attempt (heard_count() is incremented in record_() before the capacity check, so
+  /// `rf_silent` stays correct either way). A hop carries no per-event information worth
+  /// itemizing (no channel index, no RSSI); the total count is enough.
   void record_hop();
   /// Record a pairing state-machine phase transition.
   /// @param phase New phase.

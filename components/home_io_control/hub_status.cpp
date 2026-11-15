@@ -859,14 +859,13 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
 
   detail::log_component_capture(this->radio_, "parse_ok", packet.data, packet.len, &frame);
 
-  // === Key-extraction responder ("Accept Foreign Pairing") ===
+  // === Key-extraction responder ("Recover System Key") ===
   // Runs before the exchange-internal drop below: a hub-issued 0x3C challenging our own 0x37 is
   // addressed to us and is ours to answer (key_extraction_responder.cpp). Self-gated on armed + our
-  // throwaway ID, so the disarmed path (and every command other than 0x28/0x2C/0x31/0x32/0x36/0x3C)
-  // is bit-for-bit unchanged by this ordering — try_handle_frame() returns false immediately
-  // whenever it doesn't apply, and this reorder can only affect frames where BOTH this call and
-  // the is_exchange_internal_command() check below would otherwise fire, i.e. only 0x3C/0x3D (that
-  // predicate's entire domain, decisions_exchange.h).
+  // throwaway ID: try_handle_frame() returns false immediately whenever it doesn't apply (disarmed,
+  // or any command other than 0x28/0x2C/0x31/0x32/0x36/0x3C), so running it first matters only for
+  // frames that both this call and the is_exchange_internal_command() check below would take,
+  // i.e. only 0x3C/0x3D (that predicate's entire domain, decisions_exchange.h).
   if (this->key_extraction_.try_handle_frame(frame, packet.freq_hz))
     return;
 

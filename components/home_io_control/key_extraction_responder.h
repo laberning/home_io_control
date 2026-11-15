@@ -7,7 +7,7 @@
 /// The impure side of the key-extraction feature: arming/disarming, throwaway node-ID generation,
 /// the 10-minute auto-off timer, the post-extraction grace window, transmitting device-role
 /// replies, and the security-sensitive result log block. The pure state-transition decisions live
-/// in pairing_responder.h/.cpp (unchanged); this collaborator owns a
+/// in pairing_responder.h/.cpp; this collaborator owns a
 /// pairing_responder::ResponderContext and dispatches the six RX branches through
 /// try_handle_frame(), called from process_received_packet_() (hub_status.cpp).
 
@@ -79,12 +79,11 @@ class KeyExtractionResponder {
   /// @brief Arm or disarm the "Recover System Key" (key extraction) responder.
   ///
   /// Arming picks a fresh throwaway node ID, resets the pairing_responder state machine to
-  /// ARMED_IDLE, and schedules a 10-minute auto-off. While armed, the 0x28/0x2C/0x31/0x32 branches
-  /// in process_received_packet_() emulate an unpaired device so a user's existing hub can pair to
+  /// ARMED_IDLE, and schedules a 10-minute auto-off. While armed, try_handle_frame() answers the
+  /// pairing frames it is handed as an unpaired device would so a user's existing hub can pair to
   /// it and hand over its node_id/system_key (see pairing_responder.h). Disarming — manual, via
-  /// the HA switch, on successful extraction, or on auto-off — immediately stops those branches
-  /// from responding; it never touches the real device registry or the hub's own node_id_/
-  /// system_key_. This is the body that was IOHomeControlComponent::set_key_extraction_armed().
+  /// the HA switch, on successful extraction, or on auto-off — immediately stops those answers;
+  /// it never touches the real device registry or the hub's own node_id_/system_key_.
   /// @param armed Desired state.
   void set_armed(bool armed);
 
@@ -173,7 +172,7 @@ class KeyExtractionResponder {
            millis() < this->key_extraction_hold_deadline_ms_;
   }
 
-  /// State for the current "Accept Foreign Pairing" (key-extraction) arm cycle; DISARMED by
+  /// State for the current "Recover System Key" (key-extraction) arm cycle; DISARMED by
   /// default so a fresh boot never responds to foreign pairing traffic. See pairing_responder.h.
   /// Public so the host tests that script individual RX branches can preset and inspect it.
   pairing_responder::ResponderContext key_extraction_ctx_;

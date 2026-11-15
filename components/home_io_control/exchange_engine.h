@@ -431,7 +431,7 @@ class ExchangeEngine {
   /// receiver did not answer the short preamble a moving one hears, nor the wake-up preamble, so the
   /// belief that it is travelling is spent and the next exchange must lead with the wake-up preamble.
   /// The engine decides when; the hub owns the device record and clears it. Installed once, next to
-  /// set_wake_evidence_provider().
+  /// set_target_evidence_provider().
   /// @param handler Evidence reset, or an empty function to detach.
   void set_wake_evidence_spent_handler(WakeEvidenceSpentHandler handler) {
     this->wake_evidence_spent_handler_ = std::move(handler);
@@ -752,7 +752,7 @@ static constexpr size_t EXCHANGE_DEBUG_LINE_SIZE = 384;
 
 /// @brief Render the structured field list shared by both exchange-debug log lines.
 ///
-/// Split out of the log calls so the rendering is testable on host: the test log macros discard
+/// A separate function so the rendering is testable on host: the test log macros discard
 /// their arguments, so a formatter that writes into a caller's buffer is the only shape whose
 /// output a test can assert on.
 ///

@@ -2,7 +2,7 @@
 
 /// @file redaction.h
 /// @brief Key-material redaction helpers shared by every surface that can emit frame bytes
-/// or debug text (frame logging today; telemetry and diagnostic reports later).
+/// or debug text (frame logging and the key-recovery logs).
 /// @ingroup hioc_protocol
 ///
 /// The one deliberate, narrow exception to this file's masking is `IOHOME_UNSAFE_LOG_KEY_MATERIAL`

@@ -72,7 +72,7 @@ static constexpr uint16_t SX1262_IRQ_CRC_ERR = 0x0040;
 
 /// IRQ bits that represent a *terminal* radio event — a frame finished decoding, an outbound
 /// frame completed, or the chip reported a bad CRC. Deliberately excludes PREAMBLE_DETECTED even
-/// though `configure_radio_()` now includes it in `irqMask`: a preamble alone means a frame may
+/// though `configure_radio_()` includes it in `irqMask`: a preamble alone means a frame may
 /// still be arriving, so SoftPhyDriverBase's poll_until_activity_()/check_for_packet() (gated by
 /// @ref RadioSX1262::activity_irq_mask) must not treat it as terminal — doing so would tear down
 /// RX mid-reception. Same trap, same fix shape as @ref LR1121_IRQ_ACTIVITY_MASK.

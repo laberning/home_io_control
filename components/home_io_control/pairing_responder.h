@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file pairing_responder.h
-/// @brief Pure decision logic for the device-role "Accept Foreign Pairing" (system-key
+/// @brief Pure decision logic for the device-role "Recover System Key" (system-key
 /// extraction) responder.
 /// @ingroup hioc_hub
 ///
@@ -14,8 +14,8 @@
 /// the split of the decisions_*.h headers, so it is directly host-testable. The impure orchestration — arming,
 /// throwaway node-ID generation, transmitting replies, the auto-off timer, and the security log
 /// block — lives in the `KeyExtractionResponder` collaborator (`key_extraction_responder.h`/`.cpp`),
-/// which calls into this header from the 0x28/0x2C/0x31/0x32 branches in process_received_packet_()
-/// (hub_status.cpp).
+/// which calls into this header from KeyExtractionResponder::try_handle_frame() for the
+/// 0x28/0x2C/0x31/0x32/0x36/0x3C frames that process_received_packet_() (hub_status.cpp) hands it.
 
 #include "proto_device_kinds.h"
 #include "proto_sizes.h"

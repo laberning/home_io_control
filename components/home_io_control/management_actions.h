@@ -12,9 +12,9 @@
 /// class. The descriptor holds a ManagementActions* and calls only public methods on it, so no friend declarations into
 /// the hub are needed.
 ///
-/// IOHomeControlComponent exposes this collaborator through thin protected wrappers
-/// (api_rename_device_, api_identify_device_, api_force_open_device_, api_scan_paired_devices_,
-/// register_management_actions_).
+/// IOHomeControlComponent owns this collaborator and starts the registration from setup() through
+/// one thin protected wrapper (register_management_actions_()); the registered actions call the
+/// public api_*() methods here directly.
 
 #include "device_registry.h"
 #include "diagnostic_probes.h"

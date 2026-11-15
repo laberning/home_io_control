@@ -39,7 +39,7 @@ class OnewayKeyAdoption {
   ///
   /// Arming resets any class observed in an earlier window and schedules a 10-minute auto-off.
   /// Disarming — manual, on successful adoption, or on auto-off — is immediate. See the class doc
-  /// comment; this is the body that was IOHomeControlComponent::set_oneway_key_adoption_armed().
+  /// comment.
   /// @param armed Desired state.
   void set_armed(bool armed);
 

@@ -166,8 +166,8 @@ enum class BootloaderSupport : uint8_t {
 /// changes lr1121_flash_decision()'s own verdict.
 enum class BootloaderMismatch : uint8_t {
   NONE,                ///< target_fw is unknown, or its required bootloader matches bootloader_version.
-  TARGET_NEEDS_NEWER,  ///< The "too old" direction -- what REJECT_BOOTLOADER_TOO_OLD has always meant until now.
-  TARGET_NEEDS_OLDER,  ///< The "too new" direction -- a downgrade, newly reachable once this feature ships.
+  TARGET_NEEDS_NEWER,  ///< The "too old" direction -- the direction REJECT_BOOTLOADER_TOO_OLD covers.
+  TARGET_NEEDS_OLDER,  ///< The "too new" direction -- a downgrade.
 };
 
 /// @brief Classify a bootloader/target mismatch by direction; see BootloaderMismatch.

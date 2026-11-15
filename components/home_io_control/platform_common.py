@@ -4,10 +4,11 @@
 ##
 ## The cover, light, switch, lock, fan, climate and water_heater platforms all bind an ESPHome entity to a hub
 ## device: the same config keys, the same auto-generated companion diagnostic sensors
-## (device name, active issue, RSSI, last contact, exchange failures), and the same
-## to_code() wiring (set_parent / set_device_id / device type / subtype / poll
-## interval / linked remotes). This module is the single home for that shared logic so
-## a change lands in one place instead of in each — platform files call one
+## (device name, active issue, RSSI, last contact, exchange failures, unconfirmed exchanges,
+## last commanded by, last command source), and the same to_code() wiring (set_parent /
+## set_device_id / device type / subtype / poll interval / linked remotes). This module is the
+## single home for that shared logic so a change lands in one place instead of in each — platform
+## files call one
 ## inject_companion_sensor_ids() post-validator and one create_companion_sensors()
 ## to_code() helper. Any other device-bound companion (a button, switch, select or extra sensor)
 ## is declared by a platform table through inject_companion_ids() and created with

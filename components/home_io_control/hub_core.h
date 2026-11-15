@@ -471,12 +471,12 @@ class IOHomeControlComponent : public Component,
   ///
   /// Thin forwarder to the KeyExtractionResponder collaborator (key_extraction_responder.h).
   /// Arming picks a fresh throwaway node ID, resets the pairing_responder state machine to
-  /// ARMED_IDLE, and schedules a 10-minute auto-off. While armed, the 0x28/0x2C/0x31/0x32 branches
-  /// in process_received_packet_() emulate an unpaired device so a user's existing hub can pair to
-  /// it and hand over its node_id/system_key (see pairing_responder.h). Disarming — manual, via
-  /// the HA switch, on successful extraction, or on auto-off — immediately stops those branches
-  /// from responding; it never touches the real device registry or the hub's own node_id_/
-  /// system_key_. Part of HubControlPort, through which the hub-level switch arms it.
+  /// ARMED_IDLE, and schedules a 10-minute auto-off. While armed, the responder's try_handle_frame()
+  /// (called from process_received_packet_()) answers pairing frames as an unpaired device would so a user's existing
+  /// hub can pair to it and hand over its node_id/system_key (see pairing_responder.h). Disarming — manual, via the HA
+  /// switch, on successful extraction, or on auto-off — immediately stops those answers; it never touches the real
+  /// device registry or the hub's own node_id_/ system_key_. Part of HubControlPort, through which the hub-level switch
+  /// arms it.
   /// @param armed Desired state.
   void set_key_extraction_armed(bool armed) override { this->key_extraction_.set_armed(armed); }
 
@@ -1025,8 +1025,8 @@ class IOHomeControlComponent : public Component,
   /// @param src_id Sender's node ID as a string (already computed by the caller).
   void maybe_fire_sender_event_(const OneWayFrameInfo &info, bool linked, const std::string &src_id);
   /// Handle an explicit CMD_ERROR_RESP refusal from the device: record the result code, stamp link
-  /// health, and schedule the poll backoff. Split out of exchange_and_record_() to keep that
-  /// function's outcome dispatch readable — a refusal is a distinct concern from "what did the
+  /// health, and schedule the poll backoff. Kept apart from exchange_and_record_() so that
+  /// function's outcome dispatch stays readable — a refusal is a distinct concern from "what did the
   /// exchange achieve".
   /// @param device_id Target device ID.
   /// @param request Outbound request frame that drew the refusal.

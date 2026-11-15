@@ -24,7 +24,7 @@ namespace home_io_control {
 /// @brief Valid SX1262 RX bandwidth options (kHz register values).
 ///
 /// The numeric values are the register-encoded (double-sideband) bandwidth selectors used by
-/// `RadioSX1262::set_rx_bandwidth()` — a regular (mantissa, exponent) grid, with the bandwidth
+/// `RadioSX1262::set_rx_bandwidth_()` — a regular (mantissa, exponent) grid, with the bandwidth
 /// roughly doubling per group.
 ///
 /// Semtech's sizing rule for GFSK is `BW_DSB >= bitrate + 2 * Fdev + carrier offset`, which is
