@@ -129,5 +129,7 @@ water_heater:
       name: "Hot Water Heat Pump"
     electric_backup_running:
       name: "Hot Water Electric Backup"
+    heating_source:
+      name: "Hot Water Heating Source"
     boost:
       name: "Hot Water Boost"

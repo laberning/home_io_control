@@ -8,10 +8,11 @@
 > [Choosing a target](../devices/atlantic-calypso.md#choosing-a-calypso-target).
 
 The `water_heater:` entity drives a domestic hot water heater (node type 51, `domestic_hot_water`). It
-shows the water temperature, the target temperature and the operating mode. Three optional companions
+shows the water temperature, the target temperature and the operating mode. Four optional companions
 show the energy used and what is heating, and an optional switch starts and ends a boost. The card's
 away mode starts and ends the heater's holiday mode. The design is recorded in
-[ADR 0068](../adr/0068-a-domestic-hot-water-device-is-a-water-heater.md); boost and away follow
+[ADR 0068](../adr/0068-a-domestic-hot-water-device-is-a-water-heater.md); the modes follow what heats
+([ADR 0090](../adr/0090-a-water-heaters-modes-are-chosen-by-what-heats.md)); boost and away follow
 [ADR 0081](../adr/0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md).
 
 The keys every entity platform shares (`name`, `io_device_id`, `io_subtype`, `low_power`,
@@ -32,6 +33,8 @@ water_heater:
       name: "Hot water heat pump"
     electric_backup_running:
       name: "Hot water electric backup"
+    heating_source:             # a text sensor
+      name: "Hot water heating source"
     boost:                      # a switch
       name: "Hot water boost"
 ```
@@ -49,6 +52,10 @@ water_heater:
   runs. Takes every [binary sensor](https://esphome.io/components/binary_sensor/) option.
 - `electric_backup_running` (Optional): A binary sensor, `device_class: running`, on while the
   electric element heats.
+- `heating_source` (Optional): A text sensor that says what heats the water: `heat pump`,
+  `electric backup`, `heat pump and electric backup` or `idle`. It has no state until the heater has
+  reported its heating state. Takes every [text sensor](https://esphome.io/components/text_sensor/)
+  option.
 - `boost` (Optional): A switch, on while a boost runs. Turning it on starts a boost and turning it off
   ends it; a boost started here asks for a duration of 1, the value the heater showed during a boost
   started on its display. Confirmed on an Atlantic Calypso Connecté. The switch shows
@@ -62,14 +69,14 @@ water_heater:
 |---|---|
 | Current temperature | The water temperature the heater reports |
 | Target temperature | The target in the heater's status reply, 20–62 °C, step 1 °C; none in the heater's automatic mode |
-| Mode | `heat_pump` (the heater's automatic mode), `eco` (manual, ECO on), `performance` (manual, ECO off) |
+| Mode | `eco` (the heater's automatic mode), `heat_pump` (manual, ECO on: heat pump only), `performance` (manual, ECO off: the electric element may assist) |
 | Away | The heater's holiday mode, as its operating-mode word reports it |
 
 - Every value comes from the heater's replies; Home Assistant shows them after the first poll, about
   five seconds after boot. Each companion stays without a state until the heater has reported its
   value.
-- In automatic mode (`heat_pump`) the heater chooses its own target, so the card shows none and a
-  target set then is not sent; the log names the ignored target. Switch to `eco` or `performance` to
+- In automatic mode (`eco`) the heater chooses its own target, so the card shows none and a
+  target set then is not sent; the log names the ignored target. Switch to `heat_pump` or `performance` to
   set one.
 - Setting the target sends it to the heater, which reports it back at the next status read a few
   seconds later. Setting the mode writes it, reads it back at once and reads the target right after,

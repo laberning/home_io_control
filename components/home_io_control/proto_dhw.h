@@ -241,6 +241,14 @@ bool decode_dhw_mode(const uint8_t *value, size_t len, DhwMode &mode);
 /// @return false for a value shorter than five bytes.
 bool decode_dhw_heating_state(const uint8_t *value, size_t len, DhwHeatingState &state);
 
+/// @brief What heats the water, as a short label, from the two heating readings of DhwReadings.
+/// @details "heat pump", "electric backup", "heat pump and electric backup" or "idle" (neither runs). Both
+///          readings come from the same register, so a label needs both.
+/// @param heat_pump DhwReadings::heat_pump (0, 1 or -1 for not read).
+/// @param element DhwReadings::element (0, 1 or -1 for not read).
+/// @return The label, or nullptr while either reading is missing.
+const char *dhw_heating_source_name(int8_t heat_pump, int8_t element);
+
 /// @brief Energy since installation from the value of register 0x0004: unsigned 32-bit big-endian, Wh.
 /// @param value Value bytes.
 /// @param len Number of value bytes; at least 4.

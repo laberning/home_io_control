@@ -247,5 +247,7 @@ water_heater:
       name: "Test Hot Water Heat Pump"
     electric_backup_running:
       name: "Test Hot Water Electric Backup"
+    heating_source:
+      name: "Test Hot Water Heating Source"
     boost:
       name: "Test Hot Water Boost"

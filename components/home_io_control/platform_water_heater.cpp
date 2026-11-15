@@ -21,16 +21,20 @@ static const char *const TAG = "home_io_control.water_heater";
 
 namespace {
 
-/// @brief Heater mode <-> ESPHome mode. The single place this correspondence is defined (ADR 0068).
+/// @brief Heater mode <-> ESPHome mode. The single place this correspondence is defined (ADR 0090): each heater
+/// mode takes the ESPHome mode whose Home Assistant meaning matches what heats and how. Automatic adapts to
+/// consumption and uses the element as needed (energy saving: eco), manual ECO on heats with the heat pump only
+/// (heat_pump), manual ECO off lets the element assist (performance).
 struct WaterHeaterModeMapping {
   DhwMode dhw;
   water_heater::WaterHeaterMode mode;
 };
 constexpr WaterHeaterModeMapping WATER_HEATER_MODE_MAP[] = {
-    {DhwMode::AUTO, water_heater::WATER_HEATER_MODE_HEAT_PUMP},
-    {DhwMode::MANUAL_ECO_ON, water_heater::WATER_HEATER_MODE_ECO},
+    {DhwMode::AUTO, water_heater::WATER_HEATER_MODE_ECO},
+    {DhwMode::MANUAL_ECO_ON, water_heater::WATER_HEATER_MODE_HEAT_PUMP},
     {DhwMode::MANUAL_ECO_OFF, water_heater::WATER_HEATER_MODE_PERFORMANCE},
 };
+static_assert(WATER_HEATER_MODE_MAP[0].dhw == DhwMode::AUTO, "the fallback in water_heater_mode_for() is row 0");
 
 /// @brief UI target step: every target the heater has shown is a whole degree (issue #198). The main
 /// parameter resolves far finer.
@@ -46,7 +50,8 @@ water_heater::WaterHeaterMode water_heater_mode_for(DhwMode mode) {
     if (mapping.dhw == mode)
       return mapping.mode;
   }
-  return water_heater::WATER_HEATER_MODE_HEAT_PUMP;
+  // decode_dhw_mode() refuses any other value; a caller passing one gets the automatic row's mode.
+  return WATER_HEATER_MODE_MAP[0].mode;
 }
 
 bool dhw_mode_for(water_heater::WaterHeaterMode mode, DhwMode &out) {
@@ -122,7 +127,7 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
   const bool away = call.get_away().value_or(this->is_away());
   if (!std::isnan(target) && away) {
     ESP_LOGW(TAG, "Device %s: target ignored while away, the heater holds no target then", this->device_id_.c_str());
-  } else if (!std::isnan(target) && this->observed_ && this->mode_ == water_heater::WATER_HEATER_MODE_HEAT_PUMP) {
+  } else if (!std::isnan(target) && this->observed_ && this->holds_automatic_mode_()) {
     ESP_LOGW(TAG, "Device %s: target ignored in automatic mode, the heater chooses its own", this->device_id_.c_str());
   } else if (!std::isnan(target) && this->heating_port_->set_water_heater_target(this->device_id_, target) &&
              !this->observed_) {
@@ -133,6 +138,11 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
 
   if (changed)
     this->publish_state();
+}
+
+bool IOHomeWaterHeater::holds_automatic_mode_() const {
+  DhwMode heater_mode = DhwMode::MANUAL_ECO_ON;
+  return dhw_mode_for(this->mode_, heater_mode) && heater_mode == DhwMode::AUTO;
 }
 
 bool IOHomeWaterHeater::sync_from_readings_(const DhwReadings &readings) {
@@ -224,6 +234,22 @@ void IOHomeDhwBinarySensor::dump_config() {
       break;
   }
   ESP_LOGCONFIG(TAG, "IO-Homecontrol Water Heater %s:", reading);
+  ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeDhwHeatingSourceSensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    // Nothing read means no state, never "idle".
+    const char *source = dhw_heating_source_name(dev.dhw.heat_pump, dev.dhw.element);
+    if (source == nullptr) {
+      return;
+    }
+    this->publish_state(source);
+  });
+}
+
+void IOHomeDhwHeatingSourceSensor::dump_config() {
+  ESP_LOGCONFIG(TAG, "IO-Homecontrol Water Heater Heating Source:");
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
 }
 
