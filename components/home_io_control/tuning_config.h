@@ -161,7 +161,7 @@ enum class DiscoverySendChannels : uint8_t {
 /// display's pairing mode answers a pushed key with RESULT_COMMAND_UNKNOWN (tests/corpus/captures/
 /// pairing/atlantic_agilia_pairing_key_transfer_command_unknown.yaml); `auto` pulls such a device. A
 /// pulled key is carried by the devices that answer a roll-call under it, never adopted as the hub's:
-/// see PairingEngine::run_key_pull_phase_() and register_pulled_key_devices_().
+/// see KeyPull::pull() and PairingEngine::register_pulled_key_devices_().
 enum class KeyTransferMode : uint8_t {
   AUTO,  ///< Default. Pull from a device that answered discovery as a remote controller, push to any other.
   PUSH,  ///< Send our system key to the device.

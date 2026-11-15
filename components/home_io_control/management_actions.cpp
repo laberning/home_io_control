@@ -704,9 +704,6 @@ void ManagementActions::api_oneway_remove_controller(const std::string &controll
   publish_result(result);
 }
 
-/// @brief The keys one scan sweeps with: slot 0 is the hub key, the rest are the distinct per-device keys.
-using ScanKeys = std::vector<std::array<uint8_t, AES_KEY_SIZE>>;
-
 /// @brief Collect the keys to sweep: the hub key, then each per-device key that differs from it and
 /// from every key already collected. A per-device key equal to the hub key changes nothing, so it
 /// never earns a sweep of its own.
@@ -739,63 +736,6 @@ static size_t count_devices_using_key(DeviceRegistry &registry, const uint8_t *h
       count++;
   }
   return count;
-}
-
-/// @brief Build the final report: known/unknown grouping, header, the selection NOTE, and the
-/// truncation NOTE.
-static std::string build_scan_report(const ScanState &state, DeviceRegistry &registry, ScanPowerClasses selection,
-                                     const ScanKeys &keys, bool reveal_keys) {
-  // Grouped into known-first, unknown-second rather than interleaved in arrival order: the two
-  // groups need very different follow-up (nothing to do vs. paste a YAML block), so burying an
-  // unknown responder between two known ones makes it easy to miss.
-  std::string known_body;
-  std::string unknown_body;
-  uint8_t unknown_count = 0;
-  for (uint8_t i = 0; i < state.count; i++) {
-    const std::string device_id = node_id_to_string(state.responders[i].src);
-    // A device a pairing added in this boot still needs its block, so it counts as unknown here.
-    const IoDevice *registered = registry.get_declared(device_id);
-    const uint8_t slot = state.responders[i].key_slot;
-    const RollCallReplyKeys reply_keys{keys[slot].data(), keys[0].data(), slot != 0};
-    const RollCallKeyDisplay display = reveal_keys ? RollCallKeyDisplay::BANNERED : RollCallKeyDisplay::HIDDEN;
-    if (registered != nullptr) {
-      known_body += format_roll_call_responder(state.responders[i], device_id, registered, reply_keys, display);
-    } else {
-      unknown_count++;
-      unknown_body += format_roll_call_responder(state.responders[i], device_id, nullptr, reply_keys, display);
-    }
-  }
-
-  std::string body;
-  if (!known_body.empty())
-    body += "Known:\n" + known_body;
-  if (!unknown_body.empty())
-    body += "Unknown:\n" + unknown_body;
-
-  std::string message = "Roll-call: " + std::to_string(state.count) + " device" + (state.count == 1 ? "" : "s") +
-                        " detected (" + std::to_string(state.count - unknown_count) + " known, " +
-                        std::to_string(unknown_count) + " unknown)\n";
-  // A non-default selection must say so in the report itself, not just the log: a user who left
-  // this tunable on always_alive must not read a missing solar/battery device as "gone". Derived
-  // from ROLL_CALL_PASSES rather than a switch/literal, so a third power class would not need a
-  // second place taught about it.
-  if (selection != ScanPowerClasses::BOTH) {
-    for (const RollCallPass &pass : ROLL_CALL_PASSES) {
-      if (scan_power_classes_include(selection, pass.power_save_mode))
-        continue;
-      message += "NOTE: scan_power_classes=" + scan_power_classes_to_string(selection) + ": " +
-                 power_save_mode_name(pass.power_save_mode) + " devices were not called.\n";
-    }
-  }
-  // Surfaced in the report itself, not only the log: a scan that silently listed a subset would
-  // look like devices had gone missing.
-  if (state.truncated) {
-    message += "NOTE: more than " + std::to_string(SCAN_MAX_REPLIES) +
-               " devices answered; the list below is truncated. Re-run to see whether other devices "
-               "appear, and raise SCAN_MAX_REPLIES if this install really is larger.\n";
-  }
-  message += body;
-  return message;
 }
 
 ManagementActionResult ManagementActions::scan_paired_devices() {

@@ -107,7 +107,7 @@ class ExchangeEngine {
   /// @param request_preamble_override Preamble for the request frame in bytes, or 0 (the default) for
   ///        request_preamble_for()'s rule. Only pairing passes a value: it sends its directed start
   ///        frames with a preamble the device has just proven it hears (see
-  ///        PairingEngine::pairing_start_preamble_()). The 0x3D challenge response keeps the
+  ///        pairing_start_preamble()). The 0x3D challenge response keeps the
   ///        driver's response_preamble() either way. An override also switches the low-power wake
   ///        belief off for that exchange: the caller has already chosen the preamble.
   /// @param key 16-byte key the exchange answers the device's challenge under, or nullptr (the

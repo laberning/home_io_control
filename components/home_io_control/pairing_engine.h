@@ -23,6 +23,11 @@
 /// Phase 3 — Configuration (0x6F):
 ///   The controller sends SetConfig1 to enable automatic device status updates.
 ///
+/// The engine runs the push pairing above and orchestrates the attempt. Two parts of its own take the
+/// other direction: KeyPull (pairing_key_pull.h) pulls the key out of a device that hands out its own, and
+/// KeyHolderSearch (pairing_key_holders.h) then finds and registers the devices that hold that key. Both are
+/// members the engine builds from the collaborators it is given.
+///
 /// The engine is constructed once by IOHomeControlComponent. It holds double-pointer
 /// indirection for the radio driver so test assignments (`comp.radio_ = &mock`) propagate
 /// without calling setup(). All radio operations go through ExchangeEngine so that
@@ -40,6 +45,9 @@
 #include "exchange_engine.h"
 #include "device_registry.h"
 #include "pairing_advisor.h"
+#include "pairing_key_holders.h"
+#include "pairing_key_pull.h"
+#include "pairing_steps.h"
 #include "pairing_telemetry.h"
 #include "radio_interface.h"
 #include "tuning_config.h"
@@ -56,7 +64,6 @@ namespace home_io_control {
 inline constexpr uint32_t PAIRING_DISCOVERY_RESPONSE_TIMEOUT_MS = 2000;  ///< Discovery wait window after sending 0x28.
 inline constexpr uint8_t PAIRING_DISCOVERY_MAX_ATTEMPTS = 3;             ///< Retry discovery TX up to this many times.
 inline constexpr uint32_t PAIRING_KEY_CHALLENGE_TIMEOUT_MS = 500;  ///< Wait window for the device's 0x3C challenge.
-inline constexpr uint32_t PAIRING_KEY_CONFIRM_TIMEOUT_MS = 500;    ///< Wait for 0x33 key confirm after sending 0x32.
 inline constexpr uint8_t PAIRING_DISCOVER_CONFIRM_TRIES = 3;       ///< Max tries for the discover-confirm (0x2C) step.
 inline constexpr uint32_t PAIRING_DISCOVER_CONFIRM_ACK_TIMEOUT_MS = 1500;  ///< Wait window per discover-confirm try.
 /// Tries for the authenticated name read that checks whether a device took our key although the
@@ -66,9 +73,6 @@ inline constexpr uint8_t PAIRING_KEY_VERIFY_MAX_TRIES = 2;
 /// Re-sends of the key-init (0x31) after a missed 0x33 on a slow-turnaround radio, each after
 /// EXCHANGE_RETRY_DELAY_MS.
 inline constexpr uint8_t PAIRING_KEY_INIT_RESENDS = 2;
-/// Wait for the device's key transfer (0x32) after our key transfer request (0x38). Same window as
-/// the 0x33 wait: both are a unicast reply to a unicast pairing frame.
-inline constexpr uint32_t PAIRING_KEY_PULL_REPLY_TIMEOUT_MS = PAIRING_KEY_CONFIRM_TIMEOUT_MS;
 /// How recent a RecentOneWayPairingSighting has to be, relative to discover_and_pair() starting,
 /// to still count as evidence for this attempt. Generous relative to the doc's "a few seconds"
 /// PROG-then-press guidance: real field reports (issue #27) show gaps up to ~4-7 s between the
@@ -86,21 +90,6 @@ inline constexpr uint32_t PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS = 15000;
 /// @ingroup hioc_hub
 class PairingEngine {
  public:
-  /// @brief What run_key_pull_phase_() ended with.
-  enum class KeyPullResult : uint8_t {
-    FAILED,     ///< No key received, refused, or a different key the device did not prove (not printed).
-    OUR_KEY,    ///< The device sent the hub's own key: it is paired with this hub.
-    OTHER_KEY,  ///< The device sent a different key and proved it holds it (`context.pulled_key`).
-    UNPROVEN,   ///< The device sent a different key and no 0x3D to our challenges (`context.pulled_key`,
-                ///< not printed): only devices that answer a roll-call under it can prove it.
-  };
-
-  /// @brief What roll_call_and_register_() found under a key.
-  struct KeyHolderSearch {
-    uint8_t answered{0};    ///< Devices that answered under the key (registered or not).
-    uint8_t registered{0};  ///< Of those, the ones registered until reboot.
-  };
-
   /// Construct the engine with all required collaborators.
   ///
   /// @param radio_ptr  Double pointer into the hub's `radio_` member — survives driver replacement in tests.
@@ -235,77 +224,6 @@ class PairingEngine {
   /// @return true if the device answered an authenticated request with our key.
   bool verify_device_holds_key_(pairing::PairingContext &context);
 
-  /// @brief Key pull (`pairing_key_transfer: pull`, or `auto` for a remote controller): 0x38 ->
-  /// device's 0x32 -> our 0x3C -> device's 0x3D.
-  ///
-  /// Sends a key transfer request with 6 random bytes, waits for the device's 0x32 and decrypts the
-  /// key (recover_key_from_pull()). The log gets one "Key pull check" line with the key's check value,
-  /// never the key, so two attempts or two devices can be compared from the log alone.
-  ///
-  /// Every 0x38 try of the attempt carries the same challenge, so a 0x32 that answers an earlier try late
-  /// still decrypts to the key. The tries follow the command plan of the device's power class
-  /// (ExchangeEngine::plan_attempts()): to a mains device as many without a gap as fit
-  /// `exchange_total_budget_ms` (at most EXCHANGE_MAX_ATTEMPTS), the early ones listening
-  /// `exchange_early_response_wait_ms` and the last PAIRING_KEY_PULL_REPLY_TIMEOUT_MS; to a low-power
-  /// one EXCHANGE_RETRY_COUNT with the retry gap. A try that could not finish inside the budget is
-  /// not started (decisions::attempt_fits()).
-  ///
-  /// The hub's own key is accepted as is: no decrypt produces it by chance. A different key must be
-  /// proven by the device's 0x3D to our challenge (ExchangeEngine::challenge_sender() under that key, up
-  /// to EXCHANGE_RETRY_COUNT challenges while no 0x3D comes back; a 0x3D that does not verify ends it).
-  /// The challenges repeat the same bytes, so a late 0x3D still verifies; the first goes out with the
-  /// response preamble, as an immediate answer to the 0x32, the repeats with the 0x38's start preamble,
-  /// since the device may no longer be listening on the channel by then. A proven key becomes
-  /// `context.pulled_key` (OTHER_KEY); one with no 0x3D at all is kept there unprinted (UNPROVEN) for a
-  /// roll-call to prove. The hub's own key is never replaced. Hardware-validated on an Atlantic AGILIA IO
-  /// radiator (issue #165).
-  /// @param context Pairing context populated by run_discovery_phase_().
-  /// @return See KeyPullResult.
-  KeyPullResult run_key_pull_phase_(pairing::PairingContext &context);
-
-  /// @brief Which direction this attempt moves the key in.
-  ///
-  /// `pull` and `push` force it; `auto` pulls when the device answered discovery as a remote
-  /// controller (node type 1023) and pushes otherwise. Logs the `auto` decision.
-  /// @param context Pairing context populated by run_discovery_phase_().
-  /// @return true to pull the device's key, false to push the hub's.
-  [[nodiscard]] bool key_pull_selected_(const pairing::PairingContext &context) const;
-
-  /// @brief Find the devices that hold `key`, log one report, register the ones that can be controlled.
-  ///
-  /// Asks the heater at the next address first (probe_heater_at_next_address_()); otherwise runs one
-  /// roll-call sweep (run_roll_call_sweep()) with `key`. Registers every device found that has a platform
-  /// and no YAML entry, until reboot (IoDevice::registered_by_pairing); a record an earlier pairing in this
-  /// boot added is replaced. With a device key the report is build_pulled_key_report() (device log
-  /// only, one banner, the responders carry the key as their own `system_key`); with the hub key it is
-  /// build_hub_key_pull_report() (no key, no banner, the responders use the hub key).
-  ///
-  /// With `key_proven` false (a pulled key its device did not prove), the devices that answer are the
-  /// proof: a device answers a roll-call, or the heater probe's authenticated read, only under the key it
-  /// holds. If none answers, nothing is reported or registered and the key stays unprinted.
-  /// @param context Pairing context of the attempt.
-  /// @param key AES_KEY_SIZE bytes the roll-call is built with.
-  /// @param device_key true when `key` is a key the device handed over, false for the hub's own.
-  /// @param key_proven false when only the answers can prove `key` (a device key the device did not prove).
-  /// @return How many devices answered, and how many of them were registered.
-  KeyHolderSearch roll_call_and_register_(pairing::PairingContext &context, const uint8_t *key, bool device_key,
-                                          bool key_proven);
-
-  /// @brief Ask the heater at the address after an Atlantic pairing node for its maximum setpoint.
-  ///
-  /// Runs only for a node decisions::heater_behind_pairing_node() names, and only when the
-  /// YAML declares no device at that address. One authenticated register read under `key` (the full
-  /// retry budget); an answer means the electrical heater with an adjustable setpoint is there, and it
-  /// becomes the only entry of `state`, as if a roll-call had found it. The read goes out with `key` given to
-  /// ExchangeEngine::send_and_receive(), so the registry is neither read nor written for it.
-  /// @param context Pairing context of the attempt (the discovered node and its manufacturer).
-  /// @param key AES_KEY_SIZE bytes the read is signed with.
-  /// @param device_key true when `key` is a key the device handed over (the entry uses key slot 1).
-  /// @param[out] state Filled with the heater when it answered; untouched otherwise.
-  /// @return true when the heater answered.
-  bool probe_heater_at_next_address_(const pairing::PairingContext &context, const uint8_t *key, bool device_key,
-                                     ScanState &state);
-
   /// @brief Record a pairing that ends with devices found by roll-call: `paired`, `node=` unchanged.
   void finish_paired_by_roll_call_(pairing::PairingContext &context);
 
@@ -331,21 +249,6 @@ class PairingEngine {
   bool register_pulled_key_devices_(pairing::PairingContext &context, bool key_proven);
 
  private:
-  /// Preamble for a directed pairing start frame (0x2C, 0x31, 0x6F) to the device discovery just
-  /// found: the shorter of ExchangeEngine::request_preamble_for()'s rule and the preamble the
-  /// discovery request went out with (`effective_discovery_preamble()`).
-  ///
-  /// The device answered a discovery request carrying that preamble moments ago, so it is
-  /// listening and demonstrably hears it; pairing follows within seconds. The long wake-up
-  /// preamble the rule would otherwise pick for a low-power target (and that 0x31/0x6F always
-  /// carry) is not just unnecessary then: some VELUX receivers never detect a frame behind a
-  /// 1024-byte preamble at all (ADR 0029). Without a tuned discovery preamble the cap is the
-  /// start preamble, so a low-power target's frames follow discovery down to it; with a
-  /// low-power discovery frame (wake-up preamble) the result equals the rule.
-  /// @param frame The start frame about to be sent.
-  /// @return Preamble length in bytes.
-  [[nodiscard]] uint16_t pairing_start_preamble_(const IoFrame &frame) const;
-
   /// One `ListenPolicy::HOLD_REQUEST_CHANNEL` listen for the key-transfer confirm wait, called up
   /// to twice per try in `wait_for_key_confirm_()` — once for the initial reply, once more (a
   /// fresh window) after answering a device challenge — so the listen spec, logging, and telemetry
@@ -363,6 +266,24 @@ class PairingEngine {
   /// Convenience accessor returning the current radio driver (dereferences double pointer).
   [[nodiscard]] RadioDriver *radio_() const { return *radio_ptr_; }
 
+  /// Open the attempt: reset telemetry, attach it to the exchange engine, seed it with a recent 1W
+  /// pairing gesture, and log the tuning snapshot.
+  void begin_attempt_();
+
+  /// Register the paired device in the registry (until reboot unless the YAML declares it) and record it
+  /// in telemetry.
+  /// @param context Pairing context with the device from discovery.
+  void register_paired_device_(pairing::PairingContext &context);
+
+  /// Log what the user does next with the paired device (the YAML snippet, or why there is none), then
+  /// complete the attempt as paired.
+  /// @param context Pairing context with the registered device.
+  void report_paired_(pairing::PairingContext &context);
+
+  /// Enter COMPLETE and end the attempt as `paired`.
+  /// @param context Pairing context of the attempt.
+  void complete_paired_(pairing::PairingContext &context);
+
   /// Record the final outcome, detach telemetry from the exchange engine, and log the
   /// end-of-attempt summary. Called once at every discover_and_pair() exit point.
   /// @param outcome Final disposition of this attempt.
@@ -375,19 +296,6 @@ class PairingEngine {
   /// @param accepted true if the frame was classified as a valid discovery response.
   /// @param rssi RSSI of the captured frame.
   void record_discovery_rx_telemetry_(const IoFrame &frame, bool accepted, int16_t rssi);
-
-  /// Record a CMD_ERROR_RESP answer to the key step: context flag, telemetry, and a decoded log line.
-  /// @param context Pairing context to mark as refused.
-  /// @param reply   The device's CMD_ERROR_RESP frame.
-  /// @param step    Log label for the refused step (e.g. "Key transfer").
-  void note_key_refusal_(pairing::PairingContext &context, const IoFrame &reply, const char *step);
-
-  /// Wait for the device's 0x32 answer to our 0x38, holding the request channel.
-  /// @param context   Pairing context; `context.rx` receives the accepted 0x32.
-  /// @param window_ms How long to listen.
-  /// @return true if a well-formed 0x32 from the device arrived; false on timeout or refusal
-  ///         (a refusal also sets `context.key_refused`).
-  bool wait_for_pulled_key_(pairing::PairingContext &context, uint32_t window_ms);
 
   /// Run the push key exchange with its retry loop, then the key-held check if it did not confirm.
   /// @param context Pairing context populated by the discovery phase.
@@ -402,6 +310,8 @@ class PairingEngine {
   DeviceRegistry &registry_;
   PairingTelemetry &telemetry_;
   const RecentOneWayPairingSighting &recent_oneway_sighting_;
+  KeyPull key_pull_;             ///< Pulls a key out of a device that hands out its own.
+  KeyHolderSearch key_holders_;  ///< Finds and registers the devices that hold a pulled or returned key.
 };
 
 }  // namespace home_io_control

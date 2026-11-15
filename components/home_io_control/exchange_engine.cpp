@@ -891,22 +891,14 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
   RadioDriver *radio = *this->radio_ptr_;
   uint8_t count = 0;
 
-  ListenSpec spec;
-  spec.window_ms = window_ms;
   // policy is the caller's choice: ROTATE_SKIPPING_REQUEST (the default) leaves the request
   // channel unattended because so few replies land there for that caller's population; a caller
   // whose replies do land there passes ROTATE_ALL_CHANNELS instead. request_freq is set
   // unconditionally — harmless for ROTATE_ALL_CHANNELS, which never reads it.
-  spec.policy = policy;
-  spec.request_freq = freq;
-  // dwell_ms is left at 0: no measured reason to dwell differently from discovery, so listen()
-  // asks the driver via hop_dwell_ms() instead of hardcoding a value here.
   // A reception proves this channel carries responders and replies arrive spread across the whole
   // window, so staying on it costs nothing; hopping away would only shrink the time spent where
   // responders already are.
-  spec.hop_after_ignored_frame = false;
-  spec.linger_on_preamble = true;
-  spec.linger_dwell_ms = PREAMBLE_LINGER_DWELL_MS;
+  const ListenSpec spec = rotating_broadcast_listen_spec(window_ms, policy, freq, /*hop_after_ignored_frame=*/false);
 
   RadioRxPacket packet{};
   IoFrame frame{};

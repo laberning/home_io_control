@@ -120,7 +120,7 @@ majority of integrated devices).
   directed frames pairing sends to a just-discovered device (0x2C, 0x31 and
   the phase-3 config frame 0x6F) never use a longer preamble than the
   discovery request the device answered (`pairing_discovery_preamble`,
-  `PairingEngine::pairing_start_preamble_()`). At the default discovery
+  `pairing_start_preamble()`). At the default discovery
   preamble that is this ADR's rule unchanged. At a short one it is what
   makes a VELUX SSL solar roller shutter pairable: awake in its
   registration window, it ignores those frames at `LONG_PREAMBLE` and

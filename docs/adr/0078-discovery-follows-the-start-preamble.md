@@ -41,7 +41,7 @@ addresses a receiver that sleeps between short listening windows.
    number) overrides both, 1024 included, so the wake-up burst stays one line away for a device
    that needs it. A value written through Home Assistant stays set until the next restart.
 4. **The pairing cap is unchanged.** The directed pairing frames still never exceed the discovery
-   length (`PairingEngine::pairing_start_preamble_()`), so at the new default they go out at the
+   length (`pairing_start_preamble()`), so at the new default they go out at the
    normal start preamble too.
 5. **One accessor decides.** `effective_discovery_preamble()` in `tuning_config.h` resolves the
    three cases at send time; nothing else reads the raw setting. The "Tuning overrides active" log

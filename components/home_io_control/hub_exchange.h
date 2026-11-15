@@ -35,6 +35,7 @@
 /// ExchangeEngine::listen() (exchange_engine.h) for the loop itself.
 
 #include "proto_frame.h"
+#include "proto_timing.h"
 #include "radio_interface.h"
 #include <cstdint>
 #include <functional>
@@ -222,6 +223,29 @@ struct ListenSpec {
   /// lost.
   ListenStats *stats{nullptr};
 };
+
+/// @brief The listen settings every wait for a broadcast's replies shares: a rotating policy with the
+/// preamble/sync guard, so a frame arriving while the radio retunes is not cut off.
+///
+/// `dwell_ms` is left at 0 (the driver's own dwell, see ListenSpec::dwell_ms). The caller adds what is
+/// its own: ListenSpec::on_hop for pairing's hop count.
+/// @param window_ms Total time budget of the listen.
+/// @param policy One of the ROTATE_* policies.
+/// @param request_freq Channel the request went out on; read only by ListenPolicy::ROTATE_SKIPPING_REQUEST.
+/// @param hop_after_ignored_frame See ListenSpec::hop_after_ignored_frame: true for a window full of
+///        unrelated traffic (discovery), false where a reception shows responders on this channel (roll-call).
+/// @return The listen settings.
+inline ListenSpec rotating_broadcast_listen_spec(uint32_t window_ms, ListenPolicy policy, uint32_t request_freq,
+                                                 bool hop_after_ignored_frame) {
+  ListenSpec spec;
+  spec.window_ms = window_ms;
+  spec.policy = policy;
+  spec.request_freq = request_freq;
+  spec.hop_after_ignored_frame = hop_after_ignored_frame;
+  spec.linger_on_preamble = true;
+  spec.linger_dwell_ms = PREAMBLE_LINGER_DWELL_MS;
+  return spec;
+}
 
 }  // namespace home_io_control
 }  // namespace esphome

@@ -112,8 +112,6 @@ class TestablePairingEngine : public PairingEngine {
   using PairingEngine::wait_for_key_challenge_;
   using PairingEngine::wait_for_key_confirm_;
   using PairingEngine::verify_device_holds_key_;
-  using PairingEngine::run_key_pull_phase_;
-  using PairingEngine::key_pull_selected_;
   using PairingEngine::register_pulled_key_devices_;
 };
 

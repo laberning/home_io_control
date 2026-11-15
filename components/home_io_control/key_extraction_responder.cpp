@@ -92,7 +92,8 @@ constexpr uint32_t KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS = 5000;  ///< 5 seconds
 // generously rather than tightly: a real hub that's still trying should have its very next frame
 // land well inside this window -- comfortably above a single retry gap (EXCHANGE_RETRY_DELAY_MS=250ms)
 // plus the request/response windows either side of it
-// (PAIRING_KEY_CHALLENGE_TIMEOUT_MS/PAIRING_KEY_CONFIRM_TIMEOUT_MS=500ms each, pairing_engine.h) --
+// (PAIRING_KEY_CHALLENGE_TIMEOUT_MS/PAIRING_KEY_REPLY_TIMEOUT_MS=500ms each, pairing_engine.h and
+// pairing_steps.h) --
 // while staying "a few seconds", not minutes, sized against third-party hub timing (the whole
 // reason this feature exists), not this project's own controller role. Not hardware-measured;
 // deliberately generous rather than tight, matching KEY_EXTRACTION_POST_EXTRACT_GRACE_MS's own

@@ -81,11 +81,9 @@ PairingEngine::PairingEngine(RadioDriver **radio_ptr, const uint8_t *node_id, co
       engine_(engine),
       registry_(registry),
       telemetry_(telemetry),
-      recent_oneway_sighting_(recent_oneway_sighting) {}
-
-uint16_t PairingEngine::pairing_start_preamble_(const IoFrame &frame) const {
-  return std::min(engine_.request_preamble_for(frame), effective_discovery_preamble(*tuning_));
-}
+      recent_oneway_sighting_(recent_oneway_sighting),
+      key_pull_(radio_ptr, node_id, system_key, tuning, engine, telemetry),
+      key_holders_(radio_ptr, node_id, system_key, tuning, engine, registry, telemetry) {}
 
 // --- Low-level waiters ---
 
@@ -105,21 +103,15 @@ decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_respons
                                                                                    RadioRxPacket &packet,
                                                                                    IoFrame &response_frame,
                                                                                    uint32_t request_freq) {
-  ListenSpec spec;
-  spec.window_ms = timeout_ms;
   // Skipping the request channel is the default because a broadcast's answers are almost never
   // on it (ListenPolicy's own doc has the 1-in-149 measurement). `all` is the escape hatch for a
   // device that has never answered at all: that measurement is drawn from responders we already
   // hear, so it cannot speak for one whose replies we might be missing entirely.
-  spec.policy = tuning_->pairing_discovery_listen_channels == DiscoveryListenChannels::ALL
-                    ? ListenPolicy::ROTATE_ALL_CHANNELS
-                    : ListenPolicy::ROTATE_SKIPPING_REQUEST;
-  spec.request_freq = request_freq;
-  // dwell_ms left at 0: no measured reason to dwell differently from the roll-call, so listen()
-  // asks the driver (radio_()->hop_dwell_ms(*tuning_)) the same way collect_broadcast_responses()
-  // does.
-  spec.linger_on_preamble = true;
-  spec.linger_dwell_ms = PREAMBLE_LINGER_DWELL_MS;
+  const ListenPolicy policy = tuning_->pairing_discovery_listen_channels == DiscoveryListenChannels::ALL
+                                  ? ListenPolicy::ROTATE_ALL_CHANNELS
+                                  : ListenPolicy::ROTATE_SKIPPING_REQUEST;
+  // The dwell is the driver's own (no measured reason to dwell differently from the roll-call).
+  ListenSpec spec = rotating_broadcast_listen_spec(timeout_ms, policy, request_freq, /*hop_after_ignored_frame=*/true);
   spec.on_hop = [this]() { this->telemetry_.record_hop(); };
 
   bool saw_traffic = false;
@@ -195,15 +187,14 @@ bool PairingEngine::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &
 decisions::PairingDiscoverConfirmDisposition PairingEngine::wait_for_discover_confirm_ack_(
     uint8_t try_index, pairing::PairingContext &context) {
   ListenSpec spec;
-  spec.window_ms = PAIRING_DISCOVER_CONFIRM_ACK_TIMEOUT_MS;
   if (decisions::discover_confirm_try_rotates(try_index)) {
-    spec.policy = ListenPolicy::ROTATE_ALL_CHANNELS;
-    // Same shape as the discovery listen's rotating spec: a short rotating dwell needs the
-    // preamble/sync linger guard so an incoming reply is not cut off mid-retune.
-    spec.linger_on_preamble = true;
-    spec.linger_dwell_ms = PREAMBLE_LINGER_DWELL_MS;
+    // A short rotating dwell needs the preamble/sync linger guard so an incoming reply is not cut off
+    // mid-retune. The request channel is not skipped, so none is named.
+    spec = rotating_broadcast_listen_spec(PAIRING_DISCOVER_CONFIRM_ACK_TIMEOUT_MS, ListenPolicy::ROTATE_ALL_CHANNELS,
+                                          /*request_freq=*/0, /*hop_after_ignored_frame=*/true);
     spec.on_hop = [this]() { this->telemetry_.record_hop(); };
   } else {
+    spec.window_ms = PAIRING_DISCOVER_CONFIRM_ACK_TIMEOUT_MS;
     spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
   }
 
@@ -243,7 +234,7 @@ decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(p
                                                                                uint8_t try_number,
                                                                                bool after_challenge) {
   ListenSpec spec;
-  spec.window_ms = PAIRING_KEY_CONFIRM_TIMEOUT_MS;
+  spec.window_ms = PAIRING_KEY_REPLY_TIMEOUT_MS;
   spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
 
   bool saw_any = false;
@@ -266,7 +257,7 @@ decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(p
         if (disposition == decisions::PairingKeyConfirmDisposition::REFUSE) {
           this->telemetry_.record_rx_reject(*parsed, rssi);
           if (parsed->cmd == CMD_ERROR_RESP) {
-            this->note_key_refusal_(context, *parsed, "Key transfer");
+            note_key_refusal(this->telemetry_, context, *parsed, "Key transfer");
           } else {
             ESP_LOGW(TAG, "Key transfer: device responded with cmd=%s(0x%02X) (expected KEY_CONFIRM 0x33)",
                      command_name(parsed->cmd), parsed->cmd);
@@ -283,7 +274,7 @@ decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(p
 
   if (outcome == ListenOutcome::TIMED_OUT) {
     ESP_LOGI(TAG, "Try %u%s: no response for key transfer (0x32) within %" PRIu32 " ms (saw_any=%d)", try_number,
-             after_challenge ? " (post-challenge)" : "", PAIRING_KEY_CONFIRM_TIMEOUT_MS, saw_any);
+             after_challenge ? " (post-challenge)" : "", PAIRING_KEY_REPLY_TIMEOUT_MS, saw_any);
     return decisions::PairingKeyConfirmDisposition::IGNORE;
   }
   return disposition;
@@ -334,17 +325,13 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
 /// again against a freshly re-issued challenge (see that function's doc comment) rather than
 /// discarding it.
 bool PairingEngine::transfer_key_and_wait_confirm_(pairing::PairingContext &context) {
-  context.state = pairing::PairingState::TX_KEY_TRANSFER;
-  engine_.record_debug(pairing_stage_name(context.state), 1, true);
-  this->telemetry_.set_phase(context.state);
+  enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::TX_KEY_TRANSFER, 1, true);
   if (!create_key_transfer(context.req, context.key_init, context.device.node_id, node_id_, system_key_,
                            context.rx.data)) {
     return false;
   }
 
-  context.state = pairing::PairingState::WAIT_KEY_CONFIRM;
-  engine_.record_debug(pairing_stage_name(context.state), 1, true);
-  this->telemetry_.set_phase(context.state);
+  enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::WAIT_KEY_CONFIRM, 1, true);
   // Fast-turnaround radios catch the 0x33 through the standard exchange wait. Slow-turnaround
   // radios miss it while re-entering RX, so run_key_exchange_phase_()'s retry loop calls this
   // helper again instead, rather than using the dedicated wait loop directly.
@@ -354,7 +341,7 @@ bool PairingEngine::transfer_key_and_wait_confirm_(pairing::PairingContext &cont
     if (engine_.send_and_receive(context.req, context.resp, FREQ_CH2) != ExchangeOutcome::SUCCESS_WITH_RESPONSE)
       return false;
     if (context.resp.cmd == CMD_ERROR_RESP)
-      this->note_key_refusal_(context, context.resp, "Key transfer");
+      note_key_refusal(this->telemetry_, context, context.resp, "Key transfer");
     return frame_is_key_confirm(context.resp);
   }
   return wait_for_key_confirm_(context);
@@ -451,9 +438,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
 
     for (uint8_t attempt = 1; attempt <= PAIRING_DISCOVERY_MAX_ATTEMPTS; ++attempt) {
       this->telemetry_.increment_discovery_attempt();
-      context.state = pairing::PairingState::TX_DISCOVER;
-      engine_.record_debug(pairing_stage_name(context.state), attempt, false);
-      this->telemetry_.set_phase(context.state);
+      enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::TX_DISCOVER, attempt, false);
       const uint32_t request_freq = decisions::discovery_request_freq(
           tuning_->pairing_discovery_send_channels == DiscoverySendChannels::ALL, attempt);
       if (!create_discovery_request(context.req, node_id_, command, destination, tuning_->pairing_discovery_low_power,
@@ -463,9 +448,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
         return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
       }
 
-      context.state = pairing::PairingState::WAIT_DISCOVER_RESPONSE;
-      engine_.record_debug(pairing_stage_name(context.state), attempt, false);
-      this->telemetry_.set_phase(context.state);
+      enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::WAIT_DISCOVER_RESPONSE, attempt, false);
       auto result =
           wait_for_discovery_response_(tuning_->pairing_discovery_wait_ms, context.packet, context.rx, request_freq);
       if (result == decisions::PairingDiscoveryDisposition::ACCEPT) {
@@ -525,7 +508,7 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
   engine_.run_attempts(run, [&](uint8_t try_index, uint16_t /*window_ms*/) {
     engine_.record_debug(pairing_stage_name(pairing::PairingState::TX_DISCOVER_CONFIRM), try_index, false);
     if (!create_discover_confirm(context.req, node_id_, context.device.node_id, context.discovery_low_power, ack) ||
-        !engine_.transmit_frame(context.req, FREQ_CH2, pairing_start_preamble_(context.req))) {
+        !engine_.transmit_frame(context.req, FREQ_CH2, pairing_start_preamble(engine_, *tuning_, context.req))) {
       // A failed build/TX counts as a silent try, like wait_for_key_confirm_() does for 0x32.
       return AttemptVerdict::AGAIN;
     }
@@ -576,7 +559,7 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
 bool PairingEngine::resend_key_init_(pairing::PairingContext &context, uint8_t resend) {
   ESP_LOGI(TAG, "Key confirm missed, re-sending key-init to trigger auto-confirm (attempt %u/%u)", resend,
            PAIRING_KEY_INIT_RESENDS);
-  if (!engine_.transmit_frame(context.key_init, FREQ_CH2, pairing_start_preamble_(context.key_init)))
+  if (!engine_.transmit_frame(context.key_init, FREQ_CH2, pairing_start_preamble(engine_, *tuning_, context.key_init)))
     return false;
   if (!wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx, context.device.node_id))
     return false;
@@ -593,7 +576,7 @@ bool PairingEngine::resend_key_init_(pairing::PairingContext &context, uint8_t r
 /// Phase 2: authenticated key exchange (0x31 → 0x3C → 0x32 → 0x33).
 ///
 /// Steps:
-///   1. Transmit CMD_KEY_INIT (0x31), preamble per pairing_start_preamble_()
+///   1. Transmit CMD_KEY_INIT (0x31), preamble per pairing_start_preamble()
 ///   2. Wait for device challenge (0x3C)
 ///   3. Transmit CMD_KEY_TRANSFER (0x32) with encrypted system key
 ///   4. Wait for CMD_KEY_CONFIRM (0x33)
@@ -623,17 +606,14 @@ bool PairingEngine::resend_key_init_(pairing::PairingContext &context, uint8_t r
 /// slow-turnaround device that never got its key stuck retrying forever — is worse than the
 /// occasional slower failure path.
 bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
-  context.state = pairing::PairingState::TX_KEY_INIT;
-  engine_.record_debug(pairing_stage_name(context.state), 1, false);
-  this->telemetry_.set_phase(context.state);
+  enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::TX_KEY_INIT, 1, false);
   if (!create_key_init(context.key_init, node_id_, context.device.node_id) ||
-      !engine_.transmit_frame(context.key_init, FREQ_CH2, pairing_start_preamble_(context.key_init))) {
+      !engine_.transmit_frame(context.key_init, FREQ_CH2,
+                              pairing_start_preamble(engine_, *tuning_, context.key_init))) {
     return false;
   }
 
-  context.state = pairing::PairingState::WAIT_KEY_CHALLENGE;
-  engine_.record_debug(pairing_stage_name(context.state), 1, true);
-  this->telemetry_.set_phase(context.state);
+  enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::WAIT_KEY_CHALLENGE, 1, true);
   if (!wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx, context.device.node_id)) {
     return false;
   }
@@ -677,13 +657,13 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
 }
 
 /// Phase 3: send SetConfig1 (0x6F) once. Optional — see the header. Its preamble follows
-/// pairing_start_preamble_(), like the other directed pairing start frames.
+/// pairing_start_preamble(), like the other directed pairing start frames.
 void PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &context) {
   if (!create_set_config1(context.req, node_id_, context.device.node_id))
     return;
   // Its reply is never read: an explicit refusal and silence are equally harmless here.
   if (engine_.send_and_receive(context.req, context.resp, FREQ_CH2, PAIRING_SET_CONFIG1_MAX_TRIES,
-                               pairing_start_preamble_(context.req)) == ExchangeOutcome::FAILED) {
+                               pairing_start_preamble(engine_, *tuning_, context.req)) == ExchangeOutcome::FAILED) {
     ESP_LOGI(TAG, "Pairing: no reply from %s to the optional SetConfig1 (0x6F); the pairing is complete",
              context.device_id.c_str());
   }
@@ -693,29 +673,15 @@ void PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &con
 
 /// Pairing orchestrator — high-level three-phase flow.
 ///
-/// Phase 1: run_discovery_phase_() finds a device in pairing mode.
-/// Phase 2: run_key_exchange_phase_() performs authenticated key establishment.
+/// Phase 1: run_discovery_phase_() finds a device in pairing mode, run_discover_confirm_step_() confirms it.
+/// Phase 2: the key moves: run_push_key_step_() pushes the hub's key (authenticated key exchange), or
+///          KeyPull pulls the device's (run_pull_and_finish_()).
 /// Phase 3: finalize_pairing_configuration_() sends the optional SetConfig1 once.
 ///
 /// On success the device is added to the registry and a YAML snippet is printed to the log.
 /// The hub's thin wrapper manages the busy_ flag before and after this call.
 bool PairingEngine::discover_and_pair() {
-  this->telemetry_.begin();
-  this->engine_.set_transmit_observer(&this->telemetry_);
-
-  // Seed telemetry with a 1W pairing-gesture frame the hub overheard shortly before this call
-  // (issue #27/#65): without this, a PROG press completed a few seconds before "Discover & Pair"
-  // is pressed in the app is invisible to the advisor purely because the telemetry window opens
-  // here, even though the radio heard it just fine — the false rf_silent advice this produced was
-  // field-confirmed against a real trace (issue #27, miljaar).
-  if (this->recent_oneway_sighting_.seen_ms != 0 &&
-      (millis() - this->recent_oneway_sighting_.seen_ms) < PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS) {
-    this->telemetry_.record_recent_one_way_sighting(this->recent_oneway_sighting_);
-  }
-
-  ESP_LOGI(TAG, "Starting device discovery...");
-  ESP_LOGI(TAG, "%s", tuning_config_full_snapshot(*tuning_).c_str());
-
+  begin_attempt_();
   pairing::PairingContext context;
 
   // Phase 1: Discovery
@@ -739,7 +705,7 @@ bool PairingEngine::discover_and_pair() {
 
   // Phase 2: move the key, in the direction `pairing_key_transfer` selects (auto: the discovery
   // answer decides).
-  if (key_pull_selected_(context)) {
+  if (key_pull_.selected(context)) {
     bool paired = false;
     if (this->run_pull_and_finish_(context, paired))
       return paired;
@@ -752,9 +718,31 @@ bool PairingEngine::discover_and_pair() {
   // Phase 3: optional SetConfig1. The 0x33 above completed the pairing.
   finalize_pairing_configuration_(context);
 
-  context.state = pairing::PairingState::REGISTER_DEVICE;
-  engine_.record_debug(pairing_stage_name(context.state), 1, true);
-  this->telemetry_.set_phase(context.state);
+  register_paired_device_(context);
+  report_paired_(context);
+  return true;
+}
+
+void PairingEngine::begin_attempt_() {
+  this->telemetry_.begin();
+  this->engine_.set_transmit_observer(&this->telemetry_);
+
+  // Seed telemetry with a 1W pairing-gesture frame the hub overheard shortly before this call
+  // (issue #27/#65): without this, a PROG press completed a few seconds before "Discover & Pair"
+  // is pressed in the app is invisible to the advisor purely because the telemetry window opens
+  // here, even though the radio heard it just fine — the false rf_silent advice this produced was
+  // field-confirmed against a real trace (issue #27, miljaar).
+  if (this->recent_oneway_sighting_.seen_ms != 0 &&
+      (millis() - this->recent_oneway_sighting_.seen_ms) < PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS) {
+    this->telemetry_.record_recent_one_way_sighting(this->recent_oneway_sighting_);
+  }
+
+  ESP_LOGI(TAG, "Starting device discovery...");
+  ESP_LOGI(TAG, "%s", tuning_config_full_snapshot(*tuning_).c_str());
+}
+
+void PairingEngine::register_paired_device_(pairing::PairingContext &context) {
+  enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::REGISTER_DEVICE, 1, true);
 
   // The device just sent its 0x33, so it counts as heard from: its wake belief starts at "maybe
   // awake" for the follow-up exchanges rather than "asleep" (same stamp update_link_health() sets).
@@ -763,7 +751,9 @@ bool PairingEngine::discover_and_pair() {
   context.device.registered_by_pairing = registry_.get_declared(context.device_id) == nullptr;
   registry_.put(context.device_id, context.device);
   this->telemetry_.set_paired_device(context.device.node_id, context.device.type);
+}
 
+void PairingEngine::report_paired_(pairing::PairingContext &context) {
   const std::string type_diag = format_device_type_diagnostic(context.device.type);
   const std::string type_yaml = format_device_type_for_yaml(context.device.type);
   const std::string snippet =
@@ -786,15 +776,7 @@ bool PairingEngine::discover_and_pair() {
              type_yaml.c_str());
     ESP_LOGW(TAG, "Please file a GitHub issue with this device type, subtype, model, and the pairing log so support "
                   "can be added.");
-
-    context.state = pairing::PairingState::COMPLETE;
-    engine_.record_debug(pairing_stage_name(context.state), 1, true);
-    this->telemetry_.set_phase(context.state);
-    this->finish_pairing_attempt_(PairingOutcome::PAIRED);
-    return true;
-  }
-
-  if (!context.discovery_metadata_complete) {
+  } else if (!context.discovery_metadata_complete) {
     ESP_LOGW(TAG,
              "Device %s paired successfully, but the discovery response did not include type/subtype "
              "metadata, so the platform (cover/light/switch/lock) can't be determined automatically.",
@@ -802,32 +784,27 @@ bool PairingEngine::discover_and_pair() {
     ESP_LOGI(TAG, "Add this to your YAML once you know what kind of device it is:\n%s", snippet.c_str());
     ESP_LOGW(TAG, "Please file a GitHub issue with the pairing log and device model so this discovery edge case can "
                   "be investigated.");
+  } else {
+    ESP_LOGI(TAG, "Device %s (%s%s) paired successfully! Add this to your YAML:\n%s", context.device_id.c_str(),
+             format_device_kind(context.device.type, context.device.subtype).c_str(),
+             experimental_note(context.device.type, context.device.subtype), snippet.c_str());
 
-    context.state = pairing::PairingState::COMPLETE;
-    engine_.record_debug(pairing_stage_name(context.state), 1, true);
-    this->telemetry_.set_phase(context.state);
-    this->finish_pairing_attempt_(PairingOutcome::PAIRED);
-    return true;
+    if (yaml_device_type_name(context.device.type) == nullptr) {
+      ESP_LOGW(TAG,
+               "This snippet uses the raw device type %s because the project does not yet expose a named YAML "
+               "alias for %s.",
+               type_yaml.c_str(), type_diag.c_str());
+      ESP_LOGW(TAG, "Please file a GitHub issue with this type, subtype, device model, and the pairing log so "
+                    "support can be added.");
+    }
   }
 
-  ESP_LOGI(TAG, "Device %s (%s%s) paired successfully! Add this to your YAML:\n%s", context.device_id.c_str(),
-           format_device_kind(context.device.type, context.device.subtype).c_str(),
-           experimental_note(context.device.type, context.device.subtype), snippet.c_str());
+  complete_paired_(context);
+}
 
-  if (yaml_device_type_name(context.device.type) == nullptr) {
-    ESP_LOGW(TAG,
-             "This snippet uses the raw device type %s because the project does not yet expose a named YAML alias "
-             "for %s.",
-             type_yaml.c_str(), type_diag.c_str());
-    ESP_LOGW(TAG, "Please file a GitHub issue with this type, subtype, device model, and the pairing log so support "
-                  "can be added.");
-  }
-
-  context.state = pairing::PairingState::COMPLETE;
-  engine_.record_debug(pairing_stage_name(context.state), 1, true);
-  this->telemetry_.set_phase(context.state);
+void PairingEngine::complete_paired_(pairing::PairingContext &context) {
+  enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::COMPLETE, 1, true);
   this->finish_pairing_attempt_(PairingOutcome::PAIRED);
-  return true;
 }
 
 bool PairingEngine::run_push_key_step_(pairing::PairingContext &context) {
@@ -854,15 +831,14 @@ bool PairingEngine::run_push_key_step_(pairing::PairingContext &context) {
 }
 
 bool PairingEngine::verify_device_holds_key_(pairing::PairingContext &context) {
-  context.state = pairing::PairingState::VERIFY_KEY_HELD;
-  engine_.record_debug(pairing_stage_name(context.state), 1, false);
-  this->telemetry_.set_phase(context.state);
+  enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::VERIFY_KEY_HELD, 1, false);
   ESP_LOGI(TAG, "Key exchange: not confirmed; checking whether %s took the key anyway (authenticated name read)",
            context.device_id.c_str());
   if (!create_get_name(context.req, node_id_, context.device.node_id, context.discovery_low_power))
     return false;
-  const ExchangeOutcome outcome = engine_.send_and_receive(
-      context.req, context.resp, FREQ_CH2, PAIRING_KEY_VERIFY_MAX_TRIES, pairing_start_preamble_(context.req));
+  const ExchangeOutcome outcome =
+      engine_.send_and_receive(context.req, context.resp, FREQ_CH2, PAIRING_KEY_VERIFY_MAX_TRIES,
+                               pairing_start_preamble(engine_, *tuning_, context.req));
   const auto verdict = decisions::classify_key_verify_reply(outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE,
                                                             engine_.get_debug().saw_challenge, context.resp);
   const bool held = verdict == decisions::PairingKeyVerifyDisposition::HELD;
@@ -885,201 +861,21 @@ bool PairingEngine::verify_device_holds_key_(pairing::PairingContext &context) {
   return held;
 }
 
-void PairingEngine::note_key_refusal_(pairing::PairingContext &context, const IoFrame &reply, const char *step) {
-  const uint8_t code = reply.data_len > 0 ? reply.data[0] : 0;
-  context.key_refused = true;
-  context.key_refusal_code = code;
-  this->telemetry_.set_key_refusal(code);
-  ESP_LOGW(TAG, "%s: device %s refused with 0x%02X %s (%s; code %u, state %u)", step, context.device_id.c_str(), code,
-           command_result_name(code), command_result_description(code), error_resp_code(code), error_resp_state(code));
-}
-
-bool PairingEngine::wait_for_pulled_key_(pairing::PairingContext &context, uint32_t window_ms) {
-  ListenSpec spec;
-  spec.window_ms = window_ms;
-  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;  // Unicast reply to a unicast request, as for 0x33.
-
-  auto outcome =
-      engine_.listen(spec, context.packet, context.rx, [&](const IoFrame *parsed, const RadioRxPacket & /*packet*/) {
-        if (parsed == nullptr)
-          return ReplyDisposition::IGNORE;
-        const auto disposition = decisions::classify_key_pull_reply(*parsed, context.device.node_id, node_id_);
-        if (disposition == decisions::PairingKeyPullReplyDisposition::IGNORE)
-          return ReplyDisposition::IGNORE;
-        const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
-        if (disposition == decisions::PairingKeyPullReplyDisposition::KEY) {
-          this->telemetry_.record_rx(*parsed, rssi);
-          return ReplyDisposition::ACCEPT;
-        }
-        this->telemetry_.record_rx_reject(*parsed, rssi);
-        if (disposition == decisions::PairingKeyPullReplyDisposition::REFUSE) {
-          this->note_key_refusal_(context, *parsed, "Key pull");
-          return ReplyDisposition::ABORT;
-        }
-        return ReplyDisposition::IGNORE;
-      });
-  return outcome == ListenOutcome::ACCEPTED;
-}
-
-bool PairingEngine::key_pull_selected_(const pairing::PairingContext &context) const {
-  switch (tuning_->pairing_key_transfer) {
-    case KeyTransferMode::PULL:
-      return true;
-    case KeyTransferMode::PUSH:
-      return false;
-    case KeyTransferMode::AUTO:
-      break;
-  }
-  // A device that answers discovery as a remote controller (node type 1023) hands out its own key and
-  // refuses a pushed one; every other device takes a push. No switch to the other direction inside the
-  // attempt: a refusal repeats deterministically, and a retry only costs pairing time.
-  const bool pull = device_hands_out_key(context.device.type);
-  ESP_LOGI(TAG, "Key transfer: auto -> %s (%s answered discovery as %s)", pull ? "pull" : "push",
-           context.device_id.c_str(), format_device_kind(context.device.type, context.device.subtype).c_str());
-  return pull;
-}
-
-PairingEngine::KeyHolderSearch PairingEngine::roll_call_and_register_(pairing::PairingContext &context,
-                                                                      const uint8_t *key, bool device_key,
-                                                                      bool key_proven) {
-  // Every device that holds the key answers a roll-call built with it. For an Atlantic AGILIA radiator
-  // that is the heater at the next address up, not the node that handed the key over.
-  context.state = pairing::PairingState::SCAN_PULLED_KEY;
-  engine_.record_debug(pairing_stage_name(context.state), 1, true);
-  this->telemetry_.set_phase(context.state);
-  ScanState state{};
-  // An Atlantic radiator's heater answers a direct read every time but a roll-call only now and then
-  // (about one request in four), so it is asked first; the roll-call is the fallback, and the only
-  // search for any other device.
-  if (!this->probe_heater_at_next_address_(context, key, device_key, state)) {
-    uint8_t attempt = 0;
-    const uint8_t total_attempts = count_enabled_passes(tuning_->scan_power_classes) * SCAN_CHANNEL_COUNT;
-    ESP_LOGI(TAG, "Roll-call with key check value %s (%s %s handed over)", detail::format_key_check_value(key).c_str(),
-             device_key ? "the key" : "the hub key, which", context.device_id.c_str());
-    if (run_roll_call_sweep(engine_, node_id_, key, /*key_slot=*/device_key ? 1 : 0, *tuning_, state, attempt,
-                            total_attempts) == RollCallAttemptResult::BUILD_FAILED) {
-      ESP_LOGW(TAG, "Could not build the roll-call under the pulled key");
-    }
-  }
-
-  // One report for the device log only: with a device key it carries the key, so the pairing summary, the
-  // Last Pairing Result sensor and every Home Assistant event keep to the key check value. A hub-key report
-  // carries no key and has no banner.
-  KeyHolderSearch found{};
-  found.answered = state.count;
-  // An unproven key that no device answered under proves nothing: no report, so it is never printed.
-  if (!key_proven && found.answered == 0)
-    return found;
-
-  const PulledKeyReportInfo info{context.device_id, context.device.type, context.device.subtype, key,
-                                 system_key_,       key_proven};
-  if (device_key) {
-    ESP_LOGW(TAG, "========================================");
-    detail::log_multiline_result(TAG, /*is_warning=*/true, /*prefix=*/"",
-                                 build_pulled_key_report(info, state, registry_));
-    ESP_LOGW(TAG, "========================================");
-  } else if (state.count != 0) {
-    detail::log_multiline_result(TAG, /*is_warning=*/false, /*prefix=*/"",
-                                 build_hub_key_pull_report(info, state, registry_));
-  }
-
-  // Register each device the report offers a block for, so it can be controlled until the YAML is
-  // flashed: with the key it answered under when that is a device key, with the hub key otherwise. A
-  // device the YAML declares keeps its record; one an earlier pairing in this boot added is replaced, so
-  // pairing it again counts as paired. One of a type no platform drives yet is reported but not registered.
-  for (uint8_t i = 0; i < state.count; i++) {
-    const ScanResponder &responder = state.responders[i];
-    const std::string responder_id = node_id_to_string(responder.src);
-    if (registry_.get_declared(responder_id) != nullptr || !device_has_platform(responder.type, responder.subtype))
-      continue;
-    IoDevice device{};
-    memcpy(device.node_id, responder.src, NODE_ID_SIZE);
-    device.type = responder.type;
-    device.subtype = responder.subtype;
-    device.low_power = responder.has_extended && discovery_power_save_mode(responder.flags) == POWER_SAVE_LOW_POWER;
-    device.has_system_key = device_key;
-    if (device_key)
-      memcpy(device.system_key, key, AES_KEY_SIZE);
-    device.last_seen_ms = millis();
-    device.registered_by_pairing = true;
-    registry_.put(responder_id, device);
-    found.registered++;
-    ESP_LOGI(TAG, "Pairing: registered %s (%s) until reboot; paste its block above to keep it", responder_id.c_str(),
-             format_device_kind(responder.type, responder.subtype).c_str());
-  }
-  return found;
-}
-
-bool PairingEngine::probe_heater_at_next_address_(const pairing::PairingContext &context, const uint8_t *key,
-                                                  bool device_key, ScanState &state) {
-  uint8_t heater[NODE_ID_SIZE];
-  const std::optional<decisions::DeviceKind> heater_kind =
-      decisions::heater_behind_pairing_node(context.device.type, context.discovery_manufacturer);
-  if (!heater_kind || !decisions::next_node_id(context.device.node_id, heater))
-    return false;
-  const std::string heater_id = node_id_to_string(heater);
-  // A YAML entry keeps its own key; the roll-call reports it against that.
-  if (registry_.get_declared(heater_id) != nullptr)
-    return false;
-
-  // The maximum setpoint is a read-only register every such heater holds, so reading it changes nothing.
-  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
-  const size_t payload_len = encode_heating_read(HeatingFunction::MAX_SETPOINT, payload);
-  IoFrame request{};
-  IoFrame response{};
-  float max_setpoint_c = NAN;
-  ESP_LOGI(TAG, "Heater probe: reading %s, the address after %s, under key check value %s", heater_id.c_str(),
-           context.device_id.c_str(), detail::format_key_check_value(key).c_str());
-  const bool answered =
-      payload_len != 0 && create_write_private(request, node_id_, heater, /*low_power=*/false, payload, payload_len) &&
-      // The candidate has no registry record yet (the caller registers it if it answered), so the
-      // exchange is given the key to answer its challenge under.
-      engine_.send_and_receive(request, response, FREQ_CH2, EXCHANGE_RETRY_COUNT, /*request_preamble_override=*/0,
-                               key) == ExchangeOutcome::SUCCESS_WITH_RESPONSE &&
-      decode_heating_reply(response, HeatingFunction::MAX_SETPOINT, max_setpoint_c);
-  const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
-  if (!answered) {
-    ESP_LOGI(TAG, "Heater probe: %s did not answer; looking for devices with a roll-call instead", heater_id.c_str());
-    return false;
-  }
-  ESP_LOGI(TAG, "Heater probe: %s answered (maximum setpoint %.1f C); no roll-call needed", heater_id.c_str(),
-           max_setpoint_c);
-
-  // Only the register protocol answers this read, and only the heater with an adjustable setpoint
-  // speaks it; manufacturer and flags come from no reply of its own, so the report omits them.
-  ScanResponder &responder = state.responders[0];
-  memcpy(responder.src, heater, NODE_ID_SIZE);
-  responder.type = heater_kind->type;
-  responder.subtype = heater_kind->subtype;
-  responder.rssi_dbm = rssi;
-  responder.manufacturer = context.discovery_manufacturer;
-  responder.flags = 0;
-  responder.has_extended = false;
-  responder.metadata_complete = true;
-  responder.key_slot = device_key ? 1 : 0;
-  state.count = 1;
-  state.truncated = false;
-  return true;
-}
-
 void PairingEngine::finish_paired_by_roll_call_(pairing::PairingContext &context) {
   // `node=` in the frozen result string stays the node that was discovered; the responders appear in
   // the log report only.
   this->telemetry_.set_paired_device(context.device.node_id, context.device.type);
-  context.state = pairing::PairingState::COMPLETE;
-  engine_.record_debug(pairing_stage_name(context.state), 1, true);
-  this->telemetry_.set_phase(context.state);
-  this->finish_pairing_attempt_(PairingOutcome::PAIRED);
+  complete_paired_(context);
 }
 
 bool PairingEngine::run_pull_and_finish_(pairing::PairingContext &context, bool &paired) {
   this->telemetry_.set_key_pull_attempted();
-  const KeyPullResult pulled = run_key_pull_phase_(context);
-  if (pulled == KeyPullResult::OTHER_KEY || pulled == KeyPullResult::UNPROVEN) {
-    paired = this->register_pulled_key_devices_(context, /*key_proven=*/pulled == KeyPullResult::OTHER_KEY);
+  const KeyPull::Result pulled = key_pull_.pull(context);
+  if (pulled == KeyPull::Result::OTHER_KEY || pulled == KeyPull::Result::UNPROVEN) {
+    paired = this->register_pulled_key_devices_(context, /*key_proven=*/pulled == KeyPull::Result::OTHER_KEY);
     return true;
   }
-  if (pulled == KeyPullResult::FAILED) {
+  if (pulled == KeyPull::Result::FAILED) {
     this->finish_pairing_attempt_(context.key_refused ? PairingOutcome::KEY_TRANSFER_REFUSED
                                                       : PairingOutcome::KEY_EXCHANGE_FAILED);
     paired = false;
@@ -1092,7 +888,8 @@ bool PairingEngine::run_pull_and_finish_(pairing::PairingContext &context, bool 
   // key are elsewhere, so look for them, as after a foreign key, and register the ones found with the
   // hub key. With none found the attempt ends here: the node itself cannot be controlled, and it
   // refuses the SetConfig1 the push path sends.
-  if (this->roll_call_and_register_(context, system_key_, /*device_key=*/false, /*key_proven=*/true).registered > 0) {
+  if (this->key_holders_.search_and_register(context, system_key_, /*device_key=*/false, /*key_proven=*/true)
+          .registered > 0) {
     this->finish_paired_by_roll_call_(context);
     paired = true;
     return true;
@@ -1105,8 +902,8 @@ bool PairingEngine::run_pull_and_finish_(pairing::PairingContext &context, bool 
 }
 
 bool PairingEngine::register_pulled_key_devices_(pairing::PairingContext &context, bool key_proven) {
-  const KeyHolderSearch found =
-      this->roll_call_and_register_(context, context.pulled_key, /*device_key=*/true, key_proven);
+  const KeyHolderSearch::Result found =
+      this->key_holders_.search_and_register(context, context.pulled_key, /*device_key=*/true, key_proven);
   memset(context.pulled_key, 0, AES_KEY_SIZE);
   context.has_pulled_key = false;
   if (!key_proven && found.answered == 0) {
@@ -1121,112 +918,6 @@ bool PairingEngine::register_pulled_key_devices_(pairing::PairingContext &contex
   }
   this->finish_paired_by_roll_call_(context);
   return true;
-}
-
-PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::PairingContext &context) {
-  ESP_LOGW(TAG, "Key pull: asking %s for its key", context.device_id.c_str());
-  // One challenge for every try: the IV of the device's 0x32 is built from the request it answers, so
-  // with the same request bytes a 0x32 that answers an earlier try late still decrypts to the key.
-  uint8_t challenge[HMAC_SIZE];
-  crypto::generate_challenge(challenge);
-  // The request is the same on every try (one challenge), so it is built once and its transmit time
-  // estimated once for the budget rule.
-  if (!create_launch_key_transfer(context.req, node_id_, context.device.node_id, challenge)) {
-    ESP_LOGW(TAG, "Key pull failed: could not build the key transfer request for %s", context.device_id.c_str());
-    return KeyPullResult::FAILED;
-  }
-  const uint16_t preamble = pairing_start_preamble_(context.req);
-  const decisions::AttemptPlan plan =
-      engine_.plan_attempts(decisions::ReadKind::COMMAND, context.discovery_low_power, context.req, FREQ_CH2, preamble,
-                            static_cast<uint16_t>(PAIRING_KEY_PULL_REPLY_TIMEOUT_MS));
-  const ExchangeEngine::AttemptRun run{plan, engine_.tx_time_ms(context.req, FREQ_CH2, preamble)};
-  const uint32_t begin_ms = millis();
-  uint8_t tries = 0;
-  const AttemptRunResult ran = engine_.run_attempts(run, [&](uint8_t try_number, uint16_t window_ms) {
-    tries = try_number;
-    context.state = pairing::PairingState::TX_KEY_PULL;
-    engine_.record_debug(pairing_stage_name(context.state), try_number, false);
-    this->telemetry_.set_phase(context.state);
-    if (!engine_.transmit_frame(context.req, FREQ_CH2, preamble))
-      return AttemptVerdict::AGAIN;
-    context.state = pairing::PairingState::WAIT_KEY_PULL_REPLY;
-    this->telemetry_.set_phase(context.state);
-    if (wait_for_pulled_key_(context, window_ms))
-      return AttemptVerdict::DONE;
-    if (context.key_refused)
-      return AttemptVerdict::STOP;
-    ESP_LOGI(TAG, "Key pull try %u: no key transfer (0x32) from %s within %u ms", try_number, context.device_id.c_str(),
-             window_ms);
-    return AttemptVerdict::AGAIN;
-  });
-  if (ran == AttemptRunResult::BUDGET_EXHAUSTED) {
-    ESP_LOGI(TAG, "Key pull budget exhausted after %u tries (%" PRIu32 " of %u ms)", tries, millis() - begin_ms,
-             tuning_->exchange_total_budget_ms);
-  }
-  const bool got_key = ran == AttemptRunResult::DONE;
-  if (!got_key) {
-    ESP_LOGW(TAG, "Key pull failed: %s sent no key", context.device_id.c_str());
-    return KeyPullResult::FAILED;
-  }
-
-  uint8_t key[AES_KEY_SIZE];
-  if (!recover_key_from_pull(context.req, context.rx.data, key))
-    return KeyPullResult::FAILED;
-  // The key check value names the key without revealing it, so two attempts or two devices can be
-  // compared from the log alone.
-  const std::string check_value = detail::format_key_check_value(key);
-  // Our own key cannot come out of the decrypt by chance, so a match proves the device holds it.
-  if (memcmp(key, system_key_, AES_KEY_SIZE) == 0) {
-    ESP_LOGI(TAG, "Key pull check: %s -> key check value %s, the hub's own key", context.device_id.c_str(),
-             check_value.c_str());
-    return KeyPullResult::OUR_KEY;
-  }
-
-  context.state = pairing::PairingState::VERIFY_PULLED_KEY;
-  this->telemetry_.set_phase(context.state);
-  // The device's 0x3D over its own 0x32, under the key it sent, proves the decrypt and that it holds
-  // the key (a chance match is 1 in 2^48). A lost answer is challenged again; a wrong one is final.
-  // Every challenge repeats the same bytes, so a 0x3D that arrives in the next try's window still
-  // verifies instead of reading as a wrong answer. The first challenge answers the 0x32 at once and
-  // goes out with the response preamble; a repeat follows a pause, by which time a device that hops or
-  // sleeps between frames may have left the channel, so it gets the 0x38's start preamble.
-  uint8_t verify_challenge[HMAC_SIZE];
-  crypto::generate_challenge(verify_challenge);
-  const uint16_t repeat_preamble = pairing_start_preamble_(context.req);
-  ExchangeEngine::ChallengeResult proof = ExchangeEngine::ChallengeResult::NO_ANSWER;
-  uint8_t challenges = 0;
-  engine_.run_attempts(
-      ExchangeEngine::fixed_attempts(EXCHANGE_RETRY_COUNT, EXCHANGE_RETRY_DELAY_MS),
-      [&](uint8_t try_number, uint16_t /*window_ms*/) {
-        challenges = try_number;
-        const uint16_t challenge_preamble = try_number == 1 ? radio_()->response_preamble() : repeat_preamble;
-        proof = engine_.challenge_sender(context.rx, FREQ_CH2, key, verify_challenge, challenge_preamble);
-        return proof == ExchangeEngine::ChallengeResult::NO_ANSWER ? AttemptVerdict::AGAIN : AttemptVerdict::DONE;
-      });
-  if (proof == ExchangeEngine::ChallengeResult::VERIFIED) {
-    ESP_LOGI(TAG, "Key pull check: %s -> key check value %s, proven by its 0x3D", context.device_id.c_str(),
-             check_value.c_str());
-    memcpy(context.pulled_key, key, AES_KEY_SIZE);
-    context.has_pulled_key = true;
-    return KeyPullResult::OTHER_KEY;
-  }
-  this->telemetry_.set_key_pull_unproven();
-  if (proof == ExchangeEngine::ChallengeResult::MISMATCH) {
-    ESP_LOGW(TAG,
-             "Key pull check: %s -> key check value %s, not proven: its 0x3D does not match. The key is not "
-             "printed and must not be used",
-             context.device_id.c_str(), check_value.c_str());
-    return KeyPullResult::FAILED;
-  }
-  // No answer at all is not a wrong answer: devices that answer a roll-call under the key can still
-  // prove it (register_pulled_key_devices_()).
-  ESP_LOGW(TAG,
-           "Key pull check: %s -> key check value %s, not proven: no 0x3D received after %u challenges. The key "
-           "is not printed; a roll-call under it decides whether devices hold it",
-           context.device_id.c_str(), check_value.c_str(), challenges);
-  memcpy(context.pulled_key, key, AES_KEY_SIZE);
-  context.has_pulled_key = true;
-  return KeyPullResult::UNPROVEN;
 }
 
 void PairingEngine::finish_pairing_attempt_(PairingOutcome outcome) {

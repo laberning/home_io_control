@@ -57,7 +57,7 @@ frames:
     freq: 868950000
     hex: "4E 04 98 61 10 60 F8 23 38 F3 D7 04 4F CC 14"
     crc: absent
-    note: "cmd=LAUNCH_KEY_TRANSFER(0x38), START, CTRL1 bit 2 set, six random bytes, preamble 48 (key_pull_selected_: auto -> pull for a type-1023 node). The radiator answered at t=1567 with KEY_TRANSFER(0x32, 18 04, 16 bytes masked); we challenged it at t=1584 (0x3C, preamble 8, masked) and its 0x3D (8E 00, masked) verified under the decrypted key: key check value A73DD4."
+    note: "cmd=LAUNCH_KEY_TRANSFER(0x38), START, CTRL1 bit 2 set, six random bytes, preamble 48 (KeyPull::selected(): auto -> pull for a type-1023 node). The radiator answered at t=1567 with KEY_TRANSFER(0x32, 18 04, 16 bytes masked); we challenged it at t=1584 (0x3C, preamble 8, masked) and its 0x3D (8E 00, masked) verified under the decrypted key: key check value A73DD4."
   - dir: tx
     t_ms: 1836
     freq: 868950000

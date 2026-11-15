@@ -252,5 +252,19 @@ std::string build_hub_key_pull_report(const PulledKeyReportInfo &info, const Sca
 ///        is reported as known; one an earlier pairing in this boot added gets its block again.
 std::string build_pulled_key_report(const PulledKeyReportInfo &info, const ScanState &state, DeviceRegistry &registry);
 
+/// @brief The keys one scan sweeps with: slot 0 is the hub key, the rest are the distinct per-device keys.
+using ScanKeys = std::vector<std::array<uint8_t, AES_KEY_SIZE>>;
+
+/// @brief Build the final report of a Scan Paired Devices run: known and unknown responders grouped, the header,
+/// the power-class selection NOTE and the truncation NOTE.
+/// @param state The responders found, across every sweep.
+/// @param registry Device registry; a responder the YAML declares is known (DeviceRegistry::get_declared()).
+/// @param selection The scan_power_classes tunable the sweeps ran with.
+/// @param keys The keys the sweeps ran with; a responder's `key_slot` indexes it.
+/// @param reveal_keys true for the device-log rendering (keys bannered); false for the one Home Assistant records.
+/// @return The report text.
+std::string build_scan_report(const ScanState &state, DeviceRegistry &registry, ScanPowerClasses selection,
+                              const ScanKeys &keys, bool reveal_keys);
+
 }  // namespace home_io_control
 }  // namespace esphome

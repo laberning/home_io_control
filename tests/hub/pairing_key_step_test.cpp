@@ -13,6 +13,7 @@
 #include "proto_frame.h"
 
 #include "esp_random.h"
+#include "pairing_test_support.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
@@ -22,6 +23,7 @@
 #include <vector>
 
 using namespace esphome::home_io_control;
+using namespace pairing_test;
 
 namespace {
 
@@ -42,65 +44,6 @@ class TestableComponent : public IOHomeControlComponent {
       &radio_,          node_id_,  system_key_,        &tuning_,
       exchange_engine_, registry_, pairing_telemetry_, recent_oneway_pairing_sighting_};
 };
-
-constexpr uint8_t DEVICE_ID[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFB};
-constexpr size_t WIRE_CMD_OFFSET = 8;  // [CTRL0][CTRL1][DST 3B][SRC 3B][CMD ...]
-
-RadioRxPacket to_packet(const IoFrame &frame) {
-  RadioRxPacket pkt{};
-  pkt.len = serialize(frame, pkt.data, sizeof(pkt.data));
-  pkt.freq_hz = FREQ_CH2;
-  return pkt;
-}
-
-IoFrame device_frame(const uint8_t dst[NODE_ID_SIZE], uint8_t cmd, const uint8_t *data, uint8_t len) {
-  IoFrame f{};
-  init_frame(f, true, false, false, false);
-  set_dst(f, dst);
-  set_src(f, DEVICE_ID);
-  set_cmd(f, cmd, data, len);
-  return f;
-}
-
-IoFrame challenge_frame(const uint8_t dst[NODE_ID_SIZE]) {
-  static const uint8_t challenge[HMAC_SIZE] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
-  return device_frame(dst, CMD_CHALLENGE_REQ, challenge, HMAC_SIZE);
-}
-
-IoFrame error_frame(const uint8_t dst[NODE_ID_SIZE], uint8_t code) {
-  return device_frame(dst, CMD_ERROR_RESP, &code, 1);
-}
-
-/// The Atlantic AGILIA discovery reply from tests/corpus/captures/pairing/
-/// atlantic_agilia_pairing_key_transfer_command_unknown.yaml, readdressed to `dst`: node type bytes
-/// FF C0 (remote controller), manufacturer 12, flags 0xCC.
-IoFrame atlantic_discovery_reply(const uint8_t dst[NODE_ID_SIZE]) {
-  const uint8_t payload[] = {0xFF, 0xC0, 0xB6, 0xBD, 0xFB, 0x0C, 0xCC, 0x00, 0x00};
-  IoFrame f{};
-  init_frame(f, true, true, true, false);
-  set_dst(f, dst);
-  set_src(f, DEVICE_ID);
-  set_cmd(f, CMD_DISCOVER_RESP, payload, sizeof(payload));
-  return f;
-}
-
-/// The frames we sent with command `cmd`, parsed.
-std::vector<IoFrame> sent_frames_of(const MockRadio &radio, uint8_t cmd) {
-  std::vector<IoFrame> frames;
-  for (const auto &raw : radio.get_sent_data()) {
-    IoFrame frame{};
-    if (parse(raw.data(), static_cast<uint8_t>(raw.size()), frame) && frame.cmd == cmd)
-      frames.push_back(frame);
-  }
-  return frames;
-}
-
-std::vector<uint8_t> sent_commands(const MockRadio &radio) {
-  std::vector<uint8_t> cmds;
-  for (const auto &frame : radio.get_sent_data())
-    cmds.push_back(frame.size() > WIRE_CMD_OFFSET ? frame[WIRE_CMD_OFFSET] : 0);
-  return cmds;
-}
 
 void setup(TestableComponent &comp, MockRadio &radio) {
   comp.initialized_ = true;
@@ -295,370 +238,8 @@ TEST(PairingKeyStep, UnconfirmedKeyExchangeIsRescuedByKeyHeldCheck) {
 }
 
 // ============================================================================
-// Key pull (pairing_key_transfer: pull)
-// ============================================================================
-
-namespace {
-
-constexpr uint8_t PULL_CHALLENGE[HMAC_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
-constexpr uint8_t VERIFY_CHALLENGE[HMAC_SIZE] = {0x11, 0x12, 0x13, 0x14, 0x15, 0x16};
-constexpr uint8_t OTHER_KEY[AES_KEY_SIZE] = {0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE,
-                                             0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF};
-
-/// Our 0x38 carrying PULL_CHALLENGE.
-IoFrame pull_request(const uint8_t own[NODE_ID_SIZE]) {
-  IoFrame request{};
-  create_launch_key_transfer(request, own, DEVICE_ID, PULL_CHALLENGE);
-  return request;
-}
-
-/// The device's 0x32 answering pull_request(), wrapping `key` with the whole-request IV. Encrypting
-/// and decrypting are the same XOR, so recover_key_from_pull() also wraps.
-IoFrame pulled_key_frame(const uint8_t dst[NODE_ID_SIZE], const uint8_t key[AES_KEY_SIZE]) {
-  uint8_t wrapped[AES_KEY_SIZE];
-  recover_key_from_pull(pull_request(dst), key, wrapped);
-  return device_frame(dst, CMD_KEY_TRANSFER, wrapped, AES_KEY_SIZE);
-}
-
-/// The device's 0x3D answering our VERIFY_CHALLENGE, signed with `key` over its own 0x32.
-IoFrame proof_frame(const uint8_t dst[NODE_ID_SIZE], const IoFrame &its_key_transfer, const uint8_t key[AES_KEY_SIZE]) {
-  uint8_t mac[HMAC_SIZE];
-  challenge_resp_hmac(its_key_transfer, VERIFY_CHALLENGE, key, mac);
-  return device_frame(dst, CMD_CHALLENGE_RESP, mac, HMAC_SIZE);
-}
-
-struct RngGuard {
-  RngGuard() {
-    test_rng::reset();
-    test_rng::enqueue_bytes(PULL_CHALLENGE, HMAC_SIZE);
-    test_rng::enqueue_bytes(VERIFY_CHALLENGE, HMAC_SIZE);
-  }
-  ~RngGuard() { test_rng::reset(); }
-};
-
-}  // namespace
-
-TEST(PairingKeyPull, RequestFrameShape) {
-  IoFrame f{};
-  ASSERT_TRUE(create_launch_key_transfer(f, test::OWN_ID, DEVICE_ID, PULL_CHALLENGE));
-  EXPECT_EQ(f.cmd, CMD_LAUNCH_KEY_TRANSFER);
-  EXPECT_EQ(f.data_len, HMAC_SIZE);
-  EXPECT_EQ(0, memcmp(f.data, PULL_CHALLENGE, HMAC_SIZE));
-  EXPECT_TRUE(f.ctrl0 & CTRL0_START);
-  EXPECT_FALSE(f.ctrl0 & CTRL0_END);
-  EXPECT_TRUE(f.ctrl1 & CTRL1_PRIORITY);
-  EXPECT_FALSE(f.ctrl1 & CTRL1_LOW_POWER);
-}
-
-TEST(PairingKeyPull, RecoverKeyRoundTrip) {
-  const IoFrame reply = pulled_key_frame(test::OWN_ID, OTHER_KEY);
-  uint8_t out[AES_KEY_SIZE];
-  ASSERT_TRUE(recover_key_from_pull(pull_request(test::OWN_ID), reply.data, out));
-  EXPECT_EQ(0, memcmp(out, OTHER_KEY, AES_KEY_SIZE));
-}
-
-TEST(PairingKeyPull, DeviceSendingOurKeyIsPaired) {
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-
-  radio.queue_rx(to_packet(pulled_key_frame(comp.node_id_, comp.system_key_)));
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OUR_KEY);
-  EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER})) << "our own key needs no challenge";
-}
-
-TEST(PairingKeyPull, ProvenForeignKeyIsReportedNotAdopted) {
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-  uint8_t key_before[AES_KEY_SIZE];
-  memcpy(key_before, comp.system_key_, AES_KEY_SIZE);
-
-  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
-  radio.queue_rx(to_packet(reply));
-  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, OTHER_KEY)));
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OTHER_KEY);
-  EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER, CMD_CHALLENGE_REQ}));
-  EXPECT_EQ(0, memcmp(comp.system_key_, key_before, AES_KEY_SIZE)) << "a pulled key is never adopted automatically";
-}
-
-TEST(PairingKeyPull, AKeyWithNoProofIsKeptUnprovenForARollCall) {
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-
-  radio.queue_rx(to_packet(pulled_key_frame(comp.node_id_, OTHER_KEY)));
-  // No 0x3D follows.
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::UNPROVEN);
-  EXPECT_TRUE(context.has_pulled_key);
-  EXPECT_EQ(0, memcmp(context.pulled_key, OTHER_KEY, AES_KEY_SIZE)) << "kept for the roll-call, never printed";
-  EXPECT_TRUE(comp.pairing_telemetry_.key_pull_unproven());
-}
-
-TEST(PairingKeyPull, A0x32ThatAnswersAnEarlierTryLateStillDecrypts) {
-  // Issue #215: a slow giver's 0x32 can land in the next try's window. Every 0x38 carries the same
-  // challenge, so the IV the hub decrypts with is the one the device encrypted with.
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-
-  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);  // answers a request with PULL_CHALLENGE
-  radio.queue_rx_hold_until_sent(2);                                 // nothing during try 1
-  radio.queue_rx(to_packet(reply));
-  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, OTHER_KEY)));
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OTHER_KEY);
-  const std::vector<IoFrame> pulls = sent_frames_of(radio, CMD_LAUNCH_KEY_TRANSFER);
-  ASSERT_EQ(pulls.size(), 2u);
-  EXPECT_EQ(0, memcmp(pulls[0].data, PULL_CHALLENGE, HMAC_SIZE));
-  EXPECT_EQ(0, memcmp(pulls[1].data, PULL_CHALLENGE, HMAC_SIZE)) << "the retry repeats the challenge";
-}
-
-TEST(PairingKeyPull, A0x3DThatAnswersAnEarlierChallengeLateStillVerifies) {
-  // Without repeated bytes, a 0x3D to challenge 1 arriving in challenge 2's window would read as a
-  // wrong answer, which ends the pull for good.
-  test_rng::reset();
-  test_rng::enqueue_bytes(PULL_CHALLENGE, HMAC_SIZE);
-  test_rng::enqueue_bytes(VERIFY_CHALLENGE, HMAC_SIZE);
-  const uint8_t other_challenge[HMAC_SIZE] = {0x31, 0x32, 0x33, 0x34, 0x35, 0x36};
-  test_rng::enqueue_bytes(other_challenge, HMAC_SIZE);
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-
-  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
-  radio.queue_rx(to_packet(reply));
-  radio.queue_rx_hold_until_sent(3);                                        // challenge 1 gets no answer in its window
-  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, OTHER_KEY)));  // signed over VERIFY_CHALLENGE
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OTHER_KEY);
-  const std::vector<IoFrame> challenges = sent_frames_of(radio, CMD_CHALLENGE_REQ);
-  ASSERT_EQ(challenges.size(), 2u);
-  EXPECT_EQ(0, memcmp(challenges[0].data, VERIFY_CHALLENGE, HMAC_SIZE));
-  EXPECT_EQ(0, memcmp(challenges[1].data, VERIFY_CHALLENGE, HMAC_SIZE));
-  test_rng::reset();
-}
-
-TEST(PairingKeyPull, ARepeatedChallengeGetsTheStartPreamble) {
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-
-  radio.queue_rx(to_packet(pulled_key_frame(comp.node_id_, OTHER_KEY)));
-  // No 0x3D: three challenges.
-
-  comp.pairing_engine_.run_key_pull_phase_(context);
-
-  const auto &sent = radio.get_sent_data();
-  const auto &configs = radio.get_tx_configs();
-  ASSERT_EQ(sent.size(), configs.size());
-  std::vector<uint16_t> challenge_preambles;
-  uint16_t pull_preamble = 0;
-  for (size_t i = 0; i < sent.size(); i++) {
-    IoFrame frame{};
-    if (!parse(sent[i].data(), static_cast<uint8_t>(sent[i].size()), frame))
-      continue;
-    if (frame.cmd == CMD_LAUNCH_KEY_TRANSFER)
-      pull_preamble = configs[i].preamble_len;
-    if (frame.cmd == CMD_CHALLENGE_REQ)
-      challenge_preambles.push_back(configs[i].preamble_len);
-  }
-  ASSERT_EQ(challenge_preambles.size(), 3u);
-  EXPECT_EQ(challenge_preambles[0], radio.response_preamble()) << "the first answers the 0x32 at once";
-  EXPECT_GT(pull_preamble, radio.response_preamble());
-  EXPECT_EQ(challenge_preambles[1], pull_preamble) << "a repeat follows a pause";
-  EXPECT_EQ(challenge_preambles[2], pull_preamble);
-}
-
-TEST(PairingKeyPull, WrongChallengeAnswerLeavesTheKeyUnproven) {
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-  uint8_t key_before[AES_KEY_SIZE];
-  memcpy(key_before, comp.system_key_, AES_KEY_SIZE);
-
-  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
-  const uint8_t unrelated_key[AES_KEY_SIZE] = {0x77};
-  radio.queue_rx(to_packet(reply));
-  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, unrelated_key)));
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
-  EXPECT_TRUE(comp.pairing_telemetry_.key_pull_unproven());
-  EXPECT_EQ(0, memcmp(comp.system_key_, key_before, AES_KEY_SIZE));
-}
-
-TEST(PairingKeyPull, ALostProofIsChallengedAgain) {
-  // Radiator 3 in issue #165: one 0x3D lost on air failed the attempt; the next press paired.
-  test_rng::reset();
-  test_rng::enqueue_bytes(PULL_CHALLENGE, HMAC_SIZE);
-  test_rng::enqueue_bytes(VERIFY_CHALLENGE, HMAC_SIZE);
-  test_rng::enqueue_bytes(VERIFY_CHALLENGE, HMAC_SIZE);
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-
-  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
-  radio.queue_rx(to_packet(reply));
-  // The first challenge's wait is silent for its whole window; the proof arrives after the second one.
-  radio.queue_rx_hold_until_sent(3);
-  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, OTHER_KEY)));
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OTHER_KEY);
-  EXPECT_EQ(sent_commands(radio),
-            (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER, CMD_CHALLENGE_REQ, CMD_CHALLENGE_REQ}));
-  test_rng::reset();
-}
-
-TEST(PairingKeyPull, AWrongProofIsNotChallengedAgain) {
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-
-  const IoFrame reply = pulled_key_frame(comp.node_id_, OTHER_KEY);
-  const uint8_t unrelated_key[AES_KEY_SIZE] = {0x77};
-  radio.queue_rx(to_packet(reply));
-  radio.queue_rx(to_packet(proof_frame(comp.node_id_, reply, unrelated_key)));
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
-  EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER, CMD_CHALLENGE_REQ}))
-      << "a 0x3D that does not verify proves the device lacks the key; asking again cannot change that";
-}
-
-TEST(PairingKeyPull, ASilentMainsDeviceIsAskedNineTimesListeningShortOnAllButTheLastTry) {
-  esphome::test_clock::ManualClock clock;
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
-
-  EXPECT_EQ(sent_frames_of(radio, CMD_LAUNCH_KEY_TRANSFER).size(), static_cast<size_t>(EXCHANGE_MAX_ATTEMPTS));
-  const auto &waits = radio.wait_timeouts();
-  ASSERT_FALSE(waits.empty());
-  EXPECT_EQ(waits.front(), comp.tuning_.exchange_early_response_wait_ms) << "an early try listens the short window";
-  EXPECT_EQ(waits.back(), PAIRING_KEY_PULL_REPLY_TIMEOUT_MS) << "the last try listens the whole reply window";
-}
-
-TEST(PairingKeyPull, ALowPowerDeviceIsAskedThreeTimesWithTheRetryGap) {
-  esphome::test_clock::ManualClock clock;
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-  context.discovery_low_power = true;
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
-
-  EXPECT_EQ(sent_frames_of(radio, CMD_LAUNCH_KEY_TRANSFER).size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
-  const auto &times = radio.send_times_ms();
-  ASSERT_EQ(times.size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
-  EXPECT_EQ(times[1] - times[0], PAIRING_KEY_PULL_REPLY_TIMEOUT_MS + EXCHANGE_RETRY_DELAY_MS)
-      << "one reply window and the retry gap between tries";
-}
-
-TEST(PairingKeyPull, TheKeyPullNeverRunsPastTheExchangeBudget) {
-  for (const uint16_t budget_ms : {600, 1000, 2500, 5000}) {
-    esphome::test_clock::ManualClock clock;
-    RngGuard rng;
-    TestableComponent comp;
-    MockRadio radio;
-    setup(comp, radio);
-    comp.tuning_.exchange_total_budget_ms = budget_ms;
-    pairing::PairingContext context = context_for_device();
-    const uint32_t start = esphome::test_clock::peek_ms();
-
-    EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
-
-    EXPECT_LT(esphome::test_clock::peek_ms() - start, budget_ms) << "budget " << budget_ms;
-    EXPECT_GE(sent_frames_of(radio, CMD_LAUNCH_KEY_TRANSFER).size(), 1u);
-  }
-}
-
-TEST(PairingKeyPull, AReplyToALaterTryStopsTheTries) {
-  esphome::test_clock::ManualClock clock;
-  RngGuard rng;
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-  radio.queue_rx_hold_until_sent(5);  // silent for four tries, then the key arrives
-  radio.queue_rx(to_packet(pulled_key_frame(comp.node_id_, test::TEST_SYSTEM_KEY)));
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::OUR_KEY);
-
-  EXPECT_EQ(sent_frames_of(radio, CMD_LAUNCH_KEY_TRANSFER).size(), 5u);
-}
-
-TEST(PairingKeyPull, RefusalEndsThePull) {
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  pairing::PairingContext context = context_for_device();
-
-  radio.queue_rx(to_packet(error_frame(comp.node_id_, RESULT_COMMAND_UNKNOWN)));
-
-  EXPECT_EQ(comp.pairing_engine_.run_key_pull_phase_(context), PairingEngine::KeyPullResult::FAILED);
-  EXPECT_TRUE(context.key_refused);
-  EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER})) << "no retry after a refusal";
-}
-
-// ============================================================================
 // Direction: pairing_key_transfer auto | push | pull
 // ============================================================================
-
-namespace {
-
-pairing::PairingContext context_of_type(DeviceType type) {
-  pairing::PairingContext context = context_for_device();
-  context.device.type = type;
-  return context;
-}
-
-}  // namespace
-
-TEST(PairingKeyDirection, AutoPullsFromARemoteControllerAndPushesToAnythingElse) {
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-  ASSERT_EQ(comp.tuning_.pairing_key_transfer, KeyTransferMode::AUTO) << "auto is the default";
-
-  EXPECT_TRUE(comp.pairing_engine_.key_pull_selected_(context_of_type(DeviceType::REMOTE_CONTROLLER)));
-  EXPECT_FALSE(comp.pairing_engine_.key_pull_selected_(context_of_type(DeviceType::ROLLER_SHUTTER)));
-  EXPECT_FALSE(comp.pairing_engine_.key_pull_selected_(context_of_type(DeviceType::UNKNOWN)));
-}
-
-TEST(PairingKeyDirection, ForcedModesIgnoreTheDiscoveryType) {
-  TestableComponent comp;
-  MockRadio radio;
-  setup(comp, radio);
-
-  comp.tuning_.pairing_key_transfer = KeyTransferMode::PUSH;
-  EXPECT_FALSE(comp.pairing_engine_.key_pull_selected_(context_of_type(DeviceType::REMOTE_CONTROLLER)));
-  comp.tuning_.pairing_key_transfer = KeyTransferMode::PULL;
-  EXPECT_TRUE(comp.pairing_engine_.key_pull_selected_(context_of_type(DeviceType::ROLLER_SHUTTER)));
-}
 
 TEST(PairingKeyDirection, AutoPushesToAnActuatorAndNeverFallsBackToAPull) {
   TestableComponent comp;
@@ -692,19 +273,6 @@ TEST(PairingKeyDirection, AutoPushesToAnActuatorAndNeverFallsBackToAPull) {
 
 namespace {
 
-/// The heater's roll-call reply (0x2B): type 52 subtype 1 (packed 0D 01) at the address after the
-/// pairing node, manufacturer 12, always-alive.
-IoFrame heater_roll_call_reply(const uint8_t dst[NODE_ID_SIZE], uint8_t type_msb = 0x0D, uint8_t type_low = 0x01) {
-  const uint8_t payload[] = {type_msb, type_low, 0xB6, 0xBD, 0xFC, 0x0C, 0xCC, 0x00, 0x00};
-  IoFrame f{};
-  init_frame(f, true, true, true, false);
-  set_dst(f, dst);
-  const uint8_t heater[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};
-  set_src(f, heater);
-  set_cmd(f, CMD_DISCOVER_SPE_RESP, payload, sizeof(payload));
-  return f;
-}
-
 /// Queue discovery, discover-confirm ack and a pull of `key` whose sender never answers our challenges
 /// (the Atlantic flow up to the key, issue #215's Freebox).
 void queue_unproven_pull(MockRadio &radio, const uint8_t dst[NODE_ID_SIZE], const uint8_t key[AES_KEY_SIZE]) {
@@ -736,8 +304,6 @@ void queue_rx_after_sends(MockRadio &radio, int sends_before, const IoFrame &fra
 
 std::string key_hex(const uint8_t key[AES_KEY_SIZE]) { return detail::format_key_hex(key); }
 
-constexpr uint8_t HEATER_ID[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};
-
 /// Queue the heater's roll-call reply behind the direct probe of its address: the radio stays silent
 /// until the roll-call's first 0x2A goes out. Before it go 0x28, 0x2C, 0x38, the 0x3C that proves a
 /// foreign key, and three unanswered 0x20 probe tries.
@@ -750,18 +316,6 @@ void queue_roll_call_reply_after_probe(MockRadio &radio, const uint8_t dst[NODE_
 void queue_roll_call_reply_after_probe(MockRadio &radio, const IoFrame &reply) {
   queue_rx_after_sends(radio, SENDS_BEFORE_ROLL_CALL_PROVEN, reply);
 }
-
-/// A frame from the heater at the address after the pairing node.
-IoFrame heater_frame(const uint8_t dst[NODE_ID_SIZE], uint8_t cmd, const uint8_t *data, uint8_t len) {
-  IoFrame f{};
-  init_frame(f, true, false, false, false);
-  set_dst(f, dst);
-  set_src(f, HEATER_ID);
-  set_cmd(f, cmd, data, len);
-  return f;
-}
-
-constexpr uint8_t HEATER_CHALLENGE[HMAC_SIZE] = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26};
 
 /// A MockRadio that calls `on_probe_read` each time a register read (0x20) goes out, so a test can
 /// look at the registry while the heater probe's exchange is running, not only after it.
@@ -776,14 +330,6 @@ class ProbeWatchingRadio : public MockRadio {
     return MockRadio::send_packet(data, len, tx_config);
   }
 };
-
-/// Queue the heater answering the probe: its challenge, then its maximum setpoint (28.0 C), as in
-/// tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml.
-void queue_heater_answers_probe(MockRadio &radio, const uint8_t dst[NODE_ID_SIZE]) {
-  radio.queue_rx(to_packet(heater_frame(dst, CMD_CHALLENGE_REQ, HEATER_CHALLENGE, HMAC_SIZE)));
-  const uint8_t max_setpoint[] = {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01};
-  radio.queue_rx(to_packet(heater_frame(dst, CMD_WRITE_PRIVATE_ACK, max_setpoint, sizeof(max_setpoint))));
-}
 
 }  // namespace
 
