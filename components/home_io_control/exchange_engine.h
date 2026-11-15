@@ -102,8 +102,10 @@ class ExchangeEngine {
   ///        transmit attempts (clamped to [1, EXCHANGE_RETRY_COUNT]; callers whose failure is
   ///        already re-armed elsewhere, a scheduler-owned status poll, pass SCHEDULED_POLL_MAX_TRIES
   ///        so a dead device does not block loop() for the full retry product) or a read kind whose
-  ///        plan the engine builds for the request (plan_read()), or a ready decisions::AttemptPlan
-  ///        with its own count, gap and windows. An attempt that cannot finish inside
+  ///        plan the engine builds for the request (plan_for_()). This is the one way in: the engine
+  ///        plans every exchange itself, and an attempt count outside [1, EXCHANGE_MAX_ATTEMPTS] is
+  ///        never run because the plan builders (decisions::attempt_plan_for_tries(),
+  ///        decisions::attempt_plan()) never give one. An attempt that cannot finish inside
   ///        `exchange_total_budget_ms` is not started whatever the plan says (try_fits_budget_()).
   ///        The attempt plan and the preamble choice are made once, here, from the options.
   /// @return What the device actually told us — see @ref ExchangeOutcome.
@@ -155,36 +157,6 @@ class ExchangeEngine {
   [[nodiscard]] decisions::AttemptPlan plan_attempts(decisions::ReadKind kind, bool low_power, const IoFrame &request,
                                                      uint32_t freq, uint16_t preamble, uint16_t last_window_ms = 0,
                                                      std::optional<uint32_t> short_lead_tx_ms = std::nullopt) const;
-
-  /// The attempt plan for a read of @p request's target, with the transmit time this engine would
-  /// plan for the request: the radio's air-time estimate for the request's start preamble
-  /// (request_preamble_for(), the long wake-up preamble for a low-power target) on @p freq. The
-  /// public way to ask decisions::attempt_plan() without knowing the radio's timing; the plan
-  /// then agrees with the guard that runs each attempt (try_fits_budget_()).
-  /// @param kind    What the read is for.
-  /// @param request The request that will be sent (its CTRL1 low-power bit selects the power class).
-  ///
-  /// A settling read of a low-power receiver whose state the hub has no news of
-  /// (decisions::WakeBelief::UNKNOWN, a status read only) leads with one short attempt before the
-  /// wake-up attempts, and when all of them do not fit the exchange budget with it, may run past
-  /// the budget by that attempt's cost (decisions::AttemptPlan::short_lead, budget_allowance_ms); the
-  /// engine's guard honours the same allowance. A read with a fixed preamble, a single-try read and a command have no
-  /// lead.
-  /// @param freq    RF channel the request goes out on (Hz).
-  /// @param request_preamble_override The preamble the caller will fix for the exchange (as for
-  ///        ExchangeOptions::preamble_override), or 0; a fixed preamble leaves no lead.
-  /// @param state_unknown The caller has no trustworthy news of the target
-  ///        (decisions::AttemptRequest::with_state_unknown()); carried in the plan so the exchange
-  ///        resolves the same belief when it sends.
-  /// @return The plan send_and_receive() builds itself for the same read kind; handed to it as
-  ///         ExchangeOptions::plan, it runs that exchange.
-  ///
-  /// A test seam: production code always lets send_and_receive() plan from the request. This entry
-  /// exists so a test can take the engine's plan and pin an exact one with it (a clamped attempt
-  /// count, a hand-set gap or window, a zero budget allowance).
-  [[nodiscard]] decisions::AttemptPlan plan_read(decisions::ReadKind kind, const IoFrame &request, uint32_t freq,
-                                                 uint16_t request_preamble_override = 0,
-                                                 bool state_unknown = false) const;
 
   /// Authenticate an inbound device command via 0x3C challenge / 0x3D HMAC.
   /// @param request The received inbound frame (e.g., CMD_STATUS_UPDATE).
@@ -703,9 +675,19 @@ class ExchangeEngine {
   [[nodiscard]] PreamblePlan plan_request_preamble_(const IoFrame &request, uint16_t override_preamble,
                                                     bool state_unknown = false) const;
 
-  /// The attempt plan an exchange runs on: the options' ready plan, else a cap on tries from their
-  /// count, else the plan of their read kind (the lead of a settling read of a low-power receiver in
-  /// an unknown state costs the short preamble's transmit time).
+  /// The attempt plan an exchange runs on, planned from the options' request: a cap on tries from
+  /// their count, else the plan of their read kind with the transmit time this engine estimates for
+  /// the request (the radio's air time for its start preamble, request_preamble_for()). The one place an
+  /// exchange is planned, so every plan agrees with the guard that runs each attempt
+  /// (try_fits_budget_()).
+  ///
+  /// A settling read of a low-power receiver whose state the hub has no news of
+  /// (decisions::WakeBelief::UNKNOWN, a status read only) leads with one short attempt before the
+  /// wake-up attempts, and when all of them do not fit the exchange budget with it, may run past the
+  /// budget by that attempt's cost (decisions::AttemptPlan::short_lead, budget_allowance_ms); the
+  /// guard honours the same allowance. A read with a fixed preamble, a single-try read and a command
+  /// have no lead. The plan carries the request's state_unknown mark so the exchange resolves the
+  /// same belief when it sends.
   /// @param request       Frame being sent.
   /// @param freq          RF channel it goes out on (Hz).
   /// @param options       What the caller asked of the exchange.

@@ -245,22 +245,12 @@ uint32_t ExchangeEngine::tx_time_ms(const IoFrame &frame, uint32_t freq, uint16_
   return (tx_us + US_PER_MS - 1) / US_PER_MS;
 }
 
-decisions::AttemptPlan ExchangeEngine::plan_read(decisions::ReadKind kind, const IoFrame &request, uint32_t freq,
-                                                 uint16_t request_preamble_override, bool state_unknown) const {
-  decisions::AttemptRequest attempts = decisions::AttemptRequest::of_kind(kind);
-  attempts.state_unknown = state_unknown;
-  return this->plan_for_(request, freq, ExchangeOptions{attempts},
-                         this->plan_request_preamble_(request, request_preamble_override, state_unknown));
-}
-
 decisions::AttemptPlan ExchangeEngine::plan_for_(const IoFrame &request, uint32_t freq, const ExchangeOptions &options,
                                                  const PreamblePlan &preamble_plan) const {
-  if (options.plan.has_value())
-    return *options.plan;
   const decisions::AttemptRequest &attempts = options.attempts;
   if (!attempts.planned) {
     // Never below 1 (a caller passing 0 must not silently transmit nothing) and never above
-    // EXCHANGE_RETRY_COUNT: a caller that wants more attempts passes a plan or a read kind.
+    // EXCHANGE_RETRY_COUNT: a caller that wants more attempts passes a read kind.
     const uint16_t window_ms =
         is_start(request) ? this->tuning_->exchange_start_response_wait_ms : this->tuning_->exchange_response_wait_ms;
     return decisions::attempt_plan_for_tries(attempts.max_tries, window_ms);
@@ -462,8 +452,8 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   const PreamblePlan preamble_plan =
       this->plan_request_preamble_(request, options.preamble_override, options.state_unknown());
   const decisions::AttemptPlan plan = this->plan_for_(request, freq, options, preamble_plan);
-  // Clamp once: never below 1 and never above EXCHANGE_MAX_ATTEMPTS, whatever the plan says.
-  uint8_t tries_allowed = std::max<uint8_t>(1, std::min<uint8_t>(plan.max_attempts, EXCHANGE_MAX_ATTEMPTS));
+  // The plan builders own the range [1, EXCHANGE_MAX_ATTEMPTS] of the attempt count.
+  uint8_t tries_allowed = plan.max_attempts;
   this->debug_.max_tries = tries_allowed;
   this->debug_.wake_belief_use = preamble_plan.use;
   if (preamble_plan.use == WakeBeliefUse::APPLIED) {

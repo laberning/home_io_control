@@ -1252,7 +1252,10 @@ size_t planned_settling_attempts(TestableComponent &comp) {
   const IoDevice *dev = comp.get_device("ABC123");
   IoFrame request{};
   EXPECT_TRUE(create_get_status(request, comp.node_id_, dev->node_id, dev->low_power));
-  return comp.exchange_engine_.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2).max_attempts;
+  const ExchangeEngine &engine = comp.exchange_engine_;
+  return decisions::attempt_plan(decisions::ReadKind::SETTLING, dev->low_power, comp.tuning_,
+                                 engine.tx_time_ms(request, FREQ_CH2, engine.request_preamble_for(request)))
+      .max_attempts;
 }
 
 // A scheduler-owned status poll (StatusPollPolicy is tracking the device) caps its exchange at

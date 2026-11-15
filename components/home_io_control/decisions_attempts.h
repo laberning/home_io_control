@@ -110,7 +110,8 @@ enum class ReadKind : uint8_t {
              ///< as many attempts as fit the budget, to a low-power one today's few with a gap.
 };
 
-/// @brief How one exchange spends its attempts. Handed to ExchangeEngine::send_and_receive() as ExchangeOptions::plan.
+/// @brief How one exchange spends its attempts. Built by the plan builders below from a caller's request and run
+/// by ExchangeEngine::send_and_receive().
 struct AttemptPlan {
   uint8_t max_attempts{EXCHANGE_RETRY_COUNT};  ///< Most transmissions of the request, `[1, EXCHANGE_MAX_ATTEMPTS]`.
   uint16_t gap_ms{EXCHANGE_RETRY_DELAY_MS};    ///< Wait before each attempt after the first; 0 for none.
@@ -302,7 +303,7 @@ struct AttemptPlan {
 }
 
 /// @brief What a caller asks of one exchange's attempts: a plain cap on tries (today's shape), or a
-/// read kind whose plan the engine builds for the request (ExchangeEngine::plan_read(); send_and_receive() builds the
+/// read kind whose plan the engine builds for the request (send_and_receive() builds the
 /// same plan itself).
 ///
 /// Converts implicitly from a number of tries, so callers that only name a count are unchanged.

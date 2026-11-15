@@ -638,3 +638,65 @@ TEST(Decisions, NoLeadWhenOnlyOneWakeUpAttemptFitsOrForAnotherKindOfRead) {
       decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, LEAD_WAKE_TX_MS, 0, LEAD_SHORT_TX_MS)
           .short_lead);
 }
+
+TEST(Decisions, TheShortLeadsAllowanceDecidesTheThirdWakeUpAttempt) {
+  // 2400 ms admits the lead and two wake-up attempts but not the third wake-up attempt: the lead's
+  // cost pushes it past the budget. The plan's allowance is exactly what admits it again.
+  TuningConfig tuning;
+  tuning.exchange_total_budget_ms = 2400;
+  const auto plan =
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LEAD_WAKE_TX_MS, 0, LEAD_SHORT_TX_MS);
+  ASSERT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS + 1u);
+  ASSERT_GT(plan.budget_allowance_ms, 0u) << "sanity: at this budget the lead does not fit";
+
+  // Time spent before the third wake-up attempt: the lead, then two wake-up attempts, each its
+  // transmission, the attempt overhead and the window it listened (a silent target).
+  const uint32_t elapsed_ms = decisions::short_lead_cost_ms(LEAD_SHORT_TX_MS) +
+                              2 * (LEAD_WAKE_TX_MS + EXCHANGE_ATTEMPT_OVERHEAD_MS + LOW_POWER_RESPONSE_WAIT_MS);
+  const uint32_t window_ms = LOW_POWER_RESPONSE_WAIT_MS;
+
+  EXPECT_TRUE(decisions::attempt_fits(elapsed_ms, 0, LEAD_WAKE_TX_MS, window_ms, 0,
+                                      tuning.exchange_total_budget_ms + plan.budget_allowance_ms))
+      << "with the allowance the guard keeps every wake-up attempt";
+  EXPECT_FALSE(decisions::attempt_fits(elapsed_ms, 0, LEAD_WAKE_TX_MS, window_ms, 0, tuning.exchange_total_budget_ms))
+      << "without it the guard drops the third wake-up attempt";
+}
+
+TEST(AttemptPlan, NoReadKindPowerClassTuningOrTryCountGivesAPlanOutsideTheAttemptBounds) {
+  // The engine runs the plan's attempt count as it is (no clamp of its own), so the plan builders
+  // own the range [1, EXCHANGE_MAX_ATTEMPTS].
+  const auto in_bounds = [](const decisions::AttemptPlan &plan) {
+    return plan.max_attempts >= 1 && plan.max_attempts <= EXCHANGE_MAX_ATTEMPTS;
+  };
+  for (unsigned tries = 0; tries <= UINT8_MAX; tries++)
+    ASSERT_TRUE(in_bounds(decisions::attempt_plan_for_tries(static_cast<uint8_t>(tries), 400))) << "tries=" << tries;
+
+  const decisions::ReadKind kinds[] = {decisions::ReadKind::PROGRESS, decisions::ReadKind::SETTLING,
+                                       decisions::ReadKind::COMMAND};
+  const std::optional<uint32_t> leads[] = {std::nullopt, LEAD_SHORT_TX_MS};
+  for (const auto kind : kinds) {
+    for (const bool low_power : {false, true}) {
+      for (const uint16_t budget_ms : {0, 1, 100, 600, 1000, 2400, 2500, 5000, 12000, 65535}) {
+        for (const uint16_t early_ms : {0, 1, 200, 400, 65535}) {
+          for (const uint16_t start_ms : {0, 1, 200, 400, 1000, 65535}) {
+            for (const uint32_t tx_ms : {0, 1, 12, 218, 5000}) {
+              for (const uint16_t last_ms : {0, 400}) {
+                for (const auto &lead : leads) {
+                  TuningConfig tuning;
+                  tuning.exchange_total_budget_ms = budget_ms;
+                  tuning.exchange_early_response_wait_ms = early_ms;
+                  tuning.exchange_start_response_wait_ms = start_ms;
+                  const auto plan = decisions::attempt_plan(kind, low_power, tuning, tx_ms, last_ms, lead);
+                  ASSERT_TRUE(in_bounds(plan))
+                      << "kind=" << static_cast<int>(kind) << " low_power=" << low_power << " budget=" << budget_ms
+                      << " early=" << early_ms << " start=" << start_ms << " tx=" << tx_ms << " last=" << last_ms
+                      << " lead=" << lead.has_value() << " attempts=" << static_cast<int>(plan.max_attempts);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

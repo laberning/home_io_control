@@ -40,7 +40,6 @@
 #include "radio_interface.h"
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <string>
 
 namespace esphome {
@@ -149,19 +148,14 @@ using ReplyHandler = std::function<ReplyDisposition(const IoFrame *parsed, const
 /// @brief How one outbound exchange is to run, as the caller states it: one value for
 /// ExchangeEngine::send_and_receive() whatever the caller (the hub, pairing, a probe, a test).
 ///
-/// Converts implicitly from a number of tries, an @ref decisions::AttemptRequest and a ready
-/// @ref decisions::AttemptPlan, so a caller that names only its attempts says only that; the other
-/// fields default to what an ordinary exchange wants.
+/// Converts implicitly from a number of tries and from an @ref decisions::AttemptRequest, so a
+/// caller that names only its attempts says only that; the other fields default to what an
+/// ordinary exchange wants. The engine plans every exchange itself, once, from @ref attempts.
 struct ExchangeOptions {
-  /// Attempt cap or read kind; the engine builds the plan from it at the start of the exchange.
-  /// Ignored once @ref plan is set.
+  /// Attempt cap or read kind; the engine builds the exchange's plan from it at the start of the
+  /// exchange (decisions::attempt_plan_for_tries() or decisions::attempt_plan()), whose attempt
+  /// count is always in `[1, EXCHANGE_MAX_ATTEMPTS]`.
   decisions::AttemptRequest attempts;
-  /// A ready attempt plan (decisions::attempt_plan()); it wins over @ref attempts. The engine still
-  /// clamps its attempt count.
-  /// A test seam: production code always plans from the request (@ref attempts). This entry exists
-  /// so a test can pin an exact plan (an attempt clamp, a hand-set gap or window, a zero budget
-  /// allowance).
-  std::optional<decisions::AttemptPlan> plan;
   /// Preamble for the request frame in bytes, or 0 for ExchangeEngine::request_preamble_for()'s rule.
   /// An override also switches the low-power wake belief off for the exchange: the caller has
   /// already chosen the preamble. The 0x3D challenge response keeps the driver's response_preamble().
@@ -172,18 +166,15 @@ struct ExchangeOptions {
   const uint8_t *key{nullptr};
 
   ExchangeOptions() = default;
-  // NOLINTBEGIN(google-explicit-constructor): the three ways to name attempts convert implicitly, so
+  // NOLINTBEGIN(google-explicit-constructor): the two ways to name attempts convert implicitly, so
   // a caller that only names its attempts is not wrapped in boilerplate
   ExchangeOptions(uint8_t tries) : attempts(tries) {}
   ExchangeOptions(const decisions::AttemptRequest &request) : attempts(request) {}
-  ExchangeOptions(const decisions::AttemptPlan &ready_plan) : plan(ready_plan) {}
   // NOLINTEND(google-explicit-constructor)
 
   /// @brief Whether the exchange treats the receiver's state as unknown (the wake belief,
-  /// decisions::wake_belief()): the ready plan says so, or a planned read was marked so.
-  [[nodiscard]] bool state_unknown() const {
-    return plan.has_value() ? plan->state_unknown : (attempts.planned && attempts.state_unknown);
-  }
+  /// decisions::wake_belief()): a planned read was marked so.
+  [[nodiscard]] bool state_unknown() const { return attempts.planned && attempts.state_unknown; }
   /// @brief These options with the request's preamble fixed to @p preamble_bytes.
   [[nodiscard]] ExchangeOptions with_preamble(uint16_t preamble_bytes) const {
     ExchangeOptions options = *this;
