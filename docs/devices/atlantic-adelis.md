@@ -34,6 +34,7 @@ the `io_model:` line yourself.
 | Starting or ending boost and drying from Home Assistant | ✅ The display starts and ends both |
 | Boost started on the dryer itself | ✅ Shows as the `boost` preset and `heating` at the next poll |
 | Comfort or eco period of PROG | ⚠️ Experimental: read on one unit, in a comfort period and in an eco period; no second unit has confirmed it yet |
+| Energy meter (`energy:`) | ⚠️ Both units answer register 0x0116 (575 kWh and 946 kWh), not yet compared with their display; the same register matches the display of two Sauter Tahual radiators. See [Energy meter](../configuration/climate.md#energy-meter) |
 
 ## Modes and presets in Home Assistant
 

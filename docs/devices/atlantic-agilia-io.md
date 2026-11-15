@@ -150,6 +150,28 @@ climate:
       name: "Kids' room night light"
 ```
 
+## Sauter Tahual
+
+The Sauter Tahual, an electric radiator from the same group, reports the same type and subtype and
+answers like the AGILIA, window register included, so its entry is the AGILIA's with no `io_model:`.
+Two radiators run on an SX1262 hub alongside a TaHoma. Its model name register reads `TAHUAL`.
+
+- **The energy meter** matches the radiator's display on both radiators (3422 kWh and 264 kWh). Add
+  an `energy:` block to get a sensor for the Home Assistant energy dashboard; see
+  [Energy meter](../configuration/climate.md#energy-meter). The TaHoma shows a lower total for the
+  same radiators (3129 kWh and 247 kWh); the sensor follows the radiator.
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Living room radiator"
+    io_device_id: "65F57F"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
+    energy:
+      name: "Living room radiator energy"
+```
+
 ## Known quirks
 
 - **Heating / idle trails the radiator.** The hub reads the regulator when it polls: 45 seconds after
@@ -174,6 +196,9 @@ Six corpus captures from issue #165, on a Heltec V3 with the SX1262 driver:
 - [The climate entity's read-back of seven registers](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml)
 - [A setpoint change and Off, each read back](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/exchange/atlantic_agilia_exchange_setpoint_and_off_read_back.yaml)
 - [Heat, Auto and Program, each read back](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/exchange/atlantic_agilia_exchange_mode_read_back.yaml)
+
+A Sauter Tahual's read of its energy meter, register 0x0116:
+[sauter_tahual_probe_energy_register](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/sauter_tahual_probe_energy_register.yaml).
 
 An earlier capture shows the radiator refusing a pushed key:
 [atlantic_agilia_pairing_key_transfer_command_unknown](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/pairing/atlantic_agilia_pairing_key_transfer_command_unknown.yaml).

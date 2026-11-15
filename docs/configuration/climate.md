@@ -176,6 +176,37 @@ heater without `io_model: heater_with_light`.
   weekly program may be visible too. If you run one in its program, please
   [open an issue](https://github.com/laberning/home_io_control/issues) so we can check it.
 
+## Energy meter
+
+A heater with an adjustable setpoint counts the energy it has consumed, in whole kWh, in its
+register 0x0116. Add an `energy:` block to its entry to get a sensor for it, ready for the Home
+Assistant energy dashboard:
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Living room radiator"
+    io_device_id: "65F57F"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
+    energy:
+      name: "Living room radiator energy"
+```
+
+- The sensor is in kWh with `device_class: energy` and `state_class: total_increasing`, and takes the
+  options of any ESPHome [sensor](https://esphome.io/components/sensor/). It is accepted on every
+  `io_device_type: "electrical_heater"`, `io_subtype: 1` entry, with or without `io_model:`, and
+  rejected on any other.
+- The value is the total the heater's own display shows. It matched the display of two Sauter Tahual
+  radiators (3422 kWh and 264 kWh). A TaHoma or Cozytouch can show a lower figure for the same
+  heater, counted from a starting point of its own; the register is the heater's own count.
+- The heater counts whole kWh, so the sensor steps once per kWh: about every 30 minutes for a 2000 W
+  heater running flat out.
+- Declaring the sensor adds one read to each poll, after the heater's other registers; without it the
+  register is never read. A heater that has no meter answers the read empty: the sensor stays
+  without a state and the rest of the poll still counts as good.
+- The sensor has no state until the first poll has read the register.
+
 ## Heating temperature interface and heat pump
 
 Experimental and untested: no capture or hardware report exists for either. A heating temperature
@@ -227,7 +258,9 @@ A heater with an adjustable setpoint also gets a `Window` binary sensor (`device
 an `Open Window Detection` switch. Both are experimental, and they are generated only when the YAML
 names the heater kind with `io_device_type: "electrical_heater"` and `io_subtype: 1`, and not for a
 towel dryer (`io_model: towel_dryer`). A heater with a night light gets a light entity when its entry
-has a `night_light:` block; see [Heaters with a night light](#heaters-with-a-night-light).
+has a `night_light:` block; see [Heaters with a night light](#heaters-with-a-night-light). A heater
+with an adjustable setpoint gets an energy sensor when its entry has an `energy:` block; see
+[Energy meter](#energy-meter).
 
 ## Temperature range — 7.0–28.0 °C
 
