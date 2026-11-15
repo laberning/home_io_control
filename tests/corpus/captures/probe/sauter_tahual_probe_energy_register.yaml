@@ -1,0 +1,39 @@
+id: sauter_tahual_probe_energy_register
+description: >
+  A Sauter Tahual radiator (node 65F57F, io name "Radiateur salon", model register 0x0119 "TAHUAL",
+  2000 W) answering a `register_01` read of register 0x0116 from the owner's SX1262 hub C0FFEE. The request
+  is an authenticated CMD_WRITE_PRIVATE (0x20) read `0C 60 01 16`; the answer is CMD_WRITE_PRIVATE_ACK
+  (0x21) echoing the four header bytes, then the value. The 0x3C/0x3D handshake is not in this capture.
+
+  What the frames show:
+    - 0x0116 is the energy the radiator has consumed, in whole kWh, most significant byte first (unlike
+      the radiator's temperatures, which are little-endian): 0D 5E = 3422 kWh, the total the radiator's
+      own display showed. A second Tahual of the same installation (node 779430) answered 01 08 =
+      264 kWh, again equal to its display; that reply's frame was not kept.
+    - The owner's TaHoma reads 0x0116 on every polling cycle, with 0x0117, 0x012A, 0x0115, 0x0126,
+      0x0104, 0x011D, 0x0106, 0x0101 and 0x0100. It shows a lower total for each radiator (3129 kWh
+      and 247 kWh); neither 3129 nor 3 129 000 appears in any register from 0x0000 to 0x019F.
+
+  The owner's hub address is replaced by C0FFEE. Own-hardware capture: no system key, and no
+  authenticated bytes are included.
+source:
+  device: "Sauter Tahual electric radiator, 2000 W (node 65F57F)"
+  captured_with: sx1262
+  firmware: "main at e1c0858 with the register_01 probe, diagnostic_probes: true"
+  date: 2026-11-15
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: tx
+    hex: "4C 00 65 F5 7F C0 FF EE 20 0C 60 01 16"
+    crc: absent
+    note: "read register 0x0116"
+  - dir: rx
+    hex: "8E 00 C0 FF EE 65 F5 7F 21 0C 60 01 16 0D 5E"
+    crc: absent
+    note: "register 0x0116: value 0D 5E = 3422 kWh, as on the radiator's display"
+expect:
+  frames:
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
