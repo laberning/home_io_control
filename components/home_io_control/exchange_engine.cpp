@@ -695,8 +695,10 @@ bool ExchangeEngine::transmit_request_(const IoFrame &request, uint32_t freq, ui
 }
 
 void ExchangeEngine::report_overheard_(const IoFrame &frame, const RadioRxPacket &packet) {
-  if (this->overheard_frame_observer_ != nullptr)
-    this->overheard_frame_observer_->on_overheard_frame(frame, packet, millis());
+  if (this->overheard_frame_observer_ == nullptr)
+    return;
+  const int16_t rssi_dbm = (*this->radio_ptr_)->get_last_capture().rssi_dbm;
+  this->overheard_frame_observer_->on_overheard_frame(frame, packet, rssi_dbm, millis());
 }
 
 decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_response_(

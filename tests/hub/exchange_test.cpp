@@ -4919,11 +4919,16 @@ TEST(ExchangeOptions, UnconfirmedStatusReadKeepsItsPlanGapAndIsNotGivenTheLongRe
 
 namespace {
 
+/// What MockRadio's capture-lifecycle emulation stamps on every delivered frame.
+constexpr int16_t OVERHEARD_TEST_RSSI_DBM = -55;
+
 struct RecordingOverheardObserver : OverheardFrameObserver {
   std::vector<IoFrame> frames;
   std::vector<uint32_t> times;
-  void on_overheard_frame(const IoFrame &frame, const RadioRxPacket &, uint32_t now) override {
+  std::vector<int16_t> rssis;
+  void on_overheard_frame(const IoFrame &frame, const RadioRxPacket &, int16_t rssi_dbm, uint32_t now) override {
     this->frames.push_back(frame);
+    this->rssis.push_back(rssi_dbm);
     this->times.push_back(now);
   }
 };
@@ -4957,6 +4962,7 @@ struct ExchangeRun {
 /// answer follows) or between the challenge and the final reply.
 ExchangeRun run_with_noise(const IoFrame *noise, bool challenged, RecordingOverheardObserver &observer) {
   ResendRig rig;
+  rig.radio.set_emulate_capture_lifecycle(true);
   rig.engine.set_overheard_frame_observer(&observer);
   if (challenged) {
     rig.queue_challenge();
@@ -4983,6 +4989,7 @@ TEST(ExchangeOverheard, RemotePressInTheFirstResponseWaitReachesTheObserverOnce)
 
   ASSERT_EQ(heard.frames.size(), 1u);
   EXPECT_EQ(heard.frames[0].cmd, CMD_EXECUTE);
+  EXPECT_EQ(heard.rssis[0], OVERHEARD_TEST_RSSI_DBM) << "the observer gets the RSSI of the reception";
   EXPECT_EQ(memcmp(heard.frames[0].src, press.src, NODE_ID_SIZE), 0);
   EXPECT_TRUE(quiet.frames.empty());
   EXPECT_EQ(with.outcome, ExchangeOutcome::SUCCESS_WITH_RESPONSE);

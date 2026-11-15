@@ -838,15 +838,16 @@ void IOHomeControlComponent::handle_oneway_frame_(const IoFrame &frame, uint32_t
   this->follow_linked_remote_press_(info, src_id);
 }
 
-void IOHomeControlComponent::on_overheard_frame(const IoFrame &frame, const RadioRxPacket & /*packet*/, uint32_t now) {
-  // The wait has just received this frame, so the radio's last capture is its own.
-  this->oneway_receiver_.keep_overheard(frame, now, this->radio_->get_last_capture().rssi_dbm);
+void IOHomeControlComponent::on_overheard_frame(const IoFrame &frame, const RadioRxPacket & /*packet*/,
+                                                int16_t rssi_dbm, uint32_t now) {
+  this->oneway_receiver_.keep_overheard(frame, now, rssi_dbm);
 }
 
 void IOHomeControlComponent::drain_overheard_oneway_frames_() {
   if (!this->oneway_receiver_.has_kept())
     return;
-  for (const KeptOneWayFrame &kept : this->oneway_receiver_.take_kept())
+  KeptOneWayFrame kept;
+  while (this->oneway_receiver_.pop_kept(kept))
     this->handle_oneway_frame_(kept.frame, kept.heard_ms, kept.rssi_dbm);
 }
 

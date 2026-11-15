@@ -610,6 +610,7 @@ class ExchangeEngine {
   // --- Outbound exchange step helpers --------------------------------------
 
   /// Tell the overheard-frame observer, if one is attached, about a frame a wait ignored as unrelated.
+  /// The wait has just received @p packet, so the radio's last capture is its own: its RSSI goes along.
   void report_overheard_(const IoFrame &frame, const RadioRxPacket &packet);
 
   /// Transmit one request attempt and update context state on failure.

@@ -138,7 +138,7 @@ TEST_F(OverheardOneWayHub, ATwoWayFrameFromAnotherDeviceIsNotKept) {
   const uint8_t other[3] = {0x11, 0x22, 0x33};
   set_src(foreign, other);
 
-  comp.on_overheard_frame(foreign, test::make_rx_packet(foreign), esphome::millis());
+  comp.on_overheard_frame(foreign, test::make_rx_packet(foreign), -60, esphome::millis());
 
   EXPECT_FALSE(comp.oneway_receiver_.has_kept());
 }
@@ -172,12 +172,13 @@ TEST_F(OverheardOneWayHub, AKeptPressIsHandledAtItsArrivalTimeNotAtTheDrain) {
 }
 
 TEST_F(OverheardOneWayHub, AKeptPressCarriesTheRssiOfItsOwnCapture) {
-  radio.set_last_capture_rssi(-71);  // What the wait's reception left in the radio's capture.
+  radio.set_last_capture_rssi(-40);  // Differs on purpose: the hub must not read the radio back.
   const IoFrame frame = press();
 
-  comp.on_overheard_frame(frame, test::make_rx_packet(frame), esphome::millis());
+  comp.on_overheard_frame(frame, test::make_rx_packet(frame), -71, esphome::millis());
 
-  const auto kept = comp.oneway_receiver_.take_kept();
-  ASSERT_EQ(kept.size(), 1u);
-  EXPECT_EQ(kept.front().rssi_dbm, -71);
+  KeptOneWayFrame kept;
+  ASSERT_TRUE(comp.oneway_receiver_.pop_kept(kept));
+  EXPECT_EQ(kept.rssi_dbm, -71);
+  EXPECT_FALSE(comp.oneway_receiver_.has_kept());
 }

@@ -30,10 +30,13 @@ class OverheardFrameObserver {
   /// A wait heard a parsed frame that does not belong to its exchange and kept listening. The engine
   /// does not filter by protocol or sender: a one-way remote's frame and a foreign two-way frame
   /// both arrive here.
-  /// @param frame  The parsed frame.
-  /// @param packet The raw packet it came from (frequency, length, bytes).
-  /// @param now    millis() when the wait heard it.
-  virtual void on_overheard_frame(const IoFrame &frame, const RadioRxPacket &packet, uint32_t now) = 0;
+  /// @param frame    The parsed frame.
+  /// @param packet   The raw packet it came from (frequency, length, bytes).
+  /// @param rssi_dbm RSSI of that reception, in dBm, as the radio reported it for this packet. The
+  ///                 observer needs no radio access of its own to get it.
+  /// @param now      millis() when the wait heard it.
+  virtual void on_overheard_frame(const IoFrame &frame, const RadioRxPacket &packet, int16_t rssi_dbm,
+                                  uint32_t now) = 0;
 };
 
 }  // namespace home_io_control

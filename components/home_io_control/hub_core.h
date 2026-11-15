@@ -185,7 +185,7 @@ class IOHomeControlComponent : public Component,
 
   /// OverheardFrameObserver: keep a 1W frame an exchange wait ignored as unrelated, for
   /// drain_overheard_oneway_frames_() once the exchange has ended. A two-way frame is not kept.
-  void on_overheard_frame(const IoFrame &frame, const RadioRxPacket &packet, uint32_t now) override;
+  void on_overheard_frame(const IoFrame &frame, const RadioRxPacket &packet, int16_t rssi_dbm, uint32_t now) override;
 
   /// @brief Initialize hardware (radio and device registry).
   void setup() override;
