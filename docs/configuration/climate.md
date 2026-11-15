@@ -179,7 +179,8 @@ heater without `io_model: heater_with_light`.
 ## Energy and power
 
 A heater with an adjustable setpoint counts the energy it has consumed and knows its own ratings.
-A `meter:` block in the heater's entry holds up to four sensors for them; list the ones you want:
+A `meter:` block in the heater's entry holds two sensors for them, `energy` and `power`; list the ones
+you want:
 
 ```yaml
 climate:
@@ -193,21 +194,21 @@ climate:
         name: "Living room radiator energy"
       power:
         name: "Living room radiator power"
-      rated_power:
-        name: "Living room radiator rated power"
-      rated_voltage:
-        name: "Living room radiator rated voltage"
 ```
 
 | Key under `meter:` | Shows | Unit | Read from |
 |---|---|---|---|
 | `energy` | Energy consumed, for the Home Assistant energy dashboard (`total_increasing`) | kWh | Register 0x0116, every poll |
 | `power` | Power the heater draws now: its rated power times its heating rate | W | Registers 0x011A once, 0x0126 every poll |
-| `rated_power` | Rated power (diagnostic) | W | Register 0x011A, once |
-| `rated_voltage` | Rated voltage (diagnostic) | V | Register 0x011A, once |
 
-- Each sensor takes the options of any ESPHome [sensor](https://esphome.io/components/sensor/). The
-  block needs at least one of them. It is accepted on every `io_device_type: "electrical_heater"`,
+`power` brings two diagnostic sensors along, named after it: `<name> rated`, the rated power in W, and
+`<name> rated voltage`, the rated voltage in V. With the example above they are "Living room radiator
+power rated" and "Living room radiator power rated voltage". They come from the register the power
+already reads, so they add no radio traffic. Rename or hide them in Home Assistant if you do not want
+them.
+
+- `energy` and `power` take the options of any ESPHome [sensor](https://esphome.io/components/sensor/);
+  the two rating sensors take only their names from `power`. The block needs at least one of them. It is accepted on every `io_device_type: "electrical_heater"`,
   `io_subtype: 1` entry, with or without `io_model:`, and rejected on any other.
 - Each declared sensor adds only the reads it needs to the heater's poll, after its other registers;
   a register nothing shows is never read. The ratings never change, so they are read once.

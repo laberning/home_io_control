@@ -35,7 +35,7 @@ the `io_model:` line yourself.
 | Boost started on the dryer itself | ✅ Shows as the `boost` preset and `heating` at the next poll |
 | Comfort or eco period of PROG | ⚠️ Experimental: read on one unit, in a comfort period and in an eco period; no second unit has confirmed it yet |
 | Energy meter (`meter:` `energy`) | ⚠️ Both units answer register 0x0116 (575 kWh and 946 kWh), not yet compared with their display; the same register matches the display of two Sauter Tahual radiators. See [Energy and power](../configuration/climate.md#energy-and-power) |
-| Power and ratings (`meter:` `power`, `rated_power`, `rated_voltage`) | ✅ Both units report 500 W and 230 V; the power is that rating times the working rate the dryer already reports |
+| Power and ratings (`meter:` `power`) | ✅ Both units report 500 W and 230 V; the power is that rating times the working rate the dryer already reports |
 
 ## Modes and presets in Home Assistant
 
