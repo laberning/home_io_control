@@ -179,7 +179,7 @@ heater without `io_model: heater_with_light`.
 ## Energy and power
 
 A heater with an adjustable setpoint counts the energy it has consumed and knows its own ratings.
-Four optional sensors show them; add the blocks you want to the heater's entry:
+A `meter:` block in the heater's entry holds up to four sensors for them; list the ones you want:
 
 ```yaml
 climate:
@@ -188,26 +188,27 @@ climate:
     io_device_id: "65F57F"
     io_device_type: "electrical_heater"
     io_subtype: 1
-    energy:
-      name: "Living room radiator energy"
-    power:
-      name: "Living room radiator power"
-    rated_power:
-      name: "Living room radiator rated power"
-    rated_voltage:
-      name: "Living room radiator rated voltage"
+    meter:
+      energy:
+        name: "Living room radiator energy"
+      power:
+        name: "Living room radiator power"
+      rated_power:
+        name: "Living room radiator rated power"
+      rated_voltage:
+        name: "Living room radiator rated voltage"
 ```
 
-| Key | Shows | Unit | Read from |
+| Key under `meter:` | Shows | Unit | Read from |
 |---|---|---|---|
-| `energy:` | Energy consumed, for the Home Assistant energy dashboard (`total_increasing`) | kWh | Register 0x0116, every poll |
-| `power:` | Power the heater draws now: its rated power times its heating rate | W | Registers 0x011A once, 0x0126 every poll |
-| `rated_power:` | Rated power (diagnostic) | W | Register 0x011A, once |
-| `rated_voltage:` | Rated voltage (diagnostic) | V | Register 0x011A, once |
+| `energy` | Energy consumed, for the Home Assistant energy dashboard (`total_increasing`) | kWh | Register 0x0116, every poll |
+| `power` | Power the heater draws now: its rated power times its heating rate | W | Registers 0x011A once, 0x0126 every poll |
+| `rated_power` | Rated power (diagnostic) | W | Register 0x011A, once |
+| `rated_voltage` | Rated voltage (diagnostic) | V | Register 0x011A, once |
 
-- Each sensor takes the options of any ESPHome [sensor](https://esphome.io/components/sensor/). They
-  are accepted on every `io_device_type: "electrical_heater"`, `io_subtype: 1` entry, with or without
-  `io_model:`, and rejected on any other.
+- Each sensor takes the options of any ESPHome [sensor](https://esphome.io/components/sensor/). The
+  block needs at least one of them. It is accepted on every `io_device_type: "electrical_heater"`,
+  `io_subtype: 1` entry, with or without `io_model:`, and rejected on any other.
 - Each declared sensor adds only the reads it needs to the heater's poll, after its other registers;
   a register nothing shows is never read. The ratings never change, so they are read once.
 - A heater that does not hold a register answers its read empty: the sensor stays without a state and
@@ -221,7 +222,7 @@ climate:
 - **Power** is an estimate, not a measurement: the heater reports how much of the time its element
   heats (0 to 100 %), and the sensor multiplies that by the rated power. It is read at each poll
   (every 5 minutes by default), so it shows the heater at that moment, not an average between polls.
-  Use `energy:`, not this sensor, for the energy dashboard.
+  Use `energy`, not this sensor, for the energy dashboard.
 - **Rated power and voltage** are the values the heater was built for: 2000 W and 230 V on a Tahual,
   500 W and 230 V on an Adelis. The voltage is not measured; it reads 230 V whatever the mains does.
 

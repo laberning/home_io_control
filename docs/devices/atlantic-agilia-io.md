@@ -157,11 +157,11 @@ answers like the AGILIA, window register included, so its entry is the AGILIA's 
 Two radiators run on an SX1262 hub alongside a TaHoma. Its model name register reads `TAHUAL`.
 
 - **The energy meter** matches the radiator's display on both radiators (3422 kWh and 264 kWh). Add
-  an `energy:` block to get a sensor for the Home Assistant energy dashboard; see
+  `energy` to its `meter:` block to get a sensor for the Home Assistant energy dashboard; see
   [Energy and power](../configuration/climate.md#energy-and-power). The TaHoma shows a lower total for
   the same radiators (3129 kWh and 247 kWh); the sensor follows the radiator.
 - **Power and ratings.** The radiator reports its rated power and voltage (2000 W, 230 V) and how much
-  of the time it heats, so `power:`, `rated_power:` and `rated_voltage:` add an estimate of the power
+  of the time it heats, so `power`, `rated_power` and `rated_voltage` in `meter:` add an estimate of the power
   it draws and its two ratings.
 
 ```yaml
@@ -171,10 +171,11 @@ climate:
     io_device_id: "65F57F"
     io_device_type: "electrical_heater"
     io_subtype: 1
-    energy:
-      name: "Living room radiator energy"
-    power:
-      name: "Living room radiator power"
+    meter:
+      energy:
+        name: "Living room radiator energy"
+      power:
+        name: "Living room radiator power"
 ```
 
 ## Known quirks
