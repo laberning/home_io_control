@@ -439,7 +439,7 @@ TEST(ProtoHeatingTowelDryer, ReadingsStoreAndReportTheTowelRegisters) {
 TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnField) {
   // Walks every function, so a register added to the enum without a row in the readings table (or the
   // descriptor table) fails here.
-  constexpr auto LAST = static_cast<unsigned>(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS);  // the last enumerator
+  constexpr auto LAST = static_cast<unsigned>(HeatingFunction::ENERGY);  // the last enumerator
   unsigned held = 0;
   for (unsigned i = 0; i <= LAST; i++) {
     const auto fn = static_cast<HeatingFunction>(i);
@@ -456,9 +456,14 @@ TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnF
     held++;
     EXPECT_TRUE(readings.has(fn)) << heating_function_name(fn);
     const bool temperature = !std::isnan(readings.temperature_of(fn));
+    const bool quantity = !std::isnan(readings.quantity_of(fn));
+    EXPECT_FALSE(temperature && quantity) << heating_function_name(fn) << " is kept in one field";
     if (temperature) {
       EXPECT_FLOAT_EQ(readings.temperature_of(fn), 1.0F) << heating_function_name(fn);
       EXPECT_EQ(readings.value_of(fn), -1) << "a temperature has no wire byte";
+    } else if (quantity) {
+      EXPECT_FLOAT_EQ(readings.quantity_of(fn), 1.0F) << heating_function_name(fn);
+      EXPECT_EQ(readings.value_of(fn), -1) << "a quantity has no wire byte";
     } else {
       EXPECT_EQ(readings.value_of(fn), 1) << heating_function_name(fn);
     }
@@ -468,7 +473,54 @@ TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnF
     for (unsigned j = 0; j <= LAST; j++)
       EXPECT_FALSE(readings.has(static_cast<HeatingFunction>(j))) << heating_function_name(fn) << " touched " << j;
   }
-  EXPECT_EQ(held, 14u);
+  EXPECT_EQ(held, 15u);
+}
+
+TEST(ProtoHeatingEnergy, ReadsRegister0x0116AndNeverWritesIt) {
+  EXPECT_EQ(encode_read(HeatingFunction::ENERGY), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x16}));
+  EXPECT_EQ(encode(HeatingFunction::ENERGY, 0.0F), encode_read(HeatingFunction::ENERGY))
+      << "the action payload of a read-only register is its read";
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {};
+  EXPECT_EQ(encode_heating_write(HeatingFunction::ENERGY, 3422.0F, out), 0u) << "a meter is not a setting";
+  EXPECT_TRUE(heating_function_is_readable(HeatingFunction::ENERGY));
+  EXPECT_FALSE(heating_function_is_writable(HeatingFunction::ENERGY));
+  EXPECT_STREQ(heating_function_name(HeatingFunction::ENERGY), "energy");
+}
+
+TEST(ProtoHeatingEnergy, DecodesWholeKilowattHoursMostSignificantByteFirst) {
+  // The two Tahual radiators, against their displays (3422 and 264 kWh): read the other way round, as the
+  // temperatures are, they would be 24077 and 2049.
+  float value = -1.0F;
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16, 0x0D, 0x5E}), HeatingFunction::ENERGY, value));
+  EXPECT_FLOAT_EQ(value, 3422.0F);
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16, 0x01, 0x08}), HeatingFunction::ENERGY, value));
+  EXPECT_FLOAT_EQ(value, 264.0F);
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16, 0xFF, 0xFF}), HeatingFunction::ENERGY, value));
+  EXPECT_FLOAT_EQ(value, 65535.0F) << "the whole 16-bit range is a reading";
+}
+
+TEST(ProtoHeatingEnergy, AnEmptyOrTruncatedReplyIsNoValue) {
+  float value = -1.0F;
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16}), HeatingFunction::ENERGY, value))
+      << "a heater without the meter answers without a value";
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16, 0x0D}), HeatingFunction::ENERGY, value));
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x15, 0x0D, 0x5E}), HeatingFunction::ENERGY, value))
+      << "another register";
+  EXPECT_FLOAT_EQ(value, -1.0F);
+}
+
+TEST(ProtoHeatingEnergy, ReadingsKeepTheEnergyAsAQuantity) {
+  HeatingReadings readings;
+  EXPECT_TRUE(std::isnan(readings.energy_kwh));
+  EXPECT_FALSE(readings.has(HeatingFunction::ENERGY));
+  ASSERT_TRUE(readings.store(HeatingFunction::ENERGY, 40000.0F));
+  EXPECT_FLOAT_EQ(readings.energy_kwh, 40000.0F) << "above what an int16_t holds";
+  EXPECT_FLOAT_EQ(readings.quantity_of(HeatingFunction::ENERGY), 40000.0F);
+  EXPECT_TRUE(std::isnan(readings.temperature_of(HeatingFunction::ENERGY))) << "not a temperature";
+  EXPECT_EQ(readings.value_of(HeatingFunction::ENERGY), -1);
+  EXPECT_TRUE(std::isnan(readings.quantity_of(HeatingFunction::ROOM_TEMPERATURE)));
+  EXPECT_TRUE(readings.clear(HeatingFunction::ENERGY));
+  EXPECT_FALSE(readings.has(HeatingFunction::ENERGY));
 }
 
 TEST(ProtoHeatingTowelDryer, EachFunctionHasItsRegisterLowByte) {

@@ -47,6 +47,8 @@ enum class HeatingValueKind : uint8_t {
   BOUNDED_BYTE,    ///< One byte from 0 to the row's `max_value`: an enumeration (regulator state, towel-dryer
                    ///< mode, temporary state) or a percentage (working rate).
   BOUNDED_U16,     ///< Unsigned 16-bit little-endian integer from 0 to the row's `max_value` (night light brightness).
+  KWH_U16_BE,      ///< Unsigned 16-bit big-endian whole kWh (the energy register): unlike every other register,
+                   ///< read most significant byte first.
 };
 
 /// @brief Who may do what with a register.
@@ -101,6 +103,8 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
     {"night_light", HeatingFunction::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, HeatingValueKind::BINARY},
     {"night_light_brightness", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 0x42, HeatingAccess::READ_WRITE,
      HeatingValueKind::BOUNDED_U16, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
+    // Energy consumed: equal to the display of two Tahual radiators (3422 and 264 kWh).
+    {"energy", HeatingFunction::ENERGY, 0x16, HeatingAccess::READ_ONLY, HeatingValueKind::KWH_U16_BE},
 };
 
 /// @brief Look up the descriptor for a function.
@@ -127,6 +131,7 @@ size_t value_length(HeatingValueKind kind) {
     case HeatingValueKind::TENTHS_U16:
     case HeatingValueKind::HUNDREDTHS_S16:
     case HeatingValueKind::BOUNDED_U16:
+    case HeatingValueKind::KWH_U16_BE:
       return 2;
     case HeatingValueKind::BINARY:
     case HeatingValueKind::MODE:
@@ -240,6 +245,7 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE
 
     case HeatingValueKind::NONE:
     case HeatingValueKind::HUNDREDTHS_S16:
+    case HeatingValueKind::KWH_U16_BE:
       return 0;  // no writable register has this encoding
   }
   return 0;
@@ -297,6 +303,10 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
       value = static_cast<float>(raw16);
       return true;
 
+    case HeatingValueKind::KWH_U16_BE:
+      value = static_cast<float>((v[0] << BITS_PER_BYTE) | v[1]);
+      return true;
+
     case HeatingValueKind::NONE:
       return false;
   }
@@ -308,11 +318,14 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
 namespace {
 
 /// @brief Which field of HeatingReadings holds a register, and how its value is kept.
+/// @details Exactly one of the three fields is set.
 struct HeatingReadingField {
   HeatingFunction fn;                   ///< Register.
   float HeatingReadings::*temperature;  ///< The field of a register read in degrees (NaN until read), else nullptr.
   int16_t HeatingReadings::*
       integer;  ///< The field of a register read as a byte or a flag (-1 until read), else nullptr.
+  float HeatingReadings::*quantity{nullptr};  ///< The field of another measured quantity, kept as a float (NaN until
+                                              ///< read): the energy, which does not fit an int16_t. Else nullptr.
 };
 
 /// Every register the readings hold. POWER_ON, SET_PRESENCE and MIDNIGHT_SYNC have no row: they are logged or
@@ -332,6 +345,7 @@ constexpr HeatingReadingField HEATING_READING_FIELDS[] = {
     {HeatingFunction::WORKING_RATE, nullptr, &HeatingReadings::working_rate},
     {HeatingFunction::NIGHT_LIGHT, nullptr, &HeatingReadings::night_light},
     {HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, nullptr, &HeatingReadings::night_light_brightness},
+    {HeatingFunction::ENERGY, nullptr, nullptr, &HeatingReadings::energy_kwh},
 };
 
 /// @return The row of a register, or nullptr for one the readings do not hold.
@@ -343,14 +357,22 @@ const HeatingReadingField *reading_field_for(HeatingFunction fn) {
   return nullptr;
 }
 
+/// A float field of HeatingReadings.
+using HeatingFloatField = float HeatingReadings::*;
+
+/// @return The float field of a row (a temperature or another quantity), or nullptr for an integer row.
+HeatingFloatField float_field_of(const HeatingReadingField &field) {
+  return field.temperature != nullptr ? field.temperature : field.quantity;
+}
+
 }  // namespace
 
 bool HeatingReadings::store(HeatingFunction fn, float value) {
   const HeatingReadingField *field = reading_field_for(fn);
   if (field == nullptr)
     return false;
-  if (field->temperature != nullptr) {
-    this->*field->temperature = value;
+  if (const HeatingFloatField real = float_field_of(*field); real != nullptr) {
+    this->*real = value;
   } else {
     this->*field->integer = static_cast<int16_t>(value);
   }
@@ -361,8 +383,8 @@ bool HeatingReadings::clear(HeatingFunction fn) {
   const HeatingReadingField *field = reading_field_for(fn);
   if (field == nullptr)
     return false;
-  if (field->temperature != nullptr) {
-    this->*field->temperature = NAN;
+  if (const HeatingFloatField real = float_field_of(*field); real != nullptr) {
+    this->*real = NAN;
   } else {
     this->*field->integer = -1;
   }
@@ -373,12 +395,18 @@ bool HeatingReadings::has(HeatingFunction fn) const {
   const HeatingReadingField *field = reading_field_for(fn);
   if (field == nullptr)
     return false;
-  return field->temperature != nullptr ? !std::isnan(this->*field->temperature) : this->*field->integer >= 0;
+  const HeatingFloatField real = float_field_of(*field);
+  return real != nullptr ? !std::isnan(this->*real) : this->*field->integer >= 0;
 }
 
 float HeatingReadings::temperature_of(HeatingFunction fn) const {
   const HeatingReadingField *field = reading_field_for(fn);
   return field != nullptr && field->temperature != nullptr ? this->*field->temperature : NAN;
+}
+
+float HeatingReadings::quantity_of(HeatingFunction fn) const {
+  const HeatingReadingField *field = reading_field_for(fn);
+  return field != nullptr && field->quantity != nullptr ? this->*field->quantity : NAN;
 }
 
 int16_t HeatingReadings::value_of(HeatingFunction fn) const {

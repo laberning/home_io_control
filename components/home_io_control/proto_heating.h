@@ -31,6 +31,11 @@
 /// A Sauter Hekla heater adds a night light: on/off in register 0x0144 (`01` / `00`, read on a heater
 /// with the light on and off, and written as `0C 61 01 44 <value>` by the heater's own Cozytouch
 /// controller) and, most likely, its brightness in 0x0142 (reads 100 with the light at full) (issue #222).
+///
+/// Register 0x0116 holds the energy the heater has consumed, in whole kWh, as a 16-bit value read most
+/// significant byte first, unlike the temperatures. It equals the total each heater's own display shows on
+/// two Atlantic/Sauter Tahual radiators (`0D 5E` = 3422 kWh and `01 08` = 264 kWh); a TaHoma reads it on
+/// every cycle. The two Adelis sweeps in the corpus carry it too (`02 3F` and `03 B2`).
 
 #include "proto_frame.h"
 #include "proto_private_registers.h"
@@ -70,6 +75,7 @@ enum class HeatingFunction : uint8_t {
   NIGHT_LIGHT_BRIGHTNESS,  ///< Register 0x0142, read/write: the night light's brightness, 0-10000, 16-bit.
                            ///< \todo Confirm on a real heater that a write from the hub dims the light and
                            ///<       that values between its panel's four levels are accepted (issue #222).
+  ENERGY,                  ///< Register 0x0116, read-only: energy consumed, whole kWh, 16-bit big-endian.
 };
 
 /// @brief Operating modes of the mode register (HeatingFunction::SET_MODE).
@@ -235,8 +241,8 @@ size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVA
 /// Anything else (another command, another register, a truncated value, a function without a typed
 /// decode such as POWER_ON) is "no value".
 ///
-/// The value is returned in natural units: degrees Celsius for the temperature registers, the raw
-/// byte for the others. A byte above its register's range (a mode, a state, a percentage) is
+/// The value is returned in natural units: degrees Celsius for the temperature registers, kWh for the
+/// energy register, the raw byte for the others. A byte above its register's range (a mode, a state, a percentage) is
 /// "no value". A raw `-1` on the room-temperature register is a sensor fault: it decodes
 /// as NaN with `true` returned, because the heater did answer.
 /// @param reply The device's reply frame.
@@ -264,6 +270,7 @@ struct HeatingReadings {
   float eco_setback_k{NAN};            ///< A towel dryer's eco setback (register 0x0104); NaN until read.
   int16_t night_light{-1};             ///< Night light 1 on / 0 off; -1 until read.
   int16_t night_light_brightness{-1};  ///< Night light brightness register, 0-10000; -1 until read.
+  float energy_kwh{NAN};               ///< Energy consumed (register 0x0116), whole kWh; NaN until read.
   int16_t level{-1};                   ///< Low byte of the main parameter of a heater commanded with a prefixed
                                        ///< value: a heating level, or a setpoint alias. -1 until a status reply
                                        ///< carried one, and again after a reply that carried a plain
@@ -295,12 +302,17 @@ struct HeatingReadings {
   ///         temperature register the readings hold.
   [[nodiscard]] float temperature_of(HeatingFunction fn) const;
 
+  /// @brief The stored value of a register that is neither a temperature nor a byte (the energy, in kWh).
+  /// @param fn Register.
+  /// @return The value, or NaN when it has not been read or `fn` is not such a register.
+  [[nodiscard]] float quantity_of(HeatingFunction fn) const;
+
   /// @brief The stored integer value of a register (a mode, a state, a flag, a percentage).
   /// @details Lets a heating profile name the register its card reads (its mode or preset register)
   ///          instead of the caller picking a field.
   /// @param fn Register.
   /// @return The value, or -1 when it has not been read or `fn` is not an integer register the
-  ///         readings hold (the temperatures are not).
+  ///         readings hold (the temperatures and the energy are not).
   [[nodiscard]] int16_t value_of(HeatingFunction fn) const;
 };
 
