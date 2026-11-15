@@ -82,40 +82,6 @@ std::string format_lr1121_bootloader_version(uint16_t version) {
   return version == 0 ? "unknown" : format_hex16(version);
 }
 
-/// @brief Outcome of the post-bootloader-entry sanity read, factored out of run_flash_sequence_()
-/// to keep its cognitive complexity within clang-tidy's threshold.
-enum class Lr1121SanityResult {
-  OK,                 ///< type matches, and either the version matches what boot recorded, or boot
-                      ///< recorded nothing and the freshly-read version positively identifies an LR1121.
-  WRONG_TYPE,         ///< type != LR1121_UPDATER_BOOTLOADER_TYPE -- not in bootloader mode at all.
-  VERSION_MISMATCH,   ///< type is fine, but the version boot recorded no longer matches.
-  WRONG_CHIP_FAMILY,  ///< Boot recorded nothing to compare against, and the freshly-read version
-                      ///< does not identify an LR1121 -- see lr1121_check_bootloader_sanity()'s
-                      ///< comment for why type alone cannot catch this.
-};
-
-/// @brief When the boot-time excursion never read a bootloader version (`known` is
-/// false), there is nothing to compare `sanity_bootloader_version` against a prior reading, but it
-/// must still be checked against something: `sanity_type` (LR11XX_TYPE_PRODUCTION_MODE, 0xDF) is
-/// reported by an LR1120 or LR1110 too, so passing the type check alone does not prove this chip is
-/// an LR1121 -- only the bootloader *version* does that (lr1121_bootloader_is_lr1121()). Without
-/// this, the "boot-time read failed, adopt whatever bootloader-mode read we get now" recovery path
-/// would erase and overwrite an LR1120/LR1110 with an LR1121 image on nothing more than a byte both
-/// chips share. This is the last check before EraseFlash.
-Lr1121SanityResult lr1121_check_bootloader_sanity(bool known, uint16_t known_bootloader_version, uint8_t sanity_type,
-                                                  uint16_t sanity_bootloader_version) {
-  if (sanity_type != LR1121_UPDATER_BOOTLOADER_TYPE)
-    return Lr1121SanityResult::WRONG_TYPE;
-  if (known) {
-    if (sanity_bootloader_version != known_bootloader_version)
-      return Lr1121SanityResult::VERSION_MISMATCH;
-    return Lr1121SanityResult::OK;
-  }
-  if (!lr1121_bootloader_is_lr1121(sanity_bootloader_version))
-    return Lr1121SanityResult::WRONG_CHIP_FAMILY;
-  return Lr1121SanityResult::OK;
-}
-
 /// @brief Human-readable reason for a sanity-check failure, for the abort log line in
 /// run_flash_sequence_(). Factored out so that line stays one statement regardless of how many
 /// distinct sanity failures exist.
@@ -605,6 +571,25 @@ void Lr1121FirmwareUpdateController::trigger() {
   this->run_flash_sequence_();
 }
 
+void Lr1121FirmwareUpdateController::finish_image_write_(const char *reboot_log_prefix,
+                                                         const char *readback_log_prefix) {
+  // Read while still in bootloader mode, before rebooting into the newly written image -- see
+  // lr1121_log_post_write_hash()'s comment for why this is diagnostic-only.
+  lr1121_log_post_write_hash(*this->lr1121_firmware_updater_);
+
+  if (!this->lr1121_firmware_updater_->reboot(false)) {
+    ESP_LOGW(detail::TAG, "%s reboot-to-image command failed to send (BUSY timeout)", reboot_log_prefix);
+  } else {
+    uint8_t device_type = 0, fw_major = 0, fw_minor = 0;
+    if (this->lr1121_firmware_updater_->read_normal_version(device_type, fw_major, fw_minor)) {
+      const uint16_t new_fw = (static_cast<uint16_t>(fw_major) << 8) | fw_minor;
+      lr1121_log_post_flash_verify_result(new_fw, LR1121_FIRMWARE_UPDATE_TARGET_VERSION);
+    } else {
+      ESP_LOGW(detail::TAG, "%s could not read back the post-flash version (BUSY timeout)", readback_log_prefix);
+    }
+  }
+}
+
 void Lr1121FirmwareUpdateController::run_flash_sequence_() {
   *this->busy_ = true;
   // Raised for the duration of the flash so the log fills with the progress output below rather
@@ -670,21 +655,7 @@ void Lr1121FirmwareUpdateController::run_flash_sequence_() {
     return;
   }
 
-  // Read while still in bootloader mode, before rebooting into the newly written image -- see
-  // lr1121_log_post_write_hash()'s comment for why this is diagnostic-only.
-  lr1121_log_post_write_hash(*this->lr1121_firmware_updater_);
-
-  if (!this->lr1121_firmware_updater_->reboot(false)) {
-    ESP_LOGW(detail::TAG, "LR1121 firmware update: reboot-to-image command failed to send (BUSY timeout)");
-  } else {
-    uint8_t device_type = 0, fw_major = 0, fw_minor = 0;
-    if (this->lr1121_firmware_updater_->read_normal_version(device_type, fw_major, fw_minor)) {
-      const uint16_t new_fw = (static_cast<uint16_t>(fw_major) << 8) | fw_minor;
-      lr1121_log_post_flash_verify_result(new_fw, LR1121_FIRMWARE_UPDATE_TARGET_VERSION);
-    } else {
-      ESP_LOGW(detail::TAG, "LR1121 firmware update: could not read back the post-flash version (BUSY timeout)");
-    }
-  }
+  this->finish_image_write_("LR1121 firmware update:", "LR1121 firmware update:");
 
   // A clean ESP32 restart is the post-flash path rather than re-running radio_->init() in place:
   // by now init() has long since run and attached a DIO9 interrupt, so re-attachment, stale
@@ -776,7 +747,7 @@ void Lr1121FirmwareUpdateController::run_bootloader_upgrade_sequence_() {
   // loader is known to report (LR1121_UPDATER_LOADER_DEVICE_TYPE, 0xDE, observed on hardware):
   // 0xDE and the bootloader's 0xDF differ by one bit, so "anything but 0xDF" would accept a
   // single-bit corruption of exactly the byte this check exists to trust.
-  if (loader_device_type != LR1121_UPDATER_LOADER_DEVICE_TYPE) {
+  if (!lr1121_loader_type_is_loader(loader_device_type)) {
     const bool still_in_bootloader = loader_device_type == LR1121_UPDATER_BOOTLOADER_TYPE;
     ESP_LOGE(detail::TAG,
              "LR1121 bootloader rewrite: Stage 1b checkpoint failed -- chip reports type=0x%02X, expected the "
@@ -789,7 +760,7 @@ void Lr1121FirmwareUpdateController::run_bootloader_upgrade_sequence_() {
     return;
   }
   const uint16_t loader_running_fw = (static_cast<uint16_t>(loader_fw_major) << 8) | loader_fw_minor;
-  if (loader_running_fw != LR1121_LOADER_2100) {
+  if (!lr1121_loader_firmware_is_loader(loader_running_fw)) {
     ESP_LOGE(detail::TAG,
              "LR1121 bootloader rewrite: Stage 1b checkpoint failed -- chip reports firmware %s after the "
              "reboot, expected the loader's %s. Aborting before the irreversible write; the bootloader is "
@@ -826,8 +797,7 @@ void Lr1121FirmwareUpdateController::run_bootloader_upgrade_sequence_() {
     ESP_LOGW(detail::TAG,
              "LR1121 bootloader rewrite: Stage 2 status read timed out (BUSY) -- continuing to the verification "
              "read, which is what actually decides the outcome");
-  } else if (updater_status.command_status != Lr1121UpdaterCommandStatus::OK &&
-             updater_status.command_status != Lr1121UpdaterCommandStatus::DATA) {
+  } else if (!lr1121_update_command_accepted(static_cast<uint8_t>(updater_status.command_status))) {
     ESP_LOGE(detail::TAG,
              "LR1121 bootloader rewrite: Stage 2 chip reports command_status=%u after UpdateBootloader (0=FAIL, "
              "1=PERR) -- the chip did not accept 0x8100, which most likely means the bootloader was NOT "
@@ -874,8 +844,7 @@ void Lr1121FirmwareUpdateController::run_bootloader_upgrade_sequence_() {
   uint16_t post_update_bootloader_version = 0;
   const bool post_update_read_ok =
       this->lr1121_firmware_updater_->read_bootloader_version(post_update_type, post_update_bootloader_version);
-  if (!post_update_read_ok || post_update_type != LR1121_UPDATER_BOOTLOADER_TYPE ||
-      post_update_bootloader_version != LR1121_BOOTLOADER_2101) {
+  if (!lr1121_bootloader_rewrite_took(post_update_read_ok, post_update_type, post_update_bootloader_version)) {
     ESP_LOGE(detail::TAG,
              "LR1121 bootloader rewrite: Stage 2 succeeded but the chip is not behaving as expected afterward "
              "(read_ok=%d type=0x%02X bootloader=%s; expected to stay in the bootloader reporting 0x2101) -- "
@@ -904,7 +873,7 @@ void Lr1121FirmwareUpdateController::run_bootloader_upgrade_sequence_() {
     App.safe_reboot();
     return;
   }
-  if (stage3_type != LR1121_UPDATER_BOOTLOADER_TYPE || stage3_bootloader_version != LR1121_BOOTLOADER_2101) {
+  if (!lr1121_is_rewritten_bootloader(stage3_type, stage3_bootloader_version)) {
     ESP_LOGE(detail::TAG,
              "LR1121 bootloader rewrite: Stage 3 sanity check failed (type=0x%02X bootloader=%s, expected "
              "0x2101) -- aborting before erasing the transceiver region. The bootloader was already rewritten "
@@ -927,19 +896,7 @@ void Lr1121FirmwareUpdateController::run_bootloader_upgrade_sequence_() {
     return;
   }
 
-  lr1121_log_post_write_hash(*this->lr1121_firmware_updater_);
-
-  if (!this->lr1121_firmware_updater_->reboot(false)) {
-    ESP_LOGW(detail::TAG, "LR1121 bootloader rewrite: Stage 3 reboot-to-image command failed to send (BUSY timeout)");
-  } else {
-    uint8_t device_type = 0, fw_major = 0, fw_minor = 0;
-    if (this->lr1121_firmware_updater_->read_normal_version(device_type, fw_major, fw_minor)) {
-      const uint16_t new_fw = (static_cast<uint16_t>(fw_major) << 8) | fw_minor;
-      lr1121_log_post_flash_verify_result(new_fw, LR1121_FIRMWARE_UPDATE_TARGET_VERSION);
-    } else {
-      ESP_LOGW(detail::TAG, "LR1121 bootloader rewrite: could not read back the post-flash version (BUSY timeout)");
-    }
-  }
+  this->finish_image_write_("LR1121 bootloader rewrite: Stage 3", "LR1121 bootloader rewrite:");
 
   App.safe_reboot();
 }

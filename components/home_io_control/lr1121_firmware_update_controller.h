@@ -177,6 +177,14 @@ class Lr1121FirmwareUpdateController {
   /// leaves the chip unconfigured without also rebooting the ESP32.
   void run_flash_sequence_();
 
+  /// @brief The ending shared by the ordinary flash and the bootloader-rewrite's last stage, run
+  /// after the image is written: log the post-write hash, reboot the chip into the new image, read
+  /// its version back and log the verdict. Failures to reboot or read are warnings; the caller
+  /// reboots the ESP32 afterwards either way.
+  /// @param reboot_log_prefix Text that opens the warning when the reboot-to-image command fails.
+  /// @param readback_log_prefix Text that opens the warning when the version read-back fails.
+  void finish_image_write_(const char *reboot_log_prefix, const char *readback_log_prefix);
+
 #ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
   /// @brief The three-stage bootloader-rewrite sequence (ADR 0021): write the loader image, reboot
   /// into it, rewrite the bootloader via 0x81xx, then write the transceiver image. Run only once

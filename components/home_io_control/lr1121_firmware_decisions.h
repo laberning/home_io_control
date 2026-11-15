@@ -57,6 +57,18 @@ inline constexpr uint16_t LR1110_BOOTLOADER_1001 = 0x1001;
 /// "requires bootloader >= X" rule like LR1121_KNOWN_BOOTLOADER_REQUIREMENTS below.
 inline constexpr uint16_t LR1121_LOADER_2100 = 0x2100;
 
+/// @brief Normal-mode GetVersion `type` byte the bootloader *loader* image reports while running —
+/// must match radio_lr1121_firmware_updater.h's LR1121_UPDATER_LOADER_DEVICE_TYPE (0xDE). Kept as a
+/// separate constant for the same dependency-free reason as LR1121_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS
+/// above. It differs from LR1121_BOOTLOADER_TYPE_FOR_FIRMWARE_DECISIONS by exactly one bit, which is
+/// why lr1121_loader_type_is_loader() compares for equality instead of excluding the bootloader's value.
+inline constexpr uint8_t LR1121_LOADER_TYPE_FOR_FIRMWARE_DECISIONS = 0xDE;
+
+/// @brief `command_status` values of the loader's status read that mean the chip accepted the
+/// command — must match radio_lr1121_firmware_updater.h's Lr1121UpdaterCommandStatus::OK / DATA.
+inline constexpr uint8_t LR1121_COMMAND_STATUS_OK_FOR_FIRMWARE_DECISIONS = 0x02;
+inline constexpr uint8_t LR1121_COMMAND_STATUS_DATA_FOR_FIRMWARE_DECISIONS = 0x03;
+
 /// @return true if `bootloader_version` is one of the two bootloader versions an LR1121 (as
 /// opposed to an LR1120 or LR1110) can report.
 [[nodiscard]] constexpr bool lr1121_bootloader_is_lr1121(uint16_t bootloader_version) {
@@ -229,6 +241,88 @@ enum class BootloaderUpgradePath : uint8_t {
   if (required > bootloader_version)
     return BootloaderUpgradePath::AVAILABLE;
   return BootloaderUpgradePath::BLOCKED_BOOTLOADER_NEWER;
+}
+
+// === Acceptance checks of the bootloader-rewrite sequence ===
+
+/// @brief Outcome of the sanity read taken right after entering the bootloader, before anything
+/// is erased.
+enum class Lr1121SanityResult : uint8_t {
+  OK,                 ///< type matches, and either the version matches what boot recorded, or boot
+                      ///< recorded nothing and the freshly-read version positively identifies an LR1121.
+  WRONG_TYPE,         ///< type is not the bootloader's -- not in bootloader mode at all.
+  VERSION_MISMATCH,   ///< type is fine, but the version boot recorded no longer matches.
+  WRONG_CHIP_FAMILY,  ///< Boot recorded nothing to compare against, and the freshly-read version
+                      ///< does not identify an LR1121 -- see lr1121_check_bootloader_sanity().
+};
+
+/// @brief Sanity check on the bootloader-mode GetVersion read taken before the first erase.
+///
+/// The `type` byte is the production-silicon marker an LR1120 or LR1110 reports too, so passing it
+/// proves only that the chip is in bootloader mode. When boot recorded a bootloader version
+/// (`known`), the fresh read must equal it. When boot recorded nothing, the fresh read has no
+/// earlier value to match, so it must itself identify an LR1121 (lr1121_bootloader_is_lr1121());
+/// otherwise the "adopt whatever bootloader-mode read we get now" recovery path would overwrite an
+/// LR1120 or LR1110 with an LR1121 image on a byte both chips share. This is the last check before
+/// the erase.
+/// @param known Whether boot recorded a bootloader version.
+/// @param known_bootloader_version The version boot recorded; ignored when !known.
+/// @param sanity_type `type` byte of the fresh read.
+/// @param sanity_bootloader_version Bootloader version of the fresh read.
+[[nodiscard]] constexpr Lr1121SanityResult lr1121_check_bootloader_sanity(bool known, uint16_t known_bootloader_version,
+                                                                          uint8_t sanity_type,
+                                                                          uint16_t sanity_bootloader_version) {
+  if (sanity_type != LR1121_BOOTLOADER_TYPE_FOR_FIRMWARE_DECISIONS)
+    return Lr1121SanityResult::WRONG_TYPE;
+  if (known) {
+    if (sanity_bootloader_version != known_bootloader_version)
+      return Lr1121SanityResult::VERSION_MISMATCH;
+    return Lr1121SanityResult::OK;
+  }
+  if (!lr1121_bootloader_is_lr1121(sanity_bootloader_version))
+    return Lr1121SanityResult::WRONG_CHIP_FAMILY;
+  return Lr1121SanityResult::OK;
+}
+
+/// @brief Whether the `type` byte read after rebooting into the loader image is the loader's.
+///
+/// The loader and the bootloader report the same version number, so the version alone cannot tell
+/// them apart; a chip that stayed in the bootloader would pass a version-only check. The byte is
+/// compared for equality with the loader's value, never as "not the bootloader's", so a single-bit
+/// corruption of it is rejected too.
+[[nodiscard]] constexpr bool lr1121_loader_type_is_loader(uint8_t device_type) {
+  return device_type == LR1121_LOADER_TYPE_FOR_FIRMWARE_DECISIONS;
+}
+
+/// @brief Whether the firmware version read after rebooting into the loader image is the loader's
+/// own version (LR1121_LOADER_2100).
+[[nodiscard]] constexpr bool lr1121_loader_firmware_is_loader(uint16_t firmware) {
+  return firmware == LR1121_LOADER_2100;
+}
+
+/// @brief Whether the loader's `command_status` says it accepted the last command (executed, with
+/// or without data). FAIL and PERR, and any value outside the defined set, are not acceptance.
+[[nodiscard]] constexpr bool lr1121_update_command_accepted(uint8_t command_status) {
+  return command_status == LR1121_COMMAND_STATUS_OK_FOR_FIRMWARE_DECISIONS ||
+         command_status == LR1121_COMMAND_STATUS_DATA_FOR_FIRMWARE_DECISIONS;
+}
+
+/// @brief Whether a bootloader-mode GetVersion identifies the rewritten bootloader
+/// (LR1121_BOOTLOADER_2101): the bootloader's `type` byte and the new version.
+[[nodiscard]] constexpr bool lr1121_is_rewritten_bootloader(uint8_t type, uint16_t bootloader_version) {
+  return type == LR1121_BOOTLOADER_TYPE_FOR_FIRMWARE_DECISIONS && bootloader_version == LR1121_BOOTLOADER_2101;
+}
+
+/// @brief Whether the read taken after the bootloader write shows the write took effect.
+///
+/// The new bootloader is expected to refuse the loader image, which was built for the old
+/// bootloader, and stay in bootloader mode, so success is a bootloader-mode read reporting the new
+/// version. A failed read is never success.
+/// @param read_ok Whether the read completed.
+/// @param type `type` byte of the read.
+/// @param bootloader_version Bootloader version of the read.
+[[nodiscard]] constexpr bool lr1121_bootloader_rewrite_took(bool read_ok, uint8_t type, uint16_t bootloader_version) {
+  return read_ok && lr1121_is_rewritten_bootloader(type, bootloader_version);
 }
 
 /// @brief Outcome of lr1121_flash_decision().

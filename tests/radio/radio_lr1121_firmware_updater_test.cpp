@@ -1,6 +1,6 @@
 #include "radio_lr1121_firmware_updater.h"
 #include "radio_lr1121.h"               // LR1121_DEVICE_TYPE
-#include "lr1121_firmware_decisions.h"  // LR1121_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS, LR1121_BOOTLOADER_TYPE_FOR_FIRMWARE_DECISIONS
+#include "lr1121_firmware_decisions.h"  // the *_FOR_FIRMWARE_DECISIONS copies pinned below
 
 #include "esphome/core/application.h"
 
@@ -23,6 +23,16 @@ static_assert(LR1121_DEVICE_TYPE_FOR_FIRMWARE_DECISIONS == LR1121_DEVICE_TYPE,
 static_assert(LR1121_BOOTLOADER_TYPE_FOR_FIRMWARE_DECISIONS == LR1121_UPDATER_BOOTLOADER_TYPE,
               "lr1121_firmware_decisions.h's copy of the bootloader-mode type byte has drifted from "
               "radio_lr1121_firmware_updater.h");
+#ifdef IOHOME_LR1121_BOOTLOADER_UPDATE
+static_assert(LR1121_LOADER_TYPE_FOR_FIRMWARE_DECISIONS == LR1121_UPDATER_LOADER_DEVICE_TYPE,
+              "lr1121_firmware_decisions.h's copy of the loader's type byte has drifted from "
+              "radio_lr1121_firmware_updater.h");
+static_assert(LR1121_COMMAND_STATUS_OK_FOR_FIRMWARE_DECISIONS == static_cast<uint8_t>(Lr1121UpdaterCommandStatus::OK) &&
+                  LR1121_COMMAND_STATUS_DATA_FOR_FIRMWARE_DECISIONS ==
+                      static_cast<uint8_t>(Lr1121UpdaterCommandStatus::DATA),
+              "lr1121_firmware_decisions.h's accepted command_status values have drifted from "
+              "radio_lr1121_firmware_updater.h");
+#endif
 
 namespace {
 

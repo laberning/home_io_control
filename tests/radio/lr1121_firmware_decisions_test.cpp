@@ -247,3 +247,75 @@ TEST(Lr1121BootloaderUpgradePath, Row8DowngradeIsBlockedAsBootloaderNewer) {
   EXPECT_EQ(upgrade_path(true, true, LR1121_BOOTLOADER_2101, /*loader_fw=*/LR1121_BOOTLOADER_2101, 0x0103),
             BootloaderUpgradePath::BLOCKED_BOOTLOADER_NEWER);
 }
+
+// === Acceptance checks of the bootloader-rewrite sequence ===
+
+TEST(Lr1121BootloaderSanity, TypeOtherThanBootloaderIsWrongType) {
+  EXPECT_EQ(lr1121_check_bootloader_sanity(true, LR1121_BOOTLOADER_2100, 0xDE, LR1121_BOOTLOADER_2100),
+            Lr1121SanityResult::WRONG_TYPE);
+  EXPECT_EQ(lr1121_check_bootloader_sanity(false, 0, 0x03, LR1121_BOOTLOADER_2100), Lr1121SanityResult::WRONG_TYPE);
+}
+
+TEST(Lr1121BootloaderSanity, KnownVersionMustMatchTheBootTimeReading) {
+  EXPECT_EQ(lr1121_check_bootloader_sanity(true, LR1121_BOOTLOADER_2100, BL_OK, LR1121_BOOTLOADER_2100),
+            Lr1121SanityResult::OK);
+  EXPECT_EQ(lr1121_check_bootloader_sanity(true, LR1121_BOOTLOADER_2100, BL_OK, LR1121_BOOTLOADER_2101),
+            Lr1121SanityResult::VERSION_MISMATCH);
+}
+
+TEST(Lr1121BootloaderSanity, KnownVersionIsComparedEvenWhenItIsNotAnLr1121) {
+  // A matching reading is OK regardless of family: the family check applies only to an adopted read.
+  EXPECT_EQ(lr1121_check_bootloader_sanity(true, LR1120_BOOTLOADER_2000, BL_OK, LR1120_BOOTLOADER_2000),
+            Lr1121SanityResult::OK);
+}
+
+TEST(Lr1121BootloaderSanity, UnknownBootTimeVersionAcceptsOnlyAnLr1121Version) {
+  EXPECT_EQ(lr1121_check_bootloader_sanity(false, 0, BL_OK, LR1121_BOOTLOADER_2100), Lr1121SanityResult::OK);
+  EXPECT_EQ(lr1121_check_bootloader_sanity(false, 0, BL_OK, LR1121_BOOTLOADER_2101), Lr1121SanityResult::OK);
+  EXPECT_EQ(lr1121_check_bootloader_sanity(false, 0, BL_OK, LR1120_BOOTLOADER_2000),
+            Lr1121SanityResult::WRONG_CHIP_FAMILY);
+  EXPECT_EQ(lr1121_check_bootloader_sanity(false, 0, BL_OK, LR1110_BOOTLOADER_6500),
+            Lr1121SanityResult::WRONG_CHIP_FAMILY);
+  EXPECT_EQ(lr1121_check_bootloader_sanity(false, 0, BL_OK, 0x0000), Lr1121SanityResult::WRONG_CHIP_FAMILY);
+}
+
+TEST(Lr1121LoaderChecks, LoaderTypeIsAcceptedAndTheBootloaderTypeOneBitAwayIsNot) {
+  static_assert(LR1121_LOADER_TYPE_FOR_FIRMWARE_DECISIONS == 0xDE);
+  EXPECT_TRUE(lr1121_loader_type_is_loader(0xDE));
+  EXPECT_FALSE(lr1121_loader_type_is_loader(LR1121_BOOTLOADER_TYPE_FOR_FIRMWARE_DECISIONS));  // 0xDF, one bit away
+  EXPECT_FALSE(lr1121_loader_type_is_loader(0xDC));
+  EXPECT_FALSE(lr1121_loader_type_is_loader(0x5E));
+  EXPECT_FALSE(lr1121_loader_type_is_loader(LR1121));
+  EXPECT_FALSE(lr1121_loader_type_is_loader(0x00));
+}
+
+TEST(Lr1121LoaderChecks, LoaderFirmwareMustEqualTheLoadersOwnVersion) {
+  EXPECT_TRUE(lr1121_loader_firmware_is_loader(LR1121_LOADER_2100));
+  EXPECT_FALSE(lr1121_loader_firmware_is_loader(LR1121_BOOTLOADER_2101));  // one step off
+  EXPECT_FALSE(lr1121_loader_firmware_is_loader(0x2000));
+  EXPECT_FALSE(lr1121_loader_firmware_is_loader(0x0000));  // a chip that reported nothing
+}
+
+TEST(Lr1121UpdateCommandAccepted, OnlyOkAndDataCountAsAccepted) {
+  EXPECT_FALSE(lr1121_update_command_accepted(0x00));  // FAIL
+  EXPECT_FALSE(lr1121_update_command_accepted(0x01));  // PERR
+  EXPECT_TRUE(lr1121_update_command_accepted(0x02));   // OK
+  EXPECT_TRUE(lr1121_update_command_accepted(0x03));   // DATA
+  EXPECT_FALSE(lr1121_update_command_accepted(0x04));
+  EXPECT_FALSE(lr1121_update_command_accepted(0xFF));
+}
+
+TEST(Lr1121RewrittenBootloader, NeedsBootloaderTypeAndTheNewVersion) {
+  EXPECT_TRUE(lr1121_is_rewritten_bootloader(BL_OK, LR1121_BOOTLOADER_2101));
+  EXPECT_FALSE(lr1121_is_rewritten_bootloader(BL_OK, LR1121_BOOTLOADER_2100));  // old bootloader still there
+  EXPECT_FALSE(lr1121_is_rewritten_bootloader(BL_OK, 0x2102));
+  EXPECT_FALSE(lr1121_is_rewritten_bootloader(0xDE, LR1121_BOOTLOADER_2101));  // loader booted instead
+  EXPECT_FALSE(lr1121_is_rewritten_bootloader(LR1121, LR1121_BOOTLOADER_2101));
+}
+
+TEST(Lr1121RewrittenBootloader, AFailedReadIsNeverSuccess) {
+  EXPECT_TRUE(lr1121_bootloader_rewrite_took(true, BL_OK, LR1121_BOOTLOADER_2101));
+  EXPECT_FALSE(lr1121_bootloader_rewrite_took(false, BL_OK, LR1121_BOOTLOADER_2101));
+  EXPECT_FALSE(lr1121_bootloader_rewrite_took(true, BL_OK, LR1121_BOOTLOADER_2100));
+  EXPECT_FALSE(lr1121_bootloader_rewrite_took(true, 0xDE, LR1121_BOOTLOADER_2101));
+}
