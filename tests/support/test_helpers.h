@@ -149,7 +149,6 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::send_and_receive_;
   using IOHomeControlComponent::process_pending_operation_;
   using IOHomeControlComponent::authenticate_request_;
-  using IOHomeControlComponent::api_rename_device_;
   using IOHomeControlComponent::register_management_actions_;
   using IOHomeControlComponent::oneway_receiver_;
   using IOHomeControlComponent::defer_background_poll_;

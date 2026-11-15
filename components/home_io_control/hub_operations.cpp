@@ -835,10 +835,6 @@ bool IOHomeControlComponent::set_fan_position(const std::string &device_id, uint
   return this->set_device_position(device_id, position);
 }
 
-bool IOHomeControlComponent::set_light_state(const std::string &device_id, bool on) {
-  return this->set_light_position(device_id, on ? BINARY_ENTITY_ON_POSITION : BINARY_ENTITY_OFF_POSITION);
-}
-
 bool IOHomeControlComponent::set_switch_state(const std::string &device_id, bool on) {
   auto *dev = this->get_device(device_id);
   if (dev == nullptr || !this->initialized_)

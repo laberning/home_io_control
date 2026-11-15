@@ -583,22 +583,22 @@ class IOHomeControlComponent : public Component,
   /// @return true if device acknowledged; false on timeout or radio error, or when the device's
   ///         features do not accept the value (an intermediate position on a device without
   ///         device_feature::LEVELS): nothing is sent and the optimistic target is withdrawn.
-  virtual bool set_device_position(const std::string &device_id, uint8_t position);
+  bool set_device_position(const std::string &device_id, uint8_t position);
   /// Send a tilt command to a tilt‑capable cover.
   /// @param device_id Target device ID.
   /// @param tilt_percent Desired tilt (0–100).
   /// @return true if device acknowledged; false otherwise.
-  virtual bool set_device_tilt(const std::string &device_id, uint8_t tilt_percent);
+  bool set_device_tilt(const std::string &device_id, uint8_t tilt_percent);
   /// Set both position and tilt of a tilt-capable cover in one atomic command.
   /// @param device_id Target device ID.
   /// @param position Desired position (0–100, open→closed).
   /// @param tilt_percent Desired tilt (0–100).
   /// @return true if device acknowledged; false otherwise.
-  virtual bool set_device_position_and_tilt(const std::string &device_id, uint8_t position, uint8_t tilt_percent);
+  bool set_device_position_and_tilt(const std::string &device_id, uint8_t position, uint8_t tilt_percent);
   /// Request current status from a device.
   /// @param device_id Target device ID.
   /// @return true if status frame was received and processed.
-  virtual bool request_device_status(const std::string &device_id);
+  bool request_device_status(const std::string &device_id);
   /// Read the device's minimum limitation and derive its rain sensor state from the reply.
   ///
   /// Unauthenticated read (CMD_LIMITATION_STATUS_REQ); the reply is accepted only inside this
@@ -606,7 +606,7 @@ class IOHomeControlComponent : public Component,
   /// device's position or target. A moving device is not asked: the poll is deferred instead.
   /// @param device_id Target device ID.
   /// @return true if a usable limitation reply arrived and was applied.
-  virtual bool request_device_limitation(const std::string &device_id);
+  bool request_device_limitation(const std::string &device_id);
   /// Subscribe the device to EVENT_LOCAL_SENSOR and publish the sun value its answer carries.
   ///
   /// The answer is accepted only inside this exchange (decisions::is_subscription_answer(),
@@ -614,141 +614,52 @@ class IOHomeControlComponent : public Component,
   /// deferred instead.
   /// @param device_id Target device ID.
   /// @return true if an answer of the captured shape arrived and was applied.
-  virtual bool request_device_sun_level(const std::string &device_id);
+  bool request_device_sun_level(const std::string &device_id);
   /// Subscribe the device to EVENT_BATTERY_LEVEL_CHANGE and publish the level its answer carries.
   /// Same rules as request_device_sun_level().
   /// @param device_id Target device ID.
   /// @return true if an answer of the captured shape arrived and was applied.
-  virtual bool request_device_battery_level(const std::string &device_id);
+  bool request_device_battery_level(const std::string &device_id);
   /// Request the stored device name from a device.
   /// @param device_id Target device ID.
   /// @return true if a name response frame was received and processed.
-  virtual bool request_device_name(const std::string &device_id);
-  /// Rename a device and verify the result by reading the name back.
-  /// @param device_id Target device ID.
-  /// @param new_name Requested UTF-8 device name.
-  /// @return Structured result describing success, verification, and any validation failure.
-  virtual ManagementActionResult rename_device(const std::string &device_id, const std::string &new_name) {
-    return this->management_actions_.rename_device(device_id, new_name);
-  }
-  /// Trigger a device's physical identify (brief jog/flash) so a user can confirm which
-  /// physical motor a device ID maps to.
-  /// @param device_id Target device ID.
-  /// @return Structured result describing success and any validation failure. `verified` is
-  ///         always false — there is no readback for a physical identify jog.
-  virtual ManagementActionResult identify_device(const std::string &device_id) {
-    return this->management_actions_.identify_device(device_id);
-  }
-  /// @brief Move a cover device to fully open at elevated priority, intended to bypass
-  /// wind/rain soft locks.
-  ///
-  /// Safety-sensitive: queues CoverCommand::FORCE_OPEN through the normal cover-command dispatch
-  /// path. Only confirms the command was queued; the movement outcome arrives later via the
-  /// device's normal cover-state/polling pipeline, so `verified` is always false. The lock-bypass
-  /// behavior itself is experimental and unconfirmed against an active lock — see
-  /// ManagementActions::force_open_device()'s doxygen for details.
-  /// @param device_id Target device ID.
-  /// @return Structured result describing whether the command was queued.
-  virtual ManagementActionResult force_open_device(const std::string &device_id) {
-    return this->management_actions_.force_open_device(device_id);
-  }
-  /// Broadcast a roll-call and report every device that answers (see
-  /// ManagementActions::scan_paired_devices() for the full contract: only key-holding devices
-  /// answer, DeviceRegistry is never written, and zero replies is a successful result).
-  /// @return Structured result whose `message` is the full multi-line report.
-  virtual ManagementActionResult scan_paired_devices() { return this->management_actions_.scan_paired_devices(); }
-  /// Send a single diagnostic probe frame to a registered device and report the raw reply (see
-  /// DiagnosticProbes::probe_device() for the full contract, argument formats, and safety
-  /// gating). Protocol-research instrumentation for opcodes this codebase has not decoded — see
-  /// docs/diagnostic-probes.md and ADR 0024.
-  /// @param device_id Target device ID.
-  /// @param probe Probe name ("private_fn", "status_ext", "general_info3", "private2",
-  ///        "private2_short", "status_mp_fp", "status_fp_high", "limitation", "register_00", or "register_01"; the full
-  ///        list is in DiagnosticProbes::probe_device()).
-  /// @param index Function ID / selector block / modifier, as a decimal or `0x`-prefixed hex
-  ///        string; ignored for "general_info3" and "status_mp_fp"; the FPI2 bitmap for
-  ///        "status_fp_high"; 0 (minimum) or 1 (maximum) for "limitation".
-  /// @return Structured result whose `message` carries the reply's command byte and raw hex.
-  virtual ManagementActionResult probe_device(const std::string &device_id, const std::string &probe,
-                                              const std::string &index) {
-    return this->management_actions_.probe_device(device_id, probe, index);
-  }
-  /// Walk a bounded index range, one probe_device() call per index (see
-  /// DiagnosticProbes::probe_sweep()).
-  /// @param device_id Target device ID.
-  /// @param probe Probe name, same as probe_device().
-  /// @param first_index First index in the sweep (inclusive).
-  /// @param last_index Last index in the sweep (inclusive).
-  /// @return Structured result whose `message` is one line per index.
-  virtual ManagementActionResult probe_sweep(const std::string &device_id, const std::string &probe,
-                                             const std::string &first_index, const std::string &last_index) {
-    return this->management_actions_.probe_sweep(device_id, probe, first_index, last_index);
-  }
-  /// @brief Run one 2W heating/climate function (CMD_WRITE_PRIVATE 0x20) against a registered
-  /// climate device — the `heating_control` hub action.
-  ///
-  /// Experimental: the register protocol is unvalidated on real Atlantic/Thermor/Sauter hardware.
-  /// A write is reported as acknowledged by the device, never as confirmed; the register reads
-  /// (`window_open`) put the decoded value into the result message, and `power_on` / `midnight_sync`
-  /// log their ACK payload at DEBUG. See ManagementActions::heating_control() for argument formats.
-  /// @param device_id Target device ID.
-  /// @param function Heating function name.
-  /// @param value Function-specific value string.
-  /// @return Structured result describing success and any validation/exchange failure.
-  virtual ManagementActionResult heating_control(const std::string &device_id, const std::string &function,
-                                                 const std::string &value) {
-    return this->management_actions_.heating_control(device_id, function, value);
-  }
+  bool request_device_name(const std::string &device_id);
   /// Discover and pair a device that is in pairing mode.
   /// @return true if pairing completed successfully; false otherwise.
-  virtual bool discover_and_pair();
+  bool discover_and_pair();
   /// Send an arbitrary IO position (0-100) to a light entity. Internally mapped to the shared
-  /// execute path. set_light_state() is a thin binary-position wrapper around this, used by
-  /// dimmable lights to send anything other than the two binary extremes.
+  /// execute path; a binary light sends the two extremes through queue_set_light_state(), a dimmable
+  /// one anything in between through queue_set_light_position().
   /// @param device_id Target device ID.
   /// @param position Desired IO position (0-100); this device family's convention maps 0 to full
   ///        brightness and 100 to off, the same 0-100 scale platform_cover.cpp uses.
   /// @return true if device acknowledged.
-  virtual bool set_light_position(const std::string &device_id, uint8_t position);
+  bool set_light_position(const std::string &device_id, uint8_t position);
   /// Send a heat level to an exterior heater (a fan entity) as an IO position. Mapped to the shared
   /// execute path, like set_light_position().
   /// @param device_id Target device ID.
   /// @param position Desired IO position (0-100): 0 = full heat, 100 = off (the KLF 200 exterior
   ///        heating mapping, MP = position x 0x200).
   /// @return true if device acknowledged.
-  virtual bool set_fan_position(const std::string &device_id, uint8_t position);
-  /// Semantic binary helper for light entities. Internally mapped to the shared execute path.
-  /// @param device_id Target device ID.
-  /// @param on Desired on/off state.
-  /// @return true if device acknowledged.
-  virtual bool set_light_state(const std::string &device_id, bool on);
+  bool set_fan_position(const std::string &device_id, uint8_t position);
   /// Semantic binary helper for switch entities. Internally mapped to the shared execute path.
   /// @param device_id Target device ID.
   /// @param on Desired on/off state.
   /// @return true if device acknowledged.
-  virtual bool set_switch_state(const std::string &device_id, bool on);
+  bool set_switch_state(const std::string &device_id, bool on);
   /// Semantic lock helper for lock entities. Internally mapped to the shared execute path.
   /// @param device_id Target device ID.
   /// @param locked Desired locked/unlocked state.
   /// @return true if device acknowledged.
-  virtual bool set_lock_state(const std::string &device_id, bool locked);
+  bool set_lock_state(const std::string &device_id, bool locked);
   // --- Heating and hot water: one-line forwarders to HeaterController (ADR 0083) ---
-  // Virtual so entity tests can substitute them; the contracts are documented on the HeaterController methods.
+  // The contracts are documented on the HeaterController methods.
 
   /// @brief Run one heating function on the heater's private register protocol (a write for a settable
   /// register, a read for a read-only one). The `heating_control` action and the climate entity call this.
   /// @see HeaterController::send_heating_command()
   bool send_heating_command(const std::string &device_id, HeatingFunction fn, float value) override {
     return this->heater_controller_.send_heating_command(device_id, fn, value);
-  }
-  /// @brief Set the heating level of a heater commanded with levels. @see HeaterController::set_heating_level()
-  virtual bool set_heating_level(const std::string &device_id, uint8_t level) {
-    return this->heater_controller_.set_heating_level(device_id, level);
-  }
-  /// @brief Command a heater that carries a temperature or an alias in its main parameter.
-  /// @see HeaterController::set_heating_temperature()
-  virtual bool set_heating_temperature(const std::string &device_id, uint16_t main_parameter, const HeatingFp &fp) {
-    return this->heater_controller_.set_heating_temperature(device_id, main_parameter, fp);
   }
   /// @brief Send a planned climate write and read the register back; the climate entity's one entry point.
   /// @see HeaterController::execute_heating_plan()
@@ -825,13 +736,13 @@ class IOHomeControlComponent : public Component,
   /// Queue an async minimum-limitation read for the rain sensor poll; executed in loop() as a
   /// background operation (yields to commands and 1W activity).
   /// @param device_id Target device ID.
-  virtual void queue_request_device_limitation(const std::string &device_id);
+  void queue_request_device_limitation(const std::string &device_id);
   /// Queue an async sun level poll; executed in loop() as a background operation.
   /// @param device_id Target device ID.
-  virtual void queue_request_device_sun_level(const std::string &device_id);
+  void queue_request_device_sun_level(const std::string &device_id);
   /// Queue an async battery level poll; executed in loop() as a background operation.
   /// @param device_id Target device ID.
-  virtual void queue_request_device_battery_level(const std::string &device_id);
+  void queue_request_device_battery_level(const std::string &device_id);
   /// Queue an async device-name request; returns immediately, executed in loop().
   /// @param device_id Target device ID.
   void queue_request_device_name(const std::string &device_id) override;
@@ -867,7 +778,7 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param position Desired IO position (0-100).
   void queue_set_fan_position(const std::string &device_id, uint8_t position) override;
-  /// Async form of set_light_state() that keeps radio work serialized on the main loop.
+  /// Async binary on/off form of the light command that keeps radio work serialized on the main loop.
   /// @param device_id Target device ID.
   /// @param on Desired on/off state.
   void queue_set_light_state(const std::string &device_id, bool on) override;
@@ -1312,43 +1223,9 @@ class IOHomeControlComponent : public Component,
   /// @brief Resolve `normal_start_preamble` from the driver when YAML did not set it (ADR 0042).
   void resolve_start_preamble_default_();
 
-  // --- Management actions (thin wrappers delegating to management_actions_) ---
+  // --- Management actions (the native API calls management_actions_ directly) ---
   /// Register hub-level Home Assistant actions; called from setup().
   void register_management_actions_() { this->management_actions_.register_actions(); }
-  /// Native API callback: rename a registered device.
-  void api_rename_device_(const std::string &device_id, const std::string &new_name) {
-    this->management_actions_.api_rename_device(device_id, new_name);
-  }
-  /// Native API callback: trigger a registered device's physical identify.
-  void api_identify_device_(const std::string &device_id) { this->management_actions_.api_identify_device(device_id); }
-  /// Native API callback: force-open a registered cover device.
-  void api_force_open_device_(const std::string &device_id) {
-    this->management_actions_.api_force_open_device(device_id);
-  }
-  /// Native API callback: broadcast a roll-call scan of already-paired devices.
-  void api_scan_paired_devices_() { this->management_actions_.api_scan_paired_devices(); }
-  /// Native API callback: queue a 1W position for a controller identity.
-  void api_oneway_set_position_(const std::string &controller_id, const std::string &position) {
-    this->management_actions_.api_oneway_set_position(controller_id, position);
-  }
-  /// Native API callback: queue a 1W un-enrollment (remove-controller) for a controller identity.
-  void api_oneway_remove_controller_(const std::string &controller_id) {
-    this->management_actions_.api_oneway_remove_controller(controller_id);
-  }
-  /// Native API callback: run a single diagnostic probe against a registered device.
-  void api_probe_device_(const std::string &device_id, const std::string &probe, const std::string &index) {
-    this->management_actions_.api_probe_device(device_id, probe, index);
-  }
-  /// Native API callback: run a bounded diagnostic probe sweep against a registered device.
-  void api_probe_sweep_(const std::string &device_id, const std::string &probe, const std::string &first_index,
-                        const std::string &last_index) {
-    this->management_actions_.api_probe_sweep(device_id, probe, first_index, last_index);
-  }
-  /// Native API callback: run a heating/climate function (CMD_WRITE_PRIVATE 0x20) against a
-  /// registered climate device.
-  void api_heating_control_(const std::string &device_id, const std::string &function, const std::string &value) {
-    this->management_actions_.api_heating_control(device_id, function, value);
-  }
 
   // --- Frequency hopping ---
   void hop_frequency_();

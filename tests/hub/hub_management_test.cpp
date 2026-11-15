@@ -83,7 +83,7 @@ TEST(HubManagement, RenameDeviceRejectsUnknownDevice) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.rename_device("123456", "Patio Awning");
+  const auto result = component.management_actions_.rename_device("123456", "Patio Awning");
   EXPECT_FALSE(result.success);
   EXPECT_FALSE(result.verified);
   EXPECT_EQ(result.message, "device is not registered on this hub");
@@ -92,7 +92,7 @@ TEST(HubManagement, RenameDeviceRejectsUnknownDevice) {
 TEST(HubManagement, RenameDeviceRejectsWhenHubNotInitialized) {
   TestableManagementComponent component;
 
-  const auto result = component.rename_device("ABC123", "Patio Awning");
+  const auto result = component.management_actions_.rename_device("ABC123", "Patio Awning");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "hub is not initialized");
 }
@@ -102,7 +102,7 @@ TEST(HubManagement, RenameDeviceRejectsInvalidDeviceId) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.rename_device("12", "Patio Awning");
+  const auto result = component.management_actions_.rename_device("12", "Patio Awning");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device ID must be exactly 6 hexadecimal characters");
 }
@@ -112,7 +112,7 @@ TEST(HubManagement, RenameDeviceRejectsInvalidName) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.rename_device("ABC123", "");
+  const auto result = component.management_actions_.rename_device("ABC123", "");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, device_name_validation_error_description(DeviceNameValidationError::EMPTY));
 }
@@ -124,7 +124,7 @@ TEST(HubManagement, RenameDeviceSuccessVerifiesReadbackAndCachesName) {
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
   radio.queue_rx(frame_to_packet(make_get_name_response(component.node_id_, "Patio Awning")));
 
-  const auto result = component.rename_device("ABC123", "Patio Awning");
+  const auto result = component.management_actions_.rename_device("ABC123", "Patio Awning");
   EXPECT_TRUE(result.success);
   EXPECT_TRUE(result.verified);
   EXPECT_EQ(result.message, "rename verified by device readback");
@@ -142,7 +142,7 @@ TEST(HubManagement, RenameDeviceAcknowledgedButReadbackMismatchReturnsUnverified
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
   radio.queue_rx(frame_to_packet(make_get_name_response(component.node_id_, "Other Name")));
 
-  const auto result = component.rename_device("ABC123", "Patio Awning");
+  const auto result = component.management_actions_.rename_device("ABC123", "Patio Awning");
   EXPECT_TRUE(result.success);
   EXPECT_FALSE(result.verified);
   EXPECT_EQ(result.message, "rename acknowledged but readback did not match the requested name");
@@ -155,7 +155,7 @@ TEST(HubManagement, RenameDeviceAcknowledgedButReadbackFailsReturnsUnverifiedSuc
   setup_component(component, radio);
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
 
-  const auto result = component.rename_device("ABC123", "Patio Awning");
+  const auto result = component.management_actions_.rename_device("ABC123", "Patio Awning");
   EXPECT_TRUE(result.success);
   EXPECT_FALSE(result.verified);
   EXPECT_EQ(result.message, "rename acknowledged but verification readback failed");
@@ -167,7 +167,7 @@ TEST(HubManagement, RenameDeviceExplicitErrorReturnsDecodedResultCode) {
   setup_component(component, radio);
   radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_LIMITATION_BY_WIND)));
 
-  const auto result = component.rename_device("ABC123", "Patio Awning");
+  const auto result = component.management_actions_.rename_device("ABC123", "Patio Awning");
   EXPECT_FALSE(result.success);
   EXPECT_TRUE(result.has_result_code);
   EXPECT_EQ(result.result_code, RESULT_LIMITATION_BY_WIND);
@@ -180,7 +180,7 @@ TEST(HubManagement, IdentifyDeviceRejectsUnknownDevice) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.identify_device("123456");
+  const auto result = component.management_actions_.identify_device("123456");
   EXPECT_FALSE(result.success);
   EXPECT_FALSE(result.verified);
   EXPECT_EQ(result.message, "device is not registered on this hub");
@@ -189,7 +189,7 @@ TEST(HubManagement, IdentifyDeviceRejectsUnknownDevice) {
 TEST(HubManagement, IdentifyDeviceRejectsWhenHubNotInitialized) {
   TestableManagementComponent component;
 
-  const auto result = component.identify_device("ABC123");
+  const auto result = component.management_actions_.identify_device("ABC123");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "hub is not initialized");
 }
@@ -199,7 +199,7 @@ TEST(HubManagement, IdentifyDeviceRejectsInvalidDeviceId) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.identify_device("12");
+  const auto result = component.management_actions_.identify_device("12");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device ID must be exactly 6 hexadecimal characters");
 }
@@ -210,7 +210,7 @@ TEST(HubManagement, IdentifyDeviceNoResponseFails) {
   setup_component(component, radio);
   // No queued RX at all: send_and_receive times out with no valid response.
 
-  const auto result = component.identify_device("ABC123");
+  const auto result = component.management_actions_.identify_device("ABC123");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "no valid response to identify request");
 }
@@ -221,7 +221,7 @@ TEST(HubManagement, IdentifyDeviceSuccessWithDirectResponse) {
   setup_component(component, radio);
   radio.queue_rx(frame_to_packet(make_identify_ack_response(component.node_id_)));
 
-  const auto result = component.identify_device("ABC123");
+  const auto result = component.management_actions_.identify_device("ABC123");
   EXPECT_TRUE(result.success);
   EXPECT_FALSE(result.verified);
   EXPECT_EQ(result.message, "identify acknowledged by device");
@@ -233,7 +233,7 @@ TEST(HubManagement, IdentifyDeviceErrorResponseIsTreatedAsSuccess) {
   setup_component(component, radio);
   radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_LIMITATION_BY_WIND)));
 
-  const auto result = component.identify_device("ABC123");
+  const auto result = component.management_actions_.identify_device("ABC123");
   EXPECT_TRUE(result.success) << "CMD_ERROR_RESP to an identify request is expected/non-fatal";
   EXPECT_FALSE(result.verified);
   EXPECT_TRUE(result.has_result_code);
@@ -253,7 +253,7 @@ TEST(HubManagement, ApiIdentifyDevicePublishesManagementResultEvent) {
   setup_component(component, radio);
   radio.queue_rx(frame_to_packet(make_identify_ack_response(component.node_id_)));
 
-  component.api_identify_device_("ABC123");
+  component.management_actions_.api_identify_device("ABC123");
 
   ASSERT_EQ(api_server.events_.size(), 1u);
   const auto &event = api_server.events_.front();
@@ -273,7 +273,7 @@ TEST(HubManagement, ForceOpenDeviceRejectsUnknownDevice) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.force_open_device("123456");
+  const auto result = component.management_actions_.force_open_device("123456");
   EXPECT_FALSE(result.success);
   EXPECT_FALSE(result.verified);
   EXPECT_EQ(result.message, "device is not registered on this hub");
@@ -282,7 +282,7 @@ TEST(HubManagement, ForceOpenDeviceRejectsUnknownDevice) {
 TEST(HubManagement, ForceOpenDeviceRejectsWhenHubNotInitialized) {
   TestableManagementComponent component;
 
-  const auto result = component.force_open_device("ABC123");
+  const auto result = component.management_actions_.force_open_device("ABC123");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "hub is not initialized");
 }
@@ -292,7 +292,7 @@ TEST(HubManagement, ForceOpenDeviceRejectsInvalidDeviceId) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.force_open_device("12");
+  const auto result = component.management_actions_.force_open_device("12");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device ID must be exactly 6 hexadecimal characters");
 }
@@ -302,7 +302,7 @@ TEST(HubManagement, ForceOpenDeviceEnqueuesForceOpenCommand) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.force_open_device("ABC123");
+  const auto result = component.management_actions_.force_open_device("ABC123");
   EXPECT_TRUE(result.success);
   EXPECT_FALSE(result.verified);
   EXPECT_EQ(result.message,
@@ -323,7 +323,7 @@ TEST(HubManagement, ForceOpenDeviceRejectsNonCoverDevice) {
   ASSERT_NE(dev, nullptr);
   test::set_kind(*dev, DeviceType::LIGHT);
 
-  const auto result = component.force_open_device("ABC123");
+  const auto result = component.management_actions_.force_open_device("ABC123");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device does not accept cover commands");
   EXPECT_TRUE(component.op_queue_.empty());
@@ -338,7 +338,7 @@ TEST(HubManagement, ApiForceOpenDevicePublishesManagementResultEvent) {
   MockRadio radio;
   setup_component(component, radio);
 
-  component.api_force_open_device_("ABC123");
+  component.management_actions_.api_force_open_device("ABC123");
 
   ASSERT_EQ(api_server.events_.size(), 1u);
   const auto &event = api_server.events_.front();
@@ -486,14 +486,14 @@ TEST(HubManagement, HeatingControlRejectsUnknownDevice) {
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
-  const auto result = component.heating_control("123456", "power_on", "");
+  const auto result = component.management_actions_.heating_control("123456", "power_on", "");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device is not registered on this hub");
 }
 
 TEST(HubManagement, HeatingControlRejectsWhenHubNotInitialized) {
   TestableManagementComponent component;
-  const auto result = component.heating_control("ABC123", "power_on", "");
+  const auto result = component.management_actions_.heating_control("ABC123", "power_on", "");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "hub is not initialized");
 }
@@ -502,7 +502,7 @@ TEST(HubManagement, HeatingControlRejectsInvalidDeviceId) {
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
-  const auto result = component.heating_control("12", "power_on", "");
+  const auto result = component.management_actions_.heating_control("12", "power_on", "");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device ID must be exactly 6 hexadecimal characters");
 }
@@ -512,7 +512,7 @@ TEST(HubManagement, HeatingControlRejectsUnknownFunction) {
   MockRadio radio;
   setup_component(component, radio);
   make_climate_device(component);
-  const auto result = component.heating_control("ABC123", "make_coffee", "");
+  const auto result = component.management_actions_.heating_control("ABC123", "make_coffee", "");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "unknown heating function 'make_coffee'");
   EXPECT_TRUE(radio.get_sent_data().empty());
@@ -523,7 +523,7 @@ TEST(HubManagement, HeatingControlRejectsOutOfRangeTemperature) {
   MockRadio radio;
   setup_component(component, radio);
   make_climate_device(component);
-  const auto result = component.heating_control("ABC123", "set_temperature", "28.1");
+  const auto result = component.management_actions_.heating_control("ABC123", "set_temperature", "28.1");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "temperature must be between 7.0 and 28.0");
   EXPECT_TRUE(radio.get_sent_data().empty());
@@ -534,7 +534,7 @@ TEST(HubManagement, HeatingControlRejectsNonNumericTemperature) {
   MockRadio radio;
   setup_component(component, radio);
   make_climate_device(component);
-  const auto result = component.heating_control("ABC123", "set_temperature", "warm");
+  const auto result = component.management_actions_.heating_control("ABC123", "set_temperature", "warm");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "temperature must be a number in degrees Celsius");
 }
@@ -546,7 +546,7 @@ TEST(HubManagement, HeatingControlRejectsNonClimateDevice) {
   auto *dev = component.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
   test::set_kind(*dev, DeviceType::ROLLER_SHUTTER);
-  const auto result = component.heating_control("ABC123", "power_on", "");
+  const auto result = component.management_actions_.heating_control("ABC123", "power_on", "");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device is not a climate device");
   EXPECT_TRUE(radio.get_sent_data().empty());
@@ -559,7 +559,7 @@ TEST(HubManagement, HeatingControlRejectsNonFiniteTemperature) {
   make_climate_device(component);
   // strtof parses "nan" to a NaN that would pass both range comparisons; the parser must reject
   // it with the "must be a number" message before it reaches the encoder.
-  const auto result = component.heating_control("ABC123", "set_temperature", "nan");
+  const auto result = component.management_actions_.heating_control("ABC123", "set_temperature", "nan");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "temperature must be a number in degrees Celsius");
   EXPECT_TRUE(radio.get_sent_data().empty());
@@ -570,7 +570,7 @@ TEST(HubManagement, HeatingControlRejectsInvalidMode) {
   MockRadio radio;
   setup_component(component, radio);
   make_climate_device(component);
-  const auto result = component.heating_control("ABC123", "set_mode", "sideways");
+  const auto result = component.management_actions_.heating_control("ABC123", "set_mode", "sideways");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "mode must be one of auto, manual, prog, off");
   EXPECT_TRUE(radio.get_sent_data().empty());
@@ -581,7 +581,7 @@ TEST(HubManagement, HeatingControlRejectsInvalidPresence) {
   MockRadio radio;
   setup_component(component, radio);
   make_climate_device(component);
-  const auto result = component.heating_control("ABC123", "set_presence", "maybe");
+  const auto result = component.management_actions_.heating_control("ABC123", "set_presence", "maybe");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "presence must be 'on' or 'off'");
   EXPECT_TRUE(radio.get_sent_data().empty());
@@ -595,7 +595,7 @@ TEST(HubManagement, HeatingControlSendsNothingToAHeatingLevelHeater) {
   ASSERT_NE(dev, nullptr);
   test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 0);
   for (const char *function : {"power_on", "set_mode", "window_open"}) {
-    const auto result = component.heating_control("ABC123", function, "auto");
+    const auto result = component.management_actions_.heating_control("ABC123", function, "auto");
     EXPECT_FALSE(result.success) << function;
     EXPECT_EQ(result.message, "device is commanded with heating levels, not private registers") << function;
   }
@@ -607,7 +607,7 @@ TEST(HubManagement, HeatingControlRejectsInvalidOpenWindowDetection) {
   MockRadio radio;
   setup_component(component, radio);
   make_climate_device(component);
-  const auto result = component.heating_control("ABC123", "set_open_window_detection", "ajar");
+  const auto result = component.management_actions_.heating_control("ABC123", "set_open_window_detection", "ajar");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "open-window detection must be 'on' or 'off'");
   EXPECT_TRUE(radio.get_sent_data().empty());
@@ -619,7 +619,7 @@ TEST(HubManagement, HeatingControlHasNoSetWindowFunction) {
   MockRadio radio;
   setup_component(component, radio);
   make_climate_device(component);
-  const auto result = component.heating_control("ABC123", "set_window", "open");
+  const auto result = component.management_actions_.heating_control("ABC123", "set_window", "open");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "unknown heating function 'set_window'");
   EXPECT_TRUE(radio.get_sent_data().empty());
@@ -640,7 +640,7 @@ TEST(HubManagement, HeatingControlWindowOpenReadsTheSensorAndReportsIt) {
     set_cmd(reply, CMD_WRITE_PRIVATE_ACK, payload, sizeof(payload));
     radio.queue_rx(frame_to_packet(reply));
 
-    const auto result = component.heating_control("ABC123", "window_open", "");
+    const auto result = component.management_actions_.heating_control("ABC123", "window_open", "");
     EXPECT_TRUE(result.success);
     EXPECT_FALSE(result.verified);
     EXPECT_EQ(result.message, std::string("heating window_open: window ") + text);
@@ -665,7 +665,7 @@ TEST(HubManagement, HeatingControlNormalizesCaseAndWhitespace) {
   make_climate_device(component);
   radio.queue_rx(frame_to_packet(make_write_private_ack(component.node_id_)));
 
-  const auto result = component.heating_control("ABC123", "  SET_MODE  ", " Manual ");
+  const auto result = component.management_actions_.heating_control("ABC123", "  SET_MODE  ", " Manual ");
   EXPECT_TRUE(result.success);
   ASSERT_EQ(radio.get_sent_data().size(), 1u);
   const auto &tx = radio.get_sent_data().front();
@@ -702,7 +702,7 @@ TEST(HubManagement, HeatingControlHappyPathSendsExactBytesPerFunction) {
     make_climate_device(component);
     radio.queue_rx(frame_to_packet(make_write_private_ack(component.node_id_)));
 
-    const auto result = component.heating_control("ABC123", tc.function, tc.value);
+    const auto result = component.management_actions_.heating_control("ABC123", tc.function, tc.value);
     EXPECT_TRUE(result.success) << tc.function;
     EXPECT_FALSE(result.verified) << tc.function << " is an ack, not a readback";
     EXPECT_EQ(result.message, std::string("heating ") + tc.function + " acknowledged by device");
@@ -722,7 +722,7 @@ TEST(HubManagement, HeatingControlReportsFailureWithoutAck) {
   setup_component(component, radio);
   make_climate_device(component);
   // No reply queued.
-  const auto result = component.heating_control("ABC123", "set_temperature", "21.0");
+  const auto result = component.management_actions_.heating_control("ABC123", "set_temperature", "21.0");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device did not acknowledge the set_temperature command");
 }
@@ -734,7 +734,7 @@ TEST(HubManagement, HeatingControlSurfacesErrorResponseResultCode) {
   make_climate_device(component);
   radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_LIMITATION_BY_WIND)));
 
-  const auto result = component.heating_control("ABC123", "set_temperature", "21.0");
+  const auto result = component.management_actions_.heating_control("ABC123", "set_temperature", "21.0");
   EXPECT_FALSE(result.success);
   EXPECT_TRUE(result.has_result_code);
   EXPECT_EQ(result.result_code, RESULT_LIMITATION_BY_WIND);
@@ -753,7 +753,7 @@ TEST(HubManagement, ApiHeatingControlPublishesManagementResultEvent) {
   make_climate_device(component);
   radio.queue_rx(frame_to_packet(make_write_private_ack(component.node_id_)));
 
-  component.api_heating_control_("ABC123", "set_mode", "auto");
+  component.management_actions_.api_heating_control("ABC123", "set_mode", "auto");
 
   ASSERT_EQ(api_server.events_.size(), 1u);
   const auto &event = api_server.events_.front();
@@ -776,7 +776,7 @@ TEST(HubManagement, ApiRenameDevicePublishesManagementResultEvent) {
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
   radio.queue_rx(frame_to_packet(make_get_name_response(component.node_id_, "Patio Awning")));
 
-  component.api_rename_device_("ABC123", "Patio Awning");
+  component.management_actions_.api_rename_device("ABC123", "Patio Awning");
 
   ASSERT_EQ(api_server.events_.size(), 1u);
   const auto &event = api_server.events_.front();
@@ -800,7 +800,7 @@ TEST(HubManagement, ApiRenameDeviceSkipsEventWhenApiDisconnected) {
   setup_component(component, radio);
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
 
-  component.api_rename_device_("ABC123", "Patio Awning");
+  component.management_actions_.api_rename_device("ABC123", "Patio Awning");
   EXPECT_TRUE(api_server.events_.empty());
 }
 
@@ -846,7 +846,7 @@ TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
 TEST(HubManagement, ScanPairedDevicesRejectsWhenHubNotInitialized) {
   TestableManagementComponent component;
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "hub is not initialized");
 }
@@ -856,7 +856,7 @@ TEST(HubManagement, ScanPairedDevicesZeroRepliesReportsZeroAndSucceeds) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success) << "no replies is a valid result, not a failure";
   EXPECT_FALSE(result.verified);
   EXPECT_TRUE(result.device_id.empty()) << "there is no single target device";
@@ -880,7 +880,7 @@ TEST(HubManagement, ScanPairedDevicesReportsTruncationWhenMoreDevicesAnswerThanF
     radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
   }
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success) << "a truncated scan is still a successful scan";
   EXPECT_NE(result.message.find("24 devices detected"), std::string::npos)
       << "the count must reflect what was actually kept";
@@ -899,7 +899,7 @@ TEST(HubManagement, ScanPairedDevicesSweepsBothPowerClasses) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
 
   ASSERT_EQ(radio.get_sent_data().size(), 6u) << "two passes, three channels each";
@@ -963,7 +963,7 @@ TEST(HubManagement, ScanPairedDevicesSweepsOncePerDistinctKey) {
   add_keyed_device(component, "AABB02", SCAN_DEVICE_KEY);        // same key: no sweep of its own
   add_keyed_device(component, "AABB03", component.system_key_);  // equal to the hub key: no sweep either
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   ASSERT_EQ(radio.get_sent_data().size(), 12u) << "6 attempts for the hub key, 6 for the one other key";
   for (size_t i = 0; i < 12; i++) {
@@ -979,7 +979,7 @@ TEST(HubManagement, ScanPairedDevicesWithoutPerDeviceKeysSweepsTheHubKeyOnly) {
   MockRadio radio;
   setup_component(component, radio);
 
-  ASSERT_TRUE(component.scan_paired_devices().success);
+  ASSERT_TRUE(component.management_actions_.scan_paired_devices().success);
   ASSERT_EQ(radio.get_sent_data().size(), 6u);
   EXPECT_TRUE(roll_call_is_signed_with(radio.get_sent_data()[0], component.system_key_));
 }
@@ -996,7 +996,7 @@ TEST(HubManagement, ScanPairedDevicesNamesTheKeyOfAResponderFoundUnderAPerDevice
   const uint8_t src[3] = {0xAA, 0xBB, 0x01};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   const std::string kcv = detail::format_key_check_value(SCAN_DEVICE_KEY);
   EXPECT_NE(result.message.find("(0x34/1) key=" + kcv + " rssi="), std::string::npos) << result.message;
@@ -1016,7 +1016,7 @@ TEST(HubManagement, ScanPairedDevicesPutsAnUnknownKeyedResponderSnippetInsideAKe
   const uint8_t src[3] = {0x41, 0x5C, 0xE5};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
 
   // The device log gets the report with the key, inside a banner.
@@ -1053,7 +1053,7 @@ TEST(HubManagement, ScanPairedDevicesHintsWhenAKnownDeviceAnswersUnderAnotherKey
   const uint8_t src[3] = {0xAA, 0xBB, 0x01};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_NE(result.message.find("hint: answered under the key with check value " +
                                 detail::format_key_check_value(component.system_key_) +
@@ -1081,7 +1081,7 @@ TEST(HubManagement, ScanPairedDevicesGivesNoKeyHintWhenTheKeysAgree) {
   radio.queue_rx_hold_until_sent(7);
   radio.queue_rx(frame_to_packet(build_spe_response(src1, component.node_id_, payload1, sizeof(payload1))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_NE(result.message.find("AABB01"), std::string::npos);
   EXPECT_NE(result.message.find("AABB02"), std::string::npos);
@@ -1098,7 +1098,7 @@ TEST(HubManagement, ScanPairedDevicesHubKeyResponderSnippetCarriesNoKey) {
   const uint8_t src[3] = {0x41, 0x5C, 0xE5};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_NE(result.message.find("  climate:\n"), std::string::npos);
   EXPECT_EQ(result.message.find("system_key: \""), std::string::npos) << "no system_key line in the published snippet";
@@ -1117,7 +1117,7 @@ TEST(HubManagement, ScanPairedDevicesAckTunableChangesNeitherPass) {
     setup_component(component, radio);
     component.tuning_.pairing_discovery_ack_capable = ack_capable_tuning;
 
-    const auto result = component.scan_paired_devices();
+    const auto result = component.management_actions_.scan_paired_devices();
     EXPECT_TRUE(result.success);
 
     std::vector<uint8_t> ctrl1_bytes;
@@ -1142,7 +1142,7 @@ TEST(HubManagement, ScanPairedDevicesAlwaysAlivePassIsByteIdenticalToTheSingleSh
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   ASSERT_EQ(radio.get_sent_data().size(), 6u);
   ASSERT_EQ(radio.get_tx_configs().size(), 6u);
@@ -1227,7 +1227,7 @@ TEST(HubManagement, ScanPairedDevicesEachPassUsesItsListenPolicy) {
   ScanSweepTestRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
 
   ASSERT_EQ(radio.tx_boundaries().size(), 6u) << "one send_packet() per attempt";
@@ -1273,7 +1273,7 @@ TEST(HubManagement, ScanPairedDevicesKnownResponderReportedWithoutYamlSnippet) {
   const uint8_t src[3] = {0x30, 0xE1, 0xF2};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
   EXPECT_NE(result.message.find("30E1F2"), std::string::npos);
   EXPECT_NE(result.message.find("horizontal awning"), std::string::npos);
@@ -1298,7 +1298,7 @@ TEST(HubManagement, ScanPairedDevicesKnownDeviceReportingLowPowerWithoutYamlFlag
   const uint8_t src[3] = {0x30, 0xE1, 0xF2};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_NE(result.message.find("hint: reports power_save=low_power but its YAML has no low_power: true"),
             std::string::npos);
@@ -1319,7 +1319,7 @@ TEST(HubManagement, ScanPairedDevicesKnownDeviceReportingAlwaysAliveWithYamlLowP
   const uint8_t src[3] = {0x30, 0xE1, 0xF2};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_NE(result.message.find("hint: reports power_save=always_alive but its YAML sets low_power: true"),
             std::string::npos);
@@ -1340,7 +1340,7 @@ TEST(HubManagement, ScanPairedDevicesKnownDeviceMatchingPowerClassGetsNoHint) {
   const uint8_t src[3] = {0x30, 0xE1, 0xF2};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_EQ(result.message.find("hint:"), std::string::npos) << "a matching power class must not get a hint";
 }
@@ -1360,7 +1360,7 @@ TEST(HubManagement, ScanPairedDevicesKnownDeviceMatchingAlwaysAliveGetsNoHint) {
   const uint8_t src[3] = {0x30, 0xE1, 0xF2};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_EQ(result.message.find("hint:"), std::string::npos) << "a matching power class must not get a hint";
 }
@@ -1381,7 +1381,7 @@ TEST(HubManagement, ScanPairedDevicesKnownDeviceWithoutExtendedMetadataGetsNoHin
   const uint8_t src[3] = {0x30, 0xE1, 0xF2};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_EQ(result.message.find("hint:"), std::string::npos)
       << "a responder without extended metadata has nothing to compare and must not get a hint";
@@ -1405,7 +1405,7 @@ TEST(HubManagement, ScanPairedDevicesUnknownPowerSaveValueGetsNoHint) {
   const uint8_t src[3] = {0x30, 0xE1, 0xF2};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_EQ(result.message.find("hint:"), std::string::npos)
       << "an unrecognized power_save value must not be treated as evidence of either class";
@@ -1420,7 +1420,7 @@ TEST(HubManagement, ScanPairedDevicesUnknownResponderGetsYamlSnippet) {
   const uint8_t src[3] = {0x41, 0x5C, 0xE4};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
   EXPECT_NE(result.message.find("[unknown]"), std::string::npos);
   EXPECT_NE(result.message.find("Paste this into your YAML to register it:"), std::string::npos);
@@ -1445,7 +1445,7 @@ TEST(HubManagement, ScanPairedDevicesHeaterWithSetpointGetsClimateSnippet) {
   const uint8_t src[3] = {0x41, 0x5C, 0xE5};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_NE(result.message.find("electrical heater, with adjustable setpoint (0x34/1)"), std::string::npos)
       << result.message;
@@ -1464,7 +1464,7 @@ TEST(HubManagement, ScanPairedDevicesTypeWithoutPlatformIsReportedAsNotSupported
   const uint8_t src[3] = {0x41, 0x5C, 0xE5};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_NE(result.message.find("heat pump"), std::string::npos) << result.message;
   EXPECT_NE(result.message.find("not supported yet"), std::string::npos) << result.message;
@@ -1481,7 +1481,7 @@ TEST(HubManagement, ScanPairedDevicesLowPowerResponderGetsLowPowerLineInSnippet)
   const uint8_t src[3] = {0x41, 0x5C, 0xE4};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_NE(result.message.find("io_device_id: \"415CE4\""), std::string::npos);
   EXPECT_NE(result.message.find("low_power: true"), std::string::npos)
@@ -1498,7 +1498,7 @@ TEST(HubManagement, ScanPairedDevicesAlwaysAliveResponderOmitsLowPowerLine) {
   const uint8_t src[3] = {0x41, 0x5C, 0xE4};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_NE(result.message.find("io_device_id: \"415CE4\""), std::string::npos);
   EXPECT_EQ(result.message.find("low_power"), std::string::npos)
@@ -1521,7 +1521,7 @@ TEST(HubManagement, ScanPairedDevicesCarriesInversionAndRssiIntoTheReport) {
   const uint8_t src[3] = {0x30, 0xE1, 0xF2};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   EXPECT_NE(result.message.find("rssi=-73dBm"), std::string::npos)
       << "the reply's RSSI must reach the report, not a default";
@@ -1548,7 +1548,7 @@ TEST(HubManagement, ScanPairedDevicesMixedKnownAndUnknownBothClassified) {
   radio.queue_rx(
       frame_to_packet(build_spe_response(unknown_src, component.node_id_, unknown_payload, sizeof(unknown_payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
   EXPECT_NE(result.message.find("2 devices detected (1 known, 1 unknown)"), std::string::npos);
   EXPECT_NE(result.message.find("30E1F2"), std::string::npos);
@@ -1583,7 +1583,7 @@ TEST(HubManagement, ScanPairedDevicesSameSourceInBothPassesReportedOnce) {
   radio.queue_rx_after(1, packet);  // no earlier than attempt 1 (low-power pass)
   radio.queue_rx_after(4, packet);  // no earlier than attempt 4 (always-alive pass)
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
   ASSERT_EQ(radio.pending_count(), 0u) << "both gated replies must have been released into the radio during the scan";
   EXPECT_NE(result.message.find("1 device detected"), std::string::npos)
@@ -1610,7 +1610,7 @@ TEST(HubManagement, ScanPairedDevicesLateLowPowerReplyInNormalPassStillGetsLowPo
   const uint8_t src[3] = {0x41, 0x5C, 0xE4};
   radio.queue_rx_after(4, frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   ASSERT_TRUE(result.success);
   ASSERT_EQ(radio.pending_count(), 0u) << "the gated reply must have been released into the radio during the scan";
   EXPECT_NE(result.message.find("io_device_id: \"415CE4\""), std::string::npos);
@@ -1640,7 +1640,7 @@ TEST(HubManagement, ScanPairedDevicesLowPowerPassHeaderMatchesTheKlr300RollCall)
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
 
   ASSERT_FALSE(radio.get_sent_data().empty());
@@ -1665,7 +1665,7 @@ TEST(HubManagement, ScanPairedDevicesAlwaysAliveOnlySendsTheSingleShapeRollCall)
   setup_component(component, radio);
   component.tuning_.scan_power_classes = ScanPowerClasses::ALWAYS_ALIVE;
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
 
   ASSERT_EQ(radio.get_sent_data().size(), 3u) << "only the always-alive pass runs";
@@ -1688,7 +1688,7 @@ TEST(HubManagement, ScanPairedDevicesLowPowerOnlySendsOnlyTheLowPowerPass) {
   setup_component(component, radio);
   component.tuning_.scan_power_classes = ScanPowerClasses::LOW_POWER;
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
 
   ASSERT_EQ(radio.get_sent_data().size(), 3u) << "only the low-power pass runs";
@@ -1711,7 +1711,7 @@ TEST(HubManagement, ScanPairedDevicesBothOmitsTheSelectionNote) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
   EXPECT_EQ(result.message.find("scan_power_classes="), std::string::npos)
       << "the default selection must not add a selection NOTE line";
@@ -1727,7 +1727,7 @@ TEST(HubManagement, ScanPairedDevicesDedupsSameSourceThroughActionLayer) {
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
   EXPECT_NE(result.message.find("1 device detected"), std::string::npos) << "a duplicate reply must not double-count";
 
@@ -1755,7 +1755,7 @@ TEST(HubManagement, ScanPairedDevicesTruncatedMetadataFallsBackToPlaceholderSnip
   const uint8_t src[3] = {0x99, 0x88, 0x77};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
   EXPECT_NE(result.message.find("<cover|light|switch|lock>:"), std::string::npos)
       << "truncated metadata should fall back to the placeholder snippet form";
@@ -1773,7 +1773,7 @@ TEST(HubManagement, ScanPairedDevicesNeverWritesRegistry) {
   const uint8_t src[3] = {0x41, 0x5C, 0xE4};
   radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
 
-  const auto result = component.scan_paired_devices();
+  const auto result = component.management_actions_.scan_paired_devices();
   EXPECT_TRUE(result.success);
   EXPECT_EQ(component.registry_.size(), size_before) << "an unknown responder must not be auto-registered";
   EXPECT_EQ(component.get_device("415CE4"), nullptr);
@@ -1812,7 +1812,7 @@ TEST(HubManagement, ApiScanPairedDevicesPublishesManagementResultEvent) {
   MockRadio radio;
   setup_component(component, radio);
 
-  component.api_scan_paired_devices_();
+  component.management_actions_.api_scan_paired_devices();
 
   ASSERT_EQ(api_server.events_.size(), 1u);
   const auto &event = api_server.events_.front();
@@ -1836,7 +1836,7 @@ TEST(HubManagement, ApiScanPairedDevicesFailurePublishesEventWithEmptyDeviceId) 
 
   TestableManagementComponent component;  // deliberately not setup_component()'d: not initialized
 
-  component.api_scan_paired_devices_();
+  component.management_actions_.api_scan_paired_devices();
 
   ASSERT_EQ(api_server.events_.size(), 1u);
   const auto &event = api_server.events_.front();
@@ -1876,7 +1876,7 @@ TEST(HubManagement, OneWaySetPositionRejectsAnUnknownIdentity) {
   MockRadio radio;
   setup_component(component, radio);
 
-  component.api_oneway_set_position_("nope", "50");
+  component.management_actions_.api_oneway_set_position("nope", "50");
 
   ASSERT_EQ(api_server.events_.size(), 1u);
   const auto &event = api_server.events_.front();
@@ -1902,7 +1902,7 @@ TEST(HubManagement, OneWaySetPositionRejectsAMalformedPosition) {
 
   for (const char *bad : {"", "abc", "101", "-1", "12x"}) {
     api_server.reset();
-    component.api_oneway_set_position_("awning_remote", bad);
+    component.management_actions_.api_oneway_set_position("awning_remote", bad);
     ASSERT_EQ(api_server.events_.size(), 1u) << "input '" << bad << "' produced no result event";
     EXPECT_EQ(api_server.events_.front().data.at("success"), "false")
         << "position '" << bad << "' should be rejected, not coerced";
@@ -1938,7 +1938,7 @@ TEST(HubManagement, OneWaySetPositionQueuesTheParsedPositionForAKnownIdentity) {
     setup_component(component, radio);
     component.add_oneway_controller(identity);
 
-    component.api_oneway_set_position_("awning_remote", c.input);
+    component.management_actions_.api_oneway_set_position("awning_remote", c.input);
 
     ASSERT_EQ(api_server.events_.size(), 1u) << "input '" << c.input << "' produced no result event";
     EXPECT_EQ(api_server.events_.front().data.at("success"), "true") << "input '" << c.input << "'";
@@ -1961,7 +1961,7 @@ TEST(HubManagement, OneWayRemoveControllerRejectsAnUnknownIdentity) {
   MockRadio radio;
   setup_component(component, radio);
 
-  component.api_oneway_remove_controller_("nope");
+  component.management_actions_.api_oneway_remove_controller("nope");
 
   ASSERT_EQ(api_server.events_.size(), 1u);
   const auto &event = api_server.events_.front();
@@ -1984,7 +1984,7 @@ TEST(HubManagement, OneWayRemoveControllerQueuesForAKnownIdentity) {
   identity.io_device_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
   component.add_oneway_controller(identity);
 
-  component.api_oneway_remove_controller_("awning_remote");
+  component.management_actions_.api_oneway_remove_controller("awning_remote");
 
   ASSERT_EQ(api_server.events_.size(), 1u);
   EXPECT_EQ(api_server.events_.front().data.at("success"), "true");

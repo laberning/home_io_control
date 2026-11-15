@@ -3,8 +3,9 @@
 /// @file management_test_fixture.h
 /// @brief Shared fixture for the management-action and diagnostic-probe tests.
 ///
-/// TestableManagementComponent exposes the hub's protected action wrappers; setup_component() gives
-/// a component one registered device ("ABC123") on a MockRadio. Both test files include this header.
+/// TestableManagementComponent exposes the hub's ManagementActions collaborator;
+/// setup_component() gives a component one registered device ("ABC123") on a MockRadio. Both test files include this
+/// header.
 
 #include "hub_core.h"
 #include "proto_commands.h"
@@ -22,17 +23,9 @@ using namespace esphome::home_io_control;
 
 class TestableManagementComponent : public IOHomeControlComponent {
  public:
-  using IOHomeControlComponent::api_force_open_device_;
-  using IOHomeControlComponent::api_heating_control_;
-  using IOHomeControlComponent::api_identify_device_;
-  using IOHomeControlComponent::api_oneway_remove_controller_;
-  using IOHomeControlComponent::api_oneway_set_position_;
-  using IOHomeControlComponent::api_probe_device_;
-  using IOHomeControlComponent::api_probe_sweep_;
-  using IOHomeControlComponent::api_rename_device_;
-  using IOHomeControlComponent::api_scan_paired_devices_;
   using IOHomeControlComponent::initialized_;
   using IOHomeControlComponent::node_id_;
+  using IOHomeControlComponent::management_actions_;
   using IOHomeControlComponent::op_queue_;
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::register_management_actions_;

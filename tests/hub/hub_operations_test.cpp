@@ -22,7 +22,7 @@ using namespace esphome::home_io_control;
 // HubOperations test suite
 // ============================================================================
 // Tests for set_device_position, set_device_tilt, request_device_status,
-// set_light_state, set_switch_state, set_lock_state, and the queued operation dispatch.
+// set_light_position, set_switch_state, set_lock_state, and the queued operation dispatch.
 //
 // These tests verify capability-gating and correct command construction
 // using mock radio and a testable component subclass.
@@ -38,6 +38,7 @@ class TestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::process_pending_operation_;
   using IOHomeControlComponent::initialized_;
   using IOHomeControlComponent::exchange_engine_;
+  using IOHomeControlComponent::heater_controller_;
   using IOHomeControlComponent::radio_;
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
@@ -594,7 +595,7 @@ TEST(HubOperations, SetHeatingLevelSendsTheLevelInTheMainParameter) {
   radio.queue_rx(test::make_rx_packet(
       build_level_status_response(comp.node_id_, heating_level_main_parameter(heating_level::COMFORT))));
 
-  EXPECT_TRUE(comp.set_heating_level("ABC123", heating_level::COMFORT));
+  EXPECT_TRUE(comp.heater_controller_.set_heating_level("ABC123", heating_level::COMFORT));
 
   ASSERT_GE(radio.get_sent_data().size(), 1u);
   const auto &tx = radio.get_sent_data().front();
@@ -614,7 +615,7 @@ TEST(HubOperations, ALevelHeaterIsNeverInTheMovementSettleLoop) {
   radio.queue_rx(
       test::make_rx_packet(build_level_status_response(comp.node_id_, mp, /*flags=*/test::STATUS_BYTE_MOVING)));
 
-  EXPECT_TRUE(comp.set_heating_level("ABC123", heating_level::COMFORT));
+  EXPECT_TRUE(comp.heater_controller_.set_heating_level("ABC123", heating_level::COMFORT));
   EXPECT_TRUE(dev->is_stopped) << "the heater is at rest whatever its flags byte says";
   EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u) << "exactly one read-back poll is scheduled";
 
@@ -718,7 +719,7 @@ TEST(HubOperations, ExteriorHeatingGetsNoHeatingFrameFromAnyClimateEntryPoint) {
   make_exterior_heater(comp, radio, 0);
   EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.0F));
   EXPECT_FALSE(comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
-  EXPECT_FALSE(comp.set_heating_level("ABC123", heating_level::COMFORT));
+  EXPECT_FALSE(comp.heater_controller_.set_heating_level("ABC123", heating_level::COMFORT));
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
@@ -798,7 +799,7 @@ TEST(HubOperations, TemperatureHeatersGetNoRegisterFrameFromAnyEntryPoint) {
     EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5F));
     EXPECT_FALSE(
         comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
-    EXPECT_FALSE(comp.set_heating_level("ABC123", heating_level::COMFORT));
+    EXPECT_FALSE(comp.heater_controller_.set_heating_level("ABC123", heating_level::COMFORT));
     EXPECT_TRUE(radio.get_sent_data().empty())
         << "no CMD_WRITE_PRIVATE frame for a heater that takes the standard EXECUTE";
   }
@@ -809,7 +810,7 @@ TEST(HubOperations, SetHeatingTemperatureSendsTheMainParameterAloneOrWithFp9OrFp
   MockRadio plain_radio;
   make_temperature_heater(plain, plain_radio, DeviceType::HEAT_PUMP);
   plain_radio.queue_rx(test::make_rx_packet(build_level_status_response(plain.node_id_, 25600)));
-  EXPECT_TRUE(plain.set_heating_temperature("ABC123", 25600, HeatingFp{}));
+  EXPECT_TRUE(plain.heater_controller_.set_heating_temperature("ABC123", 25600, HeatingFp{}));
   const auto &tx = plain_radio.get_sent_data().front();
   EXPECT_EQ(tx[8], CMD_EXECUTE);
   EXPECT_EQ(tx[11], 0x64);
@@ -819,7 +820,8 @@ TEST(HubOperations, SetHeatingTemperatureSendsTheMainParameterAloneOrWithFp9OrFp
   MockRadio fp9_radio;
   make_temperature_heater(fp9, fp9_radio, DeviceType::HEATING_TEMPERATURE_INTERFACE);
   fp9_radio.queue_rx(test::make_rx_packet(build_level_status_response(fp9.node_id_, 25600)));
-  EXPECT_TRUE(fp9.set_heating_temperature("ABC123", 25600, HeatingFp{HeatingFpKind::FP9, heating_mode_flags::MANUAL}));
+  EXPECT_TRUE(fp9.heater_controller_.set_heating_temperature(
+      "ABC123", 25600, HeatingFp{HeatingFpKind::FP9, heating_mode_flags::MANUAL}));
   const auto &tx9 = fp9_radio.get_sent_data().front();
   EXPECT_EQ(tx9.size() - tx.size(), 2u) << "FP9 with both bitmaps and a two-byte value: 8 bytes against 6";
   EXPECT_EQ(tx9[13], 0x00) << "FP1-FP8 bitmap";
@@ -831,7 +833,8 @@ TEST(HubOperations, SetHeatingTemperatureSendsTheMainParameterAloneOrWithFp9OrFp
   MockRadio fp16_radio;
   make_temperature_heater(fp16, fp16_radio, DeviceType::HEAT_PUMP);
   fp16_radio.queue_rx(test::make_rx_packet(build_level_status_response(fp16.node_id_, 0xD80F)));
-  EXPECT_TRUE(fp16.set_heating_temperature("ABC123", 0xD80F, HeatingFp{HeatingFpKind::FP16, heating_fp16::ON}));
+  EXPECT_TRUE(fp16.heater_controller_.set_heating_temperature("ABC123", 0xD80F,
+                                                              HeatingFp{HeatingFpKind::FP16, heating_fp16::ON}));
   const auto &tx16 = fp16_radio.get_sent_data().front();
   EXPECT_EQ(tx16.size() - tx.size(), 2u) << "FP16 is two bytes behind the two bitmaps: 8 bytes against 6";
   EXPECT_EQ(tx16[11], 0xD8);
@@ -846,17 +849,17 @@ TEST(HubOperations, SetHeatingTemperatureRefusesEveryOtherKindOfDevice) {
   TestableComponent cover;
   MockRadio cover_radio;
   setup_cover_component(cover, cover_radio);
-  EXPECT_FALSE(cover.set_heating_temperature("ABC123", 25600, HeatingFp{}));
+  EXPECT_FALSE(cover.heater_controller_.set_heating_temperature("ABC123", 25600, HeatingFp{}));
 
   TestableComponent level;
   MockRadio level_radio;
   make_level_heater(level, level_radio);
-  EXPECT_FALSE(level.set_heating_temperature("ABC123", 25600, HeatingFp{}));
+  EXPECT_FALSE(level.heater_controller_.set_heating_temperature("ABC123", 25600, HeatingFp{}));
 
   TestableComponent registers;
   MockRadio register_radio;
   make_heater(registers, register_radio);
-  EXPECT_FALSE(registers.set_heating_temperature("ABC123", 25600, HeatingFp{}));
+  EXPECT_FALSE(registers.heater_controller_.set_heating_temperature("ABC123", 25600, HeatingFp{}));
   EXPECT_TRUE(cover_radio.get_sent_data().empty());
   EXPECT_TRUE(level_radio.get_sent_data().empty());
   EXPECT_TRUE(register_radio.get_sent_data().empty());
@@ -904,7 +907,8 @@ TEST(HubOperations, ATemperatureHeaterReplyThatSaysMovingGetsOneFollowUpPoll) {
   radio.queue_rx(
       test::make_rx_packet(build_level_status_response(comp.node_id_, 25600, /*flags=*/test::STATUS_BYTE_MOVING)));
 
-  EXPECT_TRUE(comp.set_heating_temperature("ABC123", 25600, HeatingFp{HeatingFpKind::FP9, heating_mode_flags::MANUAL}));
+  EXPECT_TRUE(comp.heater_controller_.set_heating_temperature(
+      "ABC123", 25600, HeatingFp{HeatingFpKind::FP9, heating_mode_flags::MANUAL}));
   EXPECT_TRUE(dev->is_stopped) << "a thermostat has no motion, whatever its flags byte says";
   EXPECT_NE(comp.poll_policy_.get_next_update("ABC123"), 0u) << "one read-back poll is scheduled";
 
@@ -953,13 +957,13 @@ TEST(HubOperations, SetHeatingLevelRefusesARegisterHeaterAndACover) {
   TestableComponent heater;
   MockRadio heater_radio;
   make_heater(heater, heater_radio);  // 52/1
-  EXPECT_FALSE(heater.set_heating_level("ABC123", heating_level::COMFORT));
+  EXPECT_FALSE(heater.heater_controller_.set_heating_level("ABC123", heating_level::COMFORT));
   EXPECT_TRUE(heater_radio.get_sent_data().empty());
 
   TestableComponent cover;
   MockRadio cover_radio;
   setup_cover_component(cover, cover_radio);
-  EXPECT_FALSE(cover.set_heating_level("ABC123", heating_level::COMFORT));
+  EXPECT_FALSE(cover.heater_controller_.set_heating_level("ABC123", heating_level::COMFORT));
   EXPECT_TRUE(cover_radio.get_sent_data().empty());
 }
 

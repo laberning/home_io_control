@@ -29,7 +29,7 @@ enum class PendingOperationType : uint8_t {
   SET_TILT,               ///< set_device_tilt call (tilt percentage 0–100).
   SET_POSITION_AND_TILT,  ///< Combined set_device_position_and_tilt call.
   DEVICE_COMMAND,         ///< Named device command (STOP, FAVORITE, VENT).
-  SET_LIGHT_STATE,        ///< set_light_state call (binary on/off).
+  SET_LIGHT_STATE,        ///< set_light_position call (binary extremes or a dimmed position).
   SET_LOCK_STATE,         ///< set_lock_state call (locked/unlocked).
   SET_SWITCH_STATE,       ///< set_switch_state call (binary on/off).
   SET_FAN_POSITION,       ///< set_fan_position call (heat level of an exterior heater as an IO position).
