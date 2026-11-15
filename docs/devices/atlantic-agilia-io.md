@@ -158,8 +158,11 @@ Two radiators run on an SX1262 hub alongside a TaHoma. Its model name register r
 
 - **The energy meter** matches the radiator's display on both radiators (3422 kWh and 264 kWh). Add
   an `energy:` block to get a sensor for the Home Assistant energy dashboard; see
-  [Energy meter](../configuration/climate.md#energy-meter). The TaHoma shows a lower total for the
-  same radiators (3129 kWh and 247 kWh); the sensor follows the radiator.
+  [Energy and power](../configuration/climate.md#energy-and-power). The TaHoma shows a lower total for
+  the same radiators (3129 kWh and 247 kWh); the sensor follows the radiator.
+- **Power and ratings.** The radiator reports its rated power and voltage (2000 W, 230 V) and how much
+  of the time it heats, so `power:`, `rated_power:` and `rated_voltage:` add an estimate of the power
+  it draws and its two ratings.
 
 ```yaml
 climate:
@@ -170,6 +173,8 @@ climate:
     io_subtype: 1
     energy:
       name: "Living room radiator energy"
+    power:
+      name: "Living room radiator power"
 ```
 
 ## Known quirks

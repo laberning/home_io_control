@@ -176,11 +176,10 @@ heater without `io_model: heater_with_light`.
   weekly program may be visible too. If you run one in its program, please
   [open an issue](https://github.com/laberning/home_io_control/issues) so we can check it.
 
-## Energy meter
+## Energy and power
 
-A heater with an adjustable setpoint counts the energy it has consumed, in whole kWh, in its
-register 0x0116. Add an `energy:` block to its entry to get a sensor for it, ready for the Home
-Assistant energy dashboard:
+A heater with an adjustable setpoint counts the energy it has consumed and knows its own ratings.
+Four optional sensors show them; add the blocks you want to the heater's entry:
 
 ```yaml
 climate:
@@ -191,21 +190,40 @@ climate:
     io_subtype: 1
     energy:
       name: "Living room radiator energy"
+    power:
+      name: "Living room radiator power"
+    rated_power:
+      name: "Living room radiator rated power"
+    rated_voltage:
+      name: "Living room radiator rated voltage"
 ```
 
-- The sensor is in kWh with `device_class: energy` and `state_class: total_increasing`, and takes the
-  options of any ESPHome [sensor](https://esphome.io/components/sensor/). It is accepted on every
-  `io_device_type: "electrical_heater"`, `io_subtype: 1` entry, with or without `io_model:`, and
-  rejected on any other.
-- The value is the total the heater's own display shows. It matched the display of two Sauter Tahual
+| Key | Shows | Unit | Read from |
+|---|---|---|---|
+| `energy:` | Energy consumed, for the Home Assistant energy dashboard (`total_increasing`) | kWh | Register 0x0116, every poll |
+| `power:` | Power the heater draws now: its rated power times its heating rate | W | Registers 0x011A once, 0x0126 every poll |
+| `rated_power:` | Rated power (diagnostic) | W | Register 0x011A, once |
+| `rated_voltage:` | Rated voltage (diagnostic) | V | Register 0x011A, once |
+
+- Each sensor takes the options of any ESPHome [sensor](https://esphome.io/components/sensor/). They
+  are accepted on every `io_device_type: "electrical_heater"`, `io_subtype: 1` entry, with or without
+  `io_model:`, and rejected on any other.
+- Each declared sensor adds only the reads it needs to the heater's poll, after its other registers;
+  a register nothing shows is never read. The ratings never change, so they are read once.
+- A heater that does not hold a register answers its read empty: the sensor stays without a state and
+  the rest of the poll still counts as good. Every sensor has no state until the poll has read what it
+  needs.
+- **Energy** is the total the heater's own display shows. It matched the display of two Sauter Tahual
   radiators (3422 kWh and 264 kWh). A TaHoma or Cozytouch can show a lower figure for the same
-  heater, counted from a starting point of its own; the register is the heater's own count.
-- The heater counts whole kWh, so the sensor steps once per kWh: about every 30 minutes for a 2000 W
-  heater running flat out.
-- Declaring the sensor adds one read to each poll, after the heater's other registers; without it the
-  register is never read. A heater that has no meter answers the read empty: the sensor stays
-  without a state and the rest of the poll still counts as good.
-- The sensor has no state until the first poll has read the register.
+  heater, counted from a starting point of its own; the register is the heater's own count. The heater
+  counts whole kWh, so the sensor steps once per kWh: about every 30 minutes for a 2000 W heater
+  running flat out.
+- **Power** is an estimate, not a measurement: the heater reports how much of the time its element
+  heats (0 to 100 %), and the sensor multiplies that by the rated power. It is read at each poll
+  (every 5 minutes by default), so it shows the heater at that moment, not an average between polls.
+  Use `energy:`, not this sensor, for the energy dashboard.
+- **Rated power and voltage** are the values the heater was built for: 2000 W and 230 V on a Tahual,
+  500 W and 230 V on an Adelis. The voltage is not measured; it reads 230 V whatever the mains does.
 
 ## Heating temperature interface and heat pump
 
@@ -259,8 +277,8 @@ an `Open Window Detection` switch. Both are experimental, and they are generated
 names the heater kind with `io_device_type: "electrical_heater"` and `io_subtype: 1`, and not for a
 towel dryer (`io_model: towel_dryer`). A heater with a night light gets a light entity when its entry
 has a `night_light:` block; see [Heaters with a night light](#heaters-with-a-night-light). A heater
-with an adjustable setpoint gets an energy sensor when its entry has an `energy:` block; see
-[Energy meter](#energy-meter).
+with an adjustable setpoint gets energy, power and rating sensors when its entry asks for them; see
+[Energy and power](#energy-and-power).
 
 ## Temperature range — 7.0–28.0 °C
 
