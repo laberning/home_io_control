@@ -68,8 +68,8 @@ static constexpr DeviceFeatures NIGHT_LIGHT = 1U << 11U;
 /// (heating_profiles_test.cpp).
 static constexpr DeviceFeatures TEMPERATURE_RANGE = 1U << 12U;
 /// An energy meter in a heater with private registers: the energy consumed, in whole kWh, in register
-/// 0x0116, and the rated power and voltage in 0x011A (proto_heating.h). Gates the heater's `energy:`,
-/// `power:`, `rated_power:` and `rated_voltage:` sensors, each of which opts the device into the reads it
+/// 0x0116, and the rated power and voltage in 0x011A (proto_heating.h). Gates the heater's `meter:` block
+/// (`energy`, `power`, `rated_power`, `rated_voltage`), each sensor of which opts the device into the reads it
 /// shows.
 static constexpr DeviceFeatures ENERGY_METER = 1U << 13U;
 }  // namespace device_feature

@@ -139,8 +139,8 @@ class IOHomeHeaterNightLight : public light::LightOutput, public Component, publ
   bool writing_{false};
 };
 
-/// @brief Sensor of one meter reading of a heater whose kind has ENERGY_METER (`energy:`, `power:`,
-/// `rated_power:`, `rated_voltage:`).
+/// @brief Sensor of one meter reading of a heater whose kind has ENERGY_METER: one key of its `meter:` block
+/// (`energy`, `power`, `rated_power`, `rated_voltage`).
 /// @ingroup hioc_platforms
 ///
 /// No state until the poll has read what the reading needs, so zero always means the heater said so.
