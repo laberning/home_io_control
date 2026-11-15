@@ -4,6 +4,7 @@
 
 #include "proto_commands.h"
 
+#include "proto_device_kinds.h"
 #include "proto_heating_profiles.h"
 
 #include "proto_constants.h"

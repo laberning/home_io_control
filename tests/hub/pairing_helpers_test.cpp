@@ -1,3 +1,4 @@
+#include "device_yaml_snippet.h"
 #include "hub_core.h"
 #include "hub_pairing.h"
 #include "pairing_engine.h"

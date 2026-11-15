@@ -19,6 +19,7 @@
 ///       path instead; the profile keys on (type, subtype, model), and the model is the YAML's.
 
 #include "proto_constants.h"
+#include "proto_device_kinds.h"
 #include "proto_device_model.h"
 #include "proto_heating.h"
 #include "proto_sizes.h"

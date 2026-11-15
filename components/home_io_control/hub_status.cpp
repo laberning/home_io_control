@@ -4,6 +4,7 @@
 #include "decisions_oneway.h"
 #include "decisions_status.h"
 #include "proto_commands.h"
+#include "proto_device_kinds.h"
 
 #include <algorithm>
 #include <cinttypes>

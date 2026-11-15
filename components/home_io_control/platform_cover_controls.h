@@ -22,6 +22,7 @@
 #include "esphome/core/component.h"
 #include "platform_companion_sensors.h"
 #include "platform_entity_base.h"
+#include "proto_device_kinds.h"
 #include "proto_device_model.h"
 
 namespace esphome {

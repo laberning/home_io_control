@@ -21,6 +21,7 @@
 /// deliberately stays in the entities; only the device-binding plumbing lives here.
 
 #include "hub_ports.h"
+#include "proto_device_kinds.h"
 #include "status_poll_policy.h"
 #include "proto_frame.h"
 

@@ -6,6 +6,7 @@
 
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include "proto_device_kinds.h"
 
 #include <cinttypes>
 #include <cstdint>

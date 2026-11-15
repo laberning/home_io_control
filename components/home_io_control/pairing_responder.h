@@ -17,7 +17,7 @@
 /// which calls into this header from the 0x28/0x2C/0x31/0x32 branches in process_received_packet_()
 /// (hub_status.cpp).
 
-#include "proto_device_model.h"
+#include "proto_device_kinds.h"
 #include "proto_sizes.h"
 
 #include <cstdint>

@@ -5,6 +5,7 @@
 #include "platform_climate.h"
 
 #include "entity_helpers.h"
+#include "proto_device_kinds.h"
 #include "proto_device_types.h"
 #include "status_poll_policy.h"
 

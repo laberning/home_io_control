@@ -11,6 +11,7 @@
 #include "device_registry.h"
 #include "exchange_engine.h"
 #include "proto_commands.h"
+#include "proto_device_kinds.h"
 #include "proto_device_types.h"
 #include "tuning_config.h"
 

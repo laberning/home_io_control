@@ -20,7 +20,7 @@
 
 #include "proto_constants.h"
 #include "proto_device_features.h"
-#include "proto_device_model.h"
+#include "proto_device_kinds.h"
 
 #include <cstdint>
 #include <string>
@@ -105,12 +105,6 @@ bool device_offers_models(DeviceType type, uint8_t subtype);
 /// @param subtype Subtype.
 /// @return true when the resolved row carries device_type_flags::HAS_PLATFORM.
 bool device_has_platform(DeviceType type, uint8_t subtype);
-
-/// @brief Name of the ESPHome platform that drives this (type, subtype).
-/// @param type Node type.
-/// @param subtype Subtype.
-/// @return "cover", "light", "switch", "lock", "climate" or "fan", or nullptr when no platform drives it yet.
-const char *device_platform_name(DeviceType type, uint8_t subtype);
 
 /// @brief Is this (type, subtype) a kind no capture or report has confirmed on a real device?
 /// @param type Node type.

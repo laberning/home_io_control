@@ -4,6 +4,7 @@
 #include "decisions_attempts.h"
 #include "decisions_status.h"
 #include "proto_commands.h"
+#include "proto_device_kinds.h"
 #include "proto_device_types.h"
 
 #include <cmath>

@@ -3,6 +3,7 @@
 /// target with no cover side effects, and the target, mode, boost and away writes. Replies are shaped on the Atlantic
 /// Calypso Connecte's (issue #198, corpus atlantic_calypso_*).
 
+#include "device_yaml_snippet.h"
 #include "hub_core.h"
 #include "decisions_status.h"
 #include "hub_internal.h"

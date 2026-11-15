@@ -11,6 +11,7 @@
 #include "log_helpers.h"
 #include "proto_codecs.h"
 #include "proto_constants.h"
+#include "proto_device_kinds.h"
 #include "proto_device_model.h"
 #include "proto_device_types.h"
 #include "proto_frame.h"

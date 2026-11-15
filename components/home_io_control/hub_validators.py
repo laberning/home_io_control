@@ -266,7 +266,7 @@ FEATURE_TEMPERATURE_RANGE = 0x1000
 # Set on a kind no capture or report has confirmed on a real device.
 KIND_EXPERIMENTAL = 0x8000
 
-# The models a (type, subtype) can have below it (proto_device_model.h DeviceModel, the model rows of
+# The models a (type, subtype) can have below it (proto_device_kinds.h DeviceModel, the model rows of
 # proto_device_types.cpp), by their YAML io_model: name. Values mirror the C++ enum;
 # tests/sync/device_features_sync_test.cpp checks them. Which (type, subtype) offers a model is the
 # "<name>/<subtype>/<model>" key of DEVICE_FEATURES.

@@ -294,33 +294,6 @@ bool device_has_platform(DeviceType type, uint8_t subtype) {
   return row != nullptr && (row->flags & HAS_PLATFORM) != 0;
 }
 
-const char *device_platform_name(DeviceType type, uint8_t subtype) {
-  if (!device_has_platform(type, subtype))
-    return nullptr;
-  switch (find_device_type_info(type, subtype, DeviceModel::NONE)->capability) {
-    case DeviceCapabilityClass::COVER:
-      return "cover";
-    case DeviceCapabilityClass::LIGHT:
-      return "light";
-    case DeviceCapabilityClass::SWITCH:
-      return "switch";
-    case DeviceCapabilityClass::LOCK:
-      return "lock";
-    case DeviceCapabilityClass::CLIMATE:
-      return "climate";
-    case DeviceCapabilityClass::HEATER_LEVEL:
-      return "fan";
-    case DeviceCapabilityClass::WATER_HEATER:
-      return "water_heater";
-    // No platform drives these classes; listed so -Wswitch flags a new class that needs a decision.
-    case DeviceCapabilityClass::UNKNOWN:
-    case DeviceCapabilityClass::SENSOR:
-    case DeviceCapabilityClass::BEACON:
-      return nullptr;
-  }
-  return nullptr;
-}
-
 bool device_is_experimental(DeviceType type, uint8_t subtype) {
   const DeviceTypeInfo *row = find_exact_device_type_info(type, subtype);
   return row != nullptr && (row->flags & device_type_flags::EXPERIMENTAL) != 0;

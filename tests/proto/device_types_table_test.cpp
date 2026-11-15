@@ -2,6 +2,7 @@
 /// @brief Tests for the node-type / subtype table (proto_device_types.h): lookups, names, platform
 ///        and behaviour flags, and the 10-bit type field end to end.
 
+#include "device_yaml_snippet.h"
 #include "proto_codecs.h"
 #include "proto_device_model.h"
 #include "proto_device_types.h"

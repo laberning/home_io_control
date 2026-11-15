@@ -30,6 +30,7 @@
 #include "esphome/components/api/custom_api_device.h"
 #include "esphome/components/spi/spi.h"
 #include "proto_codecs.h"
+#include "proto_device_kinds.h"
 #include "proto_frame.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"

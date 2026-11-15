@@ -5,6 +5,7 @@
 #include "proto_codecs.h"
 #include "proto_constants.h"
 #include "proto_crypto.h"
+#include "proto_device_kinds.h"
 #include "proto_frame.h"
 
 #include <algorithm>

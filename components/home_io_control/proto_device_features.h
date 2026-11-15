@@ -10,7 +10,7 @@
 /// capability; how it is commanded stays in the command builders and the profile tables.
 ///
 /// This leaf header includes only `<cstdint>`: IoDevice (proto_device_model.h) carries a
-/// DeviceFeatures word, and proto_device_types.h already includes proto_device_model.h.
+/// DeviceFeatures word, and so does every row of the table in proto_device_types.h.
 
 #include <cstdint>
 

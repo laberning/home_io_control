@@ -14,6 +14,7 @@
 
 #include "hub_internal.h"
 
+#include "proto_device_kinds.h"
 #include "radio_sx1276.h"
 #include "radio_sx1262.h"
 #include "radio_lr1121.h"

@@ -5,6 +5,7 @@
 #include "platform_switch.h"
 #include "entity_helpers.h"
 #include "esphome/core/log.h"
+#include "proto_device_kinds.h"
 
 namespace esphome {
 namespace home_io_control {

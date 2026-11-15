@@ -1,14 +1,16 @@
 #pragma once
 
 /// @file proto_device_model.h
-/// @brief IO-Homecontrol device-type model, capabilities and runtime device state.
+/// @brief IO-Homecontrol capability predicates, packed-metadata decoders and runtime device state.
 /// @ingroup hioc_protocol
 ///
-/// DeviceType/DeviceCapabilityClass, the capability predicates, packed-metadata
-/// decoders, cover commands, position/tilt report decoding and the IoDevice
-/// runtime struct. The per-(type, subtype) names and flags live in the table in proto_device_types.h.
+/// The capability predicates, packed-metadata decoders, position/tilt report decoding and the IoDevice
+/// runtime struct. The kind enums (DeviceType, DeviceModel, DeviceCapabilityClass, CoverCommand) are in
+/// proto_device_kinds.h; the per-(type, subtype) names and flags live in the table in
+/// proto_device_types.h.
 
 #include "proto_device_features.h"
+#include "proto_device_kinds.h"
 #include "proto_dhw.h"
 #include "proto_heating.h"
 #include "proto_sizes.h"
@@ -19,109 +21,6 @@
 
 namespace esphome {
 namespace home_io_control {
-
-// ============================================================================
-// Device Types — from the IO-Homecontrol specification
-// ============================================================================
-
-/// @brief IO-Homecontrol node types.
-/// The numeric values follow the specification's 10-bit node-type field, so the enum is 16 bits
-/// wide: a remote controller (1023) and the test type (1008) do not fit in 8 bits. Do not reassign
-/// or reorder these. Names, subtype names and capabilities live in the table in proto_device_types.h.
-enum class DeviceType : uint16_t {
-  UNKNOWN = 0,                         ///< Unknown/unspecified device.
-  INTERIOR_VENETIAN_BLIND = 1,         ///< Interior venetian blind.
-  ROLLER_SHUTTER = 2,                  ///< Roller shutter.
-  VERTICAL_EXTERIOR_AWNING = 3,        ///< Vertical exterior awning.
-  WINDOW_OPENER = 4,                   ///< Window opening actuator.
-  GARAGE_OPENER = 5,                   ///< Garage door opener.
-  LIGHT = 6,                           ///< Light.
-  GATE_OPENER = 7,                     ///< Gate opener.
-  ROLLING_DOOR_OPENER = 8,             ///< Rolling door opener.
-  LOCK = 9,                            ///< Lock.
-  VERTICAL_INTERIOR_BLIND = 10,        ///< Vertical interior blind.
-  SECURE_CONFIGURATION_DEVICE = 11,    ///< Secure configuration device (a commissioning tool, not an actuator).
-  BEACON = 12,                         ///< Beacon (unpaired/announcement). Not YAML-selectable: a
-                                       ///< discovery pseudo-type, not a configurable actuator.
-  DUAL_ROLLER_SHUTTER = 13,            ///< Dual-section roller shutter.
-  HEATING_TEMPERATURE_INTERFACE = 14,  ///< Heating temperature interface.
-  ON_OFF_SWITCH = 15,                  ///< Generic on/off switch.
-  HORIZONTAL_AWNING = 16,              ///< Horizontal awning (open/close inverted).
-  EXTERIOR_VENETIAN_BLIND = 17,        ///< Exterior venetian blind.
-  LOUVRE_BLIND = 18,                   ///< Louvre blind.
-  CURTAIN_TRACK = 19,                  ///< Curtain track.
-  VENTILATION_POINT = 20,              ///< Ventilation point.
-  EXTERIOR_HEATING = 21,               ///< Exterior heating.
-  HEAT_PUMP = 22,                      ///< Heat pump.
-  INTRUSION_ALARM = 23,                ///< Intrusion alarm.
-  SWINGING_SHUTTER = 24,               ///< Swinging shutter.
-  // 25 and 26 are not defined; the enum is non-contiguous from here on.
-  SLIDING_WINDOW = 27,             ///< Sliding window.
-  ZONE_CONTROL = 28,               ///< Zone control.
-  BIOCLIMATIC_PERGOLA = 29,        ///< Bioclimatic pergola (louvre opening as the position).
-  SIREN = 30,                      ///< Siren.
-  DOMESTIC_HOT_WATER = 51,         ///< Domestic hot water.
-  ELECTRICAL_HEATER = 52,          ///< Electrical heater.
-  HEAT_RECOVERY_VENTILATION = 53,  ///< Heat recovery ventilation.
-  CENTRAL_HOUSE_CONTROL = 255,     ///< Central house control.
-  TEST_AND_EVALUATION = 1008,      ///< Test and evaluation equipment.
-  REMOTE_CONTROLLER = 1023,        ///< Remote controller (all ten type bits set, packed bytes `FF C0`). An
-                                   ///< Atlantic AGILIA IO radiator answers discovery with this type while in
-                                   ///< its display's pairing mode, and then refuses a pushed key with
-                                   ///< RESULT_COMMAND_UNKNOWN (tests/corpus/captures/pairing/
-                                   ///< atlantic_agilia_pairing_key_transfer_command_unknown.yaml).
-};
-
-/// @brief A product model below a (node type, subtype): for products that report the same wire type
-/// but need different handling.
-/// @details The wire carries no model, so it comes from the YAML (`io_model:`) and is never learned.
-///          NONE is the (type, subtype) row itself, so every device declared without a model behaves as
-///          before. Each other value has a model row in the node-type table (proto_device_types.h) under
-///          the one (type, subtype) that offers it; the row's name is the YAML spelling. Values are
-///          stable: hub_validators.py `DEVICE_MODEL_OPTIONS` mirrors them (device_features_sync_test.cpp).
-enum class DeviceModel : uint8_t {
-  NONE = 0,               ///< No model: the (type, subtype) row.
-  TOWEL_DRYER = 1,        ///< Towel dryer under the electrical heater with an adjustable setpoint (52/1).
-  HEATER_WITH_LIGHT = 2,  ///< Heater with a night light under the electrical heater with an adjustable setpoint (52/1).
-};
-
-/// @brief High‑level capability class derived from DeviceType.
-enum class DeviceCapabilityClass : uint8_t {
-  UNKNOWN = 0x00,       ///< Unknown capability.
-  COVER = 0x01,         ///< Position‑controlled cover (shutter/blind/awning).
-  LIGHT = 0x02,         ///< Binary on/off light.
-  SWITCH = 0x03,        ///< Binary on/off switch.
-  SENSOR = 0x04,        ///< Sensor device.
-  BEACON = 0x05,        ///< Beacon.
-  CLIMATE = 0x06,       ///< Climate device (heating/cooling).
-  LOCK = 0x07,          ///< Lock.
-  HEATER_LEVEL = 0x08,  ///< Heater with a heat level in the position field (exterior heating).
-  WATER_HEATER = 0x09,  ///< Domestic hot water heater (device_feature::WATER_HEATER).
-};
-
-/// @brief Convert a DeviceType to a lowercase string identifier.
-/// @param type Device type enum.
-/// @return Null‑terminated string name (e.g., "roller_shutter"), or "unknown" for a value the
-///         table does not name.
-const char *device_type_name(DeviceType type);
-
-/// @brief True when a raw 10-bit device-type value is a named DeviceType enumerator.
-/// @details The enum is not contiguous (25 and 26 are undefined), so a range check is not enough.
-///          UNKNOWN (0) is not "known".
-/// @param raw Raw type value as decoded from an address or info frame.
-bool is_known_device_type(uint16_t raw);
-
-/// @brief Return the YAML-friendly device-type name for types exposed in the Python schema.
-/// @param type Device type enum.
-/// @return Null‑terminated string (e.g., "exterior_venetian_blind"), or nullptr if the type
-///         has no symbolic YAML alias (user must use a raw numeric value).
-const char *yaml_device_type_name(DeviceType type);
-
-/// @brief Get a human‑readable name for the capability class of a (type, subtype) row.
-/// @param type Device type.
-/// @param subtype Device subtype; a subtype row can differ from its type's row.
-/// @return String like "cover", "light", "switch", "unknown".
-const char *device_capability_class_name(DeviceType type, uint8_t subtype);
 
 /// @brief Does this device take position EXECUTEs (a percent, on / off, or stop in the main
 /// parameter) and answer status requests (0x03)?
@@ -187,75 +86,10 @@ const char *device_operation_profile_name(DeviceType type, uint8_t subtype);
 ///         type has no symbolic name. The value is printed in full ("0x3FF").
 std::string format_device_type_diagnostic(DeviceType type);
 
-/// @brief Build the YAML value for a device's `io_device_type` key.
+/// @brief A device type as raw hexadecimal.
 /// @param type Device type.
-/// @return A quoted symbolic name (e.g. `"horizontal_awning"`) when one exists, otherwise the
-///         raw hex form (e.g. `0x1A`, `0x3FF`) for a type with no YAML alias.
-std::string format_device_type_for_yaml(DeviceType type);
-
-/// @brief Build the ready-to-paste YAML block describing a device, for both a fully-decoded
-/// device and one whose type/subtype wasn't reported.
-///
-/// With `metadata_complete == false`, the type/subtype are unknown, so the returned snippet
-/// uses a `<cover|light|switch|lock>` platform placeholder and a commented-out
-/// `io_device_type` explanation; `type` and `subtype` are ignored in this case.
-///
-/// With `metadata_complete == true`, the snippet names the concrete ESPHome platform for
-/// `type` and fills in `io_subtype`, `invert_position: true` for a kind inverted by default and
-/// `dimmable: true` for a light subtype with intermediate levels (device_feature::INVERTED and
-/// device_feature::LEVELS of the kind). If the (type, subtype) has no ESPHome
-/// platform yet (device_has_platform() in proto_device_types.h), an empty string is returned
-/// instead — the caller decides what to say when there's no snippet to show.
-///
-/// `low_power: true` is emitted in **both** shapes when `low_power` is set (the device
-/// self-reported POWER_SAVE_LOW_POWER in its discovery Multi Information Byte); it is omitted
-/// entirely otherwise, since its absence is a valid, correct config.
-///
-/// The emitted keys must track the device-bound platform schemas (`platform_schema_extension()`
-/// in platform_common.py, plus each of cover.py/light.py/switch.py/lock.py's own extra keys) by
-/// hand. `make yaml-emitter-sync` (scripts/check-yaml-emitters.py) catches drift between the two
-/// statically.
-/// @param type Decoded device type.
-/// @param subtype Decoded device subtype; only used when `metadata_complete` is true.
-/// @param device_id Hex device ID string (e.g. "38B4A1").
-/// @param metadata_complete Whether the discovery response included type/subtype metadata.
-/// @param low_power Whether the device self-reported a low-power / duty-cycled class; emits
-///        `low_power: true` when set, in both snippet shapes.
-/// @param system_key_hex The device's own system key as 32 hex characters, or empty when it uses the
-///        hub's. Emits `system_key: "<hex>"` in both snippet shapes. Key material: a caller that
-///        passes one must print the snippet only inside a DO-NOT-SHARE block.
-/// @return Multi-line YAML snippet, or an empty string when `metadata_complete` is true but
-///         the (type, subtype) maps to no ESPHome platform.
-std::string build_device_yaml_snippet(DeviceType type, uint8_t subtype, const std::string &device_id,
-                                      bool metadata_complete, bool low_power,
-                                      const std::string &system_key_hex = std::string());
-
-// ============================================================================
-// Cover Commands
-// ============================================================================
-
-/// @brief Named device commands for cover-type actuators.
-///
-/// These represent the discrete non-positional actions a controller can send to
-/// a cover device. Each maps to a specific wire encoding in the CMD_EXECUTE payload.
-/// Using this enum avoids conflating numeric positions (0–100) with command codes.
-enum class CoverCommand : uint8_t {
-  STOP = 0,        ///< Stop movement immediately.
-  FAVORITE = 1,    ///< Move to stored favorite/"My" position.
-  VENT = 2,        ///< Move to ventilation position (window-type devices).
-  FORCE_OPEN = 3,  ///< Move to fully open at elevated priority; intended to bypass soft locks
-                   ///< and environmental limits (confirmed on real hardware to move correctly;
-                   ///< bypassing an active lock is still unconfirmed — see create_force_open()
-                   ///< in proto_commands.cpp).
-  PARTIAL = 4,     ///< Move to the stored partial position (garage openers; issue #163).
-  PEDESTRIAN = 5,  ///< Move to the pedestrian position (gate openers); experimental.
-                   ///< \todo Confirm on a real gate opener that 0xD807 opens it to a pedestrian position.
-};
-
-/// @brief Get a human-readable name for a CoverCommand.
-/// @param cmd The cover command to name.
-/// @return Null-terminated string such as "STOP", "FAVORITE", "VENT", "PARTIAL" or "PEDESTRIAN".
-const char *cover_command_name(CoverCommand cmd);
+/// @return The value in at least two digits, e.g. "0x1A" or "0x3FF".
+std::string format_device_type_hex(DeviceType type);
 
 /// @brief What the hub's latest minimum-limitation read says about a rain-protection limit.
 enum class RainSensorState : uint8_t {
@@ -357,9 +191,6 @@ BatteryState decode_battery_state(uint8_t status_byte);
 // Position Report Decoding
 // ============================================================================
 
-/// In status responses, position is encoded as a 16-bit value where
-/// 0x0000 = fully open (0%) and 0xC800 = fully closed (100%).
-static constexpr uint16_t STATUS_POS_MAX = 0xC800;
 /// Target-reached tolerance expressed in raw IO-homecontrol position units.
 /// 100 raw units out of 51200 full-scale is about 0.195%, so this only absorbs
 /// tiny target/current mismatches from device rounding or early stopped flags.

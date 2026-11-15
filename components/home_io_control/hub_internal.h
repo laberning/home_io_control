@@ -11,10 +11,12 @@
 #include "hub_core.h"
 #include "entity_helpers.h"
 #include "decisions_status.h"
+#include "device_yaml_snippet.h"
 #include "log_frame.h"
 #include "log_helpers.h"
 #include "proto_codecs.h"
 #include "proto_commands.h"
+#include "proto_device_kinds.h"
 #include "proto_device_types.h"
 
 #include "esphome/core/log.h"
@@ -191,24 +193,16 @@ inline void log_1w_remote_frame(const OneWayFrameInfo &info, const std::vector<s
 /// exposed sender (a physical remote button press, or a wind/rain sensor's triggered command).
 inline constexpr const char *ONEWAY_SENDER_EVENT = "esphome.home_io_control_sender_event";
 
-/// Buffer size for describe_learned_device_type()'s hex fallback: "io_device_type: 0xXX" plus margin.
-inline constexpr size_t LEARNED_DEVICE_TYPE_HEX_BUFFER_SIZE = 24;
-
 /// @brief Build the YAML line to add once a device's type is learned at runtime.
 ///
 /// Logged when `io_device_type` was left unset in YAML and an INFO2 response just resolved it
 /// for the first time this boot (ADR 0018: nothing persists, so this repeats on every reboot
-/// until the user copies the line in). Reuses yaml_device_type_name() so the exact syntax always
+/// until the user copies the line in). Reuses format_device_type_for_yaml() so the exact syntax always
 /// matches what the pairing snippet and the Python schema accept.
 /// @param type The now-known device type. Must not be DeviceType::UNKNOWN.
 /// @return The YAML line to add, e.g. `io_device_type: "interior_venetian_blind"` or `io_device_type: 0x11`.
 inline std::string describe_learned_device_type(DeviceType type) {
-  const char *name = yaml_device_type_name(type);
-  if (name != nullptr)
-    return std::string("io_device_type: \"") + name + "\"";
-  std::array<char, LEARNED_DEVICE_TYPE_HEX_BUFFER_SIZE> buffer{};
-  std::snprintf(buffer.data(), buffer.size(), "io_device_type: 0x%02X", static_cast<unsigned>(type));
-  return std::string(buffer.data());
+  return "io_device_type: " + format_device_type_for_yaml(type);
 }
 
 /// @brief Build the Home Assistant event data map for a decoded 1W sender frame.

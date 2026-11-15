@@ -19,6 +19,7 @@
 #include "esphome/core/hal.h"
 #include "oneway_controller.h"
 #include "oneway_transmitter.h"
+#include "proto_device_kinds.h"
 #include "proto_dhw.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"

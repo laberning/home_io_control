@@ -14,9 +14,11 @@
 
 #include "decisions_pairing.h"
 #include "decisions_attempts.h"
+#include "device_yaml_snippet.h"
 #include "log_helpers.h"
 #include "proto_commands.h"
 #include "proto_crypto.h"
+#include "proto_device_kinds.h"
 #include "proto_device_types.h"
 #include "proto_heating.h"
 #include "roll_call.h"

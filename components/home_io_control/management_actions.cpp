@@ -14,6 +14,7 @@
 #include "hub_core.h"
 #include "log_helpers.h"
 #include "proto_commands.h"
+#include "proto_device_kinds.h"
 #include "proto_device_types.h"
 #include "roll_call.h"
 

@@ -6,6 +6,7 @@
 #include "pairing_responder.h"
 #include "proto_commands.h"
 #include "proto_crypto.h"
+#include "proto_device_kinds.h"
 #include "radio_interface.h"
 #include "tuning_config.h"
 

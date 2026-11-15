@@ -527,6 +527,9 @@ static constexpr uint8_t RESULT_LIMITATION_BY_EMERGENCY = 0xEE;        ///< Para
 static constexpr uint8_t POS_STOP = 0xD2;      ///< Wire value: stop movement.
 static constexpr uint8_t POS_UNKNOWN = 0xD4;   ///< Wire value: position unknown / keep current.
 static constexpr uint8_t POS_FAVORITE = 0xD8;  ///< Wire value: move to favorite/"My" position.
+/// In status responses, position is encoded as a 16-bit value where
+/// 0x0000 = fully open (0%) and 0xC800 = fully closed (100%).
+static constexpr uint16_t STATUS_POS_MAX = 0xC800;
 /// 16-bit main parameter `D400` (POS_UNKNOWN in the high byte): keep the current value. Sent with a
 /// functional parameter that carries the actual change (a heat pump's off, a water heater's operating mode).
 static constexpr uint16_t MAIN_PARAMETER_KEEP = static_cast<uint16_t>(POS_UNKNOWN) << BITS_PER_BYTE;
@@ -735,7 +738,7 @@ static constexpr uint8_t MANUFACTURER_ATLANTIC_GROUP = 12;  ///< Atlantic Group 
 /// (`MANUFACTURER_OPTIONS`, `hub_validators.py`): `"Hörmann"` has an umlaut the YAML token
 /// (`hormann`) drops, and `"ASSA ABLOY"`/`"WINDOW MASTER"`/`"Atlantic Group"` use a space
 /// where the YAML token uses `_`. There is currently no YAML-token accessor for
-/// manufacturers — see `yaml_device_type_name()` (proto_device_model.h) for the pattern this
+/// manufacturers — see `yaml_device_type_name()` (proto_device_kinds.h) for the pattern this
 /// would follow if one is ever added.
 /// @param id Manufacturer ID byte (1–12 for known manufacturers).
 /// @return Null-terminated lowercase string such as "unknown", or mixed-case name like "Somfy".

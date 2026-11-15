@@ -6,6 +6,7 @@
 #include "platform_cover_controls.h"
 
 #include "esphome/core/log.h"
+#include "proto_device_kinds.h"
 
 #include <cmath>
 

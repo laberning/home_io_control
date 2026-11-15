@@ -12,7 +12,7 @@
 
 #include "oneway_controller.h"
 #include "oneway_sequence_store.h"
-#include "proto_device_model.h"
+#include "proto_device_kinds.h"
 #include "proto_frame.h"
 #include "tuning_config.h"
 

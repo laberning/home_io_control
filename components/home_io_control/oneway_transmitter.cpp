@@ -6,6 +6,7 @@
 
 #include "proto_codecs.h"
 #include "proto_commands.h"
+#include "proto_device_kinds.h"
 #include "proto_timing.h"
 
 #include "esphome/core/application.h"

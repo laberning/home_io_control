@@ -12,6 +12,7 @@
 #include "log_frame.h"
 #include "proto_commands.h"
 #include "proto_constants.h"
+#include "proto_device_kinds.h"
 #include "proto_device_types.h"
 #include "proto_dhw.h"
 #include "proto_heating.h"

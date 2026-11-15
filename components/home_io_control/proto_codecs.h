@@ -9,6 +9,7 @@
 /// structured decoding of overheard 1W remote frames.
 
 #include "proto_constants.h"
+#include "proto_device_kinds.h"
 #include "proto_device_model.h"
 #include "proto_sizes.h"
 

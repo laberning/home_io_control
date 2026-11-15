@@ -8,7 +8,7 @@
 /// rules applied when operations are enqueued. Pure data and logic — no ESPHome
 /// dependencies, fully host-testable.
 
-#include "proto_device_model.h"
+#include "proto_device_kinds.h"
 
 #include <cstdint>
 #include <deque>

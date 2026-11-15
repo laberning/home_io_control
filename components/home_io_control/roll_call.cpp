@@ -5,6 +5,7 @@
 #include "roll_call.h"
 
 #include "log_helpers.h"
+#include "device_yaml_snippet.h"
 #include "proto_constants.h"
 #include "proto_device_model.h"
 

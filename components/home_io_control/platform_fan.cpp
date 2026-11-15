@@ -5,6 +5,7 @@
 #include "platform_fan.h"
 
 #include "entity_helpers.h"
+#include "proto_device_kinds.h"
 #include "proto_device_types.h"
 
 #include "esphome/core/log.h"

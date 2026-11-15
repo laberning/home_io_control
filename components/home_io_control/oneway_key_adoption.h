@@ -10,7 +10,7 @@
 
 #include "hub_hooks.h"
 #include "proto_codecs.h"
-#include "proto_device_model.h"
+#include "proto_device_kinds.h"
 #include "proto_frame.h"
 
 #include <cstdint>

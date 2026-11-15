@@ -5,7 +5,7 @@ the two named-option tables' documented copies.
 Three C++ functions build a YAML snippet as a plain string, for a user to copy into their own
 config: build_oneway_adoption_report() (components/home_io_control/oneway_key_adoption.cpp),
 build_key_extraction_report() (components/home_io_control/key_extraction_responder.cpp) and
-build_device_yaml_snippet() (components/home_io_control/proto_device_model.cpp). Each one's emitted key names must track a
+build_device_yaml_snippet() (components/home_io_control/device_yaml_snippet.cpp). Each one's emitted key names must track a
 Python schema (ONEWAY_CONTROLLER_SCHEMA, the hub's own CONFIG_SCHEMA, and the device-bound
 platform schemas in PLATFORM_PY_FILES respectively) by hand -- nothing else keeps the two in step, so a
 schema key rename or a newly-required key drifts silently until a user's paste fails to validate.
@@ -50,7 +50,7 @@ PLATFORM_PY_FILES = [PLATFORM_COMMON_PY, COVER_PY, LIGHT_PY, SWITCH_PY, LOCK_PY,
 
 ONEWAY_KEY_ADOPTION_CPP = COMPONENT_DIR / "oneway_key_adoption.cpp"
 KEY_EXTRACTION_RESPONDER_CPP = COMPONENT_DIR / "key_extraction_responder.cpp"
-PROTO_DEVICE_MODEL_CPP = COMPONENT_DIR / "proto_device_model.cpp"
+DEVICE_YAML_SNIPPET_CPP = COMPONENT_DIR / "device_yaml_snippet.cpp"
 
 DOCS_MD = REPO_ROOT / "docs" / "supported-devices.md"
 
@@ -383,7 +383,7 @@ EMITTERS = [
     ),
     Emitter(
         "build_device_yaml_snippet -> device-bound platform schemas",
-        PROTO_DEVICE_MODEL_CPP,
+        DEVICE_YAML_SNIPPET_CPP,
         "build_device_yaml_snippet",
         device_platform_schema_keys,
         # "platform" is ESPHome's own platform-selection key (always "home_io_control" here),

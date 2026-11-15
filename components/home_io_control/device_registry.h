@@ -9,6 +9,7 @@
 /// engine, and pairing flow share a single, testable source of truth without
 /// knowing about each other.
 
+#include "proto_device_kinds.h"
 #include "proto_device_model.h"
 
 #include <functional>

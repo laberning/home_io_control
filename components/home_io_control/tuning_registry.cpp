@@ -9,8 +9,8 @@
 
 #include "tuning_registry.h"
 
-#include "proto_codecs.h"        // ADDRESS_SUFFIX_* / encode_broadcast_address() / encode_discovery_address()
-#include "proto_device_model.h"  // DeviceType
+#include "proto_codecs.h"  // ADDRESS_SUFFIX_* / encode_broadcast_address() / encode_discovery_address()
+#include "proto_device_kinds.h"
 
 #include <cstddef>
 #include <iterator>

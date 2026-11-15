@@ -4,6 +4,7 @@
 
 #include "device_registry.h"
 
+#include "proto_device_kinds.h"
 #include "proto_frame.h"
 #include "proto_sizes.h"
 

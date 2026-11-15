@@ -1,7 +1,10 @@
 #include "oneway_key_adoption.h"
 
+#include "device_yaml_snippet.h"
 #include "log_helpers.h"
 #include "proto_codecs.h"
+#include "proto_device_kinds.h"
+#include "proto_device_model.h"
 
 #include <algorithm>
 #include <cctype>
