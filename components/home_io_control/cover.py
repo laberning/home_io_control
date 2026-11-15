@@ -18,10 +18,12 @@ from esphome.const import (
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
     DEVICE_CLASS_BATTERY,
+    DEVICE_CLASS_ILLUMINANCE,
     DEVICE_CLASS_MOISTURE,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
+    UNIT_LUX,
     UNIT_PERCENT,
 )
 
@@ -376,13 +378,15 @@ async def to_code(config):
                 config[CONF_SUN_LEVEL_POLL_INTERVAL].total_milliseconds
             )
         )
-        # No unit and no device class: the value is published raw until its unit is known.
+        # Lux is an estimate (scale in platform_cover_controls.h), so the sensor stays experimental in the docs.
         await _create_reading_sensor(
             config,
             parent,
             IOHomeSunLevelSensor,
             CONF_SUN_LEVEL_SENSOR_ID,
             sun_level_sensor_name(config),
+            unit_of_measurement=UNIT_LUX,
+            device_class=DEVICE_CLASS_ILLUMINANCE,
             icon="mdi:white-balance-sunny",
         )
 

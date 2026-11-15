@@ -150,14 +150,35 @@ class IOHomeRainBinarySensor : public binary_sensor::BinarySensor, public Compon
   void publish_rain_state_(RainSensorState state);
 };
 
-/// @brief Sensor publishing the raw sun value a device answers its sun level poll with.
+/// Lux per step of the sun value a device reports (ADR 0088). The scale is an estimate drawn from the
+/// data posted in issue #156 against common daylight figures, not a measured constant: in direct sun
+/// the value read about 600 to 750, which at x100 is 60 000 to 75 000 lx, within the 50 000 to
+/// 100 000 lx usually given for direct sunlight; on dull days the daily maximum was about 35 to 61,
+/// which at x100 is 3 500 to 6 100 lx, within overcast daylight. 100 is a round factor that puts both
+/// ends in their usual ranges. An outdoor light sensor near the panel read about 10 times the value,
+/// so the two estimates disagree by a factor of ten.
+/// \todo Confirm the scale with a lux meter reading next to the panel (issue #156).
+static constexpr uint32_t SUN_VALUE_LUX_PER_STEP = 100;
+
+/// @brief Convert a device's raw sun value to lux (see SUN_VALUE_LUX_PER_STEP for the estimate).
+/// @ingroup hioc_platforms
+/// @param raw Sun value as decoded from the device's reply.
+/// @return Illuminance in lux. The 32-bit product (at most about 6.5 million) is exact as a float.
+inline float sun_value_to_lux(uint16_t raw) {
+  return static_cast<float>(static_cast<uint32_t>(raw) * SUN_VALUE_LUX_PER_STEP);
+}
+
+/// @brief Illuminance sensor (`device_class: illuminance`, lx) publishing the sun value a device
+/// answers its sun level poll with, scaled to lux.
 /// @ingroup hioc_platforms
 ///
 /// Only generated when the cover declares `sun_level_poll_interval:`, which also schedules the poll
-/// that feeds it (a subscription to EVENT_LOCAL_SENSOR, ADR 0064). Publishes the number as the device
-/// sends it, with no unit: 0 at night, rising with sun on the panel. No state until the first
+/// that feeds it (a subscription to EVENT_LOCAL_SENSOR, ADR 0064). The protocol layer decodes the raw
+/// number; this sensor owns the unit, so the scale is applied here and nowhere else
+/// (sun_value_to_lux()). 0 at night, rising with sun on the panel. No state until the first
 /// answered poll, and again after several unanswered polls.
-/// \todo Unit and scale unknown; confirmed on one Somfy RS100 Solar io only (issue #156).
+/// \todo The lux scale is an estimate (SUN_VALUE_LUX_PER_STEP); confirmed on one Somfy RS100 Solar io
+/// only (issue #156).
 class IOHomeSunLevelSensor : public IOHomeCompanionSensor {
  public:
   /// @brief Subscribe to the device's updates and publish what is already known.

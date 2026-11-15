@@ -108,8 +108,9 @@ like".
   by default, so a boost started on the dryer can take that long to appear in Home Assistant. Set
   `status_poll_interval` on the entry to read it more often.
 - **The target in an eco period is the eco temperature.** Setting a target from Home Assistant in
-  `auto` writes the comfort setpoint, so the card keeps showing the eco temperature until the dryer
-  returns to a comfort period, where it shows the new setpoint.
+  `auto` writes the comfort setpoint. When the card shows the comfort or eco preset, the target
+  follows at once: the new setpoint in a comfort period, the new setpoint minus the eco setback in an
+  eco period. The dryer's own reading replaces it at the next poll.
 - **A change of the eco setback on the dryer shows at the next poll that the temperature fits neither
   period.** The hub reads the setback at the first poll and again when the temperature in force fits
   neither period.

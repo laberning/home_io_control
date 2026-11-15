@@ -157,9 +157,11 @@ class HeaterController {
 
   /// @brief Set the heating level of a heater that is commanded with levels (the plain electrical heater).
   ///
-  /// A main-parameter-only EXECUTE through the hub's execute funnel; the settle poll that follows reads
-  /// the level back with the ordinary status read, and the climate entity shows that reading.
-  /// \todo Experimental: unconfirmed on hardware.
+  /// An EXECUTE through the hub's execute funnel (create_execute_heating_level()); the settle poll that
+  /// follows reads the level back with the ordinary status read, and the climate entity shows that
+  /// reading when the status carries one. Confirmed for Eco, Comfort and Off on a Thermor pilot-wire
+  /// interface (issue #228), whose status carries no level.
+  /// \todo The other levels and a level read-back are unconfirmed on hardware.
   /// @param device_id Target device ID (hex string).
   /// @param level Heating level low byte (heating_level::*).
   /// @return true when the device accepted the command.

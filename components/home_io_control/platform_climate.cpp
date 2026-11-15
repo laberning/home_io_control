@@ -325,12 +325,16 @@ void IOHomeClimate::dump_config() {
   this->log_poll_interval_config_(TAG, heater_poll_interval_ms);
   if (const DeviceTypeInfo *model = find_device_model_info(this->device_type_, this->subtype_, this->model_))
     ESP_LOGCONFIG(TAG, "  Model: %s", model->name);
-  // Only the register profiles have run on hardware: an Atlantic AGILIA IO radiator (issue #165) and an
-  // Atlantic Adelis towel dryer (issue #202), both all the way.
+  // The register profiles have run on hardware all the way: an Atlantic AGILIA IO radiator (issue #165) and an
+  // Atlantic Adelis towel dryer (issue #202). The heating-level profile has run on a Thermor pilot-wire
+  // interface (issue #228): Eco, Comfort and Off.
   const char *status = "experimental, unvalidated on hardware";
   switch (heating_hardware_status(this->profile_())) {
     case HeatingHardwareStatus::WRITES_EXPERIMENTAL:
       status = "readings and setpoint confirmed on hardware; mode and preset writes experimental";
+      break;
+    case HeatingHardwareStatus::LEVELS_CONFIRMED:
+      status = "Eco, Comfort and Off confirmed on hardware; no level read-back, other presets experimental";
       break;
     case HeatingHardwareStatus::CONFIRMED:
       status = "confirmed on hardware (setpoint, mode, presets, read-back)";

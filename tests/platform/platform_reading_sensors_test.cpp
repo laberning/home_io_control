@@ -59,12 +59,18 @@ TEST_F(PlatformReadingSensors, PublishTheDevicesReadings) {
 
   publish(744, 100);
 
-  EXPECT_FLOAT_EQ(sun.state, 744.0F);
+  EXPECT_FLOAT_EQ(sun.state, 74400.0F) << "raw 744 is 74 400 lx at 100 lx per step";
   EXPECT_FLOAT_EQ(battery.state, 100.0F);
 
   publish(0, 99);
   EXPECT_FLOAT_EQ(sun.state, 0.0F) << "0 is a reading (night), not unknown";
   EXPECT_FLOAT_EQ(battery.state, 99.0F);
+}
+
+TEST(SunValueToLux, ScalesByTheEstimatedFactorWithoutOverflow) {
+  EXPECT_FLOAT_EQ(sun_value_to_lux(0), 0.0F);
+  EXPECT_FLOAT_EQ(sun_value_to_lux(61), 6100.0F);
+  EXPECT_FLOAT_EQ(sun_value_to_lux(UINT16_MAX), 6553500.0F) << "the widest raw value stays exact in a float";
 }
 
 TEST_F(PlatformReadingSensors, BecomeUnknownWhenTheReadingIsDropped) {
@@ -85,7 +91,7 @@ TEST_F(PlatformReadingSensors, PublishAnAlreadyKnownReadingAtSetup) {
   sun.setup();
   battery.setup();
 
-  EXPECT_FLOAT_EQ(sun.state, 183.0F);
+  EXPECT_FLOAT_EQ(sun.state, 18300.0F);
   EXPECT_FLOAT_EQ(battery.state, 100.0F);
 }
 

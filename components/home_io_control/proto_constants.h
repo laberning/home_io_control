@@ -389,7 +389,7 @@ static constexpr uint16_t EVENT_BATTERY_LEVEL_CHANGE = 0x2001;
 /// a big-endian 16-bit value and a byte; the value is 0 at night and rises with sun on the panel
 /// (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_sx1262.yaml and
 /// somfy_rs100_probe_subscribe_event_daylight_sx1262.yaml); see decode_sun_level_event().
-/// \todo The value's unit and scale are unknown; the surrounding two bytes are undecoded.
+/// \todo The value's scale is an estimate (ADR 0088); the surrounding two bytes are undecoded.
 static constexpr uint16_t EVENT_LOCAL_SENSOR = 0x2005;
 /// @}
 

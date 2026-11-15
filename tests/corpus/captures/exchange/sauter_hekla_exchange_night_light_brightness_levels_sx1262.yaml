@@ -1,0 +1,49 @@
+id: sauter_hekla_exchange_night_light_brightness_levels_sx1262
+description: >
+  The four night-light brightness levels of a Sauter Hekla electric heater (type 52 subtype 1), set on the
+  heater's own panel and overheard by the hub. The heater's controller node (F23FA9) writes register 0x0142
+  to the Cozytouch (A34A4F) with an authenticated CMD_WRITE_PRIVATE (0x20) `0C 61 01 42 <u16 little-endian>`:
+  0x0064 (100) for the lowest level, 0x03E8 (1000), 0x07D0 (2000) and 0x2710 (10000) for the highest. The
+  brightness register therefore runs 0-10000. The four writes come from separate log excerpts, ordered by
+  the hub's capture timestamp (level 2, 3, 1, 4); t_ms is the difference of those timestamps, and the
+  excerpts may span a hub restart, so the spacing carries no meaning. No challenge or acknowledgement
+  frames were logged.
+source:
+  device: "Sauter Hekla electric heater with night light, controller node F23FA9 writing to a Sauter Cozytouch"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main with the io_capture log"
+  date: 2026-11-15
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/222"
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 869850000
+    hex: "4E 00 A3 4A 4F F2 3F A9 20 0C 61 01 42 E8 03"
+    crc: absent
+    note: "cmd=WRITE_PRIVATE(0x20), register 0x0142 (night light brightness) = 0x03E8 = 1000 (second level)"
+  - dir: rx
+    t_ms: 8283
+    freq: 868250000
+    hex: "4E 00 A3 4A 4F F2 3F A9 20 0C 61 01 42 D0 07"
+    crc: absent
+    note: "register 0x0142 = 0x07D0 = 2000 (third level)"
+  - dir: rx
+    t_ms: 587481
+    freq: 868950000
+    hex: "4E 00 A3 4A 4F F2 3F A9 20 0C 61 01 42 64 00"
+    crc: absent
+    note: "register 0x0142 = 0x0064 = 100 (lowest level)"
+  - dir: rx
+    t_ms: 780954
+    freq: 868250000
+    hex: "4E 00 A3 4A 4F F2 3F A9 20 0C 61 01 42 10 27"
+    crc: absent
+    note: "register 0x0142 = 0x2710 = 10000 (highest level)"
+expect:
+  frames:
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}
+    - {cmd: 0x20, start: true, end: false, protocol: 2w}

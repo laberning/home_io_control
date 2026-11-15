@@ -13,8 +13,10 @@
 /// The enums here are protocol-side: they carry no ESPHome type. The platform maps HeatingHvacMode
 /// and HeatingPresetId onto ESPHome's climate modes and presets.
 ///
-/// \todo Heating-level control of the plain electrical heater (node type 52, subtype 0) has no capture
-///       or hardware report yet. Confirm with one before calling it supported.
+/// \todo Heating-level control of the plain electrical heater (node type 52, subtype 0) is confirmed for
+///       Eco, Comfort and Off on one Thermor pilot-wire interface (issue #228), which reports no level in
+///       its status. The Away, Boost, Comfort -1 and Comfort -2 levels and the level read-back are
+///       unconfirmed on hardware; confirm them with a heater that shows or reports them.
 /// \todo Every 52/1 seen is an Atlantic heater. A non-Atlantic 52/1 would need the heating-level
 ///       path instead; the profile keys on (type, subtype, model), and the model is the YAML's.
 
@@ -526,14 +528,16 @@ HeatingCardCommand command_heating_card(const HeatingProfile &profile, const Hea
 
 /// @brief How far a profile's heater has been confirmed on hardware.
 enum class HeatingHardwareStatus : uint8_t {
-  UNVALIDATED,          ///< Not run on hardware: the standard EXECUTE paths, or no profile.
+  UNVALIDATED,          ///< Not run on hardware: the temperature EXECUTE paths, or no profile.
+  LEVELS_CONFIRMED,     ///< Heating levels: Eco, Comfort and Off confirmed; no level read-back, other presets not.
   WRITES_EXPERIMENTAL,  ///< Readings and setpoint confirmed; the mode and preset writes are not.
   CONFIRMED,            ///< Setpoint, mode, presets and read-back confirmed.
 };
 
 /// @brief How far a heater's profile has been confirmed on hardware.
 /// @param profile The device's profile, or nullptr while the type is unknown.
-/// @return UNVALIDATED for nullptr and for every profile that is not a register profile.
+/// @return UNVALIDATED for nullptr and for the temperature EXECUTE profiles, LEVELS_CONFIRMED for the heating-level
+///         profile, otherwise CONFIRMED or WRITES_EXPERIMENTAL for a register profile.
 HeatingHardwareStatus heating_hardware_status(const HeatingProfile *profile);
 
 }  // namespace home_io_control

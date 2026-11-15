@@ -21,8 +21,10 @@ electrical heater (node type 52, subtype 0) is commanded with heating levels in 
 and read with the ordinary status request. Reads and writes of the register protocol are confirmed
 on an Atlantic AGILIA IO radiator (see
 [ADR 0054](../adr/0054-heaters-are-read-back-over-the-private-register-protocol.md) for the
-design). The heating-level control of the plain heater is experimental, with no hardware
-confirmation yet (see
+design). The heating-level control of the plain heater is confirmed for Eco, Comfort and Off on a
+Thermor pilot-wire interface (issue #228); the Away (frost protection), Boost, Comfort -1 and
+Comfort -2 levels are untested, and the interface reports no level, so Home Assistant cannot read
+the level back (see
 [ADR 0055](../adr/0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md)).
 
 Other heating devices (exterior heating is a [fan](fan.md); the Atlantic heat pump and boiler) have no
@@ -44,7 +46,7 @@ climate:
 
 What the card shows for each heater kind:
 
-| | Electrical heater with adjustable setpoint (`io_subtype: 1`) | Plain electrical heater (`io_subtype: 0`), experimental |
+| | Electrical heater with adjustable setpoint (`io_subtype: 1`) | Plain electrical heater (`io_subtype: 0`); Eco, Comfort and Off confirmed, other levels untested |
 |---|---|---|
 | Control path | Private registers | Heating level in the standard EXECUTE |
 | Modes | `off`, `heat` (manual), `auto` | `off`, `heat` (comfort level) |
@@ -66,10 +68,12 @@ What the card shows for each heater kind:
 - After an accepted mode or setpoint write to a heater with an adjustable setpoint, the hub reads
   the register back, so a setpoint the heater adjusts shows as the heater holds it. It also polls the
   heater again 45 seconds later, so `heating` / `idle` follows the change without waiting a whole
-  poll interval. After a
-  level write to a plain heater (experimental), the next status read shows the level. Until the first read
-  succeeds the card shows the last commanded mode, setpoint or preset.
-- A change made outside Home Assistant shows up at the next poll. A heater with an adjustable
+  poll interval. After a level write to a plain heater, the next status read shows the level when
+  the heater reports one. The Thermor pilot-wire interface (issue #228) reports none, so its card
+  shows the mode or preset last commanded from Home Assistant, `off` after a reboot until the first
+  command, and a change made at the heater or in the Cozytouch app does not show. Until the first
+  read succeeds the card shows the last commanded mode, setpoint or preset.
+- A change made outside Home Assistant shows up at the next poll, on a heater that reports it. A heater with an adjustable
   setpoint shows its program mode as `auto` with the `Program` preset, its AUTO mode as `auto` with
   the `Auto` preset, and its external mode as `heat`. Open-window detection is read once, at the
   first poll, so a change made at the heater's panel appears after a reboot.
@@ -114,8 +118,9 @@ dryer holds right now. The card then shows that temperature as the target and th
 preset of the period that runs: `comfort` when the temperature equals the comfort setpoint, `eco` when
 it equals the comfort setpoint minus the eco setback. Selecting either preset sends nothing. A
 temperature that fits neither shows as the target with no preset, and the hub reads the setback again.
-Setting a target from Home Assistant still writes the comfort setpoint, so during an eco period the
-card keeps showing the eco temperature. This is experimental: it was read on one unit, in one comfort
+Setting a target from Home Assistant writes the comfort setpoint. When the card shows the comfort or
+eco preset, the target follows at once: the new setpoint in a comfort period, the new setpoint minus
+the eco setback in an eco period; the dryer's own reading replaces it at the next poll. This is experimental: it was read on one unit, in one comfort
 period and one eco period; the [Atlantic Adelis page](../devices/atlantic-adelis.md#modes-and-presets-in-home-assistant)
 has the detail.
 
@@ -149,16 +154,18 @@ takes the options of any ESPHome [light](https://esphome.io/components/light/), 
 heater without `io_model: heater_with_light`.
 
 > [!NOTE]
-> **The night light is experimental.** Reading it is confirmed on a Hekla, with the light on and off
-> (issue #222). Switching it from Home Assistant uses the same write the heater's Cozytouch sends, but
-> has not been confirmed on a heater yet, and neither has dimming. If you try it, please
+> **The night light is experimental.** Reading it and switching it on and off from Home Assistant are
+> confirmed on a Hekla (issue #222). Dimming from Home Assistant has not been confirmed on a heater yet. If you try it, please
 > [report](https://github.com/laberning/home_io_control/issues) what the light does.
 
 - The light shows what the heater reports. It has no state until the first poll, and every switch or
   brightness change the heater acknowledges is read back. A change it does not acknowledge leaves the
   light showing the heater's last reading.
-- Brightness is a percentage: 100 % in Home Assistant is the heater's full brightness. Switching on
-  at the brightness the heater already holds sends only the on command.
+- Brightness is a percentage, 100 % in Home Assistant being the heater's full brightness. The heater's
+  brightness register runs from 0 to 10000 and the light scales it linearly: 1 % is 100 and 100 % is
+  10000. A Hekla's panel offers four levels, which show as 1 %, 10 %, 20 % and 100 %. Whether the
+  heater accepts the values in between has not been confirmed. Switching on at the brightness the
+  heater already holds sends only the on command.
 - Each poll reads the light's state and brightness after the heater's own registers, so a light
   switched from the Cozytouch app or at the heater shows in Home Assistant at the next poll. A
   heater that has no night light answers these reads empty; the rest of its poll still counts as

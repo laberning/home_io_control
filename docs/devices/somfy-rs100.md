@@ -14,7 +14,7 @@ stalls, and one motor has refused two-way altogether.
 | Discover & Pair | ⚠️ Partial — often first try; the key exchange can stall and need a retry |
 | Status poll while driven by another hub | 🔍 Captured, from a KIG 300 installation |
 | Battery level (`battery: true`) | ⚠️ Coarse level only (full / normal / low); only `full` observed so far |
-| Sun level and battery percentage (`sun_level_poll_interval`, `battery_level_poll_interval`) | ⚠️ Experimental — read on one RS100 Solar io (issue #156); the sun value has no known unit |
+| Sun level and battery percentage (`sun_level_poll_interval`, `battery_level_poll_interval`) | ⚠️ Experimental — read on one RS100 Solar io (issue #156); the sun sensor reads in lux with an estimated scale of 100 lux per step, to be confirmed with a lux meter |
 
 ## Onboarding route that worked
 

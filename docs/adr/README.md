@@ -100,7 +100,8 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0061](0061-a-moving-status-report-opens-the-follow-up-window.md) | A moving status report opens the follow-up window (amended by 0079) | A report that reads as moving opens the window when none is open; a report that finds it expired ends it instead of reopening it; only kinds that report motion through status may open one |
 | [0062](0062-a-read-only-data-transport-probe.md) | A read-only data-transport probe (amends 0024) | `read_object` opens, reads and closes five allowlisted objects over `0x46`/`0x4A`; read direction only by construction, capped, raw output never applied |
 | [0063](0063-a-read-only-register-probe.md) | A read-only register probe (amends 0024) | `register_00` / `register_01` read one register over `0x20`; the read direction byte is a constant no input changes; refused for every kind but register heaters and hot water |
-| [0064](0064-a-sensor-reading-is-drawn-by-a-re-sent-event-subscription.md) | A sensor reading is drawn by a re-sent event subscription (amends 0060, 0050) | `sun_level_poll_interval` / `battery_level_poll_interval` re-send a subscription on a jittered interval and publish the value its answer carries; the answer is taken as the reply, one re-send after a lost answer, one retry a minute after an unanswered poll (rain too), strict decode, experimental on one RS100 Solar io |
+| [0064](0064-a-sensor-reading-is-drawn-by-a-re-sent-event-subscription.md) | A sensor reading is drawn by a re-sent event subscription (amends 0060, 0050; amended by 0088) | `sun_level_poll_interval` / `battery_level_poll_interval` re-send a subscription on a jittered interval and publish the value its answer carries; the answer is taken as the reply, one re-send after a lost answer, one retry a minute after an unanswered poll (rain too), strict decode, experimental on one RS100 Solar io |
+| [0088](0088-the-sun-level-is-shown-in-lux-at-100-lux-per-step.md) | The sun level is shown in lux at 100 lux per step (amends 0064) | `Sun level` keeps its entity and gains `lx` / `illuminance`, value × 100; the factor is an estimate from issue #156's readings against daylight figures until a lux meter confirms it |
 | [0065](0065-a-covers-travel-speed-is-a-three-way-choice.md) | A cover's travel speed is a three-way choice (amended by 0069, 0085) | `travel_speed:` `default` / `silent` / `fast` with a select; `default` sends the 6-byte frame a VELUX pad sends; without the key nothing changes; `silent:` stays as the two-way form |
 | [0069](0069-a-config-key-is-retired-in-two-stages.md) | A config key is retired in two stages | Warn with the exact replacement, then a config error about two months later; `silent:` enters the warning stage, amending 0065 |
 
@@ -218,6 +219,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0085: A waiting cover is shown from its status and read without back-off](0085-a-waiting-cover-is-shown-from-its-status-and-read-without-back-off.md)
 - [ADR 0086: The idle receiver keeps the loop running so its channel scan follows the protocol dwell](0086-the-idle-receiver-keeps-the-loop-running-so-its-channel-scan-follows-the-protocol-dwell.md)
 - [ADR 0087: The SX1262 receives at 117.3 kHz by default](0087-the-sx1262-receives-at-117-3-khz-by-default.md)
+- [ADR 0088: The sun level is shown in lux at 100 lux per step](0088-the-sun-level-is-shown-in-lux-at-100-lux-per-step.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

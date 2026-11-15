@@ -161,8 +161,9 @@ static constexpr uint8_t HEATING_LEVEL_MAX = 0x3F;
 /// every heating level (corpus `thermor_pilot_wire_interface_exchange_heating_level_execute`, issue #228):
 /// ACEI 0xE7, FP11 present in the FP9-FP16 bitmap, FP11 = 0xFFFF. That evidence does not establish what
 /// FP11 = 0xFFFF means; it is sent as the bridge sends it.
-/// \todo Experimental: no level change has been seen on a heater's display or read back yet, so the
-/// frame stays unconfirmed on hardware until a reporter's heater does.
+/// The frame changed the level for Eco, Comfort and Off on a Thermor pilot-wire interface's heater
+/// display (issue #228).
+/// \todo The Away, Boost, Comfort -1 and Comfort -2 levels are unconfirmed on hardware.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID (source address).
 /// @param dst Target device's 3-byte node ID (destination address).

@@ -4,6 +4,9 @@
 
 **Status:** Accepted · **Recorded:** 2026-11
 
+Amended by [ADR 0088](0088-the-sun-level-is-shown-in-lux-at-100-lux-per-step.md) (the `Sun level`
+sensor reports lux, value × 100).
+
 Amends [ADR 0060](0060-a-state-changing-diagnostic-probe.md) (point 4, and the consequence that
 leaves entities and automatic subscription to later decisions). Follows the pattern of
 [ADR 0050](0050-rain-is-read-by-an-opt-in-limitation-poll.md) and amends its miss rule (point 6
