@@ -438,9 +438,10 @@ bool decode_status_update_event(const IoFrame &frame, StatusUpdateEvent &out);
 ///
 /// Accepts only the captured shape: a well-formed CMD_STATUS_UPDATE carrying EVENT_LOCAL_SENSOR with
 /// LOCAL_SENSOR_EVENT_DATA_LEN data bytes, the first one LOCAL_SENSOR_TYPE_SUN. The value is the
-/// big-endian 16-bit word at LOCAL_SENSOR_VALUE_OFFSET, published raw: 0 at night, 744 in sun on an
+/// big-endian 16-bit word at LOCAL_SENSOR_VALUE_OFFSET, returned raw: 0 at night, 744 in sun on an
 /// RS100 Solar io (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_daylight_sx1262.yaml).
-/// \todo Unit and scale unknown; confirmed on one RS100 Solar io only.
+/// The sensor that publishes it applies the unit (an estimated lux scale, ADR 0088).
+/// \todo Lux scale unconfirmed; seen on one RS100 Solar io only.
 /// @param frame A parsed frame.
 /// @param out Receives the raw value on success.
 /// @return false for any other frame, event or shape.

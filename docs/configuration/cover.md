@@ -283,10 +283,19 @@ A solar motor with a built-in sun sensor can tell the hub how much sun its panel
 its battery is, but only when asked. With these keys set, the hub asks on each interval and
 publishes the answer:
 
-- **`<Cover Name> Sun level`**: the sun sensor's value as the motor sends it, with no unit. Over
-  a sunny November day an RS100 Solar io on a west-facing wall read 0 at night, 5 to 25 in shade
-  and at dusk, and 600 to 750 in direct sun on its panel. It is not lux: direct sunshine is tens of
-  thousands of lux. Treat it as a relative brightness for automations ("close above 500").
+- **`<Cover Name> Sun level`**: the sun sensor's value in lux, with device class `illuminance`.
+  The motor sends a plain number, and the hub multiplies it by 100. That factor is an estimate from
+  the data in [issue #156](https://github.com/laberning/home_io_control/issues/156): an RS100 Solar
+  io on a west-facing wall read 0 at night, 5 to 25 in shade and at dusk, and 600 to 750 in direct
+  sun on its panel (60 000 to 75 000 lx, in the 50 000 to 100 000 lx usually given for direct
+  sunlight). On dull November days its daily maximum was 35 to 61 (3 500 to 6 100 lx, in line
+  with overcast daylight). A Hue outdoor sensor a few metres away, about a metre higher, read about
+  10 times the sun value, which would put direct sun at only 6 000 to 7 500 lx, far below common
+  daylight figures. Until a lux meter reading next to the panel settles the scale, treat the value
+  as an estimate: use it for thresholds ("close above 50 000 lx"), not for measurement. If you have
+  a lux meter, please compare and report in the issue. Changing the unit makes Home Assistant start
+  a new statistics series for this sensor once; the history recorded before that stays under the
+  old series, in the old unit.
 - **`<Cover Name> Battery level`**: the battery level in percent, with device class `battery`.
 
 ```yaml

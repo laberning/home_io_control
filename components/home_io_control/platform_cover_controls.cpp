@@ -126,7 +126,7 @@ void IOHomeSunLevelSensor::setup() {
     this->published_once_ = true;
     this->published_ = dev.sun_level;
     // NAN is how an ESPHome sensor says "unknown": nothing read yet, or the last polls went unanswered.
-    this->publish_state(dev.sun_level.has_value() ? static_cast<float>(*dev.sun_level) : NAN);
+    this->publish_state(dev.sun_level.has_value() ? sun_value_to_lux(*dev.sun_level) : NAN);
   });
 }
 
