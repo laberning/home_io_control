@@ -101,6 +101,12 @@ TEST(DeviceFeaturesSync, EveryBitHasTheSameValueInBothLanguages) {
     EXPECT_TRUE(CPP_FEATURE_BITS.count(name)) << "FEATURE_" << name << " has no C++ bit";
 }
 
+TEST(DeviceFeaturesSync, TheMainParameterOnlySubtypeHasTheSameValueInBothLanguages) {
+  const auto python = test::parse_python_uint8_assignments(VALIDATORS, "SUBTYPE_");
+  ASSERT_TRUE(python.count("MAIN_PARAMETER_ONLY")) << "SUBTYPE_MAIN_PARAMETER_ONLY not parsed from hub_validators.py";
+  EXPECT_EQ(python.at("MAIN_PARAMETER_ONLY"), SUBTYPE_MAIN_PARAMETER_ONLY);
+}
+
 TEST(DeviceFeaturesSync, TheWholeWordOfEveryRowAgrees) {
   const auto type_values = test::parse_python_uint8_dict(VALIDATORS, "DEVICE_TYPE_OPTIONS");
   const auto table = test::parse_python_uint16_dict(VALIDATORS, "DEVICE_FEATURES");

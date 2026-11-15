@@ -9,7 +9,7 @@
 /// checks (scripts/check-tuning-sync.py, scripts/check-yaml-emitters.py, both `make lint`); see
 /// any sync test's file header for the fuller note on why both forms are kept.
 ///
-/// Seven public functions:
+/// Nine public functions:
 ///  - parse_python_uint8_dict(path, dict_name): a top-level `NAME = { "key": 0xNN, ... }` dict
 ///    (string-keyed, int-valued) -- used for MANUFACTURER_OPTIONS, DEVICE_TYPE_OPTIONS,
 ///    TCXO_VOLTAGE_OPTIONS, FEM_TX_POWER_MAX_QUIET and PA_PIN_OPTIONS (device_type_sync_test.cpp,
@@ -31,6 +31,10 @@
 ///    the two-byte forms of the first and last, used for the capability word mirror (DEVICE_FEATURES,
 ///    NAMED_POSITION_FEATURES, FEATURE_*; device_features_sync_test.cpp). Every one-byte and
 ///    two-byte form shares one parse_uint_or_fail(max).
+///  - parse_python_ordered_dict(path, dict_name): any flat dict as (key, raw value) text pairs in
+///    source order -- used for cover.py's TRAVEL_SPEEDS (travel_speed_sync_test.cpp).
+///  - parse_python_float_pair(path, name): a module-level `NAME = (low, high)` pair -- used for
+///    climate.py's DEFAULT_TEMPERATURE_RANGE_C (temperature_range_sync_test.cpp).
 ///
 /// The two dict-shaped parsers share one scan loop (parse_python_dict_entries(), below) rather
 /// than being two near-identical copies -- that duplication bug pattern is exactly what this
@@ -40,6 +44,7 @@
 
 #include <cctype>
 #include <cstdint>
+#include <exception>
 #include <fstream>
 #include <map>
 #include <string>
@@ -193,6 +198,17 @@ inline std::vector<std::pair<std::string, std::string>> parse_python_dict_entrie
 }
 
 }  // namespace detail
+
+/// Parse a flat top-level dict out of a Python source file as raw (key, value) text pairs in source
+/// order, for a sync test that checks the order or a value that is not a number (an enumerator).
+/// @param path Path to the Python source file, relative to the project root.
+/// @param dict_name The dict's variable name, e.g. "TRAVEL_SPEEDS".
+/// @return The entries as parse_python_dict_entries() trims them; empty (with a test failure already
+///         recorded via EXPECT_TRUE) if `path` could not be opened.
+inline std::vector<std::pair<std::string, std::string>> parse_python_ordered_dict(const char *path,
+                                                                                  const char *dict_name) {
+  return detail::parse_python_dict_entries(path, dict_name);
+}
 
 /// Parse a top-level `NAME = { "key": 0xNN, ... }` dict out of a Python source file
 /// (string-keyed, int-valued) -- e.g. MANUFACTURER_OPTIONS, DEVICE_TYPE_OPTIONS.
@@ -421,6 +437,36 @@ inline std::map<std::string, uint8_t> parse_python_uint8_assignments(const char 
 /// parse_python_uint8_assignments() for two-byte values -- the FEATURE_* bits in hub_validators.py.
 inline std::map<std::string, uint16_t> parse_python_uint16_assignments(const char *path, const char *prefix) {
   return detail::parse_python_assignments<uint16_t>(path, prefix, detail::parse_uint16_or_fail);
+}
+
+/// Parse a module-level `NAME = (low, high)` pair of decimal numbers (at column 0) out of a Python
+/// source file.
+/// @param path Path to the Python source file, relative to the project root.
+/// @param name The constant's name, e.g. "DEFAULT_TEMPERATURE_RANGE_C".
+/// @return {low, high}; empty if the assignment is missing or malformed (with a test failure already
+///         recorded via ADD_FAILURE, or EXPECT_TRUE if `path` could not be opened).
+inline std::vector<double> parse_python_float_pair(const char *path, const char *name) {
+  std::ifstream file = detail::open_source_or_fail(path);
+  if (!file.is_open())
+    return {};
+  const std::string head = std::string(name) + " = (";
+  std::string line;
+  while (std::getline(file, line)) {
+    if (line.compare(0, head.size(), head) != 0)
+      continue;
+    const auto comma = line.find(',', head.size());
+    const auto close = line.find(')', head.size());
+    if (comma == std::string::npos || close == std::string::npos || comma > close)
+      break;
+    try {
+      return {std::stod(line.substr(head.size(), comma - head.size())),
+              std::stod(line.substr(comma + 1, close - comma - 1))};
+    } catch (const std::exception &) {
+      break;
+    }
+  }
+  ADD_FAILURE() << path << ": " << name << " is not a `(low, high)` pair of numbers";
+  return {};
 }
 
 }  // namespace test

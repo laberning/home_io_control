@@ -9,6 +9,7 @@
 
 import hashlib
 import logging
+from dataclasses import dataclass
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
@@ -326,6 +327,227 @@ def _reject_node_id_collision(identity_id, node_id, seen_node_ids, derived):
     )
 
 
+@dataclass(frozen=True)
+class _ResolvedIdentity:
+    """A `oneway_controllers:` entry after its defaults are filled in.
+
+    `identity` is the (mutated) config entry; the other fields are facts the rules need that the
+    entry no longer shows once defaults are in.
+    """
+
+    identity: dict
+    radio_type: str
+    # True only when the user wrote `manufacturer:`; an omitted value is defaulted to 0 (Somfy).
+    manufacturer_explicit: bool
+
+    @property
+    def identity_id(self):
+        return self.identity[CONF_ID]
+
+    @property
+    def can_transmit(self):
+        """True when the identity can emit an EXECUTE: it has commands or an enroll button."""
+        return bool(self.identity[CONF_COMMANDS]) or self.identity[CONF_ENROLLMENT]
+
+
+def _resolve_identity_defaults(identity, hub_config):
+    """Fill in an identity's derived address, key and manufacturer, and return it resolved."""
+    hub_node_id = hub_config[CONF_NODE_ID]
+    if CONF_NODE_ID not in identity:
+        identity[CONF_NODE_ID] = derive_oneway_node_id(hub_node_id, identity[CONF_ID])
+        identity[CONF_NODE_ID_DERIVED] = True
+
+    # A per-identity key is optional so that identities on the hub's own network need not
+    # repeat it; an adopted foreign network's key is what makes the override necessary.
+    if CONF_SYSTEM_KEY not in identity:
+        identity[CONF_SYSTEM_KEY] = hub_config[CONF_SYSTEM_KEY]
+
+    # Recorded before the default, so the wire-profile warning can tell an explicit unprofiled
+    # vendor from an omitted manufacturer (the common back-compat case, which maps silently to
+    # Somfy).
+    manufacturer_explicit = CONF_MANUFACTURER in identity
+    if not manufacturer_explicit:
+        identity[CONF_MANUFACTURER] = 0
+    return _ResolvedIdentity(identity, hub_config[CONF_RADIO_TYPE], manufacturer_explicit)
+
+
+def _reject_collisions(resolved, seen_node_ids):
+    """Raise if the identity's address is already claimed; otherwise claim it in `seen_node_ids`.
+
+    `seen_node_ids` maps a resolved address to its human-readable owner, so a collision message
+    can name both sides rather than just reporting that "an" address is taken.
+    """
+    identity = resolved.identity
+    _reject_node_id_collision(
+        resolved.identity_id, identity[CONF_NODE_ID], seen_node_ids, identity.get(CONF_NODE_ID_DERIVED)
+    )
+    seen_node_ids[identity[CONF_NODE_ID]] = f"oneway_controllers id '{resolved.identity_id}'"
+
+
+def _enrollment_manufacturer_problem(resolved):
+    """Error text when `enrollment: true` has no explicit `manufacturer:`, else None.
+
+    manufacturer becomes required, not silently 0, whenever enrollment: true actually puts this
+    byte on the air in a CMD_ONEWAY_ADD_CONTROLLER frame -- 1W gives no error a wrong value would
+    ever surface as, so the mistake has to be caught here instead. Everywhere else it is
+    genuinely unused today, so defaulting to 0 there is harmless.
+    """
+    if resolved.identity[CONF_ENROLLMENT] and not resolved.manufacturer_explicit:
+        return (
+            f"oneway_controllers id '{resolved.identity_id}' has enrollment: true but no manufacturer: "
+            "set. Find the value from a key-adoption report for this network (the 'Recover "
+            "1W Controller Key' switch prints it), or from the device's own documentation."
+        )
+    return None
+
+
+# === Warning rules ===
+# Each rule takes a _ResolvedIdentity and returns the warning text or None. A warning, not
+# cv.Invalid, because each flags a legal config that still transmits.
+
+
+def _warn_unprofiled_manufacturer(resolved):
+    """manufacturer: also drives the 1W CMD_EXECUTE ACEI byte (ADR 0031). Only Somfy and Velux
+    have a verified wire profile; any other explicitly-named vendor falls back to the Somfy-shaped
+    default, which is a guess. Only an identity that can emit an EXECUTE is flagged; an inert
+    identity's wire shape does not matter yet."""
+    identity = resolved.identity
+    if (
+        resolved.manufacturer_explicit
+        and identity[CONF_MANUFACTURER] not in ONEWAY_WIRE_PROFILE_MANUFACTURERS
+        and resolved.can_transmit
+    ):
+        return (
+            f"home_io_control: oneway_controllers '{resolved.identity_id}' has manufacturer "
+            f"0x{identity[CONF_MANUFACTURER]:02X}, which has no "
+            "1W wire profile -- using the Somfy-shaped defaults (ACEI 0x43). Set execute_acei: "
+            "explicitly if that is wrong for your device."
+        )
+    return None
+
+
+def _warn_enrollment_with_mac_on_sx1276(resolved):
+    """enrollment_with_mac: true on sx1276 has been measured to roughly double the 0x30 burst's
+    airtime, and no VELUX capture this project holds carries the MAC at all. Other radios and
+    vendors are unaffected."""
+    identity = resolved.identity
+    if identity[CONF_ENROLLMENT] and identity[CONF_ENROLLMENT_WITH_MAC] and resolved.radio_type == "sx1276":
+        return (
+            f"home_io_control: oneway_controllers '{resolved.identity_id}' has enrollment_with_mac: true on "
+            "radio_type: sx1276, where the MAC-bearing 0x30 has been measured to take about "
+            "twice as long per burst. No VELUX capture carries this MAC either. Consider "
+            "leaving it false unless your hardware specifically needs the MAC-bearing form."
+        )
+    return None
+
+
+def _warn_velux_interior_blind_default_sweep(resolved):
+    """The velux profile's default 0x30 sweep is the exterior-shading set a KLI 310/313 uses
+    ({roller_shutter, vertical_exterior_awning, dual_roller_shutter}). An interior-blind remote
+    (KLI 312) sweeps vertical_interior_blind/interior_venetian_blind instead, so a blind identity
+    that enrolls with the default sweep almost certainly misses the actuator. Enrollment ignores
+    io_device_type, so point the user at enrollment_classes: and at the KLI's own 0x2E lines that
+    name the classes."""
+    identity = resolved.identity
+    if (
+        identity[CONF_MANUFACTURER] == MANUFACTURER_OPTIONS["velux"]
+        and identity[CONF_ENROLLMENT]
+        and CONF_ENROLLMENT_CLASSES not in identity
+        and identity[CONF_IO_DEVICE_TYPE]
+        in (
+            DEVICE_TYPE_OPTIONS["vertical_interior_blind"],
+            DEVICE_TYPE_OPTIONS["interior_venetian_blind"],
+        )
+    ):
+        kind_name = next(
+            name for name, value in DEVICE_TYPE_OPTIONS.items() if value == identity[CONF_IO_DEVICE_TYPE]
+        )
+        return (
+            f"home_io_control: oneway_controllers '{resolved.identity_id}' is a VELUX {kind_name} with "
+            "enrollment: true, but "
+            "enrollment_classes: is unset, so the enrollment 0x30 sweep uses the exterior-shading "
+            "default roller_shutter/vertical_exterior_awning/dual_roller_shutter and ignores "
+            "io_device_type. This device may enroll on other classes: set enrollment_classes: (a KLI "
+            "312 interior blind uses [vertical_interior_blind, interior_venetian_blind]). To find "
+            "yours, press Gear on the existing remote and use the classes named in its 'rx 1W "
+            "remote ... (0x2E)' DEBUG log lines -- see 'Finding your enrollment classes' in the "
+            "1W transmit docs."
+        )
+    return None
+
+
+def _warn_inverted_kind_broadcast_all(resolved):
+    """An inverted kind mirrors open/close on the wire. A broadcast-to-all frame also reaches
+    receivers of other kinds, so the mirror applies to them too -- legal, but worth a flag."""
+    identity = resolved.identity
+    if (
+        resolved.can_transmit
+        and CONF_INVERT_POSITION not in identity
+        and identity[CONF_EXECUTE_BROADCAST] == "all"
+        and device_features(identity[CONF_IO_DEVICE_TYPE]) & FEATURE_INVERTED
+    ):
+        return (
+            f"home_io_control: oneway_controllers '{resolved.identity_id}' is an inverted device kind with "
+            "execute_broadcast: all -- open/close are mirrored for every receiver of this "
+            "broadcast; set invert_position explicitly if this identity also drives "
+            "non-awning devices."
+        )
+    return None
+
+
+def _warn_inert_enrollment_classes(resolved):
+    """enrollment_classes: only feeds the VELUX enrollment gesture. On a somfy/unprofiled
+    identity, or one with no enroll button at all, it is silently inert."""
+    identity = resolved.identity
+    if CONF_ENROLLMENT_CLASSES in identity and (
+        identity[CONF_MANUFACTURER] != MANUFACTURER_OPTIONS["velux"] or not identity[CONF_ENROLLMENT]
+    ):
+        return (
+            f"home_io_control: oneway_controllers '{resolved.identity_id}' sets enrollment_classes: but it only "
+            "affects the VELUX enrollment gesture (needs manufacturer: velux AND "
+            "enrollment: true) -- it is ignored here."
+        )
+    return None
+
+
+# In the order the warnings are logged.
+_WARNING_RULES = (
+    _warn_unprofiled_manufacturer,
+    _warn_enrollment_with_mac_on_sx1276,
+    _warn_velux_interior_blind_default_sweep,
+    _warn_inverted_kind_broadcast_all,
+    _warn_inert_enrollment_classes,
+)
+
+
+def _inject_identity_entity_ids(identity):
+    """Declare the identity's entity IDs at validation time, not in to_code(): an ID created
+    late is silently dropped at runtime (ADR 0009). The `<identity_id>_<command>` shape is a
+    documented contract, not an implementation detail -- users compose `time_based` covers
+    against these IDs and cannot do that against IDs they can't predict.
+    """
+    identity_id = identity[CONF_ID]
+    identity[CONF_BUTTON_IDS] = {
+        command: ID(
+            f"{identity_id}_{command}",
+            is_declaration=True,
+            type=IOHomeOneWayCommandButton,
+        )
+        for command in identity[CONF_COMMANDS]
+    }
+    identity[CONF_LAST_COMMAND_SENSOR_ID] = ID(
+        f"{identity_id}_last_1w_command",
+        is_declaration=True,
+        type=IOHomeOneWayLastCommandTextSensor,
+    )
+    if identity[CONF_ENROLLMENT]:
+        identity[CONF_ENROLL_BUTTON_ID] = ID(
+            f"{identity_id}_enroll",
+            is_declaration=True,
+            type=IOHomeOneWayEnrollButton,
+        )
+
+
 def validate_oneway_controllers(config):
     """Resolve per-identity defaults and reject address/handle collisions at compile time.
 
@@ -344,11 +566,8 @@ def validate_oneway_controllers(config):
     if not identities:
         return config
 
-    hub_node_id = config[CONF_NODE_ID]
     seen_ids = set()
-    # Maps resolved address -> the human-readable owner, so a collision message can name both
-    # sides rather than just reporting that "an" address is taken.
-    seen_node_ids = {hub_node_id: "the hub's own node_id"}
+    seen_node_ids = {config[CONF_NODE_ID]: "the hub's own node_id"}
 
     for identity in identities:
         identity_id = identity[CONF_ID]
@@ -358,158 +577,16 @@ def validate_oneway_controllers(config):
             )
         seen_ids.add(identity_id)
 
-        if CONF_NODE_ID not in identity:
-            identity[CONF_NODE_ID] = derive_oneway_node_id(hub_node_id, identity_id)
-            identity[CONF_NODE_ID_DERIVED] = True
-
-        node_id = identity[CONF_NODE_ID]
-        _reject_node_id_collision(identity_id, node_id, seen_node_ids, identity.get(CONF_NODE_ID_DERIVED))
-        seen_node_ids[node_id] = f"oneway_controllers id '{identity_id}'"
-
-        # A per-identity key is optional so that identities on the hub's own network need not
-        # repeat it; an adopted foreign network's key is what makes the override necessary.
-        if CONF_SYSTEM_KEY not in identity:
-            identity[CONF_SYSTEM_KEY] = config[CONF_SYSTEM_KEY]
-
-        # manufacturer becomes required, not silently 0, whenever enrollment: true actually puts
-        # this byte on the air in a CMD_ONEWAY_ADD_CONTROLLER frame -- 1W gives no error a wrong
-        # value would ever surface as, so the mistake has to be caught here instead. Everywhere
-        # else it is genuinely unused today, so defaulting to 0 there is harmless.
-        if identity[CONF_ENROLLMENT] and CONF_MANUFACTURER not in identity:
-            raise cv.Invalid(
-                f"oneway_controllers id '{identity_id}' has enrollment: true but no manufacturer: "
-                "set. Find the value from a key-adoption report for this network (the 'Recover "
-                "1W Controller Key' switch prints it), or from the device's own documentation."
-            )
-        # Record whether the user set manufacturer: explicitly, before it is defaulted to 0. The
-        # 1W wire-profile warning below only fires for an *explicit* unprofiled vendor -- an
-        # omitted manufacturer is the common back-compat case and maps silently to Somfy.
-        manufacturer_explicit = CONF_MANUFACTURER in identity
-        if CONF_MANUFACTURER not in identity:
-            identity[CONF_MANUFACTURER] = 0
-
-        # manufacturer: now also drives the 1W CMD_EXECUTE ACEI byte (ADR 0031). We only have a
-        # verified wire profile for Somfy and Velux; any other explicitly-named vendor falls back
-        # to the Somfy-shaped default, which is a guess. Warn -- but not with cv.Invalid, since an
-        # unprofiled vendor is a legal config that still transmits -- and only for an identity that
-        # can actually emit an EXECUTE (has commands: or enrollment:); an inert identity's wire
-        # shape does not matter yet.
-        identity_can_transmit = bool(identity[CONF_COMMANDS]) or identity[CONF_ENROLLMENT]
-        if (
-            manufacturer_explicit
-            and identity[CONF_MANUFACTURER] not in ONEWAY_WIRE_PROFILE_MANUFACTURERS
-            and identity_can_transmit
-        ):
-            _LOGGER.warning(
-                "home_io_control: oneway_controllers '%s' has manufacturer 0x%02X, which has no "
-                "1W wire profile -- using the Somfy-shaped defaults (ACEI 0x43). Set execute_acei: "
-                "explicitly if that is wrong for your device.",
-                identity_id,
-                identity[CONF_MANUFACTURER],
-            )
-
-        # enrollment_with_mac: true on sx1276 has been measured to roughly double the 0x30 burst's
-        # airtime, and no VELUX capture this project holds carries the MAC at all -- warn, don't
-        # reject: it is still a legal config, and other radios/vendors are unaffected.
-        if (
-            identity[CONF_ENROLLMENT]
-            and identity[CONF_ENROLLMENT_WITH_MAC]
-            and config[CONF_RADIO_TYPE] == "sx1276"
-        ):
-            _LOGGER.warning(
-                "home_io_control: oneway_controllers '%s' has enrollment_with_mac: true on "
-                "radio_type: sx1276, where the MAC-bearing 0x30 has been measured to take about "
-                "twice as long per burst. No VELUX capture carries this MAC either. Consider "
-                "leaving it false unless your hardware specifically needs the MAC-bearing form.",
-                identity_id,
-            )
-
-        # The velux profile's default 0x30 sweep is the exterior-shading set a KLI 310/313 uses
-        # ({roller_shutter, vertical_exterior_awning, dual_roller_shutter}). An interior-blind remote
-        # (KLI 312) sweeps vertical_interior_blind/interior_venetian_blind instead, so a blind
-        # identity that enrolls with the default
-        # sweep almost certainly misses the actuator. Enrollment ignores io_device_type,
-        # so point the user at enrollment_classes: and at the KLI's own 0x2E lines that name the classes.
-        if (
-            identity[CONF_MANUFACTURER] == MANUFACTURER_OPTIONS["velux"]
-            and identity[CONF_ENROLLMENT]
-            and CONF_ENROLLMENT_CLASSES not in identity
-            and identity[CONF_IO_DEVICE_TYPE]
-            in (
-                DEVICE_TYPE_OPTIONS["vertical_interior_blind"],
-                DEVICE_TYPE_OPTIONS["interior_venetian_blind"],
-            )
-        ):
-            _LOGGER.warning(
-                "home_io_control: oneway_controllers '%s' is a VELUX %s with enrollment: true, but "
-                "enrollment_classes: is unset, so the enrollment 0x30 sweep uses the exterior-shading "
-                "default roller_shutter/vertical_exterior_awning/dual_roller_shutter and ignores "
-                "io_device_type. This device may enroll on other classes: set enrollment_classes: (a KLI "
-                "312 interior blind uses [vertical_interior_blind, interior_venetian_blind]). To find "
-                "yours, press Gear on the existing remote and use the classes named in its 'rx 1W "
-                "remote ... (0x2E)' DEBUG log lines -- see 'Finding your enrollment classes' in the "
-                "1W transmit docs.",
-                identity_id,
-                next(
-                    name
-                    for name, value in DEVICE_TYPE_OPTIONS.items()
-                    if value == identity[CONF_IO_DEVICE_TYPE]
-                ),
-            )
-
-        # An inverted kind mirrors open/close on the wire. A broadcast-to-all frame also reaches
-        # receivers of other kinds, so the mirror applies to them too -- legal, but worth a flag.
-        if (
-            identity_can_transmit
-            and CONF_INVERT_POSITION not in identity
-            and identity[CONF_EXECUTE_BROADCAST] == "all"
-            and device_features(identity[CONF_IO_DEVICE_TYPE]) & FEATURE_INVERTED
-        ):
-            _LOGGER.warning(
-                "home_io_control: oneway_controllers '%s' is an inverted device kind with "
-                "execute_broadcast: all -- open/close are mirrored for every receiver of this "
-                "broadcast; set invert_position explicitly if this identity also drives "
-                "non-awning devices.",
-                identity_id,
-            )
-
-        # enrollment_classes: only feeds the VELUX enrollment gesture. On a somfy/unprofiled
-        # identity, or one with no enroll button at all, it is silently inert -- flag it, the same
-        # way the blind case above is flagged.
-        if CONF_ENROLLMENT_CLASSES in identity and (
-            identity[CONF_MANUFACTURER] != MANUFACTURER_OPTIONS["velux"]
-            or not identity[CONF_ENROLLMENT]
-        ):
-            _LOGGER.warning(
-                "home_io_control: oneway_controllers '%s' sets enrollment_classes: but it only "
-                "affects the VELUX enrollment gesture (needs manufacturer: velux AND "
-                "enrollment: true) -- it is ignored here.",
-                identity_id,
-            )
-
-        # Entity IDs are declared here, at validation time, not in to_code(): an ID created late
-        # is silently dropped at runtime (ADR 0009). The `<identity_id>_<command>` shape is a
-        # documented contract, not an implementation detail -- users compose `time_based` covers
-        # against these IDs and cannot do that against IDs they can't predict.
-        identity[CONF_BUTTON_IDS] = {
-            command: ID(
-                f"{identity_id}_{command}",
-                is_declaration=True,
-                type=IOHomeOneWayCommandButton,
-            )
-            for command in identity[CONF_COMMANDS]
-        }
-        identity[CONF_LAST_COMMAND_SENSOR_ID] = ID(
-            f"{identity_id}_last_1w_command",
-            is_declaration=True,
-            type=IOHomeOneWayLastCommandTextSensor,
-        )
-        if identity[CONF_ENROLLMENT]:
-            identity[CONF_ENROLL_BUTTON_ID] = ID(
-                f"{identity_id}_enroll",
-                is_declaration=True,
-                type=IOHomeOneWayEnrollButton,
-            )
+        resolved = _resolve_identity_defaults(identity, config)
+        _reject_collisions(resolved, seen_node_ids)
+        problem = _enrollment_manufacturer_problem(resolved)
+        if problem:
+            raise cv.Invalid(problem)
+        for rule in _WARNING_RULES:
+            message = rule(resolved)
+            if message:
+                _LOGGER.warning("%s", message)
+        _inject_identity_entity_ids(identity)
 
     return config
 

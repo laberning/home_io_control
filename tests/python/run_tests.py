@@ -338,6 +338,189 @@ def oneway_invert_position_is_tri_state_in_codegen_and_warns_for_inverted_broadc
     assert warnings_for(identity("vertical_exterior_awning", "all")) == []
 
 
+def _resolved_oneway(kind="horizontal_awning", radio_type="sx1262", manufacturer_explicit=True, **extra):
+    """A `_ResolvedIdentity` for the one-way warning-rule cases, with the schema defaults filled."""
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+    from esphome.components.home_io_control.hub_validators import DEVICE_TYPE_OPTIONS
+
+    identity = {
+        "id": "remote",
+        n.CONF_NODE_ID: "A11CE0",
+        n.CONF_SYSTEM_KEY: "00112233445566778899AABBCCDDEEFF",
+        n.CONF_MANUFACTURER: 0,
+        n.CONF_IO_DEVICE_TYPE: DEVICE_TYPE_OPTIONS[kind],
+        n.CONF_ENROLLMENT_WITH_MAC: False,
+        n.CONF_EXECUTE_BROADCAST: "typed",
+        n.CONF_ENROLLMENT: False,
+        n.CONF_COMMANDS: ["open"],
+    }
+    identity.update(extra)
+    return o._ResolvedIdentity(identity, radio_type, manufacturer_explicit)
+
+
+@case()
+def oneway_warning_for_an_unprofiled_manufacturer_needs_an_explicit_vendor_that_can_transmit():
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+    from esphome.components.home_io_control.hub_validators import ONEWAY_WIRE_PROFILE_MANUFACTURERS
+
+    assert o._warn_unprofiled_manufacturer(_resolved_oneway(**{n.CONF_MANUFACTURER: 0x7F})) == (
+        "home_io_control: oneway_controllers 'remote' has manufacturer 0x7F, which has no "
+        "1W wire profile -- using the Somfy-shaped defaults (ACEI 0x43). Set execute_acei: "
+        "explicitly if that is wrong for your device."
+    )
+    assert o._warn_unprofiled_manufacturer(
+        _resolved_oneway(**{n.CONF_MANUFACTURER: sorted(ONEWAY_WIRE_PROFILE_MANUFACTURERS)[0]})
+    ) is None
+    assert o._warn_unprofiled_manufacturer(
+        _resolved_oneway(manufacturer_explicit=False, **{n.CONF_MANUFACTURER: 0x7F})
+    ) is None
+    assert o._warn_unprofiled_manufacturer(
+        _resolved_oneway(**{n.CONF_MANUFACTURER: 0x7F, n.CONF_COMMANDS: []})
+    ) is None
+
+
+@case()
+def oneway_warning_for_enrollment_with_mac_applies_to_sx1276_only():
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+
+    enrolling = {n.CONF_ENROLLMENT: True, n.CONF_ENROLLMENT_WITH_MAC: True}
+    assert o._warn_enrollment_with_mac_on_sx1276(_resolved_oneway(radio_type="sx1276", **enrolling)) == (
+        "home_io_control: oneway_controllers 'remote' has enrollment_with_mac: true on "
+        "radio_type: sx1276, where the MAC-bearing 0x30 has been measured to take about "
+        "twice as long per burst. No VELUX capture carries this MAC either. Consider "
+        "leaving it false unless your hardware specifically needs the MAC-bearing form."
+    )
+    assert o._warn_enrollment_with_mac_on_sx1276(_resolved_oneway(radio_type="sx1262", **enrolling)) is None
+    assert o._warn_enrollment_with_mac_on_sx1276(
+        _resolved_oneway(radio_type="sx1276", **{n.CONF_ENROLLMENT: True})
+    ) is None
+
+
+@case()
+def oneway_warning_for_a_velux_interior_blind_names_the_default_sweep():
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+    from esphome.components.home_io_control.hub_validators import MANUFACTURER_OPTIONS
+
+    velux = {n.CONF_MANUFACTURER: MANUFACTURER_OPTIONS["velux"], n.CONF_ENROLLMENT: True}
+    assert o._warn_velux_interior_blind_default_sweep(_resolved_oneway("vertical_interior_blind", **velux)) == (
+        "home_io_control: oneway_controllers 'remote' is a VELUX vertical_interior_blind with "
+        "enrollment: true, but "
+        "enrollment_classes: is unset, so the enrollment 0x30 sweep uses the exterior-shading "
+        "default roller_shutter/vertical_exterior_awning/dual_roller_shutter and ignores "
+        "io_device_type. This device may enroll on other classes: set enrollment_classes: (a KLI "
+        "312 interior blind uses [vertical_interior_blind, interior_venetian_blind]). To find "
+        "yours, press Gear on the existing remote and use the classes named in its 'rx 1W "
+        "remote ... (0x2E)' DEBUG log lines -- see 'Finding your enrollment classes' in the "
+        "1W transmit docs."
+    )
+    assert "interior_venetian_blind" in o._warn_velux_interior_blind_default_sweep(
+        _resolved_oneway("interior_venetian_blind", **velux)
+    ).split("is a VELUX ")[1].split(" ")[0]
+    assert o._warn_velux_interior_blind_default_sweep(_resolved_oneway("roller_shutter", **velux)) is None
+    assert o._warn_velux_interior_blind_default_sweep(
+        _resolved_oneway("vertical_interior_blind", **velux, **{n.CONF_ENROLLMENT_CLASSES: [1]})
+    ) is None
+    assert o._warn_velux_interior_blind_default_sweep(
+        _resolved_oneway("vertical_interior_blind", **{n.CONF_MANUFACTURER: 0, n.CONF_ENROLLMENT: True})
+    ) is None
+
+
+@case()
+def oneway_warning_for_an_inverted_kind_on_broadcast_all_unless_invert_position_is_set():
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+
+    broadcast = {n.CONF_EXECUTE_BROADCAST: "all"}
+    assert o._warn_inverted_kind_broadcast_all(_resolved_oneway(**broadcast)) == (
+        "home_io_control: oneway_controllers 'remote' is an inverted device kind with "
+        "execute_broadcast: all -- open/close are mirrored for every receiver of this "
+        "broadcast; set invert_position explicitly if this identity also drives "
+        "non-awning devices."
+    )
+    assert o._warn_inverted_kind_broadcast_all(_resolved_oneway(**broadcast, **{n.CONF_INVERT_POSITION: False})) is None
+    assert o._warn_inverted_kind_broadcast_all(_resolved_oneway("vertical_exterior_awning", **broadcast)) is None
+    assert o._warn_inverted_kind_broadcast_all(_resolved_oneway()) is None
+    assert o._warn_inverted_kind_broadcast_all(_resolved_oneway(**broadcast, **{n.CONF_COMMANDS: []})) is None
+
+
+@case()
+def oneway_warning_for_enrollment_classes_applies_only_to_velux_enrollment():
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+    from esphome.components.home_io_control.hub_validators import MANUFACTURER_OPTIONS
+
+    velux = MANUFACTURER_OPTIONS["velux"]
+    classes = {n.CONF_ENROLLMENT_CLASSES: [1]}
+    assert o._warn_inert_enrollment_classes(_resolved_oneway(**classes, **{n.CONF_ENROLLMENT: True})) == (
+        "home_io_control: oneway_controllers 'remote' sets enrollment_classes: but it only "
+        "affects the VELUX enrollment gesture (needs manufacturer: velux AND "
+        "enrollment: true) -- it is ignored here."
+    )
+    assert o._warn_inert_enrollment_classes(
+        _resolved_oneway(**classes, **{n.CONF_MANUFACTURER: velux})
+    ) is not None
+    assert o._warn_inert_enrollment_classes(
+        _resolved_oneway(**classes, **{n.CONF_MANUFACTURER: velux, n.CONF_ENROLLMENT: True})
+    ) is None
+    assert o._warn_inert_enrollment_classes(_resolved_oneway()) is None
+
+
+@case()
+def oneway_enrollment_without_an_explicit_manufacturer_has_a_problem_text():
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+
+    assert o._enrollment_manufacturer_problem(
+        _resolved_oneway(manufacturer_explicit=False, **{n.CONF_ENROLLMENT: True})
+    ).startswith("oneway_controllers id 'remote' has enrollment: true but no manufacturer: set.")
+    assert o._enrollment_manufacturer_problem(_resolved_oneway(**{n.CONF_ENROLLMENT: True})) is None
+    assert o._enrollment_manufacturer_problem(_resolved_oneway(manufacturer_explicit=False)) is None
+
+
+@case()
+def oneway_identity_resolves_defaults_and_declares_entity_ids():
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+
+    hub = {n.CONF_NODE_ID: "C0FFEE", n.CONF_SYSTEM_KEY: "00112233445566778899AABBCCDDEEFF", n.CONF_RADIO_TYPE: "sx1262"}
+    identity = {
+        "id": "remote", n.CONF_COMMANDS: ["open", "close"], n.CONF_ENROLLMENT: True,
+    }
+    resolved = o._resolve_identity_defaults(identity, hub)
+    assert resolved.identity[n.CONF_NODE_ID] == o.derive_oneway_node_id("C0FFEE", "remote")
+    assert resolved.identity[n.CONF_NODE_ID_DERIVED] is True
+    assert resolved.identity[n.CONF_SYSTEM_KEY] == hub[n.CONF_SYSTEM_KEY]
+    assert resolved.identity[n.CONF_MANUFACTURER] == 0 and not resolved.manufacturer_explicit
+    assert resolved.radio_type == "sx1262"
+
+    o._inject_identity_entity_ids(identity)
+    assert sorted(identity[n.CONF_BUTTON_IDS]) == ["close", "open"]
+    assert identity[n.CONF_BUTTON_IDS]["open"].id == "remote_open"
+    assert identity[n.CONF_LAST_COMMAND_SENSOR_ID].id == "remote_last_1w_command"
+    assert identity[n.CONF_ENROLL_BUTTON_ID].id == "remote_enroll"
+
+
+@case()
+def tuning_enum_assignments_cover_every_enum_select_with_its_option_names():
+    """Each enum select offers exactly the option names its assignment maps to a C++ enumerator,
+    so a selectable option always generates code."""
+    from esphome.components.home_io_control import tuning as t
+
+    keys = [key for key, _field, _options in t._ENUM_ASSIGNMENTS]
+    assert len(keys) == len(set(keys)), "an enum key is assigned twice"
+    for key, field, options in t._ENUM_ASSIGNMENTS:
+        assert t._SELECT_OPTIONS[key] == list(options), f"{key}: select options differ from the assignment table"
+        assert field == key, f"{key}: the C++ field is named after the YAML key"
+    enum_selects = set(t._SELECT_OPTIONS) - set(t._BOOL_PARAMS) - {
+        t.CONF_PAIRING_DISCOVERY_COMMANDS, t.CONF_PAIRING_DISCOVERY_DESTINATION, t.CONF_PAIRING_DISCOVERY_PAYLOAD,
+    }
+    assert enum_selects == set(keys), f"enum selects without an assignment: {sorted(enum_selects - set(keys))}"
+
+
 @case()
 def hub_entity_ids_are_declared_at_validation_time():
     """ESPHome 2026.x sizes its component vector from IDs known at the end of validation, so the

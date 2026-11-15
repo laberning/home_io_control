@@ -25,6 +25,15 @@ The selectable bandwidths also live in two places:
 The name-level check above does not see these; a wrong or missing bandwidth option
 produces no error and no symptom, it just silently omits or mis-selects a receiver
 bandwidth. This diffs the Python option strings against ``f"{khz:.1f}"`` of each C++ row.
+
+A third check covers the option strings of the enum selects (scan power classes, discover
+confirm mode, discovery listen/send channels, key transfer mode):
+  * Python: ``*_OPTIONS`` dicts in tuning.py mapping each option string to its enumerator
+    (``"skip": DiscoverConfirmMode.SKIP``).
+  * C++: the ``<enum>_to_string()`` functions in tuning_config.cpp, whose ``case`` arms return
+    the string the select shows (directly, or through ``power_save_mode_name()``).
+It diffs the enumerator -> option string mapping, so a renamed, added or swapped option fails here
+instead of showing a select state that YAML rejects.
 """
 
 import ast
@@ -36,12 +45,22 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 TUNING_PY = REPO_ROOT / "components" / "home_io_control" / "tuning.py"
 TUNING_REGISTRY_CPP = REPO_ROOT / "components" / "home_io_control" / "tuning_registry.cpp"
 TUNING_CONFIG_CPP = REPO_ROOT / "components" / "home_io_control" / "tuning_config.cpp"
+PROTO_CONSTANTS_CPP = REPO_ROOT / "components" / "home_io_control" / "proto_constants.cpp"
 
 # Python dict in tuning.py -> C++ constexpr BandwidthOption table in tuning_config.cpp.
 _BANDWIDTH_TABLES = {
     "SX1262_BANDWIDTH_OPTIONS": "SX1262_BANDWIDTHS",
     "SX1276_BANDWIDTH_OPTIONS": "SX1276_BANDWIDTHS",
     "LR1121_BANDWIDTH_OPTIONS": "LR1121_BANDWIDTHS",
+}
+
+# Python enum-select dict in tuning.py -> (C++ enum class, its to_string function in tuning_config.cpp).
+_ENUM_SELECT_TABLES = {
+    "SCAN_POWER_CLASSES_OPTIONS": ("ScanPowerClasses", "scan_power_classes_to_string"),
+    "DISCOVER_CONFIRM_MODE_OPTIONS": ("DiscoverConfirmMode", "discover_confirm_mode_to_string"),
+    "DISCOVERY_LISTEN_CHANNELS_OPTIONS": ("DiscoveryListenChannels", "discovery_listen_channels_to_string"),
+    "DISCOVERY_SEND_CHANNELS_OPTIONS": ("DiscoverySendChannels", "discovery_send_channels_to_string"),
+    "KEY_TRANSFER_MODE_OPTIONS": ("KeyTransferMode", "key_transfer_mode_to_string"),
 }
 
 
@@ -139,6 +158,84 @@ def cpp_bandwidth_options() -> dict:
     return result
 
 
+def python_enum_select_options() -> dict:
+    """Map each ``*_OPTIONS`` dict name to {enumerator: option string} (from ``"skip": Enum.SKIP``)."""
+    module = ast.parse(TUNING_PY.read_text(encoding="utf-8"))
+    result = {}
+    for name, (enum, _function) in _ENUM_SELECT_TABLES.items():
+        node = next(
+            (
+                n.value
+                for n in module.body
+                if isinstance(n, ast.Assign)
+                and isinstance(n.value, ast.Dict)
+                and any(isinstance(t, ast.Name) and t.id == name for t in n.targets)
+            ),
+            None,
+        )
+        if node is None:
+            raise SystemExit(f"error: could not find dict '{name}' in {TUNING_PY}")
+        options = {}
+        for key, value in zip(node.keys, node.values):
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                raise SystemExit(f"error: '{name}' key {ast.dump(key)} is not a string literal in {TUNING_PY}")
+            if not (isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name) and value.value.id == enum):
+                raise SystemExit(f"error: '{name}' value for '{key.value}' is not a {enum} enumerator in {TUNING_PY}")
+            options[value.attr] = key.value
+        result[name] = options
+    return result
+
+
+def _function_body(source: str, function: str, path: Path) -> str:
+    match = re.search(rf"\b{re.escape(function)}\s*\([^)]*\)\s*\{{(?P<body>.*?)\n\}}", source, re.DOTALL)
+    if not match:
+        raise SystemExit(f"error: could not find function '{function}' in {path}")
+    return match.group("body")
+
+
+def cpp_enum_select_options() -> dict:
+    """Map each Python dict name to {enumerator: option string} from its C++ to_string function.
+
+    A ``case`` arm returns a string literal, or ``power_save_mode_name(CONST)``, which is resolved
+    through that function's own ``case CONST: return "literal";`` arms in proto_constants.cpp.
+    """
+    source = TUNING_CONFIG_CPP.read_text(encoding="utf-8")
+    constants_source = PROTO_CONSTANTS_CPP.read_text(encoding="utf-8")
+    power_save_names = dict(
+        re.findall(r'case\s+(\w+):\s*return\s+"([^"]*)";', _function_body(constants_source, "power_save_mode_name", PROTO_CONSTANTS_CPP))
+    )
+    result = {}
+    for py_name, (enum, function) in _ENUM_SELECT_TABLES.items():
+        body = _function_body(source, function, TUNING_CONFIG_CPP)
+        options = {}
+        for member, expression in re.findall(rf"case\s+{enum}::(\w+):\s*return\s+([^;]+);", body):
+            literal = re.fullmatch(r'"([^"]*)"', expression.strip())
+            call = re.fullmatch(r"power_save_mode_name\((\w+)\)", expression.strip())
+            if literal:
+                options[member] = literal.group(1)
+            elif call and call.group(1) in power_save_names:
+                options[member] = power_save_names[call.group(1)]
+            else:
+                raise SystemExit(f"error: cannot resolve '{expression.strip()}' in {function} ({TUNING_CONFIG_CPP})")
+        if not options:
+            raise SystemExit(f"error: {function} in {TUNING_CONFIG_CPP} has no parseable case arms")
+        result[py_name] = options
+    return result
+
+
+def _report_enum_options(py_name: str, py_options: dict, cpp_options: dict) -> bool:
+    if py_options == cpp_options:
+        return True
+    print(f"tuning-sync: {py_name} option mismatch between tuning.py and tuning_config.cpp", file=sys.stderr)
+    for member in sorted(set(py_options) | set(cpp_options)):
+        if py_options.get(member) != cpp_options.get(member):
+            print(
+                f"  {member}: tuning.py {py_options.get(member)!r}, tuning_config.cpp {cpp_options.get(member)!r}",
+                file=sys.stderr,
+            )
+    return False
+
+
 def _report(kind: str, py_names: set, cpp_names: set, cpp_file: str = "tuning_registry.cpp") -> bool:
     if py_names == cpp_names:
         return True
@@ -174,10 +271,18 @@ def main() -> int:
         )
         bandwidth_option_count += len(cpp_bandwidths[py_name])
 
+    py_enums = python_enum_select_options()
+    cpp_enums = cpp_enum_select_options()
+    enum_option_count = 0
+    for py_name in _ENUM_SELECT_TABLES:
+        ok = _report_enum_options(py_name, py_enums[py_name], cpp_enums[py_name]) and ok
+        enum_option_count += len(cpp_enums[py_name])
+
     if ok:
         total = len(cpp_numbers) + len(cpp_selects)
         print(f"tuning-sync: OK ({len(cpp_numbers)} number + {len(cpp_selects)} select = {total} parameters in sync)")
         print(f"tuning-sync: OK ({bandwidth_option_count} RX-bandwidth options across 3 chips in sync)")
+        print(f"tuning-sync: OK ({enum_option_count} enum select options across {len(_ENUM_SELECT_TABLES)} selects in sync)")
         return 0
     return 1
 

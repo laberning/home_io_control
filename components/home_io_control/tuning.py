@@ -175,9 +175,8 @@ PAIRING_DISCOVERY_PAYLOAD_OPTIONS = ["none", "0x00"]
 
 # Which power classes scan_paired_devices() calls. Option strings mirror the roll-call report's
 # power_save= values so the two share one vocabulary; the C++ side of these exact strings is
-# scan_power_classes_to_string() / power_save_mode_name() (tuning_config.h / proto_constants.h),
-# pinned against each other by tuning_registry_test.cpp — there is no build-time gate comparing
-# the Python and C++ strings directly.
+# scan_power_classes_to_string() / power_save_mode_name() (tuning_config.h / proto_constants.h).
+# scripts/check-tuning-sync.py compares every enum select's option strings with its C++ function.
 SCAN_POWER_CLASSES_OPTIONS = {
     "both": ScanPowerClasses.BOTH,
     "always_alive": ScanPowerClasses.ALWAYS_ALIVE,
@@ -185,9 +184,8 @@ SCAN_POWER_CLASSES_OPTIONS = {
 }
 
 # Whether/how PairingEngine sends CMD_DISCOVER_CONFIRM (0x2C) during pairing. Option strings
-# mirror discover_confirm_mode_to_string() (tuning_config.h), pinned against each other by
-# tuning_registry_test.cpp the same way SCAN_POWER_CLASSES_OPTIONS is — there is no build-time gate
-# comparing the Python and C++ strings directly. "skip"/"send"/"send_with_ack", not "on"/"off":
+# mirror discover_confirm_mode_to_string() (tuning_config.h), compared by check-tuning-sync.py.
+# "skip"/"send"/"send_with_ack", not "on"/"off":
 # YAML 1.1 turns bare on/off into booleans.
 DISCOVER_CONFIRM_MODE_OPTIONS = {
     "skip": DiscoverConfirmMode.SKIP,
@@ -206,7 +204,7 @@ DISCOVERY_LISTEN_CHANNELS_OPTIONS = {
 
 # Which channels the discovery requests go out on. `request` (default) sends every attempt on CH2;
 # `all` sends the attempts of one command on CH2, CH1 and CH3 in turn. Option strings mirror
-# discovery_send_channels_to_string() (tuning_config.h), pinned by tuning_registry_test.cpp.
+# discovery_send_channels_to_string() (tuning_config.h), compared by check-tuning-sync.py.
 DISCOVERY_SEND_CHANNELS_OPTIONS = {
     "request": DiscoverySendChannels.REQUEST,
     "all": DiscoverySendChannels.ALL,
@@ -215,7 +213,7 @@ DISCOVERY_SEND_CHANNELS_OPTIONS = {
 # Which direction pairing moves the system key in. `auto` (default) pulls from a device that answers
 # discovery as a remote controller and pushes to any other; `push` sends our key; `pull` asks the
 # device for its own key. Option strings mirror key_transfer_mode_to_string() (tuning_config.h),
-# pinned against each other by tuning_registry_test.cpp. See KeyTransferMode for the details.
+# compared by check-tuning-sync.py. See KeyTransferMode for the details.
 KEY_TRANSFER_MODE_OPTIONS = {
     "auto": KeyTransferMode.AUTO,
     "push": KeyTransferMode.PUSH,
@@ -570,6 +568,20 @@ def _assign(struct, field, value):
     cg.add(cg.RawExpression(f"{struct}.{field} = {value}"))
 
 
+# Enum parameters: (YAML key, C++ TuningConfig field, option string -> C++ enumerator), each assigned
+# when the user gave the key.
+_ENUM_ASSIGNMENTS = (
+    (CONF_SX1262_RX_BANDWIDTH, "sx1262_rx_bandwidth", SX1262_BANDWIDTH_OPTIONS),
+    (CONF_SX1276_RX_BANDWIDTH, "sx1276_rx_bandwidth", SX1276_BANDWIDTH_OPTIONS),
+    (CONF_LR1121_RX_BANDWIDTH, "lr1121_rx_bandwidth", LR1121_BANDWIDTH_OPTIONS),
+    (CONF_SCAN_POWER_CLASSES, "scan_power_classes", SCAN_POWER_CLASSES_OPTIONS),
+    (CONF_PAIRING_DISCOVER_CONFIRM, "pairing_discover_confirm", DISCOVER_CONFIRM_MODE_OPTIONS),
+    (CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS, "pairing_discovery_listen_channels", DISCOVERY_LISTEN_CHANNELS_OPTIONS),
+    (CONF_PAIRING_DISCOVERY_SEND_CHANNELS, "pairing_discovery_send_channels", DISCOVERY_SEND_CHANNELS_OPTIONS),
+    (CONF_PAIRING_KEY_TRANSFER, "pairing_key_transfer", KEY_TRANSFER_MODE_OPTIONS),
+)
+
+
 def _apply_tuning_config(config, var):
     """Generate C++ code that builds a TuningConfig from the validated YAML.
 
@@ -584,63 +596,9 @@ def _apply_tuning_config(config, var):
     _assign(tuning, "active", "true")
 
     # --- Parameters needing custom handling (enum/list/byte/bool) ---
-    if CONF_SX1262_RX_BANDWIDTH in config:
-        _assign(
-            tuning,
-            "sx1262_rx_bandwidth",
-            SX1262_BANDWIDTH_OPTIONS[config[CONF_SX1262_RX_BANDWIDTH]],
-        )
-
-    if CONF_SX1276_RX_BANDWIDTH in config:
-        _assign(
-            tuning,
-            "sx1276_rx_bandwidth",
-            SX1276_BANDWIDTH_OPTIONS[config[CONF_SX1276_RX_BANDWIDTH]],
-        )
-
-    if CONF_LR1121_RX_BANDWIDTH in config:
-        _assign(
-            tuning,
-            "lr1121_rx_bandwidth",
-            LR1121_BANDWIDTH_OPTIONS[config[CONF_LR1121_RX_BANDWIDTH]],
-        )
-
-    if CONF_SCAN_POWER_CLASSES in config:
-        _assign(
-            tuning,
-            "scan_power_classes",
-            SCAN_POWER_CLASSES_OPTIONS[config[CONF_SCAN_POWER_CLASSES]],
-        )
-
-    if CONF_PAIRING_DISCOVER_CONFIRM in config:
-        _assign(
-            tuning,
-            "pairing_discover_confirm",
-            DISCOVER_CONFIRM_MODE_OPTIONS[config[CONF_PAIRING_DISCOVER_CONFIRM]],
-        )
-
-    if CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS in config:
-        _assign(
-            tuning,
-            "pairing_discovery_listen_channels",
-            DISCOVERY_LISTEN_CHANNELS_OPTIONS[
-                config[CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS]
-            ],
-        )
-
-    if CONF_PAIRING_DISCOVERY_SEND_CHANNELS in config:
-        _assign(
-            tuning,
-            "pairing_discovery_send_channels",
-            DISCOVERY_SEND_CHANNELS_OPTIONS[config[CONF_PAIRING_DISCOVERY_SEND_CHANNELS]],
-        )
-
-    if CONF_PAIRING_KEY_TRANSFER in config:
-        _assign(
-            tuning,
-            "pairing_key_transfer",
-            KEY_TRANSFER_MODE_OPTIONS[config[CONF_PAIRING_KEY_TRANSFER]],
-        )
+    for key, field, options in _ENUM_ASSIGNMENTS:
+        if key in config:
+            _assign(tuning, field, options[config[key]])
 
     # Ordered discovery commands. Clear the struct default before appending so a
     # user-provided list replaces it rather than extending it.
