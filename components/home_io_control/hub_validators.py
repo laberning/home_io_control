@@ -273,6 +273,7 @@ KIND_EXPERIMENTAL = 0x8000
 DEVICE_MODEL_OPTIONS = {
     "towel_dryer": 1,
     "heater_with_light": 2,
+    "pilot_wire_interface": 3,
 }
 
 # The capability word of each row whose type has a YAML name, keyed "<name>" for subtype 0,
@@ -321,6 +322,7 @@ DEVICE_FEATURES = {
     "electrical_heater/1": 0x0100,  # WINDOW_COMPANIONS
     "electrical_heater/1/towel_dryer": 0x0000,  # no window function
     "electrical_heater/1/heater_with_light": 0x0900,  # WINDOW_COMPANIONS NIGHT_LIGHT
+    "electrical_heater/0/pilot_wire_interface": 0x0000,  # no capability
 }
 
 # The named positions (proto_device_types.h NAMED_POSITIONS), keyed by the CoverCommand name

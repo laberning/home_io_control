@@ -625,6 +625,45 @@ TEST(PlatformClimate, LevelHeaterModesSendLevelsAndNeverRegisters) {
   EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT) << "the commanded mode stands in until a level has been read";
 }
 
+TEST(PlatformClimate, PilotWireInterfaceOffersTheSixOrdersAndNoBoost) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_level_climate(hub);
+  entity.set_device_model(DeviceModel::PILOT_WIRE_INTERFACE);
+  entity.setup();
+  ASSERT_FALSE(entity.is_failed());
+  const ClimateTraits traits = entity.traits();
+
+  EXPECT_EQ(supported_modes(traits), (std::vector<ClimateMode>{CLIMATE_MODE_OFF, CLIMATE_MODE_HEAT}));
+  EXPECT_EQ(supported_presets(traits),
+            (std::vector<ClimatePreset>{CLIMATE_PRESET_AWAY, CLIMATE_PRESET_COMFORT, CLIMATE_PRESET_ECO}));
+  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Comfort -1", "Comfort -2", "Secured"}));
+  EXPECT_EQ(hub.get_device("ABC123")->model, DeviceModel::PILOT_WIRE_INTERFACE);
+}
+
+TEST(PlatformClimate, PilotWireInterfacePresetsSendTheSameLevelsAsAPlainHeater) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_level_climate(hub);
+  entity.set_device_model(DeviceModel::PILOT_WIRE_INTERFACE);
+  entity.setup();
+
+  for (const ClimatePreset preset : {CLIMATE_PRESET_AWAY, CLIMATE_PRESET_ECO, CLIMATE_PRESET_COMFORT}) {
+    auto call = entity.make_call();
+    call.set_preset(preset);
+    call.perform();
+  }
+  for (const char *name : {"Comfort -1", "Comfort -2"}) {
+    auto call = entity.make_call();
+    call.set_preset(std::string(name));
+    call.perform();
+  }
+  perform_mode(entity, CLIMATE_MODE_OFF);
+
+  EXPECT_EQ(hub.levels,
+            (std::vector<uint8_t>{heating_level::FROST_PROTECTION, heating_level::ECO, heating_level::COMFORT,
+                                  heating_level::COMFORT_MINUS_1, heating_level::COMFORT_MINUS_2, heating_level::OFF}));
+  EXPECT_TRUE(hub.writes.empty());
+}
+
 TEST(PlatformClimate, LevelHeaterPresetsSendTheirLevels) {
   MockHubClimate hub;
   IOHomeClimate entity = make_level_climate(hub);

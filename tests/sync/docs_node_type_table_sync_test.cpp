@@ -1,8 +1,9 @@
 /// @file docs_node_type_table_sync_test.cpp
 /// @brief Verifies that the node-type table in docs/supported-devices.md ("Node types and
 ///        subtypes") agrees with the C++ table (proto_device_types.cpp): every type value, its
-///        name, its named subtypes, the models below a subtype ("(io_model: a / b)"), and
-///        "(experimental)" on exactly the subtypes whose row carries device_type_flags::EXPERIMENTAL.
+///        name, its named subtypes (subtype 0 only where models sit below it), the models below a
+///        subtype ("(io_model: a / b)"), and "(experimental)" on exactly the subtypes whose row
+///        carries device_type_flags::EXPERIMENTAL.
 ///
 /// The C++ table is authoritative; the docs follow it. The test parses the Markdown table at
 /// runtime, like the other sync tests parse hub_validators.py (see device_type_sync_test.cpp and
@@ -168,10 +169,11 @@ TEST(DocsNodeTypeTableSync, NamedSubtypesMatchAndAreMarkedExperimentalExactlyWhe
   ASSERT_FALSE(docs.empty());
   std::map<unsigned, std::map<unsigned, DocsSubtype>> expected;
   test::for_each_table_row([&expected](const DeviceTypeInfo &row) {
-    if (row.subtype == 0)
+    // Subtype 0 is the type itself; the docs name it only to list the models below it.
+    if (row.subtype == 0 && !device_offers_models(row.type, 0))
       return;
     DocsSubtype subtype;
-    subtype.name = row.name;
+    subtype.name = row.subtype == 0 ? display_name(row.name) : row.name;
     subtype.experimental = (row.flags & device_type_flags::EXPERIMENTAL) != 0;
     expected[static_cast<unsigned>(row.type)][row.subtype] = subtype;
   });

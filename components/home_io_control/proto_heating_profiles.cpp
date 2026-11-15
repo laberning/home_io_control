@@ -218,6 +218,32 @@ constexpr HeatingObservedState LEVEL_HEATER_OBSERVED[] = {
      preset_index(LEVEL_HEATER_PRESETS, HeatingPresetId::CUSTOM, "Secured")},
 };
 
+/// The pilot-wire interface's presets: the six orders the pilot wire carries, so the level list without Boost.
+/// The interface drops a boost it is sent, so it is not offered.
+constexpr HeatingPresetEntry PILOT_WIRE_PRESETS[] = {
+    LEVEL_HEATER_PRESETS[0],  // Away
+    LEVEL_HEATER_PRESETS[1],  // Eco
+    LEVEL_HEATER_PRESETS[2],  // Comfort
+    LEVEL_HEATER_PRESETS[4],  // Comfort -1
+    LEVEL_HEATER_PRESETS[5],  // Comfort -2
+    LEVEL_HEATER_PRESETS[6],  // Secured
+};
+
+/// The levels the pilot-wire interface could report, mapped onto its own preset list: the plain heater's
+/// observed states without Boost (the indices differ, so the rows are restated).
+constexpr HeatingObservedState PILOT_WIRE_OBSERVED[] = {
+    {heating_level::OFF, HeatingHvacMode::OFF, NO_PRESET},
+    {heating_level::FROST_PROTECTION, HeatingHvacMode::HEAT, preset_index(PILOT_WIRE_PRESETS, HeatingPresetId::AWAY)},
+    {heating_level::ECO, HeatingHvacMode::HEAT, preset_index(PILOT_WIRE_PRESETS, HeatingPresetId::ECO)},
+    {heating_level::COMFORT, HeatingHvacMode::HEAT, preset_index(PILOT_WIRE_PRESETS, HeatingPresetId::COMFORT)},
+    {heating_level::COMFORT_MINUS_1, HeatingHvacMode::HEAT,
+     preset_index(PILOT_WIRE_PRESETS, HeatingPresetId::CUSTOM, "Comfort -1")},
+    {heating_level::COMFORT_MINUS_2, HeatingHvacMode::HEAT,
+     preset_index(PILOT_WIRE_PRESETS, HeatingPresetId::CUSTOM, "Comfort -2")},
+    {heating_level::SECURED, HeatingHvacMode::HEAT,
+     preset_index(PILOT_WIRE_PRESETS, HeatingPresetId::CUSTOM, "Secured")},
+};
+
 // === Heating temperature interface (14/0) and heat pump (22/0): temperature in the main parameter ===
 
 constexpr HeatingFp NO_FP{};
@@ -311,6 +337,33 @@ constexpr HeatingProfile heater_with_light_profile() {
 /// The heater with a night light (52/1, model HEATER_WITH_LIGHT).
 constexpr HeatingProfile HEATER_WITH_LIGHT_PROFILE = heater_with_light_profile();
 
+/// The plain electrical heater (52/0, no model): heating levels in the standard EXECUTE.
+constexpr HeatingProfile LEVEL_HEATER_PROFILE = {
+    .type = DeviceType::ELECTRICAL_HEATER,
+    .subtype = 0,
+    .model = DeviceModel::NONE,
+    .path = HeatingControlPath::HEATING_LEVEL,
+    .features = {.target_temperature = false, .current_temperature = false, .action = false, .mode_observed = true},
+    .mp_prefix = HEATING_LEVEL_MP_PREFIX,
+    .modes = LEVEL_HEATER_MODES,
+    .presets = LEVEL_HEATER_PRESETS,
+    .observed = LEVEL_HEATER_OBSERVED,
+};
+
+/// @brief The interface's profile under the PILOT_WIRE_INTERFACE model, without the boost level.
+/// @details Built from LEVEL_HEATER_PROFILE rather than restated: the same control path, modes and main
+///          parameter prefix, only the presets and the levels read back differ.
+constexpr HeatingProfile pilot_wire_interface_profile() {
+  HeatingProfile profile = LEVEL_HEATER_PROFILE;
+  profile.model = DeviceModel::PILOT_WIRE_INTERFACE;
+  profile.presets = PILOT_WIRE_PRESETS;
+  profile.observed = PILOT_WIRE_OBSERVED;
+  return profile;
+}
+
+/// The interface for pilot-wire heaters (52/0, model PILOT_WIRE_INTERFACE).
+constexpr HeatingProfile PILOT_WIRE_INTERFACE_PROFILE = pilot_wire_interface_profile();
+
 constexpr HeatingProfile HEATING_PROFILES[] = {
     {
         .type = DeviceType::HEATING_TEMPERATURE_INTERFACE,
@@ -318,13 +371,13 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
         .model = DeviceModel::NONE,
         .path = HeatingControlPath::TEMPERATURE_EXECUTE,
         .features = {.target_temperature = true, .current_temperature = false, .action = false, .mode_observed = false},
+        .mp_prefix = HEATING_ALIAS_MP_PREFIX,
         .modes = TEMPERATURE_INTERFACE_MODES,
         .setpoint_fp = THERMOSTAT_MANUAL,
         .visual_min_c = TEMPERATURE_VISUAL_MIN_C,
         .visual_max_c = TEMPERATURE_VISUAL_MAX_C,
         .presets = TEMPERATURE_INTERFACE_PRESETS,
         .observed = TEMPERATURE_INTERFACE_OBSERVED,
-        .mp_prefix = HEATING_ALIAS_MP_PREFIX,
     },
     {
         .type = DeviceType::HEAT_PUMP,
@@ -332,25 +385,16 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
         .model = DeviceModel::NONE,
         .path = HeatingControlPath::TEMPERATURE_EXECUTE,
         .features = {.target_temperature = true, .current_temperature = false, .action = false, .mode_observed = false},
+        .mp_prefix = HEATING_ALIAS_MP_PREFIX,
+        .fixed_range = true,
         .modes = HEAT_PUMP_MODES,
         .visual_min_c = TEMPERATURE_VISUAL_MIN_C,
         .visual_max_c = TEMPERATURE_VISUAL_MAX_C,
         .presets = HEAT_PUMP_PRESETS,
         .observed = HEAT_PUMP_OBSERVED,
-        .mp_prefix = HEATING_ALIAS_MP_PREFIX,
-        .fixed_range = true,
     },
-    {
-        .type = DeviceType::ELECTRICAL_HEATER,
-        .subtype = 0,
-        .model = DeviceModel::NONE,
-        .path = HeatingControlPath::HEATING_LEVEL,
-        .features = {.target_temperature = false, .current_temperature = false, .action = false, .mode_observed = true},
-        .modes = LEVEL_HEATER_MODES,
-        .presets = LEVEL_HEATER_PRESETS,
-        .observed = LEVEL_HEATER_OBSERVED,
-        .mp_prefix = HEATING_LEVEL_MP_PREFIX,
-    },
+    LEVEL_HEATER_PROFILE,
+    PILOT_WIRE_INTERFACE_PROFILE,
     SETPOINT_HEATER_PROFILE,
     HEATER_WITH_LIGHT_PROFILE,
     {

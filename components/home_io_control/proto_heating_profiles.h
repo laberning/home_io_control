@@ -188,20 +188,25 @@ struct HeatingProgrammePeriod {
 };
 
 /// @brief One heater kind.
-/// @details A row is written with designated initializers, in declaration order. The fields before
-///          `setpoint_fp` have no default, so a row that leaves one out does not compile; every other field has
+/// @details A row is written with designated initializers, in declaration order. `type` through `features`
+///          and `modes` have no default, so a row that leaves one out does not compile; every other field has
 ///          one and is left out where unused. Each list is a span over a `constexpr` array, which carries its
 ///          own length.
 struct HeatingProfile {
   // --- Required: every row states these ---
-  DeviceType type;                          ///< Node type.
-  uint8_t subtype;                          ///< Subtype (0 = the type's own row).
-  DeviceModel model;                        ///< Model (NONE = the (type, subtype) row's own profile).
-  HeatingControlPath path;                  ///< How the heater is commanded and read.
-  HeatingProfileFeatures features;          ///< What the card and its companions offer.
+  DeviceType type;                  ///< Node type.
+  uint8_t subtype;                  ///< Subtype (0 = the type's own row).
+  DeviceModel model;                ///< Model (NONE = the (type, subtype) row's own profile).
+  HeatingControlPath path;          ///< How the heater is commanded and read.
+  HeatingProfileFeatures features;  ///< What the card and its companions offer.
+  // The byte-sized optional fields sit here, in the padding before the first span, so the row packs.
+  uint8_t mp_prefix{0};             ///< High byte of a level or alias main parameter (0 for registers).
+  bool fixed_range{false};          ///< TEMPERATURE_EXECUTE: the temperature range is fixed, so the YAML
+                                    ///< `min_temperature:` / `max_temperature:` do not apply.
+  bool experimental_writes{false};  ///< PRIVATE_REGISTERS: the mode and preset writes are unconfirmed on a device.
   std::span<const HeatingModeEntry> modes;  ///< HVAC modes offered, with the value each writes.
 
-  // --- Optional: a default stands for "unused". The byte-sized fields come last, so they pack. ---
+  // --- Optional: a default stands for "unused". ---
   HeatingFp setpoint_fp{};   ///< TEMPERATURE_EXECUTE: the functional parameter sent with a setpoint.
   float visual_min_c{0.0F};  ///< Lowest target temperature the card offers (0 without a setpoint).
   float visual_max_c{0.0F};  ///< Highest target temperature the card offers (0 without a setpoint).
@@ -225,16 +230,12 @@ struct HeatingProfile {
   /// the part costs a read, not the poll.
   std::span<const HeatingFunction> extra_poll_registers{};
   // NOLINTEND(readability-redundant-member-init)
-  uint8_t mp_prefix{0};     ///< High byte of a level or alias main parameter (0 for registers).
-  bool fixed_range{false};  ///< TEMPERATURE_EXECUTE: the temperature range is fixed, so the YAML
-                            ///< `min_temperature:` / `max_temperature:` do not apply.
   /// PRIVATE_REGISTERS: the register the HVAC modes write and the card's mode is read from.
   HeatingFunction mode_fn{HeatingFunction::SET_MODE};
   /// PRIVATE_REGISTERS with `preset_observed`: the register the card's preset is read from. The presets'
   /// own `write_fn` say what each writes.
   HeatingFunction preset_fn{HeatingFunction::SET_MODE};
   HeatingActionSource action_source{HeatingActionSource::REGULATOR};  ///< Where `features.action` reads from.
-  bool experimental_writes{false};  ///< PRIVATE_REGISTERS: the mode and preset writes are unconfirmed on a device.
 };
 
 /// @brief What a heater's programme period resolves to, from its readings.

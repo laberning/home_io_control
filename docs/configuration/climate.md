@@ -13,7 +13,9 @@
 The `climate:` entity drives electrical heaters, a heating temperature interface and a generic heat pump,
 and what its card offers follows the device kind. A towel dryer reports the same kind as a radiator,
 so its entry adds `io_model: towel_dryer`; see [Towel dryers](#towel-dryers). A heater with a night
-light adds `io_model: heater_with_light`; see [Heaters with a night light](#heaters-with-a-night-light). A heater with an adjustable setpoint (node type 52, subtype 1) is driven over its
+light adds `io_model: heater_with_light`; see [Heaters with a night light](#heaters-with-a-night-light). An
+interface for pilot-wire heaters adds `io_model: pilot_wire_interface`; see
+[Pilot-wire interfaces](#pilot-wire-interfaces). A heater with an adjustable setpoint (node type 52, subtype 1) is driven over its
 private register protocol (`CMD_WRITE_PRIVATE`, 0x20): the hub reads and writes registers such as the
 setpoint, the mode and the room temperature, and the entity shows what the heater reports. A plain
 electrical heater (node type 52, subtype 0) is commanded with heating levels in the standard EXECUTE
@@ -21,10 +23,9 @@ electrical heater (node type 52, subtype 0) is commanded with heating levels in 
 and read with the ordinary status request. Reads and writes of the register protocol are confirmed
 on an Atlantic AGILIA IO radiator (see
 [ADR 0054](../adr/0054-heaters-are-read-back-over-the-private-register-protocol.md) for the
-design). The heating-level control of the plain heater is confirmed for Eco, Comfort and Off on a
-Thermor pilot-wire interface (issue #228); the Away (frost protection), Boost, Comfort -1 and
-Comfort -2 levels are untested, and the interface reports no level, so Home Assistant cannot read
-the level back (see
+design). The heating-level control of the plain heater is confirmed on a Thermor pilot-wire
+interface (issue #228; see [Pilot-wire interfaces](#pilot-wire-interfaces)). The interface reports no
+level, so Home Assistant cannot read the level back (see
 [ADR 0055](../adr/0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md)).
 
 Other heating devices (exterior heating is a [fan](fan.md); the Atlantic heat pump and boiler) have no
@@ -130,6 +131,29 @@ do nothing. At the first poll the hub reads every 52/1 heater's model name and l
 `Device BD684B reports model name "ADELIS 2 DIGIT"`. It also logs a warning when the declaration
 looks wrong: a heater declared as a towel dryer that holds no towel-dryer mode, or one declared
 as anything else that does. The warning never changes what the hub does.
+
+## Pilot-wire interfaces
+
+An interface for pilot-wire heaters, such as the Thermor Interface Cozytouch, reports the same type
+and subtype as a plain electrical heater (node type 52, subtype 0), so the hub cannot tell them apart
+on the radio. Add `io_model: pilot_wire_interface` to its entry:
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Bedroom heater"
+    io_device_id: "A1B2C3"
+    io_device_type: "electrical_heater"
+    io_subtype: 0
+    io_model: pilot_wire_interface
+```
+
+The pilot wire carries six orders, and the card offers exactly these: the modes `off` and `heat`, and
+the presets `away` (frost protection), `eco`, `comfort`, `Comfort -1` and `Comfort -2`. All six are
+confirmed on the heater's display (issue #228). It has no boost: the interface ignores one, so the card
+does not show it. `Secured` appears when the interface reports it and cannot be set. The commands are
+the same heating-level EXECUTE as for a plain heater. A plain heater without `io_model:` keeps its
+`boost` preset.
 
 ## Heaters with a night light
 

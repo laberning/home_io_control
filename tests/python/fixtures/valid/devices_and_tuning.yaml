@@ -93,6 +93,13 @@ climate:
     io_model: heater_with_light
     night_light:
       name: "Hekla Night Light"
+  # An interface for pilot-wire heaters: the plain heater's levels without a boost.
+  - platform: home_io_control
+    name: "Pilot Wire Interface"
+    io_device_id: "5E6F73"
+    io_device_type: electrical_heater
+    io_subtype: 0
+    io_model: pilot_wire_interface
   - platform: home_io_control
     name: "Plain Heater"
     io_device_id: "5E6F70"

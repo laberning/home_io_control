@@ -209,6 +209,13 @@ climate:
     io_model: heater_with_light
     night_light:
       name: "Test Night Light"
+  # An interface for pilot-wire heaters reports the same type and subtype; io_model drops the boost it ignores.
+  - platform: home_io_control
+    name: "Test Pilot Wire Interface"
+    io_device_id: "FEEB2B"
+    io_device_type: "electrical_heater"
+    io_subtype: 0
+    io_model: pilot_wire_interface
   # The plain electrical heater is commanded with heating levels (io_subtype 0).
   - platform: home_io_control
     name: "Test Plain Heating"

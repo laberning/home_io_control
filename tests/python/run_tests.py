@@ -901,7 +901,7 @@ def a_model_row_is_offered_only_by_its_kind_and_replaces_its_word():
     towel = v.DEVICE_MODEL_OPTIONS["towel_dryer"]
     assert towel == 1
     assert v.device_models(t["electrical_heater"], 1) == ["heater_with_light", "towel_dryer"]
-    assert v.device_models(t["electrical_heater"], 0) == []
+    assert v.device_models(t["electrical_heater"], 0) == ["pilot_wire_interface"]
     assert v.device_models(t["roller_shutter"]) == []
     assert v.device_models(0x14, 1) == [], "a raw type with no name has no models"
     assert v.device_features(t["electrical_heater"], 1, towel) & v.FEATURE_WINDOW_COMPANIONS == 0

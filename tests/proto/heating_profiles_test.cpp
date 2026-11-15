@@ -564,7 +564,8 @@ TEST(HeatingProfilesTowelDryer, TheModelSelectsItsOwnProfileAndNoModelKeepsTheRa
 
 TEST(HeatingProfilesTowelDryer, AModelProfileKeepsTheControlPathOfTheProfileAboveIt) {
   // The path predicates (device_uses_heating_registers() and friends) take no model: this is why.
-  for (const auto model : {DeviceModel::TOWEL_DRYER, DeviceModel::HEATER_WITH_LIGHT}) {
+  for (const auto model :
+       {DeviceModel::TOWEL_DRYER, DeviceModel::HEATER_WITH_LIGHT, DeviceModel::PILOT_WIRE_INTERFACE}) {
     for (unsigned type = 0; type <= 0x3FF; type++) {
       for (unsigned subtype = 0; subtype <= 0x3F; subtype++) {
         const auto t = static_cast<DeviceType>(type);
@@ -889,6 +890,73 @@ TEST(HeatingProfilesHeaterWithLight, IsTheRadiatorPlusTheLightReadAfterItsPoll) 
   ASSERT_EQ(light->extra_poll_registers.size(), std::size(extra));
   for (size_t i = 0; i < std::size(extra); i++)
     EXPECT_EQ(light->extra_poll_registers[i], extra[i]) << i;
+}
+
+// === Pilot-wire interface (52/0, model PILOT_WIRE_INTERFACE) ===
+
+TEST(HeatingProfilesPilotWireInterface, OffersTheSixPilotWireOrdersAndNoBoost) {
+  const HeatingProfile &plain = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE);
+  const HeatingProfile *pilot =
+      find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE);
+  ASSERT_NE(pilot, nullptr);
+  ASSERT_NE(pilot, &plain);
+  EXPECT_EQ(pilot->model, DeviceModel::PILOT_WIRE_INTERFACE);
+
+  // Away, Eco, Comfort, Comfort -1, Comfort -2 and the read-only Secured; Off is the mode.
+  ASSERT_EQ(pilot->presets.size(), 6u);
+  const uint8_t commandable[] = {heating_level::FROST_PROTECTION, heating_level::ECO, heating_level::COMFORT,
+                                 heating_level::COMFORT_MINUS_1, heating_level::COMFORT_MINUS_2};
+  for (size_t i = 0; i < std::size(commandable); i++) {
+    EXPECT_EQ(pilot->presets[i].wire, commandable[i]) << i;
+    EXPECT_TRUE(pilot->presets[i].commandable) << i;
+    EXPECT_NE(pilot->presets[i].id, HeatingPresetId::BOOST) << i;
+  }
+  EXPECT_FALSE(pilot->presets[5].commandable);
+  for (const HeatingPresetEntry &preset : pilot->presets)
+    EXPECT_NE(preset.wire, heating_level::BOOST);
+  for (const HeatingObservedState &row : pilot->observed)
+    EXPECT_NE(row.wire, heating_level::BOOST);
+  EXPECT_EQ(pilot->modes.size(), 2u);
+}
+
+TEST(HeatingProfilesPilotWireInterface, EveryObservedLevelNamesTheSamePresetAsThePlainHeater) {
+  const HeatingProfile &plain = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE);
+  const HeatingProfile &pilot =
+      *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE);
+  for (const HeatingObservedState &row : pilot.observed) {
+    const auto same = std::find_if(plain.observed.begin(), plain.observed.end(),
+                                   [&](const HeatingObservedState &p) { return p.wire == row.wire; });
+    ASSERT_NE(same, plain.observed.end()) << static_cast<int>(row.wire);
+    EXPECT_EQ(same->hvac, row.hvac);
+    if (row.preset == -1) {
+      EXPECT_EQ(same->preset, -1);
+    } else {
+      const HeatingPresetEntry &a = pilot.presets[static_cast<size_t>(row.preset)];
+      const HeatingPresetEntry &b = plain.presets[static_cast<size_t>(same->preset)];
+      EXPECT_EQ(a.id, b.id);
+      EXPECT_EQ(a.wire, b.wire);
+    }
+  }
+}
+
+TEST(HeatingProfilesPilotWireInterface, KeepsThePlainHeatersControlPathAndMainParameterPrefix) {
+  const HeatingProfile &plain = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE);
+  const HeatingProfile &pilot =
+      *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE);
+  EXPECT_EQ(pilot.path, HeatingControlPath::HEATING_LEVEL);
+  EXPECT_EQ(pilot.path, plain.path);
+  EXPECT_EQ(pilot.mp_prefix, plain.mp_prefix);
+  EXPECT_EQ(pilot.modes.data(), plain.modes.data());
+  EXPECT_EQ(pilot.features.mode_observed, plain.features.mode_observed);
+  EXPECT_EQ(find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::PILOT_WIRE_INTERFACE),
+            find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE))
+      << "a subtype that does not offer the model falls back to its profile";
+}
+
+TEST(HeatingProfilesPilotWireInterface, APlainHeaterKeepsItsBoost) {
+  const HeatingProfile &plain = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE);
+  EXPECT_EQ(plain.presets.size(), 7u);
+  EXPECT_EQ(plain.presets[3].id, HeatingPresetId::BOOST);
 }
 
 TEST(HeatingProfilesHeaterWithLight, NoOtherProfileReadsTheLight) {
