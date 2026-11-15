@@ -1,6 +1,6 @@
 /// @file platform_climate_controls_test.cpp
 /// @brief Tests for the generated per-heater companions: the window sensor, the open-window
-/// detection switch, the night light and the energy sensor.
+/// detection switch, the night light and the meter sensors.
 
 #include "platform_climate_controls.h"
 
@@ -350,22 +350,22 @@ TEST(PlatformHeaterNightLight, AnUnacknowledgedSwitchIsNotReadBackAndShowsTheHea
   EXPECT_FALSE(rig.state.current_values.is_on()) << "never shows a command the heater did not confirm";
 }
 
-// === Energy sensor ===
+// === Meter sensors ===
 
-TEST(PlatformHeaterEnergySensor, HasNoStateUntilTheMeterHasBeenRead) {
+TEST(PlatformHeaterMeterSensor, EnergyHasNoStateUntilTheMeterHasBeenRead) {
   ClimateControlsHub hub;
   hub.add_heater();
-  IOHomeHeaterEnergySensor energy;
+  IOHomeHeaterMeterSensor energy;
   energy.set_parent(&hub);
   energy.set_device_id("ABC123");
   energy.setup();
   EXPECT_TRUE(std::isnan(energy.state)) << "zero would be a reading";
 }
 
-TEST(PlatformHeaterEnergySensor, PublishesTheMeterInKilowattHours) {
+TEST(PlatformHeaterMeterSensor, EnergyPublishesTheMeterInKilowattHours) {
   ClimateControlsHub hub;
   hub.add_heater();
-  IOHomeHeaterEnergySensor energy;
+  IOHomeHeaterMeterSensor energy;
   energy.set_parent(&hub);
   energy.set_device_id("ABC123");
   energy.setup();
@@ -376,13 +376,52 @@ TEST(PlatformHeaterEnergySensor, PublishesTheMeterInKilowattHours) {
   EXPECT_FLOAT_EQ(energy.state, 3423.0F);
 }
 
-TEST(PlatformHeaterEnergySensor, PublishesWhatIsAlreadyKnownAtSetup) {
+TEST(PlatformHeaterMeterSensor, EnergyPublishesWhatIsAlreadyKnownAtSetup) {
   ClimateControlsHub hub;
   hub.add_heater();
   hub.deliver([](HeatingReadings &r) { r.energy_kwh = 264.0F; });
-  IOHomeHeaterEnergySensor energy;
+  IOHomeHeaterMeterSensor energy;
   energy.set_parent(&hub);
   energy.set_device_id("ABC123");
   energy.setup();
   EXPECT_FLOAT_EQ(energy.state, 264.0F);
+}
+
+TEST(PlatformHeaterMeterSensor, PowerIsTheRatedPowerTimesTheWorkingRateOnceBothAreRead) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  IOHomeHeaterMeterSensor power;
+  power.set_reading(IOHomeHeaterMeterSensor::Reading::POWER);
+  power.set_parent(&hub);
+  power.set_device_id("ABC123");
+  power.setup();
+
+  hub.deliver([](HeatingReadings &r) { r.working_rate = 100; });
+  EXPECT_TRUE(std::isnan(power.state)) << "no rated power yet";
+  hub.deliver([](HeatingReadings &r) { r.rated_power_w = 2000.0F; });
+  EXPECT_FLOAT_EQ(power.state, 2000.0F);
+  hub.deliver([](HeatingReadings &r) { r.working_rate = 0; });
+  EXPECT_FLOAT_EQ(power.state, 0.0F) << "idle shows as 0 W";
+}
+
+TEST(PlatformHeaterMeterSensor, TheRatingsShowRegister0x011A) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  IOHomeHeaterMeterSensor rated_power;
+  IOHomeHeaterMeterSensor rated_voltage;
+  rated_power.set_reading(IOHomeHeaterMeterSensor::Reading::RATED_POWER);
+  rated_voltage.set_reading(IOHomeHeaterMeterSensor::Reading::RATED_VOLTAGE);
+  for (IOHomeHeaterMeterSensor *sensor : {&rated_power, &rated_voltage}) {
+    sensor->set_parent(&hub);
+    sensor->set_device_id("ABC123");
+    sensor->setup();
+    EXPECT_TRUE(std::isnan(sensor->state));
+  }
+
+  hub.deliver([](HeatingReadings &r) {
+    r.rated_power_w = 2000.0F;
+    r.rated_voltage_v = 230;
+  });
+  EXPECT_FLOAT_EQ(rated_power.state, 2000.0F);
+  EXPECT_FLOAT_EQ(rated_voltage.state, 230.0F);
 }

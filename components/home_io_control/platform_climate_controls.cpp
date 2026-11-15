@@ -1,6 +1,6 @@
 /// @file platform_climate_controls.cpp
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the open-window
-/// detection switch, the night light and the energy sensor.
+/// detection switch, the night light and the meter sensors.
 /// @ingroup hioc_platforms
 
 #include "platform_climate_controls.h"
@@ -18,7 +18,7 @@ namespace home_io_control {
 static const char *const TAG_WINDOW = "home_io_control.window";
 static const char *const TAG_DETECTION = "home_io_control.window_detection";
 static const char *const TAG_NIGHT_LIGHT = "home_io_control.night_light";
-static const char *const TAG_ENERGY = "home_io_control.heater_energy";
+static const char *const TAG_METER = "home_io_control.heater_meter";
 
 /// Percentage for a light switched on at a brightness that rounds to 0 %: the lowest level that is still
 /// on (register value HEATING_NIGHT_LIGHT_STEPS_PER_PERCENT).
@@ -143,17 +143,47 @@ void IOHomeHeaterNightLight::dump_config() {
   ESP_LOGCONFIG(TAG_NIGHT_LIGHT, "  Device ID: %s", this->device_id_.c_str());
 }
 
-void IOHomeHeaterEnergySensor::setup() {
+/// @return The log label of a meter reading.
+static const char *meter_reading_label(IOHomeHeaterMeterSensor::Reading reading) {
+  switch (reading) {
+    case IOHomeHeaterMeterSensor::Reading::ENERGY:
+      return "Energy";
+    case IOHomeHeaterMeterSensor::Reading::POWER:
+      return "Power";
+    case IOHomeHeaterMeterSensor::Reading::RATED_POWER:
+      return "Rated Power";
+    case IOHomeHeaterMeterSensor::Reading::RATED_VOLTAGE:
+      return "Rated Voltage";
+  }
+  return "Meter";
+}
+
+float IOHomeHeaterMeterSensor::value_of(Reading reading, const HeatingReadings &readings) {
+  switch (reading) {
+    case Reading::ENERGY:
+      return readings.energy_kwh;
+    case Reading::POWER:
+      return heating_power_estimate_w(readings);
+    case Reading::RATED_POWER:
+      return readings.rated_power_w;
+    case Reading::RATED_VOLTAGE:
+      return readings.rated_voltage_v >= 0 ? static_cast<float>(readings.rated_voltage_v) : NAN;
+  }
+  return NAN;
+}
+
+void IOHomeHeaterMeterSensor::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {
     // Nothing read means no state: zero would be a reading.
-    if (!std::isnan(dev.heating.energy_kwh))
-      this->publish_state(dev.heating.energy_kwh);
+    const float value = value_of(this->reading_, dev.heating);
+    if (!std::isnan(value))
+      this->publish_state(value);
   });
 }
 
-void IOHomeHeaterEnergySensor::dump_config() {
-  ESP_LOGCONFIG(TAG_ENERGY, "IO-Homecontrol Heater Energy:");
-  ESP_LOGCONFIG(TAG_ENERGY, "  Device ID: %s", this->device_id_.c_str());
+void IOHomeHeaterMeterSensor::dump_config() {
+  ESP_LOGCONFIG(TAG_METER, "IO-Homecontrol Heater %s:", meter_reading_label(this->reading_));
+  ESP_LOGCONFIG(TAG_METER, "  Device ID: %s", this->device_id_.c_str());
 }
 
 }  // namespace home_io_control

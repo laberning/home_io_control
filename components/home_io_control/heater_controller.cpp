@@ -23,6 +23,7 @@
 
 #include "esphome/core/log.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iterator>
 #include <optional>
@@ -377,6 +378,8 @@ bool HeaterController::read_and_store_heating_register_(const std::string &devic
       fn == profile->programme_period->comfort_fn)
     in_force = in_force_after_comfort_change(*profile, dev->heating, value);
   dev->heating.store(fn, value);
+  // A register holding several values (the ratings) fills them all from this one reply.
+  store_shared_register_values(response, fn, dev->heating);
   if (in_force.has_value())
     dev->heating.store(profile->programme_period->in_force_fn, *in_force);
   // A reading that left the programme drops the temperature in force before anything shows it.
@@ -726,13 +729,8 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
       this->read_heating_register(device_id, fn, nullptr, max_tries);
   }
 
-  // The energy meter, only for a device whose YAML declares the `energy:` sensor: a read every poll that
-  // nothing shows is not sent. A miss is not a poll failure; the next poll asks again.
-  if (ok) {
-    const IoDevice *current = this->registry_.get(device_id);
-    if (current != nullptr && current->energy_sensor && has_feature(current->features, device_feature::ENERGY_METER))
-      this->read_heating_register(device_id, HeatingFunction::ENERGY, nullptr, max_tries);
-  }
+  if (ok)
+    this->read_meter_registers_(device_id, profile, max_tries);
 
   // Once the device has answered a read: the one-off model check. It runs even when a later register of
   // the poll failed, because a towel dryer declared on a radiator fails exactly there (its mode register
@@ -740,6 +738,29 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
   if (answered > 0)
     this->check_heater_model(device_id, max_tries);
   return ok;
+}
+
+void HeaterController::read_meter_registers_(const std::string &device_id, const HeatingProfile &profile,
+                                             uint8_t max_tries) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr || !has_feature(dev->features, device_feature::ENERGY_METER))
+    return;
+  // Copied: each read may touch the registry.
+  const bool energy = dev->meter_sensors.energy;
+  const bool power = dev->meter_sensors.power;
+  const bool ratings = power || dev->meter_sensors.ratings;
+  const bool ratings_read = dev->heating.has(HeatingFunction::RATED_POWER);
+
+  // The ratings never change: read until read once. One read stores the power and the voltage.
+  if (ratings && !ratings_read)
+    this->read_heating_register(device_id, HeatingFunction::RATED_POWER, nullptr, max_tries);
+  // The estimate needs the working rate; a towel dryer's poll already reads it.
+  const bool rate_polled = std::find(profile.poll_registers.begin(), profile.poll_registers.end(),
+                                     HeatingFunction::WORKING_RATE) != profile.poll_registers.end();
+  if (power && !rate_polled)
+    this->read_heating_register(device_id, HeatingFunction::WORKING_RATE, nullptr, max_tries);
+  if (energy)
+    this->read_heating_register(device_id, HeatingFunction::ENERGY, nullptr, max_tries);
 }
 
 // === Poll cadence ===

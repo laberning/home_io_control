@@ -292,6 +292,14 @@ struct StopCandidate {
   void clear() { *this = {}; }
 };
 
+/// @brief The meter sensors a heater's YAML declares. Each one opts the device into the reads it shows
+/// (HeaterController::read_meter_registers_()); nothing declared reads none of them.
+struct HeatingMeterSensors {
+  bool energy{false};   ///< `energy:`: register 0x0116 on every poll.
+  bool power{false};    ///< `power:`: the ratings once and the working rate on every poll.
+  bool ratings{false};  ///< `rated_power:` or `rated_voltage:`: register 0x011A once.
+};
+
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
   uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
@@ -419,8 +427,6 @@ struct IoDevice {
                                          ///< decoded replies; stays "never read" for every other device type.
   bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
                                  ///< line names the level even when the device reports none.
-  bool energy_sensor{false};     ///< YAML-declared (a heater's `energy:` sensor): the heater poll reads the energy
-                                 ///< meter (register 0x0116) when the kind has device_feature::ENERGY_METER.
   bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every
                                  ///< exchange with it uses `system_key` below instead of the hub's key.
   uint8_t system_key[AES_KEY_SIZE]{};  ///< The device's own key; meaningful only when `has_system_key`. Key material:
@@ -432,6 +438,9 @@ struct IoDevice {
                                        ///< model name read, declared-model hint) so far; the check stops after
                                        ///< it completes or after a bounded number of runs. Runtime only.
   bool model_checked{false};           ///< The model check completed: both of its reads were answered.
+
+  HeatingMeterSensors meter_sensors{};  ///< YAML-declared meter sensors of a heater: the poll reads what
+                                        ///< they show when the kind has device_feature::ENERGY_METER.
 };
 
 /// @brief Resolve a device's capability bits and inversion from its kind and its YAML overrides.

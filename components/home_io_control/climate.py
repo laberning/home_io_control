@@ -5,7 +5,8 @@
 ## Defines the experimental IO-Homecontrol heating/climate integration and wires it to the shared
 ## hub. Heaters with a window sensor also get a Window binary sensor and an Open Window Detection
 ## switch; a heater with a night light (io_model: heater_with_light) can add a dimmable `night_light:`
-## light, and a heater with an energy meter (every electrical_heater/1 kind) an `energy:` sensor in kWh. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
+## light, and a heater with an energy meter (every electrical_heater/1 kind) the `energy:`, `power:`,
+## `rated_power:` and `rated_voltage:` sensors. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
 ## construction/registration stays here.
 
 import functools
@@ -20,11 +21,18 @@ from esphome.const import (
     CONF_MAX_TEMPERATURE,
     CONF_MIN_TEMPERATURE,
     CONF_OUTPUT_ID,
+    CONF_POWER,
     DEVICE_CLASS_ENERGY,
+    DEVICE_CLASS_POWER,
+    DEVICE_CLASS_VOLTAGE,
     DEVICE_CLASS_WINDOW,
     ENTITY_CATEGORY_CONFIG,
+    ENTITY_CATEGORY_DIAGNOSTIC,
+    STATE_CLASS_MEASUREMENT,
     STATE_CLASS_TOTAL_INCREASING,
     UNIT_KILOWATT_HOURS,
+    UNIT_VOLT,
+    UNIT_WATT,
 )
 
 from . import home_io_control_ns
@@ -66,9 +74,10 @@ IOHomeOpenWindowDetectionSwitch = home_io_control_ns.class_(
 IOHomeHeaterNightLight = home_io_control_ns.class_(
     "IOHomeHeaterNightLight", light.LightOutput, cg.Component
 )
-IOHomeHeaterEnergySensor = home_io_control_ns.class_(
-    "IOHomeHeaterEnergySensor", sensor.Sensor, cg.Component
+IOHomeHeaterMeterSensor = home_io_control_ns.class_(
+    "IOHomeHeaterMeterSensor", sensor.Sensor, cg.Component
 )
+MeterReading = IOHomeHeaterMeterSensor.enum("Reading", is_class=True)
 
 CONF_NIGHT_LIGHT = "night_light"
 
@@ -92,18 +101,76 @@ def _validate_night_light(config):
     )
 
 
-def _validate_energy(config):
-    """Accept `energy:` only on a heater kind with an energy meter (the ENERGY_METER bit of its row).
+CONF_RATED_POWER = "rated_power"
+CONF_RATED_VOLTAGE = "rated_voltage"
 
-    As for `night_light:`, the key is rejected when no io_device_type is declared: the sensor opts the
-    device into reading register 0x0116 on every poll, which only a known kind may receive.
+# The meter sensors: (YAML key, IOHomeHeaterMeterSensor::Reading, IOHomeClimate setter of the reads it opts the
+# device into, sensor schema options).
+METER_SENSORS = (
+    # Whole kWh (register 0x0116), so no decimals.
+    (
+        CONF_ENERGY,
+        MeterReading.ENERGY,
+        "set_energy_sensor",
+        {
+            "unit_of_measurement": UNIT_KILOWATT_HOURS,
+            "accuracy_decimals": 0,
+            "device_class": DEVICE_CLASS_ENERGY,
+            "state_class": STATE_CLASS_TOTAL_INCREASING,
+        },
+    ),
+    (
+        CONF_POWER,
+        MeterReading.POWER,
+        "set_power_sensor",
+        {
+            "unit_of_measurement": UNIT_WATT,
+            "accuracy_decimals": 0,
+            "device_class": DEVICE_CLASS_POWER,
+            "state_class": STATE_CLASS_MEASUREMENT,
+        },
+    ),
+    (
+        CONF_RATED_POWER,
+        MeterReading.RATED_POWER,
+        "set_ratings_sensor",
+        {
+            "unit_of_measurement": UNIT_WATT,
+            "accuracy_decimals": 0,
+            "device_class": DEVICE_CLASS_POWER,
+            "entity_category": ENTITY_CATEGORY_DIAGNOSTIC,
+        },
+    ),
+    (
+        CONF_RATED_VOLTAGE,
+        MeterReading.RATED_VOLTAGE,
+        "set_ratings_sensor",
+        {
+            "unit_of_measurement": UNIT_VOLT,
+            "accuracy_decimals": 0,
+            "device_class": DEVICE_CLASS_VOLTAGE,
+            "entity_category": ENTITY_CATEGORY_DIAGNOSTIC,
+        },
+    ),
+)
+
+
+def _validate_meter_sensors(config):
+    """Accept the meter sensors only on a heater kind with an energy meter (the ENERGY_METER bit of its row).
+
+    As for `night_light:`, the keys are rejected when no io_device_type is declared: each sensor opts the
+    device into register reads (0x0116, 0x011A, 0x0126) that only a known kind may receive.
     """
-    if CONF_ENERGY not in config or declared_features(config) & FEATURE_ENERGY_METER:
+    if declared_features(config) & FEATURE_ENERGY_METER:
         return config
-    raise cv.Invalid(
-        "energy needs a heater with an energy meter: set io_device_type: electrical_heater and io_subtype: 1",
-        path=[CONF_ENERGY],
-    )
+    for key, _, _, _ in METER_SENSORS:
+        if key in config:
+            raise cv.Invalid(
+                f"{key} needs a heater with an energy meter: set io_device_type: electrical_heater and "
+                "io_subtype: 1",
+                path=[key],
+            )
+    return config
 
 
 # The heater companions: (id key, ID suffix, class, condition). The window sensor and its detection
@@ -176,14 +243,12 @@ CONFIG_SCHEMA = cv.All(
             )
             .extend(INSTANT_LIGHT_TRANSITION)
             .extend(cv.COMPONENT_SCHEMA),
-            # Whole kWh (register 0x0116), so no decimals.
-            cv.Optional(CONF_ENERGY): sensor.sensor_schema(
-                IOHomeHeaterEnergySensor,
-                unit_of_measurement=UNIT_KILOWATT_HOURS,
-                accuracy_decimals=0,
-                device_class=DEVICE_CLASS_ENERGY,
-                state_class=STATE_CLASS_TOTAL_INCREASING,
-            ).extend(cv.COMPONENT_SCHEMA),
+            **{
+                cv.Optional(key): sensor.sensor_schema(IOHomeHeaterMeterSensor, **options).extend(
+                    cv.COMPONENT_SCHEMA
+                )
+                for key, _, _, options in METER_SENSORS
+            },
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
@@ -191,7 +256,7 @@ CONFIG_SCHEMA = cv.All(
     _validate_temperature_range,
     validate_device_model,
     _validate_night_light,
-    _validate_energy,
+    _validate_meter_sensors,
     warn_if_experimental_kind,
     _inject_companion_ids,
 )
@@ -214,11 +279,14 @@ async def to_code(config):
             )
         )
 
-    if CONF_ENERGY in config:
-        cg.add(var.set_energy_sensor(True))
-        await create_user_companion(
-            config, parent, new_entity=sensor.new_sensor, entity_config=config[CONF_ENERGY]
+    for key, reading, setter, _ in METER_SENSORS:
+        if key not in config:
+            continue
+        cg.add(getattr(var, setter)(True))
+        meter = await create_user_companion(
+            config, parent, new_entity=sensor.new_sensor, entity_config=config[key]
         )
+        cg.add(meter.set_reading(reading))
 
     if CONF_WINDOW_SENSOR_ID in config:
         await create_companion(

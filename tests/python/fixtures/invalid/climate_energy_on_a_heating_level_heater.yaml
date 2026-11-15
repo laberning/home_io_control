@@ -1,5 +1,5 @@
 # expect-error: energy needs a heater with an energy meter: set io_device_type: electrical_heater and io_subtype: 1
-# covers: climate._validate_energy
+# covers: climate._validate_meter_sensors
 packages:
   common: !include ../_common.yaml
   board: !include ../../../../config/boards/heltec-v2.yaml

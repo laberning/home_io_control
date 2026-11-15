@@ -540,13 +540,26 @@ TEST(PlatformClimate, TheEnergySensorOptsTheDeviceIntoTheEnergyMeterRead) {
   entity.set_energy_sensor(true);
   entity.setup();
   ASSERT_NE(with_sensor.get_device("ABC123"), nullptr);
-  EXPECT_TRUE(with_sensor.get_device("ABC123")->energy_sensor);
+  EXPECT_TRUE(with_sensor.get_device("ABC123")->meter_sensors.energy);
 
   MockHubClimate without;
   IOHomeClimate plain = make_bound_climate(without);
   plain.setup();
   ASSERT_NE(without.get_device("ABC123"), nullptr);
-  EXPECT_FALSE(without.get_device("ABC123")->energy_sensor) << "no sensor, no read";
+  EXPECT_FALSE(without.get_device("ABC123")->meter_sensors.energy) << "no sensor, no read";
+}
+
+TEST(PlatformClimate, ThePowerAndRatingSensorsOptTheDeviceIntoTheirReads) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_bound_climate(hub);
+  entity.set_power_sensor(true);
+  entity.set_ratings_sensor(true);
+  entity.setup();
+  const IoDevice *dev = hub.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_TRUE(dev->meter_sensors.power);
+  EXPECT_TRUE(dev->meter_sensors.ratings);
+  EXPECT_FALSE(dev->meter_sensors.energy) << "each sensor opts into its own reads";
 }
 
 // ========================================================================================

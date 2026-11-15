@@ -129,7 +129,7 @@ void IOHomeClimate::setup() {
   // shows measured values from the first minute instead of nothing.
   this->register_device_binding_(
       this, DeviceCapabilityClass::CLIMATE, [this](const IoDevice &dev) { this->on_device_update_(dev); },
-      [this](DeviceConfig &config) { config.energy_sensor = this->energy_sensor_; });
+      [this](DeviceConfig &config) { config.meter_sensors = this->meter_sensors_; });
 
   if (this->has_range_)
     this->heating_port_->set_device_temperature_range(this->device_id_, this->range_min_c_, this->range_max_c_);

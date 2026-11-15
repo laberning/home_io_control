@@ -93,8 +93,15 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
 
   /// @brief The YAML declares the heater's `energy:` sensor, so the poll reads its energy meter
   /// (register 0x0116); without it the register is never read.
-  /// @param energy_sensor True when the sensor is declared.
-  void set_energy_sensor(bool energy_sensor) { this->energy_sensor_ = energy_sensor; }
+  /// @param declared True when the sensor is declared.
+  void set_energy_sensor(bool declared) { this->meter_sensors_.energy = declared; }
+  /// @brief The YAML declares the heater's `power:` sensor, so the poll reads its ratings once and its working
+  /// rate every time.
+  /// @param declared True when the sensor is declared.
+  void set_power_sensor(bool declared) { this->meter_sensors_.power = declared; }
+  /// @brief The YAML declares `rated_power:` or `rated_voltage:`, so the poll reads register 0x011A once.
+  /// @param declared True when either sensor is declared.
+  void set_ratings_sensor(bool declared) { this->meter_sensors_.ratings = declared; }
 
  protected:
   /// @brief The device's heating profile: from the declared type, else from the type the hub learned.
@@ -141,7 +148,7 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
 
   HeatingCardState card_;                               ///< What the card shows; the entity's ESPHome fields follow it.
   bool has_range_{false};                               ///< YAML overrode the temperature encoding range.
-  bool energy_sensor_{false};                           ///< YAML declares the `energy:` sensor.
+  HeatingMeterSensors meter_sensors_{};                 ///< Meter sensors the YAML declares.
   float range_min_c_{HEATING_TEMPERATURE_RANGE_MIN_C};  ///< YAML `min_temperature:`.
   float range_max_c_{HEATING_TEMPERATURE_RANGE_MAX_C};  ///< YAML `max_temperature:`.
   std::vector<const char *> custom_presets_;            ///< Custom preset names of the profile, registered in setup().

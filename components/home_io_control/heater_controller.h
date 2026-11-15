@@ -106,7 +106,7 @@ class HeaterController {
   ///
   /// The body depends on the device: a register heater reads its profile's poll registers (stopping at the
   /// first failure), then the programme's temperature in force, its boot registers until each has been read
-  /// once, its energy meter when the YAML declares the `energy:` sensor, and on a kind with model rows the one-off
+  /// once, the meter registers its YAML's meter sensors ask for, and on a kind with model rows the one-off
   /// model check once it has answered a read; a water heater reads its status (target, capabilities, boost and away),
   /// then its water temperature, mode, heating state, boost and away duration and energy registers, then its brand
   /// until it has been read once; any other heater is polled with the generic status read. A register or water heater
@@ -431,6 +431,15 @@ class HeaterController {
   /// @param max_tries Transmit-attempt cap of each read (the poll's try band).
   /// @return true when every poll register answered.
   bool read_poll_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
+
+  /// @brief The reads the YAML's meter sensors opt a heater into, on a kind with ENERGY_METER: the ratings
+  /// until read once (`power:`, `rated_power:`, `rated_voltage:`), the working rate on every poll (`power:`,
+  /// unless the profile already polls it) and the energy on every poll (`energy:`). A miss is not a poll
+  /// failure; the next poll asks again.
+  /// @param device_id Target device ID (hex string).
+  /// @param profile The device's heating profile.
+  /// @param max_tries Attempt budget of each read.
+  void read_meter_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
 
   /// @brief Read the temperature in force of a heater's programme, when the programme runs.
   /// @details Sends nothing unless programme_period_active() holds for the readings the poll just made.

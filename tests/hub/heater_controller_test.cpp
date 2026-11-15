@@ -828,7 +828,7 @@ IoDevice *make_booted_heater(HeaterControllerFixture &fx) {
 TEST(HeaterController, AHeaterWithTheEnergySensorReadsItsEnergyMeterOnEveryPoll) {
   HeaterControllerFixture fx;
   auto *dev = make_booted_heater(fx);
-  dev->energy_sensor = true;
+  dev->meter_sensors.energy = true;
   queue_radiator_poll(fx, 0x5D, 0x07, 0x00, 0x00);
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x16, 0x0D, 0x5E});  // 3422 kWh, a Tahual's display
 
@@ -862,7 +862,7 @@ TEST(HeaterController, WithoutTheEnergySensorTheEnergyMeterIsNeverRead) {
 TEST(HeaterController, AnEnergyMeterAnsweredWithoutAValueIsNotAPollFailure) {
   HeaterControllerFixture fx;
   auto *dev = make_booted_heater(fx);
-  dev->energy_sensor = true;
+  dev->meter_sensors.energy = true;
   queue_radiator_poll(fx, 0x5D, 0x07, 0x00, 0x00);
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x16});  // a heater without the meter
 
@@ -872,6 +872,69 @@ TEST(HeaterController, AnEnergyMeterAnsweredWithoutAValueIsNotAPollFailure) {
   EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 18.85F) << "the core registers are kept";
   EXPECT_EQ(fx.poll_policy.get_status_poll_failures("ABC123"), 0u);
   EXPECT_TRUE(fx.backoffs.empty());
+}
+
+TEST(HeaterController, APowerSensorReadsTheRatingsOnceAndTheWorkingRateOnEveryPoll) {
+  HeaterControllerFixture fx;
+  auto *dev = make_booted_heater(fx);
+  dev->meter_sensors.power = true;
+  queue_radiator_poll(fx, 0x5D, 0x07, 0x02, 0x00);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x1A, 0xD0, 0x07, 0xE6});  // 2000 W, 230 V
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x26, 0x64});              // heating all the time
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+
+  ASSERT_EQ(fx.radio.get_sent_data().size(), 7u);
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data()[5]), 0x1A);
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data()[6]), 0x26);
+  EXPECT_FLOAT_EQ(dev->heating.rated_power_w, 2000.0F);
+  EXPECT_EQ(dev->heating.rated_voltage_v, 230) << "the same reply carries the voltage";
+  EXPECT_EQ(dev->heating.working_rate, 100);
+  EXPECT_FLOAT_EQ(heating_power_estimate_w(dev->heating), 2000.0F);
+
+  // The ratings never change: the next poll reads the working rate only.
+  queue_radiator_poll(fx, 0x5D, 0x07, 0x01, 0x00);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x26, 0x00});
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  ASSERT_EQ(fx.radio.get_sent_data().size(), 13u);
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data()[12]), 0x26);
+  EXPECT_FLOAT_EQ(heating_power_estimate_w(dev->heating), 0.0F);
+}
+
+TEST(HeaterController, RatingSensorsReadTheRatingsOnceAndNothingElse) {
+  HeaterControllerFixture fx;
+  auto *dev = make_booted_heater(fx);
+  dev->meter_sensors.ratings = true;
+  queue_radiator_poll(fx, 0x5D, 0x07, 0x00, 0x00);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x1A, 0xD0, 0x07, 0xE6});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  ASSERT_EQ(fx.radio.get_sent_data().size(), 6u);
+  EXPECT_EQ(dev->heating.rated_voltage_v, 230);
+
+  queue_radiator_poll(fx, 0x5D, 0x07, 0x00, 0x00);
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(fx.radio.get_sent_data().size(), 11u) << "no working rate, no energy, no second ratings read";
+}
+
+TEST(HeaterController, ATowelDryersPowerSensorDoesNotReadTheWorkingRateTwice) {
+  HeaterControllerFixture fx;
+  auto *dev = make_towel_dryer(fx);
+  dev->meter_sensors.power = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  dev->heating.eco_setback_k = 3.5F;
+  dev->model_checked = true;
+  dev->heating.rated_power_w = 500.0F;  // already read
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x5D, 0x07});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x36, 0x03});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3E, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x26, 0x0D});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+
+  EXPECT_EQ(fx.radio.get_sent_data().size(), 5u) << "its own poll already reads 0x0126";
+  EXPECT_FLOAT_EQ(heating_power_estimate_w(dev->heating), 65.0F);
 }
 
 TEST(HeaterController, HeaterPollStopsAtTheFirstFailureAndBacksOff) {

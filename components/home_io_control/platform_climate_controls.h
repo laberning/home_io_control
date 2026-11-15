@@ -2,15 +2,15 @@
 
 /// @file platform_climate_controls.h
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the open-window
-/// detection switch, the night light and the energy sensor.
+/// detection switch, the night light and the meter sensors.
 /// @ingroup hioc_platforms
 ///
 /// All are device-bound companions (DeviceBoundCompanion) that climate.py generates alongside a
 /// `climate:` entity: the window pair when the device kind has WINDOW_COMPANIONS, the night light when
-/// the YAML asks for it on a kind with NIGHT_LIGHT, the energy sensor when the YAML asks for it on a kind
+/// the YAML asks for it on a kind with NIGHT_LIGHT, the meter sensors when the YAML asks for them on a kind
 /// with ENERGY_METER. They show readings the hub's poll stores in IoDevice::heating and add no radio
-/// traffic of their own, except their writes and the read-backs that confirm them; the energy sensor's
-/// declaration adds one read of register 0x0116 to each poll.
+/// traffic of their own, except their writes and the read-backs that confirm them; a meter sensor's
+/// declaration adds the reads it shows to the poll (HeatingMeterSensors).
 ///
 /// @todo Experimental: the meaning of registers 0x010E (window sensor) and 0x0106 (open-window
 ///       detection) is unconfirmed on hardware. An AGILIA IO radiator answers both reads (window 0,
@@ -139,19 +139,40 @@ class IOHomeHeaterNightLight : public light::LightOutput, public Component, publ
   bool writing_{false};
 };
 
-/// @brief Sensor of the energy a heater has consumed, in kWh (`total_increasing`), for the Home Assistant
-/// energy dashboard (`energy:` on a heater whose kind has ENERGY_METER).
+/// @brief Sensor of one meter reading of a heater whose kind has ENERGY_METER (`energy:`, `power:`,
+/// `rated_power:`, `rated_voltage:`).
 /// @ingroup hioc_platforms
 ///
-/// Reads IoDevice::heating.energy_kwh, register 0x0116: whole kWh, so the sensor steps once per kWh. The
-/// value equals the total the heater's own display shows (two Tahual radiators); a TaHoma or Cozytouch
-/// may show a lower figure, counted from a reference of its own. No state until the first poll has read it.
-class IOHomeHeaterEnergySensor : public IOHomeCompanionSensor {
+/// No state until the poll has read what the reading needs, so zero always means the heater said so.
+class IOHomeHeaterMeterSensor : public IOHomeCompanionSensor {
  public:
+  /// @brief Which reading the sensor shows.
+  enum class Reading : uint8_t {
+    ENERGY,         ///< Energy consumed, kWh (register 0x0116, whole kWh). Equals the heater's display (two
+                    ///< Tahual radiators); a TaHoma or Cozytouch may show a lower figure, counted from a
+                    ///< reference of its own.
+    POWER,          ///< Power drawn now, W: heating_power_estimate_w(), the rated power times the working rate.
+    RATED_POWER,    ///< Rated power, W (register 0x011A).
+    RATED_VOLTAGE,  ///< Rated voltage, V (register 0x011A): a rating, not a measurement.
+  };
+
+  /// @brief Choose the reading (codegen sets it once).
+  /// @param reading Reading to show.
+  void set_reading(Reading reading) { this->reading_ = reading; }
+
+  /// @brief The value a reading shows for a heater's readings.
+  /// @param reading Reading.
+  /// @param readings What the hub has read from the heater.
+  /// @return The value, or NaN while the heater has not reported what it needs.
+  static float value_of(Reading reading, const HeatingReadings &readings);
+
   /// @brief Subscribe to the device's updates and publish what is already known.
   void setup() override;
   /// @brief Dump sensor configuration to the log.
   void dump_config() override;
+
+ protected:
+  Reading reading_{Reading::ENERGY};  ///< Reading shown.
 };
 
 }  // namespace home_io_control
