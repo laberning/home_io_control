@@ -688,35 +688,148 @@ TEST(RadioSX1276, StaleSyncAddressMatchIsClearedByCyclingOutOfRx) {
   EXPECT_TRUE(saw_rx_after_standby) << "un-sticking must return to RX afterwards";
 }
 
+namespace {
+/// True when the log holds a RestartRxWithPllLock write to REG_RX_CONFIG, the receiver restart.
+bool saw_receiver_restart(const RegisterModelSpi &spi) {
+  for (const auto &entry : spi.write_log()) {
+    if (entry.first == (REG_RX_CONFIG & 0x7F) && entry.second == (RX_CONFIG_VALUE | 0x20))
+      return true;
+  }
+  return false;
+}
+}  // namespace
+
 TEST(RadioSX1276, ReceptionInProgressHoldsWhileAFreshPreambleIsComing) {
   // A start preamble is up to LONG_PREAMBLE long and its sync word comes at the end: the hop must
   // stay on the channel for it, or the frame is caught only if the hop happens to be back here
   // when the sync word arrives.
-  test::burn_micros(1);  // see StaleSyncAddressMatchIsClearedByCyclingOutOfRx: 0 is the "unarmed" sentinel
+  esphome::test_clock::ManualClock clock;
   RegisterModelSpi spi;
   MockPin rst, dio0, dio4(false);
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_OP_MODE, MODE_RX);
   spi.set_reg(REG_IRQ_FLAGS1, 0x02);  // PreambleDetect only, no SyncAddressMatch yet
 
   EXPECT_TRUE(radio.reception_in_progress()) << "first sighting of a preamble holds the channel";
-  test::burn_micros(SX1276_PREAMBLE_HOLD_US / 2);
-  EXPECT_TRUE(radio.reception_in_progress()) << "still inside the longest start preamble";
+  esphome::test_clock::advance_ms(SX1276_IDLE_PREAMBLE_HOLD_MS - 1);
+  EXPECT_TRUE(radio.reception_in_progress()) << "still inside the first slice";
+  EXPECT_FALSE(saw_receiver_restart(spi)) << "no restart inside the slice";
 }
 
-TEST(RadioSX1276, PreambleHoldEndsAfterTheLongestStartPreamble) {
-  // PreambleDetect latches until the receiver restarts, so a detection with no sync behind it
-  // (noise) must not stop the hop for good.
-  test::burn_micros(1);
+TEST(RadioSX1276, IdleHoldIsShortSoAFalseDetectionDoesNotParkTheHop) {
+  // A strong transmitter on the adjacent channel sets PreambleDetect here and no frame follows.
+  // The hold has to end after a slice, not after the longest preamble: with the continuous idle
+  // loop a 250 ms park lost whole bursts on the channel the receiver should have been on.
+  esphome::test_clock::ManualClock clock;
   RegisterModelSpi spi;
   MockPin rst, dio0, dio4(false);
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_OP_MODE, MODE_RX);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x02);
+  ASSERT_TRUE(radio.reception_in_progress());
+
+  esphome::test_clock::advance_ms(SX1276_IDLE_PREAMBLE_HOLD_MS);
+  ASSERT_TRUE(radio.reception_in_progress()) << "the slice ended: renewed once";
+  spi.set_reg(REG_IRQ_FLAGS1, 0x00);  // the restart cleared PreambleDetect and nothing set it again
+  esphome::test_clock::advance_ms(SX1276_IDLE_RENEW_REDETECT_MS);
+
+  EXPECT_FALSE(radio.reception_in_progress()) << "no preamble again: the hop goes on, well under 250 ms";
+}
+
+TEST(RadioSX1276, IdleHoldRenewsOnTheSameChannelWhileThePreambleIsDetectedAgain) {
+  esphome::test_clock::ManualClock clock;
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_OP_MODE, MODE_RX);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x02);
+  const uint32_t freq = radio.get_current_freq();
+  ASSERT_TRUE(radio.reception_in_progress());
+
+  esphome::test_clock::advance_ms(SX1276_IDLE_PREAMBLE_HOLD_MS);
+  EXPECT_TRUE(radio.reception_in_progress());
+  EXPECT_TRUE(saw_receiver_restart(spi)) << "RestartRxWithPllLock on the held channel";
+  EXPECT_EQ(radio.get_current_freq(), freq);
+
+  esphome::test_clock::advance_ms(1);  // the still-arriving preamble sets PreambleDetect again
+  EXPECT_TRUE(radio.reception_in_progress());
+  esphome::test_clock::advance_ms(SX1276_IDLE_PREAMBLE_HOLD_MS - 1);
+  EXPECT_TRUE(radio.reception_in_progress()) << "the new slice runs its full length";
+}
+
+TEST(RadioSX1276, RunOfRenewedIdleHoldsIsBoundedByTheChainLimit) {
+  // The old flag-still-set-counts-as-a-new-sighting behaviour is bounded now: a detector that keeps
+  // firing releases the hop after the chain limit, which covers a wake-up preamble.
+  esphome::test_clock::ManualClock clock;
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_OP_MODE, MODE_RX);
   spi.set_reg(REG_IRQ_FLAGS1, 0x02);
 
-  ASSERT_TRUE(radio.reception_in_progress());
-  test::burn_micros(SX1276_PREAMBLE_HOLD_US + 2);
+  uint32_t held_ms = 0;
+  while (radio.reception_in_progress() && held_ms < 10 * IDLE_PREAMBLE_HOLD_CHAIN_MS) {
+    esphome::test_clock::advance_ms(1);
+    held_ms++;
+  }
+  EXPECT_GE(held_ms, IDLE_PREAMBLE_HOLD_CHAIN_MS) << "long enough for a wake-up preamble";
+  EXPECT_LT(held_ms, IDLE_PREAMBLE_HOLD_CHAIN_MS + SX1276_IDLE_PREAMBLE_HOLD_MS) << "and then the hop goes on";
+}
 
-  EXPECT_FALSE(radio.reception_in_progress()) << "no sync word within the hold: the hop goes on";
-  EXPECT_TRUE(radio.reception_in_progress()) << "a flag still set after that counts as a new sighting";
+TEST(RadioSX1276, IdleHoldSurvivesTheMillisWrapAndRenewsAcrossIt) {
+  esphome::test_clock::ManualClock clock(0xFFFFFFFFu - 9);  // the hold starts 10 ms before millis() wraps
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_OP_MODE, MODE_RX);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x02);
+  ASSERT_TRUE(radio.reception_in_progress());
+
+  esphome::test_clock::advance_ms(SX1276_IDLE_PREAMBLE_HOLD_MS - 1);
+  EXPECT_TRUE(radio.reception_in_progress());
+  EXPECT_FALSE(saw_receiver_restart(spi)) << "the wrap must not end the slice early";
+  esphome::test_clock::advance_ms(1);
+  EXPECT_TRUE(radio.reception_in_progress());
+  EXPECT_TRUE(saw_receiver_restart(spi)) << "renewed at the slice end, across the wrap";
+}
+
+TEST(RadioSX1276, RetuneToAnotherChannelEndsARenewalInProgress) {
+  esphome::test_clock::ManualClock clock;
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_OP_MODE, MODE_RX);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x02);
+  ASSERT_TRUE(radio.reception_in_progress());
+  esphome::test_clock::advance_ms(SX1276_IDLE_PREAMBLE_HOLD_MS);
+  ASSERT_TRUE(radio.reception_in_progress());  // renew: waiting for the preamble again
+
+  radio.change_frequency(FREQ_CH3);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x00);
+  EXPECT_FALSE(radio.reception_in_progress()) << "the wait for the old channel's preamble does not carry over";
+}
+
+TEST(RadioSX1276, ReceivedFrameEndsTheIdleHoldEvenIfTheHopNeverSawItsSync) {
+  // A long loop pass can hide the frame's SyncAddressMatch from the hop; the frame itself still ends
+  // the hold, so the hop does not sit out the rest of the slice on a channel that is quiet again.
+  esphome::test_clock::ManualClock clock;
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_OP_MODE, MODE_RX);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x02);
+  ASSERT_TRUE(radio.reception_in_progress());
+
+  const uint8_t frame[] = {0x11, 0x22, 0x33};
+  spi.seed_rx_fifo(frame, sizeof(frame));
+  spi.set_reg(REG_IRQ_FLAGS2, 0x04);  // PayloadReady
+  radio.mark_dio_fired_from_isr();
+  RadioRxPacket packet{};
+  ASSERT_TRUE(radio.check_for_packet(packet));
+
+  spi.set_reg(REG_IRQ_FLAGS1, 0x00);  // the receiver restarted after the frame
+  esphome::test_clock::advance_ms(1);
+  EXPECT_FALSE(radio.reception_in_progress()) << "the frame the preamble announced has arrived";
 }
 
 TEST(RadioSX1276, ChangeFrequencyInRxRestartsTheReceiver) {

@@ -360,7 +360,8 @@ class RadioDriver {
   /// IRQ bits) and claim "we heard something" when nothing was on air.
   void clear_last_capture() { this->last_capture_ = RadioCaptureInfo{}; }
 
-  /// @brief True while a frame is arriving on the current channel and retuning would destroy it.
+  /// @brief True while a frame, or the start preamble ahead of one, is arriving on the current channel
+  /// and retuning would lose it.
   ///
   /// Consulted by ExchangeEngine::maybe_hop() — the idle-path hop — which is purely time-gated and
   /// otherwise fires on essentially every loop() pass (issue #81). Not consulted by
@@ -370,9 +371,10 @@ class RadioDriver {
   /// The default implementation is the recorded-state one: a driver reports a reception by calling
   /// note_reception_in_progress_() from wherever it can actually observe one, and the holdoff
   /// expires by itself after RX_HOP_HOLDOFF_US. That default is correct for any driver whose RX
-  /// path passes through check_for_packet() while the frame is still arriving, and it is what both
-  /// software-PHY drivers use. A driver that cannot observe a reception from check_for_packet()
-  /// overrides this and reads the chip at hop time instead — see RadioSX1276.
+  /// path passes through check_for_packet() while the frame is still arriving. A start preamble
+  /// whose sync word is still to come counts as a reception too, for a bounded time so that a
+  /// detection on noise cannot park the receiver: a driver that can see one overrides this and
+  /// reads the chip at hop time — see RadioSX1276 and SoftPhyDriverBase.
   ///
   /// Non-const because it expires its own latch, and because an override may do SPI.
   [[nodiscard]] virtual bool reception_in_progress() {

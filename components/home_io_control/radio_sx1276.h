@@ -9,7 +9,8 @@
 /// handles CRC and packet framing specific to the IO-Homecontrol protocol.
 
 #include "radio_interface.h"
-#include "proto_timing.h"    // LONG_PREAMBLE
+#include "proto_timing.h"  // LONG_PREAMBLE
+#include "radio_preamble_hold.h"
 #include "radio_soft_phy.h"  // io868_tx_air_time_us(), soft_phy_air_time_us()
 #include "esphome/core/hal.h"
 
@@ -81,14 +82,24 @@ static constexpr uint8_t RX_CONFIG_VALUE = 0x9E;
 /// which also clears PreambleDetect and re-arms AGC/AFC for the new channel.
 static constexpr uint8_t RX_CONFIG_RESTART_RX_WITH_PLL_LOCK = 0x20;
 
-/// How long reception_in_progress() holds the idle hop on a channel once PreambleDetect is set:
-/// the longest start preamble (LONG_PREAMBLE, 1024 bytes = 213 ms at 38400 bps) plus margin, so
-/// the sync word at the end of a wake-up preamble arrives while the receiver is still there.
-/// Also the bound on a preamble detection with no frame behind it (noise): after it the hop goes
-/// on, and its receiver restart clears the flag.
-static constexpr uint32_t SX1276_PREAMBLE_HOLD_US = 250000;
-static_assert(SX1276_PREAMBLE_HOLD_US > soft_phy_air_time_us(LONG_PREAMBLE),
-              "the preamble hold must outlast the longest start preamble");
+/// How long one idle preamble hold lasts from the first sighting of PreambleDetect, in milliseconds.
+///
+/// It has to cover the rest of a start preamble: PreambleDetect sets within the first bytes of the
+/// preamble and the idle hop sights it at most one dwell (2.7 ms) later, so what is left is the
+/// preamble-to-sync of the shortest start frames that need it. 30 ms is the soft-PHY chips' figure
+/// (one 9 ms dwell plus the longest preamble-to-sync measured on air, 21 ms, see
+/// SOFT_PHY_PREAMBLE_HOLD_MS) and covers the same frames here. Longer preambles are covered by
+/// renewing the hold (see @ref IDLE_PREAMBLE_HOLD_CHAIN_MS), not by a long first slice: with the
+/// continuous idle loop the hop checks every 2.7 ms, and a 250 ms slice parked the receiver on the
+/// wrong channel for that long whenever a strong transmitter on the adjacent channel, or noise,
+/// set PreambleDetect, losing whole short bursts on the channel it should have been listening to.
+static constexpr uint32_t SX1276_IDLE_PREAMBLE_HOLD_MS = 30;
+
+/// After a renewed idle hold restarts the receiver on the held channel, how long the idle hop
+/// waits for PreambleDetect to set again before it moves on, in milliseconds. Same value as the
+/// soft-PHY chips' (SOFT_PHY_IDLE_RENEW_REDETECT_MS, ~1 ms measured there).
+/// \todo Measure the SX1276's re-detection time after RestartRxWithPllLock on the bench.
+static constexpr uint32_t SX1276_IDLE_RENEW_REDETECT_MS = 4;
 
 /// SX1276 crystal oscillator frequency (32 MHz). Used to calculate register values
 /// for bitrate, frequency deviation, and carrier frequency.
@@ -149,10 +160,12 @@ class RadioSX1276 : public RadioDriver {
   /// while a frame is still arriving and has nothing to record (issue #81).
   ///
   /// Holds on SyncAddressMatch (the frame itself, bounded by RX_HOP_HOLDOFF_US) and on
-  /// PreambleDetect (a start preamble whose sync word is still to come, bounded by
-  /// SX1276_PREAMBLE_HOLD_US). The preamble hold is meaningful only because change_frequency()
-  /// restarts the receiver, which clears the flag; without that it latches on the first preamble
-  /// (or noise) and stays set across hops.
+  /// PreambleDetect (a start preamble whose sync word is still to come): a hold of
+  /// SX1276_IDLE_PREAMBLE_HOLD_MS, renewed on the same channel while the preamble is detected again
+  /// (see PreambleHold), bounded by IDLE_PREAMBLE_HOLD_CHAIN_MS. The preamble hold is meaningful
+  /// only because change_frequency() restarts the receiver, which clears the flag; without that it
+  /// latches on the first preamble (or noise) and stays set across hops. A renew is that same
+  /// restart on the held channel.
   [[nodiscard]] bool reception_in_progress() override;
   /// @brief Per-channel dwell for a rotating listen (SX1276).
   ///
@@ -204,8 +217,8 @@ class RadioSX1276 : public RadioDriver {
   /// @param preamble Preamble length in bytes.
   void set_response_preamble_(uint16_t preamble) { this->response_preamble_ = preamble; }
 
-  /// The PreambleDetect half of reception_in_progress(): true while a fresh preamble detection is
-  /// younger than SX1276_PREAMBLE_HOLD_US.
+  /// The PreambleDetect half of reception_in_progress(): true while the idle preamble hold, with
+  /// its renewals, says to stay on the channel.
   bool preamble_hold_();
 
   // --- SPI register access ---
@@ -265,8 +278,10 @@ class RadioSX1276 : public RadioDriver {
   uint8_t pa_pin_;
   SX1276RxBandwidth rx_bandwidth_{SX1276RxBandwidth::BW_41_7_KHZ};  ///< Runtime-tunable RX bandwidth.
   uint16_t response_preamble_{SX1276_RESPONSE_PREAMBLE};            ///< Runtime-tunable response preamble.
-  uint32_t sync_hold_since_us_{0};      ///< First-sighting timestamp for reception_in_progress()'s un-stick bound.
-  uint32_t preamble_hold_since_us_{0};  ///< First-sighting timestamp for reception_in_progress()'s preamble hold.
+  uint32_t sync_hold_since_us_{0};  ///< First-sighting timestamp for reception_in_progress()'s un-stick bound.
+  /// reception_in_progress()'s preamble hold, with its renewals.
+  PreambleHold preamble_hold_state_{
+      {SX1276_IDLE_PREAMBLE_HOLD_MS, SX1276_IDLE_RENEW_REDETECT_MS, IDLE_PREAMBLE_HOLD_CHAIN_MS}};
 };
 
 }  // namespace home_io_control

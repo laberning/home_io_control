@@ -703,6 +703,142 @@ TEST(HubCore, LoopHopsFromTheHostByDefault) {
   delete comp.radio_;
 }
 
+// ========================================================================================
+// Idle receive: the loop runs continuously while the radio listens, so the idle hop keeps its
+// 2.7 ms dwell instead of one hop per ESPHome loop interval (ADR 0086).
+// ========================================================================================
+
+namespace {
+
+/// The request counter is process-wide and a destroyed hub never releases its request, so each test
+/// starts from zero and releases its own hub's request when it ends.
+struct IdleLoopGuard {
+  explicit IdleLoopGuard(TestableHubComponent &comp) : comp_(comp) {
+    esphome::HighFrequencyLoopRequester::test_reset();
+  }
+  ~IdleLoopGuard() { comp_.idle_loop_.stop(); }
+  TestableHubComponent &comp_;
+};
+
+/// A radio that reports a frame arriving until told otherwise.
+class ReceivingRadio : public MockRadio {
+ public:
+  bool reception_in_progress() override { return this->receiving; }
+  bool receiving{true};
+};
+
+/// Drive the hub for @p duration_us the way ESPHome's Application::loop() does: the component phase
+/// runs on every 0.5 ms tick while a high-frequency loop is requested, otherwise once per default
+/// loop interval (16 ms). So the hop rate a test sees follows the hub's own request, not the test.
+void run_application_for(TestableHubComponent &comp, uint32_t duration_us) {
+  constexpr uint32_t kTickUs = 500;
+  constexpr uint32_t kLoopIntervalUs = 16000;
+  uint32_t since_phase_us = kLoopIntervalUs;
+  for (uint32_t elapsed_us = 0; elapsed_us < duration_us; elapsed_us += kTickUs) {
+    esphome::test_clock::advance_us(kTickUs);
+    since_phase_us += kTickUs;
+    if (esphome::HighFrequencyLoopRequester::is_high_frequency() || since_phase_us >= kLoopIntervalUs) {
+      comp.loop();
+      since_phase_us = 0;
+    }
+  }
+}
+
+}  // namespace
+
+TEST(HubCore, LoopRequestsAContinuousLoopOnceTheRadioIsSetUp) {
+  TestableHubComponent comp;
+  IdleLoopGuard guard(comp);
+  comp.initialized_ = true;
+  comp.radio_ = new MockRadio();
+  ASSERT_FALSE(esphome::HighFrequencyLoopRequester::is_high_frequency());
+
+  comp.loop();
+
+  EXPECT_TRUE(esphome::HighFrequencyLoopRequester::is_high_frequency());
+  delete comp.radio_;
+}
+
+TEST(HubCore, LoopDoesNotRequestAContinuousLoopBeforeSetupFinished) {
+  TestableHubComponent comp;
+  IdleLoopGuard guard(comp);
+
+  comp.loop();
+
+  EXPECT_FALSE(esphome::HighFrequencyLoopRequester::is_high_frequency());
+}
+
+TEST(HubCore, LoopReleasesTheContinuousLoopWhenTheRadioFails) {
+  TestableHubComponent comp;
+  IdleLoopGuard guard(comp);
+  comp.initialized_ = true;
+  auto *radio = new LatchingRadio();
+  comp.radio_ = radio;
+  comp.loop();
+  ASSERT_TRUE(esphome::HighFrequencyLoopRequester::is_high_frequency()) << "healthy radio holds the request";
+
+  radio->latch("BUSY timeout");
+  comp.loop();
+
+  EXPECT_FALSE(esphome::HighFrequencyLoopRequester::is_high_frequency());
+  delete comp.radio_;
+}
+
+TEST(HubCore, IdleReceiverVisitsEveryChannelForTheProtocolDwellOverASecond) {
+  esphome::test_clock::ManualClock clock;
+  TestableHubComponent comp;
+  IdleLoopGuard guard(comp);
+  comp.initialized_ = true;
+  auto *radio = new MockRadio();
+  comp.radio_ = radio;
+  radio->change_frequency(FREQ_CH1);
+  radio->clear();
+  comp.exchange_engine_.reset_hop_timestamp();
+
+  run_application_for(comp, 1000000);
+
+  int hops[3] = {0, 0, 0};
+  for (const uint32_t freq : radio->freq_history()) {
+    if (freq == FREQ_CH1)
+      hops[0]++;
+    else if (freq == FREQ_CH2)
+      hops[1]++;
+    else if (freq == FREQ_CH3)
+      hops[2]++;
+  }
+  // A hop needs the dwell to have elapsed, so with 0.5 ms passes it comes every 3.0 ms: about 333 a
+  // second, a third on each channel. Without the request the pass, and so the hop, comes every
+  // 16 ms: about 62 a second.
+  const int total = hops[0] + hops[1] + hops[2];
+  EXPECT_GE(total, 300);
+  EXPECT_LE(total, 1000000 / HOP_TIME_US + 1);
+  for (const int count : hops)
+    EXPECT_NEAR(count, total / 3, 2) << "every channel gets the same share of the scan";
+
+  delete comp.radio_;
+}
+
+TEST(HubCore, IdleReceiverHoldsItsChannelWhileAFrameIsArriving) {
+  esphome::test_clock::ManualClock clock;
+  TestableHubComponent comp;
+  IdleLoopGuard guard(comp);
+  comp.initialized_ = true;
+  auto *radio = new ReceivingRadio();
+  comp.radio_ = radio;
+  radio->clear();
+  comp.exchange_engine_.reset_hop_timestamp();
+
+  run_application_for(comp, 100000);
+  EXPECT_TRUE(radio->freq_history().empty()) << "a reception in progress must keep the channel";
+
+  radio->receiving = false;
+  esphome::test_clock::advance_us(500);
+  comp.loop();
+  EXPECT_EQ(radio->freq_history().size(), 1u) << "the overdue hop happens on the first pass after the frame";
+
+  delete comp.radio_;
+}
+
 /// The responder listen is a plain deadline (key_extraction_hold_deadline_ms_), deliberately decoupled
 /// from key_extraction_ctx_.state: letting the hold lapse must NOT touch state. See
 /// HubKeyExtraction.LateKeyTransferAfterHoldExpiryStillCompletesExtraction

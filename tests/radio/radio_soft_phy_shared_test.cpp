@@ -617,6 +617,185 @@ TYPED_TEST(SoftPhyDriver, PreambleHoldEndsOnRetune) {
   EXPECT_FALSE(radio.is_preamble_detected());
 }
 
+// ---------------------------------------------------------------------------
+// Idle-hop preamble hold: the idle hop leaves a channel after a few milliseconds, well inside a start
+// preamble, so a preamble on the current channel must hold it until the sync word (or the cap).
+// ---------------------------------------------------------------------------
+
+TYPED_TEST(SoftPhyDriver, ReceptionInProgressHoldsTheIdleHopOnAFreshPreambleForTheSlice) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  // Manual time only around reception_in_progress(): it reads the scripted IRQ word, never BUSY.
+  esphome::test_clock::ManualClock clock;
+  radio.set_irq_sequence({TypeParam::preamble()});
+
+  EXPECT_TRUE(radio.reception_in_progress()) << "a preamble on this channel: a frame may follow";
+  esphome::test_clock::advance_ms(SOFT_PHY_PREAMBLE_HOLD_MS - 1);
+  EXPECT_TRUE(radio.reception_in_progress()) << "the hold runs on without a fresh detection";
+  EXPECT_FALSE(TypeParam::saw_standby(spi)) << "and does not restart the receiver inside the slice";
+}
+
+TYPED_TEST(SoftPhyDriver, IdleHoldRenewsOnTheSameChannelAtTheSliceEnd) {
+  // Leaving at the slice end puts the receiver away for several dwells, and a long preamble's sync
+  // word can fall in that gap on every copy. The renew restarts RX here instead.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  esphome::test_clock::ManualClock clock;
+  radio.set_irq_sequence({TypeParam::preamble()});
+  const uint32_t freq = radio.get_current_freq();
+  ASSERT_TRUE(radio.reception_in_progress());
+
+  esphome::test_clock::advance_ms(SOFT_PHY_PREAMBLE_HOLD_MS);
+  EXPECT_TRUE(radio.reception_in_progress()) << "the slice ended: the hold renews instead of letting the hop leave";
+  EXPECT_TRUE(TypeParam::saw_standby(spi)) << "RX was restarted";
+  EXPECT_TRUE(TypeParam::saw_cleared_irq(spi)) << "the stale detection was discarded";
+  EXPECT_EQ(radio.get_current_freq(), freq) << "on the same channel";
+}
+
+TYPED_TEST(SoftPhyDriver, RenewedHoldKeepsHoldingWhenThePreambleIsDetectedAgain) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  esphome::test_clock::ManualClock clock;
+  radio.set_irq_sequence({TypeParam::preamble()});
+  ASSERT_TRUE(radio.reception_in_progress());
+  esphome::test_clock::advance_ms(SOFT_PHY_PREAMBLE_HOLD_MS);
+  ASSERT_TRUE(radio.reception_in_progress());  // renew
+
+  esphome::test_clock::advance_ms(1);  // re-detected about a millisecond after the restart
+  radio.set_irq_sequence({TypeParam::preamble()});
+  EXPECT_TRUE(radio.reception_in_progress());
+  esphome::test_clock::advance_ms(SOFT_PHY_PREAMBLE_HOLD_MS - 1);
+  EXPECT_TRUE(radio.reception_in_progress()) << "the new slice runs its full length";
+}
+
+TYPED_TEST(SoftPhyDriver, RenewedHoldLetsTheHopGoWhenThePreambleIsNotDetectedAgain) {
+  // The preamble ended without a frame (it was a short one, or noise): the renew must not park the
+  // receiver beyond the re-detection window.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  esphome::test_clock::ManualClock clock;
+  radio.set_irq_sequence({TypeParam::preamble()});
+  ASSERT_TRUE(radio.reception_in_progress());
+  esphome::test_clock::advance_ms(SOFT_PHY_PREAMBLE_HOLD_MS);
+  ASSERT_TRUE(radio.reception_in_progress());  // renew
+  radio.set_irq_sequence({0x0000});
+
+  esphome::test_clock::advance_ms(SOFT_PHY_IDLE_RENEW_REDETECT_MS - 1);
+  EXPECT_TRUE(radio.reception_in_progress()) << "still inside the re-detection window";
+  esphome::test_clock::advance_ms(1);
+  EXPECT_FALSE(radio.reception_in_progress()) << "no preamble again: the hop goes on";
+}
+
+TYPED_TEST(SoftPhyDriver, RunOfRenewedHoldsIsBoundedByTheChainLimit) {
+  // A detector that fires on noise for as long as it is watched must still release the hop.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  esphome::test_clock::ManualClock clock;
+  radio.set_irq_sequence(std::vector<uint32_t>(4096, TypeParam::preamble()));  // a detector that never stops
+
+  uint32_t held_ms = 0;
+  while (radio.reception_in_progress() && held_ms < 10 * IDLE_PREAMBLE_HOLD_CHAIN_MS) {
+    esphome::test_clock::advance_ms(1);
+    held_ms++;
+  }
+  EXPECT_GE(held_ms, IDLE_PREAMBLE_HOLD_CHAIN_MS) << "long enough for a wake-up preamble";
+  EXPECT_LT(held_ms, IDLE_PREAMBLE_HOLD_CHAIN_MS + SOFT_PHY_PREAMBLE_HOLD_MS) << "and then the hop goes on";
+}
+
+TYPED_TEST(SoftPhyDriver, ReceptionInProgressPreambleHoldSurvivesTheMillisWrap) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  esphome::test_clock::ManualClock clock(0xFFFFFFFFu - 9);  // the hold starts 10 ms before millis() wraps
+  radio.set_irq_sequence({TypeParam::preamble()});
+
+  ASSERT_TRUE(radio.reception_in_progress());
+  esphome::test_clock::advance_ms(SOFT_PHY_PREAMBLE_HOLD_MS - 1);
+  EXPECT_TRUE(radio.reception_in_progress());
+  EXPECT_FALSE(TypeParam::saw_standby(spi)) << "the wrap must not end the slice early (no renew yet)";
+  esphome::test_clock::advance_ms(1);
+  EXPECT_TRUE(radio.reception_in_progress());
+  EXPECT_TRUE(TypeParam::saw_standby(spi)) << "the renew happens at the slice end, across the wrap";
+  radio.set_irq_sequence({0x0000});
+  esphome::test_clock::advance_ms(SOFT_PHY_IDLE_RENEW_REDETECT_MS);
+  EXPECT_FALSE(radio.reception_in_progress()) << "and the re-detection window is not stretched by it";
+}
+
+TYPED_TEST(SoftPhyDriver, ReceptionInProgressIsFalseWithoutPreambleOrFrame) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  radio.set_irq_sequence({0x0000});
+
+  EXPECT_FALSE(radio.reception_in_progress()) << "an empty channel lets the idle hop go on";
+}
+
+TYPED_TEST(SoftPhyDriver, CheckForPacketPreambleOnlyStartsTheIdleHopHold) {
+  // On a chip that raises its DIO on a preamble, check_for_packet() clears the bit before the hop
+  // looks, so the hold has to start there.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  radio.mark_dio_fired_from_isr();
+  radio.set_irq_sequence({TypeParam::preamble()});
+
+  RadioRxPacket packet{};
+  ASSERT_FALSE(radio.check_for_packet(packet));
+  radio.set_irq_sequence({0x0000});  // the bit is gone from the chip's IRQ word
+  EXPECT_TRUE(radio.reception_in_progress()) << "the preamble check_for_packet() saw holds the hop";
+}
+
+TYPED_TEST(SoftPhyDriver, RetuneToAnotherChannelEndsARenewalInProgress) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  esphome::test_clock::ManualClock clock;
+  radio.set_irq_sequence({TypeParam::preamble()});
+  ASSERT_TRUE(radio.reception_in_progress());
+  esphome::test_clock::advance_ms(SOFT_PHY_PREAMBLE_HOLD_MS);
+  ASSERT_TRUE(radio.reception_in_progress());  // renew: now waiting for the preamble again
+
+  radio.change_frequency(FREQ_CH3);
+  radio.set_irq_sequence({0x0000});
+  EXPECT_FALSE(radio.reception_in_progress()) << "the wait for the old channel's preamble does not carry over";
+}
+
+TYPED_TEST(SoftPhyDriver, BlockingListenKeepsThePlainHoldWhenTheIdleHopStartedIt) {
+  // A rotating listen starts on the idle channel without a retune, so it can inherit a hold the
+  // idle hop began. Its dwell timeout must end that hold at the slice (ADR 0070), not renew it:
+  // the listen resets RX and moves on, leaving no renewal behind for the idle hop to wait out.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  esphome::test_clock::ManualClock clock;
+  radio.set_irq_sequence(std::vector<uint32_t>(64, TypeParam::preamble()));
+  ASSERT_TRUE(radio.reception_in_progress());  // the idle hop starts the hold
+  esphome::test_clock::advance_ms(SOFT_PHY_PREAMBLE_HOLD_MS);
+
+  RadioRxPacket result{};
+  EXPECT_FALSE(radio.wait_for_packet(result, 1));
+  EXPECT_TRUE(TypeParam::saw_standby(spi)) << "past the slice the listen resets RX";
+  radio.set_irq_sequence({0x0000});
+  EXPECT_FALSE(radio.reception_in_progress()) << "no renewal left running after the blocking listen";
+}
+
+TYPED_TEST(SoftPhyDriver, RetuneEndsTheIdleHopPreambleHold) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);
+  radio.set_irq_sequence({TypeParam::preamble()});
+  ASSERT_TRUE(radio.reception_in_progress());
+
+  radio.change_frequency(FREQ_CH3);
+  radio.set_irq_sequence({0x0000});
+  EXPECT_FALSE(radio.reception_in_progress()) << "a preamble held on one channel says nothing about the next";
+}
+
 TYPED_TEST(SoftPhyDriver, SyncNearTheDeadlineStillGetsItsFrame) {
   // The sync lands at the very end of a short window; RX_DONE follows a few polls later. The
   // frame must be delivered (post-sync grace), not abandoned mid-reception.

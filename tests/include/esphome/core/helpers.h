@@ -24,6 +24,32 @@ uint32_t fnv1_hash(const char *str);
 /// so schedules that draw jitter are deterministic in tests.
 uint32_t random_uint32();
 
+/// Host stand-in for ESPHome's HighFrequencyLoopRequester: while any requester is started,
+/// is_high_frequency() is true (the real Application then runs the loop without waiting for its
+/// interval). start() and stop() are idempotent per requester, as in ESPHome.
+class HighFrequencyLoopRequester {
+ public:
+  void start() {
+    if (this->started_)
+      return;
+    num_requests++;
+    this->started_ = true;
+  }
+  void stop() {
+    if (!this->started_)
+      return;
+    num_requests--;
+    this->started_ = false;
+  }
+  static bool is_high_frequency() { return num_requests > 0; }
+  /// Test helper (not in ESPHome): forget every request, e.g. those a destroyed component left behind.
+  static void test_reset() { num_requests = 0; }
+
+ protected:
+  bool started_{false};
+  static inline uint8_t num_requests{0};
+};
+
 namespace test_random {
 /// Make every following random_uint32() call return @p value.
 void set(uint32_t value);

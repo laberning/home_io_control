@@ -90,6 +90,7 @@ void RadioSX1276::change_frequency(uint32_t freq_hz) {
   this->write_register_(REG_FRF_MID, (uint8_t) ((frf >> 8) & 0xFF));
   this->write_register_(REG_FRF_LSB, (uint8_t) (frf & 0xFF));
   this->current_freq_ = freq_hz;
+  this->preamble_hold_state_.release();  // a preamble held on the old channel says nothing about this one
   // A retune in RX (FastHop: FRF only, no mode change) keeps the receiver's state from the old
   // channel: PreambleDetect stays latched and AGC/AFC stay where a preamble, or noise, left them.
   // Restarting the chain clears both, so the next channel's preamble detection is its own. Without
@@ -111,21 +112,9 @@ bool RadioSX1276::is_preamble_detected() {
 }
 
 bool RadioSX1276::preamble_hold_() {
-  if (!this->is_preamble_detected()) {
-    this->preamble_hold_since_us_ = 0;
-    return false;
-  }
-  uint32_t const now = micros();
-  if (this->preamble_hold_since_us_ == 0) {
-    this->preamble_hold_since_us_ = now;  // first sighting of this preamble
-    return true;
-  }
-  if (now - this->preamble_hold_since_us_ < SX1276_PREAMBLE_HOLD_US)
-    return true;
-  // No sync word followed within the longest start preamble: noise or a frame we cannot have. Let
-  // the hop go on; its receiver restart (change_frequency()) clears the flag.
-  this->preamble_hold_since_us_ = 0;
-  return false;
+  return this->preamble_hold_state_.hold_renewing(
+      millis(), [this] { return this->is_preamble_detected(); },
+      [this] { this->change_frequency(this->current_freq_); });
 }
 
 bool RadioSX1276::reception_in_progress() {
@@ -133,7 +122,7 @@ bool RadioSX1276::reception_in_progress() {
     this->sync_hold_since_us_ = 0;
     return this->preamble_hold_();
   }
-  this->preamble_hold_since_us_ = 0;
+  this->preamble_hold_state_.release();  // the frame the preamble announced has arrived
   uint32_t const now = micros();
   if (this->sync_hold_since_us_ == 0) {
     this->sync_hold_since_us_ = now;  // first sighting of this reception
@@ -390,6 +379,9 @@ bool RadioSX1276::check_for_packet(RadioRxPacket &packet) {
   uint8_t const irq2 = this->read_register_(REG_IRQ_FLAGS2);
   uint8_t const rssi = this->read_register_(REG_RSSI_VALUE);
   if ((irq2 & 0x04) != 0) {
+    // The frame the preamble announced has arrived. The idle hop may not have read SyncAddressMatch
+    // while it was on air (a long loop pass), and a running slice reads nothing, so end the hold here.
+    this->preamble_hold_state_.release();
     packet.len = this->read_fifo_packet_(packet.data, sizeof(packet.data));
     packet.freq_hz = this->current_freq_;
     this->fill_capture_info_(false, irq1, irq2, rssi, packet.data, packet.len, packet.data, packet.len);

@@ -71,6 +71,8 @@ uint8_t soft_phy_raw_bytes_for_frame(uint8_t frame_len);
 static constexpr uint32_t SOFT_PHY_LINE_RATE_BPS = 38400;
 /// Microseconds in a second, for the air-time arithmetic below.
 static constexpr uint32_t SOFT_PHY_US_PER_SECOND = 1000000;
+/// Microseconds per millisecond, for comparing an air time with a bound in milliseconds.
+static constexpr uint32_t SOFT_PHY_US_PER_MS = 1000;
 
 /// @brief On-air time in microseconds for `raw_bytes` bytes at the protocol's line rate.
 ///
@@ -112,8 +114,7 @@ static constexpr uint32_t TX_DONE_GUARD_MS = 250;
 /// @param air_time_us The transmission's air time (`RadioDriver::tx_air_time_us()`).
 /// @return The air time rounded up to whole milliseconds, plus @ref TX_DONE_GUARD_MS.
 constexpr uint32_t tx_done_timeout_ms(uint32_t air_time_us) {
-  constexpr uint32_t us_per_ms = 1000;
-  return ((air_time_us + us_per_ms - 1) / us_per_ms) + TX_DONE_GUARD_MS;
+  return ((air_time_us + SOFT_PHY_US_PER_MS - 1) / SOFT_PHY_US_PER_MS) + TX_DONE_GUARD_MS;
 }
 
 /// @brief Recover a frame's total length from the very first UART cell of a reception.

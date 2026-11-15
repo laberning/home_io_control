@@ -173,6 +173,19 @@ inline bool is_broadcast_reply_for(const IoFrame &frame, uint8_t expected_cmd, c
   return frame.cmd == expected_cmd && std::memcmp(frame.dst, own_node, NODE_ID_SIZE) == 0;
 }
 
+// == Idle receive ==
+
+/// Decide whether the hub asks ESPHome to run its loop continuously. While the radio is set up and has
+/// not latched a failure the hub is a passive receiver whose idle channel hop is checked once per loop
+/// pass, so a pass every 16 to 30 ms would leave the receiver on one channel for that long; a
+/// continuous loop keeps the hop on its 2.7 ms timer. A radio that never came up, or has failed, has
+/// nothing to scan, so the loop goes back to its normal pace.
+///
+/// @param radio_ready  The radio driver was constructed and initialised.
+/// @param radio_failed The driver latched a failure after setup.
+/// @return true to hold the continuous-loop request; false to release it.
+constexpr bool wants_continuous_loop(bool radio_ready, bool radio_failed) { return radio_ready && !radio_failed; }
+
 }  // namespace decisions
 }  // namespace home_io_control
 }  // namespace esphome

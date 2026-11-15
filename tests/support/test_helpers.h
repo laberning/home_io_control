@@ -125,6 +125,7 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::initialized_;
   using IOHomeControlComponent::busy_;
   using IOHomeControlComponent::radio_;
+  using IOHomeControlComponent::idle_loop_;
   using IOHomeControlComponent::radio_failure_reason_;
   using IOHomeControlComponent::warn_if_blocking_over_;
   using IOHomeControlComponent::node_id_;
@@ -172,6 +173,7 @@ class RxTestableComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::system_key_;
   using IOHomeControlComponent::initialized_;
   using IOHomeControlComponent::radio_;
+  using IOHomeControlComponent::idle_loop_;
   using IOHomeControlComponent::op_queue_;
   using IOHomeControlComponent::poll_policy_;
   using IOHomeControlComponent::oneway_receiver_;

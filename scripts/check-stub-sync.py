@@ -75,6 +75,13 @@ ROWS = (
         "Scheduler",
         methods=("set_timeout", "set_interval", "cancel_timeout", "cancel_interval"),
     ),
+    Row(
+        "core/helpers.h",
+        "core/helpers.h",
+        "HighFrequencyLoopRequester",
+        methods=("start", "stop", "is_high_frequency"),
+        members=("started_",),
+    ),
     Row("core/application.h", "core/application.h", "Application", methods=("feed_wdt", "safe_reboot")),
     Row("core/preferences.h", "core/preference_backend.h", "ESPPreferenceObject", methods=("save", "load")),
     Row(

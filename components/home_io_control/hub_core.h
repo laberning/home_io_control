@@ -27,6 +27,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
+#include "esphome/core/helpers.h"
 #include "esphome/components/api/custom_api_device.h"
 #include "esphome/components/spi/spi.h"
 #include "proto_codecs.h"
@@ -923,6 +924,11 @@ class IOHomeControlComponent : public Component,
   /// poll never came back — is taken as at rest there: with no poll left, the device's own flag
   /// stands. Any other device is left as it is.
   void settle_ended_status_tracking_();
+
+  /// Hold ESPHome's continuous-loop request while the radio is set up and has not failed, release it
+  /// otherwise (decisions::wants_continuous_loop()). Idempotent; called every loop pass, the one place
+  /// the request is decided.
+  void update_idle_loop_request_();
   /// Arm the confirming poll that follows a command, because a CMD_EXECUTE reply is never trusted
   /// for position (see update_device_status_()'s trust_position parameter) and therefore leaves the
   /// hub with no idea where the device actually is. Re-arms the bounded tracking window rather than
@@ -1293,6 +1299,10 @@ class IOHomeControlComponent : public Component,
   /// error line, ESPHome's warning status and a republish of every device) is made once, not on
   /// every loop.
   bool radio_failure_reported_{false};
+  /// ESPHome's request for a loop that runs without waiting for its interval, held while the radio is
+  /// idle-listening so the idle channel hop runs on its own timer (ADR 0086). Decided by
+  /// update_idle_loop_request_().
+  HighFrequencyLoopRequester idle_loop_;
   uint8_t node_id_[NODE_ID_SIZE]{};
   uint8_t system_key_[AES_KEY_SIZE]{};
   uint8_t tx_power_{DEFAULT_TX_POWER_DBM};

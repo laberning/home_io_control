@@ -218,3 +218,19 @@ TEST(Decisions, AnUnhandledFrameIsRecordedOnlyFromTheFallbackWithProbesOn) {
   EXPECT_FALSE(decisions::should_record_device_event(other, true, /*fallback=*/true, /*probes=*/false));
   EXPECT_TRUE(decisions::should_record_device_event(other, true, /*fallback=*/true, /*probes=*/true));
 }
+
+// ============================================================================
+// Idle receive: when the hub asks ESPHome for a continuous loop.
+// ============================================================================
+
+TEST(Decisions, ContinuousLoopIsWantedWhileTheRadioIsSetUpAndHealthy) {
+  EXPECT_TRUE(decisions::wants_continuous_loop(/*radio_ready=*/true, /*radio_failed=*/false));
+}
+
+TEST(Decisions, ContinuousLoopIsNotWantedBeforeOrWithoutARadio) {
+  EXPECT_FALSE(decisions::wants_continuous_loop(false, false)) << "setup failed or has not finished";
+}
+
+TEST(Decisions, ContinuousLoopIsReleasedWhenTheRadioFails) {
+  EXPECT_FALSE(decisions::wants_continuous_loop(true, true));
+}

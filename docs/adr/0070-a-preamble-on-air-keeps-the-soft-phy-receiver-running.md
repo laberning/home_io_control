@@ -4,6 +4,9 @@
 
 **Status:** Accepted · **Recorded:** 2026-11
 
+Amended by [ADR 0086](0086-the-idle-receiver-keeps-the-loop-running-so-its-channel-scan-follows-the-protocol-dwell.md)
+(the preamble hold also keeps the idle hop on the channel, and is renewed there).
+
 Applies to the SX1262 and LR1121 drivers (`SoftPhyDriverBase`). The SX1276 driver is unchanged.
 
 ## Context

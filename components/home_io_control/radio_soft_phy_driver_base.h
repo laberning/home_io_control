@@ -22,6 +22,7 @@
 /// hooks implemented by `RadioSX1262`/`RadioLR1121`.
 
 #include "radio_interface.h"
+#include "radio_preamble_hold.h"
 #include "radio_soft_phy.h"
 
 #include <cstddef>
@@ -91,7 +92,7 @@ static constexpr uint32_t SOFT_PHY_CCA_SETTLE_US = 1000;
 /// Longest a detected preamble keeps the receiver running across dwell timeouts, in milliseconds.
 ///
 /// A dwell that times out while PreambleDetected is latched leaves RX and the latched bit alone, so
-/// the caller's linger guard keeps the channel (see SoftPhyDriverBase::preamble_hold_since_ms_).
+/// the caller's linger guard keeps the channel (see SoftPhyDriverBase::preamble_hold_).
 /// Restarting RX there throws the preamble away and, measured on the bench, lost frames whose sync
 /// arrived within a millisecond of the restart. The cap covers a preamble detected at the start of
 /// a dwell (one dwell, ~9 ms) plus the longest preamble-to-sync measured on air from a discovery
@@ -99,8 +100,11 @@ static constexpr uint32_t SOFT_PHY_CCA_SETTLE_US = 1000;
 /// what a false detection on noise can cost.
 static constexpr uint32_t SOFT_PHY_PREAMBLE_HOLD_MS = 30;
 
-/// Microseconds per millisecond, for the air-time arithmetic below.
-static constexpr uint32_t SOFT_PHY_US_PER_MS = 1000;
+/// After a renewed idle hold restarts RX on the held channel, how long the idle hop waits for the
+/// preamble to be detected again before it moves on, in milliseconds. Measured on the bench:
+/// re-detection of a preamble still on air takes about 1 ms on both chips; 4 ms leaves margin.
+static constexpr uint32_t SOFT_PHY_IDLE_RENEW_REDETECT_MS = 4;
+
 /// Polling granularity added on top of an air time: the receive loops poll once per millisecond.
 static constexpr uint32_t SOFT_PHY_POLL_MARGIN_MS = 2;
 
@@ -243,8 +247,17 @@ class SoftPhyDriverBase : public RadioDriver {
   /// @copydoc RadioDriver::is_preamble_detected
   ///
   /// Reads the live, sticky PreambleDetected bit. A dwell that times out on a preamble keeps RX and
-  /// that bit (see `preamble_hold_since_ms_`), so this stays true for the rest of the hold.
+  /// that bit (see `preamble_hold_`), so this stays true for the rest of the hold.
   bool is_preamble_detected() override;
+  /// @copydoc RadioDriver::reception_in_progress
+  ///
+  /// Holds on the frame itself (the recorded holdoff, RX_HOP_HOLDOFF_US) and on a start preamble
+  /// whose sync word is still to come (the preamble hold). The idle hop leaves a channel after a few
+  /// milliseconds, well inside a start preamble, so without the preamble hold it would retune under
+  /// the frame it has just found. The hold lasts `SOFT_PHY_PREAMBLE_HOLD_MS` and is then renewed on
+  /// the same channel while the preamble is detected again (see `preamble_hold_`). A running hold
+  /// answers without SPI; otherwise one IRQ status read looks for a fresh PreambleDetected.
+  [[nodiscard]] bool reception_in_progress() override;
   /// @brief Preamble for response/continuation frames — shared storage, see the concrete
   /// drivers' constructors/tuning defaults for the chip-specific rationale and value.
   [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
@@ -495,8 +508,8 @@ class SoftPhyDriverBase : public RadioDriver {
   /// @ref activity_irq_mask) within timeout.
   bool poll_until_activity_(uint32_t start, uint32_t timeout_ms, uint32_t &irq);
   /// At a dwell timeout: start or continue a preamble hold when `irq` has PreambleDetected set and
-  /// the hold is younger than @ref SOFT_PHY_PREAMBLE_HOLD_MS. True means "leave RX running";
-  /// false means the caller resets RX, which also ends any hold.
+  /// the hold is younger than @ref SOFT_PHY_PREAMBLE_HOLD_MS (no renewal in a blocking listen). True means "leave RX
+  /// running"; false means the caller resets RX, which also ends any hold.
   bool hold_rx_for_preamble_(uint32_t irq);
   /// Resolve the SYNC_WORD_VALID → RX_DONE race condition common to both chips, and — on a chip
   /// that opts into @ref early_rx_read_offset — give the length-driven receive its chance first.
@@ -520,19 +533,29 @@ class SoftPhyDriverBase : public RadioDriver {
   /// already ready; the diagnostic dump prints it so a field report shows how often it happens.
   uint32_t busy_overruns_{0};
 
-  /// @brief When the current preamble hold began (millis()); valid while `preamble_hold_active_`.
+  /// @brief The preamble hold (see @ref PreambleHold): slice, renewal and chain bound in one place.
   ///
   /// `PreambleDetected` is excluded from @ref activity_irq_mask (a bare preamble is not terminal
   /// activity), so a dwell can time out while a frame's preamble is on air. Restarting RX there (the
   /// normal timeout path, `reset_rx_state_()`) throws that preamble away; a restart within about a
   /// millisecond of the sync loses the frame. So `poll_until_activity_()`'s timeout leaves RX and the
   /// sticky bit alone while the bit is set, and `listen()`'s guard, reading the live bit through
-  /// @ref is_preamble_detected, keeps the channel. The hold ends when a frame arrives, when RX is
-  /// reset or re-armed (`reset_rx_state_()`, `rearm_rx_after_tx_()`), on a retune, or after
-  /// @ref SOFT_PHY_PREAMBLE_HOLD_MS, which bounds a false detection on noise.
-  uint32_t preamble_hold_since_ms_{0};
-  /// Whether a preamble hold is running.
-  bool preamble_hold_active_{false};
+  /// @ref is_preamble_detected, keeps the channel. On the idle path a preamble seen by
+  /// `check_for_packet()` or by @ref reception_in_progress starts the same hold, which keeps the idle
+  /// hop off the channel, and that path renews it (see below). The hold ends when a frame arrives,
+  /// when RX is reset or re-armed (`reset_rx_state_()`, `rearm_rx_after_tx_()`), on a retune, or
+  /// after @ref SOFT_PHY_PREAMBLE_HOLD_MS in a blocking listen, which bounds a false detection on
+  /// noise.
+  ///
+  /// The idle hop renews instead of ending at the slice: a wake-up preamble (~218 ms) is far longer
+  /// than the slice, and leaving costs about 8 ms away from the channel, an interval in which the
+  /// sync word of every copy of a fixed-length preamble lands at the same phase. On the LR1121 that
+  /// phase is the end of the slice or the gap, so it lost most long copies; restarting RX on the
+  /// same channel keeps the receiver there and the preamble is detected again within about 1 ms
+  /// (@ref SOFT_PHY_IDLE_RENEW_REDETECT_MS bounds the wait). The run is bounded by
+  /// @ref IDLE_PREAMBLE_HOLD_CHAIN_MS.
+  PreambleHold preamble_hold_{
+      {SOFT_PHY_PREAMBLE_HOLD_MS, SOFT_PHY_IDLE_RENEW_REDETECT_MS, IDLE_PREAMBLE_HOLD_CHAIN_MS}};
 };
 
 }  // namespace home_io_control

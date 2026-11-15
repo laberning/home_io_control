@@ -13,6 +13,7 @@
 /// component is brought up and driven over time.
 
 #include "hub_internal.h"
+#include "decisions_exchange.h"
 
 #include "proto_device_kinds.h"
 #include "radio_sx1276.h"
@@ -445,6 +446,15 @@ void IOHomeControlComponent::set_device_travel_speed(const std::string &device_i
 
 // === Main loop ===
 
+void IOHomeControlComponent::update_idle_loop_request_() {
+  const bool radio_ready = this->initialized_ && this->radio_ != nullptr;
+  if (decisions::wants_continuous_loop(radio_ready, radio_ready && this->radio_->is_failed())) {
+    this->idle_loop_.start();
+  } else {
+    this->idle_loop_.stop();
+  }
+}
+
 void IOHomeControlComponent::loop() {
   if (!this->initialized_)
     return;
@@ -461,6 +471,7 @@ void IOHomeControlComponent::loop() {
     for (const auto &entry : this->registry_)
       this->notify_device_update_(entry.first);
   }
+  this->update_idle_loop_request_();
   if (this->radio_test_mode_)
     return;
 
@@ -478,15 +489,17 @@ void IOHomeControlComponent::loop() {
     this->process_pending_operation_();
   }
 
-  // Frequency hopping — protocol specifies 2.7ms per channel, but ESPHome calls
-  // loop() every ~16-30ms. This is acceptable for a controller: a directed start frame to a
-  // low-power target still goes out with LONG_PREAMBLE (1024 bytes ≈ 218 ms airtime), long enough
-  // to be detected regardless of channel alignment; a start frame to an always-alive target uses
-  // the shorter normal_start_preamble (default 32 bytes), which such a receiver hears fine. This
-  // coarse idle hop causes no exchange to miss its channel either way, because every TX retunes
-  // explicitly to a named channel before sending. Precise hopping would only matter for a passive
-  // receiver scanning for unsolicited frames. A radio that scans the hop channels by itself
-  // (RadioDriver::run_idle_scan()) takes the idle pass over and the host does not hop.
+  // Frequency hopping: the protocol dwell is 2.7 ms per channel (HOP_TIME_US). The idle hop is only
+  // checked here, once per loop pass, so update_idle_loop_request_() asks ESPHome for a continuous
+  // loop while the radio listens (ADR 0086); with the default 16-30 ms pass a short-preamble frame
+  // of a one-way remote would be heard only when the pass happens to sit on its channel. A frame
+  // or a start preamble on the current channel holds the hop (RadioDriver::reception_in_progress()),
+  // so a receiver that lands inside a preamble stays for the frame; the driver renews that hold
+  // while the preamble is still on air, so a long wake-up preamble keeps the channel to its sync.
+  // An exchange retunes explicitly to a named channel before every TX, so it never depends on the
+  // idle channel. A radio that scans the hop channels by itself (RadioDriver::run_idle_scan())
+  // takes the idle pass over and the host does not hop.
+  //
   // Diagnostics build flag: park the receiver on one channel instead of hopping. A hopping monitor
   // is on any given channel roughly a third of the time, so "the capture never shows frame X" is
   // weak evidence — locking to the channel under study makes an absence mean something. Define it
