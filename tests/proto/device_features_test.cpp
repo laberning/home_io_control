@@ -37,6 +37,7 @@ constexpr DeviceFeatures PED = feature::PEDESTRIAN;
 constexpr DeviceFeatures EXT = feature::EXTENDED_POSITION_FRAME;
 constexpr DeviceFeatures WIN = feature::WINDOW_COMPANIONS;
 constexpr DeviceFeatures INV = feature::INVERTED;
+constexpr DeviceFeatures MTR = feature::ENERGY_METER;
 
 /// Every row of the table. A row missing here, or listed with another word, fails the test below.
 const std::vector<ExpectedRow> EXPECTED_ROWS = {
@@ -92,7 +93,7 @@ const std::vector<ExpectedRow> EXPECTED_ROWS = {
     {DeviceType::SIREN, 0, 0},
     {DeviceType::DOMESTIC_HOT_WATER, 0, feature::WATER_HEATER},
     {DeviceType::ELECTRICAL_HEATER, 0, 0},
-    {DeviceType::ELECTRICAL_HEATER, 1, WIN},
+    {DeviceType::ELECTRICAL_HEATER, 1, WIN | MTR},
     {DeviceType::HEAT_RECOVERY_VENTILATION, 0, 0},
     {DeviceType::CENTRAL_HOUSE_CONTROL, 0, 0},
     {DeviceType::TEST_AND_EVALUATION, 0, 0},
