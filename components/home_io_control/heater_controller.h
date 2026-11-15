@@ -27,6 +27,7 @@
 #include "proto_frame.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"
+#include "proto_private_registers.h"
 #include "status_poll_policy.h"
 
 #include <cstddef>
@@ -219,12 +220,12 @@ class HeaterController {
   /// The one place a register read is framed and sent; read_heating_register() decodes on top of it, and
   /// the reads no HeatingFunction describes (a model name in ASCII, "is there a value at all") use it
   /// directly. Gated by device_accepts_register_probe(); the request is built by
-  /// encode_heating_register_read(), which cannot produce a write.
+  /// encode_private_register_read(), which cannot produce a write.
   /// @param device_id Target device ID.
   /// @param reg_hi High byte of the register.
   /// @param reg_lo Low byte of the register.
   /// @param label What is read, for the log ("model_name").
-  /// @param[out] response The reply; its value bytes start at HEATING_REPLY_VALUE_OFFSET (none for a
+  /// @param[out] response The reply; its value bytes start at PRIVATE_REGISTER_VALUE_OFFSET (none for a
   ///        register the device does not hold).
   /// @param max_tries Transmit-attempt cap.
   /// @return true when the device answered with the register's echo.
@@ -291,7 +292,7 @@ class HeaterController {
   /// @param device_id Target device ID.
   /// @param index Low byte of the register.
   /// @param label What is read, for the log ("dhw_water_temperature").
-  /// @param[out] response The reply; its value bytes start at HEATING_REPLY_VALUE_OFFSET.
+  /// @param[out] response The reply; its value bytes start at PRIVATE_REGISTER_VALUE_OFFSET.
   /// @param max_tries Transmit-attempt cap forwarded to read_private_register().
   /// @return true when the device answered with the register's echo.
   bool read_dhw_register(const std::string &device_id, uint8_t index, const char *label, IoFrame &response,

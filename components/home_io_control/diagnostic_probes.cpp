@@ -10,6 +10,7 @@
 #include "proto_commands.h"
 #include "proto_device_types.h"
 #include "proto_heating_profiles.h"
+#include "proto_private_registers.h"
 
 #include "esphome/core/application.h"
 #include "esphome/core/hal.h"
@@ -195,12 +196,12 @@ bool build_probe_read_object(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 }
 
 /// Shared body of the register probes: frames a read of register `<reg_hi><index>`. The payload comes from
-/// encode_heating_register_read(), which cannot produce the write direction, so no probe input can put a
+/// encode_private_register_read(), which cannot produce the write direction, so no probe input can put a
 /// register write on the air (ADR 0063).
 bool build_probe_register_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t reg_hi, uint8_t index,
                                bool low_power) {
-  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
-  const size_t payload_len = encode_heating_register_read(reg_hi, index, payload);
+  uint8_t payload[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
+  const size_t payload_len = encode_private_register_read(reg_hi, index, payload);
   return create_write_private(f, own, dst, low_power, payload, payload_len);
 }
 

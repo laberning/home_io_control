@@ -12,6 +12,7 @@
 #include "proto_frame.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"
+#include "proto_private_registers.h"
 
 #include <gtest/gtest.h>
 
@@ -202,9 +203,9 @@ TEST(CorpusTowelDryer, DryingLeavesTheBaseModeAndThePolledTemperaturesReadable) 
 TEST(CorpusTowelDryer, TheModelNameRegisterLogsAsOneLine) {
   for (const IoFrame &reply : {frame_of(corpus::atlantic_adelis_probe_register_01_sweep_frame57_bytes),
                                frame_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame25_bytes)}) {
-    ASSERT_TRUE(heating_reply_echoes_register(reply, HEATING_REGISTER_HIGH_BYTE, HEATING_REGISTER_MODEL_NAME));
-    EXPECT_EQ(decisions::format_heater_model_name(reply.data + HEATING_REPLY_VALUE_OFFSET,
-                                                  reply.data_len - HEATING_REPLY_VALUE_OFFSET),
+    ASSERT_TRUE(private_reply_echoes_register(reply, HEATING_REGISTER_HIGH_BYTE, HEATING_REGISTER_MODEL_NAME));
+    EXPECT_EQ(decisions::format_heater_model_name(reply.data + PRIVATE_REGISTER_VALUE_OFFSET,
+                                                  reply.data_len - PRIVATE_REGISTER_VALUE_OFFSET),
               "ADELIS 2 DIGIT");
   }
 }
@@ -212,8 +213,8 @@ TEST(CorpusTowelDryer, TheModelNameRegisterLogsAsOneLine) {
 TEST(CorpusTowelDryer, AnAbsentRegisterIsAnEchoWithoutAValue) {
   // 0x0135 is answered with the header alone: the "empty" the model check tells apart from a value.
   const IoFrame empty = frame_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame53_bytes);
-  EXPECT_TRUE(heating_reply_echoes_register(empty, HEATING_REGISTER_HIGH_BYTE, 0x35));
-  EXPECT_EQ(empty.data_len, HEATING_REPLY_VALUE_OFFSET);
+  EXPECT_TRUE(private_reply_echoes_register(empty, HEATING_REGISTER_HIGH_BYTE, 0x35));
+  EXPECT_EQ(empty.data_len, PRIVATE_REGISTER_VALUE_OFFSET);
   const IoFrame mode = frame_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame54_bytes);
-  EXPECT_GT(mode.data_len, HEATING_REPLY_VALUE_OFFSET) << "0x0136 answers with a value on a towel dryer";
+  EXPECT_GT(mode.data_len, PRIVATE_REGISTER_VALUE_OFFSET) << "0x0136 answers with a value on a towel dryer";
 }

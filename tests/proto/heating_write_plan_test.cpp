@@ -2,6 +2,7 @@
 /// @brief Tests for plan_heating_write(): what a climate request writes to each kind of heater, without an
 /// entity or a hub.
 
+#include "proto_codecs.h"
 #include "proto_commands.h"
 #include "proto_device_types.h"
 #include "proto_heating.h"

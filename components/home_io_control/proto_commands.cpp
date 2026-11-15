@@ -18,6 +18,37 @@ namespace home_io_control {
 
 namespace {
 
+// === Two-way frame start ===
+
+/// Where a two-way frame stands in its exchange; sets the START and END flags.
+enum class FramePart : uint8_t {
+  START,         ///< START set, END clear: opens an exchange that continues (a request).
+  SINGLE,        ///< START and END set: a frame that is a whole exchange by itself.
+  CONTINUATION,  ///< Neither set: a frame in the middle of an exchange.
+  FINAL,         ///< END set, START clear: closes an exchange (an answer).
+};
+
+/// @brief Start a two-way frame: flags for its place in the exchange, LOW_POWER, and both addresses.
+/// CTRL1_ACK and CTRL1_PRIORITY stay with the builders that need them (see init_frame()).
+/// @param f Frame to reset and fill.
+/// @param part The frame's place in the exchange.
+/// @param src Sender node ID.
+/// @param dst Destination node ID or broadcast address.
+/// @param low_power LOW_POWER flag for the frame.
+void init_two_way(IoFrame &f, FramePart part, const uint8_t *src, const uint8_t *dst, bool low_power) {
+  const bool start = part == FramePart::START || part == FramePart::SINGLE;
+  const bool end = part == FramePart::FINAL || part == FramePart::SINGLE;
+  init_frame(f, /*is_2w=*/true, start, end, low_power);
+  set_dst(f, dst);
+  set_src(f, src);
+}
+
+/// @brief Start a controller request: START set, END clear, from `own` to `dst`.
+/// @param low_power LOW_POWER flag, the target's per-device class for controller commands.
+void init_request(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
+  init_two_way(f, FramePart::START, own, dst, low_power);
+}
+
 // === Command payload templates ===
 
 /// The protocol uses 0-100 for percentage-style position inputs before encoding them on wire.
@@ -143,9 +174,7 @@ constexpr uint8_t IDENTIFY_PARAMETER = 0xFF;
 /// both functional-parameter indicator bytes zero. Shared by the position and heating-level builders.
 bool build_main_parameter_execute(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t acei,
                                   uint8_t main_high, uint8_t main_low) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   const uint8_t payload[EXECUTE_SPECIAL_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR, acei, main_high, main_low, 0x00, 0x00};
   return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
 }
@@ -281,9 +310,7 @@ constexpr uint8_t ONEWAY_REMOVE_MAC_SPAN_SIZE = 2;
 /// Build a no-payload, addressed, authenticated request for `cmd` — the shape every
 /// device-info read (CMD_GET_NAME, CMD_GET_INFO1/2, CMD_GET_GENERAL_INFO3) uses.
 bool create_no_payload_request(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t cmd) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   return set_cmd(f, cmd);
 }
 
@@ -294,9 +321,7 @@ bool create_execute_position(IoFrame &f, const uint8_t *own, const uint8_t *dst,
                              bool silent) {
   if (position > POSITION_PERCENT_MAX)
     return false;
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   const auto payload = make_position_payload(EXECUTE_ACEI, position, silent);
   return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
 }
@@ -319,9 +344,7 @@ bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
     return false;
   const auto main_byte = static_cast<uint8_t>(main_parameter >> BITS_PER_BYTE);
   const auto modifier_byte = static_cast<uint8_t>(main_parameter & MAIN_PARAMETER_LOW_BYTE_MASK);
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   // FAVORITE is the one command here the capture covers: a Somfy hub sends the plain 6-byte form
   // for a normal "My" press and the extended 8-byte form with the silent profile when the toggle
   // is on, which is exactly the pair below. STOP is excluded because stopping has no travel speed,
@@ -348,9 +371,7 @@ bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
 /// bypass. The caller (execute_device_command_() in hub_operations.cpp) is responsible for
 /// resolving the correct value from the target IoDevice.
 bool create_force_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t open_position) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   const auto payload = make_position_payload(EXECUTE_ACEI_FORCE_OPEN, open_position);
   return set_cmd(f, CMD_EXECUTE, payload.data(), payload.size());
 }
@@ -379,9 +400,7 @@ bool create_execute_heating_main_parameter(IoFrame &f, const uint8_t *own, const
 static bool build_execute_with_second_bitmap_fp(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
                                                 uint8_t acei, uint16_t main_parameter, uint8_t second_bitmap,
                                                 uint16_t value) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   // FP1-FP8 bitmap (none), the FP9-FP16 bitmap with the one parameter's bit, then its value.
   const uint8_t payload[EXECUTE_SECOND_BITMAP_FP_PAYLOAD_SIZE] = {
       EXECUTE_ORIGINATOR,
@@ -526,9 +545,7 @@ bool create_1w_remove_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], De
 /// its own wire.
 bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t function_id,
                              uint8_t sub_index) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   uint8_t d[3] = {function_id, sub_index, 0x00};
   return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
 }
@@ -560,17 +577,13 @@ bool create_get_info2(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool l
 
 bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
                      const uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE]) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   return set_cmd(f, CMD_SET_NAME, payload, DEVICE_NAME_WRITE_PAYLOAD_SIZE);
 }
 
 /// Build an authenticated device-identify request (0x1E).
 bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   const uint8_t payload[2] = {ORIGINATOR_USER_REMOTE, IDENTIFY_PARAMETER};
   return set_cmd(f, CMD_IDENTIFY, payload, sizeof(payload));
 }
@@ -582,17 +595,13 @@ bool create_write_private(IoFrame &f, const uint8_t *own, const uint8_t *dst, bo
                           size_t payload_len) {
   if (payload == nullptr || payload_len == 0 || payload_len > FRAME_MAX_DATA_SIZE)
     return false;
-  init_frame(f, /*is_2w=*/true, /*start=*/true, /*end=*/false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   return set_cmd(f, CMD_WRITE_PRIVATE, payload, static_cast<uint8_t>(payload_len));
 }
 
 /// Build a tilt execute command (0x00) for devices that support slat angle control.
 bool create_execute_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t tilt_percent) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
 
   auto const tilt_value =
       static_cast<uint16_t>((POSITION_PERCENT_MAX - tilt_percent) * STATUS_POS_MAX / POSITION_PERCENT_MAX);
@@ -612,9 +621,7 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
                                       uint8_t position, uint8_t tilt_percent) {
   if (position > POSITION_PERCENT_MAX)
     return false;
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
 
   auto const tilt_value =
       static_cast<uint16_t>((POSITION_PERCENT_MAX - tilt_percent) * STATUS_POS_MAX / POSITION_PERCENT_MAX);
@@ -639,9 +646,7 @@ bool create_execute_position_and_tilt(IoFrame &f, const uint8_t *own, const uint
 /// values are diagnostic probes into an undecoded function ID.
 bool create_get_status_extended(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t selector,
                                 uint8_t block, uint8_t function_id) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   uint8_t d[4] = {function_id, selector, block, 0x00};
   return set_cmd(f, CMD_PRIVATE, d, sizeof(d));
 }
@@ -662,9 +667,7 @@ bool create_status_mp_fp_read(IoFrame &f, const uint8_t *own, const uint8_t *dst
   const uint8_t n2 = count_bits(fpi2);
   if (n1 + n2 == 0 || n1 + n2 > STATUS_MP_FP_PARAM_COUNT)
     return false;
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   // function ID + FPI1 + FPI2 + one status type per requested parameter.
   uint8_t d[3 + STATUS_MP_FP_PARAM_COUNT];
   size_t len = 0;
@@ -681,9 +684,7 @@ bool create_status_mp_fp_read(IoFrame &f, const uint8_t *own, const uint8_t *dst
 /// Build the limitation read (see the header for the evidence and the read-only guarantee).
 bool create_limitation_status_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, LimitationType type,
                                    bool low_power) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   const uint8_t d[LIMITATION_REQ_DATA_SIZE] = {static_cast<uint8_t>(type), LIMITATION_PARAM_MP, 0x00};
   return set_cmd(f, CMD_LIMITATION_STATUS_REQ, d, sizeof(d));
 }
@@ -695,9 +696,7 @@ bool create_event_subscription(IoFrame &f, const uint8_t *own, const uint8_t *ds
                                bool low_power) {
   if (event_id != EVENT_BATTERY_LEVEL_CHANGE && event_id != EVENT_LOCAL_SENSOR)
     return false;
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   // The event id follows the action byte, big-endian.
   const uint8_t d[SUBSCRIBE_EVENT_DATA_SIZE] = {action, static_cast<uint8_t>(event_id >> 8),
                                                 static_cast<uint8_t>(event_id & 0xFF)};
@@ -725,9 +724,7 @@ bool create_transfer_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, co
   if (!allowed)
     return false;
   const uint16_t object_id = object.id;
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   // Originator, object class, a zero byte, the object id big-endian, then two zero words (offset and
   // length of the part wanted, left zero to ask for the whole object).
   const uint8_t d[TRANSFER_OPEN_DATA_SIZE] = {ORIGINATOR_SAAC,
@@ -745,9 +742,7 @@ bool create_transfer_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, co
 /// Build the transfer-read request (see the header: exactly handle and chunk, no data).
 bool create_transfer_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t handle, uint16_t chunk,
                           bool low_power) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   const uint8_t d[TRANSFER_READ_REQ_DATA_SIZE] = {handle, static_cast<uint8_t>(chunk >> 8),
                                                   static_cast<uint8_t>(chunk & 0xFF)};
   return set_cmd(f, CMD_UNKNOWN4A_REQ, d, sizeof(d));
@@ -771,9 +766,7 @@ bool create_get_status_tilt(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
 /// silently clear the flag on a short-form probe sent to a solar device.
 bool create_private2_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t modifier, bool long_form,
                           bool low_power) {
-  init_frame(f, true, true, false, low_power);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, low_power);
   if (long_form) {
     uint8_t d[PRIVATE2_LONG_PAYLOAD_SIZE] = {POS_UNKNOWN,  0x00,     PRIVATE2_EXTENDED_BLOCK_FLAG,
                                              POS_FAVORITE, modifier, 0x00};
@@ -787,9 +780,7 @@ bool create_private2_read(IoFrame &f, const uint8_t *own, const uint8_t *dst, ui
 /// Only devices in pairing mode (PROG button pressed) will respond.
 bool create_discover(IoFrame &f, const uint8_t *own) {
   // start+end: single broadcast frame.
-  init_frame(f, true, true, true, false);
-  set_dst(f, BROADCAST_DISCOVER);
-  set_src(f, own);
+  init_two_way(f, FramePart::SINGLE, own, BROADCAST_DISCOVER, /*low_power=*/false);
   return set_cmd(f, CMD_DISCOVER_REQ);
 }
 
@@ -802,13 +793,11 @@ bool create_discover(IoFrame &f, const uint8_t *own) {
 /// motor that has never been paired with this controller's key.
 bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, const uint8_t *dst, bool low_power,
                               bool ack_capable, bool payload_enabled, uint8_t payload, const uint8_t *system_key) {
-  init_frame(f, true, true, true, low_power);
+  init_two_way(f, FramePart::SINGLE, own, dst, low_power);
   // CTRL1_ACK is deliberately not a parameter of init_frame() itself — see that function's doc for
   // why it must never be set unconditionally. Scoped here to this discovery broadcast only.
   if (ack_capable)
     f.ctrl1 |= CTRL1_ACK;
-  set_dst(f, dst);
-  set_src(f, own);
 
   switch (command) {
     case CMD_DISCOVER_REQ:
@@ -849,9 +838,7 @@ bool create_discovery_request(IoFrame &f, const uint8_t *own, uint8_t command, c
 /// See proto_commands.h for the full contract and the real-capture cross-check.
 bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, DeviceType type, uint8_t subtype,
                           uint8_t manufacturer_id, uint8_t flags) {
-  init_frame(f, true, true, true, false);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_two_way(f, FramePart::SINGLE, own, dst, /*low_power=*/false);
 
   uint8_t payload[DISCOVERY_RESP_FULL_SIZE] = {0};
   encode_packed_device_type(type, subtype, payload[0], payload[1]);
@@ -880,9 +867,7 @@ bool create_discover_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst, De
 /// stays clear because that bit describes the *target* of a controller-originated frame (see the
 /// header's convention note); a device does not flag a frame it sends *to* the hub as low-power.
 static bool create_device_terminal_ack(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t cmd) {
-  init_frame(f, true, false, true, false);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_two_way(f, FramePart::FINAL, own, dst, /*low_power=*/false);
   return set_cmd(f, cmd);
 }
 
@@ -898,14 +883,12 @@ bool create_key_confirm(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
 /// controller-side counterpart of create_device_terminal_ack() above.
 static bool create_controller_start_frame(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t cmd,
                                           bool low_power, bool ack) {
-  init_frame(f, true, /*start=*/true, /*end=*/false, low_power);
+  init_request(f, own, dst, low_power);
   // CTRL1_ACK is deliberately not a parameter of init_frame() itself — see that function's doc
   // for why it must never be set unconditionally. Scoped to the frame each caller builds, same
   // pattern as create_discovery_request()'s ack_capable.
   if (ack)
     f.ctrl1 |= CTRL1_ACK;
-  set_dst(f, dst);
-  set_src(f, own);
   return set_cmd(f, cmd);
 }
 
@@ -934,10 +917,8 @@ bool recover_system_key_from_transfer(const uint8_t transfer_payload[AES_KEY_SIZ
 /// Build a key transfer request (0x38). See proto_commands.h for the frame shape.
 bool create_launch_key_transfer(IoFrame &f, const uint8_t *own, const uint8_t *dst,
                                 const uint8_t challenge[HMAC_SIZE]) {
-  init_frame(f, true, /*start=*/true, /*end=*/false, /*low_power=*/false);
+  init_request(f, own, dst, /*low_power=*/false);
   f.ctrl1 |= CTRL1_PRIORITY;
-  set_dst(f, dst);
-  set_src(f, own);
   return set_cmd(f, CMD_LAUNCH_KEY_TRANSFER, challenge, HMAC_SIZE);
 }
 
@@ -973,9 +954,7 @@ bool create_key_transfer(IoFrame &f, IoFrame &old_frame, const uint8_t *dst, con
                          const uint8_t key[AES_KEY_SIZE], const uint8_t challenge[HMAC_SIZE]) {
   // low_power=true: the pairing key-transfer keeps a fixed frame shape, hardware-validated as-is.
   // It is a non-start continuation frame and stays outside the per-device low_power rule (ADR 0029).
-  init_frame(f, true, false, false, true);
-  set_dst(f, dst);
-  set_src(f, src);
+  init_two_way(f, FramePart::CONTINUATION, src, dst, /*low_power=*/true);
   // The pairing capture we matched derives the IV from the previous command byte only. Treating
   // the key-init frame that narrowly keeps our key transfer aligned with real controllers.
   uint8_t enc_key[AES_KEY_SIZE];
@@ -988,9 +967,7 @@ bool create_key_transfer(IoFrame &f, IoFrame &old_frame, const uint8_t *dst, con
 /// controller-role and device-role builders below, which differ only in those bits.
 static bool create_challenge_req_framed(IoFrame &f, const uint8_t *dst, const uint8_t *src,
                                         const uint8_t challenge[HMAC_SIZE], bool start, bool low_power) {
-  init_frame(f, true, start, false, low_power);
-  set_dst(f, dst);
-  set_src(f, src);
+  init_two_way(f, start ? FramePart::START : FramePart::CONTINUATION, src, dst, low_power);
   return set_cmd(f, CMD_CHALLENGE_REQ, challenge, HMAC_SIZE);
 }
 
@@ -1027,9 +1004,7 @@ bool create_challenge_req_device_role(IoFrame &f, const uint8_t *dst, const uint
 static bool create_challenge_resp_framed(IoFrame &f, const uint8_t *dst, const uint8_t *src,
                                          const uint8_t challenge[HMAC_SIZE], const IoFrame &origin, const uint8_t *key,
                                          bool end, bool low_power) {
-  init_frame(f, true, /*start=*/false, end, low_power);
-  set_dst(f, dst);
-  set_src(f, src);
+  init_two_way(f, end ? FramePart::FINAL : FramePart::CONTINUATION, src, dst, low_power);
   uint8_t hmac[HMAC_SIZE];
   if (!challenge_resp_hmac(origin, challenge, key, hmac))
     return false;
@@ -1076,9 +1051,7 @@ bool create_challenge_resp(IoFrame &f, const uint8_t *dst, const uint8_t *src, c
 /// missing. Not mirroring the request's PRIORITY bit until a second real capture settles it either
 /// way.
 bool create_node_verify_resp_device_role(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
-  init_frame(f, true, /*start=*/false, /*end=*/false, /*low_power=*/false);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_two_way(f, FramePart::CONTINUATION, own, dst, /*low_power=*/false);
   return set_cmd(f, CMD_NODE_VERIFY_RESP, own, NODE_ID_SIZE);
 }
 
@@ -1095,9 +1068,7 @@ bool create_challenge_resp_device_role(IoFrame &f, const uint8_t *dst, const uin
 bool create_status_update_resp(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
   // end=true: final frame. low_power=true: this device-role response keeps a fixed shape,
   // hardware-validated as-is, and stays outside the per-device low_power rule (ADR 0029).
-  init_frame(f, true, false, true, true);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_two_way(f, FramePart::FINAL, own, dst, /*low_power=*/true);
   return set_cmd(f, CMD_STATUS_UPDATE_RESP, STATUS_UPDATE_ACK_PAYLOAD, sizeof(STATUS_UPDATE_ACK_PAYLOAD));
 }
 
@@ -1107,9 +1078,7 @@ bool create_set_config1(IoFrame &f, const uint8_t *own, const uint8_t *dst) {
   // low_power=true: this pairing phase-3 config write keeps the fixed `4D 20` CTRL bytes it was
   // hardware-validated at; the per-device low_power rule deliberately does not reach pairing
   // frames (ADR 0029). Its preamble is chosen by the pairing engine, not by this flag alone.
-  init_frame(f, true, true, false, true);
-  set_dst(f, dst);
-  set_src(f, own);
+  init_request(f, own, dst, /*low_power=*/true);
   // Set-config payload matched from working controller captures.
   return set_cmd(f, CMD_SET_CONFIG1, SET_CONFIG1_STATUS_BROADCAST_PAYLOAD,
                  sizeof(SET_CONFIG1_STATUS_BROADCAST_PAYLOAD));

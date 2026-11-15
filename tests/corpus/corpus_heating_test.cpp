@@ -16,6 +16,7 @@
 #include "proto_frame.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"
+#include "proto_private_registers.h"
 
 #include <gtest/gtest.h>
 
@@ -52,7 +53,7 @@ template<size_t N> bool payload_matches(const uint8_t (&bytes)[N], const uint8_t
 
 /// The captured request is a read of this register.
 template<size_t N> bool is_read_of(const uint8_t (&bytes)[N], HeatingFunction fn) {
-  uint8_t encoded[HEATING_PAYLOAD_MAX_SIZE];
+  uint8_t encoded[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
   const size_t len = encode_heating_read(fn, encoded);
   EXPECT_NE(len, 0U) << heating_function_name(fn);
   return payload_matches(bytes, encoded, len);
@@ -60,7 +61,7 @@ template<size_t N> bool is_read_of(const uint8_t (&bytes)[N], HeatingFunction fn
 
 /// The captured request is a write of this value to this register.
 template<size_t N> bool is_write_of(const uint8_t (&bytes)[N], HeatingFunction fn, float value) {
-  uint8_t encoded[HEATING_PAYLOAD_MAX_SIZE];
+  uint8_t encoded[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
   const size_t len = encode_heating_write(fn, value, encoded);
   EXPECT_NE(len, 0U) << heating_function_name(fn);
   return payload_matches(bytes, encoded, len);

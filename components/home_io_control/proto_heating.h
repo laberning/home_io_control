@@ -33,6 +33,7 @@
 /// controller) and, most likely, its brightness in 0x0142 (reads 100 with the light at full) (issue #222).
 
 #include "proto_frame.h"
+#include "proto_private_registers.h"
 
 #include <cmath>
 #include <cstddef>
@@ -118,28 +119,15 @@ constexpr float HEATING_TEMP_MIN_C = 7.0F;
 /// No setpoint above 25.5 °C (a non-zero high byte) has been written on hardware yet.
 constexpr float HEATING_TEMP_MAX_C = 28.0F;
 
-/// @brief Largest payload any function produces: a set of a 16-bit value (4-byte header + 2 value bytes).
-constexpr size_t HEATING_PAYLOAD_MAX_SIZE = 6;
-
-/// @brief Leading payload byte, common to every function. Its meaning is unconfirmed; do not read a
-/// semantic (for example "device class") into it.
-constexpr uint8_t HEATING_PAYLOAD_PREFIX = 0x0C;
-
 /// @brief Payload byte at index 2: the high byte of the 16-bit register number, constant `0x01`.
 constexpr uint8_t HEATING_REGISTER_HIGH_BYTE = 0x01;
-
-/// @brief Payload byte at index 1 of a read ("get") request.
-constexpr uint8_t HEATING_DIRECTION_GET = 0x60;
-
-/// @brief Payload byte at index 1 of a write ("set") request.
-constexpr uint8_t HEATING_DIRECTION_SET = 0x61;
 
 /// @brief Measured value in a reading when the heater reports a sensor fault (raw `-1`).
 /// A reading stores it as NaN, the same as "never read".
 constexpr int16_t HEATING_SENSOR_FAULT_RAW = -1;
 
 /// @brief Default encoding range of a temperature main parameter, in degrees Celsius. The main
-/// parameter spans HEATING_TEMPERATURE_MP_SPAN steps over [min, max]; this range is the one a device
+/// parameter spans TEMPERATURE_MP_SPAN steps over [min, max]; this range is the one a device
 /// is assumed to use unless the YAML says otherwise (`min_temperature:` / `max_temperature:`).
 static constexpr float HEATING_TEMPERATURE_RANGE_MIN_C = -40.0F;
 static constexpr float HEATING_TEMPERATURE_RANGE_MAX_C = 80.0F;  ///< See HEATING_TEMPERATURE_RANGE_MIN_C.
@@ -147,9 +135,6 @@ static constexpr float HEATING_TEMPERATURE_RANGE_MAX_C = 80.0F;  ///< See HEATIN
 /// @brief Highest night light brightness (HeatingFunction::NIGHT_LIGHT_BRIGHTNESS): a percentage, so
 /// this value is full brightness.
 constexpr uint8_t HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX = 100;
-
-/// @brief Offset of the first value byte in a register reply: the four header bytes it echoes.
-constexpr size_t HEATING_REPLY_VALUE_OFFSET = 4;
 
 /// @brief Register 0x0119: the heater's model name, ASCII, not terminated ("ADELIS 2 DIGIT" on an
 /// Atlantic Adelis, corpus atlantic_adelis_probe_register_01_sweep). Read raw for a log line; no
@@ -179,16 +164,6 @@ bool heating_function_is_readable(HeatingFunction fn);
 /// @return false for an out-of-range value.
 bool heating_function_register(HeatingFunction fn, uint8_t &register_low);
 
-/// @brief Is this frame a register reply that echoes a request for this register?
-/// @details A CMD_WRITE_PRIVATE_ACK whose data starts with `0C 60 <reg_hi> <reg_lo>` (a read) or
-///          `0C 61 <reg_hi> <reg_lo>` (a write). The value bytes, if any, follow at
-///          HEATING_REPLY_VALUE_OFFSET; a register the device does not hold is answered with none.
-/// @param reply The device's reply frame.
-/// @param reg_hi High byte of the register the request addressed.
-/// @param reg_lo Low byte of the register the request addressed.
-/// @return true when the reply is the register's echo.
-bool heating_reply_echoes_register(const IoFrame &reply, uint8_t reg_hi, uint8_t reg_lo);
-
 /// @brief Encode a write ("set") of one register into a CMD_WRITE_PRIVATE (0x20) payload.
 ///
 /// `value` is interpreted by the register's encoding:
@@ -205,30 +180,16 @@ bool heating_reply_echoes_register(const IoFrame &reply, uint8_t reg_hi, uint8_t
 /// input is rejected: a byte derived from a truncating or wrapping cast is never emitted.
 /// @param fn Register to write.
 /// @param value Register-specific value (see above).
-/// @param out Output buffer of HEATING_PAYLOAD_MAX_SIZE bytes.
+/// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return Number of payload bytes written (5 or 6), or 0 on invalid input or a read-only register.
-size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]);
+size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
 /// @brief Encode a read ("get") of one register into a CMD_WRITE_PRIVATE (0x20) payload.
 /// @param fn Register to read.
-/// @param out Output buffer of HEATING_PAYLOAD_MAX_SIZE bytes.
+/// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return 4 (the payload is always `0C 60 01 <reg>`), or 0 for a write-only register or an
 ///         out-of-range value.
-size_t encode_heating_read(HeatingFunction fn, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]);
-
-/// @brief Encode a read ("get") of an arbitrary register into a CMD_WRITE_PRIVATE (0x20) payload.
-///
-/// The diagnostic `register_00` / `register_01` probes ask a device for a register no
-/// HeatingFunction names. The request is always `0C 60 <reg_hi> <reg_lo>`: the direction byte is
-/// HEATING_DIRECTION_GET and this function has no parameter that could change it, so the write
-/// direction (HEATING_DIRECTION_SET) cannot be produced from here for any input.
-/// \todo Register family 0x00xx is untested on hardware. Family 0x01xx is the one encode_heating_read()
-///       already sends to Atlantic radiators.
-/// @param reg_hi High byte of the 16-bit register number.
-/// @param reg_lo Low byte of the 16-bit register number.
-/// @param out Output buffer of HEATING_PAYLOAD_MAX_SIZE bytes.
-/// @return Always 4 (`0C 60 <reg_hi> <reg_lo>`).
-size_t encode_heating_register_read(uint8_t reg_hi, uint8_t reg_lo, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]);
+size_t encode_heating_read(HeatingFunction fn, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
 /// @brief Encode the function the `heating_control` action runs: a read for a read-only register,
 /// a write for every other.
@@ -237,9 +198,9 @@ size_t encode_heating_register_read(uint8_t reg_hi, uint8_t reg_lo, uint8_t out[
 /// reads too; the others are writes as in encode_heating_write().
 /// @param fn Function to encode.
 /// @param value Function-specific value (ignored for a read).
-/// @param out Output buffer of HEATING_PAYLOAD_MAX_SIZE bytes.
+/// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return Number of payload bytes written (4, 5 or 6), or 0 on invalid input.
-size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]);
+size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
 /// @brief Decode the value a heater answered a register read or write with.
 ///

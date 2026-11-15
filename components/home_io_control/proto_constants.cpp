@@ -243,137 +243,102 @@ const char *acei_level_name(uint8_t level) {
   }
 }
 
-const char *command_result_name(uint8_t result) {
-  switch (result) {
-    case RESULT_UNKNOWN_STATUS_REPLY:
-      return "UNKNOWN_STATUS_REPLY";
-    case RESULT_COMMAND_COMPLETED_OK:
-      return "COMMAND_COMPLETED_OK";
-    case RESULT_NO_CONTACT:
-      return "NO_CONTACT";
-    case RESULT_MANUALLY_OPERATED:
-      return "MANUALLY_OPERATED";
-    case RESULT_BLOCKED:
-      return "BLOCKED";
-    case RESULT_WRONG_SYSTEMKEY:
-      return "WRONG_SYSTEMKEY";
-    case RESULT_PRIORITY_LEVEL_LOCKED:
-      return "PRIORITY_LEVEL_LOCKED";
-    case RESULT_REACHED_WRONG_POSITION:
-      return "REACHED_WRONG_POSITION";
-    case RESULT_NO_EXECUTION:
-      return "NO_EXECUTION";
-    case RESULT_CALIBRATING:
-      return "CALIBRATING";
-    case RESULT_POWER_CONSUMPTION_TOO_HIGH:
-      return "POWER_CONSUMPTION_TOO_HIGH";
-    case RESULT_POWER_CONSUMPTION_TOO_LOW:
-      return "POWER_CONSUMPTION_TOO_LOW";
-    case RESULT_LOCK_POSITION_OPEN:
-      return "LOCK_POSITION_OPEN";
-    case RESULT_MOTION_TIME_TOO_LONG:
-      return "MOTION_TIME_TOO_LONG";
-    case RESULT_THERMAL_PROTECTION:
-      return "THERMAL_PROTECTION";
-    case RESULT_FILTER_MAINTENANCE_NEEDED:
-      return "FILTER_MAINTENANCE_NEEDED";
-    case RESULT_BATTERY_LEVEL:
-      return "BATTERY_LEVEL";
-    case RESULT_TARGET_MODIFIED:
-      return "TARGET_MODIFIED";
-    case RESULT_MODE_NOT_IMPLEMENTED:
-      return "MODE_NOT_IMPLEMENTED";
-    case RESULT_COMMAND_INCOMPATIBLE_TO_MOVEMENT:
-      return "COMMAND_INCOMPATIBLE_TO_MOVEMENT";
-    case RESULT_USER_ACTION:
-      return "USER_ACTION";
-    case RESULT_DEAD_BOLT_ERROR:
-      return "DEAD_BOLT_ERROR";
-    case RESULT_WRONG_LOAD_CONNECTED:
-      return "WRONG_LOAD_CONNECTED";
-    case RESULT_COLOUR_NOT_REACHABLE:
-      return "COLOUR_NOT_REACHABLE";
-    case RESULT_TARGET_NOT_REACHABLE:
-      return "TARGET_NOT_REACHABLE";
-    case RESULT_BAD_INDEX_RECEIVED:
-      return "BAD_INDEX_RECEIVED";
-    case RESULT_COMMAND_OVERRULED:
-      return "COMMAND_OVERRULED";
-    case RESULT_NODE_WAITING_FOR_POWER:
-      return "NODE_WAITING_FOR_POWER";
-    case RESULT_WRONG_POSITION:
-      return "WRONG_POSITION";
-    case RESULT_LIMITS_NOT_SET:
-      return "LIMITS_NOT_SET";
-    case RESULT_IP_NOT_SET:
-      return "IP_NOT_SET";
-    case RESULT_OUT_OF_RANGE:
-      return "OUT_OF_RANGE";
-    case RESULT_COMMAND_UNKNOWN:
-      return "COMMAND_UNKNOWN";
-    case RESULT_MODE_OR_STATE_UNKNOWN:
-      return "MODE_OR_STATE_UNKNOWN";
-    case RESULT_BAD_MAC:
-      return "BAD_MAC";
-    case RESULT_SETUP_REQUIRED:
-      return "SETUP_REQUIRED";
-    case RESULT_PARAMETER_UNKNOWN:
-      return "PARAMETER_UNKNOWN";
-    case RESULT_ORIGINATOR_DISABLED:
-      return "ORIGINATOR_DISABLED";
-    case RESULT_PRIORITY_LOCKED:
-      return "PRIORITY_LOCKED";
-    case RESULT_PRIORITY_SERVICE_NOT_SUPPORTED:
-      return "PRIORITY_SERVICE_NOT_SUPPORTED";
-    case RESULT_PARAMETER_LIMITATION_ADJUSTMENT:
-      return "PARAMETER_LIMITATION_ADJUSTMENT";
-    case RESULT_PARAMETER_INCOHERENCE_ADJUSTMENT:
-      return "PARAMETER_INCOHERENCE_ADJUSTMENT";
-    case RESULT_TOTAL_INCOHERENCE:
-      return "TOTAL_INCOHERENCE";
-    case RESULT_SERVICE_FULL:
-      return "SERVICE_FULL";
-    case RESULT_ALIAS_INCOHERENCE:
-      return "ALIAS_INCOHERENCE";
-    case RESULT_SESSION_INTERRUPTED:
-      return "SESSION_INTERRUPTED";
-    case RESULT_NOT_IMPLEMENTED:
-      return "NOT_IMPLEMENTED";
-    case RESULT_COMMAND_REJECTED:
-      return "COMMAND_REJECTED";
-    case RESULT_ALREADY_CONFIGURED:
-      return "ALREADY_CONFIGURED";
-    case RESULT_INFORMATION_CODE:
-      return "INFORMATION_CODE";
-    case RESULT_PARAMETER_LIMITED:
-      return "PARAMETER_LIMITED";
-    case RESULT_LIMITATION_BY_LOCAL_USER:
-      return "LIMITATION_BY_LOCAL_USER";
-    case RESULT_LIMITATION_BY_USER:
-      return "LIMITATION_BY_USER";
-    case RESULT_LIMITATION_BY_RAIN:
-      return "LIMITATION_BY_RAIN";
-    case RESULT_LIMITATION_BY_TIMER:
-      return "LIMITATION_BY_TIMER";
-    case RESULT_LIMITATION_BY_SCD:
-      return "LIMITATION_BY_SCD";
-    case RESULT_LIMITATION_BY_UPS:
-      return "LIMITATION_BY_UPS";
-    case RESULT_LIMITATION_BY_UNKNOWN_DEVICE:
-      return "LIMITATION_BY_UNKNOWN_DEVICE";
-    case RESULT_LIMITATION_BY_SAAC:
-      return "LIMITATION_BY_SAAC";
-    case RESULT_LIMITATION_BY_WIND:
-      return "LIMITATION_BY_WIND";
-    case RESULT_LIMITATION_BY_MYSELF:
-      return "LIMITATION_BY_MYSELF";
-    case RESULT_LIMITATION_BY_AUTOMATIC_CYCLE:
-      return "LIMITATION_BY_AUTOMATIC_CYCLE";
-    case RESULT_LIMITATION_BY_EMERGENCY:
-      return "LIMITATION_BY_EMERGENCY";
-    default:
-      return "UNKNOWN_RESULT_CODE";
+// === Result codes ===
+
+namespace {
+
+/// One row per whole-byte result value: its symbolic name and a warn-level description.
+struct CommandResultInfo {
+  uint8_t result;
+  const char *name;
+  const char *description;
+};
+
+constexpr CommandResultInfo COMMAND_RESULTS[] = {
+    {RESULT_UNKNOWN_STATUS_REPLY, "UNKNOWN_STATUS_REPLY", "unknown reply"},
+    {RESULT_COMMAND_COMPLETED_OK, "COMMAND_COMPLETED_OK", "no errors detected"},
+    {RESULT_NO_CONTACT, "NO_CONTACT", "no communication to node"},
+    {RESULT_MANUALLY_OPERATED, "MANUALLY_OPERATED", "manually operated by a user"},
+    {RESULT_BLOCKED, "BLOCKED", "node has been blocked by an object"},
+    {RESULT_WRONG_SYSTEMKEY, "WRONG_SYSTEMKEY", "node contains the wrong system key"},
+    {RESULT_PRIORITY_LEVEL_LOCKED, "PRIORITY_LEVEL_LOCKED", "node is locked on this priority level"},
+    {RESULT_REACHED_WRONG_POSITION, "REACHED_WRONG_POSITION", "node stopped in another position than expected"},
+    {RESULT_NO_EXECUTION, "NO_EXECUTION", "no movement of the node parameter"},
+    {RESULT_CALIBRATING, "CALIBRATING", "node is calibrating the parameters"},
+    {RESULT_POWER_CONSUMPTION_TOO_HIGH, "POWER_CONSUMPTION_TOO_HIGH", "node power consumption is too high"},
+    {RESULT_POWER_CONSUMPTION_TOO_LOW, "POWER_CONSUMPTION_TOO_LOW", "node power consumption is too low"},
+    {RESULT_LOCK_POSITION_OPEN, "LOCK_POSITION_OPEN", "door open during lock command"},
+    {RESULT_MOTION_TIME_TOO_LONG, "MOTION_TIME_TOO_LONG", "target was not reached in time"},
+    {RESULT_THERMAL_PROTECTION, "THERMAL_PROTECTION", "node has gone into thermal protection mode"},
+    {RESULT_FILTER_MAINTENANCE_NEEDED, "FILTER_MAINTENANCE_NEEDED", "filter needs maintenance"},
+    {RESULT_BATTERY_LEVEL, "BATTERY_LEVEL", "battery level is low"},
+    {RESULT_TARGET_MODIFIED, "TARGET_MODIFIED", "node modified the requested target value"},
+    {RESULT_MODE_NOT_IMPLEMENTED, "MODE_NOT_IMPLEMENTED", "node does not support the received mode"},
+    {RESULT_COMMAND_INCOMPATIBLE_TO_MOVEMENT, "COMMAND_INCOMPATIBLE_TO_MOVEMENT",
+     "node cannot move in the requested direction"},
+    {RESULT_USER_ACTION, "USER_ACTION", "user action overrode the command"},
+    {RESULT_DEAD_BOLT_ERROR, "DEAD_BOLT_ERROR", "dead bolt error"},
+    {RESULT_WRONG_LOAD_CONNECTED, "WRONG_LOAD_CONNECTED", "wrong load connected to node"},
+    {RESULT_COLOUR_NOT_REACHABLE, "COLOUR_NOT_REACHABLE", "node cannot reach the requested colour"},
+    {RESULT_TARGET_NOT_REACHABLE, "TARGET_NOT_REACHABLE", "node cannot reach the requested target position"},
+    {RESULT_BAD_INDEX_RECEIVED, "BAD_INDEX_RECEIVED", "invalid index received"},
+    {RESULT_COMMAND_OVERRULED, "COMMAND_OVERRULED", "command was overruled by a newer command"},
+    {RESULT_NODE_WAITING_FOR_POWER, "NODE_WAITING_FOR_POWER", "node is waiting for power"},
+    {RESULT_WRONG_POSITION, "WRONG_POSITION", "wrong position"},
+    {RESULT_LIMITS_NOT_SET, "LIMITS_NOT_SET", "limits are not set"},
+    {RESULT_IP_NOT_SET, "IP_NOT_SET", "intermediate position is not set"},
+    {RESULT_OUT_OF_RANGE, "OUT_OF_RANGE", "requested value is out of range"},
+    {RESULT_COMMAND_UNKNOWN, "COMMAND_UNKNOWN", "the device does not offer this command in its current state"},
+    {RESULT_MODE_OR_STATE_UNKNOWN, "MODE_OR_STATE_UNKNOWN", "mode or state number unknown to the device"},
+    {RESULT_BAD_MAC, "BAD_MAC", "the device rejected our challenge answer (wrong system key?)"},
+    {RESULT_SETUP_REQUIRED, "SETUP_REQUIRED", "the device needs setting up first"},
+    {RESULT_PARAMETER_UNKNOWN, "PARAMETER_UNKNOWN", "parameter, alias or access method unknown to the device"},
+    {RESULT_ORIGINATOR_DISABLED, "ORIGINATOR_DISABLED", "command originator disabled on the device"},
+    {RESULT_PRIORITY_LOCKED, "PRIORITY_LOCKED", "command priority too low, node rejected execution"},
+    {RESULT_PRIORITY_SERVICE_NOT_SUPPORTED, "PRIORITY_SERVICE_NOT_SUPPORTED",
+     "priority service not supported by the device"},
+    {RESULT_PARAMETER_LIMITATION_ADJUSTMENT, "PARAMETER_LIMITATION_ADJUSTMENT",
+     "the device adjusted the parameter to a limitation"},
+    {RESULT_PARAMETER_INCOHERENCE_ADJUSTMENT, "PARAMETER_INCOHERENCE_ADJUSTMENT",
+     "the device adjusted an incoherent parameter"},
+    {RESULT_TOTAL_INCOHERENCE, "TOTAL_INCOHERENCE", "the request does not fit what the device implements"},
+    {RESULT_SERVICE_FULL, "SERVICE_FULL", "the device has no room left for this request"},
+    {RESULT_ALIAS_INCOHERENCE, "ALIAS_INCOHERENCE", "alias incoherence"},
+    {RESULT_SESSION_INTERRUPTED, "SESSION_INTERRUPTED", "session interrupted"},
+    {RESULT_NOT_IMPLEMENTED, "NOT_IMPLEMENTED", "not implemented by the device"},
+    {RESULT_COMMAND_REJECTED, "COMMAND_REJECTED", "the device rejected the command"},
+    {RESULT_ALREADY_CONFIGURED, "ALREADY_CONFIGURED", "the device is already configured"},
+    {RESULT_INFORMATION_CODE, "INFORMATION_CODE", "information-only result with unknown semantics"},
+    {RESULT_PARAMETER_LIMITED, "PARAMETER_LIMITED", "parameter was limited by an unknown device"},
+    {RESULT_LIMITATION_BY_LOCAL_USER, "LIMITATION_BY_LOCAL_USER", "parameter was limited by the local button"},
+    {RESULT_LIMITATION_BY_USER, "LIMITATION_BY_USER", "parameter was limited by a remote control"},
+    {RESULT_LIMITATION_BY_RAIN, "LIMITATION_BY_RAIN", "parameter was limited by a rain sensor"},
+    {RESULT_LIMITATION_BY_TIMER, "LIMITATION_BY_TIMER", "parameter was limited by a timer"},
+    {RESULT_LIMITATION_BY_SCD, "LIMITATION_BY_SCD", "parameter was limited by a security controlling actuator"},
+    {RESULT_LIMITATION_BY_UPS, "LIMITATION_BY_UPS", "parameter was limited by a power supply"},
+    {RESULT_LIMITATION_BY_UNKNOWN_DEVICE, "LIMITATION_BY_UNKNOWN_DEVICE", "parameter was limited by an unknown device"},
+    {RESULT_LIMITATION_BY_SAAC, "LIMITATION_BY_SAAC", "parameter was limited by a standalone automatic controller"},
+    {RESULT_LIMITATION_BY_WIND, "LIMITATION_BY_WIND", "parameter was limited by a wind sensor"},
+    {RESULT_LIMITATION_BY_MYSELF, "LIMITATION_BY_MYSELF", "parameter was limited by the node itself"},
+    {RESULT_LIMITATION_BY_AUTOMATIC_CYCLE, "LIMITATION_BY_AUTOMATIC_CYCLE",
+     "parameter was limited by an automatic cycle"},
+    {RESULT_LIMITATION_BY_EMERGENCY, "LIMITATION_BY_EMERGENCY", "parameter was limited by an emergency"},
+};
+
+/// @return The table row for `result`, or nullptr when the byte is unmapped.
+const CommandResultInfo *find_result(uint8_t result) {
+  for (const CommandResultInfo &row : COMMAND_RESULTS) {
+    if (row.result == result)
+      return &row;
   }
+  return nullptr;
+}
+
+}  // namespace
+
+const char *command_result_name(uint8_t result) {
+  const CommandResultInfo *row = find_result(result);
+  return row != nullptr ? row->name : "UNKNOWN_RESULT_CODE";
 }
 
 const char *result_code_name(uint8_t code) {
@@ -383,136 +348,8 @@ const char *result_code_name(uint8_t code) {
 }
 
 const char *command_result_description(uint8_t result) {
-  switch (result) {
-    case RESULT_UNKNOWN_STATUS_REPLY:
-      return "unknown reply";
-    case RESULT_COMMAND_COMPLETED_OK:
-      return "no errors detected";
-    case RESULT_NO_CONTACT:
-      return "no communication to node";
-    case RESULT_MANUALLY_OPERATED:
-      return "manually operated by a user";
-    case RESULT_BLOCKED:
-      return "node has been blocked by an object";
-    case RESULT_WRONG_SYSTEMKEY:
-      return "node contains the wrong system key";
-    case RESULT_PRIORITY_LEVEL_LOCKED:
-      return "node is locked on this priority level";
-    case RESULT_REACHED_WRONG_POSITION:
-      return "node stopped in another position than expected";
-    case RESULT_NO_EXECUTION:
-      return "no movement of the node parameter";
-    case RESULT_CALIBRATING:
-      return "node is calibrating the parameters";
-    case RESULT_POWER_CONSUMPTION_TOO_HIGH:
-      return "node power consumption is too high";
-    case RESULT_POWER_CONSUMPTION_TOO_LOW:
-      return "node power consumption is too low";
-    case RESULT_LOCK_POSITION_OPEN:
-      return "door open during lock command";
-    case RESULT_MOTION_TIME_TOO_LONG:
-      return "target was not reached in time";
-    case RESULT_THERMAL_PROTECTION:
-      return "node has gone into thermal protection mode";
-    case RESULT_FILTER_MAINTENANCE_NEEDED:
-      return "filter needs maintenance";
-    case RESULT_BATTERY_LEVEL:
-      return "battery level is low";
-    case RESULT_TARGET_MODIFIED:
-      return "node modified the requested target value";
-    case RESULT_MODE_NOT_IMPLEMENTED:
-      return "node does not support the received mode";
-    case RESULT_COMMAND_INCOMPATIBLE_TO_MOVEMENT:
-      return "node cannot move in the requested direction";
-    case RESULT_USER_ACTION:
-      return "user action overrode the command";
-    case RESULT_DEAD_BOLT_ERROR:
-      return "dead bolt error";
-    case RESULT_WRONG_LOAD_CONNECTED:
-      return "wrong load connected to node";
-    case RESULT_COLOUR_NOT_REACHABLE:
-      return "node cannot reach the requested colour";
-    case RESULT_TARGET_NOT_REACHABLE:
-      return "node cannot reach the requested target position";
-    case RESULT_BAD_INDEX_RECEIVED:
-      return "invalid index received";
-    case RESULT_COMMAND_OVERRULED:
-      return "command was overruled by a newer command";
-    case RESULT_NODE_WAITING_FOR_POWER:
-      return "node is waiting for power";
-    case RESULT_WRONG_POSITION:
-      return "wrong position";
-    case RESULT_LIMITS_NOT_SET:
-      return "limits are not set";
-    case RESULT_IP_NOT_SET:
-      return "intermediate position is not set";
-    case RESULT_OUT_OF_RANGE:
-      return "requested value is out of range";
-    case RESULT_COMMAND_UNKNOWN:
-      return "the device does not offer this command in its current state";
-    case RESULT_MODE_OR_STATE_UNKNOWN:
-      return "mode or state number unknown to the device";
-    case RESULT_BAD_MAC:
-      return "the device rejected our challenge answer (wrong system key?)";
-    case RESULT_SETUP_REQUIRED:
-      return "the device needs setting up first";
-    case RESULT_PARAMETER_UNKNOWN:
-      return "parameter, alias or access method unknown to the device";
-    case RESULT_ORIGINATOR_DISABLED:
-      return "command originator disabled on the device";
-    case RESULT_PRIORITY_LOCKED:
-      return "command priority too low, node rejected execution";
-    case RESULT_PRIORITY_SERVICE_NOT_SUPPORTED:
-      return "priority service not supported by the device";
-    case RESULT_PARAMETER_LIMITATION_ADJUSTMENT:
-      return "the device adjusted the parameter to a limitation";
-    case RESULT_PARAMETER_INCOHERENCE_ADJUSTMENT:
-      return "the device adjusted an incoherent parameter";
-    case RESULT_TOTAL_INCOHERENCE:
-      return "the request does not fit what the device implements";
-    case RESULT_SERVICE_FULL:
-      return "the device has no room left for this request";
-    case RESULT_ALIAS_INCOHERENCE:
-      return "alias incoherence";
-    case RESULT_SESSION_INTERRUPTED:
-      return "session interrupted";
-    case RESULT_NOT_IMPLEMENTED:
-      return "not implemented by the device";
-    case RESULT_COMMAND_REJECTED:
-      return "the device rejected the command";
-    case RESULT_ALREADY_CONFIGURED:
-      return "the device is already configured";
-    case RESULT_INFORMATION_CODE:
-      return "information-only result with unknown semantics";
-    case RESULT_PARAMETER_LIMITED:
-      return "parameter was limited by an unknown device";
-    case RESULT_LIMITATION_BY_LOCAL_USER:
-      return "parameter was limited by the local button";
-    case RESULT_LIMITATION_BY_USER:
-      return "parameter was limited by a remote control";
-    case RESULT_LIMITATION_BY_RAIN:
-      return "parameter was limited by a rain sensor";
-    case RESULT_LIMITATION_BY_TIMER:
-      return "parameter was limited by a timer";
-    case RESULT_LIMITATION_BY_SCD:
-      return "parameter was limited by a security controlling actuator";
-    case RESULT_LIMITATION_BY_UPS:
-      return "parameter was limited by a power supply";
-    case RESULT_LIMITATION_BY_UNKNOWN_DEVICE:
-      return "parameter was limited by an unknown device";
-    case RESULT_LIMITATION_BY_SAAC:
-      return "parameter was limited by a standalone automatic controller";
-    case RESULT_LIMITATION_BY_WIND:
-      return "parameter was limited by a wind sensor";
-    case RESULT_LIMITATION_BY_MYSELF:
-      return "parameter was limited by the node itself";
-    case RESULT_LIMITATION_BY_AUTOMATIC_CYCLE:
-      return "parameter was limited by an automatic cycle";
-    case RESULT_LIMITATION_BY_EMERGENCY:
-      return "parameter was limited by an emergency";
-    default:
-      return "unknown result code";
-  }
+  const CommandResultInfo *row = find_result(result);
+  return row != nullptr ? row->description : "unknown result code";
 }
 
 bool is_limitation_result(uint8_t result) {

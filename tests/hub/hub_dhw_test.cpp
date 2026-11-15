@@ -9,6 +9,7 @@
 #include "proto_commands.h"
 #include "proto_dhw.h"
 #include "proto_frame.h"
+#include "proto_private_registers.h"
 #include "status_poll_policy.h"
 
 #include "test_helpers.h"
@@ -137,8 +138,8 @@ TEST(HubDhw, ThePollReadsTheOperatingStatusThenTheRegistersThenTheBrandOnce) {
   for (size_t i = 0; i < std::size(expected); i++) {
     const auto &tx = sent[i + 1];
     EXPECT_EQ(tx[8], CMD_WRITE_PRIVATE) << i;
-    EXPECT_EQ(tx[9], HEATING_PAYLOAD_PREFIX) << i;
-    EXPECT_EQ(tx[10], HEATING_DIRECTION_GET) << "a poll only reads: " << i;
+    EXPECT_EQ(tx[9], PRIVATE_REGISTER_PREFIX) << i;
+    EXPECT_EQ(tx[10], PRIVATE_REGISTER_DIRECTION_GET) << "a poll only reads: " << i;
     EXPECT_EQ(tx[11], DHW_REGISTER_HIGH_BYTE) << "family 0x00: " << i;
     EXPECT_EQ(sent_register(tx), expected[i]) << i;
   }

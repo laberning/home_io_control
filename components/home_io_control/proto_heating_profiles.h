@@ -124,9 +124,6 @@ struct HeatingFp {
   uint16_t value{0};                        ///< Its value (one byte for FP9, two for FP16).
 };
 
-/// @brief Number of main-parameter steps across the encoding range (the full position scale, 0xC800).
-static constexpr uint16_t HEATING_TEMPERATURE_MP_SPAN = 51200;
-
 /// @brief One HVAC mode the card offers and the wire value that selects it.
 struct HeatingModeEntry {
   HeatingHvacMode hvac;        ///< Mode shown on the card.
@@ -255,6 +252,10 @@ struct ProgrammePeriodState {
 /// @return The profile, or nullptr when no climate entity drives this device.
 const HeatingProfile *find_heating_profile(DeviceType type, uint8_t subtype, DeviceModel model);
 
+/// @brief Every heating profile, in table order, for code that checks the whole table.
+/// @return The whole table. A lookup for one device goes through find_heating_profile().
+std::span<const HeatingProfile> heating_profiles();
+
 /// @brief Look up the heating profile of a device record: its type, subtype and declared model.
 /// @param dev The device.
 /// @return The profile, or nullptr when no climate entity drives this device.
@@ -293,25 +294,6 @@ bool device_uses_heating_levels(DeviceType type, uint8_t subtype);
 /// @param subtype Subtype.
 /// @return true when the profile's control path is HeatingControlPath::TEMPERATURE_EXECUTE.
 bool device_uses_heating_temperature(DeviceType type, uint8_t subtype);
-
-/// @brief Encode a temperature as a main parameter over an encoding range.
-/// @details `round((celsius - min) / (max - min) * HEATING_TEMPERATURE_MP_SPAN)`, clamped to the span.
-/// @param celsius Temperature in degrees Celsius; must be finite.
-/// @param min_c Lower end of the device's encoding range.
-/// @param max_c Upper end of the device's encoding range; must exceed `min_c`.
-/// @param[out] main_parameter The encoded value.
-/// @return false for a non-finite temperature or an empty range; `main_parameter` is then untouched.
-bool encode_temperature_main_parameter(float celsius, float min_c, float max_c, uint16_t &main_parameter);
-
-/// @brief Decode a main parameter as a temperature over an encoding range (the inverse of
-/// encode_temperature_main_parameter()).
-/// @param main_parameter The 16-bit value from a status reply.
-/// @param min_c Lower end of the device's encoding range.
-/// @param max_c Upper end of the device's encoding range; must exceed `min_c`.
-/// @param[out] celsius The temperature.
-/// @return false when the value is above the span (an alias or a marker, not a temperature) or the
-///         range is empty.
-bool decode_temperature_main_parameter(uint16_t main_parameter, float min_c, float max_c, float &celsius);
 
 /// @brief Main parameter of a heating level, as it travels in an EXECUTE and in a status reply.
 /// @param level Level low byte (heating_level::*).

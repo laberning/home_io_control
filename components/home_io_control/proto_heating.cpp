@@ -5,6 +5,7 @@
 #include "proto_heating.h"
 
 #include "proto_constants.h"
+#include "proto_private_registers.h"
 #include "proto_sizes.h"
 
 namespace esphome {
@@ -16,11 +17,11 @@ namespace {
 constexpr uint16_t LOW_BYTE_MASK = 0xFF;
 
 /// Payload length of a read, and of a write that carries no value ({prefix, direction, reg-high, reg-low}).
-constexpr size_t PAYLOAD_LEN_HEADER = 4;
+constexpr size_t PAYLOAD_LEN_HEADER = PRIVATE_REGISTER_HEADER_SIZE;
 /// Payload length for a write that carries one value byte (mode / presence / window detection).
-constexpr size_t PAYLOAD_LEN_ONE_VALUE = 5;
+constexpr size_t PAYLOAD_LEN_ONE_VALUE = PRIVATE_REGISTER_HEADER_SIZE + 1;
 /// Payload length for a write of a 16-bit value (the setpoint).
-constexpr size_t PAYLOAD_LEN_TWO_VALUE = HEATING_PAYLOAD_MAX_SIZE;
+constexpr size_t PAYLOAD_LEN_TWO_VALUE = PRIVATE_REGISTER_PAYLOAD_MAX_SIZE;
 
 /// Wire scale of the setpoint registers: round(degrees * this), little-endian 16-bit.
 constexpr float DEGREES_TO_TENTHS = 10.0F;
@@ -57,8 +58,8 @@ enum class HeatingAccess : uint8_t {
 
 /// @brief One register of the heater, the single description both directions are built from.
 ///
-/// A request is {HEATING_PAYLOAD_PREFIX, direction, HEATING_REGISTER_HIGH_BYTE, register_low,
-/// [value...]}; `direction` is HEATING_DIRECTION_GET or HEATING_DIRECTION_SET.
+/// A request is {PRIVATE_REGISTER_PREFIX, direction, HEATING_REGISTER_HIGH_BYTE, register_low,
+/// [value...]}; `direction` is PRIVATE_REGISTER_DIRECTION_GET or PRIVATE_REGISTER_DIRECTION_SET.
 struct HeatingFunctionDescriptor {
   const char *name;       ///< Action-visible name.
   HeatingFunction fn;     ///< Function this row describes.
@@ -115,10 +116,7 @@ const HeatingFunctionDescriptor *descriptor_for(HeatingFunction fn) {
 
 /// @brief Write the 4-byte request header for a row.
 void write_header(const HeatingFunctionDescriptor &d, uint8_t direction, uint8_t *out) {
-  out[0] = HEATING_PAYLOAD_PREFIX;
-  out[1] = direction;
-  out[2] = HEATING_REGISTER_HIGH_BYTE;
-  out[3] = d.register_low;
+  write_private_register_header(direction, HEATING_REGISTER_HIGH_BYTE, d.register_low, out);
 }
 
 /// @brief Number of value bytes behind the header for a kind.
@@ -147,7 +145,7 @@ bool is_bounded_integer(float value, uint8_t max_value) {
 /// order the register reads back in.
 /// @return PAYLOAD_LEN_TWO_VALUE.
 size_t write_u16_set(const HeatingFunctionDescriptor &d, uint16_t raw, uint8_t *out) {
-  write_header(d, HEATING_DIRECTION_SET, out);
+  write_header(d, PRIVATE_REGISTER_DIRECTION_SET, out);
   out[4] = static_cast<uint8_t>(raw & LOW_BYTE_MASK);
   out[PAYLOAD_LEN_TWO_VALUE - 1] = static_cast<uint8_t>(raw >> BITS_PER_BYTE);
   return PAYLOAD_LEN_TWO_VALUE;
@@ -178,34 +176,15 @@ bool heating_function_register(HeatingFunction fn, uint8_t &register_low) {
   return true;
 }
 
-bool heating_reply_echoes_register(const IoFrame &reply, uint8_t reg_hi, uint8_t reg_lo) {
-  if (reply.cmd != CMD_WRITE_PRIVATE_ACK || reply.data_len < HEATING_REPLY_VALUE_OFFSET)
-    return false;
-  const uint8_t *data = reply.data;
-  if (data[0] != HEATING_PAYLOAD_PREFIX || data[2] != reg_hi || data[3] != reg_lo)
-    return false;
-  return data[1] == HEATING_DIRECTION_GET || data[1] == HEATING_DIRECTION_SET;
-}
-
-size_t encode_heating_read(HeatingFunction fn, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
+size_t encode_heating_read(HeatingFunction fn, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
   const HeatingFunctionDescriptor *d = descriptor_for(fn);
   if (d == nullptr || d->access == HeatingAccess::WRITE_ONLY)
     return 0;
-  write_header(*d, HEATING_DIRECTION_GET, out);
+  write_header(*d, PRIVATE_REGISTER_DIRECTION_GET, out);
   return PAYLOAD_LEN_HEADER;
 }
 
-size_t encode_heating_register_read(uint8_t reg_hi, uint8_t reg_lo, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
-  // The direction is the GET constant and nothing else: this is the one frame builder the register
-  // probes use, so it is where "read-only" is enforced.
-  out[0] = HEATING_PAYLOAD_PREFIX;
-  out[1] = HEATING_DIRECTION_GET;
-  out[2] = reg_hi;
-  out[3] = reg_lo;
-  return PAYLOAD_LEN_HEADER;
-}
-
-size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
+size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
   const HeatingFunctionDescriptor *d = descriptor_for(fn);
   // A read-only register is never written, whatever the caller asks: the heater's window sensor and
   // its measurements are not settings.
@@ -234,14 +213,14 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[HEATING
       if (value != static_cast<float>(HeatingMode::AUTO) && value != static_cast<float>(HeatingMode::MANUAL) &&
           value != static_cast<float>(HeatingMode::PROG) && value != static_cast<float>(HeatingMode::OFF))
         return 0;
-      write_header(*d, HEATING_DIRECTION_SET, out);
+      write_header(*d, PRIVATE_REGISTER_DIRECTION_SET, out);
       out[4] = static_cast<uint8_t>(value);
       return PAYLOAD_LEN_ONE_VALUE;
 
     case HeatingValueKind::BINARY:
       if (value != 0.0F && value != 1.0F)
         return 0;
-      write_header(*d, HEATING_DIRECTION_SET, out);
+      write_header(*d, PRIVATE_REGISTER_DIRECTION_SET, out);
       out[4] = static_cast<uint8_t>(value);
       return PAYLOAD_LEN_ONE_VALUE;
 
@@ -249,7 +228,7 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[HEATING
       // An integral value inside the register's range; anything else is refused, never truncated.
       if (!is_bounded_integer(value, d->max_value))
         return 0;
-      write_header(*d, HEATING_DIRECTION_SET, out);
+      write_header(*d, PRIVATE_REGISTER_DIRECTION_SET, out);
       out[4] = static_cast<uint8_t>(value);
       return PAYLOAD_LEN_ONE_VALUE;
 
@@ -266,7 +245,7 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[HEATING
   return 0;
 }
 
-size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
+size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
   const HeatingFunctionDescriptor *d = descriptor_for(fn);
   if (d == nullptr)
     return 0;
@@ -276,12 +255,12 @@ size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[HEATI
 bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value) {
   const HeatingFunctionDescriptor *d = descriptor_for(fn);
   if (d == nullptr || d->kind == HeatingValueKind::NONE ||
-      !heating_reply_echoes_register(reply, HEATING_REGISTER_HIGH_BYTE, d->register_low))
+      !private_reply_echoes_register(reply, HEATING_REGISTER_HIGH_BYTE, d->register_low))
     return false;
-  if (reply.data_len < HEATING_REPLY_VALUE_OFFSET + value_length(d->kind))
+  if (reply.data_len < PRIVATE_REGISTER_VALUE_OFFSET + value_length(d->kind))
     return false;
 
-  const uint8_t *v = reply.data + HEATING_REPLY_VALUE_OFFSET;
+  const uint8_t *v = reply.data + PRIVATE_REGISTER_VALUE_OFFSET;
   const auto raw16 = static_cast<uint16_t>(v[0] | (v[1] << BITS_PER_BYTE));
   switch (d->kind) {
     case HeatingValueKind::TENTHS_U16:

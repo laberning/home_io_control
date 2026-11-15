@@ -4,6 +4,7 @@
 
 #include "proto_heating_profiles.h"
 
+#include "proto_codecs.h"
 #include "proto_device_types.h"
 #include "proto_sizes.h"
 
@@ -422,6 +423,8 @@ const HeatingProfile *find_heating_profile(DeviceType type, uint8_t subtype, Dev
                                                                : nullptr;
 }
 
+std::span<const HeatingProfile> heating_profiles() { return HEATING_PROFILES; }
+
 const HeatingProfile *find_heating_profile(const IoDevice &dev) {
   return find_heating_profile(dev.type, dev.subtype, dev.model);
 }
@@ -447,23 +450,6 @@ bool device_uses_heating_levels(DeviceType type, uint8_t subtype) {
 bool device_uses_heating_temperature(DeviceType type, uint8_t subtype) {
   const HeatingProfile *profile = find_heating_profile(type, subtype, DeviceModel::NONE);
   return profile != nullptr && profile->path == HeatingControlPath::TEMPERATURE_EXECUTE;
-}
-
-bool encode_temperature_main_parameter(float celsius, float min_c, float max_c, uint16_t &main_parameter) {
-  if (!std::isfinite(celsius) || !std::isfinite(min_c) || !std::isfinite(max_c) || !(max_c > min_c))
-    return false;
-  const float steps = std::round((celsius - min_c) / (max_c - min_c) * static_cast<float>(HEATING_TEMPERATURE_MP_SPAN));
-  main_parameter = static_cast<uint16_t>(std::clamp(steps, 0.0F, static_cast<float>(HEATING_TEMPERATURE_MP_SPAN)));
-  return true;
-}
-
-bool decode_temperature_main_parameter(uint16_t main_parameter, float min_c, float max_c, float &celsius) {
-  if (main_parameter > HEATING_TEMPERATURE_MP_SPAN || !std::isfinite(min_c) || !std::isfinite(max_c) ||
-      !(max_c > min_c))
-    return false;
-  celsius =
-      min_c + (static_cast<float>(main_parameter) / static_cast<float>(HEATING_TEMPERATURE_MP_SPAN) * (max_c - min_c));
-  return true;
 }
 
 bool decode_heating_level(uint16_t main_parameter, uint8_t &level) {

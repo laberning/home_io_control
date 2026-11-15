@@ -6,6 +6,7 @@
 
 #include "proto_commands.h"
 #include "proto_constants.h"
+#include "proto_private_registers.h"
 
 #include <gtest/gtest.h>
 
@@ -41,13 +42,13 @@ std::vector<uint8_t> value_of(const IoFrame &reply, uint8_t index, bool *ok = nu
 // === Requests ===
 
 TEST(ProtoDhw, RegisterReadIsFamilyZeroGet) {
-  uint8_t out[HEATING_PAYLOAD_MAX_SIZE] = {0};
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   ASSERT_EQ(encode_dhw_register_read(DHW_REG_WATER_TEMPERATURE, out), 4U);
   EXPECT_EQ(std::vector<uint8_t>(out, out + 4), (std::vector<uint8_t>{0x0C, 0x60, 0x00, 0x17}));
 }
 
 TEST(ProtoDhw, ModeWriteIsFamilyZeroSetOfRegisterSix) {
-  uint8_t out[HEATING_PAYLOAD_MAX_SIZE] = {0};
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   for (uint8_t mode = 0; mode <= 2; mode++) {
     ASSERT_EQ(encode_dhw_mode_write(mode, out), 5U) << static_cast<unsigned>(mode);
     EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x06, mode}));
@@ -55,13 +56,13 @@ TEST(ProtoDhw, ModeWriteIsFamilyZeroSetOfRegisterSix) {
 }
 
 TEST(ProtoDhw, ModeWriteRefusesAValueTheHeaterHasNeverShown) {
-  uint8_t out[HEATING_PAYLOAD_MAX_SIZE] = {0};
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   EXPECT_EQ(encode_dhw_mode_write(3, out), 0U);
   EXPECT_EQ(encode_dhw_mode_write(0xFF, out), 0U);
 }
 
 TEST(ProtoDhw, TheDurationWritesAreFamilyZeroSetsOfTheBoostAndAwayRegisters) {
-  uint8_t out[HEATING_PAYLOAD_MAX_SIZE] = {0};
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   ASSERT_EQ(encode_dhw_duration_write(DhwOperatingFeature::BOOST, out), 5U);
   EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x00, 0x01}))
       << "boost: the value read during a boost started on the display";

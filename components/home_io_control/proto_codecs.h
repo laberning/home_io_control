@@ -527,5 +527,31 @@ bool decode_limitation_request(const IoFrame &f, LimitationType &type, uint8_t &
 ///         timer-delete codes 254/255, which are not durations.
 uint32_t limitation_time_seconds(uint8_t time_raw);
 
+// ============================================================================
+// Temperature main parameter
+// ============================================================================
+
+/// @brief Number of main-parameter steps across the encoding range (the full position scale, 0xC800).
+static constexpr uint16_t TEMPERATURE_MP_SPAN = 51200;
+
+/// @brief Encode a temperature as a main parameter over an encoding range.
+/// @details `round((celsius - min) / (max - min) * TEMPERATURE_MP_SPAN)`, clamped to the span.
+/// @param celsius Temperature in degrees Celsius; must be finite.
+/// @param min_c Lower end of the device's encoding range.
+/// @param max_c Upper end of the device's encoding range; must exceed `min_c`.
+/// @param[out] main_parameter The encoded value.
+/// @return false for a non-finite temperature or an empty range; `main_parameter` is then untouched.
+bool encode_temperature_main_parameter(float celsius, float min_c, float max_c, uint16_t &main_parameter);
+
+/// @brief Decode a main parameter as a temperature over an encoding range (the inverse of
+/// encode_temperature_main_parameter()).
+/// @param main_parameter The 16-bit value from a status reply.
+/// @param min_c Lower end of the device's encoding range.
+/// @param max_c Upper end of the device's encoding range; must exceed `min_c`.
+/// @param[out] celsius The temperature.
+/// @return false when the value is above the span (an alias or a marker, not a temperature) or the
+///         range is empty.
+bool decode_temperature_main_parameter(uint16_t main_parameter, float min_c, float max_c, float &celsius);
+
 }  // namespace home_io_control
 }  // namespace esphome

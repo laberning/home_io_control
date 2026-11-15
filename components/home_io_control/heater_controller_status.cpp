@@ -7,6 +7,7 @@
 
 #include "entity_helpers.h"
 #include "heater_controller.h"
+#include "proto_codecs.h"
 #include "proto_constants.h"
 #include "proto_dhw.h"
 #include "proto_heating.h"

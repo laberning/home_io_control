@@ -4,6 +4,7 @@
 #include "proto_heating.h"
 
 #include "proto_constants.h"
+#include "proto_private_registers.h"
 
 #include <gtest/gtest.h>
 
@@ -15,19 +16,19 @@ using namespace esphome::home_io_control;
 namespace {
 
 std::vector<uint8_t> encode(HeatingFunction fn, float value) {
-  uint8_t out[HEATING_PAYLOAD_MAX_SIZE] = {0};
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   const size_t n = encode_heating_payload(fn, value, out);
   return std::vector<uint8_t>(out, out + n);
 }
 
 std::vector<uint8_t> encode_read(HeatingFunction fn) {
-  uint8_t out[HEATING_PAYLOAD_MAX_SIZE] = {0};
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   const size_t n = encode_heating_read(fn, out);
   return std::vector<uint8_t>(out, out + n);
 }
 
 size_t write_len(HeatingFunction fn, float value) {
-  uint8_t out[HEATING_PAYLOAD_MAX_SIZE] = {0};
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   return encode_heating_write(fn, value, out);
 }
 
@@ -189,7 +190,7 @@ TEST(ProtoHeating, PowerOnAndMidnightIgnoreValue) {
 
 TEST(ProtoHeating, RejectsOutOfRangeFunctionEnum) {
   // An enum value not in the table must be refused and must never touch the output buffer.
-  uint8_t out[HEATING_PAYLOAD_MAX_SIZE];
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
   for (auto &b : out)
     b = 0xEE;
   const auto bogus = static_cast<HeatingFunction>(0x7F);
@@ -320,32 +321,6 @@ TEST(ProtoHeating, ReadingsStartUnreadAndStoreOnlyTheirRegisters) {
 
   EXPECT_FALSE(r.store(HeatingFunction::SET_PRESENCE, 1.0f));
   EXPECT_FALSE(r.store(HeatingFunction::POWER_ON, 1.0f));
-}
-
-// === Register-read probe payload (diagnostic register_00 / register_01) ===
-
-TEST(HeatingRegisterRead, BuildsTheReadRequestForBothRegisterFamilies) {
-  uint8_t out[HEATING_PAYLOAD_MAX_SIZE] = {0};
-  ASSERT_EQ(encode_heating_register_read(0x00, 0x2A, out), 4U);
-  EXPECT_EQ(std::vector<uint8_t>(out, out + 4), (std::vector<uint8_t>{0x0C, 0x60, 0x00, 0x2A}));
-  ASSERT_EQ(encode_heating_register_read(0x01, 0x15, out), 4U);
-  EXPECT_EQ(std::vector<uint8_t>(out, out + 4), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x15}));
-}
-
-TEST(HeatingRegisterRead, NoRegisterNumberEverProducesTheWriteDirection) {
-  // The probe's read-only guarantee: the direction byte is the GET constant for every one of the
-  // 65536 register numbers, and the GET and SET constants really differ.
-  static_assert(HEATING_DIRECTION_GET != HEATING_DIRECTION_SET);
-  for (unsigned reg_hi = 0; reg_hi <= 0xFF; reg_hi++) {
-    for (unsigned reg_lo = 0; reg_lo <= 0xFF; reg_lo++) {
-      uint8_t out[HEATING_PAYLOAD_MAX_SIZE] = {0};
-      ASSERT_EQ(encode_heating_register_read(static_cast<uint8_t>(reg_hi), static_cast<uint8_t>(reg_lo), out), 4U);
-      ASSERT_EQ(out[0], HEATING_PAYLOAD_PREFIX);
-      ASSERT_EQ(out[1], HEATING_DIRECTION_GET);
-      ASSERT_EQ(out[2], reg_hi);
-      ASSERT_EQ(out[3], reg_lo);
-    }
-  }
 }
 
 // --- Towel-dryer registers (values from two Atlantic Adelis units, issue #202) ---
@@ -496,16 +471,7 @@ TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnF
   EXPECT_EQ(held, 14u);
 }
 
-TEST(ProtoHeatingTowelDryer, ARegisterReplyEchoesItsRegister) {
-  EXPECT_TRUE(heating_reply_echoes_register(ack_with({0x0C, 0x60, 0x01, 0x19, 'A'}), 0x01, 0x19));
-  EXPECT_TRUE(heating_reply_echoes_register(ack_with({0x0C, 0x60, 0x01, 0x36}), 0x01, 0x36)) << "empty is an echo";
-  EXPECT_TRUE(heating_reply_echoes_register(ack_with({0x0C, 0x61, 0x01, 0x36, 0x03}), 0x01, 0x36)) << "a write's ack";
-  EXPECT_FALSE(heating_reply_echoes_register(ack_with({0x0C, 0x60, 0x01, 0x18, 0x41}), 0x01, 0x19));
-  EXPECT_FALSE(heating_reply_echoes_register(ack_with({0x0C, 0x60, 0x00, 0x19}), 0x01, 0x19));
-  EXPECT_FALSE(heating_reply_echoes_register(ack_with({0x0C, 0x62, 0x01, 0x19}), 0x01, 0x19));
-  EXPECT_FALSE(heating_reply_echoes_register(ack_with({0x0C, 0x60, 0x01}), 0x01, 0x19)) << "truncated";
-  EXPECT_FALSE(heating_reply_echoes_register(ack_with({0x0C, 0x60, 0x01, 0x19}, CMD_WRITE_PRIVATE), 0x01, 0x19));
-
+TEST(ProtoHeatingTowelDryer, EachFunctionHasItsRegisterLowByte) {
   uint8_t reg = 0;
   ASSERT_TRUE(heating_function_register(HeatingFunction::TOWEL_MODE, reg));
   EXPECT_EQ(reg, 0x36);

@@ -6,10 +6,10 @@
 ///
 /// A domestic hot water heater (node type 51, subtype 0) answers the private register reads a heater
 /// answers, `0C 60 00 <index>` in a CMD_WRITE_PRIVATE (0x20), with a CMD_WRITE_PRIVATE_ACK (0x21) that
-/// echoes the four header bytes and then the value. Its registers sit in family 0x00 (the high byte of the
-/// register number) and their multi-byte values are **big-endian**, where the radiator family 0x01 of
-/// proto_heating.h is little-endian; so this is a codec of its own, not a flag on the heater's. An index the
-/// heater does not hold is answered with no value bytes.
+/// echoes the four header bytes and then the value (proto_private_registers.h). Its registers sit in family
+/// 0x00 (the high byte of the register number) and their multi-byte values are **big-endian**, where the
+/// radiator family 0x01 of proto_heating.h is little-endian; so this is a codec of its own, not a flag on the
+/// heater's. An index the heater does not hold is answered with no value bytes.
 ///
 /// Its target temperature is not a register: it is the main parameter of a status reply, on the ordinary
 /// relative scale (0..0xC800) over DHW_TARGET_MIN_C..DHW_TARGET_MAX_C. Three replies pin it: 54 C reads
@@ -34,7 +34,7 @@
 
 #include "proto_constants.h"
 #include "proto_frame.h"
-#include "proto_heating.h"
+#include "proto_private_registers.h"
 
 #include <cmath>
 #include <cstddef>
@@ -180,17 +180,17 @@ struct DhwReadings {
 
 /// @brief Encode a read of one family-0x00 register: `0C 60 00 <index>`.
 /// @param index Low byte of the register number.
-/// @param out Output buffer of HEATING_PAYLOAD_MAX_SIZE bytes.
+/// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return Always 4.
-size_t encode_dhw_register_read(uint8_t index, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]);
+size_t encode_dhw_register_read(uint8_t index, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
 /// @brief Encode a write of the operating mode: `0C 61 00 06 <mode>`.
 /// @details Only the three values the heater has reported (DhwMode) are encoded; anything else is refused, so
 ///          a byte the heater has never shown is never written to it.
 /// @param mode Mode value.
-/// @param out Output buffer of HEATING_PAYLOAD_MAX_SIZE bytes.
+/// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return 5, or 0 for a value other than 0, 1 or 2.
-size_t encode_dhw_mode_write(uint8_t mode, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]);
+size_t encode_dhw_mode_write(uint8_t mode, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
 /// @brief Encode the duration write a start of `which` sends before its FP16 EXECUTE: `0C 61 00 00 01` for
 /// boost (DHW_BOOST_START_DURATION), `0C 61 00 05 FF` for away (DHW_AWAY_UNTIL_TURNED_OFF).
@@ -198,9 +198,9 @@ size_t encode_dhw_mode_write(uint8_t mode, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]
 ///          sequence so its acknowledgement shows what the heater keeps.
 /// \todo Experimental: confirm on the heater what these durations do (issue #198).
 /// @param which Boost or away.
-/// @param out Output buffer of HEATING_PAYLOAD_MAX_SIZE bytes.
+/// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return Always 5.
-size_t encode_dhw_duration_write(DhwOperatingFeature which, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]);
+size_t encode_dhw_duration_write(DhwOperatingFeature which, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
 /// @brief Encode a target temperature as a main parameter over DHW_TARGET_MIN_C..DHW_TARGET_MAX_C.
 /// @param celsius Target; must be finite and within the range (nothing outside it is ever sent).

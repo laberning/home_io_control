@@ -7,7 +7,9 @@
 #include "proto_crypto.h"
 #include "proto_frame.h"
 
+#include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -581,6 +583,21 @@ uint32_t limitation_time_seconds(uint8_t time_raw) {
   if (time_raw > LIMITATION_TIME_MAX_COUNTED)
     return 0;
   return (static_cast<uint32_t>(time_raw) + 1) * LIMITATION_TIME_STEP_S;
+}
+
+bool encode_temperature_main_parameter(float celsius, float min_c, float max_c, uint16_t &main_parameter) {
+  if (!std::isfinite(celsius) || !std::isfinite(min_c) || !std::isfinite(max_c) || !(max_c > min_c))
+    return false;
+  const float steps = std::round((celsius - min_c) / (max_c - min_c) * static_cast<float>(TEMPERATURE_MP_SPAN));
+  main_parameter = static_cast<uint16_t>(std::clamp(steps, 0.0F, static_cast<float>(TEMPERATURE_MP_SPAN)));
+  return true;
+}
+
+bool decode_temperature_main_parameter(uint16_t main_parameter, float min_c, float max_c, float &celsius) {
+  if (main_parameter > TEMPERATURE_MP_SPAN || !std::isfinite(min_c) || !std::isfinite(max_c) || !(max_c > min_c))
+    return false;
+  celsius = min_c + (static_cast<float>(main_parameter) / static_cast<float>(TEMPERATURE_MP_SPAN) * (max_c - min_c));
+  return true;
 }
 
 }  // namespace home_io_control

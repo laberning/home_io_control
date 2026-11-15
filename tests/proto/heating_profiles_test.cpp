@@ -1,6 +1,7 @@
 /// @file heating_profiles_test.cpp
 /// @brief Tests for the heating profile table, heating-level codec and the level EXECUTE frame.
 
+#include "proto_codecs.h"
 #include "proto_commands.h"
 #include "proto_device_types.h"
 #include "proto_heating_profiles.h"
@@ -67,6 +68,19 @@ TEST(HeatingProfiles, ClimateGateAndTypeTableAgreeForEveryRow) {
           << static_cast<unsigned>(type) << "/" << +subtype;
       EXPECT_EQ(device_supports_climate_control(type, subtype), table_says_climate_platform);
     }
+  }
+}
+
+TEST(HeatingProfiles, EveryProfileNamesARowOfTheTypeTable) {
+  // find_heating_profile() falls back differently from the type table for a named subtype, so the two
+  // lookups stay apart; this keeps a profile from being keyed to a device the table does not know.
+  ASSERT_FALSE(heating_profiles().empty());
+  for (const HeatingProfile &profile : heating_profiles()) {
+    const DeviceTypeInfo *row = profile.model == DeviceModel::NONE
+                                    ? find_exact_device_type_info(profile.type, profile.subtype)
+                                    : find_device_model_info(profile.type, profile.subtype, profile.model);
+    EXPECT_NE(row, nullptr) << format_device_ids(profile.type, profile.subtype) << " model "
+                            << static_cast<unsigned>(profile.model);
   }
 }
 

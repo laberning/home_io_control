@@ -7,6 +7,7 @@
 #include "proto_commands.h"
 #include "proto_crypto.h"
 #include "proto_frame.h"
+#include "proto_private_registers.h"
 
 #include "esphome/components/api/custom_api_device.h"
 
@@ -979,7 +980,7 @@ TEST(HubManagement, RegisterProbesNeverSendTheWriteDirectionForAnyIndex) {
         const auto sent = sent_from_cmd(radio, i);
         ASSERT_GE(sent.size(), 3u);
         if (sent[0] == CMD_WRITE_PRIVATE) {
-          ASSERT_EQ(sent[2], HEATING_DIRECTION_GET) << probe << " " << index << ": never the write direction";
+          ASSERT_EQ(sent[2], PRIVATE_REGISTER_DIRECTION_GET) << probe << " " << index << ": never the write direction";
         }
       }
     }

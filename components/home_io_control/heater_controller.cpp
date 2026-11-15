@@ -16,6 +16,7 @@
 #include "proto_dhw.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"
+#include "proto_private_registers.h"
 #include "proto_timing.h"
 #include "status_poll_policy.h"
 
@@ -219,7 +220,7 @@ bool HeaterController::exchange_heating_(const std::string &device_id, const cha
                                          IoFrame &response, uint8_t max_tries) {
   // A read and a write of the same register share the label, so the log names which one it was: a
   // read-back that fails after an acknowledged write must not read as a refused write.
-  const bool is_read = request.data_len > 1 && request.data[1] == HEATING_DIRECTION_GET;
+  const bool is_read = request.data_len > 1 && request.data[1] == PRIVATE_REGISTER_DIRECTION_GET;
   const char *direction = is_read ? "read" : "write";
   ESP_LOGI(detail::TAG, "Sending heating %s %s to device %s", direction, label, device_id.c_str());
 
@@ -264,7 +265,7 @@ bool HeaterController::send_heating_command(const std::string &device_id, Heatin
     return false;
   }
 
-  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
+  uint8_t payload[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
   const size_t payload_len = encode_heating_payload(fn, value, payload);
   if (payload_len == 0) {
     ESP_LOGW(detail::TAG, "Heating command %s for device %s rejected: value %.2f out of range",
@@ -301,8 +302,8 @@ bool HeaterController::read_private_register(const std::string &device_id, uint8
     return false;
   }
 
-  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
-  const size_t payload_len = encode_heating_register_read(reg_hi, reg_lo, payload);
+  uint8_t payload[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
+  const size_t payload_len = encode_private_register_read(reg_hi, reg_lo, payload);
   IoFrame request;
   if (!create_write_private(request, this->node_id_, dev->node_id, dev->low_power, payload, payload_len)) {
     ESP_LOGW(detail::TAG, "Heating read %s for device %s: failed to build frame", label, device_id.c_str());
@@ -311,7 +312,7 @@ bool HeaterController::read_private_register(const std::string &device_id, uint8
 
   if (!this->exchange_heating_(device_id, label, request, response, max_tries))
     return false;
-  if (!heating_reply_echoes_register(response, reg_hi, reg_lo)) {
+  if (!private_reply_echoes_register(response, reg_hi, reg_lo)) {
     char payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
     bytes_to_hex(response.data, response.data_len, payload_hex, sizeof(payload_hex));
     ESP_LOGD(detail::TAG, "heating %s reply from device %s is not for register 0x%02X%02X: %s", label,
@@ -517,7 +518,7 @@ bool HeaterController::write_dhw_register_(const std::string &device_id, const c
 }
 
 bool HeaterController::set_water_heater_mode(const std::string &device_id, DhwMode mode) {
-  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
+  uint8_t payload[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
   const size_t payload_len = encode_dhw_mode_write(static_cast<uint8_t>(mode), payload);
   if (payload_len == 0) {
     ESP_LOGW(detail::TAG, "Hot water mode %u for device %s rejected: not a mode the heater reports",
@@ -548,7 +549,7 @@ bool HeaterController::set_dhw_operating_mode_(const std::string &device_id, Dhw
   if (on) {
     // The duration goes first (ADR 0081). The heater has been seen to ignore it, and a missed ack is not
     // fatal either: the FP16 EXECUTE below is what switches the mode.
-    uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
+    uint8_t payload[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
     const size_t payload_len = encode_dhw_duration_write(which, payload);
     if (!this->write_dhw_register_(device_id, names.duration, wire.duration_register, payload, payload_len)) {
       ESP_LOGW(detail::TAG, "Device %s: %s write not acknowledged, sending the mode anyway", device_id.c_str(),
@@ -625,7 +626,7 @@ void HeaterController::check_heater_model(const std::string &device_id, uint8_t 
     IoFrame mode_reply;
     mode_answered = this->read_private_register(device_id, HEATING_REGISTER_HIGH_BYTE, mode_register, "towel_mode",
                                                 mode_reply, max_tries);
-    mode_has_value = mode_answered && mode_reply.data_len > HEATING_REPLY_VALUE_OFFSET;
+    mode_has_value = mode_answered && mode_reply.data_len > PRIVATE_REGISTER_VALUE_OFFSET;
   }
   // Report only from a run in which both reads were answered; otherwise the next poll tries again.
   if (!name_read || !mode_answered)
@@ -635,8 +636,8 @@ void HeaterController::check_heater_model(const std::string &device_id, uint8_t 
     return;
   dev->model_checked = true;
 
-  const std::string name = decisions::format_heater_model_name(name_reply.data + HEATING_REPLY_VALUE_OFFSET,
-                                                               name_reply.data_len - HEATING_REPLY_VALUE_OFFSET);
+  const std::string name = decisions::format_heater_model_name(name_reply.data + PRIVATE_REGISTER_VALUE_OFFSET,
+                                                               name_reply.data_len - PRIVATE_REGISTER_VALUE_OFFSET);
   ESP_LOGI(detail::TAG, "Device %s reports model name \"%s\"", device_id.c_str(),
            name.empty() ? "(none)" : name.c_str());
 

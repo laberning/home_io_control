@@ -11,6 +11,7 @@
 #include "proto_commands.h"
 #include "proto_device_types.h"
 #include "proto_heating.h"
+#include "proto_private_registers.h"
 #include "esphome/core/log.h"
 
 #include <cmath>
@@ -117,7 +118,7 @@ bool KeyHolderSearch::probe_heater_at_next_address_(const pairing::PairingContex
     return false;
 
   // The maximum setpoint is a read-only register every such heater holds, so reading it changes nothing.
-  uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
+  uint8_t payload[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
   const size_t payload_len = encode_heating_read(HeatingFunction::MAX_SETPOINT, payload);
   IoFrame request{};
   IoFrame response{};

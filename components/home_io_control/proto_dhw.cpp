@@ -4,8 +4,9 @@
 
 #include "proto_dhw.h"
 
+#include "proto_codecs.h"
 #include "proto_constants.h"
-#include "proto_heating_profiles.h"
+#include "proto_private_registers.h"
 #include "proto_sizes.h"
 
 namespace esphome {
@@ -13,10 +14,8 @@ namespace home_io_control {
 
 namespace {
 
-/// Length of a register request header: prefix, direction, register high byte, register low byte.
-constexpr size_t DHW_HEADER_LEN = 4;
 /// Length of a one-byte register write (mode, durations): the header plus one value byte.
-constexpr size_t DHW_BYTE_WRITE_LEN = 5;
+constexpr size_t DHW_BYTE_WRITE_LEN = PRIVATE_REGISTER_HEADER_SIZE + 1;
 /// Value bytes each typed decoder needs.
 constexpr size_t DHW_WATER_TEMPERATURE_LEN = 2;
 constexpr size_t DHW_ENERGY_LEN = 4;
@@ -64,22 +63,19 @@ bool fp16_field_on(uint16_t operating_mode, DhwOperatingFeature which) {
 }
 
 /// @brief Encode a one-byte write of a family-0x00 register: `0C 61 00 <index> <value>`.
-size_t encode_dhw_byte_write(uint8_t index, uint8_t value, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
-  out[0] = HEATING_PAYLOAD_PREFIX;
-  out[1] = HEATING_DIRECTION_SET;
-  out[2] = DHW_REGISTER_HIGH_BYTE;
-  out[3] = index;
-  out[DHW_HEADER_LEN] = value;
+size_t encode_dhw_byte_write(uint8_t index, uint8_t value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
+  write_private_register_header(PRIVATE_REGISTER_DIRECTION_SET, DHW_REGISTER_HIGH_BYTE, index, out);
+  out[PRIVATE_REGISTER_HEADER_SIZE] = value;
   return DHW_BYTE_WRITE_LEN;
 }
 
 }  // namespace
 
-size_t encode_dhw_register_read(uint8_t index, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
-  return encode_heating_register_read(DHW_REGISTER_HIGH_BYTE, index, out);
+size_t encode_dhw_register_read(uint8_t index, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
+  return encode_private_register_read(DHW_REGISTER_HIGH_BYTE, index, out);
 }
 
-size_t encode_dhw_mode_write(uint8_t mode, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
+size_t encode_dhw_mode_write(uint8_t mode, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
   if (mode > DHW_MODE_MAX)
     return 0;
   return encode_dhw_byte_write(DHW_REG_MODE, mode, out);
@@ -89,7 +85,7 @@ const DhwOperatingFeatureWire &dhw_operating_feature_wire(DhwOperatingFeature wh
   return DHW_OPERATING_FEATURES[static_cast<size_t>(which)];
 }
 
-size_t encode_dhw_duration_write(DhwOperatingFeature which, uint8_t out[HEATING_PAYLOAD_MAX_SIZE]) {
+size_t encode_dhw_duration_write(DhwOperatingFeature which, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
   const DhwOperatingFeatureWire &wire = dhw_operating_feature_wire(which);
   return encode_dhw_byte_write(wire.duration_register, wire.start_duration, out);
 }
@@ -102,10 +98,10 @@ bool encode_dhw_target(float celsius, uint16_t &main_parameter) {
 }
 
 bool decode_dhw_register_reply(const IoFrame &reply, uint8_t index, const uint8_t *&value, size_t &len) {
-  if (!heating_reply_echoes_register(reply, DHW_REGISTER_HIGH_BYTE, index))
+  if (!private_reply_echoes_register(reply, DHW_REGISTER_HIGH_BYTE, index))
     return false;
-  value = reply.data + HEATING_REPLY_VALUE_OFFSET;
-  len = reply.data_len - HEATING_REPLY_VALUE_OFFSET;
+  value = reply.data + PRIVATE_REGISTER_VALUE_OFFSET;
+  len = reply.data_len - PRIVATE_REGISTER_VALUE_OFFSET;
   return true;
 }
 

@@ -5,6 +5,7 @@
 #include "hub_internal.h"
 #include "proto_frame.h"
 #include "proto_commands.h"
+#include "proto_private_registers.h"
 
 #include "heating_test_data.h"
 #include "test_helpers.h"
@@ -430,7 +431,7 @@ TEST(HubOperations, ADeviceEventDuringAHeatingRegisterReadIsRecordedAndTheReadAn
   EXPECT_EQ(comp.device_event_count(), 1u);
   EXPECT_NE(comp.last_device_event().find(" ABC123 0x"), std::string::npos) << comp.last_device_event();
   ASSERT_EQ(radio.get_sent_data().size(), 2u) << "the read is sent once more after the report";
-  EXPECT_EQ(radio.get_sent_data()[1].at(10), HEATING_DIRECTION_GET) << "the repeat is the same read";
+  EXPECT_EQ(radio.get_sent_data()[1].at(10), PRIVATE_REGISTER_DIRECTION_GET) << "the repeat is the same read";
   EXPECT_EQ(dev->exchange_timeout_count, 0u);
 }
 
@@ -3757,7 +3758,7 @@ TEST(HubOperations, TowelDryerPollReadsItsOwnRegistersThenTheBootRegistersAndThe
   for (size_t i = 0; i < std::size(expected_registers); i++)
     EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
   for (const auto &tx : radio.get_sent_data())
-    EXPECT_EQ(tx.at(10), HEATING_DIRECTION_GET) << "a poll only reads";
+    EXPECT_EQ(tx.at(10), PRIVATE_REGISTER_DIRECTION_GET) << "a poll only reads";
   EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 19.75F);
   EXPECT_EQ(dev->heating.towel_mode, 3);
   EXPECT_EQ(dev->heating.temporary_state, 2);
@@ -3848,7 +3849,7 @@ TEST(HubOperations, TowelDryerPollReadsTheTemperatureInForceOnlyWhileTheProgramm
             (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26}));
   EXPECT_FALSE(dev->heating.has(HeatingFunction::TEMPERATURE_IN_FORCE));
   for (const auto &tx : radio.get_sent_data())
-    EXPECT_EQ(tx.at(10), HEATING_DIRECTION_GET) << "a poll only reads";
+    EXPECT_EQ(tx.at(10), PRIVATE_REGISTER_DIRECTION_GET) << "a poll only reads";
 }
 
 TEST(HubOperations, ATowelDryerInBoostIsNeverAskedForItsTemperatureAndAStaleValueIsNotKept) {
@@ -3954,7 +3955,7 @@ TEST(HubOperations, HeaterWithLightPollReadsTheLightAfterTheRadiatorRegisters) {
   for (size_t i = 0; i < std::size(expected_registers); i++)
     EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
   for (const auto &tx : radio.get_sent_data())
-    EXPECT_EQ(tx.at(10), HEATING_DIRECTION_GET) << "a poll only reads";
+    EXPECT_EQ(tx.at(10), PRIVATE_REGISTER_DIRECTION_GET) << "a poll only reads";
   EXPECT_EQ(dev->heating.night_light, 1);
   EXPECT_EQ(dev->heating.night_light_brightness, 100);
 

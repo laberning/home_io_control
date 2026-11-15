@@ -33,7 +33,7 @@ configuration cannot be undone from the radio side. A read has no such effect.
    | `register_01` | `0C 60 01 <index>` | low byte of register `0x01xx` |
 
    Family `0x01xx` is the one climate support already reads. Family `0x00xx` is untested.
-2. **Read direction only, by construction.** One builder, `encode_heating_register_read()`, frames the
+2. **Read direction only, by construction.** One builder, `encode_private_register_read()`, frames the
    request. It takes a register number and no direction: the direction byte is the read constant, so no
    input, index or caller can produce `61`. A test runs every register number through it, and another
    runs every index of both probes through the hub and checks the byte on the wire.

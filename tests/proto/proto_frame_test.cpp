@@ -303,6 +303,98 @@ TEST(ProtoFrame, CommandResultDecodeHelpers) {
   EXPECT_STREQ(command_result_description(0xFF), "unknown result code");
 }
 
+/// Every whole-byte result value keeps its name and description; a byte outside the list reads as unknown.
+TEST(ProtoFrame, CommandResultTableCoversEveryCode) {
+  struct Expected {
+    uint8_t result;
+    const char *name;
+    const char *description;
+  };
+  static constexpr Expected EXPECTED[] = {
+      {RESULT_UNKNOWN_STATUS_REPLY, "UNKNOWN_STATUS_REPLY", "unknown reply"},
+      {RESULT_COMMAND_COMPLETED_OK, "COMMAND_COMPLETED_OK", "no errors detected"},
+      {RESULT_NO_CONTACT, "NO_CONTACT", "no communication to node"},
+      {RESULT_MANUALLY_OPERATED, "MANUALLY_OPERATED", "manually operated by a user"},
+      {RESULT_BLOCKED, "BLOCKED", "node has been blocked by an object"},
+      {RESULT_WRONG_SYSTEMKEY, "WRONG_SYSTEMKEY", "node contains the wrong system key"},
+      {RESULT_PRIORITY_LEVEL_LOCKED, "PRIORITY_LEVEL_LOCKED", "node is locked on this priority level"},
+      {RESULT_REACHED_WRONG_POSITION, "REACHED_WRONG_POSITION", "node stopped in another position than expected"},
+      {RESULT_NO_EXECUTION, "NO_EXECUTION", "no movement of the node parameter"},
+      {RESULT_CALIBRATING, "CALIBRATING", "node is calibrating the parameters"},
+      {RESULT_POWER_CONSUMPTION_TOO_HIGH, "POWER_CONSUMPTION_TOO_HIGH", "node power consumption is too high"},
+      {RESULT_POWER_CONSUMPTION_TOO_LOW, "POWER_CONSUMPTION_TOO_LOW", "node power consumption is too low"},
+      {RESULT_LOCK_POSITION_OPEN, "LOCK_POSITION_OPEN", "door open during lock command"},
+      {RESULT_MOTION_TIME_TOO_LONG, "MOTION_TIME_TOO_LONG", "target was not reached in time"},
+      {RESULT_THERMAL_PROTECTION, "THERMAL_PROTECTION", "node has gone into thermal protection mode"},
+      {RESULT_FILTER_MAINTENANCE_NEEDED, "FILTER_MAINTENANCE_NEEDED", "filter needs maintenance"},
+      {RESULT_BATTERY_LEVEL, "BATTERY_LEVEL", "battery level is low"},
+      {RESULT_TARGET_MODIFIED, "TARGET_MODIFIED", "node modified the requested target value"},
+      {RESULT_MODE_NOT_IMPLEMENTED, "MODE_NOT_IMPLEMENTED", "node does not support the received mode"},
+      {RESULT_COMMAND_INCOMPATIBLE_TO_MOVEMENT, "COMMAND_INCOMPATIBLE_TO_MOVEMENT",
+       "node cannot move in the requested direction"},
+      {RESULT_USER_ACTION, "USER_ACTION", "user action overrode the command"},
+      {RESULT_DEAD_BOLT_ERROR, "DEAD_BOLT_ERROR", "dead bolt error"},
+      {RESULT_WRONG_LOAD_CONNECTED, "WRONG_LOAD_CONNECTED", "wrong load connected to node"},
+      {RESULT_COLOUR_NOT_REACHABLE, "COLOUR_NOT_REACHABLE", "node cannot reach the requested colour"},
+      {RESULT_TARGET_NOT_REACHABLE, "TARGET_NOT_REACHABLE", "node cannot reach the requested target position"},
+      {RESULT_BAD_INDEX_RECEIVED, "BAD_INDEX_RECEIVED", "invalid index received"},
+      {RESULT_COMMAND_OVERRULED, "COMMAND_OVERRULED", "command was overruled by a newer command"},
+      {RESULT_NODE_WAITING_FOR_POWER, "NODE_WAITING_FOR_POWER", "node is waiting for power"},
+      {RESULT_WRONG_POSITION, "WRONG_POSITION", "wrong position"},
+      {RESULT_LIMITS_NOT_SET, "LIMITS_NOT_SET", "limits are not set"},
+      {RESULT_IP_NOT_SET, "IP_NOT_SET", "intermediate position is not set"},
+      {RESULT_OUT_OF_RANGE, "OUT_OF_RANGE", "requested value is out of range"},
+      {RESULT_COMMAND_UNKNOWN, "COMMAND_UNKNOWN", "the device does not offer this command in its current state"},
+      {RESULT_MODE_OR_STATE_UNKNOWN, "MODE_OR_STATE_UNKNOWN", "mode or state number unknown to the device"},
+      {RESULT_BAD_MAC, "BAD_MAC", "the device rejected our challenge answer (wrong system key?)"},
+      {RESULT_SETUP_REQUIRED, "SETUP_REQUIRED", "the device needs setting up first"},
+      {RESULT_PARAMETER_UNKNOWN, "PARAMETER_UNKNOWN", "parameter, alias or access method unknown to the device"},
+      {RESULT_ORIGINATOR_DISABLED, "ORIGINATOR_DISABLED", "command originator disabled on the device"},
+      {RESULT_PRIORITY_LOCKED, "PRIORITY_LOCKED", "command priority too low, node rejected execution"},
+      {RESULT_PRIORITY_SERVICE_NOT_SUPPORTED, "PRIORITY_SERVICE_NOT_SUPPORTED",
+       "priority service not supported by the device"},
+      {RESULT_PARAMETER_LIMITATION_ADJUSTMENT, "PARAMETER_LIMITATION_ADJUSTMENT",
+       "the device adjusted the parameter to a limitation"},
+      {RESULT_PARAMETER_INCOHERENCE_ADJUSTMENT, "PARAMETER_INCOHERENCE_ADJUSTMENT",
+       "the device adjusted an incoherent parameter"},
+      {RESULT_TOTAL_INCOHERENCE, "TOTAL_INCOHERENCE", "the request does not fit what the device implements"},
+      {RESULT_SERVICE_FULL, "SERVICE_FULL", "the device has no room left for this request"},
+      {RESULT_ALIAS_INCOHERENCE, "ALIAS_INCOHERENCE", "alias incoherence"},
+      {RESULT_SESSION_INTERRUPTED, "SESSION_INTERRUPTED", "session interrupted"},
+      {RESULT_NOT_IMPLEMENTED, "NOT_IMPLEMENTED", "not implemented by the device"},
+      {RESULT_COMMAND_REJECTED, "COMMAND_REJECTED", "the device rejected the command"},
+      {RESULT_ALREADY_CONFIGURED, "ALREADY_CONFIGURED", "the device is already configured"},
+      {RESULT_INFORMATION_CODE, "INFORMATION_CODE", "information-only result with unknown semantics"},
+      {RESULT_PARAMETER_LIMITED, "PARAMETER_LIMITED", "parameter was limited by an unknown device"},
+      {RESULT_LIMITATION_BY_LOCAL_USER, "LIMITATION_BY_LOCAL_USER", "parameter was limited by the local button"},
+      {RESULT_LIMITATION_BY_USER, "LIMITATION_BY_USER", "parameter was limited by a remote control"},
+      {RESULT_LIMITATION_BY_RAIN, "LIMITATION_BY_RAIN", "parameter was limited by a rain sensor"},
+      {RESULT_LIMITATION_BY_TIMER, "LIMITATION_BY_TIMER", "parameter was limited by a timer"},
+      {RESULT_LIMITATION_BY_SCD, "LIMITATION_BY_SCD", "parameter was limited by a security controlling actuator"},
+      {RESULT_LIMITATION_BY_UPS, "LIMITATION_BY_UPS", "parameter was limited by a power supply"},
+      {RESULT_LIMITATION_BY_UNKNOWN_DEVICE, "LIMITATION_BY_UNKNOWN_DEVICE",
+       "parameter was limited by an unknown device"},
+      {RESULT_LIMITATION_BY_SAAC, "LIMITATION_BY_SAAC", "parameter was limited by a standalone automatic controller"},
+      {RESULT_LIMITATION_BY_WIND, "LIMITATION_BY_WIND", "parameter was limited by a wind sensor"},
+      {RESULT_LIMITATION_BY_MYSELF, "LIMITATION_BY_MYSELF", "parameter was limited by the node itself"},
+      {RESULT_LIMITATION_BY_AUTOMATIC_CYCLE, "LIMITATION_BY_AUTOMATIC_CYCLE",
+       "parameter was limited by an automatic cycle"},
+      {RESULT_LIMITATION_BY_EMERGENCY, "LIMITATION_BY_EMERGENCY", "parameter was limited by an emergency"},
+  };
+  bool known[256] = {};
+  for (const Expected &row : EXPECTED) {
+    known[row.result] = true;
+    EXPECT_STREQ(command_result_name(row.result), row.name) << "result 0x" << std::hex << int(row.result);
+    EXPECT_STREQ(command_result_description(row.result), row.description) << "result 0x" << std::hex << int(row.result);
+  }
+  for (int result = 0; result < 256; result++) {
+    if (known[result])
+      continue;
+    EXPECT_STREQ(command_result_name(static_cast<uint8_t>(result)), "UNKNOWN_RESULT_CODE");
+    EXPECT_STREQ(command_result_description(static_cast<uint8_t>(result)), "unknown result code");
+  }
+}
+
 TEST(ProtoFrame, CrcCcittKnownVector) {
   const uint8_t sample[] = {0x40, 0x20, 0x9C, 0xA3, 0x9C, 0xC0, 0xFF, 0xEE, 0x03, 0x03, 0x00, 0x00};
   EXPECT_EQ(crc_ccitt(sample, sizeof(sample)), 0x6E2C) << "CRC-CCITT should match the known IO-homecontrol vector";

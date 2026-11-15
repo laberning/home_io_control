@@ -123,7 +123,7 @@ class DiagnosticProbes {
   ///     block (0x48, and a 0x4A that carries data) has no builder.
   ///   - "register_00" / "register_01": a read of register `0x00<index>` / `0x01<index>` over CMD_WRITE_PRIVATE
   ///     (`0C 60 <hi> <lo>`, ADR 0063). The direction byte is the read constant and cannot be set to the write
-  ///     direction by any input (encode_heating_register_read()). Refused for a device that is neither a
+  ///     direction by any input (encode_private_register_read()). Refused for a device that is neither a
   ///     register-protocol heater nor a domestic hot water device (device_accepts_register_probe()); sweepable.
   ///     A `0x21` that echoes the register also reports its value bytes raw in `decoded`. Family `0x00xx` is
   ///     untested; `0x01xx` is the one climate support reads.

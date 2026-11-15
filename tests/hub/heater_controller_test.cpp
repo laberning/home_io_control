@@ -7,10 +7,12 @@
 
 #include "heater_controller.h"
 #include "decisions_status.h"
+#include "proto_codecs.h"
 #include "proto_commands.h"
 #include "proto_dhw.h"
 #include "proto_frame.h"
 #include "proto_heating.h"
+#include "proto_private_registers.h"
 
 #include "heater_controller_fixture.h"
 #include "heating_test_data.h"
@@ -273,7 +275,7 @@ TEST(HeaterController, ReadPrivateRegisterChecksTheEchoAndRefusesADeviceWithoutR
   IoFrame response{};
   ASSERT_TRUE(fx.controller.read_private_register("ABC123", 0x01, 0x19, "model_name", response, 1));
   EXPECT_EQ(response.data_len, ADELIS_NAME_REPLY.size());
-  EXPECT_EQ(response.data[HEATING_REPLY_VALUE_OFFSET], 'A');
+  EXPECT_EQ(response.data[PRIVATE_REGISTER_VALUE_OFFSET], 'A');
   EXPECT_EQ(sent_payload(fx.radio.get_sent_data().back(), 4), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x19}));
 
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x18, 0x41});
@@ -612,7 +614,7 @@ TEST(HeaterController, AnUnacknowledgedModeWriteIsNotReadBack) {
   const IoDevice *dev = make_water_heater(fx);
   EXPECT_FALSE(fx.controller.set_water_heater_mode("ABC123", DhwMode::AUTO));
   for (const auto &tx : fx.radio.get_sent_data())
-    EXPECT_EQ(tx[10], HEATING_DIRECTION_SET) << "only the write is tried";
+    EXPECT_EQ(tx[10], PRIVATE_REGISTER_DIRECTION_SET) << "only the write is tried";
   EXPECT_LE(fx.radio.get_sent_data().size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
   EXPECT_EQ(dev->dhw.mode, -1);
   EXPECT_TRUE(fx.status_reads.empty());
