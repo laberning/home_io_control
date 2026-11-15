@@ -269,6 +269,49 @@ decisions::AttemptPlan ExchangeEngine::plan_attempts(decisions::ReadKind kind, b
                                  last_window_ms, short_lead_tx_ms);
 }
 
+bool ExchangeEngine::begin_try_(uint8_t tries_started, uint32_t elapsed_ms, uint32_t gap_ms, uint32_t window_ms,
+                                const std::optional<TryBudget> &budget) {
+  if (tries_started == 0)
+    return true;
+  if (budget.has_value() &&
+      !this->try_fits_budget_(elapsed_ms, gap_ms, budget->tx_ms, window_ms, budget->auth_tail_ms, budget->allowance_ms))
+    return false;
+  App.feed_wdt();
+  delay(gap_ms);  // 0 for a run without a gap: a no-op that still yields
+  this->counters_.retransmits++;
+  return true;
+}
+
+ExchangeEngine::AttemptRun ExchangeEngine::fixed_attempts(uint8_t count, uint16_t gap_ms, uint16_t window_ms) {
+  AttemptRun run;
+  run.plan.max_attempts = count;
+  run.plan.gap_ms = gap_ms;
+  run.plan.window_ms = window_ms;
+  return run;
+}
+
+AttemptRunResult ExchangeEngine::run_attempts(const AttemptRun &run, const TryHandler &on_try) {
+  const decisions::AttemptPlan &plan = run.plan;
+  const uint32_t begin_ms = millis();
+  for (uint8_t tries = 0; tries < plan.max_attempts; tries++) {
+    const uint16_t window_ms = plan.window_for_attempt(tries + 1, plan.max_attempts);
+    std::optional<TryBudget> budget;
+    if (run.budgeted_tx_ms.has_value() && tries > 0)
+      budget = TryBudget{*run.budgeted_tx_ms, 0, plan.budget_allowance_ms};
+    if (!this->begin_try_(tries, millis() - begin_ms, plan.gap_ms, window_ms, budget))
+      return AttemptRunResult::BUDGET_EXHAUSTED;
+    switch (on_try(static_cast<uint8_t>(tries + 1), window_ms)) {
+      case AttemptVerdict::DONE:
+        return AttemptRunResult::DONE;
+      case AttemptVerdict::STOP:
+        return AttemptRunResult::STOPPED;
+      case AttemptVerdict::AGAIN:
+        break;
+    }
+  }
+  return AttemptRunResult::TRIES_USED;
+}
+
 bool ExchangeEngine::try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms, uint32_t window_ms,
                                       uint32_t auth_tail_ms, uint32_t allowance_ms) const {
   return decisions::attempt_fits(elapsed_ms, gap_ms, tx_ms, window_ms, auth_tail_ms,
@@ -389,18 +432,19 @@ uint32_t auth_tail_after_unconfirmed(const IoFrame &request, uint32_t final_wind
 }  // namespace
 
 ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
-                                                 uint8_t max_tries, uint16_t request_preamble_override) {
+                                                 uint8_t max_tries, uint16_t request_preamble_override,
+                                                 const uint8_t *key) {
   // Never below 1 (a caller passing 0 must not silently transmit nothing) and never above
   // EXCHANGE_RETRY_COUNT: a caller that wants more attempts passes a plan.
   const uint16_t window_ms =
       is_start(request) ? this->tuning_->exchange_start_response_wait_ms : this->tuning_->exchange_response_wait_ms;
   return this->send_and_receive(request, response, freq, decisions::attempt_plan_for_tries(max_tries, window_ms),
-                                request_preamble_override);
+                                request_preamble_override, key);
 }
 
 ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
-                                                 const decisions::AttemptPlan &plan,
-                                                 uint16_t request_preamble_override) {
+                                                 const decisions::AttemptPlan &plan, uint16_t request_preamble_override,
+                                                 const uint8_t *key) {
   this->reset_debug(request.cmd);
   // Blank the radio's diagnostic capture at the start of the exchange. The radio only clears it
   // when it actually begins a listen, so an exchange that transmits and then hears nothing at all
@@ -435,24 +479,21 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     context.wait_ms = window_ms;
     context.state = exchange::OutboundExchangeState::TX_REQUEST;
 
+    // The attempt count is a maximum, not a promise: begin_try_() does not start a try that could not
+    // finish inside the budget, counting the window it listens and, once the target has challenged,
+    // the final-reply window. See EXCHANGE_TOTAL_BUDGET_MS -- this is what keeps a failing command
+    // from blocking the ESPHome loop for the full attempts x (transmission + window) product.
+    std::optional<TryBudget> budget;
     if (tries > 0) {
-      // The attempt count is a maximum, not a promise: don't start a try that could not finish
-      // inside the budget, counting the window it listens and, once the target has challenged, the
-      // final-reply window. See EXCHANGE_TOTAL_BUDGET_MS -- this is what keeps a failing command
-      // from blocking the ESPHome loop for the full attempts x (transmission + window) product.
-      if (!this->try_fits_budget_(
-              millis() - exchange_begin_ms, plan.gap_ms,
-              this->tx_time_ms(request, freq, this->try_preamble_(plan, preamble_plan, context.try_index)), window_ms,
-              auth_tail_ms, plan.budget_allowance_ms)) {
-        this->record_debug("retry_budget_exhausted", tries, false);
-        ESP_LOGI(TAG, "Exchange budget exhausted after %u tries for cmd=%s(0x%02X) (%" PRIu32 " of %u ms)", tries,
-                 command_name(request.cmd), request.cmd, millis() - exchange_begin_ms,
-                 this->tuning_->exchange_total_budget_ms);
-        break;
-      }
-      App.feed_wdt();
-      delay(plan.gap_ms);  // 0 for a plan without a gap: a no-op that still yields
-      this->counters_.retransmits++;
+      budget = TryBudget{this->tx_time_ms(request, freq, this->try_preamble_(plan, preamble_plan, context.try_index)),
+                         auth_tail_ms, plan.budget_allowance_ms};
+    }
+    if (!this->begin_try_(tries, millis() - exchange_begin_ms, plan.gap_ms, window_ms, budget)) {
+      this->record_debug("retry_budget_exhausted", tries, false);
+      ESP_LOGI(TAG, "Exchange budget exhausted after %u tries for cmd=%s(0x%02X) (%" PRIu32 " of %u ms)", tries,
+               command_name(request.cmd), request.cmd, millis() - exchange_begin_ms,
+               this->tuning_->exchange_total_budget_ms);
+      break;
     }
 
     // Stamped after the retry gap, so a try's wait_ms and age_ms measure from its own transmit and
@@ -484,7 +525,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     }
 
     auth_tail_ms = this->final_reply_tail_ms_(request, freq);
-    if (!this->handle_authentication_(request, freq, context))
+    if (!this->handle_authentication_(request, freq, context, key))
       continue;
 
     context.state = exchange::OutboundExchangeState::WAIT_FINAL_RESPONSE;
@@ -697,7 +738,7 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
 }
 
 bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t freq,
-                                            exchange::OutboundExchangeContext &ctx) {
+                                            exchange::OutboundExchangeContext &ctx, const uint8_t *key) {
   ctx.saw_challenge = true;
   ctx.state = exchange::OutboundExchangeState::BUILD_AUTH_RESPONSE;
   this->record_debug(outbound_stage_name(ctx.state), ctx.try_index, true);
@@ -712,7 +753,7 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
   // the same reason (wait_for_first_response_()). The line below is printed after the send; every driver re-arms RX
   // inside send_packet(), so the final reply is still received while it prints. answer_challenge() covers both the 0x3D
   // build and its transmit as one step, so a failure here does not distinguish which of the two failed.
-  const bool answered = this->answer_challenge(request, ctx.rx, freq);
+  const bool answered = this->answer_challenge(request, ctx.rx, freq, key);
   const uint32_t answer_us = micros() - ctx.first_response_us;
   // The challenge's and the 0x3D's frame-log lines, held since wait_for_first_response_().
   frame_log_release();
@@ -736,10 +777,11 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
   return true;
 }
 
-bool ExchangeEngine::answer_challenge(const IoFrame &request, const IoFrame &challenge, uint32_t freq) {
+bool ExchangeEngine::answer_challenge(const IoFrame &request, const IoFrame &challenge, uint32_t freq,
+                                      const uint8_t *key) {
   IoFrame auth_resp;
   if (!create_challenge_resp(auth_resp, request.dst, this->node_id_, challenge.data, request,
-                             this->key_for(request.dst)))
+                             key != nullptr ? key : this->key_for(request.dst)))
     return false;
   return this->transmit_frame(auth_resp, freq, (*this->radio_ptr_)->response_preamble());
 }

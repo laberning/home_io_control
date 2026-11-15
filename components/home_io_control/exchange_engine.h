@@ -110,9 +110,13 @@ class ExchangeEngine {
   ///        PairingEngine::pairing_start_preamble_()). The 0x3D challenge response keeps the
   ///        driver's response_preamble() either way. An override also switches the low-power wake
   ///        belief off for that exchange: the caller has already chosen the preamble.
+  /// @param key 16-byte key the exchange answers the device's challenge under, or nullptr (the
+  ///        default) for key_for(request.dst). Only a caller that talks to a node the registry has no
+  ///        record of (pairing's heater probe) passes one.
   /// @return What the device actually told us — see @ref ExchangeOutcome.
   ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
-                                   uint8_t max_tries = EXCHANGE_RETRY_COUNT, uint16_t request_preamble_override = 0);
+                                   uint8_t max_tries = EXCHANGE_RETRY_COUNT, uint16_t request_preamble_override = 0,
+                                   const uint8_t *key = nullptr);
 
   /// The same exchange with an explicit attempt plan (decisions::attempt_plan()).
   /// @param request  As for the `max_tries` overload.
@@ -122,9 +126,39 @@ class ExchangeEngine {
   ///        attempt, and first-reply window (the early attempts' and the last one's). An attempt that cannot finish
   ///        inside `exchange_total_budget_ms` is not started whatever the plan says (try_fits_budget_()).
   /// @param request_preamble_override As for the `max_tries` overload.
+  /// @param key As for the `max_tries` overload.
   /// @return As for the `max_tries` overload.
   ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
-                                   const decisions::AttemptPlan &plan, uint16_t request_preamble_override = 0);
+                                   const decisions::AttemptPlan &plan, uint16_t request_preamble_override = 0,
+                                   const uint8_t *key = nullptr);
+
+  /// @brief The shape of a loop of tries run by run_attempts().
+  struct AttemptRun {
+    decisions::AttemptPlan plan;  ///< Number of tries, gap before each further try and the listen windows.
+    /// Transmit time of one try (tx_time_ms()). When set, a try after the first starts only if it
+    /// fits `exchange_total_budget_ms` plus the plan's allowance (the rule send_and_receive()
+    /// applies); empty runs the plan's tries whatever they cost.
+    std::optional<uint32_t> budgeted_tx_ms;
+  };
+
+  /// A run of @p count tries, each listening @p window_ms, @p gap_ms apart, with no budget: the shape
+  /// of the fixed-count retry loops (pairing's key confirm, key check and the like).
+  /// @param count     Number of tries; 0 runs none. Not clamped.
+  /// @param gap_ms    Wait before each try after the first; 0 for none.
+  /// @param window_ms Listen time of every try (handed to the handler, which may ignore it).
+  [[nodiscard]] static AttemptRun fixed_attempts(uint8_t count, uint16_t gap_ms, uint16_t window_ms = 0);
+
+  /// Run the tries of @p run: before each try after the first the exchange's step before a try
+  /// (budget when the run has one, watchdog feed, gap, retransmit count), then @p on_try, which
+  /// transmits and listens as its caller needs and says whether another try follows.
+  ///
+  /// The attempt and budget rules live here and in send_and_receive() and nowhere else; the two share
+  /// the same step before a try. The tries are not clamped to EXCHANGE_MAX_ATTEMPTS, so a caller
+  /// can pass whatever count a tuning value gives (0 runs none).
+  /// @param run    Tries, gap, windows and the optional budget.
+  /// @param on_try Called once per started try, with its 1-based number and listen window.
+  /// @return How the run ended; see @ref AttemptRunResult.
+  AttemptRunResult run_attempts(const AttemptRun &run, const TryHandler &on_try);
 
   /// The radio's estimate of how long transmitting `frame` on `freq` with `preamble` takes, in
   /// whole milliseconds rounded up; 0 for a frame that does not serialize (it is never sent).
@@ -354,8 +388,9 @@ class ExchangeEngine {
   /// @param request   The frame whose cmd+data the challenger wants proof of (the transcript).
   /// @param challenge The inbound 0x3C carrying the challenge bytes in `challenge.data`.
   /// @param freq      RF channel frequency (Hz) to transmit the 0x3D on.
+  /// @param key       16-byte key the 0x3D proves, or nullptr (the default) for key_for(request.dst).
   /// @return true if the 0x3D was built and transmitted; false on a build or transmit failure.
-  bool answer_challenge(const IoFrame &request, const IoFrame &challenge, uint32_t freq);
+  bool answer_challenge(const IoFrame &request, const IoFrame &challenge, uint32_t freq, const uint8_t *key = nullptr);
 
   /// @brief Advance the receiver one step along the protocol's channel rotation
   ///   (CH1→CH2→CH3→CH1).
@@ -518,8 +553,9 @@ class ExchangeEngine {
   /// the RSSI/Exchange-Failures per-device sensors for that) and not per-attempt (see DebugInfo for
   /// that). Persist until explicitly reset, so a caller can diff two snapshots across an arbitrary
   /// window. Coverage differs per field, see each field's own comment below: `lbt_retries` is the
-  /// only one that covers pairing traffic too (pairing calls transmit_frame() the same way normal
-  /// exchanges do); the other three only observe ExchangeEngine's own send_and_receive() path.
+  /// one that covers all pairing traffic (pairing calls transmit_frame() the same way normal
+  /// exchanges do); `retransmits` also covers pairing's retry loops (run_attempts()); the other two
+  /// only observe ExchangeEngine's own send_and_receive() path.
   ///
   /// Internal-only, deliberately: nothing outside the unit tests reads counters() today — no HA
   /// sensor, no log line, no periodic dump. Built to back a scripted continuous-operation
@@ -532,8 +568,8 @@ class ExchangeEngine {
     uint32_t lbt_retries{0};            ///< transmit_frame() LBT backoff iterations (channel busy);
                                         ///< covers pairing traffic too, via pairing_engine.cpp's
                                         ///< own transmit_frame() calls.
-    uint32_t retransmits{0};            ///< send_and_receive() TX attempts beyond the first; no
-                                        ///< pairing path.
+    uint32_t retransmits{0};            ///< TX attempts beyond the first of send_and_receive() and of
+                                        ///< run_attempts() (pairing's retry loops).
     uint32_t challenge_round_trips{0};  ///< Completed 0x3C/0x3D challenge-response cycles, either
                                         ///< direction: a device challenging our outbound command
                                         ///< (handle_authentication_()) or us authenticating an
@@ -584,6 +620,26 @@ class ExchangeEngine {
   [[nodiscard]] bool try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms, uint32_t window_ms,
                                       uint32_t auth_tail_ms, uint32_t allowance_ms = 0) const;
 
+  /// What the budget rule needs of one try; see begin_try_().
+  struct TryBudget {
+    uint32_t tx_ms{0};         ///< The try's transmit time (tx_time_ms()).
+    uint32_t auth_tail_ms{0};  ///< What a challenged try adds (final_reply_tail_ms_()), 0 before a challenge.
+    uint32_t allowance_ms{0};  ///< Time the exchange may run past the budget
+                               ///< (decisions::AttemptPlan::budget_allowance_ms).
+  };
+
+  /// The step before a try, shared by send_and_receive() and run_attempts(): for a try after the
+  /// first, checks the budget (when one is given), feeds the watchdog, waits the gap and counts the
+  /// retransmit. The first try starts at once.
+  /// @param tries_started Tries started so far (0 for the first).
+  /// @param elapsed_ms    Time since the exchange began.
+  /// @param gap_ms        Wait before this try; 0 for none (the wait still yields).
+  /// @param window_ms     How long this try then listens for the first reply.
+  /// @param budget        What the budget rule needs, or empty to start without checking one.
+  /// @return false when the budget says this try cannot finish in time (nothing was waited), else true.
+  [[nodiscard]] bool begin_try_(uint8_t tries_started, uint32_t elapsed_ms, uint32_t gap_ms, uint32_t window_ms,
+                                const std::optional<TryBudget> &budget);
+
   // --- Outbound exchange step helpers --------------------------------------
 
   /// Transmit one request attempt and update context state on failure.
@@ -595,7 +651,9 @@ class ExchangeEngine {
                                                                        exchange::OutboundExchangeContext &ctx);
 
   /// Send the 0x3D challenge response after receiving a 0x3C from the device.
-  bool handle_authentication_(const IoFrame &request, uint32_t freq, exchange::OutboundExchangeContext &ctx);
+  /// @param key Key the 0x3D proves, or nullptr for key_for(request.dst).
+  bool handle_authentication_(const IoFrame &request, uint32_t freq, exchange::OutboundExchangeContext &ctx,
+                              const uint8_t *key);
 
   /// Block until the final authenticated response arrives or the window expires.
   decisions::ExchangeFinalResponseDisposition wait_for_final_response_(const IoFrame &request,

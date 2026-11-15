@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -762,6 +763,20 @@ IoFrame heater_frame(const uint8_t dst[NODE_ID_SIZE], uint8_t cmd, const uint8_t
 
 constexpr uint8_t HEATER_CHALLENGE[HMAC_SIZE] = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26};
 
+/// A MockRadio that calls `on_probe_read` each time a register read (0x20) goes out, so a test can
+/// look at the registry while the heater probe's exchange is running, not only after it.
+class ProbeWatchingRadio : public MockRadio {
+ public:
+  std::function<void()> on_probe_read;
+
+  TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override {
+    IoFrame frame{};
+    if (on_probe_read && parse(data, len, frame) && frame.cmd == CMD_WRITE_PRIVATE)
+      on_probe_read();
+    return MockRadio::send_packet(data, len, tx_config);
+  }
+};
+
 /// Queue the heater answering the probe: its challenge, then its maximum setpoint (28.0 C), as in
 /// tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml.
 void queue_heater_answers_probe(MockRadio &radio, const uint8_t dst[NODE_ID_SIZE]) {
@@ -1033,6 +1048,57 @@ TEST(PairingKeyPullFlow, AnAgiliaHeaterThatAnswersTheProbeIsRegisteredWithoutARo
   uint8_t expected[HMAC_SIZE];
   ASSERT_TRUE(challenge_resp_hmac(reads[0], HEATER_CHALLENGE, OTHER_KEY, expected));
   EXPECT_EQ(0, memcmp(answers[0].data, expected, HMAC_SIZE)) << "the probe is signed with the pulled key";
+}
+
+TEST(PairingKeyPullFlow, AHeaterThatDoesNotAnswerTheProbeLeavesTheRegistryUntouched) {
+  RngGuard rng;
+  TestableComponent comp;
+  ProbeWatchingRadio radio;
+  setup(comp, radio);
+  queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
+  ASSERT_EQ(comp.registry_.size(), 0u);
+  std::vector<size_t> sizes_during_read;
+  radio.on_probe_read = [&]() { sizes_during_read.push_back(comp.registry_.size()); };
+
+  EXPECT_FALSE(comp.discover_and_pair());
+
+  EXPECT_EQ(sent_frames_of(radio, CMD_WRITE_PRIVATE).size(), 3u) << "sanity: the probe ran, three tries, unanswered";
+  EXPECT_EQ(sizes_during_read, (std::vector<size_t>{0, 0, 0})) << "no candidate record is planted for the read";
+  EXPECT_EQ(comp.registry_.size(), 0u) << "the probe plants no candidate and removes none";
+  EXPECT_EQ(comp.get_device("B6BDFC"), nullptr);
+}
+
+TEST(PairingKeyPullFlow, AnUnansweredProbeKeepsTheRecordAnEarlierPairingLeft) {
+  RngGuard rng;
+  TestableComponent comp;
+  ProbeWatchingRadio radio;
+  setup(comp, radio);
+  constexpr uint8_t EARLIER_KEY[AES_KEY_SIZE] = {0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48,
+                                                 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50};
+  IoDevice earlier{};
+  memcpy(earlier.node_id, HEATER_ID, NODE_ID_SIZE);
+  earlier.type = DeviceType::ELECTRICAL_HEATER;
+  earlier.subtype = 1;
+  earlier.has_system_key = true;
+  memcpy(earlier.system_key, EARLIER_KEY, AES_KEY_SIZE);
+  earlier.registered_by_pairing = true;
+  comp.registry_.put("B6BDFC", earlier);
+  queue_proven_pull(radio, comp.node_id_, OTHER_KEY);
+  uint8_t reads_with_earlier_key = 0;
+  radio.on_probe_read = [&]() {
+    const IoDevice *during = comp.get_device("B6BDFC");
+    if (during != nullptr && memcmp(during->system_key, EARLIER_KEY, AES_KEY_SIZE) == 0)
+      reads_with_earlier_key++;
+  };
+
+  EXPECT_FALSE(comp.discover_and_pair());
+
+  EXPECT_EQ(sent_frames_of(radio, CMD_WRITE_PRIVATE).size(), 3u) << "sanity: the probe ran, unanswered";
+  EXPECT_EQ(reads_with_earlier_key, 3) << "the earlier record is not replaced for the read";
+  const IoDevice *kept = comp.get_device("B6BDFC");
+  ASSERT_NE(kept, nullptr);
+  EXPECT_EQ(0, memcmp(kept->system_key, EARLIER_KEY, AES_KEY_SIZE)) << "the earlier record keeps its own key";
+  EXPECT_EQ(comp.registry_.size(), 1u);
 }
 
 TEST(PairingKeyPullFlow, AHeaterAwayFromTheNextAddressIsFoundByTheRollCall) {

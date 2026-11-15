@@ -143,6 +143,26 @@ enum class ListenOutcome : uint8_t {
 /// implementations this project builds against.
 using ReplyHandler = std::function<ReplyDisposition(const IoFrame *parsed, const RadioRxPacket &packet)>;
 
+/// @brief What a caller of @ref ExchangeEngine::run_attempts() says after one try.
+enum class AttemptVerdict : uint8_t {
+  DONE,   ///< The goal is reached; no further try.
+  AGAIN,  ///< This try did not get there (a failed transmit counts as such); spend the next one.
+  STOP,   ///< Give up at once: the peer answered in a way a repeat cannot change (an explicit refusal).
+};
+
+/// @brief How @ref ExchangeEngine::run_attempts() ended.
+enum class AttemptRunResult : uint8_t {
+  DONE,              ///< A try returned AttemptVerdict::DONE.
+  STOPPED,           ///< A try returned AttemptVerdict::STOP.
+  TRIES_USED,        ///< Every planned try ran without DONE or STOP.
+  BUDGET_EXHAUSTED,  ///< The next try could not finish inside the exchange budget, so it was not started.
+};
+
+/// @brief One try of @ref ExchangeEngine::run_attempts(): transmit and listen as the caller needs.
+/// @param try_number 1-based number of the try.
+/// @param window_ms  How long the plan says this try listens for the first reply.
+using TryHandler = std::function<AttemptVerdict(uint8_t try_number, uint16_t window_ms)>;
+
 /// @brief What a listen heard without accepting it — filled by @ref ExchangeEngine::listen() when
 /// a caller passes one in ListenSpec::stats.
 ///

@@ -2080,6 +2080,197 @@ TEST(Exchange, GenerousBudgetStillAllowsEveryRetry) {
   EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT) << "with budget to spare the retry count is unchanged";
 }
 
+// --- run_attempts(): the loop pairing's retries run through ------------------------------------
+
+namespace {
+constexpr uint8_t EXPLICIT_KEY[AES_KEY_SIZE] = {0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8,
+                                                0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF, 0xF0};
+constexpr uint8_t PROVIDER_KEY[AES_KEY_SIZE] = {0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8,
+                                                0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF, 0xD0};
+}  // namespace
+
+TEST(ExchangeRunAttempts, RunsEveryTryWithTheGapBeforeEachFurtherOne) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  std::vector<uint32_t> starts;
+  std::vector<uint8_t> numbers;
+  const uint32_t begin_ms = esphome::test_clock::peek_ms();
+  const AttemptRunResult result =
+      engine.run_attempts(ExchangeEngine::fixed_attempts(3, 250, 500), [&](uint8_t number, uint16_t window_ms) {
+        starts.push_back(esphome::test_clock::peek_ms() - begin_ms);
+        numbers.push_back(number);
+        EXPECT_EQ(window_ms, 500);
+        return AttemptVerdict::AGAIN;
+      });
+
+  EXPECT_EQ(result, AttemptRunResult::TRIES_USED);
+  EXPECT_EQ(numbers, (std::vector<uint8_t>{1, 2, 3}));
+  EXPECT_EQ(starts, (std::vector<uint32_t>{0, 250, 500})) << "no gap before the first try, one before each other";
+  EXPECT_EQ(engine.counters().retransmits, 2u) << "tries beyond the first count as retransmits";
+}
+
+TEST(ExchangeRunAttempts, DoneAndStopEndTheRunAtOnce) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  uint8_t calls = 0;
+  EXPECT_EQ(engine.run_attempts(ExchangeEngine::fixed_attempts(3, 250),
+                                [&](uint8_t number, uint16_t) {
+                                  calls++;
+                                  return number == 2 ? AttemptVerdict::DONE : AttemptVerdict::AGAIN;
+                                }),
+            AttemptRunResult::DONE);
+  EXPECT_EQ(calls, 2);
+
+  calls = 0;
+  EXPECT_EQ(engine.run_attempts(ExchangeEngine::fixed_attempts(3, 250),
+                                [&](uint8_t, uint16_t) {
+                                  calls++;
+                                  return AttemptVerdict::STOP;
+                                }),
+            AttemptRunResult::STOPPED);
+  EXPECT_EQ(calls, 1);
+}
+
+TEST(ExchangeRunAttempts, ACountOfZeroRunsNoTry) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  bool called = false;
+  EXPECT_EQ(engine.run_attempts(ExchangeEngine::fixed_attempts(0, 250),
+                                [&](uint8_t, uint16_t) {
+                                  called = true;
+                                  return AttemptVerdict::DONE;
+                                }),
+            AttemptRunResult::TRIES_USED);
+  EXPECT_FALSE(called);
+}
+
+TEST(ExchangeRunAttempts, ARunWithoutABudgetIgnoresTheExchangeBudget) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  tuning.exchange_total_budget_ms = 100;  // far less than the gaps alone
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  uint8_t calls = 0;
+  EXPECT_EQ(engine.run_attempts(ExchangeEngine::fixed_attempts(3, 250),
+                                [&](uint8_t, uint16_t) {
+                                  calls++;
+                                  return AttemptVerdict::AGAIN;
+                                }),
+            AttemptRunResult::TRIES_USED);
+  EXPECT_EQ(calls, 3);
+}
+
+TEST(ExchangeRunAttempts, ABudgetedRunStopsStartingTriesThatCannotFinish) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  tuning.exchange_total_budget_ms = 1000;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  // Try 1 spends its 200 ms window. Try 2 starts: 200 + 250 (gap) + 100 (air) + overhead + 200
+  // ends before 1000, and the run is then at 650 ms. Try 3 would end at 650 + 250 + 100 + overhead
+  // + 200 > 1000, so it is refused.
+  ExchangeEngine::AttemptRun run = ExchangeEngine::fixed_attempts(9, 250, 200);
+  run.budgeted_tx_ms = 100;
+  uint8_t calls = 0;
+  const AttemptRunResult result = engine.run_attempts(run, [&](uint8_t, uint16_t window_ms) {
+    calls++;
+    esphome::delay(window_ms);  // the try listens its whole window
+    return AttemptVerdict::AGAIN;
+  });
+
+  EXPECT_EQ(result, AttemptRunResult::BUDGET_EXHAUSTED);
+  EXPECT_EQ(calls, 2) << "the third try would end past the budget, so it is not started";
+}
+
+TEST(ExchangeRunAttempts, ABudgetedRunStillStartsItsFirstTryWhateverItCosts) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  tuning.exchange_total_budget_ms = 1;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  ExchangeEngine::AttemptRun run = ExchangeEngine::fixed_attempts(3, 250, 400);
+  run.budgeted_tx_ms = 100;
+  uint8_t calls = 0;
+  EXPECT_EQ(engine.run_attempts(run,
+                                [&](uint8_t, uint16_t) {
+                                  calls++;
+                                  return AttemptVerdict::AGAIN;
+                                }),
+            AttemptRunResult::BUDGET_EXHAUSTED);
+  EXPECT_EQ(calls, 1);
+}
+
+// --- An explicit key replaces the registry's choice for one exchange ----------------------------
+
+namespace {
+
+/// Run one exchange to a node whose challenge the device answers, with the engine's key provider
+/// returning PROVIDER_KEY for every node, and return the HMAC of the 0x3D the engine sent.
+void exchange_and_read_0x3d(const uint8_t *explicit_key, uint8_t out_hmac[HMAC_SIZE], const uint8_t *challenge_bytes) {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+  engine.set_device_key_provider([](const uint8_t *) -> const uint8_t * { return PROVIDER_KEY; });
+
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, false, 100);
+  radio.queue_rx(to_rx_packet(build_challenge(test::DST_ID, test::OWN_ID, challenge_bytes)));
+  radio.queue_rx(to_rx_packet(build_status_response(test::DST_ID, test::OWN_ID)));
+
+  IoFrame response{};
+  ASSERT_EQ(engine.send_and_receive(request, response, FREQ_CH2, EXCHANGE_RETRY_COUNT, 0, explicit_key),
+            ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  ASSERT_GE(radio.get_sent_data().size(), 2u);
+  IoFrame answer{};
+  const auto &raw = radio.get_sent_data()[1];
+  ASSERT_TRUE(parse(raw.data(), static_cast<uint8_t>(raw.size()), answer));
+  ASSERT_EQ(answer.cmd, CMD_CHALLENGE_RESP);
+  memcpy(out_hmac, answer.data, HMAC_SIZE);
+}
+
+}  // namespace
+
+TEST(ExchangeExplicitKey, TheChallengeIsAnsweredUnderTheGivenKeyNotTheRegistrysOne) {
+  const uint8_t challenge[HMAC_SIZE] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, false, 100);
+  uint8_t frame_data[FRAME_MAX_SIZE];
+  frame_data[0] = request.cmd;
+  memcpy(frame_data + 1, request.data, request.data_len);
+  uint8_t under_explicit[HMAC_SIZE];
+  uint8_t under_provider[HMAC_SIZE];
+  ASSERT_TRUE(crypto::create_hmac(frame_data, request.data_len + 1, challenge, EXPLICIT_KEY, under_explicit));
+  ASSERT_TRUE(crypto::create_hmac(frame_data, request.data_len + 1, challenge, PROVIDER_KEY, under_provider));
+
+  uint8_t sent[HMAC_SIZE]{};
+  exchange_and_read_0x3d(EXPLICIT_KEY, sent, challenge);
+  EXPECT_EQ(0, memcmp(sent, under_explicit, HMAC_SIZE));
+  EXPECT_NE(0, memcmp(sent, under_provider, HMAC_SIZE));
+
+  exchange_and_read_0x3d(nullptr, sent, challenge);
+  EXPECT_EQ(0, memcmp(sent, under_provider, HMAC_SIZE)) << "without a key the provider's key is used";
+}
+
 // --- A try's transmission counts against the budget -------------------------------------------
 // A try starts only if its transmission ends inside the budget (ExchangeEngine::try_fits_budget_()),
 // with the transmit time taken from the driver's tx_air_time_us(). Every case models air time on a

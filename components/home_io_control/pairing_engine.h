@@ -63,6 +63,9 @@ inline constexpr uint32_t PAIRING_DISCOVER_CONFIRM_ACK_TIMEOUT_MS = 1500;  ///< 
 /// key exchange did not confirm. Two, not EXCHANGE_RETRY_COUNT: the device answered moments ago, so
 /// one retry covers a lost frame, and the check runs only on an attempt that is already failing.
 inline constexpr uint8_t PAIRING_KEY_VERIFY_MAX_TRIES = 2;
+/// Re-sends of the key-init (0x31) after a missed 0x33 on a slow-turnaround radio, each after
+/// EXCHANGE_RETRY_DELAY_MS.
+inline constexpr uint8_t PAIRING_KEY_INIT_RESENDS = 2;
 /// Wait for the device's key transfer (0x32) after our key transfer request (0x38). Same window as
 /// the 0x33 wait: both are a unicast reply to a unicast pairing frame.
 inline constexpr uint32_t PAIRING_KEY_PULL_REPLY_TIMEOUT_MS = PAIRING_KEY_CONFIRM_TIMEOUT_MS;
@@ -213,6 +216,14 @@ class PairingEngine {
   /// @return true if the device confirmed the key.
   bool transfer_key_and_wait_confirm_(pairing::PairingContext &context);
 
+  /// Re-send the key-init (0x31) after a missed 0x33 on a slow-turnaround radio and carry on with
+  /// whatever the device answers: an immediate 0x33, or a fresh challenge that restarts the key
+  /// transfer.
+  /// @param context Pairing context; `context.key_init` is re-sent, `context.rx` receives the reply.
+  /// @param resend  1-based number of this re-send (1..PAIRING_KEY_INIT_RESENDS), for the log.
+  /// @return true if the device confirmed the key.
+  bool resend_key_init_(pairing::PairingContext &context, uint8_t resend);
+
   /// @brief Check whether the device took our key although the key exchange did not confirm it.
   ///
   /// A device can accept a key transfer whose 0x33 we never hear, then refuse the next one, so an
@@ -285,7 +296,8 @@ class PairingEngine {
   /// Runs only for a node decisions::heater_behind_pairing_node() names, and only when the
   /// YAML declares no device at that address. One authenticated register read under `key` (the full
   /// retry budget); an answer means the electrical heater with an adjustable setpoint is there, and it
-  /// becomes the only entry of `state`, as if a roll-call had found it. Leaves the registry as it was.
+  /// becomes the only entry of `state`, as if a roll-call had found it. The read goes out with `key` given to
+  /// ExchangeEngine::send_and_receive(), so the registry is neither read nor written for it.
   /// @param context Pairing context of the attempt (the discovered node and its manufacturer).
   /// @param key AES_KEY_SIZE bytes the read is signed with.
   /// @param device_key true when `key` is a key the device handed over (the entry uses key slot 1).

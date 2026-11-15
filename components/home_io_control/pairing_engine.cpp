@@ -298,15 +298,11 @@ decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(p
 /// (drivers whose TX waveform needs more lock-on margin return a longer preamble). Retries up to
 /// EXCHANGE_RETRY_COUNT times on timeout.
 bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
-  for (uint8_t tries = 0; tries < EXCHANGE_RETRY_COUNT; tries++) {
-    if (tries > 0) {
-      App.feed_wdt();
-      delay(EXCHANGE_RETRY_DELAY_MS);
-    }
+  const ExchangeEngine::AttemptRun run = ExchangeEngine::fixed_attempts(EXCHANGE_RETRY_COUNT, EXCHANGE_RETRY_DELAY_MS);
+  return engine_.run_attempts(run, [&](uint8_t try_number, uint16_t /*window_ms*/) {
     if (!engine_.transmit_frame(context.req, FREQ_CH2, radio_()->response_preamble()))
-      continue;
+      return AttemptVerdict::AGAIN;
 
-    const uint8_t try_number = tries + 1;
     decisions::PairingKeyConfirmDisposition disposition = listen_for_key_confirm_(context, try_number, false);
     if (disposition == decisions::PairingKeyConfirmDisposition::CHALLENGE) {
       // "Rest of the window" would leave almost nothing after a late challenge plus the 0x3D TX,
@@ -323,13 +319,13 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
     }
 
     if (disposition == decisions::PairingKeyConfirmDisposition::CONFIRM)
-      return true;
+      return AttemptVerdict::DONE;
+    // An explicit refusal must not spend the remaining retries; a challenge is not a refusal.
     if (disposition == decisions::PairingKeyConfirmDisposition::REFUSE)
-      return false;  // An explicit refusal must not spend the remaining retries; a challenge is
-                     // not a refusal, so neither branch above returns false for it.
+      return AttemptVerdict::STOP;
     // IGNORE (timeout) or a second CHALLENGE in the same try: spend the next try.
-  }
-  return false;
+    return AttemptVerdict::AGAIN;
+  }) == AttemptRunResult::DONE;
 }
 
 /// Build CMD_KEY_TRANSFER against the challenge currently held in `context.rx.data` and wait for
@@ -524,14 +520,14 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
 
   bool wait_phase_started = false;
   pairing::DiscoverConfirmResult result = pairing::DiscoverConfirmResult::NO_REPLY;
-  for (uint8_t try_index = 1; try_index <= PAIRING_DISCOVER_CONFIRM_TRIES; try_index++) {
-    if (try_index > 1)
-      App.feed_wdt();  // No extra retry gap: the 1.5 s windows already space the retransmissions.
-
+  // No retry gap: the 1.5 s windows already space the retransmissions.
+  const ExchangeEngine::AttemptRun run = ExchangeEngine::fixed_attempts(PAIRING_DISCOVER_CONFIRM_TRIES, 0);
+  engine_.run_attempts(run, [&](uint8_t try_index, uint16_t /*window_ms*/) {
     engine_.record_debug(pairing_stage_name(pairing::PairingState::TX_DISCOVER_CONFIRM), try_index, false);
     if (!create_discover_confirm(context.req, node_id_, context.device.node_id, context.discovery_low_power, ack) ||
         !engine_.transmit_frame(context.req, FREQ_CH2, pairing_start_preamble_(context.req))) {
-      continue;  // A failed build/TX counts as a silent try, like wait_for_key_confirm_() does for 0x32.
+      // A failed build/TX counts as a silent try, like wait_for_key_confirm_() does for 0x32.
+      return AttemptVerdict::AGAIN;
     }
 
     context.state = pairing::PairingState::WAIT_DISCOVER_CONFIRM;
@@ -549,17 +545,18 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
                context.device_id.c_str(), context.packet.freq_hz, millis() - wait_start_ms, try_index,
                PAIRING_DISCOVER_CONFIRM_TRIES);
       result = pairing::DiscoverConfirmResult::ACKED;
-      break;
+      return AttemptVerdict::DONE;
     }
     if (disposition == decisions::PairingDiscoverConfirmDisposition::ERROR) {
       const uint8_t error_code = context.rx.data_len > 0 ? context.rx.data[0] : 0;
       ESP_LOGW(TAG, "Discover confirm: device %s answered 0x2C with error 0x%02X, continuing with key exchange",
                context.device_id.c_str(), error_code);
       result = pairing::DiscoverConfirmResult::ERROR_REPLY;
-      break;
+      return AttemptVerdict::DONE;
     }
     // IGNORE: timeout or an unrelated frame this try — spend the next try.
-  }
+    return AttemptVerdict::AGAIN;
+  });
 
   if (result == pairing::DiscoverConfirmResult::NO_REPLY) {
     ESP_LOGI(TAG, "Discover confirm: no 0x2D from %s after %u tries, continuing with key exchange",
@@ -572,6 +569,25 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
     delay_feeding_wdt(tuning_->pairing_key_init_delay_ms);
 
   return result;
+}
+
+/// One re-send of the key-init (0x31) on a slow-turnaround radio whose 0x33 went missing, and what
+/// the device answers to it. Returns whether the key is now confirmed.
+bool PairingEngine::resend_key_init_(pairing::PairingContext &context, uint8_t resend) {
+  ESP_LOGI(TAG, "Key confirm missed, re-sending key-init to trigger auto-confirm (attempt %u/%u)", resend,
+           PAIRING_KEY_INIT_RESENDS);
+  if (!engine_.transmit_frame(context.key_init, FREQ_CH2, pairing_start_preamble_(context.key_init)))
+    return false;
+  if (!wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx, context.device.node_id))
+    return false;
+  if (context.rx.cmd == CMD_KEY_CONFIRM)
+    return true;
+  context.saw_key_challenge = true;
+  // A fresh CHALLENGE_REQ (0x3C), not a direct KEY_CONFIRM (0x33): the device never received
+  // our first 0x32 in the first place, so there is no key for it to auto-confirm yet -- a
+  // fresh 0x3C is exactly the signal that the right response is "resend 0x32 against this new
+  // challenge", not "give up and burn the retry for nothing".
+  return transfer_key_and_wait_confirm_(context);
 }
 
 /// Phase 2: authenticated key exchange (0x31 → 0x3C → 0x32 → 0x33).
@@ -636,34 +652,23 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u freq=%" PRIu32 " rssi=%d", context.rx.data_len,
            context.packet.freq_hz, radio_()->get_last_capture().rssi_dbm);
 
-  bool key_ok = transfer_key_and_wait_confirm_(context);
-  // Fast-turnaround radios catch the 0x33 through the standard exchange wait inside the helper
-  // above and never reach this loop. Slow-turnaround radios miss it while re-entering RX, so on a
-  // miss they re-send the key-init to trigger the device's auto-confirm. An explicit refusal is
-  // the device's answer, not a missed confirm: re-sending the key-init after it only draws the same
-  // refusal again (or, seen in the field, a refusal of a second key the device did not need).
-  if (!radio_()->has_fast_tx_rx_turnaround()) {
-    for (int re = 0; !key_ok && !context.key_refused && re < 2; re++) {
-      ESP_LOGI(TAG, "Key confirm missed, re-sending key-init to trigger auto-confirm (attempt %d/2)", re + 1);
-      App.feed_wdt();
-      delay(EXCHANGE_RETRY_DELAY_MS);
-      if (!engine_.transmit_frame(context.key_init, FREQ_CH2, pairing_start_preamble_(context.key_init)))
-        continue;
-      if (!wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx,
-                                   context.device.node_id))
-        continue;
-      if (context.rx.cmd == CMD_KEY_CONFIRM) {
-        key_ok = true;
-        continue;
-      }
-      context.saw_key_challenge = true;
-      // A fresh CHALLENGE_REQ (0x3C), not a direct KEY_CONFIRM (0x33): the device never received
-      // our first 0x32 in the first place, so there is no key for it to auto-confirm yet -- a
-      // fresh 0x3C is exactly the signal that the right response is "resend 0x32 against this new
-      // challenge", not "give up and burn the retry for nothing".
-      key_ok = transfer_key_and_wait_confirm_(context);
-    }
-  }
+  // Try 1 is the key transfer. Fast-turnaround radios catch the 0x33 through the standard exchange
+  // wait inside it and make no further try. Slow-turnaround radios miss it while re-entering RX, so on
+  // a miss they re-send the key-init to trigger the device's auto-confirm, up to
+  // PAIRING_KEY_INIT_RESENDS times after the retry gap. An explicit refusal is the device's answer,
+  // not a missed confirm: re-sending the key-init after it only draws the same refusal again (or,
+  // seen in the field, a refusal of a second key the device did not need).
+  bool key_ok = false;
+  const uint8_t tries = radio_()->has_fast_tx_rx_turnaround() ? 1 : PAIRING_KEY_INIT_RESENDS + 1;
+  engine_.run_attempts(ExchangeEngine::fixed_attempts(tries, EXCHANGE_RETRY_DELAY_MS),
+                       [&](uint8_t try_number, uint16_t /*window_ms*/) {
+                         if (try_number == 1) {
+                           key_ok = transfer_key_and_wait_confirm_(context);
+                         } else {
+                           key_ok = resend_key_init_(context, try_number - 1);
+                         }
+                         return key_ok || context.key_refused ? AttemptVerdict::DONE : AttemptVerdict::AGAIN;
+                       });
   if (!key_ok) {
     ESP_LOGW(TAG, "Key exchange failed");
     return false;
@@ -826,18 +831,21 @@ bool PairingEngine::discover_and_pair() {
 }
 
 bool PairingEngine::run_push_key_step_(pairing::PairingContext &context) {
-  for (uint8_t ke_attempt = 0; ke_attempt < tuning_->pairing_key_exchange_retries; ke_attempt++) {
-    if (ke_attempt > 0) {
-      ESP_LOGI(TAG, "Retrying key exchange (attempt %d/%u)...", ke_attempt + 1, tuning_->pairing_key_exchange_retries);
-      App.feed_wdt();
-      delay(EXCHANGE_RETRY_DELAY_MS);
-    }
-    if (run_key_exchange_phase_(context))
-      return true;
-    // A refusal is final for this attempt: retrying the same push only repeats the question.
-    if (context.key_refused)
-      break;
-  }
+  bool exchanged = false;
+  engine_.run_attempts(ExchangeEngine::fixed_attempts(tuning_->pairing_key_exchange_retries, EXCHANGE_RETRY_DELAY_MS),
+                       [&](uint8_t try_number, uint16_t /*window_ms*/) {
+                         if (try_number > 1) {
+                           ESP_LOGI(TAG, "Retrying key exchange (attempt %u/%u)...", try_number,
+                                    tuning_->pairing_key_exchange_retries);
+                         }
+                         exchanged = run_key_exchange_phase_(context);
+                         if (exchanged)
+                           return AttemptVerdict::DONE;
+                         // A refusal is final for this attempt: retrying the same push only repeats the question.
+                         return context.key_refused ? AttemptVerdict::STOP : AttemptVerdict::AGAIN;
+                       });
+  if (exchanged)
+    return true;
   // The device challenged our key-init, so it was talking to us; it may still have taken a key
   // whose confirm we lost. Without a challenge there is nothing to check.
   if (!context.saw_key_challenge)
@@ -1014,22 +1022,6 @@ bool PairingEngine::probe_heater_at_next_address_(const pairing::PairingContext 
   if (registry_.get_declared(heater_id) != nullptr)
     return false;
 
-  // The exchange picks its key from the registry, so the candidate is in it for the read only; the
-  // caller registers it properly if it answered. A record an earlier pairing in this boot left there is
-  // put back afterwards.
-  const IoDevice *earlier = registry_.get(heater_id);
-  const bool had_earlier = earlier != nullptr;
-  const IoDevice previous = had_earlier ? *earlier : IoDevice{};
-  IoDevice candidate{};
-  memcpy(candidate.node_id, heater, NODE_ID_SIZE);
-  candidate.type = heater_kind->type;
-  candidate.subtype = heater_kind->subtype;
-  candidate.has_system_key = device_key;
-  if (device_key)
-    memcpy(candidate.system_key, key, AES_KEY_SIZE);
-  candidate.registered_by_pairing = true;
-  registry_.put(heater_id, candidate);
-
   // The maximum setpoint is a read-only register every such heater holds, so reading it changes nothing.
   uint8_t payload[HEATING_PAYLOAD_MAX_SIZE];
   const size_t payload_len = encode_heating_read(HeatingFunction::MAX_SETPOINT, payload);
@@ -1040,14 +1032,12 @@ bool PairingEngine::probe_heater_at_next_address_(const pairing::PairingContext 
            context.device_id.c_str(), detail::format_key_check_value(key).c_str());
   const bool answered =
       payload_len != 0 && create_write_private(request, node_id_, heater, /*low_power=*/false, payload, payload_len) &&
-      engine_.send_and_receive(request, response, FREQ_CH2) == ExchangeOutcome::SUCCESS_WITH_RESPONSE &&
+      // The candidate has no registry record yet (the caller registers it if it answered), so the
+      // exchange is given the key to answer its challenge under.
+      engine_.send_and_receive(request, response, FREQ_CH2, EXCHANGE_RETRY_COUNT, /*request_preamble_override=*/0,
+                               key) == ExchangeOutcome::SUCCESS_WITH_RESPONSE &&
       decode_heating_reply(response, HeatingFunction::MAX_SETPOINT, max_setpoint_c);
   const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
-  if (had_earlier) {
-    registry_.put(heater_id, previous);
-  } else {
-    registry_.remove_registered_by_pairing(heater_id);
-  }
   if (!answered) {
     ESP_LOGI(TAG, "Heater probe: %s did not answer; looking for devices with a roll-call instead", heater_id.c_str());
     return false;
@@ -1149,34 +1139,31 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
   const decisions::AttemptPlan plan =
       engine_.plan_attempts(decisions::ReadKind::COMMAND, context.discovery_low_power, context.req, FREQ_CH2, preamble,
                             static_cast<uint16_t>(PAIRING_KEY_PULL_REPLY_TIMEOUT_MS));
-  const uint32_t tx_ms = engine_.tx_time_ms(context.req, FREQ_CH2, preamble);
+  const ExchangeEngine::AttemptRun run{plan, engine_.tx_time_ms(context.req, FREQ_CH2, preamble)};
   const uint32_t begin_ms = millis();
-  bool got_key = false;
-  for (uint8_t tries = 0; tries < plan.max_attempts && !got_key && !context.key_refused; tries++) {
-    const uint16_t window_ms = plan.window_for_attempt(tries + 1, plan.max_attempts);
-    if (tries > 0) {
-      if (!decisions::attempt_fits(millis() - begin_ms, plan.gap_ms, tx_ms, window_ms, 0,
-                                   tuning_->exchange_total_budget_ms)) {
-        ESP_LOGI(TAG, "Key pull budget exhausted after %u tries (%" PRIu32 " of %u ms)", tries, millis() - begin_ms,
-                 tuning_->exchange_total_budget_ms);
-        break;
-      }
-      App.feed_wdt();
-      delay(plan.gap_ms);  // 0 for a mains plan: a no-op that still yields
-    }
+  uint8_t tries = 0;
+  const AttemptRunResult ran = engine_.run_attempts(run, [&](uint8_t try_number, uint16_t window_ms) {
+    tries = try_number;
     context.state = pairing::PairingState::TX_KEY_PULL;
-    engine_.record_debug(pairing_stage_name(context.state), tries + 1, false);
+    engine_.record_debug(pairing_stage_name(context.state), try_number, false);
     this->telemetry_.set_phase(context.state);
     if (!engine_.transmit_frame(context.req, FREQ_CH2, preamble))
-      continue;
+      return AttemptVerdict::AGAIN;
     context.state = pairing::PairingState::WAIT_KEY_PULL_REPLY;
     this->telemetry_.set_phase(context.state);
-    got_key = wait_for_pulled_key_(context, window_ms);
-    if (!got_key && !context.key_refused) {
-      ESP_LOGI(TAG, "Key pull try %u: no key transfer (0x32) from %s within %u ms", tries + 1,
-               context.device_id.c_str(), window_ms);
-    }
+    if (wait_for_pulled_key_(context, window_ms))
+      return AttemptVerdict::DONE;
+    if (context.key_refused)
+      return AttemptVerdict::STOP;
+    ESP_LOGI(TAG, "Key pull try %u: no key transfer (0x32) from %s within %u ms", try_number, context.device_id.c_str(),
+             window_ms);
+    return AttemptVerdict::AGAIN;
+  });
+  if (ran == AttemptRunResult::BUDGET_EXHAUSTED) {
+    ESP_LOGI(TAG, "Key pull budget exhausted after %u tries (%" PRIu32 " of %u ms)", tries, millis() - begin_ms,
+             tuning_->exchange_total_budget_ms);
   }
+  const bool got_key = ran == AttemptRunResult::DONE;
   if (!got_key) {
     ESP_LOGW(TAG, "Key pull failed: %s sent no key", context.device_id.c_str());
     return KeyPullResult::FAILED;
@@ -1208,15 +1195,14 @@ PairingEngine::KeyPullResult PairingEngine::run_key_pull_phase_(pairing::Pairing
   const uint16_t repeat_preamble = pairing_start_preamble_(context.req);
   ExchangeEngine::ChallengeResult proof = ExchangeEngine::ChallengeResult::NO_ANSWER;
   uint8_t challenges = 0;
-  while (challenges < EXCHANGE_RETRY_COUNT && proof == ExchangeEngine::ChallengeResult::NO_ANSWER) {
-    if (challenges > 0) {
-      App.feed_wdt();
-      delay(EXCHANGE_RETRY_DELAY_MS);
-    }
-    const uint16_t preamble = challenges == 0 ? radio_()->response_preamble() : repeat_preamble;
-    challenges++;
-    proof = engine_.challenge_sender(context.rx, FREQ_CH2, key, verify_challenge, preamble);
-  }
+  engine_.run_attempts(
+      ExchangeEngine::fixed_attempts(EXCHANGE_RETRY_COUNT, EXCHANGE_RETRY_DELAY_MS),
+      [&](uint8_t try_number, uint16_t /*window_ms*/) {
+        challenges = try_number;
+        const uint16_t challenge_preamble = try_number == 1 ? radio_()->response_preamble() : repeat_preamble;
+        proof = engine_.challenge_sender(context.rx, FREQ_CH2, key, verify_challenge, challenge_preamble);
+        return proof == ExchangeEngine::ChallengeResult::NO_ANSWER ? AttemptVerdict::AGAIN : AttemptVerdict::DONE;
+      });
   if (proof == ExchangeEngine::ChallengeResult::VERIFIED) {
     ESP_LOGI(TAG, "Key pull check: %s -> key check value %s, proven by its 0x3D", context.device_id.c_str(),
              check_value.c_str());
