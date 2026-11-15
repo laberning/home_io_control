@@ -419,6 +419,8 @@ struct IoDevice {
                                          ///< decoded replies; stays "never read" for every other device type.
   bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
                                  ///< line names the level even when the device reports none.
+  bool energy_sensor{false};     ///< YAML-declared (a heater's `energy:` sensor): the heater poll reads the energy
+                                 ///< meter (register 0x0116) when the kind has device_feature::ENERGY_METER.
   bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every
                                  ///< exchange with it uses `system_key` below instead of the hub's key.
   uint8_t system_key[AES_KEY_SIZE]{};  ///< The device's own key; meaningful only when `has_system_key`. Key material:

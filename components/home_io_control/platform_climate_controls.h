@@ -2,14 +2,15 @@
 
 /// @file platform_climate_controls.h
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the open-window
-/// detection switch and the night light.
+/// detection switch, the night light and the energy sensor.
 /// @ingroup hioc_platforms
 ///
 /// All are device-bound companions (DeviceBoundCompanion) that climate.py generates alongside a
 /// `climate:` entity: the window pair when the device kind has WINDOW_COMPANIONS, the night light when
-/// the YAML asks for it on a kind with NIGHT_LIGHT. They show readings the hub's poll already stores in
-/// IoDevice::heating and add no radio traffic of their own, except their writes and the read-backs that
-/// confirm them.
+/// the YAML asks for it on a kind with NIGHT_LIGHT, the energy sensor when the YAML asks for it on a kind
+/// with ENERGY_METER. They show readings the hub's poll stores in IoDevice::heating and add no radio
+/// traffic of their own, except their writes and the read-backs that confirm them; the energy sensor's
+/// declaration adds one read of register 0x0116 to each poll.
 ///
 /// @todo Experimental: the meaning of registers 0x010E (window sensor) and 0x0106 (open-window
 ///       detection) is unconfirmed on hardware. An AGILIA IO radiator answers both reads (window 0,
@@ -21,6 +22,7 @@
 #include "esphome/components/light/light_output.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/core/component.h"
+#include "platform_companion_sensors.h"
 #include "platform_entity_base.h"
 #include "platform_light.h"
 #include "proto_device_model.h"
@@ -135,6 +137,21 @@ class IOHomeHeaterNightLight : public light::LightOutput, public Component, publ
   /// True while write_state() runs its writes and read-backs: the device updates they cause are not
   /// published one by one (a half-updated reading would flash a stale brightness), but once at the end.
   bool writing_{false};
+};
+
+/// @brief Sensor of the energy a heater has consumed, in kWh (`total_increasing`), for the Home Assistant
+/// energy dashboard (`energy:` on a heater whose kind has ENERGY_METER).
+/// @ingroup hioc_platforms
+///
+/// Reads IoDevice::heating.energy_kwh, register 0x0116: whole kWh, so the sensor steps once per kWh. The
+/// value equals the total the heater's own display shows (two Tahual radiators); a TaHoma or Cozytouch
+/// may show a lower figure, counted from a reference of its own. No state until the first poll has read it.
+class IOHomeHeaterEnergySensor : public IOHomeCompanionSensor {
+ public:
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+  /// @brief Dump sensor configuration to the log.
+  void dump_config() override;
 };
 
 }  // namespace home_io_control

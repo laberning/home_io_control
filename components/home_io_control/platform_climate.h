@@ -91,6 +91,11 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
     this->has_range_ = true;
   }
 
+  /// @brief The YAML declares the heater's `energy:` sensor, so the poll reads its energy meter
+  /// (register 0x0116); without it the register is never read.
+  /// @param energy_sensor True when the sensor is declared.
+  void set_energy_sensor(bool energy_sensor) { this->energy_sensor_ = energy_sensor; }
+
  protected:
   /// @brief The device's heating profile: from the declared type, else from the type the hub learned.
   /// @return The profile, or nullptr while the type is unknown.
@@ -136,6 +141,7 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
 
   HeatingCardState card_;                               ///< What the card shows; the entity's ESPHome fields follow it.
   bool has_range_{false};                               ///< YAML overrode the temperature encoding range.
+  bool energy_sensor_{false};                           ///< YAML declares the `energy:` sensor.
   float range_min_c_{HEATING_TEMPERATURE_RANGE_MIN_C};  ///< YAML `min_temperature:`.
   float range_max_c_{HEATING_TEMPERATURE_RANGE_MAX_C};  ///< YAML `max_temperature:`.
   std::vector<const char *> custom_presets_;            ///< Custom preset names of the profile, registered in setup().

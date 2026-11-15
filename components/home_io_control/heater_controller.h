@@ -106,15 +106,15 @@ class HeaterController {
   ///
   /// The body depends on the device: a register heater reads its profile's poll registers (stopping at the
   /// first failure), then the programme's temperature in force, its boot registers until each has been read
-  /// once, and on a kind with model rows the one-off model check once it has answered a read; a water heater
-  /// reads its status (target, capabilities, boost and away), then its water temperature, mode, heating
-  /// state, boost and away duration and energy registers, then its brand until it has been read once; any
-  /// other heater is polled with the generic status read. A register or water heater failure moves the
-  /// retry onto the StatusPollPolicy ladder; a status-read heater leaves that to the status read itself.
-  /// Whatever the poll finds, or whether it could run at all (the hub is not initialised yet), the next
-  /// regular poll is armed one interval out (the device's `status_poll_interval`, else
-  /// HEATING_POLL_DEFAULT_INTERVAL_MS, see heater_poll_interval_ms()). A device that is not registered
-  /// arms no timer. Called by the hub's request_device_status() for a device polls() accepts.
+  /// once, its energy meter when the YAML declares the `energy:` sensor, and on a kind with model rows the one-off
+  /// model check once it has answered a read; a water heater reads its status (target, capabilities, boost and away),
+  /// then its water temperature, mode, heating state, boost and away duration and energy registers, then its brand
+  /// until it has been read once; any other heater is polled with the generic status read. A register or water heater
+  /// failure moves the retry onto the StatusPollPolicy ladder; a status-read heater leaves that to the status read
+  /// itself. Whatever the poll finds, or whether it could run at all (the hub is not initialised yet), the next regular
+  /// poll is armed one interval out (the device's `status_poll_interval`, else HEATING_POLL_DEFAULT_INTERVAL_MS, see
+  /// heater_poll_interval_ms()). A device that is not registered arms no timer. Called by the hub's
+  /// request_device_status() for a device polls() accepts.
   /// @param device_id Target device ID (hex string).
   /// @return true when every read of the poll was answered; false when it could not run.
   bool poll(const std::string &device_id);

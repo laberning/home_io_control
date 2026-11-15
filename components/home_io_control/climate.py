@@ -5,26 +5,31 @@
 ## Defines the experimental IO-Homecontrol heating/climate integration and wires it to the shared
 ## hub. Heaters with a window sensor also get a Window binary sensor and an Open Window Detection
 ## switch; a heater with a night light (io_model: heater_with_light) can add a dimmable `night_light:`
-## light. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
+## light, and a heater with an energy meter (every electrical_heater/1 kind) an `energy:` sensor in kWh. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
 ## construction/registration stays here.
 
 import functools
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, climate, light, switch
+from esphome.components import binary_sensor, climate, light, sensor, switch
 from esphome.const import (
     CONF_DISABLED_BY_DEFAULT,
+    CONF_ENERGY,
     CONF_ID,
     CONF_MAX_TEMPERATURE,
     CONF_MIN_TEMPERATURE,
     CONF_OUTPUT_ID,
+    DEVICE_CLASS_ENERGY,
     DEVICE_CLASS_WINDOW,
     ENTITY_CATEGORY_CONFIG,
+    STATE_CLASS_TOTAL_INCREASING,
+    UNIT_KILOWATT_HOURS,
 )
 
 from . import home_io_control_ns
 from .hub_validators import (
+    FEATURE_ENERGY_METER,
     FEATURE_NIGHT_LIGHT,
     FEATURE_TEMPERATURE_RANGE,
     FEATURE_WINDOW_COMPANIONS,
@@ -35,6 +40,7 @@ from .platform_common import (
     companion_entity_name,
     create_companion,
     create_companion_sensors,
+    create_user_companion,
     has_feature,
     inherit_esphome_device,
     inject_companion_ids,
@@ -60,6 +66,9 @@ IOHomeOpenWindowDetectionSwitch = home_io_control_ns.class_(
 IOHomeHeaterNightLight = home_io_control_ns.class_(
     "IOHomeHeaterNightLight", light.LightOutput, cg.Component
 )
+IOHomeHeaterEnergySensor = home_io_control_ns.class_(
+    "IOHomeHeaterEnergySensor", sensor.Sensor, cg.Component
+)
 
 CONF_NIGHT_LIGHT = "night_light"
 
@@ -80,6 +89,20 @@ def _validate_night_light(config):
         "night_light needs a heater with a night light: set io_device_type: electrical_heater, "
         "io_subtype: 1 and io_model: heater_with_light",
         path=[CONF_NIGHT_LIGHT],
+    )
+
+
+def _validate_energy(config):
+    """Accept `energy:` only on a heater kind with an energy meter (the ENERGY_METER bit of its row).
+
+    As for `night_light:`, the key is rejected when no io_device_type is declared: the sensor opts the
+    device into reading register 0x0116 on every poll, which only a known kind may receive.
+    """
+    if CONF_ENERGY not in config or declared_features(config) & FEATURE_ENERGY_METER:
+        return config
+    raise cv.Invalid(
+        "energy needs a heater with an energy meter: set io_device_type: electrical_heater and io_subtype: 1",
+        path=[CONF_ENERGY],
     )
 
 
@@ -153,6 +176,14 @@ CONFIG_SCHEMA = cv.All(
             )
             .extend(INSTANT_LIGHT_TRANSITION)
             .extend(cv.COMPONENT_SCHEMA),
+            # Whole kWh (register 0x0116), so no decimals.
+            cv.Optional(CONF_ENERGY): sensor.sensor_schema(
+                IOHomeHeaterEnergySensor,
+                unit_of_measurement=UNIT_KILOWATT_HOURS,
+                accuracy_decimals=0,
+                device_class=DEVICE_CLASS_ENERGY,
+                state_class=STATE_CLASS_TOTAL_INCREASING,
+            ).extend(cv.COMPONENT_SCHEMA),
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
@@ -160,6 +191,7 @@ CONFIG_SCHEMA = cv.All(
     _validate_temperature_range,
     validate_device_model,
     _validate_night_light,
+    _validate_energy,
     warn_if_experimental_kind,
     _inject_companion_ids,
 )
@@ -180,6 +212,12 @@ async def to_code(config):
                 config.get(CONF_MIN_TEMPERATURE, DEFAULT_TEMPERATURE_RANGE_C[0]),
                 config.get(CONF_MAX_TEMPERATURE, DEFAULT_TEMPERATURE_RANGE_C[1]),
             )
+        )
+
+    if CONF_ENERGY in config:
+        cg.add(var.set_energy_sensor(True))
+        await create_user_companion(
+            config, parent, new_entity=sensor.new_sensor, entity_config=config[CONF_ENERGY]
         )
 
     if CONF_WINDOW_SENSOR_ID in config:

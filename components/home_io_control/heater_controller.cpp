@@ -726,6 +726,14 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
       this->read_heating_register(device_id, fn, nullptr, max_tries);
   }
 
+  // The energy meter, only for a device whose YAML declares the `energy:` sensor: a read every poll that
+  // nothing shows is not sent. A miss is not a poll failure; the next poll asks again.
+  if (ok) {
+    const IoDevice *current = this->registry_.get(device_id);
+    if (current != nullptr && current->energy_sensor && has_feature(current->features, device_feature::ENERGY_METER))
+      this->read_heating_register(device_id, HeatingFunction::ENERGY, nullptr, max_tries);
+  }
+
   // Once the device has answered a read: the one-off model check. It runs even when a later register of
   // the poll failed, because a towel dryer declared on a radiator fails exactly there (its mode register
   // holds no value) and is what the check exists to point out.

@@ -1,12 +1,14 @@
 /// @file platform_climate_controls_test.cpp
-/// @brief Tests for the generated per-heater companions: the window sensor and the open-window
-/// detection switch.
+/// @brief Tests for the generated per-heater companions: the window sensor, the open-window
+/// detection switch, the night light and the energy sensor.
 
 #include "platform_climate_controls.h"
 
 #include "hub_port_doubles.h"
 
 #include <gtest/gtest.h>
+
+#include <cmath>
 
 using namespace esphome::home_io_control;
 
@@ -346,4 +348,41 @@ TEST(PlatformHeaterNightLight, AnUnacknowledgedSwitchIsNotReadBackAndShowsTheHea
   ASSERT_EQ(rig.hub.writes.size(), 1u);
   EXPECT_TRUE(rig.hub.reads.empty()) << "a heater that did not answer the write is not asked again";
   EXPECT_FALSE(rig.state.current_values.is_on()) << "never shows a command the heater did not confirm";
+}
+
+// === Energy sensor ===
+
+TEST(PlatformHeaterEnergySensor, HasNoStateUntilTheMeterHasBeenRead) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  IOHomeHeaterEnergySensor energy;
+  energy.set_parent(&hub);
+  energy.set_device_id("ABC123");
+  energy.setup();
+  EXPECT_TRUE(std::isnan(energy.state)) << "zero would be a reading";
+}
+
+TEST(PlatformHeaterEnergySensor, PublishesTheMeterInKilowattHours) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  IOHomeHeaterEnergySensor energy;
+  energy.set_parent(&hub);
+  energy.set_device_id("ABC123");
+  energy.setup();
+
+  hub.deliver([](HeatingReadings &r) { r.energy_kwh = 3422.0F; });
+  EXPECT_FLOAT_EQ(energy.state, 3422.0F);
+  hub.deliver([](HeatingReadings &r) { r.energy_kwh = 3423.0F; });
+  EXPECT_FLOAT_EQ(energy.state, 3423.0F);
+}
+
+TEST(PlatformHeaterEnergySensor, PublishesWhatIsAlreadyKnownAtSetup) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  hub.deliver([](HeatingReadings &r) { r.energy_kwh = 264.0F; });
+  IOHomeHeaterEnergySensor energy;
+  energy.set_parent(&hub);
+  energy.set_device_id("ABC123");
+  energy.setup();
+  EXPECT_FLOAT_EQ(energy.state, 264.0F);
 }

@@ -83,6 +83,19 @@ TEST(DeviceRegistry, AddStoresBatteryEntitiesFlag) {
   EXPECT_FALSE(reg.get("ABC123")->battery_entities) << "an undeclared device has no battery entities";
 }
 
+TEST(DeviceRegistry, AddStoresEnergySensorFlag) {
+  DeviceRegistry reg;
+  DeviceConfig cfg;
+  cfg.type = DeviceType::ELECTRICAL_HEATER;
+  cfg.subtype = 1;
+  cfg.energy_sensor = true;
+  reg.add("AABBCC", cfg);
+  reg.add("ABC123");
+  ASSERT_NE(reg.get("AABBCC"), nullptr);
+  EXPECT_TRUE(reg.get("AABBCC")->energy_sensor) << "energy_sensor must survive add(id, cfg)";
+  EXPECT_FALSE(reg.get("ABC123")->energy_sensor) << "an undeclared device reads no energy meter";
+}
+
 TEST(DeviceRegistry, AddStoresNodeIdBytes) {
   DeviceRegistry reg;
   reg.add("ABC123");

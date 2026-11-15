@@ -38,6 +38,7 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
   dev.travel_speed = cfg.travel_speed;
   dev.low_power = cfg.low_power;
   dev.battery_entities = cfg.battery_entities;
+  dev.energy_sensor = cfg.energy_sensor;
   dev.has_system_key = cfg.has_system_key;
   if (cfg.has_system_key)
     memcpy(dev.system_key, cfg.system_key, AES_KEY_SIZE);

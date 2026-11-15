@@ -1,6 +1,6 @@
 /// @file platform_climate_controls.cpp
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the open-window
-/// detection switch and the night light.
+/// detection switch, the night light and the energy sensor.
 /// @ingroup hioc_platforms
 
 #include "platform_climate_controls.h"
@@ -9,6 +9,7 @@
 #include "esphome/core/log.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace esphome {
@@ -17,6 +18,7 @@ namespace home_io_control {
 static const char *const TAG_WINDOW = "home_io_control.window";
 static const char *const TAG_DETECTION = "home_io_control.window_detection";
 static const char *const TAG_NIGHT_LIGHT = "home_io_control.night_light";
+static const char *const TAG_ENERGY = "home_io_control.heater_energy";
 
 /// Percentage for a light switched on at a brightness that rounds to 0 %: the lowest level that is still
 /// on (register value HEATING_NIGHT_LIGHT_STEPS_PER_PERCENT).
@@ -139,6 +141,19 @@ void IOHomeHeaterNightLight::write_state(light::LightState *state) {
 void IOHomeHeaterNightLight::dump_config() {
   ESP_LOGCONFIG(TAG_NIGHT_LIGHT, "IO-Homecontrol Heater Night Light:");
   ESP_LOGCONFIG(TAG_NIGHT_LIGHT, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeHeaterEnergySensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    // Nothing read means no state: zero would be a reading.
+    if (!std::isnan(dev.heating.energy_kwh))
+      this->publish_state(dev.heating.energy_kwh);
+  });
+}
+
+void IOHomeHeaterEnergySensor::dump_config() {
+  ESP_LOGCONFIG(TAG_ENERGY, "IO-Homecontrol Heater Energy:");
+  ESP_LOGCONFIG(TAG_ENERGY, "  Device ID: %s", this->device_id_.c_str());
 }
 
 }  // namespace home_io_control

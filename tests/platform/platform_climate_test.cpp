@@ -534,6 +534,21 @@ TEST(PlatformClimate, SetupPollsTheHeaterLikeTheOtherPlatforms) {
   EXPECT_EQ(hub.status_poll_interval("ABC123"), 120000u);
 }
 
+TEST(PlatformClimate, TheEnergySensorOptsTheDeviceIntoTheEnergyMeterRead) {
+  MockHubClimate with_sensor;
+  IOHomeClimate entity = make_bound_climate(with_sensor);
+  entity.set_energy_sensor(true);
+  entity.setup();
+  ASSERT_NE(with_sensor.get_device("ABC123"), nullptr);
+  EXPECT_TRUE(with_sensor.get_device("ABC123")->energy_sensor);
+
+  MockHubClimate without;
+  IOHomeClimate plain = make_bound_climate(without);
+  plain.setup();
+  ASSERT_NE(without.get_device("ABC123"), nullptr);
+  EXPECT_FALSE(without.get_device("ABC123")->energy_sensor) << "no sensor, no read";
+}
+
 // ========================================================================================
 // Traits come from the heating profile
 // ========================================================================================

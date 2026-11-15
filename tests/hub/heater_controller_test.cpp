@@ -812,6 +812,68 @@ TEST(HeaterController, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnc
   EXPECT_EQ(dev->heating.window_open, 0);
 }
 
+namespace {
+
+/// A radiator whose boot registers and model check are behind it: a poll reads the five core registers.
+IoDevice *make_booted_heater(HeaterControllerFixture &fx) {
+  IoDevice *dev = make_heater(fx);
+  dev->heating.max_setpoint_c = 28.0F;
+  dev->heating.open_window_detection = 1;
+  dev->model_checked = true;
+  return dev;
+}
+
+}  // namespace
+
+TEST(HeaterController, AHeaterWithTheEnergySensorReadsItsEnergyMeterOnEveryPoll) {
+  HeaterControllerFixture fx;
+  auto *dev = make_booted_heater(fx);
+  dev->energy_sensor = true;
+  queue_radiator_poll(fx, 0x5D, 0x07, 0x00, 0x00);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x16, 0x0D, 0x5E});  // 3422 kWh, a Tahual's display
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+
+  ASSERT_EQ(fx.radio.get_sent_data().size(), 6u);
+  EXPECT_EQ(sent_payload(fx.radio.get_sent_data()[5], 4), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x16}))
+      << "the meter is read after the core registers";
+  EXPECT_FLOAT_EQ(dev->heating.energy_kwh, 3422.0F);
+
+  // Not a boot register: the next poll reads it again.
+  queue_radiator_poll(fx, 0x5D, 0x07, 0x02, 0x00);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x16, 0x0D, 0x5F});
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(fx.radio.get_sent_data().size(), 12u);
+  EXPECT_FLOAT_EQ(dev->heating.energy_kwh, 3423.0F);
+}
+
+TEST(HeaterController, WithoutTheEnergySensorTheEnergyMeterIsNeverRead) {
+  HeaterControllerFixture fx;
+  make_booted_heater(fx);
+  queue_radiator_poll(fx, 0x5D, 0x07, 0x00, 0x00);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+
+  ASSERT_EQ(fx.radio.get_sent_data().size(), 5u);
+  for (const auto &tx : fx.radio.get_sent_data())
+    EXPECT_NE(sent_register(tx), 0x16) << "a read every poll that nothing shows is not sent";
+}
+
+TEST(HeaterController, AnEnergyMeterAnsweredWithoutAValueIsNotAPollFailure) {
+  HeaterControllerFixture fx;
+  auto *dev = make_booted_heater(fx);
+  dev->energy_sensor = true;
+  queue_radiator_poll(fx, 0x5D, 0x07, 0x00, 0x00);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x16});  // a heater without the meter
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+
+  EXPECT_TRUE(std::isnan(dev->heating.energy_kwh));
+  EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 18.85F) << "the core registers are kept";
+  EXPECT_EQ(fx.poll_policy.get_status_poll_failures("ABC123"), 0u);
+  EXPECT_TRUE(fx.backoffs.empty());
+}
+
 TEST(HeaterController, HeaterPollStopsAtTheFirstFailureAndBacksOff) {
   HeaterControllerFixture fx;
   auto *dev = make_heater(fx);
