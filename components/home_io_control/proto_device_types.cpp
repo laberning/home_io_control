@@ -226,18 +226,20 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
 
     // Both rows have a heating profile (proto_heating_profiles.cpp): the plain heater is commanded with
     // heating levels in the standard EXECUTE, the one with an adjustable setpoint over the private
-    // registers (proto_heating.h).
+    // registers (proto_heating.h). Every 52/1 row has the energy meter: register 0x0116 matches the display
+    // of two Tahual radiators, and both Adelis towel dryers of issue #202 answer it.
     {DeviceType::ELECTRICAL_HEATER, 0, NO_MODEL, "electrical_heater", CAP_CLIMATE, SELECTABLE_PLATFORM, 0},
     {DeviceType::ELECTRICAL_HEATER, 1, NO_MODEL, "with adjustable setpoint", CAP_CLIMATE, SUBTYPE_PLATFORM,
-     WINDOW_COMPANIONS},
+     WINDOW_COMPANIONS | device_feature::ENERGY_METER},
     // A towel dryer reports the same 52/1 as the AGILIA radiator (two Atlantic Adelis units in issue
     // #202), so it is a model row: the YAML declares it (`io_model: towel_dryer`). It has no window
     // sensor and no open-window detection, and its own heating profile (proto_heating_profiles.cpp).
-    {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER, "towel_dryer", CAP_CLIMATE, SUBTYPE_PLATFORM, 0},
+    {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER, "towel_dryer", CAP_CLIMATE, SUBTYPE_PLATFORM,
+     device_feature::ENERGY_METER},
     // A heater with a night light (a Sauter Hekla, issue #222) reports the same 52/1 as well: everything the
     // radiator has, plus the light's registers in its own heating profile.
     {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT, "heater_with_light", CAP_CLIMATE,
-     SUBTYPE_PLATFORM, WINDOW_COMPANIONS | device_feature::NIGHT_LIGHT},
+     SUBTYPE_PLATFORM, WINDOW_COMPANIONS | device_feature::NIGHT_LIGHT | device_feature::ENERGY_METER},
 
     {DeviceType::HEAT_RECOVERY_VENTILATION, 0, NO_MODEL, "heat_recovery_ventilation", CAP_NONE, 0, 0},
 

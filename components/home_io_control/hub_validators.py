@@ -261,6 +261,7 @@ FEATURE_INVERTED = 0x0200
 FEATURE_WATER_HEATER = 0x0400
 FEATURE_NIGHT_LIGHT = 0x0800
 FEATURE_TEMPERATURE_RANGE = 0x1000
+FEATURE_ENERGY_METER = 0x2000
 # Not a capability: Python's copy of the row's EXPERIMENTAL identity flag (device_type_flags in
 # proto_device_types.h), carried in bit 15 of the same word so there is one table and one sync test.
 # Set on a kind no capture or report has confirmed on a real device.
@@ -318,9 +319,9 @@ DEVICE_FEATURES = {
     "sliding_window/1": 0x808A,  # KIND_EXPERIMENTAL LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "bioclimatic_pergola": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "domestic_hot_water": 0x8400,  # KIND_EXPERIMENTAL WATER_HEATER
-    "electrical_heater/1": 0x0100,  # WINDOW_COMPANIONS
-    "electrical_heater/1/towel_dryer": 0x0000,  # no window function
-    "electrical_heater/1/heater_with_light": 0x0900,  # WINDOW_COMPANIONS NIGHT_LIGHT
+    "electrical_heater/1": 0x2100,  # WINDOW_COMPANIONS ENERGY_METER
+    "electrical_heater/1/towel_dryer": 0x2000,  # ENERGY_METER; no window function
+    "electrical_heater/1/heater_with_light": 0x2900,  # WINDOW_COMPANIONS NIGHT_LIGHT ENERGY_METER
 }
 
 # The named positions (proto_device_types.h NAMED_POSITIONS), keyed by the CoverCommand name

@@ -411,6 +411,19 @@ TEST(DeviceTypesTableFeatures,
   });
 }
 
+TEST(DeviceTypesTableFeatures, TheEnergyMeterIsExactlyOnTheKindsReadOverThePrivateRegisters) {
+  // Register 0x0116 is a private register: a kind commanded another way has nothing to read it with.
+  const auto check = [](const DeviceTypeInfo &row, DeviceModel model, const char *name) {
+    const HeatingProfile *profile = find_heating_profile(row.type, row.subtype, model);
+    const bool registers = profile != nullptr && profile->path == HeatingControlPath::PRIVATE_REGISTERS;
+    EXPECT_EQ(has_feature(row.features, device_feature::ENERGY_METER), registers) << name;
+  };
+  test::for_each_table_row([&check](const DeviceTypeInfo &row) {
+    check(row, DeviceModel::NONE, format_device_ids(row.type, row.subtype).c_str());
+  });
+  test::for_each_model_row([&check](const DeviceTypeInfo &model) { check(model, model.model, model.name); });
+}
+
 TEST(DeviceTypesTableFeatures, TheExtendedPositionFrameIsOnlyOnRowsThatSendAPositionAndAreNotMainParameterOnly) {
   test::for_each_table_row([](const DeviceTypeInfo &row) {
     if (!device_has_platform(row.type, row.subtype))

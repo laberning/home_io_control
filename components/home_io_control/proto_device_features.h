@@ -67,6 +67,10 @@ static constexpr DeviceFeatures NIGHT_LIGHT = 1U << 11U;
 /// Set exactly on the kinds whose heating profile takes a temperature without `fixed_range`
 /// (heating_profiles_test.cpp).
 static constexpr DeviceFeatures TEMPERATURE_RANGE = 1U << 12U;
+/// An energy meter in a heater with private registers: the energy consumed, in whole kWh, in register
+/// 0x0116 (proto_heating.h). Gates the heater's `energy:` sensor, whose presence opts the device into
+/// reading the register on every poll.
+static constexpr DeviceFeatures ENERGY_METER = 1U << 13U;
 }  // namespace device_feature
 
 /// @brief True when every bit of `bit` is set in `set`.

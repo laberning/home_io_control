@@ -883,7 +883,7 @@ def device_features_fall_back_like_the_cpp_lookup():
         assert v.device_features(t[binary_kind]) & capability == 0, binary_kind
         assert v.device_features(t[binary_kind], 1) & v.FEATURE_EXTENDED_POSITION_FRAME == 0, binary_kind
     assert v.device_features(t["light"], 1) & capability == v.FEATURE_LEVELS
-    assert v.device_features(t["electrical_heater"], 1) == v.FEATURE_WINDOW_COMPANIONS
+    assert v.device_features(t["electrical_heater"], 1) == v.FEATURE_WINDOW_COMPANIONS | v.FEATURE_ENERGY_METER
     assert v.device_features(t["electrical_heater"], 0) == 0
     assert v.device_features(0x14) == 0, "a raw type with no name has no capabilities"
     assert v.device_features(0x14, 58) == v.FEATURE_MAIN_PARAMETER_ONLY
@@ -905,7 +905,10 @@ def a_model_row_is_offered_only_by_its_kind_and_replaces_its_word():
     assert v.device_models(t["roller_shutter"]) == []
     assert v.device_models(0x14, 1) == [], "a raw type with no name has no models"
     assert v.device_features(t["electrical_heater"], 1, towel) & v.FEATURE_WINDOW_COMPANIONS == 0
-    assert v.device_features(t["electrical_heater"], 1) == v.FEATURE_WINDOW_COMPANIONS, "no model: the radiator"
+    assert v.device_features(t["electrical_heater"], 1, towel) & v.FEATURE_ENERGY_METER, "the towel dryer has the meter"
+    assert v.device_features(t["electrical_heater"], 1) == (
+        v.FEATURE_WINDOW_COMPANIONS | v.FEATURE_ENERGY_METER
+    ), "no model: the radiator"
     assert v.device_features(t["roller_shutter"], 0, towel) == v.device_features(t["roller_shutter"])
     assert not v.kind_is_experimental(t["electrical_heater"], 1, towel)
     assert p.config_model({"io_model": "towel_dryer"}) == towel
