@@ -131,7 +131,7 @@ your device may differ.
 
 | Parameter | Radio | Default | Range / options | What it does |
 |---|---|---|---|---|
-| `sx1262_rx_bandwidth` | SX1262 | `58.6` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). Widen it when one device's replies are missed. |
+| `sx1262_rx_bandwidth` | SX1262 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). Widen it when one device's replies are missed. |
 | `sx1262_response_preamble` | SX1262 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1262_post_tx_settle_us` | SX1262 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth (single-sideband, so `41.7` spans 83.4 kHz); wider tolerates LO offset, narrower rejects more noise. |
@@ -186,17 +186,20 @@ frequency. Semtech sizes a GFSK filter as bitrate + 2 × deviation + carrier off
 76.8 kHz for this waveform before any offset. The SX1262 has no automatic frequency correction in
 this mode, so the filter alone has to absorb how far a device's transmitter sits from nominal.
 
-*Observations:* `58.6` kHz is the default. It is below the 76.8 kHz figure, so it trims the edges
-of even an on-frequency signal, but it made a Somfy RS100 solar shutter respond reliably where
-`117.3` did not. A device whose transmitter sits off nominal needs the opposite: a Somfy
-LightVar_Wh_io dimmer went from mostly missed replies to 9 of 11 commands confirmed at `156.2`,
-with `117.3` and `187.2` both worse in the same test
-([issue #119](https://github.com/laberning/home_io_control/issues/119)). The setting applies to
+*Observations:* `117.3` kHz is the default, the same as on the LR1121. It clears the 76.8 kHz figure
+with about 20 kHz of margin, so a transmitter that sits off nominal still passes
+([ADR 0087](../adr/0087-the-sx1262-receives-at-117-3-khz-by-default.md)). A device whose transmitter
+sits further off needs a wider filter: a Somfy LightVar_Wh_io dimmer went from 4 of 11 commands
+confirmed at `117.3` to 9 of 11 at `156.2`
+([issue #119](https://github.com/laberning/home_io_control/issues/119)), and a hand-wired module with
+a plain crystal needed `156.2` as well
+([issue #177](https://github.com/laberning/home_io_control/issues/177)). Narrower values trim the edges of even an on-frequency
+signal; `58.6` kHz is worth a try only if an install worked better there. The setting applies to
 every device, so pick the value your least cooperative device needs and check that the others
 still answer.
 
 If one device's replies are missed — `wait_first_timeout`, or a challenge that arrives without its
-final response — while other devices are fine, try `117.3` and `156.2`. `39.0` and `46.9` are
+final response — while other devices are fine, try `156.2`, then `187.2`. `39.0` and `46.9` are
 well below the 76.8 kHz figure; use them only to probe a noisy install.
 
 #### `sx1262_response_preamble`
@@ -353,10 +356,9 @@ Values near that floor are for probing it, not for everyday tuning.
 The LR1121 equivalents of the four SX1262 knobs above — same meaning (`lr1121_discovery_hop_slice_ms`
 governs the roll-call as well as discovery, same as its SX1262/SX1276 counterparts), same
 register-level reasoning (the LR1121's GFSK bandwidth encoding is register-identical to the
-SX1262's, and it needs the same standby→retune→RX hop cycle, no fast hop). Three of the four share
-SX1262's default values (`lr1121_response_preamble`, `lr1121_post_tx_settle_us`,
-`lr1121_discovery_hop_slice_ms`); `lr1121_rx_bandwidth` instead keeps its own wider default,
-`117.3` kHz, which clears the 76.8 kHz sizing figure and is validated on this chip. `lr1121_discovery_hop_slice_ms` is measured
+SX1262's, and it needs the same standby→retune→RX hop cycle, no fast hop). All four share the
+SX1262's default values; the `117.3` kHz filter clears the 76.8 kHz sizing figure and is validated
+on this chip. `lr1121_discovery_hop_slice_ms` is measured
 independently on LR1121 rather than merely inherited, since the two chips are validated
 separately and could in principle diverge.
 

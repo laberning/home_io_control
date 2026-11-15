@@ -432,7 +432,7 @@ class RadioSX1262 : public SoftPhyDriverBase {
   uint8_t tcxo_startup_attempts_{0};   ///< SetDIO3AsTCXOCtrl attempts the last bring-up took (0 = skipped/none).
   uint32_t tcxo_startup_delay_us_{0};  ///< Startup delay of the last rung tried, in µs — the rung that started the
                                        ///< TCXO on success, or the one reached before giving up.
-  SX1262RxBandwidth rx_bandwidth_{SX1262RxBandwidth::BW_58_6_KHZ};  ///< Runtime-tunable RX bandwidth.
+  SX1262RxBandwidth rx_bandwidth_{SX1262RxBandwidth::BW_117_3_KHZ};  ///< Runtime-tunable RX bandwidth.
 };
 
 }  // namespace home_io_control

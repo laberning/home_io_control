@@ -11,8 +11,8 @@ using namespace esphome::home_io_control;
 
 TEST(TuningConfig, DefaultsMatchPlan) {
   TuningConfig cfg{};
-  EXPECT_EQ(cfg.sx1262_rx_bandwidth, SX1262RxBandwidth::BW_58_6_KHZ)
-      << "narrow by default: a full-sweep field test found reception improved as the filter narrowed";
+  EXPECT_EQ(cfg.sx1262_rx_bandwidth, SX1262RxBandwidth::BW_117_3_KHZ)
+      << "117.3 kHz clears the 76.8 kHz sizing floor with margin for an off-nominal peer, as on the LR1121 (ADR 0087)";
   EXPECT_EQ(cfg.sx1262_response_preamble, 12) << "12 B matches a real controller's on-air continuation preamble";
   EXPECT_EQ(cfg.sx1262_post_tx_settle_us, 500);
   // SX1276 radio defaults: RegRxBw 0x13 (unchanged fixed value) and a 12-byte response preamble

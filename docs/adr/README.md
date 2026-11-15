@@ -40,6 +40,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0045](0045-listen-before-talk-is-part-of-sending.md) | Listen-before-talk is part of sending | The radio checks the transmit channel inside `send_packet()`, retuning first when the idle receiver is elsewhere; the engine keeps the retry policy and, since the 2026-10 amendment, checks only frames with START set |
 | [0070](0070-a-preamble-on-air-keeps-the-soft-phy-receiver-running.md) | A preamble on air keeps the software-PHY receiver running (amended by 0086) | SX1262/LR1121: a dwell that times out on a preamble keeps RX until the frame, a retune or 30 ms; a started frame gets 12 ms past the deadline; the SX1262 preamble detector is 16 bits, as on the LR1121 |
 | [0086](0086-the-idle-receiver-keeps-the-loop-running-so-its-channel-scan-follows-the-protocol-dwell.md) | The idle receiver keeps the loop running so its channel scan follows the protocol dwell (amends 0044, 0070) | A high-frequency loop request while the radio is set up and not failed, so the idle host hop follows `HOP_TIME_US` (2.7 ms) instead of the loop interval; a preamble holds the idle hop on every chip, in 30 ms slices renewed on the same channel while the preamble is detected again (300 ms bound); a chip gets its own idle dwell only on bench evidence; the loop task no longer sleeps; no option |
+| [0087](0087-the-sx1262-receives-at-117-3-khz-by-default.md) | The SX1262 receives at 117.3 kHz by default | `sx1262_rx_bandwidth` defaults to 117.3 kHz, the LR1121's value, clearing the 76.8 kHz sizing figure with margin for an off-nominal transmitter; the option stays; the SX1276 default is unchanged |
 
 ### Behavior
 
@@ -216,6 +217,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0084: Entities reach the hub only through ports](0084-entities-reach-the-hub-only-through-ports.md)
 - [ADR 0085: A waiting cover is shown from its status and read without back-off](0085-a-waiting-cover-is-shown-from-its-status-and-read-without-back-off.md)
 - [ADR 0086: The idle receiver keeps the loop running so its channel scan follows the protocol dwell](0086-the-idle-receiver-keeps-the-loop-running-so-its-channel-scan-follows-the-protocol-dwell.md)
+- [ADR 0087: The SX1262 receives at 117.3 kHz by default](0087-the-sx1262-receives-at-117-3-khz-by-default.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

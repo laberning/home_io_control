@@ -39,9 +39,9 @@ namespace home_io_control {
 enum class SX1262RxBandwidth : uint8_t {
   BW_39_0_KHZ = 0x1C,   ///< 39.0 kHz — narrowest; half the 76.8 kHz sizing floor, for probing only.
   BW_46_9_KHZ = 0x14,   ///< 46.9 kHz — narrow.
-  BW_58_6_KHZ = 0x0C,   ///< 58.6 kHz — default; the narrowest value validated on real hardware here.
+  BW_58_6_KHZ = 0x0C,   ///< 58.6 kHz — below the sizing floor; for an install that receives better narrow.
   BW_78_2_KHZ = 0x1B,   ///< 78.2 kHz — just above the 76.8 kHz sizing floor.
-  BW_117_3_KHZ = 0x0B,  ///< 117.3 kHz — clears the sizing floor with ~20 kHz of offset margin.
+  BW_117_3_KHZ = 0x0B,  ///< 117.3 kHz — default; clears the sizing floor with ~20 kHz of offset margin.
   BW_156_2_KHZ = 0x1A,  ///< 156.2 kHz — the value a Somfy LightVar_Wh_io dimmer needs.
   BW_187_2_KHZ = 0x12,  ///< 187.2 kHz — widest selectable option.
 };
@@ -282,13 +282,14 @@ struct TuningConfig {
   // --- Radio / physical layer ---
   /// SX1262 RX bandwidth selector.
   ///
-  /// 58.6 kHz (double-sideband). This is below the 76.8 kHz sizing floor for this waveform (see
-  /// `SX1262RxBandwidth`), so it trims the edges of even an on-frequency signal; it is the
-  /// default because it made a real solar shutter (Somfy RS100) respond reliably where 117.3 kHz
-  /// did not. Because the SX1262 has no GFSK AFC, a peer whose carrier sits off nominal needs a
-  /// wider setting instead: a Somfy LightVar_Wh_io dimmer went from mostly missed to mostly
-  /// confirmed replies at 156.2 kHz. The setting is global, so the right value is a per-install trade-off.
-  SX1262RxBandwidth sx1262_rx_bandwidth{SX1262RxBandwidth::BW_58_6_KHZ};
+  /// 117.3 kHz (double-sideband), the same as the LR1121. Semtech sizes a GFSK filter as bitrate + 2 x
+  /// deviation + carrier offset, 76.8 kHz for this waveform before any offset (see `SX1262RxBandwidth`);
+  /// 117.3 kHz clears it with about 20 kHz of margin. The SX1262 has no GFSK AFC, so the filter alone
+  /// absorbs how far a peer's carrier sits from nominal. A peer further off needs a wider setting: a
+  /// Somfy LightVar_Wh_io dimmer and a plain-crystal module needed 156.2 kHz. Narrower values (58.6 kHz)
+  /// trim the edges of even an on-frequency signal; use them only where an install receives better so.
+  /// The setting is global, so the right value is a per-install trade-off (ADR 0087).
+  SX1262RxBandwidth sx1262_rx_bandwidth{SX1262RxBandwidth::BW_117_3_KHZ};
   uint16_t sx1262_response_preamble{SX1262_RESPONSE_PREAMBLE};            ///< SX1262 response preamble in bytes.
   uint16_t sx1262_post_tx_settle_us{SX1262_POST_TX_SETTLE_US};            ///< Delay after SX1262 TX before RX (µs).
   SX1276RxBandwidth sx1276_rx_bandwidth{SX1276RxBandwidth::BW_41_7_KHZ};  ///< SX1276 RX bandwidth selector.

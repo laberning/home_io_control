@@ -220,11 +220,12 @@ is a general starting point, not a guarantee — different devices need differen
 
 8. **If discovery succeeds but key exchange fails** (`saw_challenge=0`, or the exchange stops
    after discovery), give the receiver more margin around the turnaround (SX1262 shown; on
-   LR1121 boards use the `lr1121_*` equivalents instead). Narrowing the bandwidth rejects more
-   noise — see [`sx1262_rx_bandwidth`](configuration/tuning.md#sx1262_rx_bandwidth):
+   LR1121 boards use the `lr1121_*` equivalents instead). If the device's replies are missed, widen
+   the receive filter; only a noisy install gains from narrowing it. See
+   [`sx1262_rx_bandwidth`](configuration/tuning.md#sx1262_rx_bandwidth):
    ```yaml
    sx1262_post_tx_settle_us: 750    # then 1000
-   sx1262_rx_bandwidth: 46.9        # then 39.0 — narrower, not wider
+   sx1262_rx_bandwidth: 156.2       # then 187.2; 78.2 or 58.6 only to reject noise
    sx1262_response_preamble: 16     # then 24
    ```
 

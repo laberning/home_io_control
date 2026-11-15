@@ -39,13 +39,14 @@ home_io_control:
     sx1262_rx_bandwidth: 156.2
 ```
 
-At the default of `58.6` kHz the hub misses most of this receiver's replies. Commands then fail
-with `wait_first_timeout`, and pairing can fail with no response at all. At `156.2` two separate
-installations went from mostly missed replies to reliable ones. The setting applies to every device
+At `58.6` kHz the hub misses most of this receiver's replies, and at the default of `117.3` kHz it
+still misses about two in three. Commands then fail with `wait_first_timeout`, and pairing can fail
+with no response at all. At `156.2` two separate installations went from mostly missed replies to
+reliable ones. The setting applies to every device
 on the hub. The Somfy motors paired alongside this receiver kept working at `156.2`. See
 [`sx1262_rx_bandwidth`](../configuration/tuning.md#sx1262_rx_bandwidth) for what the value does.
 
-On an LR1121 board the default filter is already `117.3` kHz. This receiver hasn't been tested on
+On an LR1121 board the default filter is `117.3` kHz, as on the SX1262. This receiver hasn't been tested on
 an LR1121 or an SX1276 board. If its replies go missing there, widen the filter the same way
 (`lr1121_rx_bandwidth: 156.2`, or `sx1276_rx_bandwidth: 83.3`).
 

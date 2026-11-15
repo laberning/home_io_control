@@ -114,7 +114,7 @@ SX1276_BANDWIDTH_OPTIONS = {
 # Sx1262AndLr1121BandwidthTablesAgree test pins them together). They are kept as separate C++
 # enums, and separate option dicts here, only so each chip's option set can diverge if a real
 # chip difference ever demands it. The two narrowest options (39.0/46.9 kHz) are offered on
-# both chips for probing below the SX1262 default; both sit well below the 76.8 kHz (DSB)
+# both chips for probing below the default; both sit well below the 76.8 kHz (DSB)
 # sizing floor for this waveform, so neither suits everyday use.
 LR1121_BANDWIDTH_OPTIONS = {
     "39.0": LR1121RxBandwidth.BW_39_0_KHZ,
