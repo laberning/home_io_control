@@ -74,16 +74,18 @@ class IOHomeOpenWindowDetectionSwitch : public switch_::Switch, public Component
 /// `heater_with_light`).
 /// @ingroup hioc_platforms
 ///
-/// On/off is register 0x0144 and the brightness register 0x0142, a percentage that maps 1:1 onto Home
-/// Assistant's brightness (100 % = full). The light shows what the heater reports: no state until the
-/// first poll has read 0x0144, every acknowledged write is read back, and a write the heater does not
-/// acknowledge leaves the light showing the heater's last reading.
+/// On/off is register 0x0144 and the brightness register 0x0142, which runs 0-10000 and scales linearly
+/// with Home Assistant's brightness (100 % = 10000, 1 % = 100; night_light_register_from_percent() and
+/// night_light_fraction_from_register()). A Sauter Hekla's panel sets 100, 1000, 2000 and 10000, its four
+/// levels (issue #222). The light shows what the heater reports: no state until the first poll has read
+/// 0x0144, every acknowledged write is read back, and a write the heater does not acknowledge leaves the
+/// light showing the heater's last reading.
 ///
 /// Switching on writes the brightness only when it differs from what the heater holds, then the on/off
 /// register; so on/off at an unchanged brightness never depends on the brightness write.
 ///
-/// \todo Experimental: confirm on a real heater that writing 0x0144 switches the light (the heater's
-///       own controller writes it, issue #222) and that writing 0x0142 dims it.
+/// \todo Experimental: confirm on a real heater that writing 0x0142 dims the light (switching with 0x0144
+///       is confirmed on a Hekla, issue #222).
 class IOHomeHeaterNightLight : public light::LightOutput, public Component, public DeviceBoundCompanion {
  public:
   /// @brief Subscribe to the device's updates and publish what is already known.

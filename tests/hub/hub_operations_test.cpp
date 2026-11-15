@@ -4007,15 +4007,15 @@ TEST(HubOperations, NightLightWritesSendExactBytes) {
   TestableComponent comp;
   MockRadio radio;
   make_heater_with_light(comp, radio);
-  queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x42, 0x32, 0x00});
-  ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 50.0F));
+  queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x42, 0x88, 0x13});
+  ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 5000.0F));
   queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x44, 0x01});
   ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::NIGHT_LIGHT, 1.0F));
 
   ASSERT_EQ(radio.get_sent_data().size(), 2u);
   const auto &brightness = radio.get_sent_data()[0];
   EXPECT_EQ(std::vector<uint8_t>(brightness.begin() + 9, brightness.begin() + 15),
-            (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x42, 0x32, 0x00}));
+            (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x42, 0x88, 0x13}));
   const auto &on = radio.get_sent_data()[1];
   EXPECT_EQ(std::vector<uint8_t>(on.begin() + 9, on.begin() + 14),
             (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x44, 0x01}));

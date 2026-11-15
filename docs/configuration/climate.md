@@ -149,16 +149,18 @@ takes the options of any ESPHome [light](https://esphome.io/components/light/), 
 heater without `io_model: heater_with_light`.
 
 > [!NOTE]
-> **The night light is experimental.** Reading it is confirmed on a Hekla, with the light on and off
-> (issue #222). Switching it from Home Assistant uses the same write the heater's Cozytouch sends, but
-> has not been confirmed on a heater yet, and neither has dimming. If you try it, please
+> **The night light is experimental.** Reading it and switching it on and off from Home Assistant are
+> confirmed on a Hekla (issue #222). Dimming from Home Assistant has not been confirmed on a heater yet. If you try it, please
 > [report](https://github.com/laberning/home_io_control/issues) what the light does.
 
 - The light shows what the heater reports. It has no state until the first poll, and every switch or
   brightness change the heater acknowledges is read back. A change it does not acknowledge leaves the
   light showing the heater's last reading.
-- Brightness is a percentage: 100 % in Home Assistant is the heater's full brightness. Switching on
-  at the brightness the heater already holds sends only the on command.
+- Brightness is a percentage, 100 % in Home Assistant being the heater's full brightness. The heater's
+  brightness register runs from 0 to 10000 and the light scales it linearly: 1 % is 100 and 100 % is
+  10000. A Hekla's panel offers four levels, which show as 1 %, 10 %, 20 % and 100 %. Whether the
+  heater accepts the values in between has not been confirmed. Switching on at the brightness the
+  heater already holds sends only the on command.
 - Each poll reads the light's state and brightness after the heater's own registers, so a light
   switched from the Cozytouch app or at the heater shows in Home Assistant at the next poll. A
   heater that has no night light answers these reads empty; the rest of its poll still counts as

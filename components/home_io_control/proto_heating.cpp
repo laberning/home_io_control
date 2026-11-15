@@ -66,7 +66,7 @@ struct HeatingFunctionDescriptor {
   uint8_t register_low;   ///< Payload byte 3: low byte of the 0x01xx register number.
   HeatingAccess access;   ///< Whether the register may be read, written or both.
   HeatingValueKind kind;  ///< How the value maps onto the trailing bytes.
-  uint8_t max_value{0};   ///< BOUNDED_BYTE, BOUNDED_U16: highest value a reply may carry and a write may send.
+  uint16_t max_value{0};  ///< BOUNDED_BYTE, BOUNDED_U16: highest value a reply may carry and a write may send.
 };
 
 constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
@@ -137,7 +137,7 @@ size_t value_length(HeatingValueKind kind) {
 }
 
 /// @brief Is `value` an integer from 0 to `max_value`? NaN fails every comparison, so it is refused too.
-bool is_bounded_integer(float value, uint8_t max_value) {
+bool is_bounded_integer(float value, uint16_t max_value) {
   return std::isfinite(value) && value >= 0.0F && value <= static_cast<float>(max_value) && value == std::floor(value);
 }
 

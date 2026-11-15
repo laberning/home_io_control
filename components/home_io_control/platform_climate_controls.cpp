@@ -18,8 +18,8 @@ static const char *const TAG_WINDOW = "home_io_control.window";
 static const char *const TAG_DETECTION = "home_io_control.window_detection";
 static const char *const TAG_NIGHT_LIGHT = "home_io_control.night_light";
 
-/// Brightness register value for a light switched on at a brightness that rounds to 0 %: the lowest
-/// level that is still on.
+/// Percentage for a light switched on at a brightness that rounds to 0 %: the lowest level that is still
+/// on (register value HEATING_NIGHT_LIGHT_STEPS_PER_PERCENT).
 static constexpr uint8_t NIGHT_LIGHT_MIN_ON_PERCENT = 1;
 
 void IOHomeWindowBinarySensor::setup() {
@@ -84,7 +84,7 @@ void IOHomeHeaterNightLight::on_device_update_(const IoDevice &dev) {
   // one shown.
   const float brightness =
       dev.heating.night_light_brightness > 0
-          ? static_cast<float>(dev.heating.night_light_brightness) / HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX
+          ? night_light_fraction_from_register(static_cast<uint16_t>(dev.heating.night_light_brightness))
           : this->state_->remote_values.get_brightness();
   publish_light_reading(this->state_, on, brightness, this->suppress_write_);
 }
@@ -112,10 +112,11 @@ void IOHomeHeaterNightLight::write_state(light::LightState *state) {
     // The raw brightness, not current_values_as_brightness(): that one applies gamma_correct, meant for a
     // PWM output, and would send a different percentage than the one the user picked.
     const uint8_t percent = std::clamp<uint8_t>(detail::round_percent(state->current_values.get_brightness()),
-                                                NIGHT_LIGHT_MIN_ON_PERCENT, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
+                                                NIGHT_LIGHT_MIN_ON_PERCENT, HEATING_NIGHT_LIGHT_PERCENT_MAX);
+    const uint16_t brightness = night_light_register_from_percent(percent);
     const IoDevice *dev = this->device_port_->get_device(this->device_id_);
-    if (dev == nullptr || std::cmp_not_equal(dev->heating.night_light_brightness, percent))
-      brightness_written = this->write_register_(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, percent);
+    if (dev == nullptr || std::cmp_not_equal(dev->heating.night_light_brightness, brightness))
+      brightness_written = this->write_register_(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, brightness);
   }
   // On/off goes out even when the brightness write failed: switching the light is what the user asked.
   const bool switched = this->write_register_(HeatingFunction::NIGHT_LIGHT, on ? 1.0F : 0.0F);

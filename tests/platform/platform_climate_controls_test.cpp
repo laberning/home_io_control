@@ -201,10 +201,10 @@ TEST(PlatformHeaterNightLight, TheBootRestoreAndPublishedReadingsAreNeverWritten
   NightLightRig rig;
   EXPECT_TRUE(rig.hub.writes.empty()) << "a reboot must not switch the heater's light";
 
-  rig.deliver(1, 40);
+  rig.deliver(1, 4000);
   EXPECT_TRUE(rig.state.current_values.is_on());
   EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.4F);
-  rig.deliver(0, 40);
+  rig.deliver(0, 4000);
   EXPECT_FALSE(rig.state.current_values.is_on());
   EXPECT_TRUE(rig.hub.writes.empty()) << "what the heater reports is not echoed back";
 }
@@ -212,22 +212,22 @@ TEST(PlatformHeaterNightLight, TheBootRestoreAndPublishedReadingsAreNeverWritten
 TEST(PlatformHeaterNightLight, NothingIsShownUntilTheLightHasBeenRead) {
   NightLightRig rig;
   rig.state.set_current_brightness(0.7F);
-  rig.hub.deliver([](HeatingReadings &r) { r.night_light_brightness = 100; });
+  rig.hub.deliver([](HeatingReadings &r) { r.night_light_brightness = 10000; });
   EXPECT_FALSE(rig.state.current_values.is_on());
   EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.7F) << "no on/off reading: nothing published";
 }
 
 TEST(PlatformHeaterNightLight, SwitchingOnAtANewBrightnessWritesBrightnessThenOnAndReadsBothBack) {
   NightLightRig rig;
-  rig.deliver(0, 100);
+  rig.deliver(0, 10000);
   rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT] = 1.0F;
-  rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT_BRIGHTNESS] = 50.0F;
+  rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT_BRIGHTNESS] = 5000.0F;
 
   rig.request(true, 0.5F);
 
   ASSERT_EQ(rig.hub.writes.size(), 2u);
   EXPECT_EQ(rig.hub.writes[0].fn, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS);
-  EXPECT_FLOAT_EQ(rig.hub.writes[0].value, 50.0F);
+  EXPECT_FLOAT_EQ(rig.hub.writes[0].value, 5000.0F);
   EXPECT_EQ(rig.hub.writes[1].fn, HeatingFunction::NIGHT_LIGHT);
   EXPECT_FLOAT_EQ(rig.hub.writes[1].value, 1.0F);
   EXPECT_EQ(rig.hub.reads,
@@ -241,9 +241,9 @@ TEST(PlatformHeaterNightLight, AWriteIsPublishedOnceWithBothReadBacks) {
   // Counts what reaches the LightState while a write runs: the first read-back alone (on, with the
   // old 100 %) must not be shown before the brightness read-back.
   NightLightRig rig;
-  rig.deliver(0, 100);
+  rig.deliver(0, 10000);
   rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT] = 1.0F;
-  rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT_BRIGHTNESS] = 50.0F;
+  rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT_BRIGHTNESS] = 5000.0F;
   std::vector<float> shown;
   rig.hub.register_device_callback([&rig, &shown](const std::string &, const IoDevice &) {
     shown.push_back(rig.state.current_values.get_brightness());
@@ -261,7 +261,7 @@ TEST(PlatformHeaterNightLight, AWriteIsPublishedOnceWithBothReadBacks) {
 
 TEST(PlatformHeaterNightLight, OnAtTheBrightnessTheHeaterHoldsWritesOnlyOnOff) {
   NightLightRig rig;
-  rig.deliver(0, 100);
+  rig.deliver(0, 10000);
   rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT] = 1.0F;
 
   rig.request(true, 1.0F);
@@ -273,7 +273,7 @@ TEST(PlatformHeaterNightLight, OnAtTheBrightnessTheHeaterHoldsWritesOnlyOnOff) {
 
 TEST(PlatformHeaterNightLight, OffWritesOnlyOnOff) {
   NightLightRig rig;
-  rig.deliver(1, 100);
+  rig.deliver(1, 10000);
   rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT] = 0.0F;
 
   rig.request(false, 0.3F);
@@ -286,16 +286,44 @@ TEST(PlatformHeaterNightLight, OffWritesOnlyOnOff) {
 
 TEST(PlatformHeaterNightLight, ABrightnessThatRoundsToZeroIsSentAsOnePercent) {
   NightLightRig rig;
-  rig.deliver(0, 100);
+  rig.deliver(0, 10000);
   rig.request(true, 0.004F);
   ASSERT_FALSE(rig.hub.writes.empty());
   EXPECT_EQ(rig.hub.writes[0].fn, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS);
-  EXPECT_FLOAT_EQ(rig.hub.writes[0].value, 1.0F);
+  EXPECT_FLOAT_EQ(rig.hub.writes[0].value, 100.0F);
+}
+
+TEST(PlatformHeaterNightLight, TheHeklasFourPanelLevelsShowAsOneTenTwentyAndHundredPercent) {
+  NightLightRig rig;
+  const struct {
+    int16_t raw;
+    float fraction;
+  } levels[] = {{100, 0.01F}, {1000, 0.1F}, {2000, 0.2F}, {10000, 1.0F}};
+  for (const auto &level : levels) {
+    rig.deliver(1, level.raw);
+    EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), level.fraction) << "register " << level.raw;
+  }
+  EXPECT_TRUE(rig.hub.writes.empty());
+}
+
+TEST(PlatformHeaterNightLight, HomeAssistantPercentagesAreWrittenTimesOneHundred) {
+  const struct {
+    float fraction;
+    float raw;
+  } requests[] = {{0.2F, 2000.0F}, {0.7F, 7000.0F}, {0.01F, 100.0F}};
+  for (const auto &request : requests) {
+    NightLightRig rig;
+    rig.deliver(0, 10000);
+    rig.request(true, request.fraction);
+    ASSERT_FALSE(rig.hub.writes.empty());
+    EXPECT_EQ(rig.hub.writes[0].fn, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS);
+    EXPECT_FLOAT_EQ(rig.hub.writes[0].value, request.raw);
+  }
 }
 
 TEST(PlatformHeaterNightLight, ARefusedBrightnessWriteStillSwitchesTheLightAndIsNotReadBack) {
   NightLightRig rig;
-  rig.deliver(0, 100);
+  rig.deliver(0, 10000);
   rig.hub.refused_writes = {HeatingFunction::NIGHT_LIGHT_BRIGHTNESS};
   rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT] = 1.0F;
 
@@ -310,7 +338,7 @@ TEST(PlatformHeaterNightLight, ARefusedBrightnessWriteStillSwitchesTheLightAndIs
 
 TEST(PlatformHeaterNightLight, AnUnacknowledgedSwitchIsNotReadBackAndShowsTheHeatersLastReading) {
   NightLightRig rig;
-  rig.deliver(0, 100);
+  rig.deliver(0, 10000);
   rig.hub.write_result = false;
 
   rig.request(true, 1.0F);

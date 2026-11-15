@@ -1,6 +1,6 @@
 /// @file corpus_heating_test.cpp
 /// @brief The heater register codec (proto_heating.h) against real frames from an Atlantic AGILIA IO
-/// radiator (issue #165).
+/// radiator (issue #165) and a Sauter Hekla's night light (issue #222).
 ///
 /// Every request the hub sent is compared byte for byte with what the encoder builds for the same
 /// function and value, and every reply is decoded and compared with the value the climate entity
@@ -246,4 +246,19 @@ TEST(CorpusHeating, HeatingLevelExecuteIsTheFrameAVendorBridgeSends) {
     ASSERT_EQ(built_len, captured_len) << +level;
     EXPECT_EQ(0, memcmp(built_bytes, captured_bytes, built_len)) << "level 0x" << std::hex << +level;
   }
+}
+
+// === Night light brightness levels of a Sauter Hekla (issue #222) ===
+
+TEST(CorpusHeating, TheHeklasPanelLevelsAreTheWritesOfOneTenTwentyAndHundredPercent) {
+  using namespace corpus;
+  // Frames in capture order: second, third, lowest and highest panel level.
+  EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame0_bytes,
+                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(10)));
+  EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame1_bytes,
+                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(20)));
+  EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame2_bytes,
+                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(1)));
+  EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame3_bytes,
+                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(100)));
 }

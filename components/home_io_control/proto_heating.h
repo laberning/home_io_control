@@ -35,6 +35,7 @@
 #include "proto_frame.h"
 #include "proto_private_registers.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -66,9 +67,9 @@ enum class HeatingFunction : uint8_t {
   ECO_SETBACK,             ///< Register 0x0104, read-only: how far below the comfort setpoint a towel dryer's eco
                            ///< period heats, tenths of a kelvin.
   NIGHT_LIGHT,             ///< Register 0x0144, read/write: a heater's night light on (1) or off (0).
-  NIGHT_LIGHT_BRIGHTNESS,  ///< Register 0x0142, read/write: the night light's brightness, 0-100 %, 16-bit.
-                           ///< \todo Confirm on a real heater that the value is a percentage and that a
-                           ///<       write dims the light (issue #222).
+  NIGHT_LIGHT_BRIGHTNESS,  ///< Register 0x0142, read/write: the night light's brightness, 0-10000, 16-bit.
+                           ///< \todo Confirm on a real heater that a write from the hub dims the light and
+                           ///<       that values between its panel's four levels are accepted (issue #222).
 };
 
 /// @brief Operating modes of the mode register (HeatingFunction::SET_MODE).
@@ -132,9 +133,33 @@ constexpr int16_t HEATING_SENSOR_FAULT_RAW = -1;
 static constexpr float HEATING_TEMPERATURE_RANGE_MIN_C = -40.0F;
 static constexpr float HEATING_TEMPERATURE_RANGE_MAX_C = 80.0F;  ///< See HEATING_TEMPERATURE_RANGE_MIN_C.
 
-/// @brief Highest night light brightness (HeatingFunction::NIGHT_LIGHT_BRIGHTNESS): a percentage, so
-/// this value is full brightness.
-constexpr uint8_t HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX = 100;
+/// @brief Highest value of the night light brightness register (HeatingFunction::NIGHT_LIGHT_BRIGHTNESS),
+/// full brightness. The register runs 0-10000; a Sauter Hekla's panel sets 100, 1000, 2000 and 10000
+/// for its four levels (issue #222).
+constexpr uint16_t HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX = 10000;
+
+/// @brief Register steps per percent of night light brightness: the register scales linearly with the
+/// percentage a Home Assistant light shows.
+constexpr uint16_t HEATING_NIGHT_LIGHT_STEPS_PER_PERCENT = 100;
+
+/// @brief Highest brightness percentage of a Home Assistant light.
+constexpr uint8_t HEATING_NIGHT_LIGHT_PERCENT_MAX = 100;
+
+/// @brief Night light brightness register value for a percentage.
+/// @param percent Brightness, 0-100 %; a larger value is clamped to 100 %.
+/// @return The register value, 0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX.
+constexpr uint16_t night_light_register_from_percent(uint8_t percent) {
+  return static_cast<uint16_t>(std::min<unsigned>(percent, HEATING_NIGHT_LIGHT_PERCENT_MAX) *
+                               HEATING_NIGHT_LIGHT_STEPS_PER_PERCENT);
+}
+
+/// @brief Night light brightness as a fraction of full brightness (0.0-1.0) for a register value, the
+/// form a Home Assistant light shows; 100 is 0.01.
+/// @param raw Register value; one above HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX is clamped to it.
+constexpr float night_light_fraction_from_register(uint16_t raw) {
+  return static_cast<float>(std::min<unsigned>(raw, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX)) /
+         static_cast<float>(HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
+}
 
 /// @brief Register 0x0119: the heater's model name, ASCII, not terminated ("ADELIS 2 DIGIT" on an
 /// Atlantic Adelis, corpus atlantic_adelis_probe_register_01_sweep). Read raw for a log line; no
@@ -174,7 +199,8 @@ bool heating_function_register(HeatingFunction fn, uint8_t &register_low);
 ///   - TOWEL_MODE: a TowelDryerMode value widened to float (0-3).
 ///   - TEMPORARY_STATE: a HeatingTemporaryState value widened to float (0-2).
 ///   - NIGHT_LIGHT: 0 or 1.
-///   - NIGHT_LIGHT_BRIGHTNESS: an integral percentage 0-100, encoded as a 16-bit little-endian value.
+///   - NIGHT_LIGHT_BRIGHTNESS: an integer 0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX (10000), encoded as a 16-bit
+///   little-endian value.
 /// A read-only register (including POWER_ON, MIDNIGHT_SYNC and the measurement registers) is never
 /// encoded as a write, and out-of-range, non-integral (for enum/binary encodings) or non-finite
 /// input is rejected: a byte derived from a truncating or wrapping cast is never emitted.
@@ -237,7 +263,7 @@ struct HeatingReadings {
   float in_force_temperature_c{NAN};   ///< A towel dryer's temperature in force (register 0x0137); NaN until read.
   float eco_setback_k{NAN};            ///< A towel dryer's eco setback (register 0x0104); NaN until read.
   int16_t night_light{-1};             ///< Night light 1 on / 0 off; -1 until read.
-  int16_t night_light_brightness{-1};  ///< Night light brightness, 0-100 %; -1 until read.
+  int16_t night_light_brightness{-1};  ///< Night light brightness register, 0-10000; -1 until read.
   int16_t level{-1};                   ///< Low byte of the main parameter of a heater commanded with a prefixed
                                        ///< value: a heating level, or a setpoint alias. -1 until a status reply
                                        ///< carried one, and again after a reply that carried a plain
