@@ -187,7 +187,7 @@ void IOHomeWaterHeater::dump_config() {
   ESP_LOGCONFIG(TAG, "  Target temperature range: %.0f-%.0f C", static_cast<double>(DHW_TARGET_MIN_C),
                 static_cast<double>(DHW_TARGET_MAX_C));
   this->log_poll_interval_config_(TAG, heater_poll_interval_ms);
-  ESP_LOGCONFIG(TAG, "  Status: readings, target and mode confirmed on hardware; away mode experimental");
+  ESP_LOGCONFIG(TAG, "  Status: readings, target, mode and away mode confirmed on hardware");
 }
 
 // === Companions ===
@@ -275,7 +275,8 @@ void IOHomeDhwBoostSwitch::write_state(bool state) {
 void IOHomeDhwBoostSwitch::dump_config() {
   ESP_LOGCONFIG(TAG, "IO-Homecontrol Water Heater Boost:");
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
-  ESP_LOGCONFIG(TAG, "  Status: experimental (a boost started here writes duration 1; the state is the heater's FP16)");
+  ESP_LOGCONFIG(
+      TAG, "  Status: confirmed on hardware (a boost started here writes duration 1; the state is the heater's FP16)");
 }
 
 }  // namespace home_io_control

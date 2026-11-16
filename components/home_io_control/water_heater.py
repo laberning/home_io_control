@@ -4,8 +4,8 @@
 ##
 ## Binds an ESPHome water_heater entity to a domestic hot water heater (io_device_type: domestic_hot_water),
 ## with five opt-in companions: energy (kWh, for the energy dashboard), heat pump running, electric backup
-## running, a heating-source text sensor and a boost switch. Boost and away travel in the heater's operating-mode word and are
-## experimental: not confirmed on hardware yet. The heater is polled (default every five minutes);
+## running, a heating-source text sensor and a boost switch. Boost and away travel in the heater's operating-mode word; both
+## are confirmed on an Atlantic Calypso Connecté (issue #198). The heater is polled (default every five minutes);
 ## `status_poll_interval` sets the cadence, with the same one-minute floor as climate. Shared device-binding
 ## logic lives in platform_common.py; only the water heater's entity and companions are built here.
 ##

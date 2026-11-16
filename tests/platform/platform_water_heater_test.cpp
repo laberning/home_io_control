@@ -130,7 +130,7 @@ TEST(PlatformWaterHeater, TraitsOfferTheReadingsTheThreeModesAndTheHeatersRange)
   EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_CURRENT_TEMPERATURE));
   EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_TARGET_TEMPERATURE));
   EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_OPERATION_MODE));
-  EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_AWAY_MODE)) << "away mode is offered (experimental)";
+  EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_AWAY_MODE)) << "away mode is offered";
   EXPECT_FALSE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_ON_OFF)) << "no off state has been seen";
   EXPECT_FLOAT_EQ(traits.get_min_temperature(), 20.0F);
   EXPECT_FLOAT_EQ(traits.get_max_temperature(), 62.0F);
