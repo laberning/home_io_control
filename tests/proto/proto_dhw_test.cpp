@@ -440,3 +440,17 @@ TEST(ProtoDhw, AStatusWhoseTwoWordsReadAllOnesReportsNothing) {
   ASSERT_TRUE(decode_dhw_operating_status(operating_reply(0xFFFF), s));
   EXPECT_FALSE(s.unreported) << "one word alone is not enough";
 }
+
+TEST(ProtoDhw, TheFlagAndStateWritesAreFamilyZeroSetsOfOneByte) {
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {};
+  ASSERT_EQ(encode_dhw_flag_write(DhwOperatingFeature::BOOST, true, out), 5U);
+  EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x52, 0x01}));
+  ASSERT_EQ(encode_dhw_flag_write(DhwOperatingFeature::BOOST, false, out), 5U);
+  EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x52, 0x00}));
+  ASSERT_EQ(encode_dhw_flag_write(DhwOperatingFeature::AWAY, true, out), 5U);
+  EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x53, 0x01}));
+  ASSERT_EQ(encode_dhw_state_write(DhwState::BOOST, out), 5U);
+  EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x35, 0x03}));
+  ASSERT_EQ(encode_dhw_state_write(DhwState::AWAY, out), 5U);
+  EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x35, 0x00}));
+}

@@ -136,9 +136,13 @@ heater declared without the model that answers this way is named in a warning at
 
 - **Setting the mode works**: `eco` and `electric` switch the heater's display between automatic and
   manual. Manual takes the shower count last set on the display.
-- **A target, a boost and away are shown but not sent.** How this model takes them is not known yet, so
-  a change made in Home Assistant is refused with a warning in the log and the card keeps what the
-  heater reports. Use the heater's display for them.
+- **Boost and away are experimental.** Turning one on or off writes the register that reads 1 while it
+  runs (`0x0052` for boost, `0x0053` for absence) and reads it back. If the heater did not keep the value,
+  the hub writes the heater's state register (`0x0035`) instead. The card and the switch show what the
+  heater reports afterwards, never the command; the log names each write and its acknowledgement. Neither
+  write is confirmed on a heater yet.
+- **A target is shown but not sent.** How this model takes one is not known yet, so a target set in Home
+  Assistant is refused with a warning in the log. Use the heater's display.
 - `heat_pump_running` has no state on this model: it has no heat pump.
 - The showers the heater aims for and has available, and its heating power in watts, are read every
   poll and logged when they change. They have no entity yet.

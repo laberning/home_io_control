@@ -99,6 +99,15 @@ size_t encode_dhw_duration_write(DhwOperatingFeature which, uint8_t out[PRIVATE_
   return encode_dhw_byte_write(wire.duration_register, wire.start_duration, out);
 }
 
+size_t encode_dhw_flag_write(DhwOperatingFeature which, bool on, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
+  const uint8_t index = which == DhwOperatingFeature::BOOST ? DHW_REG_BOOST_FLAG : DHW_REG_AWAY_FLAG;
+  return encode_dhw_byte_write(index, on ? 1 : 0, out);
+}
+
+size_t encode_dhw_state_write(DhwState state, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
+  return encode_dhw_byte_write(DHW_REG_STATE, static_cast<uint8_t>(state), out);
+}
+
 bool encode_dhw_target(float celsius, uint16_t &main_parameter) {
   // encode_temperature_main_parameter() clamps; a target outside the heater's own range is refused instead.
   if (!std::isfinite(celsius) || celsius < DHW_TARGET_MIN_C || celsius > DHW_TARGET_MAX_C)

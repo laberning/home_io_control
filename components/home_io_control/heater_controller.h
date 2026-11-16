@@ -454,8 +454,18 @@ class HeaterController {
   /// @return true when the status read and every register were answered.
   bool poll_dhw_(const std::string &device_id);
 
-  /// @brief Refuse a target, boost or away write to an electric storage water heater, with a warning: how
-  /// that model takes them is not known, and the heat-pump heater's frames do nothing on it.
+  /// @brief Start or end the boost or the absence of an electric storage water heater: a write of its flag
+  /// register (0x0052 or 0x0053), read back at once; when the heater did not keep the value, a write of the
+  /// state register 0x0035. The state and the target are then read, and the next poll is brought forward.
+  /// \todo Experimental: neither write is confirmed on the heater.
+  /// @param device_id Target device ID.
+  /// @param which Boost or away.
+  /// @param on true to start it.
+  /// @return true when the heater acknowledged the write (or both writes, when the state was written too).
+  bool set_dhw_register_feature_(const std::string &device_id, DhwOperatingFeature which, bool on);
+
+  /// @brief Refuse a target write to an electric storage water heater, with a warning: how that model takes
+  /// one is not known, and the heat-pump heater's EXECUTE does nothing on it.
   /// @param device_id Target device ID.
   /// @param operation What was asked, for the log ("Hot water boost").
   /// @return true when the write was refused (the device is such a heater).

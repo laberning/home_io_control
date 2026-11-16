@@ -25,8 +25,9 @@
 /// | 2 manual                 | ELECTRIC      |
 ///
 /// It reports the temperature it heats to in every state, so its target is always shown; away and boost
-/// follow its state register. Its mode is written as on the other heater. A target, a boost or away asked for
-/// in Home Assistant is not sent: how this model takes them is not known (proto_dhw.h).
+/// follow its state register. Its mode is written as on the other heater; boost and away are written to their
+/// flag registers (experimental, proto_dhw.h). A target asked for in Home Assistant is not sent: how this model
+/// takes one is not known.
 ///
 /// In automatic mode the heater chooses its own target, and its display shows none, so the entity publishes
 /// no target while the heater reports automatic mode, and a target set then is not sent.

@@ -42,7 +42,10 @@
 ///     or 2 to it switches the display between automatic and manual;
 ///   - register 0x0035 tells the four states apart (DhwState), 0x0049 holds the temperature the heater heats
 ///     to, 0x004A and 0x0046 the showers it aims for and the showers it has, and 0x0032 the heating power.
-/// How this model takes a target, a boost or an absence is not known: none of them is sent to it.
+/// How this model takes a target is not known: none is sent to it. A boost and an absence are tried as a
+/// write of the flag register that reads 1 while they run (0x0052, 0x0053), and then of the state register
+/// (encode_dhw_flag_write(), encode_dhw_state_write()).
+/// \todo Experimental: neither write is confirmed on the heater yet.
 
 #include "proto_constants.h"
 #include "proto_device_kinds.h"
@@ -105,6 +108,11 @@ static constexpr uint8_t DHW_REG_ACTIVE_TARGET = 0x49;
 /// @brief Register 0x004A: the showers the heater aims for, one byte: the showers the display shows lit,
 /// steadily or blinking. 0 in absence.
 static constexpr uint8_t DHW_REG_TARGET_SHOWERS = 0x4A;
+
+/// @brief Register 0x0052: 1 while a boost runs, 0 otherwise, one byte.
+static constexpr uint8_t DHW_REG_BOOST_FLAG = 0x52;
+/// @brief Register 0x0053: 1 in absence, 0 otherwise, one byte.
+static constexpr uint8_t DHW_REG_AWAY_FLAG = 0x53;
 
 // === Target temperature ===
 
@@ -228,6 +236,8 @@ struct DhwReadings {
   int32_t power_w{-1};         ///< Heating power in W (register 0x0032); -1 until read. Electric storage heater only.
   int16_t showers_available{-1};  ///< Showers available (register 0x0046); -1 until read. Electric storage heater only.
   int16_t showers_target{-1};     ///< Showers aimed for (register 0x004A); -1 until read. Electric storage heater only.
+  int16_t boost_flag{-1};         ///< Register 0x0052; -1 until read (it is read only after a write of it).
+  int16_t away_flag{-1};          ///< Register 0x0053; -1 until read (it is read only after a write of it).
 };
 
 // === Models ===
@@ -269,6 +279,23 @@ size_t encode_dhw_mode_write(uint8_t mode, uint8_t out[PRIVATE_REGISTER_PAYLOAD_
 /// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return Always 5.
 size_t encode_dhw_duration_write(DhwOperatingFeature which, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
+
+/// @brief Encode a write of the boost or away flag of an electric storage water heater:
+/// `0C 61 00 52 <0|1>` or `0C 61 00 53 <0|1>`.
+/// \todo Experimental: the heater shows these registers at 1 while the feature runs; that it takes a write of
+///       them is not confirmed.
+/// @param which Boost or away.
+/// @param on true to write 1, false to write 0.
+/// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
+/// @return Always 5.
+size_t encode_dhw_flag_write(DhwOperatingFeature which, bool on, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
+
+/// @brief Encode a write of the state register of an electric storage water heater: `0C 61 00 35 <state>`.
+/// \todo Experimental: not confirmed on the heater.
+/// @param state One of the four states the heater has shown.
+/// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
+/// @return Always 5.
+size_t encode_dhw_state_write(DhwState state, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
 /// @brief Encode a target temperature as a main parameter over DHW_TARGET_MIN_C..DHW_TARGET_MAX_C.
 /// @param celsius Target; must be finite and within the range (nothing outside it is ever sent).

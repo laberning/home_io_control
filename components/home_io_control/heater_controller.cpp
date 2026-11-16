@@ -59,6 +59,10 @@ const char *dhw_register_label(uint8_t index) {
       return "dhw_showers_available";
     case DHW_REG_HEATING_POWER:
       return "dhw_heating_power";
+    case DHW_REG_BOOST_FLAG:
+      return "dhw_boost_flag";
+    case DHW_REG_AWAY_FLAG:
+      return "dhw_away_flag";
     default:
       return "dhw_register";
   }
@@ -188,6 +192,16 @@ bool store_dhw_reading(const std::string &device_id, DhwReadings &readings, uint
       return store_dhw_showers(device_id, readings, index, value, len);
     case DHW_REG_HEATING_POWER:
       return store_dhw_heating_power(device_id, readings, value, len);
+    case DHW_REG_BOOST_FLAG:
+    case DHW_REG_AWAY_FLAG: {
+      uint8_t flag = 0;
+      if (!decode_dhw_duration(value, len, flag))
+        return false;
+      (index == DHW_REG_BOOST_FLAG ? readings.boost_flag : readings.away_flag) = flag;
+      ESP_LOGI(detail::TAG, "Device %s: hot water %s flag reads %u", device_id.c_str(),
+               index == DHW_REG_BOOST_FLAG ? "boost" : "away", static_cast<unsigned>(flag));
+      return true;
+    }
     default:
       return false;
   }
@@ -672,15 +686,54 @@ bool HeaterController::set_dhw_operating_mode_(const std::string &device_id, Dhw
   return true;
 }
 
-bool HeaterController::set_water_heater_boost(const std::string &device_id, bool on) {
-  if (this->refuse_unknown_dhw_write_(device_id, "Hot water boost"))
+bool HeaterController::set_dhw_register_feature_(const std::string &device_id, DhwOperatingFeature which, bool on) {
+  const bool boost = which == DhwOperatingFeature::BOOST;
+  const char *flag_name = boost ? "hot water boost flag" : "hot water away flag";
+  const uint8_t flag_register = boost ? DHW_REG_BOOST_FLAG : DHW_REG_AWAY_FLAG;
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr)
     return false;
+  // The read-back below must be this write's, not an older one.
+  (boost ? dev->dhw.boost_flag : dev->dhw.away_flag) = -1;
+
+  uint8_t payload[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
+  size_t payload_len = encode_dhw_flag_write(which, on, payload);
+  if (!this->write_dhw_register_(device_id, flag_name, flag_register, payload, payload_len))
+    return false;
+
+  // write_dhw_register_() has read the flag back. A heater that did not keep it is sent the state itself.
+  dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return false;
+  const int16_t held = boost ? dev->dhw.boost_flag : dev->dhw.away_flag;
+  if (held != (on ? 1 : 0)) {
+    // A boost runs in automatic mode only; an absence ends in the mode register 0x0006 holds.
+    DhwState state = boost ? DhwState::BOOST : DhwState::AWAY;
+    if (!on)
+      state = boost || dev->dhw.mode == static_cast<int16_t>(DhwMode::AUTO) ? DhwState::AUTO : DhwState::MANUAL;
+    ESP_LOGW(detail::TAG, "Device %s: the %s did not keep the value (it reads %d), writing state %u instead",
+             device_id.c_str(), flag_name, held, static_cast<unsigned>(state));
+    payload_len = encode_dhw_state_write(state, payload);
+    if (!this->write_dhw_register_(device_id, "hot water state", DHW_REG_STATE, payload, payload_len))
+      return false;
+  }
+  // The entity shows what the heater reports, never the command. A miss here does not undo the write.
+  this->read_dhw_reading(device_id, DHW_REG_STATE, EXCHANGE_RETRY_COUNT);
+  this->read_dhw_reading(device_id, DHW_REG_ACTIVE_TARGET, EXCHANGE_RETRY_COUNT);
+  return true;
+}
+
+bool HeaterController::set_water_heater_boost(const std::string &device_id, bool on) {
+  if (const IoDevice *dev = this->water_heater_for_write_(device_id, "hot water boost");
+      dev != nullptr && dhw_state_in_registers(dev->model))
+    return this->set_dhw_register_feature_(device_id, DhwOperatingFeature::BOOST, on);
   return this->set_dhw_operating_mode_(device_id, DhwOperatingFeature::BOOST, on);
 }
 
 bool HeaterController::set_water_heater_away(const std::string &device_id, bool on) {
-  if (this->refuse_unknown_dhw_write_(device_id, "Hot water away"))
-    return false;
+  if (const IoDevice *dev = this->water_heater_for_write_(device_id, "hot water away");
+      dev != nullptr && dhw_state_in_registers(dev->model))
+    return this->set_dhw_register_feature_(device_id, DhwOperatingFeature::AWAY, on);
   return this->set_dhw_operating_mode_(device_id, DhwOperatingFeature::AWAY, on);
 }
 
