@@ -139,7 +139,10 @@ class Climate {
   virtual ~Climate() = default;
 
   ClimateCall make_call() { return ClimateCall(this); }
-  void publish_state() { this->publish_count_++; }
+  void publish_state() {
+    this->publish_count_++;
+    this->published_targets_.push_back(this->target_temperature);
+  }
   ClimateTraits get_traits() { return this->traits(); }
 
   void set_supported_custom_presets(std::initializer_list<const char *> presets) {
@@ -160,6 +163,8 @@ class Climate {
 
   /// Test-only: number of publish_state() calls.
   int publish_count_{0};
+  /// Test-only: the target temperature each publish_state() call showed, in order.
+  std::vector<float> published_targets_;
 
   virtual ClimateTraits traits() = 0;
   virtual void control(const ClimateCall &call) = 0;

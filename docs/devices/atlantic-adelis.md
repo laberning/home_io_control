@@ -60,9 +60,8 @@ sensor shows as `comfort` or `eco`, and as `boost` during a boost:
 ```
 
 The hub reads the level with the dryer's status read, once at the end of every poll in every mode
-(one more exchange per poll), so the sensor follows the display whether or not you configure it. It
-has no state until the dryer has answered. An automation that reacts to the comfort and eco periods
-tests this sensor.
+(one more exchange per poll), whether or not you configure the sensor. The sensor has no state until
+the dryer has answered. To react to the comfort and eco periods in an automation, use this sensor.
 
 > [!NOTE]
 > **The level is experimental.** It was read on one unit, in one comfort period, one eco period and

@@ -172,7 +172,7 @@ struct HeatingProfileFeatures {
 };
 
 /// @brief How a heater's own weekly programme shows that it runs, and the temperature it heats to.
-/// @details The programme runs while the card shows `auto`: the mode register reads a value the profile's
+/// @details The programme runs while the heater's mode shows as `auto`: the mode register reads a value the profile's
 ///          observed table maps to HVAC auto (PROG on a towel dryer, PROG and AUTO on a radiator) and, where
 ///          the profile keeps timed runs in a register of its own, that register reads `idle_preset_state`
 ///          (no boost or drying on top). Then `in_force_fn` holds the temperature the heater heats to; outside
@@ -341,11 +341,22 @@ const HeatingObservedState *find_observed_preset(const HeatingProfile &profile, 
 /// @brief Does the heater's own programme run right now, with no timed run on top of it?
 /// @details True when the profile has a programme period, its mode register reads a value the profile's
 ///          observed table shows as HVAC auto and, on a profile with a preset register of its own, that
-///          register reads the idle value. An unread register is not the programme.
+///          register reads the idle value. An unread register is not the programme. A mode value the observed
+///          table does not know is not the programme either.
 /// @param profile The device's profile.
 /// @param readings What the hub has read from the heater.
 /// @return false for a profile without a programme period.
 bool programme_period_active(const HeatingProfile &profile, const HeatingReadings &readings);
+
+/// @brief The timed-run register a target must read besides the mode, if any.
+/// @details A profile that keeps boost and drying in a register of its own (a non-empty preset table) runs the
+///          programme only with none on top, so once the mode shows the programme that register decides
+///          whether it runs. In any other mode the programme does not run, whatever that register holds.
+/// @param profile The device's profile.
+/// @param readings What the hub has read from the heater (the mode as it was just read).
+/// @return The register, or std::nullopt when the mode does not show the programme or the profile has no
+///         timed-run register.
+std::optional<HeatingFunction> timed_run_register(const HeatingProfile &profile, const HeatingReadings &readings);
 
 /// @brief The temperature a heater heats to while its own programme runs.
 /// @param profile The device's profile.
@@ -386,18 +397,33 @@ struct HeatingDeviceFacts {
   float range_min_c{HEATING_TEMPERATURE_RANGE_MIN_C};  ///< Lower end of the YAML temperature range.
   float range_max_c{HEATING_TEMPERATURE_RANGE_MAX_C};  ///< Upper end of the YAML temperature range.
   float reported_setpoint_c{NAN};                      ///< The setpoint the device last reported (NaN until read).
-  bool programme_runs{false};                          ///< The programme runs and the heater reports a temperature
-                                                       ///< in force (programme_temperature_in_force() is a number):
-                                                       ///< a target is then a temporary override.
+  bool programme_runs{false};                          ///< The programme runs (programme_period_active()) on a
+                                                       ///< heater that has reported its temperature in force in
+                                                       ///< this boot (TemperatureInForceSupport::REPORTED): a
+                                                       ///< target is then a temporary override.
+  bool in_force_unresolved{false};                     ///< The programme runs on a heater that has not yet answered
+                                                       ///< the read of its temperature in force in this boot
+                                                       ///< (TemperatureInForceSupport::UNKNOWN): whether a target
+                                                       ///< is an override or a comfort write is not known yet.
+  /// The heater answered the read of the registers that say whether the programme runs (the mode, and the
+  /// timed run where it matters), made for this request. Only a target on a profile with a programme period
+  /// looks at it: without it the heater did not say what it runs.
+  bool programme_state_answered{false};
 };
 
 /// @brief Why a request becomes no write.
 enum class HeatingRefusal : uint8_t {
-  NONE,         ///< The request becomes a write.
-  NO_MATCH,     ///< The profile offers no such mode or preset.
-  NO_SETPOINT,  ///< The profile has no adjustable setpoint.
-  NO_TARGET,    ///< The mode sends the target temperature and none is known or encodable.
-  UNENCODABLE,  ///< The target temperature cannot be encoded over the device's range.
+  NONE,                        ///< The request becomes a write.
+  NO_MATCH,                    ///< The profile offers no such mode or preset.
+  NO_SETPOINT,                 ///< The profile has no adjustable setpoint.
+  NO_TARGET,                   ///< The mode sends the target temperature and none is known or encodable.
+  UNENCODABLE,                 ///< The target temperature cannot be encoded over the device's range.
+  PROGRAMME_STATE_UNANSWERED,  ///< A target on a heater with a programme whose mode (or timed run) read got no
+                               ///< reply or no value (HeatingDeviceFacts::programme_state_answered): nothing is
+                               ///< written, because neither register is known to be right.
+  IN_FORCE_UNKNOWN,            ///< A target while the programme runs, before the heater has answered the read of its
+                               ///< temperature in force in this boot (HeatingDeviceFacts::in_force_unresolved): the
+                               ///< read made for the request got no reply, so nothing is written.
 };
 
 /// @brief How a planned write reaches the device.
@@ -427,10 +453,22 @@ struct HeatingWritePlan {
   [[nodiscard]] bool is_write() const { return this->kind != HeatingPlanKind::NONE; }
 };
 
+/// @brief Does a request ask the heater what it runs before it is planned?
+/// @details A target on a profile with a programme period does: where it goes (the override register or the
+///          comfort setpoint) depends on whether the programme runs now, and only the heater knows. Nothing
+///          else reads first: a mode or preset is written as asked, a profile without a programme period has
+///          one rule for every target.
+/// @param profile The device's profile.
+/// @param request What the card asks for.
+/// @return true for a TARGET on a profile with a programme period.
+bool heating_request_reads_programme_state(const HeatingProfile &profile, const HeatingWriteRequest &request);
+
 /// @brief Collect what the hub knows about a device, for plan_heating_write().
 /// @param dev The device record, or nullptr when the hub has none.
+/// @param programme_state_answered Whether the read of the programme-state registers made for this request was
+///        answered (HeatingDeviceFacts::programme_state_answered); false when no read was made.
 /// @return The facts; `has_record` false for nullptr.
-HeatingDeviceFacts heating_device_facts(const IoDevice *dev);
+HeatingDeviceFacts heating_device_facts(const IoDevice *dev, bool programme_state_answered);
 
 /// @brief Decide what one climate request writes to a heater.
 /// @details The single place that turns a mode, preset or target into a register write, a heating level or a
@@ -439,12 +477,20 @@ HeatingDeviceFacts heating_device_facts(const IoDevice *dev);
 ///          mode sends), and whether the register is read back afterwards. The temperature is encoded over
 ///          the fixed range of a profile that has one, else over the device's YAML range.
 ///
-///          A target set while the programme runs (HeatingDeviceFacts::programme_runs: the card shows `auto`
-///          and the heater reports a temperature in force) is a temporary override: it is planned as a write
-///          of HeatingProgrammePeriod::derogation_fn with a read-back of that register
-///          (HeatingWritePlan::temporary_override), and the comfort setpoint is not touched, in every period.
-///          In any other mode, and on a heater that reports no temperature in force, it writes the comfort
-///          setpoint.
+///          A target on a profile with a programme period is planned from what the heater just said it runs
+///          (heating_request_reads_programme_state()): the facts come from a read made for this request, and
+///          without an answer (HeatingDeviceFacts::programme_state_answered) the target is refused with
+///          HeatingRefusal::PROGRAMME_STATE_UNANSWERED. The mode the card shows is not an input.
+///
+///          A target set while the programme runs (HeatingDeviceFacts::programme_runs: the heater's mode shows
+///          `auto`, no timed run is on top, and it has reported a temperature in force in this boot) is a temporary
+///          override: it is planned as a write of HeatingProgrammePeriod::derogation_fn with a read-back of that
+///          register (HeatingWritePlan::temporary_override), and the comfort setpoint is not touched, in every period.
+///          In any other mode, and on a heater that answered the read of its temperature in force without a
+///          value (TemperatureInForceSupport::ABSENT), it writes the comfort setpoint. While the programme runs and
+///          the heater has not answered the read of its temperature in force yet
+///          (HeatingDeviceFacts::in_force_unresolved) the target is refused with HeatingRefusal::IN_FORCE_UNKNOWN:
+///          neither write is right before the heater has answered, so a silent heater gets no write.
 ///          \todo Confirm the override on hardware: on a towel dryer in a comfort period and on a radiator
 ///                (the write is untested there).
 /// @param profile The device's profile.

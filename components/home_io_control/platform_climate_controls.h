@@ -36,7 +36,8 @@ namespace home_io_control {
 /// Shows `off`, `frost protection`, `eco`, `comfort -2`, `comfort -1`, `comfort`, `boost` or `secured`
 /// (heating_level_name()), read from IoDevice::heating.level: the main parameter of the heater's status
 /// read. A plain heater and a pilot-wire interface are polled with that read; a register heater gets it
-/// only where its profile has a programme (a towel dryer). No state until the heater has reported a level,
+/// only where its programme is known to report a level (HeatingProgrammePeriod::reports_level: a towel dryer,
+/// not a radiator). No state until the heater has reported a level,
 /// so a heater that reports none (a pilot-wire interface, a radiator) leaves the sensor without one.
 ///
 /// \todo Experimental on a towel dryer: its status read is captured on one unit in comfort, eco and boost,

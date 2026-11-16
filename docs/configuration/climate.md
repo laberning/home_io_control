@@ -97,17 +97,34 @@ PROG and AUTO on a heater with an adjustable setpoint such as the AGILIA IO, Sau
 EMOTION 3 H. Home Assistant shows the heater's own program as `auto`, so the card treats a target in
 `auto` as a change for now:
 
-- **In `auto`** a target is written to the heater's override register (`0x011D`) and read back. It holds
-  until the program's next change, and the program's comfort temperature is not touched, in a comfort
-  period as well as in an eco period.
-- **In `heat`** a target is the comfort temperature, as on the heater's own display.
+- **While the program runs** (the card shows `auto`) a target is written to the heater's override
+  register (`0x011D`) and read back. It holds until the program's next change, and the program's comfort
+  temperature is not touched, in a comfort period as well as in an eco period.
+- **In `heat`** a target is the comfort temperature, as on the heater's own display. So is a target set
+  while a towel dryer runs a boost or a drying run on top of its program.
 - **The card's target in `auto`** is the temperature the heater holds right now, read at every poll
-  (register `0x0137` on a towel dryer, `0x012A` on a heater with an adjustable setpoint).
+  (register `0x0137` on a towel dryer, `0x012A` on a heater with an adjustable setpoint). When you switch
+  the card to `auto`, the hub reads it right after the heater confirms the mode, so the card shows it
+  straight away. If the heater does not answer that read, the next poll shows it.
+- **A target first asks the heater what it runs.** The register a target belongs in depends on what the
+  heater runs at that moment, and the heater can change that on its own: you switch it on its panel, or
+  a boost or drying run ends on its timer. So before it writes, the hub reads the heater's mode and, on a
+  towel dryer in its program, whether a boost or drying run is on top. While the program runs and the
+  heater has not shown a temperature in force since the restart, it reads that too. The card shows what
+  these reads found. If the heater reports a temperature in force, the target is an override; if it
+  answers that read without a value, the target is the comfort temperature. Presets and mode changes are
+  sent without a read.
+- **If the heater does not answer these reads**, the hub changes nothing and logs a warning with the
+  device id. The target in Home Assistant stays the previous one, although an open card can show your
+  value until you open it again; set it again when the heater is in range. The hub never falls back to
+  the comfort temperature here, because that would change the program for good. Once the heater has
+  reported a temperature in force, a target stays an override while the program runs, even when a later
+  read of that register gets no reply or no value.
 - **A heater that does not hold the register** answers the read without a value. The hub then stops
   asking until the next restart, the card's target stays the comfort temperature and a target writes
   the comfort temperature.
-- **A heater that refuses the override** is logged as a warning with the device id and both values.
-  Nothing else is written, and the next poll shows what the heater holds.
+- **A heater that refuses the override** is logged as a warning with the device id, the value asked
+  for and what the register holds. Nothing else is written, and the next poll shows what the heater holds.
 - **To end an override early**, call the `heating_control` action (section "The `heating_control` action" below) with
   `set_derogation` and `0`. An override also ends by itself, as the heater decides. Home Assistant sends
   no call when you select the mode the card already shows, so `auto` on the card cannot end it.
@@ -187,7 +204,7 @@ The pilot wire carries six orders. The card offers the modes `off` and `heat` an
 (frost protection), `eco`, `comfort`, `Comfort -1` and `Comfort -2`. All five presets and `off` are
 confirmed on the heater's display (issue #228). It has no boost: the interface ignores one, so the card
 does not show it. The sixth order, `secured`, is one a heater reports and a controller cannot set, so
-it is no preset; an interface that reports it shows `heat` on the card and `secured` on the
+it is no preset; a plain heater that reports it shows `heat` on the card and `secured` on the
 heating level sensor. The commands are the same heating-level EXECUTE as for
 a plain heater. A plain heater without `io_model:` keeps its `boost` preset.
 
@@ -233,7 +250,7 @@ heater without `io_model: heater_with_light`.
 - The light changes at once: `default_transition_length` is 0 s, because each step of a fade would
   be a radio command.
 - A Hekla shares its node type with the Adelis towel dryer, so its weekly program may report a level
-  the way the dryer does, but the hub does not read it from a heater with an adjustable setpoint yet:
+  the way the dryer does, but the hub does not read it from a Hekla or a radiator yet:
   the heating level sensor stays without a state. If you run one in its
   program, please [open an issue](https://github.com/laberning/home_io_control/issues) so we can check it.
 
@@ -262,8 +279,8 @@ climate:
   costs one more exchange per poll. In PROG it shows `comfort` or `eco` as the program changes period;
   with a boost on top it shows `boost`.
 - The sensor stays without a state where the heater reports no level: a Thermor pilot-wire interface
-  (issue #228), and an AGILIA radiator or a Hekla, whose level the hub does not read yet. A level that
-  is not in the list leaves the last value shown.
+  (issue #228), and an AGILIA radiator or a Hekla, whose level the hub does not read yet. A status read
+  that goes unanswered, or a reply whose value is not in the list, leaves the last value shown.
 - The key is accepted on `io_device_type: electrical_heater` only. It is experimental on a towel
   dryer: the status read is captured on one unit in comfort, eco and boost, not yet during a drying
   run or a temporary override. If you try it, please
@@ -345,7 +362,7 @@ the heater took the frame, and the climate entity reads the register back to sho
 | `function` | `value` | Effect |
 |---|---|---|
 | `power_on` | *(ignored)* | Wake / retrieve paired devices. |
-| `set_temperature` | float °C, `7.0`–`28.0` | Setpoint. |
+| `set_temperature` | float °C, `7.0`–`28.0` | Setpoint (the comfort temperature, register `0x0103`), written whatever the heater runs. |
 | `set_derogation` | float °C, `7.0`–`28.0`, or `0` | A temporary override of the program (register `0x011D`) on a towel dryer or a heater with an adjustable setpoint: it holds until the program's next change; `0` cancels it. Experimental, see the section "Temporary override in `auto`" above. Refused on heaters without a program. |
 | `set_mode` | `auto` \| `manual` \| `prog` \| `off` | Operating mode. |
 | `set_presence` | `on` \| `off` | Presence / absence. The AGILIA IO acknowledges it; no visible effect observed. |

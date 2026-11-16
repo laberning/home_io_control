@@ -206,23 +206,64 @@ bool HeaterController::execute_heating_plan(const std::string &device_id, const 
     on_accepted();
   if (plan.read_back) {
     float read_back_c = NAN;
-    this->read_back_heating_register_(device_id, plan.read_back_fn, &read_back_c);
+    const HeatingRead read_back = this->read_back_heating_register_(device_id, plan.read_back_fn, &read_back_c);
     // A refused override changes nothing else: the comfort setpoint stays, and the next poll shows what the
-    // heater holds. A read-back that failed (NaN) is already logged and proves no refusal.
-    if (plan.temporary_override && !std::isnan(read_back_c) &&
-        !heating_override_taken(plan.register_value, read_back_c)) {
+    // heater holds. A read-back with no reply is already logged by the exchange and proves no refusal.
+    if (plan.temporary_override && read_back == HeatingRead::EMPTY) {
+      ESP_LOGW(detail::TAG, "Device %s did not take the temporary override of %.1f C: its register reads empty",
+               device_id.c_str(), static_cast<double>(plan.register_value));
+    } else if (plan.temporary_override && read_back == HeatingRead::VALUE &&
+               !heating_override_taken(plan.register_value, read_back_c)) {
       ESP_LOGW(detail::TAG, "Device %s did not take the temporary override of %.1f C: its register reads %.1f C",
                device_id.c_str(), static_cast<double>(plan.register_value), static_cast<double>(read_back_c));
     }
-    // A write that started the programme (auto, or the end of a boost) reads the temperature in force at once:
-    // the card shows it as the target, and a target set before the next poll is an override, not a change of
-    // the comfort setpoint.
-    const IoDevice *dev = this->registry_.get(device_id);
-    const HeatingProfile *profile = dev != nullptr ? find_heating_profile(*dev) : nullptr;
-    if (profile != nullptr && profile->programme_period != nullptr &&
-        !dev->heating.has(profile->programme_period->in_force_fn))
-      this->poll_temperature_in_force_(device_id, *profile, EXCHANGE_RETRY_COUNT);
+    if (read_back == HeatingRead::VALUE)
+      this->show_temperature_in_force_after_write_(device_id, plan);
   }
+  return true;
+}
+
+void HeaterController::show_temperature_in_force_after_write_(const std::string &device_id,
+                                                              const HeatingWritePlan &plan) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  const HeatingProfile *profile = dev != nullptr ? find_heating_profile(*dev) : nullptr;
+  // Only a write of the mode or of the timed run can start the programme; the read-back of an override already
+  // carries the value in force, and a comfort-setpoint write is made where the programme does not run.
+  if (profile == nullptr || profile->programme_period == nullptr ||
+      (plan.read_back_fn != profile->mode_fn && plan.read_back_fn != profile->preset_fn))
+    return;
+  // EXCHANGE_RETRY_COUNT, as the read before a target: the user waits for the card. The poll's own try band
+  // applies to its reads only. poll_temperature_in_force_() sends nothing unless the programme runs on the
+  // stored readings and the heater has not answered without a value, and handles a silent answer; the next poll
+  // asks again. On a dryer the register this write did not touch is an older reading, so an answer without a
+  // value may come from a heater that runs something else: it marks nothing, and the target's own read decides.
+  this->poll_temperature_in_force_(device_id, *profile, EXCHANGE_RETRY_COUNT, InForceEmptyAnswer::CHANGES_NOTHING);
+}
+
+bool HeaterController::read_programme_state(const std::string &device_id) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  const HeatingProfile *profile = dev != nullptr ? find_heating_profile(*dev) : nullptr;
+  if (profile == nullptr || profile->programme_period == nullptr)
+    return false;
+  // The mode first, then (while it shows the programme) the timed run on top of it. A heater that does not
+  // answer, or answers without a value, is asked nothing more: the caller writes nothing.
+  if (this->read_and_store_heating_register_(device_id, profile->mode_fn, nullptr, EXCHANGE_RETRY_COUNT,
+                                             /*follow_override=*/false) != HeatingRead::VALUE)
+    return false;
+  // The exchange blocks; a record removed meanwhile has nothing left to write to.
+  dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return false;
+  const std::optional<HeatingFunction> timed_run = timed_run_register(*profile, dev->heating);
+  if (timed_run && this->read_and_store_heating_register_(device_id, *timed_run, nullptr, EXCHANGE_RETRY_COUNT,
+                                                          /*follow_override=*/false) != HeatingRead::VALUE)
+    return false;
+  // The temperature in force is asked only while the heater has not answered it yet (the poll refreshes it
+  // otherwise). poll_temperature_in_force_() reads it only while the programme runs; a silent heater stays
+  // UNKNOWN, which the plan refuses.
+  dev = this->registry_.get(device_id);
+  if (dev != nullptr && dev->temperature_in_force == TemperatureInForceSupport::UNKNOWN)
+    this->poll_temperature_in_force_(device_id, *profile, EXCHANGE_RETRY_COUNT, InForceEmptyAnswer::MARKS_ABSENT);
   return true;
 }
 
@@ -346,8 +387,10 @@ bool HeaterController::read_heating_register(const std::string &device_id, Heati
          HeatingRead::VALUE;
 }
 
-void HeaterController::read_back_heating_register_(const std::string &device_id, HeatingFunction fn, float *value_out) {
-  this->read_and_store_heating_register_(device_id, fn, value_out, EXCHANGE_RETRY_COUNT, /*follow_override=*/true);
+HeaterController::HeatingRead HeaterController::read_back_heating_register_(const std::string &device_id,
+                                                                            HeatingFunction fn, float *value_out) {
+  return this->read_and_store_heating_register_(device_id, fn, value_out, EXCHANGE_RETRY_COUNT,
+                                                /*follow_override=*/true);
 }
 
 HeaterController::HeatingRead HeaterController::read_and_store_heating_register_(const std::string &device_id,
@@ -685,20 +728,33 @@ void HeaterController::check_heater_model(const std::string &device_id, uint8_t 
 }
 
 void HeaterController::poll_temperature_in_force_(const std::string &device_id, const HeatingProfile &profile,
-                                                  uint8_t max_tries) {
+                                                  uint8_t max_tries, InForceEmptyAnswer empty_answer) {
   const IoDevice *dev = this->registry_.get(device_id);
-  if (dev == nullptr || dev->no_temperature_in_force || !programme_period_active(profile, dev->heating))
+  if (dev == nullptr || dev->temperature_in_force == TemperatureInForceSupport::ABSENT ||
+      !programme_period_active(profile, dev->heating))
     return;
   const HeatingFunction fn = profile.programme_period->in_force_fn;
-  if (this->read_and_store_heating_register_(device_id, fn, nullptr, max_tries, /*follow_override=*/false) !=
-      HeatingRead::EMPTY)
+  const HeatingRead read =
+      this->read_and_store_heating_register_(device_id, fn, nullptr, max_tries, /*follow_override=*/false);
+  // A missed read (no reply) says nothing about the register and leaves what the heater has shown before.
+  if (read == HeatingRead::NO_ANSWER)
     return;
-  // The heater answered without a value: it has no such register. The read is not repeated until the next boot,
-  // and its targets keep writing the comfort setpoint.
   IoDevice *current = this->registry_.get(device_id);
   if (current == nullptr)
     return;
-  current->no_temperature_in_force = true;
+  if (read == HeatingRead::VALUE) {
+    current->temperature_in_force = TemperatureInForceSupport::REPORTED;
+    return;
+  }
+  // A heater that has answered with a value has the register: a later answer without one is a reading without
+  // a value, like a missed read, and the next poll asks again. A read that went partly by older readings
+  // (CHANGES_NOTHING) cannot tell a missing register from a heater outside its programme.
+  if (current->temperature_in_force == TemperatureInForceSupport::REPORTED ||
+      empty_answer == InForceEmptyAnswer::CHANGES_NOTHING)
+    return;
+  // The heater answered without a value: it has no such register. The read is not repeated until the next boot,
+  // and its targets keep writing the comfort setpoint.
+  current->temperature_in_force = TemperatureInForceSupport::ABSENT;
   ESP_LOGI(detail::TAG, "Device %s reports no temperature in force (%s): its target stays the comfort setpoint",
            device_id.c_str(), heating_function_name(fn));
 }
@@ -742,7 +798,7 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
   // The temperature in force is read only while the heater's own programme runs: outside it the register
   // holds no temperature, and the card needs no read.
   if (ok && profile.programme_period != nullptr)
-    this->poll_temperature_in_force_(device_id, profile, max_tries);
+    this->poll_temperature_in_force_(device_id, profile, max_tries, InForceEmptyAnswer::MARKS_ABSENT);
 
   // A part the heater may not have (a night light): read every poll once the core registers answered,
   // and a miss is not a poll failure (the next poll asks again).

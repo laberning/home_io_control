@@ -197,8 +197,12 @@ void IOHomeClimate::control(const climate::ClimateCall &call) {
 }
 
 HeatingWritePlan IOHomeClimate::plan_write_(const HeatingProfile &profile, const HeatingWriteRequest &request) {
-  const HeatingWritePlan plan =
-      plan_heating_write(profile, request, heating_device_facts(this->device_port_->get_device(this->device_id_)));
+  // A target on a heater with a programme asks the heater what it runs first: the heater may have changed
+  // since the last poll (its panel, a boost that ended), and the card's state is no input.
+  const bool state_answered = heating_request_reads_programme_state(profile, request) &&
+                              this->heating_port_->read_programme_state(this->device_id_);
+  const HeatingWritePlan plan = plan_heating_write(
+      profile, request, heating_device_facts(this->device_port_->get_device(this->device_id_), state_answered));
   if (!plan.is_write())
     this->log_refusal_(plan);
   return plan;
@@ -211,6 +215,18 @@ void IOHomeClimate::log_refusal_(const HeatingWritePlan &plan) const {
       break;
     case HeatingRefusal::NO_TARGET:
       ESP_LOGW(TAG, "Device %s: no target temperature known yet, set one before selecting heat",
+               this->device_id_.c_str());
+      break;
+    case HeatingRefusal::PROGRAMME_STATE_UNANSWERED:
+      ESP_LOGW(TAG,
+               "Device %s did not answer the read of its mode or timed run: the target is not written (a write "
+               "now could change the programme's comfort temperature)",
+               this->device_id_.c_str());
+      break;
+    case HeatingRefusal::IN_FORCE_UNKNOWN:
+      ESP_LOGW(TAG,
+               "Device %s did not answer the read of its temperature in force: the target is not written (a write "
+               "now could change the programme's comfort temperature)",
                this->device_id_.c_str());
       break;
     case HeatingRefusal::NO_MATCH:     // the request names nothing this profile offers: nothing to say

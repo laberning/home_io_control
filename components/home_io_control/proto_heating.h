@@ -282,10 +282,10 @@ struct HeatingReadings {
   int16_t night_light{-1};             ///< Night light 1 on / 0 off; -1 until read.
   int16_t night_light_brightness{-1};  ///< Night light brightness register, 0-10000; -1 until read.
   int16_t level{-1};                   ///< Low byte of the main parameter a status read returned: a heating level
-                                       ///< (a plain heater, and a register heater with a programme, whose poll
-                                       ///< ends with that read) or a setpoint alias. -1 until a status reply
-                                       ///< carried one, and again after a reply that carried a plain
-                                       ///< temperature. Set by the hub's status path, not by store().
+                                       ///< (a plain heater, and a register heater whose programme reports one,
+                                       ///< whose poll ends with that read) or a setpoint alias. -1 until a
+                                       ///< status reply carried one, and again after a reply that carried a
+                                       ///< plain temperature. Set by the hub's status path, not by store().
   int32_t main_parameter{-1};          ///< The raw current main parameter of a heater commanded with an EXECUTE
                                        ///< (a temperature, an alias or a level); -1 until a status reply
                                        ///< carried one. Set by the hub's status path, not by store().

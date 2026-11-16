@@ -292,6 +292,21 @@ struct StopCandidate {
   void clear() { *this = {}; }
 };
 
+/// @brief What a register heater with a programme has shown about its temperature in force in this boot.
+/// @details The hub reads that register while the programme runs (HeatingProgrammePeriod::in_force_fn). A heater
+///          that has answered it with a value has the programme's registers, so from then on a target set while
+///          the programme runs is a temporary override, even while a missed read leaves the value unknown.
+///          A target set while the programme runs and the state is UNKNOWN triggers that read first
+///          (HeaterController::read_programme_state()); only poll_temperature_in_force_() changes it.
+enum class TemperatureInForceSupport : uint8_t {
+  UNKNOWN,   ///< Not answered yet in this boot (no read, or no reply): a target while the programme runs first
+             ///< reads the register and writes nothing if the heater stays silent.
+  REPORTED,  ///< Answered with a value at least once: a target while the programme runs is an override. Kept
+             ///< until the next boot, also when a later answer carries no value.
+  ABSENT,    ///< The first answer came without a value: the heater has no such register. The hub stops reading
+             ///< it until the next boot, and a target writes the comfort setpoint.
+};
+
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
   uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
@@ -421,18 +436,18 @@ struct IoDevice {
                                  ///< line names the level even when the device reports none.
   bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every
                                  ///< exchange with it uses `system_key` below instead of the hub's key.
-  uint8_t system_key[AES_KEY_SIZE]{};   ///< The device's own key; meaningful only when `has_system_key`. Key material:
-                                        ///< never logged outside a bannered report block.
-  bool registered_by_pairing{false};    ///< Added by a pairing in this boot, not declared in YAML. The record is
-                                        ///< lost at reboot, so reports still print its YAML block, and a later
-                                        ///< pairing may replace it (DeviceRegistry::get_declared()).
-  uint8_t model_check_attempts{0};      ///< Runs of the hub's one-off model check (a heater kind with model rows:
-                                        ///< model name read, declared-model hint) so far; the check stops after
-                                        ///< it completes or after a bounded number of runs. Runtime only.
-  bool no_temperature_in_force{false};  ///< The heater answered the read of its temperature in force without a value:
-                                        ///< the hub stops reading it, and a target writes the comfort setpoint.
-                                        ///< Runtime only, until the next boot.
-  bool model_checked{false};            ///< The model check completed: both of its reads were answered.
+  uint8_t system_key[AES_KEY_SIZE]{};  ///< The device's own key; meaningful only when `has_system_key`. Key material:
+                                       ///< never logged outside a bannered report block.
+  bool registered_by_pairing{false};   ///< Added by a pairing in this boot, not declared in YAML. The record is
+                                       ///< lost at reboot, so reports still print its YAML block, and a later
+                                       ///< pairing may replace it (DeviceRegistry::get_declared()).
+  uint8_t model_check_attempts{0};     ///< Runs of the hub's one-off model check (a heater kind with model rows:
+                                       ///< model name read, declared-model hint) so far; the check stops after
+                                       ///< it completes or after a bounded number of runs. Runtime only.
+  /// What a register heater with a programme has answered to the read of its temperature in force. Runtime
+  /// only, until the next boot.
+  TemperatureInForceSupport temperature_in_force{TemperatureInForceSupport::UNKNOWN};
+  bool model_checked{false};  ///< The model check completed: both of its reads were answered.
 };
 
 /// @brief Resolve a device's capability bits and inversion from its kind and its YAML overrides.

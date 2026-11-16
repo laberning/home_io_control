@@ -34,9 +34,9 @@ period and `0xFC07` in a boost (corpus `atlantic_adelis_probe_status_mp_fp_progr
 instead worked out by comparing three registers: the temperature in force, the comfort setpoint and the
 eco setback.
 
-Home Assistant's Overkiz integration shows the level as the preset of an Atlantic radiator and then cannot
-show which automatic mode runs; for the towel dryer it uses the preset for the programme and handles boost
-and drying as special cases.
+Home Assistant's integration for the vendor's cloud shows the level as the preset of an Atlantic radiator
+and then cannot show which automatic mode runs; for the towel dryer it uses the preset for the programme
+and handles boost and drying as special cases.
 
 ## Decision
 
@@ -77,9 +77,9 @@ and drying as special cases.
 
 ## Considered options
 
-- **The level as the preset, as Home Assistant's Overkiz integration does.** Rejected: the card could no
-  longer tell PROG from AUTO on a radiator, and boost, drying and the level would compete for the slot on
-  a towel dryer.
+- **The level as the preset, as Home Assistant's integration for the vendor's cloud does.** Rejected: the
+  card could no longer tell PROG from AUTO on a radiator, and boost, drying and the level would compete
+  for the slot on a towel dryer.
 - **Keep shown-only presets and document them.** Rejected: the card offers a choice that is ignored.
 - **Keep the register comparison as the source.** Rejected: it names two levels only, needs the setback,
   and a heater with two automatic modes would need a rule per mode.

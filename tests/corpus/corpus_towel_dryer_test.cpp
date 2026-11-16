@@ -80,15 +80,18 @@ template<size_t N> HeatingReadings programme_readings(float comfort_c, const uin
   return readings;
 }
 
-/// Does a target set on a towel dryer with these readings plan a write of the override register?
+/// Does a target set on a towel dryer with these readings plan a write of the override register? The readings
+/// carry a 0x0137 reply, so the dryer has reported its temperature in force.
 bool target_overrides_programme(const HeatingReadings &readings) {
   IoDevice dev;
   dev.type = DeviceType::ELECTRICAL_HEATER;
   dev.subtype = 1;
   dev.model = DeviceModel::TOWEL_DRYER;
   dev.heating = readings;
-  const HeatingWritePlan plan = plan_heating_write(
-      *find_heating_profile(dev), {.kind = HeatingWriteKind::TARGET, .target_c = 18.0F}, heating_device_facts(&dev));
+  dev.temperature_in_force = TemperatureInForceSupport::REPORTED;
+  const HeatingWritePlan plan =
+      plan_heating_write(*find_heating_profile(dev), {.kind = HeatingWriteKind::TARGET, .target_c = 18.0F},
+                         heating_device_facts(&dev, true));
   return plan.register_fn == HeatingFunction::DEROGATED_SETPOINT && plan.temporary_override;
 }
 

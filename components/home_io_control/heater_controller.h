@@ -188,16 +188,29 @@ class HeaterController {
   /// (EXCHANGE_RETRY_COUNT tries), so the caller has applied the commanded state before the read-back
   /// notifies it. A refused plan or a rejected write sends no read-back and runs no hook. A failed
   /// read-back is already logged by read_heating_register(); the next poll finds the register again. A
-  /// temporary override (HeatingWritePlan::temporary_override) whose read-back differs from the request is
-  /// logged as a warning naming the device and both values; nothing else is written. A write that started the
-  /// heater's programme (its temperature in force not yet known) is followed by the read of the temperature in
-  /// force (poll_temperature_in_force_()), so a target set before the next poll is already an override.
+  /// temporary override (HeatingWritePlan::temporary_override) whose read-back differs from the request,
+  /// or answers without a value, is logged as a warning naming the device and the values; nothing else is
+  /// written. An unacknowledged write changes nothing.
   /// @param device_id Target device ID (hex string).
   /// @param plan The plan; one with no write (HeatingWritePlan::is_write()) is not sent.
   /// @param on_accepted Called once after an accepted write; may be empty.
   /// @return true when the device accepted the write.
   bool execute_heating_plan(const std::string &device_id, const HeatingWritePlan &plan,
                             const std::function<void()> &on_accepted);
+
+  /// @brief Ask a heater with a programme what it runs, as the first step of a target.
+  /// @details Reads the mode (EXCHANGE_RETRY_COUNT tries, the poll's read), then, while the mode shows the
+  ///          programme on a profile with a timed-run register of its own, that register
+  ///          (timed_run_register()), then the temperature in force while the heater has not answered it yet in
+  ///          this boot (TemperatureInForceSupport::UNKNOWN) and the programme runs. Every reading updates the
+  ///          device record and notifies the card, so the card shows what the write that follows is planned
+  ///          from. Stops at the first register that gets no reply or an answer without a value.
+  /// @param device_id Target device ID.
+  /// @return true when the mode, and the timed run where it matters, were answered with a value. false when
+  ///         the heater did not say, and for a device without a programme period (nothing is read). The
+  ///         temperature in force does not count: a silent heater leaves it UNKNOWN, which the plan refuses
+  ///         (HeatingRefusal::IN_FORCE_UNKNOWN).
+  bool read_programme_state(const std::string &device_id);
 
   /// @brief Set the temperature encoding range of a heater that carries a temperature in its main
   /// parameter (YAML `min_temperature:` / `max_temperature:`).
@@ -337,7 +350,8 @@ class HeaterController {
   /// @param device_id Target device ID (hex string).
   /// @param fn Register to read back.
   /// @param[out] value_out Decoded value; untouched when the read-back failed.
-  void read_back_heating_register_(const std::string &device_id, HeatingFunction fn, float *value_out);
+  /// @return What the read-back came to (read_and_store_heating_register_()).
+  HeatingRead read_back_heating_register_(const std::string &device_id, HeatingFunction fn, float *value_out);
 
   /// @brief The read and store behind read_heating_register(), read_back_heating_register_() and the poll of
   ///        the temperature in force.
@@ -446,14 +460,45 @@ class HeaterController {
   /// @return true when every poll register answered.
   bool read_poll_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
 
+  /// What an answer without a value to a read of the temperature in force may decide.
+  enum class InForceEmptyAnswer : uint8_t {
+    /// The heater has no such register (TemperatureInForceSupport::ABSENT): for a read made right after the mode
+    /// and the timed run were read, so the programme is known to run.
+    MARKS_ABSENT,
+    /// Nothing: for a read that goes partly by older readings, where the heater may run something else and
+    /// answer without a value for that reason.
+    CHANGES_NOTHING,
+  };
+
   /// @brief Read the temperature in force of a heater's programme, when the programme runs.
-  /// @details Sends nothing unless programme_period_active() holds for the readings the poll just made, and
-  ///          nothing once the heater has answered the read without a value (IoDevice::no_temperature_in_force):
-  ///          that heater has no such register, and its targets keep writing the comfort setpoint.
+  /// @details Sends nothing unless programme_period_active() holds for the stored readings, and nothing once
+  ///          the heater has answered the read without a value (TemperatureInForceSupport::ABSENT): that heater
+  ///          has no such register, and its targets keep writing the comfort setpoint. A value marks the heater
+  ///          TemperatureInForceSupport::REPORTED, which then stays for this boot: neither a read with no reply
+  ///          nor an answer without a value changes it. An answer without a value while the heater has not
+  ///          answered one yet marks it ABSENT only as @p empty_answer allows.
   /// @param device_id Target device ID.
   /// @param profile The device's profile; its programme_period must not be nullptr.
-  /// @param max_tries Transmit-attempt cap of the read (the poll's, or EXCHANGE_RETRY_COUNT after a write).
-  void poll_temperature_in_force_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
+  /// @param max_tries Transmit-attempt cap of the read (the poll's, or EXCHANGE_RETRY_COUNT before a target).
+  /// @param empty_answer Whether an answer without a value may mark the heater ABSENT.
+  void poll_temperature_in_force_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries,
+                                  InForceEmptyAnswer empty_answer);
+
+  /// @brief After an acknowledged write whose read-back shows the programme running, read the temperature in
+  ///        force once so the card's target is that temperature at once.
+  /// @details Display only. No write decision depends on this read having happened: a target still reads the
+  ///          mode, and the temperature in force only while the heater has not answered it yet
+  ///          (read_programme_state()). It follows a write of the mode or of a timed run (a boost or drying
+  ///          run ending), not a temporary override (its read-back already stores the value in force). It
+  ///          goes through poll_temperature_in_force_(), the only writer of the stored value, which sends
+  ///          nothing when the programme does not run, when the profile has no programme period or when the
+  ///          heater has answered without a value, and treats a silent answer as the poll does. An answer
+  ///          without a value changes nothing (InForceEmptyAnswer::CHANGES_NOTHING): on a towel dryer the
+  ///          register the write did not touch (mode or timed run) is the stored one, so the heater may run
+  ///          something else; the target's own read decides.
+  /// @param device_id Target device ID.
+  /// @param plan The plan that was just written and read back.
+  void show_temperature_in_force_after_write_(const std::string &device_id, const HeatingWritePlan &plan);
 
   /// @brief Read the heating level a heater applies now: the status read of the main parameter, whose reply
   ///        the hub's status decoder folds into HeatingReadings::level (apply_register_heater_status_reply()).

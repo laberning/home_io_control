@@ -226,6 +226,15 @@ class HubHeatingPort {
   virtual bool execute_heating_plan(const std::string &device_id, const HeatingWritePlan &plan,
                                     const std::function<void()> &on_accepted) = 0;
 
+  /// @brief Ask a heater with a programme what it runs: the first step of every target on it.
+  /// @details Reads the mode, the timed run on top of it where the profile has one and the programme runs, and
+  ///          the temperature in force while the heater has not answered it yet. The readings update the device
+  ///          record, so planning from it afterwards sees what the heater just said.
+  /// @param device_id Hexadecimal node ID string.
+  /// @return true when the heater answered the mode (and the timed run) with a value; false when it did not
+  ///         say what it runs, and for a device without a programme period.
+  virtual bool read_programme_state(const std::string &device_id) = 0;
+
   /// @brief Set the temperature range a heater's temperatures are encoded in.
   /// @param device_id Hexadecimal node ID string.
   /// @param min_c Lower end in degrees Celsius.

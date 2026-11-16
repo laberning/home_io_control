@@ -676,6 +676,10 @@ class IOHomeControlComponent : public Component,
                             const std::function<void()> &on_accepted) override {
     return this->heater_controller_.execute_heating_plan(device_id, plan, on_accepted);
   }
+  /// @brief Ask a heater with a programme what it runs. @see HeaterController::read_programme_state()
+  bool read_programme_state(const std::string &device_id) override {
+    return this->heater_controller_.read_programme_state(device_id);
+  }
   /// @brief Set a water heater's target temperature. @see HeaterController::set_water_heater_target()
   bool set_water_heater_target(const std::string &device_id, float celsius) override {
     return this->heater_controller_.set_water_heater_target(device_id, celsius);

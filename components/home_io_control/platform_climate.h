@@ -108,13 +108,20 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   void show_card_(const HeatingProfile &profile);
 
   /// @brief Plan one request with plan_heating_write() and log why it is no write.
+  /// @details A target on a heater with a programme first asks the heater what it runs
+  ///          (HubHeatingPort::read_programme_state()), then plans from what it said: the comfort setpoint in
+  ///          `heat` and while a boost or drying runs, an override while the programme runs and the heater
+  ///          reports a temperature in force, the comfort setpoint when it has none. A heater that does not
+  ///          answer gets no write and a warning, and the card keeps what the read showed. Every other request
+  ///          is planned without a read.
   /// @param profile The device's profile.
   /// @param request What the card asks for.
   /// @return The plan; HeatingWritePlan::is_write() false when it was refused.
   HeatingWritePlan plan_write_(const HeatingProfile &profile, const HeatingWriteRequest &request);
 
   /// @brief Log the refusal of a plan that is the user's to fix (no setpoint, no target temperature for
-  /// heat); the other refusals are silent.
+  /// heat) or that the heater's silence caused (PROGRAMME_STATE_UNANSWERED, IN_FORCE_UNKNOWN); the other refusals are
+  /// silent.
   void log_refusal_(const HeatingWritePlan &plan) const;
 
   /// @brief Apply the request's HVAC mode, if present. @return true if state was published.

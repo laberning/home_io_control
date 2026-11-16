@@ -159,7 +159,7 @@ constexpr HeatingFunction TOWEL_DRYER_BOOT[] = {
     HeatingFunction::MAX_SETPOINT,
 };
 
-/// The programme runs when the card shows auto (PROG) and no boost or drying is on top of it. The temperature
+/// The programme runs when the mode shows as auto (PROG) and no boost or drying is on top of it. The temperature
 /// in force then is the card's target, and a target set meanwhile is written to the derogation register
 /// instead of the comfort setpoint.
 /// \todo The level the status read reports in each period is captured on one unit (BD684B); a second unit
@@ -307,7 +307,7 @@ constexpr HeatingObservedState HEAT_PUMP_OBSERVED[] = {
 constexpr float TEMPERATURE_VISUAL_MIN_C = 5.0F;   ///< Lowest target the card offers for a temperature profile.
 constexpr float TEMPERATURE_VISUAL_MAX_C = 30.0F;  ///< Highest target the card offers for a temperature profile.
 
-/// The programme of a radiator runs while the card shows auto, in PROG and in AUTO alike; it has no timed run
+/// The programme of a radiator runs while its mode shows as auto, in PROG and in AUTO alike; it has no timed run
 /// on top. The temperature in force is register 0x012A, a target set meanwhile goes to the override register.
 /// \todo Experimental: neither 0x012A nor 0x011D has been read or written on an AGILIA, Hekla or EMOTION 3 H.
 ///       Confirm both on a radiator. A heater that answers the read empty keeps the comfort-setpoint write.
@@ -567,18 +567,33 @@ const HeatingObservedState *find_observed_preset(const HeatingProfile &profile, 
 
 // === Programme period ===
 
-bool programme_period_active(const HeatingProfile &profile, const HeatingReadings &readings) {
-  const HeatingProgrammePeriod *period = profile.programme_period;
-  if (period == nullptr)
-    return false;
-  // value_of() is -1 for an unread register: no observed row, and never an idle value.
+namespace {
+
+/// @return Whether the mode register, as read, shows the programme (a mode the card shows as `auto`).
+bool mode_shows_programme(const HeatingProfile &profile, const HeatingReadings &readings) {
+  // value_of() is -1 for an unread register, and a value the table does not know has no row: neither is the
+  // programme.
   const int16_t mode = readings.value_of(profile.mode_fn);
   const HeatingObservedState *shown = mode >= 0 ? find_observed_state(profile, static_cast<uint8_t>(mode)) : nullptr;
-  if (shown == nullptr || shown->hvac != HeatingHvacMode::AUTO)
+  return shown != nullptr && shown->hvac == HeatingHvacMode::AUTO;
+}
+
+}  // namespace
+
+bool programme_period_active(const HeatingProfile &profile, const HeatingReadings &readings) {
+  const HeatingProgrammePeriod *period = profile.programme_period;
+  if (period == nullptr || !mode_shows_programme(profile, readings))
     return false;
   // A profile that keeps boost and drying in a register of its own runs the programme only with none on top.
   return profile.preset_observed.empty() ||
          readings.value_of(profile.preset_fn) == static_cast<int16_t>(period->idle_preset_state);
+}
+
+std::optional<HeatingFunction> timed_run_register(const HeatingProfile &profile, const HeatingReadings &readings) {
+  if (profile.programme_period == nullptr || profile.preset_observed.empty() ||
+      !mode_shows_programme(profile, readings))
+    return std::nullopt;
+  return profile.preset_fn;
 }
 
 float programme_temperature_in_force(const HeatingProfile &profile, const HeatingReadings &readings) {
@@ -693,6 +708,13 @@ HeatingWritePlan plan_target_write(const HeatingProfile &profile, const HeatingW
       return refused(HeatingRefusal::UNENCODABLE);
     return plan_temperature_write(main_parameter, profile.setpoint_fp);
   }
+  // A heater that did not say what it runs gets no target: the register it belongs in is not known.
+  if (profile.programme_period != nullptr && !facts.programme_state_answered)
+    return refused(HeatingRefusal::PROGRAMME_STATE_UNANSWERED);
+  // Before the heater has answered the read of its temperature in force, an override and a comfort write are
+  // both guesses.
+  if (facts.in_force_unresolved && profile.programme_period != nullptr)
+    return refused(HeatingRefusal::IN_FORCE_UNKNOWN);
   // While the programme runs the target is a temporary override that holds until the programme's next change;
   // in any other mode it is the comfort setpoint.
   const bool override_programme = facts.programme_runs && profile.programme_period != nullptr;
@@ -710,8 +732,13 @@ HeatingWritePlan plan_target_write(const HeatingProfile &profile, const HeatingW
 
 }  // namespace
 
-HeatingDeviceFacts heating_device_facts(const IoDevice *dev) {
+bool heating_request_reads_programme_state(const HeatingProfile &profile, const HeatingWriteRequest &request) {
+  return request.kind == HeatingWriteKind::TARGET && profile.programme_period != nullptr;
+}
+
+HeatingDeviceFacts heating_device_facts(const IoDevice *dev, bool programme_state_answered) {
   HeatingDeviceFacts facts;
+  facts.programme_state_answered = programme_state_answered;
   if (dev == nullptr)
     return facts;
   facts.has_record = true;
@@ -719,7 +746,11 @@ HeatingDeviceFacts heating_device_facts(const IoDevice *dev) {
   facts.range_max_c = dev->temperature_range_max_c;
   facts.reported_setpoint_c = dev->heating.setpoint_c;
   const HeatingProfile *profile = find_heating_profile(*dev);
-  facts.programme_runs = profile != nullptr && !std::isnan(programme_temperature_in_force(*profile, dev->heating));
+  // A heater that has reported its temperature in force has the programme's registers: a read missed since
+  // (no reply, or the programme just resumed) leaves the value unknown but not the rule.
+  const bool programme_shown = profile != nullptr && programme_period_active(*profile, dev->heating);
+  facts.programme_runs = programme_shown && dev->temperature_in_force == TemperatureInForceSupport::REPORTED;
+  facts.in_force_unresolved = programme_shown && dev->temperature_in_force == TemperatureInForceSupport::UNKNOWN;
   return facts;
 }
 
