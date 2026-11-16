@@ -500,3 +500,27 @@ TEST(HeatingCard, TheRegisterAndLevelProfilesHaveBeenRunOnHardware) {
   unconfirmed_writes.experimental_writes = true;
   EXPECT_EQ(heating_hardware_status(&unconfirmed_writes), HeatingHardwareStatus::WRITES_EXPERIMENTAL);
 }
+
+// === The target of a radiator in auto is the temperature in force ===
+
+TEST(HeatingCard, ARadiatorInProgOrAutoShowsTheTemperatureInForceAsItsTargetAndInHeatTheComfortSetpoint) {
+  for (const HeatingMode mode : {HeatingMode::PROG, HeatingMode::AUTO}) {
+    HeatingReadings readings;
+    readings.mode = static_cast<int16_t>(mode);
+    readings.setpoint_c = 19.0F;
+    readings.in_force_temperature_c = 16.5F;
+    const HeatingCardState card = reduced(radiator(), readings);
+    EXPECT_EQ(card.mode, HeatingHvacMode::AUTO);
+    EXPECT_FLOAT_EQ(card.target_c, 16.5F) << static_cast<int>(mode);
+  }
+  HeatingReadings heat;
+  heat.mode = static_cast<int16_t>(HeatingMode::MANUAL);
+  heat.setpoint_c = 19.0F;
+  heat.in_force_temperature_c = 16.5F;  // a stale value is never shown outside the programme
+  EXPECT_FLOAT_EQ(reduced(radiator(), heat).target_c, 19.0F);
+
+  HeatingReadings silent;
+  silent.mode = static_cast<int16_t>(HeatingMode::PROG);
+  silent.setpoint_c = 19.0F;
+  EXPECT_FLOAT_EQ(reduced(radiator(), silent).target_c, 19.0F) << "a heater without the register: today's target";
+}

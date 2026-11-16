@@ -101,6 +101,9 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
     // Read during a panel override on a towel dryer (issue #202): 16.5 degrees, 0 otherwise.
     {"set_derogation", HeatingFunction::DEROGATED_SETPOINT, 0x1D, HeatingAccess::READ_WRITE,
      HeatingValueKind::TENTHS_U16_OR_ZERO},
+    // Not read on any radiator yet; the same temperature as 0x0137 on a towel dryer, which read it in both.
+    {"heater_temperature_in_force", HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, 0x2A, HeatingAccess::READ_ONLY,
+     HeatingValueKind::TENTHS_U16},
     // Night light registers: read on a Sauter Hekla with the light on and off (issue #222).
     {"night_light", HeatingFunction::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, HeatingValueKind::BINARY},
     {"night_light_brightness", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 0x42, HeatingAccess::READ_WRITE,
@@ -332,6 +335,7 @@ constexpr HeatingReadingField HEATING_READING_FIELDS[] = {
     {HeatingFunction::SET_TEMPERATURE, &HeatingReadings::setpoint_c, nullptr},
     {HeatingFunction::MAX_SETPOINT, &HeatingReadings::max_setpoint_c, nullptr},
     {HeatingFunction::TEMPERATURE_IN_FORCE, &HeatingReadings::in_force_temperature_c, nullptr},
+    {HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, &HeatingReadings::in_force_temperature_c, nullptr},
     {HeatingFunction::ECO_SETBACK, &HeatingReadings::eco_setback_k, nullptr},
     {HeatingFunction::DEROGATED_SETPOINT, &HeatingReadings::derogated_setpoint_c, nullptr},
     {HeatingFunction::SET_MODE, nullptr, &HeatingReadings::mode},

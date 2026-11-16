@@ -52,10 +52,13 @@ and drying as special cases.
   `secured`, and no state until the heater has reported a level. It follows the precedent of the water
   heater's `heating_source:` sensor
   ([ADR 0090](0090-a-water-heaters-modes-are-chosen-by-what-heats.md)).
-- **The status read is the one source of the level, on every heater kind.** A register heater with a
-  programme gets one status read at the end of every poll, in every mode, whether or not the sensor is
-  configured. What a heater is polled for depends on its profile alone, never on which entities the YAML
-  declares, so the device record is the same for every configuration and each poll has one tested path.
+- **The status read is the one source of the level, on every heater kind.** A register heater whose
+  programme is known to report a level gets one status read at the end of every poll, in every mode,
+  whether or not the sensor is configured. The profile's programme says whether it reports one: the towel
+  dryer does (corpus captures above); the Atlantic radiator family does not until a radiator has answered
+  the read, so it spends no exchange on a request no radiator is known to answer. What a heater is polled
+  for depends on its profile alone, never on which entities the YAML declares, so the device record is the
+  same for every configuration and each poll has one tested path.
 - **The comparison of temperature in force, comfort setpoint and setback is removed**, with the setback
   read. The card's target in the programme still shows the temperature in force.
 
@@ -63,7 +66,9 @@ and drying as special cases.
 
 - An automation that tests a towel dryer's preset for `comfort` or `eco` stops matching; it reads the
   `heating_level` sensor instead. The display was experimental.
-- A register heater with a programme costs one more authenticated exchange per poll.
+- A register heater whose programme reports a level costs one more authenticated exchange per poll.
+- A radiator's `heating_level` sensor stays without a state; one profile flag enables the read once a
+  radiator is shown to answer it.
 - The sensor stays without a state on a heater that reports no level, such as the Thermor pilot-wire
   interface ([issue #228](https://github.com/laberning/home_io_control/issues/228)).
 - What the status read answers during a temporary override and during a drying run has not been captured;

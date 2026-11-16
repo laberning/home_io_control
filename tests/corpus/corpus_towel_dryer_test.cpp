@@ -80,6 +80,18 @@ template<size_t N> HeatingReadings programme_readings(float comfort_c, const uin
   return readings;
 }
 
+/// Does a target set on a towel dryer with these readings plan a write of the override register?
+bool target_overrides_programme(const HeatingReadings &readings) {
+  IoDevice dev;
+  dev.type = DeviceType::ELECTRICAL_HEATER;
+  dev.subtype = 1;
+  dev.model = DeviceModel::TOWEL_DRYER;
+  dev.heating = readings;
+  const HeatingWritePlan plan = plan_heating_write(
+      *find_heating_profile(dev), {.kind = HeatingWriteKind::TARGET, .target_c = 18.0F}, heating_device_facts(&dev));
+  return plan.register_fn == HeatingFunction::DEROGATED_SETPOINT && plan.temporary_override;
+}
+
 }  // namespace
 
 TEST(CorpusTowelDryer, TheStatusReadNamesTheProgrammePeriodAsAHeatingLevel) {
@@ -136,12 +148,12 @@ TEST(CorpusTowelDryer, TheProgrammeTargetIsTheTemperatureInForceInBothPeriods) {
   HeatingReadings comfort = programme_readings(20.0F, corpus::atlantic_adelis_probe_temperature_in_force_frame0_bytes);
   comfort.level = device_after_status(corpus::atlantic_adelis_probe_status_mp_fp_programme_frame0_bytes).heating.level;
   EXPECT_FLOAT_EQ(programme_temperature_in_force(profile, comfort), 20.0F);
-  EXPECT_FALSE(programme_in_eco_period(profile, comfort));
+  EXPECT_TRUE(target_overrides_programme(comfort)) << "a target set in a comfort period is an override too";
 
   HeatingReadings eco = programme_readings(20.0F, corpus::atlantic_adelis_probe_temperature_in_force_frame1_bytes);
   eco.level = device_after_status(corpus::atlantic_adelis_probe_status_mp_fp_programme_frame2_bytes).heating.level;
   EXPECT_FLOAT_EQ(programme_temperature_in_force(profile, eco), 16.5F);
-  EXPECT_TRUE(programme_in_eco_period(profile, eco)) << "a target set now becomes an override of the eco temperature";
+  EXPECT_TRUE(target_overrides_programme(eco)) << "a target set in an eco period is an override";
 }
 
 TEST(CorpusTowelDryer, TheRegisterIsNoTemperatureInBoostOrDryingAndTheProfileNeverShowsIt) {

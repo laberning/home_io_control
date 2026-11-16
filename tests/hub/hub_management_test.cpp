@@ -739,23 +739,48 @@ TEST(HubManagement, HeatingControlSetDerogationWritesTheOverrideAndZeroCancelsIt
   }
 }
 
-TEST(HubManagement, HeatingControlSetDerogationRejectsABadValueAndAProfileWithoutProgrammePeriods) {
+TEST(HubManagement, HeatingControlSetDerogationRejectsABadValueAndAProfileWithoutAProgramme) {
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
   make_climate_device(component);
+  IoDevice *dev = component.get_device("ABC123");
 
+  // A plain heater commanded with levels has no programme registers.
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 0);
   auto result = component.management_actions_.heating_control("ABC123", "set_derogation", "17.5");
   EXPECT_FALSE(result.success);
-  EXPECT_EQ(result.message, "device has no programme periods, so set_derogation does not apply");
+  EXPECT_EQ(result.message, "device is commanded with heating levels, not private registers");
 
-  component.get_device("ABC123")->model = DeviceModel::TOWEL_DRYER;
-  result = component.management_actions_.heating_control("ABC123", "set_derogation", "5");
-  EXPECT_FALSE(result.success);
-  EXPECT_EQ(result.message, "temperature must be between 7.0 and 28.0");
-  result = component.management_actions_.heating_control("ABC123", "set_derogation", "warm");
-  EXPECT_FALSE(result.success);
+  // The heater with an adjustable setpoint has a programme, so it takes the override like the towel dryer.
+  for (const DeviceModel model : {DeviceModel::NONE, DeviceModel::TOWEL_DRYER}) {
+    test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
+    dev->model = model;
+    result = component.management_actions_.heating_control("ABC123", "set_derogation", "5");
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.message, "temperature must be between 7.0 and 28.0");
+    result = component.management_actions_.heating_control("ABC123", "set_derogation", "warm");
+    EXPECT_FALSE(result.success);
+  }
   EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, HeatingControlSetDerogationZeroCancelsTheOverrideOnARadiator) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  test::set_kind(*component.get_device("ABC123"), DeviceType::ELECTRICAL_HEATER, 1);
+  radio.queue_rx(frame_to_packet(make_write_private_ack(component.node_id_)));
+
+  const auto result = component.management_actions_.heating_control("ABC123", "set_derogation", "0");
+
+  EXPECT_TRUE(result.success);
+  ASSERT_EQ(radio.get_sent_data().size(), 1u);
+  const auto &tx = radio.get_sent_data().front();
+  const std::vector<uint8_t> expected = {0x0C, 0x61, 0x01, 0x1D, 0x00, 0x00};
+  for (size_t i = 0; i < expected.size(); i++)
+    EXPECT_EQ(tx[9 + i], expected[i]) << "payload byte " << i;
 }
 
 TEST(HubManagement, HeatingControlReportsFailureWithoutAck) {

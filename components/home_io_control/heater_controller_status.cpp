@@ -58,8 +58,8 @@ void apply_register_heater_status_reply(const std::string &id, IoDevice &dev, co
                                                     frame.data[STATUS_MP_FP_MAIN_PARAMETER_OFFSET + 1]);
   uint8_t level = 0;
   if (!decode_heating_level(main_parameter, level)) {
-    // Not a level: the stored level is forgotten, so the write plan no longer counts on an eco period. The
-    // heating_level sensor keeps what it last showed (a text sensor cannot go back to no state).
+    // Not a level: the stored level is forgotten. The heating_level sensor keeps what it last showed (a text
+    // sensor cannot go back to no state).
     ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%04X is not a heating level", id.c_str(), main_parameter);
     dev.heating.level = -1;
     return;

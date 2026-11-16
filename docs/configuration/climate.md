@@ -82,6 +82,38 @@ below.
   setpoint shows its program mode as `auto` with the `Program` preset, its AUTO mode as `auto` with
   the `Auto` preset, and its external mode as `heat`. Open-window detection is read once, at the
   first poll, so a change made at the heater's panel appears after a reboot.
+- While a heater with an adjustable setpoint or a towel dryer shows `auto`, a target from Home Assistant
+  is a temporary override: it holds until the heater's program changes next, and the program's comfort
+  temperature stays as it is. In `heat` a target is the comfort temperature. The card shows the
+  temperature the heater holds right now as the target while it shows `auto`. The section "Temporary
+  override in `auto`" below has the detail.
+
+## Temporary override in `auto`
+
+*Experimental: no towel dryer and no radiator has confirmed the override write yet.*
+
+A heater with its own weekly program shows `auto` while that program runs: PROG on a towel dryer,
+PROG and AUTO on a heater with an adjustable setpoint such as the AGILIA IO, Sauter Hekla or Thermor
+EMOTION 3 H. Home Assistant shows the heater's own program as `auto`, so the card treats a target in
+`auto` as a change for now:
+
+- **In `auto`** a target is written to the heater's override register (`0x011D`) and read back. It holds
+  until the program's next change, and the program's comfort temperature is not touched, in a comfort
+  period as well as in an eco period.
+- **In `heat`** a target is the comfort temperature, as on the heater's own display.
+- **The card's target in `auto`** is the temperature the heater holds right now, read at every poll
+  (register `0x0137` on a towel dryer, `0x012A` on a heater with an adjustable setpoint).
+- **A heater that does not hold the register** answers the read without a value. The hub then stops
+  asking until the next restart, the card's target stays the comfort temperature and a target writes
+  the comfort temperature.
+- **A heater that refuses the override** is logged as a warning with the device id and both values.
+  Nothing else is written, and the next poll shows what the heater holds.
+- **To end an override early**, call the `heating_control` action (section "The `heating_control` action" below) with
+  `set_derogation` and `0`. An override also ends by itself, as the heater decides. Home Assistant sends
+  no call when you select the mode the card already shows, so `auto` on the card cannot end it.
+
+To change a program's comfort temperature, select `heat`, set the target there, and select `auto`
+again, or change it on the heater.
 
 ## Towel dryers
 
@@ -120,11 +152,12 @@ reads its maximum setpoint. Boost and drying run for the duration set on the dis
 
 While the mode is PROG and no boost or drying runs, each poll adds a read of the temperature the
 dryer holds right now. The card then shows that temperature as the target. Setting a target from Home
-Assistant writes the comfort setpoint, or, in an eco period, a temporary override that ends at the next
-comfort period. In a comfort period the target follows a new setpoint at once; the dryer's own reading
-replaces it at the next poll. Which period runs is the dryer's level, which the
-heating level sensor shows as `comfort` or `eco`. This is experimental: it
-was read on one unit, in one comfort period and one eco period; the
+Assistant is a temporary override that holds until the program's next change, in a comfort period and
+in an eco period alike (section "Temporary override in `auto`" above); the dryer's own
+reading replaces the shown target at the next poll. The period that runs is the dryer's level, which
+the heating level sensor shows as `comfort` or `eco`. This is experimental: the level was read on one
+unit, in one comfort period and one eco period, and no override write has been confirmed in a comfort
+period; the
 [Atlantic Adelis page](../devices/atlantic-adelis.md#modes-and-presets-in-home-assistant) has the detail.
 
 Without `io_model:` a towel dryer runs as a radiator: the target and the room temperature work, but
@@ -313,7 +346,7 @@ the heater took the frame, and the climate entity reads the register back to sho
 |---|---|---|
 | `power_on` | *(ignored)* | Wake / retrieve paired devices. |
 | `set_temperature` | float °C, `7.0`–`28.0` | Setpoint. |
-| `set_derogation` | float °C, `7.0`–`28.0`, or `0` | Towel dryer in its program: a temporary override of the eco temperature that ends at the next comfort period (register `0x011D`); `0` cancels it. Experimental, not yet confirmed on a dryer. Refused on heaters without program periods. |
+| `set_derogation` | float °C, `7.0`–`28.0`, or `0` | A temporary override of the program (register `0x011D`) on a towel dryer or a heater with an adjustable setpoint: it holds until the program's next change; `0` cancels it. Experimental, see the section "Temporary override in `auto`" above. Refused on heaters without a program. |
 | `set_mode` | `auto` \| `manual` \| `prog` \| `off` | Operating mode. |
 | `set_presence` | `on` \| `off` | Presence / absence. The AGILIA IO acknowledges it; no visible effect observed. |
 | `set_open_window_detection` | `on` \| `off` | Switches the heater's open-window detection on or off (register `0x0106`). |

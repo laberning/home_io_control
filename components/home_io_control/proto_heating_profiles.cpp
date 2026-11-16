@@ -159,15 +159,17 @@ constexpr HeatingFunction TOWEL_DRYER_BOOT[] = {
     HeatingFunction::MAX_SETPOINT,
 };
 
-/// The programme runs when the mode register reads PROG and no boost or drying is on top of it. The
-/// temperature in force then is the card's target. A target set in an eco period is written to the
-/// derogation register instead of the comfort setpoint.
+/// The programme runs when the card shows auto (PROG) and no boost or drying is on top of it. The temperature
+/// in force then is the card's target, and a target set meanwhile is written to the derogation register
+/// instead of the comfort setpoint.
 /// \todo The level the status read reports in each period is captured on one unit (BD684B); a second unit
 ///       confirms it. Until then the level sensor is experimental.
 constexpr HeatingProgrammePeriod TOWEL_DRYER_PROGRAMME_PERIOD = {
-    static_cast<uint8_t>(TowelDryerMode::PROG), static_cast<uint8_t>(HeatingTemporaryState::NONE),
-    HeatingFunction::TEMPERATURE_IN_FORCE,      HeatingFunction::SET_TEMPERATURE,
-    HeatingFunction::DEROGATED_SETPOINT,
+    .in_force_fn = HeatingFunction::TEMPERATURE_IN_FORCE,
+    .comfort_fn = HeatingFunction::SET_TEMPERATURE,
+    .derogation_fn = HeatingFunction::DEROGATED_SETPOINT,
+    .reports_level = true,
+    .idle_preset_state = static_cast<uint8_t>(HeatingTemporaryState::NONE),
 };
 
 // === Plain electrical heater (52/0): heating levels ===
@@ -305,6 +307,16 @@ constexpr HeatingObservedState HEAT_PUMP_OBSERVED[] = {
 constexpr float TEMPERATURE_VISUAL_MIN_C = 5.0F;   ///< Lowest target the card offers for a temperature profile.
 constexpr float TEMPERATURE_VISUAL_MAX_C = 30.0F;  ///< Highest target the card offers for a temperature profile.
 
+/// The programme of a radiator runs while the card shows auto, in PROG and in AUTO alike; it has no timed run
+/// on top. The temperature in force is register 0x012A, a target set meanwhile goes to the override register.
+/// \todo Experimental: neither 0x012A nor 0x011D has been read or written on an AGILIA, Hekla or EMOTION 3 H.
+///       Confirm both on a radiator. A heater that answers the read empty keeps the comfort-setpoint write.
+constexpr HeatingProgrammePeriod SETPOINT_HEATER_PROGRAMME_PERIOD = {
+    .in_force_fn = HeatingFunction::HEATER_TEMPERATURE_IN_FORCE,
+    .comfort_fn = HeatingFunction::SET_TEMPERATURE,
+    .derogation_fn = HeatingFunction::DEROGATED_SETPOINT,
+};
+
 /// The electrical heater with an adjustable setpoint (52/1), the AGILIA radiator: a table row, and the
 /// base of the model that adds a night light.
 constexpr HeatingProfile SETPOINT_HEATER_PROFILE = {
@@ -316,6 +328,7 @@ constexpr HeatingProfile SETPOINT_HEATER_PROFILE = {
     .modes = SETPOINT_HEATER_MODES,
     .visual_min_c = HEATING_TEMP_MIN_C,
     .visual_max_c = HEATING_TEMP_MAX_C,
+    .programme_period = &SETPOINT_HEATER_PROGRAMME_PERIOD,
     .presets = SETPOINT_HEATER_PRESETS,
     .observed = SETPOINT_HEATER_OBSERVED,
     .poll_registers = SETPOINT_HEATER_POLL,
@@ -558,30 +571,20 @@ bool programme_period_active(const HeatingProfile &profile, const HeatingReading
   const HeatingProgrammePeriod *period = profile.programme_period;
   if (period == nullptr)
     return false;
-  // value_of() is -1 for an unread register, which never equals a (non-negative) register value.
-  const auto is_value = [&readings](HeatingFunction fn, uint8_t value) {
-    return readings.value_of(fn) == static_cast<int16_t>(value);
-  };
-  return is_value(profile.mode_fn, period->programme_mode) && is_value(profile.preset_fn, period->idle_preset_state);
+  // value_of() is -1 for an unread register: no observed row, and never an idle value.
+  const int16_t mode = readings.value_of(profile.mode_fn);
+  const HeatingObservedState *shown = mode >= 0 ? find_observed_state(profile, static_cast<uint8_t>(mode)) : nullptr;
+  if (shown == nullptr || shown->hvac != HeatingHvacMode::AUTO)
+    return false;
+  // A profile that keeps boost and drying in a register of its own runs the programme only with none on top.
+  return profile.preset_observed.empty() ||
+         readings.value_of(profile.preset_fn) == static_cast<int16_t>(period->idle_preset_state);
 }
 
 float programme_temperature_in_force(const HeatingProfile &profile, const HeatingReadings &readings) {
   if (!programme_period_active(profile, readings))
     return NAN;
   return readings.temperature_of(profile.programme_period->in_force_fn);
-}
-
-bool programme_in_eco_period(const HeatingProfile &profile, const HeatingReadings &readings) {
-  return programme_period_active(profile, readings) && readings.level == static_cast<int16_t>(heating_level::ECO);
-}
-
-std::optional<float> in_force_after_comfort_change(const HeatingProfile &profile, const HeatingReadings &before,
-                                                   float new_comfort_c) {
-  // Only a comfort period heats to the comfort setpoint itself. In any other period (an eco period heats to a
-  // temperature below it, an override to its own) the temperature in force is left to the next read.
-  if (programme_period_active(profile, before) && before.level == static_cast<int16_t>(heating_level::COMFORT))
-    return new_comfort_c;
-  return std::nullopt;
 }
 
 void clear_inactive_programme_reading(const HeatingProfile &profile, HeatingReadings &readings) {
@@ -690,13 +693,14 @@ HeatingWritePlan plan_target_write(const HeatingProfile &profile, const HeatingW
       return refused(HeatingRefusal::UNENCODABLE);
     return plan_temperature_write(main_parameter, profile.setpoint_fp);
   }
-  // In an eco period the target is a temporary override that ends at the next comfort period; anywhere else
-  // it is the comfort setpoint.
-  const HeatingFunction target_fn = facts.programme_in_eco_period && profile.programme_period != nullptr
-                                        ? profile.programme_period->derogation_fn
-                                        : HeatingFunction::SET_TEMPERATURE;
+  // While the programme runs the target is a temporary override that holds until the programme's next change;
+  // in any other mode it is the comfort setpoint.
+  const bool override_programme = facts.programme_runs && profile.programme_period != nullptr;
+  const HeatingFunction target_fn =
+      override_programme ? profile.programme_period->derogation_fn : HeatingFunction::SET_TEMPERATURE;
   HeatingWritePlan plan;
   plan.kind = HeatingPlanKind::REGISTER;
+  plan.temporary_override = override_programme;
   plan.register_fn = target_fn;
   plan.register_value = request.target_c;
   plan.read_back = true;
@@ -715,8 +719,17 @@ HeatingDeviceFacts heating_device_facts(const IoDevice *dev) {
   facts.range_max_c = dev->temperature_range_max_c;
   facts.reported_setpoint_c = dev->heating.setpoint_c;
   const HeatingProfile *profile = find_heating_profile(*dev);
-  facts.programme_in_eco_period = profile != nullptr && programme_in_eco_period(*profile, dev->heating);
+  facts.programme_runs = profile != nullptr && !std::isnan(programme_temperature_in_force(*profile, dev->heating));
   return facts;
+}
+
+namespace {
+/// The override register holds tenths of a degree, so two values closer than half a tenth are the same value.
+constexpr float OVERRIDE_TOLERANCE_C = 0.05F;
+}  // namespace
+
+bool heating_override_taken(float requested_c, float read_back_c) {
+  return !std::isnan(read_back_c) && std::fabs(requested_c - read_back_c) < OVERRIDE_TOLERANCE_C;
 }
 
 HeatingWritePlan plan_heating_write(const HeatingProfile &profile, const HeatingWriteRequest &request,

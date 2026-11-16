@@ -686,23 +686,41 @@ TEST(HeatingProfilesTowelDryer, TheProgrammePeriodNamesTheRegistersOfTheProgramm
   const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
   ASSERT_NE(p.programme_period, nullptr);
   const HeatingProgrammePeriod &period = *p.programme_period;
-  EXPECT_EQ(period.programme_mode, static_cast<uint8_t>(TowelDryerMode::PROG));
   EXPECT_EQ(period.idle_preset_state, static_cast<uint8_t>(HeatingTemporaryState::NONE));
   EXPECT_EQ(period.in_force_fn, HeatingFunction::TEMPERATURE_IN_FORCE);
   EXPECT_EQ(period.comfort_fn, HeatingFunction::SET_TEMPERATURE) << "the register the card writes";
-  EXPECT_EQ(period.derogation_fn, HeatingFunction::DEROGATED_SETPOINT) << "an eco-period target is written here";
+  EXPECT_EQ(period.derogation_fn, HeatingFunction::DEROGATED_SETPOINT) << "a target set in auto is written here";
+  EXPECT_TRUE(period.reports_level) << "the dryer answers the status read with its level";
   for (const HeatingPresetEntry &preset : p.presets) {
     EXPECT_NE(preset.id, HeatingPresetId::COMFORT) << "the period is shown by the level sensor, not a preset";
     EXPECT_NE(preset.id, HeatingPresetId::ECO);
   }
 }
 
-TEST(HeatingProfilesTowelDryer, OnlyTheTowelDryerHasAProgrammePeriod) {
-  EXPECT_EQ(find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE)->programme_period, nullptr);
+namespace {
+const HeatingProfile &towel();
+}  // namespace
+
+TEST(HeatingProfilesProgramme, TheRadiatorFamilyNamesItsOwnRegistersAndTheModelsInheritThem) {
+  const HeatingProfile *radiator = find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
+  ASSERT_NE(radiator->programme_period, nullptr);
+  EXPECT_EQ(radiator->programme_period->in_force_fn, HeatingFunction::HEATER_TEMPERATURE_IN_FORCE);
+  EXPECT_EQ(radiator->programme_period->comfort_fn, HeatingFunction::SET_TEMPERATURE);
+  EXPECT_EQ(radiator->programme_period->derogation_fn, HeatingFunction::DEROGATED_SETPOINT);
+  EXPECT_FALSE(radiator->programme_period->reports_level)
+      << "no radiator has answered the status read with a level, so none is asked";
   EXPECT_EQ(find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT)->programme_period,
-            nullptr);
+            radiator->programme_period);
+  EXPECT_NE(radiator->programme_period, towel().programme_period);
+}
+
+TEST(HeatingProfilesProgramme, ProfilesWithoutAProgrammeHaveNoPeriod) {
   EXPECT_EQ(find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE)->programme_period, nullptr);
+  EXPECT_EQ(find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE)->programme_period,
+            nullptr);
   EXPECT_EQ(find_heating_profile(DeviceType::HEAT_PUMP, 0, DeviceModel::NONE)->programme_period, nullptr);
+  EXPECT_EQ(find_heating_profile(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0, DeviceModel::NONE)->programme_period,
+            nullptr);
 }
 
 namespace {
@@ -743,59 +761,44 @@ TEST(HeatingProfilesTowelDryer, WithoutTheTemperatureInForceThereIsNoTargetToSho
   EXPECT_TRUE(std::isnan(programme_temperature_in_force(towel(), r))) << "the programme runs, it is just not read yet";
 }
 
-TEST(HeatingProfilesTowelDryer, TheProgrammeIsInAnEcoPeriodWhenTheStatusReadReportsTheEcoLevel) {
-  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F);
-  EXPECT_FALSE(programme_in_eco_period(towel(), r)) << "the level has not been read";
-  r.level = heating_level::ECO;
-  EXPECT_TRUE(programme_in_eco_period(towel(), r));
-  r.level = heating_level::COMFORT;
-  EXPECT_FALSE(programme_in_eco_period(towel(), r));
-  r.level = heating_level::ECO;
-  r.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
-  EXPECT_FALSE(programme_in_eco_period(towel(), r)) << "outside the programme no period runs";
-  r.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
-  r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::BOOST);
-  EXPECT_FALSE(programme_in_eco_period(towel(), r)) << "a timed run is on top";
-  EXPECT_FALSE(programme_in_eco_period(*find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE), r))
-      << "a profile without a programme period has none";
+// --- the programme runs while the card shows auto -------------------------------------------
+
+namespace {
+
+/// A radiator's readings: the mode register and the temperature in force.
+HeatingReadings radiator_readings(HeatingMode mode, float in_force_c) {
+  HeatingReadings r;
+  r.mode = static_cast<int16_t>(mode);
+  r.setpoint_c = 20.0F;
+  r.in_force_temperature_c = in_force_c;
+  return r;
 }
 
-// --- the temperature in force follows a comfort change -------------------------------------
-
-TEST(HeatingProfilesTowelDryer, AComfortPeriodFollowsTheNewComfortSetpoint) {
-  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
-  r.level = heating_level::COMFORT;
-  const std::optional<float> shifted = in_force_after_comfort_change(towel(), r, 21.5F);
-  ASSERT_TRUE(shifted.has_value());
-  EXPECT_FLOAT_EQ(*shifted, 21.5F);
+const HeatingProfile &radiator_profile() {
+  return *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
 }
 
-TEST(HeatingProfilesTowelDryer, NothingIsShiftedInAnyOtherPeriodOrWithoutALevel) {
-  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F);
-  EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 19.0F).has_value()) << "no level read yet";
-  for (const uint8_t level : {heating_level::ECO, heating_level::BOOST, heating_level::FROST_PROTECTION}) {
-    r.level = level;
-    EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 19.0F).has_value())
-        << "the next read of the register says what the heater holds, level " << +level;
+}  // namespace
+
+TEST(HeatingProfilesProgramme, ARadiatorRunsItsProgrammeInProgAndInAutoButNotInManualOffOrExternal) {
+  for (const HeatingMode mode : {HeatingMode::PROG, HeatingMode::AUTO}) {
+    const HeatingReadings r = radiator_readings(mode, 17.5F);
+    EXPECT_TRUE(programme_period_active(radiator_profile(), r)) << static_cast<int>(mode);
+    EXPECT_FLOAT_EQ(programme_temperature_in_force(radiator_profile(), r), 17.5F) << static_cast<int>(mode);
   }
-}
-
-TEST(HeatingProfilesTowelDryer, NothingIsShiftedOutsideTheProgramme) {
-  for (const TowelDryerMode mode : {TowelDryerMode::MANUAL, TowelDryerMode::OFF}) {
-    HeatingReadings r = towel_readings(mode, HeatingTemporaryState::NONE, 20.0F);
-    r.level = heating_level::COMFORT;
-    EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 21.0F).has_value());
+  for (const HeatingMode mode : {HeatingMode::MANUAL, HeatingMode::OFF, HeatingMode::EXTERNAL_SETPOINT}) {
+    const HeatingReadings r = radiator_readings(mode, 17.5F);
+    EXPECT_FALSE(programme_period_active(radiator_profile(), r)) << static_cast<int>(mode);
+    EXPECT_TRUE(std::isnan(programme_temperature_in_force(radiator_profile(), r))) << static_cast<int>(mode);
   }
-  HeatingReadings boost = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::BOOST, 20.0F);
-  boost.level = heating_level::COMFORT;
-  EXPECT_FALSE(in_force_after_comfort_change(towel(), boost, 21.0F).has_value()) << "a timed run is on top";
+  HeatingReadings unread;
+  EXPECT_FALSE(programme_period_active(radiator_profile(), unread)) << "an unread mode is not the programme";
 }
 
-TEST(HeatingProfilesTowelDryer, AProfileWithoutAProgrammePeriodShiftsNothing) {
-  const HeatingProfile &radiator = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
-  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
-  r.level = heating_level::COMFORT;
-  EXPECT_FALSE(in_force_after_comfort_change(radiator, r, 21.0F).has_value());
+TEST(HeatingProfilesProgramme, ARadiatorsModeRegisterValueIsNotMistakenForATimedRun) {
+  // The radiator has no register for timed runs; its preset register defaults to the mode register, whose
+  // AUTO value 0 equals the idle value a towel dryer's temporary state reads.
+  EXPECT_TRUE(programme_period_active(radiator_profile(), radiator_readings(HeatingMode::PROG, 17.5F)));
 }
 
 TEST(HeatingProfilesTowelDryer, TheProgrammeIsActiveOnlyInProgWithNoTimedRunOnTop) {
@@ -824,7 +827,7 @@ TEST(HeatingProfilesTowelDryer, TheProgrammeIsActiveOnlyInProgWithNoTimedRunOnTo
   }
   HeatingReadings unread;
   EXPECT_FALSE(programme_period_active(p, unread)) << "an unread mode is not the programme";
-  EXPECT_FALSE(programme_period_active(*find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE),
+  EXPECT_FALSE(programme_period_active(*find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE),
                                        towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F)))
       << "a profile without a programme period has none";
 }
@@ -844,11 +847,14 @@ TEST(HeatingProfilesTowelDryer, TheTemperatureInForceIsDroppedWhenTheProgrammeSt
   r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE);
   EXPECT_TRUE(std::isnan(programme_temperature_in_force(p, r)));
 
-  HeatingReadings radiator;
-  radiator.in_force_temperature_c = 5.0F;
-  clear_inactive_programme_reading(*find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE),
-                                   radiator);
-  EXPECT_TRUE(radiator.has(HeatingFunction::TEMPERATURE_IN_FORCE)) << "a profile without a period never touches it";
+  HeatingReadings plain;
+  plain.in_force_temperature_c = 5.0F;
+  clear_inactive_programme_reading(*find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE), plain);
+  EXPECT_TRUE(plain.has(HeatingFunction::TEMPERATURE_IN_FORCE)) << "a profile without a period never touches it";
+
+  HeatingReadings manual = radiator_readings(HeatingMode::MANUAL, 17.5F);
+  clear_inactive_programme_reading(radiator_profile(), manual);
+  EXPECT_FALSE(manual.has(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE)) << "a radiator in heat holds none";
 }
 
 TEST(HeatingProfilesTowelDryer, TheRadiatorProfileIsUnchangedAndNeverTouchesTheTowelRegisters) {

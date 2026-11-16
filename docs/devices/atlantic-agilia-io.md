@@ -17,6 +17,7 @@ platform; see [Heating and climate](../configuration/climate.md) for every optio
 | Heating / idle | ✅ Confirmed; follows a change from Home Assistant at the poll 45 seconds later, other changes at the regular poll (every 5 minutes by default) |
 | Maximum setpoint | ✅ Confirmed — the radiator reports 28.0 °C |
 | `Window` sensor | ✅ Confirmed — turns on when a window near the radiator is opened |
+| Target set in `auto` (temporary override) | ⚠️ Experimental: the registers it uses have not been read or written on a radiator yet; a radiator without them keeps writing the comfort temperature |
 | `Open Window Detection` switch | ⚠️ Reads back the radiator's setting; switching detection off from Home Assistant is not tested yet |
 
 ## Modes in Home Assistant
@@ -35,6 +36,17 @@ preset that tells them apart:
 
 Choose `Program` or `Auto` to switch between the radiator's automatic modes; `heat` or `off` leaves
 them.
+
+While the card shows `auto` (`Program` or `Auto`), a target from Home Assistant is a temporary override
+that holds until the radiator's program changes next; the program's comfort temperature stays as it is.
+While it shows `auto`, the card shows the temperature the radiator holds right now as the target. In
+`heat` a target is the comfort temperature. This is experimental: no radiator has confirmed the
+registers it rests on. A radiator that does not hold them keeps writing the comfort temperature in
+every mode. If you run a radiator in `auto`, please
+[open an issue](https://github.com/laberning/home_io_control/issues) with what the card does after a
+target. [Temporary override in `auto`](../configuration/climate.md#temporary-override-in-auto) has the
+detail.
+
 The weekly program itself is edited on the radiator. The radiator shares its node type with the
 [Atlantic Adelis towel dryer](atlantic-adelis.md#modes-and-presets-in-home-assistant), which reports
 the comfort or eco level of its program. The hub does not read that level from a radiator yet, so a

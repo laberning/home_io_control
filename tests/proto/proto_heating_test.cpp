@@ -423,6 +423,28 @@ TEST(ProtoHeatingTowelDryer, DecodesTheTemperatureInForceAndTheEcoSetbackInTenth
       << "empty is no value";
 }
 
+TEST(ProtoHeatingRadiator, TheTemperatureInForceIsRegister012AInTenthsAndSharesTheReading) {
+  EXPECT_EQ(encode_read(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x2A}));
+  EXPECT_EQ(write_len(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, 19.0F), 0u) << "read-only";
+  EXPECT_STREQ(heating_function_name(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE), "heater_temperature_in_force");
+  float value = -1.0F;
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x2A, 0xA5, 0x00}),
+                                   HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, value));
+  EXPECT_FLOAT_EQ(value, 16.5F);
+  EXPECT_FALSE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x2A}), HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, value))
+      << "a radiator without the register answers it empty";
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00}),
+                                    HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, value))
+      << "the reply of another register is no value";
+
+  // Both temperature-in-force registers are one reading: a heater has one of them.
+  HeatingReadings readings;
+  EXPECT_TRUE(readings.store(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, 17.0F));
+  EXPECT_FLOAT_EQ(readings.in_force_temperature_c, 17.0F);
+  EXPECT_FLOAT_EQ(readings.temperature_of(HeatingFunction::TEMPERATURE_IN_FORCE), 17.0F);
+}
+
 TEST(ProtoHeatingTowelDryer, OutOfRangeAndEmptyRepliesAreNoValue) {
   float value = -1.0F;
   EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x36, 0x04}), HeatingFunction::TOWEL_MODE, value));
@@ -463,7 +485,7 @@ TEST(ProtoHeatingTowelDryer, ReadingsStoreAndReportTheTowelRegisters) {
 TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnField) {
   // Walks every function, so a register added to the enum without a row in the readings table (or the
   // descriptor table) fails here.
-  constexpr auto LAST = static_cast<unsigned>(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS);  // the last enumerator
+  constexpr auto LAST = static_cast<unsigned>(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE);  // the last enumerator
   unsigned held = 0;
   for (unsigned i = 0; i <= LAST; i++) {
     const auto fn = static_cast<HeatingFunction>(i);
@@ -492,7 +514,7 @@ TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnF
     for (unsigned j = 0; j <= LAST; j++)
       EXPECT_FALSE(readings.has(static_cast<HeatingFunction>(j))) << heating_function_name(fn) << " touched " << j;
   }
-  EXPECT_EQ(held, 14u);
+  EXPECT_EQ(held, 16u);
 }
 
 TEST(ProtoHeatingTowelDryer, EachFunctionHasItsRegisterLowByte) {

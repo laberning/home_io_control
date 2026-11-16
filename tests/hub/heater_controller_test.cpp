@@ -374,81 +374,157 @@ IoDevice *make_towel_dryer_in_programme(HeaterControllerFixture &fx, float in_fo
   return dev;
 }
 
-/// The temperature in force the entities see in the last notification of the write: the one the
-/// read-back's own reading raises.
-float in_force_seen_after_comfort_write(HeaterControllerFixture &fx, float new_comfort_c, uint8_t value_lo) {
-  float seen = NAN;
-  fx.registry.subscribe(
-      [&seen](const std::string &, const IoDevice &dev) { seen = dev.heating.in_force_temperature_c; });
-  fx.queue_register_ack({0x0C, 0x61, 0x01, 0x03, value_lo, 0x00});
-  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, value_lo, 0x00});
-  EXPECT_TRUE(fx.controller.execute_heating_plan(
-      "ABC123", register_plan(HeatingFunction::SET_TEMPERATURE, new_comfort_c), nullptr));
-  return seen;
+/// A radiator running its programme in @p mode, comfort 19.0 C, holding @p in_force_c.
+IoDevice *make_radiator_in_programme(HeaterControllerFixture &fx, HeatingMode mode, float in_force_c) {
+  IoDevice *dev = make_heater(fx);
+  dev->heating.mode = static_cast<int16_t>(mode);
+  dev->heating.setpoint_c = 19.0F;
+  dev->heating.in_force_temperature_c = in_force_c;
+  return dev;
+}
+
+/// The plan a target of @p target_c becomes on the device as it is now.
+HeatingWritePlan plan_target(const IoDevice *dev, float target_c) {
+  return plan_heating_write(*find_heating_profile(*dev), {.kind = HeatingWriteKind::TARGET, .target_c = target_c},
+                            heating_device_facts(dev));
+}
+
+/// Queue the acknowledgement of a write of register @p reg and the read-back reply of @p tenths_lo / 0.
+void queue_register_write_and_read_back(HeaterControllerFixture &fx, uint8_t reg, uint8_t write_lo, uint8_t back_lo) {
+  fx.queue_register_ack({0x0C, 0x61, 0x01, reg, write_lo, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, reg, back_lo, 0x00});
 }
 
 }  // namespace
 
-TEST(HeaterController, AComfortWriteInAComfortPeriodShowsTheNewTargetAtTheReadBack) {
-  HeaterControllerFixture fx;
-  const IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F, heating_level::COMFORT);
+TEST(HeaterController, AnOverrideInAnEcoOrAComfortPeriodSendsTheOverrideRegisterAndShowsTheNewTargetAtTheReadBack) {
+  for (const uint8_t level : {heating_level::ECO, heating_level::COMFORT}) {
+    HeaterControllerFixture fx;
+    IoDevice *dev = make_towel_dryer_in_programme(fx, level == heating_level::ECO ? 15.5F : 19.0F, level);
+    const HeatingProfile &profile = *find_heating_profile(*dev);
+    const HeatingWritePlan plan = plan_target(dev, 17.5F);
+    float seen = NAN;
+    fx.registry.subscribe([&seen](const std::string &, const IoDevice &d) { seen = d.heating.in_force_temperature_c; });
+    queue_register_write_and_read_back(fx, 0x1D, 0xAF, 0xAF);
 
-  EXPECT_FLOAT_EQ(in_force_seen_after_comfort_write(fx, 20.0F, 0xC8), 20.0F) << "before the 45 s poll";
+    ASSERT_TRUE(fx.controller.execute_heating_plan("ABC123", plan, nullptr)) << "level " << +level;
 
-  EXPECT_FLOAT_EQ(programme_temperature_in_force(*find_heating_profile(*dev), dev->heating), 20.0F);
+    ASSERT_EQ(fx.radio.get_sent_data().size(), 2u);
+    EXPECT_EQ(sent_payload(fx.radio.get_sent_data()[0], 6), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x1D, 0xAF, 0x00}));
+    EXPECT_EQ(sent_register(fx.radio.get_sent_data()[1]), 0x1D) << "the read-back is of the override register";
+    for (const auto &frame : fx.radio.get_sent_data())
+      EXPECT_NE(sent_register(frame), 0x03) << "the comfort setpoint is never written";
+    EXPECT_FLOAT_EQ(seen, 17.5F) << "the card shows the new target before the next poll";
+    EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.0F) << "the comfort setpoint is untouched";
+    EXPECT_EQ(plan_target(dev, 18.0F).register_fn, HeatingFunction::DEROGATED_SETPOINT)
+        << "a second target moves the override, never the comfort setpoint";
+
+    // The next poll's 0x37 replaces the shown value.
+    fx.queue_register_ack({0x0C, 0x60, 0x01, 0x37, 0xAA, 0x00});
+    ASSERT_TRUE(fx.controller.read_heating_register("ABC123", profile.programme_period->in_force_fn, nullptr,
+                                                    EXCHANGE_RETRY_COUNT));
+    EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 17.0F) << "what the dryer reports replaces the shown value";
+  }
 }
 
-TEST(HeaterController, AComfortWriteInAnEcoPeriodLeavesTheTemperatureInForceToTheNextRead) {
-  HeaterControllerFixture fx;
-  const IoDevice *dev = make_towel_dryer_in_programme(fx, 15.5F, heating_level::ECO);
+TEST(HeaterController, ARadiatorInProgOrAutoTakesAnOverrideInRegister011D) {
+  for (const HeatingMode mode : {HeatingMode::PROG, HeatingMode::AUTO}) {
+    HeaterControllerFixture fx;
+    IoDevice *dev = make_radiator_in_programme(fx, mode, 17.0F);
+    queue_register_write_and_read_back(fx, 0x1D, 0xC8, 0xC8);
 
-  EXPECT_FLOAT_EQ(in_force_seen_after_comfort_write(fx, 20.0F, 0xC8), 15.5F);
+    ASSERT_TRUE(fx.controller.execute_heating_plan("ABC123", plan_target(dev, 20.0F), nullptr));
 
-  EXPECT_TRUE(programme_in_eco_period(*find_heating_profile(*dev), dev->heating));
+    ASSERT_EQ(fx.radio.get_sent_data().size(), 2u);
+    EXPECT_EQ(sent_payload(fx.radio.get_sent_data()[0], 6), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x1D, 0xC8, 0x00}));
+    EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 20.0F);
+    EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.0F) << "the comfort setpoint is untouched";
+  }
 }
 
-TEST(HeaterController, AComfortWriteOutsideTheProgrammeLeavesTheTemperatureInForceAlone) {
+TEST(HeaterController, ARadiatorInHeatWritesTheComfortSetpoint) {
   HeaterControllerFixture fx;
-  IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F, heating_level::COMFORT);
-  dev->heating.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::MANUAL, 17.0F);
+  dev->heating.clear(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE);
+  queue_register_write_and_read_back(fx, 0x03, 0xC8, 0xC8);
 
-  in_force_seen_after_comfort_write(fx, 20.0F, 0xC8);
+  ASSERT_TRUE(fx.controller.execute_heating_plan("ABC123", plan_target(dev, 20.0F), nullptr));
 
-  EXPECT_TRUE(std::isnan(dev->heating.in_force_temperature_c)) << "cleared outside the programme, never shifted";
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data()[0]), 0x03);
+  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 20.0F);
 }
 
-TEST(HeaterController, ADerogationWriteInAnEcoPeriodSendsTheOverrideRegisterAndShowsTheNewTargetAtTheReadBack) {
+TEST(HeaterController, AModeWriteThatStartsTheProgrammeReadsTheTemperatureInForceSoTheNextTargetIsAnOverride) {
+  // A towel dryer leaving MANUEL for PROG (registers 0x0136, 0x0137) and a radiator leaving heat for AUTO
+  // (0x0100, 0x012A): before the next poll the card's target already is the temperature in force.
+  struct Case {
+    bool towel;
+    uint8_t mode_register;
+    uint8_t mode_wire;
+    uint8_t in_force_register;
+  };
+  for (const Case &c : {Case{true, 0x36, static_cast<uint8_t>(TowelDryerMode::PROG), 0x37},
+                        Case{false, 0x00, static_cast<uint8_t>(HeatingMode::AUTO), 0x2A}}) {
+    HeaterControllerFixture fx;
+    IoDevice *dev = c.towel ? make_towel_dryer_in_programme(fx, NAN, heating_level::COMFORT)
+                            : make_radiator_in_programme(fx, HeatingMode::MANUAL, NAN);
+    if (c.towel)
+      dev->heating.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
+    const HeatingFunction mode_fn = find_heating_profile(*dev)->mode_fn;
+    EXPECT_EQ(plan_target(dev, 21.0F).register_fn, HeatingFunction::SET_TEMPERATURE) << "heat: the comfort setpoint";
+    fx.queue_register_ack({0x0C, 0x61, 0x01, c.mode_register, c.mode_wire});
+    fx.queue_register_ack({0x0C, 0x60, 0x01, c.mode_register, c.mode_wire});
+    fx.queue_register_ack({0x0C, 0x60, 0x01, c.in_force_register, 0xAA, 0x00});  // 17.0 C
+
+    ASSERT_TRUE(fx.controller.execute_heating_plan("ABC123", register_plan(mode_fn, c.mode_wire), nullptr));
+
+    ASSERT_EQ(fx.radio.get_sent_data().size(), 3u) << "write, read-back, temperature in force";
+    EXPECT_EQ(sent_register(fx.radio.get_sent_data()[2]), c.in_force_register);
+    EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 17.0F);
+    EXPECT_EQ(plan_target(dev, 21.0F).register_fn, HeatingFunction::DEROGATED_SETPOINT)
+        << "a target right after the switch leaves the comfort setpoint alone";
+  }
+}
+
+TEST(HeaterController, AModeWriteThatLeavesTheProgrammeReadsNothingMore) {
   HeaterControllerFixture fx;
-  IoDevice *dev = make_towel_dryer_in_programme(fx, 15.5F, heating_level::ECO);
-  const HeatingProfile &profile = *find_heating_profile(*dev);
-  const HeatingWritePlan plan =
-      plan_heating_write(profile, {.kind = HeatingWriteKind::TARGET, .target_c = 17.5F}, heating_device_facts(dev));
-  float seen = NAN;
-  fx.registry.subscribe([&seen](const std::string &, const IoDevice &d) { seen = d.heating.in_force_temperature_c; });
-  fx.queue_register_ack({0x0C, 0x61, 0x01, 0x1D, 0xAF, 0x00});
-  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x1D, 0xAF, 0x00});
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
+  fx.queue_register_ack({0x0C, 0x61, 0x01, 0x00, static_cast<uint8_t>(HeatingMode::MANUAL)});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x00, static_cast<uint8_t>(HeatingMode::MANUAL)});
 
-  ASSERT_TRUE(fx.controller.execute_heating_plan("ABC123", plan, nullptr));
+  ASSERT_TRUE(fx.controller.execute_heating_plan(
+      "ABC123", register_plan(HeatingFunction::SET_MODE, static_cast<float>(HeatingMode::MANUAL)), nullptr));
 
-  ASSERT_EQ(fx.radio.get_sent_data().size(), 2u);
-  EXPECT_EQ(sent_payload(fx.radio.get_sent_data()[0], 6), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x1D, 0xAF, 0x00}));
-  EXPECT_EQ(sent_register(fx.radio.get_sent_data()[1]), 0x1D) << "the read-back is of the override register";
+  EXPECT_EQ(fx.radio.get_sent_data().size(), 2u);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE));
+}
+
+TEST(HeaterController, ARefusedOverrideWritesNothingElseAndTheCardShowsWhatTheHeaterHolds) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
+  // The heater accepts the write but holds 0: no override runs.
+  queue_register_write_and_read_back(fx, 0x1D, 0xC8, 0x00);
+
+  EXPECT_TRUE(fx.controller.execute_heating_plan("ABC123", plan_target(dev, 20.0F), nullptr))
+      << "the write was acknowledged";
+
+  ASSERT_EQ(fx.radio.get_sent_data().size(), 2u) << "no fallback write of the comfort setpoint";
   for (const auto &frame : fx.radio.get_sent_data())
-    EXPECT_NE(sent_register(frame), 0x03) << "the comfort setpoint is never written";
-  EXPECT_FLOAT_EQ(seen, 17.5F) << "the card shows the new target before the next poll";
-  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.0F) << "the comfort setpoint is untouched";
-  EXPECT_TRUE(programme_in_eco_period(profile, dev->heating)) << "the level stays eco during the override";
-  EXPECT_EQ(
-      plan_heating_write(profile, {.kind = HeatingWriteKind::TARGET, .target_c = 18.0F}, heating_device_facts(dev))
-          .register_fn,
-      HeatingFunction::DEROGATED_SETPOINT)
-      << "a second target in the same eco period moves the override, never the comfort setpoint";
+    EXPECT_NE(sent_register(frame), 0x03);
+  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.0F);
+  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 17.0F) << "what the heater held stays shown until the poll";
+  EXPECT_FLOAT_EQ(dev->heating.derogated_setpoint_c, 0.0F);
+}
 
-  // The next poll's 0x37 replaces the shown value.
-  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x37, 0xAA, 0x00});
-  ASSERT_TRUE(fx.controller.read_heating_register("ABC123", HeatingFunction::TEMPERATURE_IN_FORCE, nullptr,
-                                                  EXCHANGE_RETRY_COUNT));
-  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 17.0F) << "what the dryer reports replaces the shown value";
+TEST(HeaterController, AnOverrideTheHeaterClampsShowsTheValueItHolds) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
+  queue_register_write_and_read_back(fx, 0x1D, 0xC8, 0xBE);  // asked 20.0, holds 19.0
+
+  EXPECT_TRUE(fx.controller.execute_heating_plan("ABC123", plan_target(dev, 20.0F), nullptr));
+
+  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 19.0F);
+  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.0F);
 }
 
 TEST(HeaterController, AnOverrideReadBackOfZeroLeavesTheTemperatureInForceAlone) {

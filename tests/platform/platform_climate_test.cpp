@@ -1258,32 +1258,99 @@ TEST(PlatformClimate, TowelDryerOutsideTheProgrammeNeverShowsTheTemperatureInFor
   EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE);
 }
 
-TEST(PlatformClimate, TowelDryerTargetInAnEcoPeriodWritesTheOverrideAndInAComfortPeriodTheSetpoint) {
+TEST(PlatformClimate, TowelDryerTargetInAutoWritesTheOverrideInEveryPeriodAndInHeatTheSetpoint) {
   MockHubClimate hub;
   IOHomeClimate entity = make_towel_climate(hub);
   entity.setup();
   hub.read_replies[HeatingFunction::DEROGATED_SETPOINT] = 17.5F;
   hub.read_replies[HeatingFunction::SET_TEMPERATURE] = 21.0F;
 
-  deliver_readings(hub, [](HeatingReadings &r) {
-    programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
-  });
-  auto eco_call = entity.make_call();
-  eco_call.set_target_temperature(17.5F);
-  eco_call.perform();
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::DEROGATED_SETPOINT);
-  EXPECT_FLOAT_EQ(hub.writes[0].value, 17.5F);
-  ASSERT_EQ(hub.reads.size(), 1u);
-  EXPECT_EQ(hub.reads[0], HeatingFunction::DEROGATED_SETPOINT);
+  for (const auto &period : {std::pair<float, int16_t>{16.5F, heating_level::ECO},
+                             std::pair<float, int16_t>{20.0F, heating_level::COMFORT}}) {
+    hub.writes.clear();
+    hub.reads.clear();
+    deliver_readings(hub, [&period](HeatingReadings &r) {
+      programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, period.first, period.second);
+    });
+    auto call = entity.make_call();
+    call.set_target_temperature(17.5F);
+    call.perform();
+    ASSERT_EQ(hub.writes.size(), 1u) << "level " << period.second;
+    EXPECT_EQ(hub.writes[0].fn, HeatingFunction::DEROGATED_SETPOINT) << "level " << period.second;
+    EXPECT_FLOAT_EQ(hub.writes[0].value, 17.5F);
+    ASSERT_EQ(hub.reads.size(), 1u);
+    EXPECT_EQ(hub.reads[0], HeatingFunction::DEROGATED_SETPOINT);
+  }
 
   hub.writes.clear();
-  hub.reads.clear();
   deliver_readings(
-      hub, [](HeatingReadings &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F); });
-  auto comfort_call = entity.make_call();
-  comfort_call.set_target_temperature(21.0F);
-  comfort_call.perform();
+      hub, [](HeatingReadings &r) { programme_readings(r, TowelDryerMode::MANUAL, HeatingTemporaryState::NONE, NAN); });
+  auto heat_call = entity.make_call();
+  heat_call.set_target_temperature(21.0F);
+  heat_call.perform();
+  ASSERT_EQ(hub.writes.size(), 1u);
+  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::SET_TEMPERATURE) << "heat: the target is the comfort temperature";
+}
+
+TEST(PlatformClimate, RadiatorInProgOrAutoShowsTheTemperatureInForceAndATargetIsAnOverride) {
+  for (const HeatingMode mode : {HeatingMode::PROG, HeatingMode::AUTO}) {
+    MockHubClimate hub;
+    IOHomeClimate entity = make_bound_climate(hub);
+    entity.setup();
+    hub.read_replies[HeatingFunction::DEROGATED_SETPOINT] = 21.5F;
+    deliver_readings(hub, [mode](HeatingReadings &r) {
+      r.mode = static_cast<int16_t>(mode);
+      r.setpoint_c = 19.0F;
+      r.in_force_temperature_c = 17.0F;
+    });
+    EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO);
+    EXPECT_FLOAT_EQ(entity.target_temperature, 17.0F) << "the temperature in force, not the comfort setpoint";
+
+    auto call = entity.make_call();
+    call.set_target_temperature(21.5F);
+    call.perform();
+
+    ASSERT_EQ(hub.writes.size(), 1u);
+    EXPECT_EQ(hub.writes[0].fn, HeatingFunction::DEROGATED_SETPOINT) << "the comfort setpoint is not written";
+    EXPECT_FLOAT_EQ(hub.writes[0].value, 21.5F);
+    ASSERT_EQ(hub.reads.size(), 1u);
+    EXPECT_EQ(hub.reads[0], HeatingFunction::DEROGATED_SETPOINT) << "the override is read back";
+  }
+}
+
+TEST(PlatformClimate, RadiatorInHeatShowsAndWritesTheComfortSetpoint) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_bound_climate(hub);
+  entity.setup();
+  hub.read_replies[HeatingFunction::SET_TEMPERATURE] = 21.0F;
+  deliver_readings(hub, [](HeatingReadings &r) {
+    r.mode = static_cast<int16_t>(HeatingMode::MANUAL);
+    r.setpoint_c = 19.0F;
+  });
+  EXPECT_FLOAT_EQ(entity.target_temperature, 19.0F);
+
+  auto call = entity.make_call();
+  call.set_target_temperature(21.0F);
+  call.perform();
+
+  ASSERT_EQ(hub.writes.size(), 1u);
+  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::SET_TEMPERATURE);
+}
+
+TEST(PlatformClimate, RadiatorWithoutATemperatureInForceKeepsTodaysTargetBehaviourInAuto) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_bound_climate(hub);
+  entity.setup();
+  deliver_readings(hub, [](HeatingReadings &r) {
+    r.mode = static_cast<int16_t>(HeatingMode::PROG);
+    r.setpoint_c = 19.0F;  // register 0x012A answered empty: no temperature in force
+  });
+  EXPECT_FLOAT_EQ(entity.target_temperature, 19.0F);
+
+  auto call = entity.make_call();
+  call.set_target_temperature(21.0F);
+  call.perform();
+
   ASSERT_EQ(hub.writes.size(), 1u);
   EXPECT_EQ(hub.writes[0].fn, HeatingFunction::SET_TEMPERATURE);
 }

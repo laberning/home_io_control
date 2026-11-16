@@ -620,11 +620,11 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
     return result;
   }
 
-  // The override exists only on a heater whose own programme has comfort and eco periods.
+  // The override exists only on a heater whose profile names its programme registers.
   if (fn == HeatingFunction::DEROGATED_SETPOINT) {
     const HeatingProfile *profile = find_heating_profile(*dev);
     if (profile == nullptr || profile->programme_period == nullptr) {
-      result.message = "device has no programme periods, so set_derogation does not apply";
+      result.message = "device has no programme, so set_derogation does not apply";
       return result;
     }
   }

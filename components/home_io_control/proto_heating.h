@@ -70,13 +70,19 @@ enum class HeatingFunction : uint8_t {
   NIGHT_LIGHT_BRIGHTNESS,  ///< Register 0x0142, read/write: the night light's brightness, 0-10000, 16-bit.
                            ///< \todo Confirm on a real heater that a write from the hub dims the light and
                            ///<       that values between its panel's four levels are accepted (issue #222).
-  DEROGATED_SETPOINT,      ///< Register 0x011D, read/write: a towel dryer's temporary override of the eco
-                           ///< temperature, tenths of a degree; 0 while none is active. Written with 0 it
-                           ///< cancels the override. The dryer's own panel sets it when the temperature is raised
-                           ///< in an eco period ("dérogation") and the override ends at the next comfort period.
-                           ///< A sweep taken during a panel override read 16.5 here (0 otherwise).
-                           ///< \todo Confirm on a towel dryer that a write from the hub raises the temperature in
-                           ///<       force until the next comfort period and that a write of 0 cancels it.
+  DEROGATED_SETPOINT,      ///< Register 0x011D, read/write: a heater's temporary override of its programme,
+                           ///< tenths of a degree; 0 while none is active. Written with 0 it cancels the override.
+                           ///< A towel dryer's own panel sets it when the temperature is raised in an eco period
+                           ///< ("dérogation") and the override ends at the next comfort period. A sweep taken
+                           ///< during a panel override read 16.5 here (0 otherwise).
+                           ///< \todo Confirm on a towel dryer and on a radiator that a write from the hub holds the
+                           ///<       temperature until the programme's next change, in a comfort period too, and
+                           ///<       that a write of 0 cancels it.
+  HEATER_TEMPERATURE_IN_FORCE,  ///< Register 0x012A, read-only: the temperature a heater with an adjustable setpoint
+                                ///< (AGILIA, Hekla, EMOTION 3 H) holds right now, tenths of a degree. The same value
+                                ///< as TEMPERATURE_IN_FORCE on the towel dryer, whose sweep read it in both.
+                                ///< \todo Read on a radiator: no AGILIA, Hekla or EMOTION 3 H has answered it yet. A
+                                ///<       heater that answers it empty keeps the comfort-setpoint write.
 };
 
 /// @brief Operating modes of the mode register (HeatingFunction::SET_MODE).
@@ -268,9 +274,10 @@ struct HeatingReadings {
   int16_t towel_mode{-1};              ///< TowelDryerMode value; -1 until read.
   int16_t temporary_state{-1};         ///< HeatingTemporaryState value; -1 until read.
   int16_t working_rate{-1};            ///< Working rate, 0-100 %; -1 until read.
-  float in_force_temperature_c{NAN};   ///< A towel dryer's temperature in force (register 0x0137); NaN until read.
+  float in_force_temperature_c{NAN};   ///< The temperature in force (register 0x0137 on a towel dryer, 0x012A on a
+                                       ///< radiator); NaN until read.
   float eco_setback_k{NAN};            ///< A towel dryer's eco setback (register 0x0104); NaN until read.
-  float derogated_setpoint_c{NAN};     ///< A towel dryer's override of the eco temperature (register 0x011D), 0
+  float derogated_setpoint_c{NAN};     ///< A heater's override of its programme (register 0x011D), 0
                                        ///< while none is active; NaN until read. Read after a write.
   int16_t night_light{-1};             ///< Night light 1 on / 0 off; -1 until read.
   int16_t night_light_brightness{-1};  ///< Night light brightness register, 0-10000; -1 until read.

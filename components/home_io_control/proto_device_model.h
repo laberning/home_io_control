@@ -421,15 +421,18 @@ struct IoDevice {
                                  ///< line names the level even when the device reports none.
   bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every
                                  ///< exchange with it uses `system_key` below instead of the hub's key.
-  uint8_t system_key[AES_KEY_SIZE]{};  ///< The device's own key; meaningful only when `has_system_key`. Key material:
-                                       ///< never logged outside a bannered report block.
-  bool registered_by_pairing{false};   ///< Added by a pairing in this boot, not declared in YAML. The record is
-                                       ///< lost at reboot, so reports still print its YAML block, and a later
-                                       ///< pairing may replace it (DeviceRegistry::get_declared()).
-  uint8_t model_check_attempts{0};     ///< Runs of the hub's one-off model check (a heater kind with model rows:
-                                       ///< model name read, declared-model hint) so far; the check stops after
-                                       ///< it completes or after a bounded number of runs. Runtime only.
-  bool model_checked{false};           ///< The model check completed: both of its reads were answered.
+  uint8_t system_key[AES_KEY_SIZE]{};   ///< The device's own key; meaningful only when `has_system_key`. Key material:
+                                        ///< never logged outside a bannered report block.
+  bool registered_by_pairing{false};    ///< Added by a pairing in this boot, not declared in YAML. The record is
+                                        ///< lost at reboot, so reports still print its YAML block, and a later
+                                        ///< pairing may replace it (DeviceRegistry::get_declared()).
+  uint8_t model_check_attempts{0};      ///< Runs of the hub's one-off model check (a heater kind with model rows:
+                                        ///< model name read, declared-model hint) so far; the check stops after
+                                        ///< it completes or after a bounded number of runs. Runtime only.
+  bool no_temperature_in_force{false};  ///< The heater answered the read of its temperature in force without a value:
+                                        ///< the hub stops reading it, and a target writes the comfort setpoint.
+                                        ///< Runtime only, until the next boot.
+  bool model_checked{false};            ///< The model check completed: both of its reads were answered.
 };
 
 /// @brief Resolve a device's capability bits and inversion from its kind and its YAML overrides.

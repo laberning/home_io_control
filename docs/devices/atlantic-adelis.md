@@ -34,7 +34,7 @@ the `io_model:` line yourself.
 | Starting or ending boost and drying from Home Assistant | ✅ The display starts and ends both |
 | Boost started on the dryer itself | ✅ Shows as the `boost` preset and `heating` at the next poll |
 | Level the dryer applies (`heating_level:` sensor) | ⚠️ Experimental: read on one unit, in a comfort period, in an eco period and in a boost; no second unit has confirmed it yet, and no drying run has been read |
-| Target set in an eco period (temporary override) | ⚠️ Experimental: the write has not been confirmed on a dryer yet |
+| Target set in `auto` (temporary override) | ⚠️ Experimental: the write has not been confirmed on a dryer yet, in an eco period or in a comfort period |
 
 ## Modes and presets in Home Assistant
 
@@ -119,15 +119,16 @@ like".
 - **Changes made on the dryer show up at the next poll.** The hub reads the dryer every five minutes
   by default, so a boost started on the dryer can take that long to appear in Home Assistant. Set
   `status_poll_interval` on the entry to read it more often.
-- **A target set in an eco period is a temporary override (experimental).** While the dryer runs its
-  program and its level reads `eco`, a target from Home Assistant raises the temperature until the next
-  comfort period, as the dryer's panel does. Comfort setpoint and schedule stay as they were. The card
-  shows the new target at once, and the dryer's own reading replaces it at the next poll. A target from
-  Home Assistant in a later eco period sets the override again. In a comfort period, in `heat` (MANUEL)
-  and while the level has not been read, a target changes the comfort setpoint. The write has not been
-  confirmed on a dryer yet: if the card falls back to the old temperature after the next poll, the
-  dryer refused it. The [`heating_control` action](../configuration/climate.md#the-heating_control-action) has a
-  `set_derogation` function to set or cancel the override by hand.
+- **A target set in `auto` is a temporary override (experimental).** While the dryer runs its program
+  (PROG, no boost or drying on top), a target from Home Assistant holds until the program's next change,
+  in a comfort period and in an eco period alike. The comfort temperature and the schedule stay as they
+  were. The card shows the new target at once, and the dryer's own reading replaces it at the next poll.
+  In `heat` (MANUEL) a target changes the comfort temperature. The write has not been confirmed on a
+  dryer yet: if the card falls back to the old temperature after the next poll, the dryer refused it,
+  and the log names the device. The
+  [`heating_control` action](../configuration/climate.md#the-heating_control-action) has a
+  `set_derogation` function to set or cancel the override by hand;
+  [Temporary override in `auto`](../configuration/climate.md#temporary-override-in-auto) has the detail.
 - **The weekly program is edited on the dryer.** PROG runs the program stored on the dryer, and Home
   Assistant cannot change it. To schedule from Home Assistant instead, use `heat` and change the
   target or the mode from an automation.

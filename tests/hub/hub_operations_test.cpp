@@ -3874,7 +3874,6 @@ TEST(HubOperations, TowelDryerPollReadsTheTemperatureInForceOnlyWhileTheProgramm
   const auto PROG = TowelDryerMode::PROG;
   const auto NONE = HeatingTemporaryState::NONE;
   const std::vector<uint8_t> boot_max = {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01};
-  const HeatingProfile &profile = *find_heating_profile(*dev);
 
   // A comfort period: the core registers, 0x0137, the boot register (first poll only), the status read, the
   // model name.
@@ -3883,21 +3882,21 @@ TEST(HubOperations, TowelDryerPollReadsTheTemperatureInForceOnlyWhileTheProgramm
       (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x02, STATUS_READ, 0x19}));
   EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 20.0F);
   EXPECT_EQ(dev->heating.level, heating_level::COMFORT);
-  EXPECT_FALSE(programme_in_eco_period(profile, dev->heating));
+  EXPECT_TRUE(heating_device_facts(dev).programme_runs);
 
   // An eco period: the same reads, the level is eco and the target the temperature in force.
   EXPECT_EQ(run_towel_poll(comp, radio, {PROG, NONE, IN_FORCE_ECO, LEVEL_ECO_MP, {}, {}}),
             (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, STATUS_READ}));
   EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 16.5F);
   EXPECT_EQ(dev->heating.level, heating_level::ECO);
-  EXPECT_TRUE(programme_in_eco_period(profile, dev->heating));
+  EXPECT_TRUE(heating_device_facts(dev).programme_runs);
 
   // Boost on top of the programme: no 0x0137 read, the temperature in force goes, the level reads boost.
   EXPECT_EQ(run_towel_poll(comp, radio, {PROG, HeatingTemporaryState::BOOST, {}, LEVEL_BOOST_MP, {}, {}}),
             (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, STATUS_READ}));
   EXPECT_FALSE(dev->heating.has(HeatingFunction::TEMPERATURE_IN_FORCE));
   EXPECT_EQ(dev->heating.level, heating_level::BOOST);
-  EXPECT_FALSE(programme_in_eco_period(profile, dev->heating));
+  EXPECT_FALSE(heating_device_facts(dev).programme_runs);
 
   // Back in the programme: read again, and the earlier eco value is not what shows.
   EXPECT_EQ(run_towel_poll(comp, radio, {PROG, NONE, IN_FORCE_COMFORT, LEVEL_COMFORT_MP, {}, {}}),
@@ -3927,7 +3926,7 @@ TEST(HubOperations, ATowelDryerInDryingIsNeverAskedForItsTemperatureAndAStaleVal
   EXPECT_FALSE(dev->heating.has(HeatingFunction::TEMPERATURE_IN_FORCE));
 }
 
-TEST(HubOperations, ATemperatureSetOnThePanelCostsNoReadAndTheEcoLevelRoutesTheNextTargetToTheOverride) {
+TEST(HubOperations, ATargetInAutoIsAnOverrideInEveryPeriodAndACommandInHeatIsTheComfortSetpoint) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_settled_towel_dryer(comp, radio);
@@ -3942,15 +3941,108 @@ TEST(HubOperations, ATemperatureSetOnThePanelCostsNoReadAndTheEcoLevelRoutesTheN
   EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 17.5F);
   EXPECT_EQ(plan_heating_write(profile, target_request(19.0F), heating_device_facts(dev)).register_fn,
             HeatingFunction::DEROGATED_SETPOINT)
-      << "the next target is a derogation again";
+      << "an eco period";
 
-  // The comfort period begins: the target is the comfort setpoint again.
   EXPECT_EQ(
       run_towel_poll(comp, radio,
                      {TowelDryerMode::PROG, HeatingTemporaryState::NONE, IN_FORCE_COMFORT, LEVEL_COMFORT_MP, {}, {}}),
       (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, STATUS_READ}));
   EXPECT_EQ(plan_heating_write(profile, target_request(19.0F), heating_device_facts(dev)).register_fn,
-            HeatingFunction::SET_TEMPERATURE);
+            HeatingFunction::DEROGATED_SETPOINT)
+      << "a comfort period: the programme's comfort temperature is not changed by a target";
+
+  run_towel_poll(comp, radio, {TowelDryerMode::MANUAL, HeatingTemporaryState::NONE, {}, LEVEL_COMFORT_MP, {}, {}});
+  EXPECT_EQ(plan_heating_write(profile, target_request(19.0F), heating_device_facts(dev)).register_fn,
+            HeatingFunction::SET_TEMPERATURE)
+      << "heat: the target is the comfort temperature";
+}
+
+namespace {
+
+/// A radiator whose boot registers and model check are done, so a poll sends only its recurring reads.
+IoDevice *make_settled_radiator(TestableComponent &comp, MockRadio &radio) {
+  IoDevice *dev = make_heater(comp, radio);
+  dev->model_checked = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  dev->heating.open_window_detection = 0;
+  return dev;
+}
+
+/// Queue the five core registers of a radiator poll with the mode register @p mode; no reply to 0x012A.
+void queue_radiator_core(TestableComponent &comp, MockRadio &radio, HeatingMode mode) {
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x15, 0xB7, 0x07});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x03, 0xC8, 0x00});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x00, static_cast<uint8_t>(mode)});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x17, 0x02});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x0E, 0x00});
+}
+
+std::vector<uint8_t> sent_steps_since(MockRadio &radio, size_t before) {
+  std::vector<uint8_t> steps;
+  for (size_t i = before; i < radio.get_sent_data().size(); i++)
+    steps.push_back(sent_step(radio.get_sent_data()[i]));
+  return steps;
+}
+
+}  // namespace
+
+TEST(HubOperations, ARadiatorPollReadsRegister012AOnlyWhileTheProgrammeRunsAndAsksNoStatusRead) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_radiator(comp, radio);
+
+  for (const HeatingMode mode : {HeatingMode::PROG, HeatingMode::AUTO}) {
+    const size_t before = radio.get_sent_data().size();
+    queue_radiator_core(comp, radio, mode);
+    queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A, 0xAF, 0x00});  // 17.5 C
+    EXPECT_TRUE(comp.request_device_status("ABC123"));
+    EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A}))
+        << "no status read: no radiator is known to report a level";
+    EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 17.5F);
+    EXPECT_TRUE(heating_device_facts(dev).programme_runs);
+  }
+
+  const size_t before = radio.get_sent_data().size();
+  queue_radiator_core(comp, radio, HeatingMode::MANUAL);
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E}))
+      << "heat: the temperature in force is not asked";
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE)) << "and the earlier value is dropped";
+}
+
+TEST(HubOperations, ARadiatorThatAnswers012AEmptyIsNotAskedAgainAndItsTargetsWriteTheComfortSetpoint) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_radiator(comp, radio);
+  const HeatingProfile &profile = *find_heating_profile(*dev);
+
+  size_t before = radio.get_sent_data().size();
+  queue_radiator_core(comp, radio, HeatingMode::PROG);
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A});  // answered, no value
+  EXPECT_TRUE(comp.request_device_status("ABC123")) << "an empty answer is no poll failure";
+  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A}));
+  EXPECT_TRUE(dev->no_temperature_in_force);
+  EXPECT_FALSE(heating_device_facts(dev).programme_runs);
+  EXPECT_EQ(plan_heating_write(profile, target_request(21.0F), heating_device_facts(dev)).register_fn,
+            HeatingFunction::SET_TEMPERATURE)
+      << "today's behaviour on a heater without the register";
+
+  before = radio.get_sent_data().size();
+  queue_radiator_core(comp, radio, HeatingMode::PROG);
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E}))
+      << "the read is not repeated until the next boot";
+}
+
+TEST(HubOperations, AnUnansweredRead012AIsRetriedAtTheNextPollNotMarkedMissing) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_radiator(comp, radio);
+  queue_radiator_core(comp, radio, HeatingMode::PROG);  // no answer to 0x2A: the exchange times out
+
+  comp.request_device_status("ABC123");
+
+  EXPECT_FALSE(dev->no_temperature_in_force) << "no answer at all says nothing about the register";
 }
 
 TEST(HubOperations, AStatusReplyThatCarriesNoLevelClearsTheStoredLevel) {
