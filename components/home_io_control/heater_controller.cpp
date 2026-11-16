@@ -373,9 +373,15 @@ bool HeaterController::read_and_store_heating_register_(const std::string &devic
   // The read-back of a comfort write carries the temperature in force along, so the card shows the new
   // target now instead of after the next poll of that register.
   std::optional<float> in_force;
-  if (follow_comfort && profile != nullptr && profile->programme_period != nullptr &&
-      fn == profile->programme_period->comfort_fn)
-    in_force = in_force_after_comfort_change(*profile, dev->heating, value);
+  if (follow_comfort && profile != nullptr && profile->programme_period != nullptr) {
+    const HeatingProgrammePeriod &period = *profile->programme_period;
+    if (fn == period.comfort_fn) {
+      in_force = in_force_after_comfort_change(*profile, dev->heating, value);
+    } else if (fn == period.derogation_fn && value >= HEATING_TEMP_MIN_C) {
+      // A written override is the temperature the heater holds now; 0 (none active) leaves the reading alone.
+      in_force = value;
+    }
+  }
   dev->heating.store(fn, value);
   if (in_force.has_value())
     dev->heating.store(profile->programme_period->in_force_fn, *in_force);
@@ -670,10 +676,24 @@ void HeaterController::poll_programme_period_(const std::string &device_id, cons
   const HeatingProgrammePeriod &period = *profile.programme_period;
   if (!this->read_heating_register(device_id, period.in_force_fn, nullptr, max_tries))
     return;
-  // A temperature that fits neither period means the eco setback is not what the heater holds now (it was
-  // changed on the display): forget it, so the boot registers read it again.
   IoDevice *updated = this->registry_.get(device_id);
-  if (updated != nullptr && resolve_programme_period(profile, updated->heating).preset_index < 0)
+  if (updated == nullptr)
+    return;
+  // The override reading belongs to one eco period: drop the previous one and read it again only below, in
+  // the one case that needs it.
+  updated->heating.clear(period.derogation_fn);
+  if (resolve_programme_period(profile, updated->heating).preset_index >= 0)
+    return;
+  // The temperature in force fits neither period: it is either an override of the eco temperature (set on the
+  // panel, by the action or by a target in an eco period) or a changed setback. The override register tells
+  // them apart; a non-zero value equal to the temperature in force is the eco period.
+  this->read_heating_register(device_id, period.derogation_fn, nullptr, max_tries);
+  updated = this->registry_.get(device_id);
+  if (updated == nullptr)
+    return;
+  // Still neither: the eco setback is not what the heater holds now (it was changed on the display), so
+  // forget it and let the boot registers read it again.
+  if (resolve_programme_period(profile, updated->heating).preset_index < 0)
     updated->heating.clear(period.setback_fn);
 }
 

@@ -1257,6 +1257,35 @@ TEST(PlatformClimate, TowelDryerOutsideTheProgrammeNeverShowsTheTemperatureInFor
   EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE);
 }
 
+TEST(PlatformClimate, TowelDryerTargetInAnEcoPeriodWritesTheOverrideAndInAComfortPeriodTheSetpoint) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+  hub.read_replies[HeatingFunction::DEROGATED_SETPOINT] = 17.5F;
+  hub.read_replies[HeatingFunction::SET_TEMPERATURE] = 21.0F;
+
+  deliver_readings(
+      hub, [](HeatingReadings &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F); });
+  auto eco_call = entity.make_call();
+  eco_call.set_target_temperature(17.5F);
+  eco_call.perform();
+  ASSERT_EQ(hub.writes.size(), 1u);
+  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::DEROGATED_SETPOINT);
+  EXPECT_FLOAT_EQ(hub.writes[0].value, 17.5F);
+  ASSERT_EQ(hub.reads.size(), 1u);
+  EXPECT_EQ(hub.reads[0], HeatingFunction::DEROGATED_SETPOINT);
+
+  hub.writes.clear();
+  hub.reads.clear();
+  deliver_readings(
+      hub, [](HeatingReadings &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F); });
+  auto comfort_call = entity.make_call();
+  comfort_call.set_target_temperature(21.0F);
+  comfort_call.perform();
+  ASSERT_EQ(hub.writes.size(), 1u);
+  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::SET_TEMPERATURE);
+}
+
 TEST(PlatformClimate, TowelDryerComfortAndEcoCannotBeSelectedAndSendNothing) {
   MockHubClimate hub;
   IOHomeClimate entity = make_towel_climate(hub);

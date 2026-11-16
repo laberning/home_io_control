@@ -70,6 +70,13 @@ enum class HeatingFunction : uint8_t {
   NIGHT_LIGHT_BRIGHTNESS,  ///< Register 0x0142, read/write: the night light's brightness, 0-10000, 16-bit.
                            ///< \todo Confirm on a real heater that a write from the hub dims the light and
                            ///<       that values between its panel's four levels are accepted (issue #222).
+  DEROGATED_SETPOINT,      ///< Register 0x011D, read/write: a towel dryer's temporary override of the eco
+                           ///< temperature, tenths of a degree; 0 while none is active. Written with 0 it
+                           ///< cancels the override. The dryer's own panel sets it when the temperature is raised
+                           ///< in an eco period ("dérogation") and the override ends at the next comfort period.
+                           ///< A sweep taken during a panel override read 16.5 here (0 otherwise).
+                           ///< \todo Confirm on a towel dryer that a write from the hub raises the temperature in
+                           ///<       force until the next comfort period and that a write of 0 cancels it.
 };
 
 /// @brief Operating modes of the mode register (HeatingFunction::SET_MODE).
@@ -194,6 +201,7 @@ bool heating_function_register(HeatingFunction fn, uint8_t &register_low);
 /// `value` is interpreted by the register's encoding:
 ///   - SET_TEMPERATURE: degrees Celsius within [HEATING_TEMP_MIN_C, HEATING_TEMP_MAX_C], encoded as
 ///     a 16-bit little-endian value in tenths of a degree, round-half-away-from-zero(10 * value).
+///   - DEROGATED_SETPOINT: as SET_TEMPERATURE, or 0 (`00 00`) to cancel the override.
 ///   - SET_MODE: a HeatingMode value widened to float; must be AUTO, MANUAL, PROG or OFF.
 ///   - SET_PRESENCE, SET_OPEN_WINDOW_DETECTION: 0 or 1.
 ///   - TOWEL_MODE: a TowelDryerMode value widened to float (0-3).
@@ -262,6 +270,9 @@ struct HeatingReadings {
   int16_t working_rate{-1};            ///< Working rate, 0-100 %; -1 until read.
   float in_force_temperature_c{NAN};   ///< A towel dryer's temperature in force (register 0x0137); NaN until read.
   float eco_setback_k{NAN};            ///< A towel dryer's eco setback (register 0x0104); NaN until read.
+  float derogated_setpoint_c{NAN};     ///< A towel dryer's override of the eco temperature (register 0x011D), 0
+                                       ///< while none is active; NaN until read. Read after a write, and by the
+                                       ///< poll when the temperature in force fits neither period.
   int16_t night_light{-1};             ///< Night light 1 on / 0 off; -1 until read.
   int16_t night_light_brightness{-1};  ///< Night light brightness register, 0-10000; -1 until read.
   int16_t level{-1};                   ///< Low byte of the main parameter of a heater commanded with a prefixed

@@ -323,7 +323,8 @@ class HeaterController {
   /// Like read_heating_register() with the read-back's tries, and for the comfort setpoint of a heater
   /// whose programme runs it also moves the stored temperature in force with it
   /// (in_force_after_comfort_change()), so what the card shows is the new target before the poll that
-  /// reads that register.
+  /// reads that register. A read-back of the override register of a heater whose programme runs does the
+  /// same with the value it reads.
   /// @param device_id Target device ID (hex string).
   /// @param fn Register to read back.
   void read_back_heating_register_(const std::string &device_id, HeatingFunction fn);
@@ -434,8 +435,10 @@ class HeaterController {
 
   /// @brief Read the temperature in force of a heater's programme, when the programme runs.
   /// @details Sends nothing unless programme_period_active() holds for the readings the poll just made.
-  ///          When the temperature fits neither period it forgets the eco setback, so the boot registers
-  ///          read it again.
+  ///          When the temperature fits neither period it also reads the override register
+  ///          (HeatingProgrammePeriod::derogation_fn), the only extra read: a non-zero value equal to the
+  ///          temperature in force is an override of the eco temperature. If it still fits neither period
+  ///          it forgets the eco setback, so the boot registers read it again.
   /// @param device_id Target device ID.
   /// @param profile The device's profile; its programme_period must not be nullptr.
   /// @param max_tries Transmit-attempt cap of the read (the poll's).

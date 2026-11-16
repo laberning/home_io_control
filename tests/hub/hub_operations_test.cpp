@@ -3811,6 +3811,14 @@ const std::vector<uint8_t> IN_FORCE_COMFORT = {0x0C, 0x60, 0x01, 0x37, 0xC8, 0x0
 const std::vector<uint8_t> IN_FORCE_ECO = {0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00};      // 16.5 C
 const std::vector<uint8_t> IN_FORCE_BOOST = {0x0C, 0x60, 0x01, 0x37, 0x01, 0x00};    // a count, not a temperature
 
+/// A card request for a new target temperature.
+HeatingWriteRequest target_request(float target_c) {
+  HeatingWriteRequest request;
+  request.kind = HeatingWriteKind::TARGET;
+  request.target_c = target_c;
+  return request;
+}
+
 }  // namespace
 
 TEST(HubOperations, TowelDryerPollReadsTheTemperatureInForceOnlyWhileTheProgrammeRuns) {
@@ -3869,6 +3877,71 @@ TEST(HubOperations, ATowelDryerInBoostIsNeverAskedForItsTemperatureAndAStaleValu
   EXPECT_FALSE(dev->heating.has(HeatingFunction::TEMPERATURE_IN_FORCE));
 }
 
+TEST(HubOperations, ADerogationSetOnThePanelIsReadWhenTheTemperatureFitsNeitherPeriodAndShowsEco) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_towel_dryer(comp, radio);
+  dev->model_checked = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  dev->heating.eco_setback_k = 3.5F;
+  const HeatingProfile &profile = *find_heating_profile(*dev);
+  const std::vector<uint8_t> in_force_override = {0x0C, 0x60, 0x01, 0x37, 0xAF, 0x00};  // 17.5 C
+  const std::vector<uint8_t> derogation = {0x0C, 0x60, 0x01, 0x1D, 0xAF, 0x00};         // 17.5 C
+
+  EXPECT_EQ(
+      run_towel_poll(comp, radio, {TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force_override, {derogation}}),
+      (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x1D}))
+      << "the override register is read in the same poll, nothing else";
+  EXPECT_FLOAT_EQ(dev->heating.eco_setback_k, 3.5F) << "the setback is still what the heater holds";
+  EXPECT_EQ(resolve_programme_period(profile, dev->heating).preset_index, profile.programme_period->eco_preset);
+  EXPECT_EQ(plan_heating_write(profile, target_request(19.0F), heating_device_facts(dev)).register_fn,
+            HeatingFunction::DEROGATED_SETPOINT)
+      << "the next target is a derogation again";
+
+  // The comfort period begins: it fits, no 0x011D read, and the earlier reading is gone.
+  EXPECT_EQ(run_towel_poll(comp, radio, {TowelDryerMode::PROG, HeatingTemporaryState::NONE, IN_FORCE_COMFORT, {}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37}));
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::DEROGATED_SETPOINT));
+  EXPECT_EQ(resolve_programme_period(profile, dev->heating).preset_index, profile.programme_period->comfort_preset);
+}
+
+TEST(HubOperations, ADerogationOfZeroLeavesAFitsNeitherTemperatureWithoutAPeriod) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_towel_dryer(comp, radio);
+  dev->model_checked = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  dev->heating.eco_setback_k = 3.5F;
+  const HeatingProfile &profile = *find_heating_profile(*dev);
+  const std::vector<uint8_t> in_force = {0x0C, 0x60, 0x01, 0x37, 0xAF, 0x00};       // 17.5 C
+  const std::vector<uint8_t> no_derogation = {0x0C, 0x60, 0x01, 0x1D, 0x00, 0x00};  // none active
+  const std::vector<uint8_t> setback = {0x0C, 0x60, 0x01, 0x04, 0x23, 0x00};        // 3.5 K
+
+  EXPECT_EQ(run_towel_poll(comp, radio,
+                           {TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force, {no_derogation, setback}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x1D, 0x04}))
+      << "no override: the setback is read again as before";
+  EXPECT_EQ(resolve_programme_period(profile, dev->heating).preset_index, -1);
+  EXPECT_EQ(plan_heating_write(profile, target_request(19.0F), heating_device_facts(dev)).register_fn,
+            HeatingFunction::SET_TEMPERATURE)
+      << "no period: the target is the comfort setpoint";
+}
+
+TEST(HubOperations, ADerogationThatDiffersFromTheTemperatureInForceIsNotAnOverride) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_towel_dryer(comp, radio);
+  dev->model_checked = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  dev->heating.eco_setback_k = 3.5F;
+  const std::vector<uint8_t> in_force = {0x0C, 0x60, 0x01, 0x37, 0xAF, 0x00};    // 17.5 C
+  const std::vector<uint8_t> derogation = {0x0C, 0x60, 0x01, 0x1D, 0xA5, 0x00};  // 16.5 C
+  const std::vector<uint8_t> setback = {0x0C, 0x60, 0x01, 0x04, 0x23, 0x00};     // 3.5 K
+
+  run_towel_poll(comp, radio, {TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force, {derogation, setback}});
+  EXPECT_EQ(resolve_programme_period(*find_heating_profile(*dev), dev->heating).preset_index, -1);
+}
+
 TEST(HubOperations, ATemperatureThatFitsNeitherPeriodMakesTheNextBootReadAskForTheSetbackAgain) {
   TestableComponent comp;
   MockRadio radio;
@@ -3880,8 +3953,10 @@ TEST(HubOperations, ATemperatureThatFitsNeitherPeriodMakesTheNextBootReadAskForT
   // 15.5 = 20.0 - 4.5: an eco period under the new setback, but neither period under the old one.
   const std::vector<uint8_t> in_force = {0x0C, 0x60, 0x01, 0x37, 0x9B, 0x00};
 
-  EXPECT_EQ(run_towel_poll(comp, radio, {TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force, {new_setback}}),
-            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x04}))
+  const std::vector<uint8_t> no_derogation = {0x0C, 0x60, 0x01, 0x1D, 0x00, 0x00};
+  EXPECT_EQ(run_towel_poll(comp, radio,
+                           {TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force, {no_derogation, new_setback}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x1D, 0x04}))
       << "the setback is read once more, in the same poll";
   EXPECT_FLOAT_EQ(dev->heating.eco_setback_k, 4.5F);
   EXPECT_EQ(resolve_programme_period(*find_heating_profile(*dev), dev->heating).preset_index,

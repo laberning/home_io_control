@@ -352,6 +352,30 @@ TEST(ProtoHeatingTowelDryer, WritesOutsideTheRegisterRangeOrNotIntegralAreRefuse
   EXPECT_EQ(write_len(HeatingFunction::REGULATOR_STATE, 1.0F), 0u) << "still read-only";
 }
 
+TEST(ProtoHeatingTowelDryer, DerogationIsWrittenInTenthsAndZeroCancelsIt) {
+  EXPECT_EQ(encode(HeatingFunction::DEROGATED_SETPOINT, 16.5F),
+            (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x1D, 0xA5, 0x00}));
+  EXPECT_EQ(encode(HeatingFunction::DEROGATED_SETPOINT, 0.0F),
+            (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x1D, 0x00, 0x00}))
+      << "0 is the cancel encoding";
+  EXPECT_EQ(write_len(HeatingFunction::DEROGATED_SETPOINT, 6.9F), 0u) << "below the range, and not 0";
+  EXPECT_EQ(write_len(HeatingFunction::DEROGATED_SETPOINT, 28.1F), 0u);
+  EXPECT_EQ(write_len(HeatingFunction::DEROGATED_SETPOINT, NAN), 0u);
+  EXPECT_EQ(write_len(HeatingFunction::SET_TEMPERATURE, 0.0F), 0u) << "only the override register takes 0";
+  EXPECT_EQ(encode_read(HeatingFunction::DEROGATED_SETPOINT), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x1D}));
+  EXPECT_STREQ(heating_function_name(HeatingFunction::DEROGATED_SETPOINT), "set_derogation");
+}
+
+TEST(ProtoHeatingTowelDryer, DerogationRepliesDecodeToDegreesAndZero) {
+  float value = NAN;
+  ASSERT_TRUE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x1D, 0xA5, 0x00}), HeatingFunction::DEROGATED_SETPOINT, value));
+  EXPECT_FLOAT_EQ(value, 16.5F);
+  ASSERT_TRUE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x1D, 0x00, 0x00}), HeatingFunction::DEROGATED_SETPOINT, value));
+  EXPECT_FLOAT_EQ(value, 0.0F);
+}
+
 TEST(ProtoHeatingTowelDryer, ReadsAddressTheirRegisters) {
   EXPECT_EQ(encode_read(HeatingFunction::TOWEL_MODE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x36}));
   EXPECT_EQ(encode_read(HeatingFunction::TEMPORARY_STATE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x3E}));

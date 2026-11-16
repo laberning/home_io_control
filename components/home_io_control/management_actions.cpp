@@ -16,6 +16,7 @@
 #include "proto_commands.h"
 #include "proto_device_kinds.h"
 #include "proto_device_types.h"
+#include "proto_heating_profiles.h"
 #include "roll_call.h"
 
 #include "esphome/core/hal.h"
@@ -215,8 +216,8 @@ static bool parse_heating_temperature(const std::string &value, float &value_out
 ///
 /// Every native-API argument is a string (ManagementServiceDescriptor hardcodes
 /// SERVICE_ARG_TYPE_STRING), so this turns the two strings into a HeatingFunction plus the float
-/// encode_heating_payload() expects: degrees C for `set_temperature`, a HeatingMode value for
-/// `set_mode`, 0/1 for `set_presence` / `set_open_window_detection`, and an ignored 0 for the
+/// encode_heating_payload() expects: degrees C for `set_temperature`, degrees C or 0 (cancel) for `set_derogation`, a
+/// HeatingMode value for `set_mode`, 0/1 for `set_presence` / `set_open_window_detection`, and an ignored 0 for the
 /// register reads (`power_on`, `midnight_sync`, `window_open`). On any malformed input it fills `error` with a
 /// caller-facing message and returns false rather than coercing a value. Kept next to the action (not in proto_heating)
 /// because the climate entity receives typed enums from Home Assistant and needs no string
@@ -251,6 +252,13 @@ static bool parse_heating_arguments(const std::string &function, const std::stri
   }
   if (fn == "set_temperature") {
     fn_out = HeatingFunction::SET_TEMPERATURE;
+    return parse_heating_temperature(value, value_out, error);
+  }
+  if (fn == "set_derogation") {
+    fn_out = HeatingFunction::DEROGATED_SETPOINT;
+    // 0 cancels the override (`00 00`); any other value is a temperature like set_temperature's.
+    if (trim_ascii_whitespace(value) == "0")
+      return true;
     return parse_heating_temperature(value, value_out, error);
   }
   if (fn == "set_mode") {
@@ -610,6 +618,15 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
   if (!device_uses_heating_registers(dev->type, dev->subtype)) {
     result.message = "device is commanded with heating levels, not private registers";
     return result;
+  }
+
+  // The override exists only on a heater whose own programme has comfort and eco periods.
+  if (fn == HeatingFunction::DEROGATED_SETPOINT) {
+    const HeatingProfile *profile = find_heating_profile(*dev);
+    if (profile == nullptr || profile->programme_period == nullptr) {
+      result.message = "device has no programme periods, so set_derogation does not apply";
+      return result;
+    }
   }
 
   // Snapshot any pre-existing CMD_ERROR_RESP code so a stale one (e.g. an old wind lockout from a

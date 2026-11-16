@@ -173,6 +173,7 @@ constexpr HeatingFunction TOWEL_DRYER_BOOT[] = {
 /// The programme runs when the mode register reads PROG and no boost or drying is on top of it. The
 /// temperature in force then is the comfort setpoint in a comfort period and the comfort setpoint minus the
 /// setback in an eco period.
+/// A target set in an eco period is written to the derogation register instead of the comfort setpoint.
 /// \todo Both periods are read on one unit (BD684B); a second unit or a second read confirms them. Until
 ///       then the card shows them as experimental.
 constexpr HeatingProgrammePeriod TOWEL_DRYER_PROGRAMME_PERIOD = {
@@ -181,6 +182,7 @@ constexpr HeatingProgrammePeriod TOWEL_DRYER_PROGRAMME_PERIOD = {
     HeatingFunction::TEMPERATURE_IN_FORCE,
     HeatingFunction::SET_TEMPERATURE,
     HeatingFunction::ECO_SETBACK,
+    HeatingFunction::DEROGATED_SETPOINT,
     preset_index(TOWEL_DRYER_PRESETS, HeatingPresetId::COMFORT),
     preset_index(TOWEL_DRYER_PRESETS, HeatingPresetId::ECO),
 };
@@ -577,10 +579,14 @@ ProgrammePeriodState resolve_programme_period(const HeatingProfile &profile, con
     return state;
   const int32_t in_force = to_tenths(state.target_c);
   const int32_t comfort = to_tenths(readings.temperature_of(period.comfort_fn));
+  const bool eco_temperature =
+      readings.has(period.setback_fn) && in_force == comfort - to_tenths(readings.temperature_of(period.setback_fn));
+  // An override of the eco temperature (0: none) is still the eco period: it ends at the next comfort period.
+  const bool eco_override = in_force != 0 && readings.has(period.derogation_fn) &&
+                            in_force == to_tenths(readings.temperature_of(period.derogation_fn));
   if (in_force == comfort) {
     state.preset_index = period.comfort_preset;
-  } else if (readings.has(period.setback_fn) &&
-             in_force == comfort - to_tenths(readings.temperature_of(period.setback_fn))) {
+  } else if (eco_temperature || eco_override) {
     state.preset_index = period.eco_preset;
   }
   return state;
@@ -594,8 +600,14 @@ std::optional<float> in_force_after_comfort_change(const HeatingProfile &profile
   const HeatingProgrammePeriod &period = *profile.programme_period;
   if (state.preset_index == period.comfort_preset)
     return new_comfort_c;
-  // The eco period: preset_index is the eco one and the setback has been read (resolve matched it).
-  const int32_t shifted_tenths = to_tenths(new_comfort_c) - to_tenths(before.temperature_of(period.setback_fn));
+  // The eco period. Only the eco temperature follows the comfort setpoint; an override of it (resolved from
+  // derogation_fn, possibly with no setback read) stays what it is until the heater reports otherwise.
+  if (!before.has(period.setback_fn))
+    return std::nullopt;
+  const int32_t setback_tenths = to_tenths(before.temperature_of(period.setback_fn));
+  if (to_tenths(state.target_c) != to_tenths(before.temperature_of(period.comfort_fn)) - setback_tenths)
+    return std::nullopt;
+  const int32_t shifted_tenths = to_tenths(new_comfort_c) - setback_tenths;
   return static_cast<float>(shifted_tenths) / TENTHS_PER_DEGREE;
 }
 
@@ -708,12 +720,18 @@ HeatingWritePlan plan_target_write(const HeatingProfile &profile, const HeatingW
       return refused(HeatingRefusal::UNENCODABLE);
     return plan_temperature_write(main_parameter, profile.setpoint_fp);
   }
+  // In an eco period the target is a temporary override that ends at the next comfort period; anywhere else
+  // it is the comfort setpoint.
+  const HeatingProgrammePeriod *period = profile.programme_period;
+  const bool in_eco_period =
+      period != nullptr && period->eco_preset >= 0 && facts.programme_preset_index == period->eco_preset;
+  const HeatingFunction target_fn = in_eco_period ? period->derogation_fn : HeatingFunction::SET_TEMPERATURE;
   HeatingWritePlan plan;
   plan.kind = HeatingPlanKind::REGISTER;
-  plan.register_fn = HeatingFunction::SET_TEMPERATURE;
+  plan.register_fn = target_fn;
   plan.register_value = request.target_c;
   plan.read_back = true;
-  plan.read_back_fn = HeatingFunction::SET_TEMPERATURE;
+  plan.read_back_fn = target_fn;
   return plan;
 }
 
@@ -727,6 +745,9 @@ HeatingDeviceFacts heating_device_facts(const IoDevice *dev) {
   facts.range_min_c = dev->temperature_range_min_c;
   facts.range_max_c = dev->temperature_range_max_c;
   facts.reported_setpoint_c = dev->heating.setpoint_c;
+  const HeatingProfile *profile = find_heating_profile(*dev);
+  if (profile != nullptr)
+    facts.programme_preset_index = resolve_programme_period(*profile, dev->heating).preset_index;
   return facts;
 }
 

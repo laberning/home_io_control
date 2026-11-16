@@ -90,6 +90,78 @@ TEST(HeatingWritePlan, RadiatorTargetIsAnUnencodedSetpointWriteThatIsReadBack) {
 
 // === Towel dryer (mode and temporary state registers) ===
 
+namespace {
+
+/// Facts of a towel dryer whose programme is in the period @p preset_index names (-1: not running or unknown).
+HeatingDeviceFacts towel_facts_in_period(int8_t preset_index) {
+  HeatingDeviceFacts facts = known_device(20.0F);
+  facts.programme_preset_index = preset_index;
+  return facts;
+}
+
+}  // namespace
+
+TEST(HeatingWritePlan, TowelDryerTargetInAnEcoPeriodIsAWriteOfTheDerogationRegister) {
+  const HeatingProfile &dryer = profile_of(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
+  const HeatingProgrammePeriod &period = *dryer.programme_period;
+
+  const HeatingWritePlan plan =
+      plan_heating_write(dryer, target_request(17.5F), towel_facts_in_period(period.eco_preset));
+  ASSERT_EQ(plan.kind, HeatingPlanKind::REGISTER);
+  EXPECT_EQ(plan.register_fn, HeatingFunction::DEROGATED_SETPOINT) << "the comfort setpoint stays as it is";
+  EXPECT_FLOAT_EQ(plan.register_value, 17.5F);
+  EXPECT_TRUE(plan.read_back);
+  EXPECT_EQ(plan.read_back_fn, HeatingFunction::DEROGATED_SETPOINT);
+}
+
+TEST(HeatingWritePlan, TowelDryerTargetInAComfortPeriodModeOrUnknownPeriodWritesTheComfortSetpoint) {
+  const HeatingProfile &dryer = profile_of(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
+  const HeatingProgrammePeriod &period = *dryer.programme_period;
+
+  // Comfort period; the programme not running (MANUEL, off, boost: no period); a period that fits neither.
+  for (const int8_t preset_index : {period.comfort_preset, static_cast<int8_t>(-1)}) {
+    const HeatingWritePlan plan = plan_heating_write(dryer, target_request(21.0F), towel_facts_in_period(preset_index));
+    ASSERT_EQ(plan.kind, HeatingPlanKind::REGISTER) << static_cast<int>(preset_index);
+    EXPECT_EQ(plan.register_fn, HeatingFunction::SET_TEMPERATURE) << static_cast<int>(preset_index);
+    EXPECT_EQ(plan.read_back_fn, HeatingFunction::SET_TEMPERATURE) << static_cast<int>(preset_index);
+  }
+  EXPECT_EQ(plan_heating_write(dryer, target_request(21.0F), known_device(20.0F)).register_fn,
+            HeatingFunction::SET_TEMPERATURE)
+      << "facts that name no period";
+}
+
+TEST(HeatingWritePlan, OnlyTheTowelDryerDerogates) {
+  const HeatingProfile &radiator = profile_of(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
+  // Whatever the facts say, a profile without a programme period writes the setpoint.
+  for (const int8_t preset_index : {static_cast<int8_t>(0), static_cast<int8_t>(1)}) {
+    HeatingDeviceFacts facts = known_device(20.0F);
+    facts.programme_preset_index = preset_index;
+    EXPECT_EQ(plan_heating_write(radiator, target_request(21.0F), facts).register_fn, HeatingFunction::SET_TEMPERATURE);
+  }
+}
+
+TEST(HeatingWritePlan, DeviceFactsNameTheProgrammePeriodTheReadingsShow) {
+  IoDevice dev;
+  dev.type = DeviceType::ELECTRICAL_HEATER;
+  dev.subtype = 1;
+  dev.model = DeviceModel::TOWEL_DRYER;
+  dev.heating.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
+  dev.heating.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE);
+  dev.heating.setpoint_c = 20.0F;
+  dev.heating.eco_setback_k = 3.5F;
+  const HeatingProgrammePeriod &period = *find_heating_profile(dev)->programme_period;
+
+  dev.heating.in_force_temperature_c = 16.5F;
+  EXPECT_EQ(heating_device_facts(&dev).programme_preset_index, period.eco_preset);
+  dev.heating.in_force_temperature_c = 20.0F;
+  EXPECT_EQ(heating_device_facts(&dev).programme_preset_index, period.comfort_preset);
+  dev.heating.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
+  EXPECT_EQ(heating_device_facts(&dev).programme_preset_index, -1) << "MANUEL: no period";
+  dev.heating.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
+  dev.heating.in_force_temperature_c = NAN;
+  EXPECT_EQ(heating_device_facts(&dev).programme_preset_index, -1) << "not read yet";
+}
+
 TEST(HeatingWritePlan, TowelDryerModeAndTemporaryStateAreSeparateRegisters) {
   const HeatingProfile &dryer = profile_of(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
 

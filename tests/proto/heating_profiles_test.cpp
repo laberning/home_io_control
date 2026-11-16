@@ -670,6 +670,7 @@ TEST(HeatingProfilesTowelDryer, ComfortAndEcoAreShownOnlyAndHaveNoWireValueOfThe
   EXPECT_EQ(period.in_force_fn, HeatingFunction::TEMPERATURE_IN_FORCE);
   EXPECT_EQ(period.comfort_fn, HeatingFunction::SET_TEMPERATURE) << "the register the card writes";
   EXPECT_EQ(period.setback_fn, HeatingFunction::ECO_SETBACK);
+  EXPECT_EQ(period.derogation_fn, HeatingFunction::DEROGATED_SETPOINT) << "an eco-period target is written here";
 }
 
 TEST(HeatingProfilesTowelDryer, OnlyTheTowelDryerHasAProgrammePeriod) {
@@ -724,6 +725,20 @@ TEST(HeatingProfilesTowelDryer, ATemperatureThatFitsNeitherPeriodShowsNoPeriodBu
   EXPECT_TRUE(state.active);
   EXPECT_EQ(state.preset_index, -1) << "a frost or holiday value is neither comfort nor eco";
   EXPECT_FLOAT_EQ(state.target_c, 7.0F);
+}
+
+TEST(HeatingProfilesTowelDryer, ADerogationReadingEqualToTheTemperatureInForceIsTheEcoPeriod) {
+  const HeatingProfile &p = towel();
+  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 17.5F);
+  EXPECT_EQ(resolve_programme_period(p, r).preset_index, -1) << "no override read: 17.5 fits neither period";
+  r.derogated_setpoint_c = 17.5F;
+  EXPECT_EQ(resolve_programme_period(p, r).preset_index, p.programme_period->eco_preset);
+  r.derogated_setpoint_c = 0.0F;
+  EXPECT_EQ(resolve_programme_period(p, r).preset_index, -1) << "0 is no override";
+  r.derogated_setpoint_c = 20.0F;
+  r.in_force_temperature_c = 20.0F;
+  EXPECT_EQ(resolve_programme_period(p, r).preset_index, p.programme_period->comfort_preset)
+      << "the comfort setpoint wins: the override has ended";
 }
 
 TEST(HeatingProfilesTowelDryer, WithoutTheSetbackOnlyComfortCanBeTold) {
@@ -785,6 +800,19 @@ TEST(HeatingProfilesTowelDryer, NothingIsShiftedWhenARegisterItNeedsIsUnread) {
   HeatingReadings no_setback = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F);
   no_setback.clear(HeatingFunction::ECO_SETBACK);
   EXPECT_FALSE(in_force_after_comfort_change(towel(), no_setback, 21.0F).has_value());
+}
+
+TEST(HeatingProfilesTowelDryer, AnOverrideOfTheEcoTemperatureIsNotShiftedByAComfortChange) {
+  // 17.5 is an override (comfort 20.0, setback 3.5): it does not follow the comfort setpoint.
+  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 17.5F);
+  r.derogated_setpoint_c = 17.5F;
+  ASSERT_EQ(resolve_programme_period(towel(), r).preset_index, towel().programme_period->eco_preset);
+  EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 21.0F).has_value());
+
+  r.clear(HeatingFunction::ECO_SETBACK);
+  ASSERT_EQ(resolve_programme_period(towel(), r).preset_index, towel().programme_period->eco_preset)
+      << "the override alone names the eco period";
+  EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 21.0F).has_value()) << "no setback to shift by";
 }
 
 TEST(HeatingProfilesTowelDryer, AProfileWithoutAProgrammePeriodShiftsNothing) {

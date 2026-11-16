@@ -178,13 +178,16 @@ struct HeatingProfileFeatures {
 ///          minus the `setback_fn` one in an eco period. Outside the programme `in_force_fn` is not a
 ///          temperature (it reads 1 in boost and 2 in drying on a towel dryer).
 struct HeatingProgrammePeriod {
-  uint8_t programme_mode;       ///< Value of HeatingProfile::mode_fn while the programme runs.
-  uint8_t idle_preset_state;    ///< Value of HeatingProfile::preset_fn with no timed run on top.
-  HeatingFunction in_force_fn;  ///< Register of the temperature in force.
-  HeatingFunction comfort_fn;   ///< Register of the comfort setpoint.
-  HeatingFunction setback_fn;   ///< Register of the eco setback, a distance below the comfort setpoint.
-  int8_t comfort_preset;        ///< Index into HeatingProfile::presets shown in a comfort period.
-  int8_t eco_preset;            ///< Index into HeatingProfile::presets shown in an eco period.
+  uint8_t programme_mode;         ///< Value of HeatingProfile::mode_fn while the programme runs.
+  uint8_t idle_preset_state;      ///< Value of HeatingProfile::preset_fn with no timed run on top.
+  HeatingFunction in_force_fn;    ///< Register of the temperature in force.
+  HeatingFunction comfort_fn;     ///< Register of the comfort setpoint.
+  HeatingFunction setback_fn;     ///< Register of the eco setback, a distance below the comfort setpoint.
+  HeatingFunction derogation_fn;  ///< Register of the temporary override: a target set in an eco period is
+                                  ///< written here and ends at the next comfort period, leaving the comfort
+                                  ///< setpoint and the schedule as they were.
+  int8_t comfort_preset;          ///< Index into HeatingProfile::presets shown in a comfort period.
+  int8_t eco_preset;              ///< Index into HeatingProfile::presets shown in an eco period.
 };
 
 /// @brief One heater kind.
@@ -342,7 +345,8 @@ bool programme_period_active(const HeatingProfile &profile, const HeatingReading
 
 /// @brief Which period of its programme a heater is in, and the temperature it heats to.
 /// @details Compares in whole tenths of a degree: the temperature in force equals the comfort setpoint
-///          (comfort period) or the comfort setpoint minus the setback (eco period). Anything else, or a
+///          (comfort period), the comfort setpoint minus the setback (eco period) or a non-zero override of
+///          the eco temperature read from `derogation_fn` (still the eco period). Anything else, or a
 ///          register not read yet, names no period but still reports the temperature in force.
 /// @param profile The device's profile.
 /// @param readings What the hub has read from the heater.
@@ -362,7 +366,9 @@ ProgrammePeriodState resolve_programme_period(const HeatingProfile &profile, con
 /// @param before What the hub had read before the change.
 /// @param new_comfort_c The comfort setpoint the heater now holds.
 /// @return The shifted temperature, or nothing when the profile has no programme period, the programme
-///         does not run, a register it needs has not been read, or the old value fits neither period.
+///         does not run, a register it needs has not been read, the old value fits neither period, or it is
+///         an override of the eco temperature (HeatingProgrammePeriod::derogation_fn), which a comfort change
+///         does not move.
 std::optional<float> in_force_after_comfort_change(const HeatingProfile &profile, const HeatingReadings &before,
                                                    float new_comfort_c);
 
@@ -398,6 +404,9 @@ struct HeatingDeviceFacts {
   float range_min_c{HEATING_TEMPERATURE_RANGE_MIN_C};  ///< Lower end of the YAML temperature range.
   float range_max_c{HEATING_TEMPERATURE_RANGE_MAX_C};  ///< Upper end of the YAML temperature range.
   float reported_setpoint_c{NAN};                      ///< The setpoint the device last reported (NaN until read).
+  int8_t programme_preset_index{-1};                   ///< Index of the period the device's programme is in now
+                                      ///< (ProgrammePeriodState::preset_index); -1 when no programme runs or the
+                                      ///< readings cannot say.
 };
 
 /// @brief Why a request becomes no write.
@@ -447,6 +456,12 @@ HeatingDeviceFacts heating_device_facts(const IoDevice *dev);
 ///          (including the main parameter of a level, an alias or an encoded temperature, and the target a
 ///          mode sends), and whether the register is read back afterwards. The temperature is encoded over
 ///          the fixed range of a profile that has one, else over the device's YAML range.
+///
+///          A target set while the programme is in its eco period (HeatingProgrammePeriod::eco_preset) is a
+///          temporary override: it is planned as a write of HeatingProgrammePeriod::derogation_fn with a
+///          read-back of that register, and the comfort setpoint is not touched. In a comfort period, in
+///          any other mode and when the period is unknown it writes the comfort setpoint.
+///          \todo Confirm the override on towel dryer hardware (the write is untested).
 /// @param profile The device's profile.
 /// @param request What the card asks for.
 /// @param facts What the hub knows about the device.

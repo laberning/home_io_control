@@ -275,6 +275,7 @@ the heater took the frame, and the climate entity reads the register back to sho
 |---|---|---|
 | `power_on` | *(ignored)* | Wake / retrieve paired devices. |
 | `set_temperature` | float °C, `7.0`–`28.0` | Setpoint. |
+| `set_derogation` | float °C, `7.0`–`28.0`, or `0` | Towel dryer in its program: a temporary override of the eco temperature that ends at the next comfort period (register `0x011D`); `0` cancels it. Experimental, not yet confirmed on a dryer. Refused on heaters without program periods. |
 | `set_mode` | `auto` \| `manual` \| `prog` \| `off` | Operating mode. |
 | `set_presence` | `on` \| `off` | Presence / absence. The AGILIA IO acknowledges it; no visible effect observed. |
 | `set_open_window_detection` | `on` \| `off` | Switches the heater's open-window detection on or off (register `0x0106`). |

@@ -34,6 +34,7 @@ the `io_model:` line yourself.
 | Starting or ending boost and drying from Home Assistant | ✅ The display starts and ends both |
 | Boost started on the dryer itself | ✅ Shows as the `boost` preset and `heating` at the next poll |
 | Comfort or eco period of PROG | ⚠️ Experimental: read on one unit, in a comfort period and in an eco period; no second unit has confirmed it yet |
+| Target set in an eco period (temporary override) | ⚠️ Experimental: the write has not been confirmed on a dryer yet |
 
 ## Modes and presets in Home Assistant
 
@@ -107,10 +108,18 @@ like".
 - **Changes made on the dryer show up at the next poll.** The hub reads the dryer every five minutes
   by default, so a boost started on the dryer can take that long to appear in Home Assistant. Set
   `status_poll_interval` on the entry to read it more often.
-- **The target in an eco period is the eco temperature.** Setting a target from Home Assistant in
-  `auto` writes the comfort setpoint. When the card shows the comfort or eco preset, the target
-  follows at once: the new setpoint in a comfort period, the new setpoint minus the eco setback in an
-  eco period. The dryer's own reading replaces it at the next poll.
+- **A target set in an eco period is a temporary override (experimental).** While the dryer runs its
+  program and the card shows the `eco` preset, a target from Home Assistant raises the temperature
+  until the next comfort period, as the dryer's panel does. Comfort setpoint and schedule stay as they
+  were. The card shows the new target at once, still with the `eco` preset, and the dryer's own
+  reading replaces it at the next poll. An override set on the dryer's panel or with the action shows
+  with the `eco` preset at the next poll: when the temperature in force fits neither period, the hub
+  reads the dryer's override register, and a non-zero value equal to that temperature is an override.
+  A target from Home Assistant then sets the override again. In a comfort period, in `heat` (MANUEL)
+  and while the period is unknown, a target changes the comfort setpoint. The write has not been
+  confirmed on a dryer yet: if the card falls back to the old temperature after the next poll, the
+  dryer refused it. The [`heating_control` action](../configuration/climate.md#the-heating_control-action) has a
+  `set_derogation` function to set or cancel the override by hand.
 - **A change of the eco setback on the dryer shows at the next poll that the temperature fits neither
   period.** The hub reads the setback at the first poll and again when the temperature in force fits
   neither period.

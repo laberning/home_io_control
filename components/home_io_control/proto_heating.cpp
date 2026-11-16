@@ -39,14 +39,15 @@ constexpr uint8_t WORKING_RATE_MAX = 100;
 
 /// @brief How a register's value maps onto the bytes after the 4-byte header.
 enum class HeatingValueKind : uint8_t {
-  NONE,            ///< No typed value: logged raw, never decoded.
-  TENTHS_U16,      ///< Unsigned 16-bit little-endian tenths of a degree.
-  HUNDREDTHS_S16,  ///< Signed 16-bit little-endian hundredths of a degree; -1 is a sensor fault.
-  BINARY,          ///< One byte, 0 or 1.
-  MODE,            ///< One HeatingMode byte.
-  BOUNDED_BYTE,    ///< One byte from 0 to the row's `max_value`: an enumeration (regulator state, towel-dryer
-                   ///< mode, temporary state) or a percentage (working rate).
-  BOUNDED_U16,     ///< Unsigned 16-bit little-endian integer from 0 to the row's `max_value` (night light brightness).
+  NONE,                ///< No typed value: logged raw, never decoded.
+  TENTHS_U16,          ///< Unsigned 16-bit little-endian tenths of a degree.
+  TENTHS_U16_OR_ZERO,  ///< TENTHS_U16, and a write may also send 0 (`00 00`): "no value", which cancels.
+  HUNDREDTHS_S16,      ///< Signed 16-bit little-endian hundredths of a degree; -1 is a sensor fault.
+  BINARY,              ///< One byte, 0 or 1.
+  MODE,                ///< One HeatingMode byte.
+  BOUNDED_BYTE,        ///< One byte from 0 to the row's `max_value`: an enumeration (regulator state, towel-dryer
+                       ///< mode, temporary state) or a percentage (working rate).
+  BOUNDED_U16,  ///< Unsigned 16-bit little-endian integer from 0 to the row's `max_value` (night light brightness).
 };
 
 /// @brief Who may do what with a register.
@@ -97,6 +98,9 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
     {"temperature_in_force", HeatingFunction::TEMPERATURE_IN_FORCE, 0x37, HeatingAccess::READ_ONLY,
      HeatingValueKind::TENTHS_U16},
     {"eco_setback", HeatingFunction::ECO_SETBACK, 0x04, HeatingAccess::READ_ONLY, HeatingValueKind::TENTHS_U16},
+    // Read during a panel override on a towel dryer (issue #202): 16.5 degrees, 0 otherwise.
+    {"set_derogation", HeatingFunction::DEROGATED_SETPOINT, 0x1D, HeatingAccess::READ_WRITE,
+     HeatingValueKind::TENTHS_U16_OR_ZERO},
     // Night light registers: read on a Sauter Hekla with the light on and off (issue #222).
     {"night_light", HeatingFunction::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, HeatingValueKind::BINARY},
     {"night_light_brightness", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 0x42, HeatingAccess::READ_WRITE,
@@ -125,6 +129,7 @@ size_t value_length(HeatingValueKind kind) {
     case HeatingValueKind::NONE:
       return 0;
     case HeatingValueKind::TENTHS_U16:
+    case HeatingValueKind::TENTHS_U16_OR_ZERO:
     case HeatingValueKind::HUNDREDTHS_S16:
     case HeatingValueKind::BOUNDED_U16:
       return 2;
@@ -192,6 +197,10 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE
     return 0;
 
   switch (d->kind) {
+    case HeatingValueKind::TENTHS_U16_OR_ZERO:
+      if (value == 0.0F)
+        return write_u16_set(*d, 0, out);
+      [[fallthrough]];
     case HeatingValueKind::TENTHS_U16: {
       // Reject NaN / infinity and anything outside the representable range rather than emitting a
       // wrapped byte.
@@ -264,6 +273,7 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
   const auto raw16 = static_cast<uint16_t>(v[0] | (v[1] << BITS_PER_BYTE));
   switch (d->kind) {
     case HeatingValueKind::TENTHS_U16:
+    case HeatingValueKind::TENTHS_U16_OR_ZERO:
       value = static_cast<float>(raw16) / DEGREES_TO_TENTHS;
       return true;
 
@@ -323,6 +333,7 @@ constexpr HeatingReadingField HEATING_READING_FIELDS[] = {
     {HeatingFunction::MAX_SETPOINT, &HeatingReadings::max_setpoint_c, nullptr},
     {HeatingFunction::TEMPERATURE_IN_FORCE, &HeatingReadings::in_force_temperature_c, nullptr},
     {HeatingFunction::ECO_SETBACK, &HeatingReadings::eco_setback_k, nullptr},
+    {HeatingFunction::DEROGATED_SETPOINT, &HeatingReadings::derogated_setpoint_c, nullptr},
     {HeatingFunction::SET_MODE, nullptr, &HeatingReadings::mode},
     {HeatingFunction::REGULATOR_STATE, nullptr, &HeatingReadings::regulator},
     {HeatingFunction::WINDOW_OPEN, nullptr, &HeatingReadings::window_open},

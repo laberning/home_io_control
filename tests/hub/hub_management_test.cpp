@@ -716,6 +716,48 @@ TEST(HubManagement, HeatingControlHappyPathSendsExactBytesPerFunction) {
   }
 }
 
+TEST(HubManagement, HeatingControlSetDerogationWritesTheOverrideAndZeroCancelsIt) {
+  const std::vector<HeatingCase> cases = {
+      {"set_derogation", "17.5", {0x0C, 0x61, 0x01, 0x1D, 0xAF, 0x00}},
+      {"set_derogation", "0", {0x0C, 0x61, 0x01, 0x1D, 0x00, 0x00}},
+  };
+  for (const auto &tc : cases) {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    make_climate_device(component);
+    component.get_device("ABC123")->model = DeviceModel::TOWEL_DRYER;
+    radio.queue_rx(frame_to_packet(make_write_private_ack(component.node_id_)));
+
+    const auto result = component.management_actions_.heating_control("ABC123", tc.function, tc.value);
+    EXPECT_TRUE(result.success) << tc.value;
+    ASSERT_EQ(radio.get_sent_data().size(), 1u) << tc.value;
+    const auto &tx = radio.get_sent_data().front();
+    ASSERT_GE(tx.size(), 9u + tc.payload.size());
+    for (size_t i = 0; i < tc.payload.size(); i++)
+      EXPECT_EQ(tx[9 + i], tc.payload[i]) << tc.value << " payload byte " << i;
+  }
+}
+
+TEST(HubManagement, HeatingControlSetDerogationRejectsABadValueAndAProfileWithoutProgrammePeriods) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+
+  auto result = component.management_actions_.heating_control("ABC123", "set_derogation", "17.5");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device has no programme periods, so set_derogation does not apply");
+
+  component.get_device("ABC123")->model = DeviceModel::TOWEL_DRYER;
+  result = component.management_actions_.heating_control("ABC123", "set_derogation", "5");
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "temperature must be between 7.0 and 28.0");
+  result = component.management_actions_.heating_control("ABC123", "set_derogation", "warm");
+  EXPECT_FALSE(result.success);
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
 TEST(HubManagement, HeatingControlReportsFailureWithoutAck) {
   TestableManagementComponent component;
   MockRadio radio;
