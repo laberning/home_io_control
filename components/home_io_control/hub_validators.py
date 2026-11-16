@@ -273,6 +273,7 @@ KIND_EXPERIMENTAL = 0x8000
 DEVICE_MODEL_OPTIONS = {
     "towel_dryer": 1,
     "heater_with_light": 2,
+    "electric_water_heater": 3,
 }
 
 # The capability word of each row whose type has a YAML name, keyed "<name>" for subtype 0,
@@ -318,6 +319,7 @@ DEVICE_FEATURES = {
     "sliding_window/1": 0x808A,  # KIND_EXPERIMENTAL LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "bioclimatic_pergola": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
     "domestic_hot_water": 0x8400,  # KIND_EXPERIMENTAL WATER_HEATER
+    "domestic_hot_water/0/electric_water_heater": 0x8400,  # KIND_EXPERIMENTAL WATER_HEATER
     "electrical_heater/1": 0x0100,  # WINDOW_COMPANIONS
     "electrical_heater/1/towel_dryer": 0x0000,  # no window function
     "electrical_heater/1/heater_with_light": 0x0900,  # WINDOW_COMPANIONS NIGHT_LIGHT

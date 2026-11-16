@@ -179,7 +179,11 @@ TEST(DocsNodeTypeTableSync, NamedSubtypesMatchAndAreMarkedExperimentalExactlyWhe
     const auto want = expected.find(value);
     const std::map<unsigned, DocsSubtype> none;
     const std::map<unsigned, DocsSubtype> &want_subtypes = want == expected.end() ? none : want->second;
-    EXPECT_EQ(row.subtypes.size(), want_subtypes.size()) << "type 0x" << std::hex << value << " (" << row.name << ")";
+    // Subtype 0 is the type row itself: the docs name it only to list the models below it.
+    const auto type_row = row.subtypes.find(0);
+    const size_t model_carrier = type_row != row.subtypes.end() && !type_row->second.models.empty() ? 1 : 0;
+    EXPECT_EQ(row.subtypes.size() - model_carrier, want_subtypes.size())
+        << "type 0x" << std::hex << value << " (" << row.name << ")";
     for (const auto &[subtype, named] : want_subtypes) {
       const auto listed = row.subtypes.find(subtype);
       ASSERT_NE(listed, row.subtypes.end()) << "type 0x" << std::hex << value << ": subtype " << std::dec << subtype

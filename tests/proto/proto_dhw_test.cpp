@@ -351,3 +351,92 @@ TEST(ProtoDhw, OperatingStatusRefusesWhatItCannotRead) {
   EXPECT_FALSE(decode_dhw_operating_status(wrong_command, s));
   EXPECT_EQ(s.capabilities, 0x1234) << "untouched on failure";
 }
+
+// === Electric storage water heater (DeviceModel::ELECTRIC_WATER_HEATER) ===
+// Values are those of a Sauter Guelma connecte 80 L.
+
+TEST(ProtoDhw, OnlyTheElectricStorageModelKeepsItsStateInRegisters) {
+  EXPECT_TRUE(dhw_state_in_registers(DeviceModel::ELECTRIC_WATER_HEATER));
+  EXPECT_FALSE(dhw_state_in_registers(DeviceModel::NONE));
+  EXPECT_FALSE(dhw_state_in_registers(DeviceModel::TOWEL_DRYER));
+}
+
+TEST(ProtoDhw, TheElectricStorageModelOffersOnlyTheTwoModesItHasShown) {
+  const DeviceModel electric = DeviceModel::ELECTRIC_WATER_HEATER;
+  EXPECT_TRUE(dhw_model_offers_mode(electric, DhwMode::AUTO));
+  EXPECT_TRUE(dhw_model_offers_mode(electric, DhwMode::MANUAL_ECO_OFF));
+  EXPECT_FALSE(dhw_model_offers_mode(electric, DhwMode::MANUAL_ECO_ON)) << "register 0x0006 never read 1 on it";
+  for (const DhwMode mode : {DhwMode::AUTO, DhwMode::MANUAL_ECO_ON, DhwMode::MANUAL_ECO_OFF})
+    EXPECT_TRUE(dhw_model_offers_mode(DeviceModel::NONE, mode));
+}
+
+TEST(ProtoDhw, StateDecodesTheFourValuesSeenAndNothingElse) {
+  const struct {
+    uint8_t wire;
+    DhwState state;
+  } seen[] = {{0x00, DhwState::AWAY}, {0x02, DhwState::MANUAL}, {0x03, DhwState::BOOST}, {0x04, DhwState::AUTO}};
+  for (const auto &row : seen) {
+    DhwState state = DhwState::AUTO;
+    ASSERT_TRUE(decode_dhw_state(&row.wire, 1, state)) << static_cast<unsigned>(row.wire);
+    EXPECT_EQ(state, row.state);
+  }
+  DhwState untouched = DhwState::MANUAL;
+  for (const uint8_t unknown : {uint8_t{0x01}, uint8_t{0x05}, uint8_t{0xFF}})
+    EXPECT_FALSE(decode_dhw_state(&unknown, 1, untouched)) << static_cast<unsigned>(unknown);
+  const uint8_t auto_state = 0x04;
+  EXPECT_FALSE(decode_dhw_state(&auto_state, 0, untouched)) << "an empty value";
+  EXPECT_FALSE(decode_dhw_state(nullptr, 1, untouched));
+  EXPECT_EQ(untouched, DhwState::MANUAL);
+}
+
+TEST(ProtoDhw, HeatingPowerIsUnsignedBigEndianWatts) {
+  uint16_t watts = 7;
+  const uint8_t rest[] = {0x00, 0x00};
+  ASSERT_TRUE(decode_dhw_heating_power(rest, sizeof(rest), watts));
+  EXPECT_EQ(watts, 0);
+  const uint8_t automatic[] = {0x03, 0xE8};
+  ASSERT_TRUE(decode_dhw_heating_power(automatic, sizeof(automatic), watts));
+  EXPECT_EQ(watts, 1000);
+  const uint8_t manual[] = {0x05, 0xDC};
+  ASSERT_TRUE(decode_dhw_heating_power(manual, sizeof(manual), watts));
+  EXPECT_EQ(watts, 1500);
+  EXPECT_FALSE(decode_dhw_heating_power(manual, 1, watts));
+  EXPECT_FALSE(decode_dhw_heating_power(nullptr, 2, watts));
+  EXPECT_EQ(watts, 1500) << "untouched on failure";
+}
+
+TEST(ProtoDhw, AShowerCountIsTheFirstValueByte) {
+  uint8_t showers = 9;
+  const uint8_t four = 0x04;
+  ASSERT_TRUE(decode_dhw_showers(&four, 1, showers));
+  EXPECT_EQ(showers, 4);
+  EXPECT_FALSE(decode_dhw_showers(&four, 0, showers));
+  EXPECT_FALSE(decode_dhw_showers(nullptr, 1, showers));
+  EXPECT_EQ(showers, 4);
+}
+
+TEST(ProtoDhw, TheActiveTargetIsSignedBigEndianTenths) {
+  float celsius = 0.0F;
+  const uint8_t one_shower[] = {0x01, 0xA4};
+  ASSERT_TRUE(decode_dhw_active_target(one_shower, sizeof(one_shower), celsius));
+  EXPECT_FLOAT_EQ(celsius, 42.0F);
+  const uint8_t four_showers[] = {0x02, 0xBC};
+  ASSERT_TRUE(decode_dhw_active_target(four_showers, sizeof(four_showers), celsius));
+  EXPECT_FLOAT_EQ(celsius, 70.0F);
+  const uint8_t absence[] = {0x00, 0x46};
+  ASSERT_TRUE(decode_dhw_active_target(absence, sizeof(absence), celsius));
+  EXPECT_FLOAT_EQ(celsius, 7.0F) << "frost protection";
+  EXPECT_FALSE(decode_dhw_active_target(absence, 1, celsius));
+}
+
+TEST(ProtoDhw, AStatusWhoseTwoWordsReadAllOnesReportsNothing) {
+  // The Guelma's answer in every state: main parameter 0, FP10 0, FP15 and FP16 FFFF.
+  DhwOperatingStatus s;
+  ASSERT_TRUE(decode_dhw_operating_status(
+      reply_with({0x04, 0x00, 0x00, 0x00, 0x00, 0x43, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF}, CMD_PRIVATE_RESP), s));
+  EXPECT_TRUE(s.unreported);
+  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(DHW_OPERATING_MODE_OFF), s));
+  EXPECT_FALSE(s.unreported) << "the heat-pump heater's words are readings";
+  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(0xFFFF), s));
+  EXPECT_FALSE(s.unreported) << "one word alone is not enough";
+}

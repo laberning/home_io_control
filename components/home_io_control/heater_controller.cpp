@@ -49,6 +49,16 @@ const char *dhw_register_label(uint8_t index) {
       return "dhw_energy";
     case DHW_REG_BRAND:
       return "dhw_brand";
+    case DHW_REG_STATE:
+      return "dhw_state";
+    case DHW_REG_ACTIVE_TARGET:
+      return "dhw_active_target";
+    case DHW_REG_TARGET_SHOWERS:
+      return "dhw_target_showers";
+    case DHW_REG_SHOWERS_AVAILABLE:
+      return "dhw_showers_available";
+    case DHW_REG_HEATING_POWER:
+      return "dhw_heating_power";
     default:
       return "dhw_register";
   }
@@ -77,6 +87,53 @@ bool store_dhw_brand(const std::string &device_id, DhwReadings &readings, const 
     ESP_LOGI(detail::TAG, "Device %s reports hot water brand '%c' (0x%02X)", device_id.c_str(), letter, value[0]);
   }
   readings.brand = value[0];
+  return true;
+}
+
+/// Fold the state register of an electric storage water heater into the readings: the state itself, and the
+/// boost and away it implies (this model has no operating-mode word to report them).
+bool store_dhw_state(const std::string &device_id, DhwReadings &readings, const uint8_t *value, size_t len) {
+  DhwState state = DhwState::AUTO;
+  if (!decode_dhw_state(value, len, state))
+    return false;
+  const auto raw = static_cast<int16_t>(state);
+  if (readings.state != raw) {
+    ESP_LOGI(detail::TAG, "Device %s: hot water state %d (boost %s, away %s)", device_id.c_str(), raw,
+             state == DhwState::BOOST ? "on" : "off", state == DhwState::AWAY ? "on" : "off");
+  }
+  readings.state = raw;
+  readings.boost = state == DhwState::BOOST ? 1 : 0;
+  readings.away = state == DhwState::AWAY ? 1 : 0;
+  return true;
+}
+
+/// Fold a shower count of an electric storage water heater into the readings.
+bool store_dhw_showers(const std::string &device_id, DhwReadings &readings, uint8_t index, const uint8_t *value,
+                       size_t len) {
+  uint8_t showers = 0;
+  if (!decode_dhw_showers(value, len, showers))
+    return false;
+  const bool available = index == DHW_REG_SHOWERS_AVAILABLE;
+  int16_t &reading = available ? readings.showers_available : readings.showers_target;
+  if (reading != showers) {
+    ESP_LOGI(detail::TAG, "Device %s: hot water showers %s %u", device_id.c_str(),
+             available ? "available" : "aimed for", static_cast<unsigned>(showers));
+  }
+  reading = showers;
+  return true;
+}
+
+/// Fold the heating power of an electric storage water heater into the readings. The element is what heats
+/// on this model, so the power also says whether it runs; there is no heat pump to report.
+bool store_dhw_heating_power(const std::string &device_id, DhwReadings &readings, const uint8_t *value, size_t len) {
+  uint16_t watts = 0;
+  if (!decode_dhw_heating_power(value, len, watts))
+    return false;
+  if (readings.power_w != watts)
+    ESP_LOGI(detail::TAG, "Device %s: hot water heating power %u W", device_id.c_str(), static_cast<unsigned>(watts));
+  readings.power_w = watts;
+  readings.heating = watts != 0 ? 1 : 0;
+  readings.element = readings.heating;
   return true;
 }
 
@@ -115,6 +172,22 @@ bool store_dhw_reading(const std::string &device_id, DhwReadings &readings, uint
     }
     case DHW_REG_BRAND:
       return store_dhw_brand(device_id, readings, value, len);
+    case DHW_REG_STATE:
+      return store_dhw_state(device_id, readings, value, len);
+    case DHW_REG_ACTIVE_TARGET: {
+      float celsius = NAN;
+      if (!decode_dhw_active_target(value, len, celsius))
+        return false;
+      if (readings.target_c != celsius)
+        ESP_LOGI(detail::TAG, "Device %s: hot water target %.1f C", device_id.c_str(), static_cast<double>(celsius));
+      readings.target_c = celsius;
+      return true;
+    }
+    case DHW_REG_TARGET_SHOWERS:
+    case DHW_REG_SHOWERS_AVAILABLE:
+      return store_dhw_showers(device_id, readings, index, value, len);
+    case DHW_REG_HEATING_POWER:
+      return store_dhw_heating_power(device_id, readings, value, len);
     default:
       return false;
   }
@@ -449,7 +522,20 @@ bool HeaterController::read_dhw_status(const std::string &device_id, uint8_t max
          this->hub_.status_read(device_id, request, 0, max_tries);
 }
 
+bool HeaterController::refuse_unknown_dhw_write_(const std::string &device_id, const char *operation) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr || !dhw_state_in_registers(dev->model))
+    return false;
+  ESP_LOGW(detail::TAG,
+           "%s for device %s not sent: how an electric storage water heater takes it is not known; use its "
+           "display",
+           operation, device_id.c_str());
+  return true;
+}
+
 bool HeaterController::set_water_heater_target(const std::string &device_id, float celsius) {
+  if (this->refuse_unknown_dhw_write_(device_id, "Hot water target"))
+    return false;
   uint16_t main_parameter = 0;
   if (!encode_dhw_target(celsius, main_parameter)) {
     ESP_LOGW(detail::TAG, "Hot water target %.1f C for device %s rejected: outside %.0f-%.0f C",
@@ -526,10 +612,22 @@ bool HeaterController::set_water_heater_mode(const std::string &device_id, DhwMo
              static_cast<unsigned>(mode), device_id.c_str());
     return false;
   }
+  const IoDevice *dev = this->registry_.get(device_id);
+  if (dev != nullptr && !dhw_model_offers_mode(dev->model, mode)) {
+    ESP_LOGW(detail::TAG, "Hot water mode %u for device %s rejected: not a mode this model reports",
+             static_cast<unsigned>(mode), device_id.c_str());
+    return false;
+  }
+  const bool in_registers = dev != nullptr && dhw_state_in_registers(dev->model);
   if (!this->write_dhw_register_(device_id, "hot water mode", DHW_REG_MODE, payload, payload_len))
     return false;
   // The heater chooses its own target in AUTO and holds its manual one otherwise, so the target changes
   // with the mode: read it now rather than at the next poll. A miss here does not undo the write.
+  if (in_registers) {
+    this->read_dhw_reading(device_id, DHW_REG_STATE, EXCHANGE_RETRY_COUNT);
+    this->read_dhw_reading(device_id, DHW_REG_ACTIVE_TARGET, EXCHANGE_RETRY_COUNT);
+    return true;
+  }
   this->read_dhw_status(device_id, EXCHANGE_RETRY_COUNT);
   return true;
 }
@@ -575,10 +673,14 @@ bool HeaterController::set_dhw_operating_mode_(const std::string &device_id, Dhw
 }
 
 bool HeaterController::set_water_heater_boost(const std::string &device_id, bool on) {
+  if (this->refuse_unknown_dhw_write_(device_id, "Hot water boost"))
+    return false;
   return this->set_dhw_operating_mode_(device_id, DhwOperatingFeature::BOOST, on);
 }
 
 bool HeaterController::set_water_heater_away(const std::string &device_id, bool on) {
+  if (this->refuse_unknown_dhw_write_(device_id, "Hot water away"))
+    return false;
   return this->set_dhw_operating_mode_(device_id, DhwOperatingFeature::AWAY, on);
 }
 
@@ -788,6 +890,11 @@ namespace {
 /// The registers every water heater poll reads, after the status read, in this order.
 constexpr uint8_t DHW_POLL_REGISTERS[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,          DHW_REG_HEATING,
                                           DHW_REG_BOOST_DURATION,    DHW_REG_AWAY_DURATION, DHW_REG_ENERGY};
+/// The registers the poll of an electric storage water heater reads, in this order. It reads no status: this
+/// model's status reply carries nothing, and registers 0x0021, 0x0000 and 0x0005 answer with no value.
+constexpr uint8_t DHW_ELECTRIC_POLL_REGISTERS[] = {
+    DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,              DHW_REG_STATE,         DHW_REG_ACTIVE_TARGET,
+    DHW_REG_TARGET_SHOWERS,    DHW_REG_SHOWERS_AVAILABLE, DHW_REG_HEATING_POWER, DHW_REG_ENERGY};
 
 }  // namespace
 
@@ -796,11 +903,14 @@ bool HeaterController::poll_dhw_(const std::string &device_id) {
   if (dev == nullptr || !has_feature(dev->features, device_feature::WATER_HEATER))
     return false;
 
-  return this->run_poll_(device_id, PollLadder::RUN_BY_POLL, [this, &device_id](uint8_t max_tries) {
-    bool ok = this->read_dhw_status(device_id, max_tries);
+  const bool in_registers = dhw_state_in_registers(dev->model);
+  return this->run_poll_(device_id, PollLadder::RUN_BY_POLL, [this, &device_id, in_registers](uint8_t max_tries) {
+    bool ok = in_registers || this->read_dhw_status(device_id, max_tries);
 
-    for (size_t i = 0; ok && i < sizeof(DHW_POLL_REGISTERS); i++)
-      ok = this->read_dhw_reading(device_id, DHW_POLL_REGISTERS[i], max_tries);
+    const uint8_t *registers = in_registers ? DHW_ELECTRIC_POLL_REGISTERS : DHW_POLL_REGISTERS;
+    const size_t count = in_registers ? sizeof(DHW_ELECTRIC_POLL_REGISTERS) : sizeof(DHW_POLL_REGISTERS);
+    for (size_t i = 0; ok && i < count; i++)
+      ok = this->read_dhw_reading(device_id, registers[i], max_tries);
 
     // The brand never changes: read until it has been read once. A miss is not a poll failure.
     const IoDevice *current = this->registry_.get(device_id);

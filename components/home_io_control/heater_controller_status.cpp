@@ -49,10 +49,28 @@ void apply_heating_main_parameter(const std::string &id, IoDevice &dev, uint16_t
 }
 
 void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame &frame, bool trust_position) {
-  if (!trust_position)
+  // An electric storage water heater keeps its state and target in registers; its status reply holds a main
+  // parameter of 0 and no operating-mode word, which would read as a 20 C target with every capability.
+  if (!trust_position || dhw_state_in_registers(dev.model))
     return;
   DhwOperatingStatus status;
-  if (decode_dhw_operating_status(frame, status)) {
+  const bool decoded = decode_dhw_operating_status(frame, status);
+  if (decoded && status.unreported) {
+    // The same answer from a heater declared without the model: nothing in it is a reading. Said once.
+    if (!dev.model_checked) {
+      ESP_LOGW(detail::TAG,
+               "Device %s reports no target and no operating mode in its status (FP15 and FP16 read FFFF): it "
+               "looks like an electric storage water heater. Set io_subtype: 0 and io_model: "
+               "electric_water_heater on its water_heater entry",
+               id.c_str());
+      dev.model_checked = true;
+    }
+    // No capability is reported, so boost and away are refused rather than tried.
+    dev.dhw.capabilities = 0;
+    dev.dhw.target_c = NAN;
+    return;
+  }
+  if (decoded) {
     if (dev.dhw.boost != (status.boost ? 1 : 0) || dev.dhw.away != (status.away ? 1 : 0)) {
       ESP_LOGI(detail::TAG, "Device %s: hot water boost %s, away %s (FP15 0x%04X)", id.c_str(),
                status.boost ? "on" : "off", status.away ? "on" : "off", static_cast<unsigned>(status.capabilities));

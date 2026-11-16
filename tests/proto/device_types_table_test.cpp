@@ -530,13 +530,14 @@ TEST(DeviceTypesTableModels, AModelTheKindDoesNotOfferFallsBackToTheKind) {
             device_features(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
 }
 
-TEST(DeviceTypesTableModels, OnlyTheHeaterWithASetpointOffersModels) {
+TEST(DeviceTypesTableModels, OnlyTheHeaterWithASetpointAndTheWaterHeaterOfferModels) {
   std::set<std::pair<DeviceType, uint8_t>> with_models;
   test::for_each_table_row([&with_models](const DeviceTypeInfo &row) {
     if (device_offers_models(row.type, row.subtype))
       with_models.emplace(row.type, row.subtype);
   });
-  EXPECT_EQ(with_models, (std::set<std::pair<DeviceType, uint8_t>>{{DeviceType::ELECTRICAL_HEATER, 1}}));
+  EXPECT_EQ(with_models, (std::set<std::pair<DeviceType, uint8_t>>{{DeviceType::DOMESTIC_HOT_WATER, 0},
+                                                                   {DeviceType::ELECTRICAL_HEATER, 1}}));
 }
 
 TEST(DeviceTypesTableModels, AModelRowKeepsTheIdentityOfTheRowAboveIt) {
@@ -564,5 +565,5 @@ TEST(DeviceTypesTableModels, AModelRowKeepsTheIdentityOfTheRowAboveIt) {
                                         HeatingFunction::NIGHT_LIGHT) != profile->extra_poll_registers.end();
     EXPECT_EQ(has_feature(model.features, device_feature::NIGHT_LIGHT), polls_light) << model.name;
   });
-  EXPECT_EQ(rows, 2u);
+  EXPECT_EQ(rows, 3u);
 }

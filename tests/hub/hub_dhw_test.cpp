@@ -60,6 +60,24 @@ IoDevice *make_water_heater(TestableComponent &comp, MockRadio &radio) {
   return make_device(comp, radio, DeviceType::DOMESTIC_HOT_WATER);
 }
 
+/// "ABC123" declared as an electric storage water heater (io_model: electric_water_heater).
+IoDevice *make_electric_water_heater(TestableComponent &comp, MockRadio &radio) {
+  comp.node_id_[0] = 0xC0;
+  comp.node_id_[1] = 0xFF;
+  comp.node_id_[2] = 0xEE;
+  static const uint8_t key[] = {0xD1, 0x74, 0x34, 0x93, 0xFA, 0x94, 0x38, 0x45,
+                                0xAC, 0x43, 0x50, 0xEE, 0xFF, 0x34, 0x29, 0x34};
+  std::memcpy(comp.system_key_, key, AES_KEY_SIZE);
+  comp.initialized_ = true;
+  comp.radio_ = &radio;
+  DeviceConfig config;
+  config.type = DeviceType::DOMESTIC_HOT_WATER;
+  config.model = DeviceModel::ELECTRIC_WATER_HEATER;
+  config.entity_class = DeviceCapabilityClass::WATER_HEATER;
+  comp.add_device("ABC123", config);
+  return comp.get_device("ABC123");
+}
+
 /// A frame from the heater with `cmd` and `payload`.
 IoFrame from_device(const uint8_t dst[3], uint8_t cmd, const std::vector<uint8_t> &payload) {
   IoFrame f{};
@@ -257,6 +275,159 @@ TEST(HubDhw, AModeValueNeverSeenLeavesTheModeAndThePollGoesOn) {
   EXPECT_EQ(dev->dhw.heat_pump, 0);
   EXPECT_EQ(dev->dhw.energy_wh, 1831831);
   EXPECT_EQ(dev->dhw.brand, -1) << "an empty brand is read again next time";
+}
+
+// === An electric storage water heater (io_model: electric_water_heater) ===
+// Replies are those of a Sauter Guelma connecte 80 L, read in automatic mode, manual mode, absence and boost.
+
+TEST(HubDhw, AnElectricStorageHeaterIsPolledFromItsRegistersWithNoStatusRead) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_electric_water_heater(comp, radio);
+  ASSERT_TRUE(has_feature(dev->features, device_feature::WATER_HEATER));
+  // Automatic mode with a boost running: four showers aimed for, two available, heating at 1000 W.
+  queue_register(comp, radio, DHW_REG_WATER_TEMPERATURE, {0x01, 0xB0});  // 43.2 C, two bytes on this model
+  queue_register(comp, radio, DHW_REG_MODE, {0x00});
+  queue_register(comp, radio, DHW_REG_STATE, {0x03});
+  queue_register(comp, radio, DHW_REG_ACTIVE_TARGET, {0x02, 0xBC});  // 70.0 C
+  queue_register(comp, radio, DHW_REG_TARGET_SHOWERS, {0x04});
+  queue_register(comp, radio, DHW_REG_SHOWERS_AVAILABLE, {0x02});
+  queue_register(comp, radio, DHW_REG_HEATING_POWER, {0x03, 0xE8});
+  queue_register(comp, radio, DHW_REG_ENERGY, {0x00, 0xEA, 0x9E, 0x5A});
+  queue_register(comp, radio, DHW_REG_BRAND, {0x53});
+
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+
+  const auto &sent = radio.get_sent_data();
+  const uint8_t expected[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,           DHW_REG_STATE,
+                              DHW_REG_ACTIVE_TARGET,     DHW_REG_TARGET_SHOWERS, DHW_REG_SHOWERS_AVAILABLE,
+                              DHW_REG_HEATING_POWER,     DHW_REG_ENERGY,         DHW_REG_BRAND};
+  ASSERT_EQ(sent.size(), std::size(expected)) << "no status read, and none of the registers this model leaves empty";
+  for (size_t i = 0; i < std::size(expected); i++) {
+    EXPECT_EQ(sent[i][8], CMD_WRITE_PRIVATE) << i;
+    EXPECT_EQ(sent[i][10], PRIVATE_REGISTER_DIRECTION_GET) << "a poll only reads: " << i;
+    EXPECT_EQ(sent_register(sent[i]), expected[i]) << i;
+  }
+
+  EXPECT_FLOAT_EQ(dev->dhw.water_c, 43.2F);
+  EXPECT_EQ(dev->dhw.mode, static_cast<int16_t>(DhwMode::AUTO));
+  EXPECT_EQ(dev->dhw.state, static_cast<int16_t>(DhwState::BOOST));
+  EXPECT_EQ(dev->dhw.boost, 1) << "the state register says a boost runs";
+  EXPECT_EQ(dev->dhw.away, 0);
+  EXPECT_FLOAT_EQ(dev->dhw.target_c, 70.0F);
+  EXPECT_EQ(dev->dhw.showers_target, 4);
+  EXPECT_EQ(dev->dhw.showers_available, 2);
+  EXPECT_EQ(dev->dhw.power_w, 1000);
+  EXPECT_EQ(dev->dhw.heating, 1);
+  EXPECT_EQ(dev->dhw.element, 1) << "the element is what heats";
+  EXPECT_EQ(dev->dhw.heat_pump, -1) << "there is no heat pump to report";
+  EXPECT_EQ(dev->dhw.energy_wh, 15375962);
+  EXPECT_EQ(dev->dhw.brand, 'S');
+  EXPECT_EQ(dev->dhw.capabilities, -1);
+}
+
+TEST(HubDhw, AnElectricStorageHeaterInAbsenceIsAwayWithItsFrostProtectionTarget) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_electric_water_heater(comp, radio);
+  queue_register(comp, radio, DHW_REG_WATER_TEMPERATURE, {0x01, 0xB0});
+  queue_register(comp, radio, DHW_REG_MODE, {0x02});  // the mode register cannot tell absence from manual
+  queue_register(comp, radio, DHW_REG_STATE, {0x00});
+  queue_register(comp, radio, DHW_REG_ACTIVE_TARGET, {0x00, 0x46});  // 7.0 C
+  queue_register(comp, radio, DHW_REG_TARGET_SHOWERS, {0x00});
+  queue_register(comp, radio, DHW_REG_SHOWERS_AVAILABLE, {0x01});
+  queue_register(comp, radio, DHW_REG_HEATING_POWER, {0x00, 0x00});
+  queue_register(comp, radio, DHW_REG_ENERGY, {0x00, 0xEA, 0x97, 0x04});
+  queue_register(comp, radio, DHW_REG_BRAND, {0x53});
+
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+
+  EXPECT_EQ(dev->dhw.state, static_cast<int16_t>(DhwState::AWAY));
+  EXPECT_EQ(dev->dhw.away, 1);
+  EXPECT_EQ(dev->dhw.boost, 0);
+  EXPECT_FLOAT_EQ(dev->dhw.target_c, 7.0F);
+  EXPECT_EQ(dev->dhw.showers_target, 0);
+  EXPECT_EQ(dev->dhw.power_w, 0);
+  EXPECT_EQ(dev->dhw.heating, 0);
+  EXPECT_EQ(dev->dhw.element, 0);
+}
+
+TEST(HubDhw, AStateValueNeverSeenLeavesTheStateAndThePollGoesOn) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_electric_water_heater(comp, radio);
+  dev->dhw.state = static_cast<int16_t>(DhwState::AUTO);
+  dev->dhw.away = 0;
+  queue_register(comp, radio, DHW_REG_WATER_TEMPERATURE, {0x01, 0xB0});
+  queue_register(comp, radio, DHW_REG_MODE, {0x00});
+  queue_register(comp, radio, DHW_REG_STATE, {0x01});
+  queue_register(comp, radio, DHW_REG_ACTIVE_TARGET, {0x01, 0xA4});
+  queue_register(comp, radio, DHW_REG_TARGET_SHOWERS, {0x01});
+  queue_register(comp, radio, DHW_REG_SHOWERS_AVAILABLE, {0x01});
+  queue_register(comp, radio, DHW_REG_HEATING_POWER, {0x00, 0x00});
+  queue_register(comp, radio, DHW_REG_ENERGY, {0x00, 0xEA, 0x94, 0x74});
+  queue_register(comp, radio, DHW_REG_BRAND, {0x53});
+
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+
+  EXPECT_EQ(dev->dhw.state, static_cast<int16_t>(DhwState::AUTO));
+  EXPECT_EQ(dev->dhw.away, 0);
+  EXPECT_FLOAT_EQ(dev->dhw.target_c, 42.0F);
+}
+
+TEST(HubDhw, AnElectricStorageHeatersModeIsWrittenThenItsStateAndTargetAreRead) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_electric_water_heater(comp, radio);
+  queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, 0x06, 0x02});
+  queue_register(comp, radio, DHW_REG_MODE, {0x02});
+  queue_register(comp, radio, DHW_REG_STATE, {0x02});
+  queue_register(comp, radio, DHW_REG_ACTIVE_TARGET, {0x02, 0xBC});
+
+  EXPECT_TRUE(comp.set_water_heater_mode("ABC123", DhwMode::MANUAL_ECO_OFF));
+
+  const auto &sent = radio.get_sent_data();
+  ASSERT_EQ(sent.size(), 4u);
+  EXPECT_EQ(std::vector<uint8_t>(sent[0].begin() + 9, sent[0].begin() + 14),
+            (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x06, 0x02}));
+  EXPECT_EQ(sent_register(sent[1]), DHW_REG_MODE);
+  EXPECT_EQ(sent_register(sent[2]), DHW_REG_STATE) << "no status read: the state is a register";
+  EXPECT_EQ(sent_register(sent[3]), DHW_REG_ACTIVE_TARGET);
+  EXPECT_EQ(dev->dhw.mode, static_cast<int16_t>(DhwMode::MANUAL_ECO_OFF));
+  EXPECT_EQ(dev->dhw.state, static_cast<int16_t>(DhwState::MANUAL));
+  EXPECT_FLOAT_EQ(dev->dhw.target_c, 70.0F);
+}
+
+TEST(HubDhw, AnElectricStorageHeaterIsNeverSentAModeItHasNotShownOrATargetBoostOrAway) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_electric_water_heater(comp, radio);
+
+  EXPECT_FALSE(comp.set_water_heater_mode("ABC123", DhwMode::MANUAL_ECO_ON));
+  EXPECT_FALSE(comp.set_water_heater_target("ABC123", 60.0F));
+  EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
+  EXPECT_FALSE(comp.set_water_heater_boost("ABC123", false));
+  EXPECT_FALSE(comp.set_water_heater_away("ABC123", true));
+  EXPECT_FALSE(comp.set_water_heater_away("ABC123", false));
+
+  EXPECT_TRUE(radio.get_sent_data().empty()) << "how this model takes them is not known";
+}
+
+TEST(HubDhw, AHeaterThatReportsNoOperatingWordsIsNotTakenAtItsWord) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);  // an electric storage heater declared without its model
+  queue_operating_status(comp, radio, 0x0000, 0xFFFF, 0xFFFF, 0x04);
+
+  comp.request_device_status("ABC123");  // the registers are not answered; only the status reply matters here
+
+  EXPECT_TRUE(std::isnan(dev->dhw.target_c)) << "a main parameter of 0 is not a 20 C target";
+  EXPECT_EQ(dev->dhw.capabilities, 0) << "FFFF is not 'every capability'";
+  EXPECT_EQ(dev->dhw.boost, -1);
+  EXPECT_EQ(dev->dhw.away, -1);
+  const size_t before = radio.get_sent_data().size();
+  EXPECT_FALSE(comp.set_water_heater_away("ABC123", true));
+  EXPECT_EQ(radio.get_sent_data().size(), before) << "away is refused, not tried";
 }
 
 // === Who gets the water heater path ===

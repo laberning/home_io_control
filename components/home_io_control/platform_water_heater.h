@@ -16,6 +16,18 @@
 ///
 /// OFF is not offered: no heater has been seen reporting an off state.
 ///
+/// An electric storage water heater (`io_model: electric_water_heater`, DeviceModel::ELECTRIC_WATER_HEATER)
+/// has no heat pump and two modes in that register:
+///
+/// | Heater (register 0x0006) | ESPHome mode  |
+/// |--------------------------|---------------|
+/// | 0 automatic              | ECO           |
+/// | 2 manual                 | ELECTRIC      |
+///
+/// It reports the temperature it heats to in every state, so its target is always shown; away and boost
+/// follow its state register. Its mode is written as on the other heater. A target, a boost or away asked for
+/// in Home Assistant is not sent: how this model takes them is not known (proto_dhw.h).
+///
 /// In automatic mode the heater chooses its own target, and its display shows none, so the entity publishes
 /// no target while the heater reports automatic mode, and a target set then is not sent.
 ///
@@ -53,14 +65,16 @@ namespace home_io_control {
 
 /// @brief ESPHome water heater mode for a heater mode.
 /// @param mode Mode as register 0x0006 holds it.
-/// @return The mapped ESPHome mode (see the file comment).
-water_heater::WaterHeaterMode water_heater_mode_for(DhwMode mode);
+/// @param model The declared model: it chooses the table (see the file comment).
+/// @return The mapped ESPHome mode; the model's automatic mode for a mode outside its table.
+water_heater::WaterHeaterMode water_heater_mode_for(DhwMode mode, DeviceModel model);
 
 /// @brief Heater mode for an ESPHome water heater mode.
 /// @param mode ESPHome mode.
+/// @param model The declared model: it chooses the table.
 /// @param[out] out The heater mode; untouched when false is returned.
-/// @return false for a mode the heater does not offer (OFF, ELECTRIC, HIGH_DEMAND, GAS).
-bool dhw_mode_for(water_heater::WaterHeaterMode mode, DhwMode &out);
+/// @return false for a mode the model does not offer (OFF, HIGH_DEMAND, GAS, and the other model's modes).
+bool dhw_mode_for(water_heater::WaterHeaterMode mode, DeviceModel model, DhwMode &out);
 
 /// @brief Water heater entity for a domestic hot water heater.
 /// @ingroup hioc_platforms
@@ -88,8 +102,8 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
   void control(const water_heater::WaterHeaterCall &call) override;
 
  protected:
-  /// @brief Current and target temperature, the three modes, and the target range
-  /// DHW_TARGET_MIN_C..DHW_TARGET_MAX_C at a 1 C step.
+  /// @brief Current and target temperature, the model's modes, and its target range at a 1 C step
+  /// (DHW_TARGET_MIN_C..DHW_TARGET_MAX_C, or DHW_ELECTRIC_TARGET_MIN_C..DHW_ELECTRIC_TARGET_MAX_C).
   water_heater::WaterHeaterTraits traits() override;
 
   /// @brief Inbound device-update hook: fold IoDevice::dhw into the entity and publish when a shown field
@@ -97,7 +111,8 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
   void on_device_update_(const IoDevice &dev);
 
   /// @brief Copy the readings into the entity's fields. The target is shown as unknown (NaN) while the
-  /// heater reports automatic mode or away; away follows the heater's report.
+  /// heater reports automatic mode or away, except on an electric storage water heater, which reports the
+  /// temperature it heats to in every state; away follows the heater's report.
   /// @param readings What the hub has read from the heater.
   /// @return true when a published field changed.
   bool sync_from_readings_(const DhwReadings &readings);

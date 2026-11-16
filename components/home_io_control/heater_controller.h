@@ -448,10 +448,18 @@ class HeaterController {
   bool poll_status_read_(const std::string &device_id);
 
   /// @brief Poll a water heater: the status read, then its registers (stopping at the first failure), then
-  /// its brand until it has been read once (logged at INFO).
+  /// its brand until it has been read once (logged at INFO). An electric storage water heater
+  /// (dhw_state_in_registers()) is sent no status read, and its own register list.
   /// @param device_id Target device ID.
   /// @return true when the status read and every register were answered.
   bool poll_dhw_(const std::string &device_id);
+
+  /// @brief Refuse a target, boost or away write to an electric storage water heater, with a warning: how
+  /// that model takes them is not known, and the heat-pump heater's frames do nothing on it.
+  /// @param device_id Target device ID.
+  /// @param operation What was asked, for the log ("Hot water boost").
+  /// @return true when the write was refused (the device is such a heater).
+  bool refuse_unknown_dhw_write_(const std::string &device_id, const char *operation);
 
   const uint8_t *node_id_;     ///< Controller node ID, owned by the hub.
   const bool *initialized_;    ///< The hub's initialized flag.

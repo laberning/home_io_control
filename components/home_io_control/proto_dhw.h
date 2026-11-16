@@ -31,8 +31,21 @@
 /// the boost and away durations; a write of a duration alone starts nothing.
 /// The three FP16 values start and end a boost and the holiday mode on an Atlantic Calypso Connecté
 /// (issue #198).
+///
+/// An electric storage water heater (DeviceModel::ELECTRIC_WATER_HEATER, declared with `io_model:`) reports
+/// the same node type and answers the same register reads, but keeps its state elsewhere. Read on one Sauter
+/// Guelma connecte 80 L in automatic mode, manual mode, absence and boost, at rest and while heating:
+///   - its status reply carries a main parameter of 0 and FP15 = FP16 = `FFFF` in every state, so it holds
+///     no target, no capabilities and no operating-mode word;
+///   - registers 0x0000, 0x0005 and 0x0021 answer with no value;
+///   - register 0x0006 reads 0 in automatic mode and 2 in manual mode and in absence alike, and a write of 0
+///     or 2 to it switches the display between automatic and manual;
+///   - register 0x0035 tells the four states apart (DhwState), 0x0049 holds the temperature the heater heats
+///     to, 0x004A and 0x0046 the showers it aims for and the showers it has, and 0x0032 the heating power.
+/// How this model takes a target, a boost or an absence is not known: none of them is sent to it.
 
 #include "proto_constants.h"
+#include "proto_device_kinds.h"
 #include "proto_frame.h"
 #include "proto_private_registers.h"
 
@@ -74,6 +87,25 @@ static constexpr uint8_t DHW_REG_WATER_TEMPERATURE = 0x17;
 /// @brief Register 0x0021: what is heating, eight bytes (DhwHeatingState).
 static constexpr uint8_t DHW_REG_HEATING = 0x21;
 
+// === Registers of an electric storage water heater (DeviceModel::ELECTRIC_WATER_HEATER) ===
+
+/// @brief Register 0x0032: heating power in watts, unsigned 16-bit big-endian. It read 0 at rest, 1000 while
+/// heating in automatic mode and during a boost, and 1500 while heating in manual mode.
+static constexpr uint8_t DHW_REG_HEATING_POWER = 0x32;
+/// @brief Register 0x0035: the state the display shows (DhwState), one byte. Register 0x0051 read the same
+/// value in every state.
+static constexpr uint8_t DHW_REG_STATE = 0x35;
+/// @brief Register 0x0046: the showers of hot water available, one byte: the showers the display shows
+/// steadily lit.
+static constexpr uint8_t DHW_REG_SHOWERS_AVAILABLE = 0x46;
+/// @brief Register 0x0049: the temperature the heater heats to now, signed 16-bit big-endian tenths of a
+/// degree. It read 42.0 and 61.0 C in automatic mode (one and three showers), 70.0 C in manual mode with four
+/// showers and during a boost, and 7.0 C in absence (frost protection).
+static constexpr uint8_t DHW_REG_ACTIVE_TARGET = 0x49;
+/// @brief Register 0x004A: the showers the heater aims for, one byte: the showers the display shows lit,
+/// steadily or blinking. 0 in absence.
+static constexpr uint8_t DHW_REG_TARGET_SHOWERS = 0x4A;
+
 // === Target temperature ===
 
 /// @brief Lower end of the target-temperature scale: main parameter 0 is 20 C.
@@ -81,6 +113,12 @@ static constexpr float DHW_TARGET_MIN_C = 20.0F;
 /// @brief Upper end of the target-temperature scale: main parameter 0xC800 is 62 C, the highest target the
 /// Calypso's display offers.
 static constexpr float DHW_TARGET_MAX_C = 62.0F;
+/// @brief Lowest temperature an electric storage water heater heats to: the frost protection of its absence
+/// mode (register 0x0049 read 7.0 C then).
+static constexpr float DHW_ELECTRIC_TARGET_MIN_C = 7.0F;
+/// @brief Highest temperature an electric storage water heater heats to: register 0x0049 read 70.0 C with four
+/// showers, and register 0x0041 reads `01F4 02BC` (50.0 and 70.0) in every state.
+static constexpr float DHW_ELECTRIC_TARGET_MAX_C = 70.0F;
 /// @brief Offset of the main parameter (MSB) in the data of a status reply (CMD_PRIVATE_RESP): the target
 /// slot of a cover's reply. The two bytes after it read `00 00` in every reply seen.
 static constexpr uint8_t DHW_STATUS_MAIN_PARAMETER_OFFSET = 2;
@@ -137,6 +175,9 @@ struct DhwOperatingStatus {
   uint16_t capabilities{0};  ///< FP15: DHW_CAPABILITY_* bits.
   bool boost{false};         ///< FP16 relaunch field (bits 8-9) is 1: a boost runs.
   bool away{false};          ///< FP16 absence field (bits 10-11) is 1: the holiday mode is on.
+  /// FP15 and FP16 both read `FFFF`: the heater reports neither word. An electric storage water heater
+  /// answers so in every state; `capabilities`, `boost` and `away` then say nothing.
+  bool unreported{false};
 };
 
 // === Value shapes ===
@@ -146,6 +187,15 @@ enum class DhwMode : uint8_t {
   AUTO = 0,            ///< The heater's automatic mode (its own schedule and target).
   MANUAL_ECO_ON = 1,   ///< Manual mode with ECO on (heat pump only).
   MANUAL_ECO_OFF = 2,  ///< Manual mode with ECO off (the electric element may help).
+};
+
+/// @brief State of an electric storage water heater as register 0x0035 holds it. The value 1 has not been
+/// seen.
+enum class DhwState : uint8_t {
+  AWAY = 0,    ///< Absence: frost protection only.
+  MANUAL = 2,  ///< Manual mode: the shower count set on the display.
+  BOOST = 3,   ///< Automatic mode with a boost running.
+  AUTO = 4,    ///< Automatic mode.
 };
 
 /// @brief What register 0x0021 says is heating.
@@ -174,7 +224,25 @@ struct DhwReadings {
   int16_t away_duration{-1};   ///< Register 0x0005; -1 until read. Logged, never a state.
   int64_t energy_wh{-1};       ///< Energy since installation in Wh; -1 until read.
   int16_t brand{-1};           ///< Brand letter (register 0x0007); -1 until read.
+  int16_t state{-1};           ///< DhwState value (register 0x0035); -1 until read. Electric storage heater only.
+  int32_t power_w{-1};         ///< Heating power in W (register 0x0032); -1 until read. Electric storage heater only.
+  int16_t showers_available{-1};  ///< Showers available (register 0x0046); -1 until read. Electric storage heater only.
+  int16_t showers_target{-1};     ///< Showers aimed for (register 0x004A); -1 until read. Electric storage heater only.
 };
+
+// === Models ===
+
+/// @brief Whether a water heater model keeps its state, target and heating power in registers and reports
+/// none of them in its status reply.
+/// @param model The declared model (`io_model:`).
+/// @return true for DeviceModel::ELECTRIC_WATER_HEATER.
+bool dhw_state_in_registers(DeviceModel model);
+
+/// @brief Whether a mode is one the model has been seen holding in register 0x0006.
+/// @param model The declared model.
+/// @param mode The mode.
+/// @return false for DhwMode::MANUAL_ECO_ON on an electric storage water heater (it has only shown 0 and 2).
+bool dhw_model_offers_mode(DeviceModel model, DhwMode mode);
 
 // === Requests ===
 
@@ -255,6 +323,35 @@ bool decode_dhw_energy_wh(const uint8_t *value, size_t len, uint32_t &wh);
 /// @return false for an empty value.
 bool decode_dhw_duration(const uint8_t *value, size_t len, uint8_t &duration);
 
+/// @brief State of an electric storage water heater from the value of register 0x0035.
+/// @param value Value bytes.
+/// @param len Number of value bytes; at least 1.
+/// @param[out] state The state; untouched when false is returned.
+/// @return false for an empty value or a byte other than 0, 2, 3 or 4.
+bool decode_dhw_state(const uint8_t *value, size_t len, DhwState &state);
+
+/// @brief Heating power from the value of register 0x0032: unsigned 16-bit big-endian, watts.
+/// @param value Value bytes.
+/// @param len Number of value bytes; at least 2.
+/// @param[out] watts Heating power; untouched when false is returned.
+/// @return false for a value shorter than two bytes.
+bool decode_dhw_heating_power(const uint8_t *value, size_t len, uint16_t &watts);
+
+/// @brief A shower count from the value of register 0x0046 or 0x004A: one byte.
+/// @param value Value bytes.
+/// @param len Number of value bytes; at least 1.
+/// @param[out] showers The count; untouched when false is returned.
+/// @return false for an empty value.
+bool decode_dhw_showers(const uint8_t *value, size_t len, uint8_t &showers);
+
+/// @brief The temperature an electric storage water heater heats to, from the value of register 0x0049:
+/// signed 16-bit big-endian tenths, as the water temperature.
+/// @param value Value bytes.
+/// @param len Number of value bytes; at least 2.
+/// @param[out] celsius Temperature; untouched when false is returned.
+/// @return false for a value shorter than two bytes.
+bool decode_dhw_active_target(const uint8_t *value, size_t len, float &celsius);
+
 /// @brief Target temperature from a main parameter.
 /// @param main_parameter The main parameter as the status reply carries it.
 /// @param[out] celsius Target, rounded to a tenth of a degree; untouched when false is returned.
@@ -275,6 +372,7 @@ bool decode_dhw_status_target(const IoFrame &reply, float &celsius);
 ///          when asked for `43`) are skipped. The main parameter is left to decode_dhw_status_target().
 /// @param reply The heater's reply to the status read.
 /// @param[out] status The decoded fields; untouched when false is returned.
+///          A reply whose FP15 and FP16 both read `FFFF` decodes with DhwOperatingStatus::unreported set.
 /// @return false for another command, a reply too short for the values its echo announces, an FPI1 echo other
 ///         than `00`, or an FPI2 echo without FP15 or FP16.
 bool decode_dhw_operating_status(const IoFrame &reply, DhwOperatingStatus &status);

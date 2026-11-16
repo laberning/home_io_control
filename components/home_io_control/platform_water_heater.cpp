@@ -31,6 +31,34 @@ constexpr WaterHeaterModeMapping WATER_HEATER_MODE_MAP[] = {
     {DhwMode::MANUAL_ECO_ON, water_heater::WATER_HEATER_MODE_ECO},
     {DhwMode::MANUAL_ECO_OFF, water_heater::WATER_HEATER_MODE_PERFORMANCE},
 };
+/// The two modes of an electric storage water heater: it has no heat pump, so its automatic mode is ECO
+/// (it learns the household's habits and heats only what they need) and its manual mode is ELECTRIC.
+constexpr WaterHeaterModeMapping ELECTRIC_WATER_HEATER_MODE_MAP[] = {
+    {DhwMode::AUTO, water_heater::WATER_HEATER_MODE_ECO},
+    {DhwMode::MANUAL_ECO_OFF, water_heater::WATER_HEATER_MODE_ELECTRIC},
+};
+
+/// The mode table of a model, as a range.
+struct WaterHeaterModeMap {
+  const WaterHeaterModeMapping *begin_;
+  const WaterHeaterModeMapping *end_;
+  [[nodiscard]] const WaterHeaterModeMapping *begin() const { return this->begin_; }
+  [[nodiscard]] const WaterHeaterModeMapping *end() const { return this->end_; }
+};
+
+WaterHeaterModeMap mode_map_for(DeviceModel model) {
+  if (dhw_state_in_registers(model))
+    return {std::begin(ELECTRIC_WATER_HEATER_MODE_MAP), std::end(ELECTRIC_WATER_HEATER_MODE_MAP)};
+  return {std::begin(WATER_HEATER_MODE_MAP), std::end(WATER_HEATER_MODE_MAP)};
+}
+
+/// The target range a model's card offers.
+float target_min_for(DeviceModel model) {
+  return dhw_state_in_registers(model) ? DHW_ELECTRIC_TARGET_MIN_C : DHW_TARGET_MIN_C;
+}
+float target_max_for(DeviceModel model) {
+  return dhw_state_in_registers(model) ? DHW_ELECTRIC_TARGET_MAX_C : DHW_TARGET_MAX_C;
+}
 
 /// @brief UI target step: every target the heater has shown is a whole degree (issue #198). The main
 /// parameter resolves far finer.
@@ -41,16 +69,18 @@ constexpr float WH_PER_KWH = 1000.0F;
 
 }  // namespace
 
-water_heater::WaterHeaterMode water_heater_mode_for(DhwMode mode) {
-  for (const auto &mapping : WATER_HEATER_MODE_MAP) {
+water_heater::WaterHeaterMode water_heater_mode_for(DhwMode mode, DeviceModel model) {
+  const WaterHeaterModeMap map = mode_map_for(model);
+  for (const auto &mapping : map) {
     if (mapping.dhw == mode)
       return mapping.mode;
   }
-  return water_heater::WATER_HEATER_MODE_HEAT_PUMP;
+  // A mode outside the model's table shows as its automatic mode, the table's first row.
+  return map.begin()->mode;
 }
 
-bool dhw_mode_for(water_heater::WaterHeaterMode mode, DhwMode &out) {
-  for (const auto &mapping : WATER_HEATER_MODE_MAP) {
+bool dhw_mode_for(water_heater::WaterHeaterMode mode, DeviceModel model, DhwMode &out) {
+  for (const auto &mapping : mode_map_for(model)) {
     if (mapping.mode == mode) {
       out = mapping.dhw;
       return true;
@@ -84,11 +114,15 @@ water_heater::WaterHeaterTraits IOHomeWaterHeater::traits() {
   traits.add_feature_flags(
       water_heater::WATER_HEATER_SUPPORTS_CURRENT_TEMPERATURE | water_heater::WATER_HEATER_SUPPORTS_TARGET_TEMPERATURE |
       water_heater::WATER_HEATER_SUPPORTS_OPERATION_MODE | water_heater::WATER_HEATER_SUPPORTS_AWAY_MODE);
-  traits.set_min_temperature(DHW_TARGET_MIN_C);
-  traits.set_max_temperature(DHW_TARGET_MAX_C);
+  traits.set_min_temperature(target_min_for(this->model_));
+  traits.set_max_temperature(target_max_for(this->model_));
   traits.set_target_temperature_step(WATER_HEATER_TARGET_STEP_C);
-  traits.set_supported_modes({water_heater::WATER_HEATER_MODE_HEAT_PUMP, water_heater::WATER_HEATER_MODE_ECO,
-                              water_heater::WATER_HEATER_MODE_PERFORMANCE});
+  if (dhw_state_in_registers(this->model_)) {
+    traits.set_supported_modes({water_heater::WATER_HEATER_MODE_ECO, water_heater::WATER_HEATER_MODE_ELECTRIC});
+  } else {
+    traits.set_supported_modes({water_heater::WATER_HEATER_MODE_HEAT_PUMP, water_heater::WATER_HEATER_MODE_ECO,
+                                water_heater::WATER_HEATER_MODE_PERFORMANCE});
+  }
   return traits;
 }
 
@@ -99,7 +133,7 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
 
   if (call.get_mode().has_value()) {
     DhwMode mode = DhwMode::AUTO;
-    if (!dhw_mode_for(*call.get_mode(), mode)) {
+    if (!dhw_mode_for(*call.get_mode(), this->model_, mode)) {
       // ESPHome drops a mode the traits do not list before control(); this guards a direct caller.
       ESP_LOGW(TAG, "Device %s: mode %" PRIu32 " is not one this heater offers", this->device_id_.c_str(),
                static_cast<uint32_t>(*call.get_mode()));
@@ -144,14 +178,18 @@ bool IOHomeWaterHeater::sync_from_readings_(const DhwReadings &readings) {
   // A target that is not a temperature (an alias the heater has not been seen sending) shows as unknown, and
   // so does the target in automatic mode (the heater chooses its own) and while away (the heater reports a
   // main parameter of 0 then, which would read as 20 degrees but is no target).
+  // An electric storage water heater reports the temperature it heats to in every state (its automatic
+  // choice and the frost protection of its absence included), so its target is always shown.
   const bool automatic = readings.mode == static_cast<int16_t>(DhwMode::AUTO);
-  const float target = (automatic || readings.away == 1) ? NAN : readings.target_c;
+  const bool hidden = !dhw_state_in_registers(this->model_) && (automatic || readings.away == 1);
+  const float target = hidden ? NAN : readings.target_c;
   if (detail::reading_changed(this->target_temperature_, target)) {
     this->set_target_temperature_(target);
     changed = true;
   }
   if (readings.mode >= 0) {
-    const water_heater::WaterHeaterMode mode = water_heater_mode_for(static_cast<DhwMode>(readings.mode));
+    const water_heater::WaterHeaterMode mode =
+        water_heater_mode_for(static_cast<DhwMode>(readings.mode), this->model_);
     if (mode != this->mode_) {
       this->set_mode_(mode);
       changed = true;
@@ -174,10 +212,15 @@ void IOHomeWaterHeater::on_device_update_(const IoDevice &dev) {
 void IOHomeWaterHeater::dump_config() {
   LOG_WATER_HEATER("", "IO-Homecontrol Water Heater", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
-  ESP_LOGCONFIG(TAG, "  Target temperature range: %.0f-%.0f C", static_cast<double>(DHW_TARGET_MIN_C),
-                static_cast<double>(DHW_TARGET_MAX_C));
+  ESP_LOGCONFIG(TAG, "  Target temperature range: %.0f-%.0f C", static_cast<double>(target_min_for(this->model_)),
+                static_cast<double>(target_max_for(this->model_)));
   this->log_poll_interval_config_(TAG, heater_poll_interval_ms);
-  ESP_LOGCONFIG(TAG, "  Status: readings, target and mode confirmed on hardware; away mode experimental");
+  if (dhw_state_in_registers(this->model_)) {
+    ESP_LOGCONFIG(TAG, "  Status: electric storage water heater; readings and mode confirmed on hardware; target, "
+                       "boost and away are shown but not sent");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Status: readings, target and mode confirmed on hardware; away mode experimental");
+  }
 }
 
 // === Companions ===

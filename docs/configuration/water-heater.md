@@ -102,6 +102,47 @@ Writing the boost duration register alone did nothing on that heater, so the hub
   no write for it; the log names the refusal. Until the first poll has read the capability word, a write
   is tried.
 
+## Electric storage water heaters
+
+An electric storage water heater reports the same node type as the heat-pump heater above, but keeps its
+state in other registers, and its status reply holds no target and no operating mode. Declare it with
+`io_model: electric_water_heater`, which needs `io_subtype: 0` beside it:
+
+```yaml
+water_heater:
+  - platform: home_io_control
+    name: "Hot water"
+    io_device_id: "A1B2C3"
+    io_device_type: domestic_hot_water
+    io_subtype: 0
+    io_model: electric_water_heater
+    energy:
+      name: "Hot water energy"
+    electric_backup_running:
+      name: "Hot water heating"
+```
+
+It was read on one Sauter Guelma connecté 80 L in automatic mode, manual mode, absence and boost. A
+heater declared without the model that answers this way is named in a warning at its first poll.
+
+| Field | Source |
+|---|---|
+| Current temperature | The water temperature the heater reports |
+| Target temperature | The temperature the heater heats to now, 7–70 °C, shown in every mode |
+| Mode | `eco` (the heater's automatic mode), `electric` (manual) |
+| Away | The heater's absence, from its state register |
+| `electric_backup_running` | On while the heating power is above zero |
+| `boost` switch | On while a boost runs, from the state register |
+
+- **Setting the mode works**: `eco` and `electric` switch the heater's display between automatic and
+  manual. Manual takes the shower count last set on the display.
+- **A target, a boost and away are shown but not sent.** How this model takes them is not known yet, so
+  a change made in Home Assistant is refused with a warning in the log and the card keeps what the
+  heater reports. Use the heater's display for them.
+- `heat_pump_running` has no state on this model: it has no heat pump.
+- The showers the heater aims for and has available, and its heating power in watts, are read every
+  poll and logged when they change. They have no entity yet.
+
 ## See also
 
 - [Atlantic Calypso Connecté](../devices/atlantic-calypso.md)

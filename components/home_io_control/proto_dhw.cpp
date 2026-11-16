@@ -20,6 +20,7 @@ constexpr size_t DHW_BYTE_WRITE_LEN = PRIVATE_REGISTER_HEADER_SIZE + 1;
 constexpr size_t DHW_WATER_TEMPERATURE_LEN = 2;
 constexpr size_t DHW_ENERGY_LEN = 4;
 constexpr size_t DHW_HEATING_STATE_LEN = 5;
+constexpr size_t DHW_HEATING_POWER_LEN = 2;
 /// Byte positions inside the value of register 0x0021.
 constexpr size_t DHW_HEATING_BYTE = 0;
 constexpr size_t DHW_ELEMENT_BYTE = 2;
@@ -51,6 +52,8 @@ constexpr DhwOperatingFeatureWire DHW_OPERATING_FEATURES[] = {
 static_assert(sizeof(DHW_OPERATING_FEATURES) / sizeof(DHW_OPERATING_FEATURES[0]) ==
                   static_cast<size_t>(DhwOperatingFeature::AWAY) + 1,
               "one row per DhwOperatingFeature");
+/// FP15 and FP16 of a heater that reports neither word.
+constexpr uint16_t DHW_FP_UNREPORTED = 0xFFFF;
 /// Highest DhwMode value.
 constexpr uint8_t DHW_MODE_MAX = static_cast<uint8_t>(DhwMode::MANUAL_ECO_OFF);
 
@@ -79,6 +82,12 @@ size_t encode_dhw_mode_write(uint8_t mode, uint8_t out[PRIVATE_REGISTER_PAYLOAD_
   if (mode > DHW_MODE_MAX)
     return 0;
   return encode_dhw_byte_write(DHW_REG_MODE, mode, out);
+}
+
+bool dhw_state_in_registers(DeviceModel model) { return model == DeviceModel::ELECTRIC_WATER_HEATER; }
+
+bool dhw_model_offers_mode(DeviceModel model, DhwMode mode) {
+  return !dhw_state_in_registers(model) || mode != DhwMode::MANUAL_ECO_ON;
 }
 
 const DhwOperatingFeatureWire &dhw_operating_feature_wire(DhwOperatingFeature which) {
@@ -145,6 +154,38 @@ bool decode_dhw_duration(const uint8_t *value, size_t len, uint8_t &duration) {
   return true;
 }
 
+bool decode_dhw_state(const uint8_t *value, size_t len, DhwState &state) {
+  if (value == nullptr || len < 1)
+    return false;
+  switch (static_cast<DhwState>(value[0])) {
+    case DhwState::AWAY:
+    case DhwState::MANUAL:
+    case DhwState::BOOST:
+    case DhwState::AUTO:
+      state = static_cast<DhwState>(value[0]);
+      return true;
+  }
+  return false;
+}
+
+bool decode_dhw_heating_power(const uint8_t *value, size_t len, uint16_t &watts) {
+  if (value == nullptr || len < DHW_HEATING_POWER_LEN)
+    return false;
+  watts = read_be16(value);
+  return true;
+}
+
+bool decode_dhw_showers(const uint8_t *value, size_t len, uint8_t &showers) {
+  if (value == nullptr || len < 1)
+    return false;
+  showers = value[0];
+  return true;
+}
+
+bool decode_dhw_active_target(const uint8_t *value, size_t len, float &celsius) {
+  return decode_dhw_water_temperature(value, len, celsius);
+}
+
 bool decode_dhw_target(uint16_t main_parameter, float &celsius) {
   float raw = NAN;
   if (!decode_temperature_main_parameter(main_parameter, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, raw))
@@ -189,6 +230,7 @@ bool decode_dhw_operating_status(const IoFrame &reply, DhwOperatingStatus &statu
 
   DhwOperatingStatus decoded;
   decoded.capabilities = capabilities;
+  decoded.unreported = capabilities == DHW_FP_UNREPORTED && operating_mode == DHW_FP_UNREPORTED;
   decoded.boost = fp16_field_on(operating_mode, DhwOperatingFeature::BOOST);
   decoded.away = fp16_field_on(operating_mode, DhwOperatingFeature::AWAY);
   status = decoded;

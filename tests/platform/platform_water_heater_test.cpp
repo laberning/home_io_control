@@ -91,6 +91,15 @@ void bind_water_heater(IOHomeWaterHeater &entity, MockHubWaterHeater &hub) {
   entity.setup();
 }
 
+/// Bind `entity` to "ABC123" as an electric storage water heater (io_model: electric_water_heater).
+void bind_electric_water_heater(IOHomeWaterHeater &entity, MockHubWaterHeater &hub) {
+  entity.set_parent(&hub);
+  entity.set_device_id("ABC123");
+  entity.set_device_type(DeviceType::DOMESTIC_HOT_WATER);
+  entity.set_device_model(DeviceModel::ELECTRIC_WATER_HEATER);
+  entity.setup();
+}
+
 /// Publish readings for "ABC123" as if a poll had just stored them.
 void publish(MockHubWaterHeater &hub, const DhwReadings &readings) {
   IoDevice dev = *hub.get_device("ABC123");
@@ -103,20 +112,40 @@ void publish(MockHubWaterHeater &hub, const DhwReadings &readings) {
 // === Mode mapping ===
 
 TEST(PlatformWaterHeater, TheThreeHeaterModesMapBothWays) {
-  EXPECT_EQ(water_heater_mode_for(DhwMode::AUTO), WATER_HEATER_MODE_HEAT_PUMP);
-  EXPECT_EQ(water_heater_mode_for(DhwMode::MANUAL_ECO_ON), WATER_HEATER_MODE_ECO);
-  EXPECT_EQ(water_heater_mode_for(DhwMode::MANUAL_ECO_OFF), WATER_HEATER_MODE_PERFORMANCE);
+  const DeviceModel none = DeviceModel::NONE;
+  EXPECT_EQ(water_heater_mode_for(DhwMode::AUTO, none), WATER_HEATER_MODE_HEAT_PUMP);
+  EXPECT_EQ(water_heater_mode_for(DhwMode::MANUAL_ECO_ON, none), WATER_HEATER_MODE_ECO);
+  EXPECT_EQ(water_heater_mode_for(DhwMode::MANUAL_ECO_OFF, none), WATER_HEATER_MODE_PERFORMANCE);
   for (const DhwMode mode : {DhwMode::AUTO, DhwMode::MANUAL_ECO_ON, DhwMode::MANUAL_ECO_OFF}) {
     DhwMode back = DhwMode::AUTO;
-    ASSERT_TRUE(dhw_mode_for(water_heater_mode_for(mode), back));
+    ASSERT_TRUE(dhw_mode_for(water_heater_mode_for(mode, none), none, back));
     EXPECT_EQ(back, mode);
   }
   DhwMode untouched = DhwMode::MANUAL_ECO_ON;
   for (const WaterHeaterMode mode :
        {WATER_HEATER_MODE_OFF, WATER_HEATER_MODE_ELECTRIC, WATER_HEATER_MODE_HIGH_DEMAND, WATER_HEATER_MODE_GAS}) {
-    EXPECT_FALSE(dhw_mode_for(mode, untouched)) << static_cast<unsigned>(mode);
+    EXPECT_FALSE(dhw_mode_for(mode, none, untouched)) << static_cast<unsigned>(mode);
   }
   EXPECT_EQ(untouched, DhwMode::MANUAL_ECO_ON);
+}
+
+TEST(PlatformWaterHeater, AnElectricStorageHeaterHasTwoModesOfItsOwn) {
+  const DeviceModel electric = DeviceModel::ELECTRIC_WATER_HEATER;
+  EXPECT_EQ(water_heater_mode_for(DhwMode::AUTO, electric), WATER_HEATER_MODE_ECO) << "it has no heat pump";
+  EXPECT_EQ(water_heater_mode_for(DhwMode::MANUAL_ECO_OFF, electric), WATER_HEATER_MODE_ELECTRIC);
+  EXPECT_EQ(water_heater_mode_for(DhwMode::MANUAL_ECO_ON, electric), WATER_HEATER_MODE_ECO)
+      << "a mode it has never shown reads as its automatic mode";
+  for (const DhwMode mode : {DhwMode::AUTO, DhwMode::MANUAL_ECO_OFF}) {
+    DhwMode back = DhwMode::MANUAL_ECO_ON;
+    ASSERT_TRUE(dhw_mode_for(water_heater_mode_for(mode, electric), electric, back));
+    EXPECT_EQ(back, mode);
+  }
+  DhwMode untouched = DhwMode::MANUAL_ECO_ON;
+  for (const WaterHeaterMode mode : {WATER_HEATER_MODE_OFF, WATER_HEATER_MODE_HEAT_PUMP, WATER_HEATER_MODE_PERFORMANCE,
+                                     WATER_HEATER_MODE_HIGH_DEMAND, WATER_HEATER_MODE_GAS}) {
+    EXPECT_FALSE(dhw_mode_for(mode, electric, untouched)) << static_cast<unsigned>(mode);
+  }
+  EXPECT_EQ(untouched, DhwMode::MANUAL_ECO_ON) << "value 1 is never written to this model";
 }
 
 // === Traits and setup ===
@@ -139,6 +168,67 @@ TEST(PlatformWaterHeater, TraitsOfferTheReadingsTheThreeModesAndTheHeatersRange)
   EXPECT_TRUE(traits.supports_mode(WATER_HEATER_MODE_ECO));
   EXPECT_TRUE(traits.supports_mode(WATER_HEATER_MODE_PERFORMANCE));
   EXPECT_FALSE(traits.supports_mode(WATER_HEATER_MODE_OFF));
+}
+
+TEST(PlatformWaterHeater, AnElectricStorageHeaterOffersItsTwoModesAndItsOwnRange) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_electric_water_heater(entity, hub);
+  const WaterHeaterTraits traits = entity.get_traits();
+
+  EXPECT_FALSE(entity.is_failed());
+  EXPECT_FLOAT_EQ(traits.get_min_temperature(), 7.0F) << "the frost protection of its absence";
+  EXPECT_FLOAT_EQ(traits.get_max_temperature(), 70.0F) << "four showers";
+  EXPECT_TRUE(traits.supports_mode(WATER_HEATER_MODE_ECO));
+  EXPECT_TRUE(traits.supports_mode(WATER_HEATER_MODE_ELECTRIC));
+  EXPECT_FALSE(traits.supports_mode(WATER_HEATER_MODE_HEAT_PUMP));
+  EXPECT_FALSE(traits.supports_mode(WATER_HEATER_MODE_PERFORMANCE));
+}
+
+TEST(PlatformWaterHeater, AnElectricStorageHeaterShowsItsTargetInEveryState) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_electric_water_heater(entity, hub);
+
+  // Automatic mode, one shower: the heater reports the temperature it has chosen.
+  DhwReadings readings;
+  readings.water_c = 40.2F;
+  readings.target_c = 42.0F;
+  readings.mode = static_cast<int16_t>(DhwMode::AUTO);
+  readings.away = 0;
+  publish(hub, readings);
+  EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_ECO);
+  EXPECT_FLOAT_EQ(entity.get_target_temperature(), 42.0F);
+  EXPECT_FALSE(entity.is_away());
+
+  // Manual, four showers.
+  readings.mode = static_cast<int16_t>(DhwMode::MANUAL_ECO_OFF);
+  readings.target_c = 70.0F;
+  publish(hub, readings);
+  EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_ELECTRIC);
+  EXPECT_FLOAT_EQ(entity.get_target_temperature(), 70.0F);
+
+  // Absence: register 0x0006 still reads 2, the state register says away, the target is the frost protection.
+  readings.away = 1;
+  readings.target_c = 7.0F;
+  publish(hub, readings);
+  EXPECT_TRUE(entity.is_away());
+  EXPECT_FLOAT_EQ(entity.get_target_temperature(), 7.0F);
+}
+
+TEST(PlatformWaterHeater, AnElectricStorageHeaterIsSentItsModeAsRegisterValueZeroOrTwo) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_electric_water_heater(entity, hub);
+  hub.mode_read_back = static_cast<int16_t>(DhwMode::MANUAL_ECO_OFF);
+
+  auto call = entity.make_call();
+  call.set_mode(WATER_HEATER_MODE_ELECTRIC);
+  call.perform();
+
+  ASSERT_EQ(hub.water_heater_modes.size(), 1u);
+  EXPECT_EQ(hub.water_heater_modes.back(), DhwMode::MANUAL_ECO_OFF);
+  EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_ELECTRIC);
 }
 
 TEST(PlatformWaterHeater, SetupRegistersTheDeviceAsAWaterHeater) {
