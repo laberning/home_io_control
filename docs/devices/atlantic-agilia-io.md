@@ -36,9 +36,10 @@ preset that tells them apart:
 Choose `Program` or `Auto` to switch between the radiator's automatic modes; `heat` or `off` leaves
 them.
 The weekly program itself is edited on the radiator. The radiator shares its node type with the
-[Atlantic Adelis towel dryer](atlantic-adelis.md#modes-and-presets-in-home-assistant), which shows
-the comfort or eco period of its program, so that period may be visible here too. If you run the
-radiator in PROG, please [open an issue](https://github.com/laberning/home_io_control/issues) so we can check it.
+[Atlantic Adelis towel dryer](atlantic-adelis.md#modes-and-presets-in-home-assistant), which reports
+the comfort or eco level of its program. The hub does not read that level from a radiator yet, so a
+`heating_level:` sensor on one stays without a state. If you run the radiator in PROG, please
+[open an issue](https://github.com/laberning/home_io_control/issues) so we can check it.
 
 ## How a radiator appears on the radio
 

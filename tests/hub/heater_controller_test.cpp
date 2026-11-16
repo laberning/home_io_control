@@ -363,13 +363,13 @@ TEST(HeaterController, APlannedRegisterWriteSendsItsBytesAppliesTheHookThenReads
 
 namespace {
 
-/// A towel dryer in its programme, comfort 19.0 C with a setback of 3.5 K, holding @p in_force_c.
-IoDevice *make_towel_dryer_in_programme(HeaterControllerFixture &fx, float in_force_c) {
+/// A towel dryer in its programme, comfort 19.0 C, holding @p in_force_c, whose status read reported @p level.
+IoDevice *make_towel_dryer_in_programme(HeaterControllerFixture &fx, float in_force_c, uint8_t level) {
   IoDevice *dev = make_towel_dryer(fx);
   dev->heating.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
   dev->heating.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE);
   dev->heating.setpoint_c = 19.0F;
-  dev->heating.eco_setback_k = 3.5F;
+  dev->heating.level = level;
   dev->heating.in_force_temperature_c = in_force_c;
   return dev;
 }
@@ -391,28 +391,25 @@ float in_force_seen_after_comfort_write(HeaterControllerFixture &fx, float new_c
 
 TEST(HeaterController, AComfortWriteInAComfortPeriodShowsTheNewTargetAtTheReadBack) {
   HeaterControllerFixture fx;
-  const IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F);
+  const IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F, heating_level::COMFORT);
 
   EXPECT_FLOAT_EQ(in_force_seen_after_comfort_write(fx, 20.0F, 0xC8), 20.0F) << "before the 45 s poll";
 
-  const ProgrammePeriodState period = resolve_programme_period(*find_heating_profile(*dev), dev->heating);
-  EXPECT_EQ(period.preset_index, find_heating_profile(*dev)->programme_period->comfort_preset);
-  EXPECT_FLOAT_EQ(period.target_c, 20.0F);
+  EXPECT_FLOAT_EQ(programme_temperature_in_force(*find_heating_profile(*dev), dev->heating), 20.0F);
 }
 
-TEST(HeaterController, AComfortWriteInAnEcoPeriodShowsTheNewComfortMinusTheSetback) {
+TEST(HeaterController, AComfortWriteInAnEcoPeriodLeavesTheTemperatureInForceToTheNextRead) {
   HeaterControllerFixture fx;
-  const IoDevice *dev = make_towel_dryer_in_programme(fx, 15.5F);
+  const IoDevice *dev = make_towel_dryer_in_programme(fx, 15.5F, heating_level::ECO);
 
-  EXPECT_FLOAT_EQ(in_force_seen_after_comfort_write(fx, 20.0F, 0xC8), 16.5F);
+  EXPECT_FLOAT_EQ(in_force_seen_after_comfort_write(fx, 20.0F, 0xC8), 15.5F);
 
-  EXPECT_EQ(resolve_programme_period(*find_heating_profile(*dev), dev->heating).preset_index,
-            find_heating_profile(*dev)->programme_period->eco_preset);
+  EXPECT_TRUE(programme_in_eco_period(*find_heating_profile(*dev), dev->heating));
 }
 
 TEST(HeaterController, AComfortWriteOutsideTheProgrammeLeavesTheTemperatureInForceAlone) {
   HeaterControllerFixture fx;
-  IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F);
+  IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F, heating_level::COMFORT);
   dev->heating.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
 
   in_force_seen_after_comfort_write(fx, 20.0F, 0xC8);
@@ -422,7 +419,7 @@ TEST(HeaterController, AComfortWriteOutsideTheProgrammeLeavesTheTemperatureInFor
 
 TEST(HeaterController, ADerogationWriteInAnEcoPeriodSendsTheOverrideRegisterAndShowsTheNewTargetAtTheReadBack) {
   HeaterControllerFixture fx;
-  IoDevice *dev = make_towel_dryer_in_programme(fx, 15.5F);
+  IoDevice *dev = make_towel_dryer_in_programme(fx, 15.5F, heating_level::ECO);
   const HeatingProfile &profile = *find_heating_profile(*dev);
   const HeatingWritePlan plan =
       plan_heating_write(profile, {.kind = HeatingWriteKind::TARGET, .target_c = 17.5F}, heating_device_facts(dev));
@@ -440,8 +437,7 @@ TEST(HeaterController, ADerogationWriteInAnEcoPeriodSendsTheOverrideRegisterAndS
     EXPECT_NE(sent_register(frame), 0x03) << "the comfort setpoint is never written";
   EXPECT_FLOAT_EQ(seen, 17.5F) << "the card shows the new target before the next poll";
   EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.0F) << "the comfort setpoint is untouched";
-  EXPECT_EQ(resolve_programme_period(profile, dev->heating).preset_index, profile.programme_period->eco_preset)
-      << "the card keeps the eco preset during the override";
+  EXPECT_TRUE(programme_in_eco_period(profile, dev->heating)) << "the level stays eco during the override";
   EXPECT_EQ(
       plan_heating_write(profile, {.kind = HeatingWriteKind::TARGET, .target_c = 18.0F}, heating_device_facts(dev))
           .register_fn,
@@ -457,7 +453,7 @@ TEST(HeaterController, ADerogationWriteInAnEcoPeriodSendsTheOverrideRegisterAndS
 
 TEST(HeaterController, AnOverrideReadBackOfZeroLeavesTheTemperatureInForceAlone) {
   HeaterControllerFixture fx;
-  IoDevice *dev = make_towel_dryer_in_programme(fx, 15.5F);
+  IoDevice *dev = make_towel_dryer_in_programme(fx, 15.5F, heating_level::ECO);
   fx.queue_register_ack({0x0C, 0x61, 0x01, 0x1D, 0x00, 0x00});
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x1D, 0x00, 0x00});
 
@@ -469,7 +465,7 @@ TEST(HeaterController, AnOverrideReadBackOfZeroLeavesTheTemperatureInForceAlone)
 
 TEST(HeaterController, AComfortReadOutsideAWriteDoesNotMoveTheTemperatureInForce) {
   HeaterControllerFixture fx;
-  const IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F);
+  const IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F, heating_level::COMFORT);
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC8, 0x00});
 
   ASSERT_TRUE(

@@ -1,6 +1,6 @@
 /// @file platform_climate_controls.cpp
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the open-window
-/// detection switch and the night light.
+/// detection switch, the night light and the heating-level text sensor.
 /// @ingroup hioc_platforms
 
 #include "platform_climate_controls.h"
@@ -17,10 +17,27 @@ namespace home_io_control {
 static const char *const TAG_WINDOW = "home_io_control.window";
 static const char *const TAG_DETECTION = "home_io_control.window_detection";
 static const char *const TAG_NIGHT_LIGHT = "home_io_control.night_light";
+static const char *const TAG_HEATING_LEVEL = "home_io_control.heating_level";
 
 /// Percentage for a light switched on at a brightness that rounds to 0 %: the lowest level that is still
 /// on (register value HEATING_NIGHT_LIGHT_STEPS_PER_PERCENT).
 static constexpr uint8_t NIGHT_LIGHT_MIN_ON_PERCENT = 1;
+
+void IOHomeHeatingLevelSensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    // Nothing read means no state, never a guessed level; a value that is no level keeps the last one shown.
+    if (dev.heating.level < 0)
+      return;
+    const char *name = heating_level_name(static_cast<uint8_t>(dev.heating.level));
+    if (name != nullptr)
+      this->publish_state(name);
+  });
+}
+
+void IOHomeHeatingLevelSensor::dump_config() {
+  ESP_LOGCONFIG(TAG_HEATING_LEVEL, "IO-Homecontrol Heating Level:");
+  ESP_LOGCONFIG(TAG_HEATING_LEVEL, "  Device ID: %s", this->device_id_.c_str());
+}
 
 void IOHomeWindowBinarySensor::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {

@@ -200,6 +200,9 @@ climate:
     io_device_type: "electrical_heater"
     io_subtype: 1
     io_model: towel_dryer
+    # The level the heater applies now (comfort, eco, boost, ...), from its status read.
+    heating_level:
+      name: "Test Towel Dryer Heating Level"
   # A heater with a night light: io_model adds the light's registers, night_light: its light entity.
   - platform: home_io_control
     name: "Test Heater With Light"
@@ -222,6 +225,8 @@ climate:
     io_device_id: "FEEB23"
     io_device_type: "electrical_heater"
     io_subtype: 0
+    heating_level:
+      name: "Test Plain Heating Level"
   # The heating temperature interface and the heat pump carry a temperature or an alias in the main parameter.
   - platform: home_io_control
     name: "Test Thermostat"

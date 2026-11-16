@@ -51,11 +51,15 @@ What the card shows for each heater kind:
 |---|---|---|
 | Control path | Private registers | Heating level in the standard EXECUTE |
 | Modes | `off`, `heat` (manual), `auto` | `off`, `heat` (comfort level) |
-| Presets | custom `Program` and `Auto` (the heater's own automatic modes) | `away` (frost protection), `eco`, `comfort`, `boost`; custom `Comfort -1`, `Comfort -2`; custom `Secured`, shown when the heater reports it and never set |
+| Presets | custom `Program` and `Auto` (the heater's own automatic modes) | `away` (frost protection), `eco`, `comfort`, `boost`; custom `Comfort -1`, `Comfort -2` |
 | Target temperature | 7.0 °C up to the heater's own maximum (28.0 °C until it reports one), 0.5 °C step | None: the card shows a setpoint control that the entity ignores |
 | Current temperature | Yes | No |
 | Action | `heating`, `idle`, `off` | No |
 | Companion entities | `Window` binary sensor; `Open Window Detection` switch (disabled by default) | None |
+
+Every preset on a card sends a command when you select it. The level a heater applies right now (comfort,
+eco, frost protection and so on) is a separate, optional sensor, described under "Heating level sensor"
+below.
 
 - Current temperature, setpoint, mode, action and the window state come from the heater's
   replies. Home Assistant shows them after the first poll, about five seconds after boot. A
@@ -100,7 +104,7 @@ climate:
 |---|---|
 | Control path | Private registers, with the towel dryer's own mode and temporary-state registers |
 | Modes | `off`, `heat` (the display's MANUEL), `auto` (the display's PROG) |
-| Presets | `boost`; custom `Drying`; `none` ends a boost or a drying run; `comfort` and `eco` are shown while the dryer's program runs (experimental, not selectable) |
+| Presets | `boost`; custom `Drying`; `none` ends a boost or a drying run |
 | Target temperature | As for the radiator: 7.0 °C up to the heater's own maximum, 0.5 °C step; while the dryer's program runs, the temperature it heats to right now |
 | Current temperature | Yes |
 | Action | `heating` while the element runs (including boost and drying), `idle`, `off` |
@@ -111,19 +115,17 @@ setpoint, whether the element runs) and the writes (target, mode, starting and e
 drying), each checked against the dryer's display.
 
 The towel dryer is polled with five register reads (room temperature, setpoint, mode, temporary
-state, working rate); the first poll also reads its maximum setpoint and its eco setback. Boost and
-drying run for the duration set on the display.
+state, working rate) and a status read that names the level the dryer applies; the first poll also
+reads its maximum setpoint. Boost and drying run for the duration set on the display.
 
-While the mode is PROG and no boost or drying runs, each poll adds a sixth read, of the temperature the
-dryer holds right now. The card then shows that temperature as the target and the `comfort` or `eco`
-preset of the period that runs: `comfort` when the temperature equals the comfort setpoint, `eco` when
-it equals the comfort setpoint minus the eco setback. Selecting either preset sends nothing. A
-temperature that fits neither shows as the target with no preset, and the hub reads the setback again.
-Setting a target from Home Assistant writes the comfort setpoint. When the card shows the comfort or
-eco preset, the target follows at once: the new setpoint in a comfort period, the new setpoint minus
-the eco setback in an eco period; the dryer's own reading replaces it at the next poll. This is experimental: it was read on one unit, in one comfort
-period and one eco period; the [Atlantic Adelis page](../devices/atlantic-adelis.md#modes-and-presets-in-home-assistant)
-has the detail.
+While the mode is PROG and no boost or drying runs, each poll adds a read of the temperature the
+dryer holds right now. The card then shows that temperature as the target. Setting a target from Home
+Assistant writes the comfort setpoint, or, in an eco period, a temporary override that ends at the next
+comfort period. In a comfort period the target follows a new setpoint at once; the dryer's own reading
+replaces it at the next poll. Which period runs is the dryer's level, which the
+heating level sensor shows as `comfort` or `eco`. This is experimental: it
+was read on one unit, in one comfort period and one eco period; the
+[Atlantic Adelis page](../devices/atlantic-adelis.md#modes-and-presets-in-home-assistant) has the detail.
 
 Without `io_model:` a towel dryer runs as a radiator: the target and the room temperature work, but
 the mode writes go to the radiator's register, boost and drying are missing, and the window entities
@@ -148,12 +150,13 @@ climate:
     io_model: pilot_wire_interface
 ```
 
-The pilot wire carries six orders, and the card offers exactly these: the modes `off` and `heat`, and
-the presets `away` (frost protection), `eco`, `comfort`, `Comfort -1` and `Comfort -2`. All six are
+The pilot wire carries six orders. The card offers the modes `off` and `heat` and the presets `away`
+(frost protection), `eco`, `comfort`, `Comfort -1` and `Comfort -2`. All five presets and `off` are
 confirmed on the heater's display (issue #228). It has no boost: the interface ignores one, so the card
-does not show it. `Secured` appears when the interface reports it and cannot be set. The commands are
-the same heating-level EXECUTE as for a plain heater. A plain heater without `io_model:` keeps its
-`boost` preset.
+does not show it. The sixth order, `secured`, is one a heater reports and a controller cannot set, so
+it is no preset; an interface that reports it shows `heat` on the card and `secured` on the
+heating level sensor. The commands are the same heating-level EXECUTE as for
+a plain heater. A plain heater without `io_model:` keeps its `boost` preset.
 
 ## Heaters with a night light
 
@@ -196,9 +199,42 @@ heater without `io_model: heater_with_light`.
   good.
 - The light changes at once: `default_transition_length` is 0 s, because each step of a fade would
   be a radio command.
-- A Hekla shares its node type with the Adelis towel dryer, so the comfort or eco period of its
-  weekly program may be visible too. If you run one in its program, please
-  [open an issue](https://github.com/laberning/home_io_control/issues) so we can check it.
+- A Hekla shares its node type with the Adelis towel dryer, so its weekly program may report a level
+  the way the dryer does, but the hub does not read it from a heater with an adjustable setpoint yet:
+  the heating level sensor stays without a state. If you run one in its
+  program, please [open an issue](https://github.com/laberning/home_io_control/issues) so we can check it.
+
+## Heating level sensor
+
+An `electrical_heater` entry takes an optional `heating_level:` text sensor that shows the level the
+heater applies right now. It is separate from the card's preset, which only offers what you can select.
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Bathroom towel dryer"
+    io_device_id: "BD684B"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
+    io_model: towel_dryer
+    heating_level:
+      name: "Bathroom towel dryer level"
+```
+
+- The value is one of `off`, `frost protection`, `eco`, `comfort -2`, `comfort -1`, `comfort`,
+  `boost` or `secured`. The sensor has no state until the heater has reported a level. It takes every
+  [text sensor](https://esphome.io/components/text_sensor/) option.
+- The level comes from the heater's status read. A plain heater is polled with it. A towel dryer gets
+  one such read at the end of every poll, in every mode, whether or not the sensor is configured, which
+  costs one more exchange per poll. In PROG it shows `comfort` or `eco` as the program changes period;
+  with a boost on top it shows `boost`.
+- The sensor stays without a state where the heater reports no level: a Thermor pilot-wire interface
+  (issue #228), and an AGILIA radiator or a Hekla, whose level the hub does not read yet. A level that
+  is not in the list leaves the last value shown.
+- The key is accepted on `io_device_type: electrical_heater` only. It is experimental on a towel
+  dryer: the status read is captured on one unit in comfort, eco and boost, not yet during a drying
+  run or a temporary override. If you try it, please
+  [report](https://github.com/laberning/home_io_control/issues) what the sensor shows.
 
 ## Heating temperature interface and heat pump
 
@@ -251,7 +287,9 @@ A heater with an adjustable setpoint also gets a `Window` binary sensor (`device
 an `Open Window Detection` switch. Both are experimental, and they are generated only when the YAML
 names the heater kind with `io_device_type: "electrical_heater"` and `io_subtype: 1`, and not for a
 towel dryer (`io_model: towel_dryer`). A heater with a night light gets a light entity when its entry
-has a `night_light:` block (section "Heaters with a night light" above).
+has a `night_light:` block (section "Heaters with a night light" above), and an electrical heater gets
+a `Heating level` text sensor when its entry has a `heating_level:` block
+(section "Heating level sensor" above).
 
 ## Temperature range — 7.0–28.0 °C
 

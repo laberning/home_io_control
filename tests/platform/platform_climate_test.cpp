@@ -591,7 +591,7 @@ TEST(PlatformClimate, LevelHeaterTraitsAreExactlyTheProfile) {
   EXPECT_EQ(supported_modes(traits), (std::vector<ClimateMode>{CLIMATE_MODE_OFF, CLIMATE_MODE_HEAT}));
   EXPECT_EQ(supported_presets(traits), (std::vector<ClimatePreset>{CLIMATE_PRESET_AWAY, CLIMATE_PRESET_BOOST,
                                                                    CLIMATE_PRESET_COMFORT, CLIMATE_PRESET_ECO}));
-  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Comfort -1", "Comfort -2", "Secured"}));
+  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Comfort -1", "Comfort -2"}));
   EXPECT_FALSE(traits.get_supports_current_temperature()) << "a level heater reports no temperature";
   EXPECT_FALSE(traits.get_supports_action());
 }
@@ -636,7 +636,7 @@ TEST(PlatformClimate, PilotWireInterfaceOffersTheSixOrdersAndNoBoost) {
   EXPECT_EQ(supported_modes(traits), (std::vector<ClimateMode>{CLIMATE_MODE_OFF, CLIMATE_MODE_HEAT}));
   EXPECT_EQ(supported_presets(traits),
             (std::vector<ClimatePreset>{CLIMATE_PRESET_AWAY, CLIMATE_PRESET_COMFORT, CLIMATE_PRESET_ECO}));
-  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Comfort -1", "Comfort -2", "Secured"}));
+  EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Comfort -1", "Comfort -2"}));
   EXPECT_EQ(hub.get_device("ABC123")->model, DeviceModel::PILOT_WIRE_INTERFACE);
 }
 
@@ -701,7 +701,7 @@ TEST(PlatformClimate, ACommandedLevelPresetShowsAsTheReadBackWould) {
   EXPECT_EQ(entity.publish_count_, 1);
 }
 
-TEST(PlatformClimate, TheSecuredPresetIsShownButNeverCommanded) {
+TEST(PlatformClimate, TheSecuredLevelIsShownAsHeatWithNoPresetAndCannotBeSelected) {
   MockHubClimate hub;
   IOHomeClimate entity = make_level_climate(hub);
   entity.setup();
@@ -714,7 +714,8 @@ TEST(PlatformClimate, TheSecuredPresetIsShownButNeverCommanded) {
 
   deliver_readings(hub, [](HeatingReadings &r) { r.level = heating_level::SECURED; });
   EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
-  EXPECT_EQ(entity.get_custom_preset(), "Secured");
+  EXPECT_FALSE(entity.has_custom_preset()) << "the card offers no Secured: the level sensor shows it";
+  EXPECT_FALSE(entity.preset.has_value());
 }
 
 TEST(PlatformClimate, ALevelHeaterIgnoresATargetTemperature) {
@@ -1060,9 +1061,8 @@ TEST(PlatformClimate, TowelDryerTraitsAreExactlyItsProfileWithNoRadiatorPresets)
 
   EXPECT_EQ(supported_modes(traits),
             (std::vector<ClimateMode>{CLIMATE_MODE_OFF, CLIMATE_MODE_HEAT, CLIMATE_MODE_AUTO}));
-  EXPECT_EQ(supported_presets(traits), (std::vector<ClimatePreset>{CLIMATE_PRESET_NONE, CLIMATE_PRESET_BOOST,
-                                                                   CLIMATE_PRESET_COMFORT, CLIMATE_PRESET_ECO}))
-      << "comfort and eco are listed so the card can show them";
+  EXPECT_EQ(supported_presets(traits), (std::vector<ClimatePreset>{CLIMATE_PRESET_NONE, CLIMATE_PRESET_BOOST}))
+      << "every preset sends a command: comfort and eco are the heating_level sensor's, not the card's";
   EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Drying"}))
       << "no Program / Auto: PROG is the dryer's auto mode";
   EXPECT_TRUE(traits.get_supports_current_temperature());
@@ -1167,18 +1167,20 @@ TEST(PlatformClimate, TowelDryerPresetsWriteTheTemporaryStateAndShowAsPresetsNot
 
 namespace {
 
-/// The readings of a towel dryer in PROG with comfort setpoint 20.0 and setback 3.5, `in_force` in 0x0137.
-void programme_readings(HeatingReadings &r, TowelDryerMode mode, HeatingTemporaryState state, float in_force) {
+/// The readings of a towel dryer in PROG with comfort setpoint 20.0, `in_force` in 0x0137, the status read
+/// reporting `level`.
+void programme_readings(HeatingReadings &r, TowelDryerMode mode, HeatingTemporaryState state, float in_force,
+                        int16_t level = heating_level::COMFORT) {
   r.towel_mode = static_cast<int16_t>(mode);
   r.temporary_state = static_cast<int16_t>(state);
   r.setpoint_c = 20.0F;
-  r.eco_setback_k = 3.5F;
   r.in_force_temperature_c = in_force;
+  r.level = level;
 }
 
 }  // namespace
 
-TEST(PlatformClimate, TowelDryerShowsComfortOrEcoAndTheTemperatureInForceWhileItsProgrammeRuns) {
+TEST(PlatformClimate, TowelDryerShowsTheTemperatureInForceAndNoPresetForThePeriodWhileItsProgrammeRuns) {
   MockHubClimate hub;
   IOHomeClimate entity = make_towel_climate(hub);
   entity.setup();
@@ -1187,22 +1189,23 @@ TEST(PlatformClimate, TowelDryerShowsComfortOrEcoAndTheTemperatureInForceWhileIt
       hub, [](HeatingReadings &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F); });
   EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO);
   ASSERT_TRUE(entity.preset.has_value());
-  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_COMFORT);
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE) << "comfort is a level, shown by the sensor";
   EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F);
 
-  deliver_readings(hub, [](HeatingReadings &r) { r.in_force_temperature_c = 16.5F; });
-  ASSERT_TRUE(entity.preset.has_value());
-  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_ECO);
+  deliver_readings(hub, [](HeatingReadings &r) {
+    r.in_force_temperature_c = 16.5F;
+    r.level = heating_level::ECO;
+  });
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE);
   EXPECT_FLOAT_EQ(entity.target_temperature, 16.5F) << "the temperature the dryer heats to now";
 
-  // A frost or holiday value: the temperature, and no period.
+  // A frost or holiday value: the temperature, and no preset.
   deliver_readings(hub, [](HeatingReadings &r) { r.in_force_temperature_c = 7.0F; });
-  ASSERT_TRUE(entity.preset.has_value());
   EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE);
   EXPECT_FLOAT_EQ(entity.target_temperature, 7.0F);
 }
 
-TEST(PlatformClimate, TowelDryerPeriodFollowsComfortEcoBoostComfortWithoutAFlickerOrAStaleValue) {
+TEST(PlatformClimate, TowelDryerTargetFollowsComfortEcoBoostComfortWithoutAFlickerOrAStaleValue) {
   MockHubClimate hub;
   IOHomeClimate entity = make_towel_climate(hub);
   entity.setup();
@@ -1213,9 +1216,9 @@ TEST(PlatformClimate, TowelDryerPeriodFollowsComfortEcoBoostComfortWithoutAFlick
   };
 
   in_period(20.0F);
-  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_COMFORT);
+  EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F);
   in_period(16.5F);
-  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_ECO);
+  EXPECT_FLOAT_EQ(entity.target_temperature, 16.5F);
 
   // Boost on top: the card shows boost and the comfort setpoint again, as without a programme period.
   deliver_readings(hub, [](HeatingReadings &r) {
@@ -1226,17 +1229,15 @@ TEST(PlatformClimate, TowelDryerPeriodFollowsComfortEcoBoostComfortWithoutAFlick
   EXPECT_EQ(*entity.preset, CLIMATE_PRESET_BOOST);
   EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F);
 
-  // Back in the programme, before 0x0137 is read again: no preset of the old period, today's target.
+  // Back in the programme, before 0x0137 is read again: today's target, no value of the old period.
   deliver_readings(hub,
                    [](HeatingReadings &r) { r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE); });
-  ASSERT_TRUE(entity.preset.has_value());
   EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE);
   EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F);
 
   const int published = entity.publish_count_;
   in_period(20.0F);
-  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_COMFORT);
-  EXPECT_EQ(entity.publish_count_, published + 1) << "one publish for the period, not one per register";
+  EXPECT_EQ(entity.publish_count_, published) << "the same card as before: nothing to publish";
 }
 
 TEST(PlatformClimate, TowelDryerOutsideTheProgrammeNeverShowsTheTemperatureInForce) {
@@ -1264,8 +1265,9 @@ TEST(PlatformClimate, TowelDryerTargetInAnEcoPeriodWritesTheOverrideAndInAComfor
   hub.read_replies[HeatingFunction::DEROGATED_SETPOINT] = 17.5F;
   hub.read_replies[HeatingFunction::SET_TEMPERATURE] = 21.0F;
 
-  deliver_readings(
-      hub, [](HeatingReadings &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F); });
+  deliver_readings(hub, [](HeatingReadings &r) {
+    programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
+  });
   auto eco_call = entity.make_call();
   eco_call.set_target_temperature(17.5F);
   eco_call.perform();
@@ -1286,12 +1288,13 @@ TEST(PlatformClimate, TowelDryerTargetInAnEcoPeriodWritesTheOverrideAndInAComfor
   EXPECT_EQ(hub.writes[0].fn, HeatingFunction::SET_TEMPERATURE);
 }
 
-TEST(PlatformClimate, TowelDryerComfortAndEcoCannotBeSelectedAndSendNothing) {
+TEST(PlatformClimate, TowelDryerComfortAndEcoAreNoPresetAndSendNothing) {
   MockHubClimate hub;
   IOHomeClimate entity = make_towel_climate(hub);
   entity.setup();
-  deliver_readings(
-      hub, [](HeatingReadings &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F); });
+  deliver_readings(hub, [](HeatingReadings &r) {
+    programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
+  });
   const int published = entity.publish_count_;
 
   perform_preset(entity, CLIMATE_PRESET_COMFORT);
@@ -1300,7 +1303,7 @@ TEST(PlatformClimate, TowelDryerComfortAndEcoCannotBeSelectedAndSendNothing) {
   EXPECT_TRUE(hub.writes.empty()) << "no frame";
   EXPECT_TRUE(hub.reads.empty());
   ASSERT_TRUE(entity.preset.has_value());
-  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_ECO) << "the card keeps what the dryer reports";
+  EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE);
   EXPECT_EQ(entity.publish_count_, published);
 }
 

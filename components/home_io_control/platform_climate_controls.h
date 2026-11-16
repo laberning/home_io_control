@@ -2,12 +2,13 @@
 
 /// @file platform_climate_controls.h
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the open-window
-/// detection switch and the night light.
+/// detection switch, the night light and the heating-level text sensor.
 /// @ingroup hioc_platforms
 ///
 /// All are device-bound companions (DeviceBoundCompanion) that climate.py generates alongside a
 /// `climate:` entity: the window pair when the device kind has WINDOW_COMPANIONS, the night light when
-/// the YAML asks for it on a kind with NIGHT_LIGHT. They show readings the hub's poll already stores in
+/// the YAML asks for it on a kind with NIGHT_LIGHT; the heating-level text sensor is opt-in on an
+/// electrical heater. They show readings the hub's poll already stores in
 /// IoDevice::heating and add no radio traffic of their own, except their writes and the read-backs that
 /// confirm them.
 ///
@@ -20,6 +21,7 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/light/light_output.h"
 #include "esphome/components/switch/switch.h"
+#include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
 #include "platform_entity_base.h"
 #include "platform_light.h"
@@ -27,6 +29,30 @@
 
 namespace esphome {
 namespace home_io_control {
+
+/// @brief Text sensor (`heating_level:` on a climate entry) with the level the heater applies right now.
+/// @ingroup hioc_platforms
+///
+/// Shows `off`, `frost protection`, `eco`, `comfort -2`, `comfort -1`, `comfort`, `boost` or `secured`
+/// (heating_level_name()), read from IoDevice::heating.level: the main parameter of the heater's status
+/// read. A plain heater and a pilot-wire interface are polled with that read; a register heater gets it
+/// only where its profile has a programme (a towel dryer). No state until the heater has reported a level,
+/// so a heater that reports none (a pilot-wire interface, a radiator) leaves the sensor without one.
+///
+/// \todo Experimental on a towel dryer: its status read is captured on one unit in comfort, eco and boost,
+///       not yet during a drying run or a temporary override.
+class IOHomeHeatingLevelSensor : public text_sensor::TextSensor, public Component, public DeviceBoundCompanion {
+ public:
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+
+  /// @brief Dump sensor configuration to the log.
+  void dump_config() override;
+
+  /// @brief Get setup priority so the parent hub is available first.
+  /// @return setup_priority::DATA.
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+};
 
 /// @brief Binary sensor (`device_class: window`) that is ON while the heater's window sensor reports open.
 /// @ingroup hioc_platforms

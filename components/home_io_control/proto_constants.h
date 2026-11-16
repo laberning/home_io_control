@@ -627,6 +627,9 @@ static constexpr uint8_t STATUS_MP_FP_PARAM_COUNT =
     7;  ///< Largest selection seen on air (FP1-FP7), kept as a conservative cap across both bitmaps.
 static constexpr uint8_t STATUS_MP_FP_FPI2 =
     0x00;  ///< FPI2: no FP9-FP16 requested (bit 7 = FP9 ... bit 0 = FP16 otherwise).
+static constexpr uint8_t STATUS_MP_FP_MAIN_PARAMETER_OFFSET =
+    2;  ///< Offset of the main parameter (MSB) in the data of the reply (CMD_PRIVATE_RESP): the target slot of a
+        ///< cover's reply. The two bytes after it read `00 00` in the replies of a towel dryer and a water heater.
 /// @}
 
 /// @brief Bit of functional parameter `fp` (1-16) in its bitmap: FPI1 holds FP1-FP8 and FPI2 FP9-FP16,

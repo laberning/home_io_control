@@ -5,14 +5,14 @@
 ## Defines the experimental IO-Homecontrol heating/climate integration and wires it to the shared
 ## hub. Heaters with a window sensor also get a Window binary sensor and an Open Window Detection
 ## switch; a heater with a night light (io_model: heater_with_light) can add a dimmable `night_light:`
-## light. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
+## light, and an electrical heater can add a `heating_level:` text sensor with the level it applies now. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
 ## construction/registration stays here.
 
 import functools
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, climate, light, switch
+from esphome.components import binary_sensor, climate, light, switch, text_sensor
 from esphome.const import (
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
@@ -25,6 +25,7 @@ from esphome.const import (
 
 from . import home_io_control_ns
 from .hub_validators import (
+    DEVICE_TYPE_OPTIONS,
     FEATURE_NIGHT_LIGHT,
     FEATURE_TEMPERATURE_RANGE,
     FEATURE_WINDOW_COMPANIONS,
@@ -35,6 +36,7 @@ from .platform_common import (
     companion_entity_name,
     create_companion,
     create_companion_sensors,
+    create_user_companion,
     has_feature,
     inherit_esphome_device,
     inject_companion_ids,
@@ -44,6 +46,7 @@ from .platform_common import (
     validate_register_poll_interval,
     warn_if_experimental_kind,
     wire_device_binding,
+    CONF_DEVICE_TYPE,
     CONF_HOME_IO_CONTROL_ID,
     CONF_IO_DEVICE_ID,
 )
@@ -61,7 +64,12 @@ IOHomeHeaterNightLight = home_io_control_ns.class_(
     "IOHomeHeaterNightLight", light.LightOutput, cg.Component
 )
 
+IOHomeHeatingLevelSensor = home_io_control_ns.class_(
+    "IOHomeHeatingLevelSensor", text_sensor.TextSensor, cg.Component
+)
+
 CONF_NIGHT_LIGHT = "night_light"
+CONF_HEATING_LEVEL = "heating_level"
 
 # Internal config keys for the heater-only companion IDs (injected by the post-validator).
 CONF_WINDOW_SENSOR_ID = "_window_sensor_id"
@@ -80,6 +88,21 @@ def _validate_night_light(config):
         "night_light needs a heater with a night light: set io_device_type: electrical_heater, "
         "io_subtype: 1 and io_model: heater_with_light",
         path=[CONF_NIGHT_LIGHT],
+    )
+
+
+def _validate_heating_level(config):
+    """Accept `heating_level:` only on an electrical heater.
+
+    Every electrical heater accepts it: the sensor stays without a state where the heater reports no level
+    (a pilot-wire interface, a radiator), which the docs say. Like `night_light:`, the key is rejected when
+    no io_device_type is declared: nothing at validation time says the device is a heater.
+    """
+    if CONF_HEATING_LEVEL not in config or config.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_OPTIONS["electrical_heater"]:
+        return config
+    raise cv.Invalid(
+        "heating_level needs an electrical heater: set io_device_type: electrical_heater",
+        path=[CONF_HEATING_LEVEL],
     )
 
 
@@ -153,6 +176,11 @@ CONFIG_SCHEMA = cv.All(
             )
             .extend(INSTANT_LIGHT_TRANSITION)
             .extend(cv.COMPONENT_SCHEMA),
+            # The level the heater applies now (comfort, eco, ...); its ID is declared by the schema's own
+            # GenerateID.
+            cv.Optional(CONF_HEATING_LEVEL): text_sensor.text_sensor_schema(IOHomeHeatingLevelSensor).extend(
+                cv.COMPONENT_SCHEMA
+            ),
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
@@ -160,6 +188,7 @@ CONFIG_SCHEMA = cv.All(
     _validate_temperature_range,
     validate_device_model,
     _validate_night_light,
+    _validate_heating_level,
     warn_if_experimental_kind,
     _inject_companion_ids,
 )
@@ -208,6 +237,14 @@ async def to_code(config):
             id_key=CONF_WINDOW_DETECTION_SWITCH_ID,
             name=companion_entity_name(config, "Open Window Detection"),
             overrides={CONF_DISABLED_BY_DEFAULT: True},
+        )
+
+    if CONF_HEATING_LEVEL in config:
+        await create_user_companion(
+            config,
+            parent,
+            new_entity=text_sensor.new_text_sensor,
+            entity_config=config[CONF_HEATING_LEVEL],
         )
 
     if CONF_NIGHT_LIGHT in config:

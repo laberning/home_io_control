@@ -671,6 +671,25 @@ void IOHomeControlComponent::apply_status_update_(const std::string &id, IoDevic
   this->notify_device_update_(id);
 }
 
+namespace {
+
+/// Apply a CMD_PRIVATE_RESP from a heater that has no cover fields: a water heater (its target) or a register
+/// heater (the heating level of its status read).
+/// @return true when the device is such a heater and the reply was applied; false for any other device.
+bool apply_heater_private_response(const std::string &id, IoDevice &dev, const IoFrame &frame, bool trust_position) {
+  if (has_feature(dev.features, device_feature::WATER_HEATER)) {
+    apply_dhw_status_reply(id, dev, frame, trust_position);
+    return true;
+  }
+  const HeatingProfile *profile = find_heating_profile(dev);
+  if (profile == nullptr || profile->path != HeatingControlPath::PRIVATE_REGISTERS)
+    return false;
+  apply_register_heater_status_reply(id, dev, frame, trust_position);
+  return true;
+}
+
+}  // namespace
+
 void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool trust_position) {
   const std::string id = node_id_to_string(frame.src);
   IoDevice *device_ptr = this->registry_.get(id);
@@ -687,9 +706,9 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
       return;
     }
 
-    // A water heater's reply carries its target and nothing a cover has; it never enters the cover path.
-    if (has_feature(dev.features, device_feature::WATER_HEATER)) {
-      apply_dhw_status_reply(id, dev, frame, trust_position);
+    // A water heater's and a register heater's reply carry a target or a level and nothing a cover has; they
+    // never enter the cover path.
+    if (apply_heater_private_response(id, dev, frame, trust_position)) {
       detail::clear_command_result(dev);
       this->notify_device_update_(id);
       return;

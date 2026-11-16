@@ -420,8 +420,9 @@ class HeaterController {
   bool run_poll_(const std::string &device_id, PollLadder ladder, const PollBody &body);
 
   /// @brief Poll a register heater: its profile's poll registers (stopping at the first failure), the
-  /// programme's temperature in force, the boot registers until each has been read once, and on a heater
-  /// kind with model rows the one-off model check once the device has answered a read.
+  /// programme's temperature in force, the boot registers until each has been read once, the heating level
+  /// (the status read, on a heater with a programme) and on a heater kind with model rows the one-off model check once
+  /// the device has answered a read.
   /// @param device_id Target device ID.
   /// @return true when every poll register answered.
   bool poll_registers_(const std::string &device_id);
@@ -435,14 +436,17 @@ class HeaterController {
 
   /// @brief Read the temperature in force of a heater's programme, when the programme runs.
   /// @details Sends nothing unless programme_period_active() holds for the readings the poll just made.
-  ///          When the temperature fits neither period it also reads the override register
-  ///          (HeatingProgrammePeriod::derogation_fn), the only extra read: a non-zero value equal to the
-  ///          temperature in force is an override of the eco temperature. If it still fits neither period
-  ///          it forgets the eco setback, so the boot registers read it again.
   /// @param device_id Target device ID.
   /// @param profile The device's profile; its programme_period must not be nullptr.
   /// @param max_tries Transmit-attempt cap of the read (the poll's).
-  void poll_programme_period_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
+  void poll_temperature_in_force_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
+
+  /// @brief Read the heating level a heater applies now: the status read of the main parameter, whose reply
+  ///        the hub's status decoder folds into HeatingReadings::level (apply_register_heater_status_reply()).
+  /// @details An authenticated exchange of its own. A miss is not a poll failure; the next poll asks again.
+  /// @param device_id Target device ID.
+  /// @param max_tries Transmit-attempt cap of the read (the poll's).
+  void read_heating_level_(const std::string &device_id, uint8_t max_tries);
 
   /// @brief Poll a heater without private registers with the ordinary status read: a heating-level heater
   /// (its level in the position field) and a temperature heater (its setpoint in the main parameter).
@@ -477,6 +481,19 @@ class HeaterController {
 /// @param dev Device record to update.
 /// @param current_main_parameter The 16-bit current main parameter of a reply to a status poll.
 void apply_heating_main_parameter(const std::string &id, IoDevice &dev, uint16_t current_main_parameter);
+
+/// @brief Apply the reply to a register heater's main-parameter status read: its main parameter is the
+/// heating level the heater applies now (a towel dryer in its programme answers comfort or eco).
+///
+/// Only the level is taken: a register heater's mode, temperatures and presets come from its registers. A
+/// main parameter that is not a level clears the stored level. The ack of an EXECUTE is not decoded (a
+/// register heater is never sent one).
+/// @param id Device ID for the log line.
+/// @param dev Device record to update.
+/// @param frame A CMD_PRIVATE_RESP from the heater whose data holds the main parameter (checked by the caller).
+/// @param trust_position True for a reply to a status read, false for the ack of an EXECUTE.
+void apply_register_heater_status_reply(const std::string &id, IoDevice &dev, const IoFrame &frame,
+                                        bool trust_position);
 
 /// @brief Apply a water heater's status reply: its main parameter is the target temperature; the operating-mode
 /// read (FP15, FP16) adds its capabilities and the boost and away state.

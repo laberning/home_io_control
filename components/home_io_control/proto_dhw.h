@@ -81,9 +81,8 @@ static constexpr float DHW_TARGET_MIN_C = 20.0F;
 /// @brief Upper end of the target-temperature scale: main parameter 0xC800 is 62 C, the highest target the
 /// Calypso's display offers.
 static constexpr float DHW_TARGET_MAX_C = 62.0F;
-/// @brief Offset of the main parameter (MSB) in the data of a status reply (CMD_PRIVATE_RESP): the target
-/// slot of a cover's reply. The two bytes after it read `00 00` in every reply seen.
-static constexpr uint8_t DHW_STATUS_MAIN_PARAMETER_OFFSET = 2;
+/// @brief Offset of the main parameter (MSB) in the data of a water heater's status reply.
+static constexpr uint8_t DHW_STATUS_MAIN_PARAMETER_OFFSET = STATUS_MP_FP_MAIN_PARAMETER_OFFSET;
 
 // === Operating mode (functional parameters 15 and 16) ===
 

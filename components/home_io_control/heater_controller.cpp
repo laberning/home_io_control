@@ -668,33 +668,22 @@ void HeaterController::check_heater_model(const std::string &device_id, uint8_t 
   }
 }
 
-void HeaterController::poll_programme_period_(const std::string &device_id, const HeatingProfile &profile,
-                                              uint8_t max_tries) {
+void HeaterController::poll_temperature_in_force_(const std::string &device_id, const HeatingProfile &profile,
+                                                  uint8_t max_tries) {
   const IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr || !programme_period_active(profile, dev->heating))
     return;
-  const HeatingProgrammePeriod &period = *profile.programme_period;
-  if (!this->read_heating_register(device_id, period.in_force_fn, nullptr, max_tries))
+  this->read_heating_register(device_id, profile.programme_period->in_force_fn, nullptr, max_tries);
+}
+
+void HeaterController::read_heating_level_(const std::string &device_id, uint8_t max_tries) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  IoFrame request;
+  // The status read of the main parameter; the reply's main parameter is the heating level. The failure is
+  // not a poll failure: the registers answered, and the next poll asks again.
+  if (dev == nullptr || !create_status_mp_fp_read(request, this->node_id_, dev->node_id, dev->low_power))
     return;
-  IoDevice *updated = this->registry_.get(device_id);
-  if (updated == nullptr)
-    return;
-  // The override reading belongs to one eco period: drop the previous one and read it again only below, in
-  // the one case that needs it.
-  updated->heating.clear(period.derogation_fn);
-  if (resolve_programme_period(profile, updated->heating).preset_index >= 0)
-    return;
-  // The temperature in force fits neither period: it is either an override of the eco temperature (set on the
-  // panel, by the action or by a target in an eco period) or a changed setback. The override register tells
-  // them apart; a non-zero value equal to the temperature in force is the eco period.
-  this->read_heating_register(device_id, period.derogation_fn, nullptr, max_tries);
-  updated = this->registry_.get(device_id);
-  if (updated == nullptr)
-    return;
-  // Still neither: the eco setback is not what the heater holds now (it was changed on the display), so
-  // forget it and let the boot registers read it again.
-  if (resolve_programme_period(profile, updated->heating).preset_index < 0)
-    updated->heating.clear(period.setback_fn);
+  this->hub_.status_read(device_id, request, 0, max_tries);
 }
 
 bool HeaterController::poll_registers_(const std::string &device_id) {
@@ -726,7 +715,7 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
   // The temperature in force is read only while the heater's own programme runs: outside it the register
   // holds no temperature, and the card needs no read.
   if (ok && profile.programme_period != nullptr)
-    this->poll_programme_period_(device_id, profile, max_tries);
+    this->poll_temperature_in_force_(device_id, profile, max_tries);
 
   // A part the heater may not have (a night light): read every poll once the core registers answered,
   // and a miss is not a poll failure (the next poll asks again).
@@ -745,6 +734,11 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
     if (current != nullptr && !current->heating.has(fn))
       this->read_heating_register(device_id, fn, nullptr, max_tries);
   }
+
+  // The heating level of a heater with a programme comes from its status read, in every mode: what a heater is
+  // polled for depends on its profile alone, never on which entities the YAML declares.
+  if (ok && profile.programme_period != nullptr)
+    this->read_heating_level_(device_id, max_tries);
 
   // Once the device has answered a read: the one-off model check. It runs even when a later register of
   // the poll failed, because a towel dryer declared on a radiator fails exactly there (its mode register

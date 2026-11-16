@@ -92,10 +92,10 @@ TEST(HeatingWritePlan, RadiatorTargetIsAnUnencodedSetpointWriteThatIsReadBack) {
 
 namespace {
 
-/// Facts of a towel dryer whose programme is in the period @p preset_index names (-1: not running or unknown).
-HeatingDeviceFacts towel_facts_in_period(int8_t preset_index) {
+/// Facts of a towel dryer whose programme runs in an eco period (@p in_eco) or does not.
+HeatingDeviceFacts towel_facts(bool in_eco) {
   HeatingDeviceFacts facts = known_device(20.0F);
-  facts.programme_preset_index = preset_index;
+  facts.programme_in_eco_period = in_eco;
   return facts;
 }
 
@@ -103,10 +103,8 @@ HeatingDeviceFacts towel_facts_in_period(int8_t preset_index) {
 
 TEST(HeatingWritePlan, TowelDryerTargetInAnEcoPeriodIsAWriteOfTheDerogationRegister) {
   const HeatingProfile &dryer = profile_of(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
-  const HeatingProgrammePeriod &period = *dryer.programme_period;
 
-  const HeatingWritePlan plan =
-      plan_heating_write(dryer, target_request(17.5F), towel_facts_in_period(period.eco_preset));
+  const HeatingWritePlan plan = plan_heating_write(dryer, target_request(17.5F), towel_facts(true));
   ASSERT_EQ(plan.kind, HeatingPlanKind::REGISTER);
   EXPECT_EQ(plan.register_fn, HeatingFunction::DEROGATED_SETPOINT) << "the comfort setpoint stays as it is";
   EXPECT_FLOAT_EQ(plan.register_value, 17.5F);
@@ -114,17 +112,14 @@ TEST(HeatingWritePlan, TowelDryerTargetInAnEcoPeriodIsAWriteOfTheDerogationRegis
   EXPECT_EQ(plan.read_back_fn, HeatingFunction::DEROGATED_SETPOINT);
 }
 
-TEST(HeatingWritePlan, TowelDryerTargetInAComfortPeriodModeOrUnknownPeriodWritesTheComfortSetpoint) {
+TEST(HeatingWritePlan, TowelDryerTargetOutsideAnEcoPeriodWritesTheComfortSetpoint) {
   const HeatingProfile &dryer = profile_of(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
-  const HeatingProgrammePeriod &period = *dryer.programme_period;
 
-  // Comfort period; the programme not running (MANUEL, off, boost: no period); a period that fits neither.
-  for (const int8_t preset_index : {period.comfort_preset, static_cast<int8_t>(-1)}) {
-    const HeatingWritePlan plan = plan_heating_write(dryer, target_request(21.0F), towel_facts_in_period(preset_index));
-    ASSERT_EQ(plan.kind, HeatingPlanKind::REGISTER) << static_cast<int>(preset_index);
-    EXPECT_EQ(plan.register_fn, HeatingFunction::SET_TEMPERATURE) << static_cast<int>(preset_index);
-    EXPECT_EQ(plan.read_back_fn, HeatingFunction::SET_TEMPERATURE) << static_cast<int>(preset_index);
-  }
+  // A comfort period, the programme not running (MANUEL, off, boost) or a level not read yet are no eco period.
+  const HeatingWritePlan plan = plan_heating_write(dryer, target_request(21.0F), towel_facts(false));
+  ASSERT_EQ(plan.kind, HeatingPlanKind::REGISTER);
+  EXPECT_EQ(plan.register_fn, HeatingFunction::SET_TEMPERATURE);
+  EXPECT_EQ(plan.read_back_fn, HeatingFunction::SET_TEMPERATURE);
   EXPECT_EQ(plan_heating_write(dryer, target_request(21.0F), known_device(20.0F)).register_fn,
             HeatingFunction::SET_TEMPERATURE)
       << "facts that name no period";
@@ -133,14 +128,11 @@ TEST(HeatingWritePlan, TowelDryerTargetInAComfortPeriodModeOrUnknownPeriodWrites
 TEST(HeatingWritePlan, OnlyTheTowelDryerDerogates) {
   const HeatingProfile &radiator = profile_of(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
   // Whatever the facts say, a profile without a programme period writes the setpoint.
-  for (const int8_t preset_index : {static_cast<int8_t>(0), static_cast<int8_t>(1)}) {
-    HeatingDeviceFacts facts = known_device(20.0F);
-    facts.programme_preset_index = preset_index;
-    EXPECT_EQ(plan_heating_write(radiator, target_request(21.0F), facts).register_fn, HeatingFunction::SET_TEMPERATURE);
-  }
+  EXPECT_EQ(plan_heating_write(radiator, target_request(21.0F), towel_facts(true)).register_fn,
+            HeatingFunction::SET_TEMPERATURE);
 }
 
-TEST(HeatingWritePlan, DeviceFactsNameTheProgrammePeriodTheReadingsShow) {
+TEST(HeatingWritePlan, DeviceFactsSayTheProgrammeIsInAnEcoPeriodFromTheLevelTheHeaterReported) {
   IoDevice dev;
   dev.type = DeviceType::ELECTRICAL_HEATER;
   dev.subtype = 1;
@@ -148,18 +140,16 @@ TEST(HeatingWritePlan, DeviceFactsNameTheProgrammePeriodTheReadingsShow) {
   dev.heating.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
   dev.heating.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE);
   dev.heating.setpoint_c = 20.0F;
-  dev.heating.eco_setback_k = 3.5F;
-  const HeatingProgrammePeriod &period = *find_heating_profile(dev)->programme_period;
-
   dev.heating.in_force_temperature_c = 16.5F;
-  EXPECT_EQ(heating_device_facts(&dev).programme_preset_index, period.eco_preset);
-  dev.heating.in_force_temperature_c = 20.0F;
-  EXPECT_EQ(heating_device_facts(&dev).programme_preset_index, period.comfort_preset);
+
+  EXPECT_FALSE(heating_device_facts(&dev).programme_in_eco_period) << "the level has not been read";
+  dev.heating.level = heating_level::ECO;
+  EXPECT_TRUE(heating_device_facts(&dev).programme_in_eco_period);
+  dev.heating.level = heating_level::COMFORT;
+  EXPECT_FALSE(heating_device_facts(&dev).programme_in_eco_period);
+  dev.heating.level = heating_level::ECO;
   dev.heating.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
-  EXPECT_EQ(heating_device_facts(&dev).programme_preset_index, -1) << "MANUEL: no period";
-  dev.heating.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
-  dev.heating.in_force_temperature_c = NAN;
-  EXPECT_EQ(heating_device_facts(&dev).programme_preset_index, -1) << "not read yet";
+  EXPECT_FALSE(heating_device_facts(&dev).programme_in_eco_period) << "MANUEL: no period";
 }
 
 TEST(HeatingWritePlan, TowelDryerModeAndTemporaryStateAreSeparateRegisters) {
@@ -186,16 +176,14 @@ TEST(HeatingWritePlan, TowelDryerModeAndTemporaryStateAreSeparateRegisters) {
   EXPECT_FLOAT_EQ(none.register_value, static_cast<float>(HeatingTemporaryState::NONE));
 }
 
-TEST(HeatingWritePlan, APresetTheDeviceOnlyReportsIsRefusedAndNamesItsEntry) {
+TEST(HeatingWritePlan, ComfortAndEcoAreNoPresetOfATowelDryer) {
   const HeatingProfile &dryer = profile_of(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
 
-  const HeatingWritePlan plan = plan_heating_write(dryer, preset_request(HeatingPresetId::COMFORT), known_device());
-
-  EXPECT_EQ(plan.kind, HeatingPlanKind::NONE);
-  EXPECT_FALSE(plan.is_write());
-  EXPECT_EQ(plan.refusal, HeatingRefusal::NOT_COMMANDABLE);
-  ASSERT_GE(plan.preset_index, 0);
-  EXPECT_EQ(dryer.presets[plan.preset_index].id, HeatingPresetId::COMFORT);
+  for (const HeatingPresetId preset : {HeatingPresetId::COMFORT, HeatingPresetId::ECO}) {
+    const HeatingWritePlan plan = plan_heating_write(dryer, preset_request(preset), known_device());
+    EXPECT_FALSE(plan.is_write());
+    EXPECT_EQ(plan.refusal, HeatingRefusal::NO_MATCH) << "the card never offers them";
+  }
 }
 
 // === Plain heater (heating levels) ===
@@ -221,12 +209,12 @@ TEST(HeatingWritePlan, PlainHeaterModesAndPresetsAreLevelsWithoutAReadBack) {
   EXPECT_EQ(minus1.level, heating_level::COMFORT_MINUS_1);
 }
 
-TEST(HeatingWritePlan, PlainHeaterHasNoSetpointAndTheSecuredLevelIsNeverCommanded) {
+TEST(HeatingWritePlan, PlainHeaterHasNoSetpointAndNoSecuredPreset) {
   const HeatingProfile &plain = profile_of(DeviceType::ELECTRICAL_HEATER, 0);
 
   EXPECT_EQ(plan_heating_write(plain, target_request(20.0F), known_device()).refusal, HeatingRefusal::NO_SETPOINT);
   EXPECT_EQ(plan_heating_write(plain, preset_request(HeatingPresetId::CUSTOM, "Secured"), known_device()).refusal,
-            HeatingRefusal::NOT_COMMANDABLE);
+            HeatingRefusal::NO_MATCH);
 }
 
 // === Thermostat (FP9) ===

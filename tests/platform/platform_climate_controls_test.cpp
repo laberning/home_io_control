@@ -1,6 +1,6 @@
 /// @file platform_climate_controls_test.cpp
-/// @brief Tests for the generated per-heater companions: the window sensor and the open-window
-/// detection switch.
+/// @brief Tests for the generated per-heater companions: the window sensor, the open-window detection
+/// switch and the heating-level sensor.
 
 #include "platform_climate_controls.h"
 
@@ -49,6 +49,72 @@ class TestableDetectionSwitch : public IOHomeOpenWindowDetectionSwitch {
 };
 
 }  // namespace
+
+TEST(PlatformHeatingLevelSensor, HasNoStateUntilTheHeaterHasReportedALevel) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  IOHomeHeatingLevelSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+  EXPECT_TRUE(sensor.state.empty());
+
+  hub.deliver([](HeatingReadings &r) { r.room_temperature_c = 20.0F; });
+  EXPECT_TRUE(sensor.state.empty()) << "a reading of something else is no level";
+}
+
+TEST(PlatformHeatingLevelSensor, NamesEveryLevelTheHeaterReports) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  IOHomeHeatingLevelSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  const struct {
+    uint8_t level;
+    const char *name;
+  } expected[] = {
+      {heating_level::OFF, "off"},
+      {heating_level::FROST_PROTECTION, "frost protection"},
+      {heating_level::ECO, "eco"},
+      {heating_level::COMFORT_MINUS_2, "comfort -2"},
+      {heating_level::COMFORT_MINUS_1, "comfort -1"},
+      {heating_level::COMFORT, "comfort"},
+      {heating_level::BOOST, "boost"},
+      {heating_level::SECURED, "secured"},
+  };
+  for (const auto &entry : expected) {
+    hub.deliver([&entry](HeatingReadings &r) { r.level = entry.level; });
+    EXPECT_EQ(sensor.state, entry.name);
+  }
+}
+
+TEST(PlatformHeatingLevelSensor, AValueThatIsNoLevelKeepsTheLastLevelShown) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  IOHomeHeatingLevelSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  hub.deliver([](HeatingReadings &r) { r.level = heating_level::ECO; });
+  hub.deliver([](HeatingReadings &r) { r.level = 0x40; });  // not a level of the table
+
+  EXPECT_EQ(sensor.state, "eco");
+}
+
+TEST(PlatformHeatingLevelSensor, PublishesWhatIsAlreadyKnownAtSetup) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  hub.deliver([](HeatingReadings &r) { r.level = heating_level::BOOST; });
+  IOHomeHeatingLevelSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  EXPECT_EQ(sensor.state, "boost");
+}
 
 TEST(PlatformWindowSensor, HasNoStateUntilTheSensorHasBeenRead) {
   ClimateControlsHub hub;

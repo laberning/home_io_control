@@ -172,8 +172,8 @@ TEST(HeatingProfiles, PlainHeaterOffersLevelsAsModesAndPresets) {
   EXPECT_EQ(p.modes[1].hvac, HeatingHvacMode::HEAT);
   EXPECT_EQ(p.modes[1].wire, heating_level::COMFORT);
 
-  // Exact preset set: three standard presets plus the comfort offsets and the read-only secured level.
-  ASSERT_EQ(p.presets.size(), 7u);
+  // Exact preset set: the standard presets and the comfort offsets; the secured level is reported, never a preset.
+  ASSERT_EQ(p.presets.size(), 6u);
   EXPECT_EQ(p.presets[0].id, HeatingPresetId::AWAY);
   EXPECT_EQ(p.presets[0].wire, heating_level::FROST_PROTECTION);
   EXPECT_EQ(p.presets[1].id, HeatingPresetId::ECO);
@@ -184,8 +184,16 @@ TEST(HeatingProfiles, PlainHeaterOffersLevelsAsModesAndPresets) {
   EXPECT_EQ(p.presets[4].wire, heating_level::COMFORT_MINUS_1);
   EXPECT_STREQ(p.presets[5].custom_name, "Comfort -2");
   EXPECT_EQ(p.presets[5].wire, heating_level::COMFORT_MINUS_2);
-  EXPECT_STREQ(p.presets[6].custom_name, "Secured");
-  EXPECT_FALSE(p.presets[6].commandable) << "the device reports secured; a controller cannot set it";
+}
+
+TEST(HeatingProfiles, TheSecuredLevelIsReadAsHeatWithNoPreset) {
+  for (const DeviceModel model : {DeviceModel::NONE, DeviceModel::PILOT_WIRE_INTERFACE}) {
+    const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, model);
+    const HeatingObservedState *secured = find_observed_state(p, heating_level::SECURED);
+    ASSERT_NE(secured, nullptr);
+    EXPECT_EQ(secured->hvac, HeatingHvacMode::HEAT);
+    EXPECT_EQ(secured->preset, -1) << "no preset: the heater reports it and a controller cannot set it";
+  }
 }
 
 TEST(HeatingProfiles, EveryLevelTheProfileCanCommandIsReadBackAsItself) {
@@ -257,6 +265,29 @@ TEST(HeatingLevels, DecodeEveryLevelIncludingSecured) {
     ASSERT_TRUE(decode_heating_level(heating_level_main_parameter(level), decoded)) << +level;
     EXPECT_EQ(decoded, level);
   }
+}
+
+TEST(HeatingLevels, EveryLevelHasTheNameTheSensorShows) {
+  const struct {
+    uint8_t level;
+    const char *name;
+  } names[] = {
+      {heating_level::OFF, "off"},
+      {heating_level::FROST_PROTECTION, "frost protection"},
+      {heating_level::ECO, "eco"},
+      {heating_level::COMFORT_MINUS_2, "comfort -2"},
+      {heating_level::COMFORT_MINUS_1, "comfort -1"},
+      {heating_level::COMFORT, "comfort"},
+      {heating_level::BOOST, "boost"},
+      {heating_level::SECURED, "secured"},
+  };
+  for (const auto &entry : names)
+    EXPECT_STREQ(heating_level_name(entry.level), entry.name) << +entry.level;
+}
+
+TEST(HeatingLevels, AValueThatIsNoLevelHasNoName) {
+  for (const uint8_t value : {0x06, 0x08, 0x0F, 0x40, 0xFF})
+    EXPECT_EQ(heating_level_name(value), nullptr) << +value;
 }
 
 TEST(HeatingLevels, APositionIsNotALevel) {
@@ -410,7 +441,6 @@ TEST(HeatingTemperature, ThermostatProfileSendsTheDevicesOwnCommands) {
   EXPECT_EQ(p->presets[1].wire, 0x0E);
   EXPECT_STREQ(p->presets[2].custom_name, "Secured");
   EXPECT_EQ(p->presets[2].wire, 0x0A);
-  EXPECT_TRUE(p->presets[2].commandable) << "the thermostat's secured setpoint can be selected";
   for (size_t i = 0; i < p->presets.size(); i++)
     EXPECT_EQ(p->presets[i].fp.kind, HeatingFpKind::NONE) << "an alias goes alone, preset " << i;
 }
@@ -608,7 +638,7 @@ TEST(HeatingProfilesTowelDryer, PresetsWriteTheTemporaryStateAndReadBackAsThemse
   const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
   EXPECT_EQ(p.preset_fn, HeatingFunction::TEMPORARY_STATE);
   ASSERT_FALSE(p.preset_observed.empty());
-  ASSERT_EQ(p.presets.size(), 5u);
+  ASSERT_EQ(p.presets.size(), 3u) << "none, boost and drying: comfort and eco are no presets";
   EXPECT_EQ(p.presets[0].id, HeatingPresetId::NONE);
   EXPECT_EQ(p.presets[1].id, HeatingPresetId::BOOST);
   EXPECT_EQ(p.presets[2].id, HeatingPresetId::CUSTOM);
@@ -616,7 +646,6 @@ TEST(HeatingProfilesTowelDryer, PresetsWriteTheTemporaryStateAndReadBackAsThemse
   // The timed runs are commanded and read back through the temporary state.
   for (size_t i = 0; i < 3; i++) {
     EXPECT_EQ(p.presets[i].write_fn, HeatingFunction::TEMPORARY_STATE) << i;
-    EXPECT_TRUE(p.presets[i].commandable) << i;
     const HeatingObservedState *seen = find_observed_preset(p, p.presets[i].wire);
     ASSERT_NE(seen, nullptr) << i;
     EXPECT_EQ(seen->preset, static_cast<int8_t>(i)) << "a written preset reads back as itself";
@@ -644,33 +673,28 @@ TEST(HeatingProfilesTowelDryer, PollsItsOwnRegistersAndNoWindow) {
   EXPECT_FALSE(p.experimental_writes);
 }
 
-TEST(HeatingProfilesTowelDryer, PollsTheMaximumAndTheEcoSetbackAtBoot) {
+TEST(HeatingProfilesTowelDryer, PollsTheMaximumAtBootAndNoSetback) {
   const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
-  ASSERT_EQ(p.boot_registers.size(), 2u);
+  ASSERT_EQ(p.boot_registers.size(), 1u);
   EXPECT_EQ(p.boot_registers[0], HeatingFunction::MAX_SETPOINT);
-  EXPECT_EQ(p.boot_registers[1], HeatingFunction::ECO_SETBACK);
+  EXPECT_FALSE(lists(p.poll_registers, HeatingFunction::ECO_SETBACK)) << "the level comes from the status read";
   EXPECT_FALSE(lists(p.poll_registers, HeatingFunction::TEMPERATURE_IN_FORCE))
       << "the temperature in force is read only while the programme runs, not on every poll";
 }
 
-TEST(HeatingProfilesTowelDryer, ComfortAndEcoAreShownOnlyAndHaveNoWireValueOfTheirOwn) {
+TEST(HeatingProfilesTowelDryer, TheProgrammePeriodNamesTheRegistersOfTheProgramme) {
   const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
   ASSERT_NE(p.programme_period, nullptr);
   const HeatingProgrammePeriod &period = *p.programme_period;
-  EXPECT_EQ(p.presets[period.comfort_preset].id, HeatingPresetId::COMFORT);
-  EXPECT_EQ(p.presets[period.eco_preset].id, HeatingPresetId::ECO);
-  EXPECT_FALSE(p.presets[period.comfort_preset].commandable);
-  EXPECT_FALSE(p.presets[period.eco_preset].commandable);
-  for (const int8_t shown : {period.comfort_preset, period.eco_preset}) {
-    for (size_t r = 0; r < p.preset_observed.size(); r++)
-      EXPECT_NE(p.preset_observed[r].preset, shown) << "the temporary state never names a period";
-  }
   EXPECT_EQ(period.programme_mode, static_cast<uint8_t>(TowelDryerMode::PROG));
   EXPECT_EQ(period.idle_preset_state, static_cast<uint8_t>(HeatingTemporaryState::NONE));
   EXPECT_EQ(period.in_force_fn, HeatingFunction::TEMPERATURE_IN_FORCE);
   EXPECT_EQ(period.comfort_fn, HeatingFunction::SET_TEMPERATURE) << "the register the card writes";
-  EXPECT_EQ(period.setback_fn, HeatingFunction::ECO_SETBACK);
   EXPECT_EQ(period.derogation_fn, HeatingFunction::DEROGATED_SETPOINT) << "an eco-period target is written here";
+  for (const HeatingPresetEntry &preset : p.presets) {
+    EXPECT_NE(preset.id, HeatingPresetId::COMFORT) << "the period is shown by the level sensor, not a preset";
+    EXPECT_NE(preset.id, HeatingPresetId::ECO);
+  }
 }
 
 TEST(HeatingProfilesTowelDryer, OnlyTheTowelDryerHasAProgrammePeriod) {
@@ -700,126 +724,78 @@ const HeatingProfile &towel() {
 
 }  // namespace
 
-TEST(HeatingProfilesTowelDryer, ProgrammePeriodResolvesComfortAndEcoByTenths) {
-  const HeatingProfile &p = towel();
-  const int8_t comfort = p.programme_period->comfort_preset;
-  const int8_t eco = p.programme_period->eco_preset;
-
-  const ProgrammePeriodState in_comfort =
-      resolve_programme_period(p, towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F));
-  EXPECT_TRUE(in_comfort.active);
-  EXPECT_EQ(in_comfort.preset_index, comfort);
-  EXPECT_FLOAT_EQ(in_comfort.target_c, 20.0F);
-
-  // 20.0 - 3.5 is 16.5 in tenths; in float the two are not necessarily equal.
-  const ProgrammePeriodState in_eco =
-      resolve_programme_period(p, towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F));
-  EXPECT_TRUE(in_eco.active);
-  EXPECT_EQ(in_eco.preset_index, eco);
-  EXPECT_FLOAT_EQ(in_eco.target_c, 16.5F);
-}
-
-TEST(HeatingProfilesTowelDryer, ATemperatureThatFitsNeitherPeriodShowsNoPeriodButStillTheTemperature) {
-  const ProgrammePeriodState state =
-      resolve_programme_period(towel(), towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 7.0F));
-  EXPECT_TRUE(state.active);
-  EXPECT_EQ(state.preset_index, -1) << "a frost or holiday value is neither comfort nor eco";
-  EXPECT_FLOAT_EQ(state.target_c, 7.0F);
-}
-
-TEST(HeatingProfilesTowelDryer, ADerogationReadingEqualToTheTemperatureInForceIsTheEcoPeriod) {
-  const HeatingProfile &p = towel();
-  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 17.5F);
-  EXPECT_EQ(resolve_programme_period(p, r).preset_index, -1) << "no override read: 17.5 fits neither period";
-  r.derogated_setpoint_c = 17.5F;
-  EXPECT_EQ(resolve_programme_period(p, r).preset_index, p.programme_period->eco_preset);
-  r.derogated_setpoint_c = 0.0F;
-  EXPECT_EQ(resolve_programme_period(p, r).preset_index, -1) << "0 is no override";
-  r.derogated_setpoint_c = 20.0F;
-  r.in_force_temperature_c = 20.0F;
-  EXPECT_EQ(resolve_programme_period(p, r).preset_index, p.programme_period->comfort_preset)
-      << "the comfort setpoint wins: the override has ended";
-}
-
-TEST(HeatingProfilesTowelDryer, WithoutTheSetbackOnlyComfortCanBeTold) {
-  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F);
-  r.clear(HeatingFunction::ECO_SETBACK);
-  EXPECT_EQ(resolve_programme_period(towel(), r).preset_index, -1) << "eco cannot be told without the setback";
-  r.in_force_temperature_c = 20.0F;
-  EXPECT_EQ(resolve_programme_period(towel(), r).preset_index, towel().programme_period->comfort_preset);
+TEST(HeatingProfilesTowelDryer, TheTemperatureInForceIsTheProgrammesTarget) {
+  EXPECT_FLOAT_EQ(
+      programme_temperature_in_force(towel(), towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F)),
+      20.0F);
+  EXPECT_FLOAT_EQ(
+      programme_temperature_in_force(towel(), towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F)),
+      16.5F)
+      << "an eco period: whatever the heater holds, with no setback arithmetic";
+  EXPECT_FLOAT_EQ(
+      programme_temperature_in_force(towel(), towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 7.0F)),
+      7.0F);
 }
 
 TEST(HeatingProfilesTowelDryer, WithoutTheTemperatureInForceThereIsNoTargetToShow) {
   HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
   r.clear(HeatingFunction::TEMPERATURE_IN_FORCE);
-  const ProgrammePeriodState state = resolve_programme_period(towel(), r);
-  EXPECT_TRUE(state.active) << "the programme runs, its temperature is just not read yet";
-  EXPECT_TRUE(std::isnan(state.target_c));
-  EXPECT_EQ(state.preset_index, -1);
+  EXPECT_TRUE(std::isnan(programme_temperature_in_force(towel(), r))) << "the programme runs, it is just not read yet";
+}
 
-  HeatingReadings no_comfort = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
-  no_comfort.clear(HeatingFunction::SET_TEMPERATURE);
-  EXPECT_EQ(resolve_programme_period(towel(), no_comfort).preset_index, -1);
+TEST(HeatingProfilesTowelDryer, TheProgrammeIsInAnEcoPeriodWhenTheStatusReadReportsTheEcoLevel) {
+  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F);
+  EXPECT_FALSE(programme_in_eco_period(towel(), r)) << "the level has not been read";
+  r.level = heating_level::ECO;
+  EXPECT_TRUE(programme_in_eco_period(towel(), r));
+  r.level = heating_level::COMFORT;
+  EXPECT_FALSE(programme_in_eco_period(towel(), r));
+  r.level = heating_level::ECO;
+  r.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
+  EXPECT_FALSE(programme_in_eco_period(towel(), r)) << "outside the programme no period runs";
+  r.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
+  r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::BOOST);
+  EXPECT_FALSE(programme_in_eco_period(towel(), r)) << "a timed run is on top";
+  EXPECT_FALSE(programme_in_eco_period(*find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE), r))
+      << "a profile without a programme period has none";
 }
 
 // --- the temperature in force follows a comfort change -------------------------------------
 
 TEST(HeatingProfilesTowelDryer, AComfortPeriodFollowsTheNewComfortSetpoint) {
-  const HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
+  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
+  r.level = heating_level::COMFORT;
   const std::optional<float> shifted = in_force_after_comfort_change(towel(), r, 21.5F);
   ASSERT_TRUE(shifted.has_value());
   EXPECT_FLOAT_EQ(*shifted, 21.5F);
 }
 
-TEST(HeatingProfilesTowelDryer, AnEcoPeriodFollowsTheNewComfortSetpointMinusTheSetback) {
-  const HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F);
-  const std::optional<float> shifted = in_force_after_comfort_change(towel(), r, 19.0F);
-  ASSERT_TRUE(shifted.has_value());
-  EXPECT_FLOAT_EQ(*shifted, 15.5F) << "19.0 - 3.5, in tenths";
-}
-
-TEST(HeatingProfilesTowelDryer, ATemperatureInForceThatFitsNeitherPeriodIsNotShifted) {
-  const HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 7.0F);
-  EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 21.0F).has_value());
+TEST(HeatingProfilesTowelDryer, NothingIsShiftedInAnyOtherPeriodOrWithoutALevel) {
+  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F);
+  EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 19.0F).has_value()) << "no level read yet";
+  for (const uint8_t level : {heating_level::ECO, heating_level::BOOST, heating_level::FROST_PROTECTION}) {
+    r.level = level;
+    EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 19.0F).has_value())
+        << "the next read of the register says what the heater holds, level " << +level;
+  }
 }
 
 TEST(HeatingProfilesTowelDryer, NothingIsShiftedOutsideTheProgramme) {
   for (const TowelDryerMode mode : {TowelDryerMode::MANUAL, TowelDryerMode::OFF}) {
-    const HeatingReadings r = towel_readings(mode, HeatingTemporaryState::NONE, 20.0F);
+    HeatingReadings r = towel_readings(mode, HeatingTemporaryState::NONE, 20.0F);
+    r.level = heating_level::COMFORT;
     EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 21.0F).has_value());
   }
-  const HeatingReadings boost = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::BOOST, 20.0F);
+  HeatingReadings boost = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::BOOST, 20.0F);
+  boost.level = heating_level::COMFORT;
   EXPECT_FALSE(in_force_after_comfort_change(towel(), boost, 21.0F).has_value()) << "a timed run is on top";
-}
-
-TEST(HeatingProfilesTowelDryer, NothingIsShiftedWhenARegisterItNeedsIsUnread) {
-  HeatingReadings no_in_force = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
-  no_in_force.clear(HeatingFunction::TEMPERATURE_IN_FORCE);
-  EXPECT_FALSE(in_force_after_comfort_change(towel(), no_in_force, 21.0F).has_value());
-
-  HeatingReadings no_setback = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F);
-  no_setback.clear(HeatingFunction::ECO_SETBACK);
-  EXPECT_FALSE(in_force_after_comfort_change(towel(), no_setback, 21.0F).has_value());
-}
-
-TEST(HeatingProfilesTowelDryer, AnOverrideOfTheEcoTemperatureIsNotShiftedByAComfortChange) {
-  // 17.5 is an override (comfort 20.0, setback 3.5): it does not follow the comfort setpoint.
-  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 17.5F);
-  r.derogated_setpoint_c = 17.5F;
-  ASSERT_EQ(resolve_programme_period(towel(), r).preset_index, towel().programme_period->eco_preset);
-  EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 21.0F).has_value());
-
-  r.clear(HeatingFunction::ECO_SETBACK);
-  ASSERT_EQ(resolve_programme_period(towel(), r).preset_index, towel().programme_period->eco_preset)
-      << "the override alone names the eco period";
-  EXPECT_FALSE(in_force_after_comfort_change(towel(), r, 21.0F).has_value()) << "no setback to shift by";
 }
 
 TEST(HeatingProfilesTowelDryer, AProfileWithoutAProgrammePeriodShiftsNothing) {
   const HeatingProfile &radiator = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
-  EXPECT_FALSE(in_force_after_comfort_change(
-                   radiator, towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F), 21.0F)
-                   .has_value());
+  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
+  r.level = heating_level::COMFORT;
+  EXPECT_FALSE(in_force_after_comfort_change(radiator, r, 21.0F).has_value());
 }
 
 TEST(HeatingProfilesTowelDryer, TheProgrammeIsActiveOnlyInProgWithNoTimedRunOnTop) {
@@ -841,11 +817,9 @@ TEST(HeatingProfilesTowelDryer, TheProgrammeIsActiveOnlyInProgWithNoTimedRunOnTo
     const HeatingReadings r = towel_readings(c.mode, c.state, 0.1F);
     EXPECT_EQ(programme_period_active(p, r), c.active)
         << "mode " << static_cast<int>(c.mode) << " state " << static_cast<int>(c.state);
-    const ProgrammePeriodState state = resolve_programme_period(p, r);
-    EXPECT_EQ(state.active, c.active);
-    EXPECT_EQ(state.preset_index, -1);
     if (!c.active) {
-      EXPECT_TRUE(std::isnan(state.target_c)) << "no temperature is reported outside the programme";
+      EXPECT_TRUE(std::isnan(programme_temperature_in_force(p, r)))
+          << "no temperature is reported outside the programme";
     }
   }
   HeatingReadings unread;
@@ -868,7 +842,7 @@ TEST(HeatingProfilesTowelDryer, TheTemperatureInForceIsDroppedWhenTheProgrammeSt
 
   // Back in the programme the old value must not come back.
   r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE);
-  EXPECT_TRUE(std::isnan(resolve_programme_period(p, r).target_c));
+  EXPECT_TRUE(std::isnan(programme_temperature_in_force(p, r)));
 
   HeatingReadings radiator;
   radiator.in_force_temperature_c = 5.0F;
@@ -922,7 +896,7 @@ TEST(HeatingProfilesHeaterWithLight, IsTheRadiatorPlusTheLightReadAfterItsPoll) 
 
 // === Pilot-wire interface (52/0, model PILOT_WIRE_INTERFACE) ===
 
-TEST(HeatingProfilesPilotWireInterface, OffersTheSixPilotWireOrdersAndNoBoost) {
+TEST(HeatingProfilesPilotWireInterface, OffersTheCommandablePilotWireOrdersAndNoBoost) {
   const HeatingProfile &plain = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE);
   const HeatingProfile *pilot =
       find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE);
@@ -930,16 +904,14 @@ TEST(HeatingProfilesPilotWireInterface, OffersTheSixPilotWireOrdersAndNoBoost) {
   ASSERT_NE(pilot, &plain);
   EXPECT_EQ(pilot->model, DeviceModel::PILOT_WIRE_INTERFACE);
 
-  // Away, Eco, Comfort, Comfort -1, Comfort -2 and the read-only Secured; Off is the mode.
-  ASSERT_EQ(pilot->presets.size(), 6u);
+  // Away, Eco, Comfort, Comfort -1 and Comfort -2; Off is the mode.
+  ASSERT_EQ(pilot->presets.size(), 5u);
   const uint8_t commandable[] = {heating_level::FROST_PROTECTION, heating_level::ECO, heating_level::COMFORT,
                                  heating_level::COMFORT_MINUS_1, heating_level::COMFORT_MINUS_2};
   for (size_t i = 0; i < std::size(commandable); i++) {
     EXPECT_EQ(pilot->presets[i].wire, commandable[i]) << i;
-    EXPECT_TRUE(pilot->presets[i].commandable) << i;
     EXPECT_NE(pilot->presets[i].id, HeatingPresetId::BOOST) << i;
   }
-  EXPECT_FALSE(pilot->presets[5].commandable);
   for (const HeatingPresetEntry &preset : pilot->presets)
     EXPECT_NE(preset.wire, heating_level::BOOST);
   for (const HeatingObservedState &row : pilot->observed)
@@ -983,7 +955,7 @@ TEST(HeatingProfilesPilotWireInterface, KeepsThePlainHeatersControlPathAndMainPa
 
 TEST(HeatingProfilesPilotWireInterface, APlainHeaterKeepsItsBoost) {
   const HeatingProfile &plain = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE);
-  EXPECT_EQ(plain.presets.size(), 7u);
+  EXPECT_EQ(plain.presets.size(), 6u);
   EXPECT_EQ(plain.presets[3].id, HeatingPresetId::BOOST);
 }
 
@@ -992,5 +964,33 @@ TEST(HeatingProfilesHeaterWithLight, NoOtherProfileReadsTheLight) {
     const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, model);
     EXPECT_EQ(p.extra_poll_registers.size(), 0u);
     EXPECT_FALSE(lists(p.poll_registers, HeatingFunction::NIGHT_LIGHT));
+  }
+}
+
+// === Every preset is a command ===
+
+TEST(HeatingProfiles, EveryPresetOfEveryProfileSendsACommand) {
+  for (const HeatingProfile &profile : heating_profiles()) {
+    for (const HeatingPresetEntry &preset : profile.presets) {
+      const std::string label = std::string(preset.custom_name != nullptr ? preset.custom_name : "standard") + " of " +
+                                std::to_string(static_cast<int>(profile.type)) + "/" + std::to_string(profile.subtype);
+      switch (profile.path) {
+        case HeatingControlPath::PRIVATE_REGISTERS:
+          EXPECT_TRUE(heating_function_is_writable(preset.write_fn)) << label << ": its register is writable";
+          break;
+        case HeatingControlPath::HEATING_LEVEL:
+          EXPECT_NE(preset.wire, heating_level::SECURED) << label << ": a level a heater reports and never takes";
+          break;
+        case HeatingControlPath::TEMPERATURE_EXECUTE:
+          break;
+      }
+      // A selected preset becomes a write, never a refusal.
+      HeatingWriteRequest request;
+      request.kind = HeatingWriteKind::PRESET;
+      request.preset = preset.id;
+      request.custom_name = preset.custom_name;
+      const HeatingWritePlan plan = plan_heating_write(profile, request, HeatingDeviceFacts{.has_record = true});
+      EXPECT_TRUE(plan.is_write()) << label;
+    }
   }
 }

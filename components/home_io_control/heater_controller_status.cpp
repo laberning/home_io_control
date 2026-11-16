@@ -48,6 +48,28 @@ void apply_heating_main_parameter(const std::string &id, IoDevice &dev, uint16_t
   ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%04X is not a heating value", id.c_str(), current);
 }
 
+void apply_register_heater_status_reply(const std::string &id, IoDevice &dev, const IoFrame &frame,
+                                        bool trust_position) {
+  if (!trust_position)
+    return;
+  // The reply to the main-parameter status read (create_status_mp_fp_read()), which carries the heating level
+  // at the offset every such reply holds its main parameter.
+  const auto main_parameter = static_cast<uint16_t>((frame.data[STATUS_MP_FP_MAIN_PARAMETER_OFFSET] << BITS_PER_BYTE) |
+                                                    frame.data[STATUS_MP_FP_MAIN_PARAMETER_OFFSET + 1]);
+  uint8_t level = 0;
+  if (!decode_heating_level(main_parameter, level)) {
+    // Not a level: the stored level is forgotten, so the write plan no longer counts on an eco period. The
+    // heating_level sensor keeps what it last showed (a text sensor cannot go back to no state).
+    ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%04X is not a heating level", id.c_str(), main_parameter);
+    dev.heating.level = -1;
+    return;
+  }
+  const auto stored = static_cast<int16_t>(level);
+  if (dev.heating.level != stored)
+    ESP_LOGI(detail::TAG, "Device %s: heating level 0x%02X", id.c_str(), static_cast<unsigned>(level));
+  dev.heating.level = stored;
+}
+
 void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame &frame, bool trust_position) {
   if (!trust_position)
     return;

@@ -593,6 +593,31 @@ def heater_window_companions_are_declared_at_validation_time():
 
 
 @case()
+def heating_level_sensor_is_accepted_on_an_electrical_heater_only():
+    """`heating_level:` passes on every electrical heater (the sensor stays without a state where the
+    heater reports no level) and is refused on another kind and on an entry with no declared type; an
+    entry without the key is untouched."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import climate as c
+    from esphome.components.home_io_control import hub_validators as v
+
+    key = c.CONF_HEATING_LEVEL
+    heater = v.DEVICE_TYPE_OPTIONS["electrical_heater"]
+    for subtype in (0, 1):
+        cfg = {"io_device_type": heater, "io_subtype": subtype, key: {}}
+        assert c._validate_heating_level(cfg) is cfg
+    plain = {"io_device_type": v.DEVICE_TYPE_OPTIONS["heat_pump"]}
+    assert c._validate_heating_level(plain) is plain
+    for cfg in ({"io_device_type": v.DEVICE_TYPE_OPTIONS["heat_pump"], key: {}}, {key: {}}):
+        try:
+            c._validate_heating_level(cfg)
+        except cv.Invalid as err:
+            assert "needs an electrical heater" in str(err)
+        else:
+            raise AssertionError(f"accepted {cfg}")
+
+
+@case()
 def cover_named_position_buttons_follow_the_declared_kind():
     """A cover gets one companion button per named position its declared kind has, with the entity
     ids and names Home Assistant already knows; a kind without the bit, a raw type with no row

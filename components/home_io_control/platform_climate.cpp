@@ -200,18 +200,12 @@ HeatingWritePlan IOHomeClimate::plan_write_(const HeatingProfile &profile, const
   const HeatingWritePlan plan =
       plan_heating_write(profile, request, heating_device_facts(this->device_port_->get_device(this->device_id_)));
   if (!plan.is_write())
-    this->log_refusal_(profile, plan);
+    this->log_refusal_(plan);
   return plan;
 }
 
-void IOHomeClimate::log_refusal_(const HeatingProfile &profile, const HeatingWritePlan &plan) const {
+void IOHomeClimate::log_refusal_(const HeatingWritePlan &plan) const {
   switch (plan.refusal) {
-    case HeatingRefusal::NOT_COMMANDABLE: {
-      const char *name = profile.presets[plan.preset_index].custom_name;
-      ESP_LOGW(TAG, "Device %s: preset '%s' is reported by the device and cannot be set", this->device_id_.c_str(),
-               name != nullptr ? name : "(standard)");
-      break;
-    }
     case HeatingRefusal::NO_SETPOINT:
       ESP_LOGW(TAG, "Device %s has no adjustable setpoint; the request is ignored", this->device_id_.c_str());
       break;

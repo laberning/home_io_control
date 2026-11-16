@@ -113,9 +113,9 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   /// @return The plan; HeatingWritePlan::is_write() false when it was refused.
   HeatingWritePlan plan_write_(const HeatingProfile &profile, const HeatingWriteRequest &request);
 
-  /// @brief Log the refusal of a plan that is the user's to fix (a preset the device only reports, no
-  /// setpoint, no target temperature for heat); the other refusals are silent.
-  void log_refusal_(const HeatingProfile &profile, const HeatingWritePlan &plan) const;
+  /// @brief Log the refusal of a plan that is the user's to fix (no setpoint, no target temperature for
+  /// heat); the other refusals are silent.
+  void log_refusal_(const HeatingWritePlan &plan) const;
 
   /// @brief Apply the request's HVAC mode, if present. @return true if state was published.
   bool apply_mode_(const HeatingProfile &profile, const climate::ClimateCall &call);

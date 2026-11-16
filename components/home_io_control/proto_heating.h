@@ -271,12 +271,12 @@ struct HeatingReadings {
   float in_force_temperature_c{NAN};   ///< A towel dryer's temperature in force (register 0x0137); NaN until read.
   float eco_setback_k{NAN};            ///< A towel dryer's eco setback (register 0x0104); NaN until read.
   float derogated_setpoint_c{NAN};     ///< A towel dryer's override of the eco temperature (register 0x011D), 0
-                                       ///< while none is active; NaN until read. Read after a write, and by the
-                                       ///< poll when the temperature in force fits neither period.
+                                       ///< while none is active; NaN until read. Read after a write.
   int16_t night_light{-1};             ///< Night light 1 on / 0 off; -1 until read.
   int16_t night_light_brightness{-1};  ///< Night light brightness register, 0-10000; -1 until read.
-  int16_t level{-1};                   ///< Low byte of the main parameter of a heater commanded with a prefixed
-                                       ///< value: a heating level, or a setpoint alias. -1 until a status reply
+  int16_t level{-1};                   ///< Low byte of the main parameter a status read returned: a heating level
+                                       ///< (a plain heater, and a register heater with a programme, whose poll
+                                       ///< ends with that read) or a setpoint alias. -1 until a status reply
                                        ///< carried one, and again after a reply that carried a plain
                                        ///< temperature. Set by the hub's status path, not by store().
   int32_t main_parameter{-1};          ///< The raw current main parameter of a heater commanded with an EXECUTE
