@@ -29,28 +29,9 @@ One 200 L unit is reported on an SX1276 board ([issue #198](https://github.com/l
 
 ## Modes in Home Assistant
 
-| Heater display | Home Assistant mode | What heats |
-|---|---|---|
-| AUTO | `eco` | Adapts to your consumption; the electric element helps when needed |
-| Manual, ECO on | `heat_pump` | The heat pump only, up to 50 or 54 °C |
-| Manual, ECO off | `performance` | The heat pump, with the electric element assisting, up to 62 °C |
-
-Each mode follows what Home Assistant says it means: `eco` saves energy, `heat_pump` heats slowest and
-uses the least energy, `performance` heats hardest. The heat-pump-only behaviour of manual ECO on comes
-from the heater's manual and has not been confirmed by watching the element. To see what is heating, add
-the optional `heating_source` sensor, which reads `heat pump`, `electric backup`,
-`heat pump and electric backup` or `idle`.
-
-The heater's manual mode heats to the target you set. In AUTO the heater chooses its own target
-between 50 and 62 °C and its display shows none, so Home Assistant shows no target either. A target
-you set while the heater is in AUTO is not sent; the log says so:
-
-```text
-Device F9CF0F: target ignored in automatic mode, the heater chooses its own
-```
-
-Switch to `heat_pump` or `performance` first. The hub reads the target again right after a mode change,
-so the card shows the heater's manual target within a second or two.
+The display's AUTO, manual with ECO on and manual with ECO off are the card's `eco`, `heat_pump` and
+`performance`. [Heat-pump water heaters](../heating.md#heat-pump-water-heaters) has the table, what
+heats in each mode, and why the card shows no target in `eco`.
 
 ## Choosing a Calypso target
 
@@ -151,5 +132,6 @@ The design is recorded in
 
 ## See also
 
+- [Heaters and water heaters in Home Assistant](../heating.md)
 - [Water heaters](../configuration/water-heater.md)
 - [Supported devices](../supported-devices.md)

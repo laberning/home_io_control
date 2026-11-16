@@ -103,7 +103,7 @@ the same set of keys. Platform-specific options are documented on each platform'
   [Atlantic Adelis](../devices/atlantic-adelis.md) towel dryer, and `heater_with_light`, for a heater
   with a [night light](climate.md#heaters-with-a-night-light) such as the Sauter Hekla. With
   `io_subtype: 0`: `pilot_wire_interface`, for an
-  [interface for pilot-wire heaters](climate.md#pilot-wire-interfaces). A model the declared kind does not
+  [interface for pilot-wire heaters](../heating.md#level-heaters-and-pilot-wire-interfaces). A model the declared kind does not
   offer, or `io_model` without both other keys, fails when the config is built. The models of each
   kind are listed in [Node types and subtypes](../supported-devices.md#node-types-and-subtypes).
 - `status_poll_interval` (Optional): Follow-up poll cadence while movement is expected. See the

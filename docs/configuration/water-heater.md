@@ -10,9 +10,9 @@
 The `water_heater:` entity drives a domestic hot water heater (node type 51, `domestic_hot_water`). It
 shows the water temperature, the target temperature and the operating mode. Four optional companions
 show the energy used and what is heating, and an optional switch starts and ends a boost. The card's
-away mode starts and ends the heater's holiday mode. The design is recorded in
-[ADR 0068](../adr/0068-a-domestic-hot-water-device-is-a-water-heater.md); the modes follow what heats
-([ADR 0090](../adr/0090-a-water-heaters-modes-are-chosen-by-what-heats.md)); boost and away follow
+away mode starts and ends the heater's holiday mode. Which heater mode each of the card's modes stands
+for is on [Heat-pump water heaters](../heating.md#heat-pump-water-heaters). The design is recorded in
+[ADR 0068](../adr/0068-a-domestic-hot-water-device-is-a-water-heater.md); boost and away follow
 [ADR 0081](../adr/0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md).
 
 The keys every entity platform shares (`name`, `io_device_id`, `io_subtype`, `low_power`,
@@ -69,21 +69,20 @@ water_heater:
 |---|---|
 | Current temperature | The water temperature the heater reports |
 | Target temperature | The target in the heater's status reply, 20–62 °C, step 1 °C; none in the heater's automatic mode |
-| Mode | `eco` (the heater's automatic mode), `heat_pump` (manual, ECO on: heat pump only), `performance` (manual, ECO off: the electric element may assist) |
+| Mode | The heater's operating mode, shown as `eco`, `heat_pump` or `performance`; see [Heat-pump water heaters](../heating.md#heat-pump-water-heaters) |
 | Away | The heater's holiday mode, as its operating-mode word reports it |
 
 - Every value comes from the heater's replies; Home Assistant shows them after the first poll, about
   five seconds after boot. Each companion stays without a state until the heater has reported its
   value.
-- In automatic mode (`eco`) the heater chooses its own target, so the card shows none and a
-  target set then is not sent; the log names the ignored target. Switch to `heat_pump` or `performance` to
-  set one.
+- A target set while the card shows none (in `eco`, and while away) is not sent. The log says why,
+  for example `Device F9CF0F: target ignored in automatic mode, the heater chooses its own` or
+  `Device F9CF0F: target ignored while away, the heater holds no target then`.
 - Setting the target sends it to the heater, which reports it back at the next status read a few
   seconds later. Setting the mode writes it, reads it back at once and reads the target right after,
   so the card shows the target the new mode holds. After either the hub polls the heater again 45
   seconds later, so what is heating follows the change. Until the first read succeeds the card shows
   the last commanded value.
-- The card offers no off mode. Boost is the `boost` switch, away is the card's away mode.
 - When a poll fails the hub retries with a growing delay and keeps polling at the regular interval.
 
 ## Boost and away

@@ -29,16 +29,15 @@
 /// ([issue #165](https://github.com/laberning/home_io_control/issues/165), corpus
 /// tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml).
 ///
-/// The heating-level path is confirmed for Eco, Comfort and Off on a Thermor pilot-wire interface
+/// The heating-level path is confirmed for every level but Boost on a Thermor pilot-wire interface
 /// ([issue #228](https://github.com/laberning/home_io_control/issues/228)); the interface does not
 /// report the level, so the card shows the last commanded one.
 ///
-/// @todo The Away (frost protection), Boost, Comfort -1 and Comfort -2 levels, and the temperature
-///       EXECUTE path, are unconfirmed on hardware; confirm with a capture from such a heater, a
-///       heating temperature interface or a heat pump.
+/// @todo The Boost level and the temperature EXECUTE path are unconfirmed on hardware; confirm with a
+///       capture from a heater that takes a boost, a heating temperature interface or a heat pump.
 ///
 /// @warning The temperature EXECUTE profiles are unvalidated on hardware. See
-///          docs/configuration/climate.md.
+///          docs/heating.md.
 
 #include "esphome/components/climate/climate.h"
 #include "esphome/core/component.h"

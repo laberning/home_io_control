@@ -10,14 +10,13 @@
 /// python_dict_parser.h). The "Support" column is prose and is not compared.
 
 #include "proto_device_types.h"
-#include "support/python_dict_parser.h"
+#include "support/markdown_table.h"
 
 #include "device_table_walk.h"
 #include "test_helpers.h"
 
 #include <algorithm>
 #include <cstdlib>
-#include <fstream>
 #include <map>
 #include <set>
 #include <string>
@@ -46,20 +45,6 @@ struct DocsRow {
   std::string name;
   std::map<unsigned, DocsSubtype> subtypes;
 };
-
-/// Split a Markdown table line into its trimmed cells.
-std::vector<std::string> split_cells(const std::string &line) {
-  std::vector<std::string> cells;
-  size_t start = line.find('|');
-  while (start != std::string::npos) {
-    const size_t end = line.find('|', start + 1);
-    if (end == std::string::npos)
-      break;
-    cells.push_back(test::detail::trim_ws(line.substr(start + 1, end - start - 1)));
-    start = end;
-  }
-  return cells;
-}
 
 /// Parse the "Named subtypes" cell: `N name[ (experimental)]` entries separated by ", ".
 std::map<unsigned, DocsSubtype> parse_subtypes(const std::string &cell) {
@@ -107,20 +92,8 @@ std::map<unsigned, DocsSubtype> parse_subtypes(const std::string &cell) {
 /// Read the node-type table of the docs page, keyed by the type value.
 std::map<unsigned, DocsRow> parse_docs_table() {
   std::map<unsigned, DocsRow> rows;
-  std::ifstream file = test::detail::open_source_or_fail(DOCS_PAGE);
-  if (!file.is_open())
-    return rows;
-  std::string line;
-  bool in_table = false;
-  while (std::getline(file, line)) {
-    if (!in_table) {
-      in_table = line == TABLE_HEADER;
-      continue;
-    }
-    if (line.rfind('|', 0) != 0)
-      break;  // the first line that is not a table row ends the table
-    const std::vector<std::string> cells = split_cells(line);
-    if (cells.size() < 4 || cells[0].rfind("---", 0) == 0)
+  for (const std::vector<std::string> &cells : test::read_markdown_table(DOCS_PAGE, TABLE_HEADER)) {
+    if (cells.size() < 4)
       continue;
     std::string value = cells[0];
     value.erase(std::remove(value.begin(), value.end(), '`'), value.end());
@@ -129,7 +102,6 @@ std::map<unsigned, DocsRow> parse_docs_table() {
     row.subtypes = parse_subtypes(cells[2]);
     rows[static_cast<unsigned>(std::stoul(value, nullptr, 16))] = row;
   }
-  EXPECT_TRUE(in_table) << "the node-type table header was not found in " << DOCS_PAGE;
   return rows;
 }
 

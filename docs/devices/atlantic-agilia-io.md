@@ -22,36 +22,11 @@ platform; see [Heating and climate](../configuration/climate.md) for every optio
 
 ## Modes in Home Assistant
 
-The radiator has three operating modes, described in its
+The display's BASIC, AUTO, PROG and Off are the card's `heat`, `auto` and `off`, with the `Auto` and
+`Program` presets telling the two automatic modes apart.
+[Radiators with a setpoint](../heating.md#radiators-with-a-setpoint) has the table and what a target
+does in each mode. The modes themselves are described in the radiator's
 [installation manual](https://www.atlanticheat.co.uk/assets/uploads/general/Agilia_IO_Digital_Installation_Manual_no-lines.pdf).
-Home Assistant has no separate mode for the two automatic modes, so both appear as `auto`, with a
-preset that tells them apart:
-
-| Radiator display | Home Assistant |
-|---|---|
-| BASIC — holds the set temperature, smart functions off | `heat` |
-| AUTO — learns when the room is used and adjusts the temperature | `auto` with the `Auto` preset |
-| PROG — follows the radiator's weekly program | `auto` with the `Program` preset |
-| Off | `off` |
-
-Choose `Program` or `Auto` to switch between the radiator's automatic modes; `heat` or `off` leaves
-them.
-
-While the radiator runs its program (`Program` or `Auto`, shown as `auto`), a target from Home Assistant
-is a temporary override that holds until the radiator's program changes next; the program's comfort
-temperature stays as it is. Before it writes, the hub reads which mode the radiator runs. In `auto` the
-card shows the temperature the radiator holds right now as the target. In `heat` a target is the comfort
-temperature. This is experimental: no radiator has confirmed the registers it rests on. A radiator that
-does not hold them keeps writing the comfort temperature in every mode. If you run a radiator in `auto`, please
-[open an issue](https://github.com/laberning/home_io_control/issues) with what the card does after a
-target. [Temporary override in `auto`](../configuration/climate.md#temporary-override-in-auto) has the
-detail.
-
-The weekly program itself is edited on the radiator. The radiator shares its node type with the
-[Atlantic Adelis towel dryer](atlantic-adelis.md#modes-and-presets-in-home-assistant), which reports
-the comfort or eco level of its program. The hub does not read that level from a radiator yet, so a
-`heating_level:` sensor on one stays without a state. If you run the radiator in PROG, please
-[open an issue](https://github.com/laberning/home_io_control/issues) so we can check it.
 
 ## How a radiator appears on the radio
 
@@ -193,6 +168,7 @@ An earlier capture shows the radiator refusing a pushed key:
 
 ## See also
 
+- [Heaters and water heaters in Home Assistant](../heating.md)
 - [Heating and climate](../configuration/climate.md)
 - [Pairing](../pairing.md)
 - [Supported devices](../supported-devices.md)

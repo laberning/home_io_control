@@ -189,7 +189,7 @@ device are marked experimental; declaring one in YAML logs a warning when the co
 | `0x0B` | secure configuration device | | Not supported yet |
 | `0x0C` | beacon | | Not supported yet |
 | `0x0D` | dual roller shutter | | Cover; short position frame, no `silent:` or `travel_speed:` (experimental, [details](configuration/cover.md#interior-venetian-blinds-and-dual-roller-shutters)) |
-| `0x0E` | heating temperature interface | | Climate with a setpoint, off / heat / auto and comfort / eco / secured presets (experimental, untested); see [Heating and climate](configuration/climate.md#heating-temperature-interface-and-heat-pump) |
+| `0x0E` | heating temperature interface | | Climate with a setpoint, off / heat / auto and comfort / eco / secured presets (experimental, untested); see [Thermostats and heat pumps](heating.md#thermostats-and-heat-pumps) |
 | `0x0F` | on off switch | 2 micromodule (experimental) | Switch (experimental) |
 | `0x10` | horizontal awning | 1 rail-guided pergola | Cover, direction inverted |
 | `0x11` | exterior venetian blind | | Cover with tilt |

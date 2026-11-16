@@ -53,6 +53,7 @@ AUTOLINK_IGNORE_WORDS  = home_io_control esphome \
                         docs/configuration/tuning.md \
                         docs/configuration/oneway-transmit.md \
                         docs/configuration/climate.md \
+                        docs/heating.md \
                         docs/configuration/cover.md \
                         docs/diagnostic-probes.md \
                         diagnostic-entities.md \
