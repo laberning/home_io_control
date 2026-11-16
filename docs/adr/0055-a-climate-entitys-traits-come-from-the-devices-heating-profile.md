@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0055 -->
 
-**Status:** Accepted, amended by [ADR 0059](0059-device-capabilities-come-from-the-type-table.md) (point 6: the window companions read a capability bit) and amended 2026-10 (see [Amendment](#amendment-every-preset-is-observed)) · **Recorded:** 2026-10
+**Status:** Accepted, amended by [ADR 0059](0059-device-capabilities-come-from-the-type-table.md) (point 6: the window companions read a capability bit), by [ADR 0091](0091-every-climate-preset-is-a-command-and-the-heating-level-is-a-sensor.md) (every listed preset is a command; the level is a sensor) and amended 2026-10 (see [Amendment](#amendment-every-preset-is-observed)) · **Recorded:** 2026-10
 
 ## Context
 
