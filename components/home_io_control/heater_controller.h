@@ -456,8 +456,10 @@ class HeaterController {
 
   /// @brief Start or end the boost or the absence of an electric storage water heater: a write of its flag
   /// register (0x0052 or 0x0053), read back at once; when the heater did not keep the value, a write of the
-  /// state register 0x0035. The state and the target are then read, and the next poll is brought forward.
-  /// \todo Experimental: neither write is confirmed on the heater.
+  /// state register 0x0035 and a second read of the flag. The flag read-back is what the entity shows; the
+  /// next poll is brought forward and reads the target, which follows a few seconds later.
+  /// The boost flag write is confirmed on a Sauter Guelma: its display starts and ends the boost.
+  /// \todo Experimental: the state write has not been needed and is not confirmed.
   /// @param device_id Target device ID.
   /// @param which Boost or away.
   /// @param on true to start it.

@@ -216,8 +216,8 @@ void IOHomeWaterHeater::dump_config() {
                 static_cast<double>(target_max_for(this->model_)));
   this->log_poll_interval_config_(TAG, heater_poll_interval_ms);
   if (dhw_state_in_registers(this->model_)) {
-    ESP_LOGCONFIG(TAG, "  Status: electric storage water heater; readings and mode confirmed on hardware; boost "
-                       "and away writes experimental; a target is shown but not sent");
+    ESP_LOGCONFIG(TAG, "  Status: electric storage water heater; readings, mode, boost and away confirmed on "
+                       "hardware; a target is shown but not sent");
   } else {
     ESP_LOGCONFIG(TAG, "  Status: readings, target and mode confirmed on hardware; away mode experimental");
   }

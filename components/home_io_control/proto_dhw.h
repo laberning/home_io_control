@@ -42,10 +42,11 @@
 ///     or 2 to it switches the display between automatic and manual;
 ///   - register 0x0035 tells the four states apart (DhwState), 0x0049 holds the temperature the heater heats
 ///     to, 0x004A and 0x0046 the showers it aims for and the showers it has, and 0x0032 the heating power.
-/// How this model takes a target is not known: none is sent to it. A boost and an absence are tried as a
-/// write of the flag register that reads 1 while they run (0x0052, 0x0053), and then of the state register
-/// (encode_dhw_flag_write(), encode_dhw_state_write()).
-/// \todo Experimental: neither write is confirmed on the heater yet.
+/// How this model takes a target is not known: none is sent to it. A boost and an absence are a write of the
+/// flag register that reads 1 while they run (0x0052, 0x0053): the heater's display follows both, and the
+/// flag reads back at once, while the state register 0x0035 and the target 0x0049 still held the old values
+/// right after the write. The boost and away shown therefore come from the flags.
+/// \todo The state write (encode_dhw_state_write()), kept as a fallback, has not been needed or confirmed.
 
 #include "proto_constants.h"
 #include "proto_device_kinds.h"
@@ -109,9 +110,10 @@ static constexpr uint8_t DHW_REG_ACTIVE_TARGET = 0x49;
 /// steadily or blinking. 0 in absence.
 static constexpr uint8_t DHW_REG_TARGET_SHOWERS = 0x4A;
 
-/// @brief Register 0x0052: 1 while a boost runs, 0 otherwise, one byte.
+/// @brief Register 0x0052: 1 while a boost runs, 0 otherwise, one byte. A write of 1 starts a boost and a
+/// write of 0 ends it.
 static constexpr uint8_t DHW_REG_BOOST_FLAG = 0x52;
-/// @brief Register 0x0053: 1 in absence, 0 otherwise, one byte.
+/// @brief Register 0x0053: 1 in absence, 0 otherwise, one byte. Written like the boost flag.
 static constexpr uint8_t DHW_REG_AWAY_FLAG = 0x53;
 
 // === Target temperature ===
@@ -232,12 +234,12 @@ struct DhwReadings {
   int16_t away_duration{-1};   ///< Register 0x0005; -1 until read. Logged, never a state.
   int64_t energy_wh{-1};       ///< Energy since installation in Wh; -1 until read.
   int16_t brand{-1};           ///< Brand letter (register 0x0007); -1 until read.
-  int16_t state{-1};           ///< DhwState value (register 0x0035); -1 until read. Electric storage heater only.
+  int16_t state{-1};           ///< DhwState value (register 0x0035); -1 until read. Read after a write of it only.
   int32_t power_w{-1};         ///< Heating power in W (register 0x0032); -1 until read. Electric storage heater only.
   int16_t showers_available{-1};  ///< Showers available (register 0x0046); -1 until read. Electric storage heater only.
   int16_t showers_target{-1};     ///< Showers aimed for (register 0x004A); -1 until read. Electric storage heater only.
-  int16_t boost_flag{-1};         ///< Register 0x0052; -1 until read (it is read only after a write of it).
-  int16_t away_flag{-1};          ///< Register 0x0053; -1 until read (it is read only after a write of it).
+  int16_t boost_flag{-1};         ///< Register 0x0052; -1 until read. `boost` follows it on an electric storage heater.
+  int16_t away_flag{-1};          ///< Register 0x0053; -1 until read. `away` follows it on an electric storage heater.
 };
 
 // === Models ===
@@ -282,8 +284,7 @@ size_t encode_dhw_duration_write(DhwOperatingFeature which, uint8_t out[PRIVATE_
 
 /// @brief Encode a write of the boost or away flag of an electric storage water heater:
 /// `0C 61 00 52 <0|1>` or `0C 61 00 53 <0|1>`.
-/// \todo Experimental: the heater shows these registers at 1 while the feature runs; that it takes a write of
-///       them is not confirmed.
+/// @details The boost flag is confirmed on a Sauter Guelma: its display starts and ends the boost.
 /// @param which Boost or away.
 /// @param on true to write 1, false to write 0.
 /// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.

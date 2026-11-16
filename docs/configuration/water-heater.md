@@ -130,17 +130,16 @@ heater declared without the model that answers this way is named in a warning at
 | Current temperature | The water temperature the heater reports |
 | Target temperature | The temperature the heater heats to now, 7–70 °C, shown in every mode |
 | Mode | `eco` (the heater's automatic mode), `electric` (manual) |
-| Away | The heater's absence, from its state register |
+| Away | The heater's absence, from register `0x0053` |
 | `electric_backup_running` | On while the heating power is above zero |
-| `boost` switch | On while a boost runs, from the state register |
+| `boost` switch | On while a boost runs, from register `0x0052` |
 
 - **Setting the mode works**: `eco` and `electric` switch the heater's display between automatic and
   manual. Manual takes the shower count last set on the display.
-- **Boost and away are experimental.** Turning one on or off writes the register that reads 1 while it
-  runs (`0x0052` for boost, `0x0053` for absence) and reads it back. If the heater did not keep the value,
-  the hub writes the heater's state register (`0x0035`) instead. The card and the switch show what the
-  heater reports afterwards, never the command; the log names each write and its acknowledgement. Neither
-  write is confirmed on a heater yet.
+- **Boost and away** are written to the register that reads 1 while they run (`0x0052` for boost,
+  `0x0053` for absence) and read back at once; the switch and the card show that read-back, never the
+  command. On the Sauter Guelma the display starts and ends both from Home Assistant. The target the card
+  shows follows at the next poll, 45 seconds later: the heater updates it a few seconds after the write.
 - **A target is shown but not sent.** How this model takes one is not known yet, so a target set in Home
   Assistant is refused with a warning in the log. Use the heater's display.
 - `heat_pump_running` has no state on this model: it has no heat pump.
