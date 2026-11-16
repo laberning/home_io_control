@@ -30,7 +30,9 @@
 ///
 /// A Sauter Hekla heater adds a night light: on/off in register 0x0144 (`01` / `00`, read on a heater
 /// with the light on and off, and written as `0C 61 01 44 <value>` by the heater's own Cozytouch
-/// controller) and, most likely, its brightness in 0x0142 (reads 100 with the light at full) (issue #222).
+/// controller) and its brightness in register 0x0142, which runs 0-10000: the panel's four levels write
+/// 100, 1000, 2000 and 10000 (issue #222, corpus
+/// `sauter_hekla_exchange_night_light_brightness_levels_sx1262`).
 
 #include "proto_frame.h"
 #include "proto_private_registers.h"

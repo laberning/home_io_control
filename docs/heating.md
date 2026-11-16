@@ -62,7 +62,8 @@ program, is a separate sensor (section "The level a heater applies" below).
   sensor fault leaves the room temperature empty.
 - **A heater that reports nothing** shows the mode or preset last sent from Home Assistant, and `off`
   after a restart until the first command. A change made at the heater or in the vendor's app does
-  not show. The Thermor pilot-wire interface is such a heater (issue #228).
+  not show. The [Thermor pilot-wire interface](devices/thermor-pilot-wire-interface.md) is such a
+  heater (issue #228).
 
 ### A water heater has a fixed list of modes
 
@@ -79,9 +80,9 @@ Which kind your product is:
 | Product | Heater kind |
 |---|---|
 | [Atlantic AGILIA IO](devices/atlantic-agilia-io.md), Thermor EMOTION 3 H | Radiator with a setpoint |
-| Sauter Hekla | Radiator with a setpoint and a night light |
+| [Sauter Hekla](devices/sauter-hekla.md) | Radiator with a setpoint and a night light |
 | [Atlantic Adelis](devices/atlantic-adelis.md) | Towel dryer |
-| Thermor Interface Cozytouch for pilot-wire heaters | Pilot-wire interface |
+| [Thermor Interface Cozytouch for pilot-wire heaters](devices/thermor-pilot-wire-interface.md) | Pilot-wire interface |
 | [Atlantic Calypso Connecté](devices/atlantic-calypso.md) | Heat-pump water heater |
 
 The card of each kind, keyed by the three keys of your entry. The section of the kind has the detail.
@@ -102,7 +103,8 @@ below describes it.
 ## Radiators with a setpoint
 
 An electric radiator that holds a temperature you set and has a weekly program of its own: the
-[Atlantic AGILIA IO](devices/atlantic-agilia-io.md), the Sauter Hekla and the Thermor EMOTION 3 H.
+[Atlantic AGILIA IO](devices/atlantic-agilia-io.md), the [Sauter Hekla](devices/sauter-hekla.md) and
+the Thermor EMOTION 3 H.
 The display words below are the AGILIA IO's, from its
 [installation manual](https://www.atlanticheat.co.uk/assets/uploads/general/Agilia_IO_Digital_Installation_Manual_no-lines.pdf).
 
@@ -183,8 +185,9 @@ that wire carries.
 - The card has no target, no room temperature and no `heating` / `idle`.
 - **A pilot-wire interface** (`io_model: pilot_wire_interface`) has no boost: the interface ignores
   one, so its card does not offer it. All five presets and `off` are confirmed on the heater's
-  display behind a Thermor Interface Cozytouch (issue #228). The interface reports no level, so the
-  card shows what Home Assistant last sent.
+  display behind a [Thermor Interface Cozytouch](devices/thermor-pilot-wire-interface.md)
+  (issue #228), whose page lists what the display shows for each. The interface reports no level, so
+  the card shows what Home Assistant last sent.
 - **A level heater without `io_model:`** keeps the `boost` preset. Boost is untested, and no heater
   that reports its level back has been seen. One that reports `secured` shows `heat` with no preset
   on the card and `secured` on the `heating_level:` sensor.
@@ -323,9 +326,9 @@ why the level is a sensor and not a preset.
 | AUTO | Calypso display: the heater adapts to your consumption | `eco` |
 | ECO on, ECO off | Calypso display, in manual mode: whether the electric element may assist | `heat_pump`, `performance` |
 | Comfort (Confort) | The temperature a heater holds in normal use, and a pilot-wire order | The target in `heat`; the `comfort` preset of a level heater; `comfort` on the level sensor |
-| Comfort -1, Comfort -2 | Pilot-wire orders: one or two degrees below comfort; a Thermor heater shows `CONF-1 19.0°` and `CONF-2 18.0°` (issue #228) | The `Comfort -1` and `Comfort -2` presets |
+| Comfort -1, Comfort -2 | Pilot-wire orders: one or two degrees below comfort | The `Comfort -1` and `Comfort -2` presets |
 | Eco | The lower temperature of a program, and a pilot-wire order | `eco` on the level sensor; the `eco` preset of a level heater |
-| Frost protection (hors-gel) | The lowest heating level; a Thermor heater shows `H.Gel 7.0°` for it (issue #228) | The `away` preset of a level heater; `frost protection` on the level sensor |
+| Frost protection (hors-gel, `H.Gel` on a Thermor display) | The lowest heating level | The `away` preset of a level heater; `frost protection` on the level sensor |
 | Boost | A timed run on a towel dryer or a water heater; a level on a level heater | The `boost` preset; on a water heater the `boost` switch |
 | Drying | Adelis display: a timed run | The `Drying` preset |
 | Dérogation | A temporary change to the running program | A target set in `auto`; `set_derogation` in the `heating_control` action |

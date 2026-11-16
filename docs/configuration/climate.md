@@ -9,9 +9,10 @@ preset and target does on the heater, is on
 
 > [!NOTE]
 > The platform is experimental. The [Atlantic AGILIA IO](../devices/atlantic-agilia-io.md) radiator, the
-> [Atlantic Adelis](../devices/atlantic-adelis.md) towel dryer, the Sauter Hekla, the Thermor EMOTION 3 H
-> and a Thermor pilot-wire interface are confirmed on hardware; the heating temperature interface and
-> the heat pump have not run on hardware yet. **If you own a heater, please try it and report what
+> [Atlantic Adelis](../devices/atlantic-adelis.md) towel dryer, the [Sauter Hekla](../devices/sauter-hekla.md),
+> the Thermor EMOTION 3 H and a [Thermor pilot-wire interface](../devices/thermor-pilot-wire-interface.md)
+> are confirmed on hardware; the heating temperature interface and the heat pump have not run on
+> hardware yet. **If you own a heater, please try it and report what
 > happens** on the [issue tracker](https://github.com/laberning/home_io_control/issues): success,
 > silence, or a wrong setpoint are all useful.
 
@@ -64,8 +65,8 @@ hub cannot tell them apart, so the entry names the model.
 |---|---|---|
 | A radiator with a setpoint, such as an Atlantic AGILIA IO or a Thermor EMOTION 3 H | `io_subtype: 1`, no `io_model:` | |
 | A towel dryer, such as an Atlantic Adelis | `io_subtype: 1`, `io_model: towel_dryer` | It runs as a radiator: the target and the room temperature work, but the mode writes go to the radiator's register, boost and drying are missing, and the window entities do nothing |
-| A radiator with a night light, such as a Sauter Hekla | `io_subtype: 1`, `io_model: heater_with_light` | The heater works; a `night_light:` block is rejected |
-| An interface for pilot-wire heaters, such as the Thermor Interface Cozytouch | `io_subtype: 0`, `io_model: pilot_wire_interface` | The card offers a `boost` preset, which the interface ignores |
+| A radiator with a night light, such as a [Sauter Hekla](../devices/sauter-hekla.md) | `io_subtype: 1`, `io_model: heater_with_light` | The heater works; a `night_light:` block is rejected |
+| An interface for pilot-wire heaters, such as the [Thermor Interface Cozytouch](../devices/thermor-pilot-wire-interface.md) | `io_subtype: 0`, `io_model: pilot_wire_interface` | The card offers a `boost` preset, which the interface ignores |
 | A plain electrical heater commanded by level | `io_subtype: 0`, no `io_model:` | |
 
 The block that Discover & Pair or Scan Paired Devices prints names the type and subtype only, so add
@@ -154,7 +155,7 @@ A towel dryer has no window function, so it gets neither window entity. A heater
 
 ## Heaters with a night light
 
-A Sauter Hekla has a dimmable night light and reports the same type and subtype as the AGILIA
+A [Sauter Hekla](../devices/sauter-hekla.md) has a dimmable night light and reports the same type and subtype as the AGILIA
 radiator. Add `io_model: heater_with_light` to its entry, and a `night_light:` block to get a light
 entity for it:
 
@@ -184,9 +185,9 @@ heater without `io_model: heater_with_light`.
   light showing the heater's last reading.
 - Brightness is a percentage, 100 % in Home Assistant being the heater's full brightness. The heater's
   brightness register runs from 0 to 10000 and the light scales it linearly: 1 % is 100 and 100 % is
-  10000. A Hekla's panel offers four levels, which show as 1 %, 10 %, 20 % and 100 %. Whether the
-  heater accepts the values in between has not been confirmed. Switching on at the brightness the
-  heater already holds sends only the on command.
+  10000. The [Sauter Hekla](../devices/sauter-hekla.md) page lists the levels its panel offers and
+  what is known about the values in between. Switching on at the brightness the heater already holds
+  sends only the on command.
 - Each poll reads the light's state and brightness after the heater's own registers, so a light
   switched from the Cozytouch app or at the heater shows in Home Assistant at the next poll. A
   heater that has no night light answers these reads empty; the rest of its poll still counts as
