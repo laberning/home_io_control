@@ -455,6 +455,13 @@ about half the tries, which suggests it listens less often than every 213 ms; a 
 spans more of its sleep cycle. Raise it in steps (1536, 2048) and compare how often a try
 at rest is answered (`Try N answered … preamble=`).
 
+One owner of two SSL shutters went straight to `2880` (about 600 ms on air), the wake-up length
+their shutters' own KLI 110 remotes send, together with `exchange_total_budget_ms: 4500`. All eight
+commands sent to a resting shutter in their test were accepted on the first try, about 0.6 s after
+the hub started sending, and every `stop` mid-travel landed. With the default 1024 the same shutter
+had needed the third and last try for an `open` sent 14 s after a stop. The values in between were
+not tried. For an SSL, 2880 with a 4500 ms budget is a good first value to try.
+
 A longer preamble makes every try at rest longer: at 2048 bytes a try takes about 1.1 s, so only two
 fit in the default [`exchange_total_budget_ms`](#exchange_total_budget_ms). Raise that to about
 3500 ms to keep three, and expect ESPHome to warn that the component took a long time. Pairing,
