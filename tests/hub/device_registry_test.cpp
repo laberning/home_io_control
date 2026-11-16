@@ -188,6 +188,23 @@ TEST(DeviceRegistry, PutKeepsTheOptInReadsOfTheRecordItReplaces) {
       << "and a register the heater lacks stays unasked";
 }
 
+TEST(DeviceRegistry, PutKeepsTheTemperatureRangeOfTheRecordItReplaces) {
+  DeviceRegistry reg;
+  reg.add("AABBCC",
+          {.type = DeviceType::HEATING_TEMPERATURE_INTERFACE, .entity_class = DeviceCapabilityClass::CLIMATE});
+  IoDevice *declared = reg.get("AABBCC");
+  ASSERT_NE(declared, nullptr);
+  // What the climate platform's setup stores for `min_temperature: 5` / `max_temperature: 30`.
+  declared->temperature_range_min_c = 5.0F;
+  declared->temperature_range_max_c = 30.0F;
+  IoDevice paired{};
+  paired.type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+  reg.put("AABBCC", paired);
+  const IoDevice *dev = reg.get("AABBCC");
+  EXPECT_FLOAT_EQ(dev->temperature_range_min_c, 5.0F) << "a pairing in this boot must not undo the YAML range";
+  EXPECT_FLOAT_EQ(dev->temperature_range_max_c, 30.0F);
+}
+
 TEST(DeviceRegistry, SizeReflectsRegistrationCount) {
   DeviceRegistry reg;
   EXPECT_EQ(reg.size(), 0u);
