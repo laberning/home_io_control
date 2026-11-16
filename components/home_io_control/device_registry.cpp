@@ -4,7 +4,9 @@
 
 #include "device_registry.h"
 
+#include "proto_device_features.h"
 #include "proto_device_kinds.h"
+#include "proto_dhw.h"
 #include "proto_frame.h"
 #include "proto_sizes.h"
 
@@ -42,6 +44,12 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
   if (cfg.has_system_key)
     memcpy(dev.system_key, cfg.system_key, AES_KEY_SIZE);
   resolve_device_features(dev);
+  // A water heater encodes its target over its own range, not a radiator heater's; its platform moves the upper
+  // end when the YAML sets max_temperature:.
+  if (has_feature(dev.features, device_feature::WATER_HEATER)) {
+    dev.temperature_range_min_c = DHW_TARGET_MIN_C;
+    dev.temperature_range_max_c = DHW_TARGET_MAX_C;
+  }
   devices_[device_id] = dev;
 }
 

@@ -13,7 +13,9 @@
 ///
 /// Its target temperature is not a register: it is the main parameter of a status reply, on the ordinary
 /// relative scale (0..0xC800) over DHW_TARGET_MIN_C..DHW_TARGET_MAX_C. Three replies pin it: 54 C reads
-/// `A1E8`, 62 C reads `C800`, and AUTO reads `BE7A` = 60.0 C.
+/// `A1E8`, 62 C reads `C800`, and AUTO reads `BE7A` = 60.0 C. An Atlantic Explorer V4 spans 20..70 C over the
+/// same scale (its display read 51 C at `7C00`, 52 C at `8092` and 55 C at `8C00`), so the upper end is a
+/// per-device setting (YAML `max_temperature:`) with DHW_TARGET_MAX_C as its default.
 ///
 /// Every reading here comes from one Atlantic Calypso Connecte (200 L) whose owner read each register in
 /// several display states (issue #198; corpus
@@ -78,8 +80,9 @@ static constexpr uint8_t DHW_REG_HEATING = 0x21;
 
 /// @brief Lower end of the target-temperature scale: main parameter 0 is 20 C.
 static constexpr float DHW_TARGET_MIN_C = 20.0F;
-/// @brief Upper end of the target-temperature scale: main parameter 0xC800 is 62 C, the highest target the
-/// Calypso's display offers.
+/// @brief Default upper end of the target-temperature scale: main parameter 0xC800 is 62 C, the highest target
+/// the Calypso's display offers. Another heater may span another range (an Explorer V4 reaches 70 C at 0xC800),
+/// which the YAML `max_temperature:` sets per device (IoDevice::temperature_range_max_c).
 static constexpr float DHW_TARGET_MAX_C = 62.0F;
 /// @brief Offset of the main parameter (MSB) in the data of a water heater's status reply.
 static constexpr uint8_t DHW_STATUS_MAIN_PARAMETER_OFFSET = STATUS_MP_FP_MAIN_PARAMETER_OFFSET;
@@ -201,11 +204,13 @@ size_t encode_dhw_mode_write(uint8_t mode, uint8_t out[PRIVATE_REGISTER_PAYLOAD_
 /// @return Always 5.
 size_t encode_dhw_duration_write(DhwOperatingFeature which, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
-/// @brief Encode a target temperature as a main parameter over DHW_TARGET_MIN_C..DHW_TARGET_MAX_C.
+/// @brief Encode a target temperature as a main parameter over the heater's range.
 /// @param celsius Target; must be finite and within the range (nothing outside it is ever sent).
+/// @param min_c Lower end of the range (DHW_TARGET_MIN_C unless the YAML says otherwise).
+/// @param max_c Upper end of the range (DHW_TARGET_MAX_C unless the YAML says otherwise).
 /// @param[out] main_parameter The encoded value; untouched when false is returned.
-/// @return false for a non-finite or out-of-range target.
-bool encode_dhw_target(float celsius, uint16_t &main_parameter);
+/// @return false for a non-finite or out-of-range target, or a range that is not one.
+bool encode_dhw_target(float celsius, float min_c, float max_c, uint16_t &main_parameter);
 
 // === Replies ===
 
@@ -264,16 +269,21 @@ bool decode_dhw_duration(const uint8_t *value, size_t len, uint8_t &duration);
 
 /// @brief Target temperature from a main parameter.
 /// @param main_parameter The main parameter as the status reply carries it.
+/// @param min_c Lower end of the heater's range.
+/// @param max_c Upper end of the heater's range.
 /// @param[out] celsius Target, rounded to a tenth of a degree; untouched when false is returned.
-/// @return false for a main parameter beyond 0xC800 (an alias such as 0xD8xx is not a temperature).
-bool decode_dhw_target(uint16_t main_parameter, float &celsius);
+/// @return false for a main parameter beyond 0xC800 (an alias such as 0xD8xx is not a temperature), or a range
+///         that is not one.
+bool decode_dhw_target(uint16_t main_parameter, float min_c, float max_c, float &celsius);
 
 /// @brief Target temperature from a status reply (CMD_PRIVATE_RESP) of a domestic hot water heater.
 /// @param reply The heater's reply to a status read.
+/// @param min_c Lower end of the heater's range.
+/// @param max_c Upper end of the heater's range.
 /// @param[out] celsius Target; untouched when false is returned.
 /// @return false for another command, a reply too short to carry the main parameter, or a main parameter
 ///         that is not a temperature.
-bool decode_dhw_status_target(const IoFrame &reply, float &celsius);
+bool decode_dhw_status_target(const IoFrame &reply, float min_c, float max_c, float &celsius);
 
 /// @brief Capabilities and operating-mode state from the reply to the status read
 /// DHW_STATUS_FPI1 / DHW_STATUS_FPI2.

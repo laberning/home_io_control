@@ -277,9 +277,11 @@ class HeaterController {
 
   /// @brief Set a water heater's target temperature.
   ///
-  /// A main-parameter-only EXECUTE with the target on the relative scale over DHW_TARGET_MIN_C..
-  /// DHW_TARGET_MAX_C (encode_dhw_target()), through the bare execute operation without the cover's
-  /// movement bookkeeping. The settle poll that follows reads the target back from the status reply.
+  /// A main-parameter-only EXECUTE with the target on the relative scale over the device's range
+  /// (IoDevice::temperature_range_min_c..temperature_range_max_c: DHW_TARGET_MIN_C..DHW_TARGET_MAX_C unless
+  /// YAML `max_temperature:` says otherwise; encode_dhw_target()), through the bare execute operation
+  /// without the cover's movement bookkeeping. The settle poll that follows reads the target back from the
+  /// status reply.
   /// Gated on device_feature::WATER_HEATER. The heater's display follows the target (issue #198).
   /// @param device_id Target device ID (hex string).
   /// @param celsius Target in degrees Celsius; a value outside the heater's range is refused, not clamped.

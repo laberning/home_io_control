@@ -139,6 +139,23 @@ TEST(PlatformWaterHeater, TraitsOfferTheReadingsTheThreeModesAndTheHeatersRange)
   EXPECT_TRUE(traits.supports_mode(WATER_HEATER_MODE_ECO));
   EXPECT_TRUE(traits.supports_mode(WATER_HEATER_MODE_PERFORMANCE));
   EXPECT_FALSE(traits.supports_mode(WATER_HEATER_MODE_OFF));
+  ASSERT_EQ(hub.temperature_ranges.size(), 1u) << "setup hands the range to the hub";
+  EXPECT_FLOAT_EQ(hub.temperature_ranges[0].first, 20.0F);
+  EXPECT_FLOAT_EQ(hub.temperature_ranges[0].second, 62.0F);
+}
+
+TEST(PlatformWaterHeater, MaxTemperatureMovesTheCardsRangeAndTheHubsEncoding) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  entity.set_target_range_max(70.0F);  // an Atlantic Explorer V4
+  bind_water_heater(entity, hub);
+  const WaterHeaterTraits traits = entity.get_traits();
+
+  EXPECT_FLOAT_EQ(traits.get_min_temperature(), 20.0F);
+  EXPECT_FLOAT_EQ(traits.get_max_temperature(), 70.0F);
+  ASSERT_EQ(hub.temperature_ranges.size(), 1u);
+  EXPECT_FLOAT_EQ(hub.temperature_ranges[0].first, 20.0F);
+  EXPECT_FLOAT_EQ(hub.temperature_ranges[0].second, 70.0F);
 }
 
 TEST(PlatformWaterHeater, SetupRegistersTheDeviceAsAWaterHeater) {

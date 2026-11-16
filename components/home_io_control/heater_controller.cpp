@@ -542,11 +542,16 @@ bool HeaterController::read_dhw_status(const std::string &device_id, uint8_t max
 }
 
 bool HeaterController::set_water_heater_target(const std::string &device_id, float celsius) {
+  // The range is the device's own (YAML max_temperature:). An unknown device is refused here as the execute
+  // operation would refuse it.
+  const IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return false;
   uint16_t main_parameter = 0;
-  if (!encode_dhw_target(celsius, main_parameter)) {
+  if (!encode_dhw_target(celsius, dev->temperature_range_min_c, dev->temperature_range_max_c, main_parameter)) {
     ESP_LOGW(detail::TAG, "Hot water target %.1f C for device %s rejected: outside %.0f-%.0f C",
-             static_cast<double>(celsius), device_id.c_str(), static_cast<double>(DHW_TARGET_MIN_C),
-             static_cast<double>(DHW_TARGET_MAX_C));
+             static_cast<double>(celsius), device_id.c_str(), static_cast<double>(dev->temperature_range_min_c),
+             static_cast<double>(dev->temperature_range_max_c));
     return false;
   }
   // The settle poll the execute operation arms reads the target back.

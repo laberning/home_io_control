@@ -1321,6 +1321,28 @@ TEST(HeaterController, ATargetOutsideTheHeatersRangeIsNeverSent) {
   EXPECT_TRUE(fx.executes.empty());
 }
 
+TEST(HeaterController, AWaterHeatersTargetIsEncodedOverItsOwnRange) {
+  HeaterControllerFixture fx;
+  const IoDevice *dev = make_water_heater(fx);
+  // An Explorer V4 (YAML max_temperature: 70): 51 C is 7C00 there, where the default range would send 939E.
+  fx.controller.set_device_temperature_range("ABC123", DHW_TARGET_MIN_C, 70.0F);
+
+  EXPECT_TRUE(fx.controller.set_water_heater_target("ABC123", 51.0F));
+  EXPECT_TRUE(fx.controller.set_water_heater_target("ABC123", 65.0F)) << "within that range";
+  EXPECT_FALSE(fx.controller.set_water_heater_target("ABC123", 70.5F));
+
+  ASSERT_EQ(fx.executes.size(), 2u);
+  ASSERT_TRUE(fx.executes[0].built);
+  IoFrame expected;
+  ASSERT_TRUE(create_execute_heating_main_parameter(expected, fx.node_id, dev->node_id, false, 0x7C00));
+  uint8_t expected_raw[64];
+  uint8_t got_raw[64];
+  const uint8_t expected_len = serialize(expected, expected_raw, sizeof(expected_raw));
+  const uint8_t got_len = serialize(fx.executes[0].request, got_raw, sizeof(got_raw));
+  EXPECT_EQ(std::vector<uint8_t>(got_raw, got_raw + got_len),
+            std::vector<uint8_t>(expected_raw, expected_raw + expected_len));
+}
+
 TEST(HeaterController, TheTargetIsAMainParameterOnlyExecuteThroughTheBareOperation) {
   HeaterControllerFixture fx;
   const IoDevice *dev = make_water_heater(fx);
@@ -2255,6 +2277,9 @@ TEST(HeaterStatusDecoding, ARegisterHeaterAndADeviceWithoutAProfileAreLeftAlone)
 TEST(HeaterStatusDecoding, AWaterHeaterStatusReplyGivesTheTargetCapabilitiesAndBoostAndAway) {
   IoDevice dev;
   test::set_kind(dev, DeviceType::DOMESTIC_HOT_WATER, 0);
+  // The range DeviceRegistry::add() gives a water heater.
+  dev.temperature_range_min_c = DHW_TARGET_MIN_C;
+  dev.temperature_range_max_c = DHW_TARGET_MAX_C;
   IoFrame frame{};
   const uint8_t payload[] = {0x05,
                              0x00,

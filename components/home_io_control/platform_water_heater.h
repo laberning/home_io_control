@@ -92,9 +92,14 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
   /// @param call The requested changes, already checked against traits() by ESPHome.
   void control(const water_heater::WaterHeaterCall &call) override;
 
+  /// @brief Set the upper end of the target range (YAML `max_temperature:`): the temperature main parameter
+  /// 0xC800 stands for. It sets both the encoding and the card's range; setup() hands it to the hub.
+  /// @param max_c Upper end in degrees Celsius; above DHW_TARGET_MIN_C (the codegen checks it).
+  void set_target_range_max(float max_c) { this->target_max_c_ = max_c; }
+
  protected:
   /// @brief Current and target temperature, the three modes, and the target range
-  /// DHW_TARGET_MIN_C..DHW_TARGET_MAX_C at a 1 C step.
+  /// DHW_TARGET_MIN_C..`max_temperature:` (DHW_TARGET_MAX_C by default) at a 1 C step.
   water_heater::WaterHeaterTraits traits() override;
 
   /// @brief Inbound device-update hook: fold IoDevice::dhw into the entity and publish when a shown field
@@ -110,7 +115,8 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
   /// @brief True when the mode shown is the one the heater's automatic mode maps to.
   [[nodiscard]] bool holds_automatic_mode_() const;
 
-  bool observed_{false};  ///< True once a reading has been folded in.
+  bool observed_{false};                  ///< True once a reading has been folded in.
+  float target_max_c_{DHW_TARGET_MAX_C};  ///< YAML `max_temperature:`.
 };
 
 /// @brief Sensor of the heater's energy since installation, in kWh (`total_increasing`).

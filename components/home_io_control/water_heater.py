@@ -9,6 +9,9 @@
 ## `status_poll_interval` sets the cadence, with the same one-minute floor as climate. Shared device-binding
 ## logic lives in platform_common.py; only the water heater's entity and companions are built here.
 ##
+## `max_temperature` sets the target the heater's highest main parameter stands for (62 by default, 70 on an
+## Explorer V4); it moves the card's range with it.
+##
 ## The kind is required: the codegen checks it carries the WATER_HEATER capability, so a config can never
 ## send the water heater's register frames to another device.
 
@@ -20,6 +23,7 @@ from esphome.components import binary_sensor, sensor, switch, text_sensor, water
 from esphome.const import (
     CONF_ENERGY,
     CONF_ID,
+    CONF_MAX_TEMPERATURE,
     DEVICE_CLASS_ENERGY,
     DEVICE_CLASS_RUNNING,
     STATE_CLASS_TOTAL_INCREASING,
@@ -87,6 +91,25 @@ def _validate_water_heater_kind(config):
     return config
 
 
+# The range the heater encodes its target over: main parameter 0 is DHW_TARGET_MIN_C, 0xC800 is the upper end.
+# The upper end defaults to DHW_TARGET_MAX_C (proto_dhw.h), what a Calypso uses; an Explorer V4 uses 70.
+DHW_TARGET_MIN_C = 20.0
+DHW_TARGET_MAX_BOUND_C = 100.0
+
+
+def _validate_max_temperature(config):
+    """Keep max_temperature above the fixed lower end and below boiling."""
+    if CONF_MAX_TEMPERATURE not in config:
+        return config
+    if not DHW_TARGET_MIN_C < config[CONF_MAX_TEMPERATURE] <= DHW_TARGET_MAX_BOUND_C:
+        raise cv.Invalid(
+            f"max_temperature must be above {DHW_TARGET_MIN_C:g} and at most {DHW_TARGET_MAX_BOUND_C:g} "
+            "degrees Celsius: it is the target the heater's highest main parameter stands for",
+            path=[CONF_MAX_TEMPERATURE],
+        )
+    return config
+
+
 def _inject_companion_ids(config):
     """Declare the auto-generated companion IDs during validation (ESPHome 2026.x StaticVector sizing).
 
@@ -101,6 +124,7 @@ CONFIG_SCHEMA = cv.All(
     .extend(platform_schema_extension())
     .extend(
         {
+            cv.Optional(CONF_MAX_TEMPERATURE): cv.temperature,
             cv.Optional(CONF_ENERGY): sensor.sensor_schema(
                 IOHomeDhwEnergySensor,
                 unit_of_measurement=UNIT_KILOWATT_HOURS,
@@ -127,6 +151,7 @@ CONFIG_SCHEMA = cv.All(
     .extend(cv.COMPONENT_SCHEMA),
     _validate_water_heater_kind,
     functools.partial(validate_register_poll_interval, platform="water_heater"),
+    _validate_max_temperature,
     validate_device_model,
     warn_if_experimental_kind,
     _inject_companion_ids,
@@ -141,6 +166,9 @@ async def to_code(config):
     parent = await cg.get_variable(config[CONF_HOME_IO_CONTROL_ID])
     await wire_device_binding(var, parent, config)
     await create_companion_sensors(config, parent)
+
+    if CONF_MAX_TEMPERATURE in config:
+        cg.add(var.set_target_range_max(config[CONF_MAX_TEMPERATURE]))
 
     if CONF_ENERGY in config:
         await create_user_companion(

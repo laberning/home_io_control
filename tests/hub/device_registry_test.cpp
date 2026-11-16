@@ -7,6 +7,8 @@
 #include "device_registry.h"
 
 #include "proto_device_types.h"
+#include "proto_dhw.h"
+#include "proto_heating.h"
 
 #include "esphome/core/hal.h"
 
@@ -37,6 +39,22 @@ TEST(DeviceRegistry, AddWithMetadataStoresFields) {
   EXPECT_EQ(dev->type, DeviceType::VERTICAL_EXTERIOR_AWNING);
   EXPECT_EQ(dev->subtype, 2);
   EXPECT_TRUE(dev->inverted);
+}
+
+TEST(DeviceRegistry, AWaterHeaterStartsOnTheWaterHeaterTargetRange) {
+  DeviceRegistry reg;
+  reg.add("ABC123", {.type = DeviceType::DOMESTIC_HOT_WATER, .entity_class = DeviceCapabilityClass::WATER_HEATER});
+  const IoDevice *dev = reg.get("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->temperature_range_min_c, DHW_TARGET_MIN_C);
+  EXPECT_FLOAT_EQ(dev->temperature_range_max_c, DHW_TARGET_MAX_C);
+
+  // The same kind bound to another platform is no water heater (resolve_device_features()).
+  reg.add("DEF456", {.type = DeviceType::DOMESTIC_HOT_WATER, .entity_class = DeviceCapabilityClass::SWITCH});
+  const IoDevice *other = reg.get("DEF456");
+  ASSERT_NE(other, nullptr);
+  EXPECT_FLOAT_EQ(other->temperature_range_min_c, HEATING_TEMPERATURE_RANGE_MIN_C);
+  EXPECT_FLOAT_EQ(other->temperature_range_max_c, HEATING_TEMPERATURE_RANGE_MAX_C);
 }
 
 TEST(DeviceRegistry, AddStoresAPerDeviceSystemKey) {

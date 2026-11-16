@@ -90,11 +90,12 @@ size_t encode_dhw_duration_write(DhwOperatingFeature which, uint8_t out[PRIVATE_
   return encode_dhw_byte_write(wire.duration_register, wire.start_duration, out);
 }
 
-bool encode_dhw_target(float celsius, uint16_t &main_parameter) {
+bool encode_dhw_target(float celsius, float min_c, float max_c, uint16_t &main_parameter) {
   // encode_temperature_main_parameter() clamps; a target outside the heater's own range is refused instead.
-  if (!std::isfinite(celsius) || celsius < DHW_TARGET_MIN_C || celsius > DHW_TARGET_MAX_C)
+  // It also refuses a range that is not one.
+  if (!std::isfinite(celsius) || celsius < min_c || celsius > max_c)
     return false;
-  return encode_temperature_main_parameter(celsius, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, main_parameter);
+  return encode_temperature_main_parameter(celsius, min_c, max_c, main_parameter);
 }
 
 bool decode_dhw_register_reply(const IoFrame &reply, uint8_t index, const uint8_t *&value, size_t &len) {
@@ -153,9 +154,9 @@ bool decode_dhw_duration(const uint8_t *value, size_t len, uint8_t &duration) {
   return true;
 }
 
-bool decode_dhw_target(uint16_t main_parameter, float &celsius) {
+bool decode_dhw_target(uint16_t main_parameter, float min_c, float max_c, float &celsius) {
   float raw = NAN;
-  if (!decode_temperature_main_parameter(main_parameter, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, raw))
+  if (!decode_temperature_main_parameter(main_parameter, min_c, max_c, raw))
     return false;
   // One step of the scale is under a thousandth of a degree, so the heater's 60 C reads 59.9998 unrounded;
   // the display shows whole degrees, and tenths keep any finer setting visible.
@@ -163,10 +164,10 @@ bool decode_dhw_target(uint16_t main_parameter, float &celsius) {
   return true;
 }
 
-bool decode_dhw_status_target(const IoFrame &reply, float &celsius) {
+bool decode_dhw_status_target(const IoFrame &reply, float min_c, float max_c, float &celsius) {
   if (reply.cmd != CMD_PRIVATE_RESP || reply.data_len < DHW_STATUS_MAIN_PARAMETER_OFFSET + 2)
     return false;
-  return decode_dhw_target(read_be16(reply.data + DHW_STATUS_MAIN_PARAMETER_OFFSET), celsius);
+  return decode_dhw_target(read_be16(reply.data + DHW_STATUS_MAIN_PARAMETER_OFFSET), min_c, max_c, celsius);
 }
 
 bool decode_dhw_operating_status(const IoFrame &reply, DhwOperatingStatus &status) {

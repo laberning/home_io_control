@@ -57,7 +57,7 @@ template<size_t N> uint8_t duration_of(const uint8_t (&bytes)[N], uint8_t index)
 
 template<size_t N> float target_of(const uint8_t (&bytes)[N]) {
   float celsius = NAN;
-  EXPECT_TRUE(decode_dhw_status_target(frame_of(bytes), celsius));
+  EXPECT_TRUE(decode_dhw_status_target(frame_of(bytes), DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, celsius));
   return celsius;
 }
 
@@ -157,7 +157,8 @@ TEST(CorpusDhw, TheOperatingStatusReadReportsCapabilitiesAndBothFieldsOffAtRest)
     DhwOperatingStatus status;
     ASSERT_TRUE(decode_dhw_operating_status(c.frame, status)) << c.display;
     float target = NAN;
-    ASSERT_TRUE(decode_dhw_status_target(c.frame, target)) << "the main parameter stays in place: " << c.display;
+    ASSERT_TRUE(decode_dhw_status_target(c.frame, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, target))
+        << "the main parameter stays in place: " << c.display;
     EXPECT_FLOAT_EQ(target, c.target_c) << c.display;
     EXPECT_EQ(status.capabilities, DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST) << "FP15 000C: " << c.display;
     EXPECT_FALSE(status.boost) << "FP16 4A00 reads both fields off: " << c.display;
@@ -172,10 +173,10 @@ TEST(CorpusDhw, TheOffWordIsTheFp16TheHeaterReportsAtRest) {
 
 TEST(CorpusDhw, TargetEncoderReproducesTheCapturedMainParameters) {
   uint16_t mp = 0;
-  ASSERT_TRUE(encode_dhw_target(54.0F, mp));
+  ASSERT_TRUE(encode_dhw_target(54.0F, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, mp));
   EXPECT_EQ(mp, (corpus::atlantic_calypso_probe_status_mp_fp_frame0_bytes[11] << 8) |
                     corpus::atlantic_calypso_probe_status_mp_fp_frame0_bytes[12]);
-  ASSERT_TRUE(encode_dhw_target(62.0F, mp));
+  ASSERT_TRUE(encode_dhw_target(62.0F, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, mp));
   EXPECT_EQ(mp, (corpus::atlantic_calypso_probe_status_mp_fp_frame1_bytes[11] << 8) |
                     corpus::atlantic_calypso_probe_status_mp_fp_frame1_bytes[12]);
 }

@@ -144,6 +144,7 @@ water_heater:
     io_device_id: "F9CF0F"
     io_device_type: domestic_hot_water
     status_poll_interval: 120s
+    max_temperature: 70
     energy:
       name: "Hot Water Energy"
     heat_pump_running:

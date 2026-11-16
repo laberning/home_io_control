@@ -84,7 +84,7 @@ void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame 
     dev.dhw.away = status.away ? 1 : 0;
   }
   float celsius = NAN;
-  if (decode_dhw_status_target(frame, celsius)) {
+  if (decode_dhw_status_target(frame, dev.temperature_range_min_c, dev.temperature_range_max_c, celsius)) {
     if (dev.dhw.target_c != celsius)
       ESP_LOGI(detail::TAG, "Device %s: hot water target %.1f C", id.c_str(), static_cast<double>(celsius));
     dev.dhw.target_c = celsius;

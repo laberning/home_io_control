@@ -93,23 +93,51 @@ TEST(ProtoDhw, TheOperatingModeExecuteCarriesKeepAndOneOfThreeFixedWords) {
 
 TEST(ProtoDhw, TargetEncodesOnTheRelativeScaleOverTwentyToSixtyTwo) {
   uint16_t mp = 0;
-  ASSERT_TRUE(encode_dhw_target(54.0F, mp));
+  ASSERT_TRUE(encode_dhw_target(54.0F, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, mp));
   EXPECT_EQ(mp, 0xA1E8);
-  ASSERT_TRUE(encode_dhw_target(62.0F, mp));
+  ASSERT_TRUE(encode_dhw_target(62.0F, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, mp));
   EXPECT_EQ(mp, 0xC800);
-  ASSERT_TRUE(encode_dhw_target(20.0F, mp));
+  ASSERT_TRUE(encode_dhw_target(20.0F, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, mp));
   EXPECT_EQ(mp, 0x0000);
-  ASSERT_TRUE(encode_dhw_target(60.0F, mp));
+  ASSERT_TRUE(encode_dhw_target(60.0F, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, mp));
   EXPECT_EQ(mp, 0xBE7A);
 }
 
 TEST(ProtoDhw, TargetOutsideTheHeatersRangeIsNeverEncoded) {
   uint16_t mp = 0x1234;
-  EXPECT_FALSE(encode_dhw_target(19.9F, mp));
-  EXPECT_FALSE(encode_dhw_target(62.1F, mp));
-  EXPECT_FALSE(encode_dhw_target(NAN, mp));
-  EXPECT_FALSE(encode_dhw_target(INFINITY, mp));
+  EXPECT_FALSE(encode_dhw_target(19.9F, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, mp));
+  EXPECT_FALSE(encode_dhw_target(62.1F, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, mp));
+  EXPECT_FALSE(encode_dhw_target(NAN, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, mp));
+  EXPECT_FALSE(encode_dhw_target(INFINITY, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, mp));
   EXPECT_EQ(mp, 0x1234);
+}
+
+/// The top of an Atlantic Explorer V4's scale (YAML max_temperature: 70): its display read 51 C at 7C00, 52 C at
+/// 8092 and 55 C at 8C00, one degree every 0x400.
+constexpr float EXPLORER_V4_MAX_C = 70.0F;
+
+TEST(ProtoDhw, AnExplorerV4TargetEncodesOnItsTwentyToSeventyScale) {
+  uint16_t mp = 0;
+  ASSERT_TRUE(encode_dhw_target(51.0F, DHW_TARGET_MIN_C, EXPLORER_V4_MAX_C, mp));
+  EXPECT_EQ(mp, 0x7C00);
+  ASSERT_TRUE(encode_dhw_target(55.0F, DHW_TARGET_MIN_C, EXPLORER_V4_MAX_C, mp));
+  EXPECT_EQ(mp, 0x8C00);
+  ASSERT_TRUE(encode_dhw_target(70.0F, DHW_TARGET_MIN_C, EXPLORER_V4_MAX_C, mp));
+  EXPECT_EQ(mp, 0xC800);
+  EXPECT_TRUE(encode_dhw_target(65.0F, DHW_TARGET_MIN_C, EXPLORER_V4_MAX_C, mp)) << "above the default range";
+  EXPECT_FALSE(encode_dhw_target(70.1F, DHW_TARGET_MIN_C, EXPLORER_V4_MAX_C, mp));
+}
+
+TEST(ProtoDhw, ARangeThatIsNoneEncodesAndDecodesNothing) {
+  uint16_t mp = 0x1234;
+  EXPECT_FALSE(encode_dhw_target(20.0F, 20.0F, 20.0F, mp));
+  EXPECT_FALSE(encode_dhw_target(30.0F, 40.0F, 20.0F, mp));
+  EXPECT_FALSE(encode_dhw_target(30.0F, NAN, 62.0F, mp));
+  EXPECT_EQ(mp, 0x1234);
+  float c = 42.0F;
+  EXPECT_FALSE(decode_dhw_target(0x7C00, 20.0F, 20.0F, c));
+  EXPECT_FALSE(decode_dhw_target(0x7C00, 20.0F, NAN, c));
+  EXPECT_FLOAT_EQ(c, 42.0F);
 }
 
 // === Replies ===
@@ -217,42 +245,61 @@ TEST(ProtoDhw, ADurationIsTheFirstValueByte) {
 
 TEST(ProtoDhw, TargetDecodesTheThreeMainParametersSeen) {
   float c = NAN;
-  ASSERT_TRUE(decode_dhw_target(0xA1E8, c));
+  ASSERT_TRUE(decode_dhw_target(0xA1E8, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, c));
   EXPECT_FLOAT_EQ(c, 54.0F);
-  ASSERT_TRUE(decode_dhw_target(0xC800, c));
+  ASSERT_TRUE(decode_dhw_target(0xC800, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, c));
   EXPECT_FLOAT_EQ(c, 62.0F);
-  ASSERT_TRUE(decode_dhw_target(0xBE7A, c));
+  ASSERT_TRUE(decode_dhw_target(0xBE7A, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, c));
   EXPECT_FLOAT_EQ(c, 60.0F);
-  ASSERT_TRUE(decode_dhw_target(0x0000, c));
+  ASSERT_TRUE(decode_dhw_target(0x0000, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, c));
   EXPECT_FLOAT_EQ(c, 20.0F);
+}
+
+TEST(ProtoDhw, AnExplorerV4TargetDecodesAsItsDisplayShowsIt) {
+  float c = NAN;
+  ASSERT_TRUE(decode_dhw_target(0x7C00, DHW_TARGET_MIN_C, EXPLORER_V4_MAX_C, c));
+  EXPECT_FLOAT_EQ(c, 51.0F);
+  ASSERT_TRUE(decode_dhw_target(0x8092, DHW_TARGET_MIN_C, EXPLORER_V4_MAX_C, c));
+  EXPECT_FLOAT_EQ(c, 52.1F) << "the display showed 52";
+  ASSERT_TRUE(decode_dhw_target(0x8C00, DHW_TARGET_MIN_C, EXPLORER_V4_MAX_C, c));
+  EXPECT_FLOAT_EQ(c, 55.0F);
+  ASSERT_TRUE(decode_dhw_target(0x7C00, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, c));
+  EXPECT_FLOAT_EQ(c, 46.0F) << "what the default range made of the same 51 C";
 }
 
 TEST(ProtoDhw, AMainParameterBeyondTheScaleIsNotATarget) {
   float c = 42.0F;
-  EXPECT_FALSE(decode_dhw_target(0xC801, c));
-  EXPECT_FALSE(decode_dhw_target(0xD812, c)) << "an alias";
-  EXPECT_FALSE(decode_dhw_target(0xD400, c)) << "unknown position";
+  EXPECT_FALSE(decode_dhw_target(0xC801, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, c));
+  EXPECT_FALSE(decode_dhw_target(0xD812, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, c)) << "an alias";
+  EXPECT_FALSE(decode_dhw_target(0xD400, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, c)) << "unknown position";
   EXPECT_FLOAT_EQ(c, 42.0F);
 }
 
 TEST(ProtoDhw, StatusTargetReadsTheMainParameterAtOffsetTwo) {
   float c = NAN;
-  ASSERT_TRUE(decode_dhw_status_target(reply_with({0x2D, 0x00, 0xA1, 0xE8, 0x00, 0x00}, CMD_PRIVATE_RESP), c));
+  ASSERT_TRUE(decode_dhw_status_target(reply_with({0x2D, 0x00, 0xA1, 0xE8, 0x00, 0x00}, CMD_PRIVATE_RESP),
+                                       DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, c));
   EXPECT_FLOAT_EQ(c, 54.0F);
-  EXPECT_FALSE(decode_dhw_status_target(reply_with({0x2D, 0x00, 0xA1, 0xE8}, CMD_WRITE_PRIVATE_ACK), c))
+  EXPECT_FALSE(decode_dhw_status_target(reply_with({0x2D, 0x00, 0xA1, 0xE8}, CMD_WRITE_PRIVATE_ACK), DHW_TARGET_MIN_C,
+                                        DHW_TARGET_MAX_C, c))
       << "another command";
-  EXPECT_FALSE(decode_dhw_status_target(reply_with({0x2D, 0x00, 0xA1}, CMD_PRIVATE_RESP), c)) << "too short";
-  EXPECT_FALSE(decode_dhw_status_target(reply_with({0x2D, 0x00, 0xD8, 0x12, 0x00, 0x00}, CMD_PRIVATE_RESP), c))
+  EXPECT_FALSE(
+      decode_dhw_status_target(reply_with({0x2D, 0x00, 0xA1}, CMD_PRIVATE_RESP), DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, c))
+      << "too short";
+  EXPECT_FALSE(decode_dhw_status_target(reply_with({0x2D, 0x00, 0xD8, 0x12, 0x00, 0x00}, CMD_PRIVATE_RESP),
+                                        DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, c))
       << "alias";
 }
 
 TEST(ProtoDhw, EveryEncodedTargetDecodesBackWithinATenth) {
-  for (float t = DHW_TARGET_MIN_C; t <= DHW_TARGET_MAX_C; t += 0.5F) {
-    uint16_t mp = 0;
-    ASSERT_TRUE(encode_dhw_target(t, mp)) << t;
-    float back = NAN;
-    ASSERT_TRUE(decode_dhw_target(mp, back)) << t;
-    EXPECT_NEAR(back, t, 0.05F) << t;
+  for (const float max_c : {DHW_TARGET_MAX_C, EXPLORER_V4_MAX_C}) {
+    for (float t = DHW_TARGET_MIN_C; t <= max_c; t += 0.5F) {
+      uint16_t mp = 0;
+      ASSERT_TRUE(encode_dhw_target(t, DHW_TARGET_MIN_C, max_c, mp)) << t;
+      float back = NAN;
+      ASSERT_TRUE(decode_dhw_target(mp, DHW_TARGET_MIN_C, max_c, back)) << t;
+      EXPECT_NEAR(back, t, 0.05F) << t;
+    }
   }
 }
 

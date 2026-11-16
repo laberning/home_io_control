@@ -27,6 +27,7 @@ water_heater:
     io_device_id: "F9CF0F"
     io_device_type: domestic_hot_water
     status_poll_interval: 5min  # optional; default 5 min, at least 60 s
+    max_temperature: 62         # optional; 70 on an Atlantic Explorer V4
     energy:
       name: "Hot water energy"
     heat_pump_running:
@@ -45,6 +46,11 @@ water_heater:
   to a kind that is read as a water heater, so the build refuses an entry without the key or with
   another kind. The kind is experimental, and the build warns about it.
 - `status_poll_interval` (Optional): How often the heater is read. Default 5 minutes, minimum 60 s.
+- `max_temperature` (Optional): The top of the scale the heater encodes its target on, which is also
+  the highest target the card offers. The bottom is always 20 °C. Default 62 °C, what an Atlantic
+  Calypso Connecté uses. An Atlantic Explorer V4 uses 70 °C: with the default its card shows 46 °C
+  while its display shows 51 °C. If the card and the display disagree by more as the target rises,
+  this is the key to set. Must be above 20 and at most 100.
 - `energy` (Optional): A sensor of the energy the heater has used since it was installed, in kWh,
   with `device_class: energy` and `state_class: total_increasing`, so it fits the energy dashboard.
   Takes every [sensor](https://esphome.io/components/sensor/) option.
@@ -68,7 +74,7 @@ water_heater:
 | Field | Source |
 |---|---|
 | Current temperature | The water temperature the heater reports |
-| Target temperature | The target in the heater's status reply, 20–62 °C, step 1 °C; none in the heater's automatic mode |
+| Target temperature | The target in the heater's status reply, from 20 °C to `max_temperature` (62 °C by default), step 1 °C; none in the heater's automatic mode |
 | Mode | The heater's operating mode, shown as `eco`, `heat_pump` or `performance`; see [Heat-pump water heaters](../heating.md#heat-pump-water-heaters) |
 | Away | The heater's holiday mode, as its operating-mode word reports it |
 

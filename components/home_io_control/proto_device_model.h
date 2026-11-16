@@ -475,8 +475,10 @@ struct IoDevice {
   float temperature_range_min_c{
       HEATING_TEMPERATURE_RANGE_MIN_C};  ///< Lower end of the temperature encoding range of a heater that
                                          ///< carries a temperature in its main parameter (YAML `min_temperature:`).
+                                         ///< A water heater starts at DHW_TARGET_MIN_C (DeviceRegistry::add()).
   float temperature_range_max_c{
-      HEATING_TEMPERATURE_RANGE_MAX_C};  ///< Upper end of that range (YAML `max_temperature:`).
+      HEATING_TEMPERATURE_RANGE_MAX_C};  ///< Upper end of that range (YAML `max_temperature:`). A water heater
+                                         ///< starts at DHW_TARGET_MAX_C.
   HeatingReadings heating{};             ///< What the hub has read from a heater over the private register protocol
                                          ///< (room temperature, setpoint, mode, regulator state). Set only from decoded
                                          ///< replies; stays "never read" for every other device type.

@@ -80,6 +80,9 @@ void IOHomeWaterHeater::setup() {
   // The initial poll reads the heater (HubDevicePort::queue_request_device_status()).
   this->register_device_binding_(this, DeviceCapabilityClass::WATER_HEATER,
                                  [this](const IoDevice &dev) { this->on_device_update_(dev); });
+  // The record starts at DHW_TARGET_MIN_C..DHW_TARGET_MAX_C; this applies YAML max_temperature:.
+  if (this->heating_port_ != nullptr)
+    this->heating_port_->set_device_temperature_range(this->device_id_, DHW_TARGET_MIN_C, this->target_max_c_);
 }
 
 water_heater::WaterHeaterTraits IOHomeWaterHeater::traits() {
@@ -90,7 +93,7 @@ water_heater::WaterHeaterTraits IOHomeWaterHeater::traits() {
       water_heater::WATER_HEATER_SUPPORTS_CURRENT_TEMPERATURE | water_heater::WATER_HEATER_SUPPORTS_TARGET_TEMPERATURE |
       water_heater::WATER_HEATER_SUPPORTS_OPERATION_MODE | water_heater::WATER_HEATER_SUPPORTS_AWAY_MODE);
   traits.set_min_temperature(DHW_TARGET_MIN_C);
-  traits.set_max_temperature(DHW_TARGET_MAX_C);
+  traits.set_max_temperature(this->target_max_c_);
   traits.set_target_temperature_step(WATER_HEATER_TARGET_STEP_C);
   traits.set_supported_modes({water_heater::WATER_HEATER_MODE_HEAT_PUMP, water_heater::WATER_HEATER_MODE_ECO,
                               water_heater::WATER_HEATER_MODE_PERFORMANCE});
@@ -185,7 +188,7 @@ void IOHomeWaterHeater::dump_config() {
   LOG_WATER_HEATER("", "IO-Homecontrol Water Heater", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
   ESP_LOGCONFIG(TAG, "  Target temperature range: %.0f-%.0f C", static_cast<double>(DHW_TARGET_MIN_C),
-                static_cast<double>(DHW_TARGET_MAX_C));
+                static_cast<double>(this->target_max_c_));
   this->log_poll_interval_config_(TAG, heater_poll_interval_ms);
   ESP_LOGCONFIG(TAG, "  Status: readings, target, mode and away mode confirmed on hardware");
 }
