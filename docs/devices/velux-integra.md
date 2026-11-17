@@ -17,6 +17,7 @@ and hubs that make good key sources, the wired bridges, and the products control
 | Devices behind an extracted key | ✅ Confirmed, with `low_power: true` |
 | MSU 100100 solar awning screen | ⚠️ Partial — open and close work; `stop` has no effect while it moves |
 | SSL solar roller shutter | ⚠️ Partial — Discover & Pair, open, close, position and status work; `stop` reaches it mid-travel, but not on every attempt |
+| SSL solar roller shutter behind a KLR 200 key | 📣 Reported (one reporter, two shutters, Heltec V4.3) — registered to the KLR 200 from its KLI 110, then found by Scan Paired Devices; open, close, `stop` mid-travel, position and status, with no motor reset |
 | INTEGRA SOLAR blinds | 📣 Reported, no capture |
 | SML electric roller shutter, 1W enrollment + control | ✅ Confirmed — Gear on the KLI, wait for the ready sequence, then Enroll, `low_power: false` |
 | SML electric roller shutter, two-way | 📣 Reported (one reporter) — Discover & Pair after Gear, with a short discovery preamble; open, close, stop mid-travel, set position and status |
@@ -45,7 +46,8 @@ try **1W enrollment**, the route confirmed on an SML roller shutter and on KLI 3
 Gear button on that remote, wait for the product's ready sequence to finish, then press the hub's
 Enroll button. It gives open/close/stop without status (see
 [Sending 1W commands](../configuration/oneway-transmit.md)). An SSL solar roller shutter pairs
-two-way directly instead; see [SSL solar roller shutter](#ssl-solar-roller-shutter) below. An SML
+two-way directly instead; see [SSL solar roller shutter](#ssl-solar-roller-shutter) below, or joins
+through a KLR 200 if the house has one. An SML
 roller shutter has been reported to pair two-way too; see the SML section below.
 
 ## SSL solar roller shutter
@@ -103,6 +105,27 @@ status polls that follow (the one right after the `stop` makes up to three tries
 halts and its real position arrives about a second later.
 It does not land on every attempt — press stop again if the shutter keeps moving, or use the wall
 remote.
+
+### Through a KLR 200 key instead of a motor reset
+
+When a KLR 200 already runs other products in the house, an SSL can be added to the KLR 200 and then
+reached with the KLR 200's key. Nothing is reset, the shutter keeps its own remote, and Discover &
+Pair is not needed. One owner set up two SSL shutters this way, each on its original KLI 110, with a
+Heltec V4.3 (R8):
+
+1. Extract the key from the KLR 200 as described in [Key extraction](../key-extraction.md).
+2. Open the shutter for registration from its own remote. The KLI 110 is the older remote with a
+   recessed RESET button and no Gear or Pair buttons. Hold RESET with a paperclip for about 10
+   seconds, until the shutter moves up and down briefly; VELUX's KLI 110 instructions give a
+   10-minute registration window. A short press of up to 1 second is the gesture for a *new* control
+   registering itself, not this one.
+3. On the KLR 200, add the product (on a German-language pad: **Neues Produkt** >
+   **Neue Produkte hinzufügen**). The shutter then runs from the KLR 200 too.
+4. Press **Scan Paired Devices**. The shutter answers as a low-power `roller_shutter`, subtype 0,
+   and its snippet carries `low_power: true`.
+
+The KLI 110 keeps working afterwards. Open, close, `stop` mid-travel, position and status then
+work as described above (issue #240).
 
 ## SML electric roller shutter
 
@@ -300,7 +323,7 @@ One more capture holds five type 4/1 windows answering keyed roll-calls, receive
 receiver (issue #242).
 
 Field reports: #17 (SML discovery), #74 (SML roller shutter, KLI 312 blind and FSC pleated blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
-screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #230 (SML two-way pairing, shutters queued on one KUX 110), #242 (KLR 100 Copy system, five type 4/1 windows).
+screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #230 (SML two-way pairing, shutters queued on one KUX 110), #240 (two SSL shutters behind a KLR 200 key), #242 (KLR 100 Copy system, five type 4/1 windows).
 
 ## See also
 
