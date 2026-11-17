@@ -527,7 +527,11 @@ bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 /// Values follow the public VELUX KLF 200 API (version 3.18, section 10.4.1, table 194), which
 /// describes the gateway's API rather than the radio frame; that data[1] of CMD_IDENTIFY carries
 /// the same value is our reading, and both results of issue #241 fit it (ADR 0093).
-/// \todo Unconfirmed on hardware: no device has been seen to honour a stop.
+/// Confirmed on a VELUX roof-window actuator (type 4, subtype 1; issue #241, one run with the
+/// reporter's own controller): a jogging window finished its return movement and reported done
+/// about 5 s after the stop.
+/// \todo Unconfirmed on hardware for other devices, Somfy ones included, and with this component's
+/// own radio path.
 static constexpr uint8_t IDENTIFY_WINK_STOP = 0;
 /// Longest explicit wink time in seconds (table 194: 1 to 253 are seconds).
 static constexpr uint8_t IDENTIFY_WINK_MAX_SECONDS = 253;
@@ -535,8 +539,11 @@ static constexpr uint8_t IDENTIFY_WINK_MAX_SECONDS = 253;
 /// identifies for the time its maker picked and the identify ends on its own.
 /// Table 194 also defines 255 as "wink forever"; the hub never sends it (a VELUX window kept
 /// jogging for more than 45 s with it, only a stop ended it).
-/// \todo Unconfirmed on hardware: expected to work on VELUX windows (issue #241); not yet seen on
-/// the Somfy awning or the Izymo dimmer.
+/// Confirmed on a VELUX roof-window actuator (type 4, subtype 1; issue #241, one run with the
+/// reporter's own controller): the window jogged, returned to its start position and reported
+/// done about 26 s after the request.
+/// \todo Unconfirmed on hardware for other devices, including the Somfy awning and the Izymo
+/// dimmer, and with this component's own radio path.
 static constexpr uint8_t IDENTIFY_WINK_DEVICE_DEFAULT = 254;
 
 /// @brief Build an authenticated device-identify request (0x1E) that makes a device
