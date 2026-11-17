@@ -9,11 +9,13 @@
 ///     treated as a wake-up burst;
 ///   - `low_power_wake_preamble`'s floor is LONG_PREAMBLE, so it is always a wake-up burst;
 ///   - `pairing_discovery_preamble`'s ceiling is exactly LONG_PREAMBLE, its only wake-up value
-///     (it has no default of its own: discovery follows the start preamble).
+///     (it has no default of its own: discovery follows the start preamble);
+///   - `low_power_wake_preamble`'s default, LOW_POWER_WAKE_PREAMBLE, is a value its YAML range accepts.
 /// A new preamble tunable or a raised ceiling fails here, which forces a decision about its wake
 /// level.
 
 #include "proto_timing.h"
+#include "tuning_config.h"
 #include "support/python_dict_parser.h"
 
 #include <string>
@@ -62,6 +64,20 @@ TEST(PreambleWakeSync, ParserReadsSignedRangesAndUnits) {
   EXPECT_LT(lbt.min, 0);
   EXPECT_LT(lbt.max, 0);
   EXPECT_EQ(lbt.unit, "dBm");
+}
+
+TEST(PreambleWakeSync, TheWakeUpDefaultIsAValidValueOfItsKnob) {
+  // ADR 0095: the default wake-up is LOW_POWER_WAKE_PREAMBLE, and YAML must accept it as it stands.
+  const auto params = test::parse_python_range_dict(kTuningPy, "_NUMBER_PARAMS");
+  ASSERT_EQ(params.count(kWakePreamble), 1u);
+  const auto &range = params.at(kWakePreamble);
+  EXPECT_EQ(range.min, LONG_PREAMBLE);
+  EXPECT_EQ(range.max, 4096);
+  EXPECT_EQ(TuningConfig{}.low_power_wake_preamble, LOW_POWER_WAKE_PREAMBLE);
+  EXPECT_GE(LOW_POWER_WAKE_PREAMBLE, range.min);
+  EXPECT_LE(LOW_POWER_WAKE_PREAMBLE, range.max);
+  ASSERT_GT(range.step, 0);
+  EXPECT_EQ((LOW_POWER_WAKE_PREAMBLE - range.min) % range.step, 0) << "on the number entity's step";
 }
 
 }  // namespace

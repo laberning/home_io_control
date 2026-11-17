@@ -314,10 +314,12 @@ _NUMBER_PARAMS = {
     # further.
     CONF_PAIRING_DISCOVERY_PREAMBLE: (8, 1024, 1, "B"),
     # The wake-up preamble on a directed start frame to a `low_power` target believed at rest. The
-    # default is LONG_PREAMBLE (1024); a resting VELUX SSL solar roller shutter answered it on only
-    # about half the tries, so the knob goes longer, not shorter. Floor 1024 (LONG_PREAMBLE) keeps it a wake-up burst
-    # rather than a start preamble (and keeps every value a wake-up burst for tx_wake_for()); ceiling 4096 (~0.85 s on air) already needs a larger
-    # exchange_total_budget_ms to keep three tries (a settling read of a low-power device, ADR 0073 and 0074).
+    # default is LOW_POWER_WAKE_PREAMBLE (2048, proto_timing.h, ADR 0095): a resting VELUX SSL solar
+    # roller shutter answered the 1024-byte wake-up on only about half the tries. Floor 1024
+    # (LONG_PREAMBLE) keeps it a wake-up burst rather than a start preamble (and keeps every value a
+    # wake-up burst for tx_wake_for()); ceiling 4096 (~0.85 s on air). A low-power target keeps its three
+    # attempts whatever their length costs: the exchange is bounded by that count, not by
+    # exchange_total_budget_ms (ADR 0095).
     CONF_LOW_POWER_WAKE_PREAMBLE: (1024, 4096, 64, "B"),
     CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),
     CONF_LBT_RSSI_THRESHOLD_DBM: (-95, -70, 1, "dBm"),

@@ -129,12 +129,11 @@ struct AttemptPlan {
   /// (AttemptRequest::with_state_unknown()). The exchange engine resolves the wake belief with it on
   /// sending too, so the plan and the tries agree (wake_belief()).
   bool state_unknown{false};
-  /// Time the exchange may run past `exchange_total_budget_ms`. 0 unless the short lead does not fit
-  /// with its wake-up attempts inside the budget; then the cost of the lead (short_lead_cost_ms()), so
-  /// the attempts after it get the budget the plan without it had and none is dropped. The engine's
-  /// guard adds it to the budget, so plan and guard agree. The exchange never runs past the budget by
-  /// more than this.
-  uint32_t budget_allowance_ms{0};
+  /// True when the attempt count, not `exchange_total_budget_ms`, bounds the exchange: a wake-up
+  /// exchange to a low-power target keeps all its attempts (the three wake-ups, plus the short lead
+  /// where there is one) whatever a busy channel or jitter added to the earlier ones (ADR 0095).
+  /// Set by the plan builders; the engine's guard asks obeys_time_budget().
+  bool bounded_by_attempts{false};
 
   /// @param attempt  1-based number of the attempt about to listen.
   /// @param attempts Attempts the exchange makes in all (the last one listens @ref window_ms).
@@ -145,13 +144,6 @@ struct AttemptPlan {
     return (attempt < attempts && early_window_ms != 0) ? early_window_ms : window_ms;
   }
 };
-
-/// @brief What the short lead attempt costs the exchange: its transmission, its brief listen and the
-/// attempt overhead (the same terms attempt_fits() counts for any attempt).
-/// @param short_tx_ms The lead's transmit time as the radio estimates it (short start preamble).
-[[nodiscard]] inline uint32_t short_lead_cost_ms(uint32_t short_tx_ms) {
-  return short_tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS + LOW_POWER_SHORT_LEAD_WINDOW_MS;
-}
 
 /// @brief The attempt budget rule: an attempt starts only if the whole attempt, up to the end of the
 /// last wait it can make, ends inside @p budget_ms.
@@ -171,6 +163,11 @@ struct AttemptPlan {
                                        uint32_t auth_tail_ms, uint32_t budget_ms) {
   return elapsed_ms + gap_ms + tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS + window_ms + auth_tail_ms < budget_ms;
 }
+
+/// @brief Whether the engine's guard applies `exchange_total_budget_ms` to the attempts of @p plan.
+/// Every plan obeys it except one bounded by its attempt count (AttemptPlan::bounded_by_attempts, ADR 0095).
+/// @param plan The plan the exchange runs.
+[[nodiscard]] inline bool obeys_time_budget(const AttemptPlan &plan) { return !plan.bounded_by_attempts; }
 
 /// @brief How many attempts to a silent target fit the budget when none waits a gap, capped at @p cap.
 ///
@@ -216,51 +213,48 @@ struct AttemptPlan {
 /// `exchange_early_response_wait_ms` (a mains device answers within tens of milliseconds or not at
 /// all) and the last listens the whole window, so how many fit is attempts_that_fit(), capped at
 /// EXCHANGE_MAX_ATTEMPTS. A settling read of a low-power device makes LOW_POWER_SETTLING_ATTEMPTS
-/// attempts of LOW_POWER_RESPONSE_WAIT_MS each. The same rule the engine's guard applies at run time,
-/// so a plan never promises an attempt the guard would refuse when the target stays silent. A
-/// challenged attempt costs more (the final reply window), so the guard can still stop a plan early.
+/// attempts of LOW_POWER_RESPONSE_WAIT_MS each, whatever the budget: such a plan is
+/// bounded by its attempt count and runs past the budget when they do not fit
+/// (AttemptPlan::bounded_by_attempts, ADR 0095, amending ADR 0073). For every
+/// other target the plan is the rule the engine's guard applies at run time, so a plan never
+/// promises an attempt the guard would refuse when the target stays silent. A challenged attempt
+/// costs more (the final reply window), so the guard can still stop such a plan early.
 ///
 /// PROGRESS and a COMMAND to a low-power device keep today's shapes: one attempt, and
-/// EXCHANGE_RETRY_COUNT attempts with the default gap, both with the tuned start window.
+/// EXCHANGE_RETRY_COUNT attempts with the default gap, both with the tuned start window; the
+/// command's attempts are bounded by their count too (ADR 0095).
 ///
 /// @param kind           What the request is for.
 /// @param low_power      The target is a low-power receiver (YAML `low_power`, CTRL1 low-power bit).
 /// @param tuning         Reply windows and exchange budget.
 /// @param attempt_tx_ms  One attempt's transmit time as the radio estimates it (long wake-up
-///                       preamble for a low-power target); only a gapless plan uses it.
+///                       preamble for a low-power target); sizes a gapless mains plan's attempt count.
 /// @param last_window_ms Listen time of the last attempt of a mains target, or of every attempt of a
 ///                       gapped plan; 0 for the tuned start window.
-/// @param short_lead_tx_ms Set to lead a settling read of a low-power target with one short attempt
-///                       (the receiver's state is unknown, see WakeBelief::UNKNOWN): that attempt's
-///                       transmit time. The lead is added to the wake-up attempts the budget admits,
-///                       which are the same as without it; when all of them do not fit with the lead,
-///                       the exchange may run past the budget by the lead's cost
-///                       (AttemptPlan::budget_allowance_ms). No lead when only one wake-up attempt
-///                       fits, or for any other read.
+/// @param with_short_lead Set to lead a settling read of a low-power target with one short attempt
+///                       (the receiver's state is unknown, see WakeBelief::UNKNOWN). The lead is added to the wake-up
+///                       attempts, which are the same as without it, and the plan counts it in
+///                       AttemptPlan::max_attempts. No lead for any other read.
 [[nodiscard]] inline AttemptPlan attempt_plan(ReadKind kind, bool low_power, const TuningConfig &tuning,
                                               uint32_t attempt_tx_ms, uint16_t last_window_ms = 0,
-                                              std::optional<uint32_t> short_lead_tx_ms = std::nullopt) {
+                                              bool with_short_lead = false) {
   AttemptPlan plan =
       attempt_plan_for_tries(kind == ReadKind::PROGRESS ? SCHEDULED_POLL_MAX_TRIES : EXCHANGE_RETRY_COUNT,
                              last_window_ms != 0 ? last_window_ms : tuning.exchange_start_response_wait_ms);
-  if (kind == ReadKind::PROGRESS || (kind == ReadKind::COMMAND && low_power))
+  if (kind == ReadKind::PROGRESS)
     return plan;
+  if (kind == ReadKind::COMMAND && low_power) {
+    plan.bounded_by_attempts = true;  // all of them are kept (ADR 0095)
+    return plan;
+  }
   plan.gap_ms = 0;
   if (low_power) {
     plan.window_ms = LOW_POWER_RESPONSE_WAIT_MS;
-    plan.max_attempts = attempts_that_fit(tuning.exchange_total_budget_ms, attempt_tx_ms, plan.window_ms,
-                                          plan.window_ms, LOW_POWER_SETTLING_ATTEMPTS);
-    if (short_lead_tx_ms.has_value() && plan.max_attempts > 1) {
-      const uint32_t lead_cost_ms = short_lead_cost_ms(*short_lead_tx_ms);
-      const uint32_t budget_ms = tuning.exchange_total_budget_ms;
-      // The wake-up attempts start after the lead, so they see the budget less its cost.
-      const bool all_fit_with_lead =
-          budget_ms == 0 || (budget_ms > lead_cost_ms &&
-                             attempts_that_fit(budget_ms - lead_cost_ms, attempt_tx_ms, plan.window_ms, plan.window_ms,
-                                               LOW_POWER_SETTLING_ATTEMPTS) >= plan.max_attempts);
+    plan.max_attempts = LOW_POWER_SETTLING_ATTEMPTS;
+    plan.bounded_by_attempts = true;  // the wake-up attempts all run (ADR 0095)
+    if (with_short_lead) {
       plan.short_lead = true;
       plan.max_attempts++;
-      plan.budget_allowance_ms = all_fit_with_lead ? 0 : lead_cost_ms;
     }
     return plan;
   }

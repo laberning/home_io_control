@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0080 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0095](0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md) · **Recorded:** 2026-11
 
 Amends [ADR 0079](0079-a-cover-is-followed-by-its-execution-state.md) (point 5: which status reads lead a
 low-power cover with the short attempt).

@@ -1526,8 +1526,9 @@ TEST(PairingHelpers, DiscoverConfirm_FramingFollowsPowerClassAndMode) {
     comp.radio_ = &radio;
     memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
     comp.tuning_.pairing_discover_confirm = c.mode;
-    // Tuned to the wake-up burst: with the default (the start preamble) the cap would shorten the
-    // low-power 0x2C, and this case pins the power-class framing itself.
+    // Tuned to the knob's ceiling, LONG_PREAMBLE, the one wake-up value it can take: with the default
+    // (the start preamble) the cap would shorten the low-power 0x2C to a start preamble, and this case
+    // pins the power-class framing itself. The low-power 0x2C's wake-up preamble is capped to it.
     comp.tuning_.pairing_discovery_preamble = LONG_PREAMBLE;
     comp.tuning_.pairing_discovery_preamble_set = true;
 
@@ -1710,7 +1711,7 @@ std::vector<uint16_t> tx_preambles_for(const MockRadio &radio, uint8_t cmd) {
 }
 
 /// Queue a full, successful fast-turnaround pairing conversation with a device that reports itself
-/// low-power in its 0x29, so the power-class rule alone would pick LONG_PREAMBLE for its 0x2C.
+/// low-power in its 0x29, so the power-class rule alone would pick LOW_POWER_WAKE_PREAMBLE for its 0x2C.
 void queue_low_power_device_pairing(MockRadio &radio, const uint8_t hub[NODE_ID_SIZE],
                                     const uint8_t device[NODE_ID_SIZE]) {
   IoFrame discover_resp{};
@@ -1799,7 +1800,7 @@ TEST(PairingHelpers, LowPowerDiscoveryWithoutATunedPreambleUsesTheWakeUpPreamble
   const PairingPreambles sent = pair_low_power_device(comp, radio);
 
   expect_all(sent.discover, comp.tuning_.low_power_wake_preamble, "discovery with the low-power flag");
-  expect_all(sent.confirm, LONG_PREAMBLE, "0x2C to a low-power target keeps the wake-up preamble");
+  expect_all(sent.confirm, LOW_POWER_WAKE_PREAMBLE, "0x2C to a low-power target keeps the wake-up preamble");
 }
 
 TEST(PairingHelpers, DirectedStartFramesUseShorterDiscoveryPreamble) {

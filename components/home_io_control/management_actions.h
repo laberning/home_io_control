@@ -180,7 +180,7 @@ class ManagementActions {
   /// more answer, the report says so explicitly rather than quietly listing a subset.
   ///
   /// Sweeps two passes, low-power first, then always-alive — six attempts total (three channels
-  /// per pass): CH2/CH1/CH3 with `CTRL1 = LOW_POWER | ACK` and `LONG_PREAMBLE` (the header a real
+  /// per pass): CH2/CH1/CH3 with `CTRL1 = LOW_POWER | ACK` and the wake-up preamble (the header a real
   /// VELUX KLR300 uses for its own roll-call, whose low-power shutters answered it), then
   /// CH2/CH1/CH3 with `CTRL1 = 0x00` and the tunable `normal_start_preamble`. Low-power first so a sleeper that answers
   /// late is still collected by the later always-alive windows; in the opposite order a late
@@ -203,7 +203,7 @@ class ManagementActions {
   /// `KeyExtractionResponder::send_reply_()`'s implementation comment).
   ///
   /// This still blocks the caller for the full six-window duration (roughly
-  /// `6 × pairing_discovery_wait_ms` plus three ~213 ms LONG_PREAMBLE transmits, ~12.7 s at the
+  /// `6 × pairing_discovery_wait_ms` plus three ~427 ms wake-up transmits, ~13.3 s at the
   /// 2000 ms default) and therefore trips ESPHome's "operation took a long time" warning on
   /// *every* invocation. That warning uses a per-component ratchet
   /// (`Component::should_warn_of_blocking()`): it starts at 50 ms and, each time it fires, raises

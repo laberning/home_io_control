@@ -43,6 +43,12 @@ static constexpr uint32_t DISCOVERY_SLOT_MS = 41;
 static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes: wake-up burst for a low-power start frame
 static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol default and floor for continuation frames
 
+/// Default for `TuningConfig::low_power_wake_preamble`: the 2W wake-up in front of a directed start frame
+/// to a low-power receiver believed at rest (about 427 ms on air on the SX1262 and LR1121, about 533 ms on the SX1276, whose packet coder frames each preamble byte in 10 bits). A resting VELUX SSL answers the
+/// 1024-byte wake-up (LONG_PREAMBLE) on about half the tries and this one on about three in four
+/// (ADR 0095). The one-way burst keeps LONG_PREAMBLE.
+static constexpr uint16_t LOW_POWER_WAKE_PREAMBLE = 2048;
+
 /// Default for `TuningConfig::cold_broadcast_reply_preamble` — preamble for a *broadcast* reply to
 /// a frame the peer caught via a rotating/hopping listen (currently: only the key-extraction
 /// responder's 0x29, the sole `start=true` frame any device-role builder in this codebase
@@ -148,7 +154,8 @@ static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;
 /// a read.
 static constexpr uint8_t EXCHANGE_MAX_ATTEMPTS = 9;
 /// Attempts a settling read makes to a low-power receiver. Each one leads with the wake-up
-/// preamble (~0.24 s on air), so three already fill the exchange budget.
+/// preamble (~0.43 s on air at the default), so three take longer than the exchange budget and the
+/// plan is bounded by its attempt count instead (ADR 0095).
 static constexpr uint8_t LOW_POWER_SETTLING_ATTEMPTS = 3;
 /// How long the short lead attempt of a read to a low-power receiver in an unknown state listens after
 /// the end of its own transmission (decisions::WakeBelief::UNKNOWN, ADR 0079).
@@ -168,8 +175,9 @@ static constexpr uint16_t LOW_POWER_SHORT_LEAD_WINDOW_MS = 100;
 /// 647 ms (a third-party gateway's pairing), 819 ms and 1639 ms (an RS100 io motor's key exchange)
 /// and 4375 ms (a stalled key extraction). 550 ms sits about 1.5 times above the 95th percentile and
 /// below every slower sample, so one attempt's window covers a reply that arrives late without
-/// waiting for the outliers. Three such attempts with their wake-up preambles still fit
-/// EXCHANGE_TOTAL_BUDGET_MS when nothing is waited between them.
+/// waiting for the outliers. Three such attempts behind the default LOW_POWER_WAKE_PREAMBLE take
+/// about 3.2 s, so a low-power plan runs past EXCHANGE_TOTAL_BUDGET_MS
+/// (decisions::AttemptPlan::bounded_by_attempts, ADR 0095).
 static constexpr uint16_t LOW_POWER_RESPONSE_WAIT_MS = 550;
 /// How long an attempt listens for a mains device's reply when another attempt follows it, after
 /// the end of its own transmission.
@@ -288,7 +296,9 @@ static constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS = 2000;
 /// budget. Counting the window and the final wait keeps a slow listen from running an exchange past
 /// the ceiling; counting the transmission keeps a radio with a long wake-up from starting an
 /// attempt it cannot finish in time. At the default 400 ms window three attempts with the retry gap
-/// still fit (~2.3 s); an exchange the target challenges does not always (ADR 0073). A request to a
+/// to a mains device still fit (~2.3 s); an exchange the target challenges does not always (ADR 0073).
+/// A low-power target keeps its three wake-up attempts whatever they cost: its plan is bounded by
+/// their count, not by this budget (ADR 0095). A request to a
 /// mains device that makes several attempts with no gap listens EXCHANGE_EARLY_RESPONSE_WAIT_MS on
 /// all but the last and fits nine (decisions::attempt_plan(), ADR 0075).
 static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;

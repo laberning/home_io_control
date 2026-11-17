@@ -1085,8 +1085,10 @@ class IOHomeControlComponent : public Component,
   void queue_due_periodic_polls_();
   /// Read every device with `linked_remotes` once, when a burst of linked-remote activity has been
   /// followed by `remote_activity_catchup_poll_ms` without an exchange (ADR 0080). Each read is a
-  /// one-off status read marked state-unknown (StatusPollPolicy::mark_state_unknown()); it opens no
-  /// follow-up window of its own, an answer that says moving does.
+  /// one-off status read marked state-unknown (StatusPollPolicy::start_catchup_read()); it opens no
+  /// follow-up window of its own, an answer that says moving does. A read that gets no answer is read
+  /// once more one catch-up delay later (StatusPollPolicy::take_due_catchup_retries(), ADR 0095); a
+  /// second silence ends it.
   void queue_due_catchup_reads_();
 
   /// @brief What exchange_and_record_() found.

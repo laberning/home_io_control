@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0073 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0095](0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md) · **Recorded:** 2026-11
 
 Amended by [ADR 0074](0074-settling-reads-take-the-attempt-plan-and-progress-reads-stay-single-tries.md)
 (which reads take the plan: settling reads do, progress reads stay single tries) and by

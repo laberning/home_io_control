@@ -541,7 +541,14 @@ bool IOHomeControlComponent::request_device_status(const std::string &device_id)
   const bool scheduler_managed = this->poll_policy_.is_tracking_active(device_id, millis());
   const uint32_t retry_after_fail_ms = scheduler_managed ? STATUS_RETRY_AFTER_FAIL_MS : 0;
   const decisions::AttemptRequest attempts = this->cover_poll_attempts_(device_id, scheduler_managed, state_unknown);
-  return this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, attempts);
+  const bool answered = this->execute_request_and_update_(device_id, request, false, retry_after_fail_ms, attempts);
+  // The mark is set only for a catch-up read (ADR 0080), whose miss is retried once (ADR 0095).
+  if (state_unknown && answered) {
+    this->poll_policy_.on_catchup_read_answered(device_id);
+  } else if (state_unknown) {
+    this->poll_policy_.on_catchup_read_unanswered(device_id, millis(), this->tuning_.remote_activity_catchup_poll_ms);
+  }
+  return answered;
 }
 
 namespace {

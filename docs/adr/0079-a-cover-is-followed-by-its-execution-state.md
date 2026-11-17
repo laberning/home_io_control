@@ -2,13 +2,14 @@
 
 <!-- doxygen-label: adr0079 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0095](0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md) · **Recorded:** 2026-11
 
 Amended by [ADR 0080](0080-linked-remote-activity-is-followed-by-an-opt-in-catch-up-read.md) (a catch-up read after
 linked-remote activity treats a low-power cover's state as unknown even after a recent report) and by
 [ADR 0085](0085-a-waiting-cover-is-shown-from-its-status-and-read-without-back-off.md) (points 2 and 4: a waiting
 state in a command acknowledgement sets no Active Issue, no frozen-count back-off while waiting, state 3 in a
-status reply confirmed).
+status reply confirmed) and by [ADR 0095](0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md) (point 6: the short attempt and the wake-up attempts after it are
+bounded by their count, not by the budget).
 
 Amends [ADR 0061](0061-a-moving-status-report-opens-the-follow-up-window.md) (the window's length),
 [ADR 0076](0076-a-moving-cover-is-read-once-at-its-predicted-end-of-travel.md) (what follows a frozen

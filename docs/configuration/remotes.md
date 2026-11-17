@@ -110,8 +110,8 @@ traffic to the device. Low-power devices make it likelier, because each wake-up 
 [issue #209](https://github.com/laberning/home_io_control/issues/209). On a cover,
 `status_refresh_interval` limits how long the old state can stay: see
 [Refreshing the status at rest](cover.md#refreshing-the-status-at-rest). Two tuning parameters
-act on the press itself: `remote_activity_catchup_poll_ms` reads every linked device once after
-the hub's polls that followed a press, and `remote_activity_poll_delay_ms` delays those polls; see
+act on the press itself: `remote_activity_catchup_poll_ms` reads every linked device after the
+hub's polls that followed a press (a device that does not answer is read once more), and `remote_activity_poll_delay_ms` delays those polls; see
 [Polls after a linked-remote press](tuning.md#polls-after-a-linked-remote-press--in-detail).
 
 ### What the decoded log tells you

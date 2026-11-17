@@ -2,10 +2,12 @@
 
 <!-- doxygen-label: adr0089 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0095](0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md) · **Recorded:** 2026-11
 
 Amends [ADR 0074](0074-settling-reads-take-the-attempt-plan-and-progress-reads-stay-single-tries.md) (the point
 "Callers ask the engine for the plan").
+Amended by [ADR 0095](0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md) (point 3: the short lead no longer has a budget allowance; a low-power wake-up
+plan is bounded by its attempt count instead).
 
 ## Context
 

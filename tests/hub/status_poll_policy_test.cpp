@@ -1117,3 +1117,76 @@ TEST(StatusPollPolicy, HeardActivityOrAReportDropsTheStateUnknownMark) {
   policy.clear("DEV");  // a report that ends the tracking
   EXPECT_FALSE(policy.take_state_unknown("DEV"));
 }
+
+// ============================================================================
+// Retry of an unanswered catch-up read (ADR 0095)
+// ============================================================================
+
+TEST(StatusPollPolicy, AnUnansweredCatchupReadArmsOneRetryTheDelayLater) {
+  StatusPollPolicy policy;
+  policy.start_catchup_read("DEV");
+  ASSERT_TRUE(policy.take_state_unknown("DEV"));
+  policy.on_catchup_read_unanswered("DEV", T0, CATCHUP_DELAY_MS);
+
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + CATCHUP_DELAY_MS - 1).empty());
+  EXPECT_EQ(policy.take_due_catchup_retries(T0 + CATCHUP_DELAY_MS), std::vector<std::string>{"DEV"});
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + 10 * CATCHUP_DELAY_MS).empty()) << "each retry is returned once";
+  EXPECT_TRUE(policy.take_state_unknown("DEV")) << "the retry is a catch-up read like the first";
+}
+
+TEST(StatusPollPolicy, TheRetrysOwnMissArmsNoFurtherRetry) {
+  StatusPollPolicy policy;
+  policy.start_catchup_read("DEV");
+  policy.on_catchup_read_unanswered("DEV", T0, CATCHUP_DELAY_MS);
+  ASSERT_EQ(policy.take_due_catchup_retries(T0 + CATCHUP_DELAY_MS).size(), 1u);
+
+  policy.on_catchup_read_unanswered("DEV", T0 + CATCHUP_DELAY_MS, CATCHUP_DELAY_MS);
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + 10 * CATCHUP_DELAY_MS).empty());
+
+  // The next catch-up starts afresh: its first miss arms a retry again.
+  policy.start_catchup_read("DEV");
+  policy.on_catchup_read_unanswered("DEV", T0 + 20 * CATCHUP_DELAY_MS, CATCHUP_DELAY_MS);
+  EXPECT_EQ(policy.take_due_catchup_retries(T0 + 21 * CATCHUP_DELAY_MS).size(), 1u);
+}
+
+TEST(StatusPollPolicy, ARetryThatIsAnsweredLeavesNothingToRetry) {
+  StatusPollPolicy policy;
+  policy.on_catchup_read_unanswered("DEV", T0, CATCHUP_DELAY_MS);
+  ASSERT_EQ(policy.take_due_catchup_retries(T0 + CATCHUP_DELAY_MS).size(), 1u);
+  policy.on_catchup_read_answered("DEV");
+
+  // Had the answered retry stayed marked, this miss would count as the retry's own and arm nothing.
+  policy.on_catchup_read_unanswered("DEV", T0 + 5 * CATCHUP_DELAY_MS, CATCHUP_DELAY_MS);
+  EXPECT_EQ(policy.take_due_catchup_retries(T0 + 6 * CATCHUP_DELAY_MS).size(), 1u);
+}
+
+TEST(StatusPollPolicy, NoRetryIsArmedWhileTheCatchupIsSwitchedOff) {
+  StatusPollPolicy policy;
+  policy.on_catchup_read_unanswered("DEV", T0, 0);
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + 10 * CATCHUP_DELAY_MS).empty());
+}
+
+TEST(StatusPollPolicy, ANewCatchupReadOrNewsOfTheDeviceDropsAPendingRetry) {
+  StatusPollPolicy policy;
+  policy.on_catchup_read_unanswered("DEV", T0, CATCHUP_DELAY_MS);
+  policy.start_catchup_read("DEV");
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + 10 * CATCHUP_DELAY_MS).empty()) << "the new read replaces it";
+
+  policy.on_catchup_read_unanswered("DEV", T0, CATCHUP_DELAY_MS);
+  policy.begin_tracking("DEV", DEFAULT_SETTLE_POLL_DELAY_MS, T0);  // a command or a heard press
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + 10 * CATCHUP_DELAY_MS).empty());
+
+  policy.on_catchup_read_unanswered("DEV", T0, CATCHUP_DELAY_MS);
+  policy.clear("DEV");  // a report that ends the tracking
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + 10 * CATCHUP_DELAY_MS).empty());
+}
+
+TEST(StatusPollPolicy, ACatchupRetryDueTimeIsWrapSafe) {
+  StatusPollPolicy policy;
+  const uint32_t due = 5;  // CATCHUP_DELAY_MS after a miss just before the rollover
+  const uint32_t miss = due - CATCHUP_DELAY_MS;
+  policy.on_catchup_read_unanswered("DEV", miss, CATCHUP_DELAY_MS);
+  EXPECT_TRUE(policy.take_due_catchup_retries(UINT32_MAX).empty());
+  EXPECT_TRUE(policy.take_due_catchup_retries(due - 1).empty());
+  EXPECT_EQ(policy.take_due_catchup_retries(due).size(), 1u);
+}

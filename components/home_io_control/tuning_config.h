@@ -328,8 +328,8 @@ struct TuningConfig {
   bool low_power_wake_belief{true};  ///< Order a `low_power` device's start-frame tries by its wake belief (short
                                      ///< preamble first when it is believed awake). False restores the fixed
                                      ///< wake-up preamble on every try. A diagnostic off-switch, on by default.
-  uint16_t low_power_wake_preamble{LONG_PREAMBLE};  ///< Wake-up preamble (bytes) on a directed start frame to a
-                                                    ///< `low_power` target believed at rest.
+  uint16_t low_power_wake_preamble{LOW_POWER_WAKE_PREAMBLE};  ///< Wake-up preamble (bytes) on a directed start frame to
+                                                              ///< a `low_power` target believed at rest (ADR 0095).
 
   // --- Exchange response windows ---
   // How long the hub listens for a device's reply. Tunable because the right value is a property
@@ -347,7 +347,9 @@ struct TuningConfig {
   uint16_t exchange_early_response_wait_ms{EXCHANGE_EARLY_RESPONSE_WAIT_MS};
   uint16_t exchange_response_wait_ms{
       RESPONSE_WAIT_MS};  ///< Reply window for continuation frames and the post-auth final response.
-  uint16_t exchange_total_budget_ms{EXCHANGE_TOTAL_BUDGET_MS};  ///< Ceiling on one whole exchange, retries included.
+  uint16_t exchange_total_budget_ms{
+      EXCHANGE_TOTAL_BUDGET_MS};  ///< Ceiling on one whole exchange, retries included; a low-power target's plan may
+                                  ///< run past it to keep its three wake-up attempts (ADR 0095).
 
   // --- Polls after a linked-remote press (ADR 0080) ---
   // The radio is deaf while the hub polls, so a press that starts during one of its polls is missed.
@@ -355,7 +357,8 @@ struct TuningConfig {
       REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS};    ///< Delay from a linked-remote press (not a STOP) to the
                                                 ///< first status poll of its devices.
   uint32_t remote_activity_catchup_poll_ms{0};  ///< Read every linked device this long after the last exchange
-                                                ///< of a burst of linked-remote activity; 0 = off.
+                                                ///< of a burst of linked-remote activity; 0 = off. A read that
+                                                ///< gets no answer is retried once after the same delay (ADR 0095).
 
   // --- Pairing protocol ---
   std::vector<DiscoveryCommand> pairing_discovery_commands{

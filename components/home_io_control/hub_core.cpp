@@ -582,7 +582,13 @@ void IOHomeControlComponent::listen_for_key_extraction_peer_() {
 }
 
 void IOHomeControlComponent::queue_due_catchup_reads_() {
-  if (!this->poll_policy_.take_due_catchup(millis()))
+  const uint32_t now = millis();
+  // A read the device left unanswered is retried once, one catch-up delay later (ADR 0095).
+  for (const std::string &device_id : this->poll_policy_.take_due_catchup_retries(now)) {
+    ESP_LOGD(TAG, "Device %s: catch-up read unanswered, reading it once more", device_id.c_str());
+    this->queue_request_device_status(device_id);
+  }
+  if (!this->poll_policy_.take_due_catchup(now))
     return;
   const std::vector<std::string> devices = this->registry_.all_linked_devices();
   ESP_LOGD(TAG, "No exchange for %" PRIu32 " ms after linked-remote activity: reading %zu linked device(s)",
@@ -591,7 +597,7 @@ void IOHomeControlComponent::queue_due_catchup_reads_() {
   // so the read treats its state as unknown and leads with the short attempt a moving receiver hears;
   // an answer that says moving opens the follow-up window by itself (follow_moving_report()).
   for (const std::string &device_id : devices) {
-    this->poll_policy_.mark_state_unknown(device_id);
+    this->poll_policy_.start_catchup_read(device_id);
     this->queue_request_device_status(device_id);
   }
 }

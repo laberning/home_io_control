@@ -107,7 +107,9 @@ class ExchangeEngine {
   ///        plans every exchange itself, and an attempt count outside [1, EXCHANGE_MAX_ATTEMPTS] is
   ///        never run because the plan builders (decisions::attempt_plan_for_tries(),
   ///        decisions::attempt_plan()) never give one. An attempt that cannot finish inside
-  ///        `exchange_total_budget_ms` is not started whatever the plan says (try_fits_budget_()).
+  ///        `exchange_total_budget_ms` is not started whatever the plan says (try_fits_budget_()),
+  ///        except in a plan bounded by its attempt count: a wake-up exchange to a low-power target
+  ///        runs all its attempts (decisions::obeys_time_budget(), ADR 0095).
   ///        The attempt plan and the preamble choice are made once, here, from the options.
   /// @return What the device actually told us — see @ref ExchangeOutcome.
   ExchangeOutcome send_and_receive(const IoFrame &request, IoFrame &response, uint32_t freq,
@@ -117,8 +119,8 @@ class ExchangeEngine {
   struct AttemptRun {
     decisions::AttemptPlan plan;  ///< Number of tries, gap before each further try and the listen windows.
     /// Transmit time of one try (tx_time_ms()). When set, a try after the first starts only if it
-    /// fits `exchange_total_budget_ms` plus the plan's allowance (the rule send_and_receive()
-    /// applies); empty runs the plan's tries whatever they cost.
+    /// fits `exchange_total_budget_ms` (the rule send_and_receive() applies; a plan bounded by its
+    /// attempt count skips it, decisions::obeys_time_budget()); empty runs the plan's tries whatever they cost.
     std::optional<uint32_t> budgeted_tx_ms;
   };
 
@@ -153,11 +155,10 @@ class ExchangeEngine {
   /// @param freq           RF channel the request goes out on (Hz).
   /// @param preamble       Preamble the request is sent with, in bytes.
   /// @param last_window_ms Listen time of the last attempt, or 0 for `exchange_start_response_wait_ms`.
-  /// @param short_lead_tx_ms Transmit time of a short lead attempt when the plan leads with one
-  ///                       (decisions::attempt_plan()); empty for none.
+  /// @param with_short_lead True when the plan leads with a short attempt (decisions::attempt_plan()).
   [[nodiscard]] decisions::AttemptPlan plan_attempts(decisions::ReadKind kind, bool low_power, const IoFrame &request,
                                                      uint32_t freq, uint16_t preamble, uint16_t last_window_ms = 0,
-                                                     std::optional<uint32_t> short_lead_tx_ms = std::nullopt) const;
+                                                     bool with_short_lead = false) const;
 
   /// Authenticate an inbound device command via 0x3C challenge / 0x3D HMAC.
   /// @param request The received inbound frame (e.g., CMD_STATUS_UPDATE).
@@ -313,8 +314,9 @@ class ExchangeEngine {
   bool transmit_frame(const IoFrame &frame, uint32_t freq, uint16_t preamble);
 
   /// Preamble length for an outbound request frame. A non-start frame keeps the chip's short
-  /// response preamble. A start frame gets `LONG_PREAMBLE` only when it carries `CTRL1_LOW_POWER`
-  /// (its target is a duty-cycled receiver that must be woken); every other start frame gets the
+  /// response preamble. A start frame gets the tunable wake-up preamble `low_power_wake_preamble` only
+  /// when it carries `CTRL1_LOW_POWER` (its target is a duty-cycled receiver that must be woken); every
+  /// other start frame gets the
   /// runtime-tunable `normal_start_preamble`. For a directed frame, the target's per-device
   /// `low_power` property sets the bit; for the roll-call broadcast, the pass being sent sets it (see
   /// `ManagementActions::scan_paired_devices()`).
@@ -403,7 +405,7 @@ class ExchangeEngine {
   /// belief (decisions::wake_belief(), gated by the `low_power_wake_belief` tuning switch) and the
   /// re-send of an unconfirmed CMD_EXECUTE (decisions::retry_after_unconfirmed_accept_is_safe()), so
   /// each decision lives in one place. With no provider installed every low-power exchange keeps
-  /// `LONG_PREAMBLE` on every try.
+  /// the wake-up preamble (`low_power_wake_preamble`) on every try.
   /// @param provider Evidence lookup, or an empty function to detach.
   void set_target_evidence_provider(TargetEvidenceProvider provider) {
     this->target_evidence_provider_ = std::move(provider);
@@ -582,17 +584,13 @@ class ExchangeEngine {
   /// @param window_ms    How long the try then listens for the first reply.
   /// @param auth_tail_ms What a challenged try adds (final_reply_tail_ms_()) once the target has
   ///                     challenged in this exchange, otherwise 0.
-  /// @param allowance_ms What the plan lets the exchange run past the budget
-  ///                     (decisions::AttemptPlan::budget_allowance_ms), 0 for none.
   [[nodiscard]] bool try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms, uint32_t window_ms,
-                                      uint32_t auth_tail_ms, uint32_t allowance_ms = 0) const;
+                                      uint32_t auth_tail_ms) const;
 
   /// What the budget rule needs of one try; see begin_try_().
   struct TryBudget {
     uint32_t tx_ms{0};         ///< The try's transmit time (tx_time_ms()).
     uint32_t auth_tail_ms{0};  ///< What a challenged try adds (final_reply_tail_ms_()), 0 before a challenge.
-    uint32_t allowance_ms{0};  ///< Time the exchange may run past the budget
-                               ///< (decisions::AttemptPlan::budget_allowance_ms).
   };
 
   /// The step before a try, shared by send_and_receive() and run_attempts(): for a try after the
@@ -692,18 +690,18 @@ class ExchangeEngine {
                                                     bool state_unknown = false) const;
 
   /// The attempt plan an exchange runs on, planned from the options' request: a cap on tries from
-  /// their count, else the plan of their read kind with the transmit time this engine estimates for
-  /// the request (the radio's air time for its start preamble, request_preamble_for()). The one place an
+  /// their count (to a low-power target bounded by that count,
+  /// decisions::AttemptPlan::bounded_by_attempts), else the plan of their read kind with the transmit time this engine
+  /// estimates for the request (the radio's air time for its start preamble, request_preamble_for()). The one place an
   /// exchange is planned, so every plan agrees with the guard that runs each attempt
   /// (try_fits_budget_()).
   ///
   /// A settling read of a low-power receiver whose state the hub has no news of
   /// (decisions::WakeBelief::UNKNOWN, a status read only) leads with one short attempt before the
-  /// wake-up attempts, and when all of them do not fit the exchange budget with it, may run past the
-  /// budget by that attempt's cost (decisions::AttemptPlan::short_lead, budget_allowance_ms); the
-  /// guard honours the same allowance. A read with a fixed preamble, a single-try read and a command
-  /// have no lead. The plan carries the request's state_unknown mark so the exchange resolves the
-  /// same belief when it sends.
+  /// wake-up attempts, and the plan, bounded by its attempt count, runs the lead and all of them
+  /// (decisions::AttemptPlan::short_lead, bounded_by_attempts). A read with a fixed preamble, a single-try read and a
+  /// command have no lead. The plan carries the request's state_unknown mark so the exchange resolves the same belief
+  /// when it sends.
   /// @param request       Frame being sent.
   /// @param freq          RF channel it goes out on (Hz).
   /// @param options       What the caller asked of the exchange.

@@ -253,34 +253,35 @@ decisions::AttemptPlan ExchangeEngine::plan_for_(const IoFrame &request, uint32_
     // EXCHANGE_RETRY_COUNT: a caller that wants more attempts passes a read kind.
     const uint16_t window_ms =
         is_start(request) ? this->tuning_->exchange_start_response_wait_ms : this->tuning_->exchange_response_wait_ms;
-    return decisions::attempt_plan_for_tries(attempts.max_tries, window_ms);
+    decisions::AttemptPlan counted = decisions::attempt_plan_for_tries(attempts.max_tries, window_ms);
+    // A low-power target keeps the tries the caller named behind the wake-up (ADR 0095).
+    counted.bounded_by_attempts = is_start(request) && (request.ctrl1 & CTRL1_LOW_POWER) != 0;
+    return counted;
   }
   const bool low_power = (request.ctrl1 & CTRL1_LOW_POWER) != 0;
   // A settling read of a low-power receiver the hub has no news of leads with one short attempt
   // (WakeBelief::UNKNOWN). Every other read, and any read whose preamble the caller fixed, has none.
-  std::optional<uint32_t> short_lead_tx_ms;
-  if (attempts.kind == decisions::ReadKind::SETTLING && low_power && preamble_plan.use == WakeBeliefUse::APPLIED &&
-      preamble_plan.belief == decisions::WakeBelief::UNKNOWN)
-    short_lead_tx_ms = this->tx_time_ms(request, freq, preamble_plan.short_preamble);
-  decisions::AttemptPlan plan = this->plan_attempts(attempts.kind, low_power, request, freq,
-                                                    this->request_preamble_for(request), 0, short_lead_tx_ms);
+  const bool short_lead = attempts.kind == decisions::ReadKind::SETTLING && low_power &&
+                          preamble_plan.use == WakeBeliefUse::APPLIED &&
+                          preamble_plan.belief == decisions::WakeBelief::UNKNOWN;
+  decisions::AttemptPlan plan =
+      this->plan_attempts(attempts.kind, low_power, request, freq, this->request_preamble_for(request), 0, short_lead);
   plan.state_unknown = attempts.state_unknown;
   return plan;
 }
 
 decisions::AttemptPlan ExchangeEngine::plan_attempts(decisions::ReadKind kind, bool low_power, const IoFrame &request,
                                                      uint32_t freq, uint16_t preamble, uint16_t last_window_ms,
-                                                     std::optional<uint32_t> short_lead_tx_ms) const {
+                                                     bool with_short_lead) const {
   return decisions::attempt_plan(kind, low_power, *this->tuning_, this->tx_time_ms(request, freq, preamble),
-                                 last_window_ms, short_lead_tx_ms);
+                                 last_window_ms, with_short_lead);
 }
 
 bool ExchangeEngine::begin_try_(uint8_t tries_started, uint32_t elapsed_ms, uint32_t gap_ms, uint32_t window_ms,
                                 const std::optional<TryBudget> &budget) {
   if (tries_started == 0)
     return true;
-  if (budget.has_value() &&
-      !this->try_fits_budget_(elapsed_ms, gap_ms, budget->tx_ms, window_ms, budget->auth_tail_ms, budget->allowance_ms))
+  if (budget.has_value() && !this->try_fits_budget_(elapsed_ms, gap_ms, budget->tx_ms, window_ms, budget->auth_tail_ms))
     return false;
   App.feed_wdt();
   delay(gap_ms);  // 0 for a run without a gap: a no-op that still yields
@@ -302,8 +303,8 @@ AttemptRunResult ExchangeEngine::run_attempts(const AttemptRun &run, const TryHa
   for (uint8_t tries = 0; tries < plan.max_attempts; tries++) {
     const uint16_t window_ms = plan.window_for_attempt(tries + 1, plan.max_attempts);
     std::optional<TryBudget> budget;
-    if (run.budgeted_tx_ms.has_value() && tries > 0)
-      budget = TryBudget{*run.budgeted_tx_ms, 0, plan.budget_allowance_ms};
+    if (run.budgeted_tx_ms.has_value() && tries > 0 && decisions::obeys_time_budget(plan))
+      budget = TryBudget{*run.budgeted_tx_ms, 0};
     if (!this->begin_try_(tries, millis() - begin_ms, plan.gap_ms, window_ms, budget))
       return AttemptRunResult::BUDGET_EXHAUSTED;
     switch (on_try(static_cast<uint8_t>(tries + 1), window_ms)) {
@@ -319,9 +320,9 @@ AttemptRunResult ExchangeEngine::run_attempts(const AttemptRun &run, const TryHa
 }
 
 bool ExchangeEngine::try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms, uint32_t window_ms,
-                                      uint32_t auth_tail_ms, uint32_t allowance_ms) const {
+                                      uint32_t auth_tail_ms) const {
   return decisions::attempt_fits(elapsed_ms, gap_ms, tx_ms, window_ms, auth_tail_ms,
-                                 this->tuning_->exchange_total_budget_ms + allowance_ms);
+                                 this->tuning_->exchange_total_budget_ms);
 }
 
 // ============================================================================
@@ -483,9 +484,9 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     // the final-reply window. See EXCHANGE_TOTAL_BUDGET_MS -- this is what keeps a failing command
     // from blocking the ESPHome loop for the full attempts x (transmission + window) product.
     std::optional<TryBudget> budget;
-    if (tries > 0) {
+    if (tries > 0 && decisions::obeys_time_budget(plan)) {
       budget = TryBudget{this->tx_time_ms(request, freq, this->try_preamble_(plan, preamble_plan, context.try_index)),
-                         auth_tail_ms, plan.budget_allowance_ms};
+                         auth_tail_ms};
     }
     const uint32_t gap_ms = std::max<uint32_t>(plan.gap_ms, follow_up_gap_ms);
     if (!this->begin_try_(tries, millis() - exchange_begin_ms, gap_ms, window_ms, budget)) {

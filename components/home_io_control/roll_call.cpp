@@ -173,8 +173,8 @@ std::string known_responder_hints(const ScanResponder &responder, const IoDevice
                "sleeps\n";
     } else if (power_save == POWER_SAVE_ALWAYS_ALIVE && registered.low_power) {
       hints += "    hint: reports power_save=" + std::string(power_save_mode_name(power_save)) +
-               " but its YAML sets low_power: true; remove it, the " + std::to_string(LONG_PREAMBLE) +
-               "-byte wake-up preamble can stop an always-alive receiver answering\n";
+               " but its YAML sets low_power: true; remove it, the long wake-up preamble can stop an "
+               "always-alive receiver answering\n";
     }
   }
   // The exchanges with this device use its YAML key (or the hub's). If it answered a roll-call built

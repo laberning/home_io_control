@@ -37,7 +37,7 @@ uint32_t StatusPollPolicy::get_interval(const std::string &device_id) const {
 }
 
 void StatusPollPolicy::begin_tracking(const std::string &device_id, uint32_t initial_delay_ms, uint32_t now) {
-  state_unknown_.erase(device_id);
+  drop_catchup_state_(device_id);
   PollTracking &t = tracking_[device_id];
   t.poll_deadline = now + MAX_TRACKED_STATUS_POLL_WINDOW_MS;
   t.next_update = (initial_delay_ms == 0) ? 0 : (now + initial_delay_ms);
@@ -50,7 +50,7 @@ void StatusPollPolicy::begin_tracking(const std::string &device_id, uint32_t ini
 }
 
 void StatusPollPolicy::clear(const std::string &device_id) {
-  state_unknown_.erase(device_id);
+  drop_catchup_state_(device_id);
   auto it = tracking_.find(device_id);
   if (it == tracking_.end())
     return;
@@ -398,6 +398,42 @@ bool StatusPollPolicy::take_due_catchup(uint32_t now) {
   catchup_burst_open_ = false;
   catchup_due_ms_ = 0;
   return true;
+}
+
+void StatusPollPolicy::drop_catchup_state_(const std::string &device_id) {
+  state_unknown_.erase(device_id);
+  catchup_retry_due_ms_.erase(device_id);
+  catchup_retrying_.erase(device_id);
+}
+
+void StatusPollPolicy::start_catchup_read(const std::string &device_id) {
+  drop_catchup_state_(device_id);
+  mark_state_unknown(device_id);
+}
+
+void StatusPollPolicy::on_catchup_read_unanswered(const std::string &device_id, uint32_t now, uint32_t delay_ms) {
+  // The retry's own miss ends the catch-up for this device.
+  if (catchup_retrying_.erase(device_id) != 0 || delay_ms == 0)
+    return;
+  catchup_retry_due_ms_[device_id] = stamp(now + delay_ms);
+}
+
+void StatusPollPolicy::on_catchup_read_answered(const std::string &device_id) { catchup_retrying_.erase(device_id); }
+
+std::vector<std::string> StatusPollPolicy::take_due_catchup_retries(uint32_t now) {
+  std::vector<std::string> due;
+  for (auto it = catchup_retry_due_ms_.begin(); it != catchup_retry_due_ms_.end();) {
+    // Wrap-safe: before the due time `now - due` is a huge unsigned value (a negative distance).
+    if (now - it->second > INT32_MAX) {
+      ++it;
+      continue;
+    }
+    due.push_back(it->first);
+    catchup_retrying_.insert(it->first);
+    mark_state_unknown(it->first);
+    it = catchup_retry_due_ms_.erase(it);
+  }
+  return due;
 }
 
 void StatusPollPolicy::note_ended_(const std::string &device_id) {

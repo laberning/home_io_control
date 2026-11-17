@@ -270,8 +270,8 @@ Unknown:
   roll-call. Use Discover & Pair for that, and the scan to check on devices you already have.
   [`pairing_discovery_commands`](configuration/tuning.md#pairing_discovery_commands) explains why
   0x2A is deliberately not a discovery option.
-- **A scan puts roughly 0.7 seconds of traffic on air**, dominated by the low-power pass's long
-  wake-up preambles. It is a manually triggered action — do not call it from a tight automation
+- **A scan puts roughly 1.3 seconds of traffic on air**, dominated by the low-power pass's long
+  wake-up preambles ([`low_power_wake_preamble`](configuration/tuning.md#low_power_wake_preamble)). It is a manually triggered action — do not call it from a tight automation
   loop.
 
 ### Notes on the Scan Paired Devices button

@@ -149,9 +149,9 @@ your device may differ.
 | `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
 | `key_extraction_type_word` | both | `0x0080` | `0x0000`–`0xFFFF` | Device type the key-extraction responder's discovery reply (0x29) claims, as the reply's two type bytes. Applies to an open search only. See below. |
 | `key_extraction_multi_info` | both | `0xDD` | `0x00`–`0xFF` | The key-extraction responder's discovery reply (0x29) flags byte: reply speed and whether the device sleeps. See below. |
-| `normal_start_preamble` | both | `48` on SX1262/LR1121, `32` on SX1276 | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices lead with `LONG_PREAMBLE` unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
-| `low_power_wake_preamble` | both | `1024` | 1024–4096 B | Wake-up preamble on a directed start frame to a `low_power:` device believed at rest. See below. |
-| `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the 1024-byte wake-up preamble. See below. |
+| `normal_start_preamble` | both | `48` on SX1262/LR1121, `32` on SX1276 | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the long wake-up burst. Low-power devices lead with [`low_power_wake_preamble`](#low_power_wake_preamble) unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
+| `low_power_wake_preamble` | both | `2048` | 1024–4096 B | Wake-up preamble on a directed start frame to a `low_power:` device believed at rest. See below. |
+| `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the wake-up preamble. See below. |
 | `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk checks on the transmit channel before the first frame of an exchange is sent without one. |
 | `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI on the transmit channel below which it counts as free. |
 | `remote_activity_poll_delay_ms` | both | `2000` | 0–120000 ms | Delay from a linked-remote press (not a STOP) to the first status poll of its devices. See below. |
@@ -278,14 +278,20 @@ effect as that value.
 Wall-clock ceiling on one whole exchange, including retries. `exchange_start_response_wait_ms` and
 `exchange_response_wait_ms` set how long each try waits; this caps how long *all* of them together
 may run, so a try only starts if it can finish inside the budget. The time already spent, the gap
-before the try, the try's own transmission (about 220 ms with a 1024-byte wake-up preamble,
+before the try, the try's own transmission (about 430 ms with the default 2048-byte wake-up preamble,
 [ADR 0044](../adr/0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)), the
 window the try then listens (about 10 ms of channel check and hop around each transmit are counted too),
 and, when the device has already challenged in this exchange, the wait for its final reply and the
 answer to its challenge must together stay below it ([ADR 0073](../adr/0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md),
 [ADR 0075](../adr/0075-commands-and-the-key-pull-take-the-attempt-plan-and-early-attempts-listen-short.md)).
-That last part matters for a low-power device that challenges: two tries use the default budget, so
-a third is not started.
+That last part matters for a mains device that challenges.
+
+A `low_power:` target is the exception: its three tries behind the wake-up preamble always run, whatever
+a busy channel or timing jitter added to the earlier ones, so its exchange is bounded by that count and
+not by the budget (about 3.2 s at the default
+[`low_power_wake_preamble`](#low_power_wake_preamble), a little more on a busy channel, and up to about
+4.6 s when the device challenges every try and never sends its final reply)
+([ADR 0095](../adr/0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md)).
 
 The budget also sets how often a status read that decides where a cover ended up is repeated: the
 poll after a `stop`, the poll that confirms a cover that stopped short of its target, the polls
@@ -422,9 +428,9 @@ home_io_control:
 
 The preamble in front of a directed *start* frame (`EXECUTE`, status poll, `GET_NAME`, rename,
 identify, probe) whose target is **not** declared `low_power:`. An always-listening receiver does
-not need the ~213 ms 1024-byte wake-up burst, and some receivers never lock onto one that long —
+not need the long wake-up burst (~213 ms at 1024 bytes), and some receivers never lock onto one that long —
 so a normal start frame gets this shorter preamble, matching what real hubs send to an
-always-alive device. A device declared `low_power: true` keeps `LONG_PREAMBLE` on its start frames
+always-alive device. A device declared `low_power: true` keeps the wake-up preamble ([`low_power_wake_preamble`](#low_power_wake_preamble)) on its start frames
 unless it is believed awake — see [`low_power_wake_belief`](#low_power_wake_belief).
 
 **The default depends on your radio.** An SX1262 or LR1121 board starts at 48 bytes, an SX1276
@@ -450,15 +456,26 @@ live tuning knob, bisecting the right value needs no rebuild.
 #### `low_power_wake_preamble`
 
 The wake-up preamble, in bytes, on a directed start frame to a `low_power:` device believed at rest.
-The default is 1024 (~213 ms on air). A resting VELUX SSL solar roller shutter answered it on only
-about half the tries, which suggests it listens less often than every 213 ms; a longer preamble
-spans more of its sleep cycle. Raise it in steps (1536, 2048) and compare how often a try
-at rest is answered (`Try N answered … preamble=`).
+The default is 2048: about 427 ms on air on an SX1262 or LR1121 board and about 533 ms on an SX1276 board, which sends each preamble byte with a start and a stop bit. A resting VELUX SSL solar roller shutter answered a 1024-byte
+wake-up (~213 ms) on only about half the tries, which suggests it listens less often than every
+213 ms; a longer preamble spans more of its sleep cycle. Reporters with a resting SSL saw 12 of 16
+tries answered at 2048 bytes
+([issue #151](https://github.com/laberning/home_io_control/issues/151)), against 8 of 17 at 1024
+bytes ([issue #114](https://github.com/laberning/home_io_control/issues/114)). Compare how often a try
+at rest is answered (`Try N answered … preamble=`); set `1024` to go back to the shorter wake-up, or
+raise it toward `4096` if a device still needs more.
 
-A longer preamble makes every try at rest longer: at 2048 bytes a try takes about 1.1 s, so only two
-fit in the default [`exchange_total_budget_ms`](#exchange_total_budget_ms). Raise that to about
-3500 ms to keep three, and expect ESPHome to warn that the component took a long time. Pairing,
-discovery, the roll-call and 1W transmits keep their own preambles.
+A longer preamble makes every try at rest longer: at 2048 bytes a try takes about 1 s. A `low_power:`
+target keeps its three tries anyway, so a silent device holds the hub for about 3.2 s instead of the
+2.5 s of [`exchange_total_budget_ms`](#exchange_total_budget_ms), and ESPHome may log that the
+component took a long time. Each wake-up also uses twice the air time: one wake-up to a resting device
+is about 12 % of the hour that the EU duty cycle allows on the request channel, which the hub does not
+enforce
+([ADR 0095](../adr/0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md)). The
+discovery with [`pairing_discovery_low_power`](#pairing_discovery_payload--pairing_discovery_low_power)
+and the pairing frames after it, and the low-power pass of the
+[Scan Paired Devices](../pairing.md#scan-paired-devices) roll-call, use the same setting. Pairing
+discovery without the low-power flag and 1W transmits keep their own preambles.
 
 #### `low_power_wake_belief`
 
@@ -484,11 +501,12 @@ rest. Neither can the catch-up read after linked-remote activity
 reported a moment ago, because a press the hub missed may have set it moving. Such a read makes
 one extra attempt first, with the short preamble and a 100 ms listen, and then the three wake-up
 attempts, so it reaches a moving cover and a resting one alike. A silent short attempt changes
-nothing the hub believes. At the default timing the four attempts fit
-[`exchange_total_budget_ms`](#exchange_total_budget_ms); with a tighter one the read may run past
-it by the cost of the short attempt, about 0.12 s, and no more
-([ADR 0079](../adr/0079-a-cover-is-followed-by-its-execution-state.md)). Experimental: no bench run
-has met such a read yet.
+nothing the hub believes. At the default wake-up the four attempts take about 3.3 s, past
+[`exchange_total_budget_ms`](#exchange_total_budget_ms): the four attempts all run, and the read
+ends after them
+([ADR 0079](../adr/0079-a-cover-is-followed-by-its-execution-state.md),
+[ADR 0095](../adr/0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md)).
+Experimental: no bench run has met such a read yet.
 
 "Short" is [`normal_start_preamble`](#normal_start_preamble), "wake-up" is
 [`low_power_wake_preamble`](#low_power_wake_preamble). Having merely heard from the device recently
@@ -573,8 +591,11 @@ Off at `0`, the default. Otherwise a linked-remote press opens a burst, and ever
 runs while it is open moves its catch-up out to this many milliseconds after that exchange. When
 the catch-up is due, the hub reads every device with `linked_remotes`, by remote id or by
 `class:`, once, and the burst closes. A cover that a missed press set moving answers "moving", and
-the hub then follows it to rest as after any command. A read the device does not answer is not
-repeated until the next burst.
+the hub then follows it to rest as after any command. A read the device does not answer is repeated
+once, this many milliseconds later; if that read is not answered either, the device waits for the next
+burst
+([ADR 0095](../adr/0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md)).
+A resting `low_power` cover answers a try only about three times in four, so the retry matters there.
 
 The hub cannot know whether a missed press set a `low_power` cover moving, so the catch-up read
 treats its state as unknown even when it reported a moment ago: it sends one short attempt, which
@@ -744,7 +765,7 @@ Which device power classes the `scan_paired_devices` roll-call calls (see
 - **`always_alive`**: only the always-alive pass — three attempts, the ~6 s single-pass scan. Use
   this on an installation with no solar or battery devices; the report only gains one extra
   `NOTE:` line naming the excluded class.
-- **`low_power`**: only the low-power pass — three attempts, roughly 6 seconds. Use this to test in
+- **`low_power`**: only the low-power pass — three attempts, roughly 7 seconds. Use this to test in
   isolation whether a sleeping device answers the low-power call at all, without the always-alive
   pass's replies muddying the result.
 
