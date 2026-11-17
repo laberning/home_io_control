@@ -2496,7 +2496,8 @@ TEST(Exchange, ATryThatWouldEndAtTheBudgetIsNotStarted) {
   create_get_status(request, test::OWN_ID, test::DST_ID, false);
   uint8_t raw[64];
   const uint8_t len = serialize(request, raw, sizeof(raw));
-  const uint32_t tx_ms = (io868_tx_air_time_us(TuningConfig{}.normal_start_preamble, len) + 999) / 1000;
+  const uint32_t tx_ms =
+      (io868_tx_air_time_us(TuningConfig{}.normal_start_preamble, len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE) + 999) / 1000;
   ASSERT_GT(tx_ms, 0u);
 
   // The elapsed time alone is well inside the budget, but the third try would end exactly at it:
@@ -2506,7 +2507,8 @@ TEST(Exchange, ATryThatWouldEndAtTheBudgetIsNotStarted) {
   // stands in for its size) and the overhead.
   const TuningConfig defaults;
   MockRadio probe;
-  const uint32_t answer_tx_ms = (io868_tx_air_time_us(probe.response_preamble(), len) + 999) / 1000;
+  const uint32_t answer_tx_ms =
+      (io868_tx_air_time_us(probe.response_preamble(), len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE) + 999) / 1000;
   const uint32_t tail_ms = defaults.exchange_response_wait_ms + answer_tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS;
   const auto edge =
       static_cast<uint16_t>(third_check_ms + EXCHANGE_RETRY_DELAY_MS + tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS +
@@ -4290,7 +4292,7 @@ struct PlanRig {
     uint8_t raw[64];
     const uint8_t len = serialize(request, raw, sizeof(raw));
     const uint16_t preamble = low_power ? tuning.low_power_wake_preamble : tuning.normal_start_preamble;
-    return (io868_tx_air_time_us(preamble, len) + 999) / 1000;
+    return (io868_tx_air_time_us(preamble, len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE) + 999) / 1000;
   }
 
   /// Run a status poll to a target that never answers, with @p options.
@@ -4761,7 +4763,7 @@ struct ShortLeadRig : PlanRig {
     IoFrame request = status_read();
     uint8_t raw[64];
     const uint8_t len = serialize(request, raw, sizeof(raw));
-    return (io868_tx_air_time_us(tuning.normal_start_preamble, len) + 999) / 1000;
+    return (io868_tx_air_time_us(tuning.normal_start_preamble, len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE) + 999) / 1000;
   }
 
   std::vector<uint16_t> preambles() const {

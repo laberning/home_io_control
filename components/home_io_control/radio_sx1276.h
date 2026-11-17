@@ -21,6 +21,13 @@ namespace home_io_control {
 /// pin. Doubles as the PaSelect bit of REG_PA_CONFIG.
 static constexpr uint8_t SX1276_PA_SELECT_PA_BOOST = 0x80;
 
+/// Bit periods the SX1276 sends per programmed preamble byte: its IoHomeOn coder frames each
+/// preamble byte with a start and a stop bit like a data byte, so a preamble of N bytes is 10 N
+/// bit periods, a quarter longer than the 8 N of a raw byte stream. Bench measurement of the
+/// transmitted bursts: 32 bytes occupied 332 bits, 80 bytes 812 bits, 2048 bytes 20,484 bits
+/// (533 ms); the software-PHY chips sent 16,390 bits (427 ms) for the same 2048 bytes.
+static constexpr uint8_t SX1276_PREAMBLE_BITS_PER_BYTE = 10;
+
 /// Wait after retuning to the TX channel before the clear-channel RSSI reading. The fast-hop PLL
 /// relocks in tens of µs, and with RssiSmoothing = 8 samples at the 50 kHz RX bandwidth one RSSI
 /// update takes about 40 µs; 250 µs covers both with margin and costs nothing next to a preamble.
@@ -182,10 +189,11 @@ class RadioSX1276 : public RadioDriver {
   /// (including the pairing key-confirm 0x33) are caught through the standard
   /// exchange wait — validated by real-hardware pairing on this driver.
   [[nodiscard]] bool has_fast_tx_rx_turnaround() const override { return true; }
-  /// @brief Transmit time (SX1276): the preamble, sync word and the IoHomeOn-coded frame at the
-  /// protocol line rate — the same waveform the software PHY produces.
+  /// @brief Transmit time (SX1276): the preamble at `SX1276_PREAMBLE_BITS_PER_BYTE` bits per
+  /// byte, then the sync word and the IoHomeOn-coded frame at the protocol line rate. The sync
+  /// word and frame match the software PHY's waveform; the preamble does not.
   [[nodiscard]] uint32_t tx_air_time_us(uint8_t len, const RadioTxConfig &cfg) const override {
-    return io868_tx_air_time_us(cfg.preamble_len, len);
+    return io868_tx_air_time_us(cfg.preamble_len, len, SX1276_PREAMBLE_BITS_PER_BYTE);
   }
   // `SX1276_RESPONSE_PREAMBLE` below is a code span, not \ref: doxygen 1.18 can't resolve \ref
   // to it in a whole-project build (details in proto_sizes.h). Autolinking still links it.

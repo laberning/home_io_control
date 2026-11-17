@@ -563,16 +563,17 @@ uint8_t attempts_the_guard_starts(const decisions::AttemptPlan &plan, uint32_t b
   return started;
 }
 
-// Transmit times the radios estimate for a start frame behind the wake-up preamble (8 bits per byte at
-// 38.4 kbit/s, plus the frame).
-constexpr uint32_t WAKE_TX_MS_BY_PREAMBLE[][2] = {{1024, 218}, {2048, 432}, {4096, 859}};
+// Transmit times the radios estimate for a start frame behind the wake-up preamble, at 38.4 kbit/s plus the
+// frame: 8 bits per preamble byte on the software-PHY chips, 10 on the SX1276.
+constexpr uint32_t WAKE_TX_MS_BY_PREAMBLE[][2] = {{1024, 218}, {2048, 432}, {4096, 859},
+                                                  {1024, 272}, {2048, 539}, {4096, 1072}};
 
 }  // namespace
 
 TEST(AttemptPlan, ALowPowerSettlingReadKeepsThreeAttemptsAtEveryWakeUpLength) {
   const TuningConfig tuning;
   for (const auto &row : WAKE_TX_MS_BY_PREAMBLE) {
-    SCOPED_TRACE(::testing::Message() << "wake-up preamble " << row[0] << " B");
+    SCOPED_TRACE(::testing::Message() << "wake-up preamble " << row[0] << " B, " << row[1] << " ms on air");
     const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, row[1]);
     EXPECT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS);
     EXPECT_TRUE(plan.bounded_by_attempts);
@@ -585,7 +586,7 @@ TEST(AttemptPlan, ALowPowerSettlingReadKeepsThreeAttemptsAtEveryWakeUpLength) {
 TEST(AttemptPlan, ALowPowerCommandKeepsThreeAttemptsAtEveryWakeUpLength) {
   const TuningConfig tuning;
   for (const auto &row : WAKE_TX_MS_BY_PREAMBLE) {
-    SCOPED_TRACE(::testing::Message() << "wake-up preamble " << row[0] << " B");
+    SCOPED_TRACE(::testing::Message() << "wake-up preamble " << row[0] << " B, " << row[1] << " ms on air");
     const auto plan = decisions::attempt_plan(decisions::ReadKind::COMMAND, true, tuning, row[1]);
     EXPECT_EQ(plan.max_attempts, EXCHANGE_RETRY_COUNT);
     EXPECT_TRUE(plan.bounded_by_attempts);

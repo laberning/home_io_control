@@ -203,9 +203,9 @@ class ManagementActions {
   /// `KeyExtractionResponder::send_reply_()`'s implementation comment).
   ///
   /// This still blocks the caller for the full six-window duration (roughly
-  /// `6 × pairing_discovery_wait_ms` plus three ~427 ms wake-up transmits, ~13.3 s at the
-  /// 2000 ms default) and therefore trips ESPHome's "operation took a long time" warning on
-  /// *every* invocation. That warning uses a per-component ratchet
+  /// `6 × pairing_discovery_wait_ms` plus three wake-up transmits of 427 to 533 ms depending on the
+  /// radio's `RadioDriver::tx_air_time_us()`, ~13.3 to 13.6 s at the 2000 ms default) and therefore trips ESPHome's
+  /// "operation took a long time" warning on *every* invocation. That warning uses a per-component ratchet
   /// (`Component::should_warn_of_blocking()`): it starts at 50 ms and, each time it fires, raises
   /// its own threshold to the observed duration plus a margin — but the threshold is stored in
   /// centiseconds in a `uint8_t`, so it saturates at **2550 ms**. Anything that blocks longer than

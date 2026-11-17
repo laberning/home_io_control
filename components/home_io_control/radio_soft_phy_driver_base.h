@@ -272,9 +272,10 @@ class SoftPhyDriverBase : public RadioDriver {
   /// evidence does not show. See ADR 0042.
   [[nodiscard]] uint16_t default_start_preamble() const override { return SOFT_PHY_START_PREAMBLE; }
 
-  /// @brief Transmit time: the preamble, sync word and UART-coded frame at the protocol line rate.
+  /// @brief Transmit time: the preamble (8 bits per byte, a raw byte stream), sync word and
+  /// UART-coded frame at the protocol line rate.
   [[nodiscard]] uint32_t tx_air_time_us(uint8_t len, const RadioTxConfig &cfg) const override {
-    return io868_tx_air_time_us(cfg.preamble_len, len);
+    return io868_tx_air_time_us(cfg.preamble_len, len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE);
   }
 
  protected:

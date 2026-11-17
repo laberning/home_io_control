@@ -194,15 +194,57 @@ TEST(RadioSX1276, InitFailsOnWrongVersion) {
                                                           "version check";
 }
 
-/// The IoHomeOn coder produces the same waveform as the software PHY, so the budget estimate is the
-/// shared 868 model.
-TEST(RadioSX1276, TxAirTimeIsTheIo868Model) {
+namespace {
+/// Estimated air time of a `frame_len`-byte frame (15 by default) behind `preamble_len` programmed preamble bytes.
+uint32_t sx1276_air_time_us(uint16_t preamble_len, uint8_t frame_len = 15) {
   RegisterModelSpi spi;
   MockPin rst, dio0, dio4(false);
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
   RadioTxConfig cfg{};
-  cfg.preamble_len = LONG_PREAMBLE;
-  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13));
+  cfg.preamble_len = preamble_len;
+  return radio.tx_air_time_us(frame_len, cfg);
+}
+}  // namespace
+
+/// The SX1276 sends every preamble byte as a 10-bit cell, so its estimate is the shared 868 model
+/// with 10 bits per preamble byte, not the software PHY's 8.
+TEST(RadioSX1276, TxAirTimeCountsTenBitsPerPreambleByte) {
+  EXPECT_EQ(sx1276_air_time_us(LONG_PREAMBLE), io868_tx_air_time_us(LONG_PREAMBLE, 15, SX1276_PREAMBLE_BITS_PER_BYTE));
+  EXPECT_GT(sx1276_air_time_us(LONG_PREAMBLE),
+            io868_tx_air_time_us(LONG_PREAMBLE, 15, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
+}
+
+/// Measured bursts: 32 and 80 preamble bytes occupied 332 and 812 preamble bits, so 48 more bytes
+/// add 480 bit periods; 2048 bytes plus the 15-byte frame took 539.0 ms in total.
+TEST(RadioSX1276, TxAirTimeMatchesMeasuredBursts) {
+  const double us_per_bit = 1e6 / 38400.0;
+  EXPECT_NEAR(sx1276_air_time_us(80) - sx1276_air_time_us(32), 480 * us_per_bit, 2.0);
+  EXPECT_NEAR(sx1276_air_time_us(2048), 539000.0, 539000.0 * 0.02);
+}
+
+/// Whole measured bursts, short and long: a 12-byte frame behind 32 preamble bytes took 13.32 ms, the
+/// 15-byte frame behind 2048 bytes 539.04 ms. The model leaves out a few sync-word alternation bits, so
+/// it runs a fraction of a millisecond short at every length; the per-byte count is what keeps the
+/// long burst inside that same millisecond (at 8 bits per byte it would be 107 ms short).
+TEST(RadioSX1276, TxAirTimeIsWithinAMillisecondOfEveryMeasuredBurst) {
+  EXPECT_NEAR(sx1276_air_time_us(32, 12), 13321.0, 1000.0);
+  EXPECT_NEAR(sx1276_air_time_us(2048), 539042.0, 1000.0);
+}
+
+/// The soft-PHY chips send 8 bits per preamble byte: 2048 bytes plus a 15-byte frame took 432.4 ms.
+TEST(SoftPhy, Io868AirTimeAtEightBitsPerPreambleByteMatchesMeasuredBurst) {
+  EXPECT_NEAR(io868_tx_air_time_us(2048, 15, SOFT_PHY_PREAMBLE_BITS_PER_BYTE), 432400.0, 432400.0 * 0.02);
+}
+
+/// The TX-done wait is the estimated air time plus the whole guard, at the longest preamble, and the
+/// estimate covers every one of the 10-bit preamble cells the chip sends, so the guard stays slack.
+TEST(RadioSX1276, TxDoneTimeoutAtLongestPreambleExceedsAirTimeByTheGuard) {
+  const uint32_t air_us = sx1276_air_time_us(4096);
+  const uint32_t air_ms_rounded_up = (air_us + 999) / 1000;
+  EXPECT_EQ(tx_done_timeout_ms(air_us), air_ms_rounded_up + TX_DONE_GUARD_MS);
+  EXPECT_GE(tx_done_timeout_ms(air_us) * 1000u, air_us + TX_DONE_GUARD_MS * 1000u);
+  const double preamble_on_air_us = 4096 * 10 * (1e6 / 38400.0);
+  EXPECT_GE(air_us, preamble_on_air_us) << "the estimate must not stop short of the preamble the chip sends";
 }
 
 TEST(RadioSX1276, InitProgramsValidatedConfiguration) {

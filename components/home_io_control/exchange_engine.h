@@ -213,7 +213,7 @@ class ExchangeEngine {
   ///
   /// The engine owns the TX-complete instant and the received packet; the caller cannot
   /// reconstruct either on its own (its own `millis()` taken before the call would include the
-  /// transmit itself — up to ~213 ms for a LONG_PREAMBLE start frame — and skew latency figures).
+  /// transmit itself — hundreds of milliseconds behind a wake-up preamble — and skew latency figures).
   struct BroadcastReplyInfo {
     int16_t rssi_dbm{0};      ///< RSSI of this reply (from the radio's last capture).
     uint32_t rx_freq_hz{0};   ///< Channel the reply was received on (RadioRxPacket::freq_hz).

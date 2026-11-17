@@ -217,7 +217,8 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   /// The 868 MHz production estimate, which set_model_tx_airtime() advances the clock by. A test
   /// double for a radio with a different wake-up overrides it.
   uint32_t tx_air_time_us(uint8_t len, const esphome::home_io_control::RadioTxConfig &cfg) const override {
-    return esphome::home_io_control::io868_tx_air_time_us(cfg.preamble_len, len);
+    return esphome::home_io_control::io868_tx_air_time_us(cfg.preamble_len, len,
+                                                          esphome::home_io_control::SOFT_PHY_PREAMBLE_BITS_PER_BYTE);
   }
   void set_mode_rx() override {}
   void set_mode_standby() override {}

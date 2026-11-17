@@ -44,9 +44,10 @@ static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes: wake-up burst 
 static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol default and floor for continuation frames
 
 /// Default for `TuningConfig::low_power_wake_preamble`: the 2W wake-up in front of a directed start frame
-/// to a low-power receiver believed at rest (about 427 ms on air on the SX1262 and LR1121, about 533 ms on the SX1276, whose packet coder frames each preamble byte in 10 bits). A resting VELUX SSL answers the
-/// 1024-byte wake-up (LONG_PREAMBLE) on about half the tries and this one on about three in four
-/// (ADR 0095). The one-way burst keeps LONG_PREAMBLE.
+/// to a low-power receiver believed at rest: about 427 ms on air at 8 bit periods per preamble byte, about 533 ms
+/// on a radio whose coder frames each preamble byte in 10 (each driver's `RadioDriver::tx_air_time_us()` counts its
+/// own). A resting VELUX SSL answers the 1024-byte wake-up (LONG_PREAMBLE) on about half the tries and this one on
+/// about three in four (ADR 0095). The one-way burst keeps LONG_PREAMBLE.
 static constexpr uint16_t LOW_POWER_WAKE_PREAMBLE = 2048;
 
 /// Default for `TuningConfig::cold_broadcast_reply_preamble` — preamble for a *broadcast* reply to

@@ -876,7 +876,7 @@ TEST(RadioLR1121, TxAirTimeIsTheIo868Model) {
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
   RadioTxConfig cfg{};
   cfg.preamble_len = LONG_PREAMBLE;
-  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13));
+  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
 }
 
 TEST(RadioLR1121, DefaultStartPreambleComesFromTheSharedSoftPhy) {
