@@ -124,3 +124,16 @@ water_heater:
       name: "Hot Water Electric Backup"
     boost:
       name: "Hot Water Boost"
+  # An electric storage water heater: the model below 51/0 (io_model needs io_subtype beside it).
+  - platform: home_io_control
+    name: "Electric Hot Water"
+    io_device_id: "A1B2C3"
+    io_device_type: domestic_hot_water
+    io_subtype: 0
+    io_model: electric_water_heater
+    energy:
+      name: "Electric Hot Water Energy"
+    electric_backup_running:
+      name: "Electric Hot Water Heating"
+    boost:
+      name: "Electric Hot Water Boost"
