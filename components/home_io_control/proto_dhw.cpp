@@ -39,6 +39,9 @@ constexpr uint8_t DHW_FPI2_FP16_BIT = fp_bitmap_bit(DHW_FP_OPERATING_MODE);
 /// FP16 fields: two bits each, 1 = on (0 keep, 2 off).
 constexpr uint16_t DHW_FP16_FIELD_MASK = 0x3;
 constexpr uint16_t DHW_FP16_FIELD_ON = 1;
+/// The value a field reads "off" with, and "on" with on a heater whose boost field is inverted
+/// (device_feature::DHW_BOOST_INVERTED).
+constexpr uint16_t DHW_FP16_FIELD_OFF = 2;
 constexpr uint8_t DHW_FP16_BOOST_SHIFT = 8;  ///< The relaunch field: bits 8-9.
 constexpr uint8_t DHW_FP16_AWAY_SHIFT = 10;  ///< The absence field: bits 10-11.
 /// One row per DhwOperatingFeature, in its order.
@@ -170,7 +173,7 @@ bool decode_dhw_status_target(const IoFrame &reply, float min_c, float max_c, fl
   return decode_dhw_target(read_be16(reply.data + DHW_STATUS_MAIN_PARAMETER_OFFSET), min_c, max_c, celsius);
 }
 
-bool decode_dhw_operating_status(const IoFrame &reply, DhwOperatingStatus &status) {
+bool decode_dhw_operating_status(const IoFrame &reply, bool boost_inverted, DhwOperatingStatus &status) {
   if (reply.cmd != CMD_PRIVATE_RESP || reply.data_len < DHW_STATUS_VALUES_OFFSET)
     return false;
   const uint8_t fpi2 = reply.data[DHW_STATUS_FPI2_OFFSET];
@@ -198,7 +201,8 @@ bool decode_dhw_operating_status(const IoFrame &reply, DhwOperatingStatus &statu
 
   DhwOperatingStatus decoded;
   decoded.capabilities = capabilities;
-  decoded.boost = fp16_field_on(operating_mode, DhwOperatingFeature::BOOST);
+  const uint16_t boost_field = (operating_mode >> DHW_FP16_BOOST_SHIFT) & DHW_FP16_FIELD_MASK;
+  decoded.boost = boost_field == (boost_inverted ? DHW_FP16_FIELD_OFF : DHW_FP16_FIELD_ON);
   decoded.away = fp16_field_on(operating_mode, DhwOperatingFeature::AWAY) ||
                  read_be16(reply.data + DHW_STATUS_MAIN_PARAMETER_OFFSET) == DHW_MAIN_PARAMETER_AWAY;
   status = decoded;

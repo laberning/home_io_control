@@ -2318,6 +2318,28 @@ TEST(HeaterStatusDecoding, AnExplorerV4AwayIsReadFromItsMainParameter) {
   EXPECT_EQ(dev.dhw.away, 1);
 }
 
+TEST(HeaterStatusDecoding, AnExplorerV4BoostIsReadTheOtherWayRound) {
+  IoDevice dev;
+  dev.model = DeviceModel::EXPLORER_V4;
+  test::set_kind(dev, DeviceType::DOMESTIC_HOT_WATER, 0);
+  ASSERT_TRUE(has_feature(dev.features, device_feature::DHW_BOOST_INVERTED));
+  dev.temperature_range_min_c = DHW_TARGET_MIN_C;
+  dev.temperature_range_max_c = 70.0F;
+  IoFrame frame{};
+  // Its reply during a boost started on the display: FP16 4A00, which a Calypso reports at rest.
+  const uint8_t boosting[] = {0x05, 0x00, 0xA8, 0x00, 0x00, 0x43, 0x00, 0x00, 0x80, 0x0C, 0x4A, 0x00};
+  set_cmd(frame, CMD_PRIVATE_RESP, boosting, sizeof(boosting));
+  apply_dhw_status_reply("ABC123", dev, frame, true);
+  EXPECT_EQ(dev.dhw.boost, 1);
+  EXPECT_FLOAT_EQ(dev.dhw.target_c, 62.0F) << "A800 on its 20..70 C scale";
+
+  const uint8_t rest[] = {0x05, 0x00, 0x94, 0x00, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x00};
+  set_cmd(frame, CMD_PRIVATE_RESP, rest, sizeof(rest));
+  apply_dhw_status_reply("ABC123", dev, frame, true);
+  EXPECT_EQ(dev.dhw.boost, 0);
+  EXPECT_FLOAT_EQ(dev.dhw.target_c, 57.0F);
+}
+
 TEST(HeaterStatusDecoding, TheAckOfAnExecuteIsNotDecodedAndANonTemperatureLeavesTheTargetUnknown) {
   IoDevice dev;
   test::set_kind(dev, DeviceType::DOMESTIC_HOT_WATER, 0);

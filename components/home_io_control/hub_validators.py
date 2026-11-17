@@ -269,6 +269,7 @@ FEATURES = (
     "OCCUPANCY",
     "ENERGY_METER",
     "RUN_TIMERS",
+    "DHW_BOOST_INVERTED",
 )
 
 # The models a (type, subtype) can have below it (proto_device_kinds.h DeviceModel, the model rows of
@@ -279,6 +280,7 @@ DEVICE_MODEL_OPTIONS = {
     "towel_dryer": 1,
     "heater_with_light": 2,
     "pilot_wire_interface": 3,
+    "explorer_v4": 4,
 }
 
 # The capabilities of each row whose type has a YAML name, keyed "<name>" for subtype 0,
@@ -319,6 +321,7 @@ DEVICE_FEATURES = {
     "sliding_window/1": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
     "bioclimatic_pergola": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
     "domestic_hot_water": frozenset({"WATER_HEATER"}),
+    "domestic_hot_water/0/explorer_v4": frozenset({"WATER_HEATER", "DHW_BOOST_INVERTED"}),
     "electrical_heater/1": frozenset({"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}),
     "electrical_heater/1/towel_dryer": frozenset({"CENTRAL_HEATING_MODE", "ENERGY_METER", "RUN_TIMERS"}),
     "electrical_heater/1/heater_with_light": frozenset({"WINDOW_COMPANIONS", "NIGHT_LIGHT", "OCCUPANCY", "ENERGY_METER"}),

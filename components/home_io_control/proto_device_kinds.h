@@ -77,6 +77,7 @@ enum class DeviceModel : uint8_t {
   TOWEL_DRYER = 1,        ///< Towel dryer under the electrical heater with an adjustable setpoint (52/1).
   HEATER_WITH_LIGHT = 2,  ///< Heater with a night light under the electrical heater with an adjustable setpoint (52/1).
   PILOT_WIRE_INTERFACE = 3,  ///< Interface for pilot-wire heaters under the plain electrical heater (52/0): no boost.
+  EXPLORER_V4 = 4,  ///< Atlantic Explorer V4 under the domestic hot water heater (51/0): FP16 boost field inverted.
 };
 
 /// @brief High‑level capability class derived from DeviceType.

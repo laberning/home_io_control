@@ -155,7 +155,7 @@ TEST(CorpusDhw, TheOperatingStatusReadReportsCapabilitiesAndBothFieldsOffAtRest)
   };
   for (const auto &c : cases) {
     DhwOperatingStatus status;
-    ASSERT_TRUE(decode_dhw_operating_status(c.frame, status)) << c.display;
+    ASSERT_TRUE(decode_dhw_operating_status(c.frame, false, status)) << c.display;
     float target = NAN;
     ASSERT_TRUE(decode_dhw_status_target(c.frame, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, target))
         << "the main parameter stays in place: " << c.display;

@@ -141,7 +141,7 @@ const DhwOperatingFeatureWire &dhw_operating_feature_wire(DhwOperatingFeature wh
 /// the target, is decode_dhw_status_target()'s).
 struct DhwOperatingStatus {
   uint16_t capabilities{0};  ///< FP15: DHW_CAPABILITY_* bits.
-  bool boost{false};         ///< FP16 relaunch field (bits 8-9) is 1: a boost runs.
+  bool boost{false};         ///< FP16 relaunch field (bits 8-9) is 1 (2 on an inverted heater): a boost runs.
   bool away{false};          ///< The holiday mode is on: the FP16 absence field (bits 10-11) is 1, or the main
                              ///< parameter is DHW_MAIN_PARAMETER_AWAY. An Explorer V4 keeps FP16 at 4900 while
                              ///< away, so its main parameter is the only sign.
@@ -298,10 +298,12 @@ bool decode_dhw_status_target(const IoFrame &reply, float min_c, float max_c, fl
 ///          when asked for `43`) are skipped. The main parameter counts only as a sign of away
 ///          (DHW_MAIN_PARAMETER_AWAY); its temperature is decode_dhw_status_target()'s.
 /// @param reply The heater's reply to the status read.
+/// @param boost_inverted The heater reads its boost field the other way round, 2 while a boost runs
+///        (device_feature::DHW_BOOST_INVERTED, an Atlantic Explorer V4).
 /// @param[out] status The decoded fields; untouched when false is returned.
 /// @return false for another command, a reply too short for the values its echo announces, an FPI1 echo other
 ///         than `00`, or an FPI2 echo without FP15 or FP16.
-bool decode_dhw_operating_status(const IoFrame &reply, DhwOperatingStatus &status);
+bool decode_dhw_operating_status(const IoFrame &reply, bool boost_inverted, DhwOperatingStatus &status);
 
 }  // namespace home_io_control
 }  // namespace esphome

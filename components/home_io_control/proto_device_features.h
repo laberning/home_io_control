@@ -92,6 +92,10 @@ enum class DeviceFeature : uint8_t {
   /// \todo Experimental: read on Atlantic Adelis units (issue #202); confirm on a second model and check
   ///       that a dryer without the registers answers them empty.
   RUN_TIMERS,
+  /// A water heater whose operating-mode word (FP16) carries the boost field the other way round: 1 while no boost
+  /// runs and 2 while one does, where a Calypso reports 2 and 1 (proto_dhw.h). Seen on an Atlantic Explorer V4,
+  /// whose boost duration register (0x0000) reads 0 and 1 in the same states as a Calypso's.
+  DHW_BOOST_INVERTED,
   COUNT,  ///< Not a capability: the number of capabilities, for the storage check of DeviceFeatures.
 };
 

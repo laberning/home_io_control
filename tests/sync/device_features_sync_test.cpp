@@ -54,6 +54,7 @@ const std::map<std::string, DeviceFeature> CPP_FEATURES = {
     {"OCCUPANCY", device_feature::OCCUPANCY},
     {"ENERGY_METER", device_feature::ENERGY_METER},
     {"RUN_TIMERS", device_feature::RUN_TIMERS},
+    {"DHW_BOOST_INVERTED", device_feature::DHW_BOOST_INVERTED},
 };
 
 /// The names of the capabilities in a set.

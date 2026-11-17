@@ -27,7 +27,7 @@ water_heater:
     io_device_id: "F9CF0F"
     io_device_type: domestic_hot_water
     status_poll_interval: 5min  # optional; default 5 min, at least 60 s
-    max_temperature: 62         # optional; 70 on an Atlantic Explorer V4
+    max_temperature: 62         # optional; 70 by default with io_model: explorer_v4
     energy:
       name: "Hot water energy"
     heat_pump_running:
@@ -46,11 +46,15 @@ water_heater:
   to a kind that is read as a water heater, so the build refuses an entry without the key or with
   another kind. The kind is experimental, and the build warns about it.
 - `status_poll_interval` (Optional): How often the heater is read. Default 5 minutes, minimum 60 s.
+- `io_model` (Optional): `explorer_v4` for an Atlantic Explorer V4, with `io_subtype: 0`. It reports
+  the same type, subtype, name and brand as a Calypso, so only the YAML can say which it is. The model
+  reads the heater's boost field the other way round (the Explorer V4 reports 2 while a boost runs,
+  where a Calypso reports 1) and makes `max_temperature` default to 70. Without it the switch shows a
+  boost while none runs, and the card shows 46 °C while the display shows 51 °C.
 - `max_temperature` (Optional): The top of the scale the heater encodes its target on, which is also
   the highest target the card offers. The bottom is always 20 °C. Default 62 °C, what an Atlantic
-  Calypso Connecté uses. An Atlantic Explorer V4 uses 70 °C: with the default its card shows 46 °C
-  while its display shows 51 °C. If the card and the display disagree by more as the target rises,
-  this is the key to set. Must be above 20 and at most 100.
+  Calypso Connecté uses, or 70 °C with `io_model: explorer_v4`. If the card and the display disagree
+  by more as the target rises, this is the key to set. Must be above 20 and at most 100.
 - `energy` (Optional): A sensor of the energy the heater has used since it was installed, in kWh,
   with `device_class: energy` and `state_class: total_increasing`, so it fits the energy dashboard.
   Takes every [sensor](https://esphome.io/components/sensor/) option.
@@ -64,10 +68,10 @@ water_heater:
   option.
 - `boost` (Optional): A switch, on while a boost runs. Turning it on starts a boost and turning it off
   ends it; a boost started here asks for a duration of 1, the value the heater showed during a boost
-  started on its display. Confirmed on an Atlantic Calypso Connecté. The switch shows
-  what the heater reports in its operating-mode word and writes nothing at boot, so a reboot does not
-  end a running boost; `restore_mode` has no effect. Turning it off ends away mode too. Takes the other
-  [switch](https://esphome.io/components/switch/) options.
+  started on its display. Confirmed on an Atlantic Calypso Connecté and an Atlantic Explorer V4. The
+  switch shows what the heater reports in its operating-mode word and writes nothing at boot, so a
+  reboot does not end a running boost; `restore_mode` has no effect. Turning it off ends away mode
+  too. Takes the other [switch](https://esphome.io/components/switch/) options.
 
 ## What the card shows
 
@@ -97,6 +101,10 @@ Boost and away follow the heater's operating-mode setting. Both are confirmed on
 Connecté ([issue #198](https://github.com/laberning/home_io_control/issues/198)): boost on and off and
 away on and off from Home Assistant work, and a boost started on the display shows in Home Assistant.
 Writing the boost duration register alone did nothing on that heater, so the hub sets the mode itself.
+An Atlantic Explorer V4 (`io_model: explorer_v4`) is confirmed the same way: boost and away from Home
+Assistant, on and off, and a boost started on its display. It refuses the boost duration write while
+no boost runs (it answers 0) and sets the register to 1 itself once the mode starts the boost. During
+a boost it reports a target of 62 °C, which the card shows, and its own target again afterwards.
 
 - **Starting** a boost writes its duration register (1) and then sets the operating mode; starting away
   writes its duration register (255, until turned off) and then sets the operating mode. The log shows

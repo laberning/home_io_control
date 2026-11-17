@@ -226,6 +226,11 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     //       EXPERIMENTAL.
     {DeviceType::DOMESTIC_HOT_WATER, 0, NO_MODEL, "domestic_hot_water", CAP_WATER_HEATER,
      SELECTABLE_PLATFORM | EXPERIMENTAL, device_feature::WATER_HEATER},
+    // An Atlantic Explorer V4 reports the same 51/0 and the same name and brand as the Calypso, but reads its FP16
+    // boost field the other way round and spans 20..70 C on its target scale, so the YAML declares it
+    // (`io_model: explorer_v4`).
+    {DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::EXPLORER_V4, "explorer_v4", CAP_WATER_HEATER,
+     SELECTABLE_PLATFORM | EXPERIMENTAL, device_feature::WATER_HEATER | device_feature::DHW_BOOST_INVERTED},
 
     // Both rows have a heating profile (proto_heating_profiles.cpp): the plain heater is commanded with
     // heating levels in the standard EXECUTE, the one with an adjustable setpoint over the private

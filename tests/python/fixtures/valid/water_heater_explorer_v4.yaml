@@ -1,0 +1,14 @@
+# expect: valid
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+water_heater:
+  - platform: home_io_control
+    name: "Hot Water"
+    io_device_id: "FEEB2C"
+    io_device_type: domestic_hot_water
+    io_subtype: 0
+    io_model: explorer_v4
+    boost:
+      name: "Hot Water Boost"

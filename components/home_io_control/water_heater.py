@@ -9,8 +9,9 @@
 ## `status_poll_interval` sets the cadence, with the same one-minute floor as climate. Shared device-binding
 ## logic lives in platform_common.py; only the water heater's entity and companions are built here.
 ##
-## `max_temperature` sets the target the heater's highest main parameter stands for (62 by default, 70 on an
-## Explorer V4); it moves the card's range with it.
+## `max_temperature` sets the target the heater's highest main parameter stands for (62 by default); it moves
+## the card's range with it. `io_model: explorer_v4` makes it 70 unless the key says otherwise, and reads the
+## heater's boost field the other way round (DHW_BOOST_INVERTED).
 ##
 ## The kind is required: the codegen checks it carries the WATER_HEATER capability, so a config can never
 ## send the water heater's register frames to another device.
@@ -43,6 +44,7 @@ from .platform_common import (
     wire_device_binding,
     CONF_DEVICE_TYPE,
     CONF_HOME_IO_CONTROL_ID,
+    CONF_MODEL,
 )
 
 DEPENDENCIES = ["home_io_control"]
@@ -95,6 +97,8 @@ def _validate_water_heater_kind(config):
 # The upper end defaults to DHW_TARGET_MAX_C (proto_dhw.h), what a Calypso uses; an Explorer V4 uses 70.
 DHW_TARGET_MIN_C = 20.0
 DHW_TARGET_MAX_BOUND_C = 100.0
+# The top of an Atlantic Explorer V4's scale, the default of max_temperature with io_model: explorer_v4.
+EXPLORER_V4_TARGET_MAX_C = 70.0
 
 
 def _validate_max_temperature(config):
@@ -167,8 +171,11 @@ async def to_code(config):
     await wire_device_binding(var, parent, config)
     await create_companion_sensors(config, parent)
 
-    if CONF_MAX_TEMPERATURE in config:
-        cg.add(var.set_target_range_max(config[CONF_MAX_TEMPERATURE]))
+    max_temperature = config.get(CONF_MAX_TEMPERATURE)
+    if max_temperature is None and config.get(CONF_MODEL) == "explorer_v4":
+        max_temperature = EXPLORER_V4_TARGET_MAX_C
+    if max_temperature is not None:
+        cg.add(var.set_target_range_max(max_temperature))
 
     if CONF_ENERGY in config:
         await create_user_companion(

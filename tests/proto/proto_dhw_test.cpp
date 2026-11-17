@@ -317,16 +317,16 @@ IoFrame operating_reply(uint16_t fp16, uint16_t mp = 0xA1E8, uint16_t fp15 = 0x0
 
 TEST(ProtoDhw, OperatingStatusReadsCapabilitiesAndTheTwoFields) {
   DhwOperatingStatus s;
-  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(DHW_OPERATING_MODE_OFF), s));
+  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(DHW_OPERATING_MODE_OFF), false, s));
   EXPECT_EQ(s.capabilities, DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST);
   EXPECT_FALSE(s.boost);
   EXPECT_FALSE(s.away);
 
-  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(DHW_OPERATING_MODE_BOOST_ON), s));
+  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(DHW_OPERATING_MODE_BOOST_ON), false, s));
   EXPECT_TRUE(s.boost);
   EXPECT_FALSE(s.away);
 
-  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(DHW_OPERATING_MODE_AWAY_ON), s));
+  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(DHW_OPERATING_MODE_AWAY_ON), false, s));
   EXPECT_FALSE(s.boost);
   EXPECT_TRUE(s.away);
 }
@@ -336,7 +336,7 @@ TEST(ProtoDhw, EachFeaturesOnWordSetsItsOwnFieldAndEndsTheOther) {
   // that feature on and the other off.
   for (const DhwOperatingFeature which : {DhwOperatingFeature::BOOST, DhwOperatingFeature::AWAY}) {
     DhwOperatingStatus s;
-    ASSERT_TRUE(decode_dhw_operating_status(operating_reply(dhw_operating_feature_wire(which).on_word), s));
+    ASSERT_TRUE(decode_dhw_operating_status(operating_reply(dhw_operating_feature_wire(which).on_word), false, s));
     EXPECT_EQ(s.boost, which == DhwOperatingFeature::BOOST);
     EXPECT_EQ(s.away, which == DhwOperatingFeature::AWAY);
   }
@@ -347,13 +347,13 @@ TEST(ProtoDhw, EachFeaturesOnWordSetsItsOwnFieldAndEndsTheOther) {
 TEST(ProtoDhw, OnlyAFieldValueOfOneIsOn) {
   DhwOperatingStatus s;
   // 0 keep, 2 off and 3 are not "on" in either field; bit 14 and the low byte do not matter.
-  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(0x4000), s));
+  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(0x4000), false, s));
   EXPECT_FALSE(s.boost);
   EXPECT_FALSE(s.away);
-  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(0x4F00), s));
+  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(0x4F00), false, s));
   EXPECT_FALSE(s.boost) << "field 3";
   EXPECT_FALSE(s.away) << "field 3";
-  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(0x45FF), s));
+  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(0x45FF), false, s));
   EXPECT_TRUE(s.boost);
   EXPECT_TRUE(s.away) << "the word can say both; the decoder reports what it says";
 }
@@ -361,7 +361,7 @@ TEST(ProtoDhw, OnlyAFieldValueOfOneIsOn) {
 TEST(ProtoDhw, OperatingStatusDecodesWhateverTheMainParameter) {
   // The main parameter's temperature is decode_dhw_status_target()'s; an alias there does not fail this decode.
   DhwOperatingStatus s;
-  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(DHW_OPERATING_MODE_AWAY_ON, 0xD812), s));
+  ASSERT_TRUE(decode_dhw_operating_status(operating_reply(DHW_OPERATING_MODE_AWAY_ON, 0xD812), false, s));
   EXPECT_TRUE(s.away);
 }
 
@@ -370,21 +370,43 @@ TEST(ProtoDhw, AnExplorerV4ShowsAwayOnlyInItsMainParameter) {
   // and the main parameter drops to 0000 while away.
   DhwOperatingStatus s;
   ASSERT_TRUE(decode_dhw_operating_status(
-      reply_with({0x05, 0x00, 0x78, 0x00, 0x00, 0x43, 0x00, 0x00, 0x80, 0x0C, 0x49, 0x00}, CMD_PRIVATE_RESP), s));
+      reply_with({0x05, 0x00, 0x78, 0x00, 0x00, 0x43, 0x00, 0x00, 0x80, 0x0C, 0x49, 0x00}, CMD_PRIVATE_RESP), true, s));
   EXPECT_FALSE(s.away) << "before: target 7800";
+  EXPECT_FALSE(s.boost);
   ASSERT_TRUE(decode_dhw_operating_status(
-      reply_with({0x05, 0x00, 0x00, 0x00, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x00}, CMD_PRIVATE_RESP), s));
+      reply_with({0x05, 0x00, 0x00, 0x00, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x00}, CMD_PRIVATE_RESP), true, s));
   EXPECT_TRUE(s.away) << "away: main parameter 0000, FP16 still 4900";
+  EXPECT_FALSE(s.boost);
   ASSERT_TRUE(decode_dhw_operating_status(
-      reply_with({0x05, 0x00, 0x94, 0x00, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x00}, CMD_PRIVATE_RESP), s));
+      reply_with({0x05, 0x00, 0x94, 0x00, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x00}, CMD_PRIVATE_RESP), true, s));
   EXPECT_FALSE(s.away) << "after the off word: target 9400";
+}
+
+TEST(ProtoDhw, AnInvertedHeaterReadsItsBoostFieldTheOtherWayRound) {
+  // An Atlantic Explorer V4 at rest (FP16 4900) and during a boost started on its display (4A00, with its boost
+  // duration register at 1). A Calypso reports 4A00 at rest and 4900 during a boost.
+  const IoFrame rest =
+      reply_with({0x05, 0x00, 0x94, 0x00, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x00}, CMD_PRIVATE_RESP);
+  const IoFrame boosting =
+      reply_with({0x05, 0x00, 0xA8, 0x00, 0x00, 0x43, 0x00, 0x00, 0x80, 0x0C, 0x4A, 0x00}, CMD_PRIVATE_RESP);
+  DhwOperatingStatus s;
+  ASSERT_TRUE(decode_dhw_operating_status(rest, true, s));
+  EXPECT_FALSE(s.boost) << "Explorer V4 at rest";
+  ASSERT_TRUE(decode_dhw_operating_status(boosting, true, s));
+  EXPECT_TRUE(s.boost) << "Explorer V4 boosting";
+  EXPECT_FALSE(s.away);
+  ASSERT_TRUE(decode_dhw_operating_status(rest, false, s));
+  EXPECT_TRUE(s.boost) << "the same 4900 is a boost on a Calypso";
+  ASSERT_TRUE(decode_dhw_operating_status(boosting, false, s));
+  EXPECT_FALSE(s.boost) << "and 4A00 is its rest";
 }
 
 TEST(ProtoDhw, OperatingStatusSkipsOtherParametersOfTheEcho) {
   // The heater echoes FP10 when asked for 0x43: FPI2 43, values FP10, FP15, FP16 (issue #198).
   DhwOperatingStatus s;
   ASSERT_TRUE(decode_dhw_operating_status(
-      reply_with({0x05, 0x00, 0xBE, 0x7A, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x00}, CMD_PRIVATE_RESP), s));
+      reply_with({0x05, 0x00, 0xBE, 0x7A, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x00}, CMD_PRIVATE_RESP), false,
+      s));
   EXPECT_EQ(s.capabilities, 0x000C);
   EXPECT_FALSE(s.boost);
   EXPECT_FALSE(s.away);
@@ -394,23 +416,24 @@ TEST(ProtoDhw, OperatingStatusRefusesWhatItCannotRead) {
   DhwOperatingStatus s;
   s.capabilities = 0x1234;
   const IoFrame good = operating_reply(DHW_OPERATING_MODE_OFF);
-  EXPECT_FALSE(decode_dhw_operating_status(reply_with({0x05, 0x00, 0xA1, 0xE8, 0x00, 0x00}, CMD_PRIVATE_RESP), s))
+  EXPECT_FALSE(
+      decode_dhw_operating_status(reply_with({0x05, 0x00, 0xA1, 0xE8, 0x00, 0x00}, CMD_PRIVATE_RESP), false, s))
       << "the plain FP1-FP7 read has no FP15 or FP16";
-  EXPECT_FALSE(
-      decode_dhw_operating_status(reply_with({0x05, 0x00, 0xA1, 0xE8, 0x00, 0x01, 0x4A, 0x00}, CMD_PRIVATE_RESP), s))
+  EXPECT_FALSE(decode_dhw_operating_status(
+      reply_with({0x05, 0x00, 0xA1, 0xE8, 0x00, 0x01, 0x4A, 0x00}, CMD_PRIVATE_RESP), false, s))
       << "FP16 without FP15";
-  EXPECT_FALSE(
-      decode_dhw_operating_status(reply_with({0x05, 0x00, 0xA1, 0xE8, 0x00, 0x02, 0x00, 0x0C}, CMD_PRIVATE_RESP), s))
+  EXPECT_FALSE(decode_dhw_operating_status(
+      reply_with({0x05, 0x00, 0xA1, 0xE8, 0x00, 0x02, 0x00, 0x0C}, CMD_PRIVATE_RESP), false, s))
       << "FP15 without FP16";
   EXPECT_FALSE(decode_dhw_operating_status(
-      reply_with({0x05, 0x00, 0xA1, 0xE8, 0x01, 0x03, 0x00, 0x0C, 0x4A, 0x00}, CMD_PRIVATE_RESP), s))
+      reply_with({0x05, 0x00, 0xA1, 0xE8, 0x01, 0x03, 0x00, 0x0C, 0x4A, 0x00}, CMD_PRIVATE_RESP), false, s))
       << "an FPI1 echo shifts the values";
   IoFrame short_reply = good;
   short_reply.data_len -= 1;
-  EXPECT_FALSE(decode_dhw_operating_status(short_reply, s)) << "FP16 cut short";
+  EXPECT_FALSE(decode_dhw_operating_status(short_reply, false, s)) << "FP16 cut short";
   IoFrame wrong_command = good;
   wrong_command.cmd = CMD_WRITE_PRIVATE_ACK;
-  EXPECT_FALSE(decode_dhw_operating_status(wrong_command, s));
+  EXPECT_FALSE(decode_dhw_operating_status(wrong_command, false, s));
   EXPECT_EQ(s.capabilities, 0x1234) << "untouched on failure";
 }
 

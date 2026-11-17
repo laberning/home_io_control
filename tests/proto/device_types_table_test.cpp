@@ -524,14 +524,15 @@ TEST(DeviceTypesTableModels, AModelTheKindDoesNotOfferFallsBackToTheKind) {
             device_features(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
 }
 
-TEST(DeviceTypesTableModels, OnlyTheElectricalHeatersOfferModels) {
+TEST(DeviceTypesTableModels, OnlyTheElectricalHeatersAndTheWaterHeaterOfferModels) {
   std::set<std::pair<DeviceType, uint8_t>> with_models;
   test::for_each_table_row([&with_models](const DeviceTypeInfo &row) {
     if (device_offers_models(row.type, row.subtype))
       with_models.emplace(row.type, row.subtype);
   });
   EXPECT_EQ(with_models, (std::set<std::pair<DeviceType, uint8_t>>{{DeviceType::ELECTRICAL_HEATER, 0},
-                                                                   {DeviceType::ELECTRICAL_HEATER, 1}}));
+                                                                   {DeviceType::ELECTRICAL_HEATER, 1},
+                                                                   {DeviceType::DOMESTIC_HOT_WATER, 0}}));
 }
 
 TEST(DeviceTypesTableModels, AModelRowKeepsTheIdentityOfTheRowAboveIt) {
@@ -545,8 +546,11 @@ TEST(DeviceTypesTableModels, AModelRowKeepsTheIdentityOfTheRowAboveIt) {
     EXPECT_EQ(model.flags, above->flags) << model.name << ": platform, naming and experimental flags are the row's";
     EXPECT_NE(model.model, DeviceModel::NONE);
     EXPECT_TRUE(names.insert(model.name).second) << model.name << " names two models";
+    // A YAML identifier: lowercase letters and underscores, and digits after the first letter (explorer_v4).
+    EXPECT_TRUE(model.name[0] >= 'a' && model.name[0] <= 'z') << model.name << ": a model name starts with a letter";
     for (const char *c = model.name; *c != '\0'; c++)
-      EXPECT_TRUE((*c >= 'a' && *c <= 'z') || *c == '_') << model.name << ": a model name is a YAML identifier";
+      EXPECT_TRUE((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '_')
+          << model.name << ": a model name is a YAML identifier";
     // The window companions follow the heating profile of the model as they do for a subtype row.
     const HeatingProfile *profile = find_heating_profile(model.type, model.subtype, model.model);
     const bool polls_window =
@@ -559,7 +563,7 @@ TEST(DeviceTypesTableModels, AModelRowKeepsTheIdentityOfTheRowAboveIt) {
                                         HeatingFunction::NIGHT_LIGHT) != profile->extra_poll_registers.end();
     EXPECT_EQ(has_feature(model.features, device_feature::NIGHT_LIGHT), polls_light) << model.name;
   });
-  EXPECT_EQ(rows, 3u);
+  EXPECT_EQ(rows, 4u);
 }
 
 TEST(DeviceTypesTable, OnlyTheTowelDryerRowHasTheCentralHeatingModeBit) {

@@ -74,7 +74,7 @@ void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame 
   if (!trust_position)
     return;
   DhwOperatingStatus status;
-  if (decode_dhw_operating_status(frame, status)) {
+  if (decode_dhw_operating_status(frame, has_feature(dev.features, device_feature::DHW_BOOST_INVERTED), status)) {
     if (dev.dhw.boost != (status.boost ? 1 : 0) || dev.dhw.away != (status.away ? 1 : 0)) {
       ESP_LOGI(detail::TAG, "Device %s: hot water boost %s, away %s (FP15 0x%04X)", id.c_str(),
                status.boost ? "on" : "off", status.away ? "on" : "off", static_cast<unsigned>(status.capabilities));
