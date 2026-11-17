@@ -156,7 +156,7 @@ struct RadioCaptureInfo {
                               ///< CRC failures — see the concrete driver's capture documentation.
   uint32_t timestamp_ms{0};   ///< Timestamp of capture (millis).
   uint32_t freq_hz{0};        ///< RF frequency of capture (Hz).
-  int16_t rssi_dbm{0};        ///< Received signal strength (dBm).
+  int16_t rssi_dbm{0};        ///< Received signal strength (dBm): the level at sync-word detection.
   uint16_t irq_status{0};     ///< Raw IRQ status register value.
   uint8_t irq_flags1{0};      ///< IRQ flags group 1 (chip-specific).
   uint8_t irq_flags2{0};      ///< IRQ flags group 2 (chip-specific, includes CRC flag).

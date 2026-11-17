@@ -154,6 +154,9 @@ class RadioSX1276 : public RadioDriver {
   /// @param freq_hz New frequency in Hz.
   void change_frequency(uint32_t freq_hz) override;
   /// @brief Read instantaneous RSSI (dBm) while in RX mode (used for LBT).
+  ///
+  /// Live read of the channel, the right measurement before a send. A received frame's level in
+  /// RadioCaptureInfo::rssi_dbm is a different reading: the one latched when its sync word was seen.
   /// @return RSSI in dBm (negative).
   int16_t read_rssi() override;
   /// @copydoc RadioDriver::is_sync_detected
@@ -259,13 +262,23 @@ class RadioSX1276 : public RadioDriver {
   /// @param buf_size Size of buf.
   /// @return Number of bytes read.
   uint8_t read_fifo_packet_(uint8_t *buf, uint8_t buf_size);
+  /// Latch REG_RSSI_VALUE for the reception in progress, once. Called at the first sighting of
+  /// SyncAddressMatch, where the level is the frame's own; the register keeps following the channel
+  /// afterwards and reads the noise floor once the frame has ended.
+  void latch_rssi_at_sync_();
+  /// Forget the latched level: the reception it belonged to ended (frame consumed, receiver
+  /// restarted, mode or channel changed, sync flag gone).
+  void clear_rssi_latch_();
+  /// The raw RSSI register value for the capture of the frame being delivered: the level latched
+  /// at sync, or a live read when the sync word was never seen in flight.
+  uint8_t capture_rssi_raw_();
   /// Populate last_capture_ from raw telemetry.
   /// Note: `crc_error` is never set on this driver — in IoHomeOn mode the hardware
   /// silently drops frames with a bad CRC before they reach the FIFO.
   /// @param blocking_wait if this was a blocking receive.
   /// @param irq1 IRQ flags 1.
   /// @param irq2 IRQ flags 2.
-  /// @param rssi RSSI value.
+  /// @param rssi Raw REG_RSSI_VALUE of the frame (level at sync-word detection, see capture_rssi_raw_()).
   /// @param raw Pointer to raw bytes (may be nullptr).
   /// @param raw_len Length of raw buffer.
   /// @param frame Pointer to parsed frame bytes (may be nullptr).
@@ -287,6 +300,8 @@ class RadioSX1276 : public RadioDriver {
   SX1276RxBandwidth rx_bandwidth_{SX1276RxBandwidth::BW_41_7_KHZ};  ///< Runtime-tunable RX bandwidth.
   uint16_t response_preamble_{SX1276_RESPONSE_PREAMBLE};            ///< Runtime-tunable response preamble.
   uint32_t sync_hold_since_us_{0};  ///< First-sighting timestamp for reception_in_progress()'s un-stick bound.
+  bool rssi_latched_{false};        ///< True once latch_rssi_at_sync_() has taken this reception's level.
+  uint8_t rssi_at_sync_raw_{0};     ///< Raw REG_RSSI_VALUE latched at the first sync sighting.
   /// reception_in_progress()'s preamble hold, with its renewals.
   PreambleHold preamble_hold_state_{
       {SX1276_IDLE_PREAMBLE_HOLD_MS, SX1276_IDLE_RENEW_REDETECT_MS, IDLE_PREAMBLE_HOLD_CHAIN_MS}};
