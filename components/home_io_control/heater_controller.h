@@ -205,6 +205,13 @@ class HeaterController {
   ///          this boot (TemperatureInForceSupport::UNKNOWN) and the programme runs. Every reading updates the
   ///          device record and notifies the card, so the card shows what the write that follows is planned
   ///          from. Stops at the first register that gets no reply or an answer without a value.
+  ///
+  ///          A heater that takes the override in an eco period only
+  ///          (HeatingProgrammePeriod::override_in_eco_only, ADR 0094) is then asked for its heating level by a
+  ///          status read, while the programme runs and the temperature in force is reported. The stored level is
+  ///          forgotten first, so the level in the record afterwards is the one this read returned or none; the
+  ///          plan refuses a target without one (HeatingRefusal::PERIOD_UNKNOWN). Like the temperature in
+  ///          force, a silent level read does not make this return false.
   /// @param device_id Target device ID.
   /// @return true when the mode, and the timed run where it matters, were answered with a value. false when
   ///         the heater did not say, and for a device without a programme period (nothing is read). The
@@ -499,6 +506,11 @@ class HeaterController {
   /// @param device_id Target device ID.
   /// @param plan The plan that was just written and read back.
   void show_temperature_in_force_after_write_(const std::string &device_id, const HeatingWritePlan &plan);
+
+  /// @brief The status read that gives a heater's period, made for a target (see read_programme_state()).
+  /// @param device_id Target device ID.
+  /// @param profile The device's profile; has a programme period.
+  void read_period_for_target_(const std::string &device_id, const HeatingProfile &profile);
 
   /// @brief Read the heating level a heater applies now: the status read of the main parameter, whose reply
   ///        the hub's status decoder folds into HeatingReadings::level (apply_register_heater_status_reply()).

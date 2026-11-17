@@ -77,9 +77,11 @@ enum class HeatingFunction : uint8_t {
                            ///< A towel dryer's own panel sets it when the temperature is raised in an eco period
                            ///< ("dérogation") and the override ends at the next comfort period. A sweep taken
                            ///< during a panel override read 16.5 here (0 otherwise).
-                           ///< \todo Confirm on a towel dryer and on a radiator that a write from the hub holds the
-                           ///<       temperature until the programme's next change, in a comfort period too, and
-                           ///<       that a write of 0 cancels it.
+                           ///< A write from the hub behaves the same on a towel dryer: taken and held in an eco
+                           ///< period, cancelled by 0, acknowledged and ignored (reads back 0) in a comfort period
+                           ///< (issue #202). A Thermor EMOTION 3 H radiator ignores it as well (issue #228).
+                           ///< \todo Confirm on a radiator that takes it that a write holds the temperature until
+                           ///<       the programme's next change and that a write of 0 cancels it.
   HEATER_TEMPERATURE_IN_FORCE,  ///< Register 0x012A, read-only: the temperature a heater with an adjustable setpoint
                                 ///< (AGILIA, Hekla, EMOTION 3 H) holds right now, tenths of a degree. The same value
                                 ///< as TEMPERATURE_IN_FORCE on the towel dryer, whose sweep read it in both.

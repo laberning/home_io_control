@@ -37,7 +37,7 @@ model name, `ADELIS 2 DIGIT` or `ADELIS 2 M`.
 | Mixed ADELIS 2 M | ✅ Reported working with `io_model: towel_dryer`: mode, target, boost, drying and room temperature follow the display (issue #243). With the dryer's central-heating mode on, the element does not run; see Known quirks |
 | Level the dryer applies (`heating_level:` sensor) | ⚠️ Experimental: read in a comfort period, in an eco period, in a boost and during drying (issue #202). It shows eco during a drying run, and after a change of mode or of boost it can show the old level for one or two polls |
 | Target set in `auto` in an eco period (temporary override) | ✅ The dryer takes the override, shows the new temperature and follows its program again at the next change of period; `set_derogation` with `0` ends it (issue #202) |
-| Target set in `auto` in a comfort period | ❌ The dryer refuses the override and keeps its comfort temperature: the write is acknowledged, the register reads back 0, and the card falls back to the dryer's value (issue #202). A target in a comfort period does nothing yet; set the comfort temperature in `heat` |
+| Target set in `auto` in a comfort period | ⚠️ Changes the comfort temperature, as the dryer's panel does: the dryer ignores an override in a comfort period (issue #202), so the hub writes the comfort setpoint after reading the dryer's level. The comfort setpoint is confirmed in `heat`; please report whether the display follows in `auto` |
 
 ## Modes in Home Assistant
 
@@ -76,8 +76,9 @@ and add `io_model: towel_dryer` to the block before you flash.
 - **Changes made on the dryer show up at the next poll.** The hub reads the dryer every five minutes
   by default, so a boost started on the dryer can take that long to appear in Home Assistant. Set
   `status_poll_interval` on the entry to read it more often.
-- **A target set in `auto` works in an eco period only.** It is a temporary override of the program;
-  in a comfort period the dryer refuses it. See
+- **A target set in `auto` is temporary in an eco period and lasting in a comfort period.** In an eco
+  period it is a temporary override that holds until the next comfort period. In a comfort period it
+  becomes the new comfort temperature, because the dryer ignores an override there. See
   [A target set while the heater's program runs](../heating.md#a-target-set-while-the-heaters-program-runs).
 - **Frost-free and summer show as MANUEL.** On the display, lowering the target below 12 °C reaches a
   frost-free setting at 7.0 °C, and one more step reaches a summer setting at 0.0 °C. The dryer

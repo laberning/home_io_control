@@ -69,6 +69,10 @@ class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDo
   /// and the heater has not answered before (the hub reads nothing otherwise).
   TemperatureInForceSupport in_force_answer{TemperatureInForceSupport::UNKNOWN};
   float in_force_value_c{17.0F};
+  /// What the heater answers to the status read for its heating level, made for a target on a heater that takes
+  /// the override in an eco period only while its programme runs and it reports a temperature in force: a level
+  /// byte, or SILENT (the default) for no level. The stored level is replaced by the answer, as the hub does.
+  int16_t level_answer{SILENT};
 
   /// What the hub's read does: the mode, the timed run while the mode shows the programme and the temperature
   /// in force, each stored on the heater's record with a notification, stopping at the first that is silent.
@@ -98,6 +102,9 @@ class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDo
       if (this->in_force_answer == TemperatureInForceSupport::REPORTED)
         dev->heating.in_force_temperature_c = this->in_force_value_c;
     }
+    if (profile->programme_period->override_in_eco_only && programme_period_active(*profile, dev->heating) &&
+        dev->temperature_in_force == TemperatureInForceSupport::REPORTED)
+      dev->heating.level = this->level_answer;
     this->registry_.notify(device_id);
     return true;
   }
@@ -130,8 +137,11 @@ class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDo
       // What the hub's read-back of an override does: the value read is the temperature in force now.
       IoDevice *dev = this->registry_.get(device_id);
       const HeatingProfile *profile = dev != nullptr ? find_heating_profile(*dev) : nullptr;
+      const float held = this->read_replies.at(plan.read_back_fn);
       if (profile != nullptr && profile->programme_period != nullptr) {
-        dev->heating.store(profile->programme_period->in_force_fn, this->read_replies.at(plan.read_back_fn));
+        // A written override is the temperature now in force; 0 (none active, a refusal) leaves the reading alone.
+        if (held >= HEATING_TEMP_MIN_C)
+          dev->heating.store(profile->programme_period->in_force_fn, held);
         this->registry_.notify(device_id);
       }
     } else {
@@ -1464,28 +1474,35 @@ TEST(PlatformClimate, RadiatorInProgOrAutoShowsTheTemperatureInForceAndATargetIs
   }
 }
 
-TEST(PlatformClimate, TowelDryerTargetInAutoWritesTheOverrideInEveryPeriodAndInHeatTheSetpoint) {
+TEST(PlatformClimate, TowelDryerTargetInAutoIsTheOverrideInAnEcoPeriodAndTheComfortSetpointInAComfortPeriodOrHeat) {
   MockHubClimate hub;
   IOHomeClimate entity = make_towel_climate(hub);
   entity.setup();
   hub.read_replies[HeatingFunction::DEROGATED_SETPOINT] = 17.5F;
-  hub.read_replies[HeatingFunction::SET_TEMPERATURE] = 21.0F;
+  hub.read_replies[HeatingFunction::SET_TEMPERATURE] = 17.5F;
   hub.mode_answer = DRYER_PROGRAMME;
   hub.timed_run_answer = NO_TIMED_RUN;
+  hub.in_force_answer = TemperatureInForceSupport::REPORTED;
 
-  for (const auto &period : {std::pair<float, int16_t>{16.5F, heating_level::ECO},
-                             std::pair<float, int16_t>{20.0F, heating_level::COMFORT}}) {
+  struct Period {
+    float in_force_c;
+    int16_t level;
+    HeatingFunction written;
+  };
+  for (const Period &period : {Period{16.5F, heating_level::ECO, HeatingFunction::DEROGATED_SETPOINT},
+                               Period{20.0F, heating_level::COMFORT, HeatingFunction::SET_TEMPERATURE}}) {
     hub.writes.clear();
     hub.reads.clear();
     deliver_programme_readings(hub, [&period](HeatingReadings &r) {
-      programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, period.first, period.second);
+      programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, period.in_force_c, period.level);
     });
+    hub.level_answer = period.level;
     perform_target(entity, 17.5F);
-    ASSERT_EQ(hub.writes.size(), 1u) << "level " << period.second;
-    EXPECT_EQ(hub.writes[0].fn, HeatingFunction::DEROGATED_SETPOINT) << "level " << period.second;
+    ASSERT_EQ(hub.writes.size(), 1u) << "level " << period.level;
+    EXPECT_EQ(hub.writes[0].fn, period.written) << "level " << period.level;
     EXPECT_FLOAT_EQ(hub.writes[0].value, 17.5F);
     ASSERT_EQ(hub.reads.size(), 1u);
-    EXPECT_EQ(hub.reads[0], HeatingFunction::DEROGATED_SETPOINT);
+    EXPECT_EQ(hub.reads[0], period.written) << "the register written is the one read back";
   }
 
   hub.writes.clear();
@@ -1493,6 +1510,48 @@ TEST(PlatformClimate, TowelDryerTargetInAutoWritesTheOverrideInEveryPeriodAndInH
   perform_target(entity, 21.0F);
   ASSERT_EQ(hub.writes.size(), 1u);
   EXPECT_EQ(hub.writes[0].fn, HeatingFunction::SET_TEMPERATURE) << "heat: the target is the comfort temperature";
+}
+
+TEST(PlatformClimate, ATowelDryerTargetInAutoThatReportsNoPeriodWritesNothing) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+  deliver_programme_readings(hub, [](HeatingReadings &r) {
+    programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
+  });
+  hub.mode_answer = DRYER_PROGRAMME;
+  hub.timed_run_answer = NO_TIMED_RUN;
+  hub.level_answer = MockHubClimate::SILENT;
+  const int published = entity.publish_count_;
+
+  perform_target(entity, 21.0F);
+
+  EXPECT_TRUE(hub.writes.empty()) << "neither the override nor a comfort write is known to be right";
+  EXPECT_TRUE(hub.plans.empty());
+  EXPECT_EQ(entity.publish_count_, published) << "the card stays as it was";
+}
+
+TEST(PlatformClimate, ARefusedOverrideShowsTheHeatersOwnTargetAtOnceInsteadOfTheTypedValue) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_towel_climate(hub);
+  entity.setup();
+  deliver_programme_readings(hub, [](HeatingReadings &r) {
+    programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
+  });
+  hub.mode_answer = DRYER_PROGRAMME;
+  hub.timed_run_answer = NO_TIMED_RUN;
+  hub.level_answer = heating_level::ECO;
+  hub.read_replies[HeatingFunction::DEROGATED_SETPOINT] = 0.0F;  // acknowledged, reads back as none
+  ASSERT_FLOAT_EQ(entity.target_temperature, 16.5F);
+  const int published = entity.publish_count_;
+
+  perform_target(entity, 21.0F);
+
+  ASSERT_EQ(hub.writes.size(), 1u);
+  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::DEROGATED_SETPOINT);
+  EXPECT_GT(entity.publish_count_, published) << "Home Assistant is told, so its card drops the typed value";
+  EXPECT_FLOAT_EQ(entity.published_targets_.back(), 16.5F) << "the heater's own target";
+  EXPECT_FLOAT_EQ(entity.target_temperature, 16.5F);
 }
 
 TEST(PlatformClimate, ADryerWhoseBoostEndedOrBeganSincethePollTakesTheTargetWhereTheHeaterNowSendsIt) {
@@ -1509,6 +1568,7 @@ TEST(PlatformClimate, ADryerWhoseBoostEndedOrBeganSincethePollTakesTheTargetWher
   ASSERT_TRUE(entity.preset.has_value());
   ASSERT_EQ(*entity.preset, CLIMATE_PRESET_BOOST);
   hub.timed_run_answer = NO_TIMED_RUN;
+  hub.level_answer = heating_level::ECO;
   perform_target(entity, 21.0F);
   EXPECT_EQ(written(hub), std::vector<HeatingFunction>{HeatingFunction::DEROGATED_SETPOINT});
 

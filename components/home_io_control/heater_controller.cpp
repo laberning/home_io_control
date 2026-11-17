@@ -264,7 +264,22 @@ bool HeaterController::read_programme_state(const std::string &device_id) {
   dev = this->registry_.get(device_id);
   if (dev != nullptr && dev->temperature_in_force == TemperatureInForceSupport::UNKNOWN)
     this->poll_temperature_in_force_(device_id, *profile, EXCHANGE_RETRY_COUNT, InForceEmptyAnswer::MARKS_ABSENT);
+  this->read_period_for_target_(device_id, *profile);
   return true;
+}
+
+void HeaterController::read_period_for_target_(const std::string &device_id, const HeatingProfile &profile) {
+  IoDevice *dev = this->registry_.get(device_id);
+  // The period decides only where a target goes while the programme runs on a heater that takes the override in
+  // an eco period only; every other target needs no level.
+  if (dev == nullptr || !profile.programme_period->override_in_eco_only ||
+      dev->temperature_in_force != TemperatureInForceSupport::REPORTED ||
+      !programme_period_active(profile, dev->heating))
+    return;
+  // The stored level may be one or two polls old, and an unanswered read leaves it as it was, so forget it first:
+  // a level that is there afterwards came from this read.
+  dev->heating.level = -1;
+  this->read_heating_level_(device_id, EXCHANGE_RETRY_COUNT);
 }
 
 void HeaterController::set_device_temperature_range(const std::string &device_id, float min_c, float max_c) {

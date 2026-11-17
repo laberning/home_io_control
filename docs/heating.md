@@ -149,7 +149,7 @@ so they are presets, and the mode underneath stays as it was.
 | Towel dryer display | Mode | Preset | What a target sets |
 |---|---|---|---|
 | MANUEL: holds the set temperature | `heat` | | The comfort temperature |
-| PROG: follows the dryer's weekly program | `auto` | | A temporary override: taken in an eco period, refused in a comfort period |
+| PROG: follows the dryer's weekly program | `auto` | | In a comfort period the comfort temperature, in an eco period a temporary override |
 | Off | `off` | | The comfort temperature |
 | BOOST | the mode underneath | `boost` | The comfort temperature |
 | Drying | the mode underneath | `Drying` | The comfort temperature |
@@ -170,8 +170,9 @@ Mode, boost and drying, target, room temperature and `heating` / `idle` are conf
 Adelis units, the writes each checked against the dryer's display (issue #202), and a third, mixed
 unit follows the display for mode, target, boost and drying (issue #243). The mixed model has a
 central-heating mode that keeps the element off: the card then shows `idle`, and boost and drying
-change nothing. The override is taken in an eco period and refused in a comfort period (see
-"A target set while the heater's program runs" below). The level sensor is experimental.
+change nothing. A target in `auto` changes the comfort temperature in a comfort period and is a temporary
+override in an eco period (see "A target set while the heater's program runs" below). The level sensor is
+experimental.
 
 ## Level heaters and pilot-wire interfaces
 
@@ -256,7 +257,7 @@ watching the element; the `heating_source` sensor shows what runs, so you can ch
 
 ## A target set while the heater's program runs
 
-*Confirmed on a towel dryer in an eco period (issue #202). A towel dryer refuses it in a comfort period and a Thermor EMOTION 3 H radiator refuses it altogether (issue #228). Experimental on other heaters.*
+*Confirmed on a towel dryer (issue #202). A Thermor EMOTION 3 H radiator refuses the override altogether (issue #228). Experimental on other heaters.*
 
 A heater with its own weekly program shows `auto` while that program runs: PROG on a towel dryer,
 PROG and AUTO on a radiator with a setpoint. A target you set then is a temporary override of the
@@ -264,8 +265,14 @@ program. *Dérogation* is the French word for such an exception, which is where 
 `set_derogation` function gets its name.
 
 - **While the program runs** a target is written to the heater's override register (`0x011D`) and
-  read back, in a comfort period as well as in an eco period. If the heater takes it, it holds until
-  the program's next change. The program's comfort temperature is not touched.
+  read back. If the heater takes it, it holds until the program's next change. The program's comfort
+  temperature is not touched. A towel dryer does this in an eco period only; see the next item.
+- **A towel dryer in a comfort period** ignores the override, as its own panel changes the comfort
+  temperature there. So a target you set while the dryer's program is in a comfort period is written
+  as the new comfort temperature, and it stays until you change it again. The same gesture is
+  temporary in an eco period and lasting in a comfort period. The hub asks the dryer for its level
+  just before the write to know which period it is in. During a boost or a drying run the target is
+  the comfort temperature too.
 - **In `heat`** a target is the comfort temperature, as on the heater's own display. So is a target
   set while a towel dryer runs a boost or a drying run on top of its program.
 - **The card's target in `auto`** is the temperature the heater holds right now, read at every poll
@@ -277,22 +284,24 @@ program. *Dérogation* is the French word for such an exception, which is where 
   panel, or a boost or drying run ends on its timer. So before it writes, the hub reads the heater's
   mode and, on a towel dryer in its program, whether a boost or drying run is on top. While the
   program runs and the heater has not reported a temperature in force since the restart, the hub
-  reads that too. The card shows what these reads found. Presets and mode changes are sent without
-  a read.
-- **If the heater does not answer these reads**, the hub changes nothing and logs a warning with the
-  device id. The target in Home Assistant stays the previous one, although an open card can show
-  your value until you open it again. Set the target again when the heater is in range. The hub
-  never falls back to the comfort temperature here, because that would change the program for good.
+  reads that too. A towel dryer in its program is then asked for its level, which tells a comfort
+  from an eco period. The card shows what these reads found. Presets and mode changes are sent
+  without a read.
+- **If the heater does not answer these reads**, or a towel dryer in its program gives no comfort or
+  eco level, the hub changes nothing and logs a warning with the device id. The target in Home
+  Assistant stays the previous one, although an open card can show your value until you open it
+  again. Set the target again when the heater is in range. The hub never falls back to the comfort
+  temperature here, because that would change the program for good.
 - **A heater that does not hold the register** answers the temperature-in-force read without a
   value. The hub then stops asking until the next restart, the card's target stays the comfort
   temperature, and a target writes the comfort temperature. A heater that has reported a temperature
   in force once keeps the override rule until the next restart, even when a later read of that
   register gets no reply or no value.
 - **A heater that refuses the override** is logged as a warning with the device id, the value asked
-  for and what the register holds. Nothing else is written, and the next poll shows what the heater
-  holds. A towel dryer does this in a comfort period and a Thermor EMOTION 3 H radiator in every
-  period: the write is acknowledged and the register reads back 0. A target in `auto` does nothing
-  yet on these heaters; change the comfort temperature in `heat` instead, as described below.
+  for and what the register holds. Nothing else is written, and the card shows the heater's own
+  target again at once. A Thermor EMOTION 3 H radiator does this in every period: the write is
+  acknowledged and the register reads back 0. A target in `auto` does nothing yet on that radiator;
+  change the comfort temperature in `heat` instead, as described below.
 - **To end an override early**, call the
   [`heating_control` action](configuration/climate.md#the-heating_control-action) with
   `set_derogation` and `0`. An override also ends by itself, as the heater decides. Home Assistant

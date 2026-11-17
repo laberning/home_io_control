@@ -113,11 +113,12 @@ const HeatingProfile &programme_profile(DeviceModel model) {
 
 TEST(HeatingWritePlan, ATargetWhileTheProgrammeRunsIsAnOverrideWithAReadBackOnBothHeaterFamilies) {
   for (const DeviceModel model : {DeviceModel::TOWEL_DRYER, DeviceModel::NONE, DeviceModel::HEATER_WITH_LIGHT}) {
-    const HeatingWritePlan plan =
-        plan_heating_write(programme_profile(model), target_request(17.5F), programme_facts(true));
+    // The dryer takes the override in an eco period; the radiators in every period.
+    HeatingDeviceFacts facts = programme_facts(true);
+    facts.period = HeatingPeriod::ECO;
+    const HeatingWritePlan plan = plan_heating_write(programme_profile(model), target_request(17.5F), facts);
     ASSERT_EQ(plan.kind, HeatingPlanKind::REGISTER) << static_cast<int>(model);
-    EXPECT_EQ(plan.register_fn, HeatingFunction::DEROGATED_SETPOINT)
-        << "the comfort setpoint stays as it is, in every period";
+    EXPECT_EQ(plan.register_fn, HeatingFunction::DEROGATED_SETPOINT) << "the comfort setpoint stays as it is";
     EXPECT_FLOAT_EQ(plan.register_value, 17.5F);
     EXPECT_TRUE(plan.temporary_override);
     EXPECT_TRUE(plan.read_back);
@@ -137,6 +138,51 @@ TEST(HeatingWritePlan, ATargetWhileTheProgrammeDoesNotRunWritesTheComfortSetpoin
     EXPECT_EQ(plan_heating_write(programme_profile(model), target_request(21.0F), known_device(20.0F)).register_fn,
               HeatingFunction::SET_TEMPERATURE)
         << "facts that say nothing about a programme";
+  }
+}
+
+TEST(HeatingWritePlan, ATowelDryerTargetInAComfortPeriodIsTheComfortSetpointAndInAnEcoPeriodTheOverride) {
+  const HeatingProfile &dryer = programme_profile(DeviceModel::TOWEL_DRYER);
+  HeatingDeviceFacts facts = programme_facts(true);
+
+  facts.period = HeatingPeriod::COMFORT;
+  const HeatingWritePlan comfort = plan_heating_write(dryer, target_request(21.5F), facts);
+  ASSERT_EQ(comfort.kind, HeatingPlanKind::REGISTER);
+  EXPECT_EQ(comfort.register_fn, HeatingFunction::SET_TEMPERATURE) << "the dryer ignores an override here";
+  EXPECT_FLOAT_EQ(comfort.register_value, 21.5F);
+  EXPECT_FALSE(comfort.temporary_override);
+  EXPECT_TRUE(comfort.read_back);
+  EXPECT_EQ(comfort.read_back_fn, HeatingFunction::SET_TEMPERATURE);
+
+  facts.period = HeatingPeriod::ECO;
+  const HeatingWritePlan eco = plan_heating_write(dryer, target_request(21.5F), facts);
+  EXPECT_EQ(eco.register_fn, HeatingFunction::DEROGATED_SETPOINT);
+  EXPECT_TRUE(eco.temporary_override);
+  EXPECT_EQ(eco.read_back_fn, HeatingFunction::DEROGATED_SETPOINT);
+}
+
+TEST(HeatingWritePlan, ATowelDryerTargetInAutoWithNoPeriodIsRefusedAndWritesNothing) {
+  HeatingDeviceFacts facts = programme_facts(true);
+  facts.period = HeatingPeriod::UNKNOWN;
+  const HeatingWritePlan plan =
+      plan_heating_write(programme_profile(DeviceModel::TOWEL_DRYER), target_request(21.0F), facts);
+  EXPECT_FALSE(plan.is_write()) << "neither the override nor the comfort write is known to be right";
+  EXPECT_EQ(plan.refusal, HeatingRefusal::PERIOD_UNKNOWN);
+}
+
+TEST(HeatingWritePlan, ThePeriodDecidesNothingOutsideTheProgrammeOrOnARadiator) {
+  for (const HeatingPeriod period : {HeatingPeriod::UNKNOWN, HeatingPeriod::COMFORT, HeatingPeriod::ECO}) {
+    HeatingDeviceFacts facts = programme_facts(true);
+    facts.period = period;
+    for (const DeviceModel model : {DeviceModel::NONE, DeviceModel::HEATER_WITH_LIGHT}) {
+      const HeatingWritePlan plan = plan_heating_write(programme_profile(model), target_request(21.0F), facts);
+      EXPECT_EQ(plan.register_fn, HeatingFunction::DEROGATED_SETPOINT)
+          << "a radiator keeps the override in every period, " << static_cast<int>(period);
+    }
+    facts.programme_runs = false;
+    EXPECT_EQ(plan_heating_write(programme_profile(DeviceModel::TOWEL_DRYER), target_request(21.0F), facts).register_fn,
+              HeatingFunction::SET_TEMPERATURE)
+        << "heat, or a timed run on top: the comfort setpoint without any period";
   }
 }
 
@@ -289,6 +335,23 @@ TEST(HeatingWritePlan,
   EXPECT_FALSE(heating_device_facts(nullptr, true).in_force_unresolved);
 }
 
+TEST(HeatingWritePlan, DeviceFactsNameThePeriodFromTheHeatingLevelOnAProfileThatNeedsIt) {
+  IoDevice dryer = heater_record(DeviceModel::TOWEL_DRYER, static_cast<int16_t>(TowelDryerMode::PROG), 17.0F);
+  EXPECT_EQ(heating_device_facts(&dryer, true).period, HeatingPeriod::UNKNOWN) << "no level read";
+  dryer.heating.level = heating_level::COMFORT;
+  EXPECT_EQ(heating_device_facts(&dryer, true).period, HeatingPeriod::COMFORT);
+  dryer.heating.level = heating_level::ECO;
+  EXPECT_EQ(heating_device_facts(&dryer, true).period, HeatingPeriod::ECO);
+  for (const int16_t other : {static_cast<int16_t>(heating_level::FROST_PROTECTION),
+                              static_cast<int16_t>(heating_level::BOOST), static_cast<int16_t>(-1)}) {
+    dryer.heating.level = other;
+    EXPECT_EQ(heating_device_facts(&dryer, true).period, HeatingPeriod::UNKNOWN) << other;
+  }
+  IoDevice radiator = heater_record(DeviceModel::NONE, static_cast<int16_t>(HeatingMode::PROG), 17.0F);
+  radiator.heating.level = heating_level::ECO;
+  EXPECT_EQ(heating_device_facts(&radiator, true).period, HeatingPeriod::UNKNOWN) << "a radiator needs no period";
+}
+
 TEST(HeatingWritePlan, DeviceFactsCarryWhetherTheProgrammeStateReadWasAnswered) {
   IoDevice dryer = heater_record(DeviceModel::TOWEL_DRYER, static_cast<int16_t>(TowelDryerMode::PROG), 16.5F);
   EXPECT_TRUE(heating_device_facts(&dryer, true).programme_state_answered);
@@ -326,8 +389,10 @@ TEST(HeatingWritePlan, ATargetOnAProgrammeHeaterGoesWhereWhatTheHeaterJustSaidSe
       heat.temperature_in_force = support;
       EXPECT_EQ(plan_target_from_record(heat).register_fn, HeatingFunction::SET_TEMPERATURE) << m;
     }
-    // The programme runs and the heater reports a temperature in force: an override with a read-back.
+    // The programme runs and the heater reports a temperature in force: an override with a read-back (a dryer in
+    // an eco period; in a comfort period it is the comfort setpoint, tested on its own).
     IoDevice reported = heater_record(family.model, family.programme_mode, 17.0F);
+    reported.heating.level = heating_level::ECO;
     const HeatingWritePlan override_plan = plan_target_from_record(reported);
     EXPECT_EQ(override_plan.register_fn, HeatingFunction::DEROGATED_SETPOINT) << m;
     EXPECT_TRUE(override_plan.temporary_override);

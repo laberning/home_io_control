@@ -162,6 +162,8 @@ constexpr HeatingFunction TOWEL_DRYER_BOOT[] = {
 /// The programme runs when the mode shows as auto (PROG) and no boost or drying is on top of it. The temperature
 /// in force then is the card's target, and a target set meanwhile is written to the derogation register
 /// instead of the comfort setpoint.
+/// The override is taken in an eco period and ignored in a comfort period (issue #202), so a target in a comfort
+/// period is written to the comfort setpoint instead (ADR 0094).
 /// \todo The level the status read reports in each period is captured on one unit (BD684B); a second unit
 ///       confirms it. Until then the level sensor is experimental.
 constexpr HeatingProgrammePeriod TOWEL_DRYER_PROGRAMME_PERIOD = {
@@ -169,6 +171,7 @@ constexpr HeatingProgrammePeriod TOWEL_DRYER_PROGRAMME_PERIOD = {
     .comfort_fn = HeatingFunction::SET_TEMPERATURE,
     .derogation_fn = HeatingFunction::DEROGATED_SETPOINT,
     .reports_level = true,
+    .override_in_eco_only = true,
     .idle_preset_state = static_cast<uint8_t>(HeatingTemporaryState::NONE),
 };
 
@@ -461,6 +464,18 @@ constexpr bool level_presets_are_commands() {
 
 static_assert(level_presets_are_commands(), "a level preset sends a command: the secured level is reported, never set");
 
+/// @return Whether every programme period whose override applies in an eco period only also reports its level:
+///         the period a target is planned from is the level of the heater's status read (ADR 0094).
+constexpr bool eco_only_override_reports_level() {
+  return std::ranges::all_of(HEATING_PROFILES, [](const HeatingProfile &profile) {
+    return profile.programme_period == nullptr || !profile.programme_period->override_in_eco_only ||
+           profile.programme_period->reports_level;
+  });
+}
+
+static_assert(eco_only_override_reports_level(),
+              "an override taken in an eco period only needs the level of the status read to know the period");
+
 const HeatingProfile *find_exact_profile(DeviceType type, uint8_t subtype, DeviceModel model) {
   for (const HeatingProfile &profile : HEATING_PROFILES) {
     if (profile.type == type && profile.subtype == subtype && profile.model == model)
@@ -717,7 +732,13 @@ HeatingWritePlan plan_target_write(const HeatingProfile &profile, const HeatingW
     return refused(HeatingRefusal::IN_FORCE_UNKNOWN);
   // While the programme runs the target is a temporary override that holds until the programme's next change;
   // in any other mode it is the comfort setpoint.
-  const bool override_programme = facts.programme_runs && profile.programme_period != nullptr;
+  bool override_programme = facts.programme_runs && profile.programme_period != nullptr;
+  if (override_programme && profile.programme_period->override_in_eco_only) {
+    // The heater ignores the override in a comfort period, so the target changes the comfort temperature there.
+    if (facts.period == HeatingPeriod::UNKNOWN)
+      return refused(HeatingRefusal::PERIOD_UNKNOWN);
+    override_programme = facts.period == HeatingPeriod::ECO;
+  }
   const HeatingFunction target_fn =
       override_programme ? profile.programme_period->derogation_fn : HeatingFunction::SET_TEMPERATURE;
   HeatingWritePlan plan;
@@ -736,6 +757,20 @@ bool heating_request_reads_programme_state(const HeatingProfile &profile, const 
   return request.kind == HeatingWriteKind::TARGET && profile.programme_period != nullptr;
 }
 
+namespace {
+/// The period a heating level stands for; any other level (frost protection, boost, none read) is no period.
+HeatingPeriod period_of_level(int16_t level) {
+  switch (level) {
+    case heating_level::COMFORT:
+      return HeatingPeriod::COMFORT;
+    case heating_level::ECO:
+      return HeatingPeriod::ECO;
+    default:
+      return HeatingPeriod::UNKNOWN;
+  }
+}
+}  // namespace
+
 HeatingDeviceFacts heating_device_facts(const IoDevice *dev, bool programme_state_answered) {
   HeatingDeviceFacts facts;
   facts.programme_state_answered = programme_state_answered;
@@ -751,6 +786,9 @@ HeatingDeviceFacts heating_device_facts(const IoDevice *dev, bool programme_stat
   const bool programme_shown = profile != nullptr && programme_period_active(*profile, dev->heating);
   facts.programme_runs = programme_shown && dev->temperature_in_force == TemperatureInForceSupport::REPORTED;
   facts.in_force_unresolved = programme_shown && dev->temperature_in_force == TemperatureInForceSupport::UNKNOWN;
+  // The stored level is the one the read made for this request refreshed (HeaterController::read_programme_state()).
+  if (profile != nullptr && profile->programme_period != nullptr && profile->programme_period->override_in_eco_only)
+    facts.period = period_of_level(dev->heating.level);
   return facts;
 }
 

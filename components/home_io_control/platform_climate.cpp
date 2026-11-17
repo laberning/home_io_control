@@ -229,6 +229,13 @@ void IOHomeClimate::log_refusal_(const HeatingWritePlan &plan) const {
                "now could change the programme's comfort temperature)",
                this->device_id_.c_str());
       break;
+    case HeatingRefusal::PERIOD_UNKNOWN:
+      ESP_LOGW(TAG,
+               "Device %s did not report whether its program is in a comfort or an eco period: the target is not "
+               "written (the override would be ignored in a comfort period, a comfort write would change the "
+               "program in an eco period)",
+               this->device_id_.c_str());
+      break;
     case HeatingRefusal::NO_MATCH:     // the request names nothing this profile offers: nothing to say
     case HeatingRefusal::UNENCODABLE:  // the setpoint is dropped silently, as the card keeps its value
     case HeatingRefusal::NONE:
@@ -286,6 +293,14 @@ bool IOHomeClimate::send_and_show_(const HeatingProfile &profile, const HeatingW
   });
   if (!sent)
     return false;
+  // An override the read-back did not confirm (refused, or the read-back got no reply) leaves the card as the
+  // heater's own reading made it, which a read-back publishes only when it changes the card. Home Assistant
+  // still shows the value that was typed, so publish the heater's.
+  if (plan.temporary_override && !heating_override_taken(request.target_c, this->card_.target_c)) {
+    this->show_card_(profile);
+    this->publish_state();
+    return false;
+  }
   // A mode or target written to a register is read back, and a read-back that made the card observed
   // publishes itself. A preset publishes with the command, as it always has.
   const bool read_back_publishes = plan.read_back && request.kind != HeatingWriteKind::PRESET;

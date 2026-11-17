@@ -190,6 +190,12 @@ struct HeatingProgrammePeriod {
   /// which has answered that read yet (the radiator family): its poll sends no status read, and its
   /// `heating_level:` sensor stays without a state.
   bool reports_level{false};
+  /// The heater takes the override only in an eco period; in a comfort period it acknowledges the write and
+  /// ignores it, as its own panel changes the comfort temperature there (ADR 0094). A target while the
+  /// programme runs is then planned from the period the heater reports (HeatingDeviceFacts::period): the
+  /// override in an eco period, the comfort setpoint in a comfort period. Needs `reports_level`, which is
+  /// where the period comes from (checked at build time).
+  bool override_in_eco_only{false};
   /// Value of HeatingProfile::preset_fn with no timed run on top; read only by a profile that has
   /// `preset_observed`.
   uint8_t idle_preset_state{0};
@@ -391,6 +397,13 @@ struct HeatingWriteRequest {
                                                   ///< mode that sends the target (HEATING_MP_FROM_TARGET).
 };
 
+/// @brief The period of its programme a heater says it is in, from the heating level of its status read.
+enum class HeatingPeriod : uint8_t {
+  UNKNOWN,  ///< Not read, no reply, or a level that is neither comfort nor eco.
+  COMFORT,  ///< The level is comfort.
+  ECO,      ///< The level is eco.
+};
+
 /// @brief What the hub knows about the device a request goes to.
 struct HeatingDeviceFacts {
   bool has_record{false};                              ///< The hub has a record of the device.
@@ -409,6 +422,10 @@ struct HeatingDeviceFacts {
   /// timed run where it matters), made for this request. Only a target on a profile with a programme period
   /// looks at it: without it the heater did not say what it runs.
   bool programme_state_answered{false};
+  /// The period the heater reported in the status read made for this request. Only a target on a profile
+  /// whose override applies in an eco period only (HeatingProgrammePeriod::override_in_eco_only) looks at it,
+  /// while the programme runs; UNKNOWN for every other heater.
+  HeatingPeriod period{HeatingPeriod::UNKNOWN};
 };
 
 /// @brief Why a request becomes no write.
@@ -424,6 +441,10 @@ enum class HeatingRefusal : uint8_t {
   IN_FORCE_UNKNOWN,            ///< A target while the programme runs, before the heater has answered the read of its
                                ///< temperature in force in this boot (HeatingDeviceFacts::in_force_unresolved): the
                                ///< read made for the request got no reply, so nothing is written.
+  PERIOD_UNKNOWN,              ///< A target while the programme runs on a heater that takes the override in an eco
+                               ///< period only (HeatingProgrammePeriod::override_in_eco_only), and the status read
+                               ///< made for the request gave no comfort or eco level (HeatingDeviceFacts::period):
+                               ///< nothing is written, because the override or the comfort write would be a guess.
 };
 
 /// @brief How a planned write reaches the device.
@@ -466,7 +487,8 @@ bool heating_request_reads_programme_state(const HeatingProfile &profile, const 
 /// @brief Collect what the hub knows about a device, for plan_heating_write().
 /// @param dev The device record, or nullptr when the hub has none.
 /// @param programme_state_answered Whether the read of the programme-state registers made for this request was
-///        answered (HeatingDeviceFacts::programme_state_answered); false when no read was made.
+///        answered (HeatingDeviceFacts::programme_state_answered); false when no read was made. When it was, the
+///        device's stored heating level is the one that read just refreshed and gives the period.
 /// @return The facts; `has_record` false for nullptr.
 HeatingDeviceFacts heating_device_facts(const IoDevice *dev, bool programme_state_answered);
 
@@ -485,14 +507,19 @@ HeatingDeviceFacts heating_device_facts(const IoDevice *dev, bool programme_stat
 ///          A target set while the programme runs (HeatingDeviceFacts::programme_runs: the heater's mode shows
 ///          `auto`, no timed run is on top, and it has reported a temperature in force in this boot) is a temporary
 ///          override: it is planned as a write of HeatingProgrammePeriod::derogation_fn with a read-back of that
-///          register (HeatingWritePlan::temporary_override), and the comfort setpoint is not touched, in every period.
+///          register (HeatingWritePlan::temporary_override), and the comfort setpoint is not touched, in every period
+///          (ADR 0092). On a heater that takes the override in an eco period only
+///          (HeatingProgrammePeriod::override_in_eco_only, ADR 0094) that holds in an eco period; in a comfort period
+///          the target is the comfort setpoint, as on the heater's panel, and a period that is not known
+///          (HeatingDeviceFacts::period) is refused with HeatingRefusal::PERIOD_UNKNOWN.
 ///          In any other mode, and on a heater that answered the read of its temperature in force without a
 ///          value (TemperatureInForceSupport::ABSENT), it writes the comfort setpoint. While the programme runs and
 ///          the heater has not answered the read of its temperature in force yet
 ///          (HeatingDeviceFacts::in_force_unresolved) the target is refused with HeatingRefusal::IN_FORCE_UNKNOWN:
 ///          neither write is right before the heater has answered, so a silent heater gets no write.
 ///          \todo Confirm the override on a radiator that takes it. A towel dryer takes it in an eco period and
-///                refuses it in a comfort period (issue #202); a Thermor EMOTION 3 H radiator refuses it (issue #228).
+///                refuses it in a comfort period (issue #202), which is why it writes the comfort setpoint there; a
+///                Thermor EMOTION 3 H radiator refuses it (issue #228) and has no rule of its own yet.
 /// @param profile The device's profile.
 /// @param request What the card asks for.
 /// @param facts What the hub knows about the device.

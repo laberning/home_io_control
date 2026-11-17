@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0092 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0094](0094-a-towel-dryer-target-in-a-comfort-period-changes-the-comfort-temperature.md) (a towel dryer target in a comfort period changes the comfort temperature) · **Recorded:** 2026-11
 
 ## Context
 
