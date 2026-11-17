@@ -180,7 +180,7 @@ TEST(HubManagement, IdentifyDeviceRejectsUnknownDevice) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.management_actions_.identify_device("123456");
+  const auto result = component.management_actions_.identify_device("123456", IDENTIFY_WINK_DEVICE_DEFAULT);
   EXPECT_FALSE(result.success);
   EXPECT_FALSE(result.verified);
   EXPECT_EQ(result.message, "device is not registered on this hub");
@@ -189,7 +189,7 @@ TEST(HubManagement, IdentifyDeviceRejectsUnknownDevice) {
 TEST(HubManagement, IdentifyDeviceRejectsWhenHubNotInitialized) {
   TestableManagementComponent component;
 
-  const auto result = component.management_actions_.identify_device("ABC123");
+  const auto result = component.management_actions_.identify_device("ABC123", IDENTIFY_WINK_DEVICE_DEFAULT);
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "hub is not initialized");
 }
@@ -199,7 +199,7 @@ TEST(HubManagement, IdentifyDeviceRejectsInvalidDeviceId) {
   MockRadio radio;
   setup_component(component, radio);
 
-  const auto result = component.management_actions_.identify_device("12");
+  const auto result = component.management_actions_.identify_device("12", IDENTIFY_WINK_DEVICE_DEFAULT);
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device ID must be exactly 6 hexadecimal characters");
 }
@@ -210,7 +210,7 @@ TEST(HubManagement, IdentifyDeviceNoResponseFails) {
   setup_component(component, radio);
   // No queued RX at all: send_and_receive times out with no valid response.
 
-  const auto result = component.management_actions_.identify_device("ABC123");
+  const auto result = component.management_actions_.identify_device("ABC123", IDENTIFY_WINK_DEVICE_DEFAULT);
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "no valid response to identify request");
 }
@@ -221,7 +221,7 @@ TEST(HubManagement, IdentifyDeviceSuccessWithDirectResponse) {
   setup_component(component, radio);
   radio.queue_rx(frame_to_packet(make_identify_ack_response(component.node_id_)));
 
-  const auto result = component.management_actions_.identify_device("ABC123");
+  const auto result = component.management_actions_.identify_device("ABC123", IDENTIFY_WINK_DEVICE_DEFAULT);
   EXPECT_TRUE(result.success);
   EXPECT_FALSE(result.verified);
   EXPECT_EQ(result.message, "identify acknowledged by device");
@@ -233,7 +233,7 @@ TEST(HubManagement, IdentifyDeviceErrorResponseIsTreatedAsSuccess) {
   setup_component(component, radio);
   radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_LIMITATION_BY_WIND)));
 
-  const auto result = component.management_actions_.identify_device("ABC123");
+  const auto result = component.management_actions_.identify_device("ABC123", IDENTIFY_WINK_DEVICE_DEFAULT);
   EXPECT_TRUE(result.success) << "CMD_ERROR_RESP to an identify request is expected/non-fatal";
   EXPECT_FALSE(result.verified);
   EXPECT_TRUE(result.has_result_code);
@@ -266,6 +266,114 @@ TEST(HubManagement, ApiIdentifyDevicePublishesManagementResultEvent) {
   EXPECT_EQ(event.data.count("requested_name"), 0u) << "identify has no name fields";
   EXPECT_EQ(event.data.count("applied_name"), 0u) << "identify has no name fields";
   EXPECT_EQ(event.data.count("result_code"), 0u) << "no result_code on a non-error acknowledgment";
+}
+
+// The identify wink time is byte 10 of the sent frame: 8 header bytes, cmd 0x1E, originator, wink time.
+static constexpr size_t IDENTIFY_WINK_TIME_OFFSET = 10;
+
+TEST(HubManagement, IdentifyDeviceSendsTheDeviceDefaultWinkTime) {
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  radio.queue_rx(frame_to_packet(make_identify_ack_response(component.node_id_)));
+
+  component.management_actions_.api_identify_device("ABC123");
+
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  const auto &sent = radio.get_sent_data()[0];
+  ASSERT_EQ(sent[8], CMD_IDENTIFY);
+  EXPECT_EQ(sent[IDENTIFY_WINK_TIME_OFFSET], IDENTIFY_WINK_DEVICE_DEFAULT) << "the default must be bounded, never 255";
+}
+
+TEST(HubManagement, IdentifyDeviceForSendsTheRequestedSeconds) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  radio.queue_rx(frame_to_packet(make_identify_ack_response(component.node_id_)));
+
+  const auto result = component.management_actions_.identify_device_for("ABC123", " 253 ");
+
+  EXPECT_TRUE(result.success);
+  EXPECT_EQ(result.action, "identify_device_for");
+  EXPECT_EQ(result.message, "identify acknowledged by device");
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  EXPECT_EQ(radio.get_sent_data()[0][IDENTIFY_WINK_TIME_OFFSET], 253);
+}
+
+TEST(HubManagement, IdentifyDeviceForZeroStopsARunningIdentify) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  radio.queue_rx(frame_to_packet(make_identify_ack_response(component.node_id_)));
+
+  const auto result = component.management_actions_.identify_device_for("ABC123", "0");
+
+  EXPECT_TRUE(result.success);
+  EXPECT_EQ(result.message, "identify stopped");
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  EXPECT_EQ(radio.get_sent_data()[0][IDENTIFY_WINK_TIME_OFFSET], IDENTIFY_WINK_STOP);
+}
+
+TEST(HubManagement, IdentifyDeviceForRefusesOutOfRangeSecondsWithoutSending) {
+  for (const char *bad : {"254", "255", "256", "-1", "abc", "5.5", "", "  ", "1000", "99999999999999999999"}) {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+
+    const auto result = component.management_actions_.identify_device_for("ABC123", bad);
+
+    EXPECT_FALSE(result.success) << "seconds '" << bad << "' must be refused";
+    EXPECT_EQ(result.message, "seconds must be a whole number between 0 and 253 (0 stops a running identify)");
+    EXPECT_TRUE(radio.get_sent_data().empty()) << "a refused value must not reach the radio";
+  }
+}
+
+TEST(HubManagement, IdentifyDeviceForRejectsUnknownDevice) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+
+  const auto result = component.management_actions_.identify_device_for("123456", "5");
+
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.action, "identify_device_for");
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, ApiIdentifyDeviceForPublishesResultEventUnderItsOwnActionName) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  radio.queue_rx(frame_to_packet(make_identify_ack_response(component.node_id_)));
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  component.management_actions_.api_identify_device_for("ABC123", "3");
+
+  ASSERT_EQ(api_server.events_.size(), 1u);
+  EXPECT_EQ(api_server.events_[0].data.at("action"), "identify_device_for");
+}
+
+TEST(ManagementHelpers, ParseIdentifySecondsAcceptsZeroThroughMaxOnly) {
+  uint8_t wink = 99;
+  EXPECT_TRUE(parse_identify_seconds("0", wink));
+  EXPECT_EQ(wink, 0);
+  EXPECT_TRUE(parse_identify_seconds("1", wink));
+  EXPECT_EQ(wink, 1);
+  EXPECT_TRUE(parse_identify_seconds("253", wink));
+  EXPECT_EQ(wink, 253);
+  EXPECT_TRUE(parse_identify_seconds(" 7\t", wink));
+  EXPECT_EQ(wink, 7);
+
+  wink = 99;
+  for (const char *bad : {"254", "255", "-1", "+5", "abc", "5.5", "", "1e2", "0x10", "99999999999999999999"}) {
+    EXPECT_FALSE(parse_identify_seconds(bad, wink)) << "'" << bad << "' must be refused";
+    EXPECT_EQ(wink, 99) << "a refused value leaves the output untouched";
+  }
 }
 
 TEST(HubManagement, ForceOpenDeviceRejectsUnknownDevice) {
@@ -355,7 +463,7 @@ TEST(HubManagement, ApiForceOpenDevicePublishesManagementResultEvent) {
   EXPECT_EQ(event.data.count("result_code"), 0u) << "force-open's result is asynchronous, no result_code yet";
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersOnlySevenServicesByDefault) {
+TEST(HubManagement, RegisterManagementActionsRegistersOnlyEightServicesByDefault) {
   // diagnostic_probes_enabled_ defaults to false (no set_diagnostic_probes_enabled() call), so
   // probe_device/probe_sweep must not appear in the action list at all -- this is what keeps a
   // default build's Home Assistant action list clean, not just what refuses at call time.
@@ -368,7 +476,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlySevenServicesByDefault
   setup_component(component, radio);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 7u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 8u);
   for (const auto &service : esphome::api::global_api_server->user_services_) {
     const auto name = service->encode_list_service_response().name.str();
     EXPECT_NE(name, "probe_device");
@@ -391,20 +499,27 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlySevenServicesByDefault
   EXPECT_EQ(identify_response.args[0].name.str(), "device_id");
   EXPECT_EQ(identify_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 
-  const auto force_open_response = esphome::api::global_api_server->user_services_[2]->encode_list_service_response();
+  const auto identify_for_response = esphome::api::global_api_server->user_services_[2]->encode_list_service_response();
+  EXPECT_EQ(identify_for_response.name.str(), "identify_device_for");
+  ASSERT_EQ(identify_for_response.args.size(), 2u);
+  EXPECT_EQ(identify_for_response.args[0].name.str(), "device_id");
+  EXPECT_EQ(identify_for_response.args[1].name.str(), "seconds");
+  EXPECT_EQ(identify_for_response.args[1].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+
+  const auto force_open_response = esphome::api::global_api_server->user_services_[3]->encode_list_service_response();
   EXPECT_EQ(force_open_response.name.str(), "force_open_device");
   EXPECT_EQ(force_open_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(force_open_response.args.size(), 1u);
   EXPECT_EQ(force_open_response.args[0].name.str(), "device_id");
   EXPECT_EQ(force_open_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 
-  const auto scan_response = esphome::api::global_api_server->user_services_[3]->encode_list_service_response();
+  const auto scan_response = esphome::api::global_api_server->user_services_[4]->encode_list_service_response();
   EXPECT_EQ(scan_response.name.str(), "scan_paired_devices");
   EXPECT_EQ(scan_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   EXPECT_EQ(scan_response.args.size(), 0u) << "scan_paired_devices takes no arguments";
 
   const auto oneway_set_position_response =
-      esphome::api::global_api_server->user_services_[4]->encode_list_service_response();
+      esphome::api::global_api_server->user_services_[5]->encode_list_service_response();
   EXPECT_EQ(oneway_set_position_response.name.str(), "oneway_set_position");
   EXPECT_EQ(oneway_set_position_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(oneway_set_position_response.args.size(), 2u);
@@ -414,7 +529,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlySevenServicesByDefault
   EXPECT_EQ(oneway_set_position_response.args[1].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 
   const auto oneway_remove_controller_response =
-      esphome::api::global_api_server->user_services_[5]->encode_list_service_response();
+      esphome::api::global_api_server->user_services_[6]->encode_list_service_response();
   EXPECT_EQ(oneway_remove_controller_response.name.str(), "oneway_remove_controller");
   EXPECT_EQ(oneway_remove_controller_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(oneway_remove_controller_response.args.size(), 1u);
@@ -422,7 +537,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlySevenServicesByDefault
   EXPECT_EQ(oneway_remove_controller_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 
   const auto heating_control_response =
-      esphome::api::global_api_server->user_services_[6]->encode_list_service_response();
+      esphome::api::global_api_server->user_services_[7]->encode_list_service_response();
   EXPECT_EQ(heating_control_response.name.str(), "heating_control");
   EXPECT_EQ(heating_control_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(heating_control_response.args.size(), 3u);
@@ -434,7 +549,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlySevenServicesByDefault
   EXPECT_EQ(heating_control_response.args[2].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersAllNineServicesWhenDiagnosticProbesEnabled) {
+TEST(HubManagement, RegisterManagementActionsRegistersAllTenServicesWhenDiagnosticProbesEnabled) {
   esphome::api::APIServer api_server;
   esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
@@ -445,9 +560,9 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllNineServicesWhenDiagnos
   component.set_diagnostic_probes_enabled(true);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 9u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 10u);
 
-  const auto probe_device_response = esphome::api::global_api_server->user_services_[7]->encode_list_service_response();
+  const auto probe_device_response = esphome::api::global_api_server->user_services_[8]->encode_list_service_response();
   EXPECT_EQ(probe_device_response.name.str(), "probe_device");
   EXPECT_EQ(probe_device_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_device_response.args.size(), 3u);
@@ -458,7 +573,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllNineServicesWhenDiagnos
   EXPECT_EQ(probe_device_response.args[2].name.str(), "index");
   EXPECT_EQ(probe_device_response.args[2].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 
-  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[8]->encode_list_service_response();
+  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[9]->encode_list_service_response();
   EXPECT_EQ(probe_sweep_response.name.str(), "probe_sweep");
   EXPECT_EQ(probe_sweep_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_sweep_response.args.size(), 4u);
@@ -880,7 +995,7 @@ TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 7u);
+  ASSERT_EQ(api_server.user_services_.size(), 8u);
 
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
   radio.queue_rx(frame_to_packet(make_get_name_response(component.node_id_, "Patio Awning")));
@@ -1855,9 +1970,9 @@ TEST(HubManagement, ScanPairedDevicesZeroArgDispatchExecutes) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 7u);
+  ASSERT_EQ(api_server.user_services_.size(), 8u);
 
-  const auto response = api_server.user_services_[3]->encode_list_service_response();
+  const auto response = api_server.user_services_[4]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "scan_paired_devices");
   ASSERT_EQ(response.args.size(), 0u);
 
@@ -1865,7 +1980,7 @@ TEST(HubManagement, ScanPairedDevicesZeroArgDispatchExecutes) {
   request.key = response.key;
   request.args.init(0);
 
-  EXPECT_TRUE(api_server.user_services_[3]->execute_service(request))
+  EXPECT_TRUE(api_server.user_services_[4]->execute_service(request))
       << "a zero-arg request must dispatch since request.args.size() == arg_names_.size() == 0";
   EXPECT_EQ(api_server.events_.size(), 1u) << "dispatch should have run and published a result event";
 }
@@ -1923,9 +2038,9 @@ TEST(HubManagement, OneWaySetPositionActionIsRegisteredWithBothArguments) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 7u);
+  ASSERT_EQ(api_server.user_services_.size(), 8u);
 
-  const auto response = api_server.user_services_[4]->encode_list_service_response();
+  const auto response = api_server.user_services_[5]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "oneway_set_position");
   ASSERT_EQ(response.args.size(), 2u);
   EXPECT_EQ(response.args[0].name.str(), "controller_id");

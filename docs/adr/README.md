@@ -47,6 +47,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | # | Decision | In short |
 |---|---|---|
 | [0006](0006-management-actions-as-native-api-actions.md) | Admin ops as native API actions | Rarely-used operations get no permanent entity |
+| [0093](0093-identify-asks-for-the-devices-own-wink-time.md) | Identify asks for the device's own wink time | `0x1E` carries a wink time (public KLF 200 table 194): default 254, the actuator's own; `identify_device_for` sends 1-253 s or 0 to stop; 255 never sent |
 | [0016](0016-sender-events-are-opt-in-by-allowlist.md) | Sender events are opt-in | The radio has no ownership marker, so nothing fires until named |
 | [0017](0017-device-poll-hint-shortens-but-never-stretches.md) | Poll hint shortens, never stretches | The configured interval is a ceiling, not a target |
 | [0024](0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md) | Diagnostic probes, gated and isolated (amended by 0060, 0062, 0063, 0072) | Undecoded opcodes only reach paired devices behind an opted-in config, and can never reach the status decoder |
@@ -228,6 +229,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0090: A water heater's modes are chosen by what heats](0090-a-water-heaters-modes-are-chosen-by-what-heats.md)
 - [ADR 0091: Every climate preset is a command, and the heating level is a sensor](0091-every-climate-preset-is-a-command-and-the-heating-level-is-a-sensor.md)
 - [ADR 0092: A target set in auto is a temporary override](0092-a-target-set-in-auto-is-a-temporary-override.md)
+- [ADR 0093: Identify asks for the device's own wink time](0093-identify-asks-for-the-devices-own-wink-time.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

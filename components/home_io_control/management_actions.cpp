@@ -46,6 +46,7 @@ namespace {
 
 constexpr const char *MANAGEMENT_ACTION_RENAME_DEVICE = "rename_device";
 constexpr const char *MANAGEMENT_ACTION_IDENTIFY_DEVICE = "identify_device";
+constexpr const char *MANAGEMENT_ACTION_IDENTIFY_DEVICE_FOR = "identify_device_for";
 constexpr const char *MANAGEMENT_ACTION_FORCE_OPEN_DEVICE = "force_open_device";
 constexpr const char *MANAGEMENT_ACTION_SCAN_PAIRED_DEVICES = "scan_paired_devices";
 constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_POSITION = "oneway_set_position";
@@ -338,6 +339,12 @@ void ManagementActions::register_actions() {
        {"device_id"},
        false,
        [this](const api::ExecuteServiceRequest &r) { this->api_identify_device(r.args[0].string_.str()); }},
+      {MANAGEMENT_ACTION_IDENTIFY_DEVICE_FOR,
+       {"device_id", "seconds"},
+       false,
+       [this](const api::ExecuteServiceRequest &r) {
+         this->api_identify_device_for(r.args[0].string_.str(), r.args[1].string_.str());
+       }},
       {MANAGEMENT_ACTION_FORCE_OPEN_DEVICE,
        {"device_id"},
        false,
@@ -525,19 +532,39 @@ ManagementActionResult ManagementActions::rename_device(const std::string &devic
 }
 
 void ManagementActions::api_identify_device(const std::string &device_id) {
-  publish_result(identify_device(device_id));
+  publish_result(identify_device(device_id, IDENTIFY_WINK_DEVICE_DEFAULT));
 }
 
-ManagementActionResult ManagementActions::identify_device(const std::string &device_id) {
+void ManagementActions::api_identify_device_for(const std::string &device_id, const std::string &seconds) {
+  publish_result(identify_device_for(device_id, seconds));
+}
+
+ManagementActionResult ManagementActions::identify_device_for(const std::string &device_id,
+                                                              const std::string &seconds) {
+  uint8_t wink_time = 0;
+  if (!parse_identify_seconds(seconds, wink_time)) {
+    ManagementActionResult result = make_management_result(MANAGEMENT_ACTION_IDENTIFY_DEVICE_FOR, device_id);
+    result.message = "seconds must be a whole number between 0 and 253 (0 stops a running identify)";
+    return result;
+  }
+  return run_identify_(MANAGEMENT_ACTION_IDENTIFY_DEVICE_FOR, device_id, wink_time);
+}
+
+ManagementActionResult ManagementActions::identify_device(const std::string &device_id, uint8_t wink_time) {
+  return run_identify_(MANAGEMENT_ACTION_IDENTIFY_DEVICE, device_id, wink_time);
+}
+
+ManagementActionResult ManagementActions::run_identify_(const char *action, const std::string &device_id,
+                                                        uint8_t wink_time) {
   ManagementActionResult result;
   // Deliberately no device-type gating beyond "registered on this hub" — see the doxygen note on
   // the declaration for why.
-  auto *dev = resolve_device_(MANAGEMENT_ACTION_IDENTIFY_DEVICE, device_id, result);
+  auto *dev = resolve_device_(action, device_id, result);
   if (dev == nullptr)
     return result;
 
   IoFrame request;
-  if (!create_identify(request, node_id_, dev->node_id, dev->low_power)) {
+  if (!create_identify(request, node_id_, dev->node_id, dev->low_power, wink_time)) {
     result.message = "failed to build identify request";
     return result;
   }
@@ -562,7 +589,7 @@ ManagementActionResult ManagementActions::identify_device(const std::string &dev
   // Any other endpoint-matched reply counts as acknowledgment; unlike rename there is no specific
   // response command to check against, and no readback exists to set `verified`.
   result.success = true;
-  result.message = "identify acknowledged by device";
+  result.message = wink_time == IDENTIFY_WINK_STOP ? "identify stopped" : "identify acknowledged by device";
   return result;
 }
 
@@ -683,20 +710,14 @@ void ManagementActions::api_oneway_set_position(const std::string &controller_id
   // Parse the position string here and reject loudly on anything unparseable. Do NOT relax this to
   // atoi()/strtoul()-with-default: a value that silently became 0 would send a fully-open command
   // to every actuator bound to this 1W identity.
-  const std::string trimmed = trim_ascii_whitespace(position);
-  if (trimmed.empty() || trimmed.find_first_not_of("0123456789") != std::string::npos) {
+  uint8_t parsed = 0;
+  if (!parse_whole_number_argument(position, ONEWAY_POSITION_FULLY_CLOSED, parsed)) {
     result.message = "position must be a whole number between 0 and 100";
     publish_result(result);
     return;
   }
-  const unsigned long parsed = strtoul(trimmed.c_str(), nullptr, 10);  // NOLINT(google-runtime-int)
-  if (parsed > ONEWAY_POSITION_FULLY_CLOSED) {
-    result.message = "position must be between 0 and 100";
-    publish_result(result);
-    return;
-  }
 
-  hub_->send_oneway_position(controller_id, static_cast<uint8_t>(parsed));
+  hub_->send_oneway_position(controller_id, parsed);
   result.success = true;
   // Deliberately "queued", not "sent" or "applied": 1W reports nothing back, and neither should
   // this. See the "Last 1W Command" sensor for what was actually transmitted.

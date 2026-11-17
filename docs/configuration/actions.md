@@ -10,7 +10,8 @@ optional one-tap button.
 | Action | What it does | `verified` can be `true`? |
 |---|---|---|
 | [`rename_device`](#rename_device) | Renames a paired actuator and reads the name back to confirm the write. | Yes |
-| [`identify_device`](#identify_device) | Makes a device physically identify itself (brief jog/flash) so you can tell which physical motor a device ID belongs to. | No — no readback exists for a jog |
+| [`identify_device`](#identify_device) | Makes a device physically identify itself (jog/flash) for its own default time so you can tell which physical motor a device ID belongs to. | No — no readback exists for a jog |
+| [`identify_device_for`](#identify_device_for) ⚠️ *experimental* | Identifies for a number of seconds you choose, or stops a running identify with `0`. | No — no readback exists for a jog |
 | [`force_open_device`](#force_open_device) ⚠️ *experimental* | Requests a fully-open move at elevated protocol priority, intended to override wind/rain soft locks. | No — the outcome is asynchronous |
 | [`scan_paired_devices`](../pairing.md) | Broadcasts a roll-call and reports every already-paired device that answers — no target `device_id`, no arguments at all. Also reachable as a one-tap button via `scan_paired_devices_button: true`. | No — nothing here is read back either |
 | [`oneway_set_position`](oneway-transmit.md) | Sends a numeric position as a configured 1W controller identity. Takes `controller_id` and `position`, not a `device_id` — 1W addresses a device class. | No — 1W has no reply at all |
@@ -64,7 +65,7 @@ Every action fires the same Home Assistant event, `esphome.home_io_control_actio
 | `verified` | always | Whether a follow-up readback confirmed the result — see the table above for which actions can ever set this `true`. |
 | `message` | always | Human-readable outcome summary. For `scan_paired_devices` this is the full multi-line report, not a one-line summary. |
 | `requested_name`, `applied_name` | `rename_device` only | Requested vs. verified device name. |
-| `result_code`, `result_code_name` | `rename_device`, `identify_device`, `probe_device`, and `heating_control`, when the device replies `CMD_ERROR_RESP` | Decoded protocol result code. |
+| `result_code`, `result_code_name` | `rename_device`, `identify_device`, `identify_device_for`, `probe_device`, and `heating_control`, when the device replies `CMD_ERROR_RESP` | Decoded protocol result code. |
 | `probe`, `index` | `probe_device` and `probe_sweep` only | Probe name and the requested index (or swept range). |
 | `response_cmd`, `response_cmd_name`, `response_hex` | `probe_device` only — a sweep's per-index replies are in `message` | The reply's command byte, decoded command name, and full raw wire hex. |
 
@@ -85,12 +86,41 @@ data:
 
 Fields: `device_id` (required).
 
-Sends the authenticated `CMD_IDENTIFY` command. No device-type gating beyond "is it registered" — identify exists specifically to help you work out what an unknown or unrecognized device physically is. A `CMD_ERROR_RESP` reply still counts as **success**: some devices answer that way to an identify request and jog anyway (confirmed on real hardware — the awning jogged every time despite the error reply).
+Sends the authenticated `CMD_IDENTIFY` command and asks the device to identify for the time its maker chose, so the jog or flash ends on its own. No device-type gating beyond "is it registered" — identify exists specifically to help you work out what an unknown or unrecognized device physically is. A `CMD_ERROR_RESP` reply still counts as **success**: some devices answer that way to an identify request and jog anyway (confirmed on real hardware — the awning jogged every time despite the error reply).
+
+> [!NOTE]
+> Asking for the device's own time is experimental. A VELUX roof-window actuator asked to identify forever keeps jogging until it gets a stop, and one asked for a bounded time stops by itself ([issue #241](https://github.com/laberning/home_io_control/issues/241)); the device's own time is not yet confirmed on every device type. If a device keeps going, use `identify_device_for` with `seconds: 0` to stop it, and report the device in an issue.
 
 ```yaml
 action: esphome.hioc_heltec_v2_identify_device
 data:
   device_id: "FEEB1E"
+```
+
+## `identify_device_for`
+
+Fields: `device_id` (required), `seconds` (required).
+
+> [!NOTE]
+> This action is experimental. The duration follows the public VELUX KLF 200 interface description, and no
+> device has confirmed it yet. A report of what your device does is worth an issue.
+
+Identifies like `identify_device`, but for `seconds` seconds: a whole number from 1 to 253. With `seconds: 0` it stops an identify that is still running. Home Assistant requires every field, so `seconds` is not optional; use `identify_device` for the device's own default time. Any other value (a negative number, a decimal, text, 254 or more) is refused before anything is sent, and the result message names the range.
+
+```yaml
+action: esphome.hioc_heltec_v2_identify_device_for
+data:
+  device_id: "FEEB1E"
+  seconds: "5"
+```
+
+Stop a running identify:
+
+```yaml
+action: esphome.hioc_heltec_v2_identify_device_for
+data:
+  device_id: "FEEB1E"
+  seconds: "0"
 ```
 
 ## `force_open_device`

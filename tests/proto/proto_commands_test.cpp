@@ -279,12 +279,12 @@ TEST(ProtoCommands, CreateSetNameNormalPowerClearsLowPower) {
 
 TEST(ProtoCommands, CreateIdentify) {
   IoFrame frame{};
-  ASSERT_TRUE(create_identify(frame, test::OWN_ID, test::DST_ID, /*low_power=*/true))
+  ASSERT_TRUE(create_identify(frame, test::OWN_ID, test::DST_ID, /*low_power=*/true, IDENTIFY_WINK_DEVICE_DEFAULT))
       << "create_identify should succeed";
   EXPECT_EQ(frame.cmd, CMD_IDENTIFY) << "identify command should be CMD_IDENTIFY (0x1E)";
   EXPECT_EQ(frame.data_len, 2) << "identify should carry a 2-byte payload";
   EXPECT_EQ(frame.data[0], 0x01) << "identify payload byte 0 (origin) should be 0x01";
-  EXPECT_EQ(frame.data[1], 0xFF) << "identify payload byte 1 (parameter) should be 0xFF";
+  EXPECT_EQ(frame.data[1], 0xFE) << "the default wink time is 254, the actuator's own";
   EXPECT_TRUE(is_start(frame)) << "identify should be a start frame";
   EXPECT_FALSE(is_end(frame)) << "identify should not be an end frame";
   EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0) << "low_power=true must set CTRL1_LOW_POWER";
@@ -292,8 +292,30 @@ TEST(ProtoCommands, CreateIdentify) {
 
 TEST(ProtoCommands, CreateIdentifyNormalPowerClearsLowPower) {
   IoFrame frame{};
-  ASSERT_TRUE(create_identify(frame, test::OWN_ID, test::DST_ID, /*low_power=*/false));
+  ASSERT_TRUE(create_identify(frame, test::OWN_ID, test::DST_ID, /*low_power=*/false, IDENTIFY_WINK_DEVICE_DEFAULT));
   EXPECT_EQ(frame.ctrl1 & CTRL1_LOW_POWER, 0) << "low_power=false must leave CTRL1_LOW_POWER clear";
+}
+
+TEST(ProtoCommands, IdentifyWinkTimeConstantsFollowThePublicTable) {
+  EXPECT_EQ(IDENTIFY_WINK_STOP, 0);
+  EXPECT_EQ(IDENTIFY_WINK_MAX_SECONDS, 253);
+  EXPECT_EQ(IDENTIFY_WINK_DEVICE_DEFAULT, 254);
+  EXPECT_NE(IDENTIFY_WINK_DEVICE_DEFAULT, 0xFF) << "255 means 'forever' and is never the default";
+}
+
+TEST(ProtoCommands, CreateIdentifyCarriesAnExplicitDuration) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_identify(frame, test::OWN_ID, test::DST_ID, /*low_power=*/true, 5));
+  ASSERT_EQ(frame.data_len, 2);
+  EXPECT_EQ(frame.data[0], ORIGINATOR_USER_REMOTE);
+  EXPECT_EQ(frame.data[1], 5) << "the wink time is the seconds asked for";
+}
+
+TEST(ProtoCommands, CreateIdentifyStopCarriesZero) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_identify(frame, test::OWN_ID, test::DST_ID, /*low_power=*/true, IDENTIFY_WINK_STOP));
+  ASSERT_EQ(frame.data_len, 2);
+  EXPECT_EQ(frame.data[1], 0) << "a stop is wink time 0";
 }
 
 TEST(ProtoCommands, CreateWritePrivate) {

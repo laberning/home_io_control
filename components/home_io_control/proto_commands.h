@@ -521,17 +521,39 @@ bool create_get_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
                      const uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE]);
 
+// === Identify wink time ===
+
+/// Wink time that stops a running identify.
+///
+/// Values follow the public VELUX KLF 200 API (version 3.18, section 10.4.1, table 194), which
+/// describes the gateway's API rather than the radio frame; that data[1] of CMD_IDENTIFY carries
+/// the same value is our reading, and both results of issue #241 fit it (ADR 0093).
+/// \todo Unconfirmed on hardware: no device has been seen to honour a stop.
+static constexpr uint8_t IDENTIFY_WINK_STOP = 0;
+/// Longest explicit wink time in seconds (table 194: 1 to 253 are seconds).
+static constexpr uint8_t IDENTIFY_WINK_MAX_SECONDS = 253;
+/// Wink time the actuator chooses itself; the value the hub sends by default, so every device
+/// identifies for the time its maker picked and the identify ends on its own.
+/// Table 194 also defines 255 as "wink forever"; the hub never sends it (a VELUX window kept
+/// jogging for more than 45 s with it, only a stop ended it).
+/// \todo Unconfirmed on hardware: expected to work on VELUX windows (issue #241); not yet seen on
+/// the Somfy awning or the Izymo dimmer.
+static constexpr uint8_t IDENTIFY_WINK_DEVICE_DEFAULT = 254;
+
 /// @brief Build an authenticated device-identify request (0x1E) that makes a device
-/// physically identify itself (brief jog / flash).
+/// physically identify itself (jog / flash) for a bounded time.
 ///
 /// @param f IoFrame to populate.
-/// @param own Controller's 3-byte node ID (source address).
-/// @param dst Target device's 3-byte node ID (destination address).
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
 /// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @param wink_time Seconds to identify (1 to IDENTIFY_WINK_MAX_SECONDS), IDENTIFY_WINK_STOP to stop a
+///        running identify, or IDENTIFY_WINK_DEVICE_DEFAULT for the device's own time. The caller
+///        validates the range; 255 ("forever") must not be passed.
 /// @note The device may reply with CMD_ERROR_RESP instead of a dedicated identify response;
 ///       callers should treat that reply as an expected, non-fatal outcome rather than a failure.
 /// @return true on success.
-bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
+bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t wink_time);
 
 /// @brief Build a generic CMD_WRITE_PRIVATE (0x20) frame carrying a caller-supplied payload.
 ///

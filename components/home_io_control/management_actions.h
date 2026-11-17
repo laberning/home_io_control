@@ -78,7 +78,7 @@ class ManagementActions {
   /// Native API callback: trigger a device's physical identify and publish the result as a HA event.
   void api_identify_device(const std::string &device_id);
 
-  /// @brief Trigger a registered device's physical identify (brief jog/flash).
+  /// @brief Trigger a registered device's physical identify (jog/flash) for a bounded time.
   ///
   /// Deliberately performs no device-type gating beyond "is it registered on this hub" — identify
   /// exists precisely to let a user work out what an unknown registry entry physically is, so
@@ -86,9 +86,23 @@ class ManagementActions {
   /// treated as a successful trigger (not a failure): per the protocol, devices may answer an
   /// identify request that way and still perform the jog.
   /// @param device_id Target device ID (hex string, case-insensitive).
+  /// @param wink_time Wink time sent in the request: IDENTIFY_WINK_DEVICE_DEFAULT for the device's own
+  ///        time, seconds up to IDENTIFY_WINK_MAX_SECONDS, or IDENTIFY_WINK_STOP. Not validated here;
+  ///        identify_device_for() validates user input.
   /// @return Structured result describing success and any validation failure. `verified` is
   ///         always false — there is no readback that confirms a physical jog happened.
-  ManagementActionResult identify_device(const std::string &device_id);
+  ManagementActionResult identify_device(const std::string &device_id, uint8_t wink_time);
+
+  /// Native API callback: identify for an explicit time (or stop) and publish the result as a HA event.
+  void api_identify_device_for(const std::string &device_id, const std::string &seconds);
+
+  /// @brief Identify a registered device for `seconds`, or stop a running identify with 0.
+  /// @param device_id Target device ID (hex string, case-insensitive).
+  /// @param seconds Whole seconds 1 to IDENTIFY_WINK_MAX_SECONDS, or 0 to stop. Anything else is refused
+  ///        before a frame is built.
+  /// @return Same result as identify_device(); a refused `seconds` gives `success == false` and a message
+  ///         naming the range.
+  ManagementActionResult identify_device_for(const std::string &device_id, const std::string &seconds);
 
   /// Native API callback: force-open a device and publish the result as a HA event.
   void api_force_open_device(const std::string &device_id);
@@ -266,6 +280,9 @@ class ManagementActions {
   void publish_result(const ManagementActionResult &result);
 
  private:
+  /// Shared body of identify_device() and identify_device_for(); `action` names the caller in the result.
+  ManagementActionResult run_identify_(const char *action, const std::string &device_id, uint8_t wink_time);
+
   /// @brief Shared preamble for every management action: validate the hub and device ID,
   /// then resolve the target device (see resolve_management_device()).
   ///
