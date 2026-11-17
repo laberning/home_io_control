@@ -199,7 +199,8 @@ bool decode_dhw_operating_status(const IoFrame &reply, DhwOperatingStatus &statu
   DhwOperatingStatus decoded;
   decoded.capabilities = capabilities;
   decoded.boost = fp16_field_on(operating_mode, DhwOperatingFeature::BOOST);
-  decoded.away = fp16_field_on(operating_mode, DhwOperatingFeature::AWAY);
+  decoded.away = fp16_field_on(operating_mode, DhwOperatingFeature::AWAY) ||
+                 read_be16(reply.data + DHW_STATUS_MAIN_PARAMETER_OFFSET) == DHW_MAIN_PARAMETER_AWAY;
   status = decoded;
   return true;
 }

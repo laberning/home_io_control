@@ -86,6 +86,10 @@ static constexpr float DHW_TARGET_MIN_C = 20.0F;
 static constexpr float DHW_TARGET_MAX_C = 62.0F;
 /// @brief Offset of the main parameter (MSB) in the data of a water heater's status reply.
 static constexpr uint8_t DHW_STATUS_MAIN_PARAMETER_OFFSET = STATUS_MP_FP_MAIN_PARAMETER_OFFSET;
+/// @brief Main parameter a water heater reports while its holiday mode runs: the bottom of the scale, which is
+/// no target. A Calypso reports it during a holiday set on its display, an Explorer V4 during an away started
+/// from the hub; neither has reported it otherwise.
+static constexpr uint16_t DHW_MAIN_PARAMETER_AWAY = 0x0000;
 
 // === Operating mode (functional parameters 15 and 16) ===
 
@@ -138,7 +142,9 @@ const DhwOperatingFeatureWire &dhw_operating_feature_wire(DhwOperatingFeature wh
 struct DhwOperatingStatus {
   uint16_t capabilities{0};  ///< FP15: DHW_CAPABILITY_* bits.
   bool boost{false};         ///< FP16 relaunch field (bits 8-9) is 1: a boost runs.
-  bool away{false};          ///< FP16 absence field (bits 10-11) is 1: the holiday mode is on.
+  bool away{false};          ///< The holiday mode is on: the FP16 absence field (bits 10-11) is 1, or the main
+                             ///< parameter is DHW_MAIN_PARAMETER_AWAY. An Explorer V4 keeps FP16 at 4900 while
+                             ///< away, so its main parameter is the only sign.
 };
 
 // === Value shapes ===
@@ -289,7 +295,8 @@ bool decode_dhw_status_target(const IoFrame &reply, float min_c, float max_c, fl
 /// DHW_STATUS_FPI1 / DHW_STATUS_FPI2.
 /// @details Layout of the data: `[status][b1][MP 2][FPI1][FPI2][one 2-byte value per FPI2 bit, bit 7 first]`.
 ///          The echo must carry FPI1 `00` and both the FP15 and FP16 bits; other bits (the heater echoes FP10
-///          when asked for `43`) are skipped. The main parameter is left to decode_dhw_status_target().
+///          when asked for `43`) are skipped. The main parameter counts only as a sign of away
+///          (DHW_MAIN_PARAMETER_AWAY); its temperature is decode_dhw_status_target()'s.
 /// @param reply The heater's reply to the status read.
 /// @param[out] status The decoded fields; untouched when false is returned.
 /// @return false for another command, a reply too short for the values its echo announces, an FPI1 echo other

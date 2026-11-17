@@ -359,10 +359,25 @@ TEST(ProtoDhw, OnlyAFieldValueOfOneIsOn) {
 }
 
 TEST(ProtoDhw, OperatingStatusDecodesWhateverTheMainParameter) {
-  // The main parameter is decode_dhw_status_target()'s; an alias there does not fail this decode.
+  // The main parameter's temperature is decode_dhw_status_target()'s; an alias there does not fail this decode.
   DhwOperatingStatus s;
   ASSERT_TRUE(decode_dhw_operating_status(operating_reply(DHW_OPERATING_MODE_AWAY_ON, 0xD812), s));
   EXPECT_TRUE(s.away);
+}
+
+TEST(ProtoDhw, AnExplorerV4ShowsAwayOnlyInItsMainParameter) {
+  // Status replies of an Atlantic Explorer V4 around an away started from the hub: FP16 reads 4900 throughout,
+  // and the main parameter drops to 0000 while away.
+  DhwOperatingStatus s;
+  ASSERT_TRUE(decode_dhw_operating_status(
+      reply_with({0x05, 0x00, 0x78, 0x00, 0x00, 0x43, 0x00, 0x00, 0x80, 0x0C, 0x49, 0x00}, CMD_PRIVATE_RESP), s));
+  EXPECT_FALSE(s.away) << "before: target 7800";
+  ASSERT_TRUE(decode_dhw_operating_status(
+      reply_with({0x05, 0x00, 0x00, 0x00, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x00}, CMD_PRIVATE_RESP), s));
+  EXPECT_TRUE(s.away) << "away: main parameter 0000, FP16 still 4900";
+  ASSERT_TRUE(decode_dhw_operating_status(
+      reply_with({0x05, 0x00, 0x94, 0x00, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x00}, CMD_PRIVATE_RESP), s));
+  EXPECT_FALSE(s.away) << "after the off word: target 9400";
 }
 
 TEST(ProtoDhw, OperatingStatusSkipsOtherParametersOfTheEcho) {

@@ -2303,6 +2303,21 @@ TEST(HeaterStatusDecoding, AWaterHeaterStatusReplyGivesTheTargetCapabilitiesAndB
   EXPECT_EQ(dev.dhw.away, 0);
 }
 
+TEST(HeaterStatusDecoding, AnExplorerV4AwayIsReadFromItsMainParameter) {
+  IoDevice dev;
+  test::set_kind(dev, DeviceType::DOMESTIC_HOT_WATER, 0);
+  dev.temperature_range_min_c = DHW_TARGET_MIN_C;
+  dev.temperature_range_max_c = 70.0F;
+  IoFrame frame{};
+  // The Explorer V4's reply while away: main parameter 0000, FP16 still 4900 (its word at rest).
+  const uint8_t payload[] = {0x05, 0x00, 0x00, 0x00, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x00};
+  set_cmd(frame, CMD_PRIVATE_RESP, payload, sizeof(payload));
+
+  apply_dhw_status_reply("ABC123", dev, frame, true);
+
+  EXPECT_EQ(dev.dhw.away, 1);
+}
+
 TEST(HeaterStatusDecoding, TheAckOfAnExecuteIsNotDecodedAndANonTemperatureLeavesTheTargetUnknown) {
   IoDevice dev;
   test::set_kind(dev, DeviceType::DOMESTIC_HOT_WATER, 0);

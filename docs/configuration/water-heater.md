@@ -104,8 +104,11 @@ Writing the boost duration register alone did nothing on that heater, so the hub
 - **Ending** either sends the operating mode "off", which ends both. Turning boost off while away is on
   also ends away, and the other way round.
 - **State** comes from the operating mode the heater reports in every poll, never from the command: the
-  hub reads it right after each write and again 45 seconds later. A boost or holiday started or ended on
-  the heater's display shows within one poll.
+  hub reads it right after each write and again 45 seconds later. Away also shows when the heater's
+  target drops to the bottom of its scale (main parameter `0000`), which both a Calypso and an Atlantic
+  Explorer V4 report while away. The Explorer V4 keeps its operating mode at the same value while away,
+  so that is the only sign it gives. A boost or holiday started or ended on the heater's display shows
+  within one poll.
 - **Away from Home Assistant** has no end date and runs until you turn it off. A holiday you set on the
   display with an end date still ends by itself, and the card follows.
 - **While away** the heater holds no target of its own: the card shows none, and a target set in Home

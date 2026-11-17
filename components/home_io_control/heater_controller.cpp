@@ -665,8 +665,8 @@ bool HeaterController::set_dhw_operating_mode_(const std::string &device_id, Dhw
                          });
   if (!accepted)
     return false;
-  // The entity shows what FP16 reports, never the command: read it at once. A miss does not undo the write,
-  // and the poll execute_dhw_() moved reads it again.
+  // The entity shows what the heater reports (FP16, and for away also the main parameter), never the command:
+  // read it at once. A miss does not undo the write, and the poll execute_dhw_() moved reads it again.
   this->read_dhw_status(device_id, EXCHANGE_RETRY_COUNT);
   return true;
 }
