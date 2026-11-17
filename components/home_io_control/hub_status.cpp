@@ -331,7 +331,7 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   // A moving device that counts down is read once more, with the settling plan, at the end of its
   // count (a count of 0 included); the progress read below keeps its own cadence until then.
   if (trust_position)
-    policy.on_trusted_report(id, remaining_s, dev.last_status);
+    policy.on_trusted_report(id, remaining_s, dev.last_status, decisions::is_waiting(dev.execution_state));
 
   // A count that stopped falling backs the progress reads off (StatusPollPolicy::frozen_count_delay_ms()),
   // except while the cover waits: it holds its count by design (ADR 0085). A cadence that is longer

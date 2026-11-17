@@ -137,9 +137,11 @@ it reports that it waits for power, and the hub follows it: Home Assistant shows
 or closing toward its target, `Active Issue` reads `NODE_WAITING_FOR_POWER` from the first status
 read, and the position follows once the motor runs. The shutter says "waiting for power" in the
 answer to every command, also when nothing else moves, so the hub shows the waiting state only from
-a status read, never from that answer. It keeps reading every few seconds while the shutter waits,
-so a short move is seen. The hub follows a cover for 4 minutes after the command, which covers two
-shutters one after the other. This is confirmed on a VELUX SML shutter behind a KUX 110 (issue
+a status read, never from that answer. It keeps reading every few seconds while the shutter waits
+and follows the move that starts after the wait by its own remaining time, so a short move is seen.
+A command to the position the shutter already has also reports waiting for power, and nothing
+moves. The hub follows a cover for 4 minutes after the command, which covers two shutters one after
+the other. This is confirmed on a VELUX SML shutter behind a KUX 110 (issue
 #230; see [Position and state](../configuration/cover.md#position-and-state)). The group KLI moves
 the shutters one after the other.
 

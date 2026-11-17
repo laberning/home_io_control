@@ -311,12 +311,28 @@ TEST(HubExecutionState, AFrozenCountWhileTheCoverWaitsNeverBacksTheReadsOff) {
     EXPECT_EQ(delay_after_count(rig, 5, BYTE_WAITING_FOR_POWER), DEFAULT_SETTLE_POLL_DELAY_MS) << "report " << i;
 }
 
-TEST(HubExecutionState, AFrozenCountBacksOffOnceTheWaitingCoverRunsWithoutItsCountFalling) {
+TEST(HubExecutionState, AMoveAfterAWaitStartsFreshAndIsReadAtItsPredictedEnd) {
   QueuedCoverRig rig;
-  for (int i = 0; i < 3; i++)
+  // Nine reads in state 3 at 5 s, 3 s apart, then the move reports 7 s in state 4.
+  for (int i = 0; i < 9; i++) {
+    EXPECT_EQ(delay_after_count(rig, 5, BYTE_WAITING_FOR_POWER), DEFAULT_SETTLE_POLL_DELAY_MS) << "report " << i;
+    esphome::test_clock::advance_ms(DEFAULT_SETTLE_POLL_DELAY_MS);
+  }
+  const uint32_t first_moving_ms = delay_after_count(rig, 7, BYTE_EXECUTING);
+  EXPECT_EQ(first_moving_ms, DEFAULT_SETTLE_POLL_DELAY_MS) << "not the 20 s back-off";
+  EXPECT_EQ(rig.comp.poll_policy_.get_settle_update("ABC123"), esphome::millis() + 7000u + PREDICTED_END_MARGIN_MS)
+      << "the read at the predicted end is planned";
+}
+
+TEST(HubExecutionState, AFrozenCountInStateExecutingStillBacksOffAfterAWait) {
+  QueuedCoverRig rig;
+  for (int i = 0; i < 9; i++)
     delay_after_count(rig, 5, BYTE_WAITING_FOR_POWER);
-  EXPECT_EQ(delay_after_count(rig, 5, BYTE_EXECUTING), FROZEN_COUNT_BACKOFF_FIRST_MS)
-      << "the count held while it waited; a cover that runs on a held count is stuck";
+  EXPECT_EQ(delay_after_count(rig, 7, BYTE_EXECUTING), DEFAULT_SETTLE_POLL_DELAY_MS);
+  EXPECT_EQ(delay_after_count(rig, 7, BYTE_EXECUTING), DEFAULT_SETTLE_POLL_DELAY_MS);
+  EXPECT_EQ(delay_after_count(rig, 7, BYTE_EXECUTING), DEFAULT_SETTLE_POLL_DELAY_MS);
+  EXPECT_EQ(delay_after_count(rig, 7, BYTE_EXECUTING), FROZEN_COUNT_BACKOFF_FIRST_MS)
+      << "a count that stays frozen while it runs is stuck";
 }
 
 TEST(HubExecutionState, AFallingCountReturnsToTheShortCadence) {

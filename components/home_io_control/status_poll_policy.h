@@ -144,7 +144,8 @@ static constexpr uint8_t PREDICTED_END_STALE_REPORTS = 3;
 /// is not taken as frozen. 10 s, 15 s and 20 s keep a cover that starts after waiting within 20 s of
 /// being seen, while a stuck one costs a read per 20 s instead of one per 3 s. A cover whose execution
 /// state is waiting (2 or 3) holds its count by design and is not backed off
-/// (decisions::backs_off_frozen_count(), ADR 0085); a frozen count in state 4 backs off.
+/// (decisions::backs_off_frozen_count(), ADR 0085) and its reports do not count toward the frozen count,
+/// so the first report after the wait starts fresh (on_trusted_report()); a frozen count in state 4 backs off.
 /// \todo Experimental: a frozen count in state 4 has not been captured on hardware yet.
 /// @{
 static constexpr uint32_t FROZEN_COUNT_BACKOFF_FIRST_MS = 10000;   ///< Delay after the first frozen report.
@@ -273,7 +274,10 @@ class StatusPollPolicy {
   /// @param device_id Device the report belongs to; tracked devices only.
   /// @param remaining_s Usable remaining travel time in seconds, empty when there is none.
   /// @param now Current millis().
-  void on_trusted_report(const std::string &device_id, std::optional<uint16_t> remaining_s, uint32_t now);
+  /// @param waiting True when the report's execution state is waiting (decisions::is_waiting()). The report then
+  ///        neither counts nor aims and forgets the count, the previous remaining time and the aim, so the first
+  ///        report after the wait starts a fresh move.
+  void on_trusted_report(const std::string &device_id, std::optional<uint16_t> remaining_s, uint32_t now, bool waiting);
   /// How long the next progress read waits when the device's remaining time has stopped falling.
   ///
   /// Zero while the count falls or none is known. From the PREDICTED_END_STALE_REPORTS-th report in a row

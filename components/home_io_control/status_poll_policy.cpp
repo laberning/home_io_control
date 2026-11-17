@@ -82,13 +82,15 @@ MovingReportAction StatusPollPolicy::on_moving_report(const std::string &device_
 }
 
 void StatusPollPolicy::on_trusted_report(const std::string &device_id, std::optional<uint16_t> remaining_s,
-                                         uint32_t now) {
+                                         uint32_t now, bool waiting) {
   auto it = tracking_.find(device_id);
   if (it == tracking_.end())
     return;
   PollTracking &t = it->second;
   t.predicted_end_read = false;
-  if (!remaining_s.has_value()) {
+  // A waiting cover holds its count by design: nothing to count and no end to predict, so the first
+  // report after the wait starts a fresh move.
+  if (waiting || !remaining_s.has_value()) {
     drop_predicted_end(t);
     return;
   }
