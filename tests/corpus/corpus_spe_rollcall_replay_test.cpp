@@ -7,10 +7,11 @@
 /// predicate below matches on the frames themselves instead ("any frame with cmd ==
 /// CMD_DISCOVER_SPE_RESP"), so it keeps working as more roll-call captures arrive.
 ///
-/// Two shapes are covered: our own hub's roll-call answered by Somfy devices and by Atlantic AGILIA
-/// heaters (`rx` = the 0x2B replies only), and a passive capture of a real VELUX KLR300's roll-call, where the hub's
-/// own 0x2A and the traffic around it are `rx` too — so only the 0x2B frames are decoded, and every per-device field is
-/// pinned per responder rather than assumed brand-wide.
+/// Three shapes are covered: our own hub's roll-call answered by Somfy devices and by Atlantic AGILIA
+/// heaters (`rx` = the 0x2B replies only), VELUX windows' 0x2B replies to another controller's keyed roll-call,
+/// received by that controller (the replies only), and a passive capture of a real VELUX KLR300's roll-call, where the
+/// hub's own 0x2A and the traffic around it are `rx` too — so only the 0x2B frames are decoded, and every per-device
+/// field is pinned per responder rather than assumed brand-wide.
 
 #include "corpus_generated.h"
 #include "proto_codecs.h"
@@ -40,7 +41,7 @@ std::vector<const corpus::CorpusCapture *> spe_rollcall_replay_captures() {
 
 /// One real, already-paired responder's expected decode, keyed by the reply's source address.
 /// Keyed by `src`, not the payload's backbone address: Somfy repeats its own node ID as the
-/// backbone, but VELUX reports 00 00 00, so the backbone does not identify a VELUX responder —
+/// backbone, but the VELUX roller shutters report 00 00 00, so the backbone does not identify every responder —
 /// which is also why scan_paired_devices() deduplicates by `frame.src`.
 struct ExpectedResponder {
   uint8_t src[NODE_ID_SIZE];
@@ -65,6 +66,13 @@ constexpr ExpectedResponder EXPECTED_RESPONDERS[] = {
     {{0x98, 0x61, 0x11}, DeviceType::ELECTRICAL_HEATER, 1, MANUFACTURER_ATLANTIC_GROUP, 0xCC, {0x98, 0x61, 0x11}},
     // The same radiator as B6BDFC after a connection reset: its heater moved to an unrelated address.
     {{0xF5, 0x19, 0xDD}, DeviceType::ELECTRICAL_HEATER, 1, MANUFACTURER_ATLANTIC_GROUP, 0xCC, {0xF5, 0x19, 0xDD}},
+    // velux_window_discovery_keyed_rollcall: five mains-powered window actuators (type 4, subtype 1), Multi Information
+    // Byte 0x0C as received, backbone == src.
+    {{0x93, 0xE0, 0x61}, DeviceType::WINDOW_OPENER, 1, MANUFACTURER_VELUX, 0x0C, {0x93, 0xE0, 0x61}},
+    {{0x32, 0xC4, 0xC4}, DeviceType::WINDOW_OPENER, 1, MANUFACTURER_VELUX, 0x0C, {0x32, 0xC4, 0xC4}},
+    {{0x1F, 0xDF, 0x61}, DeviceType::WINDOW_OPENER, 1, MANUFACTURER_VELUX, 0x0C, {0x1F, 0xDF, 0x61}},
+    {{0xFB, 0x47, 0xD2}, DeviceType::WINDOW_OPENER, 1, MANUFACTURER_VELUX, 0x0C, {0xFB, 0x47, 0xD2}},
+    {{0xF3, 0x21, 0x81}, DeviceType::WINDOW_OPENER, 1, MANUFACTURER_VELUX, 0x0C, {0xF3, 0x21, 0x81}},
 };
 
 const ExpectedResponder *find_expected_responder(const uint8_t src[NODE_ID_SIZE]) {

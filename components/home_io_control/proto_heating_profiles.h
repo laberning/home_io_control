@@ -491,8 +491,8 @@ HeatingDeviceFacts heating_device_facts(const IoDevice *dev, bool programme_stat
 ///          the heater has not answered the read of its temperature in force yet
 ///          (HeatingDeviceFacts::in_force_unresolved) the target is refused with HeatingRefusal::IN_FORCE_UNKNOWN:
 ///          neither write is right before the heater has answered, so a silent heater gets no write.
-///          \todo Confirm the override on hardware: on a towel dryer in a comfort period and on a radiator
-///                (the write is untested there).
+///          \todo Confirm the override on a radiator that takes it. A towel dryer takes it in an eco period and
+///                refuses it in a comfort period (issue #202); a Thermor EMOTION 3 H radiator refuses it (issue #228).
 /// @param profile The device's profile.
 /// @param request What the card asks for.
 /// @param facts What the hub knows about the device.

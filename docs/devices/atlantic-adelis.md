@@ -2,11 +2,14 @@
 <!-- doxygen-label: dev_atlantic_adelis -->
 
 An electric towel dryer with a display, sold by Atlantic. Its display names the model
-"ADELIS 2 DIGIT". It speaks io-homecontrol two-way like the
-[Atlantic AGILIA IO](atlantic-agilia-io.md) radiator, so the hub sets its temperature, mode, boost
-and drying, and reads back all of them with the room temperature and whether it heats. Two units are reported on an
-SX1276 board ([issue #202](https://github.com/laberning/home_io_control/issues/202)); see
-[Heating and climate](../configuration/climate.md) for the options.
+"ADELIS 2 DIGIT". A mixed model, heated by the central-heating water loop or by its electric element,
+reports itself as "ADELIS 2 M". Both speak io-homecontrol two-way like the
+[Atlantic AGILIA IO](atlantic-agilia-io.md) radiator, so the hub sets their temperature, mode, boost
+and drying, and reads back all of them with the room temperature and whether the element heats. Two
+ADELIS 2 DIGIT units are reported on an SX1276 board
+([issue #202](https://github.com/laberning/home_io_control/issues/202)) and one ADELIS 2 M on an
+SX1262 board (issue #202 and [issue #243](https://github.com/laberning/home_io_control/issues/243));
+see [Heating and climate](../configuration/climate.md) for the options.
 
 ## Declaring it as a towel dryer
 
@@ -16,23 +19,25 @@ so its `climate:` entry adds `io_model: towel_dryer`. The block that Discover & 
 Devices prints names the type and subtype only, so add the line yourself.
 [Choosing `io_model:`](../configuration/climate.md#choosing-io_model) says what a towel dryer does
 without it, and how the hub's log helps you check the declaration: at the first poll it prints the
-model name, `ADELIS 2 DIGIT` on this dryer.
+model name, `ADELIS 2 DIGIT` or `ADELIS 2 M`.
 
 ## What works
 
 | Capability | Status |
 |---|---|
-| Discover & Pair | ✅ Reported on two units; each has a key of its own |
+| Discover & Pair | ✅ Reported on three units; each has a key of its own. The ADELIS 2 M paired on the first attempt on an SX1262 board |
 | Target temperature | ✅ Reported working from the climate entity |
-| Room temperature | ✅ Read on both units |
+| Room temperature | ✅ Read on all three units |
 | Mode read-back (off / MANUEL / PROG) | ✅ Read on the display's three modes |
 | Boost and drying read-back | ✅ Read during a boost and during a drying run |
 | Heating / idle | ✅ Read: the element's working rate is 100 % in boost and drying |
 | Changing the mode from Home Assistant | ✅ The display follows off, MANUEL and PROG at once |
 | Starting or ending boost and drying from Home Assistant | ✅ The display starts and ends both |
 | Boost started on the dryer itself | ✅ Shows as the `boost` preset and `heating` at the next poll |
-| Level the dryer applies (`heating_level:` sensor) | ⚠️ Experimental: read on one unit, in a comfort period, in an eco period and in a boost; no second unit has confirmed it yet, and no drying run has been read |
-| Target set in `auto` (temporary override) | ⚠️ Experimental: the write has not been confirmed on a dryer yet, in an eco period or in a comfort period |
+| Mixed ADELIS 2 M | ✅ Reported working with `io_model: towel_dryer`: mode, target, boost, drying and room temperature follow the display (issue #243). With the dryer's central-heating mode on, the element does not run; see Known quirks |
+| Level the dryer applies (`heating_level:` sensor) | ⚠️ Experimental: read in a comfort period, in an eco period, in a boost and during drying (issue #202). It shows eco during a drying run, and after a change of mode or of boost it can show the old level for one or two polls |
+| Target set in `auto` in an eco period (temporary override) | ✅ The dryer takes the override, shows the new temperature and follows its program again at the next change of period; `set_derogation` with `0` ends it (issue #202) |
+| Target set in `auto` in a comfort period | ❌ The dryer refuses the override and keeps its comfort temperature: the write is acknowledged, the register reads back 0, and the card falls back to the dryer's value (issue #202). A target in a comfort period does nothing yet; set the comfort temperature in `heat` |
 
 ## Modes in Home Assistant
 
@@ -71,15 +76,25 @@ and add `io_model: towel_dryer` to the block before you flash.
 - **Changes made on the dryer show up at the next poll.** The hub reads the dryer every five minutes
   by default, so a boost started on the dryer can take that long to appear in Home Assistant. Set
   `status_poll_interval` on the entry to read it more often.
-- **A target set in `auto` is experimental.** It is a temporary override of the program that no dryer
-  has confirmed yet; see
+- **A target set in `auto` works in an eco period only.** It is a temporary override of the program;
+  in a comfort period the dryer refuses it. See
   [A target set while the heater's program runs](../heating.md#a-target-set-while-the-heaters-program-runs).
-- **A distant unit misses replies.** One of the two units, received at about -90 dBm, answered three
-  of six roll-call attempts; the near one, at about -35 dBm, answered every attempt.
+- **Frost-free and summer show as MANUEL.** On the display, lowering the target below 12 °C reaches a
+  frost-free setting at 7.0 °C, and one more step reaches a summer setting at 0.0 °C. The dryer
+  reports both as the MANUEL mode, so the card shows `heat` with a target of 7.0 or 0.0 °C. There is
+  no fourth mode to select (issue #202).
+- **The central-heating mode of an ADELIS 2 M keeps the element off.** The mixed model has a panel
+  setting for heating from the water loop. While it is on, the electric element never runs, so the
+  card shows `idle`, and boost and drying change nothing. With it off (water valve closed by hand)
+  the element runs and the card shows `heating`. The card cannot tell which mode the dryer is in
+  yet; a register that follows the setting is reported in issue #243.
+- **A distant unit misses replies.** One of the two ADELIS 2 DIGIT units, received at about -90 dBm,
+  answered three of six roll-call attempts; the near one, at about -35 dBm, answered every attempt.
 
 ## Evidence
 
-Corpus captures from issue #202, on an SX1276 board:
+The ADELIS 2 M of issue #243 is reported from logs only and has no corpus capture. Corpus captures
+from issue #202, on an SX1276 board:
 
 - [A register sweep of the first unit, partly during a boost](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_register_01_sweep.yaml)
 - [A register sweep of the second unit during a drying run](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_register_01_sweep_drying.yaml)

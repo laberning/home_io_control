@@ -375,7 +375,8 @@ A position move can carry a speed profile. The hub sends one only when you choos
 choice it sends the short frame a wall control pad sends, which names the main parameter only, and the
 motor moves at its own speed. Every device in the corpus answers that short frame without complaint.
 The Somfy devices, a VELUX SSL roller shutter and a tilt cover answer the longer frame with the speed
-profile by saying one of its parameters is unknown (result code 5), although they still run it; a VELUX
+profile by saying one of its parameters is unknown (result code 5), although they still run it, and so
+does a VELUX roof window in one installation (issue #242); a VELUX
 SML roller shutter behind a KUX 110 takes it without complaint (issue #230). `travel_speed:` picks one
 of three:
 

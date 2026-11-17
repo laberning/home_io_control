@@ -1,0 +1,55 @@
+id: velux_window_discovery_keyed_rollcall_flipper_cc1101
+description: >
+  Community capture: five VELUX mains-powered window actuators (type 4, subtype 1) answering keyed
+  roll-call requests, received by the reporter's own CC1101 receiver and not by this project's
+  hardware. The frames are a selection across several roll-call passes, not one uninterrupted
+  exchange, and the roll-call requests themselves were not logged. Each 0x2B reply is addressed to
+  the controller C0EE11 and carries the packed type/subtype 0101 (window opener, subtype 1),
+  manufacturer 01 (VELUX) and flags 0C. No key material and no authentication response are
+  present; the frames are unmodified, CRC bytes included.
+source:
+  device: "Five VELUX mains-powered window actuators, type 4 / subtype 1, listened to by a custom CC1101 receiver app (not ESPHome)"
+  captured_with: other
+  firmware: "Reporter's own receiver app; not this component"
+  date: 2026-11-16
+  origin: github-issue
+  issue: 242
+key: unknown
+frames:
+  - dir: rx
+    t_ms: 1073
+    freq: 868950000
+    hex: "D1 00 C0 EE 11 93 E0 61 2B 01 01 93 E0 61 01 0C FF FF 01 E7"
+    crc: present
+    note: "cmd=DISCOVER_SPE_RESP(0x2B) from actuator 93E061 to controller C0EE11; selected across repeated roll-call windows, no TX or crypto validation claimed"
+  - dir: rx
+    t_ms: 1191
+    freq: 868950000
+    hex: "D1 00 C0 EE 11 32 C4 C4 2B 01 01 32 C4 C4 01 0C FF FF 2A E7"
+    crc: present
+    note: "cmd=DISCOVER_SPE_RESP(0x2B) from actuator 32C4C4 to controller C0EE11; same selection as the first frame"
+  - dir: rx
+    t_ms: 1269
+    freq: 868250000
+    hex: "D1 00 C0 EE 11 1F DF 61 2B 01 01 1F DF 61 01 0C FF FF BD 61"
+    crc: present
+    note: "cmd=DISCOVER_SPE_RESP(0x2B) from actuator 1FDF61 to controller C0EE11, heard on 868.25 MHz"
+  - dir: rx
+    t_ms: 1698
+    freq: 868250000
+    hex: "D1 00 C0 EE 11 FB 47 D2 2B 01 01 FB 47 D2 01 0C FF FF 25 41"
+    crc: present
+    note: "cmd=DISCOVER_SPE_RESP(0x2B) from actuator FB47D2 to controller C0EE11, heard on 868.25 MHz"
+  - dir: rx
+    t_ms: 69532
+    freq: 868950000
+    hex: "D1 00 C0 EE 11 F3 21 81 2B 01 01 F3 21 81 01 0C FF FF AA 7C"
+    crc: present
+    note: "cmd=DISCOVER_SPE_RESP(0x2B) from actuator F32181 to controller C0EE11, from a later roll-call pass about a minute after the first four"
+expect:
+  frames:
+    - {cmd: 43, start: true, end: true, protocol: 2w}
+    - {cmd: 43, start: true, end: true, protocol: 2w}
+    - {cmd: 43, start: true, end: true, protocol: 2w}
+    - {cmd: 43, start: true, end: true, protocol: 2w}
+    - {cmd: 43, start: true, end: true, protocol: 2w}

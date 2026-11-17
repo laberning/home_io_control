@@ -111,8 +111,8 @@ The display words below are the AGILIA IO's, from its
 | Radiator display | Mode | Preset | What a target sets |
 |---|---|---|---|
 | BASIC: holds the set temperature, smart functions off | `heat` | | The comfort temperature |
-| PROG: follows the radiator's weekly program | `auto` | `Program` | A temporary override (experimental) |
-| AUTO: learns when the room is used and adjusts the temperature | `auto` | `Auto` | A temporary override (experimental) |
+| PROG: follows the radiator's weekly program | `auto` | `Program` | A temporary override (experimental; the EMOTION 3 H refuses it) |
+| AUTO: learns when the room is used and adjusts the temperature | `auto` | `Auto` | A temporary override (experimental; the EMOTION 3 H refuses it) |
 | Off | `off` | | The comfort temperature |
 
 - Select `Program` or `Auto` to switch between the two automatic modes. Selecting `auto` on the card
@@ -128,11 +128,17 @@ The display words below are the AGILIA IO's, from its
 
 Target, the three modes, both presets, the room temperature and `heating` / `idle` are confirmed on
 three AGILIA IO radiators, each read back (issue #165). The target and the room temperature are
-confirmed on a Sauter Hekla (issue #222) and the target on a Thermor EMOTION 3 H (issue #228). The
-temporary override is experimental on all three: no radiator has been read for the two registers it
-uses, and a radiator without them keeps writing the comfort temperature in every mode. If you run a
-radiator in `auto`, please [open an issue](https://github.com/laberning/home_io_control/issues) with
-what the card does after a target.
+confirmed on a Sauter Hekla (issue #222) and the target on a Thermor EMOTION 3 H (issue #228). On the
+EMOTION 3 H the temperature in force reads correctly (register `0x012A`, in `auto` it follows the
+comfort temperature), but the radiator refuses the temporary override in AUTO and in PROG: the
+write is acknowledged and the register reads back 0. The card keeps the value in force and the log
+has a warning. Until a radiator takes the override, change its comfort temperature in `heat` and
+switch back to `auto`.
+The override is experimental on the AGILIA IO and the Sauter Hekla: no radiator has been read for the
+two registers it uses, and a radiator without them keeps writing the comfort temperature in every
+mode. If you run one of these in `auto`, please
+[open an issue](https://github.com/laberning/home_io_control/issues) with what the card does after a
+target.
 
 ## Towel dryers
 
@@ -143,7 +149,7 @@ so they are presets, and the mode underneath stays as it was.
 | Towel dryer display | Mode | Preset | What a target sets |
 |---|---|---|---|
 | MANUEL: holds the set temperature | `heat` | | The comfort temperature |
-| PROG: follows the dryer's weekly program | `auto` | | A temporary override (experimental) |
+| PROG: follows the dryer's weekly program | `auto` | | A temporary override: taken in an eco period, refused in a comfort period |
 | Off | `off` | | The comfort temperature |
 | BOOST | the mode underneath | `boost` | The comfort temperature |
 | Drying | the mode underneath | `Drying` | The comfort temperature |
@@ -160,9 +166,12 @@ so they are presets, and the mode underneath stays as it was.
   `heating_level:` sensor shows them (section "The level a heater applies" below).
 - A towel dryer has no window function, so its entry gets no window entities.
 
-Mode, boost and drying, target, room temperature and `heating` / `idle` are confirmed on two Adelis
-units, the writes each checked against the dryer's display (issue #202). The temporary override and
-the level sensor are experimental.
+Mode, boost and drying, target, room temperature and `heating` / `idle` are confirmed on two electric
+Adelis units, the writes each checked against the dryer's display (issue #202), and a third, mixed
+unit follows the display for mode, target, boost and drying (issue #243). The mixed model has a
+central-heating mode that keeps the element off: the card then shows `idle`, and boost and drying
+change nothing. The override is taken in an eco period and refused in a comfort period (see
+"A target set while the heater's program runs" below). The level sensor is experimental.
 
 ## Level heaters and pilot-wire interfaces
 
@@ -247,7 +256,7 @@ watching the element; the `heating_source` sensor shows what runs, so you can ch
 
 ## A target set while the heater's program runs
 
-*Experimental: no towel dryer and no radiator has confirmed the override write yet.*
+*Confirmed on a towel dryer in an eco period (issue #202). A towel dryer refuses it in a comfort period and a Thermor EMOTION 3 H radiator refuses it altogether (issue #228). Experimental on other heaters.*
 
 A heater with its own weekly program shows `auto` while that program runs: PROG on a towel dryer,
 PROG and AUTO on a radiator with a setpoint. A target you set then is a temporary override of the
@@ -255,8 +264,8 @@ program. *Dérogation* is the French word for such an exception, which is where 
 `set_derogation` function gets its name.
 
 - **While the program runs** a target is written to the heater's override register (`0x011D`) and
-  read back. It holds until the program's next change, in a comfort period as well as in an eco
-  period. The program's comfort temperature is not touched.
+  read back, in a comfort period as well as in an eco period. If the heater takes it, it holds until
+  the program's next change. The program's comfort temperature is not touched.
 - **In `heat`** a target is the comfort temperature, as on the heater's own display. So is a target
   set while a towel dryer runs a boost or a drying run on top of its program.
 - **The card's target in `auto`** is the temperature the heater holds right now, read at every poll
@@ -281,7 +290,9 @@ program. *Dérogation* is the French word for such an exception, which is where 
   register gets no reply or no value.
 - **A heater that refuses the override** is logged as a warning with the device id, the value asked
   for and what the register holds. Nothing else is written, and the next poll shows what the heater
-  holds.
+  holds. A towel dryer does this in a comfort period and a Thermor EMOTION 3 H radiator in every
+  period: the write is acknowledged and the register reads back 0. A target in `auto` does nothing
+  yet on these heaters; change the comfort temperature in `heat` instead, as described below.
 - **To end an override early**, call the
   [`heating_control` action](configuration/climate.md#the-heating_control-action) with
   `set_derogation` and `0`. An override also ends by itself, as the heater decides. Home Assistant
@@ -305,7 +316,7 @@ reports. Use it to see, or to react in an automation to, the comfort and eco per
 
 | Heater kind | What the sensor shows |
 |---|---|
-| Towel dryer | The level in every mode: `comfort` or `eco` as the program changes period, `boost` during a boost. Experimental: read on one unit in a comfort period, an eco period and a boost (issue #202), not yet during a drying run or an override. If you run a dryer in PROG, please [report](https://github.com/laberning/home_io_control/issues) whether the sensor follows the display |
+| Towel dryer | The level in every mode: `comfort` or `eco` as the program changes period, `boost` during a boost. During a drying run it reads `eco`, and after a change of mode or of boost it can show the old level for one or two polls. Experimental: read on one unit in a comfort period, an eco period, a boost and a drying run (issue #202). If you run a dryer in PROG, please [report](https://github.com/laberning/home_io_control/issues) whether the sensor follows the display |
 | Level heater | The level the heater reports, including `secured`, which a heater reports and a controller cannot set |
 | Pilot-wire interface | Nothing: the interface reports no level (issue #228) |
 | Radiator with a setpoint | Nothing: the hub does not read a radiator's level yet. If you run one in its program, please [open an issue](https://github.com/laberning/home_io_control/issues) so it can be checked |

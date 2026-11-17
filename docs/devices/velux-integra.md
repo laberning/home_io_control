@@ -8,7 +8,8 @@ and hubs that make good key sources, the wired bridges, and the products control
 
 | Device | Status |
 |---|---|
-| INTEGRA roof-window actuator | ✅ Confirmed — open, close, position, ventilation |
+| INTEGRA roof-window actuator | ✅ Confirmed — open, close, position, ventilation. A second installation of five type 4/1 windows (factory name "Window operator") answers keyed roll-calls and commands under a key copied from a KLR 100, reported with another controller (issue #242) |
+| KLR 100 two-way control pad | 📣 Reported as a key-extraction source — with System settings, Copy system open, the pad answers an addressed key request and proves the key; reported with another controller, not yet with this hub (issue #242) |
 | KLR 200 two-way control pad | ✅ Confirmed as a key-extraction source |
 | KLR 300 two-way control pad | ✅ Confirmed as a key-extraction source (one community tester) |
 | KLF 200 gateway | ✅ Key extraction succeeded (one reporter) — use **SEARCH FOR PRODUCTS**, and repeat it while armed if it finds nothing |
@@ -229,6 +230,10 @@ Set `travel_speed: fast` on the window's cover for its fast speed, 26.5 s and au
 `silent` for the slowest, about 65 s (issue #205); see
 [Travel speed](../configuration/cover.md#travel-speed).
 
+Windows differ here. A window in another installation answered both speed profiles and a numeric
+speed with result code 5 (parameter unknown) and still moved to the requested position (issue #242). On such
+a window `travel_speed:` changes nothing, and the hub logs one warning per device and boot.
+
 ## Rain protection
 
 A VELUX window with a wired rain sensor limits its own opening while it rains and then refuses to
@@ -286,9 +291,11 @@ rain-limited limitation read, and private-function sweeps dry and in the rain st
 and KLI 313 remotes, and 6 for the SSL solar roller shutter (a TaHoma pairing it; this hub pairing it,
 with the long preamble ignored and the short one answered; a set-position ack; a stop and status
 polls that go unanswered while it moves).
+One more capture holds five type 4/1 windows answering keyed roll-calls, received with another controller's
+receiver (issue #242).
 
 Field reports: #17 (SML discovery), #74 (SML roller shutter, KLI 312 blind and FSC pleated blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
-screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #230 (SML two-way pairing, shutters queued on one KUX 110).
+screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #230 (SML two-way pairing, shutters queued on one KUX 110), #242 (KLR 100 Copy system, five type 4/1 windows).
 
 ## See also
 

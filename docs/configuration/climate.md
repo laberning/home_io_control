@@ -261,7 +261,7 @@ show the result.
 |---|---|---|
 | `power_on` | *(ignored)* | Wake / retrieve paired devices. |
 | `set_temperature` | float °C, `7.0`–`28.0` | Setpoint (the comfort temperature, register `0x0103`), written whatever the heater runs. |
-| `set_derogation` | float °C, `7.0`–`28.0`, or `0` | A temporary override of the program (register `0x011D`) on a towel dryer or a radiator with a setpoint: it holds until the program's next change; `0` cancels it. Experimental, see [A target set while the heater's program runs](../heating.md#a-target-set-while-the-heaters-program-runs). Refused on heaters without a program. |
+| `set_derogation` | float °C, `7.0`–`28.0`, or `0` | A temporary override of the program (register `0x011D`) on a towel dryer or a radiator with a setpoint: it holds until the program's next change; `0` cancels it. Confirmed on a towel dryer in an eco period, `0` included (issue #202); a towel dryer refuses it in a comfort period and a Thermor EMOTION 3 H radiator refuses it (issue #228); experimental on other heaters. See [A target set while the heater's program runs](../heating.md#a-target-set-while-the-heaters-program-runs). Refused on heaters without a program. |
 | `set_mode` | `auto` \| `manual` \| `prog` \| `off` | Operating mode. |
 | `set_presence` | `on` \| `off` | Presence / absence. The AGILIA IO acknowledges it; no visible effect observed. |
 | `set_open_window_detection` | `on` \| `off` | Switches the heater's open-window detection on or off (register `0x0106`). |

@@ -51,7 +51,9 @@ Cozytouch, such as a Thermor EMOTION 3 H, hands over that key.
 2. Put the key into `secrets.yaml` and use it as the `system_key:` of the interface's entry.
 3. Find the interface's address. Set `logger: level: DEBUG`, then change the heater's level in the
    Cozytouch app. The hub logs each frame it hears on an `io_capture` line, and the Cozytouch's
-   frames to the interface carry its address as `dst=`.
+   frames to the interface carry its address as `dst=`. The interface's device URL in the Cozytouch
+   system also carries the address, in decimal: `9506907` is `91105B` in hexadecimal. Convert it with
+   `printf '%X' 9506907`.
 
 Leave the interface's own pairing mode alone. The 4-second press that starts it also gives the
 interface a new address, and the reporter had to pair it with the Cozytouch again afterwards.
