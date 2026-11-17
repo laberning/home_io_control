@@ -9,7 +9,8 @@ home_io_control:
     sx1262_rx_bandwidth: "117.3"
     key_extraction_type_word: 0x0180
     key_extraction_multi_info: "DD"
-    pairing_discovery_preamble: 32
+    pairing_discovery_preamble_ms: 8
+    normal_start_preamble: 48  # deprecated: accepted, warned about, converted to a duration
     pairing_discovery_send_channels: all
     lbt_force_when_busy: true
     lbt_max_retries: 3  # deprecated: accepted, warned about, ignored

@@ -930,12 +930,12 @@ TEST(RadioSX1276, ApplyTuningRewritesRxBandwidthAndResponsePreamble) {
 
   TuningConfig tuning;
   tuning.sx1276_rx_bandwidth = SX1276RxBandwidth::BW_125_0_KHZ;
-  tuning.sx1276_response_preamble = 20;
+  tuning.response_preamble_ms = 5.0F;  // 192 bit periods: 19 bytes at 10 bit periods each
   radio.apply_tuning(tuning);
 
   EXPECT_EQ(spi.get_reg(REG_RX_BW), static_cast<uint8_t>(SX1276RxBandwidth::BW_125_0_KHZ));
   EXPECT_EQ(spi.get_reg(REG_AFC_BW), static_cast<uint8_t>(SX1276RxBandwidth::BW_125_0_KHZ));
-  EXPECT_EQ(radio.response_preamble(), 20u);
+  EXPECT_EQ(radio.response_preamble(), 19u);
 }
 
 TEST(RadioSX1276, ReadRssiAppliesFormula) {

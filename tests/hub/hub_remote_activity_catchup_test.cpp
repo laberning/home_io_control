@@ -344,9 +344,9 @@ TEST_F(RemoteActivityCatchupHub, ACatchupReadLeadsShortToALowPowerDeviceThatJust
   comp.process_pending_operation_();  // PRESSED_DEVICE sorts first
 
   ASSERT_GT(radio.get_tx_configs().size(), sent_before + 1);
-  EXPECT_EQ(radio.get_tx_configs()[sent_before].preamble_len, comp.tuning_.normal_start_preamble)
+  EXPECT_EQ(radio.get_tx_configs()[sent_before].preamble_len, mock_preamble_bytes(comp.tuning_.start_preamble_ms))
       << "the short lead a moving receiver hears";
-  EXPECT_EQ(radio.get_tx_configs()[sent_before + 1].preamble_len, comp.tuning_.low_power_wake_preamble)
+  EXPECT_EQ(radio.get_tx_configs()[sent_before + 1].preamble_len, mock_preamble_bytes(comp.tuning_.low_power_wake_ms))
       << "then the wake-up attempts a resting one hears";
 }
 

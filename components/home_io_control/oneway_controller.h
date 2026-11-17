@@ -57,7 +57,7 @@ const char *oneway_power_class_name(OneWayPowerClass power_class);
 /// @brief Which wake-up shape one copy of a 1W burst gets.
 enum class OneWayPreamble : uint8_t {
   WAKE,    ///< The long wake-up preamble (`LONG_PREAMBLE`), paired with `CTRL1_LOW_POWER` set.
-  NORMAL,  ///< The runtime-tunable `normal_start_preamble`, CTRL1's low-power bit clear.
+  NORMAL,  ///< The runtime-tunable `start_preamble_ms`, CTRL1's low-power bit clear.
 };
 
 /// @brief The preamble and CTRL1 shape one copy of a 1W burst gets.

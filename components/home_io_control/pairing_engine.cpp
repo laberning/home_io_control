@@ -447,7 +447,8 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
       if (!create_discovery_request(context.req, node_id_, command, destination, tuning_->pairing_discovery_low_power,
                                     tuning_->pairing_discovery_ack_capable, tuning_->pairing_discovery_payload_enabled,
                                     tuning_->pairing_discovery_payload, system_key_) ||
-          !engine_.transmit_frame(context.req, request_freq, effective_discovery_preamble(*tuning_))) {
+          !engine_.transmit_frame(context.req, request_freq,
+                                  engine_.preamble_bytes_for_ms(effective_discovery_preamble_ms(*tuning_)))) {
         return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
       }
 
@@ -701,7 +702,7 @@ bool PairingEngine::discover_and_pair() {
 
   if (tuning_->pairing_discovery_preamble_set) {
     ESP_LOGI(TAG, "Pairing: discovery preamble %u B (set in tuning); directed frames to %s are capped to it",
-             effective_discovery_preamble(*tuning_), context.device_id.c_str());
+             engine_.preamble_bytes_for_ms(effective_discovery_preamble_ms(*tuning_)), context.device_id.c_str());
   }
 
   // Discover-confirm (0x2C -> 0x2D): once per attempt, before the key-exchange retry loop below,

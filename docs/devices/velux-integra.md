@@ -111,13 +111,13 @@ status, as described under Onboarding routes above. Two-way pairing, reported by
 on an SX1262 board (issue #230), gives status, position and a working stop mid-travel as well.
 
 **Two-way pairing.** The shutter needs a short discovery preamble, as the SSL does. Set
-`pairing_discovery_preamble: 32`; with that line alone the reporter of issue #230 paired, and
+`pairing_discovery_preamble_ms: 7`; with that line alone the reporter of issue #230 paired (with 32 bytes, 6.7 ms on their board), and
 `pairing_discovery_ack_capable` is not needed:
 
 ```yaml
 home_io_control:
   tuning:
-    pairing_discovery_preamble: 32
+    pairing_discovery_preamble_ms: 7
 ```
 
 Press Gear on the shutter's own KLI 310 for about one second; the shutter starts to jog. While it
@@ -125,7 +125,7 @@ jogs, press **Discover & Pair** once. One press is enough: the search sends the 
 up to three times, and in the report the shutter answered the second one. Pairing ends the
 registration window, so the shutter stops jogging. No motor reset is needed, and the KLI remotes and
 a 1W enrollment of the same shutter keep working. Discover & Pair found nothing in issue #17, which
-ran with a 1024-byte discovery preamble.
+ran with a discovery preamble of about 213 ms (1024 bytes).
 
 Once paired, the shutter answers status reads while it moves, with the time left to its target,
 so the position in Home Assistant follows the move. Stop mid-travel works, set position lands
@@ -188,13 +188,13 @@ moves the window to its predefined air-exchange opening rather than fully open.
   (experimental: not yet confirmed on a solar shutter). Leave
   `low_power_wake_belief` on: with it off, every `stop` goes out with the long preamble and never
   lands mid-travel. The boot log states it (`Low-power wake belief: on`). At rest the SSL answers
-  only the wake-up preamble, and not on every try: about half the tries at 1024 bytes, about three
-  in four at the default 2048
+  only the wake-up preamble, and not on every try: about half the tries at about 213 ms, about three
+  in four at 427 ms, and all of eight with about 600 ms, the default
   ([issue #114](https://github.com/laberning/home_io_control/issues/114),
   [issue #151](https://github.com/laberning/home_io_control/issues/151)). The hub makes three
-  attempts, so a silent shutter holds it for about 3.2 s. If commands to a resting shutter still
+  attempts, so a silent shutter holds it for about 3.5 s. If commands to a resting shutter still
   often need a second press, try a longer
-  [`low_power_wake_preamble`](../configuration/tuning.md#low_power_wake_preamble). There is no
+  [`low_power_wake_ms`](../configuration/tuning.md#low_power_wake_ms). There is no
   such result for the MSU solar awning screen, so expect a mid-travel `stop` to do nothing there
   and use the product's own wall remote.
 - **1W enrollment is a Gear press on the existing KLI, not a button on the product.** Press the

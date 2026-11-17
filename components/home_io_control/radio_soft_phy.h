@@ -67,8 +67,8 @@ static constexpr uint8_t UART_PROBE_MAX_BIT_OFFSET = 10;
 /// @return Raw byte count, rounded up to whole bytes.
 uint8_t soft_phy_raw_bytes_for_frame(uint8_t frame_len);
 
-/// Protocol line rate. The same 38400 bps every driver programs into its own bitrate register.
-static constexpr uint32_t SOFT_PHY_LINE_RATE_BPS = 38400;
+// IO868_LINE_RATE_BPS (the protocol's 38400 bps) lives in radio_interface.h, beside the preamble
+// duration conversion that shares it.
 /// Microseconds in a second, for the air-time arithmetic below.
 static constexpr uint32_t SOFT_PHY_US_PER_SECOND = 1000000;
 /// Microseconds per millisecond, for comparing an air time with a bound in milliseconds.
@@ -81,7 +81,7 @@ static constexpr uint32_t SOFT_PHY_US_PER_MS = 1000;
 /// numerator is 64-bit: in 32 bits it would wrap above 4294 bits, and a 2048-byte wake-up
 /// preamble is a real transmission length.
 constexpr uint32_t soft_phy_bits_air_time_us(uint64_t bits) {
-  return static_cast<uint32_t>((bits * SOFT_PHY_US_PER_SECOND + SOFT_PHY_LINE_RATE_BPS - 1) / SOFT_PHY_LINE_RATE_BPS);
+  return static_cast<uint32_t>((bits * SOFT_PHY_US_PER_SECOND + IO868_LINE_RATE_BPS - 1) / IO868_LINE_RATE_BPS);
 }
 
 /// @brief On-air time in microseconds for `raw_bytes` bytes at the protocol's line rate.

@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include "proto_timing.h"
-#include "tuning_config.h"  // Per-chip response and start preambles
 
 #include <cstdint>
 
@@ -23,15 +22,27 @@ struct PreambleCase {
   TxWake start_wake;  ///< Expected level with START set.
 };
 
+/// Programmed bytes of a duration at the 38400 bps line rate and a coder's bits per preamble byte:
+/// 8 for a raw byte stream, 10 for the SX1276 (RadioDriver::preamble_bytes_for_ms() is the runtime form).
+constexpr uint16_t bytes_for_ms(double ms, uint8_t bits_per_byte) {
+  return static_cast<uint16_t>(ms * 38.4 / bits_per_byte + 0.5);
+}
+
+// Every preamble duration default, on both coders (a preamble is wake-up level by its programmed
+// length, and the two coders give different lengths for one duration).
 constexpr PreambleCase kPreambles[] = {
     {"SHORT_PREAMBLE", SHORT_PREAMBLE, TxWake::SHORT},
-    {"NORMAL_START_PREAMBLE", NORMAL_START_PREAMBLE, TxWake::SHORT},
-    {"COLD_BROADCAST_REPLY_PREAMBLE", COLD_BROADCAST_REPLY_PREAMBLE, TxWake::SHORT},
+    {"START_PREAMBLE_MS (8 bits/byte)", bytes_for_ms(START_PREAMBLE_MS, 8), TxWake::SHORT},
+    {"START_PREAMBLE_MS (10 bits/byte)", bytes_for_ms(START_PREAMBLE_MS, 10), TxWake::SHORT},
+    {"COLD_BROADCAST_REPLY_PREAMBLE_MS (8 bits/byte)", bytes_for_ms(COLD_BROADCAST_REPLY_PREAMBLE_MS, 8),
+     TxWake::SHORT},
+    {"COLD_BROADCAST_REPLY_PREAMBLE_MS (10 bits/byte)", bytes_for_ms(COLD_BROADCAST_REPLY_PREAMBLE_MS, 10),
+     TxWake::SHORT},
+    {"RESPONSE_PREAMBLE_MS (8 bits/byte)", bytes_for_ms(RESPONSE_PREAMBLE_MS, 8), TxWake::SHORT},
+    {"RESPONSE_PREAMBLE_MS (10 bits/byte)", bytes_for_ms(RESPONSE_PREAMBLE_MS, 10), TxWake::SHORT},
     {"LONG_PREAMBLE", LONG_PREAMBLE, TxWake::LONG},
-    {"SX1262_RESPONSE_PREAMBLE", SX1262_RESPONSE_PREAMBLE, TxWake::SHORT},
-    {"SX1276_RESPONSE_PREAMBLE", SX1276_RESPONSE_PREAMBLE, TxWake::SHORT},
-    {"LR1121_RESPONSE_PREAMBLE", LR1121_RESPONSE_PREAMBLE, TxWake::SHORT},
-    {"SOFT_PHY_START_PREAMBLE", SOFT_PHY_START_PREAMBLE, TxWake::SHORT},
+    {"LOW_POWER_WAKE_MS (8 bits/byte)", bytes_for_ms(LOW_POWER_WAKE_MS, 8), TxWake::LONG},
+    {"LOW_POWER_WAKE_MS (10 bits/byte)", bytes_for_ms(LOW_POWER_WAKE_MS, 10), TxWake::LONG},
 };
 
 TEST(TxWake, EveryPreambleConstantWithStartSet) {

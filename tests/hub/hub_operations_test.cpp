@@ -2704,7 +2704,7 @@ TEST(HubOperations, LowPowerDeviceExecuteUsesLongPreambleAndSetsLowPowerBit) {
   comp.set_device_position("ABC123", 50);
 
   ASSERT_GE(radio.get_tx_configs().size(), 1u) << "the EXECUTE start frame should have been transmitted";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, LOW_POWER_WAKE_PREAMBLE)
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, MOCK_WAKE_PREAMBLE)
       << "a low_power target's directed start frame must use the wake-up preamble";
   ASSERT_FALSE(radio.get_sent_data().empty());
   EXPECT_NE(radio.get_sent_data().front()[1] & CTRL1_LOW_POWER, 0)
@@ -2719,8 +2719,8 @@ TEST(HubOperations, DefaultDeviceExecuteUsesNormalStartPreambleAndClearsLowPower
   comp.set_device_position("ABC123", 50);
 
   ASSERT_GE(radio.get_tx_configs().size(), 1u) << "the EXECUTE start frame should have been transmitted";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, comp.tuning_.normal_start_preamble)
-      << "an always-alive target's directed start frame uses normal_start_preamble, not LOW_POWER_WAKE_PREAMBLE";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, mock_preamble_bytes(comp.tuning_.start_preamble_ms))
+      << "an always-alive target's directed start frame uses `start_preamble_ms`, not MOCK_WAKE_PREAMBLE";
   ASSERT_FALSE(radio.get_sent_data().empty());
   EXPECT_EQ(radio.get_sent_data().front()[1] & CTRL1_LOW_POWER, 0)
       << "an always-alive target's frame must leave CTRL1_LOW_POWER clear";
@@ -2746,8 +2746,8 @@ TEST(HubOperations, AStatusReadMarkedStateUnknownLeadsShortDespiteARecentStopped
     comp.send_and_receive_(request, response, FREQ_CH2, attempts);
 
     ASSERT_GE(radio.get_tx_configs().size(), 1u);
-    EXPECT_EQ(radio.get_tx_configs()[0].preamble_len,
-              marked ? comp.tuning_.normal_start_preamble : comp.tuning_.low_power_wake_preamble)
+    EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, marked ? mock_preamble_bytes(comp.tuning_.start_preamble_ms)
+                                                             : mock_preamble_bytes(comp.tuning_.low_power_wake_ms))
         << (marked ? "marked: the short lead first"
                    : "unmarked: a recent report keeps the read on the wake-up preamble");
   }
@@ -2762,9 +2762,9 @@ TEST(HubOperations, LowPowerDeviceStatusPollUsesLongPreambleAndSetsLowPowerBit) 
   comp.request_device_status("ABC123");
 
   ASSERT_GE(radio.get_tx_configs().size(), 2u) << "the status poll start frames should have been transmitted";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, comp.tuning_.normal_start_preamble)
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, mock_preamble_bytes(comp.tuning_.start_preamble_ms))
       << "a read to a receiver with no news of its state leads with one short attempt (ADR 0079)";
-  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, LOW_POWER_WAKE_PREAMBLE)
+  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, MOCK_WAKE_PREAMBLE)
       << "a low_power target's status poll must use the wake-up preamble after the short lead";
   ASSERT_FALSE(radio.get_sent_data().empty());
   EXPECT_NE(radio.get_sent_data().front()[1] & CTRL1_LOW_POWER, 0)
@@ -3023,9 +3023,9 @@ TEST(HubOperations, StopAckThatReportsMovingKeepsTheSettlePollShortFirst) {
   comp.request_device_status("ABC123");
 
   ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(LOW_POWER_SETTLING_ATTEMPTS));
-  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
-  EXPECT_EQ(preamble_of_tx(radio, before + 1), LOW_POWER_WAKE_PREAMBLE);
-  EXPECT_EQ(preamble_of_tx(radio, before + 2), LOW_POWER_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before), mock_preamble_bytes(comp.tuning_.start_preamble_ms));
+  EXPECT_EQ(preamble_of_tx(radio, before + 1), MOCK_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before + 2), MOCK_WAKE_PREAMBLE);
 }
 
 TEST(HubOperations, FailedStopKeepsMovingEvidence) {
@@ -3098,7 +3098,7 @@ TEST(HubOperations, HaMoveToARestingLowPowerDeviceLeadsWithTheWakeUpPreamble) {
 
   comp.set_device_position("ABC123", 40);
 
-  EXPECT_EQ(preamble_of_tx(radio, 0), LOW_POWER_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, 0), MOCK_WAKE_PREAMBLE);
 }
 
 TEST(HubOperations, StopToALowPowerDeviceAtRestLeadsWithTheShortPreamble) {
@@ -3109,7 +3109,7 @@ TEST(HubOperations, StopToALowPowerDeviceAtRestLeadsWithTheShortPreamble) {
 
   comp.execute_device_command_("ABC123", CoverCommand::STOP);
 
-  EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble)
+  EXPECT_EQ(preamble_of_tx(radio, 0), mock_preamble_bytes(comp.tuning_.start_preamble_ms))
       << "a STOP goes to a receiver that is moving, whatever the stamps say";
 }
 
@@ -3133,7 +3133,7 @@ TEST(HubOperations, SettlePollAfterAnAcceptedMoveIsASingleTryLeadingWithTheShort
   comp.request_device_status("ABC123");
 
   ASSERT_EQ(radio.get_tx_configs().size() - before, 1u) << "scheduler-owned poll: a single try";
-  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
+  EXPECT_EQ(preamble_of_tx(radio, before), mock_preamble_bytes(comp.tuning_.start_preamble_ms));
 }
 
 TEST(HubOperations, SettlePollAfterAnAcceptedStopLeadsShortThenGetsEveryTryOnTheWakeUpPreamble) {
@@ -3158,10 +3158,10 @@ TEST(HubOperations, SettlePollAfterAnAcceptedStopLeadsShortThenGetsEveryTryOnThe
   comp.request_device_status("ABC123");
 
   ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(LOW_POWER_SETTLING_ATTEMPTS) + 1);
-  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
-  EXPECT_EQ(preamble_of_tx(radio, before + 1), LOW_POWER_WAKE_PREAMBLE);
-  EXPECT_EQ(preamble_of_tx(radio, before + 2), LOW_POWER_WAKE_PREAMBLE);
-  EXPECT_EQ(preamble_of_tx(radio, before + 3), LOW_POWER_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before), mock_preamble_bytes(comp.tuning_.start_preamble_ms));
+  EXPECT_EQ(preamble_of_tx(radio, before + 1), MOCK_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before + 2), MOCK_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before + 3), MOCK_WAKE_PREAMBLE);
 }
 
 TEST(HubOperations, OnlyTheFirstPollAfterAStopGetsTheStopBudget) {
@@ -3212,9 +3212,9 @@ TEST(HubOperations, LadderSlotWithFullRetriesLeadsWithTheShortPreambleWhileBelie
   comp.request_device_status("ABC123");
 
   ASSERT_EQ(radio.get_tx_configs().size(), 3u);
-  EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble);
-  EXPECT_EQ(preamble_of_tx(radio, 1), LOW_POWER_WAKE_PREAMBLE);
-  EXPECT_EQ(preamble_of_tx(radio, 2), LOW_POWER_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, 0), mock_preamble_bytes(comp.tuning_.start_preamble_ms));
+  EXPECT_EQ(preamble_of_tx(radio, 1), MOCK_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, 2), MOCK_WAKE_PREAMBLE);
 }
 
 TEST(HubOperations, SilentPollWhileBelievedMovingSpendsTheMovingEvidence) {
@@ -3230,13 +3230,13 @@ TEST(HubOperations, SilentPollWhileBelievedMovingSpendsTheMovingEvidence) {
   note_moving_evidence(*dev, esphome::millis());
 
   comp.request_device_status("ABC123");
-  EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble);
+  EXPECT_EQ(preamble_of_tx(radio, 0), mock_preamble_bytes(comp.tuning_.start_preamble_ms));
   EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "silence while believed moving spends the evidence";
 
   const size_t before = radio.get_tx_configs().size();
   esphome::test_clock::advance_ms(1000);
   comp.set_device_position("ABC123", 40);
-  EXPECT_EQ(preamble_of_tx(radio, before), LOW_POWER_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before), MOCK_WAKE_PREAMBLE);
 }
 
 TEST(HubOperations, SpentEvidenceStaysSpentUntilMovementIsStampedAgain) {
@@ -3261,9 +3261,9 @@ TEST(HubOperations, SpentEvidenceStaysSpentUntilMovementIsStampedAgain) {
     const size_t before = radio.get_tx_configs().size();
     esphome::test_clock::advance_ms(1000);
     comp.request_device_status("ABC123");
-    EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble)
+    EXPECT_EQ(preamble_of_tx(radio, before), mock_preamble_bytes(comp.tuning_.start_preamble_ms))
         << "poll " << poll << " after the evidence was spent: the short lead";
-    EXPECT_EQ(preamble_of_tx(radio, before + 1), LOW_POWER_WAKE_PREAMBLE)
+    EXPECT_EQ(preamble_of_tx(radio, before + 1), MOCK_WAKE_PREAMBLE)
         << "poll " << poll << " after the evidence was spent: then the wake-up preamble";
     EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "silence does not bring the evidence back";
   }
@@ -3271,7 +3271,7 @@ TEST(HubOperations, SpentEvidenceStaysSpentUntilMovementIsStampedAgain) {
   note_moving_evidence(*dev, esphome::millis());  // what a decoded moving status or accepted move does
   const size_t before = radio.get_tx_configs().size();
   comp.request_device_status("ABC123");
-  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble)
+  EXPECT_EQ(preamble_of_tx(radio, before), mock_preamble_bytes(comp.tuning_.start_preamble_ms))
       << "fresh movement evidence leads short again";
 }
 
@@ -3286,14 +3286,15 @@ TEST(HubOperations, MovingEvidenceExpiresAfterMaxTravel) {
 
   esphome::test_clock::advance_ms(LOW_POWER_MAX_TRAVEL_MS - 1000);
   comp.request_device_status("ABC123");
-  EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble) << "still inside the travel window";
+  EXPECT_EQ(preamble_of_tx(radio, 0), mock_preamble_bytes(comp.tuning_.start_preamble_ms))
+      << "still inside the travel window";
 
   const size_t before = radio.get_tx_configs().size();
   esphome::test_clock::advance_ms(2000);  // now past LOW_POWER_MAX_TRAVEL_MS since the move
   comp.request_device_status("ABC123");
-  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble)
+  EXPECT_EQ(preamble_of_tx(radio, before), mock_preamble_bytes(comp.tuning_.start_preamble_ms))
       << "no news since the move and the window is over: its state is unknown, so the read leads short";
-  EXPECT_EQ(preamble_of_tx(radio, before + 1), LOW_POWER_WAKE_PREAMBLE)
+  EXPECT_EQ(preamble_of_tx(radio, before + 1), MOCK_WAKE_PREAMBLE)
       << "then the wake-up preamble a resting receiver hears";
 }
 
@@ -3308,7 +3309,7 @@ TEST(HubOperations, RecentReplyAloneKeepsTheWakeUpPreamble) {
 
   esphome::test_clock::advance_ms(100);
   comp.request_device_status("ABC123");  // heard from 100 ms ago, reported stopped
-  EXPECT_EQ(preamble_of_tx(radio, after_reply), LOW_POWER_WAKE_PREAMBLE)
+  EXPECT_EQ(preamble_of_tx(radio, after_reply), MOCK_WAKE_PREAMBLE)
       << "a resting receiver ignores the short preamble even right after it answered";
 }
 
@@ -3326,7 +3327,7 @@ TEST(HubOperations, UnregisteredDestinationIsTreatedAsAsleep) {
 
   ASSERT_EQ(radio.get_tx_configs().size(), 3u);
   for (const auto &config : radio.get_tx_configs())
-    EXPECT_EQ(config.preamble_len, LOW_POWER_WAKE_PREAMBLE) << "no record of this node, so nothing says it is awake";
+    EXPECT_EQ(config.preamble_len, MOCK_WAKE_PREAMBLE) << "no record of this node, so nothing says it is awake";
 }
 
 TEST(HubOperations, AlwaysAliveDeviceKeepsTheNormalStartPreambleOnEveryTryDespiteEvidence) {
@@ -3340,7 +3341,7 @@ TEST(HubOperations, AlwaysAliveDeviceKeepsTheNormalStartPreambleOnEveryTryDespit
 
   ASSERT_EQ(radio.get_tx_configs().size(), planned_settling_attempts(comp));
   for (const auto &config : radio.get_tx_configs())
-    EXPECT_EQ(config.preamble_len, comp.tuning_.normal_start_preamble);
+    EXPECT_EQ(config.preamble_len, mock_preamble_bytes(comp.tuning_.start_preamble_ms));
 }
 
 TEST(HubOperations, WakeBeliefSwitchOffRestoresTheWakeUpPreambleForALowPowerDevice) {
@@ -3355,7 +3356,7 @@ TEST(HubOperations, WakeBeliefSwitchOffRestoresTheWakeUpPreambleForALowPowerDevi
 
   ASSERT_EQ(radio.get_tx_configs().size(), 3u);
   for (const auto &config : radio.get_tx_configs())
-    EXPECT_EQ(config.preamble_len, LOW_POWER_WAKE_PREAMBLE);
+    EXPECT_EQ(config.preamble_len, MOCK_WAKE_PREAMBLE);
 }
 
 // ============================================================================
@@ -4420,7 +4421,7 @@ TEST(HubOperations, MissedShortTryMidMoveKeepsTheShortPreambleUntilTheCountRunsO
   comp.begin_status_poll_tracking_("ABC123", 0);
   comp.update_device_status_(moving_report(comp, 12));
   const uint32_t t0 = esphome::millis();
-  const uint16_t short_preamble = comp.tuning_.normal_start_preamble;
+  const uint16_t short_preamble = mock_preamble_bytes(comp.tuning_.start_preamble_ms);
   const IoDevice *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
 
@@ -4467,7 +4468,7 @@ TEST(HubOperations, PredictedEndReadToALowPowerCoverLeadsWithTheWakeUpPreamble) 
   const std::vector<uint16_t> preambles = preambles_since(radio, sent);
   ASSERT_EQ(preambles.size(), static_cast<size_t>(attempts));
   for (const uint16_t preamble : preambles)
-    EXPECT_EQ(preamble, comp.tuning_.low_power_wake_preamble) << "at its predicted end the cover rests";
+    EXPECT_EQ(preamble, mock_preamble_bytes(comp.tuning_.low_power_wake_ms)) << "at its predicted end the cover rests";
 }
 
 TEST(HubOperations, ReadAfterASilentPredictedEndReadLeadsShortThenWakes) {
@@ -4480,8 +4481,8 @@ TEST(HubOperations, ReadAfterASilentPredictedEndReadLeadsShortThenWakes) {
   const uint32_t t0 = esphome::millis();
   const IoDevice *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  const uint16_t short_preamble = comp.tuning_.normal_start_preamble;
-  const uint16_t wake_preamble = comp.tuning_.low_power_wake_preamble;
+  const uint16_t short_preamble = mock_preamble_bytes(comp.tuning_.start_preamble_ms);
+  const uint16_t wake_preamble = mock_preamble_bytes(comp.tuning_.low_power_wake_ms);
 
   esphome::test_clock::set_ms(t0 + 13002u);
   ASSERT_GT(run_due_poll_against_silence(comp, radio), 1);
@@ -4515,7 +4516,7 @@ TEST(HubOperations, PredictedEndReadToAMainsCoverKeepsTheNormalStartPreamble) {
   const size_t sent = radio.get_tx_configs().size();
   ASSERT_GT(run_due_poll_against_silence(comp, radio), 0);
   for (const uint16_t preamble : preambles_since(radio, sent))
-    EXPECT_EQ(preamble, comp.tuning_.normal_start_preamble);
+    EXPECT_EQ(preamble, mock_preamble_bytes(comp.tuning_.start_preamble_ms));
 }
 
 TEST(HubOperations, StaleRemainingTimeFallsBackToSingleTryProgressReads) {

@@ -1087,7 +1087,7 @@ TEST(HubManagement, ScanPairedDevicesSweepsBothPowerClasses) {
   ASSERT_EQ(radio.get_sent_data().size(), 6u) << "two passes, three channels each";
   ASSERT_EQ(radio.get_tx_configs().size(), 6u);
 
-  // Attempts 1-3: low-power pass, CTRL1 = LOW_POWER | ACK, LOW_POWER_WAKE_PREAMBLE.
+  // Attempts 1-3: low-power pass, CTRL1 = LOW_POWER | ACK, MOCK_WAKE_PREAMBLE.
   const uint32_t expected_freq[] = {FREQ_CH2, FREQ_CH1, FREQ_CH3, FREQ_CH2, FREQ_CH1, FREQ_CH3};
   for (uint8_t i = 0; i < 3; i++) {
     IoFrame frame{};
@@ -1095,16 +1095,17 @@ TEST(HubManagement, ScanPairedDevicesSweepsBothPowerClasses) {
     EXPECT_EQ(frame.ctrl1, static_cast<uint8_t>(CTRL1_LOW_POWER | CTRL1_ACK))
         << "attempt " << (i + 1) << ": low-power pass must set LOW_POWER and ACK";
     EXPECT_EQ(radio.get_tx_configs()[i].freq_hz, expected_freq[i]) << "attempt " << (i + 1);
-    EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, LOW_POWER_WAKE_PREAMBLE)
-        << "attempt " << (i + 1) << ": LOW_POWER selects LOW_POWER_WAKE_PREAMBLE via request_preamble_for()'s rule";
+    EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, MOCK_WAKE_PREAMBLE)
+        << "attempt " << (i + 1) << ": LOW_POWER selects MOCK_WAKE_PREAMBLE via request_preamble_for()'s rule";
   }
-  // Attempts 4-6: always-alive pass, CTRL1 = 0x00, normal_start_preamble.
+  // Attempts 4-6: always-alive pass, CTRL1 = 0x00, `start_preamble_ms`.
   for (uint8_t i = 3; i < 6; i++) {
     IoFrame frame{};
     ASSERT_TRUE(parse(radio.get_sent_data()[i].data(), static_cast<uint8_t>(radio.get_sent_data()[i].size()), frame));
     EXPECT_EQ(frame.ctrl1, 0) << "attempt " << (i + 1) << ": always-alive pass sets neither LOW_POWER nor ACK";
     EXPECT_EQ(radio.get_tx_configs()[i].freq_hz, expected_freq[i]) << "attempt " << (i + 1);
-    EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, component.tuning_.normal_start_preamble) << "attempt " << (i + 1);
+    EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, mock_preamble_bytes(component.tuning_.start_preamble_ms))
+        << "attempt " << (i + 1);
   }
 }
 
@@ -1349,7 +1350,7 @@ TEST(HubManagement, ScanPairedDevicesAlwaysAlivePassIsByteIdenticalToTheSingleSh
     EXPECT_EQ(actual.cmd, reference.cmd) << "attempt " << (attempt + 1);
     EXPECT_EQ(actual.data_len, reference.data_len) << "attempt " << (attempt + 1);
 
-    EXPECT_EQ(radio.get_tx_configs()[attempt].preamble_len, component.tuning_.normal_start_preamble)
+    EXPECT_EQ(radio.get_tx_configs()[attempt].preamble_len, mock_preamble_bytes(component.tuning_.start_preamble_ms))
         << "attempt " << (attempt + 1);
     EXPECT_EQ(radio.get_tx_configs()[attempt].freq_hz, expected_freq[i]) << "attempt " << (attempt + 1);
   }
@@ -1841,7 +1842,7 @@ TEST(HubManagement, ScanPairedDevicesLowPowerPassHeaderMatchesTheKlr300RollCall)
 
 TEST(HubManagement, ScanPairedDevicesAlwaysAliveOnlySendsTheSingleShapeRollCall) {
   // scan_power_classes=always_alive runs only the always-alive pass: three attempts,
-  // CTRL1=0x00, normal_start_preamble, and the report names the excluded class.
+  // CTRL1=0x00, `start_preamble_ms`, and the report names the excluded class.
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
@@ -1858,7 +1859,8 @@ TEST(HubManagement, ScanPairedDevicesAlwaysAliveOnlySendsTheSingleShapeRollCall)
     ASSERT_TRUE(parse(radio.get_sent_data()[i].data(), static_cast<uint8_t>(radio.get_sent_data()[i].size()), frame));
     EXPECT_EQ(frame.ctrl1, 0) << "attempt " << (i + 1);
     EXPECT_EQ(radio.get_tx_configs()[i].freq_hz, expected_freq[i]) << "attempt " << (i + 1);
-    EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, component.tuning_.normal_start_preamble) << "attempt " << (i + 1);
+    EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, mock_preamble_bytes(component.tuning_.start_preamble_ms))
+        << "attempt " << (i + 1);
   }
   EXPECT_NE(result.message.find("NOTE: scan_power_classes=always_alive: low_power devices were not called."),
             std::string::npos);
@@ -1881,7 +1883,7 @@ TEST(HubManagement, ScanPairedDevicesLowPowerOnlySendsOnlyTheLowPowerPass) {
     ASSERT_TRUE(parse(radio.get_sent_data()[i].data(), static_cast<uint8_t>(radio.get_sent_data()[i].size()), frame));
     EXPECT_EQ(frame.ctrl1, static_cast<uint8_t>(CTRL1_LOW_POWER | CTRL1_ACK)) << "attempt " << (i + 1);
     EXPECT_EQ(radio.get_tx_configs()[i].freq_hz, expected_freq[i]) << "attempt " << (i + 1);
-    EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, LOW_POWER_WAKE_PREAMBLE) << "attempt " << (i + 1);
+    EXPECT_EQ(radio.get_tx_configs()[i].preamble_len, MOCK_WAKE_PREAMBLE) << "attempt " << (i + 1);
   }
   EXPECT_NE(result.message.find("NOTE: scan_power_classes=low_power: always_alive devices were not called."),
             std::string::npos);

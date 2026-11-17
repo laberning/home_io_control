@@ -177,7 +177,7 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # and false mean different things for a 1W identity. Unset = every burst keeps the
         # legacy shape (LONG_PREAMBLE on every copy, CTRL1 0x00) -- byte- and
         # timing-identical to the hardware-validated Somfy path. false = every copy uses the live
-        # `normal_start_preamble` tuning value instead, CTRL1 0x00 -- the ADR 0029 shape, for a
+        # `start_preamble_ms` tuning value instead, CTRL1 0x00 -- the ADR 0029 shape, for a
         # mains-powered receiver. true = copy 1 gets LONG_PREAMBLE + CTRL1_LOW_POWER, copies 2-4 the
         # normal preamble -- a wake-up copy for a solar/battery receiver. Applies to every 1W TX of
         # the identity: commands, positions, both enrollment gestures, un-enrollment. See ADR 0038.

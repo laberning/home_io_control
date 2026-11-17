@@ -13,24 +13,23 @@ TEST(TuningConfig, DefaultsMatchPlan) {
   TuningConfig cfg{};
   EXPECT_EQ(cfg.sx1262_rx_bandwidth, SX1262RxBandwidth::BW_117_3_KHZ)
       << "117.3 kHz clears the 76.8 kHz sizing floor with margin for an off-nominal peer, as on the LR1121 (ADR 0087)";
-  EXPECT_EQ(cfg.sx1262_response_preamble, 12) << "12 B matches a real controller's on-air continuation preamble";
   EXPECT_EQ(cfg.sx1262_post_tx_settle_us, 500);
-  // SX1276 radio defaults: RegRxBw 0x13 (unchanged fixed value) and a 12-byte response preamble
-  // (raised from SHORT_PREAMBLE after hardware tuning).
+  // SX1276 radio defaults: RegRxBw 0x13 (unchanged fixed value).
   EXPECT_EQ(cfg.sx1276_rx_bandwidth, SX1276RxBandwidth::BW_41_7_KHZ);
   EXPECT_EQ(static_cast<uint8_t>(cfg.sx1276_rx_bandwidth), 0x13);
-  EXPECT_EQ(cfg.sx1276_response_preamble, 12);
   EXPECT_EQ(cfg.sx1276_discovery_hop_slice_ms, 5);
   EXPECT_EQ(cfg.sx1262_discovery_hop_slice_ms, 7);
   // LR1121 radio defaults are seeded from the validated SX1262 values.
   EXPECT_EQ(cfg.lr1121_rx_bandwidth, LR1121RxBandwidth::BW_117_3_KHZ);
-  EXPECT_EQ(cfg.lr1121_response_preamble, 12);
   EXPECT_EQ(cfg.lr1121_post_tx_settle_us, 500);
   EXPECT_EQ(cfg.lr1121_discovery_hop_slice_ms, 7);
-  // Chip-neutral: sized for the key-extraction responder's 0x29 broadcast, not any one radio.
-  EXPECT_EQ(cfg.cold_broadcast_reply_preamble, 80);
-  // Chip-neutral: directed start frame to a non-low-power target (NORMAL_START_PREAMBLE).
-  EXPECT_EQ(cfg.normal_start_preamble, 32);
+  // Every preamble is a duration, the same on every radio (ADR 0097).
+  EXPECT_EQ(cfg.response_preamble_ms, 3.5F) << "inside a session: longer of the two validated durations";
+  EXPECT_EQ(cfg.cold_broadcast_reply_preamble_ms, 20.0F) << "sized for the key-extraction responder's 0x29 broadcast";
+  EXPECT_EQ(cfg.start_preamble_ms, 10.0F) << "directed start frame to a non-low-power target";
+  EXPECT_EQ(cfg.low_power_wake_ms, 600.0F) << "wake-up for a resting battery device";
+  EXPECT_FALSE(cfg.pairing_discovery_preamble_set) << "discovery follows the start preamble";
+  EXPECT_EQ(cfg.legacy_preamble_bytes.start, 0) << "no deprecated byte key given";
   EXPECT_FALSE(cfg.lbt_force_when_busy) << "a request is never forced onto a busy channel by default";
   EXPECT_EQ(cfg.lbt_rssi_threshold_dbm, -90);
   ASSERT_EQ(cfg.pairing_discovery_commands.size(), 1);
@@ -137,73 +136,80 @@ TEST(TuningConfig, SnapshotIncludesNonDefaults) {
   TuningConfig cfg{};
   cfg.sx1262_post_tx_settle_us = 750;
   cfg.sx1276_rx_bandwidth = SX1276RxBandwidth::BW_83_3_KHZ;
-  cfg.sx1276_response_preamble = 24;
+  cfg.response_preamble_ms = 4.5F;
   cfg.pairing_discovery_commands = {DiscoveryCommand::DISCOVER, DiscoveryCommand::DISCOVER_ALT};
   cfg.pairing_discovery_payload_enabled = true;
   cfg.pairing_discovery_payload = 0x00;
   cfg.pairing_discovery_low_power = true;
   cfg.pairing_discovery_ack_capable = true;
-  cfg.pairing_discovery_preamble = 64;
+  cfg.pairing_discovery_preamble_ms = 12.5F;
   cfg.pairing_discovery_preamble_set = true;
   cfg.lbt_force_when_busy = true;
   cfg.lr1121_rx_bandwidth = LR1121RxBandwidth::BW_187_2_KHZ;
   cfg.lr1121_discovery_hop_slice_ms = 150;
-  cfg.cold_broadcast_reply_preamble = 120;
-  cfg.normal_start_preamble = 48;
+  cfg.cold_broadcast_reply_preamble_ms = 25.0F;
+  cfg.start_preamble_ms = 12.0F;
 
   std::string snapshot = tuning_config_snapshot(cfg);
   EXPECT_NE(snapshot.find("sx1262_post_tx_settle_us=750"), std::string::npos);
   EXPECT_NE(snapshot.find("sx1276_rx_bandwidth=83.3"), std::string::npos);
-  EXPECT_NE(snapshot.find("sx1276_response_preamble=24"), std::string::npos);
+  EXPECT_NE(snapshot.find("response_preamble_ms=4.5"), std::string::npos) << "a fraction keeps its fraction";
   EXPECT_NE(snapshot.find("lr1121_rx_bandwidth=187.2"), std::string::npos);
   EXPECT_NE(snapshot.find("lr1121_discovery_hop_slice_ms=150"), std::string::npos);
-  EXPECT_NE(snapshot.find("cold_broadcast_reply_preamble=120"), std::string::npos);
-  EXPECT_NE(snapshot.find("normal_start_preamble=48"), std::string::npos);
+  EXPECT_NE(snapshot.find("cold_broadcast_reply_preamble_ms=25"), std::string::npos);
+  EXPECT_NE(snapshot.find("start_preamble_ms=12"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_commands=[0x28,0x2E]"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_payload=0x00"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_low_power=true"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_ack_capable=true"), std::string::npos);
-  EXPECT_NE(snapshot.find("pairing_discovery_preamble=64"), std::string::npos);
+  EXPECT_NE(snapshot.find("pairing_discovery_preamble_ms=12.5"), std::string::npos);
   EXPECT_NE(snapshot.find("lbt_force_when_busy=true"), std::string::npos);
 }
 
 TEST(TuningConfig, SnapshotNamesTheDiscoveryPreambleOnlyWhenSet) {
-  // A driver start preamble that differs from the compiled default (SX1262/LR1121: 48) changes
-  // the effective discovery preamble without the user having set anything.
+  // A changed start preamble changes the effective discovery preamble without the user having set
+  // anything; the snapshot names the discovery preamble only when it was set.
   TuningConfig cfg{};
-  cfg.normal_start_preamble = 48;
-  EXPECT_EQ(tuning_config_snapshot(cfg).find("pairing_discovery_preamble"), std::string::npos);
+  cfg.start_preamble_ms = 12.0F;
+  EXPECT_EQ(tuning_config_snapshot(cfg).find("pairing_discovery_preamble_ms"), std::string::npos);
 
-  cfg.pairing_discovery_preamble = 32;  // a set value equal to the SX1276 default still shows
+  cfg.pairing_discovery_preamble_ms = 10.0F;  // a set value equal to the default still shows
   cfg.pairing_discovery_preamble_set = true;
-  EXPECT_NE(tuning_config_snapshot(cfg).find("pairing_discovery_preamble=32"), std::string::npos);
+  EXPECT_NE(tuning_config_snapshot(cfg).find("pairing_discovery_preamble_ms=10"), std::string::npos);
 }
 
 TEST(TuningConfig, EffectiveDiscoveryPreambleFollowsStartPreambleUnlessSet) {
   TuningConfig cfg{};
-  cfg.normal_start_preamble = 32;
-  EXPECT_EQ(effective_discovery_preamble(cfg), 32);
-  cfg.normal_start_preamble = 48;
-  EXPECT_EQ(effective_discovery_preamble(cfg), 48) << "read at send time, so a live change moves it";
+  cfg.start_preamble_ms = 8.0F;
+  EXPECT_EQ(effective_discovery_preamble_ms(cfg), 8.0F);
+  cfg.start_preamble_ms = 12.0F;
+  EXPECT_EQ(effective_discovery_preamble_ms(cfg), 12.0F) << "read at send time, so a live change moves it";
 
   cfg.pairing_discovery_low_power = true;
-  EXPECT_EQ(effective_discovery_preamble(cfg), cfg.low_power_wake_preamble);
-  cfg.low_power_wake_preamble = 900;
-  EXPECT_EQ(effective_discovery_preamble(cfg), 900);
+  EXPECT_EQ(effective_discovery_preamble_ms(cfg), cfg.low_power_wake_ms);
+  cfg.low_power_wake_ms = 450.0F;
+  EXPECT_EQ(effective_discovery_preamble_ms(cfg), 450.0F);
 
-  cfg.pairing_discovery_preamble = 1024;
+  cfg.pairing_discovery_preamble_ms = 250.0F;
   cfg.pairing_discovery_preamble_set = true;
-  EXPECT_EQ(effective_discovery_preamble(cfg), 1024) << "a set value wins over the low-power wake-up";
+  EXPECT_EQ(effective_discovery_preamble_ms(cfg), 250.0F) << "a set value wins over the low-power wake-up";
   cfg.pairing_discovery_low_power = false;
-  cfg.pairing_discovery_preamble = 32;
-  EXPECT_EQ(effective_discovery_preamble(cfg), 32);
+  cfg.pairing_discovery_preamble_ms = 8.0F;
+  EXPECT_EQ(effective_discovery_preamble_ms(cfg), 8.0F);
+}
+
+TEST(TuningConfig, FormatTuningNumberKeepsFractionsAndDropsZeroes) {
+  EXPECT_EQ(format_tuning_number(600.0F), "600");
+  EXPECT_EQ(format_tuning_number(3.5F), "3.5");
+  EXPECT_EQ(format_tuning_number(0.0F), "0");
+  EXPECT_EQ(format_tuning_number(120000.0F), "120000");
 }
 
 TEST(TuningConfig, SnapshotOmitsUnchangedDefaults) {
   TuningConfig cfg{};
-  cfg.sx1262_response_preamble = 96;  // only this override
+  cfg.response_preamble_ms = 20.0F;  // only this override
   std::string snapshot = tuning_config_snapshot(cfg);
-  EXPECT_NE(snapshot.find("sx1262_response_preamble=96"), std::string::npos);
+  EXPECT_NE(snapshot.find("response_preamble_ms=20"), std::string::npos);
   EXPECT_EQ(snapshot.find("sx1262_post_tx_settle_us"), std::string::npos);
   EXPECT_EQ(snapshot.find("lbt_force_when_busy"), std::string::npos);
 }

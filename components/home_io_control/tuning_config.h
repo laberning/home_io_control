@@ -185,26 +185,6 @@ enum class DiscoveryCommand : uint8_t {
 // single source of truth for defaults. proto_timing.h holds only chip-neutral protocol values;
 // the radio drivers consume these via apply_tuning / hop_dwell_ms.
 
-/// SX1262-specific preamble for response/continuation frames within an exchange.
-///
-/// Applies to any tight-turnaround frame sent immediately after receiving from the device —
-/// 0x3D challenge responses, 0x32 key transfers after receiving 0x3C, and any future protocol
-/// frame in that position — giving the peer's receiver time to lock back on after the SX1262's
-/// own TX→RX turnaround.
-///
-/// Defaults to 12 bytes, which puts about 102 bits on air (8 bits per byte plus 6 of soft-PHY
-/// framing, ~2.6 ms): the continuation preamble a real controller was observed sending on air
-/// (101 bits). It also matches @ref SX1276_RESPONSE_PREAMBLE. In a field run (issue #119) a Somfy
-/// light's closing reply was lost after 13 of 38 challenges with an 8-byte preamble against 4 of
-/// 35 with 12. The cost is about 0.8 ms of extra delay before the reply. The protocol's own
-/// nominal SHORT_PREAMBLE (8 bytes) stays the floor for the runtime override.
-///
-/// This constant is byte-denominated, like every other preamble value in this codebase
-/// (LONG_PREAMBLE, SHORT_PREAMBLE) — `RadioSX1262::set_packet_params_()` is the one place that
-/// converts to the chip's bit-denominated SetPacketParams field, right before the value leaves
-/// for the wire.
-static constexpr uint16_t SX1262_RESPONSE_PREAMBLE = 12;
-
 /// SX1262-specific post-TX settling delay before re-entering RX.
 ///
 /// The SX1262 GFSK demodulator needs time to stabilize after TX before it can
@@ -212,13 +192,6 @@ static constexpr uint16_t SX1262_RESPONSE_PREAMBLE = 12;
 /// that prevents challenge-byte corruption during pairing and tight-turnaround
 /// authenticated exchanges.
 static constexpr uint16_t SX1262_POST_TX_SETTLE_US = 500;
-
-/// SX1276 preamble for response/continuation frames within an exchange.
-///
-/// Defaults to 12 bytes — longer than the protocol's 8-byte SHORT_PREAMBLE. On real hardware the
-/// extra length improves the peer device's lock-on without measurably affecting exchange timing.
-/// Runtime-tunable down to SHORT_PREAMBLE or up for a marginal-range install.
-static constexpr uint16_t SX1276_RESPONSE_PREAMBLE = 12;
 
 /// Per-channel dwell while SX1276 pairing discovery hops across channels.
 ///
@@ -240,16 +213,9 @@ static constexpr uint16_t SX1276_DISCOVERY_HOP_SLICE_MS = 5;
 /// that range.
 static constexpr uint16_t SX1262_DISCOVERY_HOP_SLICE_MS = 7;
 
-/// LR1121-specific preamble for response/continuation frames within an exchange.
-///
-/// Follows @ref SX1262_RESPONSE_PREAMBLE (12 bytes), on the principle that a validated timing
-/// value encodes protocol-side reality more than a chip quirk; see there for the evidence. A value
-/// measured by loopback tuning on LR1121 hardware would fold back here.
-static constexpr uint16_t LR1121_RESPONSE_PREAMBLE = SX1262_RESPONSE_PREAMBLE;
-
 /// LR1121-specific post-TX settling delay before re-entering RX.
 ///
-/// Seeded from the SX1262-validated default; same rationale as @ref LR1121_RESPONSE_PREAMBLE.
+/// Seeded from the SX1262-validated default (@ref SX1262_POST_TX_SETTLE_US).
 static constexpr uint16_t LR1121_POST_TX_SETTLE_US = SX1262_POST_TX_SETTLE_US;
 
 /// Per-channel dwell while LR1121 pairing discovery hops across channels.
@@ -259,15 +225,6 @@ static constexpr uint16_t LR1121_POST_TX_SETTLE_US = SX1262_POST_TX_SETTLE_US;
 /// here, but the two chips are validated separately and could in principle diverge, so this stays
 /// its own literal rather than an alias.
 static constexpr uint16_t LR1121_DISCOVERY_HOP_SLICE_MS = 7;
-
-/// Default directed start preamble for drivers built on the shared software PHY (SX1262, LR1121).
-///
-/// 48 bytes rather than the protocol's documented 32. Measured: on a Somfy Izymo dimmer an SX1262
-/// answers 56/71 = 78.9% of first tries at 32 bytes and 60/60 at 48, 64, 128 and 256 — a step, not
-/// a ramp — while an SX1276 sending the same programmed 32 bytes answers 60/60. The deficit tracks
-/// the shared PHY rather than the chip, the link or the device, so the compensation belongs with
-/// the PHY. The cause of the shortfall is not identified; see ADR 0042.
-static constexpr uint16_t SOFT_PHY_START_PREAMBLE = 48;
 
 /// @brief All runtime tunable parameters for pairing and radio diagnostics.
 ///
@@ -290,16 +247,13 @@ struct TuningConfig {
   /// trim the edges of even an on-frequency signal; use them only where an install receives better so.
   /// The setting is global, so the right value is a per-install trade-off (ADR 0087).
   SX1262RxBandwidth sx1262_rx_bandwidth{SX1262RxBandwidth::BW_117_3_KHZ};
-  uint16_t sx1262_response_preamble{SX1262_RESPONSE_PREAMBLE};            ///< SX1262 response preamble in bytes.
   uint16_t sx1262_post_tx_settle_us{SX1262_POST_TX_SETTLE_US};            ///< Delay after SX1262 TX before RX (µs).
   SX1276RxBandwidth sx1276_rx_bandwidth{SX1276RxBandwidth::BW_41_7_KHZ};  ///< SX1276 RX bandwidth selector.
-  uint16_t sx1276_response_preamble{SX1276_RESPONSE_PREAMBLE};            ///< SX1276 response preamble in bytes.
   uint16_t sx1276_discovery_hop_slice_ms{
       SX1276_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while SX1276 discovery hops.
   uint16_t sx1262_discovery_hop_slice_ms{
       SX1262_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while SX1262 discovery hops.
   LR1121RxBandwidth lr1121_rx_bandwidth{LR1121RxBandwidth::BW_117_3_KHZ};  ///< LR1121 RX bandwidth selector.
-  uint16_t lr1121_response_preamble{LR1121_RESPONSE_PREAMBLE};             ///< LR1121 response preamble in bytes.
   uint16_t lr1121_post_tx_settle_us{LR1121_POST_TX_SETTLE_US};             ///< Delay after LR1121 TX before RX (µs).
   uint16_t lr1121_discovery_hop_slice_ms{
       LR1121_DISCOVERY_HOP_SLICE_MS};  ///< Per-channel dwell while LR1121 discovery hops.
@@ -307,22 +261,19 @@ struct TuningConfig {
   // preamble real devices put on a discovery reply (SDR capture analysis, issue #65). The default
   // here is sized above that preamble, so a hopping receiver catches this reply at least as
   // reliably as a real device's.
-  uint16_t cold_broadcast_reply_preamble{
-      COLD_BROADCAST_REPLY_PREAMBLE};  ///< Preamble for a start-flagged key-extraction broadcast reply (0x29).
+  /// Response/continuation preamble in milliseconds, the same on every radio: each driver converts
+  /// it with its own bits per preamble byte (`RadioDriver::preamble_bytes_for_ms()`, ADR 0097).
+  float response_preamble_ms{RESPONSE_PREAMBLE_MS};
+  /// Preamble (ms) for a start-flagged key-extraction broadcast reply (0x29).
+  float cold_broadcast_reply_preamble_ms{COLD_BROADCAST_REPLY_PREAMBLE_MS};
   uint16_t key_extraction_type_word{
       KEY_EXTRACTION_DISCOVER_RESP_TYPE_WORD};  ///< Packed type word the key-extraction 0x29 advertises
                                                 ///< to an open discovery (type << 6 | subtype).
   uint8_t key_extraction_multi_info{
       KEY_EXTRACTION_DISCOVER_RESP_FLAGS};  ///< Multi Information Byte the key-extraction 0x29 advertises.
-  uint16_t normal_start_preamble{
-      NORMAL_START_PREAMBLE};  ///< Preamble for a directed start frame to a non-low-power target.
-                               ///< Resolved at setup from RadioDriver::default_start_preamble()
-                               ///< unless `normal_start_preamble_from_yaml` says the user set it.
-  /// True when `normal_start_preamble:` appeared in YAML. Codegen emits this alongside the value;
-  /// it exists so setup() can tell "the user chose 32" from "nobody chose anything", which decides
-  /// whether the driver's default applies (ADR 0042). Only read once, at setup — a later change
-  /// through the Home Assistant number simply sets the value.
-  bool normal_start_preamble_from_yaml{false};
+  /// Preamble (ms) for a directed start frame to a non-low-power target, and the one a discovery
+  /// broadcast follows unless `pairing_discovery_preamble_ms` is set (ADR 0029, ADR 0078).
+  float start_preamble_ms{START_PREAMBLE_MS};
   int16_t lbt_rssi_threshold_dbm{LBT_RSSI_THRESHOLD_DBM};  ///< LBT channel-free threshold (dBm).
   /// When the access time of a request from the exchange engine is spent and every channel it may
   /// use stays busy, send on the quietest instead of ending the attempt as "channel busy" (ADR 0096).
@@ -331,8 +282,9 @@ struct TuningConfig {
   bool low_power_wake_belief{true};  ///< Order a `low_power` device's start-frame tries by its wake belief (short
                                      ///< preamble first when it is believed awake). False restores the fixed
                                      ///< wake-up preamble on every try. A diagnostic off-switch, on by default.
-  uint16_t low_power_wake_preamble{LOW_POWER_WAKE_PREAMBLE};  ///< Wake-up preamble (bytes) on a directed start frame to
-                                                              ///< a `low_power` target believed at rest (ADR 0095).
+  /// Wake-up preamble (ms) on a directed start frame to a `low_power` target believed at rest
+  /// (ADR 0095, ADR 0097).
+  float low_power_wake_ms{LOW_POWER_WAKE_MS};
 
   // --- Exchange response windows ---
   // How long the hub listens for a device's reply. Tunable because the right value is a property
@@ -374,11 +326,11 @@ struct TuningConfig {
   bool pairing_discovery_ack_capable{false};      ///< Set ACK (CTRL1_ACK) on the discovery broadcast only.
                                                   ///< Opt-in — see the init_frame() doc in
                                                   ///< proto_frame.h; default off.
-  /// Preamble (bytes) of the discovery broadcast (0x28/0x2E) when the user chose one. Read through
-  /// `effective_discovery_preamble()`, never directly: it counts only while
+  /// Preamble (ms) of the discovery broadcast (0x28/0x2E) when the user chose one. Read through
+  /// `effective_discovery_preamble_ms()`, never directly: it counts only while
   /// `pairing_discovery_preamble_set` is true, otherwise discovery follows the start preamble.
-  uint16_t pairing_discovery_preamble{NORMAL_START_PREAMBLE};
-  /// True when `pairing_discovery_preamble` was set, from YAML or by a write through the Home
+  float pairing_discovery_preamble_ms{START_PREAMBLE_MS};
+  /// True when `pairing_discovery_preamble_ms` was set, from YAML or by a write through the Home
   /// Assistant number (it stays set until the next restart). Codegen emits it next to the value.
   bool pairing_discovery_preamble_set{false};
   uint16_t pairing_discovery_wait_ms{
@@ -399,28 +351,43 @@ struct TuningConfig {
   uint16_t pairing_key_init_delay_ms{
       PAIRING_KEY_INIT_DELAY_MS};  ///< Pause after the discover-confirm step, before CMD_KEY_INIT (0x31).
 
+  // --- Deprecated byte-denominated preamble settings ---
+  /// Preamble lengths in programmed bytes from the deprecated YAML keys (`low_power_wake_preamble`,
+  /// `normal_start_preamble`, the response key of the board's own radio, `cold_broadcast_reply_preamble`,
+  /// `pairing_discovery_preamble`); 0 = not given. setup() converts each to the duration it gives
+  /// on the board's radio and writes it into the matching `*_ms` field (ADR 0097).
+  struct LegacyPreambleBytes {
+    uint16_t low_power_wake{0};
+    uint16_t start{0};
+    uint16_t response{0};
+    uint16_t cold_broadcast_reply{0};
+    uint16_t discovery{0};
+  };
+  LegacyPreambleBytes legacy_preamble_bytes{};
+
   // --- Internal state ---
   bool active{false};  ///< True when the YAML `tuning:` block is present.
 };
 
-/// @brief The preamble length (bytes) of the pairing discovery broadcast (`0x28`, `0x2E`).
+/// @brief The preamble duration (ms) of the pairing discovery broadcast (`0x28`, `0x2E`).
 ///
 /// Discovery has no length of its own: it is a first frame like any other, so it goes out behind
 /// the same preamble as a directed start frame to a target of the same power class. Order of
 /// precedence:
-///  1. the user's `pairing_discovery_preamble`, when set (any value, up to the wake-up burst);
-///  2. `low_power_wake_preamble` when `pairing_discovery_low_power` flags the discovery frame, since
+///  1. the user's `pairing_discovery_preamble_ms`, when set (any value in its range);
+///  2. `low_power_wake_ms` when `pairing_discovery_low_power` flags the discovery frame, since
 ///     a first frame carrying the low-power flag takes the wake-up preamble;
-///  3. `normal_start_preamble`, resolved from the radio driver (a short preamble that always-awake
-///     receivers lock onto, where some never lock onto the wake-up burst).
+///  3. `start_preamble_ms` (a short preamble that always-awake receivers lock onto, where some
+///     never lock onto the wake-up burst).
 ///
-/// Read at send time, so a live change of `normal_start_preamble` moves discovery with it.
-/// `PairingEngine` also caps the pairing START frames that follow at this length, so the frames to
-/// the discovered device never outlast the discovery it answered.
-inline uint16_t effective_discovery_preamble(const TuningConfig &cfg) {
+/// Read at send time, so a live change of `start_preamble_ms` moves discovery with it. Callers
+/// turn the duration into bytes with `RadioDriver::preamble_bytes_for_ms()`. `PairingEngine` also
+/// caps the pairing START frames that follow at this length, so the frames to the discovered
+/// device never outlast the discovery it answered.
+inline float effective_discovery_preamble_ms(const TuningConfig &cfg) {
   if (cfg.pairing_discovery_preamble_set)
-    return cfg.pairing_discovery_preamble;
-  return cfg.pairing_discovery_low_power ? cfg.low_power_wake_preamble : cfg.normal_start_preamble;
+    return cfg.pairing_discovery_preamble_ms;
+  return cfg.pairing_discovery_low_power ? cfg.low_power_wake_ms : cfg.start_preamble_ms;
 }
 
 /// @brief One selectable RX bandwidth: the chip's register byte and its nominal kHz value.
@@ -528,6 +495,12 @@ std::string tuning_config_snapshot(const TuningConfig &cfg);
 /// @param cfg Current tuning configuration.
 /// @return One-line snapshot string, or a "defaults" marker when nothing is overridden.
 std::string tuning_config_full_snapshot(const TuningConfig &cfg);
+
+/// @brief Format a numeric tuning value for the log and the snapshot: whole numbers without a
+/// fraction (`600`), fractional ones as written (`3.5`).
+/// @param value The value.
+/// @return Its shortest decimal form.
+std::string format_tuning_number(float value);
 
 /// @brief Format a single tuning update for the log.
 ///

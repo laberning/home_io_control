@@ -1,0 +1,10 @@
+# expect-error: set the same preamble; remove 'normal_start_preamble'
+# covers: tuning._refuse_old_and_new_preamble_keys
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  tuning:
+    normal_start_preamble: 48
+    start_preamble_ms: 10

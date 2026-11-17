@@ -336,6 +336,17 @@ std::optional<KeyTransferMode> key_transfer_mode_from_string(const std::string &
   return std::nullopt;
 }
 
+/// Room for the longest `%g` rendering of a float (a sign, six significant digits, an exponent).
+static constexpr size_t NUMBER_STR_SIZE = 32;
+
+std::string format_tuning_number(float value) {
+  char buf[NUMBER_STR_SIZE];
+  // %g prints 600 as "600" and 3.5 as "3.5": whole numbers stay as short as the integer fields
+  // always printed, a fractional duration keeps its fraction.
+  snprintf(buf, sizeof(buf), "%g", static_cast<double>(value));
+  return buf;
+}
+
 std::string tuning_update_log_line(const std::string &name, const std::string &value) {
   return "Tuning updated via HA: " + name + "=" + value;
 }
@@ -347,25 +358,25 @@ void append_changed_numbers(std::string &result, const TuningConfig &cfg, const 
   // Every plain numeric field is driven off the same NUMBER_PARAMS table the HA `number` entities
   // and `make tuning-sync` use (tuning_registry.cpp) — not a second, independently-maintained list
   // of field names. A hand-written per-field if-chain here once let a real, shipped knob
-  // (`pairing_discovery_preamble`) go completely missing from this exact diagnostic line — the one
+  // (`pairing_discovery_preamble_ms`) go completely missing from this exact diagnostic line — the one
   // `discover_and_pair()` logs at the start of every attempt specifically so a user's bug report
   // records which knobs were actually in effect — while still working everywhere else (HA entity,
   // YAML, `make tuning-sync`). Table-driven means a new numeric knob can't repeat that: it either
   // has a NUMBER_PARAMS row (and is covered) or it doesn't (and can't be set from HA at all).
   //
-  // `pairing_discovery_preamble` is the one exception: its registry getter reports the *effective*
-  // value (what discovery will send), which follows the radio driver's start preamble and so differs
-  // from a default-constructed config on SX1262/LR1121 with nothing set. It is named below, and only
-  // when it was set.
+  // `pairing_discovery_preamble_ms` is the one exception: its registry getter reports the *effective*
+  // value (what discovery will send), which follows the start preamble and so differs from a
+  // default-constructed config as soon as the start preamble is changed. It is named below, and
+  // only when it was set.
   for (const TuningNumberParam *p = tuning_number_params_begin(); p != tuning_number_params_end(); ++p) {
-    if (std::strcmp(p->name, "pairing_discovery_preamble") == 0)
+    if (std::strcmp(p->name, "pairing_discovery_preamble_ms") == 0)
       continue;
     const float current = p->get(cfg);
     if (current != p->get(defaults))
-      result += " " + std::string(p->name) + "=" + std::to_string(static_cast<int64_t>(current));
+      result += " " + std::string(p->name) + "=" + format_tuning_number(current);
   }
   if (cfg.pairing_discovery_preamble_set)
-    result += " pairing_discovery_preamble=" + std::to_string(cfg.pairing_discovery_preamble);
+    result += " pairing_discovery_preamble_ms=" + format_tuning_number(cfg.pairing_discovery_preamble_ms);
 }
 
 }  // namespace

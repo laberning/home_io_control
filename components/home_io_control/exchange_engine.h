@@ -313,16 +313,29 @@ class ExchangeEngine {
   /// (ChannelAccess::FREE_CHANNEL, ADR 0096).
   /// @param frame    Frame to transmit.
   /// @param freq     RF frequency in Hz.
-  /// @param preamble Preamble length in bytes (e.g. `LONG_PREAMBLE`, `SHORT_PREAMBLE`, or a
-  ///        tuning-configured value such as `normal_start_preamble`).
+  /// @param preamble Preamble length in programmed bytes (e.g. `LONG_PREAMBLE`, `SHORT_PREAMBLE`, or a
+  ///        tuning-configured duration converted with preamble_bytes_for_ms()).
   /// @return true if the radio accepted the packet; false otherwise.
   bool transmit_frame(const IoFrame &frame, uint32_t freq, uint16_t preamble);
 
+  /// Programmed preamble bytes that last @p ms milliseconds on the active radio. The one door every
+  /// preamble duration of the tuning passes through on its way to a transmit (ADR 0097); it forwards
+  /// to RadioDriver::preamble_bytes_for_ms().
+  /// @param ms Duration in milliseconds.
+  /// @return Preamble length in bytes.
+  [[nodiscard]] uint16_t preamble_bytes_for_ms(float ms) const;
+
+  /// The start preamble (`start_preamble_ms`) of a directed start frame to a mains target, in bytes.
+  [[nodiscard]] uint16_t start_preamble() const;
+
+  /// The wake-up preamble (`low_power_wake_ms`) of a start frame to a resting low-power target, in bytes.
+  [[nodiscard]] uint16_t wake_preamble() const;
+
   /// Preamble length for an outbound request frame. A non-start frame keeps the chip's short
-  /// response preamble. A start frame gets the tunable wake-up preamble `low_power_wake_preamble` only
+  /// response preamble. A start frame gets the tunable wake-up preamble `low_power_wake_ms` only
   /// when it carries `CTRL1_LOW_POWER` (its target is a duty-cycled receiver that must be woken); every
   /// other start frame gets the
-  /// runtime-tunable `normal_start_preamble`. For a directed frame, the target's per-device
+  /// runtime-tunable `start_preamble_ms`. For a directed frame, the target's per-device
   /// `low_power` property sets the bit; for the roll-call broadcast, the pass being sent sets it (see
   /// `ManagementActions::scan_paired_devices()`).
   ///
@@ -410,7 +423,7 @@ class ExchangeEngine {
   /// belief (decisions::wake_belief(), gated by the `low_power_wake_belief` tuning switch) and the
   /// re-send of an unconfirmed CMD_EXECUTE (decisions::retry_after_unconfirmed_accept_is_safe()), so
   /// each decision lives in one place. With no provider installed every low-power exchange keeps
-  /// the wake-up preamble (`low_power_wake_preamble`) on every try.
+  /// the wake-up preamble (`low_power_wake_ms`) on every try.
   /// @param provider Evidence lookup, or an empty function to detach.
   void set_target_evidence_provider(TargetEvidenceProvider provider) {
     this->target_evidence_provider_ = std::move(provider);

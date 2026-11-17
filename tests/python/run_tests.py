@@ -1063,6 +1063,113 @@ def lbt_max_retries_is_accepted_with_a_warning_and_generates_no_code():
 
 
 @case()
+def preamble_durations_take_fractional_milliseconds_inside_their_range():
+    """Every preamble is a duration in ms (ADR 0097): the number entity and the YAML key share one
+    range, a value inside it keeps its fraction, and one outside it is reported."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import tuning as t
+
+    expected = {
+        t.CONF_RESPONSE_PREAMBLE_MS: (1.5, 70, 0.5),
+        t.CONF_START_PREAMBLE_MS: (1.5, 70, 0.5),
+        t.CONF_COLD_BROADCAST_REPLY_PREAMBLE_MS: (1.5, 70, 0.5),
+        t.CONF_PAIRING_DISCOVERY_PREAMBLE_MS: (1.5, 300, 0.5),
+        t.CONF_LOW_POWER_WAKE_MS: (300, 1000, 10),
+    }
+    for key, (low, high, step) in expected.items():
+        assert t._NUMBER_PARAMS[key] == (low, high, step, "ms"), (key, t._NUMBER_PARAMS[key])
+    assert t.TUNING_SCHEMA({t.CONF_RESPONSE_PREAMBLE_MS: 3.5})[t.CONF_RESPONSE_PREAMBLE_MS] == 3.5
+    assert t.TUNING_SCHEMA({t.CONF_LOW_POWER_WAKE_MS: 600})[t.CONF_LOW_POWER_WAKE_MS] == 600
+    for key, value in ((t.CONF_RESPONSE_PREAMBLE_MS, 1.0), (t.CONF_START_PREAMBLE_MS, 71), (t.CONF_LOW_POWER_WAKE_MS, 299)):
+        try:
+            t.TUNING_SCHEMA({key: value})
+        except cv.Invalid:
+            continue
+        raise AssertionError(f"{key}: {value} is outside its range and was accepted")
+    for old_key in t._LEGACY_PREAMBLE_KEYS:
+        assert old_key not in t._NUMBER_PARAMS, f"the deprecated {old_key} must not get a number entity"
+
+
+@case()
+def deprecated_preamble_byte_keys_warn_once_and_reach_codegen_unconverted():
+    """Each old byte key is accepted within its old range, warns once naming its replacement, and
+    is handed to C++ as bytes (setup() converts it for the radio); a response key of another radio
+    is accepted and warned about but never emitted."""
+    import logging
+
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import tuning as t
+
+    class Capture(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.messages = []
+
+        def emit(self, record):
+            self.messages.append(record.getMessage())
+
+    legacy = {
+        "low_power_wake_preamble": (2048, "low_power_wake_ms"),
+        "normal_start_preamble": (48, "start_preamble_ms"),
+        "sx1262_response_preamble": (12, "response_preamble_ms"),
+        "sx1276_response_preamble": (12, "response_preamble_ms"),
+        "lr1121_response_preamble": (12, "response_preamble_ms"),
+        "cold_broadcast_reply_preamble": (80, "cold_broadcast_reply_preamble_ms"),
+        "pairing_discovery_preamble": (64, "pairing_discovery_preamble_ms"),
+    }
+    assert set(legacy) == set(t._LEGACY_PREAMBLE_KEYS), "every deprecated key is covered here"
+    for old_key, (value, new_key) in legacy.items():
+        capture = Capture()
+        t._LOGGER.addHandler(capture)
+        try:
+            assert t.TUNING_SCHEMA({old_key: value})[old_key] == value
+        finally:
+            t._LOGGER.removeHandler(capture)
+        assert len(capture.messages) == 1, (old_key, capture.messages)
+        assert f"'{old_key}:' is deprecated" in capture.messages[0]
+        assert f"'{new_key}:'" in capture.messages[0], capture.messages[0]
+        low, high = t._LEGACY_PREAMBLE_KEYS[old_key][:2]
+        try:
+            t.TUNING_SCHEMA({old_key: high + 1})
+        except cv.Invalid:
+            pass
+        else:
+            raise AssertionError(f"{old_key}: {high + 1} is above its old byte range and was accepted")
+
+    everything = {old_key: value for old_key, (value, _new) in legacy.items()}
+    assert t._legacy_preamble_assignments(everything, "sx1276") == [
+        ("legacy_preamble_bytes.low_power_wake", 2048),
+        ("legacy_preamble_bytes.start", 48),
+        ("legacy_preamble_bytes.response", 12),
+        ("legacy_preamble_bytes.cold_broadcast_reply", 80),
+        ("legacy_preamble_bytes.discovery", 64),
+    ]
+    assert t._legacy_preamble_assignments({"sx1262_response_preamble": 20}, "sx1276") == []
+    assert t._legacy_preamble_assignments({"lr1121_response_preamble": 20}, "lr1121") == [
+        ("legacy_preamble_bytes.response", 20)
+    ]
+    assert t._legacy_preamble_assignments({}, "sx1262") == []
+
+
+@case("tuning._refuse_old_and_new_preamble_keys")
+def a_byte_key_together_with_its_duration_key_is_refused():
+    """Setting the old byte key and the duration key that replaces it is ambiguous and refused,
+    naming the key to remove; the same keys for different preambles are fine."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import tuning as t
+
+    for old_key, (_lo, _hi, new_key, _field, _radio) in t._LEGACY_PREAMBLE_KEYS.items():
+        try:
+            t._refuse_old_and_new_preamble_keys({old_key: 20, new_key: 10})
+        except cv.Invalid as err:
+            assert old_key in str(err) and new_key in str(err), str(err)
+        else:
+            raise AssertionError(f"{old_key} together with {new_key} was accepted")
+    ok = {"normal_start_preamble": 48, t.CONF_LOW_POWER_WAKE_MS: 600}
+    assert t._refuse_old_and_new_preamble_keys(ok) is ok
+
+
+@case()
 def silent_key_still_works_and_warns_once_with_the_exact_travel_speed_replacement():
     """`silent:` is deprecated: a cover that declares it is still valid and logs one warning that
     gives the travel_speed: value matching its boolean (false is fast, not default) and says the

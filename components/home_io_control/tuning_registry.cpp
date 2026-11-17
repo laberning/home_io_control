@@ -22,39 +22,34 @@ namespace home_io_control {
 // Each row narrows the incoming float to the field's storage type, matching the
 // original static_cast in update_tuning_number().
 static constexpr TuningNumberParam NUMBER_PARAMS[] = {
-    {"sx1262_response_preamble", [](const TuningConfig &t) { return static_cast<float>(t.sx1262_response_preamble); },
-     [](TuningConfig &t, float v) { t.sx1262_response_preamble = static_cast<uint16_t>(v); }, true},
     {"sx1262_post_tx_settle_us", [](const TuningConfig &t) { return static_cast<float>(t.sx1262_post_tx_settle_us); },
      [](TuningConfig &t, float v) { t.sx1262_post_tx_settle_us = static_cast<uint16_t>(v); }, true},
-    {"sx1276_response_preamble", [](const TuningConfig &t) { return static_cast<float>(t.sx1276_response_preamble); },
-     [](TuningConfig &t, float v) { t.sx1276_response_preamble = static_cast<uint16_t>(v); }, true},
     {"sx1276_discovery_hop_slice_ms",
      [](const TuningConfig &t) { return static_cast<float>(t.sx1276_discovery_hop_slice_ms); },
      [](TuningConfig &t, float v) { t.sx1276_discovery_hop_slice_ms = static_cast<uint16_t>(v); }, false},
     {"sx1262_discovery_hop_slice_ms",
      [](const TuningConfig &t) { return static_cast<float>(t.sx1262_discovery_hop_slice_ms); },
      [](TuningConfig &t, float v) { t.sx1262_discovery_hop_slice_ms = static_cast<uint16_t>(v); }, false},
-    {"lr1121_response_preamble", [](const TuningConfig &t) { return static_cast<float>(t.lr1121_response_preamble); },
-     [](TuningConfig &t, float v) { t.lr1121_response_preamble = static_cast<uint16_t>(v); }, true},
     {"lr1121_post_tx_settle_us", [](const TuningConfig &t) { return static_cast<float>(t.lr1121_post_tx_settle_us); },
      [](TuningConfig &t, float v) { t.lr1121_post_tx_settle_us = static_cast<uint16_t>(v); }, true},
     {"lr1121_discovery_hop_slice_ms",
      [](const TuningConfig &t) { return static_cast<float>(t.lr1121_discovery_hop_slice_ms); },
      [](TuningConfig &t, float v) { t.lr1121_discovery_hop_slice_ms = static_cast<uint16_t>(v); }, false},
-    // false: unlike sx1262/sx1276/lr1121_response_preamble, this field is not chip-specific and
-    // is never cached into a radio driver via apply_tuning() — key_extraction_responder.cpp reads it
-    // straight out of TuningConfig at TX time, the same way the *_discovery_hop_slice_ms fields
-    // above are read live rather than applied.
-    {"cold_broadcast_reply_preamble",
-     [](const TuningConfig &t) { return static_cast<float>(t.cold_broadcast_reply_preamble); },
-     [](TuningConfig &t, float v) { t.cold_broadcast_reply_preamble = static_cast<uint16_t>(v); }, false},
-    // false: not chip-specific and never cached into a radio driver via apply_tuning() — the
-    // exchange engine reads it straight out of TuningConfig at TX time, the same as
-    // cold_broadcast_reply_preamble above.
-    {"normal_start_preamble", [](const TuningConfig &t) { return static_cast<float>(t.normal_start_preamble); },
-     [](TuningConfig &t, float v) { t.normal_start_preamble = static_cast<uint16_t>(v); }, false},
-    {"low_power_wake_preamble", [](const TuningConfig &t) { return static_cast<float>(t.low_power_wake_preamble); },
-     [](TuningConfig &t, float v) { t.low_power_wake_preamble = static_cast<uint16_t>(v); }, false},
+    // true: the response preamble is cached into the radio driver as bytes by apply_tuning(), so a
+    // change must be re-applied there.
+    {"response_preamble_ms", [](const TuningConfig &t) { return t.response_preamble_ms; },
+     [](TuningConfig &t, float v) { t.response_preamble_ms = v; }, true},
+    // false: not cached into a radio driver — key_extraction_responder.cpp reads it straight out of
+    // TuningConfig at TX time, the same way the *_discovery_hop_slice_ms fields above are read live
+    // rather than applied.
+    {"cold_broadcast_reply_preamble_ms", [](const TuningConfig &t) { return t.cold_broadcast_reply_preamble_ms; },
+     [](TuningConfig &t, float v) { t.cold_broadcast_reply_preamble_ms = v; }, false},
+    // false: not cached into a radio driver — the exchange engine reads it straight out of
+    // TuningConfig at TX time, the same as cold_broadcast_reply_preamble_ms above.
+    {"start_preamble_ms", [](const TuningConfig &t) { return t.start_preamble_ms; },
+     [](TuningConfig &t, float v) { t.start_preamble_ms = v; }, false},
+    {"low_power_wake_ms", [](const TuningConfig &t) { return t.low_power_wake_ms; },
+     [](TuningConfig &t, float v) { t.low_power_wake_ms = v; }, false},
     {"lbt_rssi_threshold_dbm", [](const TuningConfig &t) { return static_cast<float>(t.lbt_rssi_threshold_dbm); },
      [](TuningConfig &t, float v) { t.lbt_rssi_threshold_dbm = static_cast<int16_t>(v); }, false},
     {"exchange_start_response_wait_ms",
@@ -76,14 +71,13 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
      [](const TuningConfig &t) { return static_cast<float>(t.remote_activity_catchup_poll_ms); },
      [](TuningConfig &t, float v) { t.remote_activity_catchup_poll_ms = static_cast<uint32_t>(v); }, false},
     // false: read straight out of TuningConfig at TX time by PairingEngine::run_discovery_phase_(),
-    // the same as normal_start_preamble/cold_broadcast_reply_preamble above. The getter reports the
+    // the same as start_preamble_ms/cold_broadcast_reply_preamble_ms above. The getter reports the
     // effective value (what discovery sends), so the Home Assistant number shows the start preamble
     // it follows; the setter marks the value as set, and it stays set until the next restart (Home
     // Assistant has no way back to "follow").
-    {"pairing_discovery_preamble",
-     [](const TuningConfig &t) { return static_cast<float>(effective_discovery_preamble(t)); },
+    {"pairing_discovery_preamble_ms", [](const TuningConfig &t) { return effective_discovery_preamble_ms(t); },
      [](TuningConfig &t, float v) {
-       t.pairing_discovery_preamble = static_cast<uint16_t>(v);
+       t.pairing_discovery_preamble_ms = v;
        t.pairing_discovery_preamble_set = true;
      },
      false},
@@ -96,7 +90,7 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
      [](const TuningConfig &t) { return static_cast<float>(t.pairing_key_exchange_retries); },
      [](TuningConfig &t, float v) { t.pairing_key_exchange_retries = static_cast<uint8_t>(v); }, false},
     // false: read straight out of TuningConfig by PairingEngine::run_discover_confirm_step_() at
-    // the point of the pause, the same as pairing_discovery_preamble/pairing_discovery_wait_ms above.
+    // the point of the pause, the same as pairing_discovery_preamble_ms/pairing_discovery_wait_ms above.
     {"pairing_key_init_delay_ms", [](const TuningConfig &t) { return static_cast<float>(t.pairing_key_init_delay_ms); },
      [](TuningConfig &t, float v) { t.pairing_key_init_delay_ms = static_cast<uint16_t>(v); }, false},
     // false: both are read by the key-extraction responder each time it builds a discovery answer.

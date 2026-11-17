@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0095 -->
 
-**Status:** Accepted, amends [ADR 0040](0040-low-power-start-preamble-follows-the-wake-belief.md), [ADR 0013](0013-blocking-exchange-on-the-esphome-loop.md), [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md), [ADR 0079](0079-a-cover-is-followed-by-its-execution-state.md), [ADR 0080](0080-linked-remote-activity-is-followed-by-an-opt-in-catch-up-read.md) and [ADR 0089](0089-the-exchange-engine-plans-every-exchange-from-the-callers-request.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0040](0040-low-power-start-preamble-follows-the-wake-belief.md), [ADR 0013](0013-blocking-exchange-on-the-esphome-loop.md), [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md), [ADR 0079](0079-a-cover-is-followed-by-its-execution-state.md), [ADR 0080](0080-linked-remote-activity-is-followed-by-an-opt-in-catch-up-read.md) and [ADR 0089](0089-the-exchange-engine-plans-every-exchange-from-the-callers-request.md); amended by [ADR 0097](0097-every-preamble-is-set-as-a-duration-the-same-on-every-radio.md) (the wake-up is 600 ms) · **Recorded:** 2026-11
 
 ## Context
 

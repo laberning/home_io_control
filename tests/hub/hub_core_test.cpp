@@ -442,7 +442,7 @@ TEST(HubCore, OneWaySendReadsTheHubsLiveTuningForAnAlwaysAliveIdentity) {
   radio.set_rssi_default(-100);  // channel clear -- no LBT retries to complicate the tx count
 
   TuningConfig tuning{};
-  tuning.normal_start_preamble = 77;
+  tuning.start_preamble_ms = mock_preamble_ms(77);
   comp.set_tuning_config(tuning);
 
   OneWayControllerIdentity identity{};

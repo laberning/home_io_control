@@ -246,9 +246,9 @@ inline std::map<uint8_t, std::string> parse_python_uint8_keyed_string_dict(const
 
 /// One `(min, max, step, "unit")` row of a range dict.
 struct PythonRange {
-  long min{0};
-  long max{0};
-  long step{0};
+  double min{0};
+  double max{0};
+  double step{0};
   std::string unit;
 };
 
@@ -282,11 +282,13 @@ inline std::map<std::string, PythonRange> parse_python_range_dict(const char *pa
     }
     PythonRange range;
     try {
-      range.min = std::stol(fields[0], nullptr, 0);
-      range.max = std::stol(fields[1], nullptr, 0);
-      range.step = std::stol(fields[2], nullptr, 0);
+      // stod, not stol: the duration knobs have fractional bounds and steps (1.5 ms, 0.5 ms), and
+      // strtod reads the hex bounds (0xFFFF) too.
+      range.min = std::stod(fields[0]);
+      range.max = std::stod(fields[1]);
+      range.step = std::stod(fields[2]);
     } catch (const std::exception &e) {
-      ADD_FAILURE() << "Cannot parse '" << value << "' as integers for " << context << " in " << path << ": "
+      ADD_FAILURE() << "Cannot parse '" << value << "' as numbers for " << context << " in " << path << ": "
                     << e.what();
       continue;
     }

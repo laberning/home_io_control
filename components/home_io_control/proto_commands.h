@@ -36,8 +36,8 @@
 ///     same per-device-property treatment as every non-pairing builder above — every real hub in
 ///     this project's corpus mirrors that class exactly on its own 0x2C.
 ///   - The preamble follows the flag. For a start frame the exchange engine uses the wake-up
-///     preamble (`low_power_wake_preamble`, default LOW_POWER_WAKE_PREAMBLE) when CTRL1_LOW_POWER is set — the wake‑up
-///     burst for a sleeping receiver — and the runtime‑tunable `normal_start_preamble` otherwise; follow‑up frames use
+///     preamble (`low_power_wake_ms`, default LOW_POWER_WAKE_MS) when CTRL1_LOW_POWER is set — the wake‑up
+///     burst for a sleeping receiver — and the runtime‑tunable `start_preamble_ms` otherwise; follow‑up frames use
 ///     the driver's response_preamble() (exchange_engine.cpp). Both derive from the same per‑device property, so the
 ///     flag never promises a wake-up burst the device does not need, with two exceptions. Pairing's directed start
 ///     frames (0x2C, 0x31, 0x6F) never use a longer preamble than the discovery request the device just answered

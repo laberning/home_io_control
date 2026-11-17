@@ -80,7 +80,7 @@ class OneWayTransmitterTest : public ::testing::Test {
 
 TEST_F(OneWayTransmitterTest, SendsExactlyFourCopiesOnChannelTwo) {
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
   EXPECT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG));
 
@@ -97,7 +97,7 @@ TEST_F(OneWayTransmitterTest, EveryCopyIsByteIdenticalExceptCtrl1) {
   for (const OneWayPowerClass power_class :
        {OneWayPowerClass::LEGACY_LONG, OneWayPowerClass::ALWAYS_ALIVE, OneWayPowerClass::LOW_POWER}) {
     TransmitRecorder recorder;
-    OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+    OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
     transmitter.send_burst(make_stop_frame(), power_class);
 
@@ -113,7 +113,7 @@ TEST_F(OneWayTransmitterTest, EveryCopyIsByteIdenticalExceptCtrl1) {
 
 TEST_F(OneWayTransmitterTest, SpacesCopiesByTheProtocolInterval) {
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
   transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG);
 
@@ -132,7 +132,7 @@ TEST_F(OneWayTransmitterTest, GapCountIsUnchangedAcrossEveryPowerClass) {
        {OneWayPowerClass::LEGACY_LONG, OneWayPowerClass::ALWAYS_ALIVE, OneWayPowerClass::LOW_POWER}) {
     esphome::test_hal::reset_delays();
     TransmitRecorder recorder;
-    OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+    OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
     transmitter.send_burst(make_stop_frame(), power_class);
 
@@ -145,7 +145,7 @@ TEST_F(OneWayTransmitterTest, FeedsTheWatchdogDuringTheGaps) {
   // The burst blocks the ESPHome loop by design (ADR 0013). That is well inside the watchdog
   // window, but the feed is what keeps it that way if the interval is ever raised.
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
   // The counter is global and monotonic across the suite, so assert on the delta.
   const uint32_t feeds_before = esphome::App.feed_wdt_calls;
@@ -160,7 +160,7 @@ TEST_F(OneWayTransmitterTest, ReportsSuccessWhenOnlySomeCopiesGetOut) {
   // the caller something false about a command that very likely landed.
   TransmitRecorder recorder;
   recorder.fail_from_ = 2;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
   EXPECT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG))
       << "a partial burst is still a transmitted command";
@@ -170,7 +170,7 @@ TEST_F(OneWayTransmitterTest, ReportsSuccessWhenOnlySomeCopiesGetOut) {
 TEST_F(OneWayTransmitterTest, ReportsFailureWhenNothingGetsOut) {
   TransmitRecorder recorder;
   recorder.fail_from_ = 0;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
   EXPECT_FALSE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG))
       << "with no copy on air there is nothing to claim; 1W gives no other evidence";
@@ -181,7 +181,7 @@ TEST_F(OneWayTransmitterTest, StillAttemptsTheFullBurstWhenTheRadioRefusesFirst)
   // Every attempt is counted even when the radio refuses, so a radio that recovers mid-burst
   // still gets the remaining copies out.
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
   recorder.fail_from_ = 0;
 
   transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG);
@@ -196,7 +196,7 @@ TEST_F(OneWayTransmitterTest, StillAttemptsTheFullBurstWhenTheRadioRefusesFirst)
 
 TEST_F(OneWayTransmitterTest, LegacyLongBurstIsUnchanged) {
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG));
 
@@ -213,9 +213,9 @@ TEST_F(OneWayTransmitterTest, AlwaysAliveBurstUsesNormalStartPreambleOnEveryCopy
   // Full byte-identity (outside CTRL1) is pinned once, for every class, by
   // EveryCopyIsByteIdenticalExceptCtrl1 above -- this test only needs to check the shape specific
   // to ALWAYS_ALIVE: preamble and flag.
-  tuning_.normal_start_preamble = 32;
+  tuning_.start_preamble_ms = mock_preamble_ms(32);
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::ALWAYS_ALIVE));
 
@@ -230,9 +230,9 @@ TEST_F(OneWayTransmitterTest, LowPowerBurstWakesOnFirstCopyOnly) {
   // Full byte-identity (outside CTRL1) is pinned once, for every class, by
   // EveryCopyIsByteIdenticalExceptCtrl1 above -- this test only needs to check the shape specific
   // to LOW_POWER: which copy wakes and which don't.
-  tuning_.normal_start_preamble = 32;
+  tuning_.start_preamble_ms = mock_preamble_ms(32);
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER));
 
@@ -245,15 +245,32 @@ TEST_F(OneWayTransmitterTest, LowPowerBurstWakesOnFirstCopyOnly) {
   }
 }
 
+TEST_F(OneWayTransmitterTest, NormalCopiesConvertTheStartDurationOnTheRadioWhileTheWakeUpStaysLongPreamble) {
+  // The burst's normal copies follow the start preamble duration (ADR 0097): the converter of a
+  // radio that sends 10 bit periods per byte gives fewer programmed bytes for the same 10 ms. The
+  // one-way wake-up is not a duration and stays LONG_PREAMBLE on every radio.
+  TenBitPreambleRadio ten_bit;
+  TransmitRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_,
+                                [&ten_bit](float ms) { return ten_bit.preamble_bytes_for_ms(ms); });
+
+  ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER));
+
+  ASSERT_EQ(recorder.sent.size(), ONEWAY_BURST_REPEATS);
+  EXPECT_EQ(recorder.sent[0].preamble, LONG_PREAMBLE);
+  for (size_t i = 1; i < recorder.sent.size(); i++)
+    EXPECT_EQ(recorder.sent[i].preamble, 38) << "10 ms at 10 bit periods per byte, copy " << i;
+}
+
 TEST_F(OneWayTransmitterTest, NormalPreambleIsReadLiveFromTuning) {
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
-  tuning_.normal_start_preamble = 8;
+  tuning_.start_preamble_ms = mock_preamble_ms(8);
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::ALWAYS_ALIVE));
   EXPECT_EQ(recorder.sent[0].preamble, 8);
 
-  tuning_.normal_start_preamble = 64;
+  tuning_.start_preamble_ms = mock_preamble_ms(64);
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::ALWAYS_ALIVE));
   EXPECT_EQ(recorder.sent[ONEWAY_BURST_REPEATS].preamble, 64)
       << "the tuning value is read per burst, never cached at construction";
@@ -265,7 +282,7 @@ TEST_F(OneWayTransmitterTest, TransmitterOwnsTheLowPowerBit) {
   IoFrame frame = make_stop_frame();
   frame.ctrl1 |= CTRL1_LOW_POWER;
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
   ASSERT_TRUE(transmitter.send_burst(frame, OneWayPowerClass::ALWAYS_ALIVE));
 
@@ -281,7 +298,7 @@ TEST_F(OneWayTransmitterTest, FlaggedCopyStillCarriesAValidMac) {
   ASSERT_TRUE(create_1w_add_controller(frame, CONTROLLER_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING, MANUFACTURER_SOMFY,
                                        0x1234, test::TEST_SYSTEM_KEY, /*with_mac=*/true));
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
   ASSERT_TRUE(transmitter.send_burst(frame, OneWayPowerClass::LOW_POWER));
   ASSERT_EQ(recorder.sent.size(), ONEWAY_BURST_REPEATS);

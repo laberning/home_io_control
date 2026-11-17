@@ -37,8 +37,21 @@ TEST(TuningDispatch, NumberUpdatesEachParameter) {
   MockRadio radio;
   setup_component(comp, radio);
 
-  comp.update_tuning_number("sx1262_response_preamble", 96);
-  EXPECT_EQ(comp.tuning_.sx1262_response_preamble, 96);
+  comp.update_tuning_number("response_preamble_ms", 4.5F);
+  EXPECT_EQ(comp.tuning_.response_preamble_ms, 4.5F) << "a fraction of a millisecond is kept";
+
+  comp.update_tuning_number("start_preamble_ms", 12.5F);
+  EXPECT_EQ(comp.tuning_.start_preamble_ms, 12.5F);
+
+  comp.update_tuning_number("low_power_wake_ms", 450);
+  EXPECT_EQ(comp.tuning_.low_power_wake_ms, 450.0F);
+
+  comp.update_tuning_number("cold_broadcast_reply_preamble_ms", 25);
+  EXPECT_EQ(comp.tuning_.cold_broadcast_reply_preamble_ms, 25.0F);
+
+  comp.update_tuning_number("pairing_discovery_preamble_ms", 7.5F);
+  EXPECT_EQ(comp.tuning_.pairing_discovery_preamble_ms, 7.5F);
+  EXPECT_TRUE(comp.tuning_.pairing_discovery_preamble_set);
 
   comp.update_tuning_number("sx1262_post_tx_settle_us", 750);
   EXPECT_EQ(comp.tuning_.sx1262_post_tx_settle_us, 750);
@@ -48,9 +61,6 @@ TEST(TuningDispatch, NumberUpdatesEachParameter) {
 
   comp.update_tuning_number("sx1262_discovery_hop_slice_ms", 250);
   EXPECT_EQ(comp.tuning_.sx1262_discovery_hop_slice_ms, 250);
-
-  comp.update_tuning_number("lr1121_response_preamble", 96);
-  EXPECT_EQ(comp.tuning_.lr1121_response_preamble, 96);
 
   comp.update_tuning_number("lr1121_post_tx_settle_us", 750);
   EXPECT_EQ(comp.tuning_.lr1121_post_tx_settle_us, 750);
@@ -77,7 +87,7 @@ TEST(TuningDispatch, NumberIgnoresUnknownParameter) {
   setup_component(comp, radio);
   comp.update_tuning_number("does_not_exist", 123);
   // Defaults remain untouched.
-  EXPECT_EQ(comp.tuning_.sx1262_response_preamble, SX1262_RESPONSE_PREAMBLE);
+  EXPECT_EQ(comp.tuning_.response_preamble_ms, RESPONSE_PREAMBLE_MS);
 }
 
 // ============================================================================

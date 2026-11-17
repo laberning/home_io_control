@@ -91,11 +91,11 @@ struct RollCallPass {
 ///
 /// Low-power pass, `CTRL1 = 0x30` (LOW_POWER | ACK): the exact header a real VELUX KLR300 uses
 /// for its own roll-call, whose low-power shutters answered it. Setting CTRL1_LOW_POWER selects
-/// the wake-up preamble (`low_power_wake_preamble`) through the shared start-preamble rule (request_preamble_for()) —
+/// the wake-up preamble (`low_power_wake_ms`) through the shared start-preamble rule (request_preamble_for()) —
 /// no preamble is picked here. `ROTATE_ALL_CHANNELS`: those VELUX low-power replies were observed landing on the
 /// request channel, which a skipping listen would miss entirely.
 ///
-/// Always-alive pass, `CTRL1 = 0x00` at `normal_start_preamble`: an always-alive VELUX
+/// Always-alive pass, `CTRL1 = 0x00` at `start_preamble_ms`: an always-alive VELUX
 /// installation ignores a 1024-byte start preamble and answers the 32-byte one; Somfy roll-call
 /// replies land on the request channel about 1 in 149 times, so `ROTATE_SKIPPING_REQUEST` keeps
 /// the window on the channels replies actually use.

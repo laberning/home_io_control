@@ -127,10 +127,10 @@ class IOHomeControlComponent : public Component,
         // long after construction. It injects the *ability* to transmit rather than a reference
         // to whichever collaborator currently owns the radio. `&tuning_` is read per burst
         // (never cached), same pattern as exchange_engine_ above, so a live change to
-        // `normal_start_preamble` takes effect on the next 1W command without a reboot.
+        // `start_preamble_ms` takes effect on the next 1W command without a reboot.
         oneway_transmitter_([this](const IoFrame &frame, uint32_t freq,
                                    uint16_t preamble) { return this->transmit_frame_(frame, freq, preamble); },
-                            &tuning_),
+                            &tuning_, [this](float ms) { return this->exchange_engine_.preamble_bytes_for_ms(ms); }),
         // set_timeout() is protected on the real ESPHome Component (only public in the host stub),
         // so a lambda defined here — with protected access — is the one legitimate caller. See
         // oneway_key_adoption.h's NamedTimeoutFn.
@@ -846,7 +846,7 @@ class IOHomeControlComponent : public Component,
   /// @param frame IoFrame to transmit.
   /// @param freq RF frequency in Hz.
   /// @param preamble Preamble length in bytes (e.g. `LONG_PREAMBLE`, `SHORT_PREAMBLE`, or a
-  ///        tuning-configured value such as `normal_start_preamble`).
+  ///        tuning-configured duration such as `start_preamble_ms`, converted to bytes).
   bool transmit_frame_(const IoFrame &frame, uint32_t freq, uint16_t preamble);
   /// Main request/response exchange with retry and automatic authentication. Every exchange ends
   /// with StatusPollPolicy::on_exchange_ended(), so it moves an open catch-up burst's read out
@@ -1256,8 +1256,8 @@ class IOHomeControlComponent : public Component,
   // --- Tuning ---
   /// Apply the current tuning configuration to the active radio driver.
   void apply_tuning_to_radio_();
-  /// @brief Resolve `normal_start_preamble` from the driver when YAML did not set it (ADR 0042).
-  void resolve_start_preamble_default_();
+  /// @brief Convert the deprecated byte-denominated preamble keys to durations on this radio (ADR 0097).
+  void convert_legacy_preamble_bytes_();
 
   // --- Management actions (the native API calls management_actions_ directly) ---
   /// Register hub-level Home Assistant actions; called from setup().

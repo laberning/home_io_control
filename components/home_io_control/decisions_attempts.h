@@ -446,8 +446,8 @@ struct TargetEvidence {
 /// (ExchangeEngine::set_wake_evidence_spent_handler()), cover a wrong belief there.
 /// @param belief         See wake_belief().
 /// @param try_index      1-based try number, clamped to [1, EXCHANGE_RETRY_COUNT].
-/// @param short_preamble Preamble for a receiver known to be moving (`normal_start_preamble`).
-/// @param wake_preamble  Wake-up preamble for a resting receiver (`low_power_wake_preamble`).
+/// @param short_preamble Preamble for a receiver known to be moving (`start_preamble_ms`, in bytes).
+/// @param wake_preamble  Wake-up preamble for a resting receiver (`low_power_wake_ms`, in bytes).
 [[nodiscard]] inline uint16_t low_power_try_preamble(WakeBelief belief, uint8_t try_index, uint16_t short_preamble,
                                                      uint16_t wake_preamble) {
   const uint8_t try_1based = std::max<uint8_t>(1, std::min<uint8_t>(try_index, EXCHANGE_RETRY_COUNT));

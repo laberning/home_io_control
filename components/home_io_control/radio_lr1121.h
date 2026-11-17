@@ -277,8 +277,7 @@ class RadioLR1121 : public SoftPhyDriverBase {
  public:
   RadioLR1121(SpiAccess *spi, InternalGPIOPin *rst_pin, InternalGPIOPin *irq_pin, InternalGPIOPin *busy_pin,
               uint8_t tx_power, uint8_t tcxo_voltage_code)
-      : SoftPhyDriverBase(rst_pin, busy_pin, LR1121_BUSY_TIMEOUT_MS, LR1121_RESPONSE_PREAMBLE,
-                          LR1121_POST_TX_SETTLE_US),
+      : SoftPhyDriverBase(rst_pin, busy_pin, LR1121_BUSY_TIMEOUT_MS, LR1121_POST_TX_SETTLE_US),
         spi_(spi),
         irq_pin_(irq_pin),
         tx_power_(tx_power),
@@ -289,7 +288,7 @@ class RadioLR1121 : public SoftPhyDriverBase {
   /// @brief Apply LR1121 runtime tuning: RX bandwidth, response preamble, post-TX settle delay.
   void apply_tuning(const TuningConfig &tuning) override {
     this->set_rx_bandwidth_(tuning.lr1121_rx_bandwidth);
-    this->set_response_preamble_(tuning.lr1121_response_preamble);
+    this->set_response_preamble_(this->preamble_bytes_for_ms(tuning.response_preamble_ms));
     this->set_post_tx_settle_us_(tuning.lr1121_post_tx_settle_us);
   }
   // The chip constants below are code spans, not \ref: doxygen 1.18 can't resolve \ref to them

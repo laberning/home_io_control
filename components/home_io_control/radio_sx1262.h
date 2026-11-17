@@ -199,8 +199,7 @@ class RadioSX1262 : public SoftPhyDriverBase {
               uint8_t tx_power, uint8_t tcxo_voltage, InternalGPIOPin *fem_en_pin = nullptr,
               InternalGPIOPin *vfem_pin = nullptr, InternalGPIOPin *fem_pa_pin = nullptr,
               FemProfile fem_profile = FemProfile::NONE)
-      : SoftPhyDriverBase(rst_pin, busy_pin, SX1262_BUSY_TIMEOUT_MS, SX1262_RESPONSE_PREAMBLE,
-                          SX1262_POST_TX_SETTLE_US),
+      : SoftPhyDriverBase(rst_pin, busy_pin, SX1262_BUSY_TIMEOUT_MS, SX1262_POST_TX_SETTLE_US),
         spi_(spi),
         dio1_pin_(dio1_pin),
         fem_en_pin_(fem_en_pin),
@@ -215,7 +214,7 @@ class RadioSX1262 : public SoftPhyDriverBase {
   /// @brief Apply SX1262 runtime tuning: RX bandwidth, response preamble, post-TX settle delay.
   void apply_tuning(const TuningConfig &tuning) override {
     this->set_rx_bandwidth_(tuning.sx1262_rx_bandwidth);
-    this->set_response_preamble_(tuning.sx1262_response_preamble);
+    this->set_response_preamble_(this->preamble_bytes_for_ms(tuning.response_preamble_ms));
     this->set_post_tx_settle_us_(tuning.sx1262_post_tx_settle_us);
   }
   /// @brief Per-channel dwell for a rotating listen (SX1262).

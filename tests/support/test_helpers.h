@@ -131,7 +131,7 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::system_key_;
   using IOHomeControlComponent::tuning_;
-  using IOHomeControlComponent::resolve_start_preamble_default_;
+  using IOHomeControlComponent::convert_legacy_preamble_bytes_;
   using IOHomeControlComponent::op_queue_;
   using IOHomeControlComponent::poll_policy_;
   using IOHomeControlComponent::exchange_engine_;

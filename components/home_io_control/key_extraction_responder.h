@@ -64,7 +64,7 @@ class KeyExtractionResponder {
   /// @param radio             Double pointer to the hub's active radio driver, so a test's
   ///                          `comp.radio_ = &mock` propagates (mirrors ExchangeEngine).
   /// @param tuning            Runtime tuning config, owned by the hub
-  ///                          (`cold_broadcast_reply_preamble`).
+  ///                          (`cold_broadcast_reply_preamble_ms`).
   /// @param registry          Device registry, for the throwaway-ID collision check only.
   /// @param transmit          How to put a reply frame on air (see TransmitFrameFn).
   /// @param schedule_auto_off Named-timeout scheduler for the 10-minute arm window and the
@@ -220,7 +220,7 @@ class KeyExtractionResponder {
   void send_reply_(const IoFrame &frame);
   /// Answer a broadcast search the way a device does: once, in a random slot from 1 to N of the
   /// search's window (discovery_slot_count()), on a random one of the two channels the search did
-  /// not come in on, with `cold_broadcast_reply_preamble`. Timed through the named-timeout
+  /// not come in on, with `cold_broadcast_reply_preamble_ms`. Timed through the named-timeout
   /// scheduler, so the loop is never blocked while the slot runs down. The answer is dropped if
   /// the attempt has moved on (disarm, re-arm) before its slot comes.
   /// \todo Confirm on hardware that third-party controllers (TaHoma, KIG 300, KLR 200, Freebox)

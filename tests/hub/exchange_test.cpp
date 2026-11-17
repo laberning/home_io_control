@@ -4,6 +4,7 @@
 #include "proto_commands.h"
 #include "proto_crypto.h"
 #include "radio_sx1276.h"
+#include "radio_sx1262.h"
 
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
@@ -749,11 +750,12 @@ TEST(Exchange, ResponsePreamble_DefaultReturnsShortPreamble) {
 
 TEST(Exchange, ResponsePreamble_SX1262MatchesConfiguredValue) {
   MockRadioSX1262 radio;
-  EXPECT_EQ(radio.response_preamble(), SX1262_RESPONSE_PREAMBLE)
+  EXPECT_EQ(radio.response_preamble(), MOCK_RESPONSE_PREAMBLE)
       << "SX1262 should return the configured response preamble";
   // Byte-denominated like SHORT_PREAMBLE (set_packet_params_() converts to bits at the SPI
-  // boundary); the default sits above the protocol's nominal 8-byte floor.
-  EXPECT_EQ(radio.response_preamble(), 12u);
+  // boundary); the 3.5 ms default is 17 bytes at 8 bit periods each, above the protocol's nominal
+  // 8-byte floor.
+  EXPECT_EQ(radio.response_preamble(), 17u);
   EXPECT_GE(radio.response_preamble(), SHORT_PREAMBLE);
 }
 
@@ -772,31 +774,31 @@ TEST(Exchange, TxRxTurnaround_RealDriversDeclareExpectedCapability) {
 
 TEST(Exchange, RadioSX1276_ApplyTuningRoutesRadioParameters) {
   // Drives the real SX1276 apply_tuning() path (no init(); register writes go to the no-op
-  // MockSpi). Verifies the default matches the pre-tunable fixed value and that a tuning
-  // override propagates to the observable response_preamble(), and that set_rx_bandwidth_
+  // MockSpi). Verifies the default is the 3.5 ms duration at 10 bit periods per byte and that a
+  // tuning override propagates to the observable response_preamble(), and that set_rx_bandwidth_
   // accepts every enum option without touching hardware.
   MockSpi spi;
   MockPin rst, dio0, dio4;
   RadioSX1276 sx1276(&spi, &rst, &dio0, &dio4, 17, 0x80);
 
-  // Default (no tuning applied): the SX1276 default response preamble (12).
-  EXPECT_EQ(sx1276.response_preamble(), SX1276_RESPONSE_PREAMBLE);
+  // Default (no tuning applied): 3.5 ms is 13 bytes at 10 bit periods each.
+  EXPECT_EQ(sx1276.response_preamble(), 13u);
 
   TuningConfig cfg{};
-  cfg.sx1276_response_preamble = 40;
+  cfg.response_preamble_ms = 10.0F;  // 384 bit periods: 38 bytes at 10 bit periods each
   for (auto bw : {SX1276RxBandwidth::BW_20_8_KHZ, SX1276RxBandwidth::BW_41_7_KHZ, SX1276RxBandwidth::BW_125_0_KHZ}) {
     cfg.sx1276_rx_bandwidth = bw;
     sx1276.apply_tuning(cfg);  // set_rx_bandwidth_ + set_response_preamble_ (no crash / no SPI dependency)
   }
-  EXPECT_EQ(sx1276.response_preamble(), 40) << "apply_tuning must route sx1276_response_preamble to the driver";
+  EXPECT_EQ(sx1276.response_preamble(), 38) << "apply_tuning must route response_preamble_ms to the driver";
 
   // Applying defaults again restores the default preamble.
   sx1276.apply_tuning(TuningConfig{});
-  EXPECT_EQ(sx1276.response_preamble(), SX1276_RESPONSE_PREAMBLE);
+  EXPECT_EQ(sx1276.response_preamble(), 13u);
 }
 
 TEST(Exchange, SendAndReceive_LowPowerStartFrameUsesLongPreamble) {
-  // A START frame whose target is a low-power device (CTRL1_LOW_POWER set) keeps LOW_POWER_WAKE_PREAMBLE:
+  // A START frame whose target is a low-power device (CTRL1_LOW_POWER set) keeps MOCK_WAKE_PREAMBLE:
   // the long preamble is the wake-up burst for a duty-cycled receiver.
   TestableComponent comp;
   comp.initialized_ = true;
@@ -815,13 +817,13 @@ TEST(Exchange, SendAndReceive_LowPowerStartFrameUsesLongPreamble) {
   comp.send_and_receive_(request, response, FREQ_CH2);
 
   ASSERT_GE(radio.get_tx_configs().size(), 1u) << "at least one TX should have been attempted";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, LOW_POWER_WAKE_PREAMBLE)
-      << "a low-power START frame must use LOW_POWER_WAKE_PREAMBLE to wake the target";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, MOCK_WAKE_PREAMBLE)
+      << "a low-power START frame must use MOCK_WAKE_PREAMBLE to wake the target";
 }
 
 TEST(Exchange, SendAndReceive_NormalStartFrameUsesNormalStartPreamble) {
   // A START frame to a non-low-power (always-alive) target uses the runtime-tunable
-  // normal_start_preamble, not the 1024-byte wake-up burst.
+  // `start_preamble_ms`, not the 1024-byte wake-up burst.
   TestableComponent comp;
   comp.initialized_ = true;
   MockRadio radio;
@@ -839,8 +841,8 @@ TEST(Exchange, SendAndReceive_NormalStartFrameUsesNormalStartPreamble) {
   comp.send_and_receive_(request, response, FREQ_CH2);
 
   ASSERT_GE(radio.get_tx_configs().size(), 1u) << "at least one TX should have been attempted";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, comp.tuning_.normal_start_preamble)
-      << "a normal START frame must use normal_start_preamble, not LOW_POWER_WAKE_PREAMBLE";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, mock_preamble_bytes(comp.tuning_.start_preamble_ms))
+      << "a normal START frame must use `start_preamble_ms`, not MOCK_WAKE_PREAMBLE";
 }
 
 TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_Default) {
@@ -870,7 +872,7 @@ TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_Default) {
 }
 
 TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_SX1262) {
-  // Non-START frames on SX1262 should use SX1262_RESPONSE_PREAMBLE, not LOW_POWER_WAKE_PREAMBLE.
+  // Non-START frames on SX1262 should use MOCK_RESPONSE_PREAMBLE, not MOCK_WAKE_PREAMBLE.
   TestableComponent comp;
   comp.initialized_ = true;
   MockRadioSX1262 radio;
@@ -891,8 +893,90 @@ TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_SX1262) {
   comp.send_and_receive_(request, response, FREQ_CH2);
 
   ASSERT_GE(radio.get_tx_configs().size(), 1u);
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, SX1262_RESPONSE_PREAMBLE)
-      << "non-START frame on SX1262 should use SX1262_RESPONSE_PREAMBLE";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, MOCK_RESPONSE_PREAMBLE)
+      << "non-START frame on SX1262 should use MOCK_RESPONSE_PREAMBLE";
+}
+
+namespace {
+
+/// The preamble the first transmit of `request` carries, on a hub driving `radio`.
+uint16_t first_preamble_on(MockRadio &radio, const IoFrame &request) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);
+  return radio.get_tx_configs().empty() ? 0 : radio.get_tx_configs()[0].preamble_len;
+}
+
+}  // namespace
+
+// ADR 0097: every kind of frame carries its preamble as a duration, converted by the radio, so the
+// same setting is fewer programmed bytes on a radio that sends 10 bit periods per byte and lasts
+// the same on air.
+TEST(Exchange, EveryFrameKindCarriesTheSameDurationOnATenBitRadioAsOnARawStreamRadio) {
+  IoFrame normal{};
+  create_execute_position(normal, test::OWN_ID, test::DST_ID, /*low_power=*/false, 100);
+  IoFrame wake{};
+  create_execute_position(wake, test::OWN_ID, test::DST_ID, /*low_power=*/true, 100);
+  IoFrame continuation{};
+  init_frame(continuation, true, false, false, false);
+  set_dst(continuation, test::DST_ID);
+  set_src(continuation, test::OWN_ID);
+  uint8_t payload[16] = {0};
+  set_cmd(continuation, CMD_KEY_TRANSFER, payload, sizeof(payload));
+
+  struct Kind {
+    const char *name;
+    const IoFrame *frame;
+    uint16_t raw_stream_bytes;
+    uint16_t ten_bit_bytes;
+    float ms;
+  };
+  const Kind kinds[] = {
+      {"start frame to a mains target", &normal, 48, 38, START_PREAMBLE_MS},
+      {"start frame to a low-power target", &wake, 2880, 2304, LOW_POWER_WAKE_MS},
+      {"continuation frame", &continuation, 17, 13, RESPONSE_PREAMBLE_MS},
+  };
+  for (const Kind &kind : kinds) {
+    MockRadioSX1262 raw_stream;
+    TenBitPreambleRadio ten_bit;
+    EXPECT_EQ(first_preamble_on(raw_stream, *kind.frame), kind.raw_stream_bytes) << kind.name << " (8 bits/byte)";
+    EXPECT_EQ(first_preamble_on(ten_bit, *kind.frame), kind.ten_bit_bytes) << kind.name << " (10 bits/byte)";
+    RadioTxConfig raw_cfg;
+    raw_cfg.preamble_len = kind.raw_stream_bytes;
+    RadioTxConfig ten_cfg;
+    ten_cfg.preamble_len = kind.ten_bit_bytes;
+    EXPECT_NEAR(raw_stream.tx_air_time_us(13, raw_cfg) / 1000.0, ten_bit.tx_air_time_us(13, ten_cfg) / 1000.0, 1.0)
+        << kind.name << ": the same time on air";
+  }
+}
+
+TEST(Exchange, ATunedStartDurationMovesEveryRadioToItsOwnByteCount) {
+  IoFrame normal{};
+  create_execute_position(normal, test::OWN_ID, test::DST_ID, /*low_power=*/false, 100);
+  // start_preamble_ms is read at send time, so a live change (the Home Assistant number) applies to the next frame.
+  for (const float ms : {5.0F, 20.0F}) {
+    MockRadioSX1262 raw_stream;
+    TenBitPreambleRadio ten_bit;
+    TestableComponent comp;
+    comp.initialized_ = true;
+    comp.tuning_.start_preamble_ms = ms;
+    memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+    memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+    IoFrame response{};
+    comp.radio_ = &raw_stream;
+    comp.send_and_receive_(normal, response, FREQ_CH2);
+    comp.radio_ = &ten_bit;
+    comp.send_and_receive_(normal, response, FREQ_CH2);
+    ASSERT_FALSE(raw_stream.get_tx_configs().empty());
+    ASSERT_FALSE(ten_bit.get_tx_configs().empty());
+    EXPECT_EQ(raw_stream.get_tx_configs()[0].preamble_len, raw_stream.preamble_bytes_for_ms(ms)) << ms;
+    EXPECT_EQ(ten_bit.get_tx_configs()[0].preamble_len, ten_bit.preamble_bytes_for_ms(ms)) << ms;
+    EXPECT_GT(raw_stream.get_tx_configs()[0].preamble_len, ten_bit.get_tx_configs()[0].preamble_len) << ms;
+  }
 }
 
 TEST(Exchange, SendAndReceive_AuthResponseUsesSX1262Preamble) {
@@ -921,13 +1005,13 @@ TEST(Exchange, SendAndReceive_AuthResponseUsesSX1262Preamble) {
   IoFrame response{};
   comp.send_and_receive_(request, response, FREQ_CH2);
 
-  // TX 0 = request (normal_start_preamble — start frame to a non-low-power target)
-  // TX 1 = auth response (should use SX1262_RESPONSE_PREAMBLE)
+  // TX 0 = request (`start_preamble_ms` — start frame to a non-low-power target)
+  // TX 1 = auth response (should use MOCK_RESPONSE_PREAMBLE)
   ASSERT_GE(radio.get_tx_configs().size(), 2u) << "should have sent at least request + auth response";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, comp.tuning_.normal_start_preamble)
-      << "initial request (START, low_power=false) should use normal_start_preamble";
-  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, SX1262_RESPONSE_PREAMBLE)
-      << "auth response on SX1262 should use SX1262_RESPONSE_PREAMBLE";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, mock_preamble_bytes(comp.tuning_.start_preamble_ms))
+      << "initial request (START, low_power=false) should use `start_preamble_ms`";
+  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, MOCK_RESPONSE_PREAMBLE)
+      << "auth response on SX1262 should use MOCK_RESPONSE_PREAMBLE";
 }
 
 TEST(Exchange, SendAndReceive_RequestPreambleOverrideAppliesToRequestOnly) {
@@ -954,8 +1038,8 @@ TEST(Exchange, SendAndReceive_RequestPreambleOverrideAppliesToRequestOnly) {
 
   ASSERT_GE(radio.get_tx_configs().size(), 2u);
   EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, 32u)
-      << "the override replaces the rule's LOW_POWER_WAKE_PREAMBLE for a low-power start frame";
-  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, SX1262_RESPONSE_PREAMBLE)
+      << "the override replaces the rule's MOCK_WAKE_PREAMBLE for a low-power start frame";
+  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, MOCK_RESPONSE_PREAMBLE)
       << "the 0x3D challenge response keeps the driver's response preamble";
 }
 
@@ -996,7 +1080,7 @@ TEST(Exchange, AnswerChallengeSendsExactly0x3DOverTheRequestTranscript) {
       << "answer_challenge must send exactly create_challenge_resp()'s bytes";
 
   ASSERT_EQ(radio.get_tx_configs().size(), 1u);
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, SX1262_RESPONSE_PREAMBLE)
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, MOCK_RESPONSE_PREAMBLE)
       << "answer_challenge should use the driver's response_preamble(), like handle_authentication_() did";
 }
 
@@ -2500,8 +2584,10 @@ TEST(Exchange, ATryThatWouldEndAtTheBudgetIsNotStarted) {
   create_get_status(request, test::OWN_ID, test::DST_ID, false);
   uint8_t raw[64];
   const uint8_t len = serialize(request, raw, sizeof(raw));
-  const uint32_t tx_ms =
-      (io868_tx_air_time_us(TuningConfig{}.normal_start_preamble, len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE) + 999) / 1000;
+  const uint32_t tx_ms = (io868_tx_air_time_us(mock_preamble_bytes(TuningConfig{}.start_preamble_ms), len,
+                                               SOFT_PHY_PREAMBLE_BITS_PER_BYTE) +
+                          999) /
+                         1000;
   ASSERT_GT(tx_ms, 0u);
 
   // The elapsed time alone is well inside the budget, but the third try would end exactly at it:
@@ -3479,17 +3565,17 @@ TEST(WakeBelief, NoProviderKeepsTheWakeUpPreambleOnEveryTry) {
   WakeBeliefRig rig;
   rig.engine.set_target_evidence_provider({});
   EXPECT_EQ(rig.send(low_power_position_request()),
-            (Preambles{LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}));
+            (Preambles{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
 }
 
 TEST(WakeBelief, AwakeTargetGetsShortThenWakeUpTwice) {
   WakeBeliefRig rig;
   rig.moved_ago(1000);
-  const uint16_t short_preamble = rig.tuning.normal_start_preamble;
+  const uint16_t short_preamble = mock_preamble_bytes(rig.tuning.start_preamble_ms);
   EXPECT_EQ(rig.send(low_power_position_request()),
-            (Preambles{short_preamble, LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}));
+            (Preambles{short_preamble, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::AWAKE);
-  EXPECT_EQ(rig.engine.get_debug().last_try_preamble, LOW_POWER_WAKE_PREAMBLE);
+  EXPECT_EQ(rig.engine.get_debug().last_try_preamble, MOCK_WAKE_PREAMBLE);
 }
 
 TEST(WakeBelief, RecentlyHeardTargetWithoutMovingEvidenceIsAsleep) {
@@ -3498,7 +3584,7 @@ TEST(WakeBelief, RecentlyHeardTargetWithoutMovingEvidenceIsAsleep) {
   WakeBeliefRig rig;
   rig.heard_ago(34);
   EXPECT_EQ(rig.send(low_power_position_request()),
-            (Preambles{LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}));
+            (Preambles{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
 }
 
@@ -3507,15 +3593,14 @@ TEST(WakeBelief, AsleepTargetGetsTheWakeUpPreambleOnEveryTry) {
   rig.heard_ago(60000);
   rig.moved_ago(LOW_POWER_MAX_TRAVEL_MS + 1000);
   EXPECT_EQ(rig.send(low_power_position_request()),
-            (Preambles{LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}));
+            (Preambles{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
 }
 
 TEST(WakeBelief, StopIsAwakeEvenWithoutEvidence) {
   WakeBeliefRig rig;
-  const uint16_t short_preamble = rig.tuning.normal_start_preamble;
-  EXPECT_EQ(rig.send(low_power_stop_request()),
-            (Preambles{short_preamble, LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}));
+  const uint16_t short_preamble = mock_preamble_bytes(rig.tuning.start_preamble_ms);
+  EXPECT_EQ(rig.send(low_power_stop_request()), (Preambles{short_preamble, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
 }
 
 TEST(WakeBelief, UnknownDestinationIsAsleep) {
@@ -3523,7 +3608,7 @@ TEST(WakeBelief, UnknownDestinationIsAsleep) {
   rig.moved_ago(1000);  // would be AWAKE, but the provider says it has never heard of this node
   rig.evidence_known = false;
   EXPECT_EQ(rig.send(low_power_position_request()),
-            (Preambles{LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}));
+            (Preambles{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
 }
 
@@ -3532,7 +3617,7 @@ TEST(WakeBelief, KillSwitchRestoresTheWakeUpPreambleOnEveryTry) {
   rig.moved_ago(1000);
   rig.tuning.low_power_wake_belief = false;
   EXPECT_EQ(rig.send(low_power_position_request()),
-            (Preambles{LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}));
+            (Preambles{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.provider_calls, 0) << "with the switch off the evidence is never even looked up";
 }
 
@@ -3577,7 +3662,7 @@ TEST(WakeBelief, SwitchOffKeepsASingleTryExchangeOnTheWakeUpPreamble) {
   WakeBeliefRig rig;
   rig.moved_ago(1000);
   rig.tuning.low_power_wake_belief = false;
-  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{LOW_POWER_WAKE_PREAMBLE}));
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief_use, ExchangeEngine::WakeBeliefUse::SWITCHED_OFF);
 }
 
@@ -3593,7 +3678,7 @@ TEST(WakeBelief, SkipReasonLabelsAreDistinctAndReadable) {
 TEST(WakeBelief, AlwaysAliveTargetKeepsTheNormalStartPreambleOnEveryTry) {
   WakeBeliefRig rig;
   rig.moved_ago(1000);
-  const uint16_t short_preamble = rig.tuning.normal_start_preamble;
+  const uint16_t short_preamble = mock_preamble_bytes(rig.tuning.start_preamble_ms);
   EXPECT_EQ(rig.send(low_power_position_request(/*low_power=*/false)),
             (Preambles{short_preamble, short_preamble, short_preamble}));
   EXPECT_EQ(rig.provider_calls, 0) << "only a low-power start frame has a wake-up preamble to reorder";
@@ -3626,7 +3711,8 @@ TEST(WakeBelief, SingleTryExchangeSendsTheBeliefsFirstTry) {
   // wake-up preamble, so it leads with the same preamble a multi-try exchange would.
   WakeBeliefRig rig;
   rig.moved_ago(1000);
-  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{rig.tuning.normal_start_preamble}));
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1),
+            (Preambles{mock_preamble_bytes(rig.tuning.start_preamble_ms)}));
   EXPECT_EQ(rig.provider_calls, 1);
   EXPECT_EQ(rig.engine.get_debug().wake_belief_use, ExchangeEngine::WakeBeliefUse::APPLIED);
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::AWAKE);
@@ -3637,7 +3723,7 @@ TEST(WakeBelief, SingleTryExchangeToARecentlyHeardTargetKeepsTheWakeUpPreamble) 
   // heard a second ago. The receiver is at rest, where only the wake-up preamble reaches it.
   WakeBeliefRig rig;
   rig.heard_ago(1000);
-  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{LOW_POWER_WAKE_PREAMBLE}));
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
 }
 
@@ -3645,19 +3731,19 @@ TEST(WakeBelief, TwoTryExchangeStillFollowsThePlan) {
   WakeBeliefRig rig;
   rig.moved_ago(1000);
   EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/2),
-            (Preambles{rig.tuning.normal_start_preamble, LOW_POWER_WAKE_PREAMBLE}));
+            (Preambles{mock_preamble_bytes(rig.tuning.start_preamble_ms), MOCK_WAKE_PREAMBLE}));
 }
 
 TEST(WakeBelief, TunedWakePreambleReplacesLongPreamble) {
   WakeBeliefRig rig;
-  rig.tuning.low_power_wake_preamble = 2048;
+  rig.tuning.low_power_wake_ms = mock_preamble_ms(2048);
   EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{2048, 2048, 2048}));
 }
 
 TEST(WakeBelief, TunedWakePreambleAppliesWithTheSwitchOff) {
   WakeBeliefRig rig;
   rig.tuning.low_power_wake_belief = false;
-  rig.tuning.low_power_wake_preamble = 1536;
+  rig.tuning.low_power_wake_ms = mock_preamble_ms(1536);
   EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{1536, 1536, 1536}));
 }
 
@@ -3741,8 +3827,8 @@ TEST(WakeBelief, ReplyOnTheWakeUpTryEndsTheExchange) {
 
   EXPECT_EQ(outcome, ExchangeOutcome::SUCCESS_WITH_RESPONSE);
   ASSERT_EQ(rig.radio.get_tx_configs().size(), 2u);
-  EXPECT_EQ(rig.radio.get_tx_configs()[0].preamble_len, rig.tuning.normal_start_preamble);
-  EXPECT_EQ(rig.radio.get_tx_configs()[1].preamble_len, LOW_POWER_WAKE_PREAMBLE);
+  EXPECT_EQ(rig.radio.get_tx_configs()[0].preamble_len, mock_preamble_bytes(rig.tuning.start_preamble_ms));
+  EXPECT_EQ(rig.radio.get_tx_configs()[1].preamble_len, MOCK_WAKE_PREAMBLE);
 }
 
 TEST(WakeBelief, DiscoverConfirmStyleCallersStillGetTheAsleepRule) {
@@ -3750,7 +3836,7 @@ TEST(WakeBelief, DiscoverConfirmStyleCallersStillGetTheAsleepRule) {
   // it never consults a belief, whatever the evidence says.
   WakeBeliefRig rig;
   rig.moved_ago(1000);
-  EXPECT_EQ(rig.engine.request_preamble_for(low_power_position_request()), LOW_POWER_WAKE_PREAMBLE);
+  EXPECT_EQ(rig.engine.request_preamble_for(low_power_position_request()), MOCK_WAKE_PREAMBLE);
   EXPECT_EQ(rig.provider_calls, 0);
 }
 
@@ -3876,7 +3962,7 @@ TEST(Exchange, TransmitFrameStampsTheWakeLevel) {
   continuation.ctrl0 &= static_cast<uint8_t>(~CTRL0_START);
 
   ASSERT_TRUE(comp.exchange_engine_.transmit_frame(start, FREQ_CH2, LONG_PREAMBLE));
-  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(start, FREQ_CH2, NORMAL_START_PREAMBLE));
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(start, FREQ_CH2, MOCK_START_PREAMBLE));
   ASSERT_TRUE(comp.exchange_engine_.transmit_frame(continuation, FREQ_CH2, LONG_PREAMBLE));
 
   ASSERT_EQ(radio.get_tx_configs().size(), 3u);
@@ -4281,7 +4367,8 @@ struct PlanRig {
     create_get_status(request, test::OWN_ID, test::DST_ID, low_power);
     uint8_t raw[64];
     const uint8_t len = serialize(request, raw, sizeof(raw));
-    const uint16_t preamble = low_power ? tuning.low_power_wake_preamble : tuning.normal_start_preamble;
+    const uint16_t preamble =
+        low_power ? mock_preamble_bytes(tuning.low_power_wake_ms) : mock_preamble_bytes(tuning.start_preamble_ms);
     return (io868_tx_air_time_us(preamble, len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE) + 999) / 1000;
   }
 
@@ -4348,21 +4435,21 @@ TEST(Exchange, SettlingReadToASilentLowPowerTargetListensTheLowPowerWindowOnEver
 }
 
 TEST(Exchange, ASettlingReadToASilentLowPowerTargetRunsThreeWakeUpAttemptsPastTheBudgetAtTheDefaultWakeUp) {
-  // ADR 0095: at the 2048-byte default one wake-up attempt and its window take about a second, so
-  // three of them run past the 2500 ms budget, and the exchange ends after the third.
+  // ADR 0095, ADR 0097: at the 600 ms default one wake-up attempt and its window take a little over
+  // a second, so three of them run past the 2500 ms budget, and the exchange ends after the third.
   PlanRig rig;
-  ASSERT_EQ(rig.tuning.low_power_wake_preamble, LOW_POWER_WAKE_PREAMBLE);
+  ASSERT_EQ(mock_preamble_bytes(rig.tuning.low_power_wake_ms), MOCK_WAKE_PREAMBLE);
   const uint32_t blocked_ms = rig.run_silent_poll(read_of(decisions::ReadKind::SETTLING), true);
 
   EXPECT_EQ(rig.radio.get_send_count(), LOW_POWER_SETTLING_ATTEMPTS);
   EXPECT_GT(blocked_ms, rig.tuning.exchange_total_budget_ms) << "the exchange does run past the budget";
-  EXPECT_LT(blocked_ms, 3300u) << "about 3.2 s, the three attempts and nothing more";
+  EXPECT_LT(blocked_ms, 3600u) << "about 3.5 s, the three attempts and nothing more";
 }
 
 TEST(Exchange, ACommandToASilentLowPowerTargetKeepsThreeAttemptsAtEveryWakeUpLength) {
   for (const uint16_t wake_preamble : {1024, 2048, 4096}) {
     PlanRig rig;
-    rig.tuning.low_power_wake_preamble = wake_preamble;
+    rig.tuning.low_power_wake_ms = mock_preamble_ms(wake_preamble);
     rig.run_silent_poll(read_of(decisions::ReadKind::COMMAND), true);
     EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_RETRY_COUNT) << "wake-up " << wake_preamble << " B";
   }
@@ -4755,7 +4842,9 @@ struct ShortLeadRig : PlanRig {
     IoFrame request = status_read();
     uint8_t raw[64];
     const uint8_t len = serialize(request, raw, sizeof(raw));
-    return (io868_tx_air_time_us(tuning.normal_start_preamble, len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE) + 999) / 1000;
+    return (io868_tx_air_time_us(mock_preamble_bytes(tuning.start_preamble_ms), len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE) +
+            999) /
+           1000;
   }
 
   std::vector<uint16_t> preambles() const {
@@ -4791,8 +4880,8 @@ TEST(ShortLead, AnUnknownLowPowerSettlingReadLeadsWithOneShortAttemptThenTheWake
 
   EXPECT_EQ(rig.settling_read(), ExchangeOutcome::FAILED);
 
-  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{rig.tuning.normal_start_preamble, LOW_POWER_WAKE_PREAMBLE,
-                                                    LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}));
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{mock_preamble_bytes(rig.tuning.start_preamble_ms),
+                                                    MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   const auto &waits = rig.radio.wait_timeouts();
   ASSERT_EQ(waits.size(), plan.max_attempts);
   EXPECT_EQ(waits[0], plan.window_for_attempt(1, plan.max_attempts));
@@ -4807,14 +4896,13 @@ TEST(ShortLead, AReadMarkedStateUnknownLeadsShortDespiteARecentStoppedReport) {
   rig.evidence.last_status_ms = esphome::test_clock::peek_ms() - 1000;
 
   EXPECT_EQ(rig.settling_read(), ExchangeOutcome::FAILED);
-  EXPECT_EQ(rig.preambles(),
-            (std::vector<uint16_t>{LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}))
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}))
       << "unmarked, the read believes the target asleep and leads with no short attempt";
 
   rig.radio.clear();
   EXPECT_EQ(rig.settling_read(/*state_unknown=*/true), ExchangeOutcome::FAILED);
-  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{rig.tuning.normal_start_preamble, LOW_POWER_WAKE_PREAMBLE,
-                                                    LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}));
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{mock_preamble_bytes(rig.tuning.start_preamble_ms),
+                                                    MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::UNKNOWN)
       << "the exchange resolves the belief the mark asks for";
 }
@@ -4829,8 +4917,8 @@ TEST(ShortLead, FourAttemptsToASilentTargetRunPastTheDefaultBudgetAndNoFurther) 
 
   EXPECT_EQ(rig.radio.get_send_count(), static_cast<int>(plan.max_attempts))
       << "the guard admits every attempt the plan promised, the wake-up attempts included";
-  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{rig.tuning.normal_start_preamble, LOW_POWER_WAKE_PREAMBLE,
-                                                    LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}));
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{mock_preamble_bytes(rig.tuning.start_preamble_ms),
+                                                    MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   const auto &waits = rig.radio.wait_timeouts();
   ASSERT_EQ(waits.size(), 4u);
   EXPECT_EQ(waits[0], LOW_POWER_SHORT_LEAD_WINDOW_MS) << "the lead listens briefly";
@@ -4867,7 +4955,7 @@ TEST(ShortLead, ACoverAnsweringOnlyTheShortPreambleIsReachedOnTheLead) {
   EXPECT_EQ(rig.settling_read(), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
 
   EXPECT_EQ(rig.radio.get_send_count(), 1);
-  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{rig.tuning.normal_start_preamble}));
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{mock_preamble_bytes(rig.tuning.start_preamble_ms)}));
 }
 
 TEST(ShortLead, ACoverAnsweringOnlyTheWakeUpPreambleIsReachedOnTheSecondAttempt) {
@@ -4879,7 +4967,8 @@ TEST(ShortLead, ACoverAnsweringOnlyTheWakeUpPreambleIsReachedOnTheSecondAttempt)
   EXPECT_EQ(rig.settling_read(), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
 
   EXPECT_EQ(rig.radio.get_send_count(), 2);
-  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{rig.tuning.normal_start_preamble, LOW_POWER_WAKE_PREAMBLE}));
+  EXPECT_EQ(rig.preambles(),
+            (std::vector<uint16_t>{mock_preamble_bytes(rig.tuning.start_preamble_ms), MOCK_WAKE_PREAMBLE}));
 }
 
 TEST(ShortLead, ASilentLeadSpendsNoEvidence) {
@@ -4902,7 +4991,7 @@ TEST(ShortLead, ASingleTryReadKeepsTheWakeUpPreamble) {
                                         read_of(decisions::ReadKind::PROGRESS)),
             ExchangeOutcome::FAILED);
 
-  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{LOW_POWER_WAKE_PREAMBLE}));
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::UNKNOWN);
 }
 
@@ -4913,8 +5002,7 @@ TEST(ShortLead, ACountedStatusReadKeepsTheWakeUpPreambleOnEveryTry) {
   EXPECT_EQ(rig.engine.send_and_receive(ShortLeadRig::status_read(), response, FREQ_CH2, EXCHANGE_RETRY_COUNT),
             ExchangeOutcome::FAILED);
 
-  EXPECT_EQ(rig.preambles(),
-            (std::vector<uint16_t>{LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}))
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}))
       << "a caller that names only a number of tries gets no lead";
 }
 
@@ -4923,8 +5011,7 @@ TEST(ShortLead, NewsOfTheReceiversStateLeavesNoLead) {
 
   rig.evidence.last_status_ms = esphome::millis() - 1000;  // a status report a second ago: at rest, known
   EXPECT_EQ(rig.settling_read(), ExchangeOutcome::FAILED);
-  EXPECT_EQ(rig.preambles(),
-            (std::vector<uint16_t>{LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}));
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
 
   rig.radio.clear();
   rig.evidence.last_status_ms = 0;
@@ -4938,9 +5025,8 @@ TEST(ShortLead, NewsOfTheReceiversStateLeavesNoLead) {
 TEST(ShortLead, AFixedPreambleOrACommandHasNoLead) {
   ShortLeadRig rig;
 
-  EXPECT_EQ(rig.settling_read(/*state_unknown=*/false, LOW_POWER_WAKE_PREAMBLE), ExchangeOutcome::FAILED);
-  EXPECT_EQ(rig.preambles(),
-            (std::vector<uint16_t>{LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}))
+  EXPECT_EQ(rig.settling_read(/*state_unknown=*/false, MOCK_WAKE_PREAMBLE), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}))
       << "the read at a cover's predicted end fixes the wake-up preamble";
 
   rig.radio.clear();
@@ -4951,7 +5037,7 @@ TEST(ShortLead, AFixedPreambleOrACommandHasNoLead) {
             ExchangeOutcome::FAILED);
   EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_RETRY_COUNT);
   for (const auto &config : rig.radio.get_tx_configs())
-    EXPECT_EQ(config.preamble_len, LOW_POWER_WAKE_PREAMBLE);
+    EXPECT_EQ(config.preamble_len, MOCK_WAKE_PREAMBLE);
 }
 
 TEST(ShortLead, ANonLowPowerTargetHasNoLead) {
@@ -4964,7 +5050,7 @@ TEST(ShortLead, ANonLowPowerTargetHasNoLead) {
             ExchangeOutcome::FAILED);
 
   for (const auto &config : rig.radio.get_tx_configs())
-    EXPECT_EQ(config.preamble_len, rig.tuning.normal_start_preamble);
+    EXPECT_EQ(config.preamble_len, mock_preamble_bytes(rig.tuning.start_preamble_ms));
 }
 
 TEST(ShortLead, SwitchedOffWithTheWakeBeliefTuning) {
@@ -4973,8 +5059,7 @@ TEST(ShortLead, SwitchedOffWithTheWakeBeliefTuning) {
 
   EXPECT_EQ(rig.settling_read(), ExchangeOutcome::FAILED);
 
-  EXPECT_EQ(rig.preambles(),
-            (std::vector<uint16_t>{LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE, LOW_POWER_WAKE_PREAMBLE}))
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}))
       << "with the belief off every try keeps the wake-up preamble";
 }
 

@@ -300,9 +300,10 @@ void KeyExtractionResponder::schedule_discover_reply_(const IoFrame &search, con
     // fresh throwaway ID, state back to ARMED_IDLE), this answer is stale.
     if (this->key_extraction_ctx_.state != pairing_responder::ResponderState::SENT_DISCOVER_RESP)
       return;
-    // The one reply a hopping/scanning peer has to catch cold, so `cold_broadcast_reply_preamble`:
+    // The one reply a hopping/scanning peer has to catch cold, so `cold_broadcast_reply_preamble_ms`:
     // long enough for that, much shorter than LONG_PREAMBLE so the loop is not blocked.
-    this->transmit_(this->pending_discover_resp_, freq, this->tuning_->cold_broadcast_reply_preamble);
+    this->transmit_(this->pending_discover_resp_, freq,
+                    (*this->radio_)->preamble_bytes_for_ms(this->tuning_->cold_broadcast_reply_preamble_ms));
   });
   // Hold the radio (and defer background polls) through the slot and the confirm that follows it.
   this->key_extraction_hold_deadline_ms_ = millis() + delay_ms + KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS;

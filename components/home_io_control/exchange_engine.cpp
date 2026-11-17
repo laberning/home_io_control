@@ -704,7 +704,7 @@ uint16_t ExchangeEngine::try_preamble_(const decisions::AttemptPlan &plan, const
   // The plan's short lead is try 1 (a receiver in an unknown state, WakeBelief::UNKNOWN); every later
   // try follows the belief.
   if (plan.short_lead && try_index == 1)
-    return this->tuning_->normal_start_preamble;
+    return this->start_preamble();
   return preamble_plan.for_try(try_index);
 }
 
@@ -745,8 +745,18 @@ uint16_t ExchangeEngine::request_preamble_for(const IoFrame &request) const {
   // short response preamble, not be lengthened.
   if (!is_start(request))
     return (*this->radio_ptr_)->response_preamble();
-  return is_low_power_start(request) ? this->tuning_->low_power_wake_preamble : this->tuning_->normal_start_preamble;
+  return is_low_power_start(request) ? this->wake_preamble() : this->start_preamble();
 }
+
+uint16_t ExchangeEngine::preamble_bytes_for_ms(float ms) const {
+  return (*this->radio_ptr_)->preamble_bytes_for_ms(ms);
+}
+
+uint16_t ExchangeEngine::start_preamble() const {
+  return this->preamble_bytes_for_ms(this->tuning_->start_preamble_ms);
+}
+
+uint16_t ExchangeEngine::wake_preamble() const { return this->preamble_bytes_for_ms(this->tuning_->low_power_wake_ms); }
 
 const char *ExchangeEngine::wake_belief_use_name(WakeBeliefUse use) {
   switch (use) {
@@ -793,8 +803,8 @@ ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFram
   // A destination the hub has no record of has no evidence: treat it as asleep, the safe default.
   decisions::TargetEvidence evidence{};
   const bool known = this->target_evidence_provider_(request.dst, evidence);
-  plan.short_preamble = this->tuning_->normal_start_preamble;
-  plan.wake_preamble = this->tuning_->low_power_wake_preamble;
+  plan.short_preamble = this->start_preamble();
+  plan.wake_preamble = this->wake_preamble();
   plan.last_seen_ms = known ? evidence.last_seen_ms : 0;
   plan.belief = known ? decisions::wake_belief(evidence, millis(), decisions::is_stop_request(request),
                                                request.cmd == CMD_PRIVATE, state_unknown)

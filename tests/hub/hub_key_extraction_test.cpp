@@ -182,7 +182,7 @@ TEST(HubKeyExtraction, ThrowawayIdGenerationFallsBackWhenEveryCandidateCollides)
 // SHORT_PREAMBLE(8) was too short for a hopping receiver to reliably catch from a
 // slower-turnaround chip, and a flat LONG_PREAMBLE(1024) on every reply blocked the main loop
 // long enough to blow through the hub's tight per-try wait windows on both chips. That is exactly
-// why 0x29 needs its own field instead of reusing response_preamble(): SX1262_RESPONSE_PREAMBLE ==
+// why 0x29 needs its own field instead of reusing response_preamble(): MOCK_RESPONSE_PREAMBLE ==
 // SHORT_PREAMBLE(8), so response_preamble() on SX1262/LR1121 already equals the value hardware
 // testing found too short for a hopping catch.
 // ========================================================================================
@@ -200,7 +200,7 @@ TEST(HubKeyExtraction, DiscoveryReplyUsesColdBroadcastPreambleNotFixedShortConst
 
   ASSERT_EQ(radio.get_tx_configs().size(), 1u) << "0x29 is sent once, on one channel";
   for (const auto &tx_config : radio.get_tx_configs()) {
-    EXPECT_EQ(tx_config.preamble_len, comp.tuning_.cold_broadcast_reply_preamble)
+    EXPECT_EQ(tx_config.preamble_len, mock_preamble_bytes(comp.tuning_.cold_broadcast_reply_preamble_ms))
         << "discovery reply (start=true) must use cold_broadcast_reply_preamble, not "
            "response_preamble() or a fixed constant";
     EXPECT_NE(tx_config.preamble_len, radio.response_preamble())
@@ -381,9 +381,9 @@ TEST(HubKeyExtraction, NonDefaultColdBroadcastReplyPreambleChangesDiscoveryReply
   comp.set_key_extraction_armed(true);
 
   constexpr uint16_t kNonDefaultPreamble = 150;
-  ASSERT_NE(kNonDefaultPreamble, comp.tuning_.cold_broadcast_reply_preamble)
+  ASSERT_NE(kNonDefaultPreamble, mock_preamble_bytes(comp.tuning_.cold_broadcast_reply_preamble_ms))
       << "test value must actually differ from the default to prove anything";
-  comp.tuning_.cold_broadcast_reply_preamble = kNonDefaultPreamble;
+  comp.tuning_.cold_broadcast_reply_preamble_ms = mock_preamble_ms(kNonDefaultPreamble);
 
   IoFrame discover{};
   create_discover(discover, FOREIGN_HUB_ID);

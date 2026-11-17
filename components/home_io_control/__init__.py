@@ -274,4 +274,6 @@ async def to_code(config):
         await create_lr1121_firmware_update(config, var)
 
     if tuning_module.CONF_TUNING in config:
-        await tuning_module.to_code(config[tuning_module.CONF_TUNING], var)
+        await tuning_module.to_code(
+            config[tuning_module.CONF_TUNING], var, config[CONF_RADIO_TYPE]
+        )

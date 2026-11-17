@@ -192,11 +192,11 @@ is a general starting point, not a guarantee — different devices need differen
 
 5. **If the device is confirmed genuinely unpaired and still doesn't answer** any of the above,
    change the discovery broadcast's preamble — see
-   [`pairing_discovery_preamble`](configuration/tuning.md#pairing_discovery_preamble). Discovery
+   [`pairing_discovery_preamble_ms`](configuration/tuning.md#pairing_discovery_preamble_ms). Discovery
    goes out behind the short start preamble by default, which VELUX shutters answer. A device that
    may be a duty-cycled receiver can need the long wake-up burst instead:
    ```yaml
-   pairing_discovery_preamble: 1024   # or go shorter: 8
+   pairing_discovery_preamble_ms: 300   # or go shorter: 2
    ```
 
 6. **As a last resort, try the ACK-capable flag.** Real VELUX hubs send their discovery broadcast
@@ -220,18 +220,18 @@ is a general starting point, not a guarantee — different devices need differen
 
 8. **If discovery succeeds but key exchange fails** (`saw_challenge=0`, or the exchange stops
    after discovery), give the receiver more margin around the turnaround (SX1262 shown; on
-   LR1121 boards use the `lr1121_*` equivalents instead). If the device's replies are missed, widen
+   LR1121 boards use the `lr1121_*` equivalents of the radio-specific keys instead). If the device's replies are missed, widen
    the receive filter; only a noisy install gains from narrowing it. See
    [`sx1262_rx_bandwidth`](configuration/tuning.md#sx1262_rx_bandwidth):
    ```yaml
    sx1262_post_tx_settle_us: 750    # then 1000
    sx1262_rx_bandwidth: 156.2       # then 187.2; 78.2 or 58.6 only to reject noise
-   sx1262_response_preamble: 16     # then 24
+   response_preamble_ms: 5          # then 7
    ```
 
    A longer response preamble also delays the hub's answer to the device's challenge. Some
    devices reject a late answer: a Somfy MOTO 1000 io garage drive ignored all six test commands
-   with `sx1262_response_preamble: 32` ([issue #163](https://github.com/laberning/home_io_control/issues/163)).
+   behind a response preamble of about 6.7 ms (32 bytes on its SX1262 board) ([issue #163](https://github.com/laberning/home_io_control/issues/163)).
    If commands stop working after you raise it, set it back.
 
 9. **If the logs show `channel busy` on a quiet channel** (`Try N ended: channel busy`), the hub is

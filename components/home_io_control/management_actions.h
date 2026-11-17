@@ -182,7 +182,7 @@ class ManagementActions {
   /// Sweeps two passes, low-power first, then always-alive — six attempts total (three channels
   /// per pass): CH2/CH1/CH3 with `CTRL1 = LOW_POWER | ACK` and the wake-up preamble (the header a real
   /// VELUX KLR300 uses for its own roll-call, whose low-power shutters answered it), then
-  /// CH2/CH1/CH3 with `CTRL1 = 0x00` and the tunable `normal_start_preamble`. Low-power first so a sleeper that answers
+  /// CH2/CH1/CH3 with `CTRL1 = 0x00` and the tunable `start_preamble_ms`. Low-power first so a sleeper that answers
   /// late is still collected by the later always-alive windows; in the opposite order a late
   /// low-power reply would fall off the end of the scan. The low-power pass listens on all three
   /// channels including the one it transmitted on (real VELUX low-power replies have been

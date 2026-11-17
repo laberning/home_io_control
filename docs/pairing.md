@@ -120,11 +120,11 @@ see [Radio tuning](configuration/tuning.md).
 still common to need two or three presses because the timing between PROG and the button matters.
 Press PROG again and repeat before you change any settings.
 
-Discovery goes out behind a short preamble, the same length a directed command to an always-awake
+Discovery goes out behind a short preamble, the same duration a directed command to an always-awake
 device gets, because some devices (VELUX solar roller shutters among them) answer nothing else. The
 hub uses that length for the pairing frames that follow as well. A device that needs the 1024-byte
 wake-up burst takes it through
-[`pairing_discovery_preamble`](configuration/tuning.md#pairing_discovery_preamble).
+[`pairing_discovery_preamble_ms`](configuration/tuning.md#pairing_discovery_preamble_ms).
 
 **If the device never answers**, read
 [The device is never found](troubleshooting.md#the-device-is-never-found) before touching
@@ -270,9 +270,8 @@ Unknown:
   roll-call. Use Discover & Pair for that, and the scan to check on devices you already have.
   [`pairing_discovery_commands`](configuration/tuning.md#pairing_discovery_commands) explains why
   0x2A is deliberately not a discovery option.
-- **A scan puts roughly 1.3 seconds of traffic on air** (1.6 seconds on an SX1276 board, which
-  sends each preamble byte with a start and a stop bit), dominated by the low-power pass's long
-  wake-up preambles ([`low_power_wake_preamble`](configuration/tuning.md#low_power_wake_preamble)). It is a manually triggered action — do not call it from a tight automation
+- **A scan puts roughly 1.9 seconds of traffic on air** (the same on every board), dominated by the
+  low-power pass's long wake-up preambles ([`low_power_wake_ms`](configuration/tuning.md#low_power_wake_ms)). It is a manually triggered action — do not call it from a tight automation
   loop.
 
 ### Notes on the Scan Paired Devices button
