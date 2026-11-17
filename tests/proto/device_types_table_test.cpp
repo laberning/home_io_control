@@ -405,7 +405,7 @@ TEST(DeviceTypesTableFeatures,
     const HeatingProfile *profile = find_heating_profile(row.type, row.subtype, DeviceModel::NONE);
     const bool profile_has_window = profile != nullptr &&
                                     contains(profile->poll_registers, HeatingFunction::WINDOW_OPEN) &&
-                                    contains(profile->boot_registers, HeatingFunction::SET_OPEN_WINDOW_DETECTION);
+                                    contains(profile->extra_poll_registers, HeatingFunction::SET_OPEN_WINDOW_DETECTION);
     EXPECT_EQ(has_feature(row.features, device_feature::WINDOW_COMPANIONS), profile_has_window)
         << format_device_ids(row.type, row.subtype);
   });

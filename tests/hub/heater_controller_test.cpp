@@ -64,14 +64,16 @@ bool run_heating_command_with_reply(uint8_t cmd, const std::vector<uint8_t> &pay
 /// Register low byte of a sent CMD_WRITE_PRIVATE frame (payload `0C <dir> 01 <reg>` starts at offset 9).
 uint8_t sent_register(const std::vector<uint8_t> &tx) { return tx.at(12); }
 
-/// Queue the replies of one answered register-heater poll of the radiator (the five core registers).
+/// Queue the replies of one answered register-heater poll of the radiator (the five poll registers, then the
+/// open-window-detection setting).
 void queue_radiator_poll(HeaterControllerFixture &fx, uint8_t room_hi, uint8_t room_lo, uint8_t regulator,
-                         uint8_t window) {
+                         uint8_t window, uint8_t detection = 0x01) {
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, room_hi, room_lo});
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x00, 0x01});
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x17, regulator});
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x0E, window});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x06, detection});
 }
 
 /// The payload bytes (from wire offset 9) of a sent frame.
@@ -1515,7 +1517,7 @@ TEST(HeaterController, PollsIsTrueForARegisterHeaterAWaterHeaterAndAStatusReadHe
   EXPECT_FALSE(HeaterController::polls(*make_cover(cover)));
 }
 
-TEST(HeaterController, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnce) {
+TEST(HeaterController, HeaterPollReadsTheDetectionSettingEveryPollAndTheMaximumAndModelCheckOnce) {
   HeaterControllerFixture fx;
   auto *dev = make_heater(fx);
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});  // 20.75 C
@@ -1523,8 +1525,8 @@ TEST(HeaterController, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnc
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x00, 0x01});        // manual
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x17, 0x02});        // heating
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x0E, 0x01});        // window open
-  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x02, 0x18, 0x01});  // 28.0 C
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x06, 0x01});        // detection on
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x02, 0x18, 0x01});  // 28.0 C
   // The one-off model check: a model name (synthetic), and the towel-dryer mode register answered empty.
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x19, 'R', 'A', 'D', 'I', 'A', 'T'});
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x36});
@@ -1532,7 +1534,7 @@ TEST(HeaterController, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnc
   EXPECT_TRUE(fx.controller.poll("ABC123")) << "a heater is polled over its registers, not with 0x03";
 
   ASSERT_EQ(fx.radio.get_sent_data().size(), 9u);
-  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x02, 0x06, 0x19, 0x36};
+  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x02, 0x19, 0x36};
   for (size_t i = 0; i < 9; i++)
     EXPECT_EQ(sent_register(fx.radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
   EXPECT_TRUE(dev->model_checked) << "both model-check reads were answered";
@@ -1545,14 +1547,42 @@ TEST(HeaterController, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnc
   EXPECT_EQ(dev->heating.open_window_detection, 1);
   EXPECT_FALSE(fx.poll_policy.is_tracking_active("ABC123", esphome::millis())) << "a good poll closes its retry window";
 
-  // The maximum, the detection setting and the model check run once: the next poll asks for the five
-  // registers only.
+  // The maximum and the model check run once; the detection setting is read again, and a value the
+  // vendor app changed in between reaches the readings (the switch state).
   const size_t sent_before = fx.radio.get_sent_data().size();
-  queue_radiator_poll(fx, 0x59, 0x06, 0x01, 0x00);
+  queue_radiator_poll(fx, 0x59, 0x06, 0x01, 0x00, 0x00);
   EXPECT_TRUE(fx.controller.poll("ABC123"));
-  EXPECT_EQ(fx.radio.get_sent_data().size() - sent_before, 5u);
+  ASSERT_EQ(fx.radio.get_sent_data().size() - sent_before, 6u);
+  for (size_t i = sent_before; i < fx.radio.get_sent_data().size(); i++)
+    EXPECT_NE(sent_register(fx.radio.get_sent_data()[i]), 0x02) << "the maximum is not read again";
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data().back()), 0x06);
   EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 16.25F);
   EXPECT_EQ(dev->heating.window_open, 0);
+  EXPECT_FLOAT_EQ(dev->heating.max_setpoint_c, 28.0F);
+  EXPECT_EQ(dev->heating.open_window_detection, 0) << "a change from the vendor app shows on the next poll";
+}
+
+TEST(HeaterController, AMissedDetectionReadKeepsTheSwitchAndDoesNotFailThePoll) {
+  HeaterControllerFixture fx;
+  auto *dev = make_heater(fx);
+  // Boot registers and model check done, so the poll is the five registers and the detection setting.
+  dev->model_checked = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  dev->heating.open_window_detection = 1;
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});  // 20.75 C
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x00, 0x01});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x17, 0x02});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x0E, 0x00});
+  // Nothing queued for 0x0106: the detection setting never answers.
+
+  EXPECT_TRUE(fx.controller.poll("ABC123")) << "a missed setting costs a read, not the poll";
+
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data().back()), 0x06) << "the setting was asked for";
+  EXPECT_EQ(dev->heating.open_window_detection, 1) << "and the switch keeps its state";
+  EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 20.75F);
+  EXPECT_TRUE(fx.backoffs.empty());
+  EXPECT_EQ(fx.poll_policy.get_status_poll_failures("ABC123"), 0u);
 }
 
 /// Queue the replies of a towel dryer's five core registers (room, setpoint, mode, temporary state, rate).

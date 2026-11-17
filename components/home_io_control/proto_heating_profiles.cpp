@@ -90,20 +90,32 @@ constexpr HeatingFunction SETPOINT_HEATER_POLL[] = {
     HeatingFunction::REGULATOR_STATE,  HeatingFunction::WINDOW_OPEN,
 };
 
+/// The open-window-detection setting, read on every poll rather than once: the heater's own controller
+/// changes it (issue #222: a change from the vendor app). A missed read keeps the switch as it was and does
+/// not fail the poll, so the setting costs no poll the five registers above delivered.
+constexpr HeatingFunction SETPOINT_HEATER_EXTRA_POLL[] = {
+    HeatingFunction::SET_OPEN_WINDOW_DETECTION,
+};
+
 /// Properties and settings that change rarely: read until they have been read once.
 constexpr HeatingFunction SETPOINT_HEATER_BOOT[] = {
     HeatingFunction::MAX_SETPOINT,
-    HeatingFunction::SET_OPEN_WINDOW_DETECTION,
 };
 
 // === Heater with a night light (52/1, model HEATER_WITH_LIGHT): the radiator plus its light ===
 
-/// The light's state and brightness, read after the radiator's own poll. Both change from the heater's
-/// own controller (issue #222: a Cozytouch switches the light), so they are read on every poll, not once.
+/// The radiator's own extra reads, then the light's state and brightness. Both light registers change from
+/// the heater's own controller (issue #222: a Cozytouch switches the light), so they are read on every
+/// poll, not once.
 constexpr HeatingFunction HEATER_WITH_LIGHT_EXTRA_POLL[] = {
+    HeatingFunction::SET_OPEN_WINDOW_DETECTION,
     HeatingFunction::NIGHT_LIGHT,
     HeatingFunction::NIGHT_LIGHT_BRIGHTNESS,
 };
+
+static_assert(std::ranges::equal(SETPOINT_HEATER_EXTRA_POLL,
+                                 std::span(HEATER_WITH_LIGHT_EXTRA_POLL).first(std::size(SETPOINT_HEATER_EXTRA_POLL))),
+              "the heater with a light reads the radiator's extra registers first");
 
 // === Towel dryer (52/1, model TOWEL_DRYER): private registers of its own ===
 //
@@ -336,6 +348,7 @@ constexpr HeatingProfile SETPOINT_HEATER_PROFILE = {
     .observed = SETPOINT_HEATER_OBSERVED,
     .poll_registers = SETPOINT_HEATER_POLL,
     .boot_registers = SETPOINT_HEATER_BOOT,
+    .extra_poll_registers = SETPOINT_HEATER_EXTRA_POLL,
 };
 
 /// @brief The radiator's profile under the HEATER_WITH_LIGHT model, with the light read after its poll.

@@ -123,7 +123,7 @@ at a later poll:
 
 | Heater kind | One poll reads | The first poll also reads |
 |---|---|---|
-| Radiator with a setpoint | Five registers: room temperature, setpoint, mode, regulator state, window sensor. While its program runs, also the temperature in force. With `io_model: heater_with_light`, also the light's state and brightness | The maximum setpoint, the open-window-detection setting, and for the declaration check the model name and the towel dryer's mode register |
+| Radiator with a setpoint | Five registers: room temperature, setpoint, mode, regulator state, window sensor. While its program runs, also the temperature in force. Then the open-window-detection setting, and with `io_model: heater_with_light` the light's state and brightness; a read of these that gets no answer leaves the entity as it was and is asked again at the next poll | The maximum setpoint, and for the declaration check the model name and the towel dryer's mode register |
 | Towel dryer | Five registers: room temperature, setpoint, mode, temporary state, working rate. While its program runs with no boost or drying, also the temperature in force. Then one status read, which names the level the dryer applies, in every mode and whether or not a `heating_level:` sensor is configured. With a `central_heating_mode:` sensor, one more register, read before the status read | The maximum setpoint and the model name |
 | Plain electrical heater, pilot-wire interface | One status read | |
 | Thermostat, heat pump | One status read | |
@@ -149,7 +149,7 @@ generated as for the other platforms.
 | Entity | Generated for | Notes |
 |---|---|---|
 | `Window` binary sensor (`device_class: window`) | `io_device_type: "electrical_heater"` with `io_subtype: 1`, without `io_model: towel_dryer` | Experimental. The heater's own window sensor |
-| `Open Window Detection` switch | The same entries | Experimental, disabled by default. The setting is read once, at the first poll, so a change made at the heater's panel appears after a reboot |
+| `Open Window Detection` switch | The same entries | Experimental, disabled by default. The setting is read on every poll, so a change made at the heater's panel or in the vendor app appears at the next poll (issue #222). A poll that misses the setting keeps the switch as it was |
 | Night light | An entry with a `night_light:` block | See the section "Heaters with a night light" below |
 | `Heating level` text sensor | An entry with a `heating_level:` block | See the section "Heating level sensor" below |
 | Central heating mode binary sensor | An entry with a `central_heating_mode:` block | Experimental. See the section "Central-heating mode sensor" below |

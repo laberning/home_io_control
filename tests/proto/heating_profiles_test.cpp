@@ -136,9 +136,11 @@ TEST(HeatingProfiles, SetpointHeaterOffersTheCardItsRegistersCanDrive) {
   ASSERT_EQ(p.poll_registers.size(), 5u);
   EXPECT_EQ(p.poll_registers[0], HeatingFunction::ROOM_TEMPERATURE);
   EXPECT_EQ(p.poll_registers[4], HeatingFunction::WINDOW_OPEN);
-  ASSERT_EQ(p.boot_registers.size(), 2u);
+  // Read on every poll, since the vendor app changes it (issue #222), and a miss is not a poll failure.
+  ASSERT_EQ(p.extra_poll_registers.size(), 1u);
+  EXPECT_EQ(p.extra_poll_registers[0], HeatingFunction::SET_OPEN_WINDOW_DETECTION);
+  ASSERT_EQ(p.boot_registers.size(), 1u);
   EXPECT_EQ(p.boot_registers[0], HeatingFunction::MAX_SETPOINT);
-  EXPECT_EQ(p.boot_registers[1], HeatingFunction::SET_OPEN_WINDOW_DETECTION);
 }
 
 TEST(HeatingProfiles, SetpointHeaterModeRegisterMapsBackToTheCard) {
@@ -668,6 +670,7 @@ TEST(HeatingProfilesTowelDryer, PollsItsOwnRegistersAndNoWindow) {
                                       HeatingFunction::SET_MODE, HeatingFunction::REGULATOR_STATE}) {
     EXPECT_FALSE(lists(p.poll_registers, never)) << heating_function_name(never);
     EXPECT_FALSE(lists(p.boot_registers, never)) << heating_function_name(never);
+    EXPECT_FALSE(lists(p.extra_poll_registers, never)) << heating_function_name(never);
   }
   EXPECT_EQ(p.action_source, HeatingActionSource::WORKING_RATE);
   EXPECT_FALSE(p.experimental_writes);
@@ -894,7 +897,8 @@ TEST(HeatingProfilesHeaterWithLight, IsTheRadiatorPlusTheLightReadAfterItsPoll) 
   EXPECT_EQ(light->action_source, radiator.action_source);
   EXPECT_EQ(light->experimental_writes, radiator.experimental_writes);
 
-  const HeatingFunction extra[] = {HeatingFunction::NIGHT_LIGHT, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS};
+  const HeatingFunction extra[] = {HeatingFunction::SET_OPEN_WINDOW_DETECTION, HeatingFunction::NIGHT_LIGHT,
+                                   HeatingFunction::NIGHT_LIGHT_BRIGHTNESS};
   ASSERT_EQ(light->extra_poll_registers.size(), std::size(extra));
   for (size_t i = 0; i < std::size(extra); i++)
     EXPECT_EQ(light->extra_poll_registers[i], extra[i]) << i;
@@ -968,7 +972,8 @@ TEST(HeatingProfilesPilotWireInterface, APlainHeaterKeepsItsBoost) {
 TEST(HeatingProfilesHeaterWithLight, NoOtherProfileReadsTheLight) {
   for (const auto model : {DeviceModel::NONE, DeviceModel::TOWEL_DRYER}) {
     const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, model);
-    EXPECT_EQ(p.extra_poll_registers.size(), 0u);
+    EXPECT_FALSE(lists(p.extra_poll_registers, HeatingFunction::NIGHT_LIGHT));
+    EXPECT_FALSE(lists(p.extra_poll_registers, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS));
     EXPECT_FALSE(lists(p.poll_registers, HeatingFunction::NIGHT_LIGHT));
   }
 }

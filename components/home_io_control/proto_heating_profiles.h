@@ -239,9 +239,10 @@ struct HeatingProfile {
   /// (`observed`). With it, `observed` sets only the mode and this table alone sets the preset, since
   /// mode and preset live in separate registers.
   std::span<const HeatingObservedState> preset_observed{};
-  /// PRIVATE_REGISTERS: registers every poll reads after `poll_registers`, for a part the heater may not
-  /// have (a night light). A miss here is not a poll failure, so a model declared on a heater without
-  /// the part costs a read, not the poll.
+  /// PRIVATE_REGISTERS: registers every poll reads after `poll_registers` whose miss is not a poll failure:
+  /// a setting the heater's own controller changes (open-window detection), or a part the heater may not
+  /// have (a night light), so a model declared on a heater without the part costs a read, not the poll.
+  /// A missed read keeps the earlier value; the next poll asks again.
   std::span<const HeatingFunction> extra_poll_registers{};
   // NOLINTEND(readability-redundant-member-init)
   /// PRIVATE_REGISTERS: the register the HVAC modes write and the card's mode is read from.

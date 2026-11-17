@@ -838,8 +838,8 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
   if (ok && profile.programme_period != nullptr)
     this->poll_temperature_in_force_(device_id, profile, max_tries, InForceEmptyAnswer::MARKS_ABSENT);
 
-  // A part the heater may not have (a night light): read every poll once the core registers answered,
-  // and a miss is not a poll failure (the next poll asks again).
+  // A setting the heater's own controller changes, or a part the heater may not have (a night light): read
+  // every poll once the core registers answered, and a miss is not a poll failure (the next poll asks again).
   for (const HeatingFunction fn : profile.extra_poll_registers) {
     if (!ok)
       break;

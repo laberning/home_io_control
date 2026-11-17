@@ -3963,6 +3963,11 @@ void queue_radiator_core(TestableComponent &comp, MockRadio &radio, HeatingMode 
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x0E, 0x00});
 }
 
+/// Queue the open-window-detection reply (off) a radiator poll reads after its core registers and 0x012A.
+void queue_radiator_detection(TestableComponent &comp, MockRadio &radio) {
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x06, 0x00});
+}
+
 std::vector<uint8_t> sent_steps_since(MockRadio &radio, size_t before) {
   std::vector<uint8_t> steps;
   for (size_t i = before; i < radio.get_sent_data().size(); i++)
@@ -3981,8 +3986,9 @@ TEST(HubOperations, ARadiatorPollReadsRegister012AOnlyWhileTheProgrammeRunsAndAs
     const size_t before = radio.get_sent_data().size();
     queue_radiator_core(comp, radio, mode);
     queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A, 0xAF, 0x00});  // 17.5 C
+    queue_radiator_detection(comp, radio);
     EXPECT_TRUE(comp.request_device_status("ABC123"));
-    EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A}))
+    EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06}))
         << "no status read: no radiator is known to report a level";
     EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 17.5F);
     EXPECT_TRUE(heating_device_facts(dev, true).programme_runs);
@@ -3990,8 +3996,9 @@ TEST(HubOperations, ARadiatorPollReadsRegister012AOnlyWhileTheProgrammeRunsAndAs
 
   const size_t before = radio.get_sent_data().size();
   queue_radiator_core(comp, radio, HeatingMode::MANUAL);
+  queue_radiator_detection(comp, radio);
   EXPECT_TRUE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E}))
+  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06}))
       << "heat: the temperature in force is not asked";
   EXPECT_FALSE(dev->heating.has(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE)) << "and the earlier value is dropped";
 }
@@ -4004,16 +4011,18 @@ TEST(HubOperations, ARadiatorThatAnswers012AEmptyIsNotAskedAgain) {
   size_t before = radio.get_sent_data().size();
   queue_radiator_core(comp, radio, HeatingMode::PROG);
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A});  // answered, no value
+  queue_radiator_detection(comp, radio);
   EXPECT_TRUE(comp.request_device_status("ABC123")) << "an empty answer is no poll failure";
-  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A}));
+  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06}));
   EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::ABSENT);
   EXPECT_FALSE(heating_device_facts(dev, true).programme_runs) << "no temperature in force to override";
   EXPECT_FALSE(heating_device_facts(dev, true).in_force_unresolved) << "and nothing left to ask";
 
   before = radio.get_sent_data().size();
   queue_radiator_core(comp, radio, HeatingMode::PROG);
+  queue_radiator_detection(comp, radio);
   EXPECT_TRUE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E}))
+  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06}))
       << "the read is not repeated until the next boot";
 }
 
@@ -4024,11 +4033,13 @@ TEST(HubOperations, ARadiatorThatReported012AKeepsReadingItAfterAnEmptyAnswer) {
 
   queue_radiator_core(comp, radio, HeatingMode::PROG);
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A, 0xAF, 0x00});  // 17.5 C
+  queue_radiator_detection(comp, radio);
   EXPECT_TRUE(comp.request_device_status("ABC123"));
   ASSERT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED);
 
   queue_radiator_core(comp, radio, HeatingMode::PROG);
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A});  // answered, no value
+  queue_radiator_detection(comp, radio);
   EXPECT_TRUE(comp.request_device_status("ABC123"));
   EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED)
       << "a heater that has shown the register still has it";
@@ -4037,8 +4048,9 @@ TEST(HubOperations, ARadiatorThatReported012AKeepsReadingItAfterAnEmptyAnswer) {
   const size_t before = radio.get_sent_data().size();
   queue_radiator_core(comp, radio, HeatingMode::PROG);
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A, 0xB4, 0x00});  // 18.0 C
+  queue_radiator_detection(comp, radio);
   EXPECT_TRUE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A}))
+  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06}))
       << "the next poll asks again";
   EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 18.0F);
 }
@@ -4062,11 +4074,13 @@ TEST(HubOperations, ARadiatorThatReported012AKeepsTheOverrideRuleWhenALaterReadI
 
   queue_radiator_core(comp, radio, HeatingMode::PROG);
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A, 0xAF, 0x00});  // 17.5 C
+  queue_radiator_detection(comp, radio);
   EXPECT_TRUE(comp.request_device_status("ABC123"));
   EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED);
 
   // Heat drops the value; back in the programme (set on the radiator) the read of 0x012A gets no reply.
   queue_radiator_core(comp, radio, HeatingMode::MANUAL);
+  queue_radiator_detection(comp, radio);
   EXPECT_TRUE(comp.request_device_status("ABC123"));
   queue_radiator_core(comp, radio, HeatingMode::AUTO);
   comp.request_device_status("ABC123");
@@ -4212,13 +4226,14 @@ IoDevice *make_heater_with_light(TestableComponent &comp, MockRadio &radio) {
   return dev;
 }
 
-/// Answers the radiator's five poll registers.
+/// Answers the radiator's five poll registers and its open-window-detection setting (read on every poll).
 void queue_radiator_poll(TestableComponent &comp, MockRadio &radio) {
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});  // 20.75 C
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});  // 19.5 C
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x00, 0x01});        // manual
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x17, 0x02});        // heating
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x0E, 0x00});        // window closed
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x06, 0x01});        // detection on
 }
 
 }  // namespace
@@ -4234,13 +4249,12 @@ TEST(HubOperations, HeaterWithLightPollReadsTheLightAfterTheRadiatorRegisters) {
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x44, 0x01});
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x42, 0x64, 0x00});
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01});
-  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x06, 0x01});
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x19, 'H', 'E', 'K', 'L', 'A'});
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x36});
 
   EXPECT_TRUE(comp.request_device_status("ABC123"));
 
-  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x44, 0x42, 0x02, 0x06, 0x19, 0x36};
+  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42, 0x02, 0x19, 0x36};
   ASSERT_EQ(radio.get_sent_data().size(), std::size(expected_registers));
   for (size_t i = 0; i < std::size(expected_registers); i++)
     EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
@@ -4255,7 +4269,7 @@ TEST(HubOperations, HeaterWithLightPollReadsTheLightAfterTheRadiatorRegisters) {
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x44, 0x00});
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x42, 0x64, 0x00});
   EXPECT_TRUE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(radio.get_sent_data().size() - sent_before, 7u);
+  EXPECT_EQ(radio.get_sent_data().size() - sent_before, 8u);
   EXPECT_EQ(dev->heating.night_light, 0);
 }
 
@@ -4263,7 +4277,7 @@ TEST(HubOperations, AHeaterWithoutTheLightDoesNotFailItsPoll) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_heater_with_light(comp, radio);
-  // Boot registers and model check done, so the poll is the five registers plus the light.
+  // Boot registers and model check done, so the poll is the five registers, the detection setting and the light.
   dev->model_checked = true;
   dev->heating.max_setpoint_c = 28.0F;
   dev->heating.open_window_detection = 1;
@@ -4273,7 +4287,7 @@ TEST(HubOperations, AHeaterWithoutTheLightDoesNotFailItsPoll) {
 
   EXPECT_TRUE(comp.request_device_status("ABC123")) << "a missing light costs a read, not the poll";
 
-  EXPECT_EQ(radio.get_sent_data().size(), 7u);
+  EXPECT_EQ(radio.get_sent_data().size(), 8u);
   EXPECT_EQ(dev->heating.night_light, -1);
   EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
   EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 0u);
