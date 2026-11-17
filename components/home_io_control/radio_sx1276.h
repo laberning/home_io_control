@@ -186,6 +186,8 @@ class RadioSX1276 : public RadioDriver {
   [[nodiscard]] uint16_t hop_dwell_ms(const TuningConfig &tuning) const override {
     return tuning.sx1276_discovery_hop_slice_ms;
   }
+  /// @copydoc RadioDriver::cca_settle_us
+  [[nodiscard]] uint32_t cca_settle_us() const override { return SX1276_CCA_SETTLE_US; }
   /// @brief TX→RX turnaround capability (SX1276): fast.
   ///
   /// The IoHomeOn TX path returns to RX quickly enough that immediate replies

@@ -31,7 +31,7 @@ TEST(TuningConfig, DefaultsMatchPlan) {
   EXPECT_EQ(cfg.cold_broadcast_reply_preamble, 80);
   // Chip-neutral: directed start frame to a non-low-power target (NORMAL_START_PREAMBLE).
   EXPECT_EQ(cfg.normal_start_preamble, 32);
-  EXPECT_EQ(cfg.lbt_max_retries, 5);
+  EXPECT_FALSE(cfg.lbt_force_when_busy) << "a request is never forced onto a busy channel by default";
   EXPECT_EQ(cfg.lbt_rssi_threshold_dbm, -90);
   ASSERT_EQ(cfg.pairing_discovery_commands.size(), 1);
   EXPECT_EQ(static_cast<uint8_t>(cfg.pairing_discovery_commands[0]), 0x28);
@@ -145,7 +145,7 @@ TEST(TuningConfig, SnapshotIncludesNonDefaults) {
   cfg.pairing_discovery_ack_capable = true;
   cfg.pairing_discovery_preamble = 64;
   cfg.pairing_discovery_preamble_set = true;
-  cfg.lbt_max_retries = 1;
+  cfg.lbt_force_when_busy = true;
   cfg.lr1121_rx_bandwidth = LR1121RxBandwidth::BW_187_2_KHZ;
   cfg.lr1121_discovery_hop_slice_ms = 150;
   cfg.cold_broadcast_reply_preamble = 120;
@@ -164,7 +164,7 @@ TEST(TuningConfig, SnapshotIncludesNonDefaults) {
   EXPECT_NE(snapshot.find("pairing_discovery_low_power=true"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_ack_capable=true"), std::string::npos);
   EXPECT_NE(snapshot.find("pairing_discovery_preamble=64"), std::string::npos);
-  EXPECT_NE(snapshot.find("lbt_max_retries=1"), std::string::npos);
+  EXPECT_NE(snapshot.find("lbt_force_when_busy=true"), std::string::npos);
 }
 
 TEST(TuningConfig, SnapshotNamesTheDiscoveryPreambleOnlyWhenSet) {
@@ -205,7 +205,7 @@ TEST(TuningConfig, SnapshotOmitsUnchangedDefaults) {
   std::string snapshot = tuning_config_snapshot(cfg);
   EXPECT_NE(snapshot.find("sx1262_response_preamble=96"), std::string::npos);
   EXPECT_EQ(snapshot.find("sx1262_post_tx_settle_us"), std::string::npos);
-  EXPECT_EQ(snapshot.find("lbt_max_retries"), std::string::npos);
+  EXPECT_EQ(snapshot.find("lbt_force_when_busy"), std::string::npos);
 }
 
 TEST(TuningConfig, SnapshotReportsLowPowerWakeBeliefOnlyWhenOff) {

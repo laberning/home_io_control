@@ -323,8 +323,11 @@ struct TuningConfig {
   /// whether the driver's default applies (ADR 0042). Only read once, at setup — a later change
   /// through the Home Assistant number simply sets the value.
   bool normal_start_preamble_from_yaml{false};
-  uint8_t lbt_max_retries{LBT_MAX_RETRIES};                ///< LBT retries before forced TX.
   int16_t lbt_rssi_threshold_dbm{LBT_RSSI_THRESHOLD_DBM};  ///< LBT channel-free threshold (dBm).
+  /// When the access time of a request from the exchange engine is spent and every channel it may
+  /// use stays busy, send on the quietest instead of ending the attempt as "channel busy" (ADR 0096).
+  /// Off by default: the hub never sends onto a channel it measured busy.
+  bool lbt_force_when_busy{false};
   bool low_power_wake_belief{true};  ///< Order a `low_power` device's start-frame tries by its wake belief (short
                                      ///< preamble first when it is believed awake). False restores the fixed
                                      ///< wake-up preamble on every try. A diagnostic off-switch, on by default.

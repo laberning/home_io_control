@@ -211,6 +211,17 @@ class RadioDriver {
   /// - On failure: may populate last_capture_ for diagnostics, returns false.
   virtual bool check_for_packet(RadioRxPacket &packet) = 0;
 
+  /// Level on @p freq_hz right now, for a clear-channel check that takes several readings before a
+  /// send (ExchangeEngine): retunes the receiver to the channel if it is elsewhere, waits
+  /// cca_settle_us() for the reading to describe it, then reads read_rssi(). The radio stays in RX
+  /// on that channel.
+  /// @param freq_hz Channel to measure.
+  /// @return RSSI in dBm.
+  int16_t measure_channel_level(uint32_t freq_hz);
+
+  /// Wait after a retune before an RSSI reading describes the new channel (a per-chip constant).
+  [[nodiscard]] virtual uint32_t cca_settle_us() const = 0;
+
   /// Read instantaneous RSSI (in dBm) on the current channel, while in RX mode. Drivers take their
   /// clear-channel reading inside send_packet() with it; otherwise it is for diagnostics.
   /// @return RSSI in dBm (negative value).
@@ -442,14 +453,12 @@ class RadioDriver {
   void clear_reception_in_progress_() { this->rx_hold_armed_ = false; }
 
   /// The clear-channel check a driver runs at the top of send_packet(). Without a threshold in
-  /// @p tx_config it does nothing. Otherwise it retunes the receiver to `tx_config.freq_hz` if it is
-  /// elsewhere and waits @p settle_us for the RSSI reading to describe the new channel, then reads
-  /// read_rssi() there.
+  /// @p tx_config it does nothing. Otherwise it measures `tx_config.freq_hz` with
+  /// measure_channel_level().
   /// @param tx_config The transmission about to be sent.
-  /// @param settle_us The chip's RSSI settle time after a retune (a driver constant).
   /// @return The measured level if it is at or above the threshold (the channel is busy), else
   ///         nothing.
-  std::optional<int16_t> channel_busy_level_(const RadioTxConfig &tx_config, uint32_t settle_us);
+  std::optional<int16_t> channel_busy_level_(const RadioTxConfig &tx_config);
 
   /// Shared hardware reset sequence for chips with an active-low RST pin.
   /// Drives RST pin low → 10 ms → high → 10 ms. Called from derived driver init().

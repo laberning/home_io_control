@@ -152,8 +152,8 @@ your device may differ.
 | `normal_start_preamble` | both | `48` on SX1262/LR1121, `32` on SX1276 | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the long wake-up burst. Low-power devices lead with [`low_power_wake_preamble`](#low_power_wake_preamble) unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
 | `low_power_wake_preamble` | both | `2048` | 1024–4096 B | Wake-up preamble on a directed start frame to a `low_power:` device believed at rest. See below. |
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the wake-up preamble. See below. |
-| `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk checks on the transmit channel before the first frame of an exchange is sent without one. |
-| `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI on the transmit channel below which it counts as free. |
+| `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI on a channel at or above which it counts as busy. See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
+| `lbt_force_when_busy` | both | `false` | `true` / `false` | When every channel stays busy for the whole waiting time, send on the quietest one instead of ending the attempt as "channel busy". See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
 | `remote_activity_poll_delay_ms` | both | `2000` | 0–120000 ms | Delay from a linked-remote press (not a STOP) to the first status poll of its devices. See below. |
 | `remote_activity_catchup_poll_ms` | both | `0` (off) | 0–600000 ms | Read every device with `linked_remotes` this long after the last exchange that followed a linked-remote press, to catch a press the hub missed. See below. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
@@ -541,29 +541,53 @@ is listening again after its answer. It includes the answer's own airtime.
 
 With the switch off, every try to a `low_power:` device uses the wake-up preamble.
 
-#### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
+#### `lbt_rssi_threshold_dbm` / `lbt_force_when_busy`
 
-Listen-Before-Talk: right before transmitting the first frame of an exchange, the radio measures
-the channel the frame is about to go out on and sends only if it is quieter than the threshold.
-The hub retries up to *max_retries* times, 5 ms apart, then transmits anyway. Frames that answer
-within an exchange, such as the challenge response, go out at once without the check: the device
-is waiting for them, and some devices give up after a single 5 ms delay (issue #178). When the idle receiver is on another channel, the radio
-first retunes to the transmit channel and waits about a millisecond for the reading to settle
-([ADR 0045](../adr/0045-listen-before-talk-is-part-of-sending.md)). Loosen them when
-transmissions are delayed on a channel that only *looks* busy. The threshold applies to the signal
-level at the antenna: on a board with a front-end module the amplifier's gain is removed from the
-reading first (see [Hardware](../hardware.md)), so the same value means the same on every board.
+Channel access: before the hub sends a request (a command, a status or register read, a management
+request) it measures the channel it is about to use, up to five readings about 1 ms apart. One
+reading at or above `lbt_rssi_threshold_dbm` makes the channel busy, and the hub never sends onto a
+busy channel. It waits a random time, from a few milliseconds up to about 40 ms and growing with
+every busy check, while it keeps receiving, and then checks another channel. Every attempt of a
+request takes a different channel than the attempt before it, because receivers scan all three
+channels. The hub listens for the answer on the channel it sent on.
+
+The checks of one attempt last about 100 ms. If every channel stays busy that long, the attempt ends
+as "channel busy": nothing is sent, the log line `Try N ended: channel busy` says so, and the exchange
+goes on with its next attempt like after any other lost try. A request to a `low_power:` device
+stays on channel 2, where its wake-up preamble is heard, and waits up to about 600 ms, so that a
+remote's long wake-up on that channel can finish. In the worst case a command to a battery device
+therefore blocks the hub for several seconds on a nearly always busy channel
+([ADR 0096](../adr/0096-the-hubs-requests-take-a-free-channel-and-are-never-forced-onto-a-busy-one.md)).
+
+With `lbt_force_when_busy: true` the hub does not give up after that time: it measures all three
+channels and sends on the quietest one (a `low_power:` device stays on channel 2). The send can
+collide with the traffic that kept the channel busy, and a missing answer after it says nothing about
+the device, so the hub does not treat it as a sign that a moving cover has stopped. Leave it off
+unless a busy neighbour makes commands fail.
+
+Frames that answer within an exchange, such as the challenge response, go out at once on the channel
+of the request without a check: the device is waiting for them, and some devices give up after a
+single 5 ms delay (issue #178). Discovery, pairing, the key pull and broadcasts keep channel 2 and
+the older check: five readings, 5 ms apart, then a send even if the channel is still busy
+([ADR 0045](../adr/0045-listen-before-talk-is-part-of-sending.md)). When the idle receiver is on
+another channel, the radio first retunes to the channel being measured and waits about a millisecond
+for the reading to settle. The threshold applies to the signal level at the antenna: on a board with
+a front-end module the amplifier's gain is removed from the reading first (see
+[Hardware](../hardware.md)), so the same value means the same on every board.
+
+`lbt_max_retries` is deprecated: the configuration accepts it with a warning and ignores the value,
+because the time limits end the checks, not a count.
 
 *Observations:* a device's own pairing-mode beacons made the channel read as busy (around
--77 to -83 dBm), which tripped every LBT retry before each discovery transmit and slowed
-pairing noticeably. Raising the threshold (less sensitive) or lowering the retry count lets the
-hub transmit through that.
+-77 to -83 dBm), which delayed every discovery transmit and slowed pairing noticeably. Raising the
+threshold (less sensitive) lets the hub transmit through that.
 
 > [!WARNING]
-> **Keep the defaults in a permanent configuration.** The `-90` dBm threshold and the 5 ms back-off
-> keep the hub from starting an exchange over traffic it can hear. A higher threshold or fewer
-> retries make it transmit over other devices on the band, and depending on your country's rules
-> for the 868 MHz band that may not be allowed. Loosen them for a brief experiment only.
+> **Keep the default threshold in a permanent configuration.** The `-90` dBm threshold keeps the
+> hub from starting an exchange over traffic it can hear. A higher threshold, or
+> `lbt_force_when_busy: true`, makes it transmit over other devices on the band, and depending on
+> your country's rules for the 868 MHz band that may not be allowed. Use them for a brief experiment
+> only.
 
 ### Polls after a linked-remote press — in detail
 
@@ -918,8 +942,8 @@ above, is the bottleneck. The full field reference and advice codes are in
 
 ## Safety and compliance
 
-`lbt_max_retries` and `lbt_rssi_threshold_dbm` exist for diagnostics only. Setting the
-threshold too high (e.g. `-45 dBm`) or the retry count too low can force transmissions on a
+`lbt_rssi_threshold_dbm` and `lbt_force_when_busy` exist for diagnostics only. Setting the
+threshold too high (e.g. `-45 dBm`) or turning on `lbt_force_when_busy` can force transmissions on a
 busy channel and may violate local regulations for the 868 MHz SRD band. Do not leave
 aggressive LBT values in a production configuration.
 

@@ -11,6 +11,8 @@ home_io_control:
     key_extraction_multi_info: "DD"
     pairing_discovery_preamble: 32
     pairing_discovery_send_channels: all
+    lbt_force_when_busy: true
+    lbt_max_retries: 3  # deprecated: accepted, warned about, ignored
 
 cover:
   - platform: home_io_control

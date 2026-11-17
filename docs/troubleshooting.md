@@ -234,13 +234,16 @@ is a general starting point, not a guarantee — different devices need differen
    with `sx1262_response_preamble: 32` ([issue #163](https://github.com/laberning/home_io_control/issues/163)).
    If commands stop working after you raise it, set it back.
 
-9. **If the logs show LBT delaying transmissions** on a quiet channel, relax LBT — but read
+9. **If the logs show `channel busy` on a quiet channel** (`Try N ended: channel busy`), the hub is
+   reading noise as traffic. Raise the threshold a little, but read
    [Safety and compliance](configuration/tuning.md#safety-and-compliance) before you leave a
    relaxed value in a permanent config:
    ```yaml
-   lbt_max_retries: 1
    lbt_rssi_threshold_dbm: -80
    ```
+   The hub waits for a free channel and never sends onto a busy one; how long it waits and what
+   `lbt_force_when_busy` changes is described under
+   [Channel access](configuration/tuning.md#lbt_rssi_threshold_dbm--lbt_force_when_busy).
 
 After each step, record the tuning snapshot line and the outcome. When a combination works,
 paste that snapshot into your permanent `tuning:` block. If a combination makes an

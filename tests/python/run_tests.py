@@ -1027,6 +1027,42 @@ def experimental_kinds_are_marked_in_the_mirror_and_warned_about_once_at_config_
 
 
 @case()
+def lbt_max_retries_is_accepted_with_a_warning_and_generates_no_code():
+    """`lbt_max_retries` is retired (ADR 0096): the tuning block still accepts it within its old range
+    and logs one warning naming the replacement key; a value outside the range is still reported,
+    and the key never reaches the generated tuning assignments."""
+    import logging
+
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import tuning as t
+
+    class Capture(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.messages = []
+
+        def emit(self, record):
+            self.messages.append(record.getMessage())
+
+    capture = Capture()
+    t._LOGGER.addHandler(capture)
+    try:
+        assert t.TUNING_SCHEMA({t.CONF_LBT_MAX_RETRIES: 3})[t.CONF_LBT_MAX_RETRIES] == 3
+        try:
+            t.TUNING_SCHEMA({t.CONF_LBT_MAX_RETRIES: 11})
+            raise AssertionError("an out-of-range lbt_max_retries was accepted")
+        except cv.Invalid:
+            pass
+    finally:
+        t._LOGGER.removeHandler(capture)
+    assert len(capture.messages) == 1, capture.messages
+    assert "'lbt_max_retries:' is deprecated and has no effect" in capture.messages[0]
+    assert "lbt_force_when_busy: true" in capture.messages[0]
+    assert t.CONF_LBT_MAX_RETRIES not in t._NUMBER_PARAMS, "a deprecated key must not get a number entity"
+    assert t.CONF_LBT_FORCE_WHEN_BUSY in t._BOOL_PARAMS, "the replacement key is a plain boolean tuning key"
+
+
+@case()
 def silent_key_still_works_and_warns_once_with_the_exact_travel_speed_replacement():
     """`silent:` is deprecated: a cover that declares it is still valid and logs one warning that
     gives the travel_speed: value matching its boolean (false is fast, not default) and says the

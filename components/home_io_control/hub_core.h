@@ -176,6 +176,9 @@ class IOHomeControlComponent : public Component,
         clear_moving_evidence(*dev);
     });
     this->exchange_engine_.set_overheard_frame_observer(this);
+    // Channel access draws its channels and back-offs from ESPHome's random source (a settable value
+    // in the host tests, like the poll jitter).
+    this->exchange_engine_.set_random_source([]() { return random_uint32(); });
   }
 
   /// @brief Result payload used by hub-level management actions such as rename.

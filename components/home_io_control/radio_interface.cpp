@@ -29,22 +29,27 @@ void RadioDriver::reset_hardware_() {
   }
 }
 
-std::optional<int16_t> RadioDriver::channel_busy_level_(const RadioTxConfig &tx_config, uint32_t settle_us) {
-  if (!tx_config.cca_threshold_dbm.has_value())
-    return std::nullopt;
+int16_t RadioDriver::measure_channel_level(uint32_t freq_hz) {
   // The idle receiver hops, so it is usually on another channel than the one about to be used:
   // measure where the frame will go, not where the receiver happens to be.
-  if (this->current_freq_ != tx_config.freq_hz) {
+  if (this->current_freq_ != freq_hz) {
     uint32_t const start_us = micros();
-    this->change_frequency(tx_config.freq_hz);
+    uint32_t const settle_us = this->cca_settle_us();
+    this->change_frequency(freq_hz);
     delayMicroseconds(settle_us);
     if (!this->cca_retune_logged_) {
       this->cca_retune_logged_ = true;
       ESP_LOGD(TAG, "Clear-channel check retuned to %" PRIu32 " Hz: %" PRIu32 " us including %" PRIu32 " us settle",
-               tx_config.freq_hz, micros() - start_us, settle_us);
+               freq_hz, micros() - start_us, settle_us);
     }
   }
-  int16_t const level = this->read_rssi();
+  return this->read_rssi();
+}
+
+std::optional<int16_t> RadioDriver::channel_busy_level_(const RadioTxConfig &tx_config) {
+  if (!tx_config.cca_threshold_dbm.has_value())
+    return std::nullopt;
+  int16_t const level = this->measure_channel_level(tx_config.freq_hz);
   if (level >= *tx_config.cca_threshold_dbm)
     return level;
   return std::nullopt;

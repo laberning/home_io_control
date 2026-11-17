@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0045 -->
 
-**Status:** Accepted, amended 2026-10 (see [Amendment](#amendment-only-a-frame-that-opens-a-session-is-checked)) · **Recorded:** 2026-09
+**Status:** Accepted, amended 2026-10 (see [Amendment](#amendment-only-a-frame-that-opens-a-session-is-checked)), amended by [ADR 0096](0096-the-hubs-requests-take-a-free-channel-and-are-never-forced-onto-a-busy-one.md) (no forced send, a channel per attempt) · **Recorded:** 2026-09
 
 ## Context
 

@@ -84,6 +84,8 @@ struct OutboundExchangeContext {
   uint32_t first_response_ms{0};    ///< Timestamp when the first valid response arrived (for RTT/timing).
   uint32_t first_response_us{0};    ///< micros() at the same moment, for the sub-millisecond challenge-to-0x3D time.
   uint16_t request_preamble{0};     ///< Start preamble (bytes) this try's request went out with.
+  uint32_t request_freq{0};         ///< Channel (Hz) this try's request went out on, or was last checked on when it
+                                    ///< ended as "channel busy"; the 0x3D answer and the replies stay on it.
   uint32_t target_last_seen_ms{0};  ///< When the target was last heard (millis), 0 = unknown; logged as
                                     ///< the try's `age_ms=` so field logs can relate hits to wake state.
   IoFrame rx{};                     ///< Most recent candidate frame received during the exchange.
@@ -145,6 +147,13 @@ enum class ListenOutcome : uint8_t {
 /// implementations this project builds against.
 using ReplyHandler = std::function<ReplyDisposition(const IoFrame *parsed, const RadioRxPacket &packet)>;
 
+/// @brief How the requests of an exchange get onto the air.
+enum class ChannelAccess : uint8_t {
+  FREE_CHANNEL,   ///< Take a free channel, never send onto a busy one, a new channel each attempt (ADR 0096).
+  FIXED_CHANNEL,  ///< The caller's channel, checked five times 5 ms apart, then sent anyway (ADR 0045): the senders
+                  ///< whose listen layouts assume that channel (pairing, discovery, the key pull).
+};
+
 /// @brief How one outbound exchange is to run, as the caller states it: one value for
 /// ExchangeEngine::send_and_receive() whatever the caller (the hub, pairing, a probe, a test).
 ///
@@ -164,6 +173,9 @@ struct ExchangeOptions {
   /// ExchangeEngine::key_for(request.dst). Only a caller that talks to a node the registry has no
   /// record of passes one.
   const uint8_t *key{nullptr};
+  /// How the request gets onto the air. The default takes a free channel; a caller whose listen
+  /// layout assumes the channel it names says FIXED_CHANNEL.
+  ChannelAccess channel_access{ChannelAccess::FREE_CHANNEL};
 
   ExchangeOptions() = default;
   // NOLINTBEGIN(google-explicit-constructor): the two ways to name attempts convert implicitly, so
@@ -179,6 +191,12 @@ struct ExchangeOptions {
   [[nodiscard]] ExchangeOptions with_preamble(uint16_t preamble_bytes) const {
     ExchangeOptions options = *this;
     options.preamble_override = preamble_bytes;
+    return options;
+  }
+  /// @brief These options with the request kept on the channel the caller names (ChannelAccess::FIXED_CHANNEL).
+  [[nodiscard]] ExchangeOptions on_fixed_channel() const {
+    ExchangeOptions options = *this;
+    options.channel_access = ChannelAccess::FIXED_CHANNEL;
     return options;
   }
   /// @brief These options with the challenge answered under @p exchange_key.

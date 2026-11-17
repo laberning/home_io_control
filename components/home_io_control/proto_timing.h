@@ -344,15 +344,31 @@ static constexpr uint32_t ONEWAY_BURST_INTERVAL_MS = 40;
 /// is 2 hours.
 static constexpr uint32_t RAIN_EVIDENCE_HOLD_MS = 2UL * 60UL * 60UL * 1000UL;
 
-/// Listen-before-talk (LBT) parameters: conservative defaults that keep the hub from opening an
-/// exchange over traffic it can hear.
-/// Before transmitting a frame that opens a session (START set), the radio checks
-/// that the channel RSSI is below the threshold. If the channel is busy, TX is
-/// deferred by LBT_RETRY_DELAY_MS up to LBT_MAX_RETRIES times. A frame without
-/// START answers within a session and is sent at once, unchecked.
+/// Listen-before-talk (LBT) parameters of the senders that keep a fixed channel: discovery,
+/// pairing, the key pull and broadcasts. Before such a frame that opens a session (START set) the
+/// radio checks that the channel RSSI is below the threshold; on a busy channel the frame is
+/// deferred by LBT_RETRY_DELAY_MS up to LBT_MAX_RETRIES times, then sent anyway. A frame without
+/// START answers within a session and is sent at once, unchecked. The exchange engine's requests
+/// use the channel access below instead (ADR 0096).
 static constexpr int16_t LBT_RSSI_THRESHOLD_DBM = -90;  ///< Channel-free threshold
 static constexpr uint8_t LBT_MAX_RETRIES = 5;           ///< Max carrier-sense attempts before TX anyway
 static constexpr uint8_t LBT_RETRY_DELAY_MS = 5;        ///< Backoff between LBT checks
+
+/// Channel access of a request from the exchange engine (ADR 0096): the checks of one attempt end
+/// after this long, and the attempt then ends as "channel busy" instead of sending. The limits are
+/// this project's design choice, sized from a remote's wake-up holding channel 2 for at least
+/// 450 ms (issue #209): an ordinary request moves to another channel and needs far less; a request
+/// with the low-power flag stays on channel 2 and waits the remote out.
+static constexpr uint32_t CHANNEL_ACCESS_BUDGET_MS = 100;
+static constexpr uint32_t LOW_POWER_CHANNEL_ACCESS_BUDGET_MS = 600;  ///< Same, for a low-power request.
+
+/// One channel check is up to this many RSSI readings; one reading at or above the threshold makes
+/// the channel busy. The last reading is the radio's own, taken right before the first symbol.
+static constexpr uint8_t CHANNEL_CHECK_READINGS = 5;
+/// Gap between the readings of one check, in milliseconds.
+static constexpr uint32_t CHANNEL_CHECK_READING_GAP_MS = 1;
+/// Time one free channel check takes before the send, in milliseconds: the gaps between its readings.
+static constexpr uint32_t CHANNEL_CHECK_TIME_MS = CHANNEL_CHECK_READING_GAP_MS * (CHANNEL_CHECK_READINGS - 1);
 
 /// Canonical defaults for the chip-neutral runtime-tunable pairing/discovery parameters.
 ///

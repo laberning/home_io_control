@@ -55,8 +55,6 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
      [](TuningConfig &t, float v) { t.normal_start_preamble = static_cast<uint16_t>(v); }, false},
     {"low_power_wake_preamble", [](const TuningConfig &t) { return static_cast<float>(t.low_power_wake_preamble); },
      [](TuningConfig &t, float v) { t.low_power_wake_preamble = static_cast<uint16_t>(v); }, false},
-    {"lbt_max_retries", [](const TuningConfig &t) { return static_cast<float>(t.lbt_max_retries); },
-     [](TuningConfig &t, float v) { t.lbt_max_retries = static_cast<uint8_t>(v); }, false},
     {"lbt_rssi_threshold_dbm", [](const TuningConfig &t) { return static_cast<float>(t.lbt_rssi_threshold_dbm); },
      [](TuningConfig &t, float v) { t.lbt_rssi_threshold_dbm = static_cast<int16_t>(v); }, false},
     {"exchange_start_response_wait_ms",
@@ -155,6 +153,8 @@ static constexpr TuningSelectParam SELECT_PARAMS[] = {
        return true;
      },
      true},
+    {"lbt_force_when_busy", bool_select_get<&TuningConfig::lbt_force_when_busy>,
+     bool_select_set<&TuningConfig::lbt_force_when_busy>, false},
     {"low_power_wake_belief", bool_select_get<&TuningConfig::low_power_wake_belief>,
      bool_select_set<&TuningConfig::low_power_wake_belief>, false},
     {"pairing_discovery_commands",

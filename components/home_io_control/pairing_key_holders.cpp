@@ -125,13 +125,13 @@ bool KeyHolderSearch::probe_heater_at_next_address_(const pairing::PairingContex
   float max_setpoint_c = NAN;
   ESP_LOGI(TAG, "Heater probe: reading %s, the address after %s, under key check value %s", heater_id.c_str(),
            context.device_id.c_str(), detail::format_key_check_value(key).c_str());
-  const bool answered = payload_len != 0 &&
-                        create_write_private(request, node_id_, heater, /*low_power=*/false, payload, payload_len) &&
-                        // The candidate has no registry record yet (the caller registers it if it answered), so the
-                        // exchange is given the key to answer its challenge under.
-                        engine_.send_and_receive(request, response, FREQ_CH2, ExchangeOptions{}.with_key(key)) ==
-                            ExchangeOutcome::SUCCESS_WITH_RESPONSE &&
-                        decode_heating_reply(response, HeatingFunction::MAX_SETPOINT, max_setpoint_c);
+  const bool answered =
+      payload_len != 0 && create_write_private(request, node_id_, heater, /*low_power=*/false, payload, payload_len) &&
+      // The candidate has no registry record yet (the caller registers it if it answered), so the
+      // exchange is given the key to answer its challenge under.
+      engine_.send_and_receive(request, response, FREQ_CH2, ExchangeOptions{}.with_key(key).on_fixed_channel()) ==
+          ExchangeOutcome::SUCCESS_WITH_RESPONSE &&
+      decode_heating_reply(response, HeatingFunction::MAX_SETPOINT, max_setpoint_c);
   const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
   if (!answered) {
     ESP_LOGI(TAG, "Heater probe: %s did not answer; looking for devices with a roll-call instead", heater_id.c_str());

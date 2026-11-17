@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <deque>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -191,12 +192,17 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   }
   int16_t read_rssi() override {
     rssi_read_freqs_.push_back(current_freq_);
-    if (rssi_queue_.empty())
-      return rssi_default_;
+    if (rssi_queue_.empty()) {
+      // A level scripted for this channel wins over the default: a busy channel next to free ones.
+      const auto scripted = channel_rssi_.find(current_freq_);
+      return scripted != channel_rssi_.end() ? scripted->second : rssi_default_;
+    }
     int16_t val = rssi_queue_.front();
     rssi_queue_.pop_front();
     return val;
   }
+  /// A mock needs no settle time: a retune is instant.
+  uint32_t cca_settle_us() const override { return 0; }
   bool is_sync_detected() override { return false; }
   bool is_preamble_detected() override { return false; }
   /// Arm the hop holdoff the way a real driver's check_for_packet() would — exposed here since
@@ -289,6 +295,10 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void queue_rssi(int16_t rssi) { rssi_queue_.push_back(rssi); }
   /// RSSI reading once the queue is empty (default -120 dBm: clear).
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }
+  /// RSSI reading on one channel once the queue is empty, taking precedence over the default for
+  /// that channel: a busy channel next to free ones. A reading follows the channel the radio is on
+  /// when it is taken (a clear-channel check retunes there first).
+  void set_channel_rssi(uint32_t freq_hz, int16_t rssi) { channel_rssi_[freq_hz] = rssi; }
   /// Under a ManualClock, how far a delivered packet advances time past when it was requested —
   /// modelling the air time / turnaround between a device starting its reply and this driver
   /// handing it back. 0 (the default) delivers instantly, same as legacy mode always has.
@@ -358,6 +368,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   std::deque<bool> tx_results_;
   std::deque<RxQueueEntry> rx_queue_;
   std::deque<int16_t> rssi_queue_;
+  std::map<uint32_t, int16_t> channel_rssi_;
   std::vector<esphome::home_io_control::RadioTxConfig> tx_configs_;
   SendTimeline timeline_;  ///< Every send's bytes and start time; owns the timed-release rule.
   std::vector<CallKind> call_log_;

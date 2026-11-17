@@ -511,6 +511,22 @@ TEST(RadioSX1276, BusyChannelOnTheTxFrequencySendsNothing) {
   EXPECT_TRUE(spi.tx_fifo().empty()) << "a busy channel must not reach the FIFO";
 }
 
+TEST(RadioSX1276, MeasureChannelLevelReadsTheRequestedChannelWithoutTransmitting) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  CcaProbeSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  radio.change_frequency(FREQ_CH1);
+  radio.level = -77;
+
+  EXPECT_EQ(radio.measure_channel_level(FREQ_CH3), -77);
+  EXPECT_EQ(radio.measure_channel_level(FREQ_CH3), -77);
+
+  EXPECT_EQ(radio.read_freqs, (std::vector<uint32_t>{FREQ_CH3, FREQ_CH3})) << "retuned once, then read in place";
+  EXPECT_EQ(radio.get_current_freq(), FREQ_CH3);
+  EXPECT_TRUE(spi.tx_fifo().empty()) << "measuring never reaches the FIFO";
+  EXPECT_EQ(radio.cca_settle_us(), SX1276_CCA_SETTLE_US);
+}
+
 TEST(RadioSX1276, ClearChannelGoesOnToTransmit) {
   RegisterModelSpi spi;
   MockPin rst, dio0, dio4(false);

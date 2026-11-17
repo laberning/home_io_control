@@ -485,7 +485,7 @@ TxResult SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const 
   if (len == 0)
     return TxResult::failed();
   // Measured in RX, before standby: the check needs the receiver running on the TX channel.
-  if (auto busy = this->channel_busy_level_(tx_config, SOFT_PHY_CCA_SETTLE_US))
+  if (auto busy = this->channel_busy_level_(tx_config))
     return TxResult::channel_busy(*busy);
 
 #ifdef IOHOME_FRAME_LOG

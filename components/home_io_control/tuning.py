@@ -7,6 +7,8 @@
 ## pairing and radio parameters at runtime. Tuned values are volatile and reset on
 ## every boot.
 
+import logging
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import number, select
@@ -14,6 +16,8 @@ from esphome.const import CONF_ID, CONF_NAME, ENTITY_CATEGORY_CONFIG
 from esphome.core import ID
 
 from .hub_names import home_io_control_ns
+
+_LOGGER = logging.getLogger(__name__)
 
 CONF_TUNING = "tuning"
 CONF_UI_CONTROLS = "ui_controls"
@@ -35,7 +39,8 @@ CONF_LR1121_POST_TX_SETTLE_US = "lr1121_post_tx_settle_us"
 CONF_LR1121_DISCOVERY_HOP_SLICE_MS = "lr1121_discovery_hop_slice_ms"
 CONF_COLD_BROADCAST_REPLY_PREAMBLE = "cold_broadcast_reply_preamble"
 CONF_NORMAL_START_PREAMBLE = "normal_start_preamble"
-CONF_LBT_MAX_RETRIES = "lbt_max_retries"
+CONF_LBT_MAX_RETRIES = "lbt_max_retries"  # deprecated, accepted and ignored (ADR 0096)
+CONF_LBT_FORCE_WHEN_BUSY = "lbt_force_when_busy"
 CONF_LBT_RSSI_THRESHOLD_DBM = "lbt_rssi_threshold_dbm"
 CONF_LOW_POWER_WAKE_BELIEF = "low_power_wake_belief"
 CONF_LOW_POWER_WAKE_PREAMBLE = "low_power_wake_preamble"
@@ -243,7 +248,7 @@ UI_NAMES = {
     CONF_LR1121_DISCOVERY_HOP_SLICE_MS: "Radio LR1121 Discovery Hop Slice",
     CONF_COLD_BROADCAST_REPLY_PREAMBLE: "Radio Cold Broadcast Reply Preamble",
     CONF_NORMAL_START_PREAMBLE: "Radio Normal Start Preamble",
-    CONF_LBT_MAX_RETRIES: "Radio LBT Max Retries",
+    CONF_LBT_FORCE_WHEN_BUSY: "Radio LBT Force When Busy",
     CONF_LBT_RSSI_THRESHOLD_DBM: "Radio LBT RSSI Threshold",
     CONF_LOW_POWER_WAKE_BELIEF: "Radio Low Power Wake Belief",
     CONF_LOW_POWER_WAKE_PREAMBLE: "Radio Low Power Wake Preamble",
@@ -321,7 +326,6 @@ _NUMBER_PARAMS = {
     # attempts whatever their length costs: the exchange is bounded by that count, not by
     # exchange_total_budget_ms (ADR 0095).
     CONF_LOW_POWER_WAKE_PREAMBLE: (1024, 4096, 64, "B"),
-    CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),
     CONF_LBT_RSSI_THRESHOLD_DBM: (-95, -70, 1, "dBm"),
     # Ceilings are generous because the right value is a property of the target device, not of
     # the radio: measured RS100 solar reply latencies reach ~3 s (see RESPONSE_START_WAIT_MS).
@@ -365,7 +369,16 @@ _NUMBER_PARAMS = {
 #
 # low_power_wake_belief is the opposite: on by default, and a diagnostic off-switch. Setting it to
 # false restores the fixed long wake-up preamble on every try to a low_power device.
-_BOOL_PARAMS = (CONF_PAIRING_DISCOVERY_LOW_POWER, CONF_PAIRING_DISCOVERY_ACK_CAPABLE, CONF_LOW_POWER_WAKE_BELIEF)
+#
+# lbt_force_when_busy is opt-in: by default a request never goes out onto a channel the hub measured
+# busy (ADR 0096). On, a request whose access time ran out with every channel busy is sent on the
+# quietest one.
+_BOOL_PARAMS = (
+    CONF_PAIRING_DISCOVERY_LOW_POWER,
+    CONF_PAIRING_DISCOVERY_ACK_CAPABLE,
+    CONF_LOW_POWER_WAKE_BELIEF,
+    CONF_LBT_FORCE_WHEN_BUSY,
+)
 _BOOL_SELECT_OPTIONS = ["Off", "On"]
 
 # Select parameters: key -> ordered option list. Single source of truth for both the
@@ -383,6 +396,7 @@ _SELECT_OPTIONS = {
     CONF_SX1276_RX_BANDWIDTH: list(SX1276_BANDWIDTH_OPTIONS),
     CONF_LR1121_RX_BANDWIDTH: list(LR1121_BANDWIDTH_OPTIONS),
     CONF_LOW_POWER_WAKE_BELIEF: _BOOL_SELECT_OPTIONS,
+    CONF_LBT_FORCE_WHEN_BUSY: _BOOL_SELECT_OPTIONS,
     CONF_SCAN_POWER_CLASSES: list(SCAN_POWER_CLASSES_OPTIONS),
     CONF_PAIRING_DISCOVER_CONFIRM: list(DISCOVER_CONFIRM_MODE_OPTIONS),
     CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS: list(DISCOVERY_LISTEN_CHANNELS_OPTIONS),
@@ -444,6 +458,24 @@ _validate_discovery_send_channels = _one_of_string(
 _validate_key_transfer_mode = _one_of_string(
     CONF_PAIRING_KEY_TRANSFER, KEY_TRANSFER_MODE_OPTIONS
 )
+
+
+def _deprecated_lbt_max_retries(value):
+    """Accept the retired ``lbt_max_retries`` and say it no longer does anything.
+
+    The checks of a request now end by time, not by count (ADR 0096), so the value has no effect.
+    The key stays legal so an existing config keeps compiling; it also stays within its old range
+    so a typo is still reported. No code is generated for it.
+    """
+    value = cv.int_range(min=0, max=10)(value)
+    _LOGGER.warning(
+        "home_io_control: tuning '%s:' is deprecated and has no effect: a request now waits for a "
+        "free channel for a fixed time instead of counting checks. Remove it, and use '%s: true' if "
+        "you want a send onto a busy channel after that time.",
+        CONF_LBT_MAX_RETRIES,
+        CONF_LBT_FORCE_WHEN_BUSY,
+    )
+    return value
 
 
 # Numeric parameters that are protocol bytes, written in hex in YAML: key -> hex digits.
@@ -517,6 +549,7 @@ TUNING_SCHEMA = cv.Schema(
         ): _validate_discovery_send_channels,
         cv.Optional(CONF_PAIRING_KEY_TRANSFER): _validate_key_transfer_mode,
         **{cv.Optional(key): cv.boolean for key in _BOOL_PARAMS},
+        cv.Optional(CONF_LBT_MAX_RETRIES): _deprecated_lbt_max_retries,
         # Numeric parameters share their range with the number-entity bounds via _NUMBER_PARAMS.
         **{
             cv.Optional(key): cv.int_range(min=lo, max=hi)

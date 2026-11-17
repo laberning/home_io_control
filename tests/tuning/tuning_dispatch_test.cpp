@@ -58,9 +58,6 @@ TEST(TuningDispatch, NumberUpdatesEachParameter) {
   comp.update_tuning_number("lr1121_discovery_hop_slice_ms", 250);
   EXPECT_EQ(comp.tuning_.lr1121_discovery_hop_slice_ms, 250);
 
-  comp.update_tuning_number("lbt_max_retries", 1);
-  EXPECT_EQ(comp.tuning_.lbt_max_retries, 1);
-
   comp.update_tuning_number("lbt_rssi_threshold_dbm", -45);
   EXPECT_EQ(comp.tuning_.lbt_rssi_threshold_dbm, -45);
 
@@ -221,6 +218,12 @@ TEST(TuningDispatch, SelectLowPowerWakeBeliefDefaultsOnAndRoundTrips) {
 
   comp.update_tuning_select("low_power_wake_belief", "On");
   EXPECT_TRUE(comp.tuning_.low_power_wake_belief);
+
+  EXPECT_FALSE(comp.tuning_.lbt_force_when_busy) << "a request is never forced onto a busy channel unless asked";
+  EXPECT_EQ(comp.get_tuning_select_value("lbt_force_when_busy"), "Off");
+  comp.update_tuning_select("lbt_force_when_busy", "On");
+  EXPECT_TRUE(comp.tuning_.lbt_force_when_busy);
+  EXPECT_EQ(comp.get_tuning_select_value("lbt_force_when_busy"), "On");
 }
 
 TEST(TuningDispatch, SelectScanPowerClasses) {

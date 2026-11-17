@@ -291,7 +291,7 @@ TxResult RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioT
   if (len == 0 || len > RADIO_PACKET_BUFFER_SIZE)
     return TxResult::failed();
   // Measured in RX, before standby: the check needs the receiver running on the TX channel.
-  if (auto busy = this->channel_busy_level_(tx_config, SX1276_CCA_SETTLE_US))
+  if (auto busy = this->channel_busy_level_(tx_config))
     return TxResult::channel_busy(*busy);
 #ifdef IOHOME_FRAME_LOG
   log_frame("TX", data, len, tx_config.freq_hz, tx_config.preamble_len);

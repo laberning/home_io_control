@@ -242,6 +242,8 @@ class SoftPhyDriverBase : public RadioDriver {
   /// used to read the single raw byte differs, via @ref read_rssi_raw_byte. Antenna-referred: the
   /// gain of an external receive front end is removed, see @ref front_end_rx_gain_db.
   int16_t read_rssi() override;
+  /// @copydoc RadioDriver::cca_settle_us
+  [[nodiscard]] uint32_t cca_settle_us() const override { return SOFT_PHY_CCA_SETTLE_US; }
   /// @copydoc RadioDriver::is_sync_detected
   bool is_sync_detected() override;
   /// @copydoc RadioDriver::is_preamble_detected
