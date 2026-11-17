@@ -2,13 +2,14 @@
 
 /// @file platform_climate_controls.h
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the open-window
-/// detection switch, the night light and the heating-level text sensor.
+/// detection switch, the night light, the heating-level text sensor and the central-heating-mode sensor.
 /// @ingroup hioc_platforms
 ///
 /// All are device-bound companions (DeviceBoundCompanion) that climate.py generates alongside a
 /// `climate:` entity: the window pair when the device kind has WINDOW_COMPANIONS, the night light when
 /// the YAML asks for it on a kind with NIGHT_LIGHT; the heating-level text sensor is opt-in on an
-/// electrical heater. They show readings the hub's poll already stores in
+/// electrical heater, and the central-heating-mode binary sensor is opt-in on a kind with
+/// CENTRAL_HEATING_MODE (a towel dryer). They show readings the hub's poll already stores in
 /// IoDevice::heating and add no radio traffic of their own, except their writes and the read-backs that
 /// confirm them.
 ///
@@ -61,6 +62,32 @@ class IOHomeHeatingLevelSensor : public text_sensor::TextSensor, public Componen
 /// Reads IoDevice::heating.window_open. No state until the first poll has read register 0x010E, so
 /// "closed" always means the heater said so.
 class IOHomeWindowBinarySensor : public binary_sensor::BinarySensor, public Component, public DeviceBoundCompanion {
+ public:
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+
+  /// @brief Dump sensor configuration to the log.
+  void dump_config() override;
+
+  /// @brief Get setup priority so the parent hub is available first.
+  /// @return setup_priority::DATA.
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+};
+
+/// @brief Binary sensor (`central_heating_mode:` on a climate entry) that is ON while a mixed towel dryer
+/// runs on the house's central heating.
+/// @ingroup hioc_platforms
+///
+/// Reads IoDevice::heating.central_heating_mode (register 0x0153, read at every poll once this sensor is
+/// declared). While it is on the dryer's electric element stays off, so the card shows idle and Boost and
+/// Drying do nothing. No state until the heater has answered with a value, and none for a heater that
+/// answers without one (an electric unit).
+///
+/// \todo Experimental: read on one Atlantic Adelis mixed unit over four panel toggles (issue #243); confirm
+///       on a second unit.
+class IOHomeCentralHeatingModeBinarySensor : public binary_sensor::BinarySensor,
+                                             public Component,
+                                             public DeviceBoundCompanion {
  public:
   /// @brief Subscribe to the device's updates and publish what is already known.
   void setup() override;

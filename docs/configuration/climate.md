@@ -44,6 +44,9 @@ The keys every entity platform shares (`name`, `io_device_id`, `io_device_type`,
   See the section "Polling and read-back" below.
 - `heating_level` (Optional): A text sensor with the level the heater applies right now. Accepted on
   `io_device_type: electrical_heater` only. See the section "Heating level sensor" below.
+- `central_heating_mode` (Optional): A binary sensor, on while a mixed towel dryer runs on central
+  heating. Experimental. Accepted on `io_model: towel_dryer` only. See the section "Central-heating
+  mode sensor" below.
 - `night_light` (Optional): A light entity for the heater's night light. Accepted on
   `io_model: heater_with_light` only. See the section "Heaters with a night light" below.
 - `min_temperature`, `max_temperature` (Optional): The range a thermostat encodes its temperature
@@ -121,7 +124,7 @@ at a later poll:
 | Heater kind | One poll reads | The first poll also reads |
 |---|---|---|
 | Radiator with a setpoint | Five registers: room temperature, setpoint, mode, regulator state, window sensor. While its program runs, also the temperature in force. With `io_model: heater_with_light`, also the light's state and brightness | The maximum setpoint, the open-window-detection setting, and for the declaration check the model name and the towel dryer's mode register |
-| Towel dryer | Five registers: room temperature, setpoint, mode, temporary state, working rate. While its program runs with no boost or drying, also the temperature in force. Then one status read, which names the level the dryer applies, in every mode and whether or not a `heating_level:` sensor is configured | The maximum setpoint and the model name |
+| Towel dryer | Five registers: room temperature, setpoint, mode, temporary state, working rate. While its program runs with no boost or drying, also the temperature in force. Then one status read, which names the level the dryer applies, in every mode and whether or not a `heating_level:` sensor is configured. With a `central_heating_mode:` sensor, one more register, read before the status read | The maximum setpoint and the model name |
 | Plain electrical heater, pilot-wire interface | One status read | |
 | Thermostat, heat pump | One status read | |
 
@@ -149,6 +152,7 @@ generated as for the other platforms.
 | `Open Window Detection` switch | The same entries | Experimental, disabled by default. The setting is read once, at the first poll, so a change made at the heater's panel appears after a reboot |
 | Night light | An entry with a `night_light:` block | See the section "Heaters with a night light" below |
 | `Heating level` text sensor | An entry with a `heating_level:` block | See the section "Heating level sensor" below |
+| Central heating mode binary sensor | An entry with a `central_heating_mode:` block | Experimental. See the section "Central-heating mode sensor" below |
 
 A towel dryer has no window function, so it gets neither window entity. A heater declared without
 `io_device_type` gets none either, because nothing in the YAML says what it is.
@@ -216,6 +220,36 @@ The block takes every [text sensor](https://esphome.io/components/text_sensor/) 
 accepted on `io_device_type: electrical_heater` only, and it adds no radio traffic: the level comes
 from a status read the poll makes anyway. The values, and which heater kinds report a level, are in
 [The level a heater applies](../heating.md#the-level-a-heater-applies).
+
+## Central-heating mode sensor
+
+A mixed towel dryer (an Atlantic ADELIS 2 M) heats from the house's water loop and has an electric
+element as well. While its central-heating mode is on, the element never runs: the card shows
+`idle`, and Boost and Drying change nothing. The optional `central_heating_mode:` binary sensor
+shows that setting, so you can see why.
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Bathroom towel dryer"
+    io_device_id: "BD684B"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
+    io_model: towel_dryer
+    central_heating_mode:
+      name: "Bathroom towel dryer central heating"
+```
+
+The sensor is on in central-heating mode and off while the dryer uses its element. The block takes
+every [binary sensor](https://esphome.io/components/binary_sensor/) option. The key is accepted on
+`io_model: towel_dryer` only, and an entry without it reads nothing extra. It costs one register
+read per poll. A dryer that answers the read without a value, as an electric unit is expected to,
+leaves the sensor without a state; the hub logs that once and stops asking until the next boot.
+
+> [!NOTE]
+> Experimental. The register was read on one ADELIS 2 M while the setting was toggled on its panel
+> ([issue #243](https://github.com/laberning/home_io_control/issues/243)); the hub never writes it.
+> What an electric unit answers is not known. Please report your unit's result.
 
 ## Setpoint range of a radiator or towel dryer
 

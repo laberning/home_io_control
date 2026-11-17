@@ -1,0 +1,14 @@
+# expect-error: central_heating_mode needs a towel dryer: set io_device_type: electrical_heater, io_subtype: 1 and io_model: towel_dryer
+# covers: climate._validate_central_heating_mode
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+climate:
+  - platform: home_io_control
+    name: "Radiator"
+    io_device_id: "4D5E6F"
+    io_device_type: electrical_heater
+    io_subtype: 1
+    central_heating_mode:
+      name: "Central Heating Mode"

@@ -567,3 +567,14 @@ TEST(DeviceTypesTableModels, AModelRowKeepsTheIdentityOfTheRowAboveIt) {
   });
   EXPECT_EQ(rows, 3u);
 }
+
+TEST(DeviceTypesTable, OnlyTheTowelDryerRowHasTheCentralHeatingModeBit) {
+  test::for_each_model_row([](const DeviceTypeInfo &model) {
+    EXPECT_EQ(has_feature(model.features, device_feature::CENTRAL_HEATING_MODE),
+              model.model == DeviceModel::TOWEL_DRYER)
+        << model.name;
+  });
+  EXPECT_FALSE(has_feature(device_features(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE),
+                           device_feature::CENTRAL_HEATING_MODE))
+      << "a radiator has no central-heating mode";
+}

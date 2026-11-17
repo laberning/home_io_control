@@ -1,6 +1,6 @@
 /// @file platform_climate_controls_test.cpp
 /// @brief Tests for the generated per-heater companions: the window sensor, the open-window detection
-/// switch and the heating-level sensor.
+/// switch, the heating-level sensor and the central-heating-mode sensor.
 
 #include "platform_climate_controls.h"
 
@@ -154,6 +154,47 @@ TEST(PlatformWindowSensor, PublishesWhatIsAlreadyKnownAtSetup) {
   sensor.setup();
   ASSERT_TRUE(sensor.has_state());
   EXPECT_TRUE(sensor.state);
+}
+
+TEST(PlatformCentralHeatingModeSensor, HasNoStateUntilTheDryerHasAnswered) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  IOHomeCentralHeatingModeBinarySensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+  EXPECT_FALSE(sensor.has_state()) << "electric mode must mean the dryer said so";
+}
+
+TEST(PlatformCentralHeatingModeSensor, IsOnInCentralHeatingAndOffInElectricMode) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  IOHomeCentralHeatingModeBinarySensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  hub.deliver([](HeatingReadings &r) { r.central_heating_mode = 1; });
+  ASSERT_TRUE(sensor.has_state());
+  EXPECT_TRUE(sensor.state);
+
+  hub.deliver([](HeatingReadings &r) { r.central_heating_mode = 0; });
+  EXPECT_TRUE(sensor.has_state());
+  EXPECT_FALSE(sensor.state);
+}
+
+TEST(PlatformCentralHeatingModeSensor, LosesItsStateWhenTheReadingIsDropped) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  IOHomeCentralHeatingModeBinarySensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+  hub.deliver([](HeatingReadings &r) { r.central_heating_mode = 1; });
+  ASSERT_TRUE(sensor.has_state());
+
+  hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::CENTRAL_HEATING_MODE); });
+  EXPECT_FALSE(sensor.has_state()) << "a dryer that stops answering a value shows no state";
 }
 
 TEST(PlatformOpenWindowDetectionSwitch, WritesThenReadsTheRegisterBackWithTheFullBudget) {

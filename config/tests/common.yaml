@@ -203,6 +203,9 @@ climate:
     # The level the heater applies now (comfort, eco, boost, ...), from its status read.
     heating_level:
       name: "Test Towel Dryer Heating Level"
+    # On while a mixed towel dryer runs on central heating; one extra register read per poll.
+    central_heating_mode:
+      name: "Test Towel Dryer Central Heating Mode"
   # A heater with a night light: io_model adds the light's registers, night_light: its light entity.
   - platform: home_io_control
     name: "Test Heater With Light"

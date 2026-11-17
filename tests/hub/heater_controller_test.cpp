@@ -1555,6 +1555,103 @@ TEST(HeaterController, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnc
   EXPECT_EQ(dev->heating.window_open, 0);
 }
 
+/// Queue the replies of a towel dryer's five core registers (room, setpoint, mode, temporary state, rate).
+void queue_towel_dryer_poll(HeaterControllerFixture &fx) {
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x36, 0x01});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3E, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x26, 0x00});
+}
+
+/// @return Whether a sent frame of the poll read the central-heating mode (register 0x0153).
+bool read_central_heating_mode(const std::vector<std::vector<uint8_t>> &sent) {
+  return std::any_of(sent.begin(), sent.end(), [](const auto &tx) { return sent_register(tx) == 0x53; });
+}
+
+TEST(HeaterController, ADryerWithoutTheCentralHeatingSensorNeverReadsRegister0x53) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  queue_towel_dryer_poll(fx);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_FALSE(read_central_heating_mode(fx.radio.get_sent_data()));
+  EXPECT_EQ(dev->central_heating_mode_read, CentralHeatingModeRead::NOT_ASKED);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::CENTRAL_HEATING_MODE));
+}
+
+TEST(HeaterController, ADryerWithTheCentralHeatingSensorReadsItAtEveryPoll) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_central_heating_mode_read("ABC123");
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x53, 0x01});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  ASSERT_GE(fx.radio.get_sent_data().size(), 6u);
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data()[5]), 0x53) << "right after the five core registers";
+  EXPECT_EQ(dev->heating.central_heating_mode, 1);
+
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x53, 0x00});
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data()[sent_before + 5]), 0x53) << "read again, not once";
+  EXPECT_EQ(dev->heating.central_heating_mode, 0);
+  EXPECT_EQ(dev->central_heating_mode_read, CentralHeatingModeRead::ASKED);
+}
+
+TEST(HeaterController, AnAnswerWithoutAValueStopsTheCentralHeatingReadAndClearsTheReading) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_central_heating_mode_read("ABC123");
+  dev->heating.central_heating_mode = 1;  // an earlier answer
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x53});  // an electric unit: no value
+
+  EXPECT_TRUE(fx.controller.poll("ABC123")) << "a missing register is not a poll failure";
+  EXPECT_EQ(dev->central_heating_mode_read, CentralHeatingModeRead::ABSENT);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::CENTRAL_HEATING_MODE));
+
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_towel_dryer_poll(fx);
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  EXPECT_FALSE(read_central_heating_mode({sent.begin() + static_cast<std::ptrdiff_t>(sent_before), sent.end()}))
+      << "not asked again until the next boot";
+}
+
+TEST(HeaterController, AnUnknownCentralHeatingValueIsTreatedAsNoValue) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_central_heating_mode_read("ABC123");
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x53, 0x02});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(dev->central_heating_mode_read, CentralHeatingModeRead::ABSENT);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::CENTRAL_HEATING_MODE));
+}
+
+TEST(HeaterController, AMissedCentralHeatingReadChangesNothing) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_central_heating_mode_read("ABC123");
+  dev->heating.central_heating_mode = 1;
+  queue_towel_dryer_poll(fx);  // no reply to the read of 0x53
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(dev->central_heating_mode_read, CentralHeatingModeRead::ASKED) << "asked again at the next poll";
+  EXPECT_EQ(dev->heating.central_heating_mode, 1);
+}
+
+TEST(HeaterController, TheCentralHeatingReadIsRefusedOnAKindWithoutTheCapability) {
+  HeaterControllerFixture fx;
+  IoDevice *radiator = make_heater(fx);
+  fx.controller.enable_central_heating_mode_read("ABC123");
+  EXPECT_EQ(radiator->central_heating_mode_read, CentralHeatingModeRead::NOT_ASKED);
+}
+
 TEST(HeaterController, HeaterPollStopsAtTheFirstFailureAndBacksOff) {
   HeaterControllerFixture fx;
   auto *dev = make_heater(fx);

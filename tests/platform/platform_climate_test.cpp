@@ -970,6 +970,19 @@ TEST(PlatformClimate, ThermostatUsesTheYamlRangeButAHeatPumpNeverDoes) {
   EXPECT_EQ(pump_hub.temperature_calls[1].main_parameter, 29867) << "round(70 x 51200 / 120), not the YAML range's top";
 }
 
+TEST(PlatformClimate, DeclaredCentralHeatingModeSensorAsksTheHubToReadIt) {
+  MockHubClimate asked;
+  IOHomeClimate with_sensor = make_thermostat(asked);
+  with_sensor.set_reads_central_heating_mode();
+  with_sensor.setup();
+  EXPECT_EQ(asked.central_heating_mode_reads, (std::vector<std::string>{"ABC123"}));
+
+  MockHubClimate not_asked;
+  IOHomeClimate without_sensor = make_thermostat(not_asked);
+  without_sensor.setup();
+  EXPECT_TRUE(not_asked.central_heating_mode_reads.empty()) << "no sensor, no extra read";
+}
+
 TEST(PlatformClimate, HeatPumpSetpointCarriesNoFunctionalParameter) {
   MockHubClimate hub;
   IOHomeClimate entity = make_pump(hub);

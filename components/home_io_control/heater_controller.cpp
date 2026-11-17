@@ -290,6 +290,12 @@ void HeaterController::set_device_temperature_range(const std::string &device_id
   dev->temperature_range_max_c = max_c;
 }
 
+void HeaterController::enable_central_heating_mode_read(const std::string &device_id) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev != nullptr && has_feature(dev->features, device_feature::CENTRAL_HEATING_MODE))
+    dev->central_heating_mode_read = CentralHeatingModeRead::ASKED;
+}
+
 bool HeaterController::exchange_heating_(const std::string &device_id, const char *label, const IoFrame &request,
                                          IoFrame &response, uint8_t max_tries) {
   // A read and a write of the same register share the label, so the log names which one it was: a
@@ -774,6 +780,23 @@ void HeaterController::poll_temperature_in_force_(const std::string &device_id, 
            device_id.c_str(), heating_function_name(fn));
 }
 
+void HeaterController::poll_central_heating_mode_(const std::string &device_id, uint8_t max_tries) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr || dev->central_heating_mode_read != CentralHeatingModeRead::ASKED)
+    return;
+  constexpr HeatingFunction fn = HeatingFunction::CENTRAL_HEATING_MODE;
+  if (this->read_and_store_heating_register_(device_id, fn, nullptr, max_tries, /*follow_override=*/false) !=
+      HeatingRead::EMPTY)
+    return;
+  IoDevice *current = this->registry_.get(device_id);
+  if (current == nullptr)
+    return;
+  current->heating.clear(fn);
+  current->central_heating_mode_read = CentralHeatingModeRead::ABSENT;
+  ESP_LOGI(detail::TAG, "Device %s reports no central-heating mode (%s): its sensor stays without a state",
+           device_id.c_str(), heating_function_name(fn));
+}
+
 void HeaterController::read_heating_level_(const std::string &device_id, uint8_t max_tries) {
   const IoDevice *dev = this->registry_.get(device_id);
   IoFrame request;
@@ -822,6 +845,10 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
       break;
     this->read_heating_register(device_id, fn, nullptr, max_tries);
   }
+
+  // The central-heating mode is read only where the YAML declares its sensor; a miss is not a poll failure.
+  if (ok)
+    this->poll_central_heating_mode_(device_id, max_tries);
 
   // Properties and settings that rarely change are read until they have been read once. A miss here
   // is not a poll failure; the next poll asks again.

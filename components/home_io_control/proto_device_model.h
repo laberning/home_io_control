@@ -307,6 +307,15 @@ enum class TemperatureInForceSupport : uint8_t {
              ///< it until the next boot, and a target writes the comfort setpoint.
 };
 
+/// @brief Whether the hub reads a towel dryer's central-heating mode (HeatingFunction::CENTRAL_HEATING_MODE).
+/// @details Opt-in: the YAML `central_heating_mode:` key turns the read on for a kind with
+///          device_feature::CENTRAL_HEATING_MODE; nothing else reads the register. Runtime only.
+enum class CentralHeatingModeRead : uint8_t {
+  NOT_ASKED,  ///< No sensor is declared: the register is never read.
+  ASKED,      ///< A sensor is declared: every poll reads the register.
+  ABSENT,     ///< The heater answered without a value: the hub stops reading it until the next boot.
+};
+
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
   uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
@@ -448,6 +457,8 @@ struct IoDevice {
   /// only, until the next boot.
   TemperatureInForceSupport temperature_in_force{TemperatureInForceSupport::UNKNOWN};
   bool model_checked{false};  ///< The model check completed: both of its reads were answered.
+  CentralHeatingModeRead central_heating_mode_read{CentralHeatingModeRead::NOT_ASKED};  ///< The central-heating
+                                                                                        ///< mode read, see the enum.
 };
 
 /// @brief Resolve a device's capability bits and inversion from its kind and its YAML overrides.

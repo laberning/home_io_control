@@ -618,6 +618,37 @@ def heating_level_sensor_is_accepted_on_an_electrical_heater_only():
 
 
 @case()
+def central_heating_mode_sensor_is_accepted_on_a_towel_dryer_only():
+    """`central_heating_mode:` passes on a towel dryer (the CENTRAL_HEATING_MODE bit of its row) and is
+    refused on a radiator, another heater kind, another device and an entry with no declared type, with a
+    message naming io_model: towel_dryer; an entry without the key is untouched."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import climate as c
+    from esphome.components.home_io_control import hub_validators as v
+
+    key = c.CONF_CENTRAL_HEATING_MODE
+    heater = v.DEVICE_TYPE_OPTIONS["electrical_heater"]
+    dryer = {"io_device_type": heater, "io_subtype": 1, "io_model": "towel_dryer", key: {}}
+    assert c._validate_central_heating_mode(dryer) is dryer
+    untouched = {"io_device_type": heater, "io_subtype": 1}
+    assert c._validate_central_heating_mode(untouched) is untouched
+    refused = (
+        {"io_device_type": heater, "io_subtype": 1, key: {}},
+        {"io_device_type": heater, "io_subtype": 1, "io_model": "heater_with_light", key: {}},
+        {"io_device_type": heater, "io_subtype": 0, key: {}},
+        {"io_device_type": v.DEVICE_TYPE_OPTIONS["heat_pump"], key: {}},
+        {key: {}},
+    )
+    for cfg in refused:
+        try:
+            c._validate_central_heating_mode(cfg)
+        except cv.Invalid as err:
+            assert "io_model: towel_dryer" in str(err)
+        else:
+            raise AssertionError(f"accepted {cfg}")
+
+
+@case()
 def cover_named_position_buttons_follow_the_declared_kind():
     """A cover gets one companion button per named position its declared kind has, with the entity
     ids and names Home Assistant already knows; a kind without the bit, a raw type with no row

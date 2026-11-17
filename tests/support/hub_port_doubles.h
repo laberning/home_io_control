@@ -242,6 +242,10 @@ class HeatingPortDouble : public HubHeatingPort {
     this->temperature_ranges.emplace_back(min_c, max_c);
   }
 
+  void enable_central_heating_mode_read(const std::string &device_id) override {
+    this->central_heating_mode_reads.push_back(device_id);
+  }
+
   bool set_water_heater_target(const std::string &, float celsius) override {
     this->water_heater_targets.push_back(celsius);
     return this->write_result;
@@ -265,6 +269,7 @@ class HeatingPortDouble : public HubHeatingPort {
   std::vector<HeatingWritePlan> plans;                      ///< Plans handed to execute_heating_plan().
   std::vector<std::string> programme_state_reads;           ///< Devices passed to read_programme_state().
   std::vector<std::pair<float, float>> temperature_ranges;  ///< (min, max) pairs set.
+  std::vector<std::string> central_heating_mode_reads;      ///< Devices asked to read their central-heating mode.
   std::vector<float> water_heater_targets;
   std::vector<DhwMode> water_heater_modes;
   std::vector<bool> water_heater_boosts;

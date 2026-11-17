@@ -5,7 +5,8 @@
 ## Defines the experimental IO-Homecontrol heating/climate integration and wires it to the shared
 ## hub. Heaters with a window sensor also get a Window binary sensor and an Open Window Detection
 ## switch; a heater with a night light (io_model: heater_with_light) can add a dimmable `night_light:`
-## light, and an electrical heater can add a `heating_level:` text sensor with the level it applies now. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
+## light, an electrical heater can add a `heating_level:` text sensor with the level it applies now, and a towel
+## dryer (io_model: towel_dryer) can add a `central_heating_mode:` binary sensor. The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py; only climate-specific entity
 ## construction/registration stays here.
 
 import functools
@@ -26,6 +27,7 @@ from esphome.const import (
 from . import home_io_control_ns
 from .hub_validators import (
     DEVICE_TYPE_OPTIONS,
+    FEATURE_CENTRAL_HEATING_MODE,
     FEATURE_NIGHT_LIGHT,
     FEATURE_TEMPERATURE_RANGE,
     FEATURE_WINDOW_COMPANIONS,
@@ -68,7 +70,12 @@ IOHomeHeatingLevelSensor = home_io_control_ns.class_(
     "IOHomeHeatingLevelSensor", text_sensor.TextSensor, cg.Component
 )
 
+IOHomeCentralHeatingModeBinarySensor = home_io_control_ns.class_(
+    "IOHomeCentralHeatingModeBinarySensor", binary_sensor.BinarySensor, cg.Component
+)
+
 CONF_NIGHT_LIGHT = "night_light"
+CONF_CENTRAL_HEATING_MODE = "central_heating_mode"
 CONF_HEATING_LEVEL = "heating_level"
 
 # Internal config keys for the heater-only companion IDs (injected by the post-validator).
@@ -88,6 +95,21 @@ def _validate_night_light(config):
         "night_light needs a heater with a night light: set io_device_type: electrical_heater, "
         "io_subtype: 1 and io_model: heater_with_light",
         path=[CONF_NIGHT_LIGHT],
+    )
+
+
+def _validate_central_heating_mode(config):
+    """Accept `central_heating_mode:` only on a kind with the CENTRAL_HEATING_MODE bit (a towel dryer).
+
+    Like `night_light:`, the key is rejected when no io_device_type is declared: the register would
+    otherwise be read from a heater nothing says has it.
+    """
+    if CONF_CENTRAL_HEATING_MODE not in config or declared_features(config) & FEATURE_CENTRAL_HEATING_MODE:
+        return config
+    raise cv.Invalid(
+        "central_heating_mode needs a towel dryer: set io_device_type: electrical_heater, "
+        "io_subtype: 1 and io_model: towel_dryer",
+        path=[CONF_CENTRAL_HEATING_MODE],
     )
 
 
@@ -181,6 +203,12 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_HEATING_LEVEL): text_sensor.text_sensor_schema(IOHomeHeatingLevelSensor).extend(
                 cv.COMPONENT_SCHEMA
             ),
+            # On while a mixed towel dryer runs on central heating (its element stays off); opt-in, since
+            # it costs one register read per poll and only a mixed unit has the answer. Its ID is declared
+            # by the schema's own GenerateID.
+            cv.Optional(CONF_CENTRAL_HEATING_MODE): binary_sensor.binary_sensor_schema(
+                IOHomeCentralHeatingModeBinarySensor
+            ).extend(cv.COMPONENT_SCHEMA),
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
@@ -189,6 +217,7 @@ CONFIG_SCHEMA = cv.All(
     validate_device_model,
     _validate_night_light,
     _validate_heating_level,
+    _validate_central_heating_mode,
     warn_if_experimental_kind,
     _inject_companion_ids,
 )
@@ -245,6 +274,15 @@ async def to_code(config):
             parent,
             new_entity=text_sensor.new_text_sensor,
             entity_config=config[CONF_HEATING_LEVEL],
+        )
+
+    if CONF_CENTRAL_HEATING_MODE in config:
+        cg.add(var.set_reads_central_heating_mode())
+        await create_user_companion(
+            config,
+            parent,
+            new_entity=binary_sensor.new_binary_sensor,
+            entity_config=config[CONF_CENTRAL_HEATING_MODE],
         )
 
     if CONF_NIGHT_LIGHT in config:

@@ -1,6 +1,6 @@
 /// @file platform_climate_controls.cpp
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the open-window
-/// detection switch, the night light and the heating-level text sensor.
+/// detection switch, the night light, the heating-level text sensor and the central-heating-mode sensor.
 /// @ingroup hioc_platforms
 
 #include "platform_climate_controls.h"
@@ -18,6 +18,7 @@ static const char *const TAG_WINDOW = "home_io_control.window";
 static const char *const TAG_DETECTION = "home_io_control.window_detection";
 static const char *const TAG_NIGHT_LIGHT = "home_io_control.night_light";
 static const char *const TAG_HEATING_LEVEL = "home_io_control.heating_level";
+static const char *const TAG_CENTRAL_HEATING = "home_io_control.central_heating_mode";
 
 /// Percentage for a light switched on at a brightness that rounds to 0 %: the lowest level that is still
 /// on (register value HEATING_NIGHT_LIGHT_STEPS_PER_PERCENT).
@@ -53,6 +54,22 @@ void IOHomeWindowBinarySensor::setup() {
 void IOHomeWindowBinarySensor::dump_config() {
   ESP_LOGCONFIG(TAG_WINDOW, "IO-Homecontrol Window:");
   ESP_LOGCONFIG(TAG_WINDOW, "  Device ID: %s", this->device_id_.c_str());
+}
+
+void IOHomeCentralHeatingModeBinarySensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    // "Electric mode" must mean the dryer said so: nothing read, or a reading dropped, means no state.
+    if (dev.heating.central_heating_mode < 0) {
+      this->invalidate_state();
+      return;
+    }
+    this->publish_state(dev.heating.central_heating_mode != 0);
+  });
+}
+
+void IOHomeCentralHeatingModeBinarySensor::dump_config() {
+  ESP_LOGCONFIG(TAG_CENTRAL_HEATING, "IO-Homecontrol Central Heating Mode:");
+  ESP_LOGCONFIG(TAG_CENTRAL_HEATING, "  Device ID: %s", this->device_id_.c_str());
 }
 
 void IOHomeOpenWindowDetectionSwitch::setup() {

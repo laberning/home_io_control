@@ -170,6 +170,18 @@ TEST(DeviceRegistry, PutKeepsTheYamlOverridesOfTheRecordItReplaces) {
   EXPECT_TRUE(has_feature(dev->features, device_feature::LEVELS));
 }
 
+TEST(DeviceRegistry, PutKeepsTheCentralHeatingModeReadOfTheRecordItReplaces) {
+  DeviceRegistry reg;
+  reg.add("AABBCC", {.type = DeviceType::ELECTRICAL_HEATER, .subtype = 1, .model = DeviceModel::TOWEL_DRYER});
+  reg.get("AABBCC")->central_heating_mode_read = CentralHeatingModeRead::ASKED;
+  IoDevice paired{};
+  paired.type = DeviceType::ELECTRICAL_HEATER;
+  paired.subtype = 1;
+  reg.put("AABBCC", paired);
+  EXPECT_EQ(reg.get("AABBCC")->central_heating_mode_read, CentralHeatingModeRead::ASKED)
+      << "the YAML's sensor still asks for the read after pairing replaces the record";
+}
+
 TEST(DeviceRegistry, SizeReflectsRegistrationCount) {
   DeviceRegistry reg;
   EXPECT_EQ(reg.size(), 0u);

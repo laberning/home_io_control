@@ -701,6 +701,11 @@ class IOHomeControlComponent : public Component,
   void set_device_temperature_range(const std::string &device_id, float min_c, float max_c) override {
     this->heater_controller_.set_device_temperature_range(device_id, min_c, max_c);
   }
+  /// @brief Have every poll of a heater read its central-heating mode.
+  /// @see HeaterController::enable_central_heating_mode_read()
+  void enable_central_heating_mode_read(const std::string &device_id) override {
+    this->heater_controller_.enable_central_heating_mode_read(device_id);
+  }
   /// @brief Read one register of a heater and fold the decoded value into IoDevice::heating.
   /// @see HeaterController::read_heating_register()
   bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,

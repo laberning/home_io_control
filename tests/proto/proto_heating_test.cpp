@@ -485,7 +485,7 @@ TEST(ProtoHeatingTowelDryer, ReadingsStoreAndReportTheTowelRegisters) {
 TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnField) {
   // Walks every function, so a register added to the enum without a row in the readings table (or the
   // descriptor table) fails here.
-  constexpr auto LAST = static_cast<unsigned>(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE);  // the last enumerator
+  constexpr auto LAST = static_cast<unsigned>(HeatingFunction::CENTRAL_HEATING_MODE);  // the last enumerator
   unsigned held = 0;
   for (unsigned i = 0; i <= LAST; i++) {
     const auto fn = static_cast<HeatingFunction>(i);
@@ -514,7 +514,7 @@ TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnF
     for (unsigned j = 0; j <= LAST; j++)
       EXPECT_FALSE(readings.has(static_cast<HeatingFunction>(j))) << heating_function_name(fn) << " touched " << j;
   }
-  EXPECT_EQ(held, 16u);
+  EXPECT_EQ(held, 17u);
 }
 
 TEST(ProtoHeatingTowelDryer, EachFunctionHasItsRegisterLowByte) {
@@ -631,4 +631,38 @@ TEST(ProtoHeatingNightLight, ReadingsStoreAndReportTheLightRegisters) {
   EXPECT_EQ(readings.night_light_brightness, 4000);
   EXPECT_TRUE(readings.has(HeatingFunction::NIGHT_LIGHT));
   EXPECT_EQ(readings.value_of(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS), 4000);
+}
+
+// --- Central-heating mode (a mixed towel dryer, issue #243) ---
+
+TEST(ProtoHeatingCentralHeatingMode, ReadRequestAndRegister) {
+  EXPECT_EQ(encode_read(HeatingFunction::CENTRAL_HEATING_MODE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x53}));
+  EXPECT_FALSE(heating_function_is_writable(HeatingFunction::CENTRAL_HEATING_MODE)) << "never written";
+}
+
+TEST(ProtoHeatingCentralHeatingMode, DecodesCentralHeatingAndElectric) {
+  float value = -1.0F;
+  ASSERT_TRUE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x53, 0x01}), HeatingFunction::CENTRAL_HEATING_MODE, value));
+  EXPECT_FLOAT_EQ(value, 1.0F);
+  ASSERT_TRUE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x53, 0x00}), HeatingFunction::CENTRAL_HEATING_MODE, value));
+  EXPECT_FLOAT_EQ(value, 0.0F);
+}
+
+TEST(ProtoHeatingCentralHeatingMode, EmptyAndUnknownRepliesAreNoValue) {
+  float value = -1.0F;
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x53}), HeatingFunction::CENTRAL_HEATING_MODE, value))
+      << "an electric unit answers without a value";
+  EXPECT_FALSE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x53, 0x02}), HeatingFunction::CENTRAL_HEATING_MODE, value));
+  EXPECT_FLOAT_EQ(value, -1.0F);
+}
+
+TEST(ProtoHeatingCentralHeatingMode, ReadingsStoreTheMode) {
+  HeatingReadings readings;
+  EXPECT_FALSE(readings.has(HeatingFunction::CENTRAL_HEATING_MODE));
+  EXPECT_TRUE(readings.store(HeatingFunction::CENTRAL_HEATING_MODE, 1.0F));
+  EXPECT_EQ(readings.central_heating_mode, 1);
+  EXPECT_TRUE(readings.has(HeatingFunction::CENTRAL_HEATING_MODE));
 }

@@ -133,6 +133,9 @@ void IOHomeClimate::setup() {
   if (this->has_range_)
     this->heating_port_->set_device_temperature_range(this->device_id_, this->range_min_c_, this->range_max_c_);
 
+  if (this->reads_central_heating_mode_)
+    this->heating_port_->enable_central_heating_mode_read(this->device_id_);
+
   // Custom presets are registered on the entity and referenced by the traits; IO's program mode,
   // the comfort offsets and the secured level have no standard preset.
   if (const HeatingProfile *profile = this->profile_(); profile != nullptr) {

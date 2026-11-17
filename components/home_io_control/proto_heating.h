@@ -87,6 +87,12 @@ enum class HeatingFunction : uint8_t {
                                 ///< as TEMPERATURE_IN_FORCE on the towel dryer, whose sweep read it in both.
                                 ///< \todo Read on a radiator: no AGILIA, Hekla or EMOTION 3 H has answered it yet. A
                                 ///<       heater that answers it empty keeps the comfort-setpoint write.
+  CENTRAL_HEATING_MODE,         ///< Register 0x0153, read-only: 1 while a mixed towel dryer runs on the house's
+                                ///< central heating (its electric element stays off), 0 while it uses the element.
+                                ///< An electric unit is expected to answer without a value.
+                                ///< \todo Experimental: read on one Atlantic Adelis mixed unit over four panel
+                                ///<       toggles (issue #243), never written. Confirm on a second unit, and on
+                                ///<       an electric one what the read returns.
 };
 
 /// @brief Operating modes of the mode register (HeatingFunction::SET_MODE).
@@ -285,6 +291,7 @@ struct HeatingReadings {
                                        ///< while none is active; NaN until read. Read after a write.
   int16_t night_light{-1};             ///< Night light 1 on / 0 off; -1 until read.
   int16_t night_light_brightness{-1};  ///< Night light brightness register, 0-10000; -1 until read.
+  int16_t central_heating_mode{-1};    ///< Central-heating mode 1 on / 0 off (register 0x0153); -1 until read.
   int16_t level{-1};                   ///< Low byte of the main parameter a status read returned: a heating level
                                        ///< (a plain heater, and a register heater whose programme reports one,
                                        ///< whose poll ends with that read) or a setpoint alias. -1 until a

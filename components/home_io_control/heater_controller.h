@@ -226,6 +226,11 @@ class HeaterController {
   /// @param max_c Upper end; must exceed `min_c`.
   void set_device_temperature_range(const std::string &device_id, float min_c, float max_c);
 
+  /// @brief Have every poll of a heater read its central-heating mode (YAML `central_heating_mode:`).
+  /// @details A device without device_feature::CENTRAL_HEATING_MODE keeps its poll as it is. Sends nothing.
+  /// @param device_id Target device ID.
+  void enable_central_heating_mode_read(const std::string &device_id);
+
   /// @brief Read one register of a heater and fold the decoded value into IoDevice::heating.
   ///
   /// Same gate as send_heating_command(); the read itself is read_private_register(). A reply that
@@ -466,6 +471,14 @@ class HeaterController {
   /// @param max_tries Transmit-attempt cap of each read (the poll's try band).
   /// @return true when every poll register answered.
   bool read_poll_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
+
+  /// @brief Read the central-heating mode of a heater whose YAML asked for it.
+  /// @details An answer without a value (an electric unit, or a byte no mode uses) clears the reading, so the
+  ///          sensor has no state, stops the read until the next boot and logs once. A missed read changes
+  ///          nothing.
+  /// @param device_id Target device ID.
+  /// @param max_tries Transmit-attempt cap of the read (the poll's try band).
+  void poll_central_heating_mode_(const std::string &device_id, uint8_t max_tries);
 
   /// What an answer without a value to a read of the temperature in force may decide.
   enum class InForceEmptyAnswer : uint8_t {

@@ -67,6 +67,11 @@ static constexpr DeviceFeatures NIGHT_LIGHT = 1U << 11U;
 /// Set exactly on the kinds whose heating profile takes a temperature without `fixed_range`
 /// (heating_profiles_test.cpp).
 static constexpr DeviceFeatures TEMPERATURE_RANGE = 1U << 12U;
+/// A mixed towel dryer (warmed by the house's water loop, with an electric element as well) reports in
+/// register 0x0153 whether its central-heating mode is on (1) or the element is in use (0)
+/// (proto_heating.h). Gates the climate entry's `central_heating_mode:` binary sensor.
+/// \todo Experimental: read on one Atlantic Adelis mixed unit (issue #243), confirm on a second one.
+static constexpr DeviceFeatures CENTRAL_HEATING_MODE = 1U << 13U;
 }  // namespace device_feature
 
 /// @brief True when every bit of `bit` is set in `set`.

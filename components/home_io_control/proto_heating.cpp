@@ -108,6 +108,9 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
     {"night_light", HeatingFunction::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, HeatingValueKind::BINARY},
     {"night_light_brightness", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 0x42, HeatingAccess::READ_WRITE,
      HeatingValueKind::BOUNDED_U16, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
+    // Read on a mixed towel dryer (issue #243): 1 while its central-heating mode is on, 0 in electric mode.
+    {"central_heating_mode", HeatingFunction::CENTRAL_HEATING_MODE, 0x53, HeatingAccess::READ_ONLY,
+     HeatingValueKind::BINARY},
 };
 
 /// @brief Look up the descriptor for a function.
@@ -347,6 +350,7 @@ constexpr HeatingReadingField HEATING_READING_FIELDS[] = {
     {HeatingFunction::WORKING_RATE, nullptr, &HeatingReadings::working_rate},
     {HeatingFunction::NIGHT_LIGHT, nullptr, &HeatingReadings::night_light},
     {HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, nullptr, &HeatingReadings::night_light_brightness},
+    {HeatingFunction::CENTRAL_HEATING_MODE, nullptr, &HeatingReadings::central_heating_mode},
 };
 
 /// @return The row of a register, or nullptr for one the readings do not hold.
