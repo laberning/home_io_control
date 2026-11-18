@@ -21,6 +21,8 @@ const char *transfer_outcome_name(TransferOutcome outcome) {
       return "incomplete";
     case TransferOutcome::NO_ANSWER:
       return "no answer";
+    case TransferOutcome::NO_DATA:
+      return "accepted, no answer";
     case TransferOutcome::ABANDONED:
       return "abandoned";
   }
@@ -52,13 +54,13 @@ bool TransferSession::next_request(const uint8_t *own, const uint8_t *dst, bool 
 
 // === Answers ===
 
-void TransferSession::on_answer(const IoFrame *reply) {
+void TransferSession::on_answer(const IoFrame *reply, bool request_accepted) {
   switch (this->phase_) {
     case Phase::OPEN:
-      this->on_open_answer_(reply);
+      this->on_open_answer_(reply, request_accepted);
       break;
     case Phase::BLOCKS:
-      this->on_block_answer_(reply);
+      this->on_block_answer_(reply, request_accepted);
       break;
     case Phase::CLOSE:
       // The answer to the close is not checked: the read ends either way.
@@ -69,7 +71,8 @@ void TransferSession::on_answer(const IoFrame *reply) {
   }
 }
 
-void TransferSession::on_open_answer_(const IoFrame *reply) {
+void TransferSession::on_open_answer_(const IoFrame *reply, bool request_accepted) {
+  this->ended_on_accepted_silence_ = reply == nullptr && request_accepted;
   TransferOpenReply answer;
   const bool well_formed = reply != nullptr && decode_transfer_open_reply(*reply, answer);
   if (well_formed) {
@@ -99,7 +102,7 @@ void TransferSession::end_open_without_data_(const IoFrame *reply, bool well_for
     this->step_++;
     return;
   }
-  TransferOutcome outcome = TransferOutcome::NO_ANSWER;
+  TransferOutcome outcome = this->ended_on_accepted_silence_ ? TransferOutcome::NO_DATA : TransferOutcome::NO_ANSWER;
   if (reply != nullptr && !well_formed) {
     outcome = reply->cmd == CMD_ERROR_RESP ? TransferOutcome::REFUSED : TransferOutcome::MALFORMED;
   } else if (well_formed) {
@@ -115,7 +118,8 @@ void TransferSession::end_open_without_data_(const IoFrame *reply, bool well_for
   this->finish_(outcome);
 }
 
-void TransferSession::on_block_answer_(const IoFrame *reply) {
+void TransferSession::on_block_answer_(const IoFrame *reply, bool request_accepted) {
+  this->ended_on_accepted_silence_ = reply == nullptr && request_accepted;
   const uint8_t *block = nullptr;
   uint8_t block_len = 0;
   // The blocks arrive counting down but their data runs forward; a block that echoes another chunk is a late

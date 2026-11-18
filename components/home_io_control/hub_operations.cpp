@@ -259,7 +259,7 @@ IOHomeControlComponent::RequestResult IOHomeControlComponent::exchange_and_recor
       ESP_LOGW(detail::TAG, "Command 0x%02X failed for device %s: no valid response (stage=%s tries=%u)", request.cmd,
                device_id.c_str(), dbg.stage, dbg.tries);
     }
-    return RequestResult::FAILED;
+    return outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED ? RequestResult::ACCEPTED_NO_PAYLOAD : RequestResult::FAILED;
   }
 
   if (outcome == ExchangeOutcome::SUCCESS_UNCONFIRMED) {
@@ -304,6 +304,7 @@ bool IOHomeControlComponent::execute_request_and_update_(const std::string &devi
   switch (
       this->exchange_and_record_(device_id, request, response, {warn_on_no_response, retry_after_fail_ms, attempts})) {
     case RequestResult::FAILED:
+    case RequestResult::ACCEPTED_NO_PAYLOAD:
     case RequestResult::ERROR_REPLY:
       return false;
     case RequestResult::UNCONFIRMED:
@@ -771,7 +772,8 @@ bool IOHomeControlComponent::request_periodic_reading_(const std::string &device
     row.warn_refused(device_id);
   }
 
-  this->apply_periodic_reading_(device_id, reading_kind, reading, detail_text, result == RequestResult::FAILED);
+  this->apply_periodic_reading_(device_id, reading_kind, reading, detail_text,
+                                result == RequestResult::FAILED || result == RequestResult::ACCEPTED_NO_PAYLOAD);
   return reading.has_value();
 }
 

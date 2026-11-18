@@ -122,6 +122,7 @@ class Rig {
   bool hide_devices{false};    ///< find_device() reports every device as removed.
   uint16_t object_length{40};  ///< Length the modelled device announces for an accepted open.
   bool answer_data_open_empty{false};
+  bool accept_without_answer{false};  ///< The device authenticates every request and sends nothing back.
   std::vector<Sent> sent;
   std::vector<Ended> ended;
   std::vector<std::string> timer_names;  ///< Name of every timeout the reader armed.
@@ -171,11 +172,13 @@ class Rig {
     hub.exchange = [this](const std::string &device_id, const IoFrame &request, IoFrame &response) {
       sent.push_back(
           {device_id, request.cmd, std::vector<uint8_t>(request.data, request.data + request.data_len), millis()});
+      if (accept_without_answer)
+        return RecordedAnswer::ACCEPTED_NO_REPLY;
       const auto reply = answer(*registry.get(device_id), request);
       if (!reply.has_value())
-        return false;
+        return RecordedAnswer::SILENT;
       response = *reply;
-      return true;
+      return RecordedAnswer::REPLY;
     };
     return hub;
   }
@@ -455,4 +458,13 @@ TEST(TransferReader, AFullQueueAbandonsTheNewReadAndKeepsTheOnesAhead) {
   rig.read("ABC123", 0);
   ASSERT_EQ(rig.ended.size(), 1u);
   EXPECT_EQ(rig.ended[0].outcome, TransferOutcome::ABANDONED);
+}
+
+TEST(TransferReader, ADeviceThatAcceptsTheOpenButSendsNothingEndsAsNoDataNotNoAnswer) {
+  Rig rig;
+  rig.accept_without_answer = true;
+  rig.read("ABC123", 0);
+  rig.run_for(10000);
+  ASSERT_EQ(rig.ended.size(), 1u);
+  EXPECT_EQ(rig.ended[0].outcome, TransferOutcome::NO_DATA);
 }

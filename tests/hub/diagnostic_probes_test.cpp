@@ -1348,6 +1348,68 @@ TEST(HubManagement, ReadObjectCountsItsExchangesInLinkHealthLikeAnyOtherExchange
   EXPECT_EQ(dev->exchange_timeout_count, 1) << "the failed read_object exchange is counted in link health";
 }
 
+namespace {
+/// Queue a device challenge to the hub: the device heard the request, and nothing follows.
+void queue_challenge_from_device(MockRadio &radio, const IoDevice &dev, const uint8_t own[3]) {
+  const uint8_t chal_data[6] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+  IoFrame challenge{};
+  init_frame(challenge, true, false, false, false);
+  set_dst(challenge, own);
+  set_src(challenge, dev.node_id);
+  set_cmd(challenge, CMD_CHALLENGE_REQ, chal_data, sizeof(chal_data));
+  radio.queue_rx(frame_to_packet(challenge));
+}
+}  // namespace
+
+TEST(HubManagement, ReadObjectSaysWhenTheDeviceAcceptedTheOpenButSentNothing) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  queue_challenge_from_device(radio, *dev, component.node_id_);
+
+  const auto result = component.management_actions_.probe_device("ABC123", "read_object", "0");
+
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "device accepted the probe request but sent no response");
+  EXPECT_EQ(dev->exchange_unconfirmed_count, 1) << "the acceptance is still counted as one";
+  EXPECT_EQ(dev->exchange_timeout_count, 1) << "and bookkept as a failure exactly like a silent exchange";
+}
+
+TEST(HubManagement, ReadObjectSaysWhenTheDeviceAcceptedABlockRequestButSentNothing) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x00, 0x28})));
+  queue_challenge_from_device(radio, *dev, component.node_id_);  // block 3 is challenged, then nothing
+
+  const auto result = component.management_actions_.probe_device("ABC123", "read_object", "0");
+
+  EXPECT_NE(result.message.find("incomplete"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("accepted the last block request but sent no response"), std::string::npos)
+      << result.message;
+}
+
+TEST(HubManagement, ReadObjectStaysNoReplyWhenTheDeviceNeverAuthenticatedAnything) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x00, 0x28})));
+
+  const auto result = component.management_actions_.probe_device("ABC123", "read_object", "0");
+
+  EXPECT_EQ(result.message.find("accepted the last block"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("incomplete"), std::string::npos) << result.message;
+}
+
 TEST(HubManagement, ReadObjectStampsLinkHealthWhenTheDeviceAnswers) {
   TestableManagementComponent component;
   MockRadio radio;
@@ -1464,7 +1526,9 @@ struct StandaloneProbes {
                                               [this](const std::string &, const IoFrame &request, IoFrame &response) {
                                                 ++exchange_calls;
                                                 return engine.send_and_receive(request, response, FREQ_CH2) ==
-                                                       ExchangeOutcome::SUCCESS_WITH_RESPONSE;
+                                                               ExchangeOutcome::SUCCESS_WITH_RESPONSE
+                                                           ? RecordedAnswer::REPLY
+                                                           : RecordedAnswer::SILENT;
                                               }}};
 
   StandaloneProbes() { registry.add("ABC123"); }

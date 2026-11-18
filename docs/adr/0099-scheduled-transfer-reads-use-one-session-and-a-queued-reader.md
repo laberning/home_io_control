@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0099 -->
 
-**Status:** Accepted, amends [ADR 0062](0062-a-read-only-data-transport-probe.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0062](0062-a-read-only-data-transport-probe.md); amended by [ADR 0100](0100-a-transfer-read-tells-an-accepted-request-without-an-answer-from-silence.md) · **Recorded:** 2026-11
 
 ## Context
 

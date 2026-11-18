@@ -153,10 +153,10 @@ void TransferReader::step_() {
     this->finish_(session.outcome());
     return;
   }
-  const bool answered = this->hub_.exchange(read.device_id, request, reply);
+  const RecordedAnswer answer = this->hub_.exchange(read.device_id, request, reply);
   this->last_exchange_ms_ = millis();
   this->exchanged_ = true;
-  session.on_answer(answered ? &reply : nullptr);
+  session.on_answer(answer == RecordedAnswer::REPLY ? &reply : nullptr, answer == RecordedAnswer::ACCEPTED_NO_REPLY);
   if (session.done()) {
     this->finish_(session.outcome());
     return;

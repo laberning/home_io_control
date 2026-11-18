@@ -70,6 +70,13 @@ std::vector<uint8_t> next_answer(TransferSession &session, const IoFrame &answer
   return request;
 }
 
+/// Run `next()` then report a request the device challenged and left unanswered.
+std::vector<uint8_t> next_accepted_silence(TransferSession &session) {
+  const auto request = next(session);
+  session.on_answer(nullptr, true);
+  return request;
+}
+
 /// Run `next()` then report silence.
 std::vector<uint8_t> next_silence(TransferSession &session) {
   const auto request = next(session);
@@ -170,6 +177,35 @@ TEST(TransferSession, SilenceToTheOpenEndsAsNoAnswer) {
   ASSERT_TRUE(session.done());
   EXPECT_EQ(session.outcome(), TransferOutcome::NO_ANSWER);
   EXPECT_TRUE(next(session).empty());
+}
+
+TEST(TransferSession, AnOpenTheDeviceAcceptedButLeftUnansweredEndsAsNoDataNotNoAnswer) {
+  TransferSession session(PLAIN, 0, TABLE);
+  next_accepted_silence(session);
+  ASSERT_TRUE(session.done());
+  EXPECT_EQ(session.outcome(), TransferOutcome::NO_DATA);
+  EXPECT_TRUE(session.ended_on_accepted_silence());
+  EXPECT_FALSE(session.open_answered());
+}
+
+TEST(TransferSession, TheAcceptedFlagMeansNothingWhenTheDeviceAnswered) {
+  TransferSession session(PLAIN, 0, TABLE);
+  next(session);
+  const IoFrame answer = open_answer(0x10, 3, 0);
+  session.on_answer(&answer, true);  // a reply always wins over the flag
+  ASSERT_TRUE(session.done());
+  EXPECT_EQ(session.outcome(), TransferOutcome::REFUSED);
+  EXPECT_FALSE(session.ended_on_accepted_silence());
+}
+
+TEST(TransferSession, ABlockTheDeviceAcceptedButLeftUnansweredEndsIncompleteAndSaysSo) {
+  TransferSession session(PLAIN, 0, TABLE);
+  next_answer(session, open_answer(0x10, 0, 40));
+  next_accepted_silence(session);  // block 3
+  next_silence(session);           // the close
+  ASSERT_TRUE(session.done());
+  EXPECT_EQ(session.outcome(), TransferOutcome::INCOMPLETE);
+  EXPECT_TRUE(session.ended_on_accepted_silence()) << "a silent close does not erase what ended the read";
 }
 
 TEST(TransferSession, AnObjectLongerThanTheRecipeAllowsIsClosedUnread) {
@@ -397,6 +433,7 @@ TEST(TransferSession, ReadsTheCapturedRs100OpenAnswerInTwentyOneBlocks) {
 TEST(TransferSession, OutcomesHaveNames) {
   for (const TransferOutcome outcome :
        {TransferOutcome::READ, TransferOutcome::EMPTY, TransferOutcome::REFUSED, TransferOutcome::MALFORMED,
-        TransferOutcome::TOO_LONG, TransferOutcome::INCOMPLETE, TransferOutcome::NO_ANSWER, TransferOutcome::ABANDONED})
+        TransferOutcome::TOO_LONG, TransferOutcome::INCOMPLETE, TransferOutcome::NO_ANSWER, TransferOutcome::NO_DATA,
+        TransferOutcome::ABANDONED})
     EXPECT_STRNE(transfer_outcome_name(outcome), "unknown");
 }

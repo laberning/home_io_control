@@ -754,17 +754,20 @@ void DiagnosticProbes::read_object_(const IoDevice &dev, const std::string &prob
       App.feed_wdt();
       delay(TRANSFER_STEP_GAP_MS);
     }
-    const bool answered = hub_.exchange(result.device_id, request, reply);
+    const RecordedAnswer answer = hub_.exchange(result.device_id, request, reply);
+    const bool answered = answer == RecordedAnswer::REPLY;
     if (answered && !have_first_reply) {
       first_reply = reply;
       have_first_reply = true;
     }
     first_request = false;
-    session.on_answer(answered ? &reply : nullptr);
+    session.on_answer(answered ? &reply : nullptr, answer == RecordedAnswer::ACCEPTED_NO_REPLY);
   }
   if (!have_first_reply) {
-    result.message = "no reply after " + std::to_string(EXCHANGE_RETRY_COUNT) +
-                     " attempts (device asleep, unreachable, or silently ignoring this opcode)";
+    result.message = session.outcome() == TransferOutcome::NO_DATA
+                         ? "device accepted the probe request but sent no response"
+                         : "no reply after " + std::to_string(EXCHANGE_RETRY_COUNT) +
+                               " attempts (device asleep, unreachable, or silently ignoring this opcode)";
     return;
   }
   report_raw_reply_(probe, first_reply, result);
@@ -798,6 +801,9 @@ void DiagnosticProbes::read_object_(const IoDevice &dev, const std::string &prob
     case TransferOutcome::NO_ANSWER:
       result.message += " [no usable answer to the open]";
       return;
+    case TransferOutcome::NO_DATA:
+      result.message += " [device accepted the open but sent no answer to it]";
+      return;
     case TransferOutcome::READ:
     case TransferOutcome::INCOMPLETE:
     case TransferOutcome::ABANDONED:
@@ -817,6 +823,8 @@ void DiagnosticProbes::read_object_(const IoDevice &dev, const std::string &prob
     ESP_LOGI(detail::TAG, "  +%03X: %s", static_cast<unsigned>(i),
              hex_range(data.data(), i, std::min<uint16_t>(have, i + PROBE_READ_OBJECT_LOG_BYTES_PER_LINE)).c_str());
   }
+  if (session.ended_on_accepted_silence())
+    result.message += " [device accepted the last block request but sent no response]";
   result.message += (complete ? " data=" : " incomplete, data so far=") + hex;
 }
 

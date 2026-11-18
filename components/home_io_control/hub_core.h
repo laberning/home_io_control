@@ -471,8 +471,9 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @param request Request frame to send.
   /// @param[out] response The device's reply.
-  /// @return true when a reply frame, an error reply included, is in @p response.
-  bool exchange_recorded(const std::string &device_id, const IoFrame &request, IoFrame &response);
+  /// @return REPLY when a reply frame, an error reply included, is in @p response; otherwise whether the device at
+  ///         least accepted the request (ACCEPTED_NO_REPLY) or stayed silent (SILENT).
+  RecordedAnswer exchange_recorded(const std::string &device_id, const IoFrame &request, IoFrame &response);
 
   /// Register a callback invoked after every recorded device event, used by the "Last Device Event"
   /// text sensor. Single-slot, mirrors set_pairing_result_callback().
@@ -1113,10 +1114,12 @@ class IOHomeControlComponent : public Component,
 
   /// @brief What exchange_and_record_() found.
   enum class RequestResult : uint8_t {
-    FAILED,       ///< No usable reply (silence, or an unconfirmed acceptance of a request that needs a payload).
-    UNCONFIRMED,  ///< A CMD_EXECUTE the device accepted but never closed; counted as success, no reply frame.
-    ERROR_REPLY,  ///< The device refused with CMD_ERROR_RESP; handle_error_response_() has recorded it.
-    REPLY,        ///< The device answered; the caller interprets the reply frame.
+    FAILED,               ///< No usable reply: silence.
+    ACCEPTED_NO_PAYLOAD,  ///< The device accepted a request that needs a payload (not a CMD_EXECUTE) but sent none;
+                          ///< bookkept as a failure exactly like FAILED, kept apart only so a caller can say so.
+    UNCONFIRMED,          ///< A CMD_EXECUTE the device accepted but never closed; counted as success, no reply frame.
+    ERROR_REPLY,          ///< The device refused with CMD_ERROR_RESP; handle_error_response_() has recorded it.
+    REPLY,                ///< The device answered; the caller interprets the reply frame.
   };
 
   /// @brief Per-request knobs of exchange_and_record_().

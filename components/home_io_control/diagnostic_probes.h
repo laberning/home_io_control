@@ -42,7 +42,8 @@ struct DiagnosticProbesHub {
                                                             ///< Event" sensor; true when the frame was one.
   /// The exchange of the `read_object` probe, through the hub's path: its exchanges count in the exchange counters
   /// and link health like every other exchange. The other probes exchange through the engine directly, so their
-  /// replies stay raw.
+  /// replies stay raw. Its answer tells a device that stayed silent from one that accepted the request and sent no
+  /// data (RecordedAnswer), which the probe reports apart.
   RecordedExchangeFn exchange;
 };
 

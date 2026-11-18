@@ -392,8 +392,8 @@ TransferReaderHub IOHomeControlComponent::make_transfer_reader_hub_() {
   return hub;
 }
 
-bool IOHomeControlComponent::exchange_recorded(const std::string &device_id, const IoFrame &request,
-                                               IoFrame &response) {
+RecordedAnswer IOHomeControlComponent::exchange_recorded(const std::string &device_id, const IoFrame &request,
+                                                         IoFrame &response) {
   const RequestResult result =
       this->exchange_and_record_(device_id, request, response, {false, 0, EXCHANGE_RETRY_COUNT});
   if (result == RequestResult::REPLY) {
@@ -404,7 +404,17 @@ bool IOHomeControlComponent::exchange_recorded(const std::string &device_id, con
       this->notify_device_update_(device_id);
     }
   }
-  return result == RequestResult::REPLY || result == RequestResult::ERROR_REPLY;
+  switch (result) {
+    case RequestResult::REPLY:
+    case RequestResult::ERROR_REPLY:
+      return RecordedAnswer::REPLY;
+    case RequestResult::ACCEPTED_NO_PAYLOAD:
+    case RequestResult::UNCONFIRMED:  // only a CMD_EXECUTE ends so; a read never does
+      return RecordedAnswer::ACCEPTED_NO_REPLY;
+    case RequestResult::FAILED:
+      break;
+  }
+  return RecordedAnswer::SILENT;
 }
 
 // === Device management ===

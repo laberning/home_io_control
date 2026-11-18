@@ -48,15 +48,23 @@ using TransmitFrameFn = std::function<bool(const IoFrame &frame, uint32_t freq_h
 /// `Component`. Wired to a lambda in the hub's initializer list, which has protected access.
 using BeginBlockingExcursionFn = std::function<void()>;
 
+/// @brief How a recorded exchange ended, as far as a caller that needs the device's answer can tell.
+enum class RecordedAnswer : uint8_t {
+  REPLY,              ///< A reply frame, an error reply included, is in the response.
+  ACCEPTED_NO_REPLY,  ///< The device challenged the request, so it heard it, but sent no data back. Whether our
+                      ///< answer to the challenge verified, and so whether the key matches, is not visible.
+  SILENT,             ///< The device never answered the request.
+};
+
 /// @brief Runs one authenticated request/answer exchange on the command channel with the hub's shared exchange
 /// bookkeeping (exchange counters, link health of every ending, result code of an error reply, device event
 /// reports) and no poll backoff.
 /// @param device_id Hexadecimal node ID string of the device the request goes to.
 /// @param request   Request frame to send.
 /// @param response  Receives the device's reply.
-/// @return true when a reply frame, an error reply included, is in @p response; false for silence or an acceptance
-///         without a reply.
-using RecordedExchangeFn = std::function<bool(const std::string &device_id, const IoFrame &request, IoFrame &response)>;
+/// @return What came back, see RecordedAnswer.
+using RecordedExchangeFn =
+    std::function<RecordedAnswer(const std::string &device_id, const IoFrame &request, IoFrame &response)>;
 
 }  // namespace home_io_control
 }  // namespace esphome

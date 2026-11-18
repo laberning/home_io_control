@@ -186,6 +186,14 @@ never changes the device's state in Home Assistant.
 Expect devices to answer in different ways. An error answer or no reply at all means the device does
 not offer that object. Post the log lines, including a refusal, when you report a result.
 
+The probe tells two silences apart, for the open and for every block request. `no reply after 3 attempts`
+means the device sent nothing at all: it is asleep, out of range or ignoring the request. `device accepted the
+probe request but sent no response` means the device challenged the request, so it heard it, and still sent no
+data. A device that holds a different key ends this way too, because the hub cannot see whether its own answer
+to the challenge verified. For a read that stops partway, the result says `device accepted the last block request
+but sent no response` when the last block was handled that way. Both silences count as a failed exchange in the
+device's link-health figures; the second also adds to its unconfirmed-exchange count.
+
 The index may carry an offset after a colon, `"2:0x10"`: the byte position in the object where the read opens, in decimal or `0x`-prefixed hex, sent in the open request. Without one it is `0`, and every object in the table below reads at offset `0` only; an offset the row does not allow is refused before anything is sent. `probe_sweep` with `first_index: "3"` and `last_index: "3"` reads every offset a row allows, one read each, at most 16 per sweep; give both ends the same row (`"3:0x10"` to `"3:0x40"` limits the range).
 
 The probe waits 650 ms before each block request and before the close. An RS100 Solar io missed

@@ -52,7 +52,7 @@ struct TransferReaderHub {
   NamedTimeoutFn set_timeout;                      ///< The hub's set_timeout(), which is protected.
   std::function<bool()> background_radio_allowed;  ///< True when background radio work may run now.
   std::function<const IoDevice *(const std::string &device_id)> find_device;  ///< Registry lookup.
-  RecordedExchangeFn exchange;  ///< One recorded exchange; see RecordedExchangeFn.
+  RecordedExchangeFn exchange;  ///< One recorded exchange; see RecordedExchangeFn. Its RecordedAnswer decides NO_DATA.
 };
 
 /// @brief Reads data objects of devices one at a time without blocking the loop.

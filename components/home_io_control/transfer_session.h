@@ -34,6 +34,7 @@ enum class TransferOutcome : uint8_t {
   TOO_LONG,    ///< The device announced more than the recipe accepts; the transfer was closed unread.
   INCOMPLETE,  ///< A block went unanswered, came back wrong or overflowed the cap; the data is what was read.
   NO_ANSWER,   ///< The device never answered the open.
+  NO_DATA,     ///< The device accepted the open (it challenged the request) but sent no answer to it.
   ABANDONED,   ///< The runner gave the transfer up (another controller started one); closed if it was open.
 };
 
@@ -70,7 +71,9 @@ class TransferSession {
 
   /// @brief Take the device's answer to the request next_request() just built.
   /// @param reply The answer, or nullptr when the device did not answer. The answer to the close is ignored.
-  void on_answer(const IoFrame *reply);
+  /// @param request_accepted Only meaningful without a reply: the device challenged the request, so it heard it,
+  ///        and still sent no data. An open that ends so is NO_DATA instead of NO_ANSWER.
+  void on_answer(const IoFrame *reply, bool request_accepted = false);
 
   /// @brief Give the read up, for instance because another controller started a transfer to the same device.
   ///
@@ -89,6 +92,9 @@ class TransferSession {
   [[nodiscard]] bool open_answered() const { return open_answered_; }
   /// The last well-formed open answer (handle, status, length); all zero until open_answered().
   [[nodiscard]] const TransferOpenReply &open() const { return open_; }
+  /// True when the request that ended the read (an open or a block) was accepted by the device and got no answer;
+  /// meaningful once done(). Lets a runner say "accepted but silent" for an INCOMPLETE read too.
+  [[nodiscard]] bool ended_on_accepted_silence() const { return ended_on_accepted_silence_; }
   /// The bytes read so far: all of them for READ, the part read for INCOMPLETE, empty otherwise.
   [[nodiscard]] const std::vector<uint8_t> &data() const { return data_; }
 
@@ -101,8 +107,8 @@ class TransferSession {
     DONE,    ///< Nothing is left to send.
   };
 
-  void on_open_answer_(const IoFrame *reply);
-  void on_block_answer_(const IoFrame *reply);
+  void on_open_answer_(const IoFrame *reply, bool request_accepted);
+  void on_block_answer_(const IoFrame *reply, bool request_accepted);
   /// Decide the ending of an open that gave no data, or start over from the first step (retry_empty_open).
   void end_open_without_data_(const IoFrame *reply, bool well_formed);
   /// The transfer is open at the device: the next request is the close, and the read ends as @p outcome.
@@ -117,6 +123,7 @@ class TransferSession {
   size_t step_{0};       ///< Index of the open step to send next.
   bool retried_{false};  ///< The empty-open retry was used.
   bool open_answered_{false};
+  bool ended_on_accepted_silence_{false};                ///< The deciding request was accepted and unanswered.
   TransferOpenReply open_{};                             ///< The last well-formed open answer.
   uint16_t chunk_{0};                                    ///< Block to request next, counting down to 1.
   TransferOutcome outcome_{TransferOutcome::NO_ANSWER};  ///< Final once done(); the pending one in CLOSE.
