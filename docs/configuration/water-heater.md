@@ -126,6 +126,8 @@ water_heater:
       name: "Hot water showers target"
     heating_power:
       name: "Hot water heating power"
+    manual_showers:
+      name: "Hot water manual showers"
 ```
 
 It was read on one Sauter Guelma connecté 80 L in automatic mode, manual mode, absence and boost. A
@@ -156,7 +158,11 @@ heater declared without the model that answers this way is named in a warning at
 - `heating_power` (Optional): A sensor of the heating power in watts, with `device_class: power`. It reads 0
   when the heater is not heating.
 
-These three sensors need `io_model: electric_water_heater`; the build refuses them on another water heater.
+- `manual_showers` (Optional, experimental): A number from 2 to 4, the showers the heater heats for in manual
+  mode. Setting it writes the value and shows what the heater reads back; it does not change the mode. That
+  the heater takes this write is not confirmed yet.
+
+These entities need `io_model: electric_water_heater`; the build refuses them on another water heater.
 
 ## See also
 

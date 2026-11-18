@@ -274,6 +274,28 @@ void IOHomeDhwReadingSensor::dump_config() {
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
 }
 
+void IOHomeDhwManualShowersNumber::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    const auto showers = static_cast<float>(dev.dhw.showers_manual);
+    if (dev.dhw.showers_manual >= 0 && showers != this->state)
+      this->publish_state(showers);
+  });
+}
+
+void IOHomeDhwManualShowersNumber::control(float value) {
+  if (this->heating_port_ == nullptr)
+    return;
+  // The read-back inside the write updates IoDevice::dhw, and the binding above publishes it.
+  if (!this->heating_port_->set_water_heater_manual_showers(this->device_id_, static_cast<uint8_t>(std::lround(value))))
+    ESP_LOGW(TAG, "Device %s: %.0f manual showers were not kept", this->device_id_.c_str(), static_cast<double>(value));
+}
+
+void IOHomeDhwManualShowersNumber::dump_config() {
+  ESP_LOGCONFIG(TAG, "IO-Homecontrol Water Heater Manual Showers:");
+  ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+  ESP_LOGCONFIG(TAG, "  Status: experimental (the write of register 0x0048 is not confirmed on hardware)");
+}
+
 void IOHomeDhwBinarySensor::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {
     int8_t value = -1;

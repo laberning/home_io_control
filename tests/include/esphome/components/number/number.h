@@ -2,6 +2,9 @@
 
 #include "esphome/core/component.h"
 
+#include <cmath>
+#include <string>
+
 namespace esphome {
 namespace number {
 
@@ -18,8 +21,9 @@ class Number {
  public:
   virtual void setup() {}
   virtual void control(float value) = 0;
-  void publish_state(float value) {}
+  void publish_state(float value) { this->state = value; }
   NumberTraits traits;
+  float state{NAN};
 };
 
 }  // namespace number

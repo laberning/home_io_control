@@ -253,12 +253,17 @@ class HeatingPortDouble : public HubHeatingPort {
     this->water_heater_aways.push_back(on);
     return this->write_result;
   }
+  bool set_water_heater_manual_showers(const std::string &, uint8_t showers) override {
+    this->water_heater_manual_showers.push_back(showers);
+    return this->write_result;
+  }
 
   std::vector<Write> writes;                                ///< Register writes, in order.
   std::vector<HeatingFunction> reads;                       ///< Registers read, in order.
   std::vector<uint8_t> read_tries;                          ///< The attempt budget of each read.
   std::vector<HeatingWritePlan> plans;                      ///< Plans handed to execute_heating_plan().
   std::vector<std::pair<float, float>> temperature_ranges;  ///< (min, max) pairs set.
+  std::vector<uint8_t> water_heater_manual_showers;
   std::vector<float> water_heater_targets;
   std::vector<DhwMode> water_heater_modes;
   std::vector<bool> water_heater_boosts;

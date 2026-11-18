@@ -57,6 +57,8 @@ const char *dhw_register_label(uint8_t index) {
       return "dhw_showers_available";
     case DHW_REG_HEATING_POWER:
       return "dhw_heating_power";
+    case DHW_REG_MANUAL_SHOWERS:
+      return "dhw_manual_showers";
     case DHW_REG_BOOST_FLAG:
       return "dhw_boost_flag";
     case DHW_REG_AWAY_FLAG:
@@ -99,10 +101,13 @@ bool store_dhw_showers(const std::string &device_id, DhwReadings &readings, uint
   if (!decode_dhw_showers(value, len, showers))
     return false;
   const bool available = index == DHW_REG_SHOWERS_AVAILABLE;
-  int16_t &reading = available ? readings.showers_available : readings.showers_target;
+  const bool manual = index == DHW_REG_MANUAL_SHOWERS;
+  int16_t &reading =
+      available ? readings.showers_available : (manual ? readings.showers_manual : readings.showers_target);
   if (reading != showers) {
     ESP_LOGI(detail::TAG, "Device %s: hot water showers %s %u", device_id.c_str(),
-             available ? "available" : "aimed for", static_cast<unsigned>(showers));
+             available ? "available" : (manual ? "set for manual mode" : "aimed for"),
+             static_cast<unsigned>(showers));
   }
   reading = showers;
   return true;
@@ -168,6 +173,7 @@ bool store_dhw_reading(const std::string &device_id, DhwReadings &readings, uint
     }
     case DHW_REG_TARGET_SHOWERS:
     case DHW_REG_SHOWERS_AVAILABLE:
+    case DHW_REG_MANUAL_SHOWERS:
       return store_dhw_showers(device_id, readings, index, value, len);
     case DHW_REG_HEATING_POWER:
       return store_dhw_heating_power(device_id, readings, value, len);
@@ -700,6 +706,43 @@ bool HeaterController::set_dhw_register_feature_(const std::string &device_id, D
   return true;
 }
 
+bool HeaterController::set_water_heater_manual_showers(const std::string &device_id, uint8_t showers) {
+  IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr || !dhw_state_in_registers(dev->model)) {
+    ESP_LOGW(detail::TAG, "Manual showers for device %s not sent: only an electric storage water heater has them",
+             device_id.c_str());
+    return false;
+  }
+  uint8_t payload[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
+  const size_t payload_len = encode_dhw_manual_showers_write(showers, payload);
+  if (payload_len == 0) {
+    ESP_LOGW(detail::TAG, "Manual showers %u for device %s rejected: outside %u-%u", static_cast<unsigned>(showers),
+             device_id.c_str(), static_cast<unsigned>(DHW_MANUAL_SHOWERS_MIN),
+             static_cast<unsigned>(DHW_MANUAL_SHOWERS_MAX));
+    return false;
+  }
+  // The read-back below must be this write's, not an older one.
+  const int16_t before = dev->dhw.showers_manual;
+  dev->dhw.showers_manual = -1;
+  if (!this->write_dhw_register_(device_id, "hot water manual showers", DHW_REG_MANUAL_SHOWERS, payload,
+                                 payload_len)) {
+    if (IoDevice *current = this->registry_.get(device_id); current != nullptr)
+      current->dhw.showers_manual = before;
+    return false;
+  }
+  // write_dhw_register_() has read the value back; a missed read-back (-1) does not undo the acknowledged write.
+  dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return false;
+  const int16_t held = dev->dhw.showers_manual;
+  if (held >= 0 && held != showers) {
+    ESP_LOGW(detail::TAG, "Device %s: the heater did not keep %u manual showers (it reads %d)", device_id.c_str(),
+             static_cast<unsigned>(showers), held);
+    return false;
+  }
+  return true;
+}
+
 bool HeaterController::set_water_heater_boost(const std::string &device_id, bool on) {
   if (const IoDevice *dev = this->water_heater_for_write_(device_id, "hot water boost");
       dev != nullptr && dhw_state_in_registers(dev->model))
@@ -926,7 +969,8 @@ constexpr uint8_t DHW_POLL_REGISTERS[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MOD
 constexpr uint8_t DHW_ELECTRIC_POLL_REGISTERS[] = {
     DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,           DHW_REG_BOOST_FLAG,
     DHW_REG_AWAY_FLAG,         DHW_REG_ACTIVE_TARGET,  DHW_REG_TARGET_SHOWERS,
-    DHW_REG_SHOWERS_AVAILABLE, DHW_REG_HEATING_POWER,  DHW_REG_ENERGY};
+    DHW_REG_SHOWERS_AVAILABLE, DHW_REG_MANUAL_SHOWERS, DHW_REG_HEATING_POWER,
+    DHW_REG_ENERGY};
 
 }  // namespace
 

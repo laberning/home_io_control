@@ -54,6 +54,7 @@
 /// \todo The mode mapping and the target steps rest on that one heater; confirm them on a second one.
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/number/number.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/water_heater/water_heater.h"
 #include "esphome/core/component.h"
@@ -160,6 +161,28 @@ class IOHomeDhwReadingSensor : public IOHomeCompanionSensor {
 
  protected:
   Reading reading_{Reading::SHOWERS_AVAILABLE};
+};
+
+/// @brief Number that sets the showers manual mode heats for on an electric storage water heater.
+/// @ingroup hioc_platforms
+///
+/// Shows what the heater reports in register 0x0048, never the command: a value the heater does not keep is
+/// not shown. It writes nothing at boot.
+/// \todo Experimental: that the heater takes the write is not confirmed.
+class IOHomeDhwManualShowersNumber : public number::Number, public Component, public DeviceBoundCompanion {
+ public:
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+  /// @brief Dump number configuration to the log.
+  void dump_config() override;
+  /// @brief Get setup priority so the parent hub is available first.
+  /// @return setup_priority::DATA.
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+
+ protected:
+  /// @brief Write the count; the read-back publishes the state.
+  /// @param value Shower count from Home Assistant.
+  void control(float value) override;
 };
 
 /// @brief Binary sensor of one heating state of the heater: heat pump running or electric backup running.

@@ -104,6 +104,12 @@ size_t encode_dhw_flag_write(DhwOperatingFeature which, bool on, uint8_t out[PRI
   return encode_dhw_byte_write(index, on ? 1 : 0, out);
 }
 
+size_t encode_dhw_manual_showers_write(uint8_t showers, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
+  if (showers < DHW_MANUAL_SHOWERS_MIN || showers > DHW_MANUAL_SHOWERS_MAX)
+    return 0;
+  return encode_dhw_byte_write(DHW_REG_MANUAL_SHOWERS, showers, out);
+}
+
 bool encode_dhw_target(float celsius, uint16_t &main_parameter) {
   // encode_temperature_main_parameter() clamps; a target outside the heater's own range is refused instead.
   if (!std::isfinite(celsius) || celsius < DHW_TARGET_MIN_C || celsius > DHW_TARGET_MAX_C)

@@ -685,6 +685,10 @@ class IOHomeControlComponent : public Component,
   bool set_water_heater_away(const std::string &device_id, bool on) override {
     return this->heater_controller_.set_water_heater_away(device_id, on);
   }
+  /// @brief Set a water heater's manual showers. @see HeaterController::set_water_heater_manual_showers()
+  bool set_water_heater_manual_showers(const std::string &device_id, uint8_t showers) override {
+    return this->heater_controller_.set_water_heater_manual_showers(device_id, showers);
+  }
   /// @brief Set the temperature encoding range of a heater (YAML `min_temperature:` / `max_temperature:`).
   /// @see HeaterController::set_device_temperature_range()
   void set_device_temperature_range(const std::string &device_id, float min_c, float max_c) override {

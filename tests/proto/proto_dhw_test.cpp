@@ -431,3 +431,13 @@ TEST(ProtoDhw, TheFlagWritesAreFamilyZeroSetsOfOneByte) {
   ASSERT_EQ(encode_dhw_flag_write(DhwOperatingFeature::AWAY, true, out), 5U);
   EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x53, 0x01}));
 }
+
+TEST(ProtoDhw, TheManualShowersWriteTakesOnlyTheRangeTheHeaterOffers) {
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {};
+  for (const uint8_t showers : {uint8_t{2}, uint8_t{3}, uint8_t{4}}) {
+    ASSERT_EQ(encode_dhw_manual_showers_write(showers, out), 5U);
+    EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x48, showers}));
+  }
+  for (const uint8_t showers : {uint8_t{0}, uint8_t{1}, uint8_t{5}, uint8_t{255}})
+    EXPECT_EQ(encode_dhw_manual_showers_write(showers, out), 0U) << static_cast<unsigned>(showers);
+}

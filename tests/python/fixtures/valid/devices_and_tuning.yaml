@@ -143,3 +143,5 @@ water_heater:
       name: "Electric Hot Water Showers Target"
     heating_power:
       name: "Electric Hot Water Power"
+    manual_showers:
+      name: "Electric Hot Water Manual Showers"

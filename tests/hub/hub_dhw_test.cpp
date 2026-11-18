@@ -293,6 +293,7 @@ TEST(HubDhw, AnElectricStorageHeaterIsPolledFromItsRegistersWithNoStatusRead) {
   queue_register(comp, radio, DHW_REG_ACTIVE_TARGET, {0x02, 0xBC});  // 70.0 C
   queue_register(comp, radio, DHW_REG_TARGET_SHOWERS, {0x04});
   queue_register(comp, radio, DHW_REG_SHOWERS_AVAILABLE, {0x02});
+  queue_register(comp, radio, DHW_REG_MANUAL_SHOWERS, {0x04});
   queue_register(comp, radio, DHW_REG_HEATING_POWER, {0x03, 0xE8});
   queue_register(comp, radio, DHW_REG_ENERGY, {0x00, 0xEA, 0x9E, 0x5A});
   queue_register(comp, radio, DHW_REG_BRAND, {0x53});
@@ -300,10 +301,10 @@ TEST(HubDhw, AnElectricStorageHeaterIsPolledFromItsRegistersWithNoStatusRead) {
   EXPECT_TRUE(comp.request_device_status("ABC123"));
 
   const auto &sent = radio.get_sent_data();
-  const uint8_t expected[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,          DHW_REG_BOOST_FLAG,
-                              DHW_REG_AWAY_FLAG,         DHW_REG_ACTIVE_TARGET, DHW_REG_TARGET_SHOWERS,
-                              DHW_REG_SHOWERS_AVAILABLE, DHW_REG_HEATING_POWER, DHW_REG_ENERGY,
-                              DHW_REG_BRAND};
+  const uint8_t expected[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,           DHW_REG_BOOST_FLAG,
+                              DHW_REG_AWAY_FLAG,         DHW_REG_ACTIVE_TARGET,  DHW_REG_TARGET_SHOWERS,
+                              DHW_REG_SHOWERS_AVAILABLE, DHW_REG_MANUAL_SHOWERS, DHW_REG_HEATING_POWER,
+                              DHW_REG_ENERGY,            DHW_REG_BRAND};
   ASSERT_EQ(sent.size(), std::size(expected)) << "no status read, and none of the registers this model leaves empty";
   for (size_t i = 0; i < std::size(expected); i++) {
     EXPECT_EQ(sent[i][8], CMD_WRITE_PRIVATE) << i;
@@ -318,6 +319,7 @@ TEST(HubDhw, AnElectricStorageHeaterIsPolledFromItsRegistersWithNoStatusRead) {
   EXPECT_FLOAT_EQ(dev->dhw.target_c, 70.0F);
   EXPECT_EQ(dev->dhw.showers_target, 4);
   EXPECT_EQ(dev->dhw.showers_available, 2);
+  EXPECT_EQ(dev->dhw.showers_manual, 4);
   EXPECT_EQ(dev->dhw.power_w, 1000);
   EXPECT_EQ(dev->dhw.heating, 1);
   EXPECT_EQ(dev->dhw.element, 1) << "the element is what heats";
@@ -338,6 +340,7 @@ TEST(HubDhw, AnElectricStorageHeaterInAbsenceIsAwayWithItsFrostProtectionTarget)
   queue_register(comp, radio, DHW_REG_ACTIVE_TARGET, {0x00, 0x46});  // 7.0 C
   queue_register(comp, radio, DHW_REG_TARGET_SHOWERS, {0x00});
   queue_register(comp, radio, DHW_REG_SHOWERS_AVAILABLE, {0x01});
+  queue_register(comp, radio, DHW_REG_MANUAL_SHOWERS, {0x04});
   queue_register(comp, radio, DHW_REG_HEATING_POWER, {0x00, 0x00});
   queue_register(comp, radio, DHW_REG_ENERGY, {0x00, 0xEA, 0x97, 0x04});
   queue_register(comp, radio, DHW_REG_BRAND, {0x53});
@@ -449,6 +452,62 @@ TEST(HubDhw, AFlagTheHeaterDoesNotKeepFailsTheWriteAndSendsNothingMore) {
 
   EXPECT_EQ(radio.get_sent_data().size(), 2u) << "the write and its read-back only";
   EXPECT_EQ(dev->dhw.boost, 0) << "the entity shows what the heater holds";
+}
+
+TEST(HubDhw, TheManualShowersAreAWriteOfTheirRegisterReadBackAtOnce) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_electric_water_heater(comp, radio);
+  queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, DHW_REG_MANUAL_SHOWERS, 0x03});
+  queue_register(comp, radio, DHW_REG_MANUAL_SHOWERS, {0x03});
+
+  EXPECT_TRUE(comp.set_water_heater_manual_showers("ABC123", 3));
+
+  const auto &sent = radio.get_sent_data();
+  ASSERT_EQ(sent.size(), 2u);
+  EXPECT_EQ(sent_write(sent[0]), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x48, 0x03}));
+  EXPECT_EQ(sent_register(sent[1]), DHW_REG_MANUAL_SHOWERS);
+  EXPECT_EQ(dev->dhw.showers_manual, 3);
+  EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS) << "the target follows at the settle poll";
+}
+
+TEST(HubDhw, ManualShowersTheHeaterDoesNotKeepFailTheWrite) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_electric_water_heater(comp, radio);
+  queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, DHW_REG_MANUAL_SHOWERS});
+  queue_register(comp, radio, DHW_REG_MANUAL_SHOWERS, {0x04});
+
+  EXPECT_FALSE(comp.set_water_heater_manual_showers("ABC123", 2));
+
+  EXPECT_EQ(radio.get_sent_data().size(), 2u);
+  EXPECT_EQ(dev->dhw.showers_manual, 4) << "what the heater holds";
+}
+
+TEST(HubDhw, AnUnacknowledgedManualShowersWriteKeepsTheLastReading) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_electric_water_heater(comp, radio);
+  dev->dhw.showers_manual = 4;
+
+  EXPECT_FALSE(comp.set_water_heater_manual_showers("ABC123", 2));
+
+  EXPECT_EQ(dev->dhw.showers_manual, 4);
+}
+
+TEST(HubDhw, ManualShowersOutsideTheRangeOrOnAnotherHeaterAreNeverSent) {
+  TestableComponent electric;
+  MockRadio electric_radio;
+  make_electric_water_heater(electric, electric_radio);
+  for (const uint8_t showers : {uint8_t{0}, uint8_t{1}, uint8_t{5}, uint8_t{255}})
+    EXPECT_FALSE(electric.set_water_heater_manual_showers("ABC123", showers)) << static_cast<unsigned>(showers);
+  EXPECT_TRUE(electric_radio.get_sent_data().empty());
+
+  TestableComponent heat_pump;
+  MockRadio heat_pump_radio;
+  make_water_heater(heat_pump, heat_pump_radio);
+  EXPECT_FALSE(heat_pump.set_water_heater_manual_showers("ABC123", 3));
+  EXPECT_TRUE(heat_pump_radio.get_sent_data().empty());
 }
 
 TEST(HubDhw, AnUnacknowledgedFlagWriteSendsNothingMore) {

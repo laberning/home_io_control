@@ -256,6 +256,12 @@ class HubHeatingPort {
   /// @return True when the device accepted it.
   virtual bool set_water_heater_away(const std::string &device_id, bool on) = 0;
 
+  /// @brief Set the showers manual mode heats for on an electric storage water heater.
+  /// @param device_id Hexadecimal node ID string.
+  /// @param showers Shower count.
+  /// @return True when the device kept it.
+  virtual bool set_water_heater_manual_showers(const std::string &device_id, uint8_t showers) = 0;
+
  protected:
   HubHeatingPort() = default;
   HubHeatingPort(const HubHeatingPort &) = default;

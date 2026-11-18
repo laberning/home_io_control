@@ -70,6 +70,11 @@ class MockHubWaterHeater : public test::DevicePortDouble, public test::HeatingPo
   }
 };
 
+class TestableManualShowers : public IOHomeDhwManualShowersNumber {
+ public:
+  void trigger_control(float value) { this->control(value); }
+};
+
 class TestableBoostSwitch : public IOHomeDhwBoostSwitch {
  public:
   void trigger_write(bool state) { this->write_state(state); }
@@ -659,6 +664,32 @@ TEST(PlatformWaterHeater, EachElectricSensorShowsItsReadingAndNothingBeforeIt) {
   EXPECT_FLOAT_EQ(target.state, 0.0F);
   EXPECT_FLOAT_EQ(power.state, 0.0F);
   EXPECT_FLOAT_EQ(available.state, 2.0F);
+}
+
+TEST(PlatformWaterHeater, TheManualShowersShowTheHeatersReportAndSendTheCount) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_electric_water_heater(entity, hub);
+  TestableManualShowers showers;
+  showers.set_parent(&hub);
+  showers.set_device_id("ABC123");
+  showers.setup();
+  EXPECT_TRUE(std::isnan(showers.state)) << "nothing before the first read";
+  EXPECT_TRUE(hub.water_heater_manual_showers.empty()) << "nothing is written at boot";
+
+  DhwReadings readings;
+  readings.showers_manual = 4;
+  publish(hub, readings);
+  EXPECT_FLOAT_EQ(showers.state, 4.0F);
+
+  showers.trigger_control(2.0F);
+  ASSERT_EQ(hub.water_heater_manual_showers.size(), 1u);
+  EXPECT_EQ(hub.water_heater_manual_showers.back(), 2);
+  EXPECT_FLOAT_EQ(showers.state, 4.0F) << "the command alone is not shown";
+
+  readings.showers_manual = 2;
+  publish(hub, readings);
+  EXPECT_FLOAT_EQ(showers.state, 2.0F);
 }
 
 TEST(PlatformWaterHeater, EachBinaryCompanionShowsItsReadingAndNothingBeforeIt) {

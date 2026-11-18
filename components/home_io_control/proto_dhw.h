@@ -100,6 +100,14 @@ static constexpr uint8_t DHW_REG_HEATING_POWER = 0x32;
 /// @brief Register 0x0046: the showers of hot water available, one byte: the showers the display shows
 /// steadily lit.
 static constexpr uint8_t DHW_REG_SHOWERS_AVAILABLE = 0x46;
+/// @brief Register 0x0048: the showers set for manual mode, one byte. It followed the display from 4 to 2 and
+/// keeps its value in the other modes. Register 0x0042 reads `0002 0004`, the range the display offers.
+/// \todo Experimental: that the heater takes a write of this register is not confirmed.
+static constexpr uint8_t DHW_REG_MANUAL_SHOWERS = 0x48;
+/// @brief Fewest showers manual mode can be set to (register 0x0042).
+static constexpr uint8_t DHW_MANUAL_SHOWERS_MIN = 2;
+/// @brief Most showers manual mode can be set to (register 0x0042).
+static constexpr uint8_t DHW_MANUAL_SHOWERS_MAX = 4;
 /// @brief Register 0x0049: the temperature the heater heats to now, signed 16-bit big-endian tenths of a
 /// degree. It read 42.0 and 61.0 C in automatic mode (one and three showers), 70.0 C in manual mode with four
 /// showers and during a boost, and 7.0 C in absence (frost protection).
@@ -226,6 +234,7 @@ struct DhwReadings {
   int32_t power_w{-1};         ///< Heating power in W (register 0x0032); -1 until read. Electric storage heater only.
   int16_t showers_available{-1};  ///< Showers available (register 0x0046); -1 until read. Electric storage heater only.
   int16_t showers_target{-1};     ///< Showers aimed for (register 0x004A); -1 until read. Electric storage heater only.
+  int16_t showers_manual{-1};     ///< Showers set for manual mode (register 0x0048); -1 until read.
   int16_t boost_flag{-1};         ///< Register 0x0052; -1 until read. `boost` follows it on an electric storage heater.
   int16_t away_flag{-1};          ///< Register 0x0053; -1 until read. `away` follows it on an electric storage heater.
 };
@@ -278,6 +287,12 @@ size_t encode_dhw_duration_write(DhwOperatingFeature which, uint8_t out[PRIVATE_
 /// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return Always 5.
 size_t encode_dhw_flag_write(DhwOperatingFeature which, bool on, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
+
+/// @brief Encode a write of the showers set for manual mode: `0C 61 00 48 <showers>`.
+/// @param showers DHW_MANUAL_SHOWERS_MIN..DHW_MANUAL_SHOWERS_MAX; anything else is refused.
+/// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
+/// @return 5, or 0 for a count outside the range.
+size_t encode_dhw_manual_showers_write(uint8_t showers, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
 /// @brief Encode a target temperature as a main parameter over DHW_TARGET_MIN_C..DHW_TARGET_MAX_C.
 /// @param celsius Target; must be finite and within the range (nothing outside it is ever sent).
@@ -339,7 +354,7 @@ bool decode_dhw_duration(const uint8_t *value, size_t len, uint8_t &duration);
 /// @return false for a value shorter than two bytes.
 bool decode_dhw_heating_power(const uint8_t *value, size_t len, uint16_t &watts);
 
-/// @brief A shower count from the value of register 0x0046 or 0x004A: one byte.
+/// @brief A shower count from the value of register 0x0046, 0x0048 or 0x004A: one byte.
 /// @param value Value bytes.
 /// @param len Number of value bytes; at least 1.
 /// @param[out] showers The count; untouched when false is returned.

@@ -16,7 +16,7 @@ import functools
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, sensor, switch, water_heater
+from esphome.components import binary_sensor, number, sensor, switch, water_heater
 from esphome.const import (
     CONF_ENERGY,
     CONF_ID,
@@ -51,6 +51,9 @@ DEPENDENCIES = ["home_io_control"]
 IOHomeWaterHeater = home_io_control_ns.class_("IOHomeWaterHeater", water_heater.WaterHeater, cg.Component)
 IOHomeDhwEnergySensor = home_io_control_ns.class_("IOHomeDhwEnergySensor", sensor.Sensor, cg.Component)
 IOHomeDhwReadingSensor = home_io_control_ns.class_("IOHomeDhwReadingSensor", sensor.Sensor, cg.Component)
+IOHomeDhwManualShowersNumber = home_io_control_ns.class_(
+    "IOHomeDhwManualShowersNumber", number.Number, cg.Component
+)
 IOHomeDhwBinarySensor = home_io_control_ns.class_(
     "IOHomeDhwBinarySensor", binary_sensor.BinarySensor, cg.Component
 )
@@ -64,6 +67,10 @@ CONF_BOOST = "boost"
 CONF_SHOWERS_AVAILABLE = "showers_available"
 CONF_SHOWERS_TARGET = "showers_target"
 CONF_HEATING_POWER = "heating_power"
+CONF_MANUAL_SHOWERS = "manual_showers"
+# The range register 0x0042 reports (proto_dhw.h DHW_MANUAL_SHOWERS_MIN and DHW_MANUAL_SHOWERS_MAX).
+MANUAL_SHOWERS_MIN = 2
+MANUAL_SHOWERS_MAX = 4
 ICON_SHOWER = "mdi:shower"
 MODEL_ELECTRIC_WATER_HEATER = "electric_water_heater"
 
@@ -83,10 +90,10 @@ _ELECTRIC_SENSORS = (
 
 
 def _validate_electric_sensors(config):
-    """Accept the showers and heating power sensors only on the model whose poll reads them."""
+    """Accept the showers and heating power entities only on the model whose poll reads them."""
     if config.get(CONF_MODEL) == MODEL_ELECTRIC_WATER_HEATER:
         return config
-    for key, _ in _ELECTRIC_SENSORS:
+    for key in (*(key for key, _ in _ELECTRIC_SENSORS), CONF_MANUAL_SHOWERS):
         if key in config:
             raise cv.Invalid(
                 f"{key} needs an electric storage water heater: set io_subtype: 0 and "
@@ -157,6 +164,9 @@ CONFIG_SCHEMA = cv.All(
                 device_class=DEVICE_CLASS_POWER,
                 state_class=STATE_CLASS_MEASUREMENT,
             ).extend(cv.COMPONENT_SCHEMA),
+            cv.Optional(CONF_MANUAL_SHOWERS): number.number_schema(
+                IOHomeDhwManualShowersNumber, icon=ICON_SHOWER
+            ).extend(cv.COMPONENT_SCHEMA),
             cv.Optional(CONF_HEAT_PUMP_RUNNING): binary_sensor.binary_sensor_schema(
                 IOHomeDhwBinarySensor, device_class=DEVICE_CLASS_RUNNING
             ).extend(cv.COMPONENT_SCHEMA),
@@ -201,6 +211,16 @@ async def to_code(config):
             config, parent, new_entity=sensor.new_sensor, entity_config=config[key]
         )
         cg.add(companion.set_reading(reading))
+
+    if CONF_MANUAL_SHOWERS in config:
+        await create_user_companion(
+            config,
+            parent,
+            new_entity=functools.partial(
+                number.new_number, min_value=MANUAL_SHOWERS_MIN, max_value=MANUAL_SHOWERS_MAX, step=1
+            ),
+            entity_config=config[CONF_MANUAL_SHOWERS],
+        )
 
     for key, reading in _BINARY_COMPANIONS:
         if key not in config:
