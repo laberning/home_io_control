@@ -27,7 +27,6 @@ from esphome.const import (
 )
 
 from . import home_io_control_ns
-from .hub_validators import FEATURE_WATER_HEATER
 from .platform_common import (
     create_companion_sensors,
     create_user_companion,
@@ -82,7 +81,7 @@ def _validate_water_heater_kind(config):
         config,
         "the water_heater platform",
         True,
-        required=FEATURE_WATER_HEATER,
+        required="WATER_HEATER",
         reason="it drives a domestic hot water heater (io_device_type: domestic_hot_water)",
     )
     return config

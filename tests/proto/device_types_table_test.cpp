@@ -335,12 +335,6 @@ TEST(DeviceTypesTableFeatures, EveryPredicateAgreesWithTheRowsOwnClass) {
   });
 }
 
-TEST(DeviceTypesTableFeatures, NoRowUsesBit15) {
-  test::for_each_table_row([](const DeviceTypeInfo &row) {
-    EXPECT_EQ(row.features & (1U << 15U), 0u) << "bit 15 is the Python mirror's experimental marker";
-  });
-}
-
 TEST(DeviceTypesTableFeatures, AnExplicitSubtype58RowIsTheVariantOfItsTypeRow) {
   test::for_each_table_row([](const DeviceTypeInfo &row) {
     if (row.subtype != SUBTYPE_MAIN_PARAMETER_ONLY)
@@ -359,12 +353,12 @@ TEST(DeviceTypesTableFeatures, GarageOpenerRowsHaveNoFavourite) {
   });
 }
 
-TEST(DeviceTypesTableFeatures, NamedPositionValuesAreUniqueAboveTheClosedPositionAndOwnOneBitEach) {
-  DeviceFeatures bits_seen = 0;
+TEST(DeviceTypesTableFeatures, NamedPositionValuesAreUniqueAboveTheClosedPositionAndOwnOneCapabilityEach) {
+  DeviceFeatures seen;
   for (const NamedPosition &named : NAMED_POSITIONS) {
     EXPECT_GT(named.main_parameter, MAIN_PARAMETER_CLOSED) << named.name;
-    EXPECT_EQ(bits_seen & named.feature, 0u) << named.name << ": the bit is in more than one entry";
-    bits_seen |= named.feature;
+    EXPECT_FALSE(seen.intersects(named.feature)) << named.name << ": the capability is in more than one entry";
+    seen |= named.feature;
     for (const NamedPosition &other : NAMED_POSITIONS) {
       if (&other != &named) {
         EXPECT_NE(other.main_parameter, named.main_parameter) << named.name << " and " << other.name;
@@ -390,7 +384,7 @@ TEST(DeviceTypesTableFeatures, TiltNamedPositionsAndInversionBelongToCoverRowsOn
   const DeviceFeatures cover_only = device_feature::TILT | device_feature::FAVORITE | device_feature::VENT |
                                     device_feature::PARTIAL | device_feature::PEDESTRIAN | device_feature::INVERTED;
   test::for_each_table_row([cover_only](const DeviceTypeInfo &row) {
-    if ((row.features & cover_only) != 0) {
+    if (row.features.intersects(cover_only)) {
       EXPECT_EQ(row.capability, DeviceCapabilityClass::COVER) << format_device_ids(row.type, row.subtype);
     }
   });
@@ -431,7 +425,7 @@ TEST(DeviceTypesTableFeatures, TheExtendedPositionFrameIsOnlyOnRowsThatSendAPosi
 
 TEST(DeviceTypesTableFeatures, EveryRowWithCapabilitiesHasAYamlSelectableType) {
   test::for_each_table_row([](const DeviceTypeInfo &row) {
-    if (row.features == 0)
+    if (row.features.empty())
       return;
     const DeviceTypeInfo *type_row = find_exact_device_type_info(row.type, 0);
     ASSERT_NE(type_row, nullptr) << format_device_ids(row.type, row.subtype);

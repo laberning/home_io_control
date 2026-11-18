@@ -9,7 +9,7 @@
 /// checks (scripts/check-tuning-sync.py, scripts/check-yaml-emitters.py, both `make lint`); see
 /// any sync test's file header for the fuller note on why both forms are kept.
 ///
-/// Nine public functions:
+/// The public functions:
 ///  - parse_python_uint8_dict(path, dict_name): a top-level `NAME = { "key": 0xNN, ... }` dict
 ///    (string-keyed, int-valued) -- used for MANUFACTURER_OPTIONS, DEVICE_TYPE_OPTIONS,
 ///    TCXO_VOLTAGE_OPTIONS, FEM_TX_POWER_MAX_QUIET and PA_PIN_OPTIONS (device_type_sync_test.cpp,
@@ -27,14 +27,14 @@
 ///  - parse_python_uint8_assignments(path, prefix): bare module-level `<prefix>NAME = 0xNN`
 ///    Python assignments -- used for protolib.py's rekey-pipeline CMD_* mirror
 ///    (opcode_name_sync_test.cpp).
-///  - parse_python_uint16_dict(path, dict_name) and parse_python_uint16_assignments(path, prefix):
-///    the two-byte forms of the first and last, used for the capability word mirror (DEVICE_FEATURES,
-///    NAMED_POSITION_FEATURES, FEATURE_*; device_features_sync_test.cpp). Every one-byte and
-///    two-byte form shares one parse_uint_or_fail(max).
 ///  - parse_python_ordered_dict(path, dict_name): any flat dict as (key, raw value) text pairs in
 ///    source order -- used for cover.py's TRAVEL_SPEEDS (travel_speed_sync_test.cpp).
 ///  - parse_python_float_pair(path, name): a module-level `NAME = (low, high)` pair -- used for
 ///    climate.py's DEFAULT_TEMPERATURE_RANGE_C (temperature_range_sync_test.cpp).
+///  - parse_python_name_set_dict(path, dict_name) and parse_python_string_collection(path, name):
+///    the capability mirror by names, a dict of `"key": frozenset({"NAME", ...})` and a tuple or
+///    frozenset of quoted strings (hub_validators.py DEVICE_FEATURES, FEATURES and
+///    EXPERIMENTAL_KINDS; device_features_sync_test.cpp).
 ///
 /// The two dict-shaped parsers share one scan loop (parse_python_dict_entries(), below) rather
 /// than being two near-identical copies -- that duplication bug pattern is exactly what this
@@ -47,6 +47,7 @@
 #include <exception>
 #include <fstream>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -102,11 +103,6 @@ inline unsigned long parse_uint_or_fail(const std::string &text, const char *pat
 /// parse_uint_or_fail() for a one-byte value.
 inline uint8_t parse_uint8_or_fail(const std::string &text, const char *path, const std::string &context) {
   return static_cast<uint8_t>(parse_uint_or_fail(text, path, context, UINT8_MAX));
-}
-
-/// parse_uint_or_fail() for a two-byte value.
-inline uint16_t parse_uint16_or_fail(const std::string &text, const char *path, const std::string &context) {
-  return static_cast<uint16_t>(parse_uint_or_fail(text, path, context, UINT16_MAX));
 }
 
 /// Trim a raw dict value/key token: a trailing `#`-prefixed comment (consistent with how
@@ -167,12 +163,20 @@ inline std::vector<std::pair<std::string, std::string>> parse_python_dict_entrie
         in_dict = true;
       continue;
     }
-    if (line.find('}') != std::string::npos)
-      break;
-
     auto first = line.find_first_not_of(" \t");
     if (first == std::string::npos || line[first] == '#')
       continue;  // blank or comment-only line -- not a real entry
+    // A `}` that closes more braces than the line opens ends the dict (on its own line or after the
+    // last entry); a `}` that closes a brace of the value, as in `frozenset({...})`, does not.
+    int brace_depth = 0;
+    for (const char c : line.substr(0, line.find('#'))) {
+      if (c == '{')
+        brace_depth++;
+      else if (c == '}')
+        brace_depth--;
+    }
+    if (brace_depth < 0)
+      break;
 
     // If the key is a quoted string, its terminating ':' must be found after the closing quote
     // -- a colon inside the key text itself must not be mistaken for the key/value separator.
@@ -223,12 +227,77 @@ inline std::map<std::string, uint8_t> parse_python_uint8_dict(const char *path, 
   return result;
 }
 
-/// parse_python_uint8_dict() for two-byte values -- e.g. DEVICE_FEATURES, NAMED_POSITION_FEATURES.
-inline std::map<std::string, uint16_t> parse_python_uint16_dict(const char *path, const char *dict_name) {
-  std::map<std::string, uint16_t> result;
-  for (const auto &[key, value] : detail::parse_python_dict_entries(path, dict_name))
-    result[key] = detail::parse_uint16_or_fail(value, path, std::string(dict_name) + "[\"" + key + "\"]");
+/// Every double-quoted string in `text`, in order, ignoring a `#` comment to the end of a line.
+/// @param text Python source text.
+inline std::vector<std::string> quoted_strings_of(const std::string &text) {
+  std::vector<std::string> strings;
+  std::string::size_type pos = 0;
+  while (pos < text.size()) {
+    if (text[pos] == '#') {
+      pos = text.find('\n', pos);
+      if (pos == std::string::npos)
+        break;
+    } else if (text[pos] == '"') {
+      const auto close = text.find('"', pos + 1);
+      if (close == std::string::npos)
+        break;
+      strings.push_back(text.substr(pos + 1, close - pos - 1));
+      pos = close;
+    }
+    pos++;
+  }
+  return strings;
+}
+
+/// Parse a top-level `NAME = { "key": frozenset({"A", "B"}), ... }` dict (string-keyed, name-set-valued)
+/// out of a Python source file -- e.g. DEVICE_FEATURES. `frozenset()` is the empty set.
+/// @param path Path to the Python source file, relative to the project root.
+/// @param dict_name The dict's variable name.
+/// @return key -> names map; empty (with a test failure already recorded) if `path` could not be opened.
+inline std::map<std::string, std::set<std::string>> parse_python_name_set_dict(const char *path,
+                                                                               const char *dict_name) {
+  std::map<std::string, std::set<std::string>> result;
+  for (const auto &[key, value] : detail::parse_python_dict_entries(path, dict_name)) {
+    const auto names = quoted_strings_of(value);
+    result[key] = std::set<std::string>(names.begin(), names.end());
+  }
   return result;
+}
+
+/// Parse a module-level `NAME = (...)` tuple or `NAME = frozenset(...)` of double-quoted strings out of a
+/// Python source file, over as many lines as its parentheses span.
+/// @param path Path to the Python source file, relative to the project root.
+/// @param name The constant's name, e.g. "FEATURES".
+/// @return The strings in source order; empty (with a test failure already recorded) if the constant is
+///         missing or `path` could not be opened.
+inline std::vector<std::string> parse_python_string_collection(const char *path, const char *name) {
+  std::ifstream file = detail::open_source_or_fail(path);
+  if (!file.is_open())
+    return {};
+  const std::string head = std::string(name) + " = ";
+  std::string line;
+  std::string text;
+  int depth = 0;
+  bool inside = false;
+  while (std::getline(file, line)) {
+    if (!inside) {
+      if (line.compare(0, head.size(), head) != 0)
+        continue;
+      inside = true;
+    }
+    text += line + "\n";
+    for (const char c : line.substr(0, line.find('#'))) {
+      if (c == '(')
+        depth++;
+      else if (c == ')')
+        depth--;
+    }
+    if (depth <= 0)
+      break;
+  }
+  if (!inside)
+    ADD_FAILURE() << path << ": " << name << " is not a module-level assignment";
+  return quoted_strings_of(text);
 }
 
 /// Parse a top-level `NAME = { 0xNN: "value", ... }` dict out of a Python source file
@@ -434,11 +503,6 @@ std::map<std::string, Value> parse_python_assignments(const char *path, const ch
 ///         EXPECT_TRUE) if `path` could not be opened.
 inline std::map<std::string, uint8_t> parse_python_uint8_assignments(const char *path, const char *prefix) {
   return detail::parse_python_assignments<uint8_t>(path, prefix, detail::parse_uint8_or_fail);
-}
-
-/// parse_python_uint8_assignments() for two-byte values -- the FEATURE_* bits in hub_validators.py.
-inline std::map<std::string, uint16_t> parse_python_uint16_assignments(const char *path, const char *prefix) {
-  return detail::parse_python_assignments<uint16_t>(path, prefix, detail::parse_uint16_or_fail);
 }
 
 /// Parse a module-level `NAME = (low, high)` pair of decimal numbers (at column 0) out of a Python

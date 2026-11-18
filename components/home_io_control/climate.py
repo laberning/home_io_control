@@ -27,14 +27,10 @@ from esphome.const import (
 from . import home_io_control_ns
 from .hub_validators import (
     DEVICE_TYPE_OPTIONS,
-    FEATURE_CENTRAL_HEATING_MODE,
-    FEATURE_NIGHT_LIGHT,
-    FEATURE_TEMPERATURE_RANGE,
-    FEATURE_WINDOW_COMPANIONS,
 )
 from .platform_common import (
     INSTANT_LIGHT_TRANSITION,
-    declared_features,
+    declared_has_feature,
     companion_entity_name,
     create_companion,
     create_companion_sensors,
@@ -84,12 +80,12 @@ CONF_WINDOW_DETECTION_SWITCH_ID = "_window_detection_switch_id"
 
 
 def _validate_night_light(config):
-    """Accept `night_light:` only on a heater kind that has one (the NIGHT_LIGHT bit of its row).
+    """Accept `night_light:` only on a heater kind that has one (the NIGHT_LIGHT capability of its row).
 
     Unlike require_feature(), this also rejects the key when no io_device_type is declared: the light's
     registers would otherwise go to a heater nothing says has them.
     """
-    if CONF_NIGHT_LIGHT not in config or declared_features(config) & FEATURE_NIGHT_LIGHT:
+    if CONF_NIGHT_LIGHT not in config or declared_has_feature(config, "NIGHT_LIGHT"):
         return config
     raise cv.Invalid(
         "night_light needs a heater with a night light: set io_device_type: electrical_heater, "
@@ -99,12 +95,12 @@ def _validate_night_light(config):
 
 
 def _validate_central_heating_mode(config):
-    """Accept `central_heating_mode:` only on a kind with the CENTRAL_HEATING_MODE bit (a towel dryer).
+    """Accept `central_heating_mode:` only on a kind with the CENTRAL_HEATING_MODE capability (a towel dryer).
 
     Like `night_light:`, the key is rejected when no io_device_type is declared: the register would
     otherwise be read from a heater nothing says has it.
     """
-    if CONF_CENTRAL_HEATING_MODE not in config or declared_features(config) & FEATURE_CENTRAL_HEATING_MODE:
+    if CONF_CENTRAL_HEATING_MODE not in config or declared_has_feature(config, "CENTRAL_HEATING_MODE"):
         return config
     raise cv.Invalid(
         "central_heating_mode needs a towel dryer: set io_device_type: electrical_heater, "
@@ -129,16 +125,16 @@ def _validate_heating_level(config):
 
 
 # The heater companions: (id key, ID suffix, class, condition). The window sensor and its detection
-# switch exist when the declared kind's row has the WINDOW_COMPANIONS bit, so a towel dryer (a model row
+# switch exist when the declared kind's row has the WINDOW_COMPANIONS capability, so a towel dryer (a model row
 # without it) gets none. A heater declared without a type gets none: nothing at validation time says what
 # it is.
 CLIMATE_COMPANIONS = (
-    (CONF_WINDOW_SENSOR_ID, "window_sensor", IOHomeWindowBinarySensor, has_feature(FEATURE_WINDOW_COMPANIONS)),
+    (CONF_WINDOW_SENSOR_ID, "window_sensor", IOHomeWindowBinarySensor, has_feature("WINDOW_COMPANIONS")),
     (
         CONF_WINDOW_DETECTION_SWITCH_ID,
         "window_detection_switch",
         IOHomeOpenWindowDetectionSwitch,
-        has_feature(FEATURE_WINDOW_COMPANIONS),
+        has_feature("WINDOW_COMPANIONS"),
     ),
 )
 
@@ -151,7 +147,7 @@ def _inject_companion_ids(config):
 
 # The range a heating temperature interface encodes its temperature over. It defaults to -40..+80 degrees
 # Celsius (proto_heating.h) as an assumption; a device that turns out to use another range is told here.
-# A heat pump uses the fixed range, so the keys do not apply to it (the TEMPERATURE_RANGE bit). Mirrors
+# A heat pump uses the fixed range, so the keys do not apply to it (the TEMPERATURE_RANGE capability). Mirrors
 # HEATING_TEMPERATURE_RANGE_MIN_C / _MAX_C.
 DEFAULT_TEMPERATURE_RANGE_C = (-40.0, 80.0)
 TEMPERATURE_RANGE_BOUNDS_C = (-50.0, 100.0)
@@ -161,9 +157,9 @@ def _validate_temperature_range(config):
     # Applies to the two keys only when one is given; the other keeps its default.
     if CONF_MIN_TEMPERATURE not in config and CONF_MAX_TEMPERATURE not in config:
         return config
-    # The TEMPERATURE_RANGE bit of the declared kind; no declared kind has no bit, so the keys stay rejected
+    # The TEMPERATURE_RANGE capability of the declared kind; no declared kind has none, so the keys stay rejected
     # there as well (the range would otherwise go to a device nothing says has one).
-    if not declared_features(config) & FEATURE_TEMPERATURE_RANGE:
+    if not declared_has_feature(config, "TEMPERATURE_RANGE"):
         raise cv.Invalid(
             "min_temperature and max_temperature apply to io_device_type: heating_temperature_interface "
             "only: a heat pump uses a fixed range, and every other device has no temperature range"

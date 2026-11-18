@@ -288,7 +288,7 @@ bool device_uses_heating_registers(DeviceType type, uint8_t subtype);
 ///          readings are family-0x00 registers. Every other kind -- covers, lights, switches, locks, the
 ///          standard-EXECUTE heaters -- is refused. This gates the probe and the register reads only; a
 ///          heater's register writes stay behind device_uses_heating_registers(), a water heater's
-///          behind its WATER_HEATER bit.
+///          behind its WATER_HEATER capability.
 /// @param type Node type.
 /// @param subtype Subtype.
 /// @return true for a register-protocol heater or a water heater.

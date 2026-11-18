@@ -299,7 +299,7 @@ TEST(OneWayController, PowerClassNamesEveryValue) {
 }
 
 // ============================================================================
-// effective_inverted(): explicit `invert_position:` wins, else the kind's INVERTED bit
+// effective_inverted(): explicit `invert_position:` wins, else the kind's INVERTED capability
 // ============================================================================
 
 TEST(OneWayControllerInversion, OverrideBeatsTheKindAndUnsetFollowsIt) {

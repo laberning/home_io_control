@@ -31,7 +31,6 @@ from . import home_io_control_ns
 from .hub_names import CONF_INVERT_POSITION
 from .hub_validators import (
     DEFAULT_COVER_DEVICE_CLASS,
-    FEATURE_EXTENDED_POSITION_FRAME,
     NAMED_POSITION_FEATURES,
     device_type_name,
     validate_battery_level_poll_interval,
@@ -43,7 +42,6 @@ from .platform_common import (
     companion_entity_name,
     create_companion,
     create_companion_sensors,
-    declared_features,
     deprecated_key,
     has_feature,
     inject_companion_ids,
@@ -156,7 +154,7 @@ def _require_travel_speed_kind(config):
             config,
             key,
             key in config,
-            required=FEATURE_EXTENDED_POSITION_FRAME,
+            required="EXTENDED_POSITION_FRAME",
             reason=f"this device takes no travel-speed parameter; remove {key}:",
         )
     return config

@@ -1,83 +1,141 @@
 #pragma once
 
 /// @file proto_device_features.h
-/// @brief Capability bits of a device kind: what a (node type, subtype) can do.
+/// @brief Capabilities of a device kind: what a (node type, subtype) can do.
 /// @ingroup hioc_protocol
 ///
-/// The bits are carried by the rows of the node-type table (proto_device_types.h) and resolved onto
-/// each device record, so the hub, the platforms and the Python codegen ask one place whether a
-/// device has a feature instead of branching on a device type. A bit says *whether* a device has a
-/// capability; how it is commanded stays in the command builders and the profile tables.
+/// A capability is a name (DeviceFeature); a device kind's capabilities are a DeviceFeatures set of
+/// those names (ADR 0098). The sets are carried by the rows of the node-type table
+/// (proto_device_types.h) and resolved onto each device record, so the hub, the platforms and the
+/// Python codegen ask one place whether a device has a feature instead of branching on a device type.
+/// A capability says *whether* a device can do something; how it is commanded stays in the command
+/// builders and the profile tables.
 ///
-/// This leaf header includes only `<cstdint>`: IoDevice (proto_device_model.h) carries a
-/// DeviceFeatures word, and so does every row of the table in proto_device_types.h.
+/// This leaf header includes only the standard headers `<cstdint>` and `<limits>`: IoDevice (proto_device_model.h)
+/// carries a DeviceFeatures set, and so does every row of the table in proto_device_types.h.
 
 #include <cstdint>
+#include <limits>
 
 namespace esphome {
 namespace home_io_control {
 
-/// @brief Capability bits of a device kind; see device_feature.
-using DeviceFeatures = uint16_t;
+/// @brief One capability of a device kind.
+/// @details Adding a capability is one more enumerator before COUNT, one mirror entry in
+/// hub_validators.py (`FEATURES`) and the rows that have it; nobody chooses a bit position.
+/// device_features_sync_test.cpp checks that the Python mirror names the same capabilities row by row.
+/// The experimental status of a kind is not a capability: it is the row flag
+/// device_type_flags::EXPERIMENTAL.
+enum class DeviceFeature : uint8_t {
+  /// EXECUTE carries no functional parameter at all (VELUX KLF 200 API specification, Appendix 2:
+  /// "main parameter only"). Read by main_parameter_only_variant() and the table invariants; the frame
+  /// shape itself is EXTENDED_POSITION_FRAME's job.
+  MAIN_PARAMETER_ONLY,
+  /// Intermediate main-parameter values: a percent position, a brightness or a heat level.
+  LEVELS,
+  /// Slat angle (functional parameter 3) through the extended status and the tilt EXECUTE.
+  TILT,
+  /// Named position 0xD800, the favourite ("my") position. Absent where a device has refused the alias
+  /// (garage openers, issue #163).
+  FAVORITE,
+  /// Named position 0xD803, the window opener's secured ventilation position (VELUX KLF 200 API
+  /// specification, section 14.2).
+  VENT,
+  /// Named position 0xD809, sent by the Partial Position button: a garage opener runs its stored
+  /// partial position (issue #163).
+  PARTIAL,
+  /// Named position 0xD807, sent by the Pedestrian Position button.
+  /// \todo Confirm on a real gate opener that 0xD807 opens it to a pedestrian position (experimental).
+  PEDESTRIAN,
+  /// The kind may take the 8-byte position and force-open EXECUTE with functional parameter 1 set, which
+  /// is sent only when a travel speed (`silent` or `fast`) is chosen; otherwise, and for a kind without
+  /// the capability, they use the 6-byte main-parameter form. On covers functional parameter 1 is the travel
+  /// speed (VELUX KLF 200 API specification, Appendix 2), so the `travel_speed:` and `silent:` keys need
+  /// this capability; that proxy holds only for covers, which are the only kinds with those keys.
+  EXTENDED_POSITION_FRAME,
+  /// Heater window sensor and open-window-detection switch.
+  WINDOW_COMPANIONS,
+  /// Direction inverted by default (horizontal awnings: IO 0 is closed).
+  INVERTED,
+  /// Read and commanded as a domestic hot water heater: family-0x00 registers (proto_dhw.h) for its
+  /// readings and mode, the status main parameter for its target temperature. Gates the water heater
+  /// poll, its register reads and writes, and the `water_heater:` platform.
+  WATER_HEATER,
+  /// A night light built into a heater with private registers: on/off in register 0x0144, brightness in
+  /// 0x0142 (proto_heating.h). Gates the heater's `night_light:` light entity.
+  NIGHT_LIGHT,
+  /// The temperature range the device encodes its temperature over is not fixed, so the YAML
+  /// `min_temperature:` / `max_temperature:` apply. A device with a fixed range (a heat pump) lacks it.
+  /// Set exactly on the kinds whose heating profile takes a temperature without `fixed_range`
+  /// (heating_profiles_test.cpp).
+  TEMPERATURE_RANGE,
+  /// A mixed towel dryer (warmed by the house's water loop, with an electric element as well) reports in
+  /// register 0x0153 whether its central-heating mode is on (1) or the element is in use (0)
+  /// (proto_heating.h). Gates the climate entry's `central_heating_mode:` binary sensor.
+  /// \todo Experimental: read on one Atlantic Adelis mixed unit (issue #243), confirm on a second one.
+  CENTRAL_HEATING_MODE,
+  COUNT,  ///< Not a capability: the number of capabilities, for the storage check of DeviceFeatures.
+};
 
-/// @brief Capability bits carried by a DeviceTypeInfo row and resolved onto a device record.
-/// hub_validators.py mirrors the whole word bit for bit (`FEATURE_*`, `DEVICE_FEATURES`) and
-/// device_features_sync_test.cpp checks it. Bit 15 is never a capability: the Python mirror uses it
-/// for the row's experimental marker.
+/// @brief The capabilities under their short names (`device_feature::NIGHT_LIGHT`).
 namespace device_feature {
-/// EXECUTE carries no functional parameter at all (VELUX KLF 200 API specification, Appendix 2:
-/// "main parameter only"). Read by main_parameter_only_variant() and the table invariants; the frame
-/// shape itself is EXTENDED_POSITION_FRAME's job.
-static constexpr DeviceFeatures MAIN_PARAMETER_ONLY = 1U << 0U;
-/// Intermediate main-parameter values: a percent position, a brightness or a heat level.
-static constexpr DeviceFeatures LEVELS = 1U << 1U;
-/// Slat angle (functional parameter 3) through the extended status and the tilt EXECUTE.
-static constexpr DeviceFeatures TILT = 1U << 2U;
-/// Named position 0xD800, the favourite ("my") position. Absent where a device has refused the alias
-/// (garage openers, issue #163).
-static constexpr DeviceFeatures FAVORITE = 1U << 3U;
-/// Named position 0xD803, the window opener's secured ventilation position (VELUX KLF 200 API
-/// specification, section 14.2).
-static constexpr DeviceFeatures VENT = 1U << 4U;
-/// Named position 0xD809, sent by the Partial Position button: a garage opener runs its stored
-/// partial position (issue #163).
-static constexpr DeviceFeatures PARTIAL = 1U << 5U;
-/// Named position 0xD807, sent by the Pedestrian Position button.
-/// \todo Confirm on a real gate opener that 0xD807 opens it to a pedestrian position (experimental).
-static constexpr DeviceFeatures PEDESTRIAN = 1U << 6U;
-/// The kind may take the 8-byte position and force-open EXECUTE with functional parameter 1 set, which
-/// is sent only when a travel speed (`silent` or `fast`) is chosen; otherwise, and for a kind without
-/// the bit, they use the 6-byte main-parameter form. On covers functional parameter 1 is the travel
-/// speed (VELUX KLF 200 API specification, Appendix 2), so the `travel_speed:` and `silent:` keys need
-/// this bit; that proxy holds only for covers, which are the only kinds with those keys.
-static constexpr DeviceFeatures EXTENDED_POSITION_FRAME = 1U << 7U;
-/// Heater window sensor and open-window-detection switch.
-static constexpr DeviceFeatures WINDOW_COMPANIONS = 1U << 8U;
-/// Direction inverted by default (horizontal awnings: IO 0 is closed).
-static constexpr DeviceFeatures INVERTED = 1U << 9U;
-/// Read and commanded as a domestic hot water heater: family-0x00 registers (proto_dhw.h) for its
-/// readings and mode, the status main parameter for its target temperature. Gates the water heater
-/// poll, its register reads and writes, and the `water_heater:` platform.
-static constexpr DeviceFeatures WATER_HEATER = 1U << 10U;
-/// A night light built into a heater with private registers: on/off in register 0x0144, brightness in
-/// 0x0142 (proto_heating.h). Gates the heater's `night_light:` light entity.
-static constexpr DeviceFeatures NIGHT_LIGHT = 1U << 11U;
-/// The temperature range the device encodes its temperature over is not fixed, so the YAML
-/// `min_temperature:` / `max_temperature:` apply. A device with a fixed range (a heat pump) lacks it.
-/// Set exactly on the kinds whose heating profile takes a temperature without `fixed_range`
-/// (heating_profiles_test.cpp).
-static constexpr DeviceFeatures TEMPERATURE_RANGE = 1U << 12U;
-/// A mixed towel dryer (warmed by the house's water loop, with an electric element as well) reports in
-/// register 0x0153 whether its central-heating mode is on (1) or the element is in use (0)
-/// (proto_heating.h). Gates the climate entry's `central_heating_mode:` binary sensor.
-/// \todo Experimental: read on one Atlantic Adelis mixed unit (issue #243), confirm on a second one.
-static constexpr DeviceFeatures CENTRAL_HEATING_MODE = 1U << 13U;
+using enum DeviceFeature;
 }  // namespace device_feature
 
-/// @brief True when every bit of `bit` is set in `set`.
-/// @param set A feature word.
-/// @param bit One bit, or several that must all be set.
-constexpr bool has_feature(DeviceFeatures set, DeviceFeatures bit) { return (set & bit) == bit; }
+/// @brief A set of DeviceFeature capabilities.
+/// @details A value type over a fixed-width mask; the mask is an implementation detail. A single
+/// DeviceFeature converts implicitly to a one-element set, and `|` builds larger sets, so a row reads
+/// `WINDOW_COMPANIONS | NIGHT_LIGHT`.
+class DeviceFeatures {
+ public:
+  /// The empty set.
+  constexpr DeviceFeatures() = default;
+  /// A set of exactly one capability.
+  constexpr DeviceFeatures(DeviceFeature feature) : mask_(mask_of(feature)) {}
+
+  /// @brief True when every capability of `other` is in this set.
+  /// @param other One capability, or a set that must be contained entirely.
+  [[nodiscard]] constexpr bool contains(DeviceFeatures other) const { return (mask_ & other.mask_) == other.mask_; }
+  /// @brief True when the sets have at least one capability in common.
+  [[nodiscard]] constexpr bool intersects(DeviceFeatures other) const { return (mask_ & other.mask_) != 0; }
+  /// @brief True when the set holds no capability.
+  [[nodiscard]] constexpr bool empty() const { return mask_ == 0; }
+  /// @brief This set without the capabilities of `other`.
+  [[nodiscard]] constexpr DeviceFeatures without(DeviceFeatures other) const {
+    return DeviceFeatures{mask_ & ~other.mask_};
+  }
+
+  /// Union.
+  [[nodiscard]] friend constexpr DeviceFeatures operator|(DeviceFeatures lhs, DeviceFeatures rhs) {
+    return DeviceFeatures{lhs.mask_ | rhs.mask_};
+  }
+  constexpr DeviceFeatures &operator|=(DeviceFeatures rhs) {
+    mask_ |= rhs.mask_;
+    return *this;
+  }
+  /// Set equality.
+  [[nodiscard]] friend constexpr bool operator==(DeviceFeatures lhs, DeviceFeatures rhs) = default;
+
+ private:
+  using Mask = uint64_t;
+  explicit constexpr DeviceFeatures(Mask mask) : mask_(mask) {}
+  static constexpr Mask mask_of(DeviceFeature feature) { return Mask{1} << static_cast<unsigned>(feature); }
+
+  Mask mask_ = 0;
+
+  static_assert(static_cast<unsigned>(DeviceFeature::COUNT) <= std::numeric_limits<Mask>::digits,
+                "every DeviceFeature must fit the storage of DeviceFeatures; widen Mask");
+};
+
+/// @brief The set of two capabilities.
+constexpr DeviceFeatures operator|(DeviceFeature lhs, DeviceFeature rhs) {
+  return DeviceFeatures{lhs} | DeviceFeatures{rhs};
+}
+
+/// @brief True when `set` holds every capability of `feature`.
+/// @param set A capability set.
+/// @param feature One capability, or a set that must be entirely contained.
+constexpr bool has_feature(DeviceFeatures set, DeviceFeatures feature) { return set.contains(feature); }
 
 }  // namespace home_io_control
 }  // namespace esphome

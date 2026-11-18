@@ -84,8 +84,8 @@ TEST(HeatingProfiles, EveryProfileNamesARowOfTheTypeTable) {
   }
 }
 
-TEST(HeatingProfiles, TheTemperatureRangeBitMarksTheProfilesThatTakeATemperatureWithoutAFixedRange) {
-  // The YAML `min_temperature:` / `max_temperature:` keys are accepted by this bit, so it must be set
+TEST(HeatingProfiles, TheTemperatureRangeCapabilityMarksTheProfilesThatTakeATemperatureWithoutAFixedRange) {
+  // The YAML `min_temperature:` / `max_temperature:` keys are accepted by this capability, so it must be set
   // exactly where the climate platform uses the configured range (platform_climate.cpp reads
   // `fixed_range`).
   const auto check = [](const DeviceTypeInfo &row) {

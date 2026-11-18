@@ -57,7 +57,6 @@ from .hub_names import (
 from .hub_validators import (
     DEVICE_TYPE_MAX,
     DEVICE_TYPE_OPTIONS,
-    FEATURE_INVERTED,
     MANUFACTURER_OPTIONS,
     ONEWAY_WIRE_PROFILE_MANUFACTURERS,
     device_features,
@@ -257,7 +256,7 @@ def _power_class_override_expression(identity):
 def _invert_override_expression(identity):
     """Map `invert_position:` to the C++ `std::optional<bool>` the identity stores.
 
-    Unset -> `{}`: the kind's INVERTED capability bit is looked up in C++ by
+    Unset -> `{}`: the kind's INVERTED capability is looked up in C++ by
     `effective_inverted()`, so the Python side never carries a copy of the type table.
     """
     if CONF_INVERT_POSITION not in identity:
@@ -484,7 +483,7 @@ def _warn_inverted_kind_broadcast_all(resolved):
         resolved.can_transmit
         and CONF_INVERT_POSITION not in identity
         and identity[CONF_EXECUTE_BROADCAST] == "all"
-        and device_features(identity[CONF_IO_DEVICE_TYPE]) & FEATURE_INVERTED
+        and "INVERTED" in device_features(identity[CONF_IO_DEVICE_TYPE])
     ):
         return (
             f"home_io_control: oneway_controllers '{resolved.identity_id}' is an inverted device kind with "

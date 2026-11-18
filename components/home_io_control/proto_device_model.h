@@ -334,8 +334,8 @@ struct IoDevice {
   StopCandidate stop_candidate{};      ///< Last off-target "stopped" report, to confirm the next one.
   bool reports_remaining_time{false};  ///< The device has sent a nonzero remaining time in a status reply, so
                                        ///< its zero means "about to stop" rather than "not provided".
-  DeviceFeatures features{0};          ///< What this device can do, resolved by resolve_device_features(). Every
-                                       ///< capability check on a registered device reads this word.
+  DeviceFeatures features;             ///< What this device can do, resolved by resolve_device_features(). Every
+                                       ///< capability check on a registered device reads this set.
   DeviceCapabilityClass entity_class{
       DeviceCapabilityClass::UNKNOWN};  ///< Class of the entity that declared the
                                         ///< device; UNKNOWN for a device no entity declared (the type's class then
@@ -461,7 +461,7 @@ struct IoDevice {
                                                                                         ///< mode read, see the enum.
 };
 
-/// @brief Resolve a device's capability bits and inversion from its kind and its YAML overrides.
+/// @brief Resolve a device's capabilities and inversion from its kind and its YAML overrides.
 /// @details The one place a device's features are decided. The base is the (type, subtype, model) row
 ///          (device_features(), with the declared IoDevice::model); a kind with no row, or an undeclared one, takes
 ///          undeclared_kind_features() of the declaring entity's class (the type's own class when no

@@ -311,7 +311,7 @@ void resolve_device_features(IoDevice &dev) {
   // `dimmable:` has a schema default of false, so it decides a light's levels outright; the row's
   // LEVELS only drives the paste-ready snippet and the on/off-only rejection.
   if (entity_class == DeviceCapabilityClass::LIGHT) {
-    features &= static_cast<DeviceFeatures>(~device_feature::LEVELS);
+    features = features.without(device_feature::LEVELS);
     if (dev.dimmable && !has_feature(features, device_feature::MAIN_PARAMETER_ONLY))
       features |= device_feature::LEVELS;
   }
@@ -319,7 +319,7 @@ void resolve_device_features(IoDevice &dev) {
   // device of that kind bound to another platform (a `switch:` some configs declare only to reach the
   // register probes) keeps none of it, so its frames stay what they were before that path existed.
   if (entity_class != DeviceCapabilityClass::WATER_HEATER)
-    features &= static_cast<DeviceFeatures>(~device_feature::WATER_HEATER);
+    features = features.without(device_feature::WATER_HEATER);
   dev.features = features;
   dev.inverted = dev.invert_override.value_or(has_feature(features, device_feature::INVERTED));
 }

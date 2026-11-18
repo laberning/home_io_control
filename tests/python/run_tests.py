@@ -619,7 +619,7 @@ def heating_level_sensor_is_accepted_on_an_electrical_heater_only():
 
 @case()
 def central_heating_mode_sensor_is_accepted_on_a_towel_dryer_only():
-    """`central_heating_mode:` passes on a towel dryer (the CENTRAL_HEATING_MODE bit of its row) and is
+    """`central_heating_mode:` passes on a towel dryer (the CENTRAL_HEATING_MODE capability of its row) and is
     refused on a radiator, another heater kind, another device and an entry with no declared type, with a
     message naming io_model: towel_dryer; an entry without the key is untouched."""
     import esphome.config_validation as cv
@@ -651,7 +651,7 @@ def central_heating_mode_sensor_is_accepted_on_a_towel_dryer_only():
 @case()
 def cover_named_position_buttons_follow_the_declared_kind():
     """A cover gets one companion button per named position its declared kind has, with the entity
-    ids and names Home Assistant already knows; a kind without the bit, a raw type with no row
+    ids and names Home Assistant already knows; a kind without the capability, a raw type with no row
     (including the ventilation point, which is not a cover) and a cover with no declared type get none."""
     from esphome.const import CONF_ID, CONF_NAME
     from esphome.core import ID
@@ -808,7 +808,7 @@ def cover_gets_its_kinds_default_device_class():
 
     for kind, device_class in v.DEFAULT_COVER_DEVICE_CLASS.items():
         assert kind in types, kind
-        assert v.DEVICE_FEATURES.get(kind, 0) & v.FEATURE_LEVELS, f"{kind} is not a cover kind"
+        assert "LEVELS" in v.DEVICE_FEATURES.get(kind, frozenset()), f"{kind} is not a cover kind"
         assert device_class in DEVICE_CLASSES, device_class
 
     # The docs table is the same mapping, one row per class with the kinds that share it.
@@ -925,24 +925,45 @@ def device_features_fall_back_like_the_cpp_lookup():
     t = v.DEVICE_TYPE_OPTIONS
     roller = v.device_features(t["roller_shutter"])
     assert v.device_features(t["roller_shutter"], 9) == roller, "an unnamed subtype takes the type row"
-    assert v.device_features(t["roller_shutter"], 58) == v.FEATURE_MAIN_PARAMETER_ONLY | v.FEATURE_FAVORITE
-    assert v.device_features(t["interior_venetian_blind"], 58) & v.FEATURE_TILT == 0
+    assert v.device_features(t["roller_shutter"], 58) == {"MAIN_PARAMETER_ONLY", "FAVORITE"}
+    assert "TILT" not in v.device_features(t["interior_venetian_blind"], 58)
     # VELUX KLF 200 API specification, Appendix 2: types 1 and 13 take the short position frame, type 10 has no slat.
-    assert v.device_features(t["interior_venetian_blind"]) & v.FEATURE_TILT
+    assert "TILT" in v.device_features(t["interior_venetian_blind"])
     for short_frame in ("interior_venetian_blind", "dual_roller_shutter"):
-        assert v.device_features(t[short_frame]) & v.FEATURE_EXTENDED_POSITION_FRAME == 0, short_frame
-    assert v.device_features(t["vertical_interior_blind"]) & v.FEATURE_TILT == 0
-    assert v.device_features(t["window_opener"], 58) & v.FEATURE_VENT
-    capability = ~v.KIND_EXPERIMENTAL  # the experimental marker is not a capability
+        assert "EXTENDED_POSITION_FRAME" not in v.device_features(t[short_frame]), short_frame
+    assert "TILT" not in v.device_features(t["vertical_interior_blind"])
+    assert "VENT" in v.device_features(t["window_opener"], 58)
     # Lights, switches and locks have no speed to choose, so they never take the speed block.
     for binary_kind in ("light", "on_off_switch", "lock"):
-        assert v.device_features(t[binary_kind]) & capability == 0, binary_kind
-        assert v.device_features(t[binary_kind], 1) & v.FEATURE_EXTENDED_POSITION_FRAME == 0, binary_kind
-    assert v.device_features(t["light"], 1) & capability == v.FEATURE_LEVELS
-    assert v.device_features(t["electrical_heater"], 1) == v.FEATURE_WINDOW_COMPANIONS
-    assert v.device_features(t["electrical_heater"], 0) == 0
-    assert v.device_features(0x14) == 0, "a raw type with no name has no capabilities"
-    assert v.device_features(0x14, 58) == v.FEATURE_MAIN_PARAMETER_ONLY
+        assert v.device_features(t[binary_kind]) == frozenset(), binary_kind
+        assert "EXTENDED_POSITION_FRAME" not in v.device_features(t[binary_kind], 1), binary_kind
+    assert v.device_features(t["light"], 1) == {"LEVELS"}
+    assert v.device_features(t["electrical_heater"], 1) == {"WINDOW_COMPANIONS"}
+    assert v.device_features(t["electrical_heater"], 0) == frozenset()
+    assert v.device_features(0x14) == frozenset(), "a raw type with no name has no capabilities"
+    assert v.device_features(0x14, 58) == {"MAIN_PARAMETER_ONLY"}
+
+
+@case()
+def the_mirror_names_only_real_capabilities_and_a_misspelt_name_is_refused():
+    """Every capability the mirror lists is in FEATURES, the helpers refuse a name that is not, and the
+    experimental status is never a capability."""
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as p
+
+    assert len(set(v.FEATURES)) == len(v.FEATURES)
+    assert "EXPERIMENTAL" not in v.FEATURES
+    for key, names in v.DEVICE_FEATURES.items():
+        assert names <= set(v.FEATURES), f"{key} names {sorted(names - set(v.FEATURES))}"
+    assert set(v.NAMED_POSITION_FEATURES.values()) <= set(v.FEATURES)
+    for bad in (lambda: p.has_feature("LEVLES"), lambda: v.check_feature_name("experimental")):
+        try:
+            bad()
+            raise AssertionError("a misspelt capability name was accepted")
+        except ValueError:
+            pass
+    assert p.declared_has_feature({"io_device_type": v.DEVICE_TYPE_OPTIONS["roller_shutter"]}, "LEVELS")
+    assert not p.declared_has_feature({}, "LEVELS"), "no declared kind has no capability"
 
 
 @case()
@@ -960,10 +981,10 @@ def a_model_row_is_offered_only_by_its_kind_and_replaces_its_word():
     assert v.device_models(t["electrical_heater"], 0) == ["pilot_wire_interface"]
     assert v.device_models(t["roller_shutter"]) == []
     assert v.device_models(0x14, 1) == [], "a raw type with no name has no models"
-    assert v.device_features(t["electrical_heater"], 1, towel) & v.FEATURE_WINDOW_COMPANIONS == 0
-    assert v.device_features(t["electrical_heater"], 1) == v.FEATURE_WINDOW_COMPANIONS, "no model: the radiator"
+    assert "WINDOW_COMPANIONS" not in v.device_features(t["electrical_heater"], 1, towel)
+    assert v.device_features(t["electrical_heater"], 1) == {"WINDOW_COMPANIONS"}, "no model: the radiator"
     assert v.device_features(t["roller_shutter"], 0, towel) == v.device_features(t["roller_shutter"])
-    assert not v.kind_is_experimental(t["electrical_heater"], 1, towel)
+    assert not v.kind_is_experimental(t["electrical_heater"], 1)
     assert p.config_model({"io_model": "towel_dryer"}) == towel
     assert p.config_model({}) == 0
     assert v.validate_device_model_name(" Towel_Dryer ") == "towel_dryer"
@@ -976,16 +997,17 @@ def a_model_row_is_offered_only_by_its_kind_and_replaces_its_word():
 
 @case()
 def experimental_kinds_are_marked_in_the_mirror_and_warned_about_once_at_config_time():
-    """An experimental kind (no capture or report confirms it on a real device) carries
-    KIND_EXPERIMENTAL; declaring one logs one warning that names the kind and the reporting page,
-    and a confirmed kind, a declared kind of a confirmed type and a config with no kind log nothing."""
+    """An experimental kind (no capture or report confirms it on a real device) is in
+    EXPERIMENTAL_KINDS, apart from the capabilities; declaring one logs one warning that names the kind
+    and the reporting page, and a confirmed kind, a declared kind of a confirmed type and a config with
+    no kind log nothing."""
     import logging
 
     from esphome.components.home_io_control import hub_validators as v
     from esphome.components.home_io_control import platform_common as p
 
     t = v.DEVICE_TYPE_OPTIONS
-    assert v.KIND_EXPERIMENTAL == 0x8000
+    assert isinstance(v.EXPERIMENTAL_KINDS, frozenset)
     assert v.kind_is_experimental(t["gate_opener"], 58)
     assert v.kind_is_experimental(t["swinging_shutter"], 58)
     assert v.kind_is_experimental(t["light"], 1)
@@ -1226,7 +1248,7 @@ def feature_gated_keys_are_rejected_for_a_kind_without_the_feature():
     from esphome.components.home_io_control import platform_common as p
 
     t = v.DEVICE_TYPE_OPTIONS
-    silent_gate = dict(required=v.FEATURE_EXTENDED_POSITION_FRAME, reason="remove silent:")
+    silent_gate = dict(required="EXTENDED_POSITION_FRAME", reason="remove silent:")
 
     p.require_feature({}, "silent", True, **silent_gate)  # no declared kind: nothing says what it is
     p.require_feature({"io_device_type": t["garage_opener"]}, "silent", False, **silent_gate)
@@ -1242,7 +1264,7 @@ def feature_gated_keys_are_rejected_for_a_kind_without_the_feature():
     except cv.Invalid as err:
         assert "io_subtype 58" in str(err), str(err)
 
-    on_off_only = dict(forbidden=v.FEATURE_MAIN_PARAMETER_ONLY, reason="remove dimmable:")
+    on_off_only = dict(forbidden="MAIN_PARAMETER_ONLY", reason="remove dimmable:")
     p.require_feature({"io_device_type": t["light"]}, "dimmable", True, **on_off_only)
     try:
         p.require_feature({"io_device_type": t["light"], "io_subtype": 58}, "dimmable", True, **on_off_only)

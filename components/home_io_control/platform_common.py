@@ -51,6 +51,7 @@ from .hub_names import (
 )
 from .hub_validators import (
     DEVICE_MODEL_OPTIONS,
+    check_feature_name,
     device_features,
     device_model_expression,
     device_models,
@@ -206,15 +207,16 @@ def companion_id_base(config, parent_id_key):
     return sanitize(config[CONF_NAME]).lower()
 
 
-def has_feature(feature_bit):
-    """Condition for a companion spec: the declared kind's capability word has `feature_bit`.
+def has_feature(feature):
+    """Condition for a companion spec: the declared kind has the capability named `feature`.
 
-    A config that declares no io_device_type has no capability word, so the companion is not created
-    (see declared_features()).
+    A config that declares no io_device_type has no capabilities, so the companion is not created
+    (see declared_features()). A name that is no capability raises ValueError when the spec is built.
     """
+    check_feature_name(feature)
 
     def condition(config):
-        return bool(declared_features(config) & feature_bit)
+        return declared_has_feature(config, feature)
 
     return condition
 
@@ -347,7 +349,7 @@ def warn_if_experimental_kind(config):
     if CONF_DEVICE_TYPE in config:
         device_type = config[CONF_DEVICE_TYPE]
         subtype = config.get(CONF_SUBTYPE, 0)
-        if kind_is_experimental(device_type, subtype, config_model(config)):
+        if kind_is_experimental(device_type, subtype):
             _LOGGER.warning(
                 "home_io_control: %s is not yet confirmed on a real device, so it may not behave as "
                 "described. If you try it, please report the result: %s",
@@ -394,14 +396,20 @@ INSTANT_LIGHT_TRANSITION = {
 
 
 def declared_features(config):
-    """The capability word of the kind an entry declares (io_device_type, io_subtype, io_model).
+    """The capabilities (a frozenset of names) of the kind an entry declares (io_device_type,
+    io_subtype, io_model).
 
-    0 when the entry declares no io_device_type: nothing at validation time says what the device is,
-    so it has no feature a validator may rely on.
+    Empty when the entry declares no io_device_type: nothing at validation time says what the device
+    is, so it has no feature a validator may rely on.
     """
     if CONF_DEVICE_TYPE not in config:
-        return 0
+        return frozenset()
     return device_features(config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0), config_model(config))
+
+
+def declared_has_feature(config, feature):
+    """True when the kind an entry declares has the capability named `feature` (see declared_features())."""
+    return check_feature_name(feature) in declared_features(config)
 
 
 # A heater's or a water heater's state moves over minutes and its poll costs one radio exchange per register,
@@ -426,19 +434,21 @@ def validate_register_poll_interval(config, platform):
     return config
 
 
-def require_feature(config, key, active, *, required=0, forbidden=0, reason):
+def require_feature(config, key, active, *, required=None, forbidden=None, reason):
     """Reject a YAML key the declared device kind cannot use.
 
     One gate for every feature-dependent key. It only fires when the config declares
     ``io_device_type`` (without a kind nothing says what the device can do), ``active`` is true
     (the caller decides, because keys differ: ``silent:`` is active by presence, ``dimmable:``
-    only when true), and the kind's capability word lacks a ``required`` bit or has a
-    ``forbidden`` one. ``reason`` says what to do about it.
+    only when true), and the kind lacks the ``required`` capability or has the ``forbidden`` one
+    (each a capability name, or None for no condition). ``reason`` says what to do about it.
     """
     if not active or CONF_DEVICE_TYPE not in config:
         return
     features = declared_features(config)
-    if (features & required) == required and (features & forbidden) == 0:
+    if (required is None or check_feature_name(required) in features) and (
+        forbidden is None or check_feature_name(forbidden) not in features
+    ):
         return
     label = _kind_label(config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0), config.get(CONF_MODEL))
     raise cv.Invalid(f"{key} is not available on {label}: {reason}")
