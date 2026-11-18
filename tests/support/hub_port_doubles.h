@@ -242,8 +242,8 @@ class HeatingPortDouble : public HubHeatingPort {
     this->temperature_ranges.emplace_back(min_c, max_c);
   }
 
-  void enable_central_heating_mode_read(const std::string &device_id) override {
-    this->central_heating_mode_reads.push_back(device_id);
+  void enable_heating_register_read(const std::string &device_id, HeatingFunction fn) override {
+    this->register_reads.emplace_back(device_id, fn);
   }
 
   bool set_water_heater_target(const std::string &, float celsius) override {
@@ -263,13 +263,13 @@ class HeatingPortDouble : public HubHeatingPort {
     return this->write_result;
   }
 
-  std::vector<Write> writes;                                ///< Register writes, in order.
-  std::vector<HeatingFunction> reads;                       ///< Registers read, in order.
-  std::vector<uint8_t> read_tries;                          ///< The attempt budget of each read.
-  std::vector<HeatingWritePlan> plans;                      ///< Plans handed to execute_heating_plan().
-  std::vector<std::string> programme_state_reads;           ///< Devices passed to read_programme_state().
-  std::vector<std::pair<float, float>> temperature_ranges;  ///< (min, max) pairs set.
-  std::vector<std::string> central_heating_mode_reads;      ///< Devices asked to read their central-heating mode.
+  std::vector<Write> writes;                                            ///< Register writes, in order.
+  std::vector<HeatingFunction> reads;                                   ///< Registers read, in order.
+  std::vector<uint8_t> read_tries;                                      ///< The attempt budget of each read.
+  std::vector<HeatingWritePlan> plans;                                  ///< Plans handed to execute_heating_plan().
+  std::vector<std::string> programme_state_reads;                       ///< Devices passed to read_programme_state().
+  std::vector<std::pair<float, float>> temperature_ranges;              ///< (min, max) pairs set.
+  std::vector<std::pair<std::string, HeatingFunction>> register_reads;  ///< (device, register) asked to be read.
   std::vector<float> water_heater_targets;
   std::vector<DhwMode> water_heater_modes;
   std::vector<bool> water_heater_boosts;

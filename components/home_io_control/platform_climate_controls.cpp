@@ -1,6 +1,7 @@
 /// @file platform_climate_controls.cpp
-/// @brief Generated per-heater auxiliary entities: the window binary sensor, the open-window
-/// detection switch, the night light, the heating-level text sensor and the central-heating-mode sensor.
+/// @brief Generated per-heater auxiliary entities: the window binary sensor, the heater setting switches
+/// (open-window detection, occupancy detection), the night light, the heating-level text sensor and the
+/// register binary sensors (central-heating mode, occupancy).
 /// @ingroup hioc_platforms
 
 #include "platform_climate_controls.h"
@@ -14,10 +15,10 @@ namespace esphome {
 namespace home_io_control {
 
 static const char *const TAG_WINDOW = "home_io_control.window";
-static const char *const TAG_DETECTION = "home_io_control.window_detection";
+static const char *const TAG_SETTING = "home_io_control.heater_setting";
 static const char *const TAG_NIGHT_LIGHT = "home_io_control.night_light";
 static const char *const TAG_HEATING_LEVEL = "home_io_control.heating_level";
-static const char *const TAG_CENTRAL_HEATING = "home_io_control.central_heating_mode";
+static const char *const TAG_REGISTER = "home_io_control.heater_register";
 
 /// Percentage for a light switched on at a brightness that rounds to 0 %: the lowest level that is still
 /// on (register value night_light_register_from_percent(1), 30).
@@ -55,47 +56,49 @@ void IOHomeWindowBinarySensor::dump_config() {
   ESP_LOGCONFIG(TAG_WINDOW, "  Device ID: %s", this->device_id_.c_str());
 }
 
-void IOHomeCentralHeatingModeBinarySensor::setup() {
+void IOHomeHeaterRegisterBinarySensor::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {
-    // "Electric mode" must mean the dryer said so: nothing read, or a reading dropped, means no state.
-    if (dev.heating.central_heating_mode < 0) {
+    // "Off" must mean the heater said so: nothing read, or a reading dropped, means no state.
+    const int16_t reading = this->reading_(dev);
+    if (reading < 0) {
       this->invalidate_state();
       return;
     }
-    this->publish_state(dev.heating.central_heating_mode != 0);
+    this->publish_state(reading != 0);
   });
 }
 
-void IOHomeCentralHeatingModeBinarySensor::dump_config() {
-  ESP_LOGCONFIG(TAG_CENTRAL_HEATING, "IO-Homecontrol Central Heating Mode:");
-  ESP_LOGCONFIG(TAG_CENTRAL_HEATING, "  Device ID: %s", this->device_id_.c_str());
+void IOHomeHeaterRegisterBinarySensor::dump_config() {
+  ESP_LOGCONFIG(TAG_REGISTER, "IO-Homecontrol Heater Register Sensor:");
+  ESP_LOGCONFIG(TAG_REGISTER, "  Device ID: %s", this->device_id_.c_str());
+  ESP_LOGCONFIG(TAG_REGISTER, "  Register: %s", heating_function_name(this->function_));
 }
 
-void IOHomeOpenWindowDetectionSwitch::setup() {
+void IOHomeHeaterSettingSwitch::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {
     // Shown only from a reply; a switch with no reading yet keeps its unknown state.
-    if (dev.heating.open_window_detection >= 0)
-      this->publish_state(dev.heating.open_window_detection != 0);
+    const int16_t reading = this->reading_(dev);
+    if (reading >= 0)
+      this->publish_state(reading != 0);
   });
 }
 
-void IOHomeOpenWindowDetectionSwitch::write_state(bool state) {
+void IOHomeHeaterSettingSwitch::write_state(bool state) {
   if (this->heating_port_ == nullptr)
     return;
-  if (!this->heating_port_->send_heating_command(this->device_id_, HeatingFunction::SET_OPEN_WINDOW_DETECTION,
-                                                 state ? 1.0F : 0.0F)) {
-    ESP_LOGW(TAG_DETECTION, "Device %s: open-window detection %s was not acknowledged", this->device_id_.c_str(),
-             state ? "on" : "off");
+  if (!this->heating_port_->send_heating_command(this->device_id_, this->function_, state ? 1.0F : 0.0F)) {
+    ESP_LOGW(TAG_SETTING, "Device %s: %s %s was not acknowledged", this->device_id_.c_str(),
+             heating_function_name(this->function_), state ? "on" : "off");
     return;
   }
   // The read-back updates IoDevice::heating, and the companion binding above publishes it.
-  this->heating_port_->read_heating_register(this->device_id_, HeatingFunction::SET_OPEN_WINDOW_DETECTION, nullptr,
-                                             EXCHANGE_RETRY_COUNT);
+  this->heating_port_->read_heating_register(this->device_id_, this->function_, nullptr, EXCHANGE_RETRY_COUNT);
 }
 
-void IOHomeOpenWindowDetectionSwitch::dump_config() {
-  ESP_LOGCONFIG(TAG_DETECTION, "IO-Homecontrol Open Window Detection:");
-  ESP_LOGCONFIG(TAG_DETECTION, "  Device ID: %s", this->device_id_.c_str());
+void IOHomeHeaterSettingSwitch::dump_config() {
+  ESP_LOGCONFIG(TAG_SETTING, "IO-Homecontrol Heater Setting:");
+  ESP_LOGCONFIG(TAG_SETTING, "  Device ID: %s", this->device_id_.c_str());
+  ESP_LOGCONFIG(TAG_SETTING, "  Register: %s", heating_function_name(this->function_));
 }
 
 void IOHomeHeaterNightLight::setup() {

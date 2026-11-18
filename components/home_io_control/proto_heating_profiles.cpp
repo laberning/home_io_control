@@ -499,6 +499,23 @@ const HeatingProfile *find_exact_profile(DeviceType type, uint8_t subtype, Devic
 
 }  // namespace
 
+namespace {
+
+/// The registers read only on request: the central-heating mode of a mixed towel dryer, and a heater's
+/// occupancy detection setting and detected presence.
+constexpr HeatingOptInRead HEATING_OPT_IN_READS[] = {
+    {HeatingFunction::CENTRAL_HEATING_MODE, DeviceFeature::CENTRAL_HEATING_MODE},
+    {HeatingFunction::OCCUPANCY_DETECTION, DeviceFeature::OCCUPANCY},
+    {HeatingFunction::SET_PRESENCE, DeviceFeature::OCCUPANCY},
+};
+
+}  // namespace
+
+const HeatingOptInRead *find_heating_opt_in_read(HeatingFunction fn) {
+  const auto *row = std::ranges::find(HEATING_OPT_IN_READS, fn, &HeatingOptInRead::fn);
+  return row != std::end(HEATING_OPT_IN_READS) ? row : nullptr;
+}
+
 const HeatingProfile *find_heating_profile(DeviceType type, uint8_t subtype, DeviceModel model) {
   if (model != DeviceModel::NONE) {
     if (const HeatingProfile *model_profile = find_exact_profile(type, subtype, model))

@@ -272,6 +272,20 @@ std::span<const HeatingProfile> heating_profiles();
 /// @return The profile, or nullptr when no climate entity drives this device.
 const HeatingProfile *find_heating_profile(const IoDevice &dev);
 
+/// @brief A register a poll reads only where the YAML declares an entity for it, and the capability a device
+/// needs for that.
+struct HeatingOptInRead {
+  HeatingFunction fn;     ///< The register.
+  DeviceFeature feature;  ///< The capability a device kind needs for its entity to be accepted and the read to run.
+};
+
+/// @brief Look up the opt-in read of a register.
+/// @details The one list of the registers the hub reads on request (HeatingOptInReads): a register absent
+///          here is never asked for, whatever the YAML says.
+/// @param fn Register.
+/// @return The row, or nullptr when the register is not an opt-in read.
+const HeatingOptInRead *find_heating_opt_in_read(HeatingFunction fn);
+
 /// @brief Does a climate entity drive this device over the private register protocol?
 /// @details The gate for every CMD_WRITE_PRIVATE frame the hub sends: a heater that takes the standard
 ///          EXECUTE must never be sent a register write. The control path is a fact of the

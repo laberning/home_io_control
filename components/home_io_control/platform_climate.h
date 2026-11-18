@@ -90,9 +90,11 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
     this->has_range_ = true;
   }
 
-  /// @brief Declare the `central_heating_mode:` binary sensor: the heater's polls then read its central-heating
-  /// mode (a kind with device_feature::CENTRAL_HEATING_MODE only); applied to the device in setup().
-  void set_reads_central_heating_mode() { this->reads_central_heating_mode_ = true; }
+  /// @brief Declare an opt-in entity (`central_heating_mode:`, `occupancy_detection:`, `occupancy:`): the
+  /// heater's polls then read its register (a kind with the register's capability only); applied to the device
+  /// in setup().
+  /// @param fn The register the entity shows.
+  void add_register_read(HeatingFunction fn) { this->register_reads_.push_back(fn); }
 
  protected:
   /// @brief The device's heating profile: from the declared type, else from the type the hub learned.
@@ -145,7 +147,7 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   bool apply_target_temperature_(const HeatingProfile &profile, const climate::ClimateCall &call);
 
   HeatingCardState card_;                               ///< What the card shows; the entity's ESPHome fields follow it.
-  bool reads_central_heating_mode_{false};              ///< YAML declared the `central_heating_mode:` sensor.
+  std::vector<HeatingFunction> register_reads_;         ///< Registers of the opt-in entities the YAML declared.
   bool has_range_{false};                               ///< YAML overrode the temperature encoding range.
   float range_min_c_{HEATING_TEMPERATURE_RANGE_MIN_C};  ///< YAML `min_temperature:`.
   float range_max_c_{HEATING_TEMPERATURE_RANGE_MAX_C};  ///< YAML `max_temperature:`.

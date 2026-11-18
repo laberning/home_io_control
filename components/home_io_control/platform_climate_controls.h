@@ -1,15 +1,17 @@
 #pragma once
 
 /// @file platform_climate_controls.h
-/// @brief Generated per-heater auxiliary entities: the window binary sensor, the open-window
-/// detection switch, the night light, the heating-level text sensor and the central-heating-mode sensor.
+/// @brief Generated per-heater auxiliary entities: the window binary sensor, the heater setting switches
+/// (open-window detection, occupancy detection), the night light, the heating-level text sensor and the
+/// register binary sensors (central-heating mode, occupancy).
 /// @ingroup hioc_platforms
 ///
 /// All are device-bound companions (DeviceBoundCompanion) that climate.py generates alongside a
 /// `climate:` entity: the window pair when the device kind has WINDOW_COMPANIONS, the night light when
 /// the YAML asks for it on a kind with NIGHT_LIGHT; the heating-level text sensor is opt-in on an
-/// electrical heater, and the central-heating-mode binary sensor is opt-in on a kind with
-/// CENTRAL_HEATING_MODE (a towel dryer). They show readings the hub's poll already stores in
+/// electrical heater, the central-heating-mode binary sensor is opt-in on a kind with CENTRAL_HEATING_MODE (a
+/// towel dryer), and the occupancy-detection switch and occupancy binary sensor are opt-in on a kind with
+/// OCCUPANCY. They show readings the hub's poll already stores in
 /// IoDevice::heating and add no radio traffic of their own, except their writes and the read-backs that
 /// confirm them.
 ///
@@ -74,20 +76,45 @@ class IOHomeWindowBinarySensor : public binary_sensor::BinarySensor, public Comp
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 };
 
-/// @brief Binary sensor (`central_heating_mode:` on a climate entry) that is ON while a mixed towel dryer
-/// runs on the house's central heating.
+/// @brief A device-bound companion that shows one heater register (the base of the register entities below).
 /// @ingroup hioc_platforms
 ///
-/// Reads IoDevice::heating.central_heating_mode (register 0x0153, read at every poll once this sensor is
-/// declared). While it is on the dryer's electric element stays off, so the card shows idle and Boost and
-/// Drying do nothing. No state until the heater has answered with a value, and none for a heater that
-/// answers without one (an electric unit).
+/// The generated code names the register with set_function(); the entity reads its value from
+/// IoDevice::heating, which the hub's poll fills, and shows nothing until the heater has answered with one.
+class HeaterRegisterCompanion : public DeviceBoundCompanion {
+ public:
+  /// @brief Name the register this entity shows (generated code).
+  /// @param fn A register the readings hold (HeatingReadings::value_of()).
+  void set_function(HeatingFunction fn) { this->function_ = fn; }
+
+ protected:
+  /// @brief The value the heater last reported for this entity's register.
+  /// @param dev The device record.
+  /// @return The register's integer value, or -1 while it has not been read (or was dropped).
+  [[nodiscard]] int16_t reading_(const IoDevice &dev) const { return dev.heating.value_of(this->function_); }
+
+  HeatingFunction function_{HeatingFunction::COUNT};  ///< The register; COUNT until the generated code names it.
+};
+
+/// @brief Binary sensor that shows one flag register of a heater, with no state until the heater has reported it.
+/// @ingroup hioc_platforms
 ///
-/// \todo Experimental: read on one Atlantic Adelis mixed unit over four panel toggles (issue #243); confirm
-///       on a second unit.
-class IOHomeCentralHeatingModeBinarySensor : public binary_sensor::BinarySensor,
-                                             public Component,
-                                             public DeviceBoundCompanion {
+/// Used for the opt-in `central_heating_mode:` (register 0x0153) and `occupancy:` (register 0x0110) keys of a
+/// climate entry. The register is read at every poll once the entity is declared (the climate entity asks the
+/// hub, see HeatingOptInReads). ON is 1 and OFF is 0, so "off" always means the heater said so: nothing read, a
+/// reading dropped, and a heater that answers without a value (its register is absent) all leave the sensor
+/// without a state.
+///
+/// While a mixed towel dryer runs on central heating its electric element stays off, so the card shows idle and
+/// Boost and Drying do nothing; `occupancy:` is on while the heater sees someone in the room.
+///
+/// \todo Experimental: the central-heating mode is read on one Atlantic Adelis mixed unit over four panel
+///       toggles (issue #243); confirm on a second unit. The occupancy is read on a Sauter Hekla with the
+///       detection on (issue #222); what it shows with the detection off is not confirmed, and no other heater
+///       has answered it yet.
+class IOHomeHeaterRegisterBinarySensor : public binary_sensor::BinarySensor,
+                                         public Component,
+                                         public HeaterRegisterCompanion {
  public:
   /// @brief Subscribe to the device's updates and publish what is already known.
   void setup() override;
@@ -100,13 +127,16 @@ class IOHomeCentralHeatingModeBinarySensor : public binary_sensor::BinarySensor,
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 };
 
-/// @brief Switch that turns the heater's open-window detection on and off.
+/// @brief Switch for one on/off setting register of a heater.
 /// @ingroup hioc_platforms
 ///
-/// A write sends register 0x0106 and reads it back; the switch shows what the heater answered, so it
-/// has no state until the first read (the boot poll) and never shows a command the heater did not
-/// confirm. Disabled by default and in the config entity category.
-class IOHomeOpenWindowDetectionSwitch : public switch_::Switch, public Component, public DeviceBoundCompanion {
+/// Used for the open-window detection (register 0x0106, created automatically on a heater with window
+/// companions) and the opt-in `occupancy_detection:` key (register 0x0101). A write sends the register and reads
+/// it back; the switch shows what the heater answered, so it has no state until the first read (the boot poll)
+/// and never shows a command the heater did not confirm. A change made from the vendor app or on the heater
+/// shows at the next poll. The generated switches restore nothing and the open-window one is disabled by default,
+/// in the config entity category.
+class IOHomeHeaterSettingSwitch : public switch_::Switch, public Component, public HeaterRegisterCompanion {
  public:
   /// @brief Subscribe to the device's updates and publish what is already known.
   void setup() override;
@@ -119,8 +149,8 @@ class IOHomeOpenWindowDetectionSwitch : public switch_::Switch, public Component
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 
  protected:
-  /// @brief Write the detection setting and read it back.
-  /// @param state True to switch detection on.
+  /// @brief Write the setting and read it back.
+  /// @param state True to switch the setting on.
   void write_state(bool state) override;
 };
 

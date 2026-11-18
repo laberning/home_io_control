@@ -90,10 +90,15 @@ TEST(ProtoHeating, ReadPayloadsAddressTheSameRegisterAsTheWrite) {
   EXPECT_EQ(encode_read(HeatingFunction::WINDOW_OPEN), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x0E}));
 }
 
-TEST(ProtoHeating, WriteOnlyRegisterHasNoRead) {
-  EXPECT_TRUE(encode_read(HeatingFunction::SET_PRESENCE).empty());
-  EXPECT_FALSE(heating_function_is_readable(HeatingFunction::SET_PRESENCE));
+TEST(ProtoHeating, PresenceRegisterIsReadAndWritten) {
+  EXPECT_EQ(encode_read(HeatingFunction::SET_PRESENCE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x10}));
+  EXPECT_TRUE(heating_function_is_readable(HeatingFunction::SET_PRESENCE));
   EXPECT_TRUE(heating_function_is_writable(HeatingFunction::SET_PRESENCE));
+}
+
+TEST(ProtoHeating, AFunctionPastTheTableHasNoRow) {
+  EXPECT_FALSE(heating_function_is_readable(HeatingFunction::COUNT));
+  EXPECT_FALSE(heating_function_is_writable(HeatingFunction::COUNT));
 }
 
 TEST(ProtoHeating, ReadOnlyRegistersAreNeverWritten) {
@@ -319,7 +324,6 @@ TEST(ProtoHeating, ReadingsStartUnreadAndStoreOnlyTheirRegisters) {
   EXPECT_EQ(r.regulator, 1);
   EXPECT_EQ(r.window_open, 1);
 
-  EXPECT_FALSE(r.store(HeatingFunction::SET_PRESENCE, 1.0f));
   EXPECT_FALSE(r.store(HeatingFunction::POWER_ON, 1.0f));
 }
 
@@ -485,15 +489,15 @@ TEST(ProtoHeatingTowelDryer, ReadingsStoreAndReportTheTowelRegisters) {
 TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnField) {
   // Walks every function, so a register added to the enum without a row in the readings table (or the
   // descriptor table) fails here.
-  constexpr auto LAST = static_cast<unsigned>(HeatingFunction::CENTRAL_HEATING_MODE);  // the last enumerator
+  constexpr auto COUNT = static_cast<unsigned>(HeatingFunction::COUNT);
   unsigned held = 0;
-  for (unsigned i = 0; i <= LAST; i++) {
+  for (unsigned i = 0; i < COUNT; i++) {
     const auto fn = static_cast<HeatingFunction>(i);
     ASSERT_STRNE(heating_function_name(fn), "unknown") << i << " has no descriptor row";
     HeatingReadings readings;
     EXPECT_FALSE(readings.has(fn)) << heating_function_name(fn) << " starts unread";
     if (!readings.store(fn, 1.0F)) {
-      // POWER_ON, SET_PRESENCE and MIDNIGHT_SYNC are logged or written, never kept.
+      // POWER_ON and MIDNIGHT_SYNC are logged, never kept.
       EXPECT_FALSE(readings.has(fn)) << heating_function_name(fn);
       EXPECT_FALSE(readings.clear(fn)) << heating_function_name(fn);
       EXPECT_EQ(readings.value_of(fn), -1) << heating_function_name(fn);
@@ -511,10 +515,10 @@ TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnF
     EXPECT_TRUE(readings.clear(fn)) << heating_function_name(fn);
     EXPECT_FALSE(readings.has(fn)) << heating_function_name(fn) << " is unread again after clear";
     // Nothing else changed: a cleared register leaves a fresh record.
-    for (unsigned j = 0; j <= LAST; j++)
+    for (unsigned j = 0; j < COUNT; j++)
       EXPECT_FALSE(readings.has(static_cast<HeatingFunction>(j))) << heating_function_name(fn) << " touched " << j;
   }
-  EXPECT_EQ(held, 17u);
+  EXPECT_EQ(held, 19u);
 }
 
 TEST(ProtoHeatingTowelDryer, EachFunctionHasItsRegisterLowByte) {
@@ -686,4 +690,48 @@ TEST(ProtoHeatingCentralHeatingMode, ReadingsStoreTheMode) {
   EXPECT_TRUE(readings.store(HeatingFunction::CENTRAL_HEATING_MODE, 1.0F));
   EXPECT_EQ(readings.central_heating_mode, 1);
   EXPECT_TRUE(readings.has(HeatingFunction::CENTRAL_HEATING_MODE));
+}
+
+// --- Occupancy detection and detected presence (Sauter Hekla, issue #222) ---
+
+TEST(ProtoHeatingOccupancy, DetectionIsRegister0x0101ReadAndWritten) {
+  EXPECT_EQ(encode_read(HeatingFunction::OCCUPANCY_DETECTION), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x01}));
+  EXPECT_EQ(encode(HeatingFunction::OCCUPANCY_DETECTION, 1.0f), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x01, 0x01}));
+  EXPECT_EQ(encode(HeatingFunction::OCCUPANCY_DETECTION, 0.0f), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x01, 0x00}));
+  EXPECT_EQ(write_len(HeatingFunction::OCCUPANCY_DETECTION, 2.0f), 0u) << "only 0 and 1 are values";
+  EXPECT_STREQ(heating_function_name(HeatingFunction::OCCUPANCY_DETECTION), "occupancy_detection");
+}
+
+TEST(ProtoHeatingOccupancy, DecodesTheSweepValuesOfTheDetectionAndThePresence) {
+  float value = -1.0F;
+  // The Hekla sweep: 0x0101 reads 00 with detection off and 01 with it on; 0x0110 reads 00 with nobody in
+  // the room and 01 while someone walks around the heater.
+  ASSERT_TRUE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x01, 0x00}), HeatingFunction::OCCUPANCY_DETECTION, value));
+  EXPECT_FLOAT_EQ(value, 0.0F);
+  ASSERT_TRUE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x01, 0x01}), HeatingFunction::OCCUPANCY_DETECTION, value));
+  EXPECT_FLOAT_EQ(value, 1.0F);
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x10, 0x00}), HeatingFunction::SET_PRESENCE, value));
+  EXPECT_FLOAT_EQ(value, 0.0F);
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x10, 0x01}), HeatingFunction::SET_PRESENCE, value));
+  EXPECT_FLOAT_EQ(value, 1.0F);
+}
+
+TEST(ProtoHeatingOccupancy, EmptyAndUnknownRepliesAreNoValue) {
+  float value = -1.0F;
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x10}), HeatingFunction::SET_PRESENCE, value));
+  EXPECT_FALSE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x01, 0x02}), HeatingFunction::OCCUPANCY_DETECTION, value));
+  EXPECT_FLOAT_EQ(value, -1.0F);
+}
+
+TEST(ProtoHeatingOccupancy, ReadingsKeepTheDetectionAndThePresenceApart) {
+  HeatingReadings readings;
+  EXPECT_TRUE(readings.store(HeatingFunction::OCCUPANCY_DETECTION, 1.0F));
+  EXPECT_EQ(readings.occupancy_detection, 1);
+  EXPECT_FALSE(readings.has(HeatingFunction::SET_PRESENCE));
+  EXPECT_TRUE(readings.store(HeatingFunction::SET_PRESENCE, 0.0F));
+  EXPECT_EQ(readings.presence, 0);
+  EXPECT_EQ(readings.value_of(HeatingFunction::SET_PRESENCE), 0);
 }

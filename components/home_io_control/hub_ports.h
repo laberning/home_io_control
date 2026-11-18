@@ -241,11 +241,12 @@ class HubHeatingPort {
   /// @param max_c Upper end in degrees Celsius.
   virtual void set_device_temperature_range(const std::string &device_id, float min_c, float max_c) = 0;
 
-  /// @brief Have every poll of a heater read its central-heating mode (YAML `central_heating_mode:`).
-  /// @details Takes effect on a kind with device_feature::CENTRAL_HEATING_MODE only; the read stops for good when
-  ///          the heater answers it without a value. Sends nothing itself.
+  /// @brief Have every poll of a heater read one more register (an entity the YAML declared for it).
+  /// @details Takes effect on a register of find_heating_opt_in_read() whose capability the device has; the
+  ///          read of a register stops for good when the heater answers it without a value. Sends nothing itself.
   /// @param device_id Hexadecimal node ID string.
-  virtual void enable_central_heating_mode_read(const std::string &device_id) = 0;
+  /// @param fn Register to read at every poll.
+  virtual void enable_heating_register_read(const std::string &device_id, HeatingFunction fn) = 0;
 
   /// @brief Set a water heater's target temperature.
   /// @param device_id Hexadecimal node ID string.

@@ -2,18 +2,23 @@
 /// @brief Verifies that the Python mirror of the device capabilities (hub_validators.py `FEATURES`,
 ///        `DEVICE_FEATURES`, `EXPERIMENTAL_KINDS`, `NAMED_POSITION_FEATURES`, `DEVICE_MODEL_OPTIONS`)
 ///        agrees with the C++ node-type table by capability name and row for row (model rows
-///        included), preventing C++/Python drift.
+///        included), and that climate.py's `OPT_IN_READ_FEATURES` gates each opt-in register read
+///        by the capability HEATING_OPT_IN_READS names, preventing C++/Python drift.
 ///
 /// The C++ table (proto_device_types.cpp) is authoritative; the test parses hub_validators.py at
 /// runtime, like the other sync tests (see device_type_sync_test.cpp and python_dict_parser.h).
 
 #include "proto_device_features.h"
 #include "proto_device_types.h"
+#include "proto_heating.h"
+#include "proto_heating_profiles.h"
 #include "support/python_dict_parser.h"
 
 #include "device_table_walk.h"
 #include "test_helpers.h"
 
+#include <algorithm>
+#include <cctype>
 #include <map>
 #include <set>
 #include <string>
@@ -25,6 +30,7 @@ using namespace esphome::home_io_control;
 namespace {
 
 constexpr const char *VALIDATORS = "components/home_io_control/hub_validators.py";
+constexpr const char *CLIMATE = "components/home_io_control/climate.py";
 
 using NameSet = std::set<std::string>;
 
@@ -45,6 +51,7 @@ const std::map<std::string, DeviceFeature> CPP_FEATURES = {
     {"NIGHT_LIGHT", device_feature::NIGHT_LIGHT},
     {"TEMPERATURE_RANGE", device_feature::TEMPERATURE_RANGE},
     {"CENTRAL_HEATING_MODE", device_feature::CENTRAL_HEATING_MODE},
+    {"OCCUPANCY", device_feature::OCCUPANCY},
 };
 
 /// The names of the capabilities in a set.
@@ -251,4 +258,28 @@ TEST(DeviceFeaturesSync, EveryModelRowIsMirroredWithItsNameAndCapabilities) {
   });
   for (const auto &[name, value] : models)
     EXPECT_TRUE(cpp_model_names.count(name)) << "DEVICE_MODEL_OPTIONS names " << name << ", which no C++ model row has";
+}
+
+TEST(DeviceFeaturesSync, EveryOptInRegisterNeedsTheSameCapabilityInBothLanguages) {
+  // climate.py accepts an opt-in key by this capability; the hub reads the register only with the
+  // capability of HEATING_OPT_IN_READS. Were they to differ, a key would be accepted whose read never runs.
+  const auto python = test::parse_python_ordered_dict(CLIMATE, "OPT_IN_READ_FEATURES");
+  ASSERT_FALSE(python.empty()) << "OPT_IN_READ_FEATURES not parsed from climate.py";
+  const std::map<std::string, std::string> by_function(python.begin(), python.end());
+  size_t cpp_rows = 0;
+  for (unsigned i = 0; i < static_cast<unsigned>(HeatingFunction::COUNT); i++) {
+    const auto fn = static_cast<HeatingFunction>(i);
+    const HeatingOptInRead *row = find_heating_opt_in_read(fn);
+    if (row == nullptr)
+      continue;
+    cpp_rows++;
+    // The Python key is the enumerator's name, which is the function's name in capitals.
+    std::string name = heating_function_name(fn);
+    std::ranges::transform(name, name.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    ASSERT_TRUE(by_function.count(name)) << name << " is missing from OPT_IN_READ_FEATURES";
+    const NameSet names = names_of(row->feature);
+    ASSERT_EQ(names.size(), 1u) << name << " must need exactly one capability";
+    EXPECT_EQ(by_function.at(name), *names.begin()) << name;
+  }
+  EXPECT_EQ(python.size(), cpp_rows) << "OPT_IN_READ_FEATURES names a register HEATING_OPT_IN_READS does not read";
 }

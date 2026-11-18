@@ -215,6 +215,12 @@ climate:
     io_model: heater_with_light
     night_light:
       name: "Test Night Light"
+    # The occupancy detection setting (a switch) and what the heater detects (a binary sensor); one extra
+    # register read per poll each.
+    occupancy_detection:
+      name: "Test Occupancy Detection"
+    occupancy:
+      name: "Test Occupancy"
   # An interface for pilot-wire heaters reports the same type and subtype; io_model drops the boost it ignores.
   - platform: home_io_control
     name: "Test Pilot Wire Interface"

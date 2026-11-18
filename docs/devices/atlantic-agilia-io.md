@@ -19,6 +19,7 @@ platform; see [Heating and climate](../configuration/climate.md) for every optio
 | `Window` sensor | ✅ Confirmed — turns on when a window near the radiator is opened |
 | Target set in `auto` (temporary override) | ⚠️ Experimental: the registers it uses have not been read or written on a radiator yet; a radiator without them keeps writing the comfort temperature |
 | `Open Window Detection` switch | ⚠️ Reads back the radiator's setting; switching detection off from Home Assistant is not tested yet |
+| Occupancy detection (`occupancy_detection:` switch, `occupancy:` sensor) | ⚠️ Experimental: not tested on an AGILIA IO; a Sauter Hekla answers the registers ([Occupancy detection](../configuration/climate.md#occupancy-detection)) |
 
 ## Modes in Home Assistant
 

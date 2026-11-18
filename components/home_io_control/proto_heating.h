@@ -54,7 +54,11 @@ enum class HeatingFunction : uint8_t {
   POWER_ON,                   ///< Register 0x012C, read: the paired-device list. Logged, never decoded.
   SET_TEMPERATURE,            ///< Register 0x0103, read/write: comfort setpoint, tenths of a degree.
   SET_MODE,                   ///< Register 0x0100, read/write: operating mode (HeatingMode).
-  SET_PRESENCE,               ///< Register 0x0110, write-only: someone is in the room (1) or not (0).
+  SET_PRESENCE,               ///< Register 0x0110, read/write: someone is in the room (1) or not (0). A controller
+                              ///< writes it to tell the heater; a Sauter Hekla reports there whether its own
+                              ///< detection sees someone (issue #222), 0 with nobody in the room and 1 while
+                              ///< someone walks around it, with its occupancy detection on.
+                              ///< \todo Confirm on another heater that the register reports detected presence.
   SET_OPEN_WINDOW_DETECTION,  ///< Register 0x0106, read/write: open-window detection on (1) or off (0).
   MIDNIGHT_SYNC,              ///< Register 0x0130, read: the comfort/eco/auto setpoint block. Logged, never decoded.
   ROOM_TEMPERATURE,           ///< Register 0x0115, read-only: measured room temperature, signed hundredths of a degree.
@@ -94,6 +98,13 @@ enum class HeatingFunction : uint8_t {
                                 ///< \todo Experimental: read on one Atlantic Adelis mixed unit over four panel
                                 ///<       toggles (issue #243), never written. Confirm on a second unit, and on
                                 ///<       an electric one what the read returns.
+  OCCUPANCY_DETECTION,          ///< Register 0x0101, read/write: the heater's occupancy detection on (1) or off (0).
+                                ///< On a Sauter Hekla it reads 1 with the detection switched on and 0 with it off,
+                                ///< and the vendor app writes it (issue #222); the detected presence shows in
+                                ///< SET_PRESENCE.
+                                ///< \todo Experimental except on the Hekla: confirm on another heater that it
+                                ///<       answers this register.
+  COUNT,                        ///< Not a function: the number of functions, for storage sized by function.
 };
 
 /// @brief Operating modes of the mode register (HeatingFunction::SET_MODE).
@@ -254,7 +265,7 @@ bool heating_function_register(HeatingFunction fn, uint8_t &register_low);
 ///     a 16-bit little-endian value in tenths of a degree, round-half-away-from-zero(10 * value).
 ///   - DEROGATED_SETPOINT: as SET_TEMPERATURE, or 0 (`00 00`) to cancel the override.
 ///   - SET_MODE: a HeatingMode value widened to float; must be AUTO, MANUAL, PROG or OFF.
-///   - SET_PRESENCE, SET_OPEN_WINDOW_DETECTION: 0 or 1.
+///   - SET_PRESENCE, SET_OPEN_WINDOW_DETECTION, OCCUPANCY_DETECTION: 0 or 1.
 ///   - TOWEL_MODE: a TowelDryerMode value widened to float (0-3).
 ///   - TEMPORARY_STATE: a HeatingTemporaryState value widened to float (0-2).
 ///   - NIGHT_LIGHT: 0 or 1.
@@ -327,6 +338,8 @@ struct HeatingReadings {
   int16_t night_light{-1};             ///< Night light 1 on / 0 off; -1 until read.
   int16_t night_light_brightness{-1};  ///< Night light brightness register, 0-10000; -1 until read.
   int16_t central_heating_mode{-1};    ///< Central-heating mode 1 on / 0 off (register 0x0153); -1 until read.
+  int16_t occupancy_detection{-1};     ///< Occupancy detection 1 on / 0 off (register 0x0101); -1 until read.
+  int16_t presence{-1};                ///< Someone detected in the room 1 / 0 (register 0x0110); -1 until read.
   int16_t level{-1};                   ///< Low byte of the main parameter a status read returned: a heating level
                                        ///< (a plain heater, and a register heater whose programme reports one,
                                        ///< whose poll ends with that read) or a setpoint alias. -1 until a

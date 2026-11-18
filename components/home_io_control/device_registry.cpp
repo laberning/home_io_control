@@ -52,7 +52,7 @@ void DeviceRegistry::put(const std::string &device_id, IoDevice device) {
     device.invert_override = existing->second.invert_override;
     device.dimmable = existing->second.dimmable;
     device.model = existing->second.model;
-    device.central_heating_mode_read = existing->second.central_heating_mode_read;
+    device.opt_in_reads = existing->second.opt_in_reads;
   }
   resolve_device_features(device);
   devices_[device_id] = device;

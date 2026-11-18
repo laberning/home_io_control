@@ -226,10 +226,12 @@ class HeaterController {
   /// @param max_c Upper end; must exceed `min_c`.
   void set_device_temperature_range(const std::string &device_id, float min_c, float max_c);
 
-  /// @brief Have every poll of a heater read its central-heating mode (YAML `central_heating_mode:`).
-  /// @details A device without device_feature::CENTRAL_HEATING_MODE keeps its poll as it is. Sends nothing.
+  /// @brief Have every poll of a heater read one more register (an entity the YAML declared for it).
+  /// @details Only a register of find_heating_opt_in_read() whose capability the device has; for any other
+  ///          the device keeps its poll as it is. Sends nothing.
   /// @param device_id Target device ID.
-  void enable_central_heating_mode_read(const std::string &device_id);
+  /// @param fn The register to read at every poll.
+  void enable_heating_register_read(const std::string &device_id, HeatingFunction fn);
 
   /// @brief Read one register of a heater and fold the decoded value into IoDevice::heating.
   ///
@@ -472,13 +474,13 @@ class HeaterController {
   /// @return true when every poll register answered.
   bool read_poll_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
 
-  /// @brief Read the central-heating mode of a heater whose YAML asked for it.
-  /// @details An answer without a value (an electric unit, or a byte no mode uses) clears the reading, so the
-  ///          sensor has no state, stops the read until the next boot and logs once. A missed read changes
-  ///          nothing.
+  /// @brief Read the opt-in registers of a heater whose YAML asked for them, in register order.
+  /// @details An answer without a value (a heater without the register, or a byte the register does not use)
+  ///          clears that reading, so its entity has no state, stops the read of that register until the next
+  ///          boot and logs once naming it. A missed read changes nothing. Each register is judged on its own.
   /// @param device_id Target device ID.
-  /// @param max_tries Transmit-attempt cap of the read (the poll's try band).
-  void poll_central_heating_mode_(const std::string &device_id, uint8_t max_tries);
+  /// @param max_tries Transmit-attempt cap of each read (the poll's try band).
+  void poll_opt_in_registers_(const std::string &device_id, uint8_t max_tries);
 
   /// What an answer without a value to a read of the temperature in force may decide.
   enum class InForceEmptyAnswer : uint8_t {

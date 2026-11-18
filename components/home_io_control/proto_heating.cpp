@@ -75,7 +75,8 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
     {"set_temperature", HeatingFunction::SET_TEMPERATURE, 0x03, HeatingAccess::READ_WRITE,
      HeatingValueKind::TENTHS_U16},
     {"set_mode", HeatingFunction::SET_MODE, 0x00, HeatingAccess::READ_WRITE, HeatingValueKind::MODE},
-    {"set_presence", HeatingFunction::SET_PRESENCE, 0x10, HeatingAccess::WRITE_ONLY, HeatingValueKind::BINARY},
+    // 0x0110 is written by a controller to say someone is there; a Sauter Hekla reports detected presence in it.
+    {"set_presence", HeatingFunction::SET_PRESENCE, 0x10, HeatingAccess::READ_WRITE, HeatingValueKind::BINARY},
     {"set_open_window_detection", HeatingFunction::SET_OPEN_WINDOW_DETECTION, 0x06, HeatingAccess::READ_WRITE,
      HeatingValueKind::BINARY},
     {"midnight_sync", HeatingFunction::MIDNIGHT_SYNC, 0x30, HeatingAccess::READ_ONLY, HeatingValueKind::NONE},
@@ -110,6 +111,9 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
      HeatingValueKind::BOUNDED_U16, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
     // Read on a mixed towel dryer (issue #243): 1 while its central-heating mode is on, 0 in electric mode.
     {"central_heating_mode", HeatingFunction::CENTRAL_HEATING_MODE, 0x53, HeatingAccess::READ_ONLY,
+     HeatingValueKind::BINARY},
+    // Read and written on a Sauter Hekla (issue #222): 1 with its occupancy detection on, 0 with it off.
+    {"occupancy_detection", HeatingFunction::OCCUPANCY_DETECTION, 0x01, HeatingAccess::READ_WRITE,
      HeatingValueKind::BINARY},
 };
 
@@ -331,8 +335,7 @@ struct HeatingReadingField {
       integer;  ///< The field of a register read as a byte or a flag (-1 until read), else nullptr.
 };
 
-/// Every register the readings hold. POWER_ON, SET_PRESENCE and MIDNIGHT_SYNC have no row: they are logged or
-/// written, never kept.
+/// Every register the readings hold. POWER_ON and MIDNIGHT_SYNC have no row: they are logged, never kept.
 constexpr HeatingReadingField HEATING_READING_FIELDS[] = {
     {HeatingFunction::ROOM_TEMPERATURE, &HeatingReadings::room_temperature_c, nullptr},
     {HeatingFunction::SET_TEMPERATURE, &HeatingReadings::setpoint_c, nullptr},
@@ -351,6 +354,8 @@ constexpr HeatingReadingField HEATING_READING_FIELDS[] = {
     {HeatingFunction::NIGHT_LIGHT, nullptr, &HeatingReadings::night_light},
     {HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, nullptr, &HeatingReadings::night_light_brightness},
     {HeatingFunction::CENTRAL_HEATING_MODE, nullptr, &HeatingReadings::central_heating_mode},
+    {HeatingFunction::OCCUPANCY_DETECTION, nullptr, &HeatingReadings::occupancy_detection},
+    {HeatingFunction::SET_PRESENCE, nullptr, &HeatingReadings::presence},
 };
 
 /// @return The row of a register, or nullptr for one the readings do not hold.

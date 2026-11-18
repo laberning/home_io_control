@@ -258,9 +258,8 @@ TEST(HeaterController, ReadHeatingRegisterWithoutAValueInTheReplyFails) {
 TEST(HeaterController, ReadHeatingRegisterRejectsWhatItCannotRead) {
   HeaterControllerFixture fx;
   make_heater(fx);
-  EXPECT_FALSE(
-      fx.controller.read_heating_register("ABC123", HeatingFunction::SET_PRESENCE, nullptr, EXCHANGE_RETRY_COUNT))
-      << "write-only register";
+  EXPECT_FALSE(fx.controller.read_heating_register("ABC123", HeatingFunction::COUNT, nullptr, EXCHANGE_RETRY_COUNT))
+      << "a function past the table has no register";
   EXPECT_TRUE(fx.radio.get_sent_data().empty());
 
   HeaterControllerFixture cover;
@@ -1606,14 +1605,14 @@ TEST(HeaterController, ADryerWithoutTheCentralHeatingSensorNeverReadsRegister0x5
 
   EXPECT_TRUE(fx.controller.poll("ABC123"));
   EXPECT_FALSE(read_central_heating_mode(fx.radio.get_sent_data()));
-  EXPECT_EQ(dev->central_heating_mode_read, CentralHeatingModeRead::NOT_ASKED);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE), HeatingOptInReads::State::NOT_ASKED);
   EXPECT_FALSE(dev->heating.has(HeatingFunction::CENTRAL_HEATING_MODE));
 }
 
 TEST(HeaterController, ADryerWithTheCentralHeatingSensorReadsItAtEveryPoll) {
   HeaterControllerFixture fx;
   IoDevice *dev = make_towel_dryer(fx);
-  fx.controller.enable_central_heating_mode_read("ABC123");
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::CENTRAL_HEATING_MODE);
   queue_towel_dryer_poll(fx);
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x53, 0x01});
 
@@ -1628,19 +1627,19 @@ TEST(HeaterController, ADryerWithTheCentralHeatingSensorReadsItAtEveryPoll) {
   EXPECT_TRUE(fx.controller.poll("ABC123"));
   EXPECT_EQ(sent_register(fx.radio.get_sent_data()[sent_before + 5]), 0x53) << "read again, not once";
   EXPECT_EQ(dev->heating.central_heating_mode, 0);
-  EXPECT_EQ(dev->central_heating_mode_read, CentralHeatingModeRead::ASKED);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE), HeatingOptInReads::State::ASKED);
 }
 
 TEST(HeaterController, AnAnswerWithoutAValueStopsTheCentralHeatingReadAndClearsTheReading) {
   HeaterControllerFixture fx;
   IoDevice *dev = make_towel_dryer(fx);
-  fx.controller.enable_central_heating_mode_read("ABC123");
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::CENTRAL_HEATING_MODE);
   dev->heating.central_heating_mode = 1;  // an earlier answer
   queue_towel_dryer_poll(fx);
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x53});  // an electric unit: no value
 
   EXPECT_TRUE(fx.controller.poll("ABC123")) << "a missing register is not a poll failure";
-  EXPECT_EQ(dev->central_heating_mode_read, CentralHeatingModeRead::ABSENT);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE), HeatingOptInReads::State::ABSENT);
   EXPECT_FALSE(dev->heating.has(HeatingFunction::CENTRAL_HEATING_MODE));
 
   const size_t sent_before = fx.radio.get_sent_data().size();
@@ -1654,32 +1653,150 @@ TEST(HeaterController, AnAnswerWithoutAValueStopsTheCentralHeatingReadAndClearsT
 TEST(HeaterController, AnUnknownCentralHeatingValueIsTreatedAsNoValue) {
   HeaterControllerFixture fx;
   IoDevice *dev = make_towel_dryer(fx);
-  fx.controller.enable_central_heating_mode_read("ABC123");
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::CENTRAL_HEATING_MODE);
   queue_towel_dryer_poll(fx);
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x53, 0x02});
 
   EXPECT_TRUE(fx.controller.poll("ABC123"));
-  EXPECT_EQ(dev->central_heating_mode_read, CentralHeatingModeRead::ABSENT);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE), HeatingOptInReads::State::ABSENT);
   EXPECT_FALSE(dev->heating.has(HeatingFunction::CENTRAL_HEATING_MODE));
 }
 
 TEST(HeaterController, AMissedCentralHeatingReadChangesNothing) {
   HeaterControllerFixture fx;
   IoDevice *dev = make_towel_dryer(fx);
-  fx.controller.enable_central_heating_mode_read("ABC123");
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::CENTRAL_HEATING_MODE);
   dev->heating.central_heating_mode = 1;
   queue_towel_dryer_poll(fx);  // no reply to the read of 0x53
 
   EXPECT_TRUE(fx.controller.poll("ABC123"));
-  EXPECT_EQ(dev->central_heating_mode_read, CentralHeatingModeRead::ASKED) << "asked again at the next poll";
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE), HeatingOptInReads::State::ASKED)
+      << "asked again at the next poll";
   EXPECT_EQ(dev->heating.central_heating_mode, 1);
+}
+
+// === Occupancy: the second opt-in read, judged apart from the first (the Hekla sweep of issue #222) ===
+
+/// @return A heater with a night light (a Sauter Hekla), its boot reads done so a poll is its extra registers only.
+IoDevice *make_heater_with_light(HeaterControllerFixture &fx) {
+  IoDevice *dev = make_heater(fx);
+  dev->model = DeviceModel::HEATER_WITH_LIGHT;
+  resolve_device_features(*dev);
+  dev->model_checked = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  return dev;
+}
+
+/// Queue the replies of a heater with a light's poll up to and including its three extra registers.
+void queue_heater_with_light_poll(HeaterControllerFixture &fx) {
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x00, 0x01});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x17, 0x02});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x0E, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x06, 0x01});        // open-window detection
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x44, 0x00});        // night light
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x42, 0x00, 0x00});  // night light brightness
+}
+
+/// @return The registers the sent frames read, in order.
+std::vector<uint8_t> registers_read(const std::vector<std::vector<uint8_t>> &sent) {
+  std::vector<uint8_t> out;
+  for (const auto &tx : sent)
+    out.push_back(sent_register(tx));
+  return out;
+}
+
+TEST(HeaterController, AHeaterWithoutOccupancyEntitiesNeverReadsRegister0x01Or0x10) {
+  HeaterControllerFixture fx;
+  make_heater_with_light(fx);
+  queue_heater_with_light_poll(fx);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  for (const uint8_t reg : registers_read(fx.radio.get_sent_data())) {
+    EXPECT_NE(reg, 0x01);
+    EXPECT_NE(reg, 0x10);
+  }
+}
+
+TEST(HeaterController, OccupancyRegistersAreReadAfterTheExtraRegistersAndShowTheSweepValues) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_heater_with_light(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::OCCUPANCY_DETECTION);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::SET_PRESENCE);
+  queue_heater_with_light_poll(fx);
+  fx.queue_register_ack(
+      {0x0C, 0x60, 0x01, 0x10, 0x01});  // someone walks around the heater (presence first: enum order)
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x01, 0x01});  // detection on
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto read = registers_read(fx.radio.get_sent_data());
+  ASSERT_EQ(read.size(), 10u);
+  EXPECT_EQ(read[8], 0x10);
+  EXPECT_EQ(read[9], 0x01);
+  EXPECT_EQ(dev->heating.presence, 1);
+  EXPECT_EQ(dev->heating.occupancy_detection, 1);
+}
+
+TEST(HeaterController, EachOptInRegisterIsMarkedAbsentOnItsOwn) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_heater_with_light(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::OCCUPANCY_DETECTION);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::SET_PRESENCE);
+  queue_heater_with_light_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x10});        // presence: answered without a value
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x01, 0x00});  // detection: off
+
+  EXPECT_TRUE(fx.controller.poll("ABC123")) << "a missing register is not a poll failure";
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::SET_PRESENCE), HeatingOptInReads::State::ABSENT);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::OCCUPANCY_DETECTION), HeatingOptInReads::State::ASKED);
+  EXPECT_EQ(dev->heating.occupancy_detection, 0);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::SET_PRESENCE));
+
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_heater_with_light_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x01, 0x01});
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  const auto second = registers_read({sent.begin() + static_cast<std::ptrdiff_t>(sent_before), sent.end()});
+  EXPECT_EQ(std::count(second.begin(), second.end(), 0x10), 0) << "the absent register is not asked again";
+  EXPECT_EQ(second.back(), 0x01) << "the other one still is";
+  EXPECT_EQ(dev->heating.occupancy_detection, 1);
+}
+
+TEST(HeaterController, AMissedOccupancyReadKeepsTheReadingAndTheAsk) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_heater_with_light(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::OCCUPANCY_DETECTION);
+  dev->heating.occupancy_detection = 1;
+  queue_heater_with_light_poll(fx);  // no reply to the read of 0x0101
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::OCCUPANCY_DETECTION), HeatingOptInReads::State::ASKED);
+  EXPECT_EQ(dev->heating.occupancy_detection, 1);
+}
+
+TEST(HeaterController, OccupancyReadsAreRefusedOnAKindWithoutTheCapabilityAndForOtherRegisters) {
+  HeaterControllerFixture fx;
+  IoDevice *dryer = make_towel_dryer(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::OCCUPANCY_DETECTION);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::SET_PRESENCE);
+  EXPECT_EQ(dryer->opt_in_reads.state_of(HeatingFunction::OCCUPANCY_DETECTION), HeatingOptInReads::State::NOT_ASKED);
+  EXPECT_EQ(dryer->opt_in_reads.state_of(HeatingFunction::SET_PRESENCE), HeatingOptInReads::State::NOT_ASKED);
+
+  HeaterControllerFixture other;
+  IoDevice *radiator = make_heater(other);
+  other.controller.enable_heating_register_read("ABC123", HeatingFunction::ROOM_TEMPERATURE);
+  EXPECT_EQ(radiator->opt_in_reads.state_of(HeatingFunction::ROOM_TEMPERATURE), HeatingOptInReads::State::NOT_ASKED)
+      << "only a register of the opt-in table can be asked for";
 }
 
 TEST(HeaterController, TheCentralHeatingReadIsRefusedOnAKindWithoutTheCapability) {
   HeaterControllerFixture fx;
   IoDevice *radiator = make_heater(fx);
-  fx.controller.enable_central_heating_mode_read("ABC123");
-  EXPECT_EQ(radiator->central_heating_mode_read, CentralHeatingModeRead::NOT_ASKED);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::CENTRAL_HEATING_MODE);
+  EXPECT_EQ(radiator->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE),
+            HeatingOptInReads::State::NOT_ASKED);
 }
 
 TEST(HeaterController, HeaterPollStopsAtTheFirstFailureAndBacksOff) {

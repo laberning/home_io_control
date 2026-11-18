@@ -92,7 +92,7 @@ const std::vector<ExpectedRow> EXPECTED_ROWS = {
     {DeviceType::SIREN, 0, DeviceFeatures{}},
     {DeviceType::DOMESTIC_HOT_WATER, 0, feature::WATER_HEATER},
     {DeviceType::ELECTRICAL_HEATER, 0, DeviceFeatures{}},
-    {DeviceType::ELECTRICAL_HEATER, 1, WIN},
+    {DeviceType::ELECTRICAL_HEATER, 1, WIN | feature::OCCUPANCY},
     {DeviceType::HEAT_RECOVERY_VENTILATION, 0, DeviceFeatures{}},
     {DeviceType::CENTRAL_HOUSE_CONTROL, 0, DeviceFeatures{}},
     {DeviceType::TEST_AND_EVALUATION, 0, DeviceFeatures{}},

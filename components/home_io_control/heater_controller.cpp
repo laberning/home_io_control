@@ -290,10 +290,11 @@ void HeaterController::set_device_temperature_range(const std::string &device_id
   dev->temperature_range_max_c = max_c;
 }
 
-void HeaterController::enable_central_heating_mode_read(const std::string &device_id) {
+void HeaterController::enable_heating_register_read(const std::string &device_id, HeatingFunction fn) {
   IoDevice *dev = this->registry_.get(device_id);
-  if (dev != nullptr && has_feature(dev->features, device_feature::CENTRAL_HEATING_MODE))
-    dev->central_heating_mode_read = CentralHeatingModeRead::ASKED;
+  const HeatingOptInRead *opt_in = find_heating_opt_in_read(fn);
+  if (dev != nullptr && opt_in != nullptr && has_feature(dev->features, opt_in->feature))
+    dev->opt_in_reads.ask(fn);
 }
 
 bool HeaterController::exchange_heating_(const std::string &device_id, const char *label, const IoFrame &request,
@@ -780,21 +781,26 @@ void HeaterController::poll_temperature_in_force_(const std::string &device_id, 
            device_id.c_str(), heating_function_name(fn));
 }
 
-void HeaterController::poll_central_heating_mode_(const std::string &device_id, uint8_t max_tries) {
-  const IoDevice *dev = this->registry_.get(device_id);
-  if (dev == nullptr || dev->central_heating_mode_read != CentralHeatingModeRead::ASKED)
-    return;
-  constexpr HeatingFunction fn = HeatingFunction::CENTRAL_HEATING_MODE;
-  if (this->read_and_store_heating_register_(device_id, fn, nullptr, max_tries, /*follow_override=*/false) !=
-      HeatingRead::EMPTY)
-    return;
-  IoDevice *current = this->registry_.get(device_id);
-  if (current == nullptr)
-    return;
-  current->heating.clear(fn);
-  current->central_heating_mode_read = CentralHeatingModeRead::ABSENT;
-  ESP_LOGI(detail::TAG, "Device %s reports no central-heating mode (%s): its sensor stays without a state",
-           device_id.c_str(), heating_function_name(fn));
+void HeaterController::poll_opt_in_registers_(const std::string &device_id, uint8_t max_tries) {
+  for (unsigned i = 0; i < static_cast<unsigned>(HeatingFunction::COUNT); i++) {
+    const auto fn = static_cast<HeatingFunction>(i);
+    // Looked up again for every register: a read exchange may have changed the registry.
+    const IoDevice *dev = this->registry_.get(device_id);
+    if (dev == nullptr)
+      return;
+    if (dev->opt_in_reads.state_of(fn) != HeatingOptInReads::State::ASKED)
+      continue;
+    if (this->read_and_store_heating_register_(device_id, fn, nullptr, max_tries, /*follow_override=*/false) !=
+        HeatingRead::EMPTY)
+      continue;
+    IoDevice *current = this->registry_.get(device_id);
+    if (current == nullptr)
+      return;
+    current->heating.clear(fn);
+    current->opt_in_reads.mark_absent(fn);
+    ESP_LOGI(detail::TAG, "Device %s reports no value for %s: its entity stays without a state", device_id.c_str(),
+             heating_function_name(fn));
+  }
 }
 
 void HeaterController::read_heating_level_(const std::string &device_id, uint8_t max_tries) {
@@ -846,9 +852,10 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
     this->read_heating_register(device_id, fn, nullptr, max_tries);
   }
 
-  // The central-heating mode is read only where the YAML declares its sensor; a miss is not a poll failure.
+  // The registers an entity of the YAML asks for (the central-heating mode, the occupancy detection and
+  // presence) are read only where it is declared; a miss is not a poll failure.
   if (ok)
-    this->poll_central_heating_mode_(device_id, max_tries);
+    this->poll_opt_in_registers_(device_id, max_tries);
 
   // Properties and settings that rarely change are read until they have been read once. A miss here
   // is not a poll failure; the next poll asks again.

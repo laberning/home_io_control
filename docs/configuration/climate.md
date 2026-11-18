@@ -47,6 +47,11 @@ The keys every entity platform shares (`name`, `io_device_id`, `io_device_type`,
 - `central_heating_mode` (Optional): A binary sensor, on while a mixed towel dryer runs on central
   heating. Experimental. Accepted on `io_model: towel_dryer` only. See the section "Central-heating
   mode sensor" below.
+- `occupancy_detection` (Optional): A switch for the heater's occupancy detection. Experimental, except
+  on a Sauter Hekla. Accepted on a radiator or `io_model: heater_with_light` only. See the section
+  "Occupancy detection" below.
+- `occupancy` (Optional): A binary sensor, on while the heater sees someone in the room. Experimental,
+  except on a Sauter Hekla. Accepted on the same kinds. See the section "Occupancy detection" below.
 - `night_light` (Optional): A light entity for the heater's night light. Accepted on
   `io_model: heater_with_light` only. See the section "Heaters with a night light" below.
 - `min_temperature`, `max_temperature` (Optional): The range a thermostat encodes its temperature
@@ -123,7 +128,7 @@ at a later poll:
 
 | Heater kind | One poll reads | The first poll also reads |
 |---|---|---|
-| Radiator with a setpoint | Five registers: room temperature, setpoint, mode, regulator state, window sensor. While its program runs, also the temperature in force. Then the open-window-detection setting, and with `io_model: heater_with_light` the light's state and brightness; a read of these that gets no answer leaves the entity as it was and is asked again at the next poll | The maximum setpoint, and for the declaration check the model name and the towel dryer's mode register |
+| Radiator with a setpoint | Five registers: room temperature, setpoint, mode, regulator state, window sensor. While its program runs, also the temperature in force. Then the open-window-detection setting, and with `io_model: heater_with_light` the light's state and brightness; a read of these that gets no answer leaves the entity as it was and is asked again at the next poll. With an `occupancy_detection:` or `occupancy:` block, one more register each, read after these on the same terms | The maximum setpoint, and for the declaration check the model name and the towel dryer's mode register |
 | Towel dryer | Five registers: room temperature, setpoint, mode, temporary state, working rate. While its program runs with no boost or drying, also the temperature in force. Then one status read, which names the level the dryer applies, in every mode and whether or not a `heating_level:` sensor is configured. With a `central_heating_mode:` sensor, one more register, read before the status read | The maximum setpoint and the model name |
 | Plain electrical heater, pilot-wire interface | One status read | |
 | Thermostat, heat pump | One status read | |
@@ -153,6 +158,7 @@ generated as for the other platforms.
 | Night light | An entry with a `night_light:` block | See the section "Heaters with a night light" below |
 | `Heating level` text sensor | An entry with a `heating_level:` block | See the section "Heating level sensor" below |
 | Central heating mode binary sensor | An entry with a `central_heating_mode:` block | Experimental. See the section "Central-heating mode sensor" below |
+| `Occupancy detection` switch, `Occupancy` binary sensor | An entry with an `occupancy_detection:` or `occupancy:` block | See the section "Occupancy detection" below |
 
 A towel dryer has no window function, so it gets neither window entity. A heater declared without
 `io_device_type` gets none either, because nothing in the YAML says what it is.
@@ -251,6 +257,50 @@ leaves the sensor without a state; the hub logs that once and stops asking until
 > ([issue #243](https://github.com/laberning/home_io_control/issues/243)); the hub never writes it.
 > What an electric unit answers is not known. Please report your unit's result.
 
+## Occupancy detection
+
+Some electric heaters notice when someone is in the room and lower their temperature while the room is
+empty. Two optional blocks show that in Home Assistant: a switch that turns the detection on or off,
+and a binary sensor that is on while the heater sees someone. Both were read and switched on a Sauter
+Hekla ([issue #222](https://github.com/laberning/home_io_control/issues/222)).
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Kids' room heater"
+    io_device_id: "29FB38"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
+    io_model: heater_with_light
+    occupancy_detection:
+      name: "Kids' room occupancy detection"
+    occupancy:
+      name: "Kids' room occupancy"
+```
+
+- **The switch** shows the heater's setting, register `0x0101`, from a reply only: it has no state
+  until the heater has answered, and it never shows a restored guess. Switching it writes the register
+  and reads it back, so the switch shows what the heater holds. A change made in the vendor app or on
+  the heater shows at the next poll. It belongs to the config entity category.
+- **The sensor** shows register `0x0110` as the heater reports it: on while it sees someone, off while
+  it does not, and no state until the heater has answered or when it answers without a value. What it
+  shows while the detection is off is not confirmed: only "detection off, nobody there" was seen.
+- Each block costs one register read per poll, and an entry without it reads nothing extra. A heater
+  that answers a read without a value leaves that entity without a state; the hub logs that once and
+  stops asking for that register until the next boot.
+- Both keys are accepted on a radiator (`io_subtype: 1` with no `io_model`) and on
+  `io_model: heater_with_light`, and rejected on a towel dryer, a pilot-wire interface and every other
+  device. A heater declared without `io_device_type` is rejected as well, because nothing says it has
+  the registers.
+- The `set_presence` function of the `heating_control` action (section "The `heating_control` action"
+  below) is unchanged: it tells the heater that someone is there, and writes the same register the
+  sensor reads.
+
+> [!NOTE]
+> Experimental on a radiator: the Hekla is the only heater that has answered both registers. An AGILIA
+> IO or a Thermor EMOTION 3 H may answer them differently, or not at all. Please report your heater's
+> result.
+
 ## Setpoint range of a radiator or towel dryer
 
 The setpoint goes on the wire as a **16-bit little-endian value in tenths of a degree**
@@ -297,7 +347,7 @@ show the result.
 | `set_temperature` | float °C, `7.0`–`28.0` | Setpoint (the comfort temperature, register `0x0103`), written whatever the heater runs. |
 | `set_derogation` | float °C, `7.0`–`28.0`, or `0` | A temporary override of the program (register `0x011D`) on a towel dryer or a radiator with a setpoint: it holds until the program's next change; `0` cancels it. Confirmed on a towel dryer in an eco period, `0` included (issue #202); a towel dryer refuses it in a comfort period and a Thermor EMOTION 3 H radiator refuses it (issue #228); experimental on other heaters. See [A target set while the heater's program runs](../heating.md#a-target-set-while-the-heaters-program-runs). Refused on heaters without a program. |
 | `set_mode` | `auto` \| `manual` \| `prog` \| `off` | Operating mode. |
-| `set_presence` | `on` \| `off` | Presence / absence. The AGILIA IO acknowledges it; no visible effect observed. |
+| `set_presence` | `on` \| `off` | Presence / absence (register `0x0110`). The AGILIA IO acknowledges it; no visible effect observed. A Sauter Hekla reports detected presence in the same register, which the `occupancy:` sensor shows. |
 | `set_open_window_detection` | `on` \| `off` | Switches the heater's open-window detection on or off (register `0x0106`). |
 | `window_open` | *(ignored)* | Reads the heater's window sensor (register `0x010E`) and reports `window open` or `window closed` in the result `message`. |
 | `midnight_sync` | *(ignored)* | Reads register `0x0130` (the comfort/eco/auto setpoint block). Despite the name, the payload is a `0x60` **read**, not a clock-set — the device's clock register is `0x010F` and this component never writes it. Provided for protocol exploration; the ACK payload is logged at DEBUG. |

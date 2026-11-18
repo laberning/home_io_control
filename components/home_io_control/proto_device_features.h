@@ -74,6 +74,13 @@ enum class DeviceFeature : uint8_t {
   /// (proto_heating.h). Gates the climate entry's `central_heating_mode:` binary sensor.
   /// \todo Experimental: read on one Atlantic Adelis mixed unit (issue #243), confirm on a second one.
   CENTRAL_HEATING_MODE,
+  /// A heater that detects whether someone is in the room and lowers its temperature while the room is
+  /// empty: register 0x0101 switches the detection on (1) or off (0) and register 0x0110 reports whether it
+  /// sees someone (proto_heating.h). Gates the climate entry's `occupancy_detection:` switch and
+  /// `occupancy:` binary sensor.
+  /// \todo Experimental except on the Sauter Hekla (issue #222): confirm on an AGILIA IO and an EMOTION 3 H
+  ///       that they answer both registers.
+  OCCUPANCY,
   COUNT,  ///< Not a capability: the number of capabilities, for the storage check of DeviceFeatures.
 };
 

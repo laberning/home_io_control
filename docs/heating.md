@@ -124,7 +124,9 @@ The display words below are the AGILIA IO's, from its
   explains the band below 12 °C.
 - `heating` and `idle` come from the radiator's regulator.
 - The entry also gets a `Window` sensor and an `Open Window Detection` switch, and a Sauter Hekla a
-  night light; see [Companion entities](configuration/climate.md#companion-entities-of-a-heater).
+  night light; see [Companion entities](configuration/climate.md#companion-entities-of-a-heater). An
+  optional switch and sensor show the heater's
+  [occupancy detection](configuration/climate.md#occupancy-detection) (experimental).
 
 Target, the three modes, both presets, the room temperature and `heating` / `idle` are confirmed on
 three AGILIA IO radiators, each read back (issue #165). The target and the room temperature are

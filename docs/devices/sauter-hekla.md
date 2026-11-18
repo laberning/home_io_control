@@ -22,7 +22,7 @@ the night light. Three heaters that were already paired with a Sauter Cozytouch 
 | Off, Heat, Auto and the presets | ⚠️ Not confirmed on a Hekla yet |
 | Target set in `auto` (temporary override) | ⚠️ Experimental: no Hekla has confirmed it |
 | Level the heater applies (`heating_level:` sensor) | ❌ Not read: the sensor stays without a state |
-| Occupancy detection | ❌ Not supported |
+| Occupancy detection: switch (`occupancy_detection:`) and sensor (`occupancy:`) | ⚠️ Experimental: the registers were read and the setting switched in the Cozytouch app, but no one has used the Home Assistant entities yet. What the sensor shows with the detection off is not confirmed |
 
 ## Modes in Home Assistant
 
@@ -59,11 +59,16 @@ climate:
     system_key: !secret cozytouch_key
     night_light:
       name: "Kids' room night light"
+    occupancy_detection:      # optional, experimental
+      name: "Kids' room occupancy detection"
+    occupancy:                # optional, experimental
+      name: "Kids' room occupancy"
 ```
 
 `io_model: heater_with_light` and the `night_light:` block give you the light entity;
 [Heaters with a night light](../configuration/climate.md#heaters-with-a-night-light) describes how it
-behaves. Without them the heater works as a radiator without a light.
+behaves. Without them the heater works as a radiator without a light. The two occupancy blocks are
+described in [Occupancy detection](../configuration/climate.md#occupancy-detection).
 
 ## Known quirks
 
@@ -82,6 +87,8 @@ From [issue #222](https://github.com/laberning/home_io_control/issues/222), on a
 SX1262 driver:
 
 - [The panel's four night-light brightness levels, overheard by the hub](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/exchange/sauter_hekla_exchange_night_light_brightness_levels_sx1262.yaml)
+- The reporter's register reads of occupancy detection (`0x0101`: 0 off, 1 on) and detected presence
+  (`0x0110`: 0 with nobody in the room, 1 while someone walks around the heater), in the issue thread.
 - The reporter's confirmation of pairing, target, room temperature, the window sensor and switching
   and dimming the night light, in the issue thread.
 

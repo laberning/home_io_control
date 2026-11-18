@@ -16,6 +16,7 @@
 #include "proto_sizes.h"
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -307,13 +308,54 @@ enum class TemperatureInForceSupport : uint8_t {
              ///< it until the next boot, and a target writes the comfort setpoint.
 };
 
-/// @brief Whether the hub reads a towel dryer's central-heating mode (HeatingFunction::CENTRAL_HEATING_MODE).
-/// @details Opt-in: the YAML `central_heating_mode:` key turns the read on for a kind with
-///          device_feature::CENTRAL_HEATING_MODE; nothing else reads the register. Runtime only.
-enum class CentralHeatingModeRead : uint8_t {
-  NOT_ASKED,  ///< No sensor is declared: the register is never read.
-  ASKED,      ///< A sensor is declared: every poll reads the register.
-  ABSENT,     ///< The heater answered without a value: the hub stops reading it until the next boot.
+/// @brief Which opt-in heater registers the hub reads on every poll of one device, and which of them the
+/// heater turned out not to have.
+/// @details An opt-in register (find_heating_opt_in_read()) is read only where the YAML declares an entity
+///          for it. Each register is in one of three states, kept in two masks over HeatingFunction. Runtime
+///          only: nothing is persisted, and the state of an absent register resets at the next boot.
+class HeatingOptInReads {
+ public:
+  /// The state of one register.
+  enum class State : uint8_t {
+    NOT_ASKED,  ///< No entity is declared: the register is never read.
+    ASKED,      ///< An entity is declared: every poll reads the register.
+    ABSENT,     ///< The heater answered without a value: the hub stops reading it until the next boot.
+  };
+
+  /// @param fn Register.
+  /// @return Its state; NOT_ASKED for a function the masks cannot hold.
+  [[nodiscard]] State state_of(HeatingFunction fn) const {
+    if (!holds(fn))
+      return State::NOT_ASKED;
+    if ((absent_ & mask_of(fn)) != 0)
+      return State::ABSENT;
+    return (asked_ & mask_of(fn)) != 0 ? State::ASKED : State::NOT_ASKED;
+  }
+
+  /// @brief Declare that an entity wants this register read. A register already found absent stays absent.
+  /// @param fn Register.
+  void ask(HeatingFunction fn) {
+    if (holds(fn))
+      asked_ |= mask_of(fn);
+  }
+
+  /// @brief Record that the heater answered a read of this register without a value.
+  /// @param fn Register.
+  void mark_absent(HeatingFunction fn) {
+    if (holds(fn))
+      absent_ |= mask_of(fn);
+  }
+
+ private:
+  using Mask = uint32_t;
+  static_assert(static_cast<unsigned>(HeatingFunction::COUNT) <= std::numeric_limits<Mask>::digits,
+                "every HeatingFunction must fit the masks of HeatingOptInReads; widen Mask");
+  // Not named bit(): the Arduino core defines that as a macro.
+  static constexpr bool holds(HeatingFunction fn) { return fn < HeatingFunction::COUNT; }
+  static constexpr Mask mask_of(HeatingFunction fn) { return Mask{1} << static_cast<unsigned>(fn); }
+
+  Mask asked_{0};
+  Mask absent_{0};
 };
 
 /// @brief Runtime state of a paired IO‑Homecontrol device.
@@ -456,9 +498,8 @@ struct IoDevice {
   /// What a register heater with a programme has answered to the read of its temperature in force. Runtime
   /// only, until the next boot.
   TemperatureInForceSupport temperature_in_force{TemperatureInForceSupport::UNKNOWN};
-  bool model_checked{false};  ///< The model check completed: both of its reads were answered.
-  CentralHeatingModeRead central_heating_mode_read{CentralHeatingModeRead::NOT_ASKED};  ///< The central-heating
-                                                                                        ///< mode read, see the enum.
+  bool model_checked{false};       ///< The model check completed: both of its reads were answered.
+  HeatingOptInReads opt_in_reads;  ///< The opt-in registers this device is polled for (see the class).
 };
 
 /// @brief Resolve a device's capabilities and inversion from its kind and its YAML overrides.

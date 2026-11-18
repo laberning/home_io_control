@@ -572,3 +572,15 @@ TEST(DeviceTypesTable, OnlyTheTowelDryerRowHasTheCentralHeatingModeBit) {
                            device_feature::CENTRAL_HEATING_MODE))
       << "a radiator has no central-heating mode";
 }
+
+TEST(DeviceTypesTable, OccupancyIsOnTheRadiatorAndTheHeaterWithLightOnly) {
+  const auto occupancy = [](DeviceType type, uint8_t subtype, DeviceModel model) {
+    return has_feature(device_features(type, subtype, model), device_feature::OCCUPANCY);
+  };
+  EXPECT_TRUE(occupancy(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE)) << "radiator";
+  EXPECT_TRUE(occupancy(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT));
+  EXPECT_FALSE(occupancy(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER)) << "no known function";
+  EXPECT_FALSE(occupancy(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE)) << "no registers";
+  EXPECT_FALSE(occupancy(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE));
+  EXPECT_FALSE(occupancy(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
+}
