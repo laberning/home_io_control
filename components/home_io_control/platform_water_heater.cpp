@@ -293,7 +293,6 @@ void IOHomeDhwManualShowersNumber::control(float value) {
 void IOHomeDhwManualShowersNumber::dump_config() {
   ESP_LOGCONFIG(TAG, "IO-Homecontrol Water Heater Manual Showers:");
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
-  ESP_LOGCONFIG(TAG, "  Status: experimental (the write of register 0x0048 is not confirmed on hardware)");
 }
 
 void IOHomeDhwBinarySensor::setup() {

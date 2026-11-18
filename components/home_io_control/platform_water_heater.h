@@ -167,8 +167,7 @@ class IOHomeDhwReadingSensor : public IOHomeCompanionSensor {
 /// @ingroup hioc_platforms
 ///
 /// Shows what the heater reports in register 0x0048, never the command: a value the heater does not keep is
-/// not shown. It writes nothing at boot.
-/// \todo Experimental: that the heater takes the write is not confirmed.
+/// not shown. It writes nothing at boot. Confirmed on a Sauter Guelma: its display follows the write.
 class IOHomeDhwManualShowersNumber : public number::Number, public Component, public DeviceBoundCompanion {
  public:
   /// @brief Subscribe to the device's updates and publish what is already known.

@@ -100,9 +100,9 @@ static constexpr uint8_t DHW_REG_HEATING_POWER = 0x32;
 /// @brief Register 0x0046: the showers of hot water available, one byte: the showers the display shows
 /// steadily lit.
 static constexpr uint8_t DHW_REG_SHOWERS_AVAILABLE = 0x46;
-/// @brief Register 0x0048: the showers set for manual mode, one byte. It followed the display from 4 to 2 and
-/// keeps its value in the other modes. Register 0x0042 reads `0002 0004`, the range the display offers.
-/// \todo Experimental: that the heater takes a write of this register is not confirmed.
+/// @brief Register 0x0048: the showers set for manual mode, one byte. It follows the display and keeps its value
+/// in the other modes, and a write sets the display: 2, 3 and 4 showers heat to 50, 60 and 70 C. Register 0x0042
+/// reads `0002 0004`, the range the display offers.
 static constexpr uint8_t DHW_REG_MANUAL_SHOWERS = 0x48;
 /// @brief Fewest showers manual mode can be set to (register 0x0042).
 static constexpr uint8_t DHW_MANUAL_SHOWERS_MIN = 2;

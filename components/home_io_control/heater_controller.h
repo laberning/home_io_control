@@ -290,8 +290,7 @@ class HeaterController {
   bool set_water_heater_away(const std::string &device_id, bool on);
 
   /// @brief Set the showers manual mode heats for on an electric storage water heater: a write of register
-  /// 0x0048, read back at once. The mode is left as it is.
-  /// \todo Experimental: that the heater takes this write is not confirmed.
+  /// 0x0048, read back at once. The mode is left as it is. Confirmed on a Sauter Guelma: its display follows.
   /// @param device_id Target device ID (hex string).
   /// @param showers DHW_MANUAL_SHOWERS_MIN..DHW_MANUAL_SHOWERS_MAX.
   /// @return true when the heater acknowledged the write, unless the read-back shows it did not keep the value.
