@@ -28,6 +28,7 @@
 #include <array>
 #include <cinttypes>
 #include <new>
+#include <variant>
 #include <vector>
 
 namespace esphome {
@@ -428,10 +429,9 @@ void IOHomeControlComponent::set_device_status_poll_interval(const std::string &
 PeriodicPollPolicy &IOHomeControlComponent::periodic_poll_policy_(PeriodicPoll poll) {
   // Indexed by PeriodicPoll.
   static constexpr PeriodicPollPolicy IOHomeControlComponent::*const SCHEDULES[] = {
-      &IOHomeControlComponent::rain_poll_policy_,
-      &IOHomeControlComponent::sun_poll_policy_,
-      &IOHomeControlComponent::battery_level_poll_policy_,
-      &IOHomeControlComponent::status_refresh_policy_,
+      &IOHomeControlComponent::rain_poll_policy_,           &IOHomeControlComponent::sun_poll_policy_,
+      &IOHomeControlComponent::battery_level_poll_policy_,  &IOHomeControlComponent::status_refresh_policy_,
+      &IOHomeControlComponent::device_reading_poll_policy_,
   };
   return this->*SCHEDULES[static_cast<size_t>(poll)];
 }
@@ -458,6 +458,32 @@ void IOHomeControlComponent::set_device_battery_level_poll_interval(const std::s
 
 void IOHomeControlComponent::set_device_status_refresh_interval(const std::string &device_id, uint32_t interval_ms) {
   this->set_periodic_poll_interval_(PeriodicPoll::STATUS_REFRESH, device_id, interval_ms);
+}
+
+std::string IOHomeControlComponent::device_reading_key(const std::string &device_id, DeviceReading reading) {
+  return device_id + "/" + std::to_string(static_cast<unsigned>(reading));
+}
+
+void IOHomeControlComponent::set_device_reading_poll_interval(const std::string &device_id, DeviceReading reading,
+                                                              uint32_t interval_ms) {
+  const IoDevice *dev = this->get_device(device_id);
+  const DeviceReadingRow *row = find_device_reading(reading, this->reading_table_);
+  if (dev == nullptr || row == nullptr || !std::holds_alternative<DataObjectSource>(row->source))
+    return;
+  if (!has_feature(dev->features, row->feature)) {
+    ESP_LOGW(TAG, "Device %s lacks the capability of the %s reading, which is not read", device_id.c_str(), row->name);
+    return;
+  }
+  const std::string key = device_reading_key(device_id, reading);
+  const bool known = std::ranges::any_of(this->device_reading_polls_,
+                                         [&key](const DeviceReadingPoll &poll) { return poll.key == key; });
+  if (!known && interval_ms != 0)
+    this->device_reading_polls_.push_back({key, device_id, reading});
+  // The first read waits for the boot burst to pass, then follows the interval (never below the minimum).
+  this->device_reading_poll_policy_.set_interval(
+      key, interval_ms == 0 ? 0 : std::max(interval_ms, DEVICE_READING_MIN_INTERVAL_MS), millis(),
+      poll_jitter_random());
+  this->device_reading_poll_policy_.set_first_poll(key, DEVICE_READING_FIRST_READ_DELAY_MS, millis());
 }
 
 void IOHomeControlComponent::note_status_reported_(const std::string &device_id) {
@@ -662,7 +688,7 @@ void IOHomeControlComponent::queue_due_periodic_polls_() {
   /// One periodic poll: its schedule and what to queue for a device that comes due.
   struct DuePoll {
     PeriodicPoll poll;
-    void (IOHomeControlComponent::*queue)(const std::string &device_id);
+    void (IOHomeControlComponent::*queue)(const std::string &key);  ///< Takes a device id; DEVICE_READING a key.
   };
   // A device that reported nothing for a whole refresh interval is read. Each status it reports moves
   // its refresh a whole interval out (note_status_reported_()), so a device read often enough never
@@ -672,6 +698,7 @@ void IOHomeControlComponent::queue_due_periodic_polls_() {
       {PeriodicPoll::SUN_LEVEL, &IOHomeControlComponent::queue_request_device_sun_level},
       {PeriodicPoll::BATTERY_LEVEL, &IOHomeControlComponent::queue_request_device_battery_level},
       {PeriodicPoll::STATUS_REFRESH, &IOHomeControlComponent::queue_status_refresh_},
+      {PeriodicPoll::DEVICE_READING, &IOHomeControlComponent::queue_request_device_reading},
   };
   for (const DuePoll &entry : DUE_POLLS) {
     PeriodicPollPolicy &schedule = this->periodic_poll_policy_(entry.poll);

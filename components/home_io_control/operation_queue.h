@@ -26,25 +26,26 @@ static constexpr uint8_t BINARY_ENTITY_OFF_POSITION = 100;
 
 /// @brief Discriminator for entries in the pending-operation deque.
 enum class PendingOperationType : uint8_t {
-  SET_POSITION,           ///< set_device_position call (position 0–100 or special values).
-  SET_TILT,               ///< set_device_tilt call (tilt percentage 0–100).
-  SET_POSITION_AND_TILT,  ///< Combined set_device_position_and_tilt call.
-  DEVICE_COMMAND,         ///< Named device command (STOP, FAVORITE, VENT).
-  SET_LIGHT_STATE,        ///< set_light_position call (binary extremes or a dimmed position).
-  SET_LOCK_STATE,         ///< set_lock_state call (locked/unlocked).
-  SET_SWITCH_STATE,       ///< set_switch_state call (binary on/off).
-  SET_FAN_POSITION,       ///< set_fan_position call (heat level of an exterior heater as an IO position).
-  ONEWAY_COMMAND,         ///< 1W named command sent as a controller identity.
-  ONEWAY_POSITION,        ///< 1W numeric position sent as a controller identity.
-  ONEWAY_ENROLL,          ///< 1W add-controller (0x30) registering an identity.
-  ONEWAY_UNENROLL,        ///< 1W remove-controller (0x39) un-registering an identity.
-  REQUEST_STATUS,         ///< request_device_status call (poll for current position).
-  REQUEST_NAME,           ///< request_device_name call (poll for stored device name).
-  REQUEST_LIMITATION,     ///< request_device_limitation call (read the device's minimum limitation).
-  REQUEST_SUN_LEVEL,      ///< request_device_sun_level call (subscribe to EVENT_LOCAL_SENSOR, read the answer).
-  REQUEST_BATTERY_LEVEL,  ///< request_device_battery_level call (subscribe to EVENT_BATTERY_LEVEL_CHANGE, read the
-                          ///< answer).
-  DISCOVER_AND_PAIR,      ///< discover_and_pair call (starts 3-phase pairing flow).
+  SET_POSITION,            ///< set_device_position call (position 0–100 or special values).
+  SET_TILT,                ///< set_device_tilt call (tilt percentage 0–100).
+  SET_POSITION_AND_TILT,   ///< Combined set_device_position_and_tilt call.
+  DEVICE_COMMAND,          ///< Named device command (STOP, FAVORITE, VENT).
+  SET_LIGHT_STATE,         ///< set_light_position call (binary extremes or a dimmed position).
+  SET_LOCK_STATE,          ///< set_lock_state call (locked/unlocked).
+  SET_SWITCH_STATE,        ///< set_switch_state call (binary on/off).
+  SET_FAN_POSITION,        ///< set_fan_position call (heat level of an exterior heater as an IO position).
+  ONEWAY_COMMAND,          ///< 1W named command sent as a controller identity.
+  ONEWAY_POSITION,         ///< 1W numeric position sent as a controller identity.
+  ONEWAY_ENROLL,           ///< 1W add-controller (0x30) registering an identity.
+  ONEWAY_UNENROLL,         ///< 1W remove-controller (0x39) un-registering an identity.
+  REQUEST_STATUS,          ///< request_device_status call (poll for current position).
+  REQUEST_NAME,            ///< request_device_name call (poll for stored device name).
+  REQUEST_LIMITATION,      ///< request_device_limitation call (read the device's minimum limitation).
+  REQUEST_SUN_LEVEL,       ///< request_device_sun_level call (subscribe to EVENT_LOCAL_SENSOR, read the answer).
+  REQUEST_BATTERY_LEVEL,   ///< request_device_battery_level call (subscribe to EVENT_BATTERY_LEVEL_CHANGE, read the
+                           ///< answer).
+  REQUEST_DEVICE_READING,  ///< request_device_reading call (read the data object slice of one named reading).
+  DISCOVER_AND_PAIR,       ///< discover_and_pair call (starts 3-phase pairing flow).
 };
 
 /// @brief A single queued operation to be dispatched from loop().
@@ -59,13 +60,15 @@ struct PendingOperation {
   uint8_t position{0};                       ///< Position/tilt value (0–100) or binary state (ON=0, OFF=100).
   uint8_t tilt{0};                           ///< Tilt value for SET_POSITION_AND_TILT (0–100).
   CoverCommand command{CoverCommand::STOP};  ///< Named command for DEVICE_COMMAND operations.
+  uint8_t reading{0};                        ///< Number of the reading (DeviceReading) for REQUEST_DEVICE_READING.
 };
 
 /// @brief Serialized pending-operation queue with coalescing, deduplication, and two-band ordering.
 ///
 /// **Ordering:** DISCOVER_AND_PAIR > control operations > background polls.
 /// Control operations (SET_*, DEVICE_COMMAND) are inserted before any queued background polls
-/// (REQUEST_STATUS, REQUEST_NAME, REQUEST_LIMITATION, REQUEST_SUN_LEVEL, REQUEST_BATTERY_LEVEL) so user-visible
+/// (REQUEST_STATUS, REQUEST_NAME, REQUEST_LIMITATION, REQUEST_SUN_LEVEL, REQUEST_BATTERY_LEVEL,
+/// REQUEST_DEVICE_READING) so user-visible
 /// commands execute with minimum queue latency.
 /// DISCOVER_AND_PAIR always front-inserts ahead of all other entries.
 ///
@@ -80,7 +83,8 @@ struct PendingOperation {
 /// Deduplication rules:
 /// - At most one REQUEST_STATUS per device.
 /// - At most one REQUEST_NAME per device.
-/// - At most one REQUEST_LIMITATION, one REQUEST_SUN_LEVEL and one REQUEST_BATTERY_LEVEL per device.
+/// - At most one REQUEST_LIMITATION, one REQUEST_SUN_LEVEL and one REQUEST_BATTERY_LEVEL per device, and one
+///   REQUEST_DEVICE_READING per device and reading.
 /// - At most one DISCOVER_AND_PAIR (every pending background poll is flushed
 ///   and the discover entry is pushed to the front to minimize pairing-window latency).
 ///
@@ -162,6 +166,12 @@ class OperationQueue {
   /// Enqueue REQUEST_BATTERY_LEVEL, suppressing duplicates.
   /// @return true if pushed, false if a duplicate was already pending.
   bool enqueue_request_battery_level(const std::string &device_id);
+
+  /// Enqueue REQUEST_DEVICE_READING, suppressing a duplicate of the same reading of the same device.
+  /// @param device_id Device whose reading is read.
+  /// @param reading Number of the reading (DeviceReading).
+  /// @return true if pushed, false if a duplicate was already pending.
+  bool enqueue_request_device_reading(const std::string &device_id, uint8_t reading);
 
   // --- Pairing (dedup + priority front-push) ---
 

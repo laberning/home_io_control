@@ -791,8 +791,16 @@ void DiagnosticProbes::read_object_(const IoDevice &dev, const std::string &prob
       result.message +=
           open.status == TRANSFER_STATUS_NOTHING_TO_READ ? " [object is empty (status 7)]" : " [object is empty]";
       return;
+    // Named apart because a scheduled read treats them apart (ADR 0102): a declined open is read again, a missing
+    // object (error reply or status 3) or a hub-side refusal ends the reading until the next boot.
+    case TransferOutcome::DECLINED:
+      result.message += " [device declined the open]";
+      return;
+    case TransferOutcome::NO_SUCH_OBJECT:
+      result.message += " [the device does not keep this object]";
+      return;
     case TransferOutcome::REFUSED:
-      result.message += " [device refused the read]";
+      result.message += " [the hub refused the open]";
       return;
     case TransferOutcome::TOO_LONG:
       result.message += " [longer than " + std::to_string(recipe.max_bytes) + " bytes, closed unread]";

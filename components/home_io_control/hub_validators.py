@@ -20,6 +20,9 @@ import esphome.config_validation as cv
 from esphome.const import (
     CONF_CS_PIN,
     CONF_DEVICE_ID,
+    CONF_ID,
+    CONF_NAME,
+    CONF_PLATFORM,
     DEVICE_CLASS_AWNING,
     DEVICE_CLASS_BLIND,
     DEVICE_CLASS_CURTAIN,
@@ -35,13 +38,16 @@ from .hub_names import (
     CONF_FEM,
     CONF_FEM_EN_PIN,
     CONF_FEM_PA_PIN,
+    CONF_IO_DEVICE_ID,
     CONF_RADIO_TYPE,
     CONF_TX_POWER,
     CONF_VFEM_PIN,
+    DEVICE_BOUND_DOMAINS,
     MIN_BATTERY_LEVEL_POLL_INTERVAL_MS,
     MIN_RAIN_SENSOR_POLL_INTERVAL_MS,
     MIN_SUN_LEVEL_POLL_INTERVAL_MS,
     MIN_STATUS_POLL_INTERVAL_MS,
+    MIN_DEVICE_READING_INTERVAL_MS,
     MIN_STATUS_REFRESH_INTERVAL_MS,
     home_io_control_ns,
 )
@@ -269,14 +275,18 @@ FEATURES = (
     "OCCUPANCY",
     "ENERGY_METER",
     "RUN_TIMERS",
+    "NO_STATUS_READ",
 )
 
 # Python's mirror of the table of named device readings (proto_device_readings.cpp), by the enumerator name of
 # DeviceReading: the capability a device needs ("feature"), where the value comes from ("source": "register" for one
-# private register of a heater, "derived" for a value worked out from other readings), the registers the hub's poll
-# reads for it ("registers", by HeatingFunction name), and what the codegen builds for it: the YAML "key" under the
-# main entity (None where no key declares it), the entity kind ("sensor", "binary_sensor" or "switch") and the Home
-# Assistant metadata of the entity. tests/sync/device_features_sync_test.cpp checks names, capabilities, source kinds
+# private register of a heater, "derived" for a value worked out from other readings, "data_object" for a slice of a
+# data object read on a schedule), the registers the hub's poll reads for it ("registers", by HeatingFunction name;
+# none for a data object), and what the codegen builds for it: the YAML "key" under the main entity (None where no key
+# declares it), the entity kind ("sensor", "binary_sensor" or "switch") and the Home Assistant metadata of the entity.
+# A "data_object" reading is offered by the `sensor:` platform, the register and derived ones by `climate:`; it also
+# carries "update_interval_ms", the interval its YAML key reads at when the entry sets none. The recipe, offset, byte
+# range and codec of a data object are C++ only. tests/sync/device_features_sync_test.cpp checks names, capabilities, source kinds
 # and registers against the C++ table; the entity fields are Python-only, since C++ never needs them. One entry per
 # line: the sync test parses this file and reads no expressions.
 DEVICE_READINGS = {
@@ -619,6 +629,20 @@ def validate_system_key(value):
     return value
 
 
+def declared_device_entries(full_config):
+    """Yield (domain, entry, owner name) for every `platform: home_io_control` entry of a device-bound domain.
+
+    The domains in DEVICE_BOUND_DOMAINS are shared with every other component that provides such a platform, and
+    those entries have nothing to do with this component, so only ours are yielded. The owner name (the entry's
+    name, else its ID) is what a whole-YAML check prints to point at the entry.
+    """
+    for domain in DEVICE_BOUND_DOMAINS:
+        for entry in full_config.get(domain, []):
+            if not isinstance(entry, dict) or entry.get(CONF_PLATFORM) != "home_io_control":
+                continue
+            yield domain, entry, entry.get(CONF_NAME) or entry.get(CONF_ID) or "<unnamed>"
+
+
 def validate_device_id(value):
     """Validate io_device_id as exactly 6 hex characters (3 bytes)."""
     value = cv.string_strict(value).upper()
@@ -716,6 +740,13 @@ def validate_battery_level_poll_interval(value):
     """Validate battery_level_poll_interval is at least MIN_BATTERY_LEVEL_POLL_INTERVAL_MS."""
     return _validate_min_interval(
         value, MIN_BATTERY_LEVEL_POLL_INTERVAL_MS, "battery_level_poll_interval"
+    )
+
+
+def validate_device_reading_interval(value):
+    """Validate a data-object reading's update_interval is at least MIN_DEVICE_READING_INTERVAL_MS."""
+    return _validate_min_interval(
+        value, MIN_DEVICE_READING_INTERVAL_MS, "update_interval"
     )
 
 

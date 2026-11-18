@@ -416,7 +416,8 @@ void apply_name_response(IoDevice &dev, const IoFrame &frame) {
 }  // namespace
 
 void IOHomeControlComponent::begin_status_poll_tracking_(const std::string &device_id, uint32_t initial_delay_ms) {
-  if (this->get_device(device_id) == nullptr)
+  const IoDevice *dev = this->get_device(device_id);
+  if (dev == nullptr || !detail::device_reads_status(*dev))
     return;
   this->poll_policy_.begin_tracking(device_id, initial_delay_ms, millis());
 }
@@ -481,8 +482,8 @@ void IOHomeControlComponent::schedule_device_polls_(const std::vector<std::strin
 void IOHomeControlComponent::act_on_foreign_frame_(const std::string &device_id, ForeignFrameKind kind,
                                                    const std::string &controller, uint8_t cmd) {
   const IoDevice *dev = this->get_device(device_id);
-  if (dev == nullptr)
-    return;
+  if (dev == nullptr || !detail::device_reads_status(*dev))
+    return;  // a device with no status read is never polled after another controller's traffic
   const uint32_t now = millis();
   const char *what = kind == ForeignFrameKind::DEVICE_CHALLENGE_TO_OTHER ? "challenge" : command_name(cmd);
   switch (this->poll_policy_.on_foreign_frame(device_id, kind, controller, cmd, now, dev->last_status)) {

@@ -58,9 +58,11 @@ CONF_IO_DEVICE_ID = "io_device_id"
 CONF_LINKED_REMOTES = "linked_remotes"
 CONF_IO_DEVICE_TYPE = "io_device_type"
 # The ESPHome platform domains whose entries bind to a hub device and so carry an io_device_id: or
-# a linked_remotes: entry. button:/number:/select:/sensor:/text_sensor: are either not
-# device-bound or, for this component, hub-level only.
-DEVICE_BOUND_DOMAINS = ("cover", "light", "lock", "switch", "fan", "climate", "water_heater")
+# a linked_remotes: entry. button:/number:/select:/text_sensor: are either not device-bound or, for
+# this component, hub-level only. sensor: is device-bound only through the `platform: home_io_control`
+# entry that declares a device with no other main entity (sensor.py); the companion sensors are not
+# entries of the user's YAML.
+DEVICE_BOUND_DOMAINS = ("cover", "light", "lock", "switch", "fan", "climate", "water_heater", "sensor")
 CONF_INITIAL_SEQUENCE = "initial_sequence"
 CONF_COMMANDS = "commands"
 # Per-identity 1W wire overrides (ADR 0031). execute_acei: overrides the manufacturer-derived
@@ -107,6 +109,9 @@ MIN_RAIN_SENSOR_POLL_INTERVAL_MS = 60000
 MIN_SUN_LEVEL_POLL_INTERVAL_MS = 60000
 MIN_BATTERY_LEVEL_POLL_INTERVAL_MS = 60000
 MIN_STATUS_REFRESH_INTERVAL_MS = 60000
+# Shortest update_interval of a data-object reading; the hub raises a shorter one to the same value
+# (DEVICE_READING_MIN_INTERVAL_MS in periodic_poll_policy.h).
+MIN_DEVICE_READING_INTERVAL_MS = 300000
 
 # Internal config key for the "Recover System Key" companion switch ID (injected by
 # post-validator, same pattern as tuning.py's companion entity IDs — ESPHome 2026.x sizes the

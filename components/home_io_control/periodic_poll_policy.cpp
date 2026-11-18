@@ -30,6 +30,12 @@ void PeriodicPollPolicy::set_interval(const std::string &device_id, uint32_t int
   e.polling_retry = false;
 }
 
+void PeriodicPollPolicy::set_first_poll(const std::string &device_id, uint32_t delay_ms, uint32_t now) {
+  const auto it = entries_.find(device_id);
+  if (it != entries_.end())
+    it->second.next_poll = now + delay_ms;
+}
+
 uint32_t PeriodicPollPolicy::get_interval(const std::string &device_id) const {
   const auto it = entries_.find(device_id);
   return it != entries_.end() ? it->second.interval_ms : 0;

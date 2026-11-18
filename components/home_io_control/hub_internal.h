@@ -57,6 +57,15 @@ inline bool known_device_matches_entity_class(const IoDevice &dev, DeviceCapabil
   return dev.type == DeviceType::UNKNOWN || device_capability_class(dev.type, dev.subtype) == expected;
 }
 
+/// @brief Does the device kind answer a status read at all?
+/// @details False for a kind with device_feature::NO_STATUS_READ, which keeps its values in data objects: the hub
+///          never arms, queues or sends a status poll for it (the request after boot, a refresh, the poll after
+///          another controller's traffic). The one place that rule lives.
+/// @param dev IoDevice to check.
+inline bool device_reads_status(const IoDevice &dev) {
+  return !has_feature(dev.features, device_feature::NO_STATUS_READ);
+}
+
 /// @brief Does the device support status requests?
 /// UNKNOWN devices pass through.
 /// @param dev IoDevice to check.
@@ -65,9 +74,10 @@ inline bool known_device_matches_entity_class(const IoDevice &dev, DeviceCapabil
 inline bool known_device_supports_status_requests(const IoDevice &dev) {
   // A heater is polled over its register protocol rather than with the 0x03 status request, but it
   // is polled all the same, and so is a water heater (HeaterController::poll()).
-  return dev.type == DeviceType::UNKNOWN || device_takes_execute_position(dev.type, dev.subtype) ||
-         device_supports_climate_control(dev.type, dev.subtype) ||
-         has_feature(dev.features, device_feature::WATER_HEATER);
+  return device_reads_status(dev) &&
+         (dev.type == DeviceType::UNKNOWN || device_takes_execute_position(dev.type, dev.subtype) ||
+          device_supports_climate_control(dev.type, dev.subtype) ||
+          has_feature(dev.features, device_feature::WATER_HEATER));
 }
 
 /// @brief Does the device report its movement through status replies?

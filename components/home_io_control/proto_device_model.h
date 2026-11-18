@@ -15,6 +15,7 @@
 #include "proto_heating.h"
 #include "proto_sizes.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -359,6 +360,44 @@ class HeatingOptInReads {
   Mask absent_{0};
 };
 
+/// @brief The values of the readings a device keeps in data objects, and which of them the device does not have.
+/// @details Indexed by a slot, the number of the reading in the reading table (DeviceReading, proto_device_readings.h;
+///          a static_assert there keeps every reading within SLOTS). Runtime only, until the next boot. A slot is in
+///          one of three states: never read, holding a value, or absent (the device answered the open with an error
+///          reply, or the hub cannot ask for the object, so the hub reads it no more).
+struct DeviceReadingValues {
+  static constexpr size_t SLOTS = 16;  ///< Number of readings the store can hold.
+
+  /// @brief Keep a value; the slot is no longer absent.
+  void store(size_t slot, float value) {
+    if (slot >= SLOTS)
+      return;
+    this->values_[slot] = value;
+    this->held_ |= mask_of(slot);
+    this->absent_ &= static_cast<uint16_t>(~mask_of(slot));
+  }
+  /// @brief Mark the device as not having this reading; a value held before is dropped.
+  void mark_absent(size_t slot) {
+    if (slot >= SLOTS)
+      return;
+    this->absent_ |= mask_of(slot);
+    this->held_ &= static_cast<uint16_t>(~mask_of(slot));
+  }
+  /// @return The value, or nullopt when never read, absent or out of range.
+  [[nodiscard]] std::optional<float> value(size_t slot) const {
+    return slot < SLOTS && (this->held_ & mask_of(slot)) != 0 ? std::optional<float>{this->values_[slot]}
+                                                              : std::nullopt;
+  }
+  /// @return true once the device was found not to have this reading.
+  [[nodiscard]] bool absent(size_t slot) const { return slot < SLOTS && (this->absent_ & mask_of(slot)) != 0; }
+
+ private:
+  static constexpr uint16_t mask_of(size_t slot) { return static_cast<uint16_t>(1U << slot); }
+  float values_[SLOTS]{};
+  uint16_t held_{0};    ///< Bit per slot: a value is stored.
+  uint16_t absent_{0};  ///< Bit per slot: the device does not have the reading.
+};
+
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
   uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
@@ -484,6 +523,8 @@ struct IoDevice {
   DhwReadings dhw{};                     ///< What the hub has read from a water heater (device_feature::WATER_HEATER):
                                          ///< family-0x00 registers and the status reply's target. Set only from
                                          ///< decoded replies; stays "never read" for every other device type.
+  DeviceReadingValues reading_values{};  ///< What the hub has read from the device's data objects, by reading
+                                         ///< (reading_value()); kept across DeviceRegistry::put().
   bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
                                  ///< line names the level even when the device reports none.
   bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every

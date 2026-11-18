@@ -92,6 +92,10 @@ enum class DeviceFeature : uint8_t {
   /// \todo Experimental: read on Atlantic Adelis units (issue #202); confirm on a second model and check
   ///       that a dryer without the registers answers them empty.
   RUN_TIMERS,
+  /// A device kind that answers no status read: a device that keeps its values in data objects and has no state to
+  /// poll for. The hub never arms or queues a status poll for it (the request after boot, a refresh, a poll
+  /// after another controller's traffic); only its readings are read, on their own schedule.
+  NO_STATUS_READ,
   COUNT,  ///< Not a capability: the number of capabilities, for the storage check of DeviceFeatures.
 };
 

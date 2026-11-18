@@ -703,19 +703,155 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
     }
     for name, entry in v.DEVICE_READINGS.items():
         assert entry["feature"] in v.FEATURES, name
-        assert entry["source"] in ("register", "derived"), name
-        assert entry["registers"], name
+        assert entry["source"] in ("register", "derived", "data_object"), name
+        assert bool(entry["registers"]) == (entry["source"] != "data_object"), name
+        if entry["source"] == "data_object":
+            assert entry["update_interval_ms"] >= v.MIN_DEVICE_READING_INTERVAL_MS, name
         if entry["key"] is not None:
             assert entry["entity"] in ("sensor", "binary_sensor", "switch"), name
             assert entry["feature"] in v.READING_FEATURE_HINTS, name
-    schema_keys = {str(key) for key in pc.reading_keys_schema()}
+    schema_keys = {str(key) for key in pc.reading_keys_schema(pc.HEATER_READING_SOURCES)}
     assert schema_keys == {entry["key"] for entry in keyed.values()}
+    assert not pc.reading_keys_schema(pc.DATA_OBJECT_READING_SOURCES), "no production reading is a data object yet"
     try:
         pc._reading_entity_schema({"key": "x", "entity": None})
     except ValueError:
         pass
     else:
         raise AssertionError("a reading with a key and no entity kind must not build a schema")
+
+
+def with_data_object_reading(body):
+    """Run `body(sensor_module)` with the energy reading mirrored as a data-object reading, the first kind the
+    `sensor:` platform offers; the production mirror has no such row until a device needs one. The mirror is
+    restored afterwards, and the platform schema is built after the change."""
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import sensor as sensor_platform
+
+    original = v.DEVICE_READINGS["ENERGY_TOTAL"]
+    v.DEVICE_READINGS["ENERGY_TOTAL"] = {
+        "feature": "ENERGY_METER",
+        "source": "data_object",
+        "registers": (),
+        "key": "energy",
+        "entity": "sensor",
+        "unit": "kWh",
+        "accuracy": 0,
+        "device_class": "energy",
+        "state_class": "total_increasing",
+        "update_interval_ms": 3600000,
+    }
+    try:
+        return body(sensor_platform)
+    finally:
+        v.DEVICE_READINGS["ENERGY_TOTAL"] = original
+
+
+_SENSOR_ENTRIES = []
+
+
+def sensor_entry(**extra):
+    """The user-visible keys of a `sensor:` entry for a heater that counts its energy (a radiator). Every call gives
+    the entry and its energy key a name of their own: ESPHome rejects a name used twice in one process."""
+    _SENSOR_ENTRIES.append(None)
+    number = len(_SENSOR_ENTRIES)
+    if "energy" in extra:
+        extra = {**extra, "energy": {"name": f"Energy {number}"}}
+    return {
+        "name": f"Counter {number}",
+        "io_device_id": "ABC123",
+        "io_device_type": "electrical_heater",
+        "io_subtype": 1,
+        **extra,
+    }
+
+
+@case("platform_common.validate_reading_keys")
+def a_sensor_only_device_takes_the_numeric_readings_of_its_kind_from_the_mirror():
+    """The `sensor:` platform declares a device with no other main entity: it offers the data-object readings'
+    keys, takes an update_interval, hides its own entity and accepts a key only where the kind has the capability."""
+    import esphome.config_validation as cv
+    from esphome.const import CONF_INTERNAL
+
+    def body(sensor_platform):
+        schema = sensor_platform._config_schema()
+        entry = {"energy": {"name": "Energy"}, "update_interval": "1h"}
+        checked = schema(sensor_entry(**entry))
+        assert checked[CONF_INTERNAL] is True, "the declaration entity shows nothing"
+        assert checked["update_interval"].total_milliseconds == 3600000
+        assert "energy" in checked
+        # A device without the reading's capability is told what to declare.
+        try:
+            schema({**sensor_entry(**entry), "io_device_type": "roller_shutter", "io_subtype": 0})
+        except cv.Invalid as err:
+            assert "energy needs a heater that counts its energy" in str(err), str(err)
+        else:
+            raise AssertionError("a roller shutter has no energy counter")
+        # A kind that is declared nowhere offers no key at all.
+        undeclared = {key: value for key, value in sensor_entry(**entry).items() if not key.startswith("io_s")}
+        del undeclared["io_device_type"]
+        try:
+            schema(undeclared)
+        except cv.Invalid:
+            pass
+        else:
+            raise AssertionError("an undeclared kind must not take a reading key")
+        # A reading that is a data object is not offered to a climate entry, which reads heater registers.
+        from esphome.components.home_io_control import platform_common as pc
+
+        assert "energy" not in {str(key) for key in pc.reading_keys_schema(pc.HEATER_READING_SOURCES)}
+
+    with_data_object_reading(body)
+
+
+@case("hub_validators._validate_min_interval")
+def a_data_object_reading_is_read_no_more_often_than_every_five_minutes():
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import hub_validators as v
+
+    assert v.validate_device_reading_interval("5min").total_milliseconds == 300000
+    expect_invalid(v.validate_device_reading_interval, "4min", "update_interval must be at least 300000ms")
+
+
+@case()
+def a_reading_key_asks_for_its_data_object_read_with_the_mirrors_default_interval():
+    """The code the platform emits for a reading names the mirror's default interval; the entry's update_interval
+    reaches the entity on its own, as ESPHome's set_update_interval()."""
+    import asyncio
+
+    import esphome.codegen as cg
+    from esphome.components.home_io_control import platform_common as pc
+
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        def add_data_object_reading(self, reading, interval_ms):
+            self.calls.append(interval_ms)
+
+    class Entity:
+        def set_reading(self, reading):
+            return None
+
+    async def emit():
+        recorder = Recorder()
+        original_add, original_create = cg.add, pc.create_user_companion
+
+        async def create_entity(*args, **kwargs):
+            return Entity()
+
+        cg.add = lambda expression: None
+        pc.create_user_companion = create_entity
+        try:
+            await pc.reading_keys_to_code(recorder, None, {"energy": {}})
+        finally:
+            cg.add, pc.create_user_companion = original_add, original_create
+        return recorder.calls
+
+    def body(_sensor_platform):
+        assert asyncio.run(emit()) == [3600000], "the mirror's default"
+
+    with_data_object_reading(body)
 
 
 @case()

@@ -259,6 +259,14 @@ climate:
     io_device_id: "FEEB27"
     io_device_type: "heat_pump"
 
+sensor:
+  # A sensor-only entry declares a device that has no cover, light or climate entry. The production reading table has
+  # no data-object reading yet, so the entry carries no reading key; it compiles the platform and its schedule hook.
+  - platform: home_io_control
+    name: "Test Sensor Only Device"
+    io_device_id: "FEEB30"
+    update_interval: 1h
+
 water_heater:
   # Experimental water heater platform: a domestic hot water heater read over its family-0x00 registers,
   # with every opt-in companion (ADR 0068).

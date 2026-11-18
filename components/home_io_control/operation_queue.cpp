@@ -12,7 +12,7 @@ namespace home_io_control {
 bool OperationQueue::is_background_op(PendingOperationType t) {
   return t == PendingOperationType::REQUEST_STATUS || t == PendingOperationType::REQUEST_NAME ||
          t == PendingOperationType::REQUEST_LIMITATION || t == PendingOperationType::REQUEST_SUN_LEVEL ||
-         t == PendingOperationType::REQUEST_BATTERY_LEVEL;
+         t == PendingOperationType::REQUEST_BATTERY_LEVEL || t == PendingOperationType::REQUEST_DEVICE_READING;
 }
 
 void OperationQueue::push_control_(PendingOperation op) {
@@ -147,6 +147,17 @@ bool OperationQueue::enqueue_request_sun_level(const std::string &device_id) {
 
 bool OperationQueue::enqueue_request_battery_level(const std::string &device_id) {
   return enqueue_background_unique_(PendingOperationType::REQUEST_BATTERY_LEVEL, device_id);
+}
+
+bool OperationQueue::enqueue_request_device_reading(const std::string &device_id, uint8_t reading) {
+  for (const auto &op : queue_) {
+    if (op.type == PendingOperationType::REQUEST_DEVICE_READING && op.device_id == device_id && op.reading == reading)
+      return false;
+  }
+  PendingOperation op{PendingOperationType::REQUEST_DEVICE_READING, device_id, 0};
+  op.reading = reading;
+  queue_.push_back(std::move(op));
+  return true;
 }
 
 bool OperationQueue::enqueue_discover_and_pair() {

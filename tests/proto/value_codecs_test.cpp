@@ -55,6 +55,16 @@ TEST(ValueCodecs, WholeUnitsInABigEndianWordStartWithTheMostSignificantByte) {
   EXPECT_FLOAT_EQ(*decode(ValueCodec::U16_BE, {0xFF, 0xFF}), 65535.0F) << "wider than a signed 16-bit value";
 }
 
+TEST(ValueCodecs, AMarkedWordCarriesANumberOnlyBehindThePresentMarker) {
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::MARKED_U16_BE, {0x80, 0x0C, 0xBE}), 3262.0F);
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::MARKED_U16_BE, {0x80, 0xFF, 0xFF}), 65535.0F)
+      << "a full word behind the present marker is a number";
+  EXPECT_FALSE(decode(ValueCodec::MARKED_U16_BE, {0x81, 0xFF, 0xFF}).has_value()) << "the device's no-value pattern";
+  EXPECT_FALSE(decode(ValueCodec::MARKED_U16_BE, {0x00, 0x0C, 0xBE}).has_value()) << "any other marker";
+  EXPECT_FALSE(decode(ValueCodec::MARKED_U16_BE, {0x80, 0x0C}).has_value()) << "a cut-off value";
+  EXPECT_EQ(value_codec_length(ValueCodec::MARKED_U16_BE), 3u);
+}
+
 TEST(ValueCodecs, APairShowsItsFirstByteOnly) {
   EXPECT_FLOAT_EQ(*decode(ValueCodec::FIRST_BYTE_OF_PAIR, {0x3C, 0xB4}), 60.0F);
 }
@@ -78,7 +88,7 @@ TEST(ValueCodecs, NoneNeverDecodes) {
   EXPECT_FALSE(decode(ValueCodec::NONE, {0x01, 0x02}).has_value());
 }
 
-TEST(ValueCodecs, EveryCodecReadsOneOrTwoBytes) {
+TEST(ValueCodecs, EveryCodecReadsOneTwoOrThreeBytes) {
   for (const ValueCodec codec : {ValueCodec::BINARY, ValueCodec::BOUNDED_BYTE})
     EXPECT_EQ(value_codec_length(codec), 1u);
   for (const ValueCodec codec : {ValueCodec::TENTHS_U16, ValueCodec::TENTHS_U16_OR_ZERO, ValueCodec::HUNDREDTHS_S16,

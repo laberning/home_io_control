@@ -24,7 +24,7 @@
 /// refuse anything outside TRANSFER_RECIPES, and nothing here builds the write twin of the block.
 ///
 /// The class reaches the hub through TransferReaderHub, four injected calls, and includes no hub header
-/// (ADR 0083, ADR 0084). Nothing in the hub queues a read yet.
+/// (ADR 0083, ADR 0084). The hub queues the reads of its data-object readings (DataObjectSource).
 
 #include "device_registry.h"
 #include "hub_hooks.h"
@@ -71,6 +71,13 @@ class TransferReader {
   /// @param hub The injected hub calls.
   TransferReader(const uint8_t *node_id, std::span<const TransferRecipe> recipes, TransferReaderHub hub)
       : node_id_(node_id), recipes_(recipes), hub_(std::move(hub)) {}
+
+  /// @brief Replace the recipe table: the allowlist of the opens and the rows a read names.
+  /// @details For a test that runs the hub against a recipe table of its own, since the production table has no row
+  ///          for a scheduled read until a device needs one. Call it with no read queued; reads already queued name
+  ///          rows of the old table.
+  /// @param recipes The new table; must outlive the reader.
+  void set_recipes(std::span<const TransferRecipe> recipes) { this->recipes_ = recipes; }
 
   TransferReader(const TransferReader &) = delete;
   TransferReader &operator=(const TransferReader &) = delete;

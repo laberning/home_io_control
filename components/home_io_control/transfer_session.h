@@ -27,15 +27,20 @@ namespace home_io_control {
 
 /// @brief How a transfer read ended.
 enum class TransferOutcome : uint8_t {
-  READ,        ///< Every announced block was read; the data is complete.
-  EMPTY,       ///< The device answered the open and has nothing to read (length 0, or status "nothing to read").
-  REFUSED,     ///< The device refused the open: a status other than accepted/adapted, or an error reply.
-  MALFORMED,   ///< The answer to an open was not a well-formed open answer.
-  TOO_LONG,    ///< The device announced more than the recipe accepts; the transfer was closed unread.
-  INCOMPLETE,  ///< A block went unanswered, came back wrong or overflowed the cap; the data is what was read.
-  NO_ANSWER,   ///< The device never answered the open.
-  NO_DATA,     ///< The device accepted the open (it challenged the request) but sent no answer to it.
-  ABANDONED,   ///< The runner gave the transfer up (another controller started one); closed if it was open.
+  READ,            ///< Every announced block was read; the data is complete.
+  EMPTY,           ///< The device answered the open and has nothing to read (length 0, or status "nothing to read").
+  DECLINED,        ///< The device answered the open with a status other than accepted, adapted or "no such object"
+                   ///< (busy, another transfer open, ...): the object may exist, so asking again later can succeed.
+  NO_SUCH_OBJECT,  ///< The device does not have the object: it answered the open with an error reply or with
+                   ///< TRANSFER_STATUS_NO_SUCH_OBJECT.
+  REFUSED,         ///< The hub itself refused to open: an unknown recipe, an offset the recipe does not list or an
+                   ///< unregistered device. Nothing was sent.
+  MALFORMED,       ///< The answer to an open was not a well-formed open answer.
+  TOO_LONG,        ///< The device announced more than the recipe accepts; the transfer was closed unread.
+  INCOMPLETE,      ///< A block went unanswered, came back wrong or overflowed the cap; the data is what was read.
+  NO_ANSWER,       ///< The device never answered the open.
+  NO_DATA,         ///< The device accepted the open (it challenged the request) but sent no answer to it.
+  ABANDONED,       ///< The runner gave the transfer up (another controller started one); closed if it was open.
 };
 
 /// @brief Short lower-case name of an outcome, for logs.

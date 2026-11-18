@@ -218,7 +218,8 @@ records of the first ten rows, class 2 holds Somfy manufacturer objects.
 | `13` to `29` | 2 | `0xA601`, `0xA602`, `0xA603`, `0xA604`, `0xA606`, `0xA607`, `0xA609`, `0xA60B`, `0xA60D`, `0xA610`, `0xA611`, `0xA612`, `0xA613`, `0xA614`, `0xA615`, `0xA617`, `0xA618` (in this order) | Somfy objects; on an RS100 Solar io 13 of the 17 were read in full, `0xA601` (366 bytes), `0xA613` (431) and `0xA615` (341) have not been read yet, and `0xA606` was lost on the air |
 
 A device that does not keep an object answers the open with status 3 and length 0, and nothing more
-is sent. The byte layouts of indexes `5` to `29` are not decoded; they are listed so their bytes can be
+is sent; the probe reports "the device does not keep this object". Any other refusing status, such as 6
+(busy), is reported as "device declined the open". The byte layouts of indexes `5` to `29` are not decoded; they are listed so their bytes can be
 captured.
 
 Each block costs a transmission with a long preamble on a band with a duty-cycle limit. Read a few

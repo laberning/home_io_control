@@ -254,6 +254,9 @@ static constexpr uint8_t TRANSFER_READ_REQ_DATA_SIZE = 3;   ///< CMD_UNKNOWN4A_R
 static constexpr uint8_t TRANSFER_BLOCK_SIZE = 18;  ///< Data bytes per CMD_UNKNOWN4A_RESP; 18 fills a 32-byte frame.
 static constexpr uint8_t TRANSFER_STATUS_ACCEPTED = 0;  ///< CMD_TRANSFER_OPEN_RESP status: request accepted.
 static constexpr uint8_t TRANSFER_STATUS_ADAPTED = 1;   ///< CMD_TRANSFER_OPEN_RESP status: accepted with changes.
+/// CMD_TRANSFER_OPEN_RESP status 3 with length 0: the device does not keep this object. A Somfy Izymo dimmer
+/// refuses its objects 0 and 1 this way.
+static constexpr uint8_t TRANSFER_STATUS_NO_SUCH_OBJECT = 3;
 /// CMD_TRANSFER_OPEN_RESP status 7 with length 0: nothing to send for this object. An RS100 Solar io
 /// answered its object 0x6105 this way twice, with no other transfer open, so it reads as an empty
 /// object rather than a refusal (issue #156).

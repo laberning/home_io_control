@@ -10,6 +10,7 @@
 #include <set>
 #include <string>
 #include <variant>
+#include <vector>
 
 using namespace esphome::home_io_control;
 
@@ -29,6 +30,52 @@ IoDevice device_with(const HeatingReadings &readings) {
 }
 
 }  // namespace
+
+// === A data-object reading ===
+
+namespace {
+
+constexpr DataObjectSource COUNTER_SLICE{
+    .recipe = 0, .offset = 0x10, .first = 2, .length = 3, .codec = ValueCodec::MARKED_U16_BE, .max_value = 0};
+/// A test table: no production row has a data-object source yet.
+constexpr DeviceReadingRow DATA_TABLE[] = {{.name = "energy_total",
+                                            .source = COUNTER_SLICE,
+                                            .reading = DeviceReading::ENERGY_TOTAL,
+                                            .feature = DeviceFeature::ENERGY_METER}};
+
+}  // namespace
+
+TEST(DeviceReadings, ADataObjectSliceIsDecodedFromItsByteRangeOfTheAnswer) {
+  const std::vector<uint8_t> data = {0xAA, 0xBB, 0x80, 0x0C, 0xBE, 0xFF};
+  EXPECT_EQ(decode_data_object_reading(COUNTER_SLICE, data), 3262.0F) << "the slice starts at byte 2, three long";
+}
+
+TEST(DeviceReadings, ADataObjectSliceWithNoValueOrBeyondTheDataIsNoValue) {
+  EXPECT_FALSE(decode_data_object_reading(COUNTER_SLICE, std::vector<uint8_t>{0xAA, 0xBB, 0x81, 0xFF, 0xFF}));
+  EXPECT_FALSE(decode_data_object_reading(COUNTER_SLICE, std::vector<uint8_t>{0xAA, 0xBB, 0x80, 0x0C}))
+      << "a cut-off slice";
+  EXPECT_FALSE(decode_data_object_reading(COUNTER_SLICE, std::vector<uint8_t>{0xAA}));
+  EXPECT_FALSE(decode_data_object_reading(COUNTER_SLICE, std::vector<uint8_t>{}));
+}
+
+TEST(DeviceReadings, ADataObjectReadingIsLookedUpInTheDevicesStoreAndPollsNoRegister) {
+  IoDevice dev;
+  EXPECT_FALSE(reading_value(dev, DeviceReading::ENERGY_TOTAL, DATA_TABLE)) << "never read";
+  dev.reading_values.store(reading_slot(DeviceReading::ENERGY_TOTAL), 3262.0F);
+  EXPECT_EQ(reading_value(dev, DeviceReading::ENERGY_TOTAL, DATA_TABLE), 3262.0F);
+  dev.reading_values.mark_absent(reading_slot(DeviceReading::ENERGY_TOTAL));
+  EXPECT_FALSE(reading_value(dev, DeviceReading::ENERGY_TOTAL, DATA_TABLE)) << "absent";
+  EXPECT_TRUE(reading_polled_registers(DATA_TABLE[0]).empty());
+}
+
+TEST(DeviceReadings, AValueStoredAgainAfterBeingAbsentIsHeld) {
+  DeviceReadingValues values;
+  values.mark_absent(3);
+  values.store(3, 7.0F);
+  EXPECT_FALSE(values.absent(3));
+  EXPECT_EQ(values.value(3), 7.0F);
+  EXPECT_FALSE(values.value(DeviceReadingValues::SLOTS)) << "out of range reads as nothing";
+}
 
 // === The table ===
 

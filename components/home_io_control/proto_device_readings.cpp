@@ -95,22 +95,41 @@ std::optional<float> remaining_time_of_active_run(const IoDevice &dev) {
 
 }  // namespace
 
+const DeviceReadingRow *find_device_reading(DeviceReading reading, std::span<const DeviceReadingRow> table) {
+  const auto row = std::ranges::find(table, reading, &DeviceReadingRow::reading);
+  return row != table.end() ? &*row : nullptr;
+}
+
 const DeviceReadingRow *find_device_reading(DeviceReading reading) {
-  const auto *row = std::ranges::find(DEVICE_READINGS, reading, &DeviceReadingRow::reading);
-  return row != std::end(DEVICE_READINGS) ? row : nullptr;
+  return find_device_reading(reading, DEVICE_READINGS);
 }
 
 std::span<const DeviceReadingRow> device_readings() { return DEVICE_READINGS; }
 
-std::optional<float> reading_value(const IoDevice &dev, DeviceReading reading) {
-  const DeviceReadingRow *row = find_device_reading(reading);
+std::optional<float> reading_value(const IoDevice &dev, DeviceReading reading,
+                                   std::span<const DeviceReadingRow> table) {
+  const DeviceReadingRow *row = find_device_reading(reading, table);
   if (row == nullptr)
     return std::nullopt;
-  return std::visit(Overloaded{
-                        [&dev](const HeatingRegisterSource &source) { return dev.heating.reading_of(source.fn); },
-                        [&dev](const DerivedSource &source) { return source.value(dev); },
-                    },
-                    row->source);
+  return std::visit(
+      Overloaded{
+          [&dev](const HeatingRegisterSource &source) { return dev.heating.reading_of(source.fn); },
+          [&dev](const DerivedSource &source) { return source.value(dev); },
+          [&dev, reading](const DataObjectSource &) { return dev.reading_values.value(reading_slot(reading)); },
+      },
+      row->source);
+}
+
+std::optional<float> reading_value(const IoDevice &dev, DeviceReading reading) {
+  return reading_value(dev, reading, DEVICE_READINGS);
+}
+
+std::optional<float> decode_data_object_reading(const DataObjectSource &source, std::span<const uint8_t> data) {
+  if (source.first >= data.size())
+    return std::nullopt;
+  const std::span<const uint8_t> slice =
+      data.subspan(source.first, std::min<size_t>(source.length, data.size() - source.first));
+  return decode_value(source.codec, slice, source.max_value);
 }
 
 std::span<const HeatingFunction> reading_polled_registers(const DeviceReadingRow &row) {
@@ -118,6 +137,7 @@ std::span<const HeatingFunction> reading_polled_registers(const DeviceReadingRow
       Overloaded{
           [](const HeatingRegisterSource &source) { return std::span<const HeatingFunction>{&source.fn, 1}; },
           [](const DerivedSource &source) { return source.polls; },
+          [](const DataObjectSource &) { return std::span<const HeatingFunction>{}; },
       },
       row.source);
 }

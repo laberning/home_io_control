@@ -511,7 +511,7 @@ decisions::AttemptRequest IOHomeControlComponent::cover_poll_attempts_(const std
 
 bool IOHomeControlComponent::request_device_status(const std::string &device_id) {
   auto *dev = this->get_device(device_id);
-  if (dev == nullptr)
+  if (dev == nullptr || !detail::device_reads_status(*dev))
     return false;
 
   // A heater is polled on its own cadence, which continues even when this poll can not run (the hub
@@ -583,7 +583,7 @@ namespace {
 struct PeriodicReading {
   const char *label;        ///< Names the reading in log lines ("sun level") and in count_poll_miss().
   const char *capture_tag;  ///< Tag of the captured reply frame in the component capture log.
-  /// Build the request for @p dev.
+  /// Build the request for @p dev. Null for a data-object reading, which is read by the transfer reader.
   bool (*build)(IoFrame &request, const uint8_t *own, const IoDevice &dev);
   /// Decode an answered poll; @p detail_text receives text for the state-change log line.
   std::optional<uint16_t> (*decode)(const std::string &device_id, const IoFrame &response, std::string &detail_text);
@@ -592,19 +592,33 @@ struct PeriodicReading {
   bool warn_undecoded;
   /// Warn that the device answered the request with an error.
   void (*warn_refused)(const std::string &device_id);
-  /// The value the device record shows now.
-  std::optional<uint16_t> (*shown)(const IoDevice &dev);
+  /// The value the device record shows now. @p reading names the reading of a data-object row (DeviceReading::COUNT
+  /// for the rows that are one reading each).
+  std::optional<float> (*shown)(const IoDevice &dev, DeviceReading reading);
   /// Replace the value the device record shows.
-  void (*store)(IoDevice &dev, const std::optional<uint16_t> &reading);
+  void (*store)(IoDevice &dev, DeviceReading reading, const std::optional<float> &value);
   /// A value as the state-change log line prints it.
-  std::string (*format)(const std::optional<uint16_t> &reading);
+  std::string (*format)(const std::optional<float> &reading);
   /// Whether an answer equal to the shown value is logged at debug level.
   bool log_unchanged;
+  /// Whether a reading stays shown while polls miss. Else it is dropped once PERIODIC_POLL_FAILURES_BEFORE_UNKNOWN
+  /// misses are in a row; a counter that only ever grows keeps its last value.
+  bool keep_when_stale{false};
 };
 
+/// A stored level or enumeration as the number a PeriodicReading row shows.
+std::optional<float> widen(const std::optional<uint16_t> &value) {
+  return value.has_value() ? std::optional<float>(static_cast<float>(*value)) : std::nullopt;
+}
+
+/// The level or enumeration a PeriodicReading row stores, from the number it shows.
+std::optional<uint16_t> narrow(const std::optional<float> &value) {
+  return value.has_value() ? std::optional<uint16_t>(static_cast<uint16_t>(*value)) : std::nullopt;
+}
+
 /// A numeric reading for the state-change log line: the number followed by @p unit, or "unknown".
-std::string format_level(const std::optional<uint16_t> &reading, const char *unit) {
-  return reading.has_value() ? std::to_string(*reading) + unit : "unknown";
+std::string format_level(const std::optional<float> &reading, const char *unit) {
+  return reading.has_value() ? std::to_string(static_cast<unsigned>(*reading)) + unit : "unknown";
 }
 
 const PeriodicReading RAIN_READING = {
@@ -633,19 +647,20 @@ const PeriodicReading RAIN_READING = {
           ESP_LOGW(detail::TAG, "Device %s answers the limitation read with an error; its rain sensor stays unknown",
                    device_id.c_str());
         },
-    .shown = [](const IoDevice &dev) -> std::optional<uint16_t> {
-      return dev.rain_sensor == RainSensorState::UNKNOWN
-                 ? std::nullopt
-                 : std::optional<uint16_t>(static_cast<uint16_t>(dev.rain_sensor));
+    .shown = [](const IoDevice &dev, DeviceReading) -> std::optional<float> {
+      return dev.rain_sensor == RainSensorState::UNKNOWN ? std::nullopt
+                                                         : std::optional<float>(static_cast<float>(dev.rain_sensor));
     },
     .store =
-        [](IoDevice &dev, const std::optional<uint16_t> &reading) {
-          dev.rain_sensor = reading.has_value() ? static_cast<RainSensorState>(*reading) : RainSensorState::UNKNOWN;
+        [](IoDevice &dev, DeviceReading, const std::optional<float> &reading) {
+          dev.rain_sensor = reading.has_value() ? static_cast<RainSensorState>(static_cast<uint16_t>(*reading))
+                                                : RainSensorState::UNKNOWN;
         },
     .format =
-        [](const std::optional<uint16_t> &reading) {
-          return std::string(rain_sensor_state_name(reading.has_value() ? static_cast<RainSensorState>(*reading)
-                                                                        : RainSensorState::UNKNOWN));
+        [](const std::optional<float> &reading) {
+          return std::string(rain_sensor_state_name(reading.has_value()
+                                                        ? static_cast<RainSensorState>(static_cast<uint16_t>(*reading))
+                                                        : RainSensorState::UNKNOWN));
         },
     .log_unchanged = false,
 };
@@ -668,9 +683,9 @@ const PeriodicReading SUN_READING = {
     },
     .warn_undecoded = true,
     .warn_refused = [](const std::string &device_id) { warn_event_refused(device_id, "sun level"); },
-    .shown = [](const IoDevice &dev) { return dev.sun_level; },
-    .store = [](IoDevice &dev, const std::optional<uint16_t> &reading) { dev.sun_level = reading; },
-    .format = [](const std::optional<uint16_t> &reading) { return format_level(reading, ""); },
+    .shown = [](const IoDevice &dev, DeviceReading) { return widen(dev.sun_level); },
+    .store = [](IoDevice &dev, DeviceReading, const std::optional<float> &reading) { dev.sun_level = narrow(reading); },
+    .format = [](const std::optional<float> &reading) { return format_level(reading, ""); },
     .log_unchanged = true,
 };
 
@@ -687,10 +702,40 @@ const PeriodicReading BATTERY_READING = {
     },
     .warn_undecoded = true,
     .warn_refused = [](const std::string &device_id) { warn_event_refused(device_id, "battery level"); },
-    .shown = [](const IoDevice &dev) { return dev.battery_level; },
-    .store = [](IoDevice &dev, const std::optional<uint16_t> &reading) { dev.battery_level = reading; },
-    .format = [](const std::optional<uint16_t> &reading) { return format_level(reading, " %"); },
+    .shown = [](const IoDevice &dev, DeviceReading) { return widen(dev.battery_level); },
+    .store = [](IoDevice &dev, DeviceReading,
+                const std::optional<float> &reading) { dev.battery_level = narrow(reading); },
+    .format = [](const std::optional<float> &reading) { return format_level(reading, " %"); },
     .log_unchanged = true,
+};
+
+/// Room for a reading's value printed with %g.
+constexpr size_t READING_TEXT_SIZE = 24;
+
+/// A data-object reading (DataObjectSource): the request is a transfer read queued by request_device_reading(), so
+/// there is no frame to build or decode here; the row holds how the value is kept in the device record and shown.
+/// Its value is a number of the reading's own unit, and it stays shown while reads fail (a counter only grows).
+const PeriodicReading DEVICE_READING_ROW = {
+    .label = "device reading",
+    .capture_tag = nullptr,
+    .build = nullptr,
+    .decode = nullptr,
+    .warn_undecoded = false,
+    .warn_refused = nullptr,
+    .shown = [](const IoDevice &dev, DeviceReading reading) { return dev.reading_values.value(reading_slot(reading)); },
+    .store =
+        [](IoDevice &dev, DeviceReading reading, const std::optional<float> &value) {
+          if (value.has_value())
+            dev.reading_values.store(reading_slot(reading), *value);
+        },
+    .format =
+        [](const std::optional<float> &value) {
+          char text[READING_TEXT_SIZE];
+          snprintf(text, sizeof(text), "%g", static_cast<double>(value.value_or(NAN)));
+          return value.has_value() ? std::string(text) : std::string("unknown");
+        },
+    .log_unchanged = true,
+    .keep_when_stale = true,
 };
 
 /// The row of a reading poll (RAIN_SENSOR, SUN_LEVEL or BATTERY_LEVEL).
@@ -700,6 +745,8 @@ const PeriodicReading &periodic_reading_row(IOHomeControlComponent::PeriodicPoll
       return RAIN_READING;
     case IOHomeControlComponent::PeriodicPoll::SUN_LEVEL:
       return SUN_READING;
+    case IOHomeControlComponent::PeriodicPoll::DEVICE_READING:
+      return DEVICE_READING_ROW;
     default:
       return BATTERY_READING;
   }
@@ -751,7 +798,7 @@ bool IOHomeControlComponent::request_periodic_reading_(const std::string &device
   dev = this->registry_.get(device_id);
   if (dev == nullptr)
     return false;
-  std::optional<uint16_t> reading;
+  std::optional<float> reading;
   std::string detail_text;
   if (result == RequestResult::REPLY) {
     // The device transmitted, whatever it said: stamp link health the way the status path does.
@@ -759,7 +806,7 @@ bool IOHomeControlComponent::request_periodic_reading_(const std::string &device
     uint8_t raw[FRAME_MAX_SIZE] = {0};
     const uint8_t raw_len = serialize(response, raw, sizeof(raw));
     detail::log_component_capture(this->radio_, row.capture_tag, raw, raw_len, &response);
-    reading = row.decode(device_id, response, detail_text);
+    reading = widen(row.decode(device_id, response, detail_text));
     if (!reading.has_value() && row.warn_undecoded && policy.first_error_reply(device_id)) {
       char hex[FRAME_LOG_HEX_BUFFER_SIZE];
       bytes_to_hex(response.data, response.data_len, hex, sizeof(hex));
@@ -778,30 +825,106 @@ bool IOHomeControlComponent::request_periodic_reading_(const std::string &device
 }
 
 void IOHomeControlComponent::apply_periodic_reading_(const std::string &device_id, PeriodicPoll reading_kind,
-                                                     const std::optional<uint16_t> &reading,
-                                                     const std::string &detail_text, bool unanswered) {
+                                                     const std::optional<float> &reading,
+                                                     const std::string &detail_text, bool unanswered,
+                                                     DeviceReading data_reading) {
   IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr)
     return;
   const PeriodicReading &row = periodic_reading_row(reading_kind);
   PeriodicPollPolicy &policy = this->periodic_poll_policy_(reading_kind);
-  const std::optional<uint16_t> before = row.shown(*dev);
-  std::optional<uint16_t> now = before;
+  // A data-object reading is scheduled and logged under its own name and key; the others are one per device.
+  const bool is_data = reading_kind == PeriodicPoll::DEVICE_READING;
+  const std::string key = is_data ? device_reading_key(device_id, data_reading) : device_id;
+  const DeviceReadingRow *named = is_data ? find_device_reading(data_reading, this->reading_table_) : nullptr;
+  const char *label = named != nullptr ? named->name : row.label;
+  const std::optional<float> before = row.shown(*dev, data_reading);
+  std::optional<float> now = before;
   if (reading.has_value()) {
-    policy.on_poll_succeeded(device_id);
+    policy.on_poll_succeeded(key);
     now = reading;
-  } else if (count_poll_miss(policy, device_id, unanswered, row.label)) {
+  } else if (count_poll_miss(policy, key, unanswered, label) && !row.keep_when_stale) {
     now.reset();  // the last reading is too old to keep showing
   }
   if (now != before) {
-    ESP_LOGI(detail::TAG, "Device %s: %s %s -> %s%s", device_id.c_str(), row.label, row.format(before).c_str(),
+    ESP_LOGI(detail::TAG, "Device %s: %s %s -> %s%s", device_id.c_str(), label, row.format(before).c_str(),
              row.format(now).c_str(), detail_text.c_str());
-    row.store(*dev, now);
+    row.store(*dev, data_reading, now);
   } else if (reading.has_value() && row.log_unchanged) {
-    ESP_LOGD(detail::TAG, "Device %s: %s %s (unchanged)", device_id.c_str(), row.label, row.format(reading).c_str());
+    ESP_LOGD(detail::TAG, "Device %s: %s %s (unchanged)", device_id.c_str(), label, row.format(reading).c_str());
   }
   // Notify on every outcome: link health moved too, so the link sensors need the update.
   this->notify_device_update_(device_id);
+}
+
+// A data-object reading is not one exchange: the transfer reader walks the object's open, blocks and close between
+// loop passes, so the poll only starts the read and the answer arrives through apply_device_reading_answer_().
+bool IOHomeControlComponent::request_device_reading(const std::string &device_id, DeviceReading reading) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  const DeviceReadingRow *row = find_device_reading(reading, this->reading_table_);
+  const auto *source = row != nullptr ? std::get_if<DataObjectSource>(&row->source) : nullptr;
+  if (dev == nullptr || source == nullptr || !this->initialized_ || dev->reading_values.absent(reading_slot(reading)) ||
+      !has_feature(dev->features, row->feature))
+    return false;
+  // A moving device is left alone, like every periodic poll; asking again soon is cheaper than a whole interval.
+  if (!effective_is_stopped(*dev)) {
+    ESP_LOGD(detail::TAG, "Device %s: %s read deferred, device is moving", device_id.c_str(), row->name);
+    this->device_reading_poll_policy_.defer(device_reading_key(device_id, reading), PERIODIC_POLL_MOVING_RETRY_MS,
+                                            millis());
+    return false;
+  }
+  this->transfer_reader_.read(device_id, source->recipe, source->offset,
+                              [this, device_id, reading](TransferOutcome outcome, const std::vector<uint8_t> &data) {
+                                this->apply_device_reading_answer_(device_id, reading, outcome, data);
+                              });
+  return true;
+}
+
+void IOHomeControlComponent::apply_device_reading_answer_(const std::string &device_id, DeviceReading reading,
+                                                          TransferOutcome outcome, const std::vector<uint8_t> &data) {
+  IoDevice *dev = this->registry_.get(device_id);
+  const DeviceReadingRow *row = find_device_reading(reading, this->reading_table_);
+  const auto *source = row != nullptr ? std::get_if<DataObjectSource>(&row->source) : nullptr;
+  if (dev == nullptr || source == nullptr)
+    return;
+  const std::string key = device_reading_key(device_id, reading);
+  switch (outcome) {
+    case TransferOutcome::READ:
+      // A device that answers with its no-value pattern has answered, but a reading it does not carry; the last
+      // value stays and the poll counts as a miss.
+      this->apply_periodic_reading_(device_id, PeriodicPoll::DEVICE_READING, decode_data_object_reading(*source, data),
+                                    "", false, reading);
+      break;
+    case TransferOutcome::NO_SUCH_OBJECT:
+    case TransferOutcome::REFUSED:
+      // The device says it does not have the object (an error reply or status 3), or the hub cannot ask for it: asking
+      // again would only hold the device for another controller. Absent until the next boot.
+      ESP_LOGW(detail::TAG, "Device %s: no %s to read (%s); it is not read again until the next boot",
+               device_id.c_str(), row->name, transfer_outcome_name(outcome));
+      dev->reading_values.mark_absent(reading_slot(reading));
+      this->device_reading_poll_policy_.set_interval(key, 0, millis(), 0);
+      this->notify_device_update_(device_id);
+      break;
+    case TransferOutcome::NO_ANSWER:
+      // Silence: asked once more soon before it counts, like the other periodic polls.
+      this->apply_periodic_reading_(device_id, PeriodicPoll::DEVICE_READING, std::nullopt, "", true, reading);
+      break;
+    case TransferOutcome::EMPTY:
+    case TransferOutcome::DECLINED:
+      // An empty open or a declined one (busy, another transfer open; not status 3) is a missed read, not proof
+      // the object is missing: the last value stays and the next interval reads again.
+    case TransferOutcome::NO_DATA:
+    case TransferOutcome::MALFORMED:
+    case TransferOutcome::TOO_LONG:
+    case TransferOutcome::INCOMPLETE:
+      // The device answered, but not with this reading's bytes; a retry soon would not change it.
+      this->apply_periodic_reading_(device_id, PeriodicPoll::DEVICE_READING, std::nullopt, "", false, reading);
+      break;
+    case TransferOutcome::ABANDONED:
+      // Another controller needed the device: not the device's failure, so nothing is counted; try again soon.
+      this->device_reading_poll_policy_.defer(key, PERIODIC_POLL_MISS_RETRY_MS, millis());
+      break;
+  }
 }
 
 bool IOHomeControlComponent::request_device_name(const std::string &device_id) {
@@ -953,6 +1076,9 @@ void IOHomeControlComponent::queue_set_device_position_and_tilt(const std::strin
 }
 
 void IOHomeControlComponent::queue_request_device_status(const std::string &device_id) {
+  // Nothing to read, and no rejection to report: such a device is asked for its readings only.
+  if (const IoDevice *dev = this->get_device(device_id); dev != nullptr && !detail::device_reads_status(*dev))
+    return;
   if (queue_guard_rejects(this, device_id, QUEUE_GUARD_STATUS))
     return;
   // Keep at most one pending status poll per device. Without this, an overdue next_update can add
@@ -976,6 +1102,13 @@ void IOHomeControlComponent::queue_request_device_battery_level(const std::strin
   if (this->get_device(device_id) == nullptr)
     return;
   this->op_queue_.enqueue_request_battery_level(device_id);
+}
+
+void IOHomeControlComponent::queue_request_device_reading(const std::string &key) {
+  const auto poll = std::ranges::find(this->device_reading_polls_, key, &DeviceReadingPoll::key);
+  if (poll == this->device_reading_polls_.end() || this->get_device(poll->device_id) == nullptr)
+    return;
+  this->op_queue_.enqueue_request_device_reading(poll->device_id, static_cast<uint8_t>(poll->reading));
 }
 
 void IOHomeControlComponent::queue_request_device_name(const std::string &device_id) {
@@ -1132,6 +1265,9 @@ void IOHomeControlComponent::process_pending_operation_() {
       break;
     case PendingOperationType::REQUEST_BATTERY_LEVEL:
       this->request_device_battery_level(operation.device_id);
+      break;
+    case PendingOperationType::REQUEST_DEVICE_READING:
+      this->request_device_reading(operation.device_id, static_cast<DeviceReading>(operation.reading));
       break;
     case PendingOperationType::DISCOVER_AND_PAIR:
       this->discover_and_pair();

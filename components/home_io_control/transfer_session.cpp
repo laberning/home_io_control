@@ -11,6 +11,10 @@ const char *transfer_outcome_name(TransferOutcome outcome) {
       return "read";
     case TransferOutcome::EMPTY:
       return "empty";
+    case TransferOutcome::DECLINED:
+      return "declined";
+    case TransferOutcome::NO_SUCH_OBJECT:
+      return "no such object";
     case TransferOutcome::REFUSED:
       return "refused";
     case TransferOutcome::MALFORMED:
@@ -104,10 +108,16 @@ void TransferSession::end_open_without_data_(const IoFrame *reply, bool well_for
   }
   TransferOutcome outcome = this->ended_on_accepted_silence_ ? TransferOutcome::NO_DATA : TransferOutcome::NO_ANSWER;
   if (reply != nullptr && !well_formed) {
-    outcome = reply->cmd == CMD_ERROR_RESP ? TransferOutcome::REFUSED : TransferOutcome::MALFORMED;
+    outcome = reply->cmd == CMD_ERROR_RESP ? TransferOutcome::NO_SUCH_OBJECT : TransferOutcome::MALFORMED;
   } else if (well_formed) {
     const bool nothing_to_read = this->open_.status == TRANSFER_STATUS_NOTHING_TO_READ && this->open_.length == 0;
-    outcome = (this->open_.ok() || nothing_to_read) ? TransferOutcome::EMPTY : TransferOutcome::REFUSED;
+    if (this->open_.ok() || nothing_to_read) {
+      outcome = TransferOutcome::EMPTY;
+    } else if (this->open_.status == TRANSFER_STATUS_NO_SUCH_OBJECT) {
+      outcome = TransferOutcome::NO_SUCH_OBJECT;
+    } else {
+      outcome = TransferOutcome::DECLINED;
+    }
   }
   // A device that now and then answers an open empty gets the whole open sequence once more.
   if (outcome == TransferOutcome::EMPTY && this->recipe_->retry_empty_open && !this->retried_) {

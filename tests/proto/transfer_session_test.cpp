@@ -133,25 +133,31 @@ TEST(TransferSession, NothingToReadAndAZeroLengthOpenEndWithoutAnyClose) {
   }
 }
 
-TEST(TransferSession, ARefusedOpenIsRefusedWhetherByStatusOrByErrorReply) {
+TEST(TransferSession, AnErrorReplyAndStatus3MeanNoSuchObjectAndOtherRefusalsAreDeclined) {
   {
     TransferSession session(PLAIN, 0, TABLE);
     next_answer(session, open_answer(0x10, 3, 0));
     EXPECT_TRUE(session.done());
-    EXPECT_EQ(session.outcome(), TransferOutcome::REFUSED);
+    EXPECT_EQ(session.outcome(), TransferOutcome::NO_SUCH_OBJECT);
     EXPECT_TRUE(session.open_answered());
+  }
+  {
+    // Busy / another transfer open: the object may exist, so it stays a declined open.
+    TransferSession session(PLAIN, 0, TABLE);
+    next_answer(session, open_answer(0x10, 6, 0));
+    EXPECT_EQ(session.outcome(), TransferOutcome::DECLINED);
   }
   {
     // A refusal that announces a length is still a refusal: the status says no.
     TransferSession session(PLAIN, 0, TABLE);
     next_answer(session, open_answer(0x10, 2, 40));
-    EXPECT_EQ(session.outcome(), TransferOutcome::REFUSED);
+    EXPECT_EQ(session.outcome(), TransferOutcome::DECLINED);
   }
   {
     TransferSession session(PLAIN, 0, TABLE);
     next_answer(session, reply(CMD_ERROR_RESP, {RESULT_COMMAND_UNKNOWN}));
     EXPECT_TRUE(session.done());
-    EXPECT_EQ(session.outcome(), TransferOutcome::REFUSED);
+    EXPECT_EQ(session.outcome(), TransferOutcome::NO_SUCH_OBJECT);
     EXPECT_FALSE(session.open_answered());
   }
 }
@@ -194,7 +200,7 @@ TEST(TransferSession, TheAcceptedFlagMeansNothingWhenTheDeviceAnswered) {
   const IoFrame answer = open_answer(0x10, 3, 0);
   session.on_answer(&answer, true);  // a reply always wins over the flag
   ASSERT_TRUE(session.done());
-  EXPECT_EQ(session.outcome(), TransferOutcome::REFUSED);
+  EXPECT_EQ(session.outcome(), TransferOutcome::NO_SUCH_OBJECT);
   EXPECT_FALSE(session.ended_on_accepted_silence());
 }
 
@@ -335,7 +341,7 @@ TEST(TransferSession, TheSecondEmptyAnswerEndsAsEmptyAndANonEmptyFailureIsNeverR
     next_silence(session);                          // prepare
     next_answer(session, open_answer(0x00, 6, 0));  // data refused
     ASSERT_TRUE(session.done());
-    EXPECT_EQ(session.outcome(), TransferOutcome::REFUSED);
+    EXPECT_EQ(session.outcome(), TransferOutcome::DECLINED);
   }
 }
 
@@ -432,8 +438,8 @@ TEST(TransferSession, ReadsTheCapturedRs100OpenAnswerInTwentyOneBlocks) {
 
 TEST(TransferSession, OutcomesHaveNames) {
   for (const TransferOutcome outcome :
-       {TransferOutcome::READ, TransferOutcome::EMPTY, TransferOutcome::REFUSED, TransferOutcome::MALFORMED,
-        TransferOutcome::TOO_LONG, TransferOutcome::INCOMPLETE, TransferOutcome::NO_ANSWER, TransferOutcome::NO_DATA,
-        TransferOutcome::ABANDONED})
+       {TransferOutcome::READ, TransferOutcome::EMPTY, TransferOutcome::DECLINED, TransferOutcome::NO_SUCH_OBJECT,
+        TransferOutcome::REFUSED, TransferOutcome::MALFORMED, TransferOutcome::TOO_LONG, TransferOutcome::INCOMPLETE,
+        TransferOutcome::NO_ANSWER, TransferOutcome::NO_DATA, TransferOutcome::ABANDONED})
     EXPECT_STRNE(transfer_outcome_name(outcome), "unknown");
 }

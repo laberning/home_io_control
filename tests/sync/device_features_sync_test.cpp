@@ -57,6 +57,7 @@ const std::map<std::string, DeviceFeature> CPP_FEATURES = {
     {"OCCUPANCY", device_feature::OCCUPANCY},
     {"ENERGY_METER", device_feature::ENERGY_METER},
     {"RUN_TIMERS", device_feature::RUN_TIMERS},
+    {"NO_STATUS_READ", device_feature::NO_STATUS_READ},
 };
 
 /// The names of the capabilities in a set.
@@ -288,7 +289,7 @@ std::string field_text(const std::string &entry, const std::string &field) {
 }
 
 /// The mirror's name of each source kind, in the order of the ReadingSource alternatives.
-constexpr const char *SOURCE_KIND_NAMES[] = {"register", "derived"};
+constexpr const char *SOURCE_KIND_NAMES[] = {"register", "derived", "data_object"};
 static_assert(std::size(SOURCE_KIND_NAMES) == std::variant_size_v<ReadingSource>,
               "a new reading source kind needs its mirror name here and in hub_validators.py DEVICE_READINGS");
 

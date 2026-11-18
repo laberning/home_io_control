@@ -44,6 +44,14 @@ static constexpr uint8_t PERIODIC_POLL_MAX_TRIES = 2;
 /// Consecutive unanswered polls after which the last reading is no longer usable.
 static constexpr uint8_t PERIODIC_POLL_FAILURES_BEFORE_UNKNOWN = 3;
 
+/// Delay of the first read of a data-object reading after boot. A read takes seconds and holds the device, so it
+/// comes after the boot burst and every device's reading starts at the same, predictable time.
+static constexpr uint32_t DEVICE_READING_FIRST_READ_DELAY_MS = 60000;
+/// Shortest interval a data-object reading is read at: a read is an open, a block request per 18 bytes and a close,
+/// each 650 ms apart, and the device serves other controllers too (ADR 0099). A shorter configured interval is
+/// raised to this.
+static constexpr uint32_t DEVICE_READING_MIN_INTERVAL_MS = 300000;
+
 /// @brief Delay of a device's first poll after its interval is set.
 /// @param random A uniformly distributed 32-bit random number.
 /// @return PERIODIC_POLL_INITIAL_DELAY_MS plus an offset in [0, PERIODIC_POLL_INITIAL_SPREAD_MS].
@@ -71,6 +79,9 @@ class PeriodicPollPolicy {
   /// Set the poll interval and schedule the first poll at periodic_poll_first_delay_ms(@p random)
   /// after @p now. 0 removes the device from the schedule.
   void set_interval(const std::string &device_id, uint32_t interval_ms, uint32_t now, uint32_t random);
+  /// Move the first poll of a scheduled device to exactly @p delay_ms after @p now, instead of the random delay
+  /// set_interval() chose. No-op for an unscheduled device.
+  void set_first_poll(const std::string &device_id, uint32_t delay_ms, uint32_t now);
   /// Return the configured interval (0 when the device is not scheduled).
   [[nodiscard]] uint32_t get_interval(const std::string &device_id) const;
 

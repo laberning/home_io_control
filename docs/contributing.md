@@ -131,6 +131,62 @@ Register the page as above: a label `dev_<vendor>_<product>`, and a parent bulle
 pages" block of [Supported devices](supported-devices.md). Then shorten the device's row there to its
 status, at most two sentences and a link to the page.
 
+## Adding a device reading
+
+A reading is one value a device reports that Home Assistant shows as a sensor: an energy counter, an
+occupancy flag, the minutes left of a run. The readings live in one table, so a new one is table rows
+and, at most, one new decoder, never a new entity or new YAML code. The pieces are listed in the order
+you meet them. The structure behind them is described in the
+[Architecture overview](architecture_overview.md), the decisions in
+[ADR 0099](adr/0099-scheduled-transfer-reads-use-one-session-and-a-queued-reader.md),
+[ADR 0100](adr/0100-a-transfer-read-tells-an-accepted-request-without-an-answer-from-silence.md),
+[ADR 0101](adr/0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) and
+[ADR 0102](adr/0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md).
+
+1. **Find where the value lives.** A heater reports it as a private register; some devices keep it in
+   a data object. Read the objects with the [`read_object` probe](diagnostic-probes.md#reading-a-device-object).
+   `read_object <index>:<offset>` reads an object from an offset, and `probe_sweep` walks the offsets
+   of one object between two ends. Note the bytes of the value and what the device sends when it has
+   none, and capture the exchange for the corpus (step 6).
+2. **Add a transfer recipe** (data objects only). A row of `TRANSFER_RECIPES` in `proto_constants.h`,
+   behind the probe's rows, lists the opens that lead to the object, the offsets a read may open at
+   and the most bytes accepted. Only what a recipe names can be opened, and nothing builds a write.
+3. **Add the reading row.** An enumerator of `DeviceReading` and a row of the table in
+   `proto_device_readings.cpp`: its name, the capability a device needs (a `DeviceFeature`) and its
+   source. For a data object the source is a `DataObjectSource`: the recipe, the offset, the byte range
+   of the value in the data read and the codec. Value shapes that exist are in `proto_value_codecs.h`;
+   a counter that starts with a marker byte (`80` then a big-endian number, `81 FF FF` for "no value")
+   is `MARKED_U16_BE`. A new shape is one codec enumerator, one case in `decode_value()` and its test
+   in `tests/proto/value_codecs_test.cpp`.
+4. **Add the mirror row.** The same reading by name in `DEVICE_READINGS` in `hub_validators.py`: its
+   capability, its source (`data_object`), the YAML key, the entity kind, the Home Assistant unit,
+   device class and state class, and for a data object the default `update_interval_ms`, at least five
+   minutes. Add the capability's hint to `READING_FEATURE_HINTS` so the error for a kind without it
+   says what to declare. `tests/sync/device_features_sync_test.cpp` fails until both tables agree.
+5. **Give the device kind the capability.** Add the `DeviceFeature` enumerator the reading names (when
+   it is new), put it on the rows of the type table (`proto_device_types.cpp`) that have it and add its
+   name to `FEATURES` in `hub_validators.py`. A kind that answers no status read also carries
+   `NO_STATUS_READ`, so the hub never polls it for one. A kind that no table row names yet gets its
+   row, and its row in the node type table of [Supported devices](supported-devices.md), which
+   `tests/sync/docs_node_type_table_sync_test.cpp` checks.
+6. **Add the corpus capture.** Frames of the exchange that carries the value, with a provenance note,
+   go under `tests/corpus/` as described in the
+   [corpus README](https://github.com/laberning/home_io_control/blob/main/tests/corpus/README.md). A
+   test in `tests/proto/` decodes them with the new row.
+7. **Write the docs.** A row for the device in [Supported devices](supported-devices.md), marked
+   experimental until a capture or a reporter's hardware confirms the reading, and the reading key on
+   the page of the device. A device that has no other entry is declared by a
+   [`sensor:` entry](configuration/sensor.md).
+
+A reading that comes from a heater's register has no recipe and no offset: its row names the register
+(`HeatingFunction`), and the register table in `proto_heating.cpp` names its codec. The rest is the
+same.
+
+Tests sit on the lowest stage that fits. The codec and the lookup are tested without a radio. The
+schedule and the value store are tested on the hub with a reading table and recipe table of the test's
+own (`tests/hub/hub_device_reading_test.cpp` shows how), since the production tables have no row until
+a device needs one.
+
 ## Pull requests
 
 Pull requests for fixes, tests, documentation, and targeted improvements are welcome.

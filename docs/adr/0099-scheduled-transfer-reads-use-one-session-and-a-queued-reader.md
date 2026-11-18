@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0099 -->
 
-**Status:** Accepted, amends [ADR 0062](0062-a-read-only-data-transport-probe.md); amended by [ADR 0100](0100-a-transfer-read-tells-an-accepted-request-without-an-answer-from-silence.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0062](0062-a-read-only-data-transport-probe.md); amended by [ADR 0100](0100-a-transfer-read-tells-an-accepted-request-without-an-answer-from-silence.md), [ADR 0102](0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md) · **Recorded:** 2026-11
 
 ## Context
 

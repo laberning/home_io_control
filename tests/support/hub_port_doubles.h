@@ -78,6 +78,11 @@ class DevicePortDouble : public HubDevicePort {
   void set_device_status_refresh_interval(const std::string &device_id, uint32_t interval_ms) override {
     this->record_interval_(this->status_refresh_intervals_, device_id, interval_ms);
   }
+  void set_device_reading_poll_interval(const std::string &device_id, DeviceReading reading,
+                                        uint32_t interval_ms) override {
+    if (this->registry_.get(device_id) != nullptr)
+      this->reading_poll_intervals_[{device_id, reading}] = interval_ms;
+  }
 
   /// @return The interval last set for the device, or 0 when none was set or the device is not registered.
   [[nodiscard]] uint32_t status_poll_interval(const std::string &id) const {
@@ -90,6 +95,11 @@ class DevicePortDouble : public HubDevicePort {
   }
   [[nodiscard]] uint32_t status_refresh_interval(const std::string &id) const {
     return lookup_(status_refresh_intervals_, id);
+  }
+  /// @return The interval last set for a data-object reading of the device, or 0 when none was set.
+  [[nodiscard]] uint32_t reading_poll_interval(const std::string &id, DeviceReading reading) const {
+    const auto it = reading_poll_intervals_.find({id, reading});
+    return it != reading_poll_intervals_.end() ? it->second : 0;
   }
 
   // === Queued operations (recorded) ===
@@ -194,6 +204,7 @@ class DevicePortDouble : public HubDevicePort {
   IntervalMap sun_poll_intervals_;
   IntervalMap battery_level_poll_intervals_;
   IntervalMap status_refresh_intervals_;
+  std::map<std::pair<std::string, DeviceReading>, uint32_t> reading_poll_intervals_;
   std::deque<PendingOperation> queued_;
 };
 

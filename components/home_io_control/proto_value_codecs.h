@@ -31,9 +31,15 @@ enum class ValueCodec : uint8_t {
   BOUNDED_U16,         ///< Unsigned 16-bit little-endian integer from 0 to the row's `max_value`.
   U16_BE,              ///< Unsigned 16-bit whole units, most significant byte first: the one register family whose
                        ///< 16-bit value is not little-endian (an energy total in kilowatt-hours).
+  MARKED_U16_BE,       ///< Three bytes: a value marker, then an unsigned 16-bit whole number, most significant byte
+                       ///< first (a counter of a data object, `80 0C BE` = 3262). Any other marker is the device's
+                       ///< no-value pattern (`81 FF FF`), which decodes as no value.
   FIRST_BYTE_OF_PAIR,  ///< Two bytes, a value then a limit of its own; the first byte is the value (a duration in
                        ///< minutes then the panel's maximum).
 };
+
+/// @brief The leading byte of a MARKED_U16_BE value that carries a number.
+constexpr uint8_t VALUE_MARKER_PRESENT = 0x80;
 
 /// @brief Scale of the tenths codecs: the wire value is round(unit * this).
 constexpr float VALUE_TENTHS_PER_UNIT = 10.0F;

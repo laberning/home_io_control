@@ -1,0 +1,11 @@
+# expect-error: update_interval must be at least 300000ms
+# covers: hub_validators._validate_min_interval
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+sensor:
+  - platform: home_io_control
+    name: "Counter"
+    io_device_id: "ABC123"
+    update_interval: 2min

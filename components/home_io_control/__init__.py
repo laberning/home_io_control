@@ -65,10 +65,10 @@ from .lr1121_update_codegen import (
 from .oneway_controllers import (
     ONEWAY_CONTROLLER_SCHEMA,
     create_oneway_controller_entities,
-    final_validate_oneway_controller_addresses,
     validate_oneway_controllers,
     oneway_controller_expression,
 )
+from .final_validation import final_validate
 from .hub_entities import (
     create_device_event_sensor,
     create_discover_and_pair_button,
@@ -117,7 +117,7 @@ AUTO_LOAD = [
 MULTI_CONF = False
 
 
-FINAL_VALIDATE_SCHEMA = final_validate_oneway_controller_addresses
+FINAL_VALIDATE_SCHEMA = final_validate
 
 
 CONFIG_SCHEMA = cv.All(

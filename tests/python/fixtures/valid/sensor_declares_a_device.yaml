@@ -1,0 +1,11 @@
+# expect: valid
+# A sensor-only entry declares a device that has no other main entity; its reading keys come from the mirror.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+sensor:
+  - platform: home_io_control
+    name: "Counter"
+    io_device_id: "ABC123"
+    update_interval: 1h

@@ -34,6 +34,8 @@ size_t value_codec_length(ValueCodec codec) {
     case ValueCodec::U16_BE:
     case ValueCodec::FIRST_BYTE_OF_PAIR:
       return 2;
+    case ValueCodec::MARKED_U16_BE:
+      return 3;
     case ValueCodec::BINARY:
     case ValueCodec::BOUNDED_BYTE:
       return 1;
@@ -69,6 +71,12 @@ std::optional<float> decode_value(ValueCodec codec, std::span<const uint8_t> byt
     case ValueCodec::U16_BE:
       // Most significant byte first, unlike every little-endian word above.
       return static_cast<float>((bytes[0] << BITS_PER_BYTE) | bytes[1]);
+
+    case ValueCodec::MARKED_U16_BE:
+      // Only the present-marker carries a number; the other marker means the device holds no value.
+      if (bytes[0] != VALUE_MARKER_PRESENT)
+        return std::nullopt;
+      return static_cast<float>((bytes[1] << BITS_PER_BYTE) | bytes[2]);
 
     case ValueCodec::FIRST_BYTE_OF_PAIR:
       // The second byte (the panel's maximum) is not read.

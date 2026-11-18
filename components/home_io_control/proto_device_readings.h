@@ -11,7 +11,10 @@
 ///  - HeatingRegisterSource: one private register of a heater, read by the hub's poll when an entity asks for it
 ///    and decoded with a ValueCodec (proto_value_codecs.h), optionally only while another register holds a value;
 ///  - DerivedSource: a value worked out from other readings (the minutes left of whichever run is active), with the
-///    registers it needs polled.
+///    registers it needs polled;
+///  - DataObjectSource: a slice of a device's data object, read on a schedule through a transfer recipe
+///    (transfer_reader.h) and decoded with a ValueCodec; the value is kept in the device record
+///    (DeviceReadingValues), since a read takes seconds and answers later than the poll that asked.
 ///
 /// What the hub polls and what is shown stay separate: the registers the poll reads are derived from the rows
 /// (reading_polled_registers()), and every entity reads through reading_value(), wherever the source keeps the
@@ -22,6 +25,7 @@
 #include "proto_device_features.h"
 #include "proto_device_model.h"
 #include "proto_heating.h"
+#include "proto_value_codecs.h"
 
 #include <cstdint>
 #include <optional>
@@ -47,6 +51,9 @@ enum class DeviceReading : uint8_t {
   COUNT,                  ///< Number of readings; not a reading.
 };
 
+static_assert(static_cast<size_t>(DeviceReading::COUNT) <= DeviceReadingValues::SLOTS,
+              "every reading needs a slot in DeviceReadingValues; raise SLOTS");
+
 /// @brief A reading another register must show for a register read to run.
 struct HeatingReadCondition {
   HeatingFunction
@@ -68,9 +75,22 @@ struct DerivedSource {
   std::span<const HeatingFunction> polls;           ///< The registers the poll must read for `value` to know.
 };
 
-/// @brief Where a reading's value comes from. Later kinds (a data-object slice, a one-frame read) are further
-/// alternatives; the rows of the existing kinds do not change.
-using ReadingSource = std::variant<HeatingRegisterSource, DerivedSource>;
+/// @brief A reading that is a slice of a data object of the device, read on a schedule.
+/// @details The read is one TransferReader read of `recipe` at `offset` (a row of the recipe table the reader holds,
+///          and an offset that recipe allows); the value is `codec` applied to the bytes `first` to
+///          `first + length - 1` of what came back. The hub keeps it in IoDevice::reading_values.
+struct DataObjectSource {
+  uint8_t recipe;      ///< Row of the transfer recipe table (TRANSFER_RECIPES in production).
+  uint16_t offset;     ///< Offset the object is opened at; one the recipe allows.
+  uint8_t first;       ///< Index of the first byte of the slice in the data read.
+  uint8_t length;      ///< Number of bytes of the slice; at least what the codec reads.
+  ValueCodec codec;    ///< How the slice maps onto a number.
+  uint16_t max_value;  ///< Highest value of a bounded codec (decode_value()); 0 for the others.
+};
+
+/// @brief Where a reading's value comes from. Later kinds (a one-frame read) are further alternatives; the rows of
+/// the existing kinds do not change.
+using ReadingSource = std::variant<HeatingRegisterSource, DerivedSource, DataObjectSource>;
 
 /// @brief One row of the reading table.
 struct DeviceReadingRow {
@@ -85,6 +105,12 @@ struct DeviceReadingRow {
 /// @return The row, or nullptr for COUNT or a value outside the enumeration.
 const DeviceReadingRow *find_device_reading(DeviceReading reading);
 
+/// @brief Look up the row of a reading in a table of the caller's (the hub's reading table, which a test replaces).
+/// @param reading The reading.
+/// @param table The rows to look in.
+/// @return The row, or nullptr when the table has none for the reading.
+const DeviceReadingRow *find_device_reading(DeviceReading reading, std::span<const DeviceReadingRow> table);
+
 /// @brief Every reading, in table order, for code that checks the whole table.
 std::span<const DeviceReadingRow> device_readings();
 
@@ -96,10 +122,31 @@ std::span<const DeviceReadingRow> device_readings();
 /// @return The value, or nullopt while it has not been read, was dropped or cannot be told.
 std::optional<float> reading_value(const IoDevice &dev, DeviceReading reading);
 
+/// @brief reading_value() over a table of the caller's, so a test can give a data-object row that production does not
+/// have yet.
+/// @param dev The device record.
+/// @param reading The reading.
+/// @param table The rows to look the reading up in.
+/// @return The value, or nullopt while it has not been read, was dropped or cannot be told.
+std::optional<float> reading_value(const IoDevice &dev, DeviceReading reading, std::span<const DeviceReadingRow> table);
+
+/// @brief The slot of a reading in a device's DeviceReadingValues.
+/// @param reading The reading.
+/// @return The reading's number in the table's enumeration.
+[[nodiscard]] constexpr size_t reading_slot(DeviceReading reading) { return static_cast<size_t>(reading); }
+
+/// @brief The value a data-object read carries for a reading.
+/// @param source The reading's slice and codec.
+/// @param data The bytes the transfer read returned.
+/// @return The decoded value, or nullopt when the slice lies beyond the data or the bytes are the codec's no-value
+///         pattern.
+std::optional<float> decode_data_object_reading(const DataObjectSource &source, std::span<const uint8_t> data);
+
 /// @brief The registers the hub's poll reads so a reading has a value.
 /// @param row The reading's row.
 /// @return The register of a register reading, the registers a derived reading names, none for a kind with no
-///         register. The span points into static storage (the table).
+///         register (a data-object reading is read by the transfer reader instead). The span points into static storage
+///         (the table).
 std::span<const HeatingFunction> reading_polled_registers(const DeviceReadingRow &row);
 
 /// @brief The register a reading is, when it is one register of a heater.

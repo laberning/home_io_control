@@ -242,6 +242,7 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE
     case ValueCodec::NONE:
     case ValueCodec::HUNDREDTHS_S16:
     case ValueCodec::U16_BE:
+    case ValueCodec::MARKED_U16_BE:
     case ValueCodec::FIRST_BYTE_OF_PAIR:
       return 0;  // no writable register has this encoding
   }

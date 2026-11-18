@@ -35,6 +35,7 @@ from .hub_validators import (
 )
 from .platform_common import (
     DeviceReading,
+    HEATER_READING_SOURCES,
     INSTANT_LIGHT_TRANSITION,
     IOHomeHeaterSettingSwitch,
     declared_has_feature,
@@ -188,7 +189,7 @@ CONFIG_SCHEMA = cv.All(
             ),
             # The opt-in reading entities (central-heating mode, occupancy, energy, run timers): each costs one register
             # read per poll and only some heaters have the register (DEVICE_READINGS in hub_validators.py).
-            **reading_keys_schema(),
+            **reading_keys_schema(HEATER_READING_SOURCES),
         }
     )
     .extend(cv.COMPONENT_SCHEMA),

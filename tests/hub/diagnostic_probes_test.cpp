@@ -1204,7 +1204,7 @@ TEST(HubManagement, ReadObjectReportsAnErrorAnswerWithoutReadingOn) {
   EXPECT_TRUE(result.response_hex.find("FE") != std::string::npos);
 }
 
-TEST(HubManagement, ReadObjectStopsAtARefusedOpenAndAtAnEmptyObject) {
+TEST(HubManagement, ReadObjectStopsAtADeclinedOpenAndAtAnEmptyObject) {
   {
     TestableManagementComponent component;
     MockRadio radio;
@@ -1213,7 +1213,20 @@ TEST(HubManagement, ReadObjectStopsAtARefusedOpenAndAtAnEmptyObject) {
     radio.queue_rx(
         frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x02, 0x00, 0x28})));
     const auto result = component.management_actions_.probe_device("ABC123", "read_object", "0");
-    EXPECT_NE(result.message.find("device refused the read"), std::string::npos) << result.message;
+    EXPECT_NE(result.message.find("device declined the open"), std::string::npos) << result.message;
+    EXPECT_EQ(radio.get_sent_data().size(), 1u);
+  }
+  {
+    // Status 3 with length 0 (an Izymo's objects 0 and 1): the device does not keep the object.
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    component.set_diagnostic_probes_enabled(true);
+    radio.queue_rx(
+        frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x03, 0x00, 0x00})));
+    const auto result = component.management_actions_.probe_device("ABC123", "read_object", "0");
+    EXPECT_NE(result.message.find("does not keep this object"), std::string::npos) << result.message;
+    EXPECT_EQ(result.message.find("declined"), std::string::npos) << result.message;
     EXPECT_EQ(radio.get_sent_data().size(), 1u);
   }
   {

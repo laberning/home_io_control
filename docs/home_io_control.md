@@ -14,6 +14,7 @@ One line per page, so you can find the right one by what you are trying to do. T
 | `light:`, `lock:`, `switch:` | [Lights, locks and switches](configuration/light-lock-switch.md) |
 | `climate:` — heating, experimental | [Heating and climate](configuration/climate.md) |
 | `water_heater:` — domestic hot water, experimental | [Water heaters](configuration/water-heater.md) |
+| `sensor:` — devices that only keep values to read | [Sensor-only devices](configuration/sensor.md) |
 | What a heater's card offers, and what each mode, preset and target does | [Heaters and water heaters in Home Assistant](heating.md) |
 | `fan:` — exterior heating, experimental | [Exterior heating](configuration/fan.md) |
 | `rename_device`, `identify_device`, `identify_device_for`, `force_open_device` | [Home Assistant actions](configuration/actions.md) |

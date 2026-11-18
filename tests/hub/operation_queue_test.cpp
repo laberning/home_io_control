@@ -175,6 +175,25 @@ TEST(OperationQueue, LimitationReadIsBackgroundWork) {
   EXPECT_TRUE(OperationQueue::is_background_op(PendingOperationType::REQUEST_LIMITATION));
 }
 
+TEST(OperationQueue, ADeviceReadingIsBackgroundWorkQueuedOncePerDeviceAndReading) {
+  EXPECT_TRUE(OperationQueue::is_background_op(PendingOperationType::REQUEST_DEVICE_READING));
+
+  OperationQueue q;
+  EXPECT_TRUE(q.enqueue_request_device_reading("DEV", 4));
+  EXPECT_FALSE(q.enqueue_request_device_reading("DEV", 4)) << "the same reading of the same device is not queued twice";
+  EXPECT_TRUE(q.enqueue_request_device_reading("DEV", 5)) << "another reading of the device is its own read";
+  EXPECT_TRUE(q.enqueue_request_device_reading("OTHER", 4));
+  ASSERT_EQ(q.size(), 3u);
+  EXPECT_EQ(q.front().reading, 4);
+}
+
+TEST(OperationQueue, ACommandIsQueuedAheadOfADeviceReading) {
+  OperationQueue q;
+  q.enqueue_request_device_reading("DEV", 4);
+  q.enqueue_device_command("DEV", CoverCommand::STOP);
+  EXPECT_EQ(q.front().type, PendingOperationType::DEVICE_COMMAND);
+}
+
 // ============================================================================
 // Discover-and-pair priority + flushing
 // ============================================================================

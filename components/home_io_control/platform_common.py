@@ -552,15 +552,25 @@ async def create_user_companion(config, parent, *, new_entity, entity_config):
 
 # === Device readings ===
 #
-# A main entity (today the climate entity) takes one optional key per reading of DEVICE_READINGS that has one. Each
-# key is an entity of its own that shows the reading; the key costs the hub a read of the reading's registers at
-# every poll and only some kinds have them, so it needs the capability of its row. The table drives the schema, the
-# capability check and the code, so a new reading is a row there and in C++, never new codegen.
+# A main entity takes one optional key per reading of DEVICE_READINGS that has one and whose source the platform
+# offers: the climate entity the heater registers, the `sensor:` platform the data objects. Each key is an entity of
+# its own that shows the reading; the key costs the hub a read of the reading's registers at every poll, or a scheduled
+# transfer read of its data object, and only some kinds have them, so it needs the capability of its row. The table
+# drives the schema, the capability check and the code, so a new reading is a row there and in C++, never new codegen.
+
+# The mirror's source kinds each platform offers its keys for.
+HEATER_READING_SOURCES = ("register", "derived")
+DATA_OBJECT_READING_SOURCES = ("data_object",)
 
 
-def _reading_keys():
-    """[(reading name, mirror entry)] of every reading a main entity declares by a YAML key, in table order."""
-    return [(name, entry) for name, entry in DEVICE_READINGS.items() if entry["key"] is not None]
+def _reading_keys(sources=None):
+    """[(reading name, mirror entry)] of every reading a main entity declares by a YAML key, in table order; only
+    those whose source is in `sources` when it is given."""
+    return [
+        (name, entry)
+        for name, entry in DEVICE_READINGS.items()
+        if entry["key"] is not None and (sources is None or entry["source"] in sources)
+    ]
 
 
 def _reading_entity_schema(entry):
@@ -592,10 +602,11 @@ def _reading_entity_schema(entry):
     return schema.extend(cv.COMPONENT_SCHEMA)
 
 
-def reading_keys_schema():
-    """The optional YAML keys of every reading, `{cv.Optional(key): entity schema}`, to splice into a main entity's
-    schema. The entity IDs are declared by the schemas' own GenerateID."""
-    return {cv.Optional(entry["key"]): _reading_entity_schema(entry) for _, entry in _reading_keys()}
+def reading_keys_schema(sources):
+    """The optional YAML keys of the readings a platform offers, `{cv.Optional(key): entity schema}`, to splice into
+    a main entity's schema. `sources` are the mirror source kinds the platform shows (HEATER_READING_SOURCES,
+    DATA_OBJECT_READING_SOURCES). The entity IDs are declared by the schemas' own GenerateID."""
+    return {cv.Optional(entry["key"]): _reading_entity_schema(entry) for _, entry in _reading_keys(sources)}
 
 
 def validate_reading_keys(config):
@@ -614,15 +625,20 @@ def validate_reading_keys(config):
 async def reading_keys_to_code(var, parent, config):
     """Emit the code for the reading keys a main entity declares.
 
-    For each key present the main entity asks the hub to poll the reading's registers (`add_device_reading()`)
-    and the entity that shows the reading is created, named after it.
+    For each key present the main entity asks the hub to poll the reading's registers (`add_device_reading()`), or to
+    read its data object on a schedule (`add_data_object_reading()`, with the reading's default interval, which the
+    entry's `update_interval:` replaces on the entity), and the entity that shows the reading is created, named after
+    it.
     """
     for name, entry in _reading_keys():
         key = entry["key"]
         if key not in config:
             continue
         reading = getattr(DeviceReading, name)
-        cg.add(var.add_device_reading(reading))
+        if entry["source"] in DATA_OBJECT_READING_SOURCES:
+            cg.add(var.add_data_object_reading(reading, entry["update_interval_ms"]))
+        else:
+            cg.add(var.add_device_reading(reading))
         entity = await create_user_companion(
             config,
             parent,

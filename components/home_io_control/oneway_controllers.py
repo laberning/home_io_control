@@ -20,7 +20,6 @@ from esphome.components import text_sensor as text_sensor_component
 from esphome.const import (
     CONF_ID,
     CONF_NAME,
-    CONF_PLATFORM,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
 )
@@ -48,7 +47,6 @@ from .hub_names import (
     CONF_ONEWAY_CONTROLLERS,
     CONF_RADIO_TYPE,
     CONF_SYSTEM_KEY,
-    DEVICE_BOUND_DOMAINS,
     IOHomeOneWayCommandButton,
     IOHomeOneWayEnrollButton,
     IOHomeOneWayLastCommandTextSensor,
@@ -56,6 +54,7 @@ from .hub_names import (
 )
 from .hub_validators import (
     DEVICE_TYPE_MAX,
+    declared_device_entries,
     DEVICE_TYPE_OPTIONS,
     MANUFACTURER_OPTIONS,
     ONEWAY_WIRE_PROFILE_MANUFACTURERS,
@@ -594,25 +593,19 @@ def _collect_declared_device_addresses(full_config):
     """Map every node ID declared as an `io_device_id:` or a bare `linked_remotes:` entry, across
     every `home_io_control` entity in `full_config`, to a human-readable owner string.
 
-    Only entries with `platform: home_io_control` are considered — the domains in
-    DEVICE_BOUND_DOMAINS are shared with every other component that provides such a
-    platform, and those have nothing to do with this component's address space.
+    Only entries with `platform: home_io_control` are considered (declared_device_entries()).
     `class:` linked_remotes entries name a device *type*, not a node, so they carry no address to
     collide with and are skipped.
     """
     addresses = {}
-    for domain in DEVICE_BOUND_DOMAINS:
-        for entry in full_config.get(domain, []):
-            if not isinstance(entry, dict) or entry.get(CONF_PLATFORM) != "home_io_control":
+    for domain, entry, owner_name in declared_device_entries(full_config):
+        device_id = entry.get(CONF_IO_DEVICE_ID)
+        if device_id:
+            addresses[device_id] = f"{domain} '{owner_name}' io_device_id"
+        for remote in entry.get(CONF_LINKED_REMOTES, []):
+            if remote.startswith("class:"):
                 continue
-            owner_name = entry.get(CONF_NAME) or entry.get(CONF_ID) or "<unnamed>"
-            device_id = entry.get(CONF_IO_DEVICE_ID)
-            if device_id:
-                addresses[device_id] = f"{domain} '{owner_name}' io_device_id"
-            for remote in entry.get(CONF_LINKED_REMOTES, []):
-                if remote.startswith("class:"):
-                    continue
-                addresses[remote] = f"{domain} '{owner_name}' linked_remotes"
+            addresses[remote] = f"{domain} '{owner_name}' linked_remotes"
     return addresses
 
 

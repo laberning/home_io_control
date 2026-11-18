@@ -16,6 +16,7 @@ installation's identity. Everything else attaches to it.
 | [Heating and climate](climate.md) | `climate:` — experimental |
 | [Exterior heating](fan.md) | `fan:` — experimental |
 | [Water heaters](water-heater.md) | `water_heater:` — domestic hot water heaters, experimental |
+| [Sensor-only devices](sensor.md) | `sensor:` — devices that only keep values to read, such as a heat pump's energy counters |
 | [Home Assistant actions](actions.md) | Hub-level actions such as `rename_device` and `scan_paired_devices` |
 | [Linked remotes and sender events](remotes.md) | `linked_remotes:`, `exposed_senders:` |
 | [Sending 1W commands](oneway-transmit.md) | `oneway_controllers:` — driving devices that only listen for a remote |
@@ -246,6 +247,7 @@ inline pin values from the worked example above.
 - [Heating and climate](climate.md)
 - [Exterior heating](fan.md)
 - [Water heaters](water-heater.md)
+- [Sensor-only devices](sensor.md)
 - [Home Assistant actions](actions.md)
 - [Linked remotes and sender events](remotes.md)
 - [Sending 1W commands](oneway-transmit.md)

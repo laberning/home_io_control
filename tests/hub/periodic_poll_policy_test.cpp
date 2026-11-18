@@ -59,6 +59,18 @@ TEST(PeriodicPollPolicy, JitteredIntervalNeverLeavesItsRangeNorOverflows) {
 // Scheduling
 // ============================================================================
 
+TEST(PeriodicPollPolicy, TheFirstPollOfADeviceReadingIsMovedToAnExactDelay) {
+  PeriodicPollPolicy policy;
+  policy.set_interval("DEV/4", INTERVAL, T0, MID);
+  policy.set_first_poll("DEV/4", DEVICE_READING_FIRST_READ_DELAY_MS, T0);
+  EXPECT_EQ(policy.get_next_poll("DEV/4"), T0 + DEVICE_READING_FIRST_READ_DELAY_MS);
+  EXPECT_FALSE(policy.has_due(T0 + DEVICE_READING_FIRST_READ_DELAY_MS - 1));
+  EXPECT_TRUE(policy.has_due(T0 + DEVICE_READING_FIRST_READ_DELAY_MS));
+
+  policy.set_first_poll("ELSEWHERE", 1, T0);  // an unscheduled device is left alone
+  EXPECT_EQ(policy.get_interval("ELSEWHERE"), 0u);
+}
+
 TEST(PeriodicPollPolicy, NothingIsDueWithoutAnInterval) {
   PeriodicPollPolicy policy;
   EXPECT_FALSE(policy.pop_due_device(T0 + INTERVAL, 0).has_value());
