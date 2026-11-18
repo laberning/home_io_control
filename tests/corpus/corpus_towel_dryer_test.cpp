@@ -8,6 +8,7 @@
 /// expectation below compares with.
 
 #include "corpus_generated.h"
+#include "reading_store.h"
 #include "decisions_status.h"
 #include "heater_controller.h"
 #include "proto_frame.h"
@@ -64,30 +65,31 @@ template<size_t N> uint8_t status_level(const uint8_t (&bytes)[N]) {
   const IoFrame frame = frame_of(bytes);
   // data: [status][b1][MP hi][MP lo]...
   EXPECT_GE(frame.data_len, 4u);
-  uint8_t level = 0xFF;
-  EXPECT_TRUE(decode_heating_level(static_cast<uint16_t>((frame.data[2] << 8) | frame.data[3]), level));
-  return level;
+  const auto level =
+      decode_status_reading(DeviceReading::HEATING_LEVEL, std::span<const uint8_t>(frame.data + 2, 2),
+                            HEATING_LEVEL_MP_PREFIX, HEATING_TEMPERATURE_RANGE_MIN_C, HEATING_TEMPERATURE_RANGE_MAX_C);
+  EXPECT_TRUE(level.has_value());
+  return static_cast<uint8_t>(level.value_or(0xFF));
 }
 
 /// A towel dryer in PROG with no timed run, holding comfort setpoint `comfort_c`, reporting `in_force` in
 /// register 0x0137.
-template<size_t N> HeatingReadings programme_readings(float comfort_c, const uint8_t (&in_force)[N]) {
-  HeatingReadings readings;
-  readings.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
-  readings.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE);
-  readings.setpoint_c = comfort_c;
-  readings.store(HeatingFunction::TEMPERATURE_IN_FORCE, value_of(in_force, HeatingFunction::TEMPERATURE_IN_FORCE));
+template<size_t N> IoDevice programme_readings(float comfort_c, const uint8_t (&in_force)[N]) {
+  IoDevice readings;
+  readings.type = DeviceType::ELECTRICAL_HEATER;
+  readings.subtype = 1;
+  readings.model = DeviceModel::TOWEL_DRYER;
+  test::store_reading(readings, DeviceReading::TOWEL_MODE, static_cast<int16_t>(TowelDryerMode::PROG));
+  test::store_reading(readings, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(HeatingTemporaryState::NONE));
+  test::store_reading(readings, DeviceReading::SETPOINT, comfort_c);
+  test::store_reading(readings, HeatingFunction::TEMPERATURE_IN_FORCE,
+                      value_of(in_force, HeatingFunction::TEMPERATURE_IN_FORCE));
   return readings;
 }
 
 /// What a target set on a towel dryer with these readings plans to write. The readings carry a 0x0137 reply, so
 /// the dryer has reported its temperature in force, and the level of the status read that period gives.
-HeatingWritePlan plan_target_from(const HeatingReadings &readings) {
-  IoDevice dev;
-  dev.type = DeviceType::ELECTRICAL_HEATER;
-  dev.subtype = 1;
-  dev.model = DeviceModel::TOWEL_DRYER;
-  dev.heating = readings;
+HeatingWritePlan plan_target_from(IoDevice dev) {
   dev.temperature_in_force = TemperatureInForceSupport::REPORTED;
   return plan_heating_write(*find_heating_profile(dev), {.kind = HeatingWriteKind::TARGET, .target_c = 18.0F},
                             heating_device_facts(&dev, true));
@@ -139,23 +141,30 @@ TEST(CorpusTowelDryer, TheStatusReplyIsTheLevelTheSensorShows) {
       {device_after_status(corpus::atlantic_adelis_probe_status_mp_fp_frame0_bytes), "boost"},
   };
   for (const auto &level : levels) {
-    ASSERT_GE(level.dev.heating.level, 0);
-    EXPECT_STREQ(heating_level_name(static_cast<uint8_t>(level.dev.heating.level)), level.name);
+    ASSERT_GE(test::wire_read(level.dev, DeviceReading::HEATING_LEVEL), 0);
+    EXPECT_STREQ(heating_level_name(static_cast<uint8_t>(test::wire_read(level.dev, DeviceReading::HEATING_LEVEL))),
+                 level.name);
   }
 }
 
 TEST(CorpusTowelDryer, TheProgrammeTargetIsTheTemperatureInForceInBothPeriodsAndAFreshTargetFollowsThePeriod) {
   const HeatingProfile &profile = towel_profile();
-  HeatingReadings comfort = programme_readings(20.0F, corpus::atlantic_adelis_probe_temperature_in_force_frame0_bytes);
-  comfort.level = device_after_status(corpus::atlantic_adelis_probe_status_mp_fp_programme_frame0_bytes).heating.level;
+  IoDevice comfort = programme_readings(20.0F, corpus::atlantic_adelis_probe_temperature_in_force_frame0_bytes);
+  test::store_reading(
+      comfort, DeviceReading::HEATING_LEVEL,
+      test::wire_read(device_after_status(corpus::atlantic_adelis_probe_status_mp_fp_programme_frame0_bytes),
+                      DeviceReading::HEATING_LEVEL));
   EXPECT_FLOAT_EQ(programme_temperature_in_force(profile, comfort), 20.0F);
   const HeatingWritePlan comfort_plan = plan_target_from(comfort);
   EXPECT_EQ(comfort_plan.register_fn, HeatingFunction::SET_TEMPERATURE)
       << "a target set in a comfort period changes the comfort temperature: the dryer ignores an override there";
   EXPECT_FALSE(comfort_plan.temporary_override);
 
-  HeatingReadings eco = programme_readings(20.0F, corpus::atlantic_adelis_probe_temperature_in_force_frame1_bytes);
-  eco.level = device_after_status(corpus::atlantic_adelis_probe_status_mp_fp_programme_frame2_bytes).heating.level;
+  IoDevice eco = programme_readings(20.0F, corpus::atlantic_adelis_probe_temperature_in_force_frame1_bytes);
+  test::store_reading(
+      eco, DeviceReading::HEATING_LEVEL,
+      test::wire_read(device_after_status(corpus::atlantic_adelis_probe_status_mp_fp_programme_frame2_bytes),
+                      DeviceReading::HEATING_LEVEL));
   EXPECT_FLOAT_EQ(programme_temperature_in_force(profile, eco), 16.5F);
   const HeatingWritePlan eco_plan = plan_target_from(eco);
   EXPECT_EQ(eco_plan.register_fn, HeatingFunction::DEROGATED_SETPOINT)
@@ -178,11 +187,11 @@ TEST(CorpusTowelDryer, TheRegisterIsNoTemperatureInBoostOrDryingAndTheProfileNev
        HeatingTemporaryState::DRYING},
   };
   for (const Run &run : runs) {
-    HeatingReadings readings;
-    readings.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
-    readings.temporary_state = static_cast<int16_t>(run.state);
-    readings.setpoint_c = 19.5F;
-    readings.in_force_temperature_c = run.in_force;
+    IoDevice readings;
+    test::store_reading(readings, DeviceReading::TOWEL_MODE, static_cast<int16_t>(TowelDryerMode::PROG));
+    test::store_reading(readings, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(run.state));
+    test::store_reading(readings, DeviceReading::SETPOINT, 19.5F);
+    test::store_reading(readings, DeviceReading::TEMPERATURE_IN_FORCE, run.in_force);
     EXPECT_LT(run.in_force, 1.0F) << "a count, not a temperature";
     EXPECT_FALSE(programme_period_active(profile, readings));
     EXPECT_TRUE(std::isnan(programme_temperature_in_force(profile, readings)));

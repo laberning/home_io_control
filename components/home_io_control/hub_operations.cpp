@@ -864,7 +864,7 @@ bool IOHomeControlComponent::request_device_reading(const std::string &device_id
   const DeviceReadingRow *row = find_device_reading(reading, this->reading_table_);
   const auto *source = row != nullptr ? std::get_if<DataObjectSource>(&row->source) : nullptr;
   if (dev == nullptr || source == nullptr || !this->initialized_ || dev->reading_values.absent(reading_slot(reading)) ||
-      !has_feature(dev->features, row->feature))
+      !device_has_reading_capability(*dev, *row))
     return false;
   // A moving device is left alone, like every periodic poll; asking again soon is cheaper than a whole interval.
   if (!effective_is_stopped(*dev)) {

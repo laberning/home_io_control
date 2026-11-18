@@ -163,12 +163,17 @@ class DevicePortDouble : public HubDevicePort {
     // notify() publishes what the registry holds, so the update has to be stored to be seen.
     const bool was_registered = stored != nullptr;
     const IoDevice previous = was_registered ? *stored : IoDevice{};
+    // The record is stored as given: put() keeps the stored reading store of the record it replaces, and the test
+    // hands over the readings it wants shown.
     this->registry_.put(device_id, dev);
+    this->registry_.get(device_id)->reading_values = dev.reading_values;
     this->registry_.notify(device_id);
     // Restore only when there was something to restore: putting back a default IoDevice for a device that
     // was never registered would leave a phantom with a zero node ID.
-    if (!cache_device && was_registered)
+    if (!cache_device && was_registered) {
       this->registry_.put(device_id, previous);
+      this->registry_.get(device_id)->reading_values = previous.reading_values;
+    }
   }
 
   /// Publish what the registry holds for the device to the entity callbacks, as the hub does when a field

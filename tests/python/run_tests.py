@@ -702,14 +702,18 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
         "drying_duration",
     }
     for name, entry in v.DEVICE_READINGS.items():
-        assert entry["feature"] in v.FEATURES, name
-        assert entry["source"] in ("register", "derived", "data_object"), name
-        assert bool(entry["registers"]) == (entry["source"] != "data_object"), name
+        assert entry["feature"] in v.FEATURES or entry["feature"] is None, name
+        assert entry["source"] in ("register", "derived", "data_object", "status"), name
+        # A data object and a status reply are read without a register of the poll.
+        assert bool(entry["registers"]) == (entry["source"] in ("register", "derived")), name
         if entry["source"] == "data_object":
             assert entry["update_interval_ms"] >= v.MIN_DEVICE_READING_INTERVAL_MS, name
         if entry["key"] is not None:
             assert entry["entity"] in ("sensor", "binary_sensor", "switch"), name
             assert entry["feature"] in v.READING_FEATURE_HINTS, name
+        else:
+            # A reading without a key builds no entity of its own (a switch is built by its platform, not the key).
+            assert entry["entity"] in (None, "switch"), name
     schema_keys = {str(key) for key in pc.reading_keys_schema(pc.HEATER_READING_SOURCES)}
     assert schema_keys == {entry["key"] for entry in keyed.values()}
     assert not pc.reading_keys_schema(pc.DATA_OBJECT_READING_SOURCES), "no production reading is a data object yet"

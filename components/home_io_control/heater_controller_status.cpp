@@ -9,6 +9,7 @@
 #include "heater_controller.h"
 #include "proto_codecs.h"
 #include "proto_constants.h"
+#include "proto_device_readings.h"
 #include "proto_dhw.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"
@@ -16,36 +17,34 @@
 #include "esphome/core/log.h"
 
 #include <cmath>
+#include <span>
 
 namespace esphome {
 namespace home_io_control {
 
-namespace {
-
-constexpr uint16_t MAIN_PARAMETER_LOW_BYTE_MASK = 0xFF;  ///< Low byte of a 16-bit main parameter.
-
-}  // namespace
-
-void apply_heating_main_parameter(const std::string &id, IoDevice &dev, uint16_t current) {
+void apply_heating_main_parameter(const std::string &id, IoDevice &dev, std::span<const uint8_t> main_parameter) {
   const HeatingProfile *profile = find_heating_profile(dev);
   if (profile == nullptr || profile->path == HeatingControlPath::PRIVATE_REGISTERS)
     return;
-  dev.heating.main_parameter = current;
-  if ((current >> BITS_PER_BYTE) == profile->mp_prefix) {
-    const auto wire = static_cast<int16_t>(current & MAIN_PARAMETER_LOW_BYTE_MASK);
-    if (dev.heating.level != wire)
-      ESP_LOGI(detail::TAG, "Device %s: heating value 0x%02X", id.c_str(), static_cast<unsigned>(wire));
-    dev.heating.level = wire;
+  DeviceReadingValues &store = dev.reading_values;
+  if (const auto level = decode_status_reading(DeviceReading::HEATING_LEVEL, main_parameter, profile->mp_prefix,
+                                               dev.temperature_range_min_c, dev.temperature_range_max_c)) {
+    if (reading_wire(dev, DeviceReading::HEATING_LEVEL) != static_cast<int>(*level))
+      ESP_LOGI(detail::TAG, "Device %s: heating value 0x%02X", id.c_str(), static_cast<unsigned>(*level));
+    store.store(reading_slot(DeviceReading::HEATING_LEVEL), *level);
     return;
   }
-  float celsius = 0.0F;
-  if (profile->path == HeatingControlPath::TEMPERATURE_EXECUTE &&
-      decode_temperature_main_parameter(current, dev.temperature_range_min_c, dev.temperature_range_max_c, celsius)) {
-    dev.heating.setpoint_c = celsius;
-    dev.heating.level = -1;
-    return;
+  if (profile->path == HeatingControlPath::TEMPERATURE_EXECUTE) {
+    if (const auto celsius = decode_status_reading(DeviceReading::STATUS_SETPOINT, main_parameter, profile->mp_prefix,
+                                                   dev.temperature_range_min_c, dev.temperature_range_max_c)) {
+      // A plain temperature ends an alias the heater reported before.
+      store.store(reading_slot(DeviceReading::STATUS_SETPOINT), *celsius);
+      store.clear(reading_slot(DeviceReading::HEATING_LEVEL));
+      return;
+    }
   }
-  ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%04X is not a heating value", id.c_str(), current);
+  ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%02X%02X is not a heating value", id.c_str(),
+           main_parameter[0], main_parameter[1]);
 }
 
 void apply_register_heater_status_reply(const std::string &id, IoDevice &dev, const IoFrame &frame,
@@ -54,20 +53,21 @@ void apply_register_heater_status_reply(const std::string &id, IoDevice &dev, co
     return;
   // The reply to the main-parameter status read (create_status_mp_fp_read()), which carries the heating level
   // at the offset every such reply holds its main parameter.
-  const auto main_parameter = static_cast<uint16_t>((frame.data[STATUS_MP_FP_MAIN_PARAMETER_OFFSET] << BITS_PER_BYTE) |
-                                                    frame.data[STATUS_MP_FP_MAIN_PARAMETER_OFFSET + 1]);
-  uint8_t level = 0;
-  if (!decode_heating_level(main_parameter, level)) {
+  const std::span<const uint8_t> main_parameter(frame.data + STATUS_MP_FP_MAIN_PARAMETER_OFFSET,
+                                                STATUS_MAIN_PARAMETER_SIZE);
+  const auto level = decode_status_reading(DeviceReading::HEATING_LEVEL, main_parameter, HEATING_LEVEL_MP_PREFIX,
+                                           dev.temperature_range_min_c, dev.temperature_range_max_c);
+  if (!level) {
     // Not a level: the stored level is forgotten. The heating_level sensor keeps what it last showed (a text
     // sensor cannot go back to no state).
-    ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%04X is not a heating level", id.c_str(), main_parameter);
-    dev.heating.level = -1;
+    ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%02X%02X is not a heating level", id.c_str(),
+             main_parameter[0], main_parameter[1]);
+    dev.reading_values.clear(reading_slot(DeviceReading::HEATING_LEVEL));
     return;
   }
-  const auto stored = static_cast<int16_t>(level);
-  if (dev.heating.level != stored)
-    ESP_LOGI(detail::TAG, "Device %s: heating level 0x%02X", id.c_str(), static_cast<unsigned>(level));
-  dev.heating.level = stored;
+  if (reading_wire(dev, DeviceReading::HEATING_LEVEL) != static_cast<int>(*level))
+    ESP_LOGI(detail::TAG, "Device %s: heating level 0x%02X", id.c_str(), static_cast<unsigned>(*level));
+  dev.reading_values.store(reading_slot(DeviceReading::HEATING_LEVEL), *level);
 }
 
 void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame &frame, bool trust_position) {

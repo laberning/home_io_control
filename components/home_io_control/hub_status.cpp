@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <optional>
+#include <span>
 
 /// @file hub_status.cpp
 /// @brief Inbound status handling and passive receive-side state updates.
@@ -734,9 +735,7 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
       // Same reason as the record above: only a reply to a status poll is a status report.
       apply_battery_state(id, dev, frame);
       apply_heating_main_parameter(
-          id, dev,
-          static_cast<uint16_t>((frame.data[PRIVATE_RESPONSE_CURRENT_OFFSET] << BITS_PER_BYTE) |
-                                frame.data[PRIVATE_RESPONSE_CURRENT_OFFSET + 1]));
+          id, dev, std::span<const uint8_t>(frame.data + PRIVATE_RESPONSE_CURRENT_OFFSET, STATUS_MAIN_PARAMETER_SIZE));
       this->note_status_reported_(id);
     }
     detail::clear_command_result(dev);

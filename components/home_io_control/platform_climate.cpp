@@ -337,7 +337,7 @@ void IOHomeClimate::on_device_update_(const IoDevice &dev) {
   const HeatingProfile *profile = find_heating_profile(dev);
   if (profile == nullptr)
     return;
-  const HeatingCardState next = reduce_heating_card(*profile, dev.heating, this->card_);
+  const HeatingCardState next = reduce_heating_card(*profile, dev, this->card_);
   const bool changed = !next.shows_same_as(this->card_);
   this->card_ = next;
   this->show_card_(*profile);

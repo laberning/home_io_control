@@ -152,14 +152,16 @@ you meet them. The structure behind them is described in the
    behind the probe's rows, lists the opens that lead to the object, the offsets a read may open at
    and the most bytes accepted. Only what a recipe names can be opened, and nothing builds a write.
 3. **Add the reading row.** An enumerator of `DeviceReading` and a row of the table in
-   `proto_device_readings.cpp`: its name, the capability a device needs (a `DeviceFeature`) and its
-   source. For a data object the source is a `DataObjectSource`: the recipe, the offset, the byte range
-   of the value in the data read and the codec. Value shapes that exist are in `proto_value_codecs.h`;
+   `proto_device_readings.cpp`: its name, its source, when the hub reads it (`ReadingPoll`) and, for a
+   reading an entity of the YAML asks for, the capability a device needs (a `DeviceFeature`). The value
+   is kept in the device's reading store by reading, whichever the source is, so nothing else holds it.
+   For a data object the source is a `DataObjectSource`: the recipe, the offset, the byte range of the
+   value in the data read and the codec. Value shapes that exist are in `proto_value_codecs.h`;
    a counter that starts with a marker byte (`80` then a big-endian number, `81 FF FF` for "no value")
    is `MARKED_U16_BE`. A new shape is one codec enumerator, one case in `decode_value()` and its test
    in `tests/proto/value_codecs_test.cpp`.
 4. **Add the mirror row.** The same reading by name in `DEVICE_READINGS` in `hub_validators.py`: its
-   capability, its source (`data_object`), the YAML key, the entity kind, the Home Assistant unit,
+   capability (`None` for a reading no key declares), its source (`data_object`), the YAML key, the entity kind, the Home Assistant unit,
    device class and state class, and for a data object the default `update_interval_ms`, at least five
    minutes. Add the capability's hint to `READING_FEATURE_HINTS` so the error for a kind without it
    says what to declare. `tests/sync/device_features_sync_test.cpp` fails until both tables agree.

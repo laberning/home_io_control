@@ -281,7 +281,7 @@ FEATURES = (
 # Python's mirror of the table of named device readings (proto_device_readings.cpp), by the enumerator name of
 # DeviceReading: the capability a device needs ("feature"), where the value comes from ("source": "register" for one
 # private register of a heater, "derived" for a value worked out from other readings, "data_object" for a slice of a
-# data object read on a schedule), the registers the hub's poll reads for it ("registers", by HeatingFunction name;
+# data object read on a schedule, "status" for the main parameter of a status reply), the registers the hub's poll reads for it ("registers", by HeatingFunction name;
 # none for a data object), and what the codegen builds for it: the YAML "key" under the main entity (None where no key
 # declares it), the entity kind ("sensor", "binary_sensor" or "switch") and the Home Assistant metadata of the entity.
 # A "data_object" reading is offered by the `sensor:` platform, the register and derived ones by `climate:`; it also
@@ -300,6 +300,22 @@ DEVICE_READINGS = {
     "BOOST_REMAINING": {"feature": "RUN_TIMERS", "source": "register", "registers": ("BOOST_REMAINING",), "key": None, "entity": None},
     "DRYING_REMAINING": {"feature": "RUN_TIMERS", "source": "register", "registers": ("DRYING_REMAINING",), "key": None, "entity": None},
     "REMAINING_TIME": {"feature": "RUN_TIMERS", "source": "derived", "registers": ("BOOST_REMAINING", "DRYING_REMAINING"), "key": "remaining_time", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration", "state_class": "measurement"},
+    "ROOM_TEMPERATURE": {"feature": None, "source": "register", "registers": ("ROOM_TEMPERATURE",), "key": None, "entity": None},
+    "SETPOINT": {"feature": None, "source": "register", "registers": ("SET_TEMPERATURE",), "key": None, "entity": None},
+    "MAX_SETPOINT": {"feature": None, "source": "register", "registers": ("MAX_SETPOINT",), "key": None, "entity": None},
+    "MODE": {"feature": None, "source": "register", "registers": ("SET_MODE",), "key": None, "entity": None},
+    "REGULATOR_STATE": {"feature": None, "source": "register", "registers": ("REGULATOR_STATE",), "key": None, "entity": None},
+    "WINDOW_OPEN": {"feature": None, "source": "register", "registers": ("WINDOW_OPEN",), "key": None, "entity": None},
+    "TOWEL_MODE": {"feature": None, "source": "register", "registers": ("TOWEL_MODE",), "key": None, "entity": None},
+    "TEMPORARY_STATE": {"feature": None, "source": "register", "registers": ("TEMPORARY_STATE",), "key": None, "entity": None},
+    "WORKING_RATE": {"feature": None, "source": "register", "registers": ("WORKING_RATE",), "key": None, "entity": None},
+    "TEMPERATURE_IN_FORCE": {"feature": None, "source": "register", "registers": ("TEMPERATURE_IN_FORCE",), "key": None, "entity": None},
+    "HEATER_TEMPERATURE_IN_FORCE": {"feature": None, "source": "register", "registers": ("HEATER_TEMPERATURE_IN_FORCE",), "key": None, "entity": None},
+    "DEROGATED_SETPOINT": {"feature": None, "source": "register", "registers": ("SET_DEROGATION",), "key": None, "entity": None},
+    "NIGHT_LIGHT": {"feature": None, "source": "register", "registers": ("NIGHT_LIGHT",), "key": None, "entity": None},
+    "NIGHT_LIGHT_BRIGHTNESS": {"feature": None, "source": "register", "registers": ("NIGHT_LIGHT_BRIGHTNESS",), "key": None, "entity": None},
+    "HEATING_LEVEL": {"feature": None, "source": "status", "registers": (), "key": None, "entity": None},
+    "STATUS_SETPOINT": {"feature": None, "source": "status", "registers": (), "key": None, "entity": None},
 }
 
 # What to declare when a key of DEVICE_READINGS is used on a kind without its capability, by capability.

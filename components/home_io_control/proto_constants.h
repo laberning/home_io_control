@@ -693,6 +693,7 @@ static constexpr uint8_t STATUS_MP_FP_FPI2 =
 static constexpr uint8_t STATUS_MP_FP_MAIN_PARAMETER_OFFSET =
     2;  ///< Offset of the main parameter (MSB) in the data of the reply (CMD_PRIVATE_RESP): the target slot of a
         ///< cover's reply. The two bytes after it read `00 00` in the replies of a towel dryer and a water heater.
+static constexpr uint8_t STATUS_MAIN_PARAMETER_SIZE = 2;  ///< Bytes of a main parameter in a status reply, MSB first.
 /// @}
 
 /// @brief Bit of functional parameter `fp` (1-16) in its bitmap: FPI1 holds FP1-FP8 and FPI2 FP9-FP16,

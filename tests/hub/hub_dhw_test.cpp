@@ -14,6 +14,7 @@
 #include "status_poll_policy.h"
 
 #include "test_helpers.h"
+#include "reading_store.h"
 #include "stubs/radio_test_common.h"
 
 #include <cmath>
@@ -185,8 +186,11 @@ TEST(HubDhw, AStatusReplyChangesOnlyTheWaterHeaterReadings) {
   EXPECT_EQ(dev->last_moving_evidence_ms, 0u);
   EXPECT_FALSE(dev->stop_candidate.armed());
   EXPECT_EQ(dev->battery, BatteryState::NOT_REPORTED);
-  EXPECT_TRUE(std::isnan(dev->heating.setpoint_c)) << "the heater readings are a radiator's, never touched";
-  EXPECT_EQ(dev->heating.main_parameter, -1);
+  EXPECT_TRUE(std::isnan(test::number_read(*dev, DeviceReading::SETPOINT)))
+      << "the heater readings are a radiator's, never touched";
+  EXPECT_FALSE(reading_value(*dev, DeviceReading::STATUS_SETPOINT).has_value())
+      << "nor does a water heater's target become a heater's status setpoint";
+  EXPECT_FALSE(reading_value(*dev, DeviceReading::HEATING_LEVEL).has_value());
   EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u) << "no follow-up poll for a 'moving' report";
 }
 

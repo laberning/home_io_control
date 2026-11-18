@@ -25,6 +25,7 @@
 #include "tuning_config.h"
 
 #include "test_helpers.h"
+#include "reading_store.h"
 #include "stubs/radio_test_common.h"
 
 #include <cstdint>
@@ -150,7 +151,7 @@ class HeaterControllerFixture {
       status_reads.push_back({device_id, request, retry_after_fail_ms, max_tries});
       IoDevice *dev = registry.get(device_id);
       if (dev != nullptr && status_reply_level >= 0)
-        dev->heating.level = status_reply_level;
+        test::store_reading(*dev, DeviceReading::HEATING_LEVEL, status_reply_level);
       return status_read_result;
     };
     hub.poll_backoff = [this](const std::string &device_id, bool auth_like) {

@@ -20,9 +20,6 @@ namespace home_io_control {
 
 namespace {
 
-/// Mask for the low byte of a main parameter, where a heating level sits.
-constexpr uint16_t LOW_BYTE_MASK = 0xFF;
-
 /// The card shows no preset for a device-reported value.
 constexpr int8_t NO_PRESET = -1;
 
@@ -132,7 +129,7 @@ constexpr HeatingModeEntry TOWEL_DRYER_MODES[] = {
 
 /// Boost and drying are timed runs on top of the mode; "none" ends the one that runs. The comfort and eco
 /// periods of the device's own programme are not presets (nothing selects them); the level the heater
-/// applies is read from its status (HeatingReadings::level) and shown by the `heating_level:` sensor.
+/// applies is read from its status (DeviceReading::HEATING_LEVEL) and shown by the `heating_level:` sensor.
 constexpr HeatingPresetEntry TOWEL_DRYER_PRESETS[] = {
     {nullptr, HeatingPresetId::NONE, HeatingFunction::TEMPORARY_STATE,
      static_cast<uint8_t>(HeatingTemporaryState::NONE)},
@@ -180,7 +177,6 @@ constexpr HeatingFunction TOWEL_DRYER_BOOT[] = {
 ///       confirms it. Until then the level sensor is experimental.
 constexpr HeatingProgrammePeriod TOWEL_DRYER_PROGRAMME_PERIOD = {
     .in_force_fn = HeatingFunction::TEMPERATURE_IN_FORCE,
-    .comfort_fn = HeatingFunction::SET_TEMPERATURE,
     .derogation_fn = HeatingFunction::DEROGATED_SETPOINT,
     .reports_level = true,
     .override_in_eco_only = true,
@@ -328,7 +324,6 @@ constexpr float TEMPERATURE_VISUAL_MAX_C = 30.0F;  ///< Highest target the card 
 ///       Confirm both on a radiator. A heater that answers the read empty keeps the comfort-setpoint write.
 constexpr HeatingProgrammePeriod SETPOINT_HEATER_PROGRAMME_PERIOD = {
     .in_force_fn = HeatingFunction::HEATER_TEMPERATURE_IN_FORCE,
-    .comfort_fn = HeatingFunction::SET_TEMPERATURE,
     .derogation_fn = HeatingFunction::DEROGATED_SETPOINT,
 };
 
@@ -542,13 +537,6 @@ bool device_uses_heating_temperature(DeviceType type, uint8_t subtype) {
   return profile != nullptr && profile->path == HeatingControlPath::TEMPERATURE_EXECUTE;
 }
 
-bool decode_heating_level(uint16_t main_parameter, uint8_t &level) {
-  if ((main_parameter >> BITS_PER_BYTE) != HEATING_LEVEL_MP_PREFIX)
-    return false;
-  level = static_cast<uint8_t>(main_parameter & LOW_BYTE_MASK);
-  return true;
-}
-
 const char *heating_level_name(uint8_t level) {
   switch (level) {
     case heating_level::OFF:
@@ -598,41 +586,52 @@ const HeatingObservedState *find_observed_preset(const HeatingProfile &profile, 
 namespace {
 
 /// @return Whether the mode register, as read, shows the programme (a mode the card shows as `auto`).
-bool mode_shows_programme(const HeatingProfile &profile, const HeatingReadings &readings) {
-  // value_of() is -1 for an unread register, and a value the table does not know has no row: neither is the
+bool mode_shows_programme(const HeatingProfile &profile, const IoDevice &dev) {
+  // register_wire() is -1 for an unread register, and a value the table does not know has no row: neither is the
   // programme.
-  const int16_t mode = readings.value_of(profile.mode_fn);
+  const int mode = register_wire(dev, profile.mode_fn);
   const HeatingObservedState *shown = mode >= 0 ? find_observed_state(profile, static_cast<uint8_t>(mode)) : nullptr;
   return shown != nullptr && shown->hvac == HeatingHvacMode::AUTO;
 }
 
 }  // namespace
 
-bool programme_period_active(const HeatingProfile &profile, const HeatingReadings &readings) {
+bool programme_period_active(const HeatingProfile &profile, const IoDevice &dev) {
   const HeatingProgrammePeriod *period = profile.programme_period;
-  if (period == nullptr || !mode_shows_programme(profile, readings))
+  if (period == nullptr || !mode_shows_programme(profile, dev))
     return false;
   // A profile that keeps boost and drying in a register of its own runs the programme only with none on top.
   return profile.preset_observed.empty() ||
-         readings.value_of(profile.preset_fn) == static_cast<int16_t>(period->idle_preset_state);
+         register_wire(dev, profile.preset_fn) == static_cast<int>(period->idle_preset_state);
 }
 
-std::optional<HeatingFunction> timed_run_register(const HeatingProfile &profile, const HeatingReadings &readings) {
-  if (profile.programme_period == nullptr || profile.preset_observed.empty() ||
-      !mode_shows_programme(profile, readings))
+std::optional<HeatingFunction> timed_run_register(const HeatingProfile &profile, const IoDevice &dev) {
+  if (profile.programme_period == nullptr || profile.preset_observed.empty() || !mode_shows_programme(profile, dev))
     return std::nullopt;
   return profile.preset_fn;
 }
 
-float programme_temperature_in_force(const HeatingProfile &profile, const HeatingReadings &readings) {
-  if (!programme_period_active(profile, readings))
+float programme_temperature_in_force(const HeatingProfile &profile, const IoDevice &dev) {
+  if (!programme_period_active(profile, dev))
     return NAN;
-  return readings.number_of(profile.programme_period->in_force_fn);
+  return register_value(dev, profile.programme_period->in_force_fn).value_or(NAN);
 }
 
-void clear_inactive_programme_reading(const HeatingProfile &profile, HeatingReadings &readings) {
-  if (profile.programme_period != nullptr && !programme_period_active(profile, readings))
-    readings.clear(profile.programme_period->in_force_fn);
+void clear_inactive_programme_reading(const HeatingProfile &profile, IoDevice &dev) {
+  if (profile.programme_period != nullptr && !programme_period_active(profile, dev))
+    clear_register_reading(dev, profile.programme_period->in_force_fn);
+}
+
+std::optional<float> in_force_from_override_read(const HeatingProfile &profile, HeatingFunction fn, float value) {
+  if (profile.programme_period == nullptr || fn != profile.programme_period->derogation_fn ||
+      !(value >= HEATING_TEMP_MIN_C))
+    return std::nullopt;
+  return value;
+}
+
+DeviceReading heating_setpoint_reading(const HeatingProfile &profile) {
+  return profile.path == HeatingControlPath::TEMPERATURE_EXECUTE ? DeviceReading::STATUS_SETPOINT
+                                                                 : DeviceReading::SETPOINT;
 }
 
 // === Heater writes ===
@@ -772,7 +771,7 @@ bool heating_request_reads_programme_state(const HeatingProfile &profile, const 
 
 namespace {
 /// The period a heating level stands for; any other level (frost protection, boost, none read) is no period.
-HeatingPeriod period_of_level(int16_t level) {
+HeatingPeriod period_of_level(int level) {
   switch (level) {
     case heating_level::COMFORT:
       return HeatingPeriod::COMFORT;
@@ -792,16 +791,17 @@ HeatingDeviceFacts heating_device_facts(const IoDevice *dev, bool programme_stat
   facts.has_record = true;
   facts.range_min_c = dev->temperature_range_min_c;
   facts.range_max_c = dev->temperature_range_max_c;
-  facts.reported_setpoint_c = dev->heating.setpoint_c;
   const HeatingProfile *profile = find_heating_profile(*dev);
+  if (profile != nullptr)
+    facts.reported_setpoint_c = reading_value(*dev, heating_setpoint_reading(*profile)).value_or(NAN);
   // A heater that has reported its temperature in force has the programme's registers: a read missed since
   // (no reply, or the programme just resumed) leaves the value unknown but not the rule.
-  const bool programme_shown = profile != nullptr && programme_period_active(*profile, dev->heating);
+  const bool programme_shown = profile != nullptr && programme_period_active(*profile, *dev);
   facts.programme_runs = programme_shown && dev->temperature_in_force == TemperatureInForceSupport::REPORTED;
   facts.in_force_unresolved = programme_shown && dev->temperature_in_force == TemperatureInForceSupport::UNKNOWN;
   // The stored level is the one the read made for this request refreshed (HeaterController::read_programme_state()).
   if (profile != nullptr && profile->programme_period != nullptr && profile->programme_period->override_in_eco_only)
-    facts.period = period_of_level(dev->heating.level);
+    facts.period = period_of_level(reading_wire(*dev, DeviceReading::HEATING_LEVEL));
   return facts;
 }
 
@@ -866,73 +866,77 @@ void apply_observed_preset(const HeatingProfile &profile, uint8_t wire, HeatingC
     card.preset_index = observed->preset;
 }
 
-/// Fold the temperatures of the readings into the card; sets `seen` when a reading was present.
-void reduce_temperatures(const HeatingProfile &profile, const HeatingReadings &readings, float target_c,
-                         HeatingCardState &card, bool &seen) {
+/// Fold the temperatures of the device's readings into the card; sets `seen` when a reading was present.
+void reduce_temperatures(const HeatingProfile &profile, const IoDevice &dev, float target_c, HeatingCardState &card,
+                         bool &seen) {
   if (profile.features.current_temperature) {
-    card.current_c = readings.room_temperature_c;
-    seen = seen || !std::isnan(readings.room_temperature_c);
+    card.current_c = reading_value(dev, DeviceReading::ROOM_TEMPERATURE).value_or(NAN);
+    seen = seen || !std::isnan(card.current_c);
   }
   if (profile.features.target_temperature && !std::isnan(target_c)) {
     seen = true;
     card.target_c = target_c;
   }
   // The heater's own ceiling, but never past what a write can encode.
-  if (profile.features.target_temperature && !std::isnan(readings.max_setpoint_c) &&
-      readings.max_setpoint_c > HEATING_TEMP_MIN_C) {
+  const float max_setpoint_c = reading_value(dev, DeviceReading::MAX_SETPOINT).value_or(NAN);
+  if (profile.features.target_temperature && !std::isnan(max_setpoint_c) && max_setpoint_c > HEATING_TEMP_MIN_C) {
     seen = true;
-    card.max_target_c = std::min(readings.max_setpoint_c, profile.visual_max_c);
+    card.max_target_c = std::min(max_setpoint_c, profile.visual_max_c);
   }
 }
 
 /// Fold the profile's action source (the regulator state, or the working rate) into the card.
-void reduce_action(const HeatingProfile &profile, const HeatingReadings &readings, bool mode_known,
-                   HeatingCardState &card, bool &seen) {
+void reduce_action(const HeatingProfile &profile, const IoDevice &dev, bool mode_known, HeatingCardState &card,
+                   bool &seen) {
   if (!profile.features.action)
     return;
+  const int regulator = reading_wire(dev, DeviceReading::REGULATOR_STATE);
+  const int working_rate = reading_wire(dev, DeviceReading::WORKING_RATE);
   // The action follows the mode: an off heater is not "idle". Until the profile's action source has been read
   // only the off case is known.
   if (card.mode == HeatingHvacMode::OFF && mode_known) {
     card.action = HeatingAction::OFF;
-  } else if (profile.action_source == HeatingActionSource::REGULATOR && readings.regulator >= 0) {
+  } else if (profile.action_source == HeatingActionSource::REGULATOR && regulator >= 0) {
     seen = true;
-    card.action = readings.regulator == static_cast<int16_t>(HeatingRegulatorState::HEATING) ? HeatingAction::HEATING
-                                                                                             : HeatingAction::IDLE;
-  } else if (profile.action_source == HeatingActionSource::WORKING_RATE && readings.working_rate >= 0) {
+    card.action =
+        regulator == static_cast<int>(HeatingRegulatorState::HEATING) ? HeatingAction::HEATING : HeatingAction::IDLE;
+  } else if (profile.action_source == HeatingActionSource::WORKING_RATE && working_rate >= 0) {
     seen = true;
-    card.action = readings.working_rate > 0 ? HeatingAction::HEATING : HeatingAction::IDLE;
+    card.action = working_rate > 0 ? HeatingAction::HEATING : HeatingAction::IDLE;
   }
 }
 
 }  // namespace
 
-HeatingCardState reduce_heating_card(const HeatingProfile &profile, const HeatingReadings &readings,
+HeatingCardState reduce_heating_card(const HeatingProfile &profile, const IoDevice &dev,
                                      const HeatingCardState &prior) {
   HeatingCardState card = prior;
   bool seen = false;
+  const std::optional<float> setpoint_c = reading_value(dev, heating_setpoint_reading(profile));
   // While the heater's own programme runs, the temperature it heats to replaces the comfort setpoint.
-  const float in_force_c = programme_temperature_in_force(profile, readings);
-  reduce_temperatures(profile, readings, std::isnan(in_force_c) ? readings.setpoint_c : in_force_c, card, seen);
+  const float in_force_c = programme_temperature_in_force(profile, dev);
+  reduce_temperatures(profile, dev, std::isnan(in_force_c) ? setpoint_c.value_or(NAN) : in_force_c, card, seen);
 
   // The profile's mode register, or the heating level, whichever this profile's device reports.
-  const int16_t wire =
-      profile.path == HeatingControlPath::PRIVATE_REGISTERS ? readings.value_of(profile.mode_fn) : readings.level;
+  const int wire = profile.path == HeatingControlPath::PRIVATE_REGISTERS
+                       ? register_wire(dev, profile.mode_fn)
+                       : reading_wire(dev, DeviceReading::HEATING_LEVEL);
   if (wire >= 0) {
     seen = true;
     apply_observed_state(profile, static_cast<uint8_t>(wire), card);
   }
   // The preset kept in a register of its own (a towel dryer's temporary state, "none" while only the
   // programme runs).
-  const int16_t preset_wire = !profile.preset_observed.empty() ? readings.value_of(profile.preset_fn) : -1;
+  const int preset_wire = !profile.preset_observed.empty() ? register_wire(dev, profile.preset_fn) : -1;
   if (preset_wire >= 0) {
     seen = true;
     apply_observed_preset(profile, static_cast<uint8_t>(preset_wire), card);
   }
-  if (wire < 0 && profile.path == HeatingControlPath::TEMPERATURE_EXECUTE && !std::isnan(readings.setpoint_c)) {
+  if (wire < 0 && profile.path == HeatingControlPath::TEMPERATURE_EXECUTE && setpoint_c && !std::isnan(*setpoint_c)) {
     // The device reports a plain temperature, so it is on no alias preset.
     card.preset_index = NO_PRESET;
   }
-  reduce_action(profile, readings, wire >= 0, card, seen);
+  reduce_action(profile, dev, wire >= 0, card, seen);
 
   // Where nothing reads the mode back, a device that reports a setpoint or an alias is evidently on: show
   // heat until a mode is commanded, instead of the card's default "off".

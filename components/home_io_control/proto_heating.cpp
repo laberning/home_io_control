@@ -54,7 +54,7 @@ struct HeatingFunctionDescriptor {
   HeatingFunction fn;     ///< Function this row describes.
   uint8_t register_low;   ///< Payload byte 3: low byte of the 0x01xx register number.
   HeatingAccess access;   ///< Whether the register may be read, written or both.
-  ValueCodec kind;        ///< How the value maps onto the trailing bytes.
+  ValueCodec codec;       ///< How the value maps onto the trailing bytes.
   uint16_t max_value{0};  ///< BOUNDED_BYTE, BOUNDED_U16: highest value a reply may carry and a write may send.
 };
 
@@ -198,7 +198,7 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE
   if (!value_is_writable(fn, value))
     return 0;
 
-  switch (d->kind) {
+  switch (d->codec) {
     case ValueCodec::TENTHS_U16_OR_ZERO:
       if (value == 0.0F)
         return write_u16_set(*d, 0, out);
@@ -258,14 +258,14 @@ size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVA
 
 bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value) {
   const HeatingFunctionDescriptor *d = descriptor_for(fn);
-  if (d == nullptr || d->kind == ValueCodec::NONE ||
+  if (d == nullptr || d->codec == ValueCodec::NONE ||
       !private_reply_echoes_register(reply, HEATING_REGISTER_HIGH_BYTE, d->register_low))
     return false;
   if (reply.data_len < PRIVATE_REGISTER_VALUE_OFFSET)
     return false;
 
   const std::optional<float> decoded =
-      decode_value(d->kind,
+      decode_value(d->codec,
                    std::span<const uint8_t>(reply.data + PRIVATE_REGISTER_VALUE_OFFSET,
                                             reply.data_len - PRIVATE_REGISTER_VALUE_OFFSET),
                    d->max_value);
@@ -275,105 +275,13 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
   return true;
 }
 
-// === HeatingReadings: one table from register to field ===
-
-namespace {
-
-/// @brief Which field of HeatingReadings holds a register, and how its value is kept.
-struct HeatingReadingField {
-  HeatingFunction fn;              ///< Register.
-  float HeatingReadings::*number;  ///< The field of a register kept as a number with a unit (degrees, kelvin, kWh,
-                                   ///< minutes; NaN until read), else nullptr.
-  int16_t HeatingReadings::*
-      integer;  ///< The field of a register read as a byte or a flag (-1 until read), else nullptr.
-};
-
-/// Every register the readings hold. POWER_ON and MIDNIGHT_SYNC have no row: they are logged, never kept.
-constexpr HeatingReadingField HEATING_READING_FIELDS[] = {
-    {HeatingFunction::ROOM_TEMPERATURE, &HeatingReadings::room_temperature_c, nullptr},
-    {HeatingFunction::SET_TEMPERATURE, &HeatingReadings::setpoint_c, nullptr},
-    {HeatingFunction::MAX_SETPOINT, &HeatingReadings::max_setpoint_c, nullptr},
-    {HeatingFunction::TEMPERATURE_IN_FORCE, &HeatingReadings::in_force_temperature_c, nullptr},
-    {HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, &HeatingReadings::in_force_temperature_c, nullptr},
-    {HeatingFunction::ECO_SETBACK, &HeatingReadings::eco_setback_k, nullptr},
-    {HeatingFunction::DEROGATED_SETPOINT, &HeatingReadings::derogated_setpoint_c, nullptr},
-    {HeatingFunction::SET_MODE, nullptr, &HeatingReadings::mode},
-    {HeatingFunction::REGULATOR_STATE, nullptr, &HeatingReadings::regulator},
-    {HeatingFunction::WINDOW_OPEN, nullptr, &HeatingReadings::window_open},
-    {HeatingFunction::SET_OPEN_WINDOW_DETECTION, nullptr, &HeatingReadings::open_window_detection},
-    {HeatingFunction::TOWEL_MODE, nullptr, &HeatingReadings::towel_mode},
-    {HeatingFunction::TEMPORARY_STATE, nullptr, &HeatingReadings::temporary_state},
-    {HeatingFunction::WORKING_RATE, nullptr, &HeatingReadings::working_rate},
-    {HeatingFunction::NIGHT_LIGHT, nullptr, &HeatingReadings::night_light},
-    {HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, nullptr, &HeatingReadings::night_light_brightness},
-    {HeatingFunction::CENTRAL_HEATING_MODE, nullptr, &HeatingReadings::central_heating_mode},
-    {HeatingFunction::OCCUPANCY_DETECTION, nullptr, &HeatingReadings::occupancy_detection},
-    {HeatingFunction::SET_PRESENCE, nullptr, &HeatingReadings::presence},
-    {HeatingFunction::ENERGY_TOTAL, &HeatingReadings::energy_total_kwh, nullptr},
-    {HeatingFunction::BOOST_REMAINING, &HeatingReadings::boost_remaining_min, nullptr},
-    {HeatingFunction::BOOST_DURATION, &HeatingReadings::boost_duration_min, nullptr},
-    {HeatingFunction::DRYING_REMAINING, &HeatingReadings::drying_remaining_min, nullptr},
-    {HeatingFunction::DRYING_DURATION, &HeatingReadings::drying_duration_min, nullptr},
-};
-
-/// @return The row of a register, or nullptr for one the readings do not hold.
-const HeatingReadingField *reading_field_for(HeatingFunction fn) {
-  for (const auto &field : HEATING_READING_FIELDS) {
-    if (field.fn == fn)
-      return &field;
-  }
-  return nullptr;
-}
-
-}  // namespace
-
-bool HeatingReadings::store(HeatingFunction fn, float value) {
-  const HeatingReadingField *field = reading_field_for(fn);
-  if (field == nullptr)
+bool heating_reply_carries_value(const IoFrame &reply, HeatingFunction fn) {
+  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+  if (d == nullptr || d->codec == ValueCodec::NONE ||
+      !private_reply_echoes_register(reply, HEATING_REGISTER_HIGH_BYTE, d->register_low) ||
+      reply.data_len < PRIVATE_REGISTER_VALUE_OFFSET)
     return false;
-  if (field->number != nullptr) {
-    this->*field->number = value;
-  } else {
-    this->*field->integer = static_cast<int16_t>(value);
-  }
-  return true;
-}
-
-bool HeatingReadings::clear(HeatingFunction fn) {
-  const HeatingReadingField *field = reading_field_for(fn);
-  if (field == nullptr)
-    return false;
-  if (field->number != nullptr) {
-    this->*field->number = NAN;
-  } else {
-    this->*field->integer = -1;
-  }
-  return true;
-}
-
-bool HeatingReadings::has(HeatingFunction fn) const {
-  const HeatingReadingField *field = reading_field_for(fn);
-  if (field == nullptr)
-    return false;
-  return field->number != nullptr ? !std::isnan(this->*field->number) : this->*field->integer >= 0;
-}
-
-std::optional<float> HeatingReadings::reading_of(HeatingFunction fn) const {
-  const HeatingReadingField *field = reading_field_for(fn);
-  if (field == nullptr || !this->has(fn))
-    return std::nullopt;
-  return field->number != nullptr ? this->*field->number : static_cast<float>(this->*field->integer);
-}
-
-float HeatingReadings::number_of(HeatingFunction fn) const {
-  const HeatingReadingField *field = reading_field_for(fn);
-  return field != nullptr && field->number != nullptr ? this->*field->number : NAN;
-}
-
-int16_t HeatingReadings::value_of(HeatingFunction fn) const {
-  // The numbers with a unit and the registers the readings do not hold have no wire byte.
-  const HeatingReadingField *field = reading_field_for(fn);
-  return field != nullptr && field->integer != nullptr ? this->*field->integer : -1;
+  return reply.data_len - PRIVATE_REGISTER_VALUE_OFFSET >= value_codec_length(d->codec);
 }
 
 }  // namespace home_io_control

@@ -157,7 +157,7 @@ struct DhwHeatingState {
 /// @brief What the hub has read from a domestic hot water heater.
 ///
 /// Every field starts as "not read" and is set only from a decoded reply, so a sensor never shows a value the
-/// heater did not report. Mirrors HeatingReadings for the radiator family.
+/// heater did not report.
 struct DhwReadings {
   float water_c{NAN};          ///< Water temperature (register 0x0017); NaN until read.
   float target_c{NAN};         ///< Target temperature (status reply main parameter); NaN until read or when the

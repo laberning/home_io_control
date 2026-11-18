@@ -740,7 +740,7 @@ class IOHomeControlComponent : public Component,
   void enable_device_reading(const std::string &device_id, DeviceReading reading) override {
     this->heater_controller_.enable_device_reading(device_id, reading);
   }
-  /// @brief Read one register of a heater and fold the decoded value into IoDevice::heating.
+  /// @brief Read one register of a heater and keep the decoded value in the device's readings.
   /// @see HeaterController::read_heating_register()
   bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
                              uint8_t max_tries) override {

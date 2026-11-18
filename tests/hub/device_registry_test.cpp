@@ -8,8 +8,11 @@
 
 #include "proto_device_readings.h"
 #include "proto_device_types.h"
+#include "proto_heating_profiles.h"
 
 #include "esphome/core/hal.h"
+
+#include "reading_store.h"
 
 #include <gtest/gtest.h>
 
@@ -171,21 +174,29 @@ TEST(DeviceRegistry, PutKeepsTheYamlOverridesOfTheRecordItReplaces) {
   EXPECT_TRUE(has_feature(dev->features, device_feature::LEVELS));
 }
 
-TEST(DeviceRegistry, PutKeepsTheOptInReadsOfTheRecordItReplaces) {
+TEST(DeviceRegistry, PutKeepsTheWholeReadingStoreOfTheRecordItReplaces) {
   DeviceRegistry reg;
   reg.add("AABBCC", {.type = DeviceType::ELECTRICAL_HEATER, .subtype = 1, .model = DeviceModel::TOWEL_DRYER});
-  reg.get("AABBCC")->opt_in_reads.ask(HeatingFunction::CENTRAL_HEATING_MODE);
-  reg.get("AABBCC")->opt_in_reads.ask(HeatingFunction::OCCUPANCY_DETECTION);
-  reg.get("AABBCC")->opt_in_reads.mark_absent(HeatingFunction::OCCUPANCY_DETECTION);
+  IoDevice *held = reg.get("AABBCC");
+  // Values from every kind of source, and both flags: a pairing that replaces the record resets none of them.
+  test::store_reading(*held, HeatingFunction::ROOM_TEMPERATURE, 20.5F);
+  test::store_reading(*held, DeviceReading::HEATING_LEVEL, heating_level::ECO);
+  held->reading_values.store(reading_slot(DeviceReading::ENERGY_TOTAL), 3262.0F);
+  ask_register_reading(*held, HeatingFunction::CENTRAL_HEATING_MODE);
+  ask_register_reading(*held, HeatingFunction::OCCUPANCY_DETECTION);
+  mark_register_reading_absent(*held, HeatingFunction::OCCUPANCY_DETECTION);
   IoDevice paired{};
   paired.type = DeviceType::ELECTRICAL_HEATER;
   paired.subtype = 1;
   reg.put("AABBCC", paired);
-  EXPECT_EQ(reg.get("AABBCC")->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE),
-            HeatingOptInReads::State::ASKED)
+  const IoDevice &kept = *reg.get("AABBCC");
+  EXPECT_FLOAT_EQ(test::number_read(kept, DeviceReading::ROOM_TEMPERATURE), 20.5F)
+      << "a register value stays, so the card does not go blank after a re-pair";
+  EXPECT_EQ(test::wire_read(kept, DeviceReading::HEATING_LEVEL), heating_level::ECO) << "a status value stays";
+  EXPECT_EQ(reading_value(kept, DeviceReading::ENERGY_TOTAL), 3262.0F) << "and so does a data-object value";
+  EXPECT_EQ(test::read_state(kept, HeatingFunction::CENTRAL_HEATING_MODE), test::ReadState::ASKED)
       << "the YAML's sensor still asks for the read after pairing replaces the record";
-  EXPECT_EQ(reg.get("AABBCC")->opt_in_reads.state_of(HeatingFunction::OCCUPANCY_DETECTION),
-            HeatingOptInReads::State::ABSENT)
+  EXPECT_EQ(test::read_state(kept, HeatingFunction::OCCUPANCY_DETECTION), test::ReadState::ABSENT)
       << "and a register the heater lacks stays unasked";
 }
 

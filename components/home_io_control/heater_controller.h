@@ -34,6 +34,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <string>
 
 namespace esphome {
@@ -234,7 +235,8 @@ class HeaterController {
   /// @param reading The reading; its registers (reading_polled_registers()) are read at every poll.
   void enable_device_reading(const std::string &device_id, DeviceReading reading);
 
-  /// @brief Read one register of a heater and fold the decoded value into IoDevice::heating.
+  /// @brief Read one register of a heater and keep the decoded value in the reading that is the register
+  /// (IoDevice::reading_values).
   ///
   /// Same gate as send_heating_command(); the read itself is read_private_register(). A reply that
   /// decodes (decode_heating_reply()) updates the device record and notifies the entity callbacks, so
@@ -475,13 +477,14 @@ class HeaterController {
   /// @return true when every poll register answered.
   bool read_poll_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
 
-  /// @brief Read the opt-in registers of a heater whose YAML asked for them, in register order.
+  /// @brief Read the registers of the readings a heater's YAML asked for, in register order.
   /// @details An answer without a value (a heater without the register, or a byte the register does not use)
-  ///          clears that reading, so its entity has no state, stops the read of that register until the next
-  ///          boot and logs once naming it. A missed read changes nothing. Each register is judged on its own.
+  ///          marks that reading absent, so its entity has no state, stops the read of that register until the next
+  ///          boot (or until another read answers it with a value, mark_register_reading_absent()) and logs once
+  ///          naming it. A missed read changes nothing. Each register is judged on its own.
   /// @param device_id Target device ID.
   /// @param max_tries Transmit-attempt cap of each read (the poll's try band).
-  void poll_opt_in_registers_(const std::string &device_id, uint8_t max_tries);
+  void poll_asked_registers_(const std::string &device_id, uint8_t max_tries);
 
   /// What an answer without a value to a read of the temperature in force may decide.
   enum class InForceEmptyAnswer : uint8_t {
@@ -529,7 +532,7 @@ class HeaterController {
   void read_period_for_target_(const std::string &device_id, const HeatingProfile &profile);
 
   /// @brief Read the heating level a heater applies now: the status read of the main parameter, whose reply
-  ///        the hub's status decoder folds into HeatingReadings::level (apply_register_heater_status_reply()).
+  ///        the hub's status decoder keeps as DeviceReading::HEATING_LEVEL (apply_register_heater_status_reply()).
   /// @details An authenticated exchange of its own. A miss is not a poll failure; the next poll asks again.
   /// @param device_id Target device ID.
   /// @param max_tries Transmit-attempt cap of the read (the poll's).
@@ -560,20 +563,20 @@ class HeaterController {
 
 /// @brief Record what a heater commanded with an EXECUTE reports as its current main parameter.
 ///
-/// A heating-level heater reports a level; a temperature heater reports an alias (kept in
-/// HeatingReadings::level) or a plain temperature (HeatingReadings::setpoint_c, decoded over the
+/// A heating-level heater reports a level; a temperature heater reports an alias (kept as
+/// DeviceReading::HEATING_LEVEL) or a plain temperature (DeviceReading::STATUS_SETPOINT, decoded over the
 /// device's encoding range, which also clears a stale alias). A device without a heating profile and a
-/// register heater are left alone.
+/// register heater are left alone. The bytes are decoded by decode_status_reading().
 /// @param id Device ID for the log line.
 /// @param dev Device record to update.
-/// @param current_main_parameter The 16-bit current main parameter of a reply to a status poll.
-void apply_heating_main_parameter(const std::string &id, IoDevice &dev, uint16_t current_main_parameter);
+/// @param main_parameter The two bytes of the current main parameter of a reply to a status poll.
+void apply_heating_main_parameter(const std::string &id, IoDevice &dev, std::span<const uint8_t> main_parameter);
 
 /// @brief Apply the reply to a register heater's main-parameter status read: its main parameter is the
 /// heating level the heater applies now (a towel dryer in its programme answers comfort or eco).
 ///
-/// Only the level is taken: a register heater's mode, temperatures and presets come from its registers. A
-/// main parameter that is not a level clears the stored level. The ack of an EXECUTE is not decoded (a
+/// Only the level (DeviceReading::HEATING_LEVEL) is taken: a register heater's mode, temperatures and presets come from
+/// its registers. A main parameter that is not a level clears the stored level. The ack of an EXECUTE is not decoded (a
 /// register heater is never sent one).
 /// @param id Device ID for the log line.
 /// @param dev Device record to update.

@@ -2,12 +2,14 @@
 /// @brief Tests for the heating profile table, heating-level codec and the level EXECUTE frame.
 
 #include "proto_codecs.h"
+#include "reading_store.h"
 #include "proto_commands.h"
 #include "proto_device_types.h"
 #include "proto_heating_profiles.h"
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -259,13 +261,23 @@ TEST(HeatingLevels, MainParameterCarriesThePrefixAndTheLevel) {
   EXPECT_EQ(heating_level_main_parameter(heating_level::SECURED), 0xFC3F);
 }
 
+namespace {
+/// The two bytes of a heating level's main parameter as a status reply carries them.
+std::array<uint8_t, 2> main_parameter_bytes(uint8_t level) {
+  const uint16_t mp = heating_level_main_parameter(level);
+  return {static_cast<uint8_t>(mp >> 8), static_cast<uint8_t>(mp & 0xFF)};
+}
+}  // namespace
+
 TEST(HeatingLevels, DecodeEveryLevelIncludingSecured) {
   for (const uint8_t level :
        {heating_level::OFF, heating_level::FROST_PROTECTION, heating_level::ECO, heating_level::COMFORT_MINUS_2,
         heating_level::COMFORT_MINUS_1, heating_level::COMFORT, heating_level::BOOST, heating_level::SECURED}) {
-    uint8_t decoded = 0xEE;
-    ASSERT_TRUE(decode_heating_level(heating_level_main_parameter(level), decoded)) << +level;
-    EXPECT_EQ(decoded, level);
+    const auto decoded =
+        decode_status_reading(DeviceReading::HEATING_LEVEL, main_parameter_bytes(level), HEATING_LEVEL_MP_PREFIX,
+                              HEATING_TEMPERATURE_RANGE_MIN_C, HEATING_TEMPERATURE_RANGE_MAX_C);
+    ASSERT_TRUE(decoded.has_value()) << +level;
+    EXPECT_EQ(*decoded, level);
   }
 }
 
@@ -293,11 +305,14 @@ TEST(HeatingLevels, AValueThatIsNoLevelHasNoName) {
 }
 
 TEST(HeatingLevels, APositionIsNotALevel) {
-  uint8_t level = 0xEE;
-  EXPECT_FALSE(decode_heating_level(0xC800, level)) << "100 % closed";
-  EXPECT_FALSE(decode_heating_level(0x0000, level));
-  EXPECT_FALSE(decode_heating_level(0xD400, level)) << "unknown-position marker";
-  EXPECT_EQ(level, 0xEE) << "a non-level leaves the output untouched";
+  const auto decode = [](uint8_t high, uint8_t low) {
+    const std::array<uint8_t, 2> bytes = {high, low};
+    return decode_status_reading(DeviceReading::HEATING_LEVEL, bytes, HEATING_LEVEL_MP_PREFIX,
+                                 HEATING_TEMPERATURE_RANGE_MIN_C, HEATING_TEMPERATURE_RANGE_MAX_C);
+  };
+  EXPECT_FALSE(decode(0xC8, 0x00)) << "100 % closed";
+  EXPECT_FALSE(decode(0x00, 0x00));
+  EXPECT_FALSE(decode(0xD4, 0x00)) << "unknown-position marker";
 }
 
 // === Level EXECUTE frame ===
@@ -691,7 +706,6 @@ TEST(HeatingProfilesTowelDryer, TheProgrammePeriodNamesTheRegistersOfTheProgramm
   const HeatingProgrammePeriod &period = *p.programme_period;
   EXPECT_EQ(period.idle_preset_state, static_cast<uint8_t>(HeatingTemporaryState::NONE));
   EXPECT_EQ(period.in_force_fn, HeatingFunction::TEMPERATURE_IN_FORCE);
-  EXPECT_EQ(period.comfort_fn, HeatingFunction::SET_TEMPERATURE) << "the register the card writes";
   EXPECT_EQ(period.derogation_fn, HeatingFunction::DEROGATED_SETPOINT) << "a target set in auto is written here";
   EXPECT_TRUE(period.reports_level) << "the dryer answers the status read with its level";
   for (const HeatingPresetEntry &preset : p.presets) {
@@ -708,7 +722,6 @@ TEST(HeatingProfilesProgramme, TheRadiatorFamilyNamesItsOwnRegistersAndTheModels
   const HeatingProfile *radiator = find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
   ASSERT_NE(radiator->programme_period, nullptr);
   EXPECT_EQ(radiator->programme_period->in_force_fn, HeatingFunction::HEATER_TEMPERATURE_IN_FORCE);
-  EXPECT_EQ(radiator->programme_period->comfort_fn, HeatingFunction::SET_TEMPERATURE);
   EXPECT_EQ(radiator->programme_period->derogation_fn, HeatingFunction::DEROGATED_SETPOINT);
   EXPECT_FALSE(radiator->programme_period->reports_level)
       << "no radiator has answered the status read with a level, so none is asked";
@@ -728,14 +741,13 @@ TEST(HeatingProfilesProgramme, ProfilesWithoutAProgrammeHaveNoPeriod) {
 
 namespace {
 
-/// A towel dryer's readings in the state of the display: mode, temporary state, comfort 20.0, setback 3.5.
-HeatingReadings towel_readings(TowelDryerMode mode, HeatingTemporaryState state, float in_force_c) {
-  HeatingReadings r;
-  r.towel_mode = static_cast<int16_t>(mode);
-  r.temporary_state = static_cast<int16_t>(state);
-  r.setpoint_c = 20.0F;
-  r.eco_setback_k = 3.5F;
-  r.in_force_temperature_c = in_force_c;
+/// A towel dryer's readings in the state of the display: mode, temporary state, comfort 20.0.
+IoDevice towel_readings(TowelDryerMode mode, HeatingTemporaryState state, float in_force_c) {
+  IoDevice r;
+  test::store_reading(r, DeviceReading::TOWEL_MODE, static_cast<int16_t>(mode));
+  test::store_reading(r, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(state));
+  test::store_reading(r, DeviceReading::SETPOINT, 20.0F);
+  test::store_reading(r, DeviceReading::TEMPERATURE_IN_FORCE, in_force_c);
   return r;
 }
 
@@ -759,8 +771,8 @@ TEST(HeatingProfilesTowelDryer, TheTemperatureInForceIsTheProgrammesTarget) {
 }
 
 TEST(HeatingProfilesTowelDryer, WithoutTheTemperatureInForceThereIsNoTargetToShow) {
-  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
-  r.clear(HeatingFunction::TEMPERATURE_IN_FORCE);
+  IoDevice r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
+  test::clear_reading(r, HeatingFunction::TEMPERATURE_IN_FORCE);
   EXPECT_TRUE(std::isnan(programme_temperature_in_force(towel(), r))) << "the programme runs, it is just not read yet";
 }
 
@@ -769,11 +781,11 @@ TEST(HeatingProfilesTowelDryer, WithoutTheTemperatureInForceThereIsNoTargetToSho
 namespace {
 
 /// A radiator's readings: the mode register and the temperature in force.
-HeatingReadings radiator_readings(HeatingMode mode, float in_force_c) {
-  HeatingReadings r;
-  r.mode = static_cast<int16_t>(mode);
-  r.setpoint_c = 20.0F;
-  r.in_force_temperature_c = in_force_c;
+IoDevice radiator_readings(HeatingMode mode, float in_force_c) {
+  IoDevice r;
+  test::store_reading(r, DeviceReading::MODE, static_cast<int16_t>(mode));
+  test::store_reading(r, DeviceReading::SETPOINT, 20.0F);
+  test::store_reading(r, DeviceReading::HEATER_TEMPERATURE_IN_FORCE, in_force_c);
   return r;
 }
 
@@ -785,16 +797,16 @@ const HeatingProfile &radiator_profile() {
 
 TEST(HeatingProfilesProgramme, ARadiatorRunsItsProgrammeInProgAndInAutoButNotInManualOffOrExternal) {
   for (const HeatingMode mode : {HeatingMode::PROG, HeatingMode::AUTO}) {
-    const HeatingReadings r = radiator_readings(mode, 17.5F);
+    const IoDevice r = radiator_readings(mode, 17.5F);
     EXPECT_TRUE(programme_period_active(radiator_profile(), r)) << static_cast<int>(mode);
     EXPECT_FLOAT_EQ(programme_temperature_in_force(radiator_profile(), r), 17.5F) << static_cast<int>(mode);
   }
   for (const HeatingMode mode : {HeatingMode::MANUAL, HeatingMode::OFF, HeatingMode::EXTERNAL_SETPOINT}) {
-    const HeatingReadings r = radiator_readings(mode, 17.5F);
+    const IoDevice r = radiator_readings(mode, 17.5F);
     EXPECT_FALSE(programme_period_active(radiator_profile(), r)) << static_cast<int>(mode);
     EXPECT_TRUE(std::isnan(programme_temperature_in_force(radiator_profile(), r))) << static_cast<int>(mode);
   }
-  HeatingReadings unread;
+  IoDevice unread;
   EXPECT_FALSE(programme_period_active(radiator_profile(), unread)) << "an unread mode is not the programme";
 }
 
@@ -820,7 +832,7 @@ TEST(HeatingProfilesTowelDryer, TheProgrammeIsActiveOnlyInProgWithNoTimedRunOnTo
   };
   for (const auto &c : cases) {
     // 0x0137 reads 1 in boost and 2 in drying: a value that must never be taken for a temperature.
-    const HeatingReadings r = towel_readings(c.mode, c.state, 0.1F);
+    const IoDevice r = towel_readings(c.mode, c.state, 0.1F);
     EXPECT_EQ(programme_period_active(p, r), c.active)
         << "mode " << static_cast<int>(c.mode) << " state " << static_cast<int>(c.state);
     if (!c.active) {
@@ -828,7 +840,7 @@ TEST(HeatingProfilesTowelDryer, TheProgrammeIsActiveOnlyInProgWithNoTimedRunOnTo
           << "no temperature is reported outside the programme";
     }
   }
-  HeatingReadings unread;
+  IoDevice unread;
   EXPECT_FALSE(programme_period_active(p, unread)) << "an unread mode is not the programme";
   EXPECT_FALSE(programme_period_active(*find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE),
                                        towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F)))
@@ -837,27 +849,29 @@ TEST(HeatingProfilesTowelDryer, TheProgrammeIsActiveOnlyInProgWithNoTimedRunOnTo
 
 TEST(HeatingProfilesTowelDryer, TheTemperatureInForceIsDroppedWhenTheProgrammeStopsAndKeptWhileItRuns) {
   const HeatingProfile &p = towel();
-  HeatingReadings r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
+  IoDevice r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
   clear_inactive_programme_reading(p, r);
-  EXPECT_TRUE(r.has(HeatingFunction::TEMPERATURE_IN_FORCE)) << "kept while the programme runs";
+  EXPECT_TRUE(test::has_reading(r, HeatingFunction::TEMPERATURE_IN_FORCE)) << "kept while the programme runs";
 
-  r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::BOOST);
+  test::store_reading(r, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(HeatingTemporaryState::BOOST));
   clear_inactive_programme_reading(p, r);
-  EXPECT_FALSE(r.has(HeatingFunction::TEMPERATURE_IN_FORCE)) << "dropped in boost";
-  EXPECT_TRUE(r.has(HeatingFunction::ECO_SETBACK)) << "the setback is not part of it";
+  EXPECT_FALSE(test::has_reading(r, HeatingFunction::TEMPERATURE_IN_FORCE)) << "dropped in boost";
+  EXPECT_TRUE(test::has_reading(r, HeatingFunction::SET_TEMPERATURE)) << "the comfort setpoint is not part of it";
 
   // Back in the programme the old value must not come back.
-  r.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE);
+  test::store_reading(r, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(HeatingTemporaryState::NONE));
   EXPECT_TRUE(std::isnan(programme_temperature_in_force(p, r)));
 
-  HeatingReadings plain;
-  plain.in_force_temperature_c = 5.0F;
+  IoDevice plain;
+  test::store_reading(plain, DeviceReading::TEMPERATURE_IN_FORCE, 5.0F);
   clear_inactive_programme_reading(*find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE), plain);
-  EXPECT_TRUE(plain.has(HeatingFunction::TEMPERATURE_IN_FORCE)) << "a profile without a period never touches it";
+  EXPECT_TRUE(test::has_reading(plain, HeatingFunction::TEMPERATURE_IN_FORCE))
+      << "a profile without a period never touches it";
 
-  HeatingReadings manual = radiator_readings(HeatingMode::MANUAL, 17.5F);
+  IoDevice manual = radiator_readings(HeatingMode::MANUAL, 17.5F);
   clear_inactive_programme_reading(radiator_profile(), manual);
-  EXPECT_FALSE(manual.has(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE)) << "a radiator in heat holds none";
+  EXPECT_FALSE(test::has_reading(manual, HeatingFunction::HEATER_TEMPERATURE_IN_FORCE))
+      << "a radiator in heat holds none";
 }
 
 TEST(HeatingProfilesTowelDryer, TheRadiatorProfileIsUnchangedAndNeverTouchesTheTowelRegisters) {

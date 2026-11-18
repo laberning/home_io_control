@@ -7,6 +7,7 @@
 
 #include "entity_helpers.h"
 #include "esphome/core/log.h"
+#include "proto_device_readings.h"
 #include "proto_heating_profiles.h"
 
 #include <algorithm>
@@ -27,9 +28,10 @@ static constexpr uint8_t NIGHT_LIGHT_MIN_ON_PERCENT = 1;
 void IOHomeHeatingLevelSensor::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {
     // Nothing read means no state, never a guessed level; a value that is no level keeps the last one shown.
-    if (dev.heating.level < 0)
+    const int level = reading_wire(dev, DeviceReading::HEATING_LEVEL);
+    if (level < 0)
       return;
-    const char *name = heating_level_name(static_cast<uint8_t>(dev.heating.level));
+    const char *name = heating_level_name(static_cast<uint8_t>(level));
     if (name != nullptr)
       this->publish_state(name);
   });
@@ -42,12 +44,13 @@ void IOHomeHeatingLevelSensor::dump_config() {
 
 void IOHomeWindowBinarySensor::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {
-    if (dev.heating.window_open < 0) {
+    const std::optional<float> open = reading_value(dev, DeviceReading::WINDOW_OPEN);
+    if (!open) {
       // "Closed" must mean the heater said so: nothing read means no state.
       this->invalidate_state();
       return;
     }
-    this->publish_state(dev.heating.window_open != 0);
+    this->publish_state(*open != 0.0F);
   });
 }
 
@@ -73,7 +76,7 @@ void IOHomeHeaterSettingSwitch::write_state(bool state) {
              state ? "on" : "off");
     return;
   }
-  // The read-back updates IoDevice::heating, and the companion binding above publishes it.
+  // The read-back updates the device's readings, and the companion binding above publishes it.
   this->heating_port_->read_heating_register(this->device_id_, *setting, nullptr, EXCHANGE_RETRY_COUNT);
 }
 
@@ -95,15 +98,16 @@ light::LightTraits IOHomeHeaterNightLight::get_traits() {
 
 void IOHomeHeaterNightLight::on_device_update_(const IoDevice &dev) {
   // Shown only from a reply: a light with no reading yet keeps its unknown state.
-  if (this->state_ == nullptr || this->writing_ || dev.heating.night_light < 0)
+  const std::optional<float> light = reading_value(dev, DeviceReading::NIGHT_LIGHT);
+  if (this->state_ == nullptr || this->writing_ || !light)
     return;
-  const bool on = dev.heating.night_light != 0;
+  const bool on = *light != 0.0F;
   // A brightness of 0 (or none read yet) says nothing about the level the light comes on at: keep the
   // one shown.
-  const float brightness =
-      dev.heating.night_light_brightness > 0
-          ? night_light_fraction_from_register(static_cast<uint16_t>(dev.heating.night_light_brightness))
-          : this->state_->remote_values.get_brightness();
+  const int register_brightness = reading_wire(dev, DeviceReading::NIGHT_LIGHT_BRIGHTNESS);
+  const float brightness = register_brightness > 0
+                               ? night_light_fraction_from_register(static_cast<uint16_t>(register_brightness))
+                               : this->state_->remote_values.get_brightness();
   publish_light_reading(this->state_, on, brightness, this->suppress_write_);
 }
 
@@ -136,16 +140,17 @@ void IOHomeHeaterNightLight::write_state(light::LightState *state) {
     // Compared as the percentage Home Assistant shows, not as the register value: the panel's own levels
     // (100, 1000) fall between two whole percentages, and switching on at the brightness shown must not
     // move the heater off its level.
-    const bool holds_percent = dev != nullptr && dev->heating.night_light_brightness > 0 &&
-                               detail::round_percent(night_light_fraction_from_register(
-                                   static_cast<uint16_t>(dev->heating.night_light_brightness))) == percent;
+    const int held_brightness = dev != nullptr ? reading_wire(*dev, DeviceReading::NIGHT_LIGHT_BRIGHTNESS) : -1;
+    const bool holds_percent =
+        held_brightness > 0 &&
+        detail::round_percent(night_light_fraction_from_register(static_cast<uint16_t>(held_brightness))) == percent;
     if (!holds_percent)
       brightness_written = this->write_register_(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, brightness);
   }
   // On/off goes out even when the brightness write failed: switching the light is what the user asked.
   const bool switched = this->write_register_(HeatingFunction::NIGHT_LIGHT, on ? 1.0F : 0.0F);
 
-  // The read-backs update IoDevice::heating; what the heater then holds is published once, below. A write
+  // The read-backs update the device's readings; what the heater then holds is published once, below. A write
   // the heater did not acknowledge is not read back: the light then shows the heater's last reading again.
   if (switched) {
     this->heating_port_->read_heating_register(this->device_id_, HeatingFunction::NIGHT_LIGHT, nullptr,

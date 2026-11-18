@@ -3,6 +3,7 @@
 /// switch, the heating-level sensor and the central-heating-mode sensor.
 
 #include "platform_climate_controls.h"
+#include "reading_store.h"
 #include "platform_device_readings.h"
 
 #include "hub_port_doubles.h"
@@ -23,7 +24,7 @@ class ClimateControlsHub : public test::DevicePortDouble, public test::HeatingPo
     const bool read = HeatingPortDouble::read_heating_register(device_id, fn, value_out, max_tries);
     if (read) {
       if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
-        dev->heating.store(fn, this->read_replies.at(fn));
+        test::store_reading(*dev, fn, this->read_replies.at(fn));
         this->registry_.notify(device_id);
       }
     }
@@ -37,9 +38,9 @@ class ClimateControlsHub : public test::DevicePortDouble, public test::HeatingPo
     this->add_device("ABC123", config);
   }
 
-  void deliver(const std::function<void(HeatingReadings &)> &edit) {
+  void deliver(const std::function<void(IoDevice &)> &edit) {
     IoDevice dev = *this->get_device("ABC123");
-    edit(dev.heating);
+    edit(dev);
     this->trigger_device_update("ABC123", dev, /*cache_device=*/true);
   }
 };
@@ -81,7 +82,7 @@ TEST(PlatformHeatingLevelSensor, HasNoStateUntilTheHeaterHasReportedALevel) {
   sensor.setup();
   EXPECT_TRUE(sensor.state.empty());
 
-  hub.deliver([](HeatingReadings &r) { r.room_temperature_c = 20.0F; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::ROOM_TEMPERATURE, 20.0F); });
   EXPECT_TRUE(sensor.state.empty()) << "a reading of something else is no level";
 }
 
@@ -107,7 +108,7 @@ TEST(PlatformHeatingLevelSensor, NamesEveryLevelTheHeaterReports) {
       {heating_level::SECURED, "secured"},
   };
   for (const auto &entry : expected) {
-    hub.deliver([&entry](HeatingReadings &r) { r.level = entry.level; });
+    hub.deliver([&entry](IoDevice &r) { test::store_reading(r, DeviceReading::HEATING_LEVEL, entry.level); });
     EXPECT_EQ(sensor.state, entry.name);
   }
 }
@@ -120,8 +121,9 @@ TEST(PlatformHeatingLevelSensor, AValueThatIsNoLevelKeepsTheLastLevelShown) {
   sensor.set_device_id("ABC123");
   sensor.setup();
 
-  hub.deliver([](HeatingReadings &r) { r.level = heating_level::ECO; });
-  hub.deliver([](HeatingReadings &r) { r.level = 0x40; });  // not a level of the table
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::HEATING_LEVEL, heating_level::ECO); });
+  hub.deliver(
+      [](IoDevice &r) { test::store_reading(r, DeviceReading::HEATING_LEVEL, 0x40); });  // not a level of the table
 
   EXPECT_EQ(sensor.state, "eco");
 }
@@ -129,7 +131,7 @@ TEST(PlatformHeatingLevelSensor, AValueThatIsNoLevelKeepsTheLastLevelShown) {
 TEST(PlatformHeatingLevelSensor, PublishesWhatIsAlreadyKnownAtSetup) {
   ClimateControlsHub hub;
   hub.add_heater();
-  hub.deliver([](HeatingReadings &r) { r.level = heating_level::BOOST; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::HEATING_LEVEL, heating_level::BOOST); });
   IOHomeHeatingLevelSensor sensor;
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
@@ -157,11 +159,11 @@ TEST(PlatformWindowSensor, FollowsTheHeatersReadings) {
   sensor.set_device_id("ABC123");
   sensor.setup();
 
-  hub.deliver([](HeatingReadings &r) { r.window_open = 1; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::WINDOW_OPEN, 1); });
   ASSERT_TRUE(sensor.has_state());
   EXPECT_TRUE(sensor.state);
 
-  hub.deliver([](HeatingReadings &r) { r.window_open = 0; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::WINDOW_OPEN, 0); });
   EXPECT_TRUE(sensor.has_state());
   EXPECT_FALSE(sensor.state);
 }
@@ -169,7 +171,7 @@ TEST(PlatformWindowSensor, FollowsTheHeatersReadings) {
 TEST(PlatformWindowSensor, PublishesWhatIsAlreadyKnownAtSetup) {
   ClimateControlsHub hub;
   hub.add_heater();
-  hub.deliver([](HeatingReadings &r) { r.window_open = 1; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::WINDOW_OPEN, 1); });
   IOHomeWindowBinarySensor sensor;
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
@@ -196,11 +198,11 @@ TEST(PlatformCentralHeatingModeSensor, IsOnInCentralHeatingAndOffInElectricMode)
   sensor.set_device_id("ABC123");
   sensor.setup();
 
-  hub.deliver([](HeatingReadings &r) { r.central_heating_mode = 1; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::CENTRAL_HEATING_MODE, 1); });
   ASSERT_TRUE(sensor.has_state());
   EXPECT_TRUE(sensor.state);
 
-  hub.deliver([](HeatingReadings &r) { r.central_heating_mode = 0; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::CENTRAL_HEATING_MODE, 0); });
   EXPECT_TRUE(sensor.has_state());
   EXPECT_FALSE(sensor.state);
 }
@@ -212,10 +214,10 @@ TEST(PlatformCentralHeatingModeSensor, LosesItsStateWhenTheReadingIsDropped) {
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
-  hub.deliver([](HeatingReadings &r) { r.central_heating_mode = 1; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::CENTRAL_HEATING_MODE, 1); });
   ASSERT_TRUE(sensor.has_state());
 
-  hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::CENTRAL_HEATING_MODE); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, HeatingFunction::CENTRAL_HEATING_MODE); });
   EXPECT_FALSE(sensor.has_state()) << "a dryer that stops answering a value shows no state";
 }
 
@@ -274,7 +276,7 @@ TEST(PlatformHeaterSettingSwitch, FollowsTheBootPollReading) {
   sw.set_device_id("ABC123");
   sw.setup();
 
-  hub.deliver([](HeatingReadings &r) { r.open_window_detection = 1; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OPEN_WINDOW_DETECTION, 1); });
   EXPECT_TRUE(sw.get_state());
 }
 
@@ -302,9 +304,9 @@ struct NightLightRig {
   void deliver(int16_t on, int16_t brightness) {
     const bool was_on = this->state.current_values.is_on();
     const float was_brightness = this->state.current_values.get_brightness();
-    this->hub.deliver([on, brightness](HeatingReadings &r) {
-      r.night_light = on;
-      r.night_light_brightness = brightness;
+    this->hub.deliver([on, brightness](IoDevice &r) {
+      test::store_reading(r, DeviceReading::NIGHT_LIGHT, on);
+      test::store_reading(r, DeviceReading::NIGHT_LIGHT_BRIGHTNESS, brightness);
     });
     if (this->state.current_values.is_on() != was_on || this->state.current_values.get_brightness() != was_brightness)
       this->light.write_state(&this->state);
@@ -341,7 +343,7 @@ TEST(PlatformHeaterNightLight, TheBootRestoreAndPublishedReadingsAreNeverWritten
 TEST(PlatformHeaterNightLight, NothingIsShownUntilTheLightHasBeenRead) {
   NightLightRig rig;
   rig.state.set_current_brightness(0.7F);
-  rig.hub.deliver([](HeatingReadings &r) { r.night_light_brightness = 10000; });
+  rig.hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::NIGHT_LIGHT_BRIGHTNESS, 10000); });
   EXPECT_FALSE(rig.state.current_values.is_on());
   EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.7F) << "no on/off reading: nothing published";
 }
@@ -533,14 +535,14 @@ TEST(PlatformHeaterSettingSwitch, OccupancyDetectionIgnoresTheOpenWindowReading)
   sw.set_device_id("ABC123");
   sw.setup();
 
-  hub.deliver([](HeatingReadings &r) { r.open_window_detection = 1; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OPEN_WINDOW_DETECTION, 1); });
   EXPECT_FALSE(sw.get_state()) << "each switch follows its own register";
 
-  hub.deliver([](HeatingReadings &r) { r.occupancy_detection = 1; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OCCUPANCY_DETECTION, 1); });
   EXPECT_TRUE(sw.get_state());
-  hub.deliver([](HeatingReadings &r) { r.occupancy_detection = 0; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OCCUPANCY_DETECTION, 0); });
   EXPECT_FALSE(sw.get_state());
-  hub.deliver([](HeatingReadings &r) { r.occupancy_detection = 1; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OCCUPANCY_DETECTION, 1); });
   EXPECT_TRUE(sw.get_state()) << "a change made from the vendor app shows at the next poll";
 }
 
@@ -567,7 +569,7 @@ TEST(PlatformOccupancySensor, HasNoStateUntilTheHeaterHasReportedPresence) {
   sensor.setup();
   EXPECT_FALSE(sensor.has_state()) << "nobody there must mean the heater said so";
 
-  hub.deliver([](HeatingReadings &r) { r.occupancy_detection = 1; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OCCUPANCY_DETECTION, 1); });
   EXPECT_FALSE(sensor.has_state()) << "the detection setting is not the presence";
 }
 
@@ -579,10 +581,10 @@ TEST(PlatformOccupancySensor, ShowsPresenceAsTheHeaterReportsIt) {
   sensor.set_device_id("ABC123");
   sensor.setup();
 
-  hub.deliver([](HeatingReadings &r) { r.presence = 1; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OCCUPANCY, 1); });
   ASSERT_TRUE(sensor.has_state());
   EXPECT_TRUE(sensor.state);
-  hub.deliver([](HeatingReadings &r) { r.presence = 0; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OCCUPANCY, 0); });
   EXPECT_TRUE(sensor.has_state());
   EXPECT_FALSE(sensor.state);
 }
@@ -594,10 +596,10 @@ TEST(PlatformOccupancySensor, LosesItsStateWhenTheHeaterAnswersWithoutAValue) {
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
-  hub.deliver([](HeatingReadings &r) { r.presence = 1; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OCCUPANCY, 1); });
   ASSERT_TRUE(sensor.has_state());
 
-  hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::SET_PRESENCE); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, HeatingFunction::SET_PRESENCE); });
   EXPECT_FALSE(sensor.has_state());
 }
 
@@ -612,7 +614,7 @@ TEST(PlatformEnergySensor, HasNoStateUntilTheHeaterHasReportedATotal) {
   sensor.setup();
   EXPECT_TRUE(std::isnan(sensor.state)) << "a total of 0 must mean the heater said so";
 
-  hub.deliver([](HeatingReadings &r) { r.room_temperature_c = 20.0F; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::ROOM_TEMPERATURE, 20.0F); });
   EXPECT_TRUE(std::isnan(sensor.state)) << "a reading of something else is no total";
 }
 
@@ -624,11 +626,11 @@ TEST(PlatformEnergySensor, ShowsTheTotalAsTheHeaterReportsItAndFollowsEveryPoll)
   sensor.set_device_id("ABC123");
   sensor.setup();
 
-  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 3422.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 3422.0F); });
   EXPECT_FLOAT_EQ(sensor.state, 3422.0F);
-  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 3423.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 3423.0F); });
   EXPECT_FLOAT_EQ(sensor.state, 3423.0F);
-  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 65535.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 65535.0F); });
   EXPECT_FLOAT_EQ(sensor.state, 65535.0F) << "a total past 32767 is not wrapped";
 }
 
@@ -640,7 +642,7 @@ TEST(PlatformEnergySensor, ATotalOfZeroIsShownAsZero) {
   sensor.set_device_id("ABC123");
   sensor.setup();
 
-  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 0.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 0.0F); });
   EXPECT_FLOAT_EQ(sensor.state, 0.0F) << "a new heater";
 }
 
@@ -651,10 +653,10 @@ TEST(PlatformEnergySensor, LosesItsStateWhenTheHeaterAnswersWithoutAValue) {
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
-  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 3422.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 3422.0F); });
   ASSERT_FLOAT_EQ(sensor.state, 3422.0F);
 
-  hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::ENERGY_TOTAL); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, HeatingFunction::ENERGY_TOTAL); });
   EXPECT_TRUE(std::isnan(sensor.state));
 }
 
@@ -672,13 +674,13 @@ TEST(PlatformRunTimerSensors, ADurationSensorShowsItsRegisterInMinutesAndHasNoSt
     EXPECT_TRUE(std::isnan(sensor->state));
   }
 
-  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::BOOST_DURATION, 60.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::BOOST_DURATION, 60.0F); });
   EXPECT_FLOAT_EQ(boost.state, 60.0F);
   EXPECT_TRUE(std::isnan(drying.state)) << "each sensor shows its own register";
-  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::DRYING_DURATION, 30.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::DRYING_DURATION, 30.0F); });
   EXPECT_FLOAT_EQ(drying.state, 30.0F);
 
-  hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::BOOST_DURATION); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, HeatingFunction::BOOST_DURATION); });
   EXPECT_TRUE(std::isnan(boost.state)) << "a heater that answers without a value leaves no state";
 }
 
@@ -691,20 +693,20 @@ TEST(PlatformRunTimerSensors, TheRemainingTimeFollowsTheRunThatIsActive) {
   sensor.setup();
   EXPECT_TRUE(std::isnan(sensor.state)) << "state not read yet";
 
-  hub.deliver([](HeatingReadings &r) {
-    r.store(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST));
-    r.store(HeatingFunction::BOOST_REMAINING, 55.0F);
+  hub.deliver([](IoDevice &r) {
+    test::store_reading(r, HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST));
+    test::store_reading(r, HeatingFunction::BOOST_REMAINING, 55.0F);
   });
   EXPECT_FLOAT_EQ(sensor.state, 55.0F);
 
-  hub.deliver([](HeatingReadings &r) {
-    r.store(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::DRYING));
-    r.store(HeatingFunction::DRYING_REMAINING, 28.0F);
+  hub.deliver([](IoDevice &r) {
+    test::store_reading(r, HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::DRYING));
+    test::store_reading(r, HeatingFunction::DRYING_REMAINING, 28.0F);
   });
   EXPECT_FLOAT_EQ(sensor.state, 28.0F);
 
-  hub.deliver([](HeatingReadings &r) {
-    r.store(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::NONE));
+  hub.deliver([](IoDevice &r) {
+    test::store_reading(r, HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::NONE));
   });
   EXPECT_FLOAT_EQ(sensor.state, 0.0F) << "no run: 0 minutes left";
 }
@@ -717,8 +719,8 @@ TEST(PlatformRunTimerSensors, TheRemainingTimeHasNoStateWhileTheActiveRunsRegist
   sensor.set_device_id("ABC123");
   sensor.setup();
 
-  hub.deliver([](HeatingReadings &r) {
-    r.store(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST));
+  hub.deliver([](IoDevice &r) {
+    test::store_reading(r, HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST));
   });
   EXPECT_TRUE(std::isnan(sensor.state)) << "a boost with no reading is not 0 minutes";
 }
@@ -734,13 +736,15 @@ TEST(PlatformDeviceReadingSensor, PublishesAChangedValueOnceAndNotARepeatedOne) 
   sensor.setup();
   const int after_setup = sensor.publish_count;
 
-  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 3422.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 3422.0F); });
   EXPECT_EQ(sensor.publish_count, after_setup + 1);
-  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 3422.0F); });
-  hub.deliver([](HeatingReadings &r) { r.room_temperature_c = 21.0F; });  // another reading of the same device
+  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 3422.0F); });
+  hub.deliver([](IoDevice &r) {
+    test::store_reading(r, DeviceReading::ROOM_TEMPERATURE, 21.0F);
+  });  // another reading of the same device
   EXPECT_EQ(sensor.publish_count, after_setup + 1) << "an update that leaves the value alone publishes nothing";
 
-  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 3423.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 3423.0F); });
   EXPECT_EQ(sensor.publish_count, after_setup + 2);
   EXPECT_FLOAT_EQ(sensor.state, 3423.0F);
 }
@@ -754,8 +758,8 @@ TEST(PlatformDeviceReadingSensor, TwoUpdatesWithoutAValueLeaveOneNoStatePublish)
   sensor.setup();
   const int after_setup = sensor.publish_count;
 
-  hub.deliver([](HeatingReadings &r) { r.room_temperature_c = 20.0F; });
-  hub.deliver([](HeatingReadings &r) { r.room_temperature_c = 21.0F; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::ROOM_TEMPERATURE, 20.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::ROOM_TEMPERATURE, 21.0F); });
   EXPECT_EQ(sensor.publish_count, after_setup);
   EXPECT_TRUE(std::isnan(sensor.state));
 }
@@ -769,15 +773,15 @@ TEST(PlatformDeviceReadingBinarySensor, PublishesOnlyAChangedState) {
   sensor.setup();
   const int after_setup = sensor.publish_count;
 
-  hub.deliver([](HeatingReadings &r) { r.presence = 1; });
-  hub.deliver([](HeatingReadings &r) { r.presence = 1; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OCCUPANCY, 1); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OCCUPANCY, 1); });
   EXPECT_EQ(sensor.publish_count, after_setup + 1);
-  hub.deliver([](HeatingReadings &r) { r.presence = 0; });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OCCUPANCY, 0); });
   EXPECT_EQ(sensor.publish_count, after_setup + 2);
   EXPECT_FALSE(sensor.state);
 
-  hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::SET_PRESENCE); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, HeatingFunction::SET_PRESENCE); });
   EXPECT_FALSE(sensor.has_state());
-  hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::SET_PRESENCE); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, HeatingFunction::SET_PRESENCE); });
   EXPECT_EQ(sensor.publish_count, after_setup + 2) << "losing the state publishes nothing";
 }

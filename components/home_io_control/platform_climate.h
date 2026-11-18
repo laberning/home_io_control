@@ -18,7 +18,7 @@
 /// ESPHome's fields. It reads no profile control path.
 ///
 /// State is observed, not predicted. The hub polls the heater (default every 5 minutes) and this
-/// entity publishes from IoDevice::heating, which only a decoded reply changes. After an accepted
+/// entity publishes from the device's readings, which only a decoded reply changes. After an accepted
 /// register write the register is read back; after a level write the hub's settle poll reads the
 /// level. Until the first read succeeds the entity shows the last commanded mode, setpoint or preset,
 /// and nothing else. The entity deliberately does NOT use the OptimisticState overlay (ADR 0030) —
@@ -102,7 +102,7 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   /// @return The profile, or nullptr while the type is unknown.
   [[nodiscard]] const HeatingProfile *profile_() const;
 
-  /// @brief Inbound device-update hook: fold IoDevice::heating into the card and publish when
+  /// @brief Inbound device-update hook: fold the device's readings into the card and publish when
   /// something it shows changed.
   void on_device_update_(const IoDevice &dev);
 

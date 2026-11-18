@@ -470,7 +470,7 @@ void IOHomeControlComponent::set_device_reading_poll_interval(const std::string 
   const DeviceReadingRow *row = find_device_reading(reading, this->reading_table_);
   if (dev == nullptr || row == nullptr || !std::holds_alternative<DataObjectSource>(row->source))
     return;
-  if (!has_feature(dev->features, row->feature)) {
+  if (!device_has_reading_capability(*dev, *row)) {
     ESP_LOGW(TAG, "Device %s lacks the capability of the %s reading, which is not read", device_id.c_str(), row->name);
     return;
   }

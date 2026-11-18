@@ -309,93 +309,62 @@ enum class TemperatureInForceSupport : uint8_t {
              ///< it until the next boot, and a target writes the comfort setpoint.
 };
 
-/// @brief Which opt-in heater registers the hub reads on every poll of one device, and which of them the
-/// heater turned out not to have.
-/// @details An opt-in register (the register of a reading, reading_polled_registers() in proto_device_readings.h)
-///          is read only where the YAML declares an entity for it. Each register is in one of three states, kept in two
-///          masks over HeatingFunction. Runtime only: nothing is persisted, and the state of an absent register resets
-///          at the next boot.
-class HeatingOptInReads {
- public:
-  /// The state of one register.
-  enum class State : uint8_t {
-    NOT_ASKED,  ///< No entity is declared: the register is never read.
-    ASKED,      ///< An entity is declared: every poll reads the register.
-    ABSENT,     ///< The heater answered without a value: the hub stops reading it until the next boot.
-  };
-
-  /// @param fn Register.
-  /// @return Its state; NOT_ASKED for a function the masks cannot hold.
-  [[nodiscard]] State state_of(HeatingFunction fn) const {
-    if (!holds(fn))
-      return State::NOT_ASKED;
-    if ((absent_ & mask_of(fn)) != 0)
-      return State::ABSENT;
-    return (asked_ & mask_of(fn)) != 0 ? State::ASKED : State::NOT_ASKED;
-  }
-
-  /// @brief Declare that an entity wants this register read. A register already found absent stays absent.
-  /// @param fn Register.
-  void ask(HeatingFunction fn) {
-    if (holds(fn))
-      asked_ |= mask_of(fn);
-  }
-
-  /// @brief Record that the heater answered a read of this register without a value.
-  /// @param fn Register.
-  void mark_absent(HeatingFunction fn) {
-    if (holds(fn))
-      absent_ |= mask_of(fn);
-  }
-
- private:
-  using Mask = uint32_t;
-  static_assert(static_cast<unsigned>(HeatingFunction::COUNT) <= std::numeric_limits<Mask>::digits,
-                "every HeatingFunction must fit the masks of HeatingOptInReads; widen Mask");
-  // Not named bit(): the Arduino core defines that as a macro.
-  static constexpr bool holds(HeatingFunction fn) { return fn < HeatingFunction::COUNT; }
-  static constexpr Mask mask_of(HeatingFunction fn) { return Mask{1} << static_cast<unsigned>(fn); }
-
-  Mask asked_{0};
-  Mask absent_{0};
-};
-
-/// @brief The values of the readings a device keeps in data objects, and which of them the device does not have.
-/// @details Indexed by a slot, the number of the reading in the reading table (DeviceReading, proto_device_readings.h;
-///          a static_assert there keeps every reading within SLOTS). Runtime only, until the next boot. A slot is in
-///          one of three states: never read, holding a value, or absent (the device answered the open with an error
-///          reply, or the hub cannot ask for the object, so the hub reads it no more).
+/// @brief The values of a device's readings, and which of them the device has, was asked for or does not have.
+/// @details One store per device for every source of a reading (a private register, a status reply, a data object),
+///          indexed by a slot, the number of the reading in the reading table (DeviceReading,
+///          proto_device_readings.h; a static_assert there keeps every reading within SLOTS). Runtime only, until the
+///          next boot: nothing is persisted. A slot holds a value or not, independently of two flags:
+///           - asked: an entity of the YAML wants the reading, so the hub's poll reads it;
+///           - absent: the device does not have the reading (it answered the read without a value, or the hub cannot
+///             ask for it), so the hub reads it no more.
+///          A value that is stored is no longer absent; a reading found absent holds no value. Every reading read
+///          through reading_value() is held here, whichever source filled it.
 struct DeviceReadingValues {
-  static constexpr size_t SLOTS = 16;  ///< Number of readings the store can hold.
+  static constexpr size_t SLOTS = 32;  ///< Number of readings the store can hold.
 
-  /// @brief Keep a value; the slot is no longer absent.
+  /// @brief Keep a value; the slot is no longer absent. A NaN is a value too (a sensor the device reports as faulty).
   void store(size_t slot, float value) {
     if (slot >= SLOTS)
       return;
     this->values_[slot] = value;
     this->held_ |= mask_of(slot);
-    this->absent_ &= static_cast<uint16_t>(~mask_of(slot));
+    this->absent_ &= ~mask_of(slot);
+  }
+  /// @brief Forget the value of a reading: it reads as never read again. Absent and asked stay as they are.
+  void clear(size_t slot) {
+    if (slot < SLOTS)
+      this->held_ &= ~mask_of(slot);
   }
   /// @brief Mark the device as not having this reading; a value held before is dropped.
   void mark_absent(size_t slot) {
     if (slot >= SLOTS)
       return;
     this->absent_ |= mask_of(slot);
-    this->held_ &= static_cast<uint16_t>(~mask_of(slot));
+    this->held_ &= ~mask_of(slot);
   }
-  /// @return The value, or nullopt when never read, absent or out of range.
+  /// @brief Declare that an entity wants this reading read. A reading already found absent stays absent.
+  void ask(size_t slot) {
+    if (slot < SLOTS)
+      this->asked_ |= mask_of(slot);
+  }
+  /// @return The value, or nullopt when never read, cleared, absent or out of range.
   [[nodiscard]] std::optional<float> value(size_t slot) const {
     return slot < SLOTS && (this->held_ & mask_of(slot)) != 0 ? std::optional<float>{this->values_[slot]}
                                                               : std::nullopt;
   }
   /// @return true once the device was found not to have this reading.
   [[nodiscard]] bool absent(size_t slot) const { return slot < SLOTS && (this->absent_ & mask_of(slot)) != 0; }
+  /// @return true while an entity wants this reading read.
+  [[nodiscard]] bool asked(size_t slot) const { return slot < SLOTS && (this->asked_ & mask_of(slot)) != 0; }
 
  private:
-  static constexpr uint16_t mask_of(size_t slot) { return static_cast<uint16_t>(1U << slot); }
+  using Mask = uint32_t;
+  static_assert(SLOTS <= std::numeric_limits<Mask>::digits, "every slot needs a bit in the masks; widen Mask");
+  static constexpr Mask mask_of(size_t slot) { return Mask{1} << slot; }
   float values_[SLOTS]{};
-  uint16_t held_{0};    ///< Bit per slot: a value is stored.
-  uint16_t absent_{0};  ///< Bit per slot: the device does not have the reading.
+  Mask held_{0};    ///< Bit per slot: a value is stored.
+  Mask absent_{0};  ///< Bit per slot: the device does not have the reading.
+  Mask asked_{0};   ///< Bit per slot: an entity wants the reading read.
 };
 
 /// @brief Runtime state of a paired IO‑Homecontrol device.
@@ -517,14 +486,12 @@ struct IoDevice {
                                          ///< carries a temperature in its main parameter (YAML `min_temperature:`).
   float temperature_range_max_c{
       HEATING_TEMPERATURE_RANGE_MAX_C};  ///< Upper end of that range (YAML `max_temperature:`).
-  HeatingReadings heating{};             ///< What the hub has read from a heater over the private register protocol
-                                         ///< (room temperature, setpoint, mode, regulator state). Set only from decoded
-                                         ///< replies; stays "never read" for every other device type.
   DhwReadings dhw{};                     ///< What the hub has read from a water heater (device_feature::WATER_HEATER):
                                          ///< family-0x00 registers and the status reply's target. Set only from
                                          ///< decoded replies; stays "never read" for every other device type.
-  DeviceReadingValues reading_values{};  ///< What the hub has read from the device's data objects, by reading
-                                         ///< (reading_value()); kept across DeviceRegistry::put().
+  DeviceReadingValues reading_values{};  ///< What the hub has read from the device, by reading (reading_value()): a
+                                         ///< heater's registers and status reply, a data object. Kept across
+                                         ///< DeviceRegistry::put().
   bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
                                  ///< line names the level even when the device reports none.
   bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every
@@ -540,8 +507,7 @@ struct IoDevice {
   /// What a register heater with a programme has answered to the read of its temperature in force. Runtime
   /// only, until the next boot.
   TemperatureInForceSupport temperature_in_force{TemperatureInForceSupport::UNKNOWN};
-  bool model_checked{false};       ///< The model check completed: both of its reads were answered.
-  HeatingOptInReads opt_in_reads;  ///< The opt-in registers this device is polled for (see the class).
+  bool model_checked{false};  ///< The model check completed: both of its reads were answered.
 };
 
 /// @brief Resolve a device's capabilities and inversion from its kind and its YAML overrides.

@@ -2,6 +2,7 @@
 /// @brief Byte-exact tests for the heater register codec (CMD_WRITE_PRIVATE 0x20 / ack 0x21).
 
 #include "proto_heating.h"
+#include "reading_store.h"
 
 #include "proto_constants.h"
 #include "proto_private_registers.h"
@@ -318,33 +319,6 @@ TEST(ProtoHeating, ReplyWithoutAValueForThisRegisterIsNoValue) {
   EXPECT_FLOAT_EQ(v, 123.0f) << "no value leaves the output untouched";
 }
 
-// --- Readings ---
-
-TEST(ProtoHeating, ReadingsStartUnreadAndStoreOnlyTheirRegisters) {
-  HeatingReadings r;
-  EXPECT_TRUE(std::isnan(r.room_temperature_c));
-  EXPECT_TRUE(std::isnan(r.setpoint_c));
-  EXPECT_TRUE(std::isnan(r.max_setpoint_c));
-  EXPECT_EQ(r.mode, -1);
-  EXPECT_EQ(r.regulator, -1);
-  EXPECT_EQ(r.window_open, -1);
-
-  EXPECT_TRUE(r.store(HeatingFunction::ROOM_TEMPERATURE, 20.75f));
-  EXPECT_TRUE(r.store(HeatingFunction::SET_TEMPERATURE, 19.5f));
-  EXPECT_TRUE(r.store(HeatingFunction::MAX_SETPOINT, 28.0f));
-  EXPECT_TRUE(r.store(HeatingFunction::SET_MODE, 2.0f));
-  EXPECT_TRUE(r.store(HeatingFunction::REGULATOR_STATE, 1.0f));
-  EXPECT_TRUE(r.store(HeatingFunction::WINDOW_OPEN, 1.0f));
-  EXPECT_FLOAT_EQ(r.room_temperature_c, 20.75f);
-  EXPECT_FLOAT_EQ(r.setpoint_c, 19.5f);
-  EXPECT_FLOAT_EQ(r.max_setpoint_c, 28.0f);
-  EXPECT_EQ(r.mode, 2);
-  EXPECT_EQ(r.regulator, 1);
-  EXPECT_EQ(r.window_open, 1);
-
-  EXPECT_FALSE(r.store(HeatingFunction::POWER_ON, 1.0f));
-}
-
 // --- Towel-dryer registers (values from two Atlantic Adelis units, issue #202) ---
 
 TEST(ProtoHeatingTowelDryer, ModeAndTemporaryStateWritesAreByteExact) {
@@ -459,12 +433,26 @@ TEST(ProtoHeatingRadiator, TheTemperatureInForceIsRegister012AInTenthsAndSharesT
   EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00}),
                                     HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, value))
       << "the reply of another register is no value";
+}
 
-  // Both temperature-in-force registers are one reading: a heater has one of them.
-  HeatingReadings readings;
-  EXPECT_TRUE(readings.store(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, 17.0F));
-  EXPECT_FLOAT_EQ(readings.in_force_temperature_c, 17.0F);
-  EXPECT_FLOAT_EQ(readings.number_of(HeatingFunction::TEMPERATURE_IN_FORCE), 17.0F);
+TEST(ProtoHeatingTowelDryer, AByteAboveTheRegistersRangeIsStillAnAnswerThatCarriesTheValue) {
+  // The model check tells a towel dryer from a radiator by whether the heater has the mode register, so an answer
+  // with a mode byte the codec refuses counts: the register is there.
+  const IoFrame above_range = ack_with({0x0C, 0x60, 0x01, 0x36, 0x04});
+  float value = -1.0F;
+  EXPECT_FALSE(decode_heating_reply(above_range, HeatingFunction::TOWEL_MODE, value));
+  EXPECT_TRUE(heating_reply_carries_value(above_range, HeatingFunction::TOWEL_MODE));
+  EXPECT_TRUE(heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x36, 0x02}), HeatingFunction::TOWEL_MODE));
+
+  EXPECT_FALSE(heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x36}), HeatingFunction::TOWEL_MODE))
+      << "an empty answer: the heater has no such register";
+  EXPECT_FALSE(heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x00, 0x02}), HeatingFunction::TOWEL_MODE))
+      << "the reply of another register";
+  EXPECT_FALSE(
+      heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x42, 0x32}), HeatingFunction::NIGHT_LIGHT_BRIGHTNESS))
+      << "a two-byte register needs both bytes";
+  EXPECT_FALSE(heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x2C, 0x01}), HeatingFunction::POWER_ON))
+      << "a register with no typed value carries none";
 }
 
 TEST(ProtoHeatingTowelDryer, OutOfRangeAndEmptyRepliesAreNoValue) {
@@ -477,66 +465,6 @@ TEST(ProtoHeatingTowelDryer, OutOfRangeAndEmptyRepliesAreNoValue) {
   EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x17, 0x03}), HeatingFunction::REGULATOR_STATE, value))
       << "the regulator range is unchanged";
   EXPECT_FLOAT_EQ(value, -1.0F);
-}
-
-TEST(ProtoHeatingTowelDryer, ReadingsStoreAndReportTheTowelRegisters) {
-  HeatingReadings readings;
-  for (const HeatingFunction fn :
-       {HeatingFunction::TOWEL_MODE, HeatingFunction::TEMPORARY_STATE, HeatingFunction::WORKING_RATE,
-        HeatingFunction::TEMPERATURE_IN_FORCE, HeatingFunction::ECO_SETBACK}) {
-    EXPECT_FALSE(readings.has(fn));
-    EXPECT_EQ(readings.value_of(fn), -1);
-  }
-  EXPECT_TRUE(readings.store(HeatingFunction::TOWEL_MODE, 2.0F));
-  EXPECT_TRUE(readings.store(HeatingFunction::TEMPORARY_STATE, 1.0F));
-  EXPECT_TRUE(readings.store(HeatingFunction::WORKING_RATE, 100.0F));
-  EXPECT_TRUE(readings.store(HeatingFunction::TEMPERATURE_IN_FORCE, 19.5F));
-  EXPECT_EQ(readings.value_of(HeatingFunction::TOWEL_MODE), 2);
-  EXPECT_EQ(readings.value_of(HeatingFunction::TEMPORARY_STATE), 1);
-  EXPECT_EQ(readings.value_of(HeatingFunction::WORKING_RATE), 100);
-  EXPECT_EQ(readings.value_of(HeatingFunction::TEMPERATURE_IN_FORCE), -1) << "a temperature has no wire byte";
-  EXPECT_TRUE(readings.has(HeatingFunction::TEMPERATURE_IN_FORCE));
-  EXPECT_FLOAT_EQ(readings.number_of(HeatingFunction::TEMPERATURE_IN_FORCE), 19.5F);
-  EXPECT_EQ(readings.mode, -1) << "the radiator's mode field is untouched";
-
-  readings.store(HeatingFunction::SET_MODE, 3.0F);
-  EXPECT_EQ(readings.value_of(HeatingFunction::SET_MODE), readings.mode);
-  EXPECT_EQ(readings.value_of(HeatingFunction::REGULATOR_STATE), readings.regulator);
-}
-
-TEST(ProtoHeatingReadings, EveryRegisterIsStoredReportedAndClearedThroughItsOwnField) {
-  // Walks every function, so a register added to the enum without a row in the readings table (or the
-  // descriptor table) fails here.
-  constexpr auto COUNT = static_cast<unsigned>(HeatingFunction::COUNT);
-  unsigned held = 0;
-  for (unsigned i = 0; i < COUNT; i++) {
-    const auto fn = static_cast<HeatingFunction>(i);
-    ASSERT_STRNE(heating_function_name(fn), "unknown") << i << " has no descriptor row";
-    HeatingReadings readings;
-    EXPECT_FALSE(readings.has(fn)) << heating_function_name(fn) << " starts unread";
-    if (!readings.store(fn, 1.0F)) {
-      // POWER_ON and MIDNIGHT_SYNC are logged, never kept.
-      EXPECT_FALSE(readings.has(fn)) << heating_function_name(fn);
-      EXPECT_FALSE(readings.clear(fn)) << heating_function_name(fn);
-      EXPECT_EQ(readings.value_of(fn), -1) << heating_function_name(fn);
-      continue;
-    }
-    held++;
-    EXPECT_TRUE(readings.has(fn)) << heating_function_name(fn);
-    const bool temperature = !std::isnan(readings.number_of(fn));
-    if (temperature) {
-      EXPECT_FLOAT_EQ(readings.number_of(fn), 1.0F) << heating_function_name(fn);
-      EXPECT_EQ(readings.value_of(fn), -1) << "a temperature has no wire byte";
-    } else {
-      EXPECT_EQ(readings.value_of(fn), 1) << heating_function_name(fn);
-    }
-    EXPECT_TRUE(readings.clear(fn)) << heating_function_name(fn);
-    EXPECT_FALSE(readings.has(fn)) << heating_function_name(fn) << " is unread again after clear";
-    // Nothing else changed: a cleared register leaves a fresh record.
-    for (unsigned j = 0; j < COUNT; j++)
-      EXPECT_FALSE(readings.has(static_cast<HeatingFunction>(j))) << heating_function_name(fn) << " touched " << j;
-  }
-  EXPECT_EQ(held, 24u);
 }
 
 TEST(ProtoHeatingTowelDryer, EachFunctionHasItsRegisterLowByte) {
@@ -664,18 +592,6 @@ TEST(ProtoHeatingNightLight, OutOfRangeShortAndEmptyRepliesAreNoValue) {
   EXPECT_FLOAT_EQ(value, -1.0F);
 }
 
-TEST(ProtoHeatingNightLight, ReadingsStoreAndReportTheLightRegisters) {
-  HeatingReadings readings;
-  EXPECT_FALSE(readings.has(HeatingFunction::NIGHT_LIGHT));
-  EXPECT_FALSE(readings.has(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS));
-  EXPECT_TRUE(readings.store(HeatingFunction::NIGHT_LIGHT, 1.0F));
-  EXPECT_TRUE(readings.store(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 4000.0F));
-  EXPECT_EQ(readings.night_light, 1);
-  EXPECT_EQ(readings.night_light_brightness, 4000);
-  EXPECT_TRUE(readings.has(HeatingFunction::NIGHT_LIGHT));
-  EXPECT_EQ(readings.value_of(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS), 4000);
-}
-
 // --- Central-heating mode (a mixed towel dryer, issue #243) ---
 
 TEST(ProtoHeatingCentralHeatingMode, ReadRequestAndRegister) {
@@ -700,14 +616,6 @@ TEST(ProtoHeatingCentralHeatingMode, EmptyAndUnknownRepliesAreNoValue) {
   EXPECT_FALSE(
       decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x53, 0x02}), HeatingFunction::CENTRAL_HEATING_MODE, value));
   EXPECT_FLOAT_EQ(value, -1.0F);
-}
-
-TEST(ProtoHeatingCentralHeatingMode, ReadingsStoreTheMode) {
-  HeatingReadings readings;
-  EXPECT_FALSE(readings.has(HeatingFunction::CENTRAL_HEATING_MODE));
-  EXPECT_TRUE(readings.store(HeatingFunction::CENTRAL_HEATING_MODE, 1.0F));
-  EXPECT_EQ(readings.central_heating_mode, 1);
-  EXPECT_TRUE(readings.has(HeatingFunction::CENTRAL_HEATING_MODE));
 }
 
 // --- Occupancy detection and detected presence (Sauter Hekla, issue #222) ---
@@ -744,16 +652,6 @@ TEST(ProtoHeatingOccupancy, EmptyAndUnknownRepliesAreNoValue) {
   EXPECT_FLOAT_EQ(value, -1.0F);
 }
 
-TEST(ProtoHeatingOccupancy, ReadingsKeepTheDetectionAndThePresenceApart) {
-  HeatingReadings readings;
-  EXPECT_TRUE(readings.store(HeatingFunction::OCCUPANCY_DETECTION, 1.0F));
-  EXPECT_EQ(readings.occupancy_detection, 1);
-  EXPECT_FALSE(readings.has(HeatingFunction::SET_PRESENCE));
-  EXPECT_TRUE(readings.store(HeatingFunction::SET_PRESENCE, 0.0F));
-  EXPECT_EQ(readings.presence, 0);
-  EXPECT_EQ(readings.value_of(HeatingFunction::SET_PRESENCE), 0);
-}
-
 // --- Energy total (register 0x0116: whole kWh, most significant byte first) ---
 
 TEST(ProtoHeatingEnergy, TheTotalIsRegister0x0116ReadOnly) {
@@ -786,9 +684,10 @@ TEST(ProtoHeatingEnergy, ATotalAboveWhatASignedSixteenBitIntegerHoldsDecodesExac
   ASSERT_TRUE(
       decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16, 0xFF, 0xFF}), HeatingFunction::ENERGY_TOTAL, value));
   EXPECT_FLOAT_EQ(value, 65535.0F);
-  HeatingReadings readings;
-  ASSERT_TRUE(readings.store(HeatingFunction::ENERGY_TOTAL, value));
-  EXPECT_FLOAT_EQ(readings.number_of(HeatingFunction::ENERGY_TOTAL), 65535.0F) << "value_of() would wrap it";
+  IoDevice readings;
+  ASSERT_TRUE(store_register_reading(readings, HeatingFunction::ENERGY_TOTAL, value));
+  EXPECT_EQ(register_value(readings, HeatingFunction::ENERGY_TOTAL), 65535.0F)
+      << "the store holds a number, not a signed 16-bit field";
 }
 
 TEST(ProtoHeatingEnergy, ATruncatedOrEmptyReplyIsNoValue) {
@@ -801,17 +700,6 @@ TEST(ProtoHeatingEnergy, ATruncatedOrEmptyReplyIsNoValue) {
       decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x15, 0x0D, 0x5E}), HeatingFunction::ENERGY_TOTAL, value))
       << "the reply of another register";
   EXPECT_FLOAT_EQ(value, -1.0F);
-}
-
-TEST(ProtoHeatingEnergy, ReadingsKeepTheTotalAsANumber) {
-  HeatingReadings readings;
-  EXPECT_FALSE(readings.has(HeatingFunction::ENERGY_TOTAL));
-  EXPECT_TRUE(std::isnan(readings.number_of(HeatingFunction::ENERGY_TOTAL)));
-  EXPECT_TRUE(readings.store(HeatingFunction::ENERGY_TOTAL, 3422.0F));
-  EXPECT_EQ(readings.value_of(HeatingFunction::ENERGY_TOTAL), -1) << "a number with a unit has no wire byte";
-  EXPECT_FLOAT_EQ(readings.energy_total_kwh, 3422.0F);
-  EXPECT_TRUE(readings.clear(HeatingFunction::ENERGY_TOTAL));
-  EXPECT_FALSE(readings.has(HeatingFunction::ENERGY_TOTAL));
 }
 
 // --- Run timers of a towel dryer (registers 0x013A-0x013D, minutes) ---
@@ -863,24 +751,4 @@ TEST(ProtoHeatingRunTimers, AnEmptyTruncatedOrForeignReplyIsNoValue) {
   EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3C, 0x1C}), HeatingFunction::BOOST_REMAINING, value))
       << "the reply of another register";
   EXPECT_FLOAT_EQ(value, -1.0F);
-}
-
-TEST(ProtoHeatingRunTimers, ReadingsKeepEachTimerAsANumberOfItsOwn) {
-  HeatingReadings readings;
-  for (const HeatingFunction fn : {HeatingFunction::BOOST_REMAINING, HeatingFunction::BOOST_DURATION,
-                                   HeatingFunction::DRYING_REMAINING, HeatingFunction::DRYING_DURATION}) {
-    EXPECT_FALSE(readings.has(fn)) << heating_function_name(fn);
-  }
-  EXPECT_TRUE(readings.store(HeatingFunction::BOOST_REMAINING, 55.0F));
-  EXPECT_TRUE(readings.store(HeatingFunction::BOOST_DURATION, 60.0F));
-  EXPECT_TRUE(readings.store(HeatingFunction::DRYING_REMAINING, 28.0F));
-  EXPECT_TRUE(readings.store(HeatingFunction::DRYING_DURATION, 30.0F));
-  EXPECT_FLOAT_EQ(readings.boost_remaining_min, 55.0F);
-  EXPECT_FLOAT_EQ(readings.boost_duration_min, 60.0F);
-  EXPECT_FLOAT_EQ(readings.drying_remaining_min, 28.0F);
-  EXPECT_FLOAT_EQ(readings.drying_duration_min, 30.0F);
-  EXPECT_EQ(readings.value_of(HeatingFunction::BOOST_REMAINING), -1) << "a number with a unit has no wire byte";
-  EXPECT_TRUE(readings.clear(HeatingFunction::BOOST_REMAINING));
-  EXPECT_FALSE(readings.has(HeatingFunction::BOOST_REMAINING));
-  EXPECT_TRUE(readings.has(HeatingFunction::BOOST_DURATION)) << "only its own field is dropped";
 }

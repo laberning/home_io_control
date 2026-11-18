@@ -10,7 +10,7 @@
 /// the YAML asks for it on a kind with NIGHT_LIGHT; the heating-level text sensor is opt-in on an
 /// electrical heater, and the occupancy-detection switch is opt-in on a kind with OCCUPANCY. The opt-in sensors that
 /// show a reading (central-heating mode, occupancy, energy total, run timers) are the generic entities of
-/// platform_device_readings.h. They show readings the hub's poll already stores in IoDevice::heating and add no
+/// platform_device_readings.h. They show readings the hub's poll already stores in IoDevice::reading_values and add no
 /// radio traffic of their own, except their writes and the read-backs that confirm them.
 ///
 /// @todo Experimental: the meaning of registers 0x010E (window sensor) and 0x0106 (open-window
@@ -36,7 +36,7 @@ namespace home_io_control {
 /// @ingroup hioc_platforms
 ///
 /// Shows `off`, `frost protection`, `eco`, `comfort -2`, `comfort -1`, `comfort`, `boost` or `secured`
-/// (heating_level_name()), read from IoDevice::heating.level: the main parameter of the heater's status
+/// (heating_level_name()), read from DeviceReading::HEATING_LEVEL: the main parameter of the heater's status
 /// read. A plain heater and a pilot-wire interface are polled with that read; a register heater gets it
 /// only where its programme is known to report a level (HeatingProgrammePeriod::reports_level: a towel dryer,
 /// not a radiator). No state until the heater has reported a level,
@@ -60,7 +60,7 @@ class IOHomeHeatingLevelSensor : public text_sensor::TextSensor, public Componen
 /// @brief Binary sensor (`device_class: window`) that is ON while the heater's window sensor reports open.
 /// @ingroup hioc_platforms
 ///
-/// Reads IoDevice::heating.window_open. No state until the first poll has read register 0x010E, so
+/// Reads DeviceReading::WINDOW_OPEN. No state until the first poll has read register 0x010E, so
 /// "closed" always means the heater said so.
 class IOHomeWindowBinarySensor : public binary_sensor::BinarySensor, public Component, public DeviceBoundCompanion {
  public:

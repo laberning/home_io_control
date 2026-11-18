@@ -289,7 +289,7 @@ std::string field_text(const std::string &entry, const std::string &field) {
 }
 
 /// The mirror's name of each source kind, in the order of the ReadingSource alternatives.
-constexpr const char *SOURCE_KIND_NAMES[] = {"register", "derived", "data_object"};
+constexpr const char *SOURCE_KIND_NAMES[] = {"register", "derived", "data_object", "status"};
 static_assert(std::size(SOURCE_KIND_NAMES) == std::variant_size_v<ReadingSource>,
               "a new reading source kind needs its mirror name here and in hub_validators.py DEVICE_READINGS");
 
@@ -313,11 +313,16 @@ TEST(DeviceFeaturesSync, EveryDeviceReadingIsMirroredWithItsCapabilitySourceAndR
     ASSERT_TRUE(by_name.count(name)) << name << " is missing from DEVICE_READINGS";
     const std::string &entry = by_name.at(name);
 
-    const NameSet features = names_of(row.feature);
-    ASSERT_EQ(features.size(), 1u) << name << " must need exactly one capability";
-    EXPECT_EQ(test::quoted_strings_of(field_text(entry, "feature")),
-              std::vector<std::string>(features.begin(), features.end()))
-        << name;
+    if (row.feature) {
+      const NameSet features = names_of(*row.feature);
+      ASSERT_EQ(features.size(), 1u) << name << " must need exactly one capability";
+      EXPECT_EQ(test::quoted_strings_of(field_text(entry, "feature")),
+                std::vector<std::string>(features.begin(), features.end()))
+          << name;
+    } else {
+      // A reading no key of the YAML declares needs no capability.
+      EXPECT_EQ(field_text(entry, "feature"), "None") << name;
+    }
 
     EXPECT_EQ(test::quoted_strings_of(field_text(entry, "source")),
               std::vector<std::string>{SOURCE_KIND_NAMES[row.source.index()]})

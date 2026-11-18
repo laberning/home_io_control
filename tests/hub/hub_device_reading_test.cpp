@@ -42,6 +42,7 @@ constexpr DeviceReadingRow TEST_READINGS[] = {
                                 .codec = ValueCodec::MARKED_U16_BE,
                                 .max_value = 0},
      .reading = DeviceReading::ENERGY_TOTAL,
+     .poll = ReadingPoll::WHEN_ASKED,
      .feature = DeviceFeature::LEVELS},
 };
 

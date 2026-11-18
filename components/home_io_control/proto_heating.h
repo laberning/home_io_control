@@ -355,86 +355,15 @@ size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVA
 /// @return true when the reply carries a value for this register.
 bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value);
 
-/// @brief What the hub has read from one heater so far.
-///
-/// Every field starts as "never read" (NaN, or -1 for the byte registers). Only a decoded reply
-/// changes a field, so what an entity shows from here is observed, never predicted.
-struct HeatingReadings {
-  float room_temperature_c{NAN};       ///< Measured room temperature; NaN until read or on a sensor fault.
-  float setpoint_c{NAN};               ///< Comfort setpoint as the heater holds it; NaN until read.
-  float max_setpoint_c{NAN};           ///< Highest setpoint the heater accepts; NaN until read.
-  int16_t mode{-1};                    ///< HeatingMode value; -1 until read.
-  int16_t regulator{-1};               ///< HeatingRegulatorState value; -1 until read.
-  int16_t window_open{-1};             ///< 0 closed / 1 open; -1 until read.
-  int16_t open_window_detection{-1};   ///< 1 detection on / 0 off; -1 until read.
-  int16_t towel_mode{-1};              ///< TowelDryerMode value; -1 until read.
-  int16_t temporary_state{-1};         ///< HeatingTemporaryState value; -1 until read.
-  int16_t working_rate{-1};            ///< Working rate, 0-100 %; -1 until read.
-  float in_force_temperature_c{NAN};   ///< The temperature in force (register 0x0137 on a towel dryer, 0x012A on a
-                                       ///< radiator); NaN until read.
-  float eco_setback_k{NAN};            ///< A towel dryer's eco setback (register 0x0104); NaN until read.
-  float derogated_setpoint_c{NAN};     ///< A heater's override of its programme (register 0x011D), 0
-                                       ///< while none is active; NaN until read. Read after a write.
-  int16_t night_light{-1};             ///< Night light 1 on / 0 off; -1 until read.
-  int16_t night_light_brightness{-1};  ///< Night light brightness register, 0-10000; -1 until read.
-  int16_t central_heating_mode{-1};    ///< Central-heating mode 1 on / 0 off (register 0x0153); -1 until read.
-  int16_t occupancy_detection{-1};     ///< Occupancy detection 1 on / 0 off (register 0x0101); -1 until read.
-  int16_t presence{-1};                ///< Someone detected in the room 1 / 0 (register 0x0110); -1 until read.
-  float energy_total_kwh{NAN};         ///< The energy the heater has used, whole kWh (register 0x0116); NaN until read.
-  float boost_remaining_min{NAN};      ///< Minutes left of a running boost (register 0x013A); NaN until read.
-  float boost_duration_min{NAN};       ///< The boost duration set, minutes (register 0x013B); NaN until read.
-  float drying_remaining_min{NAN};     ///< Minutes left of a running drying run (register 0x013C); NaN until read.
-  float drying_duration_min{NAN};      ///< The duration of the last drying run started, minutes (register 0x013D);
-                                       ///< NaN until read.
-  int16_t level{-1};                   ///< Low byte of the main parameter a status read returned: a heating level
-                                       ///< (a plain heater, and a register heater whose programme reports one,
-                                       ///< whose poll ends with that read) or a setpoint alias. -1 until a
-                                       ///< status reply carried one, and again after a reply that carried a
-                                       ///< plain temperature. Set by the hub's status path, not by store().
-  int32_t main_parameter{-1};          ///< The raw current main parameter of a heater commanded with an EXECUTE
-                                       ///< (a temperature, an alias or a level); -1 until a status reply
-                                       ///< carried one. Set by the hub's status path, not by store().
-
-  /// @brief Fold one decoded register value into the readings.
-  /// @param fn Register the value was read from.
-  /// @param value Value as returned by decode_heating_reply().
-  /// @return true when `fn` is a register the readings hold (and the field was set).
-  bool store(HeatingFunction fn, float value);
-
-  /// @brief Forget a register's value: it reads as "never read" again.
-  /// @param fn Register.
-  /// @return true when `fn` is a register the readings hold.
-  bool clear(HeatingFunction fn);
-
-  /// @brief Has this register been read yet?
-  /// @param fn Register.
-  /// @return true when the readings hold a value for `fn`; false for "never read" and for a function
-  ///         the readings do not hold.
-  [[nodiscard]] bool has(HeatingFunction fn) const;
-
-  /// @brief The stored value of a register that is kept as a number with a unit: a temperature in degrees, a
-  /// setback in kelvin, an energy total in kilowatt-hours, a run time in minutes.
-  /// @details Wide enough for a counter: a float holds every 16-bit value exactly, where value_of() stops at 32767.
-  /// @param fn Register.
-  /// @return The value, or NaN when it has not been read or `fn` is not such a register the readings hold.
-  [[nodiscard]] float number_of(HeatingFunction fn) const;
-
-  /// @brief The stored value of a register of either kind, as the number it shows.
-  /// @details One lookup for entities that do not care whether the register is kept as a number with a unit or as a
-  ///          byte (see number_of() and value_of()).
-  /// @param fn Register.
-  /// @return The value, or nullopt when it has not been read (or was dropped) or `fn` is not a register the readings
-  ///         hold.
-  [[nodiscard]] std::optional<float> reading_of(HeatingFunction fn) const;
-
-  /// @brief The stored integer value of a register (a mode, a state, a flag, a percentage).
-  /// @details Lets a heating profile name the register its card reads (its mode or preset register)
-  ///          instead of the caller picking a field.
-  /// @param fn Register.
-  /// @return The value, or -1 when it has not been read or `fn` is not an integer register the
-  ///         readings hold (the numbers with a unit, see number_of(), are not).
-  [[nodiscard]] int16_t value_of(HeatingFunction fn) const;
-};
+/// @brief Does a heater's reply carry the value bytes of a register, whatever they say?
+/// @details True for a reply that echoes the register and holds at least the register's codec length of value bytes,
+///          also when decode_heating_reply() refuses them (a mode byte above the register's range). The difference
+///          tells a heater that has the register and answers it oddly from one that has none and answers it empty.
+/// @param reply The device's reply frame.
+/// @param fn Register the request addressed.
+/// @return true when the reply holds the register's value bytes; false for an empty answer, another register or a
+///         function with no typed value (POWER_ON).
+bool heating_reply_carries_value(const IoFrame &reply, HeatingFunction fn);
 
 }  // namespace home_io_control
 }  // namespace esphome

@@ -23,6 +23,7 @@
 #include "proto_constants.h"
 #include "proto_device_kinds.h"
 #include "proto_device_model.h"
+#include "proto_device_readings.h"
 #include "proto_heating.h"
 #include "proto_sizes.h"
 
@@ -139,7 +140,7 @@ struct HeatingModeEntry {
 
 /// @brief One preset the card offers.
 /// @details Every preset sends a command when selected: there is no way to list one the device only reports.
-///          What a heater applies right now is not a preset but the level in HeatingReadings::level.
+///          What a heater applies right now is not a preset but the level (DeviceReading::HEATING_LEVEL).
 struct HeatingPresetEntry {
   const char *custom_name;   ///< Name of a CUSTOM preset; nullptr otherwise.
   HeatingPresetId id;        ///< Standard preset, or CUSTOM.
@@ -178,15 +179,14 @@ struct HeatingProfileFeatures {
 ///          (no boost or drying on top). Then `in_force_fn` holds the temperature the heater heats to; outside
 ///          the programme it is not a temperature (it reads 1 in boost and 2 in drying on a towel dryer).
 ///          A target set while the programme runs is a temporary override: it goes to `derogation_fn`, and
-///          the comfort setpoint in `comfort_fn` and the programme stay as they are.
+///          the comfort setpoint and the programme stay as they are.
 struct HeatingProgrammePeriod {
   HeatingFunction in_force_fn;    ///< Register of the temperature in force.
-  HeatingFunction comfort_fn;     ///< Register of the comfort setpoint.
   HeatingFunction derogation_fn;  ///< Register of the temporary override of the programme: a target set while
                                   ///< the programme runs is written here and holds until the programme's next
                                   ///< change; 0 ends it.
   /// The heater answers the status read with its heating level, which every poll then makes after the
-  /// registers (HeatingReadings::level, the `heating_level:` sensor). False for a heater kind no unit of
+  /// registers (DeviceReading::HEATING_LEVEL, the `heating_level:` sensor). False for a heater kind no unit of
   /// which has answered that read yet (the radiator family): its poll sends no status read, and its
   /// `heating_level:` sensor stays without a state.
   bool reports_level{false};
@@ -327,12 +327,6 @@ constexpr uint16_t heating_prefixed_main_parameter(uint8_t prefix, uint8_t low) 
 ///         nullptr for a value that is not a level.
 const char *heating_level_name(uint8_t level);
 
-/// @brief Read a heating level out of a main parameter.
-/// @param main_parameter The 16-bit value from a status reply.
-/// @param[out] level Level low byte.
-/// @return true when the value is a heating level (high byte HEATING_LEVEL_MP_PREFIX).
-bool decode_heating_level(uint16_t main_parameter, uint8_t &level);
-
 /// @brief Find what a device-reported wire value shows on the card.
 /// @param profile The device's profile.
 /// @param wire Mode register value or level low byte.
@@ -351,32 +345,49 @@ const HeatingObservedState *find_observed_preset(const HeatingProfile &profile, 
 ///          register reads the idle value. An unread register is not the programme. A mode value the observed
 ///          table does not know is not the programme either.
 /// @param profile The device's profile.
-/// @param readings What the hub has read from the heater.
+/// @param dev The device record, which holds what the hub has read from the heater.
 /// @return false for a profile without a programme period.
-bool programme_period_active(const HeatingProfile &profile, const HeatingReadings &readings);
+bool programme_period_active(const HeatingProfile &profile, const IoDevice &dev);
 
 /// @brief The timed-run register a target must read besides the mode, if any.
 /// @details A profile that keeps boost and drying in a register of its own (a non-empty preset table) runs the
 ///          programme only with none on top, so once the mode shows the programme that register decides
 ///          whether it runs. In any other mode the programme does not run, whatever that register holds.
 /// @param profile The device's profile.
-/// @param readings What the hub has read from the heater (the mode as it was just read).
+/// @param dev The device record (the mode as it was just read).
 /// @return The register, or std::nullopt when the mode does not show the programme or the profile has no
 ///         timed-run register.
-std::optional<HeatingFunction> timed_run_register(const HeatingProfile &profile, const HeatingReadings &readings);
+std::optional<HeatingFunction> timed_run_register(const HeatingProfile &profile, const IoDevice &dev);
 
 /// @brief The temperature a heater heats to while its own programme runs.
 /// @param profile The device's profile.
-/// @param readings What the hub has read from the heater.
+/// @param dev The device record.
 /// @return The temperature in force, or NaN when the programme does not run (or the profile has none) or
 ///         the register has not been read.
-float programme_temperature_in_force(const HeatingProfile &profile, const HeatingReadings &readings);
+float programme_temperature_in_force(const HeatingProfile &profile, const IoDevice &dev);
 
-/// @brief Drop the temperature in force from the readings when the programme does not run.
+/// @brief Drop the temperature in force from the device's readings when the programme does not run.
 /// @details Keeps a value from an earlier run of the programme from being shown when the heater returns to it.
 /// @param profile The device's profile.
-/// @param[in,out] readings What the hub has read from the heater.
-void clear_inactive_programme_reading(const HeatingProfile &profile, HeatingReadings &readings);
+/// @param[in,out] dev The device record.
+void clear_inactive_programme_reading(const HeatingProfile &profile, IoDevice &dev);
+
+/// @brief The temperature in force a read of a register brings along, when the register is the programme's override.
+/// @details A read-back of the override shows the temperature the heater holds from now on, so the card shows the new
+///          target at once instead of after the next poll of the temperature in force. An override of 0 (none active)
+///          says nothing about it.
+/// @param profile The device's profile.
+/// @param fn The register that was read.
+/// @param value What it held.
+/// @return The temperature in force, or std::nullopt when `fn` is not the override register of a profile with a
+///         programme, or the override is not a temperature.
+std::optional<float> in_force_from_override_read(const HeatingProfile &profile, HeatingFunction fn, float value);
+
+/// @brief The reading that holds the setpoint a profile's card shows as its target.
+/// @param profile The device's profile.
+/// @return DeviceReading::STATUS_SETPOINT for a heater commanded with a temperature in an EXECUTE, whose status
+///         reply reports its setpoint; DeviceReading::SETPOINT, the comfort-setpoint register, for the others.
+DeviceReading heating_setpoint_reading(const HeatingProfile &profile);
 
 // === Heater writes: what a request turns into ===
 
@@ -585,11 +596,10 @@ HeatingCardState initial_heating_card(const HeatingProfile &profile);
 ///          it was. Where nothing reads the mode, a device that reports a setpoint or an alias is evidently on, so the
 ///          card shows heat until a mode is commanded. Sets `observed` once any reading was present.
 /// @param profile The device's profile.
-/// @param readings What the hub has read from the heater.
+/// @param dev The device record, which holds what the hub has read from the heater.
 /// @param prior The card before the readings.
 /// @return The card after them.
-HeatingCardState reduce_heating_card(const HeatingProfile &profile, const HeatingReadings &readings,
-                                     const HeatingCardState &prior);
+HeatingCardState reduce_heating_card(const HeatingProfile &profile, const IoDevice &dev, const HeatingCardState &prior);
 
 /// @brief What the card shows after a command the heater accepted.
 /// @details The one place the commanded and the observed state meet. Once a reading has been folded in, the
