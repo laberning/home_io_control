@@ -34,7 +34,7 @@ model name, `ADELIS 2 DIGIT` or `ADELIS 2 M`.
 | Changing the mode from Home Assistant | ✅ The display follows off, MANUEL and PROG at once |
 | Starting or ending boost and drying from Home Assistant | ✅ The display starts and ends both |
 | Boost started on the dryer itself | ✅ Shows as the `boost` preset and `heating` at the next poll |
-| Mixed ADELIS 2 M | ✅ Reported working with `io_model: towel_dryer`: mode, target, boost, drying and room temperature follow the display (issue #202). With the dryer's central-heating mode on, the element does not run; see Known quirks |
+| Mixed ADELIS 2 M | ✅ Reported working with `io_model: towel_dryer`: mode, target, boost, drying and room temperature follow the display (issue #202). With the dryer's central-heating mode on, the element does not run and drying is not available; boost still runs. See Known quirks |
 | Level the dryer applies (`heating_level:` sensor) | ⚠️ Experimental: read in a comfort period, in an eco period, in a boost and during drying (issue #202). It shows eco during a drying run, and after a change of mode or of boost it can show the old level for one or two polls |
 | Central-heating mode (`central_heating_mode:` sensor) | ⚠️ Experimental: the register followed the panel's setting over four toggles on one ADELIS 2 M (issue #243). What an electric unit answers is unknown; the sensor then has no state |
 | Target set in `auto` in an eco period (temporary override) | ✅ The dryer takes the override, shows the new temperature and follows its program again at the next change of period; `set_derogation` with `0` ends it (issue #202) |
@@ -89,8 +89,9 @@ and add `io_model: towel_dryer` to the block before you flash.
   no fourth mode to select (issue #202).
 - **The central-heating mode of an ADELIS 2 M keeps the element off.** The mixed model has a panel
   setting for heating from the water loop. While it is on, the electric element never runs, so the
-  card shows `idle`, and boost and drying change nothing. With it off (water valve closed by hand)
-  the element runs and the card shows `heating`. The experimental `central_heating_mode:` binary
+  card shows `idle`, and drying does not start: the panel asks you to switch the mode off first.
+  Boost still runs, because it uses a separate fan heater (issue #202). With the mode off (water
+  valve closed by hand) the element runs and the card shows `heating`. The experimental `central_heating_mode:` binary
   sensor shows which mode the dryer is in
   ([Central-heating mode sensor](../configuration/climate.md#central-heating-mode-sensor)); the hub
   does not change the setting.

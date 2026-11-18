@@ -179,10 +179,8 @@ The heater itself works as the radiator does: the same card, the same window ent
 takes the options of any ESPHome [light](https://esphome.io/components/light/), and it is rejected on a
 heater without `io_model: heater_with_light`.
 
-> [!NOTE]
-> **The night light is experimental.** Reading it and switching it on and off from Home Assistant are
-> confirmed on a Hekla (issue #222). Dimming from Home Assistant has not been confirmed on a heater yet. If you try it, please
-> [report](https://github.com/laberning/home_io_control/issues) what the light does.
+Reading the night light, switching it on and off and dimming it from Home Assistant are confirmed
+on a Hekla (issue #222).
 
 - The light shows what the heater reports. It has no state until the first poll, and every switch or
   brightness change the heater acknowledges is read back. A change it does not acknowledge leaves the
@@ -225,8 +223,8 @@ from a status read the poll makes anyway. The values, and which heater kinds rep
 
 A mixed towel dryer (an Atlantic ADELIS 2 M) heats from the house's water loop and has an electric
 element as well. While its central-heating mode is on, the element never runs: the card shows
-`idle`, and Boost and Drying change nothing. The optional `central_heating_mode:` binary sensor
-shows that setting, so you can see why.
+`idle`, and Drying does not start. Boost still runs, on the dryer's separate fan heater. The
+optional `central_heating_mode:` binary sensor shows that setting, so you can see why.
 
 ```yaml
 climate:

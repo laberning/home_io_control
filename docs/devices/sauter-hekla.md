@@ -18,7 +18,7 @@ the night light. Three heaters that were already paired with a Sauter Cozytouch 
 | `Window` sensor | ✅ Confirmed |
 | The Cozytouch keeps working alongside the hub | ✅ Confirmed |
 | Night light: on and off, read and switched from Home Assistant | ✅ Confirmed |
-| Night light: brightness | ⚠️ Experimental: the register and the panel's four levels are confirmed; dimming from Home Assistant is not |
+| Night light: brightness | ✅ Confirmed: the light dims with the brightness set in Home Assistant |
 | Off, Heat, Auto and the presets | ⚠️ Not confirmed on a Hekla yet |
 | Target set in `auto` (temporary override) | ⚠️ Experimental: no Hekla has confirmed it |
 | Level the heater applies (`heating_level:` sensor) | ❌ Not read: the sensor stays without a state |
@@ -72,8 +72,9 @@ behaves. Without them the heater works as a radiator without a light.
   shows at the next poll.
 - **The panel has four brightness levels.** It writes 100, 1000, 2000 and 10000 to the brightness
   register, which Home Assistant shows as 1 %, 10 %, 20 % and 100 %. The Cozytouch app's slider snaps
-  to the heater's levels; once it produced 3000. Whether the heater takes a value that Home Assistant
-  sends between the levels has not been confirmed.
+  to the heater's levels; once it produced 3000. Above about 3000 (30 %) the light hardly gets any
+  brighter, so most of the visible range lies below 30 % (issue #222). Whether the heater keeps a
+  value between its levels as written has not been confirmed.
 
 ## Evidence
 
@@ -82,7 +83,7 @@ SX1262 driver:
 
 - [The panel's four night-light brightness levels, overheard by the hub](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/exchange/sauter_hekla_exchange_night_light_brightness_levels_sx1262.yaml)
 - The reporter's confirmation of pairing, target, room temperature, the window sensor and switching
-  the night light, in the issue thread.
+  and dimming the night light, in the issue thread.
 
 ## See also
 

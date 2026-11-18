@@ -169,10 +169,10 @@ so they are presets, and the mode underneath stays as it was.
 Mode, boost and drying, target, room temperature and `heating` / `idle` are confirmed on two electric
 Adelis units, the writes each checked against the dryer's display (issue #202), and a third, mixed
 unit follows the display for mode, target, boost and drying (issue #243). The mixed model has a
-central-heating mode that keeps the element off: the card then shows `idle`, and boost and drying
-change nothing. A target in `auto` changes the comfort temperature in a comfort period and is a temporary
-override in an eco period (see "A target set while the heater's program runs" below). The level sensor is
-experimental.
+central-heating mode that keeps the element off: the card then shows `idle`, and drying does not
+start, while boost still runs on the dryer's separate fan heater. A target in `auto` changes the
+comfort temperature in a comfort period and is a temporary override in an eco period (see "A
+target set while the heater's program runs" below). The level sensor is experimental.
 
 ## Level heaters and pilot-wire interfaces
 

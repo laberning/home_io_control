@@ -138,8 +138,7 @@ class IOHomeOpenWindowDetectionSwitch : public switch_::Switch, public Component
 /// Switching on writes the brightness only when it differs from what the heater holds, then the on/off
 /// register; so on/off at an unchanged brightness never depends on the brightness write.
 ///
-/// \todo Experimental: confirm on a real heater that writing 0x0142 dims the light (switching with 0x0144
-///       is confirmed on a Hekla, issue #222).
+/// Switching with 0x0144 and dimming with 0x0142 are confirmed on a Sauter Hekla (issue #222).
 class IOHomeHeaterNightLight : public light::LightOutput, public Component, public DeviceBoundCompanion {
  public:
   /// @brief Subscribe to the device's updates and publish what is already known.

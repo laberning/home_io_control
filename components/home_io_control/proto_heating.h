@@ -70,8 +70,8 @@ enum class HeatingFunction : uint8_t {
                            ///< period heats, tenths of a kelvin.
   NIGHT_LIGHT,             ///< Register 0x0144, read/write: a heater's night light on (1) or off (0).
   NIGHT_LIGHT_BRIGHTNESS,  ///< Register 0x0142, read/write: the night light's brightness, 0-10000, 16-bit.
-                           ///< \todo Confirm on a real heater that a write from the hub dims the light and
-                           ///<       that values between its panel's four levels are accepted (issue #222).
+                           ///< A write dims the light on a Sauter Hekla (issue #222).
+                           ///< \todo Confirm that values between the panel's four levels are taken as written.
   DEROGATED_SETPOINT,      ///< Register 0x011D, read/write: a heater's temporary override of its programme,
                            ///< tenths of a degree; 0 while none is active. Written with 0 it cancels the override.
                            ///< A towel dryer's own panel sets it when the temperature is raised in an eco period
