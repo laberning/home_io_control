@@ -441,3 +441,19 @@ TEST(ProtoDhw, TheManualShowersWriteTakesOnlyTheRangeTheHeaterOffers) {
   for (const uint8_t showers : {uint8_t{0}, uint8_t{1}, uint8_t{5}, uint8_t{255}})
     EXPECT_EQ(encode_dhw_manual_showers_write(showers, out), 0U) << static_cast<unsigned>(showers);
 }
+
+TEST(ProtoDhw, ATargetSelectsTheNearestManualShowerCount) {
+  const struct {
+    float celsius;
+    uint8_t showers;
+  } cases[] = {{50.0F, 2}, {54.9F, 2}, {55.0F, 3}, {60.0F, 3}, {64.9F, 3}, {65.0F, 4}, {70.0F, 4}, {7.0F, 2}, {90.0F, 4}};
+  for (const auto &c : cases) {
+    uint8_t showers = 0;
+    ASSERT_TRUE(dhw_manual_showers_for_target(c.celsius, showers)) << c.celsius;
+    EXPECT_EQ(showers, c.showers) << c.celsius;
+  }
+  uint8_t untouched = 9;
+  EXPECT_FALSE(dhw_manual_showers_for_target(NAN, untouched));
+  EXPECT_FALSE(dhw_manual_showers_for_target(INFINITY, untouched));
+  EXPECT_EQ(untouched, 9);
+}

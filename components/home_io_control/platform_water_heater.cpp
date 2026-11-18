@@ -156,7 +156,8 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
   const bool away = call.get_away().value_or(this->is_away());
   if (!std::isnan(target) && away) {
     ESP_LOGW(TAG, "Device %s: target ignored while away, the heater holds no target then", this->device_id_.c_str());
-  } else if (!std::isnan(target) && this->observed_ && this->mode_ == water_heater::WATER_HEATER_MODE_HEAT_PUMP) {
+  } else if (!std::isnan(target) && this->observed_ &&
+             this->mode_ == water_heater_mode_for(DhwMode::AUTO, this->model_)) {
     ESP_LOGW(TAG, "Device %s: target ignored in automatic mode, the heater chooses its own", this->device_id_.c_str());
   } else if (!std::isnan(target) && this->heating_port_->set_water_heater_target(this->device_id_, target) &&
              !this->observed_) {
@@ -216,8 +217,8 @@ void IOHomeWaterHeater::dump_config() {
                 static_cast<double>(target_max_for(this->model_)));
   this->log_poll_interval_config_(TAG, heater_poll_interval_ms);
   if (dhw_state_in_registers(this->model_)) {
-    ESP_LOGCONFIG(TAG, "  Status: electric storage water heater; readings, mode, boost and away confirmed on "
-                       "hardware; a target is shown but not sent");
+    ESP_LOGCONFIG(TAG, "  Status: electric storage water heater; readings, mode, boost, away and manual showers "
+                       "confirmed on hardware; a target selects the nearest shower count in manual mode");
   } else {
     ESP_LOGCONFIG(TAG, "  Status: readings, target and mode confirmed on hardware; away mode experimental");
   }

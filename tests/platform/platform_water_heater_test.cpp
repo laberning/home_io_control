@@ -236,6 +236,37 @@ TEST(PlatformWaterHeater, AnElectricStorageHeaterIsSentItsModeAsRegisterValueZer
   EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_ELECTRIC);
 }
 
+TEST(PlatformWaterHeater, AnElectricStorageHeaterTakesATargetInManualModeOnly) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_electric_water_heater(entity, hub);
+
+  DhwReadings readings;
+  readings.target_c = 42.0F;
+  readings.mode = static_cast<int16_t>(DhwMode::AUTO);
+  readings.away = 0;
+  publish(hub, readings);
+  auto automatic = entity.make_call();
+  automatic.set_target_temperature(60.0F);
+  automatic.perform();
+  EXPECT_TRUE(hub.water_heater_targets.empty()) << "in automatic mode the heater chooses its own target";
+
+  readings.mode = static_cast<int16_t>(DhwMode::MANUAL_ECO_OFF);
+  publish(hub, readings);
+  auto manual = entity.make_call();
+  manual.set_target_temperature(60.0F);
+  manual.perform();
+  ASSERT_EQ(hub.water_heater_targets.size(), 1u);
+  EXPECT_FLOAT_EQ(hub.water_heater_targets.back(), 60.0F);
+
+  readings.away = 1;
+  publish(hub, readings);
+  auto away = entity.make_call();
+  away.set_target_temperature(70.0F);
+  away.perform();
+  EXPECT_EQ(hub.water_heater_targets.size(), 1u) << "in absence the heater holds its frost protection";
+}
+
 TEST(PlatformWaterHeater, SetupRegistersTheDeviceAsAWaterHeater) {
   MockHubWaterHeater hub;
   IOHomeWaterHeater entity;

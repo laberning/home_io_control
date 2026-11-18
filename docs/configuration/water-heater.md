@@ -148,8 +148,9 @@ heater declared without the model that answers this way is named in a warning at
   `0x0053` for absence) and read back at once; the switch and the card show that read-back, never the
   command. On the Sauter Guelma the display starts and ends both from Home Assistant. The target the card
   shows follows at the next poll, 45 seconds later: the heater updates it a few seconds after the write.
-- **A target is shown but not sent.** How this model takes one is not known yet, so a target set in Home
-  Assistant is refused with a warning in the log. Use the heater's display.
+- **A target selects a shower count in manual mode.** The heater heats to 50, 60 or 70 °C for 2, 3 or 4 showers,
+  so a target set in Home Assistant takes the nearest of the three, and the card shows it at the next poll. In
+  automatic mode and in absence the heater chooses its own target: one set then is not sent, and the log says so.
 - `heat_pump_running` has no state on this model: it has no heat pump.
 - `showers_available` (Optional): A sensor of the showers of hot water available, the ones the display shows
   steadily lit.

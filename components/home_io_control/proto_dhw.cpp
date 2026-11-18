@@ -52,6 +52,9 @@ constexpr DhwOperatingFeatureWire DHW_OPERATING_FEATURES[] = {
 static_assert(sizeof(DHW_OPERATING_FEATURES) / sizeof(DHW_OPERATING_FEATURES[0]) ==
                   static_cast<size_t>(DhwOperatingFeature::AWAY) + 1,
               "one row per DhwOperatingFeature");
+/// Manual mode of an electric storage water heater: the temperature of a shower count is base + count * step.
+constexpr float DHW_MANUAL_BASE_C = 30.0F;
+constexpr float DHW_MANUAL_C_PER_SHOWER = 10.0F;
 /// FP15 and FP16 of a heater that reports neither word.
 constexpr uint16_t DHW_FP_UNREPORTED = 0xFFFF;
 /// Highest DhwMode value.
@@ -108,6 +111,20 @@ size_t encode_dhw_manual_showers_write(uint8_t showers, uint8_t out[PRIVATE_REGI
   if (showers < DHW_MANUAL_SHOWERS_MIN || showers > DHW_MANUAL_SHOWERS_MAX)
     return 0;
   return encode_dhw_byte_write(DHW_REG_MANUAL_SHOWERS, showers, out);
+}
+
+bool dhw_manual_showers_for_target(float celsius, uint8_t &showers) {
+  if (!std::isfinite(celsius))
+    return false;
+  const long nearest = std::lround((celsius - DHW_MANUAL_BASE_C) / DHW_MANUAL_C_PER_SHOWER);
+  if (nearest <= DHW_MANUAL_SHOWERS_MIN) {
+    showers = DHW_MANUAL_SHOWERS_MIN;
+  } else if (nearest >= DHW_MANUAL_SHOWERS_MAX) {
+    showers = DHW_MANUAL_SHOWERS_MAX;
+  } else {
+    showers = static_cast<uint8_t>(nearest);
+  }
+  return true;
 }
 
 bool encode_dhw_target(float celsius, uint16_t &main_parameter) {

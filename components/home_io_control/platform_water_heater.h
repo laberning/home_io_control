@@ -26,8 +26,8 @@
 ///
 /// It reports the temperature it heats to in every state, so its target is always shown; away and boost
 /// follow their flag registers. Its mode is written as on the other heater; boost and away are written to
-/// those flag registers (proto_dhw.h). A target asked for in Home Assistant is not sent: how this model
-/// takes one is not known.
+/// those flag registers (proto_dhw.h). A target asked for in manual mode selects the nearest shower count (2, 3 or
+/// 4 showers heat to 50, 60 or 70 C); in automatic mode and in absence it is logged and dropped.
 ///
 /// In automatic mode the heater chooses its own target, and its display shows none, so the entity publishes
 /// no target while the heater reports automatic mode, and a target set then is not sent.

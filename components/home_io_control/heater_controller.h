@@ -250,6 +250,8 @@ class HeaterController {
   /// DHW_TARGET_MAX_C (encode_dhw_target()), through the bare execute operation without the cover's
   /// movement bookkeeping. The settle poll that follows reads the target back from the status reply.
   /// Gated on device_feature::WATER_HEATER. The heater's display follows the target (issue #198).
+  /// An electric storage water heater takes no free target: the nearest shower count of manual mode is set
+  /// (dhw_manual_showers_for_target(), set_water_heater_manual_showers()).
   /// @param device_id Target device ID (hex string).
   /// @param celsius Target in degrees Celsius; a value outside the heater's range is refused, not clamped.
   /// @return true when the device accepted the command.
@@ -470,13 +472,6 @@ class HeaterController {
   /// @param on true to start it.
   /// @return true when the heater acknowledged the write, unless the read-back shows it did not keep the value.
   bool set_dhw_register_feature_(const std::string &device_id, DhwOperatingFeature which, bool on);
-
-  /// @brief Refuse a target write to an electric storage water heater, with a warning: how that model takes
-  /// one is not known, and the heat-pump heater's EXECUTE does nothing on it.
-  /// @param device_id Target device ID.
-  /// @param operation What was asked, for the log ("Hot water boost").
-  /// @return true when the write was refused (the device is such a heater).
-  bool refuse_unknown_dhw_write_(const std::string &device_id, const char *operation);
 
   const uint8_t *node_id_;     ///< Controller node ID, owned by the hub.
   const bool *initialized_;    ///< The hub's initialized flag.

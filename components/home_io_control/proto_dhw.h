@@ -44,7 +44,8 @@
 ///     the showers it has, and 0x0032 the heating power;
 ///   - registers 0x0035 and 0x0051 read 4 in automatic mode, 3 during a boost, 2 in manual mode and 0 in absence,
 ///     but follow a write a few seconds late, so the hub does not read them.
-/// How this model takes a target is not known: none is sent to it. A boost and an absence are a write of the
+/// Its target is not free: a target asked for selects the nearest shower count of manual mode (register 0x0048,
+/// dhw_manual_showers_for_target()). A boost and an absence are a write of the
 /// flag register that reads 1 while they run (0x0052, 0x0053): the heater's display follows both, and the
 /// flag reads back at once, while the target 0x0049 still held the old value right after the write. The boost
 /// and away shown therefore come from the flags.
@@ -293,6 +294,13 @@ size_t encode_dhw_flag_write(DhwOperatingFeature which, bool on, uint8_t out[PRI
 /// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return 5, or 0 for a count outside the range.
 size_t encode_dhw_manual_showers_write(uint8_t showers, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
+
+/// @brief The shower count of manual mode whose temperature is nearest a target: 2, 3 and 4 showers heat to 50, 60
+/// and 70 C. A target halfway between two counts takes the higher one, and one outside the range the nearest end.
+/// @param celsius Target in degrees Celsius.
+/// @param[out] showers The count; untouched when false is returned.
+/// @return false for a target that is not finite.
+bool dhw_manual_showers_for_target(float celsius, uint8_t &showers);
 
 /// @brief Encode a target temperature as a main parameter over DHW_TARGET_MIN_C..DHW_TARGET_MAX_C.
 /// @param celsius Target; must be finite and within the range (nothing outside it is ever sent).

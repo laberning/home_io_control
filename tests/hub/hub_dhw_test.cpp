@@ -376,20 +376,50 @@ TEST(HubDhw, AnElectricStorageHeatersModeIsWrittenThenItsTargetIsRead) {
   EXPECT_FLOAT_EQ(dev->dhw.target_c, 70.0F);
 }
 
-TEST(HubDhw, AnElectricStorageHeaterIsNeverSentAModeItHasNotShownOrATarget) {
+/// The five data bytes of a sent register write (`0C 61 00 <idx> <value>`).
+std::vector<uint8_t> sent_write(const std::vector<uint8_t> &tx) {
+  return std::vector<uint8_t>(tx.begin() + 9, tx.begin() + 14);
+}
+
+TEST(HubDhw, AnElectricStorageHeaterIsNeverSentAModeItHasNotShown) {
   TestableComponent comp;
   MockRadio radio;
   make_electric_water_heater(comp, radio);
 
   EXPECT_FALSE(comp.set_water_heater_mode("ABC123", DhwMode::MANUAL_ECO_ON));
-  EXPECT_FALSE(comp.set_water_heater_target("ABC123", 60.0F));
 
-  EXPECT_TRUE(radio.get_sent_data().empty()) << "how this model takes a target is not known";
+  EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
-/// The five data bytes of a sent register write (`0C 61 00 <idx> <value>`).
-std::vector<uint8_t> sent_write(const std::vector<uint8_t> &tx) {
-  return std::vector<uint8_t>(tx.begin() + 9, tx.begin() + 14);
+TEST(HubDhw, AnElectricStorageHeatersTargetSetsTheNearestManualShowers) {
+  const struct {
+    float celsius;
+    uint8_t showers;
+  } cases[] = {{50.0F, 2}, {60.0F, 3}, {64.0F, 3}, {70.0F, 4}};
+  for (const auto &c : cases) {
+    TestableComponent comp;
+    MockRadio radio;
+    IoDevice *dev = make_electric_water_heater(comp, radio);
+    queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, DHW_REG_MANUAL_SHOWERS, c.showers});
+    queue_register(comp, radio, DHW_REG_MANUAL_SHOWERS, {c.showers});
+
+    EXPECT_TRUE(comp.set_water_heater_target("ABC123", c.celsius));
+
+    const auto &sent = radio.get_sent_data();
+    ASSERT_EQ(sent.size(), 2u) << "no main-parameter EXECUTE";
+    EXPECT_EQ(sent_write(sent[0]), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x48, c.showers}));
+    EXPECT_EQ(dev->dhw.showers_manual, c.showers);
+  }
+}
+
+TEST(HubDhw, AnElectricStorageHeatersTargetThatIsNoTemperatureIsNotSent) {
+  TestableComponent comp;
+  MockRadio radio;
+  make_electric_water_heater(comp, radio);
+
+  EXPECT_FALSE(comp.set_water_heater_target("ABC123", NAN));
+
+  EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
 TEST(HubDhw, AnElectricStorageHeatersBoostIsAWriteOfItsFlagReadBackAtOnce) {

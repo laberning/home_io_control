@@ -527,20 +527,18 @@ bool HeaterController::read_dhw_status(const std::string &device_id, uint8_t max
          this->hub_.status_read(device_id, request, 0, max_tries);
 }
 
-bool HeaterController::refuse_unknown_dhw_write_(const std::string &device_id, const char *operation) {
-  const IoDevice *dev = this->registry_.get(device_id);
-  if (dev == nullptr || !dhw_state_in_registers(dev->model))
-    return false;
-  ESP_LOGW(detail::TAG,
-           "%s for device %s not sent: how an electric storage water heater takes it is not known; use its "
-           "display",
-           operation, device_id.c_str());
-  return true;
-}
-
 bool HeaterController::set_water_heater_target(const std::string &device_id, float celsius) {
-  if (this->refuse_unknown_dhw_write_(device_id, "Hot water target"))
-    return false;
+  // An electric storage water heater heats to the temperature of a shower count: the nearest count is set.
+  if (const IoDevice *dev = this->registry_.get(device_id); dev != nullptr && dhw_state_in_registers(dev->model)) {
+    uint8_t showers = 0;
+    if (!dhw_manual_showers_for_target(celsius, showers)) {
+      ESP_LOGW(detail::TAG, "Hot water target for device %s rejected: not a temperature", device_id.c_str());
+      return false;
+    }
+    ESP_LOGI(detail::TAG, "Device %s: hot water target %.1f C sets %u manual showers", device_id.c_str(),
+             static_cast<double>(celsius), static_cast<unsigned>(showers));
+    return this->set_water_heater_manual_showers(device_id, showers);
+  }
   uint16_t main_parameter = 0;
   if (!encode_dhw_target(celsius, main_parameter)) {
     ESP_LOGW(detail::TAG, "Hot water target %.1f C for device %s rejected: outside %.0f-%.0f C",
