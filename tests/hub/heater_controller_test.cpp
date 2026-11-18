@@ -12,6 +12,7 @@
 #include "proto_dhw.h"
 #include "proto_frame.h"
 #include "proto_heating.h"
+#include "proto_heating_profiles.h"
 #include "proto_private_registers.h"
 
 #include "heater_controller_fixture.h"
@@ -1873,6 +1874,152 @@ TEST(HeaterController, TheEnergyReadIsRefusedOnAKindWithoutTheCapability) {
   ASSERT_NE(plain, nullptr);
   fx.controller.enable_heating_register_read("ABC123", HeatingFunction::ENERGY_TOTAL);
   EXPECT_EQ(plain->opt_in_reads.state_of(HeatingFunction::ENERGY_TOTAL), HeatingOptInReads::State::NOT_ASKED);
+}
+
+// === Run timers: the minutes left of a run only while it runs, and the set durations (towel dryer) ===
+
+/// Queue a towel dryer's five core registers with the given temporary state (0 none, 1 boost, 2 drying).
+void queue_towel_dryer_poll_in_state(HeaterControllerFixture &fx, uint8_t temporary_state) {
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x36, 0x01});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3E, temporary_state});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x26, 0x00});
+}
+
+/// A towel dryer that asks for all four run-timer registers.
+IoDevice *make_towel_dryer_with_run_timers(HeaterControllerFixture &fx) {
+  IoDevice *dev = make_towel_dryer(fx);
+  for (const HeatingFunction fn : {HeatingFunction::BOOST_REMAINING, HeatingFunction::BOOST_DURATION,
+                                   HeatingFunction::DRYING_REMAINING, HeatingFunction::DRYING_DURATION})
+    fx.controller.enable_heating_register_read("ABC123", fn);
+  return dev;
+}
+
+/// @return How often the sent frames read one register of the heater (the low byte of 0x01xx).
+std::ptrdiff_t reads_of(const std::vector<std::vector<uint8_t>> &sent, uint8_t reg) {
+  const auto read = registers_read(sent);
+  return std::count(read.begin(), read.end(), reg);
+}
+
+TEST(HeaterController, ADryerWithoutRunTimerSensorsNeverReadsRegisters0x3ATo0x3D) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  queue_towel_dryer_poll_in_state(fx, 1);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  for (const uint8_t reg : {0x3A, 0x3B, 0x3C, 0x3D})
+    EXPECT_EQ(reads_of(fx.radio.get_sent_data(), reg), 0) << static_cast<int>(reg);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::BOOST_REMAINING), HeatingOptInReads::State::NOT_ASKED);
+}
+
+TEST(HeaterController, AnIdleDryerIsAskedForTheDurationsOnlyAndShowsNoTimeLeft) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_with_run_timers(fx);
+  queue_towel_dryer_poll_in_state(fx, 0);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3B, 0x3C, 0x3C});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3D, 0x1E, 0x78});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  EXPECT_EQ(reads_of(sent, 0x3A), 0) << "no boost runs";
+  EXPECT_EQ(reads_of(sent, 0x3C), 0) << "no drying runs";
+  EXPECT_EQ(reads_of(sent, 0x3B), 1);
+  EXPECT_EQ(reads_of(sent, 0x3D), 1);
+  EXPECT_FLOAT_EQ(dev->heating.number_of(HeatingFunction::BOOST_DURATION), 60.0F);
+  EXPECT_FLOAT_EQ(dev->heating.number_of(HeatingFunction::DRYING_DURATION), 30.0F);
+  EXPECT_FLOAT_EQ(timed_run_remaining_minutes(dev->heating), 0.0F);
+}
+
+TEST(HeaterController, ADryerInABoostReadsTheBoostTimeLeftAndNotTheDryingOne) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_with_run_timers(fx);
+  queue_towel_dryer_poll_in_state(fx, 1);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3A, 0x37});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3B, 0x3C, 0x3C});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3D, 0x1E, 0x78});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  EXPECT_EQ(reads_of(sent, 0x3A), 1);
+  EXPECT_EQ(reads_of(sent, 0x3C), 0);
+  EXPECT_FLOAT_EQ(timed_run_remaining_minutes(dev->heating), 55.0F);
+}
+
+TEST(HeaterController, ADryerInADryingRunReadsTheDryingTimeLeftAndNotTheBoostOne) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_with_run_timers(fx);
+  queue_towel_dryer_poll_in_state(fx, 2);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3B, 0x3C, 0x3C});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3C, 0x1C});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3D, 0x1E, 0x78});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  EXPECT_EQ(reads_of(sent, 0x3A), 0);
+  EXPECT_EQ(reads_of(sent, 0x3C), 1);
+  EXPECT_FLOAT_EQ(timed_run_remaining_minutes(dev->heating), 28.0F);
+}
+
+TEST(HeaterController, TheTimeLeftOfAnEndedRunIsForgottenAndNotShownAsTheNextRunsFirstValue) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_with_run_timers(fx);
+  dev->heating.boost_remaining_min = 5.0F;  // left over from the boost that has ended
+  queue_towel_dryer_poll_in_state(fx, 0);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::BOOST_REMAINING));
+}
+
+TEST(HeaterController, ABoostStartedFromHomeAssistantDoesNotShowTheTimeLeftOfTheBoostBefore) {
+  // A boost cancelled and started again between two polls: the last poll read 40 minutes left of the old boost.
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_with_run_timers(fx);
+  dev->heating.temporary_state = static_cast<int16_t>(HeatingTemporaryState::BOOST);
+  dev->heating.boost_remaining_min = 40.0F;
+  dev->heating.drying_duration_min = 30.0F;
+  queue_register_write_and_read_back(fx, 0x3E, static_cast<uint8_t>(HeatingTemporaryState::BOOST),
+                                     static_cast<uint8_t>(HeatingTemporaryState::BOOST));
+
+  ASSERT_TRUE(fx.controller.execute_heating_plan(
+      "ABC123", register_plan(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST)),
+      nullptr));
+
+  EXPECT_TRUE(std::isnan(timed_run_remaining_minutes(dev->heating)))
+      << "the new boost's time left is unknown until the next poll, not the old boost's 40 minutes";
+  EXPECT_FLOAT_EQ(dev->heating.number_of(HeatingFunction::DRYING_DURATION), 30.0F)
+      << "a reading without a condition stays";
+}
+
+TEST(HeaterController, ARunTimerAnswerWithoutAValueMarksOnlyThatRegisterAbsent) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_with_run_timers(fx);
+  queue_towel_dryer_poll_in_state(fx, 1);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3A});  // the boost time left: no value
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3B, 0x3C, 0x3C});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3D, 0x1E, 0x78});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123")) << "a missing register is not a poll failure";
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::BOOST_REMAINING), HeatingOptInReads::State::ABSENT);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::BOOST_DURATION), HeatingOptInReads::State::ASKED);
+  EXPECT_TRUE(std::isnan(timed_run_remaining_minutes(dev->heating))) << "no value, not 0 minutes";
+
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_towel_dryer_poll_in_state(fx, 1);
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  EXPECT_EQ(reads_of({sent.begin() + static_cast<std::ptrdiff_t>(sent_before), sent.end()}, 0x3A), 0)
+      << "not asked again until the next boot";
+}
+
+TEST(HeaterController, TheRunTimerReadsAreRefusedOnAKindWithoutTheCapability) {
+  HeaterControllerFixture fx;
+  IoDevice *radiator = make_heater(fx);
+  for (const HeatingFunction fn : {HeatingFunction::BOOST_REMAINING, HeatingFunction::BOOST_DURATION,
+                                   HeatingFunction::DRYING_REMAINING, HeatingFunction::DRYING_DURATION}) {
+    fx.controller.enable_heating_register_read("ABC123", fn);
+    EXPECT_EQ(radiator->opt_in_reads.state_of(fn), HeatingOptInReads::State::NOT_ASKED) << heating_function_name(fn);
+  }
 }
 
 TEST(HeaterController, HeaterPollStopsAtTheFirstFailureAndBacksOff) {

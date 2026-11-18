@@ -272,11 +272,21 @@ std::span<const HeatingProfile> heating_profiles();
 /// @return The profile, or nullptr when no climate entity drives this device.
 const HeatingProfile *find_heating_profile(const IoDevice &dev);
 
+/// @brief A reading another register must show for an opt-in read to run.
+struct HeatingReadCondition {
+  HeatingFunction
+      fn;         ///< The register whose stored reading decides; an integer register (HeatingReadings::value_of()).
+  uint8_t value;  ///< The value `fn` must hold.
+};
+
 /// @brief A register a poll reads only where the YAML declares an entity for it, and the capability a device
 /// needs for that.
 struct HeatingOptInRead {
   HeatingFunction fn;     ///< The register.
   DeviceFeature feature;  ///< The capability a device kind needs for its entity to be accepted and the read to run.
+  std::optional<HeatingReadCondition> only_while =
+      std::nullopt;  ///< When set, the register is read only while this holds (the
+                     ///< minutes left of a run, only while that run is on).
 };
 
 /// @brief Look up the opt-in read of a register.
@@ -285,6 +295,33 @@ struct HeatingOptInRead {
 /// @param fn Register.
 /// @return The row, or nullptr when the register is not an opt-in read.
 const HeatingOptInRead *find_heating_opt_in_read(HeatingFunction fn);
+
+/// @brief Is an opt-in register due for a read, given what the poll has stored so far?
+/// @details A row without a condition is always due. A row with one is due while the condition's register holds
+///          the value; an unread condition register (-1) holds none.
+/// @param read The opt-in row.
+/// @param readings What the hub has read from the heater (the condition's register is read earlier in the poll).
+/// @return true when the poll should read the register.
+bool heating_opt_in_read_due(const HeatingOptInRead &read, const HeatingReadings &readings);
+
+/// @brief Forget the opt-in readings that are read only while a register holds a value, after a write of that
+/// register.
+/// @details A written temporary state starts or ends a timed run, so the minutes left read for an earlier run are not
+///          the new run's; the next poll reads them again. A poll that reads the register changes nothing here: it
+///          reads the conditional registers right after, and clears them itself while the condition does not hold.
+/// @param written The register that was written.
+/// @param readings What the hub has read from the heater.
+/// @return true when a reading held a value and was cleared.
+bool clear_readings_read_only_while(HeatingFunction written, HeatingReadings &readings);
+
+/// @brief The minutes left of the timed run a towel dryer is in.
+/// @details Follows the temporary state (HeatingFunction::TEMPORARY_STATE): the register of the run it shows, as
+///          the opt-in rows with a condition on that state name it, or 0 with no run active. Boost and drying never
+///          run together, since one register holds the state.
+/// @param readings What the hub has read from the heater.
+/// @return The minutes, 0 while no run is active, or NaN while the state has not been read or the register of the
+///         active run has not been read (or was dropped).
+float timed_run_remaining_minutes(const HeatingReadings &readings);
 
 /// @brief Does a climate entity drive this device over the private register protocol?
 /// @details The gate for every CMD_WRITE_PRIVATE frame the hub sends: a heater that takes the standard

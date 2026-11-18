@@ -206,6 +206,14 @@ climate:
     # On while a mixed towel dryer runs on central heating; one extra register read per poll.
     central_heating_mode:
       name: "Test Towel Dryer Central Heating Mode"
+    # The minutes left of the boost or drying run in progress (0 with none), and the durations set for them;
+    # one extra register read per poll each, the time left only while a run is on.
+    remaining_time:
+      name: "Test Towel Dryer Remaining Time"
+    boost_duration:
+      name: "Test Towel Dryer Boost Duration"
+    drying_duration:
+      name: "Test Towel Dryer Drying Duration"
   # A heater with a night light: io_model adds the light's registers, night_light: its light entity.
   - platform: home_io_control
     name: "Test Heater With Light"

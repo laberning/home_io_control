@@ -621,7 +621,8 @@ def heating_level_sensor_is_accepted_on_an_electrical_heater_only():
 def opt_in_register_keys_are_accepted_only_on_a_kind_with_their_capability():
     """`central_heating_mode:` passes on a towel dryer (the CENTRAL_HEATING_MODE capability of its row);
     `occupancy_detection:` and `occupancy:` pass on a radiator and a heater with a light (OCCUPANCY); `energy:` passes
-    on a radiator, a towel dryer and a heater with a light (ENERGY_METER). Each is refused
+    on a radiator, a towel dryer and a heater with a light (ENERGY_METER); `remaining_time:`, `boost_duration:` and
+    `drying_duration:` pass on a towel dryer only (RUN_TIMERS). Each is refused
     on every other heater kind, another device and an entry with no declared type, with a message naming the
     kind to declare; an entry without the keys is untouched."""
     import esphome.config_validation as cv
@@ -645,18 +646,27 @@ def opt_in_register_keys_are_accepted_only_on_a_kind_with_their_capability():
         c.CONF_OCCUPANCY_DETECTION: (radiator, with_light),
         c.CONF_OCCUPANCY: (radiator, with_light),
         c.CONF_ENERGY: (radiator, dryer, with_light),
+        c.CONF_REMAINING_TIME: (dryer,),
+        c.CONF_BOOST_DURATION: (dryer,),
+        c.CONF_DRYING_DURATION: (dryer,),
     }
     refused = {
         c.CONF_CENTRAL_HEATING_MODE: (radiator, with_light, plain, pilot_wire, pump, {}),
         c.CONF_OCCUPANCY_DETECTION: (dryer, plain, pilot_wire, pump, {}),
         c.CONF_OCCUPANCY: (dryer, plain, pilot_wire, pump, {}),
         c.CONF_ENERGY: (plain, pilot_wire, pump, {}),
+        c.CONF_REMAINING_TIME: (radiator, with_light, plain, pilot_wire, pump, {}),
+        c.CONF_BOOST_DURATION: (radiator, with_light, plain, pilot_wire, pump, {}),
+        c.CONF_DRYING_DURATION: (radiator, with_light, plain, pilot_wire, pump, {}),
     }
     hint = {
         c.CONF_CENTRAL_HEATING_MODE: "io_model: towel_dryer",
         c.CONF_OCCUPANCY_DETECTION: "io_model: heater_with_light",
         c.CONF_OCCUPANCY: "io_model: heater_with_light",
         c.CONF_ENERGY: "io_model: towel_dryer or io_model: heater_with_light",
+        c.CONF_REMAINING_TIME: "io_model: towel_dryer",
+        c.CONF_BOOST_DURATION: "io_model: towel_dryer",
+        c.CONF_DRYING_DURATION: "io_model: towel_dryer",
     }
     for key, kinds in accepted.items():
         for kind in kinds:

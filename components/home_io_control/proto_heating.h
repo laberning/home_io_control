@@ -113,6 +113,30 @@ enum class HeatingFunction : uint8_t {
                                 ///< Adelis units `02 3F` and `03 B2`, whose displays were not compared.
                                 ///< \todo Experimental except on the Sauter Tahual: compare with the display on
                                 ///<       an EMOTION 3 H, an Adelis and a Hekla.
+  BOOST_REMAINING,              ///< Register 0x013A, read-only: the minutes left of a running boost, rounded up; one
+                                ///< byte. Read on an Atlantic Adelis during a one-hour boost: `3C` (60) a moment
+                                ///< after the start and `37` (55) five minutes later, matching the display's
+                                ///< countdown (issue #202, corpus `atlantic_adelis_probe_boost_remaining`). A second
+                                ///< unit read `1C` (28) during a boost, and `00` was read during a drying run; no
+                                ///< read while nothing runs exists, so the hub reads it during a boost only.
+                                ///< \todo Experimental: read on Atlantic Adelis units only; confirm on another dryer.
+  BOOST_DURATION,               ///< Register 0x013B, read-only here: the boost duration set on the panel, minutes. Two
+                                ///< bytes, the duration then the panel's maximum: `3C 3C` (60, 60) with a one-hour
+                                ///< boost set, `0F 3C` (15) and `1E 3C` (30) after the panel was set to those, and
+                                ///< `23 3C` (35, 60) on a second unit; the value changed 1-3 minutes after the panel
+                                ///< did (issue #202). Only the first byte is read.
+                                ///< \todo Experimental: nobody has written it, so how the dryer takes a new
+                                ///<       duration is not known.
+  DRYING_REMAINING,             ///< Register 0x013C, read-only: the minutes left of a running drying run; one byte,
+                                ///< `1C` (28) with the display between 30 and 27 minutes left (issue #202, corpus
+                                ///< `atlantic_adelis_probe_register_01_sweep_drying`), `00` while none runs.
+                                ///< \todo Experimental: read on Atlantic Adelis units only; confirm on another dryer.
+  DRYING_DURATION,              ///< Register 0x013D, read-only here: the duration of the last drying run that was
+                                ///< started, minutes. Two bytes, the duration then the panel's maximum: `1E 78`
+                                ///< (30, 120) after a run of 30 minutes. A change on the panel alone does not show
+                                ///< until the next run starts (checked twice, issue #202). Only the first byte is read.
+                                ///< \todo Experimental: nobody has written it, so how the dryer takes a new
+                                ///<       duration is not known.
   COUNT,                        ///< Not a function: the number of functions, for storage sized by function.
 };
 
@@ -315,9 +339,9 @@ size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVA
 /// decode such as POWER_ON) is "no value".
 ///
 /// The value is returned in natural units: degrees Celsius for the temperature registers, whole
-/// kilowatt-hours for the energy total, the raw byte for the others. A byte above its register's range (a mode, a
-/// state, a percentage) is "no value". A raw `-1` on the room-temperature register is a sensor fault: it decodes as NaN
-/// with `true` returned, because the heater did answer.
+/// kilowatt-hours for the energy total, minutes for the run timers, the raw byte for the others. A byte above its
+/// register's range (a mode, a state, a percentage) is "no value". A raw `-1` on the room-temperature register is a
+/// sensor fault: it decodes as NaN with `true` returned, because the heater did answer.
 /// @param reply The device's reply frame.
 /// @param fn Register the request addressed.
 /// @param[out] value Decoded value; untouched when `false` is returned.
@@ -350,6 +374,11 @@ struct HeatingReadings {
   int16_t occupancy_detection{-1};     ///< Occupancy detection 1 on / 0 off (register 0x0101); -1 until read.
   int16_t presence{-1};                ///< Someone detected in the room 1 / 0 (register 0x0110); -1 until read.
   float energy_total_kwh{NAN};         ///< The energy the heater has used, whole kWh (register 0x0116); NaN until read.
+  float boost_remaining_min{NAN};      ///< Minutes left of a running boost (register 0x013A); NaN until read.
+  float boost_duration_min{NAN};       ///< The boost duration set, minutes (register 0x013B); NaN until read.
+  float drying_remaining_min{NAN};     ///< Minutes left of a running drying run (register 0x013C); NaN until read.
+  float drying_duration_min{NAN};      ///< The duration of the last drying run started, minutes (register 0x013D);
+                                       ///< NaN until read.
   int16_t level{-1};                   ///< Low byte of the main parameter a status read returned: a heating level
                                        ///< (a plain heater, and a register heater whose programme reports one,
                                        ///< whose poll ends with that read) or a setpoint alias. -1 until a
@@ -377,7 +406,7 @@ struct HeatingReadings {
   [[nodiscard]] bool has(HeatingFunction fn) const;
 
   /// @brief The stored value of a register that is kept as a number with a unit: a temperature in degrees, a
-  /// setback in kelvin, an energy total in kilowatt-hours.
+  /// setback in kelvin, an energy total in kilowatt-hours, a run time in minutes.
   /// @details Wide enough for a counter: a float holds every 16-bit value exactly, where value_of() stops at 32767.
   /// @param fn Register.
   /// @return The value, or NaN when it has not been read or `fn` is not such a register the readings hold.

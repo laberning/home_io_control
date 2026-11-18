@@ -37,6 +37,7 @@ model name, `ADELIS 2 DIGIT` or `ADELIS 2 M`.
 | Mixed ADELIS 2 M | ✅ Reported working with `io_model: towel_dryer`: mode, target, boost, drying and room temperature follow the display (issue #202). With the dryer's central-heating mode on, the element does not run and drying is not available; boost still runs. See Known quirks |
 | Level the dryer applies (`heating_level:` sensor) | ⚠️ Experimental: read in a comfort period, in an eco period, in a boost and during drying (issue #202). It shows eco during a drying run, and after a change of mode or of boost it can show the old level for one or two polls |
 | Central-heating mode (`central_heating_mode:` sensor) | ⚠️ Experimental: the register followed the panel's setting over four toggles on one ADELIS 2 M (issue #243). What an electric unit answers is unknown; the sensor then has no state |
+| Time left and durations (`remaining_time:`, `boost_duration:`, `drying_duration:` sensors) | ⚠️ Experimental: the time left of a boost and of a drying run matched the display, and the durations set on the panel were read (issue #202). The drying duration is the one of the last run started ([Boost and drying times](../configuration/climate.md#boost-and-drying-times)) |
 | Energy total (`energy:` sensor) | ⚠️ Experimental: two units answer the register, with totals that the displays were not compared with ([Energy sensor](../configuration/climate.md#energy-sensor)) |
 | Target set in `auto` in an eco period (temporary override) | ✅ The dryer takes the override, shows the new temperature and follows its program again at the next change of period; `set_derogation` with `0` ends it (issue #202) |
 | Target set in `auto` in a comfort period | ⚠️ Changes the comfort temperature, as the dryer's panel does: the dryer ignores an override in a comfort period (issue #202), so the hub writes the comfort setpoint after reading the dryer's level. The comfort setpoint is confirmed in `heat`; please report whether the display follows in `auto` |
@@ -75,8 +76,6 @@ and add `io_model: towel_dryer` to the block before you flash.
 
 ## Known quirks
 
-- **The remaining boost or drying time is not shown.** The dryer reports it in minutes (rounded up),
-  but no entity exposes it yet.
 - **Changes made on the dryer show up at the next poll.** The hub reads the dryer every five minutes
   by default, so a boost started on the dryer can take that long to appear in Home Assistant. Set
   `status_poll_interval` on the entry to read it more often.

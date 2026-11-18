@@ -93,6 +93,12 @@ climate:
       name: "Towel Dryer Central Heating Mode"
     energy:
       name: "Towel Dryer Energy"
+    remaining_time:
+      name: "Towel Dryer Remaining Time"
+    boost_duration:
+      name: "Towel Dryer Boost Duration"
+    drying_duration:
+      name: "Towel Dryer Drying Duration"
   # A heater with a night light: the radiator plus a dimmable light companion.
   - platform: home_io_control
     name: "Hekla"

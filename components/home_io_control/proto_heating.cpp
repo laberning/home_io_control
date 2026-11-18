@@ -47,9 +47,11 @@ enum class HeatingValueKind : uint8_t {
   MODE,                ///< One HeatingMode byte.
   BOUNDED_BYTE,        ///< One byte from 0 to the row's `max_value`: an enumeration (regulator state, towel-dryer
                        ///< mode, temporary state) or a percentage (working rate).
-  BOUNDED_U16,  ///< Unsigned 16-bit little-endian integer from 0 to the row's `max_value` (night light brightness).
-  KWH_U16_BE,   ///< Unsigned 16-bit whole kilowatt-hours, most significant byte first: the energy total, the only
-                ///< register whose 16-bit value is not little-endian.
+  BOUNDED_U16,   ///< Unsigned 16-bit little-endian integer from 0 to the row's `max_value` (night light brightness).
+  KWH_U16_BE,    ///< Unsigned 16-bit whole kilowatt-hours, most significant byte first: the energy total, the only
+                 ///< register whose 16-bit value is not little-endian.
+  MINUTES_BYTE,  ///< One byte, a number of minutes (a run's time left).
+  MINUTES_FIRST_OF_TWO,  ///< Two bytes, a duration in minutes then the panel's maximum; the first byte is the value.
 };
 
 /// @brief Who may do what with a register.
@@ -119,6 +121,16 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
      HeatingValueKind::BINARY},
     // Read on two Sauter Tahual radiators, equal to their displays (PR #238), and on an EMOTION 3 H and two Adelis.
     {"energy_total", HeatingFunction::ENERGY_TOTAL, 0x16, HeatingAccess::READ_ONLY, HeatingValueKind::KWH_U16_BE},
+    // Read on Atlantic Adelis towel dryers during a boost and a drying run, and with the durations changed on the
+    // panel (issue #202): the minutes left of each run, and the duration set for each with the panel's maximum.
+    {"boost_remaining", HeatingFunction::BOOST_REMAINING, 0x3A, HeatingAccess::READ_ONLY,
+     HeatingValueKind::MINUTES_BYTE},
+    {"boost_duration", HeatingFunction::BOOST_DURATION, 0x3B, HeatingAccess::READ_ONLY,
+     HeatingValueKind::MINUTES_FIRST_OF_TWO},
+    {"drying_remaining", HeatingFunction::DRYING_REMAINING, 0x3C, HeatingAccess::READ_ONLY,
+     HeatingValueKind::MINUTES_BYTE},
+    {"drying_duration", HeatingFunction::DRYING_DURATION, 0x3D, HeatingAccess::READ_ONLY,
+     HeatingValueKind::MINUTES_FIRST_OF_TWO},
 };
 
 /// @brief Look up the descriptor for a function.
@@ -147,10 +159,12 @@ size_t value_length(HeatingValueKind kind) {
     case HeatingValueKind::HUNDREDTHS_S16:
     case HeatingValueKind::BOUNDED_U16:
     case HeatingValueKind::KWH_U16_BE:
+    case HeatingValueKind::MINUTES_FIRST_OF_TWO:
       return 2;
     case HeatingValueKind::BINARY:
     case HeatingValueKind::MODE:
     case HeatingValueKind::BOUNDED_BYTE:
+    case HeatingValueKind::MINUTES_BYTE:
       return 1;
   }
   return 0;
@@ -265,6 +279,8 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE
     case HeatingValueKind::NONE:
     case HeatingValueKind::HUNDREDTHS_S16:
     case HeatingValueKind::KWH_U16_BE:
+    case HeatingValueKind::MINUTES_BYTE:
+    case HeatingValueKind::MINUTES_FIRST_OF_TWO:
       return 0;  // no writable register has this encoding
   }
   return 0;
@@ -328,6 +344,12 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
       value = static_cast<float>((v[0] << BITS_PER_BYTE) | v[1]);
       return true;
 
+    case HeatingValueKind::MINUTES_BYTE:
+    case HeatingValueKind::MINUTES_FIRST_OF_TWO:
+      // The first byte; the second of a pair (the panel's maximum) is not read.
+      value = static_cast<float>(v[0]);
+      return true;
+
     case HeatingValueKind::NONE:
       return false;
   }
@@ -341,8 +363,8 @@ namespace {
 /// @brief Which field of HeatingReadings holds a register, and how its value is kept.
 struct HeatingReadingField {
   HeatingFunction fn;              ///< Register.
-  float HeatingReadings::*number;  ///< The field of a register kept as a number with a unit (degrees, kelvin, kWh;
-                                   ///< NaN until read), else nullptr.
+  float HeatingReadings::*number;  ///< The field of a register kept as a number with a unit (degrees, kelvin, kWh,
+                                   ///< minutes; NaN until read), else nullptr.
   int16_t HeatingReadings::*
       integer;  ///< The field of a register read as a byte or a flag (-1 until read), else nullptr.
 };
@@ -369,6 +391,10 @@ constexpr HeatingReadingField HEATING_READING_FIELDS[] = {
     {HeatingFunction::OCCUPANCY_DETECTION, nullptr, &HeatingReadings::occupancy_detection},
     {HeatingFunction::SET_PRESENCE, nullptr, &HeatingReadings::presence},
     {HeatingFunction::ENERGY_TOTAL, &HeatingReadings::energy_total_kwh, nullptr},
+    {HeatingFunction::BOOST_REMAINING, &HeatingReadings::boost_remaining_min, nullptr},
+    {HeatingFunction::BOOST_DURATION, &HeatingReadings::boost_duration_min, nullptr},
+    {HeatingFunction::DRYING_REMAINING, &HeatingReadings::drying_remaining_min, nullptr},
+    {HeatingFunction::DRYING_DURATION, &HeatingReadings::drying_duration_min, nullptr},
 };
 
 /// @return The row of a register, or nullptr for one the readings do not hold.

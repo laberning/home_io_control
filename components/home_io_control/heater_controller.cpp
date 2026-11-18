@@ -365,6 +365,11 @@ bool HeaterController::send_heating_command(const std::string &device_id, Heatin
   // A write is something the user waits on: the full retry budget.
   if (!this->exchange_heating_(device_id, heating_function_name(fn), request, response, EXCHANGE_RETRY_COUNT))
     return false;
+  // A written temporary state starts or ends a run: the minutes left of an earlier run must not show as the new
+  // run's until the next poll reads them. The exchange blocks, so the record is looked up again.
+  IoDevice *written = this->registry_.get(device_id);
+  if (written != nullptr && clear_readings_read_only_while(fn, written->heating))
+    this->registry_.notify(device_id);
   // The regulator answers the new setpoint or mode only after a while: poll the heater again soon, so
   // heating / idle catches up without waiting a whole poll interval.
   this->schedule_poll(device_id, HEATING_POST_WRITE_POLL_DELAY_MS);
@@ -785,11 +790,18 @@ void HeaterController::poll_opt_in_registers_(const std::string &device_id, uint
   for (unsigned i = 0; i < static_cast<unsigned>(HeatingFunction::COUNT); i++) {
     const auto fn = static_cast<HeatingFunction>(i);
     // Looked up again for every register: a read exchange may have changed the registry.
-    const IoDevice *dev = this->registry_.get(device_id);
+    IoDevice *dev = this->registry_.get(device_id);
     if (dev == nullptr)
       return;
     if (dev->opt_in_reads.state_of(fn) != HeatingOptInReads::State::ASKED)
       continue;
+    // A register that is read only while a condition holds (the minutes left of a run) is not asked while it does
+    // not, and its reading of an earlier run goes, so it never shows as the current one.
+    const HeatingOptInRead *row = find_heating_opt_in_read(fn);
+    if (row != nullptr && !heating_opt_in_read_due(*row, dev->heating)) {
+      dev->heating.clear(fn);
+      continue;
+    }
     if (this->read_and_store_heating_register_(device_id, fn, nullptr, max_tries, /*follow_override=*/false) !=
         HeatingRead::EMPTY)
       continue;
@@ -853,7 +865,8 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
   }
 
   // The registers an entity of the YAML asks for (the central-heating mode, the occupancy detection and
-  // presence) are read only where it is declared; a miss is not a poll failure.
+  // presence, the energy total, a towel dryer's run timers) are read only where it is declared; a miss is not a
+  // poll failure.
   if (ok)
     this->poll_opt_in_registers_(device_id, max_tries);
 

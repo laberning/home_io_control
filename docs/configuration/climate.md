@@ -55,6 +55,11 @@ The keys every entity platform shares (`name`, `io_device_id`, `io_device_type`,
 - `energy` (Optional): A sensor with the energy the heater has used, in kWh, for the energy dashboard.
   Confirmed on a Sauter Tahual, experimental on other heaters. Accepted on a radiator,
   `io_model: towel_dryer` or `io_model: heater_with_light` only. See the section "Energy sensor" below.
+- `remaining_time` (Optional): A sensor with the minutes left of the boost or drying run in progress.
+  Experimental. Accepted on `io_model: towel_dryer` only. See the section "Boost and drying times" below.
+- `boost_duration`, `drying_duration` (Optional): Sensors with the duration set for the boost, and the
+  duration of the last drying run started, in minutes. Experimental. Accepted on the same kind. See the
+  same section.
 - `night_light` (Optional): A light entity for the heater's night light. Accepted on
   `io_model: heater_with_light` only. See the section "Heaters with a night light" below.
 - `min_temperature`, `max_temperature` (Optional): The range a thermostat encodes its temperature
@@ -132,7 +137,7 @@ at a later poll:
 | Heater kind | One poll reads | The first poll also reads |
 |---|---|---|
 | Radiator with a setpoint | Five registers: room temperature, setpoint, mode, regulator state, window sensor. While its program runs, also the temperature in force. Then the open-window-detection setting, and with `io_model: heater_with_light` the light's state and brightness; a read of these that gets no answer leaves the entity as it was and is asked again at the next poll. With an `occupancy_detection:`, `occupancy:` or `energy:` block, one more register each, read after these on the same terms | The maximum setpoint, and for the declaration check the model name and the towel dryer's mode register |
-| Towel dryer | Five registers: room temperature, setpoint, mode, temporary state, working rate. While its program runs with no boost or drying, also the temperature in force. Then one status read, which names the level the dryer applies, in every mode and whether or not a `heating_level:` sensor is configured. With a `central_heating_mode:` or `energy:` sensor, one more register each, read before the status read | The maximum setpoint and the model name |
+| Towel dryer | Five registers: room temperature, setpoint, mode, temporary state, working rate. While its program runs with no boost or drying, also the temperature in force. Then one status read, which names the level the dryer applies, in every mode and whether or not a `heating_level:` sensor is configured. With a `central_heating_mode:`, `energy:`, `boost_duration:` or `drying_duration:` sensor, one more register each, read before the status read; with `remaining_time:`, one more register while a boost or drying run is on | The maximum setpoint and the model name |
 | Plain electrical heater, pilot-wire interface | One status read | |
 | Thermostat, heat pump | One status read | |
 
@@ -163,6 +168,7 @@ generated as for the other platforms.
 | Central heating mode binary sensor | An entry with a `central_heating_mode:` block | Experimental. See the section "Central-heating mode sensor" below |
 | `Occupancy detection` switch, `Occupancy` binary sensor | An entry with an `occupancy_detection:` or `occupancy:` block | See the section "Occupancy detection" below |
 | Energy sensor | An entry with an `energy:` block | See the section "Energy sensor" below |
+| Remaining time, boost duration and drying duration sensors | An entry with a `remaining_time:`, `boost_duration:` or `drying_duration:` block | Experimental. See the section "Boost and drying times" below |
 
 A towel dryer has no window function, so it gets neither window entity. A heater declared without
 `io_device_type` gets none either, because nothing in the YAML says what it is.
@@ -344,6 +350,53 @@ climate:
 > dryers ([issue #202](https://github.com/laberning/home_io_control/issues/202)) answer the register, but
 > nobody has compared their total with the display, and a Sauter Hekla has not been tried. A vendor app
 > may show a different total than the heater's own counter. Please compare yours and report the result.
+
+## Boost and drying times
+
+A towel dryer runs a boost or a drying run for the time set on its panel (a boost of up to an hour, a drying run of
+up to two hours). Three optional sensors show the
+times in Home Assistant, all in minutes.
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Bathroom towel dryer"
+    io_device_id: "BD684B"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
+    io_model: towel_dryer
+    remaining_time:
+      name: "Bathroom towel dryer time left"
+    boost_duration:
+      name: "Bathroom towel dryer boost duration"
+    drying_duration:
+      name: "Bathroom towel dryer drying duration"
+```
+
+- **`remaining_time:`** shows the minutes left of the run in progress: the boost's while a boost runs,
+  rounded up to the minute, and the drying run's while drying runs. It shows 0 while neither runs. Right
+  after you start or end a run from Home Assistant it has no value until the next poll, about 45 seconds
+  later, so the time left of an earlier run never shows as the new one's. The dryer reports the two in separate registers, so the hub reads the one that matches
+  its temporary state, only while a run is on: an idle dryer costs no extra read. The sensor follows
+  the poll, so the time left moves in steps of the `status_poll_interval`.
+- **`boost_duration:`** shows the boost duration set on the panel. A change on the panel shows one to
+  three minutes later.
+- **`drying_duration:`** shows the duration of the last drying run that was started. The dryer updates
+  it when a run starts, so a change on the panel alone does not show until the next run.
+- Each key costs one register read per poll, except `remaining_time:`, which reads a register while a
+  run is on. The keys take every [sensor](https://esphome.io/components/sensor/) option. They are
+  accepted on `io_model: towel_dryer` only, and rejected on every other device and on an entry without
+  `io_device_type`. A dryer that answers a read without a value leaves that sensor without a state; the
+  hub logs that once and stops asking for the register until the next boot.
+- The sensors only show the times. Setting a duration from Home Assistant is not offered: nobody has
+  written the registers yet, so it is not known how the dryer takes a new duration. A boost or drying run
+  started from Home Assistant lasts as long as the panel's duration.
+
+> [!NOTE]
+> Experimental. The registers were read on Atlantic Adelis units during a boost and a drying run, and the
+> time left matched the display ([issue #202](https://github.com/laberning/home_io_control/issues/202),
+> corpus captures `atlantic_adelis_probe_boost_remaining` and `atlantic_adelis_probe_register_01_sweep_drying`).
+> Please report whether the sensors match your dryer's display.
 
 ## Setpoint range of a radiator or towel dryer
 

@@ -598,3 +598,14 @@ TEST(DeviceTypesTable, TheEnergyMeterIsOnTheRadiatorTheTowelDryerAndTheHeaterWit
       << "its energy is the water heater's";
   EXPECT_FALSE(energy_meter(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
 }
+
+TEST(DeviceTypesTable, TheRunTimersAreOnTheTowelDryerOnly) {
+  const auto run_timers = [](DeviceType type, uint8_t subtype, DeviceModel model) {
+    return has_feature(device_features(type, subtype, model), device_feature::RUN_TIMERS);
+  };
+  EXPECT_TRUE(run_timers(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER));
+  EXPECT_FALSE(run_timers(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE)) << "a radiator has no boost or drying";
+  EXPECT_FALSE(run_timers(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT));
+  EXPECT_FALSE(run_timers(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE));
+  EXPECT_FALSE(run_timers(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
+}

@@ -57,6 +57,12 @@ class NumberSensor : public IOHomeHeaterRegisterSensor {
   explicit NumberSensor(HeatingFunction fn) { this->set_function(fn); }
 };
 
+/// The sensor of a climate entry's `remaining_time:` key.
+class RemainingTimeSensor : public IOHomeHeaterRegisterSensor {
+ public:
+  RemainingTimeSensor() { this->set_shows_timed_run_remaining(); }
+};
+
 /// A register binary sensor on `fn`.
 class RegisterSensor : public IOHomeHeaterRegisterBinarySensor {
  public:
@@ -649,4 +655,69 @@ TEST(PlatformEnergySensor, LosesItsStateWhenTheHeaterAnswersWithoutAValue) {
 
   hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::ENERGY_TOTAL); });
   EXPECT_TRUE(std::isnan(sensor.state));
+}
+
+// --- Run timers: the duration sensors and the remaining-time sensor (towel dryer, minutes) ---
+
+TEST(PlatformRunTimerSensors, ADurationSensorShowsItsRegisterInMinutesAndHasNoStateBeforeThat) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  NumberSensor boost(HeatingFunction::BOOST_DURATION);
+  NumberSensor drying(HeatingFunction::DRYING_DURATION);
+  for (NumberSensor *sensor : {&boost, &drying}) {
+    sensor->set_parent(&hub);
+    sensor->set_device_id("ABC123");
+    sensor->setup();
+    EXPECT_TRUE(std::isnan(sensor->state));
+  }
+
+  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::BOOST_DURATION, 60.0F); });
+  EXPECT_FLOAT_EQ(boost.state, 60.0F);
+  EXPECT_TRUE(std::isnan(drying.state)) << "each sensor shows its own register";
+  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::DRYING_DURATION, 30.0F); });
+  EXPECT_FLOAT_EQ(drying.state, 30.0F);
+
+  hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::BOOST_DURATION); });
+  EXPECT_TRUE(std::isnan(boost.state)) << "a heater that answers without a value leaves no state";
+}
+
+TEST(PlatformRunTimerSensors, TheRemainingTimeFollowsTheRunThatIsActive) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  RemainingTimeSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+  EXPECT_TRUE(std::isnan(sensor.state)) << "state not read yet";
+
+  hub.deliver([](HeatingReadings &r) {
+    r.store(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST));
+    r.store(HeatingFunction::BOOST_REMAINING, 55.0F);
+  });
+  EXPECT_FLOAT_EQ(sensor.state, 55.0F);
+
+  hub.deliver([](HeatingReadings &r) {
+    r.store(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::DRYING));
+    r.store(HeatingFunction::DRYING_REMAINING, 28.0F);
+  });
+  EXPECT_FLOAT_EQ(sensor.state, 28.0F);
+
+  hub.deliver([](HeatingReadings &r) {
+    r.store(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::NONE));
+  });
+  EXPECT_FLOAT_EQ(sensor.state, 0.0F) << "no run: 0 minutes left";
+}
+
+TEST(PlatformRunTimerSensors, TheRemainingTimeHasNoStateWhileTheActiveRunsRegisterIsUnread) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  RemainingTimeSensor sensor;
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  hub.deliver([](HeatingReadings &r) {
+    r.store(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST));
+  });
+  EXPECT_TRUE(std::isnan(sensor.state)) << "a boost with no reading is not 0 minutes";
 }

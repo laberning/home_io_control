@@ -8,8 +8,9 @@
 ## light, an electrical heater can add a `heating_level:` text sensor with the level it applies now, a towel
 ## dryer (io_model: towel_dryer) can add a `central_heating_mode:` binary sensor, and a radiator or a heater with a
 ## light can add an `occupancy_detection:` switch and an `occupancy:` binary sensor, and a radiator, a towel dryer
-## or a heater with a light can add an `energy:` sensor with the energy total the heater counts. The heater is polled (default every
-## five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py;
+## or a heater with a light can add an `energy:` sensor with the energy total the heater counts, and a towel dryer can
+## add `remaining_time:`, `boost_duration:` and `drying_duration:` sensors with its boost and drying run times.
+## The heater is polled (default every five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py;
 ## only climate-specific entity construction/registration stays here.
 
 import functools
@@ -24,12 +25,15 @@ from esphome.const import (
     CONF_MAX_TEMPERATURE,
     CONF_MIN_TEMPERATURE,
     CONF_OUTPUT_ID,
+    DEVICE_CLASS_DURATION,
     DEVICE_CLASS_ENERGY,
     DEVICE_CLASS_OCCUPANCY,
     DEVICE_CLASS_WINDOW,
     ENTITY_CATEGORY_CONFIG,
+    STATE_CLASS_MEASUREMENT,
     STATE_CLASS_TOTAL_INCREASING,
     UNIT_KILOWATT_HOURS,
+    UNIT_MINUTE,
 )
 
 from . import home_io_control_ns
@@ -90,6 +94,9 @@ CONF_CENTRAL_HEATING_MODE = "central_heating_mode"
 CONF_OCCUPANCY_DETECTION = "occupancy_detection"
 CONF_OCCUPANCY = "occupancy"
 CONF_ENERGY = "energy"
+CONF_REMAINING_TIME = "remaining_time"
+CONF_BOOST_DURATION = "boost_duration"
+CONF_DRYING_DURATION = "drying_duration"
 CONF_HEATING_LEVEL = "heating_level"
 
 # Internal config keys for the heater-only companion IDs (injected by the post-validator).
@@ -113,23 +120,27 @@ def _validate_night_light(config):
 
 
 class OptInRead(NamedTuple):
-    """A climate key whose entity shows one heater register that a poll reads only where the key is declared.
+    """A climate key whose entity shows heater registers that a poll reads only where the key is declared.
 
-    `function` is the HeatingFunction the entity shows, `feature` the capability a kind needs for the key
-    (OPT_IN_READ_FEATURES, by the register), `hint` says which kind that is, and `schema` / `new_entity` build the
-    user's entity.
+    `functions` are the HeatingFunctions the poll reads for the key (one register, or the registers the entity
+    chooses between), `feature` the capability a kind needs for the key (OPT_IN_READ_FEATURES, by the register;
+    the registers of one key share it), `hint` says which kind that is, and `schema` / `new_entity` build the
+    user's entity. An entity that shows one register is told which; `shows_timed_run_remaining` marks the one
+    that shows the minutes left of whichever timed run is active instead.
     """
 
     key: str
     hint: str
-    function: str
+    functions: tuple
     schema: object
     new_entity: object
+    shows_timed_run_remaining: bool = False
 
     @property
     def feature(self):
-        """The capability a kind needs for this key: the one that gates the hub's read of the register."""
-        return OPT_IN_READ_FEATURES[self.function]
+        """The capability a kind needs for this key: the one that gates the hub's read of its registers."""
+        (feature,) = {OPT_IN_READ_FEATURES[function] for function in self.functions}
+        return feature
 
 
 # The capability each opt-in register needs, by HeatingFunction name: the mirror of HEATING_OPT_IN_READS
@@ -139,6 +150,10 @@ OPT_IN_READ_FEATURES = {
     "OCCUPANCY_DETECTION": "OCCUPANCY",
     "SET_PRESENCE": "OCCUPANCY",
     "ENERGY_TOTAL": "ENERGY_METER",
+    "BOOST_REMAINING": "RUN_TIMERS",
+    "BOOST_DURATION": "RUN_TIMERS",
+    "DRYING_REMAINING": "RUN_TIMERS",
+    "DRYING_DURATION": "RUN_TIMERS",
 }
 
 
@@ -152,6 +167,8 @@ _ENERGY_HINT = (
     "io_model (a radiator), io_model: towel_dryer or io_model: heater_with_light"
 )
 
+_RUN_TIMERS_HINT = "a towel dryer: set io_device_type: electrical_heater, io_subtype: 1 and io_model: towel_dryer"
+
 # Opt-in entities show a register the heater may not have and cost one read per poll, so each is a key of the
 # climate entry; its read, its capability check and its codegen all come from this table.
 OPT_IN_READS = (
@@ -160,7 +177,7 @@ OPT_IN_READS = (
     OptInRead(
         CONF_CENTRAL_HEATING_MODE,
         "a towel dryer: set io_device_type: electrical_heater, io_subtype: 1 and io_model: towel_dryer",
-        "CENTRAL_HEATING_MODE",
+        ("CENTRAL_HEATING_MODE",),
         binary_sensor.binary_sensor_schema(IOHomeHeaterRegisterBinarySensor).extend(cv.COMPONENT_SCHEMA),
         binary_sensor.new_binary_sensor,
     ),
@@ -169,7 +186,7 @@ OPT_IN_READS = (
     OptInRead(
         CONF_OCCUPANCY_DETECTION,
         _OCCUPANCY_HINT,
-        "OCCUPANCY_DETECTION",
+        ("OCCUPANCY_DETECTION",),
         switch.switch_schema(
             IOHomeHeaterSettingSwitch,
             default_restore_mode="DISABLED",
@@ -181,7 +198,7 @@ OPT_IN_READS = (
     OptInRead(
         CONF_OCCUPANCY,
         _OCCUPANCY_HINT,
-        "SET_PRESENCE",
+        ("SET_PRESENCE",),
         binary_sensor.binary_sensor_schema(
             IOHomeHeaterRegisterBinarySensor, device_class=DEVICE_CLASS_OCCUPANCY
         ).extend(cv.COMPONENT_SCHEMA),
@@ -192,13 +209,56 @@ OPT_IN_READS = (
     OptInRead(
         CONF_ENERGY,
         _ENERGY_HINT,
-        "ENERGY_TOTAL",
+        ("ENERGY_TOTAL",),
         sensor.sensor_schema(
             IOHomeHeaterRegisterSensor,
             unit_of_measurement=UNIT_KILOWATT_HOURS,
             accuracy_decimals=0,
             device_class=DEVICE_CLASS_ENERGY,
             state_class=STATE_CLASS_TOTAL_INCREASING,
+        ).extend(cv.COMPONENT_SCHEMA),
+        sensor.new_sensor,
+    ),
+    # The minutes left of the boost or drying run the dryer is in, 0 with none: two registers, one read per poll
+    # while a run is on, chosen by the dryer's temporary state.
+    OptInRead(
+        CONF_REMAINING_TIME,
+        _RUN_TIMERS_HINT,
+        ("BOOST_REMAINING", "DRYING_REMAINING"),
+        sensor.sensor_schema(
+            IOHomeHeaterRegisterSensor,
+            unit_of_measurement=UNIT_MINUTE,
+            accuracy_decimals=0,
+            device_class=DEVICE_CLASS_DURATION,
+            state_class=STATE_CLASS_MEASUREMENT,
+        ).extend(cv.COMPONENT_SCHEMA),
+        sensor.new_sensor,
+        shows_timed_run_remaining=True,
+    ),
+    # The boost duration set on the dryer. Two bytes on the wire (the duration and the panel's maximum); the
+    # sensor shows the duration.
+    OptInRead(
+        CONF_BOOST_DURATION,
+        _RUN_TIMERS_HINT,
+        ("BOOST_DURATION",),
+        sensor.sensor_schema(
+            IOHomeHeaterRegisterSensor,
+            unit_of_measurement=UNIT_MINUTE,
+            accuracy_decimals=0,
+            device_class=DEVICE_CLASS_DURATION,
+        ).extend(cv.COMPONENT_SCHEMA),
+        sensor.new_sensor,
+    ),
+    # The duration of the last drying run the dryer started: a change on the panel alone shows at the next run.
+    OptInRead(
+        CONF_DRYING_DURATION,
+        _RUN_TIMERS_HINT,
+        ("DRYING_DURATION",),
+        sensor.sensor_schema(
+            IOHomeHeaterRegisterSensor,
+            unit_of_measurement=UNIT_MINUTE,
+            accuracy_decimals=0,
+            device_class=DEVICE_CLASS_DURATION,
         ).extend(cv.COMPONENT_SCHEMA),
         sensor.new_sensor,
     ),
@@ -307,8 +367,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_HEATING_LEVEL): text_sensor.text_sensor_schema(IOHomeHeatingLevelSensor).extend(
                 cv.COMPONENT_SCHEMA
             ),
-            # The opt-in register entities (central-heating mode, occupancy, energy): each costs one register read
-            # per poll and only some heaters have the register. Their IDs are declared by the schemas' own
+            # The opt-in register entities (central-heating mode, occupancy, energy, run timers): each costs one register
+            # read per poll and only some heaters have the register. Their IDs are declared by the schemas' own
             # GenerateID.
             **{cv.Optional(read.key): read.schema for read in OPT_IN_READS},
         }
@@ -382,15 +442,19 @@ async def to_code(config):
     for read in OPT_IN_READS:
         if read.key not in config:
             continue
-        function = getattr(HeatingFunction, read.function)
-        cg.add(var.add_register_read(function))
+        functions = [getattr(HeatingFunction, name) for name in read.functions]
+        for function in functions:
+            cg.add(var.add_register_read(function))
         entity = await create_user_companion(
             config,
             parent,
             new_entity=read.new_entity,
             entity_config=config[read.key],
         )
-        cg.add(entity.set_function(function))
+        if read.shows_timed_run_remaining:
+            cg.add(entity.set_shows_timed_run_remaining())
+        else:
+            cg.add(entity.set_function(functions[0]))
 
     if CONF_NIGHT_LIGHT in config:
         night_light_config = config[CONF_NIGHT_LIGHT]

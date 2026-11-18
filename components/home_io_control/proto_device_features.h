@@ -86,6 +86,12 @@ enum class DeviceFeature : uint8_t {
   /// \todo Experimental except on the Sauter Tahual (PR #238): compare with the display on an EMOTION 3 H and an
   ///       Adelis, which answer the register, and check that a Hekla answers it.
   ENERGY_METER,
+  /// A towel dryer whose boost and drying runs the hub can show: the minutes left of the running run
+  /// (registers 0x013A and 0x013C) and the durations set for them (0x013B and 0x013D, proto_heating.h). Gates the
+  /// climate entry's `remaining_time:`, `boost_duration:` and `drying_duration:` sensors.
+  /// \todo Experimental: read on Atlantic Adelis units (issue #202); confirm on a second model and check
+  ///       that a dryer without the registers answers them empty.
+  RUN_TIMERS,
   COUNT,  ///< Not a capability: the number of capabilities, for the storage check of DeviceFeatures.
 };
 

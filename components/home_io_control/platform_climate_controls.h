@@ -3,7 +3,7 @@
 /// @file platform_climate_controls.h
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the heater setting switches
 /// (open-window detection, occupancy detection), the night light, the heating-level text sensor and the
-/// register binary sensors (central-heating mode, occupancy) and the register sensor (energy total).
+/// register binary sensors (central-heating mode, occupancy) and the register sensor (energy total, run timers).
 /// @ingroup hioc_platforms
 ///
 /// All are device-bound companions (DeviceBoundCompanion) that climate.py generates alongside a
@@ -11,9 +11,9 @@
 /// the YAML asks for it on a kind with NIGHT_LIGHT; the heating-level text sensor is opt-in on an
 /// electrical heater, the central-heating-mode binary sensor is opt-in on a kind with CENTRAL_HEATING_MODE (a
 /// towel dryer), and the occupancy-detection switch and occupancy binary sensor are opt-in on a kind with
-/// OCCUPANCY, and the energy sensor is opt-in on a kind with ENERGY_METER. They show readings the hub's poll already
-/// stores in IoDevice::heating and add no radio traffic of their own, except their writes and the read-backs that
-/// confirm them.
+/// OCCUPANCY, the energy sensor is opt-in on a kind with ENERGY_METER, and the run-timer sensors are opt-in on a kind
+/// with RUN_TIMERS (a towel dryer). They show readings the hub's poll already stores in IoDevice::heating and add no
+/// radio traffic of their own, except their writes and the read-backs that confirm them.
 ///
 /// @todo Experimental: the meaning of registers 0x010E (window sensor) and 0x0106 (open-window
 ///       detection) is unconfirmed on hardware. An AGILIA IO radiator answers both reads (window 0,
@@ -137,16 +137,26 @@ class IOHomeHeaterRegisterBinarySensor : public binary_sensor::BinarySensor,
 /// @brief Sensor that shows one numeric register of a heater, with no state until the heater has reported it.
 /// @ingroup hioc_platforms
 ///
-/// Used for the opt-in `energy:` key of a climate entry: the energy total, register 0x0116, in kWh. The unit,
+/// Used for the opt-in `energy:` key of a climate entry (the energy total, register 0x0116, in kWh) and for the
+/// run timers of a towel dryer: `boost_duration:` and `drying_duration:` show one register in minutes, and
+/// `remaining_time:` shows the minutes left of whichever run is active (set_shows_timed_run_remaining()). The unit,
 /// device class, state class and accuracy come from the key's schema (climate.py), so another numeric register
 /// is a table row. The register is read at every poll once the entity is declared (the climate entity asks the
-/// hub, see HeatingOptInReads). Nothing read, a reading dropped, and a heater that answers without a value (its
-/// register is absent) all leave the sensor without a state, never at 0.
+/// hub, see HeatingOptInReads); the minutes left of a run are read only while that run is on, and show 0 otherwise.
+/// Nothing read, a reading dropped, and a heater that answers without a value (its register is absent) all leave the
+/// sensor without a state, never at 0.
 ///
 /// \todo Experimental except on a Sauter Tahual: the total equals that radiator's display (PR #238); compare it
 ///       with the display of an EMOTION 3 H, an Adelis and a Hekla.
+/// \todo Experimental: the run timers are read on Atlantic Adelis units only (issue #202); `drying_duration:` is the
+///       duration of the last drying run started, which a change on the panel alone does not update.
 class IOHomeHeaterRegisterSensor : public sensor::Sensor, public Component, public HeaterRegisterCompanion {
  public:
+  /// @brief Show the minutes left of the run the dryer is in instead of one register (generated code).
+  /// @details The value follows the temporary state, 0 while no boost or drying runs (timed_run_remaining_minutes()),
+  ///          so the entity has no single register and set_function() is not called for it.
+  void set_shows_timed_run_remaining() { this->shows_timed_run_remaining_ = true; }
+
   /// @brief Subscribe to the device's updates and publish what is already known.
   void setup() override;
 
@@ -156,6 +166,9 @@ class IOHomeHeaterRegisterSensor : public sensor::Sensor, public Component, publ
   /// @brief Get setup priority so the parent hub is available first.
   /// @return setup_priority::DATA.
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+
+ protected:
+  bool shows_timed_run_remaining_{false};  ///< The minutes left of the active run, not one register.
 };
 
 /// @brief Switch for one on/off setting register of a heater.

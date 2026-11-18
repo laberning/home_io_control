@@ -1005,3 +1005,99 @@ TEST(HeatingProfiles, EveryPresetOfEveryProfileSendsACommand) {
     }
   }
 }
+
+// === Opt-in reads with a condition: the minutes left of a timed run ===
+
+namespace {
+
+/// Readings of a towel dryer whose temporary state has been read.
+HeatingReadings readings_in_state(HeatingTemporaryState state) {
+  HeatingReadings readings;
+  readings.store(HeatingFunction::TEMPORARY_STATE, static_cast<float>(state));
+  return readings;
+}
+
+}  // namespace
+
+TEST(HeatingOptInReads, TheTimeLeftOfARunIsDueOnlyWhileThatRunIsOn) {
+  const HeatingOptInRead *boost = find_heating_opt_in_read(HeatingFunction::BOOST_REMAINING);
+  const HeatingOptInRead *drying = find_heating_opt_in_read(HeatingFunction::DRYING_REMAINING);
+  ASSERT_NE(boost, nullptr);
+  ASSERT_NE(drying, nullptr);
+
+  const HeatingReadings idle = readings_in_state(HeatingTemporaryState::NONE);
+  EXPECT_FALSE(heating_opt_in_read_due(*boost, idle));
+  EXPECT_FALSE(heating_opt_in_read_due(*drying, idle));
+
+  const HeatingReadings boosting = readings_in_state(HeatingTemporaryState::BOOST);
+  EXPECT_TRUE(heating_opt_in_read_due(*boost, boosting));
+  EXPECT_FALSE(heating_opt_in_read_due(*drying, boosting));
+
+  const HeatingReadings drying_run = readings_in_state(HeatingTemporaryState::DRYING);
+  EXPECT_FALSE(heating_opt_in_read_due(*boost, drying_run));
+  EXPECT_TRUE(heating_opt_in_read_due(*drying, drying_run));
+
+  const HeatingReadings unread;
+  EXPECT_FALSE(heating_opt_in_read_due(*boost, unread)) << "an unread state is no run";
+  EXPECT_FALSE(heating_opt_in_read_due(*drying, unread));
+}
+
+TEST(HeatingOptInReads, ARowWithoutAConditionIsAlwaysDue) {
+  for (const HeatingFunction fn : {HeatingFunction::ENERGY_TOTAL, HeatingFunction::BOOST_DURATION,
+                                   HeatingFunction::DRYING_DURATION, HeatingFunction::CENTRAL_HEATING_MODE}) {
+    const HeatingOptInRead *row = find_heating_opt_in_read(fn);
+    ASSERT_NE(row, nullptr) << heating_function_name(fn);
+    EXPECT_TRUE(heating_opt_in_read_due(*row, HeatingReadings{})) << heating_function_name(fn);
+  }
+}
+
+TEST(HeatingOptInReads, TheRunTimersNeedTheRunTimersCapability) {
+  for (const HeatingFunction fn : {HeatingFunction::BOOST_REMAINING, HeatingFunction::BOOST_DURATION,
+                                   HeatingFunction::DRYING_REMAINING, HeatingFunction::DRYING_DURATION}) {
+    const HeatingOptInRead *row = find_heating_opt_in_read(fn);
+    ASSERT_NE(row, nullptr) << heating_function_name(fn);
+    EXPECT_EQ(row->feature, DeviceFeature::RUN_TIMERS) << heating_function_name(fn);
+  }
+}
+
+TEST(HeatingOptInReads, TheRemainingTimeFollowsTheTemporaryState) {
+  HeatingReadings readings = readings_in_state(HeatingTemporaryState::BOOST);
+  readings.store(HeatingFunction::BOOST_REMAINING, 55.0F);
+  readings.store(HeatingFunction::DRYING_REMAINING, 28.0F);  // an older drying run's value stays out of it
+  EXPECT_FLOAT_EQ(timed_run_remaining_minutes(readings), 55.0F);
+
+  readings.store(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::DRYING));
+  EXPECT_FLOAT_EQ(timed_run_remaining_minutes(readings), 28.0F);
+
+  readings.store(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::NONE));
+  EXPECT_FLOAT_EQ(timed_run_remaining_minutes(readings), 0.0F) << "no run: 0, whatever an earlier run left";
+}
+
+TEST(HeatingOptInReads, TheRemainingTimeHasNoValueUntilItIsKnown) {
+  EXPECT_TRUE(std::isnan(timed_run_remaining_minutes(HeatingReadings{}))) << "state not read";
+
+  HeatingReadings boosting = readings_in_state(HeatingTemporaryState::BOOST);
+  EXPECT_TRUE(std::isnan(timed_run_remaining_minutes(boosting))) << "the run's register not read yet";
+  boosting.store(HeatingFunction::BOOST_REMAINING, 60.0F);
+  EXPECT_FLOAT_EQ(timed_run_remaining_minutes(boosting), 60.0F);
+  boosting.clear(HeatingFunction::BOOST_REMAINING);
+  EXPECT_TRUE(std::isnan(timed_run_remaining_minutes(boosting))) << "a dropped reading is no value";
+}
+
+TEST(HeatingOptInReads, AWrittenTemporaryStateForgetsTheTimeLeftOfBothRunsAndNothingElse) {
+  HeatingReadings readings = readings_in_state(HeatingTemporaryState::BOOST);
+  readings.store(HeatingFunction::BOOST_REMAINING, 40.0F);
+  readings.store(HeatingFunction::DRYING_REMAINING, 12.0F);
+  readings.store(HeatingFunction::BOOST_DURATION, 60.0F);
+
+  EXPECT_TRUE(clear_readings_read_only_while(HeatingFunction::TEMPORARY_STATE, readings));
+  EXPECT_FALSE(readings.has(HeatingFunction::BOOST_REMAINING));
+  EXPECT_FALSE(readings.has(HeatingFunction::DRYING_REMAINING));
+  EXPECT_FLOAT_EQ(readings.number_of(HeatingFunction::BOOST_DURATION), 60.0F);
+  EXPECT_EQ(readings.value_of(HeatingFunction::TEMPORARY_STATE), static_cast<int16_t>(HeatingTemporaryState::BOOST));
+
+  EXPECT_FALSE(clear_readings_read_only_while(HeatingFunction::TEMPORARY_STATE, readings)) << "nothing left to clear";
+  readings.store(HeatingFunction::BOOST_REMAINING, 40.0F);
+  EXPECT_FALSE(clear_readings_read_only_while(HeatingFunction::TOWEL_MODE, readings)) << "no row depends on the mode";
+  EXPECT_TRUE(readings.has(HeatingFunction::BOOST_REMAINING));
+}

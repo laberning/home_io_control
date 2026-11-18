@@ -1,7 +1,8 @@
 /// @file corpus_heating_test.cpp
 /// @brief The heater register codec (proto_heating.h) against real frames from an Atlantic AGILIA IO
 /// radiator (issue #165), a Sauter Hekla's night light (issue #222) and the energy total of a Sauter Tahual
-/// radiator and two Atlantic Adelis towel dryers (PR #238, issue #202).
+/// radiator and two Atlantic Adelis towel dryers (PR #238, issue #202), and the run timers of an Adelis during a boost
+/// and a drying run.
 ///
 /// Every request the hub sent is compared byte for byte with what the encoder builds for the same
 /// function and value, and every reply is decoded and compared with the value the climate entity
@@ -275,4 +276,32 @@ TEST(CorpusHeating, TheEnergyTotalIsReadAndDecodedInWholeKilowattHoursMostSignif
                   575.0F);
   EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_drying_frame22_bytes, HeatingFunction::ENERGY_TOTAL),
                   946.0F);
+}
+
+TEST(CorpusHeating, TheBoostTimeLeftIsRegister0x013AInMinutesAsTheDisplayCountedDown) {
+  using namespace corpus;
+  // About 59:57 and 54:50 left on the display, five minutes apart.
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_boost_remaining_frame0_bytes, HeatingFunction::BOOST_REMAINING),
+                  60.0F);
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_boost_remaining_frame1_bytes, HeatingFunction::BOOST_REMAINING),
+                  55.0F);
+}
+
+TEST(CorpusHeating, TheDurationsAreTheFirstByteOfRegisters0x013BAnd0x013DAndTheTimeLeftOfDryingIsRegister0x013C) {
+  using namespace corpus;
+  // The drying sweep: a one-hour boost and a 30-minute drying set, 28 minutes of drying left on the display.
+  EXPECT_FLOAT_EQ(
+      value_of(atlantic_adelis_probe_register_01_sweep_drying_frame59_bytes, HeatingFunction::BOOST_DURATION), 60.0F);
+  EXPECT_FLOAT_EQ(
+      value_of(atlantic_adelis_probe_register_01_sweep_drying_frame60_bytes, HeatingFunction::DRYING_REMAINING), 28.0F);
+  EXPECT_FLOAT_EQ(
+      value_of(atlantic_adelis_probe_register_01_sweep_drying_frame61_bytes, HeatingFunction::DRYING_DURATION), 30.0F);
+  // The first sweep, another unit during a boost: 35 minutes of boost set and 120 of drying in its last drying run;
+  // no drying runs, so the drying time left reads 0.
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame27_bytes, HeatingFunction::BOOST_DURATION),
+                  35.0F);
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame28_bytes, HeatingFunction::DRYING_REMAINING),
+                  0.0F);
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame29_bytes, HeatingFunction::DRYING_DURATION),
+                  120.0F);
 }

@@ -244,7 +244,7 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // A mixed unit also reports whether its central-heating mode is on (CENTRAL_HEATING_MODE); the YAML asks
     // for the reading, since the model is the same for the electric unit.
     {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER, "towel_dryer", CAP_CLIMATE, SUBTYPE_PLATFORM,
-     device_feature::CENTRAL_HEATING_MODE | device_feature::ENERGY_METER},
+     device_feature::CENTRAL_HEATING_MODE | device_feature::ENERGY_METER | device_feature::RUN_TIMERS},
     // A heater with a night light (a Sauter Hekla, issue #222) reports the same 52/1 as well: everything the
     // radiator has, plus the light's registers in its own heating profile.
     {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT, "heater_with_light", CAP_CLIMATE,
