@@ -42,6 +42,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <optional>
 
 namespace esphome {
 namespace home_io_control {
@@ -190,10 +191,6 @@ constexpr float HEATING_TEMP_MAX_C = 28.0F;
 
 /// @brief Payload byte at index 2: the high byte of the 16-bit register number, constant `0x01`.
 constexpr uint8_t HEATING_REGISTER_HIGH_BYTE = 0x01;
-
-/// @brief Measured value in a reading when the heater reports a sensor fault (raw `-1`).
-/// A reading stores it as NaN, the same as "never read".
-constexpr int16_t HEATING_SENSOR_FAULT_RAW = -1;
 
 /// @brief Default encoding range of a temperature main parameter, in degrees Celsius. The main
 /// parameter spans TEMPERATURE_MP_SPAN steps over [min, max]; this range is the one a device
@@ -411,6 +408,14 @@ struct HeatingReadings {
   /// @param fn Register.
   /// @return The value, or NaN when it has not been read or `fn` is not such a register the readings hold.
   [[nodiscard]] float number_of(HeatingFunction fn) const;
+
+  /// @brief The stored value of a register of either kind, as the number it shows.
+  /// @details One lookup for entities that do not care whether the register is kept as a number with a unit or as a
+  ///          byte (see number_of() and value_of()).
+  /// @param fn Register.
+  /// @return The value, or nullopt when it has not been read (or was dropped) or `fn` is not a register the readings
+  ///         hold.
+  [[nodiscard]] std::optional<float> reading_of(HeatingFunction fn) const;
 
   /// @brief The stored integer value of a register (a mode, a state, a flag, a percentage).
   /// @details Lets a heating profile name the register its card reads (its mode or preset register)

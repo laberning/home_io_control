@@ -1,7 +1,6 @@
 /// @file platform_climate_controls.cpp
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the heater setting switches
-/// (open-window detection, occupancy detection), the night light, the heating-level text sensor and the
-/// register binary sensors (central-heating mode, occupancy) and the register sensor (energy total, run timers).
+/// (open-window detection, occupancy detection), the night light and the heating-level text sensor.
 /// @ingroup hioc_platforms
 
 #include "platform_climate_controls.h"
@@ -11,6 +10,7 @@
 #include "proto_heating_profiles.h"
 
 #include <algorithm>
+#include <optional>
 
 namespace esphome {
 namespace home_io_control {
@@ -19,7 +19,6 @@ static const char *const TAG_WINDOW = "home_io_control.window";
 static const char *const TAG_SETTING = "home_io_control.heater_setting";
 static const char *const TAG_NIGHT_LIGHT = "home_io_control.night_light";
 static const char *const TAG_HEATING_LEVEL = "home_io_control.heating_level";
-static const char *const TAG_REGISTER = "home_io_control.heater_register";
 
 /// Percentage for a light switched on at a brightness that rounds to 0 %: the lowest level that is still
 /// on (register value night_light_register_from_percent(1), 30).
@@ -57,65 +56,31 @@ void IOHomeWindowBinarySensor::dump_config() {
   ESP_LOGCONFIG(TAG_WINDOW, "  Device ID: %s", this->device_id_.c_str());
 }
 
-void IOHomeHeaterRegisterBinarySensor::setup() {
-  this->register_companion_binding_([this](const IoDevice &dev) {
-    // "Off" must mean the heater said so: nothing read, or a reading dropped, means no state.
-    const int16_t reading = this->reading_(dev);
-    if (reading < 0) {
-      this->invalidate_state();
-      return;
-    }
-    this->publish_state(reading != 0);
-  });
-}
-
-void IOHomeHeaterRegisterBinarySensor::dump_config() {
-  ESP_LOGCONFIG(TAG_REGISTER, "IO-Homecontrol Heater Register Sensor:");
-  ESP_LOGCONFIG(TAG_REGISTER, "  Device ID: %s", this->device_id_.c_str());
-  ESP_LOGCONFIG(TAG_REGISTER, "  Register: %s", heating_function_name(this->function_));
-}
-
-void IOHomeHeaterRegisterSensor::setup() {
-  this->register_companion_binding_([this](const IoDevice &dev) {
-    // NaN is "no state": a total never reads as 0 unless the heater said so.
-    this->publish_state(this->shows_timed_run_remaining_ ? timed_run_remaining_minutes(dev.heating)
-                                                         : this->number_reading_(dev));
-  });
-}
-
-void IOHomeHeaterRegisterSensor::dump_config() {
-  ESP_LOGCONFIG(TAG_REGISTER, "IO-Homecontrol Heater Register Value:");
-  ESP_LOGCONFIG(TAG_REGISTER, "  Device ID: %s", this->device_id_.c_str());
-  ESP_LOGCONFIG(
-      TAG_REGISTER, "  Register: %s",
-      this->shows_timed_run_remaining_ ? "minutes left of the active run" : heating_function_name(this->function_));
-}
-
 void IOHomeHeaterSettingSwitch::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {
     // Shown only from a reply; a switch with no reading yet keeps its unknown state.
-    const int16_t reading = this->reading_(dev);
-    if (reading >= 0)
-      this->publish_state(reading != 0);
+    if (const std::optional<float> value = this->reading_value_(dev))
+      this->publish_state(*value != 0.0F);
   });
 }
 
 void IOHomeHeaterSettingSwitch::write_state(bool state) {
-  if (this->heating_port_ == nullptr)
+  const std::optional<HeatingFunction> setting = reading_register(this->reading_);
+  if (this->heating_port_ == nullptr || !setting)
     return;
-  if (!this->heating_port_->send_heating_command(this->device_id_, this->function_, state ? 1.0F : 0.0F)) {
-    ESP_LOGW(TAG_SETTING, "Device %s: %s %s was not acknowledged", this->device_id_.c_str(),
-             heating_function_name(this->function_), state ? "on" : "off");
+  if (!this->heating_port_->send_heating_command(this->device_id_, *setting, state ? 1.0F : 0.0F)) {
+    ESP_LOGW(TAG_SETTING, "Device %s: %s %s was not acknowledged", this->device_id_.c_str(), this->reading_name_(),
+             state ? "on" : "off");
     return;
   }
   // The read-back updates IoDevice::heating, and the companion binding above publishes it.
-  this->heating_port_->read_heating_register(this->device_id_, this->function_, nullptr, EXCHANGE_RETRY_COUNT);
+  this->heating_port_->read_heating_register(this->device_id_, *setting, nullptr, EXCHANGE_RETRY_COUNT);
 }
 
 void IOHomeHeaterSettingSwitch::dump_config() {
   ESP_LOGCONFIG(TAG_SETTING, "IO-Homecontrol Heater Setting:");
   ESP_LOGCONFIG(TAG_SETTING, "  Device ID: %s", this->device_id_.c_str());
-  ESP_LOGCONFIG(TAG_SETTING, "  Register: %s", heating_function_name(this->function_));
+  ESP_LOGCONFIG(TAG_SETTING, "  Reading: %s", this->reading_name_());
 }
 
 void IOHomeHeaterNightLight::setup() {

@@ -23,6 +23,7 @@
 #include "device_registry.h"
 #include "exchange_engine.h"
 #include "hub_hooks.h"
+#include "proto_device_readings.h"
 #include "proto_dhw.h"
 #include "proto_frame.h"
 #include "proto_heating.h"
@@ -226,12 +227,12 @@ class HeaterController {
   /// @param max_c Upper end; must exceed `min_c`.
   void set_device_temperature_range(const std::string &device_id, float min_c, float max_c);
 
-  /// @brief Have every poll of a heater read one more register (an entity the YAML declared for it).
-  /// @details Only a register of find_heating_opt_in_read() whose capability the device has; for any other
-  ///          the device keeps its poll as it is. Sends nothing.
+  /// @brief Have every poll of a heater read the registers of one more reading (an entity the YAML declared for it).
+  /// @details Only a reading whose capability the device has; for any other the device keeps its poll as it is.
+  ///          Sends nothing.
   /// @param device_id Target device ID.
-  /// @param fn The register to read at every poll.
-  void enable_heating_register_read(const std::string &device_id, HeatingFunction fn);
+  /// @param reading The reading; its registers (reading_polled_registers()) are read at every poll.
+  void enable_device_reading(const std::string &device_id, DeviceReading reading);
 
   /// @brief Read one register of a heater and fold the decoded value into IoDevice::heating.
   ///

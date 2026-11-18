@@ -310,9 +310,10 @@ enum class TemperatureInForceSupport : uint8_t {
 
 /// @brief Which opt-in heater registers the hub reads on every poll of one device, and which of them the
 /// heater turned out not to have.
-/// @details An opt-in register (find_heating_opt_in_read()) is read only where the YAML declares an entity
-///          for it. Each register is in one of three states, kept in two masks over HeatingFunction. Runtime
-///          only: nothing is persisted, and the state of an absent register resets at the next boot.
+/// @details An opt-in register (the register of a reading, reading_polled_registers() in proto_device_readings.h)
+///          is read only where the YAML declares an entity for it. Each register is in one of three states, kept in two
+///          masks over HeatingFunction. Runtime only: nothing is persisted, and the state of an absent register resets
+///          at the next boot.
 class HeatingOptInReads {
  public:
   /// The state of one register.

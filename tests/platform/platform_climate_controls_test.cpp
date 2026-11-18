@@ -3,6 +3,7 @@
 /// switch, the heating-level sensor and the central-heating-mode sensor.
 
 #include "platform_climate_controls.h"
+#include "platform_device_readings.h"
 
 #include "hub_port_doubles.h"
 
@@ -45,28 +46,28 @@ class ClimateControlsHub : public test::DevicePortDouble, public test::HeatingPo
 
 class TestableDetectionSwitch : public IOHomeHeaterSettingSwitch {
  public:
-  explicit TestableDetectionSwitch(HeatingFunction fn = HeatingFunction::SET_OPEN_WINDOW_DETECTION) {
-    this->set_function(fn);
+  explicit TestableDetectionSwitch(DeviceReading reading = DeviceReading::OPEN_WINDOW_DETECTION) {
+    this->set_reading(reading);
   }
   void trigger_write(bool state) { this->write_state(state); }
 };
 
-/// A numeric register sensor on `fn`.
-class NumberSensor : public IOHomeHeaterRegisterSensor {
+/// A numeric reading sensor on `reading`.
+class NumberSensor : public IOHomeDeviceReadingSensor {
  public:
-  explicit NumberSensor(HeatingFunction fn) { this->set_function(fn); }
+  explicit NumberSensor(DeviceReading reading) { this->set_reading(reading); }
 };
 
 /// The sensor of a climate entry's `remaining_time:` key.
-class RemainingTimeSensor : public IOHomeHeaterRegisterSensor {
+class RemainingTimeSensor : public IOHomeDeviceReadingSensor {
  public:
-  RemainingTimeSensor() { this->set_shows_timed_run_remaining(); }
+  RemainingTimeSensor() { this->set_reading(DeviceReading::REMAINING_TIME); }
 };
 
-/// A register binary sensor on `fn`.
-class RegisterSensor : public IOHomeHeaterRegisterBinarySensor {
+/// A binary reading sensor on `reading`.
+class RegisterSensor : public IOHomeDeviceReadingBinarySensor {
  public:
-  explicit RegisterSensor(HeatingFunction fn) { this->set_function(fn); }
+  explicit RegisterSensor(DeviceReading reading) { this->set_reading(reading); }
 };
 
 }  // namespace
@@ -180,7 +181,7 @@ TEST(PlatformWindowSensor, PublishesWhatIsAlreadyKnownAtSetup) {
 TEST(PlatformCentralHeatingModeSensor, HasNoStateUntilTheDryerHasAnswered) {
   ClimateControlsHub hub;
   hub.add_heater();
-  RegisterSensor sensor(HeatingFunction::CENTRAL_HEATING_MODE);
+  RegisterSensor sensor(DeviceReading::CENTRAL_HEATING_MODE);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -190,7 +191,7 @@ TEST(PlatformCentralHeatingModeSensor, HasNoStateUntilTheDryerHasAnswered) {
 TEST(PlatformCentralHeatingModeSensor, IsOnInCentralHeatingAndOffInElectricMode) {
   ClimateControlsHub hub;
   hub.add_heater();
-  RegisterSensor sensor(HeatingFunction::CENTRAL_HEATING_MODE);
+  RegisterSensor sensor(DeviceReading::CENTRAL_HEATING_MODE);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -207,7 +208,7 @@ TEST(PlatformCentralHeatingModeSensor, IsOnInCentralHeatingAndOffInElectricMode)
 TEST(PlatformCentralHeatingModeSensor, LosesItsStateWhenTheReadingIsDropped) {
   ClimateControlsHub hub;
   hub.add_heater();
-  RegisterSensor sensor(HeatingFunction::CENTRAL_HEATING_MODE);
+  RegisterSensor sensor(DeviceReading::CENTRAL_HEATING_MODE);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -507,7 +508,7 @@ TEST(PlatformHeaterSettingSwitch, OccupancyDetectionWritesRegister0x0101ThenRead
   ClimateControlsHub hub;
   hub.add_heater();
   hub.read_replies[HeatingFunction::OCCUPANCY_DETECTION] = 1.0F;
-  TestableDetectionSwitch sw(HeatingFunction::OCCUPANCY_DETECTION);
+  TestableDetectionSwitch sw(DeviceReading::OCCUPANCY_DETECTION);
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");
   sw.setup();
@@ -527,7 +528,7 @@ TEST(PlatformHeaterSettingSwitch, OccupancyDetectionWritesRegister0x0101ThenRead
 TEST(PlatformHeaterSettingSwitch, OccupancyDetectionIgnoresTheOpenWindowReading) {
   ClimateControlsHub hub;
   hub.add_heater();
-  TestableDetectionSwitch sw(HeatingFunction::OCCUPANCY_DETECTION);
+  TestableDetectionSwitch sw(DeviceReading::OCCUPANCY_DETECTION);
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");
   sw.setup();
@@ -547,7 +548,7 @@ TEST(PlatformHeaterSettingSwitch, ARefusedOccupancyDetectionWriteIsNotReadBackOr
   ClimateControlsHub hub;
   hub.add_heater();
   hub.write_result = false;
-  TestableDetectionSwitch sw(HeatingFunction::OCCUPANCY_DETECTION);
+  TestableDetectionSwitch sw(DeviceReading::OCCUPANCY_DETECTION);
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");
   sw.setup();
@@ -560,7 +561,7 @@ TEST(PlatformHeaterSettingSwitch, ARefusedOccupancyDetectionWriteIsNotReadBackOr
 TEST(PlatformOccupancySensor, HasNoStateUntilTheHeaterHasReportedPresence) {
   ClimateControlsHub hub;
   hub.add_heater();
-  RegisterSensor sensor(HeatingFunction::SET_PRESENCE);
+  RegisterSensor sensor(DeviceReading::OCCUPANCY);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -573,7 +574,7 @@ TEST(PlatformOccupancySensor, HasNoStateUntilTheHeaterHasReportedPresence) {
 TEST(PlatformOccupancySensor, ShowsPresenceAsTheHeaterReportsIt) {
   ClimateControlsHub hub;
   hub.add_heater();
-  RegisterSensor sensor(HeatingFunction::SET_PRESENCE);
+  RegisterSensor sensor(DeviceReading::OCCUPANCY);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -589,7 +590,7 @@ TEST(PlatformOccupancySensor, ShowsPresenceAsTheHeaterReportsIt) {
 TEST(PlatformOccupancySensor, LosesItsStateWhenTheHeaterAnswersWithoutAValue) {
   ClimateControlsHub hub;
   hub.add_heater();
-  RegisterSensor sensor(HeatingFunction::SET_PRESENCE);
+  RegisterSensor sensor(DeviceReading::OCCUPANCY);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -605,7 +606,7 @@ TEST(PlatformOccupancySensor, LosesItsStateWhenTheHeaterAnswersWithoutAValue) {
 TEST(PlatformEnergySensor, HasNoStateUntilTheHeaterHasReportedATotal) {
   ClimateControlsHub hub;
   hub.add_heater();
-  NumberSensor sensor(HeatingFunction::ENERGY_TOTAL);
+  NumberSensor sensor(DeviceReading::ENERGY_TOTAL);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -618,7 +619,7 @@ TEST(PlatformEnergySensor, HasNoStateUntilTheHeaterHasReportedATotal) {
 TEST(PlatformEnergySensor, ShowsTheTotalAsTheHeaterReportsItAndFollowsEveryPoll) {
   ClimateControlsHub hub;
   hub.add_heater();
-  NumberSensor sensor(HeatingFunction::ENERGY_TOTAL);
+  NumberSensor sensor(DeviceReading::ENERGY_TOTAL);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -634,7 +635,7 @@ TEST(PlatformEnergySensor, ShowsTheTotalAsTheHeaterReportsItAndFollowsEveryPoll)
 TEST(PlatformEnergySensor, ATotalOfZeroIsShownAsZero) {
   ClimateControlsHub hub;
   hub.add_heater();
-  NumberSensor sensor(HeatingFunction::ENERGY_TOTAL);
+  NumberSensor sensor(DeviceReading::ENERGY_TOTAL);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -646,7 +647,7 @@ TEST(PlatformEnergySensor, ATotalOfZeroIsShownAsZero) {
 TEST(PlatformEnergySensor, LosesItsStateWhenTheHeaterAnswersWithoutAValue) {
   ClimateControlsHub hub;
   hub.add_heater();
-  NumberSensor sensor(HeatingFunction::ENERGY_TOTAL);
+  NumberSensor sensor(DeviceReading::ENERGY_TOTAL);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -662,8 +663,8 @@ TEST(PlatformEnergySensor, LosesItsStateWhenTheHeaterAnswersWithoutAValue) {
 TEST(PlatformRunTimerSensors, ADurationSensorShowsItsRegisterInMinutesAndHasNoStateBeforeThat) {
   ClimateControlsHub hub;
   hub.add_heater();
-  NumberSensor boost(HeatingFunction::BOOST_DURATION);
-  NumberSensor drying(HeatingFunction::DRYING_DURATION);
+  NumberSensor boost(DeviceReading::BOOST_DURATION);
+  NumberSensor drying(DeviceReading::DRYING_DURATION);
   for (NumberSensor *sensor : {&boost, &drying}) {
     sensor->set_parent(&hub);
     sensor->set_device_id("ABC123");
@@ -720,4 +721,63 @@ TEST(PlatformRunTimerSensors, TheRemainingTimeHasNoStateWhileTheActiveRunsRegist
     r.store(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST));
   });
   EXPECT_TRUE(std::isnan(sensor.state)) << "a boost with no reading is not 0 minutes";
+}
+
+// --- The generic reading entities publish only what changed ---
+
+TEST(PlatformDeviceReadingSensor, PublishesAChangedValueOnceAndNotARepeatedOne) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  NumberSensor sensor(DeviceReading::ENERGY_TOTAL);
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+  const int after_setup = sensor.publish_count;
+
+  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 3422.0F); });
+  EXPECT_EQ(sensor.publish_count, after_setup + 1);
+  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 3422.0F); });
+  hub.deliver([](HeatingReadings &r) { r.room_temperature_c = 21.0F; });  // another reading of the same device
+  EXPECT_EQ(sensor.publish_count, after_setup + 1) << "an update that leaves the value alone publishes nothing";
+
+  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 3423.0F); });
+  EXPECT_EQ(sensor.publish_count, after_setup + 2);
+  EXPECT_FLOAT_EQ(sensor.state, 3423.0F);
+}
+
+TEST(PlatformDeviceReadingSensor, TwoUpdatesWithoutAValueLeaveOneNoStatePublish) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  NumberSensor sensor(DeviceReading::ENERGY_TOTAL);
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+  const int after_setup = sensor.publish_count;
+
+  hub.deliver([](HeatingReadings &r) { r.room_temperature_c = 20.0F; });
+  hub.deliver([](HeatingReadings &r) { r.room_temperature_c = 21.0F; });
+  EXPECT_EQ(sensor.publish_count, after_setup);
+  EXPECT_TRUE(std::isnan(sensor.state));
+}
+
+TEST(PlatformDeviceReadingBinarySensor, PublishesOnlyAChangedState) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  RegisterSensor sensor(DeviceReading::OCCUPANCY);
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+  const int after_setup = sensor.publish_count;
+
+  hub.deliver([](HeatingReadings &r) { r.presence = 1; });
+  hub.deliver([](HeatingReadings &r) { r.presence = 1; });
+  EXPECT_EQ(sensor.publish_count, after_setup + 1);
+  hub.deliver([](HeatingReadings &r) { r.presence = 0; });
+  EXPECT_EQ(sensor.publish_count, after_setup + 2);
+  EXPECT_FALSE(sensor.state);
+
+  hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::SET_PRESENCE); });
+  EXPECT_FALSE(sensor.has_state());
+  hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::SET_PRESENCE); });
+  EXPECT_EQ(sensor.publish_count, after_setup + 2) << "losing the state publishes nothing";
 }

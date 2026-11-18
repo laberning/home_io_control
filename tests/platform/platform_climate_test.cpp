@@ -970,20 +970,20 @@ TEST(PlatformClimate, ThermostatUsesTheYamlRangeButAHeatPumpNeverDoes) {
   EXPECT_EQ(pump_hub.temperature_calls[1].main_parameter, 29867) << "round(70 x 51200 / 120), not the YAML range's top";
 }
 
-TEST(PlatformClimate, DeclaredRegisterEntitiesAskTheHubToReadTheirRegisters) {
+TEST(PlatformClimate, DeclaredReadingEntitiesAskTheHubToReadTheirReadings) {
   MockHubClimate asked;
   IOHomeClimate with_entities = make_thermostat(asked);
-  with_entities.add_register_read(HeatingFunction::CENTRAL_HEATING_MODE);
-  with_entities.add_register_read(HeatingFunction::OCCUPANCY_DETECTION);
+  with_entities.add_device_reading(DeviceReading::CENTRAL_HEATING_MODE);
+  with_entities.add_device_reading(DeviceReading::OCCUPANCY_DETECTION);
   with_entities.setup();
-  EXPECT_EQ(asked.register_reads,
-            (std::vector<std::pair<std::string, HeatingFunction>>{{"ABC123", HeatingFunction::CENTRAL_HEATING_MODE},
-                                                                  {"ABC123", HeatingFunction::OCCUPANCY_DETECTION}}));
+  EXPECT_EQ(asked.device_readings,
+            (std::vector<std::pair<std::string, DeviceReading>>{{"ABC123", DeviceReading::CENTRAL_HEATING_MODE},
+                                                                {"ABC123", DeviceReading::OCCUPANCY_DETECTION}}));
 
   MockHubClimate not_asked;
   IOHomeClimate without_entities = make_thermostat(not_asked);
   without_entities.setup();
-  EXPECT_TRUE(not_asked.register_reads.empty()) << "no entity, no extra read";
+  EXPECT_TRUE(not_asked.device_readings.empty()) << "no entity, no extra read";
 }
 
 TEST(PlatformClimate, HeatPumpSetpointCarriesNoFunctionalParameter) {

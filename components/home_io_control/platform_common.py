@@ -18,12 +18,13 @@ import logging
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import sensor, text_sensor
+from esphome.components import binary_sensor, sensor, switch, text_sensor
 from esphome.const import (
     CONF_DEFAULT_TRANSITION_LENGTH,
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
     CONF_NAME,
+    ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
     STATE_CLASS_TOTAL_INCREASING,
@@ -51,6 +52,8 @@ from .hub_names import (
 )
 from .hub_validators import (
     DEVICE_MODEL_OPTIONS,
+    DEVICE_READINGS,
+    READING_FEATURE_HINTS,
     check_feature_name,
     device_features,
     device_model_expression,
@@ -97,6 +100,19 @@ IOHomeDeviceNameTextSensor = home_io_control_ns.class_(
 IOHomeActiveIssueTextSensor = home_io_control_ns.class_(
     "IOHomeActiveIssueTextSensor", text_sensor.TextSensor, cg.Component
 )
+# The generic entities that show a named device reading (platform_device_readings.h) and the heater setting switch
+# (platform_climate_controls.h), and the readings they are named after (proto_device_readings.h DeviceReading).
+IOHomeDeviceReadingSensor = home_io_control_ns.class_(
+    "IOHomeDeviceReadingSensor", sensor.Sensor, cg.Component
+)
+IOHomeDeviceReadingBinarySensor = home_io_control_ns.class_(
+    "IOHomeDeviceReadingBinarySensor", binary_sensor.BinarySensor, cg.Component
+)
+IOHomeHeaterSettingSwitch = home_io_control_ns.class_(
+    "IOHomeHeaterSettingSwitch", switch.Switch, cg.Component
+)
+DeviceReading = home_io_control_ns.enum("DeviceReading", is_class=True)
+
 IOHomeRssiSensor = home_io_control_ns.class_("IOHomeRssiSensor", sensor.Sensor, cg.Component)
 IOHomeLastContactSensor = home_io_control_ns.class_(
     "IOHomeLastContactSensor", sensor.Sensor, cg.Component
@@ -532,6 +548,92 @@ async def create_user_companion(config, parent, *, new_entity, entity_config):
     create_companion() applies. A sub-device the companion sets itself is kept.
     """
     return await _bind_companion(config, parent, new_entity, entity_config)
+
+
+# === Device readings ===
+#
+# A main entity (today the climate entity) takes one optional key per reading of DEVICE_READINGS that has one. Each
+# key is an entity of its own that shows the reading; the key costs the hub a read of the reading's registers at
+# every poll and only some kinds have them, so it needs the capability of its row. The table drives the schema, the
+# capability check and the code, so a new reading is a row there and in C++, never new codegen.
+
+
+def _reading_keys():
+    """[(reading name, mirror entry)] of every reading a main entity declares by a YAML key, in table order."""
+    return [(name, entry) for name, entry in DEVICE_READINGS.items() if entry["key"] is not None]
+
+
+def _reading_entity_schema(entry):
+    """The schema of the entity that shows a reading: its kind and Home Assistant metadata come from the mirror."""
+    display = {
+        argument: entry[field]
+        for field, argument in (
+            ("unit", "unit_of_measurement"),
+            ("accuracy", "accuracy_decimals"),
+            ("device_class", "device_class"),
+            ("state_class", "state_class"),
+        )
+        if field in entry
+    }
+    kind = entry["entity"]
+    if kind == "sensor":
+        schema = sensor.sensor_schema(IOHomeDeviceReadingSensor, **display)
+    elif kind == "binary_sensor":
+        schema = binary_sensor.binary_sensor_schema(IOHomeDeviceReadingBinarySensor, **display)
+    elif kind == "switch":
+        # Restore mode DISABLED: the switch shows what the device reports, never a restored guess.
+        schema = switch.switch_schema(
+            IOHomeHeaterSettingSwitch,
+            default_restore_mode="DISABLED",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+        )
+    else:
+        raise ValueError(f"a reading with a key needs an entity kind, not {kind!r}")
+    return schema.extend(cv.COMPONENT_SCHEMA)
+
+
+def reading_keys_schema():
+    """The optional YAML keys of every reading, `{cv.Optional(key): entity schema}`, to splice into a main entity's
+    schema. The entity IDs are declared by the schemas' own GenerateID."""
+    return {cv.Optional(entry["key"]): _reading_entity_schema(entry) for _, entry in _reading_keys()}
+
+
+def validate_reading_keys(config):
+    """Accept each reading key only on a kind with the capability of its reading.
+
+    A key is rejected when no io_device_type is declared: the registers would otherwise be read from a device
+    nothing says has them. The message names the kind to declare (READING_FEATURE_HINTS).
+    """
+    for _, entry in _reading_keys():
+        key = entry["key"]
+        if key in config and not declared_has_feature(config, entry["feature"]):
+            raise cv.Invalid(f"{key} needs {READING_FEATURE_HINTS[entry['feature']]}", path=[key])
+    return config
+
+
+async def reading_keys_to_code(var, parent, config):
+    """Emit the code for the reading keys a main entity declares.
+
+    For each key present the main entity asks the hub to poll the reading's registers (`add_device_reading()`)
+    and the entity that shows the reading is created, named after it.
+    """
+    for name, entry in _reading_keys():
+        key = entry["key"]
+        if key not in config:
+            continue
+        reading = getattr(DeviceReading, name)
+        cg.add(var.add_device_reading(reading))
+        entity = await create_user_companion(
+            config,
+            parent,
+            new_entity={
+                "sensor": sensor.new_sensor,
+                "binary_sensor": binary_sensor.new_binary_sensor,
+                "switch": switch.new_switch,
+            }[entry["entity"]],
+            entity_config=config[key],
+        )
+        cg.add(entity.set_reading(reading))
 
 
 async def _create_diagnostic_text_sensor(config, parent, id_key, suffix, disabled_by_default):

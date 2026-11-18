@@ -42,6 +42,7 @@
 #include "esphome/components/climate/climate.h"
 #include "esphome/core/component.h"
 #include "platform_entity_base.h"
+#include "proto_device_readings.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"
 
@@ -90,11 +91,11 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
     this->has_range_ = true;
   }
 
-  /// @brief Declare an opt-in entity (`central_heating_mode:`, `occupancy_detection:`, `occupancy:`): the
-  /// heater's polls then read its register (a kind with the register's capability only); applied to the device
-  /// in setup().
-  /// @param fn The register the entity shows.
-  void add_register_read(HeatingFunction fn) { this->register_reads_.push_back(fn); }
+  /// @brief Declare an opt-in entity (`central_heating_mode:`, `occupancy:`, `energy:`, ...): the heater's polls
+  /// then read the registers of its reading (a kind with the reading's capability only); applied to the device in
+  /// setup().
+  /// @param reading The reading the entity shows.
+  void add_device_reading(DeviceReading reading) { this->device_readings_.push_back(reading); }
 
  protected:
   /// @brief The device's heating profile: from the declared type, else from the type the hub learned.
@@ -147,7 +148,7 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   bool apply_target_temperature_(const HeatingProfile &profile, const climate::ClimateCall &call);
 
   HeatingCardState card_;                               ///< What the card shows; the entity's ESPHome fields follow it.
-  std::vector<HeatingFunction> register_reads_;         ///< Registers of the opt-in entities the YAML declared.
+  std::vector<DeviceReading> device_readings_;          ///< Readings of the opt-in entities the YAML declared.
   bool has_range_{false};                               ///< YAML overrode the temperature encoding range.
   float range_min_c_{HEATING_TEMPERATURE_RANGE_MIN_C};  ///< YAML `min_temperature:`.
   float range_max_c_{HEATING_TEMPERATURE_RANGE_MAX_C};  ///< YAML `max_temperature:`.

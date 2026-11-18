@@ -499,62 +499,6 @@ const HeatingProfile *find_exact_profile(DeviceType type, uint8_t subtype, Devic
 
 }  // namespace
 
-namespace {
-
-/// The registers read only on request: the central-heating mode of a mixed towel dryer, a heater's
-/// occupancy detection setting and detected presence, its energy total, and a towel dryer's run timers. The minutes
-/// left of a run are read only while that run is on, so an idle dryer costs no read for them.
-constexpr HeatingOptInRead HEATING_OPT_IN_READS[] = {
-    {.fn = HeatingFunction::CENTRAL_HEATING_MODE, .feature = DeviceFeature::CENTRAL_HEATING_MODE},
-    {.fn = HeatingFunction::OCCUPANCY_DETECTION, .feature = DeviceFeature::OCCUPANCY},
-    {.fn = HeatingFunction::SET_PRESENCE, .feature = DeviceFeature::OCCUPANCY},
-    {.fn = HeatingFunction::ENERGY_TOTAL, .feature = DeviceFeature::ENERGY_METER},
-    {.fn = HeatingFunction::BOOST_DURATION, .feature = DeviceFeature::RUN_TIMERS},
-    {.fn = HeatingFunction::DRYING_DURATION, .feature = DeviceFeature::RUN_TIMERS},
-    {.fn = HeatingFunction::BOOST_REMAINING,
-     .feature = DeviceFeature::RUN_TIMERS,
-     .only_while =
-         HeatingReadCondition{HeatingFunction::TEMPORARY_STATE, static_cast<uint8_t>(HeatingTemporaryState::BOOST)}},
-    {.fn = HeatingFunction::DRYING_REMAINING,
-     .feature = DeviceFeature::RUN_TIMERS,
-     .only_while =
-         HeatingReadCondition{HeatingFunction::TEMPORARY_STATE, static_cast<uint8_t>(HeatingTemporaryState::DRYING)}},
-};
-
-}  // namespace
-
-const HeatingOptInRead *find_heating_opt_in_read(HeatingFunction fn) {
-  const auto *row = std::ranges::find(HEATING_OPT_IN_READS, fn, &HeatingOptInRead::fn);
-  return row != std::end(HEATING_OPT_IN_READS) ? row : nullptr;
-}
-
-bool heating_opt_in_read_due(const HeatingOptInRead &read, const HeatingReadings &readings) {
-  return !read.only_while || readings.value_of(read.only_while->fn) == static_cast<int16_t>(read.only_while->value);
-}
-
-bool clear_readings_read_only_while(HeatingFunction written, HeatingReadings &readings) {
-  bool cleared = false;
-  for (const HeatingOptInRead &read : HEATING_OPT_IN_READS) {
-    if (read.only_while && read.only_while->fn == written && readings.has(read.fn)) {
-      readings.clear(read.fn);
-      cleared = true;
-    }
-  }
-  return cleared;
-}
-
-float timed_run_remaining_minutes(const HeatingReadings &readings) {
-  const int16_t state = readings.value_of(HeatingFunction::TEMPORARY_STATE);
-  if (state < 0)
-    return NAN;
-  for (const HeatingOptInRead &read : HEATING_OPT_IN_READS) {
-    if (read.only_while && read.only_while->fn == HeatingFunction::TEMPORARY_STATE &&
-        static_cast<int16_t>(read.only_while->value) == state)
-      return readings.number_of(read.fn);
-  }
-  return 0.0F;
-}
-
 const HeatingProfile *find_heating_profile(DeviceType type, uint8_t subtype, DeviceModel model) {
   if (model != DeviceModel::NONE) {
     if (const HeatingProfile *model_profile = find_exact_profile(type, subtype, model))

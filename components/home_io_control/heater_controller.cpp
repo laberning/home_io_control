@@ -13,6 +13,7 @@
 #include "proto_commands.h"
 #include "proto_constants.h"
 #include "proto_device_kinds.h"
+#include "proto_device_readings.h"
 #include "proto_device_types.h"
 #include "proto_dhw.h"
 #include "proto_heating.h"
@@ -290,10 +291,12 @@ void HeaterController::set_device_temperature_range(const std::string &device_id
   dev->temperature_range_max_c = max_c;
 }
 
-void HeaterController::enable_heating_register_read(const std::string &device_id, HeatingFunction fn) {
+void HeaterController::enable_device_reading(const std::string &device_id, DeviceReading reading) {
   IoDevice *dev = this->registry_.get(device_id);
-  const HeatingOptInRead *opt_in = find_heating_opt_in_read(fn);
-  if (dev != nullptr && opt_in != nullptr && has_feature(dev->features, opt_in->feature))
+  const DeviceReadingRow *row = find_device_reading(reading);
+  if (dev == nullptr || row == nullptr || !has_feature(dev->features, row->feature))
+    return;
+  for (const HeatingFunction fn : reading_polled_registers(*row))
     dev->opt_in_reads.ask(fn);
 }
 
@@ -797,8 +800,7 @@ void HeaterController::poll_opt_in_registers_(const std::string &device_id, uint
       continue;
     // A register that is read only while a condition holds (the minutes left of a run) is not asked while it does
     // not, and its reading of an earlier run goes, so it never shows as the current one.
-    const HeatingOptInRead *row = find_heating_opt_in_read(fn);
-    if (row != nullptr && !heating_opt_in_read_due(*row, dev->heating)) {
+    if (!heating_register_due(fn, dev->heating)) {
       dev->heating.clear(fn);
       continue;
     }

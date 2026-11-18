@@ -2,17 +2,15 @@
 
 /// @file platform_climate_controls.h
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the heater setting switches
-/// (open-window detection, occupancy detection), the night light, the heating-level text sensor and the
-/// register binary sensors (central-heating mode, occupancy) and the register sensor (energy total, run timers).
+/// (open-window detection, occupancy detection), the night light and the heating-level text sensor.
 /// @ingroup hioc_platforms
 ///
 /// All are device-bound companions (DeviceBoundCompanion) that climate.py generates alongside a
 /// `climate:` entity: the window pair when the device kind has WINDOW_COMPANIONS, the night light when
 /// the YAML asks for it on a kind with NIGHT_LIGHT; the heating-level text sensor is opt-in on an
-/// electrical heater, the central-heating-mode binary sensor is opt-in on a kind with CENTRAL_HEATING_MODE (a
-/// towel dryer), and the occupancy-detection switch and occupancy binary sensor are opt-in on a kind with
-/// OCCUPANCY, the energy sensor is opt-in on a kind with ENERGY_METER, and the run-timer sensors are opt-in on a kind
-/// with RUN_TIMERS (a towel dryer). They show readings the hub's poll already stores in IoDevice::heating and add no
+/// electrical heater, and the occupancy-detection switch is opt-in on a kind with OCCUPANCY. The opt-in sensors that
+/// show a reading (central-heating mode, occupancy, energy total, run timers) are the generic entities of
+/// platform_device_readings.h. They show readings the hub's poll already stores in IoDevice::heating and add no
 /// radio traffic of their own, except their writes and the read-backs that confirm them.
 ///
 /// @todo Experimental: the meaning of registers 0x010E (window sensor) and 0x0106 (open-window
@@ -23,10 +21,10 @@
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/light/light_output.h"
-#include "esphome/components/sensor/sensor.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
+#include "platform_device_readings.h"
 #include "platform_entity_base.h"
 #include "platform_light.h"
 #include "proto_device_model.h"
@@ -77,110 +75,17 @@ class IOHomeWindowBinarySensor : public binary_sensor::BinarySensor, public Comp
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 };
 
-/// @brief A device-bound companion that shows one heater register (the base of the register entities below).
-/// @ingroup hioc_platforms
-///
-/// The generated code names the register with set_function(); the entity reads its value from
-/// IoDevice::heating, which the hub's poll fills, and shows nothing until the heater has answered with one.
-class HeaterRegisterCompanion : public DeviceBoundCompanion {
- public:
-  /// @brief Name the register this entity shows (generated code).
-  /// @param fn A register the readings hold (HeatingReadings::value_of() or number_of()).
-  void set_function(HeatingFunction fn) { this->function_ = fn; }
-
- protected:
-  /// @brief The value the heater last reported for this entity's register.
-  /// @param dev The device record.
-  /// @return The register's integer value, or -1 while it has not been read (or was dropped).
-  [[nodiscard]] int16_t reading_(const IoDevice &dev) const { return dev.heating.value_of(this->function_); }
-
-  /// @brief The number the heater last reported for this entity's register, for a register kept as a number with
-  /// a unit (HeatingReadings::number_of()): wide enough for a counter that reaches past 32767.
-  /// @param dev The device record.
-  /// @return The register's value, or NaN while it has not been read (or was dropped).
-  [[nodiscard]] float number_reading_(const IoDevice &dev) const { return dev.heating.number_of(this->function_); }
-
-  HeatingFunction function_{HeatingFunction::COUNT};  ///< The register; COUNT until the generated code names it.
-};
-
-/// @brief Binary sensor that shows one flag register of a heater, with no state until the heater has reported it.
-/// @ingroup hioc_platforms
-///
-/// Used for the opt-in `central_heating_mode:` (register 0x0153) and `occupancy:` (register 0x0110) keys of a
-/// climate entry. The register is read at every poll once the entity is declared (the climate entity asks the
-/// hub, see HeatingOptInReads). ON is 1 and OFF is 0, so "off" always means the heater said so: nothing read, a
-/// reading dropped, and a heater that answers without a value (its register is absent) all leave the sensor
-/// without a state.
-///
-/// While a mixed towel dryer runs on central heating its electric element stays off, so the card shows idle and
-/// Boost and Drying do nothing; `occupancy:` is on while the heater sees someone in the room.
-///
-/// \todo Experimental: the central-heating mode is read on one Atlantic Adelis mixed unit over four panel
-///       toggles (issue #243); confirm on a second unit. The occupancy is read on a Sauter Hekla with the
-///       detection on (issue #222); what it shows with the detection off is not confirmed, and no other heater
-///       has answered it yet.
-class IOHomeHeaterRegisterBinarySensor : public binary_sensor::BinarySensor,
-                                         public Component,
-                                         public HeaterRegisterCompanion {
- public:
-  /// @brief Subscribe to the device's updates and publish what is already known.
-  void setup() override;
-
-  /// @brief Dump sensor configuration to the log.
-  void dump_config() override;
-
-  /// @brief Get setup priority so the parent hub is available first.
-  /// @return setup_priority::DATA.
-  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
-};
-
-/// @brief Sensor that shows one numeric register of a heater, with no state until the heater has reported it.
-/// @ingroup hioc_platforms
-///
-/// Used for the opt-in `energy:` key of a climate entry (the energy total, register 0x0116, in kWh) and for the
-/// run timers of a towel dryer: `boost_duration:` and `drying_duration:` show one register in minutes, and
-/// `remaining_time:` shows the minutes left of whichever run is active (set_shows_timed_run_remaining()). The unit,
-/// device class, state class and accuracy come from the key's schema (climate.py), so another numeric register
-/// is a table row. The register is read at every poll once the entity is declared (the climate entity asks the
-/// hub, see HeatingOptInReads); the minutes left of a run are read only while that run is on, and show 0 otherwise.
-/// Nothing read, a reading dropped, and a heater that answers without a value (its register is absent) all leave the
-/// sensor without a state, never at 0.
-///
-/// \todo Experimental except on a Sauter Tahual: the total equals that radiator's display (PR #238); compare it
-///       with the display of an EMOTION 3 H, an Adelis and a Hekla.
-/// \todo Experimental: the run timers are read on Atlantic Adelis units only (issue #202); `drying_duration:` is the
-///       duration of the last drying run started, which a change on the panel alone does not update.
-class IOHomeHeaterRegisterSensor : public sensor::Sensor, public Component, public HeaterRegisterCompanion {
- public:
-  /// @brief Show the minutes left of the run the dryer is in instead of one register (generated code).
-  /// @details The value follows the temporary state, 0 while no boost or drying runs (timed_run_remaining_minutes()),
-  ///          so the entity has no single register and set_function() is not called for it.
-  void set_shows_timed_run_remaining() { this->shows_timed_run_remaining_ = true; }
-
-  /// @brief Subscribe to the device's updates and publish what is already known.
-  void setup() override;
-
-  /// @brief Dump sensor configuration to the log.
-  void dump_config() override;
-
-  /// @brief Get setup priority so the parent hub is available first.
-  /// @return setup_priority::DATA.
-  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
-
- protected:
-  bool shows_timed_run_remaining_{false};  ///< The minutes left of the active run, not one register.
-};
-
 /// @brief Switch for one on/off setting register of a heater.
 /// @ingroup hioc_platforms
 ///
 /// Used for the open-window detection (register 0x0106, created automatically on a heater with window
-/// companions) and the opt-in `occupancy_detection:` key (register 0x0101). A write sends the register and reads
-/// it back; the switch shows what the heater answered, so it has no state until the first read (the boot poll)
-/// and never shows a command the heater did not confirm. A change made from the vendor app or on the heater
-/// shows at the next poll. The generated switches restore nothing and the open-window one is disabled by default,
-/// in the config entity category.
-class IOHomeHeaterSettingSwitch : public switch_::Switch, public Component, public HeaterRegisterCompanion {
+/// companions) and the opt-in `occupancy_detection:` key (register 0x0101). It shows a reading
+/// (set_reading(), DeviceReading::OPEN_WINDOW_DETECTION or OCCUPANCY_DETECTION) and writes the register that
+/// reading is (reading_register()). A write sends the register and reads it back; the switch shows what the heater
+/// answered, so it has no state until the first read (the boot poll) and never shows a command the heater did not
+/// confirm. A change made from the vendor app or on the heater shows at the next poll. The generated switches restore
+/// nothing and the open-window one is disabled by default, in the config entity category.
+class IOHomeHeaterSettingSwitch : public switch_::Switch, public Component, public DeviceReadingCompanion {
  public:
   /// @brief Subscribe to the device's updates and publish what is already known.
   void setup() override;

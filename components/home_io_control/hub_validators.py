@@ -9,7 +9,7 @@
 ## status-poll intervals that the hub schema and the platform modules share.
 ##
 ## DEVICE_TYPE_OPTIONS, DEVICE_MODEL_OPTIONS, DEVICE_FEATURES (with FEATURES, EXPERIMENTAL_KINDS and
-## NAMED_POSITION_FEATURES), MANUFACTURER_OPTIONS, PA_PIN_OPTIONS, TCXO_VOLTAGE_OPTIONS and
+## NAMED_POSITION_FEATURES), DEVICE_READINGS (with READING_FEATURE_HINTS), MANUFACTURER_OPTIONS, PA_PIN_OPTIONS, TCXO_VOLTAGE_OPTIONS and
 ## FEM_TX_POWER_MAX_QUIET mirror C++ tables; the ``tests/sync/`` host tests and
 ## ``make yaml-emitter-sync`` read them from this file by name.
 
@@ -270,6 +270,35 @@ FEATURES = (
     "ENERGY_METER",
     "RUN_TIMERS",
 )
+
+# Python's mirror of the table of named device readings (proto_device_readings.cpp), by the enumerator name of
+# DeviceReading: the capability a device needs ("feature"), where the value comes from ("source": "register" for one
+# private register of a heater, "derived" for a value worked out from other readings), the registers the hub's poll
+# reads for it ("registers", by HeatingFunction name), and what the codegen builds for it: the YAML "key" under the
+# main entity (None where no key declares it), the entity kind ("sensor", "binary_sensor" or "switch") and the Home
+# Assistant metadata of the entity. tests/sync/device_features_sync_test.cpp checks names, capabilities, source kinds
+# and registers against the C++ table; the entity fields are Python-only, since C++ never needs them. One entry per
+# line: the sync test parses this file and reads no expressions.
+DEVICE_READINGS = {
+    "CENTRAL_HEATING_MODE": {"feature": "CENTRAL_HEATING_MODE", "source": "register", "registers": ("CENTRAL_HEATING_MODE",), "key": "central_heating_mode", "entity": "binary_sensor"},
+    "OCCUPANCY_DETECTION": {"feature": "OCCUPANCY", "source": "register", "registers": ("OCCUPANCY_DETECTION",), "key": "occupancy_detection", "entity": "switch"},
+    "OCCUPANCY": {"feature": "OCCUPANCY", "source": "register", "registers": ("SET_PRESENCE",), "key": "occupancy", "entity": "binary_sensor", "device_class": "occupancy"},
+    "OPEN_WINDOW_DETECTION": {"feature": "WINDOW_COMPANIONS", "source": "register", "registers": ("SET_OPEN_WINDOW_DETECTION",), "key": None, "entity": "switch"},
+    "ENERGY_TOTAL": {"feature": "ENERGY_METER", "source": "register", "registers": ("ENERGY_TOTAL",), "key": "energy", "entity": "sensor", "unit": "kWh", "accuracy": 0, "device_class": "energy", "state_class": "total_increasing"},
+    "BOOST_DURATION": {"feature": "RUN_TIMERS", "source": "register", "registers": ("BOOST_DURATION",), "key": "boost_duration", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration"},
+    "DRYING_DURATION": {"feature": "RUN_TIMERS", "source": "register", "registers": ("DRYING_DURATION",), "key": "drying_duration", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration"},
+    "BOOST_REMAINING": {"feature": "RUN_TIMERS", "source": "register", "registers": ("BOOST_REMAINING",), "key": None, "entity": None},
+    "DRYING_REMAINING": {"feature": "RUN_TIMERS", "source": "register", "registers": ("DRYING_REMAINING",), "key": None, "entity": None},
+    "REMAINING_TIME": {"feature": "RUN_TIMERS", "source": "derived", "registers": ("BOOST_REMAINING", "DRYING_REMAINING"), "key": "remaining_time", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration", "state_class": "measurement"},
+}
+
+# What to declare when a key of DEVICE_READINGS is used on a kind without its capability, by capability.
+READING_FEATURE_HINTS = {
+    "CENTRAL_HEATING_MODE": "a towel dryer: set io_device_type: electrical_heater, io_subtype: 1 and io_model: towel_dryer",
+    "OCCUPANCY": "a heater with occupancy detection: set io_device_type: electrical_heater, io_subtype: 1 and either no io_model (a radiator) or io_model: heater_with_light",
+    "ENERGY_METER": "a heater that counts its energy: set io_device_type: electrical_heater, io_subtype: 1 and either no io_model (a radiator), io_model: towel_dryer or io_model: heater_with_light",
+    "RUN_TIMERS": "a towel dryer: set io_device_type: electrical_heater, io_subtype: 1 and io_model: towel_dryer",
+}
 
 # The models a (type, subtype) can have below it (proto_device_kinds.h DeviceModel, the model rows of
 # proto_device_types.cpp), by their YAML io_model: name. Values mirror the C++ enum;

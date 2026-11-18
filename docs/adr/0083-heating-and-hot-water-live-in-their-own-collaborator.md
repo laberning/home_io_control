@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0083 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) (the opt-in register list is derived from the reading table) · **Recorded:** 2026-11
 
 Supersedes [ADR 0033](0033-heating-send-path-bypasses-the-cover-machinery.md) in full (its remaining
 points are restated below). Amends [ADR 0004](0004-hub-collaborator-decomposition.md) (the collaborator

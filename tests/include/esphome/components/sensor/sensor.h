@@ -11,9 +11,13 @@ class Sensor {
  public:
   virtual ~Sensor() = default;
 
-  void publish_state(float state) { this->state = state; }
+  void publish_state(float state) {
+    this->state = state;
+    this->publish_count++;
+  }
 
   float state{NAN};
+  int publish_count{0};  ///< Test stub only: how often publish_state() ran.
 };
 
 }  // namespace sensor

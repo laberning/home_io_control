@@ -2,13 +2,15 @@
 /// @brief Verifies that the Python mirror of the device capabilities (hub_validators.py `FEATURES`,
 ///        `DEVICE_FEATURES`, `EXPERIMENTAL_KINDS`, `NAMED_POSITION_FEATURES`, `DEVICE_MODEL_OPTIONS`)
 ///        agrees with the C++ node-type table by capability name and row for row (model rows
-///        included), and that climate.py's `OPT_IN_READ_FEATURES` gates each opt-in register read
-///        by the capability HEATING_OPT_IN_READS names, preventing C++/Python drift.
+///        included), and that the mirror `DEVICE_READINGS` lists every named device reading with the capability,
+///        source kind and polled registers of the C++ table (proto_device_readings.cpp), preventing C++/Python
+///        drift.
 ///
 /// The C++ table (proto_device_types.cpp) is authoritative; the test parses hub_validators.py at
 /// runtime, like the other sync tests (see device_type_sync_test.cpp and python_dict_parser.h).
 
 #include "proto_device_features.h"
+#include "proto_device_readings.h"
 #include "proto_device_types.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"
@@ -19,10 +21,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <map>
 #include <set>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -30,7 +34,6 @@ using namespace esphome::home_io_control;
 namespace {
 
 constexpr const char *VALIDATORS = "components/home_io_control/hub_validators.py";
-constexpr const char *CLIMATE = "components/home_io_control/climate.py";
 
 using NameSet = std::set<std::string>;
 
@@ -262,26 +265,67 @@ TEST(DeviceFeaturesSync, EveryModelRowIsMirroredWithItsNameAndCapabilities) {
     EXPECT_TRUE(cpp_model_names.count(name)) << "DEVICE_MODEL_OPTIONS names " << name << ", which no C++ model row has";
 }
 
-TEST(DeviceFeaturesSync, EveryOptInRegisterNeedsTheSameCapabilityInBothLanguages) {
-  // climate.py accepts an opt-in key by this capability; the hub reads the register only with the
-  // capability of HEATING_OPT_IN_READS. Were they to differ, a key would be accepted whose read never runs.
-  const auto python = test::parse_python_ordered_dict(CLIMATE, "OPT_IN_READ_FEATURES");
-  ASSERT_FALSE(python.empty()) << "OPT_IN_READ_FEATURES not parsed from climate.py";
-  const std::map<std::string, std::string> by_function(python.begin(), python.end());
-  size_t cpp_rows = 0;
-  for (unsigned i = 0; i < static_cast<unsigned>(HeatingFunction::COUNT); i++) {
-    const auto fn = static_cast<HeatingFunction>(i);
-    const HeatingOptInRead *row = find_heating_opt_in_read(fn);
-    if (row == nullptr)
-      continue;
-    cpp_rows++;
-    // The Python key is the enumerator's name, which is the function's name in capitals.
-    std::string name = heating_function_name(fn);
-    std::ranges::transform(name, name.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    ASSERT_TRUE(by_function.count(name)) << name << " is missing from OPT_IN_READ_FEATURES";
-    const NameSet names = names_of(row->feature);
-    ASSERT_EQ(names.size(), 1u) << name << " must need exactly one capability";
-    EXPECT_EQ(by_function.at(name), *names.begin()) << name;
+namespace {
+
+/// The text of one field's value inside an entry of the DEVICE_READINGS mirror, from after `"field": ` to the next
+/// top-level `, "` or the end of the entry; empty when the entry has no such field.
+std::string field_text(const std::string &entry, const std::string &field) {
+  const std::string head = "\"" + field + "\": ";
+  const auto start = entry.find(head);
+  if (start == std::string::npos)
+    return "";
+  const auto value_start = start + head.size();
+  int depth = 0;
+  for (auto i = value_start; i < entry.size(); i++) {
+    if (entry[i] == '(')
+      depth++;
+    else if (entry[i] == ')')
+      depth--;
+    else if (depth == 0 && (entry[i] == ',' || entry[i] == '}'))
+      return entry.substr(value_start, i - value_start);
   }
-  EXPECT_EQ(python.size(), cpp_rows) << "OPT_IN_READ_FEATURES names a register HEATING_OPT_IN_READS does not read";
+  return entry.substr(value_start);
+}
+
+/// The mirror's name of each source kind, in the order of the ReadingSource alternatives.
+constexpr const char *SOURCE_KIND_NAMES[] = {"register", "derived"};
+static_assert(std::size(SOURCE_KIND_NAMES) == std::variant_size_v<ReadingSource>,
+              "a new reading source kind needs its mirror name here and in hub_validators.py DEVICE_READINGS");
+
+/// The upper-case name of a register or reading, as the Python mirror writes it.
+std::string upper(std::string name) {
+  std::ranges::transform(name, name.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+  return name;
+}
+
+}  // namespace
+
+TEST(DeviceFeaturesSync, EveryDeviceReadingIsMirroredWithItsCapabilitySourceAndRegisters) {
+  // The codegen accepts a reading's key by its capability and the hub reads its registers by the table's; were they
+  // to differ, a key would be accepted whose read never runs, or a read run that nothing shows.
+  const auto python = test::parse_python_ordered_dict(VALIDATORS, "DEVICE_READINGS");
+  ASSERT_FALSE(python.empty()) << "DEVICE_READINGS not parsed from hub_validators.py";
+  const std::map<std::string, std::string> by_name(python.begin(), python.end());
+  for (const DeviceReadingRow &row : device_readings()) {
+    // The Python key is the enumerator's name, which is the row's name in capitals.
+    const std::string name = upper(row.name);
+    ASSERT_TRUE(by_name.count(name)) << name << " is missing from DEVICE_READINGS";
+    const std::string &entry = by_name.at(name);
+
+    const NameSet features = names_of(row.feature);
+    ASSERT_EQ(features.size(), 1u) << name << " must need exactly one capability";
+    EXPECT_EQ(test::quoted_strings_of(field_text(entry, "feature")),
+              std::vector<std::string>(features.begin(), features.end()))
+        << name;
+
+    EXPECT_EQ(test::quoted_strings_of(field_text(entry, "source")),
+              std::vector<std::string>{SOURCE_KIND_NAMES[row.source.index()]})
+        << name;
+
+    std::vector<std::string> registers;
+    for (const HeatingFunction fn : reading_polled_registers(row))
+      registers.push_back(upper(heating_function_name(fn)));
+    EXPECT_EQ(test::quoted_strings_of(field_text(entry, "registers")), registers) << name;
+  }
+  EXPECT_EQ(python.size(), device_readings().size()) << "DEVICE_READINGS names a reading the C++ table does not have";
 }

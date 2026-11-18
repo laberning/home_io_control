@@ -618,7 +618,7 @@ def heating_level_sensor_is_accepted_on_an_electrical_heater_only():
 
 
 @case()
-def opt_in_register_keys_are_accepted_only_on_a_kind_with_their_capability():
+def reading_keys_are_accepted_only_on_a_kind_with_their_capability():
     """`central_heating_mode:` passes on a towel dryer (the CENTRAL_HEATING_MODE capability of its row);
     `occupancy_detection:` and `occupancy:` pass on a radiator and a heater with a light (OCCUPANCY); `energy:` passes
     on a radiator, a towel dryer and a heater with a light (ENERGY_METER); `remaining_time:`, `boost_duration:` and
@@ -626,8 +626,8 @@ def opt_in_register_keys_are_accepted_only_on_a_kind_with_their_capability():
     on every other heater kind, another device and an entry with no declared type, with a message naming the
     kind to declare; an entry without the keys is untouched."""
     import esphome.config_validation as cv
-    from esphome.components.home_io_control import climate as c
     from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as pc
 
     heater = v.DEVICE_TYPE_OPTIONS["electrical_heater"]
     heat_pump = v.DEVICE_TYPE_OPTIONS["heat_pump"]
@@ -639,48 +639,83 @@ def opt_in_register_keys_are_accepted_only_on_a_kind_with_their_capability():
     pump = {"io_device_type": heat_pump}
 
     untouched = dict(radiator)
-    assert c._validate_opt_in_reads(untouched) is untouched
+    assert pc.validate_reading_keys(untouched) is untouched
 
     accepted = {
-        c.CONF_CENTRAL_HEATING_MODE: (dryer,),
-        c.CONF_OCCUPANCY_DETECTION: (radiator, with_light),
-        c.CONF_OCCUPANCY: (radiator, with_light),
-        c.CONF_ENERGY: (radiator, dryer, with_light),
-        c.CONF_REMAINING_TIME: (dryer,),
-        c.CONF_BOOST_DURATION: (dryer,),
-        c.CONF_DRYING_DURATION: (dryer,),
+        "central_heating_mode": (dryer,),
+        "occupancy_detection": (radiator, with_light),
+        "occupancy": (radiator, with_light),
+        "energy": (radiator, dryer, with_light),
+        "remaining_time": (dryer,),
+        "boost_duration": (dryer,),
+        "drying_duration": (dryer,),
     }
     refused = {
-        c.CONF_CENTRAL_HEATING_MODE: (radiator, with_light, plain, pilot_wire, pump, {}),
-        c.CONF_OCCUPANCY_DETECTION: (dryer, plain, pilot_wire, pump, {}),
-        c.CONF_OCCUPANCY: (dryer, plain, pilot_wire, pump, {}),
-        c.CONF_ENERGY: (plain, pilot_wire, pump, {}),
-        c.CONF_REMAINING_TIME: (radiator, with_light, plain, pilot_wire, pump, {}),
-        c.CONF_BOOST_DURATION: (radiator, with_light, plain, pilot_wire, pump, {}),
-        c.CONF_DRYING_DURATION: (radiator, with_light, plain, pilot_wire, pump, {}),
+        "central_heating_mode": (radiator, with_light, plain, pilot_wire, pump, {}),
+        "occupancy_detection": (dryer, plain, pilot_wire, pump, {}),
+        "occupancy": (dryer, plain, pilot_wire, pump, {}),
+        "energy": (plain, pilot_wire, pump, {}),
+        "remaining_time": (radiator, with_light, plain, pilot_wire, pump, {}),
+        "boost_duration": (radiator, with_light, plain, pilot_wire, pump, {}),
+        "drying_duration": (radiator, with_light, plain, pilot_wire, pump, {}),
     }
     hint = {
-        c.CONF_CENTRAL_HEATING_MODE: "io_model: towel_dryer",
-        c.CONF_OCCUPANCY_DETECTION: "io_model: heater_with_light",
-        c.CONF_OCCUPANCY: "io_model: heater_with_light",
-        c.CONF_ENERGY: "io_model: towel_dryer or io_model: heater_with_light",
-        c.CONF_REMAINING_TIME: "io_model: towel_dryer",
-        c.CONF_BOOST_DURATION: "io_model: towel_dryer",
-        c.CONF_DRYING_DURATION: "io_model: towel_dryer",
+        "central_heating_mode": "io_model: towel_dryer",
+        "occupancy_detection": "io_model: heater_with_light",
+        "occupancy": "io_model: heater_with_light",
+        "energy": "io_model: towel_dryer or io_model: heater_with_light",
+        "remaining_time": "io_model: towel_dryer",
+        "boost_duration": "io_model: towel_dryer",
+        "drying_duration": "io_model: towel_dryer",
     }
     for key, kinds in accepted.items():
         for kind in kinds:
             cfg = {**kind, key: {}}
-            assert c._validate_opt_in_reads(cfg) is cfg, (key, kind)
+            assert pc.validate_reading_keys(cfg) is cfg, (key, kind)
     for key, kinds in refused.items():
         for kind in kinds:
             cfg = {**kind, key: {}}
             try:
-                c._validate_opt_in_reads(cfg)
+                pc.validate_reading_keys(cfg)
             except cv.Invalid as err:
                 assert hint[key] in str(err) and str(err).startswith(key), (key, kind, str(err))
             else:
                 raise AssertionError(f"accepted {key} on {kind}")
+
+
+@case()
+def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
+    """The reading mirror drives the climate keys: each reading with a key has an entity kind, a capability the
+    features list knows and a hint to give where the capability is missing, and the schema offers exactly those keys;
+    a reading without a key has no entity kind to build."""
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as pc
+
+    keyed = {name: entry for name, entry in v.DEVICE_READINGS.items() if entry["key"] is not None}
+    assert {entry["key"] for entry in keyed.values()} == {
+        "central_heating_mode",
+        "occupancy_detection",
+        "occupancy",
+        "energy",
+        "remaining_time",
+        "boost_duration",
+        "drying_duration",
+    }
+    for name, entry in v.DEVICE_READINGS.items():
+        assert entry["feature"] in v.FEATURES, name
+        assert entry["source"] in ("register", "derived"), name
+        assert entry["registers"], name
+        if entry["key"] is not None:
+            assert entry["entity"] in ("sensor", "binary_sensor", "switch"), name
+            assert entry["feature"] in v.READING_FEATURE_HINTS, name
+    schema_keys = {str(key) for key in pc.reading_keys_schema()}
+    assert schema_keys == {entry["key"] for entry in keyed.values()}
+    try:
+        pc._reading_entity_schema({"key": "x", "entity": None})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a reading with a key and no entity kind must not build a schema")
 
 
 @case()

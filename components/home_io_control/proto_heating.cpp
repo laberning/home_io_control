@@ -7,6 +7,10 @@
 #include "proto_constants.h"
 #include "proto_private_registers.h"
 #include "proto_sizes.h"
+#include "proto_value_codecs.h"
+
+#include <optional>
+#include <span>
 
 namespace esphome {
 namespace home_io_control {
@@ -23,36 +27,16 @@ constexpr size_t PAYLOAD_LEN_ONE_VALUE = PRIVATE_REGISTER_HEADER_SIZE + 1;
 /// Payload length for a write of a 16-bit value (the setpoint).
 constexpr size_t PAYLOAD_LEN_TWO_VALUE = PRIVATE_REGISTER_PAYLOAD_MAX_SIZE;
 
-/// Wire scale of the setpoint registers: round(degrees * this), little-endian 16-bit.
-constexpr float DEGREES_TO_TENTHS = 10.0F;
-/// Scale of the room-temperature register: signed hundredths of a degree.
-constexpr float HUNDREDTHS_PER_DEGREE = 100.0F;
-
 /// Highest regulator-state value the register defines (HeatingRegulatorState::HEATING).
 constexpr uint8_t REGULATOR_STATE_MAX = static_cast<uint8_t>(HeatingRegulatorState::HEATING);
 /// Highest towel-dryer mode value the register defines (TowelDryerMode::MANUAL).
 constexpr uint8_t TOWEL_MODE_MAX = static_cast<uint8_t>(TowelDryerMode::MANUAL);
+/// Highest mode value a reply carries (HeatingMode::OFF); the "external setpoint" mode below it is readable.
+constexpr uint8_t HEATING_MODE_MAX = static_cast<uint8_t>(HeatingMode::OFF);
 /// Highest temporary-state value (HeatingTemporaryState::DRYING).
 constexpr uint8_t TEMPORARY_STATE_MAX = static_cast<uint8_t>(HeatingTemporaryState::DRYING);
 /// Highest working rate: a percentage.
 constexpr uint8_t WORKING_RATE_MAX = 100;
-
-/// @brief How a register's value maps onto the bytes after the 4-byte header.
-enum class HeatingValueKind : uint8_t {
-  NONE,                ///< No typed value: logged raw, never decoded.
-  TENTHS_U16,          ///< Unsigned 16-bit little-endian tenths of a degree.
-  TENTHS_U16_OR_ZERO,  ///< TENTHS_U16, and a write may also send 0 (`00 00`): "no value", which cancels.
-  HUNDREDTHS_S16,      ///< Signed 16-bit little-endian hundredths of a degree; -1 is a sensor fault.
-  BINARY,              ///< One byte, 0 or 1.
-  MODE,                ///< One HeatingMode byte.
-  BOUNDED_BYTE,        ///< One byte from 0 to the row's `max_value`: an enumeration (regulator state, towel-dryer
-                       ///< mode, temporary state) or a percentage (working rate).
-  BOUNDED_U16,   ///< Unsigned 16-bit little-endian integer from 0 to the row's `max_value` (night light brightness).
-  KWH_U16_BE,    ///< Unsigned 16-bit whole kilowatt-hours, most significant byte first: the energy total, the only
-                 ///< register whose 16-bit value is not little-endian.
-  MINUTES_BYTE,  ///< One byte, a number of minutes (a run's time left).
-  MINUTES_FIRST_OF_TWO,  ///< Two bytes, a duration in minutes then the panel's maximum; the first byte is the value.
-};
 
 /// @brief Who may do what with a register.
 enum class HeatingAccess : uint8_t {
@@ -70,67 +54,63 @@ struct HeatingFunctionDescriptor {
   HeatingFunction fn;     ///< Function this row describes.
   uint8_t register_low;   ///< Payload byte 3: low byte of the 0x01xx register number.
   HeatingAccess access;   ///< Whether the register may be read, written or both.
-  HeatingValueKind kind;  ///< How the value maps onto the trailing bytes.
+  ValueCodec kind;        ///< How the value maps onto the trailing bytes.
   uint16_t max_value{0};  ///< BOUNDED_BYTE, BOUNDED_U16: highest value a reply may carry and a write may send.
 };
 
 constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
-    {"power_on", HeatingFunction::POWER_ON, 0x2C, HeatingAccess::READ_ONLY, HeatingValueKind::NONE},
-    {"set_temperature", HeatingFunction::SET_TEMPERATURE, 0x03, HeatingAccess::READ_WRITE,
-     HeatingValueKind::TENTHS_U16},
-    {"set_mode", HeatingFunction::SET_MODE, 0x00, HeatingAccess::READ_WRITE, HeatingValueKind::MODE},
+    {"power_on", HeatingFunction::POWER_ON, 0x2C, HeatingAccess::READ_ONLY, ValueCodec::NONE},
+    {"set_temperature", HeatingFunction::SET_TEMPERATURE, 0x03, HeatingAccess::READ_WRITE, ValueCodec::TENTHS_U16},
+    {"set_mode", HeatingFunction::SET_MODE, 0x00, HeatingAccess::READ_WRITE, ValueCodec::BOUNDED_BYTE,
+     HEATING_MODE_MAX},
     // 0x0110 is written by a controller to say someone is there; a Sauter Hekla reports detected presence in it.
-    {"set_presence", HeatingFunction::SET_PRESENCE, 0x10, HeatingAccess::READ_WRITE, HeatingValueKind::BINARY},
+    {"set_presence", HeatingFunction::SET_PRESENCE, 0x10, HeatingAccess::READ_WRITE, ValueCodec::BINARY},
     {"set_open_window_detection", HeatingFunction::SET_OPEN_WINDOW_DETECTION, 0x06, HeatingAccess::READ_WRITE,
-     HeatingValueKind::BINARY},
-    {"midnight_sync", HeatingFunction::MIDNIGHT_SYNC, 0x30, HeatingAccess::READ_ONLY, HeatingValueKind::NONE},
-    {"room_temperature", HeatingFunction::ROOM_TEMPERATURE, 0x15, HeatingAccess::READ_ONLY,
-     HeatingValueKind::HUNDREDTHS_S16},
-    {"regulator_state", HeatingFunction::REGULATOR_STATE, 0x17, HeatingAccess::READ_ONLY,
-     HeatingValueKind::BOUNDED_BYTE, REGULATOR_STATE_MAX},
-    {"max_setpoint", HeatingFunction::MAX_SETPOINT, 0x02, HeatingAccess::READ_ONLY, HeatingValueKind::TENTHS_U16},
-    {"window_open", HeatingFunction::WINDOW_OPEN, 0x0E, HeatingAccess::READ_ONLY, HeatingValueKind::BINARY},
+     ValueCodec::BINARY},
+    {"midnight_sync", HeatingFunction::MIDNIGHT_SYNC, 0x30, HeatingAccess::READ_ONLY, ValueCodec::NONE},
+    {"room_temperature", HeatingFunction::ROOM_TEMPERATURE, 0x15, HeatingAccess::READ_ONLY, ValueCodec::HUNDREDTHS_S16},
+    {"regulator_state", HeatingFunction::REGULATOR_STATE, 0x17, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
+     REGULATOR_STATE_MAX},
+    {"max_setpoint", HeatingFunction::MAX_SETPOINT, 0x02, HeatingAccess::READ_ONLY, ValueCodec::TENTHS_U16},
+    {"window_open", HeatingFunction::WINDOW_OPEN, 0x0E, HeatingAccess::READ_ONLY, ValueCodec::BINARY},
     // Towel-dryer registers: read on two Atlantic Adelis units (corpus atlantic_adelis_probe_*); writing
     // 0x0136 (mode) and 0x013E (boost, drying) is confirmed against the display (issue #202).
-    {"towel_mode", HeatingFunction::TOWEL_MODE, 0x36, HeatingAccess::READ_WRITE, HeatingValueKind::BOUNDED_BYTE,
+    {"towel_mode", HeatingFunction::TOWEL_MODE, 0x36, HeatingAccess::READ_WRITE, ValueCodec::BOUNDED_BYTE,
      TOWEL_MODE_MAX},
-    {"temporary_state", HeatingFunction::TEMPORARY_STATE, 0x3E, HeatingAccess::READ_WRITE,
-     HeatingValueKind::BOUNDED_BYTE, TEMPORARY_STATE_MAX},
-    {"working_rate", HeatingFunction::WORKING_RATE, 0x26, HeatingAccess::READ_ONLY, HeatingValueKind::BOUNDED_BYTE,
+    {"temporary_state", HeatingFunction::TEMPORARY_STATE, 0x3E, HeatingAccess::READ_WRITE, ValueCodec::BOUNDED_BYTE,
+     TEMPORARY_STATE_MAX},
+    {"working_rate", HeatingFunction::WORKING_RATE, 0x26, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
      WORKING_RATE_MAX},
     // Read on a towel dryer in a programme period (issue #202): the temperature in force in 0x0137 and the
     // eco setback in 0x0104.
     {"temperature_in_force", HeatingFunction::TEMPERATURE_IN_FORCE, 0x37, HeatingAccess::READ_ONLY,
-     HeatingValueKind::TENTHS_U16},
-    {"eco_setback", HeatingFunction::ECO_SETBACK, 0x04, HeatingAccess::READ_ONLY, HeatingValueKind::TENTHS_U16},
+     ValueCodec::TENTHS_U16},
+    {"eco_setback", HeatingFunction::ECO_SETBACK, 0x04, HeatingAccess::READ_ONLY, ValueCodec::TENTHS_U16},
     // Read during a panel override on a towel dryer (issue #202): 16.5 degrees, 0 otherwise.
     {"set_derogation", HeatingFunction::DEROGATED_SETPOINT, 0x1D, HeatingAccess::READ_WRITE,
-     HeatingValueKind::TENTHS_U16_OR_ZERO},
+     ValueCodec::TENTHS_U16_OR_ZERO},
     // Not read on any radiator yet; the same temperature as 0x0137 on a towel dryer, which read it in both.
     {"heater_temperature_in_force", HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, 0x2A, HeatingAccess::READ_ONLY,
-     HeatingValueKind::TENTHS_U16},
+     ValueCodec::TENTHS_U16},
     // Night light registers: read on a Sauter Hekla with the light on and off (issue #222).
-    {"night_light", HeatingFunction::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, HeatingValueKind::BINARY},
+    {"night_light", HeatingFunction::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, ValueCodec::BINARY},
     {"night_light_brightness", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 0x42, HeatingAccess::READ_WRITE,
-     HeatingValueKind::BOUNDED_U16, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
+     ValueCodec::BOUNDED_U16, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
     // Read on a mixed towel dryer (issue #243): 1 while its central-heating mode is on, 0 in electric mode.
-    {"central_heating_mode", HeatingFunction::CENTRAL_HEATING_MODE, 0x53, HeatingAccess::READ_ONLY,
-     HeatingValueKind::BINARY},
+    {"central_heating_mode", HeatingFunction::CENTRAL_HEATING_MODE, 0x53, HeatingAccess::READ_ONLY, ValueCodec::BINARY},
     // Read and written on a Sauter Hekla (issue #222): 1 with its occupancy detection on, 0 with it off.
-    {"occupancy_detection", HeatingFunction::OCCUPANCY_DETECTION, 0x01, HeatingAccess::READ_WRITE,
-     HeatingValueKind::BINARY},
+    {"occupancy_detection", HeatingFunction::OCCUPANCY_DETECTION, 0x01, HeatingAccess::READ_WRITE, ValueCodec::BINARY},
     // Read on two Sauter Tahual radiators, equal to their displays (PR #238), and on an EMOTION 3 H and two Adelis.
-    {"energy_total", HeatingFunction::ENERGY_TOTAL, 0x16, HeatingAccess::READ_ONLY, HeatingValueKind::KWH_U16_BE},
+    {"energy_total", HeatingFunction::ENERGY_TOTAL, 0x16, HeatingAccess::READ_ONLY, ValueCodec::U16_BE},
     // Read on Atlantic Adelis towel dryers during a boost and a drying run, and with the durations changed on the
     // panel (issue #202): the minutes left of each run, and the duration set for each with the panel's maximum.
-    {"boost_remaining", HeatingFunction::BOOST_REMAINING, 0x3A, HeatingAccess::READ_ONLY,
-     HeatingValueKind::MINUTES_BYTE},
-    {"boost_duration", HeatingFunction::BOOST_DURATION, 0x3B, HeatingAccess::READ_ONLY,
-     HeatingValueKind::MINUTES_FIRST_OF_TWO},
-    {"drying_remaining", HeatingFunction::DRYING_REMAINING, 0x3C, HeatingAccess::READ_ONLY,
-     HeatingValueKind::MINUTES_BYTE},
+    {"boost_remaining", HeatingFunction::BOOST_REMAINING, 0x3A, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
+     VALUE_BYTE_MAX},
+    {"boost_duration", HeatingFunction::BOOST_DURATION, 0x3B, HeatingAccess::READ_ONLY, ValueCodec::FIRST_BYTE_OF_PAIR},
+    {"drying_remaining", HeatingFunction::DRYING_REMAINING, 0x3C, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
+     VALUE_BYTE_MAX},
     {"drying_duration", HeatingFunction::DRYING_DURATION, 0x3D, HeatingAccess::READ_ONLY,
-     HeatingValueKind::MINUTES_FIRST_OF_TWO},
+     ValueCodec::FIRST_BYTE_OF_PAIR},
 };
 
 /// @brief Look up the descriptor for a function.
@@ -147,27 +127,6 @@ const HeatingFunctionDescriptor *descriptor_for(HeatingFunction fn) {
 /// @brief Write the 4-byte request header for a row.
 void write_header(const HeatingFunctionDescriptor &d, uint8_t direction, uint8_t *out) {
   write_private_register_header(direction, HEATING_REGISTER_HIGH_BYTE, d.register_low, out);
-}
-
-/// @brief Number of value bytes behind the header for a kind.
-size_t value_length(HeatingValueKind kind) {
-  switch (kind) {
-    case HeatingValueKind::NONE:
-      return 0;
-    case HeatingValueKind::TENTHS_U16:
-    case HeatingValueKind::TENTHS_U16_OR_ZERO:
-    case HeatingValueKind::HUNDREDTHS_S16:
-    case HeatingValueKind::BOUNDED_U16:
-    case HeatingValueKind::KWH_U16_BE:
-    case HeatingValueKind::MINUTES_FIRST_OF_TWO:
-      return 2;
-    case HeatingValueKind::BINARY:
-    case HeatingValueKind::MODE:
-    case HeatingValueKind::BOUNDED_BYTE:
-    case HeatingValueKind::MINUTES_BYTE:
-      return 1;
-  }
-  return 0;
 }
 
 /// @brief Is `value` an integer from 0 to `max_value`? NaN fails every comparison, so it is refused too.
@@ -226,11 +185,11 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE
     return 0;
 
   switch (d->kind) {
-    case HeatingValueKind::TENTHS_U16_OR_ZERO:
+    case ValueCodec::TENTHS_U16_OR_ZERO:
       if (value == 0.0F)
         return write_u16_set(*d, 0, out);
       [[fallthrough]];
-    case HeatingValueKind::TENTHS_U16: {
+    case ValueCodec::TENTHS_U16: {
       // Reject NaN / infinity and anything outside the representable range rather than emitting a
       // wrapped byte.
       if (!std::isfinite(value) || value < HEATING_TEMP_MIN_C || value > HEATING_TEMP_MAX_C)
@@ -242,45 +201,37 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE
       // precision, no hidden widening to double). That holds on x86-64 SSE and on Xtensa; the
       // proto_heating test pins 20.55 C, which is one ULP from flipping to 0xCD under any
       // excess-precision evaluation.
-      return write_u16_set(*d, static_cast<uint16_t>(std::round(value * DEGREES_TO_TENTHS)), out);
+      return write_u16_set(*d, static_cast<uint16_t>(std::round(value * VALUE_TENTHS_PER_UNIT)), out);
     }
 
-    case HeatingValueKind::MODE:
-      // Exact float match against the four modes this component writes; a non-integral or unknown
-      // value (the "external" mode included) is rejected, not coerced.
-      if (value != static_cast<float>(HeatingMode::AUTO) && value != static_cast<float>(HeatingMode::MANUAL) &&
-          value != static_cast<float>(HeatingMode::PROG) && value != static_cast<float>(HeatingMode::OFF))
-        return 0;
-      write_header(*d, PRIVATE_REGISTER_DIRECTION_SET, out);
-      out[4] = static_cast<uint8_t>(value);
-      return PAYLOAD_LEN_ONE_VALUE;
-
-    case HeatingValueKind::BINARY:
+    case ValueCodec::BINARY:
       if (value != 0.0F && value != 1.0F)
         return 0;
       write_header(*d, PRIVATE_REGISTER_DIRECTION_SET, out);
       out[4] = static_cast<uint8_t>(value);
       return PAYLOAD_LEN_ONE_VALUE;
 
-    case HeatingValueKind::BOUNDED_BYTE:
+    case ValueCodec::BOUNDED_BYTE:
       // An integral value inside the register's range; anything else is refused, never truncated.
       if (!is_bounded_integer(value, d->max_value))
+        return 0;
+      // The mode register reads back the "external setpoint" mode, which this component never writes.
+      if (fn == HeatingFunction::SET_MODE && value == static_cast<float>(HeatingMode::EXTERNAL_SETPOINT))
         return 0;
       write_header(*d, PRIVATE_REGISTER_DIRECTION_SET, out);
       out[4] = static_cast<uint8_t>(value);
       return PAYLOAD_LEN_ONE_VALUE;
 
-    case HeatingValueKind::BOUNDED_U16:
+    case ValueCodec::BOUNDED_U16:
       // The same rule, in the two-byte form.
       if (!is_bounded_integer(value, d->max_value))
         return 0;
       return write_u16_set(*d, static_cast<uint16_t>(value), out);
 
-    case HeatingValueKind::NONE:
-    case HeatingValueKind::HUNDREDTHS_S16:
-    case HeatingValueKind::KWH_U16_BE:
-    case HeatingValueKind::MINUTES_BYTE:
-    case HeatingValueKind::MINUTES_FIRST_OF_TWO:
+    case ValueCodec::NONE:
+    case ValueCodec::HUNDREDTHS_S16:
+    case ValueCodec::U16_BE:
+    case ValueCodec::FIRST_BYTE_OF_PAIR:
       return 0;  // no writable register has this encoding
   }
   return 0;
@@ -295,65 +246,21 @@ size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVA
 
 bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value) {
   const HeatingFunctionDescriptor *d = descriptor_for(fn);
-  if (d == nullptr || d->kind == HeatingValueKind::NONE ||
+  if (d == nullptr || d->kind == ValueCodec::NONE ||
       !private_reply_echoes_register(reply, HEATING_REGISTER_HIGH_BYTE, d->register_low))
     return false;
-  if (reply.data_len < PRIVATE_REGISTER_VALUE_OFFSET + value_length(d->kind))
+  if (reply.data_len < PRIVATE_REGISTER_VALUE_OFFSET)
     return false;
 
-  const uint8_t *v = reply.data + PRIVATE_REGISTER_VALUE_OFFSET;
-  const auto raw16 = static_cast<uint16_t>(v[0] | (v[1] << BITS_PER_BYTE));
-  switch (d->kind) {
-    case HeatingValueKind::TENTHS_U16:
-    case HeatingValueKind::TENTHS_U16_OR_ZERO:
-      value = static_cast<float>(raw16) / DEGREES_TO_TENTHS;
-      return true;
-
-    case HeatingValueKind::HUNDREDTHS_S16: {
-      const auto signed_raw = static_cast<int16_t>(raw16);
-      value = signed_raw == HEATING_SENSOR_FAULT_RAW ? NAN : static_cast<float>(signed_raw) / HUNDREDTHS_PER_DEGREE;
-      return true;
-    }
-
-    case HeatingValueKind::BINARY:
-      if (v[0] > 1)
-        return false;
-      value = static_cast<float>(v[0]);
-      return true;
-
-    case HeatingValueKind::MODE:
-      if (v[0] > static_cast<uint8_t>(HeatingMode::OFF))
-        return false;
-      value = static_cast<float>(v[0]);
-      return true;
-
-    case HeatingValueKind::BOUNDED_BYTE:
-      if (v[0] > d->max_value)
-        return false;
-      value = static_cast<float>(v[0]);
-      return true;
-
-    case HeatingValueKind::BOUNDED_U16:
-      if (raw16 > d->max_value)
-        return false;
-      value = static_cast<float>(raw16);
-      return true;
-
-    case HeatingValueKind::KWH_U16_BE:
-      // Most significant byte first, unlike raw16 above.
-      value = static_cast<float>((v[0] << BITS_PER_BYTE) | v[1]);
-      return true;
-
-    case HeatingValueKind::MINUTES_BYTE:
-    case HeatingValueKind::MINUTES_FIRST_OF_TWO:
-      // The first byte; the second of a pair (the panel's maximum) is not read.
-      value = static_cast<float>(v[0]);
-      return true;
-
-    case HeatingValueKind::NONE:
-      return false;
-  }
-  return false;
+  const std::optional<float> decoded =
+      decode_value(d->kind,
+                   std::span<const uint8_t>(reply.data + PRIVATE_REGISTER_VALUE_OFFSET,
+                                            reply.data_len - PRIVATE_REGISTER_VALUE_OFFSET),
+                   d->max_value);
+  if (!decoded)
+    return false;
+  value = *decoded;
+  return true;
 }
 
 // === HeatingReadings: one table from register to field ===
@@ -437,6 +344,13 @@ bool HeatingReadings::has(HeatingFunction fn) const {
   if (field == nullptr)
     return false;
   return field->number != nullptr ? !std::isnan(this->*field->number) : this->*field->integer >= 0;
+}
+
+std::optional<float> HeatingReadings::reading_of(HeatingFunction fn) const {
+  const HeatingReadingField *field = reading_field_for(fn);
+  if (field == nullptr || !this->has(fn))
+    return std::nullopt;
+  return field->number != nullptr ? this->*field->number : static_cast<float>(this->*field->integer);
 }
 
 float HeatingReadings::number_of(HeatingFunction fn) const {
