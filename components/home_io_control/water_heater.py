@@ -3,8 +3,8 @@
 ## @ingroup hioc_codegen
 ##
 ## Binds an ESPHome water_heater entity to a domestic hot water heater (io_device_type: domestic_hot_water),
-## with four opt-in companions: energy (kWh, for the energy dashboard), heat pump running, electric backup
-## running, and a boost switch. Boost and away travel in the heater's operating-mode word and are
+## with opt-in companions: energy (kWh, for the energy dashboard), heat pump running, electric backup
+## running, a boost switch and, on an electric storage water heater, its showers and heating power. Boost and away travel in the heater's operating-mode word and are
 ## experimental: not confirmed on hardware yet. The heater is polled (default every five minutes);
 ## `status_poll_interval` sets the cadence, with the same one-minute floor as climate. Shared device-binding
 ## logic lives in platform_common.py; only the water heater's entity and companions are built here.
@@ -21,9 +21,12 @@ from esphome.const import (
     CONF_ENERGY,
     CONF_ID,
     DEVICE_CLASS_ENERGY,
+    DEVICE_CLASS_POWER,
     DEVICE_CLASS_RUNNING,
+    STATE_CLASS_MEASUREMENT,
     STATE_CLASS_TOTAL_INCREASING,
     UNIT_KILOWATT_HOURS,
+    UNIT_WATT,
 )
 
 from . import home_io_control_ns
@@ -40,27 +43,67 @@ from .platform_common import (
     wire_device_binding,
     CONF_DEVICE_TYPE,
     CONF_HOME_IO_CONTROL_ID,
+    CONF_MODEL,
 )
 
 DEPENDENCIES = ["home_io_control"]
 
 IOHomeWaterHeater = home_io_control_ns.class_("IOHomeWaterHeater", water_heater.WaterHeater, cg.Component)
 IOHomeDhwEnergySensor = home_io_control_ns.class_("IOHomeDhwEnergySensor", sensor.Sensor, cg.Component)
+IOHomeDhwReadingSensor = home_io_control_ns.class_("IOHomeDhwReadingSensor", sensor.Sensor, cg.Component)
 IOHomeDhwBinarySensor = home_io_control_ns.class_(
     "IOHomeDhwBinarySensor", binary_sensor.BinarySensor, cg.Component
 )
 IOHomeDhwBoostSwitch = home_io_control_ns.class_("IOHomeDhwBoostSwitch", switch.Switch, cg.Component)
 DhwReading = IOHomeDhwBinarySensor.enum("Reading", is_class=True)
+DhwSensorReading = IOHomeDhwReadingSensor.enum("Reading", is_class=True)
 
 CONF_HEAT_PUMP_RUNNING = "heat_pump_running"
 CONF_ELECTRIC_BACKUP_RUNNING = "electric_backup_running"
 CONF_BOOST = "boost"
+CONF_SHOWERS_AVAILABLE = "showers_available"
+CONF_SHOWERS_TARGET = "showers_target"
+CONF_HEATING_POWER = "heating_power"
+ICON_SHOWER = "mdi:shower"
+MODEL_ELECTRIC_WATER_HEATER = "electric_water_heater"
 
 # (YAML key, IOHomeDhwBinarySensor::Reading) of each opt-in binary companion.
 _BINARY_COMPANIONS = (
     (CONF_HEAT_PUMP_RUNNING, DhwReading.HEAT_PUMP),
     (CONF_ELECTRIC_BACKUP_RUNNING, DhwReading.ELECTRIC_BACKUP),
 )
+
+
+# (YAML key, IOHomeDhwReadingSensor::Reading) of each sensor only an electric storage water heater reports.
+_ELECTRIC_SENSORS = (
+    (CONF_SHOWERS_AVAILABLE, DhwSensorReading.SHOWERS_AVAILABLE),
+    (CONF_SHOWERS_TARGET, DhwSensorReading.SHOWERS_TARGET),
+    (CONF_HEATING_POWER, DhwSensorReading.HEATING_POWER),
+)
+
+
+def _validate_electric_sensors(config):
+    """Accept the showers and heating power sensors only on the model whose poll reads them."""
+    if config.get(CONF_MODEL) == MODEL_ELECTRIC_WATER_HEATER:
+        return config
+    for key, _ in _ELECTRIC_SENSORS:
+        if key in config:
+            raise cv.Invalid(
+                f"{key} needs an electric storage water heater: set io_subtype: 0 and "
+                f"io_model: {MODEL_ELECTRIC_WATER_HEATER}",
+                path=[key],
+            )
+    return config
+
+
+def _showers_sensor_schema():
+    """A count of showers: whole numbers, no unit."""
+    return sensor.sensor_schema(
+        IOHomeDhwReadingSensor,
+        icon=ICON_SHOWER,
+        accuracy_decimals=0,
+        state_class=STATE_CLASS_MEASUREMENT,
+    ).extend(cv.COMPONENT_SCHEMA)
 
 
 def _validate_water_heater_kind(config):
@@ -105,6 +148,15 @@ CONFIG_SCHEMA = cv.All(
                 device_class=DEVICE_CLASS_ENERGY,
                 state_class=STATE_CLASS_TOTAL_INCREASING,
             ).extend(cv.COMPONENT_SCHEMA),
+            cv.Optional(CONF_SHOWERS_AVAILABLE): _showers_sensor_schema(),
+            cv.Optional(CONF_SHOWERS_TARGET): _showers_sensor_schema(),
+            cv.Optional(CONF_HEATING_POWER): sensor.sensor_schema(
+                IOHomeDhwReadingSensor,
+                unit_of_measurement=UNIT_WATT,
+                accuracy_decimals=0,
+                device_class=DEVICE_CLASS_POWER,
+                state_class=STATE_CLASS_MEASUREMENT,
+            ).extend(cv.COMPONENT_SCHEMA),
             cv.Optional(CONF_HEAT_PUMP_RUNNING): binary_sensor.binary_sensor_schema(
                 IOHomeDhwBinarySensor, device_class=DEVICE_CLASS_RUNNING
             ).extend(cv.COMPONENT_SCHEMA),
@@ -122,6 +174,7 @@ CONFIG_SCHEMA = cv.All(
     _validate_water_heater_kind,
     functools.partial(validate_register_poll_interval, platform="water_heater"),
     validate_device_model,
+    _validate_electric_sensors,
     warn_if_experimental_kind,
     _inject_companion_ids,
 )
@@ -140,6 +193,14 @@ async def to_code(config):
         await create_user_companion(
             config, parent, new_entity=sensor.new_sensor, entity_config=config[CONF_ENERGY]
         )
+
+    for key, reading in _ELECTRIC_SENSORS:
+        if key not in config:
+            continue
+        companion = await create_user_companion(
+            config, parent, new_entity=sensor.new_sensor, entity_config=config[key]
+        )
+        cg.add(companion.set_reading(reading))
 
     for key, reading in _BINARY_COMPANIONS:
         if key not in config:

@@ -134,6 +134,34 @@ class IOHomeDhwEnergySensor : public IOHomeCompanionSensor {
   void dump_config() override;
 };
 
+/// @brief Sensor of one reading only an electric storage water heater reports: the showers available, the
+/// showers it aims for, or its heating power.
+/// @ingroup hioc_platforms
+///
+/// No state until the first poll has read the register it shows, and nothing is published while the value stays
+/// the same.
+class IOHomeDhwReadingSensor : public IOHomeCompanionSensor {
+ public:
+  /// @brief Which reading the sensor shows.
+  enum class Reading : uint8_t {
+    SHOWERS_AVAILABLE,  ///< Register 0x0046: the showers the display shows steadily lit.
+    SHOWERS_TARGET,     ///< Register 0x004A: the showers the display shows lit, steadily or blinking.
+    HEATING_POWER,      ///< Register 0x0032: the heating power in watts.
+  };
+
+  /// @brief Choose the reading (codegen sets it once).
+  /// @param reading Reading to show.
+  void set_reading(Reading reading) { this->reading_ = reading; }
+
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+  /// @brief Dump sensor configuration to the log.
+  void dump_config() override;
+
+ protected:
+  Reading reading_{Reading::SHOWERS_AVAILABLE};
+};
+
 /// @brief Binary sensor of one heating state of the heater: heat pump running or electric backup running.
 /// @ingroup hioc_platforms
 ///

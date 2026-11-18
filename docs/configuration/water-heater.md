@@ -120,6 +120,12 @@ water_heater:
       name: "Hot water energy"
     electric_backup_running:
       name: "Hot water heating"
+    showers_available:
+      name: "Hot water showers available"
+    showers_target:
+      name: "Hot water showers target"
+    heating_power:
+      name: "Hot water heating power"
 ```
 
 It was read on one Sauter Guelma connecté 80 L in automatic mode, manual mode, absence and boost. A
@@ -143,8 +149,14 @@ heater declared without the model that answers this way is named in a warning at
 - **A target is shown but not sent.** How this model takes one is not known yet, so a target set in Home
   Assistant is refused with a warning in the log. Use the heater's display.
 - `heat_pump_running` has no state on this model: it has no heat pump.
-- The showers the heater aims for and has available, and its heating power in watts, are read every
-  poll and logged when they change. They have no entity yet.
+- `showers_available` (Optional): A sensor of the showers of hot water available, the ones the display shows
+  steadily lit.
+- `showers_target` (Optional): A sensor of the showers the heater aims for, the ones the display shows lit,
+  steadily or blinking. It reads 0 in absence.
+- `heating_power` (Optional): A sensor of the heating power in watts, with `device_class: power`. It reads 0
+  when the heater is not heating.
+
+These three sensors need `io_model: electric_water_heater`; the build refuses them on another water heater.
 
 ## See also
 

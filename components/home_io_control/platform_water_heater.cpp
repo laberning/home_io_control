@@ -237,6 +237,43 @@ void IOHomeDhwEnergySensor::dump_config() {
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
 }
 
+void IOHomeDhwReadingSensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    int32_t value = -1;
+    switch (this->reading_) {
+      case Reading::SHOWERS_AVAILABLE:
+        value = dev.dhw.showers_available;
+        break;
+      case Reading::SHOWERS_TARGET:
+        value = dev.dhw.showers_target;
+        break;
+      case Reading::HEATING_POWER:
+        value = dev.dhw.power_w;
+        break;
+    }
+    // Every device update lands here; only a value the heater reported, and only when it changed, is published.
+    const auto reading = static_cast<float>(value);
+    if (value >= 0 && reading != this->state)
+      this->publish_state(reading);
+  });
+}
+
+void IOHomeDhwReadingSensor::dump_config() {
+  const char *reading = "showers available";
+  switch (this->reading_) {
+    case Reading::SHOWERS_AVAILABLE:
+      break;
+    case Reading::SHOWERS_TARGET:
+      reading = "showers aimed for";
+      break;
+    case Reading::HEATING_POWER:
+      reading = "heating power";
+      break;
+  }
+  ESP_LOGCONFIG(TAG, "IO-Homecontrol Water Heater %s:", reading);
+  ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+}
+
 void IOHomeDhwBinarySensor::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {
     int8_t value = -1;

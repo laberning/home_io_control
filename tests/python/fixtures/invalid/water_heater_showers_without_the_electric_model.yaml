@@ -1,0 +1,13 @@
+# expect-error: showers_available needs an electric storage water heater
+# covers: water_heater._validate_electric_sensors
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+water_heater:
+  - platform: home_io_control
+    name: "Hot Water"
+    io_device_id: "F9CF0F"
+    io_device_type: domestic_hot_water
+    showers_available:
+      name: "Hot Water Showers"

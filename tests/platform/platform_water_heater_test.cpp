@@ -622,6 +622,45 @@ TEST(PlatformWaterHeater, EnergyIsPublishedInKilowattHoursOnceRead) {
   EXPECT_FLOAT_EQ(energy.state, 1831.746F);
 }
 
+TEST(PlatformWaterHeater, EachElectricSensorShowsItsReadingAndNothingBeforeIt) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_electric_water_heater(entity, hub);
+  IOHomeDhwReadingSensor available;
+  IOHomeDhwReadingSensor target;
+  IOHomeDhwReadingSensor power;
+  const std::pair<IOHomeDhwReadingSensor *, IOHomeDhwReadingSensor::Reading> sensors[] = {
+      {&available, IOHomeDhwReadingSensor::Reading::SHOWERS_AVAILABLE},
+      {&target, IOHomeDhwReadingSensor::Reading::SHOWERS_TARGET},
+      {&power, IOHomeDhwReadingSensor::Reading::HEATING_POWER},
+  };
+  for (const auto &[sensor, reading] : sensors) {
+    sensor->set_parent(&hub);
+    sensor->set_device_id("ABC123");
+    sensor->set_reading(reading);
+    sensor->setup();
+    EXPECT_TRUE(std::isnan(sensor->state)) << "nothing before the first read";
+  }
+
+  // Automatic mode, three showers lit of which two steady, heating at 1000 W.
+  DhwReadings readings;
+  readings.showers_available = 2;
+  readings.showers_target = 3;
+  readings.power_w = 1000;
+  publish(hub, readings);
+  EXPECT_FLOAT_EQ(available.state, 2.0F);
+  EXPECT_FLOAT_EQ(target.state, 3.0F);
+  EXPECT_FLOAT_EQ(power.state, 1000.0F);
+
+  // Zero is a reading: absence aims for no shower, and the element is off at rest.
+  readings.showers_target = 0;
+  readings.power_w = 0;
+  publish(hub, readings);
+  EXPECT_FLOAT_EQ(target.state, 0.0F);
+  EXPECT_FLOAT_EQ(power.state, 0.0F);
+  EXPECT_FLOAT_EQ(available.state, 2.0F);
+}
+
 TEST(PlatformWaterHeater, EachBinaryCompanionShowsItsReadingAndNothingBeforeIt) {
   MockHubWaterHeater hub;
   IOHomeWaterHeater entity;

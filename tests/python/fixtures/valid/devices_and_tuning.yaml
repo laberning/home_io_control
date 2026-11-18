@@ -137,3 +137,9 @@ water_heater:
       name: "Electric Hot Water Heating"
     boost:
       name: "Electric Hot Water Boost"
+    showers_available:
+      name: "Electric Hot Water Showers Available"
+    showers_target:
+      name: "Electric Hot Water Showers Target"
+    heating_power:
+      name: "Electric Hot Water Power"
