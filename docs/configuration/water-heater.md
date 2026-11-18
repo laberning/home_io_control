@@ -2,9 +2,10 @@
 <!-- doxygen-label: cfg_water_heater -->
 
 > [!NOTE]
-> The water heater platform is confirmed on one heater, an
-> [Atlantic Calypso Connecté](../devices/atlantic-calypso.md): readings, target, mode, boost and away.
-> That heater takes only its own fixed targets; see
+> The water heater platform is confirmed on two heaters, an
+> [Atlantic Calypso Connecté](../devices/atlantic-calypso.md) and an
+> [Atlantic Explorer V4](../devices/atlantic-explorer-v4.md): readings, target, mode, boost and away.
+> The Calypso takes only its own fixed targets; see
 > [Choosing a target](../devices/atlantic-calypso.md#choosing-a-calypso-target).
 
 The `water_heater:` entity drives a domestic hot water heater (node type 51, `domestic_hot_water`). It
@@ -13,7 +14,9 @@ show the energy used and what is heating, and an optional switch starts and ends
 away mode starts and ends the heater's holiday mode. Which heater mode each of the card's modes stands
 for is on [Heat-pump water heaters](../heating.md#heat-pump-water-heaters). The design is recorded in
 [ADR 0068](../adr/0068-a-domestic-hot-water-device-is-a-water-heater.md); boost and away follow
-[ADR 0081](../adr/0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md).
+[ADR 0081](../adr/0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md), and
+`max_temperature` and `io_model`
+[ADR 0099](../adr/0099-a-water-heaters-target-range-and-boost-reading-follow-its-model.md).
 
 The keys every entity platform shares (`name`, `io_device_id`, `io_subtype`, `low_power`,
 `system_key`, `linked_remotes`, `home_io_control_id`) are documented in
@@ -46,7 +49,8 @@ water_heater:
   to a kind that is read as a water heater, so the build refuses an entry without the key or with
   another kind. The kind is experimental, and the build warns about it.
 - `status_poll_interval` (Optional): How often the heater is read. Default 5 minutes, minimum 60 s.
-- `io_model` (Optional): `explorer_v4` for an Atlantic Explorer V4, with `io_subtype: 0`. It reports
+- `io_model` (Optional): `explorer_v4` for an
+  [Atlantic Explorer V4](../devices/atlantic-explorer-v4.md), with `io_subtype: 0`. It reports
   the same type, subtype, name and brand as a Calypso, so only the YAML can say which it is. The model
   reads the heater's boost field the other way round (the Explorer V4 reports 2 while a boost runs,
   where a Calypso reports 1) and makes `max_temperature` default to 70. Without it the switch shows a
@@ -128,4 +132,5 @@ a boost it reports a target of 62 °C, which the card shows, and its own target 
 ## See also
 
 - [Atlantic Calypso Connecté](../devices/atlantic-calypso.md)
+- [Atlantic Explorer V4](../devices/atlantic-explorer-v4.md)
 - [Supported devices](../supported-devices.md)

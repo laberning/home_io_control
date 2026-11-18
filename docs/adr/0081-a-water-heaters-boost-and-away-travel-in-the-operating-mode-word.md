@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0081 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0099](0099-a-water-heaters-target-range-and-boost-reading-follow-its-model.md) · **Recorded:** 2026-11
 
 Amends [ADR 0068](0068-a-domestic-hot-water-device-is-a-water-heater.md) (a domestic hot water device is
 a water heater).

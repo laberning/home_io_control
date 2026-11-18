@@ -84,6 +84,7 @@ Which kind your product is:
 | [Atlantic Adelis](devices/atlantic-adelis.md) | Towel dryer |
 | [Thermor Interface Cozytouch for pilot-wire heaters](devices/thermor-pilot-wire-interface.md) | Pilot-wire interface |
 | [Atlantic Calypso Connecté](devices/atlantic-calypso.md) | Heat-pump water heater |
+| [Atlantic Explorer V4](devices/atlantic-explorer-v4.md) | Heat-pump water heater, declared with `io_model: explorer_v4` |
 
 The card of each kind, keyed by the three keys of your entry. The section of the kind has the detail.
 
@@ -234,8 +235,9 @@ of the device's own named setpoints.
 ## Heat-pump water heaters
 
 A water heater with a heat pump and an electric backup element: the
-[Atlantic Calypso Connecté](devices/atlantic-calypso.md). It is a `water_heater:` entity. Each mode
-is the Home Assistant mode that describes what heats.
+[Atlantic Calypso Connecté](devices/atlantic-calypso.md) and the
+[Atlantic Explorer V4](devices/atlantic-explorer-v4.md). It is a `water_heater:` entity. Each mode
+is the Home Assistant mode that describes what heats. The targets in the table are the Calypso's.
 
 | Heater display | Home Assistant mode | What heats | Target |
 |---|---|---|---|
@@ -254,10 +256,13 @@ is the Home Assistant mode that describes what heats.
   [Boost and away](configuration/water-heater.md#boost-and-away).
 - The optional `heating_source` sensor says what heats right now: `heat pump`, `electric backup`,
   `heat pump and electric backup` or `idle`.
+- An Explorer V4 has the same three modes and is declared with `io_model: explorer_v4`. Its target scale
+  runs to 70 °C, and in manual with ECO on it keeps at most 55 °C.
 
-All three modes, the target, boost and away are confirmed on one Calypso (issue #198). That manual
-ECO on heats with the heat pump alone comes from the heater's manual and has not been confirmed by
-watching the element; the `heating_source` sensor shows what runs, so you can check it.
+All three modes, the target, boost and away are confirmed on one Calypso (issue #198) and on one
+Explorer V4. That manual ECO on heats with the heat pump alone comes from the Calypso's manual and has
+not been confirmed by watching the element; the `heating_source` sensor shows what runs, so you can
+check it.
 
 ## A target set while the heater's program runs
 
