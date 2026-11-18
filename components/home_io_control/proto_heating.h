@@ -146,10 +146,20 @@ enum class HeatingMode : uint8_t {
   AUTO = 0x00,               ///< Automatic mode; the device manages the setpoint itself.
   MANUAL = 0x01,             ///< Manual mode; follows the last written setpoint.
   PROG = 0x02,               ///< Program mode; the device runs its own stored weekly schedule.
-  EXTERNAL_SETPOINT = 0x03,  ///< Setpoint comes from an external controller. Readable, never written by this
-                             ///< component. Not named EXTERNAL: the Arduino core defines that as a macro.
+  EXTERNAL_SETPOINT = 0x03,  ///< Setpoint comes from an external controller. Readable, never written (see
+                             ///< heating_mode_is_writable()). Not named EXTERNAL: the Arduino core defines
+                             ///< that as a macro.
   OFF = 0x04,                ///< Off / standby.
 };
+
+/// @brief Whether this component may write a mode to the mode register.
+/// @details Every mode except EXTERNAL_SETPOINT. That mode hands the setpoint to an external controller, so
+///          writing it is untested and could leave a heater waiting for a controller that is not there.
+///          Reading it is fine: the climate card shows it as heat. encode_heating_write() refuses a mode
+///          this rule rejects; the actions and climate profiles offer only modes it accepts.
+/// @param mode Mode to check.
+/// @return false for EXTERNAL_SETPOINT, true for every other mode.
+constexpr bool heating_mode_is_writable(HeatingMode mode) { return mode != HeatingMode::EXTERNAL_SETPOINT; }
 
 /// @brief Modes of a towel dryer's mode register (HeatingFunction::TOWEL_MODE).
 /// @details OFF, PROG and MANUAL are the values two Atlantic Adelis units report with their display
@@ -294,7 +304,7 @@ bool heating_function_register(HeatingFunction fn, uint8_t &register_low);
 ///   - SET_TEMPERATURE: degrees Celsius within [HEATING_TEMP_MIN_C, HEATING_TEMP_MAX_C], encoded as
 ///     a 16-bit little-endian value in tenths of a degree, round-half-away-from-zero(10 * value).
 ///   - DEROGATED_SETPOINT: as SET_TEMPERATURE, or 0 (`00 00`) to cancel the override.
-///   - SET_MODE: a HeatingMode value widened to float; must be AUTO, MANUAL, PROG or OFF.
+///   - SET_MODE: a HeatingMode value widened to float that heating_mode_is_writable() accepts.
 ///   - SET_PRESENCE, SET_OPEN_WINDOW_DETECTION, OCCUPANCY_DETECTION: 0 or 1.
 ///   - TOWEL_MODE: a TowelDryerMode value widened to float (0-3).
 ///   - TEMPORARY_STATE: a HeatingTemporaryState value widened to float (0-2).

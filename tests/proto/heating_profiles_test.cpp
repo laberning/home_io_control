@@ -1005,3 +1005,24 @@ TEST(HeatingProfiles, EveryPresetOfEveryProfileSendsACommand) {
     }
   }
 }
+
+TEST(HeatingProfiles, EveryModeAProfileWritesToTheModeRegisterIsWritable) {
+  for (const HeatingProfile &p : heating_profiles()) {
+    if (p.path != HeatingControlPath::PRIVATE_REGISTERS)
+      continue;
+    // A profile whose mode register is another one (the towel dryer's) has its own value set.
+    if (p.mode_fn == HeatingFunction::SET_MODE) {
+      for (const HeatingModeEntry &m : p.modes)
+        EXPECT_TRUE(heating_mode_is_writable(static_cast<HeatingMode>(m.wire)))
+            << "mode " << static_cast<int>(m.wire) << " of profile " << static_cast<int>(p.type) << "/"
+            << static_cast<int>(p.subtype);
+    }
+    for (const HeatingPresetEntry &pr : p.presets) {
+      if (pr.write_fn != HeatingFunction::SET_MODE)
+        continue;
+      EXPECT_TRUE(heating_mode_is_writable(static_cast<HeatingMode>(pr.wire)))
+          << "preset " << static_cast<int>(pr.wire) << " of profile " << static_cast<int>(p.type) << "/"
+          << static_cast<int>(p.subtype);
+    }
+  }
+}

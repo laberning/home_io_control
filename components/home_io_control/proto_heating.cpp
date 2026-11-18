@@ -177,11 +177,25 @@ size_t encode_heating_read(HeatingFunction fn, uint8_t out[PRIVATE_REGISTER_PAYL
   return PAYLOAD_LEN_HEADER;
 }
 
+/// @brief Per-register rule on top of the codec's range check: refuses values this component never writes
+/// although the register's range holds them. Today only the mode register has one (heating_mode_is_writable()).
+/// @return false only for a value the rule refuses; a value the codec must judge passes.
+static bool value_is_writable(HeatingFunction fn, float value) {
+  if (fn != HeatingFunction::SET_MODE)
+    return true;
+  // A non-integral, out-of-range or non-finite value is the codec's to refuse; only a whole mode number is judged.
+  return !is_bounded_integer(value, UINT8_MAX) ||
+         heating_mode_is_writable(static_cast<HeatingMode>(static_cast<uint8_t>(value)));
+}
+
 size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
   const HeatingFunctionDescriptor *d = descriptor_for(fn);
   // A read-only register is never written, whatever the caller asks: the heater's window sensor and
   // its measurements are not settings.
   if (d == nullptr || d->access == HeatingAccess::READ_ONLY)
+    return 0;
+
+  if (!value_is_writable(fn, value))
     return 0;
 
   switch (d->kind) {
@@ -214,9 +228,6 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE
     case ValueCodec::BOUNDED_BYTE:
       // An integral value inside the register's range; anything else is refused, never truncated.
       if (!is_bounded_integer(value, d->max_value))
-        return 0;
-      // The mode register reads back the "external setpoint" mode, which this component never writes.
-      if (fn == HeatingFunction::SET_MODE && value == static_cast<float>(HeatingMode::EXTERNAL_SETPOINT))
         return 0;
       write_header(*d, PRIVATE_REGISTER_DIRECTION_SET, out);
       out[4] = static_cast<uint8_t>(value);

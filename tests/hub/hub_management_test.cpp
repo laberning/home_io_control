@@ -691,6 +691,29 @@ TEST(HubManagement, HeatingControlRejectsInvalidMode) {
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
+TEST(HubManagement, HeatingControlSendsEveryModeItAcceptsAndNeverTheExternalSetpoint) {
+  for (const char *mode : {"auto", "manual", "prog", "off"}) {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    make_climate_device(component);
+    radio.queue_rx(frame_to_packet(make_write_private_ack(component.node_id_)));
+    const auto result = component.management_actions_.heating_control("ABC123", "set_mode", mode);
+    EXPECT_TRUE(result.success) << mode;
+    ASSERT_EQ(radio.get_sent_data().size(), 1u) << mode;
+    const auto &tx = radio.get_sent_data().front();
+    ASSERT_GE(tx.size(), 14u) << mode;
+    EXPECT_TRUE(heating_mode_is_writable(static_cast<HeatingMode>(tx[13]))) << mode;
+  }
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  EXPECT_FALSE(component.management_actions_.heating_control("ABC123", "set_mode", "external").success);
+  EXPECT_FALSE(component.management_actions_.heating_control("ABC123", "set_mode", "3").success);
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
 TEST(HubManagement, HeatingControlRejectsInvalidPresence) {
   TestableManagementComponent component;
   MockRadio radio;

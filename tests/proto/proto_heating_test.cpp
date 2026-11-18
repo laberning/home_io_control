@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -134,6 +135,22 @@ TEST(ProtoHeating, RejectsUnwritableModes) {
   EXPECT_EQ(write_len(HeatingFunction::SET_MODE, 3.0f), 0u);
   EXPECT_EQ(write_len(HeatingFunction::SET_MODE, 1.5f), 0u);
   EXPECT_EQ(write_len(HeatingFunction::SET_MODE, 5.0f), 0u);
+  // Values outside a byte stay the codec's to refuse; none of them is narrowed onto a mode number.
+  EXPECT_EQ(write_len(HeatingFunction::SET_MODE, -1.0f), 0u);
+  EXPECT_EQ(write_len(HeatingFunction::SET_MODE, 259.0f), 0u);
+  EXPECT_EQ(write_len(HeatingFunction::SET_MODE, std::numeric_limits<float>::quiet_NaN()), 0u);
+  EXPECT_EQ(write_len(HeatingFunction::SET_MODE, std::numeric_limits<float>::infinity()), 0u);
+}
+
+TEST(ProtoHeating, OnlyTheExternalSetpointModeIsNotWritable) {
+  for (const HeatingMode mode : {HeatingMode::AUTO, HeatingMode::MANUAL, HeatingMode::PROG, HeatingMode::OFF})
+    EXPECT_TRUE(heating_mode_is_writable(mode)) << static_cast<int>(mode);
+  EXPECT_FALSE(heating_mode_is_writable(HeatingMode::EXTERNAL_SETPOINT));
+  // The encoder follows the rule for every mode number of the register's range.
+  for (uint8_t v = 0; v <= 4; v++)
+    EXPECT_EQ(write_len(HeatingFunction::SET_MODE, static_cast<float>(v)) != 0u,
+              heating_mode_is_writable(static_cast<HeatingMode>(v)))
+        << static_cast<int>(v);
 }
 
 TEST(ProtoHeating, RejectsNonBinaryPresenceAndDetection) {
