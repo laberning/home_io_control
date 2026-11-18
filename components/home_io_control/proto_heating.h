@@ -41,6 +41,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 
 namespace esphome {
 namespace home_io_control {
@@ -161,27 +162,61 @@ static constexpr float HEATING_TEMPERATURE_RANGE_MAX_C = 80.0F;  ///< See HEATIN
 /// for its four levels (issue #222).
 constexpr uint16_t HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX = 10000;
 
-/// @brief Register steps per percent of night light brightness: the register scales linearly with the
-/// percentage a Home Assistant light shows.
-constexpr uint16_t HEATING_NIGHT_LIGHT_STEPS_PER_PERCENT = 100;
-
 /// @brief Highest brightness percentage of a Home Assistant light.
 constexpr uint8_t HEATING_NIGHT_LIGHT_PERCENT_MAX = 100;
 
-/// @brief Night light brightness register value for a percentage.
+/// @brief One knot of the night light brightness scale: a percentage and the register value it stands for.
+struct NightLightScaleKnot {
+  uint8_t percent;          ///< Brightness a Home Assistant light shows, 0-100 %.
+  uint16_t register_value;  ///< Register value, 0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX.
+};
+
+/// @brief The night light brightness scale, the one the heater's own vendor app uses: its slider shows
+/// 1000 as 33 %, 2000 as 66 % and 10000 as 100 % (issue #222). Between two knots the scale is linear.
+/// It spreads the range where the light visibly changes over two thirds of the slider: above about 3000
+/// a Sauter Hekla's light hardly gets brighter (issue #222). Ascending in both fields.
+constexpr NightLightScaleKnot HEATING_NIGHT_LIGHT_SCALE[] = {
+    {0, 0},
+    {33, 1000},
+    {66, 2000},
+    {HEATING_NIGHT_LIGHT_PERCENT_MAX, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
+};
+
+/// @brief Night light brightness register value for a percentage, on HEATING_NIGHT_LIGHT_SCALE.
 /// @param percent Brightness, 0-100 %; a larger value is clamped to 100 %.
-/// @return The register value, 0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX.
+/// @return The register value, 0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX, rounded to the nearest whole value.
 constexpr uint16_t night_light_register_from_percent(uint8_t percent) {
-  return static_cast<uint16_t>(std::min<unsigned>(percent, HEATING_NIGHT_LIGHT_PERCENT_MAX) *
-                               HEATING_NIGHT_LIGHT_STEPS_PER_PERCENT);
+  const unsigned p = std::min<unsigned>(percent, HEATING_NIGHT_LIGHT_PERCENT_MAX);
+  for (size_t i = 1; i < std::size(HEATING_NIGHT_LIGHT_SCALE); ++i) {
+    const NightLightScaleKnot &lo = HEATING_NIGHT_LIGHT_SCALE[i - 1];
+    const NightLightScaleKnot &hi = HEATING_NIGHT_LIGHT_SCALE[i];
+    if (p <= hi.percent) {
+      const unsigned span = hi.percent - lo.percent;
+      // Adding half the span before the division rounds to the nearest register value.
+      const unsigned scaled = ((p - lo.percent) * (hi.register_value - lo.register_value)) + (span / 2);
+      return static_cast<uint16_t>(lo.register_value + (scaled / span));
+    }
+  }
+  return HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX;
 }
 
 /// @brief Night light brightness as a fraction of full brightness (0.0-1.0) for a register value, the
-/// form a Home Assistant light shows; 100 is 0.01.
+/// form a Home Assistant light shows: the inverse of night_light_register_from_percent(), unrounded, so
+/// the panel's lowest level 100 shows as 3.3 %.
 /// @param raw Register value; one above HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX is clamped to it.
 constexpr float night_light_fraction_from_register(uint16_t raw) {
-  return static_cast<float>(std::min<unsigned>(raw, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX)) /
-         static_cast<float>(HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
+  const unsigned r = std::min<unsigned>(raw, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
+  for (size_t i = 1; i < std::size(HEATING_NIGHT_LIGHT_SCALE); ++i) {
+    const NightLightScaleKnot &lo = HEATING_NIGHT_LIGHT_SCALE[i - 1];
+    const NightLightScaleKnot &hi = HEATING_NIGHT_LIGHT_SCALE[i];
+    if (r <= hi.register_value) {
+      const float slope =
+          static_cast<float>(hi.percent - lo.percent) / static_cast<float>(hi.register_value - lo.register_value);
+      const float percent = static_cast<float>(lo.percent) + (static_cast<float>(r - lo.register_value) * slope);
+      return percent / static_cast<float>(HEATING_NIGHT_LIGHT_PERCENT_MAX);
+    }
+  }
+  return 1.0F;
 }
 
 /// @brief Register 0x0119: the heater's model name, ASCII, not terminated ("ADELIS 2 DIGIT" on an

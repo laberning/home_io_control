@@ -250,15 +250,16 @@ TEST(CorpusHeating, HeatingLevelExecuteIsTheFrameAVendorBridgeSends) {
 
 // === Night light brightness levels of a Sauter Hekla (issue #222) ===
 
-TEST(CorpusHeating, TheHeklasPanelLevelsAreTheWritesOfOneTenTwentyAndHundredPercent) {
+TEST(CorpusHeating, TheHeklasPanelLevelsAreThirtyThreeSixtySixAndHundredPercentOnTheAppsScale) {
   using namespace corpus;
-  // Frames in capture order: second, third, lowest and highest panel level.
+  // Frames in capture order: second, third, lowest and highest panel level. The lowest, 100, lies between
+  // two whole percentages (3.3 %), so it is checked as its register value.
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame0_bytes,
-                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(10)));
+                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(33)));
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame1_bytes,
-                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(20)));
+                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(66)));
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame2_bytes,
-                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(1)));
+                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 100));
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame3_bytes,
                           HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(100)));
 }

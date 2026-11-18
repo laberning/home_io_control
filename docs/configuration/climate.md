@@ -186,10 +186,12 @@ on a Hekla (issue #222).
   brightness change the heater acknowledges is read back. A change it does not acknowledge leaves the
   light showing the heater's last reading.
 - Brightness is a percentage, 100 % in Home Assistant being the heater's full brightness. The heater's
-  brightness register runs from 0 to 10000 and the light scales it linearly: 1 % is 100 and 100 % is
-  10000. The [Sauter Hekla](../devices/sauter-hekla.md) page lists the levels its panel offers and
-  what is known about the values in between. Switching on at the brightness the heater already holds
-  sends only the on command.
+  brightness register runs from 0 to 10000, and the light uses the same scale as the vendor's
+  Cozytouch app: 33 % is 1000, 66 % is 2000 and 100 % is 10000, evenly spaced in between (issue
+  #222). Most of the visible change happens below 2000, so it takes two thirds of the slider. The
+  [Sauter Hekla](../devices/sauter-hekla.md) page lists the levels its panel offers and what is known
+  about the values in between. Switching on at the brightness Home Assistant already shows sends only
+  the on command.
 - Each poll reads the light's state and brightness after the heater's own registers, so a light
   switched from the Cozytouch app or at the heater shows in Home Assistant at the next poll. A
   heater that has no night light answers these reads empty; the rest of its poll still counts as

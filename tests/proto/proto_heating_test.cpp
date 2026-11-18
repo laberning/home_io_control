@@ -544,23 +544,44 @@ TEST(ProtoHeatingNightLight, WritesAreByteExact) {
             (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x42, 0x10, 0x27}));
 }
 
-TEST(ProtoHeatingNightLight, PercentagesAndRegisterValuesConvertLinearly) {
+TEST(ProtoHeatingNightLight, PercentagesFollowTheVendorAppsScale) {
+  // The vendor app's slider: 1000 = 33 %, 2000 = 66 %, 10000 = 100 % (issue #222), linear in between.
   EXPECT_EQ(night_light_register_from_percent(0), 0);
-  EXPECT_EQ(night_light_register_from_percent(1), 100);
-  EXPECT_EQ(night_light_register_from_percent(20), 2000);
+  EXPECT_EQ(night_light_register_from_percent(1), 30);
+  EXPECT_EQ(night_light_register_from_percent(20), 606);
+  EXPECT_EQ(night_light_register_from_percent(33), 1000);
+  EXPECT_EQ(night_light_register_from_percent(50), 1515);
+  EXPECT_EQ(night_light_register_from_percent(66), 2000);
+  EXPECT_EQ(night_light_register_from_percent(70), 2941);
   EXPECT_EQ(night_light_register_from_percent(100), HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
   EXPECT_EQ(night_light_register_from_percent(200), HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX) << "clamped, never above full";
 
   EXPECT_FLOAT_EQ(night_light_fraction_from_register(0), 0.0F);
-  EXPECT_FLOAT_EQ(night_light_fraction_from_register(100), 0.01F) << "the lowest panel level";
-  EXPECT_FLOAT_EQ(night_light_fraction_from_register(1000), 0.1F);
-  EXPECT_FLOAT_EQ(night_light_fraction_from_register(2000), 0.2F);
+  EXPECT_NEAR(night_light_fraction_from_register(100), 0.033F, 1e-6F) << "the lowest panel level";
+  EXPECT_FLOAT_EQ(night_light_fraction_from_register(1000), 0.33F);
+  EXPECT_FLOAT_EQ(night_light_fraction_from_register(2000), 0.66F);
+  EXPECT_NEAR(night_light_fraction_from_register(3000), 0.7025F, 1e-6F) << "the app's value between levels";
   EXPECT_FLOAT_EQ(night_light_fraction_from_register(10000), 1.0F);
   EXPECT_FLOAT_EQ(night_light_fraction_from_register(65535), 1.0F) << "clamped, never above full";
-  for (unsigned percent = 0; percent <= 100; ++percent)
-    EXPECT_FLOAT_EQ(
-        night_light_fraction_from_register(night_light_register_from_percent(static_cast<uint8_t>(percent))),
-        static_cast<float>(percent) / 100.0F);
+}
+
+TEST(ProtoHeatingNightLight, EveryPercentageReadsBackAsItself) {
+  for (unsigned percent = 0; percent <= HEATING_NIGHT_LIGHT_PERCENT_MAX; ++percent)
+    EXPECT_NEAR(night_light_fraction_from_register(night_light_register_from_percent(static_cast<uint8_t>(percent))),
+                static_cast<float>(percent) / 100.0F, 0.002F)
+        << percent;
+}
+
+TEST(ProtoHeatingNightLight, TheScaleRisesAndEndsAtFullBrightness) {
+  for (size_t i = 1; i < std::size(HEATING_NIGHT_LIGHT_SCALE); ++i) {
+    EXPECT_GT(HEATING_NIGHT_LIGHT_SCALE[i].percent, HEATING_NIGHT_LIGHT_SCALE[i - 1].percent);
+    EXPECT_GT(HEATING_NIGHT_LIGHT_SCALE[i].register_value, HEATING_NIGHT_LIGHT_SCALE[i - 1].register_value);
+  }
+  EXPECT_EQ(HEATING_NIGHT_LIGHT_SCALE[0].percent, 0);
+  EXPECT_EQ(HEATING_NIGHT_LIGHT_SCALE[0].register_value, 0);
+  const NightLightScaleKnot &last = HEATING_NIGHT_LIGHT_SCALE[std::size(HEATING_NIGHT_LIGHT_SCALE) - 1];
+  EXPECT_EQ(last.percent, HEATING_NIGHT_LIGHT_PERCENT_MAX);
+  EXPECT_EQ(last.register_value, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
 }
 
 TEST(ProtoHeatingNightLight, WritesOutsideTheRangeOrNotIntegralAreRefused) {

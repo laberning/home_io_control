@@ -71,9 +71,9 @@ behaves. Without them the heater works as a radiator without a light.
   shortly after the hub hears the Cozytouch command the heater. A change made on the heater's panel
   shows at the next poll.
 - **The panel has four brightness levels.** It writes 100, 1000, 2000 and 10000 to the brightness
-  register, which Home Assistant shows as 1 %, 10 %, 20 % and 100 %. The Cozytouch app's slider snaps
-  to the heater's levels; once it produced 3000. Above about 3000 (30 %) the light hardly gets any
-  brighter, so most of the visible range lies below 30 % (issue #222). Whether the heater keeps a
+  register, which Home Assistant shows as 3 %, 33 %, 66 % and 100 %, the percentages the Cozytouch app
+  shows. The app's slider snaps to the heater's levels; once it produced 3000, which Home Assistant
+  shows as 70 %. Above about 3000 the light hardly gets any brighter (issue #222). Whether the heater keeps a
   value between its levels as written has not been confirmed.
 
 ## Evidence

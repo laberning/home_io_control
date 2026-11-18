@@ -9,7 +9,6 @@
 #include "esphome/core/log.h"
 
 #include <algorithm>
-#include <utility>
 
 namespace esphome {
 namespace home_io_control {
@@ -21,7 +20,7 @@ static const char *const TAG_HEATING_LEVEL = "home_io_control.heating_level";
 static const char *const TAG_CENTRAL_HEATING = "home_io_control.central_heating_mode";
 
 /// Percentage for a light switched on at a brightness that rounds to 0 %: the lowest level that is still
-/// on (register value HEATING_NIGHT_LIGHT_STEPS_PER_PERCENT).
+/// on (register value night_light_register_from_percent(1), 30).
 static constexpr uint8_t NIGHT_LIGHT_MIN_ON_PERCENT = 1;
 
 void IOHomeHeatingLevelSensor::setup() {
@@ -149,7 +148,13 @@ void IOHomeHeaterNightLight::write_state(light::LightState *state) {
                                                 NIGHT_LIGHT_MIN_ON_PERCENT, HEATING_NIGHT_LIGHT_PERCENT_MAX);
     const uint16_t brightness = night_light_register_from_percent(percent);
     const IoDevice *dev = this->device_port_->get_device(this->device_id_);
-    if (dev == nullptr || std::cmp_not_equal(dev->heating.night_light_brightness, brightness))
+    // Compared as the percentage Home Assistant shows, not as the register value: the panel's own levels
+    // (100, 1000) fall between two whole percentages, and switching on at the brightness shown must not
+    // move the heater off its level.
+    const bool holds_percent = dev != nullptr && dev->heating.night_light_brightness > 0 &&
+                               detail::round_percent(night_light_fraction_from_register(
+                                   static_cast<uint16_t>(dev->heating.night_light_brightness))) == percent;
+    if (!holds_percent)
       brightness_written = this->write_register_(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, brightness);
   }
   // On/off goes out even when the brightness write failed: switching the light is what the user asked.

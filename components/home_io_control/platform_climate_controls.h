@@ -128,12 +128,14 @@ class IOHomeOpenWindowDetectionSwitch : public switch_::Switch, public Component
 /// `heater_with_light`).
 /// @ingroup hioc_platforms
 ///
-/// On/off is register 0x0144 and the brightness register 0x0142, which runs 0-10000 and scales linearly
-/// with Home Assistant's brightness (100 % = 10000, 1 % = 100; night_light_register_from_percent() and
+/// On/off is register 0x0144 and the brightness register 0x0142, which runs 0-10000. Home Assistant's
+/// brightness follows the scale of the heater's vendor app (HEATING_NIGHT_LIGHT_SCALE: 33 % = 1000,
+/// 66 % = 2000, 100 % = 10000, linear in between; night_light_register_from_percent() and
 /// night_light_fraction_from_register()). A Sauter Hekla's panel sets 100, 1000, 2000 and 10000, its four
-/// levels (issue #222). The light shows what the heater reports: no state until the first poll has read
-/// 0x0144, every acknowledged write is read back, and a write the heater does not acknowledge leaves the
-/// light showing the heater's last reading.
+/// levels (issue #222), which show as 3 %, 33 %, 66 % and 100 %. A light switched on at the percentage the
+/// heater already shows writes no brightness, so the heater keeps its own level. The light shows what the heater
+/// reports: no state until the first poll has read 0x0144, every acknowledged write is read back, and a write the
+/// heater does not acknowledge leaves the light showing the heater's last reading.
 ///
 /// Switching on writes the brightness only when it differs from what the heater holds, then the on/off
 /// register; so on/off at an unchanged brightness never depends on the brightness write.
