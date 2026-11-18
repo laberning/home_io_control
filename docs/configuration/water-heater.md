@@ -148,6 +148,7 @@ heater declared without the model that answers this way is named in a warning at
   `0x0053` for absence) and read back at once; the switch and the card show that read-back, never the
   command. On the Sauter Guelma the display starts and ends both from Home Assistant. The target the card
   shows follows at the next poll, 45 seconds later: the heater updates it a few seconds after the write.
+  The heater refuses a boost during an absence: the switch stays off and the log says so. End the absence first.
 - **A target selects a shower count in manual mode.** The heater heats to 50, 60 or 70 °C for 2, 3 or 4 showers,
   so a target set in Home Assistant takes the nearest of the three, and the card shows it at the next poll. In
   automatic mode and in absence the heater chooses its own target: one set then is not sent, and the log says so.

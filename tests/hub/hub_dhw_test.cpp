@@ -540,6 +540,22 @@ TEST(HubDhw, ManualShowersOutsideTheRangeOrOnAnotherHeaterAreNeverSent) {
   EXPECT_TRUE(heat_pump_radio.get_sent_data().empty());
 }
 
+TEST(HubDhw, ABoostTheHeaterRefusesDuringAnAbsenceFailsAndStaysOff) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_electric_water_heater(comp, radio);
+  dev->dhw.away = 1;
+  dev->dhw.boost = 0;
+  queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, DHW_REG_BOOST_FLAG, 0x01});
+  queue_register(comp, radio, DHW_REG_BOOST_FLAG, {0x00});  // a Sauter Guelma in absence keeps it at 0
+
+  EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
+
+  EXPECT_EQ(radio.get_sent_data().size(), 2u) << "the away reading can be stale, so the heater is still asked";
+  EXPECT_EQ(dev->dhw.boost, 0);
+  EXPECT_EQ(dev->dhw.away, 1);
+}
+
 TEST(HubDhw, AnUnacknowledgedFlagWriteSendsNothingMore) {
   TestableComponent comp;
   MockRadio radio;

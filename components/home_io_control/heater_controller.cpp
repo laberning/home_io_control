@@ -695,8 +695,14 @@ bool HeaterController::set_dhw_register_feature_(const std::string &device_id, D
     return false;
   const int16_t held = boost ? dev->dhw.boost_flag : dev->dhw.away_flag;
   if (held >= 0 && held != (on ? 1 : 0)) {
-    ESP_LOGW(detail::TAG, "Device %s: the %s did not keep the value (it reads %d)", device_id.c_str(), flag_name,
-             held);
+    // The write still goes out in absence: the away reading can be a poll old, and the heater is the judge.
+    if (boost && on && dev->dhw.away == 1) {
+      ESP_LOGW(detail::TAG, "Device %s: the heater refused the boost: absence disables it, end the absence first",
+               device_id.c_str());
+    } else {
+      ESP_LOGW(detail::TAG, "Device %s: the %s did not keep the value (it reads %d)", device_id.c_str(), flag_name,
+               held);
+    }
     return false;
   }
   // The flag read-back has already published what the heater holds. The target follows a few seconds later
