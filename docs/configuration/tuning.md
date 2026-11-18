@@ -151,7 +151,7 @@ your device may differ.
 | `low_power_wake_ms` | both | `600` | 300–1000 ms | Wake-up preamble duration on a directed start frame to a `low_power:` device believed at rest. See below. |
 | `pairing_discovery_preamble_ms` | both | follows `start_preamble_ms` | 1.5–300 ms | Preamble duration on the discovery broadcast itself. See [`pairing_discovery_preamble_ms`](#pairing_discovery_preamble_ms). |
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the wake-up preamble. See below. |
-| `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI on a channel at or above which it counts as busy. See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
+| `lbt_rssi_threshold_dbm` | both | `-85` | -95 to -70 dBm | RSSI on a channel at or above which it counts as busy. See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
 | `lbt_force_when_busy` | both | `false` | `true` / `false` | When every channel stays busy for the whole waiting time, send on the quietest one instead of ending the attempt as "channel busy". See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
 | `remote_activity_poll_delay_ms` | both | `2000` | 0–120000 ms | Delay from a linked-remote press (not a STOP) to the first status poll of its devices. See below. |
 | `remote_activity_catchup_poll_ms` | both | `0` (off) | 0–600000 ms | Read every device with `linked_remotes` this long after the last exchange that followed a linked-remote press, to catch a press the hub missed. See below. |
@@ -579,6 +579,13 @@ every busy check, while it keeps receiving, and then checks another channel. Eve
 request takes a different channel than the attempt before it, because receivers scan all three
 channels. The hub listens for the answer on the channel it sent on.
 
+The default limit, -85 dBm, sits above the level some boards read on a quiet channel: a LilyGO T3
+V1.6.1 reads -88 to -90 dBm there, and at a limit of -90 dBm it never found a free channel
+([issue #228](https://github.com/laberning/home_io_control/issues/228)). If the log shows
+`Try N ended: channel busy` while nothing else sends, your board reads its quiet channels at or above
+the limit. The debug log names the level of every busy check (`Channel busy (RSSI -88 dBm on …)`);
+set the limit a few dB above it.
+
 The checks of one attempt last about 100 ms. If every channel stays busy that long, the attempt ends
 as "channel busy": nothing is sent, the log line `Try N ended: channel busy` says so, and the exchange
 goes on with its next attempt like after any other lost try. A request to a `low_power:` device
@@ -596,7 +603,8 @@ unless a busy neighbour makes commands fail.
 Frames that answer within an exchange, such as the challenge response, go out at once on the channel
 of the request without a check: the device is waiting for them, and some devices give up after a
 single 5 ms delay (issue #178). Discovery, pairing, the key pull and broadcasts keep channel 2 and
-the older check: five readings, 5 ms apart, then a send even if the channel is still busy
+the older check against the same limit: five readings, 5 ms apart, then a send even if the channel
+is still busy
 ([ADR 0045](../adr/0045-listen-before-talk-is-part-of-sending.md)). When the idle receiver is on
 another channel, the radio first retunes to the channel being measured and waits about a millisecond
 for the reading to settle. The threshold applies to the signal level at the antenna: on a board with
@@ -611,7 +619,7 @@ because the time limits end the checks, not a count.
 threshold (less sensitive) lets the hub transmit through that.
 
 > [!WARNING]
-> **Keep the default threshold in a permanent configuration.** The `-90` dBm threshold keeps the
+> **Keep the default threshold in a permanent configuration.** The `-85` dBm threshold keeps the
 > hub from starting an exchange over traffic it can hear. A higher threshold, or
 > `lbt_force_when_busy: true`, makes it transmit over other devices on the band, and depending on
 > your country's rules for the 868 MHz band that may not be allowed. Use them for a brief experiment

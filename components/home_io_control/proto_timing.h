@@ -365,9 +365,15 @@ static constexpr uint32_t RAIN_EVIDENCE_HOLD_MS = 2UL * 60UL * 60UL * 1000UL;
 /// deferred by LBT_RETRY_DELAY_MS up to LBT_MAX_RETRIES times, then sent anyway. A frame without
 /// START answers within a session and is sent at once, unchecked. The exchange engine's requests
 /// use the channel access below instead (ADR 0096).
-static constexpr int16_t LBT_RSSI_THRESHOLD_DBM = -90;  ///< Channel-free threshold
-static constexpr uint8_t LBT_MAX_RETRIES = 5;           ///< Max carrier-sense attempts before TX anyway
-static constexpr uint8_t LBT_RETRY_DELAY_MS = 5;        ///< Backoff between LBT checks
+///
+/// LBT_RSSI_THRESHOLD_DBM is the default of `lbt_rssi_threshold_dbm`: a reading at or above it makes
+/// a channel busy, for these senders and for the exchange engine's requests alike. -85 dBm sits above
+/// the highest idle floor reported on a board: a LilyGO T3 V1.6.1 (SX1276) reads -88 to -90 dBm on
+/// every channel (issue #228), so at -90 dBm it found no free channel. Another SX1276 board idles
+/// near -100 dBm (ADR 0096).
+static constexpr int16_t LBT_RSSI_THRESHOLD_DBM = -85;
+static constexpr uint8_t LBT_MAX_RETRIES = 5;     ///< Max carrier-sense attempts before TX anyway
+static constexpr uint8_t LBT_RETRY_DELAY_MS = 5;  ///< Backoff between LBT checks
 
 /// Channel access of a request from the exchange engine (ADR 0096): the checks of one attempt end
 /// after this long, and the attempt then ends as "channel busy" instead of sending. The limits are

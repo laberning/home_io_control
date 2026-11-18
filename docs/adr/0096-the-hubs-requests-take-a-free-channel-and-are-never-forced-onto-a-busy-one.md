@@ -26,14 +26,20 @@ Answers inside a session stay unchecked: a delay of one 5 ms back-off already lo
 some receivers ([issue #178](https://github.com/laberning/home_io_control/issues/178), ADR 0045's
 amendment).
 
-The hub's received level is now read correctly on every chip; on the SX1276 its idle floor is about
--100 dBm, so -90 dBm leaves about 10 dB of margin on all boards.
+The hub's received level is now read correctly on every chip. The idle floor depends on the board:
+about -100 dBm on the bench's SX1276 board, but -88 to -90 dBm on every channel of a LilyGO T3
+V1.6.1 (SX1276) in [issue #228](https://github.com/laberning/home_io_control/issues/228), where five
+readings at -90 dBm made every channel busy and the hub sent nothing at all.
 
 ## Decision
 
 - **A request from the exchange engine never goes out onto a channel measured busy** unless the
   user opts in. A check takes up to five readings about 1 ms apart; one reading at or above
   `lbt_rssi_threshold_dbm` makes the channel busy.
+- **The default limit is -85 dBm**, above the highest idle floor reported (-88 dBm, issue #228), so a
+  board with a higher floor still sends. The same limit applies to the fixed-channel senders below.
+  It costs sensitivity: traffic received between -90 and -85 dBm no longer holds a send back. The
+  limit is a stopgap until the check is measured against each board's own idle floor.
 - **An ordinary request takes a different channel on every attempt** (never the channel of the
   previous attempt, chosen at random), and on a busy result another free one. A request with the
   low-power flag stays on channel 2.
