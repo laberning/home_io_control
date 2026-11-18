@@ -208,7 +208,7 @@ TEST(PlatformWaterHeater, AnElectricStorageHeaterShowsItsTargetInEveryState) {
   EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_ELECTRIC);
   EXPECT_FLOAT_EQ(entity.get_target_temperature(), 70.0F);
 
-  // Absence: register 0x0006 still reads 2, the state register says away, the target is the frost protection.
+  // Absence entered from manual: register 0x0006 keeps 2, the away flag says away, the target is frost protection.
   readings.away = 1;
   readings.target_c = 7.0F;
   publish(hub, readings);

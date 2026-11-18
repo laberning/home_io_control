@@ -38,15 +38,16 @@
 ///   - its status reply carries a main parameter of 0 and FP15 = FP16 = `FFFF` in every state, so it holds
 ///     no target, no capabilities and no operating-mode word;
 ///   - registers 0x0000, 0x0005 and 0x0021 answer with no value;
-///   - register 0x0006 reads 0 in automatic mode and 2 in manual mode and in absence alike, and a write of 0
-///     or 2 to it switches the display between automatic and manual;
-///   - register 0x0035 tells the four states apart (DhwState), 0x0049 holds the temperature the heater heats
-///     to, 0x004A and 0x0046 the showers it aims for and the showers it has, and 0x0032 the heating power.
+///   - register 0x0006 reads 0 in automatic mode and 2 in manual mode, keeps that value during an absence, and
+///     a write of 0 or 2 to it switches the display between automatic and manual;
+///   - register 0x0049 holds the temperature the heater heats to, 0x004A and 0x0046 the showers it aims for and
+///     the showers it has, and 0x0032 the heating power;
+///   - registers 0x0035 and 0x0051 read 4 in automatic mode, 3 during a boost, 2 in manual mode and 0 in absence,
+///     but follow a write a few seconds late, so the hub does not read them.
 /// How this model takes a target is not known: none is sent to it. A boost and an absence are a write of the
 /// flag register that reads 1 while they run (0x0052, 0x0053): the heater's display follows both, and the
-/// flag reads back at once, while the state register 0x0035 and the target 0x0049 still held the old values
-/// right after the write. The boost and away shown therefore come from the flags.
-/// \todo The state write (encode_dhw_state_write()), kept as a fallback, has not been needed or confirmed.
+/// flag reads back at once, while the target 0x0049 still held the old value right after the write. The boost
+/// and away shown therefore come from the flags.
 
 #include "proto_constants.h"
 #include "proto_device_kinds.h"
@@ -96,9 +97,6 @@ static constexpr uint8_t DHW_REG_HEATING = 0x21;
 /// @brief Register 0x0032: heating power in watts, unsigned 16-bit big-endian. It read 0 at rest, 1000 while
 /// heating in automatic mode and during a boost, and 1500 while heating in manual mode.
 static constexpr uint8_t DHW_REG_HEATING_POWER = 0x32;
-/// @brief Register 0x0035: the state the display shows (DhwState), one byte. Register 0x0051 read the same
-/// value in every state.
-static constexpr uint8_t DHW_REG_STATE = 0x35;
 /// @brief Register 0x0046: the showers of hot water available, one byte: the showers the display shows
 /// steadily lit.
 static constexpr uint8_t DHW_REG_SHOWERS_AVAILABLE = 0x46;
@@ -199,15 +197,6 @@ enum class DhwMode : uint8_t {
   MANUAL_ECO_OFF = 2,  ///< Manual mode with ECO off (the electric element may help).
 };
 
-/// @brief State of an electric storage water heater as register 0x0035 holds it. The value 1 has not been
-/// seen.
-enum class DhwState : uint8_t {
-  AWAY = 0,    ///< Absence: frost protection only.
-  MANUAL = 2,  ///< Manual mode: the shower count set on the display.
-  BOOST = 3,   ///< Automatic mode with a boost running.
-  AUTO = 4,    ///< Automatic mode.
-};
-
 /// @brief What register 0x0021 says is heating.
 struct DhwHeatingState {
   bool heating{false};    ///< Byte 0: the heater is heating at all (heat pump, element or both).
@@ -234,7 +223,6 @@ struct DhwReadings {
   int16_t away_duration{-1};   ///< Register 0x0005; -1 until read. Logged, never a state.
   int64_t energy_wh{-1};       ///< Energy since installation in Wh; -1 until read.
   int16_t brand{-1};           ///< Brand letter (register 0x0007); -1 until read.
-  int16_t state{-1};           ///< DhwState value (register 0x0035); -1 until read. Read after a write of it only.
   int32_t power_w{-1};         ///< Heating power in W (register 0x0032); -1 until read. Electric storage heater only.
   int16_t showers_available{-1};  ///< Showers available (register 0x0046); -1 until read. Electric storage heater only.
   int16_t showers_target{-1};     ///< Showers aimed for (register 0x004A); -1 until read. Electric storage heater only.
@@ -284,19 +272,12 @@ size_t encode_dhw_duration_write(DhwOperatingFeature which, uint8_t out[PRIVATE_
 
 /// @brief Encode a write of the boost or away flag of an electric storage water heater:
 /// `0C 61 00 52 <0|1>` or `0C 61 00 53 <0|1>`.
-/// @details The boost flag is confirmed on a Sauter Guelma: its display starts and ends the boost.
+/// @details Confirmed on a Sauter Guelma: its display starts and ends the boost and the absence.
 /// @param which Boost or away.
 /// @param on true to write 1, false to write 0.
 /// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return Always 5.
 size_t encode_dhw_flag_write(DhwOperatingFeature which, bool on, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
-
-/// @brief Encode a write of the state register of an electric storage water heater: `0C 61 00 35 <state>`.
-/// \todo Experimental: not confirmed on the heater.
-/// @param state One of the four states the heater has shown.
-/// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
-/// @return Always 5.
-size_t encode_dhw_state_write(DhwState state, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
 /// @brief Encode a target temperature as a main parameter over DHW_TARGET_MIN_C..DHW_TARGET_MAX_C.
 /// @param celsius Target; must be finite and within the range (nothing outside it is ever sent).
@@ -350,13 +331,6 @@ bool decode_dhw_energy_wh(const uint8_t *value, size_t len, uint32_t &wh);
 /// @param[out] duration The byte; untouched when false is returned.
 /// @return false for an empty value.
 bool decode_dhw_duration(const uint8_t *value, size_t len, uint8_t &duration);
-
-/// @brief State of an electric storage water heater from the value of register 0x0035.
-/// @param value Value bytes.
-/// @param len Number of value bytes; at least 1.
-/// @param[out] state The state; untouched when false is returned.
-/// @return false for an empty value or a byte other than 0, 2, 3 or 4.
-bool decode_dhw_state(const uint8_t *value, size_t len, DhwState &state);
 
 /// @brief Heating power from the value of register 0x0032: unsigned 16-bit big-endian, watts.
 /// @param value Value bytes.

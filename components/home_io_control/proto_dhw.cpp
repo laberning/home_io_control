@@ -104,10 +104,6 @@ size_t encode_dhw_flag_write(DhwOperatingFeature which, bool on, uint8_t out[PRI
   return encode_dhw_byte_write(index, on ? 1 : 0, out);
 }
 
-size_t encode_dhw_state_write(DhwState state, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
-  return encode_dhw_byte_write(DHW_REG_STATE, static_cast<uint8_t>(state), out);
-}
-
 bool encode_dhw_target(float celsius, uint16_t &main_parameter) {
   // encode_temperature_main_parameter() clamps; a target outside the heater's own range is refused instead.
   if (!std::isfinite(celsius) || celsius < DHW_TARGET_MIN_C || celsius > DHW_TARGET_MAX_C)
@@ -161,20 +157,6 @@ bool decode_dhw_duration(const uint8_t *value, size_t len, uint8_t &duration) {
     return false;
   duration = value[0];
   return true;
-}
-
-bool decode_dhw_state(const uint8_t *value, size_t len, DhwState &state) {
-  if (value == nullptr || len < 1)
-    return false;
-  switch (static_cast<DhwState>(value[0])) {
-    case DhwState::AWAY:
-    case DhwState::MANUAL:
-    case DhwState::BOOST:
-    case DhwState::AUTO:
-      state = static_cast<DhwState>(value[0]);
-      return true;
-  }
-  return false;
 }
 
 bool decode_dhw_heating_power(const uint8_t *value, size_t len, uint16_t &watts) {

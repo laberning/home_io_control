@@ -332,7 +332,7 @@ TEST(HubDhw, AnElectricStorageHeaterInAbsenceIsAwayWithItsFrostProtectionTarget)
   MockRadio radio;
   IoDevice *dev = make_electric_water_heater(comp, radio);
   queue_register(comp, radio, DHW_REG_WATER_TEMPERATURE, {0x01, 0xB0});
-  queue_register(comp, radio, DHW_REG_MODE, {0x02});  // the mode register cannot tell absence from manual
+  queue_register(comp, radio, DHW_REG_MODE, {0x02});  // an absence entered from manual keeps this value
   queue_register(comp, radio, DHW_REG_BOOST_FLAG, {0x00});
   queue_register(comp, radio, DHW_REG_AWAY_FLAG, {0x01});
   queue_register(comp, radio, DHW_REG_ACTIVE_TARGET, {0x00, 0x46});  // 7.0 C
@@ -406,12 +406,11 @@ TEST(HubDhw, AnElectricStorageHeatersBoostIsAWriteOfItsFlagReadBackAtOnce) {
   EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS) << "the target is read by the settle poll";
 }
 
-TEST(HubDhw, EndingABoostShowsItOffFromTheFlagWhileTheStateRegisterStillLags) {
+TEST(HubDhw, EndingABoostShowsItOffFromTheFlagReadBack) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_electric_water_heater(comp, radio);
   dev->dhw.boost = 1;
-  dev->dhw.state = static_cast<int16_t>(DhwState::BOOST);
   queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, DHW_REG_BOOST_FLAG, 0x00});
   queue_register(comp, radio, DHW_REG_BOOST_FLAG, {0x00});
 
@@ -419,7 +418,7 @@ TEST(HubDhw, EndingABoostShowsItOffFromTheFlagWhileTheStateRegisterStillLags) {
 
   ASSERT_EQ(radio.get_sent_data().size(), 2u);
   EXPECT_EQ(sent_write(radio.get_sent_data()[0]), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x52, 0x00}));
-  EXPECT_EQ(dev->dhw.boost, 0) << "the state register read 3 for seconds after this write on the heater";
+  EXPECT_EQ(dev->dhw.boost, 0);
 }
 
 TEST(HubDhw, AnElectricStorageHeatersAwayIsAWriteOfItsFlag) {
@@ -437,51 +436,19 @@ TEST(HubDhw, AnElectricStorageHeatersAwayIsAWriteOfItsFlag) {
   EXPECT_EQ(dev->dhw.away, 1);
 }
 
-TEST(HubDhw, AFlagTheHeaterDoesNotKeepIsFollowedByAWriteOfTheState) {
+TEST(HubDhw, AFlagTheHeaterDoesNotKeepFailsTheWriteAndSendsNothingMore) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_electric_water_heater(comp, radio);
+  dev->dhw.boost = 0;
   dev->dhw.boost_flag = 1;  // an older read-back must not pass for this write's
   queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, DHW_REG_BOOST_FLAG});
   queue_register(comp, radio, DHW_REG_BOOST_FLAG, {0x00});  // still 0: the write did nothing
-  queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, DHW_REG_STATE, 0x03});
-  queue_register(comp, radio, DHW_REG_STATE, {0x03});
-  queue_register(comp, radio, DHW_REG_BOOST_FLAG, {0x01});  // the state write did it
 
-  EXPECT_TRUE(comp.set_water_heater_boost("ABC123", true));
+  EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
 
-  const auto &sent = radio.get_sent_data();
-  ASSERT_EQ(sent.size(), 5u);
-  EXPECT_EQ(sent_register(sent[4]), DHW_REG_BOOST_FLAG) << "the flag is what the entity shows";
-  EXPECT_EQ(sent_write(sent[0]), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x52, 0x01}));
-  EXPECT_EQ(sent_write(sent[2]), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x35, 0x03})) << "the boost state";
-  EXPECT_EQ(dev->dhw.boost, 1);
-}
-
-TEST(HubDhw, EndingAnAbsenceTheFlagDidNotEndWritesTheStateOfTheModeTheHeaterHolds) {
-  const struct {
-    DhwMode mode;
-    uint8_t state;
-  } cases[] = {{DhwMode::AUTO, 0x04}, {DhwMode::MANUAL_ECO_OFF, 0x02}};
-  for (const auto &c : cases) {
-    TestableComponent comp;
-    MockRadio radio;
-    IoDevice *dev = make_electric_water_heater(comp, radio);
-    dev->dhw.mode = static_cast<int16_t>(c.mode);
-    queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, DHW_REG_AWAY_FLAG});
-    queue_register(comp, radio, DHW_REG_AWAY_FLAG, {0x01});  // still in absence
-    queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, DHW_REG_STATE, c.state});
-    queue_register(comp, radio, DHW_REG_STATE, {c.state});
-    queue_register(comp, radio, DHW_REG_AWAY_FLAG, {0x00});
-
-    EXPECT_TRUE(comp.set_water_heater_away("ABC123", false));
-
-    const auto &sent = radio.get_sent_data();
-    ASSERT_EQ(sent.size(), 5u);
-    EXPECT_EQ(sent_write(sent[0]), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x53, 0x00}));
-    EXPECT_EQ(sent_write(sent[2]), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x35, c.state}));
-    EXPECT_EQ(dev->dhw.away, 0);
-  }
+  EXPECT_EQ(radio.get_sent_data().size(), 2u) << "the write and its read-back only";
+  EXPECT_EQ(dev->dhw.boost, 0) << "the entity shows what the heater holds";
 }
 
 TEST(HubDhw, AnUnacknowledgedFlagWriteSendsNothingMore) {

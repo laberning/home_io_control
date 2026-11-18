@@ -49,8 +49,6 @@ const char *dhw_register_label(uint8_t index) {
       return "dhw_energy";
     case DHW_REG_BRAND:
       return "dhw_brand";
-    case DHW_REG_STATE:
-      return "dhw_state";
     case DHW_REG_ACTIVE_TARGET:
       return "dhw_active_target";
     case DHW_REG_TARGET_SHOWERS:
@@ -91,19 +89,6 @@ bool store_dhw_brand(const std::string &device_id, DhwReadings &readings, const 
     ESP_LOGI(detail::TAG, "Device %s reports hot water brand '%c' (0x%02X)", device_id.c_str(), letter, value[0]);
   }
   readings.brand = value[0];
-  return true;
-}
-
-/// Fold the state register of an electric storage water heater into the readings. Boost and away are not
-/// taken from it: after a write it still read the old state while the flag registers already held the new one.
-bool store_dhw_state(const std::string &device_id, DhwReadings &readings, const uint8_t *value, size_t len) {
-  DhwState state = DhwState::AUTO;
-  if (!decode_dhw_state(value, len, state))
-    return false;
-  const auto raw = static_cast<int16_t>(state);
-  if (readings.state != raw)
-    ESP_LOGI(detail::TAG, "Device %s: hot water state %d", device_id.c_str(), raw);
-  readings.state = raw;
   return true;
 }
 
@@ -172,8 +157,6 @@ bool store_dhw_reading(const std::string &device_id, DhwReadings &readings, uint
     }
     case DHW_REG_BRAND:
       return store_dhw_brand(device_id, readings, value, len);
-    case DHW_REG_STATE:
-      return store_dhw_state(device_id, readings, value, len);
     case DHW_REG_ACTIVE_TARGET: {
       float celsius = NAN;
       if (!decode_dhw_active_target(value, len, celsius))
@@ -698,27 +681,19 @@ bool HeaterController::set_dhw_register_feature_(const std::string &device_id, D
   (boost ? dev->dhw.boost_flag : dev->dhw.away_flag) = -1;
 
   uint8_t payload[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
-  size_t payload_len = encode_dhw_flag_write(which, on, payload);
+  const size_t payload_len = encode_dhw_flag_write(which, on, payload);
   if (!this->write_dhw_register_(device_id, flag_name, flag_register, payload, payload_len))
     return false;
 
-  // write_dhw_register_() has read the flag back. A heater that did not keep it is sent the state itself.
+  // write_dhw_register_() has read the flag back; a missed read-back (-1) does not undo the acknowledged write.
   dev = this->registry_.get(device_id);
   if (dev == nullptr)
     return false;
   const int16_t held = boost ? dev->dhw.boost_flag : dev->dhw.away_flag;
-  if (held != (on ? 1 : 0)) {
-    // A boost runs in automatic mode only; an absence ends in the mode register 0x0006 holds.
-    DhwState state = boost ? DhwState::BOOST : DhwState::AWAY;
-    if (!on)
-      state = boost || dev->dhw.mode == static_cast<int16_t>(DhwMode::AUTO) ? DhwState::AUTO : DhwState::MANUAL;
-    ESP_LOGW(detail::TAG, "Device %s: the %s did not keep the value (it reads %d), writing state %u instead",
-             device_id.c_str(), flag_name, held, static_cast<unsigned>(state));
-    payload_len = encode_dhw_state_write(state, payload);
-    if (!this->write_dhw_register_(device_id, "hot water state", DHW_REG_STATE, payload, payload_len))
-      return false;
-    // The entity shows the flag, so it is read again after the state write.
-    this->read_dhw_reading(device_id, flag_register, EXCHANGE_RETRY_COUNT);
+  if (held >= 0 && held != (on ? 1 : 0)) {
+    ESP_LOGW(detail::TAG, "Device %s: the %s did not keep the value (it reads %d)", device_id.c_str(), flag_name,
+             held);
+    return false;
   }
   // The flag read-back has already published what the heater holds. The target follows a few seconds later
   // (it still read the old one right after a write), so the poll write_dhw_register_() brought forward reads it.
@@ -947,7 +922,7 @@ constexpr uint8_t DHW_POLL_REGISTERS[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MOD
                                           DHW_REG_BOOST_DURATION,    DHW_REG_AWAY_DURATION, DHW_REG_ENERGY};
 /// The registers the poll of an electric storage water heater reads, in this order. It reads no status: this
 /// model's status reply carries nothing, and registers 0x0021, 0x0000 and 0x0005 answer with no value. Boost
-/// and away come from their flag registers, not from the state register 0x0035, which follows them late.
+/// and away come from their flag registers.
 constexpr uint8_t DHW_ELECTRIC_POLL_REGISTERS[] = {
     DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,           DHW_REG_BOOST_FLAG,
     DHW_REG_AWAY_FLAG,         DHW_REG_ACTIVE_TARGET,  DHW_REG_TARGET_SHOWERS,

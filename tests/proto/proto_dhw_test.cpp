@@ -370,25 +370,6 @@ TEST(ProtoDhw, TheElectricStorageModelOffersOnlyTheTwoModesItHasShown) {
     EXPECT_TRUE(dhw_model_offers_mode(DeviceModel::NONE, mode));
 }
 
-TEST(ProtoDhw, StateDecodesTheFourValuesSeenAndNothingElse) {
-  const struct {
-    uint8_t wire;
-    DhwState state;
-  } seen[] = {{0x00, DhwState::AWAY}, {0x02, DhwState::MANUAL}, {0x03, DhwState::BOOST}, {0x04, DhwState::AUTO}};
-  for (const auto &row : seen) {
-    DhwState state = DhwState::AUTO;
-    ASSERT_TRUE(decode_dhw_state(&row.wire, 1, state)) << static_cast<unsigned>(row.wire);
-    EXPECT_EQ(state, row.state);
-  }
-  DhwState untouched = DhwState::MANUAL;
-  for (const uint8_t unknown : {uint8_t{0x01}, uint8_t{0x05}, uint8_t{0xFF}})
-    EXPECT_FALSE(decode_dhw_state(&unknown, 1, untouched)) << static_cast<unsigned>(unknown);
-  const uint8_t auto_state = 0x04;
-  EXPECT_FALSE(decode_dhw_state(&auto_state, 0, untouched)) << "an empty value";
-  EXPECT_FALSE(decode_dhw_state(nullptr, 1, untouched));
-  EXPECT_EQ(untouched, DhwState::MANUAL);
-}
-
 TEST(ProtoDhw, HeatingPowerIsUnsignedBigEndianWatts) {
   uint16_t watts = 7;
   const uint8_t rest[] = {0x00, 0x00};
@@ -441,7 +422,7 @@ TEST(ProtoDhw, AStatusWhoseTwoWordsReadAllOnesReportsNothing) {
   EXPECT_FALSE(s.unreported) << "one word alone is not enough";
 }
 
-TEST(ProtoDhw, TheFlagAndStateWritesAreFamilyZeroSetsOfOneByte) {
+TEST(ProtoDhw, TheFlagWritesAreFamilyZeroSetsOfOneByte) {
   uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {};
   ASSERT_EQ(encode_dhw_flag_write(DhwOperatingFeature::BOOST, true, out), 5U);
   EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x52, 0x01}));
@@ -449,8 +430,4 @@ TEST(ProtoDhw, TheFlagAndStateWritesAreFamilyZeroSetsOfOneByte) {
   EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x52, 0x00}));
   ASSERT_EQ(encode_dhw_flag_write(DhwOperatingFeature::AWAY, true, out), 5U);
   EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x53, 0x01}));
-  ASSERT_EQ(encode_dhw_state_write(DhwState::BOOST, out), 5U);
-  EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x35, 0x03}));
-  ASSERT_EQ(encode_dhw_state_write(DhwState::AWAY, out), 5U);
-  EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x35, 0x00}));
 }
