@@ -441,5 +441,26 @@ static constexpr uint8_t PAIRING_KEY_EXCHANGE_RETRIES = 3;  ///< Retries for the
 /// `pairing_key_init_delay_ms` can lengthen it for a device that needs a later 0x31.
 static constexpr uint16_t PAIRING_KEY_INIT_DELAY_MS = 300;
 
+// ============================================================================
+// Data transport reads (CMD_TRANSFER_OPEN .. CMD_UNKNOWN4A_RESP)
+// ============================================================================
+
+/// Pause before each request of a transfer read after the first, counted from the device's last answer. An RS100
+/// Solar io missed every block request sent right after its previous answer and answered every re-send, which left
+/// about 650 ms after that answer (issue #156). Waiting that long first saves one long-preamble transmission per
+/// request. The `read_object` probe and the queued transfer reader both use it.
+static constexpr uint32_t TRANSFER_STEP_GAP_MS = 650;
+/// Re-check delay of a transfer step that found the radio held by other hub work (a command, pairing, a key
+/// extraction, a one-way burst).
+static constexpr uint32_t TRANSFER_RADIO_HELD_RETRY_MS = 100;
+/// Quiet time a transfer read needs after the last data-transport frame of another controller to the same device.
+/// A heat pump serves one transfer at a time and keeps the handle of an opened one until it is closed: a transfer
+/// of ours open beside a gateway's or a thermostat's makes the device answer them late or refuse them, and the
+/// other controller then repeats its request. A gateway session reads about 35 entries with gaps under a second;
+/// its periodic reads take a few seconds, and a thermostat's write a second or two about every 93 s (issue #244).
+static constexpr uint32_t TRANSFER_FOREIGN_QUIET_MS = 15000;
+/// Re-check delay of a queued transfer read that is waiting for TRANSFER_FOREIGN_QUIET_MS to pass.
+static constexpr uint32_t TRANSFER_FOREIGN_RETRY_MS = 1000;
+
 }  // namespace home_io_control
 }  // namespace esphome

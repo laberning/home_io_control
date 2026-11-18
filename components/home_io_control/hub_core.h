@@ -49,6 +49,7 @@
 #include "pairing_engine.h"
 #include "management_actions.h"
 #include "heater_controller.h"
+#include "transfer_reader.h"
 #include "hub_ports.h"
 #include "key_extraction_responder.h"
 #include "oneway_controller.h"
@@ -123,6 +124,7 @@ class IOHomeControlComponent : public Component,
         management_actions_(node_id_, system_key_, &tuning_, exchange_engine_, registry_, &initialized_, this),
         heater_controller_(node_id_, &initialized_, &radio_, registry_, poll_policy_, exchange_engine_,
                            this->make_heater_controller_hub_()),
+        transfer_reader_(node_id_, TRANSFER_RECIPES, this->make_transfer_reader_hub_()),
         // Capturing `this` is safe here: the callback is only ever invoked from send_burst(),
         // long after construction. It injects the *ability* to transmit rather than a reference
         // to whichever collaborator currently owns the radio. `&tuning_` is read per burst
@@ -462,6 +464,15 @@ class IOHomeControlComponent : public Component,
   /// @param reply The probe's reply frame.
   /// @return true when it was recorded.
   bool record_probe_reply_event(const IoFrame &reply);
+
+  /// Run one authenticated request/answer exchange on the command channel with the shared exchange bookkeeping
+  /// (exchange counters, link health of every ending, result code of an error reply, device event reports) and
+  /// no poll backoff. The path of the `read_object` probe and of the transfer reader.
+  /// @param device_id Target device ID.
+  /// @param request Request frame to send.
+  /// @param[out] response The device's reply.
+  /// @return true when a reply frame, an error reply included, is in @p response.
+  bool exchange_recorded(const std::string &device_id, const IoFrame &request, IoFrame &response);
 
   /// Register a callback invoked after every recorded device event, used by the "Last Device Event"
   /// text sensor. Single-slot, mirrors set_pairing_result_callback().
@@ -971,19 +982,25 @@ class IOHomeControlComponent : public Component,
   /// @param device_ids Devices to poll.
   /// @param delay_ms Poll delay in milliseconds.
   void schedule_device_polls_(const std::vector<std::string> &device_ids, uint32_t delay_ms);
-  /// Whether loop() should skip dispatching the queue this iteration because the pending work is a
-  /// background poll and either a 1W remote transmitted very recently, or a key-extraction attempt
-  /// is mid-flight. Thin wrapper binding OneWayReceiver::defers_background_poll(), plus a second, independent yield
-  /// condition: a background poll is a blocking exchange that owns the radio for 1-3 s, and dispatching one while the
-  /// key-extraction responder is listening for its peer's next frame (an expected CMD_KEY_TRANSFER (0x32), say) would
-  /// swallow it — see listen_for_key_extraction_peer_() for the other half of that listen. Only background polls yield
-  /// here, same as the 1W rule: a user command must never wait on either kind of background activity.
+  /// Whether background radio work (a queued status poll or other background operation, a queued transfer read)
+  /// may run now: the radio is not in an exchange, the hub is not in radio test mode, no key-extraction attempt
+  /// is waiting for its peer's next frame and no linked 1W remote is transmitting. A background exchange is
+  /// blocking and owns the radio for 1-3 s; dispatched while a remote is still transmitting it would blind the
+  /// hub to the rest of the press, and while the key-extraction responder is listening for its peer's next frame
+  /// (an expected CMD_KEY_TRANSFER (0x32), say) it would swallow it — see listen_for_key_extraction_peer_() for
+  /// the other half of that listen. The one list of these conditions: loop() gates the operation queue on it
+  /// (defer_background_poll_()) and the transfer reader's steps wait on it.
+  [[nodiscard]] bool background_radio_allowed_() const {
+    return !this->busy_ && !this->radio_test_mode_ && !this->key_extraction_awaiting_reply_() &&
+           !this->oneway_receiver_.defers_background_poll(true, millis());
+  }
+  /// Whether loop() should skip dispatching the queue this iteration: the pending work is a background
+  /// operation and background_radio_allowed_() says no. Only background operations yield, a user command must
+  /// never wait on any kind of background activity.
   [[nodiscard]] bool defer_background_poll_() const {
     const bool next_op_is_background =
         !this->op_queue_.empty() && OperationQueue::is_background_op(this->op_queue_.front().type);
-    if (next_op_is_background && this->key_extraction_awaiting_reply_())
-      return true;
-    return this->oneway_receiver_.defers_background_poll(next_op_is_background, millis());
+    return next_op_is_background && !this->background_radio_allowed_();
   }
   /// Decide, and act on, what a frame of another controller means for one registered device: a
   /// heard write, or a device challenge that follows no heard read, arms a tracked poll; any other
@@ -1233,6 +1250,12 @@ class IOHomeControlComponent : public Component,
   /// exchange and execute helpers; called from the initializer list, so every lambda only captures `this`.
   /// @return The injected calls.
   HeaterControllerHub make_heater_controller_hub_();
+  /// @brief Build the calls the transfer reader reaches the hub through (ADR 0099).
+  ///
+  /// Lives on the hub for the same reasons as make_heater_controller_hub_(): the calls need protected access
+  /// (`set_timeout()`) and the hub's private predicate and exchange helpers.
+  /// @return The injected calls.
+  TransferReaderHub make_transfer_reader_hub_();
   /// Apply backoff after a failed background status poll and log the result.
   /// @param device_id Target device ID.
   /// @param auth_like True when the failed exchange saw a 0x3C challenge.
@@ -1375,6 +1398,9 @@ class IOHomeControlComponent : public Component,
   /// initialized_, node_id_ and exchange_engine_, which it references, so member-init order matches the
   /// initializer list.
   HeaterController heater_controller_;
+  /// Owns the queued, non-blocking reads of device data objects (ADR 0099). Declared after node_id_ and
+  /// heater_controller_ so member-init order matches the initializer list. Nothing queues a read yet.
+  TransferReader transfer_reader_;
   /// Owns the 1W controller identities, their rolling-sequence counters and the transmit burst.
   /// The third collaborator that drives the radio (ADR 0004), and the only one that awaits
   /// nothing — 1W has no reply to wait for.

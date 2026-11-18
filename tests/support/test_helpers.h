@@ -151,6 +151,8 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::register_management_actions_;
   using IOHomeControlComponent::oneway_receiver_;
   using IOHomeControlComponent::defer_background_poll_;
+  using IOHomeControlComponent::background_radio_allowed_;
+  using IOHomeControlComponent::transfer_reader_;
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
   // The LR1121 feature moved to the Lr1121FirmwareUpdateController collaborator (F5). Its state
   // and describe_*/debug_lines are reached through comp.lr1121_firmware_update_.<x>; the hub keeps

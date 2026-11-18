@@ -309,7 +309,10 @@ ManagementActions::ManagementActions(const uint8_t *node_id, const uint8_t *syst
       probes_(node_id, engine, registry, initialized,
               DiagnosticProbesHub{[hub]() { return hub->diagnostic_probes_enabled(); },
                                   [hub]() { return hub->get_radio(); },
-                                  [hub](const IoFrame &reply) { return hub->record_probe_reply_event(reply); }}) {}
+                                  [hub](const IoFrame &reply) { return hub->record_probe_reply_event(reply); },
+                                  [hub](const std::string &device_id, const IoFrame &request, IoFrame &response) {
+                                    return hub->exchange_recorded(device_id, request, response);
+                                  }}) {}
 
 void ManagementActions::register_actions() {
 #if defined(USE_API_USER_DEFINED_ACTIONS) && defined(USE_API_CUSTOM_SERVICES)

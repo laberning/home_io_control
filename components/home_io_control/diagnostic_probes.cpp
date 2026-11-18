@@ -11,6 +11,8 @@
 #include "proto_device_types.h"
 #include "proto_heating_profiles.h"
 #include "proto_private_registers.h"
+#include "proto_timing.h"
+#include "transfer_session.h"
 
 #include "esphome/core/application.h"
 #include "esphome/core/hal.h"
@@ -23,6 +25,7 @@
 #include <iterator>
 #include <limits>
 #include <string>
+#include <vector>
 
 namespace esphome {
 namespace home_io_control {
@@ -52,7 +55,7 @@ constexpr uint8_t PROBE_LIMITATION_INDEX_MINIMUM = 0;  ///< `limitation` index t
 constexpr const char *PROBE_NAME_SUBSCRIBE_EVENT =
     "subscribe_event";  ///< create_subscribe_event(); index 0 = battery level event, 1 = local sensor event.
 constexpr const char *PROBE_NAME_READ_OBJECT =
-    "read_object";  ///< Data-transport read of one device object (ADR 0062); index = TRANSFER_READABLE_OBJECTS row.
+    "read_object";  ///< Data-transport read of one device object (ADR 0062); index = TRANSFER_RECIPES row.
 constexpr const char *PROBE_NAME_REGISTER_00 =
     "register_00";  ///< Read of register 0x00<index> over CMD_WRITE_PRIVATE (read direction only).
 constexpr const char *PROBE_NAME_REGISTER_01 =
@@ -62,19 +65,8 @@ constexpr uint8_t PROBE_REGISTER_HEADER_LENGTH = 4;
 constexpr uint8_t PROBE_REGISTER_HIGH_00 = 0x00;  ///< High register byte of `register_00`; family untested.
 constexpr uint8_t PROBE_REGISTER_HIGH_01 =
     0x01;  ///< High register byte of `register_01`; the family climate support reads.
-/// Highest `read_object` index: the last row of TRANSFER_READABLE_OBJECTS.
-constexpr uint8_t PROBE_READ_OBJECT_MAX_INDEX = TRANSFER_READABLE_OBJECT_COUNT - 1;
-/// Pause before each block request and before the close. An RS100 Solar io missed every block request sent
-/// right after its previous answer and answered every re-send, which left about 650 ms after that answer
-/// (issue #156). Waiting that long first saves one long-preamble transmission per block.
-constexpr uint32_t PROBE_READ_OBJECT_BLOCK_GAP_MS = 650;
-/// Longest object `read_object` pulls: 24 blocks (432 bytes), the smallest whole-block cap that covers the
-/// longest length a real device has announced (431 bytes, issue #156). A device announcing more is closed again
-/// unread, so a misreading cannot turn into a long run of transmissions on the shared band. The cost: on that
-/// low-power device a 14-block read blocked the loop for 16.4 s, so 24 blocks take about 28 s nominally and, with
-/// up to 3 tries per block, can pass 60 s. The ESPHome API tolerates that (its server only drops a client after
-/// 150 s without traffic), and the probe is manual, one object per call.
-constexpr uint16_t PROBE_READ_OBJECT_MAX_BYTES = 24 * TRANSFER_BLOCK_SIZE;
+/// Highest `read_object` index: the last row of TRANSFER_RECIPES.
+constexpr uint8_t PROBE_READ_OBJECT_MAX_INDEX = TRANSFER_RECIPES.size() - 1;
 /// Data bytes per log line when `read_object` prints what it read (short enough for the log's line limit).
 constexpr uint8_t PROBE_READ_OBJECT_LOG_BYTES_PER_LINE = 24;
 /// "object 0xNNNN class NNN handle 0xNN status NNN length NNNNN" plus the terminator.
@@ -187,14 +179,6 @@ bool build_probe_unsubscribe_event(IoFrame &f, const uint8_t *own, const uint8_t
   return create_unsubscribe_event(f, own, dst, event, low_power);
 }
 
-/// Maps the `read_object` index onto its TRANSFER_READABLE_OBJECTS row; create_transfer_open() checks the
-/// object against the table again.
-bool build_probe_read_object(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint8_t index, bool low_power) {
-  if (index > PROBE_READ_OBJECT_MAX_INDEX)
-    return false;  // Unreachable through probe_device(), which gates on max_index.
-  return create_transfer_open(f, own, dst, TRANSFER_READABLE_OBJECTS[index], low_power);
-}
-
 /// Shared body of the register probes: frames a read of register `<reg_hi><index>`. The payload comes from
 /// encode_private_register_read(), which cannot produce the write direction, so no probe input can put a
 /// register write on the air (ADR 0063).
@@ -222,6 +206,8 @@ struct ProbeDescriptor {
   // --- Required: no default, so a row that leaves one out fails the host build
   // (-Wmissing-field-initializers under -Werror). ---
   const char *name;
+  /// Frames the probe's one request. Null only for `read_object` (`reads_blocks`), which runs a whole
+  /// TransferSession instead of one frame.
   ProbeBuilderFn builder;
   /// False for a probe that changes state in the device (ADR 0060), or whose index is a bitmap rather
   /// than an ordinal: probe_sweep() refuses it. Required so a new state-changing probe is never swept
@@ -236,7 +222,9 @@ struct ProbeDescriptor {
   bool needs_index{true};        ///< False for the probes whose builders take no index/selector ("general_info3",
                                  ///< "get_info1", "get_info2", "status_mp_fp").
   uint8_t max_index{UINT8_MAX};  ///< Highest index the probe accepts; the full byte range when `index_help` is null.
-  bool reads_blocks{false};      ///< True for `read_object`: an accepted first reply is followed by block reads.
+  /// True for `read_object`: the index is `<index>[:<offset>]` and the probe runs a whole TransferSession
+  /// (open, blocks, close) instead of one frame.
+  bool reads_blocks{false};
   /// True for the register probes: refused unless device_accepts_register_probe() holds for the target.
   bool register_read{false};
   /// Optional check of the parsed index beyond max_index (a bitmap index); false is reported with
@@ -284,11 +272,11 @@ constexpr ProbeDescriptor PROBE_TABLE[] = {
      .sweepable = false,
      .index_help = "index 0 (battery level event 0x2001) or 1 (local sensor event 0x2005)",
      .max_index = PROBE_SUBSCRIBE_EVENT_MAX_INDEX},
-    // The data-transport read (ADR 0062): a multi-frame session, so it is not swept; it changes nothing in
-    // the device but a transfer handle that the probe closes again.
+    // The data-transport read (ADR 0062): a multi-frame session that changes nothing in the device but a transfer
+    // handle that the probe closes again. A sweep walks the offsets of one row, not the rows.
     {.name = PROBE_NAME_READ_OBJECT,
-     .builder = build_probe_read_object,
-     .sweepable = false,
+     .builder = nullptr,
+     .sweepable = true,
      .index_help = "index 0 (actuator capacity 0x8100), 1 (actuator state 0x8103), 2 (name record 0x8003), 3 (general "
                    "info 1, 0x8001), 4 (general info 2, 0x8002), or 5 to 29 (further objects, see the diagnostic "
                    "probes documentation)",
@@ -368,21 +356,22 @@ std::string hex_range(const uint8_t *data, uint16_t first, uint16_t end) {
   return out;
 }
 
-/// @brief Parse a probe_device()/probe_sweep() index argument into a byte.
+/// @brief Parse an unsigned number argument of at most @p max.
 ///
 /// Accepts both a bare decimal string ("6") and a "0x"-prefixed hex string ("0x06") — the two
 /// shapes a Home Assistant user is likely to type when copying a value out of a captured frame
 /// dump. Rejects anything else (empty string, trailing garbage, out-of-range value) rather than
-/// silently defaulting to 0, since a wrong index silently sent as 0 would misrepresent what was
+/// silently defaulting to 0, since a wrong value silently sent as 0 would misrepresent what was
 /// actually probed.
 /// @param text Argument as received from the native API call.
-/// @param out Parsed byte on success; left untouched on failure.
-/// @return true if `text` is exactly one well-formed byte value.
-bool parse_probe_index(const std::string &text, uint8_t &out) {
+/// @param max Largest accepted value.
+/// @param out Parsed value on success; left untouched on failure.
+/// @return true if `text` is exactly one well-formed number of at most `max`.
+bool parse_probe_number(const std::string &text, uint32_t max, uint32_t &out) {
   if (text.empty())
     return false;
   // A leading "0" followed by another digit (e.g. "010") is valid octal to strtoul() below and
-  // would silently probe a different index than a user copying a byte value out of a hex dump
+  // would silently probe a different value than a user copying one out of a hex dump
   // intended -- reject it explicitly rather than relying on strtoul()'s octal parsing, which only
   // rejects the invalid-octal-digit cases ("08", "09"), not the valid ones.
   if (text.size() > 1 && text[0] == '0' && text[1] != 'x' && text[1] != 'X')
@@ -395,10 +384,61 @@ bool parse_probe_index(const std::string &text, uint8_t &out) {
   const uint32_t value = std::strtoul(text.c_str(), &end, 0);
   if (end != text.c_str() + text.size())
     return false;
-  if (errno == ERANGE || value > std::numeric_limits<uint8_t>::max())
+  if (errno == ERANGE || value > max)
+    return false;
+  out = value;
+  return true;
+}
+
+/// @brief Parse a probe_device()/probe_sweep() index argument into a byte (see parse_probe_number()).
+bool parse_probe_index(const std::string &text, uint8_t &out) {
+  uint32_t value = 0;
+  if (!parse_probe_number(text, std::numeric_limits<uint8_t>::max(), value))
     return false;
   out = static_cast<uint8_t>(value);
   return true;
+}
+
+/// @brief Split a `read_object` index `<index>[:<offset>]` into its recipe row and offset.
+///
+/// The offset defaults to 0, the only offset of every probe object. Writes the reason into @p result.message
+/// when a part is malformed; whether the row or the offset exists is checked by the caller.
+/// @return true when both parts are well-formed numbers.
+bool parse_read_object_index(const std::string &text, uint8_t &index_out, uint16_t &offset_out,
+                             ManagementActionResult &result) {
+  const size_t colon = text.find(':');
+  if (!parse_probe_index(text.substr(0, colon), index_out)) {
+    result.message = "index must be a decimal or 0x-prefixed byte value (0-255), optionally followed by :<offset>";
+    return false;
+  }
+  offset_out = 0;
+  if (colon == std::string::npos)
+    return true;
+  uint32_t offset = 0;
+  if (!parse_probe_number(text.substr(colon + 1), std::numeric_limits<uint16_t>::max(), offset)) {
+    result.message = "the offset after the colon must be a decimal or 0x-prefixed 16-bit value (0-65535)";
+    return false;
+  }
+  offset_out = static_cast<uint16_t>(offset);
+  return true;
+}
+
+/// @brief "0x" followed by @p value as four hex digits.
+std::string format_hex_word(uint16_t value) {
+  return "0x" + format_hex_byte(static_cast<uint8_t>(value >> BITS_PER_BYTE)) +
+         format_hex_byte(static_cast<uint8_t>(value));
+}
+
+/// @brief The error message for an offset that the recipe of a `read_object` index does not allow.
+std::string offset_not_allowed_message(uint8_t index, const TransferRecipe &recipe) {
+  std::string message = "read_object index " + std::to_string(index);
+  if (recipe.offsets.empty())
+    return message + " reads at offset 0 only";
+  message += " takes one of the offsets";
+  for (const uint16_t offset : recipe.offsets) {
+    message += " " + format_hex_word(offset);
+  }
+  return message;
 }
 
 /// A register read means something only to a register-protocol device; a cover, light or lock has no such register
@@ -433,6 +473,132 @@ void report_register_reply(const ProbeDescriptor &descriptor, const IoFrame &req
   }
   ESP_LOGI(detail::TAG, "%s register 0x%02X%02X on %s: %s", probe.c_str(), request.data[2], request.data[3],
            result.device_id.c_str(), echoed ? result.decoded.c_str() : command_name(response.cmd));
+}
+
+/// @brief Parse and check the `index` argument of probe_device() against the probe's row.
+///
+/// A `read_object` index is `<row>[:<offset>]`, with the offset checked against the row's recipe; every other probe
+/// takes a byte, or nothing. Writes the reason into @p result.message when the index is refused.
+/// @param[out] index_out The parsed index (0 for a probe without one).
+/// @param[out] offset_out The parsed `read_object` offset (0 otherwise).
+/// @return true when the probe may be sent.
+bool resolve_probe_index(const ProbeDescriptor &descriptor, const std::string &text, uint8_t &index_out,
+                         uint16_t &offset_out, ManagementActionResult &result) {
+  if (descriptor.reads_blocks) {
+    if (!parse_read_object_index(text, index_out, offset_out, result))
+      return false;
+  } else if (descriptor.needs_index && !parse_probe_index(text, index_out)) {
+    result.message = "index must be a decimal or 0x-prefixed byte value (0-255)";
+    return false;
+  }
+  if (descriptor.needs_index && !probe_index_in_range(descriptor, index_out)) {
+    result.message = index_out_of_range_message(descriptor);
+    return false;
+  }
+  if (descriptor.reads_blocks && !transfer_recipe_allows_offset(TRANSFER_RECIPES[index_out], offset_out)) {
+    result.message = offset_not_allowed_message(index_out, TRANSFER_RECIPES[index_out]);
+    return false;
+  }
+  return true;
+}
+
+/// @brief One probe_device() call of a sweep: the index argument it gets and the label its report line carries.
+struct SweepStep {
+  std::string index;  ///< The `index` argument of probe_device().
+  std::string label;  ///< Rendered after "index=" in the report line.
+};
+
+/// @brief Plan the sweep of an ordinary probe: one step per index from `first_index` to `last_index`.
+///
+/// Writes the reason into @p result.message when the range is malformed, past the probe's max_index or wider than
+/// PROBE_SWEEP_MAX_INDICES.
+/// @return true when @p steps and the two labels (the range's ends, as shown in the report) are filled.
+bool plan_index_sweep(const ProbeDescriptor &descriptor, const std::string &first_index, const std::string &last_index,
+                      std::vector<SweepStep> &steps, std::string &first_label, std::string &last_label,
+                      ManagementActionResult &result) {
+  uint8_t first = 0;
+  uint8_t last = 0;
+  if (!parse_probe_index(first_index, first) || !parse_probe_index(last_index, last)) {
+    result.message = "first_index/last_index must be decimal or 0x-prefixed byte values (0-255)";
+    return false;
+  }
+  if (last < first) {
+    result.message = "last_index must be >= first_index";
+    return false;
+  }
+  if (last > descriptor.max_index) {
+    result.message = index_out_of_range_message(descriptor);
+    return false;
+  }
+  const uint32_t span = static_cast<uint32_t>(last) - first + 1;
+  if (span > PROBE_SWEEP_MAX_INDICES) {
+    result.message =
+        "sweep range too wide: " + std::to_string(span) + " indices, max " + std::to_string(PROBE_SWEEP_MAX_INDICES);
+    return false;
+  }
+  for (uint32_t idx = first; idx <= last; idx++)
+    steps.push_back({std::to_string(idx), "0x" + format_hex_byte(static_cast<uint8_t>(idx))});
+  first_label = "0x" + format_hex_byte(first);
+  last_label = "0x" + format_hex_byte(last);
+  return true;
+}
+
+/// @brief Plan the sweep of `read_object`: one step per offset of one recipe row between the two ends.
+///
+/// Both ends name the same row, `<row>[:<offset>]`: a missing first offset is 0 and a missing last offset is the
+/// highest offset there is, so `3` and `3` sweep every offset of row 3. Only offsets the row allows become steps.
+/// @return true when @p steps and the two labels are filled.
+bool plan_offset_sweep(const ProbeDescriptor &descriptor, const std::string &first_index, const std::string &last_index,
+                       std::vector<SweepStep> &steps, std::string &first_label, std::string &last_label,
+                       ManagementActionResult &result) {
+  uint8_t first_row = 0;
+  uint8_t last_row = 0;
+  uint16_t first_offset = 0;
+  uint16_t last_offset = 0;
+  if (!parse_read_object_index(first_index, first_row, first_offset, result) ||
+      !parse_read_object_index(last_index, last_row, last_offset, result))
+    return false;
+  if (last_index.find(':') == std::string::npos)
+    last_offset = std::numeric_limits<uint16_t>::max();
+  if (first_row != last_row) {
+    result.message = "a read_object sweep walks the offsets of one row: first_index and last_index must name the same "
+                     "row (<row>:<first offset> and <row>:<last offset>)";
+    return false;
+  }
+  if (!probe_index_in_range(descriptor, first_row)) {
+    result.message = index_out_of_range_message(descriptor);
+    return false;
+  }
+  if (last_offset < first_offset) {
+    result.message = "the last offset must be >= the first offset";
+    return false;
+  }
+  const TransferRecipe &recipe = TRANSFER_RECIPES[first_row];
+  std::vector<uint16_t> offsets;
+  if (recipe.offsets.empty()) {
+    if (first_offset == 0)
+      offsets.push_back(0);
+  } else {
+    for (const uint16_t offset : recipe.offsets) {
+      if (offset >= first_offset && offset <= last_offset)
+        offsets.push_back(offset);
+    }
+  }
+  if (offsets.empty()) {
+    result.message = offset_not_allowed_message(first_row, recipe) + ", none of them in the range";
+    return false;
+  }
+  if (offsets.size() > PROBE_SWEEP_MAX_INDICES) {
+    result.message = "sweep range too wide: " + std::to_string(offsets.size()) + " offsets, max " +
+                     std::to_string(PROBE_SWEEP_MAX_INDICES);
+    return false;
+  }
+  const std::string row_label = "0x" + format_hex_byte(first_row) + ":";
+  for (const uint16_t offset : offsets)
+    steps.push_back({std::to_string(first_row) + ":" + std::to_string(offset), row_label + format_hex_word(offset)});
+  first_label = steps.front().label;
+  last_label = steps.back().label;
+  return true;
 }
 
 }  // namespace
@@ -480,12 +646,12 @@ ManagementActionResult DiagnosticProbes::probe_device(const std::string &device_
     return result;
 
   uint8_t index_byte = 0;
-  if (descriptor->needs_index && !parse_probe_index(index, index_byte)) {
-    result.message = "index must be a decimal or 0x-prefixed byte value (0-255)";
+  uint16_t offset = 0;
+  if (!resolve_probe_index(*descriptor, index, index_byte, offset, result))
     return result;
-  }
-  if (descriptor->needs_index && !probe_index_in_range(*descriptor, index_byte)) {
-    result.message = index_out_of_range_message(*descriptor);
+  // The data-transport read is a whole session of its own, not one frame and its reply.
+  if (descriptor->reads_blocks) {
+    read_object_(*dev, probe, index_byte, offset, result);
     return result;
   }
 
@@ -515,9 +681,22 @@ ManagementActionResult DiagnosticProbes::probe_device(const std::string &device_
     return result;
   }
 
+  report_raw_reply_(probe, response, result);
+  report_register_reply(*descriptor, request, response, probe, result);
+  // The decode depends on the reply, not on which probe drew it, so any probe that happens to
+  // draw a limitation reply reports it. Rendered, never applied: the device record is untouched.
+  if (response.cmd == CMD_LIMITATION_STATUS_RESP) {
+    result.decoded = detail::describe_limitation_reply(response);
+    result.message += " [" + result.decoded + "]";
+  }
+  return result;
+}
+
+void DiagnosticProbes::report_raw_reply_(const std::string &probe, const IoFrame &response,
+                                         ManagementActionResult &result) const {
   // Report the raw reply, not an interpretation -- the whole point of a probe is that we do not
   // know what these bytes mean yet. This never touches a device record's status: DiagnosticProbes
-  // holds no hub pointer, only the three DiagnosticProbesHub calls, so a probe reply can never be
+  // holds no hub pointer, only the DiagnosticProbesHub calls, so a probe reply can never be
   // misread as a position update.
   uint8_t raw[FRAME_MAX_SIZE] = {0};
   const uint8_t raw_len = serialize(response, raw, sizeof(raw));
@@ -557,104 +736,86 @@ ManagementActionResult DiagnosticProbes::probe_device(const std::string &device_
     result.decoded = header;
     result.message += " [" + result.decoded + "]";
   }
-  report_register_reply(*descriptor, request, response, probe, result);
-  // The data-transport read continues past its first answer; everything it reports is raw bytes.
-  if (descriptor->reads_blocks)
-    read_object_blocks_(*dev, response, TRANSFER_READABLE_OBJECTS[index_byte], result);
-  // The decode depends on the reply, not on which probe drew it, so any probe that happens to
-  // draw a limitation reply reports it. Rendered, never applied: the device record is untouched.
-  if (response.cmd == CMD_LIMITATION_STATUS_RESP) {
-    result.decoded = detail::describe_limitation_reply(response);
-    result.message += " [" + result.decoded + "]";
-  }
-  return result;
 }
 
-void DiagnosticProbes::read_object_blocks_(const IoDevice &dev, const IoFrame &open_reply, const TransferObject &object,
-                                           ManagementActionResult &result) {
-  const uint16_t object_id = object.id;
-  // Anything but an open answer (an error frame, say) is already reported by the caller.
-  if (open_reply.cmd != CMD_TRANSFER_OPEN_RESP)
+void DiagnosticProbes::read_object_(const IoDevice &dev, const std::string &probe, uint8_t index, uint16_t offset,
+                                    ManagementActionResult &result) {
+  const TransferRecipe &recipe = TRANSFER_RECIPES[index];
+  TransferSession session(recipe, offset);
+  IoFrame request;
+  IoFrame reply;
+  IoFrame first_reply;
+  bool have_first_reply = false;
+  bool first_request = true;
+  // Every request after the first waits the transfer gap after the device's last answer (the hub's own exchange
+  // has no pause of its own); a blocking loop, as every probe is (ADR 0013).
+  while (session.next_request(node_id_, dev.node_id, dev.low_power, request)) {
+    if (!first_request) {
+      App.feed_wdt();
+      delay(TRANSFER_STEP_GAP_MS);
+    }
+    const bool answered = hub_.exchange(result.device_id, request, reply);
+    if (answered && !have_first_reply) {
+      first_reply = reply;
+      have_first_reply = true;
+    }
+    first_request = false;
+    session.on_answer(answered ? &reply : nullptr);
+  }
+  if (!have_first_reply) {
+    result.message = "no reply after " + std::to_string(EXCHANGE_RETRY_COUNT) +
+                     " attempts (device asleep, unreachable, or silently ignoring this opcode)";
     return;
-  TransferOpenReply open;
-  if (!decode_transfer_open_reply(open_reply, open)) {
+  }
+  report_raw_reply_(probe, first_reply, result);
+  // Anything but an open answer (an error frame, say) is already reported above.
+  if (first_reply.cmd != CMD_TRANSFER_OPEN_RESP)
+    return;
+  if (!session.open_answered()) {
     result.message += " [not a well-formed transfer-open answer]";
     return;
   }
+  const TransferOpenReply &open = session.open();
+  const TransferObject &object = recipe.opens.back().object;
   char head[PROBE_READ_OBJECT_HEADER_BUFFER_SIZE];
   snprintf(head, sizeof(head), "object 0x%04X class %u handle 0x%02X status %u length %u",
-           static_cast<unsigned>(object_id), static_cast<unsigned>(object.object_class),
+           static_cast<unsigned>(object.id), static_cast<unsigned>(object.object_class),
            static_cast<unsigned>(open.handle), static_cast<unsigned>(open.status), static_cast<unsigned>(open.length));
   result.decoded = head;
   result.message += " [" + result.decoded + "]";
-  if (open.status == TRANSFER_STATUS_NOTHING_TO_READ && open.length == 0) {
-    result.message += " [object is empty (status 7)]";
-    return;
-  }
-  if (!open.ok()) {
-    result.message += " [device refused the read]";
-    return;
-  }
-  if (open.length == 0) {
-    result.message += " [object is empty]";
-    return;
-  }
-
-  // Close the transfer on every path past this point: the device holds a handle until told otherwise.
-  // Every block request and the close wait PROBE_READ_OBJECT_BLOCK_GAP_MS after the device's last answer.
-  const auto pause_before_request = []() {
-    App.feed_wdt();
-    delay(PROBE_READ_OBJECT_BLOCK_GAP_MS);
-  };
-  const auto close_transfer = [&]() {
-    IoFrame close_request;
-    IoFrame close_reply;
-    pause_before_request();
-    if (create_transfer_read(close_request, node_id_, dev.node_id, open.handle, TRANSFER_CHUNK_CLOSE, dev.low_power))
-      engine_.send_and_receive(close_request, close_reply, FREQ_CH2);
-  };
-  if (open.length > PROBE_READ_OBJECT_MAX_BYTES) {
-    close_transfer();
-    result.message += " [longer than " + std::to_string(PROBE_READ_OBJECT_MAX_BYTES) + " bytes, closed unread]";
-    return;
-  }
-
-  uint8_t data[PROBE_READ_OBJECT_MAX_BYTES] = {0};
-  uint16_t have = 0;
-  const uint16_t chunks = transfer_chunk_count(open.length);
-  bool complete = true;
-  for (uint16_t chunk = chunks; chunk >= 1; chunk--) {
-    IoFrame request;
-    IoFrame reply;
-    pause_before_request();
-    if (!create_transfer_read(request, node_id_, dev.node_id, open.handle, chunk, dev.low_power) ||
-        engine_.send_and_receive(request, reply, FREQ_CH2) != ExchangeOutcome::SUCCESS_WITH_RESPONSE) {
-      complete = false;
+  switch (session.outcome()) {
+    case TransferOutcome::EMPTY:
+      result.message +=
+          open.status == TRANSFER_STATUS_NOTHING_TO_READ ? " [object is empty (status 7)]" : " [object is empty]";
+      return;
+    case TransferOutcome::REFUSED:
+      result.message += " [device refused the read]";
+      return;
+    case TransferOutcome::TOO_LONG:
+      result.message += " [longer than " + std::to_string(recipe.max_bytes) + " bytes, closed unread]";
+      return;
+    case TransferOutcome::MALFORMED:
+    case TransferOutcome::NO_ANSWER:
+      result.message += " [no usable answer to the open]";
+      return;
+    case TransferOutcome::READ:
+    case TransferOutcome::INCOMPLETE:
+    case TransferOutcome::ABANDONED:
       break;
-    }
-    const uint8_t *block = nullptr;
-    uint8_t block_len = 0;
-    // The blocks arrive counting down but their data runs forward; a block that echoes another chunk
-    // is a late answer and ends the read rather than being spliced in.
-    if (!decode_transfer_block(reply, open.handle, chunk, block, block_len) ||
-        have + block_len > PROBE_READ_OBJECT_MAX_BYTES) {
-      complete = false;
-      break;
-    }
-    std::memcpy(data + have, block, block_len);
-    have = static_cast<uint16_t>(have + block_len);
   }
-  close_transfer();
 
-  const std::string hex = hex_range(data, 0, have);
+  const std::vector<uint8_t> &data = session.data();
+  const auto have = static_cast<uint16_t>(data.size());
+  const bool complete = session.outcome() == TransferOutcome::READ;
+  const std::string hex = hex_range(data.data(), 0, have);
   result.response_hex = hex;
   ESP_LOGI(detail::TAG, "read_object %s object 0x%04X class %u: %u of %u bytes%s", result.device_id.c_str(),
-           static_cast<unsigned>(object_id), static_cast<unsigned>(object.object_class), static_cast<unsigned>(have),
+           static_cast<unsigned>(object.id), static_cast<unsigned>(object.object_class), static_cast<unsigned>(have),
            static_cast<unsigned>(open.length), complete ? "" : " (incomplete)");
   // One log line per few bytes: the logger truncates long lines (512 bytes on hardware).
   for (uint16_t i = 0; i < have; i += PROBE_READ_OBJECT_LOG_BYTES_PER_LINE) {
     ESP_LOGI(detail::TAG, "  +%03X: %s", static_cast<unsigned>(i),
-             hex_range(data, i, std::min<uint16_t>(have, i + PROBE_READ_OBJECT_LOG_BYTES_PER_LINE)).c_str());
+             hex_range(data.data(), i, std::min<uint16_t>(have, i + PROBE_READ_OBJECT_LOG_BYTES_PER_LINE)).c_str());
   }
   result.message += (complete ? " data=" : " incomplete, data so far=") + hex;
 }
@@ -687,38 +848,26 @@ ManagementActionResult DiagnosticProbes::probe_sweep(const std::string &device_i
     return result;
   }
 
-  uint8_t first = 0;
-  uint8_t last = 0;
-  if (!parse_probe_index(first_index, first) || !parse_probe_index(last_index, last)) {
-    result.message = "first_index/last_index must be decimal or 0x-prefixed byte values (0-255)";
+  std::vector<SweepStep> steps;
+  std::string first_label;
+  std::string last_label;
+  const bool planned =
+      descriptor->reads_blocks
+          ? plan_offset_sweep(*descriptor, first_index, last_index, steps, first_label, last_label, result)
+          : plan_index_sweep(*descriptor, first_index, last_index, steps, first_label, last_label, result);
+  if (!planned)
     return result;
-  }
-  if (last < first) {
-    result.message = "last_index must be >= first_index";
-    return result;
-  }
-  if (last > descriptor->max_index) {
-    result.message = index_out_of_range_message(*descriptor);
-    return result;
-  }
-  const uint32_t span = static_cast<uint32_t>(last) - first + 1;
-  if (span > PROBE_SWEEP_MAX_INDICES) {
-    result.message =
-        "sweep range too wide: " + std::to_string(span) + " indices, max " + std::to_string(PROBE_SWEEP_MAX_INDICES);
-    return result;
-  }
 
   std::string report;
   uint32_t answered_count = 0;
   bool stopped_early = false;
-  for (uint32_t idx = first; idx <= last; idx++) {
-    if (idx != first) {
+  for (size_t i = 0; i < steps.size(); i++) {
+    if (i != 0) {
       App.feed_wdt();
       delay(PROBE_SWEEP_DELAY_MS);
     }
-    const std::string index_str = std::to_string(idx);
-    const ManagementActionResult step = probe_device(device_id, probe, index_str);
-    report += "index=0x" + format_hex_byte(static_cast<uint8_t>(idx)) + ": ";
+    const ManagementActionResult step = probe_device(device_id, probe, steps[i].index);
+    report += "index=" + steps[i].label + ": ";
     if (step.success) {
       answered_count++;
       report += "cmd=0x" + format_hex_byte(step.response_cmd) + " hex=" + step.response_hex;
@@ -748,8 +897,8 @@ ManagementActionResult DiagnosticProbes::probe_sweep(const std::string &device_i
   // Renders the same 0x-prefixed form as the report body, so the Home Assistant event carries the
   // swept range rather than a blank `index` field left over from the per-index probe_device()
   // results this loop discards.
-  result.probe_index = "0x" + format_hex_byte(first) + "-0x" + format_hex_byte(last);
-  result.message = "Sweep \"" + probe + "\" over [0x" + format_hex_byte(first) + ",0x" + format_hex_byte(last) +
+  result.probe_index = first_label + "-" + last_label;
+  result.message = "Sweep \"" + probe + "\" over [" + first_label + "," + last_label +
                    "]: " + std::to_string(answered_count) + " answered\n" + report;
   return result;
 }

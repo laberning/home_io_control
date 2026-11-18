@@ -859,6 +859,8 @@ void IOHomeControlComponent::handle_oneway_frame_(const IoFrame &frame, uint32_t
 
 void IOHomeControlComponent::on_overheard_frame(const IoFrame &frame, const RadioRxPacket & /*packet*/,
                                                 int16_t rssi_dbm, uint32_t now) {
+  // A data-transport frame of another controller that a wait of ours heard: a queued transfer read gives way to it.
+  this->transfer_reader_.note_transfer_frame(frame, now);
   this->oneway_receiver_.keep_overheard(frame, now, rssi_dbm);
 }
 
@@ -878,6 +880,9 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   }
 
   detail::log_component_capture(this->radio_, "parse_ok", packet.data, packet.len, &frame);
+
+  // A data-transport frame of another controller to or from a device of ours: a queued transfer read gives way.
+  this->transfer_reader_.note_transfer_frame(frame, millis());
 
   // === Key-extraction responder ("Recover System Key") ===
   // Runs before the exchange-internal drop below: a hub-issued 0x3C challenging our own 0x37 is

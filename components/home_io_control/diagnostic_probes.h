@@ -5,16 +5,18 @@
 /// @ingroup hioc_hub
 ///
 /// DiagnosticProbes owns probe_device(), probe_sweep() and the data-transport read behind the
-/// `read_object` probe, with the table of probe names and frame builders. ManagementActions owns
+/// `read_object` probe (a blocking runner of TransferSession, transfer_session.h), with the table of probe names and
+/// frame builders. ManagementActions owns
 /// one instance and registers the two native API actions that drive it; the actions exist only
 /// with `diagnostic_probes: true` (docs/diagnostic-probes.md, ADR 0024).
 ///
-/// The class reaches the hub through DiagnosticProbesHub, three injected calls, and includes no
-/// hub header. None of the three applies a status to a device record, so a probe reply stays
+/// The class reaches the hub through DiagnosticProbesHub, four injected calls, and includes no
+/// hub header. None of the four applies a status to a device record, so a probe reply stays
 /// raw: it can never be misread as a position update.
 
 #include "device_registry.h"
 #include "exchange_engine.h"
+#include "hub_hooks.h"
 #include "management_helpers.h"
 #include "proto_constants.h"
 #include "proto_frame.h"
@@ -32,12 +34,16 @@ class RadioDriver;
 inline constexpr const char *MANAGEMENT_ACTION_PROBE_DEVICE = "probe_device";
 inline constexpr const char *MANAGEMENT_ACTION_PROBE_SWEEP = "probe_sweep";
 
-/// @brief The only three things a probe needs from the hub, injected by ManagementActions.
+/// @brief The only four things a probe needs from the hub, injected by ManagementActions.
 struct DiagnosticProbesHub {
   std::function<bool()> probes_enabled;                     ///< True when `diagnostic_probes: true` was configured.
   std::function<RadioDriver *()> radio;                     ///< The radio, for the structured capture log line.
   std::function<bool(const IoFrame &)> record_reply_event;  ///< Records a device event report on the "Last Device
                                                             ///< Event" sensor; true when the frame was one.
+  /// The exchange of the `read_object` probe, through the hub's path: its exchanges count in the exchange counters
+  /// and link health like every other exchange. The other probes exchange through the engine directly, so their
+  /// replies stay raw.
+  RecordedExchangeFn exchange;
 };
 
 /// @brief Sends diagnostic probe frames to already-paired devices and reports the raw replies.
@@ -51,7 +57,7 @@ class DiagnosticProbes {
   /// @param engine       Shared exchange engine for radio transactions.
   /// @param registry     Device registry for device lookups.
   /// @param initialized  Pointer to the hub's initialized flag.
-  /// @param hub          The three injected hub calls.
+  /// @param hub          The four injected hub calls.
   DiagnosticProbes(const uint8_t *node_id, ExchangeEngine &engine, DeviceRegistry &registry, const bool *initialized,
                    DiagnosticProbesHub hub);
 
@@ -72,7 +78,7 @@ class DiagnosticProbes {
   /// warrant the same refusal. It is always "stopped" (never refuses) for a light/switch, and the
   /// reported state can be stale if the device was last moved from a physical remote the hub
   /// never saw. Routes the response straight into `result.message` as raw hex; it is never passed
-  /// to the hub's status decoder (this class holds no hub pointer, only the three calls of
+  /// to the hub's status decoder (this class holds no hub pointer, only the calls of
   /// DiagnosticProbesHub, and none of them applies a status), so a probe can never be misread as a
   /// position update. `verified` is always false: the whole point is that the reply's meaning is not yet
   /// known.
@@ -113,14 +119,18 @@ class DiagnosticProbes {
   ///   - "unsubscribe_event": create_unsubscribe_event(), the same request with action byte 0x00,
   ///     same index mapping and the same guards. An untested guess at undoing a subscription; whether
   ///     it works shows only in whether the device's reports stop.
-  ///   - "read_object": the data-transport read of ADR 0062. `index` is a row of TRANSFER_READABLE_OBJECTS:
+  ///   - "read_object": the data-transport read of ADR 0062. `index` is `<row>` or `<row>:<offset>`, `<row>` a row of
+  ///     TRANSFER_RECIPES:
   ///     0 = actuator capacity record (object 0x8100), 1 = actuator state record (0x8103), 2 = name record
   ///     (0x8003, there to prove the flow before the other two are trusted), 3 = general info 1 (0x8001),
-  ///     4 = general info 2 (0x8002), 5 to 29 = further class-0 and Somfy manufacturer objects. One call
-  ///     opens the object (CMD_TRANSFER_OPEN), pulls its blocks (CMD_UNKNOWN4A_REQ, counting down) and closes it; the
-  ///     bytes are reported raw in `response_hex` and logged, never interpreted or applied to the device record. Not
-  ///     sweepable; an object announced longer than PROBE_READ_OBJECT_MAX_BYTES is closed unread. The write twin of the
-  ///     block (0x48, and a 0x4A that carries data) has no builder.
+  ///     4 = general info 2 (0x8002), 5 to 29 = further class-0 and Somfy manufacturer objects. The offset (decimal or
+  ///     `0x`-prefixed hex, 0 when left out) names where in the object the read opens; it must be one the row allows,
+  ///     which for rows 0 to 29 is 0 only. One call runs a TransferSession: it opens the object
+  ///     (CMD_TRANSFER_OPEN), pulls its blocks (CMD_UNKNOWN4A_REQ, counting down) and closes it, through the hub's
+  ///     exchange, so the exchanges count in link health. The bytes are reported raw in `response_hex` and logged,
+  ///     never interpreted or applied to the device record. An object announced longer than the row's size cap
+  ///     (432 bytes for rows 0 to 29) is closed unread. The write twin of the block (0x48, and a 0x4A that carries
+  ///     data) has no builder. `probe_sweep` walks the offsets of one row.
   ///   - "register_00" / "register_01": a read of register `0x00<index>` / `0x01<index>` over CMD_WRITE_PRIVATE
   ///     (`0C 60 <hi> <lo>`, ADR 0063). The direction byte is the read constant and cannot be set to the write
   ///     direction by any input (encode_private_register_read()). Refused for a device that is neither a
@@ -168,19 +178,25 @@ class DiagnosticProbes {
                                      const std::string &first_index, const std::string &last_index);
 
  private:
-  /// @brief Second half of the `read_object` probe: given the device's accepted CMD_TRANSFER_OPEN
-  /// answer, pull every block, close the transfer and report what was read.
+  /// @brief Report a device's raw reply: the capture log line, the hex, the error-result decode and the device
+  /// event recording. Sets `success` and the response fields of @p result.
+  /// @param probe Probe name for the message.
+  /// @param response The device's reply.
+  /// @param result Receives the report.
+  void report_raw_reply_(const std::string &probe, const IoFrame &response, ManagementActionResult &result) const;
+
+  /// @brief The `read_object` probe: run a TransferSession against @p dev in a blocking loop and report it.
   ///
-  /// Always closes a transfer the device opened, also after a failed block, so the device is not left
-  /// holding an open handle. Writes the outcome into `result` (`response_hex`, `decoded`, `message`);
-  /// the bytes are never decoded further and never reach the device record.
+  /// Reports the device's first answer raw like every probe, then what the read found: the open answer's header,
+  /// and the data, or why there is none. A transfer the device opened is always closed, also after a failed
+  /// block. The bytes never reach the device record.
   /// @param dev The probed device.
-  /// @param open_reply The device's answer to the open; anything but a CMD_TRANSFER_OPEN_RESP is left to
-  ///                   the caller's own report and ends the read here.
-  /// @param object The object that was opened (for the log and the message).
-  /// @param result Receives the outcome appended to the first-exchange text already in it.
-  void read_object_blocks_(const IoDevice &dev, const IoFrame &open_reply, const TransferObject &object,
-                           ManagementActionResult &result);
+  /// @param probe Probe name for the message.
+  /// @param index Row of TRANSFER_RECIPES; already checked against the table.
+  /// @param offset Offset to open at; already checked against the row.
+  /// @param result Receives the outcome.
+  void read_object_(const IoDevice &dev, const std::string &probe, uint8_t index, uint16_t offset,
+                    ManagementActionResult &result);
 
   const uint8_t *node_id_;
   ExchangeEngine &engine_;

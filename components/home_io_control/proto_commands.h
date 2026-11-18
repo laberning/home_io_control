@@ -691,19 +691,24 @@ bool create_subscribe_event(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
 bool create_unsubscribe_event(IoFrame &f, const uint8_t *own, const uint8_t *dst, uint16_t event_id, bool low_power);
 
 /// Build the request that opens a read of one device object (CMD_TRANSFER_OPEN 0x46) for the
-/// `read_object` diagnostic probe (ADR 0062). The payload is
-/// `<ORIGINATOR_SAAC> <class> 00 <id hi> <id lo> 00 00 00 00`, the form Somfy controllers use to read
-/// a whole object; Somfy actuators answered it for class-0 objects (issue #156). Only the class/id pairs
-/// in TRANSFER_READABLE_OBJECTS are accepted, so this builder cannot name any other object, and there
-/// is no builder for the write twin (0x48).
+/// `read_object` diagnostic probe (ADR 0062) and the queued transfer reader (ADR 0099). The payload is
+/// `<ORIGINATOR_SAAC> <class> 00 <id hi> <id lo> <offset hi> <offset lo> 00 00`, the form Somfy controllers use to
+/// read a whole object (offset 0); Somfy actuators answered it for class-0 objects (issue #156). Only a class, id and
+/// offset that a row of TRANSFER_RECIPES names are accepted (an object of one of its steps, an offset that the row
+/// allows), so this builder cannot name any other object or offset, and there is no builder for the write twin
+/// (0x48).
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID.
 /// @param dst Target device's 3-byte node ID.
-/// @param object The class and id to open; must be an entry of TRANSFER_READABLE_OBJECTS.
+/// @param object The class and id to open; must be the object of a step of a TRANSFER_RECIPES row.
+/// @param offset Offset of the part wanted, sent big-endian; must be allowed by that row (0 when it lists none).
 /// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
-/// @return true on success, false for an object outside the allowlist.
+/// @param allowlist The recipes that name what may be opened. Production code leaves the default, TRANSFER_RECIPES;
+///        a test passes its own table, which is how a recipe with offsets or several steps is exercised.
+/// @return true on success, false for an object or offset outside the allowlist.
 bool create_transfer_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, const TransferObject &object,
-                          bool low_power);
+                          uint16_t offset, bool low_power,
+                          std::span<const TransferRecipe> allowlist = TRANSFER_RECIPES);
 
 /// Build the request that reads one chunk of an opened transfer (CMD_UNKNOWN4A_REQ 0x4A):
 /// `<handle> <chunk hi> <chunk lo>`, nothing else. Chunk numbers count down from ceil(length/18) to 1;

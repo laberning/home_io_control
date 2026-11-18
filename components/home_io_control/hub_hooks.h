@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 
 namespace esphome {
 namespace home_io_control {
@@ -46,6 +47,16 @@ using TransmitFrameFn = std::function<bool(const IoFrame &frame, uint32_t freq_h
 /// excursion — writes `Component::warn_if_blocking_over_`, which is protected on ESPHome's
 /// `Component`. Wired to a lambda in the hub's initializer list, which has protected access.
 using BeginBlockingExcursionFn = std::function<void()>;
+
+/// @brief Runs one authenticated request/answer exchange on the command channel with the hub's shared exchange
+/// bookkeeping (exchange counters, link health of every ending, result code of an error reply, device event
+/// reports) and no poll backoff.
+/// @param device_id Hexadecimal node ID string of the device the request goes to.
+/// @param request   Request frame to send.
+/// @param response  Receives the device's reply.
+/// @return true when a reply frame, an error reply included, is in @p response; false for silence or an acceptance
+///         without a reply.
+using RecordedExchangeFn = std::function<bool(const std::string &device_id, const IoFrame &request, IoFrame &response)>;
 
 }  // namespace home_io_control
 }  // namespace esphome

@@ -378,6 +378,35 @@ HeaterControllerHub IOHomeControlComponent::make_heater_controller_hub_() {
   return hub;
 }
 
+TransferReaderHub IOHomeControlComponent::make_transfer_reader_hub_() {
+  TransferReaderHub hub;
+  // set_timeout() is protected on the real ESPHome Component, so the lambda defined here is the legitimate caller.
+  hub.set_timeout = [this](const char *name, uint32_t delay_ms, std::function<void()> callback) {
+    this->set_timeout(name, delay_ms, std::move(callback));
+  };
+  hub.background_radio_allowed = [this]() { return this->background_radio_allowed_(); };
+  hub.find_device = [this](const std::string &device_id) -> const IoDevice * { return this->get_device(device_id); };
+  hub.exchange = [this](const std::string &device_id, const IoFrame &request, IoFrame &response) {
+    return this->exchange_recorded(device_id, request, response);
+  };
+  return hub;
+}
+
+bool IOHomeControlComponent::exchange_recorded(const std::string &device_id, const IoFrame &request,
+                                               IoFrame &response) {
+  const RequestResult result =
+      this->exchange_and_record_(device_id, request, response, {false, 0, EXCHANGE_RETRY_COUNT});
+  if (result == RequestResult::REPLY) {
+    // A plain reply is not stamped by the exchange (a status reply gets it from the status decoder, which a
+    // transfer answer never reaches), so a device that answers still counts as heard.
+    if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
+      detail::update_link_health(*dev, this->radio_);
+      this->notify_device_update_(device_id);
+    }
+  }
+  return result == RequestResult::REPLY || result == RequestResult::ERROR_REPLY;
+}
+
 // === Device management ===
 
 void IOHomeControlComponent::set_device_status_poll_interval(const std::string &device_id, uint32_t poll_interval_ms) {

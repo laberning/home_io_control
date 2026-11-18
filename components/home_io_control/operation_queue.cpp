@@ -169,6 +169,18 @@ std::optional<PendingOperation> OperationQueue::pop() {
   return op;
 }
 
+std::optional<PendingOperation> OperationQueue::pop_unless_held(
+    const std::function<bool(const PendingOperation &)> &held) {
+  const auto next = std::find_if(queue_.begin(), queue_.end(), [&held](const PendingOperation &op) {
+    return !is_background_op(op.type) || !held(op);
+  });
+  if (next == queue_.end())
+    return std::nullopt;
+  PendingOperation op = std::move(*next);
+  queue_.erase(next);
+  return op;
+}
+
 bool OperationQueue::empty() const { return queue_.empty(); }
 
 std::size_t OperationQueue::size() const { return queue_.size(); }

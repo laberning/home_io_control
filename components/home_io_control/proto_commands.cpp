@@ -714,25 +714,37 @@ bool create_unsubscribe_event(IoFrame &f, const uint8_t *own, const uint8_t *dst
   return create_event_subscription(f, own, dst, EVENT_SUBSCRIPTION_UNSUBSCRIBE, event_id, low_power);
 }
 
+namespace {
+/// True when some recipe of @p allowlist has a step that opens @p object and allows reading it at @p offset.
+bool transfer_open_allowed(const TransferObject &object, uint16_t offset, std::span<const TransferRecipe> allowlist) {
+  for (const TransferRecipe &recipe : allowlist) {
+    if (!transfer_recipe_allows_offset(recipe, offset))
+      continue;
+    for (const TransferOpenStep &step : recipe.opens) {
+      if (step.object.object_class == object.object_class && step.object.id == object.id)
+        return true;
+    }
+  }
+  return false;
+}
+}  // namespace
+
 /// Build the transfer-open request (see the header for the allowlist and the byte layout).
 bool create_transfer_open(IoFrame &f, const uint8_t *own, const uint8_t *dst, const TransferObject &object,
-                          bool low_power) {
-  bool allowed = false;
-  for (const TransferObject &entry : TRANSFER_READABLE_OBJECTS)
-    allowed = allowed || (entry.object_class == object.object_class && entry.id == object.id);
-  if (!allowed)
+                          uint16_t offset, bool low_power, std::span<const TransferRecipe> allowlist) {
+  if (!transfer_open_allowed(object, offset, allowlist))
     return false;
   const uint16_t object_id = object.id;
   init_request(f, own, dst, low_power);
-  // Originator, object class, a zero byte, the object id big-endian, then two zero words (offset and
-  // length of the part wanted, left zero to ask for the whole object).
+  // Originator, object class, a zero byte, the object id big-endian, the offset big-endian, then a zero word
+  // (length of the part wanted, left zero to ask for everything from the offset on).
   const uint8_t d[TRANSFER_OPEN_DATA_SIZE] = {ORIGINATOR_SAAC,
                                               object.object_class,
                                               0x00,
                                               static_cast<uint8_t>(object_id >> 8),
                                               static_cast<uint8_t>(object_id & 0xFF),
-                                              0x00,
-                                              0x00,
+                                              static_cast<uint8_t>(offset >> 8),
+                                              static_cast<uint8_t>(offset & 0xFF),
                                               0x00,
                                               0x00};
   return set_cmd(f, CMD_TRANSFER_OPEN, d, sizeof(d));

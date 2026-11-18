@@ -14,6 +14,7 @@
 #include <functional>
 #include <gtest/gtest.h>
 #include <iterator>
+#include <span>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -484,81 +485,145 @@ TEST(ProtoCommandsProbeBuilders, PrivateFunctionCarriesChosenSubIndex) {
 
 // --- Data transport read (ADR 0062) --------------------------------------------------------------
 
+namespace {
+/// The object the probe row @p index opens (every probe row is a one-step recipe).
+const TransferObject &probe_object(size_t index) { return TRANSFER_RECIPES[index].opens.front().object; }
+
+/// The bytes a transfer-open frame to DST_ID carries from its CTRL0 on, for the given object and offset.
+std::vector<uint8_t> expected_open_bytes(const uint8_t own[3], const uint8_t dst[3], const TransferObject &object,
+                                         uint16_t offset) {
+  // CTRL0 0x51 = start+end, 2W, 9 data bytes (18 bytes on the wire). Payload: SAAC originator, class, 00, object
+  // id, offset (big-endian), a zero length word.
+  return {0x51,
+          0x00,
+          dst[0],
+          dst[1],
+          dst[2],
+          own[0],
+          own[1],
+          own[2],
+          0x46,
+          0x08,
+          object.object_class,
+          0x00,
+          static_cast<uint8_t>(object.id >> 8),
+          static_cast<uint8_t>(object.id & 0xFF),
+          static_cast<uint8_t>(offset >> 8),
+          static_cast<uint8_t>(offset & 0xFF),
+          0x00,
+          0x00};
+}
+}  // namespace
+
 TEST(ProtoCommandsProbeBuilders, TransferOpenBuildsTheReadBytesForEveryAllowlistedObject) {
   IoFrame frame{};
   const uint8_t own[3] = {0x97, 0xDE, 0x1A};
   const uint8_t dst[3] = {0x51, 0xE3, 0x03};
-  for (const TransferObject &object : TRANSFER_READABLE_OBJECTS) {
+  for (const TransferRecipe &recipe : TRANSFER_RECIPES) {
+    const TransferObject &object = recipe.opens.front().object;
     SCOPED_TRACE(object.id);
-    ASSERT_TRUE(create_transfer_open(frame, own, dst, object, /*low_power=*/false));
+    ASSERT_TRUE(create_transfer_open(frame, own, dst, object, 0, /*low_power=*/false));
     uint8_t bytes[64] = {0};
     const uint8_t len = serialize(frame, bytes, sizeof(bytes));
-    // CTRL0 0x51 = start+end, 2W, 9 data bytes (18 bytes on the wire). Payload: SAAC originator, class, 00, object
-    // id, 4 zero bytes.
-    const std::vector<uint8_t> expected = {0x51,
-                                           0x00,
-                                           0x51,
-                                           0xE3,
-                                           0x03,
-                                           0x97,
-                                           0xDE,
-                                           0x1A,
-                                           0x46,
-                                           0x08,
-                                           object.object_class,
-                                           0x00,
-                                           static_cast<uint8_t>(object.id >> 8),
-                                           static_cast<uint8_t>(object.id & 0xFF),
-                                           0x00,
-                                           0x00,
-                                           0x00,
-                                           0x00};
+    const std::vector<uint8_t> expected = expected_open_bytes(own, dst, object, 0);
     ASSERT_EQ(len, expected.size());
-    EXPECT_EQ(0, std::memcmp(bytes, expected.data(), expected.size()));
+    EXPECT_EQ(0, std::memcmp(bytes, expected.data(), expected.size())) << "offset 0 keeps payload bytes 5-6 zero";
   }
 }
 
 TEST(ProtoCommandsProbeBuilders, TransferOpenTableKeepsItsFirstIndexesAndClasses) {
   // The probe index is a row of this table and is published, so existing rows never move.
-  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[0].id, TRANSFER_OBJECT_ACTUATOR_CAPACITY);
-  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[1].id, TRANSFER_OBJECT_ACTUATOR_STATE);
-  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[2].id, TRANSFER_OBJECT_NAME);
-  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[3].id, TRANSFER_OBJECT_GENERAL_INFO1);
-  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[4].id, TRANSFER_OBJECT_GENERAL_INFO2);
+  EXPECT_EQ(probe_object(0).id, TRANSFER_OBJECT_ACTUATOR_CAPACITY);
+  EXPECT_EQ(probe_object(1).id, TRANSFER_OBJECT_ACTUATOR_STATE);
+  EXPECT_EQ(probe_object(2).id, TRANSFER_OBJECT_NAME);
+  EXPECT_EQ(probe_object(3).id, TRANSFER_OBJECT_GENERAL_INFO1);
+  EXPECT_EQ(probe_object(4).id, TRANSFER_OBJECT_GENERAL_INFO2);
   for (uint8_t i = 0; i < 10; i++)
-    EXPECT_EQ(TRANSFER_READABLE_OBJECTS[i].object_class, TRANSFER_OBJECT_CLASS_DEVICE) << int(i);
-  ASSERT_EQ(TRANSFER_READABLE_OBJECT_COUNT, 30) << "indexes are public: append rows, never remove one";
-  for (uint8_t i = 10; i < TRANSFER_READABLE_OBJECT_COUNT; i++)
-    EXPECT_EQ(TRANSFER_READABLE_OBJECTS[i].object_class, TRANSFER_OBJECT_CLASS_SOMFY) << int(i);
-  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[13].id, 0xA601);
-  EXPECT_EQ(TRANSFER_READABLE_OBJECTS[29].id, 0xA618);
+    EXPECT_EQ(probe_object(i).object_class, TRANSFER_OBJECT_CLASS_DEVICE) << int(i);
+  ASSERT_EQ(TRANSFER_PROBE_RECIPE_COUNT, 30u) << "indexes are public: append rows, never remove one";
+  ASSERT_GE(TRANSFER_RECIPES.size(), TRANSFER_PROBE_RECIPE_COUNT);
+  for (uint8_t i = 10; i < TRANSFER_PROBE_RECIPE_COUNT; i++)
+    EXPECT_EQ(probe_object(i).object_class, TRANSFER_OBJECT_CLASS_SOMFY) << int(i);
+  EXPECT_EQ(probe_object(13).id, 0xA601);
+  EXPECT_EQ(probe_object(29).id, 0xA618);
   // No pair appears twice.
-  for (uint8_t i = 0; i < TRANSFER_READABLE_OBJECT_COUNT; i++)
-    for (uint8_t j = i + 1; j < TRANSFER_READABLE_OBJECT_COUNT; j++)
-      EXPECT_FALSE(TRANSFER_READABLE_OBJECTS[i].object_class == TRANSFER_READABLE_OBJECTS[j].object_class &&
-                   TRANSFER_READABLE_OBJECTS[i].id == TRANSFER_READABLE_OBJECTS[j].id)
-          << int(i) << " " << int(j);
+  for (size_t i = 0; i < TRANSFER_PROBE_RECIPE_COUNT; i++)
+    for (size_t j = i + 1; j < TRANSFER_PROBE_RECIPE_COUNT; j++)
+      EXPECT_FALSE(probe_object(i).object_class == probe_object(j).object_class &&
+                   probe_object(i).id == probe_object(j).id)
+          << i << " " << j;
+}
+
+TEST(ProtoCommandsProbeBuilders, EveryProbeRowIsAOneStepRecipeAtOffsetZeroWithTheProbeSizeCap) {
+  for (size_t i = 0; i < TRANSFER_PROBE_RECIPE_COUNT; i++) {
+    const TransferRecipe &recipe = TRANSFER_RECIPES[i];
+    SCOPED_TRACE(i);
+    EXPECT_EQ(recipe.opens.size(), 1u);
+    EXPECT_FALSE(recipe.opens.front().expect_empty);
+    EXPECT_TRUE(recipe.offsets.empty());
+    EXPECT_TRUE(transfer_recipe_allows_offset(recipe, 0));
+    EXPECT_FALSE(transfer_recipe_allows_offset(recipe, 1));
+    EXPECT_EQ(recipe.max_bytes, 432);
+    EXPECT_FALSE(recipe.retry_empty_open);
+  }
 }
 
 TEST(ProtoCommandsProbeBuilders, TransferOpenRefusesEveryObjectOutsideTheAllowlist) {
   IoFrame frame{};
   // Ids outside the table, in either class.
   for (uint16_t object : {0x0000, 0x8004, 0x8101, 0xA60C, 0xA60E, 0xA60F, 0xFFFF}) {
-    EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, {TRANSFER_OBJECT_CLASS_DEVICE, object}, false))
+    EXPECT_FALSE(
+        create_transfer_open(frame, test::OWN_ID, test::DST_ID, {TRANSFER_OBJECT_CLASS_DEVICE, object}, 0, false))
         << std::hex << object;
-    EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, {TRANSFER_OBJECT_CLASS_SOMFY, object}, false))
+    EXPECT_FALSE(
+        create_transfer_open(frame, test::OWN_ID, test::DST_ID, {TRANSFER_OBJECT_CLASS_SOMFY, object}, 0, false))
         << std::hex << object;
   }
   // A listed id in the wrong class, and a class nothing uses.
-  EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, {TRANSFER_OBJECT_CLASS_SOMFY, 0x8100}, false));
-  EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, {TRANSFER_OBJECT_CLASS_DEVICE, 0xA601}, false));
-  EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, {0x0C, 0x8100}, false));
+  EXPECT_FALSE(
+      create_transfer_open(frame, test::OWN_ID, test::DST_ID, {TRANSFER_OBJECT_CLASS_SOMFY, 0x8100}, 0, false));
+  EXPECT_FALSE(
+      create_transfer_open(frame, test::OWN_ID, test::DST_ID, {TRANSFER_OBJECT_CLASS_DEVICE, 0xA601}, 0, false));
+  EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, {0x0C, 0x8100}, 0, false));
+}
+
+TEST(ProtoCommandsProbeBuilders, TransferOpenRefusesAnOffsetNoRecipeAllows) {
+  IoFrame frame{};
+  // Every existing row reads at offset 0 only: a listed object at any other offset is refused.
+  for (uint16_t offset : {0x0001, 0x0010, 0x0100, 0x8100, 0xFFFF}) {
+    EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID,
+                                      {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_NAME}, offset, false))
+        << std::hex << offset;
+  }
+}
+
+TEST(ProtoCommandsProbeBuilders, TransferOpenPutsTheOffsetInPayloadBytesFiveAndSixBigEndian) {
+  // A recipe with listed offsets, as a table passed in: no probe row reads at another offset than 0.
+  static constexpr TransferOpenStep STEPS[] = {{{0x0C, 0x1002}}};
+  static constexpr uint16_t OFFSETS[] = {0x0000, 0x0123, 0xFFFE};
+  static constexpr TransferRecipe TABLE[] = {{.opens = STEPS, .offsets = OFFSETS}};
+  const uint8_t own[3] = {0x97, 0xDE, 0x1A};
+  const uint8_t dst[3] = {0x51, 0xE3, 0x03};
+  for (const uint16_t offset : OFFSETS) {
+    SCOPED_TRACE(offset);
+    IoFrame frame{};
+    ASSERT_TRUE(create_transfer_open(frame, own, dst, STEPS[0].object, offset, false, TABLE));
+    uint8_t bytes[64] = {0};
+    const uint8_t len = serialize(frame, bytes, sizeof(bytes));
+    const std::vector<uint8_t> expected = expected_open_bytes(own, dst, STEPS[0].object, offset);
+    ASSERT_EQ(len, expected.size());
+    EXPECT_EQ(0, std::memcmp(bytes, expected.data(), expected.size()));
+  }
+  // An offset the row does not list is refused, and so is an object of no row.
+  IoFrame frame{};
+  EXPECT_FALSE(create_transfer_open(frame, own, dst, STEPS[0].object, 0x0124, false, TABLE));
+  EXPECT_FALSE(create_transfer_open(frame, own, dst, {0x0C, 0x1003}, 0x0123, false, TABLE));
 }
 
 TEST(ProtoCommandsProbeBuilders, TransferOpenSetsLowPowerFlag) {
   IoFrame frame{};
   ASSERT_TRUE(create_transfer_open(frame, test::OWN_ID, test::DST_ID,
-                                   {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_NAME}, true));
+                                   {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_NAME}, 0, true));
   EXPECT_TRUE((frame.ctrl1 & CTRL1_LOW_POWER) != 0);
 }
 

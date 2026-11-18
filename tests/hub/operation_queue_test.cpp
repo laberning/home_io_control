@@ -456,3 +456,55 @@ TEST(OperationQueue, SetFanPositionIsAControlOperationAheadOfPolls) {
   EXPECT_EQ(q[2].type, PendingOperationType::REQUEST_STATUS);
   EXPECT_EQ(q[2].device_id, "OTHER");
 }
+
+// --- pop_unless_held: background operations of a device in a data transfer wait ---
+
+TEST(OperationQueue, PopUnlessHeldLeavesAHeldBackgroundOperationInPlaceAndTakesTheNext) {
+  OperationQueue q;
+  q.enqueue_request_status("AAA111");
+  q.enqueue_request_name("BBB222");
+  const auto held = [](const PendingOperation &op) { return op.device_id == "AAA111"; };
+
+  const auto op = q.pop_unless_held(held);
+
+  ASSERT_TRUE(op.has_value());
+  EXPECT_EQ(op->type, PendingOperationType::REQUEST_NAME);
+  EXPECT_EQ(op->device_id, "BBB222");
+  ASSERT_EQ(q.size(), 1u);
+  EXPECT_EQ(q.front().device_id, "AAA111") << "the held poll keeps its place";
+}
+
+TEST(OperationQueue, PopUnlessHeldReturnsNothingWhenEveryEntryIsHeldAndWhenEmpty) {
+  OperationQueue q;
+  const auto all = [](const PendingOperation &) { return true; };
+  EXPECT_FALSE(q.pop_unless_held(all).has_value());
+  q.enqueue_request_status("AAA111");
+  q.enqueue_request_limitation("AAA111");
+  EXPECT_FALSE(q.pop_unless_held(all).has_value());
+  EXPECT_EQ(q.size(), 2u);
+}
+
+TEST(OperationQueue, PopUnlessHeldNeverHoldsAControlOperationOrPairing) {
+  OperationQueue q;
+  q.enqueue_request_status("AAA111");
+  q.enqueue_set_position("AAA111", 40);  // drops the stale poll of the same device
+  q.enqueue_request_status("AAA111");
+  q.enqueue_discover_and_pair();  // flushes every background poll and goes first
+  const auto all = [](const PendingOperation &) { return true; };
+
+  const auto first = q.pop_unless_held(all);
+  ASSERT_TRUE(first.has_value());
+  EXPECT_EQ(first->type, PendingOperationType::DISCOVER_AND_PAIR);
+  const auto second = q.pop_unless_held(all);
+  ASSERT_TRUE(second.has_value());
+  EXPECT_EQ(second->type, PendingOperationType::SET_POSITION) << "held() is not even asked about a control operation";
+}
+
+TEST(OperationQueue, PopUnlessHeldTakesTheFrontWhenNothingIsHeld) {
+  OperationQueue q;
+  q.enqueue_request_status("AAA111");
+  q.enqueue_request_status("BBB222");
+  const auto op = q.pop_unless_held([](const PendingOperation &) { return false; });
+  ASSERT_TRUE(op.has_value());
+  EXPECT_EQ(op->device_id, "AAA111");
+}

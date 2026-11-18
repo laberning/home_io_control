@@ -1067,7 +1067,10 @@ void IOHomeControlComponent::process_pending_operation_() {
 
   // Pop before dispatch so any handler that re-queues follow-up work sees the queue in its
   // post-consumption state and cannot accidentally execute the same operation twice.
-  auto opt = this->op_queue_.pop();
+  // A background operation for a device in the middle of a data transfer waits until the transfer is closed: a
+  // status poll sent into it would cut the transfer.
+  auto opt = this->op_queue_.pop_unless_held(
+      [this](const PendingOperation &op) { return this->transfer_reader_.transfer_open_to(op.device_id); });
   if (!opt.has_value())
     return;
   const PendingOperation &operation = *opt;

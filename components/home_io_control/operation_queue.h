@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -171,6 +172,16 @@ class OperationQueue {
 
   // --- Queue access ---
   [[nodiscard]] std::optional<PendingOperation> pop();
+
+  /// @brief Pop the first operation that is not a held background operation.
+  ///
+  /// A background operation for which @p held is true stays in the queue, in its place, and the entries behind it
+  /// are considered: a status poll of a device in the middle of a data transfer waits, a poll of another device
+  /// does not. Control operations and pairing are never held. Used by the dispatcher in loop().
+  /// @param held Called with each background operation; true to leave it queued.
+  /// @return The operation, or nullopt when the queue is empty or every entry is held.
+  [[nodiscard]] std::optional<PendingOperation> pop_unless_held(
+      const std::function<bool(const PendingOperation &)> &held);
   [[nodiscard]] bool empty() const;
   [[nodiscard]] std::size_t size() const;
 

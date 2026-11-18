@@ -1325,9 +1325,112 @@ TEST(HubManagement, ReadObjectIsGatedLikeEveryProbeAndIndexBounded) {
               "record 0x8003), 3 (general info 1, 0x8001), 4 (general info 2, 0x8002), or 5 to 29 (further objects, "
               "see the diagnostic probes documentation)");
     EXPECT_EQ(component.management_actions_.probe_sweep("ABC123", "read_object", "0", "2").message,
-              "probe \"read_object\" cannot be swept; use probe_device");
+              "a read_object sweep walks the offsets of one row: first_index and last_index must name the same row "
+              "(<row>:<first offset> and <row>:<last offset>)");
     EXPECT_TRUE(radio.get_sent_data().empty());
   }
+}
+
+TEST(HubManagement, ReadObjectCountsItsExchangesInLinkHealthLikeAnyOtherExchange) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_EQ(dev->exchange_timeout_count, 0);
+
+  // No device answers: the exchange of the open fails through the hub's bookkeeping.
+  const auto result = component.management_actions_.probe_device("ABC123", "read_object", "0");
+
+  EXPECT_FALSE(result.success);
+  EXPECT_NE(result.message.find("no reply after"), std::string::npos) << result.message;
+  EXPECT_EQ(dev->exchange_timeout_count, 1) << "the failed read_object exchange is counted in link health";
+}
+
+TEST(HubManagement, ReadObjectStampsLinkHealthWhenTheDeviceAnswers) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  auto *dev = component.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->last_seen_ms = 0;
+  // The device answers the open with "nothing to read": one plain reply, no error, no status decode.
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x07, 0x00, 0x00})));
+  esphome::test_clock::ManualClock clock{50000};
+
+  const auto result = component.management_actions_.probe_device("ABC123", "read_object", "2");
+
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_NE(dev->last_seen_ms, 0u) << "a transfer answer is a frame from the device and counts as heard";
+}
+
+TEST(HubManagement, ReadObjectTakesAnOptionalOffsetAfterAColonAndReadsAtOffsetZero) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x00, 0x04})));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 1, 7, 4)));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 0, 0, 0)));
+
+  const auto result = component.management_actions_.probe_device("ABC123", "read_object", "2:0");
+
+  ASSERT_TRUE(result.success) << result.message;
+  EXPECT_EQ(result.response_hex, "07 08 09 0A");
+  const auto open = sent_frame_bytes(radio, 0);
+  EXPECT_EQ(open[12], 0x80);
+  EXPECT_EQ(open[13], 0x03) << "row 2 is the name record 0x8003";
+  EXPECT_EQ(open[14], 0x00);
+  EXPECT_EQ(open[15], 0x00) << "offset 0 in payload bytes 5-6";
+}
+
+TEST(HubManagement, ReadObjectRefusesAnOffsetItsRowDoesNotAllowAndAMalformedOneWithoutTransmitting) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  const auto not_allowed = component.management_actions_.probe_device("ABC123", "read_object", "2:0x10");
+  EXPECT_FALSE(not_allowed.success);
+  EXPECT_EQ(not_allowed.message, "read_object index 2 reads at offset 0 only");
+
+  for (const char *bad : {"2:", "2:x", "2:65536", "2:010", "2:0:0", ":0", "2:-1"}) {
+    SCOPED_TRACE(bad);
+    const auto result = component.management_actions_.probe_device("ABC123", "read_object", bad);
+    EXPECT_FALSE(result.success);
+    EXPECT_FALSE(result.message.empty());
+  }
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}
+
+TEST(HubManagement, ReadObjectSweepReadsTheOffsetsOfOneRowAndRefusesAnythingElse) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+
+  // Two ends naming different rows, a last offset below the first, and an offset the row does not allow.
+  EXPECT_FALSE(component.management_actions_.probe_sweep("ABC123", "read_object", "2:0", "3:0").success);
+  EXPECT_FALSE(component.management_actions_.probe_sweep("ABC123", "read_object", "2:5", "2:1").success);
+  const auto none = component.management_actions_.probe_sweep("ABC123", "read_object", "2:1", "2:9");
+  EXPECT_FALSE(none.success);
+  EXPECT_NE(none.message.find("reads at offset 0 only"), std::string::npos) << none.message;
+  EXPECT_FALSE(component.management_actions_.probe_sweep("ABC123", "read_object", "30", "30").success);
+  EXPECT_TRUE(radio.get_sent_data().empty());
+
+  // Row 2 has the one offset 0: a sweep over the whole row reads it once.
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x00, 0x04})));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 1, 7, 4)));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x10, 0, 0, 0)));
+  const auto swept = component.management_actions_.probe_sweep("ABC123", "read_object", "2", "2");
+  EXPECT_TRUE(swept.success) << swept.message;
+  EXPECT_NE(swept.message.find("index=0x02:0x0000: cmd=0x47"), std::string::npos) << swept.message;
+  EXPECT_EQ(swept.probe_index, "0x02:0x0000-0x02:0x0000");
 }
 
 // --- DiagnosticProbes on its own: the three injected hub calls are its only way to the hub ---
@@ -1346,6 +1449,7 @@ struct StandaloneProbes {
   bool initialized{true};
   bool enabled{true};
   int radio_calls{0};
+  int exchange_calls{0};
   std::vector<IoFrame> recorded_replies;
   DiagnosticProbes probes{node_id, engine, registry, &initialized,
                           DiagnosticProbesHub{[this]() { return enabled; },
@@ -1356,6 +1460,11 @@ struct StandaloneProbes {
                                               [this](const IoFrame &reply) {
                                                 recorded_replies.push_back(reply);
                                                 return false;
+                                              },
+                                              [this](const std::string &, const IoFrame &request, IoFrame &response) {
+                                                ++exchange_calls;
+                                                return engine.send_and_receive(request, response, FREQ_CH2) ==
+                                                       ExchangeOutcome::SUCCESS_WITH_RESPONSE;
                                               }}};
 
   StandaloneProbes() { registry.add("ABC123"); }

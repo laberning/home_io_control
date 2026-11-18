@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0062 -->
 
-**Status:** Accepted · **Recorded:** 2026-10
+**Status:** Accepted, amended by [ADR 0099](0099-scheduled-transfer-reads-use-one-session-and-a-queued-reader.md) · **Recorded:** 2026-10
 
 Amends [ADR 0024](0024-diagnostic-probes-gated-and-isolated-from-the-status-decoder.md): it
 excluded `0x4A` from the probes, and this one sends it, as a read.

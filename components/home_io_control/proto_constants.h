@@ -11,7 +11,12 @@
 
 #include "proto_sizes.h"
 
+#include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <iterator>
+#include <span>
 
 namespace esphome {
 namespace home_io_control {
@@ -194,10 +199,11 @@ static constexpr uint8_t CMD_CHALLENGE_RESP =
 // Data transport block (0x46-0x4B)
 static constexpr uint8_t CMD_TRANSFER_OPEN =
     0x46;  ///< Opens a read of one object: nine payload bytes `<originator> <class> 00 <id hi> <id lo>
-           ///< 00 00 00 00`. A Somfy Izymo answered it unauthenticated and challenged the block reads. Sent only by the
-           ///< `read_object` diagnostic probe (ADR 0062) and only for the objects in TRANSFER_OBJECT_*;
-           ///< create_transfer_open() refuses every other id. The sibling 0x48 opens a write and has no builder
-           ///< anywhere in this codebase.
+           ///< <offset hi> <offset lo> 00 00` (offset 0 and length 0 ask for the whole object). A Somfy Izymo
+           ///< answered it unauthenticated and challenged the block reads. Sent only by the `read_object`
+           ///< diagnostic probe (ADR 0062) and the queued transfer reader (ADR 0099), and only for the objects and
+           ///< offsets of TRANSFER_RECIPES; create_transfer_open() refuses every other. The sibling 0x48 opens a
+           ///< write and has no builder anywhere in this codebase.
 static constexpr uint8_t CMD_TRANSFER_OPEN_RESP =
     0x47;  ///< Answer to CMD_TRANSFER_OPEN: `<handle> <status> <length u16 BE>`. Status 0 = accepted,
            ///< 1 = adapted, anything else an error; length 0 means there is nothing to read.
@@ -214,7 +220,7 @@ static constexpr uint8_t CMD_UNKNOWN4A_RESP =
            ///< payload has the shape of a close echo.
 
 /// @name Objects the `read_object` probe can open (CMD_TRANSFER_OPEN)
-/// Object class 0 ids. Allowlisted: create_transfer_open() refuses every other id.
+/// Object class 0 ids. Allowlisted through TRANSFER_RECIPES: create_transfer_open() refuses every other id.
 /// @{
 /// The actuator capacity record a Somfy controller reads after pairing (protocol version 4 or higher).
 /// \todo Byte layout unknown: it names the events the device can report, the sensor types it
@@ -240,7 +246,7 @@ static constexpr uint16_t TRANSFER_OBJECT_GENERAL_INFO2 = 0x8002;
 /// @{
 static constexpr uint8_t TRANSFER_OPEN_DATA_SIZE = 9;       ///< CMD_TRANSFER_OPEN payload bytes.
 static constexpr uint8_t TRANSFER_OBJECT_CLASS_DEVICE = 0;  ///< Object class of the TRANSFER_OBJECT_* ids.
-/// Object class of the Somfy manufacturer objects in TRANSFER_READABLE_OBJECTS.
+/// Object class of the Somfy manufacturer objects in TRANSFER_PROBE_STEPS.
 /// \todo No device has been captured answering an open of this class yet.
 static constexpr uint8_t TRANSFER_OBJECT_CLASS_SOMFY = 2;
 static constexpr uint8_t TRANSFER_OPEN_RESP_DATA_SIZE = 4;  ///< CMD_TRANSFER_OPEN_RESP payload bytes.
@@ -261,53 +267,107 @@ struct TransferObject {
   uint16_t id{0};                                      ///< Object id, sent big-endian.
 };
 
-/// @brief Every object the `read_object` probe can open, in probe-index order (ADR 0062).
+/// @brief One open of a TransferRecipe: the object it names and whether the device is expected to answer it empty.
+struct TransferOpenStep {
+  TransferObject object{};   ///< The class and id this open names.
+  bool expect_empty{false};  ///< True for an open that only prepares the next one: an empty answer, a refusal or
+                             ///< silence moves on to the next step instead of ending the read.
+};
+
+/// @brief Longest object a one-step probe recipe reads: 24 blocks (432 bytes), the smallest whole-block cap that
+/// covers the longest length a real device has announced (431 bytes, issue #156). A device announcing more is
+/// closed again unread, so a misreading cannot turn into a long run of transmissions on the shared band. The cost:
+/// on a low-power device a 14-block read took 16.4 s, so 24 blocks take about 28 s nominally and, with up to 3
+/// tries per block, can pass 60 s.
+static constexpr uint16_t TRANSFER_PROBE_MAX_BYTES = 24 * TRANSFER_BLOCK_SIZE;
+
+/// @brief How one object is read: the opens that lead to its data, the offsets it may be opened at and its limits.
 ///
-/// create_transfer_open() refuses any class/id pair not in this table, so the table is the allowlist.
+/// A recipe is the unit of the read allowlist: create_transfer_open() builds an open only for an object that a step
+/// of some row of TRANSFER_RECIPES names, at an offset that row allows. A read names a recipe and one of its offsets.
+struct TransferRecipe {
+  /// The opens, in order. Every step but the last is tried only until one answers with data; the last decides the
+  /// outcome. Never empty.
+  std::span<const TransferOpenStep> opens;
+  /// Offsets a read of this recipe may be opened at (payload bytes 5 and 6 of the open). Empty means offset 0 only.
+  std::span<const uint16_t> offsets;
+  uint16_t max_bytes{TRANSFER_PROBE_MAX_BYTES};  ///< Most bytes accepted; an object announced longer is closed unread.
+  /// True when an open that comes back empty (status accepted or nothing to read, length 0) is tried once more from
+  /// the first step, for a device that answers an open empty now and then.
+  bool retry_empty_open{false};
+};
+
+/// @brief True when a read of @p recipe may be opened at @p offset: any listed offset, or 0 when none is listed.
+[[nodiscard]] constexpr bool transfer_recipe_allows_offset(const TransferRecipe &recipe, uint16_t offset) {
+  if (recipe.offsets.empty())
+    return offset == 0;
+  return std::ranges::any_of(recipe.offsets, [offset](uint16_t allowed) { return allowed == offset; });
+}
+
+/// @brief The objects the `read_object` probe can open, one per probe index (ADR 0062).
+///
 /// Indexes 0 to 4 are the five named objects above. Indexes 5 to 9 are the other class-0 ids a Somfy
 /// RS100 Solar io lists in its own capacity record (issue #156); they have not been read yet. Indexes
 /// 10 to 29 are Somfy manufacturer objects to read on the same motor; a device that does not keep an
 /// object refuses the open (status 3, length 0) and nothing more is sent. Every entry is a plain read
 /// of a whole object. Appending keeps the existing indexes stable; never reorder.
 /// \todo The layouts of entries 5 to 29 are unknown: read them to learn what they hold.
-static constexpr TransferObject TRANSFER_READABLE_OBJECTS[] = {
+static constexpr TransferOpenStep TRANSFER_PROBE_STEPS[] = {
     // 0-4: the named class-0 objects.
-    {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_ACTUATOR_CAPACITY},
-    {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_ACTUATOR_STATE},
-    {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_NAME},
-    {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_GENERAL_INFO1},
-    {TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_GENERAL_INFO2},
+    {{TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_ACTUATOR_CAPACITY}},
+    {{TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_ACTUATOR_STATE}},
+    {{TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_NAME}},
+    {{TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_GENERAL_INFO1}},
+    {{TRANSFER_OBJECT_CLASS_DEVICE, TRANSFER_OBJECT_GENERAL_INFO2}},
     // 5-9: further class-0 ids from the RS100 Solar's capacity record.
-    {TRANSFER_OBJECT_CLASS_DEVICE, 0x8000},
-    {TRANSFER_OBJECT_CLASS_DEVICE, 0x8005},
-    {TRANSFER_OBJECT_CLASS_DEVICE, 0x8102},
-    {TRANSFER_OBJECT_CLASS_DEVICE, 0x8104},
-    {TRANSFER_OBJECT_CLASS_DEVICE, 0xC001},
+    {{TRANSFER_OBJECT_CLASS_DEVICE, 0x8000}},
+    {{TRANSFER_OBJECT_CLASS_DEVICE, 0x8005}},
+    {{TRANSFER_OBJECT_CLASS_DEVICE, 0x8102}},
+    {{TRANSFER_OBJECT_CLASS_DEVICE, 0x8104}},
+    {{TRANSFER_OBJECT_CLASS_DEVICE, 0xC001}},
     // 10-29: Somfy manufacturer objects.
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0x6103},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0x6104},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0x6105},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA601},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA602},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA603},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA604},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA606},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA607},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA609},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA60B},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA60D},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA610},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA611},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA612},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA613},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA614},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA615},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA617},
-    {TRANSFER_OBJECT_CLASS_SOMFY, 0xA618},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0x6103}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0x6104}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0x6105}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA601}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA602}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA603}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA604}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA606}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA607}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA609}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA60B}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA60D}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA610}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA611}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA612}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA613}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA614}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA615}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA617}},
+    {{TRANSFER_OBJECT_CLASS_SOMFY, 0xA618}},
 };
-/// Number of entries in TRANSFER_READABLE_OBJECTS.
-static constexpr uint8_t TRANSFER_READABLE_OBJECT_COUNT =
-    sizeof(TRANSFER_READABLE_OBJECTS) / sizeof(TRANSFER_READABLE_OBJECTS[0]);
+
+/// Number of one-step recipes in TRANSFER_RECIPES that TRANSFER_PROBE_STEPS gives rise to.
+static constexpr size_t TRANSFER_PROBE_RECIPE_COUNT = std::size(TRANSFER_PROBE_STEPS);
+
+namespace transfer_detail {
+/// One recipe per step of @p steps: that single open, offset 0, the probe's size cap, no retry.
+template<size_t N> consteval std::array<TransferRecipe, N> one_step_recipes(const TransferOpenStep (&steps)[N]) {
+  std::array<TransferRecipe, N> recipes{};
+  for (size_t i = 0; i < N; i++)
+    recipes[i].opens = std::span<const TransferOpenStep>(&steps[i], 1);
+  return recipes;
+}
+}  // namespace transfer_detail
+
+/// @brief Every recipe a transfer read can follow, and the read allowlist (ADR 0062, ADR 0099).
+///
+/// The first TRANSFER_PROBE_RECIPE_COUNT rows are the `read_object` probe's objects as one-step recipes at offset
+/// 0, in probe-index order. Recipes for scheduled reads are appended behind them; the probe index is the row.
+/// create_transfer_open() refuses any class, id and offset that no row names.
+static constexpr std::array<TransferRecipe, TRANSFER_PROBE_RECIPE_COUNT> TRANSFER_RECIPES =
+    transfer_detail::one_step_recipes(TRANSFER_PROBE_STEPS);
 
 // Device info commands
 static constexpr uint8_t CMD_GET_NAME = 0x50;       ///< Request device name
