@@ -28,7 +28,7 @@ PHASES = ("exchange", "probe", "oneway", "statuspoll", "pairing", "discovery",
 # next to `somfy_izymo_dimmer`, or a `velux_windwo` typo, from ever reaching main.
 SUBJECTS = frozenset({
     "atlantic_adelis", "atlantic_agilia", "atlantic_calypso", "multi_somfy", "reference_1w",
-    "sauter_hekla", "selfpair", "wind_sensor",
+    "sauter_guelma", "sauter_hekla", "selfpair", "wind_sensor",
     "somfy_awning", "somfy_connectivity_kit", "somfy_izymo_dimmer", "somfy_j406",
     "somfy_oximo40", "somfy_pergola_louver", "somfy_rs100", "somfy_smoove", "somfy_sunilus", "somfy_tahoma",
     "synthetic", "thermor_pilot_wire_interface", "tilt_cover", "unidentified_1w_remote",

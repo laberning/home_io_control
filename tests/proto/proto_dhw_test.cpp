@@ -446,7 +446,8 @@ TEST(ProtoDhw, ATargetSelectsTheNearestManualShowerCount) {
   const struct {
     float celsius;
     uint8_t showers;
-  } cases[] = {{50.0F, 2}, {54.9F, 2}, {55.0F, 3}, {60.0F, 3}, {64.9F, 3}, {65.0F, 4}, {70.0F, 4}, {7.0F, 2}, {90.0F, 4}};
+  } cases[] = {{50.0F, 2}, {54.9F, 2}, {55.0F, 3}, {60.0F, 3}, {64.9F, 3},
+               {65.0F, 4}, {70.0F, 4}, {7.0F, 2},  {90.0F, 4}};
   for (const auto &c : cases) {
     uint8_t showers = 0;
     ASSERT_TRUE(dhw_manual_showers_for_target(c.celsius, showers)) << c.celsius;

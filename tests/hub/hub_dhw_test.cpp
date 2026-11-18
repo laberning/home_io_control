@@ -301,10 +301,17 @@ TEST(HubDhw, AnElectricStorageHeaterIsPolledFromItsRegistersWithNoStatusRead) {
   EXPECT_TRUE(comp.request_device_status("ABC123"));
 
   const auto &sent = radio.get_sent_data();
-  const uint8_t expected[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,           DHW_REG_BOOST_FLAG,
-                              DHW_REG_AWAY_FLAG,         DHW_REG_ACTIVE_TARGET,  DHW_REG_TARGET_SHOWERS,
-                              DHW_REG_SHOWERS_AVAILABLE, DHW_REG_MANUAL_SHOWERS, DHW_REG_HEATING_POWER,
-                              DHW_REG_ENERGY,            DHW_REG_BRAND};
+  const uint8_t expected[] = {DHW_REG_WATER_TEMPERATURE,
+                              DHW_REG_MODE,
+                              DHW_REG_BOOST_FLAG,
+                              DHW_REG_AWAY_FLAG,
+                              DHW_REG_ACTIVE_TARGET,
+                              DHW_REG_TARGET_SHOWERS,
+                              DHW_REG_SHOWERS_AVAILABLE,
+                              DHW_REG_MANUAL_SHOWERS,
+                              DHW_REG_HEATING_POWER,
+                              DHW_REG_ENERGY,
+                              DHW_REG_BRAND};
   ASSERT_EQ(sent.size(), std::size(expected)) << "no status read, and none of the registers this model leaves empty";
   for (size_t i = 0; i < std::size(expected); i++) {
     EXPECT_EQ(sent[i][8], CMD_WRITE_PRIVATE) << i;

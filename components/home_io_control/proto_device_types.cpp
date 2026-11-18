@@ -227,8 +227,8 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // connecte 80 L), so it is a model row: the YAML declares it (`io_model: electric_water_heater`). Its
     // status reply carries no target and no operating-mode word; the poll reads them from registers
     // (proto_dhw.h, dhw_state_in_registers()).
-    {DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::ELECTRIC_WATER_HEATER, "electric_water_heater",
-     CAP_WATER_HEATER, SELECTABLE_PLATFORM | EXPERIMENTAL, device_feature::WATER_HEATER},
+    {DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::ELECTRIC_WATER_HEATER, "electric_water_heater", CAP_WATER_HEATER,
+     SELECTABLE_PLATFORM | EXPERIMENTAL, device_feature::WATER_HEATER},
 
     // Both rows have a heating profile (proto_heating_profiles.cpp): the plain heater is commanded with
     // heating levels in the standard EXECUTE, the one with an adjustable setpoint over the private

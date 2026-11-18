@@ -95,8 +95,8 @@ static constexpr uint8_t DHW_REG_HEATING = 0x21;
 
 // === Registers of an electric storage water heater (DeviceModel::ELECTRIC_WATER_HEATER) ===
 
-/// @brief Register 0x0032: heating power in watts, unsigned 16-bit big-endian. It read 0 at rest, 1000 while
-/// heating in automatic mode and during a boost, and 1500 while heating in manual mode.
+/// @brief Register 0x0032: heating power in watts, unsigned 16-bit big-endian. It read 0 at rest and 1000, 1500 or
+/// 2250 while heating; a separate energy meter on the heater's supply measured the same three levels.
 static constexpr uint8_t DHW_REG_HEATING_POWER = 0x32;
 /// @brief Register 0x0046: the showers of hot water available, one byte: the showers the display shows
 /// steadily lit.

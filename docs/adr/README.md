@@ -220,6 +220,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0086: The idle receiver keeps the loop running so its channel scan follows the protocol dwell](0086-the-idle-receiver-keeps-the-loop-running-so-its-channel-scan-follows-the-protocol-dwell.md)
 - [ADR 0087: The SX1262 receives at 117.3 kHz by default](0087-the-sx1262-receives-at-117-3-khz-by-default.md)
 - [ADR 0088: The sun level is shown in lux at 100 lux per step](0088-the-sun-level-is-shown-in-lux-at-100-lux-per-step.md)
+- [ADR 0089: An electric storage water heater is a model read from its registers](0089-an-electric-storage-water-heater-is-a-model-read-from-its-registers.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

@@ -106,8 +106,7 @@ bool store_dhw_showers(const std::string &device_id, DhwReadings &readings, uint
       available ? readings.showers_available : (manual ? readings.showers_manual : readings.showers_target);
   if (reading != showers) {
     ESP_LOGI(detail::TAG, "Device %s: hot water showers %s %u", device_id.c_str(),
-             available ? "available" : (manual ? "set for manual mode" : "aimed for"),
-             static_cast<unsigned>(showers));
+             available ? "available" : (manual ? "set for manual mode" : "aimed for"), static_cast<unsigned>(showers));
   }
   reading = showers;
   return true;
@@ -728,8 +727,7 @@ bool HeaterController::set_water_heater_manual_showers(const std::string &device
   // The read-back below must be this write's, not an older one.
   const int16_t before = dev->dhw.showers_manual;
   dev->dhw.showers_manual = -1;
-  if (!this->write_dhw_register_(device_id, "hot water manual showers", DHW_REG_MANUAL_SHOWERS, payload,
-                                 payload_len)) {
+  if (!this->write_dhw_register_(device_id, "hot water manual showers", DHW_REG_MANUAL_SHOWERS, payload, payload_len)) {
     if (IoDevice *current = this->registry_.get(device_id); current != nullptr)
       current->dhw.showers_manual = before;
     return false;
@@ -971,10 +969,9 @@ constexpr uint8_t DHW_POLL_REGISTERS[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MOD
 /// model's status reply carries nothing, and registers 0x0021, 0x0000 and 0x0005 answer with no value. Boost
 /// and away come from their flag registers.
 constexpr uint8_t DHW_ELECTRIC_POLL_REGISTERS[] = {
-    DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,           DHW_REG_BOOST_FLAG,
-    DHW_REG_AWAY_FLAG,         DHW_REG_ACTIVE_TARGET,  DHW_REG_TARGET_SHOWERS,
-    DHW_REG_SHOWERS_AVAILABLE, DHW_REG_MANUAL_SHOWERS, DHW_REG_HEATING_POWER,
-    DHW_REG_ENERGY};
+    DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,           DHW_REG_BOOST_FLAG,        DHW_REG_AWAY_FLAG,
+    DHW_REG_ACTIVE_TARGET,     DHW_REG_TARGET_SHOWERS, DHW_REG_SHOWERS_AVAILABLE, DHW_REG_MANUAL_SHOWERS,
+    DHW_REG_HEATING_POWER,     DHW_REG_ENERGY};
 
 }  // namespace
 

@@ -179,3 +179,50 @@ TEST(CorpusDhw, TargetEncoderReproducesTheCapturedMainParameters) {
   EXPECT_EQ(mp, (corpus::atlantic_calypso_probe_status_mp_fp_frame1_bytes[11] << 8) |
                     corpus::atlantic_calypso_probe_status_mp_fp_frame1_bytes[12]);
 }
+
+// === Sauter Guelma, an electric storage water heater ===
+
+TEST(CorpusDhw, TheGuelmasRegistersReadWhatItsDisplayShowed) {
+  uint16_t watts = 0;
+  const auto power = value_of(corpus::sauter_guelma_exchange_register_read_frame23_bytes, DHW_REG_HEATING_POWER);
+  ASSERT_TRUE(decode_dhw_heating_power(power.data(), power.size(), watts));
+  EXPECT_EQ(watts, 1500);
+
+  float celsius = NAN;
+  const auto absence = value_of(corpus::sauter_guelma_exchange_register_read_frame14_bytes, DHW_REG_ACTIVE_TARGET);
+  ASSERT_TRUE(decode_dhw_active_target(absence.data(), absence.size(), celsius));
+  EXPECT_FLOAT_EQ(celsius, 7.0F) << "frost protection";
+  const auto manual = value_of(corpus::sauter_guelma_exchange_register_read_frame12_bytes, DHW_REG_ACTIVE_TARGET);
+  ASSERT_TRUE(decode_dhw_active_target(manual.data(), manual.size(), celsius));
+  EXPECT_FLOAT_EQ(celsius, 50.0F) << "two showers";
+
+  uint8_t showers = 0;
+  const auto set = value_of(corpus::sauter_guelma_exchange_register_read_frame20_bytes, DHW_REG_MANUAL_SHOWERS);
+  ASSERT_TRUE(decode_dhw_showers(set.data(), set.size(), showers));
+  EXPECT_EQ(showers, 2);
+  EXPECT_EQ(value_of(corpus::sauter_guelma_exchange_register_read_frame8_bytes, DHW_REG_BOOST_FLAG),
+            std::vector<uint8_t>{0x01});
+  EXPECT_EQ(value_of(corpus::sauter_guelma_exchange_register_read_frame10_bytes, DHW_REG_AWAY_FLAG),
+            std::vector<uint8_t>{0x01});
+}
+
+TEST(CorpusDhw, TheRegistersTheGuelmaDoesNotHoldAnswerWithNoValue) {
+  EXPECT_TRUE(value_of(corpus::sauter_guelma_exchange_register_read_frame29_bytes, DHW_REG_BOOST_DURATION).empty());
+  EXPECT_TRUE(value_of(corpus::sauter_guelma_exchange_register_read_frame30_bytes, DHW_REG_AWAY_DURATION).empty());
+  EXPECT_TRUE(value_of(corpus::sauter_guelma_exchange_register_read_frame31_bytes, DHW_REG_HEATING).empty());
+}
+
+TEST(CorpusDhw, TheGuelmaEchoesTheValueOfEachWriteItTook) {
+  EXPECT_EQ(value_of(corpus::sauter_guelma_exchange_register_write_frame1_bytes, DHW_REG_BOOST_FLAG),
+            std::vector<uint8_t>{0x01});
+  EXPECT_EQ(value_of(corpus::sauter_guelma_exchange_register_write_frame4_bytes, DHW_REG_AWAY_FLAG),
+            std::vector<uint8_t>{0x00});
+  EXPECT_EQ(value_of(corpus::sauter_guelma_exchange_register_write_frame5_bytes, DHW_REG_MANUAL_SHOWERS),
+            std::vector<uint8_t>{0x03});
+}
+
+TEST(CorpusDhw, TheGuelmasStatusReportsNoOperatingWords) {
+  DhwOperatingStatus status;
+  ASSERT_TRUE(decode_dhw_operating_status(frame_of(corpus::sauter_guelma_probe_status_fp_high_frame0_bytes), status));
+  EXPECT_TRUE(status.unreported);
+}

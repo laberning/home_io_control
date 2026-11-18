@@ -189,8 +189,7 @@ bool IOHomeWaterHeater::sync_from_readings_(const DhwReadings &readings) {
     changed = true;
   }
   if (readings.mode >= 0) {
-    const water_heater::WaterHeaterMode mode =
-        water_heater_mode_for(static_cast<DhwMode>(readings.mode), this->model_);
+    const water_heater::WaterHeaterMode mode = water_heater_mode_for(static_cast<DhwMode>(readings.mode), this->model_);
     if (mode != this->mode_) {
       this->set_mode_(mode);
       changed = true;
