@@ -9,7 +9,7 @@
 ## status-poll intervals that the hub schema and the platform modules share.
 ##
 ## DEVICE_TYPE_OPTIONS, DEVICE_MODEL_OPTIONS, DEVICE_FEATURES (with FEATURES, EXPERIMENTAL_KINDS and
-## NAMED_POSITION_FEATURES), DEVICE_READINGS (with READING_FEATURE_HINTS), MANUFACTURER_OPTIONS, PA_PIN_OPTIONS, TCXO_VOLTAGE_OPTIONS and
+## NAMED_POSITION_FEATURES), DEVICE_READINGS (with READING_FEATURE_HINTS and READING_REMOVE_HINTS), MANUFACTURER_OPTIONS, PA_PIN_OPTIONS, TCXO_VOLTAGE_OPTIONS and
 ## FEM_TX_POWER_MAX_QUIET mirror C++ tables; the ``tests/sync/`` host tests and
 ## ``make yaml-emitter-sync`` read them from this file by name.
 
@@ -275,25 +275,31 @@ FEATURES = (
     "OCCUPANCY",
     "ENERGY_METER",
     "RUN_TIMERS",
+    "REPORTS_HEATING_LEVEL",
     "NO_STATUS_READ",
 )
 
 # Python's mirror of the table of named device readings (proto_device_readings.cpp), by the enumerator name of
 # DeviceReading: the capability a device needs ("feature"), where the value comes from ("source": "register" for one
 # private register of a heater, "derived" for a value worked out from other readings, "data_object" for a slice of a
-# data object read on a schedule, "status" for the main parameter of a status reply), the registers the hub's poll reads for it ("registers", by HeatingFunction name;
-# none for a data object), and what the codegen builds for it: the YAML "key" under the main entity (None where no key
-# declares it), the entity kind ("sensor", "binary_sensor" or "switch") and the Home Assistant metadata of the entity.
-# A "data_object" reading is offered by the `sensor:` platform, the register and derived ones by `climate:`; it also
-# carries "update_interval_ms", the interval its YAML key reads at when the entry sets none. The recipe, offset, byte
-# range and codec of a data object are C++ only. tests/sync/device_features_sync_test.cpp checks names, capabilities, source kinds
-# and registers against the C++ table; the entity fields are Python-only, since C++ never needs them. One entry per
-# line: the sync test parses this file and reads no expressions.
+# data object read on a schedule, "status" for the main parameter of a status reply), the registers the hub's poll reads
+# for it ("registers", by HeatingFunction name; none for a data object or a status reply), and what the codegen builds
+# for it: the entity kind ("sensor", "binary_sensor", "switch" or "text_sensor"; the C++ value kind decides which fits),
+# the Home Assistant metadata of the entity ("unit", "accuracy", "device_class", "state_class") and how it is declared:
+# the YAML "key" under the main entity (None where no key declares it), or, for an entity every device of the
+# capability gets without asking, a "companion" (the suffix of its name after the main entity's), its "companion_id"
+# (the suffix of its ID, after the main entity's) and, optionally, "disabled_by_default". A reading has a key or a
+# companion, never both. A "data_object" reading is offered by the `sensor:` platform, the register, derived and status
+# ones by `climate:`; it also carries "update_interval_ms", the interval its YAML key reads at when the entry sets
+# none. The recipe, offset, byte range and codec of a data object, and the value names of a named reading, are C++
+# only. tests/sync/device_features_sync_test.cpp checks names, capabilities, source kinds and registers against the C++
+# table, and each entity kind against the C++ value kind; the other entity fields are Python-only, since C++ never needs
+# them. One entry per line: the sync test parses this file and reads no expressions.
 DEVICE_READINGS = {
     "CENTRAL_HEATING_MODE": {"feature": "CENTRAL_HEATING_MODE", "source": "register", "registers": ("CENTRAL_HEATING_MODE",), "key": "central_heating_mode", "entity": "binary_sensor"},
     "OCCUPANCY_DETECTION": {"feature": "OCCUPANCY", "source": "register", "registers": ("OCCUPANCY_DETECTION",), "key": "occupancy_detection", "entity": "switch"},
     "OCCUPANCY": {"feature": "OCCUPANCY", "source": "register", "registers": ("SET_PRESENCE",), "key": "occupancy", "entity": "binary_sensor", "device_class": "occupancy"},
-    "OPEN_WINDOW_DETECTION": {"feature": "WINDOW_COMPANIONS", "source": "register", "registers": ("SET_OPEN_WINDOW_DETECTION",), "key": None, "entity": "switch"},
+    "OPEN_WINDOW_DETECTION": {"feature": "WINDOW_COMPANIONS", "source": "register", "registers": ("SET_OPEN_WINDOW_DETECTION",), "key": None, "entity": "switch", "companion": "Open Window Detection", "companion_id": "window_detection_switch", "disabled_by_default": True},
     "ENERGY_TOTAL": {"feature": "ENERGY_METER", "source": "register", "registers": ("ENERGY_TOTAL",), "key": "energy", "entity": "sensor", "unit": "kWh", "accuracy": 0, "device_class": "energy", "state_class": "total_increasing"},
     "BOOST_DURATION": {"feature": "RUN_TIMERS", "source": "register", "registers": ("BOOST_DURATION",), "key": "boost_duration", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration"},
     "DRYING_DURATION": {"feature": "RUN_TIMERS", "source": "register", "registers": ("DRYING_DURATION",), "key": "drying_duration", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration"},
@@ -305,16 +311,16 @@ DEVICE_READINGS = {
     "MAX_SETPOINT": {"feature": None, "source": "register", "registers": ("MAX_SETPOINT",), "key": None, "entity": None},
     "MODE": {"feature": None, "source": "register", "registers": ("SET_MODE",), "key": None, "entity": None},
     "REGULATOR_STATE": {"feature": None, "source": "register", "registers": ("REGULATOR_STATE",), "key": None, "entity": None},
-    "WINDOW_OPEN": {"feature": None, "source": "register", "registers": ("WINDOW_OPEN",), "key": None, "entity": None},
+    "WINDOW_OPEN": {"feature": "WINDOW_COMPANIONS", "source": "register", "registers": ("WINDOW_OPEN",), "key": None, "entity": "binary_sensor", "device_class": "window", "companion": "Window", "companion_id": "window_sensor"},
     "TOWEL_MODE": {"feature": None, "source": "register", "registers": ("TOWEL_MODE",), "key": None, "entity": None},
     "TEMPORARY_STATE": {"feature": None, "source": "register", "registers": ("TEMPORARY_STATE",), "key": None, "entity": None},
     "WORKING_RATE": {"feature": None, "source": "register", "registers": ("WORKING_RATE",), "key": None, "entity": None},
     "TEMPERATURE_IN_FORCE": {"feature": None, "source": "register", "registers": ("TEMPERATURE_IN_FORCE",), "key": None, "entity": None},
     "HEATER_TEMPERATURE_IN_FORCE": {"feature": None, "source": "register", "registers": ("HEATER_TEMPERATURE_IN_FORCE",), "key": None, "entity": None},
     "DEROGATED_SETPOINT": {"feature": None, "source": "register", "registers": ("SET_DEROGATION",), "key": None, "entity": None},
-    "NIGHT_LIGHT": {"feature": None, "source": "register", "registers": ("NIGHT_LIGHT",), "key": None, "entity": None},
-    "NIGHT_LIGHT_BRIGHTNESS": {"feature": None, "source": "register", "registers": ("NIGHT_LIGHT_BRIGHTNESS",), "key": None, "entity": None},
-    "HEATING_LEVEL": {"feature": None, "source": "status", "registers": (), "key": None, "entity": None},
+    "NIGHT_LIGHT": {"feature": "NIGHT_LIGHT", "source": "register", "registers": ("NIGHT_LIGHT",), "key": None, "entity": None},
+    "NIGHT_LIGHT_BRIGHTNESS": {"feature": "NIGHT_LIGHT", "source": "register", "registers": ("NIGHT_LIGHT_BRIGHTNESS",), "key": None, "entity": None},
+    "HEATING_LEVEL": {"feature": "REPORTS_HEATING_LEVEL", "source": "status", "registers": (), "key": "heating_level", "entity": "text_sensor"},
     "STATUS_SETPOINT": {"feature": None, "source": "status", "registers": (), "key": None, "entity": None},
 }
 
@@ -324,6 +330,13 @@ READING_FEATURE_HINTS = {
     "OCCUPANCY": "a heater with occupancy detection: set io_device_type: electrical_heater, io_subtype: 1 and either no io_model (a radiator) or io_model: heater_with_light",
     "ENERGY_METER": "a heater that counts its energy: set io_device_type: electrical_heater, io_subtype: 1 and either no io_model (a radiator), io_model: towel_dryer or io_model: heater_with_light",
     "RUN_TIMERS": "a towel dryer: set io_device_type: electrical_heater, io_subtype: 1 and io_model: towel_dryer",
+    "REPORTS_HEATING_LEVEL": "an electrical heater: set io_device_type: electrical_heater and either io_subtype: 0 without io_model (a plain heater) or io_subtype: 1 with io_model: towel_dryer",
+}
+
+# What to do when a key of DEVICE_READINGS is used on a kind of a device type that has the capability on other kinds,
+# by capability: the declared kind is the right type, so the user is told to drop the key instead of what to declare.
+READING_REMOVE_HINTS = {
+    "REPORTS_HEATING_LEVEL": "the hub reads no heating level from this heater; remove {key}:",
 }
 
 # The models a (type, subtype) can have below it (proto_device_kinds.h DeviceModel, the model rows of
@@ -374,8 +387,9 @@ DEVICE_FEATURES = {
     "sliding_window/1": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
     "bioclimatic_pergola": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
     "domestic_hot_water": frozenset({"WATER_HEATER"}),
+    "electrical_heater": frozenset({"REPORTS_HEATING_LEVEL"}),
     "electrical_heater/1": frozenset({"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}),
-    "electrical_heater/1/towel_dryer": frozenset({"CENTRAL_HEATING_MODE", "ENERGY_METER", "RUN_TIMERS"}),
+    "electrical_heater/1/towel_dryer": frozenset({"CENTRAL_HEATING_MODE", "ENERGY_METER", "RUN_TIMERS", "REPORTS_HEATING_LEVEL"}),
     "electrical_heater/1/heater_with_light": frozenset({"WINDOW_COMPANIONS", "NIGHT_LIGHT", "OCCUPANCY", "ENERGY_METER"}),
     "electrical_heater/0/pilot_wire_interface": frozenset(),
 }
@@ -430,6 +444,15 @@ def device_models(device_type, subtype=0):
         return []
     prefix = f"{name}/{subtype}/"
     return sorted(key[len(prefix):] for key in DEVICE_FEATURES if key.startswith(prefix))
+
+
+def type_offers_feature(device_type, feature):
+    """True when some kind of the node type (a subtype row or a model row of ``DEVICE_FEATURES``) has the capability
+    ``feature``; False for a node type YAML has no name for."""
+    name = device_type_name(device_type)
+    return name is not None and any(
+        key.split("/")[0] == name and feature in features for key, features in DEVICE_FEATURES.items()
+    )
 
 
 def check_feature_name(name):

@@ -786,15 +786,16 @@ void HeaterController::poll_temperature_in_force_(const std::string &device_id, 
            device_id.c_str(), heating_function_name(fn));
 }
 
-void HeaterController::poll_asked_registers_(const std::string &device_id, uint8_t max_tries) {
-  for (unsigned i = 0; i < static_cast<unsigned>(HeatingFunction::COUNT); i++) {
-    const auto fn = static_cast<HeatingFunction>(i);
+void HeaterController::poll_asked_registers_(const std::string &device_id, const HeatingProfile &profile,
+                                             uint8_t max_tries) {
+  const IoDevice *start = this->registry_.get(device_id);
+  if (start == nullptr)
+    return;
+  for (const HeatingFunction fn : heater_poll_reads(profile, *start, ReadingPoll::WHEN_ASKED)) {
     // Looked up again for every register: a read exchange may have changed the registry.
     IoDevice *dev = this->registry_.get(device_id);
     if (dev == nullptr)
       return;
-    if (!register_reading_wanted(*dev, fn))
-      continue;
     // A register that is read only while a condition holds (the minutes left of a run) is not asked while it does
     // not, and its reading of an earlier run goes, so it never shows as the current one.
     if (!heating_register_due(fn, *dev)) {
@@ -839,9 +840,16 @@ bool HeaterController::poll_registers_(const std::string &device_id) {
 
 bool HeaterController::read_poll_registers_(const std::string &device_id, const HeatingProfile &profile,
                                             uint8_t max_tries) {
+  // Each phase asks the reading table for its registers when it starts: what an earlier phase read (the mode, a
+  // timed run's state) and what an entity asked for are then current.
+  const auto reads_of = [this, &device_id, &profile](ReadingPoll policy) {
+    const IoDevice *dev = this->registry_.get(device_id);
+    return dev != nullptr ? heater_poll_reads(profile, *dev, policy) : HeaterPollList{};
+  };
+
   bool ok = true;
   size_t answered = 0;
-  for (const HeatingFunction fn : profile.poll_registers) {
+  for (const HeatingFunction fn : reads_of(ReadingPoll::EVERY_POLL)) {
     if (!this->read_heating_register(device_id, fn, nullptr, max_tries)) {
       ok = false;
       break;
@@ -856,25 +864,21 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
 
   // A setting the heater's own controller changes, or a part the heater may not have (a night light): read
   // every poll once the core registers answered, and a miss is not a poll failure (the next poll asks again).
-  for (const HeatingFunction fn : profile.extra_poll_registers) {
-    if (!ok)
-      break;
-    this->read_heating_register(device_id, fn, nullptr, max_tries);
+  if (ok) {
+    for (const HeatingFunction fn : reads_of(ReadingPoll::EVERY_POLL_MAY_MISS))
+      this->read_heating_register(device_id, fn, nullptr, max_tries);
   }
 
   // The registers an entity of the YAML asks for (the central-heating mode, the occupancy detection and
   // presence, the energy total, a towel dryer's run timers) are read only where it is declared; a miss is not a
   // poll failure.
   if (ok)
-    this->poll_asked_registers_(device_id, max_tries);
+    this->poll_asked_registers_(device_id, profile, max_tries);
 
-  // Properties and settings that rarely change are read until they have been read once. A miss here
-  // is not a poll failure; the next poll asks again.
-  for (const HeatingFunction fn : profile.boot_registers) {
-    if (!ok)
-      break;
-    const IoDevice *current = this->registry_.get(device_id);
-    if (current != nullptr && !register_value(*current, fn).has_value())
+  // Properties and settings that rarely change are read until they hold a value. A miss here is not a poll
+  // failure; the next poll asks again.
+  if (ok) {
+    for (const HeatingFunction fn : reads_of(ReadingPoll::ONCE_AFTER_BOOT))
       this->read_heating_register(device_id, fn, nullptr, max_tries);
   }
 

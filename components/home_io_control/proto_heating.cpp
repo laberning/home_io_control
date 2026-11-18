@@ -161,6 +161,11 @@ bool heating_function_is_readable(HeatingFunction fn) {
   return d != nullptr && d->access != HeatingAccess::WRITE_ONLY;
 }
 
+ValueCodec heating_function_codec(HeatingFunction fn) {
+  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+  return d != nullptr ? d->codec : ValueCodec::NONE;
+}
+
 bool heating_function_register(HeatingFunction fn, uint8_t &register_low) {
   const HeatingFunctionDescriptor *d = descriptor_for(fn);
   if (d == nullptr)

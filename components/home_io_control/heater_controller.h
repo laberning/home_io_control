@@ -106,15 +106,15 @@ class HeaterController {
 
   /// @brief Run one regular poll of a heater or water heater and arm the next one.
   ///
-  /// The body depends on the device: a register heater reads its profile's poll registers (stopping at the
-  /// first failure), then the programme's temperature in force, its boot registers until each has been read
-  /// once, and on a kind with model rows the one-off model check once it has answered a read; a water heater
-  /// reads its status (target, capabilities, boost and away), then its water temperature, mode, heating
-  /// state, boost and away duration and energy registers, then its brand until it has been read once; any
-  /// other heater is polled with the generic status read. A register or water heater failure moves the
-  /// retry onto the StatusPollPolicy ladder; a status-read heater leaves that to the status read itself.
-  /// Whatever the poll finds, or whether it could run at all (the hub is not initialised yet), the next
-  /// regular poll is armed one interval out (the device's `status_poll_interval`, else
+  /// The body depends on the device: a register heater reads the registers its reading rows select
+  /// (every-poll ones stopping at the first failure, then the programme's temperature in force, the readings that
+  /// may miss, the asked ones and the ones read until they hold a value; heater_poll_reads()), and on a kind with model
+  /// rows the one-off model check once it has answered a read; a water heater reads its status (target, capabilities,
+  /// boost and away), then its water temperature, mode, heating state, boost and away duration and energy registers,
+  /// then its brand until it has been read once; any other heater is polled with the generic status read. A register or
+  /// water heater failure moves the retry onto the StatusPollPolicy ladder; a status-read heater leaves that to the
+  /// status read itself. Whatever the poll finds, or whether it could run at all (the hub is not initialised yet), the
+  /// next regular poll is armed one interval out (the device's `status_poll_interval`, else
   /// HEATING_POLL_DEFAULT_INTERVAL_MS, see heater_poll_interval_ms()). A device that is not registered
   /// arms no timer. Called by the hub's request_device_status() for a device polls() accepts.
   /// @param device_id Target device ID (hex string).
@@ -462,12 +462,14 @@ class HeaterController {
   /// @return The body's result; false when the poll could not run.
   bool run_poll_(const std::string &device_id, PollLadder ladder, const PollBody &body);
 
-  /// @brief Poll a register heater: its profile's poll registers (stopping at the first failure), the
-  /// programme's temperature in force, the boot registers until each has been read once, the heating level
-  /// (the status read, on a heater whose programme period reports one) and on a heater kind with model rows the one-off
-  /// model check once the device has answered a read.
+  /// @brief Poll a register heater: the registers its reading rows select, in this order: every poll
+  /// (ReadingPoll::EVERY_POLL, stopping at the first failure), the programme's temperature in force, the readings
+  /// that may miss, the ones an entity asked for, the ones read until they hold a value, the heating level (the
+  /// status read, on a heater whose programme period reports one) and, on a heater kind with model rows, the
+  /// one-off model check once the device has answered a read. Each phase takes its registers from
+  /// heater_poll_reads() when it starts.
   /// @param device_id Target device ID.
-  /// @return true when every poll register answered.
+  /// @return true when every register read on every poll answered.
   bool poll_registers_(const std::string &device_id);
 
   /// @brief The reads of one register-heater poll, in the order poll_registers_() describes.
@@ -477,14 +479,15 @@ class HeaterController {
   /// @return true when every poll register answered.
   bool read_poll_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
 
-  /// @brief Read the registers of the readings a heater's YAML asked for, in register order.
+  /// @brief Read the registers of the readings a heater's YAML asked for, in the order of the reading table.
   /// @details An answer without a value (a heater without the register, or a byte the register does not use)
   ///          marks that reading absent, so its entity has no state, stops the read of that register until the next
   ///          boot (or until another read answers it with a value, mark_register_reading_absent()) and logs once
   ///          naming it. A missed read changes nothing. Each register is judged on its own.
   /// @param device_id Target device ID.
+  /// @param profile The device's register profile.
   /// @param max_tries Transmit-attempt cap of each read (the poll's try band).
-  void poll_asked_registers_(const std::string &device_id, uint8_t max_tries);
+  void poll_asked_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
 
   /// What an answer without a value to a read of the temperature in force may decide.
   enum class InForceEmptyAnswer : uint8_t {
@@ -565,8 +568,9 @@ class HeaterController {
 ///
 /// A heating-level heater reports a level; a temperature heater reports an alias (kept as
 /// DeviceReading::HEATING_LEVEL) or a plain temperature (DeviceReading::STATUS_SETPOINT, decoded over the
-/// device's encoding range, which also clears a stale alias). A device without a heating profile and a
-/// register heater are left alone. The bytes are decoded by decode_status_reading().
+/// device's encoding range, which also clears a stale alias). A device without a heating profile, a
+/// register heater and a level heater whose status carries no level (HeatingProfile::status_reports_level false: a
+/// pilot-wire interface) are left alone. The bytes are decoded by decode_status_reading().
 /// @param id Device ID for the log line.
 /// @param dev Device record to update.
 /// @param main_parameter The two bytes of the current main parameter of a reply to a status poll.

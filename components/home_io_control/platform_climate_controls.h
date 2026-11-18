@@ -1,28 +1,25 @@
 #pragma once
 
 /// @file platform_climate_controls.h
-/// @brief Generated per-heater auxiliary entities: the window binary sensor, the heater setting switches
-/// (open-window detection, occupancy detection), the night light and the heating-level text sensor.
+/// @brief Generated per-heater auxiliary entities: the heater setting switches (open-window detection, occupancy
+/// detection) and the night light.
 /// @ingroup hioc_platforms
 ///
-/// All are device-bound companions (DeviceBoundCompanion) that climate.py generates alongside a
-/// `climate:` entity: the window pair when the device kind has WINDOW_COMPANIONS, the night light when
-/// the YAML asks for it on a kind with NIGHT_LIGHT; the heating-level text sensor is opt-in on an
-/// electrical heater, and the occupancy-detection switch is opt-in on a kind with OCCUPANCY. The opt-in sensors that
-/// show a reading (central-heating mode, occupancy, energy total, run timers) are the generic entities of
+/// Both are device-bound companions (DeviceBoundCompanion) that climate.py generates alongside a `climate:` entity: the
+/// open-window detection switch when the device kind has WINDOW_COMPANIONS (made from its reading row, with the window
+/// sensor), the occupancy-detection switch when the YAML asks for it on a kind with OCCUPANCY, and the night light when
+/// the YAML asks for it on a kind with NIGHT_LIGHT. Every other entity that shows a heater reading (the window sensor,
+/// the heating level, central-heating mode, occupancy, energy total, run timers) is a generic entity of
 /// platform_device_readings.h. They show readings the hub's poll already stores in IoDevice::reading_values and add no
 /// radio traffic of their own, except their writes and the read-backs that confirm them.
 ///
-/// @todo Experimental: the meaning of registers 0x010E (window sensor) and 0x0106 (open-window
-///       detection) is unconfirmed on hardware. An AGILIA IO radiator answers both reads (window 0,
-///       detection 1, tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml), but no
-///       report has opened a window or switched detection off yet
-///       ([issue #165](https://github.com/laberning/home_io_control/issues/165)).
+/// @todo Experimental: the meaning of register 0x0106 (open-window detection) is unconfirmed on hardware. An AGILIA IO
+///       radiator answers the read (detection 1,
+///       tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml), but no report has switched
+///       detection off yet ([issue #165](https://github.com/laberning/home_io_control/issues/165)).
 
-#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/light/light_output.h"
 #include "esphome/components/switch/switch.h"
-#include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
 #include "platform_device_readings.h"
 #include "platform_entity_base.h"
@@ -31,49 +28,6 @@
 
 namespace esphome {
 namespace home_io_control {
-
-/// @brief Text sensor (`heating_level:` on a climate entry) with the level the heater applies right now.
-/// @ingroup hioc_platforms
-///
-/// Shows `off`, `frost protection`, `eco`, `comfort -2`, `comfort -1`, `comfort`, `boost` or `secured`
-/// (heating_level_name()), read from DeviceReading::HEATING_LEVEL: the main parameter of the heater's status
-/// read. A plain heater and a pilot-wire interface are polled with that read; a register heater gets it
-/// only where its programme is known to report a level (HeatingProgrammePeriod::reports_level: a towel dryer,
-/// not a radiator). No state until the heater has reported a level,
-/// so a heater that reports none (a pilot-wire interface, a radiator) leaves the sensor without one.
-///
-/// \todo Experimental on a towel dryer: its status read is captured on one unit in comfort, eco and boost,
-///       not yet during a drying run or a temporary override.
-class IOHomeHeatingLevelSensor : public text_sensor::TextSensor, public Component, public DeviceBoundCompanion {
- public:
-  /// @brief Subscribe to the device's updates and publish what is already known.
-  void setup() override;
-
-  /// @brief Dump sensor configuration to the log.
-  void dump_config() override;
-
-  /// @brief Get setup priority so the parent hub is available first.
-  /// @return setup_priority::DATA.
-  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
-};
-
-/// @brief Binary sensor (`device_class: window`) that is ON while the heater's window sensor reports open.
-/// @ingroup hioc_platforms
-///
-/// Reads DeviceReading::WINDOW_OPEN. No state until the first poll has read register 0x010E, so
-/// "closed" always means the heater said so.
-class IOHomeWindowBinarySensor : public binary_sensor::BinarySensor, public Component, public DeviceBoundCompanion {
- public:
-  /// @brief Subscribe to the device's updates and publish what is already known.
-  void setup() override;
-
-  /// @brief Dump sensor configuration to the log.
-  void dump_config() override;
-
-  /// @brief Get setup priority so the parent hub is available first.
-  /// @return setup_priority::DATA.
-  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
-};
 
 /// @brief Switch for one on/off setting register of a heater.
 /// @ingroup hioc_platforms

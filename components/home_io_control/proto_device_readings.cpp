@@ -5,6 +5,7 @@
 #include "proto_device_readings.h"
 
 #include "proto_codecs.h"
+#include "proto_heating_profiles.h"
 #include "proto_sizes.h"
 
 #include <algorithm>
@@ -33,12 +34,22 @@ constexpr uint16_t STATUS_VALUE_LOW_BYTE_MASK = 0xFF;
 
 std::optional<float> remaining_time_of_active_run(const IoDevice &dev);
 
-/// The reading table. The first rows are the ones an entity of the YAML asks for, with the capability each needs; the
-/// rest are the registers and status values the climate card keeps by the heater's profile. A towel dryer's minutes
-/// left of a run are read only while that run is on (HeatingReadCondition), so an idle dryer costs no read for them.
-/// `poll` is the cadence of a device that reads the reading (ReadingPoll); the heating profiles' own register lists
-/// still say which heaters read which.
+/// The reading table: one row per value the hub keeps of a device, and the one place that says when a heater's poll
+/// reads it (`poll`, ReadingPoll) and for which devices (`feature`, else the heating profile: heating_profile_reads()).
+/// The rows are in read order: within a policy the poll reads them top to bottom, so the order below is the order of
+/// the registers on the wire. The first rows are the ones an entity of the YAML asks for (WHEN_ASKED), each with the
+/// capability it needs, in the order of the registers' enumeration (HeatingFunction); then the registers every poll
+/// reads, the ones that may miss, and the one read once; the last rows are not polled for their own sake. A towel
+/// dryer's minutes left of a run are read only while that run is on (HeatingReadCondition), so an idle dryer costs no
+/// read for them; the minutes left of whichever run is active are derived from the two registers, which are rows of
+/// their own. The room temperature leads the registers every poll reads: it is the value a user looks at, so a poll
+/// that dies half-way still delivered it.
 constexpr DeviceReadingRow DEVICE_READINGS[] = {
+    {.name = "occupancy",
+     .source = HeatingRegisterSource{.fn = HeatingFunction::SET_PRESENCE},
+     .reading = DeviceReading::OCCUPANCY,
+     .poll = ReadingPoll::WHEN_ASKED,
+     .feature = DeviceFeature::OCCUPANCY},
     {.name = "central_heating_mode",
      .source = HeatingRegisterSource{.fn = HeatingFunction::CENTRAL_HEATING_MODE},
      .reading = DeviceReading::CENTRAL_HEATING_MODE,
@@ -49,31 +60,11 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .reading = DeviceReading::OCCUPANCY_DETECTION,
      .poll = ReadingPoll::WHEN_ASKED,
      .feature = DeviceFeature::OCCUPANCY},
-    {.name = "occupancy",
-     .source = HeatingRegisterSource{.fn = HeatingFunction::SET_PRESENCE},
-     .reading = DeviceReading::OCCUPANCY,
-     .poll = ReadingPoll::WHEN_ASKED,
-     .feature = DeviceFeature::OCCUPANCY},
-    {.name = "open_window_detection",
-     .source = HeatingRegisterSource{.fn = HeatingFunction::SET_OPEN_WINDOW_DETECTION},
-     .reading = DeviceReading::OPEN_WINDOW_DETECTION,
-     .poll = ReadingPoll::EVERY_POLL,
-     .feature = DeviceFeature::WINDOW_COMPANIONS},
     {.name = "energy_total",
      .source = HeatingRegisterSource{.fn = HeatingFunction::ENERGY_TOTAL},
      .reading = DeviceReading::ENERGY_TOTAL,
      .poll = ReadingPoll::WHEN_ASKED,
      .feature = DeviceFeature::ENERGY_METER},
-    {.name = "boost_duration",
-     .source = HeatingRegisterSource{.fn = HeatingFunction::BOOST_DURATION},
-     .reading = DeviceReading::BOOST_DURATION,
-     .poll = ReadingPoll::WHEN_ASKED,
-     .feature = DeviceFeature::RUN_TIMERS},
-    {.name = "drying_duration",
-     .source = HeatingRegisterSource{.fn = HeatingFunction::DRYING_DURATION},
-     .reading = DeviceReading::DRYING_DURATION,
-     .poll = ReadingPoll::WHEN_ASKED,
-     .feature = DeviceFeature::RUN_TIMERS},
     {.name = "boost_remaining",
      .source =
          HeatingRegisterSource{.fn = HeatingFunction::BOOST_REMAINING,
@@ -82,12 +73,22 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .reading = DeviceReading::BOOST_REMAINING,
      .poll = ReadingPoll::WHEN_ASKED,
      .feature = DeviceFeature::RUN_TIMERS},
+    {.name = "boost_duration",
+     .source = HeatingRegisterSource{.fn = HeatingFunction::BOOST_DURATION},
+     .reading = DeviceReading::BOOST_DURATION,
+     .poll = ReadingPoll::WHEN_ASKED,
+     .feature = DeviceFeature::RUN_TIMERS},
     {.name = "drying_remaining",
      .source =
          HeatingRegisterSource{.fn = HeatingFunction::DRYING_REMAINING,
                                .only_while = HeatingReadCondition{HeatingFunction::TEMPORARY_STATE,
                                                                   static_cast<uint8_t>(HeatingTemporaryState::DRYING)}},
      .reading = DeviceReading::DRYING_REMAINING,
+     .poll = ReadingPoll::WHEN_ASKED,
+     .feature = DeviceFeature::RUN_TIMERS},
+    {.name = "drying_duration",
+     .source = HeatingRegisterSource{.fn = HeatingFunction::DRYING_DURATION},
+     .reading = DeviceReading::DRYING_DURATION,
      .poll = ReadingPoll::WHEN_ASKED,
      .feature = DeviceFeature::RUN_TIMERS},
     {.name = "remaining_time",
@@ -103,10 +104,6 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .source = HeatingRegisterSource{.fn = HeatingFunction::SET_TEMPERATURE},
      .reading = DeviceReading::SETPOINT,
      .poll = ReadingPoll::EVERY_POLL},
-    {.name = "max_setpoint",
-     .source = HeatingRegisterSource{.fn = HeatingFunction::MAX_SETPOINT},
-     .reading = DeviceReading::MAX_SETPOINT,
-     .poll = ReadingPoll::ONCE_AFTER_BOOT},
     {.name = "mode",
      .source = HeatingRegisterSource{.fn = HeatingFunction::SET_MODE},
      .reading = DeviceReading::MODE,
@@ -118,7 +115,8 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
     {.name = "window_open",
      .source = HeatingRegisterSource{.fn = HeatingFunction::WINDOW_OPEN},
      .reading = DeviceReading::WINDOW_OPEN,
-     .poll = ReadingPoll::EVERY_POLL},
+     .poll = ReadingPoll::EVERY_POLL,
+     .feature = DeviceFeature::WINDOW_COMPANIONS},
     {.name = "towel_mode",
      .source = HeatingRegisterSource{.fn = HeatingFunction::TOWEL_MODE},
      .reading = DeviceReading::TOWEL_MODE,
@@ -131,34 +129,52 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .source = HeatingRegisterSource{.fn = HeatingFunction::WORKING_RATE},
      .reading = DeviceReading::WORKING_RATE,
      .poll = ReadingPoll::EVERY_POLL},
-    {.name = "temperature_in_force",
-     .source = HeatingRegisterSource{.fn = HeatingFunction::TEMPERATURE_IN_FORCE},
-     .reading = DeviceReading::TEMPERATURE_IN_FORCE,
-     .poll = ReadingPoll::NEVER},
-    {.name = "heater_temperature_in_force",
-     .source = HeatingRegisterSource{.fn = HeatingFunction::HEATER_TEMPERATURE_IN_FORCE},
-     .reading = DeviceReading::HEATER_TEMPERATURE_IN_FORCE,
-     .poll = ReadingPoll::NEVER},
-    {.name = "derogated_setpoint",
-     .source = HeatingRegisterSource{.fn = HeatingFunction::DEROGATED_SETPOINT},
-     .reading = DeviceReading::DEROGATED_SETPOINT,
-     .poll = ReadingPoll::NEVER},
+    // The heater's own controller changes the detection setting (a change from the vendor app), and a night light is
+    // a part a model may lack: a miss costs a read, not the poll.
+    {.name = "open_window_detection",
+     .source = HeatingRegisterSource{.fn = HeatingFunction::SET_OPEN_WINDOW_DETECTION},
+     .reading = DeviceReading::OPEN_WINDOW_DETECTION,
+     .poll = ReadingPoll::EVERY_POLL_MAY_MISS,
+     .feature = DeviceFeature::WINDOW_COMPANIONS},
     {.name = "night_light",
      .source = HeatingRegisterSource{.fn = HeatingFunction::NIGHT_LIGHT},
      .reading = DeviceReading::NIGHT_LIGHT,
-     .poll = ReadingPoll::EVERY_POLL},
+     .poll = ReadingPoll::EVERY_POLL_MAY_MISS,
+     .feature = DeviceFeature::NIGHT_LIGHT},
     {.name = "night_light_brightness",
      .source = HeatingRegisterSource{.fn = HeatingFunction::NIGHT_LIGHT_BRIGHTNESS},
      .reading = DeviceReading::NIGHT_LIGHT_BRIGHTNESS,
-     .poll = ReadingPoll::EVERY_POLL},
+     .poll = ReadingPoll::EVERY_POLL_MAY_MISS,
+     .feature = DeviceFeature::NIGHT_LIGHT},
+    {.name = "max_setpoint",
+     .source = HeatingRegisterSource{.fn = HeatingFunction::MAX_SETPOINT},
+     .reading = DeviceReading::MAX_SETPOINT,
+     .poll = ReadingPoll::ONCE_AFTER_BOOT},
+    // The temperatures in force are read by the programme rule (only while the programme runs), and the derogated
+    // setpoint by a write's read-back.
+    {.name = "temperature_in_force",
+     .source = HeatingRegisterSource{.fn = HeatingFunction::TEMPERATURE_IN_FORCE},
+     .reading = DeviceReading::TEMPERATURE_IN_FORCE,
+     .poll = ReadingPoll::NOT_POLLED},
+    {.name = "heater_temperature_in_force",
+     .source = HeatingRegisterSource{.fn = HeatingFunction::HEATER_TEMPERATURE_IN_FORCE},
+     .reading = DeviceReading::HEATER_TEMPERATURE_IN_FORCE,
+     .poll = ReadingPoll::NOT_POLLED},
+    {.name = "derogated_setpoint",
+     .source = HeatingRegisterSource{.fn = HeatingFunction::DEROGATED_SETPOINT},
+     .reading = DeviceReading::DEROGATED_SETPOINT,
+     .poll = ReadingPoll::NOT_POLLED},
+    // The status read answers these two.
     {.name = "heating_level",
      .source = StatusMainParameterSource{.form = StatusValueForm::LEVEL},
      .reading = DeviceReading::HEATING_LEVEL,
-     .poll = ReadingPoll::NEVER},
+     .poll = ReadingPoll::NOT_POLLED,
+     .feature = DeviceFeature::REPORTS_HEATING_LEVEL,
+     .value_name = heating_level_name},
     {.name = "status_setpoint",
      .source = StatusMainParameterSource{.form = StatusValueForm::TEMPERATURE},
      .reading = DeviceReading::STATUS_SETPOINT,
-     .poll = ReadingPoll::NEVER},
+     .poll = ReadingPoll::NOT_POLLED},
 };
 
 /// @brief The minutes left of the timed run a towel dryer is in.
@@ -179,6 +195,22 @@ std::optional<float> remaining_time_of_active_run(const IoDevice &dev) {
 }
 
 }  // namespace
+
+ReadingValueKind reading_value_kind(const DeviceReadingRow &row) {
+  if (row.value_name != nullptr)
+    return ReadingValueKind::NAMED;
+  const ValueCodec codec =
+      std::visit(Overloaded{
+                     [](const HeatingRegisterSource &source) { return heating_function_codec(source.fn); },
+                     [](const DataObjectSource &source) { return source.codec; },
+                     // A derived value and a status parameter are numbers: the first is worked out, the second is a
+                     // level or a temperature, never a flag.
+                     [](const DerivedSource &) { return ValueCodec::NONE; },
+                     [](const StatusMainParameterSource &) { return ValueCodec::NONE; },
+                 },
+                 row.source);
+  return codec == ValueCodec::BINARY ? ReadingValueKind::FLAG : ReadingValueKind::NUMBER;
+}
 
 const DeviceReadingRow *find_device_reading(DeviceReading reading, std::span<const DeviceReadingRow> table) {
   const auto row = std::ranges::find(table, reading, &DeviceReadingRow::reading);

@@ -57,6 +57,7 @@ const std::map<std::string, DeviceFeature> CPP_FEATURES = {
     {"OCCUPANCY", device_feature::OCCUPANCY},
     {"ENERGY_METER", device_feature::ENERGY_METER},
     {"RUN_TIMERS", device_feature::RUN_TIMERS},
+    {"REPORTS_HEATING_LEVEL", device_feature::REPORTS_HEATING_LEVEL},
     {"NO_STATUS_READ", device_feature::NO_STATUS_READ},
 };
 
@@ -334,4 +335,35 @@ TEST(DeviceFeaturesSync, EveryDeviceReadingIsMirroredWithItsCapabilitySourceAndR
     EXPECT_EQ(test::quoted_strings_of(field_text(entry, "registers")), registers) << name;
   }
   EXPECT_EQ(python.size(), device_readings().size()) << "DEVICE_READINGS names a reading the C++ table does not have";
+}
+
+TEST(DeviceFeaturesSync, EveryReadingsEntityKindFitsItsValue) {
+  // The generated code builds the entity the mirror names for a reading; the entity can show only the kind of value
+  // the C++ row has: a flag is a binary sensor or a switch, a named value a text sensor, any
+  // other number a sensor. A reading with no entity (the card's own readings, the night light) builds nothing.
+  const auto python = test::parse_python_ordered_dict(VALIDATORS, "DEVICE_READINGS");
+  ASSERT_FALSE(python.empty()) << "DEVICE_READINGS not parsed from hub_validators.py";
+  const std::map<std::string, std::string> by_name(python.begin(), python.end());
+  for (const DeviceReadingRow &row : device_readings()) {
+    const std::string name = upper(row.name);
+    ASSERT_TRUE(by_name.count(name)) << name << " is missing from DEVICE_READINGS";
+    const std::vector<std::string> entity = test::quoted_strings_of(field_text(by_name.at(name), "entity"));
+    if (entity.empty()) {
+      EXPECT_EQ(field_text(by_name.at(name), "entity"), "None") << name;
+      continue;
+    }
+    ASSERT_EQ(entity.size(), 1u) << name;
+    switch (reading_value_kind(row)) {
+      case ReadingValueKind::FLAG:
+        // The switch shows and writes a setting; whether a flag is one is the platform's choice, not the value's.
+        EXPECT_TRUE(entity.front() == "binary_sensor" || entity.front() == "switch") << name << ": " << entity.front();
+        break;
+      case ReadingValueKind::NAMED:
+        EXPECT_EQ(entity.front(), "text_sensor") << name;
+        break;
+      case ReadingValueKind::NUMBER:
+        EXPECT_EQ(entity.front(), "sensor") << name;
+        break;
+    }
+  }
 }

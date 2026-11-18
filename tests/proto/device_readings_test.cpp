@@ -4,6 +4,7 @@
 
 #include "proto_device_readings.h"
 #include "proto_heating_profiles.h"
+#include "device_table_walk.h"
 #include "reading_store.h"
 
 #include <gtest/gtest.h>
@@ -11,9 +12,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iterator>
 #include <optional>
+#include <ranges>
 #include <set>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -221,14 +225,108 @@ TEST(DeviceReadings, EveryKeptHeaterRegisterIsTheSourceOfExactlyOneRow) {
   }
 }
 
+namespace {
+
+/// The phases of a heater's poll, in the order the controller runs them (HeaterController::poll_registers_()).
+constexpr ReadingPoll POLL_PHASES[] = {ReadingPoll::EVERY_POLL, ReadingPoll::EVERY_POLL_MAY_MISS,
+                                       ReadingPoll::WHEN_ASKED, ReadingPoll::ONCE_AFTER_BOOT};
+
+/// @return The position of a register's row in the poll: its phase, then its row.
+std::pair<size_t, size_t> poll_position(const DeviceReadingRow &row) {
+  const size_t phase = static_cast<size_t>(std::ranges::find(POLL_PHASES, row.poll) - std::begin(POLL_PHASES));
+  return {phase, static_cast<size_t>(&row - device_readings().data())};
+}
+
+}  // namespace
+
 TEST(DeviceReadings, ARegisterReadOnlyWhileAnotherHoldsAValueIsPolledAfterThatRegister) {
-  // The poll reads the asked registers in the order of HeatingFunction, so a condition is judged on the value read
-  // earlier in the same poll.
+  // A condition is judged on the value read earlier in the same poll.
   for (const DeviceReadingRow &row : device_readings()) {
     const auto *source = std::get_if<HeatingRegisterSource>(&row.source);
     if (source == nullptr || !source->only_while)
       continue;
-    EXPECT_LT(static_cast<unsigned>(source->only_while->fn), static_cast<unsigned>(source->fn)) << row.name;
+    const DeviceReadingRow *condition = find_register_reading(source->only_while->fn);
+    ASSERT_NE(condition, nullptr) << row.name;
+    EXPECT_LT(poll_position(*condition), poll_position(row)) << row.name;
+  }
+}
+
+TEST(DeviceReadings, TheRowsOfAPollPolicyAreInTheOrderOfTheRegisters) {
+  // The order of the rows is the order of the reads, and the asked registers go by the registers' enumeration so the
+  // wire order of an optional read does not depend on how the YAML lists its entities.
+  std::optional<unsigned> previous;
+  for (const DeviceReadingRow &row : device_readings()) {
+    const auto *source = std::get_if<HeatingRegisterSource>(&row.source);
+    if (source == nullptr || row.poll != ReadingPoll::WHEN_ASKED)
+      continue;
+    EXPECT_GT(static_cast<unsigned>(source->fn), previous.value_or(0)) << row.name;
+    previous = static_cast<unsigned>(source->fn);
+  }
+}
+
+TEST(DeviceReadings, ADerivedReadingPollsOnlyRegistersThatAreRowsOfTheirOwnWithItsPolicyAndCapability) {
+  for (const DeviceReadingRow &row : device_readings()) {
+    if (!std::holds_alternative<DerivedSource>(row.source))
+      continue;
+    for (const HeatingFunction fn : reading_polled_registers(row)) {
+      const DeviceReadingRow *own = find_register_reading(fn);
+      ASSERT_NE(own, nullptr) << row.name << " needs " << heating_function_name(fn) << " as a row";
+      EXPECT_EQ(own->poll, row.poll) << row.name;
+      EXPECT_EQ(own->feature, row.feature) << row.name;
+    }
+  }
+}
+
+TEST(DeviceReadings, AStatusReadingIsNeverPolledAndNoHeaterSelectsAReadingOfNotPolled) {
+  for (const DeviceReadingRow &row : device_readings()) {
+    if (std::holds_alternative<StatusMainParameterSource>(row.source)) {
+      EXPECT_EQ(row.poll, ReadingPoll::NOT_POLLED) << row.name;
+    }
+  }
+  // No heater poll selects a row of NOT_POLLED, whatever the heater is.
+  for (const HeatingProfile &profile : heating_profiles()) {
+    IoDevice dev;
+    dev.features = device_features(profile.type, profile.subtype, profile.model);
+    for (unsigned i = 0; i < static_cast<unsigned>(HeatingFunction::COUNT); i++)
+      ask_register_reading(dev, static_cast<HeatingFunction>(i));
+    EXPECT_TRUE(heater_poll_reads(profile, dev, ReadingPoll::NOT_POLLED).empty());
+  }
+}
+
+TEST(DeviceReadings, EveryRegisterRowThatIsPolledIsPolledForSomeRegisterHeater) {
+  // A polled row no heater applies to would be a read nothing makes: the capability and the profile rules must meet.
+  std::set<HeatingFunction> polled;
+  const auto collect = [&polled](DeviceType type, uint8_t subtype, DeviceModel model) {
+    const HeatingProfile *profile = find_heating_profile(type, subtype, model);
+    if (profile == nullptr)
+      return;
+    IoDevice dev;
+    dev.features = device_features(type, subtype, model);
+    for (unsigned i = 0; i < static_cast<unsigned>(HeatingFunction::COUNT); i++)
+      ask_register_reading(dev, static_cast<HeatingFunction>(i));
+    for (const ReadingPoll policy : POLL_PHASES) {
+      for (const HeatingFunction fn : heater_poll_reads(*profile, dev, policy))
+        polled.insert(fn);
+    }
+  };
+  test::for_each_table_row([&](const DeviceTypeInfo &row) { collect(row.type, row.subtype, DeviceModel::NONE); });
+  test::for_each_model_row([&](const DeviceTypeInfo &row) { collect(row.type, row.subtype, row.model); });
+  for (const DeviceReadingRow &row : device_readings()) {
+    const auto *source = std::get_if<HeatingRegisterSource>(&row.source);
+    if (source != nullptr && row.poll != ReadingPoll::NOT_POLLED) {
+      EXPECT_TRUE(polled.count(source->fn)) << row.name << " is read by no heater";
+    }
+  }
+}
+
+TEST(DeviceReadings, AReadingNotPolledIsNotSelectedForAnyHeaterEvenWhenAskedFor) {
+  const HeatingProfile &towel = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
+  IoDevice dev;
+  dev.features = device_features(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
+  ask_register_reading(dev, HeatingFunction::TEMPERATURE_IN_FORCE);
+  for (const ReadingPoll policy : POLL_PHASES) {
+    const HeaterPollList list = heater_poll_reads(towel, dev, policy);
+    EXPECT_EQ(std::count(list.begin(), list.end(), HeatingFunction::TEMPERATURE_IN_FORCE), 0);
   }
 }
 
@@ -237,7 +335,8 @@ TEST(DeviceReadings, TheStatusReadingsHaveNoRegisterAndReadThroughTheStore) {
     const DeviceReadingRow *row = find_device_reading(reading);
     ASSERT_NE(row, nullptr);
     EXPECT_TRUE(std::holds_alternative<StatusMainParameterSource>(row->source)) << row->name;
-    EXPECT_FALSE(row->feature.has_value()) << "no key of the YAML declares it";
+    // The heating level is declared by a key of the YAML and needs the capability of the heaters that report it.
+    EXPECT_EQ(row->feature.has_value(), reading == DeviceReading::HEATING_LEVEL) << row->name;
     IoDevice dev;
     EXPECT_FALSE(reading_value(dev, reading).has_value()) << "unread";
     test::store_reading(dev, reading, 5.0F);
@@ -265,26 +364,56 @@ TEST(DeviceReadings, AStatusMainParameterIsDecodedByItsForm) {
   EXPECT_FALSE(decode_status_reading(DeviceReading::HEATING_LEVEL, short_bytes, 0xFC, -40.0F, 80.0F));
 }
 
-TEST(DeviceReadings, EveryRowStatesWhenItIsPolledAndTheProfilesListsAgreeWithIt) {
-  // The poll lists of the heating profiles and the cadence on the rows are two statements of one fact until the
-  // poll reads the rows; they must agree.
-  const auto poll_of = [](HeatingFunction fn) {
-    const DeviceReadingRow *row = find_register_reading(fn);
-    return row != nullptr ? std::optional(row->poll) : std::nullopt;
-  };
-  for (const HeatingProfile &profile : heating_profiles()) {
-    for (const HeatingFunction fn : profile.poll_registers)
-      EXPECT_EQ(poll_of(fn), std::optional(ReadingPoll::EVERY_POLL)) << heating_function_name(fn);
-    for (const HeatingFunction fn : profile.extra_poll_registers)
-      EXPECT_EQ(poll_of(fn), std::optional(ReadingPoll::EVERY_POLL)) << heating_function_name(fn);
-    for (const HeatingFunction fn : profile.boot_registers)
-      EXPECT_EQ(poll_of(fn), std::optional(ReadingPoll::ONCE_AFTER_BOOT)) << heating_function_name(fn);
-  }
+TEST(DeviceReadings, ARowNamesItsCapabilityWhereAnEntityAsksForItAndElseTheProfileReadsIt) {
+  // WHEN_ASKED needs an entity to ask, and an entity asks through a capability.
   for (const DeviceReadingRow &row : device_readings()) {
     if (row.poll == ReadingPoll::WHEN_ASKED) {
       EXPECT_TRUE(row.feature.has_value()) << row.name << ": an entity asks for it through a capability";
     }
   }
+}
+
+// === What kind of value a reading is ===
+
+TEST(DeviceReadings, AReadingsValueKindFollowsItsCodecOrNames) {
+  for (const DeviceReadingRow &row : device_readings()) {
+    if (row.value_name != nullptr) {
+      EXPECT_EQ(reading_value_kind(row), ReadingValueKind::NAMED) << row.name;
+      continue;
+    }
+    const auto *source = std::get_if<HeatingRegisterSource>(&row.source);
+    const bool binary_register = source != nullptr && heating_function_codec(source->fn) == ValueCodec::BINARY;
+    EXPECT_EQ(reading_value_kind(row), binary_register ? ReadingValueKind::FLAG : ReadingValueKind::NUMBER) << row.name;
+  }
+  // The values the entities rely on, by name.
+  const auto kind = [](DeviceReading reading) { return reading_value_kind(*find_device_reading(reading)); };
+  EXPECT_EQ(kind(DeviceReading::WINDOW_OPEN), ReadingValueKind::FLAG);
+  EXPECT_EQ(kind(DeviceReading::OPEN_WINDOW_DETECTION), ReadingValueKind::FLAG);
+  EXPECT_EQ(kind(DeviceReading::HEATING_LEVEL), ReadingValueKind::NAMED);
+  EXPECT_EQ(kind(DeviceReading::ENERGY_TOTAL), ReadingValueKind::NUMBER);
+  EXPECT_EQ(kind(DeviceReading::REMAINING_TIME), ReadingValueKind::NUMBER);
+}
+
+TEST(DeviceReadings, ADataObjectReadingOfAFlagCodecIsAFlag) {
+  const DeviceReadingRow row = {
+      .name = "flag",
+      .source =
+          DataObjectSource{
+              .recipe = 0, .offset = 0, .first = 0, .length = 1, .codec = ValueCodec::BINARY, .max_value = 0},
+      .reading = DeviceReading::COUNT,
+      .poll = ReadingPoll::NOT_POLLED};
+  EXPECT_EQ(reading_value_kind(row), ReadingValueKind::FLAG);
+}
+
+TEST(DeviceReadings, OnlyTheHeatingLevelHasValueNamesAndTheyAreTheLevelNames) {
+  for (const DeviceReadingRow &row : device_readings()) {
+    EXPECT_EQ(row.value_name != nullptr, row.reading == DeviceReading::HEATING_LEVEL) << row.name;
+  }
+  const DeviceReadingRow *level = find_device_reading(DeviceReading::HEATING_LEVEL);
+  ASSERT_NE(level, nullptr);
+  EXPECT_STREQ(level->value_name(heating_level::COMFORT), "comfort");
+  EXPECT_EQ(level->value_name(0x40), nullptr) << "a value of no level has no name";
+  EXPECT_EQ(level->feature, DeviceFeature::REPORTS_HEATING_LEVEL);
 }
 
 // === The registers a reading makes the poll read ===

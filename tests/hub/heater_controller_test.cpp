@@ -2298,6 +2298,20 @@ TEST(HeaterStatusDecoding, ALevelHeaterKeepsTheLevelTheReplyCarries) {
   EXPECT_TRUE(std::isnan(test::number_read(dev, DeviceReading::STATUS_SETPOINT))) << "a level is no setpoint";
 }
 
+TEST(HeaterStatusDecoding, APilotWireInterfaceTakesNoLevelFromItsStatus) {
+  // The interface's status carries no level (issue #228: the one answered read had 0xC800), so even a main parameter
+  // that decodes as one is not kept: neither the card nor a sensor shows it.
+  IoDevice dev;
+  dev.model = DeviceModel::PILOT_WIRE_INTERFACE;
+  test::set_kind(dev, DeviceType::ELECTRICAL_HEATER, 0);
+
+  apply_heating_main_parameter("ABC123", dev, main_parameter_bytes(heating_level_main_parameter(heating_level::ECO)));
+  apply_heating_main_parameter("ABC123", dev, main_parameter_bytes(0xC800));
+
+  EXPECT_EQ(test::wire_read(dev, DeviceReading::HEATING_LEVEL), -1);
+  EXPECT_TRUE(std::isnan(test::number_read(dev, DeviceReading::STATUS_SETPOINT)));
+}
+
 TEST(HeaterStatusDecoding, ATemperatureHeaterKeepsTheSetpointAndClearsAStaleAlias) {
   IoDevice dev;
   test::set_kind(dev, DeviceType::HEAT_PUMP, 0);
@@ -2368,4 +2382,198 @@ TEST(HeaterStatusDecoding, TheAckOfAnExecuteIsNotDecodedAndANonTemperatureLeaves
 
   apply_dhw_status_reply("ABC123", dev, frame, true);
   EXPECT_TRUE(std::isnan(dev.dhw.target_c)) << "an alias is not a target temperature";
+}
+
+// === What one register-heater poll reads (pinned) ===
+//
+// The literal register sequences of the first and the second poll of each heater kind, with nothing asked for and with
+// every optional reading asked for. They state what a poll reads and in which order: the core registers, the
+// temperature in force while the programme runs, the registers that may miss, the asked ones, the one-off maximum, then
+// the model check. They do not change when the way the poll chooses its registers does.
+
+namespace {
+
+/// The reply payload (the echo of the register and its value bytes) a pinned poll gets for a register, by default.
+std::vector<uint8_t> pin_reply_payload(uint8_t reg) {
+  switch (reg) {
+    case 0x15:  // room temperature, 20.75 C
+      return {0x0C, 0x60, 0x01, reg, 0x1B, 0x08};
+    case 0x03:  // setpoint, 19.5 C
+    case 0x2A:  // temperature in force of a radiator
+    case 0x37:  // temperature in force of a towel dryer
+      return {0x0C, 0x60, 0x01, reg, 0xC3, 0x00};
+    case 0x02:  // maximum setpoint, 28.0 C
+      return {0x0C, 0x60, 0x01, reg, 0x18, 0x01};
+    case 0x19:  // model name (synthetic)
+      return {0x0C, 0x60, 0x01, reg, 'R', 'A', 'D'};
+    case 0x36:  // the towel-dryer mode: the radiator's model check gets no value
+      return {0x0C, 0x60, 0x01, reg};
+    case 0x42:  // night light brightness
+      return {0x0C, 0x60, 0x01, reg, 0x00, 0x00};
+    case 0x16:  // energy total
+      return {0x0C, 0x60, 0x01, reg, 0x0D, 0x5E};
+    case 0x3B:  // boost duration
+      return {0x0C, 0x60, 0x01, reg, 0x3C, 0x3C};
+    case 0x3D:  // drying duration
+      return {0x0C, 0x60, 0x01, reg, 0x1E, 0x78};
+    case 0x3A:  // boost minutes left
+      return {0x0C, 0x60, 0x01, reg, 0x37};
+    case 0x3C:  // drying minutes left
+      return {0x0C, 0x60, 0x01, reg, 0x1C};
+    default:  // a one-byte register: its value is 1 (the mode 'manual', the detection on) or 0
+      return {0x0C, 0x60, 0x01, reg,
+              static_cast<uint8_t>(reg == 0x00 || reg == 0x01 || reg == 0x06 || reg == 0x10 ? 1 : 0)};
+  }
+}
+
+/// A pinned poll's replies that differ from pin_reply_payload(): a register, then its value bytes.
+using PinReplies = std::vector<std::pair<uint8_t, std::vector<uint8_t>>>;
+
+/// Run one poll against replies for exactly the registers `expected` names, in that order.
+/// @return The registers the poll read.
+std::vector<uint8_t> run_pinned_poll(HeaterControllerFixture &fx, const std::vector<uint8_t> &expected,
+                                     const PinReplies &replies) {
+  const size_t before = fx.radio.get_sent_data().size();
+  for (const uint8_t reg : expected) {
+    std::vector<uint8_t> payload = pin_reply_payload(reg);
+    for (const auto &[replied_reg, value] : replies) {
+      if (replied_reg == reg)
+        payload = [&] {
+          std::vector<uint8_t> v{0x0C, 0x60, 0x01, reg};
+          v.insert(v.end(), value.begin(), value.end());
+          return v;
+        }();
+    }
+    fx.queue_register_ack(payload);
+  }
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  return registers_read({sent.begin() + static_cast<std::ptrdiff_t>(before), sent.end()});
+}
+
+/// Ask for every optional reading; a kind without the capability ignores the ones it has not.
+void ask_every_reading(HeaterControllerFixture &fx) {
+  for (const DeviceReading reading :
+       {DeviceReading::OCCUPANCY_DETECTION, DeviceReading::OCCUPANCY, DeviceReading::ENERGY_TOTAL,
+        DeviceReading::CENTRAL_HEATING_MODE, DeviceReading::REMAINING_TIME, DeviceReading::BOOST_DURATION,
+        DeviceReading::DRYING_DURATION})
+    fx.controller.enable_device_reading("ABC123", reading);
+}
+
+using Registers = std::vector<uint8_t>;
+
+IoDevice *make_pinned_heater(HeaterControllerFixture &fx, DeviceModel model) {
+  IoDevice *dev = make_heater(fx);
+  dev->model = model;
+  resolve_device_features(*dev);
+  return dev;
+}
+
+}  // namespace
+
+TEST(HeaterPollPin, ARadiatorWithNothingAskedReadsFiveRegistersTheDetectionSettingTheMaximumAndTheModelCheck) {
+  HeaterControllerFixture fx;
+  make_pinned_heater(fx, DeviceModel::NONE);
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x02, 0x19, 0x36}, {}),
+            (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x02, 0x19, 0x36}));
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06}, {}),
+            (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06}))
+      << "the second poll reads neither the maximum nor the model again";
+  EXPECT_TRUE(fx.status_reads.empty());
+}
+
+TEST(HeaterPollPin, ARadiatorWithEverythingAskedReadsPresenceDetectionAndEnergyAfterTheDetectionSetting) {
+  HeaterControllerFixture fx;
+  make_pinned_heater(fx, DeviceModel::NONE);
+  ask_every_reading(fx);
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x10, 0x01, 0x16, 0x02, 0x19, 0x36}, {}),
+            (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x10, 0x01, 0x16, 0x02, 0x19, 0x36}));
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x10, 0x01, 0x16}, {}),
+            (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x10, 0x01, 0x16}));
+}
+
+TEST(HeaterPollPin, ARadiatorInItsProgrammeReadsTheTemperatureInForceRightAfterTheCoreRegisters) {
+  HeaterControllerFixture fx;
+  make_pinned_heater(fx, DeviceModel::NONE);
+  const PinReplies auto_mode{{0x00, {0x00}}};
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06, 0x02, 0x19, 0x36}, auto_mode),
+            (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06, 0x02, 0x19, 0x36}));
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06}, auto_mode),
+            (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06}));
+  EXPECT_TRUE(fx.status_reads.empty()) << "a radiator's poll sends no status read";
+}
+
+TEST(HeaterPollPin, AHeaterWithALightReadsTheLightAfterTheDetectionSettingAndNothingMoreWhenNothingIsAsked) {
+  HeaterControllerFixture fx;
+  make_pinned_heater(fx, DeviceModel::HEATER_WITH_LIGHT);
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42, 0x02, 0x19, 0x36}, {}),
+            (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42, 0x02, 0x19, 0x36}));
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42}, {}),
+            (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42}));
+}
+
+TEST(HeaterPollPin, AHeaterWithALightAndEverythingAskedReadsTheAskedRegistersAfterTheLight) {
+  HeaterControllerFixture fx;
+  make_pinned_heater(fx, DeviceModel::HEATER_WITH_LIGHT);
+  ask_every_reading(fx);
+  EXPECT_EQ(
+      run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42, 0x10, 0x01, 0x16, 0x02, 0x19, 0x36}, {}),
+      (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42, 0x10, 0x01, 0x16, 0x02, 0x19, 0x36}));
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42, 0x10, 0x01, 0x16}, {}),
+            (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42, 0x10, 0x01, 0x16}));
+}
+
+TEST(HeaterPollPin, ATowelDryerWithNothingAskedReadsItsFiveRegistersTheMaximumAndTheModelName) {
+  HeaterControllerFixture fx;
+  make_towel_dryer(fx);
+  const PinReplies manual{{0x36, {0x03}}};
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x36, 0x3E, 0x26, 0x02, 0x19}, manual),
+            (Registers{0x15, 0x03, 0x36, 0x3E, 0x26, 0x02, 0x19}));
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x36, 0x3E, 0x26}, manual), (Registers{0x15, 0x03, 0x36, 0x3E, 0x26}));
+  EXPECT_EQ(fx.status_reads.size(), 2u) << "every poll of a dryer asks for the heating level, in every mode";
+}
+
+TEST(HeaterPollPin, ATowelDryerWithEverythingAskedReadsTheDurationsAndTheRunNowOnTop) {
+  const PinReplies manual{{0x36, {0x03}}};
+  {
+    HeaterControllerFixture fx;
+    make_towel_dryer(fx);
+    ask_every_reading(fx);
+    EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x36, 0x3E, 0x26, 0x53, 0x16, 0x3B, 0x3D, 0x02, 0x19}, manual),
+              (Registers{0x15, 0x03, 0x36, 0x3E, 0x26, 0x53, 0x16, 0x3B, 0x3D, 0x02, 0x19}))
+        << "no run: only the durations";
+    EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x36, 0x3E, 0x26, 0x53, 0x16, 0x3B, 0x3D}, manual),
+              (Registers{0x15, 0x03, 0x36, 0x3E, 0x26, 0x53, 0x16, 0x3B, 0x3D}));
+  }
+  {
+    HeaterControllerFixture fx;
+    make_towel_dryer(fx);
+    ask_every_reading(fx);
+    EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x36, 0x3E, 0x26, 0x53, 0x16, 0x3A, 0x3B, 0x3D, 0x02, 0x19},
+                              {{0x36, {0x03}}, {0x3E, {0x01}}}),
+              (Registers{0x15, 0x03, 0x36, 0x3E, 0x26, 0x53, 0x16, 0x3A, 0x3B, 0x3D, 0x02, 0x19}))
+        << "a boost: its minutes left too";
+  }
+  {
+    HeaterControllerFixture fx;
+    make_towel_dryer(fx);
+    ask_every_reading(fx);
+    EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x36, 0x3E, 0x26, 0x53, 0x16, 0x3B, 0x3C, 0x3D, 0x02, 0x19},
+                              {{0x36, {0x03}}, {0x3E, {0x02}}}),
+              (Registers{0x15, 0x03, 0x36, 0x3E, 0x26, 0x53, 0x16, 0x3B, 0x3C, 0x3D, 0x02, 0x19}))
+        << "a drying run: its minutes left too";
+  }
+}
+
+TEST(HeaterPollPin, ATowelDryerInItsProgrammeReadsTheTemperatureInForceThenAsksForTheLevelOncePerPoll) {
+  HeaterControllerFixture fx;
+  make_towel_dryer(fx);
+  ask_every_reading(fx);
+  const PinReplies programme{{0x36, {0x02}}};
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x53, 0x16, 0x3B, 0x3D, 0x02, 0x19}, programme),
+            (Registers{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x53, 0x16, 0x3B, 0x3D, 0x02, 0x19}));
+  EXPECT_EQ(fx.status_reads.size(), 1u);
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x53, 0x16, 0x3B, 0x3D}, programme),
+            (Registers{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x53, 0x16, 0x3B, 0x3D}));
+  EXPECT_EQ(fx.status_reads.size(), 2u) << "every poll asks for the level";
 }

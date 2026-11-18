@@ -1,0 +1,14 @@
+# expect-error: the hub reads no heating level from this heater; remove heating_level:
+# covers: platform_common.validate_reading_keys
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+climate:
+  - platform: home_io_control
+    name: "Radiator"
+    io_device_id: "4D5E6F"
+    io_device_type: electrical_heater
+    io_subtype: 1
+    heating_level:
+      name: "Heating Level"

@@ -20,10 +20,12 @@
 /// Every value but a derived one is kept in the device record, by reading (DeviceReadingValues), since a read takes
 /// seconds and answers later than the poll that asked, and a status reply answers without being asked for. What the
 /// hub polls and what is shown stay separate: the registers the poll reads are derived from the rows
-/// (reading_polled_registers()), and every consumer (the climate card, the window sensor, the reading entities)
-/// reads through reading_value(), wherever the source keeps the value. The YAML key and the Home Assistant metadata
-/// of a reading are not here: the codegen mirror (hub_validators.py `DEVICE_READINGS`) carries them, checked against
-/// this table by name, capability, source kind and registers (tests/sync/device_features_sync_test.cpp).
+/// (reading_polled_registers(), heater_poll_reads()), and every consumer (the climate card, the window sensor, the
+/// reading entities) reads through reading_value(), wherever the source keeps the value. The YAML key and the Home
+/// Assistant metadata of a reading (its entity, unit, device class, and the name of a companion entity made for it)
+/// are not here: the codegen mirror (hub_validators.py `DEVICE_READINGS`) carries them, checked against this table by
+/// name, capability, source kind, registers and value kind (tests/sync/device_features_sync_test.cpp). What stays in
+/// C++ is what the entity needs at run time: the names of a named value (`value_name`).
 ///
 /// Outside the table, with the reason: the model-name register (text, logged once), the registers the hub only logs
 /// (POWER_ON, MIDNIGHT_SYNC), the raw probes (`register_00`, `register_01`, `read_object`; raw by design), a cover's
@@ -131,15 +133,29 @@ struct DataObjectSource {
 /// the existing kinds do not change.
 using ReadingSource = std::variant<HeatingRegisterSource, DerivedSource, DataObjectSource, StatusMainParameterSource>;
 
-/// @brief When the hub reads a reading by itself. Which devices read it is decided by the capability or the heating
-/// profile; this is the cadence on a device that does.
+/// @brief When a heater's poll reads a reading by itself.
+/// @details Which devices read it is decided by the row's capability or, for a row without one, by the heating
+///          profile (heating_profile_reads()); this is the cadence on a device that does. Within one policy the
+///          order of the rows is the order of the reads (heater_poll_reads()). A data-object reading is read on its
+///          own schedule and the heater poll never consults its policy.
 enum class ReadingPoll : uint8_t {
-  NEVER,            ///< No poll reads it for its own sake: a status reply carries it, another reading it is derived
-                    ///< from does, or the programme rule and a write's read-back read it.
-  EVERY_POLL,       ///< Every poll of a device whose profile lists it, until it has no value to show.
-  ONCE_AFTER_BOOT,  ///< Read until it has been read once; a property that changes rarely.
-  WHEN_ASKED,       ///< Every poll, but only where an entity of the YAML declares the reading; a data-object reading
-                    ///< runs on its schedule instead.
+  EVERY_POLL,           ///< Every poll; the first read that fails ends the poll and fails it.
+  EVERY_POLL_MAY_MISS,  ///< Every poll, after the readings of EVERY_POLL; a miss keeps the earlier value and costs a
+                        ///< read, not the poll (a setting the heater's own controller changes, a part a model may
+                        ///< lack).
+  ONCE_AFTER_BOOT,      ///< Until it holds a value; a property that changes rarely.
+  WHEN_ASKED,           ///< Where an entity of the YAML declares the reading, until the heater answers it empty; a
+                        ///< register that is read only while another holds a value is skipped, and its earlier
+                        ///< value dropped, while it does not.
+  NOT_POLLED,           ///< No heater poll reads it for its own sake: a status reply carries it, another reading it
+                        ///< is derived from does, or the programme rule and a write's read-back read it.
+};
+
+/// @brief What a reading's number is, which decides the entity that shows it.
+enum class ReadingValueKind : uint8_t {
+  FLAG,    ///< 0 or 1: a binary sensor shows it, a switch shows and writes it.
+  NAMED,   ///< A whole number with a name for each value the row knows (DeviceReadingRow::value_name): a text sensor.
+  NUMBER,  ///< Any other number: a sensor.
 };
 
 /// @brief One row of the reading table.
@@ -149,9 +165,21 @@ struct DeviceReadingRow {
   DeviceReading reading;  ///< The reading.
   ReadingPoll poll;       ///< When the hub reads it by itself.
   std::optional<DeviceFeature> feature =
-      std::nullopt;  ///< The capability a device kind needs for an entity to ask for the reading; none for a reading
-                     ///< the heater's climate card keeps by its profile, which no key of the YAML declares.
+      std::nullopt;  ///< The capability a device kind needs to have the reading; none for a reading the heater's
+                     ///< climate card keeps by its profile (heating_profile_reads()), which no key of the YAML
+                     ///< declares. A status reading's capability says the device reports it (a heating level).
+  const char *(*value_name)(uint8_t value) =
+      nullptr;  ///< The name of each value a NAMED reading takes (nullptr for a value that has none); unset for the
+                ///< other kinds. The entity that shows the reading publishes the name, never the number.
 };
+
+/// @brief What kind of number a reading is.
+/// @details A row with a value-name function is NAMED; otherwise a flag codec (the register's, or the data object's)
+///          makes it a FLAG, and anything else is a NUMBER. The generated code and the entity that shows the reading
+///          follow it (the codegen mirror's `entity`, checked in tests/sync/device_features_sync_test.cpp).
+/// @param row The reading's row.
+/// @return The kind.
+[[nodiscard]] ReadingValueKind reading_value_kind(const DeviceReadingRow &row);
 
 /// @brief Look up the row of a reading.
 /// @param reading The reading.

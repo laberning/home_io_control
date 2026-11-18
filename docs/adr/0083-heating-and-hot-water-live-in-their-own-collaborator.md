@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0083 -->
 
-**Status:** Accepted, amended by [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) (the opt-in register list is derived from the reading table) · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) (the opt-in register list is derived from the reading table) and by [ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md) (the registers of a poll are selected from the reading rows) · **Recorded:** 2026-11
 
 Supersedes [ADR 0033](0033-heating-send-path-bypasses-the-cover-machinery.md) in full (its remaining
 points are restated below). Amends [ADR 0004](0004-hub-collaborator-decomposition.md) (the collaborator

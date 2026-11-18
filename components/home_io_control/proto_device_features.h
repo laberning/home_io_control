@@ -92,6 +92,14 @@ enum class DeviceFeature : uint8_t {
   /// \todo Experimental: read on Atlantic Adelis units (issue #202); confirm on a second model and check
   ///       that a dryer without the registers answers them empty.
   RUN_TIMERS,
+  /// A heater whose status reply reports the heating level it applies now (comfort, eco, frost protection, ...):
+  /// a plain heater, which is commanded with levels, and a towel dryer, whose programme the hub follows through the
+  /// level. Set exactly on the kinds whose heating profile reports a level (device_types_table_test.cpp). Gates the
+  /// climate entry's `heating_level:` text sensor; the hub reads no level from a radiator or a heater with a light,
+  /// and a pilot-wire interface's status carries none, so the key is rejected there.
+  /// \todo Experimental on a towel dryer: its status read is captured on one unit in comfort, eco and boost, not yet
+  ///       during a drying run or a temporary override.
+  REPORTS_HEATING_LEVEL,
   /// A device kind that answers no status read: a device that keeps its values in data objects and has no state to
   /// poll for. The hub never arms or queues a status poll for it (the request after boot, a refresh, a poll
   /// after another controller's traffic); only its readings are read, on their own schedule.

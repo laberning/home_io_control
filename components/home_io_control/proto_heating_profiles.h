@@ -7,7 +7,7 @@
 /// A profile is one row per (node type, subtype, model) that a `climate:` entity can drive. It names the
 /// control path (the private register protocol of proto_heating.h, or the standard EXECUTE with a
 /// heating level as the main parameter), the HVAC modes and presets the card shows, how each maps to
-/// a wire value in both directions, which registers a poll reads and which companion entities exist.
+/// a wire value in both directions and which registers the card reads (heating_profile_reads()).
 /// The platform asks the profile and never branches on a device type.
 ///
 /// The enums here are protocol-side: they carry no ESPHome type. The platform maps HeatingHvacMode
@@ -27,6 +27,7 @@
 #include "proto_heating.h"
 #include "proto_sizes.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -218,6 +219,10 @@ struct HeatingProfile {
   bool fixed_range{false};          ///< TEMPERATURE_EXECUTE: the temperature range is fixed, so the YAML
                                     ///< `min_temperature:` / `max_temperature:` do not apply.
   bool experimental_writes{false};  ///< PRIVATE_REGISTERS: the mode and preset writes are unconfirmed on a device.
+  /// HEATING_LEVEL: the main parameter of the heater's status reply carries the level it applies, which the card
+  /// and the `heating_level:` sensor show (DeviceReading::HEATING_LEVEL). False for a heater whose status carries
+  /// none: its status main parameter is not taken as a level, and the card shows what was last sent.
+  bool status_reports_level{false};
   std::span<const HeatingModeEntry> modes;  ///< HVAC modes offered, with the value each writes.
 
   // --- Optional: a default stands for "unused". ---
@@ -231,19 +236,10 @@ struct HeatingProfile {
   // -Wmissing-field-initializers still wants the member initializer before a row may leave it out.
   std::span<const HeatingPresetEntry> presets{};     ///< Presets offered.
   std::span<const HeatingObservedState> observed{};  ///< Device-reported value -> card state.
-  /// PRIVATE_REGISTERS: registers every poll reads, in order.
-  std::span<const HeatingFunction> poll_registers{};
-  /// PRIVATE_REGISTERS: registers read once until they have been read.
-  std::span<const HeatingFunction> boot_registers{};
   /// Device-reported value of `preset_fn` -> preset; empty when the mode register names the preset too
   /// (`observed`). With it, `observed` sets only the mode and this table alone sets the preset, since
   /// mode and preset live in separate registers.
   std::span<const HeatingObservedState> preset_observed{};
-  /// PRIVATE_REGISTERS: registers every poll reads after `poll_registers` whose miss is not a poll failure:
-  /// a setting the heater's own controller changes (open-window detection), or a part the heater may not
-  /// have (a night light), so a model declared on a heater without the part costs a read, not the poll.
-  /// A missed read keeps the earlier value; the next poll asks again.
-  std::span<const HeatingFunction> extra_poll_registers{};
   // NOLINTEND(readability-redundant-member-init)
   /// PRIVATE_REGISTERS: the register the HVAC modes write and the card's mode is read from.
   HeatingFunction mode_fn{HeatingFunction::SET_MODE};
@@ -388,6 +384,57 @@ std::optional<float> in_force_from_override_read(const HeatingProfile &profile, 
 /// @return DeviceReading::STATUS_SETPOINT for a heater commanded with a temperature in an EXECUTE, whose status
 ///         reply reports its setpoint; DeviceReading::SETPOINT, the comfort-setpoint register, for the others.
 DeviceReading heating_setpoint_reading(const HeatingProfile &profile);
+
+// === The registers a heater poll reads ===
+
+/// @brief Does the card of this profile read the register of a reading?
+/// @details Derived from the profile's own fields, so the poll and the card follow one fact: the room temperature
+///          with `features.current_temperature`; the setpoint and its maximum with `features.target_temperature`;
+///          the register of `mode_fn`; the register of `preset_fn` where the profile observes presets
+///          (`preset_observed`); the register `action_source` names, with `features.action`; and the registers of
+///          the programme period (the temperature in force and the override). A reading that is not one register of
+///          a heater, and any reading of a profile that does not use private registers, is not read.
+/// @param profile The device's profile.
+/// @param reading The reading.
+/// @return true when the profile's card reads the reading's register.
+bool heating_profile_reads(const HeatingProfile &profile, DeviceReading reading);
+
+/// @brief A short list of registers, in the order they are read.
+/// @details Fixed capacity (one slot for every reading, since each row names at most one register), so a poll builds
+///          its lists without allocating.
+struct HeaterPollList {
+  static constexpr size_t CAPACITY = static_cast<size_t>(DeviceReading::COUNT);  ///< Slots; at most one per row.
+
+  /// @return The registers, in read order.
+  [[nodiscard]] std::span<const HeatingFunction> registers() const { return {registers_.data(), size_}; }
+  [[nodiscard]] const HeatingFunction *begin() const { return registers_.data(); }        ///< Range-for.
+  [[nodiscard]] const HeatingFunction *end() const { return registers_.data() + size_; }  ///< Range-for.
+  [[nodiscard]] size_t size() const { return size_; }                                     ///< Count.
+  [[nodiscard]] bool empty() const { return size_ == 0; }                                 ///< No register.
+
+  /// @brief Append a register; one past the capacity is dropped (the capacity covers every row).
+  void push_back(HeatingFunction fn) {
+    if (size_ < CAPACITY)
+      registers_[size_++] = fn;
+  }
+
+ private:
+  std::array<HeatingFunction, CAPACITY> registers_{};
+  size_t size_{0};
+};
+
+/// @brief The registers a heater's poll reads under one policy, in read order.
+/// @details Walks the reading table in table order, which is the order of the reads, and keeps a register row of the
+///          policy that applies to the device: by its capability where it has one, otherwise where the profile reads
+///          it (heating_profile_reads()). A WHEN_ASKED row also needs an entity that asked for it, and not to have
+///          been answered empty; a ONCE_AFTER_BOOT row only until it holds a value. Which policy is read when is the
+///          caller's: HeaterController runs the phases in the order its poll describes. A profile that does not use
+///          private registers has no register poll, and ReadingPoll::NOT_POLLED selects nothing.
+/// @param profile The device's profile.
+/// @param dev The device record (its capabilities, what entities asked for, what it holds).
+/// @param policy The policy to select.
+/// @return The registers, possibly none.
+HeaterPollList heater_poll_reads(const HeatingProfile &profile, const IoDevice &dev, ReadingPoll policy);
 
 // === Heater writes: what a request turns into ===
 

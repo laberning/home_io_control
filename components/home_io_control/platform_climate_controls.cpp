@@ -1,6 +1,6 @@
 /// @file platform_climate_controls.cpp
-/// @brief Generated per-heater auxiliary entities: the window binary sensor, the heater setting switches
-/// (open-window detection, occupancy detection), the night light and the heating-level text sensor.
+/// @brief Generated per-heater auxiliary entities: the heater setting switches (open-window detection, occupancy
+/// detection) and the night light.
 /// @ingroup hioc_platforms
 
 #include "platform_climate_controls.h"
@@ -16,48 +16,12 @@
 namespace esphome {
 namespace home_io_control {
 
-static const char *const TAG_WINDOW = "home_io_control.window";
 static const char *const TAG_SETTING = "home_io_control.heater_setting";
 static const char *const TAG_NIGHT_LIGHT = "home_io_control.night_light";
-static const char *const TAG_HEATING_LEVEL = "home_io_control.heating_level";
 
 /// Percentage for a light switched on at a brightness that rounds to 0 %: the lowest level that is still
 /// on (register value night_light_register_from_percent(1), 30).
 static constexpr uint8_t NIGHT_LIGHT_MIN_ON_PERCENT = 1;
-
-void IOHomeHeatingLevelSensor::setup() {
-  this->register_companion_binding_([this](const IoDevice &dev) {
-    // Nothing read means no state, never a guessed level; a value that is no level keeps the last one shown.
-    const int level = reading_wire(dev, DeviceReading::HEATING_LEVEL);
-    if (level < 0)
-      return;
-    const char *name = heating_level_name(static_cast<uint8_t>(level));
-    if (name != nullptr)
-      this->publish_state(name);
-  });
-}
-
-void IOHomeHeatingLevelSensor::dump_config() {
-  ESP_LOGCONFIG(TAG_HEATING_LEVEL, "IO-Homecontrol Heating Level:");
-  ESP_LOGCONFIG(TAG_HEATING_LEVEL, "  Device ID: %s", this->device_id_.c_str());
-}
-
-void IOHomeWindowBinarySensor::setup() {
-  this->register_companion_binding_([this](const IoDevice &dev) {
-    const std::optional<float> open = reading_value(dev, DeviceReading::WINDOW_OPEN);
-    if (!open) {
-      // "Closed" must mean the heater said so: nothing read means no state.
-      this->invalidate_state();
-      return;
-    }
-    this->publish_state(*open != 0.0F);
-  });
-}
-
-void IOHomeWindowBinarySensor::dump_config() {
-  ESP_LOGCONFIG(TAG_WINDOW, "IO-Homecontrol Window:");
-  ESP_LOGCONFIG(TAG_WINDOW, "  Device ID: %s", this->device_id_.c_str());
-}
 
 void IOHomeHeaterSettingSwitch::setup() {
   this->register_companion_binding_([this](const IoDevice &dev) {

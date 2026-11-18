@@ -390,19 +390,45 @@ TEST(DeviceTypesTableFeatures, TiltNamedPositionsAndInversionBelongToCoverRowsOn
   });
 }
 
-TEST(DeviceTypesTableFeatures,
-     WindowCompanionsAreExactlyWhereTheHeatingProfilePollsTheWindowAndOffersTheDetectionSwitch) {
-  const auto contains = [](std::span<const HeatingFunction> list, HeatingFunction fn) {
+TEST(DeviceTypesTableFeatures, WindowCompanionsAreExactlyWhereARegisterHeaterPollReadsTheWindowAndTheDetectionSetting) {
+  const auto contains = [](const HeaterPollList &list, HeatingFunction fn) {
     return std::find(list.begin(), list.end(), fn) != list.end();
   };
   test::for_each_table_row([&contains](const DeviceTypeInfo &row) {
+    IoDevice dev;
+    dev.features = row.features;
     const HeatingProfile *profile = find_heating_profile(row.type, row.subtype, DeviceModel::NONE);
-    const bool profile_has_window = profile != nullptr &&
-                                    contains(profile->poll_registers, HeatingFunction::WINDOW_OPEN) &&
-                                    contains(profile->extra_poll_registers, HeatingFunction::SET_OPEN_WINDOW_DETECTION);
-    EXPECT_EQ(has_feature(row.features, device_feature::WINDOW_COMPANIONS), profile_has_window)
+    const bool polled_window =
+        profile != nullptr &&
+        contains(heater_poll_reads(*profile, dev, ReadingPoll::EVERY_POLL), HeatingFunction::WINDOW_OPEN) &&
+        contains(heater_poll_reads(*profile, dev, ReadingPoll::EVERY_POLL_MAY_MISS),
+                 HeatingFunction::SET_OPEN_WINDOW_DETECTION);
+    EXPECT_EQ(has_feature(row.features, device_feature::WINDOW_COMPANIONS), polled_window)
         << format_device_ids(row.type, row.subtype);
   });
+}
+
+TEST(DeviceTypesTableFeatures, ReportsHeatingLevelIsExactlyOnTheRowsWhoseProfileReportsALevel) {
+  // The capability gates the `heating_level:` key and the profile decides whether the heater's status read carries a
+  // level; were they to differ, a key would be accepted that never shows a state, or a level be read that nothing
+  // shows. A level comes from the status of a level-path heater that carries one (a plain heater, not a pilot-wire
+  // interface) or from a programme whose period the status read reports (a towel dryer).
+  const auto reports_level = [](const HeatingProfile *profile) {
+    return profile != nullptr &&
+           ((profile->path == HeatingControlPath::HEATING_LEVEL && profile->status_reports_level) ||
+            (profile->programme_period != nullptr && profile->programme_period->reports_level));
+  };
+  size_t rows_with_level = 0;
+  const auto check = [&](const DeviceTypeInfo &row, DeviceModel model) {
+    const bool has = has_feature(row.features, device_feature::REPORTS_HEATING_LEVEL);
+    EXPECT_EQ(has, reports_level(find_heating_profile(row.type, row.subtype, model)))
+        << format_device_ids(row.type, row.subtype) << " model " << static_cast<unsigned>(model);
+    rows_with_level += has ? 1 : 0;
+  };
+  test::for_each_table_row([&check](const DeviceTypeInfo &row) { check(row, DeviceModel::NONE); });
+  test::for_each_model_row([&check](const DeviceTypeInfo &row) { check(row, row.model); });
+  // The plain heater (52/0) and the towel dryer, and no other row.
+  EXPECT_EQ(rows_with_level, 2u);
 }
 
 TEST(DeviceTypesTableFeatures, TheExtendedPositionFrameIsOnlyOnRowsThatSendAPositionAndAreNotMainParameterOnly) {
@@ -547,17 +573,24 @@ TEST(DeviceTypesTableModels, AModelRowKeepsTheIdentityOfTheRowAboveIt) {
     EXPECT_TRUE(names.insert(model.name).second) << model.name << " names two models";
     for (const char *c = model.name; *c != '\0'; c++)
       EXPECT_TRUE((*c >= 'a' && *c <= 'z') || *c == '_') << model.name << ": a model name is a YAML identifier";
-    // The window companions follow the heating profile of the model as they do for a subtype row.
+    // The window companions and the night light follow the registers the model's poll reads, as for a subtype row.
+    IoDevice dev;
+    dev.features = model.features;
     const HeatingProfile *profile = find_heating_profile(model.type, model.subtype, model.model);
-    const bool polls_window =
-        profile != nullptr && std::find(profile->poll_registers.begin(), profile->poll_registers.end(),
-                                        HeatingFunction::WINDOW_OPEN) != profile->poll_registers.end();
-    EXPECT_EQ(has_feature(model.features, device_feature::WINDOW_COMPANIONS), polls_window) << model.name;
-    // The night light likewise follows the registers the model's poll reads.
-    const bool polls_light =
-        profile != nullptr && std::find(profile->extra_poll_registers.begin(), profile->extra_poll_registers.end(),
-                                        HeatingFunction::NIGHT_LIGHT) != profile->extra_poll_registers.end();
-    EXPECT_EQ(has_feature(model.features, device_feature::NIGHT_LIGHT), polls_light) << model.name;
+    const auto polls = [&](HeatingFunction fn) {
+      if (profile == nullptr)
+        return false;
+      for (const ReadingPoll policy : {ReadingPoll::EVERY_POLL, ReadingPoll::EVERY_POLL_MAY_MISS}) {
+        const HeaterPollList list = heater_poll_reads(*profile, dev, policy);
+        if (std::find(list.begin(), list.end(), fn) != list.end())
+          return true;
+      }
+      return false;
+    };
+    EXPECT_EQ(has_feature(model.features, device_feature::WINDOW_COMPANIONS), polls(HeatingFunction::WINDOW_OPEN))
+        << model.name;
+    EXPECT_EQ(has_feature(model.features, device_feature::NIGHT_LIGHT), polls(HeatingFunction::NIGHT_LIGHT))
+        << model.name;
   });
   EXPECT_EQ(rows, 3u);
 }

@@ -230,10 +230,12 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // Both rows have a heating profile (proto_heating_profiles.cpp): the plain heater is commanded with
     // heating levels in the standard EXECUTE, the one with an adjustable setpoint over the private
     // registers (proto_heating.h).
-    {DeviceType::ELECTRICAL_HEATER, 0, NO_MODEL, "electrical_heater", CAP_CLIMATE, SELECTABLE_PLATFORM, NO_FEATURES},
+    {DeviceType::ELECTRICAL_HEATER, 0, NO_MODEL, "electrical_heater", CAP_CLIMATE, SELECTABLE_PLATFORM,
+     device_feature::REPORTS_HEATING_LEVEL},
     // An interface for pilot-wire heaters (a Thermor one, issue #228) reports the same 52/0 as a plain heater
     // but carries the six pilot-wire orders only: no boost. Same class, platform and flags, own presets
-    // (proto_heating_profiles.cpp); the YAML declares it (`io_model: pilot_wire_interface`).
+    // (proto_heating_profiles.cpp); the YAML declares it (`io_model: pilot_wire_interface`). Its status carries
+    // no heating level, so it lacks REPORTS_HEATING_LEVEL.
     {DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE, "pilot_wire_interface", CAP_CLIMATE,
      SELECTABLE_PLATFORM, NO_FEATURES},
     {DeviceType::ELECTRICAL_HEATER, 1, NO_MODEL, "with adjustable setpoint", CAP_CLIMATE, SUBTYPE_PLATFORM,
@@ -244,9 +246,11 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // A mixed unit also reports whether its central-heating mode is on (CENTRAL_HEATING_MODE); the YAML asks
     // for the reading, since the model is the same for the electric unit.
     {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER, "towel_dryer", CAP_CLIMATE, SUBTYPE_PLATFORM,
-     device_feature::CENTRAL_HEATING_MODE | device_feature::ENERGY_METER | device_feature::RUN_TIMERS},
+     device_feature::CENTRAL_HEATING_MODE | device_feature::ENERGY_METER | device_feature::RUN_TIMERS |
+         device_feature::REPORTS_HEATING_LEVEL},
     // A heater with a night light (a Sauter Hekla, issue #222) reports the same 52/1 as well: everything the
-    // radiator has, plus the light's registers in its own heating profile.
+    // radiator has (its heating profile), plus the light's registers, which the NIGHT_LIGHT capability adds to the
+    // poll.
     {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT, "heater_with_light", CAP_CLIMATE,
      SUBTYPE_PLATFORM,
      WINDOW_COMPANIONS | device_feature::NIGHT_LIGHT | device_feature::OCCUPANCY | device_feature::ENERGY_METER},

@@ -42,8 +42,9 @@ The keys every entity platform shares (`name`, `io_device_id`, `io_device_type`,
   the section "Choosing `io_model:`" below says when a model is needed.
 - `status_poll_interval` (Optional): How often the heater is read. Default 5 minutes, minimum 60 s.
   See the section "Polling and read-back" below.
-- `heating_level` (Optional): A text sensor with the level the heater applies right now. Accepted on
-  `io_device_type: electrical_heater` only. See the section "Heating level sensor" below.
+- `heating_level` (Optional): A text sensor with the level the heater applies right now. Accepted on a
+  plain electrical heater and a towel dryer, the kinds that report a level. See the section "Heating
+  level sensor" below.
 - `central_heating_mode` (Optional): A binary sensor, on while a mixed towel dryer runs on central
   heating. Experimental. Accepted on `io_model: towel_dryer` only. See the section "Central-heating
   mode sensor" below.
@@ -164,7 +165,7 @@ generated as for the other platforms.
 | `Window` binary sensor (`device_class: window`) | `io_device_type: "electrical_heater"` with `io_subtype: 1`, without `io_model: towel_dryer` | Experimental. The heater's own window sensor |
 | `Open Window Detection` switch | The same entries | Experimental, disabled by default. The setting is read on every poll, so a change made at the heater's panel or in the vendor app appears at the next poll (issue #222). A poll that misses the setting keeps the switch as it was |
 | Night light | An entry with a `night_light:` block | See the section "Heaters with a night light" below |
-| `Heating level` text sensor | An entry with a `heating_level:` block | See the section "Heating level sensor" below |
+| `Heating level` text sensor | An entry with a `heating_level:` block, on a plain electrical heater or a towel dryer | See the section "Heating level sensor" below |
 | Central heating mode binary sensor | An entry with a `central_heating_mode:` block | Experimental. See the section "Central-heating mode sensor" below |
 | `Occupancy detection` switch, `Occupancy` binary sensor | An entry with an `occupancy_detection:` or `occupancy:` block | See the section "Occupancy detection" below |
 | Energy sensor | An entry with an `energy:` block | See the section "Energy sensor" below |
@@ -217,8 +218,8 @@ on a Hekla (issue #222).
 
 ## Heating level sensor
 
-An `electrical_heater` entry takes an optional `heating_level:` text sensor that shows the level the
-heater applies right now: `comfort`, `eco`, `frost protection` and so on.
+A heater that reports its level takes an optional `heating_level:` text sensor that shows the level it
+applies right now: `comfort`, `eco`, `frost protection` and so on.
 
 ```yaml
 climate:
@@ -232,9 +233,20 @@ climate:
       name: "Bathroom towel dryer level"
 ```
 
-The block takes every [text sensor](https://esphome.io/components/text_sensor/) option. The key is
-accepted on `io_device_type: electrical_heater` only, and it adds no radio traffic: the level comes
-from a status read the poll makes anyway. The values, and which heater kinds report a level, are in
+The block takes every [text sensor](https://esphome.io/components/text_sensor/) option. It adds no
+radio traffic: the level comes from a status read the poll makes anyway.
+
+Which heaters report a level decides where the key is accepted:
+
+| Heater kind | `heating_level:` |
+|---|---|
+| Towel dryer (`io_subtype: 1`, `io_model: towel_dryer`) | Accepted. Experimental |
+| Plain electrical heater (`io_subtype: 0`) | Accepted |
+| Radiator with a setpoint, heater with a light | Rejected: the hub reads no level from them, so the configuration fails with a hint to remove the key |
+| Pilot-wire interface (`io_subtype: 0`, `io_model: pilot_wire_interface`) | Rejected: its status carries no level (issue #228), so the configuration fails with a hint to remove the key |
+| Any other device, or an entry without `io_device_type` | Rejected |
+
+The values, and what each heater kind shows, are in
 [The level a heater applies](../heating.md#the-level-a-heater-applies).
 
 ## Central-heating mode sensor

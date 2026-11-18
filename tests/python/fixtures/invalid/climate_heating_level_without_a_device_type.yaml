@@ -1,5 +1,5 @@
 # expect-error: heating_level needs an electrical heater: set io_device_type: electrical_heater
-# covers: climate._validate_heating_level
+# covers: platform_common.validate_reading_keys
 packages:
   common: !include ../_common.yaml
   board: !include ../../../../config/boards/heltec-v2.yaml

@@ -1,5 +1,5 @@
 /// @file platform_device_readings.cpp
-/// @brief The generic entities that show a named device reading: one numeric sensor and one binary sensor.
+/// @brief The generic entities that show a named device reading: a numeric sensor, a binary sensor and a text sensor.
 /// @ingroup hioc_platforms
 
 #include "platform_device_readings.h"
@@ -7,6 +7,7 @@
 #include "esphome/core/log.h"
 
 #include <cmath>
+#include <cstdint>
 
 namespace esphome {
 namespace home_io_control {
@@ -53,6 +54,26 @@ void IOHomeDeviceReadingBinarySensor::setup() {
 
 void IOHomeDeviceReadingBinarySensor::dump_config() {
   ESP_LOGCONFIG(TAG_READING, "IO-Homecontrol Device Reading Binary Sensor:");
+  ESP_LOGCONFIG(TAG_READING, "  Device ID: %s", this->device_id_.c_str());
+  ESP_LOGCONFIG(TAG_READING, "  Reading: %s", this->reading_name_());
+}
+
+void IOHomeDeviceReadingTextSensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    const DeviceReadingRow *row = find_device_reading(this->reading_);
+    // Nothing read means no state, never a guessed name; a value with no name keeps the one shown.
+    const int value = reading_wire(dev, this->reading_);
+    if (row == nullptr || row->value_name == nullptr || value < 0 || value > UINT8_MAX)
+      return;
+    const char *name = row->value_name(static_cast<uint8_t>(value));
+    // A name is never empty, so the unset state (empty) never equals one.
+    if (name != nullptr && this->state != name)
+      this->publish_state(name);
+  });
+}
+
+void IOHomeDeviceReadingTextSensor::dump_config() {
+  ESP_LOGCONFIG(TAG_READING, "IO-Homecontrol Device Reading Text Sensor:");
   ESP_LOGCONFIG(TAG_READING, "  Device ID: %s", this->device_id_.c_str());
   ESP_LOGCONFIG(TAG_READING, "  Reading: %s", this->reading_name_());
 }

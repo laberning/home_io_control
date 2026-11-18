@@ -54,12 +54,14 @@ from .hub_validators import (
     DEVICE_MODEL_OPTIONS,
     DEVICE_READINGS,
     READING_FEATURE_HINTS,
+    READING_REMOVE_HINTS,
     check_feature_name,
     device_features,
     device_model_expression,
     device_models,
     device_type_name,
     kind_is_experimental,
+    type_offers_feature,
     validate_device_model_name,
     validate_system_key,
 )
@@ -107,6 +109,9 @@ IOHomeDeviceReadingSensor = home_io_control_ns.class_(
 )
 IOHomeDeviceReadingBinarySensor = home_io_control_ns.class_(
     "IOHomeDeviceReadingBinarySensor", binary_sensor.BinarySensor, cg.Component
+)
+IOHomeDeviceReadingTextSensor = home_io_control_ns.class_(
+    "IOHomeDeviceReadingTextSensor", text_sensor.TextSensor, cg.Component
 )
 IOHomeHeaterSettingSwitch = home_io_control_ns.class_(
     "IOHomeHeaterSettingSwitch", switch.Switch, cg.Component
@@ -552,15 +557,31 @@ async def create_user_companion(config, parent, *, new_entity, entity_config):
 
 # === Device readings ===
 #
-# A main entity takes one optional key per reading of DEVICE_READINGS that has one and whose source the platform
-# offers: the climate entity the heater registers, the `sensor:` platform the data objects. Each key is an entity of
-# its own that shows the reading; the key costs the hub a read of the reading's registers at every poll, or a scheduled
-# transfer read of its data object, and only some kinds have them, so it needs the capability of its row. The table
-# drives the schema, the capability check and the code, so a new reading is a row there and in C++, never new codegen.
+# The mirror DEVICE_READINGS says, for every reading, what the codegen builds and how it is declared. A reading with a
+# YAML key is an optional entity of a main entity: the climate entity takes the heater's, the `sensor:` platform the
+# data objects'. Each key is an entity of its own that shows the reading; it costs the hub a read of the reading's
+# registers at every poll (or a scheduled transfer read of its data object, or nothing for a status reading) and only
+# some kinds have them, so it needs the capability of its row. A reading with a companion is an entity every device
+# with the capability gets, named after the main entity. The table drives the schema, the capability check, the IDs
+# and the code, so a new reading is a row there and in C++, never new codegen.
 
-# The mirror's source kinds each platform offers its keys for.
-HEATER_READING_SOURCES = ("register", "derived")
+# The mirror's source kinds each platform offers its readings for.
+HEATER_READING_SOURCES = ("register", "derived", "status")
 DATA_OBJECT_READING_SOURCES = ("data_object",)
+
+# The class of the entity that shows a reading, by the mirror's entity kind.
+_READING_ENTITY_CLASSES = {
+    "sensor": IOHomeDeviceReadingSensor,
+    "binary_sensor": IOHomeDeviceReadingBinarySensor,
+    "switch": IOHomeHeaterSettingSwitch,
+    "text_sensor": IOHomeDeviceReadingTextSensor,
+}
+_READING_ENTITY_CREATORS = {
+    "sensor": sensor.new_sensor,
+    "binary_sensor": binary_sensor.new_binary_sensor,
+    "switch": switch.new_switch,
+    "text_sensor": text_sensor.new_text_sensor,
+}
 
 
 def _reading_keys(sources=None):
@@ -570,6 +591,16 @@ def _reading_keys(sources=None):
         (name, entry)
         for name, entry in DEVICE_READINGS.items()
         if entry["key"] is not None and (sources is None or entry["source"] in sources)
+    ]
+
+
+def _reading_companions(sources):
+    """[(reading name, mirror entry)] of every reading an entity is made for without a key, in table order; only
+    those whose source is in `sources`."""
+    return [
+        (name, entry)
+        for name, entry in DEVICE_READINGS.items()
+        if "companion" in entry and entry["source"] in sources
     ]
 
 
@@ -586,19 +617,22 @@ def _reading_entity_schema(entry):
         if field in entry
     }
     kind = entry["entity"]
+    entity_class = _READING_ENTITY_CLASSES.get(kind)
+    if entity_class is None:
+        raise ValueError(f"a reading with an entity needs an entity kind, not {kind!r}")
     if kind == "sensor":
-        schema = sensor.sensor_schema(IOHomeDeviceReadingSensor, **display)
+        schema = sensor.sensor_schema(entity_class, **display)
     elif kind == "binary_sensor":
-        schema = binary_sensor.binary_sensor_schema(IOHomeDeviceReadingBinarySensor, **display)
-    elif kind == "switch":
+        schema = binary_sensor.binary_sensor_schema(entity_class, **display)
+    elif kind == "text_sensor":
+        schema = text_sensor.text_sensor_schema(entity_class, **display)
+    else:
         # Restore mode DISABLED: the switch shows what the device reports, never a restored guess.
         schema = switch.switch_schema(
-            IOHomeHeaterSettingSwitch,
+            entity_class,
             default_restore_mode="DISABLED",
             entity_category=ENTITY_CATEGORY_CONFIG,
         )
-    else:
-        raise ValueError(f"a reading with a key needs an entity kind, not {kind!r}")
     return schema.extend(cv.COMPONENT_SCHEMA)
 
 
@@ -613,13 +647,65 @@ def validate_reading_keys(config):
     """Accept each reading key only on a kind with the capability of its reading.
 
     A key is rejected when no io_device_type is declared: the registers would otherwise be read from a device
-    nothing says has them. The message names the kind to declare (READING_FEATURE_HINTS).
+    nothing says has them. The message names the kind to declare (READING_FEATURE_HINTS), or, where the declared type
+    has the capability on other kinds and READING_REMOVE_HINTS says so, tells the user to remove the key.
     """
     for _, entry in _reading_keys():
         key = entry["key"]
-        if key in config and not declared_has_feature(config, entry["feature"]):
-            raise cv.Invalid(f"{key} needs {READING_FEATURE_HINTS[entry['feature']]}", path=[key])
+        feature = entry["feature"]
+        if key not in config or declared_has_feature(config, feature):
+            continue
+        remove_hint = READING_REMOVE_HINTS.get(feature)
+        if remove_hint is not None and type_offers_feature(config.get(CONF_DEVICE_TYPE), feature):
+            label = _kind_label(config[CONF_DEVICE_TYPE], config.get(CONF_SUBTYPE, 0), config.get(CONF_MODEL))
+            raise cv.Invalid(f"{key} is not available on {label}: {remove_hint.format(key=key)}", path=[key])
+        raise cv.Invalid(f"{key} needs {READING_FEATURE_HINTS[feature]}", path=[key])
     return config
+
+
+def inject_reading_companion_ids(config, parent_id_key, sources=HEATER_READING_SOURCES):
+    """Declare the IDs of the companion entities of the readings a device has, during schema validation.
+
+    One entity per reading whose mirror entry has a companion and whose capability the declared kind has
+    (has_feature()): a kind with no declared type gets none. The ID is ``<base>_<companion_id>``, under the config key
+    ``_<companion_id>_id``, and its type is the class of the entity kind. See companion_id_base() for why this is
+    done at validation time and inject_companion_ids() for the declaration.
+    """
+    specs = tuple(
+        (
+            _reading_companion_id_key(entry),
+            entry["companion_id"],
+            _READING_ENTITY_CLASSES[entry["entity"]],
+            has_feature(entry["feature"]),
+        )
+        for _, entry in _reading_companions(sources)
+    )
+    return inject_companion_ids(config, specs, parent_id_key)
+
+
+def _reading_companion_id_key(entry):
+    """The config key the declared ID of a reading's companion is kept under."""
+    return f"_{entry['companion_id']}_id"
+
+
+async def reading_companions_to_code(config, parent, sources=HEATER_READING_SOURCES):
+    """Create the companion entities declared by inject_reading_companion_ids(), named after the main entity and
+    bound to the reading they show."""
+    for name, entry in _reading_companions(sources):
+        id_key = _reading_companion_id_key(entry)
+        if id_key not in config:
+            continue
+        overrides = {CONF_DISABLED_BY_DEFAULT: True} if entry.get("disabled_by_default") else None
+        companion = await create_companion(
+            config,
+            parent,
+            schema=_reading_entity_schema(entry),
+            new_entity=_READING_ENTITY_CREATORS[entry["entity"]],
+            id_key=id_key,
+            name=companion_entity_name(config, entry["companion"]),
+            overrides=overrides,
+        )
+        cg.add(companion.set_reading(getattr(DeviceReading, name)))
 
 
 async def reading_keys_to_code(var, parent, config):
@@ -628,7 +714,7 @@ async def reading_keys_to_code(var, parent, config):
     For each key present the main entity asks the hub to poll the reading's registers (`add_device_reading()`), or to
     read its data object on a schedule (`add_data_object_reading()`, with the reading's default interval, which the
     entry's `update_interval:` replaces on the entity), and the entity that shows the reading is created, named after
-    it.
+    it. A status reading (the heating level) is read by the status read, so the hub is asked nothing.
     """
     for name, entry in _reading_keys():
         key = entry["key"]
@@ -637,16 +723,12 @@ async def reading_keys_to_code(var, parent, config):
         reading = getattr(DeviceReading, name)
         if entry["source"] in DATA_OBJECT_READING_SOURCES:
             cg.add(var.add_data_object_reading(reading, entry["update_interval_ms"]))
-        else:
+        elif entry["source"] != "status":
             cg.add(var.add_device_reading(reading))
         entity = await create_user_companion(
             config,
             parent,
-            new_entity={
-                "sensor": sensor.new_sensor,
-                "binary_sensor": binary_sensor.new_binary_sensor,
-                "switch": switch.new_switch,
-            }[entry["entity"]],
+            new_entity=_READING_ENTITY_CREATORS[entry["entity"]],
             entity_config=config[key],
         )
         cg.add(entity.set_reading(reading))

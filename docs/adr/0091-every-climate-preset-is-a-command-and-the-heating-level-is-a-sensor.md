@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0091 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md) (`heating_level:` only where the heater reports a level) · **Recorded:** 2026-11
 
 Amends [ADR 0055](0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md) (a climate
 entity's traits come from the device's heating profile): which presets a profile may list, and where the

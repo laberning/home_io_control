@@ -141,7 +141,8 @@ you meet them. The structure behind them is described in the
 [ADR 0099](adr/0099-scheduled-transfer-reads-use-one-session-and-a-queued-reader.md),
 [ADR 0100](adr/0100-a-transfer-read-tells-an-accepted-request-without-an-answer-from-silence.md),
 [ADR 0101](adr/0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) and
-[ADR 0102](adr/0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md).
+[ADR 0102](adr/0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md)
+and [ADR 0104](adr/0104-a-heaters-poll-reads-what-its-reading-rows-select.md).
 
 1. **Find where the value lives.** A heater reports it as a private register; some devices keep it in
    a data object. Read the objects with the [`read_object` probe](diagnostic-probes.md#reading-a-device-object).
@@ -159,12 +160,38 @@ you meet them. The structure behind them is described in the
    value in the data read and the codec. Value shapes that exist are in `proto_value_codecs.h`;
    a counter that starts with a marker byte (`80` then a big-endian number, `81 FF FF` for "no value")
    is `MARKED_U16_BE`. A new shape is one codec enumerator, one case in `decode_value()` and its test
-   in `tests/proto/value_codecs_test.cpp`.
+   in `tests/proto/value_codecs_test.cpp`. A reading whose values have names (a level, a mode) gives the
+   row a `value_name` function, which the entity that shows it publishes instead of the number;
+   `reading_value_kind()` then says the reading is named, a flag when its codec is a flag, and a number
+   otherwise.
+
+   **Poll policy.** A heater register row also says when the heater's poll reads it, and the poll
+   reads nothing else:
+
+   | `ReadingPoll` | The poll reads it | Use it for |
+   |---|---|---|
+   | `EVERY_POLL` | Every poll; the first read that fails ends the poll | What the card shows |
+   | `EVERY_POLL_MAY_MISS` | Every poll, after the readings above; a miss keeps the value and costs a read, not the poll | A setting the heater's own controller changes, a part a model may lack |
+   | `ONCE_AFTER_BOOT` | Until it holds a value | A property that rarely changes |
+   | `WHEN_ASKED` | Where an entity of the YAML asks for it, until the heater answers it empty | An opt-in reading |
+   | `NOT_POLLED` | Never by the poll walk | A value a status reply, a programme rule or a write's read-back delivers |
+
+   A row applies to a heater by its capability, or, for a row without one, where the heating profile
+   reads the register (`heating_profile_reads()`, from the profile's own fields). Within one policy
+   the order of the rows is the order of the reads, so put a new row where its register belongs; the
+   order of the phases is the controller's. A row read only while another register holds a value
+   (`only_while`) is skipped, and its earlier value dropped, while it does not. A data-object reading
+   ignores the policy and runs on its own schedule.
 4. **Add the mirror row.** The same reading by name in `DEVICE_READINGS` in `hub_validators.py`: its
-   capability (`None` for a reading no key declares), its source (`data_object`), the YAML key, the entity kind, the Home Assistant unit,
-   device class and state class, and for a data object the default `update_interval_ms`, at least five
-   minutes. Add the capability's hint to `READING_FEATURE_HINTS` so the error for a kind without it
-   says what to declare. `tests/sync/device_features_sync_test.cpp` fails until both tables agree.
+   capability (`None` for a reading no key declares), its source (`register`, `derived`, `data_object`
+   or `status`), the entity kind (`sensor`, `binary_sensor`, `switch` or `text_sensor`; it has to fit the
+   row's value kind), the Home Assistant unit, device class and state class, and for a data object the
+   default `update_interval_ms`, at least five minutes. An entity is declared one of two ways: by a YAML
+   `key`, or as a companion that every device with the capability gets, with `companion` (the name suffix
+   after the main entity's name), `companion_id` (the ID suffix) and, if it should start hidden,
+   `disabled_by_default`; a row has a key or a companion, never both. Add the capability's hint to
+   `READING_FEATURE_HINTS` so the error for a kind without it says what to declare. `tests/sync/device_features_sync_test.cpp`
+   fails until both tables agree.
 5. **Give the device kind the capability.** Add the `DeviceFeature` enumerator the reading names (when
    it is new), put it on the rows of the type table (`proto_device_types.cpp`) that have it and add its
    name to `FEATURES` in `hub_validators.py`. A kind that answers no status read also carries
@@ -182,7 +209,8 @@ you meet them. The structure behind them is described in the
 
 A reading that comes from a heater's register has no recipe and no offset: its row names the register
 (`HeatingFunction`), and the register table in `proto_heating.cpp` names its codec. The rest is the
-same.
+same. A reading that a status reply carries (the heating level) is a `StatusMainParameterSource` and
+is never polled.
 
 Tests sit on the lowest stage that fits. The codec and the lookup are tested without a radio. The
 schedule and the value store are tested on the hub with a reading table and recipe table of the test's

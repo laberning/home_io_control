@@ -36,6 +36,7 @@
 
 #include "proto_frame.h"
 #include "proto_private_registers.h"
+#include "proto_value_codecs.h"
 
 #include <algorithm>
 #include <cmath>
@@ -291,6 +292,11 @@ bool heating_function_is_writable(HeatingFunction fn);
 /// @return true for a read/write or read-only register; false for a write-only one or an
 ///         out-of-range value.
 bool heating_function_is_readable(HeatingFunction fn);
+
+/// @brief How the value of a register maps onto the bytes of its reply.
+/// @param fn Function.
+/// @return The register's codec; ValueCodec::NONE for a register with no typed value or an out-of-range value.
+ValueCodec heating_function_codec(HeatingFunction fn);
 
 /// @brief Low byte of the 0x01xx register behind a function.
 /// @param fn Function.

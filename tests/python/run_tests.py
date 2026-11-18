@@ -575,9 +575,12 @@ def heater_window_companions_are_declared_at_validation_time():
 
     heater = v.DEVICE_TYPE_OPTIONS["electrical_heater"]
     with_window = c._inject_companion_ids(config(heater, 1))
-    assert with_window[c.CONF_WINDOW_SENSOR_ID].id == "living_window_sensor"
-    assert with_window[c.CONF_WINDOW_SENSOR_ID].is_declaration
-    assert with_window[c.CONF_WINDOW_DETECTION_SWITCH_ID].id == "living_window_detection_switch"
+    assert with_window["_window_sensor_id"].id == "living_window_sensor"
+    assert with_window["_window_sensor_id"].is_declaration
+    assert with_window["_window_detection_switch_id"].id == "living_window_detection_switch"
+    # Each companion is declared as the class of the entity that shows its reading.
+    assert str(with_window["_window_sensor_id"].type).endswith("IOHomeDeviceReadingBinarySensor")
+    assert str(with_window["_window_detection_switch_id"].type).endswith("IOHomeHeaterSettingSwitch")
     towel = config(heater, 1)
     towel["io_model"] = "towel_dryer"
     for cfg in (
@@ -588,33 +591,47 @@ def heater_window_companions_are_declared_at_validation_time():
         towel,
     ):
         out = c._inject_companion_ids(cfg)
-        assert c.CONF_WINDOW_SENSOR_ID not in out, cfg
-        assert c.CONF_WINDOW_DETECTION_SWITCH_ID not in out, cfg
+        assert "_window_sensor_id" not in out, cfg
+        assert "_window_detection_switch_id" not in out, cfg
 
 
-@case()
-def heating_level_sensor_is_accepted_on_an_electrical_heater_only():
-    """`heating_level:` passes on every electrical heater (the sensor stays without a state where the
-    heater reports no level) and is refused on another kind and on an entry with no declared type; an
-    entry without the key is untouched."""
+@case("platform_common.validate_reading_keys")
+def heating_level_is_accepted_only_where_the_heater_reports_a_level():
+    """`heating_level:` passes on a plain heater and a towel dryer (the REPORTS_HEATING_LEVEL capability of their
+    rows). On a radiator, a heater with a light and a pilot-wire interface, from which the hub reads no level, it is
+    refused with a hint to remove it; on another device type and on an entry with no declared type it is
+    refused with the kind to declare."""
     import esphome.config_validation as cv
-    from esphome.components.home_io_control import climate as c
     from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as pc
 
-    key = c.CONF_HEATING_LEVEL
+    key = "heating_level"
     heater = v.DEVICE_TYPE_OPTIONS["electrical_heater"]
-    for subtype in (0, 1):
-        cfg = {"io_device_type": heater, "io_subtype": subtype, key: {}}
-        assert c._validate_heating_level(cfg) is cfg
-    plain = {"io_device_type": v.DEVICE_TYPE_OPTIONS["heat_pump"]}
-    assert c._validate_heating_level(plain) is plain
-    for cfg in ({"io_device_type": v.DEVICE_TYPE_OPTIONS["heat_pump"], key: {}}, {key: {}}):
+    plain = {"io_device_type": heater, "io_subtype": 0}
+    pilot_wire = {**plain, "io_model": "pilot_wire_interface"}
+    dryer = {"io_device_type": heater, "io_subtype": 1, "io_model": "towel_dryer"}
+    radiator = {"io_device_type": heater, "io_subtype": 1}
+    with_light = {**radiator, "io_model": "heater_with_light"}
+    for kind in (plain, dryer, {"io_device_type": heater}):
+        cfg = {**kind, key: {}}
+        assert pc.validate_reading_keys(cfg) is cfg, kind
+    untouched = dict(radiator)
+    assert pc.validate_reading_keys(untouched) is untouched
+    for kind in (radiator, with_light, pilot_wire):
         try:
-            c._validate_heating_level(cfg)
+            pc.validate_reading_keys({**kind, key: {}})
         except cv.Invalid as err:
-            assert "needs an electrical heater" in str(err)
+            assert "heating_level is not available on electrical_heater" in str(err), str(err)
+            assert "the hub reads no heating level from this heater" in str(err) and "remove heating_level:" in str(err), str(err)
         else:
-            raise AssertionError(f"accepted {cfg}")
+            raise AssertionError(f"accepted heating_level on {kind}")
+    for kind in ({"io_device_type": v.DEVICE_TYPE_OPTIONS["heat_pump"]}, {"io_device_type": v.DEVICE_TYPE_OPTIONS["heating_temperature_interface"]}, {}):
+        try:
+            pc.validate_reading_keys({**kind, key: {}})
+        except cv.Invalid as err:
+            assert "heating_level needs an electrical heater: set io_device_type: electrical_heater" in str(err), str(err)
+        else:
+            raise AssertionError(f"accepted heating_level on {kind}")
 
 
 @case()
@@ -649,6 +666,7 @@ def reading_keys_are_accepted_only_on_a_kind_with_their_capability():
         "remaining_time": (dryer,),
         "boost_duration": (dryer,),
         "drying_duration": (dryer,),
+        "heating_level": (plain, dryer),
     }
     refused = {
         "central_heating_mode": (radiator, with_light, plain, pilot_wire, pump, {}),
@@ -658,6 +676,7 @@ def reading_keys_are_accepted_only_on_a_kind_with_their_capability():
         "remaining_time": (radiator, with_light, plain, pilot_wire, pump, {}),
         "boost_duration": (radiator, with_light, plain, pilot_wire, pump, {}),
         "drying_duration": (radiator, with_light, plain, pilot_wire, pump, {}),
+        "heating_level": (radiator, with_light, pilot_wire, pump, {}),
     }
     hint = {
         "central_heating_mode": "io_model: towel_dryer",
@@ -667,6 +686,9 @@ def reading_keys_are_accepted_only_on_a_kind_with_their_capability():
         "remaining_time": "io_model: towel_dryer",
         "boost_duration": "io_model: towel_dryer",
         "drying_duration": "io_model: towel_dryer",
+        # A radiator, a heater with a light and a pilot-wire interface are told to drop the key; the others what to
+        # declare.
+        "heating_level": "heating_level",
     }
     for key, kinds in accepted.items():
         for kind in kinds:
@@ -700,6 +722,7 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
         "remaining_time",
         "boost_duration",
         "drying_duration",
+        "heating_level",
     }
     for name, entry in v.DEVICE_READINGS.items():
         assert entry["feature"] in v.FEATURES or entry["feature"] is None, name
@@ -709,20 +732,49 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
         if entry["source"] == "data_object":
             assert entry["update_interval_ms"] >= v.MIN_DEVICE_READING_INTERVAL_MS, name
         if entry["key"] is not None:
-            assert entry["entity"] in ("sensor", "binary_sensor", "switch"), name
+            assert entry["entity"] in ("sensor", "binary_sensor", "switch", "text_sensor"), name
             assert entry["feature"] in v.READING_FEATURE_HINTS, name
+            assert "companion" not in entry, f"{name} has a key and a companion"
         else:
-            # A reading without a key builds no entity of its own (a switch is built by its platform, not the key).
-            assert entry["entity"] in (None, "switch"), name
+            # A reading without a key builds an entity only as a companion (every device of the capability gets it).
+            assert (entry["entity"] is not None) == ("companion" in entry), name
+        if "companion" in entry:
+            assert entry["entity"] in ("sensor", "binary_sensor", "switch", "text_sensor"), name
+            assert entry["feature"] in v.FEATURES and entry["companion_id"], name
     schema_keys = {str(key) for key in pc.reading_keys_schema(pc.HEATER_READING_SOURCES)}
     assert schema_keys == {entry["key"] for entry in keyed.values()}
     assert not pc.reading_keys_schema(pc.DATA_OBJECT_READING_SOURCES), "no production reading is a data object yet"
+    # The companions are the window sensor and the detection switch, named and IDed from the mirror.
+    companions = {name: entry for name, entry in v.DEVICE_READINGS.items() if "companion" in entry}
+    assert {name: (entry["companion"], entry["companion_id"]) for name, entry in companions.items()} == {
+        "WINDOW_OPEN": ("Window", "window_sensor"),
+        "OPEN_WINDOW_DETECTION": ("Open Window Detection", "window_detection_switch"),
+    }
+    assert companions["OPEN_WINDOW_DETECTION"]["disabled_by_default"] is True
+    assert companions["WINDOW_OPEN"]["device_class"] == "window"
     try:
         pc._reading_entity_schema({"key": "x", "entity": None})
     except ValueError:
         pass
     else:
         raise AssertionError("a reading with a key and no entity kind must not build a schema")
+
+
+@case()
+def the_sensor_platform_never_offers_a_heater_companion_or_status_reading():
+    """`sensor:` offers the keys of data-object readings only, whatever the mirror holds: no heater register, derived or
+    status reading (the heating level) is a key of it, and no companion (the window sensor, the detection switch) is."""
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as pc
+    from esphome.components.home_io_control import sensor as sensor_platform
+
+    offered = {str(key) for key in pc.reading_keys_schema(pc.DATA_OBJECT_READING_SOURCES)}
+    heater_keys = {entry["key"] for entry in v.DEVICE_READINGS.values() if entry["key"] is not None}
+    assert not offered & heater_keys, offered
+    assert not pc._reading_companions(pc.DATA_OBJECT_READING_SOURCES)
+    schema_keys = {str(key) for key in sensor_platform.CONFIG_SCHEMA.validators[0].schema}
+    assert not schema_keys & heater_keys, schema_keys
+    assert "heating_level" not in schema_keys
 
 
 def with_data_object_reading(body):
@@ -1149,7 +1201,7 @@ def device_features_fall_back_like_the_cpp_lookup():
         assert "EXTENDED_POSITION_FRAME" not in v.device_features(t[binary_kind], 1), binary_kind
     assert v.device_features(t["light"], 1) == {"LEVELS"}
     assert v.device_features(t["electrical_heater"], 1) == {"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}
-    assert v.device_features(t["electrical_heater"], 0) == frozenset()
+    assert v.device_features(t["electrical_heater"], 0) == {"REPORTS_HEATING_LEVEL"}
     assert v.device_features(0x14) == frozenset(), "a raw type with no name has no capabilities"
     assert v.device_features(0x14, 58) == {"MAIN_PARAMETER_ONLY"}
 

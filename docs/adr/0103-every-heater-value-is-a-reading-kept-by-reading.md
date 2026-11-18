@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0103 -->
 
-**Status:** Accepted, amends [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md); amended by [ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md) · **Recorded:** 2026-11
 
 Builds on [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) (the
 reading table, the shared codecs) and [ADR 0102](0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md)

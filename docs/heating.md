@@ -89,8 +89,7 @@ The card of each kind, keyed by the three keys of your entry. The section of the
 
 | Heater kind | `io_device_type` | `io_subtype` | `io_model` | Modes | Presets | Target | Room temperature | Heating / idle |
 |---|---|---|---|---|---|---|---|---|
-| Radiator with a setpoint | `electrical_heater` | `1` | | `off`, `heat`, `auto` | `Program`, `Auto` | yes | yes | yes |
-| Radiator with a setpoint and a night light | `electrical_heater` | `1` | `heater_with_light` | `off`, `heat`, `auto` | `Program`, `Auto` | yes | yes | yes |
+| Radiator with a setpoint (also with `io_model: heater_with_light`) | `electrical_heater` | `1` | | `off`, `heat`, `auto` | `Program`, `Auto` | yes | yes | yes |
 | Towel dryer | `electrical_heater` | `1` | `towel_dryer` | `off`, `heat`, `auto` | `none`, `boost`, `Drying` | yes | yes | yes |
 | Level heater | `electrical_heater` | `0` | | `off`, `heat` | `away`, `eco`, `comfort`, `boost`, `Comfort -1`, `Comfort -2` | no | no | no |
 | Pilot-wire interface | `electrical_heater` | `0` | `pilot_wire_interface` | `off`, `heat` | `away`, `eco`, `comfort`, `Comfort -1`, `Comfort -2` | no | no | no |
@@ -331,8 +330,8 @@ reports. Use it to see, or to react in an automation to, the comfort and eco per
 |---|---|
 | Towel dryer | The level in every mode: `comfort` or `eco` as the program changes period, `boost` during a boost. During a drying run it reads `eco`, and after a change of mode or of boost it can show the old level for one or two polls. Experimental: read on one unit in a comfort period, an eco period, a boost and a drying run (issue #202). If you run a dryer in PROG, please [report](https://github.com/laberning/home_io_control/issues) whether the sensor follows the display |
 | Level heater | The level the heater reports, including `secured`, which a heater reports and a controller cannot set |
-| Pilot-wire interface | Nothing: the interface reports no level (issue #228) |
-| Radiator with a setpoint | Nothing: the hub does not read a radiator's level yet. If you run one in its program, please [open an issue](https://github.com/laberning/home_io_control/issues) so it can be checked |
+| Pilot-wire interface | Not available: its status carries no level (issue #228), so a `heating_level:` block on it is a configuration error |
+| Radiator with a setpoint, heater with a light | Not available: the hub reads no level from them, so a `heating_level:` block on them is a configuration error. If you run one in its program and it should report a level, please [open an issue](https://github.com/laberning/home_io_control/issues) so it can be checked |
 
 The sensor has no state until the heater has reported a level. A read that goes unanswered, or a
 reply with a value that is not in the list, leaves the last value shown.

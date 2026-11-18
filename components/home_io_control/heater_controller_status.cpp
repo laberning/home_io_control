@@ -26,6 +26,13 @@ void apply_heating_main_parameter(const std::string &id, IoDevice &dev, std::spa
   const HeatingProfile *profile = find_heating_profile(dev);
   if (profile == nullptr || profile->path == HeatingControlPath::PRIVATE_REGISTERS)
     return;
+  if (profile->path == HeatingControlPath::HEATING_LEVEL && !profile->status_reports_level) {
+    // A heater whose status carries no level (a pilot-wire interface): whatever its main parameter holds is not
+    // shown as one, and the card keeps the order last sent.
+    ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%02X%02X ignored, this heater reports no level",
+             id.c_str(), main_parameter[0], main_parameter[1]);
+    return;
+  }
   DeviceReadingValues &store = dev.reading_values;
   if (const auto level = decode_status_reading(DeviceReading::HEATING_LEVEL, main_parameter, profile->mp_prefix,
                                                dev.temperature_range_min_c, dev.temperature_range_max_c)) {

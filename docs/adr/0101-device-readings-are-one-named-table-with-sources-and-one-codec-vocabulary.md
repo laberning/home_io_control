@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0101 -->
 
-**Status:** Accepted, amends [ADR 0083](0083-heating-and-hot-water-live-in-their-own-collaborator.md); amended by [ADR 0102](0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md) and [ADR 0103](0103-every-heater-value-is-a-reading-kept-by-reading.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0083](0083-heating-and-hot-water-live-in-their-own-collaborator.md); amended by [ADR 0102](0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md), [ADR 0103](0103-every-heater-value-is-a-reading-kept-by-reading.md) and [ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md) · **Recorded:** 2026-11
 
 The heater's opt-in register list of ADR 0083 becomes the register sources of the reading table. Builds on
 [ADR 0098](0098-device-capabilities-are-a-named-set.md): a reading names the capability a device needs.

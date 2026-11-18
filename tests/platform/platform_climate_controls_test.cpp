@@ -71,12 +71,18 @@ class RegisterSensor : public IOHomeDeviceReadingBinarySensor {
   explicit RegisterSensor(DeviceReading reading) { this->set_reading(reading); }
 };
 
+/// The text sensor of a climate entry's `heating_level:` key.
+class LevelSensor : public IOHomeDeviceReadingTextSensor {
+ public:
+  LevelSensor() { this->set_reading(DeviceReading::HEATING_LEVEL); }
+};
+
 }  // namespace
 
 TEST(PlatformHeatingLevelSensor, HasNoStateUntilTheHeaterHasReportedALevel) {
   ClimateControlsHub hub;
   hub.add_heater();
-  IOHomeHeatingLevelSensor sensor;
+  LevelSensor sensor;
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -89,7 +95,7 @@ TEST(PlatformHeatingLevelSensor, HasNoStateUntilTheHeaterHasReportedALevel) {
 TEST(PlatformHeatingLevelSensor, NamesEveryLevelTheHeaterReports) {
   ClimateControlsHub hub;
   hub.add_heater();
-  IOHomeHeatingLevelSensor sensor;
+  LevelSensor sensor;
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -116,7 +122,7 @@ TEST(PlatformHeatingLevelSensor, NamesEveryLevelTheHeaterReports) {
 TEST(PlatformHeatingLevelSensor, AValueThatIsNoLevelKeepsTheLastLevelShown) {
   ClimateControlsHub hub;
   hub.add_heater();
-  IOHomeHeatingLevelSensor sensor;
+  LevelSensor sensor;
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -132,7 +138,7 @@ TEST(PlatformHeatingLevelSensor, PublishesWhatIsAlreadyKnownAtSetup) {
   ClimateControlsHub hub;
   hub.add_heater();
   hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::HEATING_LEVEL, heating_level::BOOST); });
-  IOHomeHeatingLevelSensor sensor;
+  LevelSensor sensor;
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -143,7 +149,7 @@ TEST(PlatformHeatingLevelSensor, PublishesWhatIsAlreadyKnownAtSetup) {
 TEST(PlatformWindowSensor, HasNoStateUntilTheSensorHasBeenRead) {
   ClimateControlsHub hub;
   hub.add_heater();
-  IOHomeWindowBinarySensor sensor;
+  RegisterSensor sensor(DeviceReading::WINDOW_OPEN);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -154,7 +160,7 @@ TEST(PlatformWindowSensor, HasNoStateUntilTheSensorHasBeenRead) {
 TEST(PlatformWindowSensor, FollowsTheHeatersReadings) {
   ClimateControlsHub hub;
   hub.add_heater();
-  IOHomeWindowBinarySensor sensor;
+  RegisterSensor sensor(DeviceReading::WINDOW_OPEN);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
@@ -172,7 +178,7 @@ TEST(PlatformWindowSensor, PublishesWhatIsAlreadyKnownAtSetup) {
   ClimateControlsHub hub;
   hub.add_heater();
   hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::WINDOW_OPEN, 1); });
-  IOHomeWindowBinarySensor sensor;
+  RegisterSensor sensor(DeviceReading::WINDOW_OPEN);
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();

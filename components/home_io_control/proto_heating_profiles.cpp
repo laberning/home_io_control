@@ -6,6 +6,7 @@
 
 #include "proto_codecs.h"
 #include "proto_device_kinds.h"
+#include "proto_device_readings.h"
 #include "proto_device_types.h"
 #include "proto_sizes.h"
 
@@ -14,6 +15,7 @@
 #include <iterator>
 #include <optional>
 #include <span>
+#include <variant>
 
 namespace esphome {
 namespace home_io_control {
@@ -80,40 +82,6 @@ constexpr HeatingObservedState SETPOINT_HEATER_OBSERVED[] = {
     {static_cast<uint8_t>(HeatingMode::OFF), HeatingHvacMode::OFF, NO_PRESET},
 };
 
-/// The room temperature leads: it is the value a user looks at, so a poll that dies half-way still
-/// delivered it.
-constexpr HeatingFunction SETPOINT_HEATER_POLL[] = {
-    HeatingFunction::ROOM_TEMPERATURE, HeatingFunction::SET_TEMPERATURE, HeatingFunction::SET_MODE,
-    HeatingFunction::REGULATOR_STATE,  HeatingFunction::WINDOW_OPEN,
-};
-
-/// The open-window-detection setting, read on every poll rather than once: the heater's own controller
-/// changes it (issue #222: a change from the vendor app). A missed read keeps the switch as it was and does
-/// not fail the poll, so the setting costs no poll the five registers above delivered.
-constexpr HeatingFunction SETPOINT_HEATER_EXTRA_POLL[] = {
-    HeatingFunction::SET_OPEN_WINDOW_DETECTION,
-};
-
-/// Properties and settings that change rarely: read until they have been read once.
-constexpr HeatingFunction SETPOINT_HEATER_BOOT[] = {
-    HeatingFunction::MAX_SETPOINT,
-};
-
-// === Heater with a night light (52/1, model HEATER_WITH_LIGHT): the radiator plus its light ===
-
-/// The radiator's own extra reads, then the light's state and brightness. Both light registers change from
-/// the heater's own controller (issue #222: a Cozytouch switches the light), so they are read on every
-/// poll, not once.
-constexpr HeatingFunction HEATER_WITH_LIGHT_EXTRA_POLL[] = {
-    HeatingFunction::SET_OPEN_WINDOW_DETECTION,
-    HeatingFunction::NIGHT_LIGHT,
-    HeatingFunction::NIGHT_LIGHT_BRIGHTNESS,
-};
-
-static_assert(std::ranges::equal(SETPOINT_HEATER_EXTRA_POLL,
-                                 std::span(HEATER_WITH_LIGHT_EXTRA_POLL).first(std::size(SETPOINT_HEATER_EXTRA_POLL))),
-              "the heater with a light reads the radiator's extra registers first");
-
 // === Towel dryer (52/1, model TOWEL_DRYER): private registers of its own ===
 //
 // Register values as two Atlantic Adelis units report them (issue #202, corpus
@@ -154,18 +122,6 @@ constexpr HeatingObservedState TOWEL_DRYER_OBSERVED_PRESETS[] = {
      preset_index(TOWEL_DRYER_PRESETS, HeatingPresetId::BOOST)},
     {static_cast<uint8_t>(HeatingTemporaryState::DRYING), HeatingHvacMode::HEAT,
      preset_index(TOWEL_DRYER_PRESETS, HeatingPresetId::CUSTOM, "Drying")},
-};
-
-/// Room temperature first, as on the radiator. The setpoint is 0x0103, which a climate write is known to
-/// change on this device (issue #202); the window registers are not read, the dryer has no window function.
-constexpr HeatingFunction TOWEL_DRYER_POLL[] = {
-    HeatingFunction::ROOM_TEMPERATURE, HeatingFunction::SET_TEMPERATURE, HeatingFunction::TOWEL_MODE,
-    HeatingFunction::TEMPORARY_STATE,  HeatingFunction::WORKING_RATE,
-};
-
-/// The maximum setpoint.
-constexpr HeatingFunction TOWEL_DRYER_BOOT[] = {
-    HeatingFunction::MAX_SETPOINT,
 };
 
 /// The programme runs when the mode shows as auto (PROG) and no boost or drying is on top of it. The temperature
@@ -242,8 +198,9 @@ static_assert(std::ranges::none_of(PILOT_WIRE_PRESETS,
 static_assert(std::size(PILOT_WIRE_PRESETS) + 1 == std::size(LEVEL_HEATER_PRESETS),
               "the pilot-wire presets are the plain heater's without exactly one (boost)");
 
-/// The levels the pilot-wire interface could report, mapped onto its own preset list: the plain heater's
-/// observed states without Boost (the indices differ, so the rows are restated).
+/// The card state of each level, mapped onto the pilot-wire interface's own preset list: the plain heater's
+/// observed states without Boost (the indices differ, so the rows are restated). The interface reports no level, so
+/// the table shows the order a preset sends (command_preset()).
 constexpr HeatingObservedState PILOT_WIRE_OBSERVED[] = {
     {heating_level::OFF, HeatingHvacMode::OFF, NO_PRESET},
     {heating_level::FROST_PROTECTION, HeatingHvacMode::HEAT, preset_index(PILOT_WIRE_PRESETS, HeatingPresetId::AWAY)},
@@ -327,8 +284,9 @@ constexpr HeatingProgrammePeriod SETPOINT_HEATER_PROGRAMME_PERIOD = {
     .derogation_fn = HeatingFunction::DEROGATED_SETPOINT,
 };
 
-/// The electrical heater with an adjustable setpoint (52/1), the AGILIA radiator: a table row, and the
-/// base of the model that adds a night light.
+/// The electrical heater with an adjustable setpoint (52/1), the AGILIA radiator, and the profile of the models
+/// that add parts to it (a night light): what a poll reads beyond the radiator's registers follows the model's
+/// capabilities.
 constexpr HeatingProfile SETPOINT_HEATER_PROFILE = {
     .type = DeviceType::ELECTRICAL_HEATER,
     .subtype = 1,
@@ -341,23 +299,7 @@ constexpr HeatingProfile SETPOINT_HEATER_PROFILE = {
     .programme_period = &SETPOINT_HEATER_PROGRAMME_PERIOD,
     .presets = SETPOINT_HEATER_PRESETS,
     .observed = SETPOINT_HEATER_OBSERVED,
-    .poll_registers = SETPOINT_HEATER_POLL,
-    .boot_registers = SETPOINT_HEATER_BOOT,
-    .extra_poll_registers = SETPOINT_HEATER_EXTRA_POLL,
 };
-
-/// @brief The radiator's profile under the HEATER_WITH_LIGHT model, with the light read after its poll.
-/// @details Built from SETPOINT_HEATER_PROFILE rather than restated, so the two stay one heater with one
-///          extra part.
-constexpr HeatingProfile heater_with_light_profile() {
-  HeatingProfile profile = SETPOINT_HEATER_PROFILE;
-  profile.model = DeviceModel::HEATER_WITH_LIGHT;
-  profile.extra_poll_registers = HEATER_WITH_LIGHT_EXTRA_POLL;
-  return profile;
-}
-
-/// The heater with a night light (52/1, model HEATER_WITH_LIGHT).
-constexpr HeatingProfile HEATER_WITH_LIGHT_PROFILE = heater_with_light_profile();
 
 /// The plain electrical heater (52/0, no model): heating levels in the standard EXECUTE.
 constexpr HeatingProfile LEVEL_HEATER_PROFILE = {
@@ -367,6 +309,7 @@ constexpr HeatingProfile LEVEL_HEATER_PROFILE = {
     .path = HeatingControlPath::HEATING_LEVEL,
     .features = {.target_temperature = false, .current_temperature = false, .action = false, .mode_observed = true},
     .mp_prefix = HEATING_LEVEL_MP_PREFIX,
+    .status_reports_level = true,
     .modes = LEVEL_HEATER_MODES,
     .presets = LEVEL_HEATER_PRESETS,
     .observed = LEVEL_HEATER_OBSERVED,
@@ -374,12 +317,15 @@ constexpr HeatingProfile LEVEL_HEATER_PROFILE = {
 
 /// @brief The interface's profile under the PILOT_WIRE_INTERFACE model, without the boost level.
 /// @details Built from LEVEL_HEATER_PROFILE rather than restated: the same control path, modes and main
-///          parameter prefix, only the presets and the levels read back differ.
+///          parameter prefix; the presets and their card states differ, and the interface's status carries no
+///          level (issue #228: the one status read it answered had the main parameter 0xC800), so the card shows
+///          the order last sent.
 constexpr HeatingProfile pilot_wire_interface_profile() {
   HeatingProfile profile = LEVEL_HEATER_PROFILE;
   profile.model = DeviceModel::PILOT_WIRE_INTERFACE;
   profile.presets = PILOT_WIRE_PRESETS;
   profile.observed = PILOT_WIRE_OBSERVED;
+  profile.status_reports_level = false;
   return profile;
 }
 
@@ -418,7 +364,6 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
     LEVEL_HEATER_PROFILE,
     PILOT_WIRE_INTERFACE_PROFILE,
     SETPOINT_HEATER_PROFILE,
-    HEATER_WITH_LIGHT_PROFILE,
     {
         .type = DeviceType::ELECTRICAL_HEATER,
         .subtype = 1,
@@ -431,8 +376,6 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
         .programme_period = &TOWEL_DRYER_PROGRAMME_PERIOD,
         .presets = TOWEL_DRYER_PRESETS,
         .observed = TOWEL_DRYER_OBSERVED,
-        .poll_registers = TOWEL_DRYER_POLL,
-        .boot_registers = TOWEL_DRYER_BOOT,
         .preset_observed = TOWEL_DRYER_OBSERVED_PRESETS,
         .mode_fn = HeatingFunction::TOWEL_MODE,
         .preset_fn = HeatingFunction::TEMPORARY_STATE,
@@ -632,6 +575,67 @@ std::optional<float> in_force_from_override_read(const HeatingProfile &profile, 
 DeviceReading heating_setpoint_reading(const HeatingProfile &profile) {
   return profile.path == HeatingControlPath::TEMPERATURE_EXECUTE ? DeviceReading::STATUS_SETPOINT
                                                                  : DeviceReading::SETPOINT;
+}
+
+// === The registers a heater poll reads ===
+
+namespace {
+
+/// @return The register that reports a heater is heating, for the profile's action source.
+HeatingFunction action_register(const HeatingProfile &profile) {
+  return profile.action_source == HeatingActionSource::WORKING_RATE ? HeatingFunction::WORKING_RATE
+                                                                    : HeatingFunction::REGULATOR_STATE;
+}
+
+/// @return Whether the profile's heater reads one of its programme's registers.
+bool is_programme_register(const HeatingProfile &profile, HeatingFunction fn) {
+  const HeatingProgrammePeriod *period = profile.programme_period;
+  return period != nullptr && (fn == period->in_force_fn || fn == period->derogation_fn);
+}
+
+/// @return Whether a reading is read for a device of this profile: by its capability where it has one, otherwise
+///         where the profile's card reads it.
+bool reading_applies(const HeatingProfile &profile, const IoDevice &dev, const DeviceReadingRow &row) {
+  return row.feature.has_value() ? device_has_reading_capability(dev, row)
+                                 : heating_profile_reads(profile, row.reading);
+}
+
+}  // namespace
+
+bool heating_profile_reads(const HeatingProfile &profile, DeviceReading reading) {
+  const std::optional<HeatingFunction> register_of_reading = reading_register(reading);
+  if (profile.path != HeatingControlPath::PRIVATE_REGISTERS || !register_of_reading)
+    return false;
+  const HeatingFunction fn = *register_of_reading;
+  switch (fn) {
+    case HeatingFunction::ROOM_TEMPERATURE:
+      return profile.features.current_temperature;
+    case HeatingFunction::SET_TEMPERATURE:
+    case HeatingFunction::MAX_SETPOINT:
+      return profile.features.target_temperature;
+    default:
+      break;
+  }
+  return fn == profile.mode_fn || (!profile.preset_observed.empty() && fn == profile.preset_fn) ||
+         (profile.features.action && fn == action_register(profile)) || is_programme_register(profile, fn);
+}
+
+HeaterPollList heater_poll_reads(const HeatingProfile &profile, const IoDevice &dev, ReadingPoll policy) {
+  HeaterPollList reads;
+  if (profile.path != HeatingControlPath::PRIVATE_REGISTERS || policy == ReadingPoll::NOT_POLLED)
+    return reads;
+  for (const DeviceReadingRow &row : device_readings()) {
+    // Only a register is read by the poll; a status reading, a derived one and a data object have other mechanisms.
+    const auto *source = std::get_if<HeatingRegisterSource>(&row.source);
+    if (row.poll != policy || source == nullptr || !reading_applies(profile, dev, row))
+      continue;
+    if (policy == ReadingPoll::WHEN_ASKED && !register_reading_wanted(dev, source->fn))
+      continue;
+    if (policy == ReadingPoll::ONCE_AFTER_BOOT && register_value(dev, source->fn).has_value())
+      continue;
+    reads.push_back(source->fn);
+  }
+  return reads;
 }
 
 // === Heater writes ===
