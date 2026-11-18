@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <iterator>
+#include <limits>
 
 namespace esphome {
 namespace home_io_control {
@@ -50,7 +51,13 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
      [](TuningConfig &t, float v) { t.start_preamble_ms = v; }, false},
     {"low_power_wake_ms", [](const TuningConfig &t) { return t.low_power_wake_ms; },
      [](TuningConfig &t, float v) { t.low_power_wake_ms = v; }, false},
-    {"lbt_rssi_threshold_dbm", [](const TuningConfig &t) { return static_cast<float>(t.lbt_rssi_threshold_dbm); },
+    // The getter reports NaN while the limit is learned, so the number entity shows no value
+    // instead of a threshold nobody set.
+    {"lbt_rssi_threshold_dbm",
+     [](const TuningConfig &t) {
+       return t.lbt_rssi_threshold_dbm.has_value() ? static_cast<float>(*t.lbt_rssi_threshold_dbm)
+                                                   : std::numeric_limits<float>::quiet_NaN();
+     },
      [](TuningConfig &t, float v) { t.lbt_rssi_threshold_dbm = static_cast<int16_t>(v); }, false},
     {"exchange_start_response_wait_ms",
      [](const TuningConfig &t) { return static_cast<float>(t.exchange_start_response_wait_ms); },

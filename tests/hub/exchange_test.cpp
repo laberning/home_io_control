@@ -3352,7 +3352,7 @@ TEST(Exchange, CountersTrackLbtRetries) {
   IoFrame request{};
   create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
-  // Two busy reads (>= LBT_RSSI_THRESHOLD_DBM) force two retries; the queue then runs dry and
+  // Two busy reads (>= CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM) force two retries; the queue then runs dry and
   // read_rssi() falls back to MockRadio's default (-120 dBm, well clear), so the third read lets
   // transmit_frame() proceed without a third retry being counted.
   radio.queue_rssi(-50);
@@ -3990,7 +3990,7 @@ TEST(Exchange, LbtBusyThenClearSendsOnTheSecondCheck) {
   EXPECT_EQ(radio.get_send_count(), 1);
   EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, 1u);
   ASSERT_EQ(radio.get_tx_configs().size(), 1u);
-  EXPECT_EQ(radio.get_tx_configs()[0].cca_threshold_dbm, comp.tuning_.lbt_rssi_threshold_dbm)
+  EXPECT_EQ(radio.get_tx_configs()[0].cca_threshold_dbm, comp.exchange_engine_.busy_limit_dbm())
       << "the frame that went out was sent with the check";
 }
 
@@ -5572,4 +5572,143 @@ TEST(ChannelAccess, ABusyExchangeFailsThroughTheHubWithTheChannelBusyStage) {
 
   EXPECT_EQ(radio.get_send_count(), 0);
   EXPECT_STREQ(comp.exchange_engine_.get_debug().stage, "channel_busy");
+}
+
+// ============================================================================
+// The busy limit judged against the board's own quiet level (ADR 0096): the idle hop takes a reading
+// at every QUIET_LEVEL_READING_EVERY_N_HOPS-th hop, the limit follows from the quietest channel, and
+// both channel checks (requests, start frames of fixed-channel senders) read that one limit.
+// ============================================================================
+
+namespace {
+
+/// One idle hop of @p rig: the dwell elapses and maybe_hop() runs. Returns the channel the receiver
+/// sat on right before it.
+uint32_t idle_hop(AccessRig &rig) {
+  const uint32_t before = rig.radio.get_current_freq();
+  esphome::test_clock::advance_us(HOP_TIME_US + 1);
+  rig.engine.maybe_hop();
+  return before;
+}
+
+/// Hop idle until every channel has enough readings, with the radio hearing @p level_dbm.
+void learn_quiet_level(AccessRig &rig, int16_t level_dbm) {
+  rig.radio.set_rssi_default(level_dbm);
+  const int hops = static_cast<int>(QUIET_LEVEL_MIN_READINGS) * 3 * QUIET_LEVEL_READING_EVERY_N_HOPS + 100;
+  for (int i = 0; i < hops; i++)
+    idle_hop(rig);
+}
+
+/// A frame that opens a session, so transmit_frame() checks the channel before it.
+IoFrame start_frame() {
+  IoFrame frame{};
+  create_execute_position(frame, test::OWN_ID, test::DST_ID, false, 100);
+  return frame;
+}
+
+}  // namespace
+
+TEST(BusyLimit, IdleHopTakesOneReadingAtEveryTenthHopOnTheChannelItSatOn) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  std::vector<uint32_t> before_hop;
+  for (int hop = 1; hop <= 2 * QUIET_LEVEL_READING_EVERY_N_HOPS; hop++) {
+    before_hop.push_back(idle_hop(rig));
+    const size_t expected_readings = static_cast<size_t>(hop / QUIET_LEVEL_READING_EVERY_N_HOPS);
+    EXPECT_EQ(rig.radio.rssi_read_freqs().size(), expected_readings) << "after hop " << hop;
+  }
+  EXPECT_EQ(rig.radio.rssi_read_freqs(), (std::vector<uint32_t>{before_hop[QUIET_LEVEL_READING_EVERY_N_HOPS - 1],
+                                                                before_hop[2 * QUIET_LEVEL_READING_EVERY_N_HOPS - 1]}));
+}
+
+TEST(BusyLimit, NoReadingIsTakenWhileAReceptionIsInProgress) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  for (int hop = 1; hop < QUIET_LEVEL_READING_EVERY_N_HOPS; hop++)
+    idle_hop(rig);
+
+  rig.radio.note_reception_from_test();
+  idle_hop(rig);
+  EXPECT_TRUE(rig.radio.rssi_read_freqs().empty()) << "the hop is held, so no reading is taken either";
+
+  rig.radio.clear_reception_from_test();
+  idle_hop(rig);
+  EXPECT_EQ(rig.radio.rssi_read_freqs().size(), 1u) << "the tenth hop reads once the reception has cleared";
+}
+
+TEST(BusyLimit, TheIdleHopHopsAsOftenAsBefore) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  for (int hop = 0; hop < 3 * QUIET_LEVEL_READING_EVERY_N_HOPS; hop++)
+    idle_hop(rig);
+  EXPECT_EQ(rig.radio.freq_history().size(), static_cast<size_t>(3 * QUIET_LEVEL_READING_EVERY_N_HOPS));
+}
+
+TEST(BusyLimit, IsMinusEightyFiveUntilEveryChannelHasEnoughReadings) {
+  AccessRig rig;
+  EXPECT_EQ(rig.engine.busy_limit_dbm(), -85);
+  rig.radio.set_rssi_default(-110);
+  rig.engine.reset_hop_timestamp();
+  for (int i = 0; i < 20 * QUIET_LEVEL_READING_EVERY_N_HOPS; i++)
+    idle_hop(rig);
+  EXPECT_EQ(rig.engine.busy_limit_dbm(), -85) << "a few readings per channel are no quiet level";
+}
+
+TEST(BusyLimit, ALearnedQuietBoardKeepsTheLowerBound) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  learn_quiet_level(rig, -113);  // bench V2
+  EXPECT_EQ(rig.engine.busy_limit_dbm(), -90);
+}
+
+TEST(BusyLimit, ARequestOnANoisyBoardFindsAFreeChannelOnceTheLimitIsLearned) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  rig.radio.set_rssi_default(-80);
+  EXPECT_EQ(rig.run(false, ExchangeOptions{1}), ExchangeOutcome::FAILED) << "-80 is busy against the -85 start limit";
+  ASSERT_EQ(rig.radio.get_send_count(), 0);
+
+  learn_quiet_level(rig, -89);  // a board that idles near the level of issue #228
+  ASSERT_EQ(rig.engine.busy_limit_dbm(), -75);
+  rig.radio.set_rssi_default(-80);
+  rig.run(false, ExchangeOptions{1});
+  EXPECT_EQ(rig.radio.get_send_count(), 1) << "-80 is idle noise against a learned -75";
+}
+
+TEST(BusyLimit, TheStartFrameOfAFixedChannelSenderUsesTheLearnedLimitToo) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  learn_quiet_level(rig, -89);
+  rig.radio.set_rssi_default(-80);
+
+  ASSERT_TRUE(rig.engine.transmit_frame(start_frame(), FREQ_CH2, SHORT_PREAMBLE));
+
+  EXPECT_EQ(rig.engine.counters().lbt_retries, 0u) << "-80 dBm is below the learned -75";
+  ASSERT_EQ(rig.radio.get_tx_configs().size(), 1u);
+  EXPECT_EQ(rig.radio.get_tx_configs()[0].cca_threshold_dbm, -75);
+}
+
+TEST(BusyLimit, ALearnedLimitStillHoldsBackForARealTransmission) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  learn_quiet_level(rig, -113);
+  rig.radio.set_rssi_default(-70);  // the weakest device frame seen on the bench
+  EXPECT_EQ(rig.run(false, ExchangeOptions{1}), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.radio.get_send_count(), 0);
+}
+
+TEST(BusyLimit, AFixedThresholdIsTheLimitAndNothingIsLearned) {
+  AccessRig rig;
+  rig.tuning.lbt_rssi_threshold_dbm = -95;
+  rig.engine.reset_hop_timestamp();
+  rig.radio.set_rssi_default(-110);
+  for (int i = 0; i < 50 * QUIET_LEVEL_READING_EVERY_N_HOPS; i++)
+    idle_hop(rig);
+
+  EXPECT_TRUE(rig.radio.rssi_read_freqs().empty()) << "no readings: the limit is not learned";
+  EXPECT_EQ(rig.engine.busy_limit_dbm(), -95);
+
+  rig.radio.set_rssi_default(-96);
+  ASSERT_TRUE(rig.engine.transmit_frame(start_frame(), FREQ_CH2, SHORT_PREAMBLE));
+  EXPECT_EQ(rig.radio.get_tx_configs()[0].cca_threshold_dbm, -95);
 }

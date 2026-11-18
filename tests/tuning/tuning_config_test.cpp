@@ -31,7 +31,7 @@ TEST(TuningConfig, DefaultsMatchPlan) {
   EXPECT_FALSE(cfg.pairing_discovery_preamble_set) << "discovery follows the start preamble";
   EXPECT_EQ(cfg.legacy_preamble_bytes.start, 0) << "no deprecated byte key given";
   EXPECT_FALSE(cfg.lbt_force_when_busy) << "a request is never forced onto a busy channel by default";
-  EXPECT_EQ(cfg.lbt_rssi_threshold_dbm, -85);
+  EXPECT_FALSE(cfg.lbt_rssi_threshold_dbm.has_value()) << "the busy limit is learned unless the user fixes it";
   ASSERT_EQ(cfg.pairing_discovery_commands.size(), 1);
   EXPECT_EQ(static_cast<uint8_t>(cfg.pairing_discovery_commands[0]), 0x28);
   EXPECT_TRUE(cfg.pairing_discovery_destination_auto);

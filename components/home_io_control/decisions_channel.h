@@ -11,6 +11,7 @@
 
 #include "proto_timing.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -84,6 +85,30 @@ static constexpr std::array<uint8_t, 5> BACKOFF_CEILINGS_MS = {4, 8, 16, 32, 40}
 /// judges it.
 [[nodiscard]] inline bool channel_is_busy(int16_t level_dbm, int16_t threshold_dbm) {
   return level_dbm >= threshold_dbm;
+}
+
+/// The limit at or above which a reading makes a channel busy, judged against the board's own quiet
+/// level (ADR 0096).
+/// @param quiet_level_dbm The board's quiet level, or nothing while it is not known yet.
+/// @return CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM without a quiet level; else the quiet level plus
+///         QUIET_LEVEL_MARGIN_DB, held between BUSY_LIMIT_FLOOR_DBM and BUSY_LIMIT_CEILING_DBM.
+[[nodiscard]] inline int16_t busy_limit_dbm(std::optional<int16_t> quiet_level_dbm) {
+  if (!quiet_level_dbm.has_value())
+    return CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM;
+  const auto limit = static_cast<int16_t>(*quiet_level_dbm + QUIET_LEVEL_MARGIN_DB);
+  return std::clamp(limit, BUSY_LIMIT_FLOOR_DBM, BUSY_LIMIT_CEILING_DBM);
+}
+
+/// Whether a board's quiet level is so high that its limit has less than QUIET_LEVEL_WARN_HEADROOM_DB
+/// of room below the upper bound: the highest of five readings at that level, plus the headroom,
+/// would pass BUSY_LIMIT_CEILING_DBM.
+[[nodiscard]] inline bool quiet_level_leaves_little_margin(int16_t quiet_level_dbm) {
+  return quiet_level_dbm + QUIET_LEVEL_BURST_OFFSET_DB + QUIET_LEVEL_WARN_HEADROOM_DB > BUSY_LIMIT_CEILING_DBM;
+}
+
+/// The distance between two levels, in dB.
+[[nodiscard]] inline int16_t abs_difference(int16_t a, int16_t b) {
+  return static_cast<int16_t>(a > b ? a - b : b - a);
 }
 
 /// The channel a forced send takes once the access time is spent (`lbt_force_when_busy`).

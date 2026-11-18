@@ -230,7 +230,8 @@ class RadioDriver {
   [[nodiscard]] virtual uint32_t cca_settle_us() const = 0;
 
   /// Read instantaneous RSSI (in dBm) on the current channel, while in RX mode. Drivers take their
-  /// clear-channel reading inside send_packet() with it; otherwise it is for diagnostics.
+  /// clear-channel reading inside send_packet() with it, and the idle hop feeds it to the board's
+  /// quiet level (ADR 0096), so both sit on the same scale.
   /// @return RSSI in dBm (negative value).
   virtual int16_t read_rssi() = 0;
 

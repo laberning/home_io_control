@@ -151,7 +151,7 @@ your device may differ.
 | `low_power_wake_ms` | both | `600` | 300–1000 ms | Wake-up preamble duration on a directed start frame to a `low_power:` device believed at rest. See below. |
 | `pairing_discovery_preamble_ms` | both | follows `start_preamble_ms` | 1.5–300 ms | Preamble duration on the discovery broadcast itself. See [`pairing_discovery_preamble_ms`](#pairing_discovery_preamble_ms). |
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the wake-up preamble. See below. |
-| `lbt_rssi_threshold_dbm` | both | `-85` | -95 to -70 dBm | RSSI on a channel at or above which it counts as busy. See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
+| `lbt_rssi_threshold_dbm` | both | not set (learned) | -95 to -70 dBm | RSSI on a channel at or above which it counts as busy. Not set: the hub learns the limit from how quiet the channels are on your board. See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
 | `lbt_force_when_busy` | both | `false` | `true` / `false` | When every channel stays busy for the whole waiting time, send on the quietest one instead of ending the attempt as "channel busy". See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
 | `remote_activity_poll_delay_ms` | both | `2000` | 0–120000 ms | Delay from a linked-remote press (not a STOP) to the first status poll of its devices. See below. |
 | `remote_activity_catchup_poll_ms` | both | `0` (off) | 0–600000 ms | Read every device with `linked_remotes` this long after the last exchange that followed a linked-remote press, to catch a press the hub missed. See below. |
@@ -573,18 +573,27 @@ With the switch off, every try to a `low_power:` device uses the wake-up preambl
 
 Channel access: before the hub sends a request (a command, a status or register read, a management
 request) it measures the channel it is about to use, up to five readings about 1 ms apart. One
-reading at or above `lbt_rssi_threshold_dbm` makes the channel busy, and the hub never sends onto a
-busy channel. It waits a random time, from a few milliseconds up to about 40 ms and growing with
+reading at or above the busy limit makes the channel busy, and the hub never sends onto a busy
+channel. It waits a random time, from a few milliseconds up to about 40 ms and growing with
 every busy check, while it keeps receiving, and then checks another channel. Every attempt of a
 request takes a different channel than the attempt before it, because receivers scan all three
 channels. The hub listens for the answer on the channel it sent on.
 
-The default limit, -85 dBm, sits above the level some boards read on a quiet channel: a LilyGO T3
-V1.6.1 reads -88 to -90 dBm there, and at a limit of -90 dBm it never found a free channel
-([issue #228](https://github.com/laberning/home_io_control/issues/228)). If the log shows
-`Try N ended: channel busy` while nothing else sends, your board reads its quiet channels at or above
-the limit. The debug log names the level of every busy check (`Channel busy (RSSI -88 dBm on …)`);
-set the limit a few dB above it.
+Without `lbt_rssi_threshold_dbm` the hub learns the busy limit on your board. While it listens it
+takes about twelve readings a second on each channel and keeps the typical level of each. The limit
+is the quietest channel's typical level plus 19 dB, never below -90 dBm and never above -75 dBm. A
+quiet board therefore judges a channel busy from -90 dBm on, and a board that reads more background
+noise (a LilyGO T3 V1.6.1 reads -88 to -90 dBm on a quiet channel,
+[issue #228](https://github.com/laberning/home_io_control/issues/228)) still finds free channels.
+For the first seconds after boot, until every channel has enough readings, the limit is -85 dBm. The
+log shows the limit at INFO (`Busy channel limit -81 dBm, learned from this board's quiet level`)
+when it is first known and when it changes by 3 dB or more. If a channel idles so high that little
+room is left below -75 dBm, the log warns once per boot and names the channel and its level.
+
+Set `lbt_rssi_threshold_dbm` to fix the limit yourself: the hub then uses exactly that value and
+learns nothing, and the tuning number in Home Assistant shows a value only then. If the log shows
+`Try N ended: channel busy` while nothing else sends, the debug log names the level of every busy
+check (`Channel busy (RSSI -88 dBm on …)`); set the limit a few dB above it.
 
 The checks of one attempt last about 100 ms. If every channel stays busy that long, the attempt ends
 as "channel busy": nothing is sent, the log line `Try N ended: channel busy` says so, and the exchange
@@ -619,8 +628,8 @@ because the time limits end the checks, not a count.
 threshold (less sensitive) lets the hub transmit through that.
 
 > [!WARNING]
-> **Keep the default threshold in a permanent configuration.** The `-85` dBm threshold keeps the
-> hub from starting an exchange over traffic it can hear. A higher threshold, or
+> **Leave `lbt_rssi_threshold_dbm` unset in a permanent configuration.** The learned limit keeps the
+> hub from starting an exchange over traffic it can hear. A higher fixed threshold, or
 > `lbt_force_when_busy: true`, makes it transmit over other devices on the band, and depending on
 > your country's rules for the 868 MHz band that may not be allowed. Use them for a brief experiment
 > only.

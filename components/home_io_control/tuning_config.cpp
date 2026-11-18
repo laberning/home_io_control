@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <cstdio>
 
@@ -372,7 +373,10 @@ void append_changed_numbers(std::string &result, const TuningConfig &cfg, const 
     if (std::strcmp(p->name, "pairing_discovery_preamble_ms") == 0)
       continue;
     const float current = p->get(cfg);
-    if (current != p->get(defaults))
+    const float standard = p->get(defaults);
+    // NaN is "not set" (the learned busy limit) and never equals itself.
+    const bool both_unset = std::isnan(current) && std::isnan(standard);
+    if (!both_unset && current != standard)
       result += " " + std::string(p->name) + "=" + format_tuning_number(current);
   }
   if (cfg.pairing_discovery_preamble_set)

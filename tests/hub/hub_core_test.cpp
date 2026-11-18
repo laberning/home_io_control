@@ -391,7 +391,7 @@ TEST(HubCore, LBT_ExactThreshold_IsConsideredClear) {
   comp.radio_ = &radio;
 
   // Exactly at the threshold is NOT clear (>=, not >)
-  radio.set_rssi_default(LBT_RSSI_THRESHOLD_DBM);
+  radio.set_rssi_default(CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM);
 
   IoFrame frame = make_simple_frame();
   EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
@@ -405,7 +405,7 @@ TEST(HubCore, LBT_JustBelowThreshold_TransmitsImmediately) {
   MockRadio radio;
   comp.radio_ = &radio;
 
-  radio.set_rssi_default(LBT_RSSI_THRESHOLD_DBM - 1);  // just below threshold
+  radio.set_rssi_default(CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM - 1);  // just below threshold
 
   IoFrame frame = make_simple_frame();
   EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));

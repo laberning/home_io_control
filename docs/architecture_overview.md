@@ -92,6 +92,7 @@ How to call each action from Home Assistant, with its fields and result event, i
 - Pairing telemetry recorder: [pairing_telemetry.h](../components/home_io_control/pairing_telemetry.h)
 - Pairing traffic advisor: [pairing_advisor.h](../components/home_io_control/pairing_advisor.h)
 - Key-material redaction helpers: [redaction.h](../components/home_io_control/redaction.h)
+- Quiet level of the idle channels and the busy limit learned from it ([ADR 0096](adr/0096-the-hubs-requests-take-a-free-channel-and-are-never-forced-onto-a-busy-one.md)): [channel_quiet_level.h](../components/home_io_control/channel_quiet_level.h)
 - Pure decision helpers, one header per concern, in namespace `decisions`, testable without radio or timing (no umbrella header; every includer names the headers it uses):
   - Reply classification inside an exchange, device-event and subscription answers, the broadcast reply filter: [decisions_exchange.h](../components/home_io_control/decisions_exchange.h)
   - Channel access of a request: the channel of each check, the random growing back-off, the access time, the channel of a forced send, whether silence after a try is evidence ([ADR 0096](adr/0096-the-hubs-requests-take-a-free-channel-and-are-never-forced-onto-a-busy-one.md)): [decisions_channel.h](../components/home_io_control/decisions_channel.h)

@@ -22,6 +22,7 @@
 /// thin `transmit_frame_()` / `hop_frequency_()` wrappers delegate here, and
 /// `PairingEngine` holds a direct reference for its own exchanges.
 
+#include "channel_quiet_level.h"
 #include "hub_exchange.h"
 #include "decisions_channel.h"
 #include "decisions_exchange.h"
@@ -379,9 +380,20 @@ class ExchangeEngine {
   /// channel — @ref RadioDriver::reception_in_progress() gates the hop so a reception in
   /// progress is never destroyed mid-arrival (issue #81). A deferred hop does not reset the
   /// dwell timer: it fires on the first call after the reception clears, not a further
-  /// HOP_TIME_US later.
+  /// HOP_TIME_US later. Right before every QUIET_LEVEL_READING_EVERY_N_HOPS-th hop, while the
+  /// receiver sits on the channel it just heard, it takes one RSSI reading for the board's quiet
+  /// level (ChannelQuietLevel); never during a reception, and not at all with a fixed
+  /// `lbt_rssi_threshold_dbm`.
   /// Called from the hub's `loop()` to honour passive channel scanning.
   void maybe_hop();
+
+  /// The RSSI at or above which a reading makes a channel busy, for requests and for the start frames
+  /// of the fixed-channel senders: `lbt_rssi_threshold_dbm` when set, else the limit learned from
+  /// the board's own quiet level (decisions::busy_limit_dbm(), ADR 0096).
+  [[nodiscard]] int16_t busy_limit_dbm() const;
+
+  /// The tally of idle readings the learned limit comes from; read-only, for diagnostics and tests.
+  [[nodiscard]] const ChannelQuietLevel &quiet_level() const { return this->quiet_level_; }
 
   /// Reset the hop-timer (called after radio init in hub setup()).
   void reset_hop_timestamp();
@@ -595,6 +607,10 @@ class ExchangeEngine {
   /// @param skip Channel to pass over, or 0 to rotate through all three — see hop_frequency().
   /// @param spec The listen this hop belongs to; only `on_hop` is read.
   void listen_hop_(uint32_t skip, const ListenSpec &spec);
+
+  /// Take one idle reading on the current channel into the quiet-level tally and log what the
+  /// learned limit's change deserves (maybe_hop() calls it).
+  void note_idle_reading_();
 
   // --- Transmission shape and the exchange budget ---------------------------
 
@@ -827,9 +843,12 @@ class ExchangeEngine {
 
   // --- Engine state --------------------------------------------------------
 
-  uint32_t last_hop_us_{0};  ///< Timestamp of the last channel hop (µs, from micros()).
-  DebugInfo debug_{};        ///< Snapshot updated throughout each exchange attempt.
-  Counters counters_{};      ///< Free-running counters; see counters()/reset_counters().
+  uint32_t last_hop_us_{0};        ///< Timestamp of the last channel hop (µs, from micros()).
+  uint8_t hops_since_reading_{0};  ///< Idle hops since the last quiet-level reading.
+  ChannelQuietLevel quiet_level_;  ///< Idle readings per channel; the learned busy limit comes from it.
+  BusyLimitLog busy_limit_log_;    ///< What of the learned limit has been logged already.
+  DebugInfo debug_{};              ///< Snapshot updated throughout each exchange attempt.
+  Counters counters_{};            ///< Free-running counters; see counters()/reset_counters().
 };
 
 /// Longest rendered exchange-debug field list, plus headroom for a long command name. Stays well

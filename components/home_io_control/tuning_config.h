@@ -274,7 +274,10 @@ struct TuningConfig {
   /// Preamble (ms) for a directed start frame to a non-low-power target, and the one a discovery
   /// broadcast follows unless `pairing_discovery_preamble_ms` is set (ADR 0029, ADR 0078).
   float start_preamble_ms{START_PREAMBLE_MS};
-  int16_t lbt_rssi_threshold_dbm{LBT_RSSI_THRESHOLD_DBM};  ///< LBT channel-free threshold (dBm).
+  /// A fixed RSSI (dBm) at or above which a channel counts as busy, for requests and for the start
+  /// frames of the fixed-channel senders. Unset (the default): the limit is learned from the board's
+  /// own quiet level (decisions::busy_limit_dbm(), ADR 0096).
+  std::optional<int16_t> lbt_rssi_threshold_dbm;
   /// When the access time of a request from the exchange engine is spent and every channel it may
   /// use stays busy, send on the quietest instead of ending the attempt as "channel busy" (ADR 0096).
   /// Off by default: the hub never sends onto a channel it measured busy.

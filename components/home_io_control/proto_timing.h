@@ -366,12 +366,42 @@ static constexpr uint32_t RAIN_EVIDENCE_HOLD_MS = 2UL * 60UL * 60UL * 1000UL;
 /// START answers within a session and is sent at once, unchecked. The exchange engine's requests
 /// use the channel access below instead (ADR 0096).
 ///
-/// LBT_RSSI_THRESHOLD_DBM is the default of `lbt_rssi_threshold_dbm`: a reading at or above it makes
-/// a channel busy, for these senders and for the exchange engine's requests alike. -85 dBm sits above
-/// the highest idle floor reported on a board: a LilyGO T3 V1.6.1 (SX1276) reads -88 to -90 dBm on
-/// every channel (issue #228), so at -90 dBm it found no free channel. Another SX1276 board idles
-/// near -100 dBm (ADR 0096).
-static constexpr int16_t LBT_RSSI_THRESHOLD_DBM = -85;
+/// The limit at or above which a reading makes a channel busy, for these senders and for the exchange
+/// engine's requests alike, is learned per board (decisions::busy_limit_dbm()): the board's own quiet
+/// level plus QUIET_LEVEL_MARGIN_DB, held between BUSY_LIMIT_FLOOR_DBM and BUSY_LIMIT_CEILING_DBM.
+/// A fixed `lbt_rssi_threshold_dbm` replaces it. Boards differ in how much background noise their
+/// receiver reads: one board reads -88 to -90 dBm on every channel (issue #228), so a fixed -90 dBm
+/// finds no free channel on it, while four bench boards idle between -123 and -108 dBm (ADR 0096).
+///
+/// CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM is the limit before every channel has enough readings: above
+/// the noisiest board reported so far, so a board that has not learned yet still finds a free channel.
+static constexpr int16_t CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM = -85;
+/// The learned limit never goes below this: a quiet board judges a channel busy from -90 dBm on.
+static constexpr int16_t BUSY_LIMIT_FLOOR_DBM = -90;
+/// The learned limit never goes above this: weakest own device frame seen on the bench was -70 dBm,
+/// so a limit this far below it still holds back for a nearby transmitter.
+static constexpr int16_t BUSY_LIMIT_CEILING_DBM = -75;
+/// Distance of the learned limit above the quiet level (the median of single idle readings). It
+/// covers the 4 to 5 dB by which the highest of five readings, which is what a request's channel check
+/// compares, sits above that median on all four bench boards (QUIET_LEVEL_BURST_OFFSET_DB), plus
+/// headroom for the board whose readings scatter most (ADR 0096).
+static constexpr int16_t QUIET_LEVEL_MARGIN_DB = 19;
+/// How far the highest of a check's five readings typically sits above the quiet level (see above).
+static constexpr int16_t QUIET_LEVEL_BURST_OFFSET_DB = 4;
+/// Headroom between the typical highest-of-five reading and BUSY_LIMIT_CEILING_DBM below which a
+/// board's quiet level is reported (a warning, once per boot): with less, ordinary noise reaches the
+/// limit and the board struggles to find a free channel.
+static constexpr int16_t QUIET_LEVEL_WARN_HEADROOM_DB = 10;
+/// A learned limit is logged when it is first known and when it moves by at least this much.
+static constexpr int16_t BUSY_LIMIT_LOG_STEP_DB = 3;
+/// One idle reading is taken at every this-many-th idle hop, about 12 readings a second per channel
+/// at HOP_TIME_US, rare enough to leave the idle hop as it is.
+static constexpr uint8_t QUIET_LEVEL_READING_EVERY_N_HOPS = 10;
+/// A channel's quiet level is known once it has this many readings (about 16 s after boot).
+static constexpr uint16_t QUIET_LEVEL_MIN_READINGS = 200;
+/// When a channel's readings reach this count they are all halved, so the quiet level follows a
+/// change of the board's surroundings within a few minutes.
+static constexpr uint16_t QUIET_LEVEL_HALVING_READINGS = 4096;
 static constexpr uint8_t LBT_MAX_RETRIES = 5;     ///< Max carrier-sense attempts before TX anyway
 static constexpr uint8_t LBT_RETRY_DELAY_MS = 5;  ///< Backoff between LBT checks
 

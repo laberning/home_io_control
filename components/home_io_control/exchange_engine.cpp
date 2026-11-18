@@ -162,7 +162,37 @@ void ExchangeEngine::maybe_hop() {
   // happen on the very next pass once the reception clears, not a further HOP_TIME_US later.
   if ((*this->radio_ptr_)->reception_in_progress())
     return;
+  // The receiver has sat on this channel for the whole dwell, so a reading now needs no retune or
+  // settle time. One in QUIET_LEVEL_READING_EVERY_N_HOPS hops, so the hop's timing is untouched.
+  if (++this->hops_since_reading_ >= QUIET_LEVEL_READING_EVERY_N_HOPS) {
+    this->hops_since_reading_ = 0;
+    this->note_idle_reading_();
+  }
   this->hop_frequency();
+}
+
+void ExchangeEngine::note_idle_reading_() {
+  // A fixed limit replaces the learned one, so there is nothing to learn.
+  if (this->tuning_->lbt_rssi_threshold_dbm.has_value())
+    return;
+  RadioDriver *radio = *this->radio_ptr_;
+  this->quiet_level_.add_reading(radio->get_current_freq(), radio->read_rssi());
+  const BusyLimitReport report = this->busy_limit_log_.update(this->quiet_level_.board_quiet_level());
+  if (report.limit_to_log_dbm.has_value())
+    ESP_LOGI(TAG, "Busy channel limit %d dBm, learned from this board's quiet level", *report.limit_to_log_dbm);
+  if (report.little_margin.has_value()) {
+    ESP_LOGW(TAG,
+             "Channel %" PRIu32 " Hz idles at %d dBm, close to the highest limit this hub uses (%d dBm); free "
+             "channels may be hard to find here. Set lbt_rssi_threshold_dbm to choose the limit yourself.",
+             report.little_margin->freq_hz, report.little_margin->level_dbm, BUSY_LIMIT_CEILING_DBM);
+  }
+}
+
+int16_t ExchangeEngine::busy_limit_dbm() const {
+  if (this->tuning_->lbt_rssi_threshold_dbm.has_value())
+    return *this->tuning_->lbt_rssi_threshold_dbm;
+  const std::optional<ChannelLevel> quiet = this->quiet_level_.board_quiet_level();
+  return decisions::busy_limit_dbm(quiet.has_value() ? std::optional<int16_t>(quiet->level_dbm) : std::nullopt);
 }
 
 // ============================================================================
@@ -216,7 +246,7 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
   TxResult result;
   for (uint8_t lbt = 0;; lbt++) {
     if (lbt < lbt_checks) {
-      tx_config.cca_threshold_dbm = this->tuning_->lbt_rssi_threshold_dbm;
+      tx_config.cca_threshold_dbm = this->busy_limit_dbm();
     } else {
       tx_config.cca_threshold_dbm.reset();
     }
@@ -254,7 +284,7 @@ bool ExchangeEngine::conclude_send_(const IoFrame &frame, const RadioTxConfig &t
 
 TxResult ExchangeEngine::check_channel_and_send_(const uint8_t *buf, uint8_t len, RadioTxConfig &tx_config) {
   RadioDriver *radio = *this->radio_ptr_;
-  const int16_t threshold_dbm = this->tuning_->lbt_rssi_threshold_dbm;
+  const int16_t threshold_dbm = this->busy_limit_dbm();
   // All readings but the last are taken here; the last is the radio's own, right before the first
   // symbol, so a channel that turns busy between the check and the send is still caught.
   for (uint8_t reading = 1; reading < CHANNEL_CHECK_READINGS; reading++) {

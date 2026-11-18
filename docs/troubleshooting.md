@@ -235,7 +235,9 @@ is a general starting point, not a guarantee — different devices need differen
    If commands stop working after you raise it, set it back.
 
 9. **If the logs show `channel busy` on a quiet channel** (`Try N ended: channel busy`), the hub is
-   reading noise as traffic. Raise the threshold a little, but read
+   reading noise as traffic. It learns the limit from your board's own quiet level, and warns when
+   a channel idles close to the highest limit it uses. Fix the limit a little above the level the
+   debug log names, but read
    [Safety and compliance](configuration/tuning.md#safety-and-compliance) before you leave a
    relaxed value in a permanent config:
    ```yaml

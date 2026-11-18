@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <set>
 #include <string>
 #include <vector>
@@ -148,11 +149,26 @@ TEST(TuningRegistry, EveryNumberParameterAppearsInSnapshotWhenNonDefault) {
   // while still differing from any real default), and asserts the snapshot names it.
   for (const TuningNumberParam *p = tuning_number_params_begin(); p != tuning_number_params_end(); ++p) {
     TuningConfig cfg{};
-    p->set(cfg, p->get(cfg) + 1.0F);
+    // A parameter that defaults to "not set" reads as NaN; give it any value.
+    const float standard = p->get(cfg);
+    p->set(cfg, std::isnan(standard) ? -80.0F : standard + 1.0F);
     const std::string snapshot = tuning_config_snapshot(cfg);
     EXPECT_NE(snapshot.find(std::string(p->name) + "="), std::string::npos)
         << p->name << " is missing from tuning_config_snapshot() despite being non-default";
   }
+}
+
+TEST(TuningRegistry, TheLearnedBusyLimitReadsAsNoValueAndNeverShowsInTheSnapshot) {
+  const TuningNumberParam *param = find_tuning_number("lbt_rssi_threshold_dbm");
+  ASSERT_NE(param, nullptr);
+  TuningConfig cfg{};
+  EXPECT_TRUE(std::isnan(param->get(cfg))) << "learned: the number entity shows no value";
+  EXPECT_EQ(tuning_config_snapshot(cfg).find("lbt_rssi_threshold_dbm"), std::string::npos);
+
+  param->set(cfg, -80.0F);
+  EXPECT_EQ(cfg.lbt_rssi_threshold_dbm, -80) << "setting the entity fixes the limit";
+  EXPECT_FLOAT_EQ(param->get(cfg), -80.0F);
+  EXPECT_NE(tuning_config_snapshot(cfg).find("lbt_rssi_threshold_dbm=-80"), std::string::npos);
 }
 
 // ============================================================================
