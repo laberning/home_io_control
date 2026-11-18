@@ -3,7 +3,7 @@
 /// @file platform_climate_controls.h
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the heater setting switches
 /// (open-window detection, occupancy detection), the night light, the heating-level text sensor and the
-/// register binary sensors (central-heating mode, occupancy).
+/// register binary sensors (central-heating mode, occupancy) and the register sensor (energy total).
 /// @ingroup hioc_platforms
 ///
 /// All are device-bound companions (DeviceBoundCompanion) that climate.py generates alongside a
@@ -11,8 +11,8 @@
 /// the YAML asks for it on a kind with NIGHT_LIGHT; the heating-level text sensor is opt-in on an
 /// electrical heater, the central-heating-mode binary sensor is opt-in on a kind with CENTRAL_HEATING_MODE (a
 /// towel dryer), and the occupancy-detection switch and occupancy binary sensor are opt-in on a kind with
-/// OCCUPANCY. They show readings the hub's poll already stores in
-/// IoDevice::heating and add no radio traffic of their own, except their writes and the read-backs that
+/// OCCUPANCY, and the energy sensor is opt-in on a kind with ENERGY_METER. They show readings the hub's poll already
+/// stores in IoDevice::heating and add no radio traffic of their own, except their writes and the read-backs that
 /// confirm them.
 ///
 /// @todo Experimental: the meaning of registers 0x010E (window sensor) and 0x0106 (open-window
@@ -23,6 +23,7 @@
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/light/light_output.h"
+#include "esphome/components/sensor/sensor.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
@@ -84,7 +85,7 @@ class IOHomeWindowBinarySensor : public binary_sensor::BinarySensor, public Comp
 class HeaterRegisterCompanion : public DeviceBoundCompanion {
  public:
   /// @brief Name the register this entity shows (generated code).
-  /// @param fn A register the readings hold (HeatingReadings::value_of()).
+  /// @param fn A register the readings hold (HeatingReadings::value_of() or number_of()).
   void set_function(HeatingFunction fn) { this->function_ = fn; }
 
  protected:
@@ -92,6 +93,12 @@ class HeaterRegisterCompanion : public DeviceBoundCompanion {
   /// @param dev The device record.
   /// @return The register's integer value, or -1 while it has not been read (or was dropped).
   [[nodiscard]] int16_t reading_(const IoDevice &dev) const { return dev.heating.value_of(this->function_); }
+
+  /// @brief The number the heater last reported for this entity's register, for a register kept as a number with
+  /// a unit (HeatingReadings::number_of()): wide enough for a counter that reaches past 32767.
+  /// @param dev The device record.
+  /// @return The register's value, or NaN while it has not been read (or was dropped).
+  [[nodiscard]] float number_reading_(const IoDevice &dev) const { return dev.heating.number_of(this->function_); }
 
   HeatingFunction function_{HeatingFunction::COUNT};  ///< The register; COUNT until the generated code names it.
 };
@@ -115,6 +122,30 @@ class HeaterRegisterCompanion : public DeviceBoundCompanion {
 class IOHomeHeaterRegisterBinarySensor : public binary_sensor::BinarySensor,
                                          public Component,
                                          public HeaterRegisterCompanion {
+ public:
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+
+  /// @brief Dump sensor configuration to the log.
+  void dump_config() override;
+
+  /// @brief Get setup priority so the parent hub is available first.
+  /// @return setup_priority::DATA.
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+};
+
+/// @brief Sensor that shows one numeric register of a heater, with no state until the heater has reported it.
+/// @ingroup hioc_platforms
+///
+/// Used for the opt-in `energy:` key of a climate entry: the energy total, register 0x0116, in kWh. The unit,
+/// device class, state class and accuracy come from the key's schema (climate.py), so another numeric register
+/// is a table row. The register is read at every poll once the entity is declared (the climate entity asks the
+/// hub, see HeatingOptInReads). Nothing read, a reading dropped, and a heater that answers without a value (its
+/// register is absent) all leave the sensor without a state, never at 0.
+///
+/// \todo Experimental except on a Sauter Tahual: the total equals that radiator's display (PR #238); compare it
+///       with the display of an EMOTION 3 H, an Adelis and a Hekla.
+class IOHomeHeaterRegisterSensor : public sensor::Sensor, public Component, public HeaterRegisterCompanion {
  public:
   /// @brief Subscribe to the device's updates and publish what is already known.
   void setup() override;

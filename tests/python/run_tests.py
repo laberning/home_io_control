@@ -620,7 +620,8 @@ def heating_level_sensor_is_accepted_on_an_electrical_heater_only():
 @case()
 def opt_in_register_keys_are_accepted_only_on_a_kind_with_their_capability():
     """`central_heating_mode:` passes on a towel dryer (the CENTRAL_HEATING_MODE capability of its row);
-    `occupancy_detection:` and `occupancy:` pass on a radiator and a heater with a light (OCCUPANCY). Each is refused
+    `occupancy_detection:` and `occupancy:` pass on a radiator and a heater with a light (OCCUPANCY); `energy:` passes
+    on a radiator, a towel dryer and a heater with a light (ENERGY_METER). Each is refused
     on every other heater kind, another device and an entry with no declared type, with a message naming the
     kind to declare; an entry without the keys is untouched."""
     import esphome.config_validation as cv
@@ -643,16 +644,19 @@ def opt_in_register_keys_are_accepted_only_on_a_kind_with_their_capability():
         c.CONF_CENTRAL_HEATING_MODE: (dryer,),
         c.CONF_OCCUPANCY_DETECTION: (radiator, with_light),
         c.CONF_OCCUPANCY: (radiator, with_light),
+        c.CONF_ENERGY: (radiator, dryer, with_light),
     }
     refused = {
         c.CONF_CENTRAL_HEATING_MODE: (radiator, with_light, plain, pilot_wire, pump, {}),
         c.CONF_OCCUPANCY_DETECTION: (dryer, plain, pilot_wire, pump, {}),
         c.CONF_OCCUPANCY: (dryer, plain, pilot_wire, pump, {}),
+        c.CONF_ENERGY: (plain, pilot_wire, pump, {}),
     }
     hint = {
         c.CONF_CENTRAL_HEATING_MODE: "io_model: towel_dryer",
         c.CONF_OCCUPANCY_DETECTION: "io_model: heater_with_light",
         c.CONF_OCCUPANCY: "io_model: heater_with_light",
+        c.CONF_ENERGY: "io_model: towel_dryer or io_model: heater_with_light",
     }
     for key, kinds in accepted.items():
         for kind in kinds:
@@ -959,7 +963,7 @@ def device_features_fall_back_like_the_cpp_lookup():
         assert v.device_features(t[binary_kind]) == frozenset(), binary_kind
         assert "EXTENDED_POSITION_FRAME" not in v.device_features(t[binary_kind], 1), binary_kind
     assert v.device_features(t["light"], 1) == {"LEVELS"}
-    assert v.device_features(t["electrical_heater"], 1) == {"WINDOW_COMPANIONS", "OCCUPANCY"}
+    assert v.device_features(t["electrical_heater"], 1) == {"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}
     assert v.device_features(t["electrical_heater"], 0) == frozenset()
     assert v.device_features(0x14) == frozenset(), "a raw type with no name has no capabilities"
     assert v.device_features(0x14, 58) == {"MAIN_PARAMETER_ONLY"}
@@ -1003,7 +1007,7 @@ def a_model_row_is_offered_only_by_its_kind_and_replaces_its_word():
     assert v.device_models(t["roller_shutter"]) == []
     assert v.device_models(0x14, 1) == [], "a raw type with no name has no models"
     assert "WINDOW_COMPANIONS" not in v.device_features(t["electrical_heater"], 1, towel)
-    assert v.device_features(t["electrical_heater"], 1) == {"WINDOW_COMPANIONS", "OCCUPANCY"}, "no model: the radiator"
+    assert v.device_features(t["electrical_heater"], 1) == {"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}, "no model: the radiator"
     assert v.device_features(t["roller_shutter"], 0, towel) == v.device_features(t["roller_shutter"])
     assert not v.kind_is_experimental(t["electrical_heater"], 1)
     assert p.config_model({"io_model": "towel_dryer"}) == towel

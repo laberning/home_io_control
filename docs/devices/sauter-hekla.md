@@ -23,6 +23,7 @@ the night light. Three heaters that were already paired with a Sauter Cozytouch 
 | Target set in `auto` (temporary override) | ⚠️ Experimental: no Hekla has confirmed it |
 | Level the heater applies (`heating_level:` sensor) | ❌ Not read: the sensor stays without a state |
 | Occupancy detection: switch (`occupancy_detection:`) and sensor (`occupancy:`) | ⚠️ Experimental: the registers were read and the setting switched in the Cozytouch app, but no one has used the Home Assistant entities yet. What the sensor shows with the detection off is not confirmed |
+| Energy total (`energy:` sensor) | ⚠️ Experimental: not tested on a Hekla; a Sauter Tahual's total equals its display ([Energy sensor](../configuration/climate.md#energy-sensor)) |
 
 ## Modes in Home Assistant
 

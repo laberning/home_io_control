@@ -237,18 +237,19 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE, "pilot_wire_interface", CAP_CLIMATE,
      SELECTABLE_PLATFORM, NO_FEATURES},
     {DeviceType::ELECTRICAL_HEATER, 1, NO_MODEL, "with adjustable setpoint", CAP_CLIMATE, SUBTYPE_PLATFORM,
-     WINDOW_COMPANIONS | device_feature::OCCUPANCY},
+     WINDOW_COMPANIONS | device_feature::OCCUPANCY | device_feature::ENERGY_METER},
     // A towel dryer reports the same 52/1 as the AGILIA radiator (two Atlantic Adelis units in issue
     // #202), so it is a model row: the YAML declares it (`io_model: towel_dryer`). It has no window
     // sensor and no open-window detection, and its own heating profile (proto_heating_profiles.cpp).
     // A mixed unit also reports whether its central-heating mode is on (CENTRAL_HEATING_MODE); the YAML asks
     // for the reading, since the model is the same for the electric unit.
     {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER, "towel_dryer", CAP_CLIMATE, SUBTYPE_PLATFORM,
-     device_feature::CENTRAL_HEATING_MODE},
+     device_feature::CENTRAL_HEATING_MODE | device_feature::ENERGY_METER},
     // A heater with a night light (a Sauter Hekla, issue #222) reports the same 52/1 as well: everything the
     // radiator has, plus the light's registers in its own heating profile.
     {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT, "heater_with_light", CAP_CLIMATE,
-     SUBTYPE_PLATFORM, WINDOW_COMPANIONS | device_feature::NIGHT_LIGHT | device_feature::OCCUPANCY},
+     SUBTYPE_PLATFORM,
+     WINDOW_COMPANIONS | device_feature::NIGHT_LIGHT | device_feature::OCCUPANCY | device_feature::ENERGY_METER},
 
     {DeviceType::HEAT_RECOVERY_VENTILATION, 0, NO_MODEL, "heat_recovery_ventilation", CAP_NONE, 0, NO_FEATURES},
 

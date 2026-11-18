@@ -81,6 +81,11 @@ enum class DeviceFeature : uint8_t {
   /// \todo Experimental except on the Sauter Hekla (issue #222): confirm on an AGILIA IO and an EMOTION 3 H
   ///       that they answer both registers.
   OCCUPANCY,
+  /// A heater that counts the energy it has used, in whole kilowatt-hours, in register 0x0116
+  /// (proto_heating.h). Gates the climate entry's `energy:` sensor.
+  /// \todo Experimental except on the Sauter Tahual (PR #238): compare with the display on an EMOTION 3 H and an
+  ///       Adelis, which answer the register, and check that a Hekla answers it.
+  ENERGY_METER,
   COUNT,  ///< Not a capability: the number of capabilities, for the storage check of DeviceFeatures.
 };
 

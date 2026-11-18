@@ -51,6 +51,12 @@ class TestableDetectionSwitch : public IOHomeHeaterSettingSwitch {
   void trigger_write(bool state) { this->write_state(state); }
 };
 
+/// A numeric register sensor on `fn`.
+class NumberSensor : public IOHomeHeaterRegisterSensor {
+ public:
+  explicit NumberSensor(HeatingFunction fn) { this->set_function(fn); }
+};
+
 /// A register binary sensor on `fn`.
 class RegisterSensor : public IOHomeHeaterRegisterBinarySensor {
  public:
@@ -586,4 +592,61 @@ TEST(PlatformOccupancySensor, LosesItsStateWhenTheHeaterAnswersWithoutAValue) {
 
   hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::SET_PRESENCE); });
   EXPECT_FALSE(sensor.has_state());
+}
+
+// --- Energy sensor: the numeric register sensor (register 0x0116, whole kWh) ---
+
+TEST(PlatformEnergySensor, HasNoStateUntilTheHeaterHasReportedATotal) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  NumberSensor sensor(HeatingFunction::ENERGY_TOTAL);
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+  EXPECT_TRUE(std::isnan(sensor.state)) << "a total of 0 must mean the heater said so";
+
+  hub.deliver([](HeatingReadings &r) { r.room_temperature_c = 20.0F; });
+  EXPECT_TRUE(std::isnan(sensor.state)) << "a reading of something else is no total";
+}
+
+TEST(PlatformEnergySensor, ShowsTheTotalAsTheHeaterReportsItAndFollowsEveryPoll) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  NumberSensor sensor(HeatingFunction::ENERGY_TOTAL);
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 3422.0F); });
+  EXPECT_FLOAT_EQ(sensor.state, 3422.0F);
+  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 3423.0F); });
+  EXPECT_FLOAT_EQ(sensor.state, 3423.0F);
+  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 65535.0F); });
+  EXPECT_FLOAT_EQ(sensor.state, 65535.0F) << "a total past 32767 is not wrapped";
+}
+
+TEST(PlatformEnergySensor, ATotalOfZeroIsShownAsZero) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  NumberSensor sensor(HeatingFunction::ENERGY_TOTAL);
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+
+  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 0.0F); });
+  EXPECT_FLOAT_EQ(sensor.state, 0.0F) << "a new heater";
+}
+
+TEST(PlatformEnergySensor, LosesItsStateWhenTheHeaterAnswersWithoutAValue) {
+  ClimateControlsHub hub;
+  hub.add_heater();
+  NumberSensor sensor(HeatingFunction::ENERGY_TOTAL);
+  sensor.set_parent(&hub);
+  sensor.set_device_id("ABC123");
+  sensor.setup();
+  hub.deliver([](HeatingReadings &r) { r.store(HeatingFunction::ENERGY_TOTAL, 3422.0F); });
+  ASSERT_FLOAT_EQ(sensor.state, 3422.0F);
+
+  hub.deliver([](HeatingReadings &r) { r.clear(HeatingFunction::ENERGY_TOTAL); });
+  EXPECT_TRUE(std::isnan(sensor.state));
 }

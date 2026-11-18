@@ -584,3 +584,17 @@ TEST(DeviceTypesTable, OccupancyIsOnTheRadiatorAndTheHeaterWithLightOnly) {
   EXPECT_FALSE(occupancy(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE));
   EXPECT_FALSE(occupancy(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
 }
+
+TEST(DeviceTypesTable, TheEnergyMeterIsOnTheRadiatorTheTowelDryerAndTheHeaterWithLightOnly) {
+  const auto energy_meter = [](DeviceType type, uint8_t subtype, DeviceModel model) {
+    return has_feature(device_features(type, subtype, model), device_feature::ENERGY_METER);
+  };
+  EXPECT_TRUE(energy_meter(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE)) << "radiator";
+  EXPECT_TRUE(energy_meter(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER));
+  EXPECT_TRUE(energy_meter(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT));
+  EXPECT_FALSE(energy_meter(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE)) << "no registers";
+  EXPECT_FALSE(energy_meter(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE));
+  EXPECT_FALSE(energy_meter(DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::NONE))
+      << "its energy is the water heater's";
+  EXPECT_FALSE(energy_meter(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
+}

@@ -91,6 +91,8 @@ climate:
       name: "Towel Dryer Heating Level"
     central_heating_mode:
       name: "Towel Dryer Central Heating Mode"
+    energy:
+      name: "Towel Dryer Energy"
   # A heater with a night light: the radiator plus a dimmable light companion.
   - platform: home_io_control
     name: "Hekla"
@@ -104,6 +106,8 @@ climate:
       name: "Hekla Occupancy Detection"
     occupancy:
       name: "Hekla Occupancy"
+    energy:
+      name: "Hekla Energy"
   # An interface for pilot-wire heaters: the plain heater's levels without a boost.
   - platform: home_io_control
     name: "Pilot Wire Interface"

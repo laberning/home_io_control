@@ -1,6 +1,7 @@
 /// @file corpus_heating_test.cpp
 /// @brief The heater register codec (proto_heating.h) against real frames from an Atlantic AGILIA IO
-/// radiator (issue #165) and a Sauter Hekla's night light (issue #222).
+/// radiator (issue #165), a Sauter Hekla's night light (issue #222) and the energy total of a Sauter Tahual
+/// radiator and two Atlantic Adelis towel dryers (PR #238, issue #202).
 ///
 /// Every request the hub sent is compared byte for byte with what the encoder builds for the same
 /// function and value, and every reply is decoded and compared with the value the climate entity
@@ -262,4 +263,16 @@ TEST(CorpusHeating, TheHeklasPanelLevelsAreThirtyThreeSixtySixAndHundredPercentO
                           HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 100));
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame3_bytes,
                           HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(100)));
+}
+
+TEST(CorpusHeating, TheEnergyTotalIsReadAndDecodedInWholeKilowattHoursMostSignificantByteFirst) {
+  using namespace corpus;
+  EXPECT_TRUE(is_read_of(sauter_tahual_probe_energy_register_frame0_bytes, HeatingFunction::ENERGY_TOTAL));
+  EXPECT_FLOAT_EQ(value_of(sauter_tahual_probe_energy_register_frame1_bytes, HeatingFunction::ENERGY_TOTAL), 3422.0F)
+      << "the total the Tahual's display showed";
+  // The two Adelis sweeps answer the same register; their displays were not compared with it.
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame54_bytes, HeatingFunction::ENERGY_TOTAL),
+                  575.0F);
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_drying_frame22_bytes, HeatingFunction::ENERGY_TOTAL),
+                  946.0F);
 }

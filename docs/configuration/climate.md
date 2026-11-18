@@ -52,6 +52,9 @@ The keys every entity platform shares (`name`, `io_device_id`, `io_device_type`,
   "Occupancy detection" below.
 - `occupancy` (Optional): A binary sensor, on while the heater sees someone in the room. Experimental,
   except on a Sauter Hekla. Accepted on the same kinds. See the section "Occupancy detection" below.
+- `energy` (Optional): A sensor with the energy the heater has used, in kWh, for the energy dashboard.
+  Confirmed on a Sauter Tahual, experimental on other heaters. Accepted on a radiator,
+  `io_model: towel_dryer` or `io_model: heater_with_light` only. See the section "Energy sensor" below.
 - `night_light` (Optional): A light entity for the heater's night light. Accepted on
   `io_model: heater_with_light` only. See the section "Heaters with a night light" below.
 - `min_temperature`, `max_temperature` (Optional): The range a thermostat encodes its temperature
@@ -128,8 +131,8 @@ at a later poll:
 
 | Heater kind | One poll reads | The first poll also reads |
 |---|---|---|
-| Radiator with a setpoint | Five registers: room temperature, setpoint, mode, regulator state, window sensor. While its program runs, also the temperature in force. Then the open-window-detection setting, and with `io_model: heater_with_light` the light's state and brightness; a read of these that gets no answer leaves the entity as it was and is asked again at the next poll. With an `occupancy_detection:` or `occupancy:` block, one more register each, read after these on the same terms | The maximum setpoint, and for the declaration check the model name and the towel dryer's mode register |
-| Towel dryer | Five registers: room temperature, setpoint, mode, temporary state, working rate. While its program runs with no boost or drying, also the temperature in force. Then one status read, which names the level the dryer applies, in every mode and whether or not a `heating_level:` sensor is configured. With a `central_heating_mode:` sensor, one more register, read before the status read | The maximum setpoint and the model name |
+| Radiator with a setpoint | Five registers: room temperature, setpoint, mode, regulator state, window sensor. While its program runs, also the temperature in force. Then the open-window-detection setting, and with `io_model: heater_with_light` the light's state and brightness; a read of these that gets no answer leaves the entity as it was and is asked again at the next poll. With an `occupancy_detection:`, `occupancy:` or `energy:` block, one more register each, read after these on the same terms | The maximum setpoint, and for the declaration check the model name and the towel dryer's mode register |
+| Towel dryer | Five registers: room temperature, setpoint, mode, temporary state, working rate. While its program runs with no boost or drying, also the temperature in force. Then one status read, which names the level the dryer applies, in every mode and whether or not a `heating_level:` sensor is configured. With a `central_heating_mode:` or `energy:` sensor, one more register each, read before the status read | The maximum setpoint and the model name |
 | Plain electrical heater, pilot-wire interface | One status read | |
 | Thermostat, heat pump | One status read | |
 
@@ -159,6 +162,7 @@ generated as for the other platforms.
 | `Heating level` text sensor | An entry with a `heating_level:` block | See the section "Heating level sensor" below |
 | Central heating mode binary sensor | An entry with a `central_heating_mode:` block | Experimental. See the section "Central-heating mode sensor" below |
 | `Occupancy detection` switch, `Occupancy` binary sensor | An entry with an `occupancy_detection:` or `occupancy:` block | See the section "Occupancy detection" below |
+| Energy sensor | An entry with an `energy:` block | See the section "Energy sensor" below |
 
 A towel dryer has no window function, so it gets neither window entity. A heater declared without
 `io_device_type` gets none either, because nothing in the YAML says what it is.
@@ -300,6 +304,46 @@ climate:
 > Experimental on a radiator: the Hekla is the only heater that has answered both registers. An AGILIA
 > IO or a Thermor EMOTION 3 H may answer them differently, or not at all. Please report your heater's
 > result.
+
+## Energy sensor
+
+Many electric heaters count the energy they have used, in whole kilowatt-hours, and show the total on
+their display. The optional `energy:` block shows that counter in Home Assistant, so the heater
+appears in the energy dashboard. The total matches the display of two Sauter Tahual radiators
+([pull request 238](https://github.com/laberning/home_io_control/pull/238), corpus capture
+`sauter_tahual_probe_energy_register`).
+
+```yaml
+climate:
+  - platform: home_io_control
+    name: "Living room radiator"
+    io_device_id: "65F57F"
+    io_device_type: "electrical_heater"
+    io_subtype: 1
+    energy:
+      name: "Living room radiator energy"
+```
+
+- **The sensor** shows register `0x0116` in kWh as the heater reports it (device class `energy`, state
+  class `total_increasing`, no decimals), from a reply only: it has no state until the heater has
+  answered, or when it answers without a value, and never starts at 0 on its own. The counter is in
+  whole kilowatt-hours, so a heater of 500 W moves it about once in two hours at full power.
+- The block costs one register read per poll, and an entry without it reads nothing extra. A heater
+  that answers the read without a value leaves the sensor without a state; the hub logs that once and
+  stops asking for the register until the next boot.
+- The key is accepted on a radiator (`io_subtype: 1` with no `io_model`), on `io_model: towel_dryer` and
+  on `io_model: heater_with_light`, and rejected on a pilot-wire interface and every other device. A
+  heater declared without `io_device_type` is rejected as well, because nothing says it has the
+  register.
+- There is no power sensor: Home Assistant can derive the power from the energy total with its Derivative
+  helper.
+
+> [!NOTE]
+> Experimental except on a Sauter Tahual. Two Thermor EMOTION 3 H radiators
+> ([issue #228](https://github.com/laberning/home_io_control/issues/228)) and two Atlantic Adelis towel
+> dryers ([issue #202](https://github.com/laberning/home_io_control/issues/202)) answer the register, but
+> nobody has compared their total with the display, and a Sauter Hekla has not been tried. A vendor app
+> may show a different total than the heater's own counter. Please compare yours and report the result.
 
 ## Setpoint range of a radiator or towel dryer
 

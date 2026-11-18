@@ -501,12 +501,13 @@ const HeatingProfile *find_exact_profile(DeviceType type, uint8_t subtype, Devic
 
 namespace {
 
-/// The registers read only on request: the central-heating mode of a mixed towel dryer, and a heater's
-/// occupancy detection setting and detected presence.
+/// The registers read only on request: the central-heating mode of a mixed towel dryer, a heater's
+/// occupancy detection setting and detected presence, and its energy total.
 constexpr HeatingOptInRead HEATING_OPT_IN_READS[] = {
     {HeatingFunction::CENTRAL_HEATING_MODE, DeviceFeature::CENTRAL_HEATING_MODE},
     {HeatingFunction::OCCUPANCY_DETECTION, DeviceFeature::OCCUPANCY},
     {HeatingFunction::SET_PRESENCE, DeviceFeature::OCCUPANCY},
+    {HeatingFunction::ENERGY_TOTAL, DeviceFeature::ENERGY_METER},
 };
 
 }  // namespace
@@ -644,7 +645,7 @@ std::optional<HeatingFunction> timed_run_register(const HeatingProfile &profile,
 float programme_temperature_in_force(const HeatingProfile &profile, const HeatingReadings &readings) {
   if (!programme_period_active(profile, readings))
     return NAN;
-  return readings.temperature_of(profile.programme_period->in_force_fn);
+  return readings.number_of(profile.programme_period->in_force_fn);
 }
 
 void clear_inactive_programme_reading(const HeatingProfile &profile, HeatingReadings &readings) {

@@ -1799,6 +1799,82 @@ TEST(HeaterController, TheCentralHeatingReadIsRefusedOnAKindWithoutTheCapability
             HeatingOptInReads::State::NOT_ASKED);
 }
 
+// === Energy total: the numeric opt-in read (register 0x0116, whole kWh, most significant byte first) ===
+
+TEST(HeaterController, AHeaterWithoutTheEnergySensorNeverReadsRegister0x16) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  queue_towel_dryer_poll(fx);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  for (const uint8_t reg : registers_read(fx.radio.get_sent_data()))
+    EXPECT_NE(reg, 0x16);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::ENERGY_TOTAL), HeatingOptInReads::State::NOT_ASKED);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::ENERGY_TOTAL));
+}
+
+TEST(HeaterController, TheEnergyTotalIsReadAtEveryPollAndKeptAboveWhatAnInt16Holds) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::ENERGY_TOTAL);
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x16, 0x0D, 0x5E});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto read = registers_read(fx.radio.get_sent_data());
+  ASSERT_GE(read.size(), 6u);
+  EXPECT_EQ(read[5], 0x16) << "right after the core registers";
+  EXPECT_FLOAT_EQ(dev->heating.number_of(HeatingFunction::ENERGY_TOTAL), 3422.0F);
+
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x16, 0xC3, 0x50});  // 50000 kWh: past 32767
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data()[sent_before + 5]), 0x16) << "read again, not once";
+  EXPECT_FLOAT_EQ(dev->heating.number_of(HeatingFunction::ENERGY_TOTAL), 50000.0F);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::ENERGY_TOTAL), HeatingOptInReads::State::ASKED);
+}
+
+TEST(HeaterController, AnEnergyAnswerWithoutAValueStopsTheReadAndClearsTheTotal) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::ENERGY_TOTAL);
+  dev->heating.energy_total_kwh = 100.0F;  // an earlier answer
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x16});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123")) << "a missing register is not a poll failure";
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::ENERGY_TOTAL), HeatingOptInReads::State::ABSENT);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::ENERGY_TOTAL));
+
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_towel_dryer_poll(fx);
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  const auto second = registers_read({sent.begin() + static_cast<std::ptrdiff_t>(sent_before), sent.end()});
+  EXPECT_EQ(std::count(second.begin(), second.end(), 0x16), 0) << "not asked again until the next boot";
+}
+
+TEST(HeaterController, AMissedEnergyReadKeepsTheTotalAndTheAsk) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::ENERGY_TOTAL);
+  dev->heating.energy_total_kwh = 3422.0F;
+  queue_towel_dryer_poll(fx);  // no reply to the read of 0x16
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::ENERGY_TOTAL), HeatingOptInReads::State::ASKED);
+  EXPECT_FLOAT_EQ(dev->heating.energy_total_kwh, 3422.0F);
+}
+
+TEST(HeaterController, TheEnergyReadIsRefusedOnAKindWithoutTheCapability) {
+  HeaterControllerFixture fx;
+  IoDevice *plain = fx.add_device_of_kind(DeviceType::ELECTRICAL_HEATER, 0);
+  ASSERT_NE(plain, nullptr);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::ENERGY_TOTAL);
+  EXPECT_EQ(plain->opt_in_reads.state_of(HeatingFunction::ENERGY_TOTAL), HeatingOptInReads::State::NOT_ASKED);
+}
+
 TEST(HeaterController, HeaterPollStopsAtTheFirstFailureAndBacksOff) {
   HeaterControllerFixture fx;
   auto *dev = make_heater(fx);

@@ -1,0 +1,15 @@
+# expect-error: energy needs a heater that counts its energy: set io_device_type: electrical_heater, io_subtype: 1 and either no io_model (a radiator), io_model: towel_dryer or io_model: heater_with_light
+# covers: climate._validate_opt_in_reads
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+climate:
+  - platform: home_io_control
+    name: "Pilot Wire Interface"
+    io_device_id: "4D5E6F"
+    io_device_type: electrical_heater
+    io_subtype: 0
+    io_model: pilot_wire_interface
+    energy:
+      name: "Energy"

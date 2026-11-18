@@ -7,7 +7,8 @@
 ## switch; a heater with a night light (io_model: heater_with_light) can add a dimmable `night_light:`
 ## light, an electrical heater can add a `heating_level:` text sensor with the level it applies now, a towel
 ## dryer (io_model: towel_dryer) can add a `central_heating_mode:` binary sensor, and a radiator or a heater with a
-## light can add an `occupancy_detection:` switch and an `occupancy:` binary sensor. The heater is polled (default every
+## light can add an `occupancy_detection:` switch and an `occupancy:` binary sensor, and a radiator, a towel dryer
+## or a heater with a light can add an `energy:` sensor with the energy total the heater counts. The heater is polled (default every
 ## five minutes); `status_poll_interval` sets the cadence. Shared device-binding logic lives in platform_common.py;
 ## only climate-specific entity construction/registration stays here.
 
@@ -16,16 +17,19 @@ from typing import NamedTuple
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, climate, light, switch, text_sensor
+from esphome.components import binary_sensor, climate, light, sensor, switch, text_sensor
 from esphome.const import (
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
     CONF_MAX_TEMPERATURE,
     CONF_MIN_TEMPERATURE,
     CONF_OUTPUT_ID,
+    DEVICE_CLASS_ENERGY,
     DEVICE_CLASS_OCCUPANCY,
     DEVICE_CLASS_WINDOW,
     ENTITY_CATEGORY_CONFIG,
+    STATE_CLASS_TOTAL_INCREASING,
+    UNIT_KILOWATT_HOURS,
 )
 
 from . import home_io_control_ns
@@ -74,6 +78,10 @@ IOHomeHeaterRegisterBinarySensor = home_io_control_ns.class_(
     "IOHomeHeaterRegisterBinarySensor", binary_sensor.BinarySensor, cg.Component
 )
 
+IOHomeHeaterRegisterSensor = home_io_control_ns.class_(
+    "IOHomeHeaterRegisterSensor", sensor.Sensor, cg.Component
+)
+
 # The registers a heater entity is named after (proto_heating.h HeatingFunction).
 HeatingFunction = home_io_control_ns.enum("HeatingFunction", is_class=True)
 
@@ -81,6 +89,7 @@ CONF_NIGHT_LIGHT = "night_light"
 CONF_CENTRAL_HEATING_MODE = "central_heating_mode"
 CONF_OCCUPANCY_DETECTION = "occupancy_detection"
 CONF_OCCUPANCY = "occupancy"
+CONF_ENERGY = "energy"
 CONF_HEATING_LEVEL = "heating_level"
 
 # Internal config keys for the heater-only companion IDs (injected by the post-validator).
@@ -129,12 +138,18 @@ OPT_IN_READ_FEATURES = {
     "CENTRAL_HEATING_MODE": "CENTRAL_HEATING_MODE",
     "OCCUPANCY_DETECTION": "OCCUPANCY",
     "SET_PRESENCE": "OCCUPANCY",
+    "ENERGY_TOTAL": "ENERGY_METER",
 }
 
 
 _OCCUPANCY_HINT = (
     "a heater with occupancy detection: set io_device_type: electrical_heater, io_subtype: 1 and either "
     "no io_model (a radiator) or io_model: heater_with_light"
+)
+
+_ENERGY_HINT = (
+    "a heater that counts its energy: set io_device_type: electrical_heater, io_subtype: 1 and either no "
+    "io_model (a radiator), io_model: towel_dryer or io_model: heater_with_light"
 )
 
 # Opt-in entities show a register the heater may not have and cost one read per poll, so each is a key of the
@@ -171,6 +186,21 @@ OPT_IN_READS = (
             IOHomeHeaterRegisterBinarySensor, device_class=DEVICE_CLASS_OCCUPANCY
         ).extend(cv.COMPONENT_SCHEMA),
         binary_sensor.new_binary_sensor,
+    ),
+    # The energy the heater has used, whole kWh as its display shows it. A numeric register entity: another one
+    # is a row here with its own unit, device class and state class.
+    OptInRead(
+        CONF_ENERGY,
+        _ENERGY_HINT,
+        "ENERGY_TOTAL",
+        sensor.sensor_schema(
+            IOHomeHeaterRegisterSensor,
+            unit_of_measurement=UNIT_KILOWATT_HOURS,
+            accuracy_decimals=0,
+            device_class=DEVICE_CLASS_ENERGY,
+            state_class=STATE_CLASS_TOTAL_INCREASING,
+        ).extend(cv.COMPONENT_SCHEMA),
+        sensor.new_sensor,
     ),
 )
 
@@ -277,7 +307,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_HEATING_LEVEL): text_sensor.text_sensor_schema(IOHomeHeatingLevelSensor).extend(
                 cv.COMPONENT_SCHEMA
             ),
-            # The opt-in register entities (central-heating mode, occupancy): each costs one register read
+            # The opt-in register entities (central-heating mode, occupancy, energy): each costs one register read
             # per poll and only some heaters have the register. Their IDs are declared by the schemas' own
             # GenerateID.
             **{cv.Optional(read.key): read.schema for read in OPT_IN_READS},

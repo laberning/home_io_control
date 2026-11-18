@@ -267,6 +267,7 @@ FEATURES = (
     "TEMPERATURE_RANGE",
     "CENTRAL_HEATING_MODE",
     "OCCUPANCY",
+    "ENERGY_METER",
 )
 
 # The models a (type, subtype) can have below it (proto_device_kinds.h DeviceModel, the model rows of
@@ -317,9 +318,9 @@ DEVICE_FEATURES = {
     "sliding_window/1": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
     "bioclimatic_pergola": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
     "domestic_hot_water": frozenset({"WATER_HEATER"}),
-    "electrical_heater/1": frozenset({"WINDOW_COMPANIONS", "OCCUPANCY"}),
-    "electrical_heater/1/towel_dryer": frozenset({"CENTRAL_HEATING_MODE"}),
-    "electrical_heater/1/heater_with_light": frozenset({"WINDOW_COMPANIONS", "NIGHT_LIGHT", "OCCUPANCY"}),
+    "electrical_heater/1": frozenset({"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}),
+    "electrical_heater/1/towel_dryer": frozenset({"CENTRAL_HEATING_MODE", "ENERGY_METER"}),
+    "electrical_heater/1/heater_with_light": frozenset({"WINDOW_COMPANIONS", "NIGHT_LIGHT", "OCCUPANCY", "ENERGY_METER"}),
     "electrical_heater/0/pilot_wire_interface": frozenset(),
 }
 

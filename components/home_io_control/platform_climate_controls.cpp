@@ -1,7 +1,7 @@
 /// @file platform_climate_controls.cpp
 /// @brief Generated per-heater auxiliary entities: the window binary sensor, the heater setting switches
 /// (open-window detection, occupancy detection), the night light, the heating-level text sensor and the
-/// register binary sensors (central-heating mode, occupancy).
+/// register binary sensors (central-heating mode, occupancy) and the register sensor (energy total).
 /// @ingroup hioc_platforms
 
 #include "platform_climate_controls.h"
@@ -70,6 +70,19 @@ void IOHomeHeaterRegisterBinarySensor::setup() {
 
 void IOHomeHeaterRegisterBinarySensor::dump_config() {
   ESP_LOGCONFIG(TAG_REGISTER, "IO-Homecontrol Heater Register Sensor:");
+  ESP_LOGCONFIG(TAG_REGISTER, "  Device ID: %s", this->device_id_.c_str());
+  ESP_LOGCONFIG(TAG_REGISTER, "  Register: %s", heating_function_name(this->function_));
+}
+
+void IOHomeHeaterRegisterSensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    // NaN is "no state": a total never reads as 0 unless the heater said so.
+    this->publish_state(this->number_reading_(dev));
+  });
+}
+
+void IOHomeHeaterRegisterSensor::dump_config() {
+  ESP_LOGCONFIG(TAG_REGISTER, "IO-Homecontrol Heater Register Value:");
   ESP_LOGCONFIG(TAG_REGISTER, "  Device ID: %s", this->device_id_.c_str());
   ESP_LOGCONFIG(TAG_REGISTER, "  Register: %s", heating_function_name(this->function_));
 }

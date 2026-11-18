@@ -104,6 +104,15 @@ enum class HeatingFunction : uint8_t {
                                 ///< SET_PRESENCE.
                                 ///< \todo Experimental except on the Hekla: confirm on another heater that it
                                 ///<       answers this register.
+  ENERGY_TOTAL,                 ///< Register 0x0116, read-only: the energy the heater has used, whole kilowatt-hours,
+                                ///< the total its own display shows. The only register of the family whose
+                                ///< 16-bit value is sent most significant byte first (every other is little-endian).
+                                ///< Two Sauter Tahual radiators answered `0D 5E` (3422 kWh) and `01 08` (264 kWh),
+                                ///< equal to their displays (PR #238, corpus `sauter_tahual_probe_energy_register`);
+                                ///< two Thermor EMOTION 3 H answered `0C BE` and `0F A5` (issue #228) and two Atlantic
+                                ///< Adelis units `02 3F` and `03 B2`, whose displays were not compared.
+                                ///< \todo Experimental except on the Sauter Tahual: compare with the display on
+                                ///<       an EMOTION 3 H, an Adelis and a Hekla.
   COUNT,                        ///< Not a function: the number of functions, for storage sized by function.
 };
 
@@ -305,10 +314,10 @@ size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVA
 /// Anything else (another command, another register, a truncated value, a function without a typed
 /// decode such as POWER_ON) is "no value".
 ///
-/// The value is returned in natural units: degrees Celsius for the temperature registers, the raw
-/// byte for the others. A byte above its register's range (a mode, a state, a percentage) is
-/// "no value". A raw `-1` on the room-temperature register is a sensor fault: it decodes
-/// as NaN with `true` returned, because the heater did answer.
+/// The value is returned in natural units: degrees Celsius for the temperature registers, whole
+/// kilowatt-hours for the energy total, the raw byte for the others. A byte above its register's range (a mode, a
+/// state, a percentage) is "no value". A raw `-1` on the room-temperature register is a sensor fault: it decodes as NaN
+/// with `true` returned, because the heater did answer.
 /// @param reply The device's reply frame.
 /// @param fn Register the request addressed.
 /// @param[out] value Decoded value; untouched when `false` is returned.
@@ -340,6 +349,7 @@ struct HeatingReadings {
   int16_t central_heating_mode{-1};    ///< Central-heating mode 1 on / 0 off (register 0x0153); -1 until read.
   int16_t occupancy_detection{-1};     ///< Occupancy detection 1 on / 0 off (register 0x0101); -1 until read.
   int16_t presence{-1};                ///< Someone detected in the room 1 / 0 (register 0x0110); -1 until read.
+  float energy_total_kwh{NAN};         ///< The energy the heater has used, whole kWh (register 0x0116); NaN until read.
   int16_t level{-1};                   ///< Low byte of the main parameter a status read returned: a heating level
                                        ///< (a plain heater, and a register heater whose programme reports one,
                                        ///< whose poll ends with that read) or a setpoint alias. -1 until a
@@ -366,18 +376,19 @@ struct HeatingReadings {
   ///         the readings do not hold.
   [[nodiscard]] bool has(HeatingFunction fn) const;
 
-  /// @brief The stored temperature of a register read in degrees.
+  /// @brief The stored value of a register that is kept as a number with a unit: a temperature in degrees, a
+  /// setback in kelvin, an energy total in kilowatt-hours.
+  /// @details Wide enough for a counter: a float holds every 16-bit value exactly, where value_of() stops at 32767.
   /// @param fn Register.
-  /// @return The temperature (a setback in kelvin), or NaN when it has not been read or `fn` is not a
-  ///         temperature register the readings hold.
-  [[nodiscard]] float temperature_of(HeatingFunction fn) const;
+  /// @return The value, or NaN when it has not been read or `fn` is not such a register the readings hold.
+  [[nodiscard]] float number_of(HeatingFunction fn) const;
 
   /// @brief The stored integer value of a register (a mode, a state, a flag, a percentage).
   /// @details Lets a heating profile name the register its card reads (its mode or preset register)
   ///          instead of the caller picking a field.
   /// @param fn Register.
   /// @return The value, or -1 when it has not been read or `fn` is not an integer register the
-  ///         readings hold (the temperatures are not).
+  ///         readings hold (the numbers with a unit, see number_of(), are not).
   [[nodiscard]] int16_t value_of(HeatingFunction fn) const;
 };
 
