@@ -568,47 +568,32 @@ class IOHomeControlComponent : public Component,
   void register_device_callback(DeviceUpdateCallback cb) override { this->registry_.subscribe(std::move(cb)); }
   /// @brief The periodic polls, each with its own opt-in schedule (PeriodicPollPolicy).
   ///
-  /// The first three read a value off the device (a PeriodicReading row in hub_operations.cpp
-  /// describes how); STATUS_REFRESH reads nothing of its own and queues an ordinary status request;
-  /// DEVICE_READING reads a slice of a data object (a DataObjectSource row of the reading table) through the
-  /// transfer reader, one schedule per device and reading.
+  /// STATUS_REFRESH reads nothing of its own and queues an ordinary status request; DEVICE_READING reads one
+  /// reading of the reading table (a data object, an event or a limitation: see request_device_reading()), one
+  /// schedule per device and reading.
   enum class PeriodicPoll : uint8_t {
-    RAIN_SENSOR,     ///< The device's minimum limitation, read as rain or dry (IoDevice::rain_sensor).
-    SUN_LEVEL,       ///< EVENT_LOCAL_SENSOR subscription answer (IoDevice::sun_level, ADR 0064).
-    BATTERY_LEVEL,   ///< EVENT_BATTERY_LEVEL_CHANGE subscription answer (IoDevice::battery_level, ADR 0064).
     STATUS_REFRESH,  ///< A status read for a device that reported nothing for a whole interval.
-    DEVICE_READING,  ///< A data-object reading (DataObjectSource), keyed by device and reading.
+    DEVICE_READING,  ///< A scheduled reading (DataObjectSource, EventSource, LimitationSource), keyed by device and
+                     ///< reading.
   };
 
   /// Configure the optional follow-up polling interval for a registered device.
   /// @param device_id Target device ID.
   /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the legacy one-shot settle poll only.
   void set_device_status_poll_interval(const std::string &device_id, uint32_t poll_interval_ms) override;
-  /// Opt a registered device into the periodic rain sensor poll (a read of its minimum limitation).
-  /// @param device_id Target device ID.
-  /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
-  void set_device_rain_poll_interval(const std::string &device_id, uint32_t interval_ms) override;
-  /// Opt a registered device into the periodic sun level poll (a subscription to EVENT_LOCAL_SENSOR,
-  /// whose answer carries the value; ADR 0064).
-  /// @param device_id Target device ID.
-  /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
-  void set_device_sun_poll_interval(const std::string &device_id, uint32_t interval_ms) override;
-  /// Opt a registered device into the periodic battery level poll (a subscription to
-  /// EVENT_BATTERY_LEVEL_CHANGE, whose answer carries the level; ADR 0064).
-  /// @param device_id Target device ID.
-  /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
-  void set_device_battery_level_poll_interval(const std::string &device_id, uint32_t interval_ms) override;
   /// Opt a registered device into the status refresh at rest: a status read whenever the device has
   /// not reported its status for a whole interval.
   /// @param device_id Target device ID.
   /// @param interval_ms Refresh interval in milliseconds; zero removes the device from the schedule.
   void set_device_status_refresh_interval(const std::string &device_id, uint32_t interval_ms) override;
-  /// Opt a registered device into the scheduled read of one data-object reading. The first read comes
-  /// DEVICE_READING_FIRST_READ_DELAY_MS after the call, then one every interval.
+  /// Opt a registered device into the scheduled read of one reading. A data-object reading is first read
+  /// DEVICE_READING_FIRST_READ_DELAY_MS after the call, then every interval (raised to
+  /// DEVICE_READING_MIN_INTERVAL_MS); an event or limitation reading starts at a random delay of
+  /// periodic_poll_first_delay_ms() and repeats every interval as given (the YAML validates its floor).
   /// @param device_id Target device ID.
-  /// @param reading A reading whose source is a DataObjectSource; any other is ignored.
-  /// @param interval_ms Read interval in milliseconds, raised to DEVICE_READING_MIN_INTERVAL_MS; zero removes
-  ///        the reading from the schedule.
+  /// @param reading A reading with a DataObjectSource, EventSource or LimitationSource; any other is ignored, and so
+  ///        is a reading whose capability the device lacks.
+  /// @param interval_ms Read interval in milliseconds; zero removes the reading from the schedule.
   void set_device_reading_poll_interval(const std::string &device_id, DeviceReading reading,
                                         uint32_t interval_ms) override;
 
@@ -636,32 +621,16 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @return true if status frame was received and processed.
   bool request_device_status(const std::string &device_id);
-  /// Read the device's minimum limitation and derive its rain sensor state from the reply.
+  /// Read one reading that is a scheduled read: defer while the device moves, then ask for it by its source.
   ///
-  /// Unauthenticated read (CMD_LIMITATION_STATUS_REQ); the reply is accepted only inside this
-  /// exchange (ADR 0022) and never reaches update_device_status_(), so a poll cannot move the
-  /// device's position or target. A moving device is not asked: the poll is deferred instead.
+  /// A data-object reading queues a transfer read of its recipe; the answer arrives later, from the loop, and is
+  /// folded in by apply_device_reading_answer_(). An event or limitation reading is one exchange (the event
+  /// subscription, the limitation read) whose answer is the reading, accepted only inside it (ADR 0022, ADR 0064), so
+  /// it never reaches the position decode and cannot move a device's position or target; a moving device is not
+  /// asked and the poll is deferred instead.
   /// @param device_id Target device ID.
-  /// @return true if a usable limitation reply arrived and was applied.
-  bool request_device_limitation(const std::string &device_id);
-  /// Subscribe the device to EVENT_LOCAL_SENSOR and publish the sun value its answer carries.
-  ///
-  /// The answer is accepted only inside this exchange (decisions::is_subscription_answer(),
-  /// ADR 0064) and never reaches the position decode. A moving device is not asked: the poll is
-  /// deferred instead.
-  /// @param device_id Target device ID.
-  /// @return true if an answer of the captured shape arrived and was applied.
-  bool request_device_sun_level(const std::string &device_id);
-  /// Subscribe the device to EVENT_BATTERY_LEVEL_CHANGE and publish the level its answer carries.
-  /// Same rules as request_device_sun_level().
-  /// @param device_id Target device ID.
-  /// @return true if an answer of the captured shape arrived and was applied.
-  bool request_device_battery_level(const std::string &device_id);
-  /// Start the read of one data-object reading: defer while the device moves, then queue a transfer read of its
-  /// recipe. The answer arrives later, from the loop, and is folded in by apply_periodic_reading_().
-  /// @param device_id Target device ID.
-  /// @param reading A reading whose source is a DataObjectSource.
-  /// @return true if a read was queued.
+  /// @param reading A reading with a DataObjectSource, EventSource or LimitationSource.
+  /// @return true if a data-object read was queued or an answer of the captured shape arrived and was applied.
   bool request_device_reading(const std::string &device_id, DeviceReading reading);
   /// Request the stored device name from a device.
   /// @param device_id Target device ID.
@@ -785,17 +754,8 @@ class IOHomeControlComponent : public Component,
   /// Queue an async status request; returns immediately, executed in loop().
   /// @param device_id Target device ID.
   void queue_request_device_status(const std::string &device_id) override;
-  /// Queue an async minimum-limitation read for the rain sensor poll; executed in loop() as a
-  /// background operation (yields to commands and 1W activity).
-  /// @param device_id Target device ID.
-  void queue_request_device_limitation(const std::string &device_id);
-  /// Queue an async sun level poll; executed in loop() as a background operation.
-  /// @param device_id Target device ID.
-  void queue_request_device_sun_level(const std::string &device_id);
-  /// Queue an async battery level poll; executed in loop() as a background operation.
-  /// @param device_id Target device ID.
-  void queue_request_device_battery_level(const std::string &device_id);
-  /// Queue the scheduled read of one data-object reading; executed in loop() as a background operation.
+  /// Queue the scheduled read of one reading; executed in loop() as a background operation (yields to commands and
+  /// 1W activity).
   /// @param key Key of the schedule entry (device and reading), as the DEVICE_READING policy holds it.
   void queue_request_device_reading(const std::string &key);
   /// Queue an async device-name request; returns immediately, executed in loop().
@@ -1100,27 +1060,24 @@ class IOHomeControlComponent : public Component,
   /// @param interval_ms Poll interval in milliseconds; zero removes the device from the schedule.
   void set_periodic_poll_interval_(PeriodicPoll poll, const std::string &device_id, uint32_t interval_ms);
 
-  /// Shared body of request_device_limitation(), request_device_sun_level() and
-  /// request_device_battery_level(): defer while the device moves, send the row's request, decode
-  /// the answer, fold the result into the device record.
+  /// The exchange of an event or limitation reading: send the source kind's request, decode the answer, fold the
+  /// result into the device record. The device is registered, stopped and has the reading.
   /// @param device_id Target device ID.
-  /// @param reading Which reading to poll (RAIN_SENSOR, SUN_LEVEL or BATTERY_LEVEL).
+  /// @param row The reading's row, whose source is an EventSource or a LimitationSource.
   /// @return true if an answer of the captured shape arrived and was applied.
-  bool request_periodic_reading_(const std::string &device_id, PeriodicPoll reading);
+  bool request_frame_reading_(const std::string &device_id, const DeviceReadingRow &row);
 
-  /// Fold one poll outcome into the device record: a reading replaces the value and clears the miss
-  /// count; a miss keeps the last value until PERIODIC_POLL_FAILURES_BEFORE_UNKNOWN. Logs a change
-  /// at INFO and tells subscribers in every case.
+  /// Fold one scheduled read's outcome into the device record: a value replaces the stored one and clears the miss
+  /// count; a miss keeps the last value until PERIODIC_POLL_FAILURES_BEFORE_UNKNOWN, after which a reading with
+  /// ReadingStale::DROP loses it. Logs a change at INFO and tells subscribers in every case.
   /// @param device_id Target device ID.
-  /// @param reading_kind Which reading.
-  /// @param reading The decoded value of an answered poll, empty for a miss.
+  /// @param reading Which reading.
+  /// @param value The decoded value of an answered read, empty for a miss.
   /// @param detail_text Extra text for the state-change log line, empty for a miss.
   /// @param unanswered True when the device sent nothing back at all, so the miss is retried once
   ///        after PERIODIC_POLL_MISS_RETRY_MS before it counts.
-  /// @param data_reading For PeriodicPoll::DEVICE_READING, which reading of the device; ignored otherwise.
-  void apply_periodic_reading_(const std::string &device_id, PeriodicPoll reading_kind,
-                               const std::optional<float> &reading, const std::string &detail_text, bool unanswered,
-                               DeviceReading data_reading = DeviceReading::COUNT);
+  void apply_periodic_reading_(const std::string &device_id, DeviceReading reading, const std::optional<float> &value,
+                               const std::string &detail_text, bool unanswered);
 
   /// Fold the end of a data-object read into the device record: a value is stored through
   /// apply_periodic_reading_(); a failed read, an empty open or an open the device declines with a status counts as a
@@ -1141,7 +1098,7 @@ class IOHomeControlComponent : public Component,
   void queue_status_refresh_(const std::string &device_id);
 
   /// Queue every periodic poll that is due: walks one list of PeriodicPoll rows, each with what to
-  /// queue for its due device.
+  /// queue for its due device or reading.
   void queue_due_periodic_polls_();
   /// Read every device with `linked_remotes` once, when a burst of linked-remote activity has been
   /// followed by `remote_activity_catchup_poll_ms` without an exchange (ADR 0080). Each read is a
@@ -1420,19 +1377,16 @@ class IOHomeControlComponent : public Component,
   /// undecoded probe opcode. See set_diagnostic_probes_enabled().
   bool diagnostic_probes_enabled_{false};
   StatusPollPolicy poll_policy_;
-  PeriodicPollPolicy rain_poll_policy_;            ///< Schedule of the opt-in rain sensor poll.
-  PeriodicPollPolicy sun_poll_policy_;             ///< Schedule of the opt-in sun level poll.
-  PeriodicPollPolicy battery_level_poll_policy_;   ///< Schedule of the opt-in battery level poll.
   PeriodicPollPolicy status_refresh_policy_;       ///< Schedule of the opt-in status refresh at rest.
-  PeriodicPollPolicy device_reading_poll_policy_;  ///< Schedule of the data-object readings, by device_reading_key().
-  /// One scheduled data-object reading: the key it has in device_reading_poll_policy_ and what it names.
+  PeriodicPollPolicy device_reading_poll_policy_;  ///< Schedule of the scheduled readings, by device_reading_key().
+  /// One scheduled reading: the key it has in device_reading_poll_policy_ and what it names.
   struct DeviceReadingPoll {
     std::string key;
     std::string device_id;
     DeviceReading reading;
   };
   std::vector<DeviceReadingPoll> device_reading_polls_;  ///< Every reading with a schedule entry.
-  /// The reading table the hub looks data-object readings up in: the production table, which a test replaces
+  /// The reading table the hub looks scheduled readings up in: the production table, which a test replaces
   /// (together with TransferReader::set_recipes()) to give the hub a data-object row.
   std::span<const DeviceReadingRow> reading_table_{device_readings()};
   OperationQueue op_queue_;

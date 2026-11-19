@@ -142,8 +142,9 @@ you meet them. The structure behind them is described in the
 [ADR 0100](adr/0100-a-transfer-read-tells-an-accepted-request-without-an-answer-from-silence.md),
 [ADR 0101](adr/0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) and
 [ADR 0102](adr/0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md),
-[ADR 0104](adr/0104-a-heaters-poll-reads-what-its-reading-rows-select.md) and
-[ADR 0105](adr/0105-every-device-value-write-is-judged-by-one-rule-per-register.md).
+[ADR 0104](adr/0104-a-heaters-poll-reads-what-its-reading-rows-select.md),
+[ADR 0105](adr/0105-every-device-value-write-is-judged-by-one-rule-per-register.md) and
+[ADR 0107](adr/0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md).
 
 1. **Find where the value lives.** A heater reports it as a private register; some devices keep it in
    a data object. Read the objects with the [`read_object` probe](diagnostic-probes.md#reading-a-device-object).
@@ -158,7 +159,12 @@ you meet them. The structure behind them is described in the
    reading an entity of the YAML asks for, the capability a device needs (a `DeviceFeature`). The value
    is kept in the device's reading store by reading, whichever the source is, so nothing else holds it.
    For a data object the source is a `DataObjectSource`: the recipe, the offset, the byte range of the
-   value in the data read and the codec. Value shapes that exist are in `proto_value_codecs.h`;
+   value in the data read and the codec. The other kinds are an `EventSource` (the answer to an event
+   subscription: the event, its data length, the offset and form of the value and a factor to natural
+   units), a `LimitationSource` (the answer to a limitation read) and a `StatusBatterySource` (the
+   battery byte of a status reply). A reading read on a schedule (a data object, an event or a limitation)
+   also says what its value becomes after repeated misses (`ReadingStale`): kept, as a counter is, or
+   dropped, as a state is. Value shapes that exist are in `proto_value_codecs.h`;
    a counter that starts with a marker byte (`80` then a big-endian number, `81 FF FF` for "no value")
    is `MARKED_U16_BE`. A new shape is one codec enumerator, one case in `decode_value()` and its test
    in `tests/proto/value_codecs_test.cpp`. A reading whose values have names (a level, a mode) gives the
@@ -183,18 +189,21 @@ you meet them. The structure behind them is described in the
    (`device_poll_reads()`). Within one policy the order of the rows is the order of the reads, so put
    a new row where its register belongs; the order of the phases is the controller's. A register that
    several rows are parts of is read once. A row read only while another register holds a value
-   (`only_while`) is skipped, and its earlier value dropped, while it does not. A data-object reading
-   ignores the policy and runs on its own schedule.
+   (`only_while`) is skipped, and its earlier value dropped, while it does not. A data-object, event or
+   limitation reading ignores the policy and runs on its own schedule.
 4. **Add the mirror row.** The same reading by name in `DEVICE_READINGS` in `hub_validators.py`: its
    capability (`None` for a reading no key declares), its source (`register`, `derived`, `data_object`,
-   `status` or `status_parameter`), the platform that offers its key or companion (`climate`,
-   `water_heater` or `sensor`; the sync test derives it from the row's capability and source, and the
-   heater's `energy:` and the water heater's are two rows on two platforms), the entity kind (`sensor`, `binary_sensor`, `switch` or `text_sensor`; it has to fit the
+   `status`, `status_parameter`, `event`, `limitation` or `status_battery`), the platform that offers its
+   key or companion (`climate`, `water_heater`, `sensor` or `cover`; the sync test derives it from the
+   row's capability and source, and the heater's `energy:` and the water heater's are two rows on two
+   platforms), the entity kind (`sensor`, `binary_sensor`, `switch` or `text_sensor`; it has to fit the
    row's value kind), the Home Assistant unit, device class and state class, and for a data object the
    default `update_interval_ms`, at least five minutes. An entity is declared one of two ways: by a YAML
    `key`, or as a companion that every device with the capability gets, with `companion` (the name suffix
    after the main entity's name), `companion_id` (the ID suffix) and, if it should start hidden,
-   `disabled_by_default`; a row has a key or a companion, never both. Add the capability's hint to
+   `disabled_by_default`; a row has a key or a companion, never both. A cover's reading has no capability: its
+   `opt_in_key` is the key of the cover whose presence declares it (an event or limitation reading reads on the
+   interval that key holds), and its companion is made when the key is set. Add the capability's hint to
    `READING_FEATURE_HINTS` so the error for a kind without it says what to declare. `tests/sync/device_features_sync_test.cpp`
    fails until both tables agree.
 5. **Give the device kind the capability.** Add the `DeviceFeature` enumerator the reading names (when

@@ -12,12 +12,15 @@
 #include "decisions_exchange.h"
 #include "proto_codecs.h"
 #include "proto_constants.h"
+#include "proto_device_readings.h"
 #include "proto_frame.h"
 
 #include <gtest/gtest.h>
 
 #include <iterator>
+#include <optional>
 #include <string>
+#include <variant>
 
 using namespace esphome::home_io_control;
 
@@ -114,21 +117,32 @@ TEST(CorpusStatusUpdateEvent, SubscriptionAnswerCarriesTheBatteryByteOfAPosition
   EXPECT_EQ(decode_battery_state(frame.data[1]), BatteryState::FULL_CHARGE);
 }
 
-TEST(CorpusStatusUpdateEvent, SunLevelDecodesFromEveryCapturedSensorAnswer) {
+namespace {
+
+/// What the reading `reading` (a row with an EventSource) makes of a frame.
+std::optional<float> event_reading_of(DeviceReading reading, const IoFrame &frame) {
+  const DeviceReadingRow *row = find_device_reading(reading);
+  const auto *source = row != nullptr ? std::get_if<EventSource>(&row->source) : nullptr;
+  EXPECT_NE(source, nullptr);
+  return source != nullptr ? decode_event_reading(*source, frame) : std::nullopt;
+}
+
+}  // namespace
+
+TEST(CorpusStatusUpdateEvent, SunLevelDecodesFromEveryCapturedSensorAnswerInLux) {
   const corpus::CorpusCapture *night = corpus_test::capture_by_id(corpus_test::SENSOR_EVENT_REPORT_CAPTURE);
   const corpus::CorpusCapture *day = corpus_test::capture_by_id(DAYLIGHT_SENSOR_EVENT_CAPTURE);
   ASSERT_NE(night, nullptr);
   ASSERT_NE(day, nullptr);
-  uint16_t value = 1;
-  ASSERT_TRUE(decode_sun_level_event(corpus_test::parse_capture_frame(night->frames[0]), value));
-  EXPECT_EQ(value, 0) << "night";
+  EXPECT_EQ(event_reading_of(DeviceReading::SUN_LEVEL, corpus_test::parse_capture_frame(night->frames[0])),
+            std::optional<float>(0.0F))
+      << "night";
   for (uint8_t i = 0; i < day->frame_count; i++) {
     SCOPED_TRACE("daylight answer " + std::to_string(i));
-    ASSERT_TRUE(decode_sun_level_event(corpus_test::parse_capture_frame(day->frames[i]), value));
-    EXPECT_EQ(value, DAYLIGHT_VALUES[i]);
+    EXPECT_EQ(event_reading_of(DeviceReading::SUN_LEVEL, corpus_test::parse_capture_frame(day->frames[i])),
+              std::optional<float>(static_cast<float>(DAYLIGHT_VALUES[i]) * SUN_VALUE_LUX_PER_STEP));
   }
-  uint8_t level = 0;
-  EXPECT_FALSE(decode_battery_level_event(corpus_test::parse_capture_frame(day->frames[0]), level))
+  EXPECT_FALSE(event_reading_of(DeviceReading::BATTERY_LEVEL, corpus_test::parse_capture_frame(day->frames[0])))
       << "a sun answer is not a battery level";
 }
 
@@ -136,10 +150,7 @@ TEST(CorpusStatusUpdateEvent, BatteryLevelDecodesFromTheCapturedBatteryAnswer) {
   const corpus::CorpusCapture *capture = corpus_test::capture_by_id(BATTERY_EVENT_CAPTURE);
   ASSERT_NE(capture, nullptr);
   const IoFrame frame = corpus_test::parse_capture_frame(capture->frames[0]);
-  uint8_t level = 0;
-  ASSERT_TRUE(decode_battery_level_event(frame, level));
-  EXPECT_EQ(level, CAPTURED_BATTERY_LEVEL);
-  uint16_t value = 0;
-  EXPECT_FALSE(decode_sun_level_event(frame, value)) << "a battery answer is not a sun value";
+  EXPECT_EQ(event_reading_of(DeviceReading::BATTERY_LEVEL, frame), std::optional<float>(CAPTURED_BATTERY_LEVEL));
+  EXPECT_FALSE(event_reading_of(DeviceReading::SUN_LEVEL, frame)) << "a battery answer is not a sun value";
   EXPECT_EQ(decode_battery_state(frame.data[1]), BatteryState::FULL_CHARGE) << "the status byte agrees: full";
 }

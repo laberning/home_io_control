@@ -155,24 +155,12 @@ TEST(OperationQueue, RequestNameDeduplicates) {
   EXPECT_EQ(q.size(), 1u);
 }
 
-TEST(OperationQueue, RequestLimitationDeduplicatesPerDevice) {
-  OperationQueue q;
-  EXPECT_TRUE(q.enqueue_request_limitation("DEV"));
-  EXPECT_FALSE(q.enqueue_request_limitation("DEV")) << "duplicate limitation read should be suppressed";
-  EXPECT_TRUE(q.enqueue_request_limitation("OTHER"));
-  EXPECT_EQ(q.size(), 2u);
-}
-
-TEST(OperationQueue, LimitationAndStatusReadsOfOneDeviceAreIndependent) {
+TEST(OperationQueue, ADeviceReadingAndAStatusReadOfOneDeviceAreIndependent) {
   OperationQueue q;
   q.enqueue_request_status("DEV");
-  q.enqueue_request_limitation("DEV");
+  q.enqueue_request_device_reading("DEV", 4);
 
-  EXPECT_EQ(q.size(), 2u) << "a status poll does not stand in for a limitation read";
-}
-
-TEST(OperationQueue, LimitationReadIsBackgroundWork) {
-  EXPECT_TRUE(OperationQueue::is_background_op(PendingOperationType::REQUEST_LIMITATION));
+  EXPECT_EQ(q.size(), 2u) << "a status poll does not stand in for a read of a reading";
 }
 
 TEST(OperationQueue, ADeviceReadingIsBackgroundWorkQueuedOncePerDeviceAndReading) {
@@ -212,13 +200,13 @@ TEST(OperationQueue, DiscoverAndPairFlushesPollsAndPushesToFront) {
   EXPECT_EQ(q.back().type, PendingOperationType::SET_POSITION) << "position command should be preserved";
 }
 
-TEST(OperationQueue, DiscoverAndPairFlushesQueuedLimitationReads) {
+TEST(OperationQueue, DiscoverAndPairFlushesQueuedDeviceReadings) {
   OperationQueue q;
-  q.enqueue_request_limitation("A");
+  q.enqueue_request_device_reading("A", 4);
 
   q.enqueue_discover_and_pair();
 
-  ASSERT_EQ(q.size(), 1u) << "a limitation read must not consume the short pairing window";
+  ASSERT_EQ(q.size(), 1u) << "a read of a reading must not consume the short pairing window";
   EXPECT_EQ(q.front().type, PendingOperationType::DISCOVER_AND_PAIR);
 }
 
@@ -355,14 +343,14 @@ TEST(OperationQueue, RequestNameNotDroppedOnControlEnqueue) {
   EXPECT_EQ(q[1].type, PendingOperationType::REQUEST_NAME);
 }
 
-TEST(OperationQueue, QueuedLimitationReadSurvivesAndYieldsToControlEnqueue) {
+TEST(OperationQueue, QueuedDeviceReadingSurvivesAndYieldsToControlEnqueue) {
   OperationQueue q;
-  q.enqueue_request_limitation("DEV");
+  q.enqueue_request_device_reading("DEV", 4);
   q.enqueue_set_position("DEV", 50);
 
-  ASSERT_EQ(q.size(), 2u) << "a command reply does not answer a limitation read, so it is kept";
+  ASSERT_EQ(q.size(), 2u) << "a command reply does not answer a read of a reading, so it is kept";
   EXPECT_EQ(q[0].type, PendingOperationType::SET_POSITION);
-  EXPECT_EQ(q[1].type, PendingOperationType::REQUEST_LIMITATION);
+  EXPECT_EQ(q[1].type, PendingOperationType::REQUEST_DEVICE_READING);
 }
 
 TEST(OperationQueue, DiscoverAndPairPopsBeforeControlOp) {
@@ -498,7 +486,7 @@ TEST(OperationQueue, PopUnlessHeldReturnsNothingWhenEveryEntryIsHeldAndWhenEmpty
   const auto all = [](const PendingOperation &) { return true; };
   EXPECT_FALSE(q.pop_unless_held(all).has_value());
   q.enqueue_request_status("AAA111");
-  q.enqueue_request_limitation("AAA111");
+  q.enqueue_request_device_reading("AAA111", 4);
   EXPECT_FALSE(q.pop_unless_held(all).has_value());
   EXPECT_EQ(q.size(), 2u);
 }

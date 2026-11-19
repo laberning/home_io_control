@@ -394,9 +394,10 @@ inline std::string describe_prediction(const IoDevice &dev) {
 /// @return e.g. " battery=full", or an empty string for a device without battery entities that
 ///         reports no level.
 inline std::string describe_battery(const IoDevice &dev) {
-  if (dev.battery == BatteryState::NOT_REPORTED && !dev.battery_entities)
+  const BatteryState battery = battery_state_of(dev);
+  if (battery == BatteryState::NOT_REPORTED && !dev.battery_entities)
     return {};
-  return std::string(" battery=") + battery_state_name(dev.battery);
+  return std::string(" battery=") + battery_state_name(battery);
 }
 
 /// @brief True while a device that reported stopped off its target waits for the confirming poll.

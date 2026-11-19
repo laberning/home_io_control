@@ -42,8 +42,8 @@ TEST_F(PlatformDeviceSensor, RegistersTheDeviceItDeclares) {
 }
 
 TEST_F(PlatformDeviceSensor, EachReadingIsReadAtItsOwnDefaultWhenTheEntrySetsNoInterval) {
-  entry.add_data_object_reading(DeviceReading::ENERGY_TOTAL, HOUR_MS);
-  entry.add_data_object_reading(DeviceReading::OCCUPANCY, DAY_MS);
+  entry.add_scheduled_reading(DeviceReading::ENERGY_TOTAL, HOUR_MS);
+  entry.add_scheduled_reading(DeviceReading::OCCUPANCY, DAY_MS);
 
   entry.setup();
 
@@ -52,8 +52,8 @@ TEST_F(PlatformDeviceSensor, EachReadingIsReadAtItsOwnDefaultWhenTheEntrySetsNoI
 }
 
 TEST_F(PlatformDeviceSensor, TheEntrysUpdateIntervalAppliesToEveryReading) {
-  entry.add_data_object_reading(DeviceReading::ENERGY_TOTAL, HOUR_MS);
-  entry.add_data_object_reading(DeviceReading::OCCUPANCY, DAY_MS);
+  entry.add_scheduled_reading(DeviceReading::ENERGY_TOTAL, HOUR_MS);
+  entry.add_scheduled_reading(DeviceReading::OCCUPANCY, DAY_MS);
   entry.set_update_interval(2 * HOUR_MS);
 
   entry.setup();

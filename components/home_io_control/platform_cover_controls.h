@@ -1,26 +1,22 @@
 #pragma once
 
 /// @file platform_cover_controls.h
-/// @brief Generated per-cover auxiliary entities: the command button (favorite / ventilation),
-/// the silent-operation toggle, the travel speed select, the rain binary sensor and the battery
-/// sensors.
+/// @brief Generated per-cover auxiliary entities: the command button (favorite / ventilation), the
+/// silent-operation toggle and the travel speed select.
 /// @ingroup hioc_platforms
 ///
 /// All are device-bound companions (DeviceBoundCompanion), generated alongside a `cover:` entity
-/// by cover.py when the device type supports them, and both act on an already-registered device
+/// by cover.py when the device type supports them, and act on an already-registered device
 /// rather than owning one. They live together here because they are the cover platform's small
-/// auxiliary surface, not full entity platforms of their own.
+/// auxiliary surface, not full entity platforms of their own. The cover's rain, sun level and battery
+/// entities are readings, shown by the generic reading entities (platform_device_readings.h).
 
-#include <optional>
 #include <string>
 
-#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
 #include "esphome/components/select/select.h"
 #include "esphome/components/switch/switch.h"
-#include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
-#include "platform_companion_sensors.h"
 #include "platform_entity_base.h"
 #include "proto_device_kinds.h"
 #include "proto_device_model.h"
@@ -123,141 +119,6 @@ class IOHomeCoverTravelSpeedSelect : public select::Select, public Component, pu
   /// @brief Apply the selected travel speed to the bound device.
   /// @param value "default", "silent" or "fast" (travel_speed_name()).
   void control(const std::string &value) override;
-};
-
-/// @brief Binary sensor that reports whether the window currently limits its own opening for rain.
-/// @ingroup hioc_platforms
-///
-/// ON when the device's minimum limitation read at least the rain threshold, OFF when it read
-/// below it. Only generated when the cover declares `rain_sensor_poll_interval:`, which is also what
-/// schedules the poll that feeds it. It has no state until the first answered poll, and loses it
-/// again after several unanswered polls: "off" always means a device said so. Independent of the
-/// Active Issue sensor, which reports what the last move or a clamped command implied.
-class IOHomeRainBinarySensor : public binary_sensor::BinarySensor, public Component, public DeviceBoundCompanion {
- public:
-  /// @brief Subscribe to the device's updates and publish what is already known.
-  void setup() override;
-
-  /// @brief Dump sensor configuration to the log.
-  void dump_config() override;
-
-  /// @brief Get setup priority so the parent hub is available first.
-  /// @return setup_priority::DATA.
-  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
-
- protected:
-  /// @brief Publish a rain state: true for RAIN, false for DRY, no state for UNKNOWN.
-  void publish_rain_state_(RainSensorState state);
-};
-
-/// Lux per step of the sun value a device reports (ADR 0088). The scale is an estimate drawn from the
-/// data posted in issue #156 against common daylight figures, not a measured constant: in direct sun
-/// the value read about 600 to 750, which at x100 is 60 000 to 75 000 lx, within the 50 000 to
-/// 100 000 lx usually given for direct sunlight; on dull days the daily maximum was about 35 to 61,
-/// which at x100 is 3 500 to 6 100 lx, within overcast daylight. 100 is a round factor that puts both
-/// ends in their usual ranges. An outdoor light sensor near the panel read about 10 times the value,
-/// so the two estimates disagree by a factor of ten.
-/// \todo Confirm the scale with a lux meter reading next to the panel (issue #156).
-static constexpr uint32_t SUN_VALUE_LUX_PER_STEP = 100;
-
-/// @brief Convert a device's raw sun value to lux (see SUN_VALUE_LUX_PER_STEP for the estimate).
-/// @ingroup hioc_platforms
-/// @param raw Sun value as decoded from the device's reply.
-/// @return Illuminance in lux. The 32-bit product (at most about 6.5 million) is exact as a float.
-inline float sun_value_to_lux(uint16_t raw) {
-  return static_cast<float>(static_cast<uint32_t>(raw) * SUN_VALUE_LUX_PER_STEP);
-}
-
-/// @brief Illuminance sensor (`device_class: illuminance`, lx) publishing the sun value a device
-/// answers its sun level poll with, scaled to lux.
-/// @ingroup hioc_platforms
-///
-/// Only generated when the cover declares `sun_level_poll_interval:`, which also schedules the poll
-/// that feeds it (a subscription to EVENT_LOCAL_SENSOR, ADR 0064). The protocol layer decodes the raw
-/// number; this sensor owns the unit, so the scale is applied here and nowhere else
-/// (sun_value_to_lux()). 0 at night, rising with sun on the panel. No state until the first
-/// answered poll, and again after several unanswered polls.
-/// \todo The lux scale is an estimate (SUN_VALUE_LUX_PER_STEP); confirmed on one Somfy RS100 Solar io
-/// only (issue #156).
-class IOHomeSunLevelSensor : public IOHomeCompanionSensor {
- public:
-  /// @brief Subscribe to the device's updates and publish what is already known.
-  void setup() override;
-
-  /// @brief Dump sensor configuration to the log.
-  void dump_config() override;
-
- protected:
-  std::optional<uint16_t> published_;  ///< Last value handed to publish_state(); avoids re-publishing on every update.
-  bool published_once_{false};         ///< True once anything (a value or "unknown") was published.
-};
-
-/// @brief Sensor (`device_class: battery`, %) publishing the level a device answers its battery level
-/// poll with.
-/// @ingroup hioc_platforms
-///
-/// Only generated when the cover declares `battery_level_poll_interval:`, which also schedules the
-/// poll that feeds it (a subscription to EVENT_BATTERY_LEVEL_CHANGE, ADR 0064). Independent of the
-/// `battery: true` entities, which read the coarse level from status replies at no radio cost.
-/// \todo Percent rests on one captured value (100); confirmed on one Somfy RS100 Solar io only.
-class IOHomeBatteryLevelSensor : public IOHomeCompanionSensor {
- public:
-  /// @brief Subscribe to the device's updates and publish what is already known.
-  void setup() override;
-
-  /// @brief Dump sensor configuration to the log.
-  void dump_config() override;
-
- protected:
-  std::optional<uint16_t> published_;  ///< Last value handed to publish_state(); avoids re-publishing on every update.
-  bool published_once_{false};         ///< True once anything (a value or "unknown") was published.
-};
-
-/// @brief Binary sensor (`device_class: battery`) that is ON while the device reports a low battery.
-/// @ingroup hioc_platforms
-///
-/// Home Assistant's own low-battery convention, so generic battery tooling (low-battery
-/// notification blueprints, battery views) picks it up without per-entity setup. Generated with
-/// IOHomeBatteryTextSensor when the cover declares `battery: true`. It reads IoDevice::battery,
-/// which only status replies update: the boot poll, the settle polls after a move, and the
-/// device's own status updates. No state while the device reports no battery; the first status
-/// that shows none logs one INFO line, so a mains device with the key set explains itself.
-class IOHomeBatteryLowBinarySensor : public binary_sensor::BinarySensor, public Component, public DeviceBoundCompanion {
- public:
-  /// @brief Subscribe to the device's updates and publish what is already known.
-  void setup() override;
-
-  /// @brief Dump sensor configuration to the log.
-  void dump_config() override;
-
-  /// @brief Get setup priority so the parent hub is available first.
-  /// @return setup_priority::DATA.
-  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
-
- protected:
-  /// @brief Publish from a device record: ON for LOW_CHARGE, OFF for NORMAL/FULL, no state otherwise.
-  void publish_battery_(const IoDevice &dev);
-
-  bool logged_not_reported_{false};  ///< The "reports no battery" INFO line was written once already.
-};
-
-/// @brief Diagnostic text sensor naming the device's coarse battery level: "full", "normal" or "low".
-/// @ingroup hioc_platforms
-///
-/// Disabled by default: IOHomeBatteryLowBinarySensor is the entity automations should use. This
-/// one shows all three levels, which is useful while it is still open whether a device ever reports
-/// anything but "full". Publishes nothing while the device reports no battery.
-class IOHomeBatteryTextSensor : public text_sensor::TextSensor, public Component, public DeviceBoundCompanion {
- public:
-  /// @brief Subscribe to the device's updates and publish what is already known.
-  void setup() override;
-
-  /// @brief Dump sensor configuration to the log.
-  void dump_config() override;
-
-  /// @brief Get setup priority so the parent hub is available first.
-  /// @return setup_priority::DATA.
-  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 };
 
 }  // namespace home_io_control

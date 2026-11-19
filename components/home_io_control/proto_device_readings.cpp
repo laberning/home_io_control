@@ -38,6 +38,8 @@ constexpr uint16_t STATUS_FIELD_MASK = 0x3;
 constexpr uint16_t STATUS_FIELD_ON = 1;
 
 std::optional<float> remaining_time_of_active_run(const IoDevice &dev);
+std::optional<float> battery_low_of(const IoDevice &dev);
+const char *battery_state_value_name(uint8_t value);
 
 /// The reading table: one row per value the hub keeps of a device, and the one place that says when a device's poll
 /// reads it (`poll`, ReadingPoll) and for which devices (`feature`, else the heating profile: heating_profile_reads()).
@@ -250,6 +252,42 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .reading = DeviceReading::HOT_WATER_AWAY,
      .poll = ReadingPoll::NOT_POLLED,
      .feature = DeviceFeature::WATER_HEATER},
+    // A cover's readings. A YAML key of the cover declares each (the poll interval of the three read on a schedule,
+    // `battery:` for the two of the status reply), so none needs a capability of the kind. The three read on a schedule
+    // drop their value after repeated misses.
+    {.name = "rain",
+     .source = LimitationSource{.type = LimitationType::MINIMUM},
+     .reading = DeviceReading::RAIN,
+     .poll = ReadingPoll::NOT_POLLED,
+     .stale = ReadingStale::DROP},
+    {.name = "sun_level",
+     .source = EventSource{.event = EVENT_LOCAL_SENSOR,
+                           .data_length = LOCAL_SENSOR_EVENT_DATA_LEN,
+                           .type_byte = LOCAL_SENSOR_TYPE_SUN,
+                           .value_offset = LOCAL_SENSOR_VALUE_OFFSET,
+                           .form = {.codec = ValueCodec::U16_BE},
+                           .factor = SUN_VALUE_LUX_PER_STEP},
+     .reading = DeviceReading::SUN_LEVEL,
+     .poll = ReadingPoll::NOT_POLLED,
+     .stale = ReadingStale::DROP},
+    {.name = "battery_level",
+     .source = EventSource{.event = EVENT_BATTERY_LEVEL_CHANGE,
+                           .data_length = BATTERY_LEVEL_EVENT_DATA_LEN,
+                           .type_byte = std::nullopt,
+                           .value_offset = 0,
+                           .form = {.codec = ValueCodec::BOUNDED_BYTE, .max_value = BATTERY_LEVEL_MAX_PERCENT}},
+     .reading = DeviceReading::BATTERY_LEVEL,
+     .poll = ReadingPoll::NOT_POLLED,
+     .stale = ReadingStale::DROP},
+    {.name = "battery_state",
+     .source = StatusBatterySource{},
+     .reading = DeviceReading::BATTERY_STATE,
+     .poll = ReadingPoll::NOT_POLLED,
+     .value_name = battery_state_value_name},
+    {.name = "battery_low",
+     .source = DerivedSource{.value = battery_low_of, .polls = {}, .codec = ValueCodec::BINARY},
+     .reading = DeviceReading::BATTERY_LOW,
+     .poll = ReadingPoll::NOT_POLLED},
 };
 
 /// Run `visit` on every row whose source is the register `fn`, whole or a part of it, in table order.
@@ -289,6 +327,28 @@ std::optional<float> remaining_time_of_active_run(const IoDevice &dev) {
   return 0.0F;
 }
 
+/// @brief The name of each stored value of the battery state; NOT_REPORTED is never stored (the reading is absent).
+const char *battery_state_value_name(uint8_t value) {
+  if (value == static_cast<uint8_t>(BatteryState::NOT_REPORTED) ||
+      value > static_cast<uint8_t>(BatteryState::FULL_CHARGE))
+    return nullptr;
+  return battery_state_name(static_cast<BatteryState>(value));
+}
+
+/// @brief 1 while the device reports a low battery, 0 while it reports normal or full, none while it reports nothing.
+std::optional<float> battery_low_of(const IoDevice &dev) {
+  switch (battery_state_of(dev)) {
+    case BatteryState::LOW_CHARGE:
+      return 1.0F;
+    case BatteryState::NORMAL_CHARGE:
+    case BatteryState::FULL_CHARGE:
+      return 0.0F;
+    case BatteryState::NOT_REPORTED:
+      break;
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 namespace {
@@ -301,12 +361,16 @@ ValueCodec reading_codec(const DeviceReadingRow &row) {
                           return source.part ? source.part->codec : device_register_codec(source.fn);
                         },
                         [](const DataObjectSource &source) { return source.codec; },
-                        [](const DerivedSource &) { return ValueCodec::NONE; },
+                        [](const DerivedSource &source) { return source.codec; },
                         [](const StatusMainParameterSource &) { return ValueCodec::NONE; },
                         // A field of a functional parameter is a flag, and the whole word a number.
                         [](const StatusFunctionalParameterSource &source) {
                           return source.form == StatusParameterForm::FIELD_ON ? ValueCodec::BINARY : ValueCodec::NONE;
                         },
+                        // A limitation reply is the rain flag.
+                        [](const EventSource &source) { return source.form.codec; },
+                        [](const LimitationSource &) { return ValueCodec::BINARY; },
+                        [](const StatusBatterySource &) { return ValueCodec::NONE; },
                     },
                     row.source);
 }
@@ -344,6 +408,9 @@ std::optional<float> reading_value(const IoDevice &dev, DeviceReading reading,
                         [&stored](const StatusMainParameterSource &) { return stored(); },
                         [&stored](const DataObjectSource &) { return stored(); },
                         [&stored](const StatusFunctionalParameterSource &) { return stored(); },
+                        [&stored](const EventSource &) { return stored(); },
+                        [&stored](const LimitationSource &) { return stored(); },
+                        [&stored](const StatusBatterySource &) { return stored(); },
                         [&dev](const DerivedSource &source) { return source.value(dev); },
                     },
                     row->source);
@@ -359,6 +426,26 @@ std::optional<float> decode_data_object_reading(const DataObjectSource &source, 
   const std::span<const uint8_t> slice =
       data.subspan(source.first, std::min<size_t>(source.length, data.size() - source.first));
   return decode_value(source.codec, slice, source.max_value);
+}
+
+std::optional<float> decode_event_reading(const EventSource &source, const IoFrame &frame) {
+  StatusUpdateEvent event;
+  if (!decode_status_update_event(frame, event) || event.event_id != source.event ||
+      event.data_len != source.data_length)
+    return std::nullopt;
+  const std::span<const uint8_t> data(frame.data + event.data_offset, event.data_len);
+  if (source.type_byte && (data.empty() || data.front() != *source.type_byte))
+    return std::nullopt;
+  if (source.value_offset >= data.size())
+    return std::nullopt;
+  const std::optional<float> decoded = decode_value(source.form, data.subspan(source.value_offset));
+  // The sun level's product (at most 65535 * 100) stays below 2^24, so the float is exact.
+  return decoded ? std::optional<float>(*decoded * static_cast<float>(source.factor)) : std::nullopt;
+}
+
+BatteryState battery_state_of(const IoDevice &dev) {
+  const int value = reading_wire(dev, DeviceReading::BATTERY_STATE);
+  return value < 0 ? BatteryState::NOT_REPORTED : static_cast<BatteryState>(value);
 }
 
 std::optional<float> decode_status_reading(DeviceReading reading, std::span<const uint8_t> main_parameter,
@@ -407,6 +494,9 @@ std::span<const DeviceRegister> reading_polled_registers(const DeviceReadingRow 
                         [](const DataObjectSource &) { return std::span<const DeviceRegister>{}; },
                         [](const StatusMainParameterSource &) { return std::span<const DeviceRegister>{}; },
                         [](const StatusFunctionalParameterSource &) { return std::span<const DeviceRegister>{}; },
+                        [](const EventSource &) { return std::span<const DeviceRegister>{}; },
+                        [](const LimitationSource &) { return std::span<const DeviceRegister>{}; },
+                        [](const StatusBatterySource &) { return std::span<const DeviceRegister>{}; },
                     },
                     row.source);
 }
@@ -432,6 +522,15 @@ const DeviceReadingRow *find_register_reading(DeviceRegister fn) {
 std::optional<float> register_value(const IoDevice &dev, DeviceRegister fn) {
   const DeviceReadingRow *row = find_register_reading(fn);
   return row != nullptr ? dev.reading_values.value(reading_slot(row->reading)) : std::nullopt;
+}
+
+bool reading_is_scheduled(const DeviceReadingRow &row) {
+  return std::holds_alternative<DataObjectSource>(row.source) || std::holds_alternative<EventSource>(row.source) ||
+         std::holds_alternative<LimitationSource>(row.source);
+}
+
+bool device_can_have_reading(const IoDevice &dev, const DeviceReadingRow &row) {
+  return !row.feature.has_value() || has_feature(dev.features, *row.feature);
 }
 
 bool device_has_reading_capability(const IoDevice &dev, const DeviceReadingRow &row) {

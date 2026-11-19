@@ -443,15 +443,15 @@ static constexpr uint16_t EVENT_STATUS_CHANGE = 0x100A;
 /// @{
 /// A battery-powered device reports its charge level. An RS100 Solar io answered the subscription
 /// with this event and one data byte, 100, while its status byte read full
-/// (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_battery_sx1262.yaml); see
-/// decode_battery_level_event().
+/// (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_battery_sx1262.yaml); see the
+/// battery_level reading (proto_device_readings.h).
 /// \todo Percent is a reading of that one value: no level below 100 has been captured.
 static constexpr uint16_t EVENT_BATTERY_LEVEL_CHANGE = 0x2001;
 /// A device reports a sensor built into it (sun, window, ...). An RS100 Solar io accepted the
 /// subscription and answered with this event: first data byte LOCAL_SENSOR_TYPE_SUN, then a byte,
 /// a big-endian 16-bit value and a byte; the value is 0 at night and rises with sun on the panel
 /// (tests/corpus/captures/probe/somfy_rs100_probe_subscribe_event_sx1262.yaml and
-/// somfy_rs100_probe_subscribe_event_daylight_sx1262.yaml); see decode_sun_level_event().
+/// somfy_rs100_probe_subscribe_event_daylight_sx1262.yaml); see the sun_level reading (proto_device_readings.h).
 /// \todo The value's scale is an estimate (ADR 0088); the surrounding two bytes are undecoded.
 static constexpr uint16_t EVENT_LOCAL_SENSOR = 0x2005;
 /// @}
@@ -465,6 +465,17 @@ static constexpr uint8_t LOCAL_SENSOR_VALUE_OFFSET = 2;     ///< Offset of the b
 static constexpr uint8_t BATTERY_LEVEL_EVENT_DATA_LEN = 1;  ///< EVENT_BATTERY_LEVEL_CHANGE data: one level byte.
 static constexpr uint8_t BATTERY_LEVEL_MAX_PERCENT = 100;   ///< Highest level read as a percentage.
 /// @}
+
+/// Lux per step of the sun value a device reports (ADR 0088). The scale is an estimate drawn from the
+/// data posted in issue #156 against common daylight figures, not a measured constant: in direct sun
+/// the value read about 600 to 750, which at x100 is 60 000 to 75 000 lx, within the 50 000 to
+/// 100 000 lx usually given for direct sunlight; on dull days the daily maximum was about 35 to 61,
+/// which at x100 is 3 500 to 6 100 lx, within overcast daylight. 100 is a round factor that puts both
+/// ends in their usual ranges. An outdoor light sensor near the panel read about 10 times the value,
+/// so the two estimates disagree by a factor of ten. The sun_level reading stores the value in lux, this
+/// factor applied when it is decoded (proto_device_readings.h).
+/// \todo Confirm the scale with a lux meter reading next to the panel (issue #156).
+static constexpr uint16_t SUN_VALUE_LUX_PER_STEP = 100;
 
 static constexpr uint8_t CMD_SEND_RAW_MESSAGE =
     0xF0;  ///< Named "Send Raw Message" / "Find Hardware" — two candidate names, neither settled.

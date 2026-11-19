@@ -17,6 +17,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace esphome {
@@ -224,24 +225,24 @@ static_assert(POSITION_RAW_PER_PERCENT * POSITION_FULL_PERCENT == STATUS_POS_MAX
 /// RAIN_MINIMUM_LIMIT_PERCENT in the raw position coding (0xB200).
 static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = POSITION_RAW_PER_PERCENT * RAIN_MINIMUM_LIMIT_PERCENT;
 
-/// @brief Rain state from the raw value of a minimum-limitation reply.
+/// @brief Rain from the raw value of a minimum-limitation reply.
 /// @param value_raw Big-endian raw value in position coding (LimitationStatus::value_raw).
-/// @return UNKNOWN for a value above STATUS_POS_MAX (not a percentage), RAIN at or above
-///         RAIN_MINIMUM_LIMIT_RAW, DRY below it.
-[[nodiscard]] inline RainSensorState rain_state_from_minimum_limit(uint16_t value_raw) {
+/// @return nullopt for a value above STATUS_POS_MAX (not a percentage), true (rain) at or above
+///         RAIN_MINIMUM_LIMIT_RAW, false (dry) below it.
+[[nodiscard]] inline std::optional<bool> rain_from_minimum_limit(uint16_t value_raw) {
   if (value_raw > STATUS_POS_MAX)
-    return RainSensorState::UNKNOWN;
-  return value_raw >= RAIN_MINIMUM_LIMIT_RAW ? RainSensorState::RAIN : RainSensorState::DRY;
+    return std::nullopt;
+  return value_raw >= RAIN_MINIMUM_LIMIT_RAW;
 }
 
-/// @brief Rain state from a decoded limitation reply: the one place that knows which reply fields
+/// @brief Rain from a decoded limitation reply: the one place that knows which reply fields
 /// decide. Only the main parameter's value counts; originator and remaining time do not.
 /// @param status A decoded CMD_LIMITATION_STATUS_RESP payload.
-/// @return UNKNOWN unless the reply is for the main parameter, else rain_state_from_minimum_limit().
-[[nodiscard]] inline RainSensorState rain_state_from_limitation_reply(const LimitationStatus &status) {
+/// @return nullopt unless the reply is for the main parameter, else rain_from_minimum_limit().
+[[nodiscard]] inline std::optional<bool> rain_from_limitation_reply(const LimitationStatus &status) {
   if (status.parameter_id != LIMITATION_PARAM_MP)
-    return RainSensorState::UNKNOWN;
-  return rain_state_from_minimum_limit(status.value_raw);
+    return std::nullopt;
+  return rain_from_minimum_limit(status.value_raw);
 }
 
 // === Execution state ===

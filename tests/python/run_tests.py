@@ -776,12 +776,28 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
     assert len(platform_keys) == len(set(platform_keys)), platform_keys
     for name, entry in v.DEVICE_READINGS.items():
         assert entry["feature"] in v.FEATURES or entry["feature"] is None, name
-        assert entry["platform"] in ("climate", "water_heater", "sensor"), name
+        assert entry["platform"] in ("climate", "water_heater", "sensor", "cover"), name
         assert (entry["platform"] == "sensor") == (entry["source"] == "data_object"), name
         assert (entry["platform"] == "water_heater") == (entry["feature"] == "WATER_HEATER"), name
-        assert entry["source"] in ("register", "derived", "data_object", "status", "status_parameter"), name
-        # A data object and a status reply are read without a register of the poll.
-        assert bool(entry["registers"]) == (entry["source"] in ("register", "derived")), name
+        # A cover's reading is declared by a key of the cover, not by a capability of its kind.
+        assert (entry["platform"] == "cover") == ("opt_in_key" in entry), name
+        if "opt_in_key" in entry:
+            assert entry["feature"] is None and entry["key"] is None and "companion" in entry, name
+        assert entry["source"] in (
+            "register",
+            "derived",
+            "data_object",
+            "status",
+            "status_parameter",
+            "event",
+            "limitation",
+            "status_battery",
+        ), name
+        # A data object, an event, a limitation and a status reply are read without a register of the poll, and
+        # a cover's derived flag needs none.
+        assert bool(entry["registers"]) == (
+            entry["source"] in ("register", "derived") and entry["platform"] != "cover"
+        ), name
         if entry["source"] == "data_object":
             assert entry["update_interval_ms"] >= v.MIN_DEVICE_READING_INTERVAL_MS, name
         if entry["key"] is not None:
@@ -793,8 +809,8 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
             assert (entry["entity"] is not None) == ("companion" in entry), name
         if "companion" in entry:
             assert entry["entity"] in ("sensor", "binary_sensor", "switch", "text_sensor"), name
-            assert entry["feature"] in v.FEATURES and entry["companion_id"], name
-    for platform in ("climate", "water_heater"):
+            assert entry["companion_id"] and (entry["feature"] in v.FEATURES or "opt_in_key" in entry), name
+    for platform in ("climate", "water_heater", "cover"):
         schema_keys = {str(key) for key in pc.reading_keys_schema(platform)}
         assert schema_keys == {entry["key"] for entry in keyed.values() if entry["platform"] == platform}, platform
     assert {str(key) for key in pc.reading_keys_schema(pc.WATER_HEATER_PLATFORM)} == {
@@ -804,7 +820,11 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
     }
     assert not pc.reading_keys_schema(pc.SENSOR_PLATFORM), "no production reading is a data object yet"
     # The companions are the window sensor and the detection switch, named and IDed from the mirror.
-    companions = {name: entry for name, entry in v.DEVICE_READINGS.items() if "companion" in entry}
+    companions = {
+        name: entry
+        for name, entry in v.DEVICE_READINGS.items()
+        if "companion" in entry and entry["platform"] == "climate"
+    }
     assert {name: (entry["companion"], entry["companion_id"]) for name, entry in companions.items()} == {
         "WINDOW_OPEN": ("Window", "window_sensor"),
         "OPEN_WINDOW_DETECTION": ("Open Window Detection", "window_detection_switch"),
@@ -974,7 +994,7 @@ def a_reading_key_asks_for_its_data_object_read_with_the_mirrors_default_interva
         def __init__(self):
             self.calls = []
 
-        def add_data_object_reading(self, reading, interval_ms):
+        def add_scheduled_reading(self, reading, interval_ms):
             self.calls.append(interval_ms)
 
     class Entity:
@@ -1105,25 +1125,34 @@ def cover_travel_speed_declares_its_select_and_names_the_cpp_options():
 @case()
 def cover_opt_in_companions_are_declared_only_with_their_key():
     """Each opt-in cover companion exists only when its key is set (`battery:` when true), under the id
-    suffix Home Assistant entity ids are built from."""
+    suffix Home Assistant entity ids are built from; the keys are the ones the reading mirror names."""
     from esphome.const import CONF_ID, CONF_NAME
     from esphome.core import ID
     from esphome.components.home_io_control import cover as c
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as pc
 
     def declared(**extra):
         cfg = {CONF_ID: ID("living", is_declaration=True), CONF_NAME: "Living", **extra}
         return c._inject_companion_ids(cfg)
 
-    opt_ins = {
-        c.CONF_RAIN_SENSOR_ID: ("living_rain_sensor", {c.CONF_RAIN_SENSOR_POLL_INTERVAL: 1}),
-        c.CONF_SUN_LEVEL_SENSOR_ID: ("living_sun_level_sensor", {c.CONF_SUN_LEVEL_POLL_INTERVAL: 1}),
-        c.CONF_BATTERY_LEVEL_SENSOR_ID: (
-            "living_battery_level_sensor",
-            {c.CONF_BATTERY_LEVEL_POLL_INTERVAL: 1},
-        ),
-        c.CONF_BATTERY_LOW_SENSOR_ID: ("living_battery_low_sensor", {c.CONF_BATTERY: True}),
-        c.CONF_BATTERY_SENSOR_ID: ("living_battery_sensor", {c.CONF_BATTERY: True}),
+    # The mirror's opt-in keys are the cover's own keys.
+    opt_in_keys = {entry["opt_in_key"] for entry in v.DEVICE_READINGS.values() if "opt_in_key" in entry}
+    assert opt_in_keys == {
+        c.CONF_RAIN_SENSOR_POLL_INTERVAL,
+        c.CONF_SUN_LEVEL_POLL_INTERVAL,
+        c.CONF_BATTERY_LEVEL_POLL_INTERVAL,
+        c.CONF_BATTERY,
     }
+    opt_ins = {
+        "_rain_sensor_id": ("living_rain_sensor", {c.CONF_RAIN_SENSOR_POLL_INTERVAL: 1}),
+        "_sun_level_sensor_id": ("living_sun_level_sensor", {c.CONF_SUN_LEVEL_POLL_INTERVAL: 1}),
+        "_battery_level_sensor_id": ("living_battery_level_sensor", {c.CONF_BATTERY_LEVEL_POLL_INTERVAL: 1}),
+        "_battery_low_sensor_id": ("living_battery_low_sensor", {c.CONF_BATTERY: True}),
+        "_battery_sensor_id": ("living_battery_sensor", {c.CONF_BATTERY: True}),
+    }
+    # The id keys are the ones the mirror's companions are declared under.
+    assert {pc._reading_companion_id_key(entry) for _, entry in pc._reading_opt_ins(pc.COVER_PLATFORM)} == set(opt_ins)
     bare = declared()
     for id_key, (expected_id, extra) in opt_ins.items():
         assert id_key not in bare
@@ -1131,7 +1160,142 @@ def cover_opt_in_companions_are_declared_only_with_their_key():
         assert out[id_key].id == expected_id and out[id_key].is_declaration
     # `battery: false` is a key that is present but declares nothing.
     off = declared(**{c.CONF_BATTERY: False})
-    assert c.CONF_BATTERY_LOW_SENSOR_ID not in off and c.CONF_BATTERY_SENSOR_ID not in off
+    assert "_battery_low_sensor_id" not in off and "_battery_sensor_id" not in off
+
+
+@case()
+def a_cover_schedules_the_readings_its_interval_keys_declare_and_asks_nothing_for_the_battery():
+    """`reading_schedules_to_code()` gives the hub one scheduled reading per interval key of the cover, with the key's
+    interval; `battery:` declares readings of the status reply, which are read by no schedule."""
+    from unittest import mock
+
+    import esphome.codegen as cg
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import platform_common as pc
+
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        def add_scheduled_reading(self, reading, interval_ms):
+            self.calls.append((str(reading).split("::")[-1], interval_ms))
+
+    def schedules(config):
+        recorder = Recorder()
+        with mock.patch.object(cg, "add", lambda *_: None):
+            pc.reading_schedules_to_code(recorder, config, pc.COVER_PLATFORM)
+        return recorder.calls
+
+    minutes = cv.positive_time_period_milliseconds
+    assert schedules({}) == []
+    assert schedules({"battery": True}) == []
+    assert schedules(
+        {
+            "rain_sensor_poll_interval": minutes("15min"),
+            "sun_level_poll_interval": minutes("30min"),
+            "battery_level_poll_interval": minutes("6h"),
+            "battery": True,
+        }
+    ) == [("RAIN", 900000), ("SUN_LEVEL", 1800000), ("BATTERY_LEVEL", 21600000)]
+
+
+@case()
+def cover_opt_in_entities_are_created_with_their_names_ids_and_home_assistant_metadata():
+    """The rain, sun level, battery level and battery entities of a cover keep their entity names, IDs, classes,
+    units, categories and default visibility, whichever way the code builds them. The companions are captured where
+    every one is bound to its device (platform_common._bind_companion), with the cover's own wiring mocked."""
+    from unittest import mock
+
+    import esphome.codegen as cg
+    import esphome.config_validation as cv
+    from esphome.components import cover as cover_platform
+    from esphome.components.home_io_control import cover as c
+    from esphome.components.home_io_control import platform_common as pc
+    from esphome.const import CONF_ID, CONF_NAME
+    from esphome.core import ID
+
+    created = {}
+
+    async def capture(config, parent, new_entity, entity_config, **new_kwargs):
+        created[entity_config[CONF_ID].id] = (new_entity.__name__, entity_config)
+        return mock.MagicMock()
+
+    async def anything(*args, **kwargs):
+        return mock.MagicMock()
+
+    config = {
+        CONF_ID: ID("living", is_declaration=True),
+        CONF_NAME: "Living",
+        pc.CONF_HOME_IO_CONTROL_ID: ID("hub"),
+        pc.CONF_IO_DEVICE_ID: "ABC123",
+        c.CONF_OPTIMISTIC_STATE: True,
+        c.CONF_RAIN_SENSOR_POLL_INTERVAL: cv.positive_time_period_milliseconds("15min"),
+        c.CONF_SUN_LEVEL_POLL_INTERVAL: cv.positive_time_period_milliseconds("30min"),
+        c.CONF_BATTERY_LEVEL_POLL_INTERVAL: cv.positive_time_period_milliseconds("6h"),
+        c.CONF_BATTERY: True,
+    }
+    config = c._inject_companion_ids(config)
+    with mock.patch.object(pc, "_bind_companion", capture), mock.patch.object(cg, "add", lambda *_: None), mock.patch.object(
+        cg, "register_component", anything
+    ), mock.patch.object(cg, "get_variable", anything), mock.patch.object(
+        cover_platform, "new_cover", anything
+    ), mock.patch.object(c, "wire_device_binding", anything), mock.patch.object(c, "create_companion_sensors", anything):
+        asyncio.run(c.to_code(config))
+
+    fields = (
+        "name",
+        "device_class",
+        "unit_of_measurement",
+        "accuracy_decimals",
+        "state_class",
+        "entity_category",
+        "icon",
+        "disabled_by_default",
+    )
+    expected = {
+        "living_rain_sensor": ("new_binary_sensor", {"name": "Living Rain sensor", "device_class": "moisture"}),
+        "living_sun_level_sensor": (
+            "new_sensor",
+            {
+                "name": "Living Sun level",
+                "device_class": "illuminance",
+                "unit_of_measurement": "lx",
+                "accuracy_decimals": 0,
+                "state_class": "measurement",
+                "icon": "mdi:white-balance-sunny",
+            },
+        ),
+        "living_battery_level_sensor": (
+            "new_sensor",
+            {
+                "name": "Living Battery level",
+                "device_class": "battery",
+                "unit_of_measurement": "%",
+                "accuracy_decimals": 0,
+                "state_class": "measurement",
+            },
+        ),
+        "living_battery_low_sensor": (
+            "new_binary_sensor",
+            {"name": "Living Battery Low", "device_class": "battery", "entity_category": "diagnostic"},
+        ),
+        "living_battery_sensor": (
+            "new_text_sensor",
+            {
+                "name": "Living Battery",
+                "entity_category": "diagnostic",
+                "icon": "mdi:battery",
+                "disabled_by_default": True,
+            },
+        ),
+    }
+    assert set(created) >= set(expected), sorted(created)
+    for entity_id, (creator, metadata) in expected.items():
+        creator_name, entity_config = created[entity_id]
+        assert creator_name == creator, (entity_id, creator_name)
+        got = {field: entity_config[field] for field in fields if field in entity_config}
+        got.pop("disabled_by_default", None) if not got.get("disabled_by_default") else None
+        assert got == metadata, (entity_id, got, metadata)
 
 
 @case()

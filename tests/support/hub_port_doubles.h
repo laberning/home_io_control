@@ -66,15 +66,6 @@ class DevicePortDouble : public HubDevicePort {
   void set_device_status_poll_interval(const std::string &device_id, uint32_t interval_ms) override {
     this->record_interval_(this->status_poll_intervals_, device_id, interval_ms);
   }
-  void set_device_rain_poll_interval(const std::string &device_id, uint32_t interval_ms) override {
-    this->record_interval_(this->rain_poll_intervals_, device_id, interval_ms);
-  }
-  void set_device_sun_poll_interval(const std::string &device_id, uint32_t interval_ms) override {
-    this->record_interval_(this->sun_poll_intervals_, device_id, interval_ms);
-  }
-  void set_device_battery_level_poll_interval(const std::string &device_id, uint32_t interval_ms) override {
-    this->record_interval_(this->battery_level_poll_intervals_, device_id, interval_ms);
-  }
   void set_device_status_refresh_interval(const std::string &device_id, uint32_t interval_ms) override {
     this->record_interval_(this->status_refresh_intervals_, device_id, interval_ms);
   }
@@ -88,15 +79,10 @@ class DevicePortDouble : public HubDevicePort {
   [[nodiscard]] uint32_t status_poll_interval(const std::string &id) const {
     return lookup_(status_poll_intervals_, id);
   }
-  [[nodiscard]] uint32_t rain_poll_interval(const std::string &id) const { return lookup_(rain_poll_intervals_, id); }
-  [[nodiscard]] uint32_t sun_poll_interval(const std::string &id) const { return lookup_(sun_poll_intervals_, id); }
-  [[nodiscard]] uint32_t battery_level_poll_interval(const std::string &id) const {
-    return lookup_(battery_level_poll_intervals_, id);
-  }
   [[nodiscard]] uint32_t status_refresh_interval(const std::string &id) const {
     return lookup_(status_refresh_intervals_, id);
   }
-  /// @return The interval last set for a data-object reading of the device, or 0 when none was set.
+  /// @return The interval last set for a scheduled reading of the device, or 0 when none was set.
   [[nodiscard]] uint32_t reading_poll_interval(const std::string &id, DeviceReading reading) const {
     const auto it = reading_poll_intervals_.find({id, reading});
     return it != reading_poll_intervals_.end() ? it->second : 0;
@@ -205,9 +191,6 @@ class DevicePortDouble : public HubDevicePort {
   }
 
   IntervalMap status_poll_intervals_;
-  IntervalMap rain_poll_intervals_;
-  IntervalMap sun_poll_intervals_;
-  IntervalMap battery_level_poll_intervals_;
   IntervalMap status_refresh_intervals_;
   std::map<std::pair<std::string, DeviceReading>, uint32_t> reading_poll_intervals_;
   std::deque<PendingOperation> queued_;

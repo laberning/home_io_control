@@ -821,7 +821,7 @@ TEST(HubManagement, ProbeDeviceSubscribeEventReportsA0x70ReplyRawAndNeverApplies
   dev->position = 42.0F;
   dev->target = 42.0F;
   dev->is_stopped = true;
-  const auto battery_before = dev->battery;
+  const auto battery_before = battery_state_of(*dev);
   radio.queue_rx(frame_to_packet(make_device_event_frame(component.node_id_)));
 
   const auto result = component.management_actions_.probe_device("ABC123", "subscribe_event", "1");
@@ -831,7 +831,7 @@ TEST(HubManagement, ProbeDeviceSubscribeEventReportsA0x70ReplyRawAndNeverApplies
   EXPECT_FLOAT_EQ(dev->position, 42.0F);
   EXPECT_FLOAT_EQ(dev->target, 42.0F);
   EXPECT_TRUE(dev->is_stopped);
-  EXPECT_EQ(dev->battery, battery_before);
+  EXPECT_EQ(battery_state_of(*dev), battery_before);
 }
 
 TEST(HubManagement, ProbeDeviceSubscribeEventRecordsAStatusUpdateAnswerAsTheFirstReport) {

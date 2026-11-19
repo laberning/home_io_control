@@ -6,7 +6,7 @@
 ///
 /// A reading is what the hub keeps of one value of a device: a heater's room temperature, its energy counter, the
 /// minutes left of a towel dryer's run, the heating level its status reply reports, a water heater's water
-/// temperature. One table (DEVICE_READINGS in the
+/// temperature, a cover's rain state, sun level and battery. One table (DEVICE_READINGS in the
 /// .cpp) lists every reading by name with its source and, for a reading an entity of the YAML can ask for, the
 /// capability a device needs (DeviceFeature, ADR 0098). The source says how the value is obtained, so the kinds stay
 /// apart and a new kind leaves the rows of the others alone:
@@ -19,7 +19,14 @@
 ///  - DerivedSource: a value worked out from other readings (the minutes left of whichever run is active), with the
 ///    registers it needs polled;
 ///  - DataObjectSource: a slice of a device's data object, read on a schedule through a transfer recipe
-///    (transfer_reader.h) and decoded with a ValueCodec.
+///    (transfer_reader.h) and decoded with a ValueCodec;
+///  - EventSource: the data of a device event, the answer to an event subscription sent on a schedule (ADR 0064), a
+///    slice of it decoded with a ValueForm;
+///  - LimitationSource: the answer to a limitation read sent on a schedule (a window's rain protection);
+///  - StatusBatterySource: the coarse battery level in byte 1 of a status reply.
+///
+/// A reading that is read on a schedule (data object, event, limitation) also says what its value becomes when the
+/// reads keep missing (ReadingStale).
 ///
 /// Every value but a derived one is kept in the device record, by reading (DeviceReadingValues), since a read takes
 /// seconds and answers later than the poll that asked, and a status reply answers without being asked for. What the
@@ -32,10 +39,11 @@
 /// C++ is what the entity needs at run time: the names of a named value (`value_name`).
 ///
 /// Outside the table, with the reason: the model-name register (text, logged once), the registers the hub only logs
-/// (PAIRED_DEVICES, SETPOINT_BLOCK), the raw probes (`register_00`, `register_01`, `read_object`; raw by design), a
-/// cover's position, tilt and remaining time (fields of the status frame, not readings of a register), and a cover's
-/// rain, sun and battery values (their own mechanisms, until they move onto the table).
+/// (PAIRED_DEVICES, SETPOINT_BLOCK), the raw probes (`register_00`, `register_01`, `read_object`; raw by design), and a
+/// cover's position, tilt and remaining time (fields of the status frame the cover entity shows, not readings of a
+/// register).
 
+#include "proto_constants.h"
 #include "proto_device_features.h"
 #include "proto_device_model.h"
 #include "proto_frame.h"
@@ -92,6 +100,11 @@ enum class DeviceReading : uint8_t {
   HOT_WATER_CAPABILITIES,      ///< The operating-mode capabilities a water heater reports (FP15 word).
   HOT_WATER_BOOST,             ///< A water heater's boost is on, as its operating-mode word (FP16) reports it.
   HOT_WATER_AWAY,              ///< A water heater's away mode is on, as its operating-mode word (FP16) reports it.
+  RAIN,                        ///< A window's rain protection, 1 while its minimum limit is rain-sized and 0 below it.
+  SUN_LEVEL,                   ///< The sun on a solar cover's panel, lux (an estimate, SUN_VALUE_LUX_PER_STEP).
+  BATTERY_LEVEL,               ///< A battery-powered cover's charge level, percent, from its event.
+  BATTERY_STATE,               ///< A cover's coarse battery level from its status reply (BatteryState).
+  BATTERY_LOW,                 ///< 1 while a cover reports a low battery and 0 while it reports another level.
   COUNT,                       ///< Number of readings; not a reading.
 };
 
@@ -160,6 +173,8 @@ struct StatusFunctionalParameterSource {
 struct DerivedSource {
   std::optional<float> (*value)(const IoDevice &);  ///< The value now, or nullopt while it cannot be told.
   std::span<const DeviceRegister> polls;            ///< The registers the poll must read for `value` to know.
+  ValueCodec codec{ValueCodec::NONE};               ///< What kind of number `value` gives: BINARY for a flag, which
+                                                    ///< a binary sensor shows; NONE for any other number.
 };
 
 /// @brief A reading that is a slice of a data object of the device, read on a schedule.
@@ -175,16 +190,53 @@ struct DataObjectSource {
   uint16_t max_value;  ///< Highest value of a bounded codec (decode_value()); 0 for the others.
 };
 
-/// @brief Where a reading's value comes from. Later kinds (a one-frame read) are further alternatives; the rows of
-/// the existing kinds do not change.
+/// @brief A reading that is the data of a device event, the answer to an event subscription.
+/// @details The hub sends the subscription again on every scheduled read (ADR 0064) and the device answers with the
+///          event's current value in a CMD_STATUS_UPDATE, which is the reading and nothing else: it never reaches the
+///          position decode. The answer is accepted only when it is that event, carries exactly `data_length` data
+///          bytes and, where the row names one, starts with `type_byte`; any other shape is not decoded
+///          (decode_event_reading()).
+struct EventSource {
+  uint16_t event;                    ///< The event the hub subscribes to and the answer carries (EVENT_LOCAL_SENSOR).
+  uint8_t data_length;               ///< Exact number of event data bytes of the captured answer.
+  std::optional<uint8_t> type_byte;  ///< The first event data byte, when the answer must carry a given one (the
+                                     ///< sensor type of EVENT_LOCAL_SENSOR).
+  uint8_t value_offset;              ///< Index in the event data of the first byte of the value.
+  ValueForm form;                    ///< How the bytes from `value_offset` map onto a number.
+  uint16_t factor{1};                ///< The decoded number is multiplied by this: natural units per step.
+};
+
+/// @brief A reading that is the answer to a limitation read (CMD_LIMITATION_STATUS_REQ), sent on a schedule.
+/// @details The reply is accepted only inside the exchange that asked and never reaches the status decode, so the
+///          read cannot move a device's position or target. The row's value is the rain flag the reply's value gives
+///          (decisions::rain_from_limitation_reply()); a reply that says nothing of rain is no value.
+struct LimitationSource {
+  LimitationType type;  ///< Which limit the hub asks for.
+};
+
+/// @brief A reading that is the coarse battery level in byte 1 of a status reply (decode_battery_state()).
+/// @details Not read by a poll of its own: a status reply that answers the hub's own request or an authenticated
+///          status update of the device stores it, never an execute acknowledgement (its layout follows the request)
+///          or an overheard frame (ADR 0022). A reply that shows no battery marks the reading absent.
+struct StatusBatterySource {};
+
+/// @brief Where a reading's value comes from. Rows of an existing kind are plain additions; a new kind is a further
+/// alternative here with its branches wherever the table is walked by kind.
 using ReadingSource = std::variant<RegisterSource, DerivedSource, DataObjectSource, StatusMainParameterSource,
-                                   StatusFunctionalParameterSource>;
+                                   StatusFunctionalParameterSource, EventSource, LimitationSource, StatusBatterySource>;
+
+/// @brief What becomes of a scheduled reading's value when its reads keep missing.
+enum class ReadingStale : uint8_t {
+  KEEP,  ///< The last value stays shown: a counter only grows, so an old value is still the best one.
+  DROP,  ///< The value is dropped after PERIODIC_POLL_FAILURES_BEFORE_UNKNOWN misses in a row: a state that
+         ///< changes (rain, sun, charge) is no longer known, and a shown "dry" must mean a reply said so.
+};
 
 /// @brief When a device's poll reads a reading by itself.
 /// @details Which devices read it is decided by the row's capability or, for a row without one, by the heating
 ///          profile (heating_profile_reads()); this is the cadence on a device that does. Within one policy the
-///          order of the rows is the order of the reads (device_poll_reads()). A data-object reading is read on its
-///          own schedule and the heater poll never consults its policy.
+///          order of the rows is the order of the reads (device_poll_reads()). A reading read on a schedule of its own
+///          (a data object, an event, a limitation) is never consulted by the heater poll.
 enum class ReadingPoll : uint8_t {
   EVERY_POLL,           ///< Every poll; the first read that fails ends the poll and fails it.
   EVERY_POLL_MAY_MISS,  ///< Every poll, after the readings of EVERY_POLL; a miss keeps the earlier value and costs a
@@ -218,11 +270,14 @@ struct DeviceReadingRow {
   const char *(*value_name)(uint8_t value) =
       nullptr;  ///< The name of each value a NAMED reading takes (nullptr for a value that has none); unset for the
                 ///< other kinds. The entity that shows the reading publishes the name, never the number.
+  ReadingStale stale{ReadingStale::KEEP};  ///< What a scheduled reading's value becomes after repeated misses; the
+                                           ///< other kinds never consult it.
 };
 
 /// @brief What kind of number a reading is.
-/// @details A row with a value-name function is NAMED; otherwise a flag codec (the register's, or the data object's)
-///          makes it a FLAG, and anything else is a NUMBER. The generated code and the entity that shows the reading
+/// @details A row with a value-name function is NAMED; otherwise a flag codec (the register's, the data object's or
+///          the event's, or a derived reading's own) makes it a FLAG, as does the answer to a limitation read (the
+///          rain flag), and anything else is a NUMBER. The generated code and the entity that shows the reading
 ///          follow it (the codegen mirror's `entity`, checked in tests/sync/device_features_sync_test.cpp).
 /// @param row The reading's row.
 /// @return The kind.
@@ -270,6 +325,21 @@ std::optional<float> reading_value(const IoDevice &dev, DeviceReading reading, s
 ///         pattern.
 std::optional<float> decode_data_object_reading(const DataObjectSource &source, std::span<const uint8_t> data);
 
+/// @brief The value an event report gives for an event reading.
+/// @details The frame must be a well-formed CMD_STATUS_UPDATE (decode_status_update_event()) carrying the source's
+///          event with exactly its data length and, when the source names one, its type byte. The value is the
+///          source's form applied from its offset, multiplied by its factor.
+/// @param source The reading's event and layout.
+/// @param frame The device's answer to the event subscription.
+/// @return The value in natural units, or nullopt for any other event, shape or a value the form refuses (a level
+///         above its bound).
+std::optional<float> decode_event_reading(const EventSource &source, const IoFrame &frame);
+
+/// @brief The coarse battery level the device record holds (DeviceReading::BATTERY_STATE).
+/// @param dev The device record.
+/// @return The level, or BatteryState::NOT_REPORTED while no status reply showed one.
+[[nodiscard]] BatteryState battery_state_of(const IoDevice &dev);
+
 /// @brief The value a status reply's main parameter gives for a status reading.
 /// @details The two bytes are decoded with ValueCodec::U16_BE, then the reading's StatusValueForm says what they mean:
 ///          a level is the low byte when the high byte is `level_prefix`, a temperature is the main parameter decoded
@@ -297,7 +367,8 @@ size_t store_status_parameter_readings(IoDevice &dev, const IoFrame &reply);
 /// @brief The registers the hub's poll reads so a reading has a value.
 /// @param row The reading's row.
 /// @return The register of a register reading, the registers a derived reading names, none for a kind with no
-///         register (a data-object reading is read by the transfer reader, a status reading answers the status read).
+///         register (a data-object, event or limitation reading is read on its own schedule, a status reading
+///         answers the status read).
 ///         The span points into static storage (the table).
 std::span<const DeviceRegister> reading_polled_registers(const DeviceReadingRow &row);
 
@@ -311,6 +382,19 @@ std::optional<DeviceRegister> reading_register(DeviceReading reading);
 /// @return The first row in table order whose source is that register (the register's own value, or its first part),
 ///         or nullptr when no reading is.
 const DeviceReadingRow *find_register_reading(DeviceRegister fn);
+
+/// @brief Is a reading read on a schedule of its own: a data object, an event or a limitation?
+/// @param row The reading's row.
+/// @return true for those three source kinds; the others are read by the heater poll or answered by a status reply.
+[[nodiscard]] bool reading_is_scheduled(const DeviceReadingRow &row);
+
+/// @brief Can a device have a reading: does it have the capability the row names, if it names one?
+/// @details Unlike device_has_reading_capability(), a row with no capability passes: a cover's readings are asked for
+///          by YAML keys and need no capability of the kind.
+/// @param dev The device record (its resolved features).
+/// @param row The reading's row.
+/// @return false only when the row names a capability the device lacks.
+[[nodiscard]] bool device_can_have_reading(const IoDevice &dev, const DeviceReadingRow &row);
 
 /// @brief Does a device have the capability an entity needs to ask for a reading?
 /// @param dev The device record (its resolved features).

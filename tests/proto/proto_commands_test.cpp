@@ -1,4 +1,5 @@
 #include "proto_commands.h"
+#include "proto_device_readings.h"
 #include "proto_crypto.h"
 #include "proto_frame.h"
 
@@ -764,16 +765,6 @@ TEST(ProtoCommands, CoverCommandNameLookup) {
   EXPECT_STREQ(cover_command_name(CoverCommand::FORCE_OPEN), "FORCE_OPEN");
 }
 
-TEST(ProtoCommands, RainSensorStateNameLookup) {
-  EXPECT_STREQ(rain_sensor_state_name(RainSensorState::UNKNOWN), "unknown");
-  EXPECT_STREQ(rain_sensor_state_name(RainSensorState::DRY), "dry");
-  EXPECT_STREQ(rain_sensor_state_name(RainSensorState::RAIN), "rain");
-}
-
-TEST(ProtoCommands, NewDeviceStartsWithUnknownRainSensor) {
-  EXPECT_EQ(IoDevice{}.rain_sensor, RainSensorState::UNKNOWN);
-}
-
 TEST(ProtoCommands, BatteryStateNameLookup) {
   EXPECT_STREQ(battery_state_name(BatteryState::NOT_REPORTED), "not_reported");
   EXPECT_STREQ(battery_state_name(BatteryState::LOW_CHARGE), "low");
@@ -821,7 +812,9 @@ TEST(ProtoCommands, DecodeBatteryStateIgnoresTheOtherBits) {
   EXPECT_EQ(decode_battery_state(0x9F), BatteryState::NOT_REPORTED);
 }
 
-TEST(ProtoCommands, NewDeviceStartsWithNoBatteryReported) { EXPECT_EQ(IoDevice{}.battery, BatteryState::NOT_REPORTED); }
+TEST(ProtoCommands, NewDeviceStartsWithNoBatteryReported) {
+  EXPECT_EQ(battery_state_of(IoDevice{}), BatteryState::NOT_REPORTED);
+}
 
 // ============================================================================
 // Silent operation: the reference hub's slower travel profile, isolated by A/B capture on

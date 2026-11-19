@@ -378,18 +378,33 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
 }
 
 /// @brief Record the coarse battery level a status payload carries, logging a change.
+/// @details A level is stored as the battery_state reading. A status that shows none marks the reading absent, which a
+///          later level lifts; the first one that does so for a device that declares battery entities is logged, so a
+///          mains device with `battery: true` explains itself.
 /// @param id Device ID for the log line.
 /// @param dev Device record to update.
 /// @param frame A status poll reply or a device-originated status update (both put it at data[1]).
 void apply_battery_state(const std::string &id, IoDevice &dev, const IoFrame &frame) {
   const BatteryState reported = decode_battery_state(frame.data[STATUS_BATTERY_OFFSET]);
-  if (reported == dev.battery)
+  const BatteryState before = battery_state_of(dev);
+  const size_t slot = reading_slot(DeviceReading::BATTERY_STATE);
+  if (reported == BatteryState::NOT_REPORTED) {
+    const bool first_none = !dev.reading_values.absent(slot);
+    dev.reading_values.mark_absent(slot);
+    if (before != BatteryState::NOT_REPORTED) {
+      ESP_LOGI(detail::TAG, "Device %s: battery %s -> %s", id.c_str(), battery_state_name(before),
+               battery_state_name(reported));
+    }
+    if (first_none && dev.battery_entities)
+      ESP_LOGI(detail::TAG, "Device %s reports no battery state; it is probably mains powered", id.c_str());
     return;
-  // A battery level changes rarely, so a change is worth an INFO line; mains devices stay at
-  // NOT_REPORTED and never log.
-  ESP_LOGI(detail::TAG, "Device %s: battery %s -> %s", id.c_str(), battery_state_name(dev.battery),
+  }
+  if (reported == before)
+    return;
+  // A battery level changes rarely, so a change is worth an INFO line; mains devices stay absent and never log it.
+  ESP_LOGI(detail::TAG, "Device %s: battery %s -> %s", id.c_str(), battery_state_name(before),
            battery_state_name(reported));
-  dev.battery = reported;
+  dev.reading_values.store(slot, static_cast<float>(reported));
 }
 
 /// @brief Apply INFO2 metadata to the device record when YAML has not already declared it.

@@ -195,7 +195,7 @@ TEST(HubDhw, AStatusReplyChangesOnlyTheWaterHeaterReadings) {
   EXPECT_TRUE(dev->is_stopped) << "and nothing says it moves";
   EXPECT_EQ(dev->last_moving_evidence_ms, 0u);
   EXPECT_FALSE(dev->stop_candidate.armed());
-  EXPECT_EQ(dev->battery, BatteryState::NOT_REPORTED);
+  EXPECT_EQ(battery_state_of(*dev), BatteryState::NOT_REPORTED);
   EXPECT_TRUE(std::isnan(test::number_read(*dev, DeviceReading::SETPOINT)))
       << "the heater readings are a radiator's, never touched";
   EXPECT_FLOAT_EQ(test::number_read(*dev, DeviceReading::STATUS_SETPOINT), 54.0F)

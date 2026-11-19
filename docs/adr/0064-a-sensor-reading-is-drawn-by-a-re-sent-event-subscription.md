@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0064 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted; amended by [ADR 0107](0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md) · **Recorded:** 2026-11
 
 Amended by [ADR 0088](0088-the-sun-level-is-shown-in-lux-at-100-lux-per-step.md) (the `Sun level`
 sensor reports lux, value × 100).

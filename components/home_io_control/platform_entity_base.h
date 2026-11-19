@@ -23,6 +23,7 @@
 #include "hub_ports.h"
 #include "proto_device_kinds.h"
 #include "status_poll_policy.h"
+#include "proto_device_readings.h"
 #include "proto_frame.h"
 
 #include "esphome/core/application.h"
@@ -35,6 +36,7 @@
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace esphome {
 namespace home_io_control {
@@ -99,8 +101,47 @@ class DeviceBoundEntity {
   /// @brief Configure bounded follow-up polling while a state change is expected.
   /// @param poll_interval_ms Poll interval in milliseconds; zero keeps the default single settle poll only.
   void set_status_poll_interval(uint32_t poll_interval_ms) { this->status_poll_interval_ms_ = poll_interval_ms; }
+  /// @brief Ask for one reading to be read on a schedule (generated code, once per reading the YAML declares).
+  /// @param reading A reading with a scheduled source: a data object, an event or a limitation.
+  /// @param interval_ms The interval the reading is read at unless the entity overrides it.
+  void add_scheduled_reading(DeviceReading reading, uint32_t interval_ms) {
+    this->scheduled_readings_.push_back({reading, interval_ms});
+  }
 
  protected:
+  /// One reading the YAML asked for and the interval it is read at unless the entity says otherwise.
+  struct ScheduledReading {
+    DeviceReading reading;
+    uint32_t interval_ms;
+  };
+
+  /// @brief Ask the hub to read every reading added by add_scheduled_reading() on its schedule.
+  /// @details Call after register_device_binding_(): the hub only schedules a reading of a registered device.
+  /// @param override_interval_ms When not zero, the interval of every reading in place of its own (a `sensor:` entry's
+  ///        `update_interval:`).
+  void schedule_readings_(uint32_t override_interval_ms = 0) const {
+    for (const ScheduledReading &scheduled : this->scheduled_readings_) {
+      this->device_port_->set_device_reading_poll_interval(this->device_id_, scheduled.reading,
+                                                           interval_of(scheduled, override_interval_ms));
+    }
+  }
+
+  /// @brief Emit one dump_config() line per scheduled reading: its name and interval.
+  /// @param tag Log tag of the calling entity.
+  /// @param override_interval_ms As for schedule_readings_().
+  void log_scheduled_readings_(const char *tag, uint32_t override_interval_ms = 0) const {
+    for (const ScheduledReading &scheduled : this->scheduled_readings_) {
+      const DeviceReadingRow *row = find_device_reading(scheduled.reading);
+      ESP_LOGCONFIG(tag, "  Reading: %s every %" PRIu32 " s", row != nullptr ? row->name : "unknown",
+                    interval_of(scheduled, override_interval_ms) / 1000);
+    }
+  }
+
+  /// @return The interval a scheduled reading is read at: the override when it is not zero, else the reading's own.
+  [[nodiscard]] static uint32_t interval_of(const ScheduledReading &scheduled, uint32_t override_interval_ms) {
+    return override_interval_ms != 0 ? override_interval_ms : scheduled.interval_ms;
+  }
+
   /// @brief Perform the shared setup() registration ritual.
   ///
   /// Registers the device with the controller, sets its status-poll interval, subscribes the
@@ -198,6 +239,7 @@ class DeviceBoundEntity {
   uint8_t subtype_{0};
   DeviceModel model_{DeviceModel::NONE};
   uint32_t status_poll_interval_ms_{0};
+  std::vector<ScheduledReading> scheduled_readings_;  ///< The readings the YAML declared to be read on a schedule.
   bool low_power_{false};
   bool has_system_key_{false};
   uint8_t system_key_[AES_KEY_SIZE]{};  ///< Key material: never logged.

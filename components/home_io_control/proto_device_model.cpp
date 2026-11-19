@@ -29,18 +29,6 @@ std::string format_device_type_hex(DeviceType type) {
   return std::string(buf);
 }
 
-const char *rain_sensor_state_name(RainSensorState state) {
-  switch (state) {
-    case RainSensorState::UNKNOWN:
-      return "unknown";
-    case RainSensorState::DRY:
-      return "dry";
-    case RainSensorState::RAIN:
-      return "rain";
-  }
-  return "unknown";
-}
-
 ExecutionState execution_state_of(uint8_t status_byte) {
   const uint8_t state = error_resp_state(status_byte);
   return state <= static_cast<uint8_t>(ExecutionState::DONE) ? static_cast<ExecutionState>(state)

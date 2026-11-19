@@ -85,12 +85,7 @@ void IOHomeCover::setup() {
         config.battery_entities = this->battery_entities_;
       });
   // After the registration above: the hub only schedules a poll for a registered device.
-  if (this->rain_sensor_poll_interval_ms_ != 0)
-    this->device_port_->set_device_rain_poll_interval(this->device_id_, this->rain_sensor_poll_interval_ms_);
-  if (this->sun_level_poll_interval_ms_ != 0)
-    this->device_port_->set_device_sun_poll_interval(this->device_id_, this->sun_level_poll_interval_ms_);
-  if (this->battery_level_poll_interval_ms_ != 0)
-    this->device_port_->set_device_battery_level_poll_interval(this->device_id_, this->battery_level_poll_interval_ms_);
+  this->schedule_readings_();
   if (this->status_refresh_interval_ms_ != 0)
     this->device_port_->set_device_status_refresh_interval(this->device_id_, this->status_refresh_interval_ms_);
 }
@@ -256,12 +251,7 @@ void IOHomeCover::dump_config() {
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
   ESP_LOGCONFIG(TAG, "  Invert Position Override: %s", this->invert_explicit_ ? YESNO(this->invert_) : "AUTO");
   this->log_poll_interval_config_(TAG);
-  if (this->rain_sensor_poll_interval_ms_ != 0)
-    ESP_LOGCONFIG(TAG, "  Rain Sensor Poll Interval: %" PRIu32 " ms", this->rain_sensor_poll_interval_ms_);
-  if (this->sun_level_poll_interval_ms_ != 0)
-    ESP_LOGCONFIG(TAG, "  Sun Level Poll Interval: %" PRIu32 " ms", this->sun_level_poll_interval_ms_);
-  if (this->battery_level_poll_interval_ms_ != 0)
-    ESP_LOGCONFIG(TAG, "  Battery Level Poll Interval: %" PRIu32 " ms", this->battery_level_poll_interval_ms_);
+  this->log_scheduled_readings_(TAG);
   if (this->status_refresh_interval_ms_ != 0)
     ESP_LOGCONFIG(TAG, "  Status Refresh Interval: %" PRIu32 " ms", this->status_refresh_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Supports Tilt: %s", YESNO(this->supports_tilt()));

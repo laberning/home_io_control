@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0088 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted; amended by [ADR 0107](0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md) · **Recorded:** 2026-11
 
 Amends [ADR 0064](0064-a-sensor-reading-is-drawn-by-a-re-sent-event-subscription.md) (point 1: the
 `Sun level` sensor's unit and device class, and the consequence that the sun value has no unit).

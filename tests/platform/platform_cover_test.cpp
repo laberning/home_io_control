@@ -211,34 +211,38 @@ TEST(PlatformCover, SetupStoresConfiguredStatusPollInterval) {
       << "entity setup should store the configured status poll interval in the shared device registry";
 }
 
-TEST(PlatformCover, SetupForwardsTheRainSensorPollInterval) {
+TEST(PlatformCover, SetupForwardsTheIntervalOfEachScheduledReading) {
   MockHub hub;
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  cover.set_rain_sensor_poll_interval(900000);
+  cover.add_scheduled_reading(DeviceReading::RAIN, 900000);
+  cover.add_scheduled_reading(DeviceReading::SUN_LEVEL, 1800000);
+  cover.add_scheduled_reading(DeviceReading::BATTERY_LEVEL, 21600000);
 
   cover.setup();
 
-  EXPECT_EQ(hub.rain_poll_interval("ABC123"), 900000u) << "the opt-in interval must reach the hub's rain poll schedule";
+  EXPECT_EQ(hub.reading_poll_interval("ABC123", DeviceReading::RAIN), 900000u)
+      << "the opt-in interval must reach the hub's schedule of that reading";
+  EXPECT_EQ(hub.reading_poll_interval("ABC123", DeviceReading::SUN_LEVEL), 1800000u);
+  EXPECT_EQ(hub.reading_poll_interval("ABC123", DeviceReading::BATTERY_LEVEL), 21600000u);
 }
 
-TEST(PlatformCover, SetupForwardsTheSunAndBatteryLevelPollIntervals) {
+TEST(PlatformCover, SetupSchedulesOnlyTheReadingsTheYamlDeclared) {
   MockHub hub;
   TestableCover cover;
   cover.set_parent(&hub);
   cover.set_device_id("ABC123");
-  cover.set_sun_level_poll_interval(1800000);
-  cover.set_battery_level_poll_interval(21600000);
+  cover.add_scheduled_reading(DeviceReading::SUN_LEVEL, 1800000);
 
   cover.setup();
 
-  EXPECT_EQ(hub.sun_poll_interval("ABC123"), 1800000u);
-  EXPECT_EQ(hub.battery_level_poll_interval("ABC123"), 21600000u);
-  EXPECT_EQ(hub.rain_poll_interval("ABC123"), 0u) << "each key feeds only its own schedule";
+  EXPECT_EQ(hub.reading_poll_interval("ABC123", DeviceReading::SUN_LEVEL), 1800000u);
+  EXPECT_EQ(hub.reading_poll_interval("ABC123", DeviceReading::RAIN), 0u) << "each key feeds only its own schedule";
+  EXPECT_EQ(hub.reading_poll_interval("ABC123", DeviceReading::BATTERY_LEVEL), 0u);
 }
 
-TEST(PlatformCover, SetupSchedulesNoSunOrBatteryLevelPollWithoutTheKeys) {
+TEST(PlatformCover, SetupSchedulesNoReadingWithoutTheKeys) {
   MockHub hub;
   TestableCover cover;
   cover.set_parent(&hub);
@@ -246,19 +250,8 @@ TEST(PlatformCover, SetupSchedulesNoSunOrBatteryLevelPollWithoutTheKeys) {
 
   cover.setup();
 
-  EXPECT_EQ(hub.sun_poll_interval("ABC123"), 0u);
-  EXPECT_EQ(hub.battery_level_poll_interval("ABC123"), 0u);
-}
-
-TEST(PlatformCover, SetupSchedulesNoRainPollWithoutTheKey) {
-  MockHub hub;
-  TestableCover cover;
-  cover.set_parent(&hub);
-  cover.set_device_id("ABC123");
-
-  cover.setup();
-
-  EXPECT_EQ(hub.rain_poll_interval("ABC123"), 0u) << "a cover that never opted in is never polled";
+  for (const DeviceReading reading : {DeviceReading::RAIN, DeviceReading::SUN_LEVEL, DeviceReading::BATTERY_LEVEL})
+    EXPECT_EQ(hub.reading_poll_interval("ABC123", reading), 0u) << "a cover that never opted in is never polled";
 }
 
 TEST(PlatformCover, SetupForwardsTheStatusRefreshInterval) {

@@ -92,18 +92,6 @@ std::string format_device_type_diagnostic(DeviceType type);
 /// @return The value in at least two digits, e.g. "0x1A" or "0x3FF".
 std::string format_device_type_hex(DeviceType type);
 
-/// @brief What the hub's latest minimum-limitation read says about a rain-protection limit.
-enum class RainSensorState : uint8_t {
-  UNKNOWN = 0,  ///< No usable reading: never read, or the last reads went unanswered.
-  DRY = 1,      ///< The device answered and reports no rain-sized opening limit.
-  RAIN = 2,     ///< The device answered and reports an opening limit of rain size.
-};
-
-/// @brief Get a human-readable name for a RainSensorState.
-/// @param state The state to name.
-/// @return Null-terminated lowercase string: "unknown", "dry" or "rain".
-const char *rain_sensor_state_name(RainSensorState state);
-
 /// @brief The speed a cover's position moves ask the motor for (ADR 0065).
 ///
 /// The 8-byte execute frame carries a speed profile byte; the 6-byte frame a wall pad sends carries
@@ -464,30 +452,14 @@ struct IoDevice {
                                  ///< separates a device whose missing reply is an anomaly from one that never sends
                                  ///< one (see decisions::retry_after_unconfirmed_accept_is_safe()).
   OptimisticState optimistic{};  ///< Hub-side predictions; see OptimisticState. Never observation.
-  RainSensorState rain_sensor{RainSensorState::UNKNOWN};  ///< Rain state from the opt-in minimum-limitation poll.
-                                                          ///< Set only from a limitation reply inside an exchange the
-                                                          ///< hub started; independent of `limited_by_rain`, which is
-                                                          ///< derived from status replies.
-  std::optional<uint16_t> sun_level;                      ///< Raw sun value from the opt-in EVENT_LOCAL_SENSOR poll
-                                      ///< (decode_sun_level_event()); empty until the first answer and
-                                      ///< after PERIODIC_POLL_FAILURES_BEFORE_UNKNOWN misses. Set only
-                                      ///< from the answer to a subscription the hub sent.
-  std::optional<uint16_t>
-      battery_level;  ///< Battery level in percent (0-100) from the opt-in EVENT_BATTERY_LEVEL_CHANGE
-                      ///< poll (decode_battery_level_event()); same rules as `sun_level`.
-                      ///< Independent of `battery`, the coarse status-byte level.
-  BatteryState battery{BatteryState::NOT_REPORTED};  ///< Coarse battery level from byte 1 of the device's own
-                                                     ///< status: a reply to a status poll or an authenticated
-                                                     ///< CMD_STATUS_UPDATE. Never from an execute ack (its layout
-                                                     ///< follows the request) or an overheard frame (ADR 0022).
   float temperature_range_min_c{
       HEATING_TEMPERATURE_RANGE_MIN_C};  ///< Lower end of the temperature encoding range of a heater that
                                          ///< carries a temperature in its main parameter (YAML `min_temperature:`).
   float temperature_range_max_c{
       HEATING_TEMPERATURE_RANGE_MAX_C};  ///< Upper end of that range (YAML `max_temperature:`).
   DeviceReadingValues reading_values{};  ///< What the hub has read from the device, by reading (reading_value()): a
-                                         ///< heater's or a water heater's registers and status reply, a data object.
-                                         ///< Kept across DeviceRegistry::put().
+                                         ///< heater's or a water heater's registers and status reply, a data object,
+                                         ///< a cover's rain, sun level and battery. Kept across DeviceRegistry::put().
   bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
                                  ///< line names the level even when the device reports none.
   bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every

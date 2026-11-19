@@ -291,9 +291,14 @@ std::string field_text(const std::string &entry, const std::string &field) {
 }
 
 /// The mirror's name of each source kind, in the order of the ReadingSource alternatives.
-constexpr const char *SOURCE_KIND_NAMES[] = {"register", "derived", "data_object", "status", "status_parameter"};
+constexpr const char *SOURCE_KIND_NAMES[] = {"register",         "derived", "data_object", "status",
+                                             "status_parameter", "event",   "limitation",  "status_battery"};
 static_assert(std::size(SOURCE_KIND_NAMES) == std::variant_size_v<ReadingSource>,
               "a new reading source kind needs its mirror name here and in hub_validators.py DEVICE_READINGS");
+
+/// The readings a cover declares by a YAML key of its own (the poll intervals, `battery:`), which need no capability.
+constexpr DeviceReading COVER_READINGS[] = {DeviceReading::RAIN, DeviceReading::SUN_LEVEL, DeviceReading::BATTERY_LEVEL,
+                                            DeviceReading::BATTERY_STATE, DeviceReading::BATTERY_LOW};
 
 /// The upper-case name of a register or reading, as the Python mirror writes it.
 std::string upper(std::string name) {
@@ -352,7 +357,8 @@ TEST(DeviceFeaturesSync, EveryDeviceReadingIsMirroredWithItsCapabilitySourceAndR
                 std::vector<std::string>(features.begin(), features.end()))
           << name;
     } else {
-      // A reading no key of the YAML declares needs no capability.
+      // A reading no key of the YAML declares, and a cover's reading, which any cover's key declares, need no
+      // capability.
       EXPECT_EQ(field_text(entry, "feature"), "None") << name;
     }
 
@@ -366,10 +372,14 @@ TEST(DeviceFeaturesSync, EveryDeviceReadingIsMirroredWithItsCapabilitySourceAndR
     EXPECT_EQ(test::quoted_strings_of(field_text(entry, "registers")), registers) << name;
 
     // The platform that offers the reading's key follows what the row says: a data object is the `sensor:`
-    // platform's, a reading of the water heater's capability is the water heater's, every other the climate entity's.
+    // platform's, the cover's own readings are the cover's, a reading of the water heater's capability is the water
+    // heater's, every other the climate entity's.
     const bool data_object = std::holds_alternative<DataObjectSource>(row.source);
-    const std::string platform =
-        data_object ? "sensor" : (row.feature == DeviceFeature::WATER_HEATER ? "water_heater" : "climate");
+    const bool cover_reading = std::ranges::find(COVER_READINGS, row.reading) != std::end(COVER_READINGS);
+    const std::string platform = data_object ? "sensor"
+                                 : cover_reading
+                                     ? "cover"
+                                     : (row.feature == DeviceFeature::WATER_HEATER ? "water_heater" : "climate");
     EXPECT_EQ(test::quoted_strings_of(field_text(entry, "platform")), std::vector<std::string>{platform}) << name;
   }
   EXPECT_EQ(python.size(), device_readings().size()) << "DEVICE_READINGS names a reading the C++ table does not have";

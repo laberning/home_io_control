@@ -429,8 +429,7 @@ void IOHomeControlComponent::set_device_status_poll_interval(const std::string &
 PeriodicPollPolicy &IOHomeControlComponent::periodic_poll_policy_(PeriodicPoll poll) {
   // Indexed by PeriodicPoll.
   static constexpr PeriodicPollPolicy IOHomeControlComponent::*const SCHEDULES[] = {
-      &IOHomeControlComponent::rain_poll_policy_,           &IOHomeControlComponent::sun_poll_policy_,
-      &IOHomeControlComponent::battery_level_poll_policy_,  &IOHomeControlComponent::status_refresh_policy_,
+      &IOHomeControlComponent::status_refresh_policy_,
       &IOHomeControlComponent::device_reading_poll_policy_,
   };
   return this->*SCHEDULES[static_cast<size_t>(poll)];
@@ -441,19 +440,6 @@ void IOHomeControlComponent::set_periodic_poll_interval_(PeriodicPoll poll, cons
   if (this->get_device(device_id) == nullptr)
     return;
   this->periodic_poll_policy_(poll).set_interval(device_id, interval_ms, millis(), poll_jitter_random());
-}
-
-void IOHomeControlComponent::set_device_rain_poll_interval(const std::string &device_id, uint32_t interval_ms) {
-  this->set_periodic_poll_interval_(PeriodicPoll::RAIN_SENSOR, device_id, interval_ms);
-}
-
-void IOHomeControlComponent::set_device_sun_poll_interval(const std::string &device_id, uint32_t interval_ms) {
-  this->set_periodic_poll_interval_(PeriodicPoll::SUN_LEVEL, device_id, interval_ms);
-}
-
-void IOHomeControlComponent::set_device_battery_level_poll_interval(const std::string &device_id,
-                                                                    uint32_t interval_ms) {
-  this->set_periodic_poll_interval_(PeriodicPoll::BATTERY_LEVEL, device_id, interval_ms);
 }
 
 void IOHomeControlComponent::set_device_status_refresh_interval(const std::string &device_id, uint32_t interval_ms) {
@@ -468,9 +454,10 @@ void IOHomeControlComponent::set_device_reading_poll_interval(const std::string 
                                                               uint32_t interval_ms) {
   const IoDevice *dev = this->get_device(device_id);
   const DeviceReadingRow *row = find_device_reading(reading, this->reading_table_);
-  if (dev == nullptr || row == nullptr || !std::holds_alternative<DataObjectSource>(row->source))
+  if (dev == nullptr || row == nullptr || !reading_is_scheduled(*row))
     return;
-  if (!device_has_reading_capability(*dev, *row)) {
+  const bool data_object = std::holds_alternative<DataObjectSource>(row->source);
+  if (!device_can_have_reading(*dev, *row)) {
     ESP_LOGW(TAG, "Device %s lacks the capability of the %s reading, which is not read", device_id.c_str(), row->name);
     return;
   }
@@ -479,11 +466,13 @@ void IOHomeControlComponent::set_device_reading_poll_interval(const std::string 
                                          [&key](const DeviceReadingPoll &poll) { return poll.key == key; });
   if (!known && interval_ms != 0)
     this->device_reading_polls_.push_back({key, device_id, reading});
-  // The first read waits for the boot burst to pass, then follows the interval (never below the minimum).
-  this->device_reading_poll_policy_.set_interval(
-      key, interval_ms == 0 ? 0 : std::max(interval_ms, DEVICE_READING_MIN_INTERVAL_MS), millis(),
-      poll_jitter_random());
-  this->device_reading_poll_policy_.set_first_poll(key, DEVICE_READING_FIRST_READ_DELAY_MS, millis());
+  // A data-object read holds the device for seconds: its first read waits for the boot burst to pass, then follows the
+  // interval (never below the minimum). A one-frame read starts at the random delay every scheduled poll starts at.
+  const uint32_t interval =
+      data_object && interval_ms != 0 ? std::max(interval_ms, DEVICE_READING_MIN_INTERVAL_MS) : interval_ms;
+  this->device_reading_poll_policy_.set_interval(key, interval, millis(), poll_jitter_random());
+  if (data_object)
+    this->device_reading_poll_policy_.set_first_poll(key, DEVICE_READING_FIRST_READ_DELAY_MS, millis());
 }
 
 void IOHomeControlComponent::note_status_reported_(const std::string &device_id) {
@@ -694,9 +683,6 @@ void IOHomeControlComponent::queue_due_periodic_polls_() {
   // its refresh a whole interval out (note_status_reported_()), so a device read often enough never
   // gets here.
   static constexpr DuePoll DUE_POLLS[] = {
-      {PeriodicPoll::RAIN_SENSOR, &IOHomeControlComponent::queue_request_device_limitation},
-      {PeriodicPoll::SUN_LEVEL, &IOHomeControlComponent::queue_request_device_sun_level},
-      {PeriodicPoll::BATTERY_LEVEL, &IOHomeControlComponent::queue_request_device_battery_level},
       {PeriodicPoll::STATUS_REFRESH, &IOHomeControlComponent::queue_status_refresh_},
       {PeriodicPoll::DEVICE_READING, &IOHomeControlComponent::queue_request_device_reading},
   };

@@ -14,6 +14,7 @@
 ## is declared by a platform table through inject_companion_ids() and created with
 ## create_companion(); the platform files keep their tables, schema arguments and extra setters.
 
+import functools
 import logging
 
 import esphome.codegen as cg
@@ -571,6 +572,7 @@ async def create_user_companion(config, parent, *, new_entity, entity_config):
 CLIMATE_PLATFORM = "climate"
 WATER_HEATER_PLATFORM = "water_heater"
 SENSOR_PLATFORM = "sensor"
+COVER_PLATFORM = "cover"
 
 # The platforms whose entities ask the hub to read a reading (`add_device_reading()`): a heater polls the registers its
 # YAML declares. A water heater is polled by its kind's capability and a `sensor:` entry reads its data objects on a
@@ -578,7 +580,10 @@ SENSOR_PLATFORM = "sensor"
 PLATFORMS_THAT_ASK_FOR_REGISTER_READS = (CLIMATE_PLATFORM,)
 
 # The mirror's source kinds whose value arrives in a status reply: a platform asks the hub for nothing for these.
-STATUS_READING_SOURCES = ("status", "status_parameter")
+STATUS_READING_SOURCES = ("status", "status_parameter", "status_battery")
+
+# The mirror's source kinds the hub reads on a schedule (C++ reading_is_scheduled()): the platform names the interval.
+SCHEDULED_READING_SOURCES = ("data_object", "event", "limitation")
 
 # The class of the entity that shows a reading, by the mirror's entity kind.
 _READING_ENTITY_CLASSES = {
@@ -615,6 +620,23 @@ def _reading_companions(platform):
     ]
 
 
+def _reading_opt_ins(platform):
+    """[(reading name, mirror entry)] of every reading of `platform` that a YAML key of the main entity declares by
+    its presence (the mirror's "opt_in_key"), in table order."""
+    return [
+        (name, entry)
+        for name, entry in DEVICE_READINGS.items()
+        if "opt_in_key" in entry and entry["platform"] == platform
+    ]
+
+
+def _opt_in_declared(config, entry):
+    """True when the key that declares a reading is set: present, and not `false` (a `battery: false` declares
+    nothing)."""
+    value = config.get(entry["opt_in_key"])
+    return value is not None and value is not False
+
+
 def _reading_entity_schema(entry):
     """The schema of the entity that shows a reading: its kind and Home Assistant metadata come from the mirror."""
     display = {
@@ -624,6 +646,8 @@ def _reading_entity_schema(entry):
             ("accuracy", "accuracy_decimals"),
             ("device_class", "device_class"),
             ("state_class", "state_class"),
+            ("icon", "icon"),
+            ("entity_category", "entity_category"),
         )
         if field in entry
     }
@@ -678,7 +702,8 @@ def inject_reading_companion_ids(config, parent_id_key, platform):
     """Declare the IDs of the companion entities of the readings a device has, during schema validation.
 
     One entity per reading whose mirror entry has a companion and whose capability the declared kind has
-    (has_feature()): a kind with no declared type gets none. The ID is ``<base>_<companion_id>``, under the config key
+    (has_feature()): a kind with no declared type gets none. A reading with an "opt_in_key" has the companion when
+    that key is set, whatever the kind. The ID is ``<base>_<companion_id>``, under the config key
     ``_<companion_id>_id``, and its type is the class of the entity kind. See companion_id_base() for why this is
     done at validation time and inject_companion_ids() for the declaration.
     """
@@ -687,7 +712,7 @@ def inject_reading_companion_ids(config, parent_id_key, platform):
             _reading_companion_id_key(entry),
             entry["companion_id"],
             _READING_ENTITY_CLASSES[entry["entity"]],
-            has_feature(entry["feature"]),
+            functools.partial(_opt_in_declared, entry=entry) if "opt_in_key" in entry else has_feature(entry["feature"]),
         )
         for _, entry in _reading_companions(platform)
     )
@@ -724,7 +749,7 @@ async def reading_keys_to_code(var, parent, config, platform):
 
     For each key present the main entity asks the hub to poll the reading's registers (`add_device_reading()`, on the
     platforms that ask: PLATFORMS_THAT_ASK_FOR_REGISTER_READS), or to read its data object on a schedule
-    (`add_data_object_reading()`, with the reading's default interval, which the entry's `update_interval:` replaces on
+    (`add_scheduled_reading()`, with the reading's default interval, which the entry's `update_interval:` replaces on
     the entity), and the entity that shows the reading is created, named after it. A status reading (the heating level)
     is read by the status read, and a water heater's readings by its poll, so the hub is asked nothing.
     """
@@ -734,7 +759,7 @@ async def reading_keys_to_code(var, parent, config, platform):
             continue
         reading = getattr(DeviceReading, name)
         if entry["source"] == "data_object":
-            cg.add(var.add_data_object_reading(reading, entry["update_interval_ms"]))
+            cg.add(var.add_scheduled_reading(reading, entry["update_interval_ms"]))
         elif entry["source"] not in STATUS_READING_SOURCES and platform in PLATFORMS_THAT_ASK_FOR_REGISTER_READS:
             cg.add(var.add_device_reading(reading))
         entity = await create_user_companion(
@@ -744,6 +769,19 @@ async def reading_keys_to_code(var, parent, config, platform):
             entity_config=config[key],
         )
         cg.add(entity.set_reading(reading))
+
+
+def reading_schedules_to_code(var, config, platform):
+    """Emit the schedule of every reading a main entity of `platform` declares by an opt-in key and the hub reads on a
+    schedule (an event or a limitation): `add_scheduled_reading()` with the interval the key holds. A reading of the
+    status reply (the battery) is asked of the hub for nothing."""
+    for name, entry in _reading_opt_ins(platform):
+        if entry["source"] in SCHEDULED_READING_SOURCES and _opt_in_declared(config, entry):
+            cg.add(
+                var.add_scheduled_reading(
+                    getattr(DeviceReading, name), config[entry["opt_in_key"]].total_milliseconds
+                )
+            )
 
 
 async def _create_diagnostic_text_sensor(config, parent, id_key, suffix, disabled_by_default):

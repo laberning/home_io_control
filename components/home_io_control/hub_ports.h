@@ -84,34 +84,21 @@ class HubDevicePort {
   /// @param poll_interval_ms Interval in milliseconds; zero keeps the single settle poll only.
   virtual void set_device_status_poll_interval(const std::string &device_id, uint32_t poll_interval_ms) = 0;
 
-  /// @brief Opt a device into the periodic rain sensor poll.
-  /// @param device_id Hexadecimal node ID string.
-  /// @param interval_ms Interval in milliseconds; zero removes the device from the schedule.
-  virtual void set_device_rain_poll_interval(const std::string &device_id, uint32_t interval_ms) = 0;
-
-  /// @brief Opt a device into the periodic sun level poll.
-  /// @param device_id Hexadecimal node ID string.
-  /// @param interval_ms Interval in milliseconds; zero removes the device from the schedule.
-  virtual void set_device_sun_poll_interval(const std::string &device_id, uint32_t interval_ms) = 0;
-
-  /// @brief Opt a device into the periodic battery level poll.
-  /// @param device_id Hexadecimal node ID string.
-  /// @param interval_ms Interval in milliseconds; zero removes the device from the schedule.
-  virtual void set_device_battery_level_poll_interval(const std::string &device_id, uint32_t interval_ms) = 0;
-
   /// @brief Opt a device into the status refresh at rest: a status read whenever the device has reported
   /// nothing for a whole interval.
   /// @param device_id Hexadecimal node ID string.
   /// @param interval_ms Interval in milliseconds; zero removes the device from the schedule.
   virtual void set_device_status_refresh_interval(const std::string &device_id, uint32_t interval_ms) = 0;
 
-  /// @brief Opt a device into the scheduled read of one reading that lives in a data object of the device.
-  /// @details The first read comes about a minute after the call, then one every interval. Takes effect on a
-  ///          reading with a DataObjectSource whose capability the device has; sends nothing itself.
+  /// @brief Opt a device into the scheduled read of one reading: a slice of a data object, the answer to an event
+  /// subscription or to a limitation read.
+  /// @details A data-object reading is first read about a minute after the call, then every interval; the other kinds
+  ///          start at a random delay of 15 to 45 seconds. Takes effect on a reading with a scheduled
+  ///          source whose capability the device has (when the row names one); sends nothing itself.
   /// @param device_id Hexadecimal node ID string.
   /// @param reading The reading to read.
-  /// @param interval_ms Interval in milliseconds, raised to the shortest the hub reads at; zero removes the reading
-  ///        from the schedule.
+  /// @param interval_ms Interval in milliseconds; a data-object reading is raised to the shortest the hub reads at.
+  ///        Zero removes the reading from the schedule.
   virtual void set_device_reading_poll_interval(const std::string &device_id, DeviceReading reading,
                                                 uint32_t interval_ms) = 0;
 

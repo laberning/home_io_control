@@ -2305,7 +2305,7 @@ TEST(HubStatus, StatusPollReplyRecordsFullBatteryOnASolarMotor) {
 
   comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)));
 
-  EXPECT_EQ(comp.get_device("E461E9")->battery, BatteryState::FULL_CHARGE);
+  EXPECT_EQ(battery_state_of(*comp.get_device("E461E9")), BatteryState::FULL_CHARGE);
 }
 
 TEST(HubStatus, StatusUpdateRecordsTheBatteryAtTheSameOffset) {
@@ -2317,7 +2317,7 @@ TEST(HubStatus, StatusUpdateRecordsTheBatteryAtTheSameOffset) {
 
   comp.update_device_status_(make_rs100_status_frame(CMD_STATUS_UPDATE, payload, sizeof(payload)));
 
-  EXPECT_EQ(comp.get_device("E461E9")->battery, BatteryState::FULL_CHARGE);
+  EXPECT_EQ(battery_state_of(*comp.get_device("E461E9")), BatteryState::FULL_CHARGE);
 }
 
 TEST(HubStatus, BatteryFollowsALaterLowerLevel) {
@@ -2329,7 +2329,7 @@ TEST(HubStatus, BatteryFollowsALaterLowerLevel) {
   payload[1] = 0x20;  // level 1, the other bits clear
   comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)));
 
-  EXPECT_EQ(comp.get_device("E461E9")->battery, BatteryState::LOW_CHARGE);
+  EXPECT_EQ(battery_state_of(*comp.get_device("E461E9")), BatteryState::LOW_CHARGE);
 }
 
 TEST(HubStatus, ExecuteAckDoesNotChangeTheBattery) {
@@ -2342,7 +2342,7 @@ TEST(HubStatus, ExecuteAckDoesNotChangeTheBattery) {
   comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)),
                              /*trust_position=*/false);
 
-  EXPECT_EQ(comp.get_device("E461E9")->battery, BatteryState::NOT_REPORTED);
+  EXPECT_EQ(battery_state_of(*comp.get_device("E461E9")), BatteryState::NOT_REPORTED);
 }
 
 TEST(HubStatus, MainsReplyLeavesTheBatteryNotReported) {
@@ -2354,12 +2354,45 @@ TEST(HubStatus, MainsReplyLeavesTheBatteryNotReported) {
 
   comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)));
 
-  EXPECT_EQ(comp.get_device("E461E9")->battery, BatteryState::NOT_REPORTED);
+  EXPECT_EQ(battery_state_of(*comp.get_device("E461E9")), BatteryState::NOT_REPORTED);
+}
+
+TEST(HubStatus, AReplyThatShowsNoBatteryMarksTheBatteryReadingAbsentAndALaterLevelLiftsIt) {
+  TestableHubComponent comp;
+  comp.add_device("E461E9");
+  IoDevice &dev = *comp.get_device("E461E9");
+  uint8_t payload[8] = {0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+  comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)));
+  EXPECT_TRUE(dev.reading_values.absent(reading_slot(DeviceReading::BATTERY_STATE)));
+  EXPECT_FALSE(reading_value(dev, DeviceReading::BATTERY_STATE).has_value());
+  EXPECT_FALSE(reading_value(dev, DeviceReading::BATTERY_LOW).has_value())
+      << "no state: off must mean a device said so";
+
+  payload[1] = 0x60;
+  comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)));
+  EXPECT_FALSE(dev.reading_values.absent(reading_slot(DeviceReading::BATTERY_STATE)));
+  EXPECT_EQ(battery_state_of(dev), BatteryState::FULL_CHARGE);
+  EXPECT_EQ(reading_value(dev, DeviceReading::BATTERY_LOW), std::optional<float>(0.0F));
+}
+
+TEST(HubStatus, ALaterNoBatteryReplyDropsALevelThatWasShown) {
+  TestableHubComponent comp;
+  comp.add_device("E461E9");
+  uint8_t payload[8] = {0x01, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+  comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)));
+  ASSERT_EQ(reading_value(*comp.get_device("E461E9"), DeviceReading::BATTERY_LOW), std::optional<float>(1.0F));
+
+  payload[1] = 0x00;
+  comp.update_device_status_(make_rs100_status_frame(CMD_PRIVATE_RESP, payload, sizeof(payload)));
+
+  EXPECT_EQ(battery_state_of(*comp.get_device("E461E9")), BatteryState::NOT_REPORTED);
+  EXPECT_FALSE(reading_value(*comp.get_device("E461E9"), DeviceReading::BATTERY_LOW).has_value());
 }
 
 TEST(HubStatus, StatusLineNamesAReportedBatteryLevel) {
   IoDevice dev{};
-  dev.battery = BatteryState::FULL_CHARGE;
+  dev.reading_values.store(reading_slot(DeviceReading::BATTERY_STATE), static_cast<float>(BatteryState::FULL_CHARGE));
   EXPECT_EQ(detail::describe_battery(dev), " battery=full") << "a reported level is logged with or without the key";
 }
 

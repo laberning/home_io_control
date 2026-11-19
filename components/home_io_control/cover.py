@@ -6,25 +6,19 @@
 ## Shared device-binding logic lives in platform_common.py; cover-specific extras — the
 ## ``invert_position`` option, the named-position companion buttons (favorite, ventilation), the
 ## ``silent`` and ``travel_speed`` keys with their switch and select, the opt-in
-## ``rain_sensor_poll_interval`` key with its rain binary sensor, the opt-in ``sun_level_poll_interval``
-## and ``battery_level_poll_interval`` keys with their sensors, the opt-in ``status_refresh_interval``
-## key, and the opt-in ``battery`` key with its two battery sensors — stay here.
+## ``rain_sensor_poll_interval`` key, the opt-in ``sun_level_poll_interval`` and ``battery_level_poll_interval``
+## keys, the opt-in ``status_refresh_interval`` key and the opt-in ``battery`` key stay here. The entities those
+## keys declare (rain, sun level, battery level, battery state, battery low) are readings of DEVICE_READINGS
+## (hub_validators.py), built and scheduled by platform_common.py from the mirror's ``opt_in_key``.
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, button, cover, select, sensor, switch, text_sensor
+from esphome.components import button, cover, select, switch
 from esphome.const import (
     CONF_DEVICE_CLASS,
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
-    DEVICE_CLASS_BATTERY,
-    DEVICE_CLASS_ILLUMINANCE,
-    DEVICE_CLASS_MOISTURE,
     ENTITY_CATEGORY_CONFIG,
-    ENTITY_CATEGORY_DIAGNOSTIC,
-    STATE_CLASS_MEASUREMENT,
-    UNIT_LUX,
-    UNIT_PERCENT,
 )
 
 from . import home_io_control_ns
@@ -39,6 +33,7 @@ from .hub_validators import (
     validate_sun_level_poll_interval,
 )
 from .platform_common import (
+    COVER_PLATFORM,
     companion_entity_name,
     create_companion,
     create_companion_sensors,
@@ -46,7 +41,10 @@ from .platform_common import (
     has_feature,
     inject_companion_ids,
     inject_companion_sensor_ids,
+    inject_reading_companion_ids,
     platform_schema_extension,
+    reading_companions_to_code,
+    reading_schedules_to_code,
     require_feature,
     validate_device_model,
     warn_if_experimental_kind,
@@ -62,16 +60,13 @@ CONF_SILENT_SWITCH_ID = "_silent_switch_id"
 CONF_TRAVEL_SPEED = "travel_speed"
 CONF_TRAVEL_SPEED_SELECT_ID = "_travel_speed_select_id"
 CONF_OPTIMISTIC_STATE = "optimistic_state"
+# The keys that declare a cover's readings; the mirror's "opt_in_key" of RAIN, SUN_LEVEL, BATTERY_LEVEL, BATTERY_STATE
+# and BATTERY_LOW names the same strings (the py-tests check it).
 CONF_RAIN_SENSOR_POLL_INTERVAL = "rain_sensor_poll_interval"
-CONF_RAIN_SENSOR_ID = "_rain_sensor_id"
 CONF_SUN_LEVEL_POLL_INTERVAL = "sun_level_poll_interval"
-CONF_SUN_LEVEL_SENSOR_ID = "_sun_level_sensor_id"
 CONF_BATTERY_LEVEL_POLL_INTERVAL = "battery_level_poll_interval"
-CONF_BATTERY_LEVEL_SENSOR_ID = "_battery_level_sensor_id"
 CONF_STATUS_REFRESH_INTERVAL = "status_refresh_interval"
 CONF_BATTERY = "battery"
-CONF_BATTERY_LOW_SENSOR_ID = "_battery_low_sensor_id"
-CONF_BATTERY_SENSOR_ID = "_battery_sensor_id"
 
 # Internal config keys for the cover-only companion button IDs (injected by post-validator).
 CONF_FAVORITE_BUTTON_ID = "_favorite_button_id"
@@ -98,21 +93,6 @@ TRAVEL_SPEEDS = {
 TRAVEL_SPEED_EXCLUSIVE_MESSAGE = (
     "silent: and travel_speed: set the same thing; keep one "
     "(silent: true is travel_speed: silent, silent: false is travel_speed: fast)"
-)
-IOHomeRainBinarySensor = home_io_control_ns.class_(
-    "IOHomeRainBinarySensor", binary_sensor.BinarySensor, cg.Component
-)
-IOHomeSunLevelSensor = home_io_control_ns.class_(
-    "IOHomeSunLevelSensor", sensor.Sensor, cg.Component
-)
-IOHomeBatteryLevelSensor = home_io_control_ns.class_(
-    "IOHomeBatteryLevelSensor", sensor.Sensor, cg.Component
-)
-IOHomeBatteryLowBinarySensor = home_io_control_ns.class_(
-    "IOHomeBatteryLowBinarySensor", binary_sensor.BinarySensor, cg.Component
-)
-IOHomeBatteryTextSensor = home_io_control_ns.class_(
-    "IOHomeBatteryTextSensor", text_sensor.TextSensor, cg.Component
 )
 # One C++ class backs both cover command companions; codegen sets which command each press
 # sends via set_command() (mirrors OneWayButtonAction in hub_names.py). A device-bound `button:`
@@ -170,35 +150,10 @@ def travel_speed_select_name(config):
     return companion_entity_name(config, "Travel Speed")
 
 
-def rain_sensor_name(config):
-    """Derive the rain binary sensor name from the parent cover name."""
-    return companion_entity_name(config, "Rain sensor")
-
-
-def sun_level_sensor_name(config):
-    """Derive the sun level sensor name from the parent cover name."""
-    return companion_entity_name(config, "Sun level")
-
-
-def battery_level_sensor_name(config):
-    """Derive the battery level (percent) sensor name from the parent cover name."""
-    return companion_entity_name(config, "Battery level")
-
-
-def battery_low_sensor_name(config):
-    """Derive the battery-low binary sensor name from the parent cover name."""
-    return companion_entity_name(config, "Battery Low")
-
-
-def battery_sensor_name(config):
-    """Derive the battery-level text sensor name from the parent cover name."""
-    return companion_entity_name(config, "Battery")
-
-
 # The cover's companion entities: (id key, ID suffix, class, condition), declared at validation time
 # and created in to_code() from the same id key. The shared diagnostic sensors are not listed; they
-# come from inject_companion_sensor_ids(). The ID suffixes are Home Assistant entity ids, so they are
-# pinned by the py-tests.
+# come from inject_companion_sensor_ids(), the entities of the opt-in readings (rain, sun level, battery) from
+# inject_reading_companion_ids(). The ID suffixes are Home Assistant entity ids, so they are pinned by the py-tests.
 COVER_COMPANIONS = (
     # Named-position buttons (favourite, ventilation, ...): one per position the declared kind has.
     *(
@@ -212,42 +167,18 @@ COVER_COMPANIONS = (
     # Travel speed select: likewise only with `travel_speed:`, the three-way form of the same
     # setting. The two keys are exclusive, so a cover has one entity or the other.
     (CONF_TRAVEL_SPEED_SELECT_ID, "travel_speed_select", IOHomeCoverTravelSpeedSelect, CONF_TRAVEL_SPEED),
-    # Rain binary sensor: only with `rain_sensor_poll_interval:`, the opt-in to the periodic
-    # limitation read, so a config without it gains no entity.
-    (CONF_RAIN_SENSOR_ID, "rain_sensor", IOHomeRainBinarySensor, CONF_RAIN_SENSOR_POLL_INTERVAL),
-    # Sun level and battery level sensors: each only with its poll interval, the opt-in to that poll
-    # (a subscription the device answers with the reading).
-    (CONF_SUN_LEVEL_SENSOR_ID, "sun_level_sensor", IOHomeSunLevelSensor, CONF_SUN_LEVEL_POLL_INTERVAL),
-    (
-        CONF_BATTERY_LEVEL_SENSOR_ID,
-        "battery_level_sensor",
-        IOHomeBatteryLevelSensor,
-        CONF_BATTERY_LEVEL_POLL_INTERVAL,
-    ),
-    # Battery sensors: only with `battery: true`. The level is decoded from status replies the hub
-    # already receives, so the key adds entities but no radio traffic.
-    (
-        CONF_BATTERY_LOW_SENSOR_ID,
-        "battery_low_sensor",
-        IOHomeBatteryLowBinarySensor,
-        lambda config: config.get(CONF_BATTERY, False),
-    ),
-    (
-        CONF_BATTERY_SENSOR_ID,
-        "battery_sensor",
-        IOHomeBatteryTextSensor,
-        lambda config: config.get(CONF_BATTERY, False),
-    ),
 )
 
 
 def _inject_companion_ids(config):
     """Declare the cover companion entity IDs during schema validation for StaticVector sizing.
 
-    The cover's own companions come from COVER_COMPANIONS, the always-present diagnostic sensors
-    from the shared table. See platform_common.companion_id_base() for the StaticVector rationale.
+    The cover's own companions come from COVER_COMPANIONS, the entities of its opt-in readings from the
+    reading mirror and the always-present diagnostic sensors from the shared table. See
+    platform_common.companion_id_base() for the StaticVector rationale.
     """
     inject_companion_ids(config, COVER_COMPANIONS, CONF_ID)
+    inject_reading_companion_ids(config, CONF_ID, COVER_PLATFORM)
     return inject_companion_sensor_ids(config, CONF_ID)
 
 
@@ -353,56 +284,9 @@ async def to_code(config):
             options=list(TRAVEL_SPEEDS),
         )
 
-    if CONF_RAIN_SENSOR_ID in config:
-        cg.add(
-            var.set_rain_sensor_poll_interval(
-                config[CONF_RAIN_SENSOR_POLL_INTERVAL].total_milliseconds
-            )
-        )
-        await create_companion(
-            config,
-            parent,
-            schema=binary_sensor.binary_sensor_schema(
-                IOHomeRainBinarySensor, device_class=DEVICE_CLASS_MOISTURE
-            ),
-            new_entity=binary_sensor.new_binary_sensor,
-            id_key=CONF_RAIN_SENSOR_ID,
-            name=rain_sensor_name(config),
-        )
-
-    if CONF_SUN_LEVEL_SENSOR_ID in config:
-        cg.add(
-            var.set_sun_level_poll_interval(
-                config[CONF_SUN_LEVEL_POLL_INTERVAL].total_milliseconds
-            )
-        )
-        # Lux is an estimate (scale in platform_cover_controls.h), so the sensor stays experimental in the docs.
-        await _create_reading_sensor(
-            config,
-            parent,
-            IOHomeSunLevelSensor,
-            CONF_SUN_LEVEL_SENSOR_ID,
-            sun_level_sensor_name(config),
-            unit_of_measurement=UNIT_LUX,
-            device_class=DEVICE_CLASS_ILLUMINANCE,
-            icon="mdi:white-balance-sunny",
-        )
-
-    if CONF_BATTERY_LEVEL_SENSOR_ID in config:
-        cg.add(
-            var.set_battery_level_poll_interval(
-                config[CONF_BATTERY_LEVEL_POLL_INTERVAL].total_milliseconds
-            )
-        )
-        await _create_reading_sensor(
-            config,
-            parent,
-            IOHomeBatteryLevelSensor,
-            CONF_BATTERY_LEVEL_SENSOR_ID,
-            battery_level_sensor_name(config),
-            unit_of_measurement=UNIT_PERCENT,
-            device_class=DEVICE_CLASS_BATTERY,
-        )
+    # The opt-in readings: their entities, then their schedules (rain, sun level and battery level are read on one).
+    await reading_companions_to_code(config, parent, COVER_PLATFORM)
+    reading_schedules_to_code(var, config, COVER_PLATFORM)
 
     if CONF_STATUS_REFRESH_INTERVAL in config:
         cg.add(
@@ -411,9 +295,8 @@ async def to_code(config):
             )
         )
 
-    if CONF_BATTERY_LOW_SENSOR_ID in config:
+    if config.get(CONF_BATTERY, False):
         cg.add(var.set_battery_entities(True))
-        await _create_battery_sensors(config, parent)
 
     for key, (config_key, _suffix, name, disabled) in NAMED_POSITION_BUTTONS.items():
         if config_key not in config:
@@ -430,54 +313,3 @@ async def to_code(config):
         cg.add(position_button.set_command(getattr(CoverCommand, key)))
 
     await create_companion_sensors(config, parent)
-
-
-async def _create_reading_sensor(config, parent, cls, id_key, name, **schema_kwargs):
-    """Create one polled reading sensor (sun level, battery level) bound to the cover's device."""
-    await create_companion(
-        config,
-        parent,
-        schema=sensor.sensor_schema(
-            cls,
-            accuracy_decimals=0,
-            state_class=STATE_CLASS_MEASUREMENT,
-            **schema_kwargs,
-        ),
-        new_entity=sensor.new_sensor,
-        id_key=id_key,
-        name=name,
-    )
-
-
-async def _create_battery_sensors(config, parent):
-    """Create the two `battery: true` companions.
-
-    Battery Low is the enabled one: a `device_class: battery` binary sensor is Home Assistant's own
-    low-battery signal. Battery (full/normal/low) is diagnostic and disabled by default; ESPHome
-    text sensors carry no battery device class, so nothing generic reads it.
-    """
-    await create_companion(
-        config,
-        parent,
-        schema=binary_sensor.binary_sensor_schema(
-            IOHomeBatteryLowBinarySensor,
-            device_class=DEVICE_CLASS_BATTERY,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        new_entity=binary_sensor.new_binary_sensor,
-        id_key=CONF_BATTERY_LOW_SENSOR_ID,
-        name=battery_low_sensor_name(config),
-    )
-    await create_companion(
-        config,
-        parent,
-        schema=text_sensor.text_sensor_schema(
-            IOHomeBatteryTextSensor,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-            icon="mdi:battery",
-        ),
-        new_entity=text_sensor.new_text_sensor,
-        id_key=CONF_BATTERY_SENSOR_ID,
-        name=battery_sensor_name(config),
-        overrides={CONF_DISABLED_BY_DEFAULT: True},
-    )

@@ -1,4 +1,4 @@
-#include "platform_cover_controls.h"
+#include "platform_device_readings.h"
 
 #include "hub_port_doubles.h"
 
@@ -9,8 +9,9 @@ using namespace esphome::home_io_control;
 // ============================================================================
 // PlatformBatterySensors test suite
 // ============================================================================
-// The two companions a cover gets with `battery: true`: the Battery Low binary sensor and the
-// Battery text sensor. These tests cover how they mirror IoDevice::battery once they exist.
+// The two entities a cover gets with `battery: true`: the Battery Low binary sensor (DeviceReading::BATTERY_LOW) and
+// the Battery text sensor (DeviceReading::BATTERY_STATE), both generic reading entities. These tests cover how they
+// mirror the device's battery readings once they exist.
 
 namespace {
 
@@ -23,8 +24,10 @@ class PlatformBatterySensors : public ::testing::Test {
     hub.add_device(DEVICE_ID);
     low.set_parent(&hub);
     low.set_device_id(DEVICE_ID);
+    low.set_reading(DeviceReading::BATTERY_LOW);
     level.set_parent(&hub);
     level.set_device_id(DEVICE_ID);
+    level.set_reading(DeviceReading::BATTERY_STATE);
   }
 
   void setup_both() {
@@ -32,17 +35,28 @@ class PlatformBatterySensors : public ::testing::Test {
     level.setup();
   }
 
+  /// Keep a battery level in a device record the way the hub's status decoder does: a level is stored, none marks the
+  /// reading absent.
+  static void keep_battery(IoDevice &dev, BatteryState state) {
+    const size_t slot = reading_slot(DeviceReading::BATTERY_STATE);
+    if (state == BatteryState::NOT_REPORTED) {
+      dev.reading_values.mark_absent(slot);
+    } else {
+      dev.reading_values.store(slot, static_cast<float>(state));
+    }
+  }
+
   /// Publish a status the way the hub does after decoding a reply.
   void publish_battery(BatteryState state, const std::string &id = DEVICE_ID) {
     IoDevice dev = *hub.get_device(DEVICE_ID);
-    dev.battery = state;
+    keep_battery(dev, state);
     dev.last_status = 1000;  // a status was decoded
     hub.trigger_device_update(id, dev, /*cache_device=*/true);
   }
 
   test::DevicePortDouble hub;
-  IOHomeBatteryLowBinarySensor low;
-  IOHomeBatteryTextSensor level;
+  IOHomeDeviceReadingBinarySensor low;
+  IOHomeDeviceReadingTextSensor level;
 };
 
 }  // namespace
@@ -87,7 +101,7 @@ TEST_F(PlatformBatterySensors, NotReportedPublishesNothing) {
 }
 
 TEST_F(PlatformBatterySensors, PublishAnAlreadyKnownLevelAtSetup) {
-  hub.get_device(DEVICE_ID)->battery = BatteryState::FULL_CHARGE;
+  keep_battery(*hub.get_device(DEVICE_ID), BatteryState::FULL_CHARGE);
 
   setup_both();
 

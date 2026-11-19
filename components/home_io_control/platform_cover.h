@@ -27,7 +27,8 @@ namespace home_io_control {
 /// @brief Cover entity representing an IO‑Homecontrol shutter/awning/blind.
 /// @ingroup hioc_platforms
 ///
-/// The device-binding setters, setup() registration ritual and poll-interval dump line come
+/// The device-binding setters, setup() registration ritual, the scheduled readings (the opt-in rain, sun level and
+/// battery level polls, DeviceBoundEntity::add_scheduled_reading()) and the poll-interval dump line come
 /// from DeviceBoundEntity; the richer position/tilt/movement mapping and the invert option
 /// stay here.
 class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEntity {
@@ -62,15 +63,6 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
   /// @brief Record that the YAML declared `battery: true`, so the status log line names the battery
   /// level even when the device reports none.
   void set_battery_entities(bool battery_entities) { this->battery_entities_ = battery_entities; }
-  /// @brief Opt this cover into the periodic rain sensor poll (from YAML `rain_sensor_poll_interval`).
-  /// @param interval_ms Poll interval in milliseconds; zero (the default) means no poll.
-  void set_rain_sensor_poll_interval(uint32_t interval_ms) { this->rain_sensor_poll_interval_ms_ = interval_ms; }
-  /// @brief Opt this cover into the periodic sun level poll (from YAML `sun_level_poll_interval`).
-  /// @param interval_ms Poll interval in milliseconds; 0 = not opted in.
-  void set_sun_level_poll_interval(uint32_t interval_ms) { this->sun_level_poll_interval_ms_ = interval_ms; }
-  /// @brief Opt this cover into the periodic battery level poll (from YAML `battery_level_poll_interval`).
-  /// @param interval_ms Poll interval in milliseconds; 0 = not opted in.
-  void set_battery_level_poll_interval(uint32_t interval_ms) { this->battery_level_poll_interval_ms_ = interval_ms; }
   /// @brief Opt this cover into the status refresh at rest (from YAML `status_refresh_interval`).
   /// @param interval_ms Refresh interval in milliseconds; zero (the default) means no refresh.
   void set_status_refresh_interval(uint32_t interval_ms) { this->status_refresh_interval_ms_ = interval_ms; }
@@ -104,10 +96,7 @@ class IOHomeCover : public cover::Cover, public Component, public DeviceBoundEnt
   TravelSpeed travel_speed_{TravelSpeed::MOTOR_DEFAULT};
   bool battery_entities_{false};
   float last_io_position_{UNKNOWN_POSITION};
-  uint32_t rain_sensor_poll_interval_ms_{0};    ///< 0 = not opted in; no rain poll is scheduled.
-  uint32_t sun_level_poll_interval_ms_{0};      ///< 0 = not opted in; no sun level poll is scheduled.
-  uint32_t battery_level_poll_interval_ms_{0};  ///< 0 = not opted in; no battery level poll is scheduled.
-  uint32_t status_refresh_interval_ms_{0};      ///< 0 = not opted in; no status refresh is scheduled.
+  uint32_t status_refresh_interval_ms_{0};  ///< 0 = not opted in; no status refresh is scheduled.
 };
 
 }  // namespace home_io_control

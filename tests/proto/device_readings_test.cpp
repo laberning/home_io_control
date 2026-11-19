@@ -191,10 +191,13 @@ TEST(DeviceReadings, ARegisterIsOneReadingOrAllPartsAndThePartsDoNotOverlap) {
 
 TEST(DeviceReadings, EveryRegisterOfAReadingIsReadable) {
   for (const DeviceReadingRow &row : device_readings()) {
-    // A status reading answers the status read and has no register; every other kind of the table that is polled
-    // names registers.
+    // A status reading answers the status read, an event or a limitation reading is read on a schedule of its own, and
+    // the battery flag is derived from a status reading: none has a register. Every other kind of the table names
+    // registers.
     if (std::holds_alternative<StatusMainParameterSource>(row.source) ||
-        std::holds_alternative<StatusFunctionalParameterSource>(row.source)) {
+        std::holds_alternative<StatusFunctionalParameterSource>(row.source) ||
+        std::holds_alternative<StatusBatterySource>(row.source) || std::holds_alternative<EventSource>(row.source) ||
+        std::holds_alternative<LimitationSource>(row.source) || row.reading == DeviceReading::BATTERY_LOW) {
       EXPECT_TRUE(reading_polled_registers(row).empty()) << row.name;
       continue;
     }
@@ -418,12 +421,16 @@ TEST(DeviceReadings, AReadingsValueKindFollowsItsCodecOrNames) {
     }
     const auto *source = std::get_if<RegisterSource>(&row.source);
     const auto *parameter = std::get_if<StatusFunctionalParameterSource>(&row.source);
-    // A flag is a register read as a flag, a part of a register read as one, or a field of a status parameter.
+    const auto *derived = std::get_if<DerivedSource>(&row.source);
+    // A flag is a register read as a flag, a part of a register read as one, a field of a status parameter, a derived
+    // reading that says so, or the answer to a limitation read (the rain flag).
     const ValueCodec codec = source == nullptr ? ValueCodec::NONE
                              : source->part    ? source->part->codec
                                                : device_register_codec(source->fn);
     const bool flag = codec == ValueCodec::BINARY || codec == ValueCodec::ANY_NONZERO ||
-                      (parameter != nullptr && parameter->form == StatusParameterForm::FIELD_ON);
+                      (parameter != nullptr && parameter->form == StatusParameterForm::FIELD_ON) ||
+                      (derived != nullptr && derived->codec == ValueCodec::BINARY) ||
+                      std::holds_alternative<LimitationSource>(row.source);
     EXPECT_EQ(reading_value_kind(row), flag ? ReadingValueKind::FLAG : ReadingValueKind::NUMBER) << row.name;
   }
   // The values the entities rely on, by name.
@@ -438,6 +445,11 @@ TEST(DeviceReadings, AReadingsValueKindFollowsItsCodecOrNames) {
   EXPECT_EQ(kind(DeviceReading::HOT_WATER_HEAT_PUMP), ReadingValueKind::FLAG) << "a part read as a flag";
   EXPECT_EQ(kind(DeviceReading::HOT_WATER_BOOST), ReadingValueKind::FLAG) << "a field of a status parameter";
   EXPECT_EQ(kind(DeviceReading::HOT_WATER_CAPABILITIES), ReadingValueKind::NUMBER) << "the whole word";
+  EXPECT_EQ(kind(DeviceReading::RAIN), ReadingValueKind::FLAG) << "the answer to a limitation read";
+  EXPECT_EQ(kind(DeviceReading::SUN_LEVEL), ReadingValueKind::NUMBER) << "an event's value";
+  EXPECT_EQ(kind(DeviceReading::BATTERY_LEVEL), ReadingValueKind::NUMBER);
+  EXPECT_EQ(kind(DeviceReading::BATTERY_STATE), ReadingValueKind::NAMED);
+  EXPECT_EQ(kind(DeviceReading::BATTERY_LOW), ReadingValueKind::FLAG) << "a derived flag";
 }
 
 TEST(DeviceReadings, ADataObjectReadingOfAFlagCodecIsAFlag) {
@@ -451,12 +463,21 @@ TEST(DeviceReadings, ADataObjectReadingOfAFlagCodecIsAFlag) {
   EXPECT_EQ(reading_value_kind(row), ReadingValueKind::FLAG);
 }
 
-TEST(DeviceReadings, OnlyTheHeatingLevelAndTheWaterHeaterModeHaveValueNames) {
+TEST(DeviceReadings, OnlyTheHeatingLevelTheWaterHeaterModeAndTheBatteryStateHaveValueNames) {
   for (const DeviceReadingRow &row : device_readings()) {
-    EXPECT_EQ(row.value_name != nullptr,
-              row.reading == DeviceReading::HEATING_LEVEL || row.reading == DeviceReading::HOT_WATER_MODE)
+    EXPECT_EQ(row.value_name != nullptr, row.reading == DeviceReading::HEATING_LEVEL ||
+                                             row.reading == DeviceReading::HOT_WATER_MODE ||
+                                             row.reading == DeviceReading::BATTERY_STATE)
         << row.name;
   }
+  const DeviceReadingRow *battery = find_device_reading(DeviceReading::BATTERY_STATE);
+  ASSERT_NE(battery, nullptr);
+  EXPECT_STREQ(battery->value_name(static_cast<uint8_t>(BatteryState::LOW_CHARGE)), "low");
+  EXPECT_STREQ(battery->value_name(static_cast<uint8_t>(BatteryState::NORMAL_CHARGE)), "normal");
+  EXPECT_STREQ(battery->value_name(static_cast<uint8_t>(BatteryState::FULL_CHARGE)), "full");
+  EXPECT_EQ(battery->value_name(static_cast<uint8_t>(BatteryState::NOT_REPORTED)), nullptr)
+      << "no battery is an absent reading, never a stored name";
+  EXPECT_EQ(battery->value_name(4), nullptr);
   EXPECT_STREQ(find_device_reading(DeviceReading::HOT_WATER_MODE)->value_name(0), "auto");
   const DeviceReadingRow *level = find_device_reading(DeviceReading::HEATING_LEVEL);
   ASSERT_NE(level, nullptr);
@@ -681,4 +702,78 @@ TEST(DeviceReadings, EveryStatusSetpointIsRoundedToTenthsOfADegree) {
   // A main parameter beyond the scale is no temperature, and the level reading is not rounded: it is not a temperature.
   const uint8_t alias[] = {0xD8, 0x12};
   EXPECT_FALSE(decode_status_reading(DeviceReading::STATUS_SETPOINT, alias, 0, -40.0F, 80.0F).has_value());
+}
+
+// === A cover's readings ===
+
+TEST(DeviceReadings, ACoversReadingsNeedNoCapabilityAndTheScheduledOnesDropTheirValueWhenStale) {
+  IoDevice cover{};
+  cover.type = DeviceType::ROLLER_SHUTTER;
+  resolve_device_features(cover);
+  for (const DeviceReading reading : {DeviceReading::RAIN, DeviceReading::SUN_LEVEL, DeviceReading::BATTERY_LEVEL,
+                                      DeviceReading::BATTERY_STATE, DeviceReading::BATTERY_LOW}) {
+    const DeviceReadingRow *row = find_device_reading(reading);
+    ASSERT_NE(row, nullptr);
+    EXPECT_FALSE(row->feature.has_value()) << row->name << ": a YAML key of the cover declares it";
+    EXPECT_TRUE(device_can_have_reading(cover, *row)) << row->name;
+    EXPECT_EQ(row->poll, ReadingPoll::NOT_POLLED) << row->name << ": no heater poll reads it";
+  }
+  for (const DeviceReading reading : {DeviceReading::RAIN, DeviceReading::SUN_LEVEL, DeviceReading::BATTERY_LEVEL}) {
+    const DeviceReadingRow *row = find_device_reading(reading);
+    EXPECT_TRUE(reading_is_scheduled(*row)) << row->name;
+    EXPECT_EQ(row->stale, ReadingStale::DROP) << row->name << ": a state that changes is not kept past the misses";
+  }
+  for (const DeviceReading reading : {DeviceReading::BATTERY_STATE, DeviceReading::BATTERY_LOW})
+    EXPECT_FALSE(reading_is_scheduled(*find_device_reading(reading))) << "a status reply answers it";
+}
+
+TEST(DeviceReadings, OnlyAnEventOrLimitationReadingIsScheduledWithoutACapability) {
+  // device_can_have_reading() lets a row without a capability onto any device: that is right only for a cover's
+  // readings, which a cover's own YAML key declares. A data-object reading needs its capability, so a row that forgot
+  // it would be read on every device that asks.
+  for (const DeviceReadingRow &row : device_readings()) {
+    if (reading_is_scheduled(row) && !row.feature.has_value()) {
+      EXPECT_TRUE(std::holds_alternative<EventSource>(row.source) ||
+                  std::holds_alternative<LimitationSource>(row.source))
+          << row.name;
+    }
+  }
+}
+
+TEST(DeviceReadings, ARowThatNamesACapabilityStaysOutOfADeviceThatLacksIt) {
+  IoDevice cover{};
+  cover.type = DeviceType::ROLLER_SHUTTER;
+  resolve_device_features(cover);
+  const DeviceReadingRow *energy = find_device_reading(DeviceReading::ENERGY_TOTAL);
+  ASSERT_NE(energy, nullptr);
+  EXPECT_FALSE(device_can_have_reading(cover, *energy));
+}
+
+TEST(DeviceReadings, TheBatteryFlagIsOnForALowBatteryOffForOtherLevelsAndNoneWithoutALevel) {
+  IoDevice dev{};
+  const size_t slot = reading_slot(DeviceReading::BATTERY_STATE);
+  EXPECT_FALSE(reading_value(dev, DeviceReading::BATTERY_LOW).has_value()) << "nothing read yet";
+  EXPECT_EQ(battery_state_of(dev), BatteryState::NOT_REPORTED);
+
+  dev.reading_values.store(slot, static_cast<float>(BatteryState::LOW_CHARGE));
+  EXPECT_EQ(reading_value(dev, DeviceReading::BATTERY_LOW), std::optional<float>(1.0F));
+  EXPECT_EQ(battery_state_of(dev), BatteryState::LOW_CHARGE);
+  dev.reading_values.store(slot, static_cast<float>(BatteryState::NORMAL_CHARGE));
+  EXPECT_EQ(reading_value(dev, DeviceReading::BATTERY_LOW), std::optional<float>(0.0F));
+  dev.reading_values.store(slot, static_cast<float>(BatteryState::FULL_CHARGE));
+  EXPECT_EQ(reading_value(dev, DeviceReading::BATTERY_LOW), std::optional<float>(0.0F));
+
+  dev.reading_values.mark_absent(slot);
+  EXPECT_FALSE(reading_value(dev, DeviceReading::BATTERY_LOW).has_value()) << "off must mean a device said so";
+  EXPECT_EQ(battery_state_of(dev), BatteryState::NOT_REPORTED);
+}
+
+TEST(DeviceReadings, TheSunLevelRowAppliesTheEstimatedLuxFactorWhenItDecodes) {
+  const DeviceReadingRow *row = find_device_reading(DeviceReading::SUN_LEVEL);
+  ASSERT_NE(row, nullptr);
+  const auto *source = std::get_if<EventSource>(&row->source);
+  ASSERT_NE(source, nullptr);
+  EXPECT_EQ(source->event, EVENT_LOCAL_SENSOR);
+  EXPECT_EQ(source->factor, SUN_VALUE_LUX_PER_STEP);
+  EXPECT_EQ(source->type_byte, std::optional<uint8_t>(LOCAL_SENSOR_TYPE_SUN));
 }

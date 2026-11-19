@@ -283,15 +283,20 @@ FEATURES = (
 # DeviceReading: the capability a device needs ("feature"), where the value comes from ("source": "register" for one
 # private register of a heater or a water heater, or a part of one, "derived" for a value worked out from other
 # readings, "data_object" for a slice of a data object read on a schedule, "status" for the main parameter of a status
-# reply, "status_parameter" for a functional parameter of one), the platform that offers the reading's YAML key or
-# companion ("platform": "climate", "water_heater" or "sensor"), the registers the hub's poll reads for it
-# ("registers", by DeviceRegister enumerator name; none for a data object or a status reply), and what the codegen builds
+# reply, "status_parameter" for a functional parameter of one, "event" for the data of a device event answered to a
+# subscription sent on a schedule, "limitation" for the answer to a limitation read sent on a schedule,
+# "status_battery" for the battery byte of a status reply), the platform that offers the reading's YAML key or
+# companion ("platform": "climate", "water_heater", "sensor" or "cover"), the registers the hub's poll reads for it
+# ("registers", by DeviceRegister enumerator name; none for a data object, an event, a limitation or a status reply), and what the codegen builds
 # for it: the entity kind ("sensor", "binary_sensor", "switch" or "text_sensor"; the C++ value kind decides which fits),
 # the Home Assistant metadata of the entity ("unit", "accuracy", "device_class", "state_class") and how it is declared:
 # the YAML "key" under the main entity (None where no key declares it), or, for an entity every device of the
 # capability gets without asking, a "companion" (the suffix of its name after the main entity's), its "companion_id"
-# (the suffix of its ID, after the main entity's) and, optionally, "disabled_by_default". A reading has a key or a
-# companion, never both. A reading with a key or a companion is offered by its platform only, so the two "energy" keys
+# (the suffix of its ID, after the main entity's) and, optionally, "disabled_by_default". The optional "icon" and
+# "entity_category" complete the entity's metadata. A reading has a key or a companion, never both. A cover's reading
+# has an "opt_in_key" instead of a capability: the YAML key of the cover whose presence (and, for `battery`, a true
+# value) declares the reading and creates its companion; where the reading is read on a schedule ("event" or
+# "limitation"), the key's value is the interval. A reading with a key or a companion is offered by its platform only, so the two "energy" keys
 # (a heater's and a water heater's) are two rows on two platforms. A "data_object" reading is on the `sensor:` platform;
 # it also carries "update_interval_ms", the interval its YAML key reads at when the entry sets none. The recipe, offset,
 # byte range and codec of a data object, and the value names of a named reading, are C++ only.
@@ -338,6 +343,11 @@ DEVICE_READINGS = {
     "HOT_WATER_CAPABILITIES": {"feature": "WATER_HEATER", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
     "HOT_WATER_BOOST": {"feature": "WATER_HEATER", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
     "HOT_WATER_AWAY": {"feature": "WATER_HEATER", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
+    "RAIN": {"feature": None, "source": "limitation", "platform": "cover", "registers": (), "key": None, "opt_in_key": "rain_sensor_poll_interval", "entity": "binary_sensor", "device_class": "moisture", "companion": "Rain sensor", "companion_id": "rain_sensor"},
+    "SUN_LEVEL": {"feature": None, "source": "event", "platform": "cover", "registers": (), "key": None, "opt_in_key": "sun_level_poll_interval", "entity": "sensor", "unit": "lx", "accuracy": 0, "device_class": "illuminance", "state_class": "measurement", "icon": "mdi:white-balance-sunny", "companion": "Sun level", "companion_id": "sun_level_sensor"},
+    "BATTERY_LEVEL": {"feature": None, "source": "event", "platform": "cover", "registers": (), "key": None, "opt_in_key": "battery_level_poll_interval", "entity": "sensor", "unit": "%", "accuracy": 0, "device_class": "battery", "state_class": "measurement", "companion": "Battery level", "companion_id": "battery_level_sensor"},
+    "BATTERY_STATE": {"feature": None, "source": "status_battery", "platform": "cover", "registers": (), "key": None, "opt_in_key": "battery", "entity": "text_sensor", "entity_category": "diagnostic", "icon": "mdi:battery", "companion": "Battery", "companion_id": "battery_sensor", "disabled_by_default": True},
+    "BATTERY_LOW": {"feature": None, "source": "derived", "platform": "cover", "registers": (), "key": None, "opt_in_key": "battery", "entity": "binary_sensor", "device_class": "battery", "entity_category": "diagnostic", "companion": "Battery Low", "companion_id": "battery_low_sensor"},
 }
 
 # What to declare when a key of DEVICE_READINGS is used on a kind without its capability, by capability.
