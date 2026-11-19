@@ -10,6 +10,7 @@
 #include "corpus_test_helpers.h"
 #include "test_helpers.h"
 
+#include <algorithm>
 #include <cstring>
 #include <functional>
 #include <gtest/gtest.h>
@@ -520,15 +521,63 @@ TEST(ProtoCommandsProbeBuilders, TransferOpenBuildsTheReadBytesForEveryAllowlist
   const uint8_t own[3] = {0x97, 0xDE, 0x1A};
   const uint8_t dst[3] = {0x51, 0xE3, 0x03};
   for (const TransferRecipe &recipe : TRANSFER_RECIPES) {
-    const TransferObject &object = recipe.opens.front().object;
-    SCOPED_TRACE(object.id);
-    ASSERT_TRUE(create_transfer_open(frame, own, dst, object, 0, /*low_power=*/false));
-    uint8_t bytes[64] = {0};
-    const uint8_t len = serialize(frame, bytes, sizeof(bytes));
-    const std::vector<uint8_t> expected = expected_open_bytes(own, dst, object, 0);
-    ASSERT_EQ(len, expected.size());
-    EXPECT_EQ(0, std::memcmp(bytes, expected.data(), expected.size())) << "offset 0 keeps payload bytes 5-6 zero";
+    // A probe row reads at offset 0 only; a row with listed offsets is opened at its first one.
+    const uint16_t offset = recipe.offsets.empty() ? 0 : recipe.offsets.front();
+    for (const TransferOpenStep &step : recipe.opens) {
+      SCOPED_TRACE(step.object.id);
+      ASSERT_TRUE(create_transfer_open(frame, own, dst, step.object, offset, /*low_power=*/false));
+      uint8_t bytes[64] = {0};
+      const uint8_t len = serialize(frame, bytes, sizeof(bytes));
+      const std::vector<uint8_t> expected = expected_open_bytes(own, dst, step.object, offset);
+      ASSERT_EQ(len, expected.size());
+      EXPECT_EQ(0, std::memcmp(bytes, expected.data(), expected.size()));
+    }
   }
+}
+
+TEST(ProtoCommandsProbeBuilders, AtlanticHeatPumpRecipeOpensThePrepareObjectThenTheDataObject) {
+  ASSERT_EQ(TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP, 30u) << "first row behind the 30 probe rows";
+  const TransferRecipe &recipe = TRANSFER_RECIPES[TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP];
+  ASSERT_EQ(recipe.opens.size(), 2u);
+  EXPECT_EQ(recipe.opens[0].object.object_class, 0x0C);
+  EXPECT_EQ(recipe.opens[0].object.id, 0x1001);
+  EXPECT_TRUE(recipe.opens[0].expect_empty) << "0x1001 answers empty: it only prepares";
+  EXPECT_EQ(recipe.opens[1].object.object_class, 0x0C);
+  EXPECT_EQ(recipe.opens[1].object.id, 0x1002);
+  EXPECT_FALSE(recipe.opens[1].expect_empty);
+  EXPECT_EQ(recipe.max_bytes, TRANSFER_BLOCK_SIZE);
+  EXPECT_TRUE(transfer_recipe_allows_offset(recipe, 0x0023)) << "heating energy";
+  EXPECT_TRUE(transfer_recipe_allows_offset(recipe, 0x0025)) << "hot-water energy";
+  EXPECT_TRUE(std::ranges::is_sorted(recipe.offsets));
+  EXPECT_EQ(std::ranges::adjacent_find(recipe.offsets), recipe.offsets.end()) << "no offset twice";
+}
+
+TEST(ProtoCommandsProbeBuilders, AtlanticHeatPumpOpensMatchTheCapturedTahomaPayload) {
+  // Issue #244: a TaHoma opening the hot-water energy entry sent `46 08 0C 00 10 01 00 25 00 00`, then the same
+  // open on object 0x1002.
+  const TransferRecipe &recipe = TRANSFER_RECIPES[TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP];
+  const uint8_t prepare[TRANSFER_OPEN_DATA_SIZE] = {0x08, 0x0C, 0x00, 0x10, 0x01, 0x00, 0x25, 0x00, 0x00};
+  const uint8_t data[TRANSFER_OPEN_DATA_SIZE] = {0x08, 0x0C, 0x00, 0x10, 0x02, 0x00, 0x25, 0x00, 0x00};
+  IoFrame frame{};
+  ASSERT_TRUE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, recipe.opens[0].object, 0x0025, false));
+  EXPECT_EQ(frame.cmd, CMD_TRANSFER_OPEN);
+  ASSERT_EQ(frame.data_len, TRANSFER_OPEN_DATA_SIZE);
+  EXPECT_EQ(0, std::memcmp(frame.data, prepare, sizeof(prepare)));
+  ASSERT_TRUE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, recipe.opens[1].object, 0x0025, false));
+  ASSERT_EQ(frame.data_len, TRANSFER_OPEN_DATA_SIZE);
+  EXPECT_EQ(0, std::memcmp(frame.data, data, sizeof(data)));
+}
+
+TEST(ProtoCommandsProbeBuilders, AtlanticHeatPumpOpenRefusesAnOffsetNotSeenOnAir) {
+  IoFrame frame{};
+  const TransferRecipe &recipe = TRANSFER_RECIPES[TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP];
+  for (const TransferOpenStep &step : recipe.opens)
+    for (uint16_t offset : {0x0000, 0x0005, 0x0022, 0x0024, 0x018A, 0xFFFF}) {
+      EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, step.object, offset, false))
+          << std::hex << step.object.id << " @" << offset;
+    }
+  // Another object of the same class is refused at an allowed offset.
+  EXPECT_FALSE(create_transfer_open(frame, test::OWN_ID, test::DST_ID, {0x0C, 0x1003}, 0x0025, false));
 }
 
 TEST(ProtoCommandsProbeBuilders, TransferOpenTableKeepsItsFirstIndexesAndClasses) {

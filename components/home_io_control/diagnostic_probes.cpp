@@ -278,8 +278,8 @@ constexpr ProbeDescriptor PROBE_TABLE[] = {
      .builder = nullptr,
      .sweepable = true,
      .index_help = "index 0 (actuator capacity 0x8100), 1 (actuator state 0x8103), 2 (name record 0x8003), 3 (general "
-                   "info 1, 0x8001), 4 (general info 2, 0x8002), or 5 to 29 (further objects, see the diagnostic "
-                   "probes documentation)",
+                   "info 1, 0x8001), 4 (general info 2, 0x8002), 5 to 29 (further objects) or 30 (Atlantic heat "
+                   "pump entry, with an offset), see the diagnostic probes documentation",
      .max_index = PROBE_READ_OBJECT_MAX_INDEX,
      .reads_blocks = true},
     // The register reads (ADR 0063): one CMD_WRITE_PRIVATE frame in the read direction, for register-protocol

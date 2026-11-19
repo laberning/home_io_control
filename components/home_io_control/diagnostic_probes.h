@@ -127,14 +127,15 @@ class DiagnosticProbes {
   ///     TRANSFER_RECIPES:
   ///     0 = actuator capacity record (object 0x8100), 1 = actuator state record (0x8103), 2 = name record
   ///     (0x8003, there to prove the flow before the other two are trusted), 3 = general info 1 (0x8001),
-  ///     4 = general info 2 (0x8002), 5 to 29 = further class-0 and Somfy manufacturer objects. The offset (decimal or
+  ///     4 = general info 2 (0x8002), 5 to 29 = further class-0 and Somfy manufacturer objects, 30 = an Atlantic heat
+  ///     pump entry (TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP, a prepare open then the data open). The offset (decimal or
   ///     `0x`-prefixed hex, 0 when left out) names where in the object the read opens; it must be one the row allows,
-  ///     which for rows 0 to 29 is 0 only. One call runs a TransferSession: it opens the object
-  ///     (CMD_TRANSFER_OPEN), pulls its blocks (CMD_UNKNOWN4A_REQ, counting down) and closes it, through the hub's
-  ///     exchange, so the exchanges count in link health. The bytes are reported raw in `response_hex` and logged,
-  ///     never interpreted or applied to the device record. An object announced longer than the row's size cap
-  ///     (432 bytes for rows 0 to 29) is closed unread. The write twin of the block (0x48, and a 0x4A that carries
-  ///     data) has no builder. `probe_sweep` walks the offsets of one row.
+  ///     which for rows 0 to 29 is 0 only and for row 30 one of TRANSFER_ATLANTIC_OFFSETS. One call runs a
+  ///     TransferSession: it opens the object (CMD_TRANSFER_OPEN), pulls its blocks (CMD_UNKNOWN4A_REQ, counting down)
+  ///     and closes it, through the hub's exchange, so the exchanges count in link health. The bytes are reported raw
+  ///     in `response_hex` and logged, never interpreted or applied to the device record. An object announced longer
+  ///     than the row's size cap (432 bytes for rows 0 to 29) is closed unread. The write twin of the block (0x48, and
+  ///     a 0x4A that carries data) has no builder. `probe_sweep` walks the offsets of one row.
   ///   - "register_00" / "register_01": a read of register `0x00<index>` / `0x01<index>` over CMD_WRITE_PRIVATE
   ///     (`0C 60 <hi> <lo>`, ADR 0063). The direction byte is the read constant and cannot be set to the write
   ///     direction by any input (encode_private_register_read()). Refused for a device that is neither a
