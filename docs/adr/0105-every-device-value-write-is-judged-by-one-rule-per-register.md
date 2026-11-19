@@ -53,8 +53,7 @@ only, so each writer kept its own byte layout.
 - A thermostat with the default range (-40 to 80 degrees) or a YAML range that holds 5 to 30 offers 5 to 30 as
   before; a narrower YAML range narrows its card.
 - A target of a thermostat outside its YAML range is no longer sent as the end of the range.
-- Placeholder register defaults remain on the profiles that are not register profiles (`HeatingWritePlan::register_fn`,
-  `read_back_fn`, the profile's `mode_fn` and `preset_fn`); making them optional is left to a follow-up.
+- A profile or plan that uses no register holds none.
 - The water heater's writes use these rules as well ([ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md)).
 - The night light's hub port takes a percentage, like its register's reading: the light sends the percentage Home
   Assistant shows, and the brightness register's row maps it onto the register's scale.

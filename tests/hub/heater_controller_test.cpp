@@ -361,7 +361,6 @@ HeatingWritePlan register_plan(DeviceRegister fn, float value) {
   plan.register_fn = fn;
   plan.register_value = value;
   plan.read_back = true;
-  plan.read_back_fn = fn;
   return plan;
 }
 
@@ -388,6 +387,21 @@ TEST(HeaterController, APlannedRegisterWriteSendsItsBytesAppliesTheHookThenReads
   EXPECT_EQ(sent_payload(fx.radio.get_sent_data()[0], 6), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}));
   EXPECT_EQ(fx.radio.get_sent_data()[1][10], 0x60) << "the read-back is a get of the same register";
   EXPECT_EQ(sent_register(fx.radio.get_sent_data()[1]), 0x03);
+}
+
+TEST(HeaterControllerHeatingPlan, ARegisterPlanWithoutARegisterSendsNothingAndIsNotAccepted) {
+  HeaterControllerFixture fx;
+  make_heater(fx);
+  HeatingWritePlan plan;
+  plan.kind = HeatingPlanKind::REGISTER;
+  plan.register_value = 1.0F;
+  plan.read_back = true;
+  int hook_calls = 0;
+
+  EXPECT_FALSE(fx.controller.execute_heating_plan("ABC123", plan, [&] { hook_calls++; }));
+
+  EXPECT_TRUE(fx.radio.get_sent_data().empty());
+  EXPECT_EQ(hook_calls, 0);
 }
 
 namespace {
@@ -563,7 +577,7 @@ TEST(HeaterController, AModeWriteIntoTheProgrammeIsReadBackThenTheTemperatureInF
                             : make_radiator_in_programme(fx, HeatingMode::MANUAL, NAN);
     if (c.towel)
       test::store_reading(*dev, DeviceReading::TOWEL_MODE, c.from_wire);
-    const DeviceRegister mode_fn = find_heating_profile(*dev)->mode_fn;
+    const DeviceRegister mode_fn = *find_heating_profile(*dev)->mode_fn;
     fx.queue_register_ack({0x0C, 0x61, 0x01, c.mode_register, c.to_wire});
     fx.queue_register_ack({0x0C, 0x60, 0x01, c.mode_register, c.to_wire});
     queue_read_reply(fx, c.in_force_register, {0xAF, 0x00});  // 17.5 C
@@ -585,7 +599,7 @@ TEST(HeaterController, AWriteThatDoesNotStartTheProgrammeReadsNoTemperatureInFor
     IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
     queue_register_write_and_read_back(fx, RADIATOR_MODE, RADIATOR_HEAT, RADIATOR_HEAT);
     ASSERT_TRUE(fx.controller.execute_heating_plan(
-        "ABC123", register_plan(find_heating_profile(*dev)->mode_fn, RADIATOR_HEAT), nullptr));
+        "ABC123", register_plan(*find_heating_profile(*dev)->mode_fn, RADIATOR_HEAT), nullptr));
     EXPECT_EQ(sent_registers(fx), (std::vector<uint8_t>{RADIATOR_MODE, RADIATOR_MODE}));
   }
   {
@@ -628,7 +642,7 @@ TEST(HeaterController, ASilentModeReadBackReadsNoTemperatureInForce) {
   fx.queue_register_ack({0x0C, 0x61, 0x01, RADIATOR_MODE, static_cast<uint8_t>(HeatingMode::AUTO)});  // no read-back
 
   ASSERT_TRUE(fx.controller.execute_heating_plan(
-      "ABC123", register_plan(find_heating_profile(*dev)->mode_fn, static_cast<float>(HeatingMode::AUTO)), nullptr));
+      "ABC123", register_plan(*find_heating_profile(*dev)->mode_fn, static_cast<float>(HeatingMode::AUTO)), nullptr));
 
   for (const uint8_t reg : sent_registers(fx))
     EXPECT_EQ(reg, RADIATOR_MODE) << "the write and its read-back attempts only";
@@ -642,7 +656,7 @@ TEST(HeaterController, AHeaterWithoutATemperatureInForceIsNotAskedAfterAModeWrit
   queue_register_write_and_read_back(fx, RADIATOR_MODE, auto_wire, auto_wire);
 
   ASSERT_TRUE(fx.controller.execute_heating_plan(
-      "ABC123", register_plan(find_heating_profile(*dev)->mode_fn, auto_wire), nullptr));
+      "ABC123", register_plan(*find_heating_profile(*dev)->mode_fn, auto_wire), nullptr));
 
   EXPECT_EQ(sent_registers(fx), (std::vector<uint8_t>{RADIATOR_MODE, RADIATOR_MODE}));
 }
@@ -668,7 +682,7 @@ TEST(HeaterController, ASilentTemperatureInForceReadAfterAModeWriteChangesNothin
   queue_register_write_and_read_back(fx, RADIATOR_MODE, auto_wire, auto_wire);  // the in-force read gets no reply
 
   ASSERT_TRUE(fx.controller.execute_heating_plan(
-      "ABC123", register_plan(find_heating_profile(*dev)->mode_fn, auto_wire), nullptr));
+      "ABC123", register_plan(*find_heating_profile(*dev)->mode_fn, auto_wire), nullptr));
 
   const std::vector<uint8_t> registers = sent_registers(fx);
   ASSERT_GE(registers.size(), 3u);

@@ -207,11 +207,11 @@ TEST(HeatingWriteRule, EveryValueARegisterProfileWritesIsAcceptedByTheRegistersR
     if (profile.path != HeatingControlPath::PRIVATE_REGISTERS)
       continue;
     for (const HeatingModeEntry &mode : profile.modes)
-      EXPECT_TRUE(heating_write_accepts(profile.mode_fn, static_cast<float>(mode.wire)))
+      EXPECT_TRUE(heating_write_accepts(*profile.mode_fn, static_cast<float>(mode.wire)))
           << "mode " << static_cast<int>(mode.wire) << " of " << static_cast<int>(profile.type) << "/"
           << static_cast<int>(profile.subtype);
     for (const HeatingPresetEntry &preset : profile.presets)
-      EXPECT_TRUE(heating_write_accepts(profile.preset_fn, static_cast<float>(preset.wire)))
+      EXPECT_TRUE(heating_write_accepts(*profile.preset_fn, static_cast<float>(preset.wire)))
           << "preset " << static_cast<int>(preset.wire) << " of " << static_cast<int>(profile.type) << "/"
           << static_cast<int>(profile.subtype);
   }

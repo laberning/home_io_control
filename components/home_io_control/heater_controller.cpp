@@ -128,7 +128,13 @@ bool HeaterController::execute_heating_plan(const std::string &device_id, const 
   bool accepted = false;
   switch (plan.kind) {
     case HeatingPlanKind::REGISTER:
-      accepted = this->send_heating_command(device_id, plan.register_fn, plan.register_value);
+      // The planner always names the register of a register plan; a plan without one is a programming error.
+      if (!plan.register_fn) {
+        ESP_LOGE(detail::TAG, "Device %s: a register write was planned without a register, nothing sent",
+                 device_id.c_str());
+        return false;
+      }
+      accepted = this->send_heating_command(device_id, *plan.register_fn, plan.register_value);
       break;
     case HeatingPlanKind::LEVEL:
       accepted = this->set_heating_level(device_id, plan.level);
@@ -143,9 +149,10 @@ bool HeaterController::execute_heating_plan(const std::string &device_id, const 
     return false;
   if (on_accepted)
     on_accepted();
-  if (plan.read_back) {
+  // Only a register plan reads a register back (a plan that sets read_back without one cannot be planned).
+  if (plan.read_back && plan.register_fn) {
     float read_back_c = NAN;
-    const HeatingRead read_back = this->read_back_heating_register_(device_id, plan.read_back_fn, &read_back_c);
+    const HeatingRead read_back = this->read_back_heating_register_(device_id, *plan.register_fn, &read_back_c);
     // A refused override changes nothing else: the comfort setpoint stays, and the next poll shows what the
     // heater holds. A read-back with no reply is already logged by the exchange and proves no refusal.
     if (plan.temporary_override && read_back == HeatingRead::EMPTY) {
@@ -168,8 +175,8 @@ void HeaterController::show_temperature_in_force_after_write_(const std::string 
   const HeatingProfile *profile = dev != nullptr ? find_heating_profile(*dev) : nullptr;
   // Only a write of the mode or of the timed run can start the programme; the read-back of an override already
   // carries the value in force, and a comfort-setpoint write is made where the programme does not run.
-  if (profile == nullptr || profile->programme_period == nullptr ||
-      (plan.read_back_fn != profile->mode_fn && plan.read_back_fn != profile->preset_fn))
+  if (profile == nullptr || profile->programme_period == nullptr || !plan.register_fn ||
+      (plan.register_fn != profile->mode_fn && plan.register_fn != profile->preset_fn))
     return;
   // EXCHANGE_RETRY_COUNT, as the read before a target: the user waits for the card. The poll's own try band
   // applies to its reads only. poll_temperature_in_force_() sends nothing unless the programme runs on the
@@ -182,11 +189,11 @@ void HeaterController::show_temperature_in_force_after_write_(const std::string 
 bool HeaterController::read_programme_state(const std::string &device_id) {
   const IoDevice *dev = this->registry_.get(device_id);
   const HeatingProfile *profile = dev != nullptr ? find_heating_profile(*dev) : nullptr;
-  if (profile == nullptr || profile->programme_period == nullptr)
+  if (profile == nullptr || profile->programme_period == nullptr || !profile->mode_fn)
     return false;
   // The mode first, then (while it shows the programme) the timed run on top of it. A heater that does not
   // answer, or answers without a value, is asked nothing more: the caller writes nothing.
-  if (this->read_and_store_heating_register_(device_id, profile->mode_fn, nullptr, EXCHANGE_RETRY_COUNT,
+  if (this->read_and_store_heating_register_(device_id, *profile->mode_fn, nullptr, EXCHANGE_RETRY_COUNT,
                                              /*follow_override=*/false) != HeatingRead::VALUE)
     return false;
   // The exchange blocks; a record removed meanwhile has nothing left to write to.

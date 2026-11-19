@@ -232,7 +232,7 @@ struct HeatingProfile {
   /// PRIVATE_REGISTERS: how the heater's own programme shows that it runs, the temperature it heats to and
   /// the register a target set meanwhile is written to; nullptr for a heater without one.
   const HeatingProgrammePeriod *programme_period{nullptr};
-  // NOLINTBEGIN(readability-redundant-member-init): a span's own default is empty, but g++'s
+  // NOLINTBEGIN(readability-redundant-member-init): a span's or optional's own default is empty, but g++'s
   // -Wmissing-field-initializers still wants the member initializer before a row may leave it out.
   std::span<const HeatingPresetEntry> presets{};     ///< Presets offered.
   std::span<const HeatingObservedState> observed{};  ///< Device-reported value -> card state.
@@ -240,12 +240,15 @@ struct HeatingProfile {
   /// (`observed`). With it, `observed` sets only the mode and this table alone sets the preset, since
   /// mode and preset live in separate registers.
   std::span<const HeatingObservedState> preset_observed{};
-  // NOLINTEND(readability-redundant-member-init)
-  /// PRIVATE_REGISTERS: the register the HVAC modes write and the card's mode is read from.
-  DeviceRegister mode_fn{DeviceRegister::OPERATING_MODE};
+  /// PRIVATE_REGISTERS: the register the HVAC modes write and the card's mode is read from. Named by every
+  /// private-register profile and by no other: a profile on another path reaches its device through the standard
+  /// EXECUTE and has no register to name.
+  std::optional<DeviceRegister> mode_fn{};
   /// PRIVATE_REGISTERS: the register the presets write, and with `preset_observed` the one the card's preset is
-  /// read from.
-  DeviceRegister preset_fn{DeviceRegister::OPERATING_MODE};
+  /// read from. Named by exactly the profiles that name `mode_fn`; on a profile whose mode register also names the
+  /// preset it is the same register.
+  std::optional<DeviceRegister> preset_fn{};
+  // NOLINTEND(readability-redundant-member-init)
   HeatingActionSource action_source{HeatingActionSource::REGULATOR};  ///< Where `features.action` reads from.
 };
 
@@ -567,18 +570,17 @@ enum class HeatingPlanKind : uint8_t {
 
 /// @brief The write a request turns into, with everything needed to send it and to read it back.
 struct HeatingWritePlan {
-  HeatingPlanKind kind{HeatingPlanKind::NONE};                 ///< How to send it.
-  HeatingRefusal refusal{HeatingRefusal::NONE};                ///< Why there is no write (kind NONE).
-  DeviceRegister register_fn{DeviceRegister::OPERATING_MODE};  ///< REGISTER: the register.
-  float register_value{0.0F};      ///< REGISTER: the value, as encode_heating_payload() takes it.
-  uint8_t level{0};                ///< LEVEL: the level low byte.
-  uint16_t main_parameter{0};      ///< TEMPERATURE: the main parameter.
-  HeatingFp fp{};                  ///< TEMPERATURE: the functional parameter that accompanies it.
+  HeatingPlanKind kind{HeatingPlanKind::NONE};   ///< How to send it.
+  HeatingRefusal refusal{HeatingRefusal::NONE};  ///< Why there is no write (kind NONE).
+  std::optional<DeviceRegister> register_fn;     ///< REGISTER: the register; no other plan holds one.
+  float register_value{0.0F};                    ///< REGISTER: the value, as encode_heating_payload() takes it.
+  uint8_t level{0};                              ///< LEVEL: the level low byte.
+  uint16_t main_parameter{0};                    ///< TEMPERATURE: the main parameter.
+  HeatingFp fp{};                                ///< TEMPERATURE: the functional parameter that accompanies it.
   bool temporary_override{false};  ///< REGISTER: the write is a temporary override of the programme; a read-back
                                    ///< that differs from it is a refusal (heating_override_taken()).
-  bool read_back{false};           ///< Read `read_back_fn` after an accepted write.
-  DeviceRegister read_back_fn{DeviceRegister::OPERATING_MODE};  ///< The register to read back.
-  int8_t preset_index{-1};  ///< PRESET: index into the profile's presets of the matched entry; -1 otherwise.
+  bool read_back{false};           ///< Read `register_fn` back after an accepted write.
+  int8_t preset_index{-1};         ///< PRESET: index into the profile's presets of the matched entry; -1 otherwise.
 
   /// @return Whether the request became a write.
   [[nodiscard]] bool is_write() const { return this->kind != HeatingPlanKind::NONE; }

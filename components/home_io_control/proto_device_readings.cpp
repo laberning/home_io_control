@@ -555,6 +555,8 @@ int register_wire(const IoDevice &dev, DeviceRegister fn) {
   return row != nullptr ? reading_wire(dev, row->reading) : -1;
 }
 
+int register_wire(const IoDevice &dev, std::optional<DeviceRegister> fn) { return fn ? register_wire(dev, *fn) : -1; }
+
 void store_reading(IoDevice &dev, DeviceReading reading, float value) {
   dev.reading_values.store(reading_slot(reading), value);
 }

@@ -454,6 +454,12 @@ std::optional<float> register_value(const IoDevice &dev, DeviceRegister fn);
 /// @return The value, or -1 when it has none (see register_value()).
 int register_wire(const IoDevice &dev, DeviceRegister fn);
 
+/// @brief register_wire() for a register a profile may not name.
+/// @param dev The device record.
+/// @param fn The register, or none.
+/// @return The value, or -1 when it has none or there is no register.
+int register_wire(const IoDevice &dev, std::optional<DeviceRegister> fn);
+
 // === The store door ===
 
 /// @brief Keep a value in a reading of a device; the reading is no longer absent and counts as reported.

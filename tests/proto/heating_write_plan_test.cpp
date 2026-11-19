@@ -13,7 +13,9 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <iterator>
 #include <optional>
+#include <string>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -55,6 +57,31 @@ uint16_t encoded(float celsius, float min_c, float max_c) {
 
 }  // namespace
 
+// === Which plan holds a register ===
+
+TEST(HeatingWritePlan, OnlyARegisterPlanHoldsARegister) {
+  const HeatingWriteRequest target_requests[] = {target_request(20.5F), target_request(NAN)};
+  const HeatingDeviceFacts facts[] = {known_device(20.0F), {}, {.has_record = true, .programme_state_answered = false}};
+  for (const HeatingProfile &profile : heating_profiles()) {
+    std::vector<HeatingWriteRequest> requests(std::begin(target_requests), std::end(target_requests));
+    for (const HeatingHvacMode hvac : {HeatingHvacMode::OFF, HeatingHvacMode::HEAT, HeatingHvacMode::AUTO})
+      requests.push_back(mode_request(hvac, 21.0F));
+    for (const HeatingPresetEntry &entry : profile.presets)
+      requests.push_back(preset_request(entry.id, entry.custom_name));
+    requests.push_back(preset_request(HeatingPresetId::CUSTOM, "No such preset"));
+    for (const HeatingWriteRequest &request : requests) {
+      for (const HeatingDeviceFacts &fact : facts) {
+        const HeatingWritePlan plan = plan_heating_write(profile, request, fact);
+        const std::string label = "profile " + std::to_string(static_cast<int>(profile.type)) + "/" +
+                                  std::to_string(profile.subtype) + ", request kind " +
+                                  std::to_string(static_cast<int>(request.kind));
+        EXPECT_EQ(plan.register_fn.has_value(), plan.kind == HeatingPlanKind::REGISTER) << label;
+        EXPECT_FALSE(plan.read_back && !plan.register_fn) << label << ": a read-back names a register";
+      }
+    }
+  }
+}
+
 // === Setpoint radiator (private registers) ===
 
 TEST(HeatingWritePlan, RadiatorModeIsARegisterWriteThatIsReadBack) {
@@ -66,7 +93,6 @@ TEST(HeatingWritePlan, RadiatorModeIsARegisterWriteThatIsReadBack) {
   EXPECT_EQ(plan.register_fn, radiator.mode_fn);
   EXPECT_FLOAT_EQ(plan.register_value, static_cast<float>(radiator.modes[1].wire));
   EXPECT_TRUE(plan.read_back);
-  EXPECT_EQ(plan.read_back_fn, radiator.mode_fn);
   EXPECT_EQ(plan.refusal, HeatingRefusal::NONE);
 }
 
@@ -82,7 +108,6 @@ TEST(HeatingWritePlan, RadiatorPresetWritesItsRegisterAndNamesTheMatchedEntry) {
   EXPECT_EQ(plan.register_fn, radiator.preset_fn);
   EXPECT_FLOAT_EQ(plan.register_value, static_cast<float>(entry.wire));
   EXPECT_TRUE(plan.read_back);
-  EXPECT_EQ(plan.read_back_fn, radiator.preset_fn);
 }
 
 TEST(HeatingWritePlan, RadiatorTargetIsAnUnencodedSetpointWriteThatIsReadBack) {
@@ -94,7 +119,6 @@ TEST(HeatingWritePlan, RadiatorTargetIsAnUnencodedSetpointWriteThatIsReadBack) {
   EXPECT_EQ(plan.register_fn, DeviceRegister::COMFORT_SETPOINT);
   EXPECT_FLOAT_EQ(plan.register_value, 20.5F);
   EXPECT_TRUE(plan.read_back);
-  EXPECT_EQ(plan.read_back_fn, DeviceRegister::COMFORT_SETPOINT);
 }
 
 // === A target while the programme runs: a temporary override ===
@@ -126,7 +150,6 @@ TEST(HeatingWritePlan, ATargetWhileTheProgrammeRunsIsAnOverrideWithAReadBackOnBo
     EXPECT_FLOAT_EQ(plan.register_value, 17.5F);
     EXPECT_TRUE(plan.temporary_override);
     EXPECT_TRUE(plan.read_back);
-    EXPECT_EQ(plan.read_back_fn, DeviceRegister::DEROGATED_SETPOINT);
   }
 }
 
@@ -137,7 +160,6 @@ TEST(HeatingWritePlan, ATargetWhileTheProgrammeDoesNotRunWritesTheComfortSetpoin
         plan_heating_write(programme_profile(model), target_request(21.0F), programme_facts(false));
     ASSERT_EQ(plan.kind, HeatingPlanKind::REGISTER);
     EXPECT_EQ(plan.register_fn, DeviceRegister::COMFORT_SETPOINT);
-    EXPECT_EQ(plan.read_back_fn, DeviceRegister::COMFORT_SETPOINT);
     EXPECT_FALSE(plan.temporary_override);
     EXPECT_EQ(plan_heating_write(programme_profile(model), target_request(21.0F), known_device(20.0F)).register_fn,
               DeviceRegister::COMFORT_SETPOINT)
@@ -156,13 +178,11 @@ TEST(HeatingWritePlan, ATowelDryerTargetInAComfortPeriodIsTheComfortSetpointAndI
   EXPECT_FLOAT_EQ(comfort.register_value, 21.5F);
   EXPECT_FALSE(comfort.temporary_override);
   EXPECT_TRUE(comfort.read_back);
-  EXPECT_EQ(comfort.read_back_fn, DeviceRegister::COMFORT_SETPOINT);
 
   facts.period = HeatingPeriod::ECO;
   const HeatingWritePlan eco = plan_heating_write(dryer, target_request(21.5F), facts);
   EXPECT_EQ(eco.register_fn, DeviceRegister::DEROGATED_SETPOINT);
   EXPECT_TRUE(eco.temporary_override);
-  EXPECT_EQ(eco.read_back_fn, DeviceRegister::DEROGATED_SETPOINT);
 }
 
 TEST(HeatingWritePlan, ATowelDryerTargetInAutoWithNoPeriodIsRefusedAndWritesNothing) {
@@ -467,13 +487,11 @@ TEST(HeatingWritePlan, TowelDryerModeAndTemporaryStateAreSeparateRegisters) {
   const HeatingWritePlan mode = plan_heating_write(dryer, mode_request(HeatingHvacMode::AUTO), known_device());
   ASSERT_EQ(mode.kind, HeatingPlanKind::REGISTER);
   EXPECT_EQ(mode.register_fn, DeviceRegister::TOWEL_MODE);
-  EXPECT_EQ(mode.read_back_fn, DeviceRegister::TOWEL_MODE);
 
   const HeatingWritePlan boost = plan_heating_write(dryer, preset_request(HeatingPresetId::BOOST), known_device());
   ASSERT_EQ(boost.kind, HeatingPlanKind::REGISTER);
   EXPECT_EQ(boost.register_fn, DeviceRegister::TEMPORARY_STATE);
   EXPECT_FLOAT_EQ(boost.register_value, static_cast<float>(HeatingTemporaryState::BOOST));
-  EXPECT_EQ(boost.read_back_fn, DeviceRegister::TEMPORARY_STATE);
 
   const HeatingWritePlan drying =
       plan_heating_write(dryer, preset_request(HeatingPresetId::CUSTOM, "Drying"), known_device());

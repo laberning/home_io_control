@@ -883,6 +883,26 @@ TEST(HeatingProfilesTowelDryer, TheTemperatureInForceIsDroppedWhenTheProgrammeSt
   EXPECT_FALSE(test::has_reading(manual, DeviceRegister::TEMPERATURE_IN_FORCE)) << "a radiator in heat holds none";
 }
 
+TEST(HeatingProfiles, OnlyAPrivateRegisterProfileNamesItsModeAndPresetRegisters) {
+  for (const HeatingProfile &p : heating_profiles()) {
+    const bool private_registers = p.path == HeatingControlPath::PRIVATE_REGISTERS;
+    EXPECT_EQ(p.mode_fn.has_value(), private_registers)
+        << static_cast<int>(p.type) << "/" << static_cast<int>(p.subtype);
+    EXPECT_EQ(p.preset_fn.has_value(), private_registers)
+        << static_cast<int>(p.type) << "/" << static_cast<int>(p.subtype);
+  }
+  for (const DeviceModel model : {DeviceModel::NONE, DeviceModel::PILOT_WIRE_INTERFACE}) {
+    const HeatingProfile &level = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, model);
+    EXPECT_FALSE(level.mode_fn.has_value());
+    EXPECT_FALSE(level.preset_fn.has_value());
+  }
+  for (const DeviceType type : {DeviceType::HEAT_PUMP, DeviceType::HEATING_TEMPERATURE_INTERFACE}) {
+    const HeatingProfile &temperature = *find_heating_profile(type, 0, DeviceModel::NONE);
+    EXPECT_FALSE(temperature.mode_fn.has_value());
+    EXPECT_FALSE(temperature.preset_fn.has_value());
+  }
+}
+
 TEST(HeatingProfilesTowelDryer, TheRadiatorProfileIsUnchangedAndNeverTouchesTheTowelRegisters) {
   const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
   EXPECT_EQ(p.mode_fn, DeviceRegister::OPERATING_MODE);
@@ -1048,9 +1068,9 @@ bool card_moves_with(const HeatingProfile &profile, DeviceRegister changed_fn, H
     if (const auto *source = std::get_if<RegisterSource>(&row.source))
       test::store_reading(base, source->fn, 1.0F);
   }
-  test::store_reading(base, profile.mode_fn, static_cast<float>(mode->wire));
+  test::store_reading(base, *profile.mode_fn, static_cast<float>(mode->wire));
   if (!profile.preset_observed.empty())
-    test::store_reading(base, profile.preset_fn, static_cast<float>(profile.programme_period->idle_preset_state));
+    test::store_reading(base, *profile.preset_fn, static_cast<float>(profile.programme_period->idle_preset_state));
   const HeatingCardState before = reduce_heating_card(profile, base, initial_heating_card(profile));
   for (const float value : {0.0F, 2.0F, 18.0F, 22.5F}) {
     IoDevice changed = base;
@@ -1164,7 +1184,7 @@ TEST(HeatingProfiles, EveryPresetOfEveryProfileSendsACommand) {
                                 std::to_string(static_cast<int>(profile.type)) + "/" + std::to_string(profile.subtype);
       switch (profile.path) {
         case HeatingControlPath::PRIVATE_REGISTERS:
-          EXPECT_TRUE(heating_write_accepts(profile.preset_fn, static_cast<float>(preset.wire)))
+          EXPECT_TRUE(heating_write_accepts(*profile.preset_fn, static_cast<float>(preset.wire)))
               << label << ": the register's rule takes the value the preset writes";
           break;
         case HeatingControlPath::HEATING_LEVEL:
@@ -1238,7 +1258,7 @@ TEST(HeatingProfileInForce, TheProgrammeRegistersAreTheOnesAProfileNames) {
       continue;
     EXPECT_TRUE(is_programme_register(profile, profile.programme_period->in_force_fn));
     EXPECT_TRUE(is_programme_register(profile, profile.programme_period->derogation_fn));
-    EXPECT_FALSE(is_programme_register(profile, profile.mode_fn));
+    EXPECT_FALSE(is_programme_register(profile, *profile.mode_fn));
   }
   EXPECT_TRUE(is_programme_register_of_any_profile(DeviceRegister::DEROGATED_SETPOINT));
   EXPECT_FALSE(is_programme_register_of_any_profile(DeviceRegister::OPERATING_MODE));

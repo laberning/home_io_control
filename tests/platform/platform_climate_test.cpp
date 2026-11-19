@@ -87,7 +87,7 @@ class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDo
       return false;
     if (this->mode_answer == SILENT)
       return false;
-    test::store_reading(*dev, profile->mode_fn, this->mode_answer);
+    test::store_reading(*dev, *profile->mode_fn, this->mode_answer);
     if (const auto timed_run = timed_run_register(*profile, *dev)) {
       if (this->timed_run_answer == SILENT) {
         this->registry_.notify(device_id);
@@ -117,7 +117,9 @@ class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDo
     bool accepted = false;
     switch (plan.kind) {
       case HeatingPlanKind::REGISTER:
-        accepted = this->send_heating_command(device_id, plan.register_fn, plan.register_value);
+        if (!plan.register_fn)
+          return false;
+        accepted = this->send_heating_command(device_id, *plan.register_fn, plan.register_value);
         break;
       case HeatingPlanKind::LEVEL:
         accepted = this->set_heating_level(plan.level);
@@ -131,13 +133,14 @@ class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDo
     if (!accepted)
       return false;
     on_accepted();
-    if (!plan.read_back || !this->read_heating_register(device_id, plan.read_back_fn, nullptr, EXCHANGE_RETRY_COUNT))
+    if (!plan.read_back || !plan.register_fn ||
+        !this->read_heating_register(device_id, *plan.register_fn, nullptr, EXCHANGE_RETRY_COUNT))
       return true;
     if (plan.temporary_override) {
       // What the hub's read-back of an override does: the value read is the temperature in force now.
       IoDevice *dev = this->registry_.get(device_id);
       const HeatingProfile *profile = dev != nullptr ? find_heating_profile(*dev) : nullptr;
-      const float held = this->read_replies.at(plan.read_back_fn);
+      const float held = this->read_replies.at(*plan.register_fn);
       if (profile != nullptr && profile->programme_period != nullptr) {
         // A written override is the temperature now in force; 0 (none active, a refusal) leaves the reading alone.
         if (held >= HEATING_TEMP_MIN_C)
@@ -145,7 +148,7 @@ class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDo
         this->registry_.notify(device_id);
       }
     } else {
-      this->show_temperature_in_force(device_id, plan.read_back_fn);
+      this->show_temperature_in_force(device_id, *plan.register_fn);
     }
     return true;
   }

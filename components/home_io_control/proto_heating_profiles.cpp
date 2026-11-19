@@ -296,6 +296,8 @@ constexpr HeatingProfile SETPOINT_HEATER_PROFILE = {
     .programme_period = &SETPOINT_HEATER_PROGRAMME_PERIOD,
     .presets = SETPOINT_HEATER_PRESETS,
     .observed = SETPOINT_HEATER_OBSERVED,
+    .mode_fn = DeviceRegister::OPERATING_MODE,
+    .preset_fn = DeviceRegister::OPERATING_MODE,
 };
 
 /// The plain electrical heater (52/0, no model): heating levels in the standard EXECUTE.
@@ -398,6 +400,18 @@ constexpr bool preset_indices_within_lists() {
 }
 
 static_assert(preset_indices_within_lists(), "a profile names a preset index outside its preset list");
+
+/// @return Whether a profile names its mode and preset registers exactly when it writes private registers: the
+///         other paths send the standard EXECUTE and have no register to name.
+constexpr bool registers_named_by_private_register_profiles_only() {
+  return std::ranges::all_of(HEATING_PROFILES, [](const HeatingProfile &profile) {
+    const bool private_registers = profile.path == HeatingControlPath::PRIVATE_REGISTERS;
+    return profile.mode_fn.has_value() == private_registers && profile.preset_fn.has_value() == private_registers;
+  });
+}
+
+static_assert(registers_named_by_private_register_profiles_only(),
+              "a private-register profile lacks a mode or preset register, or a profile on another path names one");
 
 /// @return Whether every preset of every level-path profile is a level a controller can set. The secured
 ///         level is the one a heater reports and never takes, so a preset for it would be a choice that
@@ -677,17 +691,20 @@ HeaterPollList device_poll_reads(const IoDevice &dev, ReadingPoll policy) {
 namespace {
 
 /// Plan the write of one wire value on the register or level path.
-HeatingWritePlan plan_wire_write(const HeatingProfile &profile, DeviceRegister fn, uint8_t wire) {
+/// @param fn The register a register-path write goes to; the level path ignores it. A register-path profile
+///        always names its registers (a build-time check), so none there is a refused plan.
+HeatingWritePlan plan_wire_write(const HeatingProfile &profile, std::optional<DeviceRegister> fn, uint8_t wire) {
   HeatingWritePlan plan;
   if (profile.path == HeatingControlPath::HEATING_LEVEL) {
     plan.kind = HeatingPlanKind::LEVEL;
     plan.level = wire;  // the settle poll of the level write reads it back
-  } else {
+  } else if (fn) {
     plan.kind = HeatingPlanKind::REGISTER;
     plan.register_fn = fn;
     plan.register_value = static_cast<float>(wire);
     plan.read_back = true;
-    plan.read_back_fn = fn;
+  } else {
+    plan.refusal = HeatingRefusal::NO_MATCH;
   }
   return plan;
 }
@@ -808,7 +825,6 @@ HeatingWritePlan plan_target_write(const HeatingProfile &profile, const HeatingW
   plan.register_fn = target_fn;
   plan.register_value = request.target_c;
   plan.read_back = true;
-  plan.read_back_fn = target_fn;
   return plan;
 }
 
