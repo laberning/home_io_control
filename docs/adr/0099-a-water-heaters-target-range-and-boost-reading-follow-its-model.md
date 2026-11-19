@@ -60,9 +60,9 @@ ends both.
   water heater page says how to recognise it.
 - While a boost runs the Explorer V4 reports a target of `A800`, 62 °C on its scale, and its own target
   again afterwards. The card shows what the heater reports.
-- The heater rounds a target to whole degrees and answers every target EXECUTE with result code 10
-  while it applies it. In manual with ECO on it keeps at most 55 °C. The hub shows the target the heater
-  reports after the write, as before.
+- The heater rounds a target to whole degrees. It answers a target EXECUTE it has to round with result
+  code 10, and a whole-degree target with code 0. In manual with ECO on it keeps at most 55 °C. The hub
+  shows the target the heater reports after the write, as before.
 - Another water heater with its own scale needs only `max_temperature`. One with another difference gets
   a model row.
 

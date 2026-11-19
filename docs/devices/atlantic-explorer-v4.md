@@ -37,10 +37,12 @@ heats in each mode, and why the card shows no target in `eco`.
 
 The heater keeps whole degrees: a target with a fraction comes back rounded. In manual with ECO on it
 keeps at most 55 °C, and a higher target comes back as 55 °C. In manual with ECO off it kept 59, 60
-and 62 °C. The card shows the target the heater kept, read back after the write.
+and 62 °C. The card shows the target the heater kept, read back with the poll 45 seconds after the
+write.
 
-The heater answers every target write with result code 10 ("parameter incoherence adjustment") while
-it applies the target, so that warning in the log is expected.
+The heater answers a target it has to round with result code 10 ("parameter incoherence adjustment"),
+so that warning in the log is expected then. A whole-degree target, which is what the card sends, is
+accepted without it.
 
 ## Working YAML
 
