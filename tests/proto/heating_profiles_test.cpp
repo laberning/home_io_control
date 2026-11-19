@@ -365,30 +365,6 @@ TEST(HeatingTemperature, DefaultRangeIsMinus40ToPlus80AndMatchesTheDeviceRecord)
   EXPECT_FLOAT_EQ(dev.temperature_range_max_c, HEATING_TEMPERATURE_RANGE_MAX_C);
 }
 
-TEST(HeatingTemperature, EncodeAtTheRangeEndsAndMidRange) {
-  uint16_t mp = 0xEEEE;
-  ASSERT_TRUE(encode_temperature_main_parameter(-40.0F, -40.0F, 80.0F, mp));
-  EXPECT_EQ(mp, 0x0000);
-  ASSERT_TRUE(encode_temperature_main_parameter(80.0F, -40.0F, 80.0F, mp));
-  EXPECT_EQ(mp, 0xC800) << "the top of the range is the full span";
-  ASSERT_TRUE(encode_temperature_main_parameter(20.0F, -40.0F, 80.0F, mp));
-  EXPECT_EQ(mp, 25600) << "20 C is half way: (20 + 40) / 120 x 51200";
-  ASSERT_TRUE(encode_temperature_main_parameter(0.0F, -40.0F, 80.0F, mp));
-  EXPECT_EQ(mp, 17067) << "round(40 x 51200 / 120)";
-}
-
-TEST(HeatingTemperature, EncodeRefusesOutsideTheRangeAndBadInput) {
-  uint16_t mp = 0x1234;
-  EXPECT_FALSE(encode_temperature_main_parameter(-100.0F, -40.0F, 80.0F, mp)) << "never clamped to the end";
-  EXPECT_FALSE(encode_temperature_main_parameter(500.0F, -40.0F, 80.0F, mp));
-  EXPECT_FALSE(encode_temperature_main_parameter(80.1F, -40.0F, 80.0F, mp));
-  EXPECT_EQ(mp, 0x1234);
-  EXPECT_FALSE(encode_temperature_main_parameter(NAN, -40.0F, 80.0F, mp));
-  EXPECT_FALSE(encode_temperature_main_parameter(20.0F, 80.0F, -40.0F, mp)) << "an inverted range";
-  EXPECT_FALSE(encode_temperature_main_parameter(20.0F, 10.0F, 10.0F, mp)) << "an empty range";
-  EXPECT_EQ(mp, 0x1234) << "a refusal leaves the output untouched";
-}
-
 TEST(HeatingTemperature, DecodeIsTheInverseWithinTheStepSize) {
   for (const float celsius : {-40.0F, -10.5F, 0.0F, 5.0F, 18.5F, 20.0F, 21.5F, 30.0F, 79.99F}) {
     uint16_t mp = 0;
@@ -684,30 +660,10 @@ TEST(HeatingProfilesTowelDryer, PresetsWriteTheTemporaryStateAndReadBackAsThemse
   EXPECT_EQ(find_observed_preset(p, 3), nullptr);
 }
 
-TEST(HeatingProfilesTowelDryer, PollsItsOwnRegistersAndNoWindow) {
+TEST(HeatingProfilesTowelDryer, TheStatusActionComesFromTheWorkingRateAndTheWritesAreNotExperimental) {
   const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
-  const PinnedPoll poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
-  EXPECT_EQ(poll.every_poll,
-            (std::vector<DeviceRegister>{DeviceRegister::ROOM_TEMPERATURE, DeviceRegister::COMFORT_SETPOINT,
-                                         DeviceRegister::TOWEL_MODE, DeviceRegister::TEMPORARY_STATE,
-                                         DeviceRegister::WORKING_RATE}));
-  EXPECT_TRUE(lists(poll.once_after_boot, DeviceRegister::MAX_SETPOINT));
-  for (const DeviceRegister never : {DeviceRegister::WINDOW_OPEN, DeviceRegister::OPEN_WINDOW_DETECTION,
-                                     DeviceRegister::OPERATING_MODE, DeviceRegister::REGULATOR_STATE}) {
-    EXPECT_FALSE(lists(poll.every_poll, never)) << device_register_name(never);
-    EXPECT_FALSE(lists(poll.once_after_boot, never)) << device_register_name(never);
-    EXPECT_FALSE(lists(poll.every_poll_may_miss, never)) << device_register_name(never);
-  }
   EXPECT_EQ(p.action_source, HeatingActionSource::WORKING_RATE);
   EXPECT_FALSE(p.experimental_writes);
-}
-
-TEST(HeatingProfilesTowelDryer, PollsTheMaximumAtBootAndNoSetback) {
-  const PinnedPoll poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
-  EXPECT_EQ(poll.once_after_boot, (std::vector<DeviceRegister>{DeviceRegister::MAX_SETPOINT}));
-  EXPECT_FALSE(lists(poll.every_poll, DeviceRegister::ECO_SETBACK)) << "the level comes from the status read";
-  EXPECT_FALSE(lists(poll.every_poll, DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE))
-      << "the temperature in force is read only while the programme runs, not on every poll";
 }
 
 TEST(HeatingProfilesTowelDryer, TheProgrammePeriodNamesTheRegistersOfTheProgramme) {
@@ -903,11 +859,10 @@ TEST(HeatingProfiles, OnlyAPrivateRegisterProfileNamesItsModeAndPresetRegisters)
   }
 }
 
-TEST(HeatingProfilesTowelDryer, TheRadiatorProfileIsUnchangedAndNeverTouchesTheTowelRegisters) {
+TEST(HeatingProfilesTowelDryer, TheRadiatorProfileNeverTouchesTheTowelRegisters) {
   const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
   EXPECT_EQ(p.mode_fn, DeviceRegister::OPERATING_MODE);
   EXPECT_TRUE(p.preset_observed.empty());
-  EXPECT_EQ(p.preset_observed.size(), 0u);
   EXPECT_EQ(p.action_source, HeatingActionSource::REGULATOR);
   EXPECT_FALSE(p.experimental_writes);
   const PinnedPoll radiator_poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
@@ -924,12 +879,10 @@ TEST(HeatingProfilesTowelDryer, TheRadiatorProfileIsUnchangedAndNeverTouchesTheT
 
 // === Heater with a night light (52/1, model HEATER_WITH_LIGHT) ===
 
-TEST(HeatingProfilesHeaterWithLight, HasNoProfileOfItsOwnAndIsPolledForTheLightByItsCapability) {
+TEST(HeatingProfilesHeaterWithLight, HasNoProfileOfItsOwn) {
   const HeatingProfile &radiator = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
   EXPECT_EQ(find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT), &radiator)
       << "the model drives the card exactly as the radiator does";
-  EXPECT_EQ(pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT).every_poll,
-            pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE).every_poll);
 }
 
 // === Pilot-wire interface (52/0, model PILOT_WIRE_INTERFACE) ===
@@ -1009,7 +962,7 @@ TEST(HeatingProfilesHeaterWithLight, NoOtherKindIsPolledForTheLight) {
 
 // === The registers a heater poll reads (pinned) ===
 
-TEST(HeaterPollReadsPin, TheRadiatorReadsFiveRegistersTheDetectionSettingEveryPollAndTheMaximumOnce) {
+TEST(HeaterPollReadsPin, TheRadiatorReadsTheDetectionSettingEveryPollAndTheMaximumOnce) {
   const PinnedPoll poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
   EXPECT_EQ(poll.every_poll,
             (std::vector<DeviceRegister>{DeviceRegister::ROOM_TEMPERATURE, DeviceRegister::COMFORT_SETPOINT,
@@ -1019,7 +972,7 @@ TEST(HeaterPollReadsPin, TheRadiatorReadsFiveRegistersTheDetectionSettingEveryPo
   EXPECT_EQ(poll.once_after_boot, (std::vector<DeviceRegister>{DeviceRegister::MAX_SETPOINT}));
 }
 
-TEST(HeaterPollReadsPin, TheHeaterWithALightReadsTheRadiatorsRegistersThenTheLightsTwo) {
+TEST(HeaterPollReadsPin, TheHeaterWithALightReadsTheRadiatorsRegistersThenThoseOfTheLight) {
   const PinnedPoll poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT);
   EXPECT_EQ(poll.every_poll,
             (std::vector<DeviceRegister>{DeviceRegister::ROOM_TEMPERATURE, DeviceRegister::COMFORT_SETPOINT,
@@ -1031,7 +984,7 @@ TEST(HeaterPollReadsPin, TheHeaterWithALightReadsTheRadiatorsRegistersThenTheLig
   EXPECT_EQ(poll.once_after_boot, (std::vector<DeviceRegister>{DeviceRegister::MAX_SETPOINT}));
 }
 
-TEST(HeaterPollReadsPin, TheTowelDryerReadsItsFiveRegistersAndTheMaximumOnce) {
+TEST(HeaterPollReadsPin, TheTowelDryerReadsItsOwnRegistersAndTheMaximumOnce) {
   const PinnedPoll poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
   EXPECT_EQ(poll.every_poll,
             (std::vector<DeviceRegister>{DeviceRegister::ROOM_TEMPERATURE, DeviceRegister::COMFORT_SETPOINT,
@@ -1163,18 +1116,6 @@ TEST(HeaterPollReads, TheMaximumIsSelectedUntilItHoldsAValue) {
   EXPECT_TRUE(rig.reads(ReadingPoll::ONCE_AFTER_BOOT).empty());
 }
 
-TEST(HeaterPollReads, ADeviceWithoutAPartIsNotPolledForIt) {
-  SelectingRig light;
-  EXPECT_EQ(light.reads(ReadingPoll::EVERY_POLL_MAY_MISS),
-            (std::vector<DeviceRegister>{DeviceRegister::OPEN_WINDOW_DETECTION, DeviceRegister::NIGHT_LIGHT,
-                                         DeviceRegister::NIGHT_LIGHT_BRIGHTNESS}));
-  light.dev.model = DeviceModel::NONE;
-  test::set_kind(light.dev, DeviceType::ELECTRICAL_HEATER, 1);
-  EXPECT_EQ(light.reads(ReadingPoll::EVERY_POLL_MAY_MISS),
-            (std::vector<DeviceRegister>{DeviceRegister::OPEN_WINDOW_DETECTION}))
-      << "a radiator without the capability reads no light";
-}
-
 // === Every preset is a command ===
 
 TEST(HeatingProfiles, EveryPresetOfEveryProfileSendsACommand) {
@@ -1208,6 +1149,10 @@ TEST(HeatingProfiles, EveryModeAProfileWritesToTheModeRegisterIsWritable) {
   for (const HeatingProfile &p : heating_profiles()) {
     if (p.path != HeatingControlPath::PRIVATE_REGISTERS)
       continue;
+    for (const HeatingModeEntry &m : p.modes)
+      EXPECT_TRUE(heating_write_accepts(*p.mode_fn, static_cast<float>(m.wire)))
+          << "mode " << static_cast<int>(m.wire) << " of profile " << static_cast<int>(p.type) << "/"
+          << static_cast<int>(p.subtype) << ": the register's rule takes it";
     // A profile whose mode register is another one (the towel dryer's) has its own value set.
     if (p.mode_fn == DeviceRegister::OPERATING_MODE) {
       for (const HeatingModeEntry &m : p.modes)

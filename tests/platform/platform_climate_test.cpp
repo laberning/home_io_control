@@ -110,7 +110,7 @@ class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDo
   }
 
   /// The real executor's dispatch, replayed through the helpers above so each expectation reads the
-  /// register, level or temperature call it always did.
+  /// register, level or temperature call the plan stands for.
   bool execute_heating_plan(const std::string &device_id, const HeatingWritePlan &plan,
                             const std::function<void()> &on_accepted) override {
     this->plans.push_back(plan);
@@ -2062,7 +2062,7 @@ TEST(PlatformClimate, RadiatorIgnoresTheTowelRegistersAndTheNonePreset) {
   EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingMode::OFF));
 }
 
-TEST(PlatformClimate, RadiatorProgramPresetStillComesFromTheModeRegister) {
+TEST(PlatformClimate, RadiatorProgramPresetComesFromTheModeRegister) {
   MockHubClimate hub;
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();

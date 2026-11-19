@@ -308,7 +308,7 @@ TEST(DeviceReadings, TheAskedRowsAreInTheOrderOfTheRegisters) {
   }
 }
 
-TEST(DeviceReadings, TheHubKeepsThirtyRegistersReadByThirtyTwoRows) {
+TEST(DeviceReadings, TheHubKeepsEveryRegisterItReadsAndTheRowsThatReadThem) {
   // Literal counts, so a register the hub keeps or a row that reads one is dropped or added only as a decision and not
   // as a side effect. A register is kept when a row of the table reads it, whatever its codec decodes; the water
   // heater's heating-state register is read by three rows, one per part of its value.

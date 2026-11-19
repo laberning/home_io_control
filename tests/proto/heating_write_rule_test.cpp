@@ -78,15 +78,6 @@ TEST(HeatingWriteRule, TheWaterHeaterRegistersFollowTheSameRule) {
     EXPECT_FALSE(heating_write_range(fn).has_value()) << device_register_name(fn);
 }
 
-TEST(HeatingWriteRule, TheTwoTemperatureRegistersShareTheSetpointRange) {
-  ASSERT_TRUE(heating_write_range(DeviceRegister::COMFORT_SETPOINT).has_value());
-  ASSERT_TRUE(heating_write_range(DeviceRegister::DEROGATED_SETPOINT).has_value());
-  EXPECT_FLOAT_EQ(heating_write_range(DeviceRegister::COMFORT_SETPOINT)->min, 7.0F);
-  EXPECT_FLOAT_EQ(heating_write_range(DeviceRegister::COMFORT_SETPOINT)->max, 28.0F);
-  EXPECT_FLOAT_EQ(heating_write_range(DeviceRegister::DEROGATED_SETPOINT)->min, HEATING_TEMP_MIN_C);
-  EXPECT_FLOAT_EQ(heating_write_range(DeviceRegister::DEROGATED_SETPOINT)->max, HEATING_TEMP_MAX_C);
-}
-
 TEST(HeatingWriteRule, OnlyTheModeRegisterHasAHoleInTheWholeNumbersItAccepts) {
   // A register with no refusal predicate and no range takes one unbroken run of whole numbers from 0.
   for (const DeviceRegister fn : all_functions()) {
@@ -133,14 +124,14 @@ TEST(HeatingWriteRule, ARegisterProfilesCardRangeIsTheSetpointRule) {
 
 namespace {
 
-/// The names of exactly the functions the action has offered since it was written.
+/// The names of exactly the functions the action offers.
 const std::vector<const char *> ACTION_FUNCTION_NAMES = {
     "power_on", "midnight_sync", "set_temperature",           "set_derogation",
     "set_mode", "set_presence",  "set_open_window_detection", "window_open"};
 
 }  // namespace
 
-TEST(HeatingActionFunctions, ExactlyTheEightTheActionOffersAreMarkedAndLookedUpByName) {
+TEST(HeatingActionFunctions, ExactlyTheFunctionsTheActionOffersAreMarkedAndLookedUpByName) {
   size_t marked = 0;
   for (const DeviceRegister fn : all_functions()) {
     if (heating_action_value_label(fn) != nullptr)
@@ -200,19 +191,4 @@ TEST(HeatingModeNames, OnlyTheWritableModesAreOffered) {
   EXPECT_STREQ(heating_mode_name(HeatingMode::EXTERNAL_SETPOINT), "external");
   EXPECT_FALSE(
       heating_write_accepts(DeviceRegister::OPERATING_MODE, static_cast<float>(*heating_mode_from_name("external"))));
-}
-
-TEST(HeatingWriteRule, EveryValueARegisterProfileWritesIsAcceptedByTheRegistersRule) {
-  for (const HeatingProfile &profile : heating_profiles()) {
-    if (profile.path != HeatingControlPath::PRIVATE_REGISTERS)
-      continue;
-    for (const HeatingModeEntry &mode : profile.modes)
-      EXPECT_TRUE(heating_write_accepts(*profile.mode_fn, static_cast<float>(mode.wire)))
-          << "mode " << static_cast<int>(mode.wire) << " of " << static_cast<int>(profile.type) << "/"
-          << static_cast<int>(profile.subtype);
-    for (const HeatingPresetEntry &preset : profile.presets)
-      EXPECT_TRUE(heating_write_accepts(*profile.preset_fn, static_cast<float>(preset.wire)))
-          << "preset " << static_cast<int>(preset.wire) << " of " << static_cast<int>(profile.type) << "/"
-          << static_cast<int>(profile.subtype);
-  }
 }

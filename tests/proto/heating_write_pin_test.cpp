@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <vector>
 
@@ -70,7 +71,7 @@ TEST(HeatingWritePin, ARegisterThatIsReadOnlyNeverEncodesAWrite) {
   }
 }
 
-TEST(HeatingWritePin, TheWritableRegistersAreExactlyTheseThirteen) {
+TEST(HeatingWritePin, TheWritableRegistersAreExactlyTheListedOnes) {
   const std::vector<DeviceRegister> writable = {
       DeviceRegister::COMFORT_SETPOINT,      DeviceRegister::OPERATING_MODE, DeviceRegister::PRESENCE,
       DeviceRegister::OPEN_WINDOW_DETECTION, DeviceRegister::TOWEL_MODE,     DeviceRegister::TEMPORARY_STATE,
@@ -96,6 +97,8 @@ TEST(HeatingWritePin, ASetpointIsTenthsOfADegreeFromSevenToTwentyEight) {
                    {20.5F, set_request(0x03, {0xCD, 0x00})},
                    {20.55F, set_request(0x03, {0xCE, 0x00})},  // the half rounds away from zero
                    {21.0F, set_request(0x03, {0xD2, 0x00})},
+                   {25.5F, set_request(0x03, {0xFF, 0x00})},  // the last value that fits the low byte
+                   {26.0F, set_request(0x03, {0x04, 0x01})},  // the first value that carries into the high byte
                    {27.96F, set_request(0x03, {0x18, 0x01})},
                    {28.0F, set_request(0x03, {0x18, 0x01})},
                    {6.95F, {}},
@@ -217,6 +220,17 @@ TEST(HeatingWritePin, AnOutOfRangeFunctionIsNeverWritten) {
   EXPECT_TRUE(write_bytes(static_cast<DeviceRegister>(200), 1.0F).empty());
 }
 
+TEST(HeatingWritePin, ARefusedFunctionLeavesTheOutputBufferUntouched) {
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
+  std::fill(std::begin(out), std::end(out), uint8_t{0xEE});
+  const auto bogus = static_cast<DeviceRegister>(0x7F);
+  EXPECT_EQ(encode_heating_payload(bogus, 20.0F, out), 0u);
+  EXPECT_EQ(encode_heating_read(bogus, out), 0u);
+  EXPECT_EQ(encode_heating_write(bogus, 20.0F, out), 0u);
+  for (const uint8_t b : out)
+    EXPECT_EQ(b, 0xEE) << "a refused write must not write the output buffer";
+}
+
 TEST(HeatingWritePin, TheActionPayloadReadsAReadOnlyRegisterAndWritesTheOthers) {
   uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   ASSERT_EQ(encode_heating_payload(DeviceRegister::WINDOW_OPEN, 5.0F, out), 4u);
@@ -250,6 +264,11 @@ TEST(NightLightWritePin, EveryWholePercentageWritesItsRegisterValueInTwoBytes) {
               set_request(0x42, {static_cast<uint8_t>(raw & 0xFF), static_cast<uint8_t>(raw >> 8)}))
         << percent << " %";
   }
+}
+
+TEST(NightLightWritePin, APercentageBetweenTwoWholeOnesIsInterpolated) {
+  EXPECT_EQ(write_bytes(DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, 50.5F), set_request(0x42, {0xFA, 0x05}))
+      << "50.5 % -> 1530 = 0x05FA";
 }
 
 TEST(NightLightWritePin, AboveOneHundredPercentIsRefused) {
@@ -313,6 +332,7 @@ TEST(MainParameterTemperaturePin, ATemperatureOutsideTheRangeIsRefused) {
   uint16_t main_parameter = 0x1234;
   EXPECT_FALSE(encode_temperature_main_parameter(-100.0F, -40.0F, 80.0F, main_parameter));
   EXPECT_FALSE(encode_temperature_main_parameter(500.0F, -40.0F, 80.0F, main_parameter));
+  EXPECT_FALSE(encode_temperature_main_parameter(80.1F, -40.0F, 80.0F, main_parameter)) << "just above the top";
   EXPECT_FALSE(encode_temperature_main_parameter(28.0F, 10.0F, 25.0F, main_parameter))
       << "a target above the YAML range is refused, not sent as its top";
   EXPECT_FALSE(encode_temperature_main_parameter(5.0F, 10.0F, 25.0F, main_parameter));

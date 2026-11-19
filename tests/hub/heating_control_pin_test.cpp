@@ -283,9 +283,15 @@ TEST(HeatingControlPin, MessagesComeInTheOrderOfTheChecks) {
   }
 }
 
-TEST(HeatingControlPin, AnOverrideNeedsAHeaterWithAProgramme) {
-  for (const Rig rig : {Rig::RADIATOR, Rig::TOWEL_DRYER})
-    EXPECT_TRUE(run_action("set_derogation", "17.5", rig).result.success);
+TEST(HeatingControlPin, AnOverrideIsWrittenOnARadiatorAndATowelDryerAndZeroCancelsIt) {
+  for (const Rig rig : {Rig::RADIATOR, Rig::TOWEL_DRYER}) {
+    const ActionRun set = run_action("set_derogation", "17.5", rig);
+    EXPECT_TRUE(set.result.success);
+    EXPECT_EQ(set.payload, (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x1D, 0xAF, 0x00}));
+    const ActionRun cancel = run_action("set_derogation", "0", rig);
+    EXPECT_TRUE(cancel.result.success);
+    EXPECT_EQ(cancel.payload, (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x1D, 0x00, 0x00}));
+  }
 }
 
 TEST(HeatingControlPin, AnUnansweredRequestIsReportedAsNotAcknowledged) {

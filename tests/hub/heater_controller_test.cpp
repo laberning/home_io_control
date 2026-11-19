@@ -1605,7 +1605,7 @@ TEST(HeaterController, PollsIsTrueForARegisterHeaterAWaterHeaterAndAStatusReadHe
   EXPECT_FALSE(HeaterController::polls(*make_cover(cover)));
 }
 
-TEST(HeaterController, HeaterPollReadsTheDetectionSettingEveryPollAndTheMaximumAndModelCheckOnce) {
+TEST(HeaterController, HeaterPollStoresEveryRegisterItReadsAndFollowsAChangeOfTheDetectionSetting) {
   HeaterControllerFixture fx;
   auto *dev = make_heater(fx);
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});  // 20.75 C
@@ -1621,10 +1621,6 @@ TEST(HeaterController, HeaterPollReadsTheDetectionSettingEveryPollAndTheMaximumA
 
   EXPECT_TRUE(fx.controller.poll("ABC123")) << "a heater is polled over its registers, not with 0x03";
 
-  ASSERT_EQ(fx.radio.get_sent_data().size(), 9u);
-  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x02, 0x19, 0x36};
-  for (size_t i = 0; i < 9; i++)
-    EXPECT_EQ(sent_register(fx.radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
   EXPECT_TRUE(dev->model_checked) << "both model-check reads were answered";
   EXPECT_FLOAT_EQ(test::number_read(*dev, DeviceReading::ROOM_TEMPERATURE), 20.75F);
   EXPECT_FLOAT_EQ(test::number_read(*dev, DeviceReading::SETPOINT), 19.5F);
@@ -1635,15 +1631,11 @@ TEST(HeaterController, HeaterPollReadsTheDetectionSettingEveryPollAndTheMaximumA
   EXPECT_EQ(test::wire_read(*dev, DeviceReading::OPEN_WINDOW_DETECTION), 1);
   EXPECT_FALSE(fx.poll_policy.is_tracking_active("ABC123", esphome::millis())) << "a good poll closes its retry window";
 
-  // The maximum and the model check run once; the detection setting is read again, and a value the
-  // vendor app changed in between reaches the readings (the switch state).
-  const size_t sent_before = fx.radio.get_sent_data().size();
+  // The second poll is answered without the maximum and the model check, which run once (HeaterPollPin pins
+  // the order); the detection setting is read again, and a value the vendor app changed in between reaches
+  // the readings (the switch state).
   queue_radiator_poll(fx, 0x59, 0x06, 0x01, 0x00, 0x00);
   EXPECT_TRUE(fx.controller.poll("ABC123"));
-  ASSERT_EQ(fx.radio.get_sent_data().size() - sent_before, 6u);
-  for (size_t i = sent_before; i < fx.radio.get_sent_data().size(); i++)
-    EXPECT_NE(sent_register(fx.radio.get_sent_data()[i]), 0x02) << "the maximum is not read again";
-  EXPECT_EQ(sent_register(fx.radio.get_sent_data().back()), 0x06);
   EXPECT_FLOAT_EQ(test::number_read(*dev, DeviceReading::ROOM_TEMPERATURE), 16.25F);
   EXPECT_EQ(test::wire_read(*dev, DeviceReading::WINDOW_OPEN), 0);
   EXPECT_FLOAT_EQ(test::number_read(*dev, DeviceReading::MAX_SETPOINT), 28.0F);
@@ -2558,7 +2550,7 @@ IoDevice *make_pinned_heater(HeaterControllerFixture &fx, DeviceModel model) {
 
 }  // namespace
 
-TEST(HeaterPollPin, ARadiatorWithNothingAskedReadsFiveRegistersTheDetectionSettingTheMaximumAndTheModelCheck) {
+TEST(HeaterPollPin, ARadiatorWithNothingAskedReadsItsCoreRegistersTheDetectionSettingTheMaximumAndTheModelCheck) {
   HeaterControllerFixture fx;
   make_pinned_heater(fx, DeviceModel::NONE);
   EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x02, 0x19, 0x36}, {}),
@@ -2620,7 +2612,7 @@ TEST(HeaterPollPin, AHeaterWithALightAndEverythingAskedReadsTheAskedRegistersAft
             (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42, 0x10, 0x01, 0x16}));
 }
 
-TEST(HeaterPollPin, ATowelDryerWithNothingAskedReadsItsFiveRegistersTheMaximumAndTheModelName) {
+TEST(HeaterPollPin, ATowelDryerWithNothingAskedReadsItsOwnRegistersTheMaximumAndTheModelName) {
   HeaterControllerFixture fx;
   make_towel_dryer(fx);
   const PinReplies manual{{0x36, {0x03}}};
