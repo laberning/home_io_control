@@ -1,18 +1,20 @@
 #pragma once
 
 /// @file proto_heating.h
-/// @brief Pure codec for the private register protocol of 2W heaters (CMD_WRITE_PRIVATE 0x20).
+/// @brief Pure codec for the private register protocol of 2W heaters and water heaters (CMD_WRITE_PRIVATE 0x20).
 /// @ingroup hioc_protocol
 ///
 /// A heater with an adjustable setpoint (node type 52, subtype 1) exposes its state as 16-bit
 /// registers `0x01xx`, read with `0C 60 01 <reg>` and written with `0C 61 01 <reg> <value>`; the
 /// device answers with CMD_WRITE_PRIVATE_ACK (0x21) echoing the header, followed by the value. Values
-/// are little-endian. An Atlantic AGILIA IO radiator answers every read and write this way
+/// are little-endian. A domestic hot water heater answers the same requests in register family `0x00`
+/// (`0C 60 00 <reg>`) and holds its multi-byte values most significant byte first; its register row names
+/// the family, and the codec the byte order. An Atlantic AGILIA IO radiator answers every read and write this way
 /// (tests/corpus/captures/exchange/atlantic_agilia_exchange_{status_read,setpoint_and_off_read_back,mode_read_back}.yaml,
 /// pinned by corpus_heating_test.cpp).
 ///
-/// One descriptor table (`HEATING_FUNCTIONS` in the .cpp) lists every register this component
-/// uses: its access (read-only, read/write, write-only) and how its value is encoded. The same row
+/// One descriptor table (`DEVICE_REGISTERS` in the .cpp) lists every register this component
+/// uses: its family, its access (read-only, read/write, write-only) and how its value is encoded. The same row
 /// drives the get payload, the set payload and the decoder of the reply, so a register is described
 /// exactly once. This module is pure: it does not touch a device record or the radio —
 /// proto_commands.h's create_write_private() frames a payload.
@@ -33,6 +35,11 @@
 /// controller) and its brightness in register 0x0142, which runs 0-10000: the panel's four levels write
 /// 100, 1000, 2000 and 10000 (issue #222, corpus
 /// `sauter_hekla_exchange_night_light_brightness_levels_sx1262`).
+///
+/// An Atlantic Calypso Connecte water heater holds its water temperature, operating mode, heating state, boost and
+/// away durations, energy counter and brand letter in family-0x00 registers (issue #198, corpus
+/// tests/corpus/captures/exchange/atlantic_calypso_exchange_register_read.yaml, pinned by corpus_dhw_test.cpp); its
+/// target, boost and away state travel in the status reply (proto_dhw.h).
 
 #include "proto_frame.h"
 #include "proto_private_registers.h"
@@ -42,6 +49,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -52,7 +60,7 @@ namespace home_io_control {
 ///
 /// The `SET_*` names are the functions of the `heating_control` action; the same row is also the
 /// register's read path (reading SET_TEMPERATURE reads the comfort setpoint).
-enum class HeatingFunction : uint8_t {
+enum class DeviceRegister : uint8_t {
   POWER_ON,                   ///< Register 0x012C, read: the paired-device list. Logged, never decoded.
   SET_TEMPERATURE,            ///< Register 0x0103, read/write: comfort setpoint, tenths of a degree.
   SET_MODE,                   ///< Register 0x0100, read/write: operating mode (HeatingMode).
@@ -140,10 +148,31 @@ enum class HeatingFunction : uint8_t {
                                 ///< until the next run starts (checked twice, issue #202). Only the first byte is read.
                                 ///< \todo Experimental: nobody has written it, so how the dryer takes a new
                                 ///<       duration is not known.
+  DHW_WATER_TEMPERATURE,        ///< Family 0x00, register 0x17, read-only: a water heater's water temperature, signed
+                                ///< big-endian tenths of a degree in the first two value bytes. Four more bytes
+                                ///< follow that never changed; they are not read.
+  DHW_MODE,                     ///< Family 0x00, register 0x06, read/write: a water heater's operating mode
+                                ///< (DhwMode). Followed the display in every run.
+  DHW_HEATING,                  ///< Family 0x00, register 0x21, read-only: what is heating, eight bytes. Byte 0 is on
+                                ///< while the heater heats at all, byte 2 while the electric element runs (during
+                                ///< a boost only), bytes 3 and 4 while the heat pump runs (always set together).
+                                ///< No typed value of its own: each of those is a reading that is a slice of it.
+  DHW_BOOST_DURATION,           ///< Family 0x00, register 0x00, read/write: a water heater's boost duration, one byte.
+                                ///< It read 1 during a boost started on the display and 0 before and after it. A
+                                ///< duration is not the state: the state is FP16 (proto_dhw.h).
+  DHW_AWAY_DURATION,            ///< Family 0x00, register 0x05, read/write: a water heater's away (holiday) duration,
+                                ///< one byte: the days the holiday still runs. It read 0 at rest and with a holiday
+                                ///< scheduled for later, 4 and 2 four and two days before the end, and 255 for a
+                                ///< holiday set on the display with no end date.
+  DHW_ENERGY,                   ///< Family 0x00, register 0x04, read-only: the energy a water heater has consumed since
+                                ///< it was installed, 32-bit big-endian, Wh. Matches the display's "since start"
+                                ///< total to the kWh, and rose while the heat pump ran.
+  DHW_BRAND,                    ///< Family 0x00, register 0x07, read-only: one ASCII letter naming the brand (`41` =
+                                ///< 'A' on the Calypso).
   COUNT,                        ///< Not a function: the number of functions, for storage sized by function.
 };
 
-/// @brief Operating modes of the mode register (HeatingFunction::SET_MODE).
+/// @brief Operating modes of the mode register (DeviceRegister::SET_MODE).
 enum class HeatingMode : uint8_t {
   AUTO = 0x00,               ///< Automatic mode; the device manages the setpoint itself.
   MANUAL = 0x01,             ///< Manual mode; follows the last written setpoint.
@@ -178,7 +207,7 @@ std::string heating_writable_mode_names();
 /// @return false for EXTERNAL_SETPOINT, true for every other mode.
 constexpr bool heating_mode_is_writable(HeatingMode mode) { return mode != HeatingMode::EXTERNAL_SETPOINT; }
 
-/// @brief Modes of a towel dryer's mode register (HeatingFunction::TOWEL_MODE).
+/// @brief Modes of a towel dryer's mode register (DeviceRegister::TOWEL_MODE).
 /// @details OFF, PROG and MANUAL are the values two Atlantic Adelis units report with their display
 ///          showing off, PROG and MANUEL (issue #202, corpus atlantic_adelis_probe_mode_reads).
 enum class TowelDryerMode : uint8_t {
@@ -188,7 +217,7 @@ enum class TowelDryerMode : uint8_t {
   MANUAL = 0x03,  ///< Manual mode: the device holds the comfort setpoint.
 };
 
-/// @brief Temporary states of a towel dryer (HeatingFunction::TEMPORARY_STATE): a timed run on top of
+/// @brief Temporary states of a towel dryer (DeviceRegister::TEMPORARY_STATE): a timed run on top of
 /// the mode, which the mode register does not show.
 enum class HeatingTemporaryState : uint8_t {
   NONE = 0x00,    ///< No temporary state: the mode applies.
@@ -196,7 +225,7 @@ enum class HeatingTemporaryState : uint8_t {
   DRYING = 0x02,  ///< Drying: full power for the drying duration.
 };
 
-/// @brief Regulator states of the regulator register (HeatingFunction::REGULATOR_STATE).
+/// @brief Regulator states of the regulator register (DeviceRegister::REGULATOR_STATE).
 enum class HeatingRegulatorState : uint8_t {
   NONE = 0x00,     ///< No regulation active.
   STANDBY = 0x01,  ///< Regulating, the element is idle.
@@ -216,8 +245,11 @@ constexpr float HEATING_TEMP_MIN_C = 7.0F;
 /// No setpoint above 25.5 °C (a non-zero high byte) has been written on hardware yet.
 constexpr float HEATING_TEMP_MAX_C = 28.0F;
 
-/// @brief Payload byte at index 2: the high byte of the 16-bit register number, constant `0x01`.
+/// @brief Payload byte at index 2: the high byte of the 16-bit register number of a heater, `0x01`.
 constexpr uint8_t HEATING_REGISTER_HIGH_BYTE = 0x01;
+
+/// @brief The high byte of the 16-bit register number of a domestic hot water heater: its registers are family 0x00.
+constexpr uint8_t DHW_REGISTER_HIGH_BYTE = 0x00;
 
 /// @brief Default encoding range of a temperature main parameter, in degrees Celsius. The main
 /// parameter spans TEMPERATURE_MP_SPAN steps over [min, max]; this range is the one a device
@@ -225,7 +257,7 @@ constexpr uint8_t HEATING_REGISTER_HIGH_BYTE = 0x01;
 static constexpr float HEATING_TEMPERATURE_RANGE_MIN_C = -40.0F;
 static constexpr float HEATING_TEMPERATURE_RANGE_MAX_C = 80.0F;  ///< See HEATING_TEMPERATURE_RANGE_MIN_C.
 
-/// @brief Highest value of the night light brightness register (HeatingFunction::NIGHT_LIGHT_BRIGHTNESS),
+/// @brief Highest value of the night light brightness register (DeviceRegister::NIGHT_LIGHT_BRIGHTNESS),
 /// full brightness. The register runs 0-10000; a Sauter Hekla's panel sets 100, 1000, 2000 and 10000
 /// for its four levels (issue #222).
 constexpr uint16_t HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX = 10000;
@@ -247,7 +279,7 @@ constexpr ValueScaleKnot HEATING_NIGHT_LIGHT_SCALE[] = {
 
 /// @brief Register 0x0119: the heater's model name, ASCII, not terminated ("ADELIS 2 DIGIT" on an
 /// Atlantic Adelis, corpus atlantic_adelis_probe_register_01_sweep). Read raw for a log line; no
-/// HeatingFunction decodes it.
+/// DeviceRegister decodes it.
 constexpr uint8_t HEATING_REGISTER_MODEL_NAME = 0x19;
 
 /// @brief The function the `heating_control` action runs under a name.
@@ -255,41 +287,48 @@ constexpr uint8_t HEATING_REGISTER_MODEL_NAME = 0x19;
 ///          every register of the table.
 /// @param name Lowercase function name as the action takes it.
 /// @return The function, or nullopt for a name the action does not offer.
-std::optional<HeatingFunction> heating_action_function(std::string_view name);
+std::optional<DeviceRegister> heating_action_function(std::string_view name);
 
 /// @brief How the `heating_control` action names the value of a function in its messages.
 /// @param fn Function.
 /// @return "temperature", "mode", "presence" or "open-window detection"; "" for an action function that takes no
 ///         value (a read); nullptr for a function the action does not offer or an out-of-range value.
-const char *heating_action_value_label(HeatingFunction fn);
+const char *heating_action_value_label(DeviceRegister fn);
 
 /// @brief Stable lowercase name for a heating function ("power_on", "set_temperature", ...).
 /// @param fn Function.
 /// @return Null-terminated string; "unknown" for an out-of-range value.
-const char *heating_function_name(HeatingFunction fn);
+const char *device_register_name(DeviceRegister fn);
 
 /// @brief Whether the register behind a function can be written.
 /// @param fn Function.
 /// @return true for a read/write or write-only register; false for a read-only one or an
 ///         out-of-range value.
-bool heating_function_is_writable(HeatingFunction fn);
+bool device_register_is_writable(DeviceRegister fn);
 
 /// @brief Whether the register behind a function can be read.
 /// @param fn Function.
 /// @return true for a read/write or read-only register; false for a write-only one or an
 ///         out-of-range value.
-bool heating_function_is_readable(HeatingFunction fn);
+bool device_register_is_readable(DeviceRegister fn);
 
 /// @brief How the value of a register maps onto the bytes of its reply.
 /// @param fn Function.
 /// @return The register's codec; ValueCodec::NONE for a register with no typed value or an out-of-range value.
-ValueCodec heating_function_codec(HeatingFunction fn);
+ValueCodec device_register_codec(DeviceRegister fn);
 
-/// @brief Low byte of the 0x01xx register behind a function.
+/// @brief The two bytes of the register number behind a function: its family (the high byte) and its index.
 /// @param fn Function.
+/// @param[out] register_high The register's family, HEATING_REGISTER_HIGH_BYTE or DHW_REGISTER_HIGH_BYTE; untouched
+///        when false is returned.
 /// @param[out] register_low The register's low byte; untouched when false is returned.
 /// @return false for an out-of-range value.
-bool heating_function_register(HeatingFunction fn, uint8_t &register_low);
+bool device_register_bytes(DeviceRegister fn, uint8_t &register_high, uint8_t &register_low);
+
+/// @brief The family of a function's register: the high byte of its number.
+/// @param fn Function.
+/// @return HEATING_REGISTER_HIGH_BYTE or DHW_REGISTER_HIGH_BYTE; HEATING_REGISTER_HIGH_BYTE for an out-of-range value.
+uint8_t device_register_family(DeviceRegister fn);
 
 /// @brief Encode a write ("set") of one register into a CMD_WRITE_PRIVATE (0x20) payload.
 ///
@@ -302,6 +341,8 @@ bool heating_function_register(HeatingFunction fn, uint8_t &register_low);
 ///   - TOWEL_MODE: a TowelDryerMode value widened to float (0-3).
 ///   - TEMPORARY_STATE: a HeatingTemporaryState value widened to float (0-2).
 ///   - NIGHT_LIGHT: 0 or 1.
+///   - DHW_MODE: a DhwMode value widened to float (0-2).
+///   - DHW_BOOST_DURATION, DHW_AWAY_DURATION: a whole number 0-255.
 ///   - NIGHT_LIGHT_BRIGHTNESS: a percentage 0-100, encoded on HEATING_NIGHT_LIGHT_SCALE as a 16-bit
 ///   little-endian register value (0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX), rounded to the nearest whole value.
 /// A read-only register (including POWER_ON, MIDNIGHT_SYNC and the measurement registers) is never
@@ -311,7 +352,7 @@ bool heating_function_register(HeatingFunction fn, uint8_t &register_low);
 /// @param value Register-specific value (see above).
 /// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return Number of payload bytes written (5 or 6), or 0 on invalid input or a read-only register.
-size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
+size_t encode_heating_write(DeviceRegister fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
 /// @brief Does the register's write rule accept this value?
 /// @details The one judgement every caller asks before it sends or offers a value: the register is writable, its
@@ -320,21 +361,21 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE
 /// @param fn Register to write.
 /// @param value Register-specific value (see encode_heating_write()).
 /// @return true when a write of `value` would be encoded.
-bool heating_write_accepts(HeatingFunction fn, float value);
+bool heating_write_accepts(DeviceRegister fn, float value);
 
 /// @brief The values a write of a register may carry, where its row names a range.
 /// @param fn Register.
 /// @return The range of a writable tenths register (the setpoint and the override, HEATING_TEMP_MIN_C to
 ///         HEATING_TEMP_MAX_C); nullopt for a register with no range of its own, a read-only register or an
 ///         out-of-range value.
-std::optional<ValueRange> heating_write_range(HeatingFunction fn);
+std::optional<ValueRange> heating_write_range(DeviceRegister fn);
 
 /// @brief Encode a read ("get") of one register into a CMD_WRITE_PRIVATE (0x20) payload.
 /// @param fn Register to read.
 /// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return 4 (the payload is always `0C 60 01 <reg>`), or 0 for a write-only register or an
 ///         out-of-range value.
-size_t encode_heating_read(HeatingFunction fn, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
+size_t encode_heating_read(DeviceRegister fn, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
 /// @brief Encode the function the `heating_control` action runs: a read for a read-only register,
 /// a write for every other.
@@ -345,17 +386,34 @@ size_t encode_heating_read(HeatingFunction fn, uint8_t out[PRIVATE_REGISTER_PAYL
 /// @param value Function-specific value (ignored for a read).
 /// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return Number of payload bytes written (4, 5 or 6), or 0 on invalid input.
-size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
+size_t encode_heating_payload(DeviceRegister fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
+
+/// @brief The value bytes of a reply that echoes a function's register.
+/// @details Accepts a CMD_WRITE_PRIVATE_ACK (0x21) whose data starts with `0C 60 <family> <reg>` (a read) or
+///          `0C 61 <family> <reg>` (a write) for this function's register. The value bytes follow the echo and may be
+///          none: a register the device does not hold is answered without any.
+/// @param reply The device's reply frame.
+/// @param fn Register the request addressed.
+/// @return The value bytes (inside `reply`), or nullopt for another command, another register or another family.
+std::optional<std::span<const uint8_t>> register_reply_value(const IoFrame &reply, DeviceRegister fn);
+
+/// @brief Decode the value bytes of a register by the register's own codec.
+/// @param fn Register.
+/// @param value_bytes The value bytes of a reply, starting at the first one (register_reply_value()).
+/// @return The value in natural units (see decode_heating_reply()), or nullopt for a register with no typed value
+///         (codec NONE), a truncated or out-of-range value or an out-of-range function.
+std::optional<float> decode_register_value(DeviceRegister fn, std::span<const uint8_t> value_bytes);
 
 /// @brief Decode the value a heater answered a register read or write with.
 ///
-/// Accepts a CMD_WRITE_PRIVATE_ACK (0x21) whose data starts with `0C 60 01 <reg>` or
-/// `0C 61 01 <reg>` for this function's register, followed by at least the register's value bytes.
+/// Accepts a CMD_WRITE_PRIVATE_ACK (0x21) whose data starts with `0C 60 <family> <reg>` or
+/// `0C 61 <family> <reg>` for this function's register, followed by at least the register's value bytes.
 /// Anything else (another command, another register, a truncated value, a function without a typed
 /// decode such as POWER_ON) is "no value".
 ///
 /// The value is returned in natural units: degrees Celsius for the temperature registers, whole
-/// kilowatt-hours for the energy total, minutes for the run timers, percent for the night light's brightness (on
+/// kilowatt-hours for the energy total, minutes for the run timers, a water heater's water temperature in degrees
+/// and its energy in kilowatt-hours with three decimals, percent for the night light's brightness (on
 /// HEATING_NIGHT_LIGHT_SCALE), the raw byte for the others. A byte above its
 /// register's range (a mode, a state, a percentage) is "no value". A raw `-1` on the room-temperature register is a
 /// sensor fault: it decodes as NaN with `true` returned, because the heater did answer.
@@ -363,7 +421,7 @@ size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVA
 /// @param fn Register the request addressed.
 /// @param[out] value Decoded value; untouched when `false` is returned.
 /// @return true when the reply carries a value for this register.
-bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value);
+bool decode_heating_reply(const IoFrame &reply, DeviceRegister fn, float &value);
 
 /// @brief Does a heater's reply carry the value bytes of a register, whatever they say?
 /// @details True for a reply that echoes the register and holds at least the register's codec length of value bytes,
@@ -373,7 +431,7 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
 /// @param fn Register the request addressed.
 /// @return true when the reply holds the register's value bytes; false for an empty answer, another register or a
 ///         function with no typed value (POWER_ON).
-bool heating_reply_carries_value(const IoFrame &reply, HeatingFunction fn);
+bool heating_reply_carries_value(const IoFrame &reply, DeviceRegister fn);
 
 }  // namespace home_io_control
 }  // namespace esphome

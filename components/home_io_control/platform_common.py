@@ -558,16 +558,27 @@ async def create_user_companion(config, parent, *, new_entity, entity_config):
 # === Device readings ===
 #
 # The mirror DEVICE_READINGS says, for every reading, what the codegen builds and how it is declared. A reading with a
-# YAML key is an optional entity of a main entity: the climate entity takes the heater's, the `sensor:` platform the
-# data objects'. Each key is an entity of its own that shows the reading; it costs the hub a read of the reading's
-# registers at every poll (or a scheduled transfer read of its data object, or nothing for a status reading) and only
-# some kinds have them, so it needs the capability of its row. A reading with a companion is an entity every device
+# YAML key is an optional entity of a main entity: the climate entity takes the heater's, the water heater the water
+# heater's, the `sensor:` platform the data objects' (the mirror's "platform" says which). Each key is an entity of its
+# own that shows the reading; on a heater it costs the hub a read of the reading's registers at every poll (a scheduled
+# transfer read of its data object, or nothing for a status reading or a water heater's reading, which its poll reads
+# anyway) and only some kinds have them, so it needs the capability of its row. A reading with a companion is an entity every device
 # with the capability gets, named after the main entity. The table drives the schema, the capability check, the IDs
 # and the code, so a new reading is a row there and in C++, never new codegen.
 
-# The mirror's source kinds each platform offers its readings for.
-HEATER_READING_SOURCES = ("register", "derived", "status")
-DATA_OBJECT_READING_SOURCES = ("data_object",)
+# The platforms that offer readings (the mirror's "platform" of a reading). A key or a companion belongs to one platform
+# only: the heater's `energy:` key is the climate platform's, the water heater's the water_heater platform's.
+CLIMATE_PLATFORM = "climate"
+WATER_HEATER_PLATFORM = "water_heater"
+SENSOR_PLATFORM = "sensor"
+
+# The platforms whose entities ask the hub to read a reading (`add_device_reading()`): a heater polls the registers its
+# YAML declares. A water heater is polled by its kind's capability and a `sensor:` entry reads its data objects on a
+# schedule, so neither asks.
+PLATFORMS_THAT_ASK_FOR_REGISTER_READS = (CLIMATE_PLATFORM,)
+
+# The mirror's source kinds whose value arrives in a status reply: a platform asks the hub for nothing for these.
+STATUS_READING_SOURCES = ("status", "status_parameter")
 
 # The class of the entity that shows a reading, by the mirror's entity kind.
 _READING_ENTITY_CLASSES = {
@@ -584,23 +595,23 @@ _READING_ENTITY_CREATORS = {
 }
 
 
-def _reading_keys(sources=None):
-    """[(reading name, mirror entry)] of every reading a main entity declares by a YAML key, in table order; only
-    those whose source is in `sources` when it is given."""
+def _reading_keys(platform):
+    """[(reading name, mirror entry)] of every reading a main entity of `platform` declares by a YAML key, in table
+    order."""
     return [
         (name, entry)
         for name, entry in DEVICE_READINGS.items()
-        if entry["key"] is not None and (sources is None or entry["source"] in sources)
+        if entry["key"] is not None and entry["platform"] == platform
     ]
 
 
-def _reading_companions(sources):
-    """[(reading name, mirror entry)] of every reading an entity is made for without a key, in table order; only
-    those whose source is in `sources`."""
+def _reading_companions(platform):
+    """[(reading name, mirror entry)] of every reading an entity of `platform` is made for without a key, in table
+    order."""
     return [
         (name, entry)
         for name, entry in DEVICE_READINGS.items()
-        if "companion" in entry and entry["source"] in sources
+        if "companion" in entry and entry["platform"] == platform
     ]
 
 
@@ -636,21 +647,21 @@ def _reading_entity_schema(entry):
     return schema.extend(cv.COMPONENT_SCHEMA)
 
 
-def reading_keys_schema(sources):
+def reading_keys_schema(platform):
     """The optional YAML keys of the readings a platform offers, `{cv.Optional(key): entity schema}`, to splice into
-    a main entity's schema. `sources` are the mirror source kinds the platform shows (HEATER_READING_SOURCES,
-    DATA_OBJECT_READING_SOURCES). The entity IDs are declared by the schemas' own GenerateID."""
-    return {cv.Optional(entry["key"]): _reading_entity_schema(entry) for _, entry in _reading_keys(sources)}
+    a main entity's schema. `platform` is the mirror's platform of the readings (CLIMATE_PLATFORM, WATER_HEATER_PLATFORM,
+    SENSOR_PLATFORM). The entity IDs are declared by the schemas' own GenerateID."""
+    return {cv.Optional(entry["key"]): _reading_entity_schema(entry) for _, entry in _reading_keys(platform)}
 
 
-def validate_reading_keys(config):
-    """Accept each reading key only on a kind with the capability of its reading.
+def validate_reading_keys(config, platform):
+    """Accept each reading key of a platform only on a kind with the capability of its reading.
 
     A key is rejected when no io_device_type is declared: the registers would otherwise be read from a device
     nothing says has them. The message names the kind to declare (READING_FEATURE_HINTS), or, where the declared type
     has the capability on other kinds and READING_REMOVE_HINTS says so, tells the user to remove the key.
     """
-    for _, entry in _reading_keys():
+    for _, entry in _reading_keys(platform):
         key = entry["key"]
         feature = entry["feature"]
         if key not in config or declared_has_feature(config, feature):
@@ -663,7 +674,7 @@ def validate_reading_keys(config):
     return config
 
 
-def inject_reading_companion_ids(config, parent_id_key, sources=HEATER_READING_SOURCES):
+def inject_reading_companion_ids(config, parent_id_key, platform):
     """Declare the IDs of the companion entities of the readings a device has, during schema validation.
 
     One entity per reading whose mirror entry has a companion and whose capability the declared kind has
@@ -678,7 +689,7 @@ def inject_reading_companion_ids(config, parent_id_key, sources=HEATER_READING_S
             _READING_ENTITY_CLASSES[entry["entity"]],
             has_feature(entry["feature"]),
         )
-        for _, entry in _reading_companions(sources)
+        for _, entry in _reading_companions(platform)
     )
     return inject_companion_ids(config, specs, parent_id_key)
 
@@ -688,10 +699,10 @@ def _reading_companion_id_key(entry):
     return f"_{entry['companion_id']}_id"
 
 
-async def reading_companions_to_code(config, parent, sources=HEATER_READING_SOURCES):
+async def reading_companions_to_code(config, parent, platform):
     """Create the companion entities declared by inject_reading_companion_ids(), named after the main entity and
     bound to the reading they show."""
-    for name, entry in _reading_companions(sources):
+    for name, entry in _reading_companions(platform):
         id_key = _reading_companion_id_key(entry)
         if id_key not in config:
             continue
@@ -708,22 +719,23 @@ async def reading_companions_to_code(config, parent, sources=HEATER_READING_SOUR
         cg.add(companion.set_reading(getattr(DeviceReading, name)))
 
 
-async def reading_keys_to_code(var, parent, config):
-    """Emit the code for the reading keys a main entity declares.
+async def reading_keys_to_code(var, parent, config, platform):
+    """Emit the code for the reading keys a main entity of `platform` declares.
 
-    For each key present the main entity asks the hub to poll the reading's registers (`add_device_reading()`), or to
-    read its data object on a schedule (`add_data_object_reading()`, with the reading's default interval, which the
-    entry's `update_interval:` replaces on the entity), and the entity that shows the reading is created, named after
-    it. A status reading (the heating level) is read by the status read, so the hub is asked nothing.
+    For each key present the main entity asks the hub to poll the reading's registers (`add_device_reading()`, on the
+    platforms that ask: PLATFORMS_THAT_ASK_FOR_REGISTER_READS), or to read its data object on a schedule
+    (`add_data_object_reading()`, with the reading's default interval, which the entry's `update_interval:` replaces on
+    the entity), and the entity that shows the reading is created, named after it. A status reading (the heating level)
+    is read by the status read, and a water heater's readings by its poll, so the hub is asked nothing.
     """
-    for name, entry in _reading_keys():
+    for name, entry in _reading_keys(platform):
         key = entry["key"]
         if key not in config:
             continue
         reading = getattr(DeviceReading, name)
-        if entry["source"] in DATA_OBJECT_READING_SOURCES:
+        if entry["source"] == "data_object":
             cg.add(var.add_data_object_reading(reading, entry["update_interval_ms"]))
-        elif entry["source"] != "status":
+        elif entry["source"] not in STATUS_READING_SOURCES and platform in PLATFORMS_THAT_ASK_FOR_REGISTER_READS:
             cg.add(var.add_device_reading(reading))
         entity = await create_user_companion(
             config,

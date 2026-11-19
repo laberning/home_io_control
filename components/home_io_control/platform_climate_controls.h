@@ -116,7 +116,7 @@ class IOHomeHeaterNightLight : public light::LightOutput, public Component, publ
   /// @param unit Appended to the value in the log line of a write the heater did not acknowledge ("%" for a
   ///        percentage).
   /// @return true when the heater acknowledged it.
-  bool write_register_(HeatingFunction fn, float value, const char *unit = "");
+  bool write_register_(DeviceRegister fn, float value, const char *unit = "");
 
   light::LightState *state_{nullptr};
   /// Swallows the write_state() that LightState::make_call().perform() causes for a state this entity

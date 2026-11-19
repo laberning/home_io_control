@@ -15,7 +15,7 @@
 /// hub header. Unlike DiagnosticProbes (ADR 0072), one of those calls, HeaterControllerHub::status_read,
 /// reaches the hub's status decoder: a water heater's status answer is an ordinary status reply.
 ///
-/// The single-register reads (read_private_register(), read_dhw_register(), read_dhw_reading(),
+/// The single-register reads (read_private_register(), read_dhw_reading(),
 /// read_dhw_status()), schedule_poll() and check_heater_model() are steps of the polls and writes; the hub
 /// calls none of them. They are public so that their gates, timer keying and bounded runs are tested on
 /// their own.
@@ -108,7 +108,7 @@ class HeaterController {
   ///
   /// The body depends on the device: a register heater reads the registers its reading rows select
   /// (every-poll ones stopping at the first failure, then the programme's temperature in force, the readings that
-  /// may miss, the asked ones and the ones read until they hold a value; heater_poll_reads()), and on a kind with model
+  /// may miss, the asked ones and the ones read until they hold a value; device_poll_reads()), and on a kind with model
   /// rows the one-off model check once it has answered a read; a water heater reads its status (target, capabilities,
   /// boost and away), then its water temperature, mode, heating state, boost and away duration and energy registers,
   /// then its brand until it has been read once; any other heater is polled with the generic status read. A register or
@@ -155,7 +155,7 @@ class HeaterController {
   /// @param value Function-specific value (degrees C, a HeatingMode as float, 0/1, or ignored), see
   ///        encode_heating_payload().
   /// @return true only if the device answered with CMD_WRITE_PRIVATE_ACK.
-  bool send_heating_command(const std::string &device_id, HeatingFunction fn, float value);
+  bool send_heating_command(const std::string &device_id, DeviceRegister fn, float value);
 
   /// @brief Set the heating level of a heater that is commanded with levels (the plain electrical heater).
   ///
@@ -242,19 +242,19 @@ class HeaterController {
   /// decodes (decode_heating_reply()) updates the device record and notifies the entity callbacks, so
   /// what an entity shows is what the heater reported.
   /// @param device_id Target device ID (hex string).
-  /// @param fn Register to read; must be readable (see heating_function_is_readable()).
+  /// @param fn Register to read; must be readable (see device_register_is_readable()).
   /// @param[out] value_out Decoded value (NaN for a room-temperature sensor fault); pass nullptr when
   ///        only the stored reading is wanted.
   /// @param max_tries Transmit-attempt cap: EXCHANGE_RETRY_COUNT for a read the user waits on (the
   ///        action, the read-back of a write), the scheduled-poll band for the background poll.
   /// @return true only if the device answered and the reply decoded to a value for `fn`.
-  bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out, uint8_t max_tries);
+  bool read_heating_register(const std::string &device_id, DeviceRegister fn, float *value_out, uint8_t max_tries);
 
   /// @brief Read one private register raw: build the read request, run the exchange and check that the
   /// reply echoes the register.
   ///
   /// The one place a register read is framed and sent; read_heating_register() decodes on top of it, and
-  /// the reads no HeatingFunction describes (a model name in ASCII, "is there a value at all") use it
+  /// the reads no DeviceRegister describes (a model name in ASCII, "is there a value at all") use it
   /// directly. Gated by device_accepts_register_probe(); the request is built by
   /// encode_private_register_read(), which cannot produce a write.
   /// @param device_id Target device ID.
@@ -281,15 +281,15 @@ class HeaterController {
   /// @brief Set a water heater's target temperature.
   ///
   /// A main-parameter-only EXECUTE with the target on the relative scale over DHW_TARGET_MIN_C..
-  /// DHW_TARGET_MAX_C (encode_dhw_target()), through the bare execute operation without the cover's
-  /// movement bookkeeping. The settle poll that follows reads the target back from the status reply.
-  /// Gated on device_feature::WATER_HEATER. The heater's display follows the target (issue #198).
+  /// DHW_TARGET_MAX_C (encode_temperature_target(), device_temperature_range()), through the bare execute operation
+  /// without the cover's movement bookkeeping. The settle poll that follows reads the target back from the status
+  /// reply. Gated on device_feature::WATER_HEATER. The heater's display follows the target (issue #198).
   /// @param device_id Target device ID (hex string).
   /// @param celsius Target in degrees Celsius; a value outside the heater's range is refused, not clamped.
   /// @return true when the device accepted the command.
   bool set_water_heater_target(const std::string &device_id, float celsius);
 
-  /// @brief Set a water heater's operating mode: a write of register 0x0006 (encode_dhw_mode_write()).
+  /// @brief Set a water heater's operating mode: a write of DeviceRegister::DHW_MODE.
   ///
   /// The register is read back at once, so the entity shows what the heater then holds, and so is the
   /// target (the status read of the poll), which the mode decides. The next poll moves to
@@ -323,29 +323,19 @@ class HeaterController {
   /// @return true when the device accepted the EXECUTE; false for a refused or unacknowledged command.
   bool set_water_heater_away(const std::string &device_id, bool on);
 
-  /// @brief Read one family-0x00 register of a water heater raw (read_private_register() gated on
-  /// device_feature::WATER_HEATER).
+  /// @brief Read one register of a water heater and store it in the readings that are the register.
+  /// @details The read of read_heating_register() under the family gate of device_takes_register(). A value no reading
+  ///          takes (an empty value, a mode byte never seen) is logged at DEBUG and leaves the readings as they were;
+  ///          it is still an answer, not a failed read. The first value of the brand register is logged.
   /// @param device_id Target device ID.
-  /// @param index Low byte of the register.
-  /// @param label What is read, for the log ("dhw_water_temperature").
-  /// @param[out] response The reply; its value bytes start at PRIVATE_REGISTER_VALUE_OFFSET.
-  /// @param max_tries Transmit-attempt cap forwarded to read_private_register().
-  /// @return true when the device answered with the register's echo.
-  bool read_dhw_register(const std::string &device_id, uint8_t index, const char *label, IoFrame &response,
-                         uint8_t max_tries);
-
-  /// @brief Read one family-0x00 register of a water heater and fold its value into IoDevice::dhw.
-  /// @details A value the decoder does not take (an empty value, a mode byte never seen) is logged at
-  ///          DEBUG and leaves the reading as it was; it is still an answer, not a failed read.
-  /// @param device_id Target device ID.
-  /// @param index One of the DHW_REG_* registers.
+  /// @param fn A DeviceRegister::DHW_* register.
   /// @param max_tries Transmit-attempt cap.
   /// @return true when the device answered.
-  bool read_dhw_reading(const std::string &device_id, uint8_t index, uint8_t max_tries);
+  bool read_dhw_reading(const std::string &device_id, DeviceRegister fn, uint8_t max_tries);
 
   /// @brief Read a water heater's target, capabilities and boost and away state: the status read
   /// DHW_STATUS_FPI1 / DHW_STATUS_FPI2 (create_status_mp_fp_read()), whose reply the hub's status
-  /// decoder folds into IoDevice::dhw.
+  /// decoder stores as readings (apply_dhw_status_reply()).
   /// @param device_id Target device ID.
   /// @param max_tries Transmit-attempt cap.
   /// @return true when the device answered.
@@ -368,7 +358,7 @@ class HeaterController {
   /// @param fn Register to read back.
   /// @param[out] value_out Decoded value; untouched when the read-back failed.
   /// @return What the read-back came to (read_and_store_heating_register_()).
-  HeatingRead read_back_heating_register_(const std::string &device_id, HeatingFunction fn, float *value_out);
+  HeatingRead read_back_heating_register_(const std::string &device_id, DeviceRegister fn, float *value_out);
 
   /// @brief The read and store behind read_heating_register(), read_back_heating_register_() and the poll of
   ///        the temperature in force.
@@ -379,7 +369,7 @@ class HeaterController {
   /// @param follow_override True to carry the temperature in force along with a read of the override register.
   /// @return VALUE when the device answered and the reply decoded to a value for `fn`; EMPTY when it answered
   ///         without one.
-  HeatingRead read_and_store_heating_register_(const std::string &device_id, HeatingFunction fn, float *value_out,
+  HeatingRead read_and_store_heating_register_(const std::string &device_id, DeviceRegister fn, float *value_out,
                                                uint8_t max_tries, bool follow_override);
 
   /// @brief The exchange every heating frame shares: run it through HeaterControllerHub::exchange (the
@@ -395,20 +385,17 @@ class HeaterController {
   bool exchange_heating_(const std::string &device_id, const char *label, const IoFrame &request, IoFrame &response,
                          uint8_t max_tries);
 
-  /// @brief Write one family-0x00 register of a water heater, then read it back.
+  /// @brief Write one register of a water heater, then read it back.
   ///
-  /// Shared by the mode setter and the boost and away duration writes, each of which encodes its own
-  /// payload. Gated on device_feature::WATER_HEATER; the write has the full retry budget, the read-back
-  /// (read_dhw_reading()) updates IoDevice::dhw, and the next poll moves to
-  /// HEATING_POST_WRITE_POLL_DELAY_MS from now.
+  /// Shared by the mode setter and the boost and away duration writes: the shared register write
+  /// (send_heating_command(): the family gate, the value judged by the register's row, the exchange with the full
+  /// retry budget, the ack log), then the read-back (read_dhw_reading()), which updates the readings; the next poll
+  /// moves to HEATING_POST_WRITE_POLL_DELAY_MS from now.
   /// @param device_id Target device ID.
-  /// @param operation What is written, for the log ("hot water mode").
-  /// @param index The register written, which is also the one read back.
-  /// @param payload The encoded write (`0C 61 00 <index> <value>`).
-  /// @param payload_len Its length.
+  /// @param fn The register written, which is also the one read back.
+  /// @param value The value, as the register's row takes it.
   /// @return true only if the device acknowledged the write; a missed read-back does not change that.
-  bool write_dhw_register_(const std::string &device_id, const char *operation, uint8_t index, const uint8_t *payload,
-                           size_t payload_len);
+  bool write_dhw_register_(const std::string &device_id, DeviceRegister fn, float value);
 
   /// @brief Switch a water heater's boost or away through the operating-mode word (ADR 0081).
   ///
@@ -467,7 +454,7 @@ class HeaterController {
   /// that may miss, the ones an entity asked for, the ones read until they hold a value, the heating level (the
   /// status read, on a heater whose programme period reports one) and, on a heater kind with model rows, the
   /// one-off model check once the device has answered a read. Each phase takes its registers from
-  /// heater_poll_reads() when it starts.
+  /// device_poll_reads() when it starts.
   /// @param device_id Target device ID.
   /// @return true when every register read on every poll answered.
   bool poll_registers_(const std::string &device_id);

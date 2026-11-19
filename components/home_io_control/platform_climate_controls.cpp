@@ -32,7 +32,7 @@ void IOHomeHeaterSettingSwitch::setup() {
 }
 
 void IOHomeHeaterSettingSwitch::write_state(bool state) {
-  const std::optional<HeatingFunction> setting = reading_register(this->reading_);
+  const std::optional<DeviceRegister> setting = reading_register(this->reading_);
   if (this->heating_port_ == nullptr || !setting)
     return;
   if (!this->heating_port_->send_heating_command(this->device_id_, *setting, state ? 1.0F : 0.0F)) {
@@ -74,11 +74,11 @@ void IOHomeHeaterNightLight::on_device_update_(const IoDevice &dev) {
   publish_light_reading(this->state_, on, brightness, this->suppress_write_);
 }
 
-bool IOHomeHeaterNightLight::write_register_(HeatingFunction fn, float value, const char *unit) {
+bool IOHomeHeaterNightLight::write_register_(DeviceRegister fn, float value, const char *unit) {
   if (this->heating_port_->send_heating_command(this->device_id_, fn, value))
     return true;
   ESP_LOGW(TAG_NIGHT_LIGHT, "Device %s: %s %.0f%s was not acknowledged", this->device_id_.c_str(),
-           heating_function_name(fn), value, unit);
+           device_register_name(fn), value, unit);
   return false;
 }
 
@@ -109,20 +109,20 @@ void IOHomeHeaterNightLight::write_state(light::LightState *state) {
         detail::round_percent(*held / static_cast<float>(HEATING_NIGHT_LIGHT_PERCENT_MAX)) == percent;
     if (!holds_percent) {
       brightness_written =
-          this->write_register_(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, static_cast<float>(percent), "%");
+          this->write_register_(DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, static_cast<float>(percent), "%");
     }
   }
   // On/off goes out even when the brightness write failed: switching the light is what the user asked.
-  const bool switched = this->write_register_(HeatingFunction::NIGHT_LIGHT, on ? 1.0F : 0.0F);
+  const bool switched = this->write_register_(DeviceRegister::NIGHT_LIGHT, on ? 1.0F : 0.0F);
 
   // The read-backs update the device's readings; what the heater then holds is published once, below. A write
   // the heater did not acknowledge is not read back: the light then shows the heater's last reading again.
   if (switched) {
-    this->heating_port_->read_heating_register(this->device_id_, HeatingFunction::NIGHT_LIGHT, nullptr,
+    this->heating_port_->read_heating_register(this->device_id_, DeviceRegister::NIGHT_LIGHT, nullptr,
                                                EXCHANGE_RETRY_COUNT);
   }
   if (brightness_written) {
-    this->heating_port_->read_heating_register(this->device_id_, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, nullptr,
+    this->heating_port_->read_heating_register(this->device_id_, DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, nullptr,
                                                EXCHANGE_RETRY_COUNT);
   }
   this->writing_ = false;

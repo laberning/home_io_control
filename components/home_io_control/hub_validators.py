@@ -281,51 +281,68 @@ FEATURES = (
 
 # Python's mirror of the table of named device readings (proto_device_readings.cpp), by the enumerator name of
 # DeviceReading: the capability a device needs ("feature"), where the value comes from ("source": "register" for one
-# private register of a heater, "derived" for a value worked out from other readings, "data_object" for a slice of a
-# data object read on a schedule, "status" for the main parameter of a status reply), the registers the hub's poll reads
-# for it ("registers", by HeatingFunction name; none for a data object or a status reply), and what the codegen builds
+# private register of a heater or a water heater, or a part of one, "derived" for a value worked out from other
+# readings, "data_object" for a slice of a data object read on a schedule, "status" for the main parameter of a status
+# reply, "status_parameter" for a functional parameter of one), the platform that offers the reading's YAML key or
+# companion ("platform": "climate", "water_heater" or "sensor"), the registers the hub's poll reads
+# for it ("registers", by DeviceRegister name; none for a data object or a status reply), and what the codegen builds
 # for it: the entity kind ("sensor", "binary_sensor", "switch" or "text_sensor"; the C++ value kind decides which fits),
 # the Home Assistant metadata of the entity ("unit", "accuracy", "device_class", "state_class") and how it is declared:
 # the YAML "key" under the main entity (None where no key declares it), or, for an entity every device of the
 # capability gets without asking, a "companion" (the suffix of its name after the main entity's), its "companion_id"
 # (the suffix of its ID, after the main entity's) and, optionally, "disabled_by_default". A reading has a key or a
-# companion, never both. A "data_object" reading is offered by the `sensor:` platform, the register, derived and status
-# ones by `climate:`; it also carries "update_interval_ms", the interval its YAML key reads at when the entry sets
-# none. The recipe, offset, byte range and codec of a data object, and the value names of a named reading, are C++
-# only. tests/sync/device_features_sync_test.cpp checks names, capabilities, source kinds and registers against the C++
-# table, and each entity kind against the C++ value kind; the other entity fields are Python-only, since C++ never needs
-# them. One entry per line: the sync test parses this file and reads no expressions.
+# companion, never both. A reading with a key or a companion is offered by its platform only, so the two "energy" keys
+# (a heater's and a water heater's) are two rows on two platforms. A "data_object" reading is on the `sensor:` platform;
+# it also carries "update_interval_ms", the interval its YAML key reads at when the entry sets none. The recipe, offset,
+# byte range and codec of a data object, and the value names of a named reading, are C++ only.
+# tests/sync/device_features_sync_test.cpp checks names, capabilities, source kinds and registers against the C++ table,
+# the platform against the row's capability and source kind, and each entity kind against the C++ value kind; the other
+# entity fields are Python-only, since C++ never needs them. One entry per line: the sync test parses this file and
+# reads no expressions.
 DEVICE_READINGS = {
-    "CENTRAL_HEATING_MODE": {"feature": "CENTRAL_HEATING_MODE", "source": "register", "registers": ("CENTRAL_HEATING_MODE",), "key": "central_heating_mode", "entity": "binary_sensor"},
-    "OCCUPANCY_DETECTION": {"feature": "OCCUPANCY", "source": "register", "registers": ("OCCUPANCY_DETECTION",), "key": "occupancy_detection", "entity": "switch"},
-    "OCCUPANCY": {"feature": "OCCUPANCY", "source": "register", "registers": ("SET_PRESENCE",), "key": "occupancy", "entity": "binary_sensor", "device_class": "occupancy"},
-    "OPEN_WINDOW_DETECTION": {"feature": "WINDOW_COMPANIONS", "source": "register", "registers": ("SET_OPEN_WINDOW_DETECTION",), "key": None, "entity": "switch", "companion": "Open Window Detection", "companion_id": "window_detection_switch", "disabled_by_default": True},
-    "ENERGY_TOTAL": {"feature": "ENERGY_METER", "source": "register", "registers": ("ENERGY_TOTAL",), "key": "energy", "entity": "sensor", "unit": "kWh", "accuracy": 0, "device_class": "energy", "state_class": "total_increasing"},
-    "BOOST_DURATION": {"feature": "RUN_TIMERS", "source": "register", "registers": ("BOOST_DURATION",), "key": "boost_duration", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration"},
-    "DRYING_DURATION": {"feature": "RUN_TIMERS", "source": "register", "registers": ("DRYING_DURATION",), "key": "drying_duration", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration"},
-    "BOOST_REMAINING": {"feature": "RUN_TIMERS", "source": "register", "registers": ("BOOST_REMAINING",), "key": None, "entity": None},
-    "DRYING_REMAINING": {"feature": "RUN_TIMERS", "source": "register", "registers": ("DRYING_REMAINING",), "key": None, "entity": None},
-    "REMAINING_TIME": {"feature": "RUN_TIMERS", "source": "derived", "registers": ("BOOST_REMAINING", "DRYING_REMAINING"), "key": "remaining_time", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration", "state_class": "measurement"},
-    "ROOM_TEMPERATURE": {"feature": None, "source": "register", "registers": ("ROOM_TEMPERATURE",), "key": None, "entity": None},
-    "SETPOINT": {"feature": None, "source": "register", "registers": ("SET_TEMPERATURE",), "key": None, "entity": None},
-    "MAX_SETPOINT": {"feature": None, "source": "register", "registers": ("MAX_SETPOINT",), "key": None, "entity": None},
-    "MODE": {"feature": None, "source": "register", "registers": ("SET_MODE",), "key": None, "entity": None},
-    "REGULATOR_STATE": {"feature": None, "source": "register", "registers": ("REGULATOR_STATE",), "key": None, "entity": None},
-    "WINDOW_OPEN": {"feature": "WINDOW_COMPANIONS", "source": "register", "registers": ("WINDOW_OPEN",), "key": None, "entity": "binary_sensor", "device_class": "window", "companion": "Window", "companion_id": "window_sensor"},
-    "TOWEL_MODE": {"feature": None, "source": "register", "registers": ("TOWEL_MODE",), "key": None, "entity": None},
-    "TEMPORARY_STATE": {"feature": None, "source": "register", "registers": ("TEMPORARY_STATE",), "key": None, "entity": None},
-    "WORKING_RATE": {"feature": None, "source": "register", "registers": ("WORKING_RATE",), "key": None, "entity": None},
-    "TEMPERATURE_IN_FORCE": {"feature": None, "source": "register", "registers": ("TEMPERATURE_IN_FORCE",), "key": None, "entity": None},
-    "HEATER_TEMPERATURE_IN_FORCE": {"feature": None, "source": "register", "registers": ("HEATER_TEMPERATURE_IN_FORCE",), "key": None, "entity": None},
-    "DEROGATED_SETPOINT": {"feature": None, "source": "register", "registers": ("SET_DEROGATION",), "key": None, "entity": None},
-    "NIGHT_LIGHT": {"feature": "NIGHT_LIGHT", "source": "register", "registers": ("NIGHT_LIGHT",), "key": None, "entity": None},
-    "NIGHT_LIGHT_BRIGHTNESS": {"feature": "NIGHT_LIGHT", "source": "register", "registers": ("NIGHT_LIGHT_BRIGHTNESS",), "key": None, "entity": None},
-    "HEATING_LEVEL": {"feature": "REPORTS_HEATING_LEVEL", "source": "status", "registers": (), "key": "heating_level", "entity": "text_sensor"},
-    "STATUS_SETPOINT": {"feature": None, "source": "status", "registers": (), "key": None, "entity": None},
+    "CENTRAL_HEATING_MODE": {"feature": "CENTRAL_HEATING_MODE", "source": "register", "platform": "climate", "registers": ("CENTRAL_HEATING_MODE",), "key": "central_heating_mode", "entity": "binary_sensor"},
+    "OCCUPANCY_DETECTION": {"feature": "OCCUPANCY", "source": "register", "platform": "climate", "registers": ("OCCUPANCY_DETECTION",), "key": "occupancy_detection", "entity": "switch"},
+    "OCCUPANCY": {"feature": "OCCUPANCY", "source": "register", "platform": "climate", "registers": ("SET_PRESENCE",), "key": "occupancy", "entity": "binary_sensor", "device_class": "occupancy"},
+    "OPEN_WINDOW_DETECTION": {"feature": "WINDOW_COMPANIONS", "source": "register", "platform": "climate", "registers": ("SET_OPEN_WINDOW_DETECTION",), "key": None, "entity": "switch", "companion": "Open Window Detection", "companion_id": "window_detection_switch", "disabled_by_default": True},
+    "ENERGY_TOTAL": {"feature": "ENERGY_METER", "source": "register", "platform": "climate", "registers": ("ENERGY_TOTAL",), "key": "energy", "entity": "sensor", "unit": "kWh", "accuracy": 0, "device_class": "energy", "state_class": "total_increasing"},
+    "BOOST_DURATION": {"feature": "RUN_TIMERS", "source": "register", "platform": "climate", "registers": ("BOOST_DURATION",), "key": "boost_duration", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration"},
+    "DRYING_DURATION": {"feature": "RUN_TIMERS", "source": "register", "platform": "climate", "registers": ("DRYING_DURATION",), "key": "drying_duration", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration"},
+    "BOOST_REMAINING": {"feature": "RUN_TIMERS", "source": "register", "platform": "climate", "registers": ("BOOST_REMAINING",), "key": None, "entity": None},
+    "DRYING_REMAINING": {"feature": "RUN_TIMERS", "source": "register", "platform": "climate", "registers": ("DRYING_REMAINING",), "key": None, "entity": None},
+    "REMAINING_TIME": {"feature": "RUN_TIMERS", "source": "derived", "platform": "climate", "registers": ("BOOST_REMAINING", "DRYING_REMAINING"), "key": "remaining_time", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration", "state_class": "measurement"},
+    "ROOM_TEMPERATURE": {"feature": None, "source": "register", "platform": "climate", "registers": ("ROOM_TEMPERATURE",), "key": None, "entity": None},
+    "SETPOINT": {"feature": None, "source": "register", "platform": "climate", "registers": ("SET_TEMPERATURE",), "key": None, "entity": None},
+    "MAX_SETPOINT": {"feature": None, "source": "register", "platform": "climate", "registers": ("MAX_SETPOINT",), "key": None, "entity": None},
+    "MODE": {"feature": None, "source": "register", "platform": "climate", "registers": ("SET_MODE",), "key": None, "entity": None},
+    "REGULATOR_STATE": {"feature": None, "source": "register", "platform": "climate", "registers": ("REGULATOR_STATE",), "key": None, "entity": None},
+    "WINDOW_OPEN": {"feature": "WINDOW_COMPANIONS", "source": "register", "platform": "climate", "registers": ("WINDOW_OPEN",), "key": None, "entity": "binary_sensor", "device_class": "window", "companion": "Window", "companion_id": "window_sensor"},
+    "TOWEL_MODE": {"feature": None, "source": "register", "platform": "climate", "registers": ("TOWEL_MODE",), "key": None, "entity": None},
+    "TEMPORARY_STATE": {"feature": None, "source": "register", "platform": "climate", "registers": ("TEMPORARY_STATE",), "key": None, "entity": None},
+    "WORKING_RATE": {"feature": None, "source": "register", "platform": "climate", "registers": ("WORKING_RATE",), "key": None, "entity": None},
+    "TEMPERATURE_IN_FORCE": {"feature": None, "source": "register", "platform": "climate", "registers": ("TEMPERATURE_IN_FORCE",), "key": None, "entity": None},
+    "HEATER_TEMPERATURE_IN_FORCE": {"feature": None, "source": "register", "platform": "climate", "registers": ("HEATER_TEMPERATURE_IN_FORCE",), "key": None, "entity": None},
+    "DEROGATED_SETPOINT": {"feature": None, "source": "register", "platform": "climate", "registers": ("SET_DEROGATION",), "key": None, "entity": None},
+    "NIGHT_LIGHT": {"feature": "NIGHT_LIGHT", "source": "register", "platform": "climate", "registers": ("NIGHT_LIGHT",), "key": None, "entity": None},
+    "NIGHT_LIGHT_BRIGHTNESS": {"feature": "NIGHT_LIGHT", "source": "register", "platform": "climate", "registers": ("NIGHT_LIGHT_BRIGHTNESS",), "key": None, "entity": None},
+    "HEATING_LEVEL": {"feature": "REPORTS_HEATING_LEVEL", "source": "status", "platform": "climate", "registers": (), "key": "heating_level", "entity": "text_sensor"},
+    "STATUS_SETPOINT": {"feature": None, "source": "status", "platform": "climate", "registers": (), "key": None, "entity": None},
+    "HOT_WATER_TEMPERATURE": {"feature": "WATER_HEATER", "source": "register", "platform": "water_heater", "registers": ("DHW_WATER_TEMPERATURE",), "key": None, "entity": None},
+    "HOT_WATER_MODE": {"feature": "WATER_HEATER", "source": "register", "platform": "water_heater", "registers": ("DHW_MODE",), "key": None, "entity": None},
+    "HOT_WATER_HEATING": {"feature": "WATER_HEATER", "source": "register", "platform": "water_heater", "registers": ("DHW_HEATING",), "key": None, "entity": None},
+    "HOT_WATER_ELECTRIC_BACKUP": {"feature": "WATER_HEATER", "source": "register", "platform": "water_heater", "registers": ("DHW_HEATING",), "key": "electric_backup_running", "entity": "binary_sensor", "device_class": "running"},
+    "HOT_WATER_HEAT_PUMP": {"feature": "WATER_HEATER", "source": "register", "platform": "water_heater", "registers": ("DHW_HEATING",), "key": "heat_pump_running", "entity": "binary_sensor", "device_class": "running"},
+    "HOT_WATER_BOOST_DURATION": {"feature": "WATER_HEATER", "source": "register", "platform": "water_heater", "registers": ("DHW_BOOST_DURATION",), "key": None, "entity": None},
+    "HOT_WATER_AWAY_DURATION": {"feature": "WATER_HEATER", "source": "register", "platform": "water_heater", "registers": ("DHW_AWAY_DURATION",), "key": None, "entity": None},
+    "HOT_WATER_ENERGY": {"feature": "WATER_HEATER", "source": "register", "platform": "water_heater", "registers": ("DHW_ENERGY",), "key": "energy", "entity": "sensor", "unit": "kWh", "accuracy": 3, "device_class": "energy", "state_class": "total_increasing"},
+    "HOT_WATER_BRAND": {"feature": "WATER_HEATER", "source": "register", "platform": "water_heater", "registers": ("DHW_BRAND",), "key": None, "entity": None},
+    "HOT_WATER_CAPABILITIES": {"feature": "WATER_HEATER", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
+    "HOT_WATER_BOOST": {"feature": "WATER_HEATER", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
+    "HOT_WATER_AWAY": {"feature": "WATER_HEATER", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
 }
 
 # What to declare when a key of DEVICE_READINGS is used on a kind without its capability, by capability.
 READING_FEATURE_HINTS = {
+    "WATER_HEATER": "a domestic hot water heater: set io_device_type: domestic_hot_water",
     "CENTRAL_HEATING_MODE": "a towel dryer: set io_device_type: electrical_heater, io_subtype: 1 and io_model: towel_dryer",
     "OCCUPANCY": "a heater with occupancy detection: set io_device_type: electrical_heater, io_subtype: 1 and either no io_model (a radiator) or io_model: heater_with_light",
     "ENERGY_METER": "a heater that counts its energy: set io_device_type: electrical_heater, io_subtype: 1 and either no io_model (a radiator), io_model: towel_dryer or io_model: heater_with_light",

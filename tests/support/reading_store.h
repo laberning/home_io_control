@@ -22,7 +22,7 @@ template<class T> void store_reading(IoDevice &dev, DeviceReading reading, T val
 }
 
 /// Keep a value for the reading that is a register of a heater.
-template<class T> void store_reading(IoDevice &dev, HeatingFunction fn, T value) {
+template<class T> void store_reading(IoDevice &dev, DeviceRegister fn, T value) {
   store_register_reading(dev, fn, static_cast<float>(value));
 }
 
@@ -39,7 +39,7 @@ inline void store_wire(IoDevice &dev, DeviceReading reading, int wire) {
 inline void clear_reading(IoDevice &dev, DeviceReading reading) { dev.reading_values.clear(reading_slot(reading)); }
 
 /// Forget the value of the reading that is a register.
-inline void clear_reading(IoDevice &dev, HeatingFunction fn) { clear_register_reading(dev, fn); }
+inline void clear_reading(IoDevice &dev, DeviceRegister fn) { clear_register_reading(dev, fn); }
 
 /// The value of a reading, or NaN when it has none.
 inline float number_read(const IoDevice &dev, DeviceReading reading) {
@@ -47,13 +47,13 @@ inline float number_read(const IoDevice &dev, DeviceReading reading) {
 }
 
 /// The value of the reading that is a register, or NaN when it has none.
-inline float number_read(const IoDevice &dev, HeatingFunction fn) { return register_value(dev, fn).value_or(NAN); }
+inline float number_read(const IoDevice &dev, DeviceRegister fn) { return register_value(dev, fn).value_or(NAN); }
 
 /// The value of a reading as a whole number, or -1 when it has none.
 inline int wire_read(const IoDevice &dev, DeviceReading reading) { return reading_wire(dev, reading); }
 
 /// The value of the reading that is a register as a whole number, or -1 when it has none.
-inline int wire_read(const IoDevice &dev, HeatingFunction fn) { return register_wire(dev, fn); }
+inline int wire_read(const IoDevice &dev, DeviceRegister fn) { return register_wire(dev, fn); }
 
 /// Whether the hub's poll reads a reading for an entity.
 enum class ReadState : uint8_t {
@@ -63,7 +63,7 @@ enum class ReadState : uint8_t {
 };
 
 /// The state of the reading that is a register.
-inline ReadState read_state(const IoDevice &dev, HeatingFunction fn) {
+inline ReadState read_state(const IoDevice &dev, DeviceRegister fn) {
   const DeviceReadingRow *row = find_register_reading(fn);
   if (row == nullptr)
     return ReadState::NOT_ASKED;
@@ -74,6 +74,6 @@ inline ReadState read_state(const IoDevice &dev, HeatingFunction fn) {
 }
 
 /// Does the device hold a value for the reading that is this register?
-inline bool has_reading(const IoDevice &dev, HeatingFunction fn) { return register_value(dev, fn).has_value(); }
+inline bool has_reading(const IoDevice &dev, DeviceRegister fn) { return register_value(dev, fn).has_value(); }
 
 }  // namespace test

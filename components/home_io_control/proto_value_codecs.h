@@ -40,6 +40,12 @@ enum class ValueCodec : uint8_t {
   SCALED_U16,          ///< Unsigned 16-bit little-endian register value from 0 to the row's `max_value`, shown on a
                        ///< scale of its own: the row's knots (ValueForm::scale) map register values to natural units
                        ///< (a brightness register to percent), linear between two knots.
+  TENTHS_S16_BE,       ///< Signed 16-bit tenths of a unit, most significant byte first (a water temperature in
+                       ///< degrees). Bytes after the two are ignored. Read only: it is never encoded.
+  THOUSANDTHS_U32_BE,  ///< Unsigned 32-bit thousandths of a unit, most significant byte first: a counter in Wh
+                       ///< shown in kWh. Read only: it is never encoded.
+  ANY_NONZERO,         ///< A flag over the bytes handed in: 1 when any of them is non-zero, 0 when all are zero.
+                       ///< Read only: it is never encoded.
 };
 
 /// @brief The leading byte of a MARKED_U16_BE value that carries a number.
@@ -47,6 +53,9 @@ constexpr uint8_t VALUE_MARKER_PRESENT = 0x80;
 
 /// @brief Scale of the tenths codecs: the wire value is round(unit * this).
 constexpr float VALUE_TENTHS_PER_UNIT = 10.0F;
+
+/// @brief Scale of THOUSANDTHS_U32_BE: the wire value is a thousand times the unit.
+constexpr float VALUE_THOUSANDTHS_PER_UNIT = 1000.0F;
 
 /// @brief Raw value of HUNDREDTHS_S16 that reports a sensor fault.
 constexpr int16_t VALUE_HUNDREDTHS_FAULT_RAW = -1;
@@ -119,7 +128,8 @@ bool value_is_bounded_integer(float value, uint16_t max_value);
 ///          whole-unit forms take a whole number inside their bound; TENTHS_U16_OR_ZERO also takes exactly 0,
 ///          the "no value" that cancels. SCALED_U16 takes a value from the first to the last knot of the scale and
 ///          rounds the register value to the nearest whole one. HUNDREDTHS_S16 never encodes its sensor-fault pattern.
-///          NONE and FIRST_BYTE_OF_PAIR (a value with a limit of its own) are not writable forms.
+///          NONE, FIRST_BYTE_OF_PAIR (a value with a limit of its own) and the read-only forms TENTHS_S16_BE,
+///          THOUSANDTHS_U32_BE and ANY_NONZERO are not writable forms.
 /// @param form Codec and the rule of the register.
 /// @param value The value in natural units.
 /// @param out Receives the value bytes, in the order the register reads them back in.

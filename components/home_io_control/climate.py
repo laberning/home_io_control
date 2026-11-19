@@ -27,7 +27,7 @@ from esphome.const import (
 
 from . import home_io_control_ns
 from .platform_common import (
-    HEATER_READING_SOURCES,
+    CLIMATE_PLATFORM,
     INSTANT_LIGHT_TRANSITION,
     declared_has_feature,
     create_companion_sensors,
@@ -76,7 +76,7 @@ def _inject_companion_ids(config):
     """Declare the heater companion IDs during validation (ESPHome 2026.x StaticVector sizing): the reading
     companions of the declared kind (the window sensor and its detection switch, where it has WINDOW_COMPANIONS) and
     the diagnostic sensors."""
-    inject_reading_companion_ids(config, CONF_ID)
+    inject_reading_companion_ids(config, CONF_ID, CLIMATE_PLATFORM)
     return inject_companion_sensor_ids(config, CONF_ID)
 
 
@@ -132,7 +132,7 @@ CONFIG_SCHEMA = cv.All(
             # The opt-in reading entities (the heating level, central-heating mode, occupancy, energy, run timers):
             # each but the level costs one register read per poll and only some heaters have the register or report
             # a level (DEVICE_READINGS in hub_validators.py).
-            **reading_keys_schema(HEATER_READING_SOURCES),
+            **reading_keys_schema(CLIMATE_PLATFORM),
         }
     )
     .extend(cv.COMPONENT_SCHEMA),
@@ -140,7 +140,7 @@ CONFIG_SCHEMA = cv.All(
     _validate_temperature_range,
     validate_device_model,
     _validate_night_light,
-    validate_reading_keys,
+    functools.partial(validate_reading_keys, platform=CLIMATE_PLATFORM),
     warn_if_experimental_kind,
     _inject_companion_ids,
 )
@@ -163,8 +163,8 @@ async def to_code(config):
             )
         )
 
-    await reading_companions_to_code(config, parent)
-    await reading_keys_to_code(var, parent, config)
+    await reading_companions_to_code(config, parent, CLIMATE_PLATFORM)
+    await reading_keys_to_code(var, parent, config, CLIMATE_PLATFORM)
 
     if CONF_NIGHT_LIGHT in config:
         night_light_config = config[CONF_NIGHT_LIGHT]

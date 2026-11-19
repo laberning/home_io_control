@@ -1,13 +1,19 @@
 /// @file corpus_dhw_test.cpp
-/// @brief The domestic hot water codec (proto_dhw.h) against real replies from an Atlantic Calypso Connecte
-/// heat-pump water heater (issue #198).
+/// @brief The domestic hot water registers (proto_heating.h), readings (proto_device_readings.h) and operating-mode
+/// word (proto_dhw.h) against real replies from an Atlantic Calypso Connecte heat-pump water heater (issue #198).
 ///
 /// Only the replies were logged, so these captures pin the decoders, not the requests or the exchange. The
 /// reporter read the display in the same session, which is what each expectation below compares with.
 
 #include "corpus_generated.h"
+#include "proto_codecs.h"
+#include "proto_device_readings.h"
+#include "proto_device_types.h"
 #include "proto_dhw.h"
 #include "proto_frame.h"
+#include "proto_heating.h"
+#include "proto_heating_profiles.h"
+#include "reading_store.h"
 
 #include <gtest/gtest.h>
 
@@ -25,111 +31,120 @@ template<size_t N> IoFrame frame_of(const uint8_t (&bytes)[N]) {
   return frame;
 }
 
-/// The value bytes of a captured register reply, failing the test when it is not for `index`.
-template<size_t N> std::vector<uint8_t> value_of(const uint8_t (&bytes)[N], uint8_t index) {
+/// A water heater record that has read one captured register reply, as the hub's poll stores it.
+template<size_t N> IoDevice stored_from(const uint8_t (&bytes)[N], DeviceRegister fn) {
+  IoDevice dev;
   const IoFrame frame = frame_of(bytes);
-  const uint8_t *value = nullptr;
-  size_t len = 0;
-  EXPECT_TRUE(decode_dhw_register_reply(frame, index, value, len)) << "register 0x" << std::hex << +index;
-  return value != nullptr ? std::vector<uint8_t>(value, value + len) : std::vector<uint8_t>();
+  const auto value = register_reply_value(frame, fn);
+  EXPECT_TRUE(value.has_value()) << device_register_name(fn);
+  if (value) {
+    EXPECT_TRUE(store_register_reply(dev, fn, *value)) << device_register_name(fn);
+  }
+  return dev;
 }
 
-template<size_t N> DhwMode mode_of(const uint8_t (&bytes)[N]) {
-  const auto value = value_of(bytes, DHW_REG_MODE);
-  DhwMode mode = DhwMode::AUTO;
-  EXPECT_TRUE(decode_dhw_mode(value.data(), value.size(), mode));
-  return mode;
+/// The value of a register's own reading, or NaN.
+template<size_t N> float number_of(const uint8_t (&bytes)[N], DeviceRegister fn) {
+  return test::number_read(stored_from(bytes, fn), fn);
 }
 
-template<size_t N> DhwHeatingState heating_of(const uint8_t (&bytes)[N]) {
-  const auto value = value_of(bytes, DHW_REG_HEATING);
-  DhwHeatingState state;
-  EXPECT_TRUE(decode_dhw_heating_state(value.data(), value.size(), state));
-  return state;
+template<size_t N> int wire_of(const uint8_t (&bytes)[N], DeviceRegister fn) {
+  return test::wire_read(stored_from(bytes, fn), fn);
 }
 
-template<size_t N> uint8_t duration_of(const uint8_t (&bytes)[N], uint8_t index) {
-  const auto value = value_of(bytes, index);
-  uint8_t duration = 0;
-  EXPECT_TRUE(decode_dhw_duration(value.data(), value.size(), duration)) << "register 0x" << std::hex << +index;
-  return duration;
+/// A water heater record that has read one captured status reply, as the hub's status decoder stores it.
+template<size_t N> IoDevice status_stored_from(const uint8_t (&bytes)[N]) {
+  IoDevice dev;
+  dev.features = device_features(DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::NONE);
+  const IoFrame frame = frame_of(bytes);
+  store_status_parameter_readings(dev, frame);
+  const std::span<const uint8_t> main_parameter(frame.data + STATUS_MP_FP_MAIN_PARAMETER_OFFSET,
+                                                STATUS_MAIN_PARAMETER_SIZE);
+  const HeatingCardRange range = device_temperature_range(dev);
+  if (const auto target =
+          decode_status_reading(DeviceReading::STATUS_SETPOINT, main_parameter, 0, range.min_c, range.max_c))
+    dev.reading_values.store(reading_slot(DeviceReading::STATUS_SETPOINT), *target);
+  return dev;
 }
 
 template<size_t N> float target_of(const uint8_t (&bytes)[N]) {
-  float celsius = NAN;
-  EXPECT_TRUE(decode_dhw_status_target(frame_of(bytes), celsius));
-  return celsius;
+  return test::number_read(status_stored_from(bytes), DeviceReading::STATUS_SETPOINT);
 }
 
 }  // namespace
 
 TEST(CorpusDhw, WaterTemperatureIsTheFirstTwoValueBytes) {
-  const auto run_a = value_of(corpus::atlantic_calypso_exchange_register_read_frame0_bytes, DHW_REG_WATER_TEMPERATURE);
-  float celsius = NAN;
-  ASSERT_TRUE(decode_dhw_water_temperature(run_a.data(), run_a.size(), celsius));
-  EXPECT_FLOAT_EQ(celsius, 49.6F);
-  const auto boost = value_of(corpus::atlantic_calypso_exchange_register_read_frame12_bytes, DHW_REG_WATER_TEMPERATURE);
-  ASSERT_TRUE(decode_dhw_water_temperature(boost.data(), boost.size(), celsius));
-  EXPECT_FLOAT_EQ(celsius, 58.1F);
+  EXPECT_FLOAT_EQ(
+      number_of(corpus::atlantic_calypso_exchange_register_read_frame0_bytes, DeviceRegister::DHW_WATER_TEMPERATURE),
+      49.6F);
+  EXPECT_FLOAT_EQ(
+      number_of(corpus::atlantic_calypso_exchange_register_read_frame12_bytes, DeviceRegister::DHW_WATER_TEMPERATURE),
+      58.1F);
 }
 
 TEST(CorpusDhw, EachDisplayedModeIsItsRegisterValue) {
-  EXPECT_EQ(mode_of(corpus::atlantic_calypso_exchange_register_read_frame1_bytes), DhwMode::AUTO);
-  EXPECT_EQ(mode_of(corpus::atlantic_calypso_exchange_register_read_frame2_bytes), DhwMode::MANUAL_ECO_ON)
+  EXPECT_EQ(wire_of(corpus::atlantic_calypso_exchange_register_read_frame1_bytes, DeviceRegister::DHW_MODE),
+            static_cast<int>(DhwMode::AUTO));
+  EXPECT_EQ(wire_of(corpus::atlantic_calypso_exchange_register_read_frame2_bytes, DeviceRegister::DHW_MODE),
+            static_cast<int>(DhwMode::MANUAL_ECO_ON))
       << "manual, ECO on";
-  EXPECT_EQ(mode_of(corpus::atlantic_calypso_exchange_register_read_frame3_bytes), DhwMode::MANUAL_ECO_OFF)
+  EXPECT_EQ(wire_of(corpus::atlantic_calypso_exchange_register_read_frame3_bytes, DeviceRegister::DHW_MODE),
+            static_cast<int>(DhwMode::MANUAL_ECO_OFF))
       << "manual, ECO off";
 }
 
 TEST(CorpusDhw, HeatingStateTellsIdleHeatPumpAndBoostApart) {
-  const DhwHeatingState idle = heating_of(corpus::atlantic_calypso_exchange_register_read_frame4_bytes);
-  EXPECT_FALSE(idle.heating);
-  EXPECT_FALSE(idle.heat_pump);
-  EXPECT_FALSE(idle.element);
-  const DhwHeatingState heat_pump = heating_of(corpus::atlantic_calypso_exchange_register_read_frame5_bytes);
-  EXPECT_TRUE(heat_pump.heating);
-  EXPECT_TRUE(heat_pump.heat_pump);
-  EXPECT_FALSE(heat_pump.element);
-  const DhwHeatingState boost = heating_of(corpus::atlantic_calypso_exchange_register_read_frame6_bytes);
-  EXPECT_TRUE(boost.heating);
-  EXPECT_TRUE(boost.heat_pump);
-  EXPECT_TRUE(boost.element);
+  const IoDevice idle =
+      stored_from(corpus::atlantic_calypso_exchange_register_read_frame4_bytes, DeviceRegister::DHW_HEATING);
+  EXPECT_EQ(reading_wire(idle, DeviceReading::HOT_WATER_HEATING), 0);
+  EXPECT_EQ(reading_wire(idle, DeviceReading::HOT_WATER_HEAT_PUMP), 0);
+  EXPECT_EQ(reading_wire(idle, DeviceReading::HOT_WATER_ELECTRIC_BACKUP), 0);
+  const IoDevice heat_pump =
+      stored_from(corpus::atlantic_calypso_exchange_register_read_frame5_bytes, DeviceRegister::DHW_HEATING);
+  EXPECT_EQ(reading_wire(heat_pump, DeviceReading::HOT_WATER_HEATING), 1);
+  EXPECT_EQ(reading_wire(heat_pump, DeviceReading::HOT_WATER_HEAT_PUMP), 1);
+  EXPECT_EQ(reading_wire(heat_pump, DeviceReading::HOT_WATER_ELECTRIC_BACKUP), 0);
+  const IoDevice boost =
+      stored_from(corpus::atlantic_calypso_exchange_register_read_frame6_bytes, DeviceRegister::DHW_HEATING);
+  EXPECT_EQ(reading_wire(boost, DeviceReading::HOT_WATER_HEATING), 1);
+  EXPECT_EQ(reading_wire(boost, DeviceReading::HOT_WATER_HEAT_PUMP), 1);
+  EXPECT_EQ(reading_wire(boost, DeviceReading::HOT_WATER_ELECTRIC_BACKUP), 1);
 }
 
 TEST(CorpusDhw, EnergyIsTheDisplaysSinceStartTotalAndRisesWhileHeating) {
-  const auto before = value_of(corpus::atlantic_calypso_exchange_register_read_frame7_bytes, DHW_REG_ENERGY);
-  const auto after = value_of(corpus::atlantic_calypso_exchange_register_read_frame8_bytes, DHW_REG_ENERGY);
-  uint32_t before_wh = 0;
-  uint32_t after_wh = 0;
-  ASSERT_TRUE(decode_dhw_energy_wh(before.data(), before.size(), before_wh));
-  ASSERT_TRUE(decode_dhw_energy_wh(after.data(), after.size(), after_wh));
-  EXPECT_EQ(before_wh / 1000U, 1831U) << "display: 1 831 kWh since start";
-  EXPECT_EQ(after_wh - before_wh, 85U);
+  const float before_kwh =
+      number_of(corpus::atlantic_calypso_exchange_register_read_frame7_bytes, DeviceRegister::DHW_ENERGY);
+  const float after_kwh =
+      number_of(corpus::atlantic_calypso_exchange_register_read_frame8_bytes, DeviceRegister::DHW_ENERGY);
+  EXPECT_EQ(static_cast<int>(before_kwh), 1831) << "display: 1 831 kWh since start";
+  EXPECT_NEAR(after_kwh - before_kwh, 0.085F, 0.001F) << "85 Wh more while the heat pump ran";
 }
 
 TEST(CorpusDhw, TheBoostDurationReadsOneDuringABoostAndZeroAfter) {
-  EXPECT_EQ(duration_of(corpus::atlantic_calypso_exchange_register_read_frame9_bytes, DHW_REG_BOOST_DURATION),
+  EXPECT_EQ(wire_of(corpus::atlantic_calypso_exchange_register_read_frame9_bytes, DeviceRegister::DHW_BOOST_DURATION),
             DHW_BOOST_START_DURATION)
       << "the value a boost start writes is the one a display-started boost holds";
-  EXPECT_EQ(duration_of(corpus::atlantic_calypso_exchange_register_read_frame10_bytes, DHW_REG_BOOST_DURATION), 0);
+  EXPECT_EQ(wire_of(corpus::atlantic_calypso_exchange_register_read_frame10_bytes, DeviceRegister::DHW_BOOST_DURATION),
+            0);
 }
 
 TEST(CorpusDhw, TheHolidayDurationCountsTheDaysLeftAndFfHasNoEnd) {
-  EXPECT_EQ(duration_of(corpus::atlantic_calypso_exchange_register_read_frame13_bytes, DHW_REG_AWAY_DURATION), 0)
+  EXPECT_EQ(wire_of(corpus::atlantic_calypso_exchange_register_read_frame13_bytes, DeviceRegister::DHW_AWAY_DURATION),
+            0)
       << "a holiday scheduled for later has not started";
-  EXPECT_EQ(duration_of(corpus::atlantic_calypso_exchange_register_read_frame14_bytes, DHW_REG_AWAY_DURATION), 2)
+  EXPECT_EQ(wire_of(corpus::atlantic_calypso_exchange_register_read_frame14_bytes, DeviceRegister::DHW_AWAY_DURATION),
+            2)
       << "two days before the end";
-  EXPECT_EQ(duration_of(corpus::atlantic_calypso_exchange_register_read_frame16_bytes, DHW_REG_AWAY_DURATION), 4)
+  EXPECT_EQ(wire_of(corpus::atlantic_calypso_exchange_register_read_frame16_bytes, DeviceRegister::DHW_AWAY_DURATION),
+            4)
       << "four days before the end";
-  EXPECT_EQ(duration_of(corpus::atlantic_calypso_exchange_register_read_frame15_bytes, DHW_REG_AWAY_DURATION),
+  EXPECT_EQ(wire_of(corpus::atlantic_calypso_exchange_register_read_frame15_bytes, DeviceRegister::DHW_AWAY_DURATION),
             DHW_AWAY_UNTIL_TURNED_OFF)
       << "the value an away start writes is the one the heater holds for a holiday with no end date";
 }
 
 TEST(CorpusDhw, BrandIsOneLetter) {
-  const auto brand = value_of(corpus::atlantic_calypso_exchange_register_read_frame11_bytes, DHW_REG_BRAND);
-  ASSERT_EQ(brand.size(), 1U);
-  EXPECT_EQ(brand[0], 'A');
+  EXPECT_EQ(wire_of(corpus::atlantic_calypso_exchange_register_read_frame11_bytes, DeviceRegister::DHW_BRAND), 'A');
 }
 
 TEST(CorpusDhw, StatusMainParameterIsTheDisplayedTarget) {
@@ -145,37 +160,40 @@ TEST(CorpusDhw, DuringAHolidayTheMainParameterIsTheBottomOfTheScale) {
 
 TEST(CorpusDhw, TheOperatingStatusReadReportsCapabilitiesAndBothFieldsOffAtRest) {
   const struct {
-    IoFrame frame;
+    IoDevice stored;
     float target_c;
     const char *display;
   } cases[] = {
-      {frame_of(corpus::atlantic_calypso_probe_status_fp_high_frame0_bytes), 60.0F, "AUTO"},
-      {frame_of(corpus::atlantic_calypso_probe_status_fp_high_frame1_bytes), 54.0F, "manual, ECO on"},
-      {frame_of(corpus::atlantic_calypso_probe_status_fp_high_frame2_bytes), 62.0F, "manual, ECO off"},
+      {status_stored_from(corpus::atlantic_calypso_probe_status_fp_high_frame0_bytes), 60.0F, "AUTO"},
+      {status_stored_from(corpus::atlantic_calypso_probe_status_fp_high_frame1_bytes), 54.0F, "manual, ECO on"},
+      {status_stored_from(corpus::atlantic_calypso_probe_status_fp_high_frame2_bytes), 62.0F, "manual, ECO off"},
   };
   for (const auto &c : cases) {
-    DhwOperatingStatus status;
-    ASSERT_TRUE(decode_dhw_operating_status(c.frame, status)) << c.display;
-    float target = NAN;
-    ASSERT_TRUE(decode_dhw_status_target(c.frame, target)) << "the main parameter stays in place: " << c.display;
-    EXPECT_FLOAT_EQ(target, c.target_c) << c.display;
-    EXPECT_EQ(status.capabilities, DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST) << "FP15 000C: " << c.display;
-    EXPECT_FALSE(status.boost) << "FP16 4A00 reads both fields off: " << c.display;
-    EXPECT_FALSE(status.away) << c.display;
+    EXPECT_FLOAT_EQ(test::number_read(c.stored, DeviceReading::STATUS_SETPOINT), c.target_c)
+        << "the main parameter stays in place: " << c.display;
+    EXPECT_EQ(reading_wire(c.stored, DeviceReading::HOT_WATER_CAPABILITIES), DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST)
+        << "FP15 000C: " << c.display;
+    EXPECT_EQ(reading_wire(c.stored, DeviceReading::HOT_WATER_BOOST), 0)
+        << "FP16 4A00 reads both fields off: " << c.display;
+    EXPECT_EQ(reading_wire(c.stored, DeviceReading::HOT_WATER_AWAY), 0) << c.display;
   }
 }
 
 TEST(CorpusDhw, TheOffWordIsTheFp16TheHeaterReportsAtRest) {
   const auto &bytes = corpus::atlantic_calypso_probe_status_fp_high_frame0_bytes;
   EXPECT_EQ((bytes[19] << 8) | bytes[20], DHW_OPERATING_MODE_OFF);
+  uint16_t fp16 = 0;
+  ASSERT_TRUE(decode_status_functional_parameter(frame_of(bytes), DHW_FP_OPERATING_MODE, fp16));
+  EXPECT_EQ(fp16, DHW_OPERATING_MODE_OFF);
 }
 
 TEST(CorpusDhw, TargetEncoderReproducesTheCapturedMainParameters) {
+  const HeatingCardRange range{DHW_TARGET_MIN_C, DHW_TARGET_MAX_C};
   uint16_t mp = 0;
-  ASSERT_TRUE(encode_dhw_target(54.0F, mp));
+  ASSERT_EQ(encode_temperature_target(range, 54.0F, mp), HeatingRefusal::NONE);
   EXPECT_EQ(mp, (corpus::atlantic_calypso_probe_status_mp_fp_frame0_bytes[11] << 8) |
                     corpus::atlantic_calypso_probe_status_mp_fp_frame0_bytes[12]);
-  ASSERT_TRUE(encode_dhw_target(62.0F, mp));
+  ASSERT_EQ(encode_temperature_target(range, 62.0F, mp), HeatingRefusal::NONE);
   EXPECT_EQ(mp, (corpus::atlantic_calypso_probe_status_mp_fp_frame1_bytes[11] << 8) |
                     corpus::atlantic_calypso_probe_status_mp_fp_frame1_bytes[12]);
 }

@@ -69,6 +69,40 @@ TEST(ValueCodecs, APairShowsItsFirstByteOnly) {
   EXPECT_FLOAT_EQ(*decode(ValueCodec::FIRST_BYTE_OF_PAIR, {0x3C, 0xB4}), 60.0F);
 }
 
+TEST(ValueCodecs, ASignedBigEndianWordIsTenthsOfAUnit) {
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::TENTHS_S16_BE, {0x02, 0x45}), 58.1F) << "a water temperature, 581 tenths";
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::TENTHS_S16_BE, {0x01, 0xF0}), 49.6F);
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::TENTHS_S16_BE, {0xFF, 0xCE}), -5.0F) << "signed: -50 tenths";
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::TENTHS_S16_BE, {0x80, 0x00}), -3276.8F) << "the lowest word";
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::TENTHS_S16_BE, {0x7F, 0xFF}), 3276.7F) << "the highest word";
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::TENTHS_S16_BE, {0x02, 0x45, 0x00, 0x5C, 0x02, 0x78}), 58.1F)
+      << "the four bytes after the word are not read";
+  EXPECT_FALSE(decode(ValueCodec::TENTHS_S16_BE, {0x02}).has_value());
+  EXPECT_EQ(value_codec_length(ValueCodec::TENTHS_S16_BE), 2u);
+}
+
+TEST(ValueCodecs, AnUnsignedBigEndianLongIsThousandthsOfAUnit) {
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::THOUSANDTHS_U32_BE, {0x00, 0x1B, 0xF3, 0x42}), 1831.746F)
+      << "1 831 746 Wh shown as kWh";
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::THOUSANDTHS_U32_BE, {0x00, 0x00, 0x00, 0x00}), 0.0F);
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::THOUSANDTHS_U32_BE, {0x00, 0x00, 0x03, 0xE8}), 1.0F);
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::THOUSANDTHS_U32_BE, {0xFF, 0xFF, 0xFF, 0xFF}), 4294967.295F)
+      << "the whole range of the word, not read as signed";
+  EXPECT_FALSE(decode(ValueCodec::THOUSANDTHS_U32_BE, {0x00, 0x1B, 0xF3}).has_value()) << "a cut-off value";
+  EXPECT_EQ(value_codec_length(ValueCodec::THOUSANDTHS_U32_BE), 4u);
+}
+
+TEST(ValueCodecs, AFlagOverASliceIsOnWhenAnyByteIsNonZero) {
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::ANY_NONZERO, {0x00}), 0.0F);
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::ANY_NONZERO, {0x00, 0x00}), 0.0F);
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::ANY_NONZERO, {0x01}), 1.0F);
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::ANY_NONZERO, {0xFF}), 1.0F) << "any byte, not only 1";
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::ANY_NONZERO, {0x00, 0x01}), 1.0F) << "either byte of a slice turns it on";
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::ANY_NONZERO, {0x01, 0x00}), 1.0F);
+  EXPECT_FALSE(decode(ValueCodec::ANY_NONZERO, {}).has_value()) << "an empty slice says nothing";
+  EXPECT_EQ(value_codec_length(ValueCodec::ANY_NONZERO), 1u);
+}
+
 TEST(ValueCodecs, TooFewBytesAreNoValue) {
   for (const ValueCodec codec : {ValueCodec::TENTHS_U16, ValueCodec::HUNDREDTHS_S16, ValueCodec::BOUNDED_U16,
                                  ValueCodec::U16_BE, ValueCodec::FIRST_BYTE_OF_PAIR}) {
@@ -196,6 +230,13 @@ TEST(ValueCodecsEncode, ASensorFaultPatternIsNotAValue) {
 TEST(ValueCodecsEncode, AFormWithoutAWritableValueEncodesNothing) {
   EXPECT_TRUE(encode({.codec = ValueCodec::NONE}, 1.0F).empty());
   EXPECT_TRUE(encode({.codec = ValueCodec::FIRST_BYTE_OF_PAIR}, 1.0F).empty()) << "its second byte is a limit";
+}
+
+TEST(ValueCodecsEncode, TheReadOnlyFormsEncodeNothing) {
+  EXPECT_TRUE(encode({.codec = ValueCodec::TENTHS_S16_BE}, 58.1F).empty());
+  EXPECT_TRUE(encode({.codec = ValueCodec::THOUSANDTHS_U32_BE}, 1.0F).empty());
+  EXPECT_TRUE(encode({.codec = ValueCodec::ANY_NONZERO}, 1.0F).empty());
+  EXPECT_TRUE(encode({.codec = ValueCodec::ANY_NONZERO}, 0.0F).empty());
 }
 
 TEST(ValueCodecsEncode, ABufferThatIsTooShortTakesNothing) {

@@ -290,7 +290,7 @@ std::string field_text(const std::string &entry, const std::string &field) {
 }
 
 /// The mirror's name of each source kind, in the order of the ReadingSource alternatives.
-constexpr const char *SOURCE_KIND_NAMES[] = {"register", "derived", "data_object", "status"};
+constexpr const char *SOURCE_KIND_NAMES[] = {"register", "derived", "data_object", "status", "status_parameter"};
 static_assert(std::size(SOURCE_KIND_NAMES) == std::variant_size_v<ReadingSource>,
               "a new reading source kind needs its mirror name here and in hub_validators.py DEVICE_READINGS");
 
@@ -330,9 +330,16 @@ TEST(DeviceFeaturesSync, EveryDeviceReadingIsMirroredWithItsCapabilitySourceAndR
         << name;
 
     std::vector<std::string> registers;
-    for (const HeatingFunction fn : reading_polled_registers(row))
-      registers.push_back(upper(heating_function_name(fn)));
+    for (const DeviceRegister fn : reading_polled_registers(row))
+      registers.push_back(upper(device_register_name(fn)));
     EXPECT_EQ(test::quoted_strings_of(field_text(entry, "registers")), registers) << name;
+
+    // The platform that offers the reading's key follows what the row says: a data object is the `sensor:`
+    // platform's, a reading of the water heater's capability is the water heater's, every other the climate entity's.
+    const bool data_object = std::holds_alternative<DataObjectSource>(row.source);
+    const std::string platform =
+        data_object ? "sensor" : (row.feature == DeviceFeature::WATER_HEATER ? "water_heater" : "climate");
+    EXPECT_EQ(test::quoted_strings_of(field_text(entry, "platform")), std::vector<std::string>{platform}) << name;
   }
   EXPECT_EQ(python.size(), device_readings().size()) << "DEVICE_READINGS names a reading the C++ table does not have";
 }

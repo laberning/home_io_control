@@ -4,11 +4,11 @@
 /// @brief Transport of the private register protocol: CMD_WRITE_PRIVATE (0x20) requests and their echoing replies.
 /// @ingroup hioc_protocol
 ///
-/// Heaters (proto_heating.h) and domestic hot water heaters (proto_dhw.h) read and write 16-bit
+/// Heaters and domestic hot water heaters (both in the register table of proto_heating.h) read and write 16-bit
 /// registers with the same four-byte header, `0C <direction> <register high> <register low>`, and
 /// the device answers with CMD_WRITE_PRIVATE_ACK (0x21) echoing that header before any value. This
 /// module owns that header, the read request and the echo check; which registers exist and how
-/// their values are encoded stays with each device family. It is pure: it touches no device record
+/// their values are encoded stays with the register table. It is pure: it touches no device record
 /// and no radio; proto_commands.h's create_write_private() frames a payload.
 
 #include "proto_frame.h"

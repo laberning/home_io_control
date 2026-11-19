@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0104 -->
 
-**Status:** Accepted, amends [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md), [ADR 0083](0083-heating-and-hot-water-live-in-their-own-collaborator.md), [ADR 0103](0103-every-heater-value-is-a-reading-kept-by-reading.md), [ADR 0091](0091-every-climate-preset-is-a-command-and-the-heating-level-is-a-sensor.md) and [ADR 0055](0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md), [ADR 0083](0083-heating-and-hot-water-live-in-their-own-collaborator.md), [ADR 0103](0103-every-heater-value-is-a-reading-kept-by-reading.md), [ADR 0091](0091-every-climate-preset-is-a-command-and-the-heating-level-is-a-sensor.md) and [ADR 0055](0055-a-climate-entitys-traits-come-from-the-devices-heating-profile.md); amended by [ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md) · **Recorded:** 2026-11
 
 Builds on [ADR 0103](0103-every-heater-value-is-a-reading-kept-by-reading.md): every value the hub keeps from a
 heater is a row of the reading table, and each row already says what it needs. This record lets the row say when it

@@ -218,7 +218,7 @@ class HubHeatingPort {
   /// @param fn Function to run.
   /// @param value Value to write; ignored for a read.
   /// @return True when the device accepted it.
-  virtual bool send_heating_command(const std::string &device_id, HeatingFunction fn, float value) = 0;
+  virtual bool send_heating_command(const std::string &device_id, DeviceRegister fn, float value) = 0;
 
   /// @brief Read one register of a heater and fold the decoded value into the device record.
   /// @param device_id Hexadecimal node ID string.
@@ -226,7 +226,7 @@ class HubHeatingPort {
   /// @param[out] value_out Receives the decoded value on success; may be null.
   /// @param max_tries Upper bound on read attempts.
   /// @return True when the register was read.
-  virtual bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
+  virtual bool read_heating_register(const std::string &device_id, DeviceRegister fn, float *value_out,
                                      uint8_t max_tries) = 0;
 
   /// @brief Send a planned climate write and read the register back.

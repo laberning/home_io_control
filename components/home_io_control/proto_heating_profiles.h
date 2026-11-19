@@ -158,8 +158,8 @@ struct HeatingObservedState {
 
 /// @brief Where a register heater's "heating" / "idle" comes from.
 enum class HeatingActionSource : uint8_t {
-  REGULATOR,     ///< The regulator register (HeatingFunction::REGULATOR_STATE): heating at state 2.
-  WORKING_RATE,  ///< The working rate (HeatingFunction::WORKING_RATE): heating above 0 %. A towel dryer's
+  REGULATOR,     ///< The regulator register (DeviceRegister::REGULATOR_STATE): heating at state 2.
+  WORKING_RATE,  ///< The working rate (DeviceRegister::WORKING_RATE): heating above 0 %. A towel dryer's
                  ///< regulator reads 0 during boost and drying, while the element runs at 100 %.
 };
 
@@ -181,10 +181,10 @@ struct HeatingProfileFeatures {
 ///          A target set while the programme runs is a temporary override: it goes to `derogation_fn`, and
 ///          the comfort setpoint and the programme stay as they are.
 struct HeatingProgrammePeriod {
-  HeatingFunction in_force_fn;    ///< Register of the temperature in force.
-  HeatingFunction derogation_fn;  ///< Register of the temporary override of the programme: a target set while
-                                  ///< the programme runs is written here and holds until the programme's next
-                                  ///< change; 0 ends it.
+  DeviceRegister in_force_fn;    ///< Register of the temperature in force.
+  DeviceRegister derogation_fn;  ///< Register of the temporary override of the programme: a target set while
+                                 ///< the programme runs is written here and holds until the programme's next
+                                 ///< change; 0 ends it.
   /// The heater answers the status read with its heating level, which every poll then makes after the
   /// registers (DeviceReading::HEATING_LEVEL, the `heating_level:` sensor). False for a heater kind no unit of
   /// which has answered that read yet (the radiator family): its poll sends no status read, and its
@@ -241,10 +241,10 @@ struct HeatingProfile {
   std::span<const HeatingObservedState> preset_observed{};
   // NOLINTEND(readability-redundant-member-init)
   /// PRIVATE_REGISTERS: the register the HVAC modes write and the card's mode is read from.
-  HeatingFunction mode_fn{HeatingFunction::SET_MODE};
+  DeviceRegister mode_fn{DeviceRegister::SET_MODE};
   /// PRIVATE_REGISTERS: the register the presets write, and with `preset_observed` the one the card's preset is
   /// read from.
-  HeatingFunction preset_fn{HeatingFunction::SET_MODE};
+  DeviceRegister preset_fn{DeviceRegister::SET_MODE};
   HeatingActionSource action_source{HeatingActionSource::REGULATOR};  ///< Where `features.action` reads from.
 };
 
@@ -352,7 +352,7 @@ bool programme_period_active(const HeatingProfile &profile, const IoDevice &dev)
 /// @param dev The device record (the mode as it was just read).
 /// @return The register, or std::nullopt when the mode does not show the programme or the profile has no
 ///         timed-run register.
-std::optional<HeatingFunction> timed_run_register(const HeatingProfile &profile, const IoDevice &dev);
+std::optional<DeviceRegister> timed_run_register(const HeatingProfile &profile, const IoDevice &dev);
 
 /// @brief The temperature a heater heats to while its own programme runs.
 /// @param profile The device's profile.
@@ -376,7 +376,7 @@ void clear_inactive_programme_reading(const HeatingProfile &profile, IoDevice &d
 /// @param value What it held.
 /// @return The temperature in force, or std::nullopt when `fn` is not the override register of a profile with a
 ///         programme, or the override is not a temperature.
-std::optional<float> in_force_from_override_read(const HeatingProfile &profile, HeatingFunction fn, float value);
+std::optional<float> in_force_from_override_read(const HeatingProfile &profile, DeviceRegister fn, float value);
 
 /// @brief The reading that holds the setpoint a profile's card shows as its target.
 /// @param profile The device's profile.
@@ -405,35 +405,51 @@ struct HeaterPollList {
   static constexpr size_t CAPACITY = static_cast<size_t>(DeviceReading::COUNT);  ///< Slots; at most one per row.
 
   /// @return The registers, in read order.
-  [[nodiscard]] std::span<const HeatingFunction> registers() const { return {registers_.data(), size_}; }
-  [[nodiscard]] const HeatingFunction *begin() const { return registers_.data(); }        ///< Range-for.
-  [[nodiscard]] const HeatingFunction *end() const { return registers_.data() + size_; }  ///< Range-for.
-  [[nodiscard]] size_t size() const { return size_; }                                     ///< Count.
-  [[nodiscard]] bool empty() const { return size_ == 0; }                                 ///< No register.
+  [[nodiscard]] std::span<const DeviceRegister> registers() const { return {registers_.data(), size_}; }
+  [[nodiscard]] const DeviceRegister *begin() const { return registers_.data(); }        ///< Range-for.
+  [[nodiscard]] const DeviceRegister *end() const { return registers_.data() + size_; }  ///< Range-for.
+  [[nodiscard]] size_t size() const { return size_; }                                    ///< Count.
+  [[nodiscard]] bool empty() const { return size_ == 0; }                                ///< No register.
 
   /// @brief Append a register; one past the capacity is dropped (the capacity covers every row).
-  void push_back(HeatingFunction fn) {
+  void push_back(DeviceRegister fn) {
     if (size_ < CAPACITY)
       registers_[size_++] = fn;
   }
 
  private:
-  std::array<HeatingFunction, CAPACITY> registers_{};
+  std::array<DeviceRegister, CAPACITY> registers_{};
   size_t size_{0};
 };
 
-/// @brief The registers a heater's poll reads under one policy, in read order.
+/// @brief The registers a device's poll reads under one policy, in read order.
 /// @details Walks the reading table in table order, which is the order of the reads, and keeps a register row of the
-///          policy that applies to the device: by its capability where it has one, otherwise where the profile reads
-///          it (heating_profile_reads()). A WHEN_ASKED row also needs an entity that asked for it, and not to have
-///          been answered empty; a ONCE_AFTER_BOOT row only until it holds a value. Which policy is read when is the
-///          caller's: HeaterController runs the phases in the order its poll describes. A profile that does not use
-///          private registers has no register poll, and ReadingPoll::NOT_POLLED selects nothing.
-/// @param profile The device's profile.
-/// @param dev The device record (its capabilities, what entities asked for, what it holds).
+///          policy that applies to the device: by its capability where it has one, otherwise where the device's heating
+///          profile reads it (heating_profile_reads()); a device without a heating profile (a water heater) is
+///          selected by capability alone. A register several rows are slices of is listed once, at its first row. A
+///          WHEN_ASKED row also needs an entity that asked for it, and not to have been answered empty; a
+///          ONCE_AFTER_BOOT row only until it holds a value. Which policy is read when is the caller's:
+///          HeaterController runs the phases in the order its poll describes. A profile that does not use private
+///          registers has no register poll, and ReadingPoll::NOT_POLLED selects nothing.
+/// @param dev The device record (its kind, capabilities, what entities asked for, what it holds).
 /// @param policy The policy to select.
 /// @return The registers, possibly none.
-HeaterPollList heater_poll_reads(const HeatingProfile &profile, const IoDevice &dev, ReadingPoll policy);
+HeaterPollList device_poll_reads(const IoDevice &dev, ReadingPoll policy);
+
+/// @brief May a register of the table be read from or written to this device?
+/// @details The one gate for every register frame the hub sends to a device: a register of the water heater's family
+///          goes only to a water heater (device_feature::WATER_HEATER), a register of the heater's family only to a
+///          heater a climate entity drives over the private registers (device_uses_heating_registers()). A device of
+///          another kind is never sent a register frame.
+/// @param dev The device record.
+/// @param fn The register.
+/// @return true when the device takes the register's family.
+bool device_takes_register(const IoDevice &dev, DeviceRegister fn);
+
+/// @brief Who takes a register, for a message that says why a frame was not sent.
+/// @param fn The register.
+/// @return "water heater" for a register of the water heater's family, "heater with private registers" otherwise.
+const char *device_register_owner(DeviceRegister fn);
 
 // === Heater writes: what a request turns into ===
 
@@ -518,17 +534,17 @@ enum class HeatingPlanKind : uint8_t {
 
 /// @brief The write a request turns into, with everything needed to send it and to read it back.
 struct HeatingWritePlan {
-  HeatingPlanKind kind{HeatingPlanKind::NONE};             ///< How to send it.
-  HeatingRefusal refusal{HeatingRefusal::NONE};            ///< Why there is no write (kind NONE).
-  HeatingFunction register_fn{HeatingFunction::SET_MODE};  ///< REGISTER: the register.
-  float register_value{0.0F};      ///< REGISTER: the value, as encode_heating_payload() takes it.
-  uint8_t level{0};                ///< LEVEL: the level low byte.
-  uint16_t main_parameter{0};      ///< TEMPERATURE: the main parameter.
-  HeatingFp fp{};                  ///< TEMPERATURE: the functional parameter that accompanies it.
+  HeatingPlanKind kind{HeatingPlanKind::NONE};           ///< How to send it.
+  HeatingRefusal refusal{HeatingRefusal::NONE};          ///< Why there is no write (kind NONE).
+  DeviceRegister register_fn{DeviceRegister::SET_MODE};  ///< REGISTER: the register.
+  float register_value{0.0F};                            ///< REGISTER: the value, as encode_heating_payload() takes it.
+  uint8_t level{0};                                      ///< LEVEL: the level low byte.
+  uint16_t main_parameter{0};                            ///< TEMPERATURE: the main parameter.
+  HeatingFp fp{};                                        ///< TEMPERATURE: the functional parameter that accompanies it.
   bool temporary_override{false};  ///< REGISTER: the write is a temporary override of the programme; a read-back
                                    ///< that differs from it is a refusal (heating_override_taken()).
   bool read_back{false};           ///< Read `read_back_fn` after an accepted write.
-  HeatingFunction read_back_fn{HeatingFunction::SET_MODE};  ///< The register to read back.
+  DeviceRegister read_back_fn{DeviceRegister::SET_MODE};  ///< The register to read back.
   int8_t preset_index{-1};  ///< PRESET: index into the profile's presets of the matched entry; -1 otherwise.
 
   /// @return Whether the request became a write.
@@ -651,6 +667,22 @@ struct HeatingCardRange {
 /// @param yaml_min_c Lower end of the YAML temperature range.
 /// @param yaml_max_c Upper end of the YAML temperature range.
 HeatingCardRange heating_card_range(const HeatingProfile &profile, float yaml_min_c, float yaml_max_c);
+
+/// @brief The range a device encodes its temperature main parameter over.
+/// @details The one answer every encode and decode of a status temperature asks: a water heater's fixed range
+///          (DHW_TARGET_MIN_C to DHW_TARGET_MAX_C), the fixed range of a heater profile that has one, otherwise the
+///          range the YAML declared for the device (IoDevice::temperature_range_min_c and `_max_c`).
+/// @param dev The device record.
+/// @return The range.
+HeatingCardRange device_temperature_range(const IoDevice &dev);
+
+/// @brief Encode a target temperature as a main parameter over a range, judging it as every temperature heater does.
+/// @param range The encoding range (device_temperature_range()).
+/// @param celsius The target.
+/// @param[out] main_parameter The encoded value; untouched unless NONE is returned.
+/// @return NONE when encoded; OUT_OF_RANGE for a finite target outside a valid range, nothing being written, never
+///         an end of the range instead; UNENCODABLE for a target that is not a number or an empty range.
+HeatingRefusal encode_temperature_target(HeatingCardRange range, float celsius, uint16_t &main_parameter);
 
 /// @brief The card of a heater nothing has been read from yet.
 /// @details Its target range reaches up to the card range's upper end (heating_card_range()) where the profile has

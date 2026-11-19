@@ -3,6 +3,7 @@
 /// target with no cover side effects, and the target, mode, boost and away writes. Replies are shaped on the Atlantic
 /// Calypso Connecte's (issue #198, corpus atlantic_calypso_*).
 
+#include "corpus_generated.h"
 #include "device_yaml_snippet.h"
 #include "hub_core.h"
 #include "decisions_status.h"
@@ -14,6 +15,7 @@
 #include "status_poll_policy.h"
 
 #include "test_helpers.h"
+#include "water_heater_values.h"
 #include "reading_store.h"
 #include "stubs/radio_test_common.h"
 
@@ -91,8 +93,11 @@ void queue_operating_status(TestableComponent &comp, MockRadio &radio, uint16_t 
          static_cast<uint8_t>(fp16 >> 8U), static_cast<uint8_t>(fp16 & 0xFFU)});
 }
 
-void queue_register(TestableComponent &comp, MockRadio &radio, uint8_t index, const std::vector<uint8_t> &value) {
-  std::vector<uint8_t> payload = {0x0C, 0x60, 0x00, index};
+/// The low byte of a register's number on the wire.
+uint8_t low_byte(DeviceRegister fn) { return test::dhw_register_byte(fn); }
+
+void queue_register(TestableComponent &comp, MockRadio &radio, DeviceRegister fn, const std::vector<uint8_t> &value) {
+  std::vector<uint8_t> payload = {0x0C, 0x60, 0x00, low_byte(fn)};
   payload.insert(payload.end(), value.begin(), value.end());
   queue(comp, radio, CMD_WRITE_PRIVATE_ACK, payload);
 }
@@ -103,14 +108,14 @@ void queue_register(TestableComponent &comp, MockRadio &radio, uint8_t index, co
 void queue_full_poll(TestableComponent &comp, MockRadio &radio, bool with_brand, uint8_t status_flags = 0x05,
                      uint16_t fp16 = DHW_OPERATING_MODE_OFF) {
   queue_operating_status(comp, radio, 0xA1E8, fp16, DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST, status_flags);  // 54 C
-  queue_register(comp, radio, DHW_REG_WATER_TEMPERATURE, {0x02, 0x45, 0x00, 0x5C, 0x02, 0x78});  // 58.1 C
-  queue_register(comp, radio, DHW_REG_MODE, {0x01});                                             // manual, ECO on
-  queue_register(comp, radio, DHW_REG_HEATING, {0x01, 0xFF, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00});
-  queue_register(comp, radio, DHW_REG_BOOST_DURATION, {0x01});
-  queue_register(comp, radio, DHW_REG_AWAY_DURATION, {0x00});
-  queue_register(comp, radio, DHW_REG_ENERGY, {0x00, 0x1B, 0xF3, 0x42});
+  queue_register(comp, radio, DeviceRegister::DHW_WATER_TEMPERATURE, {0x02, 0x45, 0x00, 0x5C, 0x02, 0x78});  // 58.1 C
+  queue_register(comp, radio, DeviceRegister::DHW_MODE, {0x01});  // manual, ECO on
+  queue_register(comp, radio, DeviceRegister::DHW_HEATING, {0x01, 0xFF, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00});
+  queue_register(comp, radio, DeviceRegister::DHW_BOOST_DURATION, {0x01});
+  queue_register(comp, radio, DeviceRegister::DHW_AWAY_DURATION, {0x00});
+  queue_register(comp, radio, DeviceRegister::DHW_ENERGY, {0x00, 0x1B, 0xF3, 0x42});
   if (with_brand)
-    queue_register(comp, radio, DHW_REG_BRAND, {0x41});
+    queue_register(comp, radio, DeviceRegister::DHW_BRAND, {0x41});
 }
 
 /// The register a sent CMD_WRITE_PRIVATE frame reads (`0C 60 00 <idx>` starts at offset 9).
@@ -135,30 +140,35 @@ TEST(HubDhw, ThePollReadsTheOperatingStatusThenTheRegistersThenTheBrandOnce) {
   EXPECT_EQ(sent[0][9], PRIVATE_STATUS_MP_FP) << "the status read the heater has answered";
   EXPECT_EQ(sent[0][10], DHW_STATUS_FPI1) << "no FP1-FP7: the heater answers them with code 5";
   EXPECT_EQ(sent[0][11], DHW_STATUS_FPI2) << "FP15 and FP16 come with the target";
-  const uint8_t expected[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,   DHW_REG_HEATING, DHW_REG_BOOST_DURATION,
-                              DHW_REG_AWAY_DURATION,     DHW_REG_ENERGY, DHW_REG_BRAND};
+  const DeviceRegister expected[] = {DeviceRegister::DHW_WATER_TEMPERATURE,
+                                     DeviceRegister::DHW_MODE,
+                                     DeviceRegister::DHW_HEATING,
+                                     DeviceRegister::DHW_BOOST_DURATION,
+                                     DeviceRegister::DHW_AWAY_DURATION,
+                                     DeviceRegister::DHW_ENERGY,
+                                     DeviceRegister::DHW_BRAND};
   for (size_t i = 0; i < std::size(expected); i++) {
     const auto &tx = sent[i + 1];
     EXPECT_EQ(tx[8], CMD_WRITE_PRIVATE) << i;
     EXPECT_EQ(tx[9], PRIVATE_REGISTER_PREFIX) << i;
     EXPECT_EQ(tx[10], PRIVATE_REGISTER_DIRECTION_GET) << "a poll only reads: " << i;
     EXPECT_EQ(tx[11], DHW_REGISTER_HIGH_BYTE) << "family 0x00: " << i;
-    EXPECT_EQ(sent_register(tx), expected[i]) << i;
+    EXPECT_EQ(sent_register(tx), low_byte(expected[i])) << i;
   }
 
-  EXPECT_FLOAT_EQ(dev->dhw.target_c, 54.0F);
-  EXPECT_FLOAT_EQ(dev->dhw.water_c, 58.1F);
-  EXPECT_EQ(dev->dhw.mode, static_cast<int16_t>(DhwMode::MANUAL_ECO_ON));
-  EXPECT_EQ(dev->dhw.heating, 1);
-  EXPECT_EQ(dev->dhw.element, 1);
-  EXPECT_EQ(dev->dhw.heat_pump, 1);
-  EXPECT_EQ(dev->dhw.capabilities, DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST);
-  EXPECT_EQ(dev->dhw.boost, 0) << "the state is FP16, not the duration register that read 1";
-  EXPECT_EQ(dev->dhw.away, 0);
-  EXPECT_EQ(dev->dhw.boost_duration, 1);
-  EXPECT_EQ(dev->dhw.away_duration, 0);
-  EXPECT_EQ(dev->dhw.energy_wh, 1831746);
-  EXPECT_EQ(dev->dhw.brand, 'A');
+  EXPECT_FLOAT_EQ(test::water_heater_values(*dev).target_c, 54.0F);
+  EXPECT_FLOAT_EQ(test::water_heater_values(*dev).water_c, 58.1F);
+  EXPECT_EQ(test::water_heater_values(*dev).mode, static_cast<int16_t>(DhwMode::MANUAL_ECO_ON));
+  EXPECT_EQ(test::water_heater_values(*dev).heating, 1);
+  EXPECT_EQ(test::water_heater_values(*dev).element, 1);
+  EXPECT_EQ(test::water_heater_values(*dev).heat_pump, 1);
+  EXPECT_EQ(test::water_heater_values(*dev).capabilities, DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST);
+  EXPECT_EQ(test::water_heater_values(*dev).boost, 0) << "the state is FP16, not the duration register that read 1";
+  EXPECT_EQ(test::water_heater_values(*dev).away, 0);
+  EXPECT_EQ(test::water_heater_values(*dev).boost_duration, 1);
+  EXPECT_EQ(test::water_heater_values(*dev).away_duration, 0);
+  EXPECT_EQ(test::water_heater_values(*dev).energy_wh, 1831746);
+  EXPECT_EQ(test::water_heater_values(*dev).brand, 'A');
   EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis())) << "a good poll closes its window";
   EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id)) << "the cadence is armed";
   EXPECT_EQ(comp.last_timeout_ms_, HEATING_POLL_DEFAULT_INTERVAL_MS);
@@ -188,8 +198,8 @@ TEST(HubDhw, AStatusReplyChangesOnlyTheWaterHeaterReadings) {
   EXPECT_EQ(dev->battery, BatteryState::NOT_REPORTED);
   EXPECT_TRUE(std::isnan(test::number_read(*dev, DeviceReading::SETPOINT)))
       << "the heater readings are a radiator's, never touched";
-  EXPECT_FALSE(reading_value(*dev, DeviceReading::STATUS_SETPOINT).has_value())
-      << "nor does a water heater's target become a heater's status setpoint";
+  EXPECT_FLOAT_EQ(test::number_read(*dev, DeviceReading::STATUS_SETPOINT), 54.0F)
+      << "a water heater's target is the setpoint its status reply reports";
   EXPECT_FALSE(reading_value(*dev, DeviceReading::HEATING_LEVEL).has_value());
   EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u) << "no follow-up poll for a 'moving' report";
 }
@@ -198,12 +208,12 @@ TEST(HubDhw, AMainParameterThatIsNotATemperatureLeavesTheTargetUnknown) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
-  dev->dhw.target_c = 54.0F;
+  test::seed_water_heater(*dev, {.target_c = 54.0F});
   queue_status(comp, radio, 0xD812);
 
   comp.request_device_status("ABC123");  // the registers are not answered; only the status reply matters here
 
-  EXPECT_TRUE(std::isnan(dev->dhw.target_c));
+  EXPECT_TRUE(std::isnan(test::water_heater_values(*dev).target_c));
 }
 
 TEST(HubDhw, AnUnansweredStatusReadFailsThePollAndMovesItOntoTheLadder) {
@@ -227,16 +237,17 @@ TEST(HubDhw, AMissedRegisterStopsThePollAndKeepsWhatWasRead) {
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
   queue_status(comp, radio, 0xC800);
-  queue_register(comp, radio, DHW_REG_WATER_TEMPERATURE, {0x01, 0xF0});
+  queue_register(comp, radio, DeviceRegister::DHW_WATER_TEMPERATURE, {0x01, 0xF0});
   // The mode register never answers.
 
   EXPECT_FALSE(comp.request_device_status("ABC123"));
 
-  EXPECT_FLOAT_EQ(dev->dhw.target_c, 62.0F);
-  EXPECT_FLOAT_EQ(dev->dhw.water_c, 49.6F);
-  EXPECT_EQ(dev->dhw.mode, -1);
+  EXPECT_FLOAT_EQ(test::water_heater_values(*dev).target_c, 62.0F);
+  EXPECT_FLOAT_EQ(test::water_heater_values(*dev).water_c, 49.6F);
+  EXPECT_EQ(test::water_heater_values(*dev).mode, -1);
   for (size_t i = 2; i < radio.get_sent_data().size(); i++)
-    EXPECT_EQ(sent_register(radio.get_sent_data()[i]), DHW_REG_MODE) << "only the missed register is retried";
+    EXPECT_EQ(sent_register(radio.get_sent_data()[i]), low_byte(DeviceRegister::DHW_MODE))
+        << "only the missed register is retried";
   EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 1u);
 }
 
@@ -244,23 +255,23 @@ TEST(HubDhw, AModeValueNeverSeenLeavesTheModeAndThePollGoesOn) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
-  dev->dhw.mode = static_cast<int16_t>(DhwMode::AUTO);
+  test::seed_water_heater(*dev, {.mode = static_cast<int16_t>(DhwMode::AUTO)});
   queue_status(comp, radio, 0xBE7A);
-  queue_register(comp, radio, DHW_REG_WATER_TEMPERATURE, {0x01, 0xF0});
-  queue_register(comp, radio, DHW_REG_MODE, {0x03});
-  queue_register(comp, radio, DHW_REG_HEATING, {0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
-  queue_register(comp, radio, DHW_REG_BOOST_DURATION, {0x00});
-  queue_register(comp, radio, DHW_REG_AWAY_DURATION, {0x00});
-  queue_register(comp, radio, DHW_REG_ENERGY, {0x00, 0x1B, 0xF3, 0x97});
-  queue_register(comp, radio, DHW_REG_BRAND, {});  // an empty answer: still an answer
+  queue_register(comp, radio, DeviceRegister::DHW_WATER_TEMPERATURE, {0x01, 0xF0});
+  queue_register(comp, radio, DeviceRegister::DHW_MODE, {0x03});
+  queue_register(comp, radio, DeviceRegister::DHW_HEATING, {0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+  queue_register(comp, radio, DeviceRegister::DHW_BOOST_DURATION, {0x00});
+  queue_register(comp, radio, DeviceRegister::DHW_AWAY_DURATION, {0x00});
+  queue_register(comp, radio, DeviceRegister::DHW_ENERGY, {0x00, 0x1B, 0xF3, 0x97});
+  queue_register(comp, radio, DeviceRegister::DHW_BRAND, {});  // an empty answer: still an answer
 
   EXPECT_TRUE(comp.request_device_status("ABC123"));
 
-  EXPECT_EQ(dev->dhw.mode, static_cast<int16_t>(DhwMode::AUTO));
-  EXPECT_EQ(dev->dhw.heating, 0);
-  EXPECT_EQ(dev->dhw.heat_pump, 0);
-  EXPECT_EQ(dev->dhw.energy_wh, 1831831);
-  EXPECT_EQ(dev->dhw.brand, -1) << "an empty brand is read again next time";
+  EXPECT_EQ(test::water_heater_values(*dev).mode, static_cast<int16_t>(DhwMode::AUTO));
+  EXPECT_EQ(test::water_heater_values(*dev).heating, 0);
+  EXPECT_EQ(test::water_heater_values(*dev).heat_pump, 0);
+  EXPECT_EQ(test::water_heater_values(*dev).energy_wh, 1831831);
+  EXPECT_EQ(test::water_heater_values(*dev).brand, -1) << "an empty brand is read again next time";
 }
 
 // === Who gets the water heater path ===
@@ -275,8 +286,7 @@ TEST(HubDhw, AWaterHeaterDeclaredOnAnotherPlatformGetsNoneOfIt) {
   EXPECT_FALSE(comp.set_water_heater_target("ABC123", 54.0F));
   EXPECT_FALSE(comp.set_water_heater_mode("ABC123", DhwMode::AUTO));
   EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
-  IoFrame response;
-  EXPECT_FALSE(comp.heater_controller_.read_dhw_register("ABC123", DHW_REG_MODE, "dhw_mode", response, 1));
+  EXPECT_FALSE(comp.heater_controller_.read_dhw_reading("ABC123", DeviceRegister::DHW_MODE, 1));
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
@@ -288,8 +298,8 @@ TEST(HubDhw, ARadiatorAndACoverAreNeverSentAFamilyZeroFrame) {
     EXPECT_FALSE(comp.set_water_heater_target("ABC123", 54.0F));
     EXPECT_FALSE(comp.set_water_heater_mode("ABC123", DhwMode::AUTO));
     EXPECT_FALSE(comp.set_water_heater_boost("ABC123", true));
-    IoFrame response;
-    EXPECT_FALSE(comp.heater_controller_.read_dhw_register("ABC123", DHW_REG_MODE, "dhw_mode", response, 1));
+    EXPECT_FALSE(comp.heater_controller_.read_dhw_reading("ABC123", DeviceRegister::DHW_MODE, 1));
+    EXPECT_FALSE(comp.heater_controller_.read_heating_register("ABC123", DeviceRegister::DHW_MODE, nullptr, 1));
     EXPECT_TRUE(radio.get_sent_data().empty()) << static_cast<unsigned>(type);
   }
 }
@@ -315,7 +325,8 @@ TEST(HubDhw, TheTargetIsAMainParameterOnlyExecute) {
   EXPECT_EQ(tx[8], CMD_EXECUTE);
   EXPECT_EQ(tx[11], 0xA1);
   EXPECT_EQ(tx[12], 0xE8);
-  EXPECT_TRUE(std::isnan(dev->dhw.target_c)) << "the ack's main parameter is not taken as the target";
+  EXPECT_TRUE(std::isnan(test::water_heater_values(*dev).target_c))
+      << "the ack's main parameter is not taken as the target";
   EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "a water heater never moves";
   EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
   EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS) << "the heating state is read again soon";
@@ -327,7 +338,7 @@ TEST(HubDhw, TheModeIsARegisterWriteReadBackAtOnceWithTheTarget) {
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
   queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, 0x06, 0x02});
-  queue_register(comp, radio, DHW_REG_MODE, {0x02});
+  queue_register(comp, radio, DeviceRegister::DHW_MODE, {0x02});
   queue_status(comp, radio, 0xA1E8);  // 54 C, the manual target the heater holds
 
   EXPECT_TRUE(comp.set_water_heater_mode("ABC123", DhwMode::MANUAL_ECO_OFF));
@@ -342,8 +353,8 @@ TEST(HubDhw, TheModeIsARegisterWriteReadBackAtOnceWithTheTarget) {
   const auto &status = radio.get_sent_data()[2];
   EXPECT_EQ(status[8], CMD_PRIVATE) << "the target follows the mode: the poll's status read";
   EXPECT_EQ(status[9], PRIVATE_STATUS_MP_FP);
-  EXPECT_EQ(dev->dhw.mode, static_cast<int16_t>(DhwMode::MANUAL_ECO_OFF));
-  EXPECT_FLOAT_EQ(dev->dhw.target_c, 54.0F);
+  EXPECT_EQ(test::water_heater_values(*dev).mode, static_cast<int16_t>(DhwMode::MANUAL_ECO_OFF));
+  EXPECT_FLOAT_EQ(test::water_heater_values(*dev).target_c, 54.0F);
   EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
   EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS);
 }
@@ -353,13 +364,13 @@ TEST(HubDhw, AMissedTargetReadAfterAModeWriteDoesNotFailTheWrite) {
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
   queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, 0x06, 0x00});
-  queue_register(comp, radio, DHW_REG_MODE, {0x00});
+  queue_register(comp, radio, DeviceRegister::DHW_MODE, {0x00});
   // The status read is never answered.
 
   EXPECT_TRUE(comp.set_water_heater_mode("ABC123", DhwMode::AUTO));
 
-  EXPECT_EQ(dev->dhw.mode, static_cast<int16_t>(DhwMode::AUTO));
-  EXPECT_TRUE(std::isnan(dev->dhw.target_c));
+  EXPECT_EQ(test::water_heater_values(*dev).mode, static_cast<int16_t>(DhwMode::AUTO));
+  EXPECT_TRUE(std::isnan(test::water_heater_values(*dev).target_c));
   EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS) << "the settle poll still reads it soon";
 }
 
@@ -374,9 +385,9 @@ std::vector<uint8_t> execute_tail(const std::vector<uint8_t> &tx) {
 }
 
 /// Queue the replies of a successful switch-on: duration ack, EXECUTE ack, the duration read-back, the status.
-void queue_on_sequence(TestableComponent &comp, MockRadio &radio, uint8_t duration_register, uint8_t duration,
+void queue_on_sequence(TestableComponent &comp, MockRadio &radio, DeviceRegister duration_register, uint8_t duration,
                        uint16_t fp16) {
-  queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, duration_register, 0x00});  // ignored: acks 00
+  queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x00, low_byte(duration_register), 0x00});  // ignored: acks 00
   queue_register(comp, radio, duration_register, {duration});
   queue_status(comp, radio, 0x0000);  // the EXECUTE's ack
   queue_operating_status(comp, radio, 0xA1E8, fp16);
@@ -388,7 +399,7 @@ TEST(HubDhw, BoostOnWritesTheDurationThenTheBoostWordThenReadsTheStatus) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
-  queue_on_sequence(comp, radio, DHW_REG_BOOST_DURATION, 1, DHW_OPERATING_MODE_BOOST_ON);
+  queue_on_sequence(comp, radio, DeviceRegister::DHW_BOOST_DURATION, 1, DHW_OPERATING_MODE_BOOST_ON);
 
   EXPECT_TRUE(comp.set_water_heater_boost("ABC123", true));
 
@@ -402,8 +413,8 @@ TEST(HubDhw, BoostOnWritesTheDurationThenTheBoostWordThenReadsTheStatus) {
   EXPECT_EQ(execute_tail(sent[2]), (std::vector<uint8_t>{0xD4, 0x00, 0x00, 0x01, 0x49, 0x00}));
   EXPECT_EQ(sent[3][8], CMD_PRIVATE) << "the status is read at once";
   EXPECT_EQ(sent[3][11], DHW_STATUS_FPI2);
-  EXPECT_EQ(dev->dhw.boost, 1) << "shown from FP16";
-  EXPECT_EQ(dev->dhw.away, 0);
+  EXPECT_EQ(test::water_heater_values(*dev).boost, 1) << "shown from FP16";
+  EXPECT_EQ(test::water_heater_values(*dev).away, 0);
   EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id));
   EXPECT_EQ(comp.last_timeout_ms_, HEATING_POST_WRITE_POLL_DELAY_MS) << "the poll follows 45 s later";
 }
@@ -412,7 +423,7 @@ TEST(HubDhw, AwayOnWritesTwoFiftyFiveToTheAwayDurationThenTheAwayWord) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
-  queue_on_sequence(comp, radio, DHW_REG_AWAY_DURATION, 0xFF, DHW_OPERATING_MODE_AWAY_ON);
+  queue_on_sequence(comp, radio, DeviceRegister::DHW_AWAY_DURATION, 0xFF, DHW_OPERATING_MODE_AWAY_ON);
 
   EXPECT_TRUE(comp.set_water_heater_away("ABC123", true));
 
@@ -421,9 +432,9 @@ TEST(HubDhw, AwayOnWritesTwoFiftyFiveToTheAwayDurationThenTheAwayWord) {
   EXPECT_EQ(std::vector<uint8_t>(sent[0].begin() + 9, sent[0].begin() + 14),
             (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x05, 0xFF}));
   EXPECT_EQ(execute_tail(sent[2]), (std::vector<uint8_t>{0xD4, 0x00, 0x00, 0x01, 0x46, 0x00}));
-  EXPECT_EQ(dev->dhw.away, 1);
-  EXPECT_EQ(dev->dhw.boost, 0);
-  EXPECT_EQ(dev->dhw.away_duration, 255);
+  EXPECT_EQ(test::water_heater_values(*dev).away, 1);
+  EXPECT_EQ(test::water_heater_values(*dev).boost, 0);
+  EXPECT_EQ(test::water_heater_values(*dev).away_duration, 255);
 }
 
 TEST(HubDhw, SwitchingOffSendsTheOffWordOnlyAndReadsTheStatus) {
@@ -431,8 +442,8 @@ TEST(HubDhw, SwitchingOffSendsTheOffWordOnlyAndReadsTheStatus) {
     TestableComponent comp;
     MockRadio radio;
     IoDevice *dev = make_water_heater(comp, radio);
-    dev->dhw.boost = 1;
-    dev->dhw.away = 1;
+    test::seed_water_heater(*dev, {.boost = 1});
+    test::seed_water_heater(*dev, {.away = 1});
     queue_status(comp, radio, 0x0000);  // the EXECUTE's ack
     queue_operating_status(comp, radio, 0xA1E8, DHW_OPERATING_MODE_OFF);
 
@@ -442,8 +453,8 @@ TEST(HubDhw, SwitchingOffSendsTheOffWordOnlyAndReadsTheStatus) {
     ASSERT_EQ(sent.size(), 2u) << boost << ": no duration write, no read-back of one";
     EXPECT_EQ(sent[0][8], CMD_EXECUTE);
     EXPECT_EQ(execute_tail(sent[0]), (std::vector<uint8_t>{0xD4, 0x00, 0x00, 0x01, 0x4A, 0x00}));
-    EXPECT_EQ(dev->dhw.boost, 0) << "off ends both";
-    EXPECT_EQ(dev->dhw.away, 0) << "off ends both";
+    EXPECT_EQ(test::water_heater_values(*dev).boost, 0) << "off ends both";
+    EXPECT_EQ(test::water_heater_values(*dev).away, 0) << "off ends both";
   }
 }
 
@@ -465,14 +476,14 @@ TEST(HubDhw, AnUnacknowledgedDurationWriteDoesNotStopTheModeWord) {
   for (size_t i = 0; i < EXCHANGE_RETRY_COUNT; i++)
     EXPECT_EQ(sent[i][8], CMD_WRITE_PRIVATE) << "every try of the duration write: " << cmds;
   EXPECT_EQ(sent[EXCHANGE_RETRY_COUNT][8], CMD_EXECUTE) << cmds;
-  EXPECT_EQ(dev->dhw.boost, 1) << cmds;
+  EXPECT_EQ(test::water_heater_values(*dev).boost, 1) << cmds;
 }
 
 TEST(HubDhw, BeforeFp15IsReadAWriteIsTried) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
-  ASSERT_EQ(dev->dhw.capabilities, -1);
+  ASSERT_EQ(test::water_heater_values(*dev).capabilities, -1);
   EXPECT_FALSE(comp.set_water_heater_away("ABC123", false)) << "no answer here, but it was tried";
   EXPECT_FALSE(radio.get_sent_data().empty());
 }
@@ -484,22 +495,22 @@ TEST(HubDhw, AnUnacknowledgedModeWordIsNotReadBackAndLeavesTheStateAlone) {
   EXPECT_FALSE(comp.set_water_heater_boost("ABC123", false));
   for (const auto &tx : radio.get_sent_data())
     EXPECT_EQ(tx[8], CMD_EXECUTE) << "only the EXECUTE is tried";
-  EXPECT_EQ(dev->dhw.boost, -1);
+  EXPECT_EQ(test::water_heater_values(*dev).boost, -1);
 }
 
 TEST(HubDhw, AStatusReplyWithoutTheOperatingWordsKeepsBoostAndAway) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
-  dev->dhw.boost = 1;
-  dev->dhw.away = 1;
+  test::seed_water_heater(*dev, {.boost = 1});
+  test::seed_water_heater(*dev, {.away = 1});
   queue_status(comp, radio, 0xA1E8);  // the plain FP1-FP7-shaped reply
 
   comp.request_device_status("ABC123");
 
-  EXPECT_FLOAT_EQ(dev->dhw.target_c, 54.0F);
-  EXPECT_EQ(dev->dhw.boost, 1);
-  EXPECT_EQ(dev->dhw.away, 1);
+  EXPECT_FLOAT_EQ(test::water_heater_values(*dev).target_c, 54.0F);
+  EXPECT_EQ(test::water_heater_values(*dev).boost, 1);
+  EXPECT_EQ(test::water_heater_values(*dev).away, 1);
 }
 
 TEST(HubDhw, ABoostOrHolidayStartedOnTheDisplayShowsWithinOnePoll) {
@@ -508,26 +519,171 @@ TEST(HubDhw, ABoostOrHolidayStartedOnTheDisplayShowsWithinOnePoll) {
   IoDevice *dev = make_water_heater(comp, radio);
   queue_full_poll(comp, radio, /*with_brand=*/false, 0x05, DHW_OPERATING_MODE_AWAY_ON);
   comp.request_device_status("ABC123");
-  EXPECT_EQ(dev->dhw.away, 1);
-  EXPECT_EQ(dev->dhw.boost, 0);
+  EXPECT_EQ(test::water_heater_values(*dev).away, 1);
+  EXPECT_EQ(test::water_heater_values(*dev).boost, 0);
 
   queue_full_poll(comp, radio, /*with_brand=*/false, 0x05, DHW_OPERATING_MODE_BOOST_ON);
   comp.request_device_status("ABC123");
-  EXPECT_EQ(dev->dhw.away, 0);
-  EXPECT_EQ(dev->dhw.boost, 1);
+  EXPECT_EQ(test::water_heater_values(*dev).away, 0);
+  EXPECT_EQ(test::water_heater_values(*dev).boost, 1);
 }
 
 TEST(HubDhw, AHeaterInAwayModeThatReportsNoTargetShowsItUnknown) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_water_heater(comp, radio);
-  dev->dhw.target_c = 54.0F;
+  test::seed_water_heater(*dev, {.target_c = 54.0F});
   queue_operating_status(comp, radio, 0xD812, DHW_OPERATING_MODE_AWAY_ON);
 
   comp.request_device_status("ABC123");
 
-  EXPECT_TRUE(std::isnan(dev->dhw.target_c));
-  EXPECT_EQ(dev->dhw.away, 1);
+  EXPECT_TRUE(std::isnan(test::water_heater_values(*dev).target_c));
+  EXPECT_EQ(test::water_heater_values(*dev).away, 1);
+}
+
+// === What each captured reply is stored as ===
+
+namespace {
+
+/// A capture frame (these carry no CRC) parsed to the frame the heater sent.
+template<size_t N> IoFrame captured(const uint8_t (&bytes)[N]) {
+  IoFrame frame{};
+  EXPECT_TRUE(parse(bytes, static_cast<uint8_t>(N), frame));
+  return frame;
+}
+
+/// The payload of a captured frame, as the hub's mock radio is fed it.
+std::vector<uint8_t> payload_of(const IoFrame &frame) {
+  return std::vector<uint8_t>(frame.data, frame.data + frame.data_len);
+}
+
+/// A fresh water heater that has been read once with a captured register reply, and what the hub kept.
+template<size_t N> test::WaterHeaterValues stored_from_register_reply(const uint8_t (&bytes)[N], DeviceRegister fn) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  const IoFrame frame = captured(bytes);
+  EXPECT_EQ(frame.cmd, CMD_WRITE_PRIVATE_ACK);
+  queue(comp, radio, CMD_WRITE_PRIVATE_ACK, payload_of(frame));
+  EXPECT_TRUE(comp.heater_controller_.read_dhw_reading("ABC123", fn, 1));
+  return test::water_heater_values(*dev);
+}
+
+/// A fresh water heater that has answered the status read with a captured reply, and what the hub kept.
+template<size_t N> test::WaterHeaterValues stored_from_status_reply(const uint8_t (&bytes)[N]) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  const IoFrame frame = captured(bytes);
+  EXPECT_EQ(frame.cmd, CMD_PRIVATE_RESP);
+  queue(comp, radio, CMD_PRIVATE_RESP, payload_of(frame));
+  EXPECT_TRUE(comp.heater_controller_.read_dhw_status("ABC123", 1));
+  return test::water_heater_values(*dev);
+}
+
+}  // namespace
+
+TEST(HubDhwCorpus, EveryCapturedRegisterReplyIsStoredAsTheDisplayShowedIt) {
+  using test::WaterHeaterValues;
+  EXPECT_FLOAT_EQ(stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame0_bytes,
+                                             DeviceRegister::DHW_WATER_TEMPERATURE)
+                      .water_c,
+                  49.6F);
+  EXPECT_FLOAT_EQ(stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame12_bytes,
+                                             DeviceRegister::DHW_WATER_TEMPERATURE)
+                      .water_c,
+                  58.1F);
+
+  EXPECT_EQ(
+      stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame1_bytes, DeviceRegister::DHW_MODE)
+          .mode,
+      static_cast<int>(DhwMode::AUTO));
+  EXPECT_EQ(
+      stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame2_bytes, DeviceRegister::DHW_MODE)
+          .mode,
+      static_cast<int>(DhwMode::MANUAL_ECO_ON));
+  EXPECT_EQ(
+      stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame3_bytes, DeviceRegister::DHW_MODE)
+          .mode,
+      static_cast<int>(DhwMode::MANUAL_ECO_OFF));
+
+  const WaterHeaterValues idle = stored_from_register_reply(
+      corpus::atlantic_calypso_exchange_register_read_frame4_bytes, DeviceRegister::DHW_HEATING);
+  EXPECT_EQ(idle.heating, 0);
+  EXPECT_EQ(idle.element, 0);
+  EXPECT_EQ(idle.heat_pump, 0);
+  const WaterHeaterValues heat_pump = stored_from_register_reply(
+      corpus::atlantic_calypso_exchange_register_read_frame5_bytes, DeviceRegister::DHW_HEATING);
+  EXPECT_EQ(heat_pump.heating, 1);
+  EXPECT_EQ(heat_pump.element, 0);
+  EXPECT_EQ(heat_pump.heat_pump, 1);
+  const WaterHeaterValues boost = stored_from_register_reply(
+      corpus::atlantic_calypso_exchange_register_read_frame6_bytes, DeviceRegister::DHW_HEATING);
+  EXPECT_EQ(boost.heating, 1);
+  EXPECT_EQ(boost.element, 1);
+  EXPECT_EQ(boost.heat_pump, 1);
+
+  const int64_t before = stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame7_bytes,
+                                                    DeviceRegister::DHW_ENERGY)
+                             .energy_wh;
+  const int64_t after = stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame8_bytes,
+                                                   DeviceRegister::DHW_ENERGY)
+                            .energy_wh;
+  EXPECT_EQ(before / 1000, 1831) << "display: 1 831 kWh since start";
+  EXPECT_EQ(after - before, 85);
+
+  EXPECT_EQ(stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame9_bytes,
+                                       DeviceRegister::DHW_BOOST_DURATION)
+                .boost_duration,
+            1);
+  EXPECT_EQ(stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame10_bytes,
+                                       DeviceRegister::DHW_BOOST_DURATION)
+                .boost_duration,
+            0);
+  EXPECT_EQ(stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame13_bytes,
+                                       DeviceRegister::DHW_AWAY_DURATION)
+                .away_duration,
+            0);
+  EXPECT_EQ(stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame14_bytes,
+                                       DeviceRegister::DHW_AWAY_DURATION)
+                .away_duration,
+            2);
+  EXPECT_EQ(stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame16_bytes,
+                                       DeviceRegister::DHW_AWAY_DURATION)
+                .away_duration,
+            4);
+  EXPECT_EQ(stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame15_bytes,
+                                       DeviceRegister::DHW_AWAY_DURATION)
+                .away_duration,
+            255);
+  EXPECT_EQ(stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame11_bytes,
+                                       DeviceRegister::DHW_BRAND)
+                .brand,
+            'A');
+}
+
+TEST(HubDhwCorpus, EveryCapturedStatusReplyIsStoredAsTheDisplayShowedIt) {
+  EXPECT_FLOAT_EQ(stored_from_status_reply(corpus::atlantic_calypso_probe_status_mp_fp_frame0_bytes).target_c, 54.0F);
+  EXPECT_FLOAT_EQ(stored_from_status_reply(corpus::atlantic_calypso_probe_status_mp_fp_frame1_bytes).target_c, 62.0F);
+  EXPECT_FLOAT_EQ(stored_from_status_reply(corpus::atlantic_calypso_probe_status_mp_fp_frame2_bytes).target_c, 60.0F);
+  EXPECT_FLOAT_EQ(stored_from_status_reply(corpus::atlantic_calypso_probe_status_mp_fp_frame3_bytes).target_c,
+                  DHW_TARGET_MIN_C)
+      << "the bottom of the scale, which the entity hides while away";
+
+  const struct {
+    test::WaterHeaterValues stored;
+    float target_c;
+  } with_words[] = {
+      {stored_from_status_reply(corpus::atlantic_calypso_probe_status_fp_high_frame0_bytes), 60.0F},
+      {stored_from_status_reply(corpus::atlantic_calypso_probe_status_fp_high_frame1_bytes), 54.0F},
+      {stored_from_status_reply(corpus::atlantic_calypso_probe_status_fp_high_frame2_bytes), 62.0F},
+  };
+  for (const auto &c : with_words) {
+    EXPECT_FLOAT_EQ(c.stored.target_c, c.target_c);
+    EXPECT_EQ(c.stored.capabilities, DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST) << "FP15 000C";
+    EXPECT_EQ(c.stored.boost, 0) << "FP16 4A00 reads both fields off";
+    EXPECT_EQ(c.stored.away, 0);
+  }
 }
 
 // === Discovery's YAML block ===

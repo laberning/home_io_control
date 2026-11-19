@@ -396,7 +396,7 @@ TEST_F(RemoteActivityCatchupHub, AHeaterWriteDuringTheBurstMovesTheCatchupOut) {
   esphome::test_clock::advance_ms(CATCHUP_MS / 2);
   const uint8_t ack[] = {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00};
   radio.queue_rx(test::make_rx_packet(heater_reply(comp.node_id_, CMD_WRITE_PRIVATE_ACK, ack)));
-  ASSERT_TRUE(comp.send_heating_command(HEATER_DEVICE, HeatingFunction::SET_TEMPERATURE, 20.5F));
+  ASSERT_TRUE(comp.send_heating_command(HEATER_DEVICE, DeviceRegister::SET_TEMPERATURE, 20.5F));
   const uint32_t written = esphome::millis();
   ASSERT_GT(written, ended);
 

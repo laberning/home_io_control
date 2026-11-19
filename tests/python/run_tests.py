@@ -58,6 +58,13 @@ def import_component():
     return package
 
 
+def climate_reading_keys(config):
+    """platform_common.validate_reading_keys() for a climate entry, the platform the capability cases are about."""
+    from esphome.components.home_io_control import platform_common as pc
+
+    return pc.validate_reading_keys(config, platform=pc.CLIMATE_PLATFORM)
+
+
 def expect_invalid(fn, value, fragment):
     """`fn(value)` raises cv.Invalid whose message contains `fragment`."""
     import esphome.config_validation as cv
@@ -614,12 +621,12 @@ def heating_level_is_accepted_only_where_the_heater_reports_a_level():
     with_light = {**radiator, "io_model": "heater_with_light"}
     for kind in (plain, dryer, {"io_device_type": heater}):
         cfg = {**kind, key: {}}
-        assert pc.validate_reading_keys(cfg) is cfg, kind
+        assert climate_reading_keys(cfg) is cfg, kind
     untouched = dict(radiator)
-    assert pc.validate_reading_keys(untouched) is untouched
+    assert climate_reading_keys(untouched) is untouched
     for kind in (radiator, with_light, pilot_wire):
         try:
-            pc.validate_reading_keys({**kind, key: {}})
+            climate_reading_keys({**kind, key: {}})
         except cv.Invalid as err:
             assert "heating_level is not available on electrical_heater" in str(err), str(err)
             assert "the hub reads no heating level from this heater" in str(err) and "remove heating_level:" in str(err), str(err)
@@ -627,7 +634,7 @@ def heating_level_is_accepted_only_where_the_heater_reports_a_level():
             raise AssertionError(f"accepted heating_level on {kind}")
     for kind in ({"io_device_type": v.DEVICE_TYPE_OPTIONS["heat_pump"]}, {"io_device_type": v.DEVICE_TYPE_OPTIONS["heating_temperature_interface"]}, {}):
         try:
-            pc.validate_reading_keys({**kind, key: {}})
+            climate_reading_keys({**kind, key: {}})
         except cv.Invalid as err:
             assert "heating_level needs an electrical heater: set io_device_type: electrical_heater" in str(err), str(err)
         else:
@@ -656,7 +663,7 @@ def reading_keys_are_accepted_only_on_a_kind_with_their_capability():
     pump = {"io_device_type": heat_pump}
 
     untouched = dict(radiator)
-    assert pc.validate_reading_keys(untouched) is untouched
+    assert climate_reading_keys(untouched) is untouched
 
     accepted = {
         "central_heating_mode": (dryer,),
@@ -693,16 +700,54 @@ def reading_keys_are_accepted_only_on_a_kind_with_their_capability():
     for key, kinds in accepted.items():
         for kind in kinds:
             cfg = {**kind, key: {}}
-            assert pc.validate_reading_keys(cfg) is cfg, (key, kind)
+            assert climate_reading_keys(cfg) is cfg, (key, kind)
     for key, kinds in refused.items():
         for kind in kinds:
             cfg = {**kind, key: {}}
             try:
-                pc.validate_reading_keys(cfg)
+                climate_reading_keys(cfg)
             except cv.Invalid as err:
                 assert hint[key] in str(err) and str(err).startswith(key), (key, kind, str(err))
             else:
                 raise AssertionError(f"accepted {key} on {kind}")
+
+
+@case("platform_common.validate_reading_keys")
+def the_water_heaters_reading_keys_need_a_water_heater_and_are_not_a_heaters():
+    """`energy:`, `heat_pump_running:` and `electric_backup_running:` pass on a domestic hot water heater and are
+    refused on any other kind, with the kind to declare; the heater's `energy:` is a key of the climate platform only,
+    so a water heater's entry is judged by the water heater's row, and the generic reading entities show them."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as pc
+    from esphome.components.home_io_control import water_heater as wh
+
+    water_heater = {"io_device_type": v.DEVICE_TYPE_OPTIONS["domestic_hot_water"]}
+    shutter = {"io_device_type": v.DEVICE_TYPE_OPTIONS["roller_shutter"]}
+    for key in ("energy", "heat_pump_running", "electric_backup_running"):
+        cfg = {**water_heater, key: {}}
+        assert pc.validate_reading_keys(cfg, platform=pc.WATER_HEATER_PLATFORM) is cfg, key
+        try:
+            pc.validate_reading_keys({**shutter, key: {}}, platform=pc.WATER_HEATER_PLATFORM)
+        except cv.Invalid as err:
+            assert str(err).startswith(f"{key} needs a domestic hot water heater"), str(err)
+        else:
+            raise AssertionError(f"accepted {key} on a roller shutter")
+    # The climate platform does not take the water heater's keys, and the water heater platform not the heater's.
+    heater_only = {**water_heater, "occupancy": {}}
+    assert pc.validate_reading_keys(heater_only, platform=pc.WATER_HEATER_PLATFORM) is heater_only
+    assert pc.validate_reading_keys({**water_heater, "heat_pump_running": {}}, platform=pc.CLIMATE_PLATFORM)
+    # The schema builds the generic reading entities from the mirror.
+    entries = {str(key): validator for key, validator in wh.CONFIG_SCHEMA.validators[0].schema.items()}
+    for key, entity_class in (
+        ("energy", "IOHomeDeviceReadingSensor"),
+        ("heat_pump_running", "IOHomeDeviceReadingBinarySensor"),
+        ("electric_backup_running", "IOHomeDeviceReadingBinarySensor"),
+        ("heating_source", "IOHomeDhwHeatingSourceSensor"),
+        ("boost", "IOHomeDhwBoostSwitch"),
+    ):
+        checked = entries[key]({"name": f"Class of {key}"})
+        assert str(checked["id"].type).split("::")[-1] == entity_class, (key, checked["id"].type)
 
 
 @case()
@@ -723,10 +768,18 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
         "boost_duration",
         "drying_duration",
         "heating_level",
+        "heat_pump_running",
+        "electric_backup_running",
     }
+    # A key belongs to one platform: the heater's `energy:` and the water heater's are two rows of two platforms.
+    platform_keys = [(entry["platform"], entry["key"]) for entry in keyed.values()]
+    assert len(platform_keys) == len(set(platform_keys)), platform_keys
     for name, entry in v.DEVICE_READINGS.items():
         assert entry["feature"] in v.FEATURES or entry["feature"] is None, name
-        assert entry["source"] in ("register", "derived", "data_object", "status"), name
+        assert entry["platform"] in ("climate", "water_heater", "sensor"), name
+        assert (entry["platform"] == "sensor") == (entry["source"] == "data_object"), name
+        assert (entry["platform"] == "water_heater") == (entry["feature"] == "WATER_HEATER"), name
+        assert entry["source"] in ("register", "derived", "data_object", "status", "status_parameter"), name
         # A data object and a status reply are read without a register of the poll.
         assert bool(entry["registers"]) == (entry["source"] in ("register", "derived")), name
         if entry["source"] == "data_object":
@@ -741,9 +794,15 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
         if "companion" in entry:
             assert entry["entity"] in ("sensor", "binary_sensor", "switch", "text_sensor"), name
             assert entry["feature"] in v.FEATURES and entry["companion_id"], name
-    schema_keys = {str(key) for key in pc.reading_keys_schema(pc.HEATER_READING_SOURCES)}
-    assert schema_keys == {entry["key"] for entry in keyed.values()}
-    assert not pc.reading_keys_schema(pc.DATA_OBJECT_READING_SOURCES), "no production reading is a data object yet"
+    for platform in ("climate", "water_heater"):
+        schema_keys = {str(key) for key in pc.reading_keys_schema(platform)}
+        assert schema_keys == {entry["key"] for entry in keyed.values() if entry["platform"] == platform}, platform
+    assert {str(key) for key in pc.reading_keys_schema(pc.WATER_HEATER_PLATFORM)} == {
+        "energy",
+        "heat_pump_running",
+        "electric_backup_running",
+    }
+    assert not pc.reading_keys_schema(pc.SENSOR_PLATFORM), "no production reading is a data object yet"
     # The companions are the window sensor and the detection switch, named and IDed from the mirror.
     companions = {name: entry for name, entry in v.DEVICE_READINGS.items() if "companion" in entry}
     assert {name: (entry["companion"], entry["companion_id"]) for name, entry in companions.items()} == {
@@ -768,10 +827,10 @@ def the_sensor_platform_never_offers_a_heater_companion_or_status_reading():
     from esphome.components.home_io_control import platform_common as pc
     from esphome.components.home_io_control import sensor as sensor_platform
 
-    offered = {str(key) for key in pc.reading_keys_schema(pc.DATA_OBJECT_READING_SOURCES)}
+    offered = {str(key) for key in pc.reading_keys_schema(pc.SENSOR_PLATFORM)}
     heater_keys = {entry["key"] for entry in v.DEVICE_READINGS.values() if entry["key"] is not None}
     assert not offered & heater_keys, offered
-    assert not pc._reading_companions(pc.DATA_OBJECT_READING_SOURCES)
+    assert not pc._reading_companions(pc.SENSOR_PLATFORM)
     schema_keys = {str(key) for key in sensor_platform.CONFIG_SCHEMA.validators[0].schema}
     assert not schema_keys & heater_keys, schema_keys
     assert "heating_level" not in schema_keys
@@ -788,6 +847,7 @@ def with_data_object_reading(body):
     v.DEVICE_READINGS["ENERGY_TOTAL"] = {
         "feature": "ENERGY_METER",
         "source": "data_object",
+        "platform": "sensor",
         "registers": (),
         "key": "energy",
         "entity": "sensor",
@@ -855,9 +915,41 @@ def a_sensor_only_device_takes_the_numeric_readings_of_its_kind_from_the_mirror(
         # A reading that is a data object is not offered to a climate entry, which reads heater registers.
         from esphome.components.home_io_control import platform_common as pc
 
-        assert "energy" not in {str(key) for key in pc.reading_keys_schema(pc.HEATER_READING_SOURCES)}
+        assert "energy" not in {str(key) for key in pc.reading_keys_schema(pc.CLIMATE_PLATFORM)}
 
     with_data_object_reading(body)
+
+
+@case()
+def the_water_heater_offers_its_companion_keys_with_their_home_assistant_metadata():
+    """The water heater's opt-in entities keep their keys, units, accuracy, device and state classes: `energy:` in
+    kWh with three decimals for the energy dashboard, the two running binary sensors, and the heating-source text
+    sensor and boost switch with no metadata of their own."""
+    from esphome.components.home_io_control import water_heater as wh
+
+    entries = {str(key): validator for key, validator in wh.CONFIG_SCHEMA.validators[0].schema.items()}
+    expected = {
+        "energy": {
+            "unit_of_measurement": "kWh",
+            "accuracy_decimals": 3,
+            "device_class": "energy",
+            "state_class": "total_increasing",
+        },
+        "heat_pump_running": {"device_class": "running"},
+        "electric_backup_running": {"device_class": "running"},
+        "heating_source": {},
+        "boost": {"restore_mode": "DISABLED"},
+    }
+    for key, metadata in expected.items():
+        assert key in entries, f"the water_heater platform lost its {key} key"
+        checked = entries[key]({"name": f"Water heater {key}"})
+        for field, value in metadata.items():
+            assert checked.get(field) == value, (key, field, checked.get(field))
+    for key in ("energy", "heat_pump_running", "electric_backup_running", "heating_source", "boost"):
+        assert key in {str(k) for k in entries}, key
+    assert {"min_temperature", "max_temperature", "heating_level", "occupancy"}.isdisjoint(entries), (
+        "no heater key belongs on a water heater"
+    )
 
 
 @case("hub_validators._validate_min_interval")
@@ -899,7 +991,7 @@ def a_reading_key_asks_for_its_data_object_read_with_the_mirrors_default_interva
         cg.add = lambda expression: None
         pc.create_user_companion = create_entity
         try:
-            await pc.reading_keys_to_code(recorder, None, {"energy": {}})
+            await pc.reading_keys_to_code(recorder, None, {"energy": {}}, pc.SENSOR_PLATFORM)
         finally:
             cg.add, pc.create_user_companion = original_add, original_create
         return recorder.calls

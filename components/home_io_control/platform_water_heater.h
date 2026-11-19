@@ -1,7 +1,7 @@
 #pragma once
 
 /// @file platform_water_heater.h
-/// @brief Water heater entity for a domestic hot water heater, and its opt-in companion sensors.
+/// @brief Water heater entity for a domestic hot water heater, and its opt-in companions.
 /// @ingroup hioc_platforms
 ///
 /// Maps a domestic hot water heater (device_feature::WATER_HEATER, proto_dhw.h) onto an ESPHome
@@ -24,17 +24,19 @@
 /// no target while the heater reports automatic mode, and a target set then is not sent.
 ///
 /// State is observed, not predicted, as on the climate entity: the hub polls the heater (default every 5
-/// minutes) and this entity publishes from IoDevice::dhw, which only a decoded reply changes. Until a reading
-/// has arrived an accepted write shows the commanded value; after that the read-back decides.
+/// minutes) and this entity publishes from its readings (reading_value(), proto_device_readings.h), which only a
+/// decoded reply changes. Until a reading has arrived an accepted write shows the commanded value; after that the
+/// read-back decides.
 ///
 /// Away mode is part of the entity: Home Assistant's away switch starts and ends the heater's holiday mode
 /// (ADR 0081). The heater reports it, and boost, in the operating-mode word the poll reads, so the entity
 /// shows away only once the heater said so. While away no target is shown (the heater reports a main parameter
 /// of 0, which is no target) and a target set then is logged and dropped.
 ///
-/// The companions (energy, heat pump running, electric backup running, heating source) show readings the same poll
-/// already stores and add no radio traffic; the boost switch shows the boost state of the operating-mode word the poll
-/// reads and writes it.
+/// The companions show readings the same poll already stores and add no radio traffic. Energy, heat pump running and
+/// electric backup running are the generic reading entities (platform_device_readings.h) the codegen builds from the
+/// reading mirror; the heating-source text sensor combines the two running readings, and the boost switch shows the
+/// boost state of the operating-mode word the poll reads and writes it.
 ///
 /// The readings, the target EXECUTE, the mode write, boost and away are confirmed on one Atlantic Calypso
 /// Connecte ([issue #198](https://github.com/laberning/home_io_control/issues/198)): its display follows the
@@ -45,12 +47,12 @@
 /// \todo The mode mapping and the target steps rest on that one heater (and on its manual for the heat-pump-only
 /// setting); confirm them on a second one, and confirm that the element never runs in manual ECO on.
 
-#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/water_heater/water_heater.h"
 #include "esphome/core/component.h"
 #include "platform_companion_sensors.h"
 #include "platform_entity_base.h"
+#include "proto_device_readings.h"
 #include "proto_dhw.h"
 
 namespace esphome {
@@ -97,15 +99,15 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
   /// DHW_TARGET_MIN_C..DHW_TARGET_MAX_C at a 1 C step.
   water_heater::WaterHeaterTraits traits() override;
 
-  /// @brief Inbound device-update hook: fold IoDevice::dhw into the entity and publish when a shown field
+  /// @brief Inbound device-update hook: fold the device's readings into the entity and publish when a shown field
   /// changed.
   void on_device_update_(const IoDevice &dev);
 
   /// @brief Copy the readings into the entity's fields. The target is shown as unknown (NaN) while the
   /// heater reports automatic mode or away; away follows the heater's report.
-  /// @param readings What the hub has read from the heater.
+  /// @param dev What the hub has read from the heater.
   /// @return true when a published field changed.
-  bool sync_from_readings_(const DhwReadings &readings);
+  bool sync_from_readings_(const IoDevice &dev);
 
   /// @brief True when the mode shown is the one the heater's automatic mode maps to.
   [[nodiscard]] bool holds_automatic_mode_() const;
@@ -113,53 +115,13 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
   bool observed_{false};  ///< True once a reading has been folded in.
 };
 
-/// @brief Sensor of the heater's energy since installation, in kWh (`total_increasing`).
-/// @ingroup hioc_platforms
-///
-/// Reads IoDevice::dhw.energy_wh (register 0x0004, Wh) and publishes it in kWh, so it fits the Home
-/// Assistant energy dashboard. No state until the first poll has read it.
-class IOHomeDhwEnergySensor : public IOHomeCompanionSensor {
- public:
-  /// @brief Subscribe to the device's updates and publish what is already known.
-  void setup() override;
-  /// @brief Dump sensor configuration to the log.
-  void dump_config() override;
-};
-
-/// @brief Binary sensor of one heating state of the heater: heat pump running or electric backup running.
-/// @ingroup hioc_platforms
-///
-/// No state until the first poll has read the register it shows, so "off" always means the heater said so.
-class IOHomeDhwBinarySensor : public binary_sensor::BinarySensor, public Component, public DeviceBoundCompanion {
- public:
-  /// @brief Which reading the sensor shows.
-  enum class Reading : uint8_t {
-    HEAT_PUMP,        ///< Register 0x0021 bytes 3/4: the heat pump runs.
-    ELECTRIC_BACKUP,  ///< Register 0x0021 byte 2: the electric element heats.
-  };
-
-  /// @brief Choose the reading (codegen sets it once).
-  /// @param reading Reading to show.
-  void set_reading(Reading reading) { this->reading_ = reading; }
-
-  /// @brief Subscribe to the device's updates and publish what is already known.
-  void setup() override;
-  /// @brief Dump sensor configuration to the log.
-  void dump_config() override;
-  /// @brief Get setup priority so the parent hub is available first.
-  /// @return setup_priority::DATA.
-  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
-
- protected:
-  Reading reading_{Reading::HEAT_PUMP};
-};
-
 /// @brief Text sensor of what heats the water: `heat pump`, `electric backup`, `heat pump and electric backup`
 /// or `idle`.
 /// @ingroup hioc_platforms
 ///
-/// Built from the same heating-state reading as the two binary sensors (dhw_heating_source_name()). No state
-/// until the first poll has read it, so `idle` always means the heater said so.
+/// Built from the readings the two running binary sensors show (DeviceReading::HOT_WATER_HEAT_PUMP and
+/// HOT_WATER_ELECTRIC_BACKUP; dhw_heating_source_name()). No state until the first poll has read them, so `idle`
+/// always means the heater said so.
 class IOHomeDhwHeatingSourceSensor : public IOHomeCompanionTextSensor {
  public:
   /// @brief Subscribe to the device's updates and publish what is already known.

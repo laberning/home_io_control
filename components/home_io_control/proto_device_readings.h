@@ -5,13 +5,17 @@
 /// @ingroup hioc_protocol
 ///
 /// A reading is what the hub keeps of one value of a device: a heater's room temperature, its energy counter, the
-/// minutes left of a towel dryer's run, the heating level its status reply reports. One table (DEVICE_READINGS in the
+/// minutes left of a towel dryer's run, the heating level its status reply reports, a water heater's water
+/// temperature. One table (DEVICE_READINGS in the
 /// .cpp) lists every reading by name with its source and, for a reading an entity of the YAML can ask for, the
 /// capability a device needs (DeviceFeature, ADR 0098). The source says how the value is obtained, so the kinds stay
 /// apart and a new kind leaves the rows of the others alone:
-///  - HeatingRegisterSource: one private register of a heater, decoded with a ValueCodec (proto_value_codecs.h),
-///    optionally only while another register holds a value;
+///  - RegisterSource: one private register of a heater or a water heater, decoded with a ValueCodec
+///    (proto_value_codecs.h), or one slice of it with a codec of its own; optionally only while another register
+///    holds a value;
 ///  - StatusMainParameterSource: the main parameter of a status reply, as a heating level or a temperature;
+///  - StatusFunctionalParameterSource: one of the functional parameters FP9-FP16 of a status reply, as the whole word
+///    or one two-bit field of it;
 ///  - DerivedSource: a value worked out from other readings (the minutes left of whichever run is active), with the
 ///    registers it needs polled;
 ///  - DataObjectSource: a slice of a device's data object, read on a schedule through a transfer recipe
@@ -20,7 +24,7 @@
 /// Every value but a derived one is kept in the device record, by reading (DeviceReadingValues), since a read takes
 /// seconds and answers later than the poll that asked, and a status reply answers without being asked for. What the
 /// hub polls and what is shown stay separate: the registers the poll reads are derived from the rows
-/// (reading_polled_registers(), heater_poll_reads()), and every consumer (the climate card, the window sensor, the
+/// (reading_polled_registers(), device_poll_reads()), and every consumer (the climate card, the window sensor, the
 /// reading entities) reads through reading_value(), wherever the source keeps the value. The YAML key and the Home
 /// Assistant metadata of a reading (its entity, unit, device class, and the name of a companion entity made for it)
 /// are not here: the codegen mirror (hub_validators.py `DEVICE_READINGS`) carries them, checked against this table by
@@ -29,11 +33,12 @@
 ///
 /// Outside the table, with the reason: the model-name register (text, logged once), the registers the hub only logs
 /// (POWER_ON, MIDNIGHT_SYNC), the raw probes (`register_00`, `register_01`, `read_object`; raw by design), a cover's
-/// position, tilt and remaining time (fields of the status frame, not readings of a register), and a water heater's
-/// and a cover's rain, sun and battery values (their own mechanisms, until they move onto the table).
+/// position, tilt and remaining time (fields of the status frame, not readings of a register), and a cover's rain,
+/// sun and battery values (their own mechanisms, until they move onto the table).
 
 #include "proto_device_features.h"
 #include "proto_device_model.h"
+#include "proto_frame.h"
 #include "proto_heating.h"
 #include "proto_value_codecs.h"
 
@@ -73,7 +78,20 @@ enum class DeviceReading : uint8_t {
   NIGHT_LIGHT,                  ///< A heater's night light, 1 on and 0 off.
   NIGHT_LIGHT_BRIGHTNESS,       ///< The night light's brightness register as a percentage, 0-100.
   HEATING_LEVEL,                ///< The heating level, or setpoint alias, a heater's status reply reports (low byte).
-  STATUS_SETPOINT,              ///< The setpoint a temperature heater's status reply reports, degrees.
+  STATUS_SETPOINT,              ///< The setpoint a status reply reports, degrees, rounded to tenths: a temperature
+                                ///< heater's setpoint, a water heater's target.
+  HOT_WATER_TEMPERATURE,        ///< A water heater's water temperature, degrees.
+  HOT_WATER_MODE,               ///< A water heater's operating mode (DhwMode).
+  HOT_WATER_HEATING,            ///< The water heater heats at all (heat pump, element or both).
+  HOT_WATER_ELECTRIC_BACKUP,    ///< The water heater's electric element runs.
+  HOT_WATER_HEAT_PUMP,          ///< The water heater's heat pump runs.
+  HOT_WATER_BOOST_DURATION,     ///< A water heater's boost duration register. Logged, never a state.
+  HOT_WATER_AWAY_DURATION,      ///< A water heater's away duration register, days. Logged, never a state.
+  HOT_WATER_ENERGY,             ///< The energy a water heater has consumed since installation, kWh.
+  HOT_WATER_BRAND,              ///< The brand letter of a water heater. Logged once.
+  HOT_WATER_CAPABILITIES,       ///< The operating-mode capabilities a water heater reports (FP15 word).
+  HOT_WATER_BOOST,              ///< A water heater's boost is on, as its operating-mode word (FP16) reports it.
+  HOT_WATER_AWAY,               ///< A water heater's away mode is on, as its operating-mode word (FP16) reports it.
   COUNT,                        ///< Number of readings; not a reading.
 };
 
@@ -82,16 +100,28 @@ static_assert(static_cast<size_t>(DeviceReading::COUNT) <= DeviceReadingValues::
 
 /// @brief A reading another register must show for a register read to run.
 struct HeatingReadCondition {
-  HeatingFunction fn;  ///< The register whose stored reading decides; an integer register.
-  uint8_t value;       ///< The value `fn` must hold.
+  DeviceRegister fn;  ///< The register whose stored reading decides; an integer register.
+  uint8_t value;      ///< The value `fn` must hold.
 };
 
-/// @brief A reading that is one register of a heater.
-struct HeatingRegisterSource {
-  HeatingFunction fn;  ///< The register; its codec is the heater register table's.
+/// @brief A slice of a register's value, with a codec of its own: the register holds several facts in different bytes.
+struct RegisterPart {
+  uint8_t first;     ///< Index of the first byte of the slice in the value bytes.
+  uint8_t length;    ///< Number of bytes of the slice; the reading has no value when the reply is shorter.
+  ValueCodec codec;  ///< How the slice maps onto a number.
+};
+
+/// @brief A reading that is one register of a heater or a water heater, or a part of it.
+/// @details Several readings may name the same register, each with its own part: one read of the register stores
+///          them all (store_register_reply()). A reading without a part is the register's value, decoded with the
+///          register's codec.
+struct RegisterSource {
+  DeviceRegister fn;  ///< The register; its codec is the register table's.
   std::optional<HeatingReadCondition> only_while =
       std::nullopt;  ///< When set, the register is read only while this holds (the minutes left of a run, only
                      ///< while that run is on).
+  std::optional<RegisterPart> part =
+      std::nullopt;  ///< When set, the reading is this slice of the value, not the register's own value.
 };
 
 /// @brief How a status reply's main parameter becomes a reading.
@@ -110,10 +140,26 @@ struct StatusMainParameterSource {
   StatusValueForm form;  ///< What the main parameter means for this reading.
 };
 
+/// @brief How a functional parameter of a status reply becomes a reading.
+enum class StatusParameterForm : uint8_t {
+  WORD,      ///< The whole 16-bit value.
+  FIELD_ON,  ///< A two-bit field of the value, shifted by StatusFunctionalParameterSource::shift: 1 when the field
+             ///< reads 1 (on), 0 for any other value (keep, off).
+};
+
+/// @brief A reading that is one of the functional parameters FP9-FP16 of a status reply.
+/// @details Not read by a poll of its own: the status read that asked for the parameter answers it, and the status
+///          decoder (store_status_parameter_readings()) stores it.
+struct StatusFunctionalParameterSource {
+  uint8_t fp;                ///< The functional parameter, 9-16.
+  StatusParameterForm form;  ///< What the value means for this reading.
+  uint8_t shift{0};          ///< FIELD_ON: lowest bit of the field.
+};
+
 /// @brief A reading worked out from other readings of the same device.
 struct DerivedSource {
   std::optional<float> (*value)(const IoDevice &);  ///< The value now, or nullopt while it cannot be told.
-  std::span<const HeatingFunction> polls;           ///< The registers the poll must read for `value` to know.
+  std::span<const DeviceRegister> polls;            ///< The registers the poll must read for `value` to know.
 };
 
 /// @brief A reading that is a slice of a data object of the device, read on a schedule.
@@ -131,12 +177,13 @@ struct DataObjectSource {
 
 /// @brief Where a reading's value comes from. Later kinds (a one-frame read) are further alternatives; the rows of
 /// the existing kinds do not change.
-using ReadingSource = std::variant<HeatingRegisterSource, DerivedSource, DataObjectSource, StatusMainParameterSource>;
+using ReadingSource = std::variant<RegisterSource, DerivedSource, DataObjectSource, StatusMainParameterSource,
+                                   StatusFunctionalParameterSource>;
 
-/// @brief When a heater's poll reads a reading by itself.
+/// @brief When a device's poll reads a reading by itself.
 /// @details Which devices read it is decided by the row's capability or, for a row without one, by the heating
 ///          profile (heating_profile_reads()); this is the cadence on a device that does. Within one policy the
-///          order of the rows is the order of the reads (heater_poll_reads()). A data-object reading is read on its
+///          order of the rows is the order of the reads (device_poll_reads()). A data-object reading is read on its
 ///          own schedule and the heater poll never consults its policy.
 enum class ReadingPoll : uint8_t {
   EVERY_POLL,           ///< Every poll; the first read that fails ends the poll and fails it.
@@ -226,33 +273,44 @@ std::optional<float> decode_data_object_reading(const DataObjectSource &source, 
 /// @brief The value a status reply's main parameter gives for a status reading.
 /// @details The two bytes are decoded with ValueCodec::U16_BE, then the reading's StatusValueForm says what they mean:
 ///          a level is the low byte when the high byte is `level_prefix`, a temperature is the main parameter decoded
-///          over the range.
+///          over the range and rounded to tenths of a degree (a step of the scale is under a thousandth of a degree,
+///          so 20 C would read 19.9998 unrounded).
 /// @param reading A reading with a StatusMainParameterSource (DeviceReading::HEATING_LEVEL or STATUS_SETPOINT).
 /// @param main_parameter The two bytes of the main parameter as the status reply carries them.
 /// @param level_prefix High byte of a level or alias (HeatingProfile::mp_prefix, HEATING_LEVEL_MP_PREFIX).
-/// @param range_min_c Lower end of the device's temperature encoding range.
+/// @param range_min_c Lower end of the device's temperature encoding range (device_temperature_range()).
 /// @param range_max_c Upper end of it.
 /// @return The value (a level's low byte, degrees Celsius), or nullopt when `reading` is not a status reading, the
 ///         bytes are too few or the main parameter is not the kind of value the reading is.
 std::optional<float> decode_status_reading(DeviceReading reading, std::span<const uint8_t> main_parameter,
                                            uint8_t level_prefix, float range_min_c, float range_max_c);
 
+/// @brief Store the readings that are functional parameters of a status reply.
+/// @details Each reading with a StatusFunctionalParameterSource whose parameter the reply carries
+///          (decode_status_functional_parameter()) is stored; a reading whose parameter the reply does not carry keeps
+///          what it held.
+/// @param dev The device record.
+/// @param reply A CMD_PRIVATE_RESP from the device.
+/// @return The number of readings stored.
+size_t store_status_parameter_readings(IoDevice &dev, const IoFrame &reply);
+
 /// @brief The registers the hub's poll reads so a reading has a value.
 /// @param row The reading's row.
 /// @return The register of a register reading, the registers a derived reading names, none for a kind with no
 ///         register (a data-object reading is read by the transfer reader, a status reading answers the status read).
 ///         The span points into static storage (the table).
-std::span<const HeatingFunction> reading_polled_registers(const DeviceReadingRow &row);
+std::span<const DeviceRegister> reading_polled_registers(const DeviceReadingRow &row);
 
 /// @brief The register a reading is, when it is one register of a heater.
 /// @param reading The reading.
 /// @return The register (what a writable setting writes), or nullopt for a derived reading or COUNT.
-std::optional<HeatingFunction> reading_register(DeviceReading reading);
+std::optional<DeviceRegister> reading_register(DeviceReading reading);
 
-/// @brief Look up the reading that is one register, for its read condition.
+/// @brief Look up the reading that is a register, for its read condition and its stored value.
 /// @param fn A register.
-/// @return The row whose source is that register, or nullptr when no reading is.
-const DeviceReadingRow *find_register_reading(HeatingFunction fn);
+/// @return The first row in table order whose source is that register (the register's own value, or its first part),
+///         or nullptr when no reading is.
+const DeviceReadingRow *find_register_reading(DeviceRegister fn);
 
 /// @brief Does a device have the capability an entity needs to ask for a reading?
 /// @param dev The device record (its resolved features).
@@ -270,44 +328,57 @@ int reading_wire(const IoDevice &dev, DeviceReading reading);
 /// @param dev The device record.
 /// @param fn The register.
 /// @return The value, or nullopt when no reading is the register or it has no value (never read, cleared, absent).
-std::optional<float> register_value(const IoDevice &dev, HeatingFunction fn);
+std::optional<float> register_value(const IoDevice &dev, DeviceRegister fn);
 
 /// @brief The value of a register read as a whole number: a mode, a state, a flag, a percentage.
 /// @param dev The device record.
 /// @param fn The register.
 /// @return The value, or -1 when it has none (see register_value()).
-int register_wire(const IoDevice &dev, HeatingFunction fn);
+int register_wire(const IoDevice &dev, DeviceRegister fn);
 
 /// @brief Keep the value a heater answered for a register, in the reading that is that register.
+/// @details Stores the first reading of the register only; a register that is read by parts is stored by
+///          store_register_reply().
 /// @param dev The device record.
 /// @param fn The register.
 /// @param value The decoded value (decode_heating_reply()).
 /// @return true when a reading is the register and now holds the value; false for a register nothing is kept of
 ///         (the logged ones).
-bool store_register_reading(IoDevice &dev, HeatingFunction fn, float value);
+bool store_register_reading(IoDevice &dev, DeviceRegister fn, float value);
 
-/// @brief Forget the value of the reading that is a register; it reads as never read again.
+/// @brief Keep what a device answered for a register, in every reading that is the register or a part of it.
+/// @details Each reading decodes the value bytes by its part's codec, or by the register's codec without a part, and
+///          keeps the result. A reading whose bytes the reply does not carry (a cut-off value, a byte the codec
+///          refuses) keeps what it held.
+/// @param dev The device record.
+/// @param fn The register.
+/// @param value_bytes The value bytes of the reply (register_reply_value()).
+/// @return true when at least one reading now holds a value from this reply; false when none did, which is how a
+///         register the device does not hold, or a value no reading takes, shows.
+bool store_register_reply(IoDevice &dev, DeviceRegister fn, std::span<const uint8_t> value_bytes);
+
+/// @brief Forget the value of every reading that is a register or a part of it; they read as never read again.
 /// @param dev The device record.
 /// @param fn The register.
 /// @return true when a reading is the register.
-bool clear_register_reading(IoDevice &dev, HeatingFunction fn);
+bool clear_register_reading(IoDevice &dev, DeviceRegister fn);
 
-/// @brief Declare that an entity wants a register read at every poll.
+/// @brief Declare that an entity wants a register read at every poll (every reading of it).
 /// @param dev The device record.
 /// @param fn The register.
-void ask_register_reading(IoDevice &dev, HeatingFunction fn);
+void ask_register_reading(IoDevice &dev, DeviceRegister fn);
 
 /// @brief Does the poll read a register for its entity: declared, and not found absent?
 /// @param dev The device record.
 /// @param fn The register.
 /// @return true when an entity asked for the reading that is the register and the heater has not answered it empty.
-bool register_reading_wanted(const IoDevice &dev, HeatingFunction fn);
+bool register_reading_wanted(const IoDevice &dev, DeviceRegister fn);
 
 /// @brief Record that the heater answered a read of a register without a value: the poll stops reading it until the
 /// next boot or until another read (an action, a write's read-back) answers it with a value, and its value is dropped.
 /// @param dev The device record.
 /// @param fn The register.
-void mark_register_reading_absent(IoDevice &dev, HeatingFunction fn);
+void mark_register_reading_absent(IoDevice &dev, DeviceRegister fn);
 
 /// @brief Is a register due for a read, given what the poll has stored so far?
 /// @details A register with no condition, or no reading at all, is always due. One with a condition is due while
@@ -315,7 +386,7 @@ void mark_register_reading_absent(IoDevice &dev, HeatingFunction fn);
 /// @param fn The register.
 /// @param dev The device record (the condition's register is read earlier in the poll).
 /// @return true when the poll should read the register.
-bool heating_register_due(HeatingFunction fn, const IoDevice &dev);
+bool heating_register_due(DeviceRegister fn, const IoDevice &dev);
 
 /// @brief Forget the readings that are read only while a register holds a value, after a write of that register.
 /// @details A written temporary state starts or ends a timed run, so the minutes left read for an earlier run are not
@@ -324,7 +395,7 @@ bool heating_register_due(HeatingFunction fn, const IoDevice &dev);
 /// @param written The register that was written.
 /// @param dev The device record.
 /// @return true when a reading held a value and was cleared.
-bool clear_readings_read_only_while(HeatingFunction written, IoDevice &dev);
+bool clear_readings_read_only_while(DeviceRegister written, IoDevice &dev);
 
 }  // namespace home_io_control
 }  // namespace esphome

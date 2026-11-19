@@ -7,12 +7,14 @@
 #include "proto_crypto.h"
 #include "proto_device_kinds.h"
 #include "proto_frame.h"
+#include "proto_sizes.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <optional>
 #include <string>
 
 namespace esphome {
@@ -599,6 +601,37 @@ bool decode_temperature_main_parameter(uint16_t main_parameter, float min_c, flo
   if (main_parameter > TEMPERATURE_MP_SPAN || !std::isfinite(min_c) || !std::isfinite(max_c) || !(max_c > min_c))
     return false;
   celsius = min_c + (static_cast<float>(main_parameter) / static_cast<float>(TEMPERATURE_MP_SPAN) * (max_c - min_c));
+  return true;
+}
+
+bool decode_status_functional_parameter(const IoFrame &reply, uint8_t fp, uint16_t &word) {
+  constexpr uint8_t first_fpi2_parameter = 9;
+  constexpr uint8_t last_fpi2_parameter = 16;
+  if (reply.cmd != CMD_PRIVATE_RESP || reply.data_len < STATUS_FP_VALUES_OFFSET || fp < first_fpi2_parameter ||
+      fp > last_fpi2_parameter || reply.data[STATUS_FPI1_ECHO_OFFSET] != 0)
+    return false;
+  const uint8_t fpi2 = reply.data[STATUS_FPI2_ECHO_OFFSET];
+  const uint8_t wanted = fp_bitmap_bit(fp);
+  if ((fpi2 & wanted) == 0)
+    return false;
+
+  // One two-byte value per FPI2 bit, bit 7 (FP9) first: walk the bits, keeping the wanted one. A value the echo
+  // announces and the reply does not hold fails the whole decode, as a truncated reply is not trusted.
+  size_t offset = STATUS_FP_VALUES_OFFSET;
+  std::optional<uint16_t> found;
+  for (int bit = BITS_PER_BYTE - 1; bit >= 0; bit--) {
+    const auto mask = static_cast<uint8_t>(1U << bit);
+    if ((fpi2 & mask) == 0)
+      continue;
+    if (offset + STATUS_FP_VALUE_SIZE > reply.data_len)
+      return false;
+    if (mask == wanted)
+      found = static_cast<uint16_t>((reply.data[offset] << BITS_PER_BYTE) | reply.data[offset + 1]);
+    offset += STATUS_FP_VALUE_SIZE;
+  }
+  if (!found)
+    return false;
+  word = *found;
   return true;
 }
 

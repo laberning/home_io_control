@@ -557,5 +557,16 @@ bool encode_temperature_main_parameter(float celsius, float min_c, float max_c, 
 ///         range is empty.
 bool decode_temperature_main_parameter(uint16_t main_parameter, float min_c, float max_c, float &celsius);
 
+/// @brief The value of one of FP9-FP16 in the reply to a status read that asked for it.
+/// @details Layout of the data: `[status][b1][MP 2][FPI1][FPI2][one 2-byte value per FPI2 bit, bit 7 first]`. The FPI1
+///          echo must be `00` (no FP1-FP8 values come first) and the FPI2 echo must hold the bit of `fp`; the other
+///          bits are skipped. The main parameter is left to the caller.
+/// @param reply The device's reply to the status read.
+/// @param fp Functional parameter, 9-16.
+/// @param[out] word The parameter's value, most significant byte first; untouched when false is returned.
+/// @return false for another command, a reply too short for the values its echo announces, an FPI1 echo other than
+///         `00`, an FPI2 echo without the parameter or a parameter outside 9-16.
+bool decode_status_functional_parameter(const IoFrame &reply, uint8_t fp, uint16_t &word);
+
 }  // namespace home_io_control
 }  // namespace esphome

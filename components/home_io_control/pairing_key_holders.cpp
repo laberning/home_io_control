@@ -119,7 +119,7 @@ bool KeyHolderSearch::probe_heater_at_next_address_(const pairing::PairingContex
 
   // The maximum setpoint is a read-only register every such heater holds, so reading it changes nothing.
   uint8_t payload[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
-  const size_t payload_len = encode_heating_read(HeatingFunction::MAX_SETPOINT, payload);
+  const size_t payload_len = encode_heating_read(DeviceRegister::MAX_SETPOINT, payload);
   IoFrame request{};
   IoFrame response{};
   float max_setpoint_c = NAN;
@@ -131,7 +131,7 @@ bool KeyHolderSearch::probe_heater_at_next_address_(const pairing::PairingContex
       // exchange is given the key to answer its challenge under.
       engine_.send_and_receive(request, response, FREQ_CH2, ExchangeOptions{}.with_key(key).on_fixed_channel()) ==
           ExchangeOutcome::SUCCESS_WITH_RESPONSE &&
-      decode_heating_reply(response, HeatingFunction::MAX_SETPOINT, max_setpoint_c);
+      decode_heating_reply(response, DeviceRegister::MAX_SETPOINT, max_setpoint_c);
   const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
   if (!answered) {
     ESP_LOGI(TAG, "Heater probe: %s did not answer; looking for devices with a roll-call instead", heater_id.c_str());

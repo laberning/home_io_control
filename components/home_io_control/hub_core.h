@@ -701,7 +701,7 @@ class IOHomeControlComponent : public Component,
   /// @brief Run one heating function on the heater's private register protocol (a write for a settable
   /// register, a read for a read-only one). The `heating_control` action and the climate entity call this.
   /// @see HeaterController::send_heating_command()
-  bool send_heating_command(const std::string &device_id, HeatingFunction fn, float value) override {
+  bool send_heating_command(const std::string &device_id, DeviceRegister fn, float value) override {
     return this->heater_controller_.send_heating_command(device_id, fn, value);
   }
   /// @brief Send a planned climate write and read the register back; the climate entity's one entry point.
@@ -742,7 +742,7 @@ class IOHomeControlComponent : public Component,
   }
   /// @brief Read one register of a heater and keep the decoded value in the device's readings.
   /// @see HeaterController::read_heating_register()
-  bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
+  bool read_heating_register(const std::string &device_id, DeviceRegister fn, float *value_out,
                              uint8_t max_tries) override {
     return this->heater_controller_.read_heating_register(device_id, fn, value_out, max_tries);
   }

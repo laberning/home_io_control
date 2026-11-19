@@ -220,8 +220,8 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::SIREN, 0, NO_MODEL, "siren", CAP_NONE, 0, NO_FEATURES},
 
     // A domestic hot water heater: readings and mode in family-0x00 registers, the target in the status
-    // main parameter (proto_dhw.h). Read on one Atlantic Calypso Connecte (issue #198); its writes are
-    // unconfirmed.
+    // main parameter (proto_dhw.h, registers in proto_heating.h). Read on one Atlantic Calypso Connecte (issue #198);
+    // its writes are unconfirmed.
     // \todo Confirm on a real heater that the target EXECUTE and the mode write take effect, then drop
     //       EXPERIMENTAL.
     {DeviceType::DOMESTIC_HOT_WATER, 0, NO_MODEL, "domestic_hot_water", CAP_WATER_HEATER,

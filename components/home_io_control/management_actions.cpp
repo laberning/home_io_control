@@ -187,7 +187,7 @@ static bool parse_heating_number(const std::string &text, float &value_out) {
 }
 
 /// @brief The message for a value the register's rule refuses, built from the function's label and rule.
-static std::string heating_refusal_message(HeatingFunction fn, ValueCodec codec) {
+static std::string heating_refusal_message(DeviceRegister fn, ValueCodec codec) {
   const std::string label = heating_action_value_label(fn);
   if (codec == ValueCodec::BINARY)
     return label + " must be 'on' or 'off'";
@@ -216,12 +216,12 @@ static std::string heating_refusal_message(HeatingFunction fn, ValueCodec codec)
 /// @param value_out The value on success (0 for a function without one).
 /// @param error Caller-facing message on failure.
 /// @return true on an accepted value.
-static bool parse_heating_value(HeatingFunction fn, const std::string &value, float &value_out, std::string &error) {
+static bool parse_heating_value(DeviceRegister fn, const std::string &value, float &value_out, std::string &error) {
   value_out = 0.0F;
-  if (!heating_function_is_writable(fn))
+  if (!device_register_is_writable(fn))
     return true;  // a read takes no value
 
-  const ValueCodec codec = heating_function_codec(fn);
+  const ValueCodec codec = device_register_codec(fn);
   const std::string text = trim_ascii_whitespace(value);
   bool parsed = false;
   switch (codec) {
@@ -261,9 +261,9 @@ static bool parse_heating_value(HeatingFunction fn, const std::string &value, fl
 /// @param value_out Parsed value on success.
 /// @param error Caller-facing message on failure.
 /// @return true on a fully valid pair.
-static bool parse_heating_arguments(const std::string &function, const std::string &value, HeatingFunction &fn_out,
+static bool parse_heating_arguments(const std::string &function, const std::string &value, DeviceRegister &fn_out,
                                     float &value_out, std::string &error) {
-  const std::optional<HeatingFunction> fn = heating_action_function(normalize_lower_argument(function));
+  const std::optional<DeviceRegister> fn = heating_action_function(normalize_lower_argument(function));
   if (!fn) {
     error = "unknown heating function '" + trim_ascii_whitespace(function) + "'";
     return false;
@@ -610,7 +610,7 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
   if (dev == nullptr)
     return result;
 
-  HeatingFunction fn{};
+  DeviceRegister fn{};
   float encoded_value = 0.0F;
   std::string parse_error;
   if (!parse_heating_arguments(function, value, fn, encoded_value, parse_error)) {
@@ -629,7 +629,7 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
   }
 
   // The override exists only on a heater whose profile names its programme registers.
-  if (fn == HeatingFunction::DEROGATED_SETPOINT) {
+  if (fn == DeviceRegister::DEROGATED_SETPOINT) {
     const HeatingProfile *profile = find_heating_profile(*dev);
     if (profile == nullptr || profile->programme_period == nullptr) {
       result.message = "device has no programme, so set_derogation does not apply";
@@ -646,12 +646,12 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
   // the action shows exactly what the climate card would; every other function is one send. Both
   // paths share the hub's exchange helper, and a CMD_ERROR_RESP is recorded on the device record by it.
   float read_value = 0.0F;
-  const bool read_with_value = fn == HeatingFunction::WINDOW_OPEN;
+  const bool read_with_value = fn == DeviceRegister::WINDOW_OPEN;
   const bool acknowledged = read_with_value
                                 ? hub_->read_heating_register(result.device_id, fn, &read_value, EXCHANGE_RETRY_COUNT)
                                 : hub_->send_heating_command(result.device_id, fn, encoded_value);
   if (!acknowledged) {
-    result.message = std::string("device did not acknowledge the ") + heating_function_name(fn) + " command";
+    result.message = std::string("device did not acknowledge the ") + device_register_name(fn) + " command";
     if (const auto *updated = registry_.get(result.device_id);
         updated != nullptr && updated->last_result_code != 0 &&
         (updated->last_result_code != prior_result_code || updated->last_result_at_ms != prior_result_at_ms)) {
@@ -668,9 +668,9 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
   // device showing the new value; the climate entity reads the register back for that.
   if (read_with_value) {
     result.message =
-        std::string("heating ") + heating_function_name(fn) + ": window " + (read_value != 0.0F ? "open" : "closed");
+        std::string("heating ") + device_register_name(fn) + ": window " + (read_value != 0.0F ? "open" : "closed");
   } else {
-    result.message = std::string("heating ") + heating_function_name(fn) + " acknowledged by device";
+    result.message = std::string("heating ") + device_register_name(fn) + " acknowledged by device";
   }
   return result;
 }

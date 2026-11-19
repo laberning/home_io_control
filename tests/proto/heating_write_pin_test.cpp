@@ -23,7 +23,7 @@ constexpr float NAN_F = std::numeric_limits<float>::quiet_NaN();
 constexpr float INF_F = std::numeric_limits<float>::infinity();
 
 /// The payload encode_heating_write() builds; empty when it refuses.
-std::vector<uint8_t> write_bytes(HeatingFunction fn, float value) {
+std::vector<uint8_t> write_bytes(DeviceRegister fn, float value) {
   uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   const size_t n = encode_heating_write(fn, value, out);
   return std::vector<uint8_t>(out, out + n);
@@ -42,9 +42,9 @@ struct WriteCase {
   std::vector<uint8_t> payload;
 };
 
-void expect_cases(HeatingFunction fn, const std::vector<WriteCase> &cases) {
+void expect_cases(DeviceRegister fn, const std::vector<WriteCase> &cases) {
   for (const WriteCase &c : cases)
-    EXPECT_EQ(write_bytes(fn, c.value), c.payload) << heating_function_name(fn) << " value " << c.value;
+    EXPECT_EQ(write_bytes(fn, c.value), c.payload) << device_register_name(fn) << " value " << c.value;
 }
 
 }  // namespace
@@ -52,50 +52,51 @@ void expect_cases(HeatingFunction fn, const std::vector<WriteCase> &cases) {
 // === Every register of the table ===
 
 TEST(HeatingWritePin, ARegisterThatIsReadOnlyNeverEncodesAWrite) {
-  const std::vector<HeatingFunction> read_only = {
-      HeatingFunction::POWER_ON,
-      HeatingFunction::MIDNIGHT_SYNC,
-      HeatingFunction::ROOM_TEMPERATURE,
-      HeatingFunction::REGULATOR_STATE,
-      HeatingFunction::MAX_SETPOINT,
-      HeatingFunction::WINDOW_OPEN,
-      HeatingFunction::WORKING_RATE,
-      HeatingFunction::TEMPERATURE_IN_FORCE,
-      HeatingFunction::ECO_SETBACK,
-      HeatingFunction::HEATER_TEMPERATURE_IN_FORCE,
-      HeatingFunction::CENTRAL_HEATING_MODE,
-      HeatingFunction::ENERGY_TOTAL,
-      HeatingFunction::BOOST_REMAINING,
-      HeatingFunction::BOOST_DURATION,
-      HeatingFunction::DRYING_REMAINING,
-      HeatingFunction::DRYING_DURATION,
+  const std::vector<DeviceRegister> read_only = {
+      DeviceRegister::POWER_ON,
+      DeviceRegister::MIDNIGHT_SYNC,
+      DeviceRegister::ROOM_TEMPERATURE,
+      DeviceRegister::REGULATOR_STATE,
+      DeviceRegister::MAX_SETPOINT,
+      DeviceRegister::WINDOW_OPEN,
+      DeviceRegister::WORKING_RATE,
+      DeviceRegister::TEMPERATURE_IN_FORCE,
+      DeviceRegister::ECO_SETBACK,
+      DeviceRegister::HEATER_TEMPERATURE_IN_FORCE,
+      DeviceRegister::CENTRAL_HEATING_MODE,
+      DeviceRegister::ENERGY_TOTAL,
+      DeviceRegister::BOOST_REMAINING,
+      DeviceRegister::BOOST_DURATION,
+      DeviceRegister::DRYING_REMAINING,
+      DeviceRegister::DRYING_DURATION,
   };
-  for (const HeatingFunction fn : read_only) {
-    EXPECT_FALSE(heating_function_is_writable(fn)) << heating_function_name(fn);
+  for (const DeviceRegister fn : read_only) {
+    EXPECT_FALSE(device_register_is_writable(fn)) << device_register_name(fn);
     for (const float value : {0.0F, 1.0F, 20.0F, 100.0F})
-      EXPECT_TRUE(write_bytes(fn, value).empty()) << heating_function_name(fn) << " value " << value;
+      EXPECT_TRUE(write_bytes(fn, value).empty()) << device_register_name(fn) << " value " << value;
   }
 }
 
-TEST(HeatingWritePin, TheWritableRegistersAreExactlyTheseTen) {
-  const std::vector<HeatingFunction> writable = {
-      HeatingFunction::SET_TEMPERATURE,           HeatingFunction::SET_MODE,    HeatingFunction::SET_PRESENCE,
-      HeatingFunction::SET_OPEN_WINDOW_DETECTION, HeatingFunction::TOWEL_MODE,  HeatingFunction::TEMPORARY_STATE,
-      HeatingFunction::DEROGATED_SETPOINT,        HeatingFunction::NIGHT_LIGHT, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS,
-      HeatingFunction::OCCUPANCY_DETECTION,
+TEST(HeatingWritePin, TheWritableRegistersAreExactlyTheseThirteen) {
+  const std::vector<DeviceRegister> writable = {
+      DeviceRegister::SET_TEMPERATURE,           DeviceRegister::SET_MODE,    DeviceRegister::SET_PRESENCE,
+      DeviceRegister::SET_OPEN_WINDOW_DETECTION, DeviceRegister::TOWEL_MODE,  DeviceRegister::TEMPORARY_STATE,
+      DeviceRegister::DEROGATED_SETPOINT,        DeviceRegister::NIGHT_LIGHT, DeviceRegister::NIGHT_LIGHT_BRIGHTNESS,
+      DeviceRegister::OCCUPANCY_DETECTION,       DeviceRegister::DHW_MODE,    DeviceRegister::DHW_BOOST_DURATION,
+      DeviceRegister::DHW_AWAY_DURATION,
   };
   size_t count = 0;
-  for (uint8_t i = 0; i < static_cast<uint8_t>(HeatingFunction::COUNT); i++) {
-    if (heating_function_is_writable(static_cast<HeatingFunction>(i)))
+  for (uint8_t i = 0; i < static_cast<uint8_t>(DeviceRegister::COUNT); i++) {
+    if (device_register_is_writable(static_cast<DeviceRegister>(i)))
       count++;
   }
   EXPECT_EQ(count, writable.size());
-  for (const HeatingFunction fn : writable)
-    EXPECT_TRUE(heating_function_is_writable(fn)) << heating_function_name(fn);
+  for (const DeviceRegister fn : writable)
+    EXPECT_TRUE(device_register_is_writable(fn)) << device_register_name(fn);
 }
 
 TEST(HeatingWritePin, ASetpointIsTenthsOfADegreeFromSevenToTwentyEight) {
-  expect_cases(HeatingFunction::SET_TEMPERATURE,
+  expect_cases(DeviceRegister::SET_TEMPERATURE,
                {
                    {7.0F, set_request(0x03, {0x46, 0x00})},
                    {7.04F, set_request(0x03, {0x46, 0x00})},
@@ -119,50 +120,50 @@ TEST(HeatingWritePin, ASetpointIsTenthsOfADegreeFromSevenToTwentyEight) {
 }
 
 TEST(HeatingWritePin, AnOverrideIsASetpointOrZeroWhichCancelsIt) {
-  expect_cases(HeatingFunction::DEROGATED_SETPOINT, {
-                                                        {0.0F, set_request(0x1D, {0x00, 0x00})},
-                                                        {-0.0F, set_request(0x1D, {0x00, 0x00})},
-                                                        {7.0F, set_request(0x1D, {0x46, 0x00})},
-                                                        {17.5F, set_request(0x1D, {0xAF, 0x00})},
-                                                        {28.0F, set_request(0x1D, {0x18, 0x01})},
-                                                        {0.1F, {}},
-                                                        {6.9F, {}},
-                                                        {28.1F, {}},
-                                                        {-1.0F, {}},
-                                                        {NAN_F, {}},
-                                                        {INF_F, {}},
-                                                        {-INF_F, {}},
-                                                    });
+  expect_cases(DeviceRegister::DEROGATED_SETPOINT, {
+                                                       {0.0F, set_request(0x1D, {0x00, 0x00})},
+                                                       {-0.0F, set_request(0x1D, {0x00, 0x00})},
+                                                       {7.0F, set_request(0x1D, {0x46, 0x00})},
+                                                       {17.5F, set_request(0x1D, {0xAF, 0x00})},
+                                                       {28.0F, set_request(0x1D, {0x18, 0x01})},
+                                                       {0.1F, {}},
+                                                       {6.9F, {}},
+                                                       {28.1F, {}},
+                                                       {-1.0F, {}},
+                                                       {NAN_F, {}},
+                                                       {INF_F, {}},
+                                                       {-INF_F, {}},
+                                                   });
 }
 
 TEST(HeatingWritePin, TheModeRegisterTakesEveryModeButTheExternalSetpoint) {
-  expect_cases(HeatingFunction::SET_MODE, {
-                                              {0.0F, set_request(0x00, {0x00})},
-                                              {1.0F, set_request(0x00, {0x01})},
-                                              {2.0F, set_request(0x00, {0x02})},
-                                              {3.0F, {}},  // the external setpoint: readable, never written
-                                              {4.0F, set_request(0x00, {0x04})},
-                                              {5.0F, {}},
-                                              {255.0F, {}},
-                                              {256.0F, {}},
-                                              {-1.0F, {}},
-                                              {1.5F, {}},
-                                              {3.5F, {}},
-                                              {NAN_F, {}},
-                                              {INF_F, {}},
-                                              {-INF_F, {}},
-                                          });
+  expect_cases(DeviceRegister::SET_MODE, {
+                                             {0.0F, set_request(0x00, {0x00})},
+                                             {1.0F, set_request(0x00, {0x01})},
+                                             {2.0F, set_request(0x00, {0x02})},
+                                             {3.0F, {}},  // the external setpoint: readable, never written
+                                             {4.0F, set_request(0x00, {0x04})},
+                                             {5.0F, {}},
+                                             {255.0F, {}},
+                                             {256.0F, {}},
+                                             {-1.0F, {}},
+                                             {1.5F, {}},
+                                             {3.5F, {}},
+                                             {NAN_F, {}},
+                                             {INF_F, {}},
+                                             {-INF_F, {}},
+                                         });
 }
 
 TEST(HeatingWritePin, AFlagRegisterTakesZeroOrOne) {
   const struct {
-    HeatingFunction fn;
+    DeviceRegister fn;
     uint8_t register_low;
   } flags[] = {
-      {HeatingFunction::SET_PRESENCE, 0x10},
-      {HeatingFunction::SET_OPEN_WINDOW_DETECTION, 0x06},
-      {HeatingFunction::NIGHT_LIGHT, 0x44},
-      {HeatingFunction::OCCUPANCY_DETECTION, 0x01},
+      {DeviceRegister::SET_PRESENCE, 0x10},
+      {DeviceRegister::SET_OPEN_WINDOW_DETECTION, 0x06},
+      {DeviceRegister::NIGHT_LIGHT, 0x44},
+      {DeviceRegister::OCCUPANCY_DETECTION, 0x01},
   };
   for (const auto &flag : flags) {
     expect_cases(flag.fn, {
@@ -178,58 +179,58 @@ TEST(HeatingWritePin, AFlagRegisterTakesZeroOrOne) {
 }
 
 TEST(HeatingWritePin, ATowelDryerModeAndTemporaryStateTakeTheirOwnRanges) {
-  expect_cases(HeatingFunction::TOWEL_MODE, {
-                                                {0.0F, set_request(0x36, {0x00})},
-                                                {1.0F, set_request(0x36, {0x01})},
-                                                {2.0F, set_request(0x36, {0x02})},
-                                                {3.0F, set_request(0x36, {0x03})},
-                                                {4.0F, {}},
-                                                {-1.0F, {}},
-                                                {1.5F, {}},
-                                                {NAN_F, {}},
-                                                {INF_F, {}},
-                                            });
-  expect_cases(HeatingFunction::TEMPORARY_STATE, {
-                                                     {0.0F, set_request(0x3E, {0x00})},
-                                                     {1.0F, set_request(0x3E, {0x01})},
-                                                     {2.0F, set_request(0x3E, {0x02})},
-                                                     {3.0F, {}},
-                                                     {-1.0F, {}},
-                                                     {0.5F, {}},
-                                                     {NAN_F, {}},
-                                                     {INF_F, {}},
-                                                 });
+  expect_cases(DeviceRegister::TOWEL_MODE, {
+                                               {0.0F, set_request(0x36, {0x00})},
+                                               {1.0F, set_request(0x36, {0x01})},
+                                               {2.0F, set_request(0x36, {0x02})},
+                                               {3.0F, set_request(0x36, {0x03})},
+                                               {4.0F, {}},
+                                               {-1.0F, {}},
+                                               {1.5F, {}},
+                                               {NAN_F, {}},
+                                               {INF_F, {}},
+                                           });
+  expect_cases(DeviceRegister::TEMPORARY_STATE, {
+                                                    {0.0F, set_request(0x3E, {0x00})},
+                                                    {1.0F, set_request(0x3E, {0x01})},
+                                                    {2.0F, set_request(0x3E, {0x02})},
+                                                    {3.0F, {}},
+                                                    {-1.0F, {}},
+                                                    {0.5F, {}},
+                                                    {NAN_F, {}},
+                                                    {INF_F, {}},
+                                                });
 }
 
 TEST(HeatingWritePin, TheNightLightBrightnessIsAPercentageSentAsTwoRegisterBytes) {
-  expect_cases(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, {
-                                                            {0.0F, set_request(0x42, {0x00, 0x00})},
-                                                            {3.3F, set_request(0x42, {0x64, 0x00})},
-                                                            {33.0F, set_request(0x42, {0xE8, 0x03})},
-                                                            {66.0F, set_request(0x42, {0xD0, 0x07})},
-                                                            {100.0F, set_request(0x42, {0x10, 0x27})},
-                                                            {100.5F, {}},
-                                                            {101.0F, {}},
-                                                            {65535.0F, {}},
-                                                            {-1.0F, {}},
-                                                            {NAN_F, {}},
-                                                            {INF_F, {}},
-                                                            {-INF_F, {}},
-                                                        });
+  expect_cases(DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, {
+                                                           {0.0F, set_request(0x42, {0x00, 0x00})},
+                                                           {3.3F, set_request(0x42, {0x64, 0x00})},
+                                                           {33.0F, set_request(0x42, {0xE8, 0x03})},
+                                                           {66.0F, set_request(0x42, {0xD0, 0x07})},
+                                                           {100.0F, set_request(0x42, {0x10, 0x27})},
+                                                           {100.5F, {}},
+                                                           {101.0F, {}},
+                                                           {65535.0F, {}},
+                                                           {-1.0F, {}},
+                                                           {NAN_F, {}},
+                                                           {INF_F, {}},
+                                                           {-INF_F, {}},
+                                                       });
 }
 
 TEST(HeatingWritePin, AnOutOfRangeFunctionIsNeverWritten) {
-  EXPECT_TRUE(write_bytes(HeatingFunction::COUNT, 1.0F).empty());
-  EXPECT_TRUE(write_bytes(static_cast<HeatingFunction>(200), 1.0F).empty());
+  EXPECT_TRUE(write_bytes(DeviceRegister::COUNT, 1.0F).empty());
+  EXPECT_TRUE(write_bytes(static_cast<DeviceRegister>(200), 1.0F).empty());
 }
 
 TEST(HeatingWritePin, TheActionPayloadReadsAReadOnlyRegisterAndWritesTheOthers) {
   uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
-  ASSERT_EQ(encode_heating_payload(HeatingFunction::WINDOW_OPEN, 5.0F, out), 4u);
+  ASSERT_EQ(encode_heating_payload(DeviceRegister::WINDOW_OPEN, 5.0F, out), 4u);
   EXPECT_EQ(std::vector<uint8_t>(out, out + 4), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x0E}));
-  ASSERT_EQ(encode_heating_payload(HeatingFunction::SET_PRESENCE, 1.0F, out), 5u);
+  ASSERT_EQ(encode_heating_payload(DeviceRegister::SET_PRESENCE, 1.0F, out), 5u);
   EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x10, 0x01}));
-  EXPECT_EQ(encode_heating_payload(HeatingFunction::SET_PRESENCE, 2.0F, out), 0u);
+  EXPECT_EQ(encode_heating_payload(DeviceRegister::SET_PRESENCE, 2.0F, out), 0u);
 }
 
 // === The night light's percent scale ===
@@ -252,7 +253,7 @@ TEST(NightLightWritePin, EveryWholePercentageWritesItsRegisterValueInTwoBytes) {
   static_assert(sizeof(NIGHT_LIGHT_REGISTER_PER_PERCENT) / sizeof(uint16_t) == 101);
   for (unsigned percent = 0; percent <= 100; percent++) {
     const uint16_t raw = NIGHT_LIGHT_REGISTER_PER_PERCENT[percent];
-    EXPECT_EQ(write_bytes(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, static_cast<float>(percent)),
+    EXPECT_EQ(write_bytes(DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, static_cast<float>(percent)),
               set_request(0x42, {static_cast<uint8_t>(raw & 0xFF), static_cast<uint8_t>(raw >> 8)}))
         << percent << " %";
   }
@@ -260,7 +261,7 @@ TEST(NightLightWritePin, EveryWholePercentageWritesItsRegisterValueInTwoBytes) {
 
 TEST(NightLightWritePin, AboveOneHundredPercentIsRefused) {
   for (const unsigned percent : {101U, 150U, 255U})
-    EXPECT_TRUE(write_bytes(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, static_cast<float>(percent)).empty())
+    EXPECT_TRUE(write_bytes(DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, static_cast<float>(percent)).empty())
         << percent << " %";
 }
 
@@ -280,7 +281,7 @@ TEST(NightLightWritePin, ARegisterValueShowsAsItsPercentageOnTheScale) {
         0x0C, 0x60, 0x01, 0x42, static_cast<uint8_t>(s.raw & 0xFF), static_cast<uint8_t>(s.raw >> 8)};
     reply.data_len = sizeof(data);
     std::copy(data, data + sizeof(data), reply.data);
-    ASSERT_TRUE(decode_heating_reply(reply, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, value)) << s.raw;
+    ASSERT_TRUE(decode_heating_reply(reply, DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value)) << s.raw;
     EXPECT_NEAR(value, s.percent, 1e-4F) << s.raw;
   }
 }

@@ -33,9 +33,9 @@ template<size_t N> IoFrame frame_of(const uint8_t (&bytes)[N]) {
 }
 
 /// Decode a register reply, failing the test when it carries no value.
-template<size_t N> float value_of(const uint8_t (&bytes)[N], HeatingFunction fn) {
+template<size_t N> float value_of(const uint8_t (&bytes)[N], DeviceRegister fn) {
   float value = NAN;
-  EXPECT_TRUE(decode_heating_reply(frame_of(bytes), fn, value)) << heating_function_name(fn);
+  EXPECT_TRUE(decode_heating_reply(frame_of(bytes), fn, value)) << device_register_name(fn);
   return value;
 }
 
@@ -45,7 +45,7 @@ const HeatingProfile &towel_profile() {
 
 /// The HVAC mode the towel-dryer profile shows for a captured reply of register 0x0136.
 template<size_t N> HeatingHvacMode shown_mode(const uint8_t (&bytes)[N]) {
-  const auto wire = static_cast<uint8_t>(value_of(bytes, HeatingFunction::TOWEL_MODE));
+  const auto wire = static_cast<uint8_t>(value_of(bytes, DeviceRegister::TOWEL_MODE));
   const HeatingObservedState *state = find_observed_state(towel_profile(), wire);
   EXPECT_NE(state, nullptr) << "mode value " << static_cast<unsigned>(wire);
   return state != nullptr ? state->hvac : HeatingHvacMode::OFF;
@@ -54,7 +54,7 @@ template<size_t N> HeatingHvacMode shown_mode(const uint8_t (&bytes)[N]) {
 /// The preset the towel-dryer profile shows for a captured reply of register 0x013E.
 template<size_t N> HeatingPresetEntry shown_preset(const uint8_t (&bytes)[N]) {
   const HeatingProfile &profile = towel_profile();
-  const auto wire = static_cast<uint8_t>(value_of(bytes, HeatingFunction::TEMPORARY_STATE));
+  const auto wire = static_cast<uint8_t>(value_of(bytes, DeviceRegister::TEMPORARY_STATE));
   const HeatingObservedState *state = find_observed_preset(profile, wire);
   EXPECT_NE(state, nullptr) << "temporary state " << static_cast<unsigned>(wire);
   return state != nullptr ? profile.presets[state->preset] : profile.presets[0];
@@ -82,8 +82,8 @@ template<size_t N> IoDevice programme_readings(float comfort_c, const uint8_t (&
   test::store_reading(readings, DeviceReading::TOWEL_MODE, static_cast<int16_t>(TowelDryerMode::PROG));
   test::store_reading(readings, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(HeatingTemporaryState::NONE));
   test::store_reading(readings, DeviceReading::SETPOINT, comfort_c);
-  test::store_reading(readings, HeatingFunction::TEMPERATURE_IN_FORCE,
-                      value_of(in_force, HeatingFunction::TEMPERATURE_IN_FORCE));
+  test::store_reading(readings, DeviceRegister::TEMPERATURE_IN_FORCE,
+                      value_of(in_force, DeviceRegister::TEMPERATURE_IN_FORCE));
   return readings;
 }
 
@@ -106,17 +106,17 @@ TEST(CorpusTowelDryer, TheStatusReadNamesTheProgrammePeriodAsAHeatingLevel) {
 
 TEST(CorpusTowelDryer, Register0137HoldsTheTemperatureInForceAndTheSetbackIsInTenths) {
   EXPECT_FLOAT_EQ(
-      value_of(corpus::atlantic_adelis_probe_temperature_in_force_frame0_bytes, HeatingFunction::TEMPERATURE_IN_FORCE),
+      value_of(corpus::atlantic_adelis_probe_temperature_in_force_frame0_bytes, DeviceRegister::TEMPERATURE_IN_FORCE),
       20.0F)
       << "comfort period";
   EXPECT_FLOAT_EQ(
-      value_of(corpus::atlantic_adelis_probe_temperature_in_force_frame1_bytes, HeatingFunction::TEMPERATURE_IN_FORCE),
+      value_of(corpus::atlantic_adelis_probe_temperature_in_force_frame1_bytes, DeviceRegister::TEMPERATURE_IN_FORCE),
       16.5F)
       << "eco period";
-  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_register_01_sweep_frame4_bytes, HeatingFunction::ECO_SETBACK),
+  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_register_01_sweep_frame4_bytes, DeviceRegister::ECO_SETBACK),
                   3.5F);
   EXPECT_FLOAT_EQ(
-      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame4_bytes, HeatingFunction::ECO_SETBACK), 3.5F)
+      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame4_bytes, DeviceRegister::ECO_SETBACK), 3.5F)
       << "both units hold the same setback";
 }
 
@@ -156,7 +156,7 @@ TEST(CorpusTowelDryer, TheProgrammeTargetIsTheTemperatureInForceInBothPeriodsAnd
                       DeviceReading::HEATING_LEVEL));
   EXPECT_FLOAT_EQ(programme_temperature_in_force(profile, comfort), 20.0F);
   const HeatingWritePlan comfort_plan = plan_target_from(comfort);
-  EXPECT_EQ(comfort_plan.register_fn, HeatingFunction::SET_TEMPERATURE)
+  EXPECT_EQ(comfort_plan.register_fn, DeviceRegister::SET_TEMPERATURE)
       << "a target set in a comfort period changes the comfort temperature: the dryer ignores an override there";
   EXPECT_FALSE(comfort_plan.temporary_override);
 
@@ -167,8 +167,7 @@ TEST(CorpusTowelDryer, TheProgrammeTargetIsTheTemperatureInForceInBothPeriodsAnd
                       DeviceReading::HEATING_LEVEL));
   EXPECT_FLOAT_EQ(programme_temperature_in_force(profile, eco), 16.5F);
   const HeatingWritePlan eco_plan = plan_target_from(eco);
-  EXPECT_EQ(eco_plan.register_fn, HeatingFunction::DEROGATED_SETPOINT)
-      << "a target set in an eco period is an override";
+  EXPECT_EQ(eco_plan.register_fn, DeviceRegister::DEROGATED_SETPOINT) << "a target set in an eco period is an override";
   EXPECT_TRUE(eco_plan.temporary_override);
 }
 
@@ -180,10 +179,10 @@ TEST(CorpusTowelDryer, TheRegisterIsNoTemperatureInBoostOrDryingAndTheProfileNev
     HeatingTemporaryState state;
   };
   const Run runs[] = {
-      {value_of(corpus::atlantic_adelis_probe_register_01_sweep_frame23_bytes, HeatingFunction::TEMPERATURE_IN_FORCE),
+      {value_of(corpus::atlantic_adelis_probe_register_01_sweep_frame23_bytes, DeviceRegister::TEMPERATURE_IN_FORCE),
        HeatingTemporaryState::BOOST},
       {value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame55_bytes,
-                HeatingFunction::TEMPERATURE_IN_FORCE),
+                DeviceRegister::TEMPERATURE_IN_FORCE),
        HeatingTemporaryState::DRYING},
   };
   for (const Run &run : runs) {
@@ -209,11 +208,11 @@ TEST(CorpusTowelDryer, EachDisplayedModeIsTheModeTheCardShows) {
 
 TEST(CorpusTowelDryer, TheRadiatorModeRegisterReadsOffAsFourNotZero) {
   // Register 0x0100 follows the display too, but its off is 4: the profile reads 0x0136, never 0x0100.
-  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_mode_reads_frame1_bytes, HeatingFunction::SET_MODE), 3.0F);
-  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_mode_reads_frame3_bytes, HeatingFunction::SET_MODE), 2.0F);
-  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_mode_reads_frame7_bytes, HeatingFunction::SET_MODE),
+  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_mode_reads_frame1_bytes, DeviceRegister::SET_MODE), 3.0F);
+  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_mode_reads_frame3_bytes, DeviceRegister::SET_MODE), 2.0F);
+  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_mode_reads_frame7_bytes, DeviceRegister::SET_MODE),
                   static_cast<float>(HeatingMode::OFF));
-  EXPECT_EQ(towel_profile().mode_fn, HeatingFunction::TOWEL_MODE);
+  EXPECT_EQ(towel_profile().mode_fn, DeviceRegister::TOWEL_MODE);
 }
 
 TEST(CorpusTowelDryer, BoostAndDryingShowAsTheirPresetsAndTheElementHeats) {
@@ -224,13 +223,13 @@ TEST(CorpusTowelDryer, BoostAndDryingShowAsTheirPresetsAndTheElementHeats) {
   ASSERT_EQ(drying.id, HeatingPresetId::CUSTOM);
   EXPECT_STREQ(drying.custom_name, "Drying");
 
+  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_register_01_sweep_frame70_bytes, DeviceRegister::WORKING_RATE),
+                  100.0F);
   EXPECT_FLOAT_EQ(
-      value_of(corpus::atlantic_adelis_probe_register_01_sweep_frame70_bytes, HeatingFunction::WORKING_RATE), 100.0F);
-  EXPECT_FLOAT_EQ(
-      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame38_bytes, HeatingFunction::WORKING_RATE),
+      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame38_bytes, DeviceRegister::WORKING_RATE),
       100.0F);
   EXPECT_FLOAT_EQ(
-      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame23_bytes, HeatingFunction::REGULATOR_STATE),
+      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame23_bytes, DeviceRegister::REGULATOR_STATE),
       0.0F)
       << "the regulator reads 'none' while the element runs: the action comes from the working rate";
   EXPECT_EQ(towel_profile().action_source, HeatingActionSource::WORKING_RATE);
@@ -239,13 +238,13 @@ TEST(CorpusTowelDryer, BoostAndDryingShowAsTheirPresetsAndTheElementHeats) {
 TEST(CorpusTowelDryer, DryingLeavesTheBaseModeAndThePolledTemperaturesReadable) {
   EXPECT_EQ(shown_mode(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame54_bytes), HeatingHvacMode::HEAT);
   EXPECT_FLOAT_EQ(
-      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame21_bytes, HeatingFunction::ROOM_TEMPERATURE),
+      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame21_bytes, DeviceRegister::ROOM_TEMPERATURE),
       19.75F);
   const float setpoint =
-      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame3_bytes, HeatingFunction::SET_TEMPERATURE);
+      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame3_bytes, DeviceRegister::SET_TEMPERATURE);
   EXPECT_FLOAT_EQ(setpoint, 19.0F);
   EXPECT_FLOAT_EQ(
-      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame2_bytes, HeatingFunction::MAX_SETPOINT),
+      value_of(corpus::atlantic_adelis_probe_register_01_sweep_drying_frame2_bytes, DeviceRegister::MAX_SETPOINT),
       28.0F);
 }
 

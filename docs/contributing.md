@@ -166,7 +166,7 @@ you meet them. The structure behind them is described in the
    `reading_value_kind()` then says the reading is named, a flag when its codec is a flag, and a number
    otherwise.
 
-   **Poll policy.** A heater register row also says when the heater's poll reads it, and the poll
+   **Poll policy.** A register row also says when the device's poll reads it, and the poll
    reads nothing else:
 
    | `ReadingPoll` | The poll reads it | Use it for |
@@ -177,15 +177,19 @@ you meet them. The structure behind them is described in the
    | `WHEN_ASKED` | Where an entity of the YAML asks for it, until the heater answers it empty | An opt-in reading |
    | `NOT_POLLED` | Never by the poll walk | A value a status reply, a programme rule or a write's read-back delivers |
 
-   A row applies to a heater by its capability, or, for a row without one, where the heating profile
-   reads the register (`heating_profile_reads()`, from the profile's own fields). Within one policy
-   the order of the rows is the order of the reads, so put a new row where its register belongs; the
-   order of the phases is the controller's. A row read only while another register holds a value
+   A row applies to a device by its capability, or, for a row without one, where the device's heating
+   profile reads the register (`heating_profile_reads()`, from the profile's own fields); a device
+   without a heating profile, such as a water heater, is selected by capability alone
+   (`device_poll_reads()`). Within one policy the order of the rows is the order of the reads, so put
+   a new row where its register belongs; the order of the phases is the controller's. A register that
+   several rows are parts of is read once. A row read only while another register holds a value
    (`only_while`) is skipped, and its earlier value dropped, while it does not. A data-object reading
    ignores the policy and runs on its own schedule.
 4. **Add the mirror row.** The same reading by name in `DEVICE_READINGS` in `hub_validators.py`: its
-   capability (`None` for a reading no key declares), its source (`register`, `derived`, `data_object`
-   or `status`), the entity kind (`sensor`, `binary_sensor`, `switch` or `text_sensor`; it has to fit the
+   capability (`None` for a reading no key declares), its source (`register`, `derived`, `data_object`,
+   `status` or `status_parameter`), the platform that offers its key or companion (`climate`,
+   `water_heater` or `sensor`; the sync test derives it from the row's capability and source, and the
+   heater's `energy:` and the water heater's are two rows on two platforms), the entity kind (`sensor`, `binary_sensor`, `switch` or `text_sensor`; it has to fit the
    row's value kind), the Home Assistant unit, device class and state class, and for a data object the
    default `update_interval_ms`, at least five minutes. An entity is declared one of two ways: by a YAML
    `key`, or as a companion that every device with the capability gets, with `companion` (the name suffix
@@ -208,10 +212,16 @@ you meet them. The structure behind them is described in the
    the page of the device. A device that has no other entry is declared by a
    [`sensor:` entry](configuration/sensor.md).
 
-A reading that comes from a heater's register has no recipe and no offset: its row names the register
-(`HeatingFunction`), and the register table in `proto_heating.cpp` names its codec. The rest is the
-same. A reading that a status reply carries (the heating level) is a `StatusMainParameterSource` and
-is never polled.
+A reading that comes from a register of a heater or a water heater has no recipe and no offset: its row
+names the register (`DeviceRegister`), and the register table in `proto_heating.cpp` names its family
+(the high byte of its number: `0x01` for a heater, `0x00` for a water heater) and its codec; the family
+also decides which devices the register is sent to (`device_takes_register()`). A register that holds
+several facts in different bytes has no codec of its own: each fact is a reading whose
+`RegisterSource` names a `part` (the first byte, the length and a codec, `ANY_NONZERO` for a flag that
+is on when any byte of the slice is), and one read of the register stores them all. The rest is the
+same. A reading that a status reply carries is never polled: the heating level and the status setpoint
+are a `StatusMainParameterSource`, and a functional parameter (FP9-FP16, the whole word or one two-bit
+field of it) is a `StatusFunctionalParameterSource`.
 
 A register that can be written has one rule, in the same row of `proto_heating.cpp`: its codec and bound,
 a `write_range` where it is a temperature, a `refuses` predicate where the register refuses a value its

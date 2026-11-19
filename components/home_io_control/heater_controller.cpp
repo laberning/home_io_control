@@ -33,91 +33,27 @@ namespace home_io_control {
 
 namespace {
 
-/// The log label of a water heater register the poll reads.
-const char *dhw_register_label(uint8_t index) {
-  switch (index) {
-    case DHW_REG_WATER_TEMPERATURE:
-      return "dhw_water_temperature";
-    case DHW_REG_MODE:
-      return "dhw_mode";
-    case DHW_REG_HEATING:
-      return "dhw_heating";
-    case DHW_REG_BOOST_DURATION:
-      return "dhw_boost_duration";
-    case DHW_REG_AWAY_DURATION:
-      return "dhw_away_duration";
-    case DHW_REG_ENERGY:
-      return "dhw_energy";
-    case DHW_REG_BRAND:
-      return "dhw_brand";
+/// Log what a water heater register read stored: the duration registers at DEBUG, the brand letter once.
+/// @param first_value True when no reading of the register held a value before this read.
+void log_dhw_reading(const std::string &device_id, DeviceRegister fn, float value, bool first_value) {
+  switch (fn) {
+    case DeviceRegister::DHW_BOOST_DURATION:
+    case DeviceRegister::DHW_AWAY_DURATION:
+      // Kept and logged; the state is FP16 (ADR 0081).
+      ESP_LOGD(detail::TAG, "Device %s: hot water %s duration %u", device_id.c_str(),
+               fn == DeviceRegister::DHW_BOOST_DURATION ? "boost" : "away", static_cast<unsigned>(value));
+      break;
+    case DeviceRegister::DHW_BRAND:
+      if (first_value) {
+        // One letter per brand; logged once so a field report says which make answered.
+        const auto byte = static_cast<uint8_t>(value);
+        const char letter = (byte >= ' ' && byte <= '~') ? static_cast<char>(byte) : '?';
+        ESP_LOGI(detail::TAG, "Device %s reports hot water brand '%c' (0x%02X)", device_id.c_str(), letter,
+                 static_cast<unsigned>(byte));
+      }
+      break;
     default:
-      return "dhw_register";
-  }
-}
-
-/// Fold a boost or away duration register into the readings (kept and logged; the state is FP16, ADR 0081).
-bool store_dhw_duration(const std::string &device_id, DhwReadings &readings, uint8_t index, const uint8_t *value,
-                        size_t len) {
-  uint8_t duration = 0;
-  if (!decode_dhw_duration(value, len, duration))
-    return false;
-  const bool boost = index == DHW_REG_BOOST_DURATION;
-  (boost ? readings.boost_duration : readings.away_duration) = duration;
-  ESP_LOGD(detail::TAG, "Device %s: hot water %s duration %u", device_id.c_str(), boost ? "boost" : "away",
-           static_cast<unsigned>(duration));
-  return true;
-}
-
-/// Fold the brand letter into the readings, logging it the first time.
-bool store_dhw_brand(const std::string &device_id, DhwReadings &readings, const uint8_t *value, size_t len) {
-  if (len < 1)
-    return false;
-  if (readings.brand < 0) {
-    // One letter per brand; logged once so a field report says which make answered.
-    const char letter = (value[0] >= ' ' && value[0] <= '~') ? static_cast<char>(value[0]) : '?';
-    ESP_LOGI(detail::TAG, "Device %s reports hot water brand '%c' (0x%02X)", device_id.c_str(), letter, value[0]);
-  }
-  readings.brand = value[0];
-  return true;
-}
-
-/// Fold one decoded water heater register into the readings.
-/// @return false when the value is not one the decoder takes (the reading is left as it was).
-bool store_dhw_reading(const std::string &device_id, DhwReadings &readings, uint8_t index, const uint8_t *value,
-                       size_t len) {
-  switch (index) {
-    case DHW_REG_WATER_TEMPERATURE:
-      return decode_dhw_water_temperature(value, len, readings.water_c);
-    case DHW_REG_MODE: {
-      DhwMode mode = DhwMode::AUTO;
-      if (!decode_dhw_mode(value, len, mode))
-        return false;
-      readings.mode = static_cast<int16_t>(mode);
-      return true;
-    }
-    case DHW_REG_HEATING: {
-      DhwHeatingState state;
-      if (!decode_dhw_heating_state(value, len, state))
-        return false;
-      readings.heating = state.heating ? 1 : 0;
-      readings.element = state.element ? 1 : 0;
-      readings.heat_pump = state.heat_pump ? 1 : 0;
-      return true;
-    }
-    case DHW_REG_BOOST_DURATION:
-    case DHW_REG_AWAY_DURATION:
-      return store_dhw_duration(device_id, readings, index, value, len);
-    case DHW_REG_ENERGY: {
-      uint32_t wh = 0;
-      if (!decode_dhw_energy_wh(value, len, wh))
-        return false;
-      readings.energy_wh = wh;
-      return true;
-    }
-    case DHW_REG_BRAND:
-      return store_dhw_brand(device_id, readings, value, len);
-    default:
-      return false;
+      break;
   }
 }
 
@@ -255,7 +191,7 @@ bool HeaterController::read_programme_state(const std::string &device_id) {
   dev = this->registry_.get(device_id);
   if (dev == nullptr)
     return false;
-  const std::optional<HeatingFunction> timed_run = timed_run_register(*profile, *dev);
+  const std::optional<DeviceRegister> timed_run = timed_run_register(*profile, *dev);
   if (timed_run && this->read_and_store_heating_register_(device_id, *timed_run, nullptr, EXCHANGE_RETRY_COUNT,
                                                           /*follow_override=*/false) != HeatingRead::VALUE)
     return false;
@@ -295,7 +231,7 @@ void HeaterController::enable_device_reading(const std::string &device_id, Devic
   const DeviceReadingRow *row = find_device_reading(reading);
   if (dev == nullptr || row == nullptr || !device_has_reading_capability(*dev, *row))
     return;
-  for (const HeatingFunction fn : reading_polled_registers(*row))
+  for (const DeviceRegister fn : reading_polled_registers(*row))
     ask_register_reading(*dev, fn);
 }
 
@@ -337,14 +273,14 @@ bool HeaterController::exchange_heating_(const std::string &device_id, const cha
   return true;
 }
 
-bool HeaterController::send_heating_command(const std::string &device_id, HeatingFunction fn, float value) {
+bool HeaterController::send_heating_command(const std::string &device_id, DeviceRegister fn, float value) {
   const IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr || !*this->initialized_)
     return false;
 
   // Capability gate: only via the predicate, never an inline device-type or vendor list.
-  if (!device_uses_heating_registers(dev->type, dev->subtype)) {
-    detail::log_rejected_operation(device_id, *dev, "heating command", "heater with private registers");
+  if (!device_takes_register(*dev, fn)) {
+    detail::log_rejected_operation(device_id, *dev, "heating command", device_register_owner(fn));
     return false;
   }
 
@@ -352,21 +288,29 @@ bool HeaterController::send_heating_command(const std::string &device_id, Heatin
   const size_t payload_len = encode_heating_payload(fn, value, payload);
   if (payload_len == 0) {
     ESP_LOGW(detail::TAG, "Heating command %s for device %s rejected: value %.2f out of range",
-             heating_function_name(fn), device_id.c_str(), value);
+             device_register_name(fn), device_id.c_str(), value);
     return false;
   }
 
   IoFrame request;
   if (!create_write_private(request, this->node_id_, dev->node_id, dev->low_power, payload, payload_len)) {
-    ESP_LOGW(detail::TAG, "Heating command %s for device %s: failed to build frame", heating_function_name(fn),
+    ESP_LOGW(detail::TAG, "Heating command %s for device %s: failed to build frame", device_register_name(fn),
              device_id.c_str());
     return false;
   }
 
   IoFrame response;
   // A write is something the user waits on: the full retry budget.
-  if (!this->exchange_heating_(device_id, heating_function_name(fn), request, response, EXCHANGE_RETRY_COUNT))
+  if (!this->exchange_heating_(device_id, device_register_name(fn), request, response, EXCHANGE_RETRY_COUNT))
     return false;
+  // A device that keeps the value echoes it in the ack; one that ignores the write acks something else (issue #198),
+  // so the ack is logged for a field report.
+  if (const auto ack_value = register_reply_value(response, fn)) {
+    char ack_hex[FRAME_LOG_HEX_BUFFER_SIZE];
+    bytes_to_hex(ack_value->data(), ack_value->size(), ack_hex, sizeof(ack_hex));
+    ESP_LOGI(detail::TAG, "Device %s: %s write acknowledged with value [%s]", device_id.c_str(),
+             device_register_name(fn), ack_hex);
+  }
   // A written temporary state starts or ends a run: the minutes left of an earlier run must not show as the new
   // run's until the next poll reads them. The exchange blocks, so the record is looked up again.
   IoDevice *written = this->registry_.get(device_id);
@@ -410,63 +354,69 @@ bool HeaterController::read_private_register(const std::string &device_id, uint8
   return true;
 }
 
-bool HeaterController::read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
+bool HeaterController::read_heating_register(const std::string &device_id, DeviceRegister fn, float *value_out,
                                              uint8_t max_tries) {
   return this->read_and_store_heating_register_(device_id, fn, value_out, max_tries, /*follow_override=*/false) ==
          HeatingRead::VALUE;
 }
 
 HeaterController::HeatingRead HeaterController::read_back_heating_register_(const std::string &device_id,
-                                                                            HeatingFunction fn, float *value_out) {
+                                                                            DeviceRegister fn, float *value_out) {
   return this->read_and_store_heating_register_(device_id, fn, value_out, EXCHANGE_RETRY_COUNT,
                                                 /*follow_override=*/true);
 }
 
 HeaterController::HeatingRead HeaterController::read_and_store_heating_register_(const std::string &device_id,
-                                                                                 HeatingFunction fn, float *value_out,
+                                                                                 DeviceRegister fn, float *value_out,
                                                                                  uint8_t max_tries,
                                                                                  bool follow_override) {
   const IoDevice *gate = this->registry_.get(device_id);
   if (gate == nullptr || !*this->initialized_)
     return HeatingRead::NO_ANSWER;
 
-  if (!device_uses_heating_registers(gate->type, gate->subtype)) {
-    detail::log_rejected_operation(device_id, *gate, "heating read", "heater with private registers");
+  if (!device_takes_register(*gate, fn)) {
+    detail::log_rejected_operation(device_id, *gate, "heating read", device_register_owner(fn));
     return HeatingRead::NO_ANSWER;
   }
 
+  uint8_t register_high = 0;
   uint8_t register_low = 0;
-  if (!heating_function_is_readable(fn) || !heating_function_register(fn, register_low)) {
-    ESP_LOGW(detail::TAG, "Heating read %s for device %s rejected: not a readable register", heating_function_name(fn),
+  if (!device_register_is_readable(fn) || !device_register_bytes(fn, register_high, register_low)) {
+    ESP_LOGW(detail::TAG, "Heating read %s for device %s rejected: not a readable register", device_register_name(fn),
              device_id.c_str());
     return HeatingRead::NO_ANSWER;
   }
 
   IoFrame response;
-  if (!this->read_private_register(device_id, HEATING_REGISTER_HIGH_BYTE, register_low, heating_function_name(fn),
-                                   response, max_tries))
+  if (!this->read_private_register(device_id, register_high, register_low, device_register_name(fn), response,
+                                   max_tries))
     return HeatingRead::NO_ANSWER;
-
-  float value = NAN;
-  if (!decode_heating_reply(response, fn, value)) {
-    char payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
-    bytes_to_hex(response.data, response.data_len, payload_hex, sizeof(payload_hex));
-    ESP_LOGD(detail::TAG, "heating %s reply from device %s carries no value: %s", heating_function_name(fn),
-             device_id.c_str(), payload_hex);
-    return HeatingRead::EMPTY;
-  }
 
   // The exchange blocks and the registry may have been touched by a callback meanwhile, so the record
   // is looked up again.
   IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr)
     return HeatingRead::NO_ANSWER;
+  // A register with a value of its own decodes to `value`; one whose readings are slices of it (a water heater's
+  // heating state) has none. Either is stored by every reading that is the register.
+  float value = NAN;
+  const bool has_value = decode_heating_reply(response, fn, value);
+  const auto value_bytes = register_reply_value(response, fn);
+  const bool stored = value_bytes && store_register_reply(*dev, fn, *value_bytes);
+  if (!has_value && !stored) {
+    char payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
+    bytes_to_hex(response.data, response.data_len, payload_hex, sizeof(payload_hex));
+    ESP_LOGD(detail::TAG, "heating %s reply from device %s carries no value: %s", device_register_name(fn),
+             device_id.c_str(), payload_hex);
+    return HeatingRead::EMPTY;
+  }
+
   const HeatingProfile *profile = find_heating_profile(*dev);
   // The read-back of an override carries the temperature in force along, so the card shows the new target
   // now instead of after the next poll of that register.
-  const std::optional<float> in_force =
-      follow_override && profile != nullptr ? in_force_from_override_read(*profile, fn, value) : std::nullopt;
-  store_register_reading(*dev, fn, value);
+  const std::optional<float> in_force = follow_override && profile != nullptr && has_value
+                                            ? in_force_from_override_read(*profile, fn, value)
+                                            : std::nullopt;
   if (in_force.has_value())
     store_register_reading(*dev, profile->programme_period->in_force_fn, *in_force);
   // A reading that left the programme drops the temperature in force before anything shows it.
@@ -488,42 +438,17 @@ void HeaterController::schedule_poll(const std::string &device_id, uint32_t dela
 
 // === Water heater (device_feature::WATER_HEATER) ===
 
-bool HeaterController::read_dhw_register(const std::string &device_id, uint8_t index, const char *label,
-                                         IoFrame &response, uint8_t max_tries) {
-  const IoDevice *dev = this->registry_.get(device_id);
-  if (dev == nullptr || !*this->initialized_)
-    return false;
-  // A family-0x00 read only ever goes to a water heater: a radiator's family is 0x01.
-  if (!has_feature(dev->features, device_feature::WATER_HEATER)) {
-    detail::log_rejected_operation(device_id, *dev, "hot water register read", "water heater");
-    return false;
-  }
-  return this->read_private_register(device_id, DHW_REGISTER_HIGH_BYTE, index, label, response, max_tries);
-}
-
-bool HeaterController::read_dhw_reading(const std::string &device_id, uint8_t index, uint8_t max_tries) {
-  IoFrame response;
-  const char *label = dhw_register_label(index);
-  if (!this->read_dhw_register(device_id, index, label, response, max_tries))
-    return false;
-  const uint8_t *value = nullptr;
-  size_t len = 0;
-  // read_private_register() has checked the echo, so this only locates the value bytes.
-  if (!decode_dhw_register_reply(response, index, value, len))
-    return false;
-  // The exchange blocks and the registry may have been touched by a callback meanwhile.
-  IoDevice *dev = this->registry_.get(device_id);
-  if (dev == nullptr)
-    return false;
-  if (!store_dhw_reading(device_id, dev->dhw, index, value, len)) {
-    char payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
-    bytes_to_hex(response.data, response.data_len, payload_hex, sizeof(payload_hex));
-    ESP_LOGD(detail::TAG, "%s reply from device %s carries no value this codec takes: %s", label, device_id.c_str(),
-             payload_hex);
-    return true;
-  }
-  this->registry_.notify(device_id);
-  return true;
+bool HeaterController::read_dhw_reading(const std::string &device_id, DeviceRegister fn, uint8_t max_tries) {
+  const IoDevice *before = this->registry_.get(device_id);
+  const bool first_value = before != nullptr && !register_value(*before, fn).has_value();
+  float value = NAN;
+  const HeatingRead read = this->read_and_store_heating_register_(device_id, fn, &value, max_tries,
+                                                                  /*follow_override=*/false);
+  if (read == HeatingRead::VALUE)
+    log_dhw_reading(device_id, fn, value, first_value);
+  // A reply that holds no value this register's codec takes is an answer, and the poll goes on: only a heater that
+  // does not answer at all ends it.
+  return read != HeatingRead::NO_ANSWER;
 }
 
 bool HeaterController::read_dhw_status(const std::string &device_id, uint8_t max_tries) {
@@ -540,11 +465,17 @@ bool HeaterController::read_dhw_status(const std::string &device_id, uint8_t max
 }
 
 bool HeaterController::set_water_heater_target(const std::string &device_id, float celsius) {
+  const IoDevice *dev = this->registry_.get(device_id);
+  if (dev == nullptr)
+    return false;
   uint16_t main_parameter = 0;
-  if (!encode_dhw_target(celsius, main_parameter)) {
+  // The range is the device's (device_temperature_range()), the rule every temperature heater's target follows: a
+  // target outside it is refused, never sent as an end of the range.
+  const HeatingCardRange range = device_temperature_range(*dev);
+  if (encode_temperature_target(range, celsius, main_parameter) != HeatingRefusal::NONE) {
     ESP_LOGW(detail::TAG, "Hot water target %.1f C for device %s rejected: outside %.0f-%.0f C",
-             static_cast<double>(celsius), device_id.c_str(), static_cast<double>(DHW_TARGET_MIN_C),
-             static_cast<double>(DHW_TARGET_MAX_C));
+             static_cast<double>(celsius), device_id.c_str(), static_cast<double>(range.min_c),
+             static_cast<double>(range.max_c));
     return false;
   }
   // The settle poll the execute operation arms reads the target back.
@@ -577,46 +508,18 @@ const IoDevice *HeaterController::water_heater_for_write_(const std::string &dev
   return dev;
 }
 
-bool HeaterController::write_dhw_register_(const std::string &device_id, const char *operation, uint8_t index,
-                                           const uint8_t *payload, size_t payload_len) {
-  const IoDevice *dev = this->water_heater_for_write_(device_id, operation);
-  if (dev == nullptr)
+bool HeaterController::write_dhw_register_(const std::string &device_id, DeviceRegister fn, float value) {
+  // The shared register write: the family gate, the value judged by the row, the exchange, the ack log and the poll
+  // that follows.
+  if (!this->send_heating_command(device_id, fn, value))
     return false;
-
-  IoFrame request;
-  if (!create_write_private(request, this->node_id_, dev->node_id, dev->low_power, payload, payload_len)) {
-    ESP_LOGW(detail::TAG, "%s for device %s: failed to build frame", operation, device_id.c_str());
-    return false;
-  }
-
-  IoFrame response;
-  // A write is something the user waits on: the full retry budget.
-  if (!this->exchange_heating_(device_id, dhw_register_label(index), request, response, EXCHANGE_RETRY_COUNT))
-    return false;
-  // A heater that keeps the value echoes it in the ack; one that ignores the write acks something else
-  // (issue #198), so the ack is logged for a field report.
-  const uint8_t *ack_value = nullptr;
-  size_t ack_len = 0;
-  if (decode_dhw_register_reply(response, index, ack_value, ack_len)) {
-    char ack_hex[FRAME_LOG_HEX_BUFFER_SIZE];
-    bytes_to_hex(ack_value, ack_len, ack_hex, sizeof(ack_hex));
-    ESP_LOGI(detail::TAG, "Device %s: %s write acknowledged with value [%s]", device_id.c_str(), operation, ack_hex);
-  }
   // The entity shows what the heater holds, not what was sent; the heating state follows later.
-  this->read_dhw_reading(device_id, index, EXCHANGE_RETRY_COUNT);
-  this->schedule_poll(device_id, HEATING_POST_WRITE_POLL_DELAY_MS);
+  this->read_dhw_reading(device_id, fn, EXCHANGE_RETRY_COUNT);
   return true;
 }
 
 bool HeaterController::set_water_heater_mode(const std::string &device_id, DhwMode mode) {
-  uint8_t payload[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
-  const size_t payload_len = encode_dhw_mode_write(static_cast<uint8_t>(mode), payload);
-  if (payload_len == 0) {
-    ESP_LOGW(detail::TAG, "Hot water mode %u for device %s rejected: not a mode the heater reports",
-             static_cast<unsigned>(mode), device_id.c_str());
-    return false;
-  }
-  if (!this->write_dhw_register_(device_id, "hot water mode", DHW_REG_MODE, payload, payload_len))
+  if (!this->write_dhw_register_(device_id, DeviceRegister::DHW_MODE, static_cast<float>(mode)))
     return false;
   // The heater chooses its own target in AUTO and holds its manual one otherwise, so the target changes
   // with the mode: read it now rather than at the next poll. A miss here does not undo the write.
@@ -631,18 +534,17 @@ bool HeaterController::set_dhw_operating_mode_(const std::string &device_id, Dhw
   if (dev == nullptr)
     return false;
   // Once FP15 has been read the heater says what it supports; before that the write is allowed to try.
-  if (dev->dhw.capabilities >= 0 && (static_cast<uint16_t>(dev->dhw.capabilities) & wire.capability) == 0) {
+  const int capabilities = reading_wire(*dev, DeviceReading::HOT_WATER_CAPABILITIES);
+  if (capabilities >= 0 && (static_cast<uint16_t>(capabilities) & wire.capability) == 0) {
     ESP_LOGW(detail::TAG, "%s for device %s refused: the heater does not report it as supported (FP15 0x%04X)",
-             names.feature, device_id.c_str(), static_cast<unsigned>(dev->dhw.capabilities));
+             names.feature, device_id.c_str(), static_cast<unsigned>(capabilities));
     return false;
   }
 
   if (on) {
     // The duration goes first (ADR 0081). The heater has been seen to ignore it, and a missed ack is not
     // fatal either: the FP16 EXECUTE below is what switches the mode.
-    uint8_t payload[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
-    const size_t payload_len = encode_dhw_duration_write(which, payload);
-    if (!this->write_dhw_register_(device_id, names.duration, wire.duration_register, payload, payload_len)) {
+    if (!this->write_dhw_register_(device_id, wire.duration_register, static_cast<float>(wire.start_duration))) {
       ESP_LOGW(detail::TAG, "Device %s: %s write not acknowledged, sending the mode anyway", device_id.c_str(),
                names.duration);
     }
@@ -710,16 +612,17 @@ void HeaterController::check_heater_model(const std::string &device_id, uint8_t 
   dev = this->registry_.get(device_id);
   if (dev == nullptr)
     return;
-  bool mode_answered = register_value(*dev, HeatingFunction::TOWEL_MODE).has_value();
+  bool mode_answered = register_value(*dev, DeviceRegister::TOWEL_MODE).has_value();
   bool mode_has_value = mode_answered;
+  uint8_t mode_family = 0;
   uint8_t mode_register = 0;
-  if (!mode_answered && heating_function_register(HeatingFunction::TOWEL_MODE, mode_register)) {
+  if (!mode_answered && device_register_bytes(DeviceRegister::TOWEL_MODE, mode_family, mode_register)) {
     IoFrame mode_reply;
-    mode_answered = this->read_private_register(device_id, HEATING_REGISTER_HIGH_BYTE, mode_register, "towel_mode",
-                                                mode_reply, max_tries);
+    mode_answered =
+        this->read_private_register(device_id, mode_family, mode_register, "towel_mode", mode_reply, max_tries);
     // An answer that carries the mode byte counts as a value, also one the codec refuses (a byte above 3): the heater
     // has the register, which is what tells a towel dryer from a radiator.
-    mode_has_value = mode_answered && heating_reply_carries_value(mode_reply, HeatingFunction::TOWEL_MODE);
+    mode_has_value = mode_answered && heating_reply_carries_value(mode_reply, DeviceRegister::TOWEL_MODE);
   }
   // Report only from a run in which both reads were answered; otherwise the next poll tries again.
   if (!name_read || !mode_answered)
@@ -760,7 +663,7 @@ void HeaterController::poll_temperature_in_force_(const std::string &device_id, 
   if (dev == nullptr || dev->temperature_in_force == TemperatureInForceSupport::ABSENT ||
       !programme_period_active(profile, *dev))
     return;
-  const HeatingFunction fn = profile.programme_period->in_force_fn;
+  const DeviceRegister fn = profile.programme_period->in_force_fn;
   const HeatingRead read =
       this->read_and_store_heating_register_(device_id, fn, nullptr, max_tries, /*follow_override=*/false);
   // A missed read (no reply) says nothing about the register and leaves what the heater has shown before.
@@ -783,7 +686,7 @@ void HeaterController::poll_temperature_in_force_(const std::string &device_id, 
   // and its targets keep writing the comfort setpoint.
   current->temperature_in_force = TemperatureInForceSupport::ABSENT;
   ESP_LOGI(detail::TAG, "Device %s reports no temperature in force (%s): its target stays the comfort setpoint",
-           device_id.c_str(), heating_function_name(fn));
+           device_id.c_str(), device_register_name(fn));
 }
 
 void HeaterController::poll_asked_registers_(const std::string &device_id, const HeatingProfile &profile,
@@ -791,7 +694,7 @@ void HeaterController::poll_asked_registers_(const std::string &device_id, const
   const IoDevice *start = this->registry_.get(device_id);
   if (start == nullptr)
     return;
-  for (const HeatingFunction fn : heater_poll_reads(profile, *start, ReadingPoll::WHEN_ASKED)) {
+  for (const DeviceRegister fn : device_poll_reads(*start, ReadingPoll::WHEN_ASKED)) {
     // Looked up again for every register: a read exchange may have changed the registry.
     IoDevice *dev = this->registry_.get(device_id);
     if (dev == nullptr)
@@ -810,7 +713,7 @@ void HeaterController::poll_asked_registers_(const std::string &device_id, const
       return;
     mark_register_reading_absent(*current, fn);
     ESP_LOGI(detail::TAG, "Device %s reports no value for %s: its entity stays without a state", device_id.c_str(),
-             heating_function_name(fn));
+             device_register_name(fn));
   }
 }
 
@@ -842,14 +745,14 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
                                             uint8_t max_tries) {
   // Each phase asks the reading table for its registers when it starts: what an earlier phase read (the mode, a
   // timed run's state) and what an entity asked for are then current.
-  const auto reads_of = [this, &device_id, &profile](ReadingPoll policy) {
+  const auto reads_of = [this, &device_id](ReadingPoll policy) {
     const IoDevice *dev = this->registry_.get(device_id);
-    return dev != nullptr ? heater_poll_reads(profile, *dev, policy) : HeaterPollList{};
+    return dev != nullptr ? device_poll_reads(*dev, policy) : HeaterPollList{};
   };
 
   bool ok = true;
   size_t answered = 0;
-  for (const HeatingFunction fn : reads_of(ReadingPoll::EVERY_POLL)) {
+  for (const DeviceRegister fn : reads_of(ReadingPoll::EVERY_POLL)) {
     if (!this->read_heating_register(device_id, fn, nullptr, max_tries)) {
       ok = false;
       break;
@@ -865,7 +768,7 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
   // A setting the heater's own controller changes, or a part the heater may not have (a night light): read
   // every poll once the core registers answered, and a miss is not a poll failure (the next poll asks again).
   if (ok) {
-    for (const HeatingFunction fn : reads_of(ReadingPoll::EVERY_POLL_MAY_MISS))
+    for (const DeviceRegister fn : reads_of(ReadingPoll::EVERY_POLL_MAY_MISS))
       this->read_heating_register(device_id, fn, nullptr, max_tries);
   }
 
@@ -878,7 +781,7 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
   // Properties and settings that rarely change are read until they hold a value. A miss here is not a poll
   // failure; the next poll asks again.
   if (ok) {
-    for (const HeatingFunction fn : reads_of(ReadingPoll::ONCE_AFTER_BOOT))
+    for (const DeviceRegister fn : reads_of(ReadingPoll::ONCE_AFTER_BOOT))
       this->read_heating_register(device_id, fn, nullptr, max_tries);
   }
 
@@ -944,29 +847,31 @@ bool HeaterController::poll_status_read_(const std::string &device_id) {
 
 // === Water heater poll ===
 
-namespace {
-
-/// The registers every water heater poll reads, after the status read, in this order.
-constexpr uint8_t DHW_POLL_REGISTERS[] = {DHW_REG_WATER_TEMPERATURE, DHW_REG_MODE,          DHW_REG_HEATING,
-                                          DHW_REG_BOOST_DURATION,    DHW_REG_AWAY_DURATION, DHW_REG_ENERGY};
-
-}  // namespace
-
 bool HeaterController::poll_dhw_(const std::string &device_id) {
   const IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr || !has_feature(dev->features, device_feature::WATER_HEATER))
     return false;
 
   return this->run_poll_(device_id, PollLadder::RUN_BY_POLL, [this, &device_id](uint8_t max_tries) {
-    bool ok = this->read_dhw_status(device_id, max_tries);
+    // The registers come from the reading table, asked for each phase when it starts: what an earlier read stored is
+    // then current.
+    const auto reads_of = [this, &device_id](ReadingPoll policy) {
+      const IoDevice *current = this->registry_.get(device_id);
+      return current != nullptr ? device_poll_reads(*current, policy) : HeaterPollList{};
+    };
 
-    for (size_t i = 0; ok && i < sizeof(DHW_POLL_REGISTERS); i++)
-      ok = this->read_dhw_reading(device_id, DHW_POLL_REGISTERS[i], max_tries);
+    bool ok = this->read_dhw_status(device_id, max_tries);
+    for (const DeviceRegister fn : reads_of(ReadingPoll::EVERY_POLL)) {
+      if (!ok)
+        break;
+      ok = this->read_dhw_reading(device_id, fn, max_tries);
+    }
 
     // The brand never changes: read until it has been read once. A miss is not a poll failure.
-    const IoDevice *current = this->registry_.get(device_id);
-    if (ok && current != nullptr && current->dhw.brand < 0)
-      this->read_dhw_reading(device_id, DHW_REG_BRAND, max_tries);
+    if (ok) {
+      for (const DeviceRegister fn : reads_of(ReadingPoll::ONCE_AFTER_BOOT))
+        this->read_dhw_reading(device_id, fn, max_tries);
+    }
     return ok;
   });
 }

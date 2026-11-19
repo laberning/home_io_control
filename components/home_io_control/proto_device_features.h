@@ -57,8 +57,8 @@ enum class DeviceFeature : uint8_t {
   WINDOW_COMPANIONS,
   /// Direction inverted by default (horizontal awnings: IO 0 is closed).
   INVERTED,
-  /// Read and commanded as a domestic hot water heater: family-0x00 registers (proto_dhw.h) for its
-  /// readings and mode, the status main parameter for its target temperature. Gates the water heater
+  /// Read and commanded as a domestic hot water heater: family-0x00 registers (proto_heating.h) for its
+  /// readings and mode, the status main parameter for its target temperature (proto_dhw.h). Gates the water heater
   /// poll, its register reads and writes, and the `water_heater:` platform.
   WATER_HEATER,
   /// A night light built into a heater with private registers: on/off in register 0x0144, brightness in

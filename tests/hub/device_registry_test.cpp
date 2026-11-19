@@ -179,12 +179,12 @@ TEST(DeviceRegistry, PutKeepsTheWholeReadingStoreOfTheRecordItReplaces) {
   reg.add("AABBCC", {.type = DeviceType::ELECTRICAL_HEATER, .subtype = 1, .model = DeviceModel::TOWEL_DRYER});
   IoDevice *held = reg.get("AABBCC");
   // Values from every kind of source, and both flags: a pairing that replaces the record resets none of them.
-  test::store_reading(*held, HeatingFunction::ROOM_TEMPERATURE, 20.5F);
+  test::store_reading(*held, DeviceRegister::ROOM_TEMPERATURE, 20.5F);
   test::store_reading(*held, DeviceReading::HEATING_LEVEL, heating_level::ECO);
   held->reading_values.store(reading_slot(DeviceReading::ENERGY_TOTAL), 3262.0F);
-  ask_register_reading(*held, HeatingFunction::CENTRAL_HEATING_MODE);
-  ask_register_reading(*held, HeatingFunction::OCCUPANCY_DETECTION);
-  mark_register_reading_absent(*held, HeatingFunction::OCCUPANCY_DETECTION);
+  ask_register_reading(*held, DeviceRegister::CENTRAL_HEATING_MODE);
+  ask_register_reading(*held, DeviceRegister::OCCUPANCY_DETECTION);
+  mark_register_reading_absent(*held, DeviceRegister::OCCUPANCY_DETECTION);
   IoDevice paired{};
   paired.type = DeviceType::ELECTRICAL_HEATER;
   paired.subtype = 1;
@@ -194,9 +194,9 @@ TEST(DeviceRegistry, PutKeepsTheWholeReadingStoreOfTheRecordItReplaces) {
       << "a register value stays, so the card does not go blank after a re-pair";
   EXPECT_EQ(test::wire_read(kept, DeviceReading::HEATING_LEVEL), heating_level::ECO) << "a status value stays";
   EXPECT_EQ(reading_value(kept, DeviceReading::ENERGY_TOTAL), 3262.0F) << "and so does a data-object value";
-  EXPECT_EQ(test::read_state(kept, HeatingFunction::CENTRAL_HEATING_MODE), test::ReadState::ASKED)
+  EXPECT_EQ(test::read_state(kept, DeviceRegister::CENTRAL_HEATING_MODE), test::ReadState::ASKED)
       << "the YAML's sensor still asks for the read after pairing replaces the record";
-  EXPECT_EQ(test::read_state(kept, HeatingFunction::OCCUPANCY_DETECTION), test::ReadState::ABSENT)
+  EXPECT_EQ(test::read_state(kept, DeviceRegister::OCCUPANCY_DETECTION), test::ReadState::ABSENT)
       << "and a register the heater lacks stays unasked";
 }
 

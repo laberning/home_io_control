@@ -11,7 +11,6 @@
 
 #include "proto_device_features.h"
 #include "proto_device_kinds.h"
-#include "proto_dhw.h"
 #include "proto_heating.h"
 #include "proto_sizes.h"
 
@@ -320,7 +319,7 @@ enum class TemperatureInForceSupport : uint8_t {
 ///          A value that is stored is no longer absent; a reading found absent holds no value. Every reading read
 ///          through reading_value() is held here, whichever source filled it.
 struct DeviceReadingValues {
-  static constexpr size_t SLOTS = 32;  ///< Number of readings the store can hold.
+  static constexpr size_t SLOTS = 48;  ///< Number of readings the store can hold.
 
   /// @brief Keep a value; the slot is no longer absent. A NaN is a value too (a sensor the device reports as faulty).
   void store(size_t slot, float value) {
@@ -358,7 +357,7 @@ struct DeviceReadingValues {
   [[nodiscard]] bool asked(size_t slot) const { return slot < SLOTS && (this->asked_ & mask_of(slot)) != 0; }
 
  private:
-  using Mask = uint32_t;
+  using Mask = uint64_t;
   static_assert(SLOTS <= std::numeric_limits<Mask>::digits, "every slot needs a bit in the masks; widen Mask");
   static constexpr Mask mask_of(size_t slot) { return Mask{1} << slot; }
   float values_[SLOTS]{};
@@ -486,12 +485,9 @@ struct IoDevice {
                                          ///< carries a temperature in its main parameter (YAML `min_temperature:`).
   float temperature_range_max_c{
       HEATING_TEMPERATURE_RANGE_MAX_C};  ///< Upper end of that range (YAML `max_temperature:`).
-  DhwReadings dhw{};                     ///< What the hub has read from a water heater (device_feature::WATER_HEATER):
-                                         ///< family-0x00 registers and the status reply's target. Set only from
-                                         ///< decoded replies; stays "never read" for every other device type.
   DeviceReadingValues reading_values{};  ///< What the hub has read from the device, by reading (reading_value()): a
-                                         ///< heater's registers and status reply, a data object. Kept across
-                                         ///< DeviceRegistry::put().
+                                         ///< heater's or a water heater's registers and status reply, a data object.
+                                         ///< Kept across DeviceRegistry::put().
   bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
                                  ///< line names the level even when the device reports none.
   bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every

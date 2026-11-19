@@ -5,6 +5,7 @@
 #include "proto_heating.h"
 
 #include "proto_constants.h"
+#include "proto_dhw.h"
 #include "proto_private_registers.h"
 #include "proto_sizes.h"
 #include "proto_value_codecs.h"
@@ -34,6 +35,8 @@ constexpr uint8_t HEATING_MODE_MAX = static_cast<uint8_t>(HeatingMode::OFF);
 constexpr uint8_t TEMPORARY_STATE_MAX = static_cast<uint8_t>(HeatingTemporaryState::DRYING);
 /// Highest working rate: a percentage.
 constexpr uint8_t WORKING_RATE_MAX = 100;
+/// Highest water heater mode value the register defines (DhwMode::MANUAL_ECO_OFF).
+constexpr uint8_t DHW_MODE_MAX = static_cast<uint8_t>(DhwMode::MANUAL_ECO_OFF);
 
 /// @brief Who may do what with a register.
 enum class HeatingAccess : uint8_t {
@@ -48,17 +51,20 @@ using HeatingValueRefusal = bool (*)(float value);
 
 /// @brief One register of the heater, the single description both directions are built from.
 ///
-/// A request is {PRIVATE_REGISTER_PREFIX, direction, HEATING_REGISTER_HIGH_BYTE, register_low,
-/// [value...]}; `direction` is PRIVATE_REGISTER_DIRECTION_GET or PRIVATE_REGISTER_DIRECTION_SET. The row is
-/// also the register's write rule: its codec, `max_value`, `write_range` and `refuses` say which values a write
-/// may carry, and every caller asks heating_write_accepts() instead of keeping a bound of its own.
-struct HeatingFunctionDescriptor {
+/// A request is {PRIVATE_REGISTER_PREFIX, direction, register_high, register_low, [value...]}; `direction` is
+/// PRIVATE_REGISTER_DIRECTION_GET or PRIVATE_REGISTER_DIRECTION_SET. The row is also the register's write rule: its
+/// codec, `max_value`, `write_range` and `refuses` say which values a write may carry, and every caller asks
+/// heating_write_accepts() instead of keeping a bound of its own.
+struct DeviceRegisterRow {
   const char *name;       ///< Action-visible name.
-  HeatingFunction fn;     ///< Function this row describes.
-  uint8_t register_low;   ///< Payload byte 3: low byte of the 0x01xx register number.
+  DeviceRegister fn;      ///< Function this row describes.
+  uint8_t register_low;   ///< Payload byte 3: low byte of the register number.
   HeatingAccess access;   ///< Whether the register may be read, written or both.
   ValueCodec codec;       ///< How the value maps onto the trailing bytes.
   uint16_t max_value{0};  ///< BOUNDED_BYTE, BOUNDED_U16: highest value a reply may carry and a write may send.
+  /// Payload byte 2: the register's family, the high byte of its number. The family does not say how a multi-byte
+  /// value is laid out: the codec does.
+  uint8_t register_high{HEATING_REGISTER_HIGH_BYTE};
   // NOLINTBEGIN(readability-redundant-member-init): g++'s -Wmissing-field-initializers wants the member
   // initializer before a row may leave the field out.
   std::optional<ValueRange> write_range{};  ///< Tenths registers: the values a write may carry.
@@ -79,22 +85,22 @@ bool refuses_unwritable_mode(float value) {
          !heating_mode_is_writable(static_cast<HeatingMode>(static_cast<uint8_t>(value)));
 }
 
-constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
+constexpr DeviceRegisterRow DEVICE_REGISTERS[] = {
     {.name = "power_on",
-     .fn = HeatingFunction::POWER_ON,
+     .fn = DeviceRegister::POWER_ON,
      .register_low = 0x2C,
      .access = HeatingAccess::READ_ONLY,
      .codec = ValueCodec::NONE,
      .action_value_label = ""},
     {.name = "set_temperature",
-     .fn = HeatingFunction::SET_TEMPERATURE,
+     .fn = DeviceRegister::SET_TEMPERATURE,
      .register_low = 0x03,
      .access = HeatingAccess::READ_WRITE,
      .codec = ValueCodec::TENTHS_U16,
      .write_range = ValueRange{HEATING_TEMP_MIN_C, HEATING_TEMP_MAX_C},
      .action_value_label = "temperature"},
     {.name = "set_mode",
-     .fn = HeatingFunction::SET_MODE,
+     .fn = DeviceRegister::SET_MODE,
      .register_low = 0x00,
      .access = HeatingAccess::READ_WRITE,
      .codec = ValueCodec::BOUNDED_BYTE,
@@ -103,89 +109,138 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
      .action_value_label = "mode"},
     // 0x0110 is written by a controller to say someone is there; a Sauter Hekla reports detected presence in it.
     {.name = "set_presence",
-     .fn = HeatingFunction::SET_PRESENCE,
+     .fn = DeviceRegister::SET_PRESENCE,
      .register_low = 0x10,
      .access = HeatingAccess::READ_WRITE,
      .codec = ValueCodec::BINARY,
      .action_value_label = "presence"},
     {.name = "set_open_window_detection",
-     .fn = HeatingFunction::SET_OPEN_WINDOW_DETECTION,
+     .fn = DeviceRegister::SET_OPEN_WINDOW_DETECTION,
      .register_low = 0x06,
      .access = HeatingAccess::READ_WRITE,
      .codec = ValueCodec::BINARY,
      .action_value_label = "open-window detection"},
     {.name = "midnight_sync",
-     .fn = HeatingFunction::MIDNIGHT_SYNC,
+     .fn = DeviceRegister::MIDNIGHT_SYNC,
      .register_low = 0x30,
      .access = HeatingAccess::READ_ONLY,
      .codec = ValueCodec::NONE,
      .action_value_label = ""},
-    {"room_temperature", HeatingFunction::ROOM_TEMPERATURE, 0x15, HeatingAccess::READ_ONLY, ValueCodec::HUNDREDTHS_S16},
-    {"regulator_state", HeatingFunction::REGULATOR_STATE, 0x17, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
+    {"room_temperature", DeviceRegister::ROOM_TEMPERATURE, 0x15, HeatingAccess::READ_ONLY, ValueCodec::HUNDREDTHS_S16},
+    {"regulator_state", DeviceRegister::REGULATOR_STATE, 0x17, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
      REGULATOR_STATE_MAX},
-    {"max_setpoint", HeatingFunction::MAX_SETPOINT, 0x02, HeatingAccess::READ_ONLY, ValueCodec::TENTHS_U16},
+    {"max_setpoint", DeviceRegister::MAX_SETPOINT, 0x02, HeatingAccess::READ_ONLY, ValueCodec::TENTHS_U16},
     {.name = "window_open",
-     .fn = HeatingFunction::WINDOW_OPEN,
+     .fn = DeviceRegister::WINDOW_OPEN,
      .register_low = 0x0E,
      .access = HeatingAccess::READ_ONLY,
      .codec = ValueCodec::BINARY,
      .action_value_label = ""},
     // Towel-dryer registers: read on two Atlantic Adelis units (corpus atlantic_adelis_probe_*); writing
     // 0x0136 (mode) and 0x013E (boost, drying) is confirmed against the display (issue #202).
-    {"towel_mode", HeatingFunction::TOWEL_MODE, 0x36, HeatingAccess::READ_WRITE, ValueCodec::BOUNDED_BYTE,
+    {"towel_mode", DeviceRegister::TOWEL_MODE, 0x36, HeatingAccess::READ_WRITE, ValueCodec::BOUNDED_BYTE,
      TOWEL_MODE_MAX},
-    {"temporary_state", HeatingFunction::TEMPORARY_STATE, 0x3E, HeatingAccess::READ_WRITE, ValueCodec::BOUNDED_BYTE,
+    {"temporary_state", DeviceRegister::TEMPORARY_STATE, 0x3E, HeatingAccess::READ_WRITE, ValueCodec::BOUNDED_BYTE,
      TEMPORARY_STATE_MAX},
-    {"working_rate", HeatingFunction::WORKING_RATE, 0x26, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
+    {"working_rate", DeviceRegister::WORKING_RATE, 0x26, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
      WORKING_RATE_MAX},
     // Read on a towel dryer in a programme period (issue #202): the temperature in force in 0x0137 and the
     // eco setback in 0x0104.
-    {"temperature_in_force", HeatingFunction::TEMPERATURE_IN_FORCE, 0x37, HeatingAccess::READ_ONLY,
+    {"temperature_in_force", DeviceRegister::TEMPERATURE_IN_FORCE, 0x37, HeatingAccess::READ_ONLY,
      ValueCodec::TENTHS_U16},
-    {"eco_setback", HeatingFunction::ECO_SETBACK, 0x04, HeatingAccess::READ_ONLY, ValueCodec::TENTHS_U16},
+    {"eco_setback", DeviceRegister::ECO_SETBACK, 0x04, HeatingAccess::READ_ONLY, ValueCodec::TENTHS_U16},
     // Read during a panel override on a towel dryer (issue #202): 16.5 degrees, 0 otherwise.
     {.name = "set_derogation",
-     .fn = HeatingFunction::DEROGATED_SETPOINT,
+     .fn = DeviceRegister::DEROGATED_SETPOINT,
      .register_low = 0x1D,
      .access = HeatingAccess::READ_WRITE,
      .codec = ValueCodec::TENTHS_U16_OR_ZERO,
      .write_range = ValueRange{HEATING_TEMP_MIN_C, HEATING_TEMP_MAX_C},
      .action_value_label = "temperature"},
     // Not read on any radiator yet; the same temperature as 0x0137 on a towel dryer, which read it in both.
-    {"heater_temperature_in_force", HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, 0x2A, HeatingAccess::READ_ONLY,
+    {"heater_temperature_in_force", DeviceRegister::HEATER_TEMPERATURE_IN_FORCE, 0x2A, HeatingAccess::READ_ONLY,
      ValueCodec::TENTHS_U16},
     // Night light registers: read on a Sauter Hekla with the light on and off (issue #222).
-    {"night_light", HeatingFunction::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, ValueCodec::BINARY},
+    {"night_light", DeviceRegister::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, ValueCodec::BINARY},
     // Written and read as a percentage: the row's scale maps it to the 0-10000 the register holds.
     {.name = "night_light_brightness",
-     .fn = HeatingFunction::NIGHT_LIGHT_BRIGHTNESS,
+     .fn = DeviceRegister::NIGHT_LIGHT_BRIGHTNESS,
      .register_low = 0x42,
      .access = HeatingAccess::READ_WRITE,
      .codec = ValueCodec::SCALED_U16,
      .max_value = HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX,
      .scale = HEATING_NIGHT_LIGHT_SCALE},
     // Read on a mixed towel dryer (issue #243): 1 while its central-heating mode is on, 0 in electric mode.
-    {"central_heating_mode", HeatingFunction::CENTRAL_HEATING_MODE, 0x53, HeatingAccess::READ_ONLY, ValueCodec::BINARY},
+    {"central_heating_mode", DeviceRegister::CENTRAL_HEATING_MODE, 0x53, HeatingAccess::READ_ONLY, ValueCodec::BINARY},
     // Read and written on a Sauter Hekla (issue #222): 1 with its occupancy detection on, 0 with it off.
-    {"occupancy_detection", HeatingFunction::OCCUPANCY_DETECTION, 0x01, HeatingAccess::READ_WRITE, ValueCodec::BINARY},
+    {"occupancy_detection", DeviceRegister::OCCUPANCY_DETECTION, 0x01, HeatingAccess::READ_WRITE, ValueCodec::BINARY},
     // Read on two Sauter Tahual radiators, equal to their displays (PR #238), and on an EMOTION 3 H and two Adelis.
-    {"energy_total", HeatingFunction::ENERGY_TOTAL, 0x16, HeatingAccess::READ_ONLY, ValueCodec::U16_BE},
+    {"energy_total", DeviceRegister::ENERGY_TOTAL, 0x16, HeatingAccess::READ_ONLY, ValueCodec::U16_BE},
     // Read on Atlantic Adelis towel dryers during a boost and a drying run, and with the durations changed on the
     // panel (issue #202): the minutes left of each run, and the duration set for each with the panel's maximum.
-    {"boost_remaining", HeatingFunction::BOOST_REMAINING, 0x3A, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
+    {"boost_remaining", DeviceRegister::BOOST_REMAINING, 0x3A, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
      VALUE_BYTE_MAX},
-    {"boost_duration", HeatingFunction::BOOST_DURATION, 0x3B, HeatingAccess::READ_ONLY, ValueCodec::FIRST_BYTE_OF_PAIR},
-    {"drying_remaining", HeatingFunction::DRYING_REMAINING, 0x3C, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
+    {"boost_duration", DeviceRegister::BOOST_DURATION, 0x3B, HeatingAccess::READ_ONLY, ValueCodec::FIRST_BYTE_OF_PAIR},
+    {"drying_remaining", DeviceRegister::DRYING_REMAINING, 0x3C, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
      VALUE_BYTE_MAX},
-    {"drying_duration", HeatingFunction::DRYING_DURATION, 0x3D, HeatingAccess::READ_ONLY,
+    {"drying_duration", DeviceRegister::DRYING_DURATION, 0x3D, HeatingAccess::READ_ONLY,
      ValueCodec::FIRST_BYTE_OF_PAIR},
+    // A water heater's registers, family 0x00, read on one Atlantic Calypso Connecte (issue #198). Their names are the
+    // log labels of the reads. The mode write and the duration writes are confirmed by the owner of that heater.
+    {.name = "dhw_water_temperature",
+     .fn = DeviceRegister::DHW_WATER_TEMPERATURE,
+     .register_low = 0x17,
+     .access = HeatingAccess::READ_ONLY,
+     .codec = ValueCodec::TENTHS_S16_BE,
+     .register_high = DHW_REGISTER_HIGH_BYTE},
+    {.name = "dhw_mode",
+     .fn = DeviceRegister::DHW_MODE,
+     .register_low = 0x06,
+     .access = HeatingAccess::READ_WRITE,
+     .codec = ValueCodec::BOUNDED_BYTE,
+     .max_value = DHW_MODE_MAX,
+     .register_high = DHW_REGISTER_HIGH_BYTE},
+    // Typed by the readings that are slices of it (proto_device_readings.h), not as one value.
+    {.name = "dhw_heating",
+     .fn = DeviceRegister::DHW_HEATING,
+     .register_low = 0x21,
+     .access = HeatingAccess::READ_ONLY,
+     .codec = ValueCodec::NONE,
+     .register_high = DHW_REGISTER_HIGH_BYTE},
+    {.name = "dhw_boost_duration",
+     .fn = DeviceRegister::DHW_BOOST_DURATION,
+     .register_low = 0x00,
+     .access = HeatingAccess::READ_WRITE,
+     .codec = ValueCodec::BOUNDED_BYTE,
+     .max_value = VALUE_BYTE_MAX,
+     .register_high = DHW_REGISTER_HIGH_BYTE},
+    {.name = "dhw_away_duration",
+     .fn = DeviceRegister::DHW_AWAY_DURATION,
+     .register_low = 0x05,
+     .access = HeatingAccess::READ_WRITE,
+     .codec = ValueCodec::BOUNDED_BYTE,
+     .max_value = VALUE_BYTE_MAX,
+     .register_high = DHW_REGISTER_HIGH_BYTE},
+    {.name = "dhw_energy",
+     .fn = DeviceRegister::DHW_ENERGY,
+     .register_low = 0x04,
+     .access = HeatingAccess::READ_ONLY,
+     .codec = ValueCodec::THOUSANDTHS_U32_BE,
+     .register_high = DHW_REGISTER_HIGH_BYTE},
+    {.name = "dhw_brand",
+     .fn = DeviceRegister::DHW_BRAND,
+     .register_low = 0x07,
+     .access = HeatingAccess::READ_ONLY,
+     .codec = ValueCodec::BOUNDED_BYTE,
+     .max_value = VALUE_BYTE_MAX,
+     .register_high = DHW_REGISTER_HIGH_BYTE},
 };
 
 /// @brief Look up the descriptor for a function.
 /// @param fn Function to resolve.
 /// @return Pointer into the constexpr table, or nullptr for an out-of-range value.
-const HeatingFunctionDescriptor *descriptor_for(HeatingFunction fn) {
-  for (const auto &d : HEATING_FUNCTIONS) {
+const DeviceRegisterRow *descriptor_for(DeviceRegister fn) {
+  for (const auto &d : DEVICE_REGISTERS) {
     if (d.fn == fn)
       return &d;
   }
@@ -193,55 +248,61 @@ const HeatingFunctionDescriptor *descriptor_for(HeatingFunction fn) {
 }
 
 /// @brief Write the 4-byte request header for a row.
-void write_header(const HeatingFunctionDescriptor &d, uint8_t direction, uint8_t *out) {
-  write_private_register_header(direction, HEATING_REGISTER_HIGH_BYTE, d.register_low, out);
+void write_header(const DeviceRegisterRow &d, uint8_t direction, uint8_t *out) {
+  write_private_register_header(direction, d.register_high, d.register_low, out);
 }
 
 /// @brief The value form of a row: its codec and the rule a write must meet.
-ValueForm form_of(const HeatingFunctionDescriptor &d) {
+ValueForm form_of(const DeviceRegisterRow &d) {
   return {.codec = d.codec, .max_value = d.max_value, .write_range = d.write_range, .scale = d.scale};
 }
 
 }  // namespace
 
-const char *heating_function_name(HeatingFunction fn) {
-  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+const char *device_register_name(DeviceRegister fn) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
   return d != nullptr ? d->name : "unknown";
 }
 
-bool heating_function_is_writable(HeatingFunction fn) {
-  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+bool device_register_is_writable(DeviceRegister fn) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
   return d != nullptr && d->access != HeatingAccess::READ_ONLY;
 }
 
-bool heating_function_is_readable(HeatingFunction fn) {
-  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+bool device_register_is_readable(DeviceRegister fn) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
   return d != nullptr && d->access != HeatingAccess::WRITE_ONLY;
 }
 
-ValueCodec heating_function_codec(HeatingFunction fn) {
-  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+ValueCodec device_register_codec(DeviceRegister fn) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
   return d != nullptr ? d->codec : ValueCodec::NONE;
 }
 
-bool heating_function_register(HeatingFunction fn, uint8_t &register_low) {
-  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+bool device_register_bytes(DeviceRegister fn, uint8_t &register_high, uint8_t &register_low) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
   if (d == nullptr)
     return false;
+  register_high = d->register_high;
   register_low = d->register_low;
   return true;
 }
 
-size_t encode_heating_read(HeatingFunction fn, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
-  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+uint8_t device_register_family(DeviceRegister fn) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
+  return d != nullptr ? d->register_high : HEATING_REGISTER_HIGH_BYTE;
+}
+
+size_t encode_heating_read(DeviceRegister fn, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
   if (d == nullptr || d->access == HeatingAccess::WRITE_ONLY)
     return 0;
   write_header(*d, PRIVATE_REGISTER_DIRECTION_GET, out);
   return PAYLOAD_LEN_HEADER;
 }
 
-size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
-  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+size_t encode_heating_write(DeviceRegister fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
   // A read-only register is never written, whatever the caller asks: the heater's window sensor and
   // its measurements are not settings.
   if (d == nullptr || d->access == HeatingAccess::READ_ONLY)
@@ -295,60 +356,65 @@ std::string heating_writable_mode_names() {
   return names;
 }
 
-std::optional<HeatingFunction> heating_action_function(std::string_view name) {
-  for (const auto &d : HEATING_FUNCTIONS) {
+std::optional<DeviceRegister> heating_action_function(std::string_view name) {
+  for (const auto &d : DEVICE_REGISTERS) {
     if (d.action_value_label != nullptr && name == d.name)
       return d.fn;
   }
   return std::nullopt;
 }
 
-const char *heating_action_value_label(HeatingFunction fn) {
-  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+const char *heating_action_value_label(DeviceRegister fn) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
   return d != nullptr ? d->action_value_label : nullptr;
 }
 
-bool heating_write_accepts(HeatingFunction fn, float value) {
+bool heating_write_accepts(DeviceRegister fn, float value) {
   uint8_t scratch[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   return encode_heating_write(fn, value, scratch) != 0;
 }
 
-std::optional<ValueRange> heating_write_range(HeatingFunction fn) {
-  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+std::optional<ValueRange> heating_write_range(DeviceRegister fn) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
   return d != nullptr && d->access != HeatingAccess::READ_ONLY ? d->write_range : std::nullopt;
 }
 
-size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
-  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+size_t encode_heating_payload(DeviceRegister fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
   if (d == nullptr)
     return 0;
   return d->access == HeatingAccess::READ_ONLY ? encode_heating_read(fn, out) : encode_heating_write(fn, value, out);
 }
 
-bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value) {
-  const HeatingFunctionDescriptor *d = descriptor_for(fn);
-  if (d == nullptr || d->codec == ValueCodec::NONE ||
-      !private_reply_echoes_register(reply, HEATING_REGISTER_HIGH_BYTE, d->register_low))
-    return false;
-  if (reply.data_len < PRIVATE_REGISTER_VALUE_OFFSET)
-    return false;
+std::optional<std::span<const uint8_t>> register_reply_value(const IoFrame &reply, DeviceRegister fn) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
+  if (d == nullptr || !private_reply_echoes_register(reply, d->register_high, d->register_low) ||
+      reply.data_len < PRIVATE_REGISTER_VALUE_OFFSET)
+    return std::nullopt;
+  return std::span<const uint8_t>(reply.data + PRIVATE_REGISTER_VALUE_OFFSET,
+                                  reply.data_len - PRIVATE_REGISTER_VALUE_OFFSET);
+}
 
-  const std::optional<float> decoded =
-      decode_value(form_of(*d), std::span<const uint8_t>(reply.data + PRIVATE_REGISTER_VALUE_OFFSET,
-                                                         reply.data_len - PRIVATE_REGISTER_VALUE_OFFSET));
+std::optional<float> decode_register_value(DeviceRegister fn, std::span<const uint8_t> value_bytes) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
+  return d != nullptr ? decode_value(form_of(*d), value_bytes) : std::nullopt;
+}
+
+bool decode_heating_reply(const IoFrame &reply, DeviceRegister fn, float &value) {
+  const std::optional<std::span<const uint8_t>> bytes = register_reply_value(reply, fn);
+  const std::optional<float> decoded = bytes ? decode_register_value(fn, *bytes) : std::nullopt;
   if (!decoded)
     return false;
   value = *decoded;
   return true;
 }
 
-bool heating_reply_carries_value(const IoFrame &reply, HeatingFunction fn) {
-  const HeatingFunctionDescriptor *d = descriptor_for(fn);
-  if (d == nullptr || d->codec == ValueCodec::NONE ||
-      !private_reply_echoes_register(reply, HEATING_REGISTER_HIGH_BYTE, d->register_low) ||
-      reply.data_len < PRIVATE_REGISTER_VALUE_OFFSET)
+bool heating_reply_carries_value(const IoFrame &reply, DeviceRegister fn) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
+  const std::optional<std::span<const uint8_t>> bytes = register_reply_value(reply, fn);
+  if (d == nullptr || d->codec == ValueCodec::NONE || !bytes)
     return false;
-  return reply.data_len - PRIVATE_REGISTER_VALUE_OFFSET >= value_codec_length(d->codec);
+  return bytes->size() >= value_codec_length(d->codec);
 }
 
 }  // namespace home_io_control

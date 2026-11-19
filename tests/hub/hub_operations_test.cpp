@@ -345,7 +345,7 @@ TEST(HubOperations, HeatingCommandAuthenticatedWithoutFinalResponseIsCountedAsAF
   pkt.freq_hz = FREQ_CH2;
   radio.queue_rx(pkt);
 
-  comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f);
+  comp.send_heating_command("ABC123", DeviceRegister::SET_TEMPERATURE, 20.5f);
 
   EXPECT_EQ(dev->exchange_unconfirmed_count, 1u);
   EXPECT_EQ(dev->exchange_timeout_count, 1u);
@@ -362,7 +362,7 @@ TEST(HubOperations, AnErrorReplyToAHeatingWriteRecordsItsResultCode) {
   ASSERT_EQ(dev->last_seen_ms, 0u);
   radio.queue_rx(test::make_rx_packet(build_error_response(comp.node_id_, RESULT_LIMITATION_BY_WIND)));
 
-  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f));
+  EXPECT_FALSE(comp.send_heating_command("ABC123", DeviceRegister::SET_TEMPERATURE, 20.5f));
 
   EXPECT_EQ(dev->last_result_code, RESULT_LIMITATION_BY_WIND);
   EXPECT_NE(dev->last_seen_ms, 0u) << "a refusal is still a frame from the heater";
@@ -380,7 +380,7 @@ TEST(HubOperations, ADeviceEventDuringAHeatingWriteIsRecordedAndTheWriteAskedAga
   radio.queue_rx(test::make_rx_packet(build_device_event_report(comp.node_id_)));
   radio.queue_rx(test::make_rx_packet(build_write_private_ack(comp.node_id_)));
 
-  EXPECT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5f));
+  EXPECT_TRUE(comp.send_heating_command("ABC123", DeviceRegister::SET_TEMPERATURE, 20.5f));
 
   EXPECT_EQ(comp.device_event_count(), 1u);
   EXPECT_NE(comp.last_device_event().find(" ABC123 0x"), std::string::npos) << comp.last_device_event();
@@ -426,7 +426,7 @@ TEST(HubOperations, ADeviceEventDuringAHeatingRegisterReadIsRecordedAndTheReadAn
   radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08})));
 
   float value = 0.0F;
-  ASSERT_TRUE(comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, &value, EXCHANGE_RETRY_COUNT));
+  ASSERT_TRUE(comp.read_heating_register("ABC123", DeviceRegister::ROOM_TEMPERATURE, &value, EXCHANGE_RETRY_COUNT));
 
   EXPECT_FLOAT_EQ(value, 20.75F) << "the answer to the repeated read is decoded";
   EXPECT_EQ(comp.device_event_count(), 1u);
@@ -505,9 +505,9 @@ TEST(HubOperations, ALevelHeaterGetsNoRegisterFrameFromAnyEntryPoint) {
   MockRadio radio;
   make_level_heater(comp, radio);
 
-  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5F));
-  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::POWER_ON, 0.0F));
-  EXPECT_FALSE(comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
+  EXPECT_FALSE(comp.send_heating_command("ABC123", DeviceRegister::SET_TEMPERATURE, 20.5F));
+  EXPECT_FALSE(comp.send_heating_command("ABC123", DeviceRegister::POWER_ON, 0.0F));
+  EXPECT_FALSE(comp.read_heating_register("ABC123", DeviceRegister::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
   EXPECT_TRUE(radio.get_sent_data().empty())
       << "no CMD_WRITE_PRIVATE frame for a heater that takes the standard EXECUTE";
 }
@@ -719,8 +719,8 @@ TEST(HubOperations, ExteriorHeatingGetsNoHeatingFrameFromAnyClimateEntryPoint) {
   TestableComponent comp;
   MockRadio radio;
   make_exterior_heater(comp, radio, 0);
-  EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.0F));
-  EXPECT_FALSE(comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
+  EXPECT_FALSE(comp.send_heating_command("ABC123", DeviceRegister::SET_TEMPERATURE, 20.0F));
+  EXPECT_FALSE(comp.read_heating_register("ABC123", DeviceRegister::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
   EXPECT_FALSE(comp.heater_controller_.set_heating_level("ABC123", heating_level::COMFORT));
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
@@ -798,9 +798,8 @@ TEST(HubOperations, TemperatureHeatersGetNoRegisterFrameFromAnyEntryPoint) {
     TestableComponent comp;
     MockRadio radio;
     make_temperature_heater(comp, radio, type);
-    EXPECT_FALSE(comp.send_heating_command("ABC123", HeatingFunction::SET_TEMPERATURE, 20.5F));
-    EXPECT_FALSE(
-        comp.read_heating_register("ABC123", HeatingFunction::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
+    EXPECT_FALSE(comp.send_heating_command("ABC123", DeviceRegister::SET_TEMPERATURE, 20.5F));
+    EXPECT_FALSE(comp.read_heating_register("ABC123", DeviceRegister::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
     EXPECT_FALSE(comp.heater_controller_.set_heating_level("ABC123", heating_level::COMFORT));
     EXPECT_TRUE(radio.get_sent_data().empty())
         << "no CMD_WRITE_PRIVATE frame for a heater that takes the standard EXECUTE";
@@ -3803,7 +3802,7 @@ TEST(HubOperations, TowelDryerPollReadsItsOwnRegistersThenTheBootRegisterTheLeve
   EXPECT_EQ(test::wire_read(*dev, DeviceReading::WORKING_RATE), 100);
   EXPECT_EQ(test::wire_read(*dev, DeviceReading::HEATING_LEVEL), heating_level::BOOST)
       << "the level the heater applies, from the status read";
-  EXPECT_FALSE(test::has_reading(*dev, HeatingFunction::TEMPERATURE_IN_FORCE))
+  EXPECT_FALSE(test::has_reading(*dev, DeviceRegister::TEMPERATURE_IN_FORCE))
       << "drying: no temperature in force is read";
   EXPECT_EQ(test::wire_read(*dev, DeviceReading::MODE), -1) << "the radiator's mode register is never read";
   EXPECT_TRUE(dev->model_checked);
@@ -3890,7 +3889,7 @@ TEST(HubOperations, TowelDryerPollReadsTheTemperatureInForceOnlyWhileTheProgramm
   // Boost on top of the programme: no 0x0137 read, the temperature in force goes, the level reads boost.
   EXPECT_EQ(run_towel_poll(comp, radio, {PROG, HeatingTemporaryState::BOOST, {}, LEVEL_BOOST_MP, {}, {}}),
             (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, STATUS_READ}));
-  EXPECT_FALSE(test::has_reading(*dev, HeatingFunction::TEMPERATURE_IN_FORCE));
+  EXPECT_FALSE(test::has_reading(*dev, DeviceRegister::TEMPERATURE_IN_FORCE));
   EXPECT_EQ(test::wire_read(*dev, DeviceReading::HEATING_LEVEL), heating_level::BOOST);
   EXPECT_FALSE(heating_device_facts(dev, true).programme_runs);
 
@@ -3902,7 +3901,7 @@ TEST(HubOperations, TowelDryerPollReadsTheTemperatureInForceOnlyWhileTheProgramm
   // MANUEL: no 0x0137 read and its value is dropped, the status read still runs.
   EXPECT_EQ(run_towel_poll(comp, radio, {TowelDryerMode::MANUAL, NONE, {}, LEVEL_COMFORT_MP, {}, {}}),
             (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, STATUS_READ}));
-  EXPECT_FALSE(test::has_reading(*dev, HeatingFunction::TEMPERATURE_IN_FORCE));
+  EXPECT_FALSE(test::has_reading(*dev, DeviceRegister::TEMPERATURE_IN_FORCE));
   for (const auto &tx : radio.get_sent_data()) {
     if (sent_step(tx) != STATUS_READ) {
       EXPECT_EQ(tx.at(10), PRIVATE_REGISTER_DIRECTION_GET) << "a poll only reads";
@@ -3919,7 +3918,7 @@ TEST(HubOperations, ATowelDryerInDryingIsNeverAskedForItsTemperatureAndAStaleVal
       run_towel_poll(comp, radio, {TowelDryerMode::PROG, HeatingTemporaryState::DRYING, {}, LEVEL_BOOST_MP, {}, {}}),
       (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, STATUS_READ}))
       << "no 0x0137 read while drying";
-  EXPECT_FALSE(test::has_reading(*dev, HeatingFunction::TEMPERATURE_IN_FORCE));
+  EXPECT_FALSE(test::has_reading(*dev, DeviceRegister::TEMPERATURE_IN_FORCE));
 }
 
 TEST(HubOperations, ThePollShowsTheProgrammeRunningInEveryPeriodAndNotInHeat) {
@@ -4003,7 +4002,7 @@ TEST(HubOperations, ARadiatorPollReadsRegister012AOnlyWhileTheProgrammeRunsAndAs
   EXPECT_TRUE(comp.request_device_status("ABC123"));
   EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06}))
       << "heat: the temperature in force is not asked";
-  EXPECT_FALSE(test::has_reading(*dev, HeatingFunction::HEATER_TEMPERATURE_IN_FORCE))
+  EXPECT_FALSE(test::has_reading(*dev, DeviceRegister::HEATER_TEMPERATURE_IN_FORCE))
       << "and the earlier value is dropped";
 }
 
@@ -4088,7 +4087,7 @@ TEST(HubOperations, ARadiatorThatReported012AKeepsTheOverrideRuleWhenALaterReadI
   EXPECT_TRUE(comp.request_device_status("ABC123"));
   queue_radiator_core(comp, radio, HeatingMode::AUTO);
   comp.request_device_status("ABC123");
-  ASSERT_FALSE(test::has_reading(*dev, HeatingFunction::HEATER_TEMPERATURE_IN_FORCE));
+  ASSERT_FALSE(test::has_reading(*dev, DeviceRegister::HEATER_TEMPERATURE_IN_FORCE));
   EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED) << "a missed read changes nothing";
 
   EXPECT_TRUE(heating_device_facts(dev, true).programme_runs)
@@ -4322,9 +4321,9 @@ TEST(HubOperations, NightLightWritesSendExactBytes) {
   make_heater_with_light(comp, radio);
   queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x42, 0x88, 0x13});
   ASSERT_TRUE(
-      comp.send_heating_command("ABC123", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 78.75F));  // register value 5000
+      comp.send_heating_command("ABC123", DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, 78.75F));  // register value 5000
   queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x44, 0x01});
-  ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::NIGHT_LIGHT, 1.0F));
+  ASSERT_TRUE(comp.send_heating_command("ABC123", DeviceRegister::NIGHT_LIGHT, 1.0F));
 
   ASSERT_EQ(radio.get_sent_data().size(), 2u);
   const auto &brightness = radio.get_sent_data()[0];

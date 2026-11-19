@@ -4,10 +4,12 @@
 ##
 ## A device that keeps its values in data objects (a heat pump's energy counters) has no cover, light or climate
 ## entry to declare it. This platform is its entry: `platform: home_io_control` with an `io_device_id:` and the
-## reading keys its kind offers (the numeric readings of DEVICE_READINGS in hub_validators.py whose source is a data
-## object, through platform_common.reading_keys_schema()), read every `update_interval`. The entry's own sensor shows
+## reading keys its kind offers (the numeric readings of DEVICE_READINGS in hub_validators.py whose platform is `sensor`,
+## through platform_common.reading_keys_schema()), read every `update_interval`. The entry's own sensor shows
 ## nothing and is marked internal; Home Assistant sees the readings and the companion diagnostics.
 ## Shared device-binding logic lives in platform_common.py; only sensor-specific construction stays here.
+
+import functools
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
@@ -17,7 +19,7 @@ from esphome.const import CONF_ID, CONF_INTERNAL, CONF_UPDATE_INTERVAL
 from . import home_io_control_ns
 from .hub_validators import validate_device_reading_interval
 from .platform_common import (
-    DATA_OBJECT_READING_SOURCES,
+    SENSOR_PLATFORM,
     create_companion_sensors,
     inject_companion_sensor_ids,
     platform_schema_extension,
@@ -54,12 +56,12 @@ def _config_schema():
             {
                 # How often every reading of the entry is read; each reading has a default of its own.
                 cv.Optional(CONF_UPDATE_INTERVAL): validate_device_reading_interval,
-                **reading_keys_schema(DATA_OBJECT_READING_SOURCES),
+                **reading_keys_schema(SENSOR_PLATFORM),
             }
         )
         .extend(cv.COMPONENT_SCHEMA),
         validate_device_model,
-        validate_reading_keys,
+        functools.partial(validate_reading_keys, platform=SENSOR_PLATFORM),
         _hide_declaration_entity,
         warn_if_experimental_kind,
         _inject_companion_ids,
@@ -79,4 +81,4 @@ async def to_code(config):
     await create_companion_sensors(config, parent)
 
     # An update_interval: key reaches the entity as set_update_interval(), which register_component() emits.
-    await reading_keys_to_code(var, parent, config)
+    await reading_keys_to_code(var, parent, config, SENSOR_PLATFORM)

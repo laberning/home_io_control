@@ -219,16 +219,16 @@ class HeatingPortDouble : public HubHeatingPort {
   /// One register write the entity asked for.
   struct Write {
     std::string device_id;
-    HeatingFunction fn;
+    DeviceRegister fn;
     float value;
   };
 
-  bool send_heating_command(const std::string &device_id, HeatingFunction fn, float value) override {
+  bool send_heating_command(const std::string &device_id, DeviceRegister fn, float value) override {
     this->writes.push_back({device_id, fn, value});
     return this->write_result && this->refused_writes.count(fn) == 0;
   }
 
-  bool read_heating_register(const std::string &, HeatingFunction fn, float *value_out, uint8_t max_tries) override {
+  bool read_heating_register(const std::string &, DeviceRegister fn, float *value_out, uint8_t max_tries) override {
     this->reads.push_back(fn);
     this->read_tries.push_back(max_tries);
     const auto reply = this->read_replies.find(fn);
@@ -280,7 +280,7 @@ class HeatingPortDouble : public HubHeatingPort {
   }
 
   std::vector<Write> writes;                                           ///< Register writes, in order.
-  std::vector<HeatingFunction> reads;                                  ///< Registers read, in order.
+  std::vector<DeviceRegister> reads;                                   ///< Registers read, in order.
   std::vector<uint8_t> read_tries;                                     ///< The attempt budget of each read.
   std::vector<HeatingWritePlan> plans;                                 ///< Plans handed to execute_heating_plan().
   std::vector<std::string> programme_state_reads;                      ///< Devices passed to read_programme_state().
@@ -290,10 +290,10 @@ class HeatingPortDouble : public HubHeatingPort {
   std::vector<DhwMode> water_heater_modes;
   std::vector<bool> water_heater_boosts;
   std::vector<bool> water_heater_aways;
-  bool programme_state_answer{true};         ///< What read_programme_state() answers: the heater said what it runs.
-  bool write_result{true};                   ///< Whether the device accepts a write.
-  std::set<HeatingFunction> refused_writes;  ///< Registers refused on top of write_result.
-  std::map<HeatingFunction, float> read_replies;  ///< Value each register reads as; a missing one fails the read.
+  bool programme_state_answer{true};             ///< What read_programme_state() answers: the heater said what it runs.
+  bool write_result{true};                       ///< Whether the device accepts a write.
+  std::set<DeviceRegister> refused_writes;       ///< Registers refused on top of write_result.
+  std::map<DeviceRegister, float> read_replies;  ///< Value each register reads as; a missing one fails the read.
 };
 
 /// @brief Double of HubControlPort: records the calls and holds the registered callbacks.

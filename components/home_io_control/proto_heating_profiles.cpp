@@ -8,6 +8,7 @@
 #include "proto_device_kinds.h"
 #include "proto_device_readings.h"
 #include "proto_device_types.h"
+#include "proto_dhw.h"
 #include "proto_sizes.h"
 
 #include <algorithm>
@@ -129,8 +130,8 @@ constexpr HeatingObservedState TOWEL_DRYER_OBSERVED_PRESETS[] = {
 /// \todo The level the status read reports in each period is captured on one unit (BD684B); a second unit
 ///       confirms it. Until then the level sensor is experimental.
 constexpr HeatingProgrammePeriod TOWEL_DRYER_PROGRAMME_PERIOD = {
-    .in_force_fn = HeatingFunction::TEMPERATURE_IN_FORCE,
-    .derogation_fn = HeatingFunction::DEROGATED_SETPOINT,
+    .in_force_fn = DeviceRegister::TEMPERATURE_IN_FORCE,
+    .derogation_fn = DeviceRegister::DEROGATED_SETPOINT,
     .reports_level = true,
     .override_in_eco_only = true,
     .idle_preset_state = static_cast<uint8_t>(HeatingTemporaryState::NONE),
@@ -276,8 +277,8 @@ constexpr float TEMPERATURE_VISUAL_MAX_C = 30.0F;  ///< Highest target the card 
 /// \todo Experimental: neither 0x012A nor 0x011D has been read or written on an AGILIA, Hekla or EMOTION 3 H.
 ///       Confirm both on a radiator. A heater that answers the read empty keeps the comfort-setpoint write.
 constexpr HeatingProgrammePeriod SETPOINT_HEATER_PROGRAMME_PERIOD = {
-    .in_force_fn = HeatingFunction::HEATER_TEMPERATURE_IN_FORCE,
-    .derogation_fn = HeatingFunction::DEROGATED_SETPOINT,
+    .in_force_fn = DeviceRegister::HEATER_TEMPERATURE_IN_FORCE,
+    .derogation_fn = DeviceRegister::DEROGATED_SETPOINT,
 };
 
 /// The electrical heater with an adjustable setpoint (52/1), the AGILIA radiator, and the profile of the models
@@ -373,8 +374,8 @@ constexpr HeatingProfile HEATING_PROFILES[] = {
         .presets = TOWEL_DRYER_PRESETS,
         .observed = TOWEL_DRYER_OBSERVED,
         .preset_observed = TOWEL_DRYER_OBSERVED_PRESETS,
-        .mode_fn = HeatingFunction::TOWEL_MODE,
-        .preset_fn = HeatingFunction::TEMPORARY_STATE,
+        .mode_fn = DeviceRegister::TOWEL_MODE,
+        .preset_fn = DeviceRegister::TEMPORARY_STATE,
         .action_source = HeatingActionSource::WORKING_RATE,
     },
 };
@@ -458,6 +459,16 @@ const HeatingProfile *find_heating_profile(const IoDevice &dev) {
 bool device_uses_heating_registers(DeviceType type, uint8_t subtype) {
   const HeatingProfile *profile = find_heating_profile(type, subtype, DeviceModel::NONE);
   return profile != nullptr && profile->path == HeatingControlPath::PRIVATE_REGISTERS;
+}
+
+bool device_takes_register(const IoDevice &dev, DeviceRegister fn) {
+  if (device_register_family(fn) == DHW_REGISTER_HIGH_BYTE)
+    return has_feature(dev.features, device_feature::WATER_HEATER);
+  return device_uses_heating_registers(dev.type, dev.subtype);
+}
+
+const char *device_register_owner(DeviceRegister fn) {
+  return device_register_family(fn) == DHW_REGISTER_HIGH_BYTE ? "water heater" : "heater with private registers";
 }
 
 bool device_accepts_register_probe(DeviceType type, uint8_t subtype) {
@@ -544,7 +555,7 @@ bool programme_period_active(const HeatingProfile &profile, const IoDevice &dev)
          register_wire(dev, profile.preset_fn) == static_cast<int>(period->idle_preset_state);
 }
 
-std::optional<HeatingFunction> timed_run_register(const HeatingProfile &profile, const IoDevice &dev) {
+std::optional<DeviceRegister> timed_run_register(const HeatingProfile &profile, const IoDevice &dev) {
   if (profile.programme_period == nullptr || profile.preset_observed.empty() || !mode_shows_programme(profile, dev))
     return std::nullopt;
   return profile.preset_fn;
@@ -561,7 +572,7 @@ void clear_inactive_programme_reading(const HeatingProfile &profile, IoDevice &d
     clear_register_reading(dev, profile.programme_period->in_force_fn);
 }
 
-std::optional<float> in_force_from_override_read(const HeatingProfile &profile, HeatingFunction fn, float value) {
+std::optional<float> in_force_from_override_read(const HeatingProfile &profile, DeviceRegister fn, float value) {
   if (profile.programme_period == nullptr || fn != profile.programme_period->derogation_fn)
     return std::nullopt;
   // The override register holds 0 while none is active: only a value from the register's lowest temperature up
@@ -580,36 +591,37 @@ DeviceReading heating_setpoint_reading(const HeatingProfile &profile) {
 namespace {
 
 /// @return The register that reports a heater is heating, for the profile's action source.
-HeatingFunction action_register(const HeatingProfile &profile) {
-  return profile.action_source == HeatingActionSource::WORKING_RATE ? HeatingFunction::WORKING_RATE
-                                                                    : HeatingFunction::REGULATOR_STATE;
+DeviceRegister action_register(const HeatingProfile &profile) {
+  return profile.action_source == HeatingActionSource::WORKING_RATE ? DeviceRegister::WORKING_RATE
+                                                                    : DeviceRegister::REGULATOR_STATE;
 }
 
 /// @return Whether the profile's heater reads one of its programme's registers.
-bool is_programme_register(const HeatingProfile &profile, HeatingFunction fn) {
+bool is_programme_register(const HeatingProfile &profile, DeviceRegister fn) {
   const HeatingProgrammePeriod *period = profile.programme_period;
   return period != nullptr && (fn == period->in_force_fn || fn == period->derogation_fn);
 }
 
-/// @return Whether a reading is read for a device of this profile: by its capability where it has one, otherwise
-///         where the profile's card reads it.
-bool reading_applies(const HeatingProfile &profile, const IoDevice &dev, const DeviceReadingRow &row) {
-  return row.feature.has_value() ? device_has_reading_capability(dev, row)
-                                 : heating_profile_reads(profile, row.reading);
+/// @return Whether a reading is read for a device: by its capability where it has one, otherwise where the profile's
+///         card reads it. A device without a profile is read by capability alone.
+bool reading_applies(const HeatingProfile *profile, const IoDevice &dev, const DeviceReadingRow &row) {
+  if (row.feature.has_value())
+    return device_has_reading_capability(dev, row);
+  return profile != nullptr && heating_profile_reads(*profile, row.reading);
 }
 
 }  // namespace
 
 bool heating_profile_reads(const HeatingProfile &profile, DeviceReading reading) {
-  const std::optional<HeatingFunction> register_of_reading = reading_register(reading);
+  const std::optional<DeviceRegister> register_of_reading = reading_register(reading);
   if (profile.path != HeatingControlPath::PRIVATE_REGISTERS || !register_of_reading)
     return false;
-  const HeatingFunction fn = *register_of_reading;
+  const DeviceRegister fn = *register_of_reading;
   switch (fn) {
-    case HeatingFunction::ROOM_TEMPERATURE:
+    case DeviceRegister::ROOM_TEMPERATURE:
       return profile.features.current_temperature;
-    case HeatingFunction::SET_TEMPERATURE:
-    case HeatingFunction::MAX_SETPOINT:
+    case DeviceRegister::SET_TEMPERATURE:
+    case DeviceRegister::MAX_SETPOINT:
       return profile.features.target_temperature;
     default:
       break;
@@ -618,14 +630,22 @@ bool heating_profile_reads(const HeatingProfile &profile, DeviceReading reading)
          (profile.features.action && fn == action_register(profile)) || is_programme_register(profile, fn);
 }
 
-HeaterPollList heater_poll_reads(const HeatingProfile &profile, const IoDevice &dev, ReadingPoll policy) {
+HeaterPollList device_poll_reads(const IoDevice &dev, ReadingPoll policy) {
   HeaterPollList reads;
-  if (profile.path != HeatingControlPath::PRIVATE_REGISTERS || policy == ReadingPoll::NOT_POLLED)
+  const HeatingProfile *profile = find_heating_profile(dev);
+  // A heater that takes the standard EXECUTE has no register poll; a device with no profile is a water heater, polled
+  // by its rows' capability.
+  if ((profile != nullptr && profile->path != HeatingControlPath::PRIVATE_REGISTERS) ||
+      policy == ReadingPoll::NOT_POLLED)
     return reads;
   for (const DeviceReadingRow &row : device_readings()) {
     // Only a register is read by the poll; a status reading, a derived one and a data object have other mechanisms.
-    const auto *source = std::get_if<HeatingRegisterSource>(&row.source);
+    const auto *source = std::get_if<RegisterSource>(&row.source);
     if (row.poll != policy || source == nullptr || !reading_applies(profile, dev, row))
+      continue;
+    // The slices of one register are one read.
+    const std::span<const DeviceRegister> listed = reads.registers();
+    if (std::ranges::find(listed, source->fn) != listed.end())
       continue;
     if (policy == ReadingPoll::WHEN_ASKED && !register_reading_wanted(dev, source->fn))
       continue;
@@ -641,7 +661,7 @@ HeaterPollList heater_poll_reads(const HeatingProfile &profile, const IoDevice &
 namespace {
 
 /// Plan the write of one wire value on the register or level path.
-HeatingWritePlan plan_wire_write(const HeatingProfile &profile, HeatingFunction fn, uint8_t wire) {
+HeatingWritePlan plan_wire_write(const HeatingProfile &profile, DeviceRegister fn, uint8_t wire) {
   HeatingWritePlan plan;
   if (profile.path == HeatingControlPath::HEATING_LEVEL) {
     plan.kind = HeatingPlanKind::LEVEL;
@@ -686,11 +706,8 @@ HeatingRefusal encode_target(const HeatingProfile &profile, const HeatingDeviceF
                              uint16_t &main_parameter) {
   if (!facts.has_record)
     return HeatingRefusal::UNENCODABLE;
-  const auto [min_c, max_c] = main_parameter_range(profile, facts.range_min_c, facts.range_max_c);
-  if (encode_temperature_main_parameter(celsius, min_c, max_c, main_parameter))
-    return HeatingRefusal::NONE;
-  const bool range_is_valid = std::isfinite(min_c) && std::isfinite(max_c) && max_c > min_c;
-  return std::isfinite(celsius) && range_is_valid ? HeatingRefusal::OUT_OF_RANGE : HeatingRefusal::UNENCODABLE;
+  return encode_temperature_target(main_parameter_range(profile, facts.range_min_c, facts.range_max_c), celsius,
+                                   main_parameter);
 }
 
 HeatingWritePlan plan_mode_write(const HeatingProfile &profile, const HeatingWriteRequest &request,
@@ -767,8 +784,8 @@ HeatingWritePlan plan_target_write(const HeatingProfile &profile, const HeatingW
       return refused(HeatingRefusal::PERIOD_UNKNOWN);
     override_programme = facts.period == HeatingPeriod::ECO;
   }
-  const HeatingFunction target_fn =
-      override_programme ? profile.programme_period->derogation_fn : HeatingFunction::SET_TEMPERATURE;
+  const DeviceRegister target_fn =
+      override_programme ? profile.programme_period->derogation_fn : DeviceRegister::SET_TEMPERATURE;
   HeatingWritePlan plan;
   plan.kind = HeatingPlanKind::REGISTER;
   plan.temporary_override = override_programme;
@@ -862,6 +879,21 @@ HeatingCardRange heating_card_range(const HeatingProfile &profile, float yaml_mi
   return overlap.min_c < overlap.max_c ? overlap : encoding;
 }
 
+HeatingCardRange device_temperature_range(const IoDevice &dev) {
+  if (has_feature(dev.features, device_feature::WATER_HEATER))
+    return {DHW_TARGET_MIN_C, DHW_TARGET_MAX_C};
+  const HeatingProfile *profile = find_heating_profile(dev);
+  return profile != nullptr ? main_parameter_range(*profile, dev.temperature_range_min_c, dev.temperature_range_max_c)
+                            : HeatingCardRange{dev.temperature_range_min_c, dev.temperature_range_max_c};
+}
+
+HeatingRefusal encode_temperature_target(HeatingCardRange range, float celsius, uint16_t &main_parameter) {
+  if (encode_temperature_main_parameter(celsius, range.min_c, range.max_c, main_parameter))
+    return HeatingRefusal::NONE;
+  const bool range_is_valid = std::isfinite(range.min_c) && std::isfinite(range.max_c) && range.max_c > range.min_c;
+  return std::isfinite(celsius) && range_is_valid ? HeatingRefusal::OUT_OF_RANGE : HeatingRefusal::UNENCODABLE;
+}
+
 HeatingCardState initial_heating_card(const HeatingProfile &profile, float yaml_min_c, float yaml_max_c) {
   HeatingCardState card;
   if (profile.features.target_temperature)
@@ -905,7 +937,7 @@ void reduce_temperatures(const HeatingProfile &profile, const IoDevice &dev, flo
   }
   // The heater's own ceiling, but never past what a write can encode.
   const float max_setpoint_c = reading_value(dev, DeviceReading::MAX_SETPOINT).value_or(NAN);
-  const std::optional<ValueRange> setpoint_range = heating_write_range(HeatingFunction::SET_TEMPERATURE);
+  const std::optional<ValueRange> setpoint_range = heating_write_range(DeviceRegister::SET_TEMPERATURE);
   if (profile.features.target_temperature && setpoint_range && !std::isnan(max_setpoint_c) &&
       max_setpoint_c > setpoint_range->min) {
     seen = true;

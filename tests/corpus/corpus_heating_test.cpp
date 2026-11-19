@@ -40,9 +40,9 @@ template<size_t N> IoFrame frame_of(const uint8_t (&bytes)[N]) {
 }
 
 /// Decode a register reply, failing the test when it carries no value.
-template<size_t N> float value_of(const uint8_t (&bytes)[N], HeatingFunction fn) {
+template<size_t N> float value_of(const uint8_t (&bytes)[N], DeviceRegister fn) {
   float value = NAN;
-  EXPECT_TRUE(decode_heating_reply(frame_of(bytes), fn, value)) << heating_function_name(fn);
+  EXPECT_TRUE(decode_heating_reply(frame_of(bytes), fn, value)) << device_register_name(fn);
   return value;
 }
 
@@ -54,18 +54,18 @@ template<size_t N> bool payload_matches(const uint8_t (&bytes)[N], const uint8_t
 }
 
 /// The captured request is a read of this register.
-template<size_t N> bool is_read_of(const uint8_t (&bytes)[N], HeatingFunction fn) {
+template<size_t N> bool is_read_of(const uint8_t (&bytes)[N], DeviceRegister fn) {
   uint8_t encoded[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
   const size_t len = encode_heating_read(fn, encoded);
-  EXPECT_NE(len, 0U) << heating_function_name(fn);
+  EXPECT_NE(len, 0U) << device_register_name(fn);
   return payload_matches(bytes, encoded, len);
 }
 
 /// The captured request is a write of this value to this register.
-template<size_t N> bool is_write_of(const uint8_t (&bytes)[N], HeatingFunction fn, float value) {
+template<size_t N> bool is_write_of(const uint8_t (&bytes)[N], DeviceRegister fn, float value) {
   uint8_t encoded[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE];
   const size_t len = encode_heating_write(fn, value, encoded);
-  EXPECT_NE(len, 0U) << heating_function_name(fn);
+  EXPECT_NE(len, 0U) << device_register_name(fn);
   return payload_matches(bytes, encoded, len);
 }
 
@@ -80,28 +80,28 @@ constexpr float MODE_OFF = static_cast<float>(HeatingMode::OFF);
 
 TEST(CorpusHeating, StatusReadRequestsAreTheEncodedReads) {
   using namespace corpus;
-  EXPECT_TRUE(is_read_of(atlantic_agilia_exchange_status_read_frame0_bytes, HeatingFunction::ROOM_TEMPERATURE));
-  EXPECT_TRUE(is_read_of(atlantic_agilia_exchange_status_read_frame2_bytes, HeatingFunction::SET_TEMPERATURE));
-  EXPECT_TRUE(is_read_of(atlantic_agilia_exchange_status_read_frame4_bytes, HeatingFunction::SET_MODE));
-  EXPECT_TRUE(is_read_of(atlantic_agilia_exchange_status_read_frame6_bytes, HeatingFunction::REGULATOR_STATE));
-  EXPECT_TRUE(is_read_of(atlantic_agilia_exchange_status_read_frame8_bytes, HeatingFunction::WINDOW_OPEN));
-  EXPECT_TRUE(is_read_of(atlantic_agilia_exchange_status_read_frame10_bytes, HeatingFunction::MAX_SETPOINT));
+  EXPECT_TRUE(is_read_of(atlantic_agilia_exchange_status_read_frame0_bytes, DeviceRegister::ROOM_TEMPERATURE));
+  EXPECT_TRUE(is_read_of(atlantic_agilia_exchange_status_read_frame2_bytes, DeviceRegister::SET_TEMPERATURE));
+  EXPECT_TRUE(is_read_of(atlantic_agilia_exchange_status_read_frame4_bytes, DeviceRegister::SET_MODE));
+  EXPECT_TRUE(is_read_of(atlantic_agilia_exchange_status_read_frame6_bytes, DeviceRegister::REGULATOR_STATE));
+  EXPECT_TRUE(is_read_of(atlantic_agilia_exchange_status_read_frame8_bytes, DeviceRegister::WINDOW_OPEN));
+  EXPECT_TRUE(is_read_of(atlantic_agilia_exchange_status_read_frame10_bytes, DeviceRegister::MAX_SETPOINT));
   EXPECT_TRUE(
-      is_read_of(atlantic_agilia_exchange_status_read_frame12_bytes, HeatingFunction::SET_OPEN_WINDOW_DETECTION));
+      is_read_of(atlantic_agilia_exchange_status_read_frame12_bytes, DeviceRegister::SET_OPEN_WINDOW_DETECTION));
 }
 
 TEST(CorpusHeating, StatusReadRepliesDecodeToWhatTheClimateEntityShowed) {
   using namespace corpus;
-  EXPECT_FLOAT_EQ(value_of(atlantic_agilia_exchange_status_read_frame1_bytes, HeatingFunction::ROOM_TEMPERATURE),
+  EXPECT_FLOAT_EQ(value_of(atlantic_agilia_exchange_status_read_frame1_bytes, DeviceRegister::ROOM_TEMPERATURE),
                   19.13F);
-  EXPECT_FLOAT_EQ(value_of(atlantic_agilia_exchange_status_read_frame3_bytes, HeatingFunction::SET_TEMPERATURE), 17.5F);
-  EXPECT_EQ(value_of(atlantic_agilia_exchange_status_read_frame5_bytes, HeatingFunction::SET_MODE), MODE_PROG);
-  EXPECT_EQ(value_of(atlantic_agilia_exchange_status_read_frame7_bytes, HeatingFunction::REGULATOR_STATE),
+  EXPECT_FLOAT_EQ(value_of(atlantic_agilia_exchange_status_read_frame3_bytes, DeviceRegister::SET_TEMPERATURE), 17.5F);
+  EXPECT_EQ(value_of(atlantic_agilia_exchange_status_read_frame5_bytes, DeviceRegister::SET_MODE), MODE_PROG);
+  EXPECT_EQ(value_of(atlantic_agilia_exchange_status_read_frame7_bytes, DeviceRegister::REGULATOR_STATE),
             static_cast<float>(HeatingRegulatorState::NONE));
-  EXPECT_EQ(value_of(atlantic_agilia_exchange_status_read_frame9_bytes, HeatingFunction::WINDOW_OPEN), 0.0F);
-  EXPECT_FLOAT_EQ(value_of(atlantic_agilia_exchange_status_read_frame11_bytes, HeatingFunction::MAX_SETPOINT),
+  EXPECT_EQ(value_of(atlantic_agilia_exchange_status_read_frame9_bytes, DeviceRegister::WINDOW_OPEN), 0.0F);
+  EXPECT_FLOAT_EQ(value_of(atlantic_agilia_exchange_status_read_frame11_bytes, DeviceRegister::MAX_SETPOINT),
                   HEATING_TEMP_MAX_C);
-  EXPECT_EQ(value_of(atlantic_agilia_exchange_status_read_frame13_bytes, HeatingFunction::SET_OPEN_WINDOW_DETECTION),
+  EXPECT_EQ(value_of(atlantic_agilia_exchange_status_read_frame13_bytes, DeviceRegister::SET_OPEN_WINDOW_DETECTION),
             1.0F);
 }
 
@@ -111,7 +111,7 @@ TEST(CorpusHeating, ReplyToOneRegisterIsNotReadAsAnother) {
   // too; only the register byte keeps the two apart.
   float value = NAN;
   EXPECT_FALSE(decode_heating_reply(frame_of(atlantic_agilia_exchange_status_read_frame1_bytes),
-                                    HeatingFunction::SET_TEMPERATURE, value));
+                                    DeviceRegister::SET_TEMPERATURE, value));
   EXPECT_TRUE(std::isnan(value));
 }
 
@@ -120,40 +120,39 @@ TEST(CorpusHeating, ReplyToOneRegisterIsNotReadAsAnother) {
 TEST(CorpusHeating, SetpointWriteIsTheEncodedWriteAndReadsBack) {
   using namespace corpus;
   EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_setpoint_and_off_read_back_frame0_bytes,
-                          HeatingFunction::SET_TEMPERATURE, 17.5F));
+                          DeviceRegister::SET_TEMPERATURE, 17.5F));
   EXPECT_FLOAT_EQ(
-      value_of(atlantic_agilia_exchange_setpoint_and_off_read_back_frame1_bytes, HeatingFunction::SET_TEMPERATURE),
+      value_of(atlantic_agilia_exchange_setpoint_and_off_read_back_frame1_bytes, DeviceRegister::SET_TEMPERATURE),
       17.5F);
   EXPECT_TRUE(
-      is_read_of(atlantic_agilia_exchange_setpoint_and_off_read_back_frame2_bytes, HeatingFunction::SET_TEMPERATURE));
+      is_read_of(atlantic_agilia_exchange_setpoint_and_off_read_back_frame2_bytes, DeviceRegister::SET_TEMPERATURE));
   EXPECT_FLOAT_EQ(
-      value_of(atlantic_agilia_exchange_setpoint_and_off_read_back_frame3_bytes, HeatingFunction::SET_TEMPERATURE),
+      value_of(atlantic_agilia_exchange_setpoint_and_off_read_back_frame3_bytes, DeviceRegister::SET_TEMPERATURE),
       17.5F);
 }
 
 TEST(CorpusHeating, EveryWritableModeIsTheEncodedWriteAndReadsBack) {
   using namespace corpus;
   // Off.
-  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_setpoint_and_off_read_back_frame4_bytes, HeatingFunction::SET_MODE,
+  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_setpoint_and_off_read_back_frame4_bytes, DeviceRegister::SET_MODE,
                           MODE_OFF));
-  EXPECT_EQ(value_of(atlantic_agilia_exchange_setpoint_and_off_read_back_frame7_bytes, HeatingFunction::SET_MODE),
+  EXPECT_EQ(value_of(atlantic_agilia_exchange_setpoint_and_off_read_back_frame7_bytes, DeviceRegister::SET_MODE),
             MODE_OFF);
   // Manual (Heat), auto, program.
-  EXPECT_TRUE(
-      is_write_of(atlantic_agilia_exchange_mode_read_back_frame0_bytes, HeatingFunction::SET_MODE, MODE_MANUAL));
-  EXPECT_EQ(value_of(atlantic_agilia_exchange_mode_read_back_frame3_bytes, HeatingFunction::SET_MODE), MODE_MANUAL);
-  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_mode_read_back_frame4_bytes, HeatingFunction::SET_MODE, MODE_AUTO));
-  EXPECT_EQ(value_of(atlantic_agilia_exchange_mode_read_back_frame7_bytes, HeatingFunction::SET_MODE), MODE_AUTO);
-  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_mode_read_back_frame8_bytes, HeatingFunction::SET_MODE, MODE_PROG));
-  EXPECT_EQ(value_of(atlantic_agilia_exchange_mode_read_back_frame11_bytes, HeatingFunction::SET_MODE), MODE_PROG);
+  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_mode_read_back_frame0_bytes, DeviceRegister::SET_MODE, MODE_MANUAL));
+  EXPECT_EQ(value_of(atlantic_agilia_exchange_mode_read_back_frame3_bytes, DeviceRegister::SET_MODE), MODE_MANUAL);
+  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_mode_read_back_frame4_bytes, DeviceRegister::SET_MODE, MODE_AUTO));
+  EXPECT_EQ(value_of(atlantic_agilia_exchange_mode_read_back_frame7_bytes, DeviceRegister::SET_MODE), MODE_AUTO);
+  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_mode_read_back_frame8_bytes, DeviceRegister::SET_MODE, MODE_PROG));
+  EXPECT_EQ(value_of(atlantic_agilia_exchange_mode_read_back_frame11_bytes, DeviceRegister::SET_MODE), MODE_PROG);
 }
 
 // === Presence ===
 
 TEST(CorpusHeating, PresenceWritesAreEncodedAndAcknowledged) {
   using namespace corpus;
-  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_presence_write_frame0_bytes, HeatingFunction::SET_PRESENCE, 1.0F));
-  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_presence_write_frame2_bytes, HeatingFunction::SET_PRESENCE, 0.0F));
+  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_presence_write_frame0_bytes, DeviceRegister::SET_PRESENCE, 1.0F));
+  EXPECT_TRUE(is_write_of(atlantic_agilia_exchange_presence_write_frame2_bytes, DeviceRegister::SET_PRESENCE, 0.0F));
   // The acknowledgement echoes the whole write.
   for (const auto &[request, ack] : {std::pair{frame_of(atlantic_agilia_exchange_presence_write_frame0_bytes),
                                                frame_of(atlantic_agilia_exchange_presence_write_frame1_bytes)},
@@ -201,11 +200,11 @@ TEST(CorpusHeating, TheDirectReadIsTheMaximumSetpointReadOfTheNextAddress) {
   const IoFrame discovery = frame_of(atlantic_agilia_pairing_key_pull_heater_direct_read_frame3_bytes);
   const IoFrame read = frame_of(atlantic_agilia_pairing_key_pull_heater_direct_read_frame7_bytes);
   EXPECT_TRUE(
-      is_read_of(atlantic_agilia_pairing_key_pull_heater_direct_read_frame7_bytes, HeatingFunction::MAX_SETPOINT));
+      is_read_of(atlantic_agilia_pairing_key_pull_heater_direct_read_frame7_bytes, DeviceRegister::MAX_SETPOINT));
   const auto heater = next_address(discovery.src);
   EXPECT_EQ(memcmp(read.dst, heater.data(), NODE_ID_SIZE), 0) << node_id_to_string(read.dst);
   EXPECT_FLOAT_EQ(
-      value_of(atlantic_agilia_pairing_key_pull_heater_direct_read_frame8_bytes, HeatingFunction::MAX_SETPOINT), 28.0F);
+      value_of(atlantic_agilia_pairing_key_pull_heater_direct_read_frame8_bytes, DeviceRegister::MAX_SETPOINT), 28.0F);
 }
 
 TEST(CorpusHeating, AfterAConnectionResetTheHeaterIsNotAtTheNextAddress) {
@@ -257,51 +256,49 @@ TEST(CorpusHeating, TheHeklasPanelLevelsAreThirtyThreeSixtySixAndHundredPercentO
   // Frames in capture order: second, third, lowest and highest panel level. The lowest, register value 100, lies
   // between two whole percentages (3.3 %).
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame0_bytes,
-                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 33.0F));
+                          DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, 33.0F));
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame1_bytes,
-                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 66.0F));
+                          DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, 66.0F));
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame2_bytes,
-                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 3.3F));
+                          DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, 3.3F));
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame3_bytes,
-                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 100.0F));
+                          DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, 100.0F));
 }
 
 TEST(CorpusHeating, TheEnergyTotalIsReadAndDecodedInWholeKilowattHoursMostSignificantByteFirst) {
   using namespace corpus;
-  EXPECT_TRUE(is_read_of(sauter_tahual_probe_energy_register_frame0_bytes, HeatingFunction::ENERGY_TOTAL));
-  EXPECT_FLOAT_EQ(value_of(sauter_tahual_probe_energy_register_frame1_bytes, HeatingFunction::ENERGY_TOTAL), 3422.0F)
+  EXPECT_TRUE(is_read_of(sauter_tahual_probe_energy_register_frame0_bytes, DeviceRegister::ENERGY_TOTAL));
+  EXPECT_FLOAT_EQ(value_of(sauter_tahual_probe_energy_register_frame1_bytes, DeviceRegister::ENERGY_TOTAL), 3422.0F)
       << "the total the Tahual's display showed";
   // The two Adelis sweeps answer the same register; their displays were not compared with it.
-  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame54_bytes, HeatingFunction::ENERGY_TOTAL),
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame54_bytes, DeviceRegister::ENERGY_TOTAL),
                   575.0F);
-  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_drying_frame22_bytes, HeatingFunction::ENERGY_TOTAL),
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_drying_frame22_bytes, DeviceRegister::ENERGY_TOTAL),
                   946.0F);
 }
 
 TEST(CorpusHeating, TheBoostTimeLeftIsRegister0x013AInMinutesAsTheDisplayCountedDown) {
   using namespace corpus;
   // About 59:57 and 54:50 left on the display, five minutes apart.
-  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_boost_remaining_frame0_bytes, HeatingFunction::BOOST_REMAINING),
-                  60.0F);
-  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_boost_remaining_frame1_bytes, HeatingFunction::BOOST_REMAINING),
-                  55.0F);
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_boost_remaining_frame0_bytes, DeviceRegister::BOOST_REMAINING), 60.0F);
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_boost_remaining_frame1_bytes, DeviceRegister::BOOST_REMAINING), 55.0F);
 }
 
 TEST(CorpusHeating, TheDurationsAreTheFirstByteOfRegisters0x013BAnd0x013DAndTheTimeLeftOfDryingIsRegister0x013C) {
   using namespace corpus;
   // The drying sweep: a one-hour boost and a 30-minute drying set, 28 minutes of drying left on the display.
   EXPECT_FLOAT_EQ(
-      value_of(atlantic_adelis_probe_register_01_sweep_drying_frame59_bytes, HeatingFunction::BOOST_DURATION), 60.0F);
+      value_of(atlantic_adelis_probe_register_01_sweep_drying_frame59_bytes, DeviceRegister::BOOST_DURATION), 60.0F);
   EXPECT_FLOAT_EQ(
-      value_of(atlantic_adelis_probe_register_01_sweep_drying_frame60_bytes, HeatingFunction::DRYING_REMAINING), 28.0F);
+      value_of(atlantic_adelis_probe_register_01_sweep_drying_frame60_bytes, DeviceRegister::DRYING_REMAINING), 28.0F);
   EXPECT_FLOAT_EQ(
-      value_of(atlantic_adelis_probe_register_01_sweep_drying_frame61_bytes, HeatingFunction::DRYING_DURATION), 30.0F);
+      value_of(atlantic_adelis_probe_register_01_sweep_drying_frame61_bytes, DeviceRegister::DRYING_DURATION), 30.0F);
   // The first sweep, another unit during a boost: 35 minutes of boost set and 120 of drying in its last drying run;
   // no drying runs, so the drying time left reads 0.
-  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame27_bytes, HeatingFunction::BOOST_DURATION),
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame27_bytes, DeviceRegister::BOOST_DURATION),
                   35.0F);
-  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame28_bytes, HeatingFunction::DRYING_REMAINING),
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame28_bytes, DeviceRegister::DRYING_REMAINING),
                   0.0F);
-  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame29_bytes, HeatingFunction::DRYING_DURATION),
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame29_bytes, DeviceRegister::DRYING_DURATION),
                   120.0F);
 }

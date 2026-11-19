@@ -32,6 +32,18 @@ uint16_t little_endian_u16(std::span<const uint8_t> bytes) {
   return static_cast<uint16_t>(bytes[0] | (bytes[1] << BITS_PER_BYTE));
 }
 
+/// @return The 16-bit big-endian word at the start of `bytes` (two bytes must be there).
+uint16_t big_endian_u16(std::span<const uint8_t> bytes) {
+  return static_cast<uint16_t>((bytes[0] << BITS_PER_BYTE) | bytes[1]);
+}
+
+/// @return The 32-bit big-endian word at the start of `bytes` (four bytes must be there).
+uint32_t big_endian_u32(std::span<const uint8_t> bytes) {
+  return (static_cast<uint32_t>(bytes[0]) << (3U * BITS_PER_BYTE)) |
+         (static_cast<uint32_t>(bytes[1]) << (2U * BITS_PER_BYTE)) |
+         (static_cast<uint32_t>(bytes[2]) << BITS_PER_BYTE) | static_cast<uint32_t>(bytes[3]);
+}
+
 /// Write `raw` little-endian into the first two bytes of `out`.
 void put_little_endian_u16(uint16_t raw, std::span<uint8_t> out) {
   out[0] = static_cast<uint8_t>(raw & LOW_BYTE_MASK);
@@ -99,11 +111,15 @@ size_t value_codec_length(ValueCodec codec) {
     case ValueCodec::SCALED_U16:
     case ValueCodec::U16_BE:
     case ValueCodec::FIRST_BYTE_OF_PAIR:
+    case ValueCodec::TENTHS_S16_BE:
       return 2;
     case ValueCodec::MARKED_U16_BE:
       return 3;
+    case ValueCodec::THOUSANDTHS_U32_BE:
+      return 4;
     case ValueCodec::BINARY:
     case ValueCodec::BOUNDED_BYTE:
+    case ValueCodec::ANY_NONZERO:
       return 1;
   }
   return 0;
@@ -161,6 +177,16 @@ std::optional<float> decode_value(const ValueForm &form, std::span<const uint8_t
       // The second byte (the panel's maximum) is not read.
       return static_cast<float>(bytes[0]);
 
+    case ValueCodec::TENTHS_S16_BE:
+      return static_cast<float>(static_cast<int16_t>(big_endian_u16(bytes))) / VALUE_TENTHS_PER_UNIT;
+
+    case ValueCodec::THOUSANDTHS_U32_BE:
+      return static_cast<float>(big_endian_u32(bytes)) / VALUE_THOUSANDTHS_PER_UNIT;
+
+    case ValueCodec::ANY_NONZERO:
+      // Every byte handed in belongs to the value: a slice of a register that several readings share.
+      return std::ranges::any_of(bytes, [](uint8_t byte) { return byte != 0; }) ? 1.0F : 0.0F;
+
     case ValueCodec::NONE:
       break;
   }
@@ -168,8 +194,10 @@ std::optional<float> decode_value(const ValueForm &form, std::span<const uint8_t
 }
 
 size_t encode_value(const ValueForm &form, float value, std::span<uint8_t> out) {
+  // NONE, a pair with a limit of its own and the read-only forms carry no value a write may send.
   if (form.codec == ValueCodec::NONE || form.codec == ValueCodec::FIRST_BYTE_OF_PAIR ||
-      out.size() < value_codec_length(form.codec))
+      form.codec == ValueCodec::TENTHS_S16_BE || form.codec == ValueCodec::THOUSANDTHS_U32_BE ||
+      form.codec == ValueCodec::ANY_NONZERO || out.size() < value_codec_length(form.codec))
     return 0;
 
   switch (form.codec) {
@@ -235,6 +263,9 @@ size_t encode_value(const ValueForm &form, float value, std::span<uint8_t> out) 
 
     case ValueCodec::NONE:
     case ValueCodec::FIRST_BYTE_OF_PAIR:
+    case ValueCodec::TENTHS_S16_BE:
+    case ValueCodec::THOUSANDTHS_U32_BE:
+    case ValueCodec::ANY_NONZERO:
       break;
   }
   return 0;

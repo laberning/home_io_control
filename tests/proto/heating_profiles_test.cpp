@@ -30,9 +30,9 @@ const uint8_t DST[NODE_ID_SIZE] = {0xAB, 0xC1, 0x23};
 
 /// The registers a profile's poll reads, by when it reads them.
 struct PinnedPoll {
-  std::vector<HeatingFunction> every_poll;           ///< Read every poll; the first failed read ends the poll.
-  std::vector<HeatingFunction> every_poll_may_miss;  ///< Read every poll after those; a miss keeps the value.
-  std::vector<HeatingFunction> once_after_boot;      ///< Read until the heater has answered once.
+  std::vector<DeviceRegister> every_poll;           ///< Read every poll; the first failed read ends the poll.
+  std::vector<DeviceRegister> every_poll_may_miss;  ///< Read every poll after those; a miss keeps the value.
+  std::vector<DeviceRegister> once_after_boot;      ///< Read until the heater has answered once.
 };
 
 /// @return The poll of a device of this kind with nothing asked for and nothing read yet, from whatever the table
@@ -41,10 +41,9 @@ PinnedPoll pinned_poll(DeviceType type, uint8_t subtype, DeviceModel model) {
   IoDevice dev;
   dev.model = model;
   test::set_kind(dev, type, subtype);
-  const HeatingProfile *profile = find_heating_profile(dev);
   const auto reads = [&](ReadingPoll policy) {
-    const HeaterPollList list = heater_poll_reads(*profile, dev, policy);
-    return std::vector<HeatingFunction>(list.begin(), list.end());
+    const HeaterPollList list = device_poll_reads(dev, policy);
+    return std::vector<DeviceRegister>(list.begin(), list.end());
   };
   return {reads(ReadingPoll::EVERY_POLL), reads(ReadingPoll::EVERY_POLL_MAY_MISS), reads(ReadingPoll::ONCE_AFTER_BOOT)};
 }
@@ -137,7 +136,7 @@ TEST(HeatingProfiles, SetpointHeaterOffersTheCardItsRegistersCanDrive) {
   EXPECT_TRUE(p.features.current_temperature);
   EXPECT_TRUE(p.features.action);
   const auto polled = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE).every_poll;
-  EXPECT_TRUE(std::find(polled.begin(), polled.end(), HeatingFunction::WINDOW_OPEN) != polled.end())
+  EXPECT_TRUE(std::find(polled.begin(), polled.end(), DeviceRegister::WINDOW_OPEN) != polled.end())
       << "the window sensor is polled with every read";
 
   ASSERT_EQ(p.modes.size(), 3u);
@@ -152,7 +151,7 @@ TEST(HeatingProfiles, SetpointHeaterOffersTheCardItsRegistersCanDrive) {
   ASSERT_EQ(p.presets.size(), 2u);
   EXPECT_EQ(p.presets[0].id, HeatingPresetId::CUSTOM);
   EXPECT_STREQ(p.presets[0].custom_name, "Program");
-  EXPECT_EQ(p.preset_fn, HeatingFunction::SET_MODE);
+  EXPECT_EQ(p.preset_fn, DeviceRegister::SET_MODE);
   EXPECT_EQ(p.presets[0].wire, 2);
   EXPECT_EQ(p.presets[1].id, HeatingPresetId::CUSTOM);
   EXPECT_STREQ(p.presets[1].custom_name, "Auto");
@@ -597,7 +596,7 @@ TEST(HeatingProfiles, RegisterProbeIsAllowedOnlyForRegisterHeatersAndHotWater) {
 
 namespace {
 
-bool lists(std::span<const HeatingFunction> list, HeatingFunction fn) {
+bool lists(std::span<const DeviceRegister> list, DeviceRegister fn) {
   return std::find(list.begin(), list.end(), fn) != list.end();
 }
 
@@ -645,7 +644,7 @@ TEST(HeatingProfilesTowelDryer, AModelProfileKeepsTheControlPathOfTheProfileAbov
 TEST(HeatingProfilesTowelDryer, ModesMapToTheTowelModeRegisterInBothDirections) {
   const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
   EXPECT_EQ(p.path, HeatingControlPath::PRIVATE_REGISTERS);
-  EXPECT_EQ(p.mode_fn, HeatingFunction::TOWEL_MODE);
+  EXPECT_EQ(p.mode_fn, DeviceRegister::TOWEL_MODE);
   ASSERT_EQ(p.modes.size(), 3u);
   const struct {
     HeatingHvacMode hvac;
@@ -667,7 +666,7 @@ TEST(HeatingProfilesTowelDryer, ModesMapToTheTowelModeRegisterInBothDirections) 
 
 TEST(HeatingProfilesTowelDryer, PresetsWriteTheTemporaryStateAndReadBackAsThemselves) {
   const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
-  EXPECT_EQ(p.preset_fn, HeatingFunction::TEMPORARY_STATE);
+  EXPECT_EQ(p.preset_fn, DeviceRegister::TEMPORARY_STATE);
   ASSERT_FALSE(p.preset_observed.empty());
   ASSERT_EQ(p.presets.size(), 3u) << "none, boost and drying: comfort and eco are no presets";
   EXPECT_EQ(p.presets[0].id, HeatingPresetId::NONE);
@@ -689,15 +688,15 @@ TEST(HeatingProfilesTowelDryer, PollsItsOwnRegistersAndNoWindow) {
   const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
   const PinnedPoll poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
   EXPECT_EQ(poll.every_poll,
-            (std::vector<HeatingFunction>{HeatingFunction::ROOM_TEMPERATURE, HeatingFunction::SET_TEMPERATURE,
-                                          HeatingFunction::TOWEL_MODE, HeatingFunction::TEMPORARY_STATE,
-                                          HeatingFunction::WORKING_RATE}));
-  EXPECT_TRUE(lists(poll.once_after_boot, HeatingFunction::MAX_SETPOINT));
-  for (const HeatingFunction never : {HeatingFunction::WINDOW_OPEN, HeatingFunction::SET_OPEN_WINDOW_DETECTION,
-                                      HeatingFunction::SET_MODE, HeatingFunction::REGULATOR_STATE}) {
-    EXPECT_FALSE(lists(poll.every_poll, never)) << heating_function_name(never);
-    EXPECT_FALSE(lists(poll.once_after_boot, never)) << heating_function_name(never);
-    EXPECT_FALSE(lists(poll.every_poll_may_miss, never)) << heating_function_name(never);
+            (std::vector<DeviceRegister>{DeviceRegister::ROOM_TEMPERATURE, DeviceRegister::SET_TEMPERATURE,
+                                         DeviceRegister::TOWEL_MODE, DeviceRegister::TEMPORARY_STATE,
+                                         DeviceRegister::WORKING_RATE}));
+  EXPECT_TRUE(lists(poll.once_after_boot, DeviceRegister::MAX_SETPOINT));
+  for (const DeviceRegister never : {DeviceRegister::WINDOW_OPEN, DeviceRegister::SET_OPEN_WINDOW_DETECTION,
+                                     DeviceRegister::SET_MODE, DeviceRegister::REGULATOR_STATE}) {
+    EXPECT_FALSE(lists(poll.every_poll, never)) << device_register_name(never);
+    EXPECT_FALSE(lists(poll.once_after_boot, never)) << device_register_name(never);
+    EXPECT_FALSE(lists(poll.every_poll_may_miss, never)) << device_register_name(never);
   }
   EXPECT_EQ(p.action_source, HeatingActionSource::WORKING_RATE);
   EXPECT_FALSE(p.experimental_writes);
@@ -705,9 +704,9 @@ TEST(HeatingProfilesTowelDryer, PollsItsOwnRegistersAndNoWindow) {
 
 TEST(HeatingProfilesTowelDryer, PollsTheMaximumAtBootAndNoSetback) {
   const PinnedPoll poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
-  EXPECT_EQ(poll.once_after_boot, (std::vector<HeatingFunction>{HeatingFunction::MAX_SETPOINT}));
-  EXPECT_FALSE(lists(poll.every_poll, HeatingFunction::ECO_SETBACK)) << "the level comes from the status read";
-  EXPECT_FALSE(lists(poll.every_poll, HeatingFunction::TEMPERATURE_IN_FORCE))
+  EXPECT_EQ(poll.once_after_boot, (std::vector<DeviceRegister>{DeviceRegister::MAX_SETPOINT}));
+  EXPECT_FALSE(lists(poll.every_poll, DeviceRegister::ECO_SETBACK)) << "the level comes from the status read";
+  EXPECT_FALSE(lists(poll.every_poll, DeviceRegister::TEMPERATURE_IN_FORCE))
       << "the temperature in force is read only while the programme runs, not on every poll";
 }
 
@@ -716,8 +715,8 @@ TEST(HeatingProfilesTowelDryer, TheProgrammePeriodNamesTheRegistersOfTheProgramm
   ASSERT_NE(p.programme_period, nullptr);
   const HeatingProgrammePeriod &period = *p.programme_period;
   EXPECT_EQ(period.idle_preset_state, static_cast<uint8_t>(HeatingTemporaryState::NONE));
-  EXPECT_EQ(period.in_force_fn, HeatingFunction::TEMPERATURE_IN_FORCE);
-  EXPECT_EQ(period.derogation_fn, HeatingFunction::DEROGATED_SETPOINT) << "a target set in auto is written here";
+  EXPECT_EQ(period.in_force_fn, DeviceRegister::TEMPERATURE_IN_FORCE);
+  EXPECT_EQ(period.derogation_fn, DeviceRegister::DEROGATED_SETPOINT) << "a target set in auto is written here";
   EXPECT_TRUE(period.reports_level) << "the dryer answers the status read with its level";
   for (const HeatingPresetEntry &preset : p.presets) {
     EXPECT_NE(preset.id, HeatingPresetId::COMFORT) << "the period is shown by the level sensor, not a preset";
@@ -732,8 +731,8 @@ const HeatingProfile &towel();
 TEST(HeatingProfilesProgramme, TheRadiatorFamilyNamesItsOwnRegistersAndTheModelsInheritThem) {
   const HeatingProfile *radiator = find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
   ASSERT_NE(radiator->programme_period, nullptr);
-  EXPECT_EQ(radiator->programme_period->in_force_fn, HeatingFunction::HEATER_TEMPERATURE_IN_FORCE);
-  EXPECT_EQ(radiator->programme_period->derogation_fn, HeatingFunction::DEROGATED_SETPOINT);
+  EXPECT_EQ(radiator->programme_period->in_force_fn, DeviceRegister::HEATER_TEMPERATURE_IN_FORCE);
+  EXPECT_EQ(radiator->programme_period->derogation_fn, DeviceRegister::DEROGATED_SETPOINT);
   EXPECT_FALSE(radiator->programme_period->reports_level)
       << "no radiator has answered the status read with a level, so none is asked";
   EXPECT_EQ(find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT)->programme_period,
@@ -783,7 +782,7 @@ TEST(HeatingProfilesTowelDryer, TheTemperatureInForceIsTheProgrammesTarget) {
 
 TEST(HeatingProfilesTowelDryer, WithoutTheTemperatureInForceThereIsNoTargetToShow) {
   IoDevice r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
-  test::clear_reading(r, HeatingFunction::TEMPERATURE_IN_FORCE);
+  test::clear_reading(r, DeviceRegister::TEMPERATURE_IN_FORCE);
   EXPECT_TRUE(std::isnan(programme_temperature_in_force(towel(), r))) << "the programme runs, it is just not read yet";
 }
 
@@ -862,12 +861,12 @@ TEST(HeatingProfilesTowelDryer, TheTemperatureInForceIsDroppedWhenTheProgrammeSt
   const HeatingProfile &p = towel();
   IoDevice r = towel_readings(TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
   clear_inactive_programme_reading(p, r);
-  EXPECT_TRUE(test::has_reading(r, HeatingFunction::TEMPERATURE_IN_FORCE)) << "kept while the programme runs";
+  EXPECT_TRUE(test::has_reading(r, DeviceRegister::TEMPERATURE_IN_FORCE)) << "kept while the programme runs";
 
   test::store_reading(r, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(HeatingTemporaryState::BOOST));
   clear_inactive_programme_reading(p, r);
-  EXPECT_FALSE(test::has_reading(r, HeatingFunction::TEMPERATURE_IN_FORCE)) << "dropped in boost";
-  EXPECT_TRUE(test::has_reading(r, HeatingFunction::SET_TEMPERATURE)) << "the comfort setpoint is not part of it";
+  EXPECT_FALSE(test::has_reading(r, DeviceRegister::TEMPERATURE_IN_FORCE)) << "dropped in boost";
+  EXPECT_TRUE(test::has_reading(r, DeviceRegister::SET_TEMPERATURE)) << "the comfort setpoint is not part of it";
 
   // Back in the programme the old value must not come back.
   test::store_reading(r, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(HeatingTemporaryState::NONE));
@@ -876,29 +875,29 @@ TEST(HeatingProfilesTowelDryer, TheTemperatureInForceIsDroppedWhenTheProgrammeSt
   IoDevice plain;
   test::store_reading(plain, DeviceReading::TEMPERATURE_IN_FORCE, 5.0F);
   clear_inactive_programme_reading(*find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE), plain);
-  EXPECT_TRUE(test::has_reading(plain, HeatingFunction::TEMPERATURE_IN_FORCE))
+  EXPECT_TRUE(test::has_reading(plain, DeviceRegister::TEMPERATURE_IN_FORCE))
       << "a profile without a period never touches it";
 
   IoDevice manual = radiator_readings(HeatingMode::MANUAL, 17.5F);
   clear_inactive_programme_reading(radiator_profile(), manual);
-  EXPECT_FALSE(test::has_reading(manual, HeatingFunction::HEATER_TEMPERATURE_IN_FORCE))
+  EXPECT_FALSE(test::has_reading(manual, DeviceRegister::HEATER_TEMPERATURE_IN_FORCE))
       << "a radiator in heat holds none";
 }
 
 TEST(HeatingProfilesTowelDryer, TheRadiatorProfileIsUnchangedAndNeverTouchesTheTowelRegisters) {
   const HeatingProfile &p = *find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
-  EXPECT_EQ(p.mode_fn, HeatingFunction::SET_MODE);
+  EXPECT_EQ(p.mode_fn, DeviceRegister::SET_MODE);
   EXPECT_TRUE(p.preset_observed.empty());
   EXPECT_EQ(p.preset_observed.size(), 0u);
   EXPECT_EQ(p.action_source, HeatingActionSource::REGULATOR);
   EXPECT_FALSE(p.experimental_writes);
   const PinnedPoll radiator_poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
-  for (const HeatingFunction towel :
-       {HeatingFunction::TOWEL_MODE, HeatingFunction::TEMPORARY_STATE, HeatingFunction::WORKING_RATE,
-        HeatingFunction::TEMPERATURE_IN_FORCE, HeatingFunction::ECO_SETBACK}) {
-    EXPECT_FALSE(lists(radiator_poll.every_poll, towel)) << heating_function_name(towel);
-    EXPECT_FALSE(lists(radiator_poll.once_after_boot, towel)) << heating_function_name(towel);
-    EXPECT_NE(p.preset_fn, towel) << heating_function_name(towel);
+  for (const DeviceRegister towel :
+       {DeviceRegister::TOWEL_MODE, DeviceRegister::TEMPORARY_STATE, DeviceRegister::WORKING_RATE,
+        DeviceRegister::TEMPERATURE_IN_FORCE, DeviceRegister::ECO_SETBACK}) {
+    EXPECT_FALSE(lists(radiator_poll.every_poll, towel)) << device_register_name(towel);
+    EXPECT_FALSE(lists(radiator_poll.once_after_boot, towel)) << device_register_name(towel);
+    EXPECT_NE(p.preset_fn, towel) << device_register_name(towel);
   }
   for (size_t i = 0; i < p.presets.size(); i++)
     EXPECT_NE(p.presets[i].id, HeatingPresetId::NONE) << "the radiator offers no 'none' preset";
@@ -982,7 +981,7 @@ TEST(HeatingProfilesPilotWireInterface, APlainHeaterKeepsItsBoost) {
 TEST(HeatingProfilesHeaterWithLight, NoOtherKindIsPolledForTheLight) {
   for (const auto model : {DeviceModel::NONE, DeviceModel::TOWEL_DRYER}) {
     const PinnedPoll poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, model);
-    for (const HeatingFunction light : {HeatingFunction::NIGHT_LIGHT, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS}) {
+    for (const DeviceRegister light : {DeviceRegister::NIGHT_LIGHT, DeviceRegister::NIGHT_LIGHT_BRIGHTNESS}) {
       EXPECT_FALSE(lists(poll.every_poll, light));
       EXPECT_FALSE(lists(poll.every_poll_may_miss, light));
     }
@@ -994,33 +993,33 @@ TEST(HeatingProfilesHeaterWithLight, NoOtherKindIsPolledForTheLight) {
 TEST(HeaterPollReadsPin, TheRadiatorReadsFiveRegistersTheDetectionSettingEveryPollAndTheMaximumOnce) {
   const PinnedPoll poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE);
   EXPECT_EQ(poll.every_poll,
-            (std::vector<HeatingFunction>{HeatingFunction::ROOM_TEMPERATURE, HeatingFunction::SET_TEMPERATURE,
-                                          HeatingFunction::SET_MODE, HeatingFunction::REGULATOR_STATE,
-                                          HeatingFunction::WINDOW_OPEN}));
-  EXPECT_EQ(poll.every_poll_may_miss, (std::vector<HeatingFunction>{HeatingFunction::SET_OPEN_WINDOW_DETECTION}));
-  EXPECT_EQ(poll.once_after_boot, (std::vector<HeatingFunction>{HeatingFunction::MAX_SETPOINT}));
+            (std::vector<DeviceRegister>{DeviceRegister::ROOM_TEMPERATURE, DeviceRegister::SET_TEMPERATURE,
+                                         DeviceRegister::SET_MODE, DeviceRegister::REGULATOR_STATE,
+                                         DeviceRegister::WINDOW_OPEN}));
+  EXPECT_EQ(poll.every_poll_may_miss, (std::vector<DeviceRegister>{DeviceRegister::SET_OPEN_WINDOW_DETECTION}));
+  EXPECT_EQ(poll.once_after_boot, (std::vector<DeviceRegister>{DeviceRegister::MAX_SETPOINT}));
 }
 
 TEST(HeaterPollReadsPin, TheHeaterWithALightReadsTheRadiatorsRegistersThenTheLightsTwo) {
   const PinnedPoll poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT);
   EXPECT_EQ(poll.every_poll,
-            (std::vector<HeatingFunction>{HeatingFunction::ROOM_TEMPERATURE, HeatingFunction::SET_TEMPERATURE,
-                                          HeatingFunction::SET_MODE, HeatingFunction::REGULATOR_STATE,
-                                          HeatingFunction::WINDOW_OPEN}));
+            (std::vector<DeviceRegister>{DeviceRegister::ROOM_TEMPERATURE, DeviceRegister::SET_TEMPERATURE,
+                                         DeviceRegister::SET_MODE, DeviceRegister::REGULATOR_STATE,
+                                         DeviceRegister::WINDOW_OPEN}));
   EXPECT_EQ(poll.every_poll_may_miss,
-            (std::vector<HeatingFunction>{HeatingFunction::SET_OPEN_WINDOW_DETECTION, HeatingFunction::NIGHT_LIGHT,
-                                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS}));
-  EXPECT_EQ(poll.once_after_boot, (std::vector<HeatingFunction>{HeatingFunction::MAX_SETPOINT}));
+            (std::vector<DeviceRegister>{DeviceRegister::SET_OPEN_WINDOW_DETECTION, DeviceRegister::NIGHT_LIGHT,
+                                         DeviceRegister::NIGHT_LIGHT_BRIGHTNESS}));
+  EXPECT_EQ(poll.once_after_boot, (std::vector<DeviceRegister>{DeviceRegister::MAX_SETPOINT}));
 }
 
 TEST(HeaterPollReadsPin, TheTowelDryerReadsItsFiveRegistersAndTheMaximumOnce) {
   const PinnedPoll poll = pinned_poll(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
   EXPECT_EQ(poll.every_poll,
-            (std::vector<HeatingFunction>{HeatingFunction::ROOM_TEMPERATURE, HeatingFunction::SET_TEMPERATURE,
-                                          HeatingFunction::TOWEL_MODE, HeatingFunction::TEMPORARY_STATE,
-                                          HeatingFunction::WORKING_RATE}));
+            (std::vector<DeviceRegister>{DeviceRegister::ROOM_TEMPERATURE, DeviceRegister::SET_TEMPERATURE,
+                                         DeviceRegister::TOWEL_MODE, DeviceRegister::TEMPORARY_STATE,
+                                         DeviceRegister::WORKING_RATE}));
   EXPECT_TRUE(poll.every_poll_may_miss.empty());
-  EXPECT_EQ(poll.once_after_boot, (std::vector<HeatingFunction>{HeatingFunction::MAX_SETPOINT}));
+  EXPECT_EQ(poll.once_after_boot, (std::vector<DeviceRegister>{DeviceRegister::MAX_SETPOINT}));
 }
 
 TEST(HeaterPollReadsPin, AHeaterThatTakesTheStatusReadReadsNoRegisterOfItsOwn) {
@@ -1042,12 +1041,12 @@ namespace {
 /// `shown`
 ///         (the programme's temperature in force replaces the setpoint on the card while the programme runs, so a
 ///         register may matter in one state only).
-bool card_moves_with(const HeatingProfile &profile, HeatingFunction changed_fn, HeatingHvacMode shown) {
+bool card_moves_with(const HeatingProfile &profile, DeviceRegister changed_fn, HeatingHvacMode shown) {
   const auto mode = std::ranges::find(profile.observed, shown, &HeatingObservedState::hvac);
   EXPECT_NE(mode, profile.observed.end());
   IoDevice base;
   for (const DeviceReadingRow &row : device_readings()) {
-    if (const auto *source = std::get_if<HeatingRegisterSource>(&row.source))
+    if (const auto *source = std::get_if<RegisterSource>(&row.source))
       test::store_reading(base, source->fn, 1.0F);
   }
   test::store_reading(base, profile.mode_fn, static_cast<float>(mode->wire));
@@ -1072,7 +1071,7 @@ TEST(HeatingProfileReads, TheRegistersTheCardReadsAreTheOnesTheProfileSays) {
     if (profile.path != HeatingControlPath::PRIVATE_REGISTERS)
       continue;
     for (const DeviceReadingRow &row : device_readings()) {
-      const auto *source = std::get_if<HeatingRegisterSource>(&row.source);
+      const auto *source = std::get_if<RegisterSource>(&row.source);
       if (source == nullptr)
         continue;
       const bool card_reads = card_moves_with(profile, source->fn, HeatingHvacMode::AUTO) ||
@@ -1112,8 +1111,8 @@ struct SelectingRig {
     dev.model = DeviceModel::HEATER_WITH_LIGHT;
     test::set_kind(dev, DeviceType::ELECTRICAL_HEATER, 1);
   }
-  std::vector<HeatingFunction> reads(ReadingPoll policy) const {
-    const HeaterPollList list = heater_poll_reads(profile, dev, policy);
+  std::vector<DeviceRegister> reads(ReadingPoll policy) const {
+    const HeaterPollList list = device_poll_reads(dev, policy);
     return {list.begin(), list.end()};
   }
 };
@@ -1123,37 +1122,37 @@ struct SelectingRig {
 TEST(HeaterPollReads, AskedRegistersAreSelectedWhenAskedAndNotAfterAnEmptyAnswer) {
   SelectingRig rig;
   EXPECT_TRUE(rig.reads(ReadingPoll::WHEN_ASKED).empty()) << "nothing asked";
-  ask_register_reading(rig.dev, HeatingFunction::OCCUPANCY_DETECTION);
-  ask_register_reading(rig.dev, HeatingFunction::SET_PRESENCE);
+  ask_register_reading(rig.dev, DeviceRegister::OCCUPANCY_DETECTION);
+  ask_register_reading(rig.dev, DeviceRegister::SET_PRESENCE);
   EXPECT_EQ(rig.reads(ReadingPoll::WHEN_ASKED),
-            (std::vector<HeatingFunction>{HeatingFunction::SET_PRESENCE, HeatingFunction::OCCUPANCY_DETECTION}))
+            (std::vector<DeviceRegister>{DeviceRegister::SET_PRESENCE, DeviceRegister::OCCUPANCY_DETECTION}))
       << "in the order of the table, not of the asking";
-  mark_register_reading_absent(rig.dev, HeatingFunction::SET_PRESENCE);
-  EXPECT_EQ(rig.reads(ReadingPoll::WHEN_ASKED), (std::vector<HeatingFunction>{HeatingFunction::OCCUPANCY_DETECTION}));
+  mark_register_reading_absent(rig.dev, DeviceRegister::SET_PRESENCE);
+  EXPECT_EQ(rig.reads(ReadingPoll::WHEN_ASKED), (std::vector<DeviceRegister>{DeviceRegister::OCCUPANCY_DETECTION}));
 }
 
 TEST(HeaterPollReads, AnAskedRegisterTheKindHasNoCapabilityForIsNotSelected) {
   SelectingRig rig;
-  ask_register_reading(rig.dev, HeatingFunction::CENTRAL_HEATING_MODE);
+  ask_register_reading(rig.dev, DeviceRegister::CENTRAL_HEATING_MODE);
   EXPECT_TRUE(rig.reads(ReadingPoll::WHEN_ASKED).empty()) << "a radiator has no central-heating mode";
 }
 
 TEST(HeaterPollReads, TheMaximumIsSelectedUntilItHoldsAValue) {
   SelectingRig rig;
-  EXPECT_EQ(rig.reads(ReadingPoll::ONCE_AFTER_BOOT), (std::vector<HeatingFunction>{HeatingFunction::MAX_SETPOINT}));
-  test::store_reading(rig.dev, HeatingFunction::MAX_SETPOINT, 28.0F);
+  EXPECT_EQ(rig.reads(ReadingPoll::ONCE_AFTER_BOOT), (std::vector<DeviceRegister>{DeviceRegister::MAX_SETPOINT}));
+  test::store_reading(rig.dev, DeviceRegister::MAX_SETPOINT, 28.0F);
   EXPECT_TRUE(rig.reads(ReadingPoll::ONCE_AFTER_BOOT).empty());
 }
 
 TEST(HeaterPollReads, ADeviceWithoutAPartIsNotPolledForIt) {
   SelectingRig light;
   EXPECT_EQ(light.reads(ReadingPoll::EVERY_POLL_MAY_MISS),
-            (std::vector<HeatingFunction>{HeatingFunction::SET_OPEN_WINDOW_DETECTION, HeatingFunction::NIGHT_LIGHT,
-                                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS}));
+            (std::vector<DeviceRegister>{DeviceRegister::SET_OPEN_WINDOW_DETECTION, DeviceRegister::NIGHT_LIGHT,
+                                         DeviceRegister::NIGHT_LIGHT_BRIGHTNESS}));
   light.dev.model = DeviceModel::NONE;
   test::set_kind(light.dev, DeviceType::ELECTRICAL_HEATER, 1);
   EXPECT_EQ(light.reads(ReadingPoll::EVERY_POLL_MAY_MISS),
-            (std::vector<HeatingFunction>{HeatingFunction::SET_OPEN_WINDOW_DETECTION}))
+            (std::vector<DeviceRegister>{DeviceRegister::SET_OPEN_WINDOW_DETECTION}))
       << "a radiator without the capability reads no light";
 }
 
@@ -1191,14 +1190,14 @@ TEST(HeatingProfiles, EveryModeAProfileWritesToTheModeRegisterIsWritable) {
     if (p.path != HeatingControlPath::PRIVATE_REGISTERS)
       continue;
     // A profile whose mode register is another one (the towel dryer's) has its own value set.
-    if (p.mode_fn == HeatingFunction::SET_MODE) {
+    if (p.mode_fn == DeviceRegister::SET_MODE) {
       for (const HeatingModeEntry &m : p.modes)
         EXPECT_TRUE(heating_mode_is_writable(static_cast<HeatingMode>(m.wire)))
             << "mode " << static_cast<int>(m.wire) << " of profile " << static_cast<int>(p.type) << "/"
             << static_cast<int>(p.subtype);
     }
     for (const HeatingPresetEntry &pr : p.presets) {
-      if (p.preset_fn != HeatingFunction::SET_MODE)
+      if (p.preset_fn != DeviceRegister::SET_MODE)
         continue;
       EXPECT_TRUE(heating_mode_is_writable(static_cast<HeatingMode>(pr.wire)))
           << "preset " << static_cast<int>(pr.wire) << " of profile " << static_cast<int>(p.type) << "/"

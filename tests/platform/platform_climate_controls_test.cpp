@@ -19,7 +19,7 @@ namespace {
 /// hub's read-back does.
 class ClimateControlsHub : public test::DevicePortDouble, public test::HeatingPortDouble {
  public:
-  bool read_heating_register(const std::string &device_id, HeatingFunction fn, float *value_out,
+  bool read_heating_register(const std::string &device_id, DeviceRegister fn, float *value_out,
                              uint8_t max_tries) override {
     const bool read = HeatingPortDouble::read_heating_register(device_id, fn, value_out, max_tries);
     if (read) {
@@ -223,14 +223,14 @@ TEST(PlatformCentralHeatingModeSensor, LosesItsStateWhenTheReadingIsDropped) {
   hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::CENTRAL_HEATING_MODE, 1); });
   ASSERT_TRUE(sensor.has_state());
 
-  hub.deliver([](IoDevice &r) { test::clear_reading(r, HeatingFunction::CENTRAL_HEATING_MODE); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::CENTRAL_HEATING_MODE); });
   EXPECT_FALSE(sensor.has_state()) << "a dryer that stops answering a value shows no state";
 }
 
 TEST(PlatformHeaterSettingSwitch, WritesThenReadsTheRegisterBackWithTheFullBudget) {
   ClimateControlsHub hub;
   hub.add_heater();
-  hub.read_replies[HeatingFunction::SET_OPEN_WINDOW_DETECTION] = 1.0F;
+  hub.read_replies[DeviceRegister::SET_OPEN_WINDOW_DETECTION] = 1.0F;
   TestableDetectionSwitch sw;
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");
@@ -239,10 +239,10 @@ TEST(PlatformHeaterSettingSwitch, WritesThenReadsTheRegisterBackWithTheFullBudge
   sw.trigger_write(true);
 
   ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::SET_OPEN_WINDOW_DETECTION);
+  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::SET_OPEN_WINDOW_DETECTION);
   EXPECT_FLOAT_EQ(hub.writes[0].value, 1.0F);
   ASSERT_EQ(hub.reads.size(), 1u);
-  EXPECT_EQ(hub.reads[0], HeatingFunction::SET_OPEN_WINDOW_DETECTION);
+  EXPECT_EQ(hub.reads[0], DeviceRegister::SET_OPEN_WINDOW_DETECTION);
   EXPECT_EQ(hub.read_tries[0], EXCHANGE_RETRY_COUNT);
   EXPECT_TRUE(sw.get_state()) << "shown from the read-back";
 }
@@ -250,7 +250,7 @@ TEST(PlatformHeaterSettingSwitch, WritesThenReadsTheRegisterBackWithTheFullBudge
 TEST(PlatformHeaterSettingSwitch, ShowsWhatTheHeaterReportsNotWhatWasCommanded) {
   ClimateControlsHub hub;
   hub.add_heater();
-  hub.read_replies[HeatingFunction::SET_OPEN_WINDOW_DETECTION] = 0.0F;  // the heater kept it off
+  hub.read_replies[DeviceRegister::SET_OPEN_WINDOW_DETECTION] = 0.0F;  // the heater kept it off
   TestableDetectionSwitch sw;
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");
@@ -357,18 +357,18 @@ TEST(PlatformHeaterNightLight, NothingIsShownUntilTheLightHasBeenRead) {
 TEST(PlatformHeaterNightLight, SwitchingOnAtANewBrightnessWritesBrightnessThenOnAndReadsBothBack) {
   NightLightRig rig;
   rig.deliver(0, 100.0F);
-  rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT] = 1.0F;
-  rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT_BRIGHTNESS] = 66.0F;
+  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT] = 1.0F;
+  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT_BRIGHTNESS] = 66.0F;
 
   rig.request(true, 0.66F);
 
   ASSERT_EQ(rig.hub.writes.size(), 2u);
-  EXPECT_EQ(rig.hub.writes[0].fn, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS);
+  EXPECT_EQ(rig.hub.writes[0].fn, DeviceRegister::NIGHT_LIGHT_BRIGHTNESS);
   EXPECT_FLOAT_EQ(rig.hub.writes[0].value, 66.0F);
-  EXPECT_EQ(rig.hub.writes[1].fn, HeatingFunction::NIGHT_LIGHT);
+  EXPECT_EQ(rig.hub.writes[1].fn, DeviceRegister::NIGHT_LIGHT);
   EXPECT_FLOAT_EQ(rig.hub.writes[1].value, 1.0F);
   EXPECT_EQ(rig.hub.reads,
-            (std::vector<HeatingFunction>{HeatingFunction::NIGHT_LIGHT, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS}));
+            (std::vector<DeviceRegister>{DeviceRegister::NIGHT_LIGHT, DeviceRegister::NIGHT_LIGHT_BRIGHTNESS}));
   EXPECT_EQ(rig.hub.read_tries[0], EXCHANGE_RETRY_COUNT);
   EXPECT_TRUE(rig.state.current_values.is_on());
   EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.66F);
@@ -379,8 +379,8 @@ TEST(PlatformHeaterNightLight, AWriteIsPublishedOnceWithBothReadBacks) {
   // old 100 %) must not be shown before the brightness read-back.
   NightLightRig rig;
   rig.deliver(0, 100.0F);
-  rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT] = 1.0F;
-  rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT_BRIGHTNESS] = 66.0F;
+  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT] = 1.0F;
+  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT_BRIGHTNESS] = 66.0F;
   std::vector<float> shown;
   rig.hub.register_device_callback([&rig, &shown](const std::string &, const IoDevice &) {
     shown.push_back(rig.state.current_values.get_brightness());
@@ -392,20 +392,20 @@ TEST(PlatformHeaterNightLight, AWriteIsPublishedOnceWithBothReadBacks) {
     EXPECT_FLOAT_EQ(brightness, 0.66F) << "no stale brightness while the write runs";
   EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.66F);
   rig.request(false, 0.66F);
-  EXPECT_EQ(rig.hub.writes.back().fn, HeatingFunction::NIGHT_LIGHT) << "the next request is not swallowed";
+  EXPECT_EQ(rig.hub.writes.back().fn, DeviceRegister::NIGHT_LIGHT) << "the next request is not swallowed";
   EXPECT_FLOAT_EQ(rig.hub.writes.back().value, 0.0F);
 }
 
 TEST(PlatformHeaterNightLight, OnAtTheBrightnessTheHeaterHoldsWritesOnlyOnOff) {
   NightLightRig rig;
   rig.deliver(0, 100.0F);
-  rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT] = 1.0F;
+  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT] = 1.0F;
 
   rig.request(true, 1.0F);
 
   ASSERT_EQ(rig.hub.writes.size(), 1u) << "on/off never depends on the brightness write";
-  EXPECT_EQ(rig.hub.writes[0].fn, HeatingFunction::NIGHT_LIGHT);
-  EXPECT_EQ(rig.hub.reads, (std::vector<HeatingFunction>{HeatingFunction::NIGHT_LIGHT}));
+  EXPECT_EQ(rig.hub.writes[0].fn, DeviceRegister::NIGHT_LIGHT);
+  EXPECT_EQ(rig.hub.reads, (std::vector<DeviceRegister>{DeviceRegister::NIGHT_LIGHT}));
 }
 
 TEST(PlatformHeaterNightLight, OnWithoutAKnownBrightnessWritesTheBrightness) {
@@ -415,7 +415,7 @@ TEST(PlatformHeaterNightLight, OnWithoutAKnownBrightnessWritesTheBrightness) {
     rig.deliver(0, held);
     rig.request(true, 1.0F);
     ASSERT_EQ(rig.hub.writes.size(), 2u) << "held " << held;
-    EXPECT_EQ(rig.hub.writes[0].fn, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS) << "held " << held;
+    EXPECT_EQ(rig.hub.writes[0].fn, DeviceRegister::NIGHT_LIGHT_BRIGHTNESS) << "held " << held;
     EXPECT_FLOAT_EQ(rig.hub.writes[0].value, 100.0F) << "held " << held;
   }
 }
@@ -423,12 +423,12 @@ TEST(PlatformHeaterNightLight, OnWithoutAKnownBrightnessWritesTheBrightness) {
 TEST(PlatformHeaterNightLight, OffWritesOnlyOnOff) {
   NightLightRig rig;
   rig.deliver(1, 100.0F);
-  rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT] = 0.0F;
+  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT] = 0.0F;
 
   rig.request(false, 0.3F);
 
   ASSERT_EQ(rig.hub.writes.size(), 1u);
-  EXPECT_EQ(rig.hub.writes[0].fn, HeatingFunction::NIGHT_LIGHT);
+  EXPECT_EQ(rig.hub.writes[0].fn, DeviceRegister::NIGHT_LIGHT);
   EXPECT_FLOAT_EQ(rig.hub.writes[0].value, 0.0F);
   EXPECT_FALSE(rig.state.current_values.is_on());
 }
@@ -438,7 +438,7 @@ TEST(PlatformHeaterNightLight, ABrightnessThatRoundsToZeroIsSentAsOnePercent) {
   rig.deliver(0, 100.0F);
   rig.request(true, 0.004F);
   ASSERT_FALSE(rig.hub.writes.empty());
-  EXPECT_EQ(rig.hub.writes[0].fn, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS);
+  EXPECT_EQ(rig.hub.writes[0].fn, DeviceRegister::NIGHT_LIGHT_BRIGHTNESS);
   EXPECT_FLOAT_EQ(rig.hub.writes[0].value, 1.0F);
 }
 
@@ -461,10 +461,10 @@ TEST(PlatformHeaterNightLight, OnAtAPanelLevelBetweenTwoPercentagesKeepsTheLevel
   for (const float level : {3.3F, 33.0F, 70.25F}) {
     NightLightRig rig;
     rig.deliver(0, level);
-    rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT] = 1.0F;
+    rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT] = 1.0F;
     rig.request(true, rig.state.current_values.get_brightness());
     ASSERT_EQ(rig.hub.writes.size(), 1u) << level << " %";
-    EXPECT_EQ(rig.hub.writes[0].fn, HeatingFunction::NIGHT_LIGHT) << level << " %";
+    EXPECT_EQ(rig.hub.writes[0].fn, DeviceRegister::NIGHT_LIGHT) << level << " %";
   }
 }
 
@@ -478,7 +478,7 @@ TEST(PlatformHeaterNightLight, HomeAssistantPercentagesAreWrittenOnTheVendorApps
     rig.deliver(0, 100.0F);
     rig.request(true, request.fraction);
     ASSERT_FALSE(rig.hub.writes.empty());
-    EXPECT_EQ(rig.hub.writes[0].fn, HeatingFunction::NIGHT_LIGHT_BRIGHTNESS);
+    EXPECT_EQ(rig.hub.writes[0].fn, DeviceRegister::NIGHT_LIGHT_BRIGHTNESS);
     EXPECT_FLOAT_EQ(rig.hub.writes[0].value, request.percent);
   }
 }
@@ -486,14 +486,14 @@ TEST(PlatformHeaterNightLight, HomeAssistantPercentagesAreWrittenOnTheVendorApps
 TEST(PlatformHeaterNightLight, ARefusedBrightnessWriteStillSwitchesTheLightAndIsNotReadBack) {
   NightLightRig rig;
   rig.deliver(0, 100.0F);
-  rig.hub.refused_writes = {HeatingFunction::NIGHT_LIGHT_BRIGHTNESS};
-  rig.hub.read_replies[HeatingFunction::NIGHT_LIGHT] = 1.0F;
+  rig.hub.refused_writes = {DeviceRegister::NIGHT_LIGHT_BRIGHTNESS};
+  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT] = 1.0F;
 
   rig.request(true, 0.5F);
 
   ASSERT_EQ(rig.hub.writes.size(), 2u);
-  EXPECT_EQ(rig.hub.writes[1].fn, HeatingFunction::NIGHT_LIGHT);
-  EXPECT_EQ(rig.hub.reads, (std::vector<HeatingFunction>{HeatingFunction::NIGHT_LIGHT}));
+  EXPECT_EQ(rig.hub.writes[1].fn, DeviceRegister::NIGHT_LIGHT);
+  EXPECT_EQ(rig.hub.reads, (std::vector<DeviceRegister>{DeviceRegister::NIGHT_LIGHT}));
   EXPECT_TRUE(rig.state.current_values.is_on());
   EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 1.0F) << "the brightness the heater still holds";
 }
@@ -515,7 +515,7 @@ TEST(PlatformHeaterNightLight, AnUnacknowledgedSwitchIsNotReadBackAndShowsTheHea
 TEST(PlatformHeaterSettingSwitch, OccupancyDetectionWritesRegister0x0101ThenReadsItBack) {
   ClimateControlsHub hub;
   hub.add_heater();
-  hub.read_replies[HeatingFunction::OCCUPANCY_DETECTION] = 1.0F;
+  hub.read_replies[DeviceRegister::OCCUPANCY_DETECTION] = 1.0F;
   TestableDetectionSwitch sw(DeviceReading::OCCUPANCY_DETECTION);
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");
@@ -525,10 +525,10 @@ TEST(PlatformHeaterSettingSwitch, OccupancyDetectionWritesRegister0x0101ThenRead
   sw.trigger_write(true);
 
   ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, HeatingFunction::OCCUPANCY_DETECTION);
+  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::OCCUPANCY_DETECTION);
   EXPECT_FLOAT_EQ(hub.writes[0].value, 1.0F);
   ASSERT_EQ(hub.reads.size(), 1u);
-  EXPECT_EQ(hub.reads[0], HeatingFunction::OCCUPANCY_DETECTION);
+  EXPECT_EQ(hub.reads[0], DeviceRegister::OCCUPANCY_DETECTION);
   EXPECT_EQ(hub.read_tries[0], EXCHANGE_RETRY_COUNT);
   EXPECT_TRUE(sw.get_state());
 }
@@ -605,7 +605,7 @@ TEST(PlatformOccupancySensor, LosesItsStateWhenTheHeaterAnswersWithoutAValue) {
   hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OCCUPANCY, 1); });
   ASSERT_TRUE(sensor.has_state());
 
-  hub.deliver([](IoDevice &r) { test::clear_reading(r, HeatingFunction::SET_PRESENCE); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::SET_PRESENCE); });
   EXPECT_FALSE(sensor.has_state());
 }
 
@@ -632,11 +632,11 @@ TEST(PlatformEnergySensor, ShowsTheTotalAsTheHeaterReportsItAndFollowsEveryPoll)
   sensor.set_device_id("ABC123");
   sensor.setup();
 
-  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 3422.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceRegister::ENERGY_TOTAL, 3422.0F); });
   EXPECT_FLOAT_EQ(sensor.state, 3422.0F);
-  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 3423.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceRegister::ENERGY_TOTAL, 3423.0F); });
   EXPECT_FLOAT_EQ(sensor.state, 3423.0F);
-  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 65535.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceRegister::ENERGY_TOTAL, 65535.0F); });
   EXPECT_FLOAT_EQ(sensor.state, 65535.0F) << "a total past 32767 is not wrapped";
 }
 
@@ -648,7 +648,7 @@ TEST(PlatformEnergySensor, ATotalOfZeroIsShownAsZero) {
   sensor.set_device_id("ABC123");
   sensor.setup();
 
-  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 0.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceRegister::ENERGY_TOTAL, 0.0F); });
   EXPECT_FLOAT_EQ(sensor.state, 0.0F) << "a new heater";
 }
 
@@ -659,10 +659,10 @@ TEST(PlatformEnergySensor, LosesItsStateWhenTheHeaterAnswersWithoutAValue) {
   sensor.set_parent(&hub);
   sensor.set_device_id("ABC123");
   sensor.setup();
-  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 3422.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceRegister::ENERGY_TOTAL, 3422.0F); });
   ASSERT_FLOAT_EQ(sensor.state, 3422.0F);
 
-  hub.deliver([](IoDevice &r) { test::clear_reading(r, HeatingFunction::ENERGY_TOTAL); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::ENERGY_TOTAL); });
   EXPECT_TRUE(std::isnan(sensor.state));
 }
 
@@ -680,13 +680,13 @@ TEST(PlatformRunTimerSensors, ADurationSensorShowsItsRegisterInMinutesAndHasNoSt
     EXPECT_TRUE(std::isnan(sensor->state));
   }
 
-  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::BOOST_DURATION, 60.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceRegister::BOOST_DURATION, 60.0F); });
   EXPECT_FLOAT_EQ(boost.state, 60.0F);
   EXPECT_TRUE(std::isnan(drying.state)) << "each sensor shows its own register";
-  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::DRYING_DURATION, 30.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceRegister::DRYING_DURATION, 30.0F); });
   EXPECT_FLOAT_EQ(drying.state, 30.0F);
 
-  hub.deliver([](IoDevice &r) { test::clear_reading(r, HeatingFunction::BOOST_DURATION); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::BOOST_DURATION); });
   EXPECT_TRUE(std::isnan(boost.state)) << "a heater that answers without a value leaves no state";
 }
 
@@ -700,19 +700,19 @@ TEST(PlatformRunTimerSensors, TheRemainingTimeFollowsTheRunThatIsActive) {
   EXPECT_TRUE(std::isnan(sensor.state)) << "state not read yet";
 
   hub.deliver([](IoDevice &r) {
-    test::store_reading(r, HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST));
-    test::store_reading(r, HeatingFunction::BOOST_REMAINING, 55.0F);
+    test::store_reading(r, DeviceRegister::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST));
+    test::store_reading(r, DeviceRegister::BOOST_REMAINING, 55.0F);
   });
   EXPECT_FLOAT_EQ(sensor.state, 55.0F);
 
   hub.deliver([](IoDevice &r) {
-    test::store_reading(r, HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::DRYING));
-    test::store_reading(r, HeatingFunction::DRYING_REMAINING, 28.0F);
+    test::store_reading(r, DeviceRegister::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::DRYING));
+    test::store_reading(r, DeviceRegister::DRYING_REMAINING, 28.0F);
   });
   EXPECT_FLOAT_EQ(sensor.state, 28.0F);
 
   hub.deliver([](IoDevice &r) {
-    test::store_reading(r, HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::NONE));
+    test::store_reading(r, DeviceRegister::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::NONE));
   });
   EXPECT_FLOAT_EQ(sensor.state, 0.0F) << "no run: 0 minutes left";
 }
@@ -726,7 +726,7 @@ TEST(PlatformRunTimerSensors, TheRemainingTimeHasNoStateWhileTheActiveRunsRegist
   sensor.setup();
 
   hub.deliver([](IoDevice &r) {
-    test::store_reading(r, HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST));
+    test::store_reading(r, DeviceRegister::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST));
   });
   EXPECT_TRUE(std::isnan(sensor.state)) << "a boost with no reading is not 0 minutes";
 }
@@ -742,15 +742,15 @@ TEST(PlatformDeviceReadingSensor, PublishesAChangedValueOnceAndNotARepeatedOne) 
   sensor.setup();
   const int after_setup = sensor.publish_count;
 
-  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 3422.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceRegister::ENERGY_TOTAL, 3422.0F); });
   EXPECT_EQ(sensor.publish_count, after_setup + 1);
-  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 3422.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceRegister::ENERGY_TOTAL, 3422.0F); });
   hub.deliver([](IoDevice &r) {
     test::store_reading(r, DeviceReading::ROOM_TEMPERATURE, 21.0F);
   });  // another reading of the same device
   EXPECT_EQ(sensor.publish_count, after_setup + 1) << "an update that leaves the value alone publishes nothing";
 
-  hub.deliver([](IoDevice &r) { test::store_reading(r, HeatingFunction::ENERGY_TOTAL, 3423.0F); });
+  hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceRegister::ENERGY_TOTAL, 3423.0F); });
   EXPECT_EQ(sensor.publish_count, after_setup + 2);
   EXPECT_FLOAT_EQ(sensor.state, 3423.0F);
 }
@@ -786,8 +786,8 @@ TEST(PlatformDeviceReadingBinarySensor, PublishesOnlyAChangedState) {
   EXPECT_EQ(sensor.publish_count, after_setup + 2);
   EXPECT_FALSE(sensor.state);
 
-  hub.deliver([](IoDevice &r) { test::clear_reading(r, HeatingFunction::SET_PRESENCE); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::SET_PRESENCE); });
   EXPECT_FALSE(sensor.has_state());
-  hub.deliver([](IoDevice &r) { test::clear_reading(r, HeatingFunction::SET_PRESENCE); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::SET_PRESENCE); });
   EXPECT_EQ(sensor.publish_count, after_setup + 2) << "losing the state publishes nothing";
 }
