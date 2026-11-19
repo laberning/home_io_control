@@ -266,7 +266,7 @@ bool HeaterController::exchange_heating_(const std::string &device_id, const cha
   }
 
   // Logging the ack payload lets a field tester read back what the heater reports even for the
-  // registers nothing decodes (`power_on`, `midnight_sync`).
+  // registers nothing decodes (PAIRED_DEVICES, SETPOINT_BLOCK).
   char ack_payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
   bytes_to_hex(response.data, response.data_len, ack_payload_hex, sizeof(ack_payload_hex));
   ESP_LOGD(detail::TAG, "heating %s %s ACK payload: %s", direction, label, ack_payload_hex);

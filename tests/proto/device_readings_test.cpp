@@ -139,10 +139,10 @@ TEST(DeviceReadingStore, ARegisterIsKeptAskedAndAbsentThroughItsReading) {
   EXPECT_FALSE(register_reading_wanted(dev, DeviceRegister::ENERGY_TOTAL)) << "no longer read";
   EXPECT_FALSE(register_value(dev, DeviceRegister::ENERGY_TOTAL).has_value());
 
-  EXPECT_FALSE(store_register_reading(dev, DeviceRegister::POWER_ON, 1.0F)) << "a logged register keeps nothing";
-  EXPECT_FALSE(clear_register_reading(dev, DeviceRegister::MIDNIGHT_SYNC));
-  EXPECT_FALSE(register_value(dev, DeviceRegister::POWER_ON).has_value());
-  EXPECT_EQ(register_wire(dev, DeviceRegister::POWER_ON), -1);
+  EXPECT_FALSE(store_register_reading(dev, DeviceRegister::PAIRED_DEVICES, 1.0F)) << "a logged register keeps nothing";
+  EXPECT_FALSE(clear_register_reading(dev, DeviceRegister::SETPOINT_BLOCK));
+  EXPECT_FALSE(register_value(dev, DeviceRegister::PAIRED_DEVICES).has_value());
+  EXPECT_EQ(register_wire(dev, DeviceRegister::PAIRED_DEVICES), -1);
 }
 
 // === The table ===
@@ -358,10 +358,10 @@ TEST(DeviceReadings, AReadingNotPolledIsNotSelectedForAnyHeaterEvenWhenAskedFor)
   IoDevice dev;
   dev.model = DeviceModel::TOWEL_DRYER;
   test::set_kind(dev, DeviceType::ELECTRICAL_HEATER, 1);
-  ask_register_reading(dev, DeviceRegister::TEMPERATURE_IN_FORCE);
+  ask_register_reading(dev, DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE);
   for (const ReadingPoll policy : POLL_PHASES) {
     const HeaterPollList list = device_poll_reads(dev, policy);
-    EXPECT_EQ(std::count(list.begin(), list.end(), DeviceRegister::TEMPERATURE_IN_FORCE), 0);
+    EXPECT_EQ(std::count(list.begin(), list.end(), DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE), 0);
   }
 }
 
@@ -377,8 +377,8 @@ TEST(DeviceReadings, TheStatusReadingsHaveNoRegisterAndReadThroughTheStore) {
     test::store_reading(dev, reading, 5.0F);
     EXPECT_EQ(reading_value(dev, reading), 5.0F);
   }
-  EXPECT_FALSE(find_register_reading(DeviceRegister::SET_TEMPERATURE) == nullptr);
-  EXPECT_EQ(find_register_reading(DeviceRegister::SET_TEMPERATURE)->reading, DeviceReading::SETPOINT)
+  EXPECT_FALSE(find_register_reading(DeviceRegister::COMFORT_SETPOINT) == nullptr);
+  EXPECT_EQ(find_register_reading(DeviceRegister::COMFORT_SETPOINT)->reading, DeviceReading::SETPOINT)
       << "the comfort-setpoint register is a reading of its own, apart from the status setpoint";
 }
 
@@ -473,7 +473,7 @@ TEST(DeviceReadings, ARegisterReadingPollsItsRegisterAndADerivedOneThoseItNames)
     return std::vector<DeviceRegister>(registers.begin(), registers.end());
   };
   EXPECT_EQ(polled(DeviceReading::ENERGY_TOTAL), std::vector<DeviceRegister>{DeviceRegister::ENERGY_TOTAL});
-  EXPECT_EQ(polled(DeviceReading::OCCUPANCY), std::vector<DeviceRegister>{DeviceRegister::SET_PRESENCE})
+  EXPECT_EQ(polled(DeviceReading::OCCUPANCY), std::vector<DeviceRegister>{DeviceRegister::PRESENCE})
       << "the reading's name is not its register's";
   EXPECT_EQ(polled(DeviceReading::REMAINING_TIME),
             (std::vector<DeviceRegister>{DeviceRegister::BOOST_REMAINING, DeviceRegister::DRYING_REMAINING}));
@@ -481,7 +481,7 @@ TEST(DeviceReadings, ARegisterReadingPollsItsRegisterAndADerivedOneThoseItNames)
 
 TEST(DeviceReadings, ASettingIsTheRegisterItWrites) {
   EXPECT_EQ(reading_register(DeviceReading::OCCUPANCY_DETECTION), DeviceRegister::OCCUPANCY_DETECTION);
-  EXPECT_EQ(reading_register(DeviceReading::OPEN_WINDOW_DETECTION), DeviceRegister::SET_OPEN_WINDOW_DETECTION);
+  EXPECT_EQ(reading_register(DeviceReading::OPEN_WINDOW_DETECTION), DeviceRegister::OPEN_WINDOW_DETECTION);
   EXPECT_FALSE(reading_register(DeviceReading::REMAINING_TIME).has_value()) << "a derived value is no register";
   EXPECT_FALSE(reading_register(DeviceReading::COUNT).has_value());
 }
@@ -499,7 +499,7 @@ TEST(DeviceReadings, ANumberAndAFlagBothComeBackAsTheirValue) {
   IoDevice dev;
   test::store_reading(dev, DeviceRegister::ENERGY_TOTAL, 40000.0F);
   test::store_reading(dev, DeviceRegister::CENTRAL_HEATING_MODE, 0.0F);
-  test::store_reading(dev, DeviceRegister::SET_PRESENCE, 1.0F);
+  test::store_reading(dev, DeviceRegister::PRESENCE, 1.0F);
   EXPECT_FLOAT_EQ(*reading_value(dev, DeviceReading::ENERGY_TOTAL), 40000.0F) << "past what a flag byte holds";
   EXPECT_FLOAT_EQ(*reading_value(dev, DeviceReading::CENTRAL_HEATING_MODE), 0.0F) << "off, because the device said so";
   EXPECT_FLOAT_EQ(*reading_value(dev, DeviceReading::OCCUPANCY), 1.0F);
@@ -649,7 +649,8 @@ TEST(DeviceReadings, AWaterHeaterReplyStoresItsReadingsAndAnEmptyOrWrongOneNone)
       << "a mode the register does not define";
   EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_MODE), 2) << "the reading keeps its value";
   EXPECT_FALSE(store_register_reply(dev, DeviceRegister::DHW_MODE, std::vector<uint8_t>{}));
-  EXPECT_FALSE(store_register_reply(dev, DeviceRegister::POWER_ON, std::vector<uint8_t>{0x01})) << "a logged register";
+  EXPECT_FALSE(store_register_reply(dev, DeviceRegister::PAIRED_DEVICES, std::vector<uint8_t>{0x01}))
+      << "a logged register";
 }
 
 TEST(DeviceReadings, ARegisterThatIsReadByPartsIsAskedClearedAndMarkedAbsentAsAWhole) {

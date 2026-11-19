@@ -144,7 +144,7 @@ TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
   print_wire("synthetic_identify ack", identify_ack);
 
   // --- synthetic_exchange_heating_set_temp: write-private(0x20) -> challenge -> resp -> ack(0x21) ---
-  // Payload is encode_heating_payload(SET_TEMPERATURE, 20.5) = {0x0C,0x61,0x01,0x03,0xCD,0x00}.
+  // Payload is encode_heating_payload(COMFORT_SETPOINT, 20.5) = {0x0C,0x61,0x01,0x03,0xCD,0x00}.
   const uint8_t heat_temp_payload[] = {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00};
   IoFrame heat_temp{};
   ASSERT_TRUE(create_write_private(heat_temp, test::OWN_ID, test::DST_ID, /*low_power=*/false, heat_temp_payload,
@@ -172,7 +172,7 @@ TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
   print_wire("synthetic_exchange_heating_set_temp ack", heat_temp_ack);
 
   // --- synthetic_exchange_heating_midnight_sync: the no-value / short-payload path ---
-  // Payload is encode_heating_payload(MIDNIGHT_SYNC, *) = {0x0C,0x60,0x01,0x30}.
+  // Payload is encode_heating_payload(SETPOINT_BLOCK, *) = {0x0C,0x60,0x01,0x30}.
   const uint8_t heat_midnight_payload[] = {0x0C, 0x60, 0x01, 0x30};
   IoFrame heat_midnight{};
   ASSERT_TRUE(create_write_private(heat_midnight, test::OWN_ID, test::DST_ID, /*low_power=*/false,

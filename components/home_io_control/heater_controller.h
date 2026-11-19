@@ -135,7 +135,7 @@ class HeaterController {
   // === Register heater ===
 
   /// @brief Run one heating function on the heater's private register protocol (CMD_WRITE_PRIVATE
-  /// 0x20): a write for a settable register, a read for a read-only one (`power_on`, `midnight_sync`).
+  /// 0x20): a write for a settable register, a read for a read-only one (PAIRED_DEVICES, SETPOINT_BLOCK).
   ///
   /// Both the `heating_control` hub action and the climate entity's writes reach this; together with
   /// read_heating_register() it is the only place register heating frames are built and sent.

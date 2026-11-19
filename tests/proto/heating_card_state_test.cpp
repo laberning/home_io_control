@@ -90,7 +90,7 @@ void programme_readings(IoDevice &r, TowelDryerMode mode, HeatingTemporaryState 
   test::store_reading(r, DeviceReading::TOWEL_MODE, static_cast<int16_t>(mode));
   test::store_reading(r, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(state));
   test::store_reading(r, DeviceReading::SETPOINT, 20.0F);
-  test::store_reading(r, DeviceReading::TEMPERATURE_IN_FORCE, in_force);
+  test::store_reading(r, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE, in_force);
 }
 
 }  // namespace
@@ -215,14 +215,14 @@ TEST(HeatingCardReduce, TowelDryerProgrammeShowsTheTemperatureInForceAndNoPreset
   EXPECT_EQ(card.preset_index, preset_of(towel_dryer(), HeatingPresetId::NONE)) << "comfort is a level, not a preset";
   EXPECT_FLOAT_EQ(card.target_c, 20.0F);
 
-  test::store_reading(r, DeviceReading::TEMPERATURE_IN_FORCE, 16.5F);
+  test::store_reading(r, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE, 16.5F);
   test::store_reading(r, DeviceReading::HEATING_LEVEL, heating_level::ECO);
   card = reduced(towel_dryer(), r, card);
   EXPECT_EQ(card.preset_index, preset_of(towel_dryer(), HeatingPresetId::NONE));
   EXPECT_FLOAT_EQ(card.target_c, 16.5F) << "the temperature the dryer heats to now";
 
   // A frost or holiday value: the temperature, and no preset.
-  test::store_reading(r, DeviceReading::TEMPERATURE_IN_FORCE, 7.0F);
+  test::store_reading(r, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE, 7.0F);
   card = reduced(towel_dryer(), r, card);
   EXPECT_EQ(card.preset_index, preset_of(towel_dryer(), HeatingPresetId::NONE));
   EXPECT_FLOAT_EQ(card.target_c, 7.0F);
@@ -249,7 +249,7 @@ TEST(HeatingCardReduce, TowelDryerTargetIsTheComfortSetpointUntilTheTemperatureI
   HeatingCardState card = reduced(towel_dryer(), r);
   ASSERT_FLOAT_EQ(card.target_c, 16.5F);
 
-  test::clear_reading(r, DeviceReading::TEMPERATURE_IN_FORCE);
+  test::clear_reading(r, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE);
   card = reduced(towel_dryer(), r, card);
   EXPECT_FLOAT_EQ(card.target_c, 20.0F);
 }
@@ -541,7 +541,7 @@ TEST(HeatingCard, ARadiatorInProgOrAutoShowsTheTemperatureInForceAsItsTargetAndI
     IoDevice readings;
     test::store_reading(readings, DeviceReading::MODE, static_cast<int16_t>(mode));
     test::store_reading(readings, DeviceReading::SETPOINT, 19.0F);
-    test::store_reading(readings, DeviceReading::HEATER_TEMPERATURE_IN_FORCE, 16.5F);
+    test::store_reading(readings, DeviceReading::TEMPERATURE_IN_FORCE, 16.5F);
     const HeatingCardState card = reduced(radiator(), readings);
     EXPECT_EQ(card.mode, HeatingHvacMode::AUTO);
     EXPECT_FLOAT_EQ(card.target_c, 16.5F) << static_cast<int>(mode);
@@ -549,7 +549,7 @@ TEST(HeatingCard, ARadiatorInProgOrAutoShowsTheTemperatureInForceAsItsTargetAndI
   IoDevice heat;
   test::store_reading(heat, DeviceReading::MODE, static_cast<int16_t>(HeatingMode::MANUAL));
   test::store_reading(heat, DeviceReading::SETPOINT, 19.0F);
-  test::store_reading(heat, DeviceReading::HEATER_TEMPERATURE_IN_FORCE,
+  test::store_reading(heat, DeviceReading::TEMPERATURE_IN_FORCE,
                       16.5F);  // a stale value is never shown outside the programme
   EXPECT_FLOAT_EQ(reduced(radiator(), heat).target_c, 19.0F);
 

@@ -230,7 +230,7 @@ TEST(PlatformCentralHeatingModeSensor, LosesItsStateWhenTheReadingIsDropped) {
 TEST(PlatformHeaterSettingSwitch, WritesThenReadsTheRegisterBackWithTheFullBudget) {
   ClimateControlsHub hub;
   hub.add_heater();
-  hub.read_replies[DeviceRegister::SET_OPEN_WINDOW_DETECTION] = 1.0F;
+  hub.read_replies[DeviceRegister::OPEN_WINDOW_DETECTION] = 1.0F;
   TestableDetectionSwitch sw;
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");
@@ -239,10 +239,10 @@ TEST(PlatformHeaterSettingSwitch, WritesThenReadsTheRegisterBackWithTheFullBudge
   sw.trigger_write(true);
 
   ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::SET_OPEN_WINDOW_DETECTION);
+  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::OPEN_WINDOW_DETECTION);
   EXPECT_FLOAT_EQ(hub.writes[0].value, 1.0F);
   ASSERT_EQ(hub.reads.size(), 1u);
-  EXPECT_EQ(hub.reads[0], DeviceRegister::SET_OPEN_WINDOW_DETECTION);
+  EXPECT_EQ(hub.reads[0], DeviceRegister::OPEN_WINDOW_DETECTION);
   EXPECT_EQ(hub.read_tries[0], EXCHANGE_RETRY_COUNT);
   EXPECT_TRUE(sw.get_state()) << "shown from the read-back";
 }
@@ -250,7 +250,7 @@ TEST(PlatformHeaterSettingSwitch, WritesThenReadsTheRegisterBackWithTheFullBudge
 TEST(PlatformHeaterSettingSwitch, ShowsWhatTheHeaterReportsNotWhatWasCommanded) {
   ClimateControlsHub hub;
   hub.add_heater();
-  hub.read_replies[DeviceRegister::SET_OPEN_WINDOW_DETECTION] = 0.0F;  // the heater kept it off
+  hub.read_replies[DeviceRegister::OPEN_WINDOW_DETECTION] = 0.0F;  // the heater kept it off
   TestableDetectionSwitch sw;
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");
@@ -605,7 +605,7 @@ TEST(PlatformOccupancySensor, LosesItsStateWhenTheHeaterAnswersWithoutAValue) {
   hub.deliver([](IoDevice &r) { test::store_reading(r, DeviceReading::OCCUPANCY, 1); });
   ASSERT_TRUE(sensor.has_state());
 
-  hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::SET_PRESENCE); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::PRESENCE); });
   EXPECT_FALSE(sensor.has_state());
 }
 
@@ -786,8 +786,8 @@ TEST(PlatformDeviceReadingBinarySensor, PublishesOnlyAChangedState) {
   EXPECT_EQ(sensor.publish_count, after_setup + 2);
   EXPECT_FALSE(sensor.state);
 
-  hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::SET_PRESENCE); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::PRESENCE); });
   EXPECT_FALSE(sensor.has_state());
-  hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::SET_PRESENCE); });
+  hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::PRESENCE); });
   EXPECT_EQ(sensor.publish_count, after_setup + 2) << "losing the state publishes nothing";
 }

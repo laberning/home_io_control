@@ -213,9 +213,12 @@ you meet them. The structure behind them is described in the
    [`sensor:` entry](configuration/sensor.md).
 
 A reading that comes from a register of a heater or a water heater has no recipe and no offset: its row
-names the register (`DeviceRegister`), and the register table in `proto_heating.cpp` names its family
-(the high byte of its number: `0x01` for a heater, `0x00` for a water heater) and its codec; the family
-also decides which devices the register is sent to (`device_takes_register()`). A register that holds
+names the register (`DeviceRegister`). Name a new register enumerator after the value the register holds;
+the Python mirror's `registers` field uses the same name. The register table in `proto_heating.cpp` names
+the register's family (the high byte of its number: `0x01` for a heater, `0x00` for a water heater), its
+codec and its `action_name`. The `action_name` is the register's label in the log and, for a register the
+action offers, the function name a user types in the `heating_control` action. The family also decides
+which devices the register is sent to (`device_takes_register()`). A register that holds
 several facts in different bytes has no codec of its own: each fact is a reading whose
 `RegisterSource` names a `part` (the first byte, the length and a codec, `ANY_NONZERO` for a flag that
 is on when any byte of the slice is), and one read of the register stores them all. The rest is the

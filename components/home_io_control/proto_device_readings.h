@@ -32,9 +32,9 @@
 /// C++ is what the entity needs at run time: the names of a named value (`value_name`).
 ///
 /// Outside the table, with the reason: the model-name register (text, logged once), the registers the hub only logs
-/// (POWER_ON, MIDNIGHT_SYNC), the raw probes (`register_00`, `register_01`, `read_object`; raw by design), a cover's
-/// position, tilt and remaining time (fields of the status frame, not readings of a register), and a cover's rain,
-/// sun and battery values (their own mechanisms, until they move onto the table).
+/// (PAIRED_DEVICES, SETPOINT_BLOCK), the raw probes (`register_00`, `register_01`, `read_object`; raw by design), a
+/// cover's position, tilt and remaining time (fields of the status frame, not readings of a register), and a cover's
+/// rain, sun and battery values (their own mechanisms, until they move onto the table).
 
 #include "proto_device_features.h"
 #include "proto_device_model.h"
@@ -53,46 +53,46 @@ namespace home_io_control {
 /// @brief One named reading. Adding one is an enumerator before COUNT, its row in the table and its entry in the
 /// codegen mirror.
 enum class DeviceReading : uint8_t {
-  CENTRAL_HEATING_MODE,         ///< 1 while a mixed towel dryer runs on central heating (its element stays off).
-  OCCUPANCY_DETECTION,          ///< The heater's occupancy detection setting; a writable setting.
-  OCCUPANCY,                    ///< Someone detected in the room.
-  OPEN_WINDOW_DETECTION,        ///< The heater's open-window detection setting; a writable setting.
-  ENERGY_TOTAL,                 ///< The energy the heater has counted, whole kWh.
-  BOOST_DURATION,               ///< The boost duration set on a towel dryer, minutes.
-  DRYING_DURATION,              ///< The duration of the last drying run a towel dryer started, minutes.
-  BOOST_REMAINING,              ///< Minutes left of a running boost; read only while a boost runs.
-  DRYING_REMAINING,             ///< Minutes left of a running drying run; read only while it runs.
-  REMAINING_TIME,               ///< Minutes left of whichever run is active, 0 with none (derived).
-  ROOM_TEMPERATURE,             ///< The room temperature the heater measures, degrees; NaN on a sensor fault.
-  SETPOINT,                     ///< The comfort setpoint the heater holds, degrees.
-  MAX_SETPOINT,                 ///< The highest setpoint the heater accepts, degrees.
-  MODE,                         ///< The heater's operating mode (HeatingMode).
-  REGULATOR_STATE,              ///< The regulator's state (HeatingRegulatorState).
-  WINDOW_OPEN,                  ///< The heater's window sensor, 1 open and 0 closed.
-  TOWEL_MODE,                   ///< A towel dryer's mode (TowelDryerMode).
-  TEMPORARY_STATE,              ///< A towel dryer's temporary state, the timed run it is in (HeatingTemporaryState).
-  WORKING_RATE,                 ///< The share of the time the element heats, 0-100 %.
-  TEMPERATURE_IN_FORCE,         ///< The temperature a towel dryer holds right now, degrees.
-  HEATER_TEMPERATURE_IN_FORCE,  ///< The temperature a radiator holds right now, degrees.
-  DEROGATED_SETPOINT,           ///< A heater's temporary override of its programme, degrees; 0 while none is active.
-  NIGHT_LIGHT,                  ///< A heater's night light, 1 on and 0 off.
-  NIGHT_LIGHT_BRIGHTNESS,       ///< The night light's brightness register as a percentage, 0-100.
-  HEATING_LEVEL,                ///< The heating level, or setpoint alias, a heater's status reply reports (low byte).
-  STATUS_SETPOINT,              ///< The setpoint a status reply reports, degrees, rounded to tenths: a temperature
-                                ///< heater's setpoint, a water heater's target.
-  HOT_WATER_TEMPERATURE,        ///< A water heater's water temperature, degrees.
-  HOT_WATER_MODE,               ///< A water heater's operating mode (DhwMode).
-  HOT_WATER_HEATING,            ///< The water heater heats at all (heat pump, element or both).
-  HOT_WATER_ELECTRIC_BACKUP,    ///< The water heater's electric element runs.
-  HOT_WATER_HEAT_PUMP,          ///< The water heater's heat pump runs.
-  HOT_WATER_BOOST_DURATION,     ///< A water heater's boost duration register. Logged, never a state.
-  HOT_WATER_AWAY_DURATION,      ///< A water heater's away duration register, days. Logged, never a state.
-  HOT_WATER_ENERGY,             ///< The energy a water heater has consumed since installation, kWh.
-  HOT_WATER_BRAND,              ///< The brand letter of a water heater. Logged once.
-  HOT_WATER_CAPABILITIES,       ///< The operating-mode capabilities a water heater reports (FP15 word).
-  HOT_WATER_BOOST,              ///< A water heater's boost is on, as its operating-mode word (FP16) reports it.
-  HOT_WATER_AWAY,               ///< A water heater's away mode is on, as its operating-mode word (FP16) reports it.
-  COUNT,                        ///< Number of readings; not a reading.
+  CENTRAL_HEATING_MODE,        ///< 1 while a mixed towel dryer runs on central heating (its element stays off).
+  OCCUPANCY_DETECTION,         ///< The heater's occupancy detection setting; a writable setting.
+  OCCUPANCY,                   ///< Someone detected in the room.
+  OPEN_WINDOW_DETECTION,       ///< The heater's open-window detection setting; a writable setting.
+  ENERGY_TOTAL,                ///< The energy the heater has counted, whole kWh.
+  BOOST_DURATION,              ///< The boost duration set on a towel dryer, minutes.
+  DRYING_DURATION,             ///< The duration of the last drying run a towel dryer started, minutes.
+  BOOST_REMAINING,             ///< Minutes left of a running boost; read only while a boost runs.
+  DRYING_REMAINING,            ///< Minutes left of a running drying run; read only while it runs.
+  REMAINING_TIME,              ///< Minutes left of whichever run is active, 0 with none (derived).
+  ROOM_TEMPERATURE,            ///< The room temperature the heater measures, degrees; NaN on a sensor fault.
+  SETPOINT,                    ///< The comfort setpoint the heater holds, degrees.
+  MAX_SETPOINT,                ///< The highest setpoint the heater accepts, degrees.
+  MODE,                        ///< The heater's operating mode (HeatingMode).
+  REGULATOR_STATE,             ///< The regulator's state (HeatingRegulatorState).
+  WINDOW_OPEN,                 ///< The heater's window sensor, 1 open and 0 closed.
+  TOWEL_MODE,                  ///< A towel dryer's mode (TowelDryerMode).
+  TEMPORARY_STATE,             ///< A towel dryer's temporary state, the timed run it is in (HeatingTemporaryState).
+  WORKING_RATE,                ///< The share of the time the element heats, 0-100 %.
+  TOWEL_TEMPERATURE_IN_FORCE,  ///< The temperature a towel dryer holds right now, degrees.
+  TEMPERATURE_IN_FORCE,        ///< The temperature a radiator holds right now, degrees.
+  DEROGATED_SETPOINT,          ///< A heater's temporary override of its programme, degrees; 0 while none is active.
+  NIGHT_LIGHT,                 ///< A heater's night light, 1 on and 0 off.
+  NIGHT_LIGHT_BRIGHTNESS,      ///< The night light's brightness register as a percentage, 0-100.
+  HEATING_LEVEL,               ///< The heating level, or setpoint alias, a heater's status reply reports (low byte).
+  STATUS_SETPOINT,             ///< The setpoint a status reply reports, degrees, rounded to tenths: a temperature
+                               ///< heater's setpoint, a water heater's target.
+  HOT_WATER_TEMPERATURE,       ///< A water heater's water temperature, degrees.
+  HOT_WATER_MODE,              ///< A water heater's operating mode (DhwMode).
+  HOT_WATER_HEATING,           ///< The water heater heats at all (heat pump, element or both).
+  HOT_WATER_ELECTRIC_BACKUP,   ///< The water heater's electric element runs.
+  HOT_WATER_HEAT_PUMP,         ///< The water heater's heat pump runs.
+  HOT_WATER_BOOST_DURATION,    ///< A water heater's boost duration register. Logged, never a state.
+  HOT_WATER_AWAY_DURATION,     ///< A water heater's away duration register, days. Logged, never a state.
+  HOT_WATER_ENERGY,            ///< The energy a water heater has consumed since installation, kWh.
+  HOT_WATER_BRAND,             ///< The brand letter of a water heater. Logged once.
+  HOT_WATER_CAPABILITIES,      ///< The operating-mode capabilities a water heater reports (FP15 word).
+  HOT_WATER_BOOST,             ///< A water heater's boost is on, as its operating-mode word (FP16) reports it.
+  HOT_WATER_AWAY,              ///< A water heater's away mode is on, as its operating-mode word (FP16) reports it.
+  COUNT,                       ///< Number of readings; not a reading.
 };
 
 static_assert(static_cast<size_t>(DeviceReading::COUNT) <= DeviceReadingValues::SLOTS,

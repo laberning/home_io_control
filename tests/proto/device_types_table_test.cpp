@@ -402,7 +402,7 @@ TEST(DeviceTypesTableFeatures, WindowCompanionsAreExactlyWhereARegisterHeaterPol
     const bool polled_window =
         find_heating_profile(dev) != nullptr &&
         contains(device_poll_reads(dev, ReadingPoll::EVERY_POLL), DeviceRegister::WINDOW_OPEN) &&
-        contains(device_poll_reads(dev, ReadingPoll::EVERY_POLL_MAY_MISS), DeviceRegister::SET_OPEN_WINDOW_DETECTION);
+        contains(device_poll_reads(dev, ReadingPoll::EVERY_POLL_MAY_MISS), DeviceRegister::OPEN_WINDOW_DETECTION);
     EXPECT_EQ(has_feature(row.features, device_feature::WINDOW_COMPANIONS), polled_window)
         << format_device_ids(row.type, row.subtype);
   });

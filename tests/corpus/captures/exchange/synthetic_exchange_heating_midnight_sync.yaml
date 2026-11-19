@@ -3,7 +3,7 @@ description: >
   Synthetic authenticated CMD_WRITE_PRIVATE (0x20) heating exchange for the no-value / short
   4-byte-payload path: midnight_sync -> 0x3C challenge -> 0x3D challenge-response ->
   CMD_WRITE_PRIVATE_ACK (0x21) echo (END). The 0x20 payload {0C 60 01 30} is
-  encode_heating_payload(MIDNIGHT_SYNC, *). Complements
+  encode_heating_payload(SETPOINT_BLOCK, *). Complements
   synthetic_exchange_heating_set_temp (the 6-byte-payload path). HMAC on the 0x3D frame is
   computed under the public corpus key (tests/support/test_helpers.h :: TEST_SYSTEM_KEY), so this
   fixture's crypto is safe to commit — see tests/corpus/corpus_bootstrap_dump_test.cpp

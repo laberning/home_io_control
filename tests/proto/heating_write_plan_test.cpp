@@ -88,10 +88,10 @@ TEST(HeatingWritePlan, RadiatorTargetIsAnUnencodedSetpointWriteThatIsReadBack) {
   const HeatingWritePlan plan = plan_heating_write(radiator, target_request(20.5F), {.programme_state_answered = true});
 
   ASSERT_EQ(plan.kind, HeatingPlanKind::REGISTER) << "the register protocol needs no device record";
-  EXPECT_EQ(plan.register_fn, DeviceRegister::SET_TEMPERATURE);
+  EXPECT_EQ(plan.register_fn, DeviceRegister::COMFORT_SETPOINT);
   EXPECT_FLOAT_EQ(plan.register_value, 20.5F);
   EXPECT_TRUE(plan.read_back);
-  EXPECT_EQ(plan.read_back_fn, DeviceRegister::SET_TEMPERATURE);
+  EXPECT_EQ(plan.read_back_fn, DeviceRegister::COMFORT_SETPOINT);
 }
 
 // === A target while the programme runs: a temporary override ===
@@ -133,11 +133,11 @@ TEST(HeatingWritePlan, ATargetWhileTheProgrammeDoesNotRunWritesTheComfortSetpoin
     const HeatingWritePlan plan =
         plan_heating_write(programme_profile(model), target_request(21.0F), programme_facts(false));
     ASSERT_EQ(plan.kind, HeatingPlanKind::REGISTER);
-    EXPECT_EQ(plan.register_fn, DeviceRegister::SET_TEMPERATURE);
-    EXPECT_EQ(plan.read_back_fn, DeviceRegister::SET_TEMPERATURE);
+    EXPECT_EQ(plan.register_fn, DeviceRegister::COMFORT_SETPOINT);
+    EXPECT_EQ(plan.read_back_fn, DeviceRegister::COMFORT_SETPOINT);
     EXPECT_FALSE(plan.temporary_override);
     EXPECT_EQ(plan_heating_write(programme_profile(model), target_request(21.0F), known_device(20.0F)).register_fn,
-              DeviceRegister::SET_TEMPERATURE)
+              DeviceRegister::COMFORT_SETPOINT)
         << "facts that say nothing about a programme";
   }
 }
@@ -149,11 +149,11 @@ TEST(HeatingWritePlan, ATowelDryerTargetInAComfortPeriodIsTheComfortSetpointAndI
   facts.period = HeatingPeriod::COMFORT;
   const HeatingWritePlan comfort = plan_heating_write(dryer, target_request(21.5F), facts);
   ASSERT_EQ(comfort.kind, HeatingPlanKind::REGISTER);
-  EXPECT_EQ(comfort.register_fn, DeviceRegister::SET_TEMPERATURE) << "the dryer ignores an override here";
+  EXPECT_EQ(comfort.register_fn, DeviceRegister::COMFORT_SETPOINT) << "the dryer ignores an override here";
   EXPECT_FLOAT_EQ(comfort.register_value, 21.5F);
   EXPECT_FALSE(comfort.temporary_override);
   EXPECT_TRUE(comfort.read_back);
-  EXPECT_EQ(comfort.read_back_fn, DeviceRegister::SET_TEMPERATURE);
+  EXPECT_EQ(comfort.read_back_fn, DeviceRegister::COMFORT_SETPOINT);
 
   facts.period = HeatingPeriod::ECO;
   const HeatingWritePlan eco = plan_heating_write(dryer, target_request(21.5F), facts);
@@ -182,7 +182,7 @@ TEST(HeatingWritePlan, ThePeriodDecidesNothingOutsideTheProgrammeOrOnARadiator) 
     }
     facts.programme_runs = false;
     EXPECT_EQ(plan_heating_write(programme_profile(DeviceModel::TOWEL_DRYER), target_request(21.0F), facts).register_fn,
-              DeviceRegister::SET_TEMPERATURE)
+              DeviceRegister::COMFORT_SETPOINT)
         << "heat, or a timed run on top: the comfort setpoint without any period";
   }
 }
@@ -280,7 +280,7 @@ IoDevice heater_record(DeviceModel model, int16_t mode_wire, float in_force_c) {
   test::store_reading(dev, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(HeatingTemporaryState::NONE));
   test::store_reading(dev, DeviceReading::SETPOINT, 20.0F);
   if (!std::isnan(in_force_c))
-    test::store_reading(dev, towel ? DeviceReading::TEMPERATURE_IN_FORCE : DeviceReading::HEATER_TEMPERATURE_IN_FORCE,
+    test::store_reading(dev, towel ? DeviceReading::TOWEL_TEMPERATURE_IN_FORCE : DeviceReading::TEMPERATURE_IN_FORCE,
                         in_force_c);
   if (!std::isnan(in_force_c))
     dev.temperature_in_force = TemperatureInForceSupport::REPORTED;
@@ -292,11 +292,11 @@ IoDevice heater_record(DeviceModel model, int16_t mode_wire, float in_force_c) {
 TEST(HeatingWritePlan, DeviceFactsSayTheProgrammeRunsWhenTheModeShowsAutoOnAHeaterThatReportedATemperatureInForce) {
   IoDevice dryer = heater_record(DeviceModel::TOWEL_DRYER, static_cast<int16_t>(TowelDryerMode::PROG), 16.5F);
   EXPECT_TRUE(heating_device_facts(&dryer, true).programme_runs) << "in an eco period";
-  test::store_reading(dryer, DeviceReading::TEMPERATURE_IN_FORCE, 20.0F);
+  test::store_reading(dryer, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE, 20.0F);
   EXPECT_TRUE(heating_device_facts(&dryer, true).programme_runs) << "in a comfort period: the level plays no part";
   test::store_reading(dryer, DeviceReading::HEATING_LEVEL, heating_level::COMFORT);
   EXPECT_TRUE(heating_device_facts(&dryer, true).programme_runs);
-  test::clear_reading(dryer, DeviceReading::TEMPERATURE_IN_FORCE);
+  test::clear_reading(dryer, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE);
   EXPECT_TRUE(heating_device_facts(&dryer, true).programme_runs)
       << "a read missed since the heater reported one: the target still leaves the comfort setpoint alone";
   dryer.temperature_in_force = TemperatureInForceSupport::UNKNOWN;
@@ -304,7 +304,7 @@ TEST(HeatingWritePlan, DeviceFactsSayTheProgrammeRunsWhenTheModeShowsAutoOnAHeat
   dryer.temperature_in_force = TemperatureInForceSupport::ABSENT;
   EXPECT_FALSE(heating_device_facts(&dryer, true).programme_runs) << "answered empty: no such register";
   dryer.temperature_in_force = TemperatureInForceSupport::REPORTED;
-  test::store_reading(dryer, DeviceReading::TEMPERATURE_IN_FORCE, 20.0F);
+  test::store_reading(dryer, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE, 20.0F);
   test::store_reading(dryer, DeviceReading::TOWEL_MODE, static_cast<int16_t>(TowelDryerMode::MANUAL));
   EXPECT_FALSE(heating_device_facts(&dryer, true).programme_runs) << "MANUEL: no programme";
   test::store_reading(dryer, DeviceReading::TOWEL_MODE, static_cast<int16_t>(TowelDryerMode::PROG));
@@ -391,7 +391,7 @@ TEST(HeatingWritePlan, ATargetOnAProgrammeHeaterGoesWhereWhatTheHeaterJustSaidSe
          {TemperatureInForceSupport::UNKNOWN, TemperatureInForceSupport::REPORTED, TemperatureInForceSupport::ABSENT}) {
       IoDevice heat = heater_record(family.model, family.other_mode, NAN);
       heat.temperature_in_force = support;
-      EXPECT_EQ(plan_target_from_record(heat).register_fn, DeviceRegister::SET_TEMPERATURE) << m;
+      EXPECT_EQ(plan_target_from_record(heat).register_fn, DeviceRegister::COMFORT_SETPOINT) << m;
     }
     // The programme runs and the heater reports a temperature in force: an override with a read-back (a dryer in
     // an eco period; in a comfort period it is the comfort setpoint, tested on its own).
@@ -404,19 +404,19 @@ TEST(HeatingWritePlan, ATargetOnAProgrammeHeaterGoesWhereWhatTheHeaterJustSaidSe
     // The programme runs and the heater has no such register: the comfort setpoint.
     IoDevice absent = heater_record(family.model, family.programme_mode, NAN);
     absent.temperature_in_force = TemperatureInForceSupport::ABSENT;
-    EXPECT_EQ(plan_target_from_record(absent).register_fn, DeviceRegister::SET_TEMPERATURE) << m;
+    EXPECT_EQ(plan_target_from_record(absent).register_fn, DeviceRegister::COMFORT_SETPOINT) << m;
     // The programme runs and the heater has not answered the temperature in force: refused.
     IoDevice unknown = heater_record(family.model, family.programme_mode, NAN);
     EXPECT_EQ(plan_target_from_record(unknown).refusal, HeatingRefusal::IN_FORCE_UNKNOWN) << m;
     // A mode value the profile does not know is not the programme: the comfort setpoint.
     IoDevice unmapped = heater_record(family.model, 99, 17.0F);
-    EXPECT_EQ(plan_target_from_record(unmapped).register_fn, DeviceRegister::SET_TEMPERATURE) << m;
+    EXPECT_EQ(plan_target_from_record(unmapped).register_fn, DeviceRegister::COMFORT_SETPOINT) << m;
   }
   // A towel dryer's boost or drying run on top of the programme: the comfort setpoint.
   for (const HeatingTemporaryState run : {HeatingTemporaryState::BOOST, HeatingTemporaryState::DRYING}) {
     IoDevice dryer = heater_record(DeviceModel::TOWEL_DRYER, static_cast<int16_t>(TowelDryerMode::PROG), 17.0F);
     test::store_reading(dryer, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(run));
-    EXPECT_EQ(plan_target_from_record(dryer).register_fn, DeviceRegister::SET_TEMPERATURE);
+    EXPECT_EQ(plan_target_from_record(dryer).register_fn, DeviceRegister::COMFORT_SETPOINT);
   }
 }
 

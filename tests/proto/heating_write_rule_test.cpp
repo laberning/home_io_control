@@ -89,10 +89,10 @@ TEST(HeatingWriteRule, TheWaterHeaterRegistersFollowTheSameRule) {
 }
 
 TEST(HeatingWriteRule, TheTwoTemperatureRegistersShareTheSetpointRange) {
-  ASSERT_TRUE(heating_write_range(DeviceRegister::SET_TEMPERATURE).has_value());
+  ASSERT_TRUE(heating_write_range(DeviceRegister::COMFORT_SETPOINT).has_value());
   ASSERT_TRUE(heating_write_range(DeviceRegister::DEROGATED_SETPOINT).has_value());
-  EXPECT_FLOAT_EQ(heating_write_range(DeviceRegister::SET_TEMPERATURE)->min, 7.0F);
-  EXPECT_FLOAT_EQ(heating_write_range(DeviceRegister::SET_TEMPERATURE)->max, 28.0F);
+  EXPECT_FLOAT_EQ(heating_write_range(DeviceRegister::COMFORT_SETPOINT)->min, 7.0F);
+  EXPECT_FLOAT_EQ(heating_write_range(DeviceRegister::COMFORT_SETPOINT)->max, 28.0F);
   EXPECT_FLOAT_EQ(heating_write_range(DeviceRegister::DEROGATED_SETPOINT)->min, HEATING_TEMP_MIN_C);
   EXPECT_FLOAT_EQ(heating_write_range(DeviceRegister::DEROGATED_SETPOINT)->max, HEATING_TEMP_MAX_C);
 }
@@ -109,7 +109,7 @@ TEST(HeatingWriteRule, OnlyTheModeRegisterHasAHoleInTheWholeNumbersItAccepts) {
       hole = hole || (accepted && ended);
       ended = ended || !accepted;
     }
-    EXPECT_EQ(hole, fn == DeviceRegister::SET_MODE) << device_register_name(fn);
+    EXPECT_EQ(hole, fn == DeviceRegister::OPERATING_MODE) << device_register_name(fn);
   }
 }
 
@@ -117,9 +117,9 @@ TEST(HeatingWriteRule, TheModeRegisterRefusesExactlyTheExternalSetpoint) {
   for (int mode = 0; mode <= 5; mode++) {
     const bool writable =
         mode <= static_cast<int>(HeatingMode::OFF) && heating_mode_is_writable(static_cast<HeatingMode>(mode));
-    EXPECT_EQ(heating_write_accepts(DeviceRegister::SET_MODE, static_cast<float>(mode)), writable) << mode;
+    EXPECT_EQ(heating_write_accepts(DeviceRegister::OPERATING_MODE, static_cast<float>(mode)), writable) << mode;
   }
-  EXPECT_FALSE(heating_write_accepts(DeviceRegister::SET_MODE, 255.0F));
+  EXPECT_FALSE(heating_write_accepts(DeviceRegister::OPERATING_MODE, 255.0F));
 }
 
 TEST(HeatingWriteRule, ARegisterProfilesCardRangeIsTheSetpointRule) {
@@ -130,12 +130,12 @@ TEST(HeatingWriteRule, ARegisterProfilesCardRangeIsTheSetpointRule) {
     const HeatingProfile *profile = find_heating_profile(DeviceType::ELECTRICAL_HEATER, 1, m.model);
     ASSERT_NE(profile, nullptr);
     ASSERT_EQ(profile->path, HeatingControlPath::PRIVATE_REGISTERS);
-    const std::optional<ValueRange> rule = heating_write_range(DeviceRegister::SET_TEMPERATURE);
+    const std::optional<ValueRange> rule = heating_write_range(DeviceRegister::COMFORT_SETPOINT);
     ASSERT_TRUE(rule.has_value());
     EXPECT_FLOAT_EQ(profile->visual_min_c, rule->min);
     EXPECT_FLOAT_EQ(profile->visual_max_c, rule->max);
-    EXPECT_TRUE(heating_write_accepts(DeviceRegister::SET_TEMPERATURE, profile->visual_min_c));
-    EXPECT_TRUE(heating_write_accepts(DeviceRegister::SET_TEMPERATURE, profile->visual_max_c));
+    EXPECT_TRUE(heating_write_accepts(DeviceRegister::COMFORT_SETPOINT, profile->visual_min_c));
+    EXPECT_TRUE(heating_write_accepts(DeviceRegister::COMFORT_SETPOINT, profile->visual_max_c));
   }
 }
 
@@ -188,7 +188,7 @@ TEST(HeatingActionFunctions, TheOnlyEnumeratedByteTheActionOffersIsTheMode) {
   for (const char *name : ACTION_FUNCTION_NAMES) {
     const DeviceRegister fn = *heating_action_function(name);
     if (device_register_is_writable(fn) && device_register_codec(fn) == ValueCodec::BOUNDED_BYTE) {
-      EXPECT_EQ(fn, DeviceRegister::SET_MODE) << name;
+      EXPECT_EQ(fn, DeviceRegister::OPERATING_MODE) << name;
     }
   }
 }
@@ -209,7 +209,7 @@ TEST(HeatingModeNames, OnlyTheWritableModesAreOffered) {
   EXPECT_EQ(heating_writable_mode_names(), "auto, manual, prog, off");
   EXPECT_STREQ(heating_mode_name(HeatingMode::EXTERNAL_SETPOINT), "external");
   EXPECT_FALSE(
-      heating_write_accepts(DeviceRegister::SET_MODE, static_cast<float>(*heating_mode_from_name("external"))));
+      heating_write_accepts(DeviceRegister::OPERATING_MODE, static_cast<float>(*heating_mode_from_name("external"))));
 }
 
 TEST(HeatingWriteRule, EveryValueARegisterProfileWritesIsAcceptedByTheRegistersRule) {

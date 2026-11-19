@@ -284,8 +284,8 @@ FEATURES = (
 # private register of a heater or a water heater, or a part of one, "derived" for a value worked out from other
 # readings, "data_object" for a slice of a data object read on a schedule, "status" for the main parameter of a status
 # reply, "status_parameter" for a functional parameter of one), the platform that offers the reading's YAML key or
-# companion ("platform": "climate", "water_heater" or "sensor"), the registers the hub's poll reads
-# for it ("registers", by DeviceRegister name; none for a data object or a status reply), and what the codegen builds
+# companion ("platform": "climate", "water_heater" or "sensor"), the registers the hub's poll reads for it
+# ("registers", by DeviceRegister enumerator name; none for a data object or a status reply), and what the codegen builds
 # for it: the entity kind ("sensor", "binary_sensor", "switch" or "text_sensor"; the C++ value kind decides which fits),
 # the Home Assistant metadata of the entity ("unit", "accuracy", "device_class", "state_class") and how it is declared:
 # the YAML "key" under the main entity (None where no key declares it), or, for an entity every device of the
@@ -302,8 +302,8 @@ FEATURES = (
 DEVICE_READINGS = {
     "CENTRAL_HEATING_MODE": {"feature": "CENTRAL_HEATING_MODE", "source": "register", "platform": "climate", "registers": ("CENTRAL_HEATING_MODE",), "key": "central_heating_mode", "entity": "binary_sensor"},
     "OCCUPANCY_DETECTION": {"feature": "OCCUPANCY", "source": "register", "platform": "climate", "registers": ("OCCUPANCY_DETECTION",), "key": "occupancy_detection", "entity": "switch"},
-    "OCCUPANCY": {"feature": "OCCUPANCY", "source": "register", "platform": "climate", "registers": ("SET_PRESENCE",), "key": "occupancy", "entity": "binary_sensor", "device_class": "occupancy"},
-    "OPEN_WINDOW_DETECTION": {"feature": "WINDOW_COMPANIONS", "source": "register", "platform": "climate", "registers": ("SET_OPEN_WINDOW_DETECTION",), "key": None, "entity": "switch", "companion": "Open Window Detection", "companion_id": "window_detection_switch", "disabled_by_default": True},
+    "OCCUPANCY": {"feature": "OCCUPANCY", "source": "register", "platform": "climate", "registers": ("PRESENCE",), "key": "occupancy", "entity": "binary_sensor", "device_class": "occupancy"},
+    "OPEN_WINDOW_DETECTION": {"feature": "WINDOW_COMPANIONS", "source": "register", "platform": "climate", "registers": ("OPEN_WINDOW_DETECTION",), "key": None, "entity": "switch", "companion": "Open Window Detection", "companion_id": "window_detection_switch", "disabled_by_default": True},
     "ENERGY_TOTAL": {"feature": "ENERGY_METER", "source": "register", "platform": "climate", "registers": ("ENERGY_TOTAL",), "key": "energy", "entity": "sensor", "unit": "kWh", "accuracy": 0, "device_class": "energy", "state_class": "total_increasing"},
     "BOOST_DURATION": {"feature": "RUN_TIMERS", "source": "register", "platform": "climate", "registers": ("BOOST_DURATION",), "key": "boost_duration", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration"},
     "DRYING_DURATION": {"feature": "RUN_TIMERS", "source": "register", "platform": "climate", "registers": ("DRYING_DURATION",), "key": "drying_duration", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration"},
@@ -311,17 +311,17 @@ DEVICE_READINGS = {
     "DRYING_REMAINING": {"feature": "RUN_TIMERS", "source": "register", "platform": "climate", "registers": ("DRYING_REMAINING",), "key": None, "entity": None},
     "REMAINING_TIME": {"feature": "RUN_TIMERS", "source": "derived", "platform": "climate", "registers": ("BOOST_REMAINING", "DRYING_REMAINING"), "key": "remaining_time", "entity": "sensor", "unit": "min", "accuracy": 0, "device_class": "duration", "state_class": "measurement"},
     "ROOM_TEMPERATURE": {"feature": None, "source": "register", "platform": "climate", "registers": ("ROOM_TEMPERATURE",), "key": None, "entity": None},
-    "SETPOINT": {"feature": None, "source": "register", "platform": "climate", "registers": ("SET_TEMPERATURE",), "key": None, "entity": None},
+    "SETPOINT": {"feature": None, "source": "register", "platform": "climate", "registers": ("COMFORT_SETPOINT",), "key": None, "entity": None},
     "MAX_SETPOINT": {"feature": None, "source": "register", "platform": "climate", "registers": ("MAX_SETPOINT",), "key": None, "entity": None},
-    "MODE": {"feature": None, "source": "register", "platform": "climate", "registers": ("SET_MODE",), "key": None, "entity": None},
+    "MODE": {"feature": None, "source": "register", "platform": "climate", "registers": ("OPERATING_MODE",), "key": None, "entity": None},
     "REGULATOR_STATE": {"feature": None, "source": "register", "platform": "climate", "registers": ("REGULATOR_STATE",), "key": None, "entity": None},
     "WINDOW_OPEN": {"feature": "WINDOW_COMPANIONS", "source": "register", "platform": "climate", "registers": ("WINDOW_OPEN",), "key": None, "entity": "binary_sensor", "device_class": "window", "companion": "Window", "companion_id": "window_sensor"},
     "TOWEL_MODE": {"feature": None, "source": "register", "platform": "climate", "registers": ("TOWEL_MODE",), "key": None, "entity": None},
     "TEMPORARY_STATE": {"feature": None, "source": "register", "platform": "climate", "registers": ("TEMPORARY_STATE",), "key": None, "entity": None},
     "WORKING_RATE": {"feature": None, "source": "register", "platform": "climate", "registers": ("WORKING_RATE",), "key": None, "entity": None},
+    "TOWEL_TEMPERATURE_IN_FORCE": {"feature": None, "source": "register", "platform": "climate", "registers": ("TOWEL_TEMPERATURE_IN_FORCE",), "key": None, "entity": None},
     "TEMPERATURE_IN_FORCE": {"feature": None, "source": "register", "platform": "climate", "registers": ("TEMPERATURE_IN_FORCE",), "key": None, "entity": None},
-    "HEATER_TEMPERATURE_IN_FORCE": {"feature": None, "source": "register", "platform": "climate", "registers": ("HEATER_TEMPERATURE_IN_FORCE",), "key": None, "entity": None},
-    "DEROGATED_SETPOINT": {"feature": None, "source": "register", "platform": "climate", "registers": ("SET_DEROGATION",), "key": None, "entity": None},
+    "DEROGATED_SETPOINT": {"feature": None, "source": "register", "platform": "climate", "registers": ("DEROGATED_SETPOINT",), "key": None, "entity": None},
     "NIGHT_LIGHT": {"feature": "NIGHT_LIGHT", "source": "register", "platform": "climate", "registers": ("NIGHT_LIGHT",), "key": None, "entity": None},
     "NIGHT_LIGHT_BRIGHTNESS": {"feature": "NIGHT_LIGHT", "source": "register", "platform": "climate", "registers": ("NIGHT_LIGHT_BRIGHTNESS",), "key": None, "entity": None},
     "HEATING_LEVEL": {"feature": "REPORTS_HEATING_LEVEL", "source": "status", "platform": "climate", "registers": (), "key": "heating_level", "entity": "text_sensor"},

@@ -50,42 +50,41 @@ IoFrame ack_with(const std::vector<uint8_t> &data, uint8_t cmd = CMD_WRITE_PRIVA
 // --- Byte-exact payloads for every function ---
 
 TEST(ProtoHeating, PowerOnPayload) {
-  EXPECT_EQ(encode(DeviceRegister::POWER_ON, 0.0f), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x2C}));
+  EXPECT_EQ(encode(DeviceRegister::PAIRED_DEVICES, 0.0f), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x2C}));
 }
 
 TEST(ProtoHeating, SetTemperaturePayload) {
   // Register 0x0103, little-endian tenths: 20.5 C -> 205 -> 0x00CD -> CD 00.
-  EXPECT_EQ(encode(DeviceRegister::SET_TEMPERATURE, 20.5f), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}));
+  EXPECT_EQ(encode(DeviceRegister::COMFORT_SETPOINT, 20.5f),
+            (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}));
 }
 
 TEST(ProtoHeating, SetModePayload) {
-  EXPECT_EQ(encode(DeviceRegister::SET_MODE, static_cast<float>(HeatingMode::MANUAL)),
+  EXPECT_EQ(encode(DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::MANUAL)),
             (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x00, 0x01}));
 }
 
 TEST(ProtoHeating, SetPresencePayload) {
-  EXPECT_EQ(encode(DeviceRegister::SET_PRESENCE, 1.0f), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x10, 0x01}));
-  EXPECT_EQ(encode(DeviceRegister::SET_PRESENCE, 0.0f), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x10, 0x00}));
+  EXPECT_EQ(encode(DeviceRegister::PRESENCE, 1.0f), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x10, 0x01}));
+  EXPECT_EQ(encode(DeviceRegister::PRESENCE, 0.0f), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x10, 0x00}));
 }
 
 TEST(ProtoHeating, OpenWindowDetectionWritesRegister0106) {
-  EXPECT_EQ(encode(DeviceRegister::SET_OPEN_WINDOW_DETECTION, 1.0f),
-            (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x06, 0x01}))
+  EXPECT_EQ(encode(DeviceRegister::OPEN_WINDOW_DETECTION, 1.0f), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x06, 0x01}))
       << "set_open_window_detection on";
-  EXPECT_EQ(encode(DeviceRegister::SET_OPEN_WINDOW_DETECTION, 0.0f),
-            (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x06, 0x00}));
+  EXPECT_EQ(encode(DeviceRegister::OPEN_WINDOW_DETECTION, 0.0f), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x06, 0x00}));
 }
 
 TEST(ProtoHeating, MidnightSyncPayload) {
-  EXPECT_EQ(encode(DeviceRegister::MIDNIGHT_SYNC, 0.0f), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x30}));
+  EXPECT_EQ(encode(DeviceRegister::SETPOINT_BLOCK, 0.0f), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x30}));
 }
 
 // --- Reads: one table drives get as well as set ---
 
 TEST(ProtoHeating, ReadPayloadsAddressTheSameRegisterAsTheWrite) {
-  EXPECT_EQ(encode_read(DeviceRegister::SET_TEMPERATURE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x03}));
-  EXPECT_EQ(encode_read(DeviceRegister::SET_MODE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x00}));
-  EXPECT_EQ(encode_read(DeviceRegister::SET_OPEN_WINDOW_DETECTION), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x06}));
+  EXPECT_EQ(encode_read(DeviceRegister::COMFORT_SETPOINT), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x03}));
+  EXPECT_EQ(encode_read(DeviceRegister::OPERATING_MODE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x00}));
+  EXPECT_EQ(encode_read(DeviceRegister::OPEN_WINDOW_DETECTION), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x06}));
   EXPECT_EQ(encode_read(DeviceRegister::ROOM_TEMPERATURE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x15}));
   EXPECT_EQ(encode_read(DeviceRegister::REGULATOR_STATE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x17}));
   EXPECT_EQ(encode_read(DeviceRegister::MAX_SETPOINT), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x02}));
@@ -93,9 +92,9 @@ TEST(ProtoHeating, ReadPayloadsAddressTheSameRegisterAsTheWrite) {
 }
 
 TEST(ProtoHeating, PresenceRegisterIsReadAndWritten) {
-  EXPECT_EQ(encode_read(DeviceRegister::SET_PRESENCE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x10}));
-  EXPECT_TRUE(device_register_is_readable(DeviceRegister::SET_PRESENCE));
-  EXPECT_TRUE(device_register_is_writable(DeviceRegister::SET_PRESENCE));
+  EXPECT_EQ(encode_read(DeviceRegister::PRESENCE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x10}));
+  EXPECT_TRUE(device_register_is_readable(DeviceRegister::PRESENCE));
+  EXPECT_TRUE(device_register_is_writable(DeviceRegister::PRESENCE));
 }
 
 TEST(ProtoHeating, AFunctionPastTheTableHasNoRow) {
@@ -110,8 +109,8 @@ TEST(ProtoHeating, ReadOnlyRegistersAreNeverWritten) {
   EXPECT_EQ(write_len(DeviceRegister::ROOM_TEMPERATURE, 20.0f), 0u);
   EXPECT_EQ(write_len(DeviceRegister::REGULATOR_STATE, 1.0f), 0u);
   EXPECT_EQ(write_len(DeviceRegister::MAX_SETPOINT, 28.0f), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::POWER_ON, 0.0f), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::MIDNIGHT_SYNC, 0.0f), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::PAIRED_DEVICES, 0.0f), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::SETPOINT_BLOCK, 0.0f), 0u);
   EXPECT_FALSE(device_register_is_writable(DeviceRegister::WINDOW_OPEN));
   EXPECT_TRUE(device_register_is_readable(DeviceRegister::WINDOW_OPEN));
 }
@@ -124,22 +123,22 @@ TEST(ProtoHeating, ActionPayloadOfAReadOnlyRegisterIsItsRead) {
 // --- Modes ---
 
 TEST(ProtoHeating, AllWritableModes) {
-  EXPECT_EQ(encode(DeviceRegister::SET_MODE, static_cast<float>(HeatingMode::AUTO)).back(), 0x00);
-  EXPECT_EQ(encode(DeviceRegister::SET_MODE, static_cast<float>(HeatingMode::MANUAL)).back(), 0x01);
-  EXPECT_EQ(encode(DeviceRegister::SET_MODE, static_cast<float>(HeatingMode::PROG)).back(), 0x02);
-  EXPECT_EQ(encode(DeviceRegister::SET_MODE, static_cast<float>(HeatingMode::OFF)).back(), 0x04);
+  EXPECT_EQ(encode(DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::AUTO)).back(), 0x00);
+  EXPECT_EQ(encode(DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::MANUAL)).back(), 0x01);
+  EXPECT_EQ(encode(DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::PROG)).back(), 0x02);
+  EXPECT_EQ(encode(DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::OFF)).back(), 0x04);
 }
 
 TEST(ProtoHeating, RejectsUnwritableModes) {
   // 0x03 (external) is readable but this component never writes it.
-  EXPECT_EQ(write_len(DeviceRegister::SET_MODE, 3.0f), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::SET_MODE, 1.5f), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::SET_MODE, 5.0f), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::OPERATING_MODE, 3.0f), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::OPERATING_MODE, 1.5f), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::OPERATING_MODE, 5.0f), 0u);
   // Values outside a byte stay the codec's to refuse; none of them is narrowed onto a mode number.
-  EXPECT_EQ(write_len(DeviceRegister::SET_MODE, -1.0f), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::SET_MODE, 259.0f), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::SET_MODE, std::numeric_limits<float>::quiet_NaN()), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::SET_MODE, std::numeric_limits<float>::infinity()), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::OPERATING_MODE, -1.0f), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::OPERATING_MODE, 259.0f), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::OPERATING_MODE, std::numeric_limits<float>::quiet_NaN()), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::OPERATING_MODE, std::numeric_limits<float>::infinity()), 0u);
 }
 
 TEST(ProtoHeating, OnlyTheExternalSetpointModeIsNotWritable) {
@@ -148,14 +147,14 @@ TEST(ProtoHeating, OnlyTheExternalSetpointModeIsNotWritable) {
   EXPECT_FALSE(heating_mode_is_writable(HeatingMode::EXTERNAL_SETPOINT));
   // The encoder follows the rule for every mode number of the register's range.
   for (uint8_t v = 0; v <= 4; v++)
-    EXPECT_EQ(write_len(DeviceRegister::SET_MODE, static_cast<float>(v)) != 0u,
+    EXPECT_EQ(write_len(DeviceRegister::OPERATING_MODE, static_cast<float>(v)) != 0u,
               heating_mode_is_writable(static_cast<HeatingMode>(v)))
         << static_cast<int>(v);
 }
 
 TEST(ProtoHeating, RejectsNonBinaryPresenceAndDetection) {
-  EXPECT_EQ(write_len(DeviceRegister::SET_PRESENCE, 2.0f), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::SET_OPEN_WINDOW_DETECTION, 0.5f), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::PRESENCE, 2.0f), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::OPEN_WINDOW_DETECTION, 0.5f), 0u);
 }
 
 // --- Temperature matrix: little-endian tenths of a degree ---
@@ -166,7 +165,7 @@ TEST(ProtoHeating, TemperatureMatrix) {
     std::vector<uint8_t> want = prefix;
     want.push_back(lo);
     want.push_back(hi);
-    EXPECT_EQ(encode(DeviceRegister::SET_TEMPERATURE, degrees), want) << degrees << " C";
+    EXPECT_EQ(encode(DeviceRegister::COMFORT_SETPOINT, degrees), want) << degrees << " C";
   };
   expect_temp(7.0f, 0x46, 0x00);    // 70   = 0x0046
   expect_temp(20.5f, 0xCD, 0x00);   // 205  = 0x00CD
@@ -177,29 +176,29 @@ TEST(ProtoHeating, TemperatureMatrix) {
 }
 
 TEST(ProtoHeating, TemperatureRejectsOutOfRangeAndNaN) {
-  EXPECT_EQ(write_len(DeviceRegister::SET_TEMPERATURE, 6.9f), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::SET_TEMPERATURE, 28.1f), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::SET_TEMPERATURE, 53.5f), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::SET_TEMPERATURE, std::nanf("")), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::SET_TEMPERATURE, INFINITY), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::COMFORT_SETPOINT, 6.9f), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::COMFORT_SETPOINT, 28.1f), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::COMFORT_SETPOINT, 53.5f), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::COMFORT_SETPOINT, std::nanf("")), 0u);
+  EXPECT_EQ(write_len(DeviceRegister::COMFORT_SETPOINT, INFINITY), 0u);
 }
 
 TEST(ProtoHeating, PayloadLengths) {
-  EXPECT_EQ(encode(DeviceRegister::POWER_ON, 0.0f).size(), 4u);
-  EXPECT_EQ(encode(DeviceRegister::MIDNIGHT_SYNC, 0.0f).size(), 4u);
-  EXPECT_EQ(encode(DeviceRegister::SET_MODE, 0.0f).size(), 5u);
-  EXPECT_EQ(encode(DeviceRegister::SET_PRESENCE, 0.0f).size(), 5u);
-  EXPECT_EQ(encode(DeviceRegister::SET_OPEN_WINDOW_DETECTION, 0.0f).size(), 5u);
-  EXPECT_EQ(encode(DeviceRegister::SET_TEMPERATURE, 20.0f).size(), 6u);
+  EXPECT_EQ(encode(DeviceRegister::PAIRED_DEVICES, 0.0f).size(), 4u);
+  EXPECT_EQ(encode(DeviceRegister::SETPOINT_BLOCK, 0.0f).size(), 4u);
+  EXPECT_EQ(encode(DeviceRegister::OPERATING_MODE, 0.0f).size(), 5u);
+  EXPECT_EQ(encode(DeviceRegister::PRESENCE, 0.0f).size(), 5u);
+  EXPECT_EQ(encode(DeviceRegister::OPEN_WINDOW_DETECTION, 0.0f).size(), 5u);
+  EXPECT_EQ(encode(DeviceRegister::COMFORT_SETPOINT, 20.0f).size(), 6u);
 }
 
 TEST(ProtoHeating, FunctionNames) {
-  EXPECT_STREQ(device_register_name(DeviceRegister::POWER_ON), "power_on");
-  EXPECT_STREQ(device_register_name(DeviceRegister::SET_TEMPERATURE), "set_temperature");
-  EXPECT_STREQ(device_register_name(DeviceRegister::SET_MODE), "set_mode");
-  EXPECT_STREQ(device_register_name(DeviceRegister::SET_PRESENCE), "set_presence");
-  EXPECT_STREQ(device_register_name(DeviceRegister::SET_OPEN_WINDOW_DETECTION), "set_open_window_detection");
-  EXPECT_STREQ(device_register_name(DeviceRegister::MIDNIGHT_SYNC), "midnight_sync");
+  EXPECT_STREQ(device_register_name(DeviceRegister::PAIRED_DEVICES), "power_on");
+  EXPECT_STREQ(device_register_name(DeviceRegister::COMFORT_SETPOINT), "set_temperature");
+  EXPECT_STREQ(device_register_name(DeviceRegister::OPERATING_MODE), "set_mode");
+  EXPECT_STREQ(device_register_name(DeviceRegister::PRESENCE), "set_presence");
+  EXPECT_STREQ(device_register_name(DeviceRegister::OPEN_WINDOW_DETECTION), "set_open_window_detection");
+  EXPECT_STREQ(device_register_name(DeviceRegister::SETPOINT_BLOCK), "midnight_sync");
   EXPECT_STREQ(device_register_name(DeviceRegister::ROOM_TEMPERATURE), "room_temperature");
   EXPECT_STREQ(device_register_name(DeviceRegister::REGULATOR_STATE), "regulator_state");
   EXPECT_STREQ(device_register_name(DeviceRegister::MAX_SETPOINT), "max_setpoint");
@@ -207,8 +206,8 @@ TEST(ProtoHeating, FunctionNames) {
 }
 
 TEST(ProtoHeating, PowerOnAndMidnightIgnoreValue) {
-  EXPECT_EQ(encode(DeviceRegister::POWER_ON, 999.0f), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x2C}));
-  EXPECT_EQ(encode(DeviceRegister::MIDNIGHT_SYNC, std::nanf("")), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x30}));
+  EXPECT_EQ(encode(DeviceRegister::PAIRED_DEVICES, 999.0f), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x2C}));
+  EXPECT_EQ(encode(DeviceRegister::SETPOINT_BLOCK, std::nanf("")), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x30}));
 }
 
 TEST(ProtoHeating, RejectsOutOfRangeFunctionEnum) {
@@ -250,7 +249,8 @@ TEST(ProtoHeating, RoomTemperatureSensorFaultDecodesAsNaN) {
 
 TEST(ProtoHeating, DecodesSetpointAndMaximumInTenths) {
   float v = 0.0f;
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00}), DeviceRegister::SET_TEMPERATURE, v));
+  ASSERT_TRUE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00}), DeviceRegister::COMFORT_SETPOINT, v));
   EXPECT_FLOAT_EQ(v, 19.5f);
   ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x02, 0x18, 0x01}), DeviceRegister::MAX_SETPOINT, v));
   EXPECT_FLOAT_EQ(v, 28.0f);
@@ -259,10 +259,10 @@ TEST(ProtoHeating, DecodesSetpointAndMaximumInTenths) {
 TEST(ProtoHeating, DecodesModeBytes) {
   float v = -1.0f;
   for (uint8_t mode : {0, 1, 2, 3, 4}) {
-    ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x00, mode}), DeviceRegister::SET_MODE, v));
+    ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x00, mode}), DeviceRegister::OPERATING_MODE, v));
     EXPECT_FLOAT_EQ(v, static_cast<float>(mode));
   }
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x00, 0x05}), DeviceRegister::SET_MODE, v))
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x00, 0x05}), DeviceRegister::OPERATING_MODE, v))
       << "an undefined mode is not a value";
 }
 
@@ -287,7 +287,8 @@ TEST(ProtoHeating, DecodesWindowSensor) {
 TEST(ProtoHeating, DecodesTheAckOfAWriteToo) {
   // A set is answered with the header of the set (0x61) followed by the value.
   float v = 0.0f;
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}), DeviceRegister::SET_TEMPERATURE, v));
+  ASSERT_TRUE(
+      decode_heating_reply(ack_with({0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}), DeviceRegister::COMFORT_SETPOINT, v));
   EXPECT_FLOAT_EQ(v, 20.5f);
 }
 
@@ -297,7 +298,7 @@ TEST(ProtoHeating, ReplyWithoutAValueForThisRegisterIsNoValue) {
   EXPECT_FALSE(
       decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00}), DeviceRegister::ROOM_TEMPERATURE, v));
   // A set acknowledged without a value.
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x61, 0x01, 0x03}), DeviceRegister::SET_TEMPERATURE, v));
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x61, 0x01, 0x03}), DeviceRegister::COMFORT_SETPOINT, v));
   // Truncated 16-bit value.
   EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x15, 0x1B}), DeviceRegister::ROOM_TEMPERATURE, v));
   // Wrong prefix, high byte or direction.
@@ -311,7 +312,7 @@ TEST(ProtoHeating, ReplyWithoutAValueForThisRegisterIsNoValue) {
   EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08}, CMD_ERROR_RESP),
                                     DeviceRegister::ROOM_TEMPERATURE, v));
   // A register with no typed decode.
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x2C, 0x01, 0x02}), DeviceRegister::POWER_ON, v));
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x2C, 0x01, 0x02}), DeviceRegister::PAIRED_DEVICES, v));
   EXPECT_FLOAT_EQ(v, 123.0f) << "no value leaves the output untouched";
 }
 
@@ -339,7 +340,7 @@ TEST(ProtoHeatingTowelDryer, WritesOutsideTheRegisterRangeOrNotIntegralAreRefuse
   EXPECT_EQ(write_len(DeviceRegister::TOWEL_MODE, NAN), 0u);
   EXPECT_EQ(write_len(DeviceRegister::TEMPORARY_STATE, 3.0F), 0u);
   EXPECT_EQ(write_len(DeviceRegister::WORKING_RATE, 50.0F), 0u) << "read-only";
-  EXPECT_EQ(write_len(DeviceRegister::TEMPERATURE_IN_FORCE, 19.0F), 0u) << "read-only";
+  EXPECT_EQ(write_len(DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, 19.0F), 0u) << "read-only";
   EXPECT_EQ(write_len(DeviceRegister::ECO_SETBACK, 3.5F), 0u) << "read-only";
   EXPECT_EQ(write_len(DeviceRegister::REGULATOR_STATE, 1.0F), 0u) << "still read-only";
 }
@@ -353,7 +354,7 @@ TEST(ProtoHeatingTowelDryer, DerogationIsWrittenInTenthsAndZeroCancelsIt) {
   EXPECT_EQ(write_len(DeviceRegister::DEROGATED_SETPOINT, 6.9F), 0u) << "below the range, and not 0";
   EXPECT_EQ(write_len(DeviceRegister::DEROGATED_SETPOINT, 28.1F), 0u);
   EXPECT_EQ(write_len(DeviceRegister::DEROGATED_SETPOINT, NAN), 0u);
-  EXPECT_EQ(write_len(DeviceRegister::SET_TEMPERATURE, 0.0F), 0u) << "only the override register takes 0";
+  EXPECT_EQ(write_len(DeviceRegister::COMFORT_SETPOINT, 0.0F), 0u) << "only the override register takes 0";
   EXPECT_EQ(encode_read(DeviceRegister::DEROGATED_SETPOINT), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x1D}));
   EXPECT_STREQ(device_register_name(DeviceRegister::DEROGATED_SETPOINT), "set_derogation");
 }
@@ -372,14 +373,14 @@ TEST(ProtoHeatingTowelDryer, ReadsAddressTheirRegisters) {
   EXPECT_EQ(encode_read(DeviceRegister::TOWEL_MODE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x36}));
   EXPECT_EQ(encode_read(DeviceRegister::TEMPORARY_STATE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x3E}));
   EXPECT_EQ(encode_read(DeviceRegister::WORKING_RATE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x26}));
-  EXPECT_EQ(encode_read(DeviceRegister::TEMPERATURE_IN_FORCE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x37}));
+  EXPECT_EQ(encode_read(DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x37}));
   EXPECT_EQ(encode_read(DeviceRegister::ECO_SETBACK), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x04}));
   EXPECT_EQ(encode(DeviceRegister::WORKING_RATE, 0.0F), encode_read(DeviceRegister::WORKING_RATE))
       << "the action payload of a read-only register is its read";
   EXPECT_STREQ(device_register_name(DeviceRegister::TOWEL_MODE), "towel_mode");
   EXPECT_STREQ(device_register_name(DeviceRegister::TEMPORARY_STATE), "temporary_state");
   EXPECT_STREQ(device_register_name(DeviceRegister::WORKING_RATE), "working_rate");
-  EXPECT_STREQ(device_register_name(DeviceRegister::TEMPERATURE_IN_FORCE), "temperature_in_force");
+  EXPECT_STREQ(device_register_name(DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE), "temperature_in_force");
   EXPECT_STREQ(device_register_name(DeviceRegister::ECO_SETBACK), "eco_setback");
 }
 
@@ -399,34 +400,34 @@ TEST(ProtoHeatingTowelDryer, DecodesTheTemperatureInForceAndTheEcoSetbackInTenth
   // Replies of unit BD684B in PROG (issue #202, corpus atlantic_adelis_probe_temperature_in_force) and the
   // setback of unit BB0B50 (corpus atlantic_adelis_probe_register_01_sweep).
   float value = -1.0F;
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xC8, 0x00}), DeviceRegister::TEMPERATURE_IN_FORCE,
-                                   value));
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xC8, 0x00}),
+                                   DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, value));
   EXPECT_FLOAT_EQ(value, 20.0F) << "comfort period";
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00}), DeviceRegister::TEMPERATURE_IN_FORCE,
-                                   value));
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00}),
+                                   DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, value));
   EXPECT_FLOAT_EQ(value, 16.5F) << "eco period";
   ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x04, 0x23, 0x00}), DeviceRegister::ECO_SETBACK, value));
   EXPECT_FLOAT_EQ(value, 3.5F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0x01, 0x00}), DeviceRegister::TEMPERATURE_IN_FORCE,
-                                   value));
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0x01, 0x00}),
+                                   DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, value));
   EXPECT_FLOAT_EQ(value, 0.1F) << "in boost the register is not a temperature; the profile's gate keeps it unshown";
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37}), DeviceRegister::TEMPERATURE_IN_FORCE, value))
+  EXPECT_FALSE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37}), DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, value))
       << "empty is no value";
 }
 
 TEST(ProtoHeatingRadiator, TheTemperatureInForceIsRegister012AInTenthsAndSharesTheReading) {
-  EXPECT_EQ(encode_read(DeviceRegister::HEATER_TEMPERATURE_IN_FORCE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x2A}));
-  EXPECT_EQ(write_len(DeviceRegister::HEATER_TEMPERATURE_IN_FORCE, 19.0F), 0u) << "read-only";
-  EXPECT_STREQ(device_register_name(DeviceRegister::HEATER_TEMPERATURE_IN_FORCE), "heater_temperature_in_force");
+  EXPECT_EQ(encode_read(DeviceRegister::TEMPERATURE_IN_FORCE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x2A}));
+  EXPECT_EQ(write_len(DeviceRegister::TEMPERATURE_IN_FORCE, 19.0F), 0u) << "read-only";
+  EXPECT_STREQ(device_register_name(DeviceRegister::TEMPERATURE_IN_FORCE), "heater_temperature_in_force");
   float value = -1.0F;
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x2A, 0xA5, 0x00}),
-                                   DeviceRegister::HEATER_TEMPERATURE_IN_FORCE, value));
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x2A, 0xA5, 0x00}), DeviceRegister::TEMPERATURE_IN_FORCE,
+                                   value));
   EXPECT_FLOAT_EQ(value, 16.5F);
-  EXPECT_FALSE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x2A}), DeviceRegister::HEATER_TEMPERATURE_IN_FORCE, value))
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x2A}), DeviceRegister::TEMPERATURE_IN_FORCE, value))
       << "a radiator without the register answers it empty";
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00}),
-                                    DeviceRegister::HEATER_TEMPERATURE_IN_FORCE, value))
+  EXPECT_FALSE(
+      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00}), DeviceRegister::TEMPERATURE_IN_FORCE, value))
       << "the reply of another register is no value";
 }
 
@@ -446,7 +447,7 @@ TEST(ProtoHeatingTowelDryer, AByteAboveTheRegistersRangeIsStillAnAnswerThatCarri
   EXPECT_FALSE(
       heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x42, 0x32}), DeviceRegister::NIGHT_LIGHT_BRIGHTNESS))
       << "a two-byte register needs both bytes";
-  EXPECT_FALSE(heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x2C, 0x01}), DeviceRegister::POWER_ON))
+  EXPECT_FALSE(heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x2C, 0x01}), DeviceRegister::PAIRED_DEVICES))
       << "a register with no typed value carries none";
 }
 
@@ -468,7 +469,7 @@ TEST(ProtoHeatingTowelDryer, EachFunctionHasItsRegisterLowByte) {
   ASSERT_TRUE(device_register_bytes(DeviceRegister::TOWEL_MODE, family, reg));
   EXPECT_EQ(family, HEATING_REGISTER_HIGH_BYTE);
   EXPECT_EQ(reg, 0x36);
-  ASSERT_TRUE(device_register_bytes(DeviceRegister::SET_MODE, family, reg));
+  ASSERT_TRUE(device_register_bytes(DeviceRegister::OPERATING_MODE, family, reg));
   EXPECT_EQ(family, HEATING_REGISTER_HIGH_BYTE);
   EXPECT_EQ(reg, 0x00);
   EXPECT_FALSE(device_register_bytes(static_cast<DeviceRegister>(0xEE), family, reg));
@@ -654,15 +655,15 @@ TEST(ProtoHeatingOccupancy, DecodesTheSweepValuesOfTheDetectionAndThePresence) {
   ASSERT_TRUE(
       decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x01, 0x01}), DeviceRegister::OCCUPANCY_DETECTION, value));
   EXPECT_FLOAT_EQ(value, 1.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x10, 0x00}), DeviceRegister::SET_PRESENCE, value));
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x10, 0x00}), DeviceRegister::PRESENCE, value));
   EXPECT_FLOAT_EQ(value, 0.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x10, 0x01}), DeviceRegister::SET_PRESENCE, value));
+  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x10, 0x01}), DeviceRegister::PRESENCE, value));
   EXPECT_FLOAT_EQ(value, 1.0F);
 }
 
 TEST(ProtoHeatingOccupancy, EmptyAndUnknownRepliesAreNoValue) {
   float value = -1.0F;
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x10}), DeviceRegister::SET_PRESENCE, value));
+  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x10}), DeviceRegister::PRESENCE, value));
   EXPECT_FALSE(
       decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x01, 0x02}), DeviceRegister::OCCUPANCY_DETECTION, value));
   EXPECT_FLOAT_EQ(value, -1.0F);

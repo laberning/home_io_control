@@ -74,7 +74,7 @@ TEST(ProtoDhw, EveryWaterHeaterRegisterIsAFamilyZeroRegisterOfTheWire) {
   }
   uint8_t high = 0;
   uint8_t low = 0;
-  ASSERT_TRUE(device_register_bytes(DeviceRegister::SET_TEMPERATURE, high, low));
+  ASSERT_TRUE(device_register_bytes(DeviceRegister::COMFORT_SETPOINT, high, low));
   EXPECT_EQ(high, HEATING_REGISTER_HIGH_BYTE) << "a heater's register keeps its family";
 }
 
@@ -211,7 +211,8 @@ TEST(ProtoDhw, RegisterReplyForAnotherIndexFamilyOrCommandIsRejected) {
       << "not a CMD_WRITE_PRIVATE_ACK";
   EXPECT_FALSE(register_reply_value(reply_with({0x0C, 0x60, 0x00}), DeviceRegister::DHW_MODE).has_value())
       << "short echo";
-  EXPECT_FALSE(register_reply_value(reply_with({0x0C, 0x60, 0x00, 0x06, 0x01}), DeviceRegister::SET_MODE).has_value())
+  EXPECT_FALSE(
+      register_reply_value(reply_with({0x0C, 0x60, 0x00, 0x06, 0x01}), DeviceRegister::OPERATING_MODE).has_value())
       << "a heater's mode register is another register";
 }
 
@@ -517,10 +518,10 @@ TEST(ProtoDhw, AFamilyZeroRegisterGoesToAWaterHeaterOnlyAndAHeaterRegisterToAHea
   EXPECT_TRUE(device_takes_register(water_heater, DeviceRegister::DHW_MODE));
   EXPECT_FALSE(device_takes_register(radiator, DeviceRegister::DHW_MODE));
   EXPECT_FALSE(device_takes_register(cover, DeviceRegister::DHW_MODE));
-  EXPECT_TRUE(device_takes_register(radiator, DeviceRegister::SET_MODE));
-  EXPECT_FALSE(device_takes_register(water_heater, DeviceRegister::SET_MODE))
+  EXPECT_TRUE(device_takes_register(radiator, DeviceRegister::OPERATING_MODE));
+  EXPECT_FALSE(device_takes_register(water_heater, DeviceRegister::OPERATING_MODE))
       << "a water heater has no heater registers";
-  EXPECT_FALSE(device_takes_register(cover, DeviceRegister::SET_MODE));
+  EXPECT_FALSE(device_takes_register(cover, DeviceRegister::OPERATING_MODE));
   EXPECT_STREQ(device_register_owner(DeviceRegister::DHW_MODE), "water heater");
-  EXPECT_STREQ(device_register_owner(DeviceRegister::SET_MODE), "heater with private registers");
+  EXPECT_STREQ(device_register_owner(DeviceRegister::OPERATING_MODE), "heater with private registers");
 }

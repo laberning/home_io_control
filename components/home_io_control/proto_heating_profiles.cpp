@@ -130,7 +130,7 @@ constexpr HeatingObservedState TOWEL_DRYER_OBSERVED_PRESETS[] = {
 /// \todo The level the status read reports in each period is captured on one unit (BD684B); a second unit
 ///       confirms it. Until then the level sensor is experimental.
 constexpr HeatingProgrammePeriod TOWEL_DRYER_PROGRAMME_PERIOD = {
-    .in_force_fn = DeviceRegister::TEMPERATURE_IN_FORCE,
+    .in_force_fn = DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE,
     .derogation_fn = DeviceRegister::DEROGATED_SETPOINT,
     .reports_level = true,
     .override_in_eco_only = true,
@@ -277,7 +277,7 @@ constexpr float TEMPERATURE_VISUAL_MAX_C = 30.0F;  ///< Highest target the card 
 /// \todo Experimental: neither 0x012A nor 0x011D has been read or written on an AGILIA, Hekla or EMOTION 3 H.
 ///       Confirm both on a radiator. A heater that answers the read empty keeps the comfort-setpoint write.
 constexpr HeatingProgrammePeriod SETPOINT_HEATER_PROGRAMME_PERIOD = {
-    .in_force_fn = DeviceRegister::HEATER_TEMPERATURE_IN_FORCE,
+    .in_force_fn = DeviceRegister::TEMPERATURE_IN_FORCE,
     .derogation_fn = DeviceRegister::DEROGATED_SETPOINT,
 };
 
@@ -620,7 +620,7 @@ bool heating_profile_reads(const HeatingProfile &profile, DeviceReading reading)
   switch (fn) {
     case DeviceRegister::ROOM_TEMPERATURE:
       return profile.features.current_temperature;
-    case DeviceRegister::SET_TEMPERATURE:
+    case DeviceRegister::COMFORT_SETPOINT:
     case DeviceRegister::MAX_SETPOINT:
       return profile.features.target_temperature;
     default:
@@ -785,7 +785,7 @@ HeatingWritePlan plan_target_write(const HeatingProfile &profile, const HeatingW
     override_programme = facts.period == HeatingPeriod::ECO;
   }
   const DeviceRegister target_fn =
-      override_programme ? profile.programme_period->derogation_fn : DeviceRegister::SET_TEMPERATURE;
+      override_programme ? profile.programme_period->derogation_fn : DeviceRegister::COMFORT_SETPOINT;
   HeatingWritePlan plan;
   plan.kind = HeatingPlanKind::REGISTER;
   plan.temporary_override = override_programme;
@@ -937,7 +937,7 @@ void reduce_temperatures(const HeatingProfile &profile, const IoDevice &dev, flo
   }
   // The heater's own ceiling, but never past what a write can encode.
   const float max_setpoint_c = reading_value(dev, DeviceReading::MAX_SETPOINT).value_or(NAN);
-  const std::optional<ValueRange> setpoint_range = heating_write_range(DeviceRegister::SET_TEMPERATURE);
+  const std::optional<ValueRange> setpoint_range = heating_write_range(DeviceRegister::COMFORT_SETPOINT);
   if (profile.features.target_temperature && setpoint_range && !std::isnan(max_setpoint_c) &&
       max_setpoint_c > setpoint_range->min) {
     seen = true;

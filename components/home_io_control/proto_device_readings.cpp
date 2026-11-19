@@ -52,7 +52,7 @@ std::optional<float> remaining_time_of_active_run(const IoDevice &dev);
 /// poll reads them; the three readings that are slices of its heating register name the register once in the poll.
 constexpr DeviceReadingRow DEVICE_READINGS[] = {
     {.name = "occupancy",
-     .source = RegisterSource{.fn = DeviceRegister::SET_PRESENCE},
+     .source = RegisterSource{.fn = DeviceRegister::PRESENCE},
      .reading = DeviceReading::OCCUPANCY,
      .poll = ReadingPoll::WHEN_ASKED,
      .feature = DeviceFeature::OCCUPANCY},
@@ -105,11 +105,11 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .reading = DeviceReading::ROOM_TEMPERATURE,
      .poll = ReadingPoll::EVERY_POLL},
     {.name = "setpoint",
-     .source = RegisterSource{.fn = DeviceRegister::SET_TEMPERATURE},
+     .source = RegisterSource{.fn = DeviceRegister::COMFORT_SETPOINT},
      .reading = DeviceReading::SETPOINT,
      .poll = ReadingPoll::EVERY_POLL},
     {.name = "mode",
-     .source = RegisterSource{.fn = DeviceRegister::SET_MODE},
+     .source = RegisterSource{.fn = DeviceRegister::OPERATING_MODE},
      .reading = DeviceReading::MODE,
      .poll = ReadingPoll::EVERY_POLL},
     {.name = "regulator_state",
@@ -136,7 +136,7 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
     // The heater's own controller changes the detection setting (a change from the vendor app), and a night light is
     // a part a model may lack: a miss costs a read, not the poll.
     {.name = "open_window_detection",
-     .source = RegisterSource{.fn = DeviceRegister::SET_OPEN_WINDOW_DETECTION},
+     .source = RegisterSource{.fn = DeviceRegister::OPEN_WINDOW_DETECTION},
      .reading = DeviceReading::OPEN_WINDOW_DETECTION,
      .poll = ReadingPoll::EVERY_POLL_MAY_MISS,
      .feature = DeviceFeature::WINDOW_COMPANIONS},
@@ -156,13 +156,13 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .poll = ReadingPoll::ONCE_AFTER_BOOT},
     // The temperatures in force are read by the programme rule (only while the programme runs), and the derogated
     // setpoint by a write's read-back.
+    {.name = "towel_temperature_in_force",
+     .source = RegisterSource{.fn = DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE},
+     .reading = DeviceReading::TOWEL_TEMPERATURE_IN_FORCE,
+     .poll = ReadingPoll::NOT_POLLED},
     {.name = "temperature_in_force",
      .source = RegisterSource{.fn = DeviceRegister::TEMPERATURE_IN_FORCE},
      .reading = DeviceReading::TEMPERATURE_IN_FORCE,
-     .poll = ReadingPoll::NOT_POLLED},
-    {.name = "heater_temperature_in_force",
-     .source = RegisterSource{.fn = DeviceRegister::HEATER_TEMPERATURE_IN_FORCE},
-     .reading = DeviceReading::HEATER_TEMPERATURE_IN_FORCE,
      .poll = ReadingPoll::NOT_POLLED},
     {.name = "derogated_setpoint",
      .source = RegisterSource{.fn = DeviceRegister::DEROGATED_SETPOINT},

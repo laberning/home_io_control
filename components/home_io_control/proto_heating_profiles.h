@@ -241,10 +241,10 @@ struct HeatingProfile {
   std::span<const HeatingObservedState> preset_observed{};
   // NOLINTEND(readability-redundant-member-init)
   /// PRIVATE_REGISTERS: the register the HVAC modes write and the card's mode is read from.
-  DeviceRegister mode_fn{DeviceRegister::SET_MODE};
+  DeviceRegister mode_fn{DeviceRegister::OPERATING_MODE};
   /// PRIVATE_REGISTERS: the register the presets write, and with `preset_observed` the one the card's preset is
   /// read from.
-  DeviceRegister preset_fn{DeviceRegister::SET_MODE};
+  DeviceRegister preset_fn{DeviceRegister::OPERATING_MODE};
   HeatingActionSource action_source{HeatingActionSource::REGULATOR};  ///< Where `features.action` reads from.
 };
 
@@ -534,17 +534,17 @@ enum class HeatingPlanKind : uint8_t {
 
 /// @brief The write a request turns into, with everything needed to send it and to read it back.
 struct HeatingWritePlan {
-  HeatingPlanKind kind{HeatingPlanKind::NONE};           ///< How to send it.
-  HeatingRefusal refusal{HeatingRefusal::NONE};          ///< Why there is no write (kind NONE).
-  DeviceRegister register_fn{DeviceRegister::SET_MODE};  ///< REGISTER: the register.
-  float register_value{0.0F};                            ///< REGISTER: the value, as encode_heating_payload() takes it.
-  uint8_t level{0};                                      ///< LEVEL: the level low byte.
-  uint16_t main_parameter{0};                            ///< TEMPERATURE: the main parameter.
-  HeatingFp fp{};                                        ///< TEMPERATURE: the functional parameter that accompanies it.
+  HeatingPlanKind kind{HeatingPlanKind::NONE};                 ///< How to send it.
+  HeatingRefusal refusal{HeatingRefusal::NONE};                ///< Why there is no write (kind NONE).
+  DeviceRegister register_fn{DeviceRegister::OPERATING_MODE};  ///< REGISTER: the register.
+  float register_value{0.0F};      ///< REGISTER: the value, as encode_heating_payload() takes it.
+  uint8_t level{0};                ///< LEVEL: the level low byte.
+  uint16_t main_parameter{0};      ///< TEMPERATURE: the main parameter.
+  HeatingFp fp{};                  ///< TEMPERATURE: the functional parameter that accompanies it.
   bool temporary_override{false};  ///< REGISTER: the write is a temporary override of the programme; a read-back
                                    ///< that differs from it is a refusal (heating_override_taken()).
   bool read_back{false};           ///< Read `read_back_fn` after an accepted write.
-  DeviceRegister read_back_fn{DeviceRegister::SET_MODE};  ///< The register to read back.
+  DeviceRegister read_back_fn{DeviceRegister::OPERATING_MODE};  ///< The register to read back.
   int8_t preset_index{-1};  ///< PRESET: index into the profile's presets of the matched entry; -1 otherwise.
 
   /// @return Whether the request became a write.

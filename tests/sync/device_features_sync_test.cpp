@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 #include <iterator>
 #include <map>
 #include <set>
@@ -300,6 +301,33 @@ std::string upper(std::string name) {
   return name;
 }
 
+/// The enumerators of DeviceRegister in declaration order, read from the header, which is what the Python mirror names
+/// a register by. The enumerators carry no explicit values, so the position is the value.
+std::vector<std::string> register_enumerator_names() {
+  std::ifstream in("components/home_io_control/proto_heating.h");
+  std::vector<std::string> names;
+  bool inside = false;
+  for (std::string line; std::getline(in, line);) {
+    if (!inside) {
+      inside = line.rfind("enum class DeviceRegister", 0) == 0;
+      continue;
+    }
+    if (line.rfind("};", 0) == 0)
+      break;
+    // An enumerator line is indentation, an upper-case identifier and a comma; comment lines start with `///`.
+    const size_t start = line.find_first_not_of(' ');
+    if (start == std::string::npos || start == 0)
+      continue;
+    size_t end = start;
+    while (end < line.size() && (std::isupper(static_cast<unsigned char>(line[end])) != 0 ||
+                                 std::isdigit(static_cast<unsigned char>(line[end])) != 0 || line[end] == '_'))
+      end++;
+    if (end > start && end < line.size() && line[end] == ',' && line.substr(start, end - start) != "COUNT")
+      names.push_back(line.substr(start, end - start));
+  }
+  return names;
+}
+
 }  // namespace
 
 TEST(DeviceFeaturesSync, EveryDeviceReadingIsMirroredWithItsCapabilitySourceAndRegisters) {
@@ -308,6 +336,9 @@ TEST(DeviceFeaturesSync, EveryDeviceReadingIsMirroredWithItsCapabilitySourceAndR
   const auto python = test::parse_python_ordered_dict(VALIDATORS, "DEVICE_READINGS");
   ASSERT_FALSE(python.empty()) << "DEVICE_READINGS not parsed from hub_validators.py";
   const std::map<std::string, std::string> by_name(python.begin(), python.end());
+  const std::vector<std::string> enumerators = register_enumerator_names();
+  ASSERT_EQ(enumerators.size(), static_cast<size_t>(DeviceRegister::COUNT))
+      << "the DeviceRegister enumerators are not read from proto_heating.h";
   for (const DeviceReadingRow &row : device_readings()) {
     // The Python key is the enumerator's name, which is the row's name in capitals.
     const std::string name = upper(row.name);
@@ -331,7 +362,7 @@ TEST(DeviceFeaturesSync, EveryDeviceReadingIsMirroredWithItsCapabilitySourceAndR
 
     std::vector<std::string> registers;
     for (const DeviceRegister fn : reading_polled_registers(row))
-      registers.push_back(upper(device_register_name(fn)));
+      registers.push_back(enumerators.at(static_cast<size_t>(fn)));
     EXPECT_EQ(test::quoted_strings_of(field_text(entry, "registers")), registers) << name;
 
     // The platform that offers the reading's key follows what the row says: a data object is the `sensor:`

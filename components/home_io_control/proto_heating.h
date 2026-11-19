@@ -58,32 +58,32 @@ namespace home_io_control {
 
 /// @brief Registers and functions of a 2W heater, one row of the descriptor table each.
 ///
-/// The `SET_*` names are the functions of the `heating_control` action; the same row is also the
-/// register's read path (reading SET_TEMPERATURE reads the comfort setpoint).
+/// The `heating_control` action offers some of them as functions under the row's action name; the same row
+/// is also the register's read path.
 enum class DeviceRegister : uint8_t {
-  POWER_ON,                   ///< Register 0x012C, read: the paired-device list. Logged, never decoded.
-  SET_TEMPERATURE,            ///< Register 0x0103, read/write: comfort setpoint, tenths of a degree.
-  SET_MODE,                   ///< Register 0x0100, read/write: operating mode (HeatingMode).
-  SET_PRESENCE,               ///< Register 0x0110, read/write: someone is in the room (1) or not (0). A controller
-                              ///< writes it to tell the heater; a Sauter Hekla reports there whether its own
-                              ///< detection sees someone (issue #222), 0 with nobody in the room and 1 while
-                              ///< someone walks around it, with its occupancy detection on.
-                              ///< \todo Confirm on another heater that the register reports detected presence.
-  SET_OPEN_WINDOW_DETECTION,  ///< Register 0x0106, read/write: open-window detection on (1) or off (0).
-  MIDNIGHT_SYNC,              ///< Register 0x0130, read: the comfort/eco/auto setpoint block. Logged, never decoded.
-  ROOM_TEMPERATURE,           ///< Register 0x0115, read-only: measured room temperature, signed hundredths of a degree.
-  REGULATOR_STATE,            ///< Register 0x0117, read-only: 0 none, 1 standby, 2 heating.
-  MAX_SETPOINT,               ///< Register 0x0102, read-only: highest setpoint the heater accepts, tenths of a degree.
-  WINDOW_OPEN,                ///< Register 0x010E, read-only: the heater's window sensor, 0 closed / 1 open.
-  TOWEL_MODE,                 ///< Register 0x0136, read/write: a towel dryer's mode (TowelDryerMode).
-  TEMPORARY_STATE,            ///< Register 0x013E, read/write: a towel dryer's temporary state (HeatingTemporaryState).
-  WORKING_RATE,               ///< Register 0x0126, read-only: share of the time the element heats, 0-100 %.
-  TEMPERATURE_IN_FORCE,    ///< Register 0x0137, read-only: the temperature a towel dryer holds right now, tenths of a
-                           ///< degree. Only a temperature while no boost or drying runs (it reads 1 and 2 there).
-                           ///< \todo Confirm on a second towel dryer (the reads so far are from one unit).
-  ECO_SETBACK,             ///< Register 0x0104, read-only: how far below the comfort setpoint a towel dryer's eco
-                           ///< period heats, tenths of a kelvin.
-  NIGHT_LIGHT,             ///< Register 0x0144, read/write: a heater's night light on (1) or off (0).
+  PAIRED_DEVICES,         ///< Register 0x012C, read: the paired-device list. Logged, never decoded.
+  COMFORT_SETPOINT,       ///< Register 0x0103, read/write: comfort setpoint, tenths of a degree.
+  OPERATING_MODE,         ///< Register 0x0100, read/write: operating mode (HeatingMode).
+  PRESENCE,               ///< Register 0x0110, read/write: someone is in the room (1) or not (0). A controller
+                          ///< writes it to tell the heater; a Sauter Hekla reports there whether its own
+                          ///< detection sees someone (issue #222), 0 with nobody in the room and 1 while
+                          ///< someone walks around it, with its occupancy detection on.
+                          ///< \todo Confirm on another heater that the register reports detected presence.
+  OPEN_WINDOW_DETECTION,  ///< Register 0x0106, read/write: open-window detection on (1) or off (0).
+  SETPOINT_BLOCK,         ///< Register 0x0130, read: the comfort/eco/auto setpoint block. Logged, never decoded.
+  ROOM_TEMPERATURE,       ///< Register 0x0115, read-only: measured room temperature, signed hundredths of a degree.
+  REGULATOR_STATE,        ///< Register 0x0117, read-only: 0 none, 1 standby, 2 heating.
+  MAX_SETPOINT,           ///< Register 0x0102, read-only: highest setpoint the heater accepts, tenths of a degree.
+  WINDOW_OPEN,            ///< Register 0x010E, read-only: the heater's window sensor, 0 closed / 1 open.
+  TOWEL_MODE,             ///< Register 0x0136, read/write: a towel dryer's mode (TowelDryerMode).
+  TEMPORARY_STATE,        ///< Register 0x013E, read/write: a towel dryer's temporary state (HeatingTemporaryState).
+  WORKING_RATE,           ///< Register 0x0126, read-only: share of the time the element heats, 0-100 %.
+  TOWEL_TEMPERATURE_IN_FORCE,  ///< Register 0x0137, read-only: the temperature a towel dryer holds right now, tenths of
+                               ///< a degree. Only a temperature while no boost or drying runs (it reads 1 and 2 there).
+                               ///< \todo Confirm on a second towel dryer (the reads so far are from one unit).
+  ECO_SETBACK,                 ///< Register 0x0104, read-only: how far below the comfort setpoint a towel dryer's eco
+                               ///< period heats, tenths of a kelvin.
+  NIGHT_LIGHT,                 ///< Register 0x0144, read/write: a heater's night light on (1) or off (0).
   NIGHT_LIGHT_BRIGHTNESS,  ///< Register 0x0142, read/write: the night light's brightness, 16-bit, 0-10000 on the wire.
                            ///< Written and read as a percentage on HEATING_NIGHT_LIGHT_SCALE. A write dims the
                            ///< light on a Sauter Hekla (issue #222).
@@ -98,81 +98,81 @@ enum class DeviceRegister : uint8_t {
                            ///< (issue #202). A Thermor EMOTION 3 H radiator ignores it as well (issue #228).
                            ///< \todo Confirm on a radiator that takes it that a write holds the temperature until
                            ///<       the programme's next change and that a write of 0 cancels it.
-  HEATER_TEMPERATURE_IN_FORCE,  ///< Register 0x012A, read-only: the temperature a heater with an adjustable setpoint
-                                ///< (AGILIA, Hekla, EMOTION 3 H) holds right now, tenths of a degree. The same value
-                                ///< as TEMPERATURE_IN_FORCE on the towel dryer, whose sweep read it in both.
-                                ///< \todo Read on a radiator: no AGILIA, Hekla or EMOTION 3 H has answered it yet. A
-                                ///<       heater that answers it empty keeps the comfort-setpoint write.
-  CENTRAL_HEATING_MODE,         ///< Register 0x0153, read-only: 1 while a mixed towel dryer runs on the house's
-                                ///< central heating (its electric element stays off), 0 while it uses the element.
-                                ///< An electric unit is expected to answer without a value.
-                                ///< \todo Experimental: read on one Atlantic Adelis mixed unit over four panel
-                                ///<       toggles (issue #243), never written. Confirm on a second unit, and on
-                                ///<       an electric one what the read returns.
-  OCCUPANCY_DETECTION,          ///< Register 0x0101, read/write: the heater's occupancy detection on (1) or off (0).
-                                ///< On a Sauter Hekla it reads 1 with the detection switched on and 0 with it off,
-                                ///< and the vendor app writes it (issue #222); the detected presence shows in
-                                ///< SET_PRESENCE.
-                                ///< \todo Experimental except on the Hekla: confirm on another heater that it
-                                ///<       answers this register.
-  ENERGY_TOTAL,                 ///< Register 0x0116, read-only: the energy the heater has used, whole kilowatt-hours,
-                                ///< the total its own display shows. The only register of the family whose
-                                ///< 16-bit value is sent most significant byte first (every other is little-endian).
-                                ///< Two Sauter Tahual radiators answered `0D 5E` (3422 kWh) and `01 08` (264 kWh),
-                                ///< equal to their displays (PR #238, corpus `sauter_tahual_probe_energy_register`);
-                                ///< two Thermor EMOTION 3 H answered `0C BE` and `0F A5` (issue #228) and two Atlantic
-                                ///< Adelis units `02 3F` and `03 B2`, whose displays were not compared.
-                                ///< \todo Experimental except on the Sauter Tahual: compare with the display on
-                                ///<       an EMOTION 3 H, an Adelis and a Hekla.
-  BOOST_REMAINING,              ///< Register 0x013A, read-only: the minutes left of a running boost, rounded up; one
-                                ///< byte. Read on an Atlantic Adelis during a one-hour boost: `3C` (60) a moment
-                                ///< after the start and `37` (55) five minutes later, matching the display's
-                                ///< countdown (issue #202, corpus `atlantic_adelis_probe_boost_remaining`). A second
-                                ///< unit read `1C` (28) during a boost, and `00` was read during a drying run; no
-                                ///< read while nothing runs exists, so the hub reads it during a boost only.
-                                ///< \todo Experimental: read on Atlantic Adelis units only; confirm on another dryer.
-  BOOST_DURATION,               ///< Register 0x013B, read-only here: the boost duration set on the panel, minutes. Two
-                                ///< bytes, the duration then the panel's maximum: `3C 3C` (60, 60) with a one-hour
-                                ///< boost set, `0F 3C` (15) and `1E 3C` (30) after the panel was set to those, and
-                                ///< `23 3C` (35, 60) on a second unit; the value changed 1-3 minutes after the panel
-                                ///< did (issue #202). Only the first byte is read.
-                                ///< \todo Experimental: nobody has written it, so how the dryer takes a new
-                                ///<       duration is not known.
-  DRYING_REMAINING,             ///< Register 0x013C, read-only: the minutes left of a running drying run; one byte,
-                                ///< `1C` (28) with the display between 30 and 27 minutes left (issue #202, corpus
-                                ///< `atlantic_adelis_probe_register_01_sweep_drying`), `00` while none runs.
-                                ///< \todo Experimental: read on Atlantic Adelis units only; confirm on another dryer.
-  DRYING_DURATION,              ///< Register 0x013D, read-only here: the duration of the last drying run that was
-                                ///< started, minutes. Two bytes, the duration then the panel's maximum: `1E 78`
-                                ///< (30, 120) after a run of 30 minutes. A change on the panel alone does not show
-                                ///< until the next run starts (checked twice, issue #202). Only the first byte is read.
-                                ///< \todo Experimental: nobody has written it, so how the dryer takes a new
-                                ///<       duration is not known.
-  DHW_WATER_TEMPERATURE,        ///< Family 0x00, register 0x17, read-only: a water heater's water temperature, signed
-                                ///< big-endian tenths of a degree in the first two value bytes. Four more bytes
-                                ///< follow that never changed; they are not read.
-  DHW_MODE,                     ///< Family 0x00, register 0x06, read/write: a water heater's operating mode
-                                ///< (DhwMode). Followed the display in every run.
-  DHW_HEATING,                  ///< Family 0x00, register 0x21, read-only: what is heating, eight bytes. Byte 0 is on
-                                ///< while the heater heats at all, byte 2 while the electric element runs (during
-                                ///< a boost only), bytes 3 and 4 while the heat pump runs (always set together).
-                                ///< No typed value of its own: each of those is a reading that is a slice of it.
-  DHW_BOOST_DURATION,           ///< Family 0x00, register 0x00, read/write: a water heater's boost duration, one byte.
-                                ///< It read 1 during a boost started on the display and 0 before and after it. A
-                                ///< duration is not the state: the state is FP16 (proto_dhw.h).
-  DHW_AWAY_DURATION,            ///< Family 0x00, register 0x05, read/write: a water heater's away (holiday) duration,
-                                ///< one byte: the days the holiday still runs. It read 0 at rest and with a holiday
-                                ///< scheduled for later, 4 and 2 four and two days before the end, and 255 for a
-                                ///< holiday set on the display with no end date.
-  DHW_ENERGY,                   ///< Family 0x00, register 0x04, read-only: the energy a water heater has consumed since
-                                ///< it was installed, 32-bit big-endian, Wh. Matches the display's "since start"
-                                ///< total to the kWh, and rose while the heat pump ran.
-  DHW_BRAND,                    ///< Family 0x00, register 0x07, read-only: one ASCII letter naming the brand (`41` =
-                                ///< 'A' on the Calypso).
-  COUNT,                        ///< Not a function: the number of functions, for storage sized by function.
+  TEMPERATURE_IN_FORCE,    ///< Register 0x012A, read-only: the temperature a heater with an adjustable setpoint
+                           ///< (AGILIA, Hekla, EMOTION 3 H) holds right now, tenths of a degree. The same value
+                           ///< as TOWEL_TEMPERATURE_IN_FORCE on the towel dryer, whose sweep read it in both.
+                           ///< \todo Read on a radiator: no AGILIA, Hekla or EMOTION 3 H has answered it yet. A
+                           ///<       heater that answers it empty keeps the comfort-setpoint write.
+  CENTRAL_HEATING_MODE,    ///< Register 0x0153, read-only: 1 while a mixed towel dryer runs on the house's
+                           ///< central heating (its electric element stays off), 0 while it uses the element.
+                           ///< An electric unit is expected to answer without a value.
+                           ///< \todo Experimental: read on one Atlantic Adelis mixed unit over four panel
+                           ///<       toggles (issue #243), never written. Confirm on a second unit, and on
+                           ///<       an electric one what the read returns.
+  OCCUPANCY_DETECTION,     ///< Register 0x0101, read/write: the heater's occupancy detection on (1) or off (0).
+                           ///< On a Sauter Hekla it reads 1 with the detection switched on and 0 with it off,
+                           ///< and the vendor app writes it (issue #222); the detected presence shows in
+                           ///< PRESENCE.
+                           ///< \todo Experimental except on the Hekla: confirm on another heater that it
+                           ///<       answers this register.
+  ENERGY_TOTAL,            ///< Register 0x0116, read-only: the energy the heater has used, whole kilowatt-hours,
+                           ///< the total its own display shows. The only register of the family whose
+                           ///< 16-bit value is sent most significant byte first (every other is little-endian).
+                           ///< Two Sauter Tahual radiators answered `0D 5E` (3422 kWh) and `01 08` (264 kWh),
+                           ///< equal to their displays (PR #238, corpus `sauter_tahual_probe_energy_register`);
+                           ///< two Thermor EMOTION 3 H answered `0C BE` and `0F A5` (issue #228) and two Atlantic
+                           ///< Adelis units `02 3F` and `03 B2`, whose displays were not compared.
+                           ///< \todo Experimental except on the Sauter Tahual: compare with the display on
+                           ///<       an EMOTION 3 H, an Adelis and a Hekla.
+  BOOST_REMAINING,         ///< Register 0x013A, read-only: the minutes left of a running boost, rounded up; one
+                           ///< byte. Read on an Atlantic Adelis during a one-hour boost: `3C` (60) a moment
+                           ///< after the start and `37` (55) five minutes later, matching the display's
+                           ///< countdown (issue #202, corpus `atlantic_adelis_probe_boost_remaining`). A second
+                           ///< unit read `1C` (28) during a boost, and `00` was read during a drying run; no
+                           ///< read while nothing runs exists, so the hub reads it during a boost only.
+                           ///< \todo Experimental: read on Atlantic Adelis units only; confirm on another dryer.
+  BOOST_DURATION,          ///< Register 0x013B, read-only here: the boost duration set on the panel, minutes. Two
+                           ///< bytes, the duration then the panel's maximum: `3C 3C` (60, 60) with a one-hour
+                           ///< boost set, `0F 3C` (15) and `1E 3C` (30) after the panel was set to those, and
+                           ///< `23 3C` (35, 60) on a second unit; the value changed 1-3 minutes after the panel
+                           ///< did (issue #202). Only the first byte is read.
+                           ///< \todo Experimental: nobody has written it, so how the dryer takes a new
+                           ///<       duration is not known.
+  DRYING_REMAINING,        ///< Register 0x013C, read-only: the minutes left of a running drying run; one byte,
+                           ///< `1C` (28) with the display between 30 and 27 minutes left (issue #202, corpus
+                           ///< `atlantic_adelis_probe_register_01_sweep_drying`), `00` while none runs.
+                           ///< \todo Experimental: read on Atlantic Adelis units only; confirm on another dryer.
+  DRYING_DURATION,         ///< Register 0x013D, read-only here: the duration of the last drying run that was
+                           ///< started, minutes. Two bytes, the duration then the panel's maximum: `1E 78`
+                           ///< (30, 120) after a run of 30 minutes. A change on the panel alone does not show
+                           ///< until the next run starts (checked twice, issue #202). Only the first byte is read.
+                           ///< \todo Experimental: nobody has written it, so how the dryer takes a new
+                           ///<       duration is not known.
+  DHW_WATER_TEMPERATURE,   ///< Family 0x00, register 0x17, read-only: a water heater's water temperature, signed
+                           ///< big-endian tenths of a degree in the first two value bytes. Four more bytes
+                           ///< follow that never changed; they are not read.
+  DHW_MODE,                ///< Family 0x00, register 0x06, read/write: a water heater's operating mode
+                           ///< (DhwMode). Followed the display in every run.
+  DHW_HEATING,             ///< Family 0x00, register 0x21, read-only: what is heating, eight bytes. Byte 0 is on
+                           ///< while the heater heats at all, byte 2 while the electric element runs (during
+                           ///< a boost only), bytes 3 and 4 while the heat pump runs (always set together).
+                           ///< No typed value of its own: each of those is a reading that is a slice of it.
+  DHW_BOOST_DURATION,      ///< Family 0x00, register 0x00, read/write: a water heater's boost duration, one byte.
+                           ///< It read 1 during a boost started on the display and 0 before and after it. A
+                           ///< duration is not the state: the state is FP16 (proto_dhw.h).
+  DHW_AWAY_DURATION,       ///< Family 0x00, register 0x05, read/write: a water heater's away (holiday) duration,
+                           ///< one byte: the days the holiday still runs. It read 0 at rest and with a holiday
+                           ///< scheduled for later, 4 and 2 four and two days before the end, and 255 for a
+                           ///< holiday set on the display with no end date.
+  DHW_ENERGY,              ///< Family 0x00, register 0x04, read-only: the energy a water heater has consumed since
+                           ///< it was installed, 32-bit big-endian, Wh. Matches the display's "since start"
+                           ///< total to the kWh, and rose while the heat pump ran.
+  DHW_BRAND,               ///< Family 0x00, register 0x07, read-only: one ASCII letter naming the brand (`41` =
+                           ///< 'A' on the Calypso).
+  COUNT,                   ///< Not a function: the number of functions, for storage sized by function.
 };
 
-/// @brief Operating modes of the mode register (DeviceRegister::SET_MODE).
+/// @brief Operating modes of the mode register (DeviceRegister::OPERATING_MODE).
 enum class HeatingMode : uint8_t {
   AUTO = 0x00,               ///< Automatic mode; the device manages the setpoint itself.
   MANUAL = 0x01,             ///< Manual mode; follows the last written setpoint.
@@ -295,7 +295,8 @@ std::optional<DeviceRegister> heating_action_function(std::string_view name);
 ///         value (a read); nullptr for a function the action does not offer or an out-of-range value.
 const char *heating_action_value_label(DeviceRegister fn);
 
-/// @brief Stable lowercase name for a heating function ("power_on", "set_temperature", ...).
+/// @brief The register's action name: its label in the log, and the function name `heating_control` takes for it
+///        ("power_on", "set_temperature", ...).
 /// @param fn Function.
 /// @return Null-terminated string; "unknown" for an out-of-range value.
 const char *device_register_name(DeviceRegister fn);
@@ -333,11 +334,11 @@ uint8_t device_register_family(DeviceRegister fn);
 /// @brief Encode a write ("set") of one register into a CMD_WRITE_PRIVATE (0x20) payload.
 ///
 /// `value` is interpreted by the register's encoding:
-///   - SET_TEMPERATURE: degrees Celsius within [HEATING_TEMP_MIN_C, HEATING_TEMP_MAX_C], encoded as
+///   - COMFORT_SETPOINT: degrees Celsius within [HEATING_TEMP_MIN_C, HEATING_TEMP_MAX_C], encoded as
 ///     a 16-bit little-endian value in tenths of a degree, round-half-away-from-zero(10 * value).
-///   - DEROGATED_SETPOINT: as SET_TEMPERATURE, or 0 (`00 00`) to cancel the override.
-///   - SET_MODE: a HeatingMode value widened to float that heating_mode_is_writable() accepts.
-///   - SET_PRESENCE, SET_OPEN_WINDOW_DETECTION, OCCUPANCY_DETECTION: 0 or 1.
+///   - DEROGATED_SETPOINT: as COMFORT_SETPOINT, or 0 (`00 00`) to cancel the override.
+///   - OPERATING_MODE: a HeatingMode value widened to float that heating_mode_is_writable() accepts.
+///   - PRESENCE, OPEN_WINDOW_DETECTION, OCCUPANCY_DETECTION: 0 or 1.
 ///   - TOWEL_MODE: a TowelDryerMode value widened to float (0-3).
 ///   - TEMPORARY_STATE: a HeatingTemporaryState value widened to float (0-2).
 ///   - NIGHT_LIGHT: 0 or 1.
@@ -345,7 +346,7 @@ uint8_t device_register_family(DeviceRegister fn);
 ///   - DHW_BOOST_DURATION, DHW_AWAY_DURATION: a whole number 0-255.
 ///   - NIGHT_LIGHT_BRIGHTNESS: a percentage 0-100, encoded on HEATING_NIGHT_LIGHT_SCALE as a 16-bit
 ///   little-endian register value (0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX), rounded to the nearest whole value.
-/// A read-only register (including POWER_ON, MIDNIGHT_SYNC and the measurement registers) is never
+/// A read-only register (including PAIRED_DEVICES, SETPOINT_BLOCK and the measurement registers) is never
 /// encoded as a write, and out-of-range, non-integral (for enum/binary encodings) or non-finite
 /// input is rejected: a byte derived from a truncating or wrapping cast is never emitted.
 /// @param fn Register to write.
@@ -380,7 +381,7 @@ size_t encode_heating_read(DeviceRegister fn, uint8_t out[PRIVATE_REGISTER_PAYLO
 /// @brief Encode the function the `heating_control` action runs: a read for a read-only register,
 /// a write for every other.
 ///
-/// POWER_ON and MIDNIGHT_SYNC are reads (their `value` is ignored); the measurement registers are
+/// PAIRED_DEVICES and SETPOINT_BLOCK are reads (their `value` is ignored); the measurement registers are
 /// reads too; the others are writes as in encode_heating_write().
 /// @param fn Function to encode.
 /// @param value Function-specific value (ignored for a read).
@@ -409,7 +410,7 @@ std::optional<float> decode_register_value(DeviceRegister fn, std::span<const ui
 /// Accepts a CMD_WRITE_PRIVATE_ACK (0x21) whose data starts with `0C 60 <family> <reg>` or
 /// `0C 61 <family> <reg>` for this function's register, followed by at least the register's value bytes.
 /// Anything else (another command, another register, a truncated value, a function without a typed
-/// decode such as POWER_ON) is "no value".
+/// decode such as PAIRED_DEVICES) is "no value".
 ///
 /// The value is returned in natural units: degrees Celsius for the temperature registers, whole
 /// kilowatt-hours for the energy total, minutes for the run timers, a water heater's water temperature in degrees
@@ -430,7 +431,7 @@ bool decode_heating_reply(const IoFrame &reply, DeviceRegister fn, float &value)
 /// @param reply The device's reply frame.
 /// @param fn Register the request addressed.
 /// @return true when the reply holds the register's value bytes; false for an empty answer, another register or a
-///         function with no typed value (POWER_ON).
+///         function with no typed value (PAIRED_DEVICES).
 bool heating_reply_carries_value(const IoFrame &reply, DeviceRegister fn);
 
 }  // namespace home_io_control

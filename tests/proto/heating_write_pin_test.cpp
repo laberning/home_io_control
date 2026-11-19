@@ -4,6 +4,7 @@
 /// contract of the write rules; they change only where a decision record changes a rule.
 
 #include "proto_codecs.h"
+#include "proto_device_readings.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"
 
@@ -53,22 +54,14 @@ void expect_cases(DeviceRegister fn, const std::vector<WriteCase> &cases) {
 
 TEST(HeatingWritePin, ARegisterThatIsReadOnlyNeverEncodesAWrite) {
   const std::vector<DeviceRegister> read_only = {
-      DeviceRegister::POWER_ON,
-      DeviceRegister::MIDNIGHT_SYNC,
-      DeviceRegister::ROOM_TEMPERATURE,
-      DeviceRegister::REGULATOR_STATE,
-      DeviceRegister::MAX_SETPOINT,
-      DeviceRegister::WINDOW_OPEN,
-      DeviceRegister::WORKING_RATE,
-      DeviceRegister::TEMPERATURE_IN_FORCE,
-      DeviceRegister::ECO_SETBACK,
-      DeviceRegister::HEATER_TEMPERATURE_IN_FORCE,
-      DeviceRegister::CENTRAL_HEATING_MODE,
-      DeviceRegister::ENERGY_TOTAL,
-      DeviceRegister::BOOST_REMAINING,
-      DeviceRegister::BOOST_DURATION,
-      DeviceRegister::DRYING_REMAINING,
-      DeviceRegister::DRYING_DURATION,
+      DeviceRegister::PAIRED_DEVICES,       DeviceRegister::SETPOINT_BLOCK,
+      DeviceRegister::ROOM_TEMPERATURE,     DeviceRegister::REGULATOR_STATE,
+      DeviceRegister::MAX_SETPOINT,         DeviceRegister::WINDOW_OPEN,
+      DeviceRegister::WORKING_RATE,         DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE,
+      DeviceRegister::ECO_SETBACK,          DeviceRegister::TEMPERATURE_IN_FORCE,
+      DeviceRegister::CENTRAL_HEATING_MODE, DeviceRegister::ENERGY_TOTAL,
+      DeviceRegister::BOOST_REMAINING,      DeviceRegister::BOOST_DURATION,
+      DeviceRegister::DRYING_REMAINING,     DeviceRegister::DRYING_DURATION,
   };
   for (const DeviceRegister fn : read_only) {
     EXPECT_FALSE(device_register_is_writable(fn)) << device_register_name(fn);
@@ -79,10 +72,10 @@ TEST(HeatingWritePin, ARegisterThatIsReadOnlyNeverEncodesAWrite) {
 
 TEST(HeatingWritePin, TheWritableRegistersAreExactlyTheseThirteen) {
   const std::vector<DeviceRegister> writable = {
-      DeviceRegister::SET_TEMPERATURE,           DeviceRegister::SET_MODE,    DeviceRegister::SET_PRESENCE,
-      DeviceRegister::SET_OPEN_WINDOW_DETECTION, DeviceRegister::TOWEL_MODE,  DeviceRegister::TEMPORARY_STATE,
-      DeviceRegister::DEROGATED_SETPOINT,        DeviceRegister::NIGHT_LIGHT, DeviceRegister::NIGHT_LIGHT_BRIGHTNESS,
-      DeviceRegister::OCCUPANCY_DETECTION,       DeviceRegister::DHW_MODE,    DeviceRegister::DHW_BOOST_DURATION,
+      DeviceRegister::COMFORT_SETPOINT,      DeviceRegister::OPERATING_MODE, DeviceRegister::PRESENCE,
+      DeviceRegister::OPEN_WINDOW_DETECTION, DeviceRegister::TOWEL_MODE,     DeviceRegister::TEMPORARY_STATE,
+      DeviceRegister::DEROGATED_SETPOINT,    DeviceRegister::NIGHT_LIGHT,    DeviceRegister::NIGHT_LIGHT_BRIGHTNESS,
+      DeviceRegister::OCCUPANCY_DETECTION,   DeviceRegister::DHW_MODE,       DeviceRegister::DHW_BOOST_DURATION,
       DeviceRegister::DHW_AWAY_DURATION,
   };
   size_t count = 0;
@@ -96,7 +89,7 @@ TEST(HeatingWritePin, TheWritableRegistersAreExactlyTheseThirteen) {
 }
 
 TEST(HeatingWritePin, ASetpointIsTenthsOfADegreeFromSevenToTwentyEight) {
-  expect_cases(DeviceRegister::SET_TEMPERATURE,
+  expect_cases(DeviceRegister::COMFORT_SETPOINT,
                {
                    {7.0F, set_request(0x03, {0x46, 0x00})},
                    {7.04F, set_request(0x03, {0x46, 0x00})},
@@ -137,22 +130,22 @@ TEST(HeatingWritePin, AnOverrideIsASetpointOrZeroWhichCancelsIt) {
 }
 
 TEST(HeatingWritePin, TheModeRegisterTakesEveryModeButTheExternalSetpoint) {
-  expect_cases(DeviceRegister::SET_MODE, {
-                                             {0.0F, set_request(0x00, {0x00})},
-                                             {1.0F, set_request(0x00, {0x01})},
-                                             {2.0F, set_request(0x00, {0x02})},
-                                             {3.0F, {}},  // the external setpoint: readable, never written
-                                             {4.0F, set_request(0x00, {0x04})},
-                                             {5.0F, {}},
-                                             {255.0F, {}},
-                                             {256.0F, {}},
-                                             {-1.0F, {}},
-                                             {1.5F, {}},
-                                             {3.5F, {}},
-                                             {NAN_F, {}},
-                                             {INF_F, {}},
-                                             {-INF_F, {}},
-                                         });
+  expect_cases(DeviceRegister::OPERATING_MODE, {
+                                                   {0.0F, set_request(0x00, {0x00})},
+                                                   {1.0F, set_request(0x00, {0x01})},
+                                                   {2.0F, set_request(0x00, {0x02})},
+                                                   {3.0F, {}},  // the external setpoint: readable, never written
+                                                   {4.0F, set_request(0x00, {0x04})},
+                                                   {5.0F, {}},
+                                                   {255.0F, {}},
+                                                   {256.0F, {}},
+                                                   {-1.0F, {}},
+                                                   {1.5F, {}},
+                                                   {3.5F, {}},
+                                                   {NAN_F, {}},
+                                                   {INF_F, {}},
+                                                   {-INF_F, {}},
+                                               });
 }
 
 TEST(HeatingWritePin, AFlagRegisterTakesZeroOrOne) {
@@ -160,8 +153,8 @@ TEST(HeatingWritePin, AFlagRegisterTakesZeroOrOne) {
     DeviceRegister fn;
     uint8_t register_low;
   } flags[] = {
-      {DeviceRegister::SET_PRESENCE, 0x10},
-      {DeviceRegister::SET_OPEN_WINDOW_DETECTION, 0x06},
+      {DeviceRegister::PRESENCE, 0x10},
+      {DeviceRegister::OPEN_WINDOW_DETECTION, 0x06},
       {DeviceRegister::NIGHT_LIGHT, 0x44},
       {DeviceRegister::OCCUPANCY_DETECTION, 0x01},
   };
@@ -228,9 +221,9 @@ TEST(HeatingWritePin, TheActionPayloadReadsAReadOnlyRegisterAndWritesTheOthers) 
   uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   ASSERT_EQ(encode_heating_payload(DeviceRegister::WINDOW_OPEN, 5.0F, out), 4u);
   EXPECT_EQ(std::vector<uint8_t>(out, out + 4), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x0E}));
-  ASSERT_EQ(encode_heating_payload(DeviceRegister::SET_PRESENCE, 1.0F, out), 5u);
+  ASSERT_EQ(encode_heating_payload(DeviceRegister::PRESENCE, 1.0F, out), 5u);
   EXPECT_EQ(std::vector<uint8_t>(out, out + 5), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x10, 0x01}));
-  EXPECT_EQ(encode_heating_payload(DeviceRegister::SET_PRESENCE, 2.0F, out), 0u);
+  EXPECT_EQ(encode_heating_payload(DeviceRegister::PRESENCE, 2.0F, out), 0u);
 }
 
 // === The night light's percent scale ===
@@ -356,4 +349,86 @@ TEST(MainParameterTemperaturePin, AFixedRangeProfileEncodesOverTheProfileRange) 
   const HeatingWritePlan plan = plan_heating_write(*pump, {.kind = HeatingWriteKind::TARGET, .target_c = 20.0F}, facts);
   ASSERT_EQ(plan.kind, HeatingPlanKind::TEMPERATURE);
   EXPECT_EQ(plan.main_parameter, 25600);
+}
+
+// === The register table ===
+
+namespace {
+
+/// What one register is: where it lives, its log label and the name the `heating_control` action offers it under.
+struct RegisterFact {
+  DeviceRegister fn;
+  uint8_t family;
+  uint8_t low;
+  const char *name;        ///< The log label.
+  bool offered_by_action;  ///< Whether `heating_control` takes the name.
+};
+
+}  // namespace
+
+TEST(HeatingRegisterPin, EveryRegisterKeepsItsNumberItsLabelAndItsPlaceInTheAction) {
+  constexpr uint8_t H = 0x01;  // the heater family
+  constexpr uint8_t D = 0x00;  // the water heater family
+  const std::vector<RegisterFact> facts = {
+      {DeviceRegister::PAIRED_DEVICES, H, 0x2C, "power_on", true},
+      {DeviceRegister::COMFORT_SETPOINT, H, 0x03, "set_temperature", true},
+      {DeviceRegister::OPERATING_MODE, H, 0x00, "set_mode", true},
+      {DeviceRegister::PRESENCE, H, 0x10, "set_presence", true},
+      {DeviceRegister::OPEN_WINDOW_DETECTION, H, 0x06, "set_open_window_detection", true},
+      {DeviceRegister::SETPOINT_BLOCK, H, 0x30, "midnight_sync", true},
+      {DeviceRegister::ROOM_TEMPERATURE, H, 0x15, "room_temperature", false},
+      {DeviceRegister::REGULATOR_STATE, H, 0x17, "regulator_state", false},
+      {DeviceRegister::MAX_SETPOINT, H, 0x02, "max_setpoint", false},
+      {DeviceRegister::WINDOW_OPEN, H, 0x0E, "window_open", true},
+      {DeviceRegister::TOWEL_MODE, H, 0x36, "towel_mode", false},
+      {DeviceRegister::TEMPORARY_STATE, H, 0x3E, "temporary_state", false},
+      {DeviceRegister::WORKING_RATE, H, 0x26, "working_rate", false},
+      {DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, H, 0x37, "temperature_in_force", false},
+      {DeviceRegister::ECO_SETBACK, H, 0x04, "eco_setback", false},
+      {DeviceRegister::DEROGATED_SETPOINT, H, 0x1D, "set_derogation", true},
+      {DeviceRegister::TEMPERATURE_IN_FORCE, H, 0x2A, "heater_temperature_in_force", false},
+      {DeviceRegister::NIGHT_LIGHT, H, 0x44, "night_light", false},
+      {DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, H, 0x42, "night_light_brightness", false},
+      {DeviceRegister::CENTRAL_HEATING_MODE, H, 0x53, "central_heating_mode", false},
+      {DeviceRegister::OCCUPANCY_DETECTION, H, 0x01, "occupancy_detection", false},
+      {DeviceRegister::ENERGY_TOTAL, H, 0x16, "energy_total", false},
+      {DeviceRegister::BOOST_REMAINING, H, 0x3A, "boost_remaining", false},
+      {DeviceRegister::BOOST_DURATION, H, 0x3B, "boost_duration", false},
+      {DeviceRegister::DRYING_REMAINING, H, 0x3C, "drying_remaining", false},
+      {DeviceRegister::DRYING_DURATION, H, 0x3D, "drying_duration", false},
+      {DeviceRegister::DHW_WATER_TEMPERATURE, D, 0x17, "dhw_water_temperature", false},
+      {DeviceRegister::DHW_MODE, D, 0x06, "dhw_mode", false},
+      {DeviceRegister::DHW_HEATING, D, 0x21, "dhw_heating", false},
+      {DeviceRegister::DHW_BOOST_DURATION, D, 0x00, "dhw_boost_duration", false},
+      {DeviceRegister::DHW_AWAY_DURATION, D, 0x05, "dhw_away_duration", false},
+      {DeviceRegister::DHW_ENERGY, D, 0x04, "dhw_energy", false},
+      {DeviceRegister::DHW_BRAND, D, 0x07, "dhw_brand", false},
+  };
+  EXPECT_EQ(facts.size(), static_cast<size_t>(DeviceRegister::COUNT)) << "a register is missing from the pin";
+  for (const RegisterFact &f : facts) {
+    uint8_t high = 0xEE;
+    uint8_t low = 0xEE;
+    ASSERT_TRUE(device_register_bytes(f.fn, high, low)) << f.name;
+    EXPECT_EQ(high, f.family) << f.name;
+    EXPECT_EQ(low, f.low) << f.name;
+    EXPECT_STREQ(device_register_name(f.fn), f.name);
+    const std::optional<DeviceRegister> offered = heating_action_function(f.name);
+    EXPECT_EQ(offered.has_value(), f.offered_by_action) << f.name;
+    if (offered.has_value()) {
+      EXPECT_EQ(*offered, f.fn) << f.name;
+    }
+  }
+}
+
+TEST(HeatingRegisterPin, TheTemperaturesInForceAreReadFromTheirOwnRegisters) {
+  // The same value on two kinds of heater, in two registers: each reading names the register of its kind.
+  const auto register_of = [](DeviceReading reading) {
+    const DeviceReadingRow *row = find_device_reading(reading);
+    EXPECT_NE(row, nullptr);
+    const auto *source = row != nullptr ? std::get_if<RegisterSource>(&row->source) : nullptr;
+    EXPECT_NE(source, nullptr);
+    return source != nullptr ? source->fn : DeviceRegister::COUNT;
+  };
+  EXPECT_EQ(register_of(DeviceReading::TOWEL_TEMPERATURE_IN_FORCE), DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE);
+  EXPECT_EQ(register_of(DeviceReading::TEMPERATURE_IN_FORCE), DeviceRegister::TEMPERATURE_IN_FORCE);
 }
