@@ -389,6 +389,26 @@ TEST(HeaterController, APlannedRegisterWriteSendsItsBytesAppliesTheHookThenReads
   EXPECT_EQ(sent_register(fx.radio.get_sent_data()[1]), 0x03);
 }
 
+TEST(HeaterController, AReadBackAfterAnAcknowledgedWriteKeepsTheFullRetryBudget) {
+  HeaterControllerFixture fx;
+  make_heater(fx);
+  fx.queue_register_ack({0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00});  // the write is acknowledged, the read-back is not
+
+  EXPECT_TRUE(
+      fx.controller.execute_heating_plan("ABC123", register_plan(DeviceRegister::COMFORT_SETPOINT, 20.5F), nullptr));
+
+  const auto &sent = fx.radio.get_sent_data();
+  ASSERT_GT(sent.size(), 1u);
+  EXPECT_EQ(sent[0][10], 0x61) << "the write goes first";
+  size_t read_tries = 0;
+  for (size_t i = 1; i < sent.size(); i++) {
+    EXPECT_EQ(sent[i][10], 0x60) << "after the write only the read-back is sent";
+    read_tries++;
+  }
+  EXPECT_EQ(read_tries, static_cast<size_t>(EXCHANGE_RETRY_COUNT))
+      << "the user waits on it: the full budget, not a poll's " << static_cast<int>(SCHEDULED_POLL_MAX_TRIES);
+}
+
 TEST(HeaterControllerHeatingPlan, ARegisterPlanWithoutARegisterSendsNothingAndIsNotAccepted) {
   HeaterControllerFixture fx;
   make_heater(fx);
@@ -814,6 +834,12 @@ TEST(HeaterController, ATargetOnAProgrammeHeaterSendsTheSameExchangesEveryTimeWh
       {"dryer in the programme with a boost on top: R mode, R timed run, W+R comfort",
        true,
        InForceSupport::REPORTED,
+       {{DRYER_MODE, DRYER_PROGRAMME}, {DRYER_TIMED_RUN, TIMED_BOOST}},
+       {DRYER_MODE, DRYER_TIMED_RUN, COMFORT_REGISTER, COMFORT_REGISTER},
+       {COMFORT_REGISTER}},
+      {"dryer in the programme with a boost on top, unknown: R mode, R timed run, W+R comfort (no R in force)",
+       true,
+       InForceSupport::UNKNOWN,
        {{DRYER_MODE, DRYER_PROGRAMME}, {DRYER_TIMED_RUN, TIMED_BOOST}},
        {DRYER_MODE, DRYER_TIMED_RUN, COMFORT_REGISTER, COMFORT_REGISTER},
        {COMFORT_REGISTER}},

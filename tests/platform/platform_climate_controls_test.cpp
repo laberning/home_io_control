@@ -10,25 +10,35 @@
 
 #include <gtest/gtest.h>
 
+#include <map>
+
 using namespace esphome::home_io_control;
 
 namespace {
 
 /// Serves a heater: the device port holds it, the heating port records the register traffic and answers
-/// reads from a script. A read that has a scripted reply also stores it in the heater's record, as the
-/// hub's read-back does.
+/// reads from a script. A test scripts what the heater's record holds after a read of a register with
+/// heater_holds(): the read answers the value, which is stored on the record with one notification, as a decoded
+/// reply is (HeaterController ReadHeatingRegisterNotifiesTheEntities).
 class ClimateControlsHub : public test::DevicePortDouble, public test::HeatingPortDouble {
  public:
   bool read_heating_register(const std::string &device_id, DeviceRegister fn, float *value_out,
                              uint8_t max_tries) override {
     const bool read = HeatingPortDouble::read_heating_register(device_id, fn, value_out, max_tries);
-    if (read) {
+    const auto held = this->held_after_read_.find(fn);
+    if (held != this->held_after_read_.end()) {
       if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
-        test::store_reading(*dev, fn, this->read_replies.at(fn));
+        test::store_reading(*dev, fn, held->second);
         this->registry_.notify(device_id);
       }
     }
     return read;
+  }
+
+  /// A read of `fn` answers `value`, and the heater's record holds it afterwards.
+  void heater_holds(DeviceRegister fn, float value) {
+    this->read_replies[fn] = value;
+    this->held_after_read_[fn] = value;
   }
 
   void add_heater() {
@@ -43,6 +53,9 @@ class ClimateControlsHub : public test::DevicePortDouble, public test::HeatingPo
     edit(dev);
     this->trigger_device_update("ABC123", dev, /*cache_device=*/true);
   }
+
+ private:
+  std::map<DeviceRegister, float> held_after_read_;
 };
 
 class TestableDetectionSwitch : public IOHomeHeaterSettingSwitch {
@@ -230,7 +243,7 @@ TEST(PlatformCentralHeatingModeSensor, LosesItsStateWhenTheReadingIsDropped) {
 TEST(PlatformHeaterSettingSwitch, WritesThenReadsTheRegisterBackWithTheFullBudget) {
   ClimateControlsHub hub;
   hub.add_heater();
-  hub.read_replies[DeviceRegister::OPEN_WINDOW_DETECTION] = 1.0F;
+  hub.heater_holds(DeviceRegister::OPEN_WINDOW_DETECTION, 1.0F);
   TestableDetectionSwitch sw;
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");
@@ -250,7 +263,7 @@ TEST(PlatformHeaterSettingSwitch, WritesThenReadsTheRegisterBackWithTheFullBudge
 TEST(PlatformHeaterSettingSwitch, ShowsWhatTheHeaterReportsNotWhatWasCommanded) {
   ClimateControlsHub hub;
   hub.add_heater();
-  hub.read_replies[DeviceRegister::OPEN_WINDOW_DETECTION] = 0.0F;  // the heater kept it off
+  hub.heater_holds(DeviceRegister::OPEN_WINDOW_DETECTION, 0.0F);  // the heater kept it off
   TestableDetectionSwitch sw;
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");
@@ -357,8 +370,8 @@ TEST(PlatformHeaterNightLight, NothingIsShownUntilTheLightHasBeenRead) {
 TEST(PlatformHeaterNightLight, SwitchingOnAtANewBrightnessWritesBrightnessThenOnAndReadsBothBack) {
   NightLightRig rig;
   rig.deliver(0, 100.0F);
-  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT] = 1.0F;
-  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT_BRIGHTNESS] = 66.0F;
+  rig.hub.heater_holds(DeviceRegister::NIGHT_LIGHT, 1.0F);
+  rig.hub.heater_holds(DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, 66.0F);
 
   rig.request(true, 0.66F);
 
@@ -379,8 +392,8 @@ TEST(PlatformHeaterNightLight, AWriteIsPublishedOnceWithBothReadBacks) {
   // old 100 %) must not be shown before the brightness read-back.
   NightLightRig rig;
   rig.deliver(0, 100.0F);
-  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT] = 1.0F;
-  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT_BRIGHTNESS] = 66.0F;
+  rig.hub.heater_holds(DeviceRegister::NIGHT_LIGHT, 1.0F);
+  rig.hub.heater_holds(DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, 66.0F);
   std::vector<float> shown;
   rig.hub.register_device_callback([&rig, &shown](const std::string &, const IoDevice &) {
     shown.push_back(rig.state.current_values.get_brightness());
@@ -399,7 +412,7 @@ TEST(PlatformHeaterNightLight, AWriteIsPublishedOnceWithBothReadBacks) {
 TEST(PlatformHeaterNightLight, OnAtTheBrightnessTheHeaterHoldsWritesOnlyOnOff) {
   NightLightRig rig;
   rig.deliver(0, 100.0F);
-  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT] = 1.0F;
+  rig.hub.heater_holds(DeviceRegister::NIGHT_LIGHT, 1.0F);
 
   rig.request(true, 1.0F);
 
@@ -425,7 +438,7 @@ TEST(PlatformHeaterNightLight, OnWithoutAKnownBrightnessWritesTheBrightness) {
 TEST(PlatformHeaterNightLight, OffWritesOnlyOnOff) {
   NightLightRig rig;
   rig.deliver(1, 100.0F);
-  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT] = 0.0F;
+  rig.hub.heater_holds(DeviceRegister::NIGHT_LIGHT, 0.0F);
 
   rig.request(false, 0.3F);
 
@@ -463,7 +476,7 @@ TEST(PlatformHeaterNightLight, OnAtAPanelLevelBetweenTwoPercentagesKeepsTheLevel
   for (const float level : {3.3F, 33.0F, 70.25F}) {
     NightLightRig rig;
     rig.deliver(0, level);
-    rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT] = 1.0F;
+    rig.hub.heater_holds(DeviceRegister::NIGHT_LIGHT, 1.0F);
     rig.request(true, rig.state.current_values.get_brightness());
     ASSERT_EQ(rig.hub.writes.size(), 1u) << level << " %";
     EXPECT_EQ(rig.hub.writes[0].fn, DeviceRegister::NIGHT_LIGHT) << level << " %";
@@ -489,7 +502,7 @@ TEST(PlatformHeaterNightLight, ARefusedBrightnessWriteStillSwitchesTheLightAndIs
   NightLightRig rig;
   rig.deliver(0, 100.0F);
   rig.hub.refused_writes = {DeviceRegister::NIGHT_LIGHT_BRIGHTNESS};
-  rig.hub.read_replies[DeviceRegister::NIGHT_LIGHT] = 1.0F;
+  rig.hub.heater_holds(DeviceRegister::NIGHT_LIGHT, 1.0F);
 
   rig.request(true, 0.5F);
 
@@ -517,7 +530,7 @@ TEST(PlatformHeaterNightLight, AnUnacknowledgedSwitchIsNotReadBackAndShowsTheHea
 TEST(PlatformHeaterSettingSwitch, OccupancyDetectionWritesRegister0x0101ThenReadsItBack) {
   ClimateControlsHub hub;
   hub.add_heater();
-  hub.read_replies[DeviceRegister::OCCUPANCY_DETECTION] = 1.0F;
+  hub.heater_holds(DeviceRegister::OCCUPANCY_DETECTION, 1.0F);
   TestableDetectionSwitch sw(DeviceReading::OCCUPANCY_DETECTION);
   sw.set_parent(&hub);
   sw.set_device_id("ABC123");

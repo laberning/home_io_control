@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <deque>
 #include <functional>
 #include <map>
 #include <string>
@@ -18,157 +19,104 @@ using namespace esphome::climate;
 
 namespace {
 
-/// The heater's hub: the device port holds the device, the heating port records the register writes, plans
-/// and reads. A plan is replayed by kind so the level and temperature paths can be refused on their own;
-/// a read with a scripted reply also stores it in the heater's record, as the hub's read-back does.
+/// The heater's hub: the device port holds the device, the heating port records the plans the entity hands
+/// over and answers what the test scripted. The double holds no rule of the heater controller: a test scripts
+/// what the heater's record holds after a read or an accepted write as record edits, in the order the controller
+/// makes its reads, each edit followed by one notification as a stored read is.
 class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDouble {
  public:
-  /// One set_heating_temperature() call.
-  struct TemperatureCall {
-    uint16_t main_parameter;
-    HeatingFp fp;
-  };
-  std::vector<TemperatureCall> temperature_calls;
-  bool temperature_result{true};
-  /// Heating levels sent through set_heating_level(), in order.
-  std::vector<uint8_t> levels;
-  bool level_result{true};
+  /// A change of the heater's stored record, as a decoded reply makes it.
+  using RecordEdit = std::function<void(IoDevice &)>;
 
-  bool set_heating_temperature(uint16_t main_parameter, const HeatingFp &fp) {
-    this->temperature_calls.push_back({main_parameter, fp});
-    return this->temperature_result;
-  }
+  /// What the record holds after read_programme_state(): applied in order, a notification after each. The answer
+  /// is `programme_state_answer`, and the edits apply whatever it is (a heater may store a mode and then stay silent).
+  std::vector<RecordEdit> on_programme_state;
+  /// What the record holds after each accepted plan, in the order the plans are accepted: the edits of one plan
+  /// in order, a notification after each. A plan beyond the script changes nothing.
+  std::deque<std::vector<RecordEdit>> after_plan;
 
-  bool set_heating_level(uint8_t level) {
-    this->levels.push_back(level);
-    return this->level_result;
-  }
-
-  bool read_heating_register(const std::string &device_id, DeviceRegister fn, float *value_out,
-                             uint8_t max_tries) override {
-    const bool read = HeatingPortDouble::read_heating_register(device_id, fn, value_out, max_tries);
-    if (read) {
-      // What the real hub does with a decoded reply: store it on the device record and notify.
-      if (IoDevice *dev = this->registry_.get(device_id); dev != nullptr) {
-        test::store_reading(*dev, fn, this->read_replies.at(fn));
-        this->registry_.notify(device_id);
-      }
-    }
-    return read;
-  }
-
-  /// A scripted answer that stands for "no reply".
-  static constexpr int16_t SILENT = -1;
-  /// What the heater answers to the read of its mode, as the register's value; SILENT (the default): no reply.
-  /// A test that sets a target on a heater with a programme says what the heater answers.
-  int16_t mode_answer{SILENT};
-  /// What the heater answers to the read of its timed run (a towel dryer in its programme); SILENT (the
-  /// default): no reply.
-  int16_t timed_run_answer{SILENT};
-  /// What the heater answers to the read of its temperature in force: UNKNOWN is no reply, REPORTED a value of
-  /// `in_force_value_c`, ABSENT an empty answer. Stored as the hub's read does, only while the programme runs
-  /// and the heater has not answered before (the hub reads nothing otherwise).
-  InForceSupport in_force_answer{InForceSupport::UNKNOWN};
-  float in_force_value_c{17.0F};
-  /// What the heater answers to the status read for its heating level, made for a target on a heater that takes
-  /// the override in an eco period only while its programme runs and it reports a temperature in force: a level
-  /// byte, or SILENT (the default) for no level. The stored level is replaced by the answer, as the hub does.
-  int16_t level_answer{SILENT};
-
-  /// What the hub's read does: the mode, the timed run while the mode shows the programme and the temperature
-  /// in force, each stored on the heater's record with a notification, stopping at the first that is silent.
   bool read_programme_state(const std::string &device_id) override {
-    HeatingPortDouble::read_programme_state(device_id);
-    IoDevice *dev = this->registry_.get(device_id);
-    if (dev == nullptr)
-      return false;  // no record: nothing to read, as the hub answers
-    const HeatingProfile *profile = find_heating_profile(*dev);
-    if (profile == nullptr || profile->programme_period == nullptr)
-      return false;
-    if (this->mode_answer == SILENT)
-      return false;
-    test::store_reading(*dev, *profile->mode_fn, this->mode_answer);
-    if (const auto timed_run = timed_run_register(*profile, *dev)) {
-      if (this->timed_run_answer == SILENT) {
-        this->registry_.notify(device_id);
-        return false;
-      }
-      test::store_reading(*dev, *timed_run, this->timed_run_answer);
-    }
-    clear_inactive_programme_reading(*profile, *dev);
-    if (programme_period_active(*profile, *dev) && test::in_force_of(*dev) == InForceSupport::UNKNOWN &&
-        this->in_force_answer != InForceSupport::UNKNOWN) {
-      test::set_in_force_support(*dev, this->in_force_answer);
-      if (this->in_force_answer == InForceSupport::REPORTED)
-        test::store_reading(*dev, profile->programme_period->in_force_fn, this->in_force_value_c);
-    }
-    if (profile->programme_period->override_in_eco_only && programme_period_active(*profile, *dev) &&
-        test::in_force_of(*dev) == InForceSupport::REPORTED)
-      test::store_reading(*dev, DeviceReading::HEATING_LEVEL, this->level_answer);
-    this->registry_.notify(device_id);
-    return true;
+    const bool answer = HeatingPortDouble::read_programme_state(device_id);
+    this->apply_(device_id, this->on_programme_state);
+    return answer;
   }
 
-  /// The real executor's dispatch, replayed through the helpers above so each expectation reads the
-  /// register, level or temperature call the plan stands for.
   bool execute_heating_plan(const std::string &device_id, const HeatingWritePlan &plan,
                             const std::function<void()> &on_accepted) override {
-    this->plans.push_back(plan);
-    bool accepted = false;
-    switch (plan.kind) {
-      case HeatingPlanKind::REGISTER:
-        if (!plan.register_fn)
-          return false;
-        accepted = this->send_heating_command(device_id, *plan.register_fn, plan.register_value);
-        break;
-      case HeatingPlanKind::LEVEL:
-        accepted = this->set_heating_level(plan.level);
-        break;
-      case HeatingPlanKind::TEMPERATURE:
-        accepted = this->set_heating_temperature(plan.main_parameter, plan.fp);
-        break;
-      case HeatingPlanKind::NONE:
-        break;
-    }
-    if (!accepted)
+    if (!HeatingPortDouble::execute_heating_plan(device_id, plan, on_accepted))
       return false;
-    on_accepted();
-    if (!plan.read_back || !plan.register_fn ||
-        !this->read_heating_register(device_id, *plan.register_fn, nullptr, EXCHANGE_RETRY_COUNT))
-      return true;
-    if (plan.temporary_override) {
-      // What the hub's read-back of an override does: the value read is the temperature in force now.
-      IoDevice *dev = this->registry_.get(device_id);
-      const HeatingProfile *profile = dev != nullptr ? find_heating_profile(*dev) : nullptr;
-      const float held = this->read_replies.at(*plan.register_fn);
-      if (profile != nullptr && profile->programme_period != nullptr) {
-        // A written override is the temperature now in force; 0 (none active, a refusal) leaves the reading alone.
-        if (held >= HEATING_TEMP_MIN_C)
-          test::store_reading(*dev, profile->programme_period->in_force_fn, held);
-        this->registry_.notify(device_id);
-      }
-    } else {
-      this->show_temperature_in_force(device_id, *plan.register_fn);
+    if (!this->after_plan.empty()) {
+      const std::vector<RecordEdit> edits = std::move(this->after_plan.front());
+      this->after_plan.pop_front();
+      this->apply_(device_id, edits);
     }
     return true;
   }
 
-  /// What the hub does after a read-back with a value of the mode or the timed run that shows the programme
-  /// running: one read of the temperature in force (`in_force_answer`), stored and notified, for the card only.
-  /// An answer without a value marks nothing, as on the hub.
-  void show_temperature_in_force(const std::string &device_id, DeviceRegister read_back_fn) {
-    IoDevice *dev = this->registry_.get(device_id);
-    const HeatingProfile *profile = dev != nullptr ? find_heating_profile(*dev) : nullptr;
-    if (profile == nullptr || profile->programme_period == nullptr ||
-        (read_back_fn != profile->mode_fn && read_back_fn != profile->preset_fn) ||
-        !programme_period_active(*profile, *dev) || test::in_force_of(*dev) == InForceSupport::ABSENT ||
-        this->in_force_answer != InForceSupport::REPORTED)
-      return;
-    test::set_in_force_support(*dev, InForceSupport::REPORTED);
-    test::store_reading(*dev, profile->programme_period->in_force_fn, this->in_force_value_c);
-    this->registry_.notify(device_id);
+ private:
+  void apply_(const std::string &device_id, const std::vector<RecordEdit> &edits) {
+    for (const RecordEdit &edit : edits) {
+      IoDevice *dev = this->registry_.get(device_id);
+      if (dev == nullptr)
+        return;
+      edit(*dev);
+      this->registry_.notify(device_id);
+    }
   }
 };
+
+// === Record edits (what the heater's record holds after a read) ===
+
+MockHubClimate::RecordEdit stores(DeviceRegister fn, float value) {
+  return [fn, value](IoDevice &dev) { test::store_reading(dev, fn, value); };
+}
+
+/// The heater answered the read of its temperature in force: REPORTED with `value_c`, or ABSENT / UNKNOWN.
+MockHubClimate::RecordEdit in_force_is(InForceSupport support, float value_c = NAN) {
+  return [support, value_c](IoDevice &dev) {
+    test::set_in_force_support(dev, support);
+    if (support == InForceSupport::REPORTED && !std::isnan(value_c))
+      test::store_reading(dev, test::in_force_row_of(dev)->reading, value_c);
+  };
+}
+
+/// The status read answered `level`, or forgets the stored level when `level` is negative (no level in the answer).
+MockHubClimate::RecordEdit level_is(int level) {
+  return [level](IoDevice &dev) { test::store_wire(dev, DeviceReading::HEATING_LEVEL, level); };
+}
+
+// === What the entity handed over ===
+
+::testing::AssertionResult is_register_write(const HeatingWritePlan &plan, DeviceRegister fn, float value) {
+  if (plan.kind != HeatingPlanKind::REGISTER || plan.register_fn != fn || plan.register_value != value)
+    return ::testing::AssertionFailure() << "not a write of register " << static_cast<int>(fn) << " = " << value;
+  return ::testing::AssertionSuccess();
+}
+
+::testing::AssertionResult is_level(const HeatingWritePlan &plan, uint8_t level) {
+  if (plan.kind != HeatingPlanKind::LEVEL || plan.level != level)
+    return ::testing::AssertionFailure() << "not heating level " << static_cast<int>(level);
+  return ::testing::AssertionSuccess();
+}
+
+::testing::AssertionResult is_temperature(const HeatingWritePlan &plan, uint16_t main_parameter, HeatingFpKind kind,
+                                          uint16_t fp_value) {
+  if (plan.kind != HeatingPlanKind::TEMPERATURE || plan.main_parameter != main_parameter || plan.fp.kind != kind ||
+      plan.fp.value != fp_value)
+    return ::testing::AssertionFailure() << "not temperature " << main_parameter << " with fp kind "
+                                         << static_cast<int>(kind) << " value " << fp_value;
+  return ::testing::AssertionSuccess();
+}
+
+/// The registers the plans write, in order (a plan of another kind adds nothing).
+std::vector<DeviceRegister> written(const MockHubClimate &hub) {
+  std::vector<DeviceRegister> fns;
+  for (const HeatingWritePlan &plan : hub.plans) {
+    if (plan.kind == HeatingPlanKind::REGISTER && plan.register_fn)
+      fns.push_back(*plan.register_fn);
+  }
+  return fns;
+}
 
 IOHomeClimate make_bound_climate(MockHubClimate &hub, DeviceType type = DeviceType::ELECTRICAL_HEATER,
                                  uint8_t subtype = 1) {
@@ -219,19 +167,18 @@ TEST(PlatformClimate, HvacModesMapToHeatingModesAndPublish) {
   IOHomeClimate entity = make_bound_climate(hub);
 
   perform_mode(entity, CLIMATE_MODE_HEAT);
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].device_id, "ABC123");
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::OPERATING_MODE);
-  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingMode::MANUAL));
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::MANUAL)));
   EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
 
   perform_mode(entity, CLIMATE_MODE_AUTO);
-  EXPECT_EQ(hub.writes.back().fn, DeviceRegister::OPERATING_MODE);
-  EXPECT_FLOAT_EQ(hub.writes.back().value, static_cast<float>(HeatingMode::AUTO));
+  EXPECT_TRUE(
+      is_register_write(hub.plans.back(), DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::AUTO)));
   EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO);
 
   perform_mode(entity, CLIMATE_MODE_OFF);
-  EXPECT_FLOAT_EQ(hub.writes.back().value, static_cast<float>(HeatingMode::OFF));
+  EXPECT_TRUE(
+      is_register_write(hub.plans.back(), DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::OFF)));
   EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF);
 
   EXPECT_EQ(entity.publish_count_, 3);
@@ -239,8 +186,10 @@ TEST(PlatformClimate, HvacModesMapToHeatingModesAndPublish) {
 
 TEST(PlatformClimate, TargetTemperatureSendsSetTemperature) {
   MockHubClimate hub;
-  hub.mode_answer = static_cast<int16_t>(HeatingMode::MANUAL);  // the heater runs heat
-  hub.read_replies[DeviceRegister::COMFORT_SETPOINT] = 20.5F;
+  // The heater runs heat, then keeps the write. Order of the reads: HeaterController
+  // ATargetOnAProgrammeHeaterSendsTheSameExchangesEveryTimeWhateverTheStoredReadingsSay.
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::MANUAL))};
+  hub.after_plan = {{stores(DeviceRegister::COMFORT_SETPOINT, 20.5F)}};
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
 
@@ -248,9 +197,8 @@ TEST(PlatformClimate, TargetTemperatureSendsSetTemperature) {
   call.set_target_temperature(20.5F);
   call.perform();
 
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::COMFORT_SETPOINT);
-  EXPECT_FLOAT_EQ(hub.writes[0].value, 20.5F);
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::COMFORT_SETPOINT, 20.5F));
   EXPECT_FLOAT_EQ(entity.target_temperature, 20.5F);
   EXPECT_EQ(entity.publish_count_, 2) << "the mode the read found, then the read-back";
 }
@@ -269,10 +217,9 @@ TEST(PlatformClimate, AutomaticModePresetsSendTheirModeAndShowAtOnce) {
     call.set_preset(std::string(c.name));
     call.perform();
 
-    ASSERT_EQ(hub.writes.size(), 1u) << c.name;
-    EXPECT_EQ(hub.writes[0].fn, DeviceRegister::OPERATING_MODE) << c.name;
-    EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(c.mode)) << c.name;
-    EXPECT_EQ(hub.reads, (std::vector<DeviceRegister>{DeviceRegister::OPERATING_MODE})) << c.name << ": confirm read";
+    ASSERT_EQ(hub.plans.size(), 1u) << c.name;
+    EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::OPERATING_MODE, static_cast<float>(c.mode))) << c.name;
+    EXPECT_TRUE(hub.plans[0].read_back) << c.name << ": confirm read";
     // Nothing has been read yet, so the command stands in: both modes show as HVAC auto.
     EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO) << c.name;
     ASSERT_TRUE(entity.has_custom_preset()) << c.name;
@@ -288,7 +235,7 @@ TEST(PlatformClimate, FailedSendDoesNotPublishOrUpdateState) {
 
   perform_mode(entity, CLIMATE_MODE_HEAT);
 
-  ASSERT_EQ(hub.writes.size(), 1u) << "the send is still attempted";
+  ASSERT_EQ(hub.plans.size(), 1u) << "the send is still attempted";
   EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF) << "state must not advance past a failed send";
   EXPECT_EQ(entity.publish_count_, 0) << "no publish on a failed send";
 }
@@ -297,18 +244,25 @@ TEST(PlatformClimate, FailedSendDoesNotAdvanceTemperatureOrPreset) {
   MockHubClimate hub;
   hub.write_result = false;
   IOHomeClimate entity = make_bound_climate(hub);
+  entity.setup();  // the device exists; only the send fails
+  // The read before the target finds heat (HeaterController
+  // ATargetOnAProgrammeHeaterSendsTheSameExchangesEveryTimeWhateverTheStoredReadingsSay).
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::MANUAL))};
 
   auto temp = entity.make_call();
   temp.set_target_temperature(21.0F);
   temp.perform();
+  ASSERT_EQ(hub.plans.size(), 1u) << "the target was planned and the send attempted";
   EXPECT_TRUE(std::isnan(entity.target_temperature)) << "target must not advance past a failed send";
 
   auto preset = entity.make_call();
   preset.set_preset(std::string("Auto"));
   preset.perform();
   EXPECT_FALSE(entity.has_custom_preset()) << "preset must not advance past a failed send";
+  EXPECT_EQ(hub.plans.size(), 2u);
 
-  EXPECT_EQ(entity.publish_count_, 0) << "no publish on any failed send";
+  // The mode the read found is the only publish: nothing was published for a send that failed.
+  EXPECT_EQ(entity.publish_count_, 1) << "no publish on any failed send";
 }
 
 TEST(PlatformClimate, UnsupportedHvacModeSendsNothing) {
@@ -317,7 +271,7 @@ TEST(PlatformClimate, UnsupportedHvacModeSendsNothing) {
 
   perform_mode(entity, CLIMATE_MODE_COOL);  // no mapping to a HeatingMode
 
-  EXPECT_TRUE(hub.writes.empty()) << "a mode with no HeatingMode mapping must not transmit";
+  EXPECT_TRUE(hub.plans.empty()) << "a mode with no HeatingMode mapping must not transmit";
   EXPECT_EQ(entity.publish_count_, 0);
 }
 
@@ -531,35 +485,40 @@ TEST(PlatformClimate, UpdatesForOtherDevicesAreIgnored) {
 
 TEST(PlatformClimate, AcceptedSetpointWriteIsReadBackAndTheHeatersValueIsShown) {
   MockHubClimate hub;
-  hub.read_replies[DeviceRegister::COMFORT_SETPOINT] = 19.0F;  // the heater held the request to 19.0
+  // Order of the reads: HeaterController
+  // ATargetOnAProgrammeHeaterSendsTheSameExchangesEveryTimeWhateverTheStoredReadingsSay.
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::MANUAL))};
+  hub.after_plan = {{stores(DeviceRegister::COMFORT_SETPOINT, 19.0F)}};  // the heater held the request to 19.0
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
   deliver_readings(
       hub, [](IoDevice &r) { test::store_reading(r, DeviceReading::MODE, static_cast<int16_t>(HeatingMode::MANUAL)); });
-  hub.mode_answer = static_cast<int16_t>(HeatingMode::MANUAL);
   const int published = entity.publish_count_;  // the read before the target finds the mode it showed
 
   auto call = entity.make_call();
   call.set_target_temperature(20.5F);
   call.perform();
 
-  ASSERT_EQ(hub.reads.size(), 1u);
-  EXPECT_EQ(hub.reads[0], DeviceRegister::COMFORT_SETPOINT);
-  EXPECT_EQ(hub.read_tries[0], EXCHANGE_RETRY_COUNT) << "the user waits on a read-back: full budget";
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::COMFORT_SETPOINT, 20.5F));
+  EXPECT_TRUE(hub.plans[0].read_back) << "the entity asks for the read-back";
   EXPECT_FLOAT_EQ(entity.target_temperature, 19.0F) << "what the heater reports, not what was commanded";
   EXPECT_EQ(entity.publish_count_, published + 1) << "one publish: the read-back's, not a second for the command";
 }
 
 TEST(PlatformClimate, AcceptedModeWriteIsReadBack) {
   MockHubClimate hub;
-  hub.read_replies[DeviceRegister::OPERATING_MODE] = static_cast<float>(HeatingMode::AUTO);
+  // The heater answers the read-back with auto (HeaterController
+  // APlannedRegisterWriteSendsItsBytesAppliesTheHookThenReadsBack).
+  hub.after_plan = {{stores(DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::AUTO))}};
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
 
   perform_mode(entity, CLIMATE_MODE_HEAT);
 
-  ASSERT_EQ(hub.reads.size(), 1u);
-  EXPECT_EQ(hub.reads[0], DeviceRegister::OPERATING_MODE);
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::MANUAL)));
+  EXPECT_TRUE(hub.plans[0].read_back);
   EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO) << "the heater says auto";
   EXPECT_EQ(entity.publish_count_, 1);
 }
@@ -573,26 +532,20 @@ TEST(PlatformClimate, AfterTheFirstReadAWriteWhoseReadBackFailsShowsNothingNew) 
     test::store_reading(r, DeviceReading::SETPOINT, 19.5F);
   });
   const int published = entity.publish_count_;
-  hub.mode_answer = static_cast<int16_t>(HeatingMode::MANUAL);  // the read before the target
+  // The read before the target finds heat (HeaterController
+  // ATargetOnAProgrammeHeaterSendsTheSameExchangesEveryTimeWhateverTheStoredReadingsSay).
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::MANUAL))};
 
-  // Both writes are acknowledged; neither read-back draws an answer.
+  // Both writes are acknowledged; neither read-back draws an answer (no script after the plans).
   auto call = entity.make_call();
   call.set_target_temperature(22.0F);
   call.perform();
   perform_mode(entity, CLIMATE_MODE_AUTO);
 
-  EXPECT_EQ(hub.writes.size(), 2u) << "both writes were sent";
+  EXPECT_EQ(hub.plans.size(), 2u) << "both writes were sent";
   EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT) << "no prediction: the entity keeps the last observed mode";
   EXPECT_FLOAT_EQ(entity.target_temperature, 19.5F);
   EXPECT_EQ(entity.publish_count_, published);
-}
-
-TEST(PlatformClimate, NothingIsReadBackAfterAFailedWrite) {
-  MockHubClimate hub;
-  hub.write_result = false;
-  IOHomeClimate entity = make_bound_climate(hub);
-  perform_mode(entity, CLIMATE_MODE_HEAT);
-  EXPECT_TRUE(hub.reads.empty());
 }
 
 TEST(PlatformClimate, ObservedProgramThenAutoPresetWaitsForTheReadBack) {
@@ -606,8 +559,8 @@ TEST(PlatformClimate, ObservedProgramThenAutoPresetWaitsForTheReadBack) {
   auto call = entity.make_call();
   call.set_preset(std::string("Auto"));
   call.perform();
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingMode::AUTO));
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::AUTO)));
   EXPECT_EQ(entity.get_custom_preset(), "Program") << "a read has succeeded: the card waits for the read-back";
   EXPECT_EQ(entity.publish_count_, published);
 
@@ -725,8 +678,7 @@ TEST(PlatformClimate, ATypeNotKnownYetOffersOnlyOff) {
   EXPECT_EQ(supported_modes(entity.traits()), (std::vector<ClimateMode>{CLIMATE_MODE_OFF}));
 
   perform_mode(entity, CLIMATE_MODE_HEAT);
-  EXPECT_TRUE(hub.writes.empty());
-  EXPECT_TRUE(hub.levels.empty());
+  EXPECT_TRUE(hub.plans.empty());
 }
 
 // ========================================================================================
@@ -741,9 +693,11 @@ TEST(PlatformClimate, LevelHeaterModesSendLevelsAndNeverRegisters) {
   perform_mode(entity, CLIMATE_MODE_OFF);
   perform_mode(entity, CLIMATE_MODE_HEAT);
 
-  EXPECT_EQ(hub.levels, (std::vector<uint8_t>{heating_level::OFF, heating_level::COMFORT}));
-  EXPECT_TRUE(hub.writes.empty()) << "no register write for a heater commanded with levels";
-  EXPECT_TRUE(hub.reads.empty()) << "the hub's settle poll reads the level, not the entity";
+  ASSERT_EQ(hub.plans.size(), 2u);
+  EXPECT_TRUE(is_level(hub.plans[0], heating_level::OFF));
+  EXPECT_TRUE(is_level(hub.plans[1], heating_level::COMFORT));
+  for (const HeatingWritePlan &plan : hub.plans)
+    EXPECT_FALSE(plan.read_back) << "the hub's settle poll reads the level, not the entity";
   EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT) << "the commanded mode stands in until a level has been read";
 }
 
@@ -780,10 +734,12 @@ TEST(PlatformClimate, PilotWireInterfacePresetsSendTheSameLevelsAsAPlainHeater) 
   }
   perform_mode(entity, CLIMATE_MODE_OFF);
 
-  EXPECT_EQ(hub.levels,
-            (std::vector<uint8_t>{heating_level::FROST_PROTECTION, heating_level::ECO, heating_level::COMFORT,
-                                  heating_level::COMFORT_MINUS_1, heating_level::COMFORT_MINUS_2, heating_level::OFF}));
-  EXPECT_TRUE(hub.writes.empty());
+  ASSERT_EQ(hub.plans.size(), 6u);
+  const uint8_t expected_levels[] = {heating_level::FROST_PROTECTION, heating_level::ECO,
+                                     heating_level::COMFORT,          heating_level::COMFORT_MINUS_1,
+                                     heating_level::COMFORT_MINUS_2,  heating_level::OFF};
+  for (size_t i = 0; i < hub.plans.size(); i++)
+    EXPECT_TRUE(is_level(hub.plans[i], expected_levels[i])) << "plan " << i;
 }
 
 TEST(PlatformClimate, LevelHeaterPresetsSendTheirLevels) {
@@ -803,9 +759,12 @@ TEST(PlatformClimate, LevelHeaterPresetsSendTheirLevels) {
     call.perform();
   }
 
-  EXPECT_EQ(hub.levels, (std::vector<uint8_t>{heating_level::FROST_PROTECTION, heating_level::ECO,
-                                              heating_level::COMFORT, heating_level::BOOST,
-                                              heating_level::COMFORT_MINUS_1, heating_level::COMFORT_MINUS_2}));
+  ASSERT_EQ(hub.plans.size(), 6u);
+  const uint8_t expected_levels[] = {heating_level::FROST_PROTECTION, heating_level::ECO,
+                                     heating_level::COMFORT,          heating_level::BOOST,
+                                     heating_level::COMFORT_MINUS_1,  heating_level::COMFORT_MINUS_2};
+  for (size_t i = 0; i < hub.plans.size(); i++)
+    EXPECT_TRUE(is_level(hub.plans[i], expected_levels[i])) << "plan " << i;
   EXPECT_EQ(entity.get_custom_preset(), "Comfort -2");
 }
 
@@ -831,7 +790,7 @@ TEST(PlatformClimate, TheSecuredLevelIsShownAsHeatWithNoPresetAndCannotBeSelecte
   auto call = entity.make_call();
   call.set_preset(std::string("Secured"));
   call.perform();
-  EXPECT_TRUE(hub.levels.empty());
+  EXPECT_TRUE(hub.plans.empty());
   EXPECT_FALSE(entity.has_custom_preset());
 
   deliver_readings(hub,
@@ -848,18 +807,18 @@ TEST(PlatformClimate, ALevelHeaterIgnoresATargetTemperature) {
   auto call = entity.make_call();
   call.set_target_temperature(21.0F);
   call.perform();
-  EXPECT_TRUE(hub.writes.empty());
-  EXPECT_TRUE(hub.levels.empty());
+  EXPECT_TRUE(hub.plans.empty());
   EXPECT_EQ(entity.publish_count_, 0);
 }
 
 TEST(PlatformClimate, AFailedLevelWriteShowsNothing) {
   MockHubClimate hub;
-  hub.level_result = false;
+  hub.write_result = false;
   IOHomeClimate entity = make_level_climate(hub);
   entity.setup();
   perform_mode(entity, CLIMATE_MODE_HEAT);
-  EXPECT_EQ(hub.levels.size(), 1u);
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_level(hub.plans[0], heating_level::COMFORT));
   EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF);
   EXPECT_EQ(entity.publish_count_, 0);
 }
@@ -921,13 +880,6 @@ IOHomeClimate make_thermostat(MockHubClimate &hub) {
 }
 IOHomeClimate make_pump(MockHubClimate &hub) { return make_bound_climate(hub, DeviceType::HEAT_PUMP, 0); }
 
-void expect_call(const MockHubClimate::TemperatureCall &call, uint16_t main_parameter, HeatingFpKind kind,
-                 uint16_t value) {
-  EXPECT_EQ(call.main_parameter, main_parameter);
-  EXPECT_EQ(call.fp.kind, kind);
-  EXPECT_EQ(call.fp.value, value);
-}
-
 }  // namespace
 
 TEST(PlatformClimate, ThermostatTraitsAreExactlyTheProfile) {
@@ -970,15 +922,15 @@ TEST(PlatformClimate, ThermostatTargetOutsideTheYamlRangeIsNotSent) {
   auto call = entity.make_call();
   call.set_target_temperature(28.0F);
   call.perform();
-  EXPECT_TRUE(hub.temperature_calls.empty()) << "refused, never sent as 25";
-  EXPECT_TRUE(hub.writes.empty());
+  EXPECT_TRUE(hub.plans.empty()) << "refused, never sent as 25";
   EXPECT_TRUE(std::isnan(entity.target_temperature)) << "the card keeps what it showed";
 
   auto inside = entity.make_call();
   inside.set_target_temperature(25.0F);
   inside.perform();
-  ASSERT_EQ(hub.temperature_calls.size(), 1u);
-  EXPECT_EQ(hub.temperature_calls[0].main_parameter, 51200);
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_EQ(hub.plans[0].kind, HeatingPlanKind::TEMPERATURE);
+  EXPECT_EQ(hub.plans[0].main_parameter, 51200);
 }
 
 TEST(PlatformClimate, HeatPumpTraitsAreExactlyTheProfile) {
@@ -1002,9 +954,9 @@ TEST(PlatformClimate, ThermostatSetpointIsTheTemperatureWithTheManualFlag) {
   call.set_target_temperature(20.0F);
   call.perform();
 
-  ASSERT_EQ(hub.temperature_calls.size(), 1u);
-  expect_call(hub.temperature_calls[0], 25600, HeatingFpKind::FP9, heating_mode_flags::MANUAL);
-  EXPECT_TRUE(hub.writes.empty()) << "no register write";
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_temperature(hub.plans[0], 25600, HeatingFpKind::FP9, heating_mode_flags::MANUAL))
+      << "no register write";
   EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F) << "the commanded value stands in until a reading";
 }
 
@@ -1016,8 +968,8 @@ TEST(PlatformClimate, ThermostatUsesTheYamlRangeButAHeatPumpNeverDoes) {
   auto call = thermostat.make_call();
   call.set_target_temperature(20.0F);
   call.perform();
-  ASSERT_EQ(hub.temperature_calls.size(), 1u);
-  EXPECT_EQ(hub.temperature_calls[0].main_parameter, 25600) << "the middle of 10..30";
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_EQ(hub.plans[0].main_parameter, 25600) << "the middle of 10..30";
 
   MockHubClimate pump_hub;
   IOHomeClimate pump = make_pump(pump_hub);
@@ -1026,12 +978,12 @@ TEST(PlatformClimate, ThermostatUsesTheYamlRangeButAHeatPumpNeverDoes) {
   auto pump_call = pump.make_call();
   pump_call.set_target_temperature(20.0F);
   pump_call.perform();
-  ASSERT_EQ(pump_hub.temperature_calls.size(), 1u);
-  EXPECT_EQ(pump_hub.temperature_calls[0].main_parameter, 25600) << "20 C over the fixed -40..80 is also half way";
+  ASSERT_EQ(pump_hub.plans.size(), 1u);
+  EXPECT_EQ(pump_hub.plans[0].main_parameter, 25600) << "20 C over the fixed -40..80 is also half way";
   auto top = pump.make_call();
   top.set_target_temperature(30.0F);
   top.perform();
-  EXPECT_EQ(pump_hub.temperature_calls[1].main_parameter, 29867) << "round(70 x 51200 / 120), not the YAML range's top";
+  EXPECT_EQ(pump_hub.plans[1].main_parameter, 29867) << "round(70 x 51200 / 120), not the YAML range's top";
 }
 
 TEST(PlatformClimate, DeclaredReadingEntitiesAskTheHubToReadTheirReadings) {
@@ -1057,8 +1009,8 @@ TEST(PlatformClimate, HeatPumpSetpointCarriesNoFunctionalParameter) {
   auto call = entity.make_call();
   call.set_target_temperature(21.0F);
   call.perform();
-  ASSERT_EQ(hub.temperature_calls.size(), 1u);
-  EXPECT_EQ(hub.temperature_calls[0].fp.kind, HeatingFpKind::NONE);
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_EQ(hub.plans[0].fp.kind, HeatingFpKind::NONE);
 }
 
 TEST(PlatformClimate, ThermostatPresetsAreTheAliasAloneWithNoFunctionalParameter) {
@@ -1074,10 +1026,10 @@ TEST(PlatformClimate, ThermostatPresetsAreTheAliasAloneWithNoFunctionalParameter
   auto secured = entity.make_call();
   secured.set_preset(std::string("Secured"));
   secured.perform();
-  ASSERT_EQ(hub.temperature_calls.size(), 3u);
-  expect_call(hub.temperature_calls[0], 0xD80F, HeatingFpKind::NONE, 0);
-  expect_call(hub.temperature_calls[1], 0xD80E, HeatingFpKind::NONE, 0);
-  expect_call(hub.temperature_calls[2], 0xD80A, HeatingFpKind::NONE, 0);
+  ASSERT_EQ(hub.plans.size(), 3u);
+  EXPECT_TRUE(is_temperature(hub.plans[0], 0xD80F, HeatingFpKind::NONE, 0));
+  EXPECT_TRUE(is_temperature(hub.plans[1], 0xD80E, HeatingFpKind::NONE, 0));
+  EXPECT_TRUE(is_temperature(hub.plans[2], 0xD80A, HeatingFpKind::NONE, 0));
   EXPECT_EQ(entity.get_custom_preset(), "Secured");
 }
 
@@ -1088,22 +1040,22 @@ TEST(PlatformClimate, ThermostatModesAreTheDevicesOwnCommands) {
 
   perform_mode(entity, CLIMATE_MODE_AUTO);
   perform_mode(entity, CLIMATE_MODE_OFF);
-  ASSERT_EQ(hub.temperature_calls.size(), 2u);
-  expect_call(hub.temperature_calls[0], 0xD80F, HeatingFpKind::FP9, heating_mode_flags::AUTO);
-  expect_call(hub.temperature_calls[1], 0xD400, HeatingFpKind::FP9, heating_mode_flags::OFF);
+  ASSERT_EQ(hub.plans.size(), 2u);
+  EXPECT_TRUE(is_temperature(hub.plans[0], 0xD80F, HeatingFpKind::FP9, heating_mode_flags::AUTO));
+  EXPECT_TRUE(is_temperature(hub.plans[1], 0xD400, HeatingFpKind::FP9, heating_mode_flags::OFF));
   EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF);
 
   // Heat is the current target temperature with the manual flag; with no target known, nothing is sent.
   perform_mode(entity, CLIMATE_MODE_HEAT);
-  EXPECT_EQ(hub.temperature_calls.size(), 2u);
+  EXPECT_EQ(hub.plans.size(), 2u);
   EXPECT_EQ(entity.mode, CLIMATE_MODE_OFF) << "a refused mode is not shown";
   auto target = entity.make_call();
   target.set_target_temperature(22.0F);
   target.perform();
   perform_mode(entity, CLIMATE_MODE_HEAT);
-  ASSERT_EQ(hub.temperature_calls.size(), 4u);
-  expect_call(hub.temperature_calls[3], hub.temperature_calls[2].main_parameter, HeatingFpKind::FP9,
-              heating_mode_flags::MANUAL);
+  ASSERT_EQ(hub.plans.size(), 4u);
+  EXPECT_TRUE(
+      is_temperature(hub.plans[3], hub.plans[2].main_parameter, HeatingFpKind::FP9, heating_mode_flags::MANUAL));
   EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
 }
 
@@ -1113,8 +1065,8 @@ TEST(PlatformClimate, ThermostatHeatUsesTheReportedSetpointWhenNoTargetWasSet) {
   entity.setup();
   deliver_readings(hub, [](IoDevice &r) { test::store_reading(r, DeviceReading::STATUS_SETPOINT, 20.0F); });
   perform_mode(entity, CLIMATE_MODE_HEAT);
-  ASSERT_EQ(hub.temperature_calls.size(), 1u);
-  expect_call(hub.temperature_calls[0], 25600, HeatingFpKind::FP9, heating_mode_flags::MANUAL);
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_temperature(hub.plans[0], 25600, HeatingFpKind::FP9, heating_mode_flags::MANUAL));
 }
 
 TEST(PlatformClimate, HeatPumpModesAndPresetsCarryFp16) {
@@ -1132,17 +1084,17 @@ TEST(PlatformClimate, HeatPumpModesAndPresetsCarryFp16) {
     custom.set_preset(std::string(name));
     custom.perform();
   }
-  ASSERT_EQ(hub.temperature_calls.size(), 5u);
-  expect_call(hub.temperature_calls[0], 0xD400, HeatingFpKind::FP16, 0x8000);
-  expect_call(hub.temperature_calls[1], 0xD80F, HeatingFpKind::FP16, 0x4000);
-  expect_call(hub.temperature_calls[2], 0xD812, HeatingFpKind::FP16, 0x4000);
-  expect_call(hub.temperature_calls[3], 0xD80E, HeatingFpKind::FP16, 0x4000);
-  expect_call(hub.temperature_calls[4], 0xD813, HeatingFpKind::FP16, 0x4000);
+  ASSERT_EQ(hub.plans.size(), 5u);
+  EXPECT_TRUE(is_temperature(hub.plans[0], 0xD400, HeatingFpKind::FP16, 0x8000));
+  EXPECT_TRUE(is_temperature(hub.plans[1], 0xD80F, HeatingFpKind::FP16, 0x4000));
+  EXPECT_TRUE(is_temperature(hub.plans[2], 0xD812, HeatingFpKind::FP16, 0x4000));
+  EXPECT_TRUE(is_temperature(hub.plans[3], 0xD80E, HeatingFpKind::FP16, 0x4000));
+  EXPECT_TRUE(is_temperature(hub.plans[4], 0xD813, HeatingFpKind::FP16, 0x4000));
 }
 
 TEST(PlatformClimate, AFailedTemperatureSendShowsNothing) {
   MockHubClimate hub;
-  hub.temperature_result = false;
+  hub.write_result = false;
   IOHomeClimate entity = make_thermostat(hub);
   entity.setup();
   auto call = entity.make_call();
@@ -1205,9 +1157,10 @@ TEST(PlatformClimate, TemperatureHeatersNeverGetARegisterWrite) {
     auto away = entity.make_call();
     away.set_preset(CLIMATE_PRESET_AWAY);
     away.perform();
-    EXPECT_TRUE(hub.writes.empty());
-    EXPECT_TRUE(hub.reads.empty());
-    EXPECT_TRUE(hub.levels.empty());
+    for (const HeatingWritePlan &plan : hub.plans) {
+      EXPECT_EQ(plan.kind, HeatingPlanKind::TEMPERATURE) << "neither a register write nor a level";
+      EXPECT_FALSE(plan.read_back);
+    }
   }
 }
 
@@ -1264,13 +1217,13 @@ TEST(PlatformClimate, TowelDryerHvacModesWriteItsModeRegisterAndReadItBack) {
   perform_mode(entity, CLIMATE_MODE_AUTO);
   perform_mode(entity, CLIMATE_MODE_OFF);
 
-  ASSERT_EQ(hub.writes.size(), 3u);
-  for (const auto &call : hub.writes)
-    EXPECT_EQ(call.fn, DeviceRegister::TOWEL_MODE) << "never the radiator's mode register";
-  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(TowelDryerMode::MANUAL));
-  EXPECT_FLOAT_EQ(hub.writes[1].value, static_cast<float>(TowelDryerMode::PROG));
-  EXPECT_FLOAT_EQ(hub.writes[2].value, static_cast<float>(TowelDryerMode::OFF));
-  EXPECT_EQ(hub.reads, (std::vector<DeviceRegister>(3, DeviceRegister::TOWEL_MODE))) << "each write is read back";
+  // Never the radiator's mode register.
+  ASSERT_EQ(hub.plans.size(), 3u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::TOWEL_MODE, static_cast<float>(TowelDryerMode::MANUAL)));
+  EXPECT_TRUE(is_register_write(hub.plans[1], DeviceRegister::TOWEL_MODE, static_cast<float>(TowelDryerMode::PROG)));
+  EXPECT_TRUE(is_register_write(hub.plans[2], DeviceRegister::TOWEL_MODE, static_cast<float>(TowelDryerMode::OFF)));
+  for (const HeatingWritePlan &plan : hub.plans)
+    EXPECT_TRUE(plan.read_back) << "each write is read back";
 }
 
 TEST(PlatformClimate, TowelDryerModeComesFromItsModeRegisterNotTheRadiators) {
@@ -1344,17 +1297,17 @@ TEST(PlatformClimate, TowelDryerPresetsWriteTheTemporaryStateAndShowAsPresetsNot
   const ClimateMode before = entity.mode;
 
   perform_preset(entity, CLIMATE_PRESET_BOOST);
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::TEMPORARY_STATE);
-  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingTemporaryState::BOOST));
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::TEMPORARY_STATE,
+                                static_cast<float>(HeatingTemporaryState::BOOST)));
   ASSERT_TRUE(entity.preset.has_value());
   EXPECT_EQ(*entity.preset, CLIMATE_PRESET_BOOST) << "shown until a read lands";
   EXPECT_EQ(entity.mode, before) << "boost's value 1 is not a mode value";
-  EXPECT_EQ(hub.reads.back(), DeviceRegister::TEMPORARY_STATE) << "read back";
+  EXPECT_TRUE(hub.plans.back().read_back) << "read back";
 
   perform_custom_preset(entity, "Drying");
-  EXPECT_EQ(hub.writes.back().fn, DeviceRegister::TEMPORARY_STATE);
-  EXPECT_FLOAT_EQ(hub.writes.back().value, static_cast<float>(HeatingTemporaryState::DRYING));
+  EXPECT_TRUE(is_register_write(hub.plans.back(), DeviceRegister::TEMPORARY_STATE,
+                                static_cast<float>(HeatingTemporaryState::DRYING)));
   EXPECT_EQ(entity.get_custom_preset(), "Drying");
   EXPECT_NE(entity.mode, CLIMATE_MODE_AUTO) << "drying's value 2 is not PROG";
 }
@@ -1462,18 +1415,27 @@ constexpr int16_t DRYER_PROGRAMME = static_cast<int16_t>(TowelDryerMode::PROG);
 constexpr int16_t NO_TIMED_RUN = static_cast<int16_t>(HeatingTemporaryState::NONE);
 constexpr int16_t TIMED_BOOST = static_cast<int16_t>(HeatingTemporaryState::BOOST);
 
+// Scripts of what the heater's record holds after a read. They follow the order the real controller reads in, one
+// notification after each stored read: before a target the mode, then (on a dryer in its programme) the timed run,
+// then the temperature in force while the heater has not answered it, then (on a dryer in an eco-only period) the
+// level (HeaterController ATargetOnAProgrammeHeaterSendsTheSameExchangesEveryTimeWhateverTheStoredReadingsSay and
+// ADryerTargetInAnEcoPeriodAsksForTheLevelThenWritesTheOverride); after a mode write the read-back, then one read of
+// the temperature in force (AModeWriteIntoTheProgrammeIsReadBackThenTheTemperatureInForceIsReadOnce); after an
+// override the read-back, which carries the new value in force with it
+// (AnOverrideInAnEcoOrAComfortPeriodSendsTheOverrideRegisterAndShowsTheNewTargetAtTheReadBack).
+
+/// The read-back of an override that the heater took: the override register and the temperature in force it brings.
+MockHubClimate::RecordEdit override_taken(float value_c) {
+  return [value_c](IoDevice &dev) {
+    test::store_reading(dev, DeviceRegister::DEROGATED_SETPOINT, value_c);
+    test::store_reading(dev, test::in_force_row_of(dev)->reading, value_c);
+  };
+}
+
 void perform_target(IOHomeClimate &entity, float target_c) {
   auto call = entity.make_call();
   call.set_target_temperature(target_c);
   call.perform();
-}
-
-/// The registers the hub was asked to write, in order.
-std::vector<DeviceRegister> written(const MockHubClimate &hub) {
-  std::vector<DeviceRegister> fns;
-  for (const auto &write : hub.writes)
-    fns.push_back(write.fn);
-  return fns;
 }
 
 /// A radiator the hub last saw in heat (comfort 19.0 C) that has reported a temperature in force before.
@@ -1491,8 +1453,8 @@ TEST(PlatformClimate, ATargetFirstAsksTheHeaterWhatItRunsThenPlansFromTheAnswer)
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
   deliver_radiator_in_heat(hub);
-  hub.mode_answer = RADIATOR_HEAT;
-  hub.read_replies[DeviceRegister::COMFORT_SETPOINT] = 21.0F;
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, RADIATOR_HEAT)};
+  hub.after_plan = {{stores(DeviceRegister::COMFORT_SETPOINT, 21.0F)}};
 
   perform_target(entity, 21.0F);
 
@@ -1507,8 +1469,9 @@ TEST(PlatformClimate, AHeaterThatNowRunsItsProgrammeTakesTheTargetAsAnOverrideWh
   deliver_radiator_in_heat(hub);  // the card shows heat
   ASSERT_EQ(entity.mode, CLIMATE_MODE_HEAT);
   ASSERT_FLOAT_EQ(entity.target_temperature, 19.0F);
-  hub.mode_answer = RADIATOR_PROGRAMME;  // but the heater's panel switched it to its programme
-  hub.read_replies[DeviceRegister::DEROGATED_SETPOINT] = 21.0F;
+  // But the heater's panel switched it to its programme.
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, RADIATOR_PROGRAMME)};
+  hub.after_plan = {{override_taken(21.0F)}};
   const int published = entity.publish_count_;
 
   perform_target(entity, 21.0F);
@@ -1533,8 +1496,8 @@ TEST(PlatformClimate, AHeaterThatNowRunsHeatTakesTheTargetAsTheComfortSetpointWh
     test::store_reading(r, DeviceReading::TEMPERATURE_IN_FORCE, 17.0F);
   });
   ASSERT_EQ(entity.mode, CLIMATE_MODE_AUTO);
-  hub.mode_answer = RADIATOR_HEAT;
-  hub.read_replies[DeviceRegister::COMFORT_SETPOINT] = 21.0F;
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, RADIATOR_HEAT)};
+  hub.after_plan = {{stores(DeviceRegister::COMFORT_SETPOINT, 21.0F)}};
 
   perform_target(entity, 21.0F);
 
@@ -1548,8 +1511,8 @@ TEST(PlatformClimate, RadiatorInProgOrAutoShowsTheTemperatureInForceAndATargetIs
     MockHubClimate hub;
     IOHomeClimate entity = make_bound_climate(hub);
     entity.setup();
-    hub.read_replies[DeviceRegister::DEROGATED_SETPOINT] = 21.5F;
-    hub.mode_answer = static_cast<int16_t>(mode);
+    hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, static_cast<int16_t>(mode))};
+    hub.after_plan = {{override_taken(21.5F)}};
     deliver_programme_readings(hub, [mode](IoDevice &r) {
       test::store_reading(r, DeviceReading::MODE, static_cast<int16_t>(mode));
       test::store_reading(r, DeviceReading::SETPOINT, 19.0F);
@@ -1560,11 +1523,11 @@ TEST(PlatformClimate, RadiatorInProgOrAutoShowsTheTemperatureInForceAndATargetIs
 
     perform_target(entity, 21.5F);
 
-    ASSERT_EQ(hub.writes.size(), 1u);
-    EXPECT_EQ(hub.writes[0].fn, DeviceRegister::DEROGATED_SETPOINT) << "the comfort setpoint is not written";
-    EXPECT_FLOAT_EQ(hub.writes[0].value, 21.5F);
-    ASSERT_EQ(hub.reads.size(), 1u);
-    EXPECT_EQ(hub.reads[0], DeviceRegister::DEROGATED_SETPOINT) << "the override is read back";
+    ASSERT_EQ(hub.plans.size(), 1u);
+    EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::DEROGATED_SETPOINT, 21.5F))
+        << "the comfort setpoint is not written";
+    EXPECT_TRUE(hub.plans[0].temporary_override);
+    EXPECT_TRUE(hub.plans[0].read_back) << "the override is read back";
   }
 }
 
@@ -1572,11 +1535,6 @@ TEST(PlatformClimate, TowelDryerTargetInAutoIsTheOverrideInAnEcoPeriodAndTheComf
   MockHubClimate hub;
   IOHomeClimate entity = make_towel_climate(hub);
   entity.setup();
-  hub.read_replies[DeviceRegister::DEROGATED_SETPOINT] = 17.5F;
-  hub.read_replies[DeviceRegister::COMFORT_SETPOINT] = 17.5F;
-  hub.mode_answer = DRYER_PROGRAMME;
-  hub.timed_run_answer = NO_TIMED_RUN;
-  hub.in_force_answer = InForceSupport::REPORTED;
 
   struct Period {
     float in_force_c;
@@ -1585,25 +1543,27 @@ TEST(PlatformClimate, TowelDryerTargetInAutoIsTheOverrideInAnEcoPeriodAndTheComf
   };
   for (const Period &period : {Period{16.5F, heating_level::ECO, DeviceRegister::DEROGATED_SETPOINT},
                                Period{20.0F, heating_level::COMFORT, DeviceRegister::COMFORT_SETPOINT}}) {
-    hub.writes.clear();
-    hub.reads.clear();
+    hub.plans.clear();
     deliver_programme_readings(hub, [&period](IoDevice &r) {
       programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, period.in_force_c, period.level);
     });
-    hub.level_answer = period.level;
+    hub.on_programme_state = {stores(DeviceRegister::TOWEL_MODE, DRYER_PROGRAMME),
+                              stores(DeviceRegister::TEMPORARY_STATE, NO_TIMED_RUN), level_is(period.level)};
+    hub.after_plan = {
+        {period.written == DeviceRegister::DEROGATED_SETPOINT ? override_taken(17.5F) : stores(period.written, 17.5F)}};
     perform_target(entity, 17.5F);
-    ASSERT_EQ(hub.writes.size(), 1u) << "level " << period.level;
-    EXPECT_EQ(hub.writes[0].fn, period.written) << "level " << period.level;
-    EXPECT_FLOAT_EQ(hub.writes[0].value, 17.5F);
-    ASSERT_EQ(hub.reads.size(), 1u);
-    EXPECT_EQ(hub.reads[0], period.written) << "the register written is the one read back";
+    ASSERT_EQ(hub.plans.size(), 1u) << "level " << period.level;
+    EXPECT_TRUE(is_register_write(hub.plans[0], period.written, 17.5F)) << "level " << period.level;
+    EXPECT_TRUE(hub.plans[0].read_back) << "the register written is the one read back";
   }
 
-  hub.writes.clear();
-  hub.mode_answer = DRYER_HEAT;
+  hub.plans.clear();
+  hub.on_programme_state = {stores(DeviceRegister::TOWEL_MODE, DRYER_HEAT)};
+  hub.after_plan = {{stores(DeviceRegister::COMFORT_SETPOINT, 21.0F)}};
   perform_target(entity, 21.0F);
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::COMFORT_SETPOINT) << "heat: the target is the comfort temperature";
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::COMFORT_SETPOINT, 21.0F))
+      << "heat: the target is the comfort temperature";
 }
 
 TEST(PlatformClimate, ATowelDryerTargetInAutoThatReportsNoPeriodWritesNothing) {
@@ -1613,15 +1573,14 @@ TEST(PlatformClimate, ATowelDryerTargetInAutoThatReportsNoPeriodWritesNothing) {
   deliver_programme_readings(hub, [](IoDevice &r) {
     programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
   });
-  hub.mode_answer = DRYER_PROGRAMME;
-  hub.timed_run_answer = NO_TIMED_RUN;
-  hub.level_answer = MockHubClimate::SILENT;
+  // The status read answers with no level.
+  hub.on_programme_state = {stores(DeviceRegister::TOWEL_MODE, DRYER_PROGRAMME),
+                            stores(DeviceRegister::TEMPORARY_STATE, NO_TIMED_RUN), level_is(-1)};
   const int published = entity.publish_count_;
 
   perform_target(entity, 21.0F);
 
-  EXPECT_TRUE(hub.writes.empty()) << "neither the override nor a comfort write is known to be right";
-  EXPECT_TRUE(hub.plans.empty());
+  EXPECT_TRUE(hub.plans.empty()) << "neither the override nor a comfort write is known to be right";
   EXPECT_EQ(entity.publish_count_, published) << "the card stays as it was";
 }
 
@@ -1632,17 +1591,18 @@ TEST(PlatformClimate, ARefusedOverrideShowsTheHeatersOwnTargetAtOnceInsteadOfThe
   deliver_programme_readings(hub, [](IoDevice &r) {
     programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
   });
-  hub.mode_answer = DRYER_PROGRAMME;
-  hub.timed_run_answer = NO_TIMED_RUN;
-  hub.level_answer = heating_level::ECO;
-  hub.read_replies[DeviceRegister::DEROGATED_SETPOINT] = 0.0F;  // acknowledged, reads back as none
+  hub.on_programme_state = {stores(DeviceRegister::TOWEL_MODE, DRYER_PROGRAMME),
+                            stores(DeviceRegister::TEMPORARY_STATE, NO_TIMED_RUN), level_is(heating_level::ECO)};
+  // Acknowledged, reads back as none: the read-back of 0 leaves the temperature in force alone
+  // (HeaterController AnOverrideReadBackOfZeroLeavesTheTemperatureInForceAlone).
+  hub.after_plan = {{stores(DeviceRegister::DEROGATED_SETPOINT, 0.0F)}};
   ASSERT_FLOAT_EQ(entity.target_temperature, 16.5F);
   const int published = entity.publish_count_;
 
   perform_target(entity, 21.0F);
 
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::DEROGATED_SETPOINT);
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::DEROGATED_SETPOINT, 21.0F));
   EXPECT_GT(entity.publish_count_, published) << "Home Assistant is told, so its card drops the typed value";
   EXPECT_FLOAT_EQ(entity.published_targets_.back(), 16.5F) << "the heater's own target";
   EXPECT_FLOAT_EQ(entity.target_temperature, 16.5F);
@@ -1652,25 +1612,25 @@ TEST(PlatformClimate, ADryerWhoseBoostEndedOrBeganSincethePollTakesTheTargetWher
   MockHubClimate hub;
   IOHomeClimate entity = make_towel_climate(hub);
   entity.setup();
-  hub.read_replies[DeviceRegister::DEROGATED_SETPOINT] = 21.0F;
-  hub.read_replies[DeviceRegister::COMFORT_SETPOINT] = 21.0F;
-  hub.mode_answer = DRYER_PROGRAMME;
 
   // The card shows a boost; the heater's timer has ended it.
   deliver_programme_readings(
       hub, [](IoDevice &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::BOOST, NAN); });
   ASSERT_TRUE(entity.preset.has_value());
   ASSERT_EQ(*entity.preset, CLIMATE_PRESET_BOOST);
-  hub.timed_run_answer = NO_TIMED_RUN;
-  hub.level_answer = heating_level::ECO;
+  hub.on_programme_state = {stores(DeviceRegister::TOWEL_MODE, DRYER_PROGRAMME),
+                            stores(DeviceRegister::TEMPORARY_STATE, NO_TIMED_RUN), level_is(heating_level::ECO)};
+  hub.after_plan = {{override_taken(21.0F)}};
   perform_target(entity, 21.0F);
   EXPECT_EQ(written(hub), std::vector<DeviceRegister>{DeviceRegister::DEROGATED_SETPOINT});
 
   // The card shows the programme; a boost has begun on the heater's panel.
-  hub.writes.clear();
+  hub.plans.clear();
   deliver_programme_readings(
       hub, [](IoDevice &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 17.0F); });
-  hub.timed_run_answer = TIMED_BOOST;
+  hub.on_programme_state = {stores(DeviceRegister::TOWEL_MODE, DRYER_PROGRAMME),
+                            stores(DeviceRegister::TEMPORARY_STATE, TIMED_BOOST)};
+  hub.after_plan = {{stores(DeviceRegister::COMFORT_SETPOINT, 21.0F)}};
   perform_target(entity, 21.0F);
   EXPECT_EQ(written(hub), std::vector<DeviceRegister>{DeviceRegister::COMFORT_SETPOINT});
 }
@@ -1679,18 +1639,18 @@ TEST(PlatformClimate, RadiatorInHeatShowsAndWritesTheComfortSetpoint) {
   MockHubClimate hub;
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
-  hub.read_replies[DeviceRegister::COMFORT_SETPOINT] = 21.0F;
   deliver_readings(hub, [](IoDevice &r) {
     test::store_reading(r, DeviceReading::MODE, RADIATOR_HEAT);
     test::store_reading(r, DeviceReading::SETPOINT, 19.0F);
   });
   EXPECT_FLOAT_EQ(entity.target_temperature, 19.0F);
-  hub.mode_answer = RADIATOR_HEAT;
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, RADIATOR_HEAT)};
+  hub.after_plan = {{stores(DeviceRegister::COMFORT_SETPOINT, 21.0F)}};
 
   perform_target(entity, 21.0F);
 
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::COMFORT_SETPOINT);
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::COMFORT_SETPOINT, 21.0F));
 }
 
 TEST(PlatformClimate, RadiatorWithoutATemperatureInForceTakesTheTargetAsTheComfortSetpointInAuto) {
@@ -1703,21 +1663,21 @@ TEST(PlatformClimate, RadiatorWithoutATemperatureInForceTakesTheTargetAsTheComfo
   test::set_in_force_support(dev, InForceSupport::ABSENT);
   hub.trigger_device_update("ABC123", dev, /*cache_device=*/true);
   EXPECT_FLOAT_EQ(entity.target_temperature, 19.0F);
-  hub.mode_answer = RADIATOR_PROGRAMME;
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, RADIATOR_PROGRAMME)};
 
   perform_target(entity, 21.0F);
 
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::COMFORT_SETPOINT);
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::COMFORT_SETPOINT, 21.0F));
 }
 
 TEST(PlatformClimate, ATargetInAutoBeforeTheHeaterAnsweredTheTemperatureInForceAsksItAndWritesTheOverride) {
   MockHubClimate hub;
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
-  hub.read_replies[DeviceRegister::DEROGATED_SETPOINT] = 21.0F;
-  hub.mode_answer = RADIATOR_PROGRAMME;
-  hub.in_force_answer = InForceSupport::REPORTED;
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, RADIATOR_PROGRAMME),
+                            in_force_is(InForceSupport::REPORTED, 17.0F)};
+  hub.after_plan = {{override_taken(21.0F)}};
 
   perform_target(entity, 21.0F);  // nothing has been read since boot
 
@@ -1729,8 +1689,8 @@ TEST(PlatformClimate, ATargetInAutoOnAHeaterThatAnswersTheTemperatureInForceEmpt
   MockHubClimate hub;
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
-  hub.mode_answer = RADIATOR_PROGRAMME;
-  hub.in_force_answer = InForceSupport::ABSENT;
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, RADIATOR_PROGRAMME),
+                            in_force_is(InForceSupport::ABSENT)};
 
   perform_target(entity, 21.0F);
 
@@ -1755,41 +1715,27 @@ TEST(PlatformClimate, ASilentHeaterGetsNoTargetAndTheCardKeepsWhatItShowed) {
     const ClimateMode shown_mode = entity.mode;
     const float shown_target = entity.target_temperature;
     const int published = entity.publish_count_;
-    hub.mode_answer = MockHubClimate::SILENT;
+    hub.programme_state_answer = false;  // the heater does not answer the read of its mode
 
     perform_target(entity, 21.0F);
 
     EXPECT_EQ(hub.programme_state_reads.size(), 1u) << "towel " << towel << ": asked once";
-    EXPECT_TRUE(hub.writes.empty()) << "no override and no comfort fallback";
-    EXPECT_TRUE(hub.plans.empty());
+    EXPECT_TRUE(hub.plans.empty()) << "no override and no comfort fallback";
     EXPECT_EQ(entity.mode, shown_mode);
     EXPECT_FLOAT_EQ(entity.target_temperature, shown_target);
     EXPECT_EQ(entity.publish_count_, published);
   }
 }
 
-TEST(PlatformClimate, ADryerThatDoesNotAnswerTheTimedRunReadGetsNoTarget) {
-  MockHubClimate hub;
-  IOHomeClimate entity = make_towel_climate(hub);
-  entity.setup();
-  hub.mode_answer = DRYER_PROGRAMME;
-  hub.timed_run_answer = MockHubClimate::SILENT;
-
-  perform_target(entity, 21.0F);
-
-  EXPECT_TRUE(hub.writes.empty());
-  EXPECT_TRUE(hub.plans.empty());
-}
-
 TEST(PlatformClimate, AHeaterThatDoesNotAnswerTheTemperatureInForceGetsNoTarget) {
   MockHubClimate hub;
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
-  hub.mode_answer = RADIATOR_PROGRAMME;  // in_force_answer stays UNKNOWN: no reply
+  // The mode is answered, the temperature in force is not: it stays unknown.
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, RADIATOR_PROGRAMME)};
 
   perform_target(entity, 21.0F);
 
-  EXPECT_TRUE(hub.writes.empty());
   EXPECT_TRUE(hub.plans.empty());
 }
 
@@ -1797,12 +1743,13 @@ TEST(PlatformClimate, TheSameTargetGoesThroughOnceTheSilentHeaterAnswers) {
   MockHubClimate hub;
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
-  hub.mode_answer = MockHubClimate::SILENT;
+  hub.programme_state_answer = false;
   perform_target(entity, 21.0F);
-  ASSERT_TRUE(hub.writes.empty());
+  ASSERT_TRUE(hub.plans.empty());
 
-  hub.mode_answer = RADIATOR_HEAT;
-  hub.read_replies[DeviceRegister::COMFORT_SETPOINT] = 21.0F;
+  hub.programme_state_answer = true;
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, RADIATOR_HEAT)};
+  hub.after_plan = {{stores(DeviceRegister::COMFORT_SETPOINT, 21.0F)}};
   perform_target(entity, 21.0F);
 
   EXPECT_EQ(written(hub), std::vector<DeviceRegister>{DeviceRegister::COMFORT_SETPOINT});
@@ -1825,17 +1772,15 @@ TEST(PlatformClimate, AModeAndATargetInOneCallWriteTheModeThenAskTheHeaterBefore
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
   deliver_radiator_in_heat(hub);
-  hub.read_replies[DeviceRegister::OPERATING_MODE] =
-      static_cast<float>(HeatingMode::PROG);  // the mode write's read-back
-  hub.mode_answer = RADIATOR_PROGRAMME;
-  hub.read_replies[DeviceRegister::DEROGATED_SETPOINT] = 21.0F;
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, RADIATOR_PROGRAMME)};
+  // The mode write's read-back, then the override's.
+  hub.after_plan = {{stores(DeviceRegister::OPERATING_MODE, RADIATOR_PROGRAMME)}, {override_taken(21.0F)}};
 
   perform_auto_and_target(entity, 21.0F);
 
   EXPECT_EQ(written(hub),
             (std::vector<DeviceRegister>{DeviceRegister::OPERATING_MODE, DeviceRegister::DEROGATED_SETPOINT}));
   EXPECT_EQ(hub.programme_state_reads.size(), 1u) << "the read is for the target, not for the mode";
-  ASSERT_EQ(hub.plans.size(), 2u);
 }
 
 TEST(PlatformClimate, SwitchingToAutoShowsTheTemperatureInForceAsTheTarget) {
@@ -1844,9 +1789,9 @@ TEST(PlatformClimate, SwitchingToAutoShowsTheTemperatureInForceAsTheTarget) {
   entity.setup();
   deliver_radiator_in_heat(hub);
   ASSERT_FLOAT_EQ(entity.target_temperature, 19.0F);
-  hub.read_replies[DeviceRegister::OPERATING_MODE] = static_cast<float>(HeatingMode::PROG);  // the mode's read-back
-  hub.in_force_answer = InForceSupport::REPORTED;
-  hub.in_force_value_c = 17.5F;
+  // The mode's read-back, then one read of the temperature in force.
+  hub.after_plan = {
+      {stores(DeviceRegister::OPERATING_MODE, RADIATOR_PROGRAMME), in_force_is(InForceSupport::REPORTED, 17.5F)}};
   const size_t published = entity.published_targets_.size();
 
   perform_mode(entity, CLIMATE_MODE_AUTO);
@@ -1865,11 +1810,10 @@ TEST(PlatformClimate, AModeAndATargetInOneCallShowTheOverrideAfterTheTemperature
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
   deliver_radiator_in_heat(hub);
-  hub.read_replies[DeviceRegister::OPERATING_MODE] = static_cast<float>(HeatingMode::PROG);
-  hub.mode_answer = RADIATOR_PROGRAMME;
-  hub.in_force_answer = InForceSupport::REPORTED;
-  hub.in_force_value_c = 17.5F;
-  hub.read_replies[DeviceRegister::DEROGATED_SETPOINT] = 21.0F;
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, RADIATOR_PROGRAMME)};
+  hub.after_plan = {
+      {stores(DeviceRegister::OPERATING_MODE, RADIATOR_PROGRAMME), in_force_is(InForceSupport::REPORTED, 17.5F)},
+      {override_taken(21.0F)}};
   const size_t published = entity.published_targets_.size();
 
   perform_auto_and_target(entity, 21.0F);
@@ -1885,12 +1829,12 @@ TEST(PlatformClimate, AModeAndATargetInOneCallToASilentHeaterWriteOnlyTheMode) {
   MockHubClimate hub;
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
-  hub.mode_answer = MockHubClimate::SILENT;
+  hub.programme_state_answer = false;
 
   perform_auto_and_target(entity, 21.0F);
 
-  ASSERT_EQ(hub.writes.size(), 1u) << "the mode write is acknowledged, the target is not written";
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::OPERATING_MODE);
+  ASSERT_EQ(hub.plans.size(), 1u) << "the mode write is acknowledged, the target is not written";
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::AUTO)));
   EXPECT_EQ(hub.programme_state_reads.size(), 1u);
   EXPECT_TRUE(std::isnan(entity.target_temperature)) << "the refused target is not shown";
 }
@@ -1899,9 +1843,9 @@ TEST(PlatformClimate, APresetAndATargetInOneCallAskTheHeaterBeforeTheTarget) {
   MockHubClimate hub;
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
-  hub.mode_answer = RADIATOR_PROGRAMME;
-  hub.in_force_answer = InForceSupport::REPORTED;
-  hub.read_replies[DeviceRegister::DEROGATED_SETPOINT] = 21.0F;
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, RADIATOR_PROGRAMME),
+                            in_force_is(InForceSupport::REPORTED, 17.0F)};
+  hub.after_plan = {{stores(DeviceRegister::OPERATING_MODE, RADIATOR_PROGRAMME)}, {override_taken(21.0F)}};
 
   auto call = entity.make_call();
   call.set_preset(std::string("Program"));
@@ -1924,7 +1868,7 @@ TEST(PlatformClimate, AModeOrAPresetAloneNeverAsksTheHeater) {
   preset.perform();
 
   EXPECT_TRUE(hub.programme_state_reads.empty());
-  EXPECT_EQ(hub.writes.size(), 2u);
+  EXPECT_EQ(hub.plans.size(), 2u);
 }
 
 TEST(PlatformClimate, AHeaterWithoutAProgrammeTakesATargetWithoutAnyRead) {
@@ -1936,29 +1880,6 @@ TEST(PlatformClimate, AHeaterWithoutAProgrammeTakesATargetWithoutAnyRead) {
 
   EXPECT_TRUE(hub.programme_state_reads.empty());
   EXPECT_EQ(hub.plans.size(), 1u);
-}
-
-TEST(PlatformClimate, ATargetInHeatOrWhileATimedRunIsOnTopNeverReadsTheTemperatureInForce) {
-  MockHubClimate hub;
-  IOHomeClimate heater = make_bound_climate(hub);
-  heater.setup();
-  hub.mode_answer = RADIATOR_HEAT;
-  hub.in_force_answer = InForceSupport::REPORTED;
-  perform_target(heater, 21.0F);
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::COMFORT_SETPOINT);
-  EXPECT_EQ(test::in_force_of(*hub.get_device("ABC123")), InForceSupport::UNKNOWN);
-
-  MockHubClimate dryer_hub;
-  IOHomeClimate dryer = make_towel_climate(dryer_hub);
-  dryer.setup();
-  dryer_hub.mode_answer = DRYER_PROGRAMME;
-  dryer_hub.timed_run_answer = TIMED_BOOST;
-  dryer_hub.in_force_answer = InForceSupport::REPORTED;
-  perform_target(dryer, 21.0F);
-  ASSERT_EQ(dryer_hub.writes.size(), 1u) << "a boost run on top: the comfort setpoint, as ADR 0092 says";
-  EXPECT_EQ(dryer_hub.writes[0].fn, DeviceRegister::COMFORT_SETPOINT);
-  EXPECT_EQ(test::in_force_of(*dryer_hub.get_device("ABC123")), InForceSupport::UNKNOWN);
 }
 
 TEST(PlatformClimate, TowelDryerComfortAndEcoAreNoPresetAndSendNothing) {
@@ -1973,8 +1894,7 @@ TEST(PlatformClimate, TowelDryerComfortAndEcoAreNoPresetAndSendNothing) {
   perform_preset(entity, CLIMATE_PRESET_COMFORT);
   perform_preset(entity, CLIMATE_PRESET_ECO);
 
-  EXPECT_TRUE(hub.writes.empty()) << "no frame";
-  EXPECT_TRUE(hub.reads.empty());
+  EXPECT_TRUE(hub.plans.empty()) << "no frame";
   ASSERT_TRUE(entity.preset.has_value());
   EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE);
   EXPECT_EQ(entity.publish_count_, published);
@@ -1990,9 +1910,9 @@ TEST(PlatformClimate, TowelDryerPresetNoneEndsTheBoost) {
   });
 
   perform_preset(entity, CLIMATE_PRESET_NONE);
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::TEMPORARY_STATE);
-  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingTemporaryState::NONE));
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::TEMPORARY_STATE,
+                                static_cast<float>(HeatingTemporaryState::NONE)));
 }
 
 TEST(PlatformClimate, TowelDryerModeCommandKeepsTheCommandedBoost) {
@@ -2054,12 +1974,11 @@ TEST(PlatformClimate, RadiatorIgnoresTheTowelRegistersAndTheNonePreset) {
 
   perform_preset(entity, CLIMATE_PRESET_NONE);
   perform_preset(entity, CLIMATE_PRESET_BOOST);
-  EXPECT_TRUE(hub.writes.empty()) << "the radiator offers neither";
+  EXPECT_TRUE(hub.plans.empty()) << "the radiator offers neither";
 
   perform_mode(entity, CLIMATE_MODE_OFF);
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::OPERATING_MODE);
-  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingMode::OFF));
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::OFF)));
 }
 
 TEST(PlatformClimate, RadiatorProgramPresetComesFromTheModeRegister) {
@@ -2068,9 +1987,8 @@ TEST(PlatformClimate, RadiatorProgramPresetComesFromTheModeRegister) {
   entity.setup();
 
   perform_custom_preset(entity, "Program");
-  ASSERT_EQ(hub.writes.size(), 1u);
-  EXPECT_EQ(hub.writes[0].fn, DeviceRegister::OPERATING_MODE);
-  EXPECT_FLOAT_EQ(hub.writes[0].value, static_cast<float>(HeatingMode::PROG));
+  ASSERT_EQ(hub.plans.size(), 1u);
+  EXPECT_TRUE(is_register_write(hub.plans[0], DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::PROG)));
   EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO) << "a commanded preset shows through the mode table";
   EXPECT_EQ(entity.get_custom_preset(), "Program");
 }
@@ -2080,8 +1998,11 @@ TEST(PlatformClimate, EveryWriteIsOnePlanHandedToTheHubAndARefusedRequestHandsNo
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
 
-  hub.read_replies[DeviceRegister::OPERATING_MODE] = static_cast<float>(HeatingMode::MANUAL);
-  hub.mode_answer = static_cast<int16_t>(HeatingMode::MANUAL);  // the read before the target: heat
+  // The read before the target finds heat; the first write's read-back too (HeaterController
+  // ATargetOnAProgrammeHeaterSendsTheSameExchangesEveryTimeWhateverTheStoredReadingsSay,
+  // APlannedRegisterWriteSendsItsBytesAppliesTheHookThenReadsBack).
+  hub.on_programme_state = {stores(DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::MANUAL))};
+  hub.after_plan = {{stores(DeviceRegister::OPERATING_MODE, static_cast<float>(HeatingMode::MANUAL))}};
 
   perform_mode(entity, CLIMATE_MODE_HEAT);
   auto target = entity.make_call();
@@ -2090,7 +2011,6 @@ TEST(PlatformClimate, EveryWriteIsOnePlanHandedToTheHubAndARefusedRequestHandsNo
   perform_custom_preset(entity, "Program");
 
   ASSERT_EQ(hub.plans.size(), 3u) << "each write reaches the hub as one plan";
-  EXPECT_EQ(hub.plans.size(), hub.writes.size());
   EXPECT_EQ(hub.plans[0].register_fn, DeviceRegister::OPERATING_MODE);
   EXPECT_EQ(hub.plans[1].register_fn, DeviceRegister::COMFORT_SETPOINT);
   EXPECT_EQ(hub.plans[2].register_fn, DeviceRegister::OPERATING_MODE);
