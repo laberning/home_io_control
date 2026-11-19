@@ -19,8 +19,10 @@ esphome:
   devices:
     - id: device_awning
       name: "Patio Awning"
+      relation: via
     - id: device_dimmer
       name: "Dimmable Light"
+      relation: via
 
 # Board SPI bus + radio pinout — single source of truth in config/boards/.
 packages:

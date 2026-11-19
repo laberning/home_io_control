@@ -15,6 +15,7 @@ esphome:
   devices:
     - id: patio_awning_device
       name: "Patio Awning"
+      relation: via
 
 cover:
   - platform: home_io_control
@@ -27,6 +28,8 @@ cover:
 
 - Declare each sub-device once under `esphome: devices:`, then reference its `id:` from the
   entity's `device_id:`.
+- `relation: via` tells Home Assistant that the device is reached through this ESPHome node. ESPHome 2026.11
+  and later require the key; on an older ESPHome, leave the `relation:` line out.
 - Every companion entity the platform generates — the favorite, ventilation, partial and pedestrian buttons (the last two are disabled by default, the pedestrian one is experimental), the silent
   operation switch, the travel speed select, the rain sensor and the diagnostic sensors — inherits the parent entity's sub-device.
 - **Give the entity an empty name.** Home Assistant displays an entity as

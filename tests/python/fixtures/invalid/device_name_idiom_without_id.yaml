@@ -6,6 +6,7 @@ esphome:
   devices:
     - id: dev_awning
       name: "Awning Device"
+      relation: via
 packages:
   common: !include ../_common.yaml
   board: !include ../../../../config/boards/heltec-v3.yaml

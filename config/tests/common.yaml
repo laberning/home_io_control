@@ -19,8 +19,10 @@ esphome:
   devices:
     - id: dev_cover
       name: "Test Cover Device"
+      relation: via
     - id: dev_light
       name: "Test Light Device"
+      relation: via
 
 # Minimal esp32 config; framework (arduino/esp-idf) set in platform-specific files
 esp32:
