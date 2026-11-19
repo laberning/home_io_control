@@ -16,6 +16,7 @@
 #include "proto_commands.h"
 #include "proto_device_kinds.h"
 #include "proto_device_types.h"
+#include "proto_heating_profiles.h"
 #include "roll_call.h"
 
 #include "esphome/core/hal.h"
@@ -45,6 +46,7 @@ namespace {
 
 constexpr const char *MANAGEMENT_ACTION_RENAME_DEVICE = "rename_device";
 constexpr const char *MANAGEMENT_ACTION_IDENTIFY_DEVICE = "identify_device";
+constexpr const char *MANAGEMENT_ACTION_IDENTIFY_DEVICE_FOR = "identify_device_for";
 constexpr const char *MANAGEMENT_ACTION_FORCE_OPEN_DEVICE = "force_open_device";
 constexpr const char *MANAGEMENT_ACTION_SCAN_PAIRED_DEVICES = "scan_paired_devices";
 constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_POSITION = "oneway_set_position";
@@ -215,8 +217,8 @@ static bool parse_heating_temperature(const std::string &value, float &value_out
 ///
 /// Every native-API argument is a string (ManagementServiceDescriptor hardcodes
 /// SERVICE_ARG_TYPE_STRING), so this turns the two strings into a HeatingFunction plus the float
-/// encode_heating_payload() expects: degrees C for `set_temperature`, a HeatingMode value for
-/// `set_mode`, 0/1 for `set_presence` / `set_open_window_detection`, and an ignored 0 for the
+/// encode_heating_payload() expects: degrees C for `set_temperature`, degrees C or 0 (cancel) for `set_derogation`, a
+/// HeatingMode value for `set_mode`, 0/1 for `set_presence` / `set_open_window_detection`, and an ignored 0 for the
 /// register reads (`power_on`, `midnight_sync`, `window_open`). On any malformed input it fills `error` with a
 /// caller-facing message and returns false rather than coercing a value. Kept next to the action (not in proto_heating)
 /// because the climate entity receives typed enums from Home Assistant and needs no string
@@ -251,6 +253,13 @@ static bool parse_heating_arguments(const std::string &function, const std::stri
   }
   if (fn == "set_temperature") {
     fn_out = HeatingFunction::SET_TEMPERATURE;
+    return parse_heating_temperature(value, value_out, error);
+  }
+  if (fn == "set_derogation") {
+    fn_out = HeatingFunction::DEROGATED_SETPOINT;
+    // 0 cancels the override (`00 00`); any other value is a temperature like set_temperature's.
+    if (trim_ascii_whitespace(value) == "0")
+      return true;
     return parse_heating_temperature(value, value_out, error);
   }
   if (fn == "set_mode") {
@@ -330,6 +339,12 @@ void ManagementActions::register_actions() {
        {"device_id"},
        false,
        [this](const api::ExecuteServiceRequest &r) { this->api_identify_device(r.args[0].string_.str()); }},
+      {MANAGEMENT_ACTION_IDENTIFY_DEVICE_FOR,
+       {"device_id", "seconds"},
+       false,
+       [this](const api::ExecuteServiceRequest &r) {
+         this->api_identify_device_for(r.args[0].string_.str(), r.args[1].string_.str());
+       }},
       {MANAGEMENT_ACTION_FORCE_OPEN_DEVICE,
        {"device_id"},
        false,
@@ -517,19 +532,39 @@ ManagementActionResult ManagementActions::rename_device(const std::string &devic
 }
 
 void ManagementActions::api_identify_device(const std::string &device_id) {
-  publish_result(identify_device(device_id));
+  publish_result(identify_device(device_id, IDENTIFY_WINK_DEVICE_DEFAULT));
 }
 
-ManagementActionResult ManagementActions::identify_device(const std::string &device_id) {
+void ManagementActions::api_identify_device_for(const std::string &device_id, const std::string &seconds) {
+  publish_result(identify_device_for(device_id, seconds));
+}
+
+ManagementActionResult ManagementActions::identify_device_for(const std::string &device_id,
+                                                              const std::string &seconds) {
+  uint8_t wink_time = 0;
+  if (!parse_identify_seconds(seconds, wink_time)) {
+    ManagementActionResult result = make_management_result(MANAGEMENT_ACTION_IDENTIFY_DEVICE_FOR, device_id);
+    result.message = "seconds must be a whole number between 0 and 253 (0 stops a running identify)";
+    return result;
+  }
+  return run_identify_(MANAGEMENT_ACTION_IDENTIFY_DEVICE_FOR, device_id, wink_time);
+}
+
+ManagementActionResult ManagementActions::identify_device(const std::string &device_id, uint8_t wink_time) {
+  return run_identify_(MANAGEMENT_ACTION_IDENTIFY_DEVICE, device_id, wink_time);
+}
+
+ManagementActionResult ManagementActions::run_identify_(const char *action, const std::string &device_id,
+                                                        uint8_t wink_time) {
   ManagementActionResult result;
   // Deliberately no device-type gating beyond "registered on this hub" — see the doxygen note on
   // the declaration for why.
-  auto *dev = resolve_device_(MANAGEMENT_ACTION_IDENTIFY_DEVICE, device_id, result);
+  auto *dev = resolve_device_(action, device_id, result);
   if (dev == nullptr)
     return result;
 
   IoFrame request;
-  if (!create_identify(request, node_id_, dev->node_id, dev->low_power)) {
+  if (!create_identify(request, node_id_, dev->node_id, dev->low_power, wink_time)) {
     result.message = "failed to build identify request";
     return result;
   }
@@ -554,7 +589,7 @@ ManagementActionResult ManagementActions::identify_device(const std::string &dev
   // Any other endpoint-matched reply counts as acknowledgment; unlike rename there is no specific
   // response command to check against, and no readback exists to set `verified`.
   result.success = true;
-  result.message = "identify acknowledged by device";
+  result.message = wink_time == IDENTIFY_WINK_STOP ? "identify stopped" : "identify acknowledged by device";
   return result;
 }
 
@@ -612,6 +647,15 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
     return result;
   }
 
+  // The override exists only on a heater whose profile names its programme registers.
+  if (fn == HeatingFunction::DEROGATED_SETPOINT) {
+    const HeatingProfile *profile = find_heating_profile(*dev);
+    if (profile == nullptr || profile->programme_period == nullptr) {
+      result.message = "device has no programme, so set_derogation does not apply";
+      return result;
+    }
+  }
+
   // Snapshot any pre-existing CMD_ERROR_RESP code so a stale one (e.g. an old wind lockout from a
   // different command) is not misattributed to this send.
   const uint8_t prior_result_code = dev->last_result_code;
@@ -666,20 +710,14 @@ void ManagementActions::api_oneway_set_position(const std::string &controller_id
   // Parse the position string here and reject loudly on anything unparseable. Do NOT relax this to
   // atoi()/strtoul()-with-default: a value that silently became 0 would send a fully-open command
   // to every actuator bound to this 1W identity.
-  const std::string trimmed = trim_ascii_whitespace(position);
-  if (trimmed.empty() || trimmed.find_first_not_of("0123456789") != std::string::npos) {
+  uint8_t parsed = 0;
+  if (!parse_whole_number_argument(position, ONEWAY_POSITION_FULLY_CLOSED, parsed)) {
     result.message = "position must be a whole number between 0 and 100";
     publish_result(result);
     return;
   }
-  const unsigned long parsed = strtoul(trimmed.c_str(), nullptr, 10);  // NOLINT(google-runtime-int)
-  if (parsed > ONEWAY_POSITION_FULLY_CLOSED) {
-    result.message = "position must be between 0 and 100";
-    publish_result(result);
-    return;
-  }
 
-  hub_->send_oneway_position(controller_id, static_cast<uint8_t>(parsed));
+  hub_->send_oneway_position(controller_id, parsed);
   result.success = true;
   // Deliberately "queued", not "sent" or "applied": 1W reports nothing back, and neither should
   // this. See the "Last 1W Command" sensor for what was actually transmitted.

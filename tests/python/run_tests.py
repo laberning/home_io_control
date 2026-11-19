@@ -593,9 +593,100 @@ def heater_window_companions_are_declared_at_validation_time():
 
 
 @case()
+def heating_level_sensor_is_accepted_on_an_electrical_heater_only():
+    """`heating_level:` passes on every electrical heater (the sensor stays without a state where the
+    heater reports no level) and is refused on another kind and on an entry with no declared type; an
+    entry without the key is untouched."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import climate as c
+    from esphome.components.home_io_control import hub_validators as v
+
+    key = c.CONF_HEATING_LEVEL
+    heater = v.DEVICE_TYPE_OPTIONS["electrical_heater"]
+    for subtype in (0, 1):
+        cfg = {"io_device_type": heater, "io_subtype": subtype, key: {}}
+        assert c._validate_heating_level(cfg) is cfg
+    plain = {"io_device_type": v.DEVICE_TYPE_OPTIONS["heat_pump"]}
+    assert c._validate_heating_level(plain) is plain
+    for cfg in ({"io_device_type": v.DEVICE_TYPE_OPTIONS["heat_pump"], key: {}}, {key: {}}):
+        try:
+            c._validate_heating_level(cfg)
+        except cv.Invalid as err:
+            assert "needs an electrical heater" in str(err)
+        else:
+            raise AssertionError(f"accepted {cfg}")
+
+
+@case()
+def opt_in_register_keys_are_accepted_only_on_a_kind_with_their_capability():
+    """`central_heating_mode:` passes on a towel dryer (the CENTRAL_HEATING_MODE capability of its row);
+    `occupancy_detection:` and `occupancy:` pass on a radiator and a heater with a light (OCCUPANCY); `energy:` passes
+    on a radiator, a towel dryer and a heater with a light (ENERGY_METER); `remaining_time:`, `boost_duration:` and
+    `drying_duration:` pass on a towel dryer only (RUN_TIMERS). Each is refused
+    on every other heater kind, another device and an entry with no declared type, with a message naming the
+    kind to declare; an entry without the keys is untouched."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import climate as c
+    from esphome.components.home_io_control import hub_validators as v
+
+    heater = v.DEVICE_TYPE_OPTIONS["electrical_heater"]
+    heat_pump = v.DEVICE_TYPE_OPTIONS["heat_pump"]
+    radiator = {"io_device_type": heater, "io_subtype": 1}
+    dryer = {**radiator, "io_model": "towel_dryer"}
+    with_light = {**radiator, "io_model": "heater_with_light"}
+    pilot_wire = {"io_device_type": heater, "io_subtype": 0, "io_model": "pilot_wire_interface"}
+    plain = {"io_device_type": heater, "io_subtype": 0}
+    pump = {"io_device_type": heat_pump}
+
+    untouched = dict(radiator)
+    assert c._validate_opt_in_reads(untouched) is untouched
+
+    accepted = {
+        c.CONF_CENTRAL_HEATING_MODE: (dryer,),
+        c.CONF_OCCUPANCY_DETECTION: (radiator, with_light),
+        c.CONF_OCCUPANCY: (radiator, with_light),
+        c.CONF_ENERGY: (radiator, dryer, with_light),
+        c.CONF_REMAINING_TIME: (dryer,),
+        c.CONF_BOOST_DURATION: (dryer,),
+        c.CONF_DRYING_DURATION: (dryer,),
+    }
+    refused = {
+        c.CONF_CENTRAL_HEATING_MODE: (radiator, with_light, plain, pilot_wire, pump, {}),
+        c.CONF_OCCUPANCY_DETECTION: (dryer, plain, pilot_wire, pump, {}),
+        c.CONF_OCCUPANCY: (dryer, plain, pilot_wire, pump, {}),
+        c.CONF_ENERGY: (plain, pilot_wire, pump, {}),
+        c.CONF_REMAINING_TIME: (radiator, with_light, plain, pilot_wire, pump, {}),
+        c.CONF_BOOST_DURATION: (radiator, with_light, plain, pilot_wire, pump, {}),
+        c.CONF_DRYING_DURATION: (radiator, with_light, plain, pilot_wire, pump, {}),
+    }
+    hint = {
+        c.CONF_CENTRAL_HEATING_MODE: "io_model: towel_dryer",
+        c.CONF_OCCUPANCY_DETECTION: "io_model: heater_with_light",
+        c.CONF_OCCUPANCY: "io_model: heater_with_light",
+        c.CONF_ENERGY: "io_model: towel_dryer or io_model: heater_with_light",
+        c.CONF_REMAINING_TIME: "io_model: towel_dryer",
+        c.CONF_BOOST_DURATION: "io_model: towel_dryer",
+        c.CONF_DRYING_DURATION: "io_model: towel_dryer",
+    }
+    for key, kinds in accepted.items():
+        for kind in kinds:
+            cfg = {**kind, key: {}}
+            assert c._validate_opt_in_reads(cfg) is cfg, (key, kind)
+    for key, kinds in refused.items():
+        for kind in kinds:
+            cfg = {**kind, key: {}}
+            try:
+                c._validate_opt_in_reads(cfg)
+            except cv.Invalid as err:
+                assert hint[key] in str(err) and str(err).startswith(key), (key, kind, str(err))
+            else:
+                raise AssertionError(f"accepted {key} on {kind}")
+
+
+@case()
 def cover_named_position_buttons_follow_the_declared_kind():
     """A cover gets one companion button per named position its declared kind has, with the entity
-    ids and names Home Assistant already knows; a kind without the bit, a raw type with no row
+    ids and names Home Assistant already knows; a kind without the capability, a raw type with no row
     (including the ventilation point, which is not a cover) and a cover with no declared type get none."""
     from esphome.const import CONF_ID, CONF_NAME
     from esphome.core import ID
@@ -752,7 +843,7 @@ def cover_gets_its_kinds_default_device_class():
 
     for kind, device_class in v.DEFAULT_COVER_DEVICE_CLASS.items():
         assert kind in types, kind
-        assert v.DEVICE_FEATURES.get(kind, 0) & v.FEATURE_LEVELS, f"{kind} is not a cover kind"
+        assert "LEVELS" in v.DEVICE_FEATURES.get(kind, frozenset()), f"{kind} is not a cover kind"
         assert device_class in DEVICE_CLASSES, device_class
 
     # The docs table is the same mapping, one row per class with the kinds that share it.
@@ -869,24 +960,45 @@ def device_features_fall_back_like_the_cpp_lookup():
     t = v.DEVICE_TYPE_OPTIONS
     roller = v.device_features(t["roller_shutter"])
     assert v.device_features(t["roller_shutter"], 9) == roller, "an unnamed subtype takes the type row"
-    assert v.device_features(t["roller_shutter"], 58) == v.FEATURE_MAIN_PARAMETER_ONLY | v.FEATURE_FAVORITE
-    assert v.device_features(t["interior_venetian_blind"], 58) & v.FEATURE_TILT == 0
+    assert v.device_features(t["roller_shutter"], 58) == {"MAIN_PARAMETER_ONLY", "FAVORITE"}
+    assert "TILT" not in v.device_features(t["interior_venetian_blind"], 58)
     # VELUX KLF 200 API specification, Appendix 2: types 1 and 13 take the short position frame, type 10 has no slat.
-    assert v.device_features(t["interior_venetian_blind"]) & v.FEATURE_TILT
+    assert "TILT" in v.device_features(t["interior_venetian_blind"])
     for short_frame in ("interior_venetian_blind", "dual_roller_shutter"):
-        assert v.device_features(t[short_frame]) & v.FEATURE_EXTENDED_POSITION_FRAME == 0, short_frame
-    assert v.device_features(t["vertical_interior_blind"]) & v.FEATURE_TILT == 0
-    assert v.device_features(t["window_opener"], 58) & v.FEATURE_VENT
-    capability = ~v.KIND_EXPERIMENTAL  # the experimental marker is not a capability
+        assert "EXTENDED_POSITION_FRAME" not in v.device_features(t[short_frame]), short_frame
+    assert "TILT" not in v.device_features(t["vertical_interior_blind"])
+    assert "VENT" in v.device_features(t["window_opener"], 58)
     # Lights, switches and locks have no speed to choose, so they never take the speed block.
     for binary_kind in ("light", "on_off_switch", "lock"):
-        assert v.device_features(t[binary_kind]) & capability == 0, binary_kind
-        assert v.device_features(t[binary_kind], 1) & v.FEATURE_EXTENDED_POSITION_FRAME == 0, binary_kind
-    assert v.device_features(t["light"], 1) & capability == v.FEATURE_LEVELS
-    assert v.device_features(t["electrical_heater"], 1) == v.FEATURE_WINDOW_COMPANIONS
-    assert v.device_features(t["electrical_heater"], 0) == 0
-    assert v.device_features(0x14) == 0, "a raw type with no name has no capabilities"
-    assert v.device_features(0x14, 58) == v.FEATURE_MAIN_PARAMETER_ONLY
+        assert v.device_features(t[binary_kind]) == frozenset(), binary_kind
+        assert "EXTENDED_POSITION_FRAME" not in v.device_features(t[binary_kind], 1), binary_kind
+    assert v.device_features(t["light"], 1) == {"LEVELS"}
+    assert v.device_features(t["electrical_heater"], 1) == {"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}
+    assert v.device_features(t["electrical_heater"], 0) == frozenset()
+    assert v.device_features(0x14) == frozenset(), "a raw type with no name has no capabilities"
+    assert v.device_features(0x14, 58) == {"MAIN_PARAMETER_ONLY"}
+
+
+@case()
+def the_mirror_names_only_real_capabilities_and_a_misspelt_name_is_refused():
+    """Every capability the mirror lists is in FEATURES, the helpers refuse a name that is not, and the
+    experimental status is never a capability."""
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as p
+
+    assert len(set(v.FEATURES)) == len(v.FEATURES)
+    assert "EXPERIMENTAL" not in v.FEATURES
+    for key, names in v.DEVICE_FEATURES.items():
+        assert names <= set(v.FEATURES), f"{key} names {sorted(names - set(v.FEATURES))}"
+    assert set(v.NAMED_POSITION_FEATURES.values()) <= set(v.FEATURES)
+    for bad in (lambda: p.has_feature("LEVLES"), lambda: v.check_feature_name("experimental")):
+        try:
+            bad()
+            raise AssertionError("a misspelt capability name was accepted")
+        except ValueError:
+            pass
+    assert p.declared_has_feature({"io_device_type": v.DEVICE_TYPE_OPTIONS["roller_shutter"]}, "LEVELS")
+    assert not p.declared_has_feature({}, "LEVELS"), "no declared kind has no capability"
 
 
 @case()
@@ -901,13 +1013,13 @@ def a_model_row_is_offered_only_by_its_kind_and_replaces_its_word():
     towel = v.DEVICE_MODEL_OPTIONS["towel_dryer"]
     assert towel == 1
     assert v.device_models(t["electrical_heater"], 1) == ["heater_with_light", "towel_dryer"]
-    assert v.device_models(t["electrical_heater"], 0) == []
+    assert v.device_models(t["electrical_heater"], 0) == ["pilot_wire_interface"]
     assert v.device_models(t["roller_shutter"]) == []
     assert v.device_models(0x14, 1) == [], "a raw type with no name has no models"
-    assert v.device_features(t["electrical_heater"], 1, towel) & v.FEATURE_WINDOW_COMPANIONS == 0
-    assert v.device_features(t["electrical_heater"], 1) == v.FEATURE_WINDOW_COMPANIONS, "no model: the radiator"
+    assert "WINDOW_COMPANIONS" not in v.device_features(t["electrical_heater"], 1, towel)
+    assert v.device_features(t["electrical_heater"], 1) == {"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}, "no model: the radiator"
     assert v.device_features(t["roller_shutter"], 0, towel) == v.device_features(t["roller_shutter"])
-    assert not v.kind_is_experimental(t["electrical_heater"], 1, towel)
+    assert not v.kind_is_experimental(t["electrical_heater"], 1)
     assert p.config_model({"io_model": "towel_dryer"}) == towel
     assert p.config_model({}) == 0
     assert v.validate_device_model_name(" Towel_Dryer ") == "towel_dryer"
@@ -920,16 +1032,17 @@ def a_model_row_is_offered_only_by_its_kind_and_replaces_its_word():
 
 @case()
 def experimental_kinds_are_marked_in_the_mirror_and_warned_about_once_at_config_time():
-    """An experimental kind (no capture or report confirms it on a real device) carries
-    KIND_EXPERIMENTAL; declaring one logs one warning that names the kind and the reporting page,
-    and a confirmed kind, a declared kind of a confirmed type and a config with no kind log nothing."""
+    """An experimental kind (no capture or report confirms it on a real device) is in
+    EXPERIMENTAL_KINDS, apart from the capabilities; declaring one logs one warning that names the kind
+    and the reporting page, and a confirmed kind, a declared kind of a confirmed type and a config with
+    no kind log nothing."""
     import logging
 
     from esphome.components.home_io_control import hub_validators as v
     from esphome.components.home_io_control import platform_common as p
 
     t = v.DEVICE_TYPE_OPTIONS
-    assert v.KIND_EXPERIMENTAL == 0x8000
+    assert isinstance(v.EXPERIMENTAL_KINDS, frozenset)
     assert v.kind_is_experimental(t["gate_opener"], 58)
     assert v.kind_is_experimental(t["swinging_shutter"], 58)
     assert v.kind_is_experimental(t["light"], 1)
@@ -968,6 +1081,149 @@ def experimental_kinds_are_marked_in_the_mirror_and_warned_about_once_at_config_
     assert warnings_for({"io_device_type": t["garage_opener"], "io_subtype": 58}) == []
     assert warnings_for({"io_device_type": t["roller_shutter"]}) == []
     assert warnings_for({}) == [], "no declared kind: nothing says what the device is"
+
+
+@case()
+def lbt_max_retries_is_accepted_with_a_warning_and_generates_no_code():
+    """`lbt_max_retries` is retired (ADR 0096): the tuning block still accepts it within its old range
+    and logs one warning naming the replacement key; a value outside the range is still reported,
+    and the key never reaches the generated tuning assignments."""
+    import logging
+
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import tuning as t
+
+    class Capture(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.messages = []
+
+        def emit(self, record):
+            self.messages.append(record.getMessage())
+
+    capture = Capture()
+    t._LOGGER.addHandler(capture)
+    try:
+        assert t.TUNING_SCHEMA({t.CONF_LBT_MAX_RETRIES: 3})[t.CONF_LBT_MAX_RETRIES] == 3
+        try:
+            t.TUNING_SCHEMA({t.CONF_LBT_MAX_RETRIES: 11})
+            raise AssertionError("an out-of-range lbt_max_retries was accepted")
+        except cv.Invalid:
+            pass
+    finally:
+        t._LOGGER.removeHandler(capture)
+    assert len(capture.messages) == 1, capture.messages
+    assert "'lbt_max_retries:' is deprecated and has no effect" in capture.messages[0]
+    assert "lbt_force_when_busy: true" in capture.messages[0]
+    assert t.CONF_LBT_MAX_RETRIES not in t._NUMBER_PARAMS, "a deprecated key must not get a number entity"
+    assert t.CONF_LBT_FORCE_WHEN_BUSY in t._BOOL_PARAMS, "the replacement key is a plain boolean tuning key"
+
+
+@case()
+def preamble_durations_take_fractional_milliseconds_inside_their_range():
+    """Every preamble is a duration in ms (ADR 0097): the number entity and the YAML key share one
+    range, a value inside it keeps its fraction, and one outside it is reported."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import tuning as t
+
+    expected = {
+        t.CONF_RESPONSE_PREAMBLE_MS: (1.5, 70, 0.5),
+        t.CONF_START_PREAMBLE_MS: (1.5, 70, 0.5),
+        t.CONF_COLD_BROADCAST_REPLY_PREAMBLE_MS: (1.5, 70, 0.5),
+        t.CONF_PAIRING_DISCOVERY_PREAMBLE_MS: (1.5, 300, 0.5),
+        t.CONF_LOW_POWER_WAKE_MS: (300, 1000, 10),
+    }
+    for key, (low, high, step) in expected.items():
+        assert t._NUMBER_PARAMS[key] == (low, high, step, "ms"), (key, t._NUMBER_PARAMS[key])
+    assert t.TUNING_SCHEMA({t.CONF_RESPONSE_PREAMBLE_MS: 3.5})[t.CONF_RESPONSE_PREAMBLE_MS] == 3.5
+    assert t.TUNING_SCHEMA({t.CONF_LOW_POWER_WAKE_MS: 600})[t.CONF_LOW_POWER_WAKE_MS] == 600
+    for key, value in ((t.CONF_RESPONSE_PREAMBLE_MS, 1.0), (t.CONF_START_PREAMBLE_MS, 71), (t.CONF_LOW_POWER_WAKE_MS, 299)):
+        try:
+            t.TUNING_SCHEMA({key: value})
+        except cv.Invalid:
+            continue
+        raise AssertionError(f"{key}: {value} is outside its range and was accepted")
+    for old_key in t._LEGACY_PREAMBLE_KEYS:
+        assert old_key not in t._NUMBER_PARAMS, f"the deprecated {old_key} must not get a number entity"
+
+
+@case()
+def deprecated_preamble_byte_keys_warn_once_and_reach_codegen_unconverted():
+    """Each old byte key is accepted within its old range, warns once naming its replacement, and
+    is handed to C++ as bytes (setup() converts it for the radio); a response key of another radio
+    is accepted and warned about but never emitted."""
+    import logging
+
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import tuning as t
+
+    class Capture(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.messages = []
+
+        def emit(self, record):
+            self.messages.append(record.getMessage())
+
+    legacy = {
+        "low_power_wake_preamble": (2048, "low_power_wake_ms"),
+        "normal_start_preamble": (48, "start_preamble_ms"),
+        "sx1262_response_preamble": (12, "response_preamble_ms"),
+        "sx1276_response_preamble": (12, "response_preamble_ms"),
+        "lr1121_response_preamble": (12, "response_preamble_ms"),
+        "cold_broadcast_reply_preamble": (80, "cold_broadcast_reply_preamble_ms"),
+        "pairing_discovery_preamble": (64, "pairing_discovery_preamble_ms"),
+    }
+    assert set(legacy) == set(t._LEGACY_PREAMBLE_KEYS), "every deprecated key is covered here"
+    for old_key, (value, new_key) in legacy.items():
+        capture = Capture()
+        t._LOGGER.addHandler(capture)
+        try:
+            assert t.TUNING_SCHEMA({old_key: value})[old_key] == value
+        finally:
+            t._LOGGER.removeHandler(capture)
+        assert len(capture.messages) == 1, (old_key, capture.messages)
+        assert f"'{old_key}:' is deprecated" in capture.messages[0]
+        assert f"'{new_key}:'" in capture.messages[0], capture.messages[0]
+        low, high = t._LEGACY_PREAMBLE_KEYS[old_key][:2]
+        try:
+            t.TUNING_SCHEMA({old_key: high + 1})
+        except cv.Invalid:
+            pass
+        else:
+            raise AssertionError(f"{old_key}: {high + 1} is above its old byte range and was accepted")
+
+    everything = {old_key: value for old_key, (value, _new) in legacy.items()}
+    assert t._legacy_preamble_assignments(everything, "sx1276") == [
+        ("legacy_preamble_bytes.low_power_wake", 2048),
+        ("legacy_preamble_bytes.start", 48),
+        ("legacy_preamble_bytes.response", 12),
+        ("legacy_preamble_bytes.cold_broadcast_reply", 80),
+        ("legacy_preamble_bytes.discovery", 64),
+    ]
+    assert t._legacy_preamble_assignments({"sx1262_response_preamble": 20}, "sx1276") == []
+    assert t._legacy_preamble_assignments({"lr1121_response_preamble": 20}, "lr1121") == [
+        ("legacy_preamble_bytes.response", 20)
+    ]
+    assert t._legacy_preamble_assignments({}, "sx1262") == []
+
+
+@case("tuning._refuse_old_and_new_preamble_keys")
+def a_byte_key_together_with_its_duration_key_is_refused():
+    """Setting the old byte key and the duration key that replaces it is ambiguous and refused,
+    naming the key to remove; the same keys for different preambles are fine."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import tuning as t
+
+    for old_key, (_lo, _hi, new_key, _field, _radio) in t._LEGACY_PREAMBLE_KEYS.items():
+        try:
+            t._refuse_old_and_new_preamble_keys({old_key: 20, new_key: 10})
+        except cv.Invalid as err:
+            assert old_key in str(err) and new_key in str(err), str(err)
+        else:
+            raise AssertionError(f"{old_key} together with {new_key} was accepted")
+    ok = {"normal_start_preamble": 48, t.CONF_LOW_POWER_WAKE_MS: 600}
+    assert t._refuse_old_and_new_preamble_keys(ok) is ok
 
 
 @case()
@@ -1027,7 +1283,7 @@ def feature_gated_keys_are_rejected_for_a_kind_without_the_feature():
     from esphome.components.home_io_control import platform_common as p
 
     t = v.DEVICE_TYPE_OPTIONS
-    silent_gate = dict(required=v.FEATURE_EXTENDED_POSITION_FRAME, reason="remove silent:")
+    silent_gate = dict(required="EXTENDED_POSITION_FRAME", reason="remove silent:")
 
     p.require_feature({}, "silent", True, **silent_gate)  # no declared kind: nothing says what it is
     p.require_feature({"io_device_type": t["garage_opener"]}, "silent", False, **silent_gate)
@@ -1043,7 +1299,7 @@ def feature_gated_keys_are_rejected_for_a_kind_without_the_feature():
     except cv.Invalid as err:
         assert "io_subtype 58" in str(err), str(err)
 
-    on_off_only = dict(forbidden=v.FEATURE_MAIN_PARAMETER_ONLY, reason="remove dimmable:")
+    on_off_only = dict(forbidden="MAIN_PARAMETER_ONLY", reason="remove dimmable:")
     p.require_feature({"io_device_type": t["light"]}, "dimmable", True, **on_off_only)
     try:
         p.require_feature({"io_device_type": t["light"], "io_subtype": 58}, "dimmable", True, **on_off_only)

@@ -21,16 +21,21 @@ static const char *const TAG = "home_io_control.water_heater";
 
 namespace {
 
-/// @brief Heater mode <-> ESPHome mode. The single place this correspondence is defined (ADR 0068).
+/// @brief Heater mode <-> ESPHome mode. The single place this correspondence is defined (ADR 0090): each heater
+/// mode takes the ESPHome mode whose Home Assistant meaning matches what heats and how. Automatic adapts to
+/// consumption and uses the element as needed (energy saving: eco), manual ECO on heats with the heat pump only
+/// (heat_pump), manual ECO off lets the element assist (performance).
 struct WaterHeaterModeMapping {
   DhwMode dhw;
   water_heater::WaterHeaterMode mode;
 };
 constexpr WaterHeaterModeMapping WATER_HEATER_MODE_MAP[] = {
-    {DhwMode::AUTO, water_heater::WATER_HEATER_MODE_HEAT_PUMP},
-    {DhwMode::MANUAL_ECO_ON, water_heater::WATER_HEATER_MODE_ECO},
+    {DhwMode::AUTO, water_heater::WATER_HEATER_MODE_ECO},
+    {DhwMode::MANUAL_ECO_ON, water_heater::WATER_HEATER_MODE_HEAT_PUMP},
     {DhwMode::MANUAL_ECO_OFF, water_heater::WATER_HEATER_MODE_PERFORMANCE},
 };
+static_assert(WATER_HEATER_MODE_MAP[0].dhw == DhwMode::AUTO, "the fallback in water_heater_mode_for() is row 0");
+
 /// The two modes of an electric storage water heater: it has no heat pump, so its automatic mode is ECO
 /// (it learns the household's habits and heats only what they need) and its manual mode is ELECTRIC.
 constexpr WaterHeaterModeMapping ELECTRIC_WATER_HEATER_MODE_MAP[] = {
@@ -156,8 +161,7 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
   const bool away = call.get_away().value_or(this->is_away());
   if (!std::isnan(target) && away) {
     ESP_LOGW(TAG, "Device %s: target ignored while away, the heater holds no target then", this->device_id_.c_str());
-  } else if (!std::isnan(target) && this->observed_ &&
-             this->mode_ == water_heater_mode_for(DhwMode::AUTO, this->model_)) {
+  } else if (!std::isnan(target) && this->observed_ && this->holds_automatic_mode_()) {
     ESP_LOGW(TAG, "Device %s: target ignored in automatic mode, the heater chooses its own", this->device_id_.c_str());
   } else if (!std::isnan(target) && this->heating_port_->set_water_heater_target(this->device_id_, target) &&
              !this->observed_) {
@@ -168,6 +172,11 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
 
   if (changed)
     this->publish_state();
+}
+
+bool IOHomeWaterHeater::holds_automatic_mode_() const {
+  DhwMode heater_mode = DhwMode::MANUAL_ECO_ON;
+  return dhw_mode_for(this->mode_, this->model_, heater_mode) && heater_mode == DhwMode::AUTO;
 }
 
 bool IOHomeWaterHeater::sync_from_readings_(const DhwReadings &readings) {
@@ -219,7 +228,7 @@ void IOHomeWaterHeater::dump_config() {
     ESP_LOGCONFIG(TAG, "  Status: electric storage water heater; readings, mode, boost, away and manual showers "
                        "confirmed on hardware; a target selects the nearest shower count in manual mode");
   } else {
-    ESP_LOGCONFIG(TAG, "  Status: readings, target and mode confirmed on hardware; away mode experimental");
+    ESP_LOGCONFIG(TAG, "  Status: readings, target, mode and away mode confirmed on hardware");
   }
 }
 
@@ -328,6 +337,22 @@ void IOHomeDhwBinarySensor::dump_config() {
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
 }
 
+void IOHomeDhwHeatingSourceSensor::setup() {
+  this->register_companion_binding_([this](const IoDevice &dev) {
+    // Nothing read means no state, never "idle".
+    const char *source = dhw_heating_source_name(dev.dhw.heat_pump, dev.dhw.element);
+    if (source == nullptr) {
+      return;
+    }
+    this->publish_state(source);
+  });
+}
+
+void IOHomeDhwHeatingSourceSensor::dump_config() {
+  ESP_LOGCONFIG(TAG, "IO-Homecontrol Water Heater Heating Source:");
+  ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
+}
+
 void IOHomeDhwBoostSwitch::setup() {
   // No restore: the state comes only from the heater, and a reboot must not start or end a boost.
   this->register_companion_binding_([this](const IoDevice &dev) {
@@ -350,7 +375,8 @@ void IOHomeDhwBoostSwitch::write_state(bool state) {
 void IOHomeDhwBoostSwitch::dump_config() {
   ESP_LOGCONFIG(TAG, "IO-Homecontrol Water Heater Boost:");
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
-  ESP_LOGCONFIG(TAG, "  Status: experimental (a boost started here writes duration 1; the state is the heater's FP16)");
+  ESP_LOGCONFIG(
+      TAG, "  Status: confirmed on hardware (a boost started here writes duration 1; the state is the heater's FP16)");
 }
 
 }  // namespace home_io_control

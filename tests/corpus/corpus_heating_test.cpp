@@ -1,6 +1,8 @@
 /// @file corpus_heating_test.cpp
 /// @brief The heater register codec (proto_heating.h) against real frames from an Atlantic AGILIA IO
-/// radiator (issue #165) and a Sauter Hekla's night light (issue #222).
+/// radiator (issue #165), a Sauter Hekla's night light (issue #222) and the energy total of a Sauter Tahual
+/// radiator and two Atlantic Adelis towel dryers (PR #238, issue #202), and the run timers of an Adelis during a boost
+/// and a drying run.
 ///
 /// Every request the hub sent is compared byte for byte with what the encoder builds for the same
 /// function and value, and every reply is decoded and compared with the value the climate entity
@@ -250,15 +252,56 @@ TEST(CorpusHeating, HeatingLevelExecuteIsTheFrameAVendorBridgeSends) {
 
 // === Night light brightness levels of a Sauter Hekla (issue #222) ===
 
-TEST(CorpusHeating, TheHeklasPanelLevelsAreTheWritesOfOneTenTwentyAndHundredPercent) {
+TEST(CorpusHeating, TheHeklasPanelLevelsAreThirtyThreeSixtySixAndHundredPercentOnTheAppsScale) {
   using namespace corpus;
-  // Frames in capture order: second, third, lowest and highest panel level.
+  // Frames in capture order: second, third, lowest and highest panel level. The lowest, 100, lies between
+  // two whole percentages (3.3 %), so it is checked as its register value.
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame0_bytes,
-                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(10)));
+                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(33)));
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame1_bytes,
-                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(20)));
+                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(66)));
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame2_bytes,
-                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(1)));
+                          HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 100));
   EXPECT_TRUE(is_write_of(sauter_hekla_exchange_night_light_brightness_levels_sx1262_frame3_bytes,
                           HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, night_light_register_from_percent(100)));
+}
+
+TEST(CorpusHeating, TheEnergyTotalIsReadAndDecodedInWholeKilowattHoursMostSignificantByteFirst) {
+  using namespace corpus;
+  EXPECT_TRUE(is_read_of(sauter_tahual_probe_energy_register_frame0_bytes, HeatingFunction::ENERGY_TOTAL));
+  EXPECT_FLOAT_EQ(value_of(sauter_tahual_probe_energy_register_frame1_bytes, HeatingFunction::ENERGY_TOTAL), 3422.0F)
+      << "the total the Tahual's display showed";
+  // The two Adelis sweeps answer the same register; their displays were not compared with it.
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame54_bytes, HeatingFunction::ENERGY_TOTAL),
+                  575.0F);
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_drying_frame22_bytes, HeatingFunction::ENERGY_TOTAL),
+                  946.0F);
+}
+
+TEST(CorpusHeating, TheBoostTimeLeftIsRegister0x013AInMinutesAsTheDisplayCountedDown) {
+  using namespace corpus;
+  // About 59:57 and 54:50 left on the display, five minutes apart.
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_boost_remaining_frame0_bytes, HeatingFunction::BOOST_REMAINING),
+                  60.0F);
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_boost_remaining_frame1_bytes, HeatingFunction::BOOST_REMAINING),
+                  55.0F);
+}
+
+TEST(CorpusHeating, TheDurationsAreTheFirstByteOfRegisters0x013BAnd0x013DAndTheTimeLeftOfDryingIsRegister0x013C) {
+  using namespace corpus;
+  // The drying sweep: a one-hour boost and a 30-minute drying set, 28 minutes of drying left on the display.
+  EXPECT_FLOAT_EQ(
+      value_of(atlantic_adelis_probe_register_01_sweep_drying_frame59_bytes, HeatingFunction::BOOST_DURATION), 60.0F);
+  EXPECT_FLOAT_EQ(
+      value_of(atlantic_adelis_probe_register_01_sweep_drying_frame60_bytes, HeatingFunction::DRYING_REMAINING), 28.0F);
+  EXPECT_FLOAT_EQ(
+      value_of(atlantic_adelis_probe_register_01_sweep_drying_frame61_bytes, HeatingFunction::DRYING_DURATION), 30.0F);
+  // The first sweep, another unit during a boost: 35 minutes of boost set and 120 of drying in its last drying run;
+  // no drying runs, so the drying time left reads 0.
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame27_bytes, HeatingFunction::BOOST_DURATION),
+                  35.0F);
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame28_bytes, HeatingFunction::DRYING_REMAINING),
+                  0.0F);
+  EXPECT_FLOAT_EQ(value_of(atlantic_adelis_probe_register_01_sweep_frame29_bytes, HeatingFunction::DRYING_DURATION),
+                  120.0F);
 }

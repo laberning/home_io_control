@@ -22,17 +22,17 @@ constexpr const char *const TAG = "home_io_control.oneway_tx";
 
 }  // namespace
 
-uint16_t oneway_copy_preamble_bytes(OneWayCopyShape shape, uint16_t normal_start_preamble) {
-  return shape.preamble == OneWayPreamble::WAKE ? LONG_PREAMBLE : normal_start_preamble;
+uint16_t oneway_copy_preamble_bytes(OneWayCopyShape shape, uint16_t start_preamble_bytes) {
+  return shape.preamble == OneWayPreamble::WAKE ? LONG_PREAMBLE : start_preamble_bytes;
 }
 
-std::string format_oneway_preamble_list(OneWayPowerClass power_class, uint16_t normal_start_preamble) {
+std::string format_oneway_preamble_list(OneWayPowerClass power_class, uint16_t start_preamble_bytes) {
   std::string out;
   for (uint8_t copy = 0; copy < ONEWAY_BURST_REPEATS; copy++) {
     const OneWayCopyShape shape = oneway_burst_copy_shape(power_class, copy);
     if (copy > 0)
       out += '/';
-    out += std::to_string(oneway_copy_preamble_bytes(shape, normal_start_preamble));
+    out += std::to_string(oneway_copy_preamble_bytes(shape, start_preamble_bytes));
   }
   return out;
 }
@@ -300,7 +300,8 @@ bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_
   const char *target = oneway_target_label(info);
   // Built from the same oneway_burst_copy_shape() the transmit loop below calls, so this can never
   // claim a preamble shape the burst does not actually send.
-  const std::string preambles = format_oneway_preamble_list(power_class, this->tuning_->normal_start_preamble);
+  const uint16_t start_preamble_bytes = this->preamble_bytes_(this->tuning_->start_preamble_ms);
+  const std::string preambles = format_oneway_preamble_list(power_class, start_preamble_bytes);
   if (info.has_intent || intent_label != nullptr) {
     ESP_LOGI(TAG, "1W tx: from %s to %s intent %s (%ux, preamble %s)", node_id_to_string(frame.src).c_str(), target,
              intent_label != nullptr ? intent_label : info.intent, ONEWAY_BURST_REPEATS, preambles.c_str());
@@ -328,7 +329,7 @@ bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_
     } else {
       copy_frame.ctrl1 &= static_cast<uint8_t>(~CTRL1_LOW_POWER);
     }
-    const uint16_t preamble = oneway_copy_preamble_bytes(shape, this->tuning_->normal_start_preamble);
+    const uint16_t preamble = oneway_copy_preamble_bytes(shape, start_preamble_bytes);
     if (this->transmit_(copy_frame, FREQ_CH2, preamble)) {
       sent++;
     }

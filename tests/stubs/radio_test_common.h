@@ -2,7 +2,6 @@
 
 #include "radio_interface.h"
 #include "radio_soft_phy.h"  // io868_tx_air_time_us() for the airtime model
-#include "radio_sx1262.h"    // SX1262_RESPONSE_PREAMBLE for the SX1262 mock
 #include "../support/timed_release.h"
 #include <esphome/core/gpio.h>
 #include <esphome/core/hal.h>
@@ -10,12 +9,34 @@
 #include <algorithm>
 #include <cstdlib>
 #include <deque>
+#include <map>
 #include <optional>
+#include <utility>
 #include <vector>
 
 // ============================================================================
 // Common test doubles for radio drivers
 // ============================================================================
+
+// --- Preamble durations on a raw-stream radio --------------------------------
+// MockRadio, the SX1262 and the LR1121 send 8 bit periods per preamble byte at 38400 bps (the
+// SX1276 sends 10, see SX1276_PREAMBLE_BITS_PER_BYTE). These convert like RadioDriver::
+// preamble_bytes_for_ms() does for them, so a test can state a duration or a byte count and the
+// other side of the conversion without a driver in hand.
+constexpr uint16_t mock_preamble_bytes(double ms) {
+  return static_cast<uint16_t>(ms * esphome::home_io_control::IO868_LINE_RATE_BPS / 1000.0 / 8.0 + 0.5);
+}
+/// Function form of mock_preamble_bytes(), the shape OneWayPreambleBytesFn takes.
+inline uint16_t mock_preamble_bytes_for_ms(float ms) { return mock_preamble_bytes(ms); }
+constexpr float mock_preamble_ms(uint16_t bytes) {
+  return static_cast<float>(bytes * 8.0 * 1000.0 / esphome::home_io_control::IO868_LINE_RATE_BPS);
+}
+/// The default durations as programmed bytes on a raw-stream radio: 2880 / 48 / 17 / 96.
+inline constexpr uint16_t MOCK_WAKE_PREAMBLE = mock_preamble_bytes(esphome::home_io_control::LOW_POWER_WAKE_MS);
+inline constexpr uint16_t MOCK_START_PREAMBLE = mock_preamble_bytes(esphome::home_io_control::START_PREAMBLE_MS);
+inline constexpr uint16_t MOCK_RESPONSE_PREAMBLE = mock_preamble_bytes(esphome::home_io_control::RESPONSE_PREAMBLE_MS);
+inline constexpr uint16_t MOCK_COLD_REPLY_PREAMBLE =
+    mock_preamble_bytes(esphome::home_io_control::COLD_BROADCAST_REPLY_PREAMBLE_MS);
 
 // --- Mock SPI ---------------------------------------------------------------
 class MockSpi : public esphome::home_io_control::SpiAccess {
@@ -191,12 +212,17 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   }
   int16_t read_rssi() override {
     rssi_read_freqs_.push_back(current_freq_);
-    if (rssi_queue_.empty())
-      return rssi_default_;
+    if (rssi_queue_.empty()) {
+      // A level scripted for this channel wins over the default: a busy channel next to free ones.
+      const auto scripted = channel_rssi_.find(current_freq_);
+      return scripted != channel_rssi_.end() ? scripted->second : rssi_default_;
+    }
     int16_t val = rssi_queue_.front();
     rssi_queue_.pop_front();
     return val;
   }
+  /// A mock needs no settle time: a retune is instant.
+  uint32_t cca_settle_us() const override { return 0; }
   bool is_sync_detected() override { return false; }
   bool is_preamble_detected() override { return false; }
   /// Arm the hop holdoff the way a real driver's check_for_packet() would — exposed here since
@@ -214,10 +240,13 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
     return tuning.sx1276_discovery_hop_slice_ms;
   }
   bool has_fast_tx_rx_turnaround() const override { return true; }
+  /// A raw byte stream, like the software-PHY chips; a double of another coder overrides it.
+  uint8_t preamble_bits_per_byte() const override { return esphome::home_io_control::SOFT_PHY_PREAMBLE_BITS_PER_BYTE; }
   /// The 868 MHz production estimate, which set_model_tx_airtime() advances the clock by. A test
   /// double for a radio with a different wake-up overrides it.
   uint32_t tx_air_time_us(uint8_t len, const esphome::home_io_control::RadioTxConfig &cfg) const override {
-    return esphome::home_io_control::io868_tx_air_time_us(cfg.preamble_len, len);
+    return esphome::home_io_control::io868_tx_air_time_us(cfg.preamble_len, len,
+                                                          esphome::home_io_control::SOFT_PHY_PREAMBLE_BITS_PER_BYTE);
   }
   void set_mode_rx() override {}
   void set_mode_standby() override {}
@@ -288,6 +317,10 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void queue_rssi(int16_t rssi) { rssi_queue_.push_back(rssi); }
   /// RSSI reading once the queue is empty (default -120 dBm: clear).
   void set_rssi_default(int16_t rssi) { rssi_default_ = rssi; }
+  /// RSSI reading on one channel once the queue is empty, taking precedence over the default for
+  /// that channel: a busy channel next to free ones. A reading follows the channel the radio is on
+  /// when it is taken (a clear-channel check retunes there first).
+  void set_channel_rssi(uint32_t freq_hz, int16_t rssi) { channel_rssi_[freq_hz] = rssi; }
   /// Under a ManualClock, how far a delivered packet advances time past when it was requested —
   /// modelling the air time / turnaround between a device starting its reply and this driver
   /// handing it back. 0 (the default) delivers instantly, same as legacy mode always has.
@@ -357,6 +390,7 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   std::deque<bool> tx_results_;
   std::deque<RxQueueEntry> rx_queue_;
   std::deque<int16_t> rssi_queue_;
+  std::map<uint32_t, int16_t> channel_rssi_;
   std::vector<esphome::home_io_control::RadioTxConfig> tx_configs_;
   SendTimeline timeline_;  ///< Every send's bytes and start time; owns the timed-release rule.
   std::vector<CallKind> call_log_;
@@ -369,6 +403,20 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   bool model_tx_airtime_{false};
   uint32_t rx_latency_ms_{0};
   bool emulate_capture_lifecycle_{false};
+};
+
+/// A MockRadio with the SX1276's coder: 10 bit periods per preamble byte instead of a raw stream's 8,
+/// so one duration is fewer programmed bytes than on the software-PHY radios.
+class TenBitPreambleRadio : public MockRadio {
+ public:
+  [[nodiscard]] uint8_t preamble_bits_per_byte() const override { return 10; }
+  [[nodiscard]] uint16_t response_preamble() const override {
+    return this->preamble_bytes_for_ms(esphome::home_io_control::RESPONSE_PREAMBLE_MS);
+  }
+  [[nodiscard]] uint32_t tx_air_time_us(uint8_t len,
+                                        const esphome::home_io_control::RadioTxConfig &cfg) const override {
+    return esphome::home_io_control::io868_tx_air_time_us(cfg.preamble_len, len, 10);
+  }
 };
 
 /// A MockRadio whose failure the test latches, the way a driver latches a runtime BUSY timeout after
@@ -384,7 +432,9 @@ class LatchingRadio : public MockRadio {
 class MockRadioSX1262 : public MockRadio {
  public:
   const char *chip_name() const override { return "sx1262"; }
-  uint16_t response_preamble() const override { return esphome::home_io_control::SX1262_RESPONSE_PREAMBLE; }
+  uint16_t response_preamble() const override {
+    return this->preamble_bytes_for_ms(esphome::home_io_control::RESPONSE_PREAMBLE_MS);
+  }
   uint16_t hop_dwell_ms(const esphome::home_io_control::TuningConfig &tuning) const override {
     return tuning.sx1262_discovery_hop_slice_ms;
   }

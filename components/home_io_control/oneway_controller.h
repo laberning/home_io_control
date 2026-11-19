@@ -57,7 +57,7 @@ const char *oneway_power_class_name(OneWayPowerClass power_class);
 /// @brief Which wake-up shape one copy of a 1W burst gets.
 enum class OneWayPreamble : uint8_t {
   WAKE,    ///< The long wake-up preamble (`LONG_PREAMBLE`), paired with `CTRL1_LOW_POWER` set.
-  NORMAL,  ///< The runtime-tunable `normal_start_preamble`, CTRL1's low-power bit clear.
+  NORMAL,  ///< The runtime-tunable `start_preamble_ms`, CTRL1's low-power bit clear.
 };
 
 /// @brief The preamble and CTRL1 shape one copy of a 1W burst gets.
@@ -135,7 +135,7 @@ struct OneWayControllerIdentity {
   /// in declaration order. See ADR 0038 for the shapes themselves.
   std::optional<OneWayPowerClass> power_class_override;
   /// `invert_position:` exactly as configured, or **empty when the key is absent** — in which case
-  /// the device kind decides (`INVERTED` capability bit). Never read this directly to transmit;
+  /// the device kind decides (`INVERTED` capability). Never read this directly to transmit;
   /// call effective_inverted(). Declared after `power_class_override` because codegen emits a
   /// designated initialiser in declaration order.
   std::optional<bool> invert_override;
@@ -283,7 +283,7 @@ inline bool has_power_class_override(const OneWayControllerIdentity &identity) {
 /// always wins; with the key absent the identity's `io_device_type` decides.
 /// \todo Confirm on a second inverted-kind 1W receiver.
 /// @param identity The controller identity.
-/// @return `invert_override` when set, else the kind's `INVERTED` capability bit.
+/// @return `invert_override` when set, else the kind's `INVERTED` capability.
 inline bool effective_inverted(const OneWayControllerIdentity &identity) {
   return identity.invert_override.value_or(
       has_feature(device_features(identity.io_device_type, 0, DeviceModel::NONE), device_feature::INVERTED));

@@ -270,6 +270,16 @@ static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = POSITION_RAW_PER_PERCENT * RA
   return !is_executing(state);
 }
 
+/// @brief True when the execution state says the cover waits for its turn or for power (state 2 or 3).
+///
+/// A waiting cover holds its remaining time by design, so a report in a waiting state is not evidence
+/// of a stuck move (ADR 0085): it neither backs the progress reads off nor counts toward the frozen
+/// count that applies once the cover runs.
+/// @param state The device's recorded execution state.
+[[nodiscard]] inline bool is_waiting(ExecutionState state) {
+  return state == ExecutionState::WAITING_FOR_EXECUTING || state == ExecutionState::WAITING_FOR_POWER;
+}
+
 /// @brief The execution state the hub records and shows for a state read from a status answer.
 ///
 /// A device on a shared power supply may answer every command with "waiting for power" in the
@@ -280,19 +290,16 @@ static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = POSITION_RAW_PER_PERCENT * RA
 /// @param state State read from byte 0 (execution_state_of()).
 /// @param from_command_ack True for the acknowledgement of the hub's own command.
 [[nodiscard]] inline ExecutionState shown_execution_state(ExecutionState state, bool from_command_ack) {
-  const bool waiting = state == ExecutionState::WAITING_FOR_EXECUTING || state == ExecutionState::WAITING_FOR_POWER;
-  return (from_command_ack && waiting) ? ExecutionState::EXECUTING : state;
+  return (from_command_ack && is_waiting(state)) ? ExecutionState::EXECUTING : state;
 }
 
 /// @brief True when a count in the remaining time that does not fall should back the progress reads off.
 ///
-/// A cover that waits (state 2 or 3) holds its count by design, so it keeps the cadence the count
-/// gives; only a frozen count while the cover claims to execute (or has no state) is a stuck one
-/// (ADR 0085). The follow-up window still ends a cover that never settles.
+/// Only a frozen count while the cover claims to execute (or has no state) is a stuck one; a waiting
+/// cover keeps the cadence the count gives (ADR 0085). The follow-up window still ends a cover that
+/// never settles.
 /// @param state The device's recorded execution state.
-[[nodiscard]] inline bool backs_off_frozen_count(ExecutionState state) {
-  return state != ExecutionState::WAITING_FOR_EXECUTING && state != ExecutionState::WAITING_FOR_POWER;
-}
+[[nodiscard]] inline bool backs_off_frozen_count(ExecutionState state) { return !is_waiting(state); }
 
 // === Result code of an EXECUTE reply ===
 

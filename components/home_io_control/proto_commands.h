@@ -35,13 +35,12 @@
 ///     `low_power` follows the discovered device's own self-reported power-save class instead, the
 ///     same per-device-property treatment as every non-pairing builder above — every real hub in
 ///     this project's corpus mirrors that class exactly on its own 0x2C.
-///   - The preamble follows the flag. For a start frame the exchange engine uses LONG_PREAMBLE
-///     (1024 bytes) when CTRL1_LOW_POWER is set — the wake‑up burst for a sleeping receiver —
-///     and the runtime‑tunable `normal_start_preamble` otherwise; follow‑up frames use the
-///     driver's response_preamble() (exchange_engine.cpp). Both derive from the same
-///     per‑device property, so the flag never promises a wake-up burst the device does not need,
-///     with two exceptions. Pairing's directed start frames (0x2C, 0x31, 0x6F) never use a longer
-///     preamble than the discovery request the device just answered
+///   - The preamble follows the flag. For a start frame the exchange engine uses the wake-up
+///     preamble (`low_power_wake_ms`, default LOW_POWER_WAKE_MS) when CTRL1_LOW_POWER is set — the wake‑up
+///     burst for a sleeping receiver — and the runtime‑tunable `start_preamble_ms` otherwise; follow‑up frames use
+///     the driver's response_preamble() (exchange_engine.cpp). Both derive from the same per‑device property, so the
+///     flag never promises a wake-up burst the device does not need, with two exceptions. Pairing's directed start
+///     frames (0x2C, 0x31, 0x6F) never use a longer preamble than the discovery request the device just answered
 ///     (pairing_start_preamble()). And send_and_receive() may lead a low-power
 ///     target's tries with the short preamble while the target is believed awake (ADR 0040), with
 ///     the frame bytes — flag included — unchanged.
@@ -161,9 +160,9 @@ static constexpr uint8_t HEATING_LEVEL_MAX = 0x3F;
 /// every heating level (corpus `thermor_pilot_wire_interface_exchange_heating_level_execute`, issue #228):
 /// ACEI 0xE7, FP11 present in the FP9-FP16 bitmap, FP11 = 0xFFFF. That evidence does not establish what
 /// FP11 = 0xFFFF means; it is sent as the bridge sends it.
-/// The frame changed the level for Eco, Comfort and Off on a Thermor pilot-wire interface's heater
-/// display (issue #228).
-/// \todo The Away, Boost, Comfort -1 and Comfort -2 levels are unconfirmed on hardware.
+/// The frame changed the level for Away, Eco, Comfort, Comfort -1, Comfort -2 and Off on a Thermor
+/// pilot-wire interface's heater display (issue #228).
+/// \todo The Boost level is unconfirmed on hardware: the interface ignores it.
 /// @param f IoFrame to populate.
 /// @param own Controller's 3-byte node ID (source address).
 /// @param dst Target device's 3-byte node ID (destination address).
@@ -521,17 +520,46 @@ bool create_get_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power,
                      const uint8_t payload[DEVICE_NAME_WRITE_PAYLOAD_SIZE]);
 
+// === Identify wink time ===
+
+/// Wink time that stops a running identify.
+///
+/// Values follow the public VELUX KLF 200 API (version 3.18, section 10.4.1, table 194), which
+/// describes the gateway's API rather than the radio frame; that data[1] of CMD_IDENTIFY carries
+/// the same value is our reading, and both results of issue #241 fit it (ADR 0093).
+/// Confirmed on a VELUX roof-window actuator (type 4, subtype 1; issue #241, one run with the
+/// reporter's own controller): a jogging window finished its return movement and reported done
+/// about 5 s after the stop.
+/// \todo Unconfirmed on hardware for other devices, Somfy ones included, and with this component's
+/// own radio path.
+static constexpr uint8_t IDENTIFY_WINK_STOP = 0;
+/// Longest explicit wink time in seconds (table 194: 1 to 253 are seconds).
+static constexpr uint8_t IDENTIFY_WINK_MAX_SECONDS = 253;
+/// Wink time the actuator chooses itself; the value the hub sends by default, so every device
+/// identifies for the time its maker picked and the identify ends on its own.
+/// Table 194 also defines 255 as "wink forever"; the hub never sends it (a VELUX window kept
+/// jogging for more than 45 s with it, only a stop ended it).
+/// Confirmed on a VELUX roof-window actuator (type 4, subtype 1; issue #241, one run with the
+/// reporter's own controller): the window jogged, returned to its start position and reported
+/// done about 26 s after the request.
+/// \todo Unconfirmed on hardware for other devices, including the Somfy awning and the Izymo
+/// dimmer, and with this component's own radio path.
+static constexpr uint8_t IDENTIFY_WINK_DEVICE_DEFAULT = 254;
+
 /// @brief Build an authenticated device-identify request (0x1E) that makes a device
-/// physically identify itself (brief jog / flash).
+/// physically identify itself (jog / flash) for a bounded time.
 ///
 /// @param f IoFrame to populate.
-/// @param own Controller's 3-byte node ID (source address).
-/// @param dst Target device's 3-byte node ID (destination address).
+/// @param own Controller's 3-byte node ID.
+/// @param dst Target device's 3-byte node ID.
 /// @param low_power True if the target is a low-power / duty-cycled device (sets CTRL1_LOW_POWER).
+/// @param wink_time Seconds to identify (1 to IDENTIFY_WINK_MAX_SECONDS), IDENTIFY_WINK_STOP to stop a
+///        running identify, or IDENTIFY_WINK_DEVICE_DEFAULT for the device's own time. The caller
+///        validates the range; 255 ("forever") must not be passed.
 /// @note The device may reply with CMD_ERROR_RESP instead of a dedicated identify response;
 ///       callers should treat that reply as an expected, non-fatal outcome rather than a failure.
 /// @return true on success.
-bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power);
+bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t wink_time);
 
 /// @brief Build a generic CMD_WRITE_PRIVATE (0x20) frame carrying a caller-supplied payload.
 ///

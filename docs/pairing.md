@@ -120,11 +120,11 @@ see [Radio tuning](configuration/tuning.md).
 still common to need two or three presses because the timing between PROG and the button matters.
 Press PROG again and repeat before you change any settings.
 
-Discovery goes out behind a short preamble, the same length a directed command to an always-awake
+Discovery goes out behind a short preamble, the same duration a directed command to an always-awake
 device gets, because some devices (VELUX solar roller shutters among them) answer nothing else. The
 hub uses that length for the pairing frames that follow as well. A device that needs the 1024-byte
 wake-up burst takes it through
-[`pairing_discovery_preamble`](configuration/tuning.md#pairing_discovery_preamble).
+[`pairing_discovery_preamble_ms`](configuration/tuning.md#pairing_discovery_preamble_ms).
 
 **If the device never answers**, read
 [The device is never found](troubleshooting.md#the-device-is-never-found) before touching
@@ -168,7 +168,7 @@ RF silence, and is reported as `1w_traffic`.
 | Advice code | When it fires | What it means |
 |-------------|----------------|----------------|
 | `1w_traffic` | A 1W remote was seen performing 1W pairing (a broadcast to `00003F` with a 1W pairing command byte). The broadcast does not identify a target, so this fires on any 1W pairing gesture in range. | A remote's PROG gesture was heard, and no device answered. That shows a gesture happened, **not** what state the device is in: the same frames have come just before a successful pairing, too. Check in order. **1.** If a **two-way** hub already controls the device (a TaHoma, KLF200, KLR200, KIG300, and similar; not a 1W wall switch or remote), it is almost certainly paired to that hub: use [key extraction](key-extraction.md). **2.** Was the PROG press on a remote *already registered to this device*, released at the first jog? A longer hold can remove the remote, or reset the device straight after a power cut. On such a remote a PROG press is also the add/remove step, so give each attempt one press: a second press while the device is still in pairing mode can close the window the first press opened. **3.** Was this the only device in pairing mode? One remote often drives several devices. **4.** A Double Power Cut or factory reset is not a pairing gesture on its own. Afterwards a device with a local remote expects that remote to be registered again, as its manual describes, so do that first, then repeat 2. Some families document a separate gesture: a VELUX SSL has a physical **P** button that opens a 10-minute 2W registration window (see [VELUX INTEGRA](devices/velux-integra.md)). |
-| `channel_busy` | Listen-before-talk retries were exhausted and the same source was heard repeatedly during the wait. | A repeating beacon (usually a nearby remote or sensor) is flooding the channel and delaying discovery transmissions. Try again, or tune `lbt_max_retries`/`lbt_rssi_threshold_dbm` — see [Radio tuning](configuration/tuning.md). |
+| `channel_busy` | Listen-before-talk retries were exhausted and the same source was heard repeatedly during the wait. | A repeating beacon (usually a nearby remote or sensor) is flooding the channel and delaying discovery transmissions. Try again, or tune `lbt_rssi_threshold_dbm` — see [Radio tuning](configuration/tuning.md). |
 | `foreign_controller` | A discovery response (0x29) was seen addressed to a node ID that is not this hub's. | Another controller (a TaHoma, say) is pairing the same device right now. Wait for it to finish, or make sure yours is the only controller with the device in pairing mode. |
 | `key_push_not_accepted` | The device answered the hub's key with `COMMAND_UNKNOWN`, or it answered discovery as a remote controller (node type 1023) and the key step failed. | The device does not take a pushed key in this mode. It may hand over its own key instead: set `pairing_key_transfer` to `pull` or back to `auto`, described in [Radio tuning](configuration/tuning.md#pairing_key_transfer). An Atlantic AGILIA IO radiator does this in its display's pairing mode, and `auto` pulls it (issue #165). |
 | `key_refused` | The device answered the hub's key with any other error. The message names the code. | If the device was paired before, run [Scan Paired Devices](#scan-paired-devices) before retrying: it may already hold a key. |
@@ -270,8 +270,8 @@ Unknown:
   roll-call. Use Discover & Pair for that, and the scan to check on devices you already have.
   [`pairing_discovery_commands`](configuration/tuning.md#pairing_discovery_commands) explains why
   0x2A is deliberately not a discovery option.
-- **A scan puts roughly 0.7 seconds of traffic on air**, dominated by the low-power pass's long
-  wake-up preambles. It is a manually triggered action — do not call it from a tight automation
+- **A scan puts roughly 1.9 seconds of traffic on air** (the same on every board), dominated by the
+  low-power pass's long wake-up preambles ([`low_power_wake_ms`](configuration/tuning.md#low_power_wake_ms)). It is a manually triggered action — do not call it from a tight automation
   loop.
 
 ### Notes on the Scan Paired Devices button

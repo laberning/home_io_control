@@ -55,6 +55,7 @@
 #include "oneway_transmitter.h"
 #include "oneway_key_adoption.h"
 #include "oneway_receiver.h"
+#include "overheard_frame_observer.h"
 #include "device_event_log.h"
 // lr1121_firmware_update_controller.h forward-declares FlashDecision / BootloaderUpgradePath /
 // Lr1121FirmwareUpdater so lr1121_firmware_decisions.h and radio_lr1121_firmware_updater.h are
@@ -109,7 +110,8 @@ class IOHomeControlComponent : public Component,
                                public SpiAccess,
                                public HubDevicePort,
                                public HubHeatingPort,
-                               public HubControlPort {
+                               public HubControlPort,
+                               public OverheardFrameObserver {
  public:
   /// Initialize ExchangeEngine, PairingEngine, and ManagementActions with double-pointer/
   /// reference indirection so that test assignments (`comp.radio_ = &mock`) propagate
@@ -125,10 +127,10 @@ class IOHomeControlComponent : public Component,
         // long after construction. It injects the *ability* to transmit rather than a reference
         // to whichever collaborator currently owns the radio. `&tuning_` is read per burst
         // (never cached), same pattern as exchange_engine_ above, so a live change to
-        // `normal_start_preamble` takes effect on the next 1W command without a reboot.
+        // `start_preamble_ms` takes effect on the next 1W command without a reboot.
         oneway_transmitter_([this](const IoFrame &frame, uint32_t freq,
                                    uint16_t preamble) { return this->transmit_frame_(frame, freq, preamble); },
-                            &tuning_),
+                            &tuning_, [this](float ms) { return this->exchange_engine_.preamble_bytes_for_ms(ms); }),
         // set_timeout() is protected on the real ESPHome Component (only public in the host stub),
         // so a lambda defined here — with protected access — is the one legitimate caller. See
         // oneway_key_adoption.h's NamedTimeoutFn.
@@ -173,12 +175,20 @@ class IOHomeControlComponent : public Component,
       if (IoDevice *dev = this->registry_.get(node_id_to_string(dst)); dev != nullptr)
         clear_moving_evidence(*dev);
     });
+    this->exchange_engine_.set_overheard_frame_observer(this);
+    // Channel access draws its channels and back-offs from ESPHome's random source (a settable value
+    // in the host tests, like the poll jitter).
+    this->exchange_engine_.set_random_source([]() { return random_uint32(); });
   }
 
   /// @brief Result payload used by hub-level management actions such as rename.
   /// Alias of the standalone esphome::home_io_control::ManagementActionResult struct so that
   /// callers using the nested name IOHomeControlComponent::ManagementActionResult continue to work.
   using ManagementActionResult = esphome::home_io_control::ManagementActionResult;
+
+  /// OverheardFrameObserver: keep a 1W frame an exchange wait ignored as unrelated, for
+  /// drain_overheard_oneway_frames_() once the exchange has ended. A two-way frame is not kept.
+  void on_overheard_frame(const IoFrame &frame, const RadioRxPacket &packet, int16_t rssi_dbm, uint32_t now) override;
 
   /// @brief Initialize hardware (radio and device registry).
   void setup() override;
@@ -464,12 +474,12 @@ class IOHomeControlComponent : public Component,
   ///
   /// Thin forwarder to the KeyExtractionResponder collaborator (key_extraction_responder.h).
   /// Arming picks a fresh throwaway node ID, resets the pairing_responder state machine to
-  /// ARMED_IDLE, and schedules a 10-minute auto-off. While armed, the 0x28/0x2C/0x31/0x32 branches
-  /// in process_received_packet_() emulate an unpaired device so a user's existing hub can pair to
-  /// it and hand over its node_id/system_key (see pairing_responder.h). Disarming — manual, via
-  /// the HA switch, on successful extraction, or on auto-off — immediately stops those branches
-  /// from responding; it never touches the real device registry or the hub's own node_id_/
-  /// system_key_. Part of HubControlPort, through which the hub-level switch arms it.
+  /// ARMED_IDLE, and schedules a 10-minute auto-off. While armed, the responder's try_handle_frame()
+  /// (called from process_received_packet_()) answers pairing frames as an unpaired device would so a user's existing
+  /// hub can pair to it and hand over its node_id/system_key (see pairing_responder.h). Disarming — manual, via the HA
+  /// switch, on successful extraction, or on auto-off — immediately stops those answers; it never touches the real
+  /// device registry or the hub's own node_id_/ system_key_. Part of HubControlPort, through which the hub-level switch
+  /// arms it.
   /// @param armed Desired state.
   void set_key_extraction_armed(bool armed) override { this->key_extraction_.set_armed(armed); }
 
@@ -669,6 +679,10 @@ class IOHomeControlComponent : public Component,
                             const std::function<void()> &on_accepted) override {
     return this->heater_controller_.execute_heating_plan(device_id, plan, on_accepted);
   }
+  /// @brief Ask a heater with a programme what it runs. @see HeaterController::read_programme_state()
+  bool read_programme_state(const std::string &device_id) override {
+    return this->heater_controller_.read_programme_state(device_id);
+  }
   /// @brief Set a water heater's target temperature. @see HeaterController::set_water_heater_target()
   bool set_water_heater_target(const std::string &device_id, float celsius) override {
     return this->heater_controller_.set_water_heater_target(device_id, celsius);
@@ -693,6 +707,11 @@ class IOHomeControlComponent : public Component,
   /// @see HeaterController::set_device_temperature_range()
   void set_device_temperature_range(const std::string &device_id, float min_c, float max_c) override {
     this->heater_controller_.set_device_temperature_range(device_id, min_c, max_c);
+  }
+  /// @brief Have every poll of a heater read one more register.
+  /// @see HeaterController::enable_heating_register_read()
+  void enable_heating_register_read(const std::string &device_id, HeatingFunction fn) override {
+    this->heater_controller_.enable_heating_register_read(device_id, fn);
   }
   /// @brief Read one register of a heater and fold the decoded value into IoDevice::heating.
   /// @see HeaterController::read_heating_register()
@@ -831,7 +850,7 @@ class IOHomeControlComponent : public Component,
   /// @param frame IoFrame to transmit.
   /// @param freq RF frequency in Hz.
   /// @param preamble Preamble length in bytes (e.g. `LONG_PREAMBLE`, `SHORT_PREAMBLE`, or a
-  ///        tuning-configured value such as `normal_start_preamble`).
+  ///        tuning-configured duration such as `start_preamble_ms`, converted to bytes).
   bool transmit_frame_(const IoFrame &frame, uint32_t freq, uint16_t preamble);
   /// Main request/response exchange with retry and automatic authentication. Every exchange ends
   /// with StatusPollPolicy::on_exchange_ended(), so it moves an open catch-up burst's read out
@@ -858,7 +877,15 @@ class IOHomeControlComponent : public Component,
   /// follow a linked remote's press. That order is load-bearing: activity and pairing gestures count
   /// repeats, and key adoption sees every frame before the duplicate filter.
   /// @param frame Parsed frame with the CTRL0 1W bit set.
-  void handle_oneway_frame_(const IoFrame &frame);
+  /// @param now millis() when the frame was heard: now for an idle frame, the wait's time for one an
+  ///        exchange kept, so the duplicate filter and burst window see the real arrival.
+  /// @param rssi_dbm RSSI of the capture, in dBm.
+  void handle_oneway_frame_(const IoFrame &frame, uint32_t now, int16_t rssi_dbm);
+
+  /// Run the 1W frames heard inside an exchange through handle_oneway_frame_(), oldest first, at
+  /// their arrival times. Called at the top of loop(), so it precedes the idle receive, the
+  /// burst-window check and the next queued operation.
+  void drain_overheard_oneway_frames_();
 
   /// Handle an authenticated CMD_STATUS_UPDATE from a registered device: a device event report
   /// (decisions::is_device_event_report()) is recorded, any other 0x71 is applied as a position update.
@@ -1014,8 +1041,8 @@ class IOHomeControlComponent : public Component,
   /// @param src_id Sender's node ID as a string (already computed by the caller).
   void maybe_fire_sender_event_(const OneWayFrameInfo &info, bool linked, const std::string &src_id);
   /// Handle an explicit CMD_ERROR_RESP refusal from the device: record the result code, stamp link
-  /// health, and schedule the poll backoff. Split out of exchange_and_record_() to keep that
-  /// function's outcome dispatch readable — a refusal is a distinct concern from "what did the
+  /// health, and schedule the poll backoff. Kept apart from exchange_and_record_() so that
+  /// function's outcome dispatch stays readable — a refusal is a distinct concern from "what did the
   /// exchange achieve".
   /// @param device_id Target device ID.
   /// @param request Outbound request frame that drew the refusal.
@@ -1065,8 +1092,10 @@ class IOHomeControlComponent : public Component,
   void queue_due_periodic_polls_();
   /// Read every device with `linked_remotes` once, when a burst of linked-remote activity has been
   /// followed by `remote_activity_catchup_poll_ms` without an exchange (ADR 0080). Each read is a
-  /// one-off status read marked state-unknown (StatusPollPolicy::mark_state_unknown()); it opens no
-  /// follow-up window of its own, an answer that says moving does.
+  /// one-off status read marked state-unknown (StatusPollPolicy::start_catchup_read()); it opens no
+  /// follow-up window of its own, an answer that says moving does. A read that gets no answer is read
+  /// once more one catch-up delay later (StatusPollPolicy::take_due_catchup_retries(), ADR 0095); a
+  /// second silence ends it.
   void queue_due_catchup_reads_();
 
   /// @brief What exchange_and_record_() found.
@@ -1231,8 +1260,8 @@ class IOHomeControlComponent : public Component,
   // --- Tuning ---
   /// Apply the current tuning configuration to the active radio driver.
   void apply_tuning_to_radio_();
-  /// @brief Resolve `normal_start_preamble` from the driver when YAML did not set it (ADR 0042).
-  void resolve_start_preamble_default_();
+  /// @brief Convert the deprecated byte-denominated preamble keys to durations on this radio (ADR 0097).
+  void convert_legacy_preamble_bytes_();
 
   // --- Management actions (the native API calls management_actions_ directly) ---
   /// Register hub-level Home Assistant actions; called from setup().

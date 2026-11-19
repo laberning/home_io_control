@@ -10,7 +10,7 @@ using namespace esphome::home_io_control::pairing_responder;
 // ============================================================================
 // PairingResponder test suite
 // ============================================================================
-// Pure state-machine transitions for the "Accept Foreign Pairing" (key-extraction) responder:
+// Pure state-machine transitions for the "Recover System Key" (key-extraction) responder:
 // ARMED_IDLE -> SENT_DISCOVER_RESP -> SENT_CONFIRM_ACK -> SENT_CHALLENGE -> EXTRACTED ->
 // SENT_NODE_VERIFY_RESP, including out-of-order frames, retries (missed-frame tolerance), the
 // SENT_CONFIRM_ACK bypass some hubs take, and the crypto integration through on_key_transfer().

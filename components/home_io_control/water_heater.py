@@ -4,8 +4,9 @@
 ##
 ## Binds an ESPHome water_heater entity to a domestic hot water heater (io_device_type: domestic_hot_water),
 ## with opt-in companions: energy (kWh, for the energy dashboard), heat pump running, electric backup
-## running, a boost switch and, on an electric storage water heater, its showers and heating power. Boost and away travel in the heater's operating-mode word and are
-## experimental: not confirmed on hardware yet. The heater is polled (default every five minutes);
+## running, a heating-source text sensor, a boost switch and, on an electric storage water heater, its showers,
+## heating power and manual showers. Boost and away travel in the heater's operating-mode word; both
+## are confirmed on an Atlantic Calypso Connecté (issue #198). The heater is polled (default every five minutes);
 ## `status_poll_interval` sets the cadence, with the same one-minute floor as climate. Shared device-binding
 ## logic lives in platform_common.py; only the water heater's entity and companions are built here.
 ##
@@ -16,7 +17,7 @@ import functools
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, number, sensor, switch, water_heater
+from esphome.components import binary_sensor, number, sensor, switch, text_sensor, water_heater
 from esphome.const import (
     CONF_ENERGY,
     CONF_ID,
@@ -30,7 +31,6 @@ from esphome.const import (
 )
 
 from . import home_io_control_ns
-from .hub_validators import FEATURE_WATER_HEATER
 from .platform_common import (
     create_companion_sensors,
     create_user_companion,
@@ -57,12 +57,16 @@ IOHomeDhwManualShowersNumber = home_io_control_ns.class_(
 IOHomeDhwBinarySensor = home_io_control_ns.class_(
     "IOHomeDhwBinarySensor", binary_sensor.BinarySensor, cg.Component
 )
+IOHomeDhwHeatingSourceSensor = home_io_control_ns.class_(
+    "IOHomeDhwHeatingSourceSensor", text_sensor.TextSensor, cg.Component
+)
 IOHomeDhwBoostSwitch = home_io_control_ns.class_("IOHomeDhwBoostSwitch", switch.Switch, cg.Component)
 DhwReading = IOHomeDhwBinarySensor.enum("Reading", is_class=True)
 DhwSensorReading = IOHomeDhwReadingSensor.enum("Reading", is_class=True)
 
 CONF_HEAT_PUMP_RUNNING = "heat_pump_running"
 CONF_ELECTRIC_BACKUP_RUNNING = "electric_backup_running"
+CONF_HEATING_SOURCE = "heating_source"
 CONF_BOOST = "boost"
 CONF_SHOWERS_AVAILABLE = "showers_available"
 CONF_SHOWERS_TARGET = "showers_target"
@@ -128,7 +132,7 @@ def _validate_water_heater_kind(config):
         config,
         "the water_heater platform",
         True,
-        required=FEATURE_WATER_HEATER,
+        required="WATER_HEATER",
         reason="it drives a domestic hot water heater (io_device_type: domestic_hot_water)",
     )
     return config
@@ -173,6 +177,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ELECTRIC_BACKUP_RUNNING): binary_sensor.binary_sensor_schema(
                 IOHomeDhwBinarySensor, device_class=DEVICE_CLASS_RUNNING
             ).extend(cv.COMPONENT_SCHEMA),
+            cv.Optional(CONF_HEATING_SOURCE): text_sensor.text_sensor_schema(IOHomeDhwHeatingSourceSensor).extend(
+                cv.COMPONENT_SCHEMA
+            ),
             # Restore mode DISABLED: the switch shows what the heater reports and never writes at boot, so a
             # reboot cannot end a running boost.
             cv.Optional(CONF_BOOST): switch.switch_schema(
@@ -229,6 +236,14 @@ async def to_code(config):
             config, parent, new_entity=binary_sensor.new_binary_sensor, entity_config=config[key]
         )
         cg.add(companion.set_reading(reading))
+
+    if CONF_HEATING_SOURCE in config:
+        await create_user_companion(
+            config,
+            parent,
+            new_entity=text_sensor.new_text_sensor,
+            entity_config=config[CONF_HEATING_SOURCE],
+        )
 
     if CONF_BOOST in config:
         await create_user_companion(

@@ -95,6 +95,20 @@ home_io_control:
                                     # already trust your key
 ```
 
+The three `!secret` lines read their values from `secrets.yaml`, one file that all your ESPHome
+devices share. In the ESPHome Device Builder you open it with **Secrets** at the top right of the
+dashboard; on the command line it sits next to your device YAML. Add the three keys this config
+uses:
+
+```yaml
+wifi_ssid: "MyNetwork"
+wifi_password: "verysecret"
+io_system_key: "00112233445566778899AABBCCDDEEFF"  # your 32 hex characters from step 1
+```
+
+Writing the values straight into the device YAML works too, but then your system key travels with
+every config you paste into an issue.
+
 `logger:` at `DEBUG` matters here: every route below reads its result out of the log.
 
 Flash it and check two things in the log:
@@ -289,6 +303,63 @@ reflash.
 
 None of them is dangerous to leave in place; this only spares you the controls you will never
 press in normal operation.
+
+## The complete config
+
+After step 4 and the tidy-up, a hub with one cover is the step 2 config without the onboarding
+flags, plus the `cover:` entry. Again for a Heltec WiFi LoRa 32 (V3); `secrets.yaml` stays as in
+step 2.
+
+<!-- board-pinout: heltec-v3 -->
+```yaml
+esphome:
+  name: io-homecontrol
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+  level: DEBUG
+
+api:
+
+external_components:
+  - source: github://laberning/home_io_control
+
+spi:
+  clk_pin: 9
+  mosi_pin: 10
+  miso_pin: 11
+
+home_io_control:
+  cs_pin: 8
+  rst_pin: 12
+  dio1_pin: 14
+  busy_pin: 13
+  radio_type: sx1262
+  tcxo_voltage: 1_8V
+
+  node_id: "A1B2C3"                 # yours, from step 1
+  system_key: !secret io_system_key # yours, from step 1
+
+cover:
+  - platform: home_io_control
+    name: "Patio Awning"
+    io_device_id: "FEEB1E"                       # from the log
+    io_device_type: "vertical_exterior_awning"   # from the log
+    io_subtype: 0                                # from the log
+```
+
+Home Assistant talks to the hub through `api:`, so the hub needs no MQTT. Keep `api:` in any case:
+the component does not build without it. If you want MQTT as well, add ESPHome's own
+[`mqtt:` block](https://esphome.io/components/mqtt.html) next to it; nothing in it is specific to
+this component.
 
 ## Next steps
 

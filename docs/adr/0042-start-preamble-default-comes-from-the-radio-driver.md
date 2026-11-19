@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0042 -->
 
-**Status:** Accepted · **Recorded:** 2026-09
+**Status:** Accepted, amended by [ADR 0097](0097-every-preamble-is-set-as-a-duration-the-same-on-every-radio.md) (a chip-neutral duration replaces the per-radio byte default) · **Recorded:** 2026-09
 
 ## Context
 

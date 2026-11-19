@@ -10,7 +10,8 @@
 ///     The hub's bookkeeping (counters, result codes, device event reports) is not part of this double: a
 ///     test that needs it goes through the hub's forwarders.
 ///   - `execute` applies the operation's guard, builds the request and records it; it does not transmit.
-///   - `status_read` records the request and answers with a configured result; it decodes nothing.
+///   - `status_read` records the request and answers with a configured result; it decodes nothing, except that a
+///     configured `status_reply_level` is stored as the heating level the status decoder would store.
 ///   - `poll_backoff` records the call and moves the real StatusPollPolicy onto its retry ladder, as the hub does.
 ///   - the timer and the queued status request are recorded.
 /// A test needs no hub object.
@@ -119,6 +120,9 @@ class HeaterControllerFixture {
 
   bool execute_result{true};      ///< What the fake `execute` answers when it built a frame.
   bool status_read_result{true};  ///< What the fake `status_read` answers.
+  /// The heating level the device's reply to a status read carries, stored on its record as the hub's status
+  /// decoder does; -1 (the default): the read gets no level, and the record is left as it was.
+  int16_t status_reply_level{-1};
   std::vector<RecordedExecute> executes;
   std::vector<RecordedStatusRead> status_reads;
   std::vector<RecordedTimer> timers;
@@ -144,6 +148,9 @@ class HeaterControllerFixture {
     hub.status_read = [this](const std::string &device_id, const IoFrame &request, uint32_t retry_after_fail_ms,
                              uint8_t max_tries) {
       status_reads.push_back({device_id, request, retry_after_fail_ms, max_tries});
+      IoDevice *dev = registry.get(device_id);
+      if (dev != nullptr && status_reply_level >= 0)
+        dev->heating.level = status_reply_level;
       return status_read_result;
     };
     hub.poll_backoff = [this](const std::string &device_id, bool auth_like) {

@@ -84,12 +84,11 @@ HeatingCardCommand commanded_target(const HeatingProfile &profile, float target_
   return command_heating_card(profile, {.kind = HeatingWriteKind::TARGET, .target_c = target_c}, plan, prior);
 }
 
-/// The readings of a towel dryer with comfort setpoint 20.0 and setback 3.5, `in_force` in 0x0137.
+/// The readings of a towel dryer with comfort setpoint 20.0, `in_force` in 0x0137.
 void programme_readings(HeatingReadings &r, TowelDryerMode mode, HeatingTemporaryState state, float in_force) {
   r.towel_mode = static_cast<int16_t>(mode);
   r.temporary_state = static_cast<int16_t>(state);
   r.setpoint_c = 20.0F;
-  r.eco_setback_k = 3.5F;
   r.in_force_temperature_c = in_force;
 }
 
@@ -206,20 +205,22 @@ TEST(HeatingCardReduce, TowelDryerBoostAndDryingComeFromTheTemporaryStateAndSurv
   EXPECT_EQ(card.preset_index, preset_of(towel_dryer(), HeatingPresetId::NONE));
 }
 
-TEST(HeatingCardReduce, TowelDryerProgrammeShowsComfortOrEcoAndTheTemperatureInForce) {
+TEST(HeatingCardReduce, TowelDryerProgrammeShowsTheTemperatureInForceAndNoPresetForThePeriod) {
   HeatingReadings r;
   programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F);
+  r.level = heating_level::COMFORT;
   HeatingCardState card = reduced(towel_dryer(), r);
   EXPECT_EQ(card.mode, HeatingHvacMode::AUTO);
-  EXPECT_EQ(card.preset_index, preset_of(towel_dryer(), HeatingPresetId::COMFORT));
+  EXPECT_EQ(card.preset_index, preset_of(towel_dryer(), HeatingPresetId::NONE)) << "comfort is a level, not a preset";
   EXPECT_FLOAT_EQ(card.target_c, 20.0F);
 
   r.in_force_temperature_c = 16.5F;
+  r.level = heating_level::ECO;
   card = reduced(towel_dryer(), r, card);
-  EXPECT_EQ(card.preset_index, preset_of(towel_dryer(), HeatingPresetId::ECO));
+  EXPECT_EQ(card.preset_index, preset_of(towel_dryer(), HeatingPresetId::NONE));
   EXPECT_FLOAT_EQ(card.target_c, 16.5F) << "the temperature the dryer heats to now";
 
-  // A frost or holiday value: the temperature, and no period.
+  // A frost or holiday value: the temperature, and no preset.
   r.in_force_temperature_c = 7.0F;
   card = reduced(towel_dryer(), r, card);
   EXPECT_EQ(card.preset_index, preset_of(towel_dryer(), HeatingPresetId::NONE));
@@ -241,16 +242,14 @@ TEST(HeatingCardReduce, TowelDryerOutsideTheProgrammeNeverShowsTheTemperatureInF
   EXPECT_EQ(card.preset_index, preset_of(towel_dryer(), HeatingPresetId::NONE));
 }
 
-TEST(HeatingCardReduce, TowelDryerPeriodLosesTheOldPeriodWhenTheTemperatureInForceIsNotReadYet) {
+TEST(HeatingCardReduce, TowelDryerTargetIsTheComfortSetpointUntilTheTemperatureInForceIsRead) {
   HeatingReadings r;
   programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F);
   HeatingCardState card = reduced(towel_dryer(), r);
-  ASSERT_EQ(card.preset_index, preset_of(towel_dryer(), HeatingPresetId::ECO));
+  ASSERT_FLOAT_EQ(card.target_c, 16.5F);
 
-  // Back in the programme before the temperature in force is read again: no preset of the old period.
   r.in_force_temperature_c = NAN;
   card = reduced(towel_dryer(), r, card);
-  EXPECT_EQ(card.preset_index, preset_of(towel_dryer(), HeatingPresetId::NONE));
   EXPECT_FLOAT_EQ(card.target_c, 20.0F);
 }
 
@@ -279,7 +278,8 @@ TEST(HeatingCardReduce, ObservedLevelsDriveModeAndPreset) {
 
   r.level = heating_level::SECURED;
   card = reduced(level_heater(), r, card);
-  EXPECT_EQ(card.preset_index, preset_of(level_heater(), HeatingPresetId::CUSTOM, "Secured"));
+  EXPECT_EQ(card.mode, HeatingHvacMode::HEAT);
+  EXPECT_EQ(card.preset_index, -1) << "secured is reported, not a preset";
   EXPECT_EQ(card.action, HeatingAction::OFF) << "a level heater has no action";
   EXPECT_TRUE(std::isnan(card.target_c));
 }
@@ -499,4 +499,28 @@ TEST(HeatingCard, TheRegisterAndLevelProfilesHaveBeenRunOnHardware) {
   HeatingProfile unconfirmed_writes = radiator();
   unconfirmed_writes.experimental_writes = true;
   EXPECT_EQ(heating_hardware_status(&unconfirmed_writes), HeatingHardwareStatus::WRITES_EXPERIMENTAL);
+}
+
+// === The target of a radiator in auto is the temperature in force ===
+
+TEST(HeatingCard, ARadiatorInProgOrAutoShowsTheTemperatureInForceAsItsTargetAndInHeatTheComfortSetpoint) {
+  for (const HeatingMode mode : {HeatingMode::PROG, HeatingMode::AUTO}) {
+    HeatingReadings readings;
+    readings.mode = static_cast<int16_t>(mode);
+    readings.setpoint_c = 19.0F;
+    readings.in_force_temperature_c = 16.5F;
+    const HeatingCardState card = reduced(radiator(), readings);
+    EXPECT_EQ(card.mode, HeatingHvacMode::AUTO);
+    EXPECT_FLOAT_EQ(card.target_c, 16.5F) << static_cast<int>(mode);
+  }
+  HeatingReadings heat;
+  heat.mode = static_cast<int16_t>(HeatingMode::MANUAL);
+  heat.setpoint_c = 19.0F;
+  heat.in_force_temperature_c = 16.5F;  // a stale value is never shown outside the programme
+  EXPECT_FLOAT_EQ(reduced(radiator(), heat).target_c, 19.0F);
+
+  HeatingReadings silent;
+  silent.mode = static_cast<int16_t>(HeatingMode::PROG);
+  silent.setpoint_c = 19.0F;
+  EXPECT_FLOAT_EQ(reduced(radiator(), silent).target_c, 19.0F) << "a heater without the register: today's target";
 }

@@ -40,7 +40,6 @@
 #include "radio_interface.h"
 #include <cstdint>
 #include <functional>
-#include <optional>
 #include <string>
 
 namespace esphome {
@@ -85,6 +84,8 @@ struct OutboundExchangeContext {
   uint32_t first_response_ms{0};    ///< Timestamp when the first valid response arrived (for RTT/timing).
   uint32_t first_response_us{0};    ///< micros() at the same moment, for the sub-millisecond challenge-to-0x3D time.
   uint16_t request_preamble{0};     ///< Start preamble (bytes) this try's request went out with.
+  uint32_t request_freq{0};         ///< Channel (Hz) this try's request went out on, or was last checked on when it
+                                    ///< ended as "channel busy"; the 0x3D answer and the replies stay on it.
   uint32_t target_last_seen_ms{0};  ///< When the target was last heard (millis), 0 = unknown; logged as
                                     ///< the try's `age_ms=` so field logs can relate hits to wake state.
   IoFrame rx{};                     ///< Most recent candidate frame received during the exchange.
@@ -146,22 +147,24 @@ enum class ListenOutcome : uint8_t {
 /// implementations this project builds against.
 using ReplyHandler = std::function<ReplyDisposition(const IoFrame *parsed, const RadioRxPacket &packet)>;
 
+/// @brief How the requests of an exchange get onto the air.
+enum class ChannelAccess : uint8_t {
+  FREE_CHANNEL,   ///< Take a free channel, never send onto a busy one, a new channel each attempt (ADR 0096).
+  FIXED_CHANNEL,  ///< The caller's channel, checked five times 5 ms apart, then sent anyway (ADR 0045): the senders
+                  ///< whose listen layouts assume that channel (pairing, discovery, the key pull).
+};
+
 /// @brief How one outbound exchange is to run, as the caller states it: one value for
 /// ExchangeEngine::send_and_receive() whatever the caller (the hub, pairing, a probe, a test).
 ///
-/// Converts implicitly from a number of tries, an @ref decisions::AttemptRequest and a ready
-/// @ref decisions::AttemptPlan, so a caller that names only its attempts says only that; the other
-/// fields default to what an ordinary exchange wants.
+/// Converts implicitly from a number of tries and from an @ref decisions::AttemptRequest, so a
+/// caller that names only its attempts says only that; the other fields default to what an
+/// ordinary exchange wants. The engine plans every exchange itself, once, from @ref attempts.
 struct ExchangeOptions {
-  /// Attempt cap or read kind; the engine builds the plan from it at the start of the exchange.
-  /// Ignored once @ref plan is set.
+  /// Attempt cap or read kind; the engine builds the exchange's plan from it at the start of the
+  /// exchange (decisions::attempt_plan_for_tries() or decisions::attempt_plan()), whose attempt
+  /// count is always in `[1, EXCHANGE_MAX_ATTEMPTS]`.
   decisions::AttemptRequest attempts;
-  /// A ready attempt plan (decisions::attempt_plan()); it wins over @ref attempts. The engine still
-  /// clamps its attempt count.
-  /// A test seam: production code always plans from the request (@ref attempts). This entry exists
-  /// so a test can pin an exact plan (an attempt clamp, a hand-set gap or window, a zero budget
-  /// allowance).
-  std::optional<decisions::AttemptPlan> plan;
   /// Preamble for the request frame in bytes, or 0 for ExchangeEngine::request_preamble_for()'s rule.
   /// An override also switches the low-power wake belief off for the exchange: the caller has
   /// already chosen the preamble. The 0x3D challenge response keeps the driver's response_preamble().
@@ -170,24 +173,30 @@ struct ExchangeOptions {
   /// ExchangeEngine::key_for(request.dst). Only a caller that talks to a node the registry has no
   /// record of passes one.
   const uint8_t *key{nullptr};
+  /// How the request gets onto the air. The default takes a free channel; a caller whose listen
+  /// layout assumes the channel it names says FIXED_CHANNEL.
+  ChannelAccess channel_access{ChannelAccess::FREE_CHANNEL};
 
   ExchangeOptions() = default;
-  // NOLINTBEGIN(google-explicit-constructor): the three ways to name attempts convert implicitly, so
+  // NOLINTBEGIN(google-explicit-constructor): the two ways to name attempts convert implicitly, so
   // a caller that only names its attempts is not wrapped in boilerplate
   ExchangeOptions(uint8_t tries) : attempts(tries) {}
   ExchangeOptions(const decisions::AttemptRequest &request) : attempts(request) {}
-  ExchangeOptions(const decisions::AttemptPlan &ready_plan) : plan(ready_plan) {}
   // NOLINTEND(google-explicit-constructor)
 
   /// @brief Whether the exchange treats the receiver's state as unknown (the wake belief,
-  /// decisions::wake_belief()): the ready plan says so, or a planned read was marked so.
-  [[nodiscard]] bool state_unknown() const {
-    return plan.has_value() ? plan->state_unknown : (attempts.planned && attempts.state_unknown);
-  }
+  /// decisions::wake_belief()): a planned read was marked so.
+  [[nodiscard]] bool state_unknown() const { return attempts.planned && attempts.state_unknown; }
   /// @brief These options with the request's preamble fixed to @p preamble_bytes.
   [[nodiscard]] ExchangeOptions with_preamble(uint16_t preamble_bytes) const {
     ExchangeOptions options = *this;
     options.preamble_override = preamble_bytes;
+    return options;
+  }
+  /// @brief These options with the request kept on the channel the caller names (ChannelAccess::FIXED_CHANNEL).
+  [[nodiscard]] ExchangeOptions on_fixed_channel() const {
+    ExchangeOptions options = *this;
+    options.channel_access = ChannelAccess::FIXED_CHANNEL;
     return options;
   }
   /// @brief These options with the challenge answered under @p exchange_key.

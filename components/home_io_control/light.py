@@ -12,7 +12,6 @@ from esphome.components import light
 from esphome.const import CONF_OUTPUT_ID
 
 from . import home_io_control_ns
-from .hub_validators import FEATURE_MAIN_PARAMETER_ONLY
 from .platform_common import (
     INSTANT_LIGHT_TRANSITION,
     create_companion_sensors,
@@ -45,7 +44,7 @@ def _require_dimmable_kind(config):
         config,
         CONF_DIMMABLE,
         config[CONF_DIMMABLE],
-        forbidden=FEATURE_MAIN_PARAMETER_ONLY,
+        forbidden="MAIN_PARAMETER_ONLY",
         reason="this light is on/off only (KLF 200 Appendix 2); remove dimmable:",
     )
     return config

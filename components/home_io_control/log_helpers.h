@@ -55,7 +55,7 @@ inline std::string format_name_and_hex(const char *name, uint8_t value) {
 /// @brief Format a 16-byte key as an uppercase, unseparated hex string for display.
 ///
 /// The one deliberate place system-key bytes are formatted for display, shared by both
-/// key-recovery features so neither forks its own copy: 2W "Accept Foreign Pairing"
+/// key-recovery features so neither forks its own copy: 2W "Recover System Key"
 /// (build_key_extraction_report(), key_extraction_responder.cpp) and 1W controller-key adoption
 /// (build_oneway_adoption_report(), oneway_key_adoption.cpp). See redaction.h for the masking rules this
 /// intentionally does not apply to — both callers are the deliberate exception, not a loosening

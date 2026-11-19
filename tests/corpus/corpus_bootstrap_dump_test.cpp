@@ -116,7 +116,7 @@ TEST(BootstrapDump, DISABLED_PrintSyntheticFrames) {
 
   // --- synthetic_identify: identify(0x1E) -> challenge -> challenge-resp -> ack(END) ---
   IoFrame identify{};
-  ASSERT_TRUE(create_identify(identify, test::OWN_ID, test::DST_ID, /*low_power=*/true));
+  ASSERT_TRUE(create_identify(identify, test::OWN_ID, test::DST_ID, /*low_power=*/true, IDENTIFY_WINK_DEVICE_DEFAULT));
   print_wire("synthetic_identify identify", identify);
 
   IoFrame identify_challenge{};

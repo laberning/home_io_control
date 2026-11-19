@@ -36,7 +36,7 @@ void enter_pairing_state(ExchangeEngine &engine, PairingTelemetry &telemetry, pa
 
 /// @brief Preamble for a directed pairing start frame (0x2C, 0x31, 0x38, 0x6F) to the device discovery
 /// just found: the shorter of ExchangeEngine::request_preamble_for()'s rule and the preamble the
-/// discovery request went out with (`effective_discovery_preamble()`).
+/// discovery request went out with (`effective_discovery_preamble_ms()`).
 ///
 /// The device answered a discovery request carrying that preamble moments ago, so it is listening and
 /// demonstrably hears it; pairing follows within seconds. The long wake-up preamble the rule would

@@ -8,7 +8,7 @@
 ## tables, and the validators for node IDs, system keys, device IDs, linked remotes and
 ## status-poll intervals that the hub schema and the platform modules share.
 ##
-## DEVICE_TYPE_OPTIONS, DEVICE_MODEL_OPTIONS, DEVICE_FEATURES (with the FEATURE_* bits, KIND_EXPERIMENTAL and
+## DEVICE_TYPE_OPTIONS, DEVICE_MODEL_OPTIONS, DEVICE_FEATURES (with FEATURES, EXPERIMENTAL_KINDS and
 ## NAMED_POSITION_FEATURES), MANUFACTURER_OPTIONS, PA_PIN_OPTIONS, TCXO_VOLTAGE_OPTIONS and
 ## FEM_TX_POWER_MAX_QUIET mirror C++ tables; the ``tests/sync/`` host tests and
 ## ``make yaml-emitter-sync`` read them from this file by name.
@@ -241,30 +241,35 @@ DEFAULT_COVER_DEVICE_CLASS = {
     "vertical_exterior_awning": DEVICE_CLASS_AWNING,
 }
 
-# === Device capability bits ===
+# === Device capabilities ===
 #
-# Python's mirror of the capability word each node-type table row carries (proto_device_features.h,
-# proto_device_types.cpp), so the codegen can decide which companions and keys a declared kind has.
-# The C++ table is authoritative; tests/sync/device_features_sync_test.cpp checks every bit value and
-# the whole word of every (type, subtype). Literals only: the sync test parses this file and reads no
-# expressions.
-FEATURE_MAIN_PARAMETER_ONLY = 0x0001
-FEATURE_LEVELS = 0x0002
-FEATURE_TILT = 0x0004
-FEATURE_FAVORITE = 0x0008
-FEATURE_VENT = 0x0010
-FEATURE_PARTIAL = 0x0020
-FEATURE_PEDESTRIAN = 0x0040
-FEATURE_EXTENDED_POSITION_FRAME = 0x0080
-FEATURE_WINDOW_COMPANIONS = 0x0100
-FEATURE_INVERTED = 0x0200
-FEATURE_WATER_HEATER = 0x0400
-FEATURE_NIGHT_LIGHT = 0x0800
-FEATURE_TEMPERATURE_RANGE = 0x1000
-# Not a capability: Python's copy of the row's EXPERIMENTAL identity flag (device_type_flags in
-# proto_device_types.h), carried in bit 15 of the same word so there is one table and one sync test.
-# Set on a kind no capture or report has confirmed on a real device.
-KIND_EXPERIMENTAL = 0x8000
+# Python's mirror of the capability set each node-type table row carries (proto_device_features.h,
+# proto_device_types.cpp), so the codegen can decide which companions and keys a declared kind has. A
+# capability is its name; the codegen asks for a name (platform_common.has_feature(), require_feature()).
+# The C++ table is authoritative; tests/sync/device_features_sync_test.cpp checks the names against the
+# C++ enumeration and the set of every (type, subtype) row. Literals only: the sync test parses this
+# file and reads no expressions.
+
+# Every capability, in the order of the C++ enumeration DeviceFeature.
+FEATURES = (
+    "MAIN_PARAMETER_ONLY",
+    "LEVELS",
+    "TILT",
+    "FAVORITE",
+    "VENT",
+    "PARTIAL",
+    "PEDESTRIAN",
+    "EXTENDED_POSITION_FRAME",
+    "WINDOW_COMPANIONS",
+    "INVERTED",
+    "WATER_HEATER",
+    "NIGHT_LIGHT",
+    "TEMPERATURE_RANGE",
+    "CENTRAL_HEATING_MODE",
+    "OCCUPANCY",
+    "ENERGY_METER",
+    "RUN_TIMERS",
+)
 
 # The models a (type, subtype) can have below it (proto_device_kinds.h DeviceModel, the model rows of
 # proto_device_types.cpp), by their YAML io_model: name. Values mirror the C++ enum;
@@ -273,65 +278,82 @@ KIND_EXPERIMENTAL = 0x8000
 DEVICE_MODEL_OPTIONS = {
     "towel_dryer": 1,
     "heater_with_light": 2,
-    "electric_water_heater": 3,
+    "pilot_wire_interface": 3,
+    "electric_water_heater": 4,
 }
 
-# The capability word of each row whose type has a YAML name, keyed "<name>" for subtype 0,
+# The capabilities of each row whose type has a YAML name, keyed "<name>" for subtype 0,
 # "<name>/<subtype>" for a subtype row and "<name>/<subtype>/<model>" for a model row. A row with no
 # capability is left out, except a subtype row under a type that has capabilities (without its explicit
-# zero the lookup would give it the type's word), a model row (it is how the codegen knows the model is
-# offered) and an experimental row (its word is KIND_EXPERIMENTAL at least).
+# empty set the lookup would give it the type's capabilities) and a model row (it is how the codegen
+# knows the model is offered).
 DEVICE_FEATURES = {
-    "interior_venetian_blind": 0x000E,  # LEVELS TILT FAVORITE
-    "roller_shutter": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "roller_shutter/1": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "roller_shutter/2": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "vertical_exterior_awning": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "window_opener": 0x009A,  # LEVELS FAVORITE VENT EXTENDED_POSITION_FRAME
-    "window_opener/1": 0x009A,  # LEVELS FAVORITE VENT EXTENDED_POSITION_FRAME
-    "garage_opener": 0x0023,  # MAIN_PARAMETER_ONLY LEVELS PARTIAL
-    "garage_opener/58": 0x0021,  # MAIN_PARAMETER_ONLY PARTIAL
-    "light/1": 0x8002,  # KIND_EXPERIMENTAL LEVELS
-    "light/2": 0x8002,  # KIND_EXPERIMENTAL LEVELS
-    "light/58": 0x0001,  # MAIN_PARAMETER_ONLY
-    "gate_opener": 0x00CA,  # LEVELS FAVORITE PEDESTRIAN EXTENDED_POSITION_FRAME
-    "gate_opener/58": 0x8049,  # KIND_EXPERIMENTAL MAIN_PARAMETER_ONLY FAVORITE PEDESTRIAN
-    "rolling_door_opener": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "lock/1": 0x8000,  # KIND_EXPERIMENTAL
-    "lock/2": 0x8000,  # KIND_EXPERIMENTAL; car controller: no capability of the lock family
-    "vertical_interior_blind": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "dual_roller_shutter": 0x000A,  # LEVELS FAVORITE
-    "on_off_switch/2": 0x8000,  # KIND_EXPERIMENTAL
-    "horizontal_awning": 0x028A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME INVERTED
-    "horizontal_awning/1": 0x028A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME INVERTED
-    "exterior_venetian_blind": 0x008E,  # LEVELS TILT FAVORITE EXTENDED_POSITION_FRAME
-    "louvre_blind": 0x008E,  # LEVELS TILT FAVORITE EXTENDED_POSITION_FRAME
-    "curtain_track": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "heating_temperature_interface": 0x1000,  # TEMPERATURE_RANGE
-    "exterior_heating": 0x0003,  # MAIN_PARAMETER_ONLY LEVELS
-    "exterior_heating/58": 0x0001,  # MAIN_PARAMETER_ONLY
-    "heat_pump/1": 0x8000,  # KIND_EXPERIMENTAL
-    "heat_pump/2": 0x8000,  # KIND_EXPERIMENTAL
-    "swinging_shutter": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "swinging_shutter/1": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "swinging_shutter/58": 0x8009,  # KIND_EXPERIMENTAL MAIN_PARAMETER_ONLY FAVORITE
-    "sliding_window": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "sliding_window/1": 0x808A,  # KIND_EXPERIMENTAL LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "bioclimatic_pergola": 0x008A,  # LEVELS FAVORITE EXTENDED_POSITION_FRAME
-    "domestic_hot_water": 0x8400,  # KIND_EXPERIMENTAL WATER_HEATER
-    "domestic_hot_water/0/electric_water_heater": 0x8400,  # KIND_EXPERIMENTAL WATER_HEATER
-    "electrical_heater/1": 0x0100,  # WINDOW_COMPANIONS
-    "electrical_heater/1/towel_dryer": 0x0000,  # no window function
-    "electrical_heater/1/heater_with_light": 0x0900,  # WINDOW_COMPANIONS NIGHT_LIGHT
+    "interior_venetian_blind": frozenset({"LEVELS", "TILT", "FAVORITE"}),
+    "roller_shutter": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "roller_shutter/1": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "roller_shutter/2": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "vertical_exterior_awning": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "window_opener": frozenset({"LEVELS", "FAVORITE", "VENT", "EXTENDED_POSITION_FRAME"}),
+    "window_opener/1": frozenset({"LEVELS", "FAVORITE", "VENT", "EXTENDED_POSITION_FRAME"}),
+    "garage_opener": frozenset({"MAIN_PARAMETER_ONLY", "LEVELS", "PARTIAL"}),
+    "garage_opener/58": frozenset({"MAIN_PARAMETER_ONLY", "PARTIAL"}),
+    "light/1": frozenset({"LEVELS"}),
+    "light/2": frozenset({"LEVELS"}),
+    "light/58": frozenset({"MAIN_PARAMETER_ONLY"}),
+    "gate_opener": frozenset({"LEVELS", "FAVORITE", "PEDESTRIAN", "EXTENDED_POSITION_FRAME"}),
+    "gate_opener/58": frozenset({"MAIN_PARAMETER_ONLY", "FAVORITE", "PEDESTRIAN"}),
+    "rolling_door_opener": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "vertical_interior_blind": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "dual_roller_shutter": frozenset({"LEVELS", "FAVORITE"}),
+    "horizontal_awning": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME", "INVERTED"}),
+    "horizontal_awning/1": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME", "INVERTED"}),
+    "exterior_venetian_blind": frozenset({"LEVELS", "TILT", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "louvre_blind": frozenset({"LEVELS", "TILT", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "curtain_track": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "heating_temperature_interface": frozenset({"TEMPERATURE_RANGE"}),
+    "exterior_heating": frozenset({"MAIN_PARAMETER_ONLY", "LEVELS"}),
+    "exterior_heating/58": frozenset({"MAIN_PARAMETER_ONLY"}),
+    "swinging_shutter": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "swinging_shutter/1": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "swinging_shutter/58": frozenset({"MAIN_PARAMETER_ONLY", "FAVORITE"}),
+    "sliding_window": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "sliding_window/1": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "bioclimatic_pergola": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
+    "domestic_hot_water": frozenset({"WATER_HEATER"}),
+    "electrical_heater/1": frozenset({"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}),
+    "electrical_heater/1/towel_dryer": frozenset({"CENTRAL_HEATING_MODE", "ENERGY_METER", "RUN_TIMERS"}),
+    "electrical_heater/1/heater_with_light": frozenset({"WINDOW_COMPANIONS", "NIGHT_LIGHT", "OCCUPANCY", "ENERGY_METER"}),
+    "electrical_heater/0/pilot_wire_interface": frozenset(),
+    "domestic_hot_water/0/electric_water_heater": frozenset({"WATER_HEATER"}),
 }
 
+# The kinds no capture or report has confirmed on a real device (device_type_flags::EXPERIMENTAL in
+# proto_device_types.h), keyed like DEVICE_FEATURES but without models. The flag names its row only: a
+# subtype without a row of its own does not inherit its type's.
+EXPERIMENTAL_KINDS = frozenset(
+    {
+        "light/1",
+        "light/2",
+        "gate_opener/58",
+        "lock/1",
+        "lock/2",
+        "on_off_switch/2",
+        "heat_pump/1",
+        "heat_pump/2",
+        "swinging_shutter/58",
+        "sliding_window/1",
+        "domestic_hot_water",
+    }
+)
+
 # The named positions (proto_device_types.h NAMED_POSITIONS), keyed by the CoverCommand name
-# cover_command_name() returns. Each companion button of cover.py is created from the bit here.
+# cover_command_name() returns, with the capability a device needs for each. Each companion button of
+# cover.py is created from the capability here.
 NAMED_POSITION_FEATURES = {
-    "FAVORITE": 0x0008,
-    "VENT": 0x0010,
-    "PEDESTRIAN": 0x0040,
-    "PARTIAL": 0x0020,
+    "FAVORITE": "FAVORITE",
+    "VENT": "VENT",
+    "PEDESTRIAN": "PEDESTRIAN",
+    "PARTIAL": "PARTIAL",
 }
 
 # Subtype that marks a device taking the main parameter only, on any node type.
@@ -357,14 +379,19 @@ def device_models(device_type, subtype=0):
     return sorted(key[len(prefix):] for key in DEVICE_FEATURES if key.startswith(prefix))
 
 
+def check_feature_name(name):
+    """Return ``name`` when it is a capability in FEATURES; raise ValueError for a misspelt one."""
+    if name not in FEATURES:
+        raise ValueError(f"unknown device capability {name!r}")
+    return name
+
+
 def device_features(device_type, subtype=0, model=0):
-    """The capability word of (io_device_type value, io_subtype, io_model value), as the C++
-    device_features() answers.
+    """The capabilities of (io_device_type value, io_subtype, io_model value) as a frozenset of names,
+    as the C++ device_features() answers.
 
     The model row; else the exact row; else, for subtype 58, the main-parameter-only variant of the
-    type's row (of no capabilities when the type has none); else the type's own row. A subtype without
-    a row of its own takes the type row's capabilities but never its KIND_EXPERIMENTAL marker: C++
-    device_is_experimental() reads only the exact row, so the marker names a row, not a family. A node type YAML
+    type's row (of no capabilities when the type has none); else the type's own row. A node type YAML
     has no name for (a raw value) has no row here, so it has no capabilities beyond the subtype-58
     rule. ``model`` is a DEVICE_MODEL_OPTIONS value, 0 for none; codegen passes the config's model
     through platform_common.config_model().
@@ -379,21 +406,22 @@ def device_features(device_type, subtype=0, model=0):
         exact = DEVICE_FEATURES.get(name if subtype == 0 else f"{name}/{subtype}")
         if exact is not None:
             return exact
-    base = (DEVICE_FEATURES.get(name, 0) if name is not None else 0) & ~KIND_EXPERIMENTAL
+    base = DEVICE_FEATURES.get(name, frozenset()) if name is not None else frozenset()
     if subtype == SUBTYPE_MAIN_PARAMETER_ONLY:
-        cleared = FEATURE_LEVELS | FEATURE_TILT | FEATURE_EXTENDED_POSITION_FRAME
-        return (base & ~cleared) | FEATURE_MAIN_PARAMETER_ONLY
+        return (base - {"LEVELS", "TILT", "EXTENDED_POSITION_FRAME"}) | {"MAIN_PARAMETER_ONLY"}
     return base
 
 
-def kind_is_experimental(device_type, subtype=0, model=0):
+def kind_is_experimental(device_type, subtype=0):
     """True when no capture or report has confirmed (io_device_type value, io_subtype) on a real device.
 
-    Reads KIND_EXPERIMENTAL from the same word as the capabilities, so it follows the same fallback as
-    device_features(): only an exact row (or model row) carries the marker, and a subtype with no row of
-    its own never inherits it from its type row.
+    Reads EXPERIMENTAL_KINDS, which names exact rows only: a subtype with no row of its own never
+    inherits the marker from its type row, as C++ device_is_experimental().
     """
-    return bool(device_features(device_type, subtype, model) & KIND_EXPERIMENTAL)
+    name = device_type_name(device_type)
+    if name is None:
+        return False
+    return (name if subtype == 0 else f"{name}/{subtype}") in EXPERIMENTAL_KINDS
 
 
 # Device-type names that were renamed. Each maps to the message the validator raises, so a config

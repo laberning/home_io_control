@@ -4,10 +4,10 @@
 /// @brief Observer interface for every frame the exchange engine puts on air.
 /// @ingroup hioc_hub
 ///
-/// ExchangeEngine::transmit_frame() is the single TX choke point of the hub: 2W exchanges,
-/// pairing, and 1W bursts all transmit through it. A TransmitObserver attached to the engine sees
-/// each listen-before-talk deferral and each frame the radio accepted, without the engine knowing
-/// who is listening or why. PairingTelemetry is the observer during a pairing attempt.
+/// The exchange engine is the single TX choke point of the hub (transmit_frame() and the channel access
+/// of a request, which share the radio's send): 2W exchanges, pairing, and 1W bursts all transmit through it. A
+/// TransmitObserver attached to the engine sees each listen-before-talk deferral and each frame the radio accepted,
+/// without the engine knowing who is listening or why. PairingTelemetry is the observer during a pairing attempt.
 
 #include "proto_frame.h"
 #include "radio_interface.h"
@@ -26,7 +26,8 @@ class TransmitObserver {
  public:
   virtual ~TransmitObserver() = default;
 
-  /// The TX channel was busy, so transmit_frame() backs off once before trying again.
+  /// A channel check found the TX channel busy, so the engine backs off before it tries again (the
+  /// same channel after 5 ms for a fixed-channel frame, another channel for a request, ADR 0096).
   /// @param rssi_dbm The level the radio measured on the TX channel (TxResult::cca_level_dbm).
   virtual void on_lbt_defer(int16_t rssi_dbm) {}
 

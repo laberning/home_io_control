@@ -3,8 +3,9 @@
 /// @ingroup hioc_hub
 ///
 /// Implements ExchangeEngine: the retry loop, challenge-response
-/// authentication, final-response wait, listen-before-talk transmit, and
-/// frequency-hopping. Debug-snapshot helpers are also here.
+/// authentication, final-response wait, the channel access of a request and the
+/// listen-before-talk transmit of the fixed-channel senders, and frequency-hopping. Debug-snapshot helpers are also
+/// here.
 
 #include "exchange_engine.h"
 
@@ -161,7 +162,37 @@ void ExchangeEngine::maybe_hop() {
   // happen on the very next pass once the reception clears, not a further HOP_TIME_US later.
   if ((*this->radio_ptr_)->reception_in_progress())
     return;
+  // The receiver has sat on this channel for the whole dwell, so a reading now needs no retune or
+  // settle time. One in QUIET_LEVEL_READING_EVERY_N_HOPS hops, so the hop's timing is untouched.
+  if (++this->hops_since_reading_ >= QUIET_LEVEL_READING_EVERY_N_HOPS) {
+    this->hops_since_reading_ = 0;
+    this->note_idle_reading_();
+  }
   this->hop_frequency();
+}
+
+void ExchangeEngine::note_idle_reading_() {
+  // A fixed limit replaces the learned one, so there is nothing to learn.
+  if (this->tuning_->lbt_rssi_threshold_dbm.has_value())
+    return;
+  RadioDriver *radio = *this->radio_ptr_;
+  this->quiet_level_.add_reading(radio->get_current_freq(), radio->read_rssi());
+  const BusyLimitReport report = this->busy_limit_log_.update(this->quiet_level_.board_quiet_level());
+  if (report.limit_to_log_dbm.has_value())
+    ESP_LOGI(TAG, "Busy channel limit %d dBm, learned from this board's quiet level", *report.limit_to_log_dbm);
+  if (report.little_margin.has_value()) {
+    ESP_LOGW(TAG,
+             "Channel %" PRIu32 " Hz idles at %d dBm, close to the highest limit this hub uses (%d dBm); free "
+             "channels may be hard to find here. Set lbt_rssi_threshold_dbm to choose the limit yourself.",
+             report.little_margin->freq_hz, report.little_margin->level_dbm, BUSY_LIMIT_CEILING_DBM);
+  }
+}
+
+int16_t ExchangeEngine::busy_limit_dbm() const {
+  if (this->tuning_->lbt_rssi_threshold_dbm.has_value())
+    return *this->tuning_->lbt_rssi_threshold_dbm;
+  const std::optional<ChannelLevel> quiet = this->quiet_level_.board_quiet_level();
+  return decisions::busy_limit_dbm(quiet.has_value() ? std::optional<int16_t>(quiet->level_dbm) : std::nullopt);
 }
 
 // ============================================================================
@@ -180,33 +211,42 @@ RadioTxConfig tx_config_for(const IoFrame &frame, uint32_t freq, uint16_t preamb
   return tx_config;
 }
 
-}  // namespace
-
-bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_t preamble) {
-  RadioDriver *radio = *this->radio_ptr_;
+/// Serialize @p frame for the air into @p buf, the first step of every send.
+/// @return The wire length, or 0 (logged) when the frame does not serialize.
+uint8_t serialize_for_tx(const IoFrame &frame, uint8_t (&buf)[FRAME_MAX_WIRE_SIZE]) {
   // FRAME_MAX_WIRE_SIZE, not FRAME_MAX_SIZE: a frame with an out-of-length MAC trailer
   // (IoFrame::has_mac, e.g. CMD_ONEWAY_ADD_CONTROLLER) serializes to more than
   // FRAME_MAX_SIZE/FRAME_MAX_DECLARED_SIZE bytes, and serialize() rejects a buffer too small to
   // hold its actual output rather than truncating into it.
-  uint8_t buf[FRAME_MAX_WIRE_SIZE];
   uint8_t const len = serialize(frame, buf, sizeof(buf));
-  if (len == 0) {
+  if (len == 0)
     ESP_LOGW(TAG, "tx: serialize_failed cmd=0x%02X", frame.cmd);
+  return len;
+}
+
+}  // namespace
+
+bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_t preamble) {
+  RadioDriver *radio = *this->radio_ptr_;
+  uint8_t buf[FRAME_MAX_WIRE_SIZE];
+  uint8_t const len = serialize_for_tx(frame, buf);
+  if (len == 0)
     return false;
-  }
-  // Listen before talk: up to lbt_max_retries sends that the radio makes only if the TX channel is
+  // Listen before talk: up to LBT_MAX_RETRIES sends that the radio makes only if the TX channel is
   // clear, measured by the driver on that channel right before transmitting; after the last busy
   // result, one send without the check, so a noisy channel delays a frame but never drops it.
   // Only a frame that opens a session (CTRL0 START) is checked. A frame without START answers one
   // the peer has just sent and is listening for on this channel for only a few tens of ms, so it
   // goes out at once: a 5 ms back-off already loses the exchange on some receivers (issue #178),
-  // and the frame that opened the session was checked by whoever sent it (ADR 0045).
-  const uint8_t lbt_checks = is_start(frame) ? this->tuning_->lbt_max_retries : 0;
+  // and the frame that opened the session was checked by whoever sent it (ADR 0045). The requests
+  // of send_and_receive() do not come through here for their check: they take a free channel
+  // (transmit_with_channel_access_(), ADR 0096).
+  const uint8_t lbt_checks = is_start(frame) ? LBT_MAX_RETRIES : 0;
   RadioTxConfig tx_config = tx_config_for(frame, freq, preamble);
   TxResult result;
   for (uint8_t lbt = 0;; lbt++) {
     if (lbt < lbt_checks) {
-      tx_config.cca_threshold_dbm = this->tuning_->lbt_rssi_threshold_dbm;
+      tx_config.cca_threshold_dbm = this->busy_limit_dbm();
     } else {
       tx_config.cca_threshold_dbm.reset();
     }
@@ -215,11 +255,22 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
       break;
     ESP_LOGD(TAG, "LBT: channel busy (RSSI %d dBm on %" PRIu32 " Hz), retry %u/%u", result.cca_level_dbm, freq, lbt + 1,
              lbt_checks);
-    this->counters_.lbt_retries++;
-    if (this->transmit_observer_ != nullptr)
-      this->transmit_observer_->on_lbt_defer(result.cca_level_dbm);
+    this->note_busy_check_(result.cca_level_dbm);
     delay(LBT_RETRY_DELAY_MS);
   }
+  return this->conclude_send_(frame, tx_config, len, result);
+}
+
+// === Shared steps of every send ===
+
+void ExchangeEngine::note_busy_check_(int16_t level_dbm) {
+  this->counters_.lbt_retries++;
+  if (this->transmit_observer_ != nullptr)
+    this->transmit_observer_->on_lbt_defer(level_dbm);
+}
+
+bool ExchangeEngine::conclude_send_(const IoFrame &frame, const RadioTxConfig &tx_config, uint8_t len,
+                                    const TxResult &result) {
   if (!result.sent()) {
     ESP_LOGW(TAG, "tx: send_failed cmd=0x%02X", frame.cmd);
     return false;
@@ -227,6 +278,91 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
   if (this->transmit_observer_ != nullptr)
     this->transmit_observer_->on_transmit(frame, tx_config, len);
   return true;
+}
+
+// === Channel access of a request (ADR 0096) ===
+
+TxResult ExchangeEngine::check_channel_and_send_(const uint8_t *buf, uint8_t len, RadioTxConfig &tx_config) {
+  RadioDriver *radio = *this->radio_ptr_;
+  const int16_t threshold_dbm = this->busy_limit_dbm();
+  // All readings but the last are taken here; the last is the radio's own, right before the first
+  // symbol, so a channel that turns busy between the check and the send is still caught.
+  for (uint8_t reading = 1; reading < CHANNEL_CHECK_READINGS; reading++) {
+    const int16_t level_dbm = radio->measure_channel_level(tx_config.freq_hz);
+    if (decisions::channel_is_busy(level_dbm, threshold_dbm))
+      return TxResult::channel_busy(level_dbm);
+    // Too short to receive anything meaningful and not a wait for a reply: the readings are the
+    // point. Waiting through listen() would also hand the radio's queued frames to the wrong handler.
+    delay(CHANNEL_CHECK_READING_GAP_MS);
+  }
+  tx_config.cca_threshold_dbm = threshold_dbm;
+  return radio->send_packet(buf, len, tx_config);
+}
+
+void ExchangeEngine::hear_channel_for_(uint32_t ms) {
+  ListenSpec spec;
+  spec.window_ms = ms;
+  spec.policy = ListenPolicy::HOLD_REQUEST_CHANNEL;
+  RadioRxPacket packet{};
+  IoFrame frame{};
+  this->listen(spec, packet, frame, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
+    // Whatever is on the channel is someone else's traffic: a remote's press is what the hub backed
+    // off from, and it is handled like one heard inside an exchange's wait.
+    if (parsed != nullptr)
+      this->report_overheard_(*parsed, pkt);
+    return ReplyDisposition::IGNORE;
+  });
+}
+
+ExchangeEngine::RequestTransmit ExchangeEngine::transmit_with_channel_access_(const IoFrame &frame, uint32_t own_freq,
+                                                                              uint16_t preamble,
+                                                                              uint32_t previous_freq) {
+  RadioDriver *radio = *this->radio_ptr_;
+  uint8_t buf[FRAME_MAX_WIRE_SIZE];
+  const uint8_t len = serialize_for_tx(frame, buf);
+  if (len == 0)
+    return {decisions::ChannelAccessStatus::FAILED, own_freq};
+  // A low-power receiver is woken on channel 2 and stays there; any other request leaves the
+  // previous attempt's channel and, on a busy result, the one it just measured.
+  const bool low_power = (frame.ctrl1 & CTRL1_LOW_POWER) != 0;
+  uint32_t freq = low_power ? own_freq : decisions::request_channel(previous_freq, this->draw_random_());
+  const uint32_t begin_ms = millis();
+  for (uint8_t busy_checks = 0;; busy_checks++) {
+    RadioTxConfig tx_config = tx_config_for(frame, freq, preamble);
+    const TxResult result = this->check_channel_and_send_(buf, len, tx_config);
+    if (result.status != TxResult::Status::CHANNEL_BUSY) {
+      const bool sent = this->conclude_send_(frame, tx_config, len, result);
+      return {sent ? decisions::ChannelAccessStatus::SENT : decisions::ChannelAccessStatus::FAILED, freq};
+    }
+    ESP_LOGD(TAG, "Channel busy (RSSI %d dBm on %" PRIu32 " Hz), check %u", result.cca_level_dbm, freq,
+             busy_checks + 1);
+    this->note_busy_check_(result.cca_level_dbm);
+    const std::optional<uint32_t> backoff_ms =
+        decisions::next_backoff_ms(millis() - begin_ms, busy_checks, low_power, this->draw_random_());
+    if (!backoff_ms.has_value())
+      break;
+    // The back-off is spent listening on the busy channel: that is where the traffic the hub backs
+    // off from is, and it keeps the loop alive (listen() feeds the watchdog while it blocks).
+    this->hear_channel_for_(*backoff_ms);
+    if (!low_power)
+      freq = decisions::request_channel(freq, this->draw_random_());
+  }
+  if (!this->tuning_->lbt_force_when_busy)
+    return {decisions::ChannelAccessStatus::CHANNEL_BUSY, freq};
+
+  // Opted in: every channel the request may use stayed busy, so send on the quietest of the three. A
+  // low-power request may use only its own channel, so there is nothing to compare.
+  std::array<int16_t, decisions::REQUEST_CHANNELS.size()> levels{};
+  if (!low_power) {
+    for (size_t i = 0; i < levels.size(); i++)
+      levels[i] = radio->measure_channel_level(decisions::REQUEST_CHANNELS[i]);
+  }
+  const uint32_t forced_freq = decisions::forced_send_channel(low_power, own_freq, levels);
+  const RadioTxConfig tx_config = tx_config_for(frame, forced_freq, preamble);
+  ESP_LOGW(TAG, "Channel busy for %" PRIu32 " ms: sending cmd=0x%02X on %" PRIu32 " Hz anyway (lbt_force_when_busy)",
+           millis() - begin_ms, frame.cmd, forced_freq);
+  const bool sent = this->conclude_send_(frame, tx_config, len, radio->send_packet(buf, len, tx_config));
+  return {sent ? decisions::ChannelAccessStatus::SENT_FORCED : decisions::ChannelAccessStatus::FAILED, forced_freq};
 }
 
 uint32_t ExchangeEngine::final_reply_tail_ms_(const IoFrame &request, uint32_t freq) const {
@@ -245,52 +381,43 @@ uint32_t ExchangeEngine::tx_time_ms(const IoFrame &frame, uint32_t freq, uint16_
   return (tx_us + US_PER_MS - 1) / US_PER_MS;
 }
 
-decisions::AttemptPlan ExchangeEngine::plan_read(decisions::ReadKind kind, const IoFrame &request, uint32_t freq,
-                                                 uint16_t request_preamble_override, bool state_unknown) const {
-  decisions::AttemptRequest attempts = decisions::AttemptRequest::of_kind(kind);
-  attempts.state_unknown = state_unknown;
-  return this->plan_for_(request, freq, ExchangeOptions{attempts},
-                         this->plan_request_preamble_(request, request_preamble_override, state_unknown));
-}
-
 decisions::AttemptPlan ExchangeEngine::plan_for_(const IoFrame &request, uint32_t freq, const ExchangeOptions &options,
                                                  const PreamblePlan &preamble_plan) const {
-  if (options.plan.has_value())
-    return *options.plan;
   const decisions::AttemptRequest &attempts = options.attempts;
   if (!attempts.planned) {
     // Never below 1 (a caller passing 0 must not silently transmit nothing) and never above
-    // EXCHANGE_RETRY_COUNT: a caller that wants more attempts passes a plan or a read kind.
+    // EXCHANGE_RETRY_COUNT: a caller that wants more attempts passes a read kind.
     const uint16_t window_ms =
         is_start(request) ? this->tuning_->exchange_start_response_wait_ms : this->tuning_->exchange_response_wait_ms;
-    return decisions::attempt_plan_for_tries(attempts.max_tries, window_ms);
+    decisions::AttemptPlan counted = decisions::attempt_plan_for_tries(attempts.max_tries, window_ms);
+    // A low-power target keeps the tries the caller named behind the wake-up (ADR 0095).
+    counted.bounded_by_attempts = is_start(request) && (request.ctrl1 & CTRL1_LOW_POWER) != 0;
+    return counted;
   }
   const bool low_power = (request.ctrl1 & CTRL1_LOW_POWER) != 0;
   // A settling read of a low-power receiver the hub has no news of leads with one short attempt
   // (WakeBelief::UNKNOWN). Every other read, and any read whose preamble the caller fixed, has none.
-  std::optional<uint32_t> short_lead_tx_ms;
-  if (attempts.kind == decisions::ReadKind::SETTLING && low_power && preamble_plan.use == WakeBeliefUse::APPLIED &&
-      preamble_plan.belief == decisions::WakeBelief::UNKNOWN)
-    short_lead_tx_ms = this->tx_time_ms(request, freq, preamble_plan.short_preamble);
-  decisions::AttemptPlan plan = this->plan_attempts(attempts.kind, low_power, request, freq,
-                                                    this->request_preamble_for(request), 0, short_lead_tx_ms);
+  const bool short_lead = attempts.kind == decisions::ReadKind::SETTLING && low_power &&
+                          preamble_plan.use == WakeBeliefUse::APPLIED &&
+                          preamble_plan.belief == decisions::WakeBelief::UNKNOWN;
+  decisions::AttemptPlan plan =
+      this->plan_attempts(attempts.kind, low_power, request, freq, this->request_preamble_for(request), 0, short_lead);
   plan.state_unknown = attempts.state_unknown;
   return plan;
 }
 
 decisions::AttemptPlan ExchangeEngine::plan_attempts(decisions::ReadKind kind, bool low_power, const IoFrame &request,
                                                      uint32_t freq, uint16_t preamble, uint16_t last_window_ms,
-                                                     std::optional<uint32_t> short_lead_tx_ms) const {
+                                                     bool with_short_lead) const {
   return decisions::attempt_plan(kind, low_power, *this->tuning_, this->tx_time_ms(request, freq, preamble),
-                                 last_window_ms, short_lead_tx_ms);
+                                 last_window_ms, with_short_lead);
 }
 
 bool ExchangeEngine::begin_try_(uint8_t tries_started, uint32_t elapsed_ms, uint32_t gap_ms, uint32_t window_ms,
                                 const std::optional<TryBudget> &budget) {
   if (tries_started == 0)
     return true;
-  if (budget.has_value() &&
-      !this->try_fits_budget_(elapsed_ms, gap_ms, budget->tx_ms, window_ms, budget->auth_tail_ms, budget->allowance_ms))
+  if (budget.has_value() && !this->try_fits_budget_(elapsed_ms, gap_ms, budget->tx_ms, window_ms, budget->auth_tail_ms))
     return false;
   App.feed_wdt();
   delay(gap_ms);  // 0 for a run without a gap: a no-op that still yields
@@ -312,8 +439,8 @@ AttemptRunResult ExchangeEngine::run_attempts(const AttemptRun &run, const TryHa
   for (uint8_t tries = 0; tries < plan.max_attempts; tries++) {
     const uint16_t window_ms = plan.window_for_attempt(tries + 1, plan.max_attempts);
     std::optional<TryBudget> budget;
-    if (run.budgeted_tx_ms.has_value() && tries > 0)
-      budget = TryBudget{*run.budgeted_tx_ms, 0, plan.budget_allowance_ms};
+    if (run.budgeted_tx_ms.has_value() && tries > 0 && decisions::obeys_time_budget(plan))
+      budget = TryBudget{*run.budgeted_tx_ms, 0};
     if (!this->begin_try_(tries, millis() - begin_ms, plan.gap_ms, window_ms, budget))
       return AttemptRunResult::BUDGET_EXHAUSTED;
     switch (on_try(static_cast<uint8_t>(tries + 1), window_ms)) {
@@ -329,9 +456,9 @@ AttemptRunResult ExchangeEngine::run_attempts(const AttemptRun &run, const TryHa
 }
 
 bool ExchangeEngine::try_fits_budget_(uint32_t elapsed_ms, uint32_t gap_ms, uint32_t tx_ms, uint32_t window_ms,
-                                      uint32_t auth_tail_ms, uint32_t allowance_ms) const {
+                                      uint32_t auth_tail_ms) const {
   return decisions::attempt_fits(elapsed_ms, gap_ms, tx_ms, window_ms, auth_tail_ms,
-                                 this->tuning_->exchange_total_budget_ms + allowance_ms);
+                                 this->tuning_->exchange_total_budget_ms);
 }
 
 // ============================================================================
@@ -462,8 +589,8 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   const PreamblePlan preamble_plan =
       this->plan_request_preamble_(request, options.preamble_override, options.state_unknown());
   const decisions::AttemptPlan plan = this->plan_for_(request, freq, options, preamble_plan);
-  // Clamp once: never below 1 and never above EXCHANGE_MAX_ATTEMPTS, whatever the plan says.
-  uint8_t tries_allowed = std::max<uint8_t>(1, std::min<uint8_t>(plan.max_attempts, EXCHANGE_MAX_ATTEMPTS));
+  // The plan builders own the range [1, EXCHANGE_MAX_ATTEMPTS] of the attempt count.
+  uint8_t tries_allowed = plan.max_attempts;
   this->debug_.max_tries = tries_allowed;
   this->debug_.wake_belief_use = preamble_plan.use;
   if (preamble_plan.use == WakeBeliefUse::APPLIED) {
@@ -475,7 +602,9 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   }
   const uint32_t exchange_begin_ms = millis();
   uint8_t unconfirmed_tries = 0;  // tries that ended challenged but never closed
-  uint32_t auth_tail_ms = 0;      // the final-reply window a challenged try adds; 0 until the target challenges
+  uint32_t previous_freq = 0;  // channel of the previous try, which a free-channel request leaves; 0 before the first
+  bool evidence_try = false;   // some try was sent onto a channel measured free (or failed to send); see below
+  uint32_t auth_tail_ms = 0;   // the final-reply window a challenged try adds; 0 until the target challenges
   uint32_t follow_up_gap_ms = 0;  // least wait before the next try, set by the unconfirmed rule
   bool announce_resend = false;   // the next try repeats an EXECUTE whose first copy went unconfirmed
 
@@ -493,9 +622,9 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     // the final-reply window. See EXCHANGE_TOTAL_BUDGET_MS -- this is what keeps a failing command
     // from blocking the ESPHome loop for the full attempts x (transmission + window) product.
     std::optional<TryBudget> budget;
-    if (tries > 0) {
+    if (tries > 0 && decisions::obeys_time_budget(plan)) {
       budget = TryBudget{this->tx_time_ms(request, freq, this->try_preamble_(plan, preamble_plan, context.try_index)),
-                         auth_tail_ms, plan.budget_allowance_ms};
+                         auth_tail_ms};
     }
     const uint32_t gap_ms = std::max<uint32_t>(plan.gap_ms, follow_up_gap_ms);
     if (!this->begin_try_(tries, millis() - exchange_begin_ms, gap_ms, window_ms, budget)) {
@@ -523,7 +652,13 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     context.request_preamble = this->try_preamble_(plan, preamble_plan, context.try_index);
     context.target_last_seen_ms = preamble_plan.last_seen_ms;
     this->debug_.last_try_preamble = context.request_preamble;
-    if (!this->transmit_request_(request, freq, context.request_preamble, context))
+    const decisions::ChannelAccessStatus access = this->transmit_request_(
+        request, freq, context.request_preamble, options.channel_access, previous_freq, context);
+    previous_freq = context.request_freq;
+    evidence_try |= decisions::silence_is_evidence(access);
+    // A request that was never sent (channel busy) or failed to send ends the try; a forced send
+    // onto a busy channel listens like any other.
+    if (!decisions::request_was_sent(access))
       continue;
 
     context.state = exchange::OutboundExchangeState::WAIT_FIRST_RESPONSE;
@@ -545,8 +680,8 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
       return ExchangeOutcome::SUCCESS_WITH_RESPONSE;
     }
 
-    auth_tail_ms = this->final_reply_tail_ms_(request, freq);
-    if (!this->handle_authentication_(request, freq, context, options.key))
+    auth_tail_ms = this->final_reply_tail_ms_(request, context.request_freq);
+    if (!this->handle_authentication_(request, context.request_freq, context, options.key))
       continue;
 
     context.state = exchange::OutboundExchangeState::WAIT_FINAL_RESPONSE;
@@ -590,7 +725,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
   // callers that need the payload still cannot.
   if (unconfirmed_tries > 0)
     return ExchangeOutcome::SUCCESS_UNCONFIRMED;
-  this->spend_wake_evidence_if_silent_(request, preamble_plan);
+  this->spend_wake_evidence_if_silent_(request, preamble_plan, evidence_try);
   return ExchangeOutcome::FAILED;
 }
 
@@ -599,11 +734,12 @@ uint16_t ExchangeEngine::try_preamble_(const decisions::AttemptPlan &plan, const
   // The plan's short lead is try 1 (a receiver in an unknown state, WakeBelief::UNKNOWN); every later
   // try follows the belief.
   if (plan.short_lead && try_index == 1)
-    return this->tuning_->normal_start_preamble;
+    return this->start_preamble();
   return preamble_plan.for_try(try_index);
 }
 
-void ExchangeEngine::spend_wake_evidence_if_silent_(const IoFrame &request, const PreamblePlan &plan) {
+void ExchangeEngine::spend_wake_evidence_if_silent_(const IoFrame &request, const PreamblePlan &plan,
+                                                    bool some_try_is_evidence) {
   // Believed moving, yet silent to the short preamble a moving receiver hears and to the wake-up
   // preamble alike: it has most likely come to rest. Spend the moving evidence so the next exchange
   // leads with the wake-up preamble instead of losing its first try (or, for a single-try poll, its
@@ -612,7 +748,9 @@ void ExchangeEngine::spend_wake_evidence_if_silent_(const IoFrame &request, cons
   // Nor does silence while the remaining time it reported has not run out: a moving receiver that
   // missed one frame is still moving, and spending the evidence would send the next try with the
   // wake-up preamble it ignores (ADR 0077).
-  if (plan.use == WakeBeliefUse::APPLIED && plan.belief == decisions::WakeBelief::AWAKE &&
+  // Nor does silence after tries that were never sent, or went onto a channel measured busy: a
+  // collision explains it as well (ADR 0096).
+  if (some_try_is_evidence && plan.use == WakeBeliefUse::APPLIED && plan.belief == decisions::WakeBelief::AWAKE &&
       !this->debug_.saw_challenge && !decisions::is_stop_request(request) && this->wake_evidence_spent_handler_ &&
       !this->still_travelling_by_its_own_count_(request)) {
     ESP_LOGD(TAG, "Low-power target %s silent while believed awake: next exchange leads with the wake-up preamble",
@@ -637,8 +775,18 @@ uint16_t ExchangeEngine::request_preamble_for(const IoFrame &request) const {
   // short response preamble, not be lengthened.
   if (!is_start(request))
     return (*this->radio_ptr_)->response_preamble();
-  return is_low_power_start(request) ? this->tuning_->low_power_wake_preamble : this->tuning_->normal_start_preamble;
+  return is_low_power_start(request) ? this->wake_preamble() : this->start_preamble();
 }
+
+uint16_t ExchangeEngine::preamble_bytes_for_ms(float ms) const {
+  return (*this->radio_ptr_)->preamble_bytes_for_ms(ms);
+}
+
+uint16_t ExchangeEngine::start_preamble() const {
+  return this->preamble_bytes_for_ms(this->tuning_->start_preamble_ms);
+}
+
+uint16_t ExchangeEngine::wake_preamble() const { return this->preamble_bytes_for_ms(this->tuning_->low_power_wake_ms); }
 
 const char *ExchangeEngine::wake_belief_use_name(WakeBeliefUse use) {
   switch (use) {
@@ -685,8 +833,8 @@ ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFram
   // A destination the hub has no record of has no evidence: treat it as asleep, the safe default.
   decisions::TargetEvidence evidence{};
   const bool known = this->target_evidence_provider_(request.dst, evidence);
-  plan.short_preamble = this->tuning_->normal_start_preamble;
-  plan.wake_preamble = this->tuning_->low_power_wake_preamble;
+  plan.short_preamble = this->start_preamble();
+  plan.wake_preamble = this->wake_preamble();
   plan.last_seen_ms = known ? evidence.last_seen_ms : 0;
   plan.belief = known ? decisions::wake_belief(evidence, millis(), decisions::is_stop_request(request),
                                                request.cmd == CMD_PRIVATE, state_unknown)
@@ -694,14 +842,38 @@ ExchangeEngine::PreamblePlan ExchangeEngine::plan_request_preamble_(const IoFram
   return plan;
 }
 
-bool ExchangeEngine::transmit_request_(const IoFrame &request, uint32_t freq, uint16_t preamble,
-                                       exchange::OutboundExchangeContext &ctx) {
-  if (!this->transmit_frame(request, freq, preamble)) {
+decisions::ChannelAccessStatus ExchangeEngine::transmit_request_(const IoFrame &request, uint32_t freq,
+                                                                 uint16_t preamble, ChannelAccess access,
+                                                                 uint32_t previous_freq,
+                                                                 exchange::OutboundExchangeContext &ctx) {
+  RequestTransmit sent;
+  if (access == ChannelAccess::FREE_CHANNEL && is_start(request)) {
+    sent = this->transmit_with_channel_access_(request, freq, preamble, previous_freq);
+  } else {
+    sent.status = this->transmit_frame(request, freq, preamble) ? decisions::ChannelAccessStatus::SENT
+                                                                : decisions::ChannelAccessStatus::FAILED;
+    sent.freq_hz = freq;
+  }
+  ctx.request_freq = sent.freq_hz;
+  if (sent.status == decisions::ChannelAccessStatus::CHANNEL_BUSY) {
+    ctx.state = exchange::OutboundExchangeState::FAILED;
+    this->record_debug("channel_busy", ctx.try_index, false);
+    this->counters_.channel_busy_attempts++;
+    ESP_LOGI(TAG,
+             "Try %d ended: channel busy for cmd=%s(0x%02X), nothing sent, last checked %" PRIu32 " Hz preamble=%u",
+             ctx.try_index, command_name(request.cmd), request.cmd, sent.freq_hz, preamble);
+  } else if (sent.status == decisions::ChannelAccessStatus::FAILED) {
     ctx.state = exchange::OutboundExchangeState::FAILED;
     this->record_debug("tx_request_failed", ctx.try_index, false);
-    return false;
   }
-  return true;
+  return sent.status;
+}
+
+void ExchangeEngine::report_overheard_(const IoFrame &frame, const RadioRxPacket &packet) {
+  if (this->overheard_frame_observer_ == nullptr)
+    return;
+  const int16_t rssi_dbm = (*this->radio_ptr_)->get_last_capture().rssi_dbm;
+  this->overheard_frame_observer_->on_overheard_frame(frame, packet, rssi_dbm, millis());
 }
 
 decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_response_(
@@ -735,6 +907,7 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
       frame_log_flush();
       this->record_debug("first_wrong_exchange", ctx.try_index, false);
       log_exchange_frame("Ignored first response", ctx.try_index, *parsed, pkt.len);
+      this->report_overheard_(*parsed, pkt);
       return ReplyDisposition::IGNORE;
     }
     ctx.first_response_ms = millis();
@@ -864,6 +1037,7 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
       return ReplyDisposition::ACCEPT;
     this->record_debug("final_wrong_exchange", ctx.try_index, true);
     log_exchange_frame("Ignored final response", ctx.try_index, *parsed, pkt.len);
+    this->report_overheard_(*parsed, pkt);
     return ReplyDisposition::IGNORE;
   });
 

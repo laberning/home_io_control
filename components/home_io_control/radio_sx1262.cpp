@@ -114,7 +114,7 @@ int8_t sx1262_fem_gain_db(FemProfile profile, uint8_t tx_power_idx) {
 
 /// Boot-log profile name and gain-estimate confidence caveat for the given profile. A `switch`
 /// that returns from every case (rather than assigning through a local) so the compiler can see
-/// every path is covered -- an assign-then-break shape here previously tripped both
+/// every path is covered -- an assign-then-break shape here trips both
 /// -Wmaybe-uninitialized (GCC can't prove FemProfile's underlying uint8_t is limited to the four
 /// named enumerators) and clang-tidy's dead-store check, for opposite reasons.
 const char *sx1262_fem_profile_name(FemProfile profile) {

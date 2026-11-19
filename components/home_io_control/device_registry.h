@@ -67,8 +67,9 @@ class DeviceRegistry {
 
   /// Insert or overwrite a device entry without deduplication or hex-validation checks.
   /// Used by the pairing flow which already validated the device during discovery. A record already
-  /// stored under the ID hands its YAML overrides (entity class, `invert_position:`, `dimmable:`, `io_model:`) to
-  /// the new one, and the new record's features are resolved before it is stored.
+  /// stored under the ID hands its YAML overrides (entity class, `invert_position:`, `dimmable:`, `io_model:`) and
+  /// its opt-in register reads (`central_heating_mode:`, `occupancy_detection:`, `occupancy:`) to the new one, and the
+  /// new record's features are resolved before it is stored.
   /// @param device_id Hexadecimal node ID string.
   /// @param device    Fully-built device to store.
   void put(const std::string &device_id, IoDevice device);

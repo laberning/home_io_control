@@ -166,6 +166,14 @@ bool decode_dhw_heating_state(const uint8_t *value, size_t len, DhwHeatingState 
   return true;
 }
 
+const char *dhw_heating_source_name(int8_t heat_pump, int8_t element) {
+  if (heat_pump < 0 || element < 0)
+    return nullptr;
+  if (heat_pump != 0)
+    return element != 0 ? "heat pump and electric backup" : "heat pump";
+  return element != 0 ? "electric backup" : "idle";
+}
+
 bool decode_dhw_energy_wh(const uint8_t *value, size_t len, uint32_t &wh) {
   if (value == nullptr || len < DHW_ENERGY_LEN)
     return false;

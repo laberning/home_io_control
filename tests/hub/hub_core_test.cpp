@@ -346,7 +346,7 @@ TEST(HubCore, LBT_ChannelClear_TransmitsImmediately) {
   comp.initialized_ = true;
   MockRadio radio;
   comp.radio_ = &radio;
-  radio.set_rssi_default(-100);  // below -90 threshold
+  radio.set_rssi_default(-100);  // below the default threshold
 
   IoFrame frame = make_simple_frame();
   EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
@@ -390,12 +390,12 @@ TEST(HubCore, LBT_ExactThreshold_IsConsideredClear) {
   MockRadio radio;
   comp.radio_ = &radio;
 
-  // Exactly at threshold (-90) should NOT be considered clear (>=, not >)
-  radio.set_rssi_default(-90);
+  // Exactly at the threshold is NOT clear (>=, not >)
+  radio.set_rssi_default(CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM);
 
   IoFrame frame = make_simple_frame();
   EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
-  // -90 is NOT < -90, so it should retry all LBT_MAX_RETRIES times then transmit
+  // The threshold is NOT below itself, so it retries all LBT_MAX_RETRIES times then transmits
   EXPECT_EQ(radio.get_send_count(), 1);
 }
 
@@ -405,7 +405,7 @@ TEST(HubCore, LBT_JustBelowThreshold_TransmitsImmediately) {
   MockRadio radio;
   comp.radio_ = &radio;
 
-  radio.set_rssi_default(-91);  // just below threshold
+  radio.set_rssi_default(CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM - 1);  // just below threshold
 
   IoFrame frame = make_simple_frame();
   EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
@@ -442,7 +442,7 @@ TEST(HubCore, OneWaySendReadsTheHubsLiveTuningForAnAlwaysAliveIdentity) {
   radio.set_rssi_default(-100);  // channel clear -- no LBT retries to complicate the tx count
 
   TuningConfig tuning{};
-  tuning.normal_start_preamble = 77;
+  tuning.start_preamble_ms = mock_preamble_ms(77);
   comp.set_tuning_config(tuning);
 
   OneWayControllerIdentity identity{};

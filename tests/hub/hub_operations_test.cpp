@@ -1252,7 +1252,10 @@ size_t planned_settling_attempts(TestableComponent &comp) {
   const IoDevice *dev = comp.get_device("ABC123");
   IoFrame request{};
   EXPECT_TRUE(create_get_status(request, comp.node_id_, dev->node_id, dev->low_power));
-  return comp.exchange_engine_.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2).max_attempts;
+  const ExchangeEngine &engine = comp.exchange_engine_;
+  return decisions::attempt_plan(decisions::ReadKind::SETTLING, dev->low_power, comp.tuning_,
+                                 engine.tx_time_ms(request, FREQ_CH2, engine.request_preamble_for(request)))
+      .max_attempts;
 }
 
 // A scheduler-owned status poll (StatusPollPolicy is tracking the device) caps its exchange at
@@ -2701,8 +2704,8 @@ TEST(HubOperations, LowPowerDeviceExecuteUsesLongPreambleAndSetsLowPowerBit) {
   comp.set_device_position("ABC123", 50);
 
   ASSERT_GE(radio.get_tx_configs().size(), 1u) << "the EXECUTE start frame should have been transmitted";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, LONG_PREAMBLE)
-      << "a low_power target's directed start frame must use the 1024-byte wake-up preamble";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, MOCK_WAKE_PREAMBLE)
+      << "a low_power target's directed start frame must use the wake-up preamble";
   ASSERT_FALSE(radio.get_sent_data().empty());
   EXPECT_NE(radio.get_sent_data().front()[1] & CTRL1_LOW_POWER, 0)
       << "a low_power target's frame must carry CTRL1_LOW_POWER";
@@ -2716,8 +2719,8 @@ TEST(HubOperations, DefaultDeviceExecuteUsesNormalStartPreambleAndClearsLowPower
   comp.set_device_position("ABC123", 50);
 
   ASSERT_GE(radio.get_tx_configs().size(), 1u) << "the EXECUTE start frame should have been transmitted";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, comp.tuning_.normal_start_preamble)
-      << "an always-alive target's directed start frame uses normal_start_preamble, not LONG_PREAMBLE";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, mock_preamble_bytes(comp.tuning_.start_preamble_ms))
+      << "an always-alive target's directed start frame uses `start_preamble_ms`, not MOCK_WAKE_PREAMBLE";
   ASSERT_FALSE(radio.get_sent_data().empty());
   EXPECT_EQ(radio.get_sent_data().front()[1] & CTRL1_LOW_POWER, 0)
       << "an always-alive target's frame must leave CTRL1_LOW_POWER clear";
@@ -2743,8 +2746,8 @@ TEST(HubOperations, AStatusReadMarkedStateUnknownLeadsShortDespiteARecentStopped
     comp.send_and_receive_(request, response, FREQ_CH2, attempts);
 
     ASSERT_GE(radio.get_tx_configs().size(), 1u);
-    EXPECT_EQ(radio.get_tx_configs()[0].preamble_len,
-              marked ? comp.tuning_.normal_start_preamble : comp.tuning_.low_power_wake_preamble)
+    EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, marked ? mock_preamble_bytes(comp.tuning_.start_preamble_ms)
+                                                             : mock_preamble_bytes(comp.tuning_.low_power_wake_ms))
         << (marked ? "marked: the short lead first"
                    : "unmarked: a recent report keeps the read on the wake-up preamble");
   }
@@ -2759,9 +2762,9 @@ TEST(HubOperations, LowPowerDeviceStatusPollUsesLongPreambleAndSetsLowPowerBit) 
   comp.request_device_status("ABC123");
 
   ASSERT_GE(radio.get_tx_configs().size(), 2u) << "the status poll start frames should have been transmitted";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, comp.tuning_.normal_start_preamble)
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, mock_preamble_bytes(comp.tuning_.start_preamble_ms))
       << "a read to a receiver with no news of its state leads with one short attempt (ADR 0079)";
-  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, LONG_PREAMBLE)
+  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, MOCK_WAKE_PREAMBLE)
       << "a low_power target's status poll must use the wake-up preamble after the short lead";
   ASSERT_FALSE(radio.get_sent_data().empty());
   EXPECT_NE(radio.get_sent_data().front()[1] & CTRL1_LOW_POWER, 0)
@@ -3020,9 +3023,9 @@ TEST(HubOperations, StopAckThatReportsMovingKeepsTheSettlePollShortFirst) {
   comp.request_device_status("ABC123");
 
   ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(LOW_POWER_SETTLING_ATTEMPTS));
-  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
-  EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE);
-  EXPECT_EQ(preamble_of_tx(radio, before + 2), LONG_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before), mock_preamble_bytes(comp.tuning_.start_preamble_ms));
+  EXPECT_EQ(preamble_of_tx(radio, before + 1), MOCK_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before + 2), MOCK_WAKE_PREAMBLE);
 }
 
 TEST(HubOperations, FailedStopKeepsMovingEvidence) {
@@ -3095,7 +3098,7 @@ TEST(HubOperations, HaMoveToARestingLowPowerDeviceLeadsWithTheWakeUpPreamble) {
 
   comp.set_device_position("ABC123", 40);
 
-  EXPECT_EQ(preamble_of_tx(radio, 0), LONG_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, 0), MOCK_WAKE_PREAMBLE);
 }
 
 TEST(HubOperations, StopToALowPowerDeviceAtRestLeadsWithTheShortPreamble) {
@@ -3106,7 +3109,7 @@ TEST(HubOperations, StopToALowPowerDeviceAtRestLeadsWithTheShortPreamble) {
 
   comp.execute_device_command_("ABC123", CoverCommand::STOP);
 
-  EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble)
+  EXPECT_EQ(preamble_of_tx(radio, 0), mock_preamble_bytes(comp.tuning_.start_preamble_ms))
       << "a STOP goes to a receiver that is moving, whatever the stamps say";
 }
 
@@ -3130,7 +3133,7 @@ TEST(HubOperations, SettlePollAfterAnAcceptedMoveIsASingleTryLeadingWithTheShort
   comp.request_device_status("ABC123");
 
   ASSERT_EQ(radio.get_tx_configs().size() - before, 1u) << "scheduler-owned poll: a single try";
-  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
+  EXPECT_EQ(preamble_of_tx(radio, before), mock_preamble_bytes(comp.tuning_.start_preamble_ms));
 }
 
 TEST(HubOperations, SettlePollAfterAnAcceptedStopLeadsShortThenGetsEveryTryOnTheWakeUpPreamble) {
@@ -3155,10 +3158,10 @@ TEST(HubOperations, SettlePollAfterAnAcceptedStopLeadsShortThenGetsEveryTryOnThe
   comp.request_device_status("ABC123");
 
   ASSERT_EQ(radio.get_tx_configs().size() - before, static_cast<size_t>(LOW_POWER_SETTLING_ATTEMPTS) + 1);
-  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble);
-  EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE);
-  EXPECT_EQ(preamble_of_tx(radio, before + 2), LONG_PREAMBLE);
-  EXPECT_EQ(preamble_of_tx(radio, before + 3), LONG_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before), mock_preamble_bytes(comp.tuning_.start_preamble_ms));
+  EXPECT_EQ(preamble_of_tx(radio, before + 1), MOCK_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before + 2), MOCK_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before + 3), MOCK_WAKE_PREAMBLE);
 }
 
 TEST(HubOperations, OnlyTheFirstPollAfterAStopGetsTheStopBudget) {
@@ -3209,9 +3212,9 @@ TEST(HubOperations, LadderSlotWithFullRetriesLeadsWithTheShortPreambleWhileBelie
   comp.request_device_status("ABC123");
 
   ASSERT_EQ(radio.get_tx_configs().size(), 3u);
-  EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble);
-  EXPECT_EQ(preamble_of_tx(radio, 1), LONG_PREAMBLE);
-  EXPECT_EQ(preamble_of_tx(radio, 2), LONG_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, 0), mock_preamble_bytes(comp.tuning_.start_preamble_ms));
+  EXPECT_EQ(preamble_of_tx(radio, 1), MOCK_WAKE_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, 2), MOCK_WAKE_PREAMBLE);
 }
 
 TEST(HubOperations, SilentPollWhileBelievedMovingSpendsTheMovingEvidence) {
@@ -3227,13 +3230,13 @@ TEST(HubOperations, SilentPollWhileBelievedMovingSpendsTheMovingEvidence) {
   note_moving_evidence(*dev, esphome::millis());
 
   comp.request_device_status("ABC123");
-  EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble);
+  EXPECT_EQ(preamble_of_tx(radio, 0), mock_preamble_bytes(comp.tuning_.start_preamble_ms));
   EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "silence while believed moving spends the evidence";
 
   const size_t before = radio.get_tx_configs().size();
   esphome::test_clock::advance_ms(1000);
   comp.set_device_position("ABC123", 40);
-  EXPECT_EQ(preamble_of_tx(radio, before), LONG_PREAMBLE);
+  EXPECT_EQ(preamble_of_tx(radio, before), MOCK_WAKE_PREAMBLE);
 }
 
 TEST(HubOperations, SpentEvidenceStaysSpentUntilMovementIsStampedAgain) {
@@ -3258,9 +3261,9 @@ TEST(HubOperations, SpentEvidenceStaysSpentUntilMovementIsStampedAgain) {
     const size_t before = radio.get_tx_configs().size();
     esphome::test_clock::advance_ms(1000);
     comp.request_device_status("ABC123");
-    EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble)
+    EXPECT_EQ(preamble_of_tx(radio, before), mock_preamble_bytes(comp.tuning_.start_preamble_ms))
         << "poll " << poll << " after the evidence was spent: the short lead";
-    EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE)
+    EXPECT_EQ(preamble_of_tx(radio, before + 1), MOCK_WAKE_PREAMBLE)
         << "poll " << poll << " after the evidence was spent: then the wake-up preamble";
     EXPECT_EQ(dev->last_moving_evidence_ms, 0u) << "silence does not bring the evidence back";
   }
@@ -3268,7 +3271,7 @@ TEST(HubOperations, SpentEvidenceStaysSpentUntilMovementIsStampedAgain) {
   note_moving_evidence(*dev, esphome::millis());  // what a decoded moving status or accepted move does
   const size_t before = radio.get_tx_configs().size();
   comp.request_device_status("ABC123");
-  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble)
+  EXPECT_EQ(preamble_of_tx(radio, before), mock_preamble_bytes(comp.tuning_.start_preamble_ms))
       << "fresh movement evidence leads short again";
 }
 
@@ -3283,14 +3286,16 @@ TEST(HubOperations, MovingEvidenceExpiresAfterMaxTravel) {
 
   esphome::test_clock::advance_ms(LOW_POWER_MAX_TRAVEL_MS - 1000);
   comp.request_device_status("ABC123");
-  EXPECT_EQ(preamble_of_tx(radio, 0), comp.tuning_.normal_start_preamble) << "still inside the travel window";
+  EXPECT_EQ(preamble_of_tx(radio, 0), mock_preamble_bytes(comp.tuning_.start_preamble_ms))
+      << "still inside the travel window";
 
   const size_t before = radio.get_tx_configs().size();
   esphome::test_clock::advance_ms(2000);  // now past LOW_POWER_MAX_TRAVEL_MS since the move
   comp.request_device_status("ABC123");
-  EXPECT_EQ(preamble_of_tx(radio, before), comp.tuning_.normal_start_preamble)
+  EXPECT_EQ(preamble_of_tx(radio, before), mock_preamble_bytes(comp.tuning_.start_preamble_ms))
       << "no news since the move and the window is over: its state is unknown, so the read leads short";
-  EXPECT_EQ(preamble_of_tx(radio, before + 1), LONG_PREAMBLE) << "then the wake-up preamble a resting receiver hears";
+  EXPECT_EQ(preamble_of_tx(radio, before + 1), MOCK_WAKE_PREAMBLE)
+      << "then the wake-up preamble a resting receiver hears";
 }
 
 TEST(HubOperations, RecentReplyAloneKeepsTheWakeUpPreamble) {
@@ -3304,7 +3309,7 @@ TEST(HubOperations, RecentReplyAloneKeepsTheWakeUpPreamble) {
 
   esphome::test_clock::advance_ms(100);
   comp.request_device_status("ABC123");  // heard from 100 ms ago, reported stopped
-  EXPECT_EQ(preamble_of_tx(radio, after_reply), LONG_PREAMBLE)
+  EXPECT_EQ(preamble_of_tx(radio, after_reply), MOCK_WAKE_PREAMBLE)
       << "a resting receiver ignores the short preamble even right after it answered";
 }
 
@@ -3322,7 +3327,7 @@ TEST(HubOperations, UnregisteredDestinationIsTreatedAsAsleep) {
 
   ASSERT_EQ(radio.get_tx_configs().size(), 3u);
   for (const auto &config : radio.get_tx_configs())
-    EXPECT_EQ(config.preamble_len, LONG_PREAMBLE) << "no record of this node, so nothing says it is awake";
+    EXPECT_EQ(config.preamble_len, MOCK_WAKE_PREAMBLE) << "no record of this node, so nothing says it is awake";
 }
 
 TEST(HubOperations, AlwaysAliveDeviceKeepsTheNormalStartPreambleOnEveryTryDespiteEvidence) {
@@ -3336,7 +3341,7 @@ TEST(HubOperations, AlwaysAliveDeviceKeepsTheNormalStartPreambleOnEveryTryDespit
 
   ASSERT_EQ(radio.get_tx_configs().size(), planned_settling_attempts(comp));
   for (const auto &config : radio.get_tx_configs())
-    EXPECT_EQ(config.preamble_len, comp.tuning_.normal_start_preamble);
+    EXPECT_EQ(config.preamble_len, mock_preamble_bytes(comp.tuning_.start_preamble_ms));
 }
 
 TEST(HubOperations, WakeBeliefSwitchOffRestoresTheWakeUpPreambleForALowPowerDevice) {
@@ -3351,7 +3356,7 @@ TEST(HubOperations, WakeBeliefSwitchOffRestoresTheWakeUpPreambleForALowPowerDevi
 
   ASSERT_EQ(radio.get_tx_configs().size(), 3u);
   for (const auto &config : radio.get_tx_configs())
-    EXPECT_EQ(config.preamble_len, LONG_PREAMBLE);
+    EXPECT_EQ(config.preamble_len, MOCK_WAKE_PREAMBLE);
 }
 
 // ============================================================================
@@ -3735,7 +3740,36 @@ using heating_test_data::ADELIS_NAME_REPLY;
 
 }  // namespace
 
-TEST(HubOperations, TowelDryerPollReadsItsOwnRegistersThenTheBootRegistersAndTheModelName) {
+namespace {
+
+// A 0x04 reply to the main-parameter status read (create_status_mp_fp_read()): the main parameter follows the
+// status byte, and the two functional-parameter echoes read 00 (the layout of corpus
+// atlantic_adelis_probe_status_mp_fp_programme).
+IoFrame build_towel_status_response(const uint8_t dst[3], uint16_t mp) {
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
+  set_dst(f, dst);
+  set_src(f, device_node_id);
+  const uint8_t payload[6] = {test::STATUS_BYTE_AT_REST, 0x00, static_cast<uint8_t>(mp >> 8U),
+                              static_cast<uint8_t>(mp),  0x00, 0x00};
+  set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
+  return f;
+}
+
+/// Stand-in for the status read in the list of sent registers: it is no register read.
+constexpr uint8_t STATUS_READ = 0xFF;
+
+/// What one sent frame was: a register's low byte, or STATUS_READ for the main-parameter status read.
+uint8_t sent_step(const std::vector<uint8_t> &tx) { return tx.at(8) == CMD_PRIVATE ? STATUS_READ : sent_register(tx); }
+
+constexpr uint16_t LEVEL_COMFORT_MP = 0xFC05;  ///< The status read's main parameter in a comfort period.
+constexpr uint16_t LEVEL_ECO_MP = 0xFC02;      ///< The status read's main parameter in an eco period.
+constexpr uint16_t LEVEL_BOOST_MP = 0xFC07;    ///< The status read's main parameter in a boost.
+
+}  // namespace
+
+TEST(HubOperations, TowelDryerPollReadsItsOwnRegistersThenTheBootRegisterTheLevelAndTheModelName) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_towel_dryer(comp, radio);
@@ -3747,23 +3781,27 @@ TEST(HubOperations, TowelDryerPollReadsItsOwnRegistersThenTheBootRegistersAndThe
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x3E, 0x02});        // drying
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x26, 0x64});        // 100 %
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01});  // 28.0 C
-  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x04, 0x23, 0x00});  // 3.5 K setback
+  radio.queue_rx(test::make_rx_packet(build_towel_status_response(comp.node_id_, LEVEL_BOOST_MP)));
   queue_register_reply(comp, radio, ADELIS_NAME_REPLY);
 
   EXPECT_TRUE(comp.request_device_status("ABC123"));
 
-  const uint8_t expected_registers[] = {0x15, 0x03, 0x36, 0x3E, 0x26, 0x02, 0x04, 0x19};
-  ASSERT_EQ(radio.get_sent_data().size(), std::size(expected_registers))
-      << "no window registers, and the mode register is not asked twice for the model check";
-  for (size_t i = 0; i < std::size(expected_registers); i++)
-    EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
-  for (const auto &tx : radio.get_sent_data())
-    EXPECT_EQ(tx.at(10), PRIVATE_REGISTER_DIRECTION_GET) << "a poll only reads";
+  const uint8_t expected_steps[] = {0x15, 0x03, 0x36, 0x3E, 0x26, 0x02, STATUS_READ, 0x19};
+  ASSERT_EQ(radio.get_sent_data().size(), std::size(expected_steps))
+      << "no window registers, no setback, and the mode register is not asked twice for the model check";
+  for (size_t i = 0; i < std::size(expected_steps); i++)
+    EXPECT_EQ(sent_step(radio.get_sent_data()[i]), expected_steps[i]) << "step " << i;
+  for (const auto &tx : radio.get_sent_data()) {
+    if (sent_step(tx) != STATUS_READ) {
+      EXPECT_EQ(tx.at(10), PRIVATE_REGISTER_DIRECTION_GET) << "a poll only reads";
+    }
+  }
   EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 19.75F);
   EXPECT_EQ(dev->heating.towel_mode, 3);
   EXPECT_EQ(dev->heating.temporary_state, 2);
   EXPECT_EQ(dev->heating.working_rate, 100);
-  EXPECT_FLOAT_EQ(dev->heating.eco_setback_k, 3.5F);
+  EXPECT_EQ(dev->heating.level, heating_level::BOOST) << "the level the heater applies, from the status read";
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::ECO_SETBACK)) << "the poll does not read the setback";
   EXPECT_FALSE(dev->heating.has(HeatingFunction::TEMPERATURE_IN_FORCE)) << "drying: no temperature in force is read";
   EXPECT_EQ(dev->heating.mode, -1) << "the radiator's mode register is never read";
   EXPECT_TRUE(dev->model_checked);
@@ -3781,11 +3819,13 @@ namespace {
 struct TowelPoll {
   TowelDryerMode mode;
   HeatingTemporaryState state;
-  std::vector<uint8_t> in_force_reply;              ///< Answer to register 0x0137 when it is asked; empty queues none.
-  std::vector<std::vector<uint8_t>> later_replies;  ///< Answers queued after it (boot registers, the model name).
+  std::vector<uint8_t> in_force_reply;  ///< Answer to register 0x0137 when it is asked; empty queues none.
+  std::optional<uint16_t> level_mp;     ///< Main parameter of the status read's answer; none queues no answer.
+  std::vector<std::vector<uint8_t>> boot_replies;   ///< Answers to the boot registers (first poll only).
+  std::vector<std::vector<uint8_t>> model_replies;  ///< Answers to the model check (first poll only).
 };
 
-/// Run one poll of the towel dryer; returns the low bytes of the registers it read, in order.
+/// Run one poll of the towel dryer; returns what it sent, in order (a register's low byte, STATUS_READ).
 std::vector<uint8_t> run_towel_poll(TestableComponent &comp, MockRadio &radio, const TowelPoll &poll) {
   const size_t before = radio.get_sent_data().size();
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x15, 0xB7, 0x07});
@@ -3795,99 +3835,364 @@ std::vector<uint8_t> run_towel_poll(TestableComponent &comp, MockRadio &radio, c
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x26, 0x00});
   if (!poll.in_force_reply.empty())
     queue_register_reply(comp, radio, poll.in_force_reply);
-  for (const auto &reply : poll.later_replies)
+  for (const auto &reply : poll.boot_replies)
+    queue_register_reply(comp, radio, reply);
+  if (poll.level_mp.has_value())
+    radio.queue_rx(test::make_rx_packet(build_towel_status_response(comp.node_id_, *poll.level_mp)));
+  for (const auto &reply : poll.model_replies)
     queue_register_reply(comp, radio, reply);
   comp.request_device_status("ABC123");
-  std::vector<uint8_t> registers;
+  std::vector<uint8_t> steps;
   for (size_t i = before; i < radio.get_sent_data().size(); i++)
-    registers.push_back(sent_register(radio.get_sent_data()[i]));
-  return registers;
+    steps.push_back(sent_step(radio.get_sent_data()[i]));
+  return steps;
 }
 
 const std::vector<uint8_t> IN_FORCE_COMFORT = {0x0C, 0x60, 0x01, 0x37, 0xC8, 0x00};  // 20.0 C
 const std::vector<uint8_t> IN_FORCE_ECO = {0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00};      // 16.5 C
-const std::vector<uint8_t> IN_FORCE_BOOST = {0x0C, 0x60, 0x01, 0x37, 0x01, 0x00};    // a count, not a temperature
+
+/// A towel dryer whose boot registers and model check are done, so a poll sends only its recurring reads.
+IoDevice *make_settled_towel_dryer(TestableComponent &comp, MockRadio &radio) {
+  IoDevice *dev = make_towel_dryer(comp, radio);
+  dev->model_checked = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  return dev;
+}
 
 }  // namespace
 
-TEST(HubOperations, TowelDryerPollReadsTheTemperatureInForceOnlyWhileTheProgrammeRuns) {
+TEST(HubOperations, TowelDryerPollReadsTheTemperatureInForceOnlyWhileTheProgrammeRunsAndTheLevelInEveryMode) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_towel_dryer(comp, radio);
   const auto PROG = TowelDryerMode::PROG;
   const auto NONE = HeatingTemporaryState::NONE;
   const std::vector<uint8_t> boot_max = {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01};
-  const std::vector<uint8_t> boot_setback = {0x0C, 0x60, 0x01, 0x04, 0x23, 0x00};  // 3.5 K
 
-  // A comfort period: the core registers, 0x0137, the boot registers (first poll only), the model name.
-  EXPECT_EQ(run_towel_poll(comp, radio, {PROG, NONE, IN_FORCE_COMFORT, {boot_max, boot_setback, ADELIS_NAME_REPLY}}),
-            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x02, 0x04, 0x19}));
+  // A comfort period: the core registers, 0x0137, the boot register (first poll only), the status read, the
+  // model name.
+  EXPECT_EQ(
+      run_towel_poll(comp, radio, {PROG, NONE, IN_FORCE_COMFORT, LEVEL_COMFORT_MP, {boot_max}, {ADELIS_NAME_REPLY}}),
+      (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x02, STATUS_READ, 0x19}));
   EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 20.0F);
-  EXPECT_FLOAT_EQ(dev->heating.eco_setback_k, 3.5F);
-  EXPECT_EQ(resolve_programme_period(*find_heating_profile(*dev), dev->heating).preset_index,
-            find_heating_profile(*dev)->programme_period->comfort_preset);
+  EXPECT_EQ(dev->heating.level, heating_level::COMFORT);
+  EXPECT_TRUE(heating_device_facts(dev, true).programme_runs);
 
-  // An eco period: one extra read per poll, nothing else.
-  EXPECT_EQ(run_towel_poll(comp, radio, {PROG, NONE, IN_FORCE_ECO, {}}),
-            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37}));
+  // An eco period: the same reads, the level is eco and the target the temperature in force.
+  EXPECT_EQ(run_towel_poll(comp, radio, {PROG, NONE, IN_FORCE_ECO, LEVEL_ECO_MP, {}, {}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, STATUS_READ}));
   EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 16.5F);
-  EXPECT_EQ(resolve_programme_period(*find_heating_profile(*dev), dev->heating).preset_index,
-            find_heating_profile(*dev)->programme_period->eco_preset);
+  EXPECT_EQ(dev->heating.level, heating_level::ECO);
+  EXPECT_TRUE(heating_device_facts(dev, true).programme_runs);
 
-  // Boost on top of the programme: exactly the frames of today's poll, and the temperature in force goes.
-  EXPECT_EQ(run_towel_poll(comp, radio, {PROG, HeatingTemporaryState::BOOST, {}, {}}),
-            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26}));
+  // Boost on top of the programme: no 0x0137 read, the temperature in force goes, the level reads boost.
+  EXPECT_EQ(run_towel_poll(comp, radio, {PROG, HeatingTemporaryState::BOOST, {}, LEVEL_BOOST_MP, {}, {}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, STATUS_READ}));
   EXPECT_FALSE(dev->heating.has(HeatingFunction::TEMPERATURE_IN_FORCE));
+  EXPECT_EQ(dev->heating.level, heating_level::BOOST);
+  EXPECT_FALSE(heating_device_facts(dev, true).programme_runs);
 
   // Back in the programme: read again, and the earlier eco value is not what shows.
-  EXPECT_EQ(run_towel_poll(comp, radio, {PROG, NONE, IN_FORCE_COMFORT, {}}),
-            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37}));
+  EXPECT_EQ(run_towel_poll(comp, radio, {PROG, NONE, IN_FORCE_COMFORT, LEVEL_COMFORT_MP, {}, {}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, STATUS_READ}));
   EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 20.0F);
 
-  // MANUEL: no extra frame, and the value from the programme is dropped.
-  EXPECT_EQ(run_towel_poll(comp, radio, {TowelDryerMode::MANUAL, NONE, {}, {}}),
-            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26}));
+  // MANUEL: no 0x0137 read and its value is dropped, the status read still runs.
+  EXPECT_EQ(run_towel_poll(comp, radio, {TowelDryerMode::MANUAL, NONE, {}, LEVEL_COMFORT_MP, {}, {}}),
+            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, STATUS_READ}));
   EXPECT_FALSE(dev->heating.has(HeatingFunction::TEMPERATURE_IN_FORCE));
-  for (const auto &tx : radio.get_sent_data())
-    EXPECT_EQ(tx.at(10), PRIVATE_REGISTER_DIRECTION_GET) << "a poll only reads";
+  for (const auto &tx : radio.get_sent_data()) {
+    if (sent_step(tx) != STATUS_READ) {
+      EXPECT_EQ(tx.at(10), PRIVATE_REGISTER_DIRECTION_GET) << "a poll only reads";
+    }
+  }
 }
 
-TEST(HubOperations, ATowelDryerInBoostIsNeverAskedForItsTemperatureAndAStaleValueIsNotKept) {
+TEST(HubOperations, ATowelDryerInDryingIsNeverAskedForItsTemperatureAndAStaleValueIsNotKept) {
   TestableComponent comp;
   MockRadio radio;
-  IoDevice *dev = make_towel_dryer(comp, radio);
-  dev->model_checked = true;
-  dev->heating.max_setpoint_c = 28.0F;
-  dev->heating.eco_setback_k = 3.5F;
+  IoDevice *dev = make_settled_towel_dryer(comp, radio);
   dev->heating.in_force_temperature_c = 16.5F;  // from an earlier programme run
-  EXPECT_EQ(run_towel_poll(comp, radio, {TowelDryerMode::PROG, HeatingTemporaryState::DRYING, {}, {}}),
-            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26}))
+  EXPECT_EQ(
+      run_towel_poll(comp, radio, {TowelDryerMode::PROG, HeatingTemporaryState::DRYING, {}, LEVEL_BOOST_MP, {}, {}}),
+      (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, STATUS_READ}))
       << "no 0x0137 read while drying";
   EXPECT_FALSE(dev->heating.has(HeatingFunction::TEMPERATURE_IN_FORCE));
 }
 
-TEST(HubOperations, ATemperatureThatFitsNeitherPeriodMakesTheNextBootReadAskForTheSetbackAgain) {
+TEST(HubOperations, ThePollShowsTheProgrammeRunningInEveryPeriodAndNotInHeat) {
   TestableComponent comp;
   MockRadio radio;
-  IoDevice *dev = make_towel_dryer(comp, radio);
+  IoDevice *dev = make_settled_towel_dryer(comp, radio);
+  const std::vector<uint8_t> in_force_override = {0x0C, 0x60, 0x01, 0x37, 0xAF, 0x00};  // 17.5 C
+
+  EXPECT_EQ(
+      run_towel_poll(comp, radio,
+                     {TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force_override, LEVEL_ECO_MP, {}, {}}),
+      (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, STATUS_READ}))
+      << "a temperature that fits no period needs no override or setback read: the level names the period";
+  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 17.5F);
+  EXPECT_TRUE(heating_device_facts(dev, true).programme_runs) << "an eco period";
+
+  EXPECT_EQ(
+      run_towel_poll(comp, radio,
+                     {TowelDryerMode::PROG, HeatingTemporaryState::NONE, IN_FORCE_COMFORT, LEVEL_COMFORT_MP, {}, {}}),
+      (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, STATUS_READ}));
+  EXPECT_TRUE(heating_device_facts(dev, true).programme_runs) << "a comfort period";
+
+  run_towel_poll(comp, radio, {TowelDryerMode::MANUAL, HeatingTemporaryState::NONE, {}, LEVEL_COMFORT_MP, {}, {}});
+  EXPECT_FALSE(heating_device_facts(dev, true).programme_runs) << "heat";
+}
+
+namespace {
+
+/// A radiator whose boot registers and model check are done, so a poll sends only its recurring reads.
+IoDevice *make_settled_radiator(TestableComponent &comp, MockRadio &radio) {
+  IoDevice *dev = make_heater(comp, radio);
   dev->model_checked = true;
   dev->heating.max_setpoint_c = 28.0F;
-  dev->heating.eco_setback_k = 3.5F;  // read at boot; the user has since changed it on the display
-  const std::vector<uint8_t> new_setback = {0x0C, 0x60, 0x01, 0x04, 0x2D, 0x00};  // 4.5 K
-  // 15.5 = 20.0 - 4.5: an eco period under the new setback, but neither period under the old one.
-  const std::vector<uint8_t> in_force = {0x0C, 0x60, 0x01, 0x37, 0x9B, 0x00};
+  dev->heating.open_window_detection = 0;
+  return dev;
+}
 
-  EXPECT_EQ(run_towel_poll(comp, radio, {TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force, {new_setback}}),
-            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x04}))
-      << "the setback is read once more, in the same poll";
-  EXPECT_FLOAT_EQ(dev->heating.eco_setback_k, 4.5F);
-  EXPECT_EQ(resolve_programme_period(*find_heating_profile(*dev), dev->heating).preset_index,
-            find_heating_profile(*dev)->programme_period->eco_preset)
-      << "the next sync shows eco";
+/// Queue the five core registers of a radiator poll with the mode register @p mode; no reply to 0x012A.
+void queue_radiator_core(TestableComponent &comp, MockRadio &radio, HeatingMode mode) {
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x15, 0xB7, 0x07});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x03, 0xC8, 0x00});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x00, static_cast<uint8_t>(mode)});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x17, 0x02});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x0E, 0x00});
+}
 
-  // A value that fits the setback in hand costs no read.
-  EXPECT_EQ(run_towel_poll(comp, radio, {TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force, {}}),
-            (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37}));
+/// Queue the open-window-detection reply (off) a radiator poll reads after its core registers and 0x012A.
+void queue_radiator_detection(TestableComponent &comp, MockRadio &radio) {
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x06, 0x00});
+}
+
+std::vector<uint8_t> sent_steps_since(MockRadio &radio, size_t before) {
+  std::vector<uint8_t> steps;
+  for (size_t i = before; i < radio.get_sent_data().size(); i++)
+    steps.push_back(sent_step(radio.get_sent_data()[i]));
+  return steps;
+}
+
+}  // namespace
+
+TEST(HubOperations, ARadiatorPollReadsRegister012AOnlyWhileTheProgrammeRunsAndAsksNoStatusRead) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_radiator(comp, radio);
+
+  for (const HeatingMode mode : {HeatingMode::PROG, HeatingMode::AUTO}) {
+    const size_t before = radio.get_sent_data().size();
+    queue_radiator_core(comp, radio, mode);
+    queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A, 0xAF, 0x00});  // 17.5 C
+    queue_radiator_detection(comp, radio);
+    EXPECT_TRUE(comp.request_device_status("ABC123"));
+    EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06}))
+        << "no status read: no radiator is known to report a level";
+    EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 17.5F);
+    EXPECT_TRUE(heating_device_facts(dev, true).programme_runs);
+  }
+
+  const size_t before = radio.get_sent_data().size();
+  queue_radiator_core(comp, radio, HeatingMode::MANUAL);
+  queue_radiator_detection(comp, radio);
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06}))
+      << "heat: the temperature in force is not asked";
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE)) << "and the earlier value is dropped";
+}
+
+TEST(HubOperations, ARadiatorThatAnswers012AEmptyIsNotAskedAgain) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_radiator(comp, radio);
+
+  size_t before = radio.get_sent_data().size();
+  queue_radiator_core(comp, radio, HeatingMode::PROG);
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A});  // answered, no value
+  queue_radiator_detection(comp, radio);
+  EXPECT_TRUE(comp.request_device_status("ABC123")) << "an empty answer is no poll failure";
+  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06}));
+  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::ABSENT);
+  EXPECT_FALSE(heating_device_facts(dev, true).programme_runs) << "no temperature in force to override";
+  EXPECT_FALSE(heating_device_facts(dev, true).in_force_unresolved) << "and nothing left to ask";
+
+  before = radio.get_sent_data().size();
+  queue_radiator_core(comp, radio, HeatingMode::PROG);
+  queue_radiator_detection(comp, radio);
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06}))
+      << "the read is not repeated until the next boot";
+}
+
+TEST(HubOperations, ARadiatorThatReported012AKeepsReadingItAfterAnEmptyAnswer) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_radiator(comp, radio);
+
+  queue_radiator_core(comp, radio, HeatingMode::PROG);
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A, 0xAF, 0x00});  // 17.5 C
+  queue_radiator_detection(comp, radio);
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  ASSERT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED);
+
+  queue_radiator_core(comp, radio, HeatingMode::PROG);
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A});  // answered, no value
+  queue_radiator_detection(comp, radio);
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED)
+      << "a heater that has shown the register still has it";
+  EXPECT_TRUE(heating_device_facts(dev, true).programme_runs);
+
+  const size_t before = radio.get_sent_data().size();
+  queue_radiator_core(comp, radio, HeatingMode::PROG);
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A, 0xB4, 0x00});  // 18.0 C
+  queue_radiator_detection(comp, radio);
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06}))
+      << "the next poll asks again";
+  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 18.0F);
+}
+
+TEST(HubOperations, AnUnansweredRead012AIsRetriedAtTheNextPollNotMarkedMissing) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_radiator(comp, radio);
+  queue_radiator_core(comp, radio, HeatingMode::PROG);  // no answer to 0x2A: the exchange times out
+
+  comp.request_device_status("ABC123");
+
+  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::UNKNOWN)
+      << "no answer at all says nothing about the register";
+}
+
+TEST(HubOperations, ARadiatorThatReported012AKeepsTheOverrideRuleWhenALaterReadIsMissed) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_radiator(comp, radio);
+
+  queue_radiator_core(comp, radio, HeatingMode::PROG);
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A, 0xAF, 0x00});  // 17.5 C
+  queue_radiator_detection(comp, radio);
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED);
+
+  // Heat drops the value; back in the programme (set on the radiator) the read of 0x012A gets no reply.
+  queue_radiator_core(comp, radio, HeatingMode::MANUAL);
+  queue_radiator_detection(comp, radio);
+  EXPECT_TRUE(comp.request_device_status("ABC123"));
+  queue_radiator_core(comp, radio, HeatingMode::AUTO);
+  comp.request_device_status("ABC123");
+  ASSERT_FALSE(dev->heating.has(HeatingFunction::HEATER_TEMPERATURE_IN_FORCE));
+  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED) << "a missed read changes nothing";
+
+  EXPECT_TRUE(heating_device_facts(dev, true).programme_runs)
+      << "the programme runs: a missed read must not turn a target into a change of the comfort setpoint";
+  EXPECT_FALSE(heating_device_facts(dev, true).in_force_unresolved);
+}
+
+TEST(HubOperations, TheReadBeforeATargetAsksTheModeThenTheTemperatureInForceOfAnUnresolvedRadiator) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_radiator(comp, radio);
+  dev->heating.mode = static_cast<int16_t>(HeatingMode::MANUAL);  // stale: the heater runs its programme now
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x00, static_cast<uint8_t>(HeatingMode::PROG)});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A, 0xAF, 0x00});  // 17.5 C
+  const size_t before = radio.get_sent_data().size();
+
+  EXPECT_TRUE(comp.read_programme_state("ABC123"));
+
+  EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x00, 0x2A}));
+  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED);
+  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 17.5F) << "the card shows what the heater said";
+  EXPECT_TRUE(heating_device_facts(dev, true).programme_runs);
+}
+
+TEST(HubOperations, TheReadBeforeATargetMarksAHeaterThatAnswersTheTemperatureInForceEmptyAsWithoutIt) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_radiator(comp, radio);
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x00, static_cast<uint8_t>(HeatingMode::PROG)});
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A});  // answered, no value
+
+  EXPECT_TRUE(comp.read_programme_state("ABC123"));
+
+  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::ABSENT);
+  EXPECT_FALSE(heating_device_facts(dev, true).programme_runs);
+  EXPECT_FALSE(heating_device_facts(dev, true).in_force_unresolved);
+}
+
+TEST(HubOperations, TheReadBeforeATargetLeavesTheTemperatureInForceUnresolvedWhileTheHeaterStaysSilent) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_radiator(comp, radio);
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x00, static_cast<uint8_t>(HeatingMode::PROG)});
+
+  EXPECT_TRUE(comp.read_programme_state("ABC123")) << "the mode was answered";  // 0x2A gets no reply
+
+  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::UNKNOWN);
+  EXPECT_TRUE(heating_device_facts(dev, true).in_force_unresolved) << "the plan refuses a target";
+  EXPECT_FALSE(heating_device_facts(dev, true).programme_runs);
+}
+
+TEST(HubOperations, TheReadBeforeATargetAsksOnlyTheModeInHeatOnceTheHeaterAnsweredOrHasNoRegister) {
+  for (const TemperatureInForceSupport support :
+       {TemperatureInForceSupport::UNKNOWN, TemperatureInForceSupport::REPORTED, TemperatureInForceSupport::ABSENT}) {
+    TestableComponent comp;
+    MockRadio radio;
+    IoDevice *dev = make_settled_radiator(comp, radio);
+    dev->temperature_in_force = support;
+    queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x00, static_cast<uint8_t>(HeatingMode::MANUAL)});
+    const size_t before = radio.get_sent_data().size();
+
+    EXPECT_TRUE(comp.read_programme_state("ABC123"));
+
+    EXPECT_EQ(sent_steps_since(radio, before), std::vector<uint8_t>{0x00})
+        << "heat: no programme runs, so no temperature in force is asked";
+  }
+  for (const TemperatureInForceSupport support :
+       {TemperatureInForceSupport::REPORTED, TemperatureInForceSupport::ABSENT}) {
+    TestableComponent comp;
+    MockRadio radio;
+    IoDevice *dev = make_settled_radiator(comp, radio);
+    dev->temperature_in_force = support;
+    queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x00, static_cast<uint8_t>(HeatingMode::PROG)});
+    const size_t before = radio.get_sent_data().size();
+
+    EXPECT_TRUE(comp.read_programme_state("ABC123"));
+
+    EXPECT_EQ(sent_steps_since(radio, before), std::vector<uint8_t>{0x00})
+        << "the programme runs and the heater has answered: the poll refreshes the value";
+  }
+}
+
+TEST(HubOperations, AStatusReplyThatCarriesNoLevelClearsTheStoredLevel) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_towel_dryer(comp, radio);
+  dev->heating.level = heating_level::ECO;
+
+  run_towel_poll(comp, radio, {TowelDryerMode::MANUAL, HeatingTemporaryState::NONE, {}, 0xC800, {}, {}});
+
+  EXPECT_EQ(dev->heating.level, -1) << "a main parameter that is no level is forgotten: no eco period is assumed";
+}
+
+TEST(HubOperations, AnUnansweredStatusReadIsNoPollFailureAndKeepsTheLastLevel) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_settled_towel_dryer(comp, radio);
+  dev->heating.level = heating_level::COMFORT;
+
+  const std::vector<uint8_t> steps =
+      run_towel_poll(comp, radio, {TowelDryerMode::MANUAL, HeatingTemporaryState::NONE, {}, std::nullopt, {}, {}});
+
+  ASSERT_GT(steps.size(), 5u);
+  for (size_t i = 5; i < steps.size(); i++)
+    EXPECT_EQ(steps[i], STATUS_READ) << "only status reads (the retries) follow the registers";
+  EXPECT_EQ(dev->heating.level, heating_level::COMFORT);
+  EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id)) << "the cadence continues";
 }
 
 TEST(HubOperations, ATowelDryerDeclaredOnARadiatorStillGetsTheModelCheck) {
@@ -3922,13 +4227,14 @@ IoDevice *make_heater_with_light(TestableComponent &comp, MockRadio &radio) {
   return dev;
 }
 
-/// Answers the radiator's five poll registers.
+/// Answers the radiator's five poll registers and its open-window-detection setting (read on every poll).
 void queue_radiator_poll(TestableComponent &comp, MockRadio &radio) {
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});  // 20.75 C
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});  // 19.5 C
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x00, 0x01});        // manual
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x17, 0x02});        // heating
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x0E, 0x00});        // window closed
+  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x06, 0x01});        // detection on
 }
 
 }  // namespace
@@ -3944,13 +4250,12 @@ TEST(HubOperations, HeaterWithLightPollReadsTheLightAfterTheRadiatorRegisters) {
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x44, 0x01});
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x42, 0x64, 0x00});
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01});
-  queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x06, 0x01});
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x19, 'H', 'E', 'K', 'L', 'A'});
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x36});
 
   EXPECT_TRUE(comp.request_device_status("ABC123"));
 
-  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x44, 0x42, 0x02, 0x06, 0x19, 0x36};
+  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42, 0x02, 0x19, 0x36};
   ASSERT_EQ(radio.get_sent_data().size(), std::size(expected_registers));
   for (size_t i = 0; i < std::size(expected_registers); i++)
     EXPECT_EQ(sent_register(radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
@@ -3965,7 +4270,7 @@ TEST(HubOperations, HeaterWithLightPollReadsTheLightAfterTheRadiatorRegisters) {
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x44, 0x00});
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x42, 0x64, 0x00});
   EXPECT_TRUE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(radio.get_sent_data().size() - sent_before, 7u);
+  EXPECT_EQ(radio.get_sent_data().size() - sent_before, 8u);
   EXPECT_EQ(dev->heating.night_light, 0);
 }
 
@@ -3973,7 +4278,7 @@ TEST(HubOperations, AHeaterWithoutTheLightDoesNotFailItsPoll) {
   TestableComponent comp;
   MockRadio radio;
   IoDevice *dev = make_heater_with_light(comp, radio);
-  // Boot registers and model check done, so the poll is the five registers plus the light.
+  // Boot registers and model check done, so the poll is the five registers, the detection setting and the light.
   dev->model_checked = true;
   dev->heating.max_setpoint_c = 28.0F;
   dev->heating.open_window_detection = 1;
@@ -3983,7 +4288,7 @@ TEST(HubOperations, AHeaterWithoutTheLightDoesNotFailItsPoll) {
 
   EXPECT_TRUE(comp.request_device_status("ABC123")) << "a missing light costs a read, not the poll";
 
-  EXPECT_EQ(radio.get_sent_data().size(), 7u);
+  EXPECT_EQ(radio.get_sent_data().size(), 8u);
   EXPECT_EQ(dev->heating.night_light, -1);
   EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis()));
   EXPECT_EQ(comp.poll_policy_.get_status_poll_failures("ABC123"), 0u);
@@ -4116,7 +4421,7 @@ TEST(HubOperations, MissedShortTryMidMoveKeepsTheShortPreambleUntilTheCountRunsO
   comp.begin_status_poll_tracking_("ABC123", 0);
   comp.update_device_status_(moving_report(comp, 12));
   const uint32_t t0 = esphome::millis();
-  const uint16_t short_preamble = comp.tuning_.normal_start_preamble;
+  const uint16_t short_preamble = mock_preamble_bytes(comp.tuning_.start_preamble_ms);
   const IoDevice *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
 
@@ -4163,7 +4468,7 @@ TEST(HubOperations, PredictedEndReadToALowPowerCoverLeadsWithTheWakeUpPreamble) 
   const std::vector<uint16_t> preambles = preambles_since(radio, sent);
   ASSERT_EQ(preambles.size(), static_cast<size_t>(attempts));
   for (const uint16_t preamble : preambles)
-    EXPECT_EQ(preamble, comp.tuning_.low_power_wake_preamble) << "at its predicted end the cover rests";
+    EXPECT_EQ(preamble, mock_preamble_bytes(comp.tuning_.low_power_wake_ms)) << "at its predicted end the cover rests";
 }
 
 TEST(HubOperations, ReadAfterASilentPredictedEndReadLeadsShortThenWakes) {
@@ -4176,8 +4481,8 @@ TEST(HubOperations, ReadAfterASilentPredictedEndReadLeadsShortThenWakes) {
   const uint32_t t0 = esphome::millis();
   const IoDevice *dev = comp.get_device("ABC123");
   ASSERT_NE(dev, nullptr);
-  const uint16_t short_preamble = comp.tuning_.normal_start_preamble;
-  const uint16_t wake_preamble = comp.tuning_.low_power_wake_preamble;
+  const uint16_t short_preamble = mock_preamble_bytes(comp.tuning_.start_preamble_ms);
+  const uint16_t wake_preamble = mock_preamble_bytes(comp.tuning_.low_power_wake_ms);
 
   esphome::test_clock::set_ms(t0 + 13002u);
   ASSERT_GT(run_due_poll_against_silence(comp, radio), 1);
@@ -4211,7 +4516,7 @@ TEST(HubOperations, PredictedEndReadToAMainsCoverKeepsTheNormalStartPreamble) {
   const size_t sent = radio.get_tx_configs().size();
   ASSERT_GT(run_due_poll_against_silence(comp, radio), 0);
   for (const uint16_t preamble : preambles_since(radio, sent))
-    EXPECT_EQ(preamble, comp.tuning_.normal_start_preamble);
+    EXPECT_EQ(preamble, mock_preamble_bytes(comp.tuning_.start_preamble_ms));
 }
 
 TEST(HubOperations, StaleRemainingTimeFallsBackToSingleTryProgressReads) {

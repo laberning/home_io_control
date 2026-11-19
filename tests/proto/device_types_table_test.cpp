@@ -335,12 +335,6 @@ TEST(DeviceTypesTableFeatures, EveryPredicateAgreesWithTheRowsOwnClass) {
   });
 }
 
-TEST(DeviceTypesTableFeatures, NoRowUsesBit15) {
-  test::for_each_table_row([](const DeviceTypeInfo &row) {
-    EXPECT_EQ(row.features & (1U << 15U), 0u) << "bit 15 is the Python mirror's experimental marker";
-  });
-}
-
 TEST(DeviceTypesTableFeatures, AnExplicitSubtype58RowIsTheVariantOfItsTypeRow) {
   test::for_each_table_row([](const DeviceTypeInfo &row) {
     if (row.subtype != SUBTYPE_MAIN_PARAMETER_ONLY)
@@ -359,12 +353,12 @@ TEST(DeviceTypesTableFeatures, GarageOpenerRowsHaveNoFavourite) {
   });
 }
 
-TEST(DeviceTypesTableFeatures, NamedPositionValuesAreUniqueAboveTheClosedPositionAndOwnOneBitEach) {
-  DeviceFeatures bits_seen = 0;
+TEST(DeviceTypesTableFeatures, NamedPositionValuesAreUniqueAboveTheClosedPositionAndOwnOneCapabilityEach) {
+  DeviceFeatures seen;
   for (const NamedPosition &named : NAMED_POSITIONS) {
     EXPECT_GT(named.main_parameter, MAIN_PARAMETER_CLOSED) << named.name;
-    EXPECT_EQ(bits_seen & named.feature, 0u) << named.name << ": the bit is in more than one entry";
-    bits_seen |= named.feature;
+    EXPECT_FALSE(seen.intersects(named.feature)) << named.name << ": the capability is in more than one entry";
+    seen |= named.feature;
     for (const NamedPosition &other : NAMED_POSITIONS) {
       if (&other != &named) {
         EXPECT_NE(other.main_parameter, named.main_parameter) << named.name << " and " << other.name;
@@ -390,7 +384,7 @@ TEST(DeviceTypesTableFeatures, TiltNamedPositionsAndInversionBelongToCoverRowsOn
   const DeviceFeatures cover_only = device_feature::TILT | device_feature::FAVORITE | device_feature::VENT |
                                     device_feature::PARTIAL | device_feature::PEDESTRIAN | device_feature::INVERTED;
   test::for_each_table_row([cover_only](const DeviceTypeInfo &row) {
-    if ((row.features & cover_only) != 0) {
+    if (row.features.intersects(cover_only)) {
       EXPECT_EQ(row.capability, DeviceCapabilityClass::COVER) << format_device_ids(row.type, row.subtype);
     }
   });
@@ -405,7 +399,7 @@ TEST(DeviceTypesTableFeatures,
     const HeatingProfile *profile = find_heating_profile(row.type, row.subtype, DeviceModel::NONE);
     const bool profile_has_window = profile != nullptr &&
                                     contains(profile->poll_registers, HeatingFunction::WINDOW_OPEN) &&
-                                    contains(profile->boot_registers, HeatingFunction::SET_OPEN_WINDOW_DETECTION);
+                                    contains(profile->extra_poll_registers, HeatingFunction::SET_OPEN_WINDOW_DETECTION);
     EXPECT_EQ(has_feature(row.features, device_feature::WINDOW_COMPANIONS), profile_has_window)
         << format_device_ids(row.type, row.subtype);
   });
@@ -431,7 +425,7 @@ TEST(DeviceTypesTableFeatures, TheExtendedPositionFrameIsOnlyOnRowsThatSendAPosi
 
 TEST(DeviceTypesTableFeatures, EveryRowWithCapabilitiesHasAYamlSelectableType) {
   test::for_each_table_row([](const DeviceTypeInfo &row) {
-    if (row.features == 0)
+    if (row.features.empty())
       return;
     const DeviceTypeInfo *type_row = find_exact_device_type_info(row.type, 0);
     ASSERT_NE(type_row, nullptr) << format_device_ids(row.type, row.subtype);
@@ -530,13 +524,14 @@ TEST(DeviceTypesTableModels, AModelTheKindDoesNotOfferFallsBackToTheKind) {
             device_features(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
 }
 
-TEST(DeviceTypesTableModels, OnlyTheHeaterWithASetpointAndTheWaterHeaterOfferModels) {
+TEST(DeviceTypesTableModels, OnlyTheElectricalHeatersAndTheWaterHeaterOfferModels) {
   std::set<std::pair<DeviceType, uint8_t>> with_models;
   test::for_each_table_row([&with_models](const DeviceTypeInfo &row) {
     if (device_offers_models(row.type, row.subtype))
       with_models.emplace(row.type, row.subtype);
   });
   EXPECT_EQ(with_models, (std::set<std::pair<DeviceType, uint8_t>>{{DeviceType::DOMESTIC_HOT_WATER, 0},
+                                                                   {DeviceType::ELECTRICAL_HEATER, 0},
                                                                    {DeviceType::ELECTRICAL_HEATER, 1}}));
 }
 
@@ -565,5 +560,53 @@ TEST(DeviceTypesTableModels, AModelRowKeepsTheIdentityOfTheRowAboveIt) {
                                         HeatingFunction::NIGHT_LIGHT) != profile->extra_poll_registers.end();
     EXPECT_EQ(has_feature(model.features, device_feature::NIGHT_LIGHT), polls_light) << model.name;
   });
-  EXPECT_EQ(rows, 3u);
+  EXPECT_EQ(rows, 4u);
+}
+
+TEST(DeviceTypesTable, OnlyTheTowelDryerRowHasTheCentralHeatingModeBit) {
+  test::for_each_model_row([](const DeviceTypeInfo &model) {
+    EXPECT_EQ(has_feature(model.features, device_feature::CENTRAL_HEATING_MODE),
+              model.model == DeviceModel::TOWEL_DRYER)
+        << model.name;
+  });
+  EXPECT_FALSE(has_feature(device_features(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE),
+                           device_feature::CENTRAL_HEATING_MODE))
+      << "a radiator has no central-heating mode";
+}
+
+TEST(DeviceTypesTable, OccupancyIsOnTheRadiatorAndTheHeaterWithLightOnly) {
+  const auto occupancy = [](DeviceType type, uint8_t subtype, DeviceModel model) {
+    return has_feature(device_features(type, subtype, model), device_feature::OCCUPANCY);
+  };
+  EXPECT_TRUE(occupancy(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE)) << "radiator";
+  EXPECT_TRUE(occupancy(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT));
+  EXPECT_FALSE(occupancy(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER)) << "no known function";
+  EXPECT_FALSE(occupancy(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE)) << "no registers";
+  EXPECT_FALSE(occupancy(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE));
+  EXPECT_FALSE(occupancy(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
+}
+
+TEST(DeviceTypesTable, TheEnergyMeterIsOnTheRadiatorTheTowelDryerAndTheHeaterWithLightOnly) {
+  const auto energy_meter = [](DeviceType type, uint8_t subtype, DeviceModel model) {
+    return has_feature(device_features(type, subtype, model), device_feature::ENERGY_METER);
+  };
+  EXPECT_TRUE(energy_meter(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE)) << "radiator";
+  EXPECT_TRUE(energy_meter(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER));
+  EXPECT_TRUE(energy_meter(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT));
+  EXPECT_FALSE(energy_meter(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE)) << "no registers";
+  EXPECT_FALSE(energy_meter(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE));
+  EXPECT_FALSE(energy_meter(DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::NONE))
+      << "its energy is the water heater's";
+  EXPECT_FALSE(energy_meter(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
+}
+
+TEST(DeviceTypesTable, TheRunTimersAreOnTheTowelDryerOnly) {
+  const auto run_timers = [](DeviceType type, uint8_t subtype, DeviceModel model) {
+    return has_feature(device_features(type, subtype, model), device_feature::RUN_TIMERS);
+  };
+  EXPECT_TRUE(run_timers(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER));
+  EXPECT_FALSE(run_timers(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::NONE)) << "a radiator has no boost or drying";
+  EXPECT_FALSE(run_timers(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT));
+  EXPECT_FALSE(run_timers(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE));
+  EXPECT_FALSE(run_timers(DeviceType::ROLLER_SHUTTER, 0, DeviceModel::NONE));
 }

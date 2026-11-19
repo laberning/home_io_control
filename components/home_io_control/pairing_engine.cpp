@@ -340,7 +340,8 @@ bool PairingEngine::transfer_key_and_wait_confirm_(pairing::PairingContext &cont
   if (radio_()->has_fast_tx_rx_turnaround()) {
     // Key exchange is the one caller that genuinely needs the payload: without the 0x33 there is
     // no confirmation the device took the key, so an unconfirmed acceptance is not good enough.
-    if (engine_.send_and_receive(context.req, context.resp, FREQ_CH2) != ExchangeOutcome::SUCCESS_WITH_RESPONSE)
+    if (engine_.send_and_receive(context.req, context.resp, FREQ_CH2, ExchangeOptions{}.on_fixed_channel()) !=
+        ExchangeOutcome::SUCCESS_WITH_RESPONSE)
       return false;
     if (context.resp.cmd == CMD_ERROR_RESP)
       note_key_refusal(this->telemetry_, context, context.resp, "Key transfer");
@@ -446,7 +447,8 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
       if (!create_discovery_request(context.req, node_id_, command, destination, tuning_->pairing_discovery_low_power,
                                     tuning_->pairing_discovery_ack_capable, tuning_->pairing_discovery_payload_enabled,
                                     tuning_->pairing_discovery_payload, system_key_) ||
-          !engine_.transmit_frame(context.req, request_freq, effective_discovery_preamble(*tuning_))) {
+          !engine_.transmit_frame(context.req, request_freq,
+                                  engine_.preamble_bytes_for_ms(effective_discovery_preamble_ms(*tuning_)))) {
         return decisions::PairingDiscoveryDisposition::NO_RESPONSE;
       }
 
@@ -665,8 +667,9 @@ void PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &con
     return;
   // Its reply is never read: an explicit refusal and silence are equally harmless here.
   if (engine_.send_and_receive(context.req, context.resp, FREQ_CH2,
-                               ExchangeOptions{PAIRING_SET_CONFIG1_MAX_TRIES}.with_preamble(pairing_start_preamble(
-                                   engine_, *tuning_, context.req))) == ExchangeOutcome::FAILED) {
+                               ExchangeOptions{PAIRING_SET_CONFIG1_MAX_TRIES}
+                                   .with_preamble(pairing_start_preamble(engine_, *tuning_, context.req))
+                                   .on_fixed_channel()) == ExchangeOutcome::FAILED) {
     ESP_LOGI(TAG, "Pairing: no reply from %s to the optional SetConfig1 (0x6F); the pairing is complete",
              context.device_id.c_str());
   }
@@ -699,7 +702,7 @@ bool PairingEngine::discover_and_pair() {
 
   if (tuning_->pairing_discovery_preamble_set) {
     ESP_LOGI(TAG, "Pairing: discovery preamble %u B (set in tuning); directed frames to %s are capped to it",
-             effective_discovery_preamble(*tuning_), context.device_id.c_str());
+             engine_.preamble_bytes_for_ms(effective_discovery_preamble_ms(*tuning_)), context.device_id.c_str());
   }
 
   // Discover-confirm (0x2C -> 0x2D): once per attempt, before the key-exchange retry loop below,
@@ -839,9 +842,11 @@ bool PairingEngine::verify_device_holds_key_(pairing::PairingContext &context) {
            context.device_id.c_str());
   if (!create_get_name(context.req, node_id_, context.device.node_id, context.discovery_low_power))
     return false;
-  const ExchangeOutcome outcome = engine_.send_and_receive(context.req, context.resp, FREQ_CH2,
-                                                           ExchangeOptions{PAIRING_KEY_VERIFY_MAX_TRIES}.with_preamble(
-                                                               pairing_start_preamble(engine_, *tuning_, context.req)));
+  const ExchangeOutcome outcome =
+      engine_.send_and_receive(context.req, context.resp, FREQ_CH2,
+                               ExchangeOptions{PAIRING_KEY_VERIFY_MAX_TRIES}
+                                   .with_preamble(pairing_start_preamble(engine_, *tuning_, context.req))
+                                   .on_fixed_channel());
   const auto verdict = decisions::classify_key_verify_reply(outcome == ExchangeOutcome::SUCCESS_WITH_RESPONSE,
                                                             engine_.get_debug().saw_challenge, context.resp);
   const bool held = verdict == decisions::PairingKeyVerifyDisposition::HELD;

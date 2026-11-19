@@ -2,7 +2,7 @@
 /// @brief Pins the device-role frame builders (proto_commands.h) against real devices' captured
 /// frames in the golden-frame corpus.
 ///
-/// The "Accept Foreign Pairing" key-extraction responder is the one place this project emits
+/// The "Recover System Key" key-extraction responder is the one place this project emits
 /// *device*-originated frames instead of controller-originated ones (see proto_commands.h's
 /// device-side builder group). Everything else it does — and therefore every other test — speaks
 /// the controller side, so a device-role builder that frames its CTRL0/CTRL1 bits the

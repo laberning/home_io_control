@@ -7,6 +7,8 @@
 ## pairing and radio parameters at runtime. Tuned values are volatile and reset on
 ## every boot.
 
+import logging
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import number, select
@@ -14,6 +16,8 @@ from esphome.const import CONF_ID, CONF_NAME, ENTITY_CATEGORY_CONFIG
 from esphome.core import ID
 
 from .hub_names import home_io_control_ns
+
+_LOGGER = logging.getLogger(__name__)
 
 CONF_TUNING = "tuning"
 CONF_UI_CONTROLS = "ui_controls"
@@ -23,22 +27,21 @@ _COMPANION_ID_BASE = "home_io_control"
 
 # --- Radio / physical layer ---
 CONF_SX1262_RX_BANDWIDTH = "sx1262_rx_bandwidth"
-CONF_SX1262_RESPONSE_PREAMBLE = "sx1262_response_preamble"
 CONF_SX1262_POST_TX_SETTLE_US = "sx1262_post_tx_settle_us"
 CONF_SX1276_RX_BANDWIDTH = "sx1276_rx_bandwidth"
-CONF_SX1276_RESPONSE_PREAMBLE = "sx1276_response_preamble"
 CONF_SX1276_DISCOVERY_HOP_SLICE_MS = "sx1276_discovery_hop_slice_ms"
 CONF_SX1262_DISCOVERY_HOP_SLICE_MS = "sx1262_discovery_hop_slice_ms"
 CONF_LR1121_RX_BANDWIDTH = "lr1121_rx_bandwidth"
-CONF_LR1121_RESPONSE_PREAMBLE = "lr1121_response_preamble"
 CONF_LR1121_POST_TX_SETTLE_US = "lr1121_post_tx_settle_us"
 CONF_LR1121_DISCOVERY_HOP_SLICE_MS = "lr1121_discovery_hop_slice_ms"
-CONF_COLD_BROADCAST_REPLY_PREAMBLE = "cold_broadcast_reply_preamble"
-CONF_NORMAL_START_PREAMBLE = "normal_start_preamble"
-CONF_LBT_MAX_RETRIES = "lbt_max_retries"
+CONF_RESPONSE_PREAMBLE_MS = "response_preamble_ms"
+CONF_COLD_BROADCAST_REPLY_PREAMBLE_MS = "cold_broadcast_reply_preamble_ms"
+CONF_START_PREAMBLE_MS = "start_preamble_ms"
+CONF_LBT_MAX_RETRIES = "lbt_max_retries"  # deprecated, accepted and ignored (ADR 0096)
+CONF_LBT_FORCE_WHEN_BUSY = "lbt_force_when_busy"
 CONF_LBT_RSSI_THRESHOLD_DBM = "lbt_rssi_threshold_dbm"
 CONF_LOW_POWER_WAKE_BELIEF = "low_power_wake_belief"
-CONF_LOW_POWER_WAKE_PREAMBLE = "low_power_wake_preamble"
+CONF_LOW_POWER_WAKE_MS = "low_power_wake_ms"
 CONF_EXCHANGE_START_RESPONSE_WAIT_MS = "exchange_start_response_wait_ms"
 CONF_EXCHANGE_EARLY_RESPONSE_WAIT_MS = "exchange_early_response_wait_ms"
 CONF_EXCHANGE_RESPONSE_WAIT_MS = "exchange_response_wait_ms"
@@ -54,7 +57,7 @@ CONF_PAIRING_DISCOVERY_DESTINATION = "pairing_discovery_destination"
 CONF_PAIRING_DISCOVERY_PAYLOAD = "pairing_discovery_payload"
 CONF_PAIRING_DISCOVERY_LOW_POWER = "pairing_discovery_low_power"
 CONF_PAIRING_DISCOVERY_ACK_CAPABLE = "pairing_discovery_ack_capable"
-CONF_PAIRING_DISCOVERY_PREAMBLE = "pairing_discovery_preamble"
+CONF_PAIRING_DISCOVERY_PREAMBLE_MS = "pairing_discovery_preamble_ms"
 CONF_PAIRING_DISCOVERY_WAIT_MS = "pairing_discovery_wait_ms"
 CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS = "pairing_discovery_initial_dwell_ms"
 CONF_PAIRING_KEY_EXCHANGE_RETRIES = "pairing_key_exchange_retries"
@@ -231,22 +234,20 @@ def _id_key(param_key):
 # cluster together alphabetically.
 UI_NAMES = {
     CONF_SX1262_RX_BANDWIDTH: "Radio SX1262 RX Bandwidth (kHz)",
-    CONF_SX1262_RESPONSE_PREAMBLE: "Radio SX1262 Response Preamble",
     CONF_SX1262_POST_TX_SETTLE_US: "Radio SX1262 Post-TX Settle",
     CONF_SX1276_RX_BANDWIDTH: "Radio SX1276 RX Bandwidth (kHz)",
-    CONF_SX1276_RESPONSE_PREAMBLE: "Radio SX1276 Response Preamble",
     CONF_SX1276_DISCOVERY_HOP_SLICE_MS: "Radio SX1276 Discovery Hop Slice",
     CONF_SX1262_DISCOVERY_HOP_SLICE_MS: "Radio SX1262 Discovery Hop Slice",
     CONF_LR1121_RX_BANDWIDTH: "Radio LR1121 RX Bandwidth (kHz)",
-    CONF_LR1121_RESPONSE_PREAMBLE: "Radio LR1121 Response Preamble",
     CONF_LR1121_POST_TX_SETTLE_US: "Radio LR1121 Post-TX Settle",
     CONF_LR1121_DISCOVERY_HOP_SLICE_MS: "Radio LR1121 Discovery Hop Slice",
-    CONF_COLD_BROADCAST_REPLY_PREAMBLE: "Radio Cold Broadcast Reply Preamble",
-    CONF_NORMAL_START_PREAMBLE: "Radio Normal Start Preamble",
-    CONF_LBT_MAX_RETRIES: "Radio LBT Max Retries",
+    CONF_RESPONSE_PREAMBLE_MS: "Radio Response Preamble",
+    CONF_COLD_BROADCAST_REPLY_PREAMBLE_MS: "Radio Cold Broadcast Reply Preamble",
+    CONF_START_PREAMBLE_MS: "Radio Start Preamble",
+    CONF_LBT_FORCE_WHEN_BUSY: "Radio LBT Force When Busy",
     CONF_LBT_RSSI_THRESHOLD_DBM: "Radio LBT RSSI Threshold",
     CONF_LOW_POWER_WAKE_BELIEF: "Radio Low Power Wake Belief",
-    CONF_LOW_POWER_WAKE_PREAMBLE: "Radio Low Power Wake Preamble",
+    CONF_LOW_POWER_WAKE_MS: "Radio Low Power Wake Preamble",
     CONF_EXCHANGE_START_RESPONSE_WAIT_MS: "Exchange Start Response Wait",
     CONF_EXCHANGE_EARLY_RESPONSE_WAIT_MS: "Exchange Early Response Wait",
     CONF_EXCHANGE_RESPONSE_WAIT_MS: "Exchange Response Wait",
@@ -258,7 +259,7 @@ UI_NAMES = {
     CONF_PAIRING_DISCOVERY_PAYLOAD: "Pairing Discovery Payload",
     CONF_PAIRING_DISCOVERY_LOW_POWER: "Pairing Discovery Low Power",
     CONF_PAIRING_DISCOVERY_ACK_CAPABLE: "Pairing Discovery ACK Capable",
-    CONF_PAIRING_DISCOVERY_PREAMBLE: "Pairing Discovery Preamble",
+    CONF_PAIRING_DISCOVERY_PREAMBLE_MS: "Pairing Discovery Preamble",
     CONF_PAIRING_DISCOVERY_WAIT_MS: "Pairing Discovery Wait",
     CONF_PAIRING_DISCOVERY_INITIAL_DWELL_MS: "Pairing Discovery Initial Dwell",
     CONF_PAIRING_KEY_EXCHANGE_RETRIES: "Pairing Key Exchange Retries",
@@ -275,13 +276,14 @@ UI_NAMES = {
 # Numeric parameters: key -> (min, max, step, unit). Single source of truth for both the
 # YAML validation range and the Home Assistant `number` entity bounds, so the two cannot drift.
 _NUMBER_PARAMS = {
-    # Floor is 8, not an arbitrary round number: it's SHORT_PREAMBLE, the protocol's own nominal
-    # preamble length and the lowest value that makes sense to transmit (below it there isn't
-    # enough preamble left for the peer's detector to lock on at all). Same floor as
-    # sx1276_response_preamble below.
-    CONF_SX1262_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
+    # Every preamble is a duration, the same on every radio (ADR 0097); each driver converts it to
+    # programmed bytes. The floor 1.5 ms is about SHORT_PREAMBLE (8 bytes, 1.7 ms on a raw-stream
+    # radio): the lowest value that leaves the peer's detector anything to lock on to. The ceiling
+    # 70 ms is about 256 bytes on the radio that sends 10 bit periods per byte, and below LONG_PREAMBLE
+    # bytes on every radio (preamble_wake_sync_test.cpp pins that, so the value can never be taken
+    # for a wake-up burst). Step 0.5 ms puts the 3.5 ms default on the number entity's grid.
+    CONF_RESPONSE_PREAMBLE_MS: (1.5, 70, 0.5, "ms"),
     CONF_SX1262_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
-    CONF_SX1276_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
     CONF_SX1276_DISCOVERY_HOP_SLICE_MS: (5, 200, 1, "ms"),
     # Floor is 0, not a physically meaningful minimum for the chip: coverage degrades gradually as
     # the dwell shortens and only truly collapses at the literal 0 ms edge case, where
@@ -291,35 +293,32 @@ _NUMBER_PARAMS = {
     CONF_SX1262_DISCOVERY_HOP_SLICE_MS: (0, 500, 1, "ms"),
     # LR1121 numeric ranges reuse the SX1262 bounds — same chip-family physical constraints, and
     # a validated SX1262 value encodes protocol-side reality more than a chip quirk.
-    CONF_LR1121_RESPONSE_PREAMBLE: (8, 256, 1, "B"),
     CONF_LR1121_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
     CONF_LR1121_DISCOVERY_HOP_SLICE_MS: (0, 500, 1, "ms"),
-    # Same (8, 256) floor/ceiling as sx1262_response_preamble above, for the same reason: 8 is
-    # SHORT_PREAMBLE, the lowest value that leaves the peer's detector anything to lock on to.
-    # This field is chip-neutral (see proto_timing.h COLD_BROADCAST_REPLY_PREAMBLE, which lives
-    # there rather than in tuning_config.h precisely because it is chip-neutral -- see that header's
-    # own "chip-neutral defaults live in proto_timing.h" comment) so it has no per-chip range to
-    # inherit the way lr1121_response_preamble does.
-    CONF_COLD_BROADCAST_REPLY_PREAMBLE: (8, 256, 1, "B"),
-    # Same (8, 256) floor/ceiling as the response-preamble params: 8 is SHORT_PREAMBLE, the lowest
-    # value that leaves the peer's detector anything to lock on to. The default is 32
-    # (NORMAL_START_PREAMBLE in proto_timing.h) -- 256 bits, inside the preamble band the protocol
-    # reference documents -- not 8: brand-new devices have been seen failing at 1/4/8 B
-    # (docs/configuration/tuning.md), so 8 is a proven-safe floor for the knob, not a sensible default.
-    CONF_NORMAL_START_PREAMBLE: (8, 256, 1, "B"),
-    # Floor is 8 (SHORT_PREAMBLE), same reasoning as the response-preamble params above. Ceiling is
-    # the current default (LONG_PREAMBLE, 1024) rather than 256 like the other preamble knobs: this
-    # one exists specifically to let a stuck pairing attempt go *shorter* than the long wake-up
-    # burst (issue #27/#87's precedent), not to go longer than it — nothing calls for raising it
-    # further.
-    CONF_PAIRING_DISCOVERY_PREAMBLE: (8, 1024, 1, "B"),
+    # Same (1.5, 70) floor/ceiling as the response preamble, for the same reasons. The default is
+    # 20 ms (COLD_BROADCAST_REPLY_PREAMBLE_MS in proto_timing.h): above the ~13.9 ms preamble real
+    # devices put on a discovery reply, so a hopping receiver catches this reply at least as reliably.
+    CONF_COLD_BROADCAST_REPLY_PREAMBLE_MS: (1.5, 70, 0.5, "ms"),
+    # Same (1.5, 70) floor/ceiling as the response preamble. The default is 10 ms
+    # (START_PREAMBLE_MS in proto_timing.h): brand-new devices have been seen failing at 1/4/8 B
+    # (docs/configuration/tuning.md), so the floor is a proven-safe lower bound for the knob, not a
+    # sensible default.
+    CONF_START_PREAMBLE_MS: (1.5, 70, 0.5, "ms"),
+    # Floor is the response preamble's 1.5 ms. The ceiling 300 ms reaches the wake-up burst
+    # (LONG_PREAMBLE bytes, 213 ms on a raw-stream radio and 267 ms on the SX1276) on every radio:
+    # an explicit opt-in to a wake-up discovery, which this one knob can reach and the others cannot.
+    # It exists to let a stuck pairing attempt go *shorter* than the long wake-up burst (issue
+    # #27/#87's precedent); nothing calls for raising it further.
+    CONF_PAIRING_DISCOVERY_PREAMBLE_MS: (1.5, 300, 0.5, "ms"),
     # The wake-up preamble on a directed start frame to a `low_power` target believed at rest. The
-    # default is LONG_PREAMBLE (1024); a resting VELUX SSL solar roller shutter answered it on only
-    # about half the tries, so the knob goes longer, not shorter. Floor 1024 (LONG_PREAMBLE) keeps it a wake-up burst
-    # rather than a start preamble (and keeps every value a wake-up burst for tx_wake_for()); ceiling 4096 (~0.85 s on air) already needs a larger
-    # exchange_total_budget_ms to keep three tries (a settling read of a low-power device, ADR 0073 and 0074).
-    CONF_LOW_POWER_WAKE_PREAMBLE: (1024, 4096, 64, "B"),
-    CONF_LBT_MAX_RETRIES: (0, 10, 1, ""),
+    # default is LOW_POWER_WAKE_MS (600, proto_timing.h, ADR 0097): a VELUX KLI 110 remote sends about
+    # 600 ms of wake-up, and a resting VELUX SSL solar roller shutter answered every try at that
+    # length. The floor 300 ms is at least LONG_PREAMBLE bytes on every radio (1152 bytes on the
+    # SX1276), which keeps every value a wake-up burst for tx_wake_for(); the ceiling 1000 ms is
+    # about four seconds of air for the three attempts. A low-power target keeps its three attempts
+    # whatever their length costs: the exchange is bounded by that count, not by
+    # exchange_total_budget_ms (ADR 0095).
+    CONF_LOW_POWER_WAKE_MS: (300, 1000, 10, "ms"),
     CONF_LBT_RSSI_THRESHOLD_DBM: (-95, -70, 1, "dBm"),
     # Ceilings are generous because the right value is a property of the target device, not of
     # the radio: measured RS100 solar reply latencies reach ~3 s (see RESPONSE_START_WAIT_MS).
@@ -353,6 +352,17 @@ _NUMBER_PARAMS = {
     CONF_KEY_EXTRACTION_MULTI_INFO: (0, 0xFF, 1, ""),
 }
 
+# Numeric parameters with a fractional value (the preamble durations, 3.5 ms by default): validated as
+# floats, so the YAML value and the number entity keep their fraction.
+_FLOAT_PARAMS = frozenset(
+    {
+        CONF_RESPONSE_PREAMBLE_MS,
+        CONF_COLD_BROADCAST_REPLY_PREAMBLE_MS,
+        CONF_START_PREAMBLE_MS,
+        CONF_PAIRING_DISCOVERY_PREAMBLE_MS,
+    }
+)
+
 # Plain boolean parameters: the C++ TuningConfig field name equals the YAML key, and every one is
 # a simple On/Off select — driving the schema, the select options, and the to_code() assignment
 # from one list each, the same way _NUMBER_PARAMS drives the numeric ones below.
@@ -363,7 +373,16 @@ _NUMBER_PARAMS = {
 #
 # low_power_wake_belief is the opposite: on by default, and a diagnostic off-switch. Setting it to
 # false restores the fixed long wake-up preamble on every try to a low_power device.
-_BOOL_PARAMS = (CONF_PAIRING_DISCOVERY_LOW_POWER, CONF_PAIRING_DISCOVERY_ACK_CAPABLE, CONF_LOW_POWER_WAKE_BELIEF)
+#
+# lbt_force_when_busy is opt-in: by default a request never goes out onto a channel the hub measured
+# busy (ADR 0096). On, a request whose access time ran out with every channel busy is sent on the
+# quietest one.
+_BOOL_PARAMS = (
+    CONF_PAIRING_DISCOVERY_LOW_POWER,
+    CONF_PAIRING_DISCOVERY_ACK_CAPABLE,
+    CONF_LOW_POWER_WAKE_BELIEF,
+    CONF_LBT_FORCE_WHEN_BUSY,
+)
 _BOOL_SELECT_OPTIONS = ["Off", "On"]
 
 # Select parameters: key -> ordered option list. Single source of truth for both the
@@ -381,6 +400,7 @@ _SELECT_OPTIONS = {
     CONF_SX1276_RX_BANDWIDTH: list(SX1276_BANDWIDTH_OPTIONS),
     CONF_LR1121_RX_BANDWIDTH: list(LR1121_BANDWIDTH_OPTIONS),
     CONF_LOW_POWER_WAKE_BELIEF: _BOOL_SELECT_OPTIONS,
+    CONF_LBT_FORCE_WHEN_BUSY: _BOOL_SELECT_OPTIONS,
     CONF_SCAN_POWER_CLASSES: list(SCAN_POWER_CLASSES_OPTIONS),
     CONF_PAIRING_DISCOVER_CONFIRM: list(DISCOVER_CONFIRM_MODE_OPTIONS),
     CONF_PAIRING_DISCOVERY_LISTEN_CHANNELS: list(DISCOVERY_LISTEN_CHANNELS_OPTIONS),
@@ -444,6 +464,87 @@ _validate_key_transfer_mode = _one_of_string(
 )
 
 
+def _deprecated_lbt_max_retries(value):
+    """Accept the retired ``lbt_max_retries`` and say it no longer does anything.
+
+    The checks of a request now end by time, not by count (ADR 0096), so the value has no effect.
+    The key stays legal so an existing config keeps compiling; it also stays within its old range
+    so a typo is still reported. No code is generated for it.
+    """
+    value = cv.int_range(min=0, max=10)(value)
+    _LOGGER.warning(
+        "home_io_control: tuning '%s:' is deprecated and has no effect: a request now waits for a "
+        "free channel for a fixed time instead of counting checks. Remove it, and use '%s: true' if "
+        "you want a send onto a busy channel after that time.",
+        CONF_LBT_MAX_RETRIES,
+        CONF_LBT_FORCE_WHEN_BUSY,
+    )
+    return value
+
+
+# Deprecated byte-denominated preamble keys (ADR 0097): old key -> (min, max, duration key it
+# became, TuningConfig::LegacyPreambleBytes field, radio_type it applies to or None for every radio).
+# The ranges are the byte ranges the keys always had. The byte value is handed to C++ unconverted:
+# only the radio driver knows how long a byte lasts on its coder, so setup() turns it into the
+# duration it has always given on that radio. A response key of another radio is validated and
+# warned about but has no effect, as before.
+_LEGACY_PREAMBLE_KEYS = {
+    "low_power_wake_preamble": (1024, 4096, CONF_LOW_POWER_WAKE_MS, "low_power_wake", None),
+    "normal_start_preamble": (8, 256, CONF_START_PREAMBLE_MS, "start", None),
+    "sx1262_response_preamble": (8, 256, CONF_RESPONSE_PREAMBLE_MS, "response", "sx1262"),
+    "sx1276_response_preamble": (8, 256, CONF_RESPONSE_PREAMBLE_MS, "response", "sx1276"),
+    "lr1121_response_preamble": (8, 256, CONF_RESPONSE_PREAMBLE_MS, "response", "lr1121"),
+    "cold_broadcast_reply_preamble": (8, 256, CONF_COLD_BROADCAST_REPLY_PREAMBLE_MS, "cold_broadcast_reply", None),
+    "pairing_discovery_preamble": (8, 1024, CONF_PAIRING_DISCOVERY_PREAMBLE_MS, "discovery", None),
+}
+
+
+def _deprecated_preamble_bytes(old_key, low, high, new_key):
+    """Build the validator of a deprecated byte-denominated preamble key.
+
+    The key keeps its old byte range so a typo is still reported, and says once that the value is a
+    duration now. The value stays a byte count; the driver converts it (see `_LEGACY_PREAMBLE_KEYS`).
+    """
+    in_range = cv.int_range(min=low, max=high)
+
+    def validate(value):
+        value = in_range(value)
+        _LOGGER.warning(
+            "home_io_control: tuning '%s:' is deprecated: every preamble is set in milliseconds now, "
+            "the same on every radio. It is converted to the duration it gives on this radio; use "
+            "'%s:' instead (see the tuning documentation).",
+            old_key,
+            new_key,
+        )
+        return value
+
+    return validate
+
+
+def _legacy_preamble_assignments(config, radio_type):
+    """The `TuningConfig::legacy_preamble_bytes` fields to set: (field, bytes) per deprecated key given.
+
+    Handed over unconverted: setup() turns each byte count into the duration it gives on the radio
+    (ADR 0097). A response key written for another radio never applied to this one and is left out.
+    """
+    return [
+        (f"legacy_preamble_bytes.{field}", config[old_key])
+        for old_key, (_lo, _hi, _new_key, field, key_radio) in _LEGACY_PREAMBLE_KEYS.items()
+        if old_key in config and key_radio in (None, radio_type)
+    ]
+
+
+def _refuse_old_and_new_preamble_keys(config):
+    """Refuse a deprecated byte key given together with the duration key that replaces it."""
+    for old_key, (_lo, _hi, new_key, _field, _radio) in _LEGACY_PREAMBLE_KEYS.items():
+        if old_key in config and new_key in config:
+            raise cv.Invalid(
+                f"tuning: '{old_key}' (bytes, deprecated) and '{new_key}' (milliseconds) set the same "
+                f"preamble; remove '{old_key}'"
+            )
+    return config
+
+
 # Numeric parameters that are protocol bytes, written in hex in YAML: key -> hex digits.
 _HEX_PARAMS = {
     CONF_KEY_EXTRACTION_TYPE_WORD: 4,
@@ -487,6 +588,13 @@ def _parse_payload(value):
     return int(value, 16)
 
 
+def _number_validator(key, low, high):
+    """Range validator of a numeric parameter: a float for a duration in ms, an int otherwise."""
+    if key in _FLOAT_PARAMS:
+        return cv.float_range(min=low, max=high)
+    return cv.int_range(min=low, max=high)
+
+
 # Tuning sub-schema (imported and extended by the hub __init__.py).
 #
 # Only `ui_controls` carries a Python default (it is a feature toggle, not a tunable). Every
@@ -515,13 +623,18 @@ TUNING_SCHEMA = cv.Schema(
         ): _validate_discovery_send_channels,
         cv.Optional(CONF_PAIRING_KEY_TRANSFER): _validate_key_transfer_mode,
         **{cv.Optional(key): cv.boolean for key in _BOOL_PARAMS},
+        cv.Optional(CONF_LBT_MAX_RETRIES): _deprecated_lbt_max_retries,
         # Numeric parameters share their range with the number-entity bounds via _NUMBER_PARAMS.
         **{
-            cv.Optional(key): cv.int_range(min=lo, max=hi)
+            cv.Optional(key): _number_validator(key, lo, hi)
             for key, (lo, hi, _step, _unit) in _NUMBER_PARAMS.items()
             if key not in _HEX_PARAMS
         },
         **{cv.Optional(key): _hex_value(key, digits) for key, digits in _HEX_PARAMS.items()},
+        **{
+            cv.Optional(old_key): _deprecated_preamble_bytes(old_key, lo, hi, new_key)
+            for old_key, (lo, hi, new_key, _field, _radio) in _LEGACY_PREAMBLE_KEYS.items()
+        },
     }
 )
 
@@ -550,7 +663,9 @@ def _inject_tuning_companion_ids(config):
     return config
 
 
-TUNING_CONFIG_SCHEMA = cv.All(TUNING_SCHEMA, _inject_tuning_companion_ids)
+TUNING_CONFIG_SCHEMA = cv.All(
+    TUNING_SCHEMA, _refuse_old_and_new_preamble_keys, _inject_tuning_companion_ids
+)
 
 
 def _cpp_bool(value):
@@ -582,7 +697,7 @@ _ENUM_ASSIGNMENTS = (
 )
 
 
-def _apply_tuning_config(config, var):
+def _apply_tuning_config(config, var, radio_type):
     """Generate C++ code that builds a TuningConfig from the validated YAML.
 
     Only keys the user actually provided are emitted; every omitted key keeps the
@@ -642,17 +757,13 @@ def _apply_tuning_config(config, var):
         if key in config:
             _assign(tuning, key, config[key])
 
-    # Emitted under the same condition as the value above, and deliberately next to it: the flag
-    # tells setup() the user picked this value, so the radio driver's default must not replace it
-    # (ADR 0042). "The user chose 32" and "nobody chose anything" are indistinguishable from the
-    # value alone, which is why a second field exists at all.
-    if CONF_NORMAL_START_PREAMBLE in config:
-        _assign(tuning, "normal_start_preamble_from_yaml", "true")
-
-    # Same reasoning: without the flag, discovery follows the radio's start preamble (or the
-    # wake-up preamble under pairing_discovery_low_power) instead of using the emitted value.
-    if CONF_PAIRING_DISCOVERY_PREAMBLE in config:
+    # Without the flag, discovery follows the start preamble (or the wake-up preamble under
+    # pairing_discovery_low_power) instead of using the emitted value.
+    if CONF_PAIRING_DISCOVERY_PREAMBLE_MS in config:
         _assign(tuning, "pairing_discovery_preamble_set", "true")
+
+    for field, value in _legacy_preamble_assignments(config, radio_type):
+        _assign(tuning, field, value)
 
     cg.add(var.set_tuning_config(tuning))
 
@@ -727,7 +838,10 @@ async def _create_select(config, var, key, options):
     await cg.register_component(entity, entity_config)
 
 
-async def to_code(config, var):
-    """Generate code for the tuning block."""
-    _apply_tuning_config(config, var)
+async def to_code(config, var, radio_type):
+    """Generate code for the tuning block.
+
+    `radio_type` is the hub's `radio_type:`; it decides which deprecated response key applies.
+    """
+    _apply_tuning_config(config, var, radio_type)
     await _create_tuning_entities(config, var)

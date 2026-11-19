@@ -1,12 +1,13 @@
-# ADR 0089: An electric storage water heater is a model read from its registers
+# ADR 0099: An electric storage water heater is a model read from its registers
 
-<!-- doxygen-label: adr0089 -->
+<!-- doxygen-label: adr0099 -->
 
 **Status:** Accepted · **Recorded:** 2026-11
 
 Extends [ADR 0068](0068-a-domestic-hot-water-device-is-a-water-heater.md) and
-[ADR 0081](0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md), and uses the model rows of
-[ADR 0067](0067-a-model-below-the-subtype-for-products-that-share-a-wire-type.md).
+[ADR 0081](0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md), uses the model rows of
+[ADR 0067](0067-a-model-below-the-subtype-for-products-that-share-a-wire-type.md), and picks its modes by what heats,
+as [ADR 0090](0090-a-water-heaters-modes-are-chosen-by-what-heats.md) does.
 
 ## Context
 
@@ -35,7 +36,8 @@ apart, and the entity's modes and range are fixed at setup.
 2. **Its poll reads registers only**, with no status read and none of the three registers it leaves empty.
 3. **Boost and away are a write of their flag**, read back at once; the entity shows the read-back, never the command.
    A flag the heater does not keep fails the write.
-4. **The mode write stays register `0x0006`.** The entity offers `eco` (automatic) and `electric` (manual).
+4. **The mode write stays register `0x0006`.** The entity offers `eco` (automatic, as on the Calypso) and `electric`
+   (manual: only the element heats).
 5. **A target selects a shower count.** The heater takes no free target: 2, 3 and 4 showers heat to 50, 60 and 70 °C,
    so a target in manual mode writes the nearest count to `0x0048`. In automatic mode and in absence it is dropped.
 6. **A heater declared without the model that answers `FFFF`** is named in a warning, its capabilities read as none,

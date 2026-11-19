@@ -40,6 +40,7 @@ void RadioSX1276::write_register_(uint8_t reg, uint8_t value) {
 // === Radio mode control ===
 
 void RadioSX1276::set_mode_(uint8_t mode) {
+  this->clear_rssi_latch_();  // any mode change ends the reception the latch belonged to
   uint8_t const current = this->read_register_(REG_OP_MODE);
   this->write_register_(REG_OP_MODE, (current & ~MODE_MASK) | (mode & MODE_MASK));
   // Judged on a register sample taken after the deadline (see poll_until), so a task preempted past
@@ -91,6 +92,7 @@ void RadioSX1276::change_frequency(uint32_t freq_hz) {
   this->write_register_(REG_FRF_LSB, (uint8_t) (frf & 0xFF));
   this->current_freq_ = freq_hz;
   this->preamble_hold_state_.release();  // a preamble held on the old channel says nothing about this one
+  this->clear_rssi_latch_();             // likewise a level taken on the old channel
   // A retune in RX (FastHop: FRF only, no mode change) keeps the receiver's state from the old
   // channel: PreambleDetect stays latched and AGC/AFC stay where a preamble, or noise, left them.
   // Restarting the chain clears both, so the next channel's preamble detection is its own. Without
@@ -102,6 +104,23 @@ void RadioSX1276::change_frequency(uint32_t freq_hz) {
 }
 
 int16_t RadioSX1276::read_rssi() { return -(int16_t) this->read_register_(REG_RSSI_VALUE) / 2; }
+
+void RadioSX1276::latch_rssi_at_sync_() {
+  if (this->rssi_latched_)
+    return;
+  this->rssi_at_sync_raw_ = this->read_register_(REG_RSSI_VALUE);
+  this->rssi_latched_ = true;
+}
+
+void RadioSX1276::clear_rssi_latch_() { this->rssi_latched_ = false; }
+
+uint8_t RadioSX1276::capture_rssi_raw_() {
+  // RegRssiValue is live: it follows the channel, so once the frame has ended it reads the noise
+  // floor. On a bench V2 receiving a dimmer the level was -42 dBm at sync and mid-frame but -84 dBm
+  // at PayloadReady. Without a sighting of the sync word in flight (DIO0 fired before any poll
+  // saw it) the end-of-frame read is all there is.
+  return this->rssi_latched_ ? this->rssi_at_sync_raw_ : this->read_register_(REG_RSSI_VALUE);
+}
 
 bool RadioSX1276::is_sync_detected() {
   return (this->read_register_(REG_IRQ_FLAGS1) & 0x01) != 0;  // Bit 0 = SyncAddressMatch
@@ -120,12 +139,14 @@ bool RadioSX1276::preamble_hold_() {
 bool RadioSX1276::reception_in_progress() {
   if (!this->is_sync_detected()) {
     this->sync_hold_since_us_ = 0;
+    this->clear_rssi_latch_();  // the flag is gone, so is the reception a latched level belonged to
     return this->preamble_hold_();
   }
   this->preamble_hold_state_.release();  // the frame the preamble announced has arrived
   uint32_t const now = micros();
   if (this->sync_hold_since_us_ == 0) {
     this->sync_hold_since_us_ = now;  // first sighting of this reception
+    this->latch_rssi_at_sync_();
     return true;
   }
   if (now - this->sync_hold_since_us_ < RX_HOP_HOLDOFF_US)
@@ -270,7 +291,7 @@ TxResult RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioT
   if (len == 0 || len > RADIO_PACKET_BUFFER_SIZE)
     return TxResult::failed();
   // Measured in RX, before standby: the check needs the receiver running on the TX channel.
-  if (auto busy = this->channel_busy_level_(tx_config, SX1276_CCA_SETTLE_US))
+  if (auto busy = this->channel_busy_level_(tx_config))
     return TxResult::channel_busy(*busy);
 #ifdef IOHOME_FRAME_LOG
   log_frame("TX", data, len, tx_config.freq_hz, tx_config.preamble_len);
@@ -321,6 +342,11 @@ bool RadioSX1276::poll_until_payload_ready_(uint32_t timeout_ms, bool &saw_dio0,
       break;
     }
     irq1 = this->read_register_(REG_IRQ_FLAGS1);
+    if ((irq1 & 0x01) != 0) {  // SyncAddressMatch: the frame is on air now; read its level first
+      this->latch_rssi_at_sync_();
+    } else {  // no reception, or one the chip dropped on a bad CRC: the next sync is a new frame
+      this->clear_rssi_latch_();
+    }
     irq2 = this->read_register_(REG_IRQ_FLAGS2);
     if ((irq2 & 0x04) != 0)
       break;
@@ -354,11 +380,12 @@ bool RadioSX1276::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
   if (!this->poll_until_payload_ready_(timeout_ms, saw_dio0, irq1, irq2))
     return false;
 
-  uint8_t const rssi = this->read_register_(REG_RSSI_VALUE);
+  uint8_t const rssi = this->capture_rssi_raw_();
   if ((irq2 & 0x04) == 0) {
     this->fill_capture_info_(true, irq1, irq2, rssi, nullptr, 0, nullptr, 0);
     return false;
   }
+  this->clear_rssi_latch_();  // consumed: the next frame gets its own level
 
   packet.len = this->read_fifo_packet_(packet.data, sizeof(packet.data));
   packet.freq_hz = this->current_freq_;
@@ -377,8 +404,9 @@ bool RadioSX1276::check_for_packet(RadioRxPacket &packet) {
 
   uint8_t const irq1 = this->read_register_(REG_IRQ_FLAGS1);
   uint8_t const irq2 = this->read_register_(REG_IRQ_FLAGS2);
-  uint8_t const rssi = this->read_register_(REG_RSSI_VALUE);
+  uint8_t const rssi = this->capture_rssi_raw_();
   if ((irq2 & 0x04) != 0) {
+    this->clear_rssi_latch_();  // consumed: the next frame gets its own level
     // The frame the preamble announced has arrived. The idle hop may not have read SyncAddressMatch
     // while it was on air (a long loop pass), and a running slice reads nothing, so end the hold here.
     this->preamble_hold_state_.release();

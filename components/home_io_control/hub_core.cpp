@@ -150,7 +150,7 @@ void IOHomeControlComponent::setup() {
   this->initialized_ = true;
   this->register_management_actions_();
   this->exchange_engine_.reset_hop_timestamp();
-  this->resolve_start_preamble_default_();
+  this->convert_legacy_preamble_bytes_();
   this->apply_tuning_to_radio_();
   if (this->tuning_.active) {
     std::string const snapshot = tuning_config_full_snapshot(this->tuning_);
@@ -222,18 +222,29 @@ void IOHomeControlComponent::apply_tuning_to_radio_() {
   this->radio_->apply_tuning(this->tuning_);
 }
 
-/// @brief Take the directed start preamble from the driver when YAML did not choose one.
+/// @brief Turn the deprecated byte-denominated preamble keys into the durations they give on this radio.
 ///
-/// Runs once, after the radio exists and before the first transmit. How much preamble a start
-/// frame needs depends on what the driver actually puts on air, so the default is the driver's to
-/// give (ADR 0042); an explicit `normal_start_preamble:` always wins, including a shorter value.
-/// The resolved value is reported by dump_config(), not from here — see the note in its body.
-void IOHomeControlComponent::resolve_start_preamble_default_() {
-  if (this->radio_ == nullptr || this->tuning_.normal_start_preamble_from_yaml)
+/// Runs once, after the radio exists and before the first transmit. Python hands over each legacy
+/// key that applies to the board (`tuning.legacy_preamble_bytes`); the duration it has always lasted
+/// on this radio is the driver's to compute (ADR 0097), so the byte value keeps its meaning and no
+/// chip name appears here. A legacy discovery preamble also marks the discovery preamble as set.
+void IOHomeControlComponent::convert_legacy_preamble_bytes_() {
+  if (this->radio_ == nullptr)
     return;
-  // Silent here on purpose: dump_config() reports the resolved value, because that is the only
-  // output a log client attaching after boot receives.
-  this->tuning_.normal_start_preamble = this->radio_->default_start_preamble();
+  const TuningConfig::LegacyPreambleBytes &legacy = this->tuning_.legacy_preamble_bytes;
+  const RadioDriver &radio = *this->radio_;
+  if (legacy.low_power_wake != 0)
+    this->tuning_.low_power_wake_ms = radio.preamble_ms_for_bytes(legacy.low_power_wake);
+  if (legacy.start != 0)
+    this->tuning_.start_preamble_ms = radio.preamble_ms_for_bytes(legacy.start);
+  if (legacy.response != 0)
+    this->tuning_.response_preamble_ms = radio.preamble_ms_for_bytes(legacy.response);
+  if (legacy.cold_broadcast_reply != 0)
+    this->tuning_.cold_broadcast_reply_preamble_ms = radio.preamble_ms_for_bytes(legacy.cold_broadcast_reply);
+  if (legacy.discovery != 0) {
+    this->tuning_.pairing_discovery_preamble_ms = radio.preamble_ms_for_bytes(legacy.discovery);
+    this->tuning_.pairing_discovery_preamble_set = true;
+  }
 }
 
 /// Update a numeric tuning parameter from a Home Assistant `number` entity.
@@ -251,7 +262,7 @@ void IOHomeControlComponent::update_tuning_number(const std::string &name, float
   param->set(this->tuning_, value);
   if (param->applies_to_radio)
     this->apply_tuning_to_radio_();
-  ESP_LOGI(detail::TAG, "%s", tuning_update_log_line(name, std::to_string(static_cast<int>(value))).c_str());
+  ESP_LOGI(detail::TAG, "%s", tuning_update_log_line(name, format_tuning_number(value)).c_str());
 }
 
 /// Update a select tuning parameter from a Home Assistant `select` entity.
@@ -319,7 +330,7 @@ ExchangeOutcome IOHomeControlComponent::send_and_receive_(const IoFrame &request
   // by its own count, and a resting receiver hears only that one. The override also takes the wake
   // belief out of the exchange, which would lead short while the moving evidence is still fresh.
   const uint16_t preamble_override = (attempts.wake_preamble_first && (request.ctrl1 & CTRL1_LOW_POWER) != 0)
-                                         ? this->tuning_.low_power_wake_preamble
+                                         ? this->exchange_engine_.wake_preamble()
                                          : 0;
   ExchangeOptions options{attempts};
   options.preamble_override = preamble_override;
@@ -475,6 +486,11 @@ void IOHomeControlComponent::loop() {
   if (this->radio_test_mode_)
     return;
 
+  // 1W frames an exchange heard and ignored are handled first: they are older than anything the
+  // idle receiver can hold, and the burst window they open gates the operation dispatched below.
+  if (!this->busy_)
+    this->drain_overheard_oneway_frames_();
+
   // Check for received packets (non-blocking)
   if (!this->busy_) {
     RadioRxPacket packet{};
@@ -577,7 +593,13 @@ void IOHomeControlComponent::listen_for_key_extraction_peer_() {
 }
 
 void IOHomeControlComponent::queue_due_catchup_reads_() {
-  if (!this->poll_policy_.take_due_catchup(millis()))
+  const uint32_t now = millis();
+  // A read the device left unanswered is retried once, one catch-up delay later (ADR 0095).
+  for (const std::string &device_id : this->poll_policy_.take_due_catchup_retries(now)) {
+    ESP_LOGD(TAG, "Device %s: catch-up read unanswered, reading it once more", device_id.c_str());
+    this->queue_request_device_status(device_id);
+  }
+  if (!this->poll_policy_.take_due_catchup(now))
     return;
   const std::vector<std::string> devices = this->registry_.all_linked_devices();
   ESP_LOGD(TAG, "No exchange for %" PRIu32 " ms after linked-remote activity: reading %zu linked device(s)",
@@ -586,7 +608,7 @@ void IOHomeControlComponent::queue_due_catchup_reads_() {
   // so the read treats its state as unknown and leads with the short attempt a moving receiver hears;
   // an answer that says moving opens the follow-up window by itself (follow_moving_report()).
   for (const std::string &device_id : devices) {
-    this->poll_policy_.mark_state_unknown(device_id);
+    this->poll_policy_.start_catchup_read(device_id);
     this->queue_request_device_status(device_id);
   }
 }
@@ -627,12 +649,20 @@ void IOHomeControlComponent::dump_config() {
   ESP_LOGCONFIG(detail::TAG, "  Node ID: %s", this->node_id_str_.c_str());
   ESP_LOGCONFIG(detail::TAG, "  Radio: %s", this->radio_type_.c_str());
   ESP_LOGCONFIG(detail::TAG, "  TX Power: %u dBm", this->tx_power_);
-  // Printed for every board, from the dump rather than from setup(): the value decides whether a
-  // directed start frame is heard at all, it is chip-dependent (ADR 0042), and a reporter's pasted
-  // log is usually captured after boot, where setup()'s output is already gone.
-  ESP_LOGCONFIG(detail::TAG, "  Start preamble: %u bytes (%s)", this->tuning_.normal_start_preamble,
-                this->tuning_.normal_start_preamble_from_yaml ? "set in YAML" : "from the radio driver");
-  ESP_LOGCONFIG(detail::TAG, "  Discovery preamble: %u bytes (%s)", effective_discovery_preamble(this->tuning_),
+  // Printed for every board, from the dump rather than from setup(): the durations decide whether a
+  // directed start frame is heard at all, and a reporter's pasted log is usually captured after
+  // boot, where setup()'s output is already gone. Each is also shown in programmed bytes on this
+  // radio, the number the driver actually sends.
+  if (this->radio_ != nullptr) {
+    ESP_LOGCONFIG(detail::TAG, "  Start preamble: %g ms (%u bytes)",
+                  static_cast<double>(this->tuning_.start_preamble_ms), this->exchange_engine_.start_preamble());
+    ESP_LOGCONFIG(detail::TAG, "  Wake-up preamble: %g ms (%u bytes)",
+                  static_cast<double>(this->tuning_.low_power_wake_ms), this->exchange_engine_.wake_preamble());
+    ESP_LOGCONFIG(detail::TAG, "  Response preamble: %g ms (%u bytes)",
+                  static_cast<double>(this->tuning_.response_preamble_ms), this->radio_->response_preamble());
+  }
+  ESP_LOGCONFIG(detail::TAG, "  Discovery preamble: %g ms (%s)",
+                static_cast<double>(effective_discovery_preamble_ms(this->tuning_)),
                 this->tuning_.pairing_discovery_preamble_set
                     ? "set in tuning"
                     : (this->tuning_.pairing_discovery_low_power ? "wake-up preamble, discovery is low-power"

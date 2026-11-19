@@ -133,6 +133,9 @@ void IOHomeClimate::setup() {
   if (this->has_range_)
     this->heating_port_->set_device_temperature_range(this->device_id_, this->range_min_c_, this->range_max_c_);
 
+  for (const HeatingFunction fn : this->register_reads_)
+    this->heating_port_->enable_heating_register_read(this->device_id_, fn);
+
   // Custom presets are registered on the entity and referenced by the traits; IO's program mode,
   // the comfort offsets and the secured level have no standard preset.
   if (const HeatingProfile *profile = this->profile_(); profile != nullptr) {
@@ -197,26 +200,43 @@ void IOHomeClimate::control(const climate::ClimateCall &call) {
 }
 
 HeatingWritePlan IOHomeClimate::plan_write_(const HeatingProfile &profile, const HeatingWriteRequest &request) {
-  const HeatingWritePlan plan =
-      plan_heating_write(profile, request, heating_device_facts(this->device_port_->get_device(this->device_id_)));
+  // A target on a heater with a programme asks the heater what it runs first: the heater may have changed
+  // since the last poll (its panel, a boost that ended), and the card's state is no input.
+  const bool state_answered = heating_request_reads_programme_state(profile, request) &&
+                              this->heating_port_->read_programme_state(this->device_id_);
+  const HeatingWritePlan plan = plan_heating_write(
+      profile, request, heating_device_facts(this->device_port_->get_device(this->device_id_), state_answered));
   if (!plan.is_write())
-    this->log_refusal_(profile, plan);
+    this->log_refusal_(plan);
   return plan;
 }
 
-void IOHomeClimate::log_refusal_(const HeatingProfile &profile, const HeatingWritePlan &plan) const {
+void IOHomeClimate::log_refusal_(const HeatingWritePlan &plan) const {
   switch (plan.refusal) {
-    case HeatingRefusal::NOT_COMMANDABLE: {
-      const char *name = profile.presets[plan.preset_index].custom_name;
-      ESP_LOGW(TAG, "Device %s: preset '%s' is reported by the device and cannot be set", this->device_id_.c_str(),
-               name != nullptr ? name : "(standard)");
-      break;
-    }
     case HeatingRefusal::NO_SETPOINT:
       ESP_LOGW(TAG, "Device %s has no adjustable setpoint; the request is ignored", this->device_id_.c_str());
       break;
     case HeatingRefusal::NO_TARGET:
       ESP_LOGW(TAG, "Device %s: no target temperature known yet, set one before selecting heat",
+               this->device_id_.c_str());
+      break;
+    case HeatingRefusal::PROGRAMME_STATE_UNANSWERED:
+      ESP_LOGW(TAG,
+               "Device %s did not answer the read of its mode or timed run: the target is not written (a write "
+               "now could change the programme's comfort temperature)",
+               this->device_id_.c_str());
+      break;
+    case HeatingRefusal::IN_FORCE_UNKNOWN:
+      ESP_LOGW(TAG,
+               "Device %s did not answer the read of its temperature in force: the target is not written (a write "
+               "now could change the programme's comfort temperature)",
+               this->device_id_.c_str());
+      break;
+    case HeatingRefusal::PERIOD_UNKNOWN:
+      ESP_LOGW(TAG,
+               "Device %s did not report whether its program is in a comfort or an eco period: the target is not "
+               "written (the override would be ignored in a comfort period, a comfort write would change the "
+               "program in an eco period)",
                this->device_id_.c_str());
       break;
     case HeatingRefusal::NO_MATCH:     // the request names nothing this profile offers: nothing to say
@@ -276,6 +296,14 @@ bool IOHomeClimate::send_and_show_(const HeatingProfile &profile, const HeatingW
   });
   if (!sent)
     return false;
+  // An override the read-back did not confirm (refused, or the read-back got no reply) leaves the card as the
+  // heater's own reading made it, which a read-back publishes only when it changes the card. Home Assistant
+  // still shows the value that was typed, so publish the heater's.
+  if (plan.temporary_override && !heating_override_taken(request.target_c, this->card_.target_c)) {
+    this->show_card_(profile);
+    this->publish_state();
+    return false;
+  }
   // A mode or target written to a register is read back, and a read-back that made the card observed
   // publishes itself. A preset publishes with the command, as it always has.
   const bool read_back_publishes = plan.read_back && request.kind != HeatingWriteKind::PRESET;
@@ -327,14 +355,14 @@ void IOHomeClimate::dump_config() {
     ESP_LOGCONFIG(TAG, "  Model: %s", model->name);
   // The register profiles have run on hardware all the way: an Atlantic AGILIA IO radiator (issue #165) and an
   // Atlantic Adelis towel dryer (issue #202). The heating-level profile has run on a Thermor pilot-wire
-  // interface (issue #228): Eco, Comfort and Off.
+  // interface (issue #228): every level but Boost, which the interface ignores.
   const char *status = "experimental, unvalidated on hardware";
   switch (heating_hardware_status(this->profile_())) {
     case HeatingHardwareStatus::WRITES_EXPERIMENTAL:
       status = "readings and setpoint confirmed on hardware; mode and preset writes experimental";
       break;
     case HeatingHardwareStatus::LEVELS_CONFIRMED:
-      status = "Eco, Comfort and Off confirmed on hardware; no level read-back, other presets experimental";
+      status = "levels confirmed on hardware except Boost; no level read-back";
       break;
     case HeatingHardwareStatus::CONFIRMED:
       status = "confirmed on hardware (setpoint, mode, presets, read-back)";

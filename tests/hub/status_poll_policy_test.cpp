@@ -753,7 +753,7 @@ TEST(StatusPollPredictedEnd, ALongRemainingTimeAimsAtTheEndPlusAMargin) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
 
-  policy.on_trusted_report("DEV", 12, T0);
+  policy.on_trusted_report("DEV", 12, T0, false);
 
   EXPECT_EQ(policy.get_settle_update("DEV"), T0 + 12000u + PREDICTED_END_MARGIN_MS);
 }
@@ -763,7 +763,7 @@ TEST(StatusPollPredictedEnd, AShortOrZeroCountAimsAtItsEndToo) {
   policy.begin_tracking("DEV", 0, T0);
 
   for (const uint16_t remaining : {uint16_t{2}, uint16_t{1}, uint16_t{0}}) {
-    policy.on_trusted_report("DEV", remaining, T0);
+    policy.on_trusted_report("DEV", remaining, T0, false);
     EXPECT_EQ(policy.get_settle_update("DEV"), T0 + remaining * 1000u + PREDICTED_END_MARGIN_MS)
         << "the end read of a count of " << remaining << " s is a settling read";
   }
@@ -772,8 +772,8 @@ TEST(StatusPollPredictedEnd, AShortOrZeroCountAimsAtItsEndToo) {
 TEST(StatusPollPredictedEnd, AShortCountReAimsNearerAndPopsAsASettlingRead) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
-  policy.on_trusted_report("DEV", 12, T0);
-  policy.on_trusted_report("DEV", 2, T0 + 10500);
+  policy.on_trusted_report("DEV", 12, T0, false);
+  policy.on_trusted_report("DEV", 2, T0 + 10500, false);
   EXPECT_EQ(policy.get_settle_update("DEV"), T0 + 13500u);
 
   EXPECT_FALSE(policy.pop_due_device(T0 + 13500).has_value());
@@ -784,18 +784,18 @@ TEST(StatusPollPredictedEnd, AShortCountReAimsNearerAndPopsAsASettlingRead) {
 TEST(StatusPollPredictedEnd, AStaleCountDropsTheAimAndAFallingOneRestoresIt) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
-  policy.on_trusted_report("DEV", 12, T0);
+  policy.on_trusted_report("DEV", 12, T0, false);
   for (uint8_t i = 1; i < PREDICTED_END_STALE_REPORTS; ++i) {
-    policy.on_trusted_report("DEV", 12, T0 + i * 3000u);
+    policy.on_trusted_report("DEV", 12, T0 + i * 3000u, false);
     EXPECT_NE(policy.get_settle_update("DEV"), 0u) << "stale report " << static_cast<int>(i) << " of the limit";
   }
 
-  policy.on_trusted_report("DEV", 12, T0 + 20000);
+  policy.on_trusted_report("DEV", 12, T0 + 20000, false);
   EXPECT_EQ(policy.get_settle_update("DEV"), 0u)
       << "the count has not fallen for " << PREDICTED_END_STALE_REPORTS << " reports: progress reads only";
-  policy.on_trusted_report("DEV", 12, T0 + 23000);
+  policy.on_trusted_report("DEV", 12, T0 + 23000, false);
   EXPECT_EQ(policy.get_settle_update("DEV"), 0u) << "it stays given up while the count stays frozen";
-  policy.on_trusted_report("DEV", 11, T0 + 26000);
+  policy.on_trusted_report("DEV", 11, T0 + 26000, false);
   EXPECT_EQ(policy.get_settle_update("DEV"), T0 + 26000u + 12000u) << "a falling count aims again";
 }
 
@@ -804,44 +804,44 @@ TEST(StatusPollPredictedEnd, ARisingCountCountsAsStaleToo) {
   policy.begin_tracking("DEV", 0, T0);
   uint16_t remaining = 10;
   for (uint8_t i = 0; i <= PREDICTED_END_STALE_REPORTS; ++i)
-    policy.on_trusted_report("DEV", remaining++, T0 + i * 3000u);
+    policy.on_trusted_report("DEV", remaining++, T0 + i * 3000u, false);
   EXPECT_EQ(policy.get_settle_update("DEV"), 0u);
 }
 
 TEST(StatusPollPredictedEnd, NoCountDropsTheAimAndAnUntrackedDeviceHasNone) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
-  policy.on_trusted_report("DEV", 12, T0);
+  policy.on_trusted_report("DEV", 12, T0, false);
 
-  policy.on_trusted_report("DEV", std::nullopt, T0 + 1000);
+  policy.on_trusted_report("DEV", std::nullopt, T0 + 1000, false);
   EXPECT_EQ(policy.get_settle_update("DEV"), 0u);
 
-  policy.on_trusted_report("OTHER", 12, T0);
+  policy.on_trusted_report("OTHER", 12, T0, false);
   EXPECT_EQ(policy.get_settle_update("OTHER"), 0u) << "only a tracked device is aimed at";
 }
 
 TEST(StatusPollPredictedEnd, ANewTrackingCycleAndClearForgetTheAim) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
-  policy.on_trusted_report("DEV", 12, T0);
+  policy.on_trusted_report("DEV", 12, T0, false);
   policy.begin_tracking("DEV", 3000, T0 + 500);  // a newer command
   EXPECT_EQ(policy.get_settle_update("DEV"), 0u);
 
-  policy.on_trusted_report("DEV", 12, T0);
+  policy.on_trusted_report("DEV", 12, T0, false);
   policy.clear("DEV");
   EXPECT_EQ(policy.get_settle_update("DEV"), 0u);
   policy.begin_tracking("DEV", 0, T0);
-  policy.on_trusted_report("DEV", 12, T0);
-  policy.on_trusted_report("DEV", 12, T0 + 1);
+  policy.on_trusted_report("DEV", 12, T0, false);
+  policy.on_trusted_report("DEV", 12, T0 + 1, false);
   policy.begin_tracking("DEV", 0, T0 + 2);
-  policy.on_trusted_report("DEV", 12, T0 + 3);
+  policy.on_trusted_report("DEV", 12, T0 + 3, false);
   EXPECT_NE(policy.get_settle_update("DEV"), 0u) << "the stale count of the earlier move does not carry over";
 }
 
 TEST(StatusPollPredictedEnd, ADueAimWinsAndMarksTheReadAsSettling) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
-  policy.on_trusted_report("DEV", 12, T0);
+  policy.on_trusted_report("DEV", 12, T0, false);
   const uint32_t aim = policy.get_settle_update("DEV");
 
   EXPECT_EQ(policy.pop_due_device(aim - 1), std::nullopt) << "not due yet";
@@ -855,7 +855,7 @@ TEST(StatusPollPredictedEnd, ADueAimWinsAndMarksTheReadAsSettling) {
 TEST(StatusPollPredictedEnd, ADueAimDropsAProgressReadDueAtTheSameTime) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
-  policy.on_trusted_report("DEV", 12, T0);
+  policy.on_trusted_report("DEV", 12, T0, false);
   policy.set_next_update("DEV", T0 + 12500);
   const uint32_t aim = policy.get_settle_update("DEV");
 
@@ -867,7 +867,7 @@ TEST(StatusPollPredictedEnd, ADueAimDropsAProgressReadDueAtTheSameTime) {
 TEST(StatusPollPredictedEnd, AProgressReadJustBeforeTheAimIsDroppedAndTheAimStays) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
-  policy.on_trusted_report("DEV", 12, T0);
+  policy.on_trusted_report("DEV", 12, T0, false);
   const uint32_t aim = policy.get_settle_update("DEV");
   policy.set_next_update("DEV", aim - PREDICTED_END_DROPS_PROGRESS_WITHIN_MS);
 
@@ -881,7 +881,7 @@ TEST(StatusPollPredictedEnd, AProgressReadJustBeforeTheAimIsDroppedAndTheAimStay
 TEST(StatusPollPredictedEnd, AProgressReadWellBeforeTheAimIsServedAsUsual) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
-  policy.on_trusted_report("DEV", 12, T0);
+  policy.on_trusted_report("DEV", 12, T0, false);
   policy.set_next_update("DEV", T0 + 3000);
 
   ASSERT_TRUE(policy.pop_due_device(T0 + 3001).has_value());
@@ -892,10 +892,10 @@ TEST(StatusPollPredictedEnd, AProgressReadWellBeforeTheAimIsServedAsUsual) {
 TEST(StatusPollPredictedEnd, ATrustedReportWithdrawsAPoppedReadThatHasNotRunYet) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
-  policy.on_trusted_report("DEV", 12, T0);
+  policy.on_trusted_report("DEV", 12, T0, false);
   ASSERT_TRUE(policy.pop_due_device(policy.get_settle_update("DEV") + 1).has_value());
 
-  policy.on_trusted_report("DEV", 20, T0 + 13000);  // moved again before the queued read ran
+  policy.on_trusted_report("DEV", 20, T0 + 13000, false);  // moved again before the queued read ran
   EXPECT_FALSE(policy.take_settling_read("DEV"));
 }
 
@@ -903,9 +903,9 @@ TEST(StatusPollPredictedEnd, AnAimBeyondTheWindowIsNotPlanned) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
 
-  policy.on_trusted_report("DEV", 0xFFF0, T0);  // far longer than the 240 s window
+  policy.on_trusted_report("DEV", 0xFFF0, T0, false);  // far longer than the 240 s window
   EXPECT_EQ(policy.get_settle_update("DEV"), 0u) << "the window ends first: progress reads and its end handling stay";
-  policy.on_trusted_report("DEV", 230, T0);
+  policy.on_trusted_report("DEV", 230, T0, false);
   EXPECT_NE(policy.get_settle_update("DEV"), 0u) << "an aim inside the window is kept";
 }
 
@@ -913,7 +913,7 @@ TEST(StatusPollPredictedEnd, TheAimSurvivesAMillisWrap) {
   StatusPollPolicy policy;
   const uint32_t now = 0xFFFFFFFFu - 5000u;
   policy.begin_tracking("DEV", 0, now);
-  policy.on_trusted_report("DEV", 12, now);
+  policy.on_trusted_report("DEV", 12, now, false);
   const uint32_t aim = policy.get_settle_update("DEV");
   ASSERT_LT(aim, now) << "the aim wrapped past zero";
 
@@ -929,7 +929,7 @@ TEST(StatusPollFrozenCount, NoBackOffWhileTheCountFalls) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
   for (uint16_t remaining = 40; remaining > 30; remaining--) {
-    policy.on_trusted_report("DEV", remaining, T0);
+    policy.on_trusted_report("DEV", remaining, T0, false);
     EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), 0u) << remaining;
   }
 }
@@ -937,17 +937,17 @@ TEST(StatusPollFrozenCount, NoBackOffWhileTheCountFalls) {
 TEST(StatusPollFrozenCount, StepsGrowFromTheThirdReportThatDidNotFallAndStopAtTheLast) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
-  policy.on_trusted_report("DEV", 30, T0);  // nothing to compare with
-  policy.on_trusted_report("DEV", 30, T0);
-  policy.on_trusted_report("DEV", 30, T0);
+  policy.on_trusted_report("DEV", 30, T0, false);  // nothing to compare with
+  policy.on_trusted_report("DEV", 30, T0, false);
+  policy.on_trusted_report("DEV", 30, T0, false);
   EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), 0u) << "two reports that did not fall";
-  policy.on_trusted_report("DEV", 30, T0);
+  policy.on_trusted_report("DEV", 30, T0, false);
   EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), FROZEN_COUNT_BACKOFF_FIRST_MS);
-  policy.on_trusted_report("DEV", 31, T0);  // a rising count is no fall either
+  policy.on_trusted_report("DEV", 31, T0, false);  // a rising count is no fall either
   EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), FROZEN_COUNT_BACKOFF_SECOND_MS);
-  policy.on_trusted_report("DEV", 31, T0);
+  policy.on_trusted_report("DEV", 31, T0, false);
   EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), FROZEN_COUNT_BACKOFF_MAX_MS);
-  policy.on_trusted_report("DEV", 31, T0);
+  policy.on_trusted_report("DEV", 31, T0, false);
   EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), FROZEN_COUNT_BACKOFF_MAX_MS);
 }
 
@@ -955,16 +955,51 @@ TEST(StatusPollFrozenCount, AFallingCountOrNoCountResetsTheSteps) {
   StatusPollPolicy policy;
   policy.begin_tracking("DEV", 0, T0);
   for (int i = 0; i < 5; i++)
-    policy.on_trusted_report("DEV", 30, T0);
+    policy.on_trusted_report("DEV", 30, T0, false);
   ASSERT_GT(policy.frozen_count_delay_ms("DEV"), 0u);
-  policy.on_trusted_report("DEV", 29, T0);
+  policy.on_trusted_report("DEV", 29, T0, false);
   EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), 0u);
 
   for (int i = 0; i < 5; i++)
-    policy.on_trusted_report("DEV", 29, T0);
+    policy.on_trusted_report("DEV", 29, T0, false);
   ASSERT_GT(policy.frozen_count_delay_ms("DEV"), 0u);
-  policy.on_trusted_report("DEV", std::nullopt, T0);
+  policy.on_trusted_report("DEV", std::nullopt, T0, false);
   EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), 0u);
+}
+
+TEST(StatusPollFrozenCount, WaitingReportsNeitherCountNorAimAndTheFirstMovingReportStartsFresh) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  // The waiting cover answers 5 s every 3 s; the move then reports 7 s.
+  for (int i = 0; i < 9; ++i) {
+    policy.on_trusted_report("DEV", 5, T0 + i * 3000u, true);
+    EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), 0u) << "waiting report " << i;
+    EXPECT_EQ(policy.get_settle_update("DEV"), 0u) << "no predicted-end read is planned while it waits";
+  }
+
+  const uint32_t now = T0 + 27000u;
+  policy.on_trusted_report("DEV", 7, now, false);
+  EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), 0u);
+  EXPECT_EQ(policy.get_settle_update("DEV"), now + 7000u + PREDICTED_END_MARGIN_MS);
+}
+
+TEST(StatusPollFrozenCount, AWaitingReportForgetsACountFromBeforeTheWait) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  for (int i = 0; i < 5; i++)
+    policy.on_trusted_report("DEV", 30, T0, false);
+  ASSERT_GT(policy.frozen_count_delay_ms("DEV"), 0u);
+  policy.on_trusted_report("DEV", 30, T0, true);
+  EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), 0u);
+}
+
+TEST(StatusPollFrozenCount, AFrozenCountOutsideAWaitStillBacksOffAfterAWait) {
+  StatusPollPolicy policy;
+  policy.begin_tracking("DEV", 0, T0);
+  policy.on_trusted_report("DEV", 5, T0, true);
+  for (int i = 0; i < 4; i++)
+    policy.on_trusted_report("DEV", 5, T0, false);
+  EXPECT_EQ(policy.frozen_count_delay_ms("DEV"), FROZEN_COUNT_BACKOFF_FIRST_MS);
 }
 
 TEST(StatusPollFrozenCount, AnUnknownDeviceHasNone) {
@@ -1081,4 +1116,77 @@ TEST(StatusPollPolicy, HeardActivityOrAReportDropsTheStateUnknownMark) {
   policy.mark_state_unknown("DEV");
   policy.clear("DEV");  // a report that ends the tracking
   EXPECT_FALSE(policy.take_state_unknown("DEV"));
+}
+
+// ============================================================================
+// Retry of an unanswered catch-up read (ADR 0095)
+// ============================================================================
+
+TEST(StatusPollPolicy, AnUnansweredCatchupReadArmsOneRetryTheDelayLater) {
+  StatusPollPolicy policy;
+  policy.start_catchup_read("DEV");
+  ASSERT_TRUE(policy.take_state_unknown("DEV"));
+  policy.on_catchup_read_unanswered("DEV", T0, CATCHUP_DELAY_MS);
+
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + CATCHUP_DELAY_MS - 1).empty());
+  EXPECT_EQ(policy.take_due_catchup_retries(T0 + CATCHUP_DELAY_MS), std::vector<std::string>{"DEV"});
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + 10 * CATCHUP_DELAY_MS).empty()) << "each retry is returned once";
+  EXPECT_TRUE(policy.take_state_unknown("DEV")) << "the retry is a catch-up read like the first";
+}
+
+TEST(StatusPollPolicy, TheRetrysOwnMissArmsNoFurtherRetry) {
+  StatusPollPolicy policy;
+  policy.start_catchup_read("DEV");
+  policy.on_catchup_read_unanswered("DEV", T0, CATCHUP_DELAY_MS);
+  ASSERT_EQ(policy.take_due_catchup_retries(T0 + CATCHUP_DELAY_MS).size(), 1u);
+
+  policy.on_catchup_read_unanswered("DEV", T0 + CATCHUP_DELAY_MS, CATCHUP_DELAY_MS);
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + 10 * CATCHUP_DELAY_MS).empty());
+
+  // The next catch-up starts afresh: its first miss arms a retry again.
+  policy.start_catchup_read("DEV");
+  policy.on_catchup_read_unanswered("DEV", T0 + 20 * CATCHUP_DELAY_MS, CATCHUP_DELAY_MS);
+  EXPECT_EQ(policy.take_due_catchup_retries(T0 + 21 * CATCHUP_DELAY_MS).size(), 1u);
+}
+
+TEST(StatusPollPolicy, ARetryThatIsAnsweredLeavesNothingToRetry) {
+  StatusPollPolicy policy;
+  policy.on_catchup_read_unanswered("DEV", T0, CATCHUP_DELAY_MS);
+  ASSERT_EQ(policy.take_due_catchup_retries(T0 + CATCHUP_DELAY_MS).size(), 1u);
+  policy.on_catchup_read_answered("DEV");
+
+  // Had the answered retry stayed marked, this miss would count as the retry's own and arm nothing.
+  policy.on_catchup_read_unanswered("DEV", T0 + 5 * CATCHUP_DELAY_MS, CATCHUP_DELAY_MS);
+  EXPECT_EQ(policy.take_due_catchup_retries(T0 + 6 * CATCHUP_DELAY_MS).size(), 1u);
+}
+
+TEST(StatusPollPolicy, NoRetryIsArmedWhileTheCatchupIsSwitchedOff) {
+  StatusPollPolicy policy;
+  policy.on_catchup_read_unanswered("DEV", T0, 0);
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + 10 * CATCHUP_DELAY_MS).empty());
+}
+
+TEST(StatusPollPolicy, ANewCatchupReadOrNewsOfTheDeviceDropsAPendingRetry) {
+  StatusPollPolicy policy;
+  policy.on_catchup_read_unanswered("DEV", T0, CATCHUP_DELAY_MS);
+  policy.start_catchup_read("DEV");
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + 10 * CATCHUP_DELAY_MS).empty()) << "the new read replaces it";
+
+  policy.on_catchup_read_unanswered("DEV", T0, CATCHUP_DELAY_MS);
+  policy.begin_tracking("DEV", DEFAULT_SETTLE_POLL_DELAY_MS, T0);  // a command or a heard press
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + 10 * CATCHUP_DELAY_MS).empty());
+
+  policy.on_catchup_read_unanswered("DEV", T0, CATCHUP_DELAY_MS);
+  policy.clear("DEV");  // a report that ends the tracking
+  EXPECT_TRUE(policy.take_due_catchup_retries(T0 + 10 * CATCHUP_DELAY_MS).empty());
+}
+
+TEST(StatusPollPolicy, ACatchupRetryDueTimeIsWrapSafe) {
+  StatusPollPolicy policy;
+  const uint32_t due = 5;  // CATCHUP_DELAY_MS after a miss just before the rollover
+  const uint32_t miss = due - CATCHUP_DELAY_MS;
+  policy.on_catchup_read_unanswered("DEV", miss, CATCHUP_DELAY_MS);
+  EXPECT_TRUE(policy.take_due_catchup_retries(UINT32_MAX).empty());
+  EXPECT_TRUE(policy.take_due_catchup_retries(due - 1).empty());
+  EXPECT_EQ(policy.take_due_catchup_retries(due).size(), 1u);
 }

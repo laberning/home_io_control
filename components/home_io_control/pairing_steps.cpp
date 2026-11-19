@@ -24,7 +24,8 @@ void enter_pairing_state(ExchangeEngine &engine, PairingTelemetry &telemetry, pa
 }
 
 uint16_t pairing_start_preamble(const ExchangeEngine &engine, const TuningConfig &tuning, const IoFrame &frame) {
-  return std::min(engine.request_preamble_for(frame), effective_discovery_preamble(tuning));
+  return std::min(engine.request_preamble_for(frame),
+                  engine.preamble_bytes_for_ms(effective_discovery_preamble_ms(tuning)));
 }
 
 void note_key_refusal(PairingTelemetry &telemetry, pairing::PairingContext &context, const IoFrame &reply,

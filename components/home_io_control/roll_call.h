@@ -4,8 +4,8 @@
 /// @brief The roll-call sweep: one keyed `0x2A` broadcast, repeated over channels and power classes.
 /// @ingroup hioc_hub
 ///
-/// Scan Paired Devices and (in a later change) a pull-key pairing both ask "which devices answer a
-/// roll-call under this key?". This module is that question, with the key passed in explicitly:
+/// Scan Paired Devices and the key-holder search after a key pull (KeyHolderSearch) both ask
+/// "which devices answer a roll-call under this key?". This module is that question, with the key passed in explicitly:
 /// the frame shapes, the channels, the reply decoding and the de-duplication live here once.
 
 #include "device_registry.h"
@@ -29,9 +29,8 @@ namespace home_io_control {
 /// `loopTask` with `ESPHOME_LOOP_TASK_STACK_SIZE` (8192 B) — not the 3.5 KB ESP-IDF main task.
 /// `ScanResponder` is 12 B, so 24 slots cost ≈288 B (~3.5 % of that stack) in a single array;
 /// replies are decoded on arrival rather than buffered as whole 33 B `IoFrame`s, which is what
-/// makes a limit this size cheap. Installs with 20+ actuators are real, so 8 (the original
-/// value, chosen when whole frames were retained) was too low to be useful. Overflow beyond
-/// this is reported in the scan's own output, never silent.
+/// makes a limit this size cheap. Installs with 20+ actuators are real, so the limit has to hold
+/// more than a handful. Overflow beyond this is reported in the scan's own output, never silent.
 inline constexpr uint8_t SCAN_MAX_REPLIES = 24;
 
 /// @brief One roll-call responder, decoded on arrival.
@@ -50,7 +49,7 @@ struct ScanResponder {
   bool has_extended;          ///< Whether manufacturer/flags above are present.
   bool metadata_complete;     ///< Whether type/subtype were present in the payload.
   uint8_t key_slot;           ///< Which key of the sweep it answered under: 0 is the hub key, n the n-th
-                              ///< per-device key (RollCallKeys).
+                              ///< per-device key (ScanKeys).
 };
 
 /// @brief Channels scan_paired_devices() transmits its roll-call request on, one attempt per
@@ -92,11 +91,11 @@ struct RollCallPass {
 ///
 /// Low-power pass, `CTRL1 = 0x30` (LOW_POWER | ACK): the exact header a real VELUX KLR300 uses
 /// for its own roll-call, whose low-power shutters answered it. Setting CTRL1_LOW_POWER selects
-/// LONG_PREAMBLE through the shared start-preamble rule (request_preamble_for()) — no preamble is
-/// picked here. `ROTATE_ALL_CHANNELS`: those VELUX low-power replies were observed landing on the
+/// the wake-up preamble (`low_power_wake_ms`) through the shared start-preamble rule (request_preamble_for()) —
+/// no preamble is picked here. `ROTATE_ALL_CHANNELS`: those VELUX low-power replies were observed landing on the
 /// request channel, which a skipping listen would miss entirely.
 ///
-/// Always-alive pass, `CTRL1 = 0x00` at `normal_start_preamble`: an always-alive VELUX
+/// Always-alive pass, `CTRL1 = 0x00` at `start_preamble_ms`: an always-alive VELUX
 /// installation ignores a 1024-byte start preamble and answers the 32-byte one; Somfy roll-call
 /// replies land on the request channel about 1 in 149 times, so `ROTATE_SKIPPING_REQUEST` keeps
 /// the window on the channels replies actually use.

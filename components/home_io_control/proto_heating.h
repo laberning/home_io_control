@@ -30,7 +30,9 @@
 ///
 /// A Sauter Hekla heater adds a night light: on/off in register 0x0144 (`01` / `00`, read on a heater
 /// with the light on and off, and written as `0C 61 01 44 <value>` by the heater's own Cozytouch
-/// controller) and, most likely, its brightness in 0x0142 (reads 100 with the light at full) (issue #222).
+/// controller) and its brightness in register 0x0142, which runs 0-10000: the panel's four levels write
+/// 100, 1000, 2000 and 10000 (issue #222, corpus
+/// `sauter_hekla_exchange_night_light_brightness_levels_sx1262`).
 
 #include "proto_frame.h"
 #include "proto_private_registers.h"
@@ -39,6 +41,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 
 namespace esphome {
 namespace home_io_control {
@@ -51,7 +54,11 @@ enum class HeatingFunction : uint8_t {
   POWER_ON,                   ///< Register 0x012C, read: the paired-device list. Logged, never decoded.
   SET_TEMPERATURE,            ///< Register 0x0103, read/write: comfort setpoint, tenths of a degree.
   SET_MODE,                   ///< Register 0x0100, read/write: operating mode (HeatingMode).
-  SET_PRESENCE,               ///< Register 0x0110, write-only: someone is in the room (1) or not (0).
+  SET_PRESENCE,               ///< Register 0x0110, read/write: someone is in the room (1) or not (0). A controller
+                              ///< writes it to tell the heater; a Sauter Hekla reports there whether its own
+                              ///< detection sees someone (issue #222), 0 with nobody in the room and 1 while
+                              ///< someone walks around it, with its occupancy detection on.
+                              ///< \todo Confirm on another heater that the register reports detected presence.
   SET_OPEN_WINDOW_DETECTION,  ///< Register 0x0106, read/write: open-window detection on (1) or off (0).
   MIDNIGHT_SYNC,              ///< Register 0x0130, read: the comfort/eco/auto setpoint block. Logged, never decoded.
   ROOM_TEMPERATURE,           ///< Register 0x0115, read-only: measured room temperature, signed hundredths of a degree.
@@ -68,8 +75,69 @@ enum class HeatingFunction : uint8_t {
                            ///< period heats, tenths of a kelvin.
   NIGHT_LIGHT,             ///< Register 0x0144, read/write: a heater's night light on (1) or off (0).
   NIGHT_LIGHT_BRIGHTNESS,  ///< Register 0x0142, read/write: the night light's brightness, 0-10000, 16-bit.
-                           ///< \todo Confirm on a real heater that a write from the hub dims the light and
-                           ///<       that values between its panel's four levels are accepted (issue #222).
+                           ///< A write dims the light on a Sauter Hekla (issue #222).
+                           ///< \todo Confirm that values between the panel's four levels are taken as written.
+  DEROGATED_SETPOINT,      ///< Register 0x011D, read/write: a heater's temporary override of its programme,
+                           ///< tenths of a degree; 0 while none is active. Written with 0 it cancels the override.
+                           ///< A towel dryer's own panel sets it when the temperature is raised in an eco period
+                           ///< ("dérogation") and the override ends at the next comfort period. A sweep taken
+                           ///< during a panel override read 16.5 here (0 otherwise).
+                           ///< A write from the hub behaves the same on a towel dryer: taken and held in an eco
+                           ///< period, cancelled by 0, acknowledged and ignored (reads back 0) in a comfort period
+                           ///< (issue #202). A Thermor EMOTION 3 H radiator ignores it as well (issue #228).
+                           ///< \todo Confirm on a radiator that takes it that a write holds the temperature until
+                           ///<       the programme's next change and that a write of 0 cancels it.
+  HEATER_TEMPERATURE_IN_FORCE,  ///< Register 0x012A, read-only: the temperature a heater with an adjustable setpoint
+                                ///< (AGILIA, Hekla, EMOTION 3 H) holds right now, tenths of a degree. The same value
+                                ///< as TEMPERATURE_IN_FORCE on the towel dryer, whose sweep read it in both.
+                                ///< \todo Read on a radiator: no AGILIA, Hekla or EMOTION 3 H has answered it yet. A
+                                ///<       heater that answers it empty keeps the comfort-setpoint write.
+  CENTRAL_HEATING_MODE,         ///< Register 0x0153, read-only: 1 while a mixed towel dryer runs on the house's
+                                ///< central heating (its electric element stays off), 0 while it uses the element.
+                                ///< An electric unit is expected to answer without a value.
+                                ///< \todo Experimental: read on one Atlantic Adelis mixed unit over four panel
+                                ///<       toggles (issue #243), never written. Confirm on a second unit, and on
+                                ///<       an electric one what the read returns.
+  OCCUPANCY_DETECTION,          ///< Register 0x0101, read/write: the heater's occupancy detection on (1) or off (0).
+                                ///< On a Sauter Hekla it reads 1 with the detection switched on and 0 with it off,
+                                ///< and the vendor app writes it (issue #222); the detected presence shows in
+                                ///< SET_PRESENCE.
+                                ///< \todo Experimental except on the Hekla: confirm on another heater that it
+                                ///<       answers this register.
+  ENERGY_TOTAL,                 ///< Register 0x0116, read-only: the energy the heater has used, whole kilowatt-hours,
+                                ///< the total its own display shows. The only register of the family whose
+                                ///< 16-bit value is sent most significant byte first (every other is little-endian).
+                                ///< Two Sauter Tahual radiators answered `0D 5E` (3422 kWh) and `01 08` (264 kWh),
+                                ///< equal to their displays (PR #238, corpus `sauter_tahual_probe_energy_register`);
+                                ///< two Thermor EMOTION 3 H answered `0C BE` and `0F A5` (issue #228) and two Atlantic
+                                ///< Adelis units `02 3F` and `03 B2`, whose displays were not compared.
+                                ///< \todo Experimental except on the Sauter Tahual: compare with the display on
+                                ///<       an EMOTION 3 H, an Adelis and a Hekla.
+  BOOST_REMAINING,              ///< Register 0x013A, read-only: the minutes left of a running boost, rounded up; one
+                                ///< byte. Read on an Atlantic Adelis during a one-hour boost: `3C` (60) a moment
+                                ///< after the start and `37` (55) five minutes later, matching the display's
+                                ///< countdown (issue #202, corpus `atlantic_adelis_probe_boost_remaining`). A second
+                                ///< unit read `1C` (28) during a boost, and `00` was read during a drying run; no
+                                ///< read while nothing runs exists, so the hub reads it during a boost only.
+                                ///< \todo Experimental: read on Atlantic Adelis units only; confirm on another dryer.
+  BOOST_DURATION,               ///< Register 0x013B, read-only here: the boost duration set on the panel, minutes. Two
+                                ///< bytes, the duration then the panel's maximum: `3C 3C` (60, 60) with a one-hour
+                                ///< boost set, `0F 3C` (15) and `1E 3C` (30) after the panel was set to those, and
+                                ///< `23 3C` (35, 60) on a second unit; the value changed 1-3 minutes after the panel
+                                ///< did (issue #202). Only the first byte is read.
+                                ///< \todo Experimental: nobody has written it, so how the dryer takes a new
+                                ///<       duration is not known.
+  DRYING_REMAINING,             ///< Register 0x013C, read-only: the minutes left of a running drying run; one byte,
+                                ///< `1C` (28) with the display between 30 and 27 minutes left (issue #202, corpus
+                                ///< `atlantic_adelis_probe_register_01_sweep_drying`), `00` while none runs.
+                                ///< \todo Experimental: read on Atlantic Adelis units only; confirm on another dryer.
+  DRYING_DURATION,              ///< Register 0x013D, read-only here: the duration of the last drying run that was
+                                ///< started, minutes. Two bytes, the duration then the panel's maximum: `1E 78`
+                                ///< (30, 120) after a run of 30 minutes. A change on the panel alone does not show
+                                ///< until the next run starts (checked twice, issue #202). Only the first byte is read.
+                                ///< \todo Experimental: nobody has written it, so how the dryer takes a new
+                                ///<       duration is not known.
+  COUNT,                        ///< Not a function: the number of functions, for storage sized by function.
 };
 
 /// @brief Operating modes of the mode register (HeatingFunction::SET_MODE).
@@ -138,27 +206,61 @@ static constexpr float HEATING_TEMPERATURE_RANGE_MAX_C = 80.0F;  ///< See HEATIN
 /// for its four levels (issue #222).
 constexpr uint16_t HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX = 10000;
 
-/// @brief Register steps per percent of night light brightness: the register scales linearly with the
-/// percentage a Home Assistant light shows.
-constexpr uint16_t HEATING_NIGHT_LIGHT_STEPS_PER_PERCENT = 100;
-
 /// @brief Highest brightness percentage of a Home Assistant light.
 constexpr uint8_t HEATING_NIGHT_LIGHT_PERCENT_MAX = 100;
 
-/// @brief Night light brightness register value for a percentage.
+/// @brief One knot of the night light brightness scale: a percentage and the register value it stands for.
+struct NightLightScaleKnot {
+  uint8_t percent;          ///< Brightness a Home Assistant light shows, 0-100 %.
+  uint16_t register_value;  ///< Register value, 0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX.
+};
+
+/// @brief The night light brightness scale, the one the heater's own vendor app uses: its slider shows
+/// 1000 as 33 %, 2000 as 66 % and 10000 as 100 % (issue #222). Between two knots the scale is linear.
+/// It spreads the range where the light visibly changes over two thirds of the slider: above about 3000
+/// a Sauter Hekla's light hardly gets brighter (issue #222). Ascending in both fields.
+constexpr NightLightScaleKnot HEATING_NIGHT_LIGHT_SCALE[] = {
+    {0, 0},
+    {33, 1000},
+    {66, 2000},
+    {HEATING_NIGHT_LIGHT_PERCENT_MAX, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
+};
+
+/// @brief Night light brightness register value for a percentage, on HEATING_NIGHT_LIGHT_SCALE.
 /// @param percent Brightness, 0-100 %; a larger value is clamped to 100 %.
-/// @return The register value, 0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX.
+/// @return The register value, 0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX, rounded to the nearest whole value.
 constexpr uint16_t night_light_register_from_percent(uint8_t percent) {
-  return static_cast<uint16_t>(std::min<unsigned>(percent, HEATING_NIGHT_LIGHT_PERCENT_MAX) *
-                               HEATING_NIGHT_LIGHT_STEPS_PER_PERCENT);
+  const unsigned p = std::min<unsigned>(percent, HEATING_NIGHT_LIGHT_PERCENT_MAX);
+  for (size_t i = 1; i < std::size(HEATING_NIGHT_LIGHT_SCALE); ++i) {
+    const NightLightScaleKnot &lo = HEATING_NIGHT_LIGHT_SCALE[i - 1];
+    const NightLightScaleKnot &hi = HEATING_NIGHT_LIGHT_SCALE[i];
+    if (p <= hi.percent) {
+      const unsigned span = hi.percent - lo.percent;
+      // Adding half the span before the division rounds to the nearest register value.
+      const unsigned scaled = ((p - lo.percent) * (hi.register_value - lo.register_value)) + (span / 2);
+      return static_cast<uint16_t>(lo.register_value + (scaled / span));
+    }
+  }
+  return HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX;
 }
 
 /// @brief Night light brightness as a fraction of full brightness (0.0-1.0) for a register value, the
-/// form a Home Assistant light shows; 100 is 0.01.
+/// form a Home Assistant light shows: the inverse of night_light_register_from_percent(), unrounded, so
+/// the panel's lowest level 100 shows as 3.3 %.
 /// @param raw Register value; one above HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX is clamped to it.
 constexpr float night_light_fraction_from_register(uint16_t raw) {
-  return static_cast<float>(std::min<unsigned>(raw, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX)) /
-         static_cast<float>(HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
+  const unsigned r = std::min<unsigned>(raw, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
+  for (size_t i = 1; i < std::size(HEATING_NIGHT_LIGHT_SCALE); ++i) {
+    const NightLightScaleKnot &lo = HEATING_NIGHT_LIGHT_SCALE[i - 1];
+    const NightLightScaleKnot &hi = HEATING_NIGHT_LIGHT_SCALE[i];
+    if (r <= hi.register_value) {
+      const float slope =
+          static_cast<float>(hi.percent - lo.percent) / static_cast<float>(hi.register_value - lo.register_value);
+      const float percent = static_cast<float>(lo.percent) + (static_cast<float>(r - lo.register_value) * slope);
+      return percent / static_cast<float>(HEATING_NIGHT_LIGHT_PERCENT_MAX);
+    }
+  }
+  return 1.0F;
 }
 
 /// @brief Register 0x0119: the heater's model name, ASCII, not terminated ("ADELIS 2 DIGIT" on an
@@ -194,8 +296,9 @@ bool heating_function_register(HeatingFunction fn, uint8_t &register_low);
 /// `value` is interpreted by the register's encoding:
 ///   - SET_TEMPERATURE: degrees Celsius within [HEATING_TEMP_MIN_C, HEATING_TEMP_MAX_C], encoded as
 ///     a 16-bit little-endian value in tenths of a degree, round-half-away-from-zero(10 * value).
+///   - DEROGATED_SETPOINT: as SET_TEMPERATURE, or 0 (`00 00`) to cancel the override.
 ///   - SET_MODE: a HeatingMode value widened to float; must be AUTO, MANUAL, PROG or OFF.
-///   - SET_PRESENCE, SET_OPEN_WINDOW_DETECTION: 0 or 1.
+///   - SET_PRESENCE, SET_OPEN_WINDOW_DETECTION, OCCUPANCY_DETECTION: 0 or 1.
 ///   - TOWEL_MODE: a TowelDryerMode value widened to float (0-3).
 ///   - TEMPORARY_STATE: a HeatingTemporaryState value widened to float (0-2).
 ///   - NIGHT_LIGHT: 0 or 1.
@@ -235,10 +338,10 @@ size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVA
 /// Anything else (another command, another register, a truncated value, a function without a typed
 /// decode such as POWER_ON) is "no value".
 ///
-/// The value is returned in natural units: degrees Celsius for the temperature registers, the raw
-/// byte for the others. A byte above its register's range (a mode, a state, a percentage) is
-/// "no value". A raw `-1` on the room-temperature register is a sensor fault: it decodes
-/// as NaN with `true` returned, because the heater did answer.
+/// The value is returned in natural units: degrees Celsius for the temperature registers, whole
+/// kilowatt-hours for the energy total, minutes for the run timers, the raw byte for the others. A byte above its
+/// register's range (a mode, a state, a percentage) is "no value". A raw `-1` on the room-temperature register is a
+/// sensor fault: it decodes as NaN with `true` returned, because the heater did answer.
 /// @param reply The device's reply frame.
 /// @param fn Register the request addressed.
 /// @param[out] value Decoded value; untouched when `false` is returned.
@@ -260,14 +363,27 @@ struct HeatingReadings {
   int16_t towel_mode{-1};              ///< TowelDryerMode value; -1 until read.
   int16_t temporary_state{-1};         ///< HeatingTemporaryState value; -1 until read.
   int16_t working_rate{-1};            ///< Working rate, 0-100 %; -1 until read.
-  float in_force_temperature_c{NAN};   ///< A towel dryer's temperature in force (register 0x0137); NaN until read.
+  float in_force_temperature_c{NAN};   ///< The temperature in force (register 0x0137 on a towel dryer, 0x012A on a
+                                       ///< radiator); NaN until read.
   float eco_setback_k{NAN};            ///< A towel dryer's eco setback (register 0x0104); NaN until read.
+  float derogated_setpoint_c{NAN};     ///< A heater's override of its programme (register 0x011D), 0
+                                       ///< while none is active; NaN until read. Read after a write.
   int16_t night_light{-1};             ///< Night light 1 on / 0 off; -1 until read.
   int16_t night_light_brightness{-1};  ///< Night light brightness register, 0-10000; -1 until read.
-  int16_t level{-1};                   ///< Low byte of the main parameter of a heater commanded with a prefixed
-                                       ///< value: a heating level, or a setpoint alias. -1 until a status reply
-                                       ///< carried one, and again after a reply that carried a plain
-                                       ///< temperature. Set by the hub's status path, not by store().
+  int16_t central_heating_mode{-1};    ///< Central-heating mode 1 on / 0 off (register 0x0153); -1 until read.
+  int16_t occupancy_detection{-1};     ///< Occupancy detection 1 on / 0 off (register 0x0101); -1 until read.
+  int16_t presence{-1};                ///< Someone detected in the room 1 / 0 (register 0x0110); -1 until read.
+  float energy_total_kwh{NAN};         ///< The energy the heater has used, whole kWh (register 0x0116); NaN until read.
+  float boost_remaining_min{NAN};      ///< Minutes left of a running boost (register 0x013A); NaN until read.
+  float boost_duration_min{NAN};       ///< The boost duration set, minutes (register 0x013B); NaN until read.
+  float drying_remaining_min{NAN};     ///< Minutes left of a running drying run (register 0x013C); NaN until read.
+  float drying_duration_min{NAN};      ///< The duration of the last drying run started, minutes (register 0x013D);
+                                       ///< NaN until read.
+  int16_t level{-1};                   ///< Low byte of the main parameter a status read returned: a heating level
+                                       ///< (a plain heater, and a register heater whose programme reports one,
+                                       ///< whose poll ends with that read) or a setpoint alias. -1 until a
+                                       ///< status reply carried one, and again after a reply that carried a
+                                       ///< plain temperature. Set by the hub's status path, not by store().
   int32_t main_parameter{-1};          ///< The raw current main parameter of a heater commanded with an EXECUTE
                                        ///< (a temperature, an alias or a level); -1 until a status reply
                                        ///< carried one. Set by the hub's status path, not by store().
@@ -289,18 +405,19 @@ struct HeatingReadings {
   ///         the readings do not hold.
   [[nodiscard]] bool has(HeatingFunction fn) const;
 
-  /// @brief The stored temperature of a register read in degrees.
+  /// @brief The stored value of a register that is kept as a number with a unit: a temperature in degrees, a
+  /// setback in kelvin, an energy total in kilowatt-hours, a run time in minutes.
+  /// @details Wide enough for a counter: a float holds every 16-bit value exactly, where value_of() stops at 32767.
   /// @param fn Register.
-  /// @return The temperature (a setback in kelvin), or NaN when it has not been read or `fn` is not a
-  ///         temperature register the readings hold.
-  [[nodiscard]] float temperature_of(HeatingFunction fn) const;
+  /// @return The value, or NaN when it has not been read or `fn` is not such a register the readings hold.
+  [[nodiscard]] float number_of(HeatingFunction fn) const;
 
   /// @brief The stored integer value of a register (a mode, a state, a flag, a percentage).
   /// @details Lets a heating profile name the register its card reads (its mode or preset register)
   ///          instead of the caller picking a field.
   /// @param fn Register.
   /// @return The value, or -1 when it has not been read or `fn` is not an integer register the
-  ///         readings hold (the temperatures are not).
+  ///         readings hold (the numbers with a unit, see number_of(), are not).
   [[nodiscard]] int16_t value_of(HeatingFunction fn) const;
 };
 

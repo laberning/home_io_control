@@ -11,9 +11,8 @@
 /// same way `tuning: {ui_controls: true}` creates its number/select entities, and `set_parent()`
 /// is called with the very hub instance being built.
 ///
-/// IOHomeDiscoverButton and IOHomePairingResultTextSensor are also still instantiated by the
-/// deprecated `button:` platform (`button.py`) for the duration of its deprecation window — see
-/// that file's `_warn_deprecated_platform()`.
+/// The retired `button:` platform entry (`button.py`) creates nothing; it fails validation and
+/// names the `discover_and_pair_button` hub option instead (ADR 0036).
 
 #include <functional>
 #include <utility>

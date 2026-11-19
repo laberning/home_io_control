@@ -63,6 +63,13 @@ inline bool is_duplicate_1w_frame(const OneWayDedupState &last, const OneWayDedu
   return (incoming.timestamp - last.timestamp) < window_ms;
 }
 
+/// Whether a frame an exchange wait ignored is kept for the one-way remote handling: only a 1W
+/// frame, the handling's input. A two-way frame from a device outside the exchange stays ignored.
+/// @param frame A parsed frame heard during an exchange wait.
+[[nodiscard]] inline bool keep_overheard_frame_for_oneway_handling(const IoFrame &frame) {
+  return (frame.ctrl0 & CTRL0_PROTOCOL_1W) != 0;
+}
+
 /// Decide whether to hold back a queued background poll because a 1W remote is still transmitting.
 ///
 /// The radio is half-duplex and an authenticated exchange blocks for 1–3 s, during which no frame

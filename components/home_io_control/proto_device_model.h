@@ -16,6 +16,7 @@
 #include "proto_sizes.h"
 
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -292,6 +293,71 @@ struct StopCandidate {
   void clear() { *this = {}; }
 };
 
+/// @brief What a register heater with a programme has shown about its temperature in force in this boot.
+/// @details The hub reads that register while the programme runs (HeatingProgrammePeriod::in_force_fn). A heater
+///          that has answered it with a value has the programme's registers, so from then on a target set while
+///          the programme runs is a temporary override, even while a missed read leaves the value unknown.
+///          A target set while the programme runs and the state is UNKNOWN triggers that read first
+///          (HeaterController::read_programme_state()); only poll_temperature_in_force_() changes it.
+enum class TemperatureInForceSupport : uint8_t {
+  UNKNOWN,   ///< Not answered yet in this boot (no read, or no reply): a target while the programme runs first
+             ///< reads the register and writes nothing if the heater stays silent.
+  REPORTED,  ///< Answered with a value at least once: a target while the programme runs is an override. Kept
+             ///< until the next boot, also when a later answer carries no value.
+  ABSENT,    ///< The first answer came without a value: the heater has no such register. The hub stops reading
+             ///< it until the next boot, and a target writes the comfort setpoint.
+};
+
+/// @brief Which opt-in heater registers the hub reads on every poll of one device, and which of them the
+/// heater turned out not to have.
+/// @details An opt-in register (find_heating_opt_in_read()) is read only where the YAML declares an entity
+///          for it. Each register is in one of three states, kept in two masks over HeatingFunction. Runtime
+///          only: nothing is persisted, and the state of an absent register resets at the next boot.
+class HeatingOptInReads {
+ public:
+  /// The state of one register.
+  enum class State : uint8_t {
+    NOT_ASKED,  ///< No entity is declared: the register is never read.
+    ASKED,      ///< An entity is declared: every poll reads the register.
+    ABSENT,     ///< The heater answered without a value: the hub stops reading it until the next boot.
+  };
+
+  /// @param fn Register.
+  /// @return Its state; NOT_ASKED for a function the masks cannot hold.
+  [[nodiscard]] State state_of(HeatingFunction fn) const {
+    if (!holds(fn))
+      return State::NOT_ASKED;
+    if ((absent_ & mask_of(fn)) != 0)
+      return State::ABSENT;
+    return (asked_ & mask_of(fn)) != 0 ? State::ASKED : State::NOT_ASKED;
+  }
+
+  /// @brief Declare that an entity wants this register read. A register already found absent stays absent.
+  /// @param fn Register.
+  void ask(HeatingFunction fn) {
+    if (holds(fn))
+      asked_ |= mask_of(fn);
+  }
+
+  /// @brief Record that the heater answered a read of this register without a value.
+  /// @param fn Register.
+  void mark_absent(HeatingFunction fn) {
+    if (holds(fn))
+      absent_ |= mask_of(fn);
+  }
+
+ private:
+  using Mask = uint32_t;
+  static_assert(static_cast<unsigned>(HeatingFunction::COUNT) <= std::numeric_limits<Mask>::digits,
+                "every HeatingFunction must fit the masks of HeatingOptInReads; widen Mask");
+  // Not named bit(): the Arduino core defines that as a macro.
+  static constexpr bool holds(HeatingFunction fn) { return fn < HeatingFunction::COUNT; }
+  static constexpr Mask mask_of(HeatingFunction fn) { return Mask{1} << static_cast<unsigned>(fn); }
+
+  Mask asked_{0};
+  Mask absent_{0};
+};
+
 /// @brief Runtime state of a paired IO‑Homecontrol device.
 struct IoDevice {
   uint8_t node_id[NODE_ID_SIZE]{};       ///< Device's 3‑byte radio address.
@@ -310,8 +376,8 @@ struct IoDevice {
   StopCandidate stop_candidate{};      ///< Last off-target "stopped" report, to confirm the next one.
   bool reports_remaining_time{false};  ///< The device has sent a nonzero remaining time in a status reply, so
                                        ///< its zero means "about to stop" rather than "not provided".
-  DeviceFeatures features{0};          ///< What this device can do, resolved by resolve_device_features(). Every
-                                       ///< capability check on a registered device reads this word.
+  DeviceFeatures features;             ///< What this device can do, resolved by resolve_device_features(). Every
+                                       ///< capability check on a registered device reads this set.
   DeviceCapabilityClass entity_class{
       DeviceCapabilityClass::UNKNOWN};  ///< Class of the entity that declared the
                                         ///< device; UNKNOWN for a device no entity declared (the type's class then
@@ -429,10 +495,14 @@ struct IoDevice {
   uint8_t model_check_attempts{0};     ///< Runs of the hub's one-off model check (a heater kind with model rows:
                                        ///< model name read, declared-model hint) so far; the check stops after
                                        ///< it completes or after a bounded number of runs. Runtime only.
-  bool model_checked{false};           ///< The model check completed: both of its reads were answered.
+  /// What a register heater with a programme has answered to the read of its temperature in force. Runtime
+  /// only, until the next boot.
+  TemperatureInForceSupport temperature_in_force{TemperatureInForceSupport::UNKNOWN};
+  bool model_checked{false};       ///< The model check completed: both of its reads were answered.
+  HeatingOptInReads opt_in_reads;  ///< The opt-in registers this device is polled for (see the class).
 };
 
-/// @brief Resolve a device's capability bits and inversion from its kind and its YAML overrides.
+/// @brief Resolve a device's capabilities and inversion from its kind and its YAML overrides.
 /// @details The one place a device's features are decided. The base is the (type, subtype, model) row
 ///          (device_features(), with the declared IoDevice::model); a kind with no row, or an undeclared one, takes
 ///          undeclared_kind_features() of the declaring entity's class (the type's own class when no

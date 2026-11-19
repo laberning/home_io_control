@@ -233,8 +233,17 @@ class HeatingPortDouble : public HubHeatingPort {
     return true;
   }
 
+  bool read_programme_state(const std::string &device_id) override {
+    this->programme_state_reads.push_back(device_id);
+    return this->programme_state_answer;
+  }
+
   void set_device_temperature_range(const std::string &, float min_c, float max_c) override {
     this->temperature_ranges.emplace_back(min_c, max_c);
+  }
+
+  void enable_heating_register_read(const std::string &device_id, HeatingFunction fn) override {
+    this->register_reads.emplace_back(device_id, fn);
   }
 
   bool set_water_heater_target(const std::string &, float celsius) override {
@@ -258,18 +267,21 @@ class HeatingPortDouble : public HubHeatingPort {
     return this->write_result;
   }
 
-  std::vector<Write> writes;                                ///< Register writes, in order.
-  std::vector<HeatingFunction> reads;                       ///< Registers read, in order.
-  std::vector<uint8_t> read_tries;                          ///< The attempt budget of each read.
-  std::vector<HeatingWritePlan> plans;                      ///< Plans handed to execute_heating_plan().
-  std::vector<std::pair<float, float>> temperature_ranges;  ///< (min, max) pairs set.
-  std::vector<uint8_t> water_heater_manual_showers;
+  std::vector<Write> writes;                                            ///< Register writes, in order.
+  std::vector<HeatingFunction> reads;                                   ///< Registers read, in order.
+  std::vector<uint8_t> read_tries;                                      ///< The attempt budget of each read.
+  std::vector<HeatingWritePlan> plans;                                  ///< Plans handed to execute_heating_plan().
+  std::vector<std::string> programme_state_reads;                       ///< Devices passed to read_programme_state().
+  std::vector<std::pair<float, float>> temperature_ranges;              ///< (min, max) pairs set.
+  std::vector<std::pair<std::string, HeatingFunction>> register_reads;  ///< (device, register) asked to be read.
+  std::vector<uint8_t> water_heater_manual_showers;                     ///< Manual shower counts set.
   std::vector<float> water_heater_targets;
   std::vector<DhwMode> water_heater_modes;
   std::vector<bool> water_heater_boosts;
   std::vector<bool> water_heater_aways;
-  bool write_result{true};                        ///< Whether the device accepts a write.
-  std::set<HeatingFunction> refused_writes;       ///< Registers refused on top of write_result.
+  bool programme_state_answer{true};         ///< What read_programme_state() answers: the heater said what it runs.
+  bool write_result{true};                   ///< Whether the device accepts a write.
+  std::set<HeatingFunction> refused_writes;  ///< Registers refused on top of write_result.
   std::map<HeatingFunction, float> read_replies;  ///< Value each register reads as; a missing one fails the read.
 };
 

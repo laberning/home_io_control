@@ -87,9 +87,12 @@ rather than everyday values, which is why they are disabled by default.
 - **RSSI** (dBm): a smoothed signal-strength reading (exponential moving average, 1/8 weight per
   sample), updated on every frame received from the device, whether a reply to the hub or
   unsolicited traffic. Unavailable until the first frame; a placeholder 0 dBm is never published.
-  It is measured at the antenna: a board with a front-end module has the amplifier's gain removed
-  (see [Hardware](hardware.md)), so readings from different boards are comparable to within a few
-  dB.
+  It is the level at sync-word detection, while the frame is on air, on every radio chip; the
+  SX1276 latches it there because its signal register falls back to the noise floor once the frame
+  ends (a bench measurement on a Heltec V2 read -42 dBm during a dimmer's frame and -84 dBm after
+  it). It is measured at the antenna: a board with a front-end module has the amplifier's gain removed
+  (see [Hardware](hardware.md)), so readings from different boards share one scale. Where a board
+  stands and how its antenna points still move its reading by several dB.
 - **Last Contact** (seconds): time since the last frame from the device. It is an age, not a
   timestamp: it resets to about 0 on every frame, including replies to the hub's own polls, and
   counts up while the device is quiet, republished once a minute so it keeps advancing in Home

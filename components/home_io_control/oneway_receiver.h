@@ -15,6 +15,8 @@
 #include "proto_codecs.h"
 #include "proto_frame.h"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -40,15 +42,30 @@ static constexpr uint32_t ONEWAY_POLL_DEFER_CAP_MS = 5000;
 /// duplicate and passes through immediately — see decisions::is_duplicate_1w_frame().
 static constexpr uint32_t ONEWAY_DEDUP_WINDOW_MS = 2000;
 
+/// How many 1W frames heard inside the hub's own exchanges are kept for the remote handling. A remote
+/// repeats a press 4 times, so 4 covers one press heard entirely inside one exchange; a fifth frame
+/// drops the oldest.
+static constexpr size_t ONEWAY_KEPT_FRAMES_MAX = 4;
+
+/// A 1W frame heard while an exchange was waiting, with what the remote handling needs from its
+/// arrival.
+struct KeptOneWayFrame {
+  IoFrame frame{};       ///< The parsed frame.
+  uint32_t heard_ms{0};  ///< millis() when the exchange wait heard it.
+  int16_t rssi_dbm{0};   ///< RSSI of the capture, in dBm.
+};
+
 /// @brief Receive-side state of the 1W frames the hub overhears.
 ///
-/// Four jobs, each a few lines of state:
+/// Five jobs, each a few lines of state:
 /// - the **burst window**: when the current burst of 1W traffic started and when it last advanced,
 ///   which gates background polls (see defers_background_poll());
 /// - the **duplicate filter**: one logical press arrives as many repeats (is_new_press());
 /// - the **pairing-gesture sighting** a later discover_and_pair() attempt seeds its telemetry with
 ///   (recent_pairing_sighting());
-/// - the **sender allowlist** that decides which senders may reach Home Assistant as an event.
+/// - the **sender allowlist** that decides which senders may reach Home Assistant as an event;
+/// - the **kept frames**: 1W frames an exchange wait heard and ignored, held until the exchange has
+///   ended and the hub takes them for the same handling as an idle frame (keep_overheard(), pop_kept()).
 ///
 /// The order in which the hub calls these matters and is the hub's to keep: note_frame() comes
 /// before the duplicate filter so a repeat still counts as activity, and is_new_press() needs the
@@ -88,6 +105,23 @@ class OneWayReceiver {
   /// @return true for a new press, false for a repeat of the previous one.
   [[nodiscard]] bool is_new_press(const IoFrame &frame, const OneWayFrameInfo &info, uint32_t now);
 
+  /// Keep a 1W frame an exchange wait heard, for pop_kept(). A frame that is not 1W is not kept
+  /// (decisions::keep_overheard_frame_for_oneway_handling()). At ONEWAY_KEPT_FRAMES_MAX frames the
+  /// oldest is dropped with a debug line.
+  /// @param frame Parsed frame heard during an exchange wait.
+  /// @param now millis() when it was heard.
+  /// @param rssi_dbm RSSI of the capture, in dBm.
+  void keep_overheard(const IoFrame &frame, uint32_t now, int16_t rssi_dbm);
+
+  /// Take the oldest kept frame out of the store. Call until it returns false to drain; neither
+  /// keeping nor taking allocates.
+  /// @param out Receives the frame when one was kept.
+  /// @return false when nothing is kept (@p out is untouched).
+  [[nodiscard]] bool pop_kept(KeptOneWayFrame &out);
+
+  /// @return true when frames are kept and waiting for pop_kept().
+  [[nodiscard]] bool has_kept() const { return this->kept_count_ != 0; }
+
   /// Whether a queued background poll should wait because a 1W remote is still transmitting.
   /// Binds the burst window to decisions::defer_background_poll_for_1w_activity().
   /// @param next_is_background True when the next queued operation is a background poll.
@@ -120,6 +154,10 @@ class OneWayReceiver {
   decisions::OneWayDedupState last_press_{};
   /// Latest pairing-gesture frame seen on the passive receive path.
   RecentOneWayPairingSighting sighting_{};
+  /// Ring of the frames kept by keep_overheard(): the oldest is at kept_head_, kept_count_ are in use.
+  std::array<KeptOneWayFrame, ONEWAY_KEPT_FRAMES_MAX> kept_{};
+  size_t kept_head_{0};   ///< Index in kept_ of the oldest kept frame.
+  size_t kept_count_{0};  ///< Frames kept, at most ONEWAY_KEPT_FRAMES_MAX.
   /// Config-time allowlist (populated once from YAML), not a per-frame allocation.
   std::vector<std::string> exposed_senders_;
 };

@@ -170,6 +170,24 @@ TEST(DeviceRegistry, PutKeepsTheYamlOverridesOfTheRecordItReplaces) {
   EXPECT_TRUE(has_feature(dev->features, device_feature::LEVELS));
 }
 
+TEST(DeviceRegistry, PutKeepsTheOptInReadsOfTheRecordItReplaces) {
+  DeviceRegistry reg;
+  reg.add("AABBCC", {.type = DeviceType::ELECTRICAL_HEATER, .subtype = 1, .model = DeviceModel::TOWEL_DRYER});
+  reg.get("AABBCC")->opt_in_reads.ask(HeatingFunction::CENTRAL_HEATING_MODE);
+  reg.get("AABBCC")->opt_in_reads.ask(HeatingFunction::OCCUPANCY_DETECTION);
+  reg.get("AABBCC")->opt_in_reads.mark_absent(HeatingFunction::OCCUPANCY_DETECTION);
+  IoDevice paired{};
+  paired.type = DeviceType::ELECTRICAL_HEATER;
+  paired.subtype = 1;
+  reg.put("AABBCC", paired);
+  EXPECT_EQ(reg.get("AABBCC")->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE),
+            HeatingOptInReads::State::ASKED)
+      << "the YAML's sensor still asks for the read after pairing replaces the record";
+  EXPECT_EQ(reg.get("AABBCC")->opt_in_reads.state_of(HeatingFunction::OCCUPANCY_DETECTION),
+            HeatingOptInReads::State::ABSENT)
+      << "and a register the heater lacks stays unasked";
+}
+
 TEST(DeviceRegistry, SizeReflectsRegistrationCount) {
   DeviceRegistry reg;
   EXPECT_EQ(reg.size(), 0u);

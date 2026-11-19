@@ -1,0 +1,12 @@
+# expect-error: heating_level needs an electrical heater: set io_device_type: electrical_heater
+# covers: climate._validate_heating_level
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+climate:
+  - platform: home_io_control
+    name: "Heater"
+    io_device_id: "4D5E6F"
+    heating_level:
+      name: "Heating Level"

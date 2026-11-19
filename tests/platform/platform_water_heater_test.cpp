@@ -118,8 +118,8 @@ void publish(MockHubWaterHeater &hub, const DhwReadings &readings) {
 
 TEST(PlatformWaterHeater, TheThreeHeaterModesMapBothWays) {
   const DeviceModel none = DeviceModel::NONE;
-  EXPECT_EQ(water_heater_mode_for(DhwMode::AUTO, none), WATER_HEATER_MODE_HEAT_PUMP);
-  EXPECT_EQ(water_heater_mode_for(DhwMode::MANUAL_ECO_ON, none), WATER_HEATER_MODE_ECO);
+  EXPECT_EQ(water_heater_mode_for(DhwMode::AUTO, none), WATER_HEATER_MODE_ECO);
+  EXPECT_EQ(water_heater_mode_for(DhwMode::MANUAL_ECO_ON, none), WATER_HEATER_MODE_HEAT_PUMP);
   EXPECT_EQ(water_heater_mode_for(DhwMode::MANUAL_ECO_OFF, none), WATER_HEATER_MODE_PERFORMANCE);
   for (const DhwMode mode : {DhwMode::AUTO, DhwMode::MANUAL_ECO_ON, DhwMode::MANUAL_ECO_OFF}) {
     DhwMode back = DhwMode::AUTO;
@@ -164,7 +164,7 @@ TEST(PlatformWaterHeater, TraitsOfferTheReadingsTheThreeModesAndTheHeatersRange)
   EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_CURRENT_TEMPERATURE));
   EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_TARGET_TEMPERATURE));
   EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_OPERATION_MODE));
-  EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_AWAY_MODE)) << "away mode is offered (experimental)";
+  EXPECT_TRUE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_AWAY_MODE)) << "away mode is offered";
   EXPECT_FALSE(traits.has_feature_flags(WATER_HEATER_SUPPORTS_ON_OFF)) << "no off state has been seen";
   EXPECT_FLOAT_EQ(traits.get_min_temperature(), 20.0F);
   EXPECT_FLOAT_EQ(traits.get_max_temperature(), 62.0F);
@@ -305,7 +305,7 @@ TEST(PlatformWaterHeater, AReadingIsPublishedWithItsMappedMode) {
 
   EXPECT_FLOAT_EQ(entity.get_current_temperature(), 58.1F);
   EXPECT_FLOAT_EQ(entity.get_target_temperature(), 54.0F);
-  EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_ECO);
+  EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_HEAT_PUMP);
   EXPECT_EQ(entity.publish_count_, published_before + 1);
 
   publish(hub, readings);
@@ -327,7 +327,7 @@ TEST(PlatformWaterHeater, AutomaticModeShowsNoTargetAndManualShowsTheReadOne) {
   readings.target_c = 60.0F;
   readings.mode = static_cast<int16_t>(DhwMode::AUTO);
   publish(hub, readings);
-  EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_HEAT_PUMP);
+  EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_ECO);
   EXPECT_TRUE(std::isnan(entity.get_target_temperature()));
 
   // Manual: the mode write's status read brings the heater's manual target.
@@ -377,7 +377,7 @@ TEST(PlatformWaterHeater, AModeIsSentAndTheReadBackIsWhatIsShown) {
 
   ASSERT_EQ(hub.water_heater_modes.size(), 1u);
   EXPECT_EQ(hub.water_heater_modes[0], DhwMode::MANUAL_ECO_OFF);
-  EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_HEAT_PUMP) << "the read-back wins over the command";
+  EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_ECO) << "the read-back wins over the command";
 }
 
 TEST(PlatformWaterHeater, BeforeAnyReadingAnAcceptedWriteShowsTheCommand) {
@@ -386,13 +386,13 @@ TEST(PlatformWaterHeater, BeforeAnyReadingAnAcceptedWriteShowsTheCommand) {
   bind_water_heater(entity, hub);  // no read-back configured
 
   auto call = entity.make_call();
-  call.set_mode(WATER_HEATER_MODE_ECO);
+  call.set_mode(WATER_HEATER_MODE_HEAT_PUMP);
   call.set_target_temperature(55.0F);
   call.perform();
 
   ASSERT_EQ(hub.water_heater_targets.size(), 1u);
   EXPECT_FLOAT_EQ(hub.water_heater_targets[0], 55.0F);
-  EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_ECO);
+  EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_HEAT_PUMP);
   EXPECT_FLOAT_EQ(entity.get_target_temperature(), 55.0F);
 }
 
@@ -429,6 +429,49 @@ TEST(PlatformWaterHeater, ATargetIsNotSentWhileTheHeaterHoldsAutomaticMode) {
   EXPECT_TRUE(std::isnan(entity.get_target_temperature()));
 }
 
+TEST(PlatformWaterHeater, EachHomeAssistantModeWritesTheMatchingHeaterMode) {
+  const std::pair<WaterHeaterMode, DhwMode> expected[] = {
+      {WATER_HEATER_MODE_ECO, DhwMode::AUTO},
+      {WATER_HEATER_MODE_HEAT_PUMP, DhwMode::MANUAL_ECO_ON},
+      {WATER_HEATER_MODE_PERFORMANCE, DhwMode::MANUAL_ECO_OFF},
+  };
+  for (const auto &[ha_mode, heater_mode] : expected) {
+    MockHubWaterHeater hub;
+    IOHomeWaterHeater entity;
+    bind_water_heater(entity, hub);
+    auto call = entity.make_call();
+    call.set_mode(ha_mode);
+    call.perform();
+    ASSERT_EQ(hub.water_heater_modes.size(), 1u) << static_cast<unsigned>(ha_mode);
+    EXPECT_EQ(hub.water_heater_modes[0], heater_mode) << static_cast<unsigned>(ha_mode);
+  }
+}
+
+TEST(PlatformWaterHeater, ATargetIsIgnoredInAutomaticModeWhateverHomeAssistantModeItMapsTo) {
+  // The guard reads the heater's mode: the heat_pump mode is the manual ECO-on setting, so it takes a target.
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+  DhwReadings readings;
+  readings.target_c = 54.0F;
+  readings.mode = static_cast<int16_t>(DhwMode::MANUAL_ECO_ON);
+  publish(hub, readings);
+  ASSERT_EQ(entity.get_mode(), WATER_HEATER_MODE_HEAT_PUMP);
+
+  auto manual = entity.make_call();
+  manual.set_target_temperature(50.0F);
+  manual.perform();
+  ASSERT_EQ(hub.water_heater_targets.size(), 1u) << "heat_pump is manual ECO on and takes a target";
+
+  readings.mode = static_cast<int16_t>(DhwMode::AUTO);
+  publish(hub, readings);
+  ASSERT_EQ(entity.get_mode(), WATER_HEATER_MODE_ECO);
+  auto automatic = entity.make_call();
+  automatic.set_target_temperature(50.0F);
+  automatic.perform();
+  EXPECT_EQ(hub.water_heater_targets.size(), 1u) << "eco is AUTO: the target is dropped";
+}
+
 TEST(PlatformWaterHeater, AFailedModeWriteKeepsTheTargetFromBeingSentInAutomaticMode) {
   MockHubWaterHeater hub;
   hub.mode_result = false;
@@ -439,7 +482,7 @@ TEST(PlatformWaterHeater, AFailedModeWriteKeepsTheTargetFromBeingSentInAutomatic
   publish(hub, readings);
 
   auto call = entity.make_call();
-  call.set_mode(WATER_HEATER_MODE_ECO);
+  call.set_mode(WATER_HEATER_MODE_HEAT_PUMP);
   call.set_target_temperature(54.0F);
   call.perform();
 
@@ -457,7 +500,7 @@ TEST(PlatformWaterHeater, AModeChangeToManualLetsTheTargetOfTheSameCallThrough) 
   publish(hub, readings);
 
   auto call = entity.make_call();
-  call.set_mode(WATER_HEATER_MODE_ECO);
+  call.set_mode(WATER_HEATER_MODE_HEAT_PUMP);
   call.set_target_temperature(54.0F);
   call.perform();
 
@@ -751,6 +794,36 @@ TEST(PlatformWaterHeater, EachBinaryCompanionShowsItsReadingAndNothingBeforeIt) 
   readings.element = 1;
   publish(hub, readings);
   EXPECT_TRUE(backup.state);
+}
+
+TEST(PlatformWaterHeater, HeatingSourceNamesWhatHeatsAndShowsNothingBeforeTheReading) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+  IOHomeDhwHeatingSourceSensor source;
+  source.set_parent(&hub);
+  source.set_device_id("ABC123");
+  source.setup();
+  EXPECT_TRUE(source.state.empty()) << "nothing before the first read";
+
+  DhwReadings readings;
+  readings.mode = static_cast<int16_t>(DhwMode::AUTO);
+  publish(hub, readings);
+  EXPECT_TRUE(source.state.empty()) << "a reading of something else is no heating state";
+
+  readings.heat_pump = 1;
+  readings.element = 0;
+  publish(hub, readings);
+  EXPECT_EQ(source.state, "heat pump");
+  readings.element = 1;
+  publish(hub, readings);
+  EXPECT_EQ(source.state, "heat pump and electric backup");
+  readings.heat_pump = 0;
+  publish(hub, readings);
+  EXPECT_EQ(source.state, "electric backup");
+  readings.element = 0;
+  publish(hub, readings);
+  EXPECT_EQ(source.state, "idle");
 }
 
 // === Boost switch ===

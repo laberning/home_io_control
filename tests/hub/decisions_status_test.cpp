@@ -360,6 +360,15 @@ TEST(DecisionsStatus, ShownExecutionStateHidesAWaitingStateOnlyInACommandAck) {
   }
 }
 
+TEST(DecisionsStatus, OnlyStates2And3AreWaiting) {
+  using decisions::is_waiting;
+  EXPECT_TRUE(is_waiting(ExecutionState::WAITING_FOR_EXECUTING));
+  EXPECT_TRUE(is_waiting(ExecutionState::WAITING_FOR_POWER));
+  for (ExecutionState other : {ExecutionState::NON_EXECUTING, ExecutionState::EXECUTION_ERROR,
+                               ExecutionState::EXECUTING, ExecutionState::DONE, ExecutionState::UNDEFINED})
+    EXPECT_FALSE(is_waiting(other));
+}
+
 TEST(DecisionsStatus, AFrozenCountBacksOffExceptWhileTheCoverWaits) {
   using decisions::backs_off_frozen_count;
   EXPECT_FALSE(backs_off_frozen_count(ExecutionState::WAITING_FOR_EXECUTING));

@@ -248,3 +248,101 @@ TEST(OneWayReceiver, OnlyListedSendersAreExposed) {
   EXPECT_TRUE(rx.is_exposed("9D6085"));
   EXPECT_FALSE(rx.is_exposed("112233"));
 }
+
+// ============================================================================
+// Frames heard during an exchange
+// ============================================================================
+
+namespace {
+/// Everything the receiver keeps, taken out oldest first.
+std::vector<KeptOneWayFrame> drain_kept(OneWayReceiver &rx) {
+  std::vector<KeptOneWayFrame> all;
+  KeptOneWayFrame k;
+  while (rx.pop_kept(k))
+    all.push_back(k);
+  return all;
+}
+}  // namespace
+
+TEST(OneWayReceiver, KeptFramesComeBackOldestFirstWithTheirArrivalAndRssi) {
+  OneWayReceiver rx;
+  rx.keep_overheard(execute_frame(MOVE_CLOSE), T0, -80);
+  rx.keep_overheard(execute_frame(MOVE_STOP), T0 + 40, -75);
+
+  const auto kept = drain_kept(rx);
+  ASSERT_EQ(kept.size(), 2u);
+  EXPECT_EQ(decode_1w_frame(kept[0].frame).main0, MOVE_CLOSE);
+  EXPECT_EQ(kept[0].heard_ms, T0);
+  EXPECT_EQ(kept[0].rssi_dbm, -80);
+  EXPECT_EQ(decode_1w_frame(kept[1].frame).main0, MOVE_STOP);
+  EXPECT_EQ(kept[1].heard_ms, T0 + 40);
+}
+
+TEST(OneWayReceiver, TakingTheKeptFramesEmptiesThem) {
+  OneWayReceiver rx;
+  rx.keep_overheard(execute_frame(MOVE_CLOSE), T0, -80);
+  ASSERT_TRUE(rx.has_kept());
+
+  EXPECT_EQ(drain_kept(rx).size(), 1u);
+  EXPECT_FALSE(rx.has_kept());
+  KeptOneWayFrame untouched;
+  untouched.heard_ms = 123;
+  EXPECT_FALSE(rx.pop_kept(untouched));
+  EXPECT_EQ(untouched.heard_ms, 123u) << "a failed pop leaves the output alone";
+}
+
+TEST(OneWayReceiver, AFifthKeptFrameDropsTheOldest) {
+  OneWayReceiver rx;
+  for (uint32_t i = 0; i < ONEWAY_KEPT_FRAMES_MAX + 1; i++)
+    rx.keep_overheard(execute_frame(MOVE_CLOSE), T0 + i, -80);
+
+  const auto kept = drain_kept(rx);
+  ASSERT_EQ(kept.size(), ONEWAY_KEPT_FRAMES_MAX);
+  EXPECT_EQ(kept.front().heard_ms, T0 + 1) << "the first frame was dropped";
+  EXPECT_EQ(kept.back().heard_ms, T0 + ONEWAY_KEPT_FRAMES_MAX);
+}
+
+TEST(OneWayReceiver, TheKeptRingKeepsArrivalOrderAfterWrappingSeveralTimes) {
+  OneWayReceiver rx;
+  const uint32_t total = ONEWAY_KEPT_FRAMES_MAX * 2 + 3;  // wraps the ring more than once
+  for (uint32_t i = 0; i < total; i++)
+    rx.keep_overheard(execute_frame(MOVE_CLOSE), T0 + i, static_cast<int16_t>(-100 + i));
+
+  const auto kept = drain_kept(rx);
+  ASSERT_EQ(kept.size(), ONEWAY_KEPT_FRAMES_MAX);
+  for (uint32_t i = 0; i < ONEWAY_KEPT_FRAMES_MAX; i++) {
+    const uint32_t expect = total - ONEWAY_KEPT_FRAMES_MAX + i;
+    EXPECT_EQ(kept[i].heard_ms, T0 + expect);
+    EXPECT_EQ(kept[i].rssi_dbm, static_cast<int16_t>(-100 + expect));
+  }
+}
+
+TEST(OneWayReceiver, TheKeptRingRefillsAfterBeingTaken) {
+  OneWayReceiver rx;
+  // Leave the head mid-ring, then empty it, so the refill starts from a non-zero head.
+  for (uint32_t i = 0; i < 3; i++)
+    rx.keep_overheard(execute_frame(MOVE_CLOSE), T0 + i, -80);
+  ASSERT_EQ(drain_kept(rx).size(), 3u);
+
+  for (uint32_t i = 0; i < ONEWAY_KEPT_FRAMES_MAX; i++)
+    rx.keep_overheard(execute_frame(MOVE_STOP), (T0 + 1000) + i, -70);
+
+  const auto kept = drain_kept(rx);
+  ASSERT_EQ(kept.size(), ONEWAY_KEPT_FRAMES_MAX);
+  for (uint32_t i = 0; i < ONEWAY_KEPT_FRAMES_MAX; i++)
+    EXPECT_EQ(kept[i].heard_ms, (T0 + 1000) + i);
+  EXPECT_FALSE(rx.has_kept());
+}
+
+TEST(OneWayReceiver, ATwoWayFrameIsNotKept) {
+  OneWayReceiver rx;
+  IoFrame two_way{};
+  init_frame(two_way, /*is_2w=*/true, /*start=*/true, /*end=*/true, /*low_power=*/false);
+  set_src(two_way, REMOTE_ID);
+  set_dst(two_way, ROLLER_CLASS);
+  set_cmd(two_way, CMD_PRIVATE_RESP, nullptr, 0);
+
+  rx.keep_overheard(two_way, T0, -80);
+
+  EXPECT_FALSE(rx.has_kept());
+}

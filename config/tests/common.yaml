@@ -200,6 +200,20 @@ climate:
     io_device_type: "electrical_heater"
     io_subtype: 1
     io_model: towel_dryer
+    # The level the heater applies now (comfort, eco, boost, ...), from its status read.
+    heating_level:
+      name: "Test Towel Dryer Heating Level"
+    # On while a mixed towel dryer runs on central heating; one extra register read per poll.
+    central_heating_mode:
+      name: "Test Towel Dryer Central Heating Mode"
+    # The minutes left of the boost or drying run in progress (0 with none), and the durations set for them;
+    # one extra register read per poll each, the time left only while a run is on.
+    remaining_time:
+      name: "Test Towel Dryer Remaining Time"
+    boost_duration:
+      name: "Test Towel Dryer Boost Duration"
+    drying_duration:
+      name: "Test Towel Dryer Drying Duration"
   # A heater with a night light: io_model adds the light's registers, night_light: its light entity.
   - platform: home_io_control
     name: "Test Heater With Light"
@@ -209,12 +223,30 @@ climate:
     io_model: heater_with_light
     night_light:
       name: "Test Night Light"
+    # The occupancy detection setting (a switch) and what the heater detects (a binary sensor); one extra
+    # register read per poll each.
+    occupancy_detection:
+      name: "Test Occupancy Detection"
+    occupancy:
+      name: "Test Occupancy"
+    # The heater's own energy counter (a sensor in kWh); one extra register read per poll.
+    energy:
+      name: "Test Heater Energy"
+  # An interface for pilot-wire heaters reports the same type and subtype; io_model drops the boost it ignores.
+  - platform: home_io_control
+    name: "Test Pilot Wire Interface"
+    io_device_id: "FEEB2B"
+    io_device_type: "electrical_heater"
+    io_subtype: 0
+    io_model: pilot_wire_interface
   # The plain electrical heater is commanded with heating levels (io_subtype 0).
   - platform: home_io_control
     name: "Test Plain Heating"
     io_device_id: "FEEB23"
     io_device_type: "electrical_heater"
     io_subtype: 0
+    heating_level:
+      name: "Test Plain Heating Level"
   # The heating temperature interface and the heat pump carry a temperature or an alias in the main parameter.
   - platform: home_io_control
     name: "Test Thermostat"
@@ -240,5 +272,7 @@ water_heater:
       name: "Test Hot Water Heat Pump"
     electric_backup_running:
       name: "Test Hot Water Electric Backup"
+    heating_source:
+      name: "Test Hot Water Heating Source"
     boost:
       name: "Test Hot Water Boost"

@@ -194,15 +194,57 @@ TEST(RadioSX1276, InitFailsOnWrongVersion) {
                                                           "version check";
 }
 
-/// The IoHomeOn coder produces the same waveform as the software PHY, so the budget estimate is the
-/// shared 868 model.
-TEST(RadioSX1276, TxAirTimeIsTheIo868Model) {
+namespace {
+/// Estimated air time of a `frame_len`-byte frame (15 by default) behind `preamble_len` programmed preamble bytes.
+uint32_t sx1276_air_time_us(uint16_t preamble_len, uint8_t frame_len = 15) {
   RegisterModelSpi spi;
   MockPin rst, dio0, dio4(false);
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
   RadioTxConfig cfg{};
-  cfg.preamble_len = LONG_PREAMBLE;
-  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13));
+  cfg.preamble_len = preamble_len;
+  return radio.tx_air_time_us(frame_len, cfg);
+}
+}  // namespace
+
+/// The SX1276 sends every preamble byte as a 10-bit cell, so its estimate is the shared 868 model
+/// with 10 bits per preamble byte, not the software PHY's 8.
+TEST(RadioSX1276, TxAirTimeCountsTenBitsPerPreambleByte) {
+  EXPECT_EQ(sx1276_air_time_us(LONG_PREAMBLE), io868_tx_air_time_us(LONG_PREAMBLE, 15, SX1276_PREAMBLE_BITS_PER_BYTE));
+  EXPECT_GT(sx1276_air_time_us(LONG_PREAMBLE),
+            io868_tx_air_time_us(LONG_PREAMBLE, 15, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
+}
+
+/// Measured bursts: 32 and 80 preamble bytes occupied 332 and 812 preamble bits, so 48 more bytes
+/// add 480 bit periods; 2048 bytes plus the 15-byte frame took 539.0 ms in total.
+TEST(RadioSX1276, TxAirTimeMatchesMeasuredBursts) {
+  const double us_per_bit = 1e6 / 38400.0;
+  EXPECT_NEAR(sx1276_air_time_us(80) - sx1276_air_time_us(32), 480 * us_per_bit, 2.0);
+  EXPECT_NEAR(sx1276_air_time_us(2048), 539000.0, 539000.0 * 0.02);
+}
+
+/// Whole measured bursts, short and long: a 12-byte frame behind 32 preamble bytes took 13.32 ms, the
+/// 15-byte frame behind 2048 bytes 539.04 ms. The model leaves out a few sync-word alternation bits, so
+/// it runs a fraction of a millisecond short at every length; the per-byte count is what keeps the
+/// long burst inside that same millisecond (at 8 bits per byte it would be 107 ms short).
+TEST(RadioSX1276, TxAirTimeIsWithinAMillisecondOfEveryMeasuredBurst) {
+  EXPECT_NEAR(sx1276_air_time_us(32, 12), 13321.0, 1000.0);
+  EXPECT_NEAR(sx1276_air_time_us(2048), 539042.0, 1000.0);
+}
+
+/// The soft-PHY chips send 8 bits per preamble byte: 2048 bytes plus a 15-byte frame took 432.4 ms.
+TEST(SoftPhy, Io868AirTimeAtEightBitsPerPreambleByteMatchesMeasuredBurst) {
+  EXPECT_NEAR(io868_tx_air_time_us(2048, 15, SOFT_PHY_PREAMBLE_BITS_PER_BYTE), 432400.0, 432400.0 * 0.02);
+}
+
+/// The TX-done wait is the estimated air time plus the whole guard, at the longest preamble, and the
+/// estimate covers every one of the 10-bit preamble cells the chip sends, so the guard stays slack.
+TEST(RadioSX1276, TxDoneTimeoutAtLongestPreambleExceedsAirTimeByTheGuard) {
+  const uint32_t air_us = sx1276_air_time_us(4096);
+  const uint32_t air_ms_rounded_up = (air_us + 999) / 1000;
+  EXPECT_EQ(tx_done_timeout_ms(air_us), air_ms_rounded_up + TX_DONE_GUARD_MS);
+  EXPECT_GE(tx_done_timeout_ms(air_us) * 1000u, air_us + TX_DONE_GUARD_MS * 1000u);
+  const double preamble_on_air_us = 4096 * 10 * (1e6 / 38400.0);
+  EXPECT_GE(air_us, preamble_on_air_us) << "the estimate must not stop short of the preamble the chip sends";
 }
 
 TEST(RadioSX1276, InitProgramsValidatedConfiguration) {
@@ -467,6 +509,22 @@ TEST(RadioSX1276, BusyChannelOnTheTxFrequencySendsNothing) {
   EXPECT_EQ(result.cca_level_dbm, -60);
   EXPECT_EQ(radio.read_freqs, std::vector<uint32_t>{FREQ_CH2}) << "retuned to the TX channel before measuring";
   EXPECT_TRUE(spi.tx_fifo().empty()) << "a busy channel must not reach the FIFO";
+}
+
+TEST(RadioSX1276, MeasureChannelLevelReadsTheRequestedChannelWithoutTransmitting) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  CcaProbeSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  radio.change_frequency(FREQ_CH1);
+  radio.level = -77;
+
+  EXPECT_EQ(radio.measure_channel_level(FREQ_CH3), -77);
+  EXPECT_EQ(radio.measure_channel_level(FREQ_CH3), -77);
+
+  EXPECT_EQ(radio.read_freqs, (std::vector<uint32_t>{FREQ_CH3, FREQ_CH3})) << "retuned once, then read in place";
+  EXPECT_EQ(radio.get_current_freq(), FREQ_CH3);
+  EXPECT_TRUE(spi.tx_fifo().empty()) << "measuring never reaches the FIFO";
+  EXPECT_EQ(radio.cca_settle_us(), SX1276_CCA_SETTLE_US);
 }
 
 TEST(RadioSX1276, ClearChannelGoesOnToTransmit) {
@@ -872,12 +930,12 @@ TEST(RadioSX1276, ApplyTuningRewritesRxBandwidthAndResponsePreamble) {
 
   TuningConfig tuning;
   tuning.sx1276_rx_bandwidth = SX1276RxBandwidth::BW_125_0_KHZ;
-  tuning.sx1276_response_preamble = 20;
+  tuning.response_preamble_ms = 5.0F;  // 192 bit periods: 19 bytes at 10 bit periods each
   radio.apply_tuning(tuning);
 
   EXPECT_EQ(spi.get_reg(REG_RX_BW), static_cast<uint8_t>(SX1276RxBandwidth::BW_125_0_KHZ));
   EXPECT_EQ(spi.get_reg(REG_AFC_BW), static_cast<uint8_t>(SX1276RxBandwidth::BW_125_0_KHZ));
-  EXPECT_EQ(radio.response_preamble(), 20u);
+  EXPECT_EQ(radio.response_preamble(), 19u);
 }
 
 TEST(RadioSX1276, ReadRssiAppliesFormula) {
@@ -887,6 +945,206 @@ TEST(RadioSX1276, ReadRssiAppliesFormula) {
   spi.set_reg(REG_RSSI_VALUE, 100);
 
   EXPECT_EQ(radio.read_rssi(), -50);
+}
+
+// ============================================================================
+// Capture RSSI: the level at sync-word detection, not at the end of the frame. RegRssiValue is
+// live, so a read at PayloadReady sees the noise floor behind the frame.
+// ============================================================================
+
+namespace {
+constexpr uint8_t kRssiInFrame = 84;      // -42 dBm
+constexpr uint8_t kRssiAfterFrame = 168;  // -84 dBm
+}  // namespace
+
+TEST(RadioSX1276, BlockingCaptureReportsTheLevelSeenAtSync) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  const uint8_t frame[] = {0xDE, 0xAD, 0xBE, 0xEF};
+  spi.seed_rx_fifo(frame, sizeof(frame));
+  spi.set_reg(REG_IRQ_FLAGS1, 0x01);  // SyncAddressMatch already up at the first poll
+  spi.set_reg(REG_RSSI_VALUE, kRssiInFrame);
+  // The frame ends during the first poll: PayloadReady rises and the level falls to the floor.
+  spi.on_nth_read(REG_IRQ_FLAGS2, 1, [&] {
+    spi.set_reg(REG_IRQ_FLAGS2, 0x04);
+    spi.set_reg(REG_RSSI_VALUE, kRssiAfterFrame);
+  });
+
+  RadioRxPacket packet{};
+  ASSERT_TRUE(radio.wait_for_packet(packet, 100));
+
+  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -42) << "the end-of-frame read would report -84";
+}
+
+TEST(RadioSX1276, BlockingCaptureFallsBackToTheLiveReadWithoutASyncSighting) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  const uint8_t frame[] = {0x11, 0x22};
+  spi.seed_rx_fifo(frame, sizeof(frame));
+  spi.set_reg(REG_IRQ_FLAGS2, 0x04);  // already complete, sync flag never polled
+  spi.set_reg(REG_RSSI_VALUE, 100);
+
+  RadioRxPacket packet{};
+  ASSERT_TRUE(radio.wait_for_packet(packet, 100));
+
+  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -50);
+}
+
+TEST(RadioSX1276, IdleCaptureReportsTheLevelLatchedByTheHopGate) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x01);
+  spi.set_reg(REG_RSSI_VALUE, kRssiInFrame);
+  ASSERT_TRUE(radio.reception_in_progress()) << "first sighting of the sync word latches the level";
+
+  // The frame completes: the level falls, PayloadReady rises, DIO0 fires.
+  spi.set_reg(REG_RSSI_VALUE, kRssiAfterFrame);
+  spi.set_reg(REG_IRQ_FLAGS2, 0x04);
+  const uint8_t frame[] = {0x11, 0x22, 0x33};
+  spi.seed_rx_fifo(frame, sizeof(frame));
+  radio.mark_dio_fired_from_isr();
+
+  RadioRxPacket packet{};
+  ASSERT_TRUE(radio.check_for_packet(packet));
+  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -42);
+}
+
+TEST(RadioSX1276, IdleCaptureFallsBackToTheLiveReadWhenSyncWasNeverSeen) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS2, 0x04);
+  spi.set_reg(REG_RSSI_VALUE, kRssiAfterFrame);
+  const uint8_t frame[] = {0x11};
+  spi.seed_rx_fifo(frame, sizeof(frame));
+  radio.mark_dio_fired_from_isr();
+
+  RadioRxPacket packet{};
+  ASSERT_TRUE(radio.check_for_packet(packet));
+  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -84);
+}
+
+TEST(RadioSX1276, ALatchedLevelNeverLeaksIntoTheNextCapture) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x01);
+  spi.set_reg(REG_RSSI_VALUE, kRssiInFrame);
+  ASSERT_TRUE(radio.reception_in_progress());
+  spi.set_reg(REG_IRQ_FLAGS2, 0x04);
+  const uint8_t first[] = {0x11};
+  spi.seed_rx_fifo(first, sizeof(first));
+  radio.mark_dio_fired_from_isr();
+  RadioRxPacket packet{};
+  ASSERT_TRUE(radio.check_for_packet(packet));
+
+  // A second frame arrives and is only seen at PayloadReady.
+  spi.set_reg(REG_IRQ_FLAGS1, 0x00);
+  spi.set_reg(REG_RSSI_VALUE, 120);  // -60 dBm
+  const uint8_t second[] = {0x22};
+  spi.seed_rx_fifo(second, sizeof(second));
+  radio.mark_dio_fired_from_isr();
+  ASSERT_TRUE(radio.check_for_packet(packet));
+
+  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -60);
+}
+
+TEST(RadioSX1276, ALatchedLevelDoesNotSurviveARetune) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x01);
+  spi.set_reg(REG_RSSI_VALUE, kRssiInFrame);
+  ASSERT_TRUE(radio.reception_in_progress());
+
+  radio.change_frequency(FREQ_CH3);  // the receiver restarts on another channel
+  spi.set_reg(REG_IRQ_FLAGS1, 0x00);
+  spi.set_reg(REG_RSSI_VALUE, 120);
+  spi.set_reg(REG_IRQ_FLAGS2, 0x04);
+  const uint8_t frame[] = {0x11};
+  spi.seed_rx_fifo(frame, sizeof(frame));
+  radio.mark_dio_fired_from_isr();
+
+  RadioRxPacket packet{};
+  ASSERT_TRUE(radio.check_for_packet(packet));
+  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -60);
+}
+
+TEST(RadioSX1276, ALatchedLevelDoesNotSurviveTheSyncFlagGoing) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x01);
+  spi.set_reg(REG_RSSI_VALUE, kRssiInFrame);
+  ASSERT_TRUE(radio.reception_in_progress());
+
+  spi.set_reg(REG_IRQ_FLAGS1, 0x00);  // a sync match with no frame behind it, gone
+  EXPECT_FALSE(radio.reception_in_progress());
+  spi.set_reg(REG_RSSI_VALUE, 120);
+  spi.set_reg(REG_IRQ_FLAGS2, 0x04);
+  const uint8_t frame[] = {0x11};
+  spi.seed_rx_fifo(frame, sizeof(frame));
+  radio.mark_dio_fired_from_isr();
+
+  RadioRxPacket packet{};
+  ASSERT_TRUE(radio.check_for_packet(packet));
+  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -60);
+}
+
+TEST(RadioSX1276, ABlockingWaitForgetsTheLevelOfAFrameTheChipDropped) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x01);  // first frame: sync seen at the first poll
+  spi.set_reg(REG_RSSI_VALUE, kRssiInFrame);
+  // A bad CRC makes the chip drop that frame (SyncAddressMatch gone at the second poll); a second
+  // frame, seen only at PayloadReady, completes in the same wait.
+  spi.on_nth_read(REG_IRQ_FLAGS1, 2, [&] {
+    spi.set_reg(REG_RSSI_VALUE, 120);  // -60 dBm
+    spi.set_reg(REG_IRQ_FLAGS2, 0x04);
+  });
+  const uint8_t frame[] = {0x11};
+  spi.seed_rx_fifo(frame, sizeof(frame));
+
+  RadioRxPacket packet{};
+  ASSERT_TRUE(radio.wait_for_packet(packet, 100));
+  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -60) << "the dropped frame's -42 dBm must not be reported";
+}
+
+TEST(RadioSX1276, ALatchedLevelDoesNotSurviveAnRxRestart) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x01);
+  spi.set_reg(REG_RSSI_VALUE, kRssiInFrame);
+  ASSERT_TRUE(radio.reception_in_progress());
+
+  radio.set_mode_standby();  // leaving RX ends the reception the level belonged to
+  radio.set_mode_rx();
+  spi.set_reg(REG_RSSI_VALUE, 120);
+  spi.set_reg(REG_IRQ_FLAGS2, 0x04);
+  const uint8_t frame[] = {0x11};
+  spi.seed_rx_fifo(frame, sizeof(frame));
+  radio.mark_dio_fired_from_isr();
+
+  RadioRxPacket packet{};
+  ASSERT_TRUE(radio.check_for_packet(packet));
+  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -60);
+}
+
+TEST(RadioSX1276, ReadRssiStaysALiveReadAfterASyncLatch) {
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.set_reg(REG_IRQ_FLAGS1, 0x01);
+  spi.set_reg(REG_RSSI_VALUE, kRssiInFrame);
+  ASSERT_TRUE(radio.reception_in_progress());
+  spi.set_reg(REG_RSSI_VALUE, kRssiAfterFrame);
+
+  EXPECT_EQ(radio.read_rssi(), -84) << "the channel check measures the channel now";
 }
 
 TEST(RadioSX1276, ChipNameIsSx1276) {

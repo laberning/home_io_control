@@ -352,6 +352,19 @@ TEST(ProtoDhw, OperatingStatusRefusesWhatItCannotRead) {
   EXPECT_EQ(s.capabilities, 0x1234) << "untouched on failure";
 }
 
+TEST(DhwHeatingSource, NamesWhatHeatsFromTheTwoReadings) {
+  EXPECT_STREQ(dhw_heating_source_name(1, 0), "heat pump");
+  EXPECT_STREQ(dhw_heating_source_name(0, 1), "electric backup");
+  EXPECT_STREQ(dhw_heating_source_name(1, 1), "heat pump and electric backup");
+  EXPECT_STREQ(dhw_heating_source_name(0, 0), "idle");
+}
+
+TEST(DhwHeatingSource, HasNoNameUntilBothReadingsArrived) {
+  EXPECT_EQ(dhw_heating_source_name(-1, -1), nullptr);
+  EXPECT_EQ(dhw_heating_source_name(1, -1), nullptr);
+  EXPECT_EQ(dhw_heating_source_name(-1, 0), nullptr);
+}
+
 // === Electric storage water heater (DeviceModel::ELECTRIC_WATER_HEATER) ===
 // Values are those of a Sauter Guelma connecte 80 L.
 

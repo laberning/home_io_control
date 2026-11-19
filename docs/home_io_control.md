@@ -13,8 +13,10 @@ One line per page, so you can find the right one by what you are trying to do. T
 | `cover:` — shutters, blinds, awnings, openers, curtains | [Covers](configuration/cover.md) |
 | `light:`, `lock:`, `switch:` | [Lights, locks and switches](configuration/light-lock-switch.md) |
 | `climate:` — heating, experimental | [Heating and climate](configuration/climate.md) |
+| `water_heater:` — domestic hot water, experimental | [Water heaters](configuration/water-heater.md) |
+| What a heater's card offers, and what each mode, preset and target does | [Heaters and water heaters in Home Assistant](heating.md) |
 | `fan:` — exterior heating, experimental | [Exterior heating](configuration/fan.md) |
-| `rename_device`, `identify_device`, `force_open_device` | [Home Assistant actions](configuration/actions.md) |
+| `rename_device`, `identify_device`, `identify_device_for`, `force_open_device` | [Home Assistant actions](configuration/actions.md) |
 | `linked_remotes:`, `exposed_senders:` | [Linked remotes and sender events](configuration/remotes.md) |
 | `oneway_controllers:` — transmitting 1W commands | [Sending 1W commands](configuration/oneway-transmit.md) |
 | Discover & Pair, Scan Paired Devices, pairing diagnostics | [Pairing](pairing.md) |

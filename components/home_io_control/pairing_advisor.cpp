@@ -219,7 +219,7 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
   char buf[ADVICE_MESSAGE_BUFFER_SIZE];
   switch (advice.code) {
     case PairingAdviceCode::ONE_WAY_PAIRING_TRAFFIC:
-      // Deliberately no longer ends on "and retry", which reads as "press PROG again now": on a remote
+      // Deliberately does not end on "and retry", which reads as "press PROG again now": on a remote
       // already registered to the device, a PROG press is also the add/remove toggle, so a second one
       // can close the window the first opened. "Can", not "does" — this fits the field reports we have
       // rather than being proven, and one press per attempt costs nothing either way.

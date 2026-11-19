@@ -144,7 +144,8 @@ static constexpr uint8_t PREDICTED_END_STALE_REPORTS = 3;
 /// is not taken as frozen. 10 s, 15 s and 20 s keep a cover that starts after waiting within 20 s of
 /// being seen, while a stuck one costs a read per 20 s instead of one per 3 s. A cover whose execution
 /// state is waiting (2 or 3) holds its count by design and is not backed off
-/// (decisions::backs_off_frozen_count(), ADR 0085); a frozen count in state 4 backs off.
+/// (decisions::backs_off_frozen_count(), ADR 0085) and its reports do not count toward the frozen count,
+/// so the first report after the wait starts fresh (on_trusted_report()); a frozen count in state 4 backs off.
 /// \todo Experimental: a frozen count in state 4 has not been captured on hardware yet.
 /// @{
 static constexpr uint32_t FROZEN_COUNT_BACKOFF_FIRST_MS = 10000;   ///< Delay after the first frozen report.
@@ -273,7 +274,10 @@ class StatusPollPolicy {
   /// @param device_id Device the report belongs to; tracked devices only.
   /// @param remaining_s Usable remaining travel time in seconds, empty when there is none.
   /// @param now Current millis().
-  void on_trusted_report(const std::string &device_id, std::optional<uint16_t> remaining_s, uint32_t now);
+  /// @param waiting True when the report's execution state is waiting (decisions::is_waiting()). The report then
+  ///        neither counts nor aims and forgets the count, the previous remaining time and the aim, so the first
+  ///        report after the wait starts a fresh move.
+  void on_trusted_report(const std::string &device_id, std::optional<uint16_t> remaining_s, uint32_t now, bool waiting);
   /// How long the next progress read waits when the device's remaining time has stopped falling.
   ///
   /// Zero while the count falls or none is known. From the PREDICTED_END_STALE_REPORTS-th report in a row
@@ -379,7 +383,7 @@ class StatusPollPolicy {
   /// build — is not "ran out" and is never returned. Returns nullopt when there is none.
   [[nodiscard]] std::optional<std::string> pop_ended_device();
 
-  // --- Catch-up read after linked-remote activity (ADR 0080) ---
+  // --- Catch-up read after linked-remote activity (ADR 0080), and its one retry (ADR 0095) ---
   /// A linked remote was heard: open a burst, or keep the open one. Only the exchanges that end
   /// while it is open set its due time (on_exchange_ended()), so a burst during which the hub never
   /// used the radio never comes due.
@@ -398,17 +402,34 @@ class StatusPollPolicy {
   void mark_state_unknown(const std::string &device_id);
   /// Consume the mark set by mark_state_unknown(): true once, for the status read dispatched after it.
   [[nodiscard]] bool take_state_unknown(const std::string &device_id);
+  /// Start a catch-up read of @p device_id: mark it (mark_state_unknown()) and drop any retry state
+  /// of an earlier catch-up, which this read replaces.
+  void start_catchup_read(const std::string &device_id);
+  /// A catch-up read of @p device_id got no usable answer at @p now. The first miss of a read arms
+  /// one retry @p delay_ms later (take_due_catchup_retries()); a miss of the retry itself ends it. A
+  /// @p delay_ms of 0 arms none.
+  void on_catchup_read_unanswered(const std::string &device_id, uint32_t now, uint32_t delay_ms);
+  /// A catch-up read of @p device_id was answered: nothing is left to retry.
+  void on_catchup_read_answered(const std::string &device_id);
+  /// The devices whose catch-up retry is due at @p now, each returned once and marked for its read
+  /// (mark_state_unknown()) as the retry: its own miss arms no further retry. Wrap-safe.
+  [[nodiscard]] std::vector<std::string> take_due_catchup_retries(uint32_t now);
 
  private:
   std::map<std::string, PollTracking> tracking_;
   bool catchup_burst_open_{false};  ///< A linked remote was heard and its catch-up has not run yet.
   uint32_t catchup_due_ms_{0};      ///< When the open burst's catch-up is due; 0 = no exchange has ended in it yet.
-  std::set<std::string> state_unknown_;            ///< Devices whose next status read is a catch-up read.
+  std::set<std::string> state_unknown_;  ///< Devices whose next status read is a catch-up read.
+  std::map<std::string, uint32_t>
+      catchup_retry_due_ms_;                       ///< Devices whose first catch-up read was missed, and when to retry.
+  std::set<std::string> catchup_retrying_;         ///< Devices whose catch-up read now under way is the retry.
   std::map<std::string, ForeignTraffic> foreign_;  ///< Overheard-traffic state, outside the tracking lifecycle.
   std::vector<std::string> ended_;  ///< Devices whose window ran out, for pop_ended_device(); no duplicates.
 
   /// Record that a device's window ran out, once.
   void note_ended_(const std::string &device_id);
+  /// Forget the catch-up mark and retry state of a device: heard activity or a report is news again.
+  void drop_catchup_state_(const std::string &device_id);
 
   /// Compute retry delay from failure count and failure class.
   static uint32_t retry_delay_ms(uint8_t consecutive_failures, bool auth_like);

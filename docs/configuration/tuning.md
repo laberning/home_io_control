@@ -132,10 +132,9 @@ your device may differ.
 | Parameter | Radio | Default | Range / options | What it does |
 |---|---|---|---|---|
 | `sx1262_rx_bandwidth` | SX1262 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). Widen it when one device's replies are missed. |
-| `sx1262_response_preamble` | SX1262 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
+| `response_preamble_ms` | both | `3.5` | 1.5–70 ms | Preamble duration on reply frames, for the peer to lock on. See [Preamble durations](#preamble-durations). |
 | `sx1262_post_tx_settle_us` | SX1262 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth (single-sideband, so `41.7` spans 83.4 kHz); wider tolerates LO offset, narrower rejects more noise. |
-| `sx1276_response_preamble` | SX1276 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `sx1262_discovery_hop_slice_ms` | SX1262 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `exchange_start_response_wait_ms` | both | `400` | 200–4000 ms | How long to listen for a reply to a *start* frame (the first frame of a command). |
@@ -143,17 +142,17 @@ your device may differ.
 | `exchange_response_wait_ms` | both | `500` | 200–4000 ms | How long to listen for a reply to a continuation frame, and for the post-auth final response. |
 | `exchange_total_budget_ms` | both | `2500` | 500–12000 ms | Wall-clock ceiling on one whole exchange, including retries. |
 | `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). `117.3` is validated on real LR1121 hardware. |
-| `lr1121_response_preamble` | LR1121 | `12` | 8–256 B | Preamble length on reply frames, for the peer to lock on. |
 | `lr1121_post_tx_settle_us` | LR1121 | `500` | 0–2000 µs | Settling delay after TX before switching back to RX. |
 | `lr1121_discovery_hop_slice_ms` | LR1121 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
-| `cold_broadcast_reply_preamble` | both | `80` | 8–256 B | Preamble length for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
+| `cold_broadcast_reply_preamble_ms` | both | `20` | 1.5–70 ms | Preamble duration for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
 | `key_extraction_type_word` | both | `0x0080` | `0x0000`–`0xFFFF` | Device type the key-extraction responder's discovery reply (0x29) claims, as the reply's two type bytes. Applies to an open search only. See below. |
 | `key_extraction_multi_info` | both | `0xDD` | `0x00`–`0xFF` | The key-extraction responder's discovery reply (0x29) flags byte: reply speed and whether the device sleeps. See below. |
-| `normal_start_preamble` | both | `48` on SX1262/LR1121, `32` on SX1276 | 8–256 B | Preamble length for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the 1024-byte wake-up burst. Low-power devices lead with `LONG_PREAMBLE` unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
-| `low_power_wake_preamble` | both | `1024` | 1024–4096 B | Wake-up preamble on a directed start frame to a `low_power:` device believed at rest. See below. |
-| `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the 1024-byte wake-up preamble. See below. |
-| `lbt_max_retries` | both | `5` | 0–10 | Listen-before-talk checks on the transmit channel before the first frame of an exchange is sent without one. |
-| `lbt_rssi_threshold_dbm` | both | `-90` | -95 to -70 dBm | RSSI on the transmit channel below which it counts as free. |
+| `start_preamble_ms` | both | `10` | 1.5–70 ms | Preamble duration for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the long wake-up burst. Low-power devices lead with [`low_power_wake_ms`](#low_power_wake_ms) unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
+| `low_power_wake_ms` | both | `600` | 300–1000 ms | Wake-up preamble duration on a directed start frame to a `low_power:` device believed at rest. See below. |
+| `pairing_discovery_preamble_ms` | both | follows `start_preamble_ms` | 1.5–300 ms | Preamble duration on the discovery broadcast itself. See [`pairing_discovery_preamble_ms`](#pairing_discovery_preamble_ms). |
+| `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the wake-up preamble. See below. |
+| `lbt_rssi_threshold_dbm` | both | not set (learned) | -95 to -70 dBm | RSSI on a channel at or above which it counts as busy. Not set: the hub learns the limit from how quiet the channels are on your board. See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
+| `lbt_force_when_busy` | both | `false` | `true` / `false` | When every channel stays busy for the whole waiting time, send on the quietest one instead of ending the attempt as "channel busy". See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
 | `remote_activity_poll_delay_ms` | both | `2000` | 0–120000 ms | Delay from a linked-remote press (not a STOP) to the first status poll of its devices. See below. |
 | `remote_activity_catchup_poll_ms` | both | `0` (off) | 0–600000 ms | Read every device with `linked_remotes` this long after the last exchange that followed a linked-remote press, to catch a press the hub missed. See below. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
@@ -202,25 +201,61 @@ If one device's replies are missed — `wait_first_timeout`, or a challenge that
 final response — while other devices are fine, try `156.2`, then `187.2`. `39.0` and `46.9` are
 well below the 76.8 kHz figure; use them only to probe a noisy install.
 
-#### `sx1262_response_preamble`
+#### Preamble durations
 
-How long a preamble the SX1262 puts in front of its *reply* frames (the key-transfer and
+Every preamble the hub sends is set as a duration in milliseconds, and it lasts the same on every
+radio ([ADR 0097](../adr/0097-every-preamble-is-set-as-a-duration-the-same-on-every-radio.md)). A
+receiver hears time, not bytes, and the same number of preamble bytes lasts longer on an SX1276
+board, which sends each byte as 10 bit periods, than on an SX1262 or LR1121 board, which sends 8.
+Each radio driver converts the duration into its own byte count at 38400 bit/s, so a configuration
+means the same on every board and moving a hub to another board keeps its timing. The log lines
+that print `preamble=` show the programmed bytes the radio was given.
+
+| Preamble | Key | Default | On SX1262 / LR1121 | On SX1276 |
+|---|---|---|---|---|
+| Wake-up for a resting `low_power:` device | [`low_power_wake_ms`](#low_power_wake_ms) | 600 ms | 2880 bytes | 2304 bytes |
+| Start of a request to any other device | [`start_preamble_ms`](#start_preamble_ms) | 10 ms | 48 bytes | 38 bytes |
+| Reply inside a session | [`response_preamble_ms`](#response_preamble_ms) | 3.5 ms | 17 bytes | 13 bytes |
+| Reply to a broadcast discovery | [`cold_broadcast_reply_preamble_ms`](#cold_broadcast_reply_preamble_ms) | 20 ms | 96 bytes | 77 bytes |
+| Discovery | [`pairing_discovery_preamble_ms`](#pairing_discovery_preamble_ms) | follows the start | 48 bytes | 38 bytes |
+
+One-way bursts keep their own wake-up preamble of 1024 bytes; their other copies follow
+`start_preamble_ms` ([Sending 1W commands](oneway-transmit.md)).
+
+The keys that set bytes (`low_power_wake_preamble`, `normal_start_preamble`,
+`sx1262_response_preamble`, `sx1276_response_preamble`, `lr1121_response_preamble`,
+`cold_broadcast_reply_preamble` and `pairing_discovery_preamble`) are deprecated. A configuration
+that still sets one compiles and logs one warning naming the key to use instead. The byte value is
+converted to the duration it gives on your board's radio, so the hub sends what it sent before: for
+example `normal_start_preamble: 32` is about 8.3 ms on an SX1276 board and about 6.7 ms on an SX1262
+board. A response key written for another radio than your board's has no effect. Setting a byte key
+and the duration key that replaces it together is an error. Each old key keeps the byte range it had.
+
+With `ui_controls: true` the preamble numbers in Home Assistant show milliseconds. The three
+per-radio response numbers become one, `Radio Response Preamble`, and `Radio Normal Start Preamble`
+becomes `Radio Start Preamble`, so a dashboard card or automation that uses one of the old entities
+needs the new one.
+
+#### `response_preamble_ms`
+
+How long a preamble the hub puts in front of its *reply* frames (the key-transfer and
 authentication responses), giving the peer time to lock on after the hub transmits. Raise it
-when key exchange stalls right after discovery on an SX1262 board, especially with a device that
-has never been paired before.
+when key exchange stalls right after discovery, especially with a device that has never been paired
+before.
 
-*Observations:* the SX1262's modulation is marginal for short preambles on the fast post-TX
-turnaround. The default of 12 bytes puts about the same preamble on air as a real controller's
-replies (about 2.6 ms) and matches the SX1276 default. In one field run a Somfy light's closing
-reply was lost after 13 of 38 challenges with 8 bytes, against 4 of 35 with 12
-([issue #119](https://github.com/laberning/home_io_control/issues/119)). 8 bytes is the
-protocol's nominal floor; already-paired devices lock onto it, but brand-new devices often fail
-to decode on-air preambles of 1/4/8 bytes and need something substantially longer. How much
-longer, up to the protocol's full 1024-byte long preamble, has not yet been independently
-validated on this chip, so treat any specific number above 12 as untested rather than
-known-good. A longer preamble also delays the reply, and some devices reject a late one (see
-[troubleshooting](../troubleshooting.md#a-tuning-plan)). The same "not below the tens of bytes"
-caution is why `normal_start_preamble` (below) defaults to 32 rather than 8.
+*Observations:* a short preamble is marginal on the fast post-TX turnaround of the SX1262 and
+LR1121 radios. A real controller's replies carry about 2.6 ms of preamble, and 12 bytes from an
+SX1276 board last about 3.4 ms; the default 3.5 ms is the longer of the two. In one field run a Somfy
+light's closing reply was lost after 13 of 38 challenges with an 8-byte preamble (1.7 ms), against
+4 of 35 with 12 bytes (2.6 ms)
+([issue #119](https://github.com/laberning/home_io_control/issues/119)). The floor of the range,
+1.5 ms, is about the protocol's nominal 8 bytes; already-paired devices lock onto that, but
+brand-new devices often fail to decode on-air preambles of a few bytes, under 2 ms, and need
+something substantially longer. How much longer has not been independently validated, so treat a
+value above 3.5 ms as untested rather than known-good. A longer preamble also delays the reply, and
+some devices reject a reply that comes a few milliseconds late (see
+[troubleshooting](../troubleshooting.md#a-tuning-plan)). The same caution is why
+`start_preamble_ms` (below) defaults to 10 ms rather than the floor.
 
 #### `sx1262_post_tx_settle_us`
 
@@ -278,14 +313,20 @@ effect as that value.
 Wall-clock ceiling on one whole exchange, including retries. `exchange_start_response_wait_ms` and
 `exchange_response_wait_ms` set how long each try waits; this caps how long *all* of them together
 may run, so a try only starts if it can finish inside the budget. The time already spent, the gap
-before the try, the try's own transmission (about 220 ms with a 1024-byte wake-up preamble,
+before the try, the try's own transmission (about 610 ms with the default 600 ms wake-up preamble,
 [ADR 0044](../adr/0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)), the
 window the try then listens (about 10 ms of channel check and hop around each transmit are counted too),
 and, when the device has already challenged in this exchange, the wait for its final reply and the
 answer to its challenge must together stay below it ([ADR 0073](../adr/0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md),
 [ADR 0075](../adr/0075-commands-and-the-key-pull-take-the-attempt-plan-and-early-attempts-listen-short.md)).
-That last part matters for a low-power device that challenges: two tries use the default budget, so
-a third is not started.
+That last part matters for a mains device that challenges.
+
+A `low_power:` target is the exception: its three tries behind the wake-up preamble always run, whatever
+a busy channel or timing jitter added to the earlier ones, so its exchange is bounded by that count and
+not by the budget (about 3.5 s at the default
+[`low_power_wake_ms`](#low_power_wake_ms), a little more on a busy channel, and up to about
+4.9 s when the device challenges every try and never sends its final reply)
+([ADR 0095](../adr/0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md)).
 
 The budget also sets how often a status read that decides where a cover ended up is repeated: the
 poll after a `stop`, the poll that confirms a cover that stopped short of its target, the polls
@@ -321,17 +362,6 @@ it (`62.5`/`83.3`/`125.0`) when a device's transmitter drifts more than the cont
 at the cost of admitting more noise; narrow to `20.8` for maximum noise rejection on a clean
 signal.
 
-#### `sx1276_response_preamble`
-
-How long a preamble the SX1276 puts in front of its *reply* frames (the key-transfer and
-authentication responses), giving the peer time to lock on after the hub transmits. Raise it
-if key exchange stalls right after discovery on an SX1276 board.
-
-*Observations:* the default here is `12` bytes — longer than the protocol's 8-byte short
-preamble, which on hardware measurably improves the peer's lock-on at no timing cost. It is the
-same as the SX1262 default; it has never needed raising in testing here. Lengthen it further for
-a stubborn or marginal-range device.
-
 #### `sx1276_discovery_hop_slice_ms` / `sx1262_discovery_hop_slice_ms`
 
 How long the receiver dwells on each channel while hopping. This governs every rotating listen in
@@ -351,9 +381,9 @@ only collapses at the literal `0`, where `wait_for_packet(..., 0)` returns befor
 observed at all — so it is left open as an experimentally checkable floor rather than assumed.
 Values near that floor are for probing it, not for everyday tuning.
 
-#### `lr1121_rx_bandwidth` / `lr1121_response_preamble` / `lr1121_post_tx_settle_us` / `lr1121_discovery_hop_slice_ms`
+#### `lr1121_rx_bandwidth` / `lr1121_post_tx_settle_us` / `lr1121_discovery_hop_slice_ms`
 
-The LR1121 equivalents of the four SX1262 knobs above — same meaning (`lr1121_discovery_hop_slice_ms`
+The LR1121 equivalents of the three SX1262 knobs above — same meaning (`lr1121_discovery_hop_slice_ms`
 governs the roll-call as well as discovery, same as its SX1262/SX1276 counterparts), same
 register-level reasoning (the LR1121's GFSK bandwidth encoding is register-identical to the
 SX1262's, and it needs the same standby→retune→RX hop cycle, no fast hop). All four share the
@@ -368,11 +398,12 @@ against a real awning at the stock settings. The main variable that still matter
 rather than these timing/bandwidth knobs — weak signal shows up as intermittent frame loss on
 either leg of an exchange, which the existing per-command retry already absorbs.
 
-#### `cold_broadcast_reply_preamble`
+#### `cold_broadcast_reply_preamble_ms`
 
-Sized independently of `response_preamble()`: it governs only the "Recover System Key" feature's
+Sized independently of `response_preamble_ms`: it governs only the "Recover System Key" feature's
 discovery reply (0x29), the sole device-role reply that is `start=true` and therefore the one a
-hopping/scanning peer has to catch cold, rather than a peer already parked on a held channel.
+hopping/scanning peer has to catch cold, rather than a peer already parked on a held channel. The
+default 20 ms is above the 13.9 ms preamble real devices put on a discovery reply.
 
 #### `key_extraction_type_word` and `key_extraction_multi_info`
 
@@ -418,47 +449,61 @@ home_io_control:
     key_extraction_multi_info: 0xDC
 ```
 
-#### `normal_start_preamble`
+#### `start_preamble_ms`
 
 The preamble in front of a directed *start* frame (`EXECUTE`, status poll, `GET_NAME`, rename,
 identify, probe) whose target is **not** declared `low_power:`. An always-listening receiver does
-not need the ~213 ms 1024-byte wake-up burst, and some receivers never lock onto one that long —
+not need a wake-up burst of hundreds of milliseconds, and some receivers never lock onto one that long —
 so a normal start frame gets this shorter preamble, matching what real hubs send to an
-always-alive device. A device declared `low_power: true` keeps `LONG_PREAMBLE` on its start frames
+always-alive device. A device declared `low_power: true` keeps the wake-up preamble ([`low_power_wake_ms`](#low_power_wake_ms)) on its start frames
 unless it is believed awake — see [`low_power_wake_belief`](#low_power_wake_belief).
 
-**The default depends on your radio.** An SX1262 or LR1121 board starts at 48 bytes, an SX1276
-board at 32 ([ADR 0042](../adr/0042-start-preamble-default-comes-from-the-radio-driver.md)). The
-software PHY those two chips share puts less usable preamble on air than its programmed length
-suggests: measured against a Somfy dimmer, an SX1262 was answered on the first try 79% of the time
-at 32 bytes and every time at 48, while an SX1276 sending the same programmed 32 was answered every
-time. The config dump in your logs prints the value it resolved and whether it came from YAML or the radio.
+**The default is a duration, the same on every board.** 10 ms is 48 bytes on an SX1262 or LR1121
+board and 38 bytes on an SX1276 board
+([ADR 0097](../adr/0097-every-preamble-is-set-as-a-duration-the-same-on-every-radio.md)). Measured
+against a Somfy dimmer, an SX1262 was answered on the first try 79% of the time with 32 bytes (6.7 ms)
+and every time with 48 (10 ms), while an SX1276 sending 32 bytes (8.7 ms) was answered every time:
+both radios need more than about 8 ms on air. The config dump in your logs prints the value in
+milliseconds and in the bytes your radio was given.
 
-Setting this key yourself always wins, **including a value below the default** — useful if you are
+Setting this key yourself overrides the default, **including a value below it** — useful if you are
 bisecting a reception problem and want to see where your own device stops answering.
 
 The same value governs a 1W identity's non-wake-up copies once its own `low_power:` is set to
 `false` or `true` — see [Sending 1W commands](oneway-transmit.md). Left unset, an identity keeps
 `LONG_PREAMBLE` on every copy regardless of this setting.
 
-Sized independently of `response_preamble()` (that knob is a per-chip TX→RX turnaround property;
-this is a cold-peer property). The `32`-byte default is 256 bits, well inside the range real hubs
-use; drop it toward `8` only if a start frame is still not being heard
-and raise it toward `LONG_PREAMBLE` if a marginal always-alive link needs more. Because it is a
+Sized independently of `response_preamble_ms` (that knob is a TX→RX turnaround property;
+this is a cold-peer property). Drop it toward the 1.5 ms floor only if a start frame is still not
+being heard, and raise it if a marginal always-alive link needs more. Because it is a
 live tuning knob, bisecting the right value needs no rebuild.
 
-#### `low_power_wake_preamble`
+#### `low_power_wake_ms`
 
-The wake-up preamble, in bytes, on a directed start frame to a `low_power:` device believed at rest.
-The default is 1024 (~213 ms on air). A resting VELUX SSL solar roller shutter answered it on only
-about half the tries, which suggests it listens less often than every 213 ms; a longer preamble
-spans more of its sleep cycle. Raise it in steps (1536, 2048) and compare how often a try
-at rest is answered (`Try N answered … preamble=`).
+The wake-up preamble, in milliseconds, on a directed start frame to a `low_power:` device believed at rest.
+The default is 600 ms, the same on every board. A VELUX KLI 110 remote sends about 600 ms of wake-up,
+and with about 600 ms all eight commands to two resting VELUX SSL shutters landed on the first try
+([pull request #240](https://github.com/laberning/home_io_control/pull/240)). A resting VELUX SSL solar
+roller shutter answered a wake-up of about 213 ms on only about half the tries, which suggests it
+listens less often than every 213 ms; a longer preamble spans more of its sleep cycle. Reporters with a
+resting SSL saw 12 of 16 tries answered at 427 ms
+([issue #151](https://github.com/laberning/home_io_control/issues/151)), against 8 of 17 at 213 ms
+([issue #114](https://github.com/laberning/home_io_control/issues/114)). Compare how often a try
+at rest is answered (`Try N answered … preamble=`); lower it toward `300` for a shorter wake-up, or
+raise it toward `1000` if a device still needs more. A shorter value than 600 ms is untested on a
+resting SSL; reports of what works are welcome.
 
-A longer preamble makes every try at rest longer: at 2048 bytes a try takes about 1.1 s, so only two
-fit in the default [`exchange_total_budget_ms`](#exchange_total_budget_ms). Raise that to about
-3500 ms to keep three, and expect ESPHome to warn that the component took a long time. Pairing,
-discovery, the roll-call and 1W transmits keep their own preambles.
+A longer preamble makes every try at rest longer: at 600 ms a try takes about 1.2 s. A `low_power:`
+target keeps its three tries anyway, so a silent device holds the hub for about 3.5 s instead of the
+2.5 s of [`exchange_total_budget_ms`](#exchange_total_budget_ms), and ESPHome may log that the
+component took a long time. One wake-up to a resting device uses about 17 % of the hour that the EU
+duty cycle allows on the request channel, which the hub does not
+enforce
+([ADR 0095](../adr/0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md)). The
+discovery with [`pairing_discovery_low_power`](#pairing_discovery_payload--pairing_discovery_low_power)
+and the pairing frames after it, and the low-power pass of the
+[Scan Paired Devices](../pairing.md#scan-paired-devices) roll-call, use the same setting. Pairing
+discovery without the low-power flag and 1W transmits keep their own preambles.
 
 #### `low_power_wake_belief`
 
@@ -484,14 +529,15 @@ rest. Neither can the catch-up read after linked-remote activity
 reported a moment ago, because a press the hub missed may have set it moving. Such a read makes
 one extra attempt first, with the short preamble and a 100 ms listen, and then the three wake-up
 attempts, so it reaches a moving cover and a resting one alike. A silent short attempt changes
-nothing the hub believes. At the default timing the four attempts fit
-[`exchange_total_budget_ms`](#exchange_total_budget_ms); with a tighter one the read may run past
-it by the cost of the short attempt, about 0.12 s, and no more
-([ADR 0079](../adr/0079-a-cover-is-followed-by-its-execution-state.md)). Experimental: no bench run
-has met such a read yet.
+nothing the hub believes. At the default wake-up the four attempts take about 3.7 s, past
+[`exchange_total_budget_ms`](#exchange_total_budget_ms): the four attempts all run, and the read
+ends after them
+([ADR 0079](../adr/0079-a-cover-is-followed-by-its-execution-state.md),
+[ADR 0095](../adr/0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md)).
+Experimental: no bench run has met such a read yet.
 
-"Short" is [`normal_start_preamble`](#normal_start_preamble), "wake-up" is
-[`low_power_wake_preamble`](#low_power_wake_preamble). Having merely heard from the device recently
+"Short" is [`start_preamble_ms`](#start_preamble_ms), "wake-up" is
+[`low_power_wake_ms`](#low_power_wake_ms). Having merely heard from the device recently
 does not count as moving: a resting VELUX SSL ignored the short preamble even 34 ms after it had
 answered. A move is "known to have ended" when a status says stopped (including the reply to a `stop`, which
 can still say "moving" while the motor winds down), or when an exchange sent while
@@ -509,7 +555,7 @@ that confirms a cover that stopped short of its target, and a one-off or refresh
 itself never changes between tries. A mains-powered VELUX receiver that is always listening rejects the wake-up preamble, so declare it `low_power: false`.
 
 To see which preamble reaches a device how soon after it last answered, read the per-try log lines.
-Each carries `preamble=` (bytes) and `age_ms=` (time since the device was last heard; `n/a` when it
+Each carries `preamble=` (programmed bytes) and `age_ms=` (time since the device was last heard; `n/a` when it
 never was, or the switch is off):
 
 ```
@@ -523,29 +569,70 @@ is listening again after its answer. It includes the answer's own airtime.
 
 With the switch off, every try to a `low_power:` device uses the wake-up preamble.
 
-#### `lbt_max_retries` / `lbt_rssi_threshold_dbm`
+#### `lbt_rssi_threshold_dbm` / `lbt_force_when_busy`
 
-Listen-Before-Talk: right before transmitting the first frame of an exchange, the radio measures
-the channel the frame is about to go out on and sends only if it is quieter than the threshold.
-The hub retries up to *max_retries* times, 5 ms apart, then transmits anyway. Frames that answer
-within an exchange, such as the challenge response, go out at once without the check: the device
-is waiting for them, and some devices give up after a single 5 ms delay (issue #178). When the idle receiver is on another channel, the radio
-first retunes to the transmit channel and waits about a millisecond for the reading to settle
-([ADR 0045](../adr/0045-listen-before-talk-is-part-of-sending.md)). Loosen them when
-transmissions are delayed on a channel that only *looks* busy. The threshold applies to the signal
-level at the antenna: on a board with a front-end module the amplifier's gain is removed from the
-reading first (see [Hardware](../hardware.md)), so the same value means the same on every board.
+Channel access: before the hub sends a request (a command, a status or register read, a management
+request) it measures the channel it is about to use, up to five readings about 1 ms apart. One
+reading at or above the busy limit makes the channel busy, and the hub never sends onto a busy
+channel. It waits a random time, from a few milliseconds up to about 40 ms and growing with
+every busy check, while it keeps receiving, and then checks another channel. Every attempt of a
+request takes a different channel than the attempt before it, because receivers scan all three
+channels. The hub listens for the answer on the channel it sent on.
+
+Without `lbt_rssi_threshold_dbm` the hub learns the busy limit on your board. While it listens it
+takes about twelve readings a second on each channel and keeps the typical level of each. The limit
+is the quietest channel's typical level plus 19 dB, never below -90 dBm and never above -75 dBm. A
+quiet board therefore judges a channel busy from -90 dBm on, and a board that reads more background
+noise (a LilyGO T3 V1.6.1 reads -88 to -90 dBm on a quiet channel,
+[issue #228](https://github.com/laberning/home_io_control/issues/228)) still finds free channels.
+For the first seconds after boot, until every channel has enough readings, the limit is -85 dBm. The
+log shows the limit at INFO (`Busy channel limit -81 dBm, learned from this board's quiet level`)
+when it is first known and when it changes by 3 dB or more. If a channel idles so high that little
+room is left below -75 dBm, the log warns once per boot and names the channel and its level.
+
+Set `lbt_rssi_threshold_dbm` to fix the limit yourself: the hub then uses exactly that value and
+learns nothing, and the tuning number in Home Assistant shows a value only then. If the log shows
+`Try N ended: channel busy` while nothing else sends, the debug log names the level of every busy
+check (`Channel busy (RSSI -88 dBm on …)`); set the limit a few dB above it.
+
+The checks of one attempt last about 100 ms. If every channel stays busy that long, the attempt ends
+as "channel busy": nothing is sent, the log line `Try N ended: channel busy` says so, and the exchange
+goes on with its next attempt like after any other lost try. A request to a `low_power:` device
+stays on channel 2, where its wake-up preamble is heard, and waits up to about 600 ms, so that a
+remote's long wake-up on that channel can finish. In the worst case a command to a battery device
+therefore blocks the hub for several seconds on a nearly always busy channel
+([ADR 0096](../adr/0096-the-hubs-requests-take-a-free-channel-and-are-never-forced-onto-a-busy-one.md)).
+
+With `lbt_force_when_busy: true` the hub does not give up after that time: it measures all three
+channels and sends on the quietest one (a `low_power:` device stays on channel 2). The send can
+collide with the traffic that kept the channel busy, and a missing answer after it says nothing about
+the device, so the hub does not treat it as a sign that a moving cover has stopped. Leave it off
+unless a busy neighbour makes commands fail.
+
+Frames that answer within an exchange, such as the challenge response, go out at once on the channel
+of the request without a check: the device is waiting for them, and some devices give up after a
+single 5 ms delay (issue #178). Discovery, pairing, the key pull and broadcasts keep channel 2 and
+the older check against the same limit: five readings, 5 ms apart, then a send even if the channel
+is still busy
+([ADR 0045](../adr/0045-listen-before-talk-is-part-of-sending.md)). When the idle receiver is on
+another channel, the radio first retunes to the channel being measured and waits about a millisecond
+for the reading to settle. The threshold applies to the signal level at the antenna: on a board with
+a front-end module the amplifier's gain is removed from the reading first (see
+[Hardware](../hardware.md)), so the same value means the same on every board.
+
+`lbt_max_retries` is deprecated: the configuration accepts it with a warning and ignores the value,
+because the time limits end the checks, not a count.
 
 *Observations:* a device's own pairing-mode beacons made the channel read as busy (around
--77 to -83 dBm), which tripped every LBT retry before each discovery transmit and slowed
-pairing noticeably. Raising the threshold (less sensitive) or lowering the retry count lets the
-hub transmit through that.
+-77 to -83 dBm), which delayed every discovery transmit and slowed pairing noticeably. Raising the
+threshold (less sensitive) lets the hub transmit through that.
 
 > [!WARNING]
-> **Keep the defaults in a permanent configuration.** The `-90` dBm threshold and the 5 ms back-off
-> keep the hub from starting an exchange over traffic it can hear. A higher threshold or fewer
-> retries make it transmit over other devices on the band, and depending on your country's rules
-> for the 868 MHz band that may not be allowed. Loosen them for a brief experiment only.
+> **Leave `lbt_rssi_threshold_dbm` unset in a permanent configuration.** The learned limit keeps the
+> hub from starting an exchange over traffic it can hear. A higher fixed threshold, or
+> `lbt_force_when_busy: true`, makes it transmit over other devices on the band, and depending on
+> your country's rules for the 868 MHz band that may not be allowed. Use them for a brief experiment
+> only.
 
 ### Polls after a linked-remote press — in detail
 
@@ -573,8 +660,11 @@ Off at `0`, the default. Otherwise a linked-remote press opens a burst, and ever
 runs while it is open moves its catch-up out to this many milliseconds after that exchange. When
 the catch-up is due, the hub reads every device with `linked_remotes`, by remote id or by
 `class:`, once, and the burst closes. A cover that a missed press set moving answers "moving", and
-the hub then follows it to rest as after any command. A read the device does not answer is not
-repeated until the next burst.
+the hub then follows it to rest as after any command. A read the device does not answer is repeated
+once, this many milliseconds later; if that read is not answered either, the device waits for the next
+burst
+([ADR 0095](../adr/0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md)).
+A resting `low_power` cover answers a try only about three times in four, so the retry matters there.
 
 The hub cannot know whether a missed press set a `low_power` cover moving, so the catch-up read
 treats its state as unknown even when it reported a moment ago: it sends one short attempt, which
@@ -670,11 +760,11 @@ is part of the confirmed pairing setup for a VELUX SSL solar roller shutter (see
 [VELUX INTEGRA](../devices/velux-integra.md#ssl-solar-roller-shutter)). For other families, turn it
 on only to test a device that never answers `0x28`, and turn it back off if it doesn't help.
 
-#### `pairing_discovery_preamble`
+#### `pairing_discovery_preamble_ms`
 
-The preamble length (in bytes) on the discovery broadcast itself (`0x28`/`0x2E`). Unset by default:
-discovery then follows [`normal_start_preamble`](#normal_start_preamble), the same length every
-first frame to an always-awake device gets (32 bytes on an SX1276, 48 on an SX1262 or LR1121). A
+The preamble duration on the discovery broadcast itself (`0x28`/`0x2E`). Unset by default:
+discovery then follows [`start_preamble_ms`](#start_preamble_ms), the same duration every
+first frame to an always-awake device gets (10 ms). A
 short discovery is what VELUX SSL and SML shutters answer, so Discover & Pair needs no tuning entry
 for them. Some awake receivers never lock onto the 1024-byte wake-up burst, which is why the default
 is short.
@@ -682,21 +772,21 @@ is short.
 Two cases change the default without setting this value. With
 [`pairing_discovery_low_power: true`](#pairing_discovery_payload--pairing_discovery_low_power) the
 discovery frame carries the low-power flag, and a first frame with that flag takes the wake-up
-preamble (`low_power_wake_preamble`). Changing `normal_start_preamble` moves discovery with it.
+preamble (`low_power_wake_ms`). Changing `start_preamble_ms` moves discovery with it.
 
-Setting a value overrides both, `1024` included. Use `1024` for a device that stays silent behind
-the short discovery and may be a duty-cycled receiver (see
-[A tuning plan](../troubleshooting.md#a-tuning-plan)); try `8` for one that wants it shorter still:
+Setting a value overrides both. Use `300`, the top of the range and a wake-up burst on every radio,
+for a device that stays silent behind the short discovery and may be a duty-cycled receiver (see
+[A tuning plan](../troubleshooting.md#a-tuning-plan)); try `2` for one that wants it shorter still:
 
 ```yaml
 tuning:
   ui_controls: true
-  pairing_discovery_preamble: 1024   # the wake-up burst; 8 (SHORT_PREAMBLE) goes the other way
+  pairing_discovery_preamble_ms: 300   # a wake-up burst; 2 goes the other way
 ```
 
 A value written through the Home Assistant number stays set until the next restart. While nothing
 is set, the number shows the length discovery uses at boot; discovery follows a later change of
-`normal_start_preamble` or `pairing_discovery_low_power` at once, the number only after a restart.
+`start_preamble_ms` or `pairing_discovery_low_power` at once, the number only after a restart.
 The log line `Tuning overrides active` names this setting only when it was set.
 
 **It also bounds the rest of pairing.** The frames the hub then sends directly to the discovered
@@ -706,7 +796,8 @@ it is listening and hears it, and some VELUX receivers ignore every frame behind
 wake-up burst those frames would otherwise carry
 ([ADR 0029](../adr/0029-start-preamble-is-a-property-of-the-target.md),
 [ADR 0078](../adr/0078-discovery-follows-the-start-preamble.md)). With a set value the log says so
-(`Pairing: discovery preamble … B (set in tuning); directed frames to … are capped to it`).
+(`Pairing: discovery preamble … B (set in tuning); directed frames to … are capped to it`, with the
+programmed bytes).
 Normal operation after pairing is not affected: it follows the device's own `low_power` setting and
 its wake belief (see [`low_power_wake_belief`](#low_power_wake_belief)).
 
@@ -730,7 +821,7 @@ How many times to retry the authenticated key exchange, each attempt using a fre
 *Observations:* the key-transfer step is the most fragile part of the flow on SX1262 — a
 device may acknowledge the challenge yet never confirm the key. That is usually a
 preamble/turnaround problem, so if extra retries alone don't help, address
-`sx1262_response_preamble` and `sx1262_post_tx_settle_us` first. Retries mainly guard against
+`response_preamble_ms` and `sx1262_post_tx_settle_us` first. Retries mainly guard against
 occasional transient decode failures.
 
 #### `scan_power_classes`
@@ -744,7 +835,7 @@ Which device power classes the `scan_paired_devices` roll-call calls (see
 - **`always_alive`**: only the always-alive pass — three attempts, the ~6 s single-pass scan. Use
   this on an installation with no solar or battery devices; the report only gains one extra
   `NOTE:` line naming the excluded class.
-- **`low_power`**: only the low-power pass — three attempts, roughly 6 seconds. Use this to test in
+- **`low_power`**: only the low-power pass — three attempts, roughly 7 seconds. Use this to test in
   isolation whether a sleeping device answers the low-power call at all, without the always-alive
   pass's replies muddying the result.
 
@@ -897,8 +988,8 @@ above, is the bottleneck. The full field reference and advice codes are in
 
 ## Safety and compliance
 
-`lbt_max_retries` and `lbt_rssi_threshold_dbm` exist for diagnostics only. Setting the
-threshold too high (e.g. `-45 dBm`) or the retry count too low can force transmissions on a
+`lbt_rssi_threshold_dbm` and `lbt_force_when_busy` exist for diagnostics only. Setting the
+threshold too high (e.g. `-45 dBm`) or turning on `lbt_force_when_busy` can force transmissions on a
 busy channel and may violate local regulations for the 868 MHz SRD band. Do not leave
 aggressive LBT values in a production configuration.
 

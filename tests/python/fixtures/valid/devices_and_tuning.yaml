@@ -9,8 +9,11 @@ home_io_control:
     sx1262_rx_bandwidth: "117.3"
     key_extraction_type_word: 0x0180
     key_extraction_multi_info: "DD"
-    pairing_discovery_preamble: 32
+    pairing_discovery_preamble_ms: 8
+    normal_start_preamble: 48  # deprecated: accepted, warned about, converted to a duration
     pairing_discovery_send_channels: all
+    lbt_force_when_busy: true
+    lbt_max_retries: 3  # deprecated: accepted, warned about, ignored
 
 cover:
   - platform: home_io_control
@@ -84,6 +87,18 @@ climate:
     io_device_type: electrical_heater
     io_subtype: 1
     io_model: towel_dryer
+    heating_level:
+      name: "Towel Dryer Heating Level"
+    central_heating_mode:
+      name: "Towel Dryer Central Heating Mode"
+    energy:
+      name: "Towel Dryer Energy"
+    remaining_time:
+      name: "Towel Dryer Remaining Time"
+    boost_duration:
+      name: "Towel Dryer Boost Duration"
+    drying_duration:
+      name: "Towel Dryer Drying Duration"
   # A heater with a night light: the radiator plus a dimmable light companion.
   - platform: home_io_control
     name: "Hekla"
@@ -93,6 +108,19 @@ climate:
     io_model: heater_with_light
     night_light:
       name: "Hekla Night Light"
+    occupancy_detection:
+      name: "Hekla Occupancy Detection"
+    occupancy:
+      name: "Hekla Occupancy"
+    energy:
+      name: "Hekla Energy"
+  # An interface for pilot-wire heaters: the plain heater's levels without a boost.
+  - platform: home_io_control
+    name: "Pilot Wire Interface"
+    io_device_id: "5E6F73"
+    io_device_type: electrical_heater
+    io_subtype: 0
+    io_model: pilot_wire_interface
   - platform: home_io_control
     name: "Plain Heater"
     io_device_id: "5E6F70"
@@ -122,6 +150,8 @@ water_heater:
       name: "Hot Water Heat Pump"
     electric_backup_running:
       name: "Hot Water Electric Backup"
+    heating_source:
+      name: "Hot Water Heating Source"
     boost:
       name: "Hot Water Boost"
   # An electric storage water heater: the model below 51/0 (io_model needs io_subtype beside it).

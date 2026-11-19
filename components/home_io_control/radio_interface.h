@@ -12,7 +12,9 @@
 #include "proto_frame.h"
 #include "proto_timing.h"
 #include "tuning_config.h"
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <iterator>
 #include <optional>
@@ -20,6 +22,11 @@
 
 namespace esphome {
 namespace home_io_control {
+
+/// Protocol line rate. The same 38400 bps every driver programs into its own bitrate register.
+static constexpr uint32_t IO868_LINE_RATE_BPS = 38400;
+/// Milliseconds per second, for converting a preamble duration to bit periods at the line rate.
+static constexpr double IO868_MS_PER_SECOND = 1000.0;
 
 inline constexpr uint8_t RADIO_PACKET_BUFFER_SIZE =
     64;  ///< Scratch buffer size for raw radio packets and recovered frames.
@@ -156,7 +163,7 @@ struct RadioCaptureInfo {
                               ///< CRC failures — see the concrete driver's capture documentation.
   uint32_t timestamp_ms{0};   ///< Timestamp of capture (millis).
   uint32_t freq_hz{0};        ///< RF frequency of capture (Hz).
-  int16_t rssi_dbm{0};        ///< Received signal strength (dBm).
+  int16_t rssi_dbm{0};        ///< Received signal strength (dBm): the level at sync-word detection.
   uint16_t irq_status{0};     ///< Raw IRQ status register value.
   uint8_t irq_flags1{0};      ///< IRQ flags group 1 (chip-specific).
   uint8_t irq_flags2{0};      ///< IRQ flags group 2 (chip-specific, includes CRC flag).
@@ -211,8 +218,20 @@ class RadioDriver {
   /// - On failure: may populate last_capture_ for diagnostics, returns false.
   virtual bool check_for_packet(RadioRxPacket &packet) = 0;
 
+  /// Level on @p freq_hz right now, for a clear-channel check that takes several readings before a
+  /// send (ExchangeEngine): retunes the receiver to the channel if it is elsewhere, waits
+  /// cca_settle_us() for the reading to describe it, then reads read_rssi(). The radio stays in RX
+  /// on that channel.
+  /// @param freq_hz Channel to measure.
+  /// @return RSSI in dBm.
+  int16_t measure_channel_level(uint32_t freq_hz);
+
+  /// Wait after a retune before an RSSI reading describes the new channel (a per-chip constant).
+  [[nodiscard]] virtual uint32_t cca_settle_us() const = 0;
+
   /// Read instantaneous RSSI (in dBm) on the current channel, while in RX mode. Drivers take their
-  /// clear-channel reading inside send_packet() with it; otherwise it is for diagnostics.
+  /// clear-channel reading inside send_packet() with it, and the idle hop feeds it to the board's
+  /// quiet level (ADR 0096), so both sit on the same scale.
   /// @return RSSI in dBm (negative value).
   virtual int16_t read_rssi() = 0;
 
@@ -230,30 +249,37 @@ class RadioDriver {
   /// an immediate reply within an exchange (challenge responses, key transfers,
   /// and any future non-START continuation frames — i.e. tight RX→TX turnaround).
   ///
-  /// The default is the protocol's standard SHORT_PREAMBLE. Drivers whose TX
-  /// waveform gives the peer device less synchronization margin override this
-  /// with a longer preamble (see the concrete drivers for the chip-specific
-  /// rationale).
+  /// The default is the protocol's standard SHORT_PREAMBLE. A driver that applies the
+  /// `response_preamble_ms` tuning (see @ref apply_tuning) returns that duration converted by
+  /// @ref preamble_bytes_for_ms.
   ///
   /// @return Preamble length in bytes.
   [[nodiscard]] virtual uint16_t response_preamble() const { return SHORT_PREAMBLE; }
 
-  /// @brief Default preamble for a directed start frame, when the user has not set
-  /// `normal_start_preamble` in YAML.
+  /// @brief Bit periods one programmed preamble byte occupies on air.
   ///
-  /// A start frame has to be found by a peer that is not yet listening to us, so it needs
-  /// enough preamble for that peer to lock. How much is enough is not purely a protocol
-  /// question: it also depends on what the driver's transmit path actually puts on air, which
-  /// is why this is a driver property rather than one constant. Drivers whose emitted preamble
-  /// gives the peer less usable synchronization than its programmed length suggests override
-  /// this with a longer value (see the override for the measurement behind it).
+  /// The one chip fact every preamble duration is converted with: a coder that frames each
+  /// preamble byte like a data byte sends more bit periods per byte than a raw byte stream. Every
+  /// preamble is set as a duration and reaches the radio as `preamble_bytes_for_ms()` of this.
+  /// @return Bit periods per programmed preamble byte (8 for a raw stream).
+  [[nodiscard]] virtual uint8_t preamble_bits_per_byte() const = 0;
+
+  /// @brief Programmed preamble bytes that last @p ms milliseconds on air on this radio.
   ///
-  /// The default is the protocol's documented preamble, 256 bits. An explicit
-  /// `normal_start_preamble:` always wins over this — including a shorter value, so a reporter
-  /// can still bisect downward in the field (ADR 0029).
+  /// Every preamble the hub sends is set as a duration (ADR 0097) and converted here, at the
+  /// protocol line rate and this driver's @ref preamble_bits_per_byte, so one setting gives the
+  /// same time on air on every radio. Rounded to the nearest byte and clamped to 1..65535.
+  /// @param ms Duration in milliseconds.
+  /// @return Preamble length in programmed bytes, as `RadioTxConfig::preamble_len` takes it.
+  [[nodiscard]] uint16_t preamble_bytes_for_ms(float ms) const;
+
+  /// @brief Duration in milliseconds of @p bytes programmed preamble bytes on this radio.
   ///
-  /// @return Preamble length in bytes.
-  [[nodiscard]] virtual uint16_t default_start_preamble() const { return NORMAL_START_PREAMBLE; }
+  /// The inverse of @ref preamble_bytes_for_ms, used to turn a legacy byte-denominated setting
+  /// into the duration it has always given on this radio.
+  /// @param bytes Preamble length in programmed bytes.
+  /// @return Duration in milliseconds.
+  [[nodiscard]] float preamble_ms_for_bytes(uint16_t bytes) const;
 
   /// @brief Apply runtime tuning parameters to the driver.
   ///
@@ -442,14 +468,12 @@ class RadioDriver {
   void clear_reception_in_progress_() { this->rx_hold_armed_ = false; }
 
   /// The clear-channel check a driver runs at the top of send_packet(). Without a threshold in
-  /// @p tx_config it does nothing. Otherwise it retunes the receiver to `tx_config.freq_hz` if it is
-  /// elsewhere and waits @p settle_us for the RSSI reading to describe the new channel, then reads
-  /// read_rssi() there.
+  /// @p tx_config it does nothing. Otherwise it measures `tx_config.freq_hz` with
+  /// measure_channel_level().
   /// @param tx_config The transmission about to be sent.
-  /// @param settle_us The chip's RSSI settle time after a retune (a driver constant).
   /// @return The measured level if it is at or above the threshold (the channel is busy), else
   ///         nothing.
-  std::optional<int16_t> channel_busy_level_(const RadioTxConfig &tx_config, uint32_t settle_us);
+  std::optional<int16_t> channel_busy_level_(const RadioTxConfig &tx_config);
 
   /// Shared hardware reset sequence for chips with an active-low RST pin.
   /// Drives RST pin low → 10 ms → high → 10 ms. Called from derived driver init().
@@ -510,6 +534,20 @@ class RadioDriver {
   volatile bool dio_fired_{false};
 #endif
 };
+
+inline uint16_t RadioDriver::preamble_bytes_for_ms(float ms) const {
+  // bits on air = ms * line rate / 1000; one programmed byte is preamble_bits_per_byte() of them.
+  const double bytes =
+      static_cast<double>(ms) * IO868_LINE_RATE_BPS / IO868_MS_PER_SECOND / this->preamble_bits_per_byte();
+  if (!(bytes >= 1.0))  // also catches a NaN: a preamble is never empty
+    return 1;
+  return static_cast<uint16_t>(std::min(std::round(bytes), static_cast<double>(UINT16_MAX)));
+}
+
+inline float RadioDriver::preamble_ms_for_bytes(uint16_t bytes) const {
+  return static_cast<float>(static_cast<double>(bytes) * this->preamble_bits_per_byte() * IO868_MS_PER_SECOND /
+                            IO868_LINE_RATE_BPS);
+}
 
 }  // namespace home_io_control
 }  // namespace esphome

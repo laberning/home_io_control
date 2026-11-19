@@ -1513,9 +1513,9 @@ TEST(PairingHelpers, DiscoverConfirm_FramingFollowsPowerClassAndMode) {
   };
   const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
   const Case cases[] = {
-      {DiscoverConfirmMode::SEND, false, 0x00, NORMAL_START_PREAMBLE},
+      {DiscoverConfirmMode::SEND, false, 0x00, MOCK_START_PREAMBLE},
       {DiscoverConfirmMode::SEND, true, CTRL1_LOW_POWER, LONG_PREAMBLE},
-      {DiscoverConfirmMode::SEND_WITH_ACK, false, CTRL1_ACK, NORMAL_START_PREAMBLE},
+      {DiscoverConfirmMode::SEND_WITH_ACK, false, CTRL1_ACK, MOCK_START_PREAMBLE},
       {DiscoverConfirmMode::SEND_WITH_ACK, true, CTRL1_LOW_POWER, LONG_PREAMBLE},
   };
   for (const Case &c : cases) {
@@ -1526,9 +1526,10 @@ TEST(PairingHelpers, DiscoverConfirm_FramingFollowsPowerClassAndMode) {
     comp.radio_ = &radio;
     memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
     comp.tuning_.pairing_discover_confirm = c.mode;
-    // Tuned to the wake-up burst: with the default (the start preamble) the cap would shorten the
-    // low-power 0x2C, and this case pins the power-class framing itself.
-    comp.tuning_.pairing_discovery_preamble = LONG_PREAMBLE;
+    // Tuned to the knob's ceiling, LONG_PREAMBLE, the one wake-up value it can take: with the default
+    // (the start preamble) the cap would shorten the low-power 0x2C to a start preamble, and this case
+    // pins the power-class framing itself. The low-power 0x2C's wake-up preamble is capped to it.
+    comp.tuning_.pairing_discovery_preamble_ms = mock_preamble_ms(LONG_PREAMBLE);
     comp.tuning_.pairing_discovery_preamble_set = true;
 
     pairing::PairingContext context;
@@ -1710,7 +1711,7 @@ std::vector<uint16_t> tx_preambles_for(const MockRadio &radio, uint8_t cmd) {
 }
 
 /// Queue a full, successful fast-turnaround pairing conversation with a device that reports itself
-/// low-power in its 0x29, so the power-class rule alone would pick LONG_PREAMBLE for its 0x2C.
+/// low-power in its 0x29, so the power-class rule alone would pick MOCK_WAKE_PREAMBLE for its 0x2C.
 void queue_low_power_device_pairing(MockRadio &radio, const uint8_t hub[NODE_ID_SIZE],
                                     const uint8_t device[NODE_ID_SIZE]) {
   IoFrame discover_resp{};
@@ -1756,11 +1757,12 @@ void expect_all(const std::vector<uint16_t> &preambles, uint16_t expected, const
 }  // namespace
 
 TEST(PairingHelpers, DiscoveryAndPairingStartFramesFollowTheDriverStartPreamble) {
-  // The two driver defaults (ADR 0042): 32 B on the SX1276, 48 B on the soft-PHY chips.
-  for (const uint16_t start_preamble : {NORMAL_START_PREAMBLE, SOFT_PHY_START_PREAMBLE}) {
+  // The start preamble is a duration (ADR 0097): the default 10 ms is 48 B on this raw-stream
+  // radio, and a tuned 5 ms is 24 B; discovery and the frames after it follow it either way.
+  for (const uint16_t start_preamble : {MOCK_START_PREAMBLE, static_cast<uint16_t>(24)}) {
     TestableComponent comp;
     MockRadio radio;
-    comp.tuning_.normal_start_preamble = start_preamble;
+    comp.tuning_.start_preamble_ms = mock_preamble_ms(start_preamble);
     ASSERT_FALSE(comp.tuning_.pairing_discovery_preamble_set);
 
     const PairingPreambles sent = pair_low_power_device(comp, radio);
@@ -1778,8 +1780,8 @@ TEST(PairingHelpers, TunedDiscoveryPreambleWinsOverTheStartPreamble) {
   for (const uint16_t tuned : {static_cast<uint16_t>(24), LONG_PREAMBLE}) {
     TestableComponent comp;
     MockRadio radio;
-    comp.tuning_.normal_start_preamble = 48;
-    comp.tuning_.pairing_discovery_preamble = tuned;
+    comp.tuning_.start_preamble_ms = mock_preamble_ms(48);
+    comp.tuning_.pairing_discovery_preamble_ms = mock_preamble_ms(tuned);
     comp.tuning_.pairing_discovery_preamble_set = true;
 
     const PairingPreambles sent = pair_low_power_device(comp, radio);
@@ -1793,13 +1795,13 @@ TEST(PairingHelpers, TunedDiscoveryPreambleWinsOverTheStartPreamble) {
 TEST(PairingHelpers, LowPowerDiscoveryWithoutATunedPreambleUsesTheWakeUpPreamble) {
   TestableComponent comp;
   MockRadio radio;
-  comp.tuning_.normal_start_preamble = 32;
+  comp.tuning_.start_preamble_ms = mock_preamble_ms(32);
   comp.tuning_.pairing_discovery_low_power = true;
 
   const PairingPreambles sent = pair_low_power_device(comp, radio);
 
-  expect_all(sent.discover, comp.tuning_.low_power_wake_preamble, "discovery with the low-power flag");
-  expect_all(sent.confirm, LONG_PREAMBLE, "0x2C to a low-power target keeps the wake-up preamble");
+  expect_all(sent.discover, mock_preamble_bytes(comp.tuning_.low_power_wake_ms), "discovery with the low-power flag");
+  expect_all(sent.confirm, MOCK_WAKE_PREAMBLE, "0x2C to a low-power target keeps the wake-up preamble");
 }
 
 TEST(PairingHelpers, DirectedStartFramesUseShorterDiscoveryPreamble) {
@@ -1809,7 +1811,7 @@ TEST(PairingHelpers, DirectedStartFramesUseShorterDiscoveryPreamble) {
   comp.radio_ = &radio;
   memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
-  comp.tuning_.pairing_discovery_preamble = 32;
+  comp.tuning_.pairing_discovery_preamble_ms = mock_preamble_ms(32);
   comp.tuning_.pairing_discovery_preamble_set = true;
   queue_low_power_device_pairing(radio, comp.node_id_, test::DST_ID);
 
@@ -1843,7 +1845,7 @@ TEST(PairingHelpers, SlowTurnaroundKeyInitRetriggerUsesShorterDiscoveryPreamble)
   comp.radio_ = &radio;
   memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
   memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
-  comp.tuning_.pairing_discovery_preamble = 32;
+  comp.tuning_.pairing_discovery_preamble_ms = mock_preamble_ms(32);
   comp.tuning_.pairing_discovery_preamble_set = true;
 
   pairing::PairingContext context;

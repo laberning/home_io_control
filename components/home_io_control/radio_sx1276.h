@@ -21,6 +21,13 @@ namespace home_io_control {
 /// pin. Doubles as the PaSelect bit of REG_PA_CONFIG.
 static constexpr uint8_t SX1276_PA_SELECT_PA_BOOST = 0x80;
 
+/// Bit periods the SX1276 sends per programmed preamble byte: its IoHomeOn coder frames each
+/// preamble byte with a start and a stop bit like a data byte, so a preamble of N bytes is 10 N
+/// bit periods, a quarter longer than the 8 N of a raw byte stream. Bench measurement of the
+/// transmitted bursts: 32 bytes occupied 332 bits, 80 bytes 812 bits, 2048 bytes 20,484 bits
+/// (533 ms); the software-PHY chips sent 16,390 bits (427 ms) for the same 2048 bytes.
+static constexpr uint8_t SX1276_PREAMBLE_BITS_PER_BYTE = 10;
+
 /// Wait after retuning to the TX channel before the clear-channel RSSI reading. The fast-hop PLL
 /// relocks in tens of µs, and with RssiSmoothing = 8 samples at the 50 kHz RX bandwidth one RSSI
 /// update takes about 40 µs; 250 µs covers both with margin and costs nothing next to a preamble.
@@ -123,7 +130,9 @@ class RadioSX1276 : public RadioDriver {
         dio0_pin_(dio0_pin),
         dio4_pin_(dio4_pin),
         tx_power_(tx_power),
-        pa_pin_(pa_pin) {}
+        pa_pin_(pa_pin) {
+    this->response_preamble_ = this->preamble_bytes_for_ms(RESPONSE_PREAMBLE_MS);
+  }
 
   /// @brief Initialize the SX1276 radio (reset, calibrate, configure registers).
   /// @return true on success; false on failure (e.g., version check).
@@ -147,6 +156,9 @@ class RadioSX1276 : public RadioDriver {
   /// @param freq_hz New frequency in Hz.
   void change_frequency(uint32_t freq_hz) override;
   /// @brief Read instantaneous RSSI (dBm) while in RX mode (used for LBT).
+  ///
+  /// Live read of the channel, the right measurement before a send. A received frame's level in
+  /// RadioCaptureInfo::rssi_dbm is a different reading: the one latched when its sync word was seen.
   /// @return RSSI in dBm (negative).
   int16_t read_rssi() override;
   /// @copydoc RadioDriver::is_sync_detected
@@ -176,28 +188,30 @@ class RadioSX1276 : public RadioDriver {
   [[nodiscard]] uint16_t hop_dwell_ms(const TuningConfig &tuning) const override {
     return tuning.sx1276_discovery_hop_slice_ms;
   }
+  /// @copydoc RadioDriver::cca_settle_us
+  [[nodiscard]] uint32_t cca_settle_us() const override { return SX1276_CCA_SETTLE_US; }
   /// @brief TX→RX turnaround capability (SX1276): fast.
   ///
   /// The IoHomeOn TX path returns to RX quickly enough that immediate replies
   /// (including the pairing key-confirm 0x33) are caught through the standard
   /// exchange wait — validated by real-hardware pairing on this driver.
   [[nodiscard]] bool has_fast_tx_rx_turnaround() const override { return true; }
-  /// @brief Transmit time (SX1276): the preamble, sync word and the IoHomeOn-coded frame at the
-  /// protocol line rate — the same waveform the software PHY produces.
+  /// @brief Transmit time (SX1276): the preamble at `SX1276_PREAMBLE_BITS_PER_BYTE` bits per
+  /// byte, then the sync word and the IoHomeOn-coded frame at the protocol line rate. The sync
+  /// word and frame match the software PHY's waveform; the preamble does not.
   [[nodiscard]] uint32_t tx_air_time_us(uint8_t len, const RadioTxConfig &cfg) const override {
-    return io868_tx_air_time_us(cfg.preamble_len, len);
+    return io868_tx_air_time_us(cfg.preamble_len, len, SX1276_PREAMBLE_BITS_PER_BYTE);
   }
-  // `SX1276_RESPONSE_PREAMBLE` below is a code span, not \ref: doxygen 1.18 can't resolve \ref
-  // to it in a whole-project build (details in proto_sizes.h). Autolinking still links it.
-  /// @brief Preamble for response/continuation frames (SX1276).
-  ///
-  /// Runtime-tunable; the default and its hardware rationale are documented at
-  /// `SX1276_RESPONSE_PREAMBLE`.
+  /// @brief Bit periods per preamble byte: `SX1276_PREAMBLE_BITS_PER_BYTE`, the IoHomeOn coder frames
+  /// each preamble byte like a data byte.
+  [[nodiscard]] uint8_t preamble_bits_per_byte() const override { return SX1276_PREAMBLE_BITS_PER_BYTE; }
+  /// @brief Preamble for response/continuation frames (SX1276): the `response_preamble_ms` tuning
+  /// converted at `SX1276_PREAMBLE_BITS_PER_BYTE` bits per byte.
   [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
   /// @brief Apply SX1276 runtime tuning: RX bandwidth and response preamble.
   void apply_tuning(const TuningConfig &tuning) override {
     this->set_rx_bandwidth_(tuning.sx1276_rx_bandwidth);
-    this->set_response_preamble_(tuning.sx1276_response_preamble);
+    this->set_response_preamble_(this->preamble_bytes_for_ms(tuning.response_preamble_ms));
   }
   /// @brief Switch radio into continuous receive mode.
   void set_mode_rx() override;
@@ -251,13 +265,23 @@ class RadioSX1276 : public RadioDriver {
   /// @param buf_size Size of buf.
   /// @return Number of bytes read.
   uint8_t read_fifo_packet_(uint8_t *buf, uint8_t buf_size);
+  /// Latch REG_RSSI_VALUE for the reception in progress, once. Called at the first sighting of
+  /// SyncAddressMatch, where the level is the frame's own; the register keeps following the channel
+  /// afterwards and reads the noise floor once the frame has ended.
+  void latch_rssi_at_sync_();
+  /// Forget the latched level: the reception it belonged to ended (frame consumed, receiver
+  /// restarted, mode or channel changed, sync flag gone).
+  void clear_rssi_latch_();
+  /// The raw RSSI register value for the capture of the frame being delivered: the level latched
+  /// at sync, or a live read when the sync word was never seen in flight.
+  uint8_t capture_rssi_raw_();
   /// Populate last_capture_ from raw telemetry.
   /// Note: `crc_error` is never set on this driver — in IoHomeOn mode the hardware
   /// silently drops frames with a bad CRC before they reach the FIFO.
   /// @param blocking_wait if this was a blocking receive.
   /// @param irq1 IRQ flags 1.
   /// @param irq2 IRQ flags 2.
-  /// @param rssi RSSI value.
+  /// @param rssi Raw REG_RSSI_VALUE of the frame (level at sync-word detection, see capture_rssi_raw_()).
   /// @param raw Pointer to raw bytes (may be nullptr).
   /// @param raw_len Length of raw buffer.
   /// @param frame Pointer to parsed frame bytes (may be nullptr).
@@ -277,8 +301,11 @@ class RadioSX1276 : public RadioDriver {
   uint8_t tx_power_;
   uint8_t pa_pin_;
   SX1276RxBandwidth rx_bandwidth_{SX1276RxBandwidth::BW_41_7_KHZ};  ///< Runtime-tunable RX bandwidth.
-  uint16_t response_preamble_{SX1276_RESPONSE_PREAMBLE};            ///< Runtime-tunable response preamble.
+  uint16_t response_preamble_{
+      0};  ///< Response preamble in bytes: the `response_preamble_ms` tuning, set in the constructor.
   uint32_t sync_hold_since_us_{0};  ///< First-sighting timestamp for reception_in_progress()'s un-stick bound.
+  bool rssi_latched_{false};        ///< True once latch_rssi_at_sync_() has taken this reception's level.
+  uint8_t rssi_at_sync_raw_{0};     ///< Raw REG_RSSI_VALUE latched at the first sync sighting.
   /// reception_in_progress()'s preamble hold, with its renewals.
   PreambleHold preamble_hold_state_{
       {SX1276_IDLE_PREAMBLE_HOLD_MS, SX1276_IDLE_RENEW_REDETECT_MS, IDLE_PREAMBLE_HOLD_CHAIN_MS}};

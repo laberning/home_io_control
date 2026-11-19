@@ -76,9 +76,10 @@ enum class DeviceModel : uint8_t {
   NONE = 0,               ///< No model: the (type, subtype) row.
   TOWEL_DRYER = 1,        ///< Towel dryer under the electrical heater with an adjustable setpoint (52/1).
   HEATER_WITH_LIGHT = 2,  ///< Heater with a night light under the electrical heater with an adjustable setpoint (52/1).
+  PILOT_WIRE_INTERFACE = 3,  ///< Interface for pilot-wire heaters under the plain electrical heater (52/0): no boost.
   /// Electric storage water heater under the domestic hot water heater (51/0): its state, target and heating
   /// power are family-0x00 registers, and its status reply carries none of them (proto_dhw.h).
-  ELECTRIC_WATER_HEATER = 3,
+  ELECTRIC_WATER_HEATER = 4,
 };
 
 /// @brief High‑level capability class derived from DeviceType.

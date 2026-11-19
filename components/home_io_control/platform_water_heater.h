@@ -10,9 +10,13 @@
 ///
 /// | Heater (register 0x0006) | ESPHome mode  |
 /// |--------------------------|---------------|
-/// | 0 automatic              | HEAT_PUMP     |
-/// | 1 manual, ECO on         | ECO           |
+/// | 0 automatic              | ECO           |
+/// | 1 manual, ECO on         | HEAT_PUMP     |
 /// | 2 manual, ECO off        | PERFORMANCE   |
+///
+/// Each heater mode takes the ESPHome mode whose Home Assistant meaning fits what heats: automatic adapts to
+/// consumption and uses the element as needed (energy saving), manual ECO on heats with the heat pump only,
+/// manual ECO off lets the element assist.
 ///
 /// OFF is not offered: no heater has been seen reporting an off state.
 ///
@@ -41,8 +45,8 @@
 /// shows away only once the heater said so. While away no target is shown (the heater reports a main parameter
 /// of 0, which is no target) and a target set then is logged and dropped.
 ///
-/// The companions (energy, heat pump running, electric backup running) show readings the same poll already
-/// stores and add no radio traffic; the boost switch shows the boost state of the operating-mode word the poll
+/// The companions (energy, heat pump running, electric backup running, heating source) show readings the same poll
+/// already stores and add no radio traffic; the boost switch shows the boost state of the operating-mode word the poll
 /// reads and writes it.
 ///
 /// The readings, the target EXECUTE, the mode write, boost and away are confirmed on one Atlantic Calypso
@@ -51,7 +55,8 @@
 /// That heater accepts only its own fixed targets (one per shower count, all whole degrees), so a value
 /// between two steps is not taken.
 ///
-/// \todo The mode mapping and the target steps rest on that one heater; confirm them on a second one.
+/// \todo The mode mapping and the target steps rest on that one heater (and on its manual for the heat-pump-only
+/// setting); confirm them on a second one, and confirm that the element never runs in manual ECO on.
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/number/number.h"
@@ -118,6 +123,9 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
   /// @param readings What the hub has read from the heater.
   /// @return true when a published field changed.
   bool sync_from_readings_(const DhwReadings &readings);
+
+  /// @brief True when the mode shown is the one the heater's automatic mode maps to.
+  [[nodiscard]] bool holds_automatic_mode_() const;
 
   bool observed_{false};  ///< True once a reading has been folded in.
 };
@@ -210,6 +218,20 @@ class IOHomeDhwBinarySensor : public binary_sensor::BinarySensor, public Compone
 
  protected:
   Reading reading_{Reading::HEAT_PUMP};
+};
+
+/// @brief Text sensor of what heats the water: `heat pump`, `electric backup`, `heat pump and electric backup`
+/// or `idle`.
+/// @ingroup hioc_platforms
+///
+/// Built from the same heating-state reading as the two binary sensors (dhw_heating_source_name()). No state
+/// until the first poll has read it, so `idle` always means the heater said so.
+class IOHomeDhwHeatingSourceSensor : public IOHomeCompanionTextSensor {
+ public:
+  /// @brief Subscribe to the device's updates and publish what is already known.
+  void setup() override;
+  /// @brief Dump sensor configuration to the log.
+  void dump_config() override;
 };
 
 /// @brief Switch that starts and ends the heater's boost.

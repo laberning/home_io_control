@@ -168,8 +168,6 @@ constexpr uint8_t PRIVATE2_EXTENDED_BLOCK_FLAG = 0x80;
 constexpr uint8_t STATUS_UPDATE_ACK_PAYLOAD[] = {0x05, 0x00};
 /// Set-config payload that enables automatic status updates from the device.
 constexpr uint8_t SET_CONFIG1_STATUS_BROADCAST_PAYLOAD[] = {0xE0, 0x10, 0x0A, 0x08, 0x00};
-/// Identify-request parameter byte (data[1] of the CMD_IDENTIFY payload).
-constexpr uint8_t IDENTIFY_PARAMETER = 0xFF;
 
 /// @brief Frame a main-parameter-only EXECUTE: originator, ACEI, the two main-parameter bytes, and
 /// both functional-parameter indicator bytes zero. Shared by the position and heating-level builders.
@@ -583,9 +581,9 @@ bool create_set_name(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool lo
 }
 
 /// Build an authenticated device-identify request (0x1E).
-bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power) {
+bool create_identify(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t wink_time) {
   init_request(f, own, dst, low_power);
-  const uint8_t payload[2] = {ORIGINATOR_USER_REMOTE, IDENTIFY_PARAMETER};
+  const uint8_t payload[2] = {ORIGINATOR_USER_REMOTE, wink_time};
   return set_cmd(f, CMD_IDENTIFY, payload, sizeof(payload));
 }
 

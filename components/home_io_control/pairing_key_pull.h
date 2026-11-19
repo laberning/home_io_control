@@ -73,8 +73,9 @@ class KeyPull {
   /// (ExchangeEngine::plan_attempts()): to a mains device as many without a gap as fit
   /// `exchange_total_budget_ms` (at most EXCHANGE_MAX_ATTEMPTS), the early ones listening
   /// `exchange_early_response_wait_ms` and the last PAIRING_KEY_REPLY_TIMEOUT_MS; to a low-power
-  /// one EXCHANGE_RETRY_COUNT with the retry gap. A try that could not finish inside the budget is
-  /// not started (decisions::attempt_fits()).
+  /// one EXCHANGE_RETRY_COUNT with the retry gap, all of them kept whatever they cost (ADR 0095).
+  /// A try of any other plan that could not finish inside the budget is not started
+  /// (decisions::attempt_fits()).
   ///
   /// The hub's own key is accepted as is: no decrypt produces it by chance. A different key must be
   /// proven by the device's 0x3D to our challenge (ExchangeEngine::challenge_sender() under that key, up

@@ -6,7 +6,7 @@
 ///
 /// One row per (node type, subtype) the project knows by name. Every per-type fact that is not a
 /// bare number — the lowercase identifier, the YAML selectability, the capability class, whether a
-/// platform can drive the device yet, and the capability bits — is read from that table, so there is
+/// platform can drive the device yet, and the capabilities — is read from that table, so there is
 /// exactly one place to add a type or a subtype. A lookup falls back from (type, subtype) to
 /// (type, 0) to "not in the table".
 ///
@@ -14,7 +14,7 @@
 /// type, not a product: products that share a (type, subtype) are told apart by data the wire does not
 /// carry, which is why the names stay generic. Where two such products need different handling, the
 /// (type, subtype) row has model rows below it (DeviceModel, YAML `io_model:`): a model row states its
-/// own whole capability word, exactly like a subtype row, and keeps the class and platform of the row
+/// own whole capability set, exactly like a subtype row, and keeps the class and platform of the row
 /// above it. A model is declared, never learned, so a lookup takes it as an explicit argument and
 /// DeviceModel::NONE is the (type, subtype) row itself (ADR 0067).
 
@@ -49,7 +49,7 @@ static constexpr uint8_t HAS_PLATFORM = 1U << 1U;
 static constexpr uint8_t STANDALONE_NAME = 1U << 2U;
 /// Subtype rows only: no capture or report has confirmed this kind on a real device, so what the
 /// row says is inferred. Discovery and pairing log it as experimental, the codegen warns when a
-/// config declares it (hub_validators.py `KIND_EXPERIMENTAL` is Python's copy of this flag), and
+/// config declares it (hub_validators.py `EXPERIMENTAL_KINDS` is Python's copy of this flag), and
 /// the node-type table in the published docs marks it. A type row (subtype 0) is never experimental.
 static constexpr uint8_t EXPERIMENTAL = 1U << 3U;
 /// Type rows only: a device that answers discovery as this type hands out its own system key and
@@ -68,7 +68,7 @@ struct DeviceTypeInfo {
                                      ///< Model row: its YAML `io_model:` spelling ("towel_dryer").
   DeviceCapabilityClass capability;  ///< Entity family the device maps to.
   uint8_t flags;                     ///< device_type_flags bits.
-  DeviceFeatures features;           ///< device_feature bits: the whole word, never merged with the type row's.
+  DeviceFeatures features;           ///< device_feature set: the row's whole set, never merged with the type row's.
 };
 
 /// @brief Look up the table row for a (type, subtype, model).
@@ -128,17 +128,17 @@ bool device_hands_out_key(DeviceType type);
 /// @return The resolved row's class, or DeviceCapabilityClass::UNKNOWN when the type is not in the table.
 DeviceCapabilityClass device_capability_class(DeviceType type, uint8_t subtype);
 
-/// @brief Capability bits of a (type, subtype, model).
+/// @brief Capabilities of a (type, subtype, model).
 /// @details The model row; else the exact (type, subtype) row; else, for subtype
 ///          SUBTYPE_MAIN_PARAMETER_ONLY, main_parameter_only_variant() of the type's row (of no features
 ///          when the type has no row); else the type's own row; else no features. Callers resolve a
-///          device's bits once, onto the device record, and read them from there; this lookup serves
+///          device's capabilities once, onto the device record, and read them from there; this lookup serves
 ///          the resolver and checks that run before a device exists.
 /// @param type Node type.
 /// @param subtype Subtype.
 /// @param model Declared model (IoDevice::model); DeviceModel::NONE where no model is declared, such
 ///        as discovery and the paste-ready YAML, which only know the wire type.
-/// @return The feature word.
+/// @return The feature set.
 DeviceFeatures device_features(DeviceType type, uint8_t subtype, DeviceModel model);
 
 /// @brief Features of a device kind that has no table row, or that is not declared at all.
@@ -147,7 +147,7 @@ DeviceFeatures device_features(DeviceType type, uint8_t subtype, DeviceModel mod
 ///          speed block of the 8-byte position frame; a light, switch or lock has no capability and
 ///          sends the 6-byte frame; an exterior-heating fan takes levels in that frame. No class has tilt.
 /// @param entity_class Capability class of the entity that registered the device.
-/// @return The feature word, or no features for a class with no EXECUTE position path.
+/// @return The feature set, or no features for a class with no EXECUTE position path.
 DeviceFeatures undeclared_kind_features(DeviceCapabilityClass entity_class);
 
 /// @brief Human-readable description of a (type, subtype) for logs and reports.
@@ -175,8 +175,7 @@ std::string format_device_ids(DeviceType type, uint8_t subtype);
 /// @return The variant's features.
 constexpr DeviceFeatures main_parameter_only_variant(DeviceFeatures type_features) {
   using namespace device_feature;
-  return static_cast<DeviceFeatures>((type_features & ~(LEVELS | TILT | EXTENDED_POSITION_FRAME)) |
-                                     MAIN_PARAMETER_ONLY);
+  return type_features.without(LEVELS | TILT | EXTENDED_POSITION_FRAME) | MAIN_PARAMETER_ONLY;
 }
 
 // === Main-parameter values ===
@@ -197,13 +196,13 @@ static constexpr uint16_t MAIN_PARAMETER_STOP = main_parameter_of(POS_STOP);
 /// What position_main_parameter() returns for a value that is no position; no device accepts it.
 static constexpr uint16_t MAIN_PARAMETER_INVALID = 0xFFFF;
 
-/// @brief One named position: its feature bit, its main-parameter value and the command that sends it.
+/// @brief One named position: its capability, its main-parameter value and the command that sends it.
 /// @details Named positions are main-parameter values defined per actuator profile (VELUX KLF 200 API
-///          specification, section 14.2). NAMED_POSITIONS is the only place a value, its bit and its
+///          specification, section 14.2). NAMED_POSITIONS is the only place a value, its capability and its
 ///          command are paired; the frame builder, the value check, the command names and the Python
 ///          mirror all derive from it.
 struct NamedPosition {
-  DeviceFeatures feature;   ///< The bit a device needs to accept it.
+  DeviceFeatures feature;   ///< The capability a device needs to accept it.
   uint16_t main_parameter;  ///< Value sent as the EXECUTE main parameter.
   CoverCommand command;     ///< The command that sends it.
   const char *name;         ///< cover_command_name() of the command ("FAVORITE", "VENT", "PEDESTRIAN", "PARTIAL").
@@ -214,7 +213,7 @@ struct NamedPosition {
 ///          is experimental: its value rests on no public source. A motor without the position
 ///          refuses either (PARAMETER_UNKNOWN) and nothing moves.
 ///          \todo Confirm 0xD807 on a real gate opener.
-///          Adding one is a bit (with its evidence), a row here, a CoverCommand value, the rows that
+///          Adding one is a capability (with its evidence), a row here, a CoverCommand value, the rows that
 ///          have it in the type table, and a companion button in the Python codegen.
 inline constexpr NamedPosition NAMED_POSITIONS[] = {
     {device_feature::FAVORITE, main_parameter_of(POS_FAVORITE), CoverCommand::FAVORITE, "FAVORITE"},
@@ -257,7 +256,7 @@ inline bool command_main_parameter(CoverCommand command, uint16_t &main_paramete
 
 /// @brief True when a device with these features accepts this main-parameter value in an EXECUTE.
 /// @details Open (0x0000), closed (0xC800) and stop (0xD200) always; 0x0001-0xC7FF only with LEVELS;
-///          a named position only with its bit; anything else never.
+///          a named position only with its capability; anything else never.
 /// @param features The device's resolved features.
 /// @param main_parameter The main parameter an EXECUTE would carry.
 constexpr bool device_accepts_main_parameter(DeviceFeatures features, uint16_t main_parameter) {

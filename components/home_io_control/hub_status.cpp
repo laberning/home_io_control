@@ -331,7 +331,7 @@ void apply_private_response_status(const std::string &id, IoDevice &dev, const I
   // A moving device that counts down is read once more, with the settling plan, at the end of its
   // count (a count of 0 included); the progress read below keeps its own cadence until then.
   if (trust_position)
-    policy.on_trusted_report(id, remaining_s, dev.last_status);
+    policy.on_trusted_report(id, remaining_s, dev.last_status, decisions::is_waiting(dev.execution_state));
 
   // A count that stopped falling backs the progress reads off (StatusPollPolicy::frozen_count_delay_ms()),
   // except while the cover waits: it holds its count by design (ADR 0085). A cadence that is longer
@@ -671,6 +671,25 @@ void IOHomeControlComponent::apply_status_update_(const std::string &id, IoDevic
   this->notify_device_update_(id);
 }
 
+namespace {
+
+/// Apply a CMD_PRIVATE_RESP from a heater that has no cover fields: a water heater (its target) or a register
+/// heater (the heating level of its status read).
+/// @return true when the device is such a heater and the reply was applied; false for any other device.
+bool apply_heater_private_response(const std::string &id, IoDevice &dev, const IoFrame &frame, bool trust_position) {
+  if (has_feature(dev.features, device_feature::WATER_HEATER)) {
+    apply_dhw_status_reply(id, dev, frame, trust_position);
+    return true;
+  }
+  const HeatingProfile *profile = find_heating_profile(dev);
+  if (profile == nullptr || profile->path != HeatingControlPath::PRIVATE_REGISTERS)
+    return false;
+  apply_register_heater_status_reply(id, dev, frame, trust_position);
+  return true;
+}
+
+}  // namespace
+
 void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool trust_position) {
   const std::string id = node_id_to_string(frame.src);
   IoDevice *device_ptr = this->registry_.get(id);
@@ -687,9 +706,9 @@ void IOHomeControlComponent::update_device_status_(const IoFrame &frame, bool tr
       return;
     }
 
-    // A water heater's reply carries its target and nothing a cover has; it never enters the cover path.
-    if (has_feature(dev.features, device_feature::WATER_HEATER)) {
-      apply_dhw_status_reply(id, dev, frame, trust_position);
+    // A water heater's and a register heater's reply carry a target or a level and nothing a cover has; they
+    // never enter the cover path.
+    if (apply_heater_private_response(id, dev, frame, trust_position)) {
       detail::clear_command_result(dev);
       this->notify_device_update_(id);
       return;
@@ -802,16 +821,15 @@ bool IOHomeControlComponent::record_probe_reply_event(const IoFrame &reply) {
 // decoded for logging and the sender event, then follows linked_remotes handling, which may schedule
 // a status poll for devices this remote controls. The order of the steps matters and is kept: see the
 // comments inline.
-void IOHomeControlComponent::handle_oneway_frame_(const IoFrame &frame) {
+void IOHomeControlComponent::handle_oneway_frame_(const IoFrame &frame, uint32_t now, int16_t rssi_dbm) {
   const std::string src_id = node_id_to_string(frame.src);
-  const uint32_t now = millis();
 
   // Any 1W frame means a remote is transmitting right now, duplicate or not — note it before the
   // duplicate filter so loop() keeps background polls off the radio for the rest of the burst. A
   // pairing-gesture sighting is remembered the same way, so a repeated gesture frame still refreshes
   // its timestamp (issue #27/#65; OneWayReceiver::note_frame() explains why the discovery
   // telemetry window alone does not catch it).
-  this->oneway_receiver_.note_frame(frame, now, this->radio_->get_last_capture().rssi_dbm);
+  this->oneway_receiver_.note_frame(frame, now, rssi_dbm);
 
   // Decode once and reuse for the duplicate key, logging and (when it carries a command intent) the
   // sender HA event, so a physical remote press (or sensor trigger) can drive automations directly.
@@ -839,6 +857,19 @@ void IOHomeControlComponent::handle_oneway_frame_(const IoFrame &frame) {
   this->follow_linked_remote_press_(info, src_id);
 }
 
+void IOHomeControlComponent::on_overheard_frame(const IoFrame &frame, const RadioRxPacket & /*packet*/,
+                                                int16_t rssi_dbm, uint32_t now) {
+  this->oneway_receiver_.keep_overheard(frame, now, rssi_dbm);
+}
+
+void IOHomeControlComponent::drain_overheard_oneway_frames_() {
+  if (!this->oneway_receiver_.has_kept())
+    return;
+  KeptOneWayFrame kept;
+  while (this->oneway_receiver_.pop_kept(kept))
+    this->handle_oneway_frame_(kept.frame, kept.heard_ms, kept.rssi_dbm);
+}
+
 void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packet) {
   IoFrame frame;
   if (!parse(packet.data, packet.len, frame)) {
@@ -848,14 +879,13 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
 
   detail::log_component_capture(this->radio_, "parse_ok", packet.data, packet.len, &frame);
 
-  // === Key-extraction responder ("Accept Foreign Pairing") ===
+  // === Key-extraction responder ("Recover System Key") ===
   // Runs before the exchange-internal drop below: a hub-issued 0x3C challenging our own 0x37 is
   // addressed to us and is ours to answer (key_extraction_responder.cpp). Self-gated on armed + our
-  // throwaway ID, so the disarmed path (and every command other than 0x28/0x2C/0x31/0x32/0x36/0x3C)
-  // is bit-for-bit unchanged by this ordering — try_handle_frame() returns false immediately
-  // whenever it doesn't apply, and this reorder can only affect frames where BOTH this call and
-  // the is_exchange_internal_command() check below would otherwise fire, i.e. only 0x3C/0x3D (that
-  // predicate's entire domain, decisions_exchange.h).
+  // throwaway ID: try_handle_frame() returns false immediately whenever it doesn't apply (disarmed,
+  // or any command other than 0x28/0x2C/0x31/0x32/0x36/0x3C), so running it first matters only for
+  // frames that both this call and the is_exchange_internal_command() check below would take,
+  // i.e. only 0x3C/0x3D (that predicate's entire domain, decisions_exchange.h).
   if (this->key_extraction_.try_handle_frame(frame, packet.freq_hz))
     return;
 
@@ -870,7 +900,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   }
 
   if ((frame.ctrl0 & CTRL0_PROTOCOL_1W) != 0) {
-    this->handle_oneway_frame_(frame);
+    this->handle_oneway_frame_(frame, millis(), this->radio_->get_last_capture().rssi_dbm);
     return;
   }
 

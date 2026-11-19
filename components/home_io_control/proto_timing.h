@@ -31,42 +31,63 @@ static constexpr uint32_t FREQ_CH3 = 869850000;  ///< Channel 3: 869.85 MHz (2W 
 /// 5.3 s, which is 128 × 41 ms plus its own turnaround (issue #215).
 static constexpr uint32_t DISCOVERY_SLOT_MS = 41;
 
-/// Preamble is a sequence of 0xAA bytes that precedes every frame.
-/// Any start frame carrying `CTRL1_LOW_POWER` — a directed frame to a low-power target, or the
-/// SPE roll-call's low-power frame shape — uses the long preamble (1024 bytes = 8192 bits) as a
-/// wake-up burst for a duty-cycled receiver; every other start frame uses the runtime-tunable
-/// `normal_start_preamble`, which an always-listening receiver detects fine. Every continuation
+/// Preamble is a sequence of 0xAA bytes that precedes every frame, set as a duration
+/// (ADR 0097): each driver converts a duration into programmed bytes with its own bits per
+/// preamble byte (`RadioDriver::preamble_bytes_for_ms()`), so one setting lasts the same on every
+/// radio. Any start frame carrying `CTRL1_LOW_POWER` — a directed frame to a low-power target, or
+/// the SPE roll-call's low-power frame shape — uses the wake-up preamble (`LOW_POWER_WAKE_MS`) for
+/// a duty-cycled receiver; every other start frame uses the runtime-tunable start preamble
+/// (`START_PREAMBLE_MS`), which an always-listening receiver detects fine. Every continuation
 /// frame (a reply, our challenge or challenge answer, a status-update ACK) uses the radio driver's
-/// `response_preamble()`, since both sides are already on the same channel; SHORT_PREAMBLE is that
-/// value's protocol default and the tuning floor. The exchange engine derives all of this from the
-/// frame (exchange_engine.cpp).
-static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes: wake-up burst for a low-power start frame
-static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol default and floor for continuation frames
+/// `response_preamble()`, since both sides are already on the same channel; SHORT_PREAMBLE is the
+/// protocol's nominal length of that preamble. The exchange engine derives all of this from the
+/// frame (exchange_engine.cpp). One-way bursts are not set as durations: they keep
+/// `LONG_PREAMBLE` as their wake-up.
+static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes: wake-up burst of a one-way low-power copy
+static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol's nominal length of a continuation preamble
 
-/// Default for `TuningConfig::cold_broadcast_reply_preamble` — preamble for a *broadcast* reply to
-/// a frame the peer caught via a rotating/hopping listen (currently: only the key-extraction
+/// Default for `TuningConfig::low_power_wake_ms`: the 2W wake-up in front of a directed start frame
+/// to a low-power receiver believed at rest. A VELUX KLI 110 remote sends about 600 ms of wake-up,
+/// and with about 600 ms all eight commands to two resting VELUX SSL shutters landed on the first
+/// try, where 427 ms answered 12 of 16 and the 213 ms of LONG_PREAMBLE about half (ADR 0095,
+/// ADR 0097). The same duration is 2880 bytes on a raw-stream radio and 2304 on the SX1276.
+static constexpr float LOW_POWER_WAKE_MS = 600.0F;
+
+/// Default for `TuningConfig::cold_broadcast_reply_preamble_ms` — preamble for a *broadcast* reply
+/// to a frame the peer caught via a rotating/hopping listen (currently: only the key-extraction
 /// responder's 0x29, the sole `start=true` frame any device-role builder in this codebase
 /// produces) — long enough to be reliably caught by a hopping receiver, short enough that
-/// sending it doesn't block the loop the way LONG_PREAMBLE does.
+/// sending it doesn't block the loop the way the wake-up preamble does.
 ///
-/// 80 bytes ≈ 16.7 ms at the protocol's 38400 bps line rate (soft_phy_air_time_us()), sized above
-/// the ~13.9 ms preamble real devices put on a discovery reply. A starting point, not yet
-/// hardware-validated for every radio. Runtime-tunable via `cold_broadcast_reply_preamble` for
-/// exactly that reason.
-static constexpr uint16_t COLD_BROADCAST_REPLY_PREAMBLE = 80;
+/// 20 ms sits above the ~13.9 ms preamble real devices put on a discovery reply. A starting
+/// point, not yet validated on every radio; runtime-tunable for exactly that reason.
+static constexpr float COLD_BROADCAST_REPLY_PREAMBLE_MS = 20.0F;
 
-/// Default for `TuningConfig::normal_start_preamble` — the preamble in front of a directed *start*
+/// Default for `TuningConfig::start_preamble_ms` — the preamble in front of a directed *start*
 /// frame whose target is **not** a low-power / duty-cycled device (`CTRL1_LOW_POWER` clear). An
-/// always-listening receiver does not need the ~213 ms `LONG_PREAMBLE` wake-up burst, and some
-/// receivers never lock onto one that long; a normal start frame gets this shorter preamble
-/// instead, matching what a reference hub sends to an always-alive device.
+/// always-listening receiver does not need a wake-up burst, and some receivers never lock onto
+/// one that long; a normal start frame gets this shorter preamble instead.
 ///
-/// 32 bytes = 256 bits is well above the ~12-byte response preamble a
-/// short-turnaround chip uses, ~6.7 ms of air time, and two orders of magnitude below the 1024-byte
-/// burst. 8 bytes is a proven lower bound against paired always-alive devices but nothing bounds
-/// where a start frame stops being heard, so 32 is the defensible middle — and `normal_start_preamble`
-/// is a live tuning knob so a wrong guess costs a number change, not a rebuild.
-static constexpr uint16_t NORMAL_START_PREAMBLE = 32;
+/// 10 ms is 48 bytes on a raw-stream radio: on a Somfy Izymo dimmer such a radio answered 60 of 60
+/// first tries at 48 bytes against 56 of 71 at 32 (ADR 0042), and a radio that sends 10 bits per
+/// byte answered 60 of 60 at 32 bytes, about 8.7 ms. Both need more than about 8 ms on air; 10 ms
+/// is the one duration that serves every radio (ADR 0097). A live tuning knob, so a wrong guess
+/// costs a number change, not a rebuild.
+static constexpr float START_PREAMBLE_MS = 10.0F;
+
+/// Default for `TuningConfig::response_preamble_ms` — preamble of a response/continuation frame
+/// sent immediately after receiving from the device (0x3D challenge responses, 0x32 key
+/// transfers, and any future frame in that position), giving the peer's receiver time to lock
+/// back on after our own TX→RX turnaround.
+///
+/// 3.5 ms: a radio that sends 10 bits per preamble byte sent 12 bytes, about 3.4 ms, from the
+/// start; a raw-stream radio sent 12 bytes, about 2.6 ms, since a field run raised it from 8 (issue
+/// #119: a Somfy light's closing reply was lost after 13 of 38 challenges with 8 bytes against 4
+/// of 35 with 12). A real controller was observed sending about 101 bits (2.6 ms) of continuation
+/// preamble; 3.5 ms is the longer of the two validated durations. It starts the answer about 1 ms
+/// later than 2.6 ms, and some devices reject an answer a few milliseconds late (issues #178 and
+/// #163), so the margin above it is small (ADR 0097).
+static constexpr float RESPONSE_PREAMBLE_MS = 3.5F;
 
 /// How hard a transmission has to work to be heard: the wake-up level the receiver needs. A radio
 /// that wakes receivers by preamble length gets the same information from
@@ -78,11 +99,12 @@ enum class TxWake : uint8_t {
   LONG,   ///< The receiver may be duty-cycling.
 };
 
-/// True when a preamble this long is the wake-up burst for a duty-cycled receiver. Every preamble
-/// tunable except `pairing_discovery_preamble` is capped well below `LONG_PREAMBLE`, and that one
-/// is capped at it (an explicit opt-in to the wake-up burst for discovery), so only a real wake-up
-/// burst reaches the threshold. The discovery preamble has no compiled default: it follows
-/// `normal_start_preamble` (see `effective_discovery_preamble()` in tuning_config.h).
+/// True when a preamble this long (in programmed bytes) is the wake-up burst for a duty-cycled
+/// receiver. Every preamble duration tunable except `low_power_wake_ms` and
+/// `pairing_discovery_preamble_ms` is capped well below `LONG_PREAMBLE` on every radio, and the
+/// wake-up floor is above it on every radio, so only a real wake-up burst reaches the threshold.
+/// The discovery preamble has no compiled default: it follows `start_preamble_ms` (see
+/// `effective_discovery_preamble_ms()` in tuning_config.h).
 constexpr bool is_wake_preamble(uint16_t len) { return len >= LONG_PREAMBLE; }
 
 /// The wake-up level of a frame, from the two facts that decide it: whether it starts an exchange
@@ -148,7 +170,8 @@ static constexpr uint8_t EXCHANGE_RETRY_COUNT = 3;
 /// a read.
 static constexpr uint8_t EXCHANGE_MAX_ATTEMPTS = 9;
 /// Attempts a settling read makes to a low-power receiver. Each one leads with the wake-up
-/// preamble (~0.24 s on air), so three already fill the exchange budget.
+/// preamble (~0.43 s on air at the default), so three take longer than the exchange budget and the
+/// plan is bounded by its attempt count instead (ADR 0095).
 static constexpr uint8_t LOW_POWER_SETTLING_ATTEMPTS = 3;
 /// How long the short lead attempt of a read to a low-power receiver in an unknown state listens after
 /// the end of its own transmission (decisions::WakeBelief::UNKNOWN, ADR 0079).
@@ -168,8 +191,9 @@ static constexpr uint16_t LOW_POWER_SHORT_LEAD_WINDOW_MS = 100;
 /// 647 ms (a third-party gateway's pairing), 819 ms and 1639 ms (an RS100 io motor's key exchange)
 /// and 4375 ms (a stalled key extraction). 550 ms sits about 1.5 times above the 95th percentile and
 /// below every slower sample, so one attempt's window covers a reply that arrives late without
-/// waiting for the outliers. Three such attempts with their wake-up preambles still fit
-/// EXCHANGE_TOTAL_BUDGET_MS when nothing is waited between them.
+/// waiting for the outliers. Three such attempts behind the default LOW_POWER_WAKE_MS take
+/// about 3.5 s, so a low-power plan runs past EXCHANGE_TOTAL_BUDGET_MS
+/// (decisions::AttemptPlan::bounded_by_attempts, ADR 0095).
 static constexpr uint16_t LOW_POWER_RESPONSE_WAIT_MS = 550;
 /// How long an attempt listens for a mains device's reply when another attempt follows it, after
 /// the end of its own transmission.
@@ -288,7 +312,9 @@ static constexpr uint32_t REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS = 2000;
 /// budget. Counting the window and the final wait keeps a slow listen from running an exchange past
 /// the ceiling; counting the transmission keeps a radio with a long wake-up from starting an
 /// attempt it cannot finish in time. At the default 400 ms window three attempts with the retry gap
-/// still fit (~2.3 s); an exchange the target challenges does not always (ADR 0073). A request to a
+/// to a mains device still fit (~2.3 s); an exchange the target challenges does not always (ADR 0073).
+/// A low-power target keeps its three wake-up attempts whatever they cost: its plan is bounded by
+/// their count, not by this budget (ADR 0095). A request to a
 /// mains device that makes several attempts with no gap listens EXCHANGE_EARLY_RESPONSE_WAIT_MS on
 /// all but the last and fits nine (decisions::attempt_plan(), ADR 0075).
 static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
@@ -333,15 +359,67 @@ static constexpr uint32_t ONEWAY_BURST_INTERVAL_MS = 40;
 /// is 2 hours.
 static constexpr uint32_t RAIN_EVIDENCE_HOLD_MS = 2UL * 60UL * 60UL * 1000UL;
 
-/// Listen-before-talk (LBT) parameters: conservative defaults that keep the hub from opening an
-/// exchange over traffic it can hear.
-/// Before transmitting a frame that opens a session (START set), the radio checks
-/// that the channel RSSI is below the threshold. If the channel is busy, TX is
-/// deferred by LBT_RETRY_DELAY_MS up to LBT_MAX_RETRIES times. A frame without
-/// START answers within a session and is sent at once, unchecked.
-static constexpr int16_t LBT_RSSI_THRESHOLD_DBM = -90;  ///< Channel-free threshold
-static constexpr uint8_t LBT_MAX_RETRIES = 5;           ///< Max carrier-sense attempts before TX anyway
-static constexpr uint8_t LBT_RETRY_DELAY_MS = 5;        ///< Backoff between LBT checks
+/// Listen-before-talk (LBT) parameters of the senders that keep a fixed channel: discovery,
+/// pairing, the key pull and broadcasts. Before such a frame that opens a session (START set) the
+/// radio checks that the channel RSSI is below the threshold; on a busy channel the frame is
+/// deferred by LBT_RETRY_DELAY_MS up to LBT_MAX_RETRIES times, then sent anyway. A frame without
+/// START answers within a session and is sent at once, unchecked. The exchange engine's requests
+/// use the channel access below instead (ADR 0096).
+///
+/// The limit at or above which a reading makes a channel busy, for these senders and for the exchange
+/// engine's requests alike, is learned per board (decisions::busy_limit_dbm()): the board's own quiet
+/// level plus QUIET_LEVEL_MARGIN_DB, held between BUSY_LIMIT_FLOOR_DBM and BUSY_LIMIT_CEILING_DBM.
+/// A fixed `lbt_rssi_threshold_dbm` replaces it. Boards differ in how much background noise their
+/// receiver reads: one board reads -88 to -90 dBm on every channel (issue #228), so a fixed -90 dBm
+/// finds no free channel on it, while four bench boards idle between -123 and -108 dBm (ADR 0096).
+///
+/// CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM is the limit before every channel has enough readings: above
+/// the noisiest board reported so far, so a board that has not learned yet still finds a free channel.
+static constexpr int16_t CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM = -85;
+/// The learned limit never goes below this: a quiet board judges a channel busy from -90 dBm on.
+static constexpr int16_t BUSY_LIMIT_FLOOR_DBM = -90;
+/// The learned limit never goes above this: weakest own device frame seen on the bench was -70 dBm,
+/// so a limit this far below it still holds back for a nearby transmitter.
+static constexpr int16_t BUSY_LIMIT_CEILING_DBM = -75;
+/// Distance of the learned limit above the quiet level (the median of single idle readings). It
+/// covers the 4 to 5 dB by which the highest of five readings, which is what a request's channel check
+/// compares, sits above that median on all four bench boards (QUIET_LEVEL_BURST_OFFSET_DB), plus
+/// headroom for the board whose readings scatter most (ADR 0096).
+static constexpr int16_t QUIET_LEVEL_MARGIN_DB = 19;
+/// How far the highest of a check's five readings typically sits above the quiet level (see above).
+static constexpr int16_t QUIET_LEVEL_BURST_OFFSET_DB = 4;
+/// Headroom between the typical highest-of-five reading and BUSY_LIMIT_CEILING_DBM below which a
+/// board's quiet level is reported (a warning, once per boot): with less, ordinary noise reaches the
+/// limit and the board struggles to find a free channel.
+static constexpr int16_t QUIET_LEVEL_WARN_HEADROOM_DB = 10;
+/// A learned limit is logged when it is first known and when it moves by at least this much.
+static constexpr int16_t BUSY_LIMIT_LOG_STEP_DB = 3;
+/// One idle reading is taken at every this-many-th idle hop, about 12 readings a second per channel
+/// at HOP_TIME_US, rare enough to leave the idle hop as it is.
+static constexpr uint8_t QUIET_LEVEL_READING_EVERY_N_HOPS = 10;
+/// A channel's quiet level is known once it has this many readings (about 16 s after boot).
+static constexpr uint16_t QUIET_LEVEL_MIN_READINGS = 200;
+/// When a channel's readings reach this count they are all halved, so the quiet level follows a
+/// change of the board's surroundings within a few minutes.
+static constexpr uint16_t QUIET_LEVEL_HALVING_READINGS = 4096;
+static constexpr uint8_t LBT_MAX_RETRIES = 5;     ///< Max carrier-sense attempts before TX anyway
+static constexpr uint8_t LBT_RETRY_DELAY_MS = 5;  ///< Backoff between LBT checks
+
+/// Channel access of a request from the exchange engine (ADR 0096): the checks of one attempt end
+/// after this long, and the attempt then ends as "channel busy" instead of sending. The limits are
+/// this project's design choice, sized from a remote's wake-up holding channel 2 for at least
+/// 450 ms (issue #209): an ordinary request moves to another channel and needs far less; a request
+/// with the low-power flag stays on channel 2 and waits the remote out.
+static constexpr uint32_t CHANNEL_ACCESS_BUDGET_MS = 100;
+static constexpr uint32_t LOW_POWER_CHANNEL_ACCESS_BUDGET_MS = 600;  ///< Same, for a low-power request.
+
+/// One channel check is up to this many RSSI readings; one reading at or above the threshold makes
+/// the channel busy. The last reading is the radio's own, taken right before the first symbol.
+static constexpr uint8_t CHANNEL_CHECK_READINGS = 5;
+/// Gap between the readings of one check, in milliseconds.
+static constexpr uint32_t CHANNEL_CHECK_READING_GAP_MS = 1;
+/// Time one free channel check takes before the send, in milliseconds: the gaps between its readings.
+static constexpr uint32_t CHANNEL_CHECK_TIME_MS = CHANNEL_CHECK_READING_GAP_MS * (CHANNEL_CHECK_READINGS - 1);
 
 /// Canonical defaults for the chip-neutral runtime-tunable pairing/discovery parameters.
 ///

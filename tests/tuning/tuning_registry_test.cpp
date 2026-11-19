@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <set>
 #include <string>
 #include <vector>
@@ -48,19 +49,29 @@ std::set<std::string> select_param_names() {
 
 TEST(TuningRegistry, NumberTableContainsExactlyExpectedParameters) {
   const std::set<std::string> expected = {
-      "sx1262_response_preamble",        "sx1262_post_tx_settle_us",
-      "sx1276_response_preamble",        "sx1276_discovery_hop_slice_ms",
-      "sx1262_discovery_hop_slice_ms",   "lr1121_response_preamble",
-      "lr1121_post_tx_settle_us",        "lr1121_discovery_hop_slice_ms",
-      "cold_broadcast_reply_preamble",   "normal_start_preamble",
-      "low_power_wake_preamble",         "lbt_max_retries",
-      "lbt_rssi_threshold_dbm",          "pairing_discovery_preamble",
-      "pairing_discovery_wait_ms",       "pairing_discovery_initial_dwell_ms",
-      "pairing_key_exchange_retries",    "exchange_start_response_wait_ms",
-      "exchange_response_wait_ms",       "exchange_total_budget_ms",
-      "exchange_early_response_wait_ms", "pairing_key_init_delay_ms",
-      "key_extraction_type_word",        "key_extraction_multi_info",
-      "remote_activity_poll_delay_ms",   "remote_activity_catchup_poll_ms",
+      "response_preamble_ms",
+      "sx1262_post_tx_settle_us",
+      "sx1276_discovery_hop_slice_ms",
+      "sx1262_discovery_hop_slice_ms",
+      "lr1121_post_tx_settle_us",
+      "lr1121_discovery_hop_slice_ms",
+      "cold_broadcast_reply_preamble_ms",
+      "start_preamble_ms",
+      "low_power_wake_ms",
+      "lbt_rssi_threshold_dbm",
+      "pairing_discovery_preamble_ms",
+      "pairing_discovery_wait_ms",
+      "pairing_discovery_initial_dwell_ms",
+      "pairing_key_exchange_retries",
+      "exchange_start_response_wait_ms",
+      "exchange_response_wait_ms",
+      "exchange_total_budget_ms",
+      "exchange_early_response_wait_ms",
+      "pairing_key_init_delay_ms",
+      "key_extraction_type_word",
+      "key_extraction_multi_info",
+      "remote_activity_poll_delay_ms",
+      "remote_activity_catchup_poll_ms",
   };
   EXPECT_EQ(number_param_names(), expected) << "number table drifted from the expected inventory";
 }
@@ -76,6 +87,7 @@ TEST(TuningRegistry, SelectTableContainsExactlyExpectedParameters) {
       "pairing_discovery_low_power",
       "pairing_discovery_ack_capable",
       "low_power_wake_belief",
+      "lbt_force_when_busy",
       "scan_power_classes",
       "pairing_discover_confirm",
       "pairing_discovery_listen_channels",
@@ -85,8 +97,8 @@ TEST(TuningRegistry, SelectTableContainsExactlyExpectedParameters) {
   EXPECT_EQ(select_param_names(), expected) << "select table drifted from the expected inventory";
 }
 
-TEST(TuningRegistry, TotalParameterCountIsForty) {
-  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 40u);
+TEST(TuningRegistry, TotalParameterCountIsThirtyEight) {
+  EXPECT_EQ(number_param_names().size() + select_param_names().size(), 38u);
 }
 
 // ============================================================================
@@ -110,21 +122,21 @@ TEST(TuningRegistry, EveryNumberParameterRoundTrips) {
 TEST(TuningRegistry, DiscoveryPreambleGetterIsEffectiveAndSetterMarksItSet) {
   const TuningNumberParam *param = nullptr;
   for (const TuningNumberParam *p = tuning_number_params_begin(); p != tuning_number_params_end(); ++p) {
-    if (std::string(p->name) == "pairing_discovery_preamble")
+    if (std::string(p->name) == "pairing_discovery_preamble_ms")
       param = p;
   }
   ASSERT_NE(param, nullptr);
 
   TuningConfig cfg{};
-  cfg.normal_start_preamble = 48;
-  EXPECT_FLOAT_EQ(param->get(cfg), 48.0F) << "unset: the getter shows what discovery will send";
+  cfg.start_preamble_ms = 12.0F;
+  EXPECT_FLOAT_EQ(param->get(cfg), 12.0F) << "unset: the getter shows what discovery will send";
   EXPECT_FALSE(cfg.pairing_discovery_preamble_set);
 
-  param->set(cfg, 1024.0F);
+  param->set(cfg, 250.0F);
   EXPECT_TRUE(cfg.pairing_discovery_preamble_set);
-  EXPECT_FLOAT_EQ(param->get(cfg), 1024.0F);
-  cfg.normal_start_preamble = 32;
-  EXPECT_FLOAT_EQ(param->get(cfg), 1024.0F) << "stays set when the start preamble changes";
+  EXPECT_FLOAT_EQ(param->get(cfg), 250.0F);
+  cfg.start_preamble_ms = 8.0F;
+  EXPECT_FLOAT_EQ(param->get(cfg), 250.0F) << "stays set when the start preamble changes";
 }
 
 TEST(TuningRegistry, EveryNumberParameterAppearsInSnapshotWhenNonDefault) {
@@ -137,11 +149,26 @@ TEST(TuningRegistry, EveryNumberParameterAppearsInSnapshotWhenNonDefault) {
   // while still differing from any real default), and asserts the snapshot names it.
   for (const TuningNumberParam *p = tuning_number_params_begin(); p != tuning_number_params_end(); ++p) {
     TuningConfig cfg{};
-    p->set(cfg, p->get(cfg) + 1.0F);
+    // A parameter that defaults to "not set" reads as NaN; give it any value.
+    const float standard = p->get(cfg);
+    p->set(cfg, std::isnan(standard) ? -80.0F : standard + 1.0F);
     const std::string snapshot = tuning_config_snapshot(cfg);
     EXPECT_NE(snapshot.find(std::string(p->name) + "="), std::string::npos)
         << p->name << " is missing from tuning_config_snapshot() despite being non-default";
   }
+}
+
+TEST(TuningRegistry, TheLearnedBusyLimitReadsAsNoValueAndNeverShowsInTheSnapshot) {
+  const TuningNumberParam *param = find_tuning_number("lbt_rssi_threshold_dbm");
+  ASSERT_NE(param, nullptr);
+  TuningConfig cfg{};
+  EXPECT_TRUE(std::isnan(param->get(cfg))) << "learned: the number entity shows no value";
+  EXPECT_EQ(tuning_config_snapshot(cfg).find("lbt_rssi_threshold_dbm"), std::string::npos);
+
+  param->set(cfg, -80.0F);
+  EXPECT_EQ(cfg.lbt_rssi_threshold_dbm, -80) << "setting the entity fixes the limit";
+  EXPECT_FLOAT_EQ(param->get(cfg), -80.0F);
+  EXPECT_NE(tuning_config_snapshot(cfg).find("lbt_rssi_threshold_dbm=-80"), std::string::npos);
 }
 
 // ============================================================================
@@ -173,6 +200,7 @@ TEST(TuningRegistry, EverySelectOptionRoundTrips) {
       {"pairing_discovery_low_power", {"Off", "On"}},
       {"pairing_discovery_ack_capable", {"Off", "On"}},
       {"low_power_wake_belief", {"Off", "On"}},
+      {"lbt_force_when_busy", {"Off", "On"}},
       {"scan_power_classes", {"both", "always_alive", "low_power"}},
       {"pairing_discover_confirm", {"skip", "send", "send_with_ack"}},
       {"pairing_discovery_listen_channels", {"skip_request", "all"}},
@@ -221,94 +249,98 @@ TEST(TuningRegistry, UnknownNamesDoNotCrashAndReturnDefaults) {
 }
 
 // ============================================================================
-// Driver-supplied start preamble default (ADR 0042)
+// Deprecated byte-denominated preamble keys (ADR 0097)
 // ============================================================================
-// How much preamble a directed start frame needs depends on what the driver actually puts on
-// air, so the default is the driver's to give. The constants are pinned here; the per-driver
-// values live in each driver's own test file next to its double, and the resolution itself is
-// exercised below against a MockRadio.
-
-TEST(TuningRegistry, SoftPhyDriversAskForMorePreambleThanTheProtocolDocuments) {
-  // Measured, not chosen: an SX1262 answers 56/71 = 78.9% of first tries at 32 bytes and 60/60 at
-  // 48, 64, 128 and 256, while an SX1276 sending the same programmed 32 answers 60/60. The
-  // per-driver values are pinned in each driver's own test file, where the doubles live.
-  EXPECT_GT(SOFT_PHY_START_PREAMBLE, NORMAL_START_PREAMBLE);
-  EXPECT_EQ(SOFT_PHY_START_PREAMBLE, 48);
-  EXPECT_EQ(NORMAL_START_PREAMBLE, 32) << "the protocol's documented preamble is 256 bits";
-}
-
-TEST(TuningRegistry, StartPreambleOverrideFlagDefaultsToUnset) {
-  // setup() must be able to tell "the user chose 32" from "nobody chose anything"; the value
-  // alone cannot express that, which is the whole reason the flag exists.
-  const TuningConfig fresh;
-  EXPECT_FALSE(fresh.normal_start_preamble_from_yaml);
-  EXPECT_EQ(fresh.normal_start_preamble, NORMAL_START_PREAMBLE);
-}
-
-// --- resolve_start_preamble_default_(): which value actually reaches the transmitter ---
+// Python hands each legacy key that applies to the board over as bytes
+// (TuningConfig::legacy_preamble_bytes); setup() converts it to the duration it has always lasted
+// on this radio, so a byte value keeps its meaning and the chip is the driver's to name.
 
 namespace {
 
-/// A radio whose only interesting property is the start preamble it asks for.
-class PreambleMockRadio : public MockRadio {
- public:
-  explicit PreambleMockRadio(uint16_t preamble) : preamble_(preamble) {}
-  [[nodiscard]] uint16_t default_start_preamble() const override { return preamble_; }
-
- private:
-  uint16_t preamble_;
-};
-
-/// Wire up just enough component for the resolver: it reads the radio and the tuning struct.
-void run_resolver(test::TestableHubComponent &comp, MockRadio &radio) {
+/// Wire up just enough component for the conversion: it reads the radio and the tuning struct.
+void run_legacy_conversion(test::TestableHubComponent &comp, MockRadio &radio) {
   comp.initialized_ = true;
   comp.radio_ = &radio;
-  comp.resolve_start_preamble_default_();
+  comp.convert_legacy_preamble_bytes_();
 }
 
 }  // namespace
 
-TEST(TuningRegistry, ResolverTakesTheDriverDefaultWhenYamlDidNotSetIt) {
+TEST(TuningRegistry, NoLegacyKeyLeavesEveryDurationAtItsDefault) {
   test::TestableHubComponent comp;
-  PreambleMockRadio radio(SOFT_PHY_START_PREAMBLE);
-  run_resolver(comp, radio);
-  EXPECT_EQ(comp.tuning_.normal_start_preamble, SOFT_PHY_START_PREAMBLE);
+  MockRadio radio;
+  run_legacy_conversion(comp, radio);
+  const TuningConfig fresh;
+  EXPECT_EQ(comp.tuning_.start_preamble_ms, fresh.start_preamble_ms);
+  EXPECT_EQ(comp.tuning_.low_power_wake_ms, fresh.low_power_wake_ms);
+  EXPECT_EQ(comp.tuning_.response_preamble_ms, fresh.response_preamble_ms);
+  EXPECT_EQ(comp.tuning_.cold_broadcast_reply_preamble_ms, fresh.cold_broadcast_reply_preamble_ms);
+  EXPECT_FALSE(comp.tuning_.pairing_discovery_preamble_set);
 }
 
-TEST(TuningRegistry, ResolverLeavesAnExplicitYamlValueAlone) {
-  // The whole point of the flag: an explicit 32 on a soft-PHY board must survive, or a reporter
-  // can never bisect downward to reproduce the very problem this default compensates for.
+TEST(TuningRegistry, LegacyByteKeysBecomeTheDurationTheyGiveOnAnEightBitRadio) {
   test::TestableHubComponent comp;
-  comp.tuning_.normal_start_preamble = NORMAL_START_PREAMBLE;
-  comp.tuning_.normal_start_preamble_from_yaml = true;
-  PreambleMockRadio radio(SOFT_PHY_START_PREAMBLE);
-  run_resolver(comp, radio);
-  EXPECT_EQ(comp.tuning_.normal_start_preamble, NORMAL_START_PREAMBLE)
-      << "an explicit value must win over the driver default, including a shorter one";
+  comp.tuning_.legacy_preamble_bytes = {
+      .low_power_wake = 2048, .start = 48, .response = 12, .cold_broadcast_reply = 80, .discovery = 64};
+  MockRadio radio;  // raw byte stream: 8 bit periods per byte, 38400 bps
+  run_legacy_conversion(comp, radio);
+  EXPECT_NEAR(comp.tuning_.low_power_wake_ms, 426.67F, 0.01F);
+  EXPECT_NEAR(comp.tuning_.start_preamble_ms, 10.0F, 0.01F);
+  EXPECT_NEAR(comp.tuning_.response_preamble_ms, 2.5F, 0.01F);
+  EXPECT_NEAR(comp.tuning_.cold_broadcast_reply_preamble_ms, 16.67F, 0.01F);
+  EXPECT_NEAR(comp.tuning_.pairing_discovery_preamble_ms, 13.33F, 0.01F);
+  EXPECT_TRUE(comp.tuning_.pairing_discovery_preamble_set) << "a legacy discovery key is a set discovery preamble";
 }
 
-TEST(TuningRegistry, ResolverHonoursAnExplicitValueLargerThanTheDriverDefaultToo) {
+TEST(TuningRegistry, TheSameLegacyBytesLastLongerOnATenBitRadio) {
   test::TestableHubComponent comp;
-  comp.tuning_.normal_start_preamble = 256;
-  comp.tuning_.normal_start_preamble_from_yaml = true;
-  PreambleMockRadio radio(SOFT_PHY_START_PREAMBLE);
-  run_resolver(comp, radio);
-  EXPECT_EQ(comp.tuning_.normal_start_preamble, 256);
+  comp.tuning_.legacy_preamble_bytes.low_power_wake = 2048;
+  comp.tuning_.legacy_preamble_bytes.start = 32;
+  TenBitPreambleRadio radio;
+  run_legacy_conversion(comp, radio);
+  EXPECT_NEAR(comp.tuning_.low_power_wake_ms, 533.33F, 0.01F) << "2048 bytes are 533 ms on this coder";
+  EXPECT_NEAR(comp.tuning_.start_preamble_ms, 8.33F, 0.01F);
 }
 
-TEST(TuningRegistry, ResolverIsANoOpWithoutARadio) {
-  // setup() bails out before this on a radio failure; the guard keeps the resolver safe anyway.
+TEST(TuningRegistry, ALegacyKeyOnlyMovesItsOwnDuration) {
   test::TestableHubComponent comp;
+  comp.tuning_.legacy_preamble_bytes.start = 24;
+  MockRadio radio;
+  run_legacy_conversion(comp, radio);
+  const TuningConfig fresh;
+  EXPECT_NEAR(comp.tuning_.start_preamble_ms, 5.0F, 0.01F);
+  EXPECT_EQ(comp.tuning_.low_power_wake_ms, fresh.low_power_wake_ms);
+  EXPECT_EQ(comp.tuning_.response_preamble_ms, fresh.response_preamble_ms);
+  EXPECT_FALSE(comp.tuning_.pairing_discovery_preamble_set);
+}
+
+TEST(TuningRegistry, LegacyConversionIsANoOpWithoutARadio) {
+  // setup() bails out before this on a radio failure; the guard keeps the conversion safe anyway.
+  test::TestableHubComponent comp;
+  comp.tuning_.legacy_preamble_bytes.start = 24;
   comp.radio_ = nullptr;
-  comp.resolve_start_preamble_default_();
-  EXPECT_EQ(comp.tuning_.normal_start_preamble, NORMAL_START_PREAMBLE);
+  comp.convert_legacy_preamble_bytes_();
+  EXPECT_EQ(comp.tuning_.start_preamble_ms, TuningConfig{}.start_preamble_ms);
 }
 
-TEST(TuningRegistry, ResolverIsIdempotent) {
-  // apply_tuning_to_radio_() can run again on a UI change; resolving twice must not drift.
-  test::TestableHubComponent comp;
-  PreambleMockRadio radio(SOFT_PHY_START_PREAMBLE);
-  run_resolver(comp, radio);
-  comp.resolve_start_preamble_default_();
-  EXPECT_EQ(comp.tuning_.normal_start_preamble, SOFT_PHY_START_PREAMBLE);
+TEST(TuningRegistry, PreambleDurationRowsAcceptAndReportFractions) {
+  TuningConfig cfg;
+  const TuningNumberParam *response = find_tuning_number("response_preamble_ms");
+  ASSERT_NE(response, nullptr);
+  response->set(cfg, 4.5F);
+  EXPECT_EQ(cfg.response_preamble_ms, 4.5F);
+  EXPECT_EQ(response->get(cfg), 4.5F);
+  EXPECT_TRUE(response->applies_to_radio) << "the driver caches the converted response preamble";
+  for (const char *key : {"start_preamble_ms", "low_power_wake_ms", "cold_broadcast_reply_preamble_ms"}) {
+    const TuningNumberParam *param = find_tuning_number(key);
+    ASSERT_NE(param, nullptr) << key;
+    EXPECT_FALSE(param->applies_to_radio) << key << " is converted at send time";
+  }
+}
+
+TEST(TuningRegistry, TheByteDenominatedRowsAreGone) {
+  for (const char *key :
+       {"sx1262_response_preamble", "sx1276_response_preamble", "lr1121_response_preamble", "normal_start_preamble",
+        "low_power_wake_preamble", "cold_broadcast_reply_preamble", "pairing_discovery_preamble"})
+    EXPECT_EQ(find_tuning_number(key), nullptr) << key << " is accepted in YAML only, converted by codegen";
 }

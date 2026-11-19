@@ -42,11 +42,12 @@ From a board in hand to a moving blind, and the two ways of getting a device ont
 
 ## Reference
 
-Every YAML key, what the companion sensors report, and the small things that make the result nicer
-to live with.
+Every YAML key, what a heater's card offers, what the companion sensors report, and the small things
+that make the result nicer to live with.
 
 <!-- doxygen-subpages -->
 - [Configuration reference](configuration/index.md)
+- [Heaters and water heaters in Home Assistant](heating.md)
 - [Diagnostic entities](diagnostic-entities.md)
 - [Tips and tricks](tips-and-tricks.md)
 <!-- /doxygen-subpages -->

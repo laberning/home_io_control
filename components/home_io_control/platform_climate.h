@@ -29,16 +29,15 @@
 /// ([issue #165](https://github.com/laberning/home_io_control/issues/165), corpus
 /// tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml).
 ///
-/// The heating-level path is confirmed for Eco, Comfort and Off on a Thermor pilot-wire interface
+/// The heating-level path is confirmed for every level but Boost on a Thermor pilot-wire interface
 /// ([issue #228](https://github.com/laberning/home_io_control/issues/228)); the interface does not
 /// report the level, so the card shows the last commanded one.
 ///
-/// @todo The Away (frost protection), Boost, Comfort -1 and Comfort -2 levels, and the temperature
-///       EXECUTE path, are unconfirmed on hardware; confirm with a capture from such a heater, a
-///       heating temperature interface or a heat pump.
+/// @todo The Boost level and the temperature EXECUTE path are unconfirmed on hardware; confirm with a
+///       capture from a heater that takes a boost, a heating temperature interface or a heat pump.
 ///
 /// @warning The temperature EXECUTE profiles are unvalidated on hardware. See
-///          docs/configuration/climate.md.
+///          docs/heating.md.
 
 #include "esphome/components/climate/climate.h"
 #include "esphome/core/component.h"
@@ -91,6 +90,12 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
     this->has_range_ = true;
   }
 
+  /// @brief Declare an opt-in entity (`central_heating_mode:`, `occupancy_detection:`, `occupancy:`): the
+  /// heater's polls then read its register (a kind with the register's capability only); applied to the device
+  /// in setup().
+  /// @param fn The register the entity shows.
+  void add_register_read(HeatingFunction fn) { this->register_reads_.push_back(fn); }
+
  protected:
   /// @brief The device's heating profile: from the declared type, else from the type the hub learned.
   /// @return The profile, or nullptr while the type is unknown.
@@ -108,14 +113,21 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   void show_card_(const HeatingProfile &profile);
 
   /// @brief Plan one request with plan_heating_write() and log why it is no write.
+  /// @details A target on a heater with a programme first asks the heater what it runs
+  ///          (HubHeatingPort::read_programme_state()), then plans from what it said: the comfort setpoint in
+  ///          `heat` and while a boost or drying runs, an override while the programme runs and the heater
+  ///          reports a temperature in force, the comfort setpoint when it has none. A heater that does not
+  ///          answer gets no write and a warning, and the card keeps what the read showed. Every other request
+  ///          is planned without a read.
   /// @param profile The device's profile.
   /// @param request What the card asks for.
   /// @return The plan; HeatingWritePlan::is_write() false when it was refused.
   HeatingWritePlan plan_write_(const HeatingProfile &profile, const HeatingWriteRequest &request);
 
-  /// @brief Log the refusal of a plan that is the user's to fix (a preset the device only reports, no
-  /// setpoint, no target temperature for heat); the other refusals are silent.
-  void log_refusal_(const HeatingProfile &profile, const HeatingWritePlan &plan) const;
+  /// @brief Log the refusal of a plan that is the user's to fix (no setpoint, no target temperature for
+  /// heat) or that the heater's silence caused (PROGRAMME_STATE_UNANSWERED, IN_FORCE_UNKNOWN); the other refusals are
+  /// silent.
+  void log_refusal_(const HeatingWritePlan &plan) const;
 
   /// @brief Apply the request's HVAC mode, if present. @return true if state was published.
   bool apply_mode_(const HeatingProfile &profile, const climate::ClimateCall &call);
@@ -135,6 +147,7 @@ class IOHomeClimate : public climate::Climate, public Component, public DeviceBo
   bool apply_target_temperature_(const HeatingProfile &profile, const climate::ClimateCall &call);
 
   HeatingCardState card_;                               ///< What the card shows; the entity's ESPHome fields follow it.
+  std::vector<HeatingFunction> register_reads_;         ///< Registers of the opt-in entities the YAML declared.
   bool has_range_{false};                               ///< YAML overrode the temperature encoding range.
   float range_min_c_{HEATING_TEMPERATURE_RANGE_MIN_C};  ///< YAML `min_temperature:`.
   float range_max_c_{HEATING_TEMPERATURE_RANGE_MAX_C};  ///< YAML `max_temperature:`.

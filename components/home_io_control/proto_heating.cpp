@@ -39,14 +39,19 @@ constexpr uint8_t WORKING_RATE_MAX = 100;
 
 /// @brief How a register's value maps onto the bytes after the 4-byte header.
 enum class HeatingValueKind : uint8_t {
-  NONE,            ///< No typed value: logged raw, never decoded.
-  TENTHS_U16,      ///< Unsigned 16-bit little-endian tenths of a degree.
-  HUNDREDTHS_S16,  ///< Signed 16-bit little-endian hundredths of a degree; -1 is a sensor fault.
-  BINARY,          ///< One byte, 0 or 1.
-  MODE,            ///< One HeatingMode byte.
-  BOUNDED_BYTE,    ///< One byte from 0 to the row's `max_value`: an enumeration (regulator state, towel-dryer
-                   ///< mode, temporary state) or a percentage (working rate).
-  BOUNDED_U16,     ///< Unsigned 16-bit little-endian integer from 0 to the row's `max_value` (night light brightness).
+  NONE,                ///< No typed value: logged raw, never decoded.
+  TENTHS_U16,          ///< Unsigned 16-bit little-endian tenths of a degree.
+  TENTHS_U16_OR_ZERO,  ///< TENTHS_U16, and a write may also send 0 (`00 00`): "no value", which cancels.
+  HUNDREDTHS_S16,      ///< Signed 16-bit little-endian hundredths of a degree; -1 is a sensor fault.
+  BINARY,              ///< One byte, 0 or 1.
+  MODE,                ///< One HeatingMode byte.
+  BOUNDED_BYTE,        ///< One byte from 0 to the row's `max_value`: an enumeration (regulator state, towel-dryer
+                       ///< mode, temporary state) or a percentage (working rate).
+  BOUNDED_U16,   ///< Unsigned 16-bit little-endian integer from 0 to the row's `max_value` (night light brightness).
+  KWH_U16_BE,    ///< Unsigned 16-bit whole kilowatt-hours, most significant byte first: the energy total, the only
+                 ///< register whose 16-bit value is not little-endian.
+  MINUTES_BYTE,  ///< One byte, a number of minutes (a run's time left).
+  MINUTES_FIRST_OF_TWO,  ///< Two bytes, a duration in minutes then the panel's maximum; the first byte is the value.
 };
 
 /// @brief Who may do what with a register.
@@ -74,7 +79,8 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
     {"set_temperature", HeatingFunction::SET_TEMPERATURE, 0x03, HeatingAccess::READ_WRITE,
      HeatingValueKind::TENTHS_U16},
     {"set_mode", HeatingFunction::SET_MODE, 0x00, HeatingAccess::READ_WRITE, HeatingValueKind::MODE},
-    {"set_presence", HeatingFunction::SET_PRESENCE, 0x10, HeatingAccess::WRITE_ONLY, HeatingValueKind::BINARY},
+    // 0x0110 is written by a controller to say someone is there; a Sauter Hekla reports detected presence in it.
+    {"set_presence", HeatingFunction::SET_PRESENCE, 0x10, HeatingAccess::READ_WRITE, HeatingValueKind::BINARY},
     {"set_open_window_detection", HeatingFunction::SET_OPEN_WINDOW_DETECTION, 0x06, HeatingAccess::READ_WRITE,
      HeatingValueKind::BINARY},
     {"midnight_sync", HeatingFunction::MIDNIGHT_SYNC, 0x30, HeatingAccess::READ_ONLY, HeatingValueKind::NONE},
@@ -97,10 +103,34 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
     {"temperature_in_force", HeatingFunction::TEMPERATURE_IN_FORCE, 0x37, HeatingAccess::READ_ONLY,
      HeatingValueKind::TENTHS_U16},
     {"eco_setback", HeatingFunction::ECO_SETBACK, 0x04, HeatingAccess::READ_ONLY, HeatingValueKind::TENTHS_U16},
+    // Read during a panel override on a towel dryer (issue #202): 16.5 degrees, 0 otherwise.
+    {"set_derogation", HeatingFunction::DEROGATED_SETPOINT, 0x1D, HeatingAccess::READ_WRITE,
+     HeatingValueKind::TENTHS_U16_OR_ZERO},
+    // Not read on any radiator yet; the same temperature as 0x0137 on a towel dryer, which read it in both.
+    {"heater_temperature_in_force", HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, 0x2A, HeatingAccess::READ_ONLY,
+     HeatingValueKind::TENTHS_U16},
     // Night light registers: read on a Sauter Hekla with the light on and off (issue #222).
     {"night_light", HeatingFunction::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, HeatingValueKind::BINARY},
     {"night_light_brightness", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 0x42, HeatingAccess::READ_WRITE,
      HeatingValueKind::BOUNDED_U16, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
+    // Read on a mixed towel dryer (issue #243): 1 while its central-heating mode is on, 0 in electric mode.
+    {"central_heating_mode", HeatingFunction::CENTRAL_HEATING_MODE, 0x53, HeatingAccess::READ_ONLY,
+     HeatingValueKind::BINARY},
+    // Read and written on a Sauter Hekla (issue #222): 1 with its occupancy detection on, 0 with it off.
+    {"occupancy_detection", HeatingFunction::OCCUPANCY_DETECTION, 0x01, HeatingAccess::READ_WRITE,
+     HeatingValueKind::BINARY},
+    // Read on two Sauter Tahual radiators, equal to their displays (PR #238), and on an EMOTION 3 H and two Adelis.
+    {"energy_total", HeatingFunction::ENERGY_TOTAL, 0x16, HeatingAccess::READ_ONLY, HeatingValueKind::KWH_U16_BE},
+    // Read on Atlantic Adelis towel dryers during a boost and a drying run, and with the durations changed on the
+    // panel (issue #202): the minutes left of each run, and the duration set for each with the panel's maximum.
+    {"boost_remaining", HeatingFunction::BOOST_REMAINING, 0x3A, HeatingAccess::READ_ONLY,
+     HeatingValueKind::MINUTES_BYTE},
+    {"boost_duration", HeatingFunction::BOOST_DURATION, 0x3B, HeatingAccess::READ_ONLY,
+     HeatingValueKind::MINUTES_FIRST_OF_TWO},
+    {"drying_remaining", HeatingFunction::DRYING_REMAINING, 0x3C, HeatingAccess::READ_ONLY,
+     HeatingValueKind::MINUTES_BYTE},
+    {"drying_duration", HeatingFunction::DRYING_DURATION, 0x3D, HeatingAccess::READ_ONLY,
+     HeatingValueKind::MINUTES_FIRST_OF_TWO},
 };
 
 /// @brief Look up the descriptor for a function.
@@ -125,12 +155,16 @@ size_t value_length(HeatingValueKind kind) {
     case HeatingValueKind::NONE:
       return 0;
     case HeatingValueKind::TENTHS_U16:
+    case HeatingValueKind::TENTHS_U16_OR_ZERO:
     case HeatingValueKind::HUNDREDTHS_S16:
     case HeatingValueKind::BOUNDED_U16:
+    case HeatingValueKind::KWH_U16_BE:
+    case HeatingValueKind::MINUTES_FIRST_OF_TWO:
       return 2;
     case HeatingValueKind::BINARY:
     case HeatingValueKind::MODE:
     case HeatingValueKind::BOUNDED_BYTE:
+    case HeatingValueKind::MINUTES_BYTE:
       return 1;
   }
   return 0;
@@ -192,6 +226,10 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE
     return 0;
 
   switch (d->kind) {
+    case HeatingValueKind::TENTHS_U16_OR_ZERO:
+      if (value == 0.0F)
+        return write_u16_set(*d, 0, out);
+      [[fallthrough]];
     case HeatingValueKind::TENTHS_U16: {
       // Reject NaN / infinity and anything outside the representable range rather than emitting a
       // wrapped byte.
@@ -240,6 +278,9 @@ size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE
 
     case HeatingValueKind::NONE:
     case HeatingValueKind::HUNDREDTHS_S16:
+    case HeatingValueKind::KWH_U16_BE:
+    case HeatingValueKind::MINUTES_BYTE:
+    case HeatingValueKind::MINUTES_FIRST_OF_TWO:
       return 0;  // no writable register has this encoding
   }
   return 0;
@@ -264,6 +305,7 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
   const auto raw16 = static_cast<uint16_t>(v[0] | (v[1] << BITS_PER_BYTE));
   switch (d->kind) {
     case HeatingValueKind::TENTHS_U16:
+    case HeatingValueKind::TENTHS_U16_OR_ZERO:
       value = static_cast<float>(raw16) / DEGREES_TO_TENTHS;
       return true;
 
@@ -297,6 +339,17 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
       value = static_cast<float>(raw16);
       return true;
 
+    case HeatingValueKind::KWH_U16_BE:
+      // Most significant byte first, unlike raw16 above.
+      value = static_cast<float>((v[0] << BITS_PER_BYTE) | v[1]);
+      return true;
+
+    case HeatingValueKind::MINUTES_BYTE:
+    case HeatingValueKind::MINUTES_FIRST_OF_TWO:
+      // The first byte; the second of a pair (the panel's maximum) is not read.
+      value = static_cast<float>(v[0]);
+      return true;
+
     case HeatingValueKind::NONE:
       return false;
   }
@@ -309,20 +362,22 @@ namespace {
 
 /// @brief Which field of HeatingReadings holds a register, and how its value is kept.
 struct HeatingReadingField {
-  HeatingFunction fn;                   ///< Register.
-  float HeatingReadings::*temperature;  ///< The field of a register read in degrees (NaN until read), else nullptr.
+  HeatingFunction fn;              ///< Register.
+  float HeatingReadings::*number;  ///< The field of a register kept as a number with a unit (degrees, kelvin, kWh,
+                                   ///< minutes; NaN until read), else nullptr.
   int16_t HeatingReadings::*
       integer;  ///< The field of a register read as a byte or a flag (-1 until read), else nullptr.
 };
 
-/// Every register the readings hold. POWER_ON, SET_PRESENCE and MIDNIGHT_SYNC have no row: they are logged or
-/// written, never kept.
+/// Every register the readings hold. POWER_ON and MIDNIGHT_SYNC have no row: they are logged, never kept.
 constexpr HeatingReadingField HEATING_READING_FIELDS[] = {
     {HeatingFunction::ROOM_TEMPERATURE, &HeatingReadings::room_temperature_c, nullptr},
     {HeatingFunction::SET_TEMPERATURE, &HeatingReadings::setpoint_c, nullptr},
     {HeatingFunction::MAX_SETPOINT, &HeatingReadings::max_setpoint_c, nullptr},
     {HeatingFunction::TEMPERATURE_IN_FORCE, &HeatingReadings::in_force_temperature_c, nullptr},
+    {HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, &HeatingReadings::in_force_temperature_c, nullptr},
     {HeatingFunction::ECO_SETBACK, &HeatingReadings::eco_setback_k, nullptr},
+    {HeatingFunction::DEROGATED_SETPOINT, &HeatingReadings::derogated_setpoint_c, nullptr},
     {HeatingFunction::SET_MODE, nullptr, &HeatingReadings::mode},
     {HeatingFunction::REGULATOR_STATE, nullptr, &HeatingReadings::regulator},
     {HeatingFunction::WINDOW_OPEN, nullptr, &HeatingReadings::window_open},
@@ -332,6 +387,14 @@ constexpr HeatingReadingField HEATING_READING_FIELDS[] = {
     {HeatingFunction::WORKING_RATE, nullptr, &HeatingReadings::working_rate},
     {HeatingFunction::NIGHT_LIGHT, nullptr, &HeatingReadings::night_light},
     {HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, nullptr, &HeatingReadings::night_light_brightness},
+    {HeatingFunction::CENTRAL_HEATING_MODE, nullptr, &HeatingReadings::central_heating_mode},
+    {HeatingFunction::OCCUPANCY_DETECTION, nullptr, &HeatingReadings::occupancy_detection},
+    {HeatingFunction::SET_PRESENCE, nullptr, &HeatingReadings::presence},
+    {HeatingFunction::ENERGY_TOTAL, &HeatingReadings::energy_total_kwh, nullptr},
+    {HeatingFunction::BOOST_REMAINING, &HeatingReadings::boost_remaining_min, nullptr},
+    {HeatingFunction::BOOST_DURATION, &HeatingReadings::boost_duration_min, nullptr},
+    {HeatingFunction::DRYING_REMAINING, &HeatingReadings::drying_remaining_min, nullptr},
+    {HeatingFunction::DRYING_DURATION, &HeatingReadings::drying_duration_min, nullptr},
 };
 
 /// @return The row of a register, or nullptr for one the readings do not hold.
@@ -349,8 +412,8 @@ bool HeatingReadings::store(HeatingFunction fn, float value) {
   const HeatingReadingField *field = reading_field_for(fn);
   if (field == nullptr)
     return false;
-  if (field->temperature != nullptr) {
-    this->*field->temperature = value;
+  if (field->number != nullptr) {
+    this->*field->number = value;
   } else {
     this->*field->integer = static_cast<int16_t>(value);
   }
@@ -361,8 +424,8 @@ bool HeatingReadings::clear(HeatingFunction fn) {
   const HeatingReadingField *field = reading_field_for(fn);
   if (field == nullptr)
     return false;
-  if (field->temperature != nullptr) {
-    this->*field->temperature = NAN;
+  if (field->number != nullptr) {
+    this->*field->number = NAN;
   } else {
     this->*field->integer = -1;
   }
@@ -373,16 +436,16 @@ bool HeatingReadings::has(HeatingFunction fn) const {
   const HeatingReadingField *field = reading_field_for(fn);
   if (field == nullptr)
     return false;
-  return field->temperature != nullptr ? !std::isnan(this->*field->temperature) : this->*field->integer >= 0;
+  return field->number != nullptr ? !std::isnan(this->*field->number) : this->*field->integer >= 0;
 }
 
-float HeatingReadings::temperature_of(HeatingFunction fn) const {
+float HeatingReadings::number_of(HeatingFunction fn) const {
   const HeatingReadingField *field = reading_field_for(fn);
-  return field != nullptr && field->temperature != nullptr ? this->*field->temperature : NAN;
+  return field != nullptr && field->number != nullptr ? this->*field->number : NAN;
 }
 
 int16_t HeatingReadings::value_of(HeatingFunction fn) const {
-  // Temperatures and the registers the readings do not hold have no wire byte.
+  // The numbers with a unit and the registers the readings do not hold have no wire byte.
   const HeatingReadingField *field = reading_field_for(fn);
   return field != nullptr && field->integer != nullptr ? this->*field->integer : -1;
 }

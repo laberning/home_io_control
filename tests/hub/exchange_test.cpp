@@ -4,6 +4,7 @@
 #include "proto_commands.h"
 #include "proto_crypto.h"
 #include "radio_sx1276.h"
+#include "radio_sx1262.h"
 
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
@@ -32,6 +33,25 @@ exchange::OutboundExchangeContext make_outbound_context() {
   ctx.first_response_ms = 0;
   return ctx;
 }
+
+namespace {
+
+/// The plan the request path builds for a read of @p request: decisions::attempt_plan() with the
+/// transmit time the engine estimates for the request's start preamble on FREQ_CH2. What a test
+/// compares the attempts of a run against; the exchange itself is always started from a read kind.
+/// @param with_short_lead True for a settling read of a low-power receiver in an unknown state.
+decisions::AttemptPlan expected_plan(const ExchangeEngine &engine, const TuningConfig &tuning, decisions::ReadKind kind,
+                                     const IoFrame &request, bool with_short_lead = false) {
+  const bool low_power = (request.ctrl1 & CTRL1_LOW_POWER) != 0;
+  return decisions::attempt_plan(kind, low_power, tuning,
+                                 engine.tx_time_ms(request, FREQ_CH2, engine.request_preamble_for(request)), 0,
+                                 with_short_lead);
+}
+
+/// Options that run an exchange as a read of @p kind.
+ExchangeOptions read_of(decisions::ReadKind kind) { return decisions::AttemptRequest::of_kind(kind); }
+
+}  // namespace
 
 // ========================================================================================
 // Outbound exchange state machine
@@ -536,7 +556,9 @@ TEST(Exchange, UnconfirmedExecuteResendWaitsTheLongerGap) {
   ASSERT_EQ(t.size(), 4u);
   // From our first 0x3D to the re-sent command: the whole final-reply window, then the re-send gap
   // in place of the ordinary retry gap, so a device still acting on the first copy has finished.
-  EXPECT_EQ(t[2] - t[1], rig.tuning.exchange_response_wait_ms + UNCONFIRMED_EXECUTE_RESEND_DELAY_MS);
+  EXPECT_EQ(t[2] - t[1],
+            rig.tuning.exchange_response_wait_ms + UNCONFIRMED_EXECUTE_RESEND_DELAY_MS + CHANNEL_CHECK_TIME_MS)
+      << "the re-sent request's channel check comes after the gap";
 }
 
 TEST(Exchange, UnconfirmedExecuteIsResentAtMostOnce) {
@@ -728,11 +750,12 @@ TEST(Exchange, ResponsePreamble_DefaultReturnsShortPreamble) {
 
 TEST(Exchange, ResponsePreamble_SX1262MatchesConfiguredValue) {
   MockRadioSX1262 radio;
-  EXPECT_EQ(radio.response_preamble(), SX1262_RESPONSE_PREAMBLE)
+  EXPECT_EQ(radio.response_preamble(), MOCK_RESPONSE_PREAMBLE)
       << "SX1262 should return the configured response preamble";
   // Byte-denominated like SHORT_PREAMBLE (set_packet_params_() converts to bits at the SPI
-  // boundary); the default sits above the protocol's nominal 8-byte floor.
-  EXPECT_EQ(radio.response_preamble(), 12u);
+  // boundary); the 3.5 ms default is 17 bytes at 8 bit periods each, above the protocol's nominal
+  // 8-byte floor.
+  EXPECT_EQ(radio.response_preamble(), 17u);
   EXPECT_GE(radio.response_preamble(), SHORT_PREAMBLE);
 }
 
@@ -751,31 +774,31 @@ TEST(Exchange, TxRxTurnaround_RealDriversDeclareExpectedCapability) {
 
 TEST(Exchange, RadioSX1276_ApplyTuningRoutesRadioParameters) {
   // Drives the real SX1276 apply_tuning() path (no init(); register writes go to the no-op
-  // MockSpi). Verifies the default matches the pre-tunable fixed value and that a tuning
-  // override propagates to the observable response_preamble(), and that set_rx_bandwidth_
+  // MockSpi). Verifies the default is the 3.5 ms duration at 10 bit periods per byte and that a
+  // tuning override propagates to the observable response_preamble(), and that set_rx_bandwidth_
   // accepts every enum option without touching hardware.
   MockSpi spi;
   MockPin rst, dio0, dio4;
   RadioSX1276 sx1276(&spi, &rst, &dio0, &dio4, 17, 0x80);
 
-  // Default (no tuning applied): the SX1276 default response preamble (12).
-  EXPECT_EQ(sx1276.response_preamble(), SX1276_RESPONSE_PREAMBLE);
+  // Default (no tuning applied): 3.5 ms is 13 bytes at 10 bit periods each.
+  EXPECT_EQ(sx1276.response_preamble(), 13u);
 
   TuningConfig cfg{};
-  cfg.sx1276_response_preamble = 40;
+  cfg.response_preamble_ms = 10.0F;  // 384 bit periods: 38 bytes at 10 bit periods each
   for (auto bw : {SX1276RxBandwidth::BW_20_8_KHZ, SX1276RxBandwidth::BW_41_7_KHZ, SX1276RxBandwidth::BW_125_0_KHZ}) {
     cfg.sx1276_rx_bandwidth = bw;
     sx1276.apply_tuning(cfg);  // set_rx_bandwidth_ + set_response_preamble_ (no crash / no SPI dependency)
   }
-  EXPECT_EQ(sx1276.response_preamble(), 40) << "apply_tuning must route sx1276_response_preamble to the driver";
+  EXPECT_EQ(sx1276.response_preamble(), 38) << "apply_tuning must route response_preamble_ms to the driver";
 
   // Applying defaults again restores the default preamble.
   sx1276.apply_tuning(TuningConfig{});
-  EXPECT_EQ(sx1276.response_preamble(), SX1276_RESPONSE_PREAMBLE);
+  EXPECT_EQ(sx1276.response_preamble(), 13u);
 }
 
 TEST(Exchange, SendAndReceive_LowPowerStartFrameUsesLongPreamble) {
-  // A START frame whose target is a low-power device (CTRL1_LOW_POWER set) keeps LONG_PREAMBLE:
+  // A START frame whose target is a low-power device (CTRL1_LOW_POWER set) keeps MOCK_WAKE_PREAMBLE:
   // the long preamble is the wake-up burst for a duty-cycled receiver.
   TestableComponent comp;
   comp.initialized_ = true;
@@ -794,13 +817,13 @@ TEST(Exchange, SendAndReceive_LowPowerStartFrameUsesLongPreamble) {
   comp.send_and_receive_(request, response, FREQ_CH2);
 
   ASSERT_GE(radio.get_tx_configs().size(), 1u) << "at least one TX should have been attempted";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, LONG_PREAMBLE)
-      << "a low-power START frame must use LONG_PREAMBLE to wake the target";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, MOCK_WAKE_PREAMBLE)
+      << "a low-power START frame must use MOCK_WAKE_PREAMBLE to wake the target";
 }
 
 TEST(Exchange, SendAndReceive_NormalStartFrameUsesNormalStartPreamble) {
   // A START frame to a non-low-power (always-alive) target uses the runtime-tunable
-  // normal_start_preamble, not the 1024-byte wake-up burst.
+  // `start_preamble_ms`, not the 1024-byte wake-up burst.
   TestableComponent comp;
   comp.initialized_ = true;
   MockRadio radio;
@@ -818,8 +841,8 @@ TEST(Exchange, SendAndReceive_NormalStartFrameUsesNormalStartPreamble) {
   comp.send_and_receive_(request, response, FREQ_CH2);
 
   ASSERT_GE(radio.get_tx_configs().size(), 1u) << "at least one TX should have been attempted";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, comp.tuning_.normal_start_preamble)
-      << "a normal START frame must use normal_start_preamble, not LONG_PREAMBLE";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, mock_preamble_bytes(comp.tuning_.start_preamble_ms))
+      << "a normal START frame must use `start_preamble_ms`, not MOCK_WAKE_PREAMBLE";
 }
 
 TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_Default) {
@@ -849,7 +872,7 @@ TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_Default) {
 }
 
 TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_SX1262) {
-  // Non-START frames on SX1262 should use SX1262_RESPONSE_PREAMBLE, not LONG_PREAMBLE.
+  // Non-START frames on SX1262 should use MOCK_RESPONSE_PREAMBLE, not MOCK_WAKE_PREAMBLE.
   TestableComponent comp;
   comp.initialized_ = true;
   MockRadioSX1262 radio;
@@ -870,8 +893,90 @@ TEST(Exchange, SendAndReceive_NonStartFrameUsesResponsePreamble_SX1262) {
   comp.send_and_receive_(request, response, FREQ_CH2);
 
   ASSERT_GE(radio.get_tx_configs().size(), 1u);
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, SX1262_RESPONSE_PREAMBLE)
-      << "non-START frame on SX1262 should use SX1262_RESPONSE_PREAMBLE";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, MOCK_RESPONSE_PREAMBLE)
+      << "non-START frame on SX1262 should use MOCK_RESPONSE_PREAMBLE";
+}
+
+namespace {
+
+/// The preamble the first transmit of `request` carries, on a hub driving `radio`.
+uint16_t first_preamble_on(MockRadio &radio, const IoFrame &request) {
+  TestableComponent comp;
+  comp.initialized_ = true;
+  comp.radio_ = &radio;
+  memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+  memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2);
+  return radio.get_tx_configs().empty() ? 0 : radio.get_tx_configs()[0].preamble_len;
+}
+
+}  // namespace
+
+// ADR 0097: every kind of frame carries its preamble as a duration, converted by the radio, so the
+// same setting is fewer programmed bytes on a radio that sends 10 bit periods per byte and lasts
+// the same on air.
+TEST(Exchange, EveryFrameKindCarriesTheSameDurationOnATenBitRadioAsOnARawStreamRadio) {
+  IoFrame normal{};
+  create_execute_position(normal, test::OWN_ID, test::DST_ID, /*low_power=*/false, 100);
+  IoFrame wake{};
+  create_execute_position(wake, test::OWN_ID, test::DST_ID, /*low_power=*/true, 100);
+  IoFrame continuation{};
+  init_frame(continuation, true, false, false, false);
+  set_dst(continuation, test::DST_ID);
+  set_src(continuation, test::OWN_ID);
+  uint8_t payload[16] = {0};
+  set_cmd(continuation, CMD_KEY_TRANSFER, payload, sizeof(payload));
+
+  struct Kind {
+    const char *name;
+    const IoFrame *frame;
+    uint16_t raw_stream_bytes;
+    uint16_t ten_bit_bytes;
+    float ms;
+  };
+  const Kind kinds[] = {
+      {"start frame to a mains target", &normal, 48, 38, START_PREAMBLE_MS},
+      {"start frame to a low-power target", &wake, 2880, 2304, LOW_POWER_WAKE_MS},
+      {"continuation frame", &continuation, 17, 13, RESPONSE_PREAMBLE_MS},
+  };
+  for (const Kind &kind : kinds) {
+    MockRadioSX1262 raw_stream;
+    TenBitPreambleRadio ten_bit;
+    EXPECT_EQ(first_preamble_on(raw_stream, *kind.frame), kind.raw_stream_bytes) << kind.name << " (8 bits/byte)";
+    EXPECT_EQ(first_preamble_on(ten_bit, *kind.frame), kind.ten_bit_bytes) << kind.name << " (10 bits/byte)";
+    RadioTxConfig raw_cfg;
+    raw_cfg.preamble_len = kind.raw_stream_bytes;
+    RadioTxConfig ten_cfg;
+    ten_cfg.preamble_len = kind.ten_bit_bytes;
+    EXPECT_NEAR(raw_stream.tx_air_time_us(13, raw_cfg) / 1000.0, ten_bit.tx_air_time_us(13, ten_cfg) / 1000.0, 1.0)
+        << kind.name << ": the same time on air";
+  }
+}
+
+TEST(Exchange, ATunedStartDurationMovesEveryRadioToItsOwnByteCount) {
+  IoFrame normal{};
+  create_execute_position(normal, test::OWN_ID, test::DST_ID, /*low_power=*/false, 100);
+  // start_preamble_ms is read at send time, so a live change (the Home Assistant number) applies to the next frame.
+  for (const float ms : {5.0F, 20.0F}) {
+    MockRadioSX1262 raw_stream;
+    TenBitPreambleRadio ten_bit;
+    TestableComponent comp;
+    comp.initialized_ = true;
+    comp.tuning_.start_preamble_ms = ms;
+    memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
+    memcpy(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE);
+    IoFrame response{};
+    comp.radio_ = &raw_stream;
+    comp.send_and_receive_(normal, response, FREQ_CH2);
+    comp.radio_ = &ten_bit;
+    comp.send_and_receive_(normal, response, FREQ_CH2);
+    ASSERT_FALSE(raw_stream.get_tx_configs().empty());
+    ASSERT_FALSE(ten_bit.get_tx_configs().empty());
+    EXPECT_EQ(raw_stream.get_tx_configs()[0].preamble_len, raw_stream.preamble_bytes_for_ms(ms)) << ms;
+    EXPECT_EQ(ten_bit.get_tx_configs()[0].preamble_len, ten_bit.preamble_bytes_for_ms(ms)) << ms;
+    EXPECT_GT(raw_stream.get_tx_configs()[0].preamble_len, ten_bit.get_tx_configs()[0].preamble_len) << ms;
+  }
 }
 
 TEST(Exchange, SendAndReceive_AuthResponseUsesSX1262Preamble) {
@@ -900,13 +1005,13 @@ TEST(Exchange, SendAndReceive_AuthResponseUsesSX1262Preamble) {
   IoFrame response{};
   comp.send_and_receive_(request, response, FREQ_CH2);
 
-  // TX 0 = request (normal_start_preamble — start frame to a non-low-power target)
-  // TX 1 = auth response (should use SX1262_RESPONSE_PREAMBLE)
+  // TX 0 = request (`start_preamble_ms` — start frame to a non-low-power target)
+  // TX 1 = auth response (should use MOCK_RESPONSE_PREAMBLE)
   ASSERT_GE(radio.get_tx_configs().size(), 2u) << "should have sent at least request + auth response";
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, comp.tuning_.normal_start_preamble)
-      << "initial request (START, low_power=false) should use normal_start_preamble";
-  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, SX1262_RESPONSE_PREAMBLE)
-      << "auth response on SX1262 should use SX1262_RESPONSE_PREAMBLE";
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, mock_preamble_bytes(comp.tuning_.start_preamble_ms))
+      << "initial request (START, low_power=false) should use `start_preamble_ms`";
+  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, MOCK_RESPONSE_PREAMBLE)
+      << "auth response on SX1262 should use MOCK_RESPONSE_PREAMBLE";
 }
 
 TEST(Exchange, SendAndReceive_RequestPreambleOverrideAppliesToRequestOnly) {
@@ -933,8 +1038,8 @@ TEST(Exchange, SendAndReceive_RequestPreambleOverrideAppliesToRequestOnly) {
 
   ASSERT_GE(radio.get_tx_configs().size(), 2u);
   EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, 32u)
-      << "the override replaces the rule's LONG_PREAMBLE for a low-power start frame";
-  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, SX1262_RESPONSE_PREAMBLE)
+      << "the override replaces the rule's MOCK_WAKE_PREAMBLE for a low-power start frame";
+  EXPECT_EQ(radio.get_tx_configs()[1].preamble_len, MOCK_RESPONSE_PREAMBLE)
       << "the 0x3D challenge response keeps the driver's response preamble";
 }
 
@@ -975,7 +1080,7 @@ TEST(Exchange, AnswerChallengeSendsExactly0x3DOverTheRequestTranscript) {
       << "answer_challenge must send exactly create_challenge_resp()'s bytes";
 
   ASSERT_EQ(radio.get_tx_configs().size(), 1u);
-  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, SX1262_RESPONSE_PREAMBLE)
+  EXPECT_EQ(radio.get_tx_configs()[0].preamble_len, MOCK_RESPONSE_PREAMBLE)
       << "answer_challenge should use the driver's response_preamble(), like handle_authentication_() did";
 }
 
@@ -1173,7 +1278,9 @@ TEST(Exchange, SendAndReceive_FirstResponseWaitStaysOnRequestChannel) {
   IoFrame response{};
   comp.send_and_receive_(request, response, FREQ_CH2);
 
-  EXPECT_TRUE(radio.freq_history().empty())
+  // The only retunes are the channel checks of the later attempts (each leaves the previous attempt's
+  // channel); a wait itself never retunes, whether the dwell is genuinely empty or a frame arrived.
+  EXPECT_EQ(radio.freq_history().size(), static_cast<size_t>(radio.get_send_count() - 1))
       << "HOLD_REQUEST_CHANNEL must never retune, whether the dwell is genuinely empty or a "
          "rejected frame arrived";
   ASSERT_GE(radio.call_log().size(), 2u) << "need the reception plus at least one following slice";
@@ -2049,21 +2156,41 @@ TEST(Exchange, RetriesStopOnceTheTotalBudgetIsSpent) {
   RadioDriver *radio_ptr = &radio;
 
   TuningConfig tuning;
-  // A try starts only if its transmission ends inside the budget: elapsed + retry delay (250) + the
-  // try's air time (a low-power START frame's 1024-byte preamble, ~218 ms). Try 2's check runs at
-  // 250 ms (try 1's wait) and ends its transmission at ~718 < 1000; try 3's runs at 750 and would
-  // end at ~1218 -- exactly two tries, in real milliseconds rather than relative to the window.
+  // A try starts only if it ends inside the budget: elapsed + retry delay (250) + the try's air time
+  // (a mains START frame's short preamble, ~16 ms) + its overhead and window (250). Try 2's check runs
+  // at ~276 ms (try 1's end) and ends at ~802 < 1000; try 3's runs at ~802 and would end at ~1328 --
+  // exactly two tries, in real milliseconds rather than relative to the window.
   tuning.exchange_start_response_wait_ms = 250;
   tuning.exchange_total_budget_ms = 1000;
   ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
 
   IoFrame request{};
-  create_execute_position(request, test::OWN_ID, test::DST_ID, true, 100);
+  create_execute_position(request, test::OWN_ID, test::DST_ID, /*low_power=*/false, 100);
   IoFrame response{};
   engine.send_and_receive(request, response, FREQ_CH2);  // nothing queued -> every try fails
 
   EXPECT_EQ(radio.get_send_count(), 2) << "a third try must not start once the budget is spent";
   EXPECT_STREQ(engine.get_debug().stage, "retry_budget_exhausted");
+}
+
+TEST(Exchange, ALowPowerTargetKeepsItsThreeTriesWhateverTheBudget) {
+  // The same exchange to a low-power target: the budget would stop it after two, the attempt count
+  // alone bounds it, so the third runs (ADR 0095).
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+
+  TuningConfig tuning;
+  tuning.exchange_start_response_wait_ms = 250;
+  tuning.exchange_total_budget_ms = 1000;
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+
+  IoFrame request{};
+  create_execute_position(request, test::OWN_ID, test::DST_ID, /*low_power=*/true, 100);
+  IoFrame response{};
+  engine.send_and_receive(request, response, FREQ_CH2);
+
+  EXPECT_EQ(radio.get_send_count(), EXCHANGE_RETRY_COUNT);
 }
 
 TEST(Exchange, GenerousBudgetStillAllowsEveryRetry) {
@@ -2333,7 +2460,7 @@ int run_challenged_status_poll(uint16_t budget_ms, std::vector<uint32_t> *send_t
 
 }  // namespace
 
-TEST(Exchange, ThreeUnansweredSlowWakeTriesStayInsideTheBudget) {
+TEST(Exchange, ThreeUnansweredSlowWakeTriesAllRunPastTheBudget) {
   esphome::test_clock::ManualClock clock;
   SlowWakeRadio radio;
   radio.set_model_tx_airtime(true);
@@ -2348,17 +2475,18 @@ TEST(Exchange, ThreeUnansweredSlowWakeTriesStayInsideTheBudget) {
   EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::FAILED);
   const uint32_t blocked_ms = esphome::test_clock::peek_ms() - start;
 
-  // Try 1 ends at 500 + 400 = 900; try 2's transmission would end at 900 + 250 + 500 = 1650 and
-  // starts; try 3's would end at 2050 + 250 + 500 = 2800, past the budget, so it never starts.
-  // Counting only the elapsed time, try 3 would have started and blocked until ~3.2 s.
-  EXPECT_EQ(radio.get_send_count(), 2);
-  EXPECT_STREQ(engine.get_debug().stage, "retry_budget_exhausted");
-  EXPECT_LT(blocked_ms, tuning.exchange_total_budget_ms);
+  // Three tries of a 500 ms wake-up, a 400 ms window and the 250 ms gap end at 3 x 910 + 2 x 250 =
+  // 3230 ms, past the 2500 ms budget: a low-power target keeps its three tries, bounded by their count
+  // (ADR 0095). The exchange runs no longer than they need.
+  EXPECT_EQ(radio.get_send_count(), 3);
+  EXPECT_STREQ(engine.get_debug().stage, "wait_first_timeout");
+  EXPECT_GT(blocked_ms, tuning.exchange_total_budget_ms);
+  EXPECT_LT(blocked_ms, 3230u);
   for (const auto &cfg : radio.get_tx_configs())
     EXPECT_EQ(cfg.wake, TxWake::LONG);
 }
 
-TEST(Exchange, PlanReadGivesTheSettlingPlanTheGuardAgreesWith) {
+TEST(Exchange, SettlingReadRunsThePlanTheGuardAgreesWith) {
   esphome::test_clock::ManualClock clock;
   MockRadio radio;
   radio.set_model_tx_airtime(true);
@@ -2368,7 +2496,7 @@ TEST(Exchange, PlanReadGivesTheSettlingPlanTheGuardAgreesWith) {
   IoFrame request{};
   create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
 
-  const decisions::AttemptPlan plan = engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  const decisions::AttemptPlan plan = expected_plan(engine, tuning, decisions::ReadKind::SETTLING, request);
 
   EXPECT_EQ(plan.gap_ms, 0u);
   // At the defaults one attempt is the short start frame on air (~10 ms) plus its overhead and the
@@ -2378,12 +2506,13 @@ TEST(Exchange, PlanReadGivesTheSettlingPlanTheGuardAgreesWith) {
   // A silent target gets exactly the planned attempts: the plan equals what the guard admits.
   IoFrame response{};
   const uint32_t start = esphome::test_clock::peek_ms();
-  EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+  EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2, read_of(decisions::ReadKind::SETTLING)),
+            ExchangeOutcome::FAILED);
   EXPECT_EQ(radio.get_send_count(), plan.max_attempts);
   EXPECT_LT(esphome::test_clock::peek_ms() - start, tuning.exchange_total_budget_ms);
 }
 
-TEST(Exchange, PlanReadAgreesWithTheGuardWhenTheBudgetLimitsTheAttempts) {
+TEST(Exchange, SettlingReadAgreesWithTheGuardWhenTheBudgetLimitsTheAttempts) {
   // At a 1000 ms budget the plan is 3 (1 + (999 - 422) / 222) and a silent target gets exactly those.
   esphome::test_clock::ManualClock clock;
   MockRadio radio;
@@ -2395,15 +2524,17 @@ TEST(Exchange, PlanReadAgreesWithTheGuardWhenTheBudgetLimitsTheAttempts) {
   IoFrame request{};
   create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
 
-  const decisions::AttemptPlan plan = engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  const decisions::AttemptPlan plan = expected_plan(engine, tuning, decisions::ReadKind::SETTLING, request);
   IoFrame response{};
-  EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+  EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2,
+                                    decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING)),
+            ExchangeOutcome::FAILED);
 
   EXPECT_EQ(plan.max_attempts, 3u);
   EXPECT_EQ(radio.get_send_count(), plan.max_attempts) << "the plan promises what the guard admits, no more, no fewer";
 }
 
-TEST(Exchange, PlanReadForALowPowerTargetUsesTheLowPowerWindowAndThreeAttempts) {
+TEST(Exchange, SettlingReadOfASilentLowPowerTargetUsesTheLowPowerWindowAndThreeAttempts) {
   esphome::test_clock::ManualClock clock;
   MockRadio radio;
   radio.set_model_tx_airtime(true);
@@ -2413,14 +2544,19 @@ TEST(Exchange, PlanReadForALowPowerTargetUsesTheLowPowerWindowAndThreeAttempts) 
   IoFrame request{};
   create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/true);
 
-  const decisions::AttemptPlan plan = engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  IoFrame response{};
+  EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2,
+                                    decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING)),
+            ExchangeOutcome::FAILED);
 
-  EXPECT_EQ(plan.window_ms, LOW_POWER_RESPONSE_WAIT_MS);
-  EXPECT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS)
+  EXPECT_EQ(radio.get_send_count(), LOW_POWER_SETTLING_ATTEMPTS)
       << "wake-up preamble plus 550 ms window: three fit the default budget, the cap";
+  ASSERT_EQ(radio.wait_timeouts().size(), static_cast<size_t>(LOW_POWER_SETTLING_ATTEMPTS));
+  for (const auto wait : radio.wait_timeouts())
+    EXPECT_EQ(wait, LOW_POWER_RESPONSE_WAIT_MS);
 }
 
-TEST(Exchange, PlanReadForAProgressLookIsASingleAttempt) {
+TEST(Exchange, ProgressLookToASilentTargetIsASingleAttempt) {
   esphome::test_clock::ManualClock clock;
   MockRadio radio;
   RadioDriver *radio_ptr = &radio;
@@ -2429,7 +2565,12 @@ TEST(Exchange, PlanReadForAProgressLookIsASingleAttempt) {
   IoFrame request{};
   create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
 
-  EXPECT_EQ(engine.plan_read(decisions::ReadKind::PROGRESS, request, FREQ_CH2).max_attempts, SCHEDULED_POLL_MAX_TRIES);
+  IoFrame response{};
+  EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2,
+                                    decisions::AttemptRequest::of_kind(decisions::ReadKind::PROGRESS)),
+            ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(radio.get_send_count(), SCHEDULED_POLL_MAX_TRIES);
 }
 
 TEST(Exchange, ATryThatWouldEndAtTheBudgetIsNotStarted) {
@@ -2443,7 +2584,10 @@ TEST(Exchange, ATryThatWouldEndAtTheBudgetIsNotStarted) {
   create_get_status(request, test::OWN_ID, test::DST_ID, false);
   uint8_t raw[64];
   const uint8_t len = serialize(request, raw, sizeof(raw));
-  const uint32_t tx_ms = (io868_tx_air_time_us(TuningConfig{}.normal_start_preamble, len) + 999) / 1000;
+  const uint32_t tx_ms = (io868_tx_air_time_us(mock_preamble_bytes(TuningConfig{}.start_preamble_ms), len,
+                                               SOFT_PHY_PREAMBLE_BITS_PER_BYTE) +
+                          999) /
+                         1000;
   ASSERT_GT(tx_ms, 0u);
 
   // The elapsed time alone is well inside the budget, but the third try would end exactly at it:
@@ -2453,7 +2597,8 @@ TEST(Exchange, ATryThatWouldEndAtTheBudgetIsNotStarted) {
   // stands in for its size) and the overhead.
   const TuningConfig defaults;
   MockRadio probe;
-  const uint32_t answer_tx_ms = (io868_tx_air_time_us(probe.response_preamble(), len) + 999) / 1000;
+  const uint32_t answer_tx_ms =
+      (io868_tx_air_time_us(probe.response_preamble(), len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE) + 999) / 1000;
   const uint32_t tail_ms = defaults.exchange_response_wait_ms + answer_tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS;
   const auto edge =
       static_cast<uint16_t>(third_check_ms + EXCHANGE_RETRY_DELAY_MS + tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS +
@@ -2493,8 +2638,10 @@ TEST(Exchange, RetryCadenceMatchesTheRecordedWaitSliceForEachTryPlusTheFixedRetr
       << "HOLD_REQUEST_CHANNEL (wait_for_first_response_) issues exactly one wait per try";
 
   for (size_t i = 0; i + 1 < send_times.size(); i++) {
-    EXPECT_EQ(send_times[i + 1] - send_times[i], wait_timeouts[i] + EXCHANGE_RETRY_DELAY_MS)
-        << "try " << i << "'s gap to the next send must be its own wait slice plus the fixed retry delay";
+    EXPECT_EQ(send_times[i + 1] - send_times[i], wait_timeouts[i] + EXCHANGE_RETRY_DELAY_MS + CHANNEL_CHECK_TIME_MS)
+        << "try " << i
+        << "'s gap to the next send must be its own wait slice plus the fixed retry delay and the "
+           "next request's channel check";
   }
 }
 
@@ -3205,7 +3352,7 @@ TEST(Exchange, CountersTrackLbtRetries) {
   IoFrame request{};
   create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
 
-  // Two busy reads (>= LBT_RSSI_THRESHOLD_DBM) force two retries; the queue then runs dry and
+  // Two busy reads (>= CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM) force two retries; the queue then runs dry and
   // read_rssi() falls back to MockRadio's default (-120 dBm, well clear), so the third read lets
   // transmit_frame() proceed without a third retry being counted.
   radio.queue_rssi(-50);
@@ -3417,16 +3564,18 @@ using Preambles = std::vector<uint16_t>;
 TEST(WakeBelief, NoProviderKeepsTheWakeUpPreambleOnEveryTry) {
   WakeBeliefRig rig;
   rig.engine.set_target_evidence_provider({});
-  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.send(low_power_position_request()),
+            (Preambles{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
 }
 
 TEST(WakeBelief, AwakeTargetGetsShortThenWakeUpTwice) {
   WakeBeliefRig rig;
   rig.moved_ago(1000);
-  const uint16_t short_preamble = rig.tuning.normal_start_preamble;
-  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{short_preamble, LONG_PREAMBLE, LONG_PREAMBLE}));
+  const uint16_t short_preamble = mock_preamble_bytes(rig.tuning.start_preamble_ms);
+  EXPECT_EQ(rig.send(low_power_position_request()),
+            (Preambles{short_preamble, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::AWAKE);
-  EXPECT_EQ(rig.engine.get_debug().last_try_preamble, LONG_PREAMBLE);
+  EXPECT_EQ(rig.engine.get_debug().last_try_preamble, MOCK_WAKE_PREAMBLE);
 }
 
 TEST(WakeBelief, RecentlyHeardTargetWithoutMovingEvidenceIsAsleep) {
@@ -3434,7 +3583,8 @@ TEST(WakeBelief, RecentlyHeardTargetWithoutMovingEvidenceIsAsleep) {
   // amendment): having heard from the device is no reason to lead short.
   WakeBeliefRig rig;
   rig.heard_ago(34);
-  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.send(low_power_position_request()),
+            (Preambles{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
 }
 
@@ -3442,21 +3592,23 @@ TEST(WakeBelief, AsleepTargetGetsTheWakeUpPreambleOnEveryTry) {
   WakeBeliefRig rig;
   rig.heard_ago(60000);
   rig.moved_ago(LOW_POWER_MAX_TRAVEL_MS + 1000);
-  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.send(low_power_position_request()),
+            (Preambles{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
 }
 
 TEST(WakeBelief, StopIsAwakeEvenWithoutEvidence) {
   WakeBeliefRig rig;
-  const uint16_t short_preamble = rig.tuning.normal_start_preamble;
-  EXPECT_EQ(rig.send(low_power_stop_request()), (Preambles{short_preamble, LONG_PREAMBLE, LONG_PREAMBLE}));
+  const uint16_t short_preamble = mock_preamble_bytes(rig.tuning.start_preamble_ms);
+  EXPECT_EQ(rig.send(low_power_stop_request()), (Preambles{short_preamble, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
 }
 
 TEST(WakeBelief, UnknownDestinationIsAsleep) {
   WakeBeliefRig rig;
   rig.moved_ago(1000);  // would be AWAKE, but the provider says it has never heard of this node
   rig.evidence_known = false;
-  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.send(low_power_position_request()),
+            (Preambles{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
 }
 
@@ -3464,7 +3616,8 @@ TEST(WakeBelief, KillSwitchRestoresTheWakeUpPreambleOnEveryTry) {
   WakeBeliefRig rig;
   rig.moved_ago(1000);
   rig.tuning.low_power_wake_belief = false;
-  EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.send(low_power_position_request()),
+            (Preambles{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.provider_calls, 0) << "with the switch off the evidence is never even looked up";
 }
 
@@ -3509,7 +3662,7 @@ TEST(WakeBelief, SwitchOffKeepsASingleTryExchangeOnTheWakeUpPreamble) {
   WakeBeliefRig rig;
   rig.moved_ago(1000);
   rig.tuning.low_power_wake_belief = false;
-  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{LONG_PREAMBLE}));
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief_use, ExchangeEngine::WakeBeliefUse::SWITCHED_OFF);
 }
 
@@ -3525,7 +3678,7 @@ TEST(WakeBelief, SkipReasonLabelsAreDistinctAndReadable) {
 TEST(WakeBelief, AlwaysAliveTargetKeepsTheNormalStartPreambleOnEveryTry) {
   WakeBeliefRig rig;
   rig.moved_ago(1000);
-  const uint16_t short_preamble = rig.tuning.normal_start_preamble;
+  const uint16_t short_preamble = mock_preamble_bytes(rig.tuning.start_preamble_ms);
   EXPECT_EQ(rig.send(low_power_position_request(/*low_power=*/false)),
             (Preambles{short_preamble, short_preamble, short_preamble}));
   EXPECT_EQ(rig.provider_calls, 0) << "only a low-power start frame has a wake-up preamble to reorder";
@@ -3558,7 +3711,8 @@ TEST(WakeBelief, SingleTryExchangeSendsTheBeliefsFirstTry) {
   // wake-up preamble, so it leads with the same preamble a multi-try exchange would.
   WakeBeliefRig rig;
   rig.moved_ago(1000);
-  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{rig.tuning.normal_start_preamble}));
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1),
+            (Preambles{mock_preamble_bytes(rig.tuning.start_preamble_ms)}));
   EXPECT_EQ(rig.provider_calls, 1);
   EXPECT_EQ(rig.engine.get_debug().wake_belief_use, ExchangeEngine::WakeBeliefUse::APPLIED);
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::AWAKE);
@@ -3569,7 +3723,7 @@ TEST(WakeBelief, SingleTryExchangeToARecentlyHeardTargetKeepsTheWakeUpPreamble) 
   // heard a second ago. The receiver is at rest, where only the wake-up preamble reaches it.
   WakeBeliefRig rig;
   rig.heard_ago(1000);
-  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{LONG_PREAMBLE}));
+  EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/1), (Preambles{MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::ASLEEP);
 }
 
@@ -3577,19 +3731,19 @@ TEST(WakeBelief, TwoTryExchangeStillFollowsThePlan) {
   WakeBeliefRig rig;
   rig.moved_ago(1000);
   EXPECT_EQ(rig.send(low_power_position_request(), /*max_tries=*/2),
-            (Preambles{rig.tuning.normal_start_preamble, LONG_PREAMBLE}));
+            (Preambles{mock_preamble_bytes(rig.tuning.start_preamble_ms), MOCK_WAKE_PREAMBLE}));
 }
 
 TEST(WakeBelief, TunedWakePreambleReplacesLongPreamble) {
   WakeBeliefRig rig;
-  rig.tuning.low_power_wake_preamble = 2048;
+  rig.tuning.low_power_wake_ms = mock_preamble_ms(2048);
   EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{2048, 2048, 2048}));
 }
 
 TEST(WakeBelief, TunedWakePreambleAppliesWithTheSwitchOff) {
   WakeBeliefRig rig;
   rig.tuning.low_power_wake_belief = false;
-  rig.tuning.low_power_wake_preamble = 1536;
+  rig.tuning.low_power_wake_ms = mock_preamble_ms(1536);
   EXPECT_EQ(rig.send(low_power_position_request()), (Preambles{1536, 1536, 1536}));
 }
 
@@ -3673,8 +3827,8 @@ TEST(WakeBelief, ReplyOnTheWakeUpTryEndsTheExchange) {
 
   EXPECT_EQ(outcome, ExchangeOutcome::SUCCESS_WITH_RESPONSE);
   ASSERT_EQ(rig.radio.get_tx_configs().size(), 2u);
-  EXPECT_EQ(rig.radio.get_tx_configs()[0].preamble_len, rig.tuning.normal_start_preamble);
-  EXPECT_EQ(rig.radio.get_tx_configs()[1].preamble_len, LONG_PREAMBLE);
+  EXPECT_EQ(rig.radio.get_tx_configs()[0].preamble_len, mock_preamble_bytes(rig.tuning.start_preamble_ms));
+  EXPECT_EQ(rig.radio.get_tx_configs()[1].preamble_len, MOCK_WAKE_PREAMBLE);
 }
 
 TEST(WakeBelief, DiscoverConfirmStyleCallersStillGetTheAsleepRule) {
@@ -3682,7 +3836,7 @@ TEST(WakeBelief, DiscoverConfirmStyleCallersStillGetTheAsleepRule) {
   // it never consults a belief, whatever the evidence says.
   WakeBeliefRig rig;
   rig.moved_ago(1000);
-  EXPECT_EQ(rig.engine.request_preamble_for(low_power_position_request()), LONG_PREAMBLE);
+  EXPECT_EQ(rig.engine.request_preamble_for(low_power_position_request()), MOCK_WAKE_PREAMBLE);
   EXPECT_EQ(rig.provider_calls, 0);
 }
 
@@ -3808,7 +3962,7 @@ TEST(Exchange, TransmitFrameStampsTheWakeLevel) {
   continuation.ctrl0 &= static_cast<uint8_t>(~CTRL0_START);
 
   ASSERT_TRUE(comp.exchange_engine_.transmit_frame(start, FREQ_CH2, LONG_PREAMBLE));
-  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(start, FREQ_CH2, NORMAL_START_PREAMBLE));
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(start, FREQ_CH2, MOCK_START_PREAMBLE));
   ASSERT_TRUE(comp.exchange_engine_.transmit_frame(continuation, FREQ_CH2, LONG_PREAMBLE));
 
   ASSERT_EQ(radio.get_tx_configs().size(), 3u);
@@ -3819,7 +3973,8 @@ TEST(Exchange, TransmitFrameStampsTheWakeLevel) {
 
 // ============================================================================
 // Listen before talk — transmit_frame() asks the radio to send only on a clear TX channel, up to
-// lbt_max_retries times, then sends once without the check; a failed send ends it at once.
+// LBT_MAX_RETRIES times, then sends once without the check; a failed send ends it at once. This is the
+// access of the senders that keep a fixed channel; a request from send_and_receive() takes a free channel.
 // ============================================================================
 
 TEST(Exchange, LbtBusyThenClearSendsOnTheSecondCheck) {
@@ -3835,7 +3990,7 @@ TEST(Exchange, LbtBusyThenClearSendsOnTheSecondCheck) {
   EXPECT_EQ(radio.get_send_count(), 1);
   EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, 1u);
   ASSERT_EQ(radio.get_tx_configs().size(), 1u);
-  EXPECT_EQ(radio.get_tx_configs()[0].cca_threshold_dbm, comp.tuning_.lbt_rssi_threshold_dbm)
+  EXPECT_EQ(radio.get_tx_configs()[0].cca_threshold_dbm, comp.exchange_engine_.busy_limit_dbm())
       << "the frame that went out was sent with the check";
 }
 
@@ -3851,8 +4006,7 @@ TEST(Exchange, LbtBusyOnEveryCheckSendsOnceWithoutIt) {
   create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
   ASSERT_TRUE(comp.exchange_engine_.transmit_frame(request, FREQ_CH2, SHORT_PREAMBLE));
 
-  const uint8_t checks = comp.tuning_.lbt_max_retries;
-  ASSERT_GT(checks, 0u);
+  const uint8_t checks = LBT_MAX_RETRIES;
   EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, checks);
   EXPECT_EQ(observer.lbt_defers.size(), checks);
   EXPECT_EQ(radio.rssi_read_freqs().size(), checks) << "the forced send takes no reading";
@@ -3872,22 +4026,6 @@ TEST(Exchange, LbtFailedSendIsNotRetried) {
 
   EXPECT_EQ(radio.get_send_count(), 1) << "FAILED is not CHANNEL_BUSY: no further attempt";
   EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, 0u);
-}
-
-TEST(Exchange, LbtSwitchedOffSendsWithoutACheck) {
-  TestableComponent comp;
-  MockRadio radio;
-  wire_observer_rig(comp, radio);
-  comp.tuning_.lbt_max_retries = 0;
-  radio.set_rssi_default(-50);
-
-  IoFrame request{};
-  create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
-  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(request, FREQ_CH2, SHORT_PREAMBLE));
-
-  EXPECT_TRUE(radio.rssi_read_freqs().empty());
-  ASSERT_EQ(radio.get_tx_configs().size(), 1u);
-  EXPECT_FALSE(radio.get_tx_configs()[0].cca_threshold_dbm.has_value());
 }
 
 // Only a frame that opens a session (CTRL0 START) is checked; one without START answers within a
@@ -3915,11 +4053,11 @@ TEST(Exchange, LbtSkippedForAFrameWithoutStart) {
   EXPECT_FALSE(radio.get_tx_configs()[0].cca_threshold_dbm.has_value());
 }
 
-TEST(Exchange, LbtChecksTheRequestButNotThe0x3DOfAnAuthenticatedExchange) {
+TEST(Exchange, TheRequestsChannelIsCheckedButNotThe0x3DOfAnAuthenticatedExchange) {
   TestableComponent comp;
   MockRadio radio;
   wire_observer_rig(comp, radio);
-  radio.set_rssi_default(-50);  // busy on every check
+  radio.set_channel_rssi(FREQ_CH2, -50);  // the first channel is busy; the others are free
 
   IoFrame request{};
   create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
@@ -3930,17 +4068,17 @@ TEST(Exchange, LbtChecksTheRequestButNotThe0x3DOfAnAuthenticatedExchange) {
   IoFrame response{};
   ASSERT_EQ(comp.send_and_receive_(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
 
-  const uint8_t checks = comp.tuning_.lbt_max_retries;
-  ASSERT_GT(checks, 0u);
-  EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, checks) << "only the request's checks are counted";
-  EXPECT_EQ(radio.rssi_read_freqs().size(), checks) << "the 0x3D takes no reading";
+  EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, 1u) << "only the request's checks are counted";
   ASSERT_EQ(radio.get_sent_data().size(), 2u) << "request + 0x3D";
   IoFrame sent{};
   const auto &raw = radio.get_sent_data()[1];
   ASSERT_TRUE(parse(raw.data(), static_cast<uint8_t>(raw.size()), sent));
   EXPECT_EQ(sent.cmd, CMD_CHALLENGE_RESP);
   ASSERT_EQ(radio.get_tx_configs().size(), 2u);
-  EXPECT_FALSE(radio.get_tx_configs()[1].cca_threshold_dbm.has_value());
+  EXPECT_TRUE(radio.get_tx_configs()[0].cca_threshold_dbm.has_value());
+  EXPECT_FALSE(radio.get_tx_configs()[1].cca_threshold_dbm.has_value()) << "the 0x3D is never checked";
+  EXPECT_EQ(radio.get_tx_configs()[1].freq_hz, radio.get_tx_configs()[0].freq_hz)
+      << "the answer goes out on the channel the request took";
 }
 
 // ============================================================================
@@ -4229,104 +4367,139 @@ struct PlanRig {
     create_get_status(request, test::OWN_ID, test::DST_ID, low_power);
     uint8_t raw[64];
     const uint8_t len = serialize(request, raw, sizeof(raw));
-    const uint16_t preamble = low_power ? LONG_PREAMBLE : tuning.normal_start_preamble;
-    return (io868_tx_air_time_us(preamble, len) + 999) / 1000;
+    const uint16_t preamble =
+        low_power ? mock_preamble_bytes(tuning.low_power_wake_ms) : mock_preamble_bytes(tuning.start_preamble_ms);
+    return (io868_tx_air_time_us(preamble, len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE) + 999) / 1000;
   }
 
-  /// Run a status poll to a target that never answers, with @p plan.
+  /// Run a status poll to a target that never answers, with @p options.
   /// @return The wall-clock time the exchange blocked.
-  uint32_t run_silent_poll(const decisions::AttemptPlan &plan, bool low_power) {
+  uint32_t run_silent_poll(const ExchangeOptions &options, bool low_power) {
     IoFrame request{};
     create_get_status(request, test::OWN_ID, test::DST_ID, low_power);
     IoFrame response{};
     const uint32_t start = esphome::test_clock::peek_ms();
-    EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+    EXPECT_EQ(engine.send_and_receive(request, response, FREQ_CH2, options), ExchangeOutcome::FAILED);
     return esphome::test_clock::peek_ms() - start;
   }
 };
+
+/// An upper bound on the time @p attempts attempts to a silent target take, worked out from the attempts alone
+/// (transmission, overhead, listen window and gap), independent of the guard and the budget it applies.
+uint32_t silent_attempts_bound_ms(const PlanRig &rig, uint32_t attempts, uint32_t gap_ms, uint32_t window_ms,
+                                  bool low_power) {
+  return attempts * (rig.attempt_tx_ms(low_power) + EXCHANGE_ATTEMPT_OVERHEAD_MS + window_ms) +
+         (attempts - 1U) * gap_ms;
+}
 
 }  // namespace
 
 TEST(Exchange, SettlingReadToASilentMainsTargetMakesTheFittingNumberOfAttemptsWithoutAGap) {
   PlanRig rig;
-  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, false, rig.tuning, rig.attempt_tx_ms(false));
+  IoFrame status{};
+  create_get_status(status, test::OWN_ID, test::DST_ID, false);
+  const auto plan = expected_plan(rig.engine, rig.tuning, decisions::ReadKind::SETTLING, status);
   ASSERT_GT(plan.max_attempts, EXCHANGE_RETRY_COUNT) << "sanity: the plan is more than today's three";
 
-  const uint32_t blocked_ms = rig.run_silent_poll(plan, false);
+  const uint32_t blocked_ms = rig.run_silent_poll(read_of(decisions::ReadKind::SETTLING), false);
 
   EXPECT_EQ(rig.radio.get_send_count(), plan.max_attempts);
   EXPECT_LT(blocked_ms, rig.tuning.exchange_total_budget_ms);
   const auto &t = rig.radio.send_times_ms();
   for (size_t i = 0; i + 1 < t.size(); i++)
-    EXPECT_LE(t[i + 1] - t[i], rig.attempt_tx_ms(false) + rig.radio.wait_timeouts()[i])
-        << "no gap: the next attempt follows the window (the estimate rounds the air time up)";
+    EXPECT_LE(t[i + 1] - t[i], rig.attempt_tx_ms(false) + rig.radio.wait_timeouts()[i] + CHANNEL_CHECK_TIME_MS)
+        << "no gap: the next attempt follows the window and its channel check (the estimate rounds the air time up)";
 }
 
 TEST(Exchange, SettlingReadIsCappedAtTheMostAttemptsWhateverTheBudget) {
   PlanRig rig;
   rig.tuning.exchange_total_budget_ms = 12000;
-  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, false, rig.tuning, rig.attempt_tx_ms(false));
 
-  rig.run_silent_poll(plan, false);
-
-  EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_MAX_ATTEMPTS);
-}
-
-TEST(Exchange, EngineClampsAPlanThatAsksForMoreThanTheMostAttempts) {
-  PlanRig rig;
-  rig.tuning.exchange_total_budget_ms = 12000;
-  decisions::AttemptPlan plan;
-  plan.max_attempts = 25;
-  plan.gap_ms = 0;
-
-  rig.run_silent_poll(plan, false);
+  rig.run_silent_poll(read_of(decisions::ReadKind::SETTLING), false);
 
   EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_MAX_ATTEMPTS);
 }
 
 TEST(Exchange, SettlingReadToASilentLowPowerTargetListensTheLowPowerWindowOnEveryAttempt) {
   PlanRig rig;
-  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, rig.tuning, rig.attempt_tx_ms(true));
-  ASSERT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS);
-
-  const uint32_t blocked_ms = rig.run_silent_poll(plan, true);
+  IoFrame status{};
+  create_get_status(status, test::OWN_ID, test::DST_ID, true);
+  const auto plan = expected_plan(rig.engine, rig.tuning, decisions::ReadKind::SETTLING, status);
+  const uint32_t blocked_ms = rig.run_silent_poll(read_of(decisions::ReadKind::SETTLING), true);
 
   EXPECT_EQ(rig.radio.get_send_count(), LOW_POWER_SETTLING_ATTEMPTS);
   ASSERT_EQ(rig.radio.wait_timeouts().size(), static_cast<size_t>(LOW_POWER_SETTLING_ATTEMPTS));
   for (const auto wait : rig.radio.wait_timeouts())
     EXPECT_EQ(wait, LOW_POWER_RESPONSE_WAIT_MS);
+  EXPECT_LT(blocked_ms, silent_attempts_bound_ms(rig, plan.max_attempts, plan.gap_ms, plan.window_ms, true));
+}
+
+TEST(Exchange, ASettlingReadToASilentLowPowerTargetRunsThreeWakeUpAttemptsPastTheBudgetAtTheDefaultWakeUp) {
+  // ADR 0095, ADR 0097: at the 600 ms default one wake-up attempt and its window take a little over
+  // a second, so three of them run past the 2500 ms budget, and the exchange ends after the third.
+  PlanRig rig;
+  ASSERT_EQ(mock_preamble_bytes(rig.tuning.low_power_wake_ms), MOCK_WAKE_PREAMBLE);
+  const uint32_t blocked_ms = rig.run_silent_poll(read_of(decisions::ReadKind::SETTLING), true);
+
+  EXPECT_EQ(rig.radio.get_send_count(), LOW_POWER_SETTLING_ATTEMPTS);
+  EXPECT_GT(blocked_ms, rig.tuning.exchange_total_budget_ms) << "the exchange does run past the budget";
+  EXPECT_LT(blocked_ms, 3600u) << "about 3.5 s, the three attempts and nothing more";
+}
+
+TEST(Exchange, ACommandToASilentLowPowerTargetKeepsThreeAttemptsAtEveryWakeUpLength) {
+  for (const uint16_t wake_preamble : {1024, 2048, 4096}) {
+    PlanRig rig;
+    rig.tuning.low_power_wake_ms = mock_preamble_ms(wake_preamble);
+    rig.run_silent_poll(read_of(decisions::ReadKind::COMMAND), true);
+    EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_RETRY_COUNT) << "wake-up " << wake_preamble << " B";
+  }
+}
+
+TEST(Exchange, AMainsTargetOrAMidTravelLookKeepsTheBudgetAtTheDefaultWakeUp) {
+  PlanRig rig;
+  const uint32_t blocked_ms = rig.run_silent_poll(read_of(decisions::ReadKind::SETTLING), false);
   EXPECT_LT(blocked_ms, rig.tuning.exchange_total_budget_ms);
 }
 
-TEST(Exchange, NoPlanLetsASilentTargetBlockPastTheBudget) {
-  // Windows and budgets from short to long: whatever the plan asks for, the guard keeps the blocked
-  // time under the budget when the target never answers.
-  for (const bool low_power : {false, true}) {
-    for (const uint16_t window_ms : {200, 400, 550, 1000}) {
-      for (const uint16_t budget_ms : {1000, 2500, 5000, 12000}) {
-        PlanRig rig;
-        rig.tuning.exchange_start_response_wait_ms = window_ms;
-        rig.tuning.exchange_total_budget_ms = budget_ms;
-        decisions::AttemptPlan plan;
-        plan.max_attempts = EXCHANGE_MAX_ATTEMPTS;
-        plan.window_ms = window_ms;
-        plan.gap_ms = 0;
-        const uint32_t blocked_ms = rig.run_silent_poll(plan, low_power);
-        // The first attempt always runs, so a window longer than the budget is the one exception.
-        if (window_ms < budget_ms) {
-          EXPECT_LT(blocked_ms, budget_ms)
-              << "low_power=" << low_power << " window=" << window_ms << " budget=" << budget_ms;
+TEST(Exchange, NoRequestLetsASilentTargetBlockPastTheBudget) {
+  // Windows and budgets from short to long, for a settling read (gapless) and for the count form
+  // (the default retry gap): the guard keeps the blocked time under the budget when the target
+  // never answers. A low-power target's wake-up exchange is bounded by its attempt count instead
+  // (ADR 0095): it makes all its attempts and takes no longer than they do.
+  for (const bool counted : {false, true}) {
+    for (const bool low_power : {false, true}) {
+      for (const uint16_t window_ms : {200, 400, 550, 1000}) {
+        for (const uint16_t budget_ms : {1000, 2500, 5000, 12000}) {
+          PlanRig rig;
+          rig.tuning.exchange_start_response_wait_ms = window_ms;
+          rig.tuning.exchange_total_budget_ms = budget_ms;
+          const ExchangeOptions options =
+              counted ? ExchangeOptions{EXCHANGE_RETRY_COUNT} : read_of(decisions::ReadKind::SETTLING);
+          IoFrame probe{};
+          create_get_status(probe, test::OWN_ID, test::DST_ID, low_power);
+          const uint32_t blocked_ms = rig.run_silent_poll(options, low_power);
+          if (low_power) {
+            const uint32_t attempts = counted ? EXCHANGE_RETRY_COUNT : LOW_POWER_SETTLING_ATTEMPTS;
+            const uint32_t gap_ms = counted ? EXCHANGE_RETRY_DELAY_MS : 0;
+            const uint32_t listen_ms = counted ? window_ms : LOW_POWER_RESPONSE_WAIT_MS;
+            EXPECT_EQ(rig.radio.get_send_count(), static_cast<int>(attempts));
+            EXPECT_LT(blocked_ms, silent_attempts_bound_ms(rig, attempts, gap_ms, listen_ms, true))
+                << "counted=" << counted << " window=" << window_ms << " budget=" << budget_ms;
+          } else if (window_ms < budget_ms) {
+            // The first attempt always runs, so a window longer than the budget is the one exception.
+            EXPECT_LT(blocked_ms, budget_ms)
+                << "counted=" << counted << " window=" << window_ms << " budget=" << budget_ms;
+          }
         }
       }
     }
   }
 }
 
-TEST(Exchange, ChallengedLowPowerPollNoLongerStartsAThirdTryThatCannotFinish) {
+TEST(Exchange, ChallengedLowPowerPollKeepsItsThirdTryBecauseItsAttemptCountBoundsIt) {
   // Each try is challenged and its final reply never comes: a try costs its wake-up transmission
-  // plus the 500 ms final window. After two the elapsed time plus a third's gap, wake-up, start
-  // window and final window is past the 2500 ms budget, so the third is not started. Counting only
-  // the elapsed time and the transmission, it would have started.
+  // plus the 500 ms final window, so after two the budget rule would refuse a third. A low-power
+  // target's wake-up exchange is bounded by its attempt count instead (ADR 0095): all three run.
   PlanRig rig;
   queue_challenges(rig.radio, EXCHANGE_RETRY_COUNT);
   IoFrame request{};
@@ -4335,8 +4508,8 @@ TEST(Exchange, ChallengedLowPowerPollNoLongerStartsAThirdTryThatCannotFinish) {
 
   EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2), ExchangeOutcome::SUCCESS_UNCONFIRMED);
 
-  EXPECT_EQ(rig.radio.get_send_count(), 4) << "two tries, each a request and a 0x3D";
-  EXPECT_STREQ(rig.engine.get_debug().stage, "retry_budget_exhausted");
+  EXPECT_EQ(rig.radio.get_send_count(), 2 * EXCHANGE_RETRY_COUNT) << "three tries, each a request and a 0x3D";
+  EXPECT_STRNE(rig.engine.get_debug().stage, "retry_budget_exhausted");
 }
 
 TEST(Exchange, ChallengedMainsPollStillMakesItsThirdTry) {
@@ -4353,13 +4526,13 @@ TEST(Exchange, ChallengedMainsPollStillMakesItsThirdTry) {
 
 TEST(Exchange, CommandToASilentMainsTargetMakesNineAttemptsListeningShortOnAllButTheLast) {
   PlanRig rig;
-  const auto plan = decisions::attempt_plan(decisions::ReadKind::COMMAND, false, rig.tuning, rig.attempt_tx_ms(false));
   IoFrame request{};
   create_execute_position(request, test::OWN_ID, test::DST_ID, /*low_power=*/false, 40);
   IoFrame response{};
   const uint32_t start = esphome::test_clock::peek_ms();
 
-  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, read_of(decisions::ReadKind::COMMAND)),
+            ExchangeOutcome::FAILED);
 
   EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_MAX_ATTEMPTS) << "more than today's three for a silent mains target";
   const auto &waits = rig.radio.wait_timeouts();
@@ -4378,9 +4551,10 @@ TEST(Exchange, CommandPlanNeverBlocksPastTheBudgetForAnyEarlyAndStartWindow) {
         rig.tuning.exchange_early_response_wait_ms = early_ms;
         rig.tuning.exchange_start_response_wait_ms = start_ms;
         rig.tuning.exchange_total_budget_ms = budget_ms;
-        const auto plan =
-            decisions::attempt_plan(decisions::ReadKind::COMMAND, false, rig.tuning, rig.attempt_tx_ms(false));
-        const uint32_t blocked_ms = rig.run_silent_poll(plan, false);
+        IoFrame status{};
+        create_get_status(status, test::OWN_ID, test::DST_ID, false);
+        const auto plan = expected_plan(rig.engine, rig.tuning, decisions::ReadKind::COMMAND, status);
+        const uint32_t blocked_ms = rig.run_silent_poll(read_of(decisions::ReadKind::COMMAND), false);
         const std::string where = "early=" + std::to_string(early_ms) + " start=" + std::to_string(start_ms) +
                                   " budget=" + std::to_string(budget_ms);
         EXPECT_EQ(rig.radio.get_send_count(), plan.max_attempts) << where << ": the plan is what the guard admits";
@@ -4402,12 +4576,13 @@ TEST(Exchange, ChallengedWriteIsNeverCopiedMoreThanTodaysThreeTimesWhateverThePl
   IoFrame request{};
   ASSERT_TRUE(create_write_private(request, test::OWN_ID, test::DST_ID, /*low_power=*/false, payload,
                                    static_cast<uint8_t>(sizeof(payload))));
-  decisions::AttemptPlan plan;
-  plan.max_attempts = EXCHANGE_MAX_ATTEMPTS;
-  plan.gap_ms = 0;
+  ASSERT_EQ(expected_plan(rig.engine, rig.tuning, decisions::ReadKind::COMMAND, request).max_attempts,
+            EXCHANGE_MAX_ATTEMPTS)
+      << "sanity: the command's plan is the largest, gapless";
   IoFrame response{};
 
-  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, read_of(decisions::ReadKind::COMMAND)),
+            ExchangeOutcome::SUCCESS_UNCONFIRMED);
 
   EXPECT_EQ(rig.radio.get_send_count(), 2 * EXCHANGE_RETRY_COUNT) << "three requests, each with its 0x3D";
 }
@@ -4422,13 +4597,13 @@ TEST(Exchange, ChallengedWriteAfterSilentAttemptsIsNotCopiedAgain) {
   IoFrame request{};
   ASSERT_TRUE(create_write_private(request, test::OWN_ID, test::DST_ID, /*low_power=*/false, payload,
                                    static_cast<uint8_t>(sizeof(payload))));
-  decisions::AttemptPlan plan;
-  plan.max_attempts = EXCHANGE_MAX_ATTEMPTS;
-  plan.gap_ms = 0;
-  plan.early_window_ms = 200;  // short early listens leave the budget room for further copies
+  // The command's plan has short early listens, which leave the budget room for further copies.
+  ASSERT_EQ(expected_plan(rig.engine, rig.tuning, decisions::ReadKind::COMMAND, request).max_attempts,
+            EXCHANGE_MAX_ATTEMPTS);
   IoFrame response{};
 
-  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::SUCCESS_UNCONFIRMED);
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, read_of(decisions::ReadKind::COMMAND)),
+            ExchangeOutcome::SUCCESS_UNCONFIRMED);
 
   EXPECT_EQ(rig.radio.get_send_count(), 5) << "four requests and the 0x3D answering the fourth's challenge";
 }
@@ -4438,19 +4613,17 @@ TEST(Exchange, ExecuteChallengedWithoutAClosingReplyIsResentOnceWhateverThePlan)
   rig.queue_challenge();
   rig.radio.queue_rx_hold_until_sent(3);
   rig.queue_challenge();
-  decisions::AttemptPlan plan;
-  plan.max_attempts = EXCHANGE_MAX_ATTEMPTS;
-  plan.gap_ms = 0;
-  plan.early_window_ms = 200;
+  ASSERT_EQ(expected_plan(rig.engine, rig.tuning, decisions::ReadKind::COMMAND, stop_request()).max_attempts,
+            EXCHANGE_MAX_ATTEMPTS);
   IoFrame response{};
 
-  EXPECT_EQ(rig.engine.send_and_receive(stop_request(), response, FREQ_CH2, plan),
+  EXPECT_EQ(rig.engine.send_and_receive(stop_request(), response, FREQ_CH2, read_of(decisions::ReadKind::COMMAND)),
             ExchangeOutcome::SUCCESS_UNCONFIRMED);
 
   EXPECT_EQ(rig.radio.get_send_count(), 4) << "request, 0x3D, one re-send, 0x3D; no third copy";
   const auto &waits = rig.radio.wait_timeouts();
   ASSERT_GE(waits.size(), 3u);
-  EXPECT_EQ(waits[0], 200u) << "the first attempt is an early one";
+  EXPECT_EQ(waits[0], rig.tuning.exchange_early_response_wait_ms) << "the first attempt is an early one";
 }
 
 TEST(Exchange, FavouriteExecuteWhoseReplyIsLostAfterItWasChallengedIsNeverSentAgain) {
@@ -4484,22 +4657,21 @@ TEST(Exchange, ResendKeepsItsLongGapWhenThePlanHasNoGap) {
   rig.queue_challenge();
   rig.radio.queue_rx_hold_until_sent(4);
   rig.queue_final_reply();
-  decisions::AttemptPlan plan;
-  plan.gap_ms = 0;
   IoFrame response{};
 
-  ASSERT_EQ(rig.engine.send_and_receive(stop_request(), response, FREQ_CH2, plan),
+  ASSERT_EQ(rig.engine.send_and_receive(stop_request(), response, FREQ_CH2, read_of(decisions::ReadKind::COMMAND)),
             ExchangeOutcome::SUCCESS_WITH_RESPONSE);
 
   const auto &t = rig.radio.send_times_ms();
   ASSERT_EQ(t.size(), 4u);
-  EXPECT_EQ(t[2] - t[1], rig.tuning.exchange_response_wait_ms + UNCONFIRMED_EXECUTE_RESEND_DELAY_MS)
-      << "the re-send waits 750 ms in total whether or not the plan has a gap of its own";
+  EXPECT_EQ(t[2] - t[1],
+            rig.tuning.exchange_response_wait_ms + UNCONFIRMED_EXECUTE_RESEND_DELAY_MS + CHANNEL_CHECK_TIME_MS)
+      << "the re-send waits 750 ms in total whether or not the plan has a gap of its own, then its channel check";
 }
 
-TEST(Exchange, ResendToALowPowerTargetStillFitsTheDefaultBudget) {
-  // A low-power EXECUTE accepted without a closing reply is still re-sent: its wake-up preamble and
-  // first-reply window end inside the budget after the 750 ms gap.
+TEST(Exchange, ResendToALowPowerTargetIsSentBehindTheWakeUpPreamble) {
+  // A low-power EXECUTE accepted without a closing reply is still re-sent after the 750 ms gap; its
+  // exchange is bounded by its attempt count, not the budget (ADR 0095).
   ResendRig rig;
   rig.radio.set_model_tx_airtime(true);
   rig.queue_challenge();
@@ -4512,18 +4684,22 @@ TEST(Exchange, ResendToALowPowerTargetStillFitsTheDefaultBudget) {
   EXPECT_EQ(rig.radio.get_send_count(), 4) << "request, 0x3D, the re-send, 0x3D";
 }
 
-TEST(Exchange, ResendBehindTheWakeUpPreambleIsSentOnceItsGapIsWaited) {
-  // Every try leads with the wake-up preamble. The re-send's own check (gap, transmission, window)
-  // admits it; the guard ahead of the re-sent try must not then refuse it for a final-reply window
-  // the re-send's check leaves out, after the long gap has already been waited.
+TEST(Exchange, ResendThatFitsTheBudgetIsSentOnceItsGapIsWaited) {
+  // The re-send's own check (gap, transmission, window) admits it; the guard ahead of the re-sent try
+  // must not then refuse it for a final-reply window the re-send's check leaves out, after the long
+  // gap has already been waited. A mains target, since a low-power one is bounded by its attempt count
+  // and skips the guard (ADR 0095). The budget sits between what the re-send needs and what it would
+  // need with the final-reply window counted ahead of it.
   ResendRig rig;
-  rig.tuning.low_power_wake_belief = false;
   rig.radio.set_model_tx_airtime(true);
   rig.queue_challenge();
   rig.radio.queue_rx_hold_until_sent(3);
   rig.queue_challenge();
-  IoFrame request{};
-  create_execute_command(request, test::OWN_ID, test::DST_ID, /*low_power=*/true, CoverCommand::STOP);
+  IoFrame request = stop_request();
+  // Try 1 ends with its 500 ms final wait at about 500 ms; the re-send then needs the 750 ms gap, its
+  // transmission, the overhead and the 400 ms start window (about 1680 ms in all), and the final-reply
+  // window would add about 520 ms more.
+  rig.tuning.exchange_total_budget_ms = 2000;
   const uint32_t start = esphome::test_clock::peek_ms();
 
   EXPECT_EQ(rig.send(request), ExchangeOutcome::SUCCESS_UNCONFIRMED);
@@ -4549,6 +4725,77 @@ TEST(Exchange, UnconfirmedExecuteOnItsLastAllowedTryIsNotWaitedForAResend) {
   EXPECT_LT(esphome::test_clock::peek_ms() - start,
             rig.tuning.exchange_start_response_wait_ms + rig.tuning.exchange_response_wait_ms)
       << "the exchange ends with the final wait, not after the re-send gap";
+}
+
+namespace {
+
+/// Make every channel read busy for every clear-channel check, and let a request go out anyway once
+/// its access time is spent (lbt_force_when_busy), so each start frame waits out its whole access
+/// time before it is sent.
+void make_channels_always_busy_but_forced(PlanRig &rig) {
+  rig.radio.set_rssi_default(0);
+  rig.tuning.lbt_force_when_busy = true;
+}
+
+}  // namespace
+
+TEST(Exchange, ALowPowerWakeUpExchangeKeepsAllItsAttemptsWhenABusyChannelDelaysEachOne) {
+  // Size the budget so the three attempts fit it with 1 ms to spare when nothing delays them. Each
+  // attempt then waits the low-power access time (600 ms) for a free channel, so the budget alone
+  // would drop the second and third attempts. The attempt count bounds the exchange instead (ADR 0095).
+  for (const auto kind : {decisions::ReadKind::SETTLING, decisions::ReadKind::COMMAND}) {
+    PlanRig rig;
+    make_channels_always_busy_but_forced(rig);
+    const uint32_t gap_ms = kind == decisions::ReadKind::COMMAND ? EXCHANGE_RETRY_DELAY_MS : 0;
+    const uint32_t window_ms =
+        kind == decisions::ReadKind::COMMAND ? rig.tuning.exchange_start_response_wait_ms : LOW_POWER_RESPONSE_WAIT_MS;
+    rig.tuning.exchange_total_budget_ms =
+        silent_attempts_bound_ms(rig, LOW_POWER_SETTLING_ATTEMPTS, gap_ms, window_ms, true) + 1;
+
+    const uint32_t blocked_ms = rig.run_silent_poll(read_of(kind), true);
+
+    EXPECT_EQ(rig.radio.get_send_count(), static_cast<int>(LOW_POWER_SETTLING_ATTEMPTS))
+        << "kind=" << static_cast<int>(kind);
+    EXPECT_GT(blocked_ms, rig.tuning.exchange_total_budget_ms) << "the delays pushed the exchange past the budget";
+    EXPECT_LT(blocked_ms,
+              silent_attempts_bound_ms(rig, LOW_POWER_SETTLING_ATTEMPTS, gap_ms, window_ms, true) +
+                  LOW_POWER_SETTLING_ATTEMPTS * (LOW_POWER_CHANNEL_ACCESS_BUDGET_MS + 3 * CHANNEL_CHECK_READINGS))
+        << "no longer than the attempts and their channel access time";
+  }
+}
+
+TEST(Exchange, ALowPowerExchangeRunsNoMoreThanItsAttemptsWhateverTheBudget) {
+  // The count bound is also a ceiling: a huge budget adds no attempt to the planned ones (the count
+  // form is capped at EXCHANGE_RETRY_COUNT, a settling read at the three wake-ups).
+  PlanRig rig;
+  rig.tuning.exchange_total_budget_ms = 12000;
+
+  rig.run_silent_poll(ExchangeOptions{EXCHANGE_RETRY_COUNT}, true);
+  EXPECT_EQ(rig.radio.get_send_count(), static_cast<int>(EXCHANGE_RETRY_COUNT));
+
+  rig.radio.clear();
+  rig.run_silent_poll(read_of(decisions::ReadKind::SETTLING), true);
+  EXPECT_EQ(rig.radio.get_send_count(), static_cast<int>(LOW_POWER_SETTLING_ATTEMPTS));
+}
+
+TEST(Exchange, AUserBudgetOfOneSecondStillGivesALowPowerTargetThreeAttempts) {
+  for (const bool counted : {false, true}) {
+    PlanRig rig;
+    rig.tuning.exchange_total_budget_ms = 1000;
+    rig.run_silent_poll(counted ? ExchangeOptions{EXCHANGE_RETRY_COUNT} : read_of(decisions::ReadKind::SETTLING), true);
+    EXPECT_EQ(rig.radio.get_send_count(), static_cast<int>(LOW_POWER_SETTLING_ATTEMPTS)) << "counted=" << counted;
+  }
+}
+
+TEST(Exchange, AMainsTargetStillStopsAtTheBudgetOnABusyChannel) {
+  PlanRig rig;
+  make_channels_always_busy_but_forced(rig);
+  rig.tuning.exchange_total_budget_ms = 1000;
+
+  const uint32_t blocked_ms = rig.run_silent_poll(ExchangeOptions{EXCHANGE_RETRY_COUNT}, false);
+
+  EXPECT_LT(rig.radio.get_send_count(), static_cast<int>(EXCHANGE_RETRY_COUNT)) << "the budget drops a later attempt";
+  EXPECT_LT(blocked_ms, rig.tuning.exchange_total_budget_ms);
 }
 
 // ============================================================================
@@ -4595,7 +4842,9 @@ struct ShortLeadRig : PlanRig {
     IoFrame request = status_read();
     uint8_t raw[64];
     const uint8_t len = serialize(request, raw, sizeof(raw));
-    return (io868_tx_air_time_us(tuning.normal_start_preamble, len) + 999) / 1000;
+    return (io868_tx_air_time_us(mock_preamble_bytes(tuning.start_preamble_ms), len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE) +
+            999) /
+           1000;
   }
 
   std::vector<uint16_t> preambles() const {
@@ -4604,20 +4853,40 @@ struct ShortLeadRig : PlanRig {
       result.push_back(config.preamble_len);
     return result;
   }
+
+  /// The plan the request path builds for a settling read of status_read() that leads short.
+  decisions::AttemptPlan leading_plan() const {
+    return expected_plan(engine, tuning, decisions::ReadKind::SETTLING, status_read(), /*with_short_lead=*/true);
+  }
+
+  /// Run a settling read of status_read() against the rig's scripted radio.
+  ExchangeOutcome settling_read(bool state_unknown = false, uint16_t preamble_override = 0) {
+    IoFrame response{};
+    decisions::AttemptRequest attempts = decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING);
+    attempts.state_unknown = state_unknown;
+    return engine.send_and_receive(status_read(), response, FREQ_CH2,
+                                   ExchangeOptions{attempts}.with_preamble(preamble_override));
+  }
 };
 
 }  // namespace
 
-TEST(ShortLead, PlanLeadsAnUnknownLowPowerSettlingReadWithOneShortAttempt) {
+TEST(ShortLead, AnUnknownLowPowerSettlingReadLeadsWithOneShortAttemptThenTheWakeUpAttempts) {
   ShortLeadRig rig;
-
-  const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, ShortLeadRig::status_read(), FREQ_CH2);
-
-  EXPECT_TRUE(plan.short_lead);
+  const auto plan = rig.leading_plan();
+  ASSERT_TRUE(plan.short_lead);
   EXPECT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS + 1u) << "the three wake-up attempts are kept";
-  EXPECT_EQ(plan.budget_allowance_ms, 0u) << "at the default budget the lead and the three wake-up attempts fit";
-  EXPECT_EQ(plan.window_for_attempt(1, plan.max_attempts), LOW_POWER_SHORT_LEAD_WINDOW_MS);
-  EXPECT_EQ(plan.window_for_attempt(2, plan.max_attempts), LOW_POWER_RESPONSE_WAIT_MS);
+  EXPECT_TRUE(plan.bounded_by_attempts) << "three wake-ups behind the 2048-byte default outlast the budget";
+
+  EXPECT_EQ(rig.settling_read(), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{mock_preamble_bytes(rig.tuning.start_preamble_ms),
+                                                    MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
+  const auto &waits = rig.radio.wait_timeouts();
+  ASSERT_EQ(waits.size(), plan.max_attempts);
+  EXPECT_EQ(waits[0], plan.window_for_attempt(1, plan.max_attempts));
+  EXPECT_EQ(waits[0], LOW_POWER_SHORT_LEAD_WINDOW_MS);
+  EXPECT_EQ(waits[1], LOW_POWER_RESPONSE_WAIT_MS);
 }
 
 TEST(ShortLead, AReadMarkedStateUnknownLeadsShortDespiteARecentStoppedReport) {
@@ -4625,93 +4894,68 @@ TEST(ShortLead, AReadMarkedStateUnknownLeadsShortDespiteARecentStoppedReport) {
   // The target reported a second ago (a "stopped" report clears the moving evidence): unmarked, the
   // read believes it asleep and sends only wake-up attempts.
   rig.evidence.last_status_ms = esphome::test_clock::peek_ms() - 1000;
-  const IoFrame request = ShortLeadRig::status_read();
 
-  const auto unmarked = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
-  EXPECT_FALSE(unmarked.short_lead);
-  EXPECT_FALSE(unmarked.state_unknown);
+  EXPECT_EQ(rig.settling_read(), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}))
+      << "unmarked, the read believes the target asleep and leads with no short attempt";
 
-  const auto marked = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2, 0, /*state_unknown=*/true);
-  EXPECT_TRUE(marked.short_lead);
-  EXPECT_TRUE(marked.state_unknown) << "the plan carries the mark to the exchange";
-
-  IoFrame response{};
-  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, marked), ExchangeOutcome::FAILED);
-  EXPECT_EQ(rig.preambles(),
-            (std::vector<uint16_t>{rig.tuning.normal_start_preamble, LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  rig.radio.clear();
+  EXPECT_EQ(rig.settling_read(/*state_unknown=*/true), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{mock_preamble_bytes(rig.tuning.start_preamble_ms),
+                                                    MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::UNKNOWN)
-      << "the exchange resolves the same belief the plan was built on";
+      << "the exchange resolves the belief the mark asks for";
 }
 
-TEST(ShortLead, FourAttemptsToASilentTargetFitTheDefaultBudget) {
+TEST(ShortLead, FourAttemptsToASilentTargetRunPastTheDefaultBudgetAndNoFurther) {
   ShortLeadRig rig;
-  const IoFrame request = ShortLeadRig::status_read();
-  const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
-  IoFrame response{};
+  const auto plan = rig.leading_plan();
 
   const uint32_t start = esphome::test_clock::peek_ms();
-  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.settling_read(), ExchangeOutcome::FAILED);
   const uint32_t blocked_ms = esphome::test_clock::peek_ms() - start;
 
   EXPECT_EQ(rig.radio.get_send_count(), static_cast<int>(plan.max_attempts))
       << "the guard admits every attempt the plan promised, the wake-up attempts included";
-  EXPECT_EQ(rig.preambles(),
-            (std::vector<uint16_t>{rig.tuning.normal_start_preamble, LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{mock_preamble_bytes(rig.tuning.start_preamble_ms),
+                                                    MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
   const auto &waits = rig.radio.wait_timeouts();
   ASSERT_EQ(waits.size(), 4u);
   EXPECT_EQ(waits[0], LOW_POWER_SHORT_LEAD_WINDOW_MS) << "the lead listens briefly";
   EXPECT_EQ(waits[1], LOW_POWER_RESPONSE_WAIT_MS);
-  EXPECT_LT(blocked_ms, rig.tuning.exchange_total_budget_ms) << "with the default timing no allowance is needed";
+  EXPECT_GT(blocked_ms, rig.tuning.exchange_total_budget_ms) << "the wake-up attempts run past the budget";
+  EXPECT_LT(blocked_ms,
+            rig.short_tx_ms() + EXCHANGE_ATTEMPT_OVERHEAD_MS + LOW_POWER_SHORT_LEAD_WINDOW_MS +
+                silent_attempts_bound_ms(rig, LOW_POWER_SETTLING_ATTEMPTS, 0, LOW_POWER_RESPONSE_WAIT_MS, true))
+      << "the lead and the three wake-up attempts take no longer than they need";
 }
 
-TEST(ShortLead, AShorterBudgetGrantsTheLeadsCostAndKeepsEveryWakeUpAttempt) {
-  // 2400 ms admits the three wake-up attempts (3 x 778 ms at the defaults) but not the lead before them.
-  // The read may then run past the budget by the lead's cost and by no more.
+TEST(ShortLead, AUserBudgetOfOneSecondStillRunsTheLeadAndEveryWakeUpAttempt) {
+  // The budget admits none of the attempts after the first; the attempt count alone bounds the exchange
+  // (ADR 0095).
   ShortLeadRig rig;
-  rig.tuning.exchange_total_budget_ms = 2400;
-  const IoFrame request = ShortLeadRig::status_read();
-  const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
+  rig.tuning.exchange_total_budget_ms = 1000;
+  const auto plan = rig.leading_plan();
   ASSERT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS + 1u);
-  EXPECT_EQ(plan.budget_allowance_ms, decisions::short_lead_cost_ms(rig.short_tx_ms()));
-  IoFrame response{};
 
   const uint32_t start = esphome::test_clock::peek_ms();
-  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.settling_read(), ExchangeOutcome::FAILED);
   const uint32_t blocked_ms = esphome::test_clock::peek_ms() - start;
 
   EXPECT_EQ(rig.radio.get_send_count(), static_cast<int>(plan.max_attempts))
       << "no wake-up attempt is dropped for the lead";
-  EXPECT_GT(blocked_ms, rig.tuning.exchange_total_budget_ms) << "the allowance is what these attempts needed";
-  EXPECT_LE(blocked_ms, rig.tuning.exchange_total_budget_ms + plan.budget_allowance_ms);
-}
-
-TEST(ShortLead, WithoutTheAllowanceTheGuardDropsTheThirdWakeUpAttempt) {
-  // The same plan with the allowance withdrawn: the lead's cost pushes the last wake-up attempt past
-  // the budget, which is what the allowance is for.
-  ShortLeadRig rig;
-  rig.tuning.exchange_total_budget_ms = 2400;
-  const IoFrame request = ShortLeadRig::status_read();
-  auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
-  plan.budget_allowance_ms = 0;
-  IoFrame response{};
-
-  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
-
-  EXPECT_EQ(rig.radio.get_send_count(), 3) << "the short lead and two wake-up attempts";
+  EXPECT_GT(blocked_ms, rig.tuning.exchange_total_budget_ms) << "the attempts run past the budget";
 }
 
 TEST(ShortLead, ACoverAnsweringOnlyTheShortPreambleIsReachedOnTheLead) {
   // A moving VELUX screen answers the short start frame and ignores the wake-up one.
   ShortLeadRig rig;
   rig.radio.queue_rx(ShortLeadRig::status_reply());
-  const IoFrame request = ShortLeadRig::status_read();
-  const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
-  IoFrame response{};
 
-  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  EXPECT_EQ(rig.settling_read(), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
 
   EXPECT_EQ(rig.radio.get_send_count(), 1);
-  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{rig.tuning.normal_start_preamble}));
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{mock_preamble_bytes(rig.tuning.start_preamble_ms)}));
 }
 
 TEST(ShortLead, ACoverAnsweringOnlyTheWakeUpPreambleIsReachedOnTheSecondAttempt) {
@@ -4719,25 +4963,20 @@ TEST(ShortLead, ACoverAnsweringOnlyTheWakeUpPreambleIsReachedOnTheSecondAttempt)
   ShortLeadRig rig;
   rig.radio.queue_rx_hold_until_sent(2);
   rig.radio.queue_rx(ShortLeadRig::status_reply());
-  const IoFrame request = ShortLeadRig::status_read();
-  const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
-  IoFrame response{};
 
-  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  EXPECT_EQ(rig.settling_read(), ExchangeOutcome::SUCCESS_WITH_RESPONSE);
 
   EXPECT_EQ(rig.radio.get_send_count(), 2);
-  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{rig.tuning.normal_start_preamble, LONG_PREAMBLE}));
+  EXPECT_EQ(rig.preambles(),
+            (std::vector<uint16_t>{mock_preamble_bytes(rig.tuning.start_preamble_ms), MOCK_WAKE_PREAMBLE}));
 }
 
 TEST(ShortLead, ASilentLeadSpendsNoEvidence) {
   // Only an exchange planned on AWAKE spends the moving evidence when it goes unanswered; the lead of an
   // unknown state has none to spend.
   ShortLeadRig rig;
-  const IoFrame request = ShortLeadRig::status_read();
-  const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
-  IoFrame response{};
 
-  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.settling_read(), ExchangeOutcome::FAILED);
 
   EXPECT_EQ(rig.evidence_spent, 0);
 }
@@ -4746,14 +4985,13 @@ TEST(ShortLead, ASingleTryReadKeepsTheWakeUpPreamble) {
   // The lead never replaces the only try: a progress read goes to a receiver whose state is unknown
   // with the preamble that reaches a resting one.
   ShortLeadRig rig;
-  const IoFrame request = ShortLeadRig::status_read();
-  const auto plan = rig.engine.plan_read(decisions::ReadKind::PROGRESS, request, FREQ_CH2);
   IoFrame response{};
 
-  EXPECT_FALSE(plan.short_lead);
-  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, plan), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.engine.send_and_receive(ShortLeadRig::status_read(), response, FREQ_CH2,
+                                        read_of(decisions::ReadKind::PROGRESS)),
+            ExchangeOutcome::FAILED);
 
-  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{LONG_PREAMBLE}));
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{MOCK_WAKE_PREAMBLE}));
   EXPECT_EQ(rig.engine.get_debug().wake_belief, decisions::WakeBelief::UNKNOWN);
 }
 
@@ -4764,51 +5002,64 @@ TEST(ShortLead, ACountedStatusReadKeepsTheWakeUpPreambleOnEveryTry) {
   EXPECT_EQ(rig.engine.send_and_receive(ShortLeadRig::status_read(), response, FREQ_CH2, EXCHANGE_RETRY_COUNT),
             ExchangeOutcome::FAILED);
 
-  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{LONG_PREAMBLE, LONG_PREAMBLE, LONG_PREAMBLE}))
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}))
       << "a caller that names only a number of tries gets no lead";
 }
 
 TEST(ShortLead, NewsOfTheReceiversStateLeavesNoLead) {
   ShortLeadRig rig;
-  const IoFrame request = ShortLeadRig::status_read();
 
   rig.evidence.last_status_ms = esphome::millis() - 1000;  // a status report a second ago: at rest, known
-  EXPECT_FALSE(rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2).short_lead);
+  EXPECT_EQ(rig.settling_read(), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}));
 
+  rig.radio.clear();
   rig.evidence.last_status_ms = 0;
   rig.evidence.last_moving_evidence_ms = esphome::millis() - 1000;  // believed moving: the belief itself leads short
-  const auto awake = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
-  EXPECT_FALSE(awake.short_lead);
-  EXPECT_EQ(awake.max_attempts, LOW_POWER_SETTLING_ATTEMPTS);
+  EXPECT_EQ(rig.settling_read(), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.radio.get_send_count(), LOW_POWER_SETTLING_ATTEMPTS)
+      << "the wake-up attempts only, none added as a lead";
+  EXPECT_EQ(rig.radio.wait_timeouts().front(), LOW_POWER_RESPONSE_WAIT_MS);
 }
 
 TEST(ShortLead, AFixedPreambleOrACommandHasNoLead) {
   ShortLeadRig rig;
-  const IoFrame request = ShortLeadRig::status_read();
 
-  EXPECT_FALSE(rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2, LONG_PREAMBLE).short_lead)
+  EXPECT_EQ(rig.settling_read(/*state_unknown=*/false, MOCK_WAKE_PREAMBLE), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}))
       << "the read at a cover's predicted end fixes the wake-up preamble";
 
+  rig.radio.clear();
   IoFrame move{};
   create_execute_position(move, test::OWN_ID, test::DST_ID, /*low_power=*/true, 40);
-  const auto plan = rig.engine.plan_read(decisions::ReadKind::COMMAND, move, FREQ_CH2);
-  EXPECT_FALSE(plan.short_lead);
-  EXPECT_EQ(plan.max_attempts, EXCHANGE_RETRY_COUNT);
+  IoFrame response{};
+  EXPECT_EQ(rig.engine.send_and_receive(move, response, FREQ_CH2, read_of(decisions::ReadKind::COMMAND)),
+            ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.radio.get_send_count(), EXCHANGE_RETRY_COUNT);
+  for (const auto &config : rig.radio.get_tx_configs())
+    EXPECT_EQ(config.preamble_len, MOCK_WAKE_PREAMBLE);
 }
 
 TEST(ShortLead, ANonLowPowerTargetHasNoLead) {
   ShortLeadRig rig;
   IoFrame request{};
   create_get_status(request, test::OWN_ID, test::DST_ID, /*low_power=*/false);
+  IoFrame response{};
 
-  EXPECT_FALSE(rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2).short_lead);
+  EXPECT_EQ(rig.engine.send_and_receive(request, response, FREQ_CH2, read_of(decisions::ReadKind::SETTLING)),
+            ExchangeOutcome::FAILED);
+
+  for (const auto &config : rig.radio.get_tx_configs())
+    EXPECT_EQ(config.preamble_len, mock_preamble_bytes(rig.tuning.start_preamble_ms));
 }
 
 TEST(ShortLead, SwitchedOffWithTheWakeBeliefTuning) {
   ShortLeadRig rig;
   rig.tuning.low_power_wake_belief = false;
 
-  EXPECT_FALSE(rig.engine.plan_read(decisions::ReadKind::SETTLING, ShortLeadRig::status_read(), FREQ_CH2).short_lead)
+  EXPECT_EQ(rig.settling_read(), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.preambles(), (std::vector<uint16_t>{MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE, MOCK_WAKE_PREAMBLE}))
       << "with the belief off every try keeps the wake-up preamble";
 }
 
@@ -4844,54 +5095,9 @@ TEST(ExchangeOptions, EveryWayOfNamingTheAttemptsLooksTheTargetUpOnce) {
   }
   {
     WakeBeliefRig rig;
-    rig.engine.send_and_receive(request, response, FREQ_CH2, decisions::AttemptPlan{});
-    EXPECT_EQ(rig.provider_calls, 1) << "a ready plan";
+    rig.engine.send_and_receive(request, response, FREQ_CH2);
+    EXPECT_EQ(rig.provider_calls, 1) << "the default options";
   }
-}
-
-TEST(ExchangeOptions, ReadKindRunsTheSameExchangeAsThePlanReadBuilds) {
-  // The exchange builds the plan of a read kind itself; handing it plan_read()'s plan instead must
-  // transmit the same frames with the same preambles, windows and timing.
-  const IoFrame request = [] {
-    IoFrame frame{};
-    create_get_status(frame, test::OWN_ID, test::DST_ID, /*low_power=*/true);
-    return frame;
-  }();
-  IoFrame response{};
-  uint32_t kind_elapsed_ms = 0;
-  uint32_t plan_elapsed_ms = 0;
-  std::vector<uint16_t> kind_preambles;
-  std::vector<uint16_t> plan_preambles;
-  std::vector<uint16_t> kind_windows;
-  std::vector<uint16_t> plan_windows;
-  {
-    WakeBeliefRig rig;
-    rig.moved_ago(1000);
-    const uint32_t start = esphome::millis();
-    rig.engine.send_and_receive(request, response, FREQ_CH2,
-                                decisions::AttemptRequest::of_kind(decisions::ReadKind::SETTLING));
-    kind_elapsed_ms = esphome::millis() - start;
-    for (const auto &config : rig.radio.get_tx_configs())
-      kind_preambles.push_back(config.preamble_len);
-    for (const auto wait : rig.radio.wait_timeouts())
-      kind_windows.push_back(static_cast<uint16_t>(wait));
-  }
-  {
-    WakeBeliefRig rig;
-    rig.moved_ago(1000);
-    const auto plan = rig.engine.plan_read(decisions::ReadKind::SETTLING, request, FREQ_CH2);
-    const uint32_t start = esphome::millis();
-    rig.engine.send_and_receive(request, response, FREQ_CH2, plan);
-    plan_elapsed_ms = esphome::millis() - start;
-    for (const auto &config : rig.radio.get_tx_configs())
-      plan_preambles.push_back(config.preamble_len);
-    for (const auto wait : rig.radio.wait_timeouts())
-      plan_windows.push_back(static_cast<uint16_t>(wait));
-  }
-  EXPECT_FALSE(kind_preambles.empty());
-  EXPECT_EQ(kind_preambles, plan_preambles);
-  EXPECT_EQ(kind_windows, plan_windows);
-  EXPECT_EQ(kind_elapsed_ms, plan_elapsed_ms);
 }
 
 TEST(ExchangeOptions, OptionsKeepEachFieldWhenAnotherIsSet) {
@@ -4900,7 +5106,6 @@ TEST(ExchangeOptions, OptionsKeepEachFieldWhenAnotherIsSet) {
   EXPECT_EQ(options.attempts.max_tries, 3);
   EXPECT_EQ(options.preamble_override, 40);
   EXPECT_EQ(options.key, key);
-  EXPECT_FALSE(options.plan.has_value());
 }
 
 TEST(ExchangeOptions, OnlyAnExecuteLooksTheTargetUpWhenItsTryIsUnconfirmed) {
@@ -4938,5 +5143,572 @@ TEST(ExchangeOptions, UnconfirmedStatusReadKeepsItsPlanGapAndIsNotGivenTheLongRe
 
   const auto &t = rig.radio.send_times_ms();
   ASSERT_GE(t.size(), 3u);
-  EXPECT_EQ(t[2] - t[1], rig.tuning.exchange_response_wait_ms + EXCHANGE_RETRY_DELAY_MS);
+  EXPECT_EQ(t[2] - t[1], rig.tuning.exchange_response_wait_ms + EXCHANGE_RETRY_DELAY_MS + CHANNEL_CHECK_TIME_MS);
+}
+
+// ============================================================================
+// Overheard-frame observer: a frame the first-response or final-response wait ignores as unrelated
+// is reported to the attached OverheardFrameObserver, and the exchange itself runs as without it.
+// ============================================================================
+
+namespace {
+
+/// What MockRadio's capture-lifecycle emulation stamps on every delivered frame.
+constexpr int16_t OVERHEARD_TEST_RSSI_DBM = -55;
+
+struct RecordingOverheardObserver : OverheardFrameObserver {
+  std::vector<IoFrame> frames;
+  std::vector<uint32_t> times;
+  std::vector<int16_t> rssis;
+  void on_overheard_frame(const IoFrame &frame, const RadioRxPacket &, int16_t rssi_dbm, uint32_t now) override {
+    this->frames.push_back(frame);
+    this->rssis.push_back(rssi_dbm);
+    this->times.push_back(now);
+  }
+};
+
+/// A wall remote's CLOSE press: a 1W frame to a device class.
+IoFrame remote_press_frame() {
+  const uint8_t remote[NODE_ID_SIZE] = {0x9D, 0x60, 0x85};
+  const uint8_t roller_class[NODE_ID_SIZE] = {0x00, 0x01, 0xBF};
+  const uint8_t close[3] = {0x00, 0x00, 0xC8};
+  IoFrame f{};
+  init_frame(f, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
+  set_src(f, remote);
+  set_dst(f, roller_class);
+  set_cmd(f, CMD_EXECUTE, close, sizeof(close));
+  return f;
+}
+
+/// What an exchange did, for comparing a run with and without an overheard frame.
+struct ExchangeRun {
+  ExchangeOutcome outcome;
+  size_t send_count;
+  std::vector<uint32_t> send_times_ms;
+  uint32_t ended_ms;
+  bool operator==(const ExchangeRun &o) const {
+    return outcome == o.outcome && send_count == o.send_count && send_times_ms == o.send_times_ms &&
+           ended_ms == o.ended_ms;
+  }
+};
+
+/// One exchange where `noise` (if any) is queued at the given point: before the first reply (a direct
+/// answer follows) or between the challenge and the final reply.
+ExchangeRun run_with_noise(const IoFrame *noise, bool challenged, RecordingOverheardObserver &observer) {
+  ResendRig rig;
+  rig.radio.set_emulate_capture_lifecycle(true);
+  rig.engine.set_overheard_frame_observer(&observer);
+  if (challenged) {
+    rig.queue_challenge();
+    if (noise != nullptr)
+      rig.queue(*noise);
+    rig.queue_final_reply();
+  } else {
+    if (noise != nullptr)
+      rig.queue(*noise);
+    rig.queue(build_status_response(test::DST_ID, test::OWN_ID));
+  }
+  const ExchangeOutcome outcome = rig.send(stop_request());
+  return {outcome, rig.radio.get_sent_data().size(), rig.radio.send_times_ms(), esphome::millis()};
+}
+
+}  // namespace
+
+TEST(ExchangeOverheard, RemotePressInTheFirstResponseWaitReachesTheObserverOnce) {
+  const IoFrame press = remote_press_frame();
+  RecordingOverheardObserver quiet;
+  RecordingOverheardObserver heard;
+  const ExchangeRun without = run_with_noise(nullptr, false, quiet);
+  const ExchangeRun with = run_with_noise(&press, false, heard);
+
+  ASSERT_EQ(heard.frames.size(), 1u);
+  EXPECT_EQ(heard.frames[0].cmd, CMD_EXECUTE);
+  EXPECT_EQ(heard.rssis[0], OVERHEARD_TEST_RSSI_DBM) << "the observer gets the RSSI of the reception";
+  EXPECT_EQ(memcmp(heard.frames[0].src, press.src, NODE_ID_SIZE), 0);
+  EXPECT_TRUE(quiet.frames.empty());
+  EXPECT_EQ(with.outcome, ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  EXPECT_TRUE(with == without) << "the exchange's outcome, sends and timing do not depend on the frame";
+}
+
+TEST(ExchangeOverheard, RemotePressInTheFinalResponseWaitReachesTheObserverOnce) {
+  const IoFrame press = remote_press_frame();
+  RecordingOverheardObserver quiet;
+  RecordingOverheardObserver heard;
+  const ExchangeRun without = run_with_noise(nullptr, true, quiet);
+  const ExchangeRun with = run_with_noise(&press, true, heard);
+
+  ASSERT_EQ(heard.frames.size(), 1u);
+  EXPECT_EQ(heard.frames[0].cmd, CMD_EXECUTE);
+  EXPECT_TRUE(quiet.frames.empty());
+  EXPECT_TRUE(with == without);
+}
+
+TEST(ExchangeOverheard, ForeignTwoWayFrameAlsoReachesTheObserverBecauseTheEngineDoesNotFilter) {
+  const IoFrame foreign = build_status_response(test::FOREIGN_ID, test::OWN_ID);
+  RecordingOverheardObserver heard;
+  const ExchangeRun run = run_with_noise(&foreign, false, heard);
+
+  ASSERT_EQ(heard.frames.size(), 1u);
+  EXPECT_EQ(heard.frames[0].cmd, CMD_PRIVATE_RESP);
+  EXPECT_EQ(run.outcome, ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+}
+
+TEST(ExchangeOverheard, FramesTheExchangeAcceptsAreNotReported) {
+  RecordingOverheardObserver heard;
+  const ExchangeRun run = run_with_noise(nullptr, true, heard);
+
+  EXPECT_EQ(run.outcome, ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+  EXPECT_TRUE(heard.frames.empty());
+}
+
+TEST(ExchangeOverheard, InboundAuthenticationWaitDoesNotReport) {
+  // challenge_sender() serves a device-initiated command and the pairing key pull; its wait is
+  // not an exchange wait, so a remote press heard there is not handed to the observer.
+  ResendRig rig;
+  RecordingOverheardObserver heard;
+  rig.engine.set_overheard_frame_observer(&heard);
+  rig.queue(remote_press_frame());
+
+  IoFrame request{};
+  create_execute_position(request, test::DST_ID, test::OWN_ID, false, 100);
+  EXPECT_NE(rig.engine.challenge_sender(request, FREQ_CH2, test::TEST_SYSTEM_KEY),
+            ExchangeEngine::ChallengeResult::VERIFIED);
+  EXPECT_TRUE(heard.frames.empty());
+}
+
+// ============================================================================
+// Channel access of a request (ADR 0096): a request from send_and_receive() is sent only onto a
+// channel its check found free; on a busy result it moves to another channel after a random, growing
+// back-off, and when its access time is spent the attempt ends as "channel busy" with nothing sent.
+// ============================================================================
+
+namespace {
+
+/// A standalone engine on a manual clock whose random source is scripted: the values are consumed in
+/// order, then 0. The draws of one attempt are the first channel, then per busy check the back-off and
+/// the next channel.
+struct AccessRig {
+  esphome::test_clock::ManualClock clock;
+  MockRadio radio;
+  RadioDriver *radio_ptr{&radio};
+  TuningConfig tuning{};
+  ExchangeEngine engine{&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning};
+  std::deque<uint32_t> random_values;
+  RecordingTransmitObserver transmitted;
+  RecordingOverheardObserver heard;
+
+  AccessRig() {
+    engine.set_random_source([this]() -> uint32_t {
+      if (random_values.empty())
+        return 0;
+      const uint32_t value = random_values.front();
+      random_values.pop_front();
+      return value;
+    });
+    engine.set_transmit_observer(&transmitted);
+    engine.set_overheard_frame_observer(&heard);
+  }
+
+  /// A status read of a mains or low-power target.
+  static IoFrame status_read(bool low_power) {
+    IoFrame request{};
+    create_get_status(request, test::OWN_ID, test::DST_ID, low_power);
+    return request;
+  }
+
+  /// One exchange with @p options to a target that never answers.
+  ExchangeOutcome run(bool low_power, const ExchangeOptions &options) {
+    IoFrame response{};
+    return engine.send_and_receive(status_read(low_power), response, FREQ_CH2, options);
+  }
+
+  /// The channel of every frame sent, in order.
+  std::vector<uint32_t> sent_channels() const {
+    std::vector<uint32_t> channels;
+    for (const auto &config : radio.get_tx_configs())
+      channels.push_back(config.freq_hz);
+    return channels;
+  }
+};
+
+using Channels = std::vector<uint32_t>;
+
+}  // namespace
+
+TEST(ChannelAccess, AFreeChannelIsSentOnAtOnceAfterTheFiveReadings) {
+  AccessRig rig;
+  rig.run(false, ExchangeOptions{1});
+
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH2}));
+  EXPECT_EQ(rig.radio.rssi_read_freqs().size(), static_cast<size_t>(CHANNEL_CHECK_READINGS))
+      << "four readings from the engine and the radio's own right before the first symbol";
+  EXPECT_EQ(rig.engine.counters().lbt_retries, 0u);
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, 0u);
+  EXPECT_TRUE(rig.radio.freq_history().empty()) << "no retune: the radio was already on the chosen channel";
+}
+
+TEST(ChannelAccess, TheFirstChannelOfARequestIsTheRandomSourcesChoice) {
+  for (const uint32_t random : {0u, 1u, 2u}) {
+    AccessRig rig;
+    rig.random_values = {random};
+    rig.run(false, ExchangeOptions{1});
+    ASSERT_EQ(rig.sent_channels().size(), 1u);
+    EXPECT_EQ(rig.sent_channels()[0], decisions::REQUEST_CHANNELS[random]) << "random=" << random;
+  }
+}
+
+TEST(ChannelAccess, EveryAttemptOfARequestTakesADifferentChannelThanTheOneBefore) {
+  AccessRig rig;
+  rig.random_values = {0, 0, 1};  // attempt 1: CH2; attempts 2 and 3 draw among the two channels they may take
+  rig.run(false, ExchangeOptions{3});
+
+  const Channels sent = rig.sent_channels();
+  ASSERT_EQ(sent.size(), 3u);
+  EXPECT_NE(sent[0], sent[1]);
+  EXPECT_NE(sent[1], sent[2]);
+  EXPECT_EQ(sent, (Channels{FREQ_CH2, FREQ_CH1, FREQ_CH3})) << "the draws 0, 0 and 1 (modulo the two candidates)";
+}
+
+TEST(ChannelAccess, ABusyChannelMovesTheRequestToAnotherOneAndTheReplyIsHeardThere) {
+  AccessRig rig;
+  rig.radio.set_channel_rssi(FREQ_CH2, -50);  // the first channel is busy, the others are free
+  rig.radio.queue_rx_silence(1);              // what the back-off hears
+  const IoFrame reply = build_status_response(test::DST_ID, test::OWN_ID);
+  uint8_t raw[64];
+  RadioRxPacket pkt{};
+  pkt.len = serialize(reply, raw, sizeof(raw));
+  memcpy(pkt.data, raw, pkt.len);
+  pkt.freq_hz = FREQ_CH1;
+  rig.radio.queue_rx(pkt);
+
+  IoFrame response{};
+  ASSERT_EQ(rig.engine.send_and_receive(AccessRig::status_read(false), response, FREQ_CH2, ExchangeOptions{1}),
+            ExchangeOutcome::SUCCESS_WITH_RESPONSE);
+
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH1})) << "nothing was sent onto the busy channel";
+  EXPECT_EQ(rig.engine.counters().lbt_retries, 1u);
+  EXPECT_EQ(rig.transmitted.lbt_defers, std::vector<int16_t>{-50});
+  EXPECT_EQ(rig.radio.get_current_freq(), FREQ_CH1) << "the reply wait stayed on the channel the request used";
+  EXPECT_EQ(rig.radio.freq_history(), (Channels{FREQ_CH1})) << "one retune, to the new channel, before the send";
+}
+
+TEST(ChannelAccess, TheBackOffIsRandomAndTheHubKeepsReceivingThroughIt) {
+  AccessRig rig;
+  rig.radio.set_channel_rssi(FREQ_CH2, -50);
+  rig.random_values = {0, 2, 0};  // first channel CH2; back-off 1 + 2 % 4 = 3 ms; next channel CH1
+  rig.run(false, ExchangeOptions{1});
+
+  ASSERT_FALSE(rig.radio.wait_timeouts().empty());
+  EXPECT_EQ(rig.radio.wait_timeouts()[0], 3u) << "the first wait of the exchange is the back-off, through listen()";
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH1}));
+}
+
+TEST(ChannelAccess, ARemoteFrameHeardDuringTheBackOffReachesTheRemoteHandling) {
+  AccessRig rig;
+  rig.radio.set_emulate_capture_lifecycle(true);
+  rig.radio.set_channel_rssi(FREQ_CH2, -50);  // the remote's burst keeps channel 2 busy
+  rig.radio.queue_rx(to_rx_packet(remote_press_frame()));
+
+  rig.run(false, ExchangeOptions{1});
+
+  ASSERT_EQ(rig.heard.frames.size(), 1u) << "the press heard while backing off is handed over once";
+  EXPECT_EQ(rig.heard.frames[0].cmd, CMD_EXECUTE);
+  EXPECT_EQ(rig.heard.rssis[0], OVERHEARD_TEST_RSSI_DBM);
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH1})) << "and the request still goes out, on another channel";
+}
+
+TEST(ChannelAccess, AChannelThatNeverClearsEndsTheAttemptAsBusyAndSendsNothing) {
+  AccessRig rig;
+  rig.radio.set_rssi_default(-50);  // every channel is busy
+  const uint32_t begin_ms = esphome::test_clock::peek_ms();
+
+  EXPECT_EQ(rig.run(false, ExchangeOptions{1}), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 0) << "never onto a channel measured busy";
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, 1u);
+  EXPECT_GT(rig.engine.counters().lbt_retries, 1u) << "it kept checking, on other channels, until the time was spent";
+  EXPECT_STREQ(rig.engine.get_debug().stage, "channel_busy");
+  const uint32_t spent_ms = esphome::test_clock::peek_ms() - begin_ms;
+  EXPECT_GE(spent_ms, CHANNEL_ACCESS_BUDGET_MS);
+  EXPECT_LE(spent_ms, CHANNEL_ACCESS_BUDGET_MS + CHANNEL_CHECK_TIME_MS + 2) << "and no longer than about 100 ms";
+  const Channels &measured = rig.radio.rssi_read_freqs();
+  EXPECT_GE(std::set<uint32_t>(measured.begin(), measured.end()).size(), 2u) << "it moved on to other channels";
+}
+
+TEST(ChannelAccess, ABusyAttemptCountsAsAFailedAttemptOfItsPlanAndTheNextOneStartsAfterTheGap) {
+  AccessRig rig;
+  rig.radio.set_rssi_default(-50);
+
+  EXPECT_EQ(rig.run(false, ExchangeOptions{EXCHANGE_RETRY_COUNT}), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, static_cast<uint32_t>(EXCHANGE_RETRY_COUNT));
+  EXPECT_EQ(rig.engine.counters().retransmits, static_cast<uint32_t>(EXCHANGE_RETRY_COUNT - 1));
+  EXPECT_EQ(rig.radio.get_send_count(), 0);
+}
+
+TEST(ChannelAccess, ALowPowerRequestStaysOnChannel2AndWaitsLongerForItToClear) {
+  AccessRig rig;
+  rig.random_values = {1, 1, 1, 1, 1, 1, 1, 1};  // would move an ordinary request
+  rig.radio.set_channel_rssi(FREQ_CH2, -50);
+  const uint32_t begin_ms = esphome::test_clock::peek_ms();
+
+  EXPECT_EQ(rig.run(true, ExchangeOptions{1}), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(rig.radio.get_send_count(), 0);
+  const Channels &measured = rig.radio.rssi_read_freqs();
+  EXPECT_EQ(std::set<uint32_t>(measured.begin(), measured.end()), std::set<uint32_t>{FREQ_CH2});
+  EXPECT_TRUE(rig.radio.freq_history().empty()) << "it never leaves channel 2";
+  const uint32_t spent_ms = esphome::test_clock::peek_ms() - begin_ms;
+  EXPECT_GE(spent_ms, LOW_POWER_CHANNEL_ACCESS_BUDGET_MS);
+  EXPECT_LE(spent_ms, LOW_POWER_CHANNEL_ACCESS_BUDGET_MS + CHANNEL_CHECK_TIME_MS + 2);
+}
+
+TEST(ChannelAccess, ALowPowerRequestSendsOnChannel2OnceItClears) {
+  AccessRig rig;
+  rig.random_values = {1, 1, 1, 1};
+  rig.run(true, ExchangeOptions{1});
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH2}));
+}
+
+TEST(ChannelAccess, ABusyAttemptSpendsNoWakeEvidence) {
+  AccessRig rig;
+  decisions::TargetEvidence evidence{};
+  evidence.last_moving_evidence_ms = esphome::millis() - 1000;  // believed moving: AWAKE
+  rig.engine.set_target_evidence_provider([&evidence](const uint8_t *, decisions::TargetEvidence &out) {
+    out = evidence;
+    return true;
+  });
+  int spent = 0;
+  rig.engine.set_wake_evidence_spent_handler([&spent](const uint8_t *) { spent++; });
+  rig.radio.set_rssi_default(-50);
+
+  rig.run(true, ExchangeOptions{1});
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, 1u);
+  EXPECT_EQ(spent, 0) << "a request that was never sent says nothing about the receiver";
+
+  rig.radio.set_rssi_default(-120);
+  rig.run(true, ExchangeOptions{1});
+  EXPECT_EQ(spent, 1) << "the same silence after a send onto a free channel does spend it";
+}
+
+TEST(ChannelAccess, AForcedSendGoesOntoTheQuietestChannelAndIsNoEvidenceWhenSilent) {
+  AccessRig rig;
+  rig.tuning.lbt_force_when_busy = true;
+  rig.radio.set_channel_rssi(FREQ_CH2, -50);
+  rig.radio.set_channel_rssi(FREQ_CH1, -70);
+  rig.radio.set_channel_rssi(FREQ_CH3, -60);
+  decisions::TargetEvidence evidence{};
+  evidence.last_moving_evidence_ms = esphome::millis() - 1000;
+  rig.engine.set_target_evidence_provider([&evidence](const uint8_t *, decisions::TargetEvidence &out) {
+    out = evidence;
+    return true;
+  });
+  int spent = 0;
+  rig.engine.set_wake_evidence_spent_handler([&spent](const uint8_t *) { spent++; });
+
+  rig.run(false, ExchangeOptions{1});
+
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH1})) << "every channel read busy; CH1 was the quietest";
+  ASSERT_EQ(rig.radio.get_tx_configs().size(), 1u);
+  EXPECT_FALSE(rig.radio.get_tx_configs()[0].cca_threshold_dbm.has_value()) << "forced: no check";
+  EXPECT_EQ(rig.engine.counters().channel_busy_attempts, 0u) << "it was sent, so it is not a busy attempt";
+  EXPECT_EQ(spent, 0) << "a collision on a busy channel explains the silence";
+}
+
+TEST(ChannelAccess, AForcedLowPowerSendStaysOnChannel2) {
+  AccessRig rig;
+  rig.tuning.lbt_force_when_busy = true;
+  rig.radio.set_channel_rssi(FREQ_CH2, -50);
+  rig.radio.set_channel_rssi(FREQ_CH1, -110);
+  rig.radio.set_channel_rssi(FREQ_CH3, -110);
+
+  rig.run(true, ExchangeOptions{1});
+
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH2}));
+  const Channels &measured = rig.radio.rssi_read_freqs();
+  EXPECT_EQ(std::set<uint32_t>(measured.begin(), measured.end()), std::set<uint32_t>{FREQ_CH2})
+      << "the other channels are never measured: a low-power request may not use them";
+}
+
+TEST(ChannelAccess, ACallerThatNeedsItsChannelKeepsTheFixedChannelAccess) {
+  AccessRig rig;
+  rig.random_values = {1, 1, 1};
+  rig.radio.set_rssi_default(-50);  // busy on every check
+
+  rig.run(false, ExchangeOptions{1}.on_fixed_channel());
+
+  EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH2})) << "the caller's channel, whatever the random source says";
+  EXPECT_EQ(rig.engine.counters().lbt_retries, static_cast<uint32_t>(LBT_MAX_RETRIES)) << "five checks, 5 ms apart";
+  ASSERT_EQ(rig.radio.get_tx_configs().size(), 1u);
+  EXPECT_FALSE(rig.radio.get_tx_configs()[0].cca_threshold_dbm.has_value()) << "then one send without a check";
+}
+
+TEST(ChannelAccess, TheHubInstallsItsRandomSourceSoARequestFollowsIt) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+  esphome::test_random::set(2);
+
+  IoFrame request{};
+  create_get_status(request, comp.node_id_, test::DST_ID, false);
+  IoFrame response{};
+  comp.send_and_receive_(request, response, FREQ_CH2, 1);
+  esphome::test_random::set(0);
+
+  ASSERT_EQ(radio.get_tx_configs().size(), 1u);
+  EXPECT_EQ(radio.get_tx_configs()[0].freq_hz, FREQ_CH3);
+}
+
+TEST(ChannelAccess, ABusyExchangeFailsThroughTheHubWithTheChannelBusyStage) {
+  TestableComponent comp;
+  MockRadio radio;
+  wire_observer_rig(comp, radio);
+  radio.set_rssi_default(-50);
+
+  IoFrame request{};
+  create_get_status(request, comp.node_id_, test::DST_ID, false);
+  IoFrame response{};
+  EXPECT_EQ(comp.send_and_receive_(request, response, FREQ_CH2, 1), ExchangeOutcome::FAILED);
+
+  EXPECT_EQ(radio.get_send_count(), 0);
+  EXPECT_STREQ(comp.exchange_engine_.get_debug().stage, "channel_busy");
+}
+
+// ============================================================================
+// The busy limit judged against the board's own quiet level (ADR 0096): the idle hop takes a reading
+// at every QUIET_LEVEL_READING_EVERY_N_HOPS-th hop, the limit follows from the quietest channel, and
+// both channel checks (requests, start frames of fixed-channel senders) read that one limit.
+// ============================================================================
+
+namespace {
+
+/// One idle hop of @p rig: the dwell elapses and maybe_hop() runs. Returns the channel the receiver
+/// sat on right before it.
+uint32_t idle_hop(AccessRig &rig) {
+  const uint32_t before = rig.radio.get_current_freq();
+  esphome::test_clock::advance_us(HOP_TIME_US + 1);
+  rig.engine.maybe_hop();
+  return before;
+}
+
+/// Hop idle until every channel has enough readings, with the radio hearing @p level_dbm.
+void learn_quiet_level(AccessRig &rig, int16_t level_dbm) {
+  rig.radio.set_rssi_default(level_dbm);
+  const int hops = static_cast<int>(QUIET_LEVEL_MIN_READINGS) * 3 * QUIET_LEVEL_READING_EVERY_N_HOPS + 100;
+  for (int i = 0; i < hops; i++)
+    idle_hop(rig);
+}
+
+/// A frame that opens a session, so transmit_frame() checks the channel before it.
+IoFrame start_frame() {
+  IoFrame frame{};
+  create_execute_position(frame, test::OWN_ID, test::DST_ID, false, 100);
+  return frame;
+}
+
+}  // namespace
+
+TEST(BusyLimit, IdleHopTakesOneReadingAtEveryTenthHopOnTheChannelItSatOn) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  std::vector<uint32_t> before_hop;
+  for (int hop = 1; hop <= 2 * QUIET_LEVEL_READING_EVERY_N_HOPS; hop++) {
+    before_hop.push_back(idle_hop(rig));
+    const size_t expected_readings = static_cast<size_t>(hop / QUIET_LEVEL_READING_EVERY_N_HOPS);
+    EXPECT_EQ(rig.radio.rssi_read_freqs().size(), expected_readings) << "after hop " << hop;
+  }
+  EXPECT_EQ(rig.radio.rssi_read_freqs(), (std::vector<uint32_t>{before_hop[QUIET_LEVEL_READING_EVERY_N_HOPS - 1],
+                                                                before_hop[2 * QUIET_LEVEL_READING_EVERY_N_HOPS - 1]}));
+}
+
+TEST(BusyLimit, NoReadingIsTakenWhileAReceptionIsInProgress) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  for (int hop = 1; hop < QUIET_LEVEL_READING_EVERY_N_HOPS; hop++)
+    idle_hop(rig);
+
+  rig.radio.note_reception_from_test();
+  idle_hop(rig);
+  EXPECT_TRUE(rig.radio.rssi_read_freqs().empty()) << "the hop is held, so no reading is taken either";
+
+  rig.radio.clear_reception_from_test();
+  idle_hop(rig);
+  EXPECT_EQ(rig.radio.rssi_read_freqs().size(), 1u) << "the tenth hop reads once the reception has cleared";
+}
+
+TEST(BusyLimit, TheIdleHopHopsAsOftenAsBefore) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  for (int hop = 0; hop < 3 * QUIET_LEVEL_READING_EVERY_N_HOPS; hop++)
+    idle_hop(rig);
+  EXPECT_EQ(rig.radio.freq_history().size(), static_cast<size_t>(3 * QUIET_LEVEL_READING_EVERY_N_HOPS));
+}
+
+TEST(BusyLimit, IsMinusEightyFiveUntilEveryChannelHasEnoughReadings) {
+  AccessRig rig;
+  EXPECT_EQ(rig.engine.busy_limit_dbm(), -85);
+  rig.radio.set_rssi_default(-110);
+  rig.engine.reset_hop_timestamp();
+  for (int i = 0; i < 20 * QUIET_LEVEL_READING_EVERY_N_HOPS; i++)
+    idle_hop(rig);
+  EXPECT_EQ(rig.engine.busy_limit_dbm(), -85) << "a few readings per channel are no quiet level";
+}
+
+TEST(BusyLimit, ALearnedQuietBoardKeepsTheLowerBound) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  learn_quiet_level(rig, -113);  // bench V2
+  EXPECT_EQ(rig.engine.busy_limit_dbm(), -90);
+}
+
+TEST(BusyLimit, ARequestOnANoisyBoardFindsAFreeChannelOnceTheLimitIsLearned) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  rig.radio.set_rssi_default(-80);
+  EXPECT_EQ(rig.run(false, ExchangeOptions{1}), ExchangeOutcome::FAILED) << "-80 is busy against the -85 start limit";
+  ASSERT_EQ(rig.radio.get_send_count(), 0);
+
+  learn_quiet_level(rig, -89);  // a board that idles near the level of issue #228
+  ASSERT_EQ(rig.engine.busy_limit_dbm(), -75);
+  rig.radio.set_rssi_default(-80);
+  rig.run(false, ExchangeOptions{1});
+  EXPECT_EQ(rig.radio.get_send_count(), 1) << "-80 is idle noise against a learned -75";
+}
+
+TEST(BusyLimit, TheStartFrameOfAFixedChannelSenderUsesTheLearnedLimitToo) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  learn_quiet_level(rig, -89);
+  rig.radio.set_rssi_default(-80);
+
+  ASSERT_TRUE(rig.engine.transmit_frame(start_frame(), FREQ_CH2, SHORT_PREAMBLE));
+
+  EXPECT_EQ(rig.engine.counters().lbt_retries, 0u) << "-80 dBm is below the learned -75";
+  ASSERT_EQ(rig.radio.get_tx_configs().size(), 1u);
+  EXPECT_EQ(rig.radio.get_tx_configs()[0].cca_threshold_dbm, -75);
+}
+
+TEST(BusyLimit, ALearnedLimitStillHoldsBackForARealTransmission) {
+  AccessRig rig;
+  rig.engine.reset_hop_timestamp();
+  learn_quiet_level(rig, -113);
+  rig.radio.set_rssi_default(-70);  // the weakest device frame seen on the bench
+  EXPECT_EQ(rig.run(false, ExchangeOptions{1}), ExchangeOutcome::FAILED);
+  EXPECT_EQ(rig.radio.get_send_count(), 0);
+}
+
+TEST(BusyLimit, AFixedThresholdIsTheLimitAndNothingIsLearned) {
+  AccessRig rig;
+  rig.tuning.lbt_rssi_threshold_dbm = -95;
+  rig.engine.reset_hop_timestamp();
+  rig.radio.set_rssi_default(-110);
+  for (int i = 0; i < 50 * QUIET_LEVEL_READING_EVERY_N_HOPS; i++)
+    idle_hop(rig);
+
+  EXPECT_TRUE(rig.radio.rssi_read_freqs().empty()) << "no readings: the limit is not learned";
+  EXPECT_EQ(rig.engine.busy_limit_dbm(), -95);
+
+  rig.radio.set_rssi_default(-96);
+  ASSERT_TRUE(rig.engine.transmit_frame(start_frame(), FREQ_CH2, SHORT_PREAMBLE));
+  EXPECT_EQ(rig.radio.get_tx_configs()[0].cca_threshold_dbm, -95);
 }

@@ -357,9 +357,9 @@ TEST(RadioSX1262, UartDecodeFixedStride) {
 // set_packet_params_() must convert.
 // ============================================================================
 
-/// The default reply preamble (12 B) must reach the chip as 96 bits = 0x00 0x60; a drop back to 8 B
+/// The default reply preamble (3.5 ms, 17 B) must reach the chip as 136 bits = 0x00 0x88; a drop back to 8 B
 /// (64 bits) fails here.
-TEST(RadioSX1262, DefaultResponsePreambleEncodesAs96Bits) {
+TEST(RadioSX1262, DefaultResponsePreambleEncodesAs136Bits) {
   ScriptedSpi spi;
   MockPin rst, dio1, busy(false);
   TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
@@ -389,9 +389,9 @@ TEST(RadioSX1262, DefaultResponsePreambleEncodesAs96Bits) {
   ASSERT_GE(packet_params_idx, 0);
   const auto &pp = spi.transactions()[packet_params_idx];
   ASSERT_EQ(pp.size(), 10u);
-  EXPECT_EQ(radio.response_preamble(), 12u);
+  EXPECT_EQ(radio.response_preamble(), 17u) << "the 3.5 ms default at 8 bit periods per byte";
   EXPECT_EQ(pp[1], 0x00);
-  EXPECT_EQ(pp[2], 0x60);
+  EXPECT_EQ(pp[2], 0x88);
 }
 
 TEST(RadioSX1262, SendPacketSetsPacketParamsPreambleInBits) {
@@ -571,10 +571,12 @@ TEST(SoftPhy, AirTimeIsRoundedUpToWholeBytes) {
 
 TEST(SoftPhy, Io868AirTimeCountsPreambleSyncAndCodedFrame) {
   // A 13-byte frame plus CRC is 15 UART cells = 150 bits = 19 bytes; plus 3 sync bytes.
-  EXPECT_EQ(io868_tx_air_time_us(1024, 13), soft_phy_air_time_us(1024 + 3 + 19));
-  EXPECT_GT(io868_tx_air_time_us(1024, 13), 217000u) << "a wake-up try is ~218 ms on air, not ~330";
-  EXPECT_LT(io868_tx_air_time_us(1024, 13), 219000u);
-  EXPECT_LT(io868_tx_air_time_us(NORMAL_START_PREAMBLE, 13), 12000u);
+  EXPECT_EQ(io868_tx_air_time_us(1024, 13, SOFT_PHY_PREAMBLE_BITS_PER_BYTE), soft_phy_air_time_us(1024 + 3 + 19));
+  EXPECT_GT(io868_tx_air_time_us(1024, 13, SOFT_PHY_PREAMBLE_BITS_PER_BYTE), 217000u)
+      << "a wake-up try is ~218 ms on air, not ~330";
+  EXPECT_LT(io868_tx_air_time_us(1024, 13, SOFT_PHY_PREAMBLE_BITS_PER_BYTE), 219000u);
+  EXPECT_LT(io868_tx_air_time_us(MOCK_START_PREAMBLE, 13, SOFT_PHY_PREAMBLE_BITS_PER_BYTE), 16000u)
+      << "a start preamble is ~10 ms on air, ~14.6 ms with the sync word and a 13-byte frame";
 }
 
 /// The budget estimate a soft-PHY driver reports is the shared 868 model, for its config's preamble.
@@ -584,9 +586,9 @@ TEST(RadioSX1262, TxAirTimeIsTheIo868Model) {
   TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
   RadioTxConfig cfg{};
   cfg.preamble_len = LONG_PREAMBLE;
-  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13));
+  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
   cfg.preamble_len = SHORT_PREAMBLE;
-  EXPECT_EQ(radio.tx_air_time_us(20, cfg), io868_tx_air_time_us(SHORT_PREAMBLE, 20));
+  EXPECT_EQ(radio.tx_air_time_us(20, cfg), io868_tx_air_time_us(SHORT_PREAMBLE, 20, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
 }
 
 TEST(RadioSX1262, EarlyCompletionIsOptInPerChip) {
@@ -1030,14 +1032,18 @@ TEST(RadioSX1262FemRxGain, KctReadingAtTheMeasuredBenchLevelMatchesAFrontEndless
   EXPECT_NEAR(reading, -61, 4) << "gain-corrected V4.3 reading should sit near the V3's -61 dBm";
 }
 
-/// ADR 0042: the start-preamble default is the driver's to give, and the override lives on
-/// SoftPhyDriverBase rather than here — both soft-PHY chips measured the same, so letting them
-/// diverge per driver would be inventing a difference the evidence does not show.
-TEST(RadioSX1262, DefaultStartPreambleComesFromTheSharedSoftPhy) {
+/// ADR 0097: a preamble is set as a duration; the soft PHY sends a raw byte stream, 8 bit periods
+/// per programmed byte, so 10 ms is 48 bytes, and the response default is applied from tuning.
+TEST(RadioSX1262, PreambleDurationsConvertAtEightBitsPerByte) {
   ScriptedSpi spi;
   MockPin rst, dio1, busy(false);
   TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
-  EXPECT_EQ(radio.default_start_preamble(), SOFT_PHY_START_PREAMBLE);
-  EXPECT_GT(radio.default_start_preamble(), NORMAL_START_PREAMBLE)
-      << "the soft PHY needs more than the protocol's documented preamble";
+  EXPECT_EQ(radio.preamble_bits_per_byte(), 8);
+  EXPECT_EQ(radio.preamble_bytes_for_ms(START_PREAMBLE_MS), 48);
+  EXPECT_EQ(radio.preamble_bytes_for_ms(LOW_POWER_WAKE_MS), 2880);
+  EXPECT_EQ(radio.response_preamble(), MOCK_RESPONSE_PREAMBLE) << "the 3.5 ms default before any tuning is applied";
+  TuningConfig tuning;
+  tuning.response_preamble_ms = 10.0F;
+  radio.apply_tuning(tuning);
+  EXPECT_EQ(radio.response_preamble(), 48) << "apply_tuning converts response_preamble_ms";
 }

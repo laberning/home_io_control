@@ -1,22 +1,22 @@
 /// @file docs_node_type_table_sync_test.cpp
 /// @brief Verifies that the node-type table in docs/supported-devices.md ("Node types and
 ///        subtypes") agrees with the C++ table (proto_device_types.cpp): every type value, its
-///        name, its named subtypes, the models below a subtype ("(io_model: a / b)"), and
-///        "(experimental)" on exactly the subtypes whose row carries device_type_flags::EXPERIMENTAL.
+///        name, its named subtypes (subtype 0 only where models sit below it), the models below a
+///        subtype ("(io_model: a / b)"), and "(experimental)" on exactly the subtypes whose row
+///        carries device_type_flags::EXPERIMENTAL.
 ///
 /// The C++ table is authoritative; the docs follow it. The test parses the Markdown table at
 /// runtime, like the other sync tests parse hub_validators.py (see device_type_sync_test.cpp and
 /// python_dict_parser.h). The "Support" column is prose and is not compared.
 
 #include "proto_device_types.h"
-#include "support/python_dict_parser.h"
+#include "support/markdown_table.h"
 
 #include "device_table_walk.h"
 #include "test_helpers.h"
 
 #include <algorithm>
 #include <cstdlib>
-#include <fstream>
 #include <map>
 #include <set>
 #include <string>
@@ -45,20 +45,6 @@ struct DocsRow {
   std::string name;
   std::map<unsigned, DocsSubtype> subtypes;
 };
-
-/// Split a Markdown table line into its trimmed cells.
-std::vector<std::string> split_cells(const std::string &line) {
-  std::vector<std::string> cells;
-  size_t start = line.find('|');
-  while (start != std::string::npos) {
-    const size_t end = line.find('|', start + 1);
-    if (end == std::string::npos)
-      break;
-    cells.push_back(test::detail::trim_ws(line.substr(start + 1, end - start - 1)));
-    start = end;
-  }
-  return cells;
-}
 
 /// Parse the "Named subtypes" cell: `N name[ (experimental)]` entries separated by ", ".
 std::map<unsigned, DocsSubtype> parse_subtypes(const std::string &cell) {
@@ -106,20 +92,8 @@ std::map<unsigned, DocsSubtype> parse_subtypes(const std::string &cell) {
 /// Read the node-type table of the docs page, keyed by the type value.
 std::map<unsigned, DocsRow> parse_docs_table() {
   std::map<unsigned, DocsRow> rows;
-  std::ifstream file = test::detail::open_source_or_fail(DOCS_PAGE);
-  if (!file.is_open())
-    return rows;
-  std::string line;
-  bool in_table = false;
-  while (std::getline(file, line)) {
-    if (!in_table) {
-      in_table = line == TABLE_HEADER;
-      continue;
-    }
-    if (line.rfind('|', 0) != 0)
-      break;  // the first line that is not a table row ends the table
-    const std::vector<std::string> cells = split_cells(line);
-    if (cells.size() < 4 || cells[0].rfind("---", 0) == 0)
+  for (const std::vector<std::string> &cells : test::read_markdown_table(DOCS_PAGE, TABLE_HEADER)) {
+    if (cells.size() < 4)
       continue;
     std::string value = cells[0];
     value.erase(std::remove(value.begin(), value.end(), '`'), value.end());
@@ -128,7 +102,6 @@ std::map<unsigned, DocsRow> parse_docs_table() {
     row.subtypes = parse_subtypes(cells[2]);
     rows[static_cast<unsigned>(std::stoul(value, nullptr, 16))] = row;
   }
-  EXPECT_TRUE(in_table) << "the node-type table header was not found in " << DOCS_PAGE;
   return rows;
 }
 
@@ -168,10 +141,11 @@ TEST(DocsNodeTypeTableSync, NamedSubtypesMatchAndAreMarkedExperimentalExactlyWhe
   ASSERT_FALSE(docs.empty());
   std::map<unsigned, std::map<unsigned, DocsSubtype>> expected;
   test::for_each_table_row([&expected](const DeviceTypeInfo &row) {
-    if (row.subtype == 0)
+    // Subtype 0 is the type itself; the docs name it only to list the models below it.
+    if (row.subtype == 0 && !device_offers_models(row.type, 0))
       return;
     DocsSubtype subtype;
-    subtype.name = row.name;
+    subtype.name = row.subtype == 0 ? display_name(row.name) : row.name;
     subtype.experimental = (row.flags & device_type_flags::EXPERIMENTAL) != 0;
     expected[static_cast<unsigned>(row.type)][row.subtype] = subtype;
   });
@@ -179,11 +153,7 @@ TEST(DocsNodeTypeTableSync, NamedSubtypesMatchAndAreMarkedExperimentalExactlyWhe
     const auto want = expected.find(value);
     const std::map<unsigned, DocsSubtype> none;
     const std::map<unsigned, DocsSubtype> &want_subtypes = want == expected.end() ? none : want->second;
-    // Subtype 0 is the type row itself: the docs name it only to list the models below it.
-    const auto type_row = row.subtypes.find(0);
-    const size_t model_carrier = type_row != row.subtypes.end() && !type_row->second.models.empty() ? 1 : 0;
-    EXPECT_EQ(row.subtypes.size() - model_carrier, want_subtypes.size())
-        << "type 0x" << std::hex << value << " (" << row.name << ")";
+    EXPECT_EQ(row.subtypes.size(), want_subtypes.size()) << "type 0x" << std::hex << value << " (" << row.name << ")";
     for (const auto &[subtype, named] : want_subtypes) {
       const auto listed = row.subtypes.find(subtype);
       ASSERT_NE(listed, row.subtypes.end()) << "type 0x" << std::hex << value << ": subtype " << std::dec << subtype

@@ -108,7 +108,7 @@ MIN_SUN_LEVEL_POLL_INTERVAL_MS = 60000
 MIN_BATTERY_LEVEL_POLL_INTERVAL_MS = 60000
 MIN_STATUS_REFRESH_INTERVAL_MS = 60000
 
-# Internal config key for the "Accept Foreign Pairing" companion switch ID (injected by
+# Internal config key for the "Recover System Key" companion switch ID (injected by
 # post-validator, same pattern as tuning.py's companion entity IDs — ESPHome 2026.x sizes the
 # runtime component vector from IDs known at the end of schema validation, so a companion
 # entity created only in to_code() would silently drop; see tuning.py::_inject_tuning_companion_ids

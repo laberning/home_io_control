@@ -136,9 +136,8 @@ static constexpr float DHW_ELECTRIC_TARGET_MIN_C = 7.0F;
 /// @brief Highest temperature an electric storage water heater heats to: register 0x0049 read 70.0 C with four
 /// showers, and register 0x0041 reads `01F4 02BC` (50.0 and 70.0) in every state.
 static constexpr float DHW_ELECTRIC_TARGET_MAX_C = 70.0F;
-/// @brief Offset of the main parameter (MSB) in the data of a status reply (CMD_PRIVATE_RESP): the target
-/// slot of a cover's reply. The two bytes after it read `00 00` in every reply seen.
-static constexpr uint8_t DHW_STATUS_MAIN_PARAMETER_OFFSET = 2;
+/// @brief Offset of the main parameter (MSB) in the data of a water heater's status reply.
+static constexpr uint8_t DHW_STATUS_MAIN_PARAMETER_OFFSET = STATUS_MP_FP_MAIN_PARAMETER_OFFSET;
 
 // === Operating mode (functional parameters 15 and 16) ===
 
@@ -340,6 +339,14 @@ bool decode_dhw_mode(const uint8_t *value, size_t len, DhwMode &mode);
 /// @param[out] state The decoded state; untouched when false is returned.
 /// @return false for a value shorter than five bytes.
 bool decode_dhw_heating_state(const uint8_t *value, size_t len, DhwHeatingState &state);
+
+/// @brief What heats the water, as a short label, from the two heating readings of DhwReadings.
+/// @details "heat pump", "electric backup", "heat pump and electric backup" or "idle" (neither runs). Both
+///          readings come from the same register, so a label needs both.
+/// @param heat_pump DhwReadings::heat_pump (0, 1 or -1 for not read).
+/// @param element DhwReadings::element (0, 1 or -1 for not read).
+/// @return The label, or nullptr while either reading is missing.
+const char *dhw_heating_source_name(int8_t heat_pump, int8_t element);
 
 /// @brief Energy since installation from the value of register 0x0004: unsigned 32-bit big-endian, Wh.
 /// @param value Value bytes.

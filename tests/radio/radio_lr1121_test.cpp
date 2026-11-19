@@ -689,9 +689,9 @@ TEST(RadioLR1121, SendPacketAppliesHighAcpWorkaroundBeforeSetTx) {
   EXPECT_EQ(addr, LR1121_REG_HIGH_ACP_WORKAROUND_ADDR);
 }
 
-/// The default reply preamble (12 B) must reach the chip as 96 bits = 0x00 0x60; a drop back to 8 B
+/// The default reply preamble (3.5 ms, 17 B) must reach the chip as 136 bits = 0x00 0x88; a drop back to 8 B
 /// (64 bits) fails here.
-TEST(RadioLR1121, DefaultResponsePreambleEncodesAs96Bits) {
+TEST(RadioLR1121, DefaultResponsePreambleEncodesAs136Bits) {
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, 0x07);
@@ -716,9 +716,9 @@ TEST(RadioLR1121, DefaultResponsePreambleEncodesAs96Bits) {
   ASSERT_GE(packet_params_idx, 0);
   const auto &pp = spi.transactions()[packet_params_idx];
   ASSERT_EQ(pp.size(), 11u);
-  EXPECT_EQ(radio.response_preamble(), 12u);
+  EXPECT_EQ(radio.response_preamble(), 17u) << "the 3.5 ms default at 8 bit periods per byte";
   EXPECT_EQ(pp[2], 0x00);
-  EXPECT_EQ(pp[3], 0x60);
+  EXPECT_EQ(pp[3], 0x88);
 }
 
 TEST(RadioLR1121, SendPacketSetsPacketParamsLengthToEncodedLength) {
@@ -836,7 +836,7 @@ TEST(RadioLR1121, ApplyTuningRewritesModulationParamsBandwidth) {
 
   TuningConfig tuning;
   tuning.lr1121_rx_bandwidth = LR1121RxBandwidth::BW_187_2_KHZ;
-  tuning.lr1121_response_preamble = 96;
+  tuning.response_preamble_ms = 20.0F;  // 96 bytes at 8 bit periods each
   tuning.lr1121_post_tx_settle_us = 750;
   radio.apply_tuning(tuning);
 
@@ -876,16 +876,16 @@ TEST(RadioLR1121, TxAirTimeIsTheIo868Model) {
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
   RadioTxConfig cfg{};
   cfg.preamble_len = LONG_PREAMBLE;
-  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13));
+  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
 }
 
-TEST(RadioLR1121, DefaultStartPreambleComesFromTheSharedSoftPhy) {
+TEST(RadioLR1121, PreambleDurationsConvertAtEightBitsPerByte) {
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
-  EXPECT_EQ(radio.default_start_preamble(), SOFT_PHY_START_PREAMBLE);
-  EXPECT_GT(radio.default_start_preamble(), NORMAL_START_PREAMBLE)
-      << "the soft PHY needs more than the protocol's documented preamble";
+  EXPECT_EQ(radio.preamble_bits_per_byte(), 8);
+  EXPECT_EQ(radio.preamble_bytes_for_ms(START_PREAMBLE_MS), 48) << "the same 10 ms as every radio";
+  EXPECT_EQ(radio.response_preamble(), MOCK_RESPONSE_PREAMBLE);
 }
 
 // ============================================================================

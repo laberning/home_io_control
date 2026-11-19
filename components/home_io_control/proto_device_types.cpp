@@ -43,11 +43,13 @@ constexpr uint8_t SUBTYPE_PLATFORM = HAS_PLATFORM;  ///< Subtype row a platform 
 constexpr uint8_t EXPERIMENTAL_SUBTYPE_PLATFORM =
     HAS_PLATFORM | EXPERIMENTAL;  ///< Subtype row a platform drives that no capture or report confirms.
 
-// === Feature words ===
+// === Feature sets ===
 //
-// A row states its whole word. Families share a constant, and a subtype-58 row is
+// A row states its whole set. Families share a constant, and a subtype-58 row is
 // main_parameter_only_variant() of its family where it has no reason to differ.
 
+/// No capability: a row for a type the project names but cannot command.
+constexpr DeviceFeatures NO_FEATURES{};
 /// Positionable cover: a slider, the favourite position and the 8-byte position frame.
 constexpr DeviceFeatures COVER = LEVELS | FAVORITE | EXTENDED_POSITION_FRAME;
 /// Cover with an adjustable slat angle.
@@ -82,7 +84,7 @@ constexpr DeviceFeatures GARAGE = device_feature::MAIN_PARAMETER_ONLY | LEVELS |
 constexpr DeviceFeatures GATE = COVER | PEDESTRIAN;
 /// On/off command in the 6-byte main-parameter frame: a plain light, a switch, a lock. These kinds
 /// have no speed to choose, so they never take the speed block (no EXTENDED_POSITION_FRAME).
-constexpr DeviceFeatures BINARY_COMMAND = DeviceFeatures{0};
+constexpr DeviceFeatures BINARY_COMMAND{};
 /// Light whose brightness is controllable (the 6/1 and 6/2 rows).
 constexpr DeviceFeatures DIMMABLE_LIGHT = LEVELS;
 /// Exterior heating: a heat level in the main parameter, main parameter only.
@@ -111,7 +113,7 @@ constexpr size_t TYPE_HEX_BUFFER_SIZE = 24;  ///< "unknown type 0x3FF" plus marg
 /// \todo Confirm 6/1 and 6/2 accept the brightness EXECUTE on a real device.
 /// \todo Confirm the 15/2, 9/1, 9/2, 22/x, 7/58, 24/58, 27/1 and 1023/2..5 subtype rows against a capture.
 constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
-    {DeviceType::UNKNOWN, 0, NO_MODEL, "unknown", CAP_NONE, YAML_SELECTABLE, 0},
+    {DeviceType::UNKNOWN, 0, NO_MODEL, "unknown", CAP_NONE, YAML_SELECTABLE, NO_FEATURES},
 
     {DeviceType::INTERIOR_VENETIAN_BLIND, 0, NO_MODEL, "interior_venetian_blind", CAP_COVER, SELECTABLE_PLATFORM,
      INTERIOR_VENETIAN},
@@ -151,14 +153,14 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::LOCK, 0, NO_MODEL, "lock", CAP_LOCK, SELECTABLE_PLATFORM, BINARY_COMMAND},
     {DeviceType::LOCK, 1, NO_MODEL, "window lock", CAP_LOCK, EXPERIMENTAL_SUBTYPE_PLATFORM | STANDALONE_NAME,
      BINARY_COMMAND},
-    {DeviceType::LOCK, 2, NO_MODEL, "car controller", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME, 0},
+    {DeviceType::LOCK, 2, NO_MODEL, "car controller", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME, NO_FEATURES},
 
     {DeviceType::VERTICAL_INTERIOR_BLIND, 0, NO_MODEL, "vertical_interior_blind", CAP_COVER, SELECTABLE_PLATFORM,
      VERTICAL_INTERIOR},
 
-    {DeviceType::SECURE_CONFIGURATION_DEVICE, 0, NO_MODEL, "secure_configuration_device", CAP_NONE, 0, 0},
+    {DeviceType::SECURE_CONFIGURATION_DEVICE, 0, NO_MODEL, "secure_configuration_device", CAP_NONE, 0, NO_FEATURES},
 
-    {DeviceType::BEACON, 0, NO_MODEL, "beacon", DeviceCapabilityClass::BEACON, 0, 0},
+    {DeviceType::BEACON, 0, NO_MODEL, "beacon", DeviceCapabilityClass::BEACON, 0, NO_FEATURES},
 
     {DeviceType::DUAL_ROLLER_SHUTTER, 0, NO_MODEL, "dual_roller_shutter", CAP_COVER, SELECTABLE_PLATFORM, DUAL_SHUTTER},
 
@@ -178,10 +180,10 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
 
     {DeviceType::CURTAIN_TRACK, 0, NO_MODEL, "curtain_track", CAP_COVER, SELECTABLE_PLATFORM, COVER},
 
-    {DeviceType::VENTILATION_POINT, 0, NO_MODEL, "ventilation_point", CAP_SWITCH, 0, 0},
-    {DeviceType::VENTILATION_POINT, 1, NO_MODEL, "air inlet", CAP_SWITCH, 0, 0},
-    {DeviceType::VENTILATION_POINT, 2, NO_MODEL, "air transfer", CAP_SWITCH, 0, 0},
-    {DeviceType::VENTILATION_POINT, 3, NO_MODEL, "air outlet", CAP_SWITCH, 0, 0},
+    {DeviceType::VENTILATION_POINT, 0, NO_MODEL, "ventilation_point", CAP_SWITCH, 0, NO_FEATURES},
+    {DeviceType::VENTILATION_POINT, 1, NO_MODEL, "air inlet", CAP_SWITCH, 0, NO_FEATURES},
+    {DeviceType::VENTILATION_POINT, 2, NO_MODEL, "air transfer", CAP_SWITCH, 0, NO_FEATURES},
+    {DeviceType::VENTILATION_POINT, 3, NO_MODEL, "air outlet", CAP_SWITCH, 0, NO_FEATURES},
 
     // Exterior heating takes a heat level in the position field (a fan entity), not a setpoint. Every
     // exterior heater gets the main parameter only: its first functional parameter is not a cover's, and
@@ -191,13 +193,14 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::EXTERIOR_HEATING, SUBTYPE_MAIN_PARAMETER_ONLY, NO_MODEL, "on/off only", CAP_HEATER_LEVEL,
      SUBTYPE_PLATFORM, main_parameter_only_variant(HEAT_LEVEL_DEVICE)},
 
-    {DeviceType::HEAT_PUMP, 0, NO_MODEL, "heat_pump", CAP_CLIMATE, SELECTABLE_PLATFORM, 0},
+    {DeviceType::HEAT_PUMP, 0, NO_MODEL, "heat_pump", CAP_CLIMATE, SELECTABLE_PLATFORM, NO_FEATURES},
     // The two Atlantic profiles use a different private register family from the electrical
     // heater's, so the heating payloads must not be sent to them: no climate class.
-    {DeviceType::HEAT_PUMP, 1, NO_MODEL, "heat pump (Atlantic)", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME, 0},
-    {DeviceType::HEAT_PUMP, 2, NO_MODEL, "boiler (Atlantic)", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME, 0},
+    {DeviceType::HEAT_PUMP, 1, NO_MODEL, "heat pump (Atlantic)", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME, NO_FEATURES},
+    {DeviceType::HEAT_PUMP, 2, NO_MODEL, "boiler (Atlantic)", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME, NO_FEATURES},
 
-    {DeviceType::INTRUSION_ALARM, 0, NO_MODEL, "intrusion_alarm", DeviceCapabilityClass::SENSOR, YAML_SELECTABLE, 0},
+    {DeviceType::INTRUSION_ALARM, 0, NO_MODEL, "intrusion_alarm", DeviceCapabilityClass::SENSOR, YAML_SELECTABLE,
+     NO_FEATURES},
 
     {DeviceType::SWINGING_SHUTTER, 0, NO_MODEL, "swinging_shutter", CAP_COVER, SELECTABLE_PLATFORM, COVER},
     {DeviceType::SWINGING_SHUTTER, 1, NO_MODEL, "with independent leaves", CAP_COVER, SUBTYPE_PLATFORM, COVER},
@@ -210,11 +213,11 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::SLIDING_WINDOW, 0, NO_MODEL, "sliding_window", CAP_COVER, SELECTABLE_PLATFORM, COVER},
     {DeviceType::SLIDING_WINDOW, 1, NO_MODEL, "with lock", CAP_COVER, EXPERIMENTAL_SUBTYPE_PLATFORM, COVER},
 
-    {DeviceType::ZONE_CONTROL, 0, NO_MODEL, "zone_control", CAP_NONE, 0, 0},
+    {DeviceType::ZONE_CONTROL, 0, NO_MODEL, "zone_control", CAP_NONE, 0, NO_FEATURES},
 
     {DeviceType::BIOCLIMATIC_PERGOLA, 0, NO_MODEL, "bioclimatic_pergola", CAP_COVER, SELECTABLE_PLATFORM, COVER},
 
-    {DeviceType::SIREN, 0, NO_MODEL, "siren", CAP_NONE, 0, 0},
+    {DeviceType::SIREN, 0, NO_MODEL, "siren", CAP_NONE, 0, NO_FEATURES},
 
     // A domestic hot water heater: readings and mode in family-0x00 registers, the target in the status
     // main parameter (proto_dhw.h). Read on one Atlantic Calypso Connecte (issue #198); its writes are
@@ -233,29 +236,38 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // Both rows have a heating profile (proto_heating_profiles.cpp): the plain heater is commanded with
     // heating levels in the standard EXECUTE, the one with an adjustable setpoint over the private
     // registers (proto_heating.h).
-    {DeviceType::ELECTRICAL_HEATER, 0, NO_MODEL, "electrical_heater", CAP_CLIMATE, SELECTABLE_PLATFORM, 0},
+    {DeviceType::ELECTRICAL_HEATER, 0, NO_MODEL, "electrical_heater", CAP_CLIMATE, SELECTABLE_PLATFORM, NO_FEATURES},
+    // An interface for pilot-wire heaters (a Thermor one, issue #228) reports the same 52/0 as a plain heater
+    // but carries the six pilot-wire orders only: no boost. Same class, platform and flags, own presets
+    // (proto_heating_profiles.cpp); the YAML declares it (`io_model: pilot_wire_interface`).
+    {DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE, "pilot_wire_interface", CAP_CLIMATE,
+     SELECTABLE_PLATFORM, NO_FEATURES},
     {DeviceType::ELECTRICAL_HEATER, 1, NO_MODEL, "with adjustable setpoint", CAP_CLIMATE, SUBTYPE_PLATFORM,
-     WINDOW_COMPANIONS},
+     WINDOW_COMPANIONS | device_feature::OCCUPANCY | device_feature::ENERGY_METER},
     // A towel dryer reports the same 52/1 as the AGILIA radiator (two Atlantic Adelis units in issue
     // #202), so it is a model row: the YAML declares it (`io_model: towel_dryer`). It has no window
     // sensor and no open-window detection, and its own heating profile (proto_heating_profiles.cpp).
-    {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER, "towel_dryer", CAP_CLIMATE, SUBTYPE_PLATFORM, 0},
+    // A mixed unit also reports whether its central-heating mode is on (CENTRAL_HEATING_MODE); the YAML asks
+    // for the reading, since the model is the same for the electric unit.
+    {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER, "towel_dryer", CAP_CLIMATE, SUBTYPE_PLATFORM,
+     device_feature::CENTRAL_HEATING_MODE | device_feature::ENERGY_METER | device_feature::RUN_TIMERS},
     // A heater with a night light (a Sauter Hekla, issue #222) reports the same 52/1 as well: everything the
     // radiator has, plus the light's registers in its own heating profile.
     {DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT, "heater_with_light", CAP_CLIMATE,
-     SUBTYPE_PLATFORM, WINDOW_COMPANIONS | device_feature::NIGHT_LIGHT},
+     SUBTYPE_PLATFORM,
+     WINDOW_COMPANIONS | device_feature::NIGHT_LIGHT | device_feature::OCCUPANCY | device_feature::ENERGY_METER},
 
-    {DeviceType::HEAT_RECOVERY_VENTILATION, 0, NO_MODEL, "heat_recovery_ventilation", CAP_NONE, 0, 0},
+    {DeviceType::HEAT_RECOVERY_VENTILATION, 0, NO_MODEL, "heat_recovery_ventilation", CAP_NONE, 0, NO_FEATURES},
 
-    {DeviceType::CENTRAL_HOUSE_CONTROL, 0, NO_MODEL, "central_house_control", CAP_NONE, 0, 0},
+    {DeviceType::CENTRAL_HOUSE_CONTROL, 0, NO_MODEL, "central_house_control", CAP_NONE, 0, NO_FEATURES},
 
-    {DeviceType::TEST_AND_EVALUATION, 0, NO_MODEL, "test_and_evaluation", CAP_NONE, 0, 0},
+    {DeviceType::TEST_AND_EVALUATION, 0, NO_MODEL, "test_and_evaluation", CAP_NONE, 0, NO_FEATURES},
 
-    {DeviceType::REMOTE_CONTROLLER, 0, NO_MODEL, "remote_controller", CAP_NONE, HANDS_OUT_KEY, 0},
-    {DeviceType::REMOTE_CONTROLLER, 2, NO_MODEL, "Keygo", CAP_NONE, EXPERIMENTAL, 0},
-    {DeviceType::REMOTE_CONTROLLER, 3, NO_MODEL, "Izymo", CAP_NONE, EXPERIMENTAL, 0},
-    {DeviceType::REMOTE_CONTROLLER, 4, NO_MODEL, "public frame", CAP_NONE, EXPERIMENTAL, 0},
-    {DeviceType::REMOTE_CONTROLLER, 5, NO_MODEL, "V500", CAP_NONE, EXPERIMENTAL, 0},
+    {DeviceType::REMOTE_CONTROLLER, 0, NO_MODEL, "remote_controller", CAP_NONE, HANDS_OUT_KEY, NO_FEATURES},
+    {DeviceType::REMOTE_CONTROLLER, 2, NO_MODEL, "Keygo", CAP_NONE, EXPERIMENTAL, NO_FEATURES},
+    {DeviceType::REMOTE_CONTROLLER, 3, NO_MODEL, "Izymo", CAP_NONE, EXPERIMENTAL, NO_FEATURES},
+    {DeviceType::REMOTE_CONTROLLER, 4, NO_MODEL, "public frame", CAP_NONE, EXPERIMENTAL, NO_FEATURES},
+    {DeviceType::REMOTE_CONTROLLER, 5, NO_MODEL, "V500", CAP_NONE, EXPERIMENTAL, NO_FEATURES},
 };
 
 }  // namespace
@@ -323,8 +335,8 @@ DeviceFeatures device_features(DeviceType type, uint8_t subtype, DeviceModel mod
     return exact->features;
   const DeviceTypeInfo *type_row = find_exact_device_type_info(type, 0);
   if (subtype == SUBTYPE_MAIN_PARAMETER_ONLY)
-    return main_parameter_only_variant(type_row != nullptr ? type_row->features : DeviceFeatures{0});
-  return type_row != nullptr ? type_row->features : DeviceFeatures{0};
+    return main_parameter_only_variant(type_row != nullptr ? type_row->features : DeviceFeatures{});
+  return type_row != nullptr ? type_row->features : DeviceFeatures{};
 }
 
 DeviceFeatures undeclared_kind_features(DeviceCapabilityClass entity_class) {
@@ -344,9 +356,9 @@ DeviceFeatures undeclared_kind_features(DeviceCapabilityClass entity_class) {
     case DeviceCapabilityClass::BEACON:
     case DeviceCapabilityClass::CLIMATE:
     case DeviceCapabilityClass::WATER_HEATER:
-      return 0;
+      return NO_FEATURES;
   }
-  return 0;
+  return NO_FEATURES;
 }
 
 std::string format_device_kind(DeviceType type, uint8_t subtype) {

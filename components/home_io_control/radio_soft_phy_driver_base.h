@@ -216,17 +216,15 @@ class SoftPhyDriverBase : public RadioDriver {
   ///   chip failed. Chip-specific (SX1262: 10 ms: RC-oscillator timing; LR1121: 3000 ms, matched
   ///   to RadioLib's post-reset boot-ROM wait) — this class has no opinion on the value, only on
   ///   where it's stored and how it's used.
-  /// @param default_response_preamble Chip-specific default for @ref response_preamble (each
-  ///   concrete driver passes its own validated constant — this class has no opinion on the
-  ///   value, only on where it's stored).
   /// @param default_post_tx_settle_us Chip-specific default post-TX settling delay, same rationale.
   SoftPhyDriverBase(InternalGPIOPin *rst_pin, InternalGPIOPin *busy_pin, uint32_t busy_timeout_ms,
-                    uint16_t default_response_preamble, uint16_t default_post_tx_settle_us)
+                    uint16_t default_post_tx_settle_us)
       : RadioDriver(rst_pin),
         busy_pin_(busy_pin),
-        response_preamble_(default_response_preamble),
         post_tx_settle_us_(default_post_tx_settle_us),
-        busy_timeout_ms_(busy_timeout_ms) {}
+        busy_timeout_ms_(busy_timeout_ms) {
+    this->response_preamble_ = this->preamble_bytes_for_ms(RESPONSE_PREAMBLE_MS);
+  }
 
   /// @copydoc RadioDriver::send_packet
   TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
@@ -242,6 +240,8 @@ class SoftPhyDriverBase : public RadioDriver {
   /// used to read the single raw byte differs, via @ref read_rssi_raw_byte. Antenna-referred: the
   /// gain of an external receive front end is removed, see @ref front_end_rx_gain_db.
   int16_t read_rssi() override;
+  /// @copydoc RadioDriver::cca_settle_us
+  [[nodiscard]] uint32_t cca_settle_us() const override { return SOFT_PHY_CCA_SETTLE_US; }
   /// @copydoc RadioDriver::is_sync_detected
   bool is_sync_detected() override;
   /// @copydoc RadioDriver::is_preamble_detected
@@ -258,28 +258,22 @@ class SoftPhyDriverBase : public RadioDriver {
   /// the same channel while the preamble is detected again (see `preamble_hold_`). A running hold
   /// answers without SPI; otherwise one IRQ status read looks for a fresh PreambleDetected.
   [[nodiscard]] bool reception_in_progress() override;
-  /// @brief Preamble for response/continuation frames — shared storage, see the concrete
-  /// drivers' constructors/tuning defaults for the chip-specific rationale and value.
+  /// @brief Preamble for response/continuation frames: the `response_preamble_ms` tuning converted
+  /// at 8 bits per byte (set by the concrete drivers' `apply_tuning()`).
   [[nodiscard]] uint16_t response_preamble() const override { return this->response_preamble_; }
 
-  /// @copydoc RadioDriver::default_start_preamble
-  ///
-  /// This PHY puts less usable preamble on air than its programmed length suggests, so it asks for
-  /// more than the protocol's documented value (`SOFT_PHY_START_PREAMBLE`, which carries the
-  /// measurement). The override belongs here rather than on each concrete driver because the
-  /// shared PHY is the level the effect follows: SX1262 and LR1121 measured the same as each other
-  /// and both differed from the register PHY, so a per-driver value would invent a difference the
-  /// evidence does not show. See ADR 0042.
-  [[nodiscard]] uint16_t default_start_preamble() const override { return SOFT_PHY_START_PREAMBLE; }
+  /// @brief Bit periods per preamble byte: 8, the preamble is a raw byte stream.
+  [[nodiscard]] uint8_t preamble_bits_per_byte() const override { return SOFT_PHY_PREAMBLE_BITS_PER_BYTE; }
 
-  /// @brief Transmit time: the preamble, sync word and UART-coded frame at the protocol line rate.
+  /// @brief Transmit time: the preamble (8 bits per byte, a raw byte stream), sync word and
+  /// UART-coded frame at the protocol line rate.
   [[nodiscard]] uint32_t tx_air_time_us(uint8_t len, const RadioTxConfig &cfg) const override {
-    return io868_tx_air_time_us(cfg.preamble_len, len);
+    return io868_tx_air_time_us(cfg.preamble_len, len, SOFT_PHY_PREAMBLE_BITS_PER_BYTE);
   }
 
  protected:
   // --- Tuning helpers shared by both drivers (values/defaults stay chip-specific) ---
-  /// Set the preamble length used for response/continuation frames within an exchange.
+  /// Set the preamble length (bytes) used for response/continuation frames within an exchange.
   void set_response_preamble_(uint16_t preamble) { this->response_preamble_ = preamble; }
   /// Set the delay between TX completion and re-entering RX.
   void set_post_tx_settle_us_(uint16_t delay_us) { this->post_tx_settle_us_ = delay_us; }

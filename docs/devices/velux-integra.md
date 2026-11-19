@@ -8,7 +8,8 @@ and hubs that make good key sources, the wired bridges, and the products control
 
 | Device | Status |
 |---|---|
-| INTEGRA roof-window actuator | ✅ Confirmed — open, close, position, ventilation |
+| INTEGRA roof-window actuator | ✅ Confirmed — open, close, position, ventilation. A second installation of five type 4/1 windows (factory name "Window operator") answers keyed roll-calls and commands under a key copied from a KLR 100, reported with another controller (issue #242) |
+| KLR 100 two-way control pad | 📣 Reported as a key-extraction source — with System settings, Copy system open, the pad answers an addressed key request and proves the key; reported with another controller, not yet with this hub (issue #242) |
 | KLR 200 two-way control pad | ✅ Confirmed as a key-extraction source |
 | KLR 300 two-way control pad | ✅ Confirmed as a key-extraction source (one community tester) |
 | KLF 200 gateway | ✅ Key extraction succeeded (one reporter) — use **SEARCH FOR PRODUCTS**, and repeat it while armed if it finds nothing |
@@ -110,13 +111,13 @@ status, as described under Onboarding routes above. Two-way pairing, reported by
 on an SX1262 board (issue #230), gives status, position and a working stop mid-travel as well.
 
 **Two-way pairing.** The shutter needs a short discovery preamble, as the SSL does. Set
-`pairing_discovery_preamble: 32`; with that line alone the reporter of issue #230 paired, and
+`pairing_discovery_preamble_ms: 7`; with that line alone the reporter of issue #230 paired (with 32 bytes, 6.7 ms on their board), and
 `pairing_discovery_ack_capable` is not needed:
 
 ```yaml
 home_io_control:
   tuning:
-    pairing_discovery_preamble: 32
+    pairing_discovery_preamble_ms: 7
 ```
 
 Press Gear on the shutter's own KLI 310 for about one second; the shutter starts to jog. While it
@@ -124,7 +125,7 @@ jogs, press **Discover & Pair** once. One press is enough: the search sends the 
 up to three times, and in the report the shutter answered the second one. Pairing ends the
 registration window, so the shutter stops jogging. No motor reset is needed, and the KLI remotes and
 a 1W enrollment of the same shutter keep working. Discover & Pair found nothing in issue #17, which
-ran with a 1024-byte discovery preamble.
+ran with a discovery preamble of about 213 ms (1024 bytes).
 
 Once paired, the shutter answers status reads while it moves, with the time left to its target,
 so the position in Home Assistant follows the move. Stop mid-travel works, set position lands
@@ -137,9 +138,11 @@ it reports that it waits for power, and the hub follows it: Home Assistant shows
 or closing toward its target, `Active Issue` reads `NODE_WAITING_FOR_POWER` from the first status
 read, and the position follows once the motor runs. The shutter says "waiting for power" in the
 answer to every command, also when nothing else moves, so the hub shows the waiting state only from
-a status read, never from that answer. It keeps reading every few seconds while the shutter waits,
-so a short move is seen. The hub follows a cover for 4 minutes after the command, which covers two
-shutters one after the other. This is confirmed on a VELUX SML shutter behind a KUX 110 (issue
+a status read, never from that answer. It keeps reading every few seconds while the shutter waits
+and follows the move that starts after the wait by its own remaining time, so a short move is seen.
+A command to the position the shutter already has also reports waiting for power, and nothing
+moves. The hub follows a cover for 4 minutes after the command, which covers two shutters one after
+the other. This is confirmed on a VELUX SML shutter behind a KUX 110 (issue
 #230; see [Position and state](../configuration/cover.md#position-and-state)). The group KLI moves
 the shutters one after the other.
 
@@ -185,9 +188,13 @@ moves the window to its predefined air-exchange opening rather than fully open.
   (experimental: not yet confirmed on a solar shutter). Leave
   `low_power_wake_belief` on: with it off, every `stop` goes out with the long preamble and never
   lands mid-travel. The boot log states it (`Low-power wake belief: on`). At rest the SSL answers
-  only the wake-up preamble, and only on about half the tries; if commands to a resting shutter
+  only the wake-up preamble, and not on every try: about half the tries at about 213 ms, about three
+  in four at 427 ms, and all of eight with about 600 ms, the default
+  ([issue #114](https://github.com/laberning/home_io_control/issues/114),
+  [issue #151](https://github.com/laberning/home_io_control/issues/151)). The hub makes three
+  attempts, so a silent shutter holds it for about 3.5 s. If commands to a resting shutter still
   often need a second press, try a longer
-  [`low_power_wake_preamble`](../configuration/tuning.md#low_power_wake_preamble). There is no
+  [`low_power_wake_ms`](../configuration/tuning.md#low_power_wake_ms). There is no
   such result for the MSU solar awning screen, so expect a mid-travel `stop` to do nothing there
   and use the product's own wall remote.
 - **1W enrollment is a Gear press on the existing KLI, not a button on the product.** Press the
@@ -226,6 +233,10 @@ window moves alike from the pad and from the hub: a full travel of one roof wind
 Set `travel_speed: fast` on the window's cover for its fast speed, 26.5 s and audibly louder, or
 `silent` for the slowest, about 65 s (issue #205); see
 [Travel speed](../configuration/cover.md#travel-speed).
+
+Windows differ here. A window in another installation answered both speed profiles and a numeric
+speed with result code 5 (parameter unknown) and still moved to the requested position (issue #242). On such
+a window `travel_speed:` changes nothing, and the hub logs one warning per device and boot.
 
 ## Rain protection
 
@@ -284,9 +295,11 @@ rain-limited limitation read, and private-function sweeps dry and in the rain st
 and KLI 313 remotes, and 6 for the SSL solar roller shutter (a TaHoma pairing it; this hub pairing it,
 with the long preamble ignored and the short one answered; a set-position ack; a stop and status
 polls that go unanswered while it moves).
+One more capture holds five type 4/1 windows answering keyed roll-calls, received with another controller's
+receiver (issue #242).
 
 Field reports: #17 (SML discovery), #74 (SML roller shutter, KLI 312 blind and FSC pleated blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
-screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #230 (SML two-way pairing, shutters queued on one KUX 110).
+screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #230 (SML two-way pairing, shutters queued on one KUX 110), #242 (KLR 100 Copy system, five type 4/1 windows).
 
 ## See also
 

@@ -17,28 +17,18 @@ platform; see [Heating and climate](../configuration/climate.md) for every optio
 | Heating / idle | ✅ Confirmed; follows a change from Home Assistant at the poll 45 seconds later, other changes at the regular poll (every 5 minutes by default) |
 | Maximum setpoint | ✅ Confirmed — the radiator reports 28.0 °C |
 | `Window` sensor | ✅ Confirmed — turns on when a window near the radiator is opened |
+| Target set in `auto` (temporary override) | ⚠️ Experimental: the registers it uses have not been read or written on a radiator yet; a radiator without them keeps writing the comfort temperature |
 | `Open Window Detection` switch | ⚠️ Reads back the radiator's setting; switching detection off from Home Assistant is not tested yet |
+| Occupancy detection (`occupancy_detection:` switch, `occupancy:` sensor) | ⚠️ Experimental: not tested on an AGILIA IO; a Sauter Hekla answers the registers ([Occupancy detection](../configuration/climate.md#occupancy-detection)) |
+| Energy total (`energy:` sensor) | ⚠️ Experimental: not tested on an AGILIA IO; a Sauter Tahual's total equals its display ([Energy sensor](../configuration/climate.md#energy-sensor)) |
 
 ## Modes in Home Assistant
 
-The radiator has three operating modes, described in its
+The display's BASIC, AUTO, PROG and Off are the card's `heat`, `auto` and `off`, with the `Auto` and
+`Program` presets telling the two automatic modes apart.
+[Radiators with a setpoint](../heating.md#radiators-with-a-setpoint) has the table and what a target
+does in each mode. The modes themselves are described in the radiator's
 [installation manual](https://www.atlanticheat.co.uk/assets/uploads/general/Agilia_IO_Digital_Installation_Manual_no-lines.pdf).
-Home Assistant has no separate mode for the two automatic modes, so both appear as `auto`, with a
-preset that tells them apart:
-
-| Radiator display | Home Assistant |
-|---|---|
-| BASIC — holds the set temperature, smart functions off | `heat` |
-| AUTO — learns when the room is used and adjusts the temperature | `auto` with the `Auto` preset |
-| PROG — follows the radiator's weekly program | `auto` with the `Program` preset |
-| Off | `off` |
-
-Choose `Program` or `Auto` to switch between the radiator's automatic modes; `heat` or `off` leaves
-them.
-The weekly program itself is edited on the radiator. The radiator shares its node type with the
-[Atlantic Adelis towel dryer](atlantic-adelis.md#modes-and-presets-in-home-assistant), which shows
-the comfort or eco period of its program, so that period may be visible here too. If you run the
-radiator in PROG, please [open an issue](https://github.com/laberning/home_io_control/issues) so we can check it.
 
 ## How a radiator appears on the radio
 
@@ -117,38 +107,12 @@ climate:
 `io_device_id` is the heater's address as the printed block shows it. Give
 every radiator its own entry with its own `system_key:`.
 
-## Sauter Hekla
+## Other heaters that pair this way
 
-The Sauter Hekla, an electric heater from the same group, pairs and works the same way. It is
-confirmed on three heaters that were already paired with a Sauter Cozytouch, on a Heltec V3 (issue
-#222). The differences:
-
-- **The pairing menu** is in the expert menu: **Menu expert** → **Paramétrages** → **Connectivité** →
-  **Envoyer clé**. Choose it on the heater, then press **Discover & Pair** on the hub.
-- **One key for all heaters on a Cozytouch.** A heater paired with a Cozytouch holds the key of the
-  Cozytouch installation, so every heater on it hands over the same key. Pair one heater; for the
-  others you need only their address, which you can take from the hub's log while the Cozytouch
-  talks to them, and the same `system_key:`.
-- **The Cozytouch keeps working.** Pairing with the hub reads the heater's key and leaves it
-  unchanged, so the heater stays controllable from the Cozytouch app. A change made in the app shows
-  in Home Assistant at the next poll: the hub polls each heater every `status_poll_interval`, and
-  shortly after it hears the Cozytouch talk to a heater.
-- **The night light** gets a light entity with `io_model: heater_with_light` and a `night_light:`
-  block; see [Heaters with a night light](../configuration/climate.md#heaters-with-a-night-light).
-  Reading it is confirmed; switching and dimming it from Home Assistant are experimental.
-
-```yaml
-climate:
-  - platform: home_io_control
-    name: "Kids' room heater"
-    io_device_id: "29FB38"
-    io_device_type: "electrical_heater"
-    io_subtype: 1
-    io_model: heater_with_light
-    system_key: !secret cozytouch_key
-    night_light:
-      name: "Kids' room night light"
-```
+The [Sauter Hekla](sauter-hekla.md), an electric heater from the same group, pairs and works the same
+way from a different menu, and adds a night light. The Thermor EMOTION 3 H pairs from the same menu as
+the AGILIA IO and is set up like it; its row is in
+[Heating and hot water](../supported-devices.md#heating-and-hot-water).
 
 ## Known quirks
 
@@ -180,6 +144,7 @@ An earlier capture shows the radiator refusing a pushed key:
 
 ## See also
 
+- [Heaters and water heaters in Home Assistant](../heating.md)
 - [Heating and climate](../configuration/climate.md)
 - [Pairing](../pairing.md)
 - [Supported devices](../supported-devices.md)

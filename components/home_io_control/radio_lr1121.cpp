@@ -87,7 +87,7 @@ void RadioLR1121::log_command_status_(uint16_t opcode) const {
   // Stat1 bits [3:1] encode the previous command's fate (0=CMD_FAIL, 1=CMD_PERR "processing
   // error", 2=CMD_OK, 3=CMD_DAT); bit 0 is a separate IRQ-active flag. Any FAIL/PERR means the
   // chip silently rejected the command — surfaced unconditionally (not gated on
-  // IOHOME_FRAME_LOG) since this whole driver has been blind to command rejections until now.
+  // IOHOME_FRAME_LOG) because without it a rejected command leaves no trace.
   uint8_t const cmd_status = (this->last_stat1_ >> 1) & 0x07;
   if (cmd_status == 0x00 || cmd_status == 0x01) {
     ESP_LOGW(TAG, "cmd 0x%04X rejected: stat1=0x%02X (%s)", opcode, this->last_stat1_,

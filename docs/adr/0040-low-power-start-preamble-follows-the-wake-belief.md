@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0040 -->
 
-**Status:** Accepted, amended 2026-09 (see [Amendment](#amendment-a-resting-receiver-hears-only-the-wake-up-preamble)) · **Recorded:** 2026-09
+**Status:** Accepted, amended 2026-09 and by [ADR 0095](0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md) (2048-byte default) (see [Amendment](#amendment-a-resting-receiver-hears-only-the-wake-up-preamble)) · **Recorded:** 2026-09
 
 Amended by [ADR 0073](0073-a-read-plans-its-attempts-and-an-attempt-must-fit-the-budget-with-its-windows.md)
 (the post-`stop` poll keeps three tries until it takes the settling plan) and by [ADR 0074](0074-settling-reads-take-the-attempt-plan-and-progress-reads-stay-single-tries.md)

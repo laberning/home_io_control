@@ -12,6 +12,7 @@
 #include "proto_dhw.h"
 #include "proto_frame.h"
 #include "proto_heating.h"
+#include "proto_heating_profiles.h"
 #include "proto_private_registers.h"
 
 #include "heater_controller_fixture.h"
@@ -64,14 +65,16 @@ bool run_heating_command_with_reply(uint8_t cmd, const std::vector<uint8_t> &pay
 /// Register low byte of a sent CMD_WRITE_PRIVATE frame (payload `0C <dir> 01 <reg>` starts at offset 9).
 uint8_t sent_register(const std::vector<uint8_t> &tx) { return tx.at(12); }
 
-/// Queue the replies of one answered register-heater poll of the radiator (the five core registers).
+/// Queue the replies of one answered register-heater poll of the radiator (the five poll registers, then the
+/// open-window-detection setting).
 void queue_radiator_poll(HeaterControllerFixture &fx, uint8_t room_hi, uint8_t room_lo, uint8_t regulator,
-                         uint8_t window) {
+                         uint8_t window, uint8_t detection = 0x01) {
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, room_hi, room_lo});
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x00, 0x01});
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x17, regulator});
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x0E, window});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x06, detection});
 }
 
 /// The payload bytes (from wire offset 9) of a sent frame.
@@ -256,9 +259,8 @@ TEST(HeaterController, ReadHeatingRegisterWithoutAValueInTheReplyFails) {
 TEST(HeaterController, ReadHeatingRegisterRejectsWhatItCannotRead) {
   HeaterControllerFixture fx;
   make_heater(fx);
-  EXPECT_FALSE(
-      fx.controller.read_heating_register("ABC123", HeatingFunction::SET_PRESENCE, nullptr, EXCHANGE_RETRY_COUNT))
-      << "write-only register";
+  EXPECT_FALSE(fx.controller.read_heating_register("ABC123", HeatingFunction::COUNT, nullptr, EXCHANGE_RETRY_COUNT))
+      << "a function past the table has no register";
   EXPECT_TRUE(fx.radio.get_sent_data().empty());
 
   HeaterControllerFixture cover;
@@ -363,66 +365,809 @@ TEST(HeaterController, APlannedRegisterWriteSendsItsBytesAppliesTheHookThenReads
 
 namespace {
 
-/// A towel dryer in its programme, comfort 19.0 C with a setback of 3.5 K, holding @p in_force_c.
-IoDevice *make_towel_dryer_in_programme(HeaterControllerFixture &fx, float in_force_c) {
+/// A towel dryer in its programme, comfort 19.0 C, holding @p in_force_c (a number marks it reported), whose
+/// status read reported @p level.
+IoDevice *make_towel_dryer_in_programme(HeaterControllerFixture &fx, float in_force_c, uint8_t level) {
   IoDevice *dev = make_towel_dryer(fx);
+  fx.status_reply_level = level;  // the level the next status read answers
   dev->heating.towel_mode = static_cast<int16_t>(TowelDryerMode::PROG);
   dev->heating.temporary_state = static_cast<int16_t>(HeatingTemporaryState::NONE);
   dev->heating.setpoint_c = 19.0F;
-  dev->heating.eco_setback_k = 3.5F;
+  dev->heating.level = level;
   dev->heating.in_force_temperature_c = in_force_c;
+  if (!std::isnan(in_force_c))
+    dev->temperature_in_force = TemperatureInForceSupport::REPORTED;
   return dev;
 }
 
-/// The temperature in force the entities see in the last notification of the write: the one the
-/// read-back's own reading raises.
-float in_force_seen_after_comfort_write(HeaterControllerFixture &fx, float new_comfort_c, uint8_t value_lo) {
-  float seen = NAN;
-  fx.registry.subscribe(
-      [&seen](const std::string &, const IoDevice &dev) { seen = dev.heating.in_force_temperature_c; });
-  fx.queue_register_ack({0x0C, 0x61, 0x01, 0x03, value_lo, 0x00});
-  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, value_lo, 0x00});
-  EXPECT_TRUE(fx.controller.execute_heating_plan(
-      "ABC123", register_plan(HeatingFunction::SET_TEMPERATURE, new_comfort_c), nullptr));
-  return seen;
+/// A radiator running its programme in @p mode, comfort 19.0 C, holding @p in_force_c (a number marks it
+/// reported).
+IoDevice *make_radiator_in_programme(HeaterControllerFixture &fx, HeatingMode mode, float in_force_c) {
+  IoDevice *dev = make_heater(fx);
+  dev->heating.mode = static_cast<int16_t>(mode);
+  dev->heating.setpoint_c = 19.0F;
+  dev->heating.in_force_temperature_c = in_force_c;
+  if (!std::isnan(in_force_c))
+    dev->temperature_in_force = TemperatureInForceSupport::REPORTED;
+  return dev;
 }
+
+/// An override of @p value written to the override register with its read-back: a plan, not a decision, so the
+/// tests of execute_heating_plan() do not depend on any stored reading.
+HeatingWritePlan override_plan(float value) {
+  HeatingWritePlan plan = register_plan(HeatingFunction::DEROGATED_SETPOINT, value);
+  plan.temporary_override = true;
+  return plan;
+}
+
+/// Queue the acknowledgement of a write of register @p reg and the read-back reply of @p tenths_lo / 0.
+void queue_register_write_and_read_back(HeaterControllerFixture &fx, uint8_t reg, uint8_t write_lo, uint8_t back_lo) {
+  fx.queue_register_ack({0x0C, 0x61, 0x01, reg, write_lo, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, reg, back_lo, 0x00});
+}
+
+/// The registers a frame list read or wrote, in order.
+std::vector<uint8_t> sent_registers(const HeaterControllerFixture &fx) {
+  std::vector<uint8_t> registers;
+  for (const auto &frame : fx.radio.get_sent_data())
+    registers.push_back(sent_register(frame));
+  return registers;
+}
+
+/// The registers of the frames sent since @p before frames.
+std::vector<uint8_t> sent_registers_since(const HeaterControllerFixture &fx, size_t before) {
+  std::vector<uint8_t> registers = sent_registers(fx);
+  registers.erase(registers.begin(), registers.begin() + static_cast<std::ptrdiff_t>(before));
+  return registers;
+}
+
+/// Whether the frame is a write (`0x61`) and not a read.
+bool is_write_frame(const std::vector<uint8_t> &tx) { return tx.at(10) == 0x61; }
+
+/// The writes a fixture's radio carried, as register numbers.
+std::vector<uint8_t> written_registers(const HeaterControllerFixture &fx) {
+  std::vector<uint8_t> registers;
+  for (const auto &frame : fx.radio.get_sent_data()) {
+    if (is_write_frame(frame))
+      registers.push_back(sent_register(frame));
+  }
+  return registers;
+}
+
+/// What the climate entity does for a target: ask the heater what it runs, plan from the record, and send.
+struct TargetOutcome {
+  bool state_answered{false};  ///< The heater answered the mode (and the timed run where it matters).
+  HeatingWritePlan plan;       ///< What the target became.
+  bool sent{false};            ///< The write was sent and acknowledged.
+};
+
+TargetOutcome set_target(HeaterControllerFixture &fx, float target_c) {
+  TargetOutcome outcome;
+  outcome.state_answered = fx.controller.read_programme_state("ABC123");
+  const IoDevice *dev = fx.registry.get("ABC123");
+  outcome.plan =
+      plan_heating_write(*find_heating_profile(*dev), {.kind = HeatingWriteKind::TARGET, .target_c = target_c},
+                         heating_device_facts(dev, outcome.state_answered));
+  outcome.sent = outcome.plan.is_write() && fx.controller.execute_heating_plan("ABC123", outcome.plan, nullptr);
+  return outcome;
+}
+
+/// Queue the heater's reply to a read of register @p reg with the value bytes @p value.
+void queue_read_reply(HeaterControllerFixture &fx, uint8_t reg, std::vector<uint8_t> value) {
+  std::vector<uint8_t> payload = {0x0C, 0x60, 0x01, reg};
+  payload.insert(payload.end(), value.begin(), value.end());
+  fx.queue_register_ack(payload);
+}
+
+constexpr uint8_t RADIATOR_MODE = 0x00;
+constexpr uint8_t RADIATOR_IN_FORCE = 0x2A;
+constexpr uint8_t DRYER_MODE = 0x36;
+constexpr uint8_t DRYER_TIMED_RUN = 0x3E;
+constexpr uint8_t DRYER_IN_FORCE = 0x37;
+constexpr uint8_t OVERRIDE_REGISTER = 0x1D;
+constexpr uint8_t COMFORT_REGISTER = 0x03;
+
+constexpr uint8_t RADIATOR_HEAT = static_cast<uint8_t>(HeatingMode::MANUAL);
+constexpr uint8_t RADIATOR_PROGRAMME = static_cast<uint8_t>(HeatingMode::PROG);
+constexpr uint8_t DRYER_HEAT = static_cast<uint8_t>(TowelDryerMode::MANUAL);
+constexpr uint8_t DRYER_PROGRAMME = static_cast<uint8_t>(TowelDryerMode::PROG);
+constexpr uint8_t NO_TIMED_RUN = static_cast<uint8_t>(HeatingTemporaryState::NONE);
+constexpr uint8_t TIMED_BOOST = static_cast<uint8_t>(HeatingTemporaryState::BOOST);
 
 }  // namespace
 
-TEST(HeaterController, AComfortWriteInAComfortPeriodShowsTheNewTargetAtTheReadBack) {
-  HeaterControllerFixture fx;
-  const IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F);
+TEST(HeaterController, AnOverrideInAnEcoOrAComfortPeriodSendsTheOverrideRegisterAndShowsTheNewTargetAtTheReadBack) {
+  for (const uint8_t level : {heating_level::ECO, heating_level::COMFORT}) {
+    HeaterControllerFixture fx;
+    IoDevice *dev = make_towel_dryer_in_programme(fx, level == heating_level::ECO ? 15.5F : 19.0F, level);
+    const HeatingProfile &profile = *find_heating_profile(*dev);
+    float seen = NAN;
+    fx.registry.subscribe([&seen](const std::string &, const IoDevice &d) { seen = d.heating.in_force_temperature_c; });
+    queue_register_write_and_read_back(fx, 0x1D, 0xAF, 0xAF);
 
-  EXPECT_FLOAT_EQ(in_force_seen_after_comfort_write(fx, 20.0F, 0xC8), 20.0F) << "before the 45 s poll";
+    ASSERT_TRUE(fx.controller.execute_heating_plan("ABC123", override_plan(17.5F), nullptr)) << "level " << +level;
 
-  const ProgrammePeriodState period = resolve_programme_period(*find_heating_profile(*dev), dev->heating);
-  EXPECT_EQ(period.preset_index, find_heating_profile(*dev)->programme_period->comfort_preset);
-  EXPECT_FLOAT_EQ(period.target_c, 20.0F);
+    ASSERT_EQ(fx.radio.get_sent_data().size(), 2u);
+    EXPECT_EQ(sent_payload(fx.radio.get_sent_data()[0], 6), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x1D, 0xAF, 0x00}));
+    EXPECT_EQ(sent_register(fx.radio.get_sent_data()[1]), 0x1D) << "the read-back is of the override register";
+    for (const auto &frame : fx.radio.get_sent_data())
+      EXPECT_NE(sent_register(frame), 0x03) << "the comfort setpoint is never written";
+    EXPECT_FLOAT_EQ(seen, 17.5F) << "the card shows the new target before the next poll";
+    EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.0F) << "the comfort setpoint is untouched";
+
+    // The next poll's 0x37 replaces the shown value.
+    fx.queue_register_ack({0x0C, 0x60, 0x01, 0x37, 0xAA, 0x00});
+    ASSERT_TRUE(fx.controller.read_heating_register("ABC123", profile.programme_period->in_force_fn, nullptr,
+                                                    EXCHANGE_RETRY_COUNT));
+    EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 17.0F) << "what the dryer reports replaces the shown value";
+  }
 }
 
-TEST(HeaterController, AComfortWriteInAnEcoPeriodShowsTheNewComfortMinusTheSetback) {
-  HeaterControllerFixture fx;
-  const IoDevice *dev = make_towel_dryer_in_programme(fx, 15.5F);
+// === The temperature in force is read once after a write that starts the programme (display only) ===
 
-  EXPECT_FLOAT_EQ(in_force_seen_after_comfort_write(fx, 20.0F, 0xC8), 16.5F);
+namespace {
 
-  EXPECT_EQ(resolve_programme_period(*find_heating_profile(*dev), dev->heating).preset_index,
-            find_heating_profile(*dev)->programme_period->eco_preset);
+/// Whether a device reports its temperature in force, as one of the stored readings of a heater's record.
+float stored_in_force(const IoDevice &dev) { return dev.heating.in_force_temperature_c; }
+
+}  // namespace
+
+TEST(HeaterController, AModeWriteIntoTheProgrammeIsReadBackThenTheTemperatureInForceIsReadOnce) {
+  struct Case {
+    bool towel;
+    uint8_t mode_register;
+    uint8_t in_force_register;
+    uint8_t from_wire;
+    uint8_t to_wire;
+  };
+  for (const Case &c :
+       {Case{true, DRYER_MODE, DRYER_IN_FORCE, DRYER_HEAT, DRYER_PROGRAMME},
+        Case{false, RADIATOR_MODE, RADIATOR_IN_FORCE, RADIATOR_HEAT, static_cast<uint8_t>(HeatingMode::AUTO)}}) {
+    HeaterControllerFixture fx;
+    IoDevice *dev = c.towel ? make_towel_dryer_in_programme(fx, NAN, heating_level::COMFORT)
+                            : make_radiator_in_programme(fx, HeatingMode::MANUAL, NAN);
+    if (c.towel)
+      dev->heating.towel_mode = c.from_wire;
+    const HeatingFunction mode_fn = find_heating_profile(*dev)->mode_fn;
+    fx.queue_register_ack({0x0C, 0x61, 0x01, c.mode_register, c.to_wire});
+    fx.queue_register_ack({0x0C, 0x60, 0x01, c.mode_register, c.to_wire});
+    queue_read_reply(fx, c.in_force_register, {0xAF, 0x00});  // 17.5 C
+    ASSERT_EQ(dev->temperature_in_force, TemperatureInForceSupport::UNKNOWN);
+
+    ASSERT_TRUE(fx.controller.execute_heating_plan("ABC123", register_plan(mode_fn, c.to_wire), nullptr));
+
+    EXPECT_EQ(sent_registers(fx), (std::vector<uint8_t>{c.mode_register, c.mode_register, c.in_force_register}))
+        << "write, read-back, one read of the temperature in force, towel " << c.towel;
+    EXPECT_FLOAT_EQ(stored_in_force(*dev), 17.5F);
+    EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED);
+  }
 }
 
-TEST(HeaterController, AComfortWriteOutsideTheProgrammeLeavesTheTemperatureInForceAlone) {
+TEST(HeaterController, AWriteThatDoesNotStartTheProgrammeReadsNoTemperatureInForce) {
+  // A mode write into heat, a boost started on the dryer: the read-back shows no programme running.
+  {
+    HeaterControllerFixture fx;
+    IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
+    queue_register_write_and_read_back(fx, RADIATOR_MODE, RADIATOR_HEAT, RADIATOR_HEAT);
+    ASSERT_TRUE(fx.controller.execute_heating_plan(
+        "ABC123", register_plan(find_heating_profile(*dev)->mode_fn, RADIATOR_HEAT), nullptr));
+    EXPECT_EQ(sent_registers(fx), (std::vector<uint8_t>{RADIATOR_MODE, RADIATOR_MODE}));
+  }
+  {
+    HeaterControllerFixture fx;
+    make_towel_dryer_in_programme(fx, NAN, heating_level::COMFORT);
+    queue_register_write_and_read_back(fx, DRYER_MODE, DRYER_HEAT, DRYER_HEAT);
+    ASSERT_TRUE(
+        fx.controller.execute_heating_plan("ABC123", register_plan(HeatingFunction::TOWEL_MODE, DRYER_HEAT), nullptr));
+    EXPECT_EQ(sent_registers(fx), (std::vector<uint8_t>{DRYER_MODE, DRYER_MODE}));
+  }
+  {
+    HeaterControllerFixture fx;
+    make_towel_dryer_in_programme(fx, NAN, heating_level::COMFORT);
+    queue_register_write_and_read_back(fx, DRYER_TIMED_RUN, TIMED_BOOST, TIMED_BOOST);
+    ASSERT_TRUE(fx.controller.execute_heating_plan(
+        "ABC123", register_plan(HeatingFunction::TEMPORARY_STATE, TIMED_BOOST), nullptr));
+    EXPECT_EQ(sent_registers(fx), (std::vector<uint8_t>{DRYER_TIMED_RUN, DRYER_TIMED_RUN}))
+        << "a boost on top of the programme is not the programme running";
+  }
+}
+
+TEST(HeaterController, ADryerBoostEndedWhileTheModeShowsTheProgrammeReadsTheTemperatureInForce) {
   HeaterControllerFixture fx;
-  IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F);
-  dev->heating.towel_mode = static_cast<int16_t>(TowelDryerMode::MANUAL);
+  IoDevice *dev = make_towel_dryer_in_programme(fx, NAN, heating_level::COMFORT);
+  dev->heating.temporary_state = TIMED_BOOST;
+  queue_register_write_and_read_back(fx, DRYER_TIMED_RUN, NO_TIMED_RUN, NO_TIMED_RUN);
+  queue_read_reply(fx, DRYER_IN_FORCE, {0xAF, 0x00});
 
-  in_force_seen_after_comfort_write(fx, 20.0F, 0xC8);
+  ASSERT_TRUE(fx.controller.execute_heating_plan(
+      "ABC123", register_plan(HeatingFunction::TEMPORARY_STATE, NO_TIMED_RUN), nullptr));
 
-  EXPECT_TRUE(std::isnan(dev->heating.in_force_temperature_c)) << "cleared outside the programme, never shifted";
+  EXPECT_EQ(sent_registers(fx), (std::vector<uint8_t>{DRYER_TIMED_RUN, DRYER_TIMED_RUN, DRYER_IN_FORCE}));
+  EXPECT_FLOAT_EQ(stored_in_force(*dev), 17.5F);
+}
+
+TEST(HeaterController, ASilentModeReadBackReadsNoTemperatureInForce) {
+  // The stored mode already shows the programme, so only the missing read-back keeps the read away.
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::PROG, NAN);
+  fx.queue_register_ack({0x0C, 0x61, 0x01, RADIATOR_MODE, static_cast<uint8_t>(HeatingMode::AUTO)});  // no read-back
+
+  ASSERT_TRUE(fx.controller.execute_heating_plan(
+      "ABC123", register_plan(find_heating_profile(*dev)->mode_fn, static_cast<float>(HeatingMode::AUTO)), nullptr));
+
+  for (const uint8_t reg : sent_registers(fx))
+    EXPECT_EQ(reg, RADIATOR_MODE) << "the write and its read-back attempts only";
+}
+
+TEST(HeaterController, AHeaterWithoutATemperatureInForceIsNotAskedAfterAModeWrite) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::MANUAL, NAN);
+  dev->temperature_in_force = TemperatureInForceSupport::ABSENT;
+  const uint8_t auto_wire = static_cast<uint8_t>(HeatingMode::AUTO);
+  queue_register_write_and_read_back(fx, RADIATOR_MODE, auto_wire, auto_wire);
+
+  ASSERT_TRUE(fx.controller.execute_heating_plan(
+      "ABC123", register_plan(find_heating_profile(*dev)->mode_fn, auto_wire), nullptr));
+
+  EXPECT_EQ(sent_registers(fx), (std::vector<uint8_t>{RADIATOR_MODE, RADIATOR_MODE}));
+}
+
+TEST(HeaterController, AProfileWithoutAProgrammeIsNotAskedAfterAWrite) {
+  // A heating-level heater has no programme period: its plan has no register read-back and nothing is read.
+  HeaterControllerFixture fx;
+  ASSERT_NE(fx.add_device_of_kind(DeviceType::ELECTRICAL_HEATER, 0), nullptr);
+  ASSERT_EQ(find_heating_profile(*fx.registry.get("ABC123"))->programme_period, nullptr);
+  HeatingWritePlan plan;
+  plan.kind = HeatingPlanKind::LEVEL;
+  plan.level = heating_level::ECO;
+
+  EXPECT_TRUE(fx.controller.execute_heating_plan("ABC123", plan, nullptr));
+
+  EXPECT_TRUE(fx.radio.get_sent_data().empty()) << "the level is an execute, and no register is read";
+}
+
+TEST(HeaterController, ASilentTemperatureInForceReadAfterAModeWriteChangesNothingElse) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::MANUAL, NAN);
+  const uint8_t auto_wire = static_cast<uint8_t>(HeatingMode::AUTO);
+  queue_register_write_and_read_back(fx, RADIATOR_MODE, auto_wire, auto_wire);  // the in-force read gets no reply
+
+  ASSERT_TRUE(fx.controller.execute_heating_plan(
+      "ABC123", register_plan(find_heating_profile(*dev)->mode_fn, auto_wire), nullptr));
+
+  const std::vector<uint8_t> registers = sent_registers(fx);
+  ASSERT_GE(registers.size(), 3u);
+  EXPECT_EQ(registers[2], RADIATOR_IN_FORCE);
+  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::UNKNOWN) << "a missed read says nothing";
+  EXPECT_TRUE(std::isnan(stored_in_force(*dev)));
+  EXPECT_EQ(dev->heating.mode, auto_wire) << "the mode the read-back stored stays";
+  EXPECT_TRUE(written_registers(fx) == std::vector<uint8_t>{RADIATOR_MODE}) << "nothing else is written";
+}
+
+TEST(HeaterController, AnEmptyTemperatureInForceAfterAWriteLeavesTheTargetsOwnReadToDecide) {
+  // The display read goes by the stored readings, and on a dryer one of the two registers that say "the programme
+  // runs" was not read with the write: the heater may run something else and answer the register empty. Only the
+  // target's own read, made on fresh readings, may mark the heater as having no temperature in force.
+  struct Case {
+    const char *what;
+    uint8_t written_register;
+    uint8_t written_wire;
+    uint8_t stored_mode;
+    uint8_t stored_timed_run;
+  };
+  for (const Case &c :
+       {Case{"mode written, stored timed run stale", DRYER_MODE, DRYER_PROGRAMME, DRYER_HEAT, NO_TIMED_RUN},
+        Case{"boost ended, stored mode stale", DRYER_TIMED_RUN, NO_TIMED_RUN, DRYER_PROGRAMME, TIMED_BOOST}}) {
+    HeaterControllerFixture fx;
+    IoDevice *dev = make_towel_dryer_in_programme(fx, NAN, heating_level::ECO);
+    dev->heating.towel_mode = c.stored_mode;
+    dev->heating.temporary_state = c.stored_timed_run;
+    const HeatingFunction fn =
+        c.written_register == DRYER_MODE ? HeatingFunction::TOWEL_MODE : HeatingFunction::TEMPORARY_STATE;
+    queue_register_write_and_read_back(fx, c.written_register, c.written_wire, c.written_wire);
+    queue_read_reply(fx, DRYER_IN_FORCE, {});  // answered, no value
+
+    ASSERT_TRUE(fx.controller.execute_heating_plan("ABC123", register_plan(fn, c.written_wire), nullptr)) << c.what;
+    ASSERT_EQ(sent_registers(fx).back(), DRYER_IN_FORCE) << c.what;
+    EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::UNKNOWN) << c.what;
+
+    // The next target asks the heater, which now runs its programme and reports the temperature in force.
+    const size_t before = fx.radio.get_sent_data().size();
+    queue_read_reply(fx, DRYER_MODE, {DRYER_PROGRAMME});
+    queue_read_reply(fx, DRYER_TIMED_RUN, {NO_TIMED_RUN});
+    queue_read_reply(fx, DRYER_IN_FORCE, {0xAF, 0x00});
+    queue_register_write_and_read_back(fx, OVERRIDE_REGISTER, 0xD2, 0xD2);
+
+    EXPECT_TRUE(set_target(fx, 21.0F).sent) << c.what;
+
+    EXPECT_EQ(sent_registers_since(fx, before),
+              (std::vector<uint8_t>{DRYER_MODE, DRYER_TIMED_RUN, DRYER_IN_FORCE, OVERRIDE_REGISTER, OVERRIDE_REGISTER}))
+        << c.what;
+    EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED) << c.what;
+  }
+}
+
+TEST(HeaterController, AnOverrideWriteReadsNoTemperatureInForceOfItsOwn) {
+  // Its read-back already stores the value in force.
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
+  queue_register_write_and_read_back(fx, OVERRIDE_REGISTER, 0xAF, 0xAF);
+
+  ASSERT_TRUE(fx.controller.execute_heating_plan("ABC123", override_plan(17.5F), nullptr));
+
+  EXPECT_EQ(sent_registers(fx), (std::vector<uint8_t>{OVERRIDE_REGISTER, OVERRIDE_REGISTER}));
+  EXPECT_FLOAT_EQ(stored_in_force(*dev), 17.5F);
+}
+
+// === A target asks the heater what it runs first ===
+
+TEST(HeaterController, ATargetOnAProgrammeHeaterSendsTheSameExchangesEveryTimeWhateverTheStoredReadingsSay) {
+  // Radiator (mode 0x00, temperature in force 0x2A) and towel dryer (mode 0x36, timed run 0x3E, temperature in
+  // force 0x37). R = read, W = write.
+  struct Case {
+    const char *what;
+    bool towel;
+    TemperatureInForceSupport support;
+    std::vector<std::vector<uint8_t>> replies;  // to the reads, in order: register, value bytes
+    std::vector<uint8_t> sequence;              // registers, in the order they are sent
+    std::vector<uint8_t> writes;                // the registers written
+  };
+  const std::vector<uint8_t> in_force = {0xAF, 0x00};  // 17.5 C
+  const std::vector<Case> cases = {
+      {"radiator in heat: R mode, W+R comfort",
+       false,
+       TemperatureInForceSupport::UNKNOWN,
+       {{RADIATOR_MODE, RADIATOR_HEAT}},
+       {RADIATOR_MODE, COMFORT_REGISTER, COMFORT_REGISTER},
+       {COMFORT_REGISTER}},
+      {"radiator in the programme, reported: R mode, W+R override",
+       false,
+       TemperatureInForceSupport::REPORTED,
+       {{RADIATOR_MODE, RADIATOR_PROGRAMME}},
+       {RADIATOR_MODE, OVERRIDE_REGISTER, OVERRIDE_REGISTER},
+       {OVERRIDE_REGISTER}},
+      {"radiator in the programme, unknown: R mode, R in force, W+R override",
+       false,
+       TemperatureInForceSupport::UNKNOWN,
+       {{RADIATOR_MODE, RADIATOR_PROGRAMME}, {RADIATOR_IN_FORCE, 0xAF, 0x00}},
+       {RADIATOR_MODE, RADIATOR_IN_FORCE, OVERRIDE_REGISTER, OVERRIDE_REGISTER},
+       {OVERRIDE_REGISTER}},
+      {"radiator in the programme, absent: R mode, W+R comfort",
+       false,
+       TemperatureInForceSupport::ABSENT,
+       {{RADIATOR_MODE, RADIATOR_PROGRAMME}},
+       {RADIATOR_MODE, COMFORT_REGISTER, COMFORT_REGISTER},
+       {COMFORT_REGISTER}},
+      {"dryer in heat: R mode, W+R comfort",
+       true,
+       TemperatureInForceSupport::UNKNOWN,
+       {{DRYER_MODE, DRYER_HEAT}},
+       {DRYER_MODE, COMFORT_REGISTER, COMFORT_REGISTER},
+       {COMFORT_REGISTER}},
+      {"dryer in the programme, reported: R mode, R timed run, W+R override",
+       true,
+       TemperatureInForceSupport::REPORTED,
+       {{DRYER_MODE, DRYER_PROGRAMME}, {DRYER_TIMED_RUN, NO_TIMED_RUN}},
+       {DRYER_MODE, DRYER_TIMED_RUN, OVERRIDE_REGISTER, OVERRIDE_REGISTER},
+       {OVERRIDE_REGISTER}},
+      {"dryer in the programme, unknown: R mode, R timed run, R in force, W+R override",
+       true,
+       TemperatureInForceSupport::UNKNOWN,
+       {{DRYER_MODE, DRYER_PROGRAMME}, {DRYER_TIMED_RUN, NO_TIMED_RUN}, {DRYER_IN_FORCE, 0xAF, 0x00}},
+       {DRYER_MODE, DRYER_TIMED_RUN, DRYER_IN_FORCE, OVERRIDE_REGISTER, OVERRIDE_REGISTER},
+       {OVERRIDE_REGISTER}},
+      {"dryer in the programme, absent: R mode, R timed run, W+R comfort",
+       true,
+       TemperatureInForceSupport::ABSENT,
+       {{DRYER_MODE, DRYER_PROGRAMME}, {DRYER_TIMED_RUN, NO_TIMED_RUN}},
+       {DRYER_MODE, DRYER_TIMED_RUN, COMFORT_REGISTER, COMFORT_REGISTER},
+       {COMFORT_REGISTER}},
+      {"dryer in the programme with a boost on top: R mode, R timed run, W+R comfort",
+       true,
+       TemperatureInForceSupport::REPORTED,
+       {{DRYER_MODE, DRYER_PROGRAMME}, {DRYER_TIMED_RUN, TIMED_BOOST}},
+       {DRYER_MODE, DRYER_TIMED_RUN, COMFORT_REGISTER, COMFORT_REGISTER},
+       {COMFORT_REGISTER}},
+  };
+  for (const Case &c : cases) {
+    // Whatever the hub stored (heat, or the programme with a boost on a dryer), the heater's answer decides.
+    for (const bool stored_in_heat : {false, true}) {
+      HeaterControllerFixture fx;
+      IoDevice *dev = c.towel ? make_towel_dryer_in_programme(fx, NAN, heating_level::ECO)
+                              : make_radiator_in_programme(fx, HeatingMode::MANUAL, NAN);
+      dev->temperature_in_force = c.support;
+      if (c.support == TemperatureInForceSupport::REPORTED)
+        dev->heating.in_force_temperature_c = 17.0F;
+      if (c.towel) {
+        dev->heating.towel_mode = stored_in_heat ? DRYER_HEAT : DRYER_PROGRAMME;
+        dev->heating.temporary_state = stored_in_heat ? TIMED_BOOST : NO_TIMED_RUN;
+      } else {
+        dev->heating.mode = stored_in_heat ? RADIATOR_HEAT : RADIATOR_PROGRAMME;
+      }
+      for (const auto &reply : c.replies)
+        queue_read_reply(fx, reply[0], std::vector<uint8_t>(reply.begin() + 1, reply.end()));
+      fx.queue_register_ack({0x0C, 0x61, 0x01, c.writes.front(), 0xD2, 0x00});
+      fx.queue_register_ack({0x0C, 0x60, 0x01, c.writes.front(), 0xD2, 0x00});
+
+      const TargetOutcome outcome = set_target(fx, 21.0F);
+
+      EXPECT_TRUE(outcome.sent) << c.what << ", stored " << stored_in_heat;
+      EXPECT_EQ(sent_registers(fx), c.sequence) << c.what << ", stored " << stored_in_heat;
+      EXPECT_EQ(written_registers(fx), c.writes) << c.what;
+    }
+  }
+}
+
+TEST(HeaterController, AHeaterNowInTheProgrammeTakesTheTargetAsAnOverrideWhateverTheHubStoredBefore) {
+  // Stored: heat. The heater runs its programme (set on its panel since the last poll).
+  for (const bool towel : {false, true}) {
+    HeaterControllerFixture fx;
+    IoDevice *dev = towel ? make_towel_dryer_in_programme(fx, 17.0F, heating_level::ECO)
+                          : make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
+    if (towel)
+      dev->heating.towel_mode = DRYER_HEAT;
+    else
+      dev->heating.mode = RADIATOR_HEAT;
+    queue_read_reply(fx, towel ? DRYER_MODE : RADIATOR_MODE, {towel ? DRYER_PROGRAMME : RADIATOR_PROGRAMME});
+    if (towel)
+      queue_read_reply(fx, DRYER_TIMED_RUN, {NO_TIMED_RUN});
+    queue_register_write_and_read_back(fx, OVERRIDE_REGISTER, 0xD2, 0xD2);
+
+    const TargetOutcome outcome = set_target(fx, 21.0F);
+
+    EXPECT_TRUE(outcome.sent) << "towel " << towel;
+    EXPECT_TRUE(outcome.plan.temporary_override);
+    EXPECT_EQ(written_registers(fx), std::vector<uint8_t>{OVERRIDE_REGISTER}) << "the comfort setpoint is not written";
+    EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.0F);
+  }
+}
+
+TEST(HeaterController, AHeaterNowInHeatTakesTheTargetAsTheComfortSetpointWhateverTheHubStoredBefore) {
+  // Stored: the programme, with a reported temperature in force. The heater was set to heat.
+  for (const bool towel : {false, true}) {
+    HeaterControllerFixture fx;
+    IoDevice *dev = towel ? make_towel_dryer_in_programme(fx, 17.0F, heating_level::COMFORT)
+                          : make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
+    queue_read_reply(fx, towel ? DRYER_MODE : RADIATOR_MODE, {towel ? DRYER_HEAT : RADIATOR_HEAT});
+    queue_register_write_and_read_back(fx, COMFORT_REGISTER, 0xD2, 0xD2);
+
+    const TargetOutcome outcome = set_target(fx, 21.0F);
+
+    EXPECT_TRUE(outcome.sent) << "towel " << towel;
+    EXPECT_FALSE(outcome.plan.temporary_override);
+    EXPECT_EQ(written_registers(fx), std::vector<uint8_t>{COMFORT_REGISTER});
+    EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 21.0F);
+  }
+}
+
+TEST(HeaterController, ADryerThatStoredABoostButAnswersNoTimedRunTakesTheTargetAsAnOverride) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_in_programme(fx, 17.0F, heating_level::ECO);
+  dev->heating.temporary_state = static_cast<int16_t>(HeatingTemporaryState::BOOST);
+  queue_read_reply(fx, DRYER_MODE, {DRYER_PROGRAMME});
+  queue_read_reply(fx, DRYER_TIMED_RUN, {NO_TIMED_RUN});
+  queue_register_write_and_read_back(fx, OVERRIDE_REGISTER, 0xD2, 0xD2);
+
+  EXPECT_TRUE(set_target(fx, 21.0F).sent);
+
+  EXPECT_EQ(written_registers(fx), std::vector<uint8_t>{OVERRIDE_REGISTER});
+  EXPECT_EQ(dev->heating.value_of(HeatingFunction::TEMPORARY_STATE), static_cast<int16_t>(HeatingTemporaryState::NONE));
+}
+
+TEST(HeaterController, ADryerThatStoredTheProgrammeButAnswersABoostTakesTheTargetAsTheComfortSetpoint) {
+  HeaterControllerFixture fx;
+  make_towel_dryer_in_programme(fx, 17.0F, heating_level::COMFORT);
+  queue_read_reply(fx, DRYER_MODE, {DRYER_PROGRAMME});
+  queue_read_reply(fx, DRYER_TIMED_RUN, {TIMED_BOOST});
+  queue_register_write_and_read_back(fx, COMFORT_REGISTER, 0xD2, 0xD2);
+
+  EXPECT_TRUE(set_target(fx, 21.0F).sent);
+
+  EXPECT_EQ(written_registers(fx), std::vector<uint8_t>{COMFORT_REGISTER});
+}
+
+TEST(HeaterController, ATargetOnAHeaterNeverReadInThisBootAsksTheHeaterAndFollowsItsAnswer) {
+  for (const bool towel : {false, true}) {
+    HeaterControllerFixture fx;
+    IoDevice *dev = towel ? make_towel_dryer(fx) : make_heater(fx);
+    fx.status_reply_level = heating_level::ECO;
+    ASSERT_EQ(dev->heating.value_of(towel ? HeatingFunction::TOWEL_MODE : HeatingFunction::SET_MODE), -1);
+    queue_read_reply(fx, towel ? DRYER_MODE : RADIATOR_MODE, {towel ? DRYER_PROGRAMME : RADIATOR_PROGRAMME});
+    if (towel)
+      queue_read_reply(fx, DRYER_TIMED_RUN, {NO_TIMED_RUN});
+    queue_read_reply(fx, towel ? DRYER_IN_FORCE : RADIATOR_IN_FORCE, {0xAF, 0x00});
+    queue_register_write_and_read_back(fx, OVERRIDE_REGISTER, 0xD2, 0xD2);
+
+    EXPECT_TRUE(set_target(fx, 21.0F).sent) << "towel " << towel;
+
+    EXPECT_EQ(written_registers(fx), std::vector<uint8_t>{OVERRIDE_REGISTER});
+  }
+}
+
+TEST(HeaterController, AModeWriteWhoseAcknowledgementWasLostIsFollowedByATargetThatAsksTheHeater) {
+  // The write reached the heater (it runs its programme now) but its acknowledgement did not arrive.
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::MANUAL, 17.0F);
+  EXPECT_FALSE(fx.controller.execute_heating_plan(
+      "ABC123", register_plan(HeatingFunction::SET_MODE, static_cast<float>(HeatingMode::AUTO)), nullptr));
+  const size_t before = fx.radio.get_sent_data().size();
+  queue_read_reply(fx, RADIATOR_MODE, {static_cast<uint8_t>(HeatingMode::AUTO)});
+  queue_register_write_and_read_back(fx, OVERRIDE_REGISTER, 0xD2, 0xD2);
+
+  EXPECT_TRUE(set_target(fx, 21.0F).sent);
+
+  EXPECT_EQ(sent_registers_since(fx, before),
+            (std::vector<uint8_t>{RADIATOR_MODE, OVERRIDE_REGISTER, OVERRIDE_REGISTER}));
+  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.0F) << "the comfort setpoint is not written";
+}
+
+TEST(HeaterController, AModeSetWithTheActionIsFollowedByATargetThatAsksTheHeater) {
+  // The heating_control action writes the mode and reads nothing back.
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::MANUAL, 17.0F);
+  fx.queue_register_ack({0x0C, 0x61, 0x01, 0x00, static_cast<uint8_t>(HeatingMode::PROG)});
+  ASSERT_TRUE(
+      fx.controller.send_heating_command("ABC123", HeatingFunction::SET_MODE, static_cast<float>(HeatingMode::PROG)));
+  ASSERT_EQ(fx.radio.get_sent_data().size(), 1u) << "the write alone";
+  const size_t before = fx.radio.get_sent_data().size();
+  queue_read_reply(fx, RADIATOR_MODE, {RADIATOR_PROGRAMME});
+  queue_register_write_and_read_back(fx, OVERRIDE_REGISTER, 0xD2, 0xD2);
+
+  EXPECT_TRUE(set_target(fx, 21.0F).sent);
+
+  EXPECT_EQ(sent_registers_since(fx, before),
+            (std::vector<uint8_t>{RADIATOR_MODE, OVERRIDE_REGISTER, OVERRIDE_REGISTER}));
+  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.0F);
+}
+
+TEST(HeaterController, AModeAndATargetInOneCallReadTheTemperatureInForceOnceAndTheModeAgainBeforeTheTarget) {
+  // The mode write's read-back, the display read of the temperature in force, then the target's own read of the
+  // mode. The target's rule reads the temperature in force only while it is UNKNOWN: the display read answered
+  // it, so it is not sent twice.
+  HeaterControllerFixture fx;
+  make_radiator_in_programme(fx, HeatingMode::MANUAL, NAN);
+  const uint8_t auto_wire = static_cast<uint8_t>(HeatingMode::AUTO);
+  fx.queue_register_ack({0x0C, 0x61, 0x01, RADIATOR_MODE, auto_wire});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, RADIATOR_MODE, auto_wire});
+  queue_read_reply(fx, RADIATOR_IN_FORCE, {0xAF, 0x00});
+  queue_read_reply(fx, RADIATOR_MODE, {auto_wire});
+  queue_register_write_and_read_back(fx, OVERRIDE_REGISTER, 0xD2, 0xD2);
+
+  ASSERT_TRUE(fx.controller.execute_heating_plan(
+      "ABC123", register_plan(HeatingFunction::SET_MODE, static_cast<float>(HeatingMode::AUTO)), nullptr));
+  EXPECT_TRUE(set_target(fx, 21.0F).sent);
+
+  EXPECT_EQ(sent_registers(fx), (std::vector<uint8_t>{RADIATOR_MODE, RADIATOR_MODE, RADIATOR_IN_FORCE, RADIATOR_MODE,
+                                                      OVERRIDE_REGISTER, OVERRIDE_REGISTER}));
+}
+
+TEST(HeaterController, AHeaterThatDoesNotAnswerTheModeReadGetsNothingWrittenAndNothingChanges) {
+  for (const bool towel : {false, true}) {
+    HeaterControllerFixture fx;
+    IoDevice *dev = towel ? make_towel_dryer_in_programme(fx, 17.0F, heating_level::COMFORT)
+                          : make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
+    const IoDevice before = *dev;
+
+    const TargetOutcome outcome = set_target(fx, 21.0F);  // no reply
+
+    EXPECT_FALSE(outcome.state_answered) << "towel " << towel;
+    EXPECT_EQ(outcome.plan.refusal, HeatingRefusal::PROGRAMME_STATE_UNANSWERED);
+    EXPECT_FALSE(outcome.sent);
+    EXPECT_FALSE(sent_registers(fx).empty());
+    for (const uint8_t reg : sent_registers(fx))
+      EXPECT_EQ(reg, towel ? DRYER_MODE : RADIATOR_MODE) << "only the mode is asked, and nothing is written";
+    EXPECT_TRUE(written_registers(fx).empty());
+    EXPECT_EQ(dev->heating.mode, before.heating.mode) << "the stored reading stays as it was";
+    EXPECT_EQ(dev->heating.towel_mode, before.heating.towel_mode);
+    EXPECT_EQ(dev->temperature_in_force, before.temperature_in_force);
+    EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, before.heating.in_force_temperature_c);
+  }
+}
+
+TEST(HeaterController, ADryerInItsProgrammeWhoseTimedRunIsNotAnsweredGetsNothingWritten) {
+  HeaterControllerFixture fx;
+  make_towel_dryer_in_programme(fx, 17.0F, heating_level::COMFORT);
+  queue_read_reply(fx, DRYER_MODE, {DRYER_PROGRAMME});  // the timed-run read gets no reply
+
+  const TargetOutcome outcome = set_target(fx, 21.0F);
+
+  EXPECT_FALSE(outcome.state_answered);
+  EXPECT_EQ(outcome.plan.refusal, HeatingRefusal::PROGRAMME_STATE_UNANSWERED)
+      << "a boost or drying run could be on top: neither register is known to be right";
+  const std::vector<uint8_t> reads = sent_registers(fx);
+  ASSERT_GE(reads.size(), 2u);
+  EXPECT_EQ(reads.front(), DRYER_MODE);
+  for (size_t i = 1; i < reads.size(); i++)
+    EXPECT_EQ(reads[i], DRYER_TIMED_RUN) << "nothing is asked after a silent read";
+  EXPECT_TRUE(written_registers(fx).empty());
+}
+
+TEST(HeaterController, AModeReadAnsweredWithoutAValueGetsNothingWrittenAndIsNotAskedAgain) {
+  HeaterControllerFixture fx;
+  make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, RADIATOR_MODE});  // the mode register echoed without a value
+
+  const TargetOutcome outcome = set_target(fx, 21.0F);
+
+  EXPECT_FALSE(outcome.state_answered);
+  EXPECT_EQ(outcome.plan.refusal, HeatingRefusal::PROGRAMME_STATE_UNANSWERED);
+  EXPECT_EQ(sent_registers(fx), std::vector<uint8_t>{RADIATOR_MODE}) << "one answered read, not asked again";
+}
+
+TEST(HeaterController, AHeaterInTheProgrammeThatDoesNotAnswerTheTemperatureInForceGetsNothingWritten) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::PROG, NAN);
+  queue_read_reply(fx, RADIATOR_MODE, {RADIATOR_PROGRAMME});  // the read of 0x012A gets no reply
+
+  const TargetOutcome outcome = set_target(fx, 21.0F);
+
+  EXPECT_TRUE(outcome.state_answered);
+  EXPECT_EQ(outcome.plan.refusal, HeatingRefusal::IN_FORCE_UNKNOWN);
+  EXPECT_FALSE(outcome.sent);
+  EXPECT_TRUE(written_registers(fx).empty());
+  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::UNKNOWN);
+}
+
+TEST(HeaterController, AHeaterThatAnswersTheTemperatureInForceEmptyTakesTheTargetAsTheComfortSetpoint) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::MANUAL, NAN);
+  queue_read_reply(fx, RADIATOR_MODE, {RADIATOR_PROGRAMME});
+  queue_read_reply(fx, RADIATOR_IN_FORCE, {});  // answered, no value
+  queue_register_write_and_read_back(fx, COMFORT_REGISTER, 0xD2, 0xD2);
+
+  EXPECT_TRUE(set_target(fx, 21.0F).sent);
+
+  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::ABSENT);
+  EXPECT_EQ(written_registers(fx), std::vector<uint8_t>{COMFORT_REGISTER});
+}
+
+TEST(HeaterController, ADryerTargetInAComfortPeriodAsksForTheLevelThenWritesTheComfortSetpoint) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F, heating_level::COMFORT);
+  queue_read_reply(fx, DRYER_MODE, {DRYER_PROGRAMME});
+  queue_read_reply(fx, DRYER_TIMED_RUN, {NO_TIMED_RUN});
+  queue_register_write_and_read_back(fx, COMFORT_REGISTER, 0xD2, 0xD2);
+
+  const TargetOutcome outcome = set_target(fx, 21.0F);
+
+  EXPECT_TRUE(outcome.sent);
+  EXPECT_FALSE(outcome.plan.temporary_override);
+  EXPECT_EQ(sent_registers(fx),
+            (std::vector<uint8_t>{DRYER_MODE, DRYER_TIMED_RUN, COMFORT_REGISTER, COMFORT_REGISTER}));
+  EXPECT_EQ(written_registers(fx), std::vector<uint8_t>{COMFORT_REGISTER}) << "the override is not written";
+  ASSERT_EQ(fx.status_reads.size(), 1u) << "one status read, after the registers and before the write";
+  EXPECT_EQ(fx.status_reads[0].max_tries, EXCHANGE_RETRY_COUNT);
+  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 21.0F);
+}
+
+TEST(HeaterController, ADryerTargetInAnEcoPeriodAsksForTheLevelThenWritesTheOverride) {
+  HeaterControllerFixture fx;
+  make_towel_dryer_in_programme(fx, 16.5F, heating_level::ECO);
+  queue_read_reply(fx, DRYER_MODE, {DRYER_PROGRAMME});
+  queue_read_reply(fx, DRYER_TIMED_RUN, {NO_TIMED_RUN});
+  queue_register_write_and_read_back(fx, OVERRIDE_REGISTER, 0xD2, 0xD2);
+
+  const TargetOutcome outcome = set_target(fx, 21.0F);
+
+  EXPECT_TRUE(outcome.sent);
+  EXPECT_TRUE(outcome.plan.temporary_override);
+  EXPECT_EQ(written_registers(fx), std::vector<uint8_t>{OVERRIDE_REGISTER});
+  EXPECT_EQ(fx.status_reads.size(), 1u);
+}
+
+TEST(HeaterController, ADryerWhoseStoredLevelIsOldTakesTheLevelOfTheReadMadeForTheTarget) {
+  // The poll stored eco; the period has changed since. The stored level is not used.
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_in_programme(fx, 16.5F, heating_level::ECO);
+  fx.status_reply_level = heating_level::COMFORT;
+  queue_read_reply(fx, DRYER_MODE, {DRYER_PROGRAMME});
+  queue_read_reply(fx, DRYER_TIMED_RUN, {NO_TIMED_RUN});
+  queue_register_write_and_read_back(fx, COMFORT_REGISTER, 0xD2, 0xD2);
+
+  EXPECT_TRUE(set_target(fx, 21.0F).sent);
+
+  EXPECT_EQ(written_registers(fx), std::vector<uint8_t>{COMFORT_REGISTER});
+  EXPECT_EQ(dev->heating.level, heating_level::COMFORT);
+}
+
+TEST(HeaterController, ADryerThatDoesNotAnswerTheLevelReadGetsNothingWritten) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_in_programme(fx, 16.5F, heating_level::ECO);
+  fx.status_reply_level = -1;  // the status read brings no level; the stored eco is old
+  queue_read_reply(fx, DRYER_MODE, {DRYER_PROGRAMME});
+  queue_read_reply(fx, DRYER_TIMED_RUN, {NO_TIMED_RUN});
+
+  const TargetOutcome outcome = set_target(fx, 21.0F);
+
+  EXPECT_TRUE(outcome.state_answered) << "the registers answered";
+  EXPECT_EQ(outcome.plan.refusal, HeatingRefusal::PERIOD_UNKNOWN);
+  EXPECT_FALSE(outcome.sent);
+  EXPECT_TRUE(written_registers(fx).empty());
+  EXPECT_EQ(fx.status_reads.size(), 1u);
+  EXPECT_EQ(dev->heating.level, -1) << "the old level is not kept as if it were fresh";
+}
+
+TEST(HeaterController, ATargetThatNeedsNoPeriodMakesNoStatusRead) {
+  // heat and a boost on top: the comfort setpoint without a period; a radiator: no such rule.
+  {
+    HeaterControllerFixture fx;
+    make_towel_dryer_in_programme(fx, 17.0F, heating_level::ECO);
+    queue_read_reply(fx, DRYER_MODE, {DRYER_HEAT});
+    queue_register_write_and_read_back(fx, COMFORT_REGISTER, 0xD2, 0xD2);
+    EXPECT_TRUE(set_target(fx, 21.0F).sent);
+    EXPECT_TRUE(fx.status_reads.empty()) << "heat";
+  }
+  {
+    HeaterControllerFixture fx;
+    make_towel_dryer_in_programme(fx, 17.0F, heating_level::ECO);
+    queue_read_reply(fx, DRYER_MODE, {DRYER_PROGRAMME});
+    queue_read_reply(fx, DRYER_TIMED_RUN, {TIMED_BOOST});
+    queue_register_write_and_read_back(fx, COMFORT_REGISTER, 0xD2, 0xD2);
+    EXPECT_TRUE(set_target(fx, 21.0F).sent);
+    EXPECT_TRUE(fx.status_reads.empty()) << "a boost on top";
+  }
+  {
+    HeaterControllerFixture fx;
+    make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
+    queue_read_reply(fx, RADIATOR_MODE, {RADIATOR_PROGRAMME});
+    queue_register_write_and_read_back(fx, OVERRIDE_REGISTER, 0xD2, 0xD2);
+    EXPECT_TRUE(set_target(fx, 21.0F).sent);
+    EXPECT_TRUE(fx.status_reads.empty()) << "a radiator keeps the override in every period";
+  }
+}
+
+TEST(HeaterController, AHeaterWithoutAProgrammeIsNotReadBeforeATarget) {
+  HeaterControllerFixture fx;
+  IoDevice *plain = fx.add_device_of_kind(DeviceType::ELECTRICAL_HEATER, 0);
+  ASSERT_NE(plain, nullptr);
+
+  EXPECT_FALSE(fx.controller.read_programme_state("ABC123"));
+  EXPECT_TRUE(fx.radio.get_sent_data().empty()) << "a profile without a programme period has nothing to read";
+}
+
+TEST(HeaterController, ARefusedOverrideWritesNothingElseAndTheCardShowsWhatTheHeaterHolds) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
+  // The heater accepts the write but holds 0: no override runs.
+  queue_register_write_and_read_back(fx, 0x1D, 0xC8, 0x00);
+
+  EXPECT_TRUE(fx.controller.execute_heating_plan("ABC123", override_plan(20.0F), nullptr))
+      << "the write was acknowledged";
+
+  ASSERT_EQ(fx.radio.get_sent_data().size(), 2u) << "no fallback write of the comfort setpoint";
+  for (const auto &frame : fx.radio.get_sent_data())
+    EXPECT_NE(sent_register(frame), 0x03);
+  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.0F);
+  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 17.0F) << "what the heater held stays shown until the poll";
+  EXPECT_FLOAT_EQ(dev->heating.derogated_setpoint_c, 0.0F);
+}
+
+TEST(HeaterController, AnOverrideTheHeaterClampsShowsTheValueItHolds) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::PROG, 17.0F);
+  queue_register_write_and_read_back(fx, 0x1D, 0xC8, 0xBE);  // asked 20.0, holds 19.0
+
+  EXPECT_TRUE(fx.controller.execute_heating_plan("ABC123", override_plan(20.0F), nullptr));
+
+  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 19.0F);
+  EXPECT_FLOAT_EQ(dev->heating.setpoint_c, 19.0F);
+}
+
+TEST(HeaterController, AnOverrideReadBackOfZeroLeavesTheTemperatureInForceAlone) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_in_programme(fx, 15.5F, heating_level::ECO);
+  fx.queue_register_ack({0x0C, 0x61, 0x01, 0x1D, 0x00, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x1D, 0x00, 0x00});
+
+  ASSERT_TRUE(
+      fx.controller.execute_heating_plan("ABC123", register_plan(HeatingFunction::DEROGATED_SETPOINT, 0.0F), nullptr));
+
+  EXPECT_FLOAT_EQ(dev->heating.in_force_temperature_c, 15.5F) << "a dryer that kept no override shows what it held";
 }
 
 TEST(HeaterController, AComfortReadOutsideAWriteDoesNotMoveTheTemperatureInForce) {
   HeaterControllerFixture fx;
-  const IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F);
+  const IoDevice *dev = make_towel_dryer_in_programme(fx, 19.0F, heating_level::COMFORT);
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC8, 0x00});
 
   ASSERT_TRUE(
@@ -772,7 +1517,7 @@ TEST(HeaterController, PollsIsTrueForARegisterHeaterAWaterHeaterAndAStatusReadHe
   EXPECT_FALSE(HeaterController::polls(*make_cover(cover)));
 }
 
-TEST(HeaterController, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnce) {
+TEST(HeaterController, HeaterPollReadsTheDetectionSettingEveryPollAndTheMaximumAndModelCheckOnce) {
   HeaterControllerFixture fx;
   auto *dev = make_heater(fx);
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});  // 20.75 C
@@ -780,8 +1525,8 @@ TEST(HeaterController, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnc
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x00, 0x01});        // manual
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x17, 0x02});        // heating
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x0E, 0x01});        // window open
-  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x02, 0x18, 0x01});  // 28.0 C
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x06, 0x01});        // detection on
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x02, 0x18, 0x01});  // 28.0 C
   // The one-off model check: a model name (synthetic), and the towel-dryer mode register answered empty.
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x19, 'R', 'A', 'D', 'I', 'A', 'T'});
   fx.queue_register_ack({0x0C, 0x60, 0x01, 0x36});
@@ -789,7 +1534,7 @@ TEST(HeaterController, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnc
   EXPECT_TRUE(fx.controller.poll("ABC123")) << "a heater is polled over its registers, not with 0x03";
 
   ASSERT_EQ(fx.radio.get_sent_data().size(), 9u);
-  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x02, 0x06, 0x19, 0x36};
+  const uint8_t expected_registers[] = {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x02, 0x19, 0x36};
   for (size_t i = 0; i < 9; i++)
     EXPECT_EQ(sent_register(fx.radio.get_sent_data()[i]), expected_registers[i]) << "read " << i;
   EXPECT_TRUE(dev->model_checked) << "both model-check reads were answered";
@@ -802,14 +1547,479 @@ TEST(HeaterController, HeaterPollReadsTheProfileRegistersThenTheBootRegistersOnc
   EXPECT_EQ(dev->heating.open_window_detection, 1);
   EXPECT_FALSE(fx.poll_policy.is_tracking_active("ABC123", esphome::millis())) << "a good poll closes its retry window";
 
-  // The maximum, the detection setting and the model check run once: the next poll asks for the five
-  // registers only.
+  // The maximum and the model check run once; the detection setting is read again, and a value the
+  // vendor app changed in between reaches the readings (the switch state).
   const size_t sent_before = fx.radio.get_sent_data().size();
-  queue_radiator_poll(fx, 0x59, 0x06, 0x01, 0x00);
+  queue_radiator_poll(fx, 0x59, 0x06, 0x01, 0x00, 0x00);
   EXPECT_TRUE(fx.controller.poll("ABC123"));
-  EXPECT_EQ(fx.radio.get_sent_data().size() - sent_before, 5u);
+  ASSERT_EQ(fx.radio.get_sent_data().size() - sent_before, 6u);
+  for (size_t i = sent_before; i < fx.radio.get_sent_data().size(); i++)
+    EXPECT_NE(sent_register(fx.radio.get_sent_data()[i]), 0x02) << "the maximum is not read again";
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data().back()), 0x06);
   EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 16.25F);
   EXPECT_EQ(dev->heating.window_open, 0);
+  EXPECT_FLOAT_EQ(dev->heating.max_setpoint_c, 28.0F);
+  EXPECT_EQ(dev->heating.open_window_detection, 0) << "a change from the vendor app shows on the next poll";
+}
+
+TEST(HeaterController, AMissedDetectionReadKeepsTheSwitchAndDoesNotFailThePoll) {
+  HeaterControllerFixture fx;
+  auto *dev = make_heater(fx);
+  // Boot registers and model check done, so the poll is the five registers and the detection setting.
+  dev->model_checked = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  dev->heating.open_window_detection = 1;
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});  // 20.75 C
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x00, 0x01});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x17, 0x02});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x0E, 0x00});
+  // Nothing queued for 0x0106: the detection setting never answers.
+
+  EXPECT_TRUE(fx.controller.poll("ABC123")) << "a missed setting costs a read, not the poll";
+
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data().back()), 0x06) << "the setting was asked for";
+  EXPECT_EQ(dev->heating.open_window_detection, 1) << "and the switch keeps its state";
+  EXPECT_FLOAT_EQ(dev->heating.room_temperature_c, 20.75F);
+  EXPECT_TRUE(fx.backoffs.empty());
+  EXPECT_EQ(fx.poll_policy.get_status_poll_failures("ABC123"), 0u);
+}
+
+/// Queue the replies of a towel dryer's five core registers (room, setpoint, mode, temporary state, rate).
+void queue_towel_dryer_poll(HeaterControllerFixture &fx) {
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x36, 0x01});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3E, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x26, 0x00});
+}
+
+/// @return Whether a sent frame of the poll read the central-heating mode (register 0x0153).
+bool read_central_heating_mode(const std::vector<std::vector<uint8_t>> &sent) {
+  return std::any_of(sent.begin(), sent.end(), [](const auto &tx) { return sent_register(tx) == 0x53; });
+}
+
+TEST(HeaterController, ADryerWithoutTheCentralHeatingSensorNeverReadsRegister0x53) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  queue_towel_dryer_poll(fx);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_FALSE(read_central_heating_mode(fx.radio.get_sent_data()));
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE), HeatingOptInReads::State::NOT_ASKED);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::CENTRAL_HEATING_MODE));
+}
+
+TEST(HeaterController, ADryerWithTheCentralHeatingSensorReadsItAtEveryPoll) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::CENTRAL_HEATING_MODE);
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x53, 0x01});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  ASSERT_GE(fx.radio.get_sent_data().size(), 6u);
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data()[5]), 0x53) << "right after the five core registers";
+  EXPECT_EQ(dev->heating.central_heating_mode, 1);
+
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x53, 0x00});
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data()[sent_before + 5]), 0x53) << "read again, not once";
+  EXPECT_EQ(dev->heating.central_heating_mode, 0);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE), HeatingOptInReads::State::ASKED);
+}
+
+TEST(HeaterController, AnAnswerWithoutAValueStopsTheCentralHeatingReadAndClearsTheReading) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::CENTRAL_HEATING_MODE);
+  dev->heating.central_heating_mode = 1;  // an earlier answer
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x53});  // an electric unit: no value
+
+  EXPECT_TRUE(fx.controller.poll("ABC123")) << "a missing register is not a poll failure";
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE), HeatingOptInReads::State::ABSENT);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::CENTRAL_HEATING_MODE));
+
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_towel_dryer_poll(fx);
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  EXPECT_FALSE(read_central_heating_mode({sent.begin() + static_cast<std::ptrdiff_t>(sent_before), sent.end()}))
+      << "not asked again until the next boot";
+}
+
+TEST(HeaterController, AnUnknownCentralHeatingValueIsTreatedAsNoValue) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::CENTRAL_HEATING_MODE);
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x53, 0x02});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE), HeatingOptInReads::State::ABSENT);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::CENTRAL_HEATING_MODE));
+}
+
+TEST(HeaterController, AMissedCentralHeatingReadChangesNothing) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::CENTRAL_HEATING_MODE);
+  dev->heating.central_heating_mode = 1;
+  queue_towel_dryer_poll(fx);  // no reply to the read of 0x53
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE), HeatingOptInReads::State::ASKED)
+      << "asked again at the next poll";
+  EXPECT_EQ(dev->heating.central_heating_mode, 1);
+}
+
+// === Occupancy: the second opt-in read, judged apart from the first (the Hekla sweep of issue #222) ===
+
+/// @return A heater with a night light (a Sauter Hekla), its boot reads done so a poll is its extra registers only.
+IoDevice *make_heater_with_light(HeaterControllerFixture &fx) {
+  IoDevice *dev = make_heater(fx);
+  dev->model = DeviceModel::HEATER_WITH_LIGHT;
+  resolve_device_features(*dev);
+  dev->model_checked = true;
+  dev->heating.max_setpoint_c = 28.0F;
+  return dev;
+}
+
+/// Queue the replies of a heater with a light's poll up to and including its three extra registers.
+void queue_heater_with_light_poll(HeaterControllerFixture &fx) {
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x00, 0x01});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x17, 0x02});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x0E, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x06, 0x01});        // open-window detection
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x44, 0x00});        // night light
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x42, 0x00, 0x00});  // night light brightness
+}
+
+/// @return The registers the sent frames read, in order.
+std::vector<uint8_t> registers_read(const std::vector<std::vector<uint8_t>> &sent) {
+  std::vector<uint8_t> out;
+  for (const auto &tx : sent)
+    out.push_back(sent_register(tx));
+  return out;
+}
+
+TEST(HeaterController, AHeaterWithoutOccupancyEntitiesNeverReadsRegister0x01Or0x10) {
+  HeaterControllerFixture fx;
+  make_heater_with_light(fx);
+  queue_heater_with_light_poll(fx);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  for (const uint8_t reg : registers_read(fx.radio.get_sent_data())) {
+    EXPECT_NE(reg, 0x01);
+    EXPECT_NE(reg, 0x10);
+  }
+}
+
+TEST(HeaterController, OccupancyRegistersAreReadAfterTheExtraRegistersAndShowTheSweepValues) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_heater_with_light(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::OCCUPANCY_DETECTION);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::SET_PRESENCE);
+  queue_heater_with_light_poll(fx);
+  fx.queue_register_ack(
+      {0x0C, 0x60, 0x01, 0x10, 0x01});  // someone walks around the heater (presence first: enum order)
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x01, 0x01});  // detection on
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto read = registers_read(fx.radio.get_sent_data());
+  ASSERT_EQ(read.size(), 10u);
+  EXPECT_EQ(read[8], 0x10);
+  EXPECT_EQ(read[9], 0x01);
+  EXPECT_EQ(dev->heating.presence, 1);
+  EXPECT_EQ(dev->heating.occupancy_detection, 1);
+}
+
+TEST(HeaterController, EachOptInRegisterIsMarkedAbsentOnItsOwn) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_heater_with_light(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::OCCUPANCY_DETECTION);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::SET_PRESENCE);
+  queue_heater_with_light_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x10});        // presence: answered without a value
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x01, 0x00});  // detection: off
+
+  EXPECT_TRUE(fx.controller.poll("ABC123")) << "a missing register is not a poll failure";
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::SET_PRESENCE), HeatingOptInReads::State::ABSENT);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::OCCUPANCY_DETECTION), HeatingOptInReads::State::ASKED);
+  EXPECT_EQ(dev->heating.occupancy_detection, 0);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::SET_PRESENCE));
+
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_heater_with_light_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x01, 0x01});
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  const auto second = registers_read({sent.begin() + static_cast<std::ptrdiff_t>(sent_before), sent.end()});
+  EXPECT_EQ(std::count(second.begin(), second.end(), 0x10), 0) << "the absent register is not asked again";
+  EXPECT_EQ(second.back(), 0x01) << "the other one still is";
+  EXPECT_EQ(dev->heating.occupancy_detection, 1);
+}
+
+TEST(HeaterController, AMissedOccupancyReadKeepsTheReadingAndTheAsk) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_heater_with_light(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::OCCUPANCY_DETECTION);
+  dev->heating.occupancy_detection = 1;
+  queue_heater_with_light_poll(fx);  // no reply to the read of 0x0101
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::OCCUPANCY_DETECTION), HeatingOptInReads::State::ASKED);
+  EXPECT_EQ(dev->heating.occupancy_detection, 1);
+}
+
+TEST(HeaterController, OccupancyReadsAreRefusedOnAKindWithoutTheCapabilityAndForOtherRegisters) {
+  HeaterControllerFixture fx;
+  IoDevice *dryer = make_towel_dryer(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::OCCUPANCY_DETECTION);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::SET_PRESENCE);
+  EXPECT_EQ(dryer->opt_in_reads.state_of(HeatingFunction::OCCUPANCY_DETECTION), HeatingOptInReads::State::NOT_ASKED);
+  EXPECT_EQ(dryer->opt_in_reads.state_of(HeatingFunction::SET_PRESENCE), HeatingOptInReads::State::NOT_ASKED);
+
+  HeaterControllerFixture other;
+  IoDevice *radiator = make_heater(other);
+  other.controller.enable_heating_register_read("ABC123", HeatingFunction::ROOM_TEMPERATURE);
+  EXPECT_EQ(radiator->opt_in_reads.state_of(HeatingFunction::ROOM_TEMPERATURE), HeatingOptInReads::State::NOT_ASKED)
+      << "only a register of the opt-in table can be asked for";
+}
+
+TEST(HeaterController, TheCentralHeatingReadIsRefusedOnAKindWithoutTheCapability) {
+  HeaterControllerFixture fx;
+  IoDevice *radiator = make_heater(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::CENTRAL_HEATING_MODE);
+  EXPECT_EQ(radiator->opt_in_reads.state_of(HeatingFunction::CENTRAL_HEATING_MODE),
+            HeatingOptInReads::State::NOT_ASKED);
+}
+
+// === Energy total: the numeric opt-in read (register 0x0116, whole kWh, most significant byte first) ===
+
+TEST(HeaterController, AHeaterWithoutTheEnergySensorNeverReadsRegister0x16) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  queue_towel_dryer_poll(fx);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  for (const uint8_t reg : registers_read(fx.radio.get_sent_data()))
+    EXPECT_NE(reg, 0x16);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::ENERGY_TOTAL), HeatingOptInReads::State::NOT_ASKED);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::ENERGY_TOTAL));
+}
+
+TEST(HeaterController, TheEnergyTotalIsReadAtEveryPollAndKeptAboveWhatAnInt16Holds) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::ENERGY_TOTAL);
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x16, 0x0D, 0x5E});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto read = registers_read(fx.radio.get_sent_data());
+  ASSERT_GE(read.size(), 6u);
+  EXPECT_EQ(read[5], 0x16) << "right after the core registers";
+  EXPECT_FLOAT_EQ(dev->heating.number_of(HeatingFunction::ENERGY_TOTAL), 3422.0F);
+
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x16, 0xC3, 0x50});  // 50000 kWh: past 32767
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(sent_register(fx.radio.get_sent_data()[sent_before + 5]), 0x16) << "read again, not once";
+  EXPECT_FLOAT_EQ(dev->heating.number_of(HeatingFunction::ENERGY_TOTAL), 50000.0F);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::ENERGY_TOTAL), HeatingOptInReads::State::ASKED);
+}
+
+TEST(HeaterController, AnEnergyAnswerWithoutAValueStopsTheReadAndClearsTheTotal) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::ENERGY_TOTAL);
+  dev->heating.energy_total_kwh = 100.0F;  // an earlier answer
+  queue_towel_dryer_poll(fx);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x16});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123")) << "a missing register is not a poll failure";
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::ENERGY_TOTAL), HeatingOptInReads::State::ABSENT);
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::ENERGY_TOTAL));
+
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_towel_dryer_poll(fx);
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  const auto second = registers_read({sent.begin() + static_cast<std::ptrdiff_t>(sent_before), sent.end()});
+  EXPECT_EQ(std::count(second.begin(), second.end(), 0x16), 0) << "not asked again until the next boot";
+}
+
+TEST(HeaterController, AMissedEnergyReadKeepsTheTotalAndTheAsk) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::ENERGY_TOTAL);
+  dev->heating.energy_total_kwh = 3422.0F;
+  queue_towel_dryer_poll(fx);  // no reply to the read of 0x16
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::ENERGY_TOTAL), HeatingOptInReads::State::ASKED);
+  EXPECT_FLOAT_EQ(dev->heating.energy_total_kwh, 3422.0F);
+}
+
+TEST(HeaterController, TheEnergyReadIsRefusedOnAKindWithoutTheCapability) {
+  HeaterControllerFixture fx;
+  IoDevice *plain = fx.add_device_of_kind(DeviceType::ELECTRICAL_HEATER, 0);
+  ASSERT_NE(plain, nullptr);
+  fx.controller.enable_heating_register_read("ABC123", HeatingFunction::ENERGY_TOTAL);
+  EXPECT_EQ(plain->opt_in_reads.state_of(HeatingFunction::ENERGY_TOTAL), HeatingOptInReads::State::NOT_ASKED);
+}
+
+// === Run timers: the minutes left of a run only while it runs, and the set durations (towel dryer) ===
+
+/// Queue a towel dryer's five core registers with the given temporary state (0 none, 1 boost, 2 drying).
+void queue_towel_dryer_poll_in_state(HeaterControllerFixture &fx, uint8_t temporary_state) {
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x36, 0x01});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3E, temporary_state});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x26, 0x00});
+}
+
+/// A towel dryer that asks for all four run-timer registers.
+IoDevice *make_towel_dryer_with_run_timers(HeaterControllerFixture &fx) {
+  IoDevice *dev = make_towel_dryer(fx);
+  for (const HeatingFunction fn : {HeatingFunction::BOOST_REMAINING, HeatingFunction::BOOST_DURATION,
+                                   HeatingFunction::DRYING_REMAINING, HeatingFunction::DRYING_DURATION})
+    fx.controller.enable_heating_register_read("ABC123", fn);
+  return dev;
+}
+
+/// @return How often the sent frames read one register of the heater (the low byte of 0x01xx).
+std::ptrdiff_t reads_of(const std::vector<std::vector<uint8_t>> &sent, uint8_t reg) {
+  const auto read = registers_read(sent);
+  return std::count(read.begin(), read.end(), reg);
+}
+
+TEST(HeaterController, ADryerWithoutRunTimerSensorsNeverReadsRegisters0x3ATo0x3D) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer(fx);
+  queue_towel_dryer_poll_in_state(fx, 1);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  for (const uint8_t reg : {0x3A, 0x3B, 0x3C, 0x3D})
+    EXPECT_EQ(reads_of(fx.radio.get_sent_data(), reg), 0) << static_cast<int>(reg);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::BOOST_REMAINING), HeatingOptInReads::State::NOT_ASKED);
+}
+
+TEST(HeaterController, AnIdleDryerIsAskedForTheDurationsOnlyAndShowsNoTimeLeft) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_with_run_timers(fx);
+  queue_towel_dryer_poll_in_state(fx, 0);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3B, 0x3C, 0x3C});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3D, 0x1E, 0x78});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  EXPECT_EQ(reads_of(sent, 0x3A), 0) << "no boost runs";
+  EXPECT_EQ(reads_of(sent, 0x3C), 0) << "no drying runs";
+  EXPECT_EQ(reads_of(sent, 0x3B), 1);
+  EXPECT_EQ(reads_of(sent, 0x3D), 1);
+  EXPECT_FLOAT_EQ(dev->heating.number_of(HeatingFunction::BOOST_DURATION), 60.0F);
+  EXPECT_FLOAT_EQ(dev->heating.number_of(HeatingFunction::DRYING_DURATION), 30.0F);
+  EXPECT_FLOAT_EQ(timed_run_remaining_minutes(dev->heating), 0.0F);
+}
+
+TEST(HeaterController, ADryerInABoostReadsTheBoostTimeLeftAndNotTheDryingOne) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_with_run_timers(fx);
+  queue_towel_dryer_poll_in_state(fx, 1);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3A, 0x37});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3B, 0x3C, 0x3C});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3D, 0x1E, 0x78});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  EXPECT_EQ(reads_of(sent, 0x3A), 1);
+  EXPECT_EQ(reads_of(sent, 0x3C), 0);
+  EXPECT_FLOAT_EQ(timed_run_remaining_minutes(dev->heating), 55.0F);
+}
+
+TEST(HeaterController, ADryerInADryingRunReadsTheDryingTimeLeftAndNotTheBoostOne) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_with_run_timers(fx);
+  queue_towel_dryer_poll_in_state(fx, 2);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3B, 0x3C, 0x3C});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3C, 0x1C});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3D, 0x1E, 0x78});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  EXPECT_EQ(reads_of(sent, 0x3A), 0);
+  EXPECT_EQ(reads_of(sent, 0x3C), 1);
+  EXPECT_FLOAT_EQ(timed_run_remaining_minutes(dev->heating), 28.0F);
+}
+
+TEST(HeaterController, TheTimeLeftOfAnEndedRunIsForgottenAndNotShownAsTheNextRunsFirstValue) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_with_run_timers(fx);
+  dev->heating.boost_remaining_min = 5.0F;  // left over from the boost that has ended
+  queue_towel_dryer_poll_in_state(fx, 0);
+
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  EXPECT_FALSE(dev->heating.has(HeatingFunction::BOOST_REMAINING));
+}
+
+TEST(HeaterController, ABoostStartedFromHomeAssistantDoesNotShowTheTimeLeftOfTheBoostBefore) {
+  // A boost cancelled and started again between two polls: the last poll read 40 minutes left of the old boost.
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_with_run_timers(fx);
+  dev->heating.temporary_state = static_cast<int16_t>(HeatingTemporaryState::BOOST);
+  dev->heating.boost_remaining_min = 40.0F;
+  dev->heating.drying_duration_min = 30.0F;
+  queue_register_write_and_read_back(fx, 0x3E, static_cast<uint8_t>(HeatingTemporaryState::BOOST),
+                                     static_cast<uint8_t>(HeatingTemporaryState::BOOST));
+
+  ASSERT_TRUE(fx.controller.execute_heating_plan(
+      "ABC123", register_plan(HeatingFunction::TEMPORARY_STATE, static_cast<float>(HeatingTemporaryState::BOOST)),
+      nullptr));
+
+  EXPECT_TRUE(std::isnan(timed_run_remaining_minutes(dev->heating)))
+      << "the new boost's time left is unknown until the next poll, not the old boost's 40 minutes";
+  EXPECT_FLOAT_EQ(dev->heating.number_of(HeatingFunction::DRYING_DURATION), 30.0F)
+      << "a reading without a condition stays";
+}
+
+TEST(HeaterController, ARunTimerAnswerWithoutAValueMarksOnlyThatRegisterAbsent) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_with_run_timers(fx);
+  queue_towel_dryer_poll_in_state(fx, 1);
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3A});  // the boost time left: no value
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3B, 0x3C, 0x3C});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x3D, 0x1E, 0x78});
+
+  EXPECT_TRUE(fx.controller.poll("ABC123")) << "a missing register is not a poll failure";
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::BOOST_REMAINING), HeatingOptInReads::State::ABSENT);
+  EXPECT_EQ(dev->opt_in_reads.state_of(HeatingFunction::BOOST_DURATION), HeatingOptInReads::State::ASKED);
+  EXPECT_TRUE(std::isnan(timed_run_remaining_minutes(dev->heating))) << "no value, not 0 minutes";
+
+  const size_t sent_before = fx.radio.get_sent_data().size();
+  queue_towel_dryer_poll_in_state(fx, 1);
+  EXPECT_TRUE(fx.controller.poll("ABC123"));
+  const auto &sent = fx.radio.get_sent_data();
+  EXPECT_EQ(reads_of({sent.begin() + static_cast<std::ptrdiff_t>(sent_before), sent.end()}, 0x3A), 0)
+      << "not asked again until the next boot";
+}
+
+TEST(HeaterController, TheRunTimerReadsAreRefusedOnAKindWithoutTheCapability) {
+  HeaterControllerFixture fx;
+  IoDevice *radiator = make_heater(fx);
+  for (const HeatingFunction fn : {HeatingFunction::BOOST_REMAINING, HeatingFunction::BOOST_DURATION,
+                                   HeatingFunction::DRYING_REMAINING, HeatingFunction::DRYING_DURATION}) {
+    fx.controller.enable_heating_register_read("ABC123", fn);
+    EXPECT_EQ(radiator->opt_in_reads.state_of(fn), HeatingOptInReads::State::NOT_ASKED) << heating_function_name(fn);
+  }
 }
 
 TEST(HeaterController, HeaterPollStopsAtTheFirstFailureAndBacksOff) {

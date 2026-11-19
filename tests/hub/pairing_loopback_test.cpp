@@ -250,7 +250,7 @@ TEST_P(PairingLoopback, DefaultModeCompletesFullSequenceAndResponderRecoversHubK
 /// wake-up burst here: with the default (the start preamble) the cap would shorten the 0x2C.
 TEST_P(PairingLoopback, DiscoverConfirmFollowsTheResponderAdvertisedPowerClass) {
   device_.tuning_.key_extraction_multi_info = 0xDD;
-  hub_.tuning_.pairing_discovery_preamble = LONG_PREAMBLE;
+  hub_.tuning_.pairing_discovery_preamble_ms = mock_preamble_ms(LONG_PREAMBLE);
   hub_.tuning_.pairing_discovery_preamble_set = true;
   ASSERT_TRUE(hub_.discover_and_pair());
 

@@ -1,5 +1,5 @@
 /// @file device_features_resolver_test.cpp
-/// @brief resolve_device_features(): the one place a device's capability bits and inversion are decided.
+/// @brief resolve_device_features(): the one place a device's capabilities and inversion are decided.
 /// @ingroup hioc_protocol
 
 #include "proto_device_features.h"

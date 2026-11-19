@@ -67,37 +67,49 @@ static constexpr uint8_t UART_PROBE_MAX_BIT_OFFSET = 10;
 /// @return Raw byte count, rounded up to whole bytes.
 uint8_t soft_phy_raw_bytes_for_frame(uint8_t frame_len);
 
-/// Protocol line rate. The same 38400 bps every driver programs into its own bitrate register.
-static constexpr uint32_t SOFT_PHY_LINE_RATE_BPS = 38400;
+// IO868_LINE_RATE_BPS (the protocol's 38400 bps) lives in radio_interface.h, beside the preamble
+// duration conversion that shares it.
 /// Microseconds in a second, for the air-time arithmetic below.
 static constexpr uint32_t SOFT_PHY_US_PER_SECOND = 1000000;
 /// Microseconds per millisecond, for comparing an air time with a bound in milliseconds.
 static constexpr uint32_t SOFT_PHY_US_PER_MS = 1000;
 
+/// @brief On-air time in microseconds for `bits` bit periods at the protocol's line rate.
+///
+/// One bit is 1 / 38400 s = 26.04 µs. Computed as an integer division rounded *up*, so the result
+/// never falls short and a caller that waits on it never reads the chip's buffer early. The
+/// numerator is 64-bit: in 32 bits it would wrap above 4294 bits, and a 2048-byte wake-up
+/// preamble is a real transmission length.
+constexpr uint32_t soft_phy_bits_air_time_us(uint64_t bits) {
+  return static_cast<uint32_t>((bits * SOFT_PHY_US_PER_SECOND + IO868_LINE_RATE_BPS - 1) / IO868_LINE_RATE_BPS);
+}
+
 /// @brief On-air time in microseconds for `raw_bytes` bytes at the protocol's line rate.
 ///
-/// One byte is 8 / 38400 s = 208.333 µs. Computed as an integer division rounded *up*, so the
-/// result never falls short of a whole byte's air time and a caller that waits on it never reads
-/// the chip's buffer early. The numerator is 64-bit: in 32 bits it would wrap above 536 bytes, and
-/// a 1024-byte wake-up preamble is a real transmission length.
+/// One byte is 8 / 38400 s = 208.333 µs, rounded up (see @ref soft_phy_bits_air_time_us).
 constexpr uint32_t soft_phy_air_time_us(uint32_t raw_bytes) {
-  const uint64_t bit_periods = static_cast<uint64_t>(raw_bytes) * BITS_PER_BYTE * SOFT_PHY_US_PER_SECOND;
-  return static_cast<uint32_t>((bit_periods + SOFT_PHY_LINE_RATE_BPS - 1) / SOFT_PHY_LINE_RATE_BPS);
+  return soft_phy_bits_air_time_us(static_cast<uint64_t>(raw_bytes) * BITS_PER_BYTE);
 }
 
 /// Sync word bytes on air after the preamble (`55 FF 33` on the SX1276, the UART-coded equivalent
 /// on the software PHY): three on every 868 MHz chip.
 static constexpr uint16_t IO868_SYNC_WORD_BYTES = 3;
 
+/// Bits the software PHY sends per preamble byte: the preamble is a raw byte stream, so each byte
+/// is 8 bit periods. Chips whose coder frames preamble bytes differently pass their own number.
+static constexpr uint8_t SOFT_PHY_PREAMBLE_BITS_PER_BYTE = 8;
+
 /// @brief Time on air of one 868 MHz transmission: preamble, sync word, and the frame plus its CRC,
 /// each byte of the latter a 10-bit UART cell, at the protocol's line rate.
 ///
-/// The same line coding applies to every 868 MHz chip (the SX1276's IoHomeOn coder and the
-/// software PHY produce the same waveform), so every 868 driver's `tx_air_time_us()` is this.
-/// @param preamble_len Preamble length in bytes.
-/// @param frame_len    Frame length in bytes, without the CRC.
+/// The sync word and the coded frame are the same on every 868 MHz chip. The preamble is not: how
+/// many bit periods one programmed preamble byte occupies depends on the chip's coder, so each
+/// driver passes its own number and its `tx_air_time_us()` is this formula.
+/// @param preamble_len           Preamble length in programmed bytes.
+/// @param frame_len              Frame length in bytes, without the CRC.
+/// @param preamble_bits_per_byte Bit periods one programmed preamble byte occupies on air.
 /// @return Air time in microseconds, rounded up.
-uint32_t io868_tx_air_time_us(uint16_t preamble_len, uint8_t frame_len);
+uint32_t io868_tx_air_time_us(uint16_t preamble_len, uint8_t frame_len, uint8_t preamble_bits_per_byte);
 
 /// @brief Slack a driver allows past a transmission's own air time before it gives up waiting for
 /// the chip's TX-done interrupt.

@@ -105,6 +105,32 @@ Two things that catch people out:
 Run `make lint` before opening a pull request; it checks links, anchors, labels and parents, and
 tells you exactly what is missing.
 
+### Adding a device page
+
+A device gets a page under `docs/devices/` when it is confirmed on hardware and has facts of its own
+that do not fit its row in [Supported devices](supported-devices.md): a pairing menu, a quirk, a
+working YAML, evidence. A device that is set up exactly like another one stays a row that links to
+that device's page.
+
+Give a new page these sections, in this order. Leave out a section that has nothing to say, and add
+one of the device's own where it needs it, such as how the device appears on the radio or a check to
+make before pairing:
+
+| Section | What goes in it |
+|---|---|
+| Opening paragraph | What the device is, what the hub does with it, how many units are confirmed on which board, and the issue |
+| `## What works` | A table of capabilities with ✅, ⚠️ or ❌ and one line each |
+| `## Modes in Home Assistant` | Heaters only: one or two sentences and a link to the device's kind in [Heaters and water heaters in Home Assistant](heating.md). The mode table lives there, once per kind |
+| A pairing section | The menu path on the device and what the hub prints; name it after the device ("Pairing a radiator") so other pages can link to it |
+| `## Working YAML` | One complete entry that works |
+| `## Known quirks` | What surprises an owner, one bullet each, with what to do about it |
+| `## Evidence` | Links to the corpus captures and the issue |
+| `## See also` | The configuration page and related devices |
+
+Register the page as above: a label `dev_<vendor>_<product>`, and a parent bullet in the "Device
+pages" block of [Supported devices](supported-devices.md). Then shorten the device's row there to its
+status, at most two sentences and a link to the page.
+
 ## Pull requests
 
 Pull requests for fixes, tests, documentation, and targeted improvements are welcome.

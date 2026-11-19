@@ -11,6 +11,7 @@
 
 #include "device_registry.h"
 #include "proto_codecs.h"
+#include "proto_commands.h"
 #include "proto_constants.h"
 #include "proto_frame.h"
 
@@ -19,6 +20,7 @@
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 
 namespace esphome {
@@ -73,6 +75,39 @@ inline std::string normalize_device_id_argument(const std::string &device_id) {
   std::transform(normalized.begin(), normalized.end(), normalized.begin(),
                  [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
   return normalized;
+}
+
+/// @brief Parse a native-API string argument as a whole number from 0 to `max_value`.
+///
+/// Every native-API argument is a string. This accepts only decimal digits (surrounding whitespace
+/// ignored) and refuses everything else (empty, signs, decimals, text, values above `max_value`)
+/// rather than coercing it: an atoi()-style default would turn a typo into a real command.
+/// @param text Argument text.
+/// @param max_value Largest accepted value.
+/// @param value_out Parsed value on success; untouched on refusal.
+/// @return true when `text` is a whole number in range.
+inline bool parse_whole_number_argument(const std::string &text, uint8_t max_value, uint8_t &value_out) {
+  const std::string trimmed = trim_ascii_whitespace(text);
+  if (trimmed.empty() || trimmed.find_first_not_of("0123456789") != std::string::npos)
+    return false;
+  // An overlong digit string saturates strtoul at ULONG_MAX, which the range check refuses.
+  // NOLINTNEXTLINE(google-runtime-int): strtoul() returns unsigned long.
+  const unsigned long parsed = std::strtoul(trimmed.c_str(), nullptr, 10);
+  if (parsed > max_value)
+    return false;
+  value_out = static_cast<uint8_t>(parsed);
+  return true;
+}
+
+/// @brief Parse the `seconds` argument of `identify_device_for` into an identify wink time.
+///
+/// Accepts IDENTIFY_WINK_STOP (0, stops a running identify) to IDENTIFY_WINK_MAX_SECONDS (253) and
+/// refuses 254 and above: a value that silently became 255 would start an identify that never ends.
+/// @param seconds Argument text; surrounding whitespace is ignored.
+/// @param wink_time_out Parsed wink time on success; untouched on refusal.
+/// @return true when `seconds` is a whole number in range.
+inline bool parse_identify_seconds(const std::string &seconds, uint8_t &wink_time_out) {
+  return parse_whole_number_argument(seconds, IDENTIFY_WINK_MAX_SECONDS, wink_time_out);
 }
 
 /// @brief Format a byte as two uppercase hex digits, no prefix. Named neutrally rather than

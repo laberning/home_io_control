@@ -13,15 +13,18 @@
 
 /// @defgroup hioc_protocol Protocol Layer
 /// @ingroup hioc_arch
-/// @brief Frame definitions, crypto helpers, command builders, and protocol utilities.
+/// @brief Frame model, crypto helpers, command builders, the node-type and capability table, and the heater and hot
+/// water codecs.
 
 /// @defgroup hioc_radio Radio Driver Layer
 /// @ingroup hioc_arch
-/// @brief Chip-specific radio abstractions and concrete SX1276/SX1262/LR1121 drivers.
+/// @brief The radio driver interface, the SX1276/SX1262/LR1121 drivers, the shared software PHY and the idle preamble
+/// hold.
 
 /// @defgroup hioc_hub Controller Layer
 /// @ingroup hioc_arch
-/// @brief Hub orchestration, exchange state machines, pairing, and runtime operations.
+/// @brief Hub orchestration and its collaborators: the exchange and pairing engines, queued operations and polls,
+/// heating, one-way handling, management actions, the entity ports, and the pure decision helpers.
 
 /// @defgroup hioc_entities ESPHome Integration Layer
 /// @ingroup hioc_arch

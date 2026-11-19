@@ -12,6 +12,7 @@
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
+#include <algorithm>
 #include <cstring>
 
 using namespace esphome::home_io_control;
@@ -202,7 +203,111 @@ TEST_F(RemoteActivityCatchupHub, AnUnansweredCatchupReadOpensNoFollowUpWindow) {
   for (const char *id : {PRESSED_DEVICE, OTHER_DEVICE, CLASS_DEVICE})
     EXPECT_FALSE(comp.poll_policy_.is_tracking_active(id, missed)) << id << ": a catch-up read is a one-off read";
   loop_at(missed + STATUS_RETRY_AFTER_FAIL_MS);
-  EXPECT_TRUE(queued_status_reads().empty()) << "its attempts are its retry; no ladder follows it";
+  EXPECT_TRUE(queued_status_reads().empty()) << "no ladder follows it; its single retry waits the catch-up delay";
+}
+
+// ============================================================================
+// Retry of an unanswered catch-up read (ADR 0095)
+// ============================================================================
+
+TEST_F(RemoteActivityCatchupHub, AnAnsweredCatchupReadIsNotRetried) {
+  esphome::test_clock::ManualClock clock;
+  comp.tuning_.remote_activity_catchup_poll_ms = CATCHUP_MS;
+
+  press_linked_remote();
+  const uint32_t ended = run_answered_first_poll();
+  loop_at(ended + CATCHUP_MS);
+  ASSERT_EQ(comp.op_queue_.size(), 3u);
+  for (const uint8_t *node_id : {PRESSED_DEVICE_NODE_ID, OTHER_DEVICE_NODE_ID, CLASS_DEVICE_NODE_ID}) {
+    radio.queue_rx(test::make_rx_packet(status_reply(node_id)));
+    comp.process_pending_operation_();
+  }
+
+  loop_at(esphome::millis() + 2 * CATCHUP_MS);
+  EXPECT_TRUE(queued_status_reads().empty());
+}
+
+TEST_F(RemoteActivityCatchupHub, ASilentCatchupReadIsRetriedOnceTheCatchupDelayLater) {
+  esphome::test_clock::ManualClock clock;
+  comp.tuning_.remote_activity_catchup_poll_ms = CATCHUP_MS;
+
+  press_linked_remote();
+  const uint32_t ended = run_answered_first_poll();
+  loop_at(ended + CATCHUP_MS);
+  ASSERT_EQ(comp.op_queue_.size(), 3u);
+  comp.process_pending_operation_();  // PRESSED_DEVICE: nothing queued on the radio, no answer
+  const uint32_t first_miss = esphome::millis();
+  comp.process_pending_operation_();
+  comp.process_pending_operation_();
+  const uint32_t last_miss = esphome::millis();
+
+  loop_at(first_miss + CATCHUP_MS - 1);
+  EXPECT_TRUE(queued_status_reads().empty()) << "not before the catch-up delay has passed";
+
+  loop_at(last_miss + CATCHUP_MS);
+  EXPECT_EQ(queued_status_reads(), (std::vector<std::string>{PRESSED_DEVICE, OTHER_DEVICE, CLASS_DEVICE}))
+      << "each silent device is read once more";
+}
+
+TEST_F(RemoteActivityCatchupHub, OnlyTheDeviceThatStayedSilentIsRetried) {
+  esphome::test_clock::ManualClock clock;
+  comp.tuning_.remote_activity_catchup_poll_ms = CATCHUP_MS;
+
+  press_linked_remote();
+  const uint32_t ended = run_answered_first_poll();
+  loop_at(ended + CATCHUP_MS);
+  ASSERT_EQ(comp.op_queue_.size(), 3u);
+  radio.queue_rx(test::make_rx_packet(status_reply(PRESSED_DEVICE_NODE_ID)));
+  comp.process_pending_operation_();  // answered
+  comp.process_pending_operation_();  // OTHER_DEVICE: silent
+  radio.queue_rx(test::make_rx_packet(status_reply(CLASS_DEVICE_NODE_ID)));
+  comp.process_pending_operation_();  // answered
+
+  loop_at(esphome::millis() + CATCHUP_MS);
+  EXPECT_EQ(queued_status_reads(), std::vector<std::string>{OTHER_DEVICE});
+}
+
+TEST_F(RemoteActivityCatchupHub, ACatchupReadThatIsSilentTwiceIsNotRetriedAgain) {
+  esphome::test_clock::ManualClock clock;
+  comp.tuning_.remote_activity_catchup_poll_ms = CATCHUP_MS;
+
+  press_linked_remote();
+  const uint32_t ended = run_answered_first_poll();
+  loop_at(ended + CATCHUP_MS);
+  while (!comp.op_queue_.empty())
+    comp.process_pending_operation_();
+  loop_at(esphome::millis() + CATCHUP_MS);
+  ASSERT_EQ(comp.op_queue_.size(), 3u) << "the retry";
+  while (!comp.op_queue_.empty())
+    comp.process_pending_operation_();  // silent again
+
+  loop_at(esphome::millis() + 3 * CATCHUP_MS);
+  EXPECT_TRUE(queued_status_reads().empty()) << "a second silence ends the catch-up";
+}
+
+TEST_F(RemoteActivityCatchupHub, ARetryThatIsAnsweredEndsTheCatchupAndAMovingAnswerIsFollowed) {
+  esphome::test_clock::ManualClock clock;
+  comp.tuning_.remote_activity_catchup_poll_ms = CATCHUP_MS;
+
+  press_linked_remote();
+  const uint32_t ended = run_answered_first_poll();
+  loop_at(ended + CATCHUP_MS);
+  while (!comp.op_queue_.empty())
+    comp.process_pending_operation_();
+  loop_at(esphome::millis() + CATCHUP_MS);
+  ASSERT_EQ(comp.op_queue_.size(), 3u);
+  for (const uint8_t *node_id : {PRESSED_DEVICE_NODE_ID, OTHER_DEVICE_NODE_ID, CLASS_DEVICE_NODE_ID}) {
+    const bool moving = node_id == OTHER_DEVICE_NODE_ID;
+    radio.queue_rx(test::make_rx_packet(moving ? moving_reply(node_id) : status_reply(node_id)));
+    comp.process_pending_operation_();
+  }
+
+  EXPECT_TRUE(comp.poll_policy_.is_tracking_active(OTHER_DEVICE, esphome::millis()))
+      << "an answer to the retry is followed like any catch-up answer";
+  loop_at(esphome::millis() + 3 * CATCHUP_MS);
+  const std::vector<std::string> later = queued_status_reads();
+  EXPECT_EQ(std::count(later.begin(), later.end(), PRESSED_DEVICE), 0) << "no retry of an answered read";
+  EXPECT_EQ(std::count(later.begin(), later.end(), CLASS_DEVICE), 0) << "no retry of an answered read";
 }
 
 TEST_F(RemoteActivityCatchupHub, AMovingAnswerToACatchupReadIsFollowed) {
@@ -239,9 +344,9 @@ TEST_F(RemoteActivityCatchupHub, ACatchupReadLeadsShortToALowPowerDeviceThatJust
   comp.process_pending_operation_();  // PRESSED_DEVICE sorts first
 
   ASSERT_GT(radio.get_tx_configs().size(), sent_before + 1);
-  EXPECT_EQ(radio.get_tx_configs()[sent_before].preamble_len, comp.tuning_.normal_start_preamble)
+  EXPECT_EQ(radio.get_tx_configs()[sent_before].preamble_len, mock_preamble_bytes(comp.tuning_.start_preamble_ms))
       << "the short lead a moving receiver hears";
-  EXPECT_EQ(radio.get_tx_configs()[sent_before + 1].preamble_len, comp.tuning_.low_power_wake_preamble)
+  EXPECT_EQ(radio.get_tx_configs()[sent_before + 1].preamble_len, mock_preamble_bytes(comp.tuning_.low_power_wake_ms))
       << "then the wake-up attempts a resting one hears";
 }
 

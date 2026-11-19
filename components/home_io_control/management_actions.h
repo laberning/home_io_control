@@ -12,9 +12,9 @@
 /// class. The descriptor holds a ManagementActions* and calls only public methods on it, so no friend declarations into
 /// the hub are needed.
 ///
-/// IOHomeControlComponent exposes this collaborator through thin protected wrappers
-/// (api_rename_device_, api_identify_device_, api_force_open_device_, api_scan_paired_devices_,
-/// register_management_actions_).
+/// IOHomeControlComponent owns this collaborator and starts the registration from setup() through
+/// one thin protected wrapper (register_management_actions_()); the registered actions call the
+/// public api_*() methods here directly.
 
 #include "device_registry.h"
 #include "diagnostic_probes.h"
@@ -78,7 +78,7 @@ class ManagementActions {
   /// Native API callback: trigger a device's physical identify and publish the result as a HA event.
   void api_identify_device(const std::string &device_id);
 
-  /// @brief Trigger a registered device's physical identify (brief jog/flash).
+  /// @brief Trigger a registered device's physical identify (jog/flash) for a bounded time.
   ///
   /// Deliberately performs no device-type gating beyond "is it registered on this hub" — identify
   /// exists precisely to let a user work out what an unknown registry entry physically is, so
@@ -86,9 +86,23 @@ class ManagementActions {
   /// treated as a successful trigger (not a failure): per the protocol, devices may answer an
   /// identify request that way and still perform the jog.
   /// @param device_id Target device ID (hex string, case-insensitive).
+  /// @param wink_time Wink time sent in the request: IDENTIFY_WINK_DEVICE_DEFAULT for the device's own
+  ///        time, seconds up to IDENTIFY_WINK_MAX_SECONDS, or IDENTIFY_WINK_STOP. Not validated here;
+  ///        identify_device_for() validates user input.
   /// @return Structured result describing success and any validation failure. `verified` is
   ///         always false — there is no readback that confirms a physical jog happened.
-  ManagementActionResult identify_device(const std::string &device_id);
+  ManagementActionResult identify_device(const std::string &device_id, uint8_t wink_time);
+
+  /// Native API callback: identify for an explicit time (or stop) and publish the result as a HA event.
+  void api_identify_device_for(const std::string &device_id, const std::string &seconds);
+
+  /// @brief Identify a registered device for `seconds`, or stop a running identify with 0.
+  /// @param device_id Target device ID (hex string, case-insensitive).
+  /// @param seconds Whole seconds 1 to IDENTIFY_WINK_MAX_SECONDS, or 0 to stop. Anything else is refused
+  ///        before a frame is built.
+  /// @return Same result as identify_device(); a refused `seconds` gives `success == false` and a message
+  ///         naming the range.
+  ManagementActionResult identify_device_for(const std::string &device_id, const std::string &seconds);
 
   /// Native API callback: force-open a device and publish the result as a HA event.
   void api_force_open_device(const std::string &device_id);
@@ -166,9 +180,9 @@ class ManagementActions {
   /// more answer, the report says so explicitly rather than quietly listing a subset.
   ///
   /// Sweeps two passes, low-power first, then always-alive — six attempts total (three channels
-  /// per pass): CH2/CH1/CH3 with `CTRL1 = LOW_POWER | ACK` and `LONG_PREAMBLE` (the header a real
+  /// per pass): CH2/CH1/CH3 with `CTRL1 = LOW_POWER | ACK` and the wake-up preamble (the header a real
   /// VELUX KLR300 uses for its own roll-call, whose low-power shutters answered it), then
-  /// CH2/CH1/CH3 with `CTRL1 = 0x00` and the tunable `normal_start_preamble`. Low-power first so a sleeper that answers
+  /// CH2/CH1/CH3 with `CTRL1 = 0x00` and the tunable `start_preamble_ms`. Low-power first so a sleeper that answers
   /// late is still collected by the later always-alive windows; in the opposite order a late
   /// low-power reply would fall off the end of the scan. The low-power pass listens on all three
   /// channels including the one it transmitted on (real VELUX low-power replies have been
@@ -189,9 +203,9 @@ class ManagementActions {
   /// `KeyExtractionResponder::send_reply_()`'s implementation comment).
   ///
   /// This still blocks the caller for the full six-window duration (roughly
-  /// `6 × pairing_discovery_wait_ms` plus three ~213 ms LONG_PREAMBLE transmits, ~12.7 s at the
-  /// 2000 ms default) and therefore trips ESPHome's "operation took a long time" warning on
-  /// *every* invocation. That warning uses a per-component ratchet
+  /// `6 × pairing_discovery_wait_ms` plus three wake-up transmits of 427 to 533 ms depending on the
+  /// radio's `RadioDriver::tx_air_time_us()`, ~13.3 to 13.6 s at the 2000 ms default) and therefore trips ESPHome's
+  /// "operation took a long time" warning on *every* invocation. That warning uses a per-component ratchet
   /// (`Component::should_warn_of_blocking()`): it starts at 50 ms and, each time it fires, raises
   /// its own threshold to the observed duration plus a margin — but the threshold is stored in
   /// centiseconds in a `uint8_t`, so it saturates at **2550 ms**. Anything that blocks longer than
@@ -266,6 +280,9 @@ class ManagementActions {
   void publish_result(const ManagementActionResult &result);
 
  private:
+  /// Shared body of identify_device() and identify_device_for(); `action` names the caller in the result.
+  ManagementActionResult run_identify_(const char *action, const std::string &device_id, uint8_t wink_time);
+
   /// @brief Shared preamble for every management action: validate the hub and device ID,
   /// then resolve the target device (see resolve_management_device()).
   ///
