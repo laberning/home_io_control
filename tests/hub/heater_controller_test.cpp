@@ -6,6 +6,7 @@
 /// settle poll) is tested through the hub's forwarders in hub_operations_test.cpp and hub_dhw_test.cpp.
 
 #include "heater_controller.h"
+#include "payload_frame.h"
 #include "reading_store.h"
 #include "water_heater_values.h"
 #include "decisions_status.h"
@@ -19,7 +20,7 @@
 #include "proto_private_registers.h"
 
 #include "heater_controller_fixture.h"
-#include "heating_test_data.h"
+#include "corpus_test_helpers.h"
 
 #include <array>
 #include <cmath>
@@ -47,8 +48,7 @@ IoDevice *make_heater(HeaterControllerFixture &fx) {
 
 IoDevice *make_towel_dryer(HeaterControllerFixture &fx) {
   IoDevice *dev = make_heater(fx);
-  dev->model = DeviceModel::TOWEL_DRYER;
-  resolve_device_features(*dev);
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
   return dev;
 }
 
@@ -62,8 +62,6 @@ IoDevice *make_water_heater(HeaterControllerFixture &fx) {
 }
 
 IoDevice *make_cover(HeaterControllerFixture &fx) { return fx.add_device_of_kind(DeviceType::ROLLER_SHUTTER); }
-
-using heating_test_data::ADELIS_NAME_REPLY;
 
 /// Run send_heating_command against an electrical heater with an adjustable setpoint with a single reply frame
 /// (`cmd` and `payload`) queued as the device's answer.
@@ -300,10 +298,10 @@ TEST(HeaterController, ReadHeatingRegisterRejectsWhatItCannotRead) {
 TEST(HeaterController, ReadPrivateRegisterChecksTheEchoAndRefusesADeviceWithoutRegisters) {
   HeaterControllerFixture fx;
   make_heater(fx);
-  fx.queue_register_ack(ADELIS_NAME_REPLY);
+  fx.queue_register_ack(corpus_test::adelis_name_reply());
   IoFrame response{};
   ASSERT_TRUE(fx.controller.read_private_register("ABC123", 0x01, 0x19, "model_name", response, 1));
-  EXPECT_EQ(response.data_len, ADELIS_NAME_REPLY.size());
+  EXPECT_EQ(response.data_len, corpus_test::adelis_name_reply().size());
   EXPECT_EQ(response.data[PRIVATE_REGISTER_VALUE_OFFSET], 'A');
   EXPECT_EQ(sent_payload(fx.radio.get_sent_data().back(), 4), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x19}));
 
@@ -1788,8 +1786,7 @@ TEST(HeaterController, AMissedCentralHeatingReadChangesNothing) {
 /// @return A heater with a night light (a Sauter Hekla), its boot reads done so a poll is its extra registers only.
 IoDevice *make_heater_with_light(HeaterControllerFixture &fx) {
   IoDevice *dev = make_heater(fx);
-  dev->model = DeviceModel::HEATER_WITH_LIGHT;
-  resolve_device_features(*dev);
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT);
   dev->model_checked = true;
   test::store_reading(*dev, DeviceReading::MAX_SETPOINT, 28.0F);
   return dev;
@@ -1902,10 +1899,7 @@ TEST(HeaterController, OccupancyReadsAreRefusedOnAKindWithoutTheCapabilityAndFor
 TEST(HeaterController, AReadingThatIsNotReadWhenAskedIsIgnoredByEnableDeviceReading) {
   HeaterControllerFixture fx;
   IoDevice *radiator = make_heater(fx);
-  const auto polls = [&](ReadingPoll policy) {
-    const HeaterPollList list = device_poll_reads(*radiator, policy);
-    return std::vector<DeviceRegister>(list.begin(), list.end());
-  };
+  const auto polls = [&](ReadingPoll policy) { return test::polled_registers(*radiator, policy); };
   const DeviceReadingRow *room = find_device_reading(DeviceReading::ROOM_TEMPERATURE);
   ASSERT_NE(room, nullptr);
   ASSERT_NE(room->poll, ReadingPoll::WHEN_ASKED) << "the room temperature is polled by the profile, not asked for";
@@ -2382,20 +2376,13 @@ TEST(HeaterController, AWaterHeaterPollOfAnUnregisteredDeviceArmsNoTimer) {
 
 // === Decoding a status answer ===
 
-namespace {
-
-/// The two bytes of a main parameter as a status reply carries them, most significant byte first.
-std::array<uint8_t, 2> main_parameter_bytes(uint16_t main_parameter) {
-  return {static_cast<uint8_t>(main_parameter >> 8), static_cast<uint8_t>(main_parameter & 0xFF)};
-}
-
-}  // namespace
+namespace {}  // namespace
 
 TEST(HeaterStatusDecoding, ALevelHeaterKeepsTheLevelTheReplyCarries) {
   IoDevice dev;
   test::set_kind(dev, DeviceType::ELECTRICAL_HEATER, 0);
 
-  const auto bytes = main_parameter_bytes(heating_level_main_parameter(heating_level::ECO));
+  const auto bytes = test::main_parameter_bytes(heating_level_main_parameter(heating_level::ECO));
   apply_heating_main_parameter("ABC123", dev, bytes);
 
   EXPECT_EQ(test::wire_read(dev, DeviceReading::HEATING_LEVEL), heating_level::ECO);
@@ -2406,11 +2393,11 @@ TEST(HeaterStatusDecoding, APilotWireInterfaceTakesNoLevelFromItsStatus) {
   // The interface's status carries no level (issue #228: the one answered read had 0xC800), so even a main parameter
   // that decodes as one is not kept: neither the card nor a sensor shows it.
   IoDevice dev;
-  dev.model = DeviceModel::PILOT_WIRE_INTERFACE;
-  test::set_kind(dev, DeviceType::ELECTRICAL_HEATER, 0);
+  test::set_kind(dev, DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::PILOT_WIRE_INTERFACE);
 
-  apply_heating_main_parameter("ABC123", dev, main_parameter_bytes(heating_level_main_parameter(heating_level::ECO)));
-  apply_heating_main_parameter("ABC123", dev, main_parameter_bytes(0xC800));
+  apply_heating_main_parameter("ABC123", dev,
+                               test::main_parameter_bytes(heating_level_main_parameter(heating_level::ECO)));
+  apply_heating_main_parameter("ABC123", dev, test::main_parameter_bytes(0xC800));
 
   EXPECT_EQ(test::wire_read(dev, DeviceReading::HEATING_LEVEL), -1);
   EXPECT_TRUE(std::isnan(test::number_read(dev, DeviceReading::STATUS_SETPOINT)));
@@ -2423,7 +2410,7 @@ TEST(HeaterStatusDecoding, ATemperatureHeaterKeepsTheSetpointAndClearsAStaleAlia
   uint16_t mp = 0;
   ASSERT_TRUE(encode_temperature_main_parameter(21.0F, dev.temperature_range_min_c, dev.temperature_range_max_c, mp));
 
-  const auto bytes = main_parameter_bytes(mp);
+  const auto bytes = test::main_parameter_bytes(mp);
   apply_heating_main_parameter("ABC123", dev, bytes);
 
   EXPECT_NEAR(test::number_read(dev, DeviceReading::STATUS_SETPOINT), 21.0F, 0.1F);
@@ -2433,7 +2420,7 @@ TEST(HeaterStatusDecoding, ATemperatureHeaterKeepsTheSetpointAndClearsAStaleAlia
 }
 
 TEST(HeaterStatusDecoding, ARegisterHeaterAndADeviceWithoutAProfileAreLeftAlone) {
-  const auto bytes = main_parameter_bytes(0x1234);
+  const auto bytes = test::main_parameter_bytes(0x1234);
   IoDevice radiator;
   test::set_kind(radiator, DeviceType::ELECTRICAL_HEATER, 1);
   apply_heating_main_parameter("ABC123", radiator, bytes);
@@ -2448,8 +2435,7 @@ TEST(HeaterStatusDecoding, ARegisterHeaterAndADeviceWithoutAProfileAreLeftAlone)
 }
 
 TEST(HeaterStatusDecoding, AWaterHeaterStatusReplyGivesTheTargetCapabilitiesAndBoostAndAway) {
-  IoDevice dev;
-  test::set_kind(dev, DeviceType::DOMESTIC_HOT_WATER, 0);
+  IoDevice dev = test::water_heater_record();
   IoFrame frame{};
   const uint8_t payload[] = {0x05,
                              0x00,
@@ -2474,8 +2460,7 @@ TEST(HeaterStatusDecoding, AWaterHeaterStatusReplyGivesTheTargetCapabilitiesAndB
 }
 
 TEST(HeaterStatusDecoding, TheAckOfAnExecuteIsNotDecodedAndANonTemperatureLeavesTheTargetUnknown) {
-  IoDevice dev;
-  test::set_kind(dev, DeviceType::DOMESTIC_HOT_WATER, 0);
+  IoDevice dev = test::water_heater_record();
   test::seed_water_heater(dev, {.target_c = 54.0F});
   IoFrame frame{};
   const uint8_t payload[] = {0x2D, 0x00, 0xD8, 0x12, 0x00, 0x00};
@@ -2569,8 +2554,7 @@ using Registers = std::vector<uint8_t>;
 
 IoDevice *make_pinned_heater(HeaterControllerFixture &fx, DeviceModel model) {
   IoDevice *dev = make_heater(fx);
-  dev->model = model;
-  resolve_device_features(*dev);
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1, model);
   return dev;
 }
 

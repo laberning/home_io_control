@@ -1,6 +1,7 @@
 /// @file proto_private_registers_test.cpp
 /// @brief Byte-exact tests for the private register transport: header, read request, echo check.
 
+#include "payload_frame.h"
 #include "proto_private_registers.h"
 
 #include "proto_constants.h"
@@ -10,20 +11,6 @@
 #include <vector>
 
 using namespace esphome::home_io_control;
-
-namespace {
-
-/// A reply with the given data bytes.
-IoFrame ack_with(const std::vector<uint8_t> &data, uint8_t cmd = CMD_WRITE_PRIVATE_ACK) {
-  IoFrame f{};
-  f.cmd = cmd;
-  f.data_len = static_cast<uint8_t>(data.size());
-  for (size_t i = 0; i < data.size(); i++)
-    f.data[i] = data[i];
-  return f;
-}
-
-}  // namespace
 
 TEST(ProtoPrivateRegisters, HeaderCarriesPrefixDirectionAndRegister) {
   uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
@@ -57,12 +44,23 @@ TEST(ProtoPrivateRegisters, NoRegisterNumberEverProducesTheWriteDirection) {
 }
 
 TEST(ProtoPrivateRegisters, ARegisterReplyEchoesItsRegister) {
-  EXPECT_TRUE(private_reply_echoes_register(ack_with({0x0C, 0x60, 0x01, 0x19, 'A'}), 0x01, 0x19));
-  EXPECT_TRUE(private_reply_echoes_register(ack_with({0x0C, 0x60, 0x01, 0x36}), 0x01, 0x36)) << "empty is an echo";
-  EXPECT_TRUE(private_reply_echoes_register(ack_with({0x0C, 0x61, 0x01, 0x36, 0x03}), 0x01, 0x36)) << "a write's ack";
-  EXPECT_FALSE(private_reply_echoes_register(ack_with({0x0C, 0x60, 0x01, 0x18, 0x41}), 0x01, 0x19));
-  EXPECT_FALSE(private_reply_echoes_register(ack_with({0x0C, 0x60, 0x00, 0x19}), 0x01, 0x19));
-  EXPECT_FALSE(private_reply_echoes_register(ack_with({0x0C, 0x62, 0x01, 0x19}), 0x01, 0x19));
-  EXPECT_FALSE(private_reply_echoes_register(ack_with({0x0C, 0x60, 0x01}), 0x01, 0x19)) << "truncated";
-  EXPECT_FALSE(private_reply_echoes_register(ack_with({0x0C, 0x60, 0x01, 0x19}, CMD_WRITE_PRIVATE), 0x01, 0x19));
+  EXPECT_TRUE(private_reply_echoes_register(
+      test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x19, 'A'}), 0x01, 0x19));
+  EXPECT_TRUE(private_reply_echoes_register(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x36}),
+                                            0x01, 0x36))
+      << "empty is an echo";
+  EXPECT_TRUE(private_reply_echoes_register(
+      test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x01, 0x36, 0x03}), 0x01, 0x36))
+      << "a write's ack";
+  EXPECT_FALSE(private_reply_echoes_register(
+      test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x18, 0x41}), 0x01, 0x19));
+  EXPECT_FALSE(private_reply_echoes_register(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x00, 0x19}),
+                                             0x01, 0x19));
+  EXPECT_FALSE(private_reply_echoes_register(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x62, 0x01, 0x19}),
+                                             0x01, 0x19));
+  EXPECT_FALSE(
+      private_reply_echoes_register(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01}), 0x01, 0x19))
+      << "truncated";
+  EXPECT_FALSE(
+      private_reply_echoes_register(test::make_payload_frame(CMD_WRITE_PRIVATE, {0x0C, 0x60, 0x01, 0x19}), 0x01, 0x19));
 }

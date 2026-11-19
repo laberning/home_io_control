@@ -1312,28 +1312,14 @@ TEST(PlatformClimate, TowelDryerPresetsWriteTheTemporaryStateAndShowAsPresetsNot
   EXPECT_NE(entity.mode, CLIMATE_MODE_AUTO) << "drying's value 2 is not PROG";
 }
 
-namespace {
-
-/// The readings of a towel dryer in PROG with comfort setpoint 20.0, `in_force` in 0x0137, the status read
-/// reporting `level`.
-void programme_readings(IoDevice &r, TowelDryerMode mode, HeatingTemporaryState state, float in_force,
-                        int16_t level = heating_level::COMFORT) {
-  test::store_reading(r, DeviceReading::TOWEL_MODE, static_cast<int16_t>(mode));
-  test::store_reading(r, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(state));
-  test::store_reading(r, DeviceReading::SETPOINT, 20.0F);
-  test::store_reading(r, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE, in_force);
-  test::store_reading(r, DeviceReading::HEATING_LEVEL, level);
-}
-
-}  // namespace
-
 TEST(PlatformClimate, TowelDryerShowsTheTemperatureInForceAndNoPresetForThePeriodWhileItsProgrammeRuns) {
   MockHubClimate hub;
   IOHomeClimate entity = make_towel_climate(hub);
   entity.setup();
 
-  deliver_readings(
-      hub, [](IoDevice &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F); });
+  deliver_readings(hub, [](IoDevice &r) {
+    test::store_programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 20.0F, heating_level::COMFORT);
+  });
   EXPECT_EQ(entity.mode, CLIMATE_MODE_AUTO);
   ASSERT_TRUE(entity.preset.has_value());
   EXPECT_EQ(*entity.preset, CLIMATE_PRESET_NONE) << "comfort is a level, shown by the sensor";
@@ -1358,7 +1344,8 @@ TEST(PlatformClimate, TowelDryerTargetFollowsComfortEcoBoostComfortWithoutAFlick
   entity.setup();
   const auto in_period = [&](float in_force) {
     deliver_readings(hub, [in_force](IoDevice &r) {
-      programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force);
+      test::store_programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, in_force,
+                                     heating_level::COMFORT);
     });
   };
 
@@ -1395,11 +1382,15 @@ TEST(PlatformClimate, TowelDryerOutsideTheProgrammeNeverShowsTheTemperatureInFor
   entity.setup();
   // 0x0137 reads 1 in boost and 2 in drying; a stale reading must not reach the card even if one slips in.
   for (const auto state : {HeatingTemporaryState::BOOST, HeatingTemporaryState::DRYING}) {
-    deliver_readings(hub, [state](IoDevice &r) { programme_readings(r, TowelDryerMode::PROG, state, 0.1F); });
+    deliver_readings(hub, [state](IoDevice &r) {
+      test::store_programme_readings(r, TowelDryerMode::PROG, state, 0.1F, heating_level::COMFORT);
+    });
     EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F);
   }
-  deliver_readings(
-      hub, [](IoDevice &r) { programme_readings(r, TowelDryerMode::MANUAL, HeatingTemporaryState::NONE, 16.5F); });
+  deliver_readings(hub, [](IoDevice &r) {
+    test::store_programme_readings(r, TowelDryerMode::MANUAL, HeatingTemporaryState::NONE, 16.5F,
+                                   heating_level::COMFORT);
+  });
   EXPECT_EQ(entity.mode, CLIMATE_MODE_HEAT);
   EXPECT_FLOAT_EQ(entity.target_temperature, 20.0F) << "MANUEL holds the comfort setpoint";
   ASSERT_TRUE(entity.preset.has_value());
@@ -1545,7 +1536,8 @@ TEST(PlatformClimate, TowelDryerTargetInAutoIsTheOverrideInAnEcoPeriodAndTheComf
                                Period{20.0F, heating_level::COMFORT, DeviceRegister::COMFORT_SETPOINT}}) {
     hub.plans.clear();
     deliver_programme_readings(hub, [&period](IoDevice &r) {
-      programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, period.in_force_c, period.level);
+      test::store_programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, period.in_force_c,
+                                     period.level);
     });
     hub.on_programme_state = {stores(DeviceRegister::TOWEL_MODE, DRYER_PROGRAMME),
                               stores(DeviceRegister::TEMPORARY_STATE, NO_TIMED_RUN), level_is(period.level)};
@@ -1571,7 +1563,7 @@ TEST(PlatformClimate, ATowelDryerTargetInAutoThatReportsNoPeriodWritesNothing) {
   IOHomeClimate entity = make_towel_climate(hub);
   entity.setup();
   deliver_programme_readings(hub, [](IoDevice &r) {
-    programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
+    test::store_programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
   });
   // The status read answers with no level.
   hub.on_programme_state = {stores(DeviceRegister::TOWEL_MODE, DRYER_PROGRAMME),
@@ -1589,7 +1581,7 @@ TEST(PlatformClimate, ARefusedOverrideShowsTheHeatersOwnTargetAtOnceInsteadOfThe
   IOHomeClimate entity = make_towel_climate(hub);
   entity.setup();
   deliver_programme_readings(hub, [](IoDevice &r) {
-    programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
+    test::store_programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
   });
   hub.on_programme_state = {stores(DeviceRegister::TOWEL_MODE, DRYER_PROGRAMME),
                             stores(DeviceRegister::TEMPORARY_STATE, NO_TIMED_RUN), level_is(heating_level::ECO)};
@@ -1614,8 +1606,9 @@ TEST(PlatformClimate, ADryerWhoseBoostEndedOrBeganSincethePollTakesTheTargetWher
   entity.setup();
 
   // The card shows a boost; the heater's timer has ended it.
-  deliver_programme_readings(
-      hub, [](IoDevice &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::BOOST, NAN); });
+  deliver_programme_readings(hub, [](IoDevice &r) {
+    test::store_programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::BOOST, NAN, heating_level::COMFORT);
+  });
   ASSERT_TRUE(entity.preset.has_value());
   ASSERT_EQ(*entity.preset, CLIMATE_PRESET_BOOST);
   hub.on_programme_state = {stores(DeviceRegister::TOWEL_MODE, DRYER_PROGRAMME),
@@ -1626,8 +1619,9 @@ TEST(PlatformClimate, ADryerWhoseBoostEndedOrBeganSincethePollTakesTheTargetWher
 
   // The card shows the programme; a boost has begun on the heater's panel.
   hub.plans.clear();
-  deliver_programme_readings(
-      hub, [](IoDevice &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 17.0F); });
+  deliver_programme_readings(hub, [](IoDevice &r) {
+    test::store_programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 17.0F, heating_level::COMFORT);
+  });
   hub.on_programme_state = {stores(DeviceRegister::TOWEL_MODE, DRYER_PROGRAMME),
                             stores(DeviceRegister::TEMPORARY_STATE, TIMED_BOOST)};
   hub.after_plan = {{stores(DeviceRegister::COMFORT_SETPOINT, 21.0F)}};
@@ -1703,8 +1697,10 @@ TEST(PlatformClimate, ASilentHeaterGetsNoTargetAndTheCardKeepsWhatItShowed) {
     IOHomeClimate entity = towel ? make_towel_climate(hub) : make_bound_climate(hub);
     entity.setup();
     if (towel) {
-      deliver_programme_readings(
-          hub, [](IoDevice &r) { programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 17.0F); });
+      deliver_programme_readings(hub, [](IoDevice &r) {
+        test::store_programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 17.0F,
+                                       heating_level::COMFORT);
+      });
     } else {
       deliver_programme_readings(hub, [](IoDevice &r) {
         test::store_reading(r, DeviceReading::MODE, RADIATOR_PROGRAMME);
@@ -1887,7 +1883,7 @@ TEST(PlatformClimate, TowelDryerComfortAndEcoAreNoPresetAndSendNothing) {
   IOHomeClimate entity = make_towel_climate(hub);
   entity.setup();
   deliver_readings(hub, [](IoDevice &r) {
-    programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
+    test::store_programme_readings(r, TowelDryerMode::PROG, HeatingTemporaryState::NONE, 16.5F, heating_level::ECO);
   });
   const int published = entity.publish_count_;
 

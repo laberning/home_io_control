@@ -2,6 +2,7 @@
 /// @brief Byte-exact tests for the heater register codec (CMD_WRITE_PRIVATE 0x20 / ack 0x21).
 
 #include "proto_heating.h"
+#include "payload_frame.h"
 #include "reading_store.h"
 
 #include "proto_constants.h"
@@ -32,16 +33,6 @@ std::vector<uint8_t> encode_read(DeviceRegister fn) {
 size_t write_len(DeviceRegister fn, float value) {
   uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   return encode_heating_write(fn, value, out);
-}
-
-/// A 0x21 reply with the given data bytes.
-IoFrame ack_with(const std::vector<uint8_t> &data, uint8_t cmd = CMD_WRITE_PRIVATE_ACK) {
-  IoFrame f{};
-  f.cmd = cmd;
-  f.data_len = static_cast<uint8_t>(data.size());
-  for (size_t i = 0; i < data.size(); i++)
-    f.data[i] = data[i];
-  return f;
 }
 
 }  // namespace
@@ -103,17 +94,21 @@ TEST(ProtoHeating, DecodesRoomTemperatureInHundredths) {
   float v = 0.0f;
   // 0x081B = 2075 -> 20.75 C
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08}), DeviceRegister::ROOM_TEMPERATURE, v));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08}),
+                           DeviceRegister::ROOM_TEMPERATURE, v));
   EXPECT_FLOAT_EQ(v, 20.75f);
   // 0x0659 = 1625 -> 16.25 C
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x15, 0x59, 0x06}), DeviceRegister::ROOM_TEMPERATURE, v));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x15, 0x59, 0x06}),
+                           DeviceRegister::ROOM_TEMPERATURE, v));
   EXPECT_FLOAT_EQ(v, 16.25f);
 }
 
 TEST(ProtoHeating, RoomTemperatureSensorFaultDecodesAsNaN) {
   float v = 0.0f;
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x15, 0xFF, 0xFF}), DeviceRegister::ROOM_TEMPERATURE, v))
+  ASSERT_TRUE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x15, 0xFF, 0xFF}),
+                           DeviceRegister::ROOM_TEMPERATURE, v))
       << "the heater did answer";
   EXPECT_TRUE(std::isnan(v));
 }
@@ -121,45 +116,56 @@ TEST(ProtoHeating, RoomTemperatureSensorFaultDecodesAsNaN) {
 TEST(ProtoHeating, DecodesSetpointAndMaximumInTenths) {
   float v = 0.0f;
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00}), DeviceRegister::COMFORT_SETPOINT, v));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00}),
+                           DeviceRegister::COMFORT_SETPOINT, v));
   EXPECT_FLOAT_EQ(v, 19.5f);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x02, 0x18, 0x01}), DeviceRegister::MAX_SETPOINT, v));
+  ASSERT_TRUE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01}),
+                           DeviceRegister::MAX_SETPOINT, v));
   EXPECT_FLOAT_EQ(v, 28.0f);
 }
 
 TEST(ProtoHeating, DecodesModeBytes) {
   float v = -1.0f;
   for (uint8_t mode : {0, 1, 2, 3, 4}) {
-    ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x00, mode}), DeviceRegister::OPERATING_MODE, v));
+    ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x00, mode}),
+                                     DeviceRegister::OPERATING_MODE, v));
     EXPECT_FLOAT_EQ(v, static_cast<float>(mode));
   }
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x00, 0x05}), DeviceRegister::OPERATING_MODE, v))
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x00, 0x05}),
+                                    DeviceRegister::OPERATING_MODE, v))
       << "an undefined mode is not a value";
 }
 
 TEST(ProtoHeating, DecodesRegulatorStates) {
   float v = -1.0f;
   for (uint8_t state : {0, 1, 2}) {
-    ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x17, state}), DeviceRegister::REGULATOR_STATE, v));
+    ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x17, state}),
+                                     DeviceRegister::REGULATOR_STATE, v));
     EXPECT_FLOAT_EQ(v, static_cast<float>(state));
   }
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x17, 0x03}), DeviceRegister::REGULATOR_STATE, v));
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x17, 0x03}),
+                                    DeviceRegister::REGULATOR_STATE, v));
 }
 
 TEST(ProtoHeating, DecodesWindowSensor) {
   float v = -1.0f;
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x0E, 0x00}), DeviceRegister::WINDOW_OPEN, v));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x0E, 0x00}),
+                                   DeviceRegister::WINDOW_OPEN, v));
   EXPECT_FLOAT_EQ(v, 0.0f);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x0E, 0x01}), DeviceRegister::WINDOW_OPEN, v));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x0E, 0x01}),
+                                   DeviceRegister::WINDOW_OPEN, v));
   EXPECT_FLOAT_EQ(v, 1.0f);
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x0E, 0x02}), DeviceRegister::WINDOW_OPEN, v));
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x0E, 0x02}),
+                                    DeviceRegister::WINDOW_OPEN, v));
 }
 
 TEST(ProtoHeating, DecodesTheAckOfAWriteToo) {
   // A set is answered with the header of the set (0x61) followed by the value.
   float v = 0.0f;
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}), DeviceRegister::COMFORT_SETPOINT, v));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}),
+                           DeviceRegister::COMFORT_SETPOINT, v));
   EXPECT_FLOAT_EQ(v, 20.5f);
 }
 
@@ -167,23 +173,31 @@ TEST(ProtoHeating, ReplyWithoutAValueForThisRegisterIsNoValue) {
   float v = 123.0f;
   // Another register's answer.
   EXPECT_FALSE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00}), DeviceRegister::ROOM_TEMPERATURE, v));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x03, 0xC3, 0x00}),
+                           DeviceRegister::ROOM_TEMPERATURE, v));
   // A set acknowledged without a value.
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x61, 0x01, 0x03}), DeviceRegister::COMFORT_SETPOINT, v));
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x01, 0x03}),
+                                    DeviceRegister::COMFORT_SETPOINT, v));
   // Truncated 16-bit value.
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x15, 0x1B}), DeviceRegister::ROOM_TEMPERATURE, v));
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x15, 0x1B}),
+                                    DeviceRegister::ROOM_TEMPERATURE, v));
   // Wrong prefix, high byte or direction.
   EXPECT_FALSE(
-      decode_heating_reply(ack_with({0x0D, 0x60, 0x01, 0x15, 0x1B, 0x08}), DeviceRegister::ROOM_TEMPERATURE, v));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0D, 0x60, 0x01, 0x15, 0x1B, 0x08}),
+                           DeviceRegister::ROOM_TEMPERATURE, v));
   EXPECT_FALSE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x02, 0x15, 0x1B, 0x08}), DeviceRegister::ROOM_TEMPERATURE, v));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x02, 0x15, 0x1B, 0x08}),
+                           DeviceRegister::ROOM_TEMPERATURE, v));
   EXPECT_FALSE(
-      decode_heating_reply(ack_with({0x0C, 0x62, 0x01, 0x15, 0x1B, 0x08}), DeviceRegister::ROOM_TEMPERATURE, v));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x62, 0x01, 0x15, 0x1B, 0x08}),
+                           DeviceRegister::ROOM_TEMPERATURE, v));
   // Not a CMD_WRITE_PRIVATE_ACK.
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08}, CMD_ERROR_RESP),
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_ERROR_RESP, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08}),
                                     DeviceRegister::ROOM_TEMPERATURE, v));
   // A register with no typed decode.
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x2C, 0x01, 0x02}), DeviceRegister::PAIRED_DEVICES, v));
+  EXPECT_FALSE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x2C, 0x01, 0x02}),
+                           DeviceRegister::PAIRED_DEVICES, v));
   EXPECT_FLOAT_EQ(v, 123.0f) << "no value leaves the output untouched";
 }
 
@@ -196,10 +210,12 @@ TEST(ProtoHeatingTowelDryer, DerogationIsReadFromItsRegister) {
 TEST(ProtoHeatingTowelDryer, DerogationRepliesDecodeToDegreesAndZero) {
   float value = NAN;
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x1D, 0xA5, 0x00}), DeviceRegister::DEROGATED_SETPOINT, value));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x1D, 0xA5, 0x00}),
+                           DeviceRegister::DEROGATED_SETPOINT, value));
   EXPECT_FLOAT_EQ(value, 16.5F);
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x1D, 0x00, 0x00}), DeviceRegister::DEROGATED_SETPOINT, value));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x1D, 0x00, 0x00}),
+                           DeviceRegister::DEROGATED_SETPOINT, value));
   EXPECT_FLOAT_EQ(value, 0.0F);
 }
 
@@ -215,13 +231,17 @@ TEST(ProtoHeatingTowelDryer, ReadsAddressTheirRegisters) {
 
 TEST(ProtoHeatingTowelDryer, DecodesWhatTheAdelisReports) {
   float value = -1.0F;
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x36, 0x03}), DeviceRegister::TOWEL_MODE, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x36, 0x03}),
+                                   DeviceRegister::TOWEL_MODE, value));
   EXPECT_FLOAT_EQ(value, 3.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3E, 0x02}), DeviceRegister::TEMPORARY_STATE, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x3E, 0x02}),
+                                   DeviceRegister::TEMPORARY_STATE, value));
   EXPECT_FLOAT_EQ(value, 2.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x26, 0x64}), DeviceRegister::WORKING_RATE, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x26, 0x64}),
+                                   DeviceRegister::WORKING_RATE, value));
   EXPECT_FLOAT_EQ(value, 100.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x26, 0x0D}), DeviceRegister::WORKING_RATE, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x26, 0x0D}),
+                                   DeviceRegister::WORKING_RATE, value));
   EXPECT_FLOAT_EQ(value, 13.0F);
 }
 
@@ -229,61 +249,78 @@ TEST(ProtoHeatingTowelDryer, DecodesTheTemperatureInForceAndTheEcoSetbackInTenth
   // Replies of unit BD684B in PROG (issue #202, corpus atlantic_adelis_probe_temperature_in_force) and the
   // setback of unit BB0B50 (corpus atlantic_adelis_probe_register_01_sweep).
   float value = -1.0F;
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xC8, 0x00}),
-                                   DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, value));
+  ASSERT_TRUE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x37, 0xC8, 0x00}),
+                           DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, value));
   EXPECT_FLOAT_EQ(value, 20.0F) << "comfort period";
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00}),
-                                   DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, value));
+  ASSERT_TRUE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00}),
+                           DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, value));
   EXPECT_FLOAT_EQ(value, 16.5F) << "eco period";
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x04, 0x23, 0x00}), DeviceRegister::ECO_SETBACK, value));
+  ASSERT_TRUE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x04, 0x23, 0x00}),
+                           DeviceRegister::ECO_SETBACK, value));
   EXPECT_FLOAT_EQ(value, 3.5F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0x01, 0x00}),
-                                   DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, value));
+  ASSERT_TRUE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x37, 0x01, 0x00}),
+                           DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, value));
   EXPECT_FLOAT_EQ(value, 0.1F) << "in boost the register is not a temperature; the profile's gate keeps it unshown";
-  EXPECT_FALSE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37}), DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, value))
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x37}),
+                                    DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, value))
       << "empty is no value";
 }
 
 TEST(ProtoHeatingRadiator, TheTemperatureInForceIsRegister012AInTenthsAndSharesTheReading) {
   EXPECT_EQ(encode_read(DeviceRegister::TEMPERATURE_IN_FORCE), (std::vector<uint8_t>{0x0C, 0x60, 0x01, 0x2A}));
   float value = -1.0F;
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x2A, 0xA5, 0x00}), DeviceRegister::TEMPERATURE_IN_FORCE,
-                                   value));
+  ASSERT_TRUE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x2A, 0xA5, 0x00}),
+                           DeviceRegister::TEMPERATURE_IN_FORCE, value));
   EXPECT_FLOAT_EQ(value, 16.5F);
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x2A}), DeviceRegister::TEMPERATURE_IN_FORCE, value))
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x2A}),
+                                    DeviceRegister::TEMPERATURE_IN_FORCE, value))
       << "a radiator without the register answers it empty";
   EXPECT_FALSE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00}), DeviceRegister::TEMPERATURE_IN_FORCE, value))
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x37, 0xA5, 0x00}),
+                           DeviceRegister::TEMPERATURE_IN_FORCE, value))
       << "the reply of another register is no value";
 }
 
 TEST(ProtoHeatingTowelDryer, AByteAboveTheRegistersRangeIsStillAnAnswerThatCarriesTheValue) {
   // The model check tells a towel dryer from a radiator by whether the heater has the mode register, so an answer
   // with a mode byte the codec refuses counts: the register is there.
-  const IoFrame above_range = ack_with({0x0C, 0x60, 0x01, 0x36, 0x04});
+  const IoFrame above_range = test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x36, 0x04});
   float value = -1.0F;
   EXPECT_FALSE(decode_heating_reply(above_range, DeviceRegister::TOWEL_MODE, value));
   EXPECT_TRUE(heating_reply_carries_value(above_range, DeviceRegister::TOWEL_MODE));
-  EXPECT_TRUE(heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x36, 0x02}), DeviceRegister::TOWEL_MODE));
+  EXPECT_TRUE(heating_reply_carries_value(
+      test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x36, 0x02}), DeviceRegister::TOWEL_MODE));
 
-  EXPECT_FALSE(heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x36}), DeviceRegister::TOWEL_MODE))
+  EXPECT_FALSE(heating_reply_carries_value(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x36}),
+                                           DeviceRegister::TOWEL_MODE))
       << "an empty answer: the heater has no such register";
-  EXPECT_FALSE(heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x00, 0x02}), DeviceRegister::TOWEL_MODE))
+  EXPECT_FALSE(heating_reply_carries_value(
+      test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x00, 0x02}), DeviceRegister::TOWEL_MODE))
       << "the reply of another register";
   EXPECT_FALSE(
-      heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x42, 0x32}), DeviceRegister::NIGHT_LIGHT_BRIGHTNESS))
+      heating_reply_carries_value(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x42, 0x32}),
+                                  DeviceRegister::NIGHT_LIGHT_BRIGHTNESS))
       << "a two-byte register needs both bytes";
-  EXPECT_FALSE(heating_reply_carries_value(ack_with({0x0C, 0x60, 0x01, 0x2C, 0x01}), DeviceRegister::PAIRED_DEVICES))
+  EXPECT_FALSE(heating_reply_carries_value(
+      test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x2C, 0x01}), DeviceRegister::PAIRED_DEVICES))
       << "a register with no typed value carries none";
 }
 
 TEST(ProtoHeatingTowelDryer, OutOfRangeAndEmptyRepliesAreNoValue) {
   float value = -1.0F;
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x36, 0x04}), DeviceRegister::TOWEL_MODE, value));
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3E, 0x03}), DeviceRegister::TEMPORARY_STATE, value));
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x26, 0x65}), DeviceRegister::WORKING_RATE, value));
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x36}), DeviceRegister::TOWEL_MODE, value))
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x36, 0x04}),
+                                    DeviceRegister::TOWEL_MODE, value));
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x3E, 0x03}),
+                                    DeviceRegister::TEMPORARY_STATE, value));
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x26, 0x65}),
+                                    DeviceRegister::WORKING_RATE, value));
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x36}),
+                                    DeviceRegister::TOWEL_MODE, value))
       << "a register the device does not hold is answered without a value";
   EXPECT_FLOAT_EQ(value, -1.0F);
 }
@@ -303,7 +340,8 @@ uint16_t night_light_register_of(float percent) {
 float night_light_percent_of(uint16_t raw) {
   float value = NAN;
   decode_heating_reply(
-      ack_with({0x0C, 0x60, 0x01, 0x42, static_cast<uint8_t>(raw & 0xFF), static_cast<uint8_t>(raw >> 8)}),
+      test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x42, static_cast<uint8_t>(raw & 0xFF),
+                                                       static_cast<uint8_t>(raw >> 8)}),
       DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value);
   return value;
 }
@@ -338,40 +376,51 @@ TEST(ProtoHeatingNightLight, DecodesWhatTheHeklaReports) {
   // The register_01 sweeps of issue #222: 0x0144 reads 01 with the light on and 00 with it off; 0x0142
   // reads 64 00 either way (the lowest of its four levels, 100 on the 0-10000 scale).
   float value = -1.0F;
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x44, 0x01}), DeviceRegister::NIGHT_LIGHT, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x44, 0x01}),
+                                   DeviceRegister::NIGHT_LIGHT, value));
   EXPECT_FLOAT_EQ(value, 1.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x44, 0x00}), DeviceRegister::NIGHT_LIGHT, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x44, 0x00}),
+                                   DeviceRegister::NIGHT_LIGHT, value));
   EXPECT_FLOAT_EQ(value, 0.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0x64, 0x00}),
-                                   DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value));
+  ASSERT_TRUE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x42, 0x64, 0x00}),
+                           DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value));
   EXPECT_NEAR(value, 3.3F, 1e-4F) << "register value 100, as a percentage";
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0xE8, 0x03}),
-                                   DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value));
+  ASSERT_TRUE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x42, 0xE8, 0x03}),
+                           DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value));
   EXPECT_FLOAT_EQ(value, 33.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0xD0, 0x07}),
-                                   DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value));
+  ASSERT_TRUE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x42, 0xD0, 0x07}),
+                           DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value));
   EXPECT_FLOAT_EQ(value, 66.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0x10, 0x27}),
-                                   DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value));
+  ASSERT_TRUE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x42, 0x10, 0x27}),
+                           DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value));
   EXPECT_FLOAT_EQ(value, 100.0F);
   // The heater's answer to the Cozytouch's write carries the new value too.
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x61, 0x01, 0x44, 0x01}), DeviceRegister::NIGHT_LIGHT, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x01, 0x44, 0x01}),
+                                   DeviceRegister::NIGHT_LIGHT, value));
   EXPECT_FLOAT_EQ(value, 1.0F);
 }
 
 TEST(ProtoHeatingNightLight, OutOfRangeShortAndEmptyRepliesAreNoValue) {
   float value = -1.0F;
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0x11, 0x27}),
-                                    DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value))
-      << "10001 is above the register's range";
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0xFF, 0xFF}),
-                                    DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value));
   EXPECT_FALSE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0x32}), DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value))
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x42, 0x11, 0x27}),
+                           DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value))
+      << "10001 is above the register's range";
+  EXPECT_FALSE(
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x42, 0xFF, 0xFF}),
+                           DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value));
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x42, 0x32}),
+                                    DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, value))
       << "a two-byte register answered with one byte";
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x44}), DeviceRegister::NIGHT_LIGHT, value))
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x44}),
+                                    DeviceRegister::NIGHT_LIGHT, value))
       << "a heater without the light answers without a value";
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x44, 0x02}), DeviceRegister::NIGHT_LIGHT, value));
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x44, 0x02}),
+                                    DeviceRegister::NIGHT_LIGHT, value));
   EXPECT_FLOAT_EQ(value, -1.0F);
 }
 
@@ -383,20 +432,21 @@ TEST(ProtoHeatingCentralHeatingMode, ReadRequestAndRegister) {
 
 TEST(ProtoHeatingCentralHeatingMode, DecodesCentralHeatingAndElectric) {
   float value = -1.0F;
-  ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x53, 0x01}), DeviceRegister::CENTRAL_HEATING_MODE, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x53, 0x01}),
+                                   DeviceRegister::CENTRAL_HEATING_MODE, value));
   EXPECT_FLOAT_EQ(value, 1.0F);
-  ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x53, 0x00}), DeviceRegister::CENTRAL_HEATING_MODE, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x53, 0x00}),
+                                   DeviceRegister::CENTRAL_HEATING_MODE, value));
   EXPECT_FLOAT_EQ(value, 0.0F);
 }
 
 TEST(ProtoHeatingCentralHeatingMode, EmptyAndUnknownRepliesAreNoValue) {
   float value = -1.0F;
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x53}), DeviceRegister::CENTRAL_HEATING_MODE, value))
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x53}),
+                                    DeviceRegister::CENTRAL_HEATING_MODE, value))
       << "an electric unit answers without a value";
-  EXPECT_FALSE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x53, 0x02}), DeviceRegister::CENTRAL_HEATING_MODE, value));
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x53, 0x02}),
+                                    DeviceRegister::CENTRAL_HEATING_MODE, value));
   EXPECT_FLOAT_EQ(value, -1.0F);
 }
 
@@ -410,23 +460,26 @@ TEST(ProtoHeatingOccupancy, DecodesTheSweepValuesOfTheDetectionAndThePresence) {
   float value = -1.0F;
   // The Hekla sweep: 0x0101 reads 00 with detection off and 01 with it on; 0x0110 reads 00 with nobody in
   // the room and 01 while someone walks around the heater.
-  ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x01, 0x00}), DeviceRegister::OCCUPANCY_DETECTION, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x01, 0x00}),
+                                   DeviceRegister::OCCUPANCY_DETECTION, value));
   EXPECT_FLOAT_EQ(value, 0.0F);
-  ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x01, 0x01}), DeviceRegister::OCCUPANCY_DETECTION, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x01, 0x01}),
+                                   DeviceRegister::OCCUPANCY_DETECTION, value));
   EXPECT_FLOAT_EQ(value, 1.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x10, 0x00}), DeviceRegister::PRESENCE, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x10, 0x00}),
+                                   DeviceRegister::PRESENCE, value));
   EXPECT_FLOAT_EQ(value, 0.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x10, 0x01}), DeviceRegister::PRESENCE, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x10, 0x01}),
+                                   DeviceRegister::PRESENCE, value));
   EXPECT_FLOAT_EQ(value, 1.0F);
 }
 
 TEST(ProtoHeatingOccupancy, EmptyAndUnknownRepliesAreNoValue) {
   float value = -1.0F;
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x10}), DeviceRegister::PRESENCE, value));
-  EXPECT_FALSE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x01, 0x02}), DeviceRegister::OCCUPANCY_DETECTION, value));
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x10}),
+                                    DeviceRegister::PRESENCE, value));
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x01, 0x02}),
+                                    DeviceRegister::OCCUPANCY_DETECTION, value));
   EXPECT_FLOAT_EQ(value, -1.0F);
 }
 
@@ -441,23 +494,28 @@ TEST(ProtoHeatingEnergy, DecodesTheTotalMostSignificantByteFirst) {
   float value = -1.0F;
   // The displays of two Sauter Tahual radiators, and a Thermor EMOTION 3 H's answer (not compared with its display).
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16, 0x0D, 0x5E}), DeviceRegister::ENERGY_TOTAL, value));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x16, 0x0D, 0x5E}),
+                           DeviceRegister::ENERGY_TOTAL, value));
   EXPECT_FLOAT_EQ(value, 3422.0F);
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16, 0x01, 0x08}), DeviceRegister::ENERGY_TOTAL, value));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x16, 0x01, 0x08}),
+                           DeviceRegister::ENERGY_TOTAL, value));
   EXPECT_FLOAT_EQ(value, 264.0F);
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16, 0x0C, 0xBE}), DeviceRegister::ENERGY_TOTAL, value));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x16, 0x0C, 0xBE}),
+                           DeviceRegister::ENERGY_TOTAL, value));
   EXPECT_FLOAT_EQ(value, 3262.0F);
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16, 0x00, 0x00}), DeviceRegister::ENERGY_TOTAL, value));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x16, 0x00, 0x00}),
+                           DeviceRegister::ENERGY_TOTAL, value));
   EXPECT_FLOAT_EQ(value, 0.0F) << "a new heater";
 }
 
 TEST(ProtoHeatingEnergy, ATotalAboveWhatASignedSixteenBitIntegerHoldsDecodesExactly) {
   float value = -1.0F;
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16, 0xFF, 0xFF}), DeviceRegister::ENERGY_TOTAL, value));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x16, 0xFF, 0xFF}),
+                           DeviceRegister::ENERGY_TOTAL, value));
   EXPECT_FLOAT_EQ(value, 65535.0F);
   IoDevice readings;
   store_reading(readings, DeviceReading::ENERGY_TOTAL, value);
@@ -467,12 +525,15 @@ TEST(ProtoHeatingEnergy, ATotalAboveWhatASignedSixteenBitIntegerHoldsDecodesExac
 
 TEST(ProtoHeatingEnergy, ATruncatedOrEmptyReplyIsNoValue) {
   float value = -1.0F;
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16}), DeviceRegister::ENERGY_TOTAL, value))
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x16}),
+                                    DeviceRegister::ENERGY_TOTAL, value))
       << "a heater without the register answers without a value";
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16, 0x0D}), DeviceRegister::ENERGY_TOTAL, value))
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x16, 0x0D}),
+                                    DeviceRegister::ENERGY_TOTAL, value))
       << "one byte is not a total";
   EXPECT_FALSE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x15, 0x0D, 0x5E}), DeviceRegister::ENERGY_TOTAL, value))
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x15, 0x0D, 0x5E}),
+                           DeviceRegister::ENERGY_TOTAL, value))
       << "the reply of another register";
   EXPECT_FLOAT_EQ(value, -1.0F);
 }
@@ -492,36 +553,46 @@ TEST(ProtoHeatingRunTimers, EachTimerIsReadFromItsRegister) {
 
 TEST(ProtoHeatingRunTimers, TheTimeLeftIsTheOneByteInMinutes) {
   float value = -1.0F;
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3A, 0x3C}), DeviceRegister::BOOST_REMAINING, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x3A, 0x3C}),
+                                   DeviceRegister::BOOST_REMAINING, value));
   EXPECT_FLOAT_EQ(value, 60.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3C, 0x1C}), DeviceRegister::DRYING_REMAINING, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x3C, 0x1C}),
+                                   DeviceRegister::DRYING_REMAINING, value));
   EXPECT_FLOAT_EQ(value, 28.0F);
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3C, 0x00}), DeviceRegister::DRYING_REMAINING, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x3C, 0x00}),
+                                   DeviceRegister::DRYING_REMAINING, value));
   EXPECT_FLOAT_EQ(value, 0.0F) << "no run";
-  ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3A, 0xFF}), DeviceRegister::BOOST_REMAINING, value));
+  ASSERT_TRUE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x3A, 0xFF}),
+                                   DeviceRegister::BOOST_REMAINING, value));
   EXPECT_FLOAT_EQ(value, 255.0F) << "a count, not an enumeration: no upper bound but the byte";
 }
 
 TEST(ProtoHeatingRunTimers, TheDurationIsTheFirstOfTwoBytesAndTheSecondIsThePanelsMaximum) {
   float value = -1.0F;
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3B, 0x3C, 0x3C}), DeviceRegister::BOOST_DURATION, value));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x3B, 0x3C, 0x3C}),
+                           DeviceRegister::BOOST_DURATION, value));
   EXPECT_FLOAT_EQ(value, 60.0F);
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3B, 0x23, 0x3C}), DeviceRegister::BOOST_DURATION, value));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x3B, 0x23, 0x3C}),
+                           DeviceRegister::BOOST_DURATION, value));
   EXPECT_FLOAT_EQ(value, 35.0F);
   ASSERT_TRUE(
-      decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3D, 0x1E, 0x78}), DeviceRegister::DRYING_DURATION, value));
+      decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x3D, 0x1E, 0x78}),
+                           DeviceRegister::DRYING_DURATION, value));
   EXPECT_FLOAT_EQ(value, 30.0F);
 }
 
 TEST(ProtoHeatingRunTimers, AnEmptyTruncatedOrForeignReplyIsNoValue) {
   float value = -1.0F;
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3A}), DeviceRegister::BOOST_REMAINING, value))
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x3A}),
+                                    DeviceRegister::BOOST_REMAINING, value))
       << "a dryer without the register answers without a value";
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3B, 0x3C}), DeviceRegister::BOOST_DURATION, value))
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x3B, 0x3C}),
+                                    DeviceRegister::BOOST_DURATION, value))
       << "a duration comes with the panel's maximum";
-  EXPECT_FALSE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x3C, 0x1C}), DeviceRegister::BOOST_REMAINING, value))
+  EXPECT_FALSE(decode_heating_reply(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x3C, 0x1C}),
+                                    DeviceRegister::BOOST_REMAINING, value))
       << "the reply of another register";
   EXPECT_FLOAT_EQ(value, -1.0F);
 }

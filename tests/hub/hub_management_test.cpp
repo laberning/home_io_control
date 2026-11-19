@@ -587,16 +587,6 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllTenServicesWhenDiagnost
 // heating_control action (CMD_WRITE_PRIVATE 0x20)
 // ========================================================================================
 
-static IoFrame make_write_private_ack(const uint8_t dst[3]) {
-  IoFrame frame{};
-  init_frame(frame, true, false, true, false);
-  const uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
-  set_dst(frame, dst);
-  set_src(frame, device_node_id);
-  set_cmd(frame, CMD_WRITE_PRIVATE_ACK, nullptr, 0);
-  return frame;
-}
-
 TEST(HubManagement, HeatingControlRejectsUnknownDevice) {
   TestableManagementComponent component;
   MockRadio radio;
@@ -666,7 +656,8 @@ TEST(HubManagement, ApiHeatingControlPublishesManagementResultEvent) {
   MockRadio radio;
   setup_component(component, radio);
   make_climate_device(component);
-  radio.queue_rx(frame_to_packet(make_write_private_ack(component.node_id_)));
+  radio.queue_rx(
+      frame_to_packet(test::make_device_reply(component.node_id_, CMD_WRITE_PRIVATE_ACK, {}, test::DEVICE_ABC123_ID)));
 
   component.management_actions_.api_heating_control("ABC123", "set_mode", "auto");
 

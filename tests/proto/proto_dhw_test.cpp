@@ -13,7 +13,9 @@
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"
 #include "proto_private_registers.h"
+#include "payload_frame.h"
 #include "reading_store.h"
+#include "test_helpers.h"
 #include "water_heater_values.h"
 
 #include <gtest/gtest.h>
@@ -27,27 +29,9 @@ using namespace esphome::home_io_control;
 
 namespace {
 
-/// A reply with the given command and data bytes.
-IoFrame reply_with(const std::vector<uint8_t> &data, uint8_t cmd = CMD_WRITE_PRIVATE_ACK) {
-  IoFrame f{};
-  f.cmd = cmd;
-  f.data_len = static_cast<uint8_t>(data.size());
-  for (size_t i = 0; i < data.size(); i++)
-    f.data[i] = data[i];
-  return f;
-}
-
 /// The bytes of a payload an encoder wrote.
 std::vector<uint8_t> payload_of(const uint8_t (&out)[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE], size_t length) {
   return std::vector<uint8_t>(out, out + length);
-}
-
-/// A water heater's record, with its capabilities as the hub resolves them for the kind.
-IoDevice water_heater_record() {
-  IoDevice dev;
-  dev.type = DeviceType::DOMESTIC_HOT_WATER;
-  dev.features = device_features(DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::NONE);
-  return dev;
 }
 
 }  // namespace
@@ -147,7 +131,7 @@ TEST(ProtoDhw, TheOperatingModeExecuteCarriesKeepAndOneOfThreeFixedWords) {
 }
 
 TEST(ProtoDhw, TargetEncodesOnTheRelativeScaleOverTwentyToSixtyTwo) {
-  const IoDevice dev = water_heater_record();
+  const IoDevice dev = test::water_heater_record();
   const HeatingCardRange range = device_temperature_range(dev);
   EXPECT_FLOAT_EQ(range.min_c, DHW_TARGET_MIN_C);
   EXPECT_FLOAT_EQ(range.max_c, DHW_TARGET_MAX_C);
@@ -163,7 +147,7 @@ TEST(ProtoDhw, TargetEncodesOnTheRelativeScaleOverTwentyToSixtyTwo) {
 }
 
 TEST(ProtoDhw, TargetOutsideTheHeatersRangeIsNeverEncoded) {
-  const HeatingCardRange range = device_temperature_range(water_heater_record());
+  const HeatingCardRange range = device_temperature_range(test::water_heater_record());
   uint16_t mp = 0x1234;
   EXPECT_EQ(encode_temperature_target(range, 19.9F, mp), HeatingRefusal::OUT_OF_RANGE);
   EXPECT_EQ(encode_temperature_target(range, 62.1F, mp), HeatingRefusal::OUT_OF_RANGE);
@@ -173,7 +157,7 @@ TEST(ProtoDhw, TargetOutsideTheHeatersRangeIsNeverEncoded) {
 }
 
 TEST(ProtoDhw, TheWaterHeatersRangeIsItsOwnWhateverTheRecordHolds) {
-  IoDevice dev = water_heater_record();
+  IoDevice dev = test::water_heater_record();
   dev.temperature_range_min_c = 5.0F;
   dev.temperature_range_max_c = 30.0F;
   const HeatingCardRange range = device_temperature_range(dev);
@@ -184,14 +168,15 @@ TEST(ProtoDhw, TheWaterHeatersRangeIsItsOwnWhateverTheRecordHolds) {
 // === Replies ===
 
 TEST(ProtoDhw, RegisterReplyYieldsTheValueAfterTheEcho) {
-  const IoFrame reply = reply_with({0x0C, 0x60, 0x00, 0x04, 0x00, 0x1B, 0xF3, 0x42});
+  const IoFrame reply =
+      test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x00, 0x04, 0x00, 0x1B, 0xF3, 0x42});
   const auto value = register_reply_value(reply, DeviceRegister::DHW_ENERGY);
   ASSERT_TRUE(value.has_value());
   EXPECT_EQ(std::vector<uint8_t>(value->begin(), value->end()), (std::vector<uint8_t>{0x00, 0x1B, 0xF3, 0x42}));
 }
 
 TEST(ProtoDhw, AnIndexTheHeaterDoesNotHoldIsAnEmptyValue) {
-  const IoFrame reply = reply_with({0x0C, 0x60, 0x00, 0x04});
+  const IoFrame reply = test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x00, 0x04});
   const auto value = register_reply_value(reply, DeviceRegister::DHW_ENERGY);
   ASSERT_TRUE(value.has_value());
   EXPECT_TRUE(value->empty());
@@ -200,19 +185,24 @@ TEST(ProtoDhw, AnIndexTheHeaterDoesNotHoldIsAnEmptyValue) {
 }
 
 TEST(ProtoDhw, RegisterReplyForAnotherIndexFamilyOrCommandIsRejected) {
-  const IoFrame mode = reply_with({0x0C, 0x60, 0x00, 0x06, 0x01});
+  const IoFrame mode = test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x00, 0x06, 0x01});
   EXPECT_TRUE(register_reply_value(mode, DeviceRegister::DHW_MODE).has_value());
   EXPECT_FALSE(register_reply_value(mode, DeviceRegister::DHW_ENERGY).has_value()) << "another index";
-  EXPECT_FALSE(register_reply_value(reply_with({0x0C, 0x60, 0x01, 0x06, 0x01}), DeviceRegister::DHW_MODE).has_value())
+  EXPECT_FALSE(register_reply_value(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x06, 0x01}),
+                                    DeviceRegister::DHW_MODE)
+                   .has_value())
       << "the radiator family 0x01";
-  EXPECT_FALSE(
-      register_reply_value(reply_with({0x0C, 0x60, 0x00, 0x06, 0x01}, CMD_PRIVATE_RESP), DeviceRegister::DHW_MODE)
-          .has_value())
+  EXPECT_FALSE(register_reply_value(test::make_payload_frame(CMD_PRIVATE_RESP, {0x0C, 0x60, 0x00, 0x06, 0x01}),
+                                    DeviceRegister::DHW_MODE)
+                   .has_value())
       << "not a CMD_WRITE_PRIVATE_ACK";
-  EXPECT_FALSE(register_reply_value(reply_with({0x0C, 0x60, 0x00}), DeviceRegister::DHW_MODE).has_value())
+  EXPECT_FALSE(register_reply_value(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x00}),
+                                    DeviceRegister::DHW_MODE)
+                   .has_value())
       << "short echo";
-  EXPECT_FALSE(
-      register_reply_value(reply_with({0x0C, 0x60, 0x00, 0x06, 0x01}), DeviceRegister::OPERATING_MODE).has_value())
+  EXPECT_FALSE(register_reply_value(test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x00, 0x06, 0x01}),
+                                    DeviceRegister::OPERATING_MODE)
+                   .has_value())
       << "a heater's mode register is another register";
 }
 
@@ -245,8 +235,9 @@ TEST(ProtoDhw, TheHeatingRegisterHasNoValueOfItsOwn) {
   const uint8_t value[] = {0x01, 0xFF, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00};
   EXPECT_FALSE(decode_register_value(DeviceRegister::DHW_HEATING, value).has_value())
       << "its readings are slices of it";
-  EXPECT_FALSE(heating_reply_carries_value(reply_with({0x0C, 0x60, 0x00, 0x21, 0x01, 0xFF, 0x00, 0x01, 0x01}),
-                                           DeviceRegister::DHW_HEATING));
+  EXPECT_FALSE(heating_reply_carries_value(
+      test::make_payload_frame(CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x00, 0x21, 0x01, 0xFF, 0x00, 0x01, 0x01}),
+      DeviceRegister::DHW_HEATING));
 }
 
 TEST(ProtoDhw, HeatingStateReadsTheThreeStatesSeen) {
@@ -262,7 +253,7 @@ TEST(ProtoDhw, HeatingStateReadsTheThreeStatesSeen) {
       {{0x01, 0xFF, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00}, 1, 1, 1, "boost"},
   };
   for (const auto &c : cases) {
-    IoDevice dev = water_heater_record();
+    IoDevice dev = test::water_heater_record();
     ASSERT_TRUE(store_register_reply(dev, DeviceRegister::DHW_HEATING, c.value)) << c.state;
     EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_HEATING), c.heating) << c.state;
     EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_ELECTRIC_BACKUP), c.element) << c.state;
@@ -274,14 +265,14 @@ TEST(ProtoDhw, TheHeatPumpIsOnWhenEitherOfItsBytesIsSet) {
   // Bytes 3 and 4 were always set together; either one alone still says the heat pump runs.
   for (const std::vector<uint8_t> &value : {std::vector<uint8_t>{0x01, 0xFF, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00},
                                             std::vector<uint8_t>{0x01, 0xFF, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00}}) {
-    IoDevice dev = water_heater_record();
+    IoDevice dev = test::water_heater_record();
     ASSERT_TRUE(store_register_reply(dev, DeviceRegister::DHW_HEATING, value));
     EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_HEAT_PUMP), 1);
   }
 }
 
 TEST(ProtoDhw, ACutOffHeatingValueStoresOnlyTheSlicesItHolds) {
-  IoDevice dev = water_heater_record();
+  IoDevice dev = test::water_heater_record();
   // Three bytes: the heating byte and the element byte are there, the heat pump's two are not.
   ASSERT_TRUE(store_register_reply(dev, DeviceRegister::DHW_HEATING, std::vector<uint8_t>{0x01, 0xFF, 0x01}));
   EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_HEATING), 1);
@@ -291,7 +282,7 @@ TEST(ProtoDhw, ACutOffHeatingValueStoresOnlyTheSlicesItHolds) {
 }
 
 TEST(ProtoDhw, ACutOffHeatingValueKeepsTheValuesOfTheSlicesItDoesNotHold) {
-  IoDevice dev = water_heater_record();
+  IoDevice dev = test::water_heater_record();
   ASSERT_TRUE(store_register_reply(dev, DeviceRegister::DHW_HEATING,
                                    std::vector<uint8_t>{0x01, 0xFF, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00}));
   ASSERT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_HEAT_PUMP), 1);
@@ -334,7 +325,7 @@ namespace {
 
 /// What a status reply makes a water heater's target, through the hub's own status glue.
 std::optional<float> target_of(const IoFrame &reply) {
-  IoDevice dev = water_heater_record();
+  IoDevice dev = test::water_heater_record();
   test::apply_status_reply(dev, reply);
   return reading_value(dev, DeviceReading::STATUS_SETPOINT);
 }
@@ -343,7 +334,7 @@ std::optional<float> target_of(const IoFrame &reply) {
 
 TEST(ProtoDhw, TargetDecodesTheThreeMainParametersSeen) {
   const auto decode = [](uint8_t high, uint8_t low) {
-    return target_of(reply_with({0x2D, 0x00, high, low, 0x00, 0x00}, CMD_PRIVATE_RESP));
+    return target_of(test::make_payload_frame(CMD_PRIVATE_RESP, {0x2D, 0x00, high, low, 0x00, 0x00}));
   };
   EXPECT_FLOAT_EQ(*decode(0xA1, 0xE8), 54.0F);
   EXPECT_FLOAT_EQ(*decode(0xC8, 0x00), 62.0F);
@@ -353,7 +344,7 @@ TEST(ProtoDhw, TargetDecodesTheThreeMainParametersSeen) {
 
 TEST(ProtoDhw, AMainParameterBeyondTheScaleIsNotATarget) {
   const auto decode = [](uint8_t high, uint8_t low) {
-    return target_of(reply_with({0x2D, 0x00, high, low, 0x00, 0x00}, CMD_PRIVATE_RESP));
+    return target_of(test::make_payload_frame(CMD_PRIVATE_RESP, {0x2D, 0x00, high, low, 0x00, 0x00}));
   };
   EXPECT_FALSE(decode(0xC8, 0x01).has_value());
   EXPECT_FALSE(decode(0xD8, 0x12).has_value()) << "an alias";
@@ -361,7 +352,7 @@ TEST(ProtoDhw, AMainParameterBeyondTheScaleIsNotATarget) {
 }
 
 TEST(ProtoDhw, EveryEncodedTargetDecodesBackWithinATenth) {
-  const HeatingCardRange range = device_temperature_range(water_heater_record());
+  const HeatingCardRange range = device_temperature_range(test::water_heater_record());
   for (float t = DHW_TARGET_MIN_C; t <= DHW_TARGET_MAX_C; t += 0.5F) {
     uint16_t mp = 0;
     ASSERT_EQ(encode_temperature_target(range, t, mp), HeatingRefusal::NONE) << t;
@@ -378,15 +369,15 @@ namespace {
 
 /// The reply to a status read with FPI1 00 / FPI2 03: flags, b1, MP, FPI1, FPI2, FP15, FP16.
 IoFrame operating_reply(uint16_t fp16, uint16_t mp = 0xA1E8, uint16_t fp15 = 0x000C) {
-  return reply_with({0x05, 0x00, static_cast<uint8_t>(mp >> 8), static_cast<uint8_t>(mp & 0xFF), 0x00, 0x03,
-                     static_cast<uint8_t>(fp15 >> 8), static_cast<uint8_t>(fp15 & 0xFF),
-                     static_cast<uint8_t>(fp16 >> 8), static_cast<uint8_t>(fp16 & 0xFF)},
-                    CMD_PRIVATE_RESP);
+  return test::make_payload_frame(
+      CMD_PRIVATE_RESP, {0x05, 0x00, static_cast<uint8_t>(mp >> 8), static_cast<uint8_t>(mp & 0xFF), 0x00, 0x03,
+                         static_cast<uint8_t>(fp15 >> 8), static_cast<uint8_t>(fp15 & 0xFF),
+                         static_cast<uint8_t>(fp16 >> 8), static_cast<uint8_t>(fp16 & 0xFF)});
 }
 
 /// The record after the status decoder has stored a reply's functional parameter readings.
 IoDevice stored_from(const IoFrame &reply) {
-  IoDevice dev = water_heater_record();
+  IoDevice dev = test::water_heater_record();
   store_status_parameter_readings(dev, reply);
   return dev;
 }
@@ -442,8 +433,8 @@ TEST(ProtoDhw, OperatingStatusDecodesWhateverTheMainParameter) {
 
 TEST(ProtoDhw, OperatingStatusSkipsOtherParametersOfTheEcho) {
   // The heater echoes FP10 when asked for 0x43: FPI2 43, values FP10, FP15, FP16 (issue #198).
-  const IoDevice dev = stored_from(
-      reply_with({0x05, 0x00, 0xBE, 0x7A, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x00}, CMD_PRIVATE_RESP));
+  const IoDevice dev = stored_from(test::make_payload_frame(
+      CMD_PRIVATE_RESP, {0x05, 0x00, 0xBE, 0x7A, 0x00, 0x43, 0x00, 0x00, 0x00, 0x0C, 0x4A, 0x00}));
   EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_CAPABILITIES), 0x000C);
   EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_BOOST), 0);
   EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_AWAY), 0);
@@ -471,16 +462,20 @@ TEST(ProtoDhw, OperatingStatusRefusesWhatItCannotRead) {
   };
   const IoFrame good = operating_reply(DHW_OPERATING_MODE_OFF);
   ASSERT_EQ(fp15_stored(good), 0x000C);
-  EXPECT_EQ(fp15_stored(reply_with({0x05, 0x00, 0xA1, 0xE8, 0x00, 0x00}, CMD_PRIVATE_RESP)), -1)
+  EXPECT_EQ(fp15_stored(test::make_payload_frame(CMD_PRIVATE_RESP, {0x05, 0x00, 0xA1, 0xE8, 0x00, 0x00})), -1)
       << "the plain FP1-FP7 read has no FP15 or FP16";
   // Each parameter is stored on its own: a reply that carries one of them gives that one and not the other.
-  const IoFrame fp16_only = reply_with({0x05, 0x00, 0xA1, 0xE8, 0x00, 0x01, 0x4A, 0x00}, CMD_PRIVATE_RESP);
+  const IoFrame fp16_only =
+      test::make_payload_frame(CMD_PRIVATE_RESP, {0x05, 0x00, 0xA1, 0xE8, 0x00, 0x01, 0x4A, 0x00});
   EXPECT_EQ(fp16_stored(fp16_only), 0);
   EXPECT_EQ(fp15_stored(fp16_only), -1);
-  const IoFrame fp15_only = reply_with({0x05, 0x00, 0xA1, 0xE8, 0x00, 0x02, 0x00, 0x0C}, CMD_PRIVATE_RESP);
+  const IoFrame fp15_only =
+      test::make_payload_frame(CMD_PRIVATE_RESP, {0x05, 0x00, 0xA1, 0xE8, 0x00, 0x02, 0x00, 0x0C});
   EXPECT_EQ(fp15_stored(fp15_only), 0x000C);
   EXPECT_EQ(fp16_stored(fp15_only), -1);
-  EXPECT_EQ(fp15_stored(reply_with({0x05, 0x00, 0xA1, 0xE8, 0x01, 0x03, 0x00, 0x0C, 0x4A, 0x00}, CMD_PRIVATE_RESP)), -1)
+  EXPECT_EQ(fp15_stored(test::make_payload_frame(CMD_PRIVATE_RESP,
+                                                 {0x05, 0x00, 0xA1, 0xE8, 0x01, 0x03, 0x00, 0x0C, 0x4A, 0x00})),
+            -1)
       << "an FPI1 echo shifts the values";
   IoFrame short_reply = good;
   short_reply.data_len -= 1;
@@ -492,7 +487,8 @@ TEST(ProtoDhw, OperatingStatusRefusesWhatItCannotRead) {
 
 TEST(ProtoDhw, ASecondReplyWithoutTheParametersKeepsWhatWasStored) {
   IoDevice dev = stored_from(operating_reply(DHW_OPERATING_MODE_BOOST_ON));
-  EXPECT_EQ(store_status_parameter_readings(dev, reply_with({0x05, 0x00, 0xA1, 0xE8, 0x00, 0x00}, CMD_PRIVATE_RESP)),
+  EXPECT_EQ(store_status_parameter_readings(
+                dev, test::make_payload_frame(CMD_PRIVATE_RESP, {0x05, 0x00, 0xA1, 0xE8, 0x00, 0x00})),
             0u);
   EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_BOOST), 1);
   EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_CAPABILITIES), 0x000C);
@@ -514,7 +510,7 @@ TEST(DhwHeatingSource, HasNoNameUntilBothReadingsArrived) {
 // === Who takes a register ===
 
 TEST(ProtoDhw, AFamilyZeroRegisterGoesToAWaterHeaterOnlyAndAHeaterRegisterToAHeaterOnly) {
-  const IoDevice water_heater = water_heater_record();
+  const IoDevice water_heater = test::water_heater_record();
   IoDevice radiator;
   radiator.type = DeviceType::ELECTRICAL_HEATER;
   radiator.subtype = 1;

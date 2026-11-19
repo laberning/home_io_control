@@ -7,7 +7,7 @@
 #include "proto_commands.h"
 #include "proto_private_registers.h"
 
-#include "heating_test_data.h"
+#include "corpus_test_helpers.h"
 #include "test_helpers.h"
 #include "reading_store.h"
 #include "stubs/radio_test_common.h"
@@ -301,17 +301,6 @@ TEST(HubOperations, StatusRequestIsRefusedForTheCarControllerSubtypeOfTheLockTyp
 // send_heating_command tests (CMD_WRITE_PRIVATE 0x20)
 // ========================================================================================
 
-static IoFrame build_write_private_ack(const uint8_t dst[3]) {
-  IoFrame f{};
-  init_frame(f, true, false, true, false);
-  uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
-  set_dst(f, dst);
-  set_src(f, device_node_id);
-  const uint8_t payload[] = {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00};
-  set_cmd(f, CMD_WRITE_PRIVATE_ACK, payload, sizeof(payload));
-  return f;
-}
-
 /// A device event report (a 0x71 nobody subscribed to) from the heater ABC123 to the hub.
 static IoFrame build_device_event_report(const uint8_t dst[3]) {
   IoFrame f{};
@@ -378,7 +367,8 @@ TEST(HubOperations, ADeviceEventDuringAHeatingWriteIsRecordedAndTheWriteAskedAga
   test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
 
   radio.queue_rx(test::make_rx_packet(build_device_event_report(comp.node_id_)));
-  radio.queue_rx(test::make_rx_packet(build_write_private_ack(comp.node_id_)));
+  radio.queue_rx(test::make_rx_packet(test::make_device_reply(
+      comp.node_id_, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x61, 0x01, 0x03, 0xCD, 0x00}, test::DEVICE_ABC123_ID)));
 
   EXPECT_TRUE(comp.send_heating_command("ABC123", DeviceRegister::COMFORT_SETPOINT, 20.5f));
 
@@ -393,17 +383,6 @@ TEST(HubOperations, ADeviceEventDuringAHeatingWriteIsRecordedAndTheWriteAskedAga
 // ========================================================================================
 
 namespace {
-
-// A 0x21 from the heater (0xABC123) whose data is `payload`.
-IoFrame build_register_ack(const uint8_t dst[3], const std::vector<uint8_t> &payload) {
-  IoFrame f{};
-  init_frame(f, true, false, true, false);
-  uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
-  set_dst(f, dst);
-  set_src(f, device_node_id);
-  set_cmd(f, CMD_WRITE_PRIVATE_ACK, payload.data(), payload.size());
-  return f;
-}
 
 // Register low byte of a sent CMD_WRITE_PRIVATE frame (payload `0C <dir> 01 <reg>` starts at offset 9).
 uint8_t sent_register(const std::vector<uint8_t> &tx) { return tx.at(12); }
@@ -423,7 +402,8 @@ TEST(HubOperations, ADeviceEventDuringAHeatingRegisterReadIsRecordedAndTheReadAn
   MockRadio radio;
   auto *dev = make_heater(comp, radio);
   radio.queue_rx(test::make_rx_packet(build_device_event_report(comp.node_id_)));
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08})));
+  radio.queue_rx(test::make_rx_packet(test::make_device_reply(
+      comp.node_id_, CMD_WRITE_PRIVATE_ACK, {0x0C, 0x60, 0x01, 0x15, 0x1B, 0x08}, test::DEVICE_ABC123_ID)));
 
   float value = 0.0F;
   ASSERT_TRUE(comp.read_heating_register("ABC123", DeviceRegister::ROOM_TEMPERATURE, &value, EXCHANGE_RETRY_COUNT));
@@ -3727,16 +3707,14 @@ namespace {
 
 IoDevice *make_towel_dryer(TestableComponent &comp, MockRadio &radio) {
   IoDevice *dev = make_heater(comp, radio);
-  dev->model = DeviceModel::TOWEL_DRYER;
-  resolve_device_features(*dev);
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
   return dev;
 }
 
 void queue_register_reply(TestableComponent &comp, MockRadio &radio, const std::vector<uint8_t> &payload) {
-  radio.queue_rx(test::make_rx_packet(build_register_ack(comp.node_id_, payload)));
+  radio.queue_rx(test::make_rx_packet(
+      test::make_device_reply(comp.node_id_, CMD_WRITE_PRIVATE_ACK, payload, test::DEVICE_ABC123_ID)));
 }
-
-using heating_test_data::ADELIS_NAME_REPLY;
 
 }  // namespace
 
@@ -3782,7 +3760,7 @@ TEST(HubOperations, TowelDryerPollReadsItsOwnRegistersThenTheBootRegisterTheLeve
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x26, 0x64});        // 100 %
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x02, 0x18, 0x01});  // 28.0 C
   radio.queue_rx(test::make_rx_packet(build_towel_status_response(comp.node_id_, LEVEL_BOOST_MP)));
-  queue_register_reply(comp, radio, ADELIS_NAME_REPLY);
+  queue_register_reply(comp, radio, corpus_test::adelis_name_reply());
 
   EXPECT_TRUE(comp.request_device_status("ABC123"));
 
@@ -3873,7 +3851,8 @@ TEST(HubOperations, TowelDryerPollReadsTheTemperatureInForceOnlyWhileTheProgramm
   // A comfort period: the core registers, 0x0137, the boot register (first poll only), the status read, the
   // model name.
   EXPECT_EQ(
-      run_towel_poll(comp, radio, {PROG, NONE, IN_FORCE_COMFORT, LEVEL_COMFORT_MP, {boot_max}, {ADELIS_NAME_REPLY}}),
+      run_towel_poll(comp, radio,
+                     {PROG, NONE, IN_FORCE_COMFORT, LEVEL_COMFORT_MP, {boot_max}, {corpus_test::adelis_name_reply()}}),
       (std::vector<uint8_t>{0x15, 0x03, 0x36, 0x3E, 0x26, 0x37, 0x02, STATUS_READ, 0x19}));
   EXPECT_FLOAT_EQ(test::number_read(*dev, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE), 20.0F);
   EXPECT_EQ(test::wire_read(*dev, DeviceReading::HEATING_LEVEL), heating_level::COMFORT);
@@ -4222,8 +4201,7 @@ namespace {
 
 IoDevice *make_heater_with_light(TestableComponent &comp, MockRadio &radio) {
   IoDevice *dev = make_heater(comp, radio);
-  dev->model = DeviceModel::HEATER_WITH_LIGHT;
-  resolve_device_features(*dev);
+  test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::HEATER_WITH_LIGHT);
   return dev;
 }
 

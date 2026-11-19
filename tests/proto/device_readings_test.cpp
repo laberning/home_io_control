@@ -391,8 +391,7 @@ TEST(DeviceReadings, EveryRegisterRowThatIsPolledIsPolledForSomeHeaterOrWaterHea
 
 TEST(DeviceReadings, AReadingNotPolledIsNotSelectedForAnyHeaterEvenWhenAskedFor) {
   IoDevice dev;
-  dev.model = DeviceModel::TOWEL_DRYER;
-  test::set_kind(dev, DeviceType::ELECTRICAL_HEATER, 1);
+  test::set_kind(dev, DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
   ask_register_reading(dev, DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE);
   for (const ReadingPoll policy : POLL_PHASES) {
     const HeaterPollList list = device_poll_reads(dev, policy);
@@ -664,42 +663,27 @@ TEST(DeviceReadings, AWrittenTemporaryStateForgetsTheTimeLeftOfBothRunsAndNothin
 
 // === The water heater's rows, selected by capability ===
 
-namespace {
-
-/// A water heater's record with nothing read yet.
-IoDevice water_heater_record() {
-  IoDevice dev;
-  test::set_kind(dev, DeviceType::DOMESTIC_HOT_WATER);
-  return dev;
-}
-
-std::vector<DeviceRegister> polled_registers(const IoDevice &dev, ReadingPoll policy) {
-  const HeaterPollList list = device_poll_reads(dev, policy);
-  return std::vector<DeviceRegister>(list.begin(), list.end());
-}
-
-}  // namespace
-
 TEST(DeviceReadings, AWaterHeaterIsPolledByItsRowsInTableOrderWithTheHeatingRegisterOnce) {
-  const IoDevice dev = water_heater_record();
+  const IoDevice dev = test::water_heater_record();
   ASSERT_TRUE(has_feature(dev.features, device_feature::WATER_HEATER));
-  EXPECT_EQ(polled_registers(dev, ReadingPoll::EVERY_POLL),
+  EXPECT_EQ(test::polled_registers(dev, ReadingPoll::EVERY_POLL),
             (std::vector<DeviceRegister>{DeviceRegister::DHW_WATER_TEMPERATURE, DeviceRegister::DHW_MODE,
                                          DeviceRegister::DHW_HEATING, DeviceRegister::DHW_BOOST_DURATION,
                                          DeviceRegister::DHW_AWAY_DURATION, DeviceRegister::DHW_ENERGY}))
       << "three readings are slices of the heating register: one read";
-  EXPECT_EQ(polled_registers(dev, ReadingPoll::ONCE_AFTER_BOOT),
+  EXPECT_EQ(test::polled_registers(dev, ReadingPoll::ONCE_AFTER_BOOT),
             (std::vector<DeviceRegister>{DeviceRegister::DHW_BRAND}));
-  EXPECT_TRUE(polled_registers(dev, ReadingPoll::EVERY_POLL_MAY_MISS).empty());
-  EXPECT_TRUE(polled_registers(dev, ReadingPoll::WHEN_ASKED).empty());
-  EXPECT_TRUE(polled_registers(dev, ReadingPoll::NOT_POLLED).empty()) << "the status readings answer the status read";
+  EXPECT_TRUE(test::polled_registers(dev, ReadingPoll::EVERY_POLL_MAY_MISS).empty());
+  EXPECT_TRUE(test::polled_registers(dev, ReadingPoll::WHEN_ASKED).empty());
+  EXPECT_TRUE(test::polled_registers(dev, ReadingPoll::NOT_POLLED).empty())
+      << "the status readings answer the status read";
 }
 
 TEST(DeviceReadings, TheBrandIsReadUntilItHoldsAValueAndNoLonger) {
-  IoDevice dev = water_heater_record();
-  ASSERT_EQ(polled_registers(dev, ReadingPoll::ONCE_AFTER_BOOT).size(), 1u);
+  IoDevice dev = test::water_heater_record();
+  ASSERT_EQ(test::polled_registers(dev, ReadingPoll::ONCE_AFTER_BOOT).size(), 1u);
   test::store_reading(dev, DeviceRegister::DHW_BRAND, 65);
-  EXPECT_TRUE(polled_registers(dev, ReadingPoll::ONCE_AFTER_BOOT).empty());
+  EXPECT_TRUE(test::polled_registers(dev, ReadingPoll::ONCE_AFTER_BOOT).empty());
 }
 
 TEST(DeviceReadings, ADeviceWithoutAHeatingProfileOrTheWaterHeaterCapabilityIsPolledForNoRegister) {
@@ -710,12 +694,12 @@ TEST(DeviceReadings, ADeviceWithoutAHeatingProfileOrTheWaterHeaterCapabilityIsPo
     test::set_kind(dev, type);
     for (const ReadingPoll policy : {ReadingPoll::EVERY_POLL, ReadingPoll::EVERY_POLL_MAY_MISS, ReadingPoll::WHEN_ASKED,
                                      ReadingPoll::ONCE_AFTER_BOOT})
-      EXPECT_TRUE(polled_registers(dev, policy).empty()) << static_cast<int>(type);
+      EXPECT_TRUE(test::polled_registers(dev, policy).empty()) << static_cast<int>(type);
   }
 }
 
 TEST(DeviceReadings, AWaterHeaterReplyStoresItsReadingsAndAnEmptyOrWrongOneNone) {
-  IoDevice dev = water_heater_record();
+  IoDevice dev = test::water_heater_record();
   EXPECT_TRUE(store_register_reply(dev, DeviceRegister::DHW_MODE, std::vector<uint8_t>{0x02}));
   EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_MODE), 2);
   EXPECT_FALSE(store_register_reply(dev, DeviceRegister::DHW_MODE, std::vector<uint8_t>{0x07}))
@@ -727,7 +711,7 @@ TEST(DeviceReadings, AWaterHeaterReplyStoresItsReadingsAndAnEmptyOrWrongOneNone)
 }
 
 TEST(DeviceReadings, ARegisterThatIsReadByPartsIsAskedClearedAndMarkedAbsentAsAWhole) {
-  IoDevice dev = water_heater_record();
+  IoDevice dev = test::water_heater_record();
   ASSERT_TRUE(store_register_reply(dev, DeviceRegister::DHW_HEATING,
                                    std::vector<uint8_t>{0x01, 0xFF, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00}));
   EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_HEAT_PUMP), 1);

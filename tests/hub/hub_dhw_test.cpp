@@ -63,18 +63,8 @@ IoDevice *make_water_heater(TestableComponent &comp, MockRadio &radio) {
   return make_device(comp, radio, DeviceType::DOMESTIC_HOT_WATER);
 }
 
-/// A frame from the heater with `cmd` and `payload`.
-IoFrame from_device(const uint8_t dst[3], uint8_t cmd, const std::vector<uint8_t> &payload) {
-  IoFrame f{};
-  init_frame(f, true, false, true, false);
-  set_dst(f, dst);
-  set_src(f, DEVICE_NODE_ID);
-  set_cmd(f, cmd, payload.data(), payload.size());
-  return f;
-}
-
 void queue(TestableComponent &comp, MockRadio &radio, uint8_t cmd, const std::vector<uint8_t> &payload) {
-  radio.queue_rx(test::make_rx_packet(from_device(comp.node_id_, cmd, payload)));
+  radio.queue_rx(test::make_rx_packet(test::make_device_reply(comp.node_id_, cmd, payload, DEVICE_NODE_ID)));
 }
 
 /// The status reply the Calypso sends for a target `mp` (corpus atlantic_calypso_probe_status_mp_fp).

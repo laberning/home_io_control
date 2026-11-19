@@ -8,11 +8,13 @@
 /// either the reading or the register of a heater, whichever the test is about.
 
 #include "proto_device_readings.h"
+#include "proto_heating.h"
 #include "proto_heating_profiles.h"
 
 #include <cmath>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -75,6 +77,24 @@ inline ReadState read_state(const IoDevice &dev, DeviceRegister fn) {
 
 /// Does the device hold a value for the reading that is this register?
 inline bool has_reading(const IoDevice &dev, DeviceRegister fn) { return register_value(dev, fn).has_value(); }
+
+/// The registers a poll of the device reads under one policy, in the order of the reads.
+inline std::vector<DeviceRegister> polled_registers(const IoDevice &dev, ReadingPoll policy) {
+  const HeaterPollList list = device_poll_reads(dev, policy);
+  return std::vector<DeviceRegister>(list.begin(), list.end());
+}
+
+/// The readings of a towel dryer with comfort setpoint 20.0 and `in_force` in the temperature-in-force register,
+/// as a poll leaves them; the heating level the status read reported is stored when `level` is given.
+inline void store_programme_readings(IoDevice &dev, TowelDryerMode mode, HeatingTemporaryState state, float in_force,
+                                     std::optional<int16_t> level = std::nullopt) {
+  store_reading(dev, DeviceReading::TOWEL_MODE, static_cast<int16_t>(mode));
+  store_reading(dev, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(state));
+  store_reading(dev, DeviceReading::SETPOINT, 20.0F);
+  store_reading(dev, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE, in_force);
+  if (level)
+    store_reading(dev, DeviceReading::HEATING_LEVEL, *level);
+}
 
 /// The reading a profile's programme keeps its temperature in force in, or nullptr for a device without a programme.
 inline const DeviceReadingRow *in_force_row_of(const IoDevice &dev) {

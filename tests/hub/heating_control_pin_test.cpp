@@ -21,17 +21,6 @@ using namespace management_test;
 
 namespace {
 
-/// A heater reply that echoes the register of `payload` (`0C 6x 01 <reg> [value]`).
-IoFrame register_ack(const uint8_t dst[3], const std::vector<uint8_t> &payload) {
-  IoFrame frame{};
-  init_frame(frame, true, false, true, false);
-  const uint8_t device_node_id[3] = {0xAB, 0xC1, 0x23};
-  set_dst(frame, dst);
-  set_src(frame, device_node_id);
-  set_cmd(frame, CMD_WRITE_PRIVATE_ACK, payload.data(), static_cast<uint8_t>(payload.size()));
-  return frame;
-}
-
 /// What one run of the action did.
 struct ActionRun {
   ManagementActionResult result;
@@ -74,7 +63,8 @@ ActionRun run_action(const std::string &function, const std::string &value, Rig 
   // One reply for the one request: a set is acknowledged, a read answers the sensor's value.
   std::vector<uint8_t> reply = {0x0C, 0x60, 0x01, 0x0E};
   reply.insert(reply.end(), read_value.begin(), read_value.end());
-  radio.queue_rx(frame_to_packet(register_ack(component.node_id_, reply)));
+  radio.queue_rx(frame_to_packet(
+      test::make_device_reply(component.node_id_, CMD_WRITE_PRIVATE_ACK, reply, test::DEVICE_ABC123_ID)));
 
   ActionRun run;
   run.result = component.management_actions_.heating_control("ABC123", function, value);

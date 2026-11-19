@@ -886,12 +886,7 @@ namespace {
 
 /// A frame from the probe device to the hub with the given command and payload.
 IoFrame make_transfer_reply(const uint8_t dst[3], uint8_t cmd, const std::vector<uint8_t> &payload) {
-  IoFrame frame{};
-  init_frame(frame, true, false, true, false);
-  set_dst(frame, dst);
-  set_src(frame, PROBE_DEVICE_NODE_ID);
-  EXPECT_TRUE(set_cmd(frame, cmd, payload.data(), static_cast<uint8_t>(payload.size())));
-  return frame;
+  return test::make_device_reply(dst, cmd, payload, PROBE_DEVICE_NODE_ID);
 }
 
 /// The 18-byte block `first, first+1, ...` of a transfer, echoing handle and chunk.

@@ -9,6 +9,7 @@
 #include "../stubs/radio_test_common.h"
 
 #include <cstring>
+#include <vector>
 
 #include "esphome/core/application.h"
 
@@ -43,6 +44,33 @@ inline void set_kind(IoDevice &dev, DeviceType type, uint8_t subtype = 0) {
   dev.type = type;
   dev.subtype = subtype;
   resolve_device_features(dev);
+}
+
+/// The same for a kind of product that shares its type and subtype with others (a model).
+inline void set_kind(IoDevice &dev, DeviceType type, uint8_t subtype, DeviceModel model) {
+  dev.model = model;
+  set_kind(dev, type, subtype);
+}
+
+/// A water heater's record with nothing read yet, its capabilities as the hub resolves them for the kind.
+inline IoDevice water_heater_record() {
+  IoDevice dev;
+  set_kind(dev, DeviceType::DOMESTIC_HOT_WATER);
+  return dev;
+}
+
+/// The node id the hub tests give their one registered device (key "ABC123").
+const uint8_t DEVICE_ABC123_ID[3] = {0xAB, 0xC1, 0x23};
+
+/// A frame from the device `src` to `dst` carrying `cmd` and `payload`, as a reply on air has it.
+inline IoFrame make_device_reply(const uint8_t dst[3], uint8_t cmd, const std::vector<uint8_t> &payload,
+                                 const uint8_t src[3]) {
+  IoFrame frame{};
+  init_frame(frame, true, false, true, false);
+  set_dst(frame, dst);
+  set_src(frame, src);
+  EXPECT_TRUE(set_cmd(frame, cmd, payload.data(), static_cast<uint8_t>(payload.size())));
+  return frame;
 }
 
 inline IoFrame make_execute(uint8_t position) {

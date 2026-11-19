@@ -3,6 +3,7 @@
 /// entity or a hub.
 
 #include "proto_codecs.h"
+#include "heating_profiles.h"
 #include "reading_store.h"
 #include "proto_commands.h"
 #include "proto_device_readings.h"
@@ -21,12 +22,6 @@
 using namespace esphome::home_io_control;
 
 namespace {
-
-const HeatingProfile &profile_of(DeviceType type, uint8_t subtype, DeviceModel model = DeviceModel::NONE) {
-  const HeatingProfile *profile = find_heating_profile(type, subtype, model);
-  EXPECT_NE(profile, nullptr);
-  return *profile;
-}
 
 HeatingWriteRequest mode_request(HeatingHvacMode hvac, float shown_target_c = NAN) {
   return {.kind = HeatingWriteKind::MODE, .hvac = hvac, .shown_target_c = shown_target_c};
@@ -85,7 +80,7 @@ TEST(HeatingWritePlan, OnlyARegisterPlanHoldsARegister) {
 // === Setpoint radiator (private registers) ===
 
 TEST(HeatingWritePlan, RadiatorModeIsARegisterWriteThatIsReadBack) {
-  const HeatingProfile &radiator = profile_of(DeviceType::ELECTRICAL_HEATER, 1);
+  const HeatingProfile &radiator = test::profile_of(DeviceType::ELECTRICAL_HEATER, 1);
 
   const HeatingWritePlan plan = plan_heating_write(radiator, mode_request(HeatingHvacMode::HEAT), known_device());
 
@@ -97,7 +92,7 @@ TEST(HeatingWritePlan, RadiatorModeIsARegisterWriteThatIsReadBack) {
 }
 
 TEST(HeatingWritePlan, RadiatorPresetWritesItsRegisterAndNamesTheMatchedEntry) {
-  const HeatingProfile &radiator = profile_of(DeviceType::ELECTRICAL_HEATER, 1);
+  const HeatingProfile &radiator = test::profile_of(DeviceType::ELECTRICAL_HEATER, 1);
   const HeatingWritePlan plan =
       plan_heating_write(radiator, preset_request(HeatingPresetId::CUSTOM, "Program"), known_device());
 
@@ -111,7 +106,7 @@ TEST(HeatingWritePlan, RadiatorPresetWritesItsRegisterAndNamesTheMatchedEntry) {
 }
 
 TEST(HeatingWritePlan, RadiatorTargetIsAnUnencodedSetpointWriteThatIsReadBack) {
-  const HeatingProfile &radiator = profile_of(DeviceType::ELECTRICAL_HEATER, 1);
+  const HeatingProfile &radiator = test::profile_of(DeviceType::ELECTRICAL_HEATER, 1);
 
   const HeatingWritePlan plan = plan_heating_write(radiator, target_request(20.5F), {.programme_state_answered = true});
 
@@ -134,7 +129,7 @@ HeatingDeviceFacts programme_facts(bool runs) {
 
 /// A heater with an adjustable setpoint or a towel dryer, by model.
 const HeatingProfile &programme_profile(DeviceModel model) {
-  return profile_of(DeviceType::ELECTRICAL_HEATER, 1, model);
+  return test::profile_of(DeviceType::ELECTRICAL_HEATER, 1, model);
 }
 
 }  // namespace
@@ -221,8 +216,9 @@ TEST(HeatingWritePlan, ATargetInAutoBeforeTheHeaterAnsweredTheTemperatureInForce
   }
   HeatingDeviceFacts facts = known_device(20.0F);
   facts.in_force_unresolved = true;
-  EXPECT_NE(plan_heating_write(profile_of(DeviceType::ELECTRICAL_HEATER, 0), target_request(21.0F), facts).refusal,
-            HeatingRefusal::IN_FORCE_UNKNOWN)
+  EXPECT_NE(
+      plan_heating_write(test::profile_of(DeviceType::ELECTRICAL_HEATER, 0), target_request(21.0F), facts).refusal,
+      HeatingRefusal::IN_FORCE_UNKNOWN)
       << "a profile without a programme never waits for a temperature in force";
 }
 
@@ -267,16 +263,17 @@ TEST(HeatingWritePlan, AModeOrPresetNeverWaitsForTheProgrammeStateRead) {
 TEST(HeatingWritePlan, AProfileWithoutAProgrammeIsNeverRefusedForTheProgrammeState) {
   HeatingDeviceFacts facts = known_device(20.0F);
   facts.programme_state_answered = false;
-  const HeatingProfile &thermostat = profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  const HeatingProfile &thermostat = test::profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
   EXPECT_TRUE(plan_heating_write(thermostat, target_request(21.0F), facts).is_write());
-  EXPECT_NE(plan_heating_write(profile_of(DeviceType::ELECTRICAL_HEATER, 0), target_request(21.0F), facts).refusal,
-            HeatingRefusal::PROGRAMME_STATE_UNANSWERED);
+  EXPECT_NE(
+      plan_heating_write(test::profile_of(DeviceType::ELECTRICAL_HEATER, 0), target_request(21.0F), facts).refusal,
+      HeatingRefusal::PROGRAMME_STATE_UNANSWERED);
 }
 
 TEST(HeatingWritePlan, AProfileWithoutAProgrammeWritesTheSetpointWhateverTheFactsSay) {
-  const HeatingProfile &plain = profile_of(DeviceType::ELECTRICAL_HEATER, 0);
+  const HeatingProfile &plain = test::profile_of(DeviceType::ELECTRICAL_HEATER, 0);
   EXPECT_FALSE(plan_heating_write(plain, target_request(21.0F), programme_facts(true)).temporary_override);
-  const HeatingProfile &thermostat = profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  const HeatingProfile &thermostat = test::profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
   EXPECT_FALSE(plan_heating_write(thermostat, target_request(21.0F), programme_facts(true)).temporary_override);
 }
 
@@ -457,7 +454,7 @@ TEST(HeatingWritePlan, ATimedRunRegisterMattersOnlyWhileTheModeShowsTheProgramme
   IoDevice radiator_readings;
   test::store_reading(radiator_readings, DeviceReading::MODE, static_cast<int16_t>(HeatingMode::PROG));
   EXPECT_EQ(timed_run_register(radiator, radiator_readings), std::nullopt) << "a radiator has no timed run";
-  EXPECT_EQ(timed_run_register(profile_of(DeviceType::ELECTRICAL_HEATER, 0), radiator_readings), std::nullopt);
+  EXPECT_EQ(timed_run_register(test::profile_of(DeviceType::ELECTRICAL_HEATER, 0), radiator_readings), std::nullopt);
 }
 
 TEST(HeatingWritePlan, OnlyATargetOnAProfileWithAProgrammeReadsTheProgrammeStateFirst) {
@@ -468,8 +465,8 @@ TEST(HeatingWritePlan, OnlyATargetOnAProfileWithAProgrammeReadsTheProgrammeState
     EXPECT_FALSE(heating_request_reads_programme_state(profile, preset_request(HeatingPresetId::BOOST)));
   }
   EXPECT_FALSE(
-      heating_request_reads_programme_state(profile_of(DeviceType::ELECTRICAL_HEATER, 0), target_request(21.0F)));
-  EXPECT_FALSE(heating_request_reads_programme_state(profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0),
+      heating_request_reads_programme_state(test::profile_of(DeviceType::ELECTRICAL_HEATER, 0), target_request(21.0F)));
+  EXPECT_FALSE(heating_request_reads_programme_state(test::profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0),
                                                      target_request(21.0F)));
 }
 
@@ -482,7 +479,7 @@ TEST(HeatingWritePlan, AnOverrideIsTakenWhenTheRegisterHoldsTheRequestToATenth) 
 }
 
 TEST(HeatingWritePlan, TowelDryerModeAndTemporaryStateAreSeparateRegisters) {
-  const HeatingProfile &dryer = profile_of(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
+  const HeatingProfile &dryer = test::profile_of(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
 
   const HeatingWritePlan mode = plan_heating_write(dryer, mode_request(HeatingHvacMode::AUTO), known_device());
   ASSERT_EQ(mode.kind, HeatingPlanKind::REGISTER);
@@ -504,7 +501,7 @@ TEST(HeatingWritePlan, TowelDryerModeAndTemporaryStateAreSeparateRegisters) {
 }
 
 TEST(HeatingWritePlan, ComfortAndEcoAreNoPresetOfATowelDryer) {
-  const HeatingProfile &dryer = profile_of(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
+  const HeatingProfile &dryer = test::profile_of(DeviceType::ELECTRICAL_HEATER, 1, DeviceModel::TOWEL_DRYER);
 
   for (const HeatingPresetId preset : {HeatingPresetId::COMFORT, HeatingPresetId::ECO}) {
     const HeatingWritePlan plan = plan_heating_write(dryer, preset_request(preset), known_device());
@@ -516,7 +513,7 @@ TEST(HeatingWritePlan, ComfortAndEcoAreNoPresetOfATowelDryer) {
 // === Plain heater (heating levels) ===
 
 TEST(HeatingWritePlan, PlainHeaterModesAndPresetsAreLevelsWithoutAReadBack) {
-  const HeatingProfile &plain = profile_of(DeviceType::ELECTRICAL_HEATER, 0);
+  const HeatingProfile &plain = test::profile_of(DeviceType::ELECTRICAL_HEATER, 0);
 
   const HeatingWritePlan off = plan_heating_write(plain, mode_request(HeatingHvacMode::OFF), known_device());
   ASSERT_EQ(off.kind, HeatingPlanKind::LEVEL);
@@ -537,7 +534,7 @@ TEST(HeatingWritePlan, PlainHeaterModesAndPresetsAreLevelsWithoutAReadBack) {
 }
 
 TEST(HeatingWritePlan, PlainHeaterHasNoSetpointAndNoSecuredPreset) {
-  const HeatingProfile &plain = profile_of(DeviceType::ELECTRICAL_HEATER, 0);
+  const HeatingProfile &plain = test::profile_of(DeviceType::ELECTRICAL_HEATER, 0);
 
   EXPECT_EQ(plan_heating_write(plain, target_request(20.0F), known_device()).refusal, HeatingRefusal::NO_SETPOINT);
   EXPECT_EQ(plan_heating_write(plain, preset_request(HeatingPresetId::CUSTOM, "Secured"), known_device()).refusal,
@@ -547,7 +544,7 @@ TEST(HeatingWritePlan, PlainHeaterHasNoSetpointAndNoSecuredPreset) {
 // === Thermostat (FP9) ===
 
 TEST(HeatingWritePlan, ThermostatOffAndAutoSendTheirMarkerWithFp9) {
-  const HeatingProfile &thermostat = profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  const HeatingProfile &thermostat = test::profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
 
   const HeatingWritePlan off = plan_heating_write(thermostat, mode_request(HeatingHvacMode::OFF), known_device());
   ASSERT_EQ(off.kind, HeatingPlanKind::TEMPERATURE);
@@ -563,7 +560,7 @@ TEST(HeatingWritePlan, ThermostatOffAndAutoSendTheirMarkerWithFp9) {
 }
 
 TEST(HeatingWritePlan, ThermostatHeatSendsTheShownTargetOverTheYamlRange) {
-  const HeatingProfile &thermostat = profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  const HeatingProfile &thermostat = test::profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
 
   const HeatingWritePlan plan =
       plan_heating_write(thermostat, mode_request(HeatingHvacMode::HEAT, 21.0F), known_device(19.0F, 7.0F, 30.0F));
@@ -575,7 +572,7 @@ TEST(HeatingWritePlan, ThermostatHeatSendsTheShownTargetOverTheYamlRange) {
 }
 
 TEST(HeatingWritePlan, ThermostatHeatFallsBackToTheReportedSetpointAndRefusesWithNeither) {
-  const HeatingProfile &thermostat = profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  const HeatingProfile &thermostat = test::profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
 
   const HeatingWritePlan reported =
       plan_heating_write(thermostat, mode_request(HeatingHvacMode::HEAT), known_device(19.5F, 7.0F, 30.0F));
@@ -596,7 +593,7 @@ TEST(HeatingWritePlan, HeatPlansTheSetpointAHeaterReportsAtEitherEndOfARangeThat
   // reply decodes to stays inside the range, so heat is planned and not refused as out of range.
   const float min_c = 7.2222F;
   const float max_c = 26.6667F;
-  const HeatingProfile &thermostat = profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  const HeatingProfile &thermostat = test::profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
   for (const uint16_t word : {static_cast<uint16_t>(0), TEMPERATURE_MP_SPAN}) {
     const std::vector<uint8_t> main_parameter = {static_cast<uint8_t>(word >> 8), static_cast<uint8_t>(word & 0xFF)};
     const std::optional<float> setpoint =
@@ -613,7 +610,7 @@ TEST(HeatingWritePlan, HeatPlansTheSetpointAHeaterReportsAtEitherEndOfARangeThat
 }
 
 TEST(HeatingWritePlan, ThermostatTargetAndAliasPresetsCarryTheirFunctionalParameter) {
-  const HeatingProfile &thermostat = profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  const HeatingProfile &thermostat = test::profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
 
   const HeatingWritePlan target = plan_heating_write(thermostat, target_request(22.0F), known_device(NAN, 5.0F, 35.0F));
   ASSERT_EQ(target.kind, HeatingPlanKind::TEMPERATURE);
@@ -632,7 +629,7 @@ TEST(HeatingWritePlan, ThermostatTargetAndAliasPresetsCarryTheirFunctionalParame
 // === Heat pump (FP16, fixed range) ===
 
 TEST(HeatingWritePlan, HeatPumpOffAndOnCarryFp16) {
-  const HeatingProfile &pump = profile_of(DeviceType::HEAT_PUMP, 0);
+  const HeatingProfile &pump = test::profile_of(DeviceType::HEAT_PUMP, 0);
 
   const HeatingWritePlan off = plan_heating_write(pump, mode_request(HeatingHvacMode::OFF), known_device());
   ASSERT_EQ(off.kind, HeatingPlanKind::TEMPERATURE);
@@ -649,7 +646,7 @@ TEST(HeatingWritePlan, HeatPumpOffAndOnCarryFp16) {
 }
 
 TEST(HeatingWritePlan, AFixedRangeProfileIgnoresTheYamlRange) {
-  const HeatingProfile &pump = profile_of(DeviceType::HEAT_PUMP, 0);
+  const HeatingProfile &pump = test::profile_of(DeviceType::HEAT_PUMP, 0);
   ASSERT_TRUE(pump.fixed_range);
 
   const HeatingWritePlan plan = plan_heating_write(pump, target_request(21.0F), known_device(NAN, 7.0F, 30.0F));
@@ -662,7 +659,7 @@ TEST(HeatingWritePlan, AFixedRangeProfileIgnoresTheYamlRange) {
 // === Refusals ===
 
 TEST(HeatingWritePlan, ATargetNeedsADeviceRecordAndAFiniteTemperature) {
-  const HeatingProfile &thermostat = profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  const HeatingProfile &thermostat = test::profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
 
   EXPECT_EQ(plan_heating_write(thermostat, target_request(21.0F), HeatingDeviceFacts{}).refusal,
             HeatingRefusal::UNENCODABLE);
@@ -673,7 +670,7 @@ TEST(HeatingWritePlan, ATargetNeedsADeviceRecordAndAFiniteTemperature) {
 }
 
 TEST(HeatingWritePlan, AModeOrPresetTheProfileDoesNotOfferMatchesNothing) {
-  const HeatingProfile &pump = profile_of(DeviceType::HEAT_PUMP, 0);
+  const HeatingProfile &pump = test::profile_of(DeviceType::HEAT_PUMP, 0);
 
   EXPECT_EQ(plan_heating_write(pump, mode_request(HeatingHvacMode::AUTO), known_device()).refusal,
             HeatingRefusal::NO_MATCH);
