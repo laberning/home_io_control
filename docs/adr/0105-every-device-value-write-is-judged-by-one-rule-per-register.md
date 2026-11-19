@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0105 -->
 
-**Status:** Accepted, amends [ADR 0054](0054-heaters-are-read-back-over-the-private-register-protocol.md), [ADR 0057](0057-temperature-setpoints-travel-in-the-main-parameter.md) and [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0054](0054-heaters-are-read-back-over-the-private-register-protocol.md), [ADR 0057](0057-temperature-setpoints-travel-in-the-main-parameter.md) and [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md); amended by [ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md) · **Recorded:** 2026-11
 
 Builds on [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) (the shared
 codecs) and [ADR 0054](0054-heaters-are-read-back-over-the-private-register-protocol.md) (one register table drives
@@ -55,7 +55,9 @@ only, so each writer kept its own byte layout.
 - A target of a thermostat outside its YAML range is no longer sent as the end of the range.
 - Placeholder register defaults remain on the profiles that are not register profiles (`HeatingWritePlan::register_fn`,
   `read_back_fn`, the profile's `mode_fn` and `preset_fn`); making them optional is left to a follow-up.
-- The water heater's writes still use their own encoders and move onto these rules separately.
+- The water heater's writes use these rules as well ([ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md)).
+- The night light's hub port takes a percentage, like its register's reading: the light sends the percentage Home
+  Assistant shows, and the brightness register's row maps it onto the register's scale.
 
 ## Considered options
 

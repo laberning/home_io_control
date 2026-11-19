@@ -27,8 +27,8 @@ def final_validate_one_main_entity_per_device(config):
         if device_id in declared:
             raise cv.Invalid(
                 f"io_device_id {device_id} is declared by {declared[device_id]} and by {owner}: "
-                "a device is declared by one main entity; give the other entity's readings to "
-                "the first (its reading keys), or use another device"
+                "a device is declared by one main entity; remove one of the two entries, or use "
+                "another device"
             )
         if device_id:
             declared[device_id] = owner

@@ -1080,9 +1080,10 @@ class IOHomeControlComponent : public Component,
                                const std::string &detail_text, bool unanswered);
 
   /// Fold the end of a data-object read into the device record: a value is stored through
-  /// apply_periodic_reading_(); a failed read, an empty open or an open the device declines with a status counts as a
-  /// miss and keeps the last value; an error reply to the open or a read the hub itself refuses marks the reading
-  /// absent until the next boot (one warning); a read another controller cut off is asked again soon without
+  /// apply_periodic_reading_(); a failed read, an empty open or an open the device declines with a status other than
+  /// "no such object" (busy, another transfer open) counts as a miss and keeps the last value; an error reply to the
+  /// open, the status "no such object" (3) or a read the hub itself refuses marks the reading absent until the next
+  /// boot (one warning); a read another controller cut off is asked again soon without
   /// counting (ADR 0102).
   /// @param device_id Target device ID.
   /// @param reading The reading that was read.

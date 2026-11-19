@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0107 -->
 
-**Status:** Accepted, amends [ADR 0064](0064-a-sensor-reading-is-drawn-by-a-re-sent-event-subscription.md), [ADR 0088](0088-the-sun-level-is-shown-in-lux-at-100-lux-per-step.md), [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) and [ADR 0102](0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0064](0064-a-sensor-reading-is-drawn-by-a-re-sent-event-subscription.md), [ADR 0088](0088-the-sun-level-is-shown-in-lux-at-100-lux-per-step.md), [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md), [ADR 0102](0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md) and [ADR 0103](0103-every-heater-value-is-a-reading-kept-by-reading.md) · **Recorded:** 2026-11
 
 Builds on [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) (the reading
 table) and [ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md) (status values as a source kind,
@@ -27,7 +27,8 @@ more after silence, count misses.
    per-reading schedule: the moving-device deferral, the one retry after silence and the miss counting. What differs
    between kinds (the request, the warnings for a refusal or an answer of another shape) belongs to the source kind;
    what differs between readings is one rule per row: after repeated misses, drop the value (rain, sun, battery) or
-   keep it (a counter).
+   keep it (a counter). At most one reading is due per pass of the loop, so a device with several scheduled
+   readings never asks for two in one pass.
 3. **Values are stored in their natural units.** The sun level is stored in lux, its estimated factor of
    [ADR 0088](0088-the-sun-level-is-shown-in-lux-at-100-lux-per-step.md) applied when decoding, as a scaled register
    value is stored in its own unit since

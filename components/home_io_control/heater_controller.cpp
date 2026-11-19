@@ -27,6 +27,7 @@
 #include <cmath>
 #include <iterator>
 #include <optional>
+#include <variant>
 
 namespace esphome {
 namespace home_io_control {
@@ -230,6 +231,10 @@ void HeaterController::enable_device_reading(const std::string &device_id, Devic
   IoDevice *dev = this->registry_.get(device_id);
   const DeviceReadingRow *row = find_device_reading(reading);
   if (dev == nullptr || row == nullptr || !device_has_reading_capability(*dev, *row))
+    return;
+  // Only a reading that is read when asked has an asked flag to set. A derived reading is asked through the registers
+  // it needs, which are such rows themselves; every other policy reads without an entity asking.
+  if (row->poll != ReadingPoll::WHEN_ASKED && !std::holds_alternative<DerivedSource>(row->source))
     return;
   for (const DeviceRegister fn : reading_polled_registers(*row))
     ask_register_reading(*dev, fn);
@@ -689,8 +694,7 @@ void HeaterController::poll_temperature_in_force_(const std::string &device_id, 
            device_id.c_str(), device_register_name(fn));
 }
 
-void HeaterController::poll_asked_registers_(const std::string &device_id, const HeatingProfile &profile,
-                                             uint8_t max_tries) {
+void HeaterController::poll_asked_registers_(const std::string &device_id, uint8_t max_tries) {
   const IoDevice *start = this->registry_.get(device_id);
   if (start == nullptr)
     return;
@@ -776,7 +780,7 @@ bool HeaterController::read_poll_registers_(const std::string &device_id, const 
   // presence, the energy total, a towel dryer's run timers) are read only where it is declared; a miss is not a
   // poll failure.
   if (ok)
-    this->poll_asked_registers_(device_id, profile, max_tries);
+    this->poll_asked_registers_(device_id, max_tries);
 
   // Properties and settings that rarely change are read until they hold a value. A miss here is not a poll
   // failure; the next poll asks again.

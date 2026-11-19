@@ -122,12 +122,28 @@ TEST(ValueCodecs, NoneNeverDecodes) {
   EXPECT_FALSE(decode(ValueCodec::NONE, {0x01, 0x02}).has_value());
 }
 
-TEST(ValueCodecs, EveryCodecReadsOneTwoOrThreeBytes) {
-  for (const ValueCodec codec : {ValueCodec::BINARY, ValueCodec::BOUNDED_BYTE})
-    EXPECT_EQ(value_codec_length(codec), 1u);
-  for (const ValueCodec codec : {ValueCodec::TENTHS_U16, ValueCodec::TENTHS_U16_OR_ZERO, ValueCodec::HUNDREDTHS_S16,
-                                 ValueCodec::BOUNDED_U16, ValueCodec::U16_BE, ValueCodec::FIRST_BYTE_OF_PAIR})
-    EXPECT_EQ(value_codec_length(codec), 2u);
+TEST(ValueCodecs, EveryCodecReadsAsManyBytesAsItsEncodingHolds) {
+  const struct {
+    ValueCodec codec;
+    size_t length;
+  } cases[] = {
+      {ValueCodec::NONE, 0},
+      {ValueCodec::BINARY, 1},
+      {ValueCodec::BOUNDED_BYTE, 1},
+      {ValueCodec::ANY_NONZERO, 1},
+      {ValueCodec::TENTHS_U16, 2},
+      {ValueCodec::TENTHS_U16_OR_ZERO, 2},
+      {ValueCodec::HUNDREDTHS_S16, 2},
+      {ValueCodec::BOUNDED_U16, 2},
+      {ValueCodec::SCALED_U16, 2},
+      {ValueCodec::U16_BE, 2},
+      {ValueCodec::FIRST_BYTE_OF_PAIR, 2},
+      {ValueCodec::TENTHS_S16_BE, 2},
+      {ValueCodec::MARKED_U16_BE, 3},
+      {ValueCodec::THOUSANDTHS_U32_BE, 4},
+  };
+  for (const auto &c : cases)
+    EXPECT_EQ(value_codec_length(c.codec), c.length) << static_cast<int>(c.codec);
 }
 
 // === Encoding: the inverse of decoding ===
@@ -209,6 +225,31 @@ TEST(ValueCodecsEncode, AValueOutsideTheFormIsRefusedNeverRoundedIntoRange) {
     EXPECT_TRUE(encode({.codec = ValueCodec::BOUNDED_U16, .max_value = 10000}, value).empty()) << value;
   for (const float value : {65536.0F, -1.0F, 0.5F, nan})
     EXPECT_TRUE(encode({.codec = ValueCodec::U16_BE}, value).empty()) << value;
+}
+
+TEST(ValueCodecsEncode, AWriteRangeNarrowsTheSpanOfTheCodecAndNeverWidensIt) {
+  // A range wider than the bytes hold: a value outside the span of the bytes is refused, not cast out of range.
+  const ValueRange too_wide{-100.0F, 100000.0F};
+  EXPECT_TRUE(encode({.codec = ValueCodec::TENTHS_U16, .write_range = too_wide}, 7000.0F).empty()) << "above 6553.5";
+  EXPECT_TRUE(encode({.codec = ValueCodec::TENTHS_U16, .write_range = too_wide}, -1.0F).empty()) << "an unsigned word";
+  EXPECT_EQ(encode({.codec = ValueCodec::TENTHS_U16, .write_range = too_wide}, 20.0F),
+            (std::vector<uint8_t>{0xC8, 0x00}));
+  EXPECT_TRUE(encode({.codec = ValueCodec::HUNDREDTHS_S16, .write_range = too_wide}, 400.0F).empty()) << "above 327.67";
+  EXPECT_TRUE(encode({.codec = ValueCodec::HUNDREDTHS_S16, .write_range = too_wide}, -400.0F).empty());
+}
+
+TEST(ValueCodecsScale, AScaleMustRiseStrictlyInBothFields) {
+  constexpr ValueScaleKnot rising[] = {{0, 0}, {50, 1000}, {100, 10000}};
+  constexpr ValueScaleKnot equal_natural[] = {{0, 0}, {0, 1000}};
+  constexpr ValueScaleKnot equal_raw[] = {{0, 0}, {50, 1000}, {100, 1000}};
+  constexpr ValueScaleKnot falling[] = {{0, 0}, {50, 1000}, {40, 2000}};
+  constexpr ValueScaleKnot single[] = {{0, 0}};
+  static_assert(value_scale_rises(rising));
+  EXPECT_FALSE(value_scale_rises(equal_natural)) << "two equal knots would divide by zero";
+  EXPECT_FALSE(value_scale_rises(equal_raw));
+  EXPECT_FALSE(value_scale_rises(falling));
+  EXPECT_FALSE(value_scale_rises(single));
+  EXPECT_FALSE(value_scale_rises({}));
 }
 
 TEST(ValueCodecsEncode, OnlyTheOrZeroFormTakesAZeroOutsideItsRange) {

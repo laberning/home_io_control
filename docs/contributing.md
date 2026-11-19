@@ -143,7 +143,8 @@ you meet them. The structure behind them is described in the
 [ADR 0101](adr/0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) and
 [ADR 0102](adr/0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md),
 [ADR 0104](adr/0104-a-heaters-poll-reads-what-its-reading-rows-select.md),
-[ADR 0105](adr/0105-every-device-value-write-is-judged-by-one-rule-per-register.md) and
+[ADR 0105](adr/0105-every-device-value-write-is-judged-by-one-rule-per-register.md),
+[ADR 0106](adr/0106-a-water-heaters-values-are-readings-of-the-same-table.md) and
 [ADR 0107](adr/0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md).
 
 1. **Find where the value lives.** A heater reports it as a private register; some devices keep it in
@@ -247,8 +248,9 @@ by name. A new value shape is an `encode_value()` case beside the `decode_value(
 
 Tests sit on the lowest stage that fits. The codec and the lookup are tested without a radio. The
 schedule and the value store are tested on the hub with a reading table and recipe table of the test's
-own (`tests/hub/hub_device_reading_test.cpp` shows how), since the production tables have no row until
-a device needs one.
+own (`tests/hub/hub_device_reading_test.cpp` shows how), since the production table has no data-object
+reading and the production recipes no row for a scheduled read yet; the event, limitation and status readings of a
+cover have production rows.
 
 ## Pull requests
 

@@ -26,8 +26,10 @@ written a second time for the scheduled read.
 
 1. **One session.** `TransferSession` walks one recipe at one offset: the open steps, the blocks
    counting down, the close. It is pure: it builds the next request and classifies each answer
-   (read, empty, refused, malformed, too long, incomplete, no answer, abandoned). Once a device accepted
-   an open, the last request is always the close. The `read_object` probe and the queued reader both
+   (`TransferOutcome`: read, empty, declined, no such object, refused, malformed answer, too long, incomplete,
+   no answer, accepted without an answer, abandoned). A read is complete only when its blocks add up to the length
+   the open announced; any other count ends it incomplete. Once a device accepted an open, the last request is
+   always the close. The `read_object` probe and the queued reader both
    drive it, so the order of requests and the meaning of each answer exist once.
 2. **Recipes are the allowlist.** `TRANSFER_RECIPES` replaces the object table of ADR 0062. A row
    lists one or more opens (class, id, and whether the device is expected to answer that open empty),
@@ -64,14 +66,15 @@ written a second time for the scheduled read.
 ## Consequences
 
 - Adding a readable object is a table row, and a device that needs two opens or an offset is a recipe,
-  not hub code. Nothing in the hub queues a read yet: the first caller arrives with the first device that
-  has a recipe.
+  not hub code. The hub queues the reads of its data-object readings on their schedule
+  ([ADR 0102](0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md));
+  no production recipe for a scheduled read exists yet, so no device is read this way until the first one is added.
 - A device whose reads are scheduled is read in the loop between other work, so a read takes a few
   seconds more than the blocking probe and waits behind commands, pairing and another controller's
   traffic. A read that another controller interrupts is lost and has to be queued again.
 - The 15 s quiet time is long next to a room thermostat's write, which a busy installation meets every
   few seconds; the reads then wait, which only delays them.
-- The probe's silence message no longer tells an unanswered request from an acceptance without a reply
-  for `read_object`; both say that no reply came.
+- The probe's silence message does not tell an unanswered request from an acceptance without a reply; both say that no
+  reply came, until [ADR 0100](0100-a-transfer-read-tells-an-accepted-request-without-an-answer-from-silence.md) makes the difference.
 - A recipe that is not read-only has no place in the table: writing stays excluded and has no builder
   (ADR 0062), and adding one is a new decision.

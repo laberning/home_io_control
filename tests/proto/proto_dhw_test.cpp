@@ -98,13 +98,13 @@ TEST(ProtoDhw, ModeWriteRefusesAValueTheHeaterHasNeverShown) {
 
 TEST(ProtoDhw, TheDurationWritesAreFamilyZeroSetsOfTheBoostAndAwayRegisters) {
   uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
-  for (const DhwOperatingFeature which : {DhwOperatingFeature::BOOST, DhwOperatingFeature::AWAY}) {
-    const DhwOperatingFeatureWire &wire = dhw_operating_feature_wire(which);
-    ASSERT_EQ(encode_heating_write(wire.duration_register, static_cast<float>(wire.start_duration), out), 5U);
-    EXPECT_EQ(
-        payload_of(out, 5),
-        (std::vector<uint8_t>{0x0C, 0x61, 0x00, test::dhw_register_byte(wire.duration_register), wire.start_duration}));
-  }
+  // What a start writes, as literals: boost one, away 255 (until turned off), each to its own register.
+  const DhwOperatingFeatureWire &boost = dhw_operating_feature_wire(DhwOperatingFeature::BOOST);
+  EXPECT_EQ(boost.duration_register, DeviceRegister::DHW_BOOST_DURATION);
+  EXPECT_EQ(boost.start_duration, 1);
+  const DhwOperatingFeatureWire &away = dhw_operating_feature_wire(DhwOperatingFeature::AWAY);
+  EXPECT_EQ(away.duration_register, DeviceRegister::DHW_AWAY_DURATION);
+  EXPECT_EQ(away.start_duration, 255);
   ASSERT_EQ(encode_heating_write(DeviceRegister::DHW_BOOST_DURATION, 1.0F, out), 5U);
   EXPECT_EQ(payload_of(out, 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x00, 0x01}))
       << "boost: the value read during a boost started on the display";
@@ -290,6 +290,20 @@ TEST(ProtoDhw, ACutOffHeatingValueStoresOnlyTheSlicesItHolds) {
   EXPECT_FALSE(store_register_reply(dev, DeviceRegister::DHW_HEATING, std::vector<uint8_t>{})) << "no byte at all";
 }
 
+TEST(ProtoDhw, ACutOffHeatingValueKeepsTheValuesOfTheSlicesItDoesNotHold) {
+  IoDevice dev = water_heater_record();
+  ASSERT_TRUE(store_register_reply(dev, DeviceRegister::DHW_HEATING,
+                                   std::vector<uint8_t>{0x01, 0xFF, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00}));
+  ASSERT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_HEAT_PUMP), 1);
+
+  // The next answer holds two bytes: the heating byte and a byte of the element that now say "off", and nothing of
+  // the heat pump's, which is not rewritten from a stale or empty slice.
+  ASSERT_TRUE(store_register_reply(dev, DeviceRegister::DHW_HEATING, std::vector<uint8_t>{0x00, 0xFF, 0x00}));
+  EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_HEATING), 0);
+  EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_ELECTRIC_BACKUP), 0);
+  EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_HEAT_PUMP), 1) << "the earlier value stays";
+}
+
 TEST(ProtoDhw, EnergyIsUnsignedBigEndianWattHoursShownInKilowattHours) {
   const uint8_t value[] = {0x00, 0x1B, 0xF3, 0x42};
   EXPECT_FLOAT_EQ(*decode_register_value(DeviceRegister::DHW_ENERGY, value), 1831.746F);
@@ -318,15 +332,11 @@ TEST(ProtoDhw, TheBrandIsTheLetterItsByteSays) {
 
 namespace {
 
-/// What a status reply's main parameter reads as on a water heater's range: the status setpoint reading.
+/// What a status reply makes a water heater's target, through the hub's own status glue.
 std::optional<float> target_of(const IoFrame &reply) {
-  const IoDevice dev = water_heater_record();
-  const HeatingCardRange range = device_temperature_range(dev);
-  if (reply.cmd != CMD_PRIVATE_RESP || reply.data_len < STATUS_MP_FP_MAIN_PARAMETER_OFFSET + STATUS_MAIN_PARAMETER_SIZE)
-    return std::nullopt;
-  const std::span<const uint8_t> main_parameter(reply.data + STATUS_MP_FP_MAIN_PARAMETER_OFFSET,
-                                                STATUS_MAIN_PARAMETER_SIZE);
-  return decode_status_reading(DeviceReading::STATUS_SETPOINT, main_parameter, 0, range.min_c, range.max_c);
+  IoDevice dev = water_heater_record();
+  test::apply_status_reply(dev, reply);
+  return reading_value(dev, DeviceReading::STATUS_SETPOINT);
 }
 
 }  // namespace

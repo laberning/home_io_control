@@ -85,7 +85,10 @@ the same set of keys. Platform-specific options are documented on each platform'
 - `home_io_control_id` (Optional): Which hub this entity attaches to. Only needed when more than
   one `home_io_control:` block exists.
 - `io_device_id` (Required): The device's 3-byte address, as exactly 6 hexadecimal characters. If
-  you do not know it yet, use the Discover & Pair button — see [Pairing](../pairing.md).
+  you do not know it yet, use the Discover & Pair button — see [Pairing](../pairing.md). A device is
+  declared by one entry only, whichever of the platforms `cover:`, `light:`, `lock:`, `switch:`, `climate:`,
+  `fan:`, `water_heater:` and `sensor:` it is on; a second entry with the same `io_device_id` is a configuration
+  error that names both entries.
 - `io_device_type` (Optional): The device's IO-Homecontrol type, named (`vertical_exterior_awning`) or raw (`0x11`).
   Declaring it is what enables type-specific behaviour such as the Favorite Position button
   (not on garage openers), automatic direction inversion and the open/close-only cover of a

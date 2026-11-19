@@ -1,3 +1,7 @@
+/// @file transfer_session.cpp
+/// @brief TransferSession: the request and answer order of one read of a device object, and what each answer means.
+/// @ingroup hioc_hub
+
 #include "transfer_session.h"
 
 #include "proto_commands.h"
@@ -142,8 +146,10 @@ void TransferSession::on_block_answer_(const IoFrame *reply, bool request_accept
   }
   this->data_.insert(this->data_.end(), block, block + block_len);
   this->chunk_--;
-  if (this->chunk_ == 0)
-    this->close_then_(TransferOutcome::READ);
+  if (this->chunk_ == 0) {
+    // The blocks are all in; the read is complete only if they add up to the length the open announced.
+    this->close_then_(this->data_.size() == this->open_.length ? TransferOutcome::READ : TransferOutcome::INCOMPLETE);
+  }
 }
 
 // === Ending ===

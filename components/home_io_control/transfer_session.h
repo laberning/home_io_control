@@ -8,8 +8,9 @@
 /// down, and the close. It sends nothing and waits for nothing. A runner asks it for the next request,
 /// performs the exchange its own way (the `read_object` probe in a blocking loop, TransferReader one
 /// step per timeout) and hands the answer back, so the order of requests and the meaning of each answer
-/// exist once (ADR 0099). Once a device accepted an open, the session's last request is always the close,
-/// whatever went wrong in between.
+/// exist once (ADR 0099). Once a device accepted an open that announces data, the session's last request is always the
+/// close, whatever went wrong in between; an open answered with no data (length 0 or "nothing to read") needs none and
+/// ends the read at once.
 ///
 /// The session includes no hub header and no radio header: it is tested with answers written by hand.
 
@@ -37,7 +38,8 @@ enum class TransferOutcome : uint8_t {
                    ///< unregistered device. Nothing was sent.
   MALFORMED,       ///< The answer to an open was not a well-formed open answer.
   TOO_LONG,        ///< The device announced more than the recipe accepts; the transfer was closed unread.
-  INCOMPLETE,      ///< A block went unanswered, came back wrong or overflowed the cap; the data is what was read.
+  INCOMPLETE,      ///< A block went unanswered, came back wrong or overflowed the cap, or the blocks did not add up to
+                   ///< the announced length; the data is what was read.
   NO_ANSWER,       ///< The device never answered the open.
   NO_DATA,         ///< The device accepted the open (it challenged the request) but sent no answer to it.
   ABANDONED,       ///< The runner gave the transfer up (another controller started one); closed if it was open.
@@ -100,7 +102,8 @@ class TransferSession {
   /// True when the request that ended the read (an open or a block) was accepted by the device and got no answer;
   /// meaningful once done(). Lets a runner say "accepted but silent" for an INCOMPLETE read too.
   [[nodiscard]] bool ended_on_accepted_silence() const { return ended_on_accepted_silence_; }
-  /// The bytes read so far: all of them for READ, the part read for INCOMPLETE, empty otherwise.
+  /// The bytes read so far: all of them for READ, the blocks read before the read ended for INCOMPLETE and ABANDONED,
+  /// empty for the other outcomes.
   [[nodiscard]] const std::vector<uint8_t> &data() const { return data_; }
 
  private:

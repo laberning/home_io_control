@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0103 -->
 
-**Status:** Accepted, amends [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md); amended by [ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md); amended by [ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md), [ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md) and [ADR 0107](0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md) · **Recorded:** 2026-11
 
 Builds on [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) (the
 reading table, the shared codecs) and [ADR 0102](0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md)
@@ -60,10 +60,13 @@ put the values of data-object readings in a per-device store keyed by reading.
   starting blank. A register the heater answered without a value, and that a later read (the
   `heating_control` action, a write's read-back) answers with a value, is polled again, because a stored
   value is proof the register exists.
-- The poll still reads the registers of the heating profiles' lists. Each row already states when it is
-  read, so a later change can derive the poll from the rows instead.
-- A cover's sun level, rain and battery, a water heater's registers, the model-name register and the
-  raw probes stay outside the table, each with its own mechanism.
+- Each row states when it is read and the poll derives its registers from the rows
+  ([ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md)).
+- A water heater's registers and status values, a cover's rain, sun level and battery
+  ([ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md),
+  [ADR 0107](0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md)) are rows of the
+  same table. The model-name register, the logged registers and the raw probes stay outside it, each with its own
+  mechanism.
 
 ## Considered options
 

@@ -146,9 +146,9 @@ enum class StatusValueForm : uint8_t {
 
 /// @brief A reading that is the main parameter of a status reply of a heater commanded with an EXECUTE.
 /// @details Not read by a poll of its own: the status read answers it, and the hub's status decoder
-///          (apply_heating_main_parameter(), apply_register_heater_status_reply()) stores it. The two bytes are decoded
-///          with ValueCodec::U16_BE and `form` says what they mean. A device that answers no status read
-///          (DeviceFeature::NO_STATUS_READ) never gets one.
+///          (apply_heating_main_parameter(), apply_register_heater_status_reply(), apply_dhw_status_reply()) stores it.
+///          The two bytes are decoded with ValueCodec::U16_BE and `form` says what they mean. A device that answers no
+///          status read (DeviceFeature::NO_STATUS_READ) never gets one.
 struct StatusMainParameterSource {
   StatusValueForm form;  ///< What the main parameter means for this reading.
 };
@@ -283,6 +283,13 @@ struct DeviceReadingRow {
 /// @return The kind.
 [[nodiscard]] ReadingValueKind reading_value_kind(const DeviceReadingRow &row);
 
+/// @brief Whether a scheduled poll that brings the value it already had is worth a debug line.
+/// @details A flag (rain) is polled often and rarely changes, so repeating it would only fill the log; a number or a
+///          named value says something even when it is the same.
+/// @param row The reading's row.
+/// @return False for a flag reading, true otherwise.
+[[nodiscard]] bool reading_logs_unchanged(const DeviceReadingRow &row);
+
 /// @brief Look up the row of a reading.
 /// @param reading The reading.
 /// @return The row, or nullptr for COUNT or a value outside the enumeration.
@@ -344,7 +351,8 @@ std::optional<float> decode_event_reading(const EventSource &source, const IoFra
 /// @details The two bytes are decoded with ValueCodec::U16_BE, then the reading's StatusValueForm says what they mean:
 ///          a level is the low byte when the high byte is `level_prefix`, a temperature is the main parameter decoded
 ///          over the range and rounded to tenths of a degree (a step of the scale is under a thousandth of a degree,
-///          so 20 C would read 19.9998 unrounded).
+///          so 20 C would read 19.9998 unrounded) and clamped into the range, so a range end that is no whole tenth
+///          stays a setpoint the range accepts.
 /// @param reading A reading with a StatusMainParameterSource (DeviceReading::HEATING_LEVEL or STATUS_SETPOINT).
 /// @param main_parameter The two bytes of the main parameter as the status reply carries them.
 /// @param level_prefix High byte of a level or alias (HeatingProfile::mp_prefix, HEATING_LEVEL_MP_PREFIX).
@@ -372,9 +380,10 @@ size_t store_status_parameter_readings(IoDevice &dev, const IoFrame &reply);
 ///         The span points into static storage (the table).
 std::span<const DeviceRegister> reading_polled_registers(const DeviceReadingRow &row);
 
-/// @brief The register a reading is, when it is one register of a heater.
+/// @brief The register a reading is, when its source is a register.
 /// @param reading The reading.
-/// @return The register (what a writable setting writes), or nullopt for a derived reading or COUNT.
+/// @return The register (what a writable setting writes; for a reading that is one part of a register, that register),
+///         or nullopt for a reading of another source kind or COUNT.
 std::optional<DeviceRegister> reading_register(DeviceReading reading);
 
 /// @brief Look up the reading that is a register, for its read condition and its stored value.

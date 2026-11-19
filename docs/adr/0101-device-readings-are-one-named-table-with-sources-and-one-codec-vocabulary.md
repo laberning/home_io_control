@@ -22,20 +22,24 @@ a second value-codec enum beside the heater's.
 1. **One table of named readings** (`DeviceReading`, `proto_device_readings.cpp`). Each row is what one
    entity shows: its name, the capability a device needs (a `DeviceFeature`), and its source.
 2. **A source is a kind.** The kinds are alternatives of one type, so a new kind leaves the rows of the
-   others alone. Two exist: a heater register (with an optional condition under which the register is
+   others alone. Two existed when this record was written: a heater register (with an optional condition under which the register is
    read, such as the minutes left of a run only while that run is on) and a value derived from other
    readings (the minutes left of whichever run is active, with the registers it needs polled). Further
-   kinds (a slice of a data object, a periodic one-frame read) are further alternatives.
+   kinds (a slice of a data object, a periodic one-frame read) are further alternatives, which
+   [ADR 0102](0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md),
+   [ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md) and
+   [ADR 0107](0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md) added.
 3. **What is polled is derived from what is shown.** The registers the hub reads at every poll are the
    registers of the readings an entity declared; the heater's separate opt-in list is gone. A reading's
-   capability gates its read, as before.
+   capability gates its read, as before. [ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md) later
+   gave every row a poll policy.
 4. **One value-codec vocabulary** (`ValueCodec`, `proto_value_codecs.h`) with one pure decoder
    (`decode_value()`), shared by the heater register table and every later source. The decoder returns a
    number in natural units (`std::optional<float>`, so a counter wider than a signed 16-bit value and a
    temperature share it); the unit belongs to the entity.
-5. **One lookup and one entity pair.** `reading_value(device, reading)` returns the value wherever its
-   source keeps it. One numeric and one binary entity (`IOHomeDeviceReadingSensor`,
-   `IOHomeDeviceReadingBinarySensor`) show any reading and publish only on change; the heater setting
+5. **One lookup and one set of entities.** `reading_value(device, reading)` returns the value wherever its
+   source keeps it. One numeric, one binary and (since [ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md))
+   one text entity show any reading and publish only on change; the heater setting
    switch writes the register of its reading and shows it through the same lookup.
 6. **The codegen mirror carries what C++ never needs.** `DEVICE_READINGS` in `hub_validators.py` lists
    each reading by name with its capability, source kind, polled registers, YAML key, entity kind and
@@ -49,9 +53,11 @@ a second value-codec enum beside the heater's.
 - A user sees no change: the same keys under `climate:`, the same entities, names, units, device and
   state classes, and the same register reads per poll.
 - Values stay where they are (`HeatingReadings`); a source that stores its value elsewhere adds its own
-  store behind the same lookup.
+  store behind the same lookup. [ADR 0103](0103-every-heater-value-is-a-reading-kept-by-reading.md) moved every
+  value into one per-device store by reading.
 - The cover's sun and battery readings and sensor-only devices are not on the table yet; the table
-  leaves room for them.
+  leaves room for them ([ADR 0102](0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md),
+  [ADR 0107](0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md)).
 
 ## Considered options
 

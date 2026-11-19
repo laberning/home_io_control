@@ -409,14 +409,16 @@ TEST(PlatformHeaterNightLight, OnAtTheBrightnessTheHeaterHoldsWritesOnlyOnOff) {
 }
 
 TEST(PlatformHeaterNightLight, OnWithoutAKnownBrightnessWritesTheBrightness) {
-  // -1 (never read) and 0 hold no percentage, even the full one: the brightness asked for is written.
-  for (const float held : {-1.0F, 0.0F}) {
+  // A brightness never delivered and one that reads 0 hold no percentage, even the full one: the brightness asked for
+  // is written.
+  for (const bool delivered : {false, true}) {
     NightLightRig rig;
-    rig.deliver(0, held);
+    if (delivered)
+      rig.deliver(0, 0.0F);
     rig.request(true, 1.0F);
-    ASSERT_EQ(rig.hub.writes.size(), 2u) << "held " << held;
-    EXPECT_EQ(rig.hub.writes[0].fn, DeviceRegister::NIGHT_LIGHT_BRIGHTNESS) << "held " << held;
-    EXPECT_FLOAT_EQ(rig.hub.writes[0].value, 100.0F) << "held " << held;
+    ASSERT_EQ(rig.hub.writes.size(), 2u) << "delivered " << delivered;
+    EXPECT_EQ(rig.hub.writes[0].fn, DeviceRegister::NIGHT_LIGHT_BRIGHTNESS) << "delivered " << delivered;
+    EXPECT_FLOAT_EQ(rig.hub.writes[0].value, 100.0F) << "delivered " << delivered;
   }
 }
 

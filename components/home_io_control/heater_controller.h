@@ -229,8 +229,8 @@ class HeaterController {
   void set_device_temperature_range(const std::string &device_id, float min_c, float max_c);
 
   /// @brief Have every poll of a heater read the registers of one more reading (an entity the YAML declared for it).
-  /// @details Only a reading whose capability the device has; for any other the device keeps its poll as it is.
-  ///          Sends nothing.
+  /// @details Only a reading whose capability the device has and that is read when asked (or derived from such
+  ///          readings); for any other the device keeps its poll as it is. Sends nothing.
   /// @param device_id Target device ID.
   /// @param reading The reading; its registers (reading_polled_registers()) are read at every poll.
   void enable_device_reading(const std::string &device_id, DeviceReading reading);
@@ -472,9 +472,8 @@ class HeaterController {
   ///          boot (or until another read answers it with a value, mark_register_reading_absent()) and logs once
   ///          naming it. A missed read changes nothing. Each register is judged on its own.
   /// @param device_id Target device ID.
-  /// @param profile The device's register profile.
   /// @param max_tries Transmit-attempt cap of each read (the poll's try band).
-  void poll_asked_registers_(const std::string &device_id, const HeatingProfile &profile, uint8_t max_tries);
+  void poll_asked_registers_(const std::string &device_id, uint8_t max_tries);
 
   /// What an answer without a value to a read of the temperature in force may decide.
   enum class InForceEmptyAnswer : uint8_t {

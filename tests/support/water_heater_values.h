@@ -6,8 +6,9 @@
 ///
 /// A test arranges what the hub has read from a water heater with seed_water_heater() and
 /// store_water_heater_values(), and checks what it kept with water_heater_values(). Every field starts as "not
-/// read": NaN for a temperature, -1 for a whole number.
+/// read": NaN for a temperature or an energy, -1 for a whole number.
 
+#include "heater_controller.h"
 #include "proto_device_model.h"
 #include "proto_device_readings.h"
 #include "proto_dhw.h"
@@ -57,15 +58,20 @@ struct WaterHeaterValues {
   int away{-1};            ///< Away on, 0 or 1.
   int boost_duration{-1};  ///< Register 0x0000.
   int away_duration{-1};   ///< Register 0x0005.
-  int64_t energy_wh{-1};   ///< Energy in Wh.
+  float energy_kwh{NAN};   ///< Energy in kWh, as the reading holds it.
   int brand{-1};           ///< Brand letter.
 };
+
+/// Let a water heater record read one status reply the way the hub does (apply_dhw_status_reply(), the position
+/// trusted), so a test never repeats the glue between the reply's bytes and the readings.
+inline void apply_status_reply(IoDevice &dev, const IoFrame &reply) {
+  apply_dhw_status_reply("ABC123", dev, reply, true);
+}
 
 /// What the record holds now.
 inline WaterHeaterValues water_heater_values(const IoDevice &dev) {
   const auto number = [&dev](DeviceReading reading) { return reading_value(dev, reading).value_or(NAN); };
   const auto wire = [&dev](DeviceReading reading) { return reading_wire(dev, reading); };
-  const float energy_kwh = number(DeviceReading::HOT_WATER_ENERGY);
   return {.water_c = number(DeviceReading::HOT_WATER_TEMPERATURE),
           .target_c = number(DeviceReading::STATUS_SETPOINT),
           .mode = wire(DeviceReading::HOT_WATER_MODE),
@@ -77,7 +83,7 @@ inline WaterHeaterValues water_heater_values(const IoDevice &dev) {
           .away = wire(DeviceReading::HOT_WATER_AWAY),
           .boost_duration = wire(DeviceReading::HOT_WATER_BOOST_DURATION),
           .away_duration = wire(DeviceReading::HOT_WATER_AWAY_DURATION),
-          .energy_wh = std::isnan(energy_kwh) ? -1 : std::llround(energy_kwh * 1000.0F),
+          .energy_kwh = number(DeviceReading::HOT_WATER_ENERGY),
           .brand = wire(DeviceReading::HOT_WATER_BRAND)};
 }
 
@@ -102,8 +108,7 @@ inline void store_water_heater_values(IoDevice &dev, const WaterHeaterValues &v)
   wire(DeviceReading::HOT_WATER_AWAY, v.away);
   wire(DeviceReading::HOT_WATER_BOOST_DURATION, v.boost_duration);
   wire(DeviceReading::HOT_WATER_AWAY_DURATION, v.away_duration);
-  number(DeviceReading::HOT_WATER_ENERGY,
-         v.energy_wh < 0 ? NAN : static_cast<float>(v.energy_wh) / VALUE_THOUSANDTHS_PER_UNIT);
+  number(DeviceReading::HOT_WATER_ENERGY, v.energy_kwh);
   wire(DeviceReading::HOT_WATER_BRAND, v.brand);
 }
 
@@ -128,8 +133,8 @@ inline void seed_water_heater(IoDevice &dev, const WaterHeaterValues &v) {
   keep(merged.boost_duration, v.boost_duration);
   keep(merged.away_duration, v.away_duration);
   keep(merged.brand, v.brand);
-  if (v.energy_wh >= 0)
-    merged.energy_wh = v.energy_wh;
+  if (!std::isnan(v.energy_kwh))
+    merged.energy_kwh = v.energy_kwh;
   store_water_heater_values(dev, merged);
 }
 

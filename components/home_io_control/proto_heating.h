@@ -169,7 +169,7 @@ enum class DeviceRegister : uint8_t {
                            ///< total to the kWh, and rose while the heat pump ran.
   DHW_BRAND,               ///< Family 0x00, register 0x07, read-only: one ASCII letter naming the brand (`41` =
                            ///< 'A' on the Calypso).
-  COUNT,                   ///< Not a function: the number of functions, for storage sized by function.
+  COUNT,                   ///< Not a function: the number of registers, for a table or loop over all of them.
 };
 
 /// @brief Operating modes of the mode register (DeviceRegister::OPERATING_MODE).
@@ -276,6 +276,7 @@ constexpr ValueScaleKnot HEATING_NIGHT_LIGHT_SCALE[] = {
     {66, 2000},
     {HEATING_NIGHT_LIGHT_PERCENT_MAX, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
 };
+static_assert(value_scale_rises(HEATING_NIGHT_LIGHT_SCALE), "the scale divides by the distance between its knots");
 
 /// @brief Register 0x0119: the heater's model name, ASCII, not terminated ("ADELIS 2 DIGIT" on an
 /// Atlantic Adelis, corpus atlantic_adelis_probe_register_01_sweep). Read raw for a log line; no
@@ -374,8 +375,8 @@ std::optional<ValueRange> heating_write_range(DeviceRegister fn);
 /// @brief Encode a read ("get") of one register into a CMD_WRITE_PRIVATE (0x20) payload.
 /// @param fn Register to read.
 /// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
-/// @return 4 (the payload is always `0C 60 01 <reg>`), or 0 for a write-only register or an
-///         out-of-range value.
+/// @return 4 (the payload is `0C 60 <family> <reg>`: the register's family byte is 01 for a heater and 00 for a water
+///         heater), or 0 for a register that has no row or is write-only.
 size_t encode_heating_read(DeviceRegister fn, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
 
 /// @brief Encode the function the `heating_control` action runs: a read for a read-only register,

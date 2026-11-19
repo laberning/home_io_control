@@ -1,5 +1,6 @@
 /// @file proto_heating.cpp
-/// @brief Pure codec for the private register protocol of 2W heaters (CMD_WRITE_PRIVATE 0x20).
+/// @brief The register table of the private register protocol (CMD_WRITE_PRIVATE 0x20), and the pure codec for its
+/// requests and values.
 /// @ingroup hioc_protocol
 
 #include "proto_heating.h"
@@ -61,7 +62,8 @@ struct DeviceRegisterRow {
   uint8_t register_low;     ///< Payload byte 3: low byte of the register number.
   HeatingAccess access;     ///< Whether the register may be read, written or both.
   ValueCodec codec;         ///< How the value maps onto the trailing bytes.
-  uint16_t max_value{0};    ///< BOUNDED_BYTE, BOUNDED_U16: highest value a reply may carry and a write may send.
+  /// BOUNDED_BYTE, BOUNDED_U16, SCALED_U16: highest value a reply may carry and a write may send.
+  uint16_t max_value{0};
   /// Payload byte 2: the register's family, the high byte of its number. The family does not say how a multi-byte
   /// value is laid out: the codec does.
   uint8_t register_high{HEATING_REGISTER_HIGH_BYTE};

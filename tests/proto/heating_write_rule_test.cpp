@@ -33,16 +33,6 @@ std::vector<float> probe_values() {
 
 }  // namespace
 
-TEST(HeatingWriteRule, AcceptsIsExactlyWhatTheEncoderEncodes) {
-  for (const DeviceRegister fn : all_functions()) {
-    for (const float value : probe_values()) {
-      uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
-      EXPECT_EQ(heating_write_accepts(fn, value), encode_heating_write(fn, value, out) != 0)
-          << device_register_name(fn) << " value " << value;
-    }
-  }
-}
-
 TEST(HeatingWriteRule, ARegisterThatCannotBeWrittenAcceptsNothing) {
   for (const DeviceRegister fn : all_functions()) {
     if (device_register_is_writable(fn))

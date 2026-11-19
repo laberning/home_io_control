@@ -1848,7 +1848,29 @@ TEST(HeaterController, OccupancyReadsAreRefusedOnAKindWithoutTheCapabilityAndFor
   IoDevice *radiator = make_heater(other);
   other.controller.enable_device_reading("ABC123", DeviceReading::COUNT);
   EXPECT_EQ(test::read_state(*radiator, DeviceRegister::ROOM_TEMPERATURE), test::ReadState::NOT_ASKED)
-      << "only the registers of a reading of the table can be asked for";
+      << "a value outside the enumeration has no row";
+}
+
+TEST(HeaterController, AReadingThatIsNotReadWhenAskedIsIgnoredByEnableDeviceReading) {
+  HeaterControllerFixture fx;
+  IoDevice *radiator = make_heater(fx);
+  const auto polls = [&](ReadingPoll policy) {
+    const HeaterPollList list = device_poll_reads(*radiator, policy);
+    return std::vector<DeviceRegister>(list.begin(), list.end());
+  };
+  const DeviceReadingRow *room = find_device_reading(DeviceReading::ROOM_TEMPERATURE);
+  ASSERT_NE(room, nullptr);
+  ASSERT_NE(room->poll, ReadingPoll::WHEN_ASKED) << "the room temperature is polled by the profile, not asked for";
+  const auto every_before = polls(ReadingPoll::EVERY_POLL);
+  const auto may_miss_before = polls(ReadingPoll::EVERY_POLL_MAY_MISS);
+  const auto asked_before = polls(ReadingPoll::WHEN_ASKED);
+
+  fx.controller.enable_device_reading("ABC123", DeviceReading::ROOM_TEMPERATURE);
+
+  EXPECT_EQ(test::read_state(*radiator, DeviceRegister::ROOM_TEMPERATURE), test::ReadState::NOT_ASKED);
+  EXPECT_EQ(polls(ReadingPoll::EVERY_POLL), every_before);
+  EXPECT_EQ(polls(ReadingPoll::EVERY_POLL_MAY_MISS), may_miss_before);
+  EXPECT_EQ(polls(ReadingPoll::WHEN_ASKED), asked_before);
 }
 
 TEST(HeaterController, TheCentralHeatingReadIsRefusedOnAKindWithoutTheCapability) {
@@ -2545,6 +2567,16 @@ TEST(HeaterPollPin, AHeaterWithALightReadsTheLightAfterTheDetectionSettingAndNot
             (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42, 0x02, 0x19, 0x36}));
   EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42}, {}),
             (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x06, 0x44, 0x42}));
+}
+
+TEST(HeaterPollPin, AHeaterWithALightInItsProgrammeReadsTheTemperatureInForceBeforeTheLightRegisters) {
+  HeaterControllerFixture fx;
+  make_pinned_heater(fx, DeviceModel::HEATER_WITH_LIGHT);
+  const PinReplies auto_mode{{0x00, {0x00}}};
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06, 0x44, 0x42, 0x02, 0x19, 0x36}, auto_mode),
+            (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06, 0x44, 0x42, 0x02, 0x19, 0x36}));
+  EXPECT_EQ(run_pinned_poll(fx, {0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06, 0x44, 0x42}, auto_mode),
+            (Registers{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06, 0x44, 0x42}));
 }
 
 TEST(HeaterPollPin, AHeaterWithALightAndEverythingAskedReadsTheAskedRegistersAfterTheLight) {

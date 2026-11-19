@@ -557,12 +557,14 @@ namespace {
 /// Count one periodic poll that brought no reading. A poll the device left unanswered is asked
 /// again after PERIODIC_POLL_MISS_RETRY_MS first and counts only if the retry is unanswered too;
 /// any other miss (an error reply, an answer of another shape) counts at once.
+/// @param key The poll policy's key of the poll; @p device_id is only for the log line.
 /// @return True while the last reading is no longer usable.
-bool count_poll_miss(PeriodicPollPolicy &policy, const std::string &device_id, bool unanswered, const char *label) {
+bool count_poll_miss(PeriodicPollPolicy &policy, const std::string &key, const std::string &device_id, bool unanswered,
+                     const char *label) {
   if (!unanswered)
-    return policy.on_poll_failed(device_id);
-  const bool unusable = policy.on_poll_unanswered(device_id, millis());
-  if (policy.retry_armed(device_id)) {
+    return policy.on_poll_failed(key);
+  const bool unusable = policy.on_poll_unanswered(key, millis());
+  if (policy.retry_armed(key)) {
     ESP_LOGD(detail::TAG, "Device %s: %s poll unanswered, asking again in %" PRIu32 " s", device_id.c_str(), label,
              PERIODIC_POLL_MISS_RETRY_MS / 1000);
   }
@@ -728,7 +730,7 @@ void IOHomeControlComponent::apply_periodic_reading_(const std::string &device_i
   if (value.has_value()) {
     policy.on_poll_succeeded(key);
     now = value;
-  } else if (count_poll_miss(policy, key, unanswered, row->name) && row->stale == ReadingStale::DROP) {
+  } else if (count_poll_miss(policy, key, device_id, unanswered, row->name) && row->stale == ReadingStale::DROP) {
     now.reset();  // the last reading is too old to keep showing
   }
   if (now != before) {
@@ -739,7 +741,7 @@ void IOHomeControlComponent::apply_periodic_reading_(const std::string &device_i
     } else {
       dev->reading_values.clear(slot);
     }
-  } else if (value.has_value()) {
+  } else if (value.has_value() && reading_logs_unchanged(*row)) {
     ESP_LOGD(detail::TAG, "Device %s: %s %s (unchanged)", device_id.c_str(), row->name,
              format_reading_value(value).c_str());
   }

@@ -34,12 +34,12 @@ with a light and a pilot-wire interface, whose status carries no level (issue #2
    temperature with `current_temperature`, the setpoint and its maximum with `target_temperature`, the register
    of `mode_fn`, of `preset_fn` where presets are observed and of the action source, and the registers of the
    programme. The poll and the card follow one fact; no capability is added per card register (ADR 0103).
-3. **One selection function; table order is read order within a policy.** `heater_poll_reads()` walks the rows
+3. **One selection function; table order is read order within a policy.** `device_poll_reads()` walks the rows
    in table order and returns a small fixed-capacity list for one policy. The controller keeps the order of the
    phases of a poll (every-poll rows, the programme's registers, may-miss rows, asked rows, rows read once, the
    status level, the model check) and asks the table for each phase when it starts, so what an earlier phase
    read is current. The rows that an entity asks for are in the order of the register enumeration
-   (`HeatingFunction`), which is the order the poll has always read them in; nothing sorts at run time. A row that derives from others (the minutes
+   (`DeviceRegister`), which is the order the poll has always read them in; nothing sorts at run time. A row that derives from others (the minutes
    left of a run) names registers that are rows of their own, with the same policy and capability.
 4. **The profile lists, their span fields and the heater-with-light profile are gone.** The registers a poll
    reads follow from the rows, the capabilities and the profile's own fields. `find_heating_profile()` already
@@ -83,13 +83,15 @@ with a light and a pilot-wire interface, whose status carries no level (issue #2
 - The statements of ADR 0091 that the `heating_level:` sensor is accepted on every electrical heater and stays
   without a state on a radiator and a pilot-wire interface no longer apply: the key is rejected there, until such
   a heater is shown to report a level and gains the capability.
-- ADR 0103's remark that the poll still reads the registers of the profile lists, and ADR 0055's that a profile names
-  the registers a poll reads, are replaced by decisions 2 and 3.
+- ADR 0055's statement that a profile names the registers a poll reads is replaced by decisions 2 and 3; ADR 0103's
+  remark that the poll still read the profile lists no longer applies.
   ADR 0101's derivation of the polled registers from the declared readings now goes through the poll policy, and
   ADR 0083's description of what `HeaterController` polls is the phase order of decision 3 over the table.
-- A cover's rain, sun and battery values, a water heater's registers, the model-name register, the logged
-  registers, the raw probes and the night light's entity class stay outside the table's entity mechanism, each
-  with its own reason (see the [architecture overview](../architecture_overview.md)).
+- The model-name register, the logged registers, the raw probes and the night light's entity class stay outside the
+  table's entity mechanism, each with its own reason (see the [architecture overview](../architecture_overview.md)).
+  A water heater's registers and a cover's readings joined the table in
+  [ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md) and
+  [ADR 0107](0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md).
 
 ## Considered options
 

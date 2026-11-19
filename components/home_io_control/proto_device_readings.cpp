@@ -50,8 +50,9 @@ const char *battery_state_value_name(uint8_t value);
 /// dryer's minutes left of a run are read only while that run is on (HeatingReadCondition), so an idle dryer costs no
 /// read for them; the minutes left of whichever run is active are derived from the two registers, which are rows of
 /// their own. The room temperature leads the registers every poll reads: it is the value a user looks at, so a poll
-/// that dies half-way still delivered it. A water heater's rows (capability WATER_HEATER) come last, in the order its
-/// poll reads them; the three readings that are slices of its heating register name the register once in the poll.
+/// that dies half-way still delivered it. The water heater's rows (capability WATER_HEATER) follow the heater's, in
+/// the order its poll reads them; the three readings that are slices of its heating register name the register once in
+/// the poll.
 constexpr DeviceReadingRow DEVICE_READINGS[] = {
     {.name = "occupancy",
      .source = RegisterSource{.fn = DeviceRegister::PRESENCE},
@@ -367,8 +368,8 @@ ValueCodec reading_codec(const DeviceReadingRow &row) {
                         [](const StatusFunctionalParameterSource &source) {
                           return source.form == StatusParameterForm::FIELD_ON ? ValueCodec::BINARY : ValueCodec::NONE;
                         },
-                        // A limitation reply is the rain flag.
                         [](const EventSource &source) { return source.form.codec; },
+                        // A limitation reply is the rain flag.
                         [](const LimitationSource &) { return ValueCodec::BINARY; },
                         [](const StatusBatterySource &) { return ValueCodec::NONE; },
                     },
@@ -384,6 +385,8 @@ ReadingValueKind reading_value_kind(const DeviceReadingRow &row) {
   return codec == ValueCodec::BINARY || codec == ValueCodec::ANY_NONZERO ? ReadingValueKind::FLAG
                                                                          : ReadingValueKind::NUMBER;
 }
+
+bool reading_logs_unchanged(const DeviceReadingRow &row) { return reading_value_kind(row) != ReadingValueKind::FLAG; }
 
 const DeviceReadingRow *find_device_reading(DeviceReading reading, std::span<const DeviceReadingRow> table) {
   const auto row = std::ranges::find(table, reading, &DeviceReadingRow::reading);
@@ -421,11 +424,10 @@ std::optional<float> reading_value(const IoDevice &dev, DeviceReading reading) {
 }
 
 std::optional<float> decode_data_object_reading(const DataObjectSource &source, std::span<const uint8_t> data) {
-  if (source.first >= data.size())
+  // A slice the data cuts off is no value: a shortened one could decode as a different number.
+  if (source.first + source.length > data.size())
     return std::nullopt;
-  const std::span<const uint8_t> slice =
-      data.subspan(source.first, std::min<size_t>(source.length, data.size() - source.first));
-  return decode_value(source.codec, slice, source.max_value);
+  return decode_value(source.codec, data.subspan(source.first, source.length), source.max_value);
 }
 
 std::optional<float> decode_event_reading(const EventSource &source, const IoFrame &frame) {
@@ -465,7 +467,9 @@ std::optional<float> decode_status_reading(DeviceReading reading, std::span<cons
       float celsius = 0.0F;
       if (!decode_temperature_main_parameter(word, range_min_c, range_max_c, celsius))
         return std::nullopt;
-      return std::round(celsius * VALUE_TENTHS_PER_UNIT) / VALUE_TENTHS_PER_UNIT;
+      // Rounded to a tenth for display, but never past the end of the range the device encodes over: an end that is
+      // no whole tenth would otherwise round outside the range and a write of that setpoint would be refused.
+      return std::clamp(std::round(celsius * VALUE_TENTHS_PER_UNIT) / VALUE_TENTHS_PER_UNIT, range_min_c, range_max_c);
     }
   }
   return std::nullopt;

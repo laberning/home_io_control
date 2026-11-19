@@ -297,7 +297,8 @@ enum class TemperatureInForceSupport : uint8_t {
 };
 
 /// @brief The values of a device's readings, and which of them the device has, was asked for or does not have.
-/// @details One store per device for every source of a reading (a private register, a status reply, a data object),
+/// @details One store per device for every source of a reading (a private register, a status reply, a data object,
+///          the answer to an event subscription or a limitation read),
 ///          indexed by a slot, the number of the reading in the reading table (DeviceReading,
 ///          proto_device_readings.h; a static_assert there keeps every reading within SLOTS). Runtime only, until the
 ///          next boot: nothing is persisted. A slot holds a value or not, independently of two flags:

@@ -14,6 +14,7 @@
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"
 #include "reading_store.h"
+#include "water_heater_values.h"
 
 #include <gtest/gtest.h>
 
@@ -56,14 +57,7 @@ template<size_t N> int wire_of(const uint8_t (&bytes)[N], DeviceRegister fn) {
 template<size_t N> IoDevice status_stored_from(const uint8_t (&bytes)[N]) {
   IoDevice dev;
   dev.features = device_features(DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::NONE);
-  const IoFrame frame = frame_of(bytes);
-  store_status_parameter_readings(dev, frame);
-  const std::span<const uint8_t> main_parameter(frame.data + STATUS_MP_FP_MAIN_PARAMETER_OFFSET,
-                                                STATUS_MAIN_PARAMETER_SIZE);
-  const HeatingCardRange range = device_temperature_range(dev);
-  if (const auto target =
-          decode_status_reading(DeviceReading::STATUS_SETPOINT, main_parameter, 0, range.min_c, range.max_c))
-    dev.reading_values.store(reading_slot(DeviceReading::STATUS_SETPOINT), *target);
+  test::apply_status_reply(dev, frame_of(bytes));
   return dev;
 }
 
@@ -116,8 +110,8 @@ TEST(CorpusDhw, EnergyIsTheDisplaysSinceStartTotalAndRisesWhileHeating) {
       number_of(corpus::atlantic_calypso_exchange_register_read_frame7_bytes, DeviceRegister::DHW_ENERGY);
   const float after_kwh =
       number_of(corpus::atlantic_calypso_exchange_register_read_frame8_bytes, DeviceRegister::DHW_ENERGY);
-  EXPECT_EQ(static_cast<int>(before_kwh), 1831) << "display: 1 831 kWh since start";
-  EXPECT_NEAR(after_kwh - before_kwh, 0.085F, 0.001F) << "85 Wh more while the heat pump ran";
+  EXPECT_FLOAT_EQ(before_kwh, 1831.746F) << "display: 1 831 kWh since start";
+  EXPECT_FLOAT_EQ(after_kwh, 1831.831F) << "85 Wh more while the heat pump ran";
 }
 
 TEST(CorpusDhw, TheBoostDurationReadsOneDuringABoostAndZeroAfter) {

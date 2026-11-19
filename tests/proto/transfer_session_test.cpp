@@ -249,6 +249,21 @@ TEST(TransferSession, BlocksThatOverflowTheCapEndIncompleteAfterAClose) {
   EXPECT_EQ(session.data().size(), 36u) << "the overflowing block is not kept";
 }
 
+TEST(TransferSession, BlocksThatAddUpToLessOrMoreThanTheAnnouncedLengthEndIncomplete) {
+  // The open announces 20 bytes (two blocks); the cap of 40 leaves room for a last block that is too long.
+  for (const uint8_t last_block_bytes : {uint8_t{1}, uint8_t{5}}) {
+    TransferSession session(PLAIN, 0, TABLE);
+    next_answer(session, open_answer(0x10, 0, 20));
+    next_answer(session, block(0x10, 2, 0, 18));
+    next_answer(session, block(0x10, 1, 18, last_block_bytes));  // the announced 20 leaves 2 for this one
+    EXPECT_EQ(next_silence(session), (std::vector<uint8_t>{CMD_UNKNOWN4A_REQ, 0x10, 0x00, 0x00}))
+        << "the transfer is closed all the same";
+    ASSERT_TRUE(session.done());
+    EXPECT_EQ(session.outcome(), TransferOutcome::INCOMPLETE) << static_cast<int>(last_block_bytes);
+    EXPECT_EQ(session.data().size(), 18u + last_block_bytes) << "the data read is kept";
+  }
+}
+
 TEST(TransferSession, ABlockThatEchoesAnotherChunkEndsIncompleteWithTheCloseAsLastRequest) {
   TransferSession session(PLAIN, 0, TABLE);
   next_answer(session, open_answer(0x10, 0, 40));

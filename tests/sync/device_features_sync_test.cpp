@@ -13,6 +13,7 @@
 #include "proto_device_readings.h"
 #include "proto_device_types.h"
 #include "proto_heating.h"
+#include "periodic_poll_policy.h"
 #include "proto_heating_profiles.h"
 #include "support/python_dict_parser.h"
 
@@ -24,6 +25,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -306,15 +308,16 @@ std::string upper(std::string name) {
   return name;
 }
 
-/// The enumerators of DeviceRegister in declaration order, read from the header, which is what the Python mirror names
-/// a register by. The enumerators carry no explicit values, so the position is the value.
-std::vector<std::string> register_enumerator_names() {
-  std::ifstream in("components/home_io_control/proto_heating.h");
+/// The enumerators of an enum in declaration order, read from the header that declares it (`enum_head` is the start of
+/// its declaration line), which is what the Python mirror names a register or reading by. The enumerators carry no
+/// explicit values, so the position is the value. COUNT is left out.
+std::vector<std::string> enumerator_names(const char *header, const std::string &enum_head) {
+  std::ifstream in(header);
   std::vector<std::string> names;
   bool inside = false;
   for (std::string line; std::getline(in, line);) {
     if (!inside) {
-      inside = line.rfind("enum class DeviceRegister", 0) == 0;
+      inside = line.rfind(enum_head, 0) == 0;
       continue;
     }
     if (line.rfind("};", 0) == 0)
@@ -331,6 +334,10 @@ std::vector<std::string> register_enumerator_names() {
       names.push_back(line.substr(start, end - start));
   }
   return names;
+}
+
+std::vector<std::string> register_enumerator_names() {
+  return enumerator_names("components/home_io_control/proto_heating.h", "enum class DeviceRegister");
 }
 
 }  // namespace
@@ -414,4 +421,58 @@ TEST(DeviceFeaturesSync, EveryReadingsEntityKindFitsItsValue) {
         break;
     }
   }
+}
+
+TEST(DeviceFeaturesSync, EveryRowIsNamedAfterItsEnumeratorAndTheMirrorKeepsTheRulesOfItsEntity) {
+  const auto python = test::parse_python_ordered_dict(VALIDATORS, "DEVICE_READINGS");
+  ASSERT_FALSE(python.empty()) << "DEVICE_READINGS not parsed from hub_validators.py";
+  const std::map<std::string, std::string> by_name(python.begin(), python.end());
+  const std::vector<std::string> readings =
+      enumerator_names("components/home_io_control/proto_device_readings.h", "enum class DeviceReading ");
+  ASSERT_EQ(readings.size(), static_cast<size_t>(DeviceReading::COUNT)) << "the DeviceReading enumerators are not read";
+  for (const DeviceReadingRow &row : device_readings()) {
+    // The row is found by its enumerator and carries that enumerator's name, so the mirror's key (the name in capitals)
+    // is the enumerator's too.
+    const DeviceReadingRow *found = find_device_reading(row.reading);
+    ASSERT_NE(found, nullptr) << row.name;
+    EXPECT_EQ(upper(found->name), readings.at(static_cast<size_t>(row.reading))) << row.name;
+    const std::string name = upper(row.name);
+    ASSERT_TRUE(by_name.count(name)) << name << " is missing from DEVICE_READINGS";
+    const std::string &entry = by_name.at(name);
+    const std::vector<std::string> entity = test::quoted_strings_of(field_text(entry, "entity"));
+    const bool keyed = field_text(entry, "key") != "None";
+
+    if (!entity.empty() && entity.front() == "switch") {
+      // A switch writes the setting: its register must be one a write may reach.
+      const auto *source = std::get_if<RegisterSource>(&row.source);
+      ASSERT_NE(source, nullptr) << name << ": a switch needs a register";
+      EXPECT_TRUE(device_register_is_writable(source->fn)) << name;
+    }
+    if (keyed && test::quoted_strings_of(field_text(entry, "platform")) == std::vector<std::string>{"climate"}) {
+      // A key the climate entity takes is read when the YAML asks for it, or arrives with a status reply or is derived
+      // from readings that do.
+      const bool asked_or_status = row.poll == ReadingPoll::WHEN_ASKED ||
+                                   std::holds_alternative<StatusMainParameterSource>(row.source) ||
+                                   std::holds_alternative<StatusFunctionalParameterSource>(row.source) ||
+                                   std::holds_alternative<DerivedSource>(row.source);
+      EXPECT_TRUE(asked_or_status) << name << ": a keyed climate reading is asked for or a status source";
+    }
+    if (keyed && std::ranges::find(COVER_READINGS, row.reading) == std::end(COVER_READINGS)) {
+      EXPECT_TRUE(row.feature.has_value()) << name << ": a key the YAML takes needs a capability to be valid on";
+    }
+  }
+}
+
+TEST(DeviceFeaturesSync, TheFiveMinuteFloorOfADataObjectReadIsTheSameInBothLanguages) {
+  std::ifstream in("components/home_io_control/hub_names.py");
+  ASSERT_TRUE(in.good());
+  std::optional<unsigned long> python_ms;
+  for (std::string line; std::getline(in, line);) {
+    const std::string head = "MIN_DEVICE_READING_INTERVAL_MS = ";
+    if (line.rfind(head, 0) == 0)
+      python_ms = std::stoul(line.substr(head.size()));
+  }
+  ASSERT_TRUE(python_ms.has_value()) << "MIN_DEVICE_READING_INTERVAL_MS not found in hub_names.py";
+  EXPECT_EQ(*python_ms, DEVICE_READING_MIN_INTERVAL_MS);
+  EXPECT_EQ(DEVICE_READING_MIN_INTERVAL_MS, 5U * 60U * 1000U) << "five minutes";
 }

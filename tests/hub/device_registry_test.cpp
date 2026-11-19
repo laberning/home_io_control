@@ -200,18 +200,6 @@ TEST(DeviceRegistry, PutKeepsTheWholeReadingStoreOfTheRecordItReplaces) {
       << "and a register the heater lacks stays unasked";
 }
 
-TEST(DeviceRegistry, PutKeepsTheDataObjectReadingsOfTheRecordItReplaces) {
-  DeviceRegistry reg;
-  reg.add("AABBCC");
-  reg.get("AABBCC")->reading_values.store(reading_slot(DeviceReading::ENERGY_TOTAL), 3262.0F);
-  reg.get("AABBCC")->reading_values.mark_absent(reading_slot(DeviceReading::OCCUPANCY));
-  IoDevice paired{};
-  reg.put("AABBCC", paired);
-  EXPECT_EQ(reg.get("AABBCC")->reading_values.value(reading_slot(DeviceReading::ENERGY_TOTAL)), 3262.0F)
-      << "a value read from a data object survives a pairing that replaces the record";
-  EXPECT_TRUE(reg.get("AABBCC")->reading_values.absent(reading_slot(DeviceReading::OCCUPANCY)));
-}
-
 TEST(DeviceRegistry, SizeReflectsRegistrationCount) {
   DeviceRegistry reg;
   EXPECT_EQ(reg.size(), 0u);

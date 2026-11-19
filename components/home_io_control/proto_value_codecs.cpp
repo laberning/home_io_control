@@ -1,5 +1,5 @@
 /// @file proto_value_codecs.cpp
-/// @brief The value encodings of the bytes a device reports, and the one pure decoder for them.
+/// @brief The value encodings of the bytes a device reports or is sent: the pure decoder and encoder for them.
 /// @ingroup hioc_protocol
 
 #include "proto_value_codecs.h"
@@ -50,10 +50,12 @@ void put_little_endian_u16(uint16_t raw, std::span<uint8_t> out) {
   out[1] = static_cast<uint8_t>(raw >> BITS_PER_BYTE);
 }
 
-/// @return Whether `value` is finite and inside the form's write range (`fallback` where it has none).
-bool within_write_range(const ValueForm &form, float value, ValueRange fallback) {
-  const ValueRange range = form.write_range.value_or(fallback);
-  return std::isfinite(value) && value >= range.min && value <= range.max;
+/// @return Whether `value` is finite and inside the span the codec's bytes hold (`codec_span`) and, where the form
+/// has one, its write range: the range narrows the span and never widens it.
+bool within_write_range(const ValueForm &form, float value, ValueRange codec_span) {
+  if (!std::isfinite(value) || value < codec_span.min || value > codec_span.max)
+    return false;
+  return !form.write_range || (value >= form.write_range->min && value <= form.write_range->max);
 }
 
 /// Encode a value of a tenths codec: refused outside the range, otherwise the nearest tenth.

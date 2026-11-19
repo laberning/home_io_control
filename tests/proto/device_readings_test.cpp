@@ -64,6 +64,14 @@ TEST(DeviceReadings, ADataObjectSliceWithNoValueOrBeyondTheDataIsNoValue) {
   EXPECT_FALSE(decode_data_object_reading(COUNTER_SLICE, std::vector<uint8_t>{}));
 }
 
+TEST(DeviceReadings, AnAnyNonZeroSliceTheDataCutsOffIsNoValue) {
+  // The any-non-zero form would decode the one byte that is there as a value; a cut-off slice is not read at all.
+  constexpr DataObjectSource TWO_BYTE_FLAG{
+      .recipe = 0, .offset = 0, .first = 1, .length = 2, .codec = ValueCodec::ANY_NONZERO, .max_value = 0};
+  EXPECT_EQ(decode_data_object_reading(TWO_BYTE_FLAG, std::vector<uint8_t>{0x00, 0x00, 0x01}), 1.0F);
+  EXPECT_FALSE(decode_data_object_reading(TWO_BYTE_FLAG, std::vector<uint8_t>{0x00, 0x01}));
+}
+
 TEST(DeviceReadings, ADataObjectReadingIsLookedUpInTheDevicesStoreAndPollsNoRegister) {
   IoDevice dev;
   EXPECT_FALSE(reading_value(dev, DeviceReading::ENERGY_TOTAL, DATA_TABLE)) << "never read";
@@ -286,9 +294,10 @@ TEST(DeviceReadings, ARegisterReadOnlyWhileAnotherHoldsAValueIsPolledAfterThatRe
   }
 }
 
-TEST(DeviceReadings, TheRowsOfAPollPolicyAreInTheOrderOfTheRegisters) {
-  // The order of the rows is the order of the reads, and the asked registers go by the registers' enumeration so the
-  // wire order of an optional read does not depend on how the YAML lists its entities.
+TEST(DeviceReadings, TheAskedRowsAreInTheOrderOfTheRegisters) {
+  // The asked registers go by the registers' enumeration so the wire order of an optional read does not depend on how
+  // the YAML lists its entities. The other policies read in the order of the rows, which a row may choose freely;
+  // the poll pins (HeaterPollPin) state that order register by register.
   std::optional<unsigned> previous;
   for (const DeviceReadingRow &row : device_readings()) {
     const auto *source = std::get_if<RegisterSource>(&row.source);
@@ -297,6 +306,29 @@ TEST(DeviceReadings, TheRowsOfAPollPolicyAreInTheOrderOfTheRegisters) {
     EXPECT_GT(static_cast<unsigned>(source->fn), previous.value_or(0)) << row.name;
     previous = static_cast<unsigned>(source->fn);
   }
+}
+
+TEST(DeviceReadings, TheHubKeepsThirtyRegistersReadByThirtyTwoRows) {
+  // Literal counts, so a register the hub keeps or a row that reads one is dropped or added only as a decision and not
+  // as a side effect. A register is kept when a row of the table reads it, whatever its codec decodes; the water
+  // heater's heating-state register is read by three rows, one per part of its value.
+  size_t rows = 0;
+  std::set<DeviceRegister> kept;
+  for (const DeviceReadingRow &row : device_readings()) {
+    if (const auto *source = std::get_if<RegisterSource>(&row.source)) {
+      rows++;
+      kept.insert(source->fn);
+    }
+  }
+  EXPECT_EQ(kept.size(), 30u) << "registers the hub keeps";
+  EXPECT_EQ(rows, 32u) << "rows with a register source";
+  EXPECT_EQ(std::ranges::count_if(device_readings(),
+                                  [](const DeviceReadingRow &row) {
+                                    const auto *source = std::get_if<RegisterSource>(&row.source);
+                                    return source != nullptr && source->fn == DeviceRegister::DHW_HEATING;
+                                  }),
+            3)
+      << "the heating-state register is behind three rows";
 }
 
 TEST(DeviceReadings, ADerivedReadingPollsOnlyRegistersThatAreRowsOfTheirOwnWithItsPolicyAndCapability) {
@@ -412,6 +444,16 @@ TEST(DeviceReadings, ARowNamesItsCapabilityWhereAnEntityAsksForItAndElseTheProfi
 }
 
 // === What kind of value a reading is ===
+
+TEST(DeviceReadings, OnlyAFlagReadingLogsNoUnchangedLine) {
+  // Rain is polled often and rarely changes; sun level and battery say something even when they repeat.
+  const auto logs = [](DeviceReading reading) { return reading_logs_unchanged(*find_device_reading(reading)); };
+  EXPECT_FALSE(logs(DeviceReading::RAIN));
+  EXPECT_FALSE(logs(DeviceReading::BATTERY_LOW)) << "a derived flag";
+  EXPECT_TRUE(logs(DeviceReading::SUN_LEVEL));
+  EXPECT_TRUE(logs(DeviceReading::BATTERY_LEVEL));
+  EXPECT_TRUE(logs(DeviceReading::BATTERY_STATE)) << "a named value";
+}
 
 TEST(DeviceReadings, AReadingsValueKindFollowsItsCodecOrNames) {
   for (const DeviceReadingRow &row : device_readings()) {
@@ -587,8 +629,18 @@ TEST(DeviceReadings, ARegisterWithoutAConditionIsAlwaysDue) {
                                   DeviceRegister::DRYING_DURATION, DeviceRegister::CENTRAL_HEATING_MODE}) {
     EXPECT_TRUE(heating_register_due(fn, IoDevice{})) << device_register_name(fn);
   }
-  EXPECT_TRUE(heating_register_due(DeviceRegister::ROOM_TEMPERATURE, IoDevice{}))
-      << "a register no reading is has no condition";
+  EXPECT_TRUE(heating_register_due(DeviceRegister::ROOM_TEMPERATURE, IoDevice{})) << "a row without a condition";
+}
+
+TEST(DeviceReadings, ARegisterWithoutAReadingRowIsAlwaysDue) {
+  // The registers the heater poll reads for their own sake (a model name, the heating level) carry no reading row.
+  std::optional<DeviceRegister> without_row;
+  for (unsigned i = 0; i < static_cast<unsigned>(DeviceRegister::COUNT); ++i) {
+    if (find_register_reading(static_cast<DeviceRegister>(i)) == nullptr)
+      without_row = static_cast<DeviceRegister>(i);
+  }
+  ASSERT_TRUE(without_row.has_value()) << "some register is no reading";
+  EXPECT_TRUE(heating_register_due(*without_row, IoDevice{})) << device_register_name(*without_row);
 }
 
 TEST(DeviceReadings, AWrittenTemporaryStateForgetsTheTimeLeftOfBothRunsAndNothingElse) {
@@ -774,6 +826,6 @@ TEST(DeviceReadings, TheSunLevelRowAppliesTheEstimatedLuxFactorWhenItDecodes) {
   const auto *source = std::get_if<EventSource>(&row->source);
   ASSERT_NE(source, nullptr);
   EXPECT_EQ(source->event, EVENT_LOCAL_SENSOR);
-  EXPECT_EQ(source->factor, SUN_VALUE_LUX_PER_STEP);
+  EXPECT_EQ(source->factor, 100) << "one step of the device's value is 100 lux";
   EXPECT_EQ(source->type_byte, std::optional<uint8_t>(LOCAL_SENSOR_TYPE_SUN));
 }

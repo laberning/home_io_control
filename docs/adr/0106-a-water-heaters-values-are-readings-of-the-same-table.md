@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0106 -->
 
-**Status:** Accepted, amends [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) and [ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md), [ADR 0103](0103-every-heater-value-is-a-reading-kept-by-reading.md), [ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md), [ADR 0105](0105-every-device-value-write-is-judged-by-one-rule-per-register.md) and [ADR 0068](0068-a-domestic-hot-water-device-is-a-water-heater.md) · **Recorded:** 2026-11
 
 Builds on [ADR 0068](0068-a-domestic-hot-water-device-is-a-water-heater.md) (a domestic hot water device is a water
 heater), [ADR 0081](0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md) (boost and away travel in
@@ -45,9 +45,15 @@ boost, away and capability values come as functional parameters of the status re
 - A water heater value is added like a heater value: a register row, a reading row and its mirror entry.
 - The water heater's energy, heat pump and electric backup entities are the generic reading entities; the water heater
   entity, the heating-source text sensor and the boost switch read through the readings.
+- The codec of its own that [ADR 0068](0068-a-domestic-hot-water-device-is-a-water-heater.md) gave the water heater
+  is gone: `proto_dhw.h` keeps the request builders, the mode and operating-word values and the names.
 - Mode and duration writes go through the shared encoder and write rules; the target follows the main-parameter rule
   of [ADR 0105](0105-every-device-value-write-is-judged-by-one-rule-per-register.md).
-- A heater's status setpoint is rounded to tenths: one step of the main-parameter scale is under a thousandth of a
+- The boost and away words (FP16) and the capability word (FP15) are stored independently: a status reply that carries
+  one of them stores that one and leaves the other as it was, so boost and away can show while the capabilities stay
+  unknown.
+- The water heater's energy sensor has no state until its first read, which the poll makes on its first run.
+- A heater's status setpoint is rounded to tenths and kept inside the device's range: one step of the main-parameter scale is under a thousandth of a
   degree, so 20 °C could read 19.9998 before.
 - YAML keys, entities, their metadata and the frames sent are unchanged.
 

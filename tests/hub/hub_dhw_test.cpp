@@ -167,7 +167,7 @@ TEST(HubDhw, ThePollReadsTheOperatingStatusThenTheRegistersThenTheBrandOnce) {
   EXPECT_EQ(test::water_heater_values(*dev).away, 0);
   EXPECT_EQ(test::water_heater_values(*dev).boost_duration, 1);
   EXPECT_EQ(test::water_heater_values(*dev).away_duration, 0);
-  EXPECT_EQ(test::water_heater_values(*dev).energy_wh, 1831746);
+  EXPECT_FLOAT_EQ(test::water_heater_values(*dev).energy_kwh, 1831.746F);
   EXPECT_EQ(test::water_heater_values(*dev).brand, 'A');
   EXPECT_FALSE(comp.poll_policy_.is_tracking_active("ABC123", esphome::millis())) << "a good poll closes its window";
   EXPECT_EQ(comp.last_timeout_id_, decisions::heating_poll_timer_id(dev->node_id)) << "the cadence is armed";
@@ -270,7 +270,7 @@ TEST(HubDhw, AModeValueNeverSeenLeavesTheModeAndThePollGoesOn) {
   EXPECT_EQ(test::water_heater_values(*dev).mode, static_cast<int16_t>(DhwMode::AUTO));
   EXPECT_EQ(test::water_heater_values(*dev).heating, 0);
   EXPECT_EQ(test::water_heater_values(*dev).heat_pump, 0);
-  EXPECT_EQ(test::water_heater_values(*dev).energy_wh, 1831831);
+  EXPECT_FLOAT_EQ(test::water_heater_values(*dev).energy_kwh, 1831.831F);
   EXPECT_EQ(test::water_heater_values(*dev).brand, -1) << "an empty brand is read again next time";
 }
 
@@ -528,6 +528,39 @@ TEST(HubDhw, ABoostOrHolidayStartedOnTheDisplayShowsWithinOnePoll) {
   EXPECT_EQ(test::water_heater_values(*dev).boost, 1);
 }
 
+TEST(HubDhw, AStatusReplyWithFp16AndNoFp15ShowsBoostAndAwayAndLeavesTheCapabilitiesUnknown) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  // FPI2 01 asks for FP16 only: the main parameter, then the operating-mode word with boost on.
+  queue(comp, radio, CMD_PRIVATE_RESP,
+        {0x05, 0x00, 0xA1, 0xE8, 0x00, 0x01, static_cast<uint8_t>(DHW_OPERATING_MODE_BOOST_ON >> 8U),
+         static_cast<uint8_t>(DHW_OPERATING_MODE_BOOST_ON & 0xFFU)});
+
+  comp.request_device_status("ABC123");
+
+  const test::WaterHeaterValues values = test::water_heater_values(*dev);
+  EXPECT_EQ(values.boost, 1) << "the boost switch shows the word that came";
+  EXPECT_EQ(values.away, 0);
+  EXPECT_EQ(values.capabilities, -1) << "FP15 was not in the reply, so what the heater offers stays unknown";
+  EXPECT_FLOAT_EQ(values.target_c, 54.0F) << "the water heater still shows its target";
+}
+
+TEST(HubDhw, AShortStatusReplyAndAnotherCommandLeaveTheTargetAsItWas) {
+  TestableComponent comp;
+  MockRadio radio;
+  IoDevice *dev = make_water_heater(comp, radio);
+  test::seed_water_heater(*dev, {.target_c = 54.0F});
+
+  queue(comp, radio, CMD_PRIVATE_RESP, {0x2D, 0x00, 0xC8});  // a main parameter cut off after its first byte
+  comp.request_device_status("ABC123");
+  EXPECT_FLOAT_EQ(test::water_heater_values(*dev).target_c, 54.0F) << "a short reply carries no target";
+
+  queue(comp, radio, CMD_WRITE_PRIVATE_ACK, {0x2D, 0x00, 0xC8, 0x00});  // the acknowledgement of a write
+  comp.request_device_status("ABC123");
+  EXPECT_FLOAT_EQ(test::water_heater_values(*dev).target_c, 54.0F) << "an acknowledgement is no status reply";
+}
+
 TEST(HubDhw, AHeaterInAwayModeThatReportsNoTargetShowsItUnknown) {
   TestableComponent comp;
   MockRadio radio;
@@ -623,14 +656,16 @@ TEST(HubDhwCorpus, EveryCapturedRegisterReplyIsStoredAsTheDisplayShowedIt) {
   EXPECT_EQ(boost.element, 1);
   EXPECT_EQ(boost.heat_pump, 1);
 
-  const int64_t before = stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame7_bytes,
-                                                    DeviceRegister::DHW_ENERGY)
-                             .energy_wh;
-  const int64_t after = stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame8_bytes,
-                                                   DeviceRegister::DHW_ENERGY)
-                            .energy_wh;
-  EXPECT_EQ(before / 1000, 1831) << "display: 1 831 kWh since start";
-  EXPECT_EQ(after - before, 85);
+  EXPECT_FLOAT_EQ(stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame7_bytes,
+                                             DeviceRegister::DHW_ENERGY)
+                      .energy_kwh,
+                  1831.746F)
+      << "display: 1 831 kWh since start";
+  EXPECT_FLOAT_EQ(stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame8_bytes,
+                                             DeviceRegister::DHW_ENERGY)
+                      .energy_kwh,
+                  1831.831F)
+      << "85 Wh more while the heat pump ran";
 
   EXPECT_EQ(stored_from_register_reply(corpus::atlantic_calypso_exchange_register_read_frame9_bytes,
                                        DeviceRegister::DHW_BOOST_DURATION)

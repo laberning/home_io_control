@@ -573,7 +573,7 @@ TEST(PlatformWaterHeater, EnergyIsPublishedInKilowattHoursOnceRead) {
   EXPECT_TRUE(std::isnan(energy.state)) << "nothing before the first read";
 
   test::WaterHeaterValues readings;
-  readings.energy_wh = 1831746;
+  readings.energy_kwh = 1831.746F;
   publish(hub, readings);
   EXPECT_FLOAT_EQ(energy.state, 1831.746F);
 }

@@ -5,6 +5,7 @@
 #include "proto_codecs.h"
 #include "reading_store.h"
 #include "proto_commands.h"
+#include "proto_device_readings.h"
 #include "proto_device_types.h"
 #include "proto_heating.h"
 #include "proto_heating_profiles.h"
@@ -12,6 +13,8 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <optional>
+#include <vector>
 
 using namespace esphome::home_io_control;
 
@@ -569,6 +572,27 @@ TEST(HeatingWritePlan, ThermostatHeatFallsBackToTheReportedSetpointAndRefusesWit
   const HeatingWritePlan no_record =
       plan_heating_write(thermostat, mode_request(HeatingHvacMode::HEAT, 21.0F), HeatingDeviceFacts{});
   EXPECT_EQ(no_record.refusal, HeatingRefusal::NO_TARGET) << "a target cannot be encoded without the device's range";
+}
+
+TEST(HeatingWritePlan, HeatPlansTheSetpointAHeaterReportsAtEitherEndOfARangeThatIsNoWholeTenth) {
+  // A range of 45 to 80 degrees Fahrenheit: its ends are no whole tenth of a degree Celsius, and the setpoint a status
+  // reply decodes to stays inside the range, so heat is planned and not refused as out of range.
+  const float min_c = 7.2222F;
+  const float max_c = 26.6667F;
+  const HeatingProfile &thermostat = profile_of(DeviceType::HEATING_TEMPERATURE_INTERFACE, 0);
+  for (const uint16_t word : {static_cast<uint16_t>(0), TEMPERATURE_MP_SPAN}) {
+    const std::vector<uint8_t> main_parameter = {static_cast<uint8_t>(word >> 8), static_cast<uint8_t>(word & 0xFF)};
+    const std::optional<float> setpoint =
+        decode_status_reading(DeviceReading::STATUS_SETPOINT, main_parameter, 0, min_c, max_c);
+    ASSERT_TRUE(setpoint.has_value()) << word;
+    EXPECT_GE(*setpoint, min_c) << word;
+    EXPECT_LE(*setpoint, max_c) << word;
+
+    const HeatingWritePlan plan =
+        plan_heating_write(thermostat, mode_request(HeatingHvacMode::HEAT), known_device(*setpoint, min_c, max_c));
+    EXPECT_EQ(plan.kind, HeatingPlanKind::TEMPERATURE) << "heat on a setpoint at the end " << word;
+    EXPECT_EQ(plan.main_parameter, word);
+  }
 }
 
 TEST(HeatingWritePlan, ThermostatTargetAndAliasPresetsCarryTheirFunctionalParameter) {
