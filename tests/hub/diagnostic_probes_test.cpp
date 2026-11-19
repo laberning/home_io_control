@@ -1326,12 +1326,16 @@ TEST(HubManagement, ReadObjectIsGatedLikeEveryProbeAndIndexBounded) {
     MockRadio radio;
     setup_component(component, radio);
     component.set_diagnostic_probes_enabled(true);
-    EXPECT_FALSE(component.management_actions_.probe_device("ABC123", "read_object", "30").success);
+    EXPECT_FALSE(component.management_actions_.probe_device("ABC123", "read_object", "31").success);
     EXPECT_FALSE(component.management_actions_.probe_device("ABC123", "read_object", "0x8100").success);
-    EXPECT_EQ(component.management_actions_.probe_device("ABC123", "read_object", "30").message,
+    EXPECT_EQ(component.management_actions_.probe_device("ABC123", "read_object", "31").message,
               "probe \"read_object\" takes index 0 (actuator capacity 0x8100), 1 (actuator state 0x8103), 2 (name "
-              "record 0x8003), 3 (general info 1, 0x8001), 4 (general info 2, 0x8002), or 5 to 29 (further objects, "
-              "see the diagnostic probes documentation)");
+              "record 0x8003), 3 (general info 1, 0x8001), 4 (general info 2, 0x8002), 5 to 29 (further objects) or "
+              "30 (Atlantic heat pump entry, with an offset), see the diagnostic probes documentation");
+    // Row 30 reads at a listed offset only: without one it is refused before anything is sent.
+    EXPECT_EQ(component.management_actions_.probe_device("ABC123", "read_object", "30")
+                  .message.rfind("read_object index 30 takes one of the offsets 0x0001 0x0002", 0),
+              0u);
     EXPECT_EQ(component.management_actions_.probe_sweep("ABC123", "read_object", "0", "2").message,
               "a read_object sweep walks the offsets of one row: first_index and last_index must name the same row "
               "(<row>:<first offset> and <row>:<last offset>)");

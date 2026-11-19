@@ -780,6 +780,8 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
         "heating_level",
         "heat_pump_running",
         "electric_backup_running",
+        "heating_energy",
+        "hot_water_energy",
     }
     # A key belongs to one platform: the heater's `energy:` and the water heater's are two rows of two platforms.
     platform_keys = [(entry["platform"], entry["key"]) for entry in keyed.values()]
@@ -820,7 +822,7 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
         if "companion" in entry:
             assert entry["entity"] in ("sensor", "binary_sensor", "switch", "text_sensor"), name
             assert entry["companion_id"] and (entry["feature"] in v.FEATURES or "opt_in_key" in entry), name
-    for platform in ("climate", "water_heater", "cover"):
+    for platform in ("climate", "water_heater", "cover", "sensor"):
         schema_keys = {str(key) for key in pc.reading_keys_schema(platform)}
         assert schema_keys == {entry["key"] for entry in keyed.values() if entry["platform"] == platform}, platform
     assert {str(key) for key in pc.reading_keys_schema(pc.WATER_HEATER_PLATFORM)} == {
@@ -828,7 +830,8 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
         "heat_pump_running",
         "electric_backup_running",
     }
-    assert not pc.reading_keys_schema(pc.SENSOR_PLATFORM), "no production reading is a data object yet"
+    # The data-object readings in production are the Atlantic heat pump's (issue #244).
+    assert {str(key) for key in pc.reading_keys_schema(pc.SENSOR_PLATFORM)} == {"heating_energy", "hot_water_energy"}
     # The companions are the window sensor and the detection switch, named and IDed from the mirror.
     companions = {
         name: entry
@@ -852,14 +855,21 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
 @case()
 def the_sensor_platform_never_offers_a_heater_companion_or_status_reading():
     """`sensor:` offers the keys of data-object readings only, whatever the mirror holds: no heater register, derived or
-    status reading (the heating level) is a key of it, and no companion (the window sensor, the detection switch) is."""
+    status reading (the heating level) is a key of it, and no companion (the window sensor, the detection switch) is.
+    The data-object readings of the mirror (an Atlantic heat pump's) are exactly what it offers."""
     from esphome.components.home_io_control import hub_validators as v
     from esphome.components.home_io_control import platform_common as pc
     from esphome.components.home_io_control import sensor as sensor_platform
 
     offered = {str(key) for key in pc.reading_keys_schema(pc.SENSOR_PLATFORM)}
-    heater_keys = {entry["key"] for entry in v.DEVICE_READINGS.values() if entry["key"] is not None}
+    heater_keys = {
+        entry["key"]
+        for entry in v.DEVICE_READINGS.values()
+        if entry["key"] is not None and entry["source"] != "data_object"
+    }
+    data_object_keys = {entry["key"] for entry in v.DEVICE_READINGS.values() if entry["source"] == "data_object"}
     assert not offered & heater_keys, offered
+    assert offered == data_object_keys, offered
     assert not pc._reading_companions(pc.SENSOR_PLATFORM)
     schema_keys = {str(key) for key in sensor_platform.CONFIG_SCHEMA.validators[0].schema}
     assert not schema_keys & heater_keys, schema_keys
@@ -868,8 +878,8 @@ def the_sensor_platform_never_offers_a_heater_companion_or_status_reading():
 
 def with_data_object_reading(body):
     """Run `body(sensor_module)` with the energy reading mirrored as a data-object reading, the first kind the
-    `sensor:` platform offers; the production mirror has no such row until a device needs one. The mirror is
-    restored afterwards, and the platform schema is built after the change."""
+    `sensor:` platform offers, on a heater kind whose capability the tests below exercise. The mirror is restored
+    afterwards, and the platform schema is built after the change."""
     from esphome.components.home_io_control import hub_validators as v
     from esphome.components.home_io_control import sensor as sensor_platform
 

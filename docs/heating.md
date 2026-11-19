@@ -227,8 +227,9 @@ of the device's own named setpoints.
   that reports a setpoint is shown as heating.
 - Neither card has a room temperature or `heating` / `idle`: nothing the entity reads carries one.
 - There is no cooling.
-- The Atlantic heat pump and boiler subtypes (22/1, 22/2) use a different protocol and are not
-  supported.
+- The Atlantic heat pump and boiler subtypes (22/1, 22/2) use a different protocol and have no card.
+  The Atlantic heat pump's energy counters are read through a `sensor:` entry instead, see
+  [Atlantic Alfea heat pump](devices/atlantic-heat-pump.md); the boiler is not supported.
 
 ## Heat-pump water heaters
 

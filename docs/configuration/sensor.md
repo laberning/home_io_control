@@ -7,9 +7,10 @@ The entry registers the device with the hub and reads the values you list on a s
 shows in Home Assistant as a sensor of that device.
 
 Which values a device kind offers is part of the device's support. A kind offers a reading key only
-once its data has been confirmed on hardware, and the page of that device lists them. No kind offers a reading
-key yet, so a `sensor:` entry has none to take; the example shows the shape of an entry for the first one. A kind
-that has no status to read, and so is never sent a status read, is not defined yet either. A contributor adds a reading as
+once its data has been confirmed on hardware, and the page of that device lists them. One kind offers reading
+keys so far: the Atlantic heat pump (`io_device_type: heat_pump`, `io_subtype: 1`), with `heating_energy:` and
+`hot_water_energy:`, its energy counters in kWh ([Atlantic Alfea heat pump](../devices/atlantic-heat-pump.md)).
+It has no status to read, so it is never sent a status read. A contributor adds a reading as
 described in [Adding a device reading](../contributing.md#adding-a-device-reading).
 
 The keys every entity platform shares (`name`, `io_device_id`, `io_device_type`, `io_subtype`,
@@ -20,10 +21,15 @@ gets.
 ```yaml
 sensor:
   - platform: home_io_control
-    name: "Meter"
+    name: "Heat pump"
     io_device_id: "ABC123"
-    io_device_type: <kind>  # a kind that offers reading keys
+    io_device_type: heat_pump  # a kind that offers reading keys
+    io_subtype: 1
     update_interval: 1h  # optional; every reading has a default of its own, at least 5 min
+    heating_energy:
+      name: "Heat pump heating energy"
+    hot_water_energy:
+      name: "Heat pump hot water energy"
 ```
 
 The entry's own sensor has no state and is not shown in Home Assistant. Its `name` names the device:

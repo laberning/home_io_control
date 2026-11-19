@@ -248,9 +248,9 @@ by name. A new value shape is an `encode_value()` case beside the `decode_value(
 
 Tests sit on the lowest stage that fits. The codec and the lookup are tested without a radio. The
 schedule and the value store are tested on the hub with a reading table and recipe table of the test's
-own (`tests/hub/hub_device_reading_test.cpp` shows how), since the production table has no data-object
-reading and the production recipes no row for a scheduled read yet; the event, limitation and status readings of a
-cover have production rows.
+own (`tests/hub/hub_device_reading_test.cpp` shows how), so they do not move when a production row changes; the
+Atlantic heat pump's energy counters are the production data-object readings, and the event, limitation and status
+readings of a cover have production rows.
 
 ## Pull requests
 

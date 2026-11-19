@@ -42,7 +42,7 @@ namespace {
 
 constexpr DataObjectSource COUNTER_SLICE{
     .recipe = 0, .offset = 0x10, .first = 2, .length = 3, .codec = ValueCodec::MARKED_U16_BE, .max_value = 0};
-/// A test table: no production row has a data-object source yet.
+/// A test table of the tests' own, with a slice that does not start at the first byte.
 constexpr DeviceReadingRow DATA_TABLE[] = {{.name = "energy_total",
                                             .source = COUNTER_SLICE,
                                             .reading = DeviceReading::ENERGY_TOTAL,
@@ -62,6 +62,36 @@ TEST(DeviceReadings, ADataObjectSliceWithNoValueOrBeyondTheDataIsNoValue) {
       << "a cut-off slice";
   EXPECT_FALSE(decode_data_object_reading(COUNTER_SLICE, std::vector<uint8_t>{0xAA}));
   EXPECT_FALSE(decode_data_object_reading(COUNTER_SLICE, std::vector<uint8_t>{}));
+}
+
+TEST(DeviceReadings, TheHeatPumpEnergyRowsReadTheirEntriesOfTheAtlanticRecipe) {
+  // Issue #244: the heating counter at offset 0x0023, the hot-water counter at 0x0025, both three bytes.
+  const struct {
+    DeviceReading reading;
+    uint16_t offset;
+  } cases[] = {{DeviceReading::HEAT_PUMP_HEATING_ENERGY, 0x0023}, {DeviceReading::HEAT_PUMP_HOT_WATER_ENERGY, 0x0025}};
+  for (const auto &c : cases) {
+    const DeviceReadingRow *row = find_device_reading(c.reading);
+    ASSERT_NE(row, nullptr);
+    SCOPED_TRACE(row->name);
+    const auto *source = std::get_if<DataObjectSource>(&row->source);
+    ASSERT_NE(source, nullptr);
+    EXPECT_EQ(source->recipe, TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP);
+    EXPECT_EQ(source->offset, c.offset);
+    EXPECT_TRUE(transfer_recipe_allows_offset(TRANSFER_RECIPES[source->recipe], source->offset));
+    EXPECT_EQ(row->feature, DeviceFeature::HEAT_PUMP_ENERGY);
+    EXPECT_EQ(row->stale, ReadingStale::KEEP) << "a counter only grows";
+    EXPECT_TRUE(reading_is_scheduled(*row));
+  }
+}
+
+TEST(DeviceReadings, AHeatPumpCounterDecodesTheMarkedAnswerAndRefusesItsNoValuePattern) {
+  const DeviceReadingRow *row = find_device_reading(DeviceReading::HEAT_PUMP_HOT_WATER_ENERGY);
+  ASSERT_NE(row, nullptr);
+  const auto &source = std::get<DataObjectSource>(row->source);
+  // The TaHoma's read of the hot-water counter in issue #244.
+  EXPECT_EQ(decode_data_object_reading(source, std::vector<uint8_t>{0x80, 0x24, 0xAC}), 9388.0F);
+  EXPECT_FALSE(decode_data_object_reading(source, std::vector<uint8_t>{0x81, 0xFF, 0xFF})) << "the entry has no value";
 }
 
 TEST(DeviceReadings, AnAnyNonZeroSliceTheDataCutsOffIsNoValue) {
@@ -199,10 +229,11 @@ TEST(DeviceReadings, ARegisterIsOneReadingOrAllPartsAndThePartsDoNotOverlap) {
 
 TEST(DeviceReadings, EveryRegisterOfAReadingIsReadable) {
   for (const DeviceReadingRow &row : device_readings()) {
-    // A status reading answers the status read, an event or a limitation reading is read on a schedule of its own, and
-    // the battery flag is derived from a status reading: none has a register. Every other kind of the table names
-    // registers.
-    if (std::holds_alternative<StatusMainParameterSource>(row.source) ||
+    // A status reading answers the status read, a data-object, event or limitation reading is read on a schedule of its
+    // own, and the battery flag is derived from a status reading: none has a register. Every other kind of the table
+    // names registers.
+    if (std::holds_alternative<DataObjectSource>(row.source) ||
+        std::holds_alternative<StatusMainParameterSource>(row.source) ||
         std::holds_alternative<StatusFunctionalParameterSource>(row.source) ||
         std::holds_alternative<StatusBatterySource>(row.source) || std::holds_alternative<EventSource>(row.source) ||
         std::holds_alternative<LimitationSource>(row.source) || row.reading == DeviceReading::BATTERY_LOW) {

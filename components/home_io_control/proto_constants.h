@@ -354,6 +354,38 @@ static constexpr TransferOpenStep TRANSFER_PROBE_STEPS[] = {
 /// Number of one-step recipes in TRANSFER_RECIPES that TRANSFER_PROBE_STEPS gives rise to.
 static constexpr size_t TRANSFER_PROBE_RECIPE_COUNT = std::size(TRANSFER_PROBE_STEPS);
 
+/// @name Atlantic heat pump data objects (node type 0x16, subtype 1)
+/// Seen on air between a TaHoma Switch and an Atlantic Alfea Duo Extensa A.I. (issue #244).
+/// @{
+/// Object class of the heat pump's data objects. The TaHoma opens both objects below with this class.
+static constexpr uint8_t TRANSFER_OBJECT_CLASS_ATLANTIC = 0x0C;
+/// Opened first at every offset and answered empty (status accepted, length 0): 91 of the TaHoma's 96 captured
+/// opens and every open of the hub's own. It only prepares the open of TRANSFER_OBJECT_ATLANTIC_DATA. What it is for
+/// is unknown: the TaHoma sends it, so the recipe does too.
+static constexpr uint16_t TRANSFER_OBJECT_ATLANTIC_PREPARE = 0x1001;
+/// The heat pump's entry table, opened at the offset of one entry; the answer is that entry, for example
+/// `80 24 AC` (a marker byte, then 9388 kWh big-endian) at offset 0x0025.
+static constexpr uint16_t TRANSFER_OBJECT_ATLANTIC_DATA = 0x1002;
+/// @}
+
+/// @brief The opens of an Atlantic heat pump entry read: the empty prepare open, then the data open (issue #244).
+static constexpr TransferOpenStep TRANSFER_ATLANTIC_STEPS[] = {
+    {{TRANSFER_OBJECT_CLASS_ATLANTIC, TRANSFER_OBJECT_ATLANTIC_PREPARE}, /*expect_empty=*/true},
+    {{TRANSFER_OBJECT_CLASS_ATLANTIC, TRANSFER_OBJECT_ATLANTIC_DATA}},
+};
+
+/// @brief The offsets a TaHoma Switch was captured reading from an Atlantic heat pump (issue #244), ascending.
+/// Only offsets seen on air are listed. 0x0023 is the heating energy and 0x0025 the hot-water energy, in kWh.
+static constexpr uint16_t TRANSFER_ATLANTIC_OFFSETS[] = {
+    0x0001, 0x0002, 0x0003, 0x0004, 0x0006, 0x0007, 0x0008, 0x0019, 0x001D, 0x001F, 0x0020, 0x0021,
+    0x0023, 0x0025, 0x0027, 0x002A, 0x002E, 0x0041, 0x0045, 0x005C, 0x0062, 0x0073, 0x0084, 0x0088,
+    0x0099, 0x00BD, 0x00CE, 0x00F0, 0x0104, 0x0108, 0x010A, 0x011B, 0x012B, 0x013C, 0x013D, 0x013E,
+    0x013F, 0x0140, 0x0141, 0x0142, 0x0143, 0x0154, 0x0171, 0x0172, 0x0173, 0x0175, 0x0177, 0x0178,
+    0x0189, 0x019B, 0x019F, 0x01A6, 0x01BB, 0x01CC, 0x01DD, 0x02D8, 0x02DA, 0x02DD, 0x03C2};
+
+/// Row of TRANSFER_RECIPES that reads an Atlantic heat pump entry; also its `read_object` probe index.
+static constexpr uint8_t TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP = TRANSFER_PROBE_RECIPE_COUNT;
+
 namespace transfer_detail {
 /// One recipe per step of @p steps: that single open, offset 0, the probe's size cap, no retry.
 template<size_t N> consteval std::array<TransferRecipe, N> one_step_recipes(const TransferOpenStep (&steps)[N]) {
@@ -362,15 +394,40 @@ template<size_t N> consteval std::array<TransferRecipe, N> one_step_recipes(cons
     recipes[i].opens = std::span<const TransferOpenStep>(&steps[i], 1);
   return recipes;
 }
+
+/// The probe rows of @p steps, in order, followed by @p appended.
+template<size_t N, size_t M>
+consteval std::array<TransferRecipe, N + M> probe_rows_then(const TransferOpenStep (&steps)[N],
+                                                            const std::array<TransferRecipe, M> &appended) {
+  std::array<TransferRecipe, N + M> recipes{};
+  const std::array<TransferRecipe, N> probe = one_step_recipes(steps);
+  for (size_t i = 0; i < N; i++)
+    recipes[i] = probe[i];
+  for (size_t i = 0; i < M; i++)
+    recipes[N + i] = appended[i];
+  return recipes;
+}
 }  // namespace transfer_detail
+
+/// @brief The recipes for scheduled reads, appended behind the probe rows; append only, never reorder.
+static constexpr std::array<TransferRecipe, 1> TRANSFER_APPENDED_RECIPES = {{
+    // Row TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP: one entry, 3 bytes in the captures, so a single block is enough.
+    // About one in three of the TaHoma's data opens carried no data (94 of 249) on the capturing installation, so
+    // an empty answer is tried once more from the prepare open.
+    {.opens = TRANSFER_ATLANTIC_STEPS,
+     .offsets = TRANSFER_ATLANTIC_OFFSETS,
+     .max_bytes = TRANSFER_BLOCK_SIZE,
+     .retry_empty_open = true},
+}};
 
 /// @brief Every recipe a transfer read can follow, and the read allowlist (ADR 0062, ADR 0099).
 ///
 /// The first TRANSFER_PROBE_RECIPE_COUNT rows are the `read_object` probe's objects as one-step recipes at offset
-/// 0, in probe-index order. Recipes for scheduled reads are appended behind them; the probe index is the row.
-/// create_transfer_open() refuses any class, id and offset that no row names.
-static constexpr std::array<TransferRecipe, TRANSFER_PROBE_RECIPE_COUNT> TRANSFER_RECIPES =
-    transfer_detail::one_step_recipes(TRANSFER_PROBE_STEPS);
+/// 0, in probe-index order. Recipes for scheduled reads are appended behind them (TRANSFER_APPENDED_RECIPES); the
+/// probe index is the row. create_transfer_open() refuses any class, id and offset that no row names.
+static constexpr std::array<TransferRecipe, TRANSFER_PROBE_RECIPE_COUNT + TRANSFER_APPENDED_RECIPES.size()>
+    TRANSFER_RECIPES = transfer_detail::probe_rows_then(TRANSFER_PROBE_STEPS, TRANSFER_APPENDED_RECIPES);
+static_assert(TRANSFER_RECIPES.size() > TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP);
 
 // Device info commands
 static constexpr uint8_t CMD_GET_NAME = 0x50;       ///< Request device name
