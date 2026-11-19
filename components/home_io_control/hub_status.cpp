@@ -387,15 +387,14 @@ void apply_unsolicited_status_update(const std::string &id, IoDevice &dev, const
 void apply_battery_state(const std::string &id, IoDevice &dev, const IoFrame &frame) {
   const BatteryState reported = decode_battery_state(frame.data[STATUS_BATTERY_OFFSET]);
   const BatteryState before = battery_state_of(dev);
-  const size_t slot = reading_slot(DeviceReading::BATTERY_STATE);
   if (reported == BatteryState::NOT_REPORTED) {
-    const bool first_none = !dev.reading_values.absent(slot);
-    dev.reading_values.mark_absent(slot);
+    const bool first_none = !reading_absent(dev, DeviceReading::BATTERY_STATE);
+    mark_reading_absent(dev, DeviceReading::BATTERY_STATE);
     if (before != BatteryState::NOT_REPORTED) {
       ESP_LOGI(detail::TAG, "Device %s: battery %s -> %s", id.c_str(), battery_state_name(before),
                battery_state_name(reported));
     }
-    if (first_none && dev.battery_entities)
+    if (first_none && reading_asked(dev, DeviceReading::BATTERY_STATE))
       ESP_LOGI(detail::TAG, "Device %s reports no battery state; it is probably mains powered", id.c_str());
     return;
   }
@@ -404,7 +403,7 @@ void apply_battery_state(const std::string &id, IoDevice &dev, const IoFrame &fr
   // A battery level changes rarely, so a change is worth an INFO line; mains devices stay absent and never log it.
   ESP_LOGI(detail::TAG, "Device %s: battery %s -> %s", id.c_str(), battery_state_name(before),
            battery_state_name(reported));
-  dev.reading_values.store(slot, static_cast<float>(reported));
+  store_reading(dev, DeviceReading::BATTERY_STATE, static_cast<float>(reported));
 }
 
 /// @brief Apply INFO2 metadata to the device record when YAML has not already declared it.

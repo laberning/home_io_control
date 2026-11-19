@@ -90,7 +90,7 @@ template<size_t N> IoDevice programme_readings(float comfort_c, const uint8_t (&
 /// What a target set on a towel dryer with these readings plans to write. The readings carry a 0x0137 reply, so
 /// the dryer has reported its temperature in force, and the level of the status read that period gives.
 HeatingWritePlan plan_target_from(IoDevice dev) {
-  dev.temperature_in_force = TemperatureInForceSupport::REPORTED;
+  test::set_in_force_support(dev, InForceSupport::REPORTED);
   return plan_heating_write(*find_heating_profile(dev), {.kind = HeatingWriteKind::TARGET, .target_c = 18.0F},
                             heating_device_facts(&dev, true));
 }

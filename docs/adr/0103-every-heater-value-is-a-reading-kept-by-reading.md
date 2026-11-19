@@ -27,8 +27,12 @@ put the values of data-object readings in a per-device store keyed by reading.
    entity of the YAML asks for have no capability and no key; the heater's profile decides which heaters
    read them.
 2. **One store, by reading.** A device keeps every reading, from every source, in one per-device store
-   (`IoDevice::reading_values`), indexed by reading and holding, per reading, a value, an "asked" flag
-   and an "absent" flag. A value stored lifts "absent"; a reading found absent holds no value. A NaN is a
+   (`IoDevice::reading_values`), indexed by reading and holding, per reading, a value, an "asked" flag,
+   an "absent" flag and a "reported" flag. A value stored lifts "absent" and sets "reported"; a reading
+   found absent holds no value. "Reported" outlives a cleared value and an absent mark, so it says the
+   device has answered with a value in this boot; a heater's temperature-in-force state (reported, absent
+   or not yet known) is read from these flags of its in-force reading, not kept in a field of its own.
+   Every write to the store goes through one set of store functions. A NaN is a
    value: a room-temperature sensor the heater reports as faulty is an answer. `HeatingReadings`, the
    register-to-field table and the opt-in read masks are gone. Storing by reading, not by register, is
    what lets the status values (which have no register) and the data-object values share the store.
@@ -47,9 +51,9 @@ put the values of data-object readings in a per-device store keyed by reading.
 6. **The model check judges the towel-mode register by the answer.** A reply that carries the register's
    value bytes counts as a value, also when the codec refuses them; the register is what tells a towel
    dryer from a radiator.
-7. **A re-pair keeps the whole store.** `DeviceRegistry::put()` copies the values and both flags to the
-   record that replaces the device, so the card does not go blank after a re-pair and an entity keeps
-   asking. The store is a RAM field of the device record and nothing is written to flash.
+7. **A re-pair keeps the whole store.** `DeviceRegistry::put()` copies the values and every flag to the
+   record that replaces the device, so the card does not go blank after a re-pair, an entity keeps
+   asking and a heater keeps its temperature-in-force state. The store is a RAM field of the device record and nothing is written to flash.
 
 ## Consequences
 
@@ -57,7 +61,8 @@ put the values of data-object readings in a per-device store keyed by reading.
   no second register map or field to touch.
 - The YAML keys and entities stay the same, and so do the registers read per poll, their order and their
   cadence. Two edges change. After a re-pair the card keeps the values read before it instead of
-  starting blank. A register the heater answered without a value, and that a later read (the
+  starting blank, and a heater's temperature-in-force state and a cover's `battery: true` request are kept
+  with them. A register the heater answered without a value, and that a later read (the
   `heating_control` action, a write's read-back) answers with a value, is polled again, because a stored
   value is proof the register exists.
 - Each row states when it is read and the poll derives its registers from the rows

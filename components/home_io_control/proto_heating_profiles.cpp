@@ -561,6 +561,19 @@ std::optional<DeviceRegister> timed_run_register(const HeatingProfile &profile, 
   return profile.preset_fn;
 }
 
+InForceSupport in_force_support(const HeatingProfile &profile, const IoDevice &dev) {
+  if (profile.programme_period == nullptr)
+    return InForceSupport::UNKNOWN;
+  const DeviceReadingRow *row = find_register_reading(profile.programme_period->in_force_fn);
+  if (row == nullptr)
+    return InForceSupport::UNKNOWN;
+  // Absent first: a store lifts it, so an absent mark is always the later fact. A heater that has reported keeps that
+  // until the next boot, also after a later answer without a value (the store keeps the mark through clear()).
+  if (reading_absent(dev, row->reading))
+    return InForceSupport::ABSENT;
+  return reading_reported(dev, row->reading) ? InForceSupport::REPORTED : InForceSupport::UNKNOWN;
+}
+
 float programme_temperature_in_force(const HeatingProfile &profile, const IoDevice &dev) {
   if (!programme_period_active(profile, dev))
     return NAN;
@@ -596,12 +609,6 @@ DeviceRegister action_register(const HeatingProfile &profile) {
                                                                     : DeviceRegister::REGULATOR_STATE;
 }
 
-/// @return Whether the profile's heater reads one of its programme's registers.
-bool is_programme_register(const HeatingProfile &profile, DeviceRegister fn) {
-  const HeatingProgrammePeriod *period = profile.programme_period;
-  return period != nullptr && (fn == period->in_force_fn || fn == period->derogation_fn);
-}
-
 /// @return Whether a reading is read for a device: by its capability where it has one, otherwise where the profile's
 ///         card reads it. A device without a profile is read by capability alone.
 bool reading_applies(const HeatingProfile *profile, const IoDevice &dev, const DeviceReadingRow &row) {
@@ -612,18 +619,27 @@ bool reading_applies(const HeatingProfile *profile, const IoDevice &dev, const D
 
 }  // namespace
 
+bool is_programme_register(const HeatingProfile &profile, DeviceRegister fn) {
+  const HeatingProgrammePeriod *period = profile.programme_period;
+  return period != nullptr && (fn == period->in_force_fn || fn == period->derogation_fn);
+}
+
+bool is_programme_register_of_any_profile(DeviceRegister fn) {
+  return std::ranges::any_of(heating_profiles(),
+                             [fn](const HeatingProfile &profile) { return is_programme_register(profile, fn); });
+}
+
 bool heating_profile_reads(const HeatingProfile &profile, DeviceReading reading) {
   const std::optional<DeviceRegister> register_of_reading = reading_register(reading);
   if (profile.path != HeatingControlPath::PRIVATE_REGISTERS || !register_of_reading)
     return false;
   const DeviceRegister fn = *register_of_reading;
-  switch (fn) {
-    case DeviceRegister::ROOM_TEMPERATURE:
+  switch (find_device_reading(reading)->card) {
+    case CardUse::CURRENT_TEMPERATURE:
       return profile.features.current_temperature;
-    case DeviceRegister::COMFORT_SETPOINT:
-    case DeviceRegister::MAX_SETPOINT:
+    case CardUse::TARGET_TEMPERATURE:
       return profile.features.target_temperature;
-    default:
+    case CardUse::NONE:
       break;
   }
   return fn == profile.mode_fn || (!profile.preset_observed.empty() && fn == profile.preset_fn) ||
@@ -830,8 +846,9 @@ HeatingDeviceFacts heating_device_facts(const IoDevice *dev, bool programme_stat
   // A heater that has reported its temperature in force has the programme's registers: a read missed since
   // (no reply, or the programme just resumed) leaves the value unknown but not the rule.
   const bool programme_shown = profile != nullptr && programme_period_active(*profile, *dev);
-  facts.programme_runs = programme_shown && dev->temperature_in_force == TemperatureInForceSupport::REPORTED;
-  facts.in_force_unresolved = programme_shown && dev->temperature_in_force == TemperatureInForceSupport::UNKNOWN;
+  const InForceSupport support = profile != nullptr ? in_force_support(*profile, *dev) : InForceSupport::UNKNOWN;
+  facts.programme_runs = programme_shown && support == InForceSupport::REPORTED;
+  facts.in_force_unresolved = programme_shown && support == InForceSupport::UNKNOWN;
   // The stored level is the one the read made for this request refreshed (HeaterController::read_programme_state()).
   if (profile != nullptr && profile->programme_period != nullptr && profile->programme_period->override_in_eco_only)
     facts.period = period_of_level(reading_wire(*dev, DeviceReading::HEATING_LEVEL));

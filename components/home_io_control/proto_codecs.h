@@ -23,6 +23,13 @@ namespace home_io_control {
 
 struct IoFrame;  // Defined in proto_frame.h; decode_1w_frame takes it by reference.
 
+/// @brief The 16-bit big-endian word at `bytes` (the protocol's multi-byte fields, most significant byte first).
+/// @param bytes Pointer to two readable bytes.
+/// @return The word.
+[[nodiscard]] constexpr uint16_t read_u16_be(const uint8_t *bytes) {
+  return static_cast<uint16_t>((bytes[0] << BITS_PER_BYTE) | bytes[1]);
+}
+
 // ============================================================================
 // Device Name Codec
 // ============================================================================

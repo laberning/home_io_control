@@ -5,6 +5,7 @@
 #include "device_registry.h"
 
 #include "proto_device_kinds.h"
+#include "proto_device_readings.h"
 #include "proto_frame.h"
 #include "proto_sizes.h"
 
@@ -37,11 +38,13 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
   dev.optimistic_state = cfg.optimistic_state;
   dev.travel_speed = cfg.travel_speed;
   dev.low_power = cfg.low_power;
-  dev.battery_entities = cfg.battery_entities;
   dev.has_system_key = cfg.has_system_key;
   if (cfg.has_system_key)
     memcpy(dev.system_key, cfg.system_key, AES_KEY_SIZE);
   resolve_device_features(dev);
+  // A cover that declares battery entities asks for its coarse battery level, so a status line says "not reported".
+  if (cfg.battery_entities)
+    ask_reading(dev, DeviceReading::BATTERY_STATE);
   devices_[device_id] = dev;
 }
 

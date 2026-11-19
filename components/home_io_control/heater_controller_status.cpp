@@ -34,23 +34,18 @@ void apply_heating_main_parameter(const std::string &id, IoDevice &dev, std::spa
              id.c_str(), main_parameter[0], main_parameter[1]);
     return;
   }
-  DeviceReadingValues &store = dev.reading_values;
-  const HeatingCardRange range = device_temperature_range(dev);
-  if (const auto level = decode_status_reading(DeviceReading::HEATING_LEVEL, main_parameter, profile->mp_prefix,
-                                               range.min_c, range.max_c)) {
-    if (reading_wire(dev, DeviceReading::HEATING_LEVEL) != static_cast<int>(*level))
-      ESP_LOGI(detail::TAG, "Device %s: heating value 0x%02X", id.c_str(), static_cast<unsigned>(*level));
-    store.store(reading_slot(DeviceReading::HEATING_LEVEL), *level);
+  if (const auto level =
+          store_status_main_parameter(dev, DeviceReading::HEATING_LEVEL, main_parameter, profile->mp_prefix);
+      level.value) {
+    if (level.changed)
+      ESP_LOGI(detail::TAG, "Device %s: heating value 0x%02X", id.c_str(), static_cast<unsigned>(*level.value));
     return;
   }
-  if (profile->path == HeatingControlPath::TEMPERATURE_EXECUTE) {
-    if (const auto celsius = decode_status_reading(DeviceReading::STATUS_SETPOINT, main_parameter, profile->mp_prefix,
-                                                   range.min_c, range.max_c)) {
-      // A plain temperature ends an alias the heater reported before.
-      store.store(reading_slot(DeviceReading::STATUS_SETPOINT), *celsius);
-      store.clear(reading_slot(DeviceReading::HEATING_LEVEL));
-      return;
-    }
+  if (profile->path == HeatingControlPath::TEMPERATURE_EXECUTE &&
+      store_status_main_parameter(dev, DeviceReading::STATUS_SETPOINT, main_parameter, profile->mp_prefix).value) {
+    // A plain temperature ends an alias the heater reported before.
+    clear_reading(dev, DeviceReading::HEATING_LEVEL);
+    return;
   }
   ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%02X%02X is not a heating value", id.c_str(),
            main_parameter[0], main_parameter[1]);
@@ -64,20 +59,18 @@ void apply_register_heater_status_reply(const std::string &id, IoDevice &dev, co
   // at the offset every such reply holds its main parameter.
   const std::span<const uint8_t> main_parameter(frame.data + STATUS_MP_FP_MAIN_PARAMETER_OFFSET,
                                                 STATUS_MAIN_PARAMETER_SIZE);
-  const HeatingCardRange range = device_temperature_range(dev);
-  const auto level = decode_status_reading(DeviceReading::HEATING_LEVEL, main_parameter, HEATING_LEVEL_MP_PREFIX,
-                                           range.min_c, range.max_c);
-  if (!level) {
+  const StatusStore level =
+      store_status_main_parameter(dev, DeviceReading::HEATING_LEVEL, main_parameter, HEATING_LEVEL_MP_PREFIX);
+  if (!level.value) {
     // Not a level: the stored level is forgotten. The heating_level sensor keeps what it last showed (a text
     // sensor cannot go back to no state).
     ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%02X%02X is not a heating level", id.c_str(),
              main_parameter[0], main_parameter[1]);
-    dev.reading_values.clear(reading_slot(DeviceReading::HEATING_LEVEL));
+    clear_reading(dev, DeviceReading::HEATING_LEVEL);
     return;
   }
-  if (reading_wire(dev, DeviceReading::HEATING_LEVEL) != static_cast<int>(*level))
-    ESP_LOGI(detail::TAG, "Device %s: heating level 0x%02X", id.c_str(), static_cast<unsigned>(*level));
-  dev.reading_values.store(reading_slot(DeviceReading::HEATING_LEVEL), *level);
+  if (level.changed)
+    ESP_LOGI(detail::TAG, "Device %s: heating level 0x%02X", id.c_str(), static_cast<unsigned>(*level.value));
 }
 
 void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame &frame, bool trust_position) {
@@ -98,19 +91,17 @@ void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame 
 
   const std::span<const uint8_t> main_parameter(frame.data + STATUS_MP_FP_MAIN_PARAMETER_OFFSET,
                                                 STATUS_MAIN_PARAMETER_SIZE);
-  const HeatingCardRange range = device_temperature_range(dev);
   // A water heater's main parameter is its target, over the range the heater has: no level prefix applies.
-  if (const auto celsius =
-          decode_status_reading(DeviceReading::STATUS_SETPOINT, main_parameter, 0, range.min_c, range.max_c)) {
-    if (reading_value(dev, DeviceReading::STATUS_SETPOINT) != celsius)
-      ESP_LOGI(detail::TAG, "Device %s: hot water target %.1f C", id.c_str(), static_cast<double>(*celsius));
-    dev.reading_values.store(reading_slot(DeviceReading::STATUS_SETPOINT), *celsius);
+  if (const StatusStore target = store_status_main_parameter(dev, DeviceReading::STATUS_SETPOINT, main_parameter, 0);
+      target.value) {
+    if (target.changed)
+      ESP_LOGI(detail::TAG, "Device %s: hot water target %.1f C", id.c_str(), static_cast<double>(*target.value));
     return;
   }
   // An alias or an out-of-range value is not a target temperature: it is logged and the target shows unknown.
   ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%02X%02X is not a hot water target", id.c_str(),
            main_parameter[0], main_parameter[1]);
-  dev.reading_values.clear(reading_slot(DeviceReading::STATUS_SETPOINT));
+  clear_reading(dev, DeviceReading::STATUS_SETPOINT);
 }
 
 }  // namespace home_io_control

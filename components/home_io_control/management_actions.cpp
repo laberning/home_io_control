@@ -630,10 +630,11 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
   }
 
   // The override exists only on a heater whose profile names its programme registers.
-  if (fn == DeviceRegister::DEROGATED_SETPOINT) {
+  // A register the profile names as a programme register (the override, the temperature in force) exists only there.
+  if (is_programme_register_of_any_profile(fn)) {
     const HeatingProfile *profile = find_heating_profile(*dev);
-    if (profile == nullptr || profile->programme_period == nullptr) {
-      result.message = "device has no programme, so set_derogation does not apply";
+    if (profile == nullptr || !is_programme_register(*profile, fn)) {
+      result.message = std::string("device has no programme, so ") + device_register_name(fn) + " does not apply";
       return result;
     }
   }
@@ -647,7 +648,7 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
   // the action shows exactly what the climate card would; every other function is one send. Both
   // paths share the hub's exchange helper, and a CMD_ERROR_RESP is recorded on the device record by it.
   float read_value = 0.0F;
-  const bool read_with_value = fn == DeviceRegister::WINDOW_OPEN;
+  const bool read_with_value = device_register_action_shows_value(fn);
   const bool acknowledged = read_with_value
                                 ? hub_->read_heating_register(result.device_id, fn, &read_value, EXCHANGE_RETRY_COUNT)
                                 : hub_->send_heating_command(result.device_id, fn, encoded_value);

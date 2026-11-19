@@ -401,9 +401,10 @@ IoDevice *make_towel_dryer_in_programme(HeaterControllerFixture &fx, float in_fo
   test::store_reading(*dev, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(HeatingTemporaryState::NONE));
   test::store_reading(*dev, DeviceReading::SETPOINT, 19.0F);
   test::store_reading(*dev, DeviceReading::HEATING_LEVEL, level);
-  test::store_reading(*dev, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE, in_force_c);
   if (!std::isnan(in_force_c))
-    dev->temperature_in_force = TemperatureInForceSupport::REPORTED;
+    test::store_reading(*dev, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE, in_force_c);
+  if (!std::isnan(in_force_c))
+    test::set_in_force_support(*dev, InForceSupport::REPORTED);
   return dev;
 }
 
@@ -413,9 +414,10 @@ IoDevice *make_radiator_in_programme(HeaterControllerFixture &fx, HeatingMode mo
   IoDevice *dev = make_heater(fx);
   test::store_reading(*dev, DeviceReading::MODE, static_cast<int16_t>(mode));
   test::store_reading(*dev, DeviceReading::SETPOINT, 19.0F);
-  test::store_reading(*dev, DeviceReading::TEMPERATURE_IN_FORCE, in_force_c);
   if (!std::isnan(in_force_c))
-    dev->temperature_in_force = TemperatureInForceSupport::REPORTED;
+    test::store_reading(*dev, DeviceReading::TEMPERATURE_IN_FORCE, in_force_c);
+  if (!std::isnan(in_force_c))
+    test::set_in_force_support(*dev, InForceSupport::REPORTED);
   return dev;
 }
 
@@ -565,14 +567,14 @@ TEST(HeaterController, AModeWriteIntoTheProgrammeIsReadBackThenTheTemperatureInF
     fx.queue_register_ack({0x0C, 0x61, 0x01, c.mode_register, c.to_wire});
     fx.queue_register_ack({0x0C, 0x60, 0x01, c.mode_register, c.to_wire});
     queue_read_reply(fx, c.in_force_register, {0xAF, 0x00});  // 17.5 C
-    ASSERT_EQ(dev->temperature_in_force, TemperatureInForceSupport::UNKNOWN);
+    ASSERT_EQ(test::in_force_of(*dev), InForceSupport::UNKNOWN);
 
     ASSERT_TRUE(fx.controller.execute_heating_plan("ABC123", register_plan(mode_fn, c.to_wire), nullptr));
 
     EXPECT_EQ(sent_registers(fx), (std::vector<uint8_t>{c.mode_register, c.mode_register, c.in_force_register}))
         << "write, read-back, one read of the temperature in force, towel " << c.towel;
     EXPECT_FLOAT_EQ(stored_in_force(*dev), 17.5F);
-    EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED);
+    EXPECT_EQ(test::in_force_of(*dev), InForceSupport::REPORTED);
   }
 }
 
@@ -635,7 +637,7 @@ TEST(HeaterController, ASilentModeReadBackReadsNoTemperatureInForce) {
 TEST(HeaterController, AHeaterWithoutATemperatureInForceIsNotAskedAfterAModeWrite) {
   HeaterControllerFixture fx;
   IoDevice *dev = make_radiator_in_programme(fx, HeatingMode::MANUAL, NAN);
-  dev->temperature_in_force = TemperatureInForceSupport::ABSENT;
+  test::set_in_force_support(*dev, InForceSupport::ABSENT);
   const uint8_t auto_wire = static_cast<uint8_t>(HeatingMode::AUTO);
   queue_register_write_and_read_back(fx, RADIATOR_MODE, auto_wire, auto_wire);
 
@@ -671,7 +673,7 @@ TEST(HeaterController, ASilentTemperatureInForceReadAfterAModeWriteChangesNothin
   const std::vector<uint8_t> registers = sent_registers(fx);
   ASSERT_GE(registers.size(), 3u);
   EXPECT_EQ(registers[2], RADIATOR_IN_FORCE);
-  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::UNKNOWN) << "a missed read says nothing";
+  EXPECT_EQ(test::in_force_of(*dev), InForceSupport::UNKNOWN) << "a missed read says nothing";
   EXPECT_TRUE(std::isnan(stored_in_force(*dev)));
   EXPECT_EQ(test::wire_read(*dev, DeviceReading::MODE), auto_wire) << "the mode the read-back stored stays";
   EXPECT_TRUE(written_registers(fx) == std::vector<uint8_t>{RADIATOR_MODE}) << "nothing else is written";
@@ -702,7 +704,7 @@ TEST(HeaterController, AnEmptyTemperatureInForceAfterAWriteLeavesTheTargetsOwnRe
 
     ASSERT_TRUE(fx.controller.execute_heating_plan("ABC123", register_plan(fn, c.written_wire), nullptr)) << c.what;
     ASSERT_EQ(sent_registers(fx).back(), DRYER_IN_FORCE) << c.what;
-    EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::UNKNOWN) << c.what;
+    EXPECT_EQ(test::in_force_of(*dev), InForceSupport::UNKNOWN) << c.what;
 
     // The next target asks the heater, which now runs its programme and reports the temperature in force.
     const size_t before = fx.radio.get_sent_data().size();
@@ -716,7 +718,7 @@ TEST(HeaterController, AnEmptyTemperatureInForceAfterAWriteLeavesTheTargetsOwnRe
     EXPECT_EQ(sent_registers_since(fx, before),
               (std::vector<uint8_t>{DRYER_MODE, DRYER_TIMED_RUN, DRYER_IN_FORCE, OVERRIDE_REGISTER, OVERRIDE_REGISTER}))
         << c.what;
-    EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED) << c.what;
+    EXPECT_EQ(test::in_force_of(*dev), InForceSupport::REPORTED) << c.what;
   }
 }
 
@@ -740,7 +742,7 @@ TEST(HeaterController, ATargetOnAProgrammeHeaterSendsTheSameExchangesEveryTimeWh
   struct Case {
     const char *what;
     bool towel;
-    TemperatureInForceSupport support;
+    InForceSupport support;
     std::vector<std::vector<uint8_t>> replies;  // to the reads, in order: register, value bytes
     std::vector<uint8_t> sequence;              // registers, in the order they are sent
     std::vector<uint8_t> writes;                // the registers written
@@ -749,55 +751,55 @@ TEST(HeaterController, ATargetOnAProgrammeHeaterSendsTheSameExchangesEveryTimeWh
   const std::vector<Case> cases = {
       {"radiator in heat: R mode, W+R comfort",
        false,
-       TemperatureInForceSupport::UNKNOWN,
+       InForceSupport::UNKNOWN,
        {{RADIATOR_MODE, RADIATOR_HEAT}},
        {RADIATOR_MODE, COMFORT_REGISTER, COMFORT_REGISTER},
        {COMFORT_REGISTER}},
       {"radiator in the programme, reported: R mode, W+R override",
        false,
-       TemperatureInForceSupport::REPORTED,
+       InForceSupport::REPORTED,
        {{RADIATOR_MODE, RADIATOR_PROGRAMME}},
        {RADIATOR_MODE, OVERRIDE_REGISTER, OVERRIDE_REGISTER},
        {OVERRIDE_REGISTER}},
       {"radiator in the programme, unknown: R mode, R in force, W+R override",
        false,
-       TemperatureInForceSupport::UNKNOWN,
+       InForceSupport::UNKNOWN,
        {{RADIATOR_MODE, RADIATOR_PROGRAMME}, {RADIATOR_IN_FORCE, 0xAF, 0x00}},
        {RADIATOR_MODE, RADIATOR_IN_FORCE, OVERRIDE_REGISTER, OVERRIDE_REGISTER},
        {OVERRIDE_REGISTER}},
       {"radiator in the programme, absent: R mode, W+R comfort",
        false,
-       TemperatureInForceSupport::ABSENT,
+       InForceSupport::ABSENT,
        {{RADIATOR_MODE, RADIATOR_PROGRAMME}},
        {RADIATOR_MODE, COMFORT_REGISTER, COMFORT_REGISTER},
        {COMFORT_REGISTER}},
       {"dryer in heat: R mode, W+R comfort",
        true,
-       TemperatureInForceSupport::UNKNOWN,
+       InForceSupport::UNKNOWN,
        {{DRYER_MODE, DRYER_HEAT}},
        {DRYER_MODE, COMFORT_REGISTER, COMFORT_REGISTER},
        {COMFORT_REGISTER}},
       {"dryer in the programme, reported: R mode, R timed run, W+R override",
        true,
-       TemperatureInForceSupport::REPORTED,
+       InForceSupport::REPORTED,
        {{DRYER_MODE, DRYER_PROGRAMME}, {DRYER_TIMED_RUN, NO_TIMED_RUN}},
        {DRYER_MODE, DRYER_TIMED_RUN, OVERRIDE_REGISTER, OVERRIDE_REGISTER},
        {OVERRIDE_REGISTER}},
       {"dryer in the programme, unknown: R mode, R timed run, R in force, W+R override",
        true,
-       TemperatureInForceSupport::UNKNOWN,
+       InForceSupport::UNKNOWN,
        {{DRYER_MODE, DRYER_PROGRAMME}, {DRYER_TIMED_RUN, NO_TIMED_RUN}, {DRYER_IN_FORCE, 0xAF, 0x00}},
        {DRYER_MODE, DRYER_TIMED_RUN, DRYER_IN_FORCE, OVERRIDE_REGISTER, OVERRIDE_REGISTER},
        {OVERRIDE_REGISTER}},
       {"dryer in the programme, absent: R mode, R timed run, W+R comfort",
        true,
-       TemperatureInForceSupport::ABSENT,
+       InForceSupport::ABSENT,
        {{DRYER_MODE, DRYER_PROGRAMME}, {DRYER_TIMED_RUN, NO_TIMED_RUN}},
        {DRYER_MODE, DRYER_TIMED_RUN, COMFORT_REGISTER, COMFORT_REGISTER},
        {COMFORT_REGISTER}},
       {"dryer in the programme with a boost on top: R mode, R timed run, W+R comfort",
        true,
-       TemperatureInForceSupport::REPORTED,
+       InForceSupport::REPORTED,
        {{DRYER_MODE, DRYER_PROGRAMME}, {DRYER_TIMED_RUN, TIMED_BOOST}},
        {DRYER_MODE, DRYER_TIMED_RUN, COMFORT_REGISTER, COMFORT_REGISTER},
        {COMFORT_REGISTER}},
@@ -808,8 +810,8 @@ TEST(HeaterController, ATargetOnAProgrammeHeaterSendsTheSameExchangesEveryTimeWh
       HeaterControllerFixture fx;
       IoDevice *dev = c.towel ? make_towel_dryer_in_programme(fx, NAN, heating_level::ECO)
                               : make_radiator_in_programme(fx, HeatingMode::MANUAL, NAN);
-      dev->temperature_in_force = c.support;
-      if (c.support == TemperatureInForceSupport::REPORTED)
+      test::set_in_force_support(*dev, c.support);
+      if (c.support == InForceSupport::REPORTED)
         test::store_reading(*dev, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE, 17.0F);
       if (c.towel) {
         test::store_reading(*dev, DeviceReading::TOWEL_MODE, stored_in_heat ? DRYER_HEAT : DRYER_PROGRAMME);
@@ -993,7 +995,7 @@ TEST(HeaterController, AHeaterThatDoesNotAnswerTheModeReadGetsNothingWrittenAndN
     EXPECT_EQ(test::wire_read(*dev, DeviceReading::MODE), test::wire_read(before, DeviceReading::MODE))
         << "the stored reading stays as it was";
     EXPECT_EQ(test::wire_read(*dev, DeviceReading::TOWEL_MODE), test::wire_read(before, DeviceReading::TOWEL_MODE));
-    EXPECT_EQ(dev->temperature_in_force, before.temperature_in_force);
+    EXPECT_EQ(test::in_force_of(*dev), test::in_force_of(before));
     EXPECT_FLOAT_EQ(stored_in_force(*dev), stored_in_force(before));
   }
 }
@@ -1039,7 +1041,7 @@ TEST(HeaterController, AHeaterInTheProgrammeThatDoesNotAnswerTheTemperatureInFor
   EXPECT_EQ(outcome.plan.refusal, HeatingRefusal::IN_FORCE_UNKNOWN);
   EXPECT_FALSE(outcome.sent);
   EXPECT_TRUE(written_registers(fx).empty());
-  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::UNKNOWN);
+  EXPECT_EQ(test::in_force_of(*dev), InForceSupport::UNKNOWN);
 }
 
 TEST(HeaterController, AHeaterThatAnswersTheTemperatureInForceEmptyTakesTheTargetAsTheComfortSetpoint) {
@@ -1051,7 +1053,7 @@ TEST(HeaterController, AHeaterThatAnswersTheTemperatureInForceEmptyTakesTheTarge
 
   EXPECT_TRUE(set_target(fx, 21.0F).sent);
 
-  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::ABSENT);
+  EXPECT_EQ(test::in_force_of(*dev), InForceSupport::ABSENT);
   EXPECT_EQ(written_registers(fx), std::vector<uint8_t>{COMFORT_REGISTER});
 }
 
@@ -1197,6 +1199,20 @@ TEST(HeaterController, AnOverrideReadBackOfZeroLeavesTheTemperatureInForceAlone)
       fx.controller.execute_heating_plan("ABC123", register_plan(DeviceRegister::DEROGATED_SETPOINT, 0.0F), nullptr));
 
   EXPECT_FLOAT_EQ(stored_in_force(*dev), 15.5F) << "a dryer that kept no override shows what it held";
+}
+
+TEST(HeaterController, AnOverrideReadBackDoesNotStoreTheTemperatureInForceOfAHeaterThatHasNone) {
+  HeaterControllerFixture fx;
+  IoDevice *dev = make_towel_dryer_in_programme(fx, NAN, heating_level::ECO);
+  test::set_in_force_support(*dev, InForceSupport::ABSENT);
+  fx.queue_register_ack({0x0C, 0x61, 0x01, 0x1D, 0xD2, 0x00});
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x1D, 0xD2, 0x00});
+
+  ASSERT_TRUE(
+      fx.controller.execute_heating_plan("ABC123", register_plan(DeviceRegister::DEROGATED_SETPOINT, 21.0F), nullptr));
+
+  EXPECT_EQ(test::in_force_of(*dev), InForceSupport::ABSENT) << "a store would lift the heater's absent mark";
+  EXPECT_TRUE(std::isnan(stored_in_force(*dev)));
 }
 
 TEST(HeaterController, AComfortReadOutsideAWriteDoesNotMoveTheTemperatureInForce) {

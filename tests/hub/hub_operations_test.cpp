@@ -4016,7 +4016,7 @@ TEST(HubOperations, ARadiatorThatAnswers012AEmptyIsNotAskedAgain) {
   queue_radiator_detection(comp, radio);
   EXPECT_TRUE(comp.request_device_status("ABC123")) << "an empty answer is no poll failure";
   EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x15, 0x03, 0x00, 0x17, 0x0E, 0x2A, 0x06}));
-  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::ABSENT);
+  EXPECT_EQ(test::in_force_of(*dev), InForceSupport::ABSENT);
   EXPECT_FALSE(heating_device_facts(dev, true).programme_runs) << "no temperature in force to override";
   EXPECT_FALSE(heating_device_facts(dev, true).in_force_unresolved) << "and nothing left to ask";
 
@@ -4037,14 +4037,13 @@ TEST(HubOperations, ARadiatorThatReported012AKeepsReadingItAfterAnEmptyAnswer) {
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A, 0xAF, 0x00});  // 17.5 C
   queue_radiator_detection(comp, radio);
   EXPECT_TRUE(comp.request_device_status("ABC123"));
-  ASSERT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED);
+  ASSERT_EQ(test::in_force_of(*dev), InForceSupport::REPORTED);
 
   queue_radiator_core(comp, radio, HeatingMode::PROG);
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A});  // answered, no value
   queue_radiator_detection(comp, radio);
   EXPECT_TRUE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED)
-      << "a heater that has shown the register still has it";
+  EXPECT_EQ(test::in_force_of(*dev), InForceSupport::REPORTED) << "a heater that has shown the register still has it";
   EXPECT_TRUE(heating_device_facts(dev, true).programme_runs);
 
   const size_t before = radio.get_sent_data().size();
@@ -4065,8 +4064,7 @@ TEST(HubOperations, AnUnansweredRead012AIsRetriedAtTheNextPollNotMarkedMissing) 
 
   comp.request_device_status("ABC123");
 
-  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::UNKNOWN)
-      << "no answer at all says nothing about the register";
+  EXPECT_EQ(test::in_force_of(*dev), InForceSupport::UNKNOWN) << "no answer at all says nothing about the register";
 }
 
 TEST(HubOperations, ARadiatorThatReported012AKeepsTheOverrideRuleWhenALaterReadIsMissed) {
@@ -4078,7 +4076,7 @@ TEST(HubOperations, ARadiatorThatReported012AKeepsTheOverrideRuleWhenALaterReadI
   queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x2A, 0xAF, 0x00});  // 17.5 C
   queue_radiator_detection(comp, radio);
   EXPECT_TRUE(comp.request_device_status("ABC123"));
-  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED);
+  EXPECT_EQ(test::in_force_of(*dev), InForceSupport::REPORTED);
 
   // Heat drops the value; back in the programme (set on the radiator) the read of 0x012A gets no reply.
   queue_radiator_core(comp, radio, HeatingMode::MANUAL);
@@ -4087,7 +4085,7 @@ TEST(HubOperations, ARadiatorThatReported012AKeepsTheOverrideRuleWhenALaterReadI
   queue_radiator_core(comp, radio, HeatingMode::AUTO);
   comp.request_device_status("ABC123");
   ASSERT_FALSE(test::has_reading(*dev, DeviceRegister::TEMPERATURE_IN_FORCE));
-  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED) << "a missed read changes nothing";
+  EXPECT_EQ(test::in_force_of(*dev), InForceSupport::REPORTED) << "a missed read changes nothing";
 
   EXPECT_TRUE(heating_device_facts(dev, true).programme_runs)
       << "the programme runs: a missed read must not turn a target into a change of the comfort setpoint";
@@ -4107,7 +4105,7 @@ TEST(HubOperations, TheReadBeforeATargetAsksTheModeThenTheTemperatureInForceOfAn
   EXPECT_TRUE(comp.read_programme_state("ABC123"));
 
   EXPECT_EQ(sent_steps_since(radio, before), (std::vector<uint8_t>{0x00, 0x2A}));
-  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::REPORTED);
+  EXPECT_EQ(test::in_force_of(*dev), InForceSupport::REPORTED);
   EXPECT_FLOAT_EQ(test::number_read(*dev, DeviceReading::TEMPERATURE_IN_FORCE), 17.5F)
       << "the card shows what the heater said";
   EXPECT_TRUE(heating_device_facts(dev, true).programme_runs);
@@ -4122,7 +4120,7 @@ TEST(HubOperations, TheReadBeforeATargetMarksAHeaterThatAnswersTheTemperatureInF
 
   EXPECT_TRUE(comp.read_programme_state("ABC123"));
 
-  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::ABSENT);
+  EXPECT_EQ(test::in_force_of(*dev), InForceSupport::ABSENT);
   EXPECT_FALSE(heating_device_facts(dev, true).programme_runs);
   EXPECT_FALSE(heating_device_facts(dev, true).in_force_unresolved);
 }
@@ -4135,18 +4133,17 @@ TEST(HubOperations, TheReadBeforeATargetLeavesTheTemperatureInForceUnresolvedWhi
 
   EXPECT_TRUE(comp.read_programme_state("ABC123")) << "the mode was answered";  // 0x2A gets no reply
 
-  EXPECT_EQ(dev->temperature_in_force, TemperatureInForceSupport::UNKNOWN);
+  EXPECT_EQ(test::in_force_of(*dev), InForceSupport::UNKNOWN);
   EXPECT_TRUE(heating_device_facts(dev, true).in_force_unresolved) << "the plan refuses a target";
   EXPECT_FALSE(heating_device_facts(dev, true).programme_runs);
 }
 
 TEST(HubOperations, TheReadBeforeATargetAsksOnlyTheModeInHeatOnceTheHeaterAnsweredOrHasNoRegister) {
-  for (const TemperatureInForceSupport support :
-       {TemperatureInForceSupport::UNKNOWN, TemperatureInForceSupport::REPORTED, TemperatureInForceSupport::ABSENT}) {
+  for (const InForceSupport support : {InForceSupport::UNKNOWN, InForceSupport::REPORTED, InForceSupport::ABSENT}) {
     TestableComponent comp;
     MockRadio radio;
     IoDevice *dev = make_settled_radiator(comp, radio);
-    dev->temperature_in_force = support;
+    test::set_in_force_support(*dev, support);
     queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x00, static_cast<uint8_t>(HeatingMode::MANUAL)});
     const size_t before = radio.get_sent_data().size();
 
@@ -4155,12 +4152,11 @@ TEST(HubOperations, TheReadBeforeATargetAsksOnlyTheModeInHeatOnceTheHeaterAnswer
     EXPECT_EQ(sent_steps_since(radio, before), std::vector<uint8_t>{0x00})
         << "heat: no programme runs, so no temperature in force is asked";
   }
-  for (const TemperatureInForceSupport support :
-       {TemperatureInForceSupport::REPORTED, TemperatureInForceSupport::ABSENT}) {
+  for (const InForceSupport support : {InForceSupport::REPORTED, InForceSupport::ABSENT}) {
     TestableComponent comp;
     MockRadio radio;
     IoDevice *dev = make_settled_radiator(comp, radio);
-    dev->temperature_in_force = support;
+    test::set_in_force_support(*dev, support);
     queue_register_reply(comp, radio, {0x0C, 0x60, 0x01, 0x00, static_cast<uint8_t>(HeatingMode::PROG)});
     const size_t before = radio.get_sent_data().size();
 

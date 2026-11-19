@@ -257,6 +257,13 @@ enum class ReadingValueKind : uint8_t {
   NUMBER,  ///< Any other number: a sensor.
 };
 
+/// @brief Which temperature of the climate card a reading serves, for a profile that shows it.
+enum class CardUse : uint8_t {
+  NONE,                 ///< No fixed role: the profile names the register (mode, preset, action, programme).
+  CURRENT_TEMPERATURE,  ///< The card's current temperature (HeatingFeatures::current_temperature).
+  TARGET_TEMPERATURE,   ///< The card's target and its bounds (HeatingFeatures::target_temperature).
+};
+
 /// @brief One row of the reading table.
 struct DeviceReadingRow {
   const char *name;       ///< Lower-case name for logs; its upper-case form is the key of the codegen mirror.
@@ -270,6 +277,7 @@ struct DeviceReadingRow {
   const char *(*value_name)(uint8_t value) =
       nullptr;  ///< The name of each value a NAMED reading takes (nullptr for a value that has none); unset for the
                 ///< other kinds. The entity that shows the reading publishes the name, never the number.
+  CardUse card{CardUse::NONE};  ///< The role the climate card gives the reading; read by heating_profile_reads().
   ReadingStale stale{ReadingStale::KEEP};  ///< What a scheduled reading's value becomes after repeated misses; the
                                            ///< other kinds never consult it.
 };
@@ -372,6 +380,23 @@ std::optional<float> decode_status_reading(DeviceReading reading, std::span<cons
 /// @return The number of readings stored.
 size_t store_status_parameter_readings(IoDevice &dev, const IoFrame &reply);
 
+/// @brief What store_status_main_parameter() did.
+struct StatusStore {
+  std::optional<float> value;  ///< The value now stored; nullopt when the main parameter is none of this reading.
+  bool changed{false};         ///< The stored value differs from what the reading held before.
+};
+
+/// @brief Decode a status reply's main parameter for a status reading and store it.
+/// @details The range is the device's (device_temperature_range()). A main parameter that is none of this reading
+///          stores nothing and leaves the reading as it was: the caller decides whether that clears it.
+/// @param dev The device record.
+/// @param reading A reading with a StatusMainParameterSource.
+/// @param main_parameter The two bytes of the main parameter.
+/// @param level_prefix High byte of a level or alias (decode_status_reading()).
+/// @return The value stored and whether it changed.
+StatusStore store_status_main_parameter(IoDevice &dev, DeviceReading reading, std::span<const uint8_t> main_parameter,
+                                        uint8_t level_prefix);
+
 /// @brief The registers the hub's poll reads so a reading has a value.
 /// @param row The reading's row.
 /// @return The register of a register reading, the registers a derived reading names, none for a kind with no
@@ -429,15 +454,43 @@ std::optional<float> register_value(const IoDevice &dev, DeviceRegister fn);
 /// @return The value, or -1 when it has none (see register_value()).
 int register_wire(const IoDevice &dev, DeviceRegister fn);
 
-/// @brief Keep the value a heater answered for a register, in the reading that is that register.
-/// @details Stores the first reading of the register only; a register that is read by parts is stored by
-///          store_register_reply().
+// === The store door ===
+
+/// @brief Keep a value in a reading of a device; the reading is no longer absent and counts as reported.
 /// @param dev The device record.
-/// @param fn The register.
-/// @param value The decoded value (decode_heating_reply()).
-/// @return true when a reading is the register and now holds the value; false for a register nothing is kept of
-///         (the logged ones).
-bool store_register_reading(IoDevice &dev, DeviceRegister fn, float value);
+/// @param reading The reading.
+/// @param value The value (NaN is a value: a sensor the device reports as faulty).
+void store_reading(IoDevice &dev, DeviceReading reading, float value);
+
+/// @brief Forget the value of a reading; it reads as never read again. Absent, asked and reported stay.
+/// @param dev The device record.
+/// @param reading The reading.
+void clear_reading(IoDevice &dev, DeviceReading reading);
+
+/// @brief Record that the device does not have a reading; a value held before is dropped.
+/// @param dev The device record.
+/// @param reading The reading.
+void mark_reading_absent(IoDevice &dev, DeviceReading reading);
+
+/// @param dev The device record.
+/// @param reading The reading.
+/// @return true once the device was found not to have the reading (until a value is stored).
+[[nodiscard]] bool reading_absent(const IoDevice &dev, DeviceReading reading);
+
+/// @param dev The device record.
+/// @param reading The reading.
+/// @return true once a value was stored for the reading in this boot, also when it was cleared since.
+[[nodiscard]] bool reading_reported(const IoDevice &dev, DeviceReading reading);
+
+/// @brief Declare that an entity wants a reading.
+/// @param dev The device record.
+/// @param reading The reading.
+void ask_reading(IoDevice &dev, DeviceReading reading);
+
+/// @param dev The device record.
+/// @param reading The reading.
+/// @return true while an entity wants the reading.
+[[nodiscard]] bool reading_asked(const IoDevice &dev, DeviceReading reading);
 
 /// @brief Keep what a device answered for a register, in every reading that is the register or a part of it.
 /// @details Each reading decodes the value bytes by its part's codec, or by the register's codec without a part, and

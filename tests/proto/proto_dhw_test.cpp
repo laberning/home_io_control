@@ -418,8 +418,6 @@ TEST(ProtoDhw, EachFeaturesOnWordSetsItsOwnFieldAndEndsTheOther) {
   }
   EXPECT_EQ(dhw_operating_feature_wire(DhwOperatingFeature::BOOST).capability, DHW_CAPABILITY_BOOST);
   EXPECT_EQ(dhw_operating_feature_wire(DhwOperatingFeature::AWAY).capability, DHW_CAPABILITY_AWAY);
-  EXPECT_EQ(dhw_operating_feature_wire(DhwOperatingFeature::BOOST).fp16_shift, DHW_FP16_BOOST_SHIFT);
-  EXPECT_EQ(dhw_operating_feature_wire(DhwOperatingFeature::AWAY).fp16_shift, DHW_FP16_AWAY_SHIFT);
 }
 
 TEST(ProtoDhw, OnlyAFieldValueOfOneIsOn) {

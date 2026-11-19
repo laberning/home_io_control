@@ -95,7 +95,6 @@ static constexpr uint8_t DHW_FP16_AWAY_SHIFT = 10;
 /// @brief The wire facts of one DhwOperatingFeature: what FP15, FP16 and the duration registers say about it.
 struct DhwOperatingFeatureWire {
   uint16_t capability;               ///< FP15 bit that says the heater supports it (DHW_CAPABILITY_*).
-  uint8_t fp16_shift;                ///< Lowest bit of its two-bit FP16 field (0 keep, 1 on, 2 off).
   uint16_t on_word;                  ///< FP16 that starts it and ends the other (DHW_OPERATING_MODE_*_ON).
   DeviceRegister duration_register;  ///< Register that holds its duration.
   uint8_t start_duration;            ///< Duration a start writes before the FP16 EXECUTE.

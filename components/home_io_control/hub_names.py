@@ -105,9 +105,9 @@ CONF_LR1121_BOOTLOADER = "bootloader"
 CONF_CHECKSUM_MD5 = "checksum_md5"
 CONF_TARGET_VERSION = "target_version"
 MIN_STATUS_POLL_INTERVAL_MS = 500
-MIN_RAIN_SENSOR_POLL_INTERVAL_MS = 60000
-MIN_SUN_LEVEL_POLL_INTERVAL_MS = 60000
-MIN_BATTERY_LEVEL_POLL_INTERVAL_MS = 60000
+# Shortest poll interval of a cover's scheduled reading (rain, sun level, battery level): the `min_interval_ms` of
+# their DEVICE_READINGS rows.
+MIN_READING_POLL_INTERVAL_MS = 60000
 MIN_STATUS_REFRESH_INTERVAL_MS = 60000
 # Shortest update_interval of a data-object reading; the hub raises a shorter one to the same value
 # (DEVICE_READING_MIN_INTERVAL_MS in periodic_poll_policy.h).

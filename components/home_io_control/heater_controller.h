@@ -204,7 +204,7 @@ class HeaterController {
   /// @details Reads the mode (EXCHANGE_RETRY_COUNT tries, the poll's read), then, while the mode shows the
   ///          programme on a profile with a timed-run register of its own, that register
   ///          (timed_run_register()), then the temperature in force while the heater has not answered it yet in
-  ///          this boot (TemperatureInForceSupport::UNKNOWN) and the programme runs. Every reading updates the
+  ///          this boot (InForceSupport::UNKNOWN) and the programme runs. Every reading updates the
   ///          device record and notifies the card, so the card shows what the write that follows is planned
   ///          from. Stops at the first register that gets no reply or an answer without a value.
   ///
@@ -477,7 +477,7 @@ class HeaterController {
 
   /// What an answer without a value to a read of the temperature in force may decide.
   enum class InForceEmptyAnswer : uint8_t {
-    /// The heater has no such register (TemperatureInForceSupport::ABSENT): for a read made right after the mode
+    /// The heater has no such register (InForceSupport::ABSENT): for a read made right after the mode
     /// and the timed run were read, so the programme is known to run.
     MARKS_ABSENT,
     /// Nothing: for a read that goes partly by older readings, where the heater may run something else and
@@ -487,9 +487,9 @@ class HeaterController {
 
   /// @brief Read the temperature in force of a heater's programme, when the programme runs.
   /// @details Sends nothing unless programme_period_active() holds for the stored readings, and nothing once
-  ///          the heater has answered the read without a value (TemperatureInForceSupport::ABSENT): that heater
+  ///          the heater has answered the read without a value (InForceSupport::ABSENT): that heater
   ///          has no such register, and its targets keep writing the comfort setpoint. A value marks the heater
-  ///          TemperatureInForceSupport::REPORTED, which then stays for this boot: neither a read with no reply
+  ///          InForceSupport::REPORTED, which then stays for this boot: neither a read with no reply
   ///          nor an answer without a value changes it. An answer without a value while the heater has not
   ///          answered one yet marks it ABSENT only as @p empty_answer allows.
   /// @param device_id Target device ID.

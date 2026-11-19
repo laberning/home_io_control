@@ -139,7 +139,7 @@ TEST(DeviceReadingStore, ARegisterIsKeptAskedAndAbsentThroughItsReading) {
   EXPECT_FALSE(register_reading_wanted(dev, DeviceRegister::ENERGY_TOTAL));
   ask_register_reading(dev, DeviceRegister::ENERGY_TOTAL);
   EXPECT_TRUE(register_reading_wanted(dev, DeviceRegister::ENERGY_TOTAL));
-  EXPECT_TRUE(store_register_reading(dev, DeviceRegister::ENERGY_TOTAL, 3422.0F));
+  store_reading(dev, DeviceReading::ENERGY_TOTAL, 3422.0F);
   EXPECT_EQ(register_value(dev, DeviceRegister::ENERGY_TOTAL), 3422.0F);
   EXPECT_EQ(reading_value(dev, DeviceReading::ENERGY_TOTAL), 3422.0F) << "the register is the reading";
 
@@ -147,7 +147,7 @@ TEST(DeviceReadingStore, ARegisterIsKeptAskedAndAbsentThroughItsReading) {
   EXPECT_FALSE(register_reading_wanted(dev, DeviceRegister::ENERGY_TOTAL)) << "no longer read";
   EXPECT_FALSE(register_value(dev, DeviceRegister::ENERGY_TOTAL).has_value());
 
-  EXPECT_FALSE(store_register_reading(dev, DeviceRegister::PAIRED_DEVICES, 1.0F)) << "a logged register keeps nothing";
+  EXPECT_FALSE(find_register_reading(DeviceRegister::PAIRED_DEVICES)) << "a logged register is no reading";
   EXPECT_FALSE(clear_register_reading(dev, DeviceRegister::SETPOINT_BLOCK));
   EXPECT_FALSE(register_value(dev, DeviceRegister::PAIRED_DEVICES).has_value());
   EXPECT_EQ(register_wire(dev, DeviceRegister::PAIRED_DEVICES), -1);
@@ -828,4 +828,67 @@ TEST(DeviceReadings, TheSunLevelRowAppliesTheEstimatedLuxFactorWhenItDecodes) {
   EXPECT_EQ(source->event, EVENT_LOCAL_SENSOR);
   EXPECT_EQ(source->factor, 100) << "one step of the device's value is 100 lux";
   EXPECT_EQ(source->type_byte, std::optional<uint8_t>(LOCAL_SENSOR_TYPE_SUN));
+}
+
+// === The store door ===
+
+TEST(DeviceReadingStore, TheDoorStoresClearsAndMarksAbsentByReading) {
+  IoDevice dev;
+  mark_reading_absent(dev, DeviceReading::ENERGY_TOTAL);
+  EXPECT_TRUE(reading_absent(dev, DeviceReading::ENERGY_TOTAL));
+  store_reading(dev, DeviceReading::ENERGY_TOTAL, 12.0F);
+  EXPECT_FALSE(reading_absent(dev, DeviceReading::ENERGY_TOTAL)) << "a stored value lifts the absent mark";
+  EXPECT_EQ(reading_value(dev, DeviceReading::ENERGY_TOTAL), 12.0F);
+  clear_reading(dev, DeviceReading::ENERGY_TOTAL);
+  EXPECT_FALSE(reading_value(dev, DeviceReading::ENERGY_TOTAL).has_value());
+  mark_reading_absent(dev, DeviceReading::ENERGY_TOTAL);
+  EXPECT_TRUE(reading_absent(dev, DeviceReading::ENERGY_TOTAL));
+  EXPECT_FALSE(reading_asked(dev, DeviceReading::BATTERY_STATE));
+  ask_reading(dev, DeviceReading::BATTERY_STATE);
+  EXPECT_TRUE(reading_asked(dev, DeviceReading::BATTERY_STATE));
+}
+
+TEST(DeviceReadingStore, AValueStaysReportedThroughAClearAndAnAbsentMarkUntilTheNextBoot) {
+  IoDevice dev;
+  EXPECT_FALSE(reading_reported(dev, DeviceReading::ENERGY_TOTAL));
+  store_reading(dev, DeviceReading::ENERGY_TOTAL, 1.0F);
+  EXPECT_TRUE(reading_reported(dev, DeviceReading::ENERGY_TOTAL));
+  clear_reading(dev, DeviceReading::ENERGY_TOTAL);
+  EXPECT_TRUE(reading_reported(dev, DeviceReading::ENERGY_TOTAL)) << "a clear drops the value, not the fact";
+  mark_reading_absent(dev, DeviceReading::ENERGY_TOTAL);
+  EXPECT_TRUE(reading_reported(dev, DeviceReading::ENERGY_TOTAL));
+  EXPECT_FALSE(reading_reported(dev, DeviceReading::OCCUPANCY)) << "per reading";
+  DeviceReadingValues values;
+  EXPECT_FALSE(values.reported(DeviceReadingValues::SLOTS)) << "out of range reads as nothing";
+}
+
+TEST(DeviceReadingStore, AMainParameterIsStoredOnlyWhenItIsAValueOfTheReading) {
+  IoDevice dev;
+  const std::vector<uint8_t> level{HEATING_LEVEL_MP_PREFIX, heating_level::ECO};
+  const StatusStore first =
+      store_status_main_parameter(dev, DeviceReading::HEATING_LEVEL, level, HEATING_LEVEL_MP_PREFIX);
+  ASSERT_TRUE(first.value.has_value());
+  EXPECT_TRUE(first.changed);
+  EXPECT_EQ(test::wire_read(dev, DeviceReading::HEATING_LEVEL), heating_level::ECO);
+  EXPECT_FALSE(store_status_main_parameter(dev, DeviceReading::HEATING_LEVEL, level, HEATING_LEVEL_MP_PREFIX).changed)
+      << "the same value again is no change";
+  const std::vector<uint8_t> other_prefix{0x12, 0x34};
+  const StatusStore none =
+      store_status_main_parameter(dev, DeviceReading::HEATING_LEVEL, other_prefix, HEATING_LEVEL_MP_PREFIX);
+  EXPECT_FALSE(none.value.has_value());
+  EXPECT_EQ(test::wire_read(dev, DeviceReading::HEATING_LEVEL), heating_level::ECO)
+      << "a main parameter that is none of the reading leaves it to the caller";
+}
+
+// === The card role of a reading ===
+
+TEST(DeviceReadings, OnlyTheRoomTemperatureAndTheSetpointsServeTheCard) {
+  for (const DeviceReadingRow &row : device_readings()) {
+    const bool serves_card = row.reading == DeviceReading::ROOM_TEMPERATURE || row.reading == DeviceReading::SETPOINT ||
+                             row.reading == DeviceReading::MAX_SETPOINT;
+    EXPECT_EQ(row.card != CardUse::NONE, serves_card) << row.name;
+  }
+  EXPECT_EQ(find_device_reading(DeviceReading::ROOM_TEMPERATURE)->card, CardUse::CURRENT_TEMPERATURE);
+  EXPECT_EQ(find_device_reading(DeviceReading::SETPOINT)->card, CardUse::TARGET_TEMPERATURE);
+  EXPECT_EQ(find_device_reading(DeviceReading::MAX_SETPOINT)->card, CardUse::TARGET_TEMPERATURE);
 }

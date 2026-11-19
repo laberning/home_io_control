@@ -498,8 +498,7 @@ bool decode_status_update_event(const IoFrame &frame, StatusUpdateEvent &out) {
   const uint8_t data_len = frame.data[STATUS_UPDATE_EVENT_LENGTH_OFFSET];
   if (data_len != frame.data_len - STATUS_UPDATE_EVENT_DATA_OFFSET)
     return false;
-  out.event_id = static_cast<uint16_t>((frame.data[STATUS_UPDATE_EVENT_ID_OFFSET] << BITS_PER_BYTE) |
-                                       frame.data[STATUS_UPDATE_EVENT_ID_OFFSET + 1]);
+  out.event_id = read_u16_be(frame.data + STATUS_UPDATE_EVENT_ID_OFFSET);
   out.data_offset = STATUS_UPDATE_EVENT_DATA_OFFSET;
   out.data_len = data_len;
   return true;
@@ -510,7 +509,7 @@ bool decode_transfer_open_reply(const IoFrame &f, TransferOpenReply &out) {
     return false;
   out.handle = f.data[0];
   out.status = f.data[1];
-  out.length = static_cast<uint16_t>((f.data[2] << BITS_PER_BYTE) | f.data[3]);
+  out.length = read_u16_be(f.data + 2);
   return true;
 }
 
@@ -538,7 +537,7 @@ bool decode_limitation_status(const IoFrame &f, LimitationStatus &out) {
   if (f.cmd != CMD_LIMITATION_STATUS_RESP || f.data_len != LIMITATION_RESP_DATA_SIZE)
     return false;
   out.parameter_id = f.data[0];
-  out.value_raw = static_cast<uint16_t>((f.data[1] << BITS_PER_BYTE) | f.data[2]);
+  out.value_raw = read_u16_be(f.data + 1);
   out.originator = f.data[3];
   out.time_raw = f.data[4];
   return true;
@@ -604,7 +603,7 @@ bool decode_status_functional_parameter(const IoFrame &reply, uint8_t fp, uint16
     if (offset + STATUS_FP_VALUE_SIZE > reply.data_len)
       return false;
     if (mask == wanted)
-      found = static_cast<uint16_t>((reply.data[offset] << BITS_PER_BYTE) | reply.data[offset + 1]);
+      found = read_u16_be(reply.data + offset);
     offset += STATUS_FP_VALUE_SIZE;
   }
   if (!found)

@@ -87,7 +87,7 @@ inline bool is_subscription_answer(const IoFrame &request, const IoFrame &respon
   StatusUpdateEvent event;
   if (!decode_status_update_event(response, event))
     return false;
-  const auto requested = static_cast<uint16_t>((request.data[1] << BITS_PER_BYTE) | request.data[2]);
+  const auto requested = read_u16_be(request.data + 1);
   return event.event_id == requested;
 }
 

@@ -395,7 +395,7 @@ inline std::string describe_prediction(const IoDevice &dev) {
 ///         reports no level.
 inline std::string describe_battery(const IoDevice &dev) {
   const BatteryState battery = battery_state_of(dev);
-  if (battery == BatteryState::NOT_REPORTED && !dev.battery_entities)
+  if (battery == BatteryState::NOT_REPORTED && !reading_asked(dev, DeviceReading::BATTERY_STATE))
     return {};
   return std::string(" battery=") + battery_state_name(battery);
 }

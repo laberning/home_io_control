@@ -1204,3 +1204,42 @@ TEST(HeatingProfiles, EveryModeAProfileWritesToTheModeRegisterIsWritable) {
     }
   }
 }
+
+// === The temperature in force and the programme registers ===
+
+TEST(HeatingProfileInForce, TheStateIsTheStoresAbsentAndReportedMarksOfTheInForceReading) {
+  IoDevice dev;
+  dev.type = DeviceType::ELECTRICAL_HEATER;
+  dev.subtype = 1;
+  const HeatingProfile *profile = find_heating_profile(dev);
+  ASSERT_NE(profile, nullptr);
+  ASSERT_NE(profile->programme_period, nullptr);
+  const DeviceReading in_force = find_register_reading(profile->programme_period->in_force_fn)->reading;
+  EXPECT_EQ(in_force_support(*profile, dev), InForceSupport::UNKNOWN) << "nothing answered yet";
+  mark_reading_absent(dev, in_force);
+  EXPECT_EQ(in_force_support(*profile, dev), InForceSupport::ABSENT);
+  store_reading(dev, in_force, 17.0F);
+  EXPECT_EQ(in_force_support(*profile, dev), InForceSupport::REPORTED) << "a value lifts the absent mark";
+  clear_reading(dev, in_force);
+  EXPECT_EQ(in_force_support(*profile, dev), InForceSupport::REPORTED) << "kept until the next boot";
+}
+
+TEST(HeatingProfileInForce, AProfileWithoutAProgrammeHasNoInForceState) {
+  const HeatingProfile *profile = find_heating_profile(DeviceType::ELECTRICAL_HEATER, 0, DeviceModel::NONE);
+  ASSERT_NE(profile, nullptr);
+  ASSERT_EQ(profile->programme_period, nullptr);
+  EXPECT_EQ(in_force_support(*profile, IoDevice{}), InForceSupport::UNKNOWN);
+  EXPECT_FALSE(is_programme_register(*profile, DeviceRegister::DEROGATED_SETPOINT));
+}
+
+TEST(HeatingProfileInForce, TheProgrammeRegistersAreTheOnesAProfileNames) {
+  for (const HeatingProfile &profile : heating_profiles()) {
+    if (profile.programme_period == nullptr)
+      continue;
+    EXPECT_TRUE(is_programme_register(profile, profile.programme_period->in_force_fn));
+    EXPECT_TRUE(is_programme_register(profile, profile.programme_period->derogation_fn));
+    EXPECT_FALSE(is_programme_register(profile, profile.mode_fn));
+  }
+  EXPECT_TRUE(is_programme_register_of_any_profile(DeviceRegister::DEROGATED_SETPOINT));
+  EXPECT_FALSE(is_programme_register_of_any_profile(DeviceRegister::OPERATING_MODE));
+}

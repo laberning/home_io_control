@@ -249,7 +249,7 @@ TEST(HeatingCardReduce, TowelDryerTargetIsTheComfortSetpointUntilTheTemperatureI
   HeatingCardState card = reduced(towel_dryer(), r);
   ASSERT_FLOAT_EQ(card.target_c, 16.5F);
 
-  test::clear_reading(r, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE);
+  clear_reading(r, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE);
   card = reduced(towel_dryer(), r, card);
   EXPECT_FLOAT_EQ(card.target_c, 20.0F);
 }
@@ -334,7 +334,7 @@ TEST(HeatingCardReduce, ThermostatAliasShowsItsPresetAndAPlainTemperatureShowsNo
   EXPECT_EQ(card.preset_index, preset_of(thermostat(), HeatingPresetId::ECO));
   EXPECT_FLOAT_EQ(card.target_c, 18.0F);
 
-  test::clear_reading(r, DeviceReading::HEATING_LEVEL);  // a reply that carried a plain temperature
+  clear_reading(r, DeviceReading::HEATING_LEVEL);  // a reply that carried a plain temperature
   test::store_reading(r, DeviceReading::STATUS_SETPOINT, 19.0F);
   card = reduced(thermostat(), r, card);
   EXPECT_EQ(card.preset_index, -1);

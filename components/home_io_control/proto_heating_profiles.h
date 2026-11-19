@@ -28,6 +28,7 @@
 #include "proto_sizes.h"
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -344,6 +345,38 @@ const HeatingObservedState *find_observed_preset(const HeatingProfile &profile, 
 /// @return false for a profile without a programme period.
 bool programme_period_active(const HeatingProfile &profile, const IoDevice &dev);
 
+/// @brief What a register heater with a programme has shown about its temperature in force in this boot.
+/// @details The hub reads that register while the programme runs (HeatingProgrammePeriod::in_force_fn). A heater that
+///          has answered it with a value has the programme's registers, so from then on a target set while the
+///          programme runs is a temporary override, even while a missed read leaves the value unknown. The state is
+///          the store's: absent and reported marks of the in-force reading (DeviceReadingValues).
+enum class InForceSupport : uint8_t {
+  UNKNOWN,   ///< Not answered yet in this boot (no read, or no reply): a target while the programme runs first reads
+             ///< the register and writes nothing if the heater stays silent.
+  REPORTED,  ///< Answered with a value at least once: a target while the programme runs is an override. Kept until
+             ///< the next boot, also when a later answer carries no value.
+  ABSENT,    ///< The first answer came without a value: the heater has no such register. The hub stops reading it
+             ///< until the next boot, and a target writes the comfort setpoint.
+};
+
+/// @brief What the device's record says about the temperature in force of a profile's programme.
+/// @param profile The device's profile.
+/// @param dev The device record.
+/// @return UNKNOWN for a profile without a programme period.
+[[nodiscard]] InForceSupport in_force_support(const HeatingProfile &profile, const IoDevice &dev);
+
+/// @brief Is a register one of the profile's programme registers (the temperature in force, the override)?
+/// @param profile The device's profile.
+/// @param fn The register.
+/// @return false for a profile without a programme period.
+[[nodiscard]] bool is_programme_register(const HeatingProfile &profile, DeviceRegister fn);
+
+/// @brief Is a register a programme register of some heater kind?
+/// @details For a gate that refuses such a register on a heater whose profile has no programme.
+/// @param fn The register.
+/// @return true when any profile names the register as its temperature in force or its override.
+[[nodiscard]] bool is_programme_register_of_any_profile(DeviceRegister fn);
+
 /// @brief The timed-run register a target must read besides the mode, if any.
 /// @details A profile that keeps boost and drying in a register of its own (a non-empty preset table) runs the
 ///          programme only with none on top, so once the mode shows the programme that register decides
@@ -486,11 +519,11 @@ struct HeatingDeviceFacts {
   float reported_setpoint_c{NAN};                      ///< The setpoint the device last reported (NaN until read).
   bool programme_runs{false};                          ///< The programme runs (programme_period_active()) on a
                                                        ///< heater that has reported its temperature in force in
-                                                       ///< this boot (TemperatureInForceSupport::REPORTED): a
+                                                       ///< this boot (InForceSupport::REPORTED): a
                                                        ///< target is then a temporary override.
   bool in_force_unresolved{false};                     ///< The programme runs on a heater that has not yet answered
                                                        ///< the read of its temperature in force in this boot
-                                                       ///< (TemperatureInForceSupport::UNKNOWN): whether a target
+                                                       ///< (InForceSupport::UNKNOWN): whether a target
                                                        ///< is an override or a comfort write is not known yet.
   /// The heater answered the read of the registers that say whether the programme runs (the mode, and the
   /// timed run where it matters), made for this request. Only a target on a profile with a programme period
@@ -590,7 +623,7 @@ HeatingDeviceFacts heating_device_facts(const IoDevice *dev, bool programme_stat
 ///          the target is the comfort setpoint, as on the heater's panel, and a period that is not known
 ///          (HeatingDeviceFacts::period) is refused with HeatingRefusal::PERIOD_UNKNOWN.
 ///          In any other mode, and on a heater that answered the read of its temperature in force without a
-///          value (TemperatureInForceSupport::ABSENT), it writes the comfort setpoint. While the programme runs and
+///          value (InForceSupport::ABSENT), it writes the comfort setpoint. While the programme runs and
 ///          the heater has not answered the read of its temperature in force yet
 ///          (HeatingDeviceFacts::in_force_unresolved) the target is refused with HeatingRefusal::IN_FORCE_UNKNOWN:
 ///          neither write is right before the heater has answered, so a silent heater gets no write.

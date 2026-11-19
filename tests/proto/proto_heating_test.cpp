@@ -702,7 +702,7 @@ TEST(ProtoHeatingEnergy, ATotalAboveWhatASignedSixteenBitIntegerHoldsDecodesExac
       decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x16, 0xFF, 0xFF}), DeviceRegister::ENERGY_TOTAL, value));
   EXPECT_FLOAT_EQ(value, 65535.0F);
   IoDevice readings;
-  ASSERT_TRUE(store_register_reading(readings, DeviceRegister::ENERGY_TOTAL, value));
+  store_reading(readings, DeviceReading::ENERGY_TOTAL, value);
   EXPECT_EQ(register_value(readings, DeviceRegister::ENERGY_TOTAL), 65535.0F)
       << "the store holds a number, not a signed 16-bit field";
 }

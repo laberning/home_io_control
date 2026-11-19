@@ -68,7 +68,7 @@ class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDo
   /// What the heater answers to the read of its temperature in force: UNKNOWN is no reply, REPORTED a value of
   /// `in_force_value_c`, ABSENT an empty answer. Stored as the hub's read does, only while the programme runs
   /// and the heater has not answered before (the hub reads nothing otherwise).
-  TemperatureInForceSupport in_force_answer{TemperatureInForceSupport::UNKNOWN};
+  InForceSupport in_force_answer{InForceSupport::UNKNOWN};
   float in_force_value_c{17.0F};
   /// What the heater answers to the status read for its heating level, made for a target on a heater that takes
   /// the override in an eco period only while its programme runs and it reports a temperature in force: a level
@@ -96,14 +96,14 @@ class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDo
       test::store_reading(*dev, *timed_run, this->timed_run_answer);
     }
     clear_inactive_programme_reading(*profile, *dev);
-    if (programme_period_active(*profile, *dev) && dev->temperature_in_force == TemperatureInForceSupport::UNKNOWN &&
-        this->in_force_answer != TemperatureInForceSupport::UNKNOWN) {
-      dev->temperature_in_force = this->in_force_answer;
-      if (this->in_force_answer == TemperatureInForceSupport::REPORTED)
+    if (programme_period_active(*profile, *dev) && test::in_force_of(*dev) == InForceSupport::UNKNOWN &&
+        this->in_force_answer != InForceSupport::UNKNOWN) {
+      test::set_in_force_support(*dev, this->in_force_answer);
+      if (this->in_force_answer == InForceSupport::REPORTED)
         test::store_reading(*dev, profile->programme_period->in_force_fn, this->in_force_value_c);
     }
     if (profile->programme_period->override_in_eco_only && programme_period_active(*profile, *dev) &&
-        dev->temperature_in_force == TemperatureInForceSupport::REPORTED)
+        test::in_force_of(*dev) == InForceSupport::REPORTED)
       test::store_reading(*dev, DeviceReading::HEATING_LEVEL, this->level_answer);
     this->registry_.notify(device_id);
     return true;
@@ -158,10 +158,10 @@ class MockHubClimate : public test::DevicePortDouble, public test::HeatingPortDo
     const HeatingProfile *profile = dev != nullptr ? find_heating_profile(*dev) : nullptr;
     if (profile == nullptr || profile->programme_period == nullptr ||
         (read_back_fn != profile->mode_fn && read_back_fn != profile->preset_fn) ||
-        !programme_period_active(*profile, *dev) || dev->temperature_in_force == TemperatureInForceSupport::ABSENT ||
-        this->in_force_answer != TemperatureInForceSupport::REPORTED)
+        !programme_period_active(*profile, *dev) || test::in_force_of(*dev) == InForceSupport::ABSENT ||
+        this->in_force_answer != InForceSupport::REPORTED)
       return;
-    dev->temperature_in_force = TemperatureInForceSupport::REPORTED;
+    test::set_in_force_support(*dev, InForceSupport::REPORTED);
     test::store_reading(*dev, profile->programme_period->in_force_fn, this->in_force_value_c);
     this->registry_.notify(device_id);
   }
@@ -393,11 +393,11 @@ void deliver_readings(MockHubClimate &hub, const std::function<void(IoDevice &)>
 }
 
 /// Publish `edit` applied to readings that carry the heater's answer to the read of its temperature in force,
-/// as the hub does after the poll that read it: the heater is marked TemperatureInForceSupport::REPORTED.
+/// as the hub does after the poll that read it: the heater is marked InForceSupport::REPORTED.
 void deliver_programme_readings(MockHubClimate &hub, const std::function<void(IoDevice &)> &edit) {
   IoDevice dev = *hub.get_device("ABC123");
   edit(dev);
-  dev.temperature_in_force = TemperatureInForceSupport::REPORTED;
+  test::set_in_force_support(dev, InForceSupport::REPORTED);
   hub.trigger_device_update("ABC123", dev, /*cache_device=*/true);
 }
 
@@ -1168,7 +1168,7 @@ TEST(PlatformClimate, ObservedAliasAndTemperatureDrivePresetAndTargetNotTheComma
   EXPECT_EQ(entity.get_custom_preset(), "Secured");
 
   deliver_readings(hub, [](IoDevice &r) {
-    test::clear_reading(r, DeviceReading::HEATING_LEVEL);
+    clear_reading(r, DeviceReading::HEATING_LEVEL);
     test::store_reading(r, DeviceReading::STATUS_SETPOINT, 21.5F);
   });
   EXPECT_FLOAT_EQ(entity.target_temperature, 21.5F);
@@ -1414,8 +1414,8 @@ TEST(PlatformClimate, TowelDryerTargetFollowsComfortEcoBoostComfortWithoutAFlick
   // Boost on top: the card shows boost and the comfort setpoint again, as without a programme period.
   deliver_readings(hub, [](IoDevice &r) {
     test::store_reading(r, DeviceReading::TEMPORARY_STATE, static_cast<int16_t>(HeatingTemporaryState::BOOST));
-    test::clear_reading(r,
-                        DeviceReading::TOWEL_TEMPERATURE_IN_FORCE);  // what the hub does the moment the programme stops
+    clear_reading(r,
+                  DeviceReading::TOWEL_TEMPERATURE_IN_FORCE);  // what the hub does the moment the programme stops
   });
   ASSERT_TRUE(entity.preset.has_value());
   EXPECT_EQ(*entity.preset, CLIMATE_PRESET_BOOST);
@@ -1573,7 +1573,7 @@ TEST(PlatformClimate, TowelDryerTargetInAutoIsTheOverrideInAnEcoPeriodAndTheComf
   hub.read_replies[DeviceRegister::COMFORT_SETPOINT] = 17.5F;
   hub.mode_answer = DRYER_PROGRAMME;
   hub.timed_run_answer = NO_TIMED_RUN;
-  hub.in_force_answer = TemperatureInForceSupport::REPORTED;
+  hub.in_force_answer = InForceSupport::REPORTED;
 
   struct Period {
     float in_force_c;
@@ -1697,7 +1697,7 @@ TEST(PlatformClimate, RadiatorWithoutATemperatureInForceTakesTheTargetAsTheComfo
   IoDevice dev = *hub.get_device("ABC123");
   test::store_reading(dev, DeviceReading::MODE, RADIATOR_PROGRAMME);
   test::store_reading(dev, DeviceReading::SETPOINT, 19.0F);  // register 0x012A answered empty: no temperature in force
-  dev.temperature_in_force = TemperatureInForceSupport::ABSENT;
+  test::set_in_force_support(dev, InForceSupport::ABSENT);
   hub.trigger_device_update("ABC123", dev, /*cache_device=*/true);
   EXPECT_FLOAT_EQ(entity.target_temperature, 19.0F);
   hub.mode_answer = RADIATOR_PROGRAMME;
@@ -1714,7 +1714,7 @@ TEST(PlatformClimate, ATargetInAutoBeforeTheHeaterAnsweredTheTemperatureInForceA
   entity.setup();
   hub.read_replies[DeviceRegister::DEROGATED_SETPOINT] = 21.0F;
   hub.mode_answer = RADIATOR_PROGRAMME;
-  hub.in_force_answer = TemperatureInForceSupport::REPORTED;
+  hub.in_force_answer = InForceSupport::REPORTED;
 
   perform_target(entity, 21.0F);  // nothing has been read since boot
 
@@ -1727,7 +1727,7 @@ TEST(PlatformClimate, ATargetInAutoOnAHeaterThatAnswersTheTemperatureInForceEmpt
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
   hub.mode_answer = RADIATOR_PROGRAMME;
-  hub.in_force_answer = TemperatureInForceSupport::ABSENT;
+  hub.in_force_answer = InForceSupport::ABSENT;
 
   perform_target(entity, 21.0F);
 
@@ -1842,7 +1842,7 @@ TEST(PlatformClimate, SwitchingToAutoShowsTheTemperatureInForceAsTheTarget) {
   deliver_radiator_in_heat(hub);
   ASSERT_FLOAT_EQ(entity.target_temperature, 19.0F);
   hub.read_replies[DeviceRegister::OPERATING_MODE] = static_cast<float>(HeatingMode::PROG);  // the mode's read-back
-  hub.in_force_answer = TemperatureInForceSupport::REPORTED;
+  hub.in_force_answer = InForceSupport::REPORTED;
   hub.in_force_value_c = 17.5F;
   const size_t published = entity.published_targets_.size();
 
@@ -1864,7 +1864,7 @@ TEST(PlatformClimate, AModeAndATargetInOneCallShowTheOverrideAfterTheTemperature
   deliver_radiator_in_heat(hub);
   hub.read_replies[DeviceRegister::OPERATING_MODE] = static_cast<float>(HeatingMode::PROG);
   hub.mode_answer = RADIATOR_PROGRAMME;
-  hub.in_force_answer = TemperatureInForceSupport::REPORTED;
+  hub.in_force_answer = InForceSupport::REPORTED;
   hub.in_force_value_c = 17.5F;
   hub.read_replies[DeviceRegister::DEROGATED_SETPOINT] = 21.0F;
   const size_t published = entity.published_targets_.size();
@@ -1897,7 +1897,7 @@ TEST(PlatformClimate, APresetAndATargetInOneCallAskTheHeaterBeforeTheTarget) {
   IOHomeClimate entity = make_bound_climate(hub);
   entity.setup();
   hub.mode_answer = RADIATOR_PROGRAMME;
-  hub.in_force_answer = TemperatureInForceSupport::REPORTED;
+  hub.in_force_answer = InForceSupport::REPORTED;
   hub.read_replies[DeviceRegister::DEROGATED_SETPOINT] = 21.0F;
 
   auto call = entity.make_call();
@@ -1940,22 +1940,22 @@ TEST(PlatformClimate, ATargetInHeatOrWhileATimedRunIsOnTopNeverReadsTheTemperatu
   IOHomeClimate heater = make_bound_climate(hub);
   heater.setup();
   hub.mode_answer = RADIATOR_HEAT;
-  hub.in_force_answer = TemperatureInForceSupport::REPORTED;
+  hub.in_force_answer = InForceSupport::REPORTED;
   perform_target(heater, 21.0F);
   ASSERT_EQ(hub.writes.size(), 1u);
   EXPECT_EQ(hub.writes[0].fn, DeviceRegister::COMFORT_SETPOINT);
-  EXPECT_EQ(hub.get_device("ABC123")->temperature_in_force, TemperatureInForceSupport::UNKNOWN);
+  EXPECT_EQ(test::in_force_of(*hub.get_device("ABC123")), InForceSupport::UNKNOWN);
 
   MockHubClimate dryer_hub;
   IOHomeClimate dryer = make_towel_climate(dryer_hub);
   dryer.setup();
   dryer_hub.mode_answer = DRYER_PROGRAMME;
   dryer_hub.timed_run_answer = TIMED_BOOST;
-  dryer_hub.in_force_answer = TemperatureInForceSupport::REPORTED;
+  dryer_hub.in_force_answer = InForceSupport::REPORTED;
   perform_target(dryer, 21.0F);
   ASSERT_EQ(dryer_hub.writes.size(), 1u) << "a boost run on top: the comfort setpoint, as ADR 0092 says";
   EXPECT_EQ(dryer_hub.writes[0].fn, DeviceRegister::COMFORT_SETPOINT);
-  EXPECT_EQ(dryer_hub.get_device("ABC123")->temperature_in_force, TemperatureInForceSupport::UNKNOWN);
+  EXPECT_EQ(test::in_force_of(*dryer_hub.get_device("ABC123")), InForceSupport::UNKNOWN);
 }
 
 TEST(PlatformClimate, TowelDryerComfortAndEcoAreNoPresetAndSendNothing) {

@@ -83,8 +83,15 @@ TEST(DeviceRegistry, AddStoresBatteryEntitiesFlag) {
   reg.add("AABBCC", cfg);
   reg.add("ABC123");
   ASSERT_NE(reg.get("AABBCC"), nullptr);
-  EXPECT_TRUE(reg.get("AABBCC")->battery_entities) << "battery_entities must survive add(id, cfg)";
-  EXPECT_FALSE(reg.get("ABC123")->battery_entities) << "an undeclared device has no battery entities";
+  EXPECT_TRUE(reading_asked(*reg.get("AABBCC"), DeviceReading::BATTERY_STATE))
+      << "battery_entities must survive add(id, cfg)";
+  EXPECT_FALSE(reading_asked(*reg.get("ABC123"), DeviceReading::BATTERY_STATE))
+      << "an undeclared device has no battery entities";
+
+  IoDevice paired{};
+  reg.put("AABBCC", paired);
+  EXPECT_TRUE(reading_asked(*reg.get("AABBCC"), DeviceReading::BATTERY_STATE))
+      << "a re-pair keeps the declared battery entities with the rest of the store";
 }
 
 TEST(DeviceRegistry, AddStoresNodeIdBytes) {
@@ -645,4 +652,16 @@ TEST(DeviceRegistry, RangeForIterationAllowsMutation) {
 
   EXPECT_EQ(reg.get("111AAA")->position, 42);
   EXPECT_EQ(reg.get("222BBB")->position, 42);
+}
+
+TEST(DeviceRegistry, APairingKeepsAHeatersInForceStateTogetherWithItsOtherReadings) {
+  DeviceRegistry reg;
+  reg.add("AABBCC", {.type = DeviceType::ELECTRICAL_HEATER, .subtype = 1});
+  test::set_in_force_support(*reg.get("AABBCC"), InForceSupport::ABSENT);
+  IoDevice paired{};
+  paired.type = DeviceType::ELECTRICAL_HEATER;
+  paired.subtype = 1;
+  reg.put("AABBCC", paired);
+  EXPECT_EQ(test::in_force_of(*reg.get("AABBCC")), InForceSupport::ABSENT)
+      << "the same rule as every other reading: a re-pair keeps what the boot learned";
 }

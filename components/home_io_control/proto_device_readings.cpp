@@ -106,11 +106,13 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
     {.name = "room_temperature",
      .source = RegisterSource{.fn = DeviceRegister::ROOM_TEMPERATURE},
      .reading = DeviceReading::ROOM_TEMPERATURE,
-     .poll = ReadingPoll::EVERY_POLL},
+     .poll = ReadingPoll::EVERY_POLL,
+     .card = CardUse::CURRENT_TEMPERATURE},
     {.name = "setpoint",
      .source = RegisterSource{.fn = DeviceRegister::COMFORT_SETPOINT},
      .reading = DeviceReading::SETPOINT,
-     .poll = ReadingPoll::EVERY_POLL},
+     .poll = ReadingPoll::EVERY_POLL,
+     .card = CardUse::TARGET_TEMPERATURE},
     {.name = "mode",
      .source = RegisterSource{.fn = DeviceRegister::OPERATING_MODE},
      .reading = DeviceReading::MODE,
@@ -156,7 +158,8 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
     {.name = "max_setpoint",
      .source = RegisterSource{.fn = DeviceRegister::MAX_SETPOINT},
      .reading = DeviceReading::MAX_SETPOINT,
-     .poll = ReadingPoll::ONCE_AFTER_BOOT},
+     .poll = ReadingPoll::ONCE_AFTER_BOOT,
+     .card = CardUse::TARGET_TEMPERATURE},
     // The temperatures in force are read by the programme rule (only while the programme runs), and the derogated
     // setpoint by a write's read-back.
     {.name = "towel_temperature_in_force",
@@ -485,7 +488,7 @@ size_t store_status_parameter_readings(IoDevice &dev, const IoFrame &reply) {
     auto value = static_cast<float>(word);
     if (source->form == StatusParameterForm::FIELD_ON)
       value = ((word >> source->shift) & STATUS_FIELD_MASK) == STATUS_FIELD_ON ? 1.0F : 0.0F;
-    dev.reading_values.store(reading_slot(row.reading), value);
+    store_reading(dev, row.reading, value);
     stored++;
   }
   return stored;
@@ -552,19 +555,47 @@ int register_wire(const IoDevice &dev, DeviceRegister fn) {
   return row != nullptr ? reading_wire(dev, row->reading) : -1;
 }
 
-bool store_register_reading(IoDevice &dev, DeviceRegister fn, float value) {
-  const DeviceReadingRow *row = find_register_reading(fn);
-  if (row == nullptr)
-    return false;
-  dev.reading_values.store(reading_slot(row->reading), value);
-  return true;
+void store_reading(IoDevice &dev, DeviceReading reading, float value) {
+  dev.reading_values.store(reading_slot(reading), value);
+}
+
+void clear_reading(IoDevice &dev, DeviceReading reading) { dev.reading_values.clear(reading_slot(reading)); }
+
+void mark_reading_absent(IoDevice &dev, DeviceReading reading) {
+  dev.reading_values.mark_absent(reading_slot(reading));
+}
+
+bool reading_absent(const IoDevice &dev, DeviceReading reading) {
+  return dev.reading_values.absent(reading_slot(reading));
+}
+
+bool reading_reported(const IoDevice &dev, DeviceReading reading) {
+  return dev.reading_values.reported(reading_slot(reading));
+}
+
+void ask_reading(IoDevice &dev, DeviceReading reading) { dev.reading_values.ask(reading_slot(reading)); }
+
+bool reading_asked(const IoDevice &dev, DeviceReading reading) {
+  return dev.reading_values.asked(reading_slot(reading));
+}
+
+StatusStore store_status_main_parameter(IoDevice &dev, DeviceReading reading, std::span<const uint8_t> main_parameter,
+                                        uint8_t level_prefix) {
+  const HeatingCardRange range = device_temperature_range(dev);
+  const std::optional<float> value =
+      decode_status_reading(reading, main_parameter, level_prefix, range.min_c, range.max_c);
+  if (!value)
+    return {};
+  const std::optional<float> before = reading_value(dev, reading);
+  store_reading(dev, reading, *value);
+  return {value, !before || *before != *value};
 }
 
 bool store_register_reply(IoDevice &dev, DeviceRegister fn, std::span<const uint8_t> value_bytes) {
   bool stored = false;
   for_each_register_reading(fn, [&](const DeviceReadingRow &row, const RegisterSource &source) {
     if (const std::optional<float> value = decode_register_source(source, value_bytes)) {
-      dev.reading_values.store(reading_slot(row.reading), *value);
+      store_reading(dev, row.reading, *value);
       stored = true;
     }
   });
@@ -574,28 +605,25 @@ bool store_register_reply(IoDevice &dev, DeviceRegister fn, std::span<const uint
 bool clear_register_reading(IoDevice &dev, DeviceRegister fn) {
   bool found = false;
   for_each_register_reading(fn, [&](const DeviceReadingRow &row, const RegisterSource &) {
-    dev.reading_values.clear(reading_slot(row.reading));
+    clear_reading(dev, row.reading);
     found = true;
   });
   return found;
 }
 
 void ask_register_reading(IoDevice &dev, DeviceRegister fn) {
-  for_each_register_reading(fn, [&](const DeviceReadingRow &row, const RegisterSource &) {
-    dev.reading_values.ask(reading_slot(row.reading));
-  });
+  for_each_register_reading(
+      fn, [&](const DeviceReadingRow &row, const RegisterSource &) { ask_reading(dev, row.reading); });
 }
 
 bool register_reading_wanted(const IoDevice &dev, DeviceRegister fn) {
   const DeviceReadingRow *row = find_register_reading(fn);
-  return row != nullptr && dev.reading_values.asked(reading_slot(row->reading)) &&
-         !dev.reading_values.absent(reading_slot(row->reading));
+  return row != nullptr && reading_asked(dev, row->reading) && !reading_absent(dev, row->reading);
 }
 
 void mark_register_reading_absent(IoDevice &dev, DeviceRegister fn) {
-  for_each_register_reading(fn, [&](const DeviceReadingRow &row, const RegisterSource &) {
-    dev.reading_values.mark_absent(reading_slot(row.reading));
-  });
+  for_each_register_reading(
+      fn, [&](const DeviceReadingRow &row, const RegisterSource &) { mark_reading_absent(dev, row.reading); });
 }
 
 bool heating_register_due(DeviceRegister fn, const IoDevice &dev) {
@@ -611,8 +639,8 @@ bool clear_readings_read_only_while(DeviceRegister written, IoDevice &dev) {
   for (const DeviceReadingRow &row : DEVICE_READINGS) {
     const auto *source = std::get_if<RegisterSource>(&row.source);
     if (source != nullptr && source->only_while && source->only_while->fn == written &&
-        dev.reading_values.value(reading_slot(row.reading))) {
-      dev.reading_values.clear(reading_slot(row.reading));
+        reading_value(dev, row.reading)) {
+      clear_reading(dev, row.reading);
       cleared = true;
     }
   }

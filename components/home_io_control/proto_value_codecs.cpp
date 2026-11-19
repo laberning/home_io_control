@@ -4,6 +4,7 @@
 
 #include "proto_value_codecs.h"
 
+#include "proto_codecs.h"
 #include "proto_sizes.h"
 
 #include <algorithm>
@@ -30,11 +31,6 @@ constexpr float TENTHS_U16_MAX = 65535.0F / VALUE_TENTHS_PER_UNIT;
 /// @return The 16-bit little-endian word at the start of `bytes` (two bytes must be there).
 uint16_t little_endian_u16(std::span<const uint8_t> bytes) {
   return static_cast<uint16_t>(bytes[0] | (bytes[1] << BITS_PER_BYTE));
-}
-
-/// @return The 16-bit big-endian word at the start of `bytes` (two bytes must be there).
-uint16_t big_endian_u16(std::span<const uint8_t> bytes) {
-  return static_cast<uint16_t>((bytes[0] << BITS_PER_BYTE) | bytes[1]);
 }
 
 /// @return The 32-bit big-endian word at the start of `bytes` (four bytes must be there).
@@ -167,20 +163,20 @@ std::optional<float> decode_value(const ValueForm &form, std::span<const uint8_t
 
     case ValueCodec::U16_BE:
       // Most significant byte first, unlike every little-endian word above.
-      return static_cast<float>((bytes[0] << BITS_PER_BYTE) | bytes[1]);
+      return static_cast<float>(read_u16_be(bytes.data()));
 
     case ValueCodec::MARKED_U16_BE:
       // Only the present-marker carries a number; the other marker means the device holds no value.
       if (bytes[0] != VALUE_MARKER_PRESENT)
         return std::nullopt;
-      return static_cast<float>((bytes[1] << BITS_PER_BYTE) | bytes[2]);
+      return static_cast<float>(read_u16_be(bytes.data() + 1));
 
     case ValueCodec::FIRST_BYTE_OF_PAIR:
       // The second byte (the panel's maximum) is not read.
       return static_cast<float>(bytes[0]);
 
     case ValueCodec::TENTHS_S16_BE:
-      return static_cast<float>(static_cast<int16_t>(big_endian_u16(bytes))) / VALUE_TENTHS_PER_UNIT;
+      return static_cast<float>(static_cast<int16_t>(read_u16_be(bytes.data()))) / VALUE_TENTHS_PER_UNIT;
 
     case ValueCodec::THOUSANDTHS_U32_BE:
       return static_cast<float>(big_endian_u32(bytes)) / VALUE_THOUSANDTHS_PER_UNIT;

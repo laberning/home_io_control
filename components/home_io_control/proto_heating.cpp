@@ -43,7 +43,6 @@ constexpr uint8_t DHW_MODE_MAX = static_cast<uint8_t>(DhwMode::MANUAL_ECO_OFF);
 enum class HeatingAccess : uint8_t {
   READ_ONLY,   ///< Reads only; a write is refused by the codec.
   READ_WRITE,  ///< Reads and writes.
-  WRITE_ONLY,  ///< Writes only; the heater has no readable value for it.
 };
 
 /// @brief A register's refusal of values its range holds but this component never writes.
@@ -67,6 +66,9 @@ struct DeviceRegisterRow {
   /// Payload byte 2: the register's family, the high byte of its number. The family does not say how a multi-byte
   /// value is laid out: the codec does.
   uint8_t register_high{HEATING_REGISTER_HIGH_BYTE};
+  /// The action's read of this function shows the decoded value in its message, not only that the device
+  /// answered (the window sensor).
+  bool action_shows_value{false};
   // NOLINTBEGIN(readability-redundant-member-init): g++'s -Wmissing-field-initializers wants the member
   // initializer before a row may leave the field out.
   std::optional<ValueRange> write_range{};  ///< Tenths registers: the values a write may carry.
@@ -137,6 +139,7 @@ constexpr DeviceRegisterRow DEVICE_REGISTERS[] = {
      .register_low = 0x0E,
      .access = HeatingAccess::READ_ONLY,
      .codec = ValueCodec::BINARY,
+     .action_shows_value = true,
      .action_value_label = ""},
     // Towel-dryer registers: read on two Atlantic Adelis units (corpus atlantic_adelis_probe_*); writing
     // 0x0136 (mode) and 0x013E (boost, drying) is confirmed against the display (issue #202).
@@ -273,7 +276,12 @@ bool device_register_is_writable(DeviceRegister fn) {
 
 bool device_register_is_readable(DeviceRegister fn) {
   const DeviceRegisterRow *d = descriptor_for(fn);
-  return d != nullptr && d->access != HeatingAccess::WRITE_ONLY;
+  return d != nullptr;
+}
+
+bool device_register_action_shows_value(DeviceRegister fn) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
+  return d != nullptr && d->action_shows_value;
 }
 
 ValueCodec device_register_codec(DeviceRegister fn) {
@@ -297,7 +305,7 @@ uint8_t device_register_family(DeviceRegister fn) {
 
 size_t encode_heating_read(DeviceRegister fn, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
   const DeviceRegisterRow *d = descriptor_for(fn);
-  if (d == nullptr || d->access == HeatingAccess::WRITE_ONLY)
+  if (d == nullptr)
     return 0;
   write_header(*d, PRIVATE_REGISTER_DIRECTION_GET, out);
   return PAYLOAD_LEN_HEADER;

@@ -724,8 +724,7 @@ void IOHomeControlComponent::apply_periodic_reading_(const std::string &device_i
     return;
   PeriodicPollPolicy &policy = this->device_reading_poll_policy_;
   const std::string key = device_reading_key(device_id, reading);
-  const size_t slot = reading_slot(reading);
-  const std::optional<float> before = dev->reading_values.value(slot);
+  const std::optional<float> before = reading_value(*dev, reading);
   std::optional<float> now = before;
   if (value.has_value()) {
     policy.on_poll_succeeded(key);
@@ -737,9 +736,9 @@ void IOHomeControlComponent::apply_periodic_reading_(const std::string &device_i
     ESP_LOGI(detail::TAG, "Device %s: %s %s -> %s%s", device_id.c_str(), row->name,
              format_reading_value(before).c_str(), format_reading_value(now).c_str(), detail_text.c_str());
     if (now.has_value()) {
-      dev->reading_values.store(slot, *now);
+      store_reading(*dev, reading, *now);
     } else {
-      dev->reading_values.clear(slot);
+      clear_reading(*dev, reading);
     }
   } else if (value.has_value() && reading_logs_unchanged(*row)) {
     ESP_LOGD(detail::TAG, "Device %s: %s %s (unchanged)", device_id.c_str(), row->name,
@@ -756,7 +755,7 @@ bool IOHomeControlComponent::request_device_reading(const std::string &device_id
   const IoDevice *dev = this->registry_.get(device_id);
   const DeviceReadingRow *row = find_device_reading(reading, this->reading_table_);
   if (dev == nullptr || row == nullptr || !reading_is_scheduled(*row) || !this->initialized_ ||
-      dev->reading_values.absent(reading_slot(reading)) || !device_can_have_reading(*dev, *row))
+      reading_absent(*dev, reading) || !device_can_have_reading(*dev, *row))
     return false;
   // A moving device is left alone (the same caution the diagnostic probe applies), like every periodic poll; asking
   // again soon is cheaper than a whole interval. Not a failure and not a reading.
@@ -813,7 +812,7 @@ void IOHomeControlComponent::apply_device_reading_answer_(const std::string &dev
       // again would only hold the device for another controller. Absent until the next boot.
       ESP_LOGW(detail::TAG, "Device %s: no %s to read (%s); it is not read again until the next boot",
                device_id.c_str(), row->name, transfer_outcome_name(outcome));
-      dev->reading_values.mark_absent(reading_slot(reading));
+      mark_reading_absent(*dev, reading);
       this->device_reading_poll_policy_.set_interval(key, 0, millis(), 0);
       this->notify_device_update_(device_id);
       break;

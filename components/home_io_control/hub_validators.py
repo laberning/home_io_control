@@ -43,9 +43,7 @@ from .hub_names import (
     CONF_TX_POWER,
     CONF_VFEM_PIN,
     DEVICE_BOUND_DOMAINS,
-    MIN_BATTERY_LEVEL_POLL_INTERVAL_MS,
-    MIN_RAIN_SENSOR_POLL_INTERVAL_MS,
-    MIN_SUN_LEVEL_POLL_INTERVAL_MS,
+    MIN_READING_POLL_INTERVAL_MS,
     MIN_STATUS_POLL_INTERVAL_MS,
     MIN_DEVICE_READING_INTERVAL_MS,
     MIN_STATUS_REFRESH_INTERVAL_MS,
@@ -343,9 +341,9 @@ DEVICE_READINGS = {
     "HOT_WATER_CAPABILITIES": {"feature": "WATER_HEATER", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
     "HOT_WATER_BOOST": {"feature": "WATER_HEATER", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
     "HOT_WATER_AWAY": {"feature": "WATER_HEATER", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
-    "RAIN": {"feature": None, "source": "limitation", "platform": "cover", "registers": (), "key": None, "opt_in_key": "rain_sensor_poll_interval", "entity": "binary_sensor", "device_class": "moisture", "companion": "Rain sensor", "companion_id": "rain_sensor"},
-    "SUN_LEVEL": {"feature": None, "source": "event", "platform": "cover", "registers": (), "key": None, "opt_in_key": "sun_level_poll_interval", "entity": "sensor", "unit": "lx", "accuracy": 0, "device_class": "illuminance", "state_class": "measurement", "icon": "mdi:white-balance-sunny", "companion": "Sun level", "companion_id": "sun_level_sensor"},
-    "BATTERY_LEVEL": {"feature": None, "source": "event", "platform": "cover", "registers": (), "key": None, "opt_in_key": "battery_level_poll_interval", "entity": "sensor", "unit": "%", "accuracy": 0, "device_class": "battery", "state_class": "measurement", "companion": "Battery level", "companion_id": "battery_level_sensor"},
+    "RAIN": {"feature": None, "source": "limitation", "platform": "cover", "registers": (), "key": None, "opt_in_key": "rain_sensor_poll_interval", "min_interval_ms": MIN_READING_POLL_INTERVAL_MS, "entity": "binary_sensor", "device_class": "moisture", "companion": "Rain sensor", "companion_id": "rain_sensor"},
+    "SUN_LEVEL": {"feature": None, "source": "event", "platform": "cover", "registers": (), "key": None, "opt_in_key": "sun_level_poll_interval", "min_interval_ms": MIN_READING_POLL_INTERVAL_MS, "entity": "sensor", "unit": "lx", "accuracy": 0, "device_class": "illuminance", "state_class": "measurement", "icon": "mdi:white-balance-sunny", "companion": "Sun level", "companion_id": "sun_level_sensor"},
+    "BATTERY_LEVEL": {"feature": None, "source": "event", "platform": "cover", "registers": (), "key": None, "opt_in_key": "battery_level_poll_interval", "min_interval_ms": MIN_READING_POLL_INTERVAL_MS, "entity": "sensor", "unit": "%", "accuracy": 0, "device_class": "battery", "state_class": "measurement", "companion": "Battery level", "companion_id": "battery_level_sensor"},
     "BATTERY_STATE": {"feature": None, "source": "status_battery", "platform": "cover", "registers": (), "key": None, "opt_in_key": "battery", "entity": "text_sensor", "entity_category": "diagnostic", "icon": "mdi:battery", "companion": "Battery", "companion_id": "battery_sensor", "disabled_by_default": True},
     "BATTERY_LOW": {"feature": None, "source": "derived", "platform": "cover", "registers": (), "key": None, "opt_in_key": "battery", "entity": "binary_sensor", "device_class": "battery", "entity_category": "diagnostic", "companion": "Battery Low", "companion_id": "battery_low_sensor"},
 }
@@ -788,25 +786,25 @@ def validate_status_poll_interval(value):
     )
 
 
-def validate_rain_sensor_poll_interval(value):
-    """Validate rain_sensor_poll_interval is at least MIN_RAIN_SENSOR_POLL_INTERVAL_MS."""
-    return _validate_min_interval(
-        value, MIN_RAIN_SENSOR_POLL_INTERVAL_MS, "rain_sensor_poll_interval"
-    )
+def validate_reading_poll_interval(reading_name):
+    """Return the validator of a reading's poll interval key: its `opt_in_key` and floor in DEVICE_READINGS."""
+    row = DEVICE_READINGS[reading_name]
+    key = row["opt_in_key"]
+    minimum_ms = row["min_interval_ms"]
+
+    def validate(value):
+        return _validate_min_interval(value, minimum_ms, key)
+
+    return validate
 
 
-def validate_sun_level_poll_interval(value):
-    """Validate sun_level_poll_interval is at least MIN_SUN_LEVEL_POLL_INTERVAL_MS."""
-    return _validate_min_interval(
-        value, MIN_SUN_LEVEL_POLL_INTERVAL_MS, "sun_level_poll_interval"
-    )
-
-
-def validate_battery_level_poll_interval(value):
-    """Validate battery_level_poll_interval is at least MIN_BATTERY_LEVEL_POLL_INTERVAL_MS."""
-    return _validate_min_interval(
-        value, MIN_BATTERY_LEVEL_POLL_INTERVAL_MS, "battery_level_poll_interval"
-    )
+def reading_poll_interval_schema(platform):
+    """The optional poll interval keys of a platform's scheduled readings, from the DEVICE_READINGS rows."""
+    return {
+        cv.Optional(row["opt_in_key"]): validate_reading_poll_interval(name)
+        for name, row in DEVICE_READINGS.items()
+        if row["platform"] == platform and "min_interval_ms" in row
+    }
 
 
 def validate_device_reading_interval(value):

@@ -281,21 +281,6 @@ struct StopCandidate {
   void clear() { *this = {}; }
 };
 
-/// @brief What a register heater with a programme has shown about its temperature in force in this boot.
-/// @details The hub reads that register while the programme runs (HeatingProgrammePeriod::in_force_fn). A heater
-///          that has answered it with a value has the programme's registers, so from then on a target set while
-///          the programme runs is a temporary override, even while a missed read leaves the value unknown.
-///          A target set while the programme runs and the state is UNKNOWN triggers that read first
-///          (HeaterController::read_programme_state()); only poll_temperature_in_force_() changes it.
-enum class TemperatureInForceSupport : uint8_t {
-  UNKNOWN,   ///< Not answered yet in this boot (no read, or no reply): a target while the programme runs first
-             ///< reads the register and writes nothing if the heater stays silent.
-  REPORTED,  ///< Answered with a value at least once: a target while the programme runs is an override. Kept
-             ///< until the next boot, also when a later answer carries no value.
-  ABSENT,    ///< The first answer came without a value: the heater has no such register. The hub stops reading
-             ///< it until the next boot, and a target writes the comfort setpoint.
-};
-
 /// @brief The values of a device's readings, and which of them the device has, was asked for or does not have.
 /// @details One store per device for every source of a reading (a private register, a status reply, a data object,
 ///          the answer to an event subscription or a limitation read),
@@ -305,6 +290,7 @@ enum class TemperatureInForceSupport : uint8_t {
 ///           - asked: an entity of the YAML wants the reading, so the hub's poll reads it;
 ///           - absent: the device does not have the reading (it answered the read without a value, or the hub cannot
 ///             ask for it), so the hub reads it no more.
+///           - reported: a value was stored in this boot; it outlives clear() and mark_absent().
 ///          A value that is stored is no longer absent; a reading found absent holds no value. Every reading read
 ///          through reading_value() is held here, whichever source filled it.
 struct DeviceReadingValues {
@@ -316,14 +302,15 @@ struct DeviceReadingValues {
       return;
     this->values_[slot] = value;
     this->held_ |= mask_of(slot);
+    this->reported_ |= mask_of(slot);
     this->absent_ &= ~mask_of(slot);
   }
-  /// @brief Forget the value of a reading: it reads as never read again. Absent and asked stay as they are.
+  /// @brief Forget the value of a reading: it reads as never read again. Absent, asked and reported stay as they are.
   void clear(size_t slot) {
     if (slot < SLOTS)
       this->held_ &= ~mask_of(slot);
   }
-  /// @brief Mark the device as not having this reading; a value held before is dropped.
+  /// @brief Mark the device as not having this reading; a value held before is dropped. Reported stays as it is.
   void mark_absent(size_t slot) {
     if (slot >= SLOTS)
       return;
@@ -342,6 +329,8 @@ struct DeviceReadingValues {
   }
   /// @return true once the device was found not to have this reading.
   [[nodiscard]] bool absent(size_t slot) const { return slot < SLOTS && (this->absent_ & mask_of(slot)) != 0; }
+  /// @return true once a value was stored in this boot, also when it was cleared or dropped since.
+  [[nodiscard]] bool reported(size_t slot) const { return slot < SLOTS && (this->reported_ & mask_of(slot)) != 0; }
   /// @return true while an entity wants this reading read.
   [[nodiscard]] bool asked(size_t slot) const { return slot < SLOTS && (this->asked_ & mask_of(slot)) != 0; }
 
@@ -353,6 +342,8 @@ struct DeviceReadingValues {
   Mask held_{0};    ///< Bit per slot: a value is stored.
   Mask absent_{0};  ///< Bit per slot: the device does not have the reading.
   Mask asked_{0};   ///< Bit per slot: an entity wants the reading read.
+  /// Bit per slot: the device answered with a value in this boot, kept by clear() and mark_absent().
+  Mask reported_{0};
 };
 
 /// @brief Runtime state of a paired IO‑Homecontrol device.
@@ -461,22 +452,17 @@ struct IoDevice {
   DeviceReadingValues reading_values{};  ///< What the hub has read from the device, by reading (reading_value()): a
                                          ///< heater's or a water heater's registers and status reply, a data object,
                                          ///< a cover's rain, sun level and battery. Kept across DeviceRegistry::put().
-  bool battery_entities{false};  ///< YAML-declared (`battery: true`): the battery entities exist, so the status log
-                                 ///< line names the level even when the device reports none.
-  bool has_system_key{false};    ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every
-                                 ///< exchange with it uses `system_key` below instead of the hub's key.
-  uint8_t system_key[AES_KEY_SIZE]{};  ///< The device's own key; meaningful only when `has_system_key`. Key material:
-                                       ///< never logged outside a bannered report block.
-  bool registered_by_pairing{false};   ///< Added by a pairing in this boot, not declared in YAML. The record is
-                                       ///< lost at reboot, so reports still print its YAML block, and a later
-                                       ///< pairing may replace it (DeviceRegistry::get_declared()).
-  uint8_t model_check_attempts{0};     ///< Runs of the hub's one-off model check (a heater kind with model rows:
-                                       ///< model name read, declared-model hint) so far; the check stops after
-                                       ///< it completes or after a bounded number of runs. Runtime only.
-  /// What a register heater with a programme has answered to the read of its temperature in force. Runtime
-  /// only, until the next boot.
-  TemperatureInForceSupport temperature_in_force{TemperatureInForceSupport::UNKNOWN};
-  bool model_checked{false};  ///< The model check completed: both of its reads were answered.
+  bool has_system_key{false};            ///< YAML-declared (`system_key:`): this device keeps a key of its own. Every
+                                         ///< exchange with it uses `system_key` below instead of the hub's key.
+  uint8_t system_key[AES_KEY_SIZE]{};    ///< The device's own key; meaningful only when `has_system_key`. Key material:
+                                         ///< never logged outside a bannered report block.
+  bool registered_by_pairing{false};     ///< Added by a pairing in this boot, not declared in YAML. The record is
+                                         ///< lost at reboot, so reports still print its YAML block, and a later
+                                         ///< pairing may replace it (DeviceRegistry::get_declared()).
+  uint8_t model_check_attempts{0};       ///< Runs of the hub's one-off model check (a heater kind with model rows:
+                                         ///< model name read, declared-model hint) so far; the check stops after
+                                         ///< it completes or after a bounded number of runs. Runtime only.
+  bool model_checked{false};             ///< The model check completed: both of its reads were answered.
 };
 
 /// @brief Resolve a device's capabilities and inversion from its kind and its YAML overrides.

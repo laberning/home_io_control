@@ -14,10 +14,8 @@ namespace {
 
 /// One row per DhwOperatingFeature, in its order.
 constexpr DhwOperatingFeatureWire DHW_OPERATING_FEATURES[] = {
-    {DHW_CAPABILITY_BOOST, DHW_FP16_BOOST_SHIFT, DHW_OPERATING_MODE_BOOST_ON, DeviceRegister::DHW_BOOST_DURATION,
-     DHW_BOOST_START_DURATION},
-    {DHW_CAPABILITY_AWAY, DHW_FP16_AWAY_SHIFT, DHW_OPERATING_MODE_AWAY_ON, DeviceRegister::DHW_AWAY_DURATION,
-     DHW_AWAY_UNTIL_TURNED_OFF},
+    {DHW_CAPABILITY_BOOST, DHW_OPERATING_MODE_BOOST_ON, DeviceRegister::DHW_BOOST_DURATION, DHW_BOOST_START_DURATION},
+    {DHW_CAPABILITY_AWAY, DHW_OPERATING_MODE_AWAY_ON, DeviceRegister::DHW_AWAY_DURATION, DHW_AWAY_UNTIL_TURNED_OFF},
 };
 static_assert(std::size(DHW_OPERATING_FEATURES) == static_cast<size_t>(DhwOperatingFeature::AWAY) + 1,
               "one row per DhwOperatingFeature");

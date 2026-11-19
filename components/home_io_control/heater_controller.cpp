@@ -25,6 +25,7 @@
 #include "esphome/core/log.h"
 
 #include <cmath>
+#include <cstdio>
 #include <iterator>
 #include <optional>
 #include <variant>
@@ -200,7 +201,7 @@ bool HeaterController::read_programme_state(const std::string &device_id) {
   // otherwise). poll_temperature_in_force_() reads it only while the programme runs; a silent heater stays
   // UNKNOWN, which the plan refuses.
   dev = this->registry_.get(device_id);
-  if (dev != nullptr && dev->temperature_in_force == TemperatureInForceSupport::UNKNOWN)
+  if (dev != nullptr && in_force_support(*profile, *dev) == InForceSupport::UNKNOWN)
     this->poll_temperature_in_force_(device_id, *profile, EXCHANGE_RETRY_COUNT, InForceEmptyAnswer::MARKS_ABSENT);
   this->read_period_for_target_(device_id, *profile);
   return true;
@@ -211,11 +212,11 @@ void HeaterController::read_period_for_target_(const std::string &device_id, con
   // The period decides only where a target goes while the programme runs on a heater that takes the override in
   // an eco period only; every other target needs no level.
   if (dev == nullptr || !profile.programme_period->override_in_eco_only ||
-      dev->temperature_in_force != TemperatureInForceSupport::REPORTED || !programme_period_active(profile, *dev))
+      in_force_support(profile, *dev) != InForceSupport::REPORTED || !programme_period_active(profile, *dev))
     return;
   // The stored level may be one or two polls old, and an unanswered read leaves it as it was, so forget it first:
   // a level that is there afterwards came from this read.
-  dev->reading_values.clear(reading_slot(DeviceReading::HEATING_LEVEL));
+  clear_reading(*dev, DeviceReading::HEATING_LEVEL);
   this->read_heating_level_(device_id, EXCHANGE_RETRY_COUNT);
 }
 
@@ -402,12 +403,18 @@ HeaterController::HeatingRead HeaterController::read_and_store_heating_register_
   IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr)
     return HeatingRead::NO_ANSWER;
-  // A register with a value of its own decodes to `value`; one whose readings are slices of it (a water heater's
-  // heating state) has none. Either is stored by every reading that is the register.
-  float value = NAN;
-  const bool has_value = decode_heating_reply(response, fn, value);
+  // Every reading that is the register stores its value (or its slice) once; the value this read gives is the one the
+  // store now holds. A register no reading is (the eco setback an action reads) has no store: it decodes on the spot.
   const auto value_bytes = register_reply_value(response, fn);
   const bool stored = value_bytes && store_register_reply(*dev, fn, *value_bytes);
+  std::optional<float> read_value;
+  if (stored) {
+    read_value = register_value(*dev, fn);
+  } else if (value_bytes) {
+    read_value = decode_register_value(fn, *value_bytes);
+  }
+  const float value = read_value.value_or(NAN);
+  const bool has_value = read_value.has_value();
   if (!has_value && !stored) {
     char payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
     bytes_to_hex(response.data, response.data_len, payload_hex, sizeof(payload_hex));
@@ -422,8 +429,12 @@ HeaterController::HeatingRead HeaterController::read_and_store_heating_register_
   const std::optional<float> in_force = follow_override && profile != nullptr && has_value
                                             ? in_force_from_override_read(*profile, fn, value)
                                             : std::nullopt;
-  if (in_force.has_value())
-    store_register_reading(*dev, profile->programme_period->in_force_fn, *in_force);
+  // The register of a heater that has no temperature in force (reading absent) stays unstored: the store would lift it.
+  if (in_force.has_value()) {
+    if (const DeviceReadingRow *in_force_row = find_register_reading(profile->programme_period->in_force_fn);
+        in_force_row != nullptr && !reading_absent(*dev, in_force_row->reading))
+      store_reading(*dev, in_force_row->reading, *in_force);
+  }
   // A reading that left the programme drops the temperature in force before anything shows it.
   if (profile != nullptr)
     clear_inactive_programme_reading(*profile, *dev);
@@ -621,7 +632,8 @@ void HeaterController::check_heater_model(const std::string &device_id, uint8_t 
   bool mode_has_value = mode_answered;
   uint8_t mode_family = 0;
   uint8_t mode_register = 0;
-  if (!mode_answered && device_register_bytes(DeviceRegister::TOWEL_MODE, mode_family, mode_register)) {
+  const bool mode_has_bytes = device_register_bytes(DeviceRegister::TOWEL_MODE, mode_family, mode_register);
+  if (!mode_answered && mode_has_bytes) {
     IoFrame mode_reply;
     mode_answered =
         this->read_private_register(device_id, mode_family, mode_register, "towel_mode", mode_reply, max_tries);
@@ -644,18 +656,20 @@ void HeaterController::check_heater_model(const std::string &device_id, uint8_t 
 
   const DeviceTypeInfo *towel = find_device_model_info(dev->type, dev->subtype, DeviceModel::TOWEL_DRYER);
   const char *towel_name = towel != nullptr ? towel->name : "towel_dryer";
+  char mode_register_text[sizeof("0x0000")];
+  snprintf(mode_register_text, sizeof(mode_register_text), "0x%02X%02X", mode_family, mode_register);
   switch (decisions::classify_heater_model_hint(dev->model, mode_has_value)) {
     case decisions::HeaterModelHint::LOOKS_LIKE_RADIATOR:
       ESP_LOGW(detail::TAG,
-               "Device %s is declared with io_model: %s, but it holds no towel-dryer mode (register 0x0136 is "
+               "Device %s is declared with io_model: %s, but it holds no towel-dryer mode (register %s is "
                "empty): it looks like a radiator. Remove io_model: from its climate entry",
-               device_id.c_str(), towel_name);
+               device_id.c_str(), towel_name, mode_register_text);
       break;
     case decisions::HeaterModelHint::LOOKS_LIKE_TOWEL_DRYER:
       ESP_LOGW(detail::TAG,
-               "Device %s holds a towel-dryer mode (register 0x0136): it looks like a towel dryer. Set "
+               "Device %s holds a towel-dryer mode (register %s): it looks like a towel dryer. Set "
                "io_model: %s on its climate entry for its modes, Boost and Drying",
-               device_id.c_str(), towel_name);
+               device_id.c_str(), mode_register_text, towel_name);
       break;
     case decisions::HeaterModelHint::NONE:
       break;
@@ -665,7 +679,7 @@ void HeaterController::check_heater_model(const std::string &device_id, uint8_t 
 void HeaterController::poll_temperature_in_force_(const std::string &device_id, const HeatingProfile &profile,
                                                   uint8_t max_tries, InForceEmptyAnswer empty_answer) {
   const IoDevice *dev = this->registry_.get(device_id);
-  if (dev == nullptr || dev->temperature_in_force == TemperatureInForceSupport::ABSENT ||
+  if (dev == nullptr || in_force_support(profile, *dev) == InForceSupport::ABSENT ||
       !programme_period_active(profile, *dev))
     return;
   const DeviceRegister fn = profile.programme_period->in_force_fn;
@@ -677,19 +691,18 @@ void HeaterController::poll_temperature_in_force_(const std::string &device_id, 
   IoDevice *current = this->registry_.get(device_id);
   if (current == nullptr)
     return;
-  if (read == HeatingRead::VALUE) {
-    current->temperature_in_force = TemperatureInForceSupport::REPORTED;
+  // A read with a value stored it, which is what reports the register (DeviceReadingValues).
+  if (read == HeatingRead::VALUE)
     return;
-  }
   // A heater that has answered with a value has the register: a later answer without one is a reading without
   // a value, like a missed read, and the next poll asks again. A read that went partly by older readings
   // (CHANGES_NOTHING) cannot tell a missing register from a heater outside its programme.
-  if (current->temperature_in_force == TemperatureInForceSupport::REPORTED ||
+  if (in_force_support(profile, *current) == InForceSupport::REPORTED ||
       empty_answer == InForceEmptyAnswer::CHANGES_NOTHING)
     return;
   // The heater answered without a value: it has no such register. The read is not repeated until the next boot,
   // and its targets keep writing the comfort setpoint.
-  current->temperature_in_force = TemperatureInForceSupport::ABSENT;
+  mark_register_reading_absent(*current, fn);
   ESP_LOGI(detail::TAG, "Device %s reports no temperature in force (%s): its target stays the comfort setpoint",
            device_id.c_str(), device_register_name(fn));
 }

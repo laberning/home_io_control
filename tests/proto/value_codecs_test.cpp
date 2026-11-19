@@ -1,6 +1,7 @@
 /// @file value_codecs_test.cpp
 /// @brief Tests for the shared value codecs: how the bytes of a reading map onto a number, and what is "no value".
 
+#include "proto_codecs.h"
 #include "proto_value_codecs.h"
 
 #include <gtest/gtest.h>
@@ -337,4 +338,10 @@ TEST(ValueCodecsScaled, AValueOutsideTheScaleIsRefused) {
   for (const float value : {-0.1F, 100.1F, NAN, INFINITY, -INFINITY})
     EXPECT_TRUE(encode(scaled(), value).empty()) << value;
   EXPECT_TRUE(encode({.codec = ValueCodec::SCALED_U16, .max_value = 1000}, 5.0F).empty()) << "a form with no scale";
+}
+
+TEST(ValueCodecs, AWordReadBigEndianHasItsFirstByteMostSignificant) {
+  const uint8_t bytes[] = {0x12, 0x34, 0xFF};
+  EXPECT_EQ(read_u16_be(bytes), 0x1234);
+  EXPECT_EQ(read_u16_be(bytes + 1), 0x34FF);
 }

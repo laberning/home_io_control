@@ -158,7 +158,7 @@ you meet them. The structure behind them is described in the
 3. **Add the reading row.** An enumerator of `DeviceReading` and a row of the table in
    `proto_device_readings.cpp`: its name, its source, when the hub reads it (`ReadingPoll`) and, for a
    reading an entity of the YAML asks for, the capability a device needs (a `DeviceFeature`). The value
-   is kept in the device's reading store by reading, whichever the source is, so nothing else holds it.
+   is kept in the device's reading store by reading, whichever the source is, so nothing else holds it. Code that writes a value uses `store_reading()`, `clear_reading()` and `mark_reading_absent()`; it never reaches into `IoDevice::reading_values`.
    For a data object the source is a `DataObjectSource`: the recipe, the offset, the byte range of the
    value in the data read and the codec. The other kinds are an `EventSource` (the answer to an event
    subscription: the event, its data length, the offset and form of the value and a factor to natural

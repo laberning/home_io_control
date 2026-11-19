@@ -27,10 +27,8 @@ from .hub_validators import (
     DEFAULT_COVER_DEVICE_CLASS,
     NAMED_POSITION_FEATURES,
     device_type_name,
-    validate_battery_level_poll_interval,
-    validate_rain_sensor_poll_interval,
+    reading_poll_interval_schema,
     validate_status_refresh_interval,
-    validate_sun_level_poll_interval,
 )
 from .platform_common import (
     COVER_PLATFORM,
@@ -60,11 +58,6 @@ CONF_SILENT_SWITCH_ID = "_silent_switch_id"
 CONF_TRAVEL_SPEED = "travel_speed"
 CONF_TRAVEL_SPEED_SELECT_ID = "_travel_speed_select_id"
 CONF_OPTIMISTIC_STATE = "optimistic_state"
-# The keys that declare a cover's readings; the mirror's "opt_in_key" of RAIN, SUN_LEVEL, BATTERY_LEVEL, BATTERY_STATE
-# and BATTERY_LOW names the same strings (the py-tests check it).
-CONF_RAIN_SENSOR_POLL_INTERVAL = "rain_sensor_poll_interval"
-CONF_SUN_LEVEL_POLL_INTERVAL = "sun_level_poll_interval"
-CONF_BATTERY_LEVEL_POLL_INTERVAL = "battery_level_poll_interval"
 CONF_STATUS_REFRESH_INTERVAL = "status_refresh_interval"
 CONF_BATTERY = "battery"
 
@@ -207,22 +200,9 @@ CONFIG_SCHEMA = cv.All(
             ): cv.enum(TRAVEL_SPEEDS, lower=True),
         }
     )
-    .extend(
-        {
-            cv.Optional(
-                CONF_RAIN_SENSOR_POLL_INTERVAL
-            ): validate_rain_sensor_poll_interval
-        }
-    )
-    .extend(
-        {
-            cv.Optional(CONF_SUN_LEVEL_POLL_INTERVAL): validate_sun_level_poll_interval,
-            cv.Optional(
-                CONF_BATTERY_LEVEL_POLL_INTERVAL
-            ): validate_battery_level_poll_interval,
-            cv.Optional(CONF_STATUS_REFRESH_INTERVAL): validate_status_refresh_interval,
-        }
-    )
+    # The keys of a cover's scheduled readings (rain, sun level, battery level) and their floor come from the mirror.
+    .extend(reading_poll_interval_schema(COVER_PLATFORM))
+    .extend({cv.Optional(CONF_STATUS_REFRESH_INTERVAL): validate_status_refresh_interval})
     .extend({cv.Optional(CONF_BATTERY): cv.boolean})
     .extend({cv.Optional(CONF_OPTIMISTIC_STATE, default=True): cv.boolean})
     .extend(cv.COMPONENT_SCHEMA),

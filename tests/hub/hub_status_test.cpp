@@ -2400,7 +2400,7 @@ TEST(HubStatus, StatusLineNamesAMissingLevelOnlyWhenBatteryEntitiesAreDeclared) 
   IoDevice dev{};
   EXPECT_EQ(detail::describe_battery(dev), "") << "mains devices without `battery: true` keep their line unchanged";
 
-  dev.battery_entities = true;
+  ask_reading(dev, DeviceReading::BATTERY_STATE);  // what `battery: true` declares
   EXPECT_EQ(detail::describe_battery(dev), " battery=not_reported");
 }
 

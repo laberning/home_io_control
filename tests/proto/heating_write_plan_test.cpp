@@ -286,7 +286,7 @@ IoDevice heater_record(DeviceModel model, int16_t mode_wire, float in_force_c) {
     test::store_reading(dev, towel ? DeviceReading::TOWEL_TEMPERATURE_IN_FORCE : DeviceReading::TEMPERATURE_IN_FORCE,
                         in_force_c);
   if (!std::isnan(in_force_c))
-    dev.temperature_in_force = TemperatureInForceSupport::REPORTED;
+    test::set_in_force_support(dev, InForceSupport::REPORTED);
   return dev;
 }
 
@@ -299,14 +299,14 @@ TEST(HeatingWritePlan, DeviceFactsSayTheProgrammeRunsWhenTheModeShowsAutoOnAHeat
   EXPECT_TRUE(heating_device_facts(&dryer, true).programme_runs) << "in a comfort period: the level plays no part";
   test::store_reading(dryer, DeviceReading::HEATING_LEVEL, heating_level::COMFORT);
   EXPECT_TRUE(heating_device_facts(&dryer, true).programme_runs);
-  test::clear_reading(dryer, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE);
+  clear_reading(dryer, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE);
   EXPECT_TRUE(heating_device_facts(&dryer, true).programme_runs)
       << "a read missed since the heater reported one: the target still leaves the comfort setpoint alone";
-  dryer.temperature_in_force = TemperatureInForceSupport::UNKNOWN;
+  test::set_in_force_support(dryer, InForceSupport::UNKNOWN);
   EXPECT_FALSE(heating_device_facts(&dryer, true).programme_runs) << "not reported yet in this boot";
-  dryer.temperature_in_force = TemperatureInForceSupport::ABSENT;
+  test::set_in_force_support(dryer, InForceSupport::ABSENT);
   EXPECT_FALSE(heating_device_facts(&dryer, true).programme_runs) << "answered empty: no such register";
-  dryer.temperature_in_force = TemperatureInForceSupport::REPORTED;
+  test::set_in_force_support(dryer, InForceSupport::REPORTED);
   test::store_reading(dryer, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE, 20.0F);
   test::store_reading(dryer, DeviceReading::TOWEL_MODE, static_cast<int16_t>(TowelDryerMode::MANUAL));
   EXPECT_FALSE(heating_device_facts(&dryer, true).programme_runs) << "MANUEL: no programme";
@@ -326,14 +326,14 @@ TEST(HeatingWritePlan, DeviceFactsSayTheProgrammeRunsWhenTheModeShowsAutoOnAHeat
 TEST(HeatingWritePlan,
      DeviceFactsLeaveTheTemperatureInForceUnresolvedOnlyWhileTheProgrammeRunsAndTheHeaterHasNotAnswered) {
   IoDevice dryer = heater_record(DeviceModel::TOWEL_DRYER, static_cast<int16_t>(TowelDryerMode::PROG), NAN);
-  ASSERT_EQ(dryer.temperature_in_force, TemperatureInForceSupport::UNKNOWN);
+  ASSERT_EQ(test::in_force_of(dryer), InForceSupport::UNKNOWN);
   EXPECT_TRUE(heating_device_facts(&dryer, true).in_force_unresolved);
   EXPECT_FALSE(heating_device_facts(&dryer, true).programme_runs);
-  dryer.temperature_in_force = TemperatureInForceSupport::REPORTED;
+  test::set_in_force_support(dryer, InForceSupport::REPORTED);
   EXPECT_FALSE(heating_device_facts(&dryer, true).in_force_unresolved);
-  dryer.temperature_in_force = TemperatureInForceSupport::ABSENT;
+  test::set_in_force_support(dryer, InForceSupport::ABSENT);
   EXPECT_FALSE(heating_device_facts(&dryer, true).in_force_unresolved);
-  dryer.temperature_in_force = TemperatureInForceSupport::UNKNOWN;
+  test::set_in_force_support(dryer, InForceSupport::UNKNOWN);
   test::store_reading(dryer, DeviceReading::TOWEL_MODE, static_cast<int16_t>(TowelDryerMode::MANUAL));
   EXPECT_FALSE(heating_device_facts(&dryer, true).in_force_unresolved) << "heat: a target is the comfort setpoint";
   test::store_reading(dryer, DeviceReading::TOWEL_MODE, static_cast<int16_t>(TowelDryerMode::PROG));
@@ -390,10 +390,9 @@ TEST(HeatingWritePlan, ATargetOnAProgrammeHeaterGoesWhereWhatTheHeaterJustSaidSe
   for (const Family &family : families) {
     const int m = static_cast<int>(family.model);
     // Not the programme (heat): the comfort setpoint, whatever the temperature-in-force state.
-    for (const TemperatureInForceSupport support :
-         {TemperatureInForceSupport::UNKNOWN, TemperatureInForceSupport::REPORTED, TemperatureInForceSupport::ABSENT}) {
+    for (const InForceSupport support : {InForceSupport::UNKNOWN, InForceSupport::REPORTED, InForceSupport::ABSENT}) {
       IoDevice heat = heater_record(family.model, family.other_mode, NAN);
-      heat.temperature_in_force = support;
+      test::set_in_force_support(heat, support);
       EXPECT_EQ(plan_target_from_record(heat).register_fn, DeviceRegister::COMFORT_SETPOINT) << m;
     }
     // The programme runs and the heater reports a temperature in force: an override with a read-back (a dryer in
@@ -406,7 +405,7 @@ TEST(HeatingWritePlan, ATargetOnAProgrammeHeaterGoesWhereWhatTheHeaterJustSaidSe
     EXPECT_TRUE(override_plan.read_back);
     // The programme runs and the heater has no such register: the comfort setpoint.
     IoDevice absent = heater_record(family.model, family.programme_mode, NAN);
-    absent.temperature_in_force = TemperatureInForceSupport::ABSENT;
+    test::set_in_force_support(absent, InForceSupport::ABSENT);
     EXPECT_EQ(plan_target_from_record(absent).register_fn, DeviceRegister::COMFORT_SETPOINT) << m;
     // The programme runs and the heater has not answered the temperature in force: refused.
     IoDevice unknown = heater_record(family.model, family.programme_mode, NAN);

@@ -45,7 +45,6 @@
 #include "proto_private_registers.h"
 #include "proto_value_codecs.h"
 
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -310,9 +309,13 @@ bool device_register_is_writable(DeviceRegister fn);
 
 /// @brief Whether the register behind a function can be read.
 /// @param fn Function.
-/// @return true for a read/write or read-only register; false for a write-only one or an
-///         out-of-range value.
+/// @return true for a register of the table; false for an out-of-range value.
 bool device_register_is_readable(DeviceRegister fn);
+
+/// @brief Whether the `heating_control` action reports the decoded value of a register it reads.
+/// @param fn Function.
+/// @return true for a register whose read the action answers with its value (the window sensor).
+bool device_register_action_shows_value(DeviceRegister fn);
 
 /// @brief How the value of a register maps onto the bytes of its reply.
 /// @param fn Function.

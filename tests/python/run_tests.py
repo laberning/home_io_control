@@ -201,23 +201,33 @@ def spi_radio_needs_its_chip_select_pin():
     expect_invalid(v.validate_radio_transport, {"radio_type": "lr1121"}, "radio_type: lr1121 is an SPI radio")
 
 
+def opt_in_key(reading_name):
+    """The YAML key that declares a reading, as the mirror names it."""
+    from esphome.components.home_io_control import hub_validators as v
+
+    return v.DEVICE_READINGS[reading_name]["opt_in_key"]
+
+
 @case("hub_validators._validate_min_interval")
 def poll_intervals_have_a_floor():
     from esphome.components.home_io_control import hub_validators as v
 
     assert v.validate_status_poll_interval("60s") is not None
     expect_invalid(v.validate_status_poll_interval, "100ms", "status_poll_interval must be at least 500ms")
-    assert v.validate_rain_sensor_poll_interval("15min") is not None
-    assert v.validate_rain_sensor_poll_interval("1min") is not None
-    expect_invalid(v.validate_rain_sensor_poll_interval, "59s", "rain_sensor_poll_interval must be at least 60000ms")
-    assert v.validate_sun_level_poll_interval("30min") is not None
-    assert v.validate_sun_level_poll_interval("1min") is not None
-    expect_invalid(v.validate_sun_level_poll_interval, "59s", "sun_level_poll_interval must be at least 60000ms")
-    assert v.validate_battery_level_poll_interval("6h") is not None
-    assert v.validate_battery_level_poll_interval("1min") is not None
+    assert v.validate_reading_poll_interval("RAIN")("15min") is not None
+    assert v.validate_reading_poll_interval("RAIN")("1min") is not None
+    expect_invalid(v.validate_reading_poll_interval("RAIN"), "59s", "rain_sensor_poll_interval must be at least 60000ms")
+    assert v.validate_reading_poll_interval("SUN_LEVEL")("30min") is not None
+    assert v.validate_reading_poll_interval("SUN_LEVEL")("1min") is not None
+    expect_invalid(v.validate_reading_poll_interval("SUN_LEVEL"), "59s", "sun_level_poll_interval must be at least 60000ms")
+    assert v.validate_reading_poll_interval("BATTERY_LEVEL")("6h") is not None
+    assert v.validate_reading_poll_interval("BATTERY_LEVEL")("1min") is not None
     expect_invalid(
-        v.validate_battery_level_poll_interval, "59s", "battery_level_poll_interval must be at least 60000ms"
+        v.validate_reading_poll_interval("BATTERY_LEVEL"), "59s", "battery_level_poll_interval must be at least 60000ms"
     )
+    # The keys come from the mirror's rows with a floor, and every such row is a cover reading's opt-in key.
+    keys = {str(k) for k in v.reading_poll_interval_schema("cover")}
+    assert keys == {"rain_sensor_poll_interval", "sun_level_poll_interval", "battery_level_poll_interval"}, keys
     assert v.validate_status_refresh_interval("15min") is not None
     assert v.validate_status_refresh_interval("1min") is not None
     expect_invalid(v.validate_status_refresh_interval, "59s", "status_refresh_interval must be at least 60000ms")
@@ -1139,15 +1149,15 @@ def cover_opt_in_companions_are_declared_only_with_their_key():
     # The mirror's opt-in keys are the cover's own keys.
     opt_in_keys = {entry["opt_in_key"] for entry in v.DEVICE_READINGS.values() if "opt_in_key" in entry}
     assert opt_in_keys == {
-        c.CONF_RAIN_SENSOR_POLL_INTERVAL,
-        c.CONF_SUN_LEVEL_POLL_INTERVAL,
-        c.CONF_BATTERY_LEVEL_POLL_INTERVAL,
+        opt_in_key("RAIN"),
+        opt_in_key("SUN_LEVEL"),
+        opt_in_key("BATTERY_LEVEL"),
         c.CONF_BATTERY,
     }
     opt_ins = {
-        "_rain_sensor_id": ("living_rain_sensor", {c.CONF_RAIN_SENSOR_POLL_INTERVAL: 1}),
-        "_sun_level_sensor_id": ("living_sun_level_sensor", {c.CONF_SUN_LEVEL_POLL_INTERVAL: 1}),
-        "_battery_level_sensor_id": ("living_battery_level_sensor", {c.CONF_BATTERY_LEVEL_POLL_INTERVAL: 1}),
+        "_rain_sensor_id": ("living_rain_sensor", {opt_in_key("RAIN"): 1}),
+        "_sun_level_sensor_id": ("living_sun_level_sensor", {opt_in_key("SUN_LEVEL"): 1}),
+        "_battery_level_sensor_id": ("living_battery_level_sensor", {opt_in_key("BATTERY_LEVEL"): 1}),
         "_battery_low_sensor_id": ("living_battery_low_sensor", {c.CONF_BATTERY: True}),
         "_battery_sensor_id": ("living_battery_sensor", {c.CONF_BATTERY: True}),
     }
@@ -1229,9 +1239,9 @@ def cover_opt_in_entities_are_created_with_their_names_ids_and_home_assistant_me
         pc.CONF_HOME_IO_CONTROL_ID: ID("hub"),
         pc.CONF_IO_DEVICE_ID: "ABC123",
         c.CONF_OPTIMISTIC_STATE: True,
-        c.CONF_RAIN_SENSOR_POLL_INTERVAL: cv.positive_time_period_milliseconds("15min"),
-        c.CONF_SUN_LEVEL_POLL_INTERVAL: cv.positive_time_period_milliseconds("30min"),
-        c.CONF_BATTERY_LEVEL_POLL_INTERVAL: cv.positive_time_period_milliseconds("6h"),
+        opt_in_key("RAIN"): cv.positive_time_period_milliseconds("15min"),
+        opt_in_key("SUN_LEVEL"): cv.positive_time_period_milliseconds("30min"),
+        opt_in_key("BATTERY_LEVEL"): cv.positive_time_period_milliseconds("6h"),
         c.CONF_BATTERY: True,
     }
     config = c._inject_companion_ids(config)
