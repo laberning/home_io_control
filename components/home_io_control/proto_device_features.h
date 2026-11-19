@@ -104,6 +104,11 @@ enum class DeviceFeature : uint8_t {
   /// poll for. The hub never arms or queues a status poll for it (the request after boot, a refresh, a poll
   /// after another controller's traffic); only its readings are read, on their own schedule.
   NO_STATUS_READ,
+  /// An Atlantic heat pump that keeps its heating and hot-water energy counters, in whole kilowatt-hours, in entries
+  /// of its data object (TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP, offsets 0x0023 and 0x0025). Gates the `sensor:`
+  /// entry's `heating_energy:` and `hot_water_energy:` keys.
+  /// \todo Experimental: read on one Atlantic Alfea Duo Extensa A.I. (issue #244); confirm on a second model.
+  HEAT_PUMP_ENERGY,
   COUNT,  ///< Not a capability: the number of capabilities, for the storage check of DeviceFeatures.
 };
 
