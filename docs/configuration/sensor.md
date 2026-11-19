@@ -9,7 +9,8 @@ shows in Home Assistant as a sensor of that device.
 Which values a device kind offers is part of the device's support. A kind offers a reading key only
 once its data has been confirmed on hardware, and the page of that device lists them. One kind offers reading
 keys so far: the Atlantic heat pump (`io_device_type: heat_pump`, `io_subtype: 1`), with `heating_energy:` and
-`hot_water_energy:`, its energy counters in kWh ([Atlantic Alfea heat pump](../devices/atlantic-heat-pump.md)).
+`hot_water_energy:`, its energy counters in kWh, and `outdoor_temperature:`
+([Atlantic Alfea heat pump](../devices/atlantic-heat-pump.md)).
 It has no status to read, so it is never sent a status read. A contributor adds a reading as
 described in [Adding a device reading](../contributing.md#adding-a-device-reading).
 
@@ -57,7 +58,8 @@ The first read of each reading comes about a minute after the hub starts, then o
 another controller is using the device's data transport, and it closes the transfer at once when
 another controller starts one. When the device does not answer, answers without a value, answers
 an empty object or is busy, the sensor keeps its last value and the reading is read again at the next
-interval.
+interval. A measurement (the heat pump's outdoor temperature) shows no value after repeated misses
+rather than an old one; a counter keeps its last value.
 A device that answers the open with an error or with status 3, meaning it does not keep the object, is
 not read again until the next boot, and the log names it once. A kind that has no status to read is sent no status read.
 

@@ -276,6 +276,7 @@ FEATURES = (
     "REPORTS_HEATING_LEVEL",
     "NO_STATUS_READ",
     "HEAT_PUMP_ENERGY",
+    "HEAT_PUMP_OUTDOOR_TEMPERATURE",
 )
 
 # Python's mirror of the table of named device readings (proto_device_readings.cpp), by the enumerator name of
@@ -349,6 +350,7 @@ DEVICE_READINGS = {
     "BATTERY_LOW": {"feature": None, "source": "derived", "platform": "cover", "registers": (), "key": None, "opt_in_key": "battery", "entity": "binary_sensor", "device_class": "battery", "entity_category": "diagnostic", "companion": "Battery Low", "companion_id": "battery_low_sensor"},
     "HEAT_PUMP_HEATING_ENERGY": {"feature": "HEAT_PUMP_ENERGY", "source": "data_object", "platform": "sensor", "registers": (), "key": "heating_energy", "entity": "sensor", "unit": "kWh", "accuracy": 0, "device_class": "energy", "state_class": "total_increasing", "update_interval_ms": 3600000},
     "HEAT_PUMP_HOT_WATER_ENERGY": {"feature": "HEAT_PUMP_ENERGY", "source": "data_object", "platform": "sensor", "registers": (), "key": "hot_water_energy", "entity": "sensor", "unit": "kWh", "accuracy": 0, "device_class": "energy", "state_class": "total_increasing", "update_interval_ms": 3600000},
+    "HEAT_PUMP_OUTDOOR_TEMPERATURE": {"feature": "HEAT_PUMP_OUTDOOR_TEMPERATURE", "source": "data_object", "platform": "sensor", "registers": (), "key": "outdoor_temperature", "entity": "sensor", "unit": "°C", "accuracy": 1, "device_class": "temperature", "state_class": "measurement", "update_interval_ms": 600000},
 }
 
 # What to declare when a key of DEVICE_READINGS is used on a kind without its capability, by capability.
@@ -360,6 +362,7 @@ READING_FEATURE_HINTS = {
     "RUN_TIMERS": "a towel dryer: set io_device_type: electrical_heater, io_subtype: 1 and io_model: towel_dryer",
     "REPORTS_HEATING_LEVEL": "an electrical heater: set io_device_type: electrical_heater and either io_subtype: 0 without io_model (a plain heater) or io_subtype: 1 with io_model: towel_dryer",
     "HEAT_PUMP_ENERGY": "an Atlantic heat pump: set io_device_type: heat_pump and io_subtype: 1",
+    "HEAT_PUMP_OUTDOOR_TEMPERATURE": "an Atlantic heat pump: set io_device_type: heat_pump and io_subtype: 1",
 }
 
 # What to do when a key of DEVICE_READINGS is used on a kind of a device type that has the capability on other kinds,
@@ -421,7 +424,7 @@ DEVICE_FEATURES = {
     "electrical_heater/1/towel_dryer": frozenset({"CENTRAL_HEATING_MODE", "ENERGY_METER", "RUN_TIMERS", "REPORTS_HEATING_LEVEL"}),
     "electrical_heater/1/heater_with_light": frozenset({"WINDOW_COMPANIONS", "NIGHT_LIGHT", "OCCUPANCY", "ENERGY_METER"}),
     "electrical_heater/0/pilot_wire_interface": frozenset(),
-    "heat_pump/1": frozenset({"HEAT_PUMP_ENERGY", "NO_STATUS_READ"}),
+    "heat_pump/1": frozenset({"HEAT_PUMP_ENERGY", "HEAT_PUMP_OUTDOOR_TEMPERATURE", "NO_STATUS_READ"}),
 }
 
 # The kinds no capture or report has confirmed on a real device (device_type_flags::EXPERIMENTAL in

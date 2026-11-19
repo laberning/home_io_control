@@ -94,6 +94,20 @@ TEST(DeviceReadings, AHeatPumpCounterDecodesTheMarkedAnswerAndRefusesItsNoValueP
   EXPECT_FALSE(decode_data_object_reading(source, std::vector<uint8_t>{0x81, 0xFF, 0xFF})) << "the entry has no value";
 }
 
+TEST(DeviceReadings, TheHeatPumpOutdoorTemperatureRowReadsItsEntryAndDropsAStaleValue) {
+  const DeviceReadingRow *row = find_device_reading(DeviceReading::HEAT_PUMP_OUTDOOR_TEMPERATURE);
+  ASSERT_NE(row, nullptr);
+  const auto *source = std::get_if<DataObjectSource>(&row->source);
+  ASSERT_NE(source, nullptr);
+  EXPECT_EQ(source->recipe, TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP);
+  EXPECT_EQ(source->offset, 0x019B);
+  EXPECT_TRUE(transfer_recipe_allows_offset(TRANSFER_RECIPES[source->recipe], source->offset));
+  EXPECT_EQ(row->feature, DeviceFeature::HEAT_PUMP_OUTDOOR_TEMPERATURE);
+  EXPECT_EQ(row->stale, ReadingStale::DROP) << "a measurement is not shown stale";
+  EXPECT_FLOAT_EQ(*decode_data_object_reading(*source, std::vector<uint8_t>{0x80, 0x00, 0x77}), 11.9F);
+  EXPECT_FALSE(decode_data_object_reading(*source, std::vector<uint8_t>{0x81, 0xFF, 0xFF})) << "no value";
+}
+
 TEST(DeviceReadings, AnAnyNonZeroSliceTheDataCutsOffIsNoValue) {
   // The any-non-zero form would decode the one byte that is there as a value; a cut-off slice is not read at all.
   constexpr DataObjectSource TWO_BYTE_FLAG{

@@ -1,0 +1,79 @@
+id: atlantic_alfea_probe_outdoor_temperature_sx1276
+description: |
+  An Atlantic Alfea Duo Extensa A.I. heat pump (node type 0x16, subtype 1) answering a read of its
+  outdoor temperature entry, offset 0x019B, on the reporter's LilyGO T3 V2.1 (SX1276) hub (issue #244,
+  log taken 2026-11-16 20:42:30-20:42:32 local time). The hub ran the reader of the fork that issue #244
+  links, which sends the same opens as the Atlantic heat pump recipe. Addresses masked: hub A1B2C3,
+  heat pump D1E2F3.
+
+    - CMD_TRANSFER_OPEN (0x46) of object 0x1001 in class 0x0C at offset 0x019B, answered empty;
+    - the same open of object 0x1002, answered with handle 0x12, status 1 (adapted), length 3;
+    - one CMD_UNKNOWN4A_REQ (0x4A) for chunk 1, answered with `80 00 77`: the marker byte 0x80 and
+      0x0077 = 119 tenths, 11.9 degrees;
+    - the close (chunk 0) and its echo.
+
+  Over the reporter's captures of 16 and 17 November the entry read between `80 00 72` (11.4) and
+  `80 00 93` (14.7), following the outdoor temperature. No value below zero has been seen, so the sign
+  of the word is assumed, not observed.
+
+  Own installation: the system key is known to the reporter but not published; no frame here is
+  authenticated.
+source:
+  device: "Atlantic Alfea Duo Extensa A.I. heat pump (node type 0x16, subtype 1)"
+  captured_with: sx1276
+  firmware: "LilyGO T3 V2.1, Gluxur/home_io_control branch atlantic-heat-pump-energy (the fork of issue #244)"
+  date: 2026-11-16
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/244"
+key: unknown
+frames:
+  - dir: tx
+    freq: 868950000
+    hex: "51 00 D1 E2 F3 A1 B2 C3 46 08 0C 00 10 01 01 9B 00 00"
+    crc: absent
+    note: "cmd=TRANSFER_OPEN(0x46), prepare open: class 0x0C, object 0x1001, offset 0x019B"
+  - dir: rx
+    freq: 868950000
+    hex: "8C 00 A1 B2 C3 D1 E2 F3 47 00 00 00 00"
+    crc: absent
+    note: "cmd=TRANSFER_OPEN_RESP(0x47): handle 0, status 0, length 0 (empty, as usual for 0x1001)"
+  - dir: tx
+    freq: 868950000
+    hex: "51 00 D1 E2 F3 A1 B2 C3 46 08 0C 00 10 02 01 9B 00 00"
+    crc: absent
+    note: "cmd=TRANSFER_OPEN(0x46), data open: class 0x0C, object 0x1002, offset 0x019B"
+  - dir: rx
+    freq: 868950000
+    hex: "8C 00 A1 B2 C3 D1 E2 F3 47 12 01 00 03"
+    crc: absent
+    note: "cmd=TRANSFER_OPEN_RESP(0x47): handle 0x12, status 1 (adapted), length 3"
+  - dir: tx
+    freq: 868950000
+    hex: "4B 00 D1 E2 F3 A1 B2 C3 4A 12 00 01"
+    crc: absent
+    note: "cmd=UNKNOWN4A_REQ(0x4A): handle 0x12, chunk 1"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 A1 B2 C3 D1 E2 F3 4B 12 00 01 80 00 77"
+    crc: absent
+    note: "cmd=UNKNOWN4A_RESP(0x4B): handle 0x12, chunk 1, data 80 00 77 = 11.9 degrees"
+  - dir: tx
+    freq: 868950000
+    hex: "4B 00 D1 E2 F3 A1 B2 C3 4A 12 00 00"
+    crc: absent
+    note: "cmd=UNKNOWN4A_REQ(0x4A): close (chunk 0)"
+  - dir: rx
+    freq: 868950000
+    hex: "8B 00 A1 B2 C3 D1 E2 F3 4B 12 00 00"
+    crc: absent
+    note: "cmd=UNKNOWN4A_RESP(0x4B): close echo"
+expect:
+  frames:
+    - {cmd: 0x46, start: true, end: false, protocol: 2w}
+    - {cmd: 0x47, start: false, end: true, protocol: 2w}
+    - {cmd: 0x46, start: true, end: false, protocol: 2w}
+    - {cmd: 0x47, start: false, end: true, protocol: 2w}
+    - {cmd: 0x4A, start: true, end: false, protocol: 2w}
+    - {cmd: 0x4B, start: false, end: true, protocol: 2w}
+    - {cmd: 0x4A, start: true, end: false, protocol: 2w}
+    - {cmd: 0x4B, start: false, end: true, protocol: 2w}

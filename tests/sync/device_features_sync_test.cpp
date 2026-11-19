@@ -63,6 +63,7 @@ const std::map<std::string, DeviceFeature> CPP_FEATURES = {
     {"REPORTS_HEATING_LEVEL", device_feature::REPORTS_HEATING_LEVEL},
     {"NO_STATUS_READ", device_feature::NO_STATUS_READ},
     {"HEAT_PUMP_ENERGY", device_feature::HEAT_PUMP_ENERGY},
+    {"HEAT_PUMP_OUTDOOR_TEMPERATURE", device_feature::HEAT_PUMP_OUTDOOR_TEMPERATURE},
 };
 
 /// The names of the capabilities in a set.

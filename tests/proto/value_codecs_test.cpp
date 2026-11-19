@@ -66,6 +66,16 @@ TEST(ValueCodecs, AMarkedWordCarriesANumberOnlyBehindThePresentMarker) {
   EXPECT_EQ(value_codec_length(ValueCodec::MARKED_U16_BE), 3u);
 }
 
+TEST(ValueCodecs, AMarkedTenthsWordIsSignedAndCarriesANumberOnlyBehindThePresentMarker) {
+  // An Atlantic heat pump's outdoor temperature entry (issue #244): 0x0077 tenths.
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::MARKED_TENTHS_S16_BE, {0x80, 0x00, 0x77}), 11.9F);
+  EXPECT_FLOAT_EQ(*decode(ValueCodec::MARKED_TENTHS_S16_BE, {0x80, 0xFF, 0xCE}), -5.0F) << "signed: -50 tenths";
+  EXPECT_FALSE(decode(ValueCodec::MARKED_TENTHS_S16_BE, {0x81, 0xFF, 0xFF}).has_value())
+      << "the no-value pattern is not -0.1";
+  EXPECT_FALSE(decode(ValueCodec::MARKED_TENTHS_S16_BE, {0x00, 0x00, 0x77}).has_value()) << "any other marker";
+  EXPECT_FALSE(decode(ValueCodec::MARKED_TENTHS_S16_BE, {0x80, 0x00}).has_value()) << "a cut-off value";
+}
+
 TEST(ValueCodecs, APairShowsItsFirstByteOnly) {
   EXPECT_FLOAT_EQ(*decode(ValueCodec::FIRST_BYTE_OF_PAIR, {0x3C, 0xB4}), 60.0F);
 }
@@ -141,6 +151,7 @@ TEST(ValueCodecs, EveryCodecReadsAsManyBytesAsItsEncodingHolds) {
       {ValueCodec::FIRST_BYTE_OF_PAIR, 2},
       {ValueCodec::TENTHS_S16_BE, 2},
       {ValueCodec::MARKED_U16_BE, 3},
+      {ValueCodec::MARKED_TENTHS_S16_BE, 3},
       {ValueCodec::THOUSANDTHS_U32_BE, 4},
   };
   for (const auto &c : cases)
@@ -279,6 +290,7 @@ TEST(ValueCodecsEncode, TheReadOnlyFormsEncodeNothing) {
   EXPECT_TRUE(encode({.codec = ValueCodec::THOUSANDTHS_U32_BE}, 1.0F).empty());
   EXPECT_TRUE(encode({.codec = ValueCodec::ANY_NONZERO}, 1.0F).empty());
   EXPECT_TRUE(encode({.codec = ValueCodec::ANY_NONZERO}, 0.0F).empty());
+  EXPECT_TRUE(encode({.codec = ValueCodec::MARKED_TENTHS_S16_BE}, 11.9F).empty());
 }
 
 TEST(ValueCodecsEncode, ABufferThatIsTooShortTakesNothing) {

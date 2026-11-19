@@ -317,6 +317,19 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .poll = ReadingPoll::WHEN_ASKED,
      .feature = DeviceFeature::HEAT_PUMP_ENERGY,
      .stale = ReadingStale::KEEP},
+    // The heat pump's outdoor temperature (issue #244): the marker byte, then signed tenths of a degree (`80 00 77` is
+    // 11.9). A measurement, so it is dropped after repeated misses rather than shown stale.
+    {.name = "heat_pump_outdoor_temperature",
+     .source = DataObjectSource{.recipe = TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP,
+                                .offset = 0x019B,
+                                .first = 0,
+                                .length = 3,
+                                .codec = ValueCodec::MARKED_TENTHS_S16_BE,
+                                .max_value = 0},
+     .reading = DeviceReading::HEAT_PUMP_OUTDOOR_TEMPERATURE,
+     .poll = ReadingPoll::WHEN_ASKED,
+     .feature = DeviceFeature::HEAT_PUMP_OUTDOOR_TEMPERATURE,
+     .stale = ReadingStale::DROP},
 };
 
 /// Run `visit` on every row whose source is the register `fn`, whole or a part of it, in table order.

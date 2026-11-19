@@ -107,7 +107,8 @@ enum class DeviceReading : uint8_t {
   BATTERY_LOW,                 ///< 1 while a cover reports a low battery and 0 while it reports another level.
   HEAT_PUMP_HEATING_ENERGY,    ///< The energy an Atlantic heat pump has counted for heating, whole kWh.
   HEAT_PUMP_HOT_WATER_ENERGY,  ///< The energy an Atlantic heat pump has counted for hot water, whole kWh.
-  COUNT,                       ///< Number of readings; not a reading.
+  HEAT_PUMP_OUTDOOR_TEMPERATURE,  ///< The outdoor temperature an Atlantic heat pump measures, degrees.
+  COUNT,                          ///< Number of readings; not a reading.
 };
 
 static_assert(static_cast<size_t>(DeviceReading::COUNT) <= DeviceReadingValues::SLOTS,
