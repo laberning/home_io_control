@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0102 -->
 
-**Status:** Accepted, amends [ADR 0099](0099-scheduled-transfer-reads-use-one-session-and-a-queued-reader.md) and [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md); amended by [ADR 0107](0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0099](0099-scheduled-transfer-reads-use-one-session-and-a-queued-reader.md) and [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md); amended by [ADR 0107](0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md), [ADR 0108](0108-a-scheduled-read-is-in-flight-once-and-waits-only-for-its-own-device.md) · **Recorded:** 2026-11
 
 Builds on [ADR 0099](0099-scheduled-transfer-reads-use-one-session-and-a-queued-reader.md) (the queued
 transfer reader) and [ADR 0100](0100-a-transfer-read-tells-an-accepted-request-without-an-answer-from-silence.md)

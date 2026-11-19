@@ -1508,11 +1508,33 @@ TEST(HubManagement, ReadObjectSweepReadsTheOffsetsOfOneRowAndRefusesAnythingElse
   EXPECT_EQ(swept.probe_index, "0x02:0x0000-0x02:0x0000");
 }
 
-// --- DiagnosticProbes on its own: the three injected hub calls are its only way to the hub ---
+TEST(HubManagement, ReadObjectIsRefusedWhileTheHubsTransferReaderHoldsTheDeviceOpen) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  esphome::test_scheduler::clear();
+  // A scheduled read whose open the device accepted: the reader holds a transfer open to it.
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x10, 0x00, 0x00, 0x28})));
+  component.transfer_reader_.read("ABC123", 0, 0, nullptr);
+  esphome::test_scheduler::run_due();
+  ASSERT_TRUE(component.transfer_reader_.transfer_open_to("ABC123"));
+  const size_t sent_before = radio.get_sent_data().size();
+
+  const auto result = component.management_actions_.probe_device("ABC123", "read_object", "2");
+
+  EXPECT_FALSE(result.success);
+  EXPECT_EQ(result.message, "a scheduled read of this device is in progress, try again in a moment");
+  EXPECT_EQ(radio.get_sent_data().size(), sent_before) << "the probe sent nothing";
+  esphome::test_scheduler::clear();  // the reader's next step must not outlive the component
+}
+
+// --- DiagnosticProbes on its own: the injected hub calls are its only way to the hub ---
 
 namespace {
 
-/// A DiagnosticProbes with no hub behind it: a real engine and registry on a MockRadio, and the three
+/// A DiagnosticProbes with no hub behind it: a real engine and registry on a MockRadio, and the
 /// DiagnosticProbesHub calls as fakes that count what reached them.
 struct StandaloneProbes {
   MockRadio radio;
@@ -1523,6 +1545,7 @@ struct StandaloneProbes {
   DeviceRegistry registry;
   bool initialized{true};
   bool enabled{true};
+  bool transfer_open{false};  ///< What the transfer_open_to call answers.
   int radio_calls{0};
   int exchange_calls{0};
   std::vector<IoFrame> recorded_replies;
@@ -1542,7 +1565,8 @@ struct StandaloneProbes {
                                                                ExchangeOutcome::SUCCESS_WITH_RESPONSE
                                                            ? RecordedAnswer::REPLY
                                                            : RecordedAnswer::SILENT;
-                                              }}};
+                                              },
+                                              [this](const std::string &) { return transfer_open; }}};
 
   StandaloneProbes() { registry.add("ABC123"); }
 };
@@ -1560,6 +1584,24 @@ TEST(DiagnosticProbesSeam, DisabledHookRefusesBeforeAnyRadioTraffic) {
   EXPECT_TRUE(rig.radio.get_sent_data().empty()) << "the gate is the injected call, checked before any send";
   EXPECT_EQ(rig.radio_calls, 0);
   EXPECT_TRUE(rig.recorded_replies.empty());
+}
+
+TEST(DiagnosticProbesSeam, ReadObjectIsRefusedWhileTheReaderHoldsATransferOpenToTheDevice) {
+  StandaloneProbes rig;
+  rig.transfer_open = true;
+  rig.registry.get("ABC123")->is_stopped = true;
+
+  const auto result = rig.probes.probe_device("ABC123", "read_object", "2");
+
+  EXPECT_FALSE(result.success);
+  EXPECT_TRUE(result.terminal_refusal);
+  EXPECT_EQ(result.message, "a scheduled read of this device is in progress, try again in a moment");
+  EXPECT_TRUE(rig.radio.get_sent_data().empty()) << "nothing was sent";
+  EXPECT_EQ(rig.exchange_calls, 0);
+
+  rig.transfer_open = false;
+  rig.probes.probe_device("ABC123", "read_object", "2");
+  EXPECT_GT(rig.exchange_calls, 0) << "the same probe runs once the reader let go";
 }
 
 TEST(DiagnosticProbesSeam, ReplyGoesOnlyToTheInjectedCallsAndLeavesTheRecordAlone) {

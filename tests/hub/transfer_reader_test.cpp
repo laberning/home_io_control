@@ -316,6 +316,61 @@ TEST(TransferReader, AnotherControllersTrafficToADifferentDeviceIsNoReasonToWait
   EXPECT_FALSE(rig.sent_to("ABC123").empty());
 }
 
+TEST(TransferReader, AReadOfAHeldDeviceWaitsAloneAndTheReadBehindItRunsFirst) {
+  Rig rig;
+  rig.foreign_request_to("ABC123");
+  rig.read("ABC123", 0);
+  rig.read("DEF456", 0);
+
+  rig.run_for(10000);
+  EXPECT_TRUE(rig.sent_to("ABC123").empty()) << "A is still held";
+  ASSERT_FALSE(rig.sent_to("DEF456").empty()) << "B's read does not wait behind A's";
+  ASSERT_EQ(rig.ended.size(), 1u);
+  EXPECT_EQ(rig.ended[0].outcome, TransferOutcome::READ);
+
+  rig.run_for(TRANSFER_FOREIGN_QUIET_MS);
+  EXPECT_FALSE(rig.sent_to("ABC123").empty()) << "A's read runs once A has been quiet for the quiet time";
+  rig.run_for(30000);
+  ASSERT_EQ(rig.ended.size(), 2u);
+  EXPECT_EQ(rig.ended[1].outcome, TransferOutcome::READ);
+  EXPECT_GE(rig.sent_to("ABC123").front().at_ms, 100000u + TRANSFER_FOREIGN_QUIET_MS);
+}
+
+TEST(TransferReader, WhenEveryQueuedDeviceIsHeldTheReadsRunInQueueOrderAsTheyGoQuiet) {
+  Rig rig;
+  rig.foreign_request_to("ABC123");
+  rig.run_for(1000);
+  rig.foreign_request_to("DEF456");  // B goes quiet a second after A
+  rig.read("ABC123", 0);
+  rig.read("DEF456", 0);
+
+  rig.run_for(TRANSFER_FOREIGN_QUIET_MS - 1000 - 500);
+  EXPECT_TRUE(rig.sent.empty()) << "A has been quiet for 14.5 s, B for 13.5 s";
+  rig.run_for(2000);
+  ASSERT_FALSE(rig.sent.empty());
+  EXPECT_EQ(rig.sent.front().device_id, "ABC123") << "A went quiet first and was queued first";
+  rig.run_for(60000);
+  ASSERT_EQ(rig.ended.size(), 2u);
+  EXPECT_FALSE(rig.sent_to("DEF456").empty());
+}
+
+TEST(TransferReader, AReadThatStartedIsNeverReorderedByTrafficToAnotherDevice) {
+  Rig rig;
+  rig.read("ABC123", 0);
+  rig.run_for(TRANSFER_STEP_GAP_MS + 10);  // A's open and first block request are out
+  ASSERT_EQ(rig.sent.size(), 2u);
+  rig.read("DEF456", 0);
+  rig.foreign_request_to("DEF456");  // the queued one is held; the started one is not
+
+  rig.run_for(30000);
+  ASSERT_GE(rig.ended.size(), 1u);
+  EXPECT_EQ(rig.ended[0].outcome, TransferOutcome::READ) << "A's read went on to the end";
+  // Every request of A comes before the first of B: B was never moved ahead of the read in progress.
+  const auto first_b =
+      std::find_if(rig.sent.begin(), rig.sent.end(), [](const Rig::Sent &sent) { return sent.device_id == "DEF456"; });
+  EXPECT_TRUE(std::none_of(first_b, rig.sent.end(), [](const Rig::Sent &sent) { return sent.device_id == "ABC123"; }));
+}
+
 TEST(TransferReader, ANewForeignFrameRestartsTheQuietTime) {
   Rig rig;
   rig.foreign_request_to("ABC123");
@@ -407,6 +462,26 @@ TEST(TransferReader, ARemovedDeviceDropsItsReadAndTheQueueGoesOn) {
   ASSERT_EQ(rig.ended.size(), 2u);
   EXPECT_EQ(rig.ended[0].outcome, TransferOutcome::ABANDONED);
   EXPECT_EQ(rig.ended[1].outcome, TransferOutcome::ABANDONED) << "every step of the hidden registry drops its read";
+}
+
+TEST(TransferReader, ADeviceRemovedAfterAnAcceptedOpenEndsTheReadAbandonedWithoutAClose) {
+  Rig rig;
+  rig.read("ABC123", 0);
+  rig.read("DEF456", 0);
+  rig.run_for(1);  // the open went out and the device accepted it
+  ASSERT_EQ(rig.sent_to("ABC123").size(), 1u);
+  ASSERT_TRUE(rig.reader.transfer_open_to("ABC123"));
+  rig.registry.get("ABC123")->registered_by_pairing = true;
+  ASSERT_TRUE(rig.registry.remove_registered_by_pairing("ABC123"));
+  rig.run_for(TRANSFER_STEP_GAP_MS + 10);
+
+  ASSERT_GE(rig.ended.size(), 1u);
+  EXPECT_EQ(rig.ended[0].outcome, TransferOutcome::ABANDONED);
+  EXPECT_EQ(rig.sent_to("ABC123").size(), 1u) << "nothing more is sent to the removed device, the close included";
+  EXPECT_FALSE(rig.reader.transfer_open_to("ABC123"));
+  rig.run_for(30000);
+  ASSERT_EQ(rig.ended.size(), 2u);
+  EXPECT_EQ(rig.ended[1].outcome, TransferOutcome::READ) << "the queue moved on";
 }
 
 TEST(TransferReader, ADeviceRemovedAfterTheFirstReadStartedOnlyDropsTheRemainingReads) {

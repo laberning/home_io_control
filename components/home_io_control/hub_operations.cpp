@@ -769,6 +769,19 @@ bool IOHomeControlComponent::request_device_reading(const std::string &device_id
   const auto *source = std::get_if<DataObjectSource>(&row->source);
   if (source == nullptr)
     return this->request_frame_reading_(device_id, *row);
+  // One read in flight for each device and reading: while the last one is queued or running (it may wait long for
+  // another controller to go quiet), a due reading is skipped for this interval, not queued again (ADR 0108).
+  const auto poll =
+      std::ranges::find(this->device_reading_polls_, device_reading_key(device_id, reading), &DeviceReadingPoll::key);
+  if (poll != this->device_reading_polls_.end()) {
+    if (poll->in_flight) {
+      ESP_LOGD(detail::TAG, "Device %s: %s read skipped, the last read is still in flight", device_id.c_str(),
+               row->name);
+      return false;
+    }
+    // Before read(): the reader may end the read inside the call, and that answer clears the note.
+    poll->in_flight = true;
+  }
   this->transfer_reader_.read(device_id, source->recipe, source->offset,
                               [this, device_id, reading](TransferOutcome outcome, const std::vector<uint8_t> &data) {
                                 this->apply_device_reading_answer_(device_id, reading, outcome, data);
@@ -778,12 +791,16 @@ bool IOHomeControlComponent::request_device_reading(const std::string &device_id
 
 void IOHomeControlComponent::apply_device_reading_answer_(const std::string &device_id, DeviceReading reading,
                                                           TransferOutcome outcome, const std::vector<uint8_t> &data) {
+  const std::string key = device_reading_key(device_id, reading);
+  // Every outcome ends the read, including the ones the reader reports inside read(), and the device may be gone.
+  if (const auto poll = std::ranges::find(this->device_reading_polls_, key, &DeviceReadingPoll::key);
+      poll != this->device_reading_polls_.end())
+    poll->in_flight = false;
   IoDevice *dev = this->registry_.get(device_id);
   const DeviceReadingRow *row = find_device_reading(reading, this->reading_table_);
   const auto *source = row != nullptr ? std::get_if<DataObjectSource>(&row->source) : nullptr;
   if (dev == nullptr || source == nullptr)
     return;
-  const std::string key = device_reading_key(device_id, reading);
   switch (outcome) {
     case TransferOutcome::READ:
       // A device that answers with its no-value pattern has answered, but a reading it does not carry; the last

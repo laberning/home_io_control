@@ -192,6 +192,133 @@ TEST(HubDeviceReading, AMovingDeviceIsNotReadAndAsksAgainSoon) {
             PERIODIC_POLL_MOVING_RETRY_MS);
 }
 
+// === One read in flight ===
+
+namespace {
+
+/// Another controller's transfer request to the rig's device, heard now: it holds the device's reads.
+void hold_device(HubRig &rig) {
+  IoFrame frame{};
+  init_frame(frame, true, false, true, false);
+  const uint8_t other[NODE_ID_SIZE] = {0x12, 0x34, 0x56};
+  set_src(frame, other);
+  set_dst(frame, rig.device().node_id);
+  ASSERT_TRUE(set_cmd(frame, CMD_TRANSFER_OPEN, nullptr, 0));
+  rig.comp.transfer_reader_.note_transfer_frame(frame, esphome::millis());
+}
+
+/// Let the reader run on a silent device until it has nothing left to do; the frames sent are the reads that reached
+/// it (times the tries of one silent open).
+size_t run_reader_on_a_silent_device(HubRig &rig) {
+  for (size_t i = 0; i < 8 * EXCHANGE_MAX_ATTEMPTS; ++i)
+    rig.radio.queue_tx_result(false);
+  esphome::test_scheduler::run_due();  // a timer whose deadline passed while the test moved the clock
+  esphome::test_scheduler::run_until(esphome::millis() + TRANSFER_FOREIGN_QUIET_MS + 5000);
+  return static_cast<size_t>(rig.radio.get_send_count());
+}
+
+/// The frames one read of a held device sends once it goes quiet, on a silent device.
+size_t sends_of_one_read() {
+  HubRig rig;
+  rig.schedule();
+  hold_device(rig);
+  rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL);
+  return run_reader_on_a_silent_device(rig);
+}
+
+}  // namespace
+
+TEST(HubDeviceReading, AReadThatWaitsForAQuietDeviceIsNotQueuedAgainWhenTheIntervalFiresAgain) {
+  const size_t one_read = sends_of_one_read();
+  ASSERT_GT(one_read, 0u);
+  HubRig rig;
+  rig.schedule();
+  hold_device(rig);
+  esphome::test_clock::advance_ms(DEVICE_READING_FIRST_READ_DELAY_MS);
+  rig.comp.loop();
+  ASSERT_EQ(rig.comp.op_queue_.size(), 1u);
+  rig.comp.process_pending_operation_();  // the read waits for the device to go quiet
+  ASSERT_FALSE(rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL)) << "in flight";
+
+  // The interval fires twice more while it waits.
+  for (int i = 0; i < 2; ++i) {
+    esphome::test_clock::advance_ms(DEVICE_READING_MIN_INTERVAL_MS * 2);
+    hold_device(rig);
+    rig.comp.loop();
+    while (!rig.comp.op_queue_.empty())
+      rig.comp.process_pending_operation_();
+  }
+
+  EXPECT_EQ(run_reader_on_a_silent_device(rig), one_read) << "the three intervals reached the reader as one read";
+}
+
+TEST(HubDeviceReading, TheNextReadIsQueuedAfterTheFirstEnded) {
+  HubRig rig;
+  rig.schedule();
+  hold_device(rig);
+  EXPECT_TRUE(rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL));
+  EXPECT_FALSE(rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL)) << "still in flight";
+
+  rig.answer(TransferOutcome::READ, COUNTER_3262);
+
+  EXPECT_TRUE(rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL));
+}
+
+TEST(HubDeviceReading, EveryEndingOfAReadClearsItsInFlightNote) {
+  for (const TransferOutcome outcome :
+       {TransferOutcome::READ, TransferOutcome::NO_ANSWER, TransferOutcome::EMPTY, TransferOutcome::DECLINED,
+        TransferOutcome::NO_DATA, TransferOutcome::MALFORMED, TransferOutcome::TOO_LONG, TransferOutcome::INCOMPLETE,
+        TransferOutcome::ABANDONED}) {
+    SCOPED_TRACE(transfer_outcome_name(outcome));
+    HubRig rig;
+    rig.schedule();
+    hold_device(rig);
+    ASSERT_TRUE(rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL));
+
+    rig.answer(outcome, COUNTER_3262);
+
+    EXPECT_TRUE(rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL)) << "asked again";
+  }
+}
+
+TEST(HubDeviceReading, AReadTheDeviceReportsAbsentOrTheReaderRefusesIsNoLongerInFlight) {
+  for (const TransferOutcome outcome : {TransferOutcome::NO_SUCH_OBJECT, TransferOutcome::REFUSED}) {
+    SCOPED_TRACE(transfer_outcome_name(outcome));
+    HubRig rig;
+    rig.schedule();
+    hold_device(rig);
+    ASSERT_TRUE(rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL));
+    rig.answer(outcome);
+    ASSERT_FALSE(rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL)) << "absent";
+
+    // A stored value ends absent (DeviceReadingValues::store()); the read that marked it must not be left in flight.
+    rig.device().reading_values.store(reading_slot(DeviceReading::ENERGY_TOTAL), 1.0F);
+    EXPECT_TRUE(rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL)) << "not in flight";
+  }
+}
+
+TEST(HubDeviceReading, AReadTheReaderRefusesInsideTheCallIsEndedAtOnce) {
+  HubRig rig;
+  rig.schedule();
+  rig.comp.transfer_reader_.set_recipes({});  // the reading's recipe row is gone, so the reader refuses at once
+  EXPECT_TRUE(rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL));
+  EXPECT_TRUE(rig.device().reading_values.absent(reading_slot(DeviceReading::ENERGY_TOTAL)))
+      << "the refusal was applied inside the call";
+}
+
+TEST(HubDeviceReading, AReadTheFullQueueAbandonsIsNoLongerInFlight) {
+  HubRig rig;
+  rig.schedule();
+  hold_device(rig);
+  // Fill the reader's queue behind a read of the device; each ask is a read the hub does not track as one in flight.
+  for (size_t i = 0; i <= TransferReader::QUEUE_MAX + 1; ++i)
+    rig.comp.transfer_reader_.read(DEVICE_ID, 0, 0x0010, [](TransferOutcome, const std::vector<uint8_t> &) {});
+
+  EXPECT_TRUE(rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL)) << "the call went through";
+  EXPECT_TRUE(rig.comp.request_device_reading(DEVICE_ID, DeviceReading::ENERGY_TOTAL))
+      << "the reader ended it ABANDONED inside the call, which cleared the note";
+}
+
 // === The value store ===
 
 TEST(HubDeviceReading, AReadStoresTheDecodedSliceAndNotifiesTheDevicesSubscribers) {

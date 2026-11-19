@@ -9,8 +9,9 @@
 /// performs the exchange its own way (the `read_object` probe in a blocking loop, TransferReader one
 /// step per timeout) and hands the answer back, so the order of requests and the meaning of each answer
 /// exist once (ADR 0099). Once a device accepted an open that announces data, the session's last request is always the
-/// close, whatever went wrong in between; an open answered with no data (length 0 or "nothing to read") needs none and
-/// ends the read at once.
+/// close, whatever went wrong in between (the runner's exception is a device that left the registry: it has no
+/// record to address the close to, and the transfer is left to the device to drop, ADR 0108); an open answered with no
+/// data (length 0 or "nothing to read") needs none and ends the read at once.
 ///
 /// The session includes no hub header and no radio header: it is tested with answers written by hand.
 

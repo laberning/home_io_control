@@ -290,7 +290,8 @@ ManagementActions::ManagementActions(const uint8_t *node_id, const uint8_t *syst
                                   [hub](const IoFrame &reply) { return hub->record_probe_reply_event(reply); },
                                   [hub](const std::string &device_id, const IoFrame &request, IoFrame &response) {
                                     return hub->exchange_recorded(device_id, request, response);
-                                  }}) {}
+                                  },
+                                  [hub](const std::string &device_id) { return hub->transfer_open_to(device_id); }}) {}
 
 void ManagementActions::register_actions() {
 #if defined(USE_API_USER_DEFINED_ACTIONS) && defined(USE_API_CUSTOM_SERVICES)

@@ -477,6 +477,12 @@ class IOHomeControlComponent : public Component,
   ///         least accepted the request (ACCEPTED_NO_REPLY) or stayed silent (SILENT).
   RecordedAnswer exchange_recorded(const std::string &device_id, const IoFrame &request, IoFrame &response);
 
+  /// True while the transfer reader holds a transfer open to @p device_id (TransferReader::transfer_open_to()); the
+  /// `read_object` probe refuses then.
+  [[nodiscard]] bool transfer_open_to(const std::string &device_id) const {
+    return this->transfer_reader_.transfer_open_to(device_id);
+  }
+
   /// Register a callback invoked after every recorded device event, used by the "Last Device Event"
   /// text sensor. Single-slot, mirrors set_pairing_result_callback().
   /// @param cb Callable with no arguments.
@@ -630,6 +636,7 @@ class IOHomeControlComponent : public Component,
   /// asked and the poll is deferred instead.
   /// @param device_id Target device ID.
   /// @param reading A reading with a DataObjectSource, EventSource or LimitationSource.
+  /// A data-object reading whose last read is still queued or running is not queued again (ADR 0108).
   /// @return true if a data-object read was queued or an answer of the captured shape arrived and was applied.
   bool request_device_reading(const std::string &device_id, DeviceReading reading);
   /// Request the stored device name from a device.
@@ -1385,6 +1392,7 @@ class IOHomeControlComponent : public Component,
     std::string key;
     std::string device_id;
     DeviceReading reading;
+    bool in_flight{false};  ///< A data-object read of it is queued or running in the transfer reader (ADR 0108).
   };
   std::vector<DeviceReadingPoll> device_reading_polls_;  ///< Every reading with a schedule entry.
   /// The reading table the hub looks scheduled readings up in: the production table, which a test replaces

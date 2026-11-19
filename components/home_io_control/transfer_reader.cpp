@@ -87,7 +87,7 @@ void TransferReader::read(const std::string &device_id, size_t recipe_index, uin
     return;
   }
   this->reads_.push_back(Read{device_id, recipe_index, offset, std::move(done)});
-  if (!this->session_.has_value())
+  if (!this->session_.has_value() && !this->waiting_for_quiet_)
     this->start_next_();
 }
 
@@ -104,10 +104,24 @@ void TransferReader::after_(uint32_t delay_ms, std::function<void()> step) {
 }
 
 void TransferReader::start_next_() {
+  this->waiting_for_quiet_ = false;
   if (this->reads_.empty()) {
     this->session_.reset();
     return;
   }
+  // The first read whose device is quiet goes first: a device another controller keeps busy holds its own reads
+  // only, and reads of devices that are not held stay first in, first out (ADR 0108).
+  const auto ready = std::find_if(this->reads_.begin(), this->reads_.end(),
+                                  [this](const Read &read) { return !this->foreign_active_(read.device_id); });
+  if (ready == this->reads_.end()) {
+    // Every queued device is held: choose again after a retry wait. No session exists meanwhile, so no read is
+    // started and read() leaves the pending choice alone.
+    this->session_.reset();
+    this->waiting_for_quiet_ = true;
+    this->after_(TRANSFER_FOREIGN_RETRY_MS, [this]() { this->start_next_(); });
+    return;
+  }
+  std::rotate(this->reads_.begin(), ready, ready + 1);
   const Read &read = this->reads_.front();
   this->session_.emplace(this->recipes_[read.recipe_index], read.offset, this->recipes_);
   // Start on the next loop pass, never inside the caller (a sensor update or another read's callback): an
@@ -130,14 +144,19 @@ void TransferReader::step_() {
   // Looked up on each step, not kept: the registry owns the device.
   const IoDevice *dev = this->hub_.find_device(read.device_id);
   if (dev == nullptr) {
-    ESP_LOGW(detail::TAG, "%s: device removed, transfer read dropped", read.device_id.c_str());
+    // A close would need a send path to a device the hub no longer records exchanges with; a transfer the device
+    // accepted stays open until the device drops it (ADR 0108).
+    ESP_LOGW(detail::TAG, "%s: device removed, transfer read dropped%s", read.device_id.c_str(),
+             session.started() ? " (a transfer it accepted may be left open)" : "");
     this->finish_(TransferOutcome::ABANDONED);
     return;
   }
   if (this->foreign_active_(read.device_id)) {
     if (!session.started()) {
-      // Nothing of ours is open: wait until the other controller has gone quiet.
-      this->after_(TRANSFER_FOREIGN_RETRY_MS, [this]() { this->step_(); });
+      // Nothing of ours is open: another controller took the device since this read was chosen. Choose again, which
+      // lets a read of a quiet device go first or waits until this one is quiet.
+      this->session_.reset();
+      this->start_next_();
       return;
     }
     // The other controller started a transfer while ours is open: free the device at once (the next request is
@@ -177,7 +196,7 @@ void TransferReader::finish_(TransferOutcome outcome) {
   if (read.done)
     read.done(outcome, data);
   // The callback may have queued a read, which started the chain itself (the session was reset).
-  if (!this->session_.has_value())
+  if (!this->session_.has_value() && !this->waiting_for_quiet_)
     this->start_next_();
 }
 

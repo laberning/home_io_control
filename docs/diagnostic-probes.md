@@ -183,6 +183,10 @@ them 24 bytes to a line. The probe stops without reading when the device answers
 the open, reports a length of 0, or announces more than 432 bytes. It never writes to the device and
 never changes the device's state in Home Assistant.
 
+A device serves one transfer at a time. While the hub is reading a data object of the same device on its
+schedule, the probe refuses with `a scheduled read of this device is in progress, try again in a moment` and
+sends nothing, and a sweep stops at that refusal; a scheduled read takes a few seconds.
+
 Expect devices to answer in different ways. An error answer or no reply at all means the device does
 not offer that object. Post the log lines, including a refusal, when you report a result.
 

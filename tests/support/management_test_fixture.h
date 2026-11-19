@@ -31,6 +31,7 @@ class TestableManagementComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::register_management_actions_;
   using IOHomeControlComponent::registry_;
   using IOHomeControlComponent::system_key_;
+  using IOHomeControlComponent::transfer_reader_;
   using IOHomeControlComponent::tuning_;
 };
 

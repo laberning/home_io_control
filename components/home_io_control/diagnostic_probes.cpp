@@ -651,6 +651,14 @@ ManagementActionResult DiagnosticProbes::probe_device(const std::string &device_
     return result;
   // The data-transport read is a whole session of its own, not one frame and its reply.
   if (descriptor->reads_blocks) {
+    // A device serves one transfer at a time. The probe blocks the loop while it runs, so a scheduled read cannot
+    // start a step in between; one already open is checked here, before anything is sent (ADR 0108). The refusal is
+    // terminal: the reader cannot let go during a sweep either, so every remaining index would be refused alike.
+    if (hub_.transfer_open_to(result.device_id)) {
+      result.message = "a scheduled read of this device is in progress, try again in a moment";
+      result.terminal_refusal = true;
+      return result;
+    }
     read_object_(*dev, probe, index_byte, offset, result);
     return result;
   }

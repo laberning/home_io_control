@@ -16,7 +16,10 @@
 ///     later, like a background poll;
 ///   - a read starts only after TRANSFER_FOREIGN_QUIET_MS without a data-transport frame of another
 ///     controller to or from that device, and one that appears mid-read closes the transfer and ends the read
-///     ABANDONED;
+///     ABANDONED. A read of a held device waits alone: the first queued read whose device is quiet runs first,
+///     reads of quiet devices stay first in, first out, and a started read is never reordered (ADR 0108);
+///   - a device removed from the registry mid-read ends the read ABANDONED without a close: a transfer it
+///     accepted is left to the device to drop (ADR 0108);
 ///   - while a read of a device is in progress (transfer_open_to()), the hub keeps that device's queued
 ///     background operations waiting.
 ///
@@ -124,6 +127,8 @@ class TransferReader {
   void drop_expired_foreign_(uint32_t now);
   /// Run @p step after @p delay_ms; while the hub holds the radio, retry it a little later.
   void after_(uint32_t delay_ms, std::function<void()> step);
+  /// Start the first queued read whose device is quiet, moved to the front; when every queued device is held, wait
+  /// TRANSFER_FOREIGN_RETRY_MS and choose again. Only called with no read in progress.
   void start_next_();
   /// One step of the front read: one exchange, or a wait.
   void step_();
@@ -138,6 +143,7 @@ class TransferReader {
   std::vector<ForeignTransfer> foreign_;
   uint32_t last_exchange_ms_{0};  ///< millis() after the last exchange of any read; valid once exchanged_.
   bool exchanged_{false};
+  bool waiting_for_quiet_{false};  ///< Every queued device is held and a choice is pending; no session exists.
 };
 
 }  // namespace home_io_control

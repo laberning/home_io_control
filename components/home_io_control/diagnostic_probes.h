@@ -10,8 +10,8 @@
 /// one instance and registers the two native API actions that drive it; the actions exist only
 /// with `diagnostic_probes: true` (docs/diagnostic-probes.md, ADR 0024).
 ///
-/// The class reaches the hub through DiagnosticProbesHub, four injected calls, and includes no
-/// hub header. None of the four applies a status to a device record, so a probe reply stays
+/// The class reaches the hub through DiagnosticProbesHub, five injected calls, and includes no
+/// hub header. None of the five applies a status to a device record, so a probe reply stays
 /// raw: it can never be misread as a position update.
 
 #include "device_registry.h"
@@ -34,7 +34,7 @@ class RadioDriver;
 inline constexpr const char *MANAGEMENT_ACTION_PROBE_DEVICE = "probe_device";
 inline constexpr const char *MANAGEMENT_ACTION_PROBE_SWEEP = "probe_sweep";
 
-/// @brief The only four things a probe needs from the hub, injected by ManagementActions.
+/// @brief The only five things a probe needs from the hub, injected by ManagementActions.
 struct DiagnosticProbesHub {
   std::function<bool()> probes_enabled;                     ///< True when `diagnostic_probes: true` was configured.
   std::function<RadioDriver *()> radio;                     ///< The radio, for the structured capture log line.
@@ -45,6 +45,9 @@ struct DiagnosticProbesHub {
   /// replies stay raw. Its answer tells a device that stayed silent from one that accepted the request and sent no
   /// data (RecordedAnswer), which the probe reports apart.
   RecordedExchangeFn exchange;
+  /// True while the hub's transfer reader holds a transfer open to the device. `read_object` refuses then, so it
+  /// never opens a second transfer on a device that serves one at a time (ADR 0108).
+  std::function<bool(const std::string &device_id)> transfer_open_to;
 };
 
 /// @brief Sends diagnostic probe frames to already-paired devices and reports the raw replies.
@@ -58,7 +61,7 @@ class DiagnosticProbes {
   /// @param engine       Shared exchange engine for radio transactions.
   /// @param registry     Device registry for device lookups.
   /// @param initialized  Pointer to the hub's initialized flag.
-  /// @param hub          The four injected hub calls.
+  /// @param hub          The five injected hub calls.
   DiagnosticProbes(const uint8_t *node_id, ExchangeEngine &engine, DeviceRegistry &registry, const bool *initialized,
                    DiagnosticProbesHub hub);
 
