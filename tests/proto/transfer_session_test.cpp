@@ -5,6 +5,7 @@
 #include "proto_codecs.h"
 #include "proto_commands.h"
 #include "proto_constants.h"
+#include "proto_device_readings.h"
 #include "proto_frame.h"
 #include "transfer_session.h"
 
@@ -449,6 +450,33 @@ TEST(TransferSession, ReadsTheCapturedRs100OpenAnswerInTwentyOneBlocks) {
   EXPECT_EQ(next_answer(session, answer)[1], 0x08);
   EXPECT_FALSE(session.done());
   EXPECT_EQ(next(session), (std::vector<uint8_t>{CMD_UNKNOWN4A_REQ, 0x10, 0x00, 21})) << "21 chunks, counting down";
+}
+
+TEST(TransferSession, ReplaysTheCapturedAtlanticHeatPumpCounterRead) {
+  // Issue #244: the heating counter of an Atlantic heat pump, read with the recipe at offset 0x0023. Every request
+  // the session builds is the captured one (command and payload), and the data decodes with the reading row.
+  const corpus::CorpusCapture *capture =
+      corpus_test::capture_by_id("atlantic_alfea_probe_read_object_heating_energy_sx1276");
+  ASSERT_NE(capture, nullptr);
+  TransferSession session(TRANSFER_RECIPES[TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP], 0x0023);
+  for (size_t i = 0; i < capture->frame_count; i++) {
+    SCOPED_TRACE(i);
+    const corpus::CorpusFrame &frame = capture->frames[i];
+    const IoFrame parsed = corpus_test::parse_capture_frame(frame);
+    if (frame.tx) {
+      std::vector<uint8_t> captured = {parsed.cmd};
+      captured.insert(captured.end(), parsed.data, parsed.data + parsed.data_len);
+      EXPECT_EQ(next(session), captured);
+    } else {
+      session.on_answer(&parsed);
+    }
+  }
+  ASSERT_TRUE(session.done());
+  EXPECT_EQ(session.outcome(), TransferOutcome::READ);
+  ASSERT_EQ(session.data(), (std::vector<uint8_t>{0x80, 0x2C, 0xC7}));
+  const DeviceReadingRow *row = find_device_reading(DeviceReading::HEAT_PUMP_HEATING_ENERGY);
+  ASSERT_NE(row, nullptr);
+  EXPECT_EQ(decode_data_object_reading(std::get<DataObjectSource>(row->source), session.data()), 11463.0F);
 }
 
 TEST(TransferSession, OutcomesHaveNames) {

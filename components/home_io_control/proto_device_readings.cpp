@@ -292,6 +292,31 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .source = DerivedSource{.value = battery_low_of, .polls = {}, .codec = ValueCodec::BINARY},
      .reading = DeviceReading::BATTERY_LOW,
      .poll = ReadingPoll::NOT_POLLED},
+    // An Atlantic heat pump's energy counters (issue #244): one entry of its data object each, a marker byte and a
+    // big-endian count of kWh (`80 24 AC` is 9388), `81 FF FF` when the entry has no value. A counter only grows, so
+    // it keeps its value through misses.
+    {.name = "heat_pump_heating_energy",
+     .source = DataObjectSource{.recipe = TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP,
+                                .offset = 0x0023,
+                                .first = 0,
+                                .length = 3,
+                                .codec = ValueCodec::MARKED_U16_BE,
+                                .max_value = 0},
+     .reading = DeviceReading::HEAT_PUMP_HEATING_ENERGY,
+     .poll = ReadingPoll::WHEN_ASKED,
+     .feature = DeviceFeature::HEAT_PUMP_ENERGY,
+     .stale = ReadingStale::KEEP},
+    {.name = "heat_pump_hot_water_energy",
+     .source = DataObjectSource{.recipe = TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP,
+                                .offset = 0x0025,
+                                .first = 0,
+                                .length = 3,
+                                .codec = ValueCodec::MARKED_U16_BE,
+                                .max_value = 0},
+     .reading = DeviceReading::HEAT_PUMP_HOT_WATER_ENERGY,
+     .poll = ReadingPoll::WHEN_ASKED,
+     .feature = DeviceFeature::HEAT_PUMP_ENERGY,
+     .stale = ReadingStale::KEEP},
 };
 
 /// Run `visit` on every row whose source is the register `fn`, whole or a part of it, in table order.

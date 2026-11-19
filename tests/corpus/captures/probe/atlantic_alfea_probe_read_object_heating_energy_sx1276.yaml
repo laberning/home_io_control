@@ -1,0 +1,78 @@
+id: atlantic_alfea_probe_read_object_heating_energy_sx1276
+description: |
+  An Atlantic Alfea Duo Extensa A.I. heat pump (node type 0x16, subtype 1) answering the `read_object`
+  diagnostic probe at index 30 (the Atlantic heat pump recipe) and offset 0x0023, its heating energy
+  counter, on the reporter's LilyGO T3 V2.1 (SX1276) hub (issue #244, log taken 2026-11-19 18:14:05-18:14:07
+  local time). Addresses masked: hub A1B2C3, heat pump D1E2F3.
+
+  The read is the one a TaHoma Switch was captured making on the same heat pump:
+    - CMD_TRANSFER_OPEN (0x46) of object 0x1001 in class 0x0C at offset 0x0023, answered empty
+      (handle 0, status 0, length 0): this open only prepares the next one;
+    - the same open of object 0x1002, answered with handle 0x2C, status 1 (adapted), length 3;
+    - one CMD_UNKNOWN4A_REQ (0x4A) for chunk 1, answered with `80 2C C7`: the marker byte 0x80 and
+      0x2CC7 = 11463 kWh, matching the yearly totals of the TaHoma app;
+    - the close (chunk 0) and its echo.
+  Every request was answered on the first try, with no challenge. The hot-water counter at offset 0x0025
+  read the same way 14 s later gave `80 24 C0` = 9408 kWh.
+
+  Own installation: the system key is known to the reporter but not published; no frame here is
+  authenticated.
+source:
+  device: "Atlantic Alfea Duo Extensa A.I. heat pump (node type 0x16, subtype 1)"
+  captured_with: sx1276
+  firmware: "LilyGO T3 V2.1, main 35b2d2a plus the Atlantic heat pump recipe row, diagnostic_probes: true"
+  date: 2026-11-19
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/244"
+key: unknown
+frames:
+  - dir: tx
+    freq: 868250000
+    hex: "51 00 D1 E2 F3 A1 B2 C3 46 08 0C 00 10 01 00 23 00 00"
+    crc: absent
+    note: "cmd=TRANSFER_OPEN(0x46), prepare open: class 0x0C, object 0x1001, offset 0x0023"
+  - dir: rx
+    freq: 868250000
+    hex: "8C 00 A1 B2 C3 D1 E2 F3 47 00 00 00 00"
+    crc: absent
+    note: "cmd=TRANSFER_OPEN_RESP(0x47): handle 0, status 0, length 0 (empty, as usual for 0x1001)"
+  - dir: tx
+    freq: 868950000
+    hex: "51 00 D1 E2 F3 A1 B2 C3 46 08 0C 00 10 02 00 23 00 00"
+    crc: absent
+    note: "cmd=TRANSFER_OPEN(0x46), data open: class 0x0C, object 0x1002, offset 0x0023"
+  - dir: rx
+    freq: 868950000
+    hex: "8C 00 A1 B2 C3 D1 E2 F3 47 2C 01 00 03"
+    crc: absent
+    note: "cmd=TRANSFER_OPEN_RESP(0x47): handle 0x2C, status 1 (adapted), length 3"
+  - dir: tx
+    freq: 868950000
+    hex: "4B 00 D1 E2 F3 A1 B2 C3 4A 2C 00 01"
+    crc: absent
+    note: "cmd=UNKNOWN4A_REQ(0x4A): handle 0x2C, chunk 1"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 A1 B2 C3 D1 E2 F3 4B 2C 00 01 80 2C C7"
+    crc: absent
+    note: "cmd=UNKNOWN4A_RESP(0x4B): handle 0x2C, chunk 1, data 80 2C C7 = 11463 kWh"
+  - dir: tx
+    freq: 869850000
+    hex: "4B 00 D1 E2 F3 A1 B2 C3 4A 2C 00 00"
+    crc: absent
+    note: "cmd=UNKNOWN4A_REQ(0x4A): close (chunk 0)"
+  - dir: rx
+    freq: 869850000
+    hex: "8B 00 A1 B2 C3 D1 E2 F3 4B 2C 00 00"
+    crc: absent
+    note: "cmd=UNKNOWN4A_RESP(0x4B): close echo"
+expect:
+  frames:
+    - {cmd: 0x46, start: true, end: false, protocol: 2w}
+    - {cmd: 0x47, start: false, end: true, protocol: 2w}
+    - {cmd: 0x46, start: true, end: false, protocol: 2w}
+    - {cmd: 0x47, start: false, end: true, protocol: 2w}
+    - {cmd: 0x4A, start: true, end: false, protocol: 2w}
+    - {cmd: 0x4B, start: false, end: true, protocol: 2w}
+    - {cmd: 0x4A, start: true, end: false, protocol: 2w}
+    - {cmd: 0x4B, start: false, end: true, protocol: 2w}
