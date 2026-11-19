@@ -249,7 +249,7 @@ void HeaterController::enable_device_reading(const std::string &device_id, Devic
 }
 
 bool HeaterController::exchange_heating_(const std::string &device_id, const char *label, const IoFrame &request,
-                                         IoFrame &response, uint8_t max_tries) {
+                                         IoFrame &response, uint8_t max_tries, AckNotify notify) {
   // A read and a write of the same register share the label, so the log names which one it was: a
   // read-back that fails after an acknowledged write must not read as a refused write.
   const bool is_read = request.data_len > 1 && request.data[1] == PRIVATE_REGISTER_DIRECTION_GET;
@@ -267,7 +267,9 @@ bool HeaterController::exchange_heating_(const std::string &device_id, const cha
     detail::update_link_health(*dev, *this->radio_);
     if (response.cmd == CMD_WRITE_PRIVATE_ACK)
       detail::clear_command_result(*dev);
-    this->registry_.notify(device_id);
+    // A register read that stores the reply notifies once, after the store (AckNotify::BY_CALLER).
+    if (response.cmd != CMD_WRITE_PRIVATE_ACK || notify == AckNotify::NOW)
+      this->registry_.notify(device_id);
   }
   const bool acknowledged = replied && response.cmd == CMD_WRITE_PRIVATE_ACK;
 
@@ -336,7 +338,8 @@ bool HeaterController::send_heating_command(const std::string &device_id, Device
 }
 
 bool HeaterController::read_private_register(const std::string &device_id, uint8_t reg_hi, uint8_t reg_lo,
-                                             const char *label, IoFrame &response, uint8_t max_tries) {
+                                             const char *label, IoFrame &response, uint8_t max_tries,
+                                             AckNotify notify) {
   const IoDevice *dev = this->registry_.get(device_id);
   if (dev == nullptr || !*this->initialized_)
     return false;
@@ -355,9 +358,12 @@ bool HeaterController::read_private_register(const std::string &device_id, uint8
     return false;
   }
 
-  if (!this->exchange_heating_(device_id, label, request, response, max_tries))
+  if (!this->exchange_heating_(device_id, label, request, response, max_tries, notify))
     return false;
   if (!private_reply_echoes_register(response, reg_hi, reg_lo)) {
+    // The caller stores nothing from a reply for another register, so the reply's link health is notified here.
+    if (notify == AckNotify::BY_CALLER)
+      this->registry_.notify(device_id);
     char payload_hex[FRAME_LOG_HEX_BUFFER_SIZE];
     bytes_to_hex(response.data, response.data_len, payload_hex, sizeof(payload_hex));
     ESP_LOGD(detail::TAG, "heating %s reply from device %s is not for register 0x%02X%02X: %s", label,
@@ -401,8 +407,9 @@ HeaterController::HeatingRead HeaterController::read_and_store_heating_register_
   }
 
   IoFrame response;
+  // The reply is notified once, below, after what it holds is stored.
   if (!this->read_private_register(device_id, register_high, register_low, device_register_name(fn), response,
-                                   max_tries))
+                                   max_tries, AckNotify::BY_CALLER))
     return HeatingRead::NO_ANSWER;
 
   // The exchange blocks and the registry may have been touched by a callback meanwhile, so the record
@@ -427,6 +434,7 @@ HeaterController::HeatingRead HeaterController::read_and_store_heating_register_
     bytes_to_hex(response.data, response.data_len, payload_hex, sizeof(payload_hex));
     ESP_LOGD(detail::TAG, "heating %s reply from device %s carries no value: %s", device_register_name(fn),
              device_id.c_str(), payload_hex);
+    this->registry_.notify(device_id);  // the reply's link health
     return HeatingRead::EMPTY;
   }
 

@@ -267,7 +267,43 @@ TEST(HeaterController, ReadHeatingRegisterNotifiesTheEntities) {
   ASSERT_TRUE(
       fx.controller.read_heating_register("ABC123", DeviceRegister::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
 
-  EXPECT_GE(notifications, 1) << "what an entity shows is what the heater reported";
+  EXPECT_EQ(notifications, 1) << "what an entity shows is what the heater reported, notified once after the store";
+}
+
+TEST(HeaterController, AReadReplyWithoutAValueNotifiesOnce) {
+  HeaterControllerFixture fx;
+  make_heater(fx);
+  int notifications = 0;
+  fx.registry.subscribe([&notifications](const std::string &, const IoDevice &) { notifications++; });
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x15});
+
+  EXPECT_FALSE(
+      fx.controller.read_heating_register("ABC123", DeviceRegister::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
+  EXPECT_EQ(notifications, 1) << "the heater was heard, so its link health is shown, once";
+}
+
+TEST(HeaterController, AReadReplyForAnotherRegisterNotifiesOnce) {
+  HeaterControllerFixture fx;
+  make_heater(fx);
+  int notifications = 0;
+  fx.registry.subscribe([&notifications](const std::string &, const IoDevice &) { notifications++; });
+  fx.queue_register_ack({0x0C, 0x60, 0x01, 0x16, 0x1B, 0x08});
+
+  EXPECT_FALSE(
+      fx.controller.read_heating_register("ABC123", DeviceRegister::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
+  EXPECT_EQ(notifications, 1) << "nothing is stored from it, but the heater was heard";
+}
+
+TEST(HeaterController, AReadAnsweredWithAnotherCommandNotifiesOnce) {
+  HeaterControllerFixture fx;
+  make_heater(fx);
+  int notifications = 0;
+  fx.registry.subscribe([&notifications](const std::string &, const IoDevice &) { notifications++; });
+  fx.queue_reply(CMD_PRIVATE_RESP, {test::STATUS_BYTE_AT_REST, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00});
+
+  EXPECT_FALSE(
+      fx.controller.read_heating_register("ABC123", DeviceRegister::ROOM_TEMPERATURE, nullptr, EXCHANGE_RETRY_COUNT));
+  EXPECT_EQ(notifications, 1) << "the heater was heard, so its link health is shown, once";
 }
 
 TEST(HeaterController, ReadHeatingRegisterWithoutAValueInTheReplyFails) {
@@ -565,6 +601,21 @@ TEST(HeaterController, AnOverrideInAnEcoOrAComfortPeriodSendsTheOverrideRegister
     EXPECT_FLOAT_EQ(test::number_read(*dev, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE), 17.0F)
         << "what the dryer reports replaces the shown value";
   }
+}
+
+TEST(HeaterController, AnOverrideReadBackNotifiesOnceWithTheTemperatureInForceStored) {
+  HeaterControllerFixture fx;
+  make_towel_dryer_in_programme(fx, 15.5F, heating_level::ECO);
+  std::vector<float> shown;
+  fx.registry.subscribe([&shown](const std::string &, const IoDevice &d) {
+    shown.push_back(test::number_read(d, DeviceReading::TOWEL_TEMPERATURE_IN_FORCE));
+  });
+  queue_register_write_and_read_back(fx, 0x1D, 0xAF, 0xAF);
+
+  ASSERT_TRUE(fx.controller.execute_heating_plan("ABC123", override_plan(17.5F), nullptr));
+
+  ASSERT_EQ(shown.size(), 2u) << "one notification for the write, one for the read-back";
+  EXPECT_FLOAT_EQ(shown.back(), 17.5F) << "the read-back notifies after the temperature in force is stored";
 }
 
 // === The temperature in force is read once after a write that starts the programme (display only) ===

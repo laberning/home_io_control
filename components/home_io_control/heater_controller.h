@@ -83,6 +83,13 @@ struct HeaterControllerHub {
 /// @ingroup hioc_hub
 class HeaterController {
  public:
+  /// @brief Who notifies the entities of an acknowledged register reply: the exchange itself, or the caller once it
+  /// has stored what the reply holds, so that one read notifies once.
+  enum class AckNotify : uint8_t {
+    NOW,        ///< The exchange notifies as soon as the reply is in.
+    BY_CALLER,  ///< The caller notifies a reply that echoes the register once it has stored what the reply holds.
+  };
+
   /// @param node_id      Controller 3-byte node ID, owned by the hub.
   /// @param initialized  Pointer to the hub's initialized flag.
   /// @param radio        Pointer to the hub's radio pointer (read per call, so a later assignment is seen).
@@ -239,8 +246,9 @@ class HeaterController {
   /// (IoDevice::reading_values).
   ///
   /// Same gate as send_heating_command(); the read itself is read_private_register(). A reply that
-  /// decodes (decode_heating_reply()) updates the device record and notifies the entity callbacks, so
-  /// what an entity shows is what the heater reported.
+  /// decodes (decode_heating_reply()) updates the device record and notifies the entity callbacks once, after the
+  /// store, so what an entity shows is what the heater reported. A reply without a value, or for another register, is
+  /// notified once too, for the link health it carries.
   /// @param device_id Target device ID (hex string).
   /// @param fn Register to read; must be readable (see device_register_is_readable()).
   /// @param[out] value_out Decoded value (NaN for a room-temperature sensor fault); pass nullptr when
@@ -264,9 +272,12 @@ class HeaterController {
   /// @param[out] response The reply; its value bytes start at PRIVATE_REGISTER_VALUE_OFFSET (none for a
   ///        register the device does not hold).
   /// @param max_tries Transmit-attempt cap.
+  /// @param notify Who notifies the entities of an acknowledged reply that echoes the register: this read
+  ///        (AckNotify::NOW), or the caller once it has stored what the reply holds (AckNotify::BY_CALLER), so one read
+  ///        notifies once. Every other reply is notified here either way.
   /// @return true when the device answered with the register's echo.
   bool read_private_register(const std::string &device_id, uint8_t reg_hi, uint8_t reg_lo, const char *label,
-                             IoFrame &response, uint8_t max_tries);
+                             IoFrame &response, uint8_t max_tries, AckNotify notify = AckNotify::NOW);
 
   /// @brief Arm the heater's regular-cadence poll timer (run by poll() and moved by an acknowledged write).
   ///
@@ -375,15 +386,17 @@ class HeaterController {
   /// @brief The exchange every heating frame shares: run it through HeaterControllerHub::exchange (the
   /// shared bookkeeping, no poll backoff since the heater poll keeps its own), stamp link health of a
   /// reply, notify the entities and report whether the device answered with CMD_WRITE_PRIVATE_ACK
-  /// (ADR 0082).
+  /// (ADR 0082). An acknowledged reply is notified only with AckNotify::NOW: with AckNotify::BY_CALLER the caller
+  /// notifies once it has stored what the reply holds.
   /// @param device_id Target device ID.
   /// @param label What was sent, for the log ("set_temperature", "read room_temperature").
   /// @param request The framed CMD_WRITE_PRIVATE request.
   /// @param[out] response The device's reply; valid when true is returned.
   /// @param max_tries Transmit-attempt cap.
+  /// @param notify Who notifies the entities of an acknowledged reply (see read_private_register()).
   /// @return true only if the reply is a CMD_WRITE_PRIVATE_ACK.
   bool exchange_heating_(const std::string &device_id, const char *label, const IoFrame &request, IoFrame &response,
-                         uint8_t max_tries);
+                         uint8_t max_tries, AckNotify notify = AckNotify::NOW);
 
   /// @brief Write one register of a water heater, then read it back.
   ///
