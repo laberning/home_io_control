@@ -91,7 +91,7 @@ size_t encode_dhw_duration_write(DhwOperatingFeature which, uint8_t out[PRIVATE_
 }
 
 bool encode_dhw_target(float celsius, uint16_t &main_parameter) {
-  // encode_temperature_main_parameter() clamps; a target outside the heater's own range is refused instead.
+  // A target outside the heater's own range is refused here, before the range of the main parameter is applied.
   if (!std::isfinite(celsius) || celsius < DHW_TARGET_MIN_C || celsius > DHW_TARGET_MAX_C)
     return false;
   return encode_temperature_main_parameter(celsius, DHW_TARGET_MIN_C, DHW_TARGET_MAX_C, main_parameter);

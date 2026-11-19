@@ -95,3 +95,164 @@ TEST(ValueCodecs, EveryCodecReadsOneTwoOrThreeBytes) {
                                  ValueCodec::BOUNDED_U16, ValueCodec::U16_BE, ValueCodec::FIRST_BYTE_OF_PAIR})
     EXPECT_EQ(value_codec_length(codec), 2u);
 }
+
+// === Encoding: the inverse of decoding ===
+
+namespace {
+
+/// The bytes encode_value() writes for a value; empty when it refuses.
+std::vector<uint8_t> encode(const ValueForm &form, float value) {
+  std::array<uint8_t, 4> out{};
+  const size_t n = encode_value(form, value, out);
+  return std::vector<uint8_t>(out.begin(), out.begin() + static_cast<std::ptrdiff_t>(n));
+}
+
+}  // namespace
+
+TEST(ValueCodecsEncode, EveryWritableFormDecodesBackToTheValueItEncoded) {
+  const struct {
+    ValueForm form;
+    float value;
+  } cases[] = {
+      {{.codec = ValueCodec::TENTHS_U16}, 20.5F},
+      {{.codec = ValueCodec::TENTHS_U16}, 28.0F},
+      {{.codec = ValueCodec::TENTHS_U16}, 6553.5F},
+      {{.codec = ValueCodec::TENTHS_U16_OR_ZERO}, 17.5F},
+      {{.codec = ValueCodec::TENTHS_U16_OR_ZERO}, 0.0F},
+      {{.codec = ValueCodec::HUNDREDTHS_S16}, 18.64F},
+      {{.codec = ValueCodec::HUNDREDTHS_S16}, -1.0F},
+      {{.codec = ValueCodec::BINARY}, 0.0F},
+      {{.codec = ValueCodec::BINARY}, 1.0F},
+      {{.codec = ValueCodec::BOUNDED_BYTE, .max_value = 100}, 100.0F},
+      {{.codec = ValueCodec::BOUNDED_BYTE, .max_value = VALUE_BYTE_MAX}, 255.0F},
+      {{.codec = ValueCodec::BOUNDED_U16, .max_value = 10000}, 10000.0F},
+      {{.codec = ValueCodec::BOUNDED_U16, .max_value = 10000}, 0.0F},
+      {{.codec = ValueCodec::U16_BE}, 3422.0F},
+      {{.codec = ValueCodec::U16_BE}, 65535.0F},
+      {{.codec = ValueCodec::MARKED_U16_BE}, 3262.0F},
+  };
+  for (const auto &c : cases) {
+    const std::vector<uint8_t> bytes = encode(c.form, c.value);
+    ASSERT_EQ(bytes.size(), value_codec_length(c.form.codec)) << "codec " << static_cast<int>(c.form.codec);
+    const std::optional<float> back = decode_value(c.form.codec, bytes, c.form.max_value);
+    ASSERT_TRUE(back.has_value()) << "codec " << static_cast<int>(c.form.codec) << " value " << c.value;
+    EXPECT_NEAR(*back, c.value, 0.0051F) << "codec " << static_cast<int>(c.form.codec);
+  }
+}
+
+TEST(ValueCodecsEncode, TheBytesAreInTheOrderTheRegisterReadsBackIn) {
+  EXPECT_EQ(encode({.codec = ValueCodec::TENTHS_U16}, 28.0F), (std::vector<uint8_t>{0x18, 0x01}));
+  EXPECT_EQ(encode({.codec = ValueCodec::TENTHS_U16}, 20.55F), (std::vector<uint8_t>{0xCE, 0x00}))
+      << "the half rounds away from zero";
+  EXPECT_EQ(encode({.codec = ValueCodec::HUNDREDTHS_S16}, -1.0F), (std::vector<uint8_t>{0x9C, 0xFF}));
+  EXPECT_EQ(encode({.codec = ValueCodec::BOUNDED_U16, .max_value = 10000}, 10000.0F),
+            (std::vector<uint8_t>{0x10, 0x27}));
+  EXPECT_EQ(encode({.codec = ValueCodec::U16_BE}, 3422.0F), (std::vector<uint8_t>{0x0D, 0x5E}))
+      << "the one most-significant-byte-first word";
+  EXPECT_EQ(encode({.codec = ValueCodec::MARKED_U16_BE}, 3262.0F), (std::vector<uint8_t>{0x80, 0x0C, 0xBE}));
+}
+
+TEST(ValueCodecsEncode, AValueOutsideTheFormIsRefusedNeverRoundedIntoRange) {
+  const float nan = NAN;
+  const float inf = INFINITY;
+  const ValueForm tenths = {.codec = ValueCodec::TENTHS_U16, .write_range = ValueRange{7.0F, 28.0F}};
+  for (const float value : {6.9F, 28.1F, 0.0F, -1.0F, nan, inf, -inf})
+    EXPECT_TRUE(encode(tenths, value).empty()) << value;
+  EXPECT_FALSE(encode(tenths, 7.0F).empty());
+  EXPECT_FALSE(encode(tenths, 28.0F).empty());
+
+  const ValueForm no_range = {.codec = ValueCodec::TENTHS_U16};
+  EXPECT_TRUE(encode(no_range, 6553.6F).empty()) << "more than 16 bits of tenths";
+  EXPECT_TRUE(encode(no_range, -0.1F).empty()) << "an unsigned word holds no negative";
+
+  for (const float value : {2.0F, -1.0F, 0.5F, nan, inf})
+    EXPECT_TRUE(encode({.codec = ValueCodec::BINARY}, value).empty()) << value;
+  for (const float value : {101.0F, -1.0F, 1.5F, nan, inf})
+    EXPECT_TRUE(encode({.codec = ValueCodec::BOUNDED_BYTE, .max_value = 100}, value).empty()) << value;
+  EXPECT_TRUE(encode({.codec = ValueCodec::BOUNDED_BYTE, .max_value = 1000}, 256.0F).empty())
+      << "a byte holds no more than 255, whatever the bound says";
+  for (const float value : {10001.0F, -1.0F, 0.5F, nan})
+    EXPECT_TRUE(encode({.codec = ValueCodec::BOUNDED_U16, .max_value = 10000}, value).empty()) << value;
+  for (const float value : {65536.0F, -1.0F, 0.5F, nan})
+    EXPECT_TRUE(encode({.codec = ValueCodec::U16_BE}, value).empty()) << value;
+}
+
+TEST(ValueCodecsEncode, OnlyTheOrZeroFormTakesAZeroOutsideItsRange) {
+  const ValueRange range{7.0F, 28.0F};
+  EXPECT_EQ(encode({.codec = ValueCodec::TENTHS_U16_OR_ZERO, .write_range = range}, 0.0F),
+            (std::vector<uint8_t>{0x00, 0x00}));
+  EXPECT_EQ(encode({.codec = ValueCodec::TENTHS_U16_OR_ZERO, .write_range = range}, -0.0F),
+            (std::vector<uint8_t>{0x00, 0x00}))
+      << "any value that equals zero cancels";
+  EXPECT_TRUE(encode({.codec = ValueCodec::TENTHS_U16_OR_ZERO, .write_range = range}, 0.1F).empty());
+  EXPECT_TRUE(encode({.codec = ValueCodec::TENTHS_U16, .write_range = range}, 0.0F).empty());
+}
+
+TEST(ValueCodecsEncode, ASensorFaultPatternIsNotAValue) {
+  EXPECT_TRUE(encode({.codec = ValueCodec::HUNDREDTHS_S16}, -0.01F).empty()) << "raw -1 reads back as a fault";
+  EXPECT_TRUE(encode({.codec = ValueCodec::HUNDREDTHS_S16}, 400.0F).empty());
+}
+
+TEST(ValueCodecsEncode, AFormWithoutAWritableValueEncodesNothing) {
+  EXPECT_TRUE(encode({.codec = ValueCodec::NONE}, 1.0F).empty());
+  EXPECT_TRUE(encode({.codec = ValueCodec::FIRST_BYTE_OF_PAIR}, 1.0F).empty()) << "its second byte is a limit";
+}
+
+TEST(ValueCodecsEncode, ABufferThatIsTooShortTakesNothing) {
+  std::array<uint8_t, 4> out{};
+  EXPECT_EQ(encode_value({.codec = ValueCodec::TENTHS_U16}, 20.0F, std::span<uint8_t>(out.data(), 1)), 0u);
+  EXPECT_EQ(encode_value({.codec = ValueCodec::MARKED_U16_BE}, 20.0F, std::span<uint8_t>(out.data(), 2)), 0u);
+  EXPECT_EQ(encode_value({.codec = ValueCodec::BINARY}, 1.0F, std::span<uint8_t>(out.data(), 1)), 1u);
+}
+
+TEST(ValueCodecsEncode, ABoundedIntegerIsAWholeNumberInsideItsBound) {
+  EXPECT_TRUE(value_is_bounded_integer(0.0F, 0));
+  EXPECT_TRUE(value_is_bounded_integer(10.0F, 10));
+  EXPECT_FALSE(value_is_bounded_integer(11.0F, 10));
+  EXPECT_FALSE(value_is_bounded_integer(-1.0F, 10));
+  EXPECT_FALSE(value_is_bounded_integer(1.5F, 10));
+  EXPECT_FALSE(value_is_bounded_integer(NAN, 10));
+  EXPECT_FALSE(value_is_bounded_integer(INFINITY, 10));
+}
+
+// === The scaled form ===
+
+namespace {
+
+constexpr ValueScaleKnot TEST_SCALE[] = {{0, 0}, {10, 100}, {100, 1000}};
+
+ValueForm scaled() { return {.codec = ValueCodec::SCALED_U16, .max_value = 1000, .scale = TEST_SCALE}; }
+
+}  // namespace
+
+TEST(ValueCodecsScaled, ARegisterValueDecodesLinearBetweenItsKnots) {
+  const auto decode_raw = [](uint16_t raw) {
+    const std::vector<uint8_t> bytes = {static_cast<uint8_t>(raw & 0xFF), static_cast<uint8_t>(raw >> 8)};
+    return decode_value(scaled(), bytes);
+  };
+  EXPECT_FLOAT_EQ(*decode_raw(0), 0.0F);
+  EXPECT_FLOAT_EQ(*decode_raw(50), 5.0F);
+  EXPECT_FLOAT_EQ(*decode_raw(100), 10.0F);
+  EXPECT_FLOAT_EQ(*decode_raw(550), 55.0F);
+  EXPECT_FLOAT_EQ(*decode_raw(1000), 100.0F);
+  EXPECT_FALSE(decode_raw(1001).has_value()) << "above the register's maximum";
+}
+
+TEST(ValueCodecsScaled, AValueEncodesToTheNearestRegisterValueAndRoundTrips) {
+  EXPECT_EQ(encode(scaled(), 0.0F), (std::vector<uint8_t>{0x00, 0x00}));
+  EXPECT_EQ(encode(scaled(), 10.0F), (std::vector<uint8_t>{0x64, 0x00}));
+  EXPECT_EQ(encode(scaled(), 100.0F), (std::vector<uint8_t>{0xE8, 0x03}));
+  EXPECT_EQ(encode(scaled(), 55.0F), (std::vector<uint8_t>{0x26, 0x02})) << "550";
+  EXPECT_EQ(encode(scaled(), 5.04F), (std::vector<uint8_t>{0x32, 0x00})) << "50.4 rounds to 50";
+  for (float value = 0.0F; value <= 100.0F; value += 2.5F) {
+    const std::vector<uint8_t> bytes = encode(scaled(), value);
+    ASSERT_EQ(bytes.size(), 2u) << value;
+    EXPECT_NEAR(*decode_value(scaled(), bytes), value, 0.06F) << value;
+  }
+}
+
+TEST(ValueCodecsScaled, AValueOutsideTheScaleIsRefused) {
+  for (const float value : {-0.1F, 100.1F, NAN, INFINITY, -INFINITY})
+    EXPECT_TRUE(encode(scaled(), value).empty()) << value;
+  EXPECT_TRUE(encode({.codec = ValueCodec::SCALED_U16, .max_value = 1000}, 5.0F).empty()) << "a form with no scale";
+}

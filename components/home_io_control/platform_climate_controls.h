@@ -61,10 +61,10 @@ class IOHomeHeaterSettingSwitch : public switch_::Switch, public Component, publ
 /// `heater_with_light`).
 /// @ingroup hioc_platforms
 ///
-/// On/off is register 0x0144 and the brightness register 0x0142, which runs 0-10000. Home Assistant's
-/// brightness follows the scale of the heater's vendor app (HEATING_NIGHT_LIGHT_SCALE: 33 % = 1000,
-/// 66 % = 2000, 100 % = 10000, linear in between; night_light_register_from_percent() and
-/// night_light_fraction_from_register()). A Sauter Hekla's panel sets 100, 1000, 2000 and 10000, its four
+/// On/off is register 0x0144 and the brightness register 0x0142, which runs 0-10000. The light writes and shows
+/// a percentage: the brightness register's row maps it to the register value on the scale of the heater's vendor
+/// app (HEATING_NIGHT_LIGHT_SCALE: 33 % = 1000, 66 % = 2000, 100 % = 10000, linear in between), so a reading holds
+/// percent. A Sauter Hekla's panel sets 100, 1000, 2000 and 10000, its four
 /// levels (issue #222), which show as 3 %, 33 %, 66 % and 100 %. A light switched on at the percentage the
 /// heater already shows writes no brightness, so the heater keeps its own level. The light shows what the heater
 /// reports: no state until the first poll has read 0x0144, every acknowledged write is read back, and a write the
@@ -112,9 +112,11 @@ class IOHomeHeaterNightLight : public light::LightOutput, public Component, publ
 
   /// @brief Write one light register.
   /// @param fn NIGHT_LIGHT or NIGHT_LIGHT_BRIGHTNESS.
-  /// @param value Value to write.
+  /// @param value Value to write: 0 or 1 for the on/off register, a percentage for the brightness.
+  /// @param unit Appended to the value in the log line of a write the heater did not acknowledge ("%" for a
+  ///        percentage).
   /// @return true when the heater acknowledged it.
-  bool write_register_(HeatingFunction fn, float value);
+  bool write_register_(HeatingFunction fn, float value, const char *unit = "");
 
   light::LightState *state_{nullptr};
   /// Swallows the write_state() that LightState::make_call().perform() causes for a state this entity

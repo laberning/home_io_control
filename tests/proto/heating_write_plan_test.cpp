@@ -76,10 +76,10 @@ TEST(HeatingWritePlan, RadiatorPresetWritesItsRegisterAndNamesTheMatchedEntry) {
   ASSERT_GE(plan.preset_index, 0);
   const HeatingPresetEntry &entry = radiator.presets[plan.preset_index];
   EXPECT_STREQ(entry.custom_name, "Program");
-  EXPECT_EQ(plan.register_fn, entry.write_fn);
+  EXPECT_EQ(plan.register_fn, radiator.preset_fn);
   EXPECT_FLOAT_EQ(plan.register_value, static_cast<float>(entry.wire));
   EXPECT_TRUE(plan.read_back);
-  EXPECT_EQ(plan.read_back_fn, entry.write_fn);
+  EXPECT_EQ(plan.read_back_fn, radiator.preset_fn);
 }
 
 TEST(HeatingWritePlan, RadiatorTargetIsAnUnencodedSetpointWriteThatIsReadBack) {

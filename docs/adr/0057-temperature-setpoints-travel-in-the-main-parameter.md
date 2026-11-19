@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0057 -->
 
-**Status:** Accepted · **Recorded:** 2026-10
+**Status:** Accepted; amended by [ADR 0105](0105-every-device-value-write-is-judged-by-one-rule-per-register.md) (a temperature outside the range is refused, not clamped; the card offers no target outside the range) · **Recorded:** 2026-10
 
 ## Context
 

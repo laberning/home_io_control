@@ -141,8 +141,9 @@ you meet them. The structure behind them is described in the
 [ADR 0099](adr/0099-scheduled-transfer-reads-use-one-session-and-a-queued-reader.md),
 [ADR 0100](adr/0100-a-transfer-read-tells-an-accepted-request-without-an-answer-from-silence.md),
 [ADR 0101](adr/0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) and
-[ADR 0102](adr/0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md)
-and [ADR 0104](adr/0104-a-heaters-poll-reads-what-its-reading-rows-select.md).
+[ADR 0102](adr/0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md),
+[ADR 0104](adr/0104-a-heaters-poll-reads-what-its-reading-rows-select.md) and
+[ADR 0105](adr/0105-every-device-value-write-is-judged-by-one-rule-per-register.md).
 
 1. **Find where the value lives.** A heater reports it as a private register; some devices keep it in
    a data object. Read the objects with the [`read_object` probe](diagnostic-probes.md#reading-a-device-object).
@@ -211,6 +212,16 @@ A reading that comes from a heater's register has no recipe and no offset: its r
 (`HeatingFunction`), and the register table in `proto_heating.cpp` names its codec. The rest is the
 same. A reading that a status reply carries (the heating level) is a `StatusMainParameterSource` and
 is never polled.
+
+A register that can be written has one rule, in the same row of `proto_heating.cpp`: its codec and bound,
+a `write_range` where it is a temperature, a `refuses` predicate where the register refuses a value its
+codec holds (the mode register refuses the external-setpoint mode), and, for a register shown on a scale of
+its own, the scale. Every caller asks `heating_write_accepts()` and states a range through
+`heating_write_range()`; none keeps a bound or a list of its own
+([ADR 0105](adr/0105-every-device-value-write-is-judged-by-one-rule-per-register.md)). A function the
+`heating_control` action offers carries a label for its value in the same row, and the action finds it
+by name. A new value shape is an `encode_value()` case beside the `decode_value()` one, with a test in
+`tests/proto/value_codecs_test.cpp`.
 
 Tests sit on the lowest stage that fits. The codec and the lookup are tested without a radio. The
 schedule and the value store are tested on the hub with a reading table and recipe table of the test's

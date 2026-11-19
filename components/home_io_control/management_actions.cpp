@@ -16,6 +16,7 @@
 #include "proto_commands.h"
 #include "proto_device_kinds.h"
 #include "proto_device_types.h"
+#include "proto_heating.h"
 #include "proto_heating_profiles.h"
 #include "roll_call.h"
 
@@ -172,126 +173,103 @@ static std::string normalize_lower_argument(const std::string &value) {
   return normalized;
 }
 
-/// @brief A `value` token that maps to a fixed float (used by set_mode / set_presence /
-/// set_open_window_detection).
-struct HeatingNamedValue {
-  const char *token;
-  float value;
-};
-
-/// @brief Match `token` against `table`; on a hit set `out` and return true.
-static bool match_heating_named_value(const std::string &token, const HeatingNamedValue *table, size_t table_len,
-                                      float &out) {
-  for (size_t i = 0; i < table_len; i++) {
-    if (token == table[i].token) {
-      out = table[i].value;
-      return true;
-    }
-  }
-  return false;
-}
-
-/// @brief Parse `set_temperature`'s value into degrees Celsius, range-checked.
-static bool parse_heating_temperature(const std::string &value, float &value_out, std::string &error) {
-  const std::string text = trim_ascii_whitespace(value);
+/// @brief Parse a temperature argument: a plain number in degrees Celsius.
+/// @return false for text that is not a finite number.
+static bool parse_heating_number(const std::string &text, float &value_out) {
   errno = 0;
   // NOLINTNEXTLINE(misc-const-correctness): strtoul()/strtof() take a `char **` end pointer.
   char *end = nullptr;
   const float parsed = std::strtof(text.c_str(), &end);
-  if (text.empty() || end != text.c_str() + text.size() || errno == ERANGE || !std::isfinite(parsed)) {
-    error = "temperature must be a number in degrees Celsius";
+  if (text.empty() || end != text.c_str() + text.size() || errno == ERANGE || !std::isfinite(parsed))
     return false;
-  }
-  if (parsed < HEATING_TEMP_MIN_C || parsed > HEATING_TEMP_MAX_C) {
-    std::array<char, HEATING_RANGE_MESSAGE_BUFFER_SIZE> buffer{};
-    std::snprintf(buffer.data(), buffer.size(), "temperature must be between %.1f and %.1f",
-                  static_cast<double>(HEATING_TEMP_MIN_C), static_cast<double>(HEATING_TEMP_MAX_C));
-    error = buffer.data();
-    return false;
-  }
   value_out = parsed;
   return true;
 }
 
-/// @brief Parse the (`function`, `value`) argument pair of the `heating_control` action.
+/// @brief The message for a value the register's rule refuses, built from the function's label and rule.
+static std::string heating_refusal_message(HeatingFunction fn, ValueCodec codec) {
+  const std::string label = heating_action_value_label(fn);
+  if (codec == ValueCodec::BINARY)
+    return label + " must be 'on' or 'off'";
+  if (codec == ValueCodec::BOUNDED_BYTE)
+    return label + " must be one of " + heating_writable_mode_names();
+  const std::optional<ValueRange> range = heating_write_range(fn);
+  if (!range)
+    return label + " is not accepted";
+  std::array<char, HEATING_RANGE_MESSAGE_BUFFER_SIZE> buffer{};
+  std::snprintf(buffer.data(), buffer.size(), " must be between %.1f and %.1f", static_cast<double>(range->min),
+                static_cast<double>(range->max));
+  return label + buffer.data();
+}
+
+/// @brief Parse the value argument of a `heating_control` function and judge it by the register's rule.
 ///
-/// Every native-API argument is a string (ManagementServiceDescriptor hardcodes
-/// SERVICE_ARG_TYPE_STRING), so this turns the two strings into a HeatingFunction plus the float
-/// encode_heating_payload() expects: degrees C for `set_temperature`, degrees C or 0 (cancel) for `set_derogation`, a
-/// HeatingMode value for `set_mode`, 0/1 for `set_presence` / `set_open_window_detection`, and an ignored 0 for the
-/// register reads (`power_on`, `midnight_sync`, `window_open`). On any malformed input it fills `error` with a
-/// caller-facing message and returns false rather than coercing a value. Kept next to the action (not in proto_heating)
-/// because the climate entity receives typed enums from Home Assistant and needs no string
-/// parsing.
-/// @param function Function name argument.
+/// Every native-API argument is a string (ManagementServiceDescriptor hardcodes SERVICE_ARG_TYPE_STRING), so this
+/// turns the value text into the float encode_heating_payload() expects, by the register's codec: a number of
+/// degrees for the tenths registers, `on` / `off` for a flag, a mode word for the mode register (an enumerated
+/// byte: the only one the action offers). A function that takes no value (a read) ignores the text. The register's
+/// rule (heating_write_accepts()) decides what is refused, so no bound or list lives here. On a malformed or refused
+/// value it fills `error` with a caller-facing message and returns false rather than coercing. Kept next to the
+/// action because the climate entity receives typed enums from Home Assistant and needs no string parsing.
+/// @param fn The function the action runs.
+/// @param value The value argument.
+/// @param value_out The value on success (0 for a function without one).
+/// @param error Caller-facing message on failure.
+/// @return true on an accepted value.
+static bool parse_heating_value(HeatingFunction fn, const std::string &value, float &value_out, std::string &error) {
+  value_out = 0.0F;
+  if (!heating_function_is_writable(fn))
+    return true;  // a read takes no value
+
+  const ValueCodec codec = heating_function_codec(fn);
+  const std::string text = trim_ascii_whitespace(value);
+  bool parsed = false;
+  switch (codec) {
+    case ValueCodec::TENTHS_U16:
+    case ValueCodec::TENTHS_U16_OR_ZERO:
+      if (!parse_heating_number(text, value_out)) {
+        error = std::string(heating_action_value_label(fn)) + " must be a number in degrees Celsius";
+        return false;
+      }
+      parsed = true;
+      break;
+    case ValueCodec::BINARY: {
+      const std::string word = normalize_lower_argument(text);
+      parsed = word == "on" || word == "off";
+      value_out = word == "on" ? 1.0F : 0.0F;
+      break;
+    }
+    case ValueCodec::BOUNDED_BYTE:
+      if (const std::optional<HeatingMode> mode = heating_mode_from_name(normalize_lower_argument(text))) {
+        value_out = static_cast<float>(*mode);
+        parsed = true;
+      }
+      break;
+    default:
+      break;  // no other codec is a function of the action
+  }
+  if (parsed && heating_write_accepts(fn, value_out))
+    return true;
+  error = heating_refusal_message(fn, codec);
+  return false;
+}
+
+/// @brief Parse the (`function`, `value`) argument pair of the `heating_control` action.
+/// @param function Function name argument, looked up among the functions the action offers.
 /// @param value Value argument.
 /// @param fn_out Parsed function on success.
-/// @param value_out Parsed value on success (0 for the value-less functions).
+/// @param value_out Parsed value on success.
 /// @param error Caller-facing message on failure.
 /// @return true on a fully valid pair.
 static bool parse_heating_arguments(const std::string &function, const std::string &value, HeatingFunction &fn_out,
                                     float &value_out, std::string &error) {
-  static constexpr HeatingNamedValue MODE_VALUES[] = {
-      {"auto", static_cast<float>(HeatingMode::AUTO)},
-      {"manual", static_cast<float>(HeatingMode::MANUAL)},
-      {"prog", static_cast<float>(HeatingMode::PROG)},
-      {"off", static_cast<float>(HeatingMode::OFF)},
-  };
-  static constexpr HeatingNamedValue PRESENCE_VALUES[] = {{"on", 1.0F}, {"off", 0.0F}};
-  static constexpr HeatingNamedValue DETECTION_VALUES[] = {{"on", 1.0F}, {"off", 0.0F}};
-
-  const std::string fn = normalize_lower_argument(function);
-  value_out = 0.0F;
-
-  if (fn == "power_on") {
-    fn_out = HeatingFunction::POWER_ON;
-    return true;
-  }
-  if (fn == "midnight_sync") {
-    fn_out = HeatingFunction::MIDNIGHT_SYNC;
-    return true;
-  }
-  if (fn == "set_temperature") {
-    fn_out = HeatingFunction::SET_TEMPERATURE;
-    return parse_heating_temperature(value, value_out, error);
-  }
-  if (fn == "set_derogation") {
-    fn_out = HeatingFunction::DEROGATED_SETPOINT;
-    // 0 cancels the override (`00 00`); any other value is a temperature like set_temperature's.
-    if (trim_ascii_whitespace(value) == "0")
-      return true;
-    return parse_heating_temperature(value, value_out, error);
-  }
-  if (fn == "set_mode") {
-    fn_out = HeatingFunction::SET_MODE;
-    if (match_heating_named_value(normalize_lower_argument(value), MODE_VALUES, std::size(MODE_VALUES), value_out))
-      return true;
-    error = "mode must be one of auto, manual, prog, off";
+  const std::optional<HeatingFunction> fn = heating_action_function(normalize_lower_argument(function));
+  if (!fn) {
+    error = "unknown heating function '" + trim_ascii_whitespace(function) + "'";
     return false;
   }
-  if (fn == "set_presence") {
-    fn_out = HeatingFunction::SET_PRESENCE;
-    if (match_heating_named_value(normalize_lower_argument(value), PRESENCE_VALUES, std::size(PRESENCE_VALUES),
-                                  value_out))
-      return true;
-    error = "presence must be 'on' or 'off'";
-    return false;
-  }
-  if (fn == "set_open_window_detection") {
-    fn_out = HeatingFunction::SET_OPEN_WINDOW_DETECTION;
-    if (match_heating_named_value(normalize_lower_argument(value), DETECTION_VALUES, std::size(DETECTION_VALUES),
-                                  value_out))
-      return true;
-    error = "open-window detection must be 'on' or 'off'";
-    return false;
-  }
-  if (fn == "window_open") {
-    fn_out = HeatingFunction::WINDOW_OPEN;
-    return true;
-  }
-
-  error = "unknown heating function '" + trim_ascii_whitespace(function) + "'";
-  return false;
+  fn_out = *fn;
+  return parse_heating_value(*fn, value, value_out, error);
 }
 
 // --- ManagementActions ---

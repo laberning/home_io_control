@@ -20,7 +20,7 @@ static const char *const TAG_SETTING = "home_io_control.heater_setting";
 static const char *const TAG_NIGHT_LIGHT = "home_io_control.night_light";
 
 /// Percentage for a light switched on at a brightness that rounds to 0 %: the lowest level that is still
-/// on (register value night_light_register_from_percent(1), 30).
+/// on (register value 30).
 static constexpr uint8_t NIGHT_LIGHT_MIN_ON_PERCENT = 1;
 
 void IOHomeHeaterSettingSwitch::setup() {
@@ -68,18 +68,17 @@ void IOHomeHeaterNightLight::on_device_update_(const IoDevice &dev) {
   const bool on = *light != 0.0F;
   // A brightness of 0 (or none read yet) says nothing about the level the light comes on at: keep the
   // one shown.
-  const int register_brightness = reading_wire(dev, DeviceReading::NIGHT_LIGHT_BRIGHTNESS);
-  const float brightness = register_brightness > 0
-                               ? night_light_fraction_from_register(static_cast<uint16_t>(register_brightness))
-                               : this->state_->remote_values.get_brightness();
+  const std::optional<float> percent = reading_value(dev, DeviceReading::NIGHT_LIGHT_BRIGHTNESS);
+  const float brightness = percent && *percent > 0.0F ? *percent / static_cast<float>(HEATING_NIGHT_LIGHT_PERCENT_MAX)
+                                                      : this->state_->remote_values.get_brightness();
   publish_light_reading(this->state_, on, brightness, this->suppress_write_);
 }
 
-bool IOHomeHeaterNightLight::write_register_(HeatingFunction fn, float value) {
+bool IOHomeHeaterNightLight::write_register_(HeatingFunction fn, float value, const char *unit) {
   if (this->heating_port_->send_heating_command(this->device_id_, fn, value))
     return true;
-  ESP_LOGW(TAG_NIGHT_LIGHT, "Device %s: %s %.0f was not acknowledged", this->device_id_.c_str(),
-           heating_function_name(fn), value);
+  ESP_LOGW(TAG_NIGHT_LIGHT, "Device %s: %s %.0f%s was not acknowledged", this->device_id_.c_str(),
+           heating_function_name(fn), value, unit);
   return false;
 }
 
@@ -99,17 +98,19 @@ void IOHomeHeaterNightLight::write_state(light::LightState *state) {
     // PWM output, and would send a different percentage than the one the user picked.
     const uint8_t percent = std::clamp<uint8_t>(detail::round_percent(state->current_values.get_brightness()),
                                                 NIGHT_LIGHT_MIN_ON_PERCENT, HEATING_NIGHT_LIGHT_PERCENT_MAX);
-    const uint16_t brightness = night_light_register_from_percent(percent);
     const IoDevice *dev = this->device_port_->get_device(this->device_id_);
     // Compared as the percentage Home Assistant shows, not as the register value: the panel's own levels
     // (100, 1000) fall between two whole percentages, and switching on at the brightness shown must not
     // move the heater off its level.
-    const int held_brightness = dev != nullptr ? reading_wire(*dev, DeviceReading::NIGHT_LIGHT_BRIGHTNESS) : -1;
+    const std::optional<float> held =
+        dev != nullptr ? reading_value(*dev, DeviceReading::NIGHT_LIGHT_BRIGHTNESS) : std::nullopt;
     const bool holds_percent =
-        held_brightness > 0 &&
-        detail::round_percent(night_light_fraction_from_register(static_cast<uint16_t>(held_brightness))) == percent;
-    if (!holds_percent)
-      brightness_written = this->write_register_(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, brightness);
+        held && *held > 0.0F &&
+        detail::round_percent(*held / static_cast<float>(HEATING_NIGHT_LIGHT_PERCENT_MAX)) == percent;
+    if (!holds_percent) {
+      brightness_written =
+          this->write_register_(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, static_cast<float>(percent), "%");
+    }
   }
   // On/off goes out even when the brightness write failed: switching the light is what the user asked.
   const bool switched = this->write_register_(HeatingFunction::NIGHT_LIGHT, on ? 1.0F : 0.0F);

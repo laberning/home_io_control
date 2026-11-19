@@ -11,21 +11,18 @@
 
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 
 namespace esphome {
 namespace home_io_control {
 
 namespace {
 
-/// Mask for the low byte of a 16-bit little-endian register value.
-constexpr uint16_t LOW_BYTE_MASK = 0xFF;
-
-/// Payload length of a read, and of a write that carries no value ({prefix, direction, reg-high, reg-low}).
+/// Payload length of a read ({prefix, direction, reg-high, reg-low}).
 constexpr size_t PAYLOAD_LEN_HEADER = PRIVATE_REGISTER_HEADER_SIZE;
-/// Payload length for a write that carries one value byte (mode / presence / window detection).
-constexpr size_t PAYLOAD_LEN_ONE_VALUE = PRIVATE_REGISTER_HEADER_SIZE + 1;
-/// Payload length for a write of a 16-bit value (the setpoint).
-constexpr size_t PAYLOAD_LEN_TWO_VALUE = PRIVATE_REGISTER_PAYLOAD_MAX_SIZE;
+/// Room for the value bytes of a write after the header: one byte, or a 16-bit value.
+constexpr size_t PAYLOAD_LEN_VALUE_MAX = PRIVATE_REGISTER_PAYLOAD_MAX_SIZE - PRIVATE_REGISTER_HEADER_SIZE;
 
 /// Highest regulator-state value the register defines (HeatingRegulatorState::HEATING).
 constexpr uint8_t REGULATOR_STATE_MAX = static_cast<uint8_t>(HeatingRegulatorState::HEATING);
@@ -45,10 +42,16 @@ enum class HeatingAccess : uint8_t {
   WRITE_ONLY,  ///< Writes only; the heater has no readable value for it.
 };
 
+/// @brief A register's refusal of values its range holds but this component never writes.
+/// @return true for a value the register refuses; false for one the codec alone must judge.
+using HeatingValueRefusal = bool (*)(float value);
+
 /// @brief One register of the heater, the single description both directions are built from.
 ///
 /// A request is {PRIVATE_REGISTER_PREFIX, direction, HEATING_REGISTER_HIGH_BYTE, register_low,
-/// [value...]}; `direction` is PRIVATE_REGISTER_DIRECTION_GET or PRIVATE_REGISTER_DIRECTION_SET.
+/// [value...]}; `direction` is PRIVATE_REGISTER_DIRECTION_GET or PRIVATE_REGISTER_DIRECTION_SET. The row is
+/// also the register's write rule: its codec, `max_value`, `write_range` and `refuses` say which values a write
+/// may carry, and every caller asks heating_write_accepts() instead of keeping a bound of its own.
 struct HeatingFunctionDescriptor {
   const char *name;       ///< Action-visible name.
   HeatingFunction fn;     ///< Function this row describes.
@@ -56,23 +59,77 @@ struct HeatingFunctionDescriptor {
   HeatingAccess access;   ///< Whether the register may be read, written or both.
   ValueCodec codec;       ///< How the value maps onto the trailing bytes.
   uint16_t max_value{0};  ///< BOUNDED_BYTE, BOUNDED_U16: highest value a reply may carry and a write may send.
+  // NOLINTBEGIN(readability-redundant-member-init): g++'s -Wmissing-field-initializers wants the member
+  // initializer before a row may leave the field out.
+  std::optional<ValueRange> write_range{};  ///< Tenths registers: the values a write may carry.
+  HeatingValueRefusal refuses{nullptr};     ///< A value the register refuses although the codec holds it.
+  /// The `heating_control` action offers this function under `name`. The label names the value in the action's
+  /// messages ("temperature", "mode"); "" for a function that takes no value (a read). nullptr: not a function of
+  /// the action.
+  const char *action_value_label{nullptr};
+  std::span<const ValueScaleKnot> scale{};  ///< SCALED_U16: the scale from the natural value to the register value.
+  // NOLINTEND(readability-redundant-member-init)
 };
 
+/// @brief The mode register refuses the modes heating_mode_is_writable() rejects.
+/// @details Only a whole mode number is judged here; a non-integral, out-of-range or non-finite value is the
+///          codec's to refuse.
+bool refuses_unwritable_mode(float value) {
+  return value_is_bounded_integer(value, UINT8_MAX) &&
+         !heating_mode_is_writable(static_cast<HeatingMode>(static_cast<uint8_t>(value)));
+}
+
 constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
-    {"power_on", HeatingFunction::POWER_ON, 0x2C, HeatingAccess::READ_ONLY, ValueCodec::NONE},
-    {"set_temperature", HeatingFunction::SET_TEMPERATURE, 0x03, HeatingAccess::READ_WRITE, ValueCodec::TENTHS_U16},
-    {"set_mode", HeatingFunction::SET_MODE, 0x00, HeatingAccess::READ_WRITE, ValueCodec::BOUNDED_BYTE,
-     HEATING_MODE_MAX},
+    {.name = "power_on",
+     .fn = HeatingFunction::POWER_ON,
+     .register_low = 0x2C,
+     .access = HeatingAccess::READ_ONLY,
+     .codec = ValueCodec::NONE,
+     .action_value_label = ""},
+    {.name = "set_temperature",
+     .fn = HeatingFunction::SET_TEMPERATURE,
+     .register_low = 0x03,
+     .access = HeatingAccess::READ_WRITE,
+     .codec = ValueCodec::TENTHS_U16,
+     .write_range = ValueRange{HEATING_TEMP_MIN_C, HEATING_TEMP_MAX_C},
+     .action_value_label = "temperature"},
+    {.name = "set_mode",
+     .fn = HeatingFunction::SET_MODE,
+     .register_low = 0x00,
+     .access = HeatingAccess::READ_WRITE,
+     .codec = ValueCodec::BOUNDED_BYTE,
+     .max_value = HEATING_MODE_MAX,
+     .refuses = refuses_unwritable_mode,
+     .action_value_label = "mode"},
     // 0x0110 is written by a controller to say someone is there; a Sauter Hekla reports detected presence in it.
-    {"set_presence", HeatingFunction::SET_PRESENCE, 0x10, HeatingAccess::READ_WRITE, ValueCodec::BINARY},
-    {"set_open_window_detection", HeatingFunction::SET_OPEN_WINDOW_DETECTION, 0x06, HeatingAccess::READ_WRITE,
-     ValueCodec::BINARY},
-    {"midnight_sync", HeatingFunction::MIDNIGHT_SYNC, 0x30, HeatingAccess::READ_ONLY, ValueCodec::NONE},
+    {.name = "set_presence",
+     .fn = HeatingFunction::SET_PRESENCE,
+     .register_low = 0x10,
+     .access = HeatingAccess::READ_WRITE,
+     .codec = ValueCodec::BINARY,
+     .action_value_label = "presence"},
+    {.name = "set_open_window_detection",
+     .fn = HeatingFunction::SET_OPEN_WINDOW_DETECTION,
+     .register_low = 0x06,
+     .access = HeatingAccess::READ_WRITE,
+     .codec = ValueCodec::BINARY,
+     .action_value_label = "open-window detection"},
+    {.name = "midnight_sync",
+     .fn = HeatingFunction::MIDNIGHT_SYNC,
+     .register_low = 0x30,
+     .access = HeatingAccess::READ_ONLY,
+     .codec = ValueCodec::NONE,
+     .action_value_label = ""},
     {"room_temperature", HeatingFunction::ROOM_TEMPERATURE, 0x15, HeatingAccess::READ_ONLY, ValueCodec::HUNDREDTHS_S16},
     {"regulator_state", HeatingFunction::REGULATOR_STATE, 0x17, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
      REGULATOR_STATE_MAX},
     {"max_setpoint", HeatingFunction::MAX_SETPOINT, 0x02, HeatingAccess::READ_ONLY, ValueCodec::TENTHS_U16},
-    {"window_open", HeatingFunction::WINDOW_OPEN, 0x0E, HeatingAccess::READ_ONLY, ValueCodec::BINARY},
+    {.name = "window_open",
+     .fn = HeatingFunction::WINDOW_OPEN,
+     .register_low = 0x0E,
+     .access = HeatingAccess::READ_ONLY,
+     .codec = ValueCodec::BINARY,
+     .action_value_label = ""},
     // Towel-dryer registers: read on two Atlantic Adelis units (corpus atlantic_adelis_probe_*); writing
     // 0x0136 (mode) and 0x013E (boost, drying) is confirmed against the display (issue #202).
     {"towel_mode", HeatingFunction::TOWEL_MODE, 0x36, HeatingAccess::READ_WRITE, ValueCodec::BOUNDED_BYTE,
@@ -87,15 +144,26 @@ constexpr HeatingFunctionDescriptor HEATING_FUNCTIONS[] = {
      ValueCodec::TENTHS_U16},
     {"eco_setback", HeatingFunction::ECO_SETBACK, 0x04, HeatingAccess::READ_ONLY, ValueCodec::TENTHS_U16},
     // Read during a panel override on a towel dryer (issue #202): 16.5 degrees, 0 otherwise.
-    {"set_derogation", HeatingFunction::DEROGATED_SETPOINT, 0x1D, HeatingAccess::READ_WRITE,
-     ValueCodec::TENTHS_U16_OR_ZERO},
+    {.name = "set_derogation",
+     .fn = HeatingFunction::DEROGATED_SETPOINT,
+     .register_low = 0x1D,
+     .access = HeatingAccess::READ_WRITE,
+     .codec = ValueCodec::TENTHS_U16_OR_ZERO,
+     .write_range = ValueRange{HEATING_TEMP_MIN_C, HEATING_TEMP_MAX_C},
+     .action_value_label = "temperature"},
     // Not read on any radiator yet; the same temperature as 0x0137 on a towel dryer, which read it in both.
     {"heater_temperature_in_force", HeatingFunction::HEATER_TEMPERATURE_IN_FORCE, 0x2A, HeatingAccess::READ_ONLY,
      ValueCodec::TENTHS_U16},
     // Night light registers: read on a Sauter Hekla with the light on and off (issue #222).
     {"night_light", HeatingFunction::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, ValueCodec::BINARY},
-    {"night_light_brightness", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 0x42, HeatingAccess::READ_WRITE,
-     ValueCodec::BOUNDED_U16, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
+    // Written and read as a percentage: the row's scale maps it to the 0-10000 the register holds.
+    {.name = "night_light_brightness",
+     .fn = HeatingFunction::NIGHT_LIGHT_BRIGHTNESS,
+     .register_low = 0x42,
+     .access = HeatingAccess::READ_WRITE,
+     .codec = ValueCodec::SCALED_U16,
+     .max_value = HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX,
+     .scale = HEATING_NIGHT_LIGHT_SCALE},
     // Read on a mixed towel dryer (issue #243): 1 while its central-heating mode is on, 0 in electric mode.
     {"central_heating_mode", HeatingFunction::CENTRAL_HEATING_MODE, 0x53, HeatingAccess::READ_ONLY, ValueCodec::BINARY},
     // Read and written on a Sauter Hekla (issue #222): 1 with its occupancy detection on, 0 with it off.
@@ -129,19 +197,9 @@ void write_header(const HeatingFunctionDescriptor &d, uint8_t direction, uint8_t
   write_private_register_header(direction, HEATING_REGISTER_HIGH_BYTE, d.register_low, out);
 }
 
-/// @brief Is `value` an integer from 0 to `max_value`? NaN fails every comparison, so it is refused too.
-bool is_bounded_integer(float value, uint16_t max_value) {
-  return std::isfinite(value) && value >= 0.0F && value <= static_cast<float>(max_value) && value == std::floor(value);
-}
-
-/// @brief Write a set request for a 16-bit register: the header, then the value low byte first, the
-/// order the register reads back in.
-/// @return PAYLOAD_LEN_TWO_VALUE.
-size_t write_u16_set(const HeatingFunctionDescriptor &d, uint16_t raw, uint8_t *out) {
-  write_header(d, PRIVATE_REGISTER_DIRECTION_SET, out);
-  out[4] = static_cast<uint8_t>(raw & LOW_BYTE_MASK);
-  out[PAYLOAD_LEN_TWO_VALUE - 1] = static_cast<uint8_t>(raw >> BITS_PER_BYTE);
-  return PAYLOAD_LEN_TWO_VALUE;
+/// @brief The value form of a row: its codec and the rule a write must meet.
+ValueForm form_of(const HeatingFunctionDescriptor &d) {
+  return {.codec = d.codec, .max_value = d.max_value, .write_range = d.write_range, .scale = d.scale};
 }
 
 }  // namespace
@@ -182,76 +240,82 @@ size_t encode_heating_read(HeatingFunction fn, uint8_t out[PRIVATE_REGISTER_PAYL
   return PAYLOAD_LEN_HEADER;
 }
 
-/// @brief Per-register rule on top of the codec's range check: refuses values this component never writes
-/// although the register's range holds them. Today only the mode register has one (heating_mode_is_writable()).
-/// @return false only for a value the rule refuses; a value the codec must judge passes.
-static bool value_is_writable(HeatingFunction fn, float value) {
-  if (fn != HeatingFunction::SET_MODE)
-    return true;
-  // A non-integral, out-of-range or non-finite value is the codec's to refuse; only a whole mode number is judged.
-  return !is_bounded_integer(value, UINT8_MAX) ||
-         heating_mode_is_writable(static_cast<HeatingMode>(static_cast<uint8_t>(value)));
-}
-
 size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
   const HeatingFunctionDescriptor *d = descriptor_for(fn);
   // A read-only register is never written, whatever the caller asks: the heater's window sensor and
   // its measurements are not settings.
   if (d == nullptr || d->access == HeatingAccess::READ_ONLY)
     return 0;
-
-  if (!value_is_writable(fn, value))
+  if (d->refuses != nullptr && d->refuses(value))
     return 0;
 
-  switch (d->codec) {
-    case ValueCodec::TENTHS_U16_OR_ZERO:
-      if (value == 0.0F)
-        return write_u16_set(*d, 0, out);
-      [[fallthrough]];
-    case ValueCodec::TENTHS_U16: {
-      // Reject NaN / infinity and anything outside the representable range rather than emitting a
-      // wrapped byte.
-      if (!std::isfinite(value) || value < HEATING_TEMP_MIN_C || value > HEATING_TEMP_MAX_C)
-        return 0;
-      // Multiply in float (not double): the float32 product of e.g. 20.55f * 10.0f is exactly
-      // 205.5f, and std::round() takes that half away from zero to 206 (0x00CE). Truncating or
-      // rounding toward even would both be wrong here.
-      // NB: this exactness relies on FLT_EVAL_METHOD == 0 (operands evaluated at their own single
-      // precision, no hidden widening to double). That holds on x86-64 SSE and on Xtensa; the
-      // proto_heating test pins 20.55 C, which is one ULP from flipping to 0xCD under any
-      // excess-precision evaluation.
-      return write_u16_set(*d, static_cast<uint16_t>(std::round(value * VALUE_TENTHS_PER_UNIT)), out);
-    }
+  // The codec judges the value and lays out its bytes; a refused value emits nothing, never a wrapped byte.
+  const size_t value_len =
+      encode_value(form_of(*d), value, std::span<uint8_t>(out + PRIVATE_REGISTER_HEADER_SIZE, PAYLOAD_LEN_VALUE_MAX));
+  if (value_len == 0)
+    return 0;
+  write_header(*d, PRIVATE_REGISTER_DIRECTION_SET, out);
+  return PRIVATE_REGISTER_HEADER_SIZE + value_len;
+}
 
-    case ValueCodec::BINARY:
-      if (value != 0.0F && value != 1.0F)
-        return 0;
-      write_header(*d, PRIVATE_REGISTER_DIRECTION_SET, out);
-      out[4] = static_cast<uint8_t>(value);
-      return PAYLOAD_LEN_ONE_VALUE;
-
-    case ValueCodec::BOUNDED_BYTE:
-      // An integral value inside the register's range; anything else is refused, never truncated.
-      if (!is_bounded_integer(value, d->max_value))
-        return 0;
-      write_header(*d, PRIVATE_REGISTER_DIRECTION_SET, out);
-      out[4] = static_cast<uint8_t>(value);
-      return PAYLOAD_LEN_ONE_VALUE;
-
-    case ValueCodec::BOUNDED_U16:
-      // The same rule, in the two-byte form.
-      if (!is_bounded_integer(value, d->max_value))
-        return 0;
-      return write_u16_set(*d, static_cast<uint16_t>(value), out);
-
-    case ValueCodec::NONE:
-    case ValueCodec::HUNDREDTHS_S16:
-    case ValueCodec::U16_BE:
-    case ValueCodec::MARKED_U16_BE:
-    case ValueCodec::FIRST_BYTE_OF_PAIR:
-      return 0;  // no writable register has this encoding
+const char *heating_mode_name(HeatingMode mode) {
+  switch (mode) {
+    case HeatingMode::AUTO:
+      return "auto";
+    case HeatingMode::MANUAL:
+      return "manual";
+    case HeatingMode::PROG:
+      return "prog";
+    case HeatingMode::EXTERNAL_SETPOINT:
+      return "external";
+    case HeatingMode::OFF:
+      return "off";
   }
-  return 0;
+  return "unknown";
+}
+
+std::optional<HeatingMode> heating_mode_from_name(std::string_view name) {
+  for (uint8_t value = 0; value <= HEATING_MODE_MAX; value++) {
+    const auto mode = static_cast<HeatingMode>(value);
+    if (name == heating_mode_name(mode))
+      return mode;
+  }
+  return std::nullopt;
+}
+
+std::string heating_writable_mode_names() {
+  std::string names;
+  for (uint8_t value = 0; value <= HEATING_MODE_MAX; value++) {
+    const auto mode = static_cast<HeatingMode>(value);
+    if (!heating_mode_is_writable(mode))
+      continue;
+    names += names.empty() ? "" : ", ";
+    names += heating_mode_name(mode);
+  }
+  return names;
+}
+
+std::optional<HeatingFunction> heating_action_function(std::string_view name) {
+  for (const auto &d : HEATING_FUNCTIONS) {
+    if (d.action_value_label != nullptr && name == d.name)
+      return d.fn;
+  }
+  return std::nullopt;
+}
+
+const char *heating_action_value_label(HeatingFunction fn) {
+  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+  return d != nullptr ? d->action_value_label : nullptr;
+}
+
+bool heating_write_accepts(HeatingFunction fn, float value) {
+  uint8_t scratch[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
+  return encode_heating_write(fn, value, scratch) != 0;
+}
+
+std::optional<ValueRange> heating_write_range(HeatingFunction fn) {
+  const HeatingFunctionDescriptor *d = descriptor_for(fn);
+  return d != nullptr && d->access != HeatingAccess::READ_ONLY ? d->write_range : std::nullopt;
 }
 
 size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]) {
@@ -270,10 +334,8 @@ bool decode_heating_reply(const IoFrame &reply, HeatingFunction fn, float &value
     return false;
 
   const std::optional<float> decoded =
-      decode_value(d->codec,
-                   std::span<const uint8_t>(reply.data + PRIVATE_REGISTER_VALUE_OFFSET,
-                                            reply.data_len - PRIVATE_REGISTER_VALUE_OFFSET),
-                   d->max_value);
+      decode_value(form_of(*d), std::span<const uint8_t>(reply.data + PRIVATE_REGISTER_VALUE_OFFSET,
+                                                         reply.data_len - PRIVATE_REGISTER_VALUE_OFFSET));
   if (!decoded)
     return false;
   value = *decoded;

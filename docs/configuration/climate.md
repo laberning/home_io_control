@@ -203,7 +203,8 @@ on a Hekla (issue #222).
   brightness change the heater acknowledges is read back. A change it does not acknowledge leaves the
   light showing the heater's last reading.
 - Brightness is a percentage, 100 % in Home Assistant being the heater's full brightness. The heater's
-  brightness register runs from 0 to 10000, and the light uses the same scale as the vendor's
+  brightness register runs from 0 to 10000, and the light writes and shows a percentage on the same
+  scale as the vendor's
   Cozytouch app: 33 % is 1000, 66 % is 2000 and 100 % is 10000, evenly spaced in between (issue
   #222). Most of the visible change happens below 2000, so it takes two thirds of the slider. The
   [Sauter Hekla](../devices/sauter-hekla.md) page lists the levels its panel offers and what is known
@@ -427,9 +428,12 @@ frost-protection setpoint can be commanded directly.
 
 A heating temperature interface encodes its temperature over a range, assumed to be −40 to +80 °C.
 `min_temperature:` and `max_temperature:` (each −50 to +100 °C, minimum below maximum) set another
-one. They are the range the device encodes over, not the range of the card, which offers 5.0 to
-30.0 °C. A heat pump uses the fixed range −40 to +80 °C, so the keys are rejected there and on every
-other kind.
+one. They are the range the device encodes over. The card offers 5.0 to 30.0 °C, cut to that range,
+so it never offers a target the device cannot take: with `min_temperature: 10` and
+`max_temperature: 25` it offers 10.0 to 25.0 °C. A target outside the range (from an automation, since
+the card stops at its ends) is refused with a warning in the log and nothing is sent. A heat pump uses
+the fixed range −40 to +80 °C, so the keys are rejected there and on every other kind; its card offers
+5.0 to 30.0 °C.
 
 ```yaml
 climate:
@@ -454,7 +458,7 @@ show the result.
 |---|---|---|
 | `power_on` | *(ignored)* | Wake / retrieve paired devices. |
 | `set_temperature` | float °C, `7.0`–`28.0` | Setpoint (the comfort temperature, register `0x0103`), written whatever the heater runs. |
-| `set_derogation` | float °C, `7.0`–`28.0`, or `0` | A temporary override of the program (register `0x011D`) on a towel dryer or a radiator with a setpoint: it holds until the program's next change; `0` cancels it. Confirmed on a towel dryer in an eco period, `0` included (issue #202); a towel dryer refuses it in a comfort period and a Thermor EMOTION 3 H radiator refuses it (issue #228); experimental on other heaters. See [A target set while the heater's program runs](../heating.md#a-target-set-while-the-heaters-program-runs). Refused on heaters without a program. |
+| `set_derogation` | float °C, `7.0`–`28.0`, or `0` | A temporary override of the program (register `0x011D`) on a towel dryer or a radiator with a setpoint: it holds until the program's next change; any value that equals zero (`0`, `0.0`) cancels it. Confirmed on a towel dryer in an eco period, `0` included (issue #202); a towel dryer refuses it in a comfort period and a Thermor EMOTION 3 H radiator refuses it (issue #228); experimental on other heaters. See [A target set while the heater's program runs](../heating.md#a-target-set-while-the-heaters-program-runs). Refused on heaters without a program. |
 | `set_mode` | `auto` \| `manual` \| `prog` \| `off` | Operating mode. |
 | `set_presence` | `on` \| `off` | Presence / absence (register `0x0110`). The AGILIA IO acknowledges it; no visible effect observed. A Sauter Hekla reports detected presence in the same register, which the `occupancy:` sensor shows. |
 | `set_open_window_detection` | `on` \| `off` | Switches the heater's open-window detection on or off (register `0x0106`). |

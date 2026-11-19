@@ -66,8 +66,8 @@ constexpr HeatingModeEntry SETPOINT_HEATER_MODES[] = {
 
 /// Both automatic modes show as HVAC auto; these presets are how a user picks between them.
 constexpr HeatingPresetEntry SETPOINT_HEATER_PRESETS[] = {
-    {"Program", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, static_cast<uint8_t>(HeatingMode::PROG)},
-    {"Auto", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, static_cast<uint8_t>(HeatingMode::AUTO)},
+    {"Program", HeatingPresetId::CUSTOM, static_cast<uint8_t>(HeatingMode::PROG)},
+    {"Auto", HeatingPresetId::CUSTOM, static_cast<uint8_t>(HeatingMode::AUTO)},
 };
 
 constexpr HeatingObservedState SETPOINT_HEATER_OBSERVED[] = {
@@ -99,12 +99,9 @@ constexpr HeatingModeEntry TOWEL_DRYER_MODES[] = {
 /// periods of the device's own programme are not presets (nothing selects them); the level the heater
 /// applies is read from its status (DeviceReading::HEATING_LEVEL) and shown by the `heating_level:` sensor.
 constexpr HeatingPresetEntry TOWEL_DRYER_PRESETS[] = {
-    {nullptr, HeatingPresetId::NONE, HeatingFunction::TEMPORARY_STATE,
-     static_cast<uint8_t>(HeatingTemporaryState::NONE)},
-    {nullptr, HeatingPresetId::BOOST, HeatingFunction::TEMPORARY_STATE,
-     static_cast<uint8_t>(HeatingTemporaryState::BOOST)},
-    {"Drying", HeatingPresetId::CUSTOM, HeatingFunction::TEMPORARY_STATE,
-     static_cast<uint8_t>(HeatingTemporaryState::DRYING)},
+    {nullptr, HeatingPresetId::NONE, static_cast<uint8_t>(HeatingTemporaryState::NONE)},
+    {nullptr, HeatingPresetId::BOOST, static_cast<uint8_t>(HeatingTemporaryState::BOOST)},
+    {"Drying", HeatingPresetId::CUSTOM, static_cast<uint8_t>(HeatingTemporaryState::DRYING)},
 };
 
 /// The mode register names the mode only; TOWEL_DRYER_OBSERVED_PRESETS names the preset.
@@ -147,13 +144,12 @@ constexpr HeatingModeEntry LEVEL_HEATER_MODES[] = {
 };
 
 constexpr HeatingPresetEntry LEVEL_HEATER_PRESETS[] = {
-    // write_fn is unused on this path; SET_MODE is a placeholder that is never sent.
-    {nullptr, HeatingPresetId::AWAY, HeatingFunction::SET_MODE, heating_level::FROST_PROTECTION},
-    {nullptr, HeatingPresetId::ECO, HeatingFunction::SET_MODE, heating_level::ECO},
-    {nullptr, HeatingPresetId::COMFORT, HeatingFunction::SET_MODE, heating_level::COMFORT},
-    {nullptr, HeatingPresetId::BOOST, HeatingFunction::SET_MODE, heating_level::BOOST},
-    {"Comfort -1", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, heating_level::COMFORT_MINUS_1},
-    {"Comfort -2", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, heating_level::COMFORT_MINUS_2},
+    {nullptr, HeatingPresetId::AWAY, heating_level::FROST_PROTECTION},
+    {nullptr, HeatingPresetId::ECO, heating_level::ECO},
+    {nullptr, HeatingPresetId::COMFORT, heating_level::COMFORT},
+    {nullptr, HeatingPresetId::BOOST, heating_level::BOOST},
+    {"Comfort -1", HeatingPresetId::CUSTOM, heating_level::COMFORT_MINUS_1},
+    {"Comfort -2", HeatingPresetId::CUSTOM, heating_level::COMFORT_MINUS_2},
 };
 
 constexpr HeatingObservedState LEVEL_HEATER_OBSERVED[] = {
@@ -232,9 +228,9 @@ constexpr HeatingModeEntry TEMPERATURE_INTERFACE_MODES[] = {
 
 /// A setpoint alias is selected by its main parameter alone, with no functional parameter.
 constexpr HeatingPresetEntry TEMPERATURE_INTERFACE_PRESETS[] = {
-    {nullptr, HeatingPresetId::COMFORT, HeatingFunction::SET_MODE, heating_alias::COMFORT, NO_FP},
-    {nullptr, HeatingPresetId::ECO, HeatingFunction::SET_MODE, heating_alias::THERMOSTAT_ECO, NO_FP},
-    {"Secured", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, heating_alias::SECURED, NO_FP},
+    {nullptr, HeatingPresetId::COMFORT, heating_alias::COMFORT, NO_FP},
+    {nullptr, HeatingPresetId::ECO, heating_alias::THERMOSTAT_ECO, NO_FP},
+    {"Secured", HeatingPresetId::CUSTOM, heating_alias::SECURED, NO_FP},
 };
 
 /// The mode is the last command (nothing reads it back), so the hvac column is not consulted; the rows
@@ -257,10 +253,10 @@ constexpr HeatingModeEntry HEAT_PUMP_MODES[] = {
 };
 
 constexpr HeatingPresetEntry HEAT_PUMP_PRESETS[] = {
-    {nullptr, HeatingPresetId::COMFORT, HeatingFunction::SET_MODE, heating_alias::COMFORT, HEAT_PUMP_ON},
-    {nullptr, HeatingPresetId::ECO, HeatingFunction::SET_MODE, heating_alias::HEAT_PUMP_ECO, HEAT_PUMP_ON},
-    {"Setback", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, heating_alias::HEAT_PUMP_SETBACK, HEAT_PUMP_ON},
-    {"Halted", HeatingPresetId::CUSTOM, HeatingFunction::SET_MODE, heating_alias::HEAT_PUMP_HALTED, HEAT_PUMP_ON},
+    {nullptr, HeatingPresetId::COMFORT, heating_alias::COMFORT, HEAT_PUMP_ON},
+    {nullptr, HeatingPresetId::ECO, heating_alias::HEAT_PUMP_ECO, HEAT_PUMP_ON},
+    {"Setback", HeatingPresetId::CUSTOM, heating_alias::HEAT_PUMP_SETBACK, HEAT_PUMP_ON},
+    {"Halted", HeatingPresetId::CUSTOM, heating_alias::HEAT_PUMP_HALTED, HEAT_PUMP_ON},
 };
 
 constexpr HeatingObservedState HEAT_PUMP_OBSERVED[] = {
@@ -566,10 +562,12 @@ void clear_inactive_programme_reading(const HeatingProfile &profile, IoDevice &d
 }
 
 std::optional<float> in_force_from_override_read(const HeatingProfile &profile, HeatingFunction fn, float value) {
-  if (profile.programme_period == nullptr || fn != profile.programme_period->derogation_fn ||
-      !(value >= HEATING_TEMP_MIN_C))
+  if (profile.programme_period == nullptr || fn != profile.programme_period->derogation_fn)
     return std::nullopt;
-  return value;
+  // The override register holds 0 while none is active: only a value from the register's lowest temperature up
+  // is one.
+  const std::optional<ValueRange> range = heating_write_range(fn);
+  return range && value >= range->min ? std::optional<float>{value} : std::nullopt;
 }
 
 DeviceReading heating_setpoint_reading(const HeatingProfile &profile) {
@@ -674,15 +672,25 @@ HeatingWritePlan refused(HeatingRefusal refusal) {
   return plan;
 }
 
-/// Encode a target over the range the profile calls for: a profile with a fixed range never takes the
-/// YAML range, whatever the record holds.
-bool encode_target(const HeatingProfile &profile, const HeatingDeviceFacts &facts, float celsius,
-                   uint16_t &main_parameter) {
+/// The encoding range of a profile's temperature main parameter: the fixed range where the profile has one, the
+/// YAML range otherwise (a profile with a fixed range never takes the YAML range, whatever the record holds).
+HeatingCardRange main_parameter_range(const HeatingProfile &profile, float yaml_min_c, float yaml_max_c) {
+  if (profile.fixed_range)
+    return {HEATING_TEMPERATURE_RANGE_MIN_C, HEATING_TEMPERATURE_RANGE_MAX_C};
+  return {yaml_min_c, yaml_max_c};
+}
+
+/// Encode a target over the range the profile calls for (main_parameter_range()).
+/// @return NONE when encoded; OUT_OF_RANGE for a finite target outside a valid range; UNENCODABLE otherwise.
+HeatingRefusal encode_target(const HeatingProfile &profile, const HeatingDeviceFacts &facts, float celsius,
+                             uint16_t &main_parameter) {
   if (!facts.has_record)
-    return false;
-  const float min_c = profile.fixed_range ? HEATING_TEMPERATURE_RANGE_MIN_C : facts.range_min_c;
-  const float max_c = profile.fixed_range ? HEATING_TEMPERATURE_RANGE_MAX_C : facts.range_max_c;
-  return encode_temperature_main_parameter(celsius, min_c, max_c, main_parameter);
+    return HeatingRefusal::UNENCODABLE;
+  const auto [min_c, max_c] = main_parameter_range(profile, facts.range_min_c, facts.range_max_c);
+  if (encode_temperature_main_parameter(celsius, min_c, max_c, main_parameter))
+    return HeatingRefusal::NONE;
+  const bool range_is_valid = std::isfinite(min_c) && std::isfinite(max_c) && max_c > min_c;
+  return std::isfinite(celsius) && range_is_valid ? HeatingRefusal::OUT_OF_RANGE : HeatingRefusal::UNENCODABLE;
 }
 
 HeatingWritePlan plan_mode_write(const HeatingProfile &profile, const HeatingWriteRequest &request,
@@ -699,8 +707,11 @@ HeatingWritePlan plan_mode_write(const HeatingProfile &profile, const HeatingWri
     // Heat (manual) is the current target temperature with the manual flag: the target the card shows,
     // else the one the device last reported.
     const float target = std::isnan(request.shown_target_c) ? facts.reported_setpoint_c : request.shown_target_c;
-    if (std::isnan(target) || !encode_target(profile, facts, target, main_parameter))
+    if (std::isnan(target))
       return refused(HeatingRefusal::NO_TARGET);
+    const HeatingRefusal encoding = encode_target(profile, facts, target, main_parameter);
+    if (encoding != HeatingRefusal::NONE)
+      return refused(encoding == HeatingRefusal::OUT_OF_RANGE ? encoding : HeatingRefusal::NO_TARGET);
   }
   return plan_temperature_write(main_parameter, entry->fp);
 }
@@ -723,7 +734,7 @@ HeatingWritePlan plan_preset_write(const HeatingProfile &profile, const HeatingW
   HeatingWritePlan plan =
       profile.path == HeatingControlPath::TEMPERATURE_EXECUTE
           ? plan_temperature_write(heating_prefixed_main_parameter(profile.mp_prefix, entry.wire), entry.fp)
-          : plan_wire_write(profile, entry.write_fn, entry.wire);
+          : plan_wire_write(profile, profile.preset_fn, entry.wire);
   plan.preset_index = index;
   return plan;
 }
@@ -735,8 +746,9 @@ HeatingWritePlan plan_target_write(const HeatingProfile &profile, const HeatingW
   if (profile.path == HeatingControlPath::TEMPERATURE_EXECUTE) {
     // The temperature travels in the main parameter, encoded over the device's range.
     uint16_t main_parameter = 0;
-    if (!encode_target(profile, facts, request.target_c, main_parameter))
-      return refused(HeatingRefusal::UNENCODABLE);
+    const HeatingRefusal encoding = encode_target(profile, facts, request.target_c, main_parameter);
+    if (encoding != HeatingRefusal::NONE)
+      return refused(encoding);
     return plan_temperature_write(main_parameter, profile.setpoint_fp);
   }
   // A heater that did not say what it runs gets no target: the register it belongs in is not known.
@@ -840,10 +852,20 @@ bool HeatingCardState::shows_same_as(const HeatingCardState &other) const {
          same_temperature(this->max_target_c, other.max_target_c);
 }
 
-HeatingCardState initial_heating_card(const HeatingProfile &profile) {
+HeatingCardRange heating_card_range(const HeatingProfile &profile, float yaml_min_c, float yaml_max_c) {
+  const HeatingCardRange visual{profile.visual_min_c, profile.visual_max_c};
+  if (profile.path != HeatingControlPath::TEMPERATURE_EXECUTE)
+    return visual;
+  const HeatingCardRange encoding = main_parameter_range(profile, yaml_min_c, yaml_max_c);
+  const HeatingCardRange overlap{std::max(visual.min_c, encoding.min_c), std::min(visual.max_c, encoding.max_c)};
+  // An encoding range that misses the visual range entirely leaves the card the device's own range.
+  return overlap.min_c < overlap.max_c ? overlap : encoding;
+}
+
+HeatingCardState initial_heating_card(const HeatingProfile &profile, float yaml_min_c, float yaml_max_c) {
   HeatingCardState card;
   if (profile.features.target_temperature)
-    card.max_target_c = profile.visual_max_c;
+    card.max_target_c = heating_card_range(profile, yaml_min_c, yaml_max_c).max_c;
   return card;
 }
 
@@ -883,7 +905,9 @@ void reduce_temperatures(const HeatingProfile &profile, const IoDevice &dev, flo
   }
   // The heater's own ceiling, but never past what a write can encode.
   const float max_setpoint_c = reading_value(dev, DeviceReading::MAX_SETPOINT).value_or(NAN);
-  if (profile.features.target_temperature && !std::isnan(max_setpoint_c) && max_setpoint_c > HEATING_TEMP_MIN_C) {
+  const std::optional<ValueRange> setpoint_range = heating_write_range(HeatingFunction::SET_TEMPERATURE);
+  if (profile.features.target_temperature && setpoint_range && !std::isnan(max_setpoint_c) &&
+      max_setpoint_c > setpoint_range->min) {
     seen = true;
     card.max_target_c = std::min(max_setpoint_c, profile.visual_max_c);
   }

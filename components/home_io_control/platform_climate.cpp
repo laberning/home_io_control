@@ -139,7 +139,7 @@ void IOHomeClimate::setup() {
   // Custom presets are registered on the entity and referenced by the traits; IO's program mode,
   // the comfort offsets and the secured level have no standard preset.
   if (const HeatingProfile *profile = this->profile_(); profile != nullptr) {
-    this->card_ = initial_heating_card(*profile);
+    this->card_ = initial_heating_card(*profile, this->range_min_c_, this->range_max_c_);
     for (const HeatingPresetEntry &entry : profile->presets) {
       if (entry.id == HeatingPresetId::CUSTOM)
         this->custom_presets_.push_back(entry.custom_name);
@@ -169,10 +169,10 @@ climate::ClimateTraits IOHomeClimate::traits() {
     if (entry.id != HeatingPresetId::CUSTOM)
       traits.add_supported_preset(to_climate_preset(entry.id));
   }
-  // HEATING_TEMP_MIN_C up to the heater's own maximum setpoint once read, never past what
-  // encode_heating_write() accepts (HEATING_TEMP_MAX_C).
+  // The profile's lowest target up to the heater's own maximum setpoint once read, never past what the
+  // setpoint register accepts.
   if (profile->features.target_temperature) {
-    traits.set_visual_min_temperature(profile->visual_min_c);
+    traits.set_visual_min_temperature(heating_card_range(*profile, this->range_min_c_, this->range_max_c_).min_c);
     traits.set_visual_max_temperature(this->card_.max_target_c);
     traits.set_visual_target_temperature_step(CLIMATE_TARGET_TEMP_STEP_C);
   }
@@ -238,6 +238,11 @@ void IOHomeClimate::log_refusal_(const HeatingWritePlan &plan) const {
                "written (the override would be ignored in a comfort period, a comfort write would change the "
                "program in an eco period)",
                this->device_id_.c_str());
+      break;
+    case HeatingRefusal::OUT_OF_RANGE:
+      ESP_LOGW(TAG, "Device %s: the target is outside the heater's temperature range (%.1f to %.1f C); it is not sent",
+               this->device_id_.c_str(), static_cast<double>(this->range_min_c_),
+               static_cast<double>(this->range_max_c_));
       break;
     case HeatingRefusal::NO_MATCH:     // the request names nothing this profile offers: nothing to say
     case HeatingRefusal::UNENCODABLE:  // the setpoint is dropped silently, as the card keeps its value
@@ -348,7 +353,10 @@ void IOHomeClimate::on_device_update_(const IoDevice &dev) {
 void IOHomeClimate::dump_config() {
   LOG_CLIMATE("", "IO-Homecontrol Climate", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
-  ESP_LOGCONFIG(TAG, "  Target temperature range: %.1f-%.1f C (maximum from the heater once read)", HEATING_TEMP_MIN_C,
+  const HeatingProfile *profile = this->profile_();
+  ESP_LOGCONFIG(TAG, "  Target temperature range: %.1f-%.1f C (maximum from the heater once read)",
+                profile != nullptr ? heating_card_range(*profile, this->range_min_c_, this->range_max_c_).min_c
+                                   : this->range_min_c_,
                 this->card_.max_target_c);
   this->log_poll_interval_config_(TAG, heater_poll_interval_ms);
   if (const DeviceTypeInfo *model = find_device_model_info(this->device_type_, this->subtype_, this->model_))

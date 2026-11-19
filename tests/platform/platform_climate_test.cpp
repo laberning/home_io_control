@@ -938,8 +938,44 @@ TEST(PlatformClimate, ThermostatTraitsAreExactlyTheProfile) {
   EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Secured"}));
   EXPECT_FALSE(traits.get_supports_current_temperature()) << "no temperature is invented";
   EXPECT_FALSE(traits.get_supports_action());
-  EXPECT_FLOAT_EQ(traits.get_visual_min_temperature(), 5.0F);
+  EXPECT_FLOAT_EQ(traits.get_visual_min_temperature(), 5.0F)
+      << "the default encoding range holds the whole visual range";
   EXPECT_FLOAT_EQ(traits.get_visual_max_temperature(), 30.0F);
+}
+
+TEST(PlatformClimate, ThermostatCardNarrowsToANarrowerYamlEncodingRange) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_thermostat(hub);
+  entity.set_temperature_range(10.0F, 25.0F);
+  entity.setup();
+  const ClimateTraits traits = entity.traits();
+  EXPECT_FLOAT_EQ(traits.get_visual_min_temperature(), 10.0F);
+  EXPECT_FLOAT_EQ(traits.get_visual_max_temperature(), 25.0F);
+}
+
+TEST(PlatformClimate, ThermostatTargetOutsideTheYamlRangeIsNotSent) {
+  MockHubClimate hub;
+  IOHomeClimate entity = make_thermostat(hub);
+  entity.set_temperature_range(10.0F, 25.0F);
+  entity.setup();
+  // The hub applies the YAML range to the device's record (the double only records the call).
+  ASSERT_EQ(hub.temperature_ranges.size(), 1u);
+  IoDevice *dev = hub.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  dev->temperature_range_min_c = 10.0F;
+  dev->temperature_range_max_c = 25.0F;
+  auto call = entity.make_call();
+  call.set_target_temperature(28.0F);
+  call.perform();
+  EXPECT_TRUE(hub.temperature_calls.empty()) << "refused, never sent as 25";
+  EXPECT_TRUE(hub.writes.empty());
+  EXPECT_TRUE(std::isnan(entity.target_temperature)) << "the card keeps what it showed";
+
+  auto inside = entity.make_call();
+  inside.set_target_temperature(25.0F);
+  inside.perform();
+  ASSERT_EQ(hub.temperature_calls.size(), 1u);
+  EXPECT_EQ(hub.temperature_calls[0].main_parameter, 51200);
 }
 
 TEST(PlatformClimate, HeatPumpTraitsAreExactlyTheProfile) {
@@ -951,6 +987,8 @@ TEST(PlatformClimate, HeatPumpTraitsAreExactlyTheProfile) {
       << "heat and off; no cooling";
   EXPECT_EQ(supported_presets(traits), (std::vector<ClimatePreset>{CLIMATE_PRESET_COMFORT, CLIMATE_PRESET_ECO}));
   EXPECT_EQ(entity.get_supported_custom_presets(), (std::vector<std::string>{"Setback", "Halted"}));
+  EXPECT_FLOAT_EQ(traits.get_visual_min_temperature(), 5.0F);
+  EXPECT_FLOAT_EQ(traits.get_visual_max_temperature(), 30.0F);
 }
 
 TEST(PlatformClimate, ThermostatSetpointIsTheTemperatureWithTheManualFlag) {

@@ -478,8 +478,37 @@ TEST(HeatingCard, ACardStartsOffWithNothingKnownAndTheProfilesOwnRange) {
   EXPECT_TRUE(std::isnan(radiator_card.current_c));
   EXPECT_FALSE(radiator_card.observed);
   EXPECT_FLOAT_EQ(radiator_card.max_target_c, radiator().visual_max_c);
-  EXPECT_FLOAT_EQ(initial_heating_card(thermostat()).max_target_c, thermostat().visual_max_c);
+  EXPECT_FLOAT_EQ(initial_heating_card(thermostat(), 10.0F, 25.0F).max_target_c, 25.0F)
+      << "a narrower YAML encoding range narrows the thermostat's card";
+  EXPECT_FLOAT_EQ(initial_heating_card(thermostat()).max_target_c, thermostat().visual_max_c)
+      << "the default encoding range holds the whole visual range";
   EXPECT_FLOAT_EQ(initial_heating_card(level_heater()).max_target_c, HEATING_TEMP_MAX_C) << "no setpoint, no range";
+}
+
+namespace {
+
+/// @brief A card spans `min_c` to `max_c`.
+void expect_card_range(const HeatingCardRange &range, float min_c, float max_c) {
+  EXPECT_FLOAT_EQ(range.min_c, min_c);
+  EXPECT_FLOAT_EQ(range.max_c, max_c);
+}
+
+}  // namespace
+
+TEST(HeatingCard, AMainParameterCardOffersTheVisualRangeInsideTheEncodingRange) {
+  const HeatingProfile &pump = profile_of(DeviceType::HEAT_PUMP, 0);
+  SCOPED_TRACE("thermostat: the visual range, cut to the YAML encoding range");
+  expect_card_range(heating_card_range(thermostat(), HEATING_TEMPERATURE_RANGE_MIN_C, HEATING_TEMPERATURE_RANGE_MAX_C),
+                    thermostat().visual_min_c, thermostat().visual_max_c);
+  expect_card_range(heating_card_range(thermostat(), 10.0F, 25.0F), 10.0F, 25.0F);
+  expect_card_range(heating_card_range(thermostat(), 0.0F, 25.0F), thermostat().visual_min_c, 25.0F);
+  expect_card_range(heating_card_range(thermostat(), 10.0F, 60.0F), 10.0F, thermostat().visual_max_c);
+  // An encoding range beside the visual range leaves the card the device's own range.
+  expect_card_range(heating_card_range(thermostat(), 35.0F, 60.0F), 35.0F, 60.0F);
+  SCOPED_TRACE("heat pump: a fixed encoding range, whatever the YAML says");
+  expect_card_range(heating_card_range(pump, 10.0F, 25.0F), pump.visual_min_c, pump.visual_max_c);
+  SCOPED_TRACE("register profiles: the visual range");
+  expect_card_range(heating_card_range(radiator(), 10.0F, 25.0F), radiator().visual_min_c, radiator().visual_max_c);
 }
 
 TEST(HeatingCard, TwoCardsDifferingInABookkeepingFlagShowTheSame) {

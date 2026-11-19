@@ -482,66 +482,84 @@ TEST(ProtoHeatingNightLight, WritesAreByteExact) {
   // On/off is the write the heater's own Cozytouch controller sends.
   EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT, 1.0F), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x44, 0x01}));
   EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT, 0.0F), (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x44, 0x00}));
-  // The brightness is written in the two-byte form it reads back in.
-  // The register runs 0-10000; the four levels of a Hekla's panel (issue #222) as the heater writes them.
-  EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 100.0F),
+  // The brightness is written as a percentage and sent in the two-byte form it reads back in. The register runs
+  // 0-10000; the four levels of a Hekla's panel (issue #222) as the heater writes them: 3.3 %, 33 %, 66 %, 100 %.
+  EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 3.3F),
             (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x42, 0x64, 0x00}));
-  EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 1000.0F),
+  EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 33.0F),
             (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x42, 0xE8, 0x03}));
-  EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 2000.0F),
+  EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 66.0F),
             (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x42, 0xD0, 0x07}));
-  EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 10000.0F),
+  EXPECT_EQ(encode(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 100.0F),
             (std::vector<uint8_t>{0x0C, 0x61, 0x01, 0x42, 0x10, 0x27}));
 }
 
+namespace {
+
+/// The register value a percentage writes, read back out of the payload.
+uint16_t night_light_register_of(float percent) {
+  const std::vector<uint8_t> payload = encode(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, percent);
+  EXPECT_EQ(payload.size(), 6u) << percent << " %";
+  return payload.size() == 6 ? static_cast<uint16_t>(payload[4] | (payload[5] << 8)) : 0;
+}
+
+/// The percentage a register value shows as, through a heater's reply; NaN when the reply carries none.
+float night_light_percent_of(uint16_t raw) {
+  float value = NAN;
+  decode_heating_reply(
+      ack_with({0x0C, 0x60, 0x01, 0x42, static_cast<uint8_t>(raw & 0xFF), static_cast<uint8_t>(raw >> 8)}),
+      HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, value);
+  return value;
+}
+
+}  // namespace
+
 TEST(ProtoHeatingNightLight, PercentagesFollowTheVendorAppsScale) {
   // The vendor app's slider: 1000 = 33 %, 2000 = 66 %, 10000 = 100 % (issue #222), linear in between.
-  EXPECT_EQ(night_light_register_from_percent(0), 0);
-  EXPECT_EQ(night_light_register_from_percent(1), 30);
-  EXPECT_EQ(night_light_register_from_percent(20), 606);
-  EXPECT_EQ(night_light_register_from_percent(33), 1000);
-  EXPECT_EQ(night_light_register_from_percent(50), 1515);
-  EXPECT_EQ(night_light_register_from_percent(66), 2000);
-  EXPECT_EQ(night_light_register_from_percent(70), 2941);
-  EXPECT_EQ(night_light_register_from_percent(100), HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
-  EXPECT_EQ(night_light_register_from_percent(200), HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX) << "clamped, never above full";
+  EXPECT_EQ(night_light_register_of(0.0F), 0);
+  EXPECT_EQ(night_light_register_of(1.0F), 30);
+  EXPECT_EQ(night_light_register_of(20.0F), 606);
+  EXPECT_EQ(night_light_register_of(33.0F), 1000);
+  EXPECT_EQ(night_light_register_of(50.0F), 1515);
+  EXPECT_EQ(night_light_register_of(50.5F), 1530) << "a percentage between two whole ones";
+  EXPECT_EQ(night_light_register_of(66.0F), 2000);
+  EXPECT_EQ(night_light_register_of(70.0F), 2941);
+  EXPECT_EQ(night_light_register_of(100.0F), HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
 
-  EXPECT_FLOAT_EQ(night_light_fraction_from_register(0), 0.0F);
-  EXPECT_NEAR(night_light_fraction_from_register(100), 0.033F, 1e-6F) << "the lowest panel level";
-  EXPECT_FLOAT_EQ(night_light_fraction_from_register(1000), 0.33F);
-  EXPECT_FLOAT_EQ(night_light_fraction_from_register(2000), 0.66F);
-  EXPECT_NEAR(night_light_fraction_from_register(3000), 0.7025F, 1e-6F) << "the app's value between levels";
-  EXPECT_FLOAT_EQ(night_light_fraction_from_register(10000), 1.0F);
-  EXPECT_FLOAT_EQ(night_light_fraction_from_register(65535), 1.0F) << "clamped, never above full";
+  EXPECT_FLOAT_EQ(night_light_percent_of(0), 0.0F);
+  EXPECT_NEAR(night_light_percent_of(100), 3.3F, 1e-4F) << "the lowest panel level";
+  EXPECT_FLOAT_EQ(night_light_percent_of(1000), 33.0F);
+  EXPECT_FLOAT_EQ(night_light_percent_of(2000), 66.0F);
+  EXPECT_NEAR(night_light_percent_of(3000), 70.25F, 1e-4F) << "the app's value between levels";
+  EXPECT_FLOAT_EQ(night_light_percent_of(10000), 100.0F);
 }
 
 TEST(ProtoHeatingNightLight, EveryPercentageReadsBackAsItself) {
   for (unsigned percent = 0; percent <= HEATING_NIGHT_LIGHT_PERCENT_MAX; ++percent)
-    EXPECT_NEAR(night_light_fraction_from_register(night_light_register_from_percent(static_cast<uint8_t>(percent))),
-                static_cast<float>(percent) / 100.0F, 0.002F)
+    EXPECT_NEAR(night_light_percent_of(night_light_register_of(static_cast<float>(percent))),
+                static_cast<float>(percent), 0.2F)
         << percent;
 }
 
 TEST(ProtoHeatingNightLight, TheScaleRisesAndEndsAtFullBrightness) {
   for (size_t i = 1; i < std::size(HEATING_NIGHT_LIGHT_SCALE); ++i) {
-    EXPECT_GT(HEATING_NIGHT_LIGHT_SCALE[i].percent, HEATING_NIGHT_LIGHT_SCALE[i - 1].percent);
-    EXPECT_GT(HEATING_NIGHT_LIGHT_SCALE[i].register_value, HEATING_NIGHT_LIGHT_SCALE[i - 1].register_value);
+    EXPECT_GT(HEATING_NIGHT_LIGHT_SCALE[i].natural, HEATING_NIGHT_LIGHT_SCALE[i - 1].natural);
+    EXPECT_GT(HEATING_NIGHT_LIGHT_SCALE[i].raw, HEATING_NIGHT_LIGHT_SCALE[i - 1].raw);
   }
-  EXPECT_EQ(HEATING_NIGHT_LIGHT_SCALE[0].percent, 0);
-  EXPECT_EQ(HEATING_NIGHT_LIGHT_SCALE[0].register_value, 0);
-  const NightLightScaleKnot &last = HEATING_NIGHT_LIGHT_SCALE[std::size(HEATING_NIGHT_LIGHT_SCALE) - 1];
-  EXPECT_EQ(last.percent, HEATING_NIGHT_LIGHT_PERCENT_MAX);
-  EXPECT_EQ(last.register_value, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
+  EXPECT_EQ(HEATING_NIGHT_LIGHT_SCALE[0].natural, 0);
+  EXPECT_EQ(HEATING_NIGHT_LIGHT_SCALE[0].raw, 0);
+  const ValueScaleKnot &last = HEATING_NIGHT_LIGHT_SCALE[std::size(HEATING_NIGHT_LIGHT_SCALE) - 1];
+  EXPECT_EQ(last.natural, HEATING_NIGHT_LIGHT_PERCENT_MAX);
+  EXPECT_EQ(last.raw, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
 }
 
-TEST(ProtoHeatingNightLight, WritesOutsideTheRangeOrNotIntegralAreRefused) {
+TEST(ProtoHeatingNightLight, WritesOutsideTheRangeAreRefused) {
   EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT, 2.0F), 0u);
-  EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 10001.0F), 0u);
+  EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 101.0F), 0u);
   EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, -1.0F), 0u);
-  EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 50.5F), 0u);
   EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, NAN), 0u);
   EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 0.0F), 6u);
-  EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 10000.0F), 6u);
+  EXPECT_EQ(write_len(HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 100.0F), 6u);
 }
 
 TEST(ProtoHeatingNightLight, ReadsAddressTheirRegisters) {
@@ -561,16 +579,16 @@ TEST(ProtoHeatingNightLight, DecodesWhatTheHeklaReports) {
   EXPECT_FLOAT_EQ(value, 0.0F);
   ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0x64, 0x00}),
                                    HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, value));
-  EXPECT_FLOAT_EQ(value, 100.0F);
+  EXPECT_NEAR(value, 3.3F, 1e-4F) << "register value 100, as a percentage";
   ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0xE8, 0x03}),
                                    HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, value));
-  EXPECT_FLOAT_EQ(value, 1000.0F);
+  EXPECT_FLOAT_EQ(value, 33.0F);
   ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0xD0, 0x07}),
                                    HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, value));
-  EXPECT_FLOAT_EQ(value, 2000.0F);
+  EXPECT_FLOAT_EQ(value, 66.0F);
   ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x60, 0x01, 0x42, 0x10, 0x27}),
                                    HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, value));
-  EXPECT_FLOAT_EQ(value, 10000.0F);
+  EXPECT_FLOAT_EQ(value, 100.0F);
   // The heater's answer to the Cozytouch's write carries the new value too.
   ASSERT_TRUE(decode_heating_reply(ack_with({0x0C, 0x61, 0x01, 0x44, 0x01}), HeatingFunction::NIGHT_LIGHT, value));
   EXPECT_FLOAT_EQ(value, 1.0F);

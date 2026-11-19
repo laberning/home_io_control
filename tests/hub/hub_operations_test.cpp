@@ -4268,7 +4268,9 @@ TEST(HubOperations, HeaterWithLightPollReadsTheLightAfterTheRadiatorRegisters) {
   for (const auto &tx : radio.get_sent_data())
     EXPECT_EQ(tx.at(10), PRIVATE_REGISTER_DIRECTION_GET) << "a poll only reads";
   EXPECT_EQ(test::wire_read(*dev, DeviceReading::NIGHT_LIGHT), 1);
-  EXPECT_EQ(test::wire_read(*dev, DeviceReading::NIGHT_LIGHT_BRIGHTNESS), 100);
+  ASSERT_TRUE(reading_value(*dev, DeviceReading::NIGHT_LIGHT_BRIGHTNESS).has_value());
+  EXPECT_NEAR(*reading_value(*dev, DeviceReading::NIGHT_LIGHT_BRIGHTNESS), 3.3F, 1e-4F)
+      << "register value 100 is held as a percentage";
 
   // Unlike the boot registers, the light is read again on the next poll.
   const size_t sent_before = radio.get_sent_data().size();
@@ -4319,7 +4321,8 @@ TEST(HubOperations, NightLightWritesSendExactBytes) {
   MockRadio radio;
   make_heater_with_light(comp, radio);
   queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x42, 0x88, 0x13});
-  ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 5000.0F));
+  ASSERT_TRUE(
+      comp.send_heating_command("ABC123", HeatingFunction::NIGHT_LIGHT_BRIGHTNESS, 78.75F));  // register value 5000
   queue_register_reply(comp, radio, {0x0C, 0x61, 0x01, 0x44, 0x01});
   ASSERT_TRUE(comp.send_heating_command("ABC123", HeatingFunction::NIGHT_LIGHT, 1.0F));
 

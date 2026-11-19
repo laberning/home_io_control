@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0054 -->
 
-**Status:** Accepted, amended 2026-10 (see [Amendment](#amendment-the-setpoint-heater-offers-no-presence-preset)) · **Recorded:** 2026-10
+**Status:** Accepted, amended 2026-10 (see [Amendment](#amendment-the-setpoint-heater-offers-no-presence-preset)); amended by [ADR 0105](0105-every-device-value-write-is-judged-by-one-rule-per-register.md) · **Recorded:** 2026-10
 
 ## Context
 

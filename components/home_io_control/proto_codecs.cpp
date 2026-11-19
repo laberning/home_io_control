@@ -587,10 +587,11 @@ uint32_t limitation_time_seconds(uint8_t time_raw) {
 }
 
 bool encode_temperature_main_parameter(float celsius, float min_c, float max_c, uint16_t &main_parameter) {
-  if (!std::isfinite(celsius) || !std::isfinite(min_c) || !std::isfinite(max_c) || !(max_c > min_c))
+  if (!std::isfinite(celsius) || !std::isfinite(min_c) || !std::isfinite(max_c) || !(max_c > min_c) ||
+      celsius < min_c || celsius > max_c)
     return false;
-  const float steps = std::round((celsius - min_c) / (max_c - min_c) * static_cast<float>(TEMPERATURE_MP_SPAN));
-  main_parameter = static_cast<uint16_t>(std::clamp(steps, 0.0F, static_cast<float>(TEMPERATURE_MP_SPAN)));
+  main_parameter =
+      static_cast<uint16_t>(std::round((celsius - min_c) / (max_c - min_c) * static_cast<float>(TEMPERATURE_MP_SPAN)));
   return true;
 }
 

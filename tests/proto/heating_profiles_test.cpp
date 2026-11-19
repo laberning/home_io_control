@@ -152,11 +152,10 @@ TEST(HeatingProfiles, SetpointHeaterOffersTheCardItsRegistersCanDrive) {
   ASSERT_EQ(p.presets.size(), 2u);
   EXPECT_EQ(p.presets[0].id, HeatingPresetId::CUSTOM);
   EXPECT_STREQ(p.presets[0].custom_name, "Program");
-  EXPECT_EQ(p.presets[0].write_fn, HeatingFunction::SET_MODE);
+  EXPECT_EQ(p.preset_fn, HeatingFunction::SET_MODE);
   EXPECT_EQ(p.presets[0].wire, 2);
   EXPECT_EQ(p.presets[1].id, HeatingPresetId::CUSTOM);
   EXPECT_STREQ(p.presets[1].custom_name, "Auto");
-  EXPECT_EQ(p.presets[1].write_fn, HeatingFunction::SET_MODE);
   EXPECT_EQ(p.presets[1].wire, 0);
 }
 
@@ -379,13 +378,12 @@ TEST(HeatingTemperature, EncodeAtTheRangeEndsAndMidRange) {
   EXPECT_EQ(mp, 17067) << "round(40 x 51200 / 120)";
 }
 
-TEST(HeatingTemperature, EncodeClampsOutsideTheRangeAndRefusesBadInput) {
-  uint16_t mp = 0;
-  ASSERT_TRUE(encode_temperature_main_parameter(-100.0F, -40.0F, 80.0F, mp));
-  EXPECT_EQ(mp, 0x0000);
-  ASSERT_TRUE(encode_temperature_main_parameter(500.0F, -40.0F, 80.0F, mp));
-  EXPECT_EQ(mp, 0xC800);
-  mp = 0x1234;
+TEST(HeatingTemperature, EncodeRefusesOutsideTheRangeAndBadInput) {
+  uint16_t mp = 0x1234;
+  EXPECT_FALSE(encode_temperature_main_parameter(-100.0F, -40.0F, 80.0F, mp)) << "never clamped to the end";
+  EXPECT_FALSE(encode_temperature_main_parameter(500.0F, -40.0F, 80.0F, mp));
+  EXPECT_FALSE(encode_temperature_main_parameter(80.1F, -40.0F, 80.0F, mp));
+  EXPECT_EQ(mp, 0x1234);
   EXPECT_FALSE(encode_temperature_main_parameter(NAN, -40.0F, 80.0F, mp));
   EXPECT_FALSE(encode_temperature_main_parameter(20.0F, 80.0F, -40.0F, mp)) << "an inverted range";
   EXPECT_FALSE(encode_temperature_main_parameter(20.0F, 10.0F, 10.0F, mp)) << "an empty range";
@@ -678,7 +676,6 @@ TEST(HeatingProfilesTowelDryer, PresetsWriteTheTemporaryStateAndReadBackAsThemse
   EXPECT_STREQ(p.presets[2].custom_name, "Drying");
   // The timed runs are commanded and read back through the temporary state.
   for (size_t i = 0; i < 3; i++) {
-    EXPECT_EQ(p.presets[i].write_fn, HeatingFunction::TEMPORARY_STATE) << i;
     const HeatingObservedState *seen = find_observed_preset(p, p.presets[i].wire);
     ASSERT_NE(seen, nullptr) << i;
     EXPECT_EQ(seen->preset, static_cast<int8_t>(i)) << "a written preset reads back as itself";
@@ -901,8 +898,7 @@ TEST(HeatingProfilesTowelDryer, TheRadiatorProfileIsUnchangedAndNeverTouchesTheT
         HeatingFunction::TEMPERATURE_IN_FORCE, HeatingFunction::ECO_SETBACK}) {
     EXPECT_FALSE(lists(radiator_poll.every_poll, towel)) << heating_function_name(towel);
     EXPECT_FALSE(lists(radiator_poll.once_after_boot, towel)) << heating_function_name(towel);
-    for (size_t i = 0; i < p.presets.size(); i++)
-      EXPECT_NE(p.presets[i].write_fn, towel) << heating_function_name(towel);
+    EXPECT_NE(p.preset_fn, towel) << heating_function_name(towel);
   }
   for (size_t i = 0; i < p.presets.size(); i++)
     EXPECT_NE(p.presets[i].id, HeatingPresetId::NONE) << "the radiator offers no 'none' preset";
@@ -1170,7 +1166,8 @@ TEST(HeatingProfiles, EveryPresetOfEveryProfileSendsACommand) {
                                 std::to_string(static_cast<int>(profile.type)) + "/" + std::to_string(profile.subtype);
       switch (profile.path) {
         case HeatingControlPath::PRIVATE_REGISTERS:
-          EXPECT_TRUE(heating_function_is_writable(preset.write_fn)) << label << ": its register is writable";
+          EXPECT_TRUE(heating_write_accepts(profile.preset_fn, static_cast<float>(preset.wire)))
+              << label << ": the register's rule takes the value the preset writes";
           break;
         case HeatingControlPath::HEATING_LEVEL:
           EXPECT_NE(preset.wire, heating_level::SECURED) << label << ": a level a heater reports and never takes";
@@ -1201,7 +1198,7 @@ TEST(HeatingProfiles, EveryModeAProfileWritesToTheModeRegisterIsWritable) {
             << static_cast<int>(p.subtype);
     }
     for (const HeatingPresetEntry &pr : p.presets) {
-      if (pr.write_fn != HeatingFunction::SET_MODE)
+      if (p.preset_fn != HeatingFunction::SET_MODE)
         continue;
       EXPECT_TRUE(heating_mode_is_writable(static_cast<HeatingMode>(pr.wire)))
           << "preset " << static_cast<int>(pr.wire) << " of profile " << static_cast<int>(p.type) << "/"

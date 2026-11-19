@@ -71,7 +71,7 @@ enum class DeviceReading : uint8_t {
   HEATER_TEMPERATURE_IN_FORCE,  ///< The temperature a radiator holds right now, degrees.
   DEROGATED_SETPOINT,           ///< A heater's temporary override of its programme, degrees; 0 while none is active.
   NIGHT_LIGHT,                  ///< A heater's night light, 1 on and 0 off.
-  NIGHT_LIGHT_BRIGHTNESS,       ///< The night light's brightness register, 0-10000.
+  NIGHT_LIGHT_BRIGHTNESS,       ///< The night light's brightness register as a percentage, 0-100.
   HEATING_LEVEL,                ///< The heating level, or setpoint alias, a heater's status reply reports (low byte).
   STATUS_SETPOINT,              ///< The setpoint a temperature heater's status reply reports, degrees.
   COUNT,                        ///< Number of readings; not a reading.

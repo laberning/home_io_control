@@ -537,12 +537,14 @@ uint32_t limitation_time_seconds(uint8_t time_raw);
 static constexpr uint16_t TEMPERATURE_MP_SPAN = 51200;
 
 /// @brief Encode a temperature as a main parameter over an encoding range.
-/// @details `round((celsius - min) / (max - min) * TEMPERATURE_MP_SPAN)`, clamped to the span.
-/// @param celsius Temperature in degrees Celsius; must be finite.
+/// @details `round((celsius - min) / (max - min) * TEMPERATURE_MP_SPAN)`. A temperature outside the range is
+///          refused, never clamped to its end: the device would heat to a temperature nobody asked for.
+/// @param celsius Temperature in degrees Celsius; must be finite and inside [min_c, max_c].
 /// @param min_c Lower end of the device's encoding range.
 /// @param max_c Upper end of the device's encoding range; must exceed `min_c`.
 /// @param[out] main_parameter The encoded value.
-/// @return false for a non-finite temperature or an empty range; `main_parameter` is then untouched.
+/// @return false for a non-finite temperature, a temperature outside the range or an empty range;
+///         `main_parameter` is then untouched.
 bool encode_temperature_main_parameter(float celsius, float min_c, float max_c, uint16_t &main_parameter);
 
 /// @brief Decode a main parameter as a temperature over an encoding range (the inverse of

@@ -143,11 +143,10 @@ struct HeatingModeEntry {
 /// @details Every preset sends a command when selected: there is no way to list one the device only reports.
 ///          What a heater applies right now is not a preset but the level (DeviceReading::HEATING_LEVEL).
 struct HeatingPresetEntry {
-  const char *custom_name;   ///< Name of a CUSTOM preset; nullptr otherwise.
-  HeatingPresetId id;        ///< Standard preset, or CUSTOM.
-  HeatingFunction write_fn;  ///< PRIVATE_REGISTERS: register the preset writes. Unused for levels.
-  uint8_t wire;              ///< Value written: register value, or the low byte of a level or alias.
-  HeatingFp fp{};            ///< TEMPERATURE_EXECUTE: the functional parameter sent with the alias.
+  const char *custom_name;  ///< Name of a CUSTOM preset; nullptr otherwise.
+  HeatingPresetId id;       ///< Standard preset, or CUSTOM.
+  uint8_t wire;             ///< Value written: register value, or the low byte of a level or alias.
+  HeatingFp fp{};           ///< TEMPERATURE_EXECUTE: the functional parameter sent with the alias.
 };
 
 /// @brief What a device-reported wire value shows on the card.
@@ -243,8 +242,8 @@ struct HeatingProfile {
   // NOLINTEND(readability-redundant-member-init)
   /// PRIVATE_REGISTERS: the register the HVAC modes write and the card's mode is read from.
   HeatingFunction mode_fn{HeatingFunction::SET_MODE};
-  /// PRIVATE_REGISTERS with `preset_observed`: the register the card's preset is read from. The presets'
-  /// own `write_fn` say what each writes.
+  /// PRIVATE_REGISTERS: the register the presets write, and with `preset_observed` the one the card's preset is
+  /// read from.
   HeatingFunction preset_fn{HeatingFunction::SET_MODE};
   HeatingActionSource action_source{HeatingActionSource::REGULATOR};  ///< Where `features.action` reads from.
 };
@@ -493,7 +492,10 @@ enum class HeatingRefusal : uint8_t {
   NO_MATCH,                    ///< The profile offers no such mode or preset.
   NO_SETPOINT,                 ///< The profile has no adjustable setpoint.
   NO_TARGET,                   ///< The mode sends the target temperature and none is known or encodable.
-  UNENCODABLE,                 ///< The target temperature cannot be encoded over the device's range.
+  UNENCODABLE,                 ///< The target temperature cannot be encoded over the device's range (no device
+                               ///< record, a temperature that is not a number, an empty range).
+  OUT_OF_RANGE,                ///< The target temperature, or the target a mode sends, lies outside the device's
+                               ///< encoding range: nothing is written, never an end of the range instead.
   PROGRAMME_STATE_UNANSWERED,  ///< A target on a heater with a programme whose mode (or timed run) read got no
                                ///< reply or no value (HeatingDeviceFacts::programme_state_answered): nothing is
                                ///< written, because neither register is known to be right.
@@ -631,10 +633,33 @@ struct HeatingCardCommand {
                           ///< False when the heater's own report decides what the card shows.
 };
 
-/// @brief The card of a heater nothing has been read from yet.
-/// @details Its target range reaches up to the profile's own upper end where the profile has a setpoint.
+/// @brief The target range a card offers.
+struct HeatingCardRange {
+  float min_c;  ///< Lowest target.
+  float max_c;  ///< Highest target.
+};
+
+/// @brief The target range the card of a device offers.
+/// @details The card never offers a target the device cannot take. A heater whose target travels in the main
+///          parameter offers the part of the profile's visual range (`visual_min_c` to `visual_max_c`) that lies
+///          inside its encoding range: the YAML `min_temperature:` / `max_temperature:`, or the fixed range of a
+///          profile that has one. The default encoding range holds the whole visual range, so such a card offers the
+///          visual range unchanged; a narrower YAML range narrows it, and one that misses the visual range entirely
+///          leaves the card the encoding range itself. Every other profile offers its visual range: the register
+///          profiles' is the write range of the setpoint register.
 /// @param profile The device's profile.
-HeatingCardState initial_heating_card(const HeatingProfile &profile);
+/// @param yaml_min_c Lower end of the YAML temperature range.
+/// @param yaml_max_c Upper end of the YAML temperature range.
+HeatingCardRange heating_card_range(const HeatingProfile &profile, float yaml_min_c, float yaml_max_c);
+
+/// @brief The card of a heater nothing has been read from yet.
+/// @details Its target range reaches up to the card range's upper end (heating_card_range()) where the profile has
+///          a setpoint.
+/// @param profile The device's profile.
+/// @param yaml_min_c Lower end of the YAML temperature range.
+/// @param yaml_max_c Upper end of the YAML temperature range.
+HeatingCardState initial_heating_card(const HeatingProfile &profile, float yaml_min_c = HEATING_TEMPERATURE_RANGE_MIN_C,
+                                      float yaml_max_c = HEATING_TEMPERATURE_RANGE_MAX_C);
 
 /// @brief Fold a heater's readings into the card.
 /// @details The mode or level, the preset kept in a register of its own, the temperatures (while the

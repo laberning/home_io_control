@@ -38,12 +38,12 @@
 #include "proto_private_registers.h"
 #include "proto_value_codecs.h"
 
-#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <iterator>
 #include <optional>
+#include <string>
+#include <string_view>
 
 namespace esphome {
 namespace home_io_control {
@@ -76,8 +76,9 @@ enum class HeatingFunction : uint8_t {
   ECO_SETBACK,             ///< Register 0x0104, read-only: how far below the comfort setpoint a towel dryer's eco
                            ///< period heats, tenths of a kelvin.
   NIGHT_LIGHT,             ///< Register 0x0144, read/write: a heater's night light on (1) or off (0).
-  NIGHT_LIGHT_BRIGHTNESS,  ///< Register 0x0142, read/write: the night light's brightness, 0-10000, 16-bit.
-                           ///< A write dims the light on a Sauter Hekla (issue #222).
+  NIGHT_LIGHT_BRIGHTNESS,  ///< Register 0x0142, read/write: the night light's brightness, 16-bit, 0-10000 on the wire.
+                           ///< Written and read as a percentage on HEATING_NIGHT_LIGHT_SCALE. A write dims the
+                           ///< light on a Sauter Hekla (issue #222).
                            ///< \todo Confirm that values between the panel's four levels are taken as written.
   DEROGATED_SETPOINT,      ///< Register 0x011D, read/write: a heater's temporary override of its programme,
                            ///< tenths of a degree; 0 while none is active. Written with 0 it cancels the override.
@@ -153,6 +154,21 @@ enum class HeatingMode : uint8_t {
   OFF = 0x04,                ///< Off / standby.
 };
 
+/// @brief The word for a mode in the `heating_control` action ("auto", "manual", "prog", "external", "off").
+/// @param mode Mode.
+/// @return Null-terminated lowercase word; "unknown" for an out-of-range value.
+const char *heating_mode_name(HeatingMode mode);
+
+/// @brief The mode a word names, the inverse of heating_mode_name().
+/// @param name Lowercase word.
+/// @return The mode, or nullopt for a word no mode has. The result is not necessarily writable
+///         (heating_mode_is_writable()).
+std::optional<HeatingMode> heating_mode_from_name(std::string_view name);
+
+/// @brief The words of the modes that may be written, for a message that lists them.
+/// @return "auto, manual, prog, off": every mode but the external setpoint, comma separated.
+std::string heating_writable_mode_names();
+
 /// @brief Whether this component may write a mode to the mode register.
 /// @details Every mode except EXTERNAL_SETPOINT. That mode hands the setpoint to an external controller, so
 ///          writing it is untested and could leave a heater waiting for a controller that is not there.
@@ -187,12 +203,12 @@ enum class HeatingRegulatorState : uint8_t {
   HEATING = 0x02,  ///< The element is heating.
 };
 
-/// @brief Lowest setpoint this codec will encode.
+/// @brief Lowest setpoint a write may carry: the low end of the write range of the setpoint registers.
 ///
 /// The conventional frost-protection setpoint, safely representable as wire value 70.
 constexpr float HEATING_TEMP_MIN_C = 7.0F;
 
-/// @brief Highest setpoint this codec will encode.
+/// @brief Highest setpoint a write may carry: the high end of the write range of the setpoint registers.
 ///
 /// The setpoint register is a 16-bit little-endian value in tenths of a degree; 28.0 °C (`18 01`) is
 /// the ceiling Atlantic radiator manuals document and the value an AGILIA IO radiator reports in its
@@ -217,64 +233,35 @@ constexpr uint16_t HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX = 10000;
 /// @brief Highest brightness percentage of a Home Assistant light.
 constexpr uint8_t HEATING_NIGHT_LIGHT_PERCENT_MAX = 100;
 
-/// @brief One knot of the night light brightness scale: a percentage and the register value it stands for.
-struct NightLightScaleKnot {
-  uint8_t percent;          ///< Brightness a Home Assistant light shows, 0-100 %.
-  uint16_t register_value;  ///< Register value, 0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX.
-};
-
 /// @brief The night light brightness scale, the one the heater's own vendor app uses: its slider shows
 /// 1000 as 33 %, 2000 as 66 % and 10000 as 100 % (issue #222). Between two knots the scale is linear.
 /// It spreads the range where the light visibly changes over two thirds of the slider: above about 3000
-/// a Sauter Hekla's light hardly gets brighter (issue #222). Ascending in both fields.
-constexpr NightLightScaleKnot HEATING_NIGHT_LIGHT_SCALE[] = {
+/// a Sauter Hekla's light hardly gets brighter (issue #222). The brightness register's row carries it
+/// (ValueCodec::SCALED_U16), so a write takes a percentage and a reading shows one.
+constexpr ValueScaleKnot HEATING_NIGHT_LIGHT_SCALE[] = {
     {0, 0},
     {33, 1000},
     {66, 2000},
     {HEATING_NIGHT_LIGHT_PERCENT_MAX, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX},
 };
 
-/// @brief Night light brightness register value for a percentage, on HEATING_NIGHT_LIGHT_SCALE.
-/// @param percent Brightness, 0-100 %; a larger value is clamped to 100 %.
-/// @return The register value, 0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX, rounded to the nearest whole value.
-constexpr uint16_t night_light_register_from_percent(uint8_t percent) {
-  const unsigned p = std::min<unsigned>(percent, HEATING_NIGHT_LIGHT_PERCENT_MAX);
-  for (size_t i = 1; i < std::size(HEATING_NIGHT_LIGHT_SCALE); ++i) {
-    const NightLightScaleKnot &lo = HEATING_NIGHT_LIGHT_SCALE[i - 1];
-    const NightLightScaleKnot &hi = HEATING_NIGHT_LIGHT_SCALE[i];
-    if (p <= hi.percent) {
-      const unsigned span = hi.percent - lo.percent;
-      // Adding half the span before the division rounds to the nearest register value.
-      const unsigned scaled = ((p - lo.percent) * (hi.register_value - lo.register_value)) + (span / 2);
-      return static_cast<uint16_t>(lo.register_value + (scaled / span));
-    }
-  }
-  return HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX;
-}
-
-/// @brief Night light brightness as a fraction of full brightness (0.0-1.0) for a register value, the
-/// form a Home Assistant light shows: the inverse of night_light_register_from_percent(), unrounded, so
-/// the panel's lowest level 100 shows as 3.3 %.
-/// @param raw Register value; one above HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX is clamped to it.
-constexpr float night_light_fraction_from_register(uint16_t raw) {
-  const unsigned r = std::min<unsigned>(raw, HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX);
-  for (size_t i = 1; i < std::size(HEATING_NIGHT_LIGHT_SCALE); ++i) {
-    const NightLightScaleKnot &lo = HEATING_NIGHT_LIGHT_SCALE[i - 1];
-    const NightLightScaleKnot &hi = HEATING_NIGHT_LIGHT_SCALE[i];
-    if (r <= hi.register_value) {
-      const float slope =
-          static_cast<float>(hi.percent - lo.percent) / static_cast<float>(hi.register_value - lo.register_value);
-      const float percent = static_cast<float>(lo.percent) + (static_cast<float>(r - lo.register_value) * slope);
-      return percent / static_cast<float>(HEATING_NIGHT_LIGHT_PERCENT_MAX);
-    }
-  }
-  return 1.0F;
-}
-
 /// @brief Register 0x0119: the heater's model name, ASCII, not terminated ("ADELIS 2 DIGIT" on an
 /// Atlantic Adelis, corpus atlantic_adelis_probe_register_01_sweep). Read raw for a log line; no
 /// HeatingFunction decodes it.
 constexpr uint8_t HEATING_REGISTER_MODEL_NAME = 0x19;
+
+/// @brief The function the `heating_control` action runs under a name.
+/// @details Only the functions the action offers: the readable and writable settings the table marks for it, not
+///          every register of the table.
+/// @param name Lowercase function name as the action takes it.
+/// @return The function, or nullopt for a name the action does not offer.
+std::optional<HeatingFunction> heating_action_function(std::string_view name);
+
+/// @brief How the `heating_control` action names the value of a function in its messages.
+/// @param fn Function.
+/// @return "temperature", "mode", "presence" or "open-window detection"; "" for an action function that takes no
+///         value (a read); nullptr for a function the action does not offer or an out-of-range value.
+const char *heating_action_value_label(HeatingFunction fn);
 
 /// @brief Stable lowercase name for a heating function ("power_on", "set_temperature", ...).
 /// @param fn Function.
@@ -315,8 +302,8 @@ bool heating_function_register(HeatingFunction fn, uint8_t &register_low);
 ///   - TOWEL_MODE: a TowelDryerMode value widened to float (0-3).
 ///   - TEMPORARY_STATE: a HeatingTemporaryState value widened to float (0-2).
 ///   - NIGHT_LIGHT: 0 or 1.
-///   - NIGHT_LIGHT_BRIGHTNESS: an integer 0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX (10000), encoded as a 16-bit
-///   little-endian value.
+///   - NIGHT_LIGHT_BRIGHTNESS: a percentage 0-100, encoded on HEATING_NIGHT_LIGHT_SCALE as a 16-bit
+///   little-endian register value (0-HEATING_NIGHT_LIGHT_BRIGHTNESS_MAX), rounded to the nearest whole value.
 /// A read-only register (including POWER_ON, MIDNIGHT_SYNC and the measurement registers) is never
 /// encoded as a write, and out-of-range, non-integral (for enum/binary encodings) or non-finite
 /// input is rejected: a byte derived from a truncating or wrapping cast is never emitted.
@@ -325,6 +312,22 @@ bool heating_function_register(HeatingFunction fn, uint8_t &register_low);
 /// @param out Output buffer of PRIVATE_REGISTER_PAYLOAD_MAX_SIZE bytes.
 /// @return Number of payload bytes written (5 or 6), or 0 on invalid input or a read-only register.
 size_t encode_heating_write(HeatingFunction fn, float value, uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE]);
+
+/// @brief Does the register's write rule accept this value?
+/// @details The one judgement every caller asks before it sends or offers a value: the register is writable, its
+///          refusal predicate (the mode register refuses the external setpoint) lets the value through, and the codec
+///          takes it inside the row's range, so it is exactly the values encode_heating_write() encodes.
+/// @param fn Register to write.
+/// @param value Register-specific value (see encode_heating_write()).
+/// @return true when a write of `value` would be encoded.
+bool heating_write_accepts(HeatingFunction fn, float value);
+
+/// @brief The values a write of a register may carry, where its row names a range.
+/// @param fn Register.
+/// @return The range of a writable tenths register (the setpoint and the override, HEATING_TEMP_MIN_C to
+///         HEATING_TEMP_MAX_C); nullopt for a register with no range of its own, a read-only register or an
+///         out-of-range value.
+std::optional<ValueRange> heating_write_range(HeatingFunction fn);
 
 /// @brief Encode a read ("get") of one register into a CMD_WRITE_PRIVATE (0x20) payload.
 /// @param fn Register to read.
@@ -352,7 +355,8 @@ size_t encode_heating_payload(HeatingFunction fn, float value, uint8_t out[PRIVA
 /// decode such as POWER_ON) is "no value".
 ///
 /// The value is returned in natural units: degrees Celsius for the temperature registers, whole
-/// kilowatt-hours for the energy total, minutes for the run timers, the raw byte for the others. A byte above its
+/// kilowatt-hours for the energy total, minutes for the run timers, percent for the night light's brightness (on
+/// HEATING_NIGHT_LIGHT_SCALE), the raw byte for the others. A byte above its
 /// register's range (a mode, a state, a percentage) is "no value". A raw `-1` on the room-temperature register is a
 /// sensor fault: it decodes as NaN with `true` returned, because the heater did answer.
 /// @param reply The device's reply frame.
