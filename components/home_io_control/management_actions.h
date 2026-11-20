@@ -257,17 +257,22 @@ class ManagementActions {
   /// against real Atlantic/Thermor/Sauter hardware (see docs/configuration/climate.md's experimental
   /// banner). It is NOT diagnostic-gated; the guard is documentation, not `diagnostic_probes:`.
   ///
-  /// `function` is one of `power_on` / `set_temperature` / `set_mode` / `set_presence` /
-  /// `set_open_window_detection` / `midnight_sync` / `window_open`. `value` is parsed per function:
-  /// a float in degrees Celsius (7.0-28.0) for `set_temperature`, `auto|manual|prog|off` for
-  /// `set_mode`, `on|off` for `set_presence` and `set_open_window_detection`, ignored for the
-  /// register reads. A malformed value is reported, never coerced.
+  /// `function` is one of `set_comfort_setpoint` / `set_operating_mode` / `set_presence` /
+  /// `set_open_window_detection` / `set_derogated_setpoint` (writes) or `read_paired_devices` /
+  /// `read_setpoint_block` / `read_window_open` (reads): "set_" or "read_" + the register's name (see
+  /// heating_action_function_name()). `value` is parsed per function: a float in degrees Celsius (7.0-28.0) for
+  /// the setpoints, `auto|manual|prog|off` for `set_operating_mode`, `on|off` for `set_presence` and
+  /// `set_open_window_detection`, ignored for the reads. A malformed value is reported, never coerced.
   ///
-  /// Delegates to IOHomeControlComponent::send_heating_command() (and, for `window_open`,
+  /// The retired names `power_on`, `set_temperature`, `set_mode`, `set_derogation`, `midnight_sync` and
+  /// `window_open` still work until January 2027 (ADR 0109); a call that uses one logs a warning and ends its
+  /// result message with the same sentence.
+  ///
+  /// Delegates to IOHomeControlComponent::send_heating_command() (and, for `read_window_open`,
   /// read_heating_register()) so the entity and the action share one transmit path. `verified` is
-  /// always false: an acknowledged write is not the device showing the new value. `window_open`
-  /// reports the heater's window sensor in the result message; `power_on` and `midnight_sync` log
-  /// their ACK payload at DEBUG.
+  /// always false: an acknowledged write is not the device showing the new value. `read_window_open`
+  /// reports the heater's window sensor in the result message; `read_paired_devices` and
+  /// `read_setpoint_block` log their ACK payload at DEBUG.
   /// @param device_id Target device ID (hex string, case-insensitive).
   /// @param function Heating function name (see above).
   /// @param value Function-specific value string (see above).
@@ -282,6 +287,16 @@ class ManagementActions {
  private:
   /// Shared body of identify_device() and identify_device_for(); `action` names the caller in the result.
   ManagementActionResult run_identify_(const char *action, const std::string &device_id, uint8_t wink_time);
+
+  /// @brief Run one parsed `heating_control` function on a device and fill `result` with the outcome.
+  ///
+  /// The capability and programme gates, then one send (or the decoded read for the window sensor).
+  /// @param dev The resolved target device.
+  /// @param fn The function to run.
+  /// @param encoded_value The value the function writes (0 for a read).
+  /// @param result Carries the device ID in; success and message out.
+  void run_heating_function_(const IoDevice &dev, DeviceRegister fn, float encoded_value,
+                             ManagementActionResult &result);
 
   /// @brief Shared preamble for every management action: validate the hub and device ID,
   /// then resolve the target device (see resolve_management_device()).

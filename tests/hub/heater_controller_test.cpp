@@ -126,7 +126,7 @@ TEST(HeaterController, SendHeatingCommandFailsBeforeTheHubIsInitialisedAndForAnU
   EXPECT_TRUE(fx.radio.get_sent_data().empty());
 }
 
-// power_on / midnight_sync are register reads: the 0x21 ACK carries a payload the controller logs at
+// read_paired_devices / read_setpoint_block are register reads: the 0x21 ACK carries a payload the controller logs at
 // DEBUG (bytes_to_hex) but does not decode. Exercise both an ACK with payload bytes and the
 // empty-payload ACK to prove the log path handles either without crashing and still returns true.
 TEST(HeaterController, SendHeatingCommandAcceptsReadAckWithPayload) {

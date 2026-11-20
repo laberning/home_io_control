@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0069 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0109](0109-an-action-function-is-retired-in-two-stages.md) (an action function is retired the same way) · **Recorded:** 2026-11
 
 Amends [ADR 0065](0065-a-covers-travel-speed-is-a-three-way-choice.md) (decision 2: `silent:` stays
 as the two-way form). Follows [ADR 0036](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md),

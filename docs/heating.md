@@ -266,7 +266,7 @@ watching the element; the `heating_source` sensor shows what runs, so you can ch
 A heater with its own weekly program shows `auto` while that program runs: PROG on a towel dryer,
 PROG and AUTO on a radiator with a setpoint. A target you set then is a temporary override of the
 program. *Dérogation* is the French word for such an exception, which is where the action's
-`set_derogation` function gets its name.
+`set_derogated_setpoint` function gets its name.
 
 - **While the program runs** a target is written to the heater's override register (`0x011D`) and
   read back. If the heater takes it, it holds until the program's next change. The program's comfort
@@ -308,7 +308,7 @@ program. *Dérogation* is the French word for such an exception, which is where 
   change the comfort temperature in `heat` instead, as described below.
 - **To end an override early**, call the
   [`heating_control` action](configuration/climate.md#the-heating_control-action) with
-  `set_derogation` and `0`. An override also ends by itself, as the heater decides. Home Assistant
+  `set_derogated_setpoint` and `0`. An override also ends by itself, as the heater decides. Home Assistant
   sends no call when you select the mode the card already shows, so selecting `auto` again cannot
   end it.
 
@@ -355,7 +355,7 @@ why the level is a sensor and not a preset.
 | Frost protection (hors-gel, `H.Gel` on a Thermor display) | The lowest heating level | The `away` preset of a level heater; `frost protection` on the level sensor |
 | Boost | A timed run on a towel dryer or a water heater; a level on a level heater | The `boost` preset; on a water heater the `boost` switch |
 | Drying | Adelis display: a timed run | The `Drying` preset |
-| Dérogation | A temporary change to the running program | A target set in `auto`; `set_derogation` in the `heating_control` action |
+| Dérogation | A temporary change to the running program | A target set in `auto`; `set_derogated_setpoint` in the `heating_control` action |
 | Secured | A level a heater reports and a controller cannot set | `secured` on the level sensor; no preset |
 | Holiday, absence | Calypso display | The water heater card's away mode |
 

@@ -389,7 +389,7 @@ class HeaterController {
   /// (ADR 0082). An acknowledged reply is notified only with AckNotify::NOW: with AckNotify::BY_CALLER the caller
   /// notifies once it has stored what the reply holds.
   /// @param device_id Target device ID.
-  /// @param label What was sent, for the log ("set_temperature", "read room_temperature").
+  /// @param label What was sent, for the log ("comfort_setpoint", "read room_temperature").
   /// @param request The framed CMD_WRITE_PRIVATE request.
   /// @param[out] response The device's reply; valid when true is returned.
   /// @param max_tries Transmit-attempt cap.

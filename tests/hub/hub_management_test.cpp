@@ -11,6 +11,7 @@
 
 #include "corpus_generated.h"
 #include "corpus_test_helpers.h"
+#include "log_capture.h"
 #include "management_test_fixture.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
@@ -591,14 +592,14 @@ TEST(HubManagement, HeatingControlRejectsUnknownDevice) {
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
-  const auto result = component.management_actions_.heating_control("123456", "power_on", "");
+  const auto result = component.management_actions_.heating_control("123456", "read_paired_devices", "");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device is not registered on this hub");
 }
 
 TEST(HubManagement, HeatingControlRejectsWhenHubNotInitialized) {
   TestableManagementComponent component;
-  const auto result = component.management_actions_.heating_control("ABC123", "power_on", "");
+  const auto result = component.management_actions_.heating_control("ABC123", "read_paired_devices", "");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "hub is not initialized");
 }
@@ -607,13 +608,13 @@ TEST(HubManagement, HeatingControlRejectsInvalidDeviceId) {
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
-  const auto result = component.management_actions_.heating_control("12", "power_on", "");
+  const auto result = component.management_actions_.heating_control("12", "read_paired_devices", "");
   EXPECT_FALSE(result.success);
   EXPECT_EQ(result.message, "device ID must be exactly 6 hexadecimal characters");
 }
 
 // The override takes the same refusals on every model of a heater that has a programme.
-TEST(HubManagement, HeatingControlSetDerogationRefusesABadValueOnEveryModelWithAProgramme) {
+TEST(HubManagement, HeatingControlSetDerogatedSetpointRefusesABadValueOnEveryModelWithAProgramme) {
   TestableManagementComponent component;
   MockRadio radio;
   setup_component(component, radio);
@@ -623,10 +624,10 @@ TEST(HubManagement, HeatingControlSetDerogationRefusesABadValueOnEveryModelWithA
   for (const DeviceModel model : {DeviceModel::NONE, DeviceModel::TOWEL_DRYER}) {
     test::set_kind(*dev, DeviceType::ELECTRICAL_HEATER, 1);
     dev->model = model;
-    auto result = component.management_actions_.heating_control("ABC123", "set_derogation", "5");
+    auto result = component.management_actions_.heating_control("ABC123", "set_derogated_setpoint", "5");
     EXPECT_FALSE(result.success);
     EXPECT_EQ(result.message, "temperature must be between 7.0 and 28.0");
-    result = component.management_actions_.heating_control("ABC123", "set_derogation", "warm");
+    result = component.management_actions_.heating_control("ABC123", "set_derogated_setpoint", "warm");
     EXPECT_FALSE(result.success);
   }
   EXPECT_TRUE(radio.get_sent_data().empty());
@@ -639,7 +640,7 @@ TEST(HubManagement, HeatingControlSurfacesErrorResponseResultCode) {
   make_climate_device(component);
   radio.queue_rx(frame_to_packet(make_error_response(component.node_id_, RESULT_LIMITATION_BY_WIND)));
 
-  const auto result = component.management_actions_.heating_control("ABC123", "set_temperature", "21.0");
+  const auto result = component.management_actions_.heating_control("ABC123", "set_comfort_setpoint", "21.0");
   EXPECT_FALSE(result.success);
   EXPECT_TRUE(result.has_result_code);
   EXPECT_EQ(result.result_code, RESULT_LIMITATION_BY_WIND);
@@ -659,7 +660,7 @@ TEST(HubManagement, ApiHeatingControlPublishesManagementResultEvent) {
   radio.queue_rx(
       frame_to_packet(test::make_device_reply(component.node_id_, CMD_WRITE_PRIVATE_ACK, {}, test::DEVICE_ABC123_ID)));
 
-  component.management_actions_.api_heating_control("ABC123", "set_mode", "auto");
+  component.management_actions_.api_heating_control("ABC123", "set_operating_mode", "auto");
 
   ASSERT_EQ(api_server.events_.size(), 1u);
   const auto &event = api_server.events_.front();
@@ -668,7 +669,61 @@ TEST(HubManagement, ApiHeatingControlPublishesManagementResultEvent) {
   EXPECT_EQ(event.data.at("device_id"), "ABC123");
   EXPECT_EQ(event.data.at("success"), "true");
   EXPECT_EQ(event.data.at("verified"), "false");
-  EXPECT_EQ(event.data.at("message"), "heating set_mode acknowledged by device");
+  EXPECT_EQ(event.data.at("message"), "heating operating_mode acknowledged by device");
+}
+
+TEST(HubManagement, ApiHeatingControlRetiredNameAddsTheNoticeToTheResultEvent) {
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  radio.queue_rx(
+      frame_to_packet(test::make_device_reply(component.node_id_, CMD_WRITE_PRIVATE_ACK, {}, test::DEVICE_ABC123_ID)));
+
+  component.management_actions_.api_heating_control("ABC123", "set_mode", "auto");
+
+  ASSERT_EQ(api_server.events_.size(), 1u);
+  EXPECT_EQ(api_server.events_.front().data.at("success"), "true");
+  EXPECT_EQ(api_server.events_.front().data.at("message"),
+            "heating operating_mode acknowledged by device; heating_control function 'set_mode' is deprecated and "
+            "stops working after January 2027; use 'set_operating_mode'");
+}
+
+// A retired name adds exactly one warning (the deprecation notice, ADR 0109) to what the same call under the new
+// name logs: once on an accepted write, once on a refused value (whose failed result logs a warning of its own).
+TEST(HubManagement, HeatingControlRetiredNameAddsExactlyOneWarningPerCall) {
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  make_climate_device(component);
+  test::LogCapture log;
+  const auto warnings_of = [&](const char *function, const char *value, bool acknowledged) {
+    if (acknowledged)
+      radio.queue_rx(frame_to_packet(
+          test::make_device_reply(component.node_id_, CMD_WRITE_PRIVATE_ACK, {}, test::DEVICE_ABC123_ID)));
+    log.clear();
+    component.management_actions_.api_heating_control("ABC123", function, value);
+    return log.count('W');
+  };
+
+  EXPECT_EQ(warnings_of("set_mode", "auto", true), warnings_of("set_operating_mode", "auto", true) + 1)
+      << "an accepted write";
+  EXPECT_EQ(warnings_of("set_temperature", "99", false), warnings_of("set_comfort_setpoint", "99", false) + 1)
+      << "a refused value";
+
+  ASSERT_EQ(api_server.events_.size(), 4u);
+  EXPECT_EQ(api_server.events_[0].data.at("success"), "true");
+  EXPECT_EQ(api_server.events_[1].data.at("success"), "true");
+  EXPECT_EQ(api_server.events_[2].data.at("success"), "false");
+  EXPECT_EQ(api_server.events_[3].data.at("success"), "false");
 }
 
 TEST(HubManagement, ApiRenameDevicePublishesManagementResultEvent) {
@@ -1735,7 +1790,7 @@ TEST(HubManagement, ApiScanPairedDevicesPublishesManagementResultEvent) {
 TEST(HubManagement, ApiScanPairedDevicesFailurePublishesEventWithEmptyDeviceId) {
   // scan_paired_devices() has no single target, so its ManagementActionResult::device_id is
   // always empty on both the success and failure paths — publish_result()'s log line must
-  // handle that without a dangling "for device :" (host tests can't observe ESP_LOG output,
+  // handle that without a dangling "for device :" (host tests can't read a logged line's text,
   // since IOHOME_HOST_LOG_STUB discards its arguments, so this asserts on the event/result
   // fields the log line is built from instead).
   esphome::api::APIServer api_server;

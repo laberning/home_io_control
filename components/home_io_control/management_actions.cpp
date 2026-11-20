@@ -53,6 +53,8 @@ constexpr const char *MANAGEMENT_ACTION_SCAN_PAIRED_DEVICES = "scan_paired_devic
 constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_POSITION = "oneway_set_position";
 constexpr const char *MANAGEMENT_ACTION_ONEWAY_REMOVE_CONTROLLER = "oneway_remove_controller";
 constexpr const char *MANAGEMENT_ACTION_HEATING_CONTROL = "heating_control";
+/// Until when the retired `heating_control` function names work (ADR 0109).
+constexpr const char *HEATING_DEPRECATION_END = "January 2027";
 constexpr const char *MANAGEMENT_RESULT_EVENT = "esphome.home_io_control_action_result";
 constexpr size_t UNEXPECTED_RESPONSE_MESSAGE_BUFFER_SIZE = 64;
 constexpr size_t HEATING_RANGE_MESSAGE_BUFFER_SIZE = 64;
@@ -257,19 +259,31 @@ static bool parse_heating_value(DeviceRegister fn, const std::string &value, flo
 /// @brief Parse the (`function`, `value`) argument pair of the `heating_control` action.
 /// @param function Function name argument, looked up among the functions the action offers.
 /// @param value Value argument.
-/// @param fn_out Parsed function on success.
+/// @param fn_out Parsed function once the name is known, also when the value is then refused.
+/// @param replaced_name_out The retired name `function` used, nullptr for a current name.
 /// @param value_out Parsed value on success.
 /// @param error Caller-facing message on failure.
 /// @return true on a fully valid pair.
 static bool parse_heating_arguments(const std::string &function, const std::string &value, DeviceRegister &fn_out,
-                                    float &value_out, std::string &error) {
-  const std::optional<DeviceRegister> fn = heating_action_function(normalize_lower_argument(function));
-  if (!fn) {
+                                    const char *&replaced_name_out, float &value_out, std::string &error) {
+  const std::optional<HeatingActionFunction> offered = heating_action_function(normalize_lower_argument(function));
+  if (!offered) {
     error = "unknown heating function '" + trim_ascii_whitespace(function) + "'";
     return false;
   }
-  fn_out = *fn;
-  return parse_heating_value(*fn, value, value_out, error);
+  fn_out = offered->fn;
+  replaced_name_out = offered->replaced_name;
+  return parse_heating_value(offered->fn, value, value_out, error);
+}
+
+/// @brief The sentence that says a retired `heating_control` function name was used.
+/// @details Stage one of ADR 0109: the old name still works, the log and the result event name the new one.
+/// @param replaced_name The retired name the call used.
+/// @param fn The function it ran; its current name is heating_action_function_name(fn).
+/// @return The sentence, without a trailing full stop, for the log and the end of the result message.
+static std::string heating_deprecation_notice(const char *replaced_name, DeviceRegister fn) {
+  return std::string("heating_control function '") + replaced_name + "' is deprecated and stops working after " +
+         HEATING_DEPRECATION_END + "; use '" + heating_action_function_name(fn) + "'";
 }
 
 // --- ManagementActions ---
@@ -612,37 +626,50 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
     return result;
 
   DeviceRegister fn{};
+  const char *replaced_name = nullptr;
   float encoded_value = 0.0F;
   std::string parse_error;
-  if (!parse_heating_arguments(function, value, fn, encoded_value, parse_error)) {
+  const bool parsed = parse_heating_arguments(function, value, fn, replaced_name, encoded_value, parse_error);
+  if (parsed) {
+    run_heating_function_(*dev, fn, encoded_value, result);
+  } else {
     result.message = parse_error;
-    return result;
   }
 
-  // Capability gate via the predicate only — no inline device-type or vendor list.
-  if (!device_supports_climate_control(dev->type, dev->subtype)) {
-    result.message = "device is not a climate device";
-    return result;
+  if (replaced_name != nullptr) {
+    const std::string notice = heating_deprecation_notice(replaced_name, fn);
+    ESP_LOGW(detail::TAG, "%s", notice.c_str());
+    result.message += (result.message.empty() ? "" : "; ") + notice;
   }
-  if (!device_uses_heating_registers(dev->type, dev->subtype)) {
+  return result;
+}
+
+void ManagementActions::run_heating_function_(const IoDevice &dev, DeviceRegister fn, float encoded_value,
+                                              ManagementActionResult &result) {
+  // Capability gate via the predicate only — no inline device-type or vendor list.
+  if (!device_supports_climate_control(dev.type, dev.subtype)) {
+    result.message = "device is not a climate device";
+    return;
+  }
+  if (!device_uses_heating_registers(dev.type, dev.subtype)) {
     result.message = "device is commanded with heating levels, not private registers";
-    return result;
+    return;
   }
 
   // The override exists only on a heater whose profile names its programme registers.
   // A register the profile names as a programme register (the override, the temperature in force) exists only there.
   if (is_programme_register_of_any_profile(fn)) {
-    const HeatingProfile *profile = find_heating_profile(*dev);
+    const HeatingProfile *profile = find_heating_profile(dev);
     if (profile == nullptr || !is_programme_register(*profile, fn)) {
       result.message = std::string("device has no programme, so ") + device_register_name(fn) + " does not apply";
-      return result;
+      return;
     }
   }
 
   // Snapshot any pre-existing CMD_ERROR_RESP code so a stale one (e.g. an old wind lockout from a
   // different command) is not misattributed to this send.
-  const uint8_t prior_result_code = dev->last_result_code;
-  const uint32_t prior_result_at_ms = dev->last_result_at_ms;
+  const uint8_t prior_result_code = dev.last_result_code;
+  const uint32_t prior_result_at_ms = dev.last_result_at_ms;
 
   // A register with a decoded value (the window sensor) is read through the entity's read path, so
   // the action shows exactly what the climate card would; every other function is one send. Both
@@ -662,7 +689,7 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
       result.message =
           std::string(command_result_name(result.result_code)) + ": " + command_result_description(result.result_code);
     }
-    return result;
+    return;
   }
 
   result.success = true;
@@ -674,7 +701,6 @@ ManagementActionResult ManagementActions::heating_control(const std::string &dev
   } else {
     result.message = std::string("heating ") + device_register_name(fn) + " acknowledged by device";
   }
-  return result;
 }
 
 void ManagementActions::api_scan_paired_devices() { publish_result(scan_paired_devices()); }

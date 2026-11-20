@@ -1,6 +1,6 @@
 id: synthetic_exchange_heating_set_temp
 description: >
-  Synthetic authenticated CMD_WRITE_PRIVATE (0x20) heating exchange: set_temperature 20.5 C ->
+  Synthetic authenticated CMD_WRITE_PRIVATE (0x20) heating exchange: set_comfort_setpoint 20.5 C ->
   0x3C challenge -> 0x3D challenge-response -> CMD_WRITE_PRIVATE_ACK (0x21) echo (END). Bootstrap
   fixture for the CMD 0x20 heating codec (proto_heating.{h,cpp}) and the hub heating send path.
   The 0x20 payload {0C 61 01 03 CD 00} is encode_heating_payload(COMFORT_SETPOINT, 20.5); the
@@ -26,7 +26,7 @@ frames:
     freq: 868950000
     hex: "4E 00 44 55 66 11 22 33 20 0C 61 01 03 CD 00 C8 9B"
     crc: present
-    note: "CMD_WRITE_PRIVATE, START: set_temperature 20.5 C (byte 0xCD = 205)"
+    note: "CMD_WRITE_PRIVATE, START: set_comfort_setpoint 20.5 C (byte 0xCD = 205)"
   - dir: rx
     freq: 868950000
     hex: "0E 00 11 22 33 44 55 66 3C 01 23 45 67 89 AB 2E 19"

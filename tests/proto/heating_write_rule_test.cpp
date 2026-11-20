@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <string>
 #include <vector>
 
 using namespace esphome::home_io_control;
@@ -126,8 +127,19 @@ namespace {
 
 /// The names of exactly the functions the action offers.
 const std::vector<const char *> ACTION_FUNCTION_NAMES = {
-    "power_on", "midnight_sync", "set_temperature",           "set_derogation",
-    "set_mode", "set_presence",  "set_open_window_detection", "window_open"};
+    "read_paired_devices", "read_setpoint_block", "set_comfort_setpoint",      "set_derogated_setpoint",
+    "set_operating_mode",  "set_presence",        "set_open_window_detection", "read_window_open"};
+
+/// A retired function name and the current name of the function it runs.
+struct RetiredName {
+  const char *old_name;
+  const char *new_name;
+};
+
+const std::vector<RetiredName> RETIRED_NAMES = {
+    {"power_on", "read_paired_devices"},      {"set_temperature", "set_comfort_setpoint"},
+    {"set_mode", "set_operating_mode"},       {"set_derogation", "set_derogated_setpoint"},
+    {"midnight_sync", "read_setpoint_block"}, {"window_open", "read_window_open"}};
 
 }  // namespace
 
@@ -139,26 +151,54 @@ TEST(HeatingActionFunctions, ExactlyTheFunctionsTheActionOffersAreMarkedAndLooke
   }
   EXPECT_EQ(marked, ACTION_FUNCTION_NAMES.size());
   for (const char *name : ACTION_FUNCTION_NAMES) {
-    const std::optional<DeviceRegister> fn = heating_action_function(name);
-    ASSERT_TRUE(fn.has_value()) << name;
-    EXPECT_STREQ(device_register_name(*fn), name);
-    EXPECT_NE(heating_action_value_label(*fn), nullptr) << name;
+    const std::optional<HeatingActionFunction> offered = heating_action_function(name);
+    ASSERT_TRUE(offered.has_value()) << name;
+    EXPECT_EQ(heating_action_function_name(offered->fn), name);
+    EXPECT_EQ(offered->replaced_name, nullptr) << name << " is a current name";
+    EXPECT_NE(heating_action_value_label(offered->fn), nullptr) << name;
   }
 }
 
-TEST(HeatingActionFunctions, ARegisterTheActionDoesNotOfferHasNoActionName) {
+TEST(HeatingActionFunctions, AFunctionNameIsSetForAWritableRegisterAndReadForAReadOnlyOne) {
+  EXPECT_EQ(heating_action_function_name(DeviceRegister::COMFORT_SETPOINT), "set_comfort_setpoint");
+  EXPECT_EQ(heating_action_function_name(DeviceRegister::WINDOW_OPEN), "read_window_open");
+  for (const char *name : ACTION_FUNCTION_NAMES) {
+    const DeviceRegister fn = heating_action_function(name)->fn;
+    const std::string expected =
+        std::string(device_register_is_writable(fn) ? "set_" : "read_") + device_register_name(fn);
+    EXPECT_EQ(expected, name);
+  }
+}
+
+TEST(HeatingActionFunctions, ARetiredNameRunsTheFunctionItReplacedAndSaysSo) {
+  for (const RetiredName &retired : RETIRED_NAMES) {
+    const std::optional<HeatingActionFunction> offered = heating_action_function(retired.old_name);
+    ASSERT_TRUE(offered.has_value()) << retired.old_name;
+    EXPECT_EQ(heating_action_function_name(offered->fn), retired.new_name) << retired.old_name;
+    ASSERT_NE(offered->replaced_name, nullptr) << retired.old_name;
+    EXPECT_STREQ(offered->replaced_name, retired.old_name);
+    EXPECT_EQ(heating_action_function(retired.new_name)->fn, offered->fn) << retired.old_name;
+  }
+}
+
+TEST(HeatingActionFunctions, ARegisterTheActionDoesNotOfferIsReachableUnderNoName) {
   for (const DeviceRegister fn : all_functions()) {
     if (heating_action_value_label(fn) != nullptr)
       continue;
-    EXPECT_FALSE(heating_action_function(device_register_name(fn)).has_value()) << device_register_name(fn);
+    const std::string name = device_register_name(fn);
+    EXPECT_EQ(heating_action_function_name(fn), "") << name;
+    for (const std::string &candidate : {name, "set_" + name, "read_" + name})
+      EXPECT_FALSE(heating_action_function(candidate).has_value()) << candidate;
   }
-  for (const char *name : {"", "unknown", "SET_MODE", " set_mode", "set_mode ", "make_coffee"})
+  // Under the wrong verb, or bare, an offered register is no function either.
+  for (const char *name : {"", "unknown", "SET_OPERATING_MODE", " set_operating_mode", "set_operating_mode ",
+                           "make_coffee", "read_comfort_setpoint", "set_window_open", "comfort_setpoint"})
     EXPECT_FALSE(heating_action_function(name).has_value()) << "'" << name << "'";
 }
 
 TEST(HeatingActionFunctions, AFunctionTakesAValueExactlyWhenItIsWritable) {
   for (const char *name : ACTION_FUNCTION_NAMES) {
-    const DeviceRegister fn = *heating_action_function(name);
+    const DeviceRegister fn = heating_action_function(name)->fn;
     const std::string label = heating_action_value_label(fn);
     EXPECT_EQ(label.empty(), !device_register_is_writable(fn)) << name;
   }
@@ -167,7 +207,7 @@ TEST(HeatingActionFunctions, AFunctionTakesAValueExactlyWhenItIsWritable) {
 TEST(HeatingActionFunctions, TheOnlyEnumeratedByteTheActionOffersIsTheMode) {
   // The action reads a bounded byte as a mode word; a second one would need its own words.
   for (const char *name : ACTION_FUNCTION_NAMES) {
-    const DeviceRegister fn = *heating_action_function(name);
+    const DeviceRegister fn = heating_action_function(name)->fn;
     if (device_register_is_writable(fn) && device_register_codec(fn) == ValueCodec::BOUNDED_BYTE) {
       EXPECT_EQ(fn, DeviceRegister::OPERATING_MODE) << name;
     }

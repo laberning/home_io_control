@@ -57,7 +57,7 @@ namespace home_io_control {
 
 /// @brief Registers and functions of a 2W heater, one row of the descriptor table each.
 ///
-/// The `heating_control` action offers some of them as functions under the row's action name; the same row
+/// The `heating_control` action offers some of them as functions under a name built from the row's name; the same row
 /// is also the register's read path.
 enum class DeviceRegister : uint8_t {
   PAIRED_DEVICES,         ///< Register 0x012C, read: the paired-device list. Logged, never decoded.
@@ -282,12 +282,24 @@ static_assert(value_scale_rises(HEATING_NIGHT_LIGHT_SCALE), "the scale divides b
 /// DeviceRegister decodes it.
 constexpr uint8_t HEATING_REGISTER_MODEL_NAME = 0x19;
 
+/// @brief The function a `heating_control` function name selects.
+struct HeatingActionFunction {
+  DeviceRegister fn{};                 ///< The function to run.
+  const char *replaced_name{nullptr};  ///< The retired name that was used; nullptr for a current name.
+};
+
+/// @brief The name the `heating_control` action offers a function under.
+/// @details "set_" + the register's name for a writable register, "read_" + the name for a read-only one.
+/// @param fn Function.
+/// @return The function name, or "" for a function the action does not offer.
+std::string heating_action_function_name(DeviceRegister fn);
+
 /// @brief The function the `heating_control` action runs under a name.
 /// @details Only the functions the action offers: the readable and writable settings the table marks for it, not
-///          every register of the table.
+///          every register of the table. A retired name (ADR 0109) is accepted and says which name it replaced.
 /// @param name Lowercase function name as the action takes it.
 /// @return The function, or nullopt for a name the action does not offer.
-std::optional<DeviceRegister> heating_action_function(std::string_view name);
+std::optional<HeatingActionFunction> heating_action_function(std::string_view name);
 
 /// @brief How the `heating_control` action names the value of a function in its messages.
 /// @param fn Function.
@@ -295,8 +307,8 @@ std::optional<DeviceRegister> heating_action_function(std::string_view name);
 ///         value (a read); nullptr for a function the action does not offer or an out-of-range value.
 const char *heating_action_value_label(DeviceRegister fn);
 
-/// @brief The register's action name: its label in the log, and the function name `heating_control` takes for it
-///        ("power_on", "set_temperature", ...).
+/// @brief The register's name: its DeviceRegister enumerator in lower case, the label of the register in logs
+///        ("comfort_setpoint", "towel_temperature_in_force", ...).
 /// @param fn Function.
 /// @return Null-terminated string; "unknown" for an out-of-range value.
 const char *device_register_name(DeviceRegister fn);

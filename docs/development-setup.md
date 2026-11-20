@@ -35,7 +35,7 @@ Use the Ubuntu command above inside a WSL2 distribution.
 Host tests live in one directory per layer: `tests/proto/`, `tests/radio/`, `tests/hub/`,
 `tests/platform/`, `tests/oneway/` and `tests/tuning/` test that layer's code; `tests/corpus/` replays
 the golden-frame corpus, `tests/sync/` checks that C++ and Python tables agree, and `tests/harness/`
-tests the host stubs themselves. The doubles the suites share are in `tests/support/` (a hub-free `HeaterController` fixture, the hub port doubles, timed replay) and `tests/stubs/` (scripted SPI, the software-PHY test driver); `tests/include/` holds the ESPHome header stubs. Put a new `*_test.cpp` in the directory of the code it tests; the
+tests the host stubs themselves. The doubles the suites share are in `tests/support/` (a hub-free `HeaterController` fixture, the hub port doubles, timed replay, a log capture that counts the lines a call logs) and `tests/stubs/` (scripted SPI, the software-PHY test driver); `tests/include/` holds the ESPHome header stubs. Put a new `*_test.cpp` in the directory of the code it tests; the
 Makefile finds it there. Any compiler warning fails the host build.
 
 ```bash

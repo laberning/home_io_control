@@ -1,7 +1,7 @@
 id: synthetic_exchange_heating_midnight_sync
 description: >
   Synthetic authenticated CMD_WRITE_PRIVATE (0x20) heating exchange for the no-value / short
-  4-byte-payload path: midnight_sync -> 0x3C challenge -> 0x3D challenge-response ->
+  4-byte-payload path: read_setpoint_block -> 0x3C challenge -> 0x3D challenge-response ->
   CMD_WRITE_PRIVATE_ACK (0x21) echo (END). The 0x20 payload {0C 60 01 30} is
   encode_heating_payload(SETPOINT_BLOCK, *). Complements
   synthetic_exchange_heating_set_temp (the 6-byte-payload path). HMAC on the 0x3D frame is
@@ -12,7 +12,7 @@ description: >
   echo of the request, not a modelled register-read response — a real 0x0130 read answers with the
   ~17-byte block (see atlantic_adelis_probe_register_01_sweep, whose 0x0130 reply carries 17 bytes
   after the register), so these bytes must not
-  later be mined as evidence of what a midnight_sync read returns.
+  later be mined as evidence of what the read_setpoint_block function returns.
 source:
   device: "synthetic controller <-> synthetic climate device"
   captured_with: synthetic
@@ -26,7 +26,7 @@ frames:
     freq: 868950000
     hex: "4C 00 44 55 66 11 22 33 20 0C 60 01 30 EB FE"
     crc: present
-    note: "CMD_WRITE_PRIVATE, START: midnight time-sync (4-byte payload, no value)"
+    note: "CMD_WRITE_PRIVATE, START: read_setpoint_block, register 0x0130 (4-byte payload, no value)"
   - dir: rx
     freq: 868950000
     hex: "0E 00 11 22 33 44 55 66 3C 01 23 45 67 89 AB 2E 19"

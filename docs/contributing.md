@@ -227,10 +227,11 @@ A reading that comes from a register of a heater or a water heater has no recipe
 names the register (`DeviceRegister`). Name a new register enumerator after the value the register holds;
 the Python mirror's `registers` field uses the same name. The register table in `proto_heating.cpp` names
 the register's family (the high byte of its number: `0x01` for a heater, `0x00` for a water heater), its
-codec and its `action_name`. The `action_name` is the register's label in the log and, for a register the
-action offers, the function name a user types in the `heating_control` action. The family also decides
-which devices the register is sent to (`device_takes_register()`). A register that holds
-several facts in different bytes has no codec of its own: each fact is a reading whose
+codec and its `name`. The `name` is the register's `DeviceRegister` enumerator in lower case (a sync test
+checks it), the register's label in the log and, for a register the action offers, the stem of the function
+name a user types in the `heating_control` action: `set_` + name for a writable register, `read_` + name for
+a read-only one. The family also decides which devices the register is sent to (`device_takes_register()`).
+A register that holds several facts in different bytes has no codec of its own: each fact is a reading whose
 `RegisterSource` names a `part` (the first byte, the length and a codec, `ANY_NONZERO` for a flag that
 is on when any byte of the slice is), and one read of the register stores them all. The rest is the
 same. A reading that a status reply carries is never polled: the heating level and the status setpoint
@@ -244,8 +245,9 @@ its own, the scale. Every caller asks `heating_write_accepts()` and states a ran
 `heating_write_range()`; none keeps a bound or a list of its own
 ([ADR 0105](adr/0105-every-device-value-write-is-judged-by-one-rule-per-register.md)). A function the
 `heating_control` action offers carries a label for its value in the same row, and the action finds it
-by name. A new value shape is an `encode_value()` case beside the `decode_value()` one, with a test in
-`tests/proto/value_codecs_test.cpp`.
+by name. A function name that was retired stays in `DEPRECATED_HEATING_FUNCTIONS` while it still works
+([ADR 0109](adr/0109-an-action-function-is-retired-in-two-stages.md)). A new value shape is an
+`encode_value()` case beside the `decode_value()` one, with a test in `tests/proto/value_codecs_test.cpp`.
 
 Tests sit on the lowest stage that fits. The codec and the lookup are tested without a radio. The
 schedule and the value store are tested on the hub with a reading table and recipe table of the test's

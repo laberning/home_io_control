@@ -381,7 +381,7 @@ struct RegisterFact {
   uint8_t family;
   uint8_t low;
   const char *name;        ///< The log label.
-  bool offered_by_action;  ///< Whether `heating_control` takes the name.
+  bool offered_by_action;  ///< Whether `heating_control` offers the register.
 };
 
 }  // namespace
@@ -390,12 +390,12 @@ TEST(HeatingRegisterPin, EveryRegisterKeepsItsNumberItsLabelAndItsPlaceInTheActi
   constexpr uint8_t H = 0x01;  // the heater family
   constexpr uint8_t D = 0x00;  // the water heater family
   const std::vector<RegisterFact> facts = {
-      {DeviceRegister::PAIRED_DEVICES, H, 0x2C, "power_on", true},
-      {DeviceRegister::COMFORT_SETPOINT, H, 0x03, "set_temperature", true},
-      {DeviceRegister::OPERATING_MODE, H, 0x00, "set_mode", true},
-      {DeviceRegister::PRESENCE, H, 0x10, "set_presence", true},
-      {DeviceRegister::OPEN_WINDOW_DETECTION, H, 0x06, "set_open_window_detection", true},
-      {DeviceRegister::SETPOINT_BLOCK, H, 0x30, "midnight_sync", true},
+      {DeviceRegister::PAIRED_DEVICES, H, 0x2C, "paired_devices", true},
+      {DeviceRegister::COMFORT_SETPOINT, H, 0x03, "comfort_setpoint", true},
+      {DeviceRegister::OPERATING_MODE, H, 0x00, "operating_mode", true},
+      {DeviceRegister::PRESENCE, H, 0x10, "presence", true},
+      {DeviceRegister::OPEN_WINDOW_DETECTION, H, 0x06, "open_window_detection", true},
+      {DeviceRegister::SETPOINT_BLOCK, H, 0x30, "setpoint_block", true},
       {DeviceRegister::ROOM_TEMPERATURE, H, 0x15, "room_temperature", false},
       {DeviceRegister::REGULATOR_STATE, H, 0x17, "regulator_state", false},
       {DeviceRegister::MAX_SETPOINT, H, 0x02, "max_setpoint", false},
@@ -403,10 +403,10 @@ TEST(HeatingRegisterPin, EveryRegisterKeepsItsNumberItsLabelAndItsPlaceInTheActi
       {DeviceRegister::TOWEL_MODE, H, 0x36, "towel_mode", false},
       {DeviceRegister::TEMPORARY_STATE, H, 0x3E, "temporary_state", false},
       {DeviceRegister::WORKING_RATE, H, 0x26, "working_rate", false},
-      {DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, H, 0x37, "temperature_in_force", false},
+      {DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, H, 0x37, "towel_temperature_in_force", false},
       {DeviceRegister::ECO_SETBACK, H, 0x04, "eco_setback", false},
-      {DeviceRegister::DEROGATED_SETPOINT, H, 0x1D, "set_derogation", true},
-      {DeviceRegister::TEMPERATURE_IN_FORCE, H, 0x2A, "heater_temperature_in_force", false},
+      {DeviceRegister::DEROGATED_SETPOINT, H, 0x1D, "derogated_setpoint", true},
+      {DeviceRegister::TEMPERATURE_IN_FORCE, H, 0x2A, "temperature_in_force", false},
       {DeviceRegister::NIGHT_LIGHT, H, 0x44, "night_light", false},
       {DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, H, 0x42, "night_light_brightness", false},
       {DeviceRegister::CENTRAL_HEATING_MODE, H, 0x53, "central_heating_mode", false},
@@ -432,10 +432,12 @@ TEST(HeatingRegisterPin, EveryRegisterKeepsItsNumberItsLabelAndItsPlaceInTheActi
     EXPECT_EQ(high, f.family) << f.name;
     EXPECT_EQ(low, f.low) << f.name;
     EXPECT_STREQ(device_register_name(f.fn), f.name);
-    const std::optional<DeviceRegister> offered = heating_action_function(f.name);
-    EXPECT_EQ(offered.has_value(), f.offered_by_action) << f.name;
-    if (offered.has_value()) {
-      EXPECT_EQ(*offered, f.fn) << f.name;
+    const std::string function = heating_action_function_name(f.fn);
+    EXPECT_EQ(!function.empty(), f.offered_by_action) << f.name;
+    if (f.offered_by_action) {
+      const std::optional<HeatingActionFunction> offered = heating_action_function(function);
+      ASSERT_TRUE(offered.has_value()) << function;
+      EXPECT_EQ(offered->fn, f.fn) << f.name;
     }
   }
 }

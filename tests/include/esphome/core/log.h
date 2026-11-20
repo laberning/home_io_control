@@ -36,25 +36,54 @@
 // %u/PRIu32 fixes when the ESP-IDF toolchain moved. Note that host and firmware disagree on the
 // width of size_t/uint32_t, so use the width-agnostic specifiers (%zu, PRIu32) rather than %u to
 // satisfy both.
+//
+// Recording: a test that needs to know *that* a line was logged (a warning issued once per call)
+// installs a `host_log_stub::Recorder` (tests/support/log_capture.h). Each log macro then records
+// its level, tag and format string; the arguments stay unevaluated, as above, so recording changes
+// nothing about what a logged expression does. Without a recorder installed a line costs one
+// pointer check.
 namespace esphome {
 namespace host_log_stub {
 inline void sink(const char *, const char *, ...) ESPHOME_ATTRIBUTE_FORMAT(printf, 2, 3);
 inline void sink(const char *, const char *, ...) {}
+
+/// Receives the lines logged while it is installed; see tests/support/log_capture.h.
+class Recorder {
+ public:
+  virtual ~Recorder() = default;
+  /// @param level 'E', 'W', 'I', 'D', 'V' or 'C' (config).
+  /// @param tag The line's tag.
+  /// @param format The line's format string, unformatted.
+  virtual void record(char level, const char *tag, const char *format) = 0;
+};
+
+/// The installed recorder, or nullptr.
+inline Recorder *&recorder() {
+  static Recorder *installed = nullptr;
+  return installed;
+}
+
+/// Hand one line to the installed recorder, if any.
+inline void record(char level, const char *tag, const char *format) {
+  if (Recorder *installed = recorder())
+    installed->record(level, tag, format);
+}
 }  // namespace host_log_stub
 }  // namespace esphome
 
-#define IOHOME_HOST_LOG_STUB(tag, ...) \
+#define IOHOME_HOST_LOG_STUB(level, tag, format, ...) \
   do { \
+    ::esphome::host_log_stub::record(level, tag, format); \
     if (false) \
-      ::esphome::host_log_stub::sink(tag, __VA_ARGS__); \
+      ::esphome::host_log_stub::sink(tag, format __VA_OPT__(, ) __VA_ARGS__); \
   } while (0)
 
-#define ESP_LOGI(tag, ...) IOHOME_HOST_LOG_STUB(tag, __VA_ARGS__)
-#define ESP_LOGD(tag, ...) IOHOME_HOST_LOG_STUB(tag, __VA_ARGS__)
-#define ESP_LOGV(tag, ...) IOHOME_HOST_LOG_STUB(tag, __VA_ARGS__)
-#define ESP_LOGW(tag, ...) IOHOME_HOST_LOG_STUB(tag, __VA_ARGS__)
-#define ESP_LOGE(tag, ...) IOHOME_HOST_LOG_STUB(tag, __VA_ARGS__)
-#define ESP_LOGCONFIG(tag, ...) IOHOME_HOST_LOG_STUB(tag, __VA_ARGS__)
+#define ESP_LOGI(tag, ...) IOHOME_HOST_LOG_STUB('I', tag, __VA_ARGS__)
+#define ESP_LOGD(tag, ...) IOHOME_HOST_LOG_STUB('D', tag, __VA_ARGS__)
+#define ESP_LOGV(tag, ...) IOHOME_HOST_LOG_STUB('V', tag, __VA_ARGS__)
+#define ESP_LOGW(tag, ...) IOHOME_HOST_LOG_STUB('W', tag, __VA_ARGS__)
+#define ESP_LOGE(tag, ...) IOHOME_HOST_LOG_STUB('E', tag, __VA_ARGS__)
+#define ESP_LOGCONFIG(tag, ...) IOHOME_HOST_LOG_STUB('C', tag, __VA_ARGS__)
 
 // Helper macros used in dump_config()
 #define YESNO(b) ((b) ? "YES" : "NO")

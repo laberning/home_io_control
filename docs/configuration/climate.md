@@ -449,36 +449,56 @@ climate:
 
 Takes `device_id`, `function`, and `value`. It reaches heaters that use the private register protocol
 (`io_subtype: 1`); a plain heater is commanded through the `climate:` entity only. Each function
-writes what it is told, whatever the heater runs. A bare `set_temperature` takes effect without a
-prior `power_on` or mode write (confirmed on an AGILIA IO). `verified` is always `false`: an
+writes what it is told, whatever the heater runs. A bare `set_comfort_setpoint` takes effect without a
+prior mode write (confirmed on an AGILIA IO). `verified` is always `false`: an
 acknowledged write means the heater took the frame, and the climate entity reads the register back to
 show the result.
 
+A function is named after the register it runs: `set_` plus the register's name for a register the
+action writes, `read_` plus the name for one it reads. The name is also the register's label in the
+device log.
+
 | `function` | `value` | Effect |
 |---|---|---|
-| `power_on` | *(ignored)* | Wake / retrieve paired devices. |
-| `set_temperature` | float °C, `7.0`–`28.0` | Setpoint (the comfort temperature, register `0x0103`), written whatever the heater runs. |
-| `set_derogation` | float °C, `7.0`–`28.0`, or `0` | A temporary override of the program (register `0x011D`) on a towel dryer or a radiator with a setpoint: it holds until the program's next change; any value that equals zero (`0`, `0.0`) cancels it. Confirmed on a towel dryer in an eco period, `0` included (issue #202); a towel dryer refuses it in a comfort period and a Thermor EMOTION 3 H radiator refuses it (issue #228); experimental on other heaters. See [A target set while the heater's program runs](../heating.md#a-target-set-while-the-heaters-program-runs). Refused on heaters without a program. |
-| `set_mode` | `auto` \| `manual` \| `prog` \| `off` | Operating mode. |
+| `read_paired_devices` | *(ignored)* | Reads the paired-device list (register `0x012C`); the ACK payload is logged at DEBUG. |
+| `set_comfort_setpoint` | float °C, `7.0`–`28.0` | Setpoint (the comfort temperature, register `0x0103`), written whatever the heater runs. |
+| `set_derogated_setpoint` | float °C, `7.0`–`28.0`, or `0` | A temporary override of the program (register `0x011D`) on a towel dryer or a radiator with a setpoint: it holds until the program's next change; any value that equals zero (`0`, `0.0`) cancels it. Confirmed on a towel dryer in an eco period, `0` included (issue #202); a towel dryer refuses it in a comfort period and a Thermor EMOTION 3 H radiator refuses it (issue #228); experimental on other heaters. See [A target set while the heater's program runs](../heating.md#a-target-set-while-the-heaters-program-runs). Refused on heaters without a program. |
+| `set_operating_mode` | `auto` \| `manual` \| `prog` \| `off` | Operating mode. |
 | `set_presence` | `on` \| `off` | Presence / absence (register `0x0110`). The AGILIA IO acknowledges it; no visible effect observed. A Sauter Hekla reports detected presence in the same register, which the `occupancy:` sensor shows. |
 | `set_open_window_detection` | `on` \| `off` | Switches the heater's open-window detection on or off (register `0x0106`). |
-| `window_open` | *(ignored)* | Reads the heater's window sensor (register `0x010E`) and reports `window open` or `window closed` in the result `message`. |
-| `midnight_sync` | *(ignored)* | Reads register `0x0130` (the comfort/eco/auto setpoint block). Despite the name, the payload is a `0x60` **read**, not a clock-set — the device's clock register is `0x010F` and this component never writes it. Provided for protocol exploration; the ACK payload is logged at DEBUG. |
+| `read_window_open` | *(ignored)* | Reads the heater's window sensor (register `0x010E`) and reports `window open` or `window closed` in the result `message`. |
+| `read_setpoint_block` | *(ignored)* | Reads register `0x0130` (the comfort/eco/auto setpoint block). The payload is a `0x60` **read**; the device's clock register is `0x010F` and this component never writes it. Provided for protocol exploration; the ACK payload is logged at DEBUG. |
 
 ```yaml
 action: esphome.hioc_heltec_v2_heating_control
 data:
   device_id: "FEEB22"
-  function: set_temperature
+  function: set_comfort_setpoint
   value: "20.5"
 ```
 
 An unknown function, an out-of-range temperature, or a non-climate `device_id` is reported in the
 result event's `message` and nothing is transmitted. A `CMD_ERROR_RESP` from the device surfaces
-its decoded result code in `result_code` / `result_code_name`. For `power_on` and `midnight_sync`
-(which are register reads) the `0x21` ACK payload is written to the DEBUG log — a `midnight_sync`
+its decoded result code in `result_code` / `result_code_name`. For `read_paired_devices` and
+`read_setpoint_block` the `0x21` ACK payload is written to the DEBUG log; a `read_setpoint_block`
 read returns the ~17-byte setpoint block, which can help settle the 25.5-vs-28 °C question on real
 hardware.
+
+### Old function names
+
+The old names still work and send the same frames. Each call that uses one logs a warning and ends
+the result event's `message` with the new name. The old names stop working after January 2027
+([ADR 0109](../adr/0109-an-action-function-is-retired-in-two-stages.md)); change your automations to
+the new ones before then.
+
+| Old name | New name |
+|---|---|
+| `power_on` | `read_paired_devices` |
+| `set_temperature` | `set_comfort_setpoint` |
+| `set_mode` | `set_operating_mode` |
+| `set_derogation` | `set_derogated_setpoint` |
+| `midnight_sync` | `read_setpoint_block` |
+| `window_open` | `read_window_open` |
 
 ## See also
 

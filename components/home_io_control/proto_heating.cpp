@@ -56,11 +56,13 @@ using HeatingValueRefusal = bool (*)(float value);
 /// codec, `max_value`, `write_range` and `refuses` say which values a write may carry, and every caller asks
 /// heating_write_accepts() instead of keeping a bound of its own.
 struct DeviceRegisterRow {
-  const char *action_name;  ///< The name the `heating_control` action takes and the label of the register in logs.
-  DeviceRegister fn;        ///< Function this row describes.
-  uint8_t register_low;     ///< Payload byte 3: low byte of the register number.
-  HeatingAccess access;     ///< Whether the register may be read, written or both.
-  ValueCodec codec;         ///< How the value maps onto the trailing bytes.
+  /// The register's name: its DeviceRegister enumerator in lower case. It is the register's label in logs and the
+  /// stem of the function name the `heating_control` action takes ("set_" or "read_" + name); a sync test checks it.
+  const char *name;
+  DeviceRegister fn;     ///< Function this row describes.
+  uint8_t register_low;  ///< Payload byte 3: low byte of the register number.
+  HeatingAccess access;  ///< Whether the register may be read, written or both.
+  ValueCodec codec;      ///< How the value maps onto the trailing bytes.
   /// BOUNDED_BYTE, BOUNDED_U16, SCALED_U16: highest value a reply may carry and a write may send.
   uint16_t max_value{0};
   /// Payload byte 2: the register's family, the high byte of its number. The family does not say how a multi-byte
@@ -73,9 +75,9 @@ struct DeviceRegisterRow {
   // initializer before a row may leave the field out.
   std::optional<ValueRange> write_range{};  ///< Tenths registers: the values a write may carry.
   HeatingValueRefusal refuses{nullptr};     ///< A value the register refuses although the codec holds it.
-  /// The `heating_control` action offers this function under `action_name`. The label names the value in the action's
-  /// messages ("temperature", "mode"); "" for a function that takes no value (a read). nullptr: not a function of
-  /// the action.
+  /// The `heating_control` action offers this function (see heating_action_function_name()). The label names the value
+  /// in the action's messages ("temperature", "mode"); "" for a function that takes no value (a read). nullptr: not a
+  /// function of the action.
   const char *action_value_label{nullptr};
   std::span<const ValueScaleKnot> scale{};  ///< SCALED_U16: the scale from the natural value to the register value.
   // NOLINTEND(readability-redundant-member-init)
@@ -90,20 +92,20 @@ bool refuses_unwritable_mode(float value) {
 }
 
 constexpr DeviceRegisterRow DEVICE_REGISTERS[] = {
-    {.action_name = "power_on",
+    {.name = "paired_devices",
      .fn = DeviceRegister::PAIRED_DEVICES,
      .register_low = 0x2C,
      .access = HeatingAccess::READ_ONLY,
      .codec = ValueCodec::NONE,
      .action_value_label = ""},
-    {.action_name = "set_temperature",
+    {.name = "comfort_setpoint",
      .fn = DeviceRegister::COMFORT_SETPOINT,
      .register_low = 0x03,
      .access = HeatingAccess::READ_WRITE,
      .codec = ValueCodec::TENTHS_U16,
      .write_range = ValueRange{HEATING_TEMP_MIN_C, HEATING_TEMP_MAX_C},
      .action_value_label = "temperature"},
-    {.action_name = "set_mode",
+    {.name = "operating_mode",
      .fn = DeviceRegister::OPERATING_MODE,
      .register_low = 0x00,
      .access = HeatingAccess::READ_WRITE,
@@ -112,19 +114,19 @@ constexpr DeviceRegisterRow DEVICE_REGISTERS[] = {
      .refuses = refuses_unwritable_mode,
      .action_value_label = "mode"},
     // 0x0110 is written by a controller to say someone is there; a Sauter Hekla reports detected presence in it.
-    {.action_name = "set_presence",
+    {.name = "presence",
      .fn = DeviceRegister::PRESENCE,
      .register_low = 0x10,
      .access = HeatingAccess::READ_WRITE,
      .codec = ValueCodec::BINARY,
      .action_value_label = "presence"},
-    {.action_name = "set_open_window_detection",
+    {.name = "open_window_detection",
      .fn = DeviceRegister::OPEN_WINDOW_DETECTION,
      .register_low = 0x06,
      .access = HeatingAccess::READ_WRITE,
      .codec = ValueCodec::BINARY,
      .action_value_label = "open-window detection"},
-    {.action_name = "midnight_sync",
+    {.name = "setpoint_block",
      .fn = DeviceRegister::SETPOINT_BLOCK,
      .register_low = 0x30,
      .access = HeatingAccess::READ_ONLY,
@@ -134,7 +136,7 @@ constexpr DeviceRegisterRow DEVICE_REGISTERS[] = {
     {"regulator_state", DeviceRegister::REGULATOR_STATE, 0x17, HeatingAccess::READ_ONLY, ValueCodec::BOUNDED_BYTE,
      REGULATOR_STATE_MAX},
     {"max_setpoint", DeviceRegister::MAX_SETPOINT, 0x02, HeatingAccess::READ_ONLY, ValueCodec::TENTHS_U16},
-    {.action_name = "window_open",
+    {.name = "window_open",
      .fn = DeviceRegister::WINDOW_OPEN,
      .register_low = 0x0E,
      .access = HeatingAccess::READ_ONLY,
@@ -151,11 +153,11 @@ constexpr DeviceRegisterRow DEVICE_REGISTERS[] = {
      WORKING_RATE_MAX},
     // Read on a towel dryer in a programme period (issue #202): the temperature in force in 0x0137 and the
     // eco setback in 0x0104.
-    {"temperature_in_force", DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, 0x37, HeatingAccess::READ_ONLY,
+    {"towel_temperature_in_force", DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE, 0x37, HeatingAccess::READ_ONLY,
      ValueCodec::TENTHS_U16},
     {"eco_setback", DeviceRegister::ECO_SETBACK, 0x04, HeatingAccess::READ_ONLY, ValueCodec::TENTHS_U16},
     // Read during a panel override on a towel dryer (issue #202): 16.5 degrees, 0 otherwise.
-    {.action_name = "set_derogation",
+    {.name = "derogated_setpoint",
      .fn = DeviceRegister::DEROGATED_SETPOINT,
      .register_low = 0x1D,
      .access = HeatingAccess::READ_WRITE,
@@ -163,12 +165,12 @@ constexpr DeviceRegisterRow DEVICE_REGISTERS[] = {
      .write_range = ValueRange{HEATING_TEMP_MIN_C, HEATING_TEMP_MAX_C},
      .action_value_label = "temperature"},
     // Not read on any radiator yet; the same temperature as 0x0137 on a towel dryer, which read it in both.
-    {"heater_temperature_in_force", DeviceRegister::TEMPERATURE_IN_FORCE, 0x2A, HeatingAccess::READ_ONLY,
+    {"temperature_in_force", DeviceRegister::TEMPERATURE_IN_FORCE, 0x2A, HeatingAccess::READ_ONLY,
      ValueCodec::TENTHS_U16},
     // Night light registers: read on a Sauter Hekla with the light on and off (issue #222).
     {"night_light", DeviceRegister::NIGHT_LIGHT, 0x44, HeatingAccess::READ_WRITE, ValueCodec::BINARY},
     // Written and read as a percentage: the row's scale maps it to the 0-10000 the register holds.
-    {.action_name = "night_light_brightness",
+    {.name = "night_light_brightness",
      .fn = DeviceRegister::NIGHT_LIGHT_BRIGHTNESS,
      .register_low = 0x42,
      .access = HeatingAccess::READ_WRITE,
@@ -192,13 +194,13 @@ constexpr DeviceRegisterRow DEVICE_REGISTERS[] = {
      ValueCodec::FIRST_BYTE_OF_PAIR},
     // A water heater's registers, family 0x00, read on one Atlantic Calypso Connecte (issue #198). Their names are the
     // log labels of the reads. The mode write and the duration writes are confirmed by the owner of that heater.
-    {.action_name = "dhw_water_temperature",
+    {.name = "dhw_water_temperature",
      .fn = DeviceRegister::DHW_WATER_TEMPERATURE,
      .register_low = 0x17,
      .access = HeatingAccess::READ_ONLY,
      .codec = ValueCodec::TENTHS_S16_BE,
      .register_high = DHW_REGISTER_HIGH_BYTE},
-    {.action_name = "dhw_mode",
+    {.name = "dhw_mode",
      .fn = DeviceRegister::DHW_MODE,
      .register_low = 0x06,
      .access = HeatingAccess::READ_WRITE,
@@ -206,39 +208,53 @@ constexpr DeviceRegisterRow DEVICE_REGISTERS[] = {
      .max_value = DHW_MODE_MAX,
      .register_high = DHW_REGISTER_HIGH_BYTE},
     // Typed by the readings that are slices of it (proto_device_readings.h), not as one value.
-    {.action_name = "dhw_heating",
+    {.name = "dhw_heating",
      .fn = DeviceRegister::DHW_HEATING,
      .register_low = 0x21,
      .access = HeatingAccess::READ_ONLY,
      .codec = ValueCodec::NONE,
      .register_high = DHW_REGISTER_HIGH_BYTE},
-    {.action_name = "dhw_boost_duration",
+    {.name = "dhw_boost_duration",
      .fn = DeviceRegister::DHW_BOOST_DURATION,
      .register_low = 0x00,
      .access = HeatingAccess::READ_WRITE,
      .codec = ValueCodec::BOUNDED_BYTE,
      .max_value = VALUE_BYTE_MAX,
      .register_high = DHW_REGISTER_HIGH_BYTE},
-    {.action_name = "dhw_away_duration",
+    {.name = "dhw_away_duration",
      .fn = DeviceRegister::DHW_AWAY_DURATION,
      .register_low = 0x05,
      .access = HeatingAccess::READ_WRITE,
      .codec = ValueCodec::BOUNDED_BYTE,
      .max_value = VALUE_BYTE_MAX,
      .register_high = DHW_REGISTER_HIGH_BYTE},
-    {.action_name = "dhw_energy",
+    {.name = "dhw_energy",
      .fn = DeviceRegister::DHW_ENERGY,
      .register_low = 0x04,
      .access = HeatingAccess::READ_ONLY,
      .codec = ValueCodec::THOUSANDTHS_U32_BE,
      .register_high = DHW_REGISTER_HIGH_BYTE},
-    {.action_name = "dhw_brand",
+    {.name = "dhw_brand",
      .fn = DeviceRegister::DHW_BRAND,
      .register_low = 0x07,
      .access = HeatingAccess::READ_ONLY,
      .codec = ValueCodec::BOUNDED_BYTE,
      .max_value = VALUE_BYTE_MAX,
      .register_high = DHW_REGISTER_HIGH_BYTE},
+};
+
+/// @brief A function name the `heating_control` action still accepts for a function it now offers under another.
+struct DeprecatedHeatingFunction {
+  const char *old_name;  ///< The retired function name.
+  DeviceRegister fn;     ///< The function it runs; its current name is heating_action_function_name(fn).
+};
+
+/// The retired function names of the `heating_control` action, kept for the first stage of ADR 0109: each still
+/// works and every call that uses one is reported as deprecated.
+constexpr DeprecatedHeatingFunction DEPRECATED_HEATING_FUNCTIONS[] = {
+    {"power_on", DeviceRegister::PAIRED_DEVICES},      {"set_temperature", DeviceRegister::COMFORT_SETPOINT},
+    {"set_mode", DeviceRegister::OPERATING_MODE},      {"set_derogation", DeviceRegister::DEROGATED_SETPOINT},
+    {"midnight_sync", DeviceRegister::SETPOINT_BLOCK}, {"window_open", DeviceRegister::WINDOW_OPEN},
 };
 
 /// @brief Look up the descriptor for a function.
@@ -266,7 +282,7 @@ ValueForm form_of(const DeviceRegisterRow &d) {
 
 const char *device_register_name(DeviceRegister fn) {
   const DeviceRegisterRow *d = descriptor_for(fn);
-  return d != nullptr ? d->action_name : "unknown";
+  return d != nullptr ? d->name : "unknown";
 }
 
 bool device_register_is_writable(DeviceRegister fn) {
@@ -366,10 +382,21 @@ std::string heating_writable_mode_names() {
   return names;
 }
 
-std::optional<DeviceRegister> heating_action_function(std::string_view name) {
+std::string heating_action_function_name(DeviceRegister fn) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
+  if (d == nullptr || d->action_value_label == nullptr)
+    return "";
+  return std::string(d->access == HeatingAccess::READ_ONLY ? "read_" : "set_") + d->name;
+}
+
+std::optional<HeatingActionFunction> heating_action_function(std::string_view name) {
   for (const auto &d : DEVICE_REGISTERS) {
-    if (d.action_value_label != nullptr && name == d.action_name)
-      return d.fn;
+    if (d.action_value_label != nullptr && name == heating_action_function_name(d.fn))
+      return HeatingActionFunction{.fn = d.fn};
+  }
+  for (const auto &alias : DEPRECATED_HEATING_FUNCTIONS) {
+    if (name == alias.old_name)
+      return HeatingActionFunction{.fn = alias.fn, .replaced_name = alias.old_name};
   }
   return std::nullopt;
 }
