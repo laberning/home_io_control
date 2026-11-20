@@ -286,3 +286,13 @@ water_heater:
       name: "Test Hot Water Heating Source"
     boost:
       name: "Test Hot Water Boost"
+  # An Atlantic Explorer V4 reports the same type and subtype; io_model selects its 20..70 C target and how it
+  # reports boost and away (ADR 0110).
+  - platform: home_io_control
+    name: "Test Explorer V4"
+    io_device_id: "FEEB2C"
+    io_device_type: "domestic_hot_water"
+    io_subtype: 0
+    io_model: explorer_v4
+    boost:
+      name: "Test Explorer V4 Boost"

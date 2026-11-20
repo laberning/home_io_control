@@ -58,6 +58,13 @@ static constexpr float DHW_TARGET_MIN_C = 20.0F;
 /// @brief Upper end of the Atlantic Calypso's target scale: main parameter 0xC800 is 62 C, the highest target its
 /// display offers.
 static constexpr float DHW_TARGET_MAX_C = 62.0F;
+/// @brief Upper end of the Atlantic Explorer V4's target scale (the row with DeviceFeature::HOT_WATER_TARGET_20_70):
+/// main parameter 0xC800 is 70 C. Its lower end is the Calypso's: 7C00 reads 51 C, 8C00 55 C and 9C00 59 C on its
+/// display (pull request #246).
+static constexpr float DHW_EXPLORER_V4_TARGET_MAX_C = 70.0F;
+/// @brief Step of the Atlantic Explorer V4's target: it answers a target between two whole degrees with result code
+/// 10 and rounds it, so the hub sends whole degrees only.
+static constexpr float DHW_EXPLORER_V4_TARGET_STEP_C = 1.0F;
 
 // === Operating mode (functional parameters 15 and 16) ===
 
@@ -90,6 +97,12 @@ static constexpr uint16_t DHW_CAPABILITY_BOOST = 1U << 3U;
 static constexpr uint8_t DHW_FP16_BOOST_SHIFT = 8;
 /// @brief Lowest bit of the away (absence) field of FP16: bits 10-11.
 static constexpr uint8_t DHW_FP16_AWAY_SHIFT = 10;
+/// @brief Boost field of FP16 during a boost on an Atlantic Explorer V4: it reports 4A00 then and 4900 at rest, the
+/// Calypso's words the other way round (pull request #246).
+static constexpr uint8_t DHW_EXPLORER_V4_BOOST_FIELD = 2;
+/// @brief Main parameter an Atlantic Explorer V4 reports while away: its FP16 stays 4900, so this is the only sign
+/// (pull request #246).
+static constexpr uint16_t DHW_EXPLORER_V4_AWAY_MAIN_PARAMETER = 0x0000;
 
 // === Value shapes ===
 

@@ -199,16 +199,18 @@ TEST(DeviceReadingStore, ARegisterIsKeptAskedAndAbsentThroughItsReading) {
 
 // === The table ===
 
-TEST(DeviceReadings, EveryReadingHasExactlyOneRowAndAUniqueName) {
-  std::set<std::string> names;
+TEST(DeviceReadings, EveryReadingHasARowAndEveryRowAUniqueName) {
+  // A reading may have several rows, one per member of a capability group (ADR 0110); the group tests in
+  // device_value_write_test.cpp check that exactly one applies to a device.
   for (unsigned i = 0; i < static_cast<unsigned>(DeviceReading::COUNT); i++) {
     const auto reading = static_cast<DeviceReading>(i);
     const DeviceReadingRow *row = find_device_reading(reading);
     ASSERT_NE(row, nullptr) << i;
     EXPECT_EQ(row->reading, reading);
-    EXPECT_TRUE(names.insert(row->name).second) << row->name << " is named twice";
   }
-  EXPECT_EQ(device_readings().size(), static_cast<size_t>(DeviceReading::COUNT));
+  std::set<std::string> names;
+  for (const DeviceReadingRow &row : device_readings())
+    EXPECT_TRUE(names.insert(row.name).second) << row.name << " is named twice";
   EXPECT_EQ(find_device_reading(DeviceReading::COUNT), nullptr);
 }
 
@@ -524,14 +526,17 @@ TEST(DeviceReadings, AReadingsValueKindFollowsItsCodecOrNames) {
     }
     const auto *source = std::get_if<RegisterSource>(&row.source);
     const auto *parameter = std::get_if<StatusFunctionalParameterSource>(&row.source);
+    const auto *main = std::get_if<StatusMainParameterSource>(&row.source);
     const auto *derived = std::get_if<DerivedSource>(&row.source);
-    // A flag is a register read as a flag, a part of a register read as one, a field of a status parameter, a derived
-    // reading that says so, or the answer to a limitation read (the rain flag).
+    // A flag is a register read as a flag, a part of a register read as one, a field of a status parameter, a main
+    // parameter that equals a value, a derived reading that says so, or the answer to a limitation read (the rain
+    // flag).
     const ValueCodec codec = source == nullptr ? ValueCodec::NONE
                              : source->part    ? source->part->codec
                                                : device_register_codec(source->fn);
     const bool flag = codec == ValueCodec::BINARY || codec == ValueCodec::ANY_NONZERO ||
                       (parameter != nullptr && parameter->form == StatusParameterForm::FIELD_EQUALS) ||
+                      (main != nullptr && main->form == StatusValueForm::EQUALS) ||
                       (derived != nullptr && derived->codec == ValueCodec::BINARY) ||
                       std::holds_alternative<LimitationSource>(row.source);
     EXPECT_EQ(reading_value_kind(row), flag ? ReadingValueKind::FLAG : ReadingValueKind::NUMBER) << row.name;

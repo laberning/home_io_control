@@ -1,4 +1,4 @@
-# expect-error: Unknown io_model 'radiator'; known models: heater_with_light, pilot_wire_interface, towel_dryer
+# expect-error: Unknown io_model 'radiator'; known models: explorer_v4, heater_with_light, pilot_wire_interface, towel_dryer
 # covers: hub_validators.validate_device_model_name
 packages:
   common: !include ../_common.yaml

@@ -124,3 +124,32 @@ TEST(HeaterStatusDecoding, TheAckOfAnExecuteIsNotDecodedAndANonTemperatureLeaves
   apply_dhw_status_reply("ABC123", dev, frame, true);
   EXPECT_TRUE(std::isnan(test::water_heater_values(dev).target_c)) << "an alias is not a target temperature";
 }
+
+TEST(HeaterStatusDecoding, AnExplorerV4ReadsAwayFromItsMainParameterAndBoostFromItsOwnField) {
+  IoDevice dev;
+  test::set_kind(dev, DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::EXPLORER_V4);
+  // The poll's status reads as the heater answered them (pull request #246): FP10, FP15 800C and FP16 follow the
+  // main parameter.
+  const auto reply = [](uint8_t mp_high, uint8_t fp16_high) {
+    return test::make_payload_frame(CMD_PRIVATE_RESP, {0x05, 0x00, mp_high, 0x00, DHW_STATUS_FPI1, DHW_STATUS_FPI2,
+                                                       0x00, 0x00, 0x80, 0x0C, fp16_high, 0x00});
+  };
+
+  // Away: main parameter 0000, FP16 4900 as at rest.
+  test::apply_status_reply(dev, reply(0x00, 0x49));
+  EXPECT_EQ(test::water_heater_values(dev).away, 1);
+  EXPECT_EQ(test::water_heater_values(dev).boost, 0);
+  EXPECT_FLOAT_EQ(test::water_heater_values(dev).target_c, 20.0F) << "what the heater reports; the card hides it";
+
+  // A boost: the 62 C it heats to, FP16 4A00.
+  test::apply_status_reply(dev, reply(0xA8, 0x4A));
+  EXPECT_EQ(test::water_heater_values(dev).away, 0);
+  EXPECT_EQ(test::water_heater_values(dev).boost, 1);
+  EXPECT_FLOAT_EQ(test::water_heater_values(dev).target_c, 62.0F);
+
+  // At rest: its 55 C target, FP16 4900.
+  test::apply_status_reply(dev, reply(0x8C, 0x49));
+  EXPECT_EQ(test::water_heater_values(dev).away, 0);
+  EXPECT_EQ(test::water_heater_values(dev).boost, 0);
+  EXPECT_FLOAT_EQ(test::water_heater_values(dev).target_c, 55.0F);
+}

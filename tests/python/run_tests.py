@@ -1526,6 +1526,11 @@ def a_model_row_is_offered_only_by_its_kind_and_replaces_its_word():
     assert towel == 1
     assert v.device_models(t["electrical_heater"], 1) == ["heater_with_light", "towel_dryer"]
     assert v.device_models(t["electrical_heater"], 0) == ["pilot_wire_interface"]
+    assert v.device_models(t["domestic_hot_water"], 0) == ["explorer_v4"]
+    explorer = v.DEVICE_MODEL_OPTIONS["explorer_v4"]
+    assert v.device_features(t["domestic_hot_water"], 0, explorer) == {
+        "WATER_HEATER", "HOT_WATER_TARGET_20_70", "HOT_WATER_BOOST_FP16_INVERTED", "HOT_WATER_AWAY_MAIN_PARAMETER",
+        "HOT_WATER_REGISTERS_CALYPSO", "HOT_WATER_OPERATING_MODE_WORD"}
     assert v.device_models(t["roller_shutter"]) == []
     assert v.device_models(0x14, 1) == [], "a raw type with no name has no models"
     assert "WINDOW_COMPANIONS" not in v.device_features(t["electrical_heater"], 1, towel)

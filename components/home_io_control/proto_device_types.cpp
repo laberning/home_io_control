@@ -232,6 +232,15 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
      device_feature::WATER_HEATER | device_feature::HOT_WATER_TARGET_20_62 | device_feature::HOT_WATER_BOOST_FP16 |
          device_feature::HOT_WATER_AWAY_FP16 | device_feature::HOT_WATER_REGISTERS_CALYPSO |
          device_feature::HOT_WATER_OPERATING_MODE_WORD},
+    // An Atlantic Explorer V4 reports the same 51/0, name and brand as the Calypso (pull request #246), so it is a
+    // model row: the YAML declares it (`io_model: explorer_v4`). It answers the Calypso's registers and operating-mode
+    // word, but its target runs to 70 C, its boost field reads the other way round and it shows away in the main
+    // parameter only.
+    {DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::EXPLORER_V4, "explorer_v4", CAP_WATER_HEATER,
+     SELECTABLE_PLATFORM | EXPERIMENTAL,
+     device_feature::WATER_HEATER | device_feature::HOT_WATER_TARGET_20_70 |
+         device_feature::HOT_WATER_BOOST_FP16_INVERTED | device_feature::HOT_WATER_AWAY_MAIN_PARAMETER |
+         device_feature::HOT_WATER_REGISTERS_CALYPSO | device_feature::HOT_WATER_OPERATING_MODE_WORD},
 
     // Both rows have a heating profile (proto_heating_profiles.cpp): the plain heater is commanded with
     // heating levels in the standard EXECUTE, the one with an adjustable setpoint over the private
