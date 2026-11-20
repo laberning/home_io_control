@@ -1551,10 +1551,11 @@ def experimental_kinds_are_marked_in_the_mirror_and_warned_about_once_at_config_
 
     t = v.DEVICE_TYPE_OPTIONS
     assert isinstance(v.EXPERIMENTAL_KINDS, frozenset)
-    assert v.kind_is_experimental(t["gate_opener"], 58)
     assert v.kind_is_experimental(t["swinging_shutter"], 58)
+    assert not v.kind_is_experimental(t["gate_opener"], 58), "7/58 is reported working by issue #244"
     assert v.kind_is_experimental(t["light"], 1)
     assert v.kind_is_experimental(t["heat_pump"], 2), "a row with no capability is marked by the flag alone"
+    assert not v.kind_is_experimental(t["heat_pump"], 1), "22/1 is confirmed by issue #244"
     assert not v.kind_is_experimental(t["garage_opener"], 58), "5/58 is confirmed by issue #163"
     assert not v.kind_is_experimental(t["gate_opener"])
     assert not v.kind_is_experimental(t["sliding_window"], 9), "a subtype with no row behaves like its type"
@@ -1579,9 +1580,9 @@ def experimental_kinds_are_marked_in_the_mirror_and_warned_about_once_at_config_
             p._LOGGER.removeHandler(capture)
         return capture.messages
 
-    messages = warnings_for({"io_device_type": t["gate_opener"], "io_subtype": 58})
+    messages = warnings_for({"io_device_type": t["swinging_shutter"], "io_subtype": 58})
     assert len(messages) == 1, messages
-    assert "gate_opener (io_subtype 58)" in messages[0]
+    assert "swinging_shutter (io_subtype 58)" in messages[0]
     assert "not yet confirmed on a real device" in messages[0]
     assert "contributing.html#reporting-unsupported-devices" in messages[0]
     assert len(warnings_for({"io_device_type": t["light"], "io_subtype": 2})) == 1

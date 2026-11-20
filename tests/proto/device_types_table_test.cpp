@@ -470,11 +470,9 @@ TEST(DeviceTypesTableExperimental, ExactlyTheRowsNoCaptureOrReportConfirmsAreFla
   const std::set<std::pair<DeviceType, uint8_t>> expected = {
       {DeviceType::LIGHT, 1},
       {DeviceType::LIGHT, 2},
-      {DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY},
       {DeviceType::LOCK, 1},
       {DeviceType::LOCK, 2},
       {DeviceType::ON_OFF_SWITCH, 2},
-      {DeviceType::HEAT_PUMP, 1},
       {DeviceType::HEAT_PUMP, 2},
       {DeviceType::SWINGING_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY},
       {DeviceType::SLIDING_WINDOW, 1},
@@ -504,8 +502,10 @@ TEST(DeviceTypesTableExperimental, AnExperimentalTypeRowFlagsOnlyItself) {
 }
 
 TEST(DeviceTypesTableExperimental, TheLookupFlagsOnlyAnExactRow) {
-  EXPECT_TRUE(device_is_experimental(DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY));
+  EXPECT_TRUE(device_is_experimental(DeviceType::SWINGING_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY));
   EXPECT_TRUE(device_is_experimental(DeviceType::LIGHT, 1));
+  EXPECT_FALSE(device_is_experimental(DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY))
+      << "7/58 is reported working by issue #244";
   EXPECT_FALSE(device_is_experimental(DeviceType::GARAGE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY))
       << "5/58 is confirmed by issue #163";
   EXPECT_FALSE(device_is_experimental(DeviceType::GATE_OPENER, 0));

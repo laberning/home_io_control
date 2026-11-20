@@ -103,7 +103,7 @@ constexpr size_t TYPE_HEX_BUFFER_SIZE = 24;  ///< "unknown type 0x3FF" plus marg
 /// platform (ventilation point, heating interface) is a statement about the device, not a promise.
 ///
 /// Rows that no capture or report has confirmed yet carry device_type_flags::EXPERIMENTAL: the 6/1,
-/// 6/2, 7/58, 9/1, 9/2, 15/2, 22/1, 22/2, 24/58, 27/1 and 1023/2..5 subtype rows. Discovery and pairing
+/// 6/2, 9/1, 9/2, 15/2, 22/2, 24/58, 27/1 and 1023/2..5 subtype rows. Discovery and pairing
 /// log them as experimental and the codegen warns when a config declares one. The flag leaves with the
 /// \todo that names a row once a capture or a reporter confirms it. Rows 1, 10 and 13 are not flagged:
 /// their changed behaviour is experimental, their identity is not. The 51/0 type row is the one type row
@@ -111,7 +111,7 @@ constexpr size_t TYPE_HEX_BUFFER_SIZE = 24;  ///< "unknown type 0x3FF" plus marg
 /// is what makes the codegen warn a user of any other water heater. The flag names its row only: a
 /// subtype without a row of its own does not inherit it (device_is_experimental(), and the Python mirror).
 /// \todo Confirm 6/1 and 6/2 accept the brightness EXECUTE on a real device.
-/// \todo Confirm the 15/2, 9/1, 9/2, 22/x, 7/58, 24/58, 27/1 and 1023/2..5 subtype rows against a capture.
+/// \todo Confirm the 15/2, 9/1, 9/2, 22/2, 24/58, 27/1 and 1023/2..5 subtype rows against a capture.
 constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::UNKNOWN, 0, NO_MODEL, "unknown", CAP_NONE, YAML_SELECTABLE, NO_FEATURES},
 
@@ -142,11 +142,12 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
      main_parameter_only_variant(BINARY_COMMAND)},
 
     {DeviceType::GATE_OPENER, 0, NO_MODEL, "gate_opener", CAP_COVER, SELECTABLE_PLATFORM, GATE},
+    // Open, close and stop are reported working on a Somfy Elixo 3S io swing gate opener (issue #244).
     // \todo Confirm on a real 7/58 gate opener that intermediate positions are refused and whether the
-    //       favourite is accepted; inferred from the shared subtype-58 definition and the 5/58 opener of
-    //       issue #163 (experimental).
-    {DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY, NO_MODEL, "open/close only", CAP_COVER,
-     EXPERIMENTAL_SUBTYPE_PLATFORM, main_parameter_only_variant(GATE)},
+    //       favourite and the pedestrian position are accepted; inferred from the shared subtype-58
+    //       definition and the 5/58 opener of issue #163.
+    {DeviceType::GATE_OPENER, SUBTYPE_MAIN_PARAMETER_ONLY, NO_MODEL, "open/close only", CAP_COVER, SUBTYPE_PLATFORM,
+     main_parameter_only_variant(GATE)},
 
     {DeviceType::ROLLING_DOOR_OPENER, 0, NO_MODEL, "rolling_door_opener", CAP_COVER, SELECTABLE_PLATFORM, COVER},
 
@@ -197,7 +198,7 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // The two Atlantic profiles use a different private register family from the electrical
     // heater's, so the heating payloads must not be sent to them: no climate class. The heat pump keeps its
     // values in a data object and is never sent a status read (issue #244).
-    {DeviceType::HEAT_PUMP, 1, NO_MODEL, "heat pump (Atlantic)", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME,
+    {DeviceType::HEAT_PUMP, 1, NO_MODEL, "heat pump (Atlantic)", CAP_NONE, STANDALONE_NAME,
      device_feature::HEAT_PUMP_ENERGY | device_feature::HEAT_PUMP_OUTDOOR_TEMPERATURE | device_feature::NO_STATUS_READ},
     {DeviceType::HEAT_PUMP, 2, NO_MODEL, "boiler (Atlantic)", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME, NO_FEATURES},
 

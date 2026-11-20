@@ -179,9 +179,12 @@ data:
 ```
 
 The result carries the object id, the transfer's length and the bytes in `response_hex`; the log prints
-them 24 bytes to a line. The probe stops without reading when the device answers with an error, refuses
-the open, reports a length of 0, or announces more than 432 bytes. It never writes to the device and
-never changes the device's state in Home Assistant.
+them 24 bytes to a line. The message also shows the raw answer to the open (`hex=`). For a row that opens
+twice, such as row `30`, that is the answer to the last open the device answered: normally the second open,
+the one that gives the data, and the empty answer to the first open only when the second goes unanswered.
+The probe stops without reading when the device answers with an error, refuses the open, reports a length
+of 0, or announces more than 432 bytes. It never writes to the device and never changes the device's state
+in Home Assistant.
 
 A device serves one transfer at a time. While the hub is reading a data object of the same device on its
 schedule, the probe refuses with `a scheduled read of this device is in progress, try again in a moment` and

@@ -25,7 +25,7 @@ The keys every entity platform shares — `name`, `io_device_id`, `io_device_typ
 `status_poll_interval`, `low_power`, `linked_remotes`, `home_io_control_id` — are documented in
 [the configuration reference](index.md). The options below are the cover's own.
 
-A cover whose declared kind no capture or report has confirmed on a real device (a gate opener or swinging
+A cover whose declared kind no capture or report has confirmed on a real device (a swinging
 shutter of subtype 58, a sliding window with a lock) logs one warning when the config is built. The config is
 accepted and the cover is created; the warning asks you to
 [report what happens](../contributing.md#reporting-unsupported-devices).
@@ -115,9 +115,12 @@ door does not move (issue #163, corpus
 - has no Favorite Position button when it is a garage opener, and takes no `silent:` or
   `travel_speed:` key.
 
-Subtype 58 on a gate opener or a swinging shutter is inferred from the garage opener's behaviour
-and the shared subtype definition, so it is experimental: the Favorite Position button stays and
-is sent, and a motor without a favorite position answers `PARAMETER_UNKNOWN` and does not move.
+Open, close and stop work on a Somfy Elixo 3S io swing gate opener of subtype 58 (issue #244). That
+a gate opener of subtype 58 refuses a percentage, and how it takes the favorite position, is
+inferred from the garage opener's behaviour and the shared subtype definition. Subtype 58 on a
+swinging shutter rests on that inference alone, so it is experimental. On both kinds the Favorite
+Position button stays and is sent, and a motor without a favorite position answers
+`PARAMETER_UNKNOWN` and does not move.
 
 ## Partial and pedestrian position buttons
 

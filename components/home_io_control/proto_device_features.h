@@ -107,7 +107,8 @@ enum class DeviceFeature : uint8_t {
   /// An Atlantic heat pump that keeps its heating and hot-water energy counters, in whole kilowatt-hours, in entries
   /// of its data object (TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP, offsets 0x0023 and 0x0025). Gates the `sensor:`
   /// entry's `heating_energy:` and `hot_water_energy:` keys.
-  /// \todo Experimental: read on one Atlantic Alfea Duo Extensa A.I. (issue #244); confirm on a second model.
+  /// \todo Read on one Atlantic Alfea Duo Extensa A.I. (issue #244, corpus
+  ///       `atlantic_alfea_probe_read_object_heating_energy_sx1276`); confirm on a second model.
   HEAT_PUMP_ENERGY,
   /// An Atlantic heat pump that keeps the outdoor temperature its sensor measures, in tenths of a degree, in an entry
   /// of its data object (TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP, offset 0x019B). Gates the `sensor:` entry's

@@ -7,6 +7,7 @@
 
 #include "entity_helpers.h"
 #include "log_helpers.h"
+#include "proto_codecs.h"
 #include "proto_commands.h"
 #include "proto_device_types.h"
 #include "proto_heating_profiles.h"
@@ -752,8 +753,10 @@ void DiagnosticProbes::read_object_(const IoDevice &dev, const std::string &prob
   TransferSession session(recipe, offset);
   IoFrame request;
   IoFrame reply;
-  IoFrame first_reply;
-  bool have_first_reply = false;
+  // The answer to the last open the device answered: the open that open() and the decoded part describe. With a
+  // recipe of several opens (a prepare open before the data open) it is the data open's answer, not the first one.
+  IoFrame open_reply;
+  bool have_open_reply = false;
   bool first_request = true;
   // Every request after the first waits the transfer gap after the device's last answer (the hub's own exchange
   // has no pause of its own); a blocking loop, as every probe is (ADR 0013).
@@ -764,29 +767,31 @@ void DiagnosticProbes::read_object_(const IoDevice &dev, const std::string &prob
     }
     const RecordedAnswer answer = hub_.exchange(result.device_id, request, reply);
     const bool answered = answer == RecordedAnswer::REPLY;
-    if (answered && !have_first_reply) {
-      first_reply = reply;
-      have_first_reply = true;
+    if (answered && request.cmd == CMD_TRANSFER_OPEN) {
+      open_reply = reply;
+      have_open_reply = true;
     }
     first_request = false;
     session.on_answer(answered ? &reply : nullptr, answer == RecordedAnswer::ACCEPTED_NO_REPLY);
   }
-  if (!have_first_reply) {
+  if (!have_open_reply) {
     result.message = session.outcome() == TransferOutcome::NO_DATA
                          ? "device accepted the probe request but sent no response"
                          : "no reply after " + std::to_string(EXCHANGE_RETRY_COUNT) +
                                " attempts (device asleep, unreachable, or silently ignoring this opcode)";
     return;
   }
-  report_raw_reply_(probe, first_reply, result);
+  report_raw_reply_(probe, open_reply, result);
   // Anything but an open answer (an error frame, say) is already reported above.
-  if (first_reply.cmd != CMD_TRANSFER_OPEN_RESP)
+  if (open_reply.cmd != CMD_TRANSFER_OPEN_RESP)
     return;
-  if (!session.open_answered()) {
+  // Decode the reported answer itself, so the decoded part never describes an earlier open (a well-formed prepare
+  // answer) next to a malformed data-open answer.
+  TransferOpenReply open;
+  if (!decode_transfer_open_reply(open_reply, open)) {
     result.message += " [not a well-formed transfer-open answer]";
     return;
   }
-  const TransferOpenReply &open = session.open();
   const TransferObject &object = recipe.opens.back().object;
   char head[PROBE_READ_OBJECT_HEADER_BUFFER_SIZE];
   snprintf(head, sizeof(head), "object 0x%04X class %u handle 0x%02X status %u length %u",

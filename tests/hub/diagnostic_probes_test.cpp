@@ -1462,6 +1462,51 @@ TEST(HubManagement, ReadObjectTakesAnOptionalOffsetAfterAColonAndReadsAtOffsetZe
   EXPECT_EQ(open[15], 0x00) << "offset 0 in payload bytes 5-6";
 }
 
+TEST(HubManagement, ReadObjectReportsTheAnswerToTheOpenThatGaveTheDataForATwoStepRecipe) {
+  // Row 30 opens twice: a prepare open the device answers empty, then the data open (issue #244). The raw reply in
+  // the message must be the data open's answer, the one the decoded part describes, not the empty first answer.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x00, 0x00, 0x00, 0x00})));
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x2C, 0x01, 0x00, 0x03})));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x2C, 1, 7, 3)));
+  radio.queue_rx(frame_to_packet(make_block(component.node_id_, 0x2C, 0, 0, 0)));
+
+  const auto result = component.management_actions_.probe_device("ABC123", "read_object", "30:0x0023");
+
+  ASSERT_TRUE(result.success) << result.message;
+  ASSERT_EQ(radio.get_sent_data().size(), 4u) << "prepare open, data open, one block, close";
+  EXPECT_NE(result.message.find("47 2C 01 00 03"), std::string::npos) << result.message;
+  EXPECT_EQ(result.message.find("47 00 00 00 00"), std::string::npos)
+      << "the prepare open's empty answer must not be the reported reply: " << result.message;
+  EXPECT_NE(result.message.find("handle 0x2C status 1 length 3"), std::string::npos) << result.message;
+  EXPECT_EQ(result.response_hex, "07 08 09");
+}
+
+TEST(HubManagement, ReadObjectCallsAMalformedDataOpenAnswerMalformedAfterAWellFormedPrepareAnswer) {
+  // The decoded part describes the reported answer only: a well-formed prepare answer must not be decoded next to
+  // the raw bytes of a malformed data-open answer.
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  component.set_diagnostic_probes_enabled(true);
+  radio.queue_rx(
+      frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x00, 0x00, 0x00, 0x00})));
+  radio.queue_rx(frame_to_packet(make_transfer_reply(component.node_id_, CMD_TRANSFER_OPEN_RESP, {0x2C, 0x01})));
+
+  const auto result = component.management_actions_.probe_device("ABC123", "read_object", "30:0x0023");
+
+  ASSERT_EQ(radio.get_sent_data().size(), 2u) << "prepare open and data open; nothing is open to close";
+  EXPECT_NE(result.message.find("47 2C 01"), std::string::npos) << result.message;
+  EXPECT_NE(result.message.find("[not a well-formed transfer-open answer]"), std::string::npos) << result.message;
+  EXPECT_EQ(result.message.find("handle 0x00"), std::string::npos)
+      << "the prepare answer must not be decoded: " << result.message;
+}
+
 TEST(HubManagement, ReadObjectRefusesAnOffsetItsRowDoesNotAllowAndAMalformedOneWithoutTransmitting) {
   TestableManagementComponent component;
   MockRadio radio;

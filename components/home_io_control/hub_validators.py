@@ -434,11 +434,9 @@ EXPERIMENTAL_KINDS = frozenset(
     {
         "light/1",
         "light/2",
-        "gate_opener/58",
         "lock/1",
         "lock/2",
         "on_off_switch/2",
-        "heat_pump/1",
         "heat_pump/2",
         "swinging_shutter/58",
         "sliding_window/1",

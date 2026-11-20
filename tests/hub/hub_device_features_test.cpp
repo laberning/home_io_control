@@ -125,7 +125,8 @@ TEST(HubDeviceFeatures, GarageOpener5_0KeepsPercentPositionsButHasNoFavourite) {
 }
 
 // ============================================================================
-// 24/58 swinging shutter and 7/58 gate opener (experimental: inferred from 5/58 and the family)
+// 24/58 swinging shutter (experimental) and 7/58 gate opener (open/close/stop reported, issue #244); the
+// position refusal and the favourite are inferred from 5/58 and the family
 // ============================================================================
 
 TEST(HubDeviceFeatures, SwingingShutter24_58RefusesFiftyPercentButSendsTheFavourite) {
