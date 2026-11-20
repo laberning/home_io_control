@@ -271,6 +271,8 @@ TEST(HubDhw, AWaterHeaterDeclaredOnAnotherPlatformGetsNoneOfIt) {
   MockRadio radio;
   IoDevice *dev = make_device(comp, radio, DeviceType::DOMESTIC_HOT_WATER, DeviceCapabilityClass::SWITCH);
   EXPECT_FALSE(has_feature(dev->features, device_feature::WATER_HEATER));
+  EXPECT_FALSE(has_feature(dev->features, device_feature::HOT_WATER_OPERATING_MODE_WORD));
+  EXPECT_FALSE(device_has_status_reading(*dev)) << "the capability word (FP15) is the water heater's status read";
 
   EXPECT_FALSE(comp.request_device_status("ABC123"));
   EXPECT_FALSE(comp.set_water_heater_target("ABC123", 54.0F));

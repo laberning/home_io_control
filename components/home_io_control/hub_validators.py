@@ -281,6 +281,7 @@ FEATURES = (
     "HOT_WATER_BOOST_FP16",
     "HOT_WATER_AWAY_FP16",
     "HOT_WATER_REGISTERS_CALYPSO",
+    "HOT_WATER_OPERATING_MODE_WORD",
 )
 
 # Python's mirror of the table of named device readings (proto_device_readings.cpp), by the enumerator name of
@@ -345,7 +346,7 @@ DEVICE_READINGS = {
     "HOT_WATER_ENERGY": {"feature": "HOT_WATER_REGISTERS_CALYPSO", "source": "register", "platform": "water_heater", "registers": ("DHW_ENERGY",), "key": "energy", "entity": "sensor", "unit": "kWh", "accuracy": 3, "device_class": "energy", "state_class": "total_increasing"},
     "HOT_WATER_BRAND": {"feature": "HOT_WATER_REGISTERS_CALYPSO", "source": "register", "platform": "water_heater", "registers": ("DHW_BRAND",), "key": None, "entity": None},
     "HOT_WATER_TARGET": {"feature": "HOT_WATER_TARGET_20_62", "source": "status", "platform": "water_heater", "registers": (), "key": None, "entity": None},
-    "HOT_WATER_CAPABILITIES": {"feature": "HOT_WATER_BOOST_FP16", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
+    "HOT_WATER_CAPABILITIES": {"feature": "HOT_WATER_OPERATING_MODE_WORD", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
     "HOT_WATER_BOOST": {"feature": "HOT_WATER_BOOST_FP16", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
     "HOT_WATER_AWAY": {"feature": "HOT_WATER_AWAY_FP16", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
     "RAIN": {"feature": None, "source": "limitation", "platform": "cover", "registers": (), "key": None, "opt_in_key": "rain_sensor_poll_interval", "min_interval_ms": MIN_READING_POLL_INTERVAL_MS, "entity": "binary_sensor", "device_class": "moisture", "companion": "Rain sensor", "companion_id": "rain_sensor"},
@@ -424,7 +425,7 @@ DEVICE_FEATURES = {
     "sliding_window": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
     "sliding_window/1": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
     "bioclimatic_pergola": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
-    "domestic_hot_water": frozenset({"WATER_HEATER", "HOT_WATER_TARGET_20_62", "HOT_WATER_BOOST_FP16", "HOT_WATER_AWAY_FP16", "HOT_WATER_REGISTERS_CALYPSO"}),
+    "domestic_hot_water": frozenset({"WATER_HEATER", "HOT_WATER_TARGET_20_62", "HOT_WATER_BOOST_FP16", "HOT_WATER_AWAY_FP16", "HOT_WATER_REGISTERS_CALYPSO", "HOT_WATER_OPERATING_MODE_WORD"}),
     "electrical_heater": frozenset({"REPORTS_HEATING_LEVEL"}),
     "electrical_heater/1": frozenset({"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}),
     "electrical_heater/1/towel_dryer": frozenset({"CENTRAL_HEATING_MODE", "ENERGY_METER", "RUN_TIMERS", "REPORTS_HEATING_LEVEL"}),

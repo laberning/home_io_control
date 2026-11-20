@@ -306,8 +306,10 @@ void resolve_device_features(IoDevice &dev) {
   // The water heater path (its poll, its register reads and writes) belongs to a water heater entity. A
   // device of that kind bound to another platform (a `switch:` some configs declare only to reach the
   // register probes) keeps none of it, so its frames stay what they were before that path existed.
-  if (entity_class != DeviceCapabilityClass::WATER_HEATER)
+  if (entity_class != DeviceCapabilityClass::WATER_HEATER) {
     features = features.without(device_feature::WATER_HEATER);
+    features = features.without(device_feature::HOT_WATER_OPERATING_MODE_WORD);
+  }
   // A capability group applies only with its base: a kind that lost the base drops the group's member too.
   for (const FeatureGroup &group : FEATURE_GROUPS) {
     if (!has_feature(features, group.base)) {

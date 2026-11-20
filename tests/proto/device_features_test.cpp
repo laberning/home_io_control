@@ -93,7 +93,7 @@ const std::vector<ExpectedRow> EXPECTED_ROWS = {
     {DeviceType::SIREN, 0, DeviceFeatures{}},
     {DeviceType::DOMESTIC_HOT_WATER, 0,
      feature::WATER_HEATER | feature::HOT_WATER_TARGET_20_62 | feature::HOT_WATER_BOOST_FP16 |
-         feature::HOT_WATER_AWAY_FP16 | feature::HOT_WATER_REGISTERS_CALYPSO},
+         feature::HOT_WATER_AWAY_FP16 | feature::HOT_WATER_REGISTERS_CALYPSO | feature::HOT_WATER_OPERATING_MODE_WORD},
     {DeviceType::ELECTRICAL_HEATER, 0, feature::REPORTS_HEATING_LEVEL},
     {DeviceType::ELECTRICAL_HEATER, 1, WIN | feature::OCCUPANCY | feature::ENERGY_METER},
     {DeviceType::HEAT_RECOVERY_VENTILATION, 0, DeviceFeatures{}},

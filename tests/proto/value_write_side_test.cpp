@@ -10,6 +10,7 @@
 #include "proto_device_readings.h"
 #include "proto_dhw.h"
 #include "proto_heating.h"
+#include "proto_heating_profiles.h"
 #include "reading_store.h"
 #include "stepped_water_heater_rows.h"
 #include "test_helpers.h"
@@ -246,4 +247,17 @@ TEST(ValueWriteSide, TheCalypsosBoostAndAwayRowsAreGatedByTheMemberOfTheirOwnGro
   const DeviceFeatures calypso = device_features(DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::NONE);
   EXPECT_TRUE(has_feature(calypso, DeviceFeature::HOT_WATER_BOOST_FP16));
   EXPECT_TRUE(has_feature(calypso, DeviceFeature::HOT_WATER_AWAY_FP16));
+}
+
+// The FP16 boost and away rows guard on FP15, so the FP15 row must not depend on either member: a model whose boost
+// reads otherwise but whose away is the Calypso's still needs FP15 for the away guard.
+TEST(ValueWriteSide, TheCapabilityWordIsReadByAnyHeaterWithTheOperatingModeWordWhateverItsBoostMember) {
+  EXPECT_EQ(row_of(DeviceReading::HOT_WATER_CAPABILITIES).feature, DeviceFeature::HOT_WATER_OPERATING_MODE_WORD);
+  IoDevice dev;
+  dev.features = DeviceFeatures{} | device_feature::WATER_HEATER | device_feature::HOT_WATER_AWAY_FP16 |
+                 device_feature::HOT_WATER_OPERATING_MODE_WORD;
+  EXPECT_TRUE(device_can_have_reading(dev, row_of(DeviceReading::HOT_WATER_CAPABILITIES)));
+  EXPECT_TRUE(device_has_status_reading(dev));
+  const DeviceFeatures calypso = device_features(DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::NONE);
+  EXPECT_TRUE(has_feature(calypso, DeviceFeature::HOT_WATER_OPERATING_MODE_WORD));
 }

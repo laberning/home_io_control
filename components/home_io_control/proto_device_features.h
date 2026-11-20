@@ -139,6 +139,11 @@ enum class DeviceFeature : uint8_t {
   /// the group HOT_WATER_REGISTER_MAP: the rows of those readings (proto_device_readings.cpp) are gated by it, so a
   /// model with other registers has rows of its own and its poll reads none of these.
   HOT_WATER_REGISTERS_CALYPSO,
+  /// A water heater that switches boost or away through the operating-mode word, functional parameter 16, and reports
+  /// in functional parameter 15 which of them it supports (the Atlantic Calypso Connecté, issue #198). Not a member of
+  /// a group: it gates the row of DeviceReading::HOT_WATER_CAPABILITIES, which the write guards of the FP16 boost and
+  /// away rows read, so a model whose boost or away row differs from the Calypso's still reads FP15.
+  HOT_WATER_OPERATING_MODE_WORD,
   COUNT,  ///< Not a capability: the number of capabilities, for the storage check of DeviceFeatures.
 };
 

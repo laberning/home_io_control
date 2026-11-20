@@ -252,7 +252,7 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .source = StatusFunctionalParameterSource{.fp = DHW_FP_CAPABILITIES, .form = StatusParameterForm::WORD},
      .reading = DeviceReading::HOT_WATER_CAPABILITIES,
      .poll = ReadingPoll::NOT_POLLED,
-     .feature = DeviceFeature::HOT_WATER_BOOST_FP16},
+     .feature = DeviceFeature::HOT_WATER_OPERATING_MODE_WORD},
     // Boost and away are two fields of the operating-mode word, FP16, on the Atlantic Calypso: one EXECUTE sets the
     // whole word (the off word ends both), FP15 says which the heater supports, and the duration register is written
     // first (ADR 0081, ADR 0110). The words and durations are the heater's row data.

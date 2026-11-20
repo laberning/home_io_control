@@ -230,7 +230,8 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::DOMESTIC_HOT_WATER, 0, NO_MODEL, "domestic_hot_water", CAP_WATER_HEATER,
      SELECTABLE_PLATFORM | EXPERIMENTAL,
      device_feature::WATER_HEATER | device_feature::HOT_WATER_TARGET_20_62 | device_feature::HOT_WATER_BOOST_FP16 |
-         device_feature::HOT_WATER_AWAY_FP16 | device_feature::HOT_WATER_REGISTERS_CALYPSO},
+         device_feature::HOT_WATER_AWAY_FP16 | device_feature::HOT_WATER_REGISTERS_CALYPSO |
+         device_feature::HOT_WATER_OPERATING_MODE_WORD},
 
     // Both rows have a heating profile (proto_heating_profiles.cpp): the plain heater is commanded with
     // heating levels in the standard EXECUTE, the one with an adjustable setpoint over the private

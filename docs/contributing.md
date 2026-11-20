@@ -265,9 +265,11 @@ the hub writes the value; the read side's form encodes it, so a range or a scale
 `HeaterController::write_value()` sends it and reads the row's read side again.
 
 The rows that read a water heater's water temperature, mode, heating state, durations, energy and brand are gated by
-the one member of the group `HOT_WATER_REGISTER_MAP`, and the row of the capability word (FP15) by the boost member,
-so a model with other registers carries another member and its poll reads none of the Calypso's registers and sends
-no status read unless one of its rows reads from a status reply.
+the one member of the group `HOT_WATER_REGISTER_MAP`, so a model with other registers carries another member and its
+poll reads none of the Calypso's registers and sends no status read unless one of its rows reads from a status reply.
+The row of the capability word (FP15) is gated by `HOT_WATER_OPERATING_MODE_WORD`, a plain capability outside the
+groups: the guards of the operating-mode word's boost and away writes read FP15, so every model that switches either
+through that word carries it, whatever its boost and away members are.
 
 A water heater model chooses how boost and away are written by its member of the capability groups
 `HOT_WATER_BOOST` and `HOT_WATER_AWAY`. A model that switches them with an operating-mode word has rows with a

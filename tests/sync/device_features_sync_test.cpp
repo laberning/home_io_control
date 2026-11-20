@@ -68,6 +68,7 @@ const std::map<std::string, DeviceFeature> CPP_FEATURES = {
     {"HOT_WATER_BOOST_FP16", device_feature::HOT_WATER_BOOST_FP16},
     {"HOT_WATER_AWAY_FP16", device_feature::HOT_WATER_AWAY_FP16},
     {"HOT_WATER_REGISTERS_CALYPSO", device_feature::HOT_WATER_REGISTERS_CALYPSO},
+    {"HOT_WATER_OPERATING_MODE_WORD", device_feature::HOT_WATER_OPERATING_MODE_WORD},
 };
 
 /// The names of the capabilities in a set.
@@ -308,11 +309,12 @@ static_assert(std::size(SOURCE_KIND_NAMES) == std::variant_size_v<ReadingSource>
 constexpr DeviceReading COVER_READINGS[] = {DeviceReading::RAIN, DeviceReading::SUN_LEVEL, DeviceReading::BATTERY_LEVEL,
                                             DeviceReading::BATTERY_STATE, DeviceReading::BATTERY_LOW};
 
-/// Is a capability the water heater's own: its base capability or a member of a group built on it?
+/// Is a capability the water heater's own: its base capability, the operating-mode word, or a member of a group built
+/// on the base?
 bool is_water_heater_feature(std::optional<DeviceFeature> feature) {
   if (!feature)
     return false;
-  if (*feature == DeviceFeature::WATER_HEATER)
+  if (*feature == DeviceFeature::WATER_HEATER || *feature == DeviceFeature::HOT_WATER_OPERATING_MODE_WORD)
     return true;
   return std::ranges::any_of(FEATURE_GROUPS, [feature](const FeatureGroup &group) {
     return group.base == DeviceFeature::WATER_HEATER &&
