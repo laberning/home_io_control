@@ -201,11 +201,9 @@ void RadioSX1276::configure_radio_() {
   this->write_register_(REG_OP_MODE, 0x00);  // FSK + Sleep
   delay(10);
 
-  // Frequency: channel 2 (868.95 MHz)
-  uint64_t const frf = ((uint64_t) FREQ_CH2 << 19) / FXOSC;
-  this->write_register_(REG_FRF_MSB, (uint8_t) ((frf >> 16) & 0xFF));
-  this->write_register_(REG_FRF_MID, (uint8_t) ((frf >> 8) & 0xFF));
-  this->write_register_(REG_FRF_LSB, (uint8_t) (frf & 0xFF));
+  // Frequency: channel 2 (868.95 MHz). Through change_frequency() so the driver's own record of
+  // the channel matches the chip, also when this runs again after a chip reset.
+  this->change_frequency(FREQ_CH2);
 
   this->set_mode_(MODE_STDBY);
   this->run_image_cal_();
@@ -326,11 +324,20 @@ TxResult RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioT
     if (millis() - start > timeout_ms) {
       // Read before leaving Tx: RegIrqFlags1 says whether the chip was ready to send (ModeReady,
       // TxReady, PllLock), RegIrqFlags2 how far it got (FifoEmpty, FifoLevel, PacketSent).
+      uint8_t const op_mode = this->read_register_(REG_OP_MODE);
       ESP_LOGE(TAG,
                "TX timeout after %" PRIu32
                " ms — DIO0 never fired (RegOpMode 0x%02X, RegIrqFlags1 0x%02X, RegIrqFlags2 0x%02X)",
-               timeout_ms, this->read_register_(REG_OP_MODE), this->read_register_(REG_IRQ_FLAGS1),
-               this->read_register_(REG_IRQ_FLAGS2));
+               timeout_ms, op_mode, this->read_register_(REG_IRQ_FLAGS1), this->read_register_(REG_IRQ_FLAGS2));
+      if (sx1276_chip_was_reset(op_mode)) {
+        // Everything configure_radio_() programmed is gone (FSK packet engine, IoHomeOn, frequency,
+        // sync word, DIO mapping), so re-entering RX alone would leave it deaf until the next boot.
+        ESP_LOGW(TAG, "SX1276 reset during the transmission and lost its configuration (supply dip?): "
+                      "configuring it again");
+        this->configure_radio_();
+        if (this->failed_)
+          return TxResult::failed();
+      }
       this->return_to_rx_after_tx_();
       return TxResult::failed();
     }

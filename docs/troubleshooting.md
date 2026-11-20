@@ -315,8 +315,10 @@ tells you where to look:
   the pin is not a strapping pin such as GPIO12.
 - **`mode=STDBY_XOSC` and `tx_done=0`**: the radio never started the transmission. Post the log in
   an issue.
-- **`mode=STDBY_RC`**: the chip reset during the transmission and lost its settings. That points
-  at the power supply; see the next section.
+- **`mode=STDBY_RC`**: the chip reset during the transmission and lost its settings. The hub
+  configures it again and keeps working; the next line says
+  `reset during the transmission and lost its configuration`. A reset under the transmit current
+  points at the power supply, see the next section.
 - **`mode=TX`**: the chip is still transmitting long after the frame should have ended. Post the
   log in an issue.
 - **A named device error** such as `PLL_LOCK_ERR` or `PA_RAMP_ERR`: the chip could not lock its
@@ -325,6 +327,9 @@ tells you where to look:
 On an SX1276 board the line itself carries the chip state:
 `TX timeout after N ms — DIO0 never fired (RegOpMode 0x.., RegIrqFlags1 0x.., RegIrqFlags2 0x..)`.
 
+- **`RegOpMode 0x09`**: the radio reset during the transmission and lost its settings. The hub
+  configures it again and keeps working, as on the other chips; a reset under the transmit current
+  points at the power supply, see the next section.
 - **`RegIrqFlags2` has bit `0x08` (PacketSent) set**: the transmission finished, but DIO0 never
   reached the ESP32. Check the `dio0_pin` wiring.
 - **`RegIrqFlags2` has bit `0x40` (FifoEmpty) clear**: part of the frame never left the radio.

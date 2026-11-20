@@ -939,3 +939,119 @@ TEST(RadioLR1121, TxTimeoutReadsChipStateBeforeStandbyThenReceivesAgain) {
   EXPECT_GT(standby, errors) << "standby follows, after the chip state is read";
   EXPECT_GT(set_rx, standby) << "a failed send still ends with the receiver running (send_packet() contract)";
 }
+
+TEST(Lr1121StatusDecoder, OnlyStdbyRcCountsAsAReset) {
+  EXPECT_TRUE(lr1121_chip_was_reset(0x1 << 1)) << "STDBY_RC: the driver never asks for it, a reset starts there";
+  EXPECT_TRUE(lr1121_chip_was_reset((0x1 << 1) | 0x01)) << "the flash bit is not part of the mode";
+  EXPECT_FALSE(lr1121_chip_was_reset(0x2 << 1)) << "STDBY_XOSC is the driver's own standby and TX fallback";
+  EXPECT_FALSE(lr1121_chip_was_reset(0x5 << 1)) << "still in TX";
+  EXPECT_FALSE(lr1121_chip_was_reset(0x00)) << "SLEEP, or an unanswered read, is not a reset";
+}
+
+namespace {
+/// Index of the first transaction at or after @p from whose 16-bit opcode is @p opcode, or -1.
+int lr1121_find_from(const ScriptedSpi &spi, size_t from, uint16_t opcode) {
+  const auto &txs = spi.transactions();
+  for (size_t i = from; i < txs.size(); i++) {
+    if (txs[i].size() >= 2 && ((txs[i][0] << 8) | txs[i][1]) == opcode)
+      return static_cast<int>(i);
+  }
+  return -1;
+}
+}  // namespace
+
+/// Answers every GetVersion (0x0101) as a real LR1121, wherever it falls in the transaction
+/// stream: configure_radio_() starts with that identity check, also when it runs again after a
+/// chip reset, long after a linear response queue would have been consumed by other reads.
+class VersionAnsweringSpi : public ScriptedSpi {
+ public:
+  void spi_enable() override {
+    ScriptedSpi::spi_enable();
+    idx_ = 0;
+    first_ = 0;
+    responding_ = pending_response_;
+    pending_response_ = false;
+  }
+  void spi_write(uint8_t data) override {
+    ScriptedSpi::spi_write(data);
+    if (idx_ == 0)
+      first_ = data;
+    else if (idx_ == 1 && first_ == 0x01 && data == 0x01)  // GetVersion 0x0101
+      version_seen_ = true;
+    idx_++;
+  }
+  uint8_t spi_read() override {
+    const uint8_t recorded = ScriptedSpi::spi_read();
+    const int i = idx_++;
+    if (!responding_)
+      return recorded;
+    static constexpr uint8_t VERSION_RESPONSE[] = {0x00, 0x01, LR1121_DEVICE_TYPE, 0x02, 0x01};  // Stat1, version
+    return i < static_cast<int>(sizeof(VERSION_RESPONSE)) ? VERSION_RESPONSE[i] : 0;
+  }
+  void spi_disable() override {
+    ScriptedSpi::spi_disable();
+    pending_response_ = version_seen_;
+    version_seen_ = false;
+  }
+
+ private:
+  int idx_{0};
+  uint8_t first_{0};
+  bool version_seen_{false};
+  bool pending_response_{false};
+  bool responding_{false};
+};
+
+TEST(RadioLR1121, TxTimeoutWithoutAResetDoesNotConfigureTheChipAgain) {
+  // The SPI answers GetVersion, so a wrongly triggered configuration would run through to
+  // SetPacketType instead of stopping at the identity check.
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  VersionAnsweringSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, 0x07);
+  RadioTxConfig cfg;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  EXPECT_FALSE(radio.send_packet(frame, sizeof(frame), cfg).sent());
+
+  const int set_tx = lr1121_find_from(spi, 0, LR1121_CMD_SET_TX);
+  ASSERT_GE(set_tx, 0);
+  EXPECT_LT(lr1121_find_from(spi, set_tx, LR1121_CMD_GET_VERSION), 0) << "a chip that kept its settings is left alone";
+}
+
+TEST(RadioLR1121, TxTimeoutAfterAChipResetStopsWhenTheChipNoLongerIdentifies) {
+  // The configuration after a reset starts with the identity check; a chip that fails it is
+  // reported failed and is not put back into RX.
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  ScriptedSpi spi;  // answers GetVersion with zeros: device type 0x00
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, 0x07);
+  radio.force_chip_reset_verdict(true);
+  RadioTxConfig cfg;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  EXPECT_FALSE(radio.send_packet(frame, sizeof(frame), cfg).sent());
+
+  EXPECT_TRUE(radio.is_failed());
+  const int set_tx = lr1121_find_from(spi, 0, LR1121_CMD_SET_TX);
+  ASSERT_GE(set_tx, 0);
+  const int version = lr1121_find_from(spi, set_tx, LR1121_CMD_GET_VERSION);
+  ASSERT_GT(version, set_tx) << "the configuration runs its identity check";
+  EXPECT_LT(lr1121_find_from(spi, version, LR1121_CMD_SET_RX), 0) << "a failed chip is not re-armed";
+}
+
+TEST(RadioLR1121, TxTimeoutAfterAChipResetConfiguresItAgainBeforeReceiving) {
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  VersionAnsweringSpi spi;
+  MockPin rst, irq, busy(false);
+  TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, 0x07);
+  radio.force_chip_reset_verdict(true);
+  RadioTxConfig cfg;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  EXPECT_FALSE(radio.send_packet(frame, sizeof(frame), cfg).sent());
+  EXPECT_FALSE(radio.is_failed());
+
+  const int set_tx = lr1121_find_from(spi, 0, LR1121_CMD_SET_TX);
+  ASSERT_GE(set_tx, 0);
+  const int packet_type = lr1121_find_from(spi, set_tx, LR1121_CMD_SET_PACKET_TYPE);
+  EXPECT_GT(packet_type, set_tx) << "the chip is configured again";
+  EXPECT_GT(lr1121_find_from(spi, packet_type, LR1121_CMD_SET_RX), packet_type) << "and receives afterwards";
+}

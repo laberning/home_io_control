@@ -345,9 +345,12 @@ class SoftPhyDriverBase : public RadioDriver {
   /// Minimal path back into RX immediately after a transmission — see the definition for why this
   /// is deliberately not @ref reset_rx_state_.
   void rearm_rx_after_tx_();
-  /// End a transmission whose TxDone never came: standby, then rearm_rx_after_tx_(), so the
-  /// receiver runs again as RadioDriver::send_packet() promises.
-  void end_timed_out_tx_();
+  /// End a transmission whose TxDone never came, so the receiver runs again as
+  /// RadioDriver::send_packet() promises: standby, then rearm_rx_after_tx_(). When the chip reset
+  /// during the transmission it has lost its whole configuration, so the driver restores it first
+  /// (@ref restore_configuration_after_reset) instead of asking a reset chip for standby.
+  /// @param chip_reset What @ref report_tx_timeout_state found.
+  void end_timed_out_tx_(bool chip_reset);
 
   /// @brief The GFSK SetPacketParams fields both software-PHY chips program identically.
   ///
@@ -468,14 +471,26 @@ class SoftPhyDriverBase : public RadioDriver {
   /// before every SetRx/SetTx.
   virtual void before_tx_arm() {}
   /// @brief Log the chip's own state after a transmission that never reported TX-done, before the
-  /// driver forces standby. No-op by default.
+  /// driver leaves it, and say whether the chip reset during it. Logs nothing and returns false by
+  /// default.
   ///
   /// The shared flow already logs the IRQ word; a chip with a status or error register adds what
   /// tells the cases apart: sent but the interrupt never reached the host, never started, still
   /// transmitting, back in standby after a reset or brown-out, or stopped by a device error.
   /// @param irq_status The IRQ word read after the wait gave up (@ref read_irq_status_raw), so the
   ///        override can say whether the chip itself flagged TX-done (@ref tx_done_bit).
-  virtual void log_tx_timeout_state(uint32_t irq_status) { (void) irq_status; }
+  /// @return true if the state shows the chip reset during the transmission and lost its
+  ///         configuration; the caller then calls @ref restore_configuration_after_reset.
+  virtual bool report_tx_timeout_state(uint32_t irq_status) {
+    (void) irq_status;
+    return false;
+  }
+  /// @brief Program a chip that reset on its own back to the state init() left it in, ending in
+  /// RX. Only called after @ref report_tx_timeout_state returned true; no-op by default.
+  ///
+  /// The host side (pins, interrupt handler, runtime tuning kept in members) survives a chip
+  /// reset, so this is the chip's configuration sequence without the pin setup and reset pulse.
+  virtual void restore_configuration_after_reset() {}
   /// @brief Hook run as part of @ref reset_rx_state_, before re-entering RX. No-op by default;
   /// SX1262 overrides this to (re-)write its buffer base address, which LR1121 doesn't need.
   virtual void configure_buffer_base() {}

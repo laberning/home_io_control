@@ -75,7 +75,17 @@ template<class Base> class TestableSoftPhy : public Base {
   /// can assert what the config dump will report.
   [[nodiscard]] uint16_t init_device_errors_for_test() const { return this->init_device_errors_; }
 
+  /// Make the next TX timeout report a chip reset, whatever the chip status read says. The real
+  /// report still runs (and logs); only its verdict is replaced. The per-chip verdict functions
+  /// (sx1262_chip_was_reset(), lr1121_chip_was_reset()) are tested on their own.
+  void force_chip_reset_verdict(bool reset) { forced_reset_verdict_ = reset; }
+
  protected:
+  bool report_tx_timeout_state(uint32_t irq_status) override {
+    bool const verdict = Base::report_tx_timeout_state(irq_status);
+    return forced_reset_verdict_ ? true : verdict;
+  }
+
   uint32_t read_irq_status_raw() override {
     if (irq_idx_ < irq_seq_.size())
       return irq_seq_[irq_idx_++];
@@ -101,6 +111,7 @@ template<class Base> class TestableSoftPhy : public Base {
   esphome::home_io_control::RadioRxPacket expected_packet_{};
   bool read_success_ = true;
   bool use_real_ = false;
+  bool forced_reset_verdict_ = false;
 };
 
 /// @brief Scriptable stand-in for the length-driven ("early completion") receive path.

@@ -132,6 +132,14 @@ void sx1262_format_device_errors(uint16_t errors, char *buf, size_t buf_size);
 /// @return `STDBY_RC`, `STDBY_XOSC`, `FS`, `RX`, `TX`, or `?` for a reserved or unused value.
 const char *sx1262_chip_mode_name(uint8_t chip_status);
 
+/// @brief Whether a GetStatus byte read after a timed-out transmission shows a chip that reset.
+///
+/// The driver only ever asks for STDBY_XOSC (set_mode_standby() and the TX fallback mode), and a
+/// reset starts the chip in STDBY_RC, so STDBY_RC here means it reset and lost its configuration.
+/// @param chip_status The byte GetStatus returned.
+/// @return true for chip mode STDBY_RC.
+bool sx1262_chip_was_reset(uint8_t chip_status);
+
 /// @brief Command status field of a GetStatus byte (bits 3:1).
 /// @param chip_status The byte GetStatus returned.
 /// @return The 3-bit field (2 = data available, 3 = command timeout, 4 = processing error,
@@ -328,7 +336,11 @@ class RadioSX1262 : public SoftPhyDriverBase {
   uint8_t read_chip_status_();
   /// @brief Log GetStatus, whether the IRQ word holds TX-done, the device errors and the DIO1/BUSY
   /// pin levels after a TX that never reported TX-done.
-  void log_tx_timeout_state(uint32_t irq_status) override;
+  /// @return true if GetStatus shows STDBY_RC (sx1262_chip_was_reset()).
+  bool report_tx_timeout_state(uint32_t irq_status) override;
+  /// @brief Front-end module back to its receive level, then configure_radio_() again, which ends
+  /// in RX without driving that pin itself.
+  void restore_configuration_after_reset() override;
   /// @brief Clear device error flags.
   void clear_device_errors_();
   /// @copydoc SoftPhyDriverBase::front_end_rx_gain_db
@@ -416,12 +428,17 @@ class RadioSX1262 : public SoftPhyDriverBase {
   /// Called from both @ref set_mode_rx and @ref set_mode_standby (not just the former) because a
   /// TX timeout in SoftPhyDriverBase::send_packet() calls set_mode_standby() directly and never
   /// reaches set_mode_rx() — without this hook there too, a timed-out TX would leave the mode pin
-  /// stranded in its TX-active state indefinitely (nothing else would ever drop it back).
+  /// stranded in its TX-active state indefinitely (nothing else would ever drop it back). A TX
+  /// timeout after a chip reset skips standby, so @ref restore_configuration_after_reset calls it
+  /// itself.
   void fem_set_rx_mode_();
 
  private:
   SpiAccess *spi_;
   InternalGPIOPin *dio1_pin_;
+  /// DIO1 handler attached by the first configure_radio_(); a configuration after a chip reset
+  /// keeps it instead of attaching it a second time.
+  bool dio1_interrupt_attached_{false};
   InternalGPIOPin *fem_en_pin_;
   InternalGPIOPin *vfem_pin_;
   InternalGPIOPin *fem_pa_pin_;

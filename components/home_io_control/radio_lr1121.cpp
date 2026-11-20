@@ -44,9 +44,13 @@ void lr1121_format_device_errors(uint16_t errors, char *buf, size_t buf_size) {
   format_device_error_bits(errors, LR1121_DEVICE_ERROR_BITS, buf, buf_size);
 }
 
+bool lr1121_chip_was_reset(uint8_t stat2) {
+  return ((stat2 >> 1) & 0x07) == 1;  // Stat2 bits 3:1, 1 = STDBY_RC
+}
+
 const char *lr1121_chip_mode_name(uint8_t stat2) {
   // Stat2 bits 3:1 = chip mode; bit 0 = running from flash; bits 7:4 = reset cause, which every
-  // GetStatus clears (see log_tx_timeout_state()).
+  // GetStatus clears (see report_tx_timeout_state()).
   static constexpr const char *NAMES[] = {"SLEEP", "STDBY_RC", "STDBY_XOSC", "FS", "RX", "TX", "LOC"};
   uint8_t const mode = (stat2 >> 1) & 0x07;
   return mode < sizeof(NAMES) / sizeof(NAMES[0]) ? NAMES[mode] : "?";
@@ -295,7 +299,7 @@ bool RadioLR1121::init() {
   return true;
 }
 
-void RadioLR1121::log_tx_timeout_state(uint32_t irq_status) {
+bool RadioLR1121::report_tx_timeout_state(uint32_t irq_status) {
   uint8_t stat2 = 0;
   (void) this->read_status_(stat2);
   uint16_t const errors = this->get_errors_();
@@ -310,7 +314,10 @@ void RadioLR1121::log_tx_timeout_state(uint32_t irq_status) {
   ESP_LOGE(TAG, "TX timeout chip state: stat2 0x%02X (mode=%s), tx_done=%d, device errors 0x%04X (%s), DIO1=%d BUSY=%d",
            stat2, lr1121_chip_mode_name(stat2), (irq_status & this->tx_done_bit()) != 0, errors, errbuf,
            this->irq_pin_->digital_read(), this->busy_pin_->digital_read());
+  return lr1121_chip_was_reset(stat2);
 }
+
+void RadioLR1121::restore_configuration_after_reset() { this->configure_radio_(); }
 
 void RadioLR1121::dump_debug() {
   uint8_t version[4] = {0};
@@ -455,8 +462,11 @@ void RadioLR1121::configure_radio_() {
   };
   this->write_command_(LR1121_CMD_SET_DIO_IRQ_PARAMS, irq_params, sizeof(irq_params));
 
-  // 14. Attach the DIO9 interrupt.
-  this->irq_pin_->attach_interrupt(&RadioLR1121::gpio_intr, this, gpio::INTERRUPT_RISING_EDGE);
+  // 14. Attach the DIO9 interrupt, once: the host side survives a chip reset.
+  if (!this->irq_interrupt_attached_) {
+    this->irq_pin_->attach_interrupt(&RadioLR1121::gpio_intr, this, gpio::INTERRUPT_RISING_EDGE);
+    this->irq_interrupt_attached_ = true;
+  }
 
   // 15. Clear any pending IRQs / errors — recording the error word first, since that is the only
   //     trace of a calibration or TCXO fault from bring-up. A healthy chip leaves it zero (confirmed

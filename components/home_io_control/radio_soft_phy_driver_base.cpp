@@ -279,11 +279,24 @@ void SoftPhyDriverBase::rearm_rx_after_tx_() {
   this->set_mode_rx();
 }
 
-void SoftPhyDriverBase::end_timed_out_tx_() {
-  // No TxDone, so the chip may still be in Tx: stop it first (this also returns a front-end module
-  // to its receive level), then re-arm exactly as after a sent frame, stale-buffer handling
-  // included. send_packet() promises a running receiver on every return.
-  this->set_mode_standby();
+void SoftPhyDriverBase::end_timed_out_tx_(bool chip_reset) {
+  if (chip_reset) {
+    // A reset chip has lost everything init() programmed (packet type, frequency, sync word, TCXO
+    // control, interrupt routing), so re-entering RX alone would leave it deaf until the next boot.
+    // A reset in the middle of a transmission is almost always the supply dipping under the
+    // transmit current, which is worth saying in the log.
+    ESP_LOGW(TAG, "%s reset during the transmission and lost its configuration (supply dip?): configuring it again",
+             this->chip_name());
+    this->restore_configuration_after_reset();
+    if (this->failed_)
+      return;  // the configuration failed and was logged; the driver now reports itself failed
+  } else {
+    // No TxDone, so the chip may still be in Tx: stop it first (this also returns a front-end
+    // module to its receive level).
+    this->set_mode_standby();
+  }
+  // Re-arm exactly as after a sent frame, stale-buffer handling included. send_packet() promises
+  // a running receiver on every return.
   this->rearm_rx_after_tx_();
 }
 
@@ -547,8 +560,7 @@ TxResult SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const 
                  "TX timeout after %" PRIu32 " ms (air time %" PRIu32 " us) — DIO/IRQ pin never fired, IRQ status "
                  "0x%08" PRIX32,
                  timeout_ms, air_time_us, tx_irq);
-        this->log_tx_timeout_state(tx_irq);
-        this->end_timed_out_tx_();
+        this->end_timed_out_tx_(this->report_tx_timeout_state(tx_irq));
         return TxResult::failed();
       }
       App.feed_wdt();
@@ -567,8 +579,7 @@ TxResult SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const 
 
     if (millis() - start > timeout_ms) {
       ESP_LOGE(TAG, "TX timeout after %" PRIu32 " ms — no TX_DONE IRQ (last_irq=0x%08" PRIX32 ")", timeout_ms, tx_irq);
-      this->log_tx_timeout_state(tx_irq);
-      this->end_timed_out_tx_();
+      this->end_timed_out_tx_(this->report_tx_timeout_state(tx_irq));
       return TxResult::failed();
     }
   }

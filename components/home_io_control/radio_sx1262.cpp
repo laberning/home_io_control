@@ -185,6 +185,10 @@ FemTxEstimate sx1262_fem_tx_estimate(FemProfile profile, uint8_t tx_power) {
   return {clamped, sx1262_fem_estimated_antenna_dbm(profile, clamped)};
 }
 
+bool sx1262_chip_was_reset(uint8_t chip_status) {
+  return ((chip_status >> 4) & 0x07) == 2;  // GetStatus bits 6:4, 2 = STDBY_RC
+}
+
 const char *sx1262_chip_mode_name(uint8_t chip_status) {
   // GetStatus bits 6:4 = chip mode (datasheet "Status Bytes" table).
   switch ((chip_status >> 4) & 0x07) {
@@ -470,7 +474,7 @@ uint8_t RadioSX1262::read_chip_status_() {
   return chip_status;
 }
 
-void RadioSX1262::log_tx_timeout_state(uint32_t irq_status) {
+bool RadioSX1262::report_tx_timeout_state(uint32_t irq_status) {
   uint8_t const chip_status = this->read_chip_status_();
   uint16_t const errors = this->get_device_errors_();
   char errbuf[DEVICE_ERROR_STR_SIZE];
@@ -486,6 +490,14 @@ void RadioSX1262::log_tx_timeout_state(uint32_t irq_status) {
            chip_status, sx1262_chip_mode_name(chip_status), sx1262_command_status(chip_status),
            (irq_status & this->tx_done_bit()) != 0, errors, errbuf, this->dio1_pin_->digital_read(),
            this->busy_pin_->digital_read());
+  return sx1262_chip_was_reset(chip_status);
+}
+
+void RadioSX1262::restore_configuration_after_reset() {
+  // configure_radio_() enters RX with a raw SetRx (its step 19), which relies on the front-end
+  // module already being at its receive level; after a transmission it is still at its TX level.
+  this->fem_set_rx_mode_();
+  this->configure_radio_();
 }
 
 void RadioSX1262::dump_debug() {
@@ -594,7 +606,8 @@ void RadioSX1262::configure_tcxo_() {
   // window, so step 5's wait_busy_() would otherwise time out and latch failed_ on a board the
   // ladder just rescued. busy_timeout_ms_ is a ceiling, never a delay, so a permanently wider
   // value costs a healthy board nothing; runtime never re-pays the startup wait (step 6b sets the
-  // XOSC standby fallback and set_mode_standby() uses STDBY_XOSC, so the chip never drops to RC).
+  // XOSC standby fallback and set_mode_standby() uses STDBY_XOSC, so the chip never drops to RC)
+  // except in a configuration after a chip reset, which runs this ladder again.
   if (this->tcxo_startup_attempts_ > 1) {
     const uint32_t escalated = (this->tcxo_startup_delay_us_ / 1000) + TCXO_BUSY_MARGIN_MS;
     this->set_busy_timeout_ms_(saved_busy_timeout_ms > escalated ? saved_busy_timeout_ms : escalated);
@@ -729,8 +742,11 @@ void RadioSX1262::configure_radio_() {
   // clang-format on
   this->write_opcode_(SX1262_SET_DIO_IRQ_PARAMS, irq_params, sizeof(irq_params));
 
-  // 17. Attach DIO1 interrupt
-  this->dio1_pin_->attach_interrupt(&RadioSX1262::gpio_intr, this, gpio::INTERRUPT_RISING_EDGE);
+  // 17. Attach DIO1 interrupt, once: the host side survives a chip reset.
+  if (!this->dio1_interrupt_attached_) {
+    this->dio1_pin_->attach_interrupt(&RadioSX1262::gpio_intr, this, gpio::INTERRUPT_RISING_EDGE);
+    this->dio1_interrupt_attached_ = true;
+  }
 
   // 18. Clear any pending IRQs, and report the device-error word before clearing it. Both the TCXO
   // and bare-crystal paths in step 2-3 clear the expected POR flags (XOSC_START_ERR, IMG_CALIB_ERR
@@ -745,8 +761,9 @@ void RadioSX1262::configure_radio_() {
   // 19. Enter continuous receive. Written inline rather than via set_mode_rx() — correct only
   // because the FEM mode pin was already left in its RX level by the pin-setup block above (HIGH
   // for a legacy FemProfile::NONE strap, its computed receive/idle level for a configured profile
-  // (see fem_set_rx_mode_())); a future refactor that reorders init() must not move this ahead of
-  // that block, or route through set_mode_rx() instead.
+  // (see fem_set_rx_mode_())), or by restore_configuration_after_reset() when this runs again
+  // after a chip reset; a future refactor that reorders init() must not move this ahead of that
+  // block, or route through set_mode_rx() instead.
   uint8_t rx_continuous[3] = {0xFF, 0xFF, 0xFF};  // 0xFFFFFF = continuous
   this->write_opcode_(SX1262_SET_RX, rx_continuous, sizeof(rx_continuous));
 }

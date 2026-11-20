@@ -545,3 +545,65 @@ TEST(RadioSX1262Tx, TimeoutReadsChipStateBeforeStandbyThenReceivesAgain) {
   EXPECT_GT(standby, errors) << "standby follows, after the chip state is read";
   EXPECT_GT(set_rx, standby) << "a failed send still ends with the receiver running (send_packet() contract)";
 }
+
+TEST(Sx1262StatusDecoder, OnlyStdbyRcCountsAsAReset) {
+  EXPECT_TRUE(sx1262_chip_was_reset(0x2 << 4)) << "STDBY_RC: the driver never asks for it, a reset starts there";
+  EXPECT_FALSE(sx1262_chip_was_reset(0x3 << 4)) << "STDBY_XOSC is the driver's own standby and TX fallback";
+  EXPECT_FALSE(sx1262_chip_was_reset((0x6 << 4) | (0x6 << 1))) << "still in TX";
+  EXPECT_FALSE(sx1262_chip_was_reset(0x00)) << "an unanswered read is not a reset";
+}
+
+namespace {
+/// Index of the first transaction at or after @p from whose opcode is @p opcode, or -1.
+int sx1262_find_from(const ScriptedSpi &spi, size_t from, uint8_t opcode) {
+  const auto &txs = spi.transactions();
+  for (size_t i = from; i < txs.size(); i++) {
+    if (!txs[i].empty() && txs[i][0] == opcode)
+      return static_cast<int>(i);
+  }
+  return -1;
+}
+}  // namespace
+
+TEST(RadioSX1262Tx, TimeoutWithoutAResetDoesNotConfigureTheChipAgain) {
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, TCXO_CODE_1_8V);
+  ASSERT_TRUE(radio.init());
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  const size_t before_tx = spi.transactions().size();
+  EXPECT_FALSE(radio.send_packet(frame, sizeof(frame), cfg).sent());
+
+  const int set_tx = sx1262_find_from(spi, before_tx, SX1262_SET_TX);
+  ASSERT_GE(set_tx, 0);
+  EXPECT_LT(sx1262_find_from(spi, set_tx, SX1262_SET_PACKET_TYPE), 0) << "a chip that kept its settings is left alone";
+}
+
+TEST(RadioSX1262Tx, TimeoutAfterAChipResetConfiguresItAgainBeforeReceiving) {
+  // A reset during the transmission (a supply dip, typically) wipes packet type, frequency, sync
+  // word and TCXO control; SetRx alone would leave the board deaf until the next boot.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, TCXO_CODE_1_8V);
+  ASSERT_TRUE(radio.init());
+  radio.force_chip_reset_verdict(true);
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  const size_t before_tx = spi.transactions().size();
+  EXPECT_FALSE(radio.send_packet(frame, sizeof(frame), cfg).sent());
+  EXPECT_FALSE(radio.is_failed());
+
+  const int set_tx = sx1262_find_from(spi, before_tx, SX1262_SET_TX);
+  ASSERT_GE(set_tx, 0);
+  const int standby = sx1262_find_from(spi, set_tx, SX1262_SET_STANDBY);
+  ASSERT_GE(standby, 0);
+  ASSERT_GE(spi.transactions()[standby].size(), 2u);
+  EXPECT_EQ(spi.transactions()[standby][1], 0x00) << "the configuration starts from STDBY_RC; STDBY_XOSC needs the "
+                                                     "TCXO control the reset wiped";
+  const int packet_type = sx1262_find_from(spi, set_tx, SX1262_SET_PACKET_TYPE);
+  EXPECT_GT(packet_type, set_tx) << "the chip is configured again";
+  EXPECT_GT(sx1262_find_from(spi, packet_type, SX1262_SET_RX), packet_type) << "and receives afterwards";
+}

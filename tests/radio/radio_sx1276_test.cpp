@@ -76,6 +76,11 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
   // seed_stale_fifo() that the driver did not clear.
   const std::vector<uint8_t> &tx_fifo() const { return this->tx_fifo_; }
 
+  // Make the next switch to Tx reset the chip, the way a supply dip under the transmit current
+  // does: RegOpMode reads its reset value 0x09 (FSK, LowFrequencyModeOn, standby, datasheet
+  // register table) and every register configure_radio_() wrote is back to its default.
+  void reset_chip_on_next_tx() { this->reset_on_tx_ = true; }
+
   // Leave bytes in the FIFO the way a reception cut short by a switch from Rx to standby does: the
   // chip shares one FIFO between both directions, so they sit in front of whatever is loaded next.
   void seed_stale_fifo(std::initializer_list<uint8_t> bytes) {
@@ -117,6 +122,11 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
  private:
   static constexpr uint8_t kRegFifo = 0x00;
   static constexpr uint8_t kRegIrqFlags2 = 0x3F;
+  static constexpr uint8_t kRegOpMode = 0x01;
+  static constexpr uint8_t kRegVersion = 0x42;
+  static constexpr uint8_t kModeMask = 0x07;
+  static constexpr uint8_t kModeTx = 0x03;
+  static constexpr uint8_t kOpModeAfterReset = 0x09;
   static constexpr uint8_t kIrq2FifoOverrun = 0x10;
   static constexpr uint8_t kIrq2WriteToClear = kIrq2FifoOverrun | 0x01;  // FifoOverrun, LowBat
 
@@ -132,6 +142,14 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
       return;
     }
     this->write_log_.emplace_back(this->addr_, value);
+    if (this->addr_ == kRegOpMode && this->reset_on_tx_ && (value & kModeMask) == kModeTx) {
+      this->reset_on_tx_ = false;
+      uint8_t const version = this->regs_[kRegVersion];
+      std::fill(std::begin(this->regs_), std::end(this->regs_), 0);
+      this->regs_[kRegVersion] = version;
+      this->regs_[kRegOpMode] = kOpModeAfterReset;
+      return;
+    }
     if (this->addr_ == kRegIrqFlags2) {
       // Write-1-to-clear flags (FifoOverrun, LowBat); writing FifoOverrun also empties the FIFO.
       this->regs_[kRegIrqFlags2] &= static_cast<uint8_t>(~(value & kIrq2WriteToClear));
@@ -182,6 +200,7 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
   uint32_t hook_nth_{0};
   uint32_t hook_reads_{0};
 
+  bool reset_on_tx_{false};
   bool stuck_active_{false};
   uint8_t stuck_reg_{0};
   uint8_t stuck_value_{0};
@@ -522,6 +541,72 @@ TEST(RadioSX1276, TxTimeoutLeavesTheReceiverRunningWithTheShortPreamble) {
   EXPECT_EQ(spi.get_reg(REG_OP_MODE) & MODE_MASK, MODE_RX) << "a failed send must end in Rx";
   EXPECT_EQ(spi.get_reg(REG_PREAMBLE_MSB), 0x00);
   EXPECT_EQ(spi.get_reg(REG_PREAMBLE_LSB), 0x08) << "the wake-up preamble must not outlive its transmission";
+}
+
+TEST(RadioSX1276, ResetVerdictReadsLowFrequencyModeOn) {
+  EXPECT_TRUE(sx1276_chip_was_reset(0x09)) << "RegOpMode's reset value";
+  EXPECT_FALSE(sx1276_chip_was_reset(0x03)) << "still in Tx as configured";
+  EXPECT_FALSE(sx1276_chip_was_reset(0x01)) << "standby as configured";
+}
+
+TEST(RadioSX1276, TxTimeoutWithoutAResetDoesNotConfigureTheChipAgain) {
+  esphome::test_clock::ManualClock clock;
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  const uint8_t payload[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.preamble_len = SHORT_PREAMBLE;
+
+  EXPECT_FALSE(radio.send_packet(payload, sizeof(payload), cfg).sent());
+  EXPECT_FALSE(spi.wrote_register(REG_PACKET_CONFIG2)) << "a chip that kept its settings is left alone";
+}
+
+TEST(RadioSX1276, TxTimeoutAfterAChipResetConfiguresItAgainBeforeReceiving) {
+  // A reset during the transmission wipes the FSK packet engine, IoHomeOn, frequency and sync
+  // word; re-entering Rx alone would leave the board deaf until the next boot.
+  esphome::test_clock::ManualClock clock;
+  RegisterModelSpi spi;
+  seed_valid_version(spi);
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  ASSERT_TRUE(radio.init());
+  spi.reset_chip_on_next_tx();
+  const uint8_t payload[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH1;
+  cfg.preamble_len = LONG_PREAMBLE;
+
+  EXPECT_FALSE(radio.send_packet(payload, sizeof(payload), cfg).sent());
+
+  EXPECT_FALSE(radio.is_failed());
+  EXPECT_EQ(spi.get_reg(REG_PACKET_CONFIG2), 0x70) << "IoHomeOn and packet mode are programmed again";
+  EXPECT_EQ(spi.get_reg(REG_SYNC_VALUE1), 0x55) << "the sync word is programmed again";
+  EXPECT_EQ(spi.get_reg(REG_OP_MODE) & MODE_MASK, MODE_RX) << "and the chip receives";
+  EXPECT_FALSE(sx1276_chip_was_reset(spi.get_reg(REG_OP_MODE)));
+  EXPECT_EQ(spi.get_reg(REG_PREAMBLE_LSB), 0x08);
+  uint64_t const frf = ((uint64_t) radio.get_current_freq() << 19) / FXOSC;
+  EXPECT_EQ(spi.get_reg(REG_FRF_MSB), (uint8_t) ((frf >> 16) & 0xFF)) << "the driver's channel record matches the chip";
+  EXPECT_EQ(spi.get_reg(REG_FRF_MID), (uint8_t) ((frf >> 8) & 0xFF));
+  EXPECT_EQ(spi.get_reg(REG_FRF_LSB), (uint8_t) (frf & 0xFF));
+}
+
+TEST(RadioSX1276, TxTimeoutAfterAChipResetStopsWhenTheConfigurationFails) {
+  // A chip whose image calibration never completes after the reset is reported failed and is not
+  // put back into Rx. Legacy clock: run_image_cal_() busy-polls millis() until its timeout.
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.stick_reg(REG_IMAGE_CAL, 0x20);  // ImageCalRunning never clears
+  spi.reset_chip_on_next_tx();
+  const uint8_t payload[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.preamble_len = SHORT_PREAMBLE;
+
+  EXPECT_FALSE(radio.send_packet(payload, sizeof(payload), cfg).sent());
+
+  EXPECT_TRUE(radio.is_failed());
+  EXPECT_NE(spi.get_reg(REG_OP_MODE) & MODE_MASK, MODE_RX) << "a failed chip is not re-armed";
 }
 
 TEST(RadioSX1276, SendPacketEmptiesTheFifoBeforeLoadingTheFrame) {

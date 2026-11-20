@@ -131,6 +131,14 @@ void lr1121_format_device_errors(uint16_t errors, char *buf, size_t buf_size);
 /// @return `SLEEP`, `STDBY_RC`, `STDBY_XOSC`, `FS`, `RX`, `TX`, `LOC` (Wi-Fi/GNSS scan), or `?`.
 const char *lr1121_chip_mode_name(uint8_t stat2);
 
+/// @brief Whether a Stat2 byte read after a timed-out transmission shows a chip that reset.
+///
+/// The driver only ever asks for STDBY_XOSC (set_mode_standby() and the TX fallback mode), and a
+/// reset starts the chip in STDBY_RC, so STDBY_RC here means it reset and lost its configuration.
+/// @param stat2 The Stat2 byte GetStatus returned.
+/// @return true for chip mode STDBY_RC.
+bool lr1121_chip_was_reset(uint8_t stat2);
+
 /// Newest LR1121 transceiver firmware known at the time this file was last updated, per the
 /// version-numbered filenames and CHANGELOG.md at
 /// https://github.com/Lora-net/radio_firmware_images/tree/master/lr1121/transceiver — the same
@@ -388,7 +396,11 @@ class RadioLR1121 : public SoftPhyDriverBase {
   uint32_t read_status_(uint8_t &stat2);
   /// @brief Log Stat2 with the chip mode, whether the IRQ word holds TX-done, the device errors and
   /// the DIO1/BUSY pin levels after a TX that never reported TX-done.
-  void log_tx_timeout_state(uint32_t irq_status) override;
+  /// @return true if Stat2 shows STDBY_RC (lr1121_chip_was_reset()).
+  bool report_tx_timeout_state(uint32_t irq_status) override;
+  /// @brief configure_radio_() again; the RF switch is driven by the chip's own DIOs, which that
+  /// sequence programs.
+  void restore_configuration_after_reset() override;
   /// @brief Clear device error flags. Called both during init (after TCXO configuration, before
   ///        calibration) and at the end of configure_radio_(), which records them first.
   void clear_errors_();
@@ -470,6 +482,9 @@ class RadioLR1121 : public SoftPhyDriverBase {
  private:
   SpiAccess *spi_;
   InternalGPIOPin *irq_pin_;
+  /// IRQ handler attached by the first configure_radio_(); a configuration after a chip reset
+  /// keeps it instead of attaching it a second time.
+  bool irq_interrupt_attached_{false};
   uint8_t tx_power_;
   uint8_t tcxo_voltage_code_;  ///< TCXO_VOLTAGE_OPTIONS code from YAML (1_6V=0x00 .. 3_3V=0x07); the chip's
                                ///< SetTcxoMode voltage code directly. TCXO_VOLTAGE_NONE means no TCXO (bare crystal).

@@ -956,6 +956,38 @@ TEST(RadioSX1262Fem, TxActiveLevelMatchesEachProfilesPolarity) {
   EXPECT_FALSE(xy16p35.fem_tx_active_level_for_test());
 }
 
+TEST(RadioSX1262Fem, ConfigurationAfterAChipResetEntersRxWithTheModePinAtItsReceiveLevel) {
+  // The configuration ends in a raw SetRx that does not drive the mode pin itself, and after the
+  // transmission the pin is still at its TX-active level: the restore must drop it first, or the
+  // receiver would listen through a front-end module set to transmit.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  FemPin fem_en(&spi), vfem(&spi), mode(&spi);
+  TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0, &fem_en, &vfem, &mode, FemProfile::GC1109);
+  ASSERT_TRUE(radio.init());
+  radio.force_chip_reset_verdict(true);
+  const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.preamble_len = SHORT_PREAMBLE;
+  EXPECT_FALSE(radio.send_packet(frame, sizeof(frame), cfg).sent());
+
+  const auto &txs = spi.transactions();
+  const int set_tx = last_tx_with_opcode(spi, SX1262_SET_TX);
+  ASSERT_GE(set_tx, 0);
+  int first_set_rx = -1;
+  for (size_t i = static_cast<size_t>(set_tx); i < txs.size(); i++) {
+    if (!txs[i].empty() && txs[i][0] == SX1262_SET_RX) {
+      first_set_rx = static_cast<int>(i);
+      break;
+    }
+  }
+  ASSERT_GT(first_set_rx, set_tx) << "the configuration ends in RX";
+  const auto before_rx = std::find_if(mode.writes().rbegin(), mode.writes().rend(),
+                                      [&](const auto &w) { return w.second <= static_cast<size_t>(first_set_rx); });
+  ASSERT_NE(before_rx, mode.writes().rend());
+  EXPECT_FALSE(before_rx->first) << "GC1109: the mode pin is LOW (receive) before the configuration's SetRx";
+}
+
 // ============================================================================
 // FEM receive gain: RSSI is reported at the antenna, not at the radio's input
 // ============================================================================

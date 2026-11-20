@@ -73,6 +73,14 @@ static constexpr uint8_t REG_IRQ_FLAGS2 = 0x3F;      ///< IRQ flags: FIFO full/e
 /// RegIrqFlags2 FifoOverrun bit. Writing it clears the flag and empties the FIFO (datasheet,
 /// RegIrqFlags2).
 static constexpr uint8_t IRQ2_FIFO_OVERRUN = 0x10;
+/// RegOpMode LowFrequencyModeOn bit. It is 1 after a reset (RegOpMode resets to 0x09) and
+/// configure_radio_() clears it, so the driver never runs with it set.
+static constexpr uint8_t OP_MODE_LOW_FREQUENCY_MODE_ON = 0x08;
+
+/// @brief Whether RegOpMode read after a timed-out transmission shows a chip that reset.
+/// @param op_mode The RegOpMode value.
+/// @return true when LowFrequencyModeOn is set again: the chip lost what configure_radio_() wrote.
+constexpr bool sx1276_chip_was_reset(uint8_t op_mode) { return (op_mode & OP_MODE_LOW_FREQUENCY_MODE_ON) != 0; }
 static constexpr uint8_t REG_DIO_MAPPING1 = 0x40;  ///< DIO0-DIO3 pin mapping
 static constexpr uint8_t REG_DIO_MAPPING2 = 0x41;  ///< DIO4-DIO5 pin mapping
 static constexpr uint8_t REG_VERSION = 0x42;       ///< Chip version (should read 0x12 for SX1276)
