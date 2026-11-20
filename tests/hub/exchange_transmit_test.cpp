@@ -4,6 +4,7 @@
 
 #include "hub_exchange.h"
 #include "hub_core.h"
+#include "oneway_transmitter.h"
 #include "proto_frame.h"
 #include "proto_commands.h"
 #include "proto_crypto.h"
@@ -206,6 +207,128 @@ TEST(Exchange, LbtFailedSendIsNotRetried) {
 
   EXPECT_EQ(radio.get_send_count(), 1) << "FAILED is not CHANNEL_BUSY: no further attempt";
   EXPECT_EQ(comp.exchange_engine_.counters().lbt_retries, 0u);
+}
+
+// ============================================================================
+// A one-way burst through the real send path. Every copy opens a session (CTRL0 START), so every copy gets the
+// listen-before-talk check of a fixed-channel sender: up to LBT_MAX_RETRIES checks LBT_RETRY_DELAY_MS apart, then
+// the copy goes out regardless. A busy channel delays a copy by at most the sum of its checks and never drops it;
+// the gap of the burst (ONEWAY_BURST_INTERVAL_MS) comes on top.
+// ============================================================================
+
+namespace {
+
+/// A 1W STOP burst through the hub's engine: the transmitter is wired as the hub wires it.
+struct OneWayBurstRig {
+  OneWayBurstRig() : transmitter(make_transmit(), &comp.tuning_, make_preamble_bytes()) {
+    wire_observer_rig(comp, radio);
+    comp.exchange_engine_.set_transmit_observer(&observer);
+    radio.set_rssi_default(-120);
+    esphome::test_hal::reset_delays();
+    EXPECT_TRUE(create_1w_execute_command(frame, test::OWN_ID, DeviceType::VERTICAL_EXTERIOR_AWNING, CoverCommand::STOP,
+                                          0x0102, test::TEST_SYSTEM_KEY));
+  }
+
+  OneWayTransmitFn make_transmit() {
+    return [this](const IoFrame &f, uint32_t freq, uint16_t preamble) {
+      return comp.exchange_engine_.transmit_frame(f, freq, preamble);
+    };
+  }
+  OneWayPreambleBytesFn make_preamble_bytes() {
+    return [this](float ms) { return comp.exchange_engine_.preamble_bytes_for_ms(ms); };
+  }
+
+  TestableComponent comp;
+  MockRadio radio;
+  RecordingTransmitObserver observer;
+  OneWayTransmitter transmitter;
+  IoFrame frame{};
+};
+
+/// Sum of the delays the burst waited, in ms.
+uint32_t total_delay_ms() {
+  uint32_t total = 0;
+  for (const uint32_t ms : esphome::test_hal::recorded_delays())
+    total += ms;
+  return total;
+}
+
+}  // namespace
+
+TEST(OneWayBurstSendPath, EveryCopyOpensASessionSoEveryCopyIsCheckedBeforeItGoesOut) {
+  OneWayBurstRig rig;
+  ASSERT_TRUE(is_start(rig.frame)) << "a 1W copy carries START";
+
+  ASSERT_TRUE(rig.transmitter.send_burst(rig.frame, OneWayPowerClass::ALWAYS_ALIVE));
+
+  ASSERT_EQ(rig.radio.get_tx_configs().size(), ONEWAY_BURST_REPEATS);
+  for (const auto &tx_config : rig.radio.get_tx_configs()) {
+    ASSERT_TRUE(tx_config.cca_threshold_dbm.has_value()) << "a free channel is sent on with the check, never without";
+    EXPECT_EQ(*tx_config.cca_threshold_dbm, rig.comp.exchange_engine_.busy_limit_dbm());
+  }
+  EXPECT_EQ(rig.comp.exchange_engine_.counters().lbt_retries, 0u);
+}
+
+TEST(OneWayBurstSendPath, ABusyChannelBeforeTheSecondCopyDelaysThatCopyOnceAndLosesNone) {
+  OneWayBurstRig rig;
+  rig.radio.queue_rssi(-120);  // copy 1: free
+  rig.radio.queue_rssi(-50);   // copy 2, first check: busy; the next reading is the free default
+
+  ASSERT_TRUE(rig.transmitter.send_burst(rig.frame, OneWayPowerClass::ALWAYS_ALIVE));
+
+  EXPECT_EQ(rig.observer.sent.size(), ONEWAY_BURST_REPEATS) << "all four copies went out";
+  EXPECT_EQ(rig.comp.exchange_engine_.counters().lbt_retries, 1u);
+  ASSERT_EQ(rig.observer.lbt_defers.size(), 1u);
+  EXPECT_EQ(rig.observer.lbt_defers[0], -50);
+  // gap, gap + one back-off before copy 2's second check, gap: the back-off sits inside the second copy's wait.
+  const std::vector<uint32_t> expected_delays = {ONEWAY_BURST_INTERVAL_MS, LBT_RETRY_DELAY_MS, ONEWAY_BURST_INTERVAL_MS,
+                                                 ONEWAY_BURST_INTERVAL_MS};
+  EXPECT_EQ(esphome::test_hal::recorded_delays(), expected_delays);
+  for (const auto &tx_config : rig.radio.get_tx_configs())
+    EXPECT_TRUE(tx_config.cca_threshold_dbm.has_value()) << "the copy that went out after the back-off was checked";
+}
+
+TEST(OneWayBurstSendPath, AChannelThatStaysBusyDelaysEachCopyByAllItsChecksThenSendsItUnchecked) {
+  OneWayBurstRig rig;
+  rig.radio.set_rssi_default(-50);  // busy on every check
+
+  ASSERT_TRUE(rig.transmitter.send_burst(rig.frame, OneWayPowerClass::ALWAYS_ALIVE));
+
+  const uint32_t checks_per_copy = LBT_MAX_RETRIES;
+  EXPECT_EQ(rig.observer.sent.size(), ONEWAY_BURST_REPEATS) << "the copy still goes out after the last check";
+  EXPECT_EQ(rig.comp.exchange_engine_.counters().lbt_retries, checks_per_copy * ONEWAY_BURST_REPEATS);
+  ASSERT_EQ(rig.radio.get_tx_configs().size(), ONEWAY_BURST_REPEATS);
+  for (const auto &tx_config : rig.radio.get_tx_configs())
+    EXPECT_FALSE(tx_config.cca_threshold_dbm.has_value()) << "the send after the last check is not checked again";
+  // At most 25 ms per copy on top of the three gaps of the burst.
+  EXPECT_EQ(total_delay_ms(), (ONEWAY_BURST_REPEATS - 1) * ONEWAY_BURST_INTERVAL_MS +
+                                  ONEWAY_BURST_REPEATS * checks_per_copy * LBT_RETRY_DELAY_MS);
+}
+
+TEST(OneWayBurstSendPath, ACopyTheRadioFailsIsNotRetriedAndTheNextCopyStillGoesOut) {
+  OneWayBurstRig rig;
+  rig.radio.queue_tx_result(true);
+  rig.radio.queue_tx_result(false);  // copy 2: the radio cannot send it
+
+  EXPECT_TRUE(rig.transmitter.send_burst(rig.frame, OneWayPowerClass::ALWAYS_ALIVE))
+      << "a partial burst counts as sent";
+
+  EXPECT_EQ(rig.radio.get_send_count(), ONEWAY_BURST_REPEATS)
+      << "one attempt per copy: a failure is not a busy channel";
+  EXPECT_EQ(rig.observer.sent.size(), ONEWAY_BURST_REPEATS - 1u) << "the failed copy never reached the air";
+  EXPECT_EQ(rig.comp.exchange_engine_.counters().lbt_retries, 0u);
+}
+
+TEST(OneWayBurstSendPath, ABurstOfWakeUpCopiesIsStampedWithTheLongWakeLevelAndTheFlagCopyAlone) {
+  OneWayBurstRig rig;
+
+  ASSERT_TRUE(rig.transmitter.send_burst(rig.frame, OneWayPowerClass::LOW_POWER));
+
+  ASSERT_EQ(rig.radio.get_tx_configs().size(), ONEWAY_BURST_REPEATS);
+  EXPECT_EQ(rig.radio.get_tx_configs()[0].wake, TxWake::LONG);
+  EXPECT_EQ(rig.radio.get_tx_configs()[0].preamble_len, LONG_PREAMBLE);
+  for (size_t copy = 1; copy < ONEWAY_BURST_REPEATS; copy++)
+    EXPECT_EQ(rig.radio.get_tx_configs()[copy].wake, TxWake::SHORT) << "copy " << copy;
 }
 
 // Only a frame that opens a session (CTRL0 START) is checked; one without START answers within a

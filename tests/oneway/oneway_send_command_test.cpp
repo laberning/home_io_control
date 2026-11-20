@@ -32,19 +32,24 @@ const uint8_t OWN_NET_NODE[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
 const uint8_t ADOPTED_NET_NODE[NODE_ID_SIZE] = {0x44, 0x55, 0x66};
 
 /// Captures the frames a burst puts on air. `transmit_result` is what `fn()` reports back to the
-/// transmitter — set it false to simulate a radio that never accepts a copy. Records the preamble
-/// requested for each copy alongside its frame (ctrl1 -- including CTRL1_LOW_POWER -- is already on
-/// the frame itself, so no separate field is needed for that).
+/// transmitter once `results` (below) has run out — set it false to simulate a radio that never accepts a
+/// copy. `results[n]` answers the n-th copy offered, so a test can refuse one burst of a gesture and take the
+/// rest. Records every copy offered, accepted or not, with the preamble requested for it alongside its frame
+/// (ctrl1 -- including CTRL1_LOW_POWER -- is already on the frame itself, so no separate field is needed for that).
 class BurstRecorder {
  public:
   OneWayTransmitFn fn() {
     return [this](const IoFrame &frame, uint32_t freq, uint16_t preamble) {
       (void) freq;
+      const size_t attempt = this->frames.size();
       this->frames.push_back(frame);
       this->preambles.push_back(preamble);
-      return this->transmit_result;
+      return attempt < this->results.size() ? static_cast<bool>(this->results[attempt]) : this->transmit_result;
     };
   }
+
+  /// What the first copies offered report, in order; copy n beyond the list reports `transmit_result`.
+  std::vector<bool> results;
 
   bool transmit_result{true};
 
@@ -561,6 +566,129 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentSkipsStopAndDownWhenTheSweepTransmi
   EXPECT_EQ(recorder.frames.size(), 4u * ONEWAY_BURST_REPEATS);
   for (const auto &f : recorder.frames)
     EXPECT_NE(f.cmd, CMD_EXECUTE) << "no STOP/DOWN EXECUTE frame should have been built after a dead sweep";
+}
+
+// ============================================================================
+// Failures inside the enrollment gestures and before a burst
+// ============================================================================
+
+namespace {
+/// `ONEWAY_BURST_REPEATS` refusals starting at copy `first_copy`, as a per-copy result list.
+std::vector<bool> refuse_burst(size_t first_copy) {
+  std::vector<bool> results(first_copy + ONEWAY_BURST_REPEATS, true);
+  for (size_t copy = first_copy; copy < results.size(); copy++)
+    results[copy] = false;
+  return results;
+}
+}  // namespace
+
+TEST_F(OneWaySendCommandTest, SomfyEnrollmentStillAddsTheControllerWhenTheRemovePreludeIsRefused) {
+  BurstRecorder recorder;
+  recorder.results = refuse_burst(0);  // the whole 0x39 burst; the 0x30 burst after it is taken
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 5));
+  transmitter.setup();
+  std::vector<OneWayCommandReport> reports;
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &r) { reports.push_back(r); });
+
+  EXPECT_TRUE(transmitter.send_enrollment("awning")) << "the 0x30 is what registers the identity";
+
+  ASSERT_EQ(recorder.frames.size(), 2u * ONEWAY_BURST_REPEATS) << "the 0x30 is sent although the 0x39 was refused";
+  EXPECT_EQ(recorder.frames[0].cmd, CMD_ONEWAY_REMOVE);
+  EXPECT_EQ(recorder.frames[ONEWAY_BURST_REPEATS].cmd, CMD_ONEWAY_ADD_CONTROLLER);
+  ASSERT_EQ(reports.size(), 2u);
+  EXPECT_EQ(reports[0].intent, "UNENROLL");
+  EXPECT_FALSE(reports[0].transmitted);
+  EXPECT_TRUE(reports[0].sequence_reserved);
+  EXPECT_EQ(reports[1].intent, "ENROLL");
+  EXPECT_TRUE(reports[1].transmitted);
+  EXPECT_EQ(reports[1].sequence, reports[0].sequence + 1) << "each half has its own sequence";
+}
+
+TEST_F(OneWaySendCommandTest, SomfyEnrollmentReportsFailureWhenTheAddIsRefusedEvenIfTheRemoveWentOut) {
+  BurstRecorder recorder;
+  recorder.results = std::vector<bool>(ONEWAY_BURST_REPEATS, true);  // the 0x39 burst goes out
+  recorder.transmit_result = false;                                  // the 0x30 burst does not
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 5));
+  transmitter.setup();
+
+  EXPECT_FALSE(transmitter.send_enrollment("awning")) << "the identity was removed and never added";
+}
+
+TEST_F(OneWaySendCommandTest, VeluxEnrollmentStillSweepsAndCompletesWhenTheRemovePreludeIsRefused) {
+  BurstRecorder recorder;
+  recorder.results = refuse_burst(0);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  transmitter.add_identity(make_velux_identity(1));
+  transmitter.setup();
+
+  EXPECT_TRUE(transmitter.send_enrollment("velux"));
+
+  // 0x39 (refused) + three 0x30 + STOP + DOWN.
+  ASSERT_EQ(recorder.frames.size(), 6u * ONEWAY_BURST_REPEATS);
+  EXPECT_EQ(recorder.frames[0].cmd, CMD_ONEWAY_REMOVE);
+  for (size_t burst = 1; burst <= 3; burst++)
+    EXPECT_EQ(recorder.frames[burst * ONEWAY_BURST_REPEATS].cmd, CMD_ONEWAY_ADD_CONTROLLER) << "sweep burst " << burst;
+  EXPECT_EQ(recorder.frames[4 * ONEWAY_BURST_REPEATS].cmd, CMD_EXECUTE);
+  EXPECT_EQ(recorder.frames[5 * ONEWAY_BURST_REPEATS].cmd, CMD_EXECUTE);
+}
+
+TEST_F(OneWaySendCommandTest, VeluxEnrollmentCountsTheSweepAsSentWhenOnlyOneClassIsRefused) {
+  // The sweep's second class (burst 2 of the gesture) never reaches the radio; the others do.
+  BurstRecorder recorder;
+  recorder.results = refuse_burst(2 * ONEWAY_BURST_REPEATS);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  transmitter.add_identity(make_velux_identity(1));
+  transmitter.setup();
+  std::vector<OneWayCommandReport> reports;
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &r) { reports.push_back(r); });
+
+  EXPECT_TRUE(transmitter.send_enrollment("velux"));
+
+  EXPECT_EQ(recorder.frames.size(), 6u * ONEWAY_BURST_REPEATS)
+      << "the refused class does not stop the sweep or the STOP+DOWN";
+  // Reports: 0x39, the sweep as one, STOP, DOWN.
+  ASSERT_EQ(reports.size(), 4u);
+  EXPECT_EQ(reports[1].intent, "ENROLL");
+  EXPECT_TRUE(reports[1].transmitted) << "some class reached the radio";
+}
+
+TEST_F(OneWaySendCommandTest, ACommandWithoutAWireEncodingReportsReservedNotSentAndSpendsItsSequence) {
+  // FORCE_OPEN has no 1W encoding, so the frame cannot be built once the sequence is reserved.
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 40));
+  transmitter.setup();
+  std::vector<OneWayCommandReport> reports;
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &r) { reports.push_back(r); });
+
+  EXPECT_FALSE(transmitter.send_command("awning", CoverCommand::FORCE_OPEN));
+
+  EXPECT_TRUE(recorder.frames.empty());
+  ASSERT_EQ(reports.size(), 1u);
+  EXPECT_TRUE(reports[0].sequence_reserved) << "the sequence is spent even though nothing was built";
+  EXPECT_FALSE(reports[0].transmitted);
+  EXPECT_EQ(reports[0].sequence, 40);
+
+  ASSERT_TRUE(transmitter.send_command("awning", CoverCommand::STOP));
+  EXPECT_EQ(recorder.sequences().front(), 41) << "the spent sequence is never handed out again";
+}
+
+TEST_F(OneWaySendCommandTest, AnOutOfRangePositionReportsReservedNotSent) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 40));
+  transmitter.setup();
+  std::vector<OneWayCommandReport> reports;
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &r) { reports.push_back(r); });
+
+  EXPECT_FALSE(transmitter.send_position("awning", 101));
+
+  EXPECT_TRUE(recorder.frames.empty());
+  ASSERT_EQ(reports.size(), 1u);
+  EXPECT_TRUE(reports[0].sequence_reserved);
+  EXPECT_FALSE(reports[0].transmitted);
 }
 
 TEST_F(OneWaySendCommandTest, UnenrollmentBuildsARemoveControllerFrame) {

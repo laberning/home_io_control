@@ -7,6 +7,7 @@
 #include "stubs/radio_test_common.h"
 #include "stubs/scripted_spi.h"
 #include "stubs/soft_phy_test_driver.h"
+#include "oneway_wire_frames.h"
 
 #include <gtest/gtest.h>
 #include <string>
@@ -816,6 +817,55 @@ TEST(RadioLR1121, SendPacketWritesUartEncodedBytes) {
   ASSERT_EQ(tx.size(), 2u + expected_encoded_len) << "WriteBuffer payload must be exactly the UART-encoded frame";
   for (uint8_t i = 0; i < expected_encoded_len; i++)
     EXPECT_EQ(tx[2 + i], expected_encoded[i]) << "encoded byte " << (int) i << " mismatch";
+}
+
+// ============================================================================
+// The one-way frame sizes (23, 29 and 35 bytes) at the wake-up and at the start preamble
+// ============================================================================
+
+TEST(RadioLR1121, SendsEachOneWayFrameSizeBehindTheWakeUpAndTheStartPreamble) {
+  const std::vector<oneway_wire::WireFrame> frames = oneway_wire::frames();
+  ASSERT_EQ(frames.size(), 3u);
+  EXPECT_EQ(frames[0].bytes.size(), oneway_wire::EXECUTE_WIRE_LEN);
+  EXPECT_EQ(frames[1].bytes.size(), oneway_wire::ADD_WIRE_LEN);
+  EXPECT_EQ(frames[2].bytes.size(), oneway_wire::ADD_WITH_MAC_WIRE_LEN);
+
+  for (const auto &frame : frames) {
+    for (const bool wake : {true, false}) {
+      ScriptedSpi spi;
+      MockPin rst, irq, busy(false);
+      TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, 0x07);
+      const uint16_t preamble = wake ? LONG_PREAMBLE : radio.preamble_bytes_for_ms(START_PREAMBLE_MS);
+      SCOPED_TRACE(oneway_wire::case_name(frame, preamble));
+      RadioTxConfig cfg;
+      cfg.freq_hz = FREQ_CH2;
+      cfg.preamble_len = preamble;
+      cfg.wake = wake ? TxWake::LONG : TxWake::SHORT;
+      const uint8_t len = static_cast<uint8_t>(frame.bytes.size());
+
+      (void) radio.send_packet(frame.bytes.data(), len, cfg);  // times out in a host test, see above
+
+      const int write_idx = spi.find_opcode(LR1121_CMD_WRITE_BUFFER);
+      ASSERT_GE(write_idx, 0);
+      int params_idx = -1;
+      for (int i = write_idx - 1; i >= 0 && params_idx < 0; i--) {
+        const auto &t = spi.transactions()[i];
+        if (t.size() >= 2 && t[0] == ((LR1121_CMD_SET_PACKET_PARAMS >> 8) & 0xFF) &&
+            t[1] == (LR1121_CMD_SET_PACKET_PARAMS & 0xFF))
+          params_idx = i;
+      }
+      ASSERT_GE(params_idx, 0) << "the packet parameters are set before the frame is loaded";
+      const auto &params = spi.transactions()[params_idx];
+      ASSERT_EQ(params.size(), 11u) << "opcode and nine parameter bytes";
+      const uint16_t preamble_bits = static_cast<uint16_t>((params[2] << 8) | params[3]);
+      EXPECT_EQ(preamble_bits, preamble * 8) << "the chip's preamble field counts bits";
+      const uint8_t encoded_len = oneway_wire::expected_encoded_len(len);
+      EXPECT_EQ(params[8], encoded_len) << "payload length: the frame and its CRC as 10-bit UART cells";
+      EXPECT_EQ(spi.transactions()[write_idx].size(), 2u + encoded_len) << "opcode, then the encoded frame";
+      EXPECT_EQ(radio.tx_air_time_us(len, cfg), oneway_wire::expected_air_time_us(preamble, len, 8))
+          << "eight bit periods per preamble byte";
+    }
+  }
 }
 
 TEST(RadioLR1121, SendPacketAppliesHighAcpWorkaroundBeforeSetTx) {

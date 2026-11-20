@@ -1,0 +1,15 @@
+# expect-error: (this address was derived; set node_id: explicitly to resolve the clash)
+# covers: oneway_controllers._reject_node_id_collision
+# 'second' has no node_id, so its address derives from the hub's node_id and its handle (07C81D here). 'first'
+# names that very address, so the derived one collides and the message says it was derived.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: first
+      node_id: "07C81D"
+      io_device_type: vertical_exterior_awning
+    - id: second
+      io_device_type: roller_shutter

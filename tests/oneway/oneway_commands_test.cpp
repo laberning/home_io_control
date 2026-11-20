@@ -327,7 +327,7 @@ TEST(OneWayCommands, FrameCarriesTheOneWayShape) {
       << "a 1W execute's MAC lives inside the declared length; the out-of-length trailer is CMD 0x30's";
 }
 
-TEST(OneWayCommands, LowPowerBitIsNeverSet) {
+TEST(OneWayCommands, TheExecuteBuilderLeavesCtrl1ZeroForTheBurstToSet) {
   // Real remotes leave CTRL1 at zero on every copy but the first of a burst: three own-hardware
   // captures and the published example carry ctrl1=0x00, and the one remote seen setting
   // CTRL1_LOW_POWER does so on copy 1 only. That per-copy flag is send_burst()'s job (ADR 0038);
@@ -745,9 +745,9 @@ TEST(OneWayEnrollment, AddControllerRoundTripsThroughAdoptionDecoder) {
          "with what the decoder expects";
 }
 
-TEST(OneWayEnrollment, LowPowerBitIsNeverSet) {
-  // Same rule as every other 1W builder in this file (OneWayCommands.LowPowerBitIsNeverSet) —
-  // stated here too because it is easy to reintroduce by analogy with the 2W builders, which do set it.
+TEST(OneWayEnrollment, TheEnrollmentBuildersLeaveCtrl1ZeroForTheBurstToSet) {
+  // Same rule as every other 1W builder in this file (OneWayCommands.TheExecuteBuilderLeavesCtrl1ZeroForTheBurstToSet)
+  // — stated here too because it is easy to reintroduce by analogy with the 2W builders, which do set it.
   IoFrame add{};
   ASSERT_TRUE(create_1w_add_controller(add, ADD_CONTROLLER_VECTOR_SRC, DeviceType::UNKNOWN,
                                        ADD_CONTROLLER_VECTOR_MANUFACTURER, ADD_CONTROLLER_VECTOR_SEQUENCE,

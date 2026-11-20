@@ -34,11 +34,17 @@ struct SentFrame {
 };
 
 /// Records what the transmitter asked for, so the cadence can be asserted without a radio.
+///
+/// What each attempt reports back is scripted per call: `results[n]` answers the n-th attempt, and every
+/// attempt beyond the list answers `default_result`. An attempt the recorder refuses is counted in `attempts`
+/// but is not in `sent`, as a copy that never reached the air is not.
 class TransmitRecorder {
  public:
   OneWayTransmitFn fn() {
     return [this](const IoFrame &frame, uint32_t freq, uint16_t preamble) {
-      if (this->fail_from_ >= 0 && static_cast<int>(this->sent.size()) >= this->fail_from_)
+      const size_t attempt = this->attempts++;
+      const bool accepted = attempt < this->results.size() ? this->results[attempt] : this->default_result;
+      if (!accepted)
         return false;
       uint8_t buf[FRAME_MAX_WIRE_SIZE] = {0};
       const uint8_t len = serialize(frame, buf, sizeof(buf));
@@ -48,8 +54,11 @@ class TransmitRecorder {
   }
 
   std::vector<SentFrame> sent;
-  /// Index from which the radio starts refusing; -1 means it never does.
-  int fail_from_{-1};
+  size_t attempts{0};
+  /// What the first attempts report, in order (true = the copy reached the radio).
+  std::vector<bool> results;
+  /// What every attempt after `results` reports.
+  bool default_result{true};
 };
 
 IoFrame make_stop_frame() {
@@ -155,34 +164,51 @@ TEST_F(OneWayTransmitterTest, FeedsTheWatchdogDuringTheGaps) {
       << "the watchdog must be fed at least once per blocking gap";
 }
 
-TEST_F(OneWayTransmitterTest, ReportsSuccessWhenOnlySomeCopiesGetOut) {
+TEST_F(OneWayTransmitterTest, ReportsSuccessWhenOnlyTheFirstCopiesGetOut) {
   // A device needs one copy. Reporting failure because the radio refused the last two would tell
   // the caller something false about a command that very likely landed.
   TransmitRecorder recorder;
-  recorder.fail_from_ = 2;
+  recorder.results = {true, true};
+  recorder.default_result = false;
   OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
   EXPECT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG))
       << "a partial burst is still a transmitted command";
-  EXPECT_EQ(recorder.sent.size(), 2u) << "the burst must keep trying the remaining copies, not abort on first refusal";
+  EXPECT_EQ(recorder.attempts, ONEWAY_BURST_REPEATS) << "the burst tries every copy, it does not abort on a refusal";
+  EXPECT_EQ(recorder.sent.size(), 2u);
+}
+
+TEST_F(OneWayTransmitterTest, ACopyThatFailsDoesNotKeepALaterCopyFromGoingOut) {
+  // The radio refuses copy 2 and takes copy 3 and 4: the burst reports success and the later copies are on air.
+  TransmitRecorder recorder;
+  recorder.results = {true, false, true, true};
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+
+  EXPECT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER));
+
+  EXPECT_EQ(recorder.attempts, ONEWAY_BURST_REPEATS);
+  ASSERT_EQ(recorder.sent.size(), 3u);
+  EXPECT_NE(recorder.sent[0].bytes[1] & CTRL1_LOW_POWER, 0) << "the wake-up copy went out";
+  EXPECT_EQ(recorder.sent[1].bytes[1] & CTRL1_LOW_POWER, 0);
+  EXPECT_EQ(recorder.sent[2].bytes[1] & CTRL1_LOW_POWER, 0);
 }
 
 TEST_F(OneWayTransmitterTest, ReportsFailureWhenNothingGetsOut) {
   TransmitRecorder recorder;
-  recorder.fail_from_ = 0;
+  recorder.default_result = false;
   OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
   EXPECT_FALSE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG))
       << "with no copy on air there is nothing to claim; 1W gives no other evidence";
   EXPECT_TRUE(recorder.sent.empty());
+  EXPECT_EQ(recorder.attempts, ONEWAY_BURST_REPEATS);
 }
 
-TEST_F(OneWayTransmitterTest, StillAttemptsTheFullBurstWhenTheRadioRefusesFirst) {
-  // Every attempt is counted even when the radio refuses, so a radio that recovers mid-burst
-  // still gets the remaining copies out.
+TEST_F(OneWayTransmitterTest, KeepsItsCadenceWhenEveryCopyIsRefused) {
+  // The gaps go before each copy after the first, so refused copies do not shorten the burst.
   TransmitRecorder recorder;
+  recorder.default_result = false;
   OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
-  recorder.fail_from_ = 0;
 
   transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG);
 
@@ -194,7 +220,7 @@ TEST_F(OneWayTransmitterTest, StillAttemptsTheFullBurstWhenTheRadioRefusesFirst)
 // Per-copy preamble/CTRL1 shape (ADR 0038)
 // ============================================================================
 
-TEST_F(OneWayTransmitterTest, LegacyLongBurstIsUnchanged) {
+TEST_F(OneWayTransmitterTest, LegacyLongBurstSendsTheLongWakeUpOnEveryCopyWithoutTheFlag) {
   TransmitRecorder recorder;
   OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 

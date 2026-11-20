@@ -16,6 +16,7 @@
 #include "stubs/radio_test_common.h"
 #include "stubs/scripted_spi.h"
 #include "stubs/soft_phy_test_driver.h"
+#include "oneway_wire_frames.h"
 
 #include <gtest/gtest.h>
 #include <functional>
@@ -606,4 +607,49 @@ TEST(RadioSX1262Tx, TimeoutAfterAChipResetConfiguresItAgainBeforeReceiving) {
   const int packet_type = sx1262_find_from(spi, set_tx, SX1262_SET_PACKET_TYPE);
   EXPECT_GT(packet_type, set_tx) << "the chip is configured again";
   EXPECT_GT(sx1262_find_from(spi, packet_type, SX1262_SET_RX), packet_type) << "and receives afterwards";
+}
+
+// ============================================================================
+// The one-way frame sizes (23, 29 and 35 bytes) at the wake-up and at the start preamble
+// ============================================================================
+
+TEST(RadioSX1262Tx, SendsEachOneWayFrameSizeBehindTheWakeUpAndTheStartPreamble) {
+  const std::vector<oneway_wire::WireFrame> frames = oneway_wire::frames();
+  ASSERT_EQ(frames.size(), 3u);
+  EXPECT_EQ(frames[0].bytes.size(), oneway_wire::EXECUTE_WIRE_LEN);
+  EXPECT_EQ(frames[1].bytes.size(), oneway_wire::ADD_WIRE_LEN);
+  EXPECT_EQ(frames[2].bytes.size(), oneway_wire::ADD_WITH_MAC_WIRE_LEN);
+
+  for (const auto &frame : frames) {
+    for (const bool wake : {true, false}) {
+      ScriptedSpi spi;
+      MockPin rst, dio1, busy(false);
+      TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, TCXO_CODE_1_8V);
+      ASSERT_TRUE(radio.init());
+      const uint16_t preamble = wake ? LONG_PREAMBLE : radio.preamble_bytes_for_ms(START_PREAMBLE_MS);
+      SCOPED_TRACE(oneway_wire::case_name(frame, preamble));
+      RadioTxConfig cfg;
+      cfg.freq_hz = FREQ_CH2;
+      cfg.preamble_len = preamble;
+      cfg.wake = wake ? TxWake::LONG : TxWake::SHORT;
+      const uint8_t len = static_cast<uint8_t>(frame.bytes.size());
+      const size_t before_tx = spi.transactions().size();
+
+      (void) radio.send_packet(frame.bytes.data(), len, cfg);  // the host harness never raises TxDone
+
+      const int params_idx = sx1262_find_from(spi, before_tx, SX1262_SET_PACKET_PARAMS);
+      const int buffer_idx = sx1262_find_from(spi, before_tx, SX1262_WRITE_BUFFER);
+      ASSERT_GE(params_idx, 0);
+      ASSERT_GT(buffer_idx, params_idx) << "the packet parameters are set before the frame is loaded";
+      const auto &params = spi.transactions()[params_idx];
+      ASSERT_EQ(params.size(), 10u) << "opcode and nine parameter bytes";
+      const uint16_t preamble_bits = static_cast<uint16_t>((params[1] << 8) | params[2]);
+      EXPECT_EQ(preamble_bits, preamble * 8) << "the chip's preamble field counts bits";
+      const uint8_t encoded_len = oneway_wire::expected_encoded_len(len);
+      EXPECT_EQ(params[7], encoded_len) << "payload length: the frame and its CRC as 10-bit UART cells";
+      EXPECT_EQ(spi.transactions()[buffer_idx].size(), 2u + encoded_len) << "opcode, offset, then the encoded frame";
+      EXPECT_EQ(radio.tx_air_time_us(len, cfg), oneway_wire::expected_air_time_us(preamble, len, 8))
+          << "eight bit periods per preamble byte";
+    }
+  }
 }

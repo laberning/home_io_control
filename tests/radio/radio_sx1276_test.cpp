@@ -5,6 +5,7 @@
 
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
+#include "oneway_wire_frames.h"
 
 #include <functional>
 #include <initializer_list>
@@ -496,6 +497,73 @@ TEST(RadioSX1276, SendPacketWritesPreambleFrequencyAndFifoBeforeTxWait) {
 
   ASSERT_EQ(spi.tx_fifo().size(), sizeof(payload));
   EXPECT_TRUE(std::equal(spi.tx_fifo().begin(), spi.tx_fifo().end(), payload));
+}
+
+// ============================================================================
+// The one-way frame sizes (23, 29 and 35 bytes) at the wake-up and at the start preamble
+// ============================================================================
+
+/// What the SX1276 is handed for each one-way frame size: the preamble it programs, the bytes it loads into the
+/// FIFO and the air time it estimates. The 35-byte frame is recorded as the driver loads it today: all 35 bytes
+/// go into the FIFO, while the packet engine takes the frame's length from its first byte, which declares 29.
+TEST(RadioSX1276, SendsEachOneWayFrameSizeBehindTheWakeUpAndTheStartPreamble) {
+  const std::vector<oneway_wire::WireFrame> frames = oneway_wire::frames();
+  ASSERT_EQ(frames.size(), 3u);
+  EXPECT_EQ(frames[0].bytes.size(), oneway_wire::EXECUTE_WIRE_LEN);
+  EXPECT_EQ(frames[1].bytes.size(), oneway_wire::ADD_WIRE_LEN);
+  EXPECT_EQ(frames[2].bytes.size(), oneway_wire::ADD_WITH_MAC_WIRE_LEN);
+
+  RegisterModelSpi probe_spi;
+  MockPin probe_rst, probe_dio0, probe_dio4(false);
+  RadioSX1276 probe(&probe_spi, &probe_rst, &probe_dio0, &probe_dio4, 17, 0x80);
+  const uint16_t start_preamble = probe.preamble_bytes_for_ms(START_PREAMBLE_MS);
+
+  for (const auto &frame : frames) {
+    for (const uint16_t preamble : {LONG_PREAMBLE, start_preamble}) {
+      SCOPED_TRACE(oneway_wire::case_name(frame, preamble));
+      RegisterModelSpi spi;
+      MockPin rst, dio0, dio4(false);
+      RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+      RadioTxConfig cfg;
+      cfg.freq_hz = FREQ_CH2;
+      cfg.preamble_len = preamble;
+      cfg.wake = preamble >= LONG_PREAMBLE ? TxWake::LONG : TxWake::SHORT;
+      const uint8_t len = static_cast<uint8_t>(frame.bytes.size());
+
+      (void) radio.send_packet(frame.bytes.data(), len, cfg);  // times out in a host test, see above
+
+      uint16_t programmed = 0;
+      for (const auto &entry : spi.write_log()) {
+        if (entry.first == REG_PREAMBLE_MSB)
+          programmed = static_cast<uint16_t>(entry.second << 8);
+        if (entry.first == REG_PREAMBLE_LSB) {
+          programmed = static_cast<uint16_t>(programmed | entry.second);
+          break;
+        }
+      }
+      EXPECT_EQ(programmed, preamble);
+      ASSERT_EQ(spi.tx_fifo().size(), frame.bytes.size()) << "every byte of the frame is loaded into the FIFO";
+      EXPECT_EQ(spi.tx_fifo(), frame.bytes);
+      EXPECT_EQ(radio.tx_air_time_us(len, cfg), oneway_wire::expected_air_time_us(preamble, len, 10))
+          << "ten bit periods per preamble byte";
+    }
+  }
+}
+
+TEST(RadioSX1276, TheLengthItsPacketEngineTakesFromTheFirstByteOfTheMacFrameIsTheDeclaredOne) {
+  // The 35-byte add-controller frame carries six bytes after its declared 29. In variable-length mode the packet
+  // engine reads the length from the frame's first byte, so it is told 29.
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  seed_valid_version(spi);
+  ASSERT_TRUE(radio.init());
+  EXPECT_NE(spi.get_reg(REG_PACKET_CONFIG1) & 0x80, 0) << "PacketFormat = variable length";
+
+  const auto frames = oneway_wire::frames();
+  const auto &with_mac = frames[2].bytes;
+  EXPECT_EQ((with_mac[0] & CTRL0_LENGTH_MASK) + 1, oneway_wire::ADD_WIRE_LEN);
+  EXPECT_EQ(with_mac.size(), oneway_wire::ADD_WITH_MAC_WIRE_LEN);
 }
 
 TEST(RadioSX1276, TxDoneWaitGivesUpOneGuardAfterTheFrameShouldHaveEnded) {

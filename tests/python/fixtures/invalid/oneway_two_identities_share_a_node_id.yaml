@@ -1,0 +1,15 @@
+# expect-error: uses node_id 123456, which collides with oneway_controllers id 'first'
+# covers: oneway_controllers._reject_node_id_collision
+# Two identities that name the same address would share one rolling sequence counter on the receiver.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: first
+      node_id: "123456"
+      io_device_type: vertical_exterior_awning
+    - id: second
+      node_id: "123456"
+      io_device_type: roller_shutter
