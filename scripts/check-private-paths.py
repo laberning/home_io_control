@@ -58,9 +58,12 @@ def find_hits(rel_path: str, text: str) -> list[tuple[int, str]]:
 
 
 def tracked_text_files() -> list[tuple[str, str]]:
-    """(repo-relative path, text) for every tracked file that decodes as UTF-8."""
-    listed = subprocess.run(["git", "ls-files", "-z"], cwd=REPO_ROOT, check=True,
-                            capture_output=True).stdout.decode("utf-8").split("\0")
+    """(repo-relative path, text) for every file a commit would carry that decodes as UTF-8: tracked files,
+    plus untracked ones that are not ignored, so a new file is checked before it is staged."""
+    listed: list[str] = []
+    for extra in ([], ["--others", "--exclude-standard"]):
+        listed.extend(subprocess.run(["git", "ls-files", "-z", *extra], cwd=REPO_ROOT, check=True,
+                                     capture_output=True).stdout.decode("utf-8").split("\0"))
     files = []
     for rel in filter(None, listed):
         path = REPO_ROOT / rel

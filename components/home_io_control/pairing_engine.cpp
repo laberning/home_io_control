@@ -15,6 +15,7 @@
 #include "decisions_pairing.h"
 #include "decisions_attempts.h"
 #include "device_yaml_snippet.h"
+#include "log_frame.h"
 #include "log_helpers.h"
 #include "proto_commands.h"
 #include "proto_crypto.h"
@@ -244,14 +245,20 @@ decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(p
   auto outcome =
       engine_.listen(spec, context.packet, context.resp, [&](const IoFrame *parsed, const RadioRxPacket &packet) {
         saw_any = true;
-        ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, packet.len, packet.freq_hz);
         if (parsed == nullptr) {
+          ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, packet.len, packet.freq_hz);
           ESP_LOGD(TAG, "Key confirm wait: parse failed");
           return ReplyDisposition::IGNORE;
         }
-        ESP_LOGD(TAG, "Key confirm wait: parsed cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X", parsed->cmd,
-                 parsed->src[0], parsed->src[1], parsed->src[2], parsed->dst[0], parsed->dst[1], parsed->dst[2]);
         disposition = decisions::classify_pairing_key_confirm_reply(context.req, *parsed);
+        // A challenge the caller is about to answer is not traced: a line here would sit between the challenge
+        // and the 0x3D, and some receivers drop a late answer (issue #163). The caller reports it after the
+        // confirm wait (ADR 0111).
+        if (after_challenge || disposition != decisions::PairingKeyConfirmDisposition::CHALLENGE) {
+          ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, packet.len, packet.freq_hz);
+          ESP_LOGD(TAG, "Key confirm wait: parsed cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X", parsed->cmd,
+                   parsed->src[0], parsed->src[1], parsed->src[2], parsed->dst[0], parsed->dst[1], parsed->dst[2]);
+        }
         if (disposition == decisions::PairingKeyConfirmDisposition::IGNORE)
           return ReplyDisposition::IGNORE;
 
@@ -293,23 +300,29 @@ decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(p
 bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
   const ExchangeEngine::AttemptRun run = ExchangeEngine::fixed_attempts(EXCHANGE_RETRY_COUNT, EXCHANGE_RETRY_DELAY_MS);
   return engine_.run_attempts(run, [&](uint8_t try_number, uint16_t /*window_ms*/) {
+    // Quiet window (ADR 0111): from before the 0x32 to the end of the wait for its confirm and, when the device
+    // challenges, on across the 0x3D and the second wait. Nothing is printed between the challenge and the answer
+    // (a late answer is dropped by some receivers, issue #163) nor while a reply is awaited.
+    FrameLogHoldScope quiet_window;
     if (!engine_.transmit_frame(context.req, FREQ_CH2, radio_()->response_preamble()))
       return AttemptVerdict::AGAIN;
 
     decisions::PairingKeyConfirmDisposition disposition = listen_for_key_confirm_(context, try_number, false);
-    if (disposition == decisions::PairingKeyConfirmDisposition::CHALLENGE) {
+    const bool challenged = disposition == decisions::PairingKeyConfirmDisposition::CHALLENGE;
+    bool answered = false;
+    if (challenged) {
       // "Rest of the window" would leave almost nothing after a late challenge plus the 0x3D TX,
       // so this is a fresh full window, same as ExchangeEngine::wait_for_final_response_() gets
       // after handle_authentication_(). A failed 0x3D build/TX leaves `disposition` at CHALLENGE,
       // which the checks below treat the same as a second challenge: this try ends without
       // confirming, and the next try re-sends 0x32.
-      // Logged after the 0x3D, not before: a log line between challenge and answer delays the
-      // answer, and some receivers drop a late one (issue #163). RX is already re-armed by then.
-      const bool answered = engine_.answer_challenge(context.req, context.resp, FREQ_CH2);
-      ESP_LOGI(TAG, "Key transfer: device challenged the key transfer, %s", answered ? "answered 0x3D" : "0x3D failed");
+      answered = engine_.answer_challenge(context.req, context.resp, FREQ_CH2);
       if (answered)
         disposition = listen_for_key_confirm_(context, try_number, true);
     }
+    quiet_window.release();
+    if (challenged)
+      ESP_LOGI(TAG, "Key transfer: device challenged the key transfer, %s", answered ? "answered 0x3D" : "0x3D failed");
 
     if (disposition == decisions::PairingKeyConfirmDisposition::CONFIRM)
       return AttemptVerdict::DONE;
@@ -444,6 +457,9 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
       enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::TX_DISCOVER, attempt, false);
       const uint32_t request_freq = decisions::discovery_request_freq(
           tuning_->pairing_discovery_send_channels == DiscoverySendChannels::ALL, attempt);
+      // Every transmit-then-wait step of pairing holds the frame log from before the transmit to the end of the
+      // wait, so nothing printed delays noticing the reply (ADR 0111).
+      FrameLogHoldScope quiet_window;
       if (!create_discovery_request(context.req, node_id_, command, destination, tuning_->pairing_discovery_low_power,
                                     tuning_->pairing_discovery_ack_capable, tuning_->pairing_discovery_payload_enabled,
                                     tuning_->pairing_discovery_payload, system_key_) ||
@@ -455,6 +471,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::run_discovery_phase_(pairi
       enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::WAIT_DISCOVER_RESPONSE, attempt, false);
       auto result =
           wait_for_discovery_response_(tuning_->pairing_discovery_wait_ms, context.packet, context.rx, request_freq);
+      quiet_window.release();
       if (result == decisions::PairingDiscoveryDisposition::ACCEPT) {
         const DiscoveryResponseInfo info = parse_device_from_discovery(context.rx, context.device, context.device_id);
         context.discovery_metadata_complete = context.rx.data_len >= DEVICE_METADATA_SIZE;
@@ -511,6 +528,7 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
   const ExchangeEngine::AttemptRun run = ExchangeEngine::fixed_attempts(PAIRING_DISCOVER_CONFIRM_TRIES, 0);
   engine_.run_attempts(run, [&](uint8_t try_index, uint16_t /*window_ms*/) {
     engine_.record_debug(pairing_stage_name(pairing::PairingState::TX_DISCOVER_CONFIRM), try_index, false);
+    FrameLogHoldScope quiet_window;  // From before the 0x2C to the end of the wait for its answer (ADR 0111).
     if (!create_discover_confirm(context.req, node_id_, context.device.node_id, context.discovery_low_power, ack) ||
         !engine_.transmit_frame(context.req, FREQ_CH2, pairing_start_preamble(engine_, *tuning_, context.req))) {
       // A failed build/TX counts as a silent try, like wait_for_key_confirm_() does for 0x32.
@@ -526,6 +544,7 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
 
     const uint32_t wait_start_ms = millis();
     const decisions::PairingDiscoverConfirmDisposition disposition = wait_for_discover_confirm_ack_(try_index, context);
+    quiet_window.release();
 
     if (disposition == decisions::PairingDiscoverConfirmDisposition::ACK) {
       ESP_LOGI(TAG, "Discover confirm: 0x2D from %s on freq=%" PRIu32 " after %" PRIu32 " ms (try %u/%u)",
@@ -563,9 +582,14 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
 bool PairingEngine::resend_key_init_(pairing::PairingContext &context, uint8_t resend) {
   ESP_LOGI(TAG, "Key confirm missed, re-sending key-init to trigger auto-confirm (attempt %u/%u)", resend,
            PAIRING_KEY_INIT_RESENDS);
+  // From before the 0x31 across the 0x32 that answers its challenge to the end of the wait for the confirm
+  // (ADR 0111): nothing is printed between the challenge and the 0x32 (issue #163).
+  const FrameLogHoldScope quiet_window;
   if (!engine_.transmit_frame(context.key_init, FREQ_CH2, pairing_start_preamble(engine_, *tuning_, context.key_init)))
     return false;
-  if (!wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx, context.device.node_id))
+  const bool challenged =
+      wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx, context.device.node_id);
+  if (!challenged)
     return false;
   if (context.rx.cmd == CMD_KEY_CONFIRM)
     return true;
@@ -611,6 +635,10 @@ bool PairingEngine::resend_key_init_(pairing::PairingContext &context, uint8_t r
 /// occasional slower failure path.
 bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::TX_KEY_INIT, 1, false);
+  // From before the 0x31 across the 0x32 that answers its challenge to the end of the key transfer's wait for the
+  // confirm, including that wait's own tries (ADR 0111): nothing is printed between the challenge and the 0x32
+  // (issue #163), so the challenge line below follows that wait.
+  FrameLogHoldScope quiet_window;
   if (!create_key_init(context.key_init, node_id_, context.device.node_id) ||
       !engine_.transmit_frame(context.key_init, FREQ_CH2,
                               pairing_start_preamble(engine_, *tuning_, context.key_init))) {
@@ -618,12 +646,14 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   }
 
   enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::WAIT_KEY_CHALLENGE, 1, true);
-  if (!wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx, context.device.node_id)) {
+  const bool challenged =
+      wait_for_key_challenge_(PAIRING_KEY_CHALLENGE_TIMEOUT_MS, context.packet, context.rx, context.device.node_id);
+  if (!challenged)
     return false;
-  }
 
   // Some devices send 0x33 directly after 0x31 without requiring 0x32.
   if (context.rx.cmd == CMD_KEY_CONFIRM) {
+    quiet_window.release();  // The step's frame-log lines first, then its outcome.
     ESP_LOGI(TAG, "Device accepted key immediately (0x33 without 0x32 exchange)");
     context.resp = context.rx;
     return true;
@@ -633,8 +663,9 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   // No challenge bytes here: the raw 0x3C payload plus the 0x3D response it provokes is a
   // known-plaintext/known-ciphertext pair under the system key (see redaction.h). The generic
   // frame-log helpers (log_frame()/log_component_capture()) already mask both commands.
-  ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u freq=%" PRIu32 " rssi=%d", context.rx.data_len,
-           context.packet.freq_hz, radio_()->get_last_capture().rssi_dbm);
+  const uint8_t challenge_len = context.rx.data_len;
+  const uint32_t challenge_freq_hz = context.packet.freq_hz;
+  const int challenge_rssi_dbm = radio_()->get_last_capture().rssi_dbm;
 
   // Try 1 is the key transfer. Fast-turnaround radios catch the 0x33 through the standard exchange
   // wait inside it and make no further try. Slow-turnaround radios miss it while re-entering RX, so on
@@ -648,6 +679,9 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
                        [&](uint8_t try_number, uint16_t /*window_ms*/) {
                          if (try_number == 1) {
                            key_ok = transfer_key_and_wait_confirm_(context);
+                           quiet_window.release();
+                           ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u freq=%" PRIu32 " rssi=%d",
+                                    challenge_len, challenge_freq_hz, challenge_rssi_dbm);
                          } else {
                            key_ok = resend_key_init_(context, try_number - 1);
                          }

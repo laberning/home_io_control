@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <deque>
+#include <functional>
 #include <map>
 #include <optional>
 #include <utility>
@@ -116,6 +117,8 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
       tx_results_.pop_front();
     }
     tx_configs_.push_back(tx_config);
+    if (on_send_)
+      on_send_();
     timeline_.record(data, len);  // Before the air-time advance: releases count from TX start.
     send_count_++;
     // peek_ms() has no side effect in either clock mode, so this is meaningful under ManualClock
@@ -193,6 +196,8 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
         return false;  // Queued silence: a slice that times out with nothing received.
       }
       packet = *entry;
+      if (on_deliver_)
+        on_deliver_();
       if (emulate_capture_lifecycle_)
         this->populate_capture_base_(true, packet.freq_hz, -55, packet.data, packet.len, packet.data, packet.len);
       this->advance_manual_ms_(rx_latency_ms_);
@@ -255,6 +260,13 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void dump_debug() override {}
 
   // Test helpers
+  /// Run `callback` at the moment send_packet() accepts a frame for transmission (after a clear-channel
+  /// check that passed), and at the moment wait_for_packet() hands a scripted packet over. A test that
+  /// samples a log recorder in both can tell what the code under test logged while the hub waited for a
+  /// reply it had just provoked.
+  void set_on_send(std::function<void()> callback) { on_send_ = std::move(callback); }
+  /// @copydoc set_on_send()
+  void set_on_deliver(std::function<void()> callback) { on_deliver_ = std::move(callback); }
   void queue_rx(const esphome::home_io_control::RadioRxPacket &pkt) {
     rx_queue_.push_back({pkt, std::nullopt, std::nullopt, std::nullopt});
   }
@@ -389,6 +401,8 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
 
   std::deque<bool> tx_results_;
   std::deque<RxQueueEntry> rx_queue_;
+  std::function<void()> on_send_;     ///< See set_on_send().
+  std::function<void()> on_deliver_;  ///< See set_on_deliver().
   std::deque<int16_t> rssi_queue_;
   std::map<uint32_t, int16_t> channel_rssi_;
   std::vector<esphome::home_io_control::RadioTxConfig> tx_configs_;

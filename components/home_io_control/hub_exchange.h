@@ -83,6 +83,8 @@ struct OutboundExchangeContext {
   uint32_t wait_ms{0};              ///< Current timeout window for the active wait (ms).
   uint32_t first_response_ms{0};    ///< Timestamp when the first valid response arrived (for RTT/timing).
   uint32_t first_response_us{0};    ///< micros() at the same moment, for the sub-millisecond challenge-to-0x3D time.
+  uint32_t answer_us{0};            ///< Challenge accepted until the 0x3D was sent, for the deferred `Auth challenge`
+                                    ///< line (nothing is logged while the final reply is awaited).
   uint16_t request_preamble{0};     ///< Start preamble (bytes) this try's request went out with.
   uint32_t request_freq{0};         ///< Channel (Hz) this try's request went out on, or was last checked on when it
                                     ///< ended as "channel busy"; the 0x3D answer and the replies stay on it.

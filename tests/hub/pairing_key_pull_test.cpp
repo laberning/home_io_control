@@ -13,6 +13,7 @@
 #include "esp_random.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
+#include "support/hold_seam.h"
 
 #include <cstring>
 #include <vector>
@@ -87,6 +88,35 @@ TEST(PairingKeyPull, ProvenForeignKeyIsReportedNotAdopted) {
   EXPECT_EQ(rig.key_pull.pull(context), KeyPull::Result::OTHER_KEY);
   EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER, CMD_CHALLENGE_REQ}));
   EXPECT_EQ(0, memcmp(rig.system_key, key_before, AES_KEY_SIZE)) << "a pulled key is never adopted automatically";
+}
+
+TEST(PairingKeyPull, HoldsTheFrameLogAcrossTheRequestAndTheProofChallenge) {
+  RngGuard rng;
+  MockRadio radio;
+  KeyPullRig rig(radio);
+  pairing::PairingContext context = context_for_device();
+  test::HoldSeam seam(radio);
+
+  const IoFrame reply = pulled_key_frame(rig.node_id, OTHER_KEY);
+  radio.queue_rx(to_packet(reply));
+  radio.queue_rx(to_packet(proof_frame(rig.node_id, reply, OTHER_KEY)));
+
+  ASSERT_EQ(rig.key_pull.pull(context), KeyPull::Result::OTHER_KEY);
+  EXPECT_EQ(seam.depth_at_send.size(), 2u) << "the 0x38 and the proof challenge";
+  EXPECT_EQ(seam.depth_at_deliver.size(), 2u) << "the 0x32 and the device's 0x3D";
+  EXPECT_TRUE(seam.held_at_every_send_and_delivery())
+      << "nothing may be logged while the hub waits for the 0x32 or for the proof (ADR 0111)";
+  EXPECT_TRUE(test::frame_log_released());
+}
+
+TEST(PairingKeyPull, ReleasesTheFrameLogWhenNothingAnswers) {
+  RngGuard rng;
+  MockRadio radio;
+  KeyPullRig rig(radio);
+  pairing::PairingContext context = context_for_device();
+
+  EXPECT_EQ(rig.key_pull.pull(context), KeyPull::Result::FAILED);
+  EXPECT_TRUE(test::frame_log_released()) << "every silent try ends its quiet window";
 }
 
 TEST(PairingKeyPull, AKeyWithNoProofIsKeptUnprovenForARollCall) {

@@ -10,6 +10,7 @@
 
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
+#include "support/hold_seam.h"
 
 #include <cstring>
 
@@ -292,6 +293,25 @@ TEST(ChallengeWait, AnUnrelatedFrameBeforeTheGenuineAnswerStillVerifies) {
 
   EXPECT_EQ(f.run(), ExchangeEngine::ChallengeResult::VERIFIED)
       << "a frame from another party must not end the wait before the device answers";
+}
+
+TEST(ChallengeWait, HoldsTheFrameLogFromTheChallengeToTheAnswer) {
+  ChallengeWaitFixture f;
+  test::HoldSeam seam(f.radio);
+  f.queue(f.answer(test::DST_ID, test::TEST_SYSTEM_KEY));
+
+  ASSERT_EQ(f.run(), ExchangeEngine::ChallengeResult::VERIFIED);
+  EXPECT_EQ(seam.depth_at_send.size(), 1u);
+  EXPECT_TRUE(seam.held_at_every_send_and_delivery())
+      << "nothing may be logged while the hub waits for the answer to its challenge (ADR 0111)";
+  EXPECT_TRUE(test::frame_log_released());
+}
+
+TEST(ChallengeWait, ReleasesTheFrameLogWhenNoAnswerComes) {
+  ChallengeWaitFixture f;
+
+  ASSERT_EQ(f.run(), ExchangeEngine::ChallengeResult::NO_ANSWER);
+  EXPECT_TRUE(test::frame_log_released());
 }
 
 TEST(ChallengeWait, AnswerFromAnotherDeviceAloneIsNoAnswerNotAMismatch) {

@@ -204,7 +204,7 @@ def _mini_repo(root: Path) -> None:
     )
 
 
-def _run_checks_in(root: Path) -> list[str]:
+def _run_checks_in(root: Path, crosslinks_only: bool = False) -> list[str]:
     # check-docs-links.py loaded its own private copy of stage-docs.py -- patch that one.
     sdx = cdl.stage_docs
     saved = {k: getattr(cdl, k) for k in ("REPO_ROOT", "DOXYFILE", "DOCS_DIR", "_DOXYGEN_SOURCE_DIRS")}
@@ -220,7 +220,8 @@ def _run_checks_in(root: Path) -> list[str]:
         sdx.SOURCE_GLOBS = ["README.md", "docs/*.md", "docs/adr/*.md"]
         errors: list[str] = []
         cdl.check_crosslinks(errors)
-        cdl.check_published_docs(errors)
+        if not crosslinks_only:
+            cdl.check_published_docs(errors)
         return errors
     finally:
         for k, v in saved.items():
@@ -292,6 +293,30 @@ def test_each_violation_is_caught() -> None:
             subprocess.run(["git", "add", "-A"], cwd=root, check=True)
             errors = _run_checks_in(root)
             check(errors != [], f"violation not caught: {name}")
+
+
+def test_untracked_page_is_checked_before_it_is_staged() -> None:
+    """A new page nobody has `git add`ed yet is read by the cross-link check, one that is ignored is not."""
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mini_repo(root)
+        (root / "docs" / "new.md").write_text("# New\n<!-- doxygen-label: new -->\n\n[x](missing.md)\n")
+        errors = _run_checks_in(root, crosslinks_only=True)
+        check(any("new.md" in e and "broken link" in e for e in errors),
+              f"untracked page's broken link not caught: {errors}")
+
+        (root / "local_only" / "broken.md").write_text("[x](missing.md)\n")
+        errors = _run_checks_in(root, crosslinks_only=True)
+        check(not any("local_only" in e for e in errors), f"an ignored file must stay unchecked: {errors}")
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        _mini_repo(root)
+        (root / "docs" / "new.md").write_text("# New\n<!-- doxygen-label: new -->\n")
+        (root / "docs" / "guide.md").write_text(
+            "# Guide\n<!-- doxygen-label: guide -->\n\n[n](new.md)\n")
+        errors = _run_checks_in(root, crosslinks_only=True)
+        check(errors == [], f"a link to a new, unstaged page is a link to a file the commit carries: {errors}")
 
 
 # ---------------------------------------------------------------------------

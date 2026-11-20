@@ -92,22 +92,62 @@ inline void render_frame_hex_redacted(const uint8_t *data, uint8_t len, char *ou
 /// @brief Log level of one frame-log line, kept with the line while it is held.
 enum class FrameLogLevel : uint8_t { WARN, INFO, DEBUG };
 
-/// Lines one hold can keep. A held window covers one received frame and the answer to it: the
-/// driver's reception lines (at most four, on a failed decode) plus the answer's TX line and the
-/// driver's re-arm line.
-inline constexpr size_t FRAME_LOG_HELD_LINES = 6;
+/// Lines one outermost hold can keep. One hold covers a whole authenticated exchange of the exchange engine, from
+/// before the request's transmit to the end of the wait for the final reply (ADR 0111): the request's TX
+/// line and the driver's re-arm line, the challenge's reception lines (at most four, on a failed
+/// decode), the 0x3D's TX and re-arm lines and the final reply's reception lines (at most four), with a
+/// margin for a probe line.
+inline constexpr size_t FRAME_LOG_HELD_LINES = 12;
 /// The overflow note flush() prints when lines did not fit.
 inline constexpr size_t FRAME_LOG_NOTE_SIZE = 64;
 /// One rendered frame-log line: the hex dump plus its prefix, frequency, command and flags.
 inline constexpr size_t FRAME_LOG_LINE_SIZE = FRAME_LOG_HEX_BUFFER_SIZE + 96;
 
-/// @brief Keeps frame-log lines back while the hub answers a device, and prints them afterwards.
+/// @brief How many callers hold the frame log at the moment; nested holds count up and the outermost release ends it.
+///
+/// Every build tracks it, with or without IOHOME_FRAME_LOG: the depth is what a test reads to prove that a
+/// transmit-then-wait caller holds the frame log across its quiet window (ADR 0111), although only a frame-log
+/// build has lines to keep back. It also counts the releases, so a test can prove that no release (which prints
+/// the held lines in a frame-log build) fell between a reply and the answer to it; the count is one increment
+/// per release and has no other use in production.
+class FrameLogHoldDepth {
+ public:
+  /// Enter one more hold. Saturates, so a leak cannot wrap to "not holding".
+  void enter() {
+    if (this->depth_ < UINT8_MAX)
+      this->depth_++;
+  }
+  /// Leave one hold; releasing without a hold changes nothing.
+  /// @return true when this call ended the outermost hold (or no hold was active).
+  bool leave() {
+    if (this->depth_ > 0) {
+      this->depth_--;
+      this->releases_++;
+    }
+    return this->depth_ == 0;
+  }
+  /// @return number of holds currently entered.
+  [[nodiscard]] uint8_t depth() const { return this->depth_; }
+  /// @return number of holds left since startup (wraps); a test compares two readings for equality.
+  [[nodiscard]] uint32_t releases() const { return this->releases_; }
+
+ private:
+  uint8_t depth_{0};
+  uint32_t releases_{0};
+};
+
+/// @brief Keeps frame-log lines back while the hub waits for a reply it provoked, and prints them afterwards.
 ///
 /// Printing a log line takes milliseconds, and some receivers drop the hub's answer to their
-/// challenge when it comes that much later (issue #163). While held, write() stores each line
-/// instead of printing it; flush() prints the stored lines in order. Not holding, write() prints
-/// at once. A line that does not fit while held is counted, not printed, and flush() reports the
-/// count, so nothing is printed inside the window.
+/// challenge when it comes that much later (issue #163); a reply that starts on air right after the
+/// hub's own transmission is noticed late by a hub that is still printing (ADR 0111). Every caller that
+/// transmits and then waits for the reply it provoked therefore holds from before the transmit until its
+/// wait has ended. While held, write() stores each line instead of printing it; flush() prints the stored
+/// lines in order. Not holding, write() prints at once. A line that does not fit while held is counted, not
+/// printed, and flush() reports the count, so nothing is printed inside the window.
+///
+/// Holds nest: hold() counts up and release() counts down, and only the outermost release prints the lines
+/// and stops holding.
 ///
 /// Kept outside the IOHOME_FRAME_LOG guard so its behaviour is unit-testable; firmware builds use
 /// the one instance behind frame_log_hold() / frame_log_release().
@@ -118,10 +158,14 @@ class FrameLogBuffer {
 
   explicit FrameLogBuffer(Sink sink) : sink_(sink) {}
 
-  /// Start keeping lines back. Holding again while held changes nothing.
-  void hold() { this->holding_ = true; }
+  /// Start keeping lines back; a hold inside a hold nests.
+  void hold() { this->hold_.enter(); }
   /// @return true while lines are kept back.
-  [[nodiscard]] bool holding() const { return this->holding_; }
+  [[nodiscard]] bool holding() const { return this->hold_.depth() > 0; }
+  /// @return number of nested holds.
+  [[nodiscard]] uint8_t depth() const { return this->hold_.depth(); }
+  /// @return number of holds left so far (see FrameLogHoldDepth::releases()).
+  [[nodiscard]] uint32_t releases() const { return this->hold_.releases(); }
   /// @return number of lines currently kept back.
   [[nodiscard]] uint8_t held() const { return this->count_; }
 
@@ -130,7 +174,7 @@ class FrameLogBuffer {
   /// @param tag Must outlive the hold: a string literal, as every logging tag here is.
   /// @param text The rendered line; copied (and truncated to FRAME_LOG_LINE_SIZE - 1) when held.
   void write(FrameLogLevel level, const char *tag, const char *text) {
-    if (!this->holding_) {
+    if (!this->holding()) {
       this->sink_(level, tag, text);
       return;
     }
@@ -159,10 +203,10 @@ class FrameLogBuffer {
     }
   }
 
-  /// Print the kept lines and stop holding.
+  /// End one hold. The outermost release prints the kept lines and stops holding; an inner one keeps them for it.
   void release() {
-    this->flush();
-    this->holding_ = false;
+    if (this->hold_.leave())
+      this->flush();
   }
 
  private:
@@ -174,7 +218,7 @@ class FrameLogBuffer {
   };
 
   Sink sink_;
-  bool holding_{false};
+  FrameLogHoldDepth hold_;
   uint8_t count_{0};
   uint8_t dropped_{0};
   Line lines_[FRAME_LOG_HELD_LINES]{};
@@ -216,12 +260,16 @@ inline void frame_log_line(FrameLogLevel level, const char *tag, const char *for
   frame_log_buffer().write(level, tag, text);
 }
 
-/// @brief Hold frame-log lines until frame_log_release() (see FrameLogBuffer).
+/// @brief Hold frame-log lines until the matching frame_log_release() (see FrameLogBuffer).
 inline void frame_log_hold() { frame_log_buffer().hold(); }
 /// @brief Print the held lines; keep holding.
 inline void frame_log_flush() { frame_log_buffer().flush(); }
-/// @brief Print the held lines and stop holding.
+/// @brief End one hold; the outermost release prints the held lines.
 inline void frame_log_release() { frame_log_buffer().release(); }
+/// @brief Number of holds in effect; 0 when lines print at once.
+inline uint8_t frame_log_hold_depth() { return frame_log_buffer().depth(); }
+/// @brief Number of holds left so far; two equal readings mean nothing was printed by a release in between.
+inline uint32_t frame_log_release_count() { return frame_log_buffer().releases(); }
 
 inline void log_frame(const char *prefix, const uint8_t *data, uint8_t len, uint32_t freq, uint16_t preamble = 0) {
   char hex[FRAME_LOG_HEX_BUFFER_SIZE];
@@ -243,11 +291,42 @@ inline void log_frame(const char *prefix, const uint8_t *data, uint8_t len, uint
                    cmd_str, flags, hex);
 }
 #else
-// Without the frame log nothing is ever held, so the exchange engine's calls compile to nothing.
-inline void frame_log_hold() {}
+// Without the frame log there are no lines to keep back, so only the hold depth is tracked (a counter, not the
+// buffer): tests read it to check where the hub holds, and the calls cost nothing else.
+inline FrameLogHoldDepth &frame_log_hold_state() {
+  static FrameLogHoldDepth state;
+  return state;
+}
+inline void frame_log_hold() { frame_log_hold_state().enter(); }
 inline void frame_log_flush() {}
-inline void frame_log_release() {}
+inline void frame_log_release() { frame_log_hold_state().leave(); }
+inline uint8_t frame_log_hold_depth() { return frame_log_hold_state().depth(); }
+inline uint32_t frame_log_release_count() { return frame_log_hold_state().releases(); }
 #endif
+
+/// @brief Holds the frame log for the quiet window of one transmit-then-wait step (ADR 0111).
+///
+/// Declare it before the transmit that provokes a reply; the hold ends with release(), or at scope exit
+/// when the step is left earlier (a failed transmit, an early return). Calling release() right after the
+/// wait keeps the lines of the step ahead of whatever the caller logs about its outcome. Holds nest.
+class FrameLogHoldScope {
+ public:
+  FrameLogHoldScope() { frame_log_hold(); }
+  ~FrameLogHoldScope() { this->release(); }
+  FrameLogHoldScope(const FrameLogHoldScope &) = delete;
+  FrameLogHoldScope &operator=(const FrameLogHoldScope &) = delete;
+
+  /// End the hold now; a second call, and the destructor after it, do nothing.
+  void release() {
+    if (!this->released_) {
+      this->released_ = true;
+      frame_log_release();
+    }
+  }
+
+ private:
+  bool released_{false};
+};
 
 }  // namespace home_io_control
 }  // namespace esphome

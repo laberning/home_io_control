@@ -554,6 +554,18 @@ void format_try_age(const exchange::OutboundExchangeContext &ctx, char (&buf)[TR
   snprintf(buf, sizeof(buf), "%" PRIu32, ctx.try_start_ms - ctx.target_last_seen_ms);
 }
 
+/// Print the `Auth challenge` line of a try. Its values are kept in `ctx` so that the line can follow the final
+/// wait instead of delaying the reply that wait listens for (ADR 0111).
+void log_auth_challenge(const IoFrame &request, const exchange::OutboundExchangeContext &ctx) {
+  char age[TRY_AGE_BUFFER_SIZE];
+  format_try_age(ctx, age);
+  ESP_LOGI(TAG,
+           "Auth challenge try=%d wait_ms=%" PRIu32
+           " req_cmd=0x%02X req_len=%u preamble=%u age_ms=%s answer_us=%" PRIu32,
+           ctx.try_index, ctx.first_response_ms - ctx.try_start_ms, request.cmd, request.data_len, ctx.request_preamble,
+           age, ctx.answer_us);
+}
+
 /// True for a start frame addressed to a duty-cycled receiver — the only frame that has a wake-up
 /// preamble to choose. One definition, shared by the fixed rule and the per-try wake belief.
 bool is_low_power_start(const IoFrame &request) { return is_start(request) && (request.ctrl1 & CTRL1_LOW_POWER) != 0; }
@@ -652,14 +664,23 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
     context.request_preamble = this->try_preamble_(plan, preamble_plan, context.try_index);
     context.target_last_seen_ms = preamble_plan.last_seen_ms;
     this->debug_.last_try_preamble = context.request_preamble;
+    // Quiet window: from here to the end of the last wait of this try the frame log keeps its lines
+    // back (ADR 0111), so nothing printed delays noticing the reply the request provokes. The window
+    // spans several functions, so it is released explicitly instead of by a FrameLogHoldScope, on every
+    // path out of the try: the first wait (any outcome but a challenge), the last wait, or the failure
+    // paths around them. Only the lines are kept back without IOHOME_FRAME_LOG; the hold depth is
+    // tracked in every build.
+    frame_log_hold();
     const decisions::ChannelAccessStatus access = this->transmit_request_(
         request, freq, context.request_preamble, options.channel_access, previous_freq, context);
     previous_freq = context.request_freq;
     evidence_try |= decisions::silence_is_evidence(access);
     // A request that was never sent (channel busy) or failed to send ends the try; a forced send
     // onto a busy channel listens like any other.
-    if (!decisions::request_was_sent(access))
+    if (!decisions::request_was_sent(access)) {
+      frame_log_release();
       continue;
+    }
 
     context.state = exchange::OutboundExchangeState::WAIT_FIRST_RESPONSE;
     this->record_debug(outbound_stage_name(context.state), context.try_index, false);
@@ -682,7 +703,7 @@ ExchangeOutcome ExchangeEngine::send_and_receive(const IoFrame &request, IoFrame
 
     auth_tail_ms = this->final_reply_tail_ms_(request, context.request_freq);
     if (!this->handle_authentication_(request, context.request_freq, context, options.key))
-      continue;
+      continue;  // handle_authentication_() has released the hold
 
     context.state = exchange::OutboundExchangeState::WAIT_FINAL_RESPONSE;
     this->record_debug(outbound_stage_name(context.state), context.try_index, true);
@@ -888,12 +909,9 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
 
   auto disp = decisions::ExchangeFirstResponseDisposition::IGNORE_UNRELATED;
   RadioRxPacket packet{};
-  // The frame log holds its lines from here until the 0x3D has gone out (handle_authentication_()),
-  // so a challenge's RX line and the 0x3D's TX line print after the answer instead of delaying it:
-  // some receivers drop the command when the answer is late (issue #163). A rejected frame's lines
-  // are printed as soon as it is rejected, and any other outcome releases the hold below. No-ops
-  // without IOHOME_FRAME_LOG.
-  frame_log_hold();
+  // The frame log has been held since before the request went out (send_and_receive_()). A rejected
+  // frame's lines are printed as soon as it is rejected, because the hub keeps listening and they
+  // describe the past; any other outcome but a challenge releases the hold below.
   auto outcome = this->listen(spec, packet, ctx.rx, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
     if (parsed == nullptr) {
       frame_log_flush();
@@ -915,8 +933,8 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
     return ReplyDisposition::ACCEPT;
   });
 
-  // Only a challenge keeps the hold: send_and_receive_() hands it straight to handle_authentication_(),
-  // which releases it after the 0x3D.
+  // Only a challenge keeps the hold: the 0x3D and the final reply are the rest of the quiet window,
+  // and wait_for_final_response_() releases it.
   if (outcome != ListenOutcome::ACCEPTED || disp != decisions::ExchangeFirstResponseDisposition::REQUIRE_AUTH)
     frame_log_release();
   if (outcome == ListenOutcome::ACCEPTED)
@@ -943,26 +961,21 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
   ctx.state = exchange::OutboundExchangeState::TX_AUTH_RESPONSE;
   this->record_debug(outbound_stage_name(ctx.state), ctx.try_index, true);
   // Nothing is logged before the 0x3D: some receivers drop the command when the answer comes late,
-  // and a log line here sits between challenge and answer (issue #163); the frame log is held for
-  // the same reason (wait_for_first_response_()). The line below is printed after the send; every driver re-arms RX
-  // inside send_packet(), so the final reply is still received while it prints. answer_challenge() covers both the 0x3D
-  // build and its transmit as one step, so a failure here does not distinguish which of the two failed.
+  // and a log line here sits between challenge and answer (issue #163). Nor after it: the final reply
+  // starts on air within a millisecond and is over after a few, so a line printed now delays noticing
+  // it (ADR 0111). The frame log stays held and the `Auth challenge` line is printed by
+  // wait_for_final_response_() once its wait has ended; its values are kept in the context.
+  // answer_challenge() covers both the 0x3D build and its transmit as one step, so a failure here does
+  // not distinguish which of the two failed.
   const bool answered = this->answer_challenge(request, ctx.rx, freq, key);
-  const uint32_t answer_us = micros() - ctx.first_response_us;
-  // The challenge's and the 0x3D's frame-log lines, held since wait_for_first_response_().
-  frame_log_release();
-
-  char age[TRY_AGE_BUFFER_SIZE];
-  format_try_age(ctx, age);
-  // answer_us: from the challenge being accepted until answer_challenge() returned: the 0x3D's
-  // build, its airtime up to TxDone, and the driver's RX re-arm and post-TX settle.
-  ESP_LOGI(TAG,
-           "Auth challenge try=%d wait_ms=%" PRIu32
-           " req_cmd=0x%02X req_len=%u preamble=%u age_ms=%s answer_us=%" PRIu32,
-           ctx.try_index, ctx.first_response_ms - ctx.try_start_ms, request.cmd, request.data_len, ctx.request_preamble,
-           age, answer_us);
+  // From the challenge being accepted until answer_challenge() returned: the 0x3D's build, its airtime
+  // up to TxDone, and the driver's RX re-arm and post-TX settle.
+  ctx.answer_us = micros() - ctx.first_response_us;
 
   if (!answered) {
+    // No final wait follows, so the quiet window ends here.
+    frame_log_release();
+    log_auth_challenge(request, ctx);
     ctx.state = exchange::OutboundExchangeState::FAILED;
     this->record_debug("auth_response_failed", ctx.try_index, true);
     return false;
@@ -1026,8 +1039,12 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
   spec.stats = &stats;
 
   RadioRxPacket packet{};
+  // The frame log is still held from before the request: the request's, the challenge's and the 0x3D's
+  // lines print after this wait, not while the final reply is on air. A rejected frame's lines print
+  // at once, as in the first wait.
   auto outcome = this->listen(spec, packet, ctx.rx, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
     if (parsed == nullptr) {
+      frame_log_flush();
       this->record_debug("final_parse_fail", ctx.try_index, true);
       this->counters_.parse_failures++;
       log_unparsable_frame("Unparsable final response", ctx.try_index, pkt);
@@ -1035,11 +1052,16 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
     }
     if (is_valid_final_response(*parsed, request))
       return ReplyDisposition::ACCEPT;
+    frame_log_flush();
     this->record_debug("final_wrong_exchange", ctx.try_index, true);
     log_exchange_frame("Ignored final response", ctx.try_index, *parsed, pkt.len);
     this->report_overheard_(*parsed, pkt);
     return ReplyDisposition::IGNORE;
   });
+
+  // The quiet window ends with the wait: the held frame-log lines, then the line the challenge deferred.
+  frame_log_release();
+  log_auth_challenge(request, ctx);
 
   this->note_final_wait_(stats);
   if (outcome == ListenOutcome::ACCEPTED)
@@ -1061,6 +1083,8 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
                                                     ListenPolicy policy) {
   this->reset_debug(request.cmd);
 
+  // Quiet window of the replies (ADR 0111): held from before the broadcast goes out to the end of the window.
+  FrameLogHoldScope quiet_window;
   if (!this->transmit_frame(request, freq, this->request_preamble_for(request))) {
     this->record_debug("broadcast_tx_failed", 1, false);
     return 0;
@@ -1097,6 +1121,7 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
     return ReplyDisposition::IGNORE;
   });
 
+  quiet_window.release();
   this->record_debug("broadcast_collect_done", 1, false);
   return count;
 }
@@ -1139,6 +1164,10 @@ bool dispatch_received_packet(const ReplyHandler &on_frame, const RadioRxPacket 
     case ReplyDisposition::IGNORE:
       break;
   }
+  // A frame the handler ignores ends no quiet window (ADR 0111): the hub keeps waiting and the held lines describe
+  // the past. Printing them now keeps a long wait that hears many frames (a roll-call, a pairing discovery) from
+  // overflowing the hold buffer. Nothing is held outside a window, so this is a no-op there.
+  frame_log_flush();
   if (stats != nullptr)
     count_saturating(stats->frames_ignored);
   return false;
@@ -1278,6 +1307,8 @@ ExchangeEngine::ChallengeResult ExchangeEngine::challenge_sender(const IoFrame &
     this->record_debug(inbound_stage_name(context.state), 1, true);
     return ChallengeResult::NO_ANSWER;
   }
+  // Quiet window of the device's answer (ADR 0111): held from before the challenge goes out to the end of the wait.
+  FrameLogHoldScope quiet_window;
   if (!this->transmit_frame(context.challenge, freq, preamble)) {
     context.state = exchange::InboundAuthState::FAILED;
     this->record_debug(inbound_stage_name(context.state), 1, true);
@@ -1299,17 +1330,20 @@ ExchangeEngine::ChallengeResult ExchangeEngine::challenge_sender(const IoFrame &
   IoFrame rx{};
   const ListenOutcome outcome = this->listen(spec, packet, rx, [&](const IoFrame *parsed, const RadioRxPacket &pkt) {
     // Each frame that does not end the wait is logged like one in a final-reply wait, so a log
-    // shows what the wait heard when the answer never came.
+    // shows what the wait heard when the answer never came; its held frame-log lines print first.
     if (parsed == nullptr) {
+      frame_log_flush();
       log_unparsable_frame("Unparsable challenge answer", 1, pkt);
       return ReplyDisposition::IGNORE;
     }
     if (decisions::classify_challenge_answer(*parsed, request.src, this->node_id_) ==
         decisions::ChallengeAnswerDisposition::ACCEPT)
       return ReplyDisposition::ACCEPT;
+    frame_log_flush();
     log_exchange_frame("Ignored challenge answer", 1, *parsed, pkt.len);
     return ReplyDisposition::IGNORE;
   });
+  quiet_window.release();
   this->note_final_wait_(stats);
   if (outcome != ListenOutcome::ACCEPTED) {
     context.state = exchange::InboundAuthState::FAILED;

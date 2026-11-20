@@ -10,6 +10,7 @@
 
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
+#include "support/hold_seam.h"
 
 #include <algorithm>
 #include <cstring>
@@ -86,6 +87,42 @@ TEST(Exchange, CollectBroadcastResponses_OneReply) {
   EXPECT_EQ(memcmp(collected.frames[0].src, test::DST_ID, NODE_ID_SIZE), 0)
       << "delivered reply should carry the responder's node ID";
   EXPECT_EQ(collected.rssi_dbm[0], -42) << "delivered reply should carry the RSSI of the captured packet";
+}
+
+TEST(Exchange, CollectBroadcastResponses_HoldsTheFrameLogFromTheBroadcastToTheLastReply) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+  test::HoldSeam seam(radio);
+
+  radio.queue_rx(to_rx_packet(build_spe_response(test::DST_ID, test::OWN_ID)));
+  radio.queue_rx(to_rx_packet(build_spe_response(test::FOREIGN_ID, test::OWN_ID)));
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP, tuning.pairing_discovery_wait_ms,
+                                     collected.handler());
+
+  EXPECT_EQ(seam.depth_at_deliver.size(), 2u);
+  EXPECT_TRUE(seam.held_at_every_send_and_delivery())
+      << "nothing may be logged between the broadcast and any reply of the window (ADR 0111)";
+  EXPECT_TRUE(test::frame_log_released());
+}
+
+TEST(Exchange, CollectBroadcastResponses_ReleasesTheFrameLogWhenTheBroadcastFailsToSend) {
+  MockRadio radio;
+  RadioDriver *radio_ptr = &radio;
+  TuningConfig tuning = make_broadcast_test_tuning();
+  ExchangeEngine engine(&radio_ptr, test::OWN_ID, test::TEST_SYSTEM_KEY, &tuning);
+  radio.queue_tx_result(false);
+
+  IoFrame request = build_spe_request(test::OWN_ID);
+  CollectedReplies collected;
+  EXPECT_EQ(engine.collect_broadcast_responses(request, FREQ_CH2, CMD_DISCOVER_SPE_RESP,
+                                               tuning.pairing_discovery_wait_ms, collected.handler()),
+            0u);
+  EXPECT_TRUE(test::frame_log_released());
 }
 
 TEST(Exchange, CollectBroadcastResponses_TwoDistinctSourcesBothCollected) {

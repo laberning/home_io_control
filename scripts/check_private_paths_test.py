@@ -85,6 +85,26 @@ def test_allowlist_is_narrow():
         cpp.ALLOWLIST = saved
 
 
+def test_untracked_files_are_read_and_ignored_ones_are_not():
+    import subprocess
+    import tempfile
+    saved = cpp.REPO_ROOT
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / ".gitignore").write_text("scratch/\n")
+        (root / "scratch").mkdir()
+        (root / "scratch" / "notes.md").write_text(f"see {LAB}x\n")
+        (root / "new.md").write_text(f"see {LAB}x\n")  # never `git add`ed
+        cpp.REPO_ROOT = root
+        try:
+            names = {rel for rel, _ in cpp.tracked_text_files()}
+        finally:
+            cpp.REPO_ROOT = saved
+    assert "new.md" in names, "an untracked file a commit would carry must be checked"
+    assert "scratch/notes.md" not in names, "an ignored file must stay unchecked"
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

@@ -6,6 +6,7 @@
 
 #include "decisions_attempts.h"
 #include "decisions_pairing.h"
+#include "log_frame.h"
 #include "log_helpers.h"
 #include "proto_codecs.h"
 #include "proto_commands.h"
@@ -99,11 +100,14 @@ KeyPull::Result KeyPull::pull(pairing::PairingContext &context) {
   const AttemptRunResult ran = engine_.run_attempts(run, [&](uint8_t try_number, uint16_t window_ms) {
     tries = try_number;
     enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::TX_KEY_PULL, try_number, false);
+    FrameLogHoldScope quiet_window;  // From before the 0x38 to the end of the wait for the 0x32 (ADR 0111).
     if (!engine_.transmit_frame(context.req, FREQ_CH2, preamble))
       return AttemptVerdict::AGAIN;
     context.state = pairing::PairingState::WAIT_KEY_PULL_REPLY;
     this->telemetry_.set_phase(context.state);
-    if (wait_for_pulled_key_(context, window_ms))
+    const bool pulled = wait_for_pulled_key_(context, window_ms);
+    quiet_window.release();
+    if (pulled)
       return AttemptVerdict::DONE;
     if (context.key_refused)
       return AttemptVerdict::STOP;

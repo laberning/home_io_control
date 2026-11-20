@@ -193,7 +193,8 @@ class ExchangeEngine {
   /// may retry a NO_ANSWER; a MISMATCH means the device does not hold `key`. Sends a fresh random
   /// challenge with the radio's response preamble, then listens on the same channel for the whole
   /// response window: only a 0x3D from `request`'s sender to this hub counts (see
-  /// decisions::classify_challenge_answer()); any other frame is ignored and the wait goes on.
+  /// decisions::classify_challenge_answer()); any other frame is ignored and the wait goes on. The frame log is held
+  /// from before the challenge goes out to the end of the wait (ADR 0111).
   /// @param request The device's frame the challenge is about (its cmd + data are the transcript).
   /// @param freq    RF channel to challenge on.
   /// @param key     16-byte key the device's 0x3D must verify against.
@@ -253,6 +254,7 @@ class ExchangeEngine {
   /// which knows how little of each reply it actually needs to keep — see
   /// `ManagementActions::scan_paired_devices()`, which decodes each frame on arrival into a
   /// compact record rather than retaining whole frames. Collection always runs to the deadline.
+  /// Holds the frame log from before the broadcast to the end of the window (ADR 0111).
   /// @param request       Frame to transmit once (cmd + endpoints already filled).
   /// @param freq          RF channel frequency (Hz) for the initial transmit.
   /// @param expected_cmd  Command byte a reply must carry to be considered.
@@ -283,6 +285,10 @@ class ExchangeEngine {
   /// already holds the accepted frame and `packet` already holds its raw bytes — no copy is
   /// needed. A packet that fails to parse is still handed to `on_frame` (with a null `parsed`
   /// pointer), so a caller that wants to log or count unparsable frames still can.
+  ///
+  /// A frame `on_frame` ignores prints the frame-log lines held so far (frame_log_flush()), because the wait goes on
+  /// and the lines describe the past; a caller that holds the frame log across its wait (ADR 0111) therefore
+  /// never overflows the hold buffer on a long wait that hears many frames.
   ///
   /// Any richer result than accept/refuse/timeout — a disposition with more than three values, a
   /// captured "did we see any traffic at all" flag — is the caller's business: capture it in
@@ -716,16 +722,20 @@ class ExchangeEngine {
   /// The next random number for channel access: from the installed source, 0 without one.
   [[nodiscard]] uint32_t draw_random_() const { return this->random_source_ ? this->random_source_() : 0; }
 
-  /// Block until the first response arrives or the wait window expires.
+  /// Block until the first response arrives or the wait window expires. Releases the frame-log hold unless
+  /// the reply is a challenge, whose 0x3D and final reply are the rest of the quiet window (ADR 0111).
   decisions::ExchangeFirstResponseDisposition wait_for_first_response_(const IoFrame &request,
                                                                        exchange::OutboundExchangeContext &ctx);
 
-  /// Send the 0x3D challenge response after receiving a 0x3C from the device.
+  /// Send the 0x3D challenge response after receiving a 0x3C from the device. Logs nothing and leaves the
+  /// frame-log hold in place, so the final reply is noticed while it is on air (ADR 0111); only a failed
+  /// answer, after which no final wait follows, releases the hold and prints the deferred line itself.
   /// @param key Key the 0x3D proves, or nullptr for key_for(request.dst).
   bool handle_authentication_(const IoFrame &request, uint32_t freq, exchange::OutboundExchangeContext &ctx,
                               const uint8_t *key);
 
-  /// Block until the final authenticated response arrives or the window expires.
+  /// Block until the final authenticated response arrives or the window expires. Ends the quiet window of
+  /// the try: it releases the frame-log hold and prints the deferred `Auth challenge` line (ADR 0111).
   decisions::ExchangeFinalResponseDisposition wait_for_final_response_(const IoFrame &request,
                                                                        exchange::OutboundExchangeContext &ctx);
 

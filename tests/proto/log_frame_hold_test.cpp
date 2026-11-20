@@ -100,3 +100,60 @@ TEST_F(FrameLogHold, ReleaseWithoutHoldIsHarmless) {
   EXPECT_TRUE(g_printed.empty());
   EXPECT_FALSE(buffer_.holding());
 }
+
+TEST_F(FrameLogHold, HoldsNestAndOnlyTheOutermostReleasePrints) {
+  buffer_.hold();
+  buffer_.hold();
+  EXPECT_EQ(buffer_.depth(), 2u);
+  buffer_.write(FrameLogLevel::INFO, "io_frame", "inside both");
+
+  buffer_.release();
+  EXPECT_TRUE(g_printed.empty()) << "the inner release leaves the outer window quiet";
+  EXPECT_TRUE(buffer_.holding());
+  EXPECT_EQ(buffer_.depth(), 1u);
+
+  buffer_.release();
+  ASSERT_EQ(g_printed.size(), 1u);
+  EXPECT_EQ(g_printed[0].text, "inside both");
+  EXPECT_FALSE(buffer_.holding());
+}
+
+TEST(FrameLogHoldScopeTest, HoldsForItsLifetimeAndReleasesOnce) {
+  ASSERT_EQ(frame_log_hold_depth(), 0u);
+  {
+    FrameLogHoldScope outer;
+    EXPECT_EQ(frame_log_hold_depth(), 1u);
+    {
+      FrameLogHoldScope inner;
+      EXPECT_EQ(frame_log_hold_depth(), 2u) << "scopes nest";
+      inner.release();
+      EXPECT_EQ(frame_log_hold_depth(), 1u);
+      inner.release();  // a second release, and the destructor after it, must not release the outer hold
+      EXPECT_EQ(frame_log_hold_depth(), 1u);
+    }
+    EXPECT_EQ(frame_log_hold_depth(), 1u);
+  }
+  EXPECT_EQ(frame_log_hold_depth(), 0u) << "leaving the scope ends the hold";
+}
+
+TEST(FrameLogHoldDepthTest, ReleaseWithoutHoldStaysAtZeroAndSaturatesAtTheTop) {
+  FrameLogHoldDepth depth;
+  EXPECT_TRUE(depth.leave());
+  EXPECT_EQ(depth.depth(), 0u);
+  for (int i = 0; i < 300; i++)
+    depth.enter();
+  EXPECT_EQ(depth.depth(), UINT8_MAX) << "a leak cannot wrap around to not holding";
+}
+
+TEST(FrameLogHoldDepthCount, CountsOnlyReleasesThatLeftAHold) {
+  FrameLogHoldDepth depth;
+  EXPECT_EQ(depth.releases(), 0u);
+  depth.leave();
+  EXPECT_EQ(depth.releases(), 0u) << "a release without a hold is not counted";
+  depth.enter();
+  depth.enter();
+  depth.leave();
+  depth.leave();
+  EXPECT_EQ(depth.releases(), 2u) << "inner and outermost releases both count";
+  EXPECT_EQ(depth.depth(), 0u);
+}

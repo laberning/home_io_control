@@ -16,6 +16,8 @@
 #include "pairing_test_support.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
+#include "support/hold_seam.h"
+#include "support/log_capture.h"
 
 #include <algorithm>
 #include <cstring>
@@ -164,6 +166,128 @@ TEST(PairingKeyStep, AtlanticFlowWithAForcedPushEndsRefusedWithPullAdvice) {
   EXPECT_EQ(std::count(cmds.begin(), cmds.end(), CMD_KEY_TRANSFER), 1);
   EXPECT_EQ(std::count(cmds.begin(), cmds.end(), CMD_GET_NAME), PAIRING_KEY_VERIFY_MAX_TRIES)
       << "the key-held check runs once, with its own small try budget";
+}
+
+// ============================================================================
+// Quiet windows of the pairing steps (ADR 0111)
+// ============================================================================
+
+TEST(PairingQuietWindow, EveryTransmitAndReplyOfAWholePairingAttemptSitsInAHeldWindow) {
+  // Discovery, discover-confirm, key-init, the key transfer's confirm wait and the key-held check's exchange.
+  TestableComponent comp;
+  MockRadioSX1262 radio;
+  setup(comp, radio);
+  comp.tuning_.pairing_key_transfer = KeyTransferMode::PUSH;
+  test::HoldSeam seam(radio);
+
+  radio.queue_rx(to_packet(atlantic_discovery_reply(comp.node_id_)));
+  IoFrame ack{};
+  ASSERT_TRUE(create_discover_confirm_ack(ack, DEVICE_ID, comp.node_id_));
+  radio.queue_rx(to_packet(ack));
+  radio.queue_rx(to_packet(challenge_frame(comp.node_id_)));
+  radio.queue_rx(to_packet(error_frame(comp.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  EXPECT_FALSE(comp.discover_and_pair());
+
+  EXPECT_GE(seam.depth_at_send.size(), 4u) << "0x28, 0x2C, 0x31, 0x32 and the key-held check's reads";
+  EXPECT_EQ(seam.depth_at_deliver.size(), 4u) << "discovery reply, 0x2D, 0x3C, the refusal";
+  EXPECT_TRUE(seam.held_at_every_send_and_delivery())
+      << "nothing may be logged while pairing waits for a reply it provoked";
+  EXPECT_TRUE(test::frame_log_released());
+}
+
+TEST(PairingQuietWindow, KeyConfirmWaitHoldsAcrossTheAnswerAndLogsTheChallengeLineAfterIt) {
+  TestableComponent comp;
+  MockRadioSX1262 radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+  test::LogCapture log;
+  std::vector<size_t> at_send;
+  std::vector<size_t> at_deliver;
+  test::HoldSeam seam(
+      radio, [&] { at_send.push_back(log.lines().size()); }, [&] { at_deliver.push_back(log.lines().size()); });
+
+  radio.queue_rx(to_packet(challenge_frame(comp.node_id_)));  // to the 0x31
+  radio.queue_rx(to_packet(challenge_frame(comp.node_id_)));  // to the 0x32: a second challenge
+  radio.queue_rx(to_packet(device_frame(comp.node_id_, CMD_KEY_CONFIRM, nullptr, 0)));  // to our 0x3D
+
+  ASSERT_TRUE(comp.pairing_engine_.run_key_exchange_phase_(context));
+
+  EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>{CMD_KEY_INIT, CMD_KEY_TRANSFER, CMD_CHALLENGE_RESP}));
+  ASSERT_EQ(at_send.size(), 3u);
+  ASSERT_EQ(at_deliver.size(), 3u);
+  for (size_t i = 0; i < 3; i++)
+    EXPECT_EQ(at_deliver[i], at_send[i]) << "a line was logged between transmit " << i << " and its reply";
+  EXPECT_EQ(at_send[1], at_deliver[0]) << "a line was logged between the key-init's challenge and the 0x32 (#163)";
+  EXPECT_EQ(at_send[2], at_deliver[1]) << "a line was logged between the challenge and the 0x3D (issue #163)";
+  EXPECT_TRUE(seam.quiet_from_delivery_to_next_send(0)) << "the hold was released between the key-init's challenge and "
+                                                           "the 0x32, which prints the held lines there (#163)";
+  EXPECT_TRUE(seam.quiet_from_delivery_to_next_send(1))
+      << "the hold was released between the challenge and the 0x3D, which prints the held lines there (#163)";
+  EXPECT_TRUE(seam.held_at_every_send_and_delivery());
+  EXPECT_TRUE(test::frame_log_released());
+
+  size_t challenged_line = log.lines().size();
+  for (size_t i = 0; i < log.lines().size(); i++) {
+    if (log.lines()[i].format.rfind("Key transfer: device challenged the key transfer", 0) == 0)
+      challenged_line = i;
+  }
+  ASSERT_LT(challenged_line, log.lines().size()) << "the line is still logged";
+  EXPECT_GE(challenged_line, at_deliver.back()) << "the line follows the wait for the confirm, not the 0x3D";
+}
+
+TEST(PairingQuietWindow, KeyInitChallengeLineFollowsTheWaitForTheConfirm) {
+  TestableComponent comp;
+  MockRadioSX1262 radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+  test::LogCapture log;
+  size_t at_last_deliver = 0;
+  test::HoldSeam seam(radio, {}, [&] { at_last_deliver = log.lines().size(); });
+
+  radio.queue_rx(to_packet(challenge_frame(comp.node_id_)));                      // to the 0x31
+  radio.queue_rx(to_packet(error_frame(comp.node_id_, RESULT_COMMAND_UNKNOWN)));  // to the 0x32
+
+  EXPECT_FALSE(comp.pairing_engine_.run_key_exchange_phase_(context));
+
+  size_t challenge_line = log.lines().size();
+  for (size_t i = 0; i < log.lines().size(); i++) {
+    if (log.lines()[i].format.rfind("Challenge (0x3C) received", 0) == 0)
+      challenge_line = i;
+  }
+  ASSERT_LT(challenge_line, log.lines().size()) << "the line is still logged";
+  EXPECT_GE(challenge_line, at_last_deliver) << "the line must not sit between the challenge and the 0x32";
+  EXPECT_TRUE(test::frame_log_released());
+}
+
+TEST(PairingQuietWindow, ResentKeyInitHoldsAcrossTheAnswerToItsChallenge) {
+  TestableComponent comp;
+  MockRadioSX1262 radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+  ASSERT_TRUE(create_key_init(context.key_init, comp.node_id_, context.device.node_id));
+  test::HoldSeam seam(radio);
+
+  radio.queue_rx(to_packet(challenge_frame(comp.node_id_)));                      // to the re-sent 0x31
+  radio.queue_rx(to_packet(error_frame(comp.node_id_, RESULT_COMMAND_UNKNOWN)));  // to the 0x32
+
+  EXPECT_FALSE(comp.pairing_engine_.resend_key_init_(context, 1));
+
+  EXPECT_EQ(sent_commands(radio), (std::vector<uint8_t>{CMD_KEY_INIT, CMD_KEY_TRANSFER}));
+  EXPECT_TRUE(seam.quiet_from_delivery_to_next_send(0))
+      << "the hold was released between the re-sent key-init's challenge and the 0x32 (#163)";
+  EXPECT_TRUE(seam.held_at_every_send_and_delivery());
+  EXPECT_TRUE(test::frame_log_released());
+}
+
+TEST(PairingQuietWindow, ReleasesTheHoldWhenTheKeyInitNeverGetsAChallenge) {
+  TestableComponent comp;
+  MockRadioSX1262 radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+
+  EXPECT_FALSE(comp.pairing_engine_.run_key_exchange_phase_(context));
+  EXPECT_TRUE(test::frame_log_released());
 }
 
 // ============================================================================

@@ -134,6 +134,7 @@ class TestablePairingEngine : public PairingEngine {
   using PairingEngine::run_discovery_phase_;
   using PairingEngine::run_discover_confirm_step_;
   using PairingEngine::run_key_exchange_phase_;
+  using PairingEngine::resend_key_init_;
   using PairingEngine::finalize_pairing_configuration_;
   using PairingEngine::wait_for_discovery_response_;
   using PairingEngine::wait_for_discover_confirm_ack_;

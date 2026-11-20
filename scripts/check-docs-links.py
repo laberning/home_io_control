@@ -73,20 +73,28 @@ def _rel(p: Path) -> str:
         return str(p)
 
 
+def _committable_paths(*pathspecs: str) -> list[str]:
+    """Repo-root-relative paths of the files a commit would carry: tracked ones, plus untracked ones that
+    are not ignored. A new page is checked before it is staged, so the gate cannot pass a page that
+    `git add` would then carry unchecked."""
+    paths: list[str] = []
+    for extra in ([], ["--others", "--exclude-standard"]):
+        out = subprocess.run(
+            ["git", "ls-files", *extra, "--", *pathspecs],
+            cwd=REPO_ROOT, check=True, capture_output=True, text=True,
+        ).stdout
+        paths.extend(line for line in out.splitlines() if line)
+    return paths
+
+
 def _tracked_markdown_files() -> list[Path]:
-    out = subprocess.run(
-        ["git", "ls-files", "*.md"],
-        cwd=REPO_ROOT, check=True, capture_output=True, text=True,
-    ).stdout
-    return sorted(REPO_ROOT / line for line in out.splitlines() if line)
+    """Every Markdown file a commit would carry (see _committable_paths)."""
+    return sorted(REPO_ROOT / line for line in _committable_paths("*.md"))
 
 
 def _tracked_paths() -> set[str]:
-    """Every git-tracked path, repo-root-relative (POSIX)."""
-    out = subprocess.run(
-        ["git", "ls-files"], cwd=REPO_ROOT, check=True, capture_output=True, text=True,
-    ).stdout
-    return {line for line in out.splitlines() if line}
+    """Every path a commit would carry, repo-root-relative (POSIX); link targets are checked against it."""
+    return set(_committable_paths())
 
 
 def _is_gitignored(path: Path) -> bool:
