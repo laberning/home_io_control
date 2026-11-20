@@ -601,7 +601,9 @@ size_t store_status_parameter_readings(IoDevice &dev, const IoFrame &reply) {
   for (const DeviceReadingRow &row : active_table) {
     const auto *source = std::get_if<StatusFunctionalParameterSource>(&row.source);
     uint16_t word = 0;
-    if (source == nullptr || !decode_status_functional_parameter(reply, source->fp, word))
+    // Several rows may play one part of a reading: only the one the device selects decodes its value.
+    if (source == nullptr || device_reading_row(dev, row.reading) != &row ||
+        !decode_status_functional_parameter(reply, source->fp, word))
       continue;
     store_reading(dev, row.reading, decode_status_parameter(*source, word));
     stored++;

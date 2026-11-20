@@ -515,8 +515,9 @@ std::optional<float> decode_status_reading(DeviceReading reading, std::span<cons
 
 /// @brief Store the readings that are functional parameters of a status reply.
 /// @details Each reading with a StatusFunctionalParameterSource whose parameter the reply carries
-///          (decode_status_functional_parameter()) is stored; a reading whose parameter the reply does not carry keeps
-///          what it held.
+///          (decode_status_functional_parameter()) is stored, through the row the device's capabilities select
+///          (device_reading_row()): a row of another model never stores into the device. A reading whose parameter
+///          the reply does not carry keeps what it held.
 /// @param dev The device record.
 /// @param reply A CMD_PRIVATE_RESP from the device.
 /// @return The number of readings stored.

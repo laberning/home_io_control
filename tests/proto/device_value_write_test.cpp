@@ -12,6 +12,7 @@
 #include "proto_device_types.h"
 #include "proto_dhw.h"
 #include "device_table_walk.h"
+#include "payload_frame.h"
 #include "test_helpers.h"
 
 #include <gtest/gtest.h>
@@ -352,4 +353,35 @@ TEST(StatusParameterForm, TheCalypsosBoostAndAwayRowsAreFieldsEqualToOne) {
     EXPECT_EQ(source->form, StatusParameterForm::FIELD_EQUALS);
     EXPECT_EQ(source->equals, 1) << row->name;
   }
+}
+
+TEST(StatusParameterForm, AReplyStoresABoostThroughTheRowTheDeviceSelectsOnly) {
+  // Two models read boost from the same field of FP16, one as field 1, the other as field 2: each device keeps the
+  // value of its own row, never the other model's.
+  constexpr auto boost_row = [](DeviceFeature feature, uint8_t equals) {
+    return DeviceReadingRow{.name = "hot_water_boost",
+                            .source = StatusFunctionalParameterSource{.fp = DHW_FP_OPERATING_MODE,
+                                                                      .form = StatusParameterForm::FIELD_EQUALS,
+                                                                      .shift = DHW_FP16_BOOST_SHIFT,
+                                                                      .equals = equals},
+                            .reading = DeviceReading::HOT_WATER_BOOST,
+                            .poll = ReadingPoll::NOT_POLLED,
+                            .feature = feature};
+  };
+  const DeviceReadingRow rows[] = {boost_row(RANGE_20_62, 1), boost_row(RANGE_20_70, 2)};
+  const ScopedReadingTable table{rows};
+  // A status reply with FPI1 00 / FPI2 01: flags, b1, MP, FPI1, FPI2, FP16 = 4A00.
+  const IoFrame reply = test::make_payload_frame(CMD_PRIVATE_RESP, {0x05, 0x00, 0x88, 0x00, 0x00, 0x01, 0x4A, 0x00});
+
+  IoDevice first = heater_with(RANGE_20_62);
+  EXPECT_EQ(store_status_parameter_readings(first, reply), 1u);
+  EXPECT_EQ(reading_wire(first, DeviceReading::HOT_WATER_BOOST), 0) << "4A00 is field 2, not this row's 1";
+
+  IoDevice second = heater_with(RANGE_20_70);
+  EXPECT_EQ(store_status_parameter_readings(second, reply), 1u);
+  EXPECT_EQ(reading_wire(second, DeviceReading::HOT_WATER_BOOST), 1);
+
+  IoDevice neither = heater_with(DeviceFeatures{});
+  EXPECT_EQ(store_status_parameter_readings(neither, reply), 0u) << "no row applies, so nothing is stored";
+  EXPECT_EQ(reading_wire(neither, DeviceReading::HOT_WATER_BOOST), -1);
 }
