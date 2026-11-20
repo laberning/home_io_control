@@ -111,7 +111,7 @@ corpus-validate:
 # (FUZZ_TIME seconds, default 60), not part of `make check`/`make test`: fuzzing has no pass/fail
 # gate the way a fixed test suite does. Each target keeps its own seed and working-corpus
 # directories under build/fuzz/, so inputs of different shapes never mix.
-#   fuzz-frame     frame parser + its pure decoders (proto_frame/codecs/device_model/device_types/heating_profiles/
+#   fuzz-frame     frame parser + its pure decoders (proto_frame/codecs/device_model/device_readings/dhw/device_types/heating_profiles/
 #                  heating/private_registers/value_codecs/crypto, all ESPHome-free; tests/include only
 #                  supplies esp_random.h for proto_crypto.cpp).
 #   fuzz-soft-phy  software-PHY RX decoder (radio_soft_phy.cpp): raw chip buffers through the
@@ -134,7 +134,8 @@ endef
 fuzz-frame:
 	$(call FUZZ_RUN,fuzz_frame_parse,,seeds,\
 		components/home_io_control/proto_frame.cpp components/home_io_control/proto_codecs.cpp \
-		components/home_io_control/proto_device_model.cpp components/home_io_control/proto_device_types.cpp \
+		components/home_io_control/proto_device_model.cpp components/home_io_control/proto_device_readings.cpp components/home_io_control/proto_dhw.cpp \
+		components/home_io_control/proto_device_types.cpp \
 		components/home_io_control/proto_heating_profiles.cpp components/home_io_control/proto_heating.cpp \
 		components/home_io_control/proto_private_registers.cpp components/home_io_control/proto_value_codecs.cpp \
 		components/home_io_control/proto_crypto.cpp tests/fuzz/fuzz_frame_parse.cpp)
