@@ -39,50 +39,6 @@ constexpr uint8_t WORKING_RATE_MAX = 100;
 /// Highest water heater mode value the register defines (DhwMode::MANUAL_ECO_OFF).
 constexpr uint8_t DHW_MODE_MAX = static_cast<uint8_t>(DhwMode::MANUAL_ECO_OFF);
 
-/// @brief Who may do what with a register.
-enum class HeatingAccess : uint8_t {
-  READ_ONLY,   ///< Reads only; a write is refused by the codec.
-  READ_WRITE,  ///< Reads and writes.
-};
-
-/// @brief A register's refusal of values its range holds but this component never writes.
-/// @return true for a value the register refuses; false for one the codec alone must judge.
-using HeatingValueRefusal = bool (*)(float value);
-
-/// @brief One register of the heater, the single description both directions are built from.
-///
-/// A request is {PRIVATE_REGISTER_PREFIX, direction, register_high, register_low, [value...]}; `direction` is
-/// PRIVATE_REGISTER_DIRECTION_GET or PRIVATE_REGISTER_DIRECTION_SET. The row is also the register's write rule: its
-/// codec, `max_value`, `write_range` and `refuses` say which values a write may carry, and every caller asks
-/// heating_write_accepts() instead of keeping a bound of its own.
-struct DeviceRegisterRow {
-  /// The register's name: its DeviceRegister enumerator in lower case. It is the register's label in logs and the
-  /// stem of the function name the `heating_control` action takes ("set_" or "read_" + name); a sync test checks it.
-  const char *name;
-  DeviceRegister fn;     ///< Function this row describes.
-  uint8_t register_low;  ///< Payload byte 3: low byte of the register number.
-  HeatingAccess access;  ///< Whether the register may be read, written or both.
-  ValueCodec codec;      ///< How the value maps onto the trailing bytes.
-  /// BOUNDED_BYTE, BOUNDED_U16, SCALED_U16: highest value a reply may carry and a write may send.
-  uint16_t max_value{0};
-  /// Payload byte 2: the register's family, the high byte of its number. The family does not say how a multi-byte
-  /// value is laid out: the codec does.
-  uint8_t register_high{HEATING_REGISTER_HIGH_BYTE};
-  /// The action's read of this function shows the decoded value in its message, not only that the device
-  /// answered (the window sensor).
-  bool action_shows_value{false};
-  // NOLINTBEGIN(readability-redundant-member-init): g++'s -Wmissing-field-initializers wants the member
-  // initializer before a row may leave the field out.
-  std::optional<ValueRange> write_range{};  ///< Tenths registers: the values a write may carry.
-  HeatingValueRefusal refuses{nullptr};     ///< A value the register refuses although the codec holds it.
-  /// The `heating_control` action offers this function (see heating_action_function_name()). The label names the value
-  /// in the action's messages ("temperature", "mode"); "" for a function that takes no value (a read). nullptr: not a
-  /// function of the action.
-  const char *action_value_label{nullptr};
-  std::span<const ValueScaleKnot> scale{};  ///< SCALED_U16: the scale from the natural value to the register value.
-  // NOLINTEND(readability-redundant-member-init)
-};
-
 /// @brief The mode register refuses the modes heating_mode_is_writable() rejects.
 /// @details Only a whole mode number is judged here; a non-integral, out-of-range or non-finite value is the
 ///          codec's to refuse.
@@ -257,11 +213,17 @@ constexpr DeprecatedHeatingFunction DEPRECATED_HEATING_FUNCTIONS[] = {
     {"midnight_sync", DeviceRegister::SETPOINT_BLOCK}, {"window_open", DeviceRegister::WINDOW_OPEN},
 };
 
+/// The rows every lookup walks: DEVICE_REGISTERS, or the rows of a ScopedRegisterTable.
+// The seam of ScopedRegisterTable: a test gives a device registers production does not have; production never
+// changes it.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables): the seam named above
+std::span<const DeviceRegisterRow> active_registers = DEVICE_REGISTERS;
+
 /// @brief Look up the descriptor for a function.
 /// @param fn Function to resolve.
 /// @return Pointer into the constexpr table, or nullptr for an out-of-range value.
 const DeviceRegisterRow *descriptor_for(DeviceRegister fn) {
-  for (const auto &d : DEVICE_REGISTERS) {
+  for (const auto &d : active_registers) {
     if (d.fn == fn)
       return &d;
   }
@@ -279,6 +241,17 @@ ValueForm form_of(const DeviceRegisterRow &d) {
 }
 
 }  // namespace
+
+ScopedRegisterTable::ScopedRegisterTable(std::span<const DeviceRegisterRow> rows) : previous_(active_registers) {
+  active_registers = rows;
+}
+
+ScopedRegisterTable::~ScopedRegisterTable() { active_registers = previous_; }
+
+std::optional<ValueForm> device_register_form(DeviceRegister fn) {
+  const DeviceRegisterRow *d = descriptor_for(fn);
+  return d != nullptr ? std::optional<ValueForm>{form_of(*d)} : std::nullopt;
+}
 
 const char *device_register_name(DeviceRegister fn) {
   const DeviceRegisterRow *d = descriptor_for(fn);
@@ -390,7 +363,7 @@ std::string heating_action_function_name(DeviceRegister fn) {
 }
 
 std::optional<HeatingActionFunction> heating_action_function(std::string_view name) {
-  for (const auto &d : DEVICE_REGISTERS) {
+  for (const auto &d : active_registers) {
     if (d.action_value_label != nullptr && name == heating_action_function_name(d.fn))
       return HeatingActionFunction{.fn = d.fn};
   }

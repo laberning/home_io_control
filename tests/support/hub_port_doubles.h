@@ -21,6 +21,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <utility>
@@ -248,6 +249,9 @@ class HeatingPortDouble : public HubHeatingPort {
   [[nodiscard]] HeatingCardRange water_heater_target_range(const std::string &) const override {
     return this->water_heater_range;
   }
+  [[nodiscard]] std::optional<float> water_heater_target_step(const std::string &) const override {
+    return this->water_heater_step;
+  }
   bool set_water_heater_target(const std::string &, float celsius) override {
     this->water_heater_targets.push_back(celsius);
     return this->write_result;
@@ -275,6 +279,8 @@ class HeatingPortDouble : public HubHeatingPort {
   std::vector<float> water_heater_targets;
   /// The range the card offers; the Calypso's, which is the range of its target row.
   HeatingCardRange water_heater_range{DHW_TARGET_MIN_C, DHW_TARGET_MAX_C};
+  /// The step the card offers, from the heater's target row; none for a target that takes any value, as the Calypso's.
+  std::optional<float> water_heater_step{std::nullopt};
   std::vector<DhwMode> water_heater_modes;
   std::vector<bool> water_heater_boosts;
   std::vector<bool> water_heater_aways;

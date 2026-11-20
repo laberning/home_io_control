@@ -34,6 +34,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -292,14 +293,19 @@ class HeaterController {
   /// @brief Write a value of a water heater through the write side of the row its capabilities select (ADR 0110).
   ///
   /// The row of `reading` that device_reading_row() selects says how the value is written and plan_value_write()
-  /// judges it: a register write goes through send_heating_command() (the register's rule, ADR 0105), a
-  /// main-parameter EXECUTE through the bare operation without the cover's movement bookkeeping, over the row's range.
-  /// A value the row refuses is logged and never sent. After an accepted write the row's read side is read again
-  /// (read_back_()), so the entity shows what the heater then holds; a missed read-back does not undo the write. The
-  /// next poll moves to HEATING_POST_WRITE_POLL_DELAY_MS from now. Gated on device_feature::WATER_HEATER.
+  /// judges it, in this order: the guard (a reading that has been read and fails it refuses; one not read yet lets the
+  /// write try), the steps of the target, the target itself. The before-write, when the row has one for this value,
+  /// goes first: a failure is logged and the target is sent anyway. A register write goes through
+  /// send_heating_command() (the register's rule, ADR 0105), a main-parameter or functional-parameter EXECUTE through
+  /// the bare operation without the cover's movement bookkeeping. A value the row refuses is logged and never sent.
+  /// After an accepted write the row's read side is read again (read_back_()), so the entity shows what the heater
+  /// then holds; a missed read-back does not undo the write. The next poll moves to HEATING_POST_WRITE_POLL_DELAY_MS
+  /// from now. Gated on device_feature::WATER_HEATER and on the capability of the selected row: a device that lacks it
+  /// (a model with another register map, boost or away) has no way to write the value, and nothing is sent.
   /// @param device_id Target device ID (hex string).
-  /// @param reading The reading to write (DeviceReading::HOT_WATER_TARGET, HOT_WATER_MODE).
-  /// @param value The value in the reading's natural units (degrees, a mode number).
+  /// @param reading The reading to write (DeviceReading::HOT_WATER_TARGET, HOT_WATER_MODE, HOT_WATER_BOOST,
+  ///        HOT_WATER_AWAY).
+  /// @param value The value in the reading's natural units (degrees, a mode number, a flag of 0 or 1).
   /// @return true only if the device accepted the write.
   bool write_value(const std::string &device_id, DeviceReading reading, float value);
 
@@ -318,6 +324,12 @@ class HeaterController {
   /// @return The range of the heater's target row; NaN at both ends for an unknown device.
   [[nodiscard]] HeatingCardRange water_heater_target_range(const std::string &device_id) const;
 
+  /// @brief The step a water heater's card offers its target in, when the heater takes only steps.
+  /// @param device_id Target device ID (hex string).
+  /// @return The step of the heater's target row (value_write_step()); nullopt for a target that takes any value or an
+  ///         unknown device, and the card then offers its own fine step.
+  [[nodiscard]] std::optional<float> water_heater_target_step(const std::string &device_id) const;
+
   /// @brief Set a water heater's operating mode: write_value() of DeviceReading::HOT_WATER_MODE.
   ///
   /// The register is read back at once, so the entity shows what the heater then holds, and so is the
@@ -329,27 +341,27 @@ class HeaterController {
   /// @return true only if the device acknowledged the write; a missed read-back does not change that.
   bool set_water_heater_mode(const std::string &device_id, DhwMode mode);
 
-  /// @brief Start or end a water heater's boost: a duration write of register 0x0000, then an EXECUTE with
-  /// the operating-mode word FP16 (DHW_OPERATING_MODE_BOOST_ON, or DHW_OPERATING_MODE_OFF to end).
+  /// @brief Start or end a water heater's boost: write_value() of DeviceReading::HOT_WATER_BOOST with a flag.
   ///
-  /// See set_dhw_operating_mode_() for the sequence. Ending a boost also ends away, because the off word
-  /// switches both (ADR 0081). Gated on device_feature::WATER_HEATER.
-  /// Confirmed on an Atlantic Calypso Connecté (issue #198).
+  /// How the flag is written is the row the heater's boost capability selects. On an Atlantic Calypso Connecté it is a
+  /// duration write of register 0x0000, then an EXECUTE with the operating-mode word FP16 (DHW_OPERATING_MODE_BOOST_ON,
+  /// or DHW_OPERATING_MODE_OFF to end), refused once FP15 has been read and lacks the boost bit. Ending a boost also
+  /// ends away there, because the off word switches both (ADR 0081). Gated on device_feature::WATER_HEATER. Confirmed
+  /// on an Atlantic Calypso Connecté (issue #198).
   /// @param device_id Target device ID (hex string).
   /// @param on true to start a boost, false to end it.
-  /// @return true when the device accepted the EXECUTE; false for a refused or unacknowledged command.
+  /// @return true when the device accepted the write; false for a refused or unacknowledged command.
   bool set_water_heater_boost(const std::string &device_id, bool on);
 
-  /// @brief Start or end a water heater's away (holiday) mode: a duration write of register 0x0005 (255,
-  /// until turned off), then an EXECUTE with FP16 DHW_OPERATING_MODE_AWAY_ON, or DHW_OPERATING_MODE_OFF
-  /// to end.
+  /// @brief Start or end a water heater's away (holiday) mode: write_value() of DeviceReading::HOT_WATER_AWAY with a
+  /// flag.
   ///
-  /// See set_dhw_operating_mode_() for the sequence. Ending away also ends a boost (ADR 0081). Gated on
-  /// device_feature::WATER_HEATER.
-  /// Confirmed on an Atlantic Calypso Connecté (issue #198).
+  /// On an Atlantic Calypso Connecté a duration write of register 0x0005 (255, until turned off), then an EXECUTE with
+  /// FP16 DHW_OPERATING_MODE_AWAY_ON, or DHW_OPERATING_MODE_OFF to end; ending away also ends a boost (ADR 0081).
+  /// Gated on device_feature::WATER_HEATER. Confirmed on an Atlantic Calypso Connecté (issue #198).
   /// @param device_id Target device ID (hex string).
   /// @param on true to start away, false to end it.
-  /// @return true when the device accepted the EXECUTE; false for a refused or unacknowledged command.
+  /// @return true when the device accepted the write; false for a refused or unacknowledged command.
   bool set_water_heater_away(const std::string &device_id, bool on);
 
   /// @brief Read one register of a water heater and store it in the readings that are the register.
@@ -434,18 +446,15 @@ class HeaterController {
   ///        read. Any other source kind reads nothing.
   void read_back_(const std::string &device_id, const DeviceReadingRow &row);
 
-  /// @brief Switch a water heater's boost or away through the operating-mode word (ADR 0081).
-  ///
-  /// Refused and logged when FP15 has been read and lacks the feature's capability bit. On: the duration
-  /// register write (its ack is logged, a missed one does not stop the sequence), then one EXECUTE with
-  /// MAIN_PARAMETER_KEEP and the feature's FP16. Off: the EXECUTE with DHW_OPERATING_MODE_OFF only. After
-  /// an accepted EXECUTE the status is read at once and the next poll moves to
-  /// HEATING_POST_WRITE_POLL_DELAY_MS from now.
+  /// @brief Send the EXECUTE that sets a functional parameter, keeping the main parameter, through the bare operation.
+  /// @details Only functional parameter 16 (DHW_FP_OPERATING_MODE) has a frame builder; a row that names another is a
+  ///          table fault, logged and never sent.
   /// @param device_id Target device ID.
-  /// @param which Boost or away.
-  /// @param on true to start it, false to end it (which ends the other too).
+  /// @param action Operation name for the logs.
+  /// @param fp The functional parameter.
+  /// @param word The word the parameter takes.
   /// @return true when the device accepted the EXECUTE.
-  bool set_dhw_operating_mode_(const std::string &device_id, DhwOperatingFeature which, bool on);
+  bool execute_functional_parameter_(const std::string &device_id, const char *action, uint8_t fp, uint16_t word);
 
   /// @brief The water heater `device_id` names, or nullptr when it is unknown, the hub is not set up yet,
   /// or the device is no water heater (that case is logged). The gate of every water heater write.

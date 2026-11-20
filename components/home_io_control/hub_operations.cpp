@@ -719,7 +719,7 @@ void IOHomeControlComponent::apply_periodic_reading_(const std::string &device_i
                                                      const std::optional<float> &value, const std::string &detail_text,
                                                      bool unanswered) {
   IoDevice *dev = this->registry_.get(device_id);
-  const DeviceReadingRow *row = find_device_reading(reading, this->reading_table_);
+  const DeviceReadingRow *row = find_device_reading(reading);
   if (dev == nullptr || row == nullptr)
     return;
   PeriodicPollPolicy &policy = this->device_reading_poll_policy_;
@@ -753,7 +753,7 @@ void IOHomeControlComponent::apply_periodic_reading_(const std::string &device_i
 // event or limitation reading is one exchange, and its answer is applied at once.
 bool IOHomeControlComponent::request_device_reading(const std::string &device_id, DeviceReading reading) {
   const IoDevice *dev = this->registry_.get(device_id);
-  const DeviceReadingRow *row = find_device_reading(reading, this->reading_table_);
+  const DeviceReadingRow *row = find_device_reading(reading);
   if (dev == nullptr || row == nullptr || !reading_is_scheduled(*row) || !this->initialized_ ||
       reading_absent(*dev, reading) || !device_can_have_reading(*dev, *row))
     return false;
@@ -796,7 +796,7 @@ void IOHomeControlComponent::apply_device_reading_answer_(const std::string &dev
       poll != this->device_reading_polls_.end())
     poll->in_flight = false;
   IoDevice *dev = this->registry_.get(device_id);
-  const DeviceReadingRow *row = find_device_reading(reading, this->reading_table_);
+  const DeviceReadingRow *row = find_device_reading(reading);
   const auto *source = row != nullptr ? std::get_if<DataObjectSource>(&row->source) : nullptr;
   if (dev == nullptr || source == nullptr)
     return;

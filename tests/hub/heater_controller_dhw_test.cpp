@@ -197,7 +197,7 @@ TEST(HeaterController, SwitchingOffSendsTheOffWordOnlyAndReadsTheStatus) {
 
     EXPECT_TRUE(fx.radio.get_sent_data().empty()) << boost << ": no duration write, no read-back of one";
     ASSERT_EQ(fx.executes.size(), 1u);
-    EXPECT_EQ(fx.executes[0].action, "hot water boost and away off");
+    EXPECT_EQ(fx.executes[0].action, boost ? "hot water boost off" : "hot water away off");
     const IoFrame &execute = fx.executes[0].request;
     EXPECT_EQ(std::vector<uint8_t>(execute.data + execute.data_len - 6, execute.data + execute.data_len),
               (std::vector<uint8_t>{0xD4, 0x00, 0x00, 0x01, 0x4A, 0x00}));

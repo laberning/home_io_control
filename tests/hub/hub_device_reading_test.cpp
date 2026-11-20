@@ -3,7 +3,7 @@
 /// transfer read reaches the device's value store, and the capability of a device kind that has no status read.
 ///
 /// The production reading and recipe tables have no data-object row until a device needs one, so each test gives the
-/// hub a table of its own (reading_table_ and TransferReader::set_recipes()).
+/// hub a table of its own (ScopedReadingTable and TransferReader::set_recipes()).
 
 #include "hub_core.h"
 #include "proto_commands.h"
@@ -55,6 +55,7 @@ const std::vector<uint8_t> COUNTER_NONE = {0x11, 0x22, 0x81, 0xFF, 0xFF};
 /// tables, with the clock under the test's control.
 struct HubRig {
   esphome::test_clock::ManualClock clock{200000};
+  ScopedReadingTable tables{TEST_READINGS};  ///< Declared before the hub, so it outlives it.
   TestableHubComponent comp;
   MockRadio radio;
   int notifications{0};
@@ -68,7 +69,6 @@ struct HubRig {
     std::memcpy(comp.system_key_, key, AES_KEY_SIZE);
     comp.initialized_ = true;
     comp.radio_ = &radio;
-    comp.reading_table_ = TEST_READINGS;
     comp.transfer_reader_.set_recipes(TEST_RECIPES);
     esphome::test_random::set(0);
     DeviceConfig cfg;

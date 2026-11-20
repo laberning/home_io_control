@@ -65,6 +65,9 @@ const std::map<std::string, DeviceFeature> CPP_FEATURES = {
     {"HEAT_PUMP_ENERGY", device_feature::HEAT_PUMP_ENERGY},
     {"HEAT_PUMP_OUTDOOR_TEMPERATURE", device_feature::HEAT_PUMP_OUTDOOR_TEMPERATURE},
     {"HOT_WATER_TARGET_20_62", device_feature::HOT_WATER_TARGET_20_62},
+    {"HOT_WATER_BOOST_FP16", device_feature::HOT_WATER_BOOST_FP16},
+    {"HOT_WATER_AWAY_FP16", device_feature::HOT_WATER_AWAY_FP16},
+    {"HOT_WATER_REGISTERS_CALYPSO", device_feature::HOT_WATER_REGISTERS_CALYPSO},
 };
 
 /// The names of the capabilities in a set.

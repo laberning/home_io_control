@@ -30,8 +30,10 @@
 /// reads keep missing (ReadingStale).
 ///
 /// A row can also say how its value is written (DeviceReadingRow::write, ValueWrite): a register write, judged by
-/// the register's own rule, or a main-parameter EXECUTE over the row's range (ADR 0110). The write side shares the
-/// read side's form, so a range or a scale exists once. Several rows may play the same part of one reading (a water
+/// the register's own rule, a main-parameter EXECUTE over the row's range, or an EXECUTE that sets a functional
+/// parameter to a fixed word, with an optional guard on another reading, a write sent ahead and a rounding policy for
+/// a target that takes only steps (ADR 0110). The write side shares the read side's form, so a range or a scale exists
+/// once. Several rows may play the same part of one reading (a water
 /// heater's target, whose range differs by model); the device's capabilities select exactly one of them
 /// (device_reading_row()), and every such row is gated by a member of one capability group (FeatureGroup).
 ///
@@ -61,6 +63,7 @@
 #include <optional>
 #include <span>
 #include <variant>
+#include <vector>
 
 namespace esphome {
 namespace home_io_control {
@@ -291,15 +294,69 @@ struct RegisterWrite {
 ///          range that decodes the status reply, and a value outside it is refused, never clamped.
 struct MainParameterWrite {};
 
-/// @brief Where a written value goes. A further kind is a further alternative with its branch in plan_value_write().
-using ValueWriteTarget = std::variant<RegisterWrite, MainParameterWrite>;
+/// @brief A write target that sets one functional parameter of an EXECUTE to a fixed word and keeps the main parameter.
+/// @details The value is a flag: 1 sends `on_word`, 0 sends `off_word`, any other value is refused. The word is the
+///          whole parameter, so an off word may end more than the one flag (a water heater's operating-mode word
+///          ends boost and away alike, ADR 0081). Only functional parameter 16 has a frame builder
+///          (create_execute_heating_with_fp16()); the controller refuses any other.
+struct FunctionalParameterWrite {
+  uint8_t fp;         ///< The functional parameter, 9-16.
+  uint16_t on_word;   ///< The parameter's value for a flag of 1.
+  uint16_t off_word;  ///< The parameter's value for a flag of 0.
+};
 
-/// @brief How a reading's value is written (ADR 0110).
-/// @details The target is the one part this struct holds so far; a guard, a write sent before and a rounding policy
-///          come with ADR 0110's other parts. The value is encoded by the form of the row's read side, never by a
-///          copy of it. After a write the hub reads the row's read side again.
+/// @brief Where a written value goes. A further kind is a further alternative with its branch in plan_value_write().
+using ValueWriteTarget = std::variant<RegisterWrite, MainParameterWrite, FunctionalParameterWrite>;
+
+/// @brief How a guard reads the reading it names.
+enum class WriteGuardTest : uint8_t {
+  EQUALS,   ///< The reading, as a whole number, equals the guard's value.
+  HAS_BIT,  ///< The reading, as a whole number, has every bit of the guard's value set.
+};
+
+/// @brief A condition on a reading of the same device for a write to be sent (ADR 0110).
+/// @details A guard whose reading has been read and fails refuses the write; a guard whose reading has not been read
+///          yet lets the write try, so a device that never reports the reading is not locked out.
+struct WriteGuard {
+  DeviceReading reading;  ///< The reading judged; a whole number (reading_wire()).
+  WriteGuardTest test;    ///< How the reading is judged.
+  uint16_t value;         ///< The number it must equal, or the bits it must have set.
+};
+
+/// @brief A register write sent ahead of the target, with a fixed value (a boost's duration).
+struct FixedRegisterWrite {
+  DeviceRegister fn;  ///< The register written; its row judges the value (ADR 0105).
+  float value;        ///< The value, in the register's natural units.
+};
+
+/// @brief What a value between the steps of a stepped target becomes.
+enum class RoundingPolicy : uint8_t {
+  EXACT,    ///< Nothing: the value is refused without sending. The default.
+  NEAREST,  ///< The nearest step; halfway between two steps, the higher one.
+  DOWN,     ///< The step below.
+  UP,       ///< The step above.
+};
+
+/// @brief A write side's rounding policy and, for a main-parameter target, its step.
+/// @details The steps of a register target are the knots of its scale (a SCALED_BYTE register counts steps); the steps
+///          of a main-parameter target are `step` apart from the lowest value of the range. With no steps the value
+///          is any the target takes and the policy has nothing to decide. A value outside the first and last step is
+///          refused whatever the policy: rounding never clamps.
+struct ValueRounding {
+  RoundingPolicy policy{RoundingPolicy::EXACT};  ///< What a value between two steps becomes.
+  std::optional<float> step = std::nullopt;      ///< MainParameterWrite: the distance between two steps, degrees.
+};
+
+/// @brief How a reading's value is written (ADR 0110): where it goes and what must hold for it to be sent.
+/// @details The value is encoded by the form of the row's read side or of the register, never by a copy of it. After a
+///          write the hub reads the row's read side again.
 struct ValueWrite {
-  ValueWriteTarget target;  ///< Where the value goes.
+  ValueWriteTarget target;                         ///< Where the value goes.
+  std::optional<WriteGuard> guard = std::nullopt;  ///< When the write may be sent; none: always.
+  /// Sent first. For a FunctionalParameterWrite only when the flag is switched on: the word that switches it off ends
+  /// what the before-write set up.
+  std::optional<FixedRegisterWrite> before = std::nullopt;
+  ValueRounding rounding{};  ///< What a value between the steps of the target becomes.
 };
 
 /// @brief One row of the reading table.
@@ -508,6 +565,11 @@ const DeviceReadingRow *find_register_reading(DeviceRegister fn);
 /// @return true for those three source kinds; the others are read by the heater poll or answered by a status reply.
 [[nodiscard]] bool reading_is_scheduled(const DeviceReadingRow &row);
 
+/// @brief Is a reading answered by a status reply: its main parameter, a functional parameter or the battery byte?
+/// @param row The reading's row.
+/// @return true for those three source kinds: a status read reads the reading, again after a write.
+[[nodiscard]] bool reading_is_from_status_reply(const DeviceReadingRow &row);
+
 /// @brief Can a device have a reading: does it have the capability the row names, if it names one?
 /// @details Unlike device_has_reading_capability(), a row with no capability passes: a cover's readings are asked for
 ///          by YAML keys and need no capability of the kind.
@@ -552,29 +614,76 @@ int register_wire(const IoDevice &dev, std::optional<DeviceRegister> fn);
 enum class ValueWriteRefusal : uint8_t {
   NONE,           ///< The value is written.
   NO_WRITE_SIDE,  ///< The row says no way to write its value.
-  OUT_OF_RANGE,   ///< A finite value outside the range the main parameter is encoded over; never clamped.
-  UNENCODABLE,    ///< A value that is not a number, or a row whose read side gives no range to encode over.
+  OUT_OF_RANGE,   ///< A finite value outside the range the target takes; never clamped, whatever the rounding policy.
+  UNENCODABLE,    ///< A value that is not a number or a flag, or a row whose read side gives no range to encode over.
   REGISTER_RULE,  ///< The register's own rule refuses the value (heating_write_accepts()).
+  OFF_STEP,       ///< A value between the steps of a stepped target under RoundingPolicy::EXACT.
+  GUARD,          ///< The guard's reading has been read and fails the guard.
 };
 
-/// @brief What writing a value to a reading is: nothing, a register write or a main-parameter EXECUTE.
+/// @brief What writing a value to a reading is: nothing, a register write, or an EXECUTE.
 struct ValueWritePlan {
   ValueWriteRefusal refusal{ValueWriteRefusal::NO_WRITE_SIDE};  ///< NONE when the value is to be sent.
   std::optional<DeviceRegister> register_fn;                    ///< Set for a register write: the register.
-  float register_value{0.0F};                                   ///< The value the register's row encodes.
-  uint16_t main_parameter{0};                                   ///< Set for an EXECUTE: the encoded main parameter.
+  float register_value{0.0F};                                   ///< The value the register's row encodes, rounded.
+  uint16_t main_parameter{0};                   ///< Set for a main-parameter EXECUTE: the encoded value.
+  std::optional<uint8_t> functional_parameter;  ///< Set for a functional-parameter EXECUTE: which one.
+  uint16_t functional_word{0};                  ///< Set for it: the word the parameter takes.
+  std::optional<FixedRegisterWrite> before;     ///< Sent first, when the write has one.
 
-  /// @return true when the plan sends a main-parameter EXECUTE (no register, no refusal).
+  /// @return true when the plan sends an EXECUTE (no register, no refusal).
   [[nodiscard]] bool is_execute() const { return this->refusal == ValueWriteRefusal::NONE && !this->register_fn; }
 };
 
 /// @brief Plan the write of a value through a row's write side, without sending anything.
-/// @details A register write is judged by the register's rule (heating_write_accepts(), ADR 0105); an EXECUTE is
-///          encoded over the range of the row's read side and a value outside it is refused (ADR 0110).
+/// @details In this order: the guard (a reading that has been read and fails it refuses; one not read yet lets the
+///          write try), the rounding of a stepped target, then the target. A register write is judged by the register's
+///          rule (heating_write_accepts(), ADR 0105); a main-parameter EXECUTE is encoded over the range of the row's
+///          read side and a value outside it is refused (ADR 0110); a functional-parameter EXECUTE takes a flag. The
+///          before-write is part of the plan when the write has one.
+/// @param dev The device the value is written to; its readings decide the guard.
 /// @param row The row of the reading, as device_reading_row() selected it.
-/// @param value The value in the reading's natural units (degrees, a mode number).
+/// @param value The value in the reading's natural units (degrees, a mode number, a flag).
 /// @return The plan; refusal is NONE when the value is to be sent.
-[[nodiscard]] ValueWritePlan plan_value_write(const DeviceReadingRow &row, float value);
+[[nodiscard]] ValueWritePlan plan_value_write(const IoDevice &dev, const DeviceReadingRow &row, float value);
+
+/// @brief The values a row's write side takes, as its card shows them.
+/// @param row The row of the reading.
+/// @return The range of a main-parameter target (the read side's), the first to the last knot of a register target
+///         that has a scale, the write range of any other register target; nullopt when the row has no write side or
+///         its target has no range.
+[[nodiscard]] std::optional<ValueRange> value_write_range(const DeviceReadingRow &row);
+
+/// @brief The distance between two steps of a row's write side, for a card that offers only steps.
+/// @param row The row of the reading.
+/// @return The row's step for a main-parameter target; for a register target with a scale, the distance of its knots
+///         when they are all the same distance apart; nullopt when the target takes any value or its steps are uneven.
+[[nodiscard]] std::optional<float> value_write_step(const DeviceReadingRow &row);
+
+/// @brief The values a stepped target accepts, lowest first.
+/// @param row The row of the reading.
+/// @return The knots of a register target with a scale, or the grid of a main-parameter step from the low end of the
+///         range to its last step; empty for a target that takes any value or a row without a write side.
+[[nodiscard]] std::vector<float> value_write_steps(const DeviceReadingRow &row);
+
+// === Replacing the table in a test ===
+
+/// @brief Replaces the reading table for as long as it lives, so a test can give a device rows production does not
+/// have.
+/// @details Every lookup of the table (device_readings(), device_reading_row(), the stores of register and status
+///          replies, device_poll_reads()) follows. The table is process-wide: one object at a time, on the test's
+///          thread. Production code never creates one.
+class ScopedReadingTable {
+ public:
+  /// @param rows The rows that replace the production table; they must outlive this object.
+  explicit ScopedReadingTable(std::span<const DeviceReadingRow> rows);
+  ~ScopedReadingTable();
+  ScopedReadingTable(const ScopedReadingTable &) = delete;
+  ScopedReadingTable &operator=(const ScopedReadingTable &) = delete;
+
+ private:
+  std::span<const DeviceReadingRow> previous_;  ///< The table to restore.
+};
 
 // === The store door ===
 

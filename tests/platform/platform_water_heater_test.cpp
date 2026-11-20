@@ -153,6 +153,16 @@ TEST(PlatformWaterHeater, TheCardsRangeFollowsTheRangeOfTheHeatersTargetRow) {
   EXPECT_FLOAT_EQ(traits.get_max_temperature(), 70.0F);
 }
 
+TEST(PlatformWaterHeater, TheCardsStepIsTheStepOfTheHeatersTargetRowAndAWholeDegreeWhenTheRowHasNone) {
+  MockHubWaterHeater hub;
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+  EXPECT_FLOAT_EQ(entity.get_traits().get_target_temperature_step(), 1.0F) << "the Calypso's row has no step";
+
+  hub.water_heater_step = 10.0F;  // a heater that takes 50, 60 and 70 degrees only
+  EXPECT_FLOAT_EQ(entity.get_traits().get_target_temperature_step(), 10.0F);
+}
+
 TEST(PlatformWaterHeater, SetupRegistersTheDeviceAsAWaterHeater) {
   MockHubWaterHeater hub;
   IOHomeWaterHeater entity;

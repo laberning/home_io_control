@@ -40,6 +40,11 @@ enum class ValueCodec : uint8_t {
   SCALED_U16,          ///< Unsigned 16-bit little-endian register value from 0 to the row's `max_value`, shown on a
                        ///< scale of its own: the row's knots (ValueForm::scale) map register values to natural units
                        ///< (a brightness register to percent), linear between two knots.
+  SCALED_BYTE,         ///< One byte on a scale of its own like SCALED_U16 (the same knots, the same mapping): a
+                       ///< register that counts steps (a shower count that stands for a water temperature). The
+                       ///< first knot need not be at register value 0; a count below the first or above the last
+                       ///< knot, or above the row's `max_value`, is no value. A write that is no knot is a step the
+                       ///< register does not have, which a write side's rounding policy judges (ValueRounding).
   TENTHS_S16_BE,       ///< Signed 16-bit tenths of a unit, most significant byte first (a water temperature in
                        ///< degrees). Bytes after the two are ignored. Read only: it is never encoded.
   THOUSANDTHS_U32_BE,  ///< Unsigned 32-bit thousandths of a unit, most significant byte first: a counter in Wh
@@ -99,14 +104,14 @@ constexpr bool value_scale_rises(std::span<const ValueScaleKnot> scale) {
 ///          the byte layout of a write are stated once, next to the register.
 struct ValueForm {
   ValueCodec codec{ValueCodec::NONE};  ///< How the value maps onto the bytes.
-  uint16_t max_value{0};               ///< BOUNDED_BYTE, BOUNDED_U16, SCALED_U16: highest value.
+  uint16_t max_value{0};               ///< BOUNDED_BYTE, BOUNDED_U16, SCALED_U16, SCALED_BYTE: highest value.
   /// TENTHS_U16, TENTHS_U16_OR_ZERO, HUNDREDTHS_S16: the values a write may carry, narrowing the span the bytes
   /// hold (a range wider than the bytes never widens it); without it a write may carry any value the bytes hold.
   // NOLINTBEGIN(readability-redundant-member-init): g++'s -Wmissing-field-initializers wants the member
   // initializer before a designated form may leave the field out.
   std::optional<ValueRange> write_range{};
-  /// SCALED_U16: the knots of the scale, ascending in both fields, the first at register value 0 and the last at
-  /// `max_value`.
+  /// SCALED_U16, SCALED_BYTE: the knots of the scale, ascending in both fields. SCALED_U16: the first at register
+  /// value 0 and the last at `max_value`. SCALED_BYTE: the first and last knot are the lowest and highest count.
   std::span<const ValueScaleKnot> scale{};
   // NOLINTEND(readability-redundant-member-init)
 };
@@ -123,7 +128,8 @@ size_t value_codec_length(ValueCodec codec);
 ///          HUNDREDTHS_S16 is a sensor fault: it decodes as NaN, with a value returned, because the device did answer.
 /// @param codec Encoding of the bytes.
 /// @param bytes The value bytes, starting at the first one; trailing bytes the codec does not read are ignored.
-/// @param max_value Highest value of BOUNDED_BYTE, BOUNDED_U16 and SCALED_U16; ignored by the other codecs.
+/// @param max_value Highest value of BOUNDED_BYTE, BOUNDED_U16, SCALED_U16 and SCALED_BYTE; ignored by the other
+/// codecs.
 /// @return The value, or nullopt when the bytes carry none.
 std::optional<float> decode_value(ValueCodec codec, std::span<const uint8_t> bytes, uint16_t max_value = 0);
 
@@ -144,9 +150,9 @@ bool value_is_bounded_integer(float value, uint16_t max_value);
 ///          forms accept a finite value inside the codec's own span and the form's `write_range` and
 ///          round to the nearest tenth, half away from zero; BINARY takes 0 or 1; the bounded forms and the
 ///          whole-unit forms take a whole number inside their bound; TENTHS_U16_OR_ZERO also takes exactly 0,
-///          the "no value" that cancels. SCALED_U16 takes a value from the first to the last knot of the scale and
-///          rounds the register value to the nearest whole one. HUNDREDTHS_S16 never encodes its sensor-fault pattern.
-///          NONE, FIRST_BYTE_OF_PAIR (a value with a limit of its own) and the read-only forms TENTHS_S16_BE,
+///          the "no value" that cancels. SCALED_U16 and SCALED_BYTE take a value from the first to the last knot of the
+///          scale and round the register value to the nearest whole one. HUNDREDTHS_S16 never encodes its sensor-fault
+///          pattern. NONE, FIRST_BYTE_OF_PAIR (a value with a limit of its own) and the read-only forms TENTHS_S16_BE,
 ///          THOUSANDTHS_U32_BE and ANY_NONZERO are not writable forms.
 /// @param form Codec and the rule of the register.
 /// @param value The value in natural units.

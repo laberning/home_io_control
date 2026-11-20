@@ -61,21 +61,6 @@ void log_dhw_reading(const std::string &device_id, DeviceRegister fn, float valu
   }
 }
 
-/// Log names of the two features the operating-mode word switches; their wire facts are
-/// dhw_operating_feature_wire()'s.
-struct DhwOperatingFeatureNames {
-  const char *feature;   ///< The feature and its EXECUTE.
-  const char *duration;  ///< Its duration write.
-};
-
-/// One row per DhwOperatingFeature, in its order.
-constexpr DhwOperatingFeatureNames DHW_OPERATING_FEATURE_NAMES[] = {
-    {"hot water boost", "hot water boost duration"},
-    {"hot water away", "hot water away duration"},
-};
-static_assert(std::size(DHW_OPERATING_FEATURE_NAMES) == static_cast<size_t>(DhwOperatingFeature::AWAY) + 1,
-              "one row per DhwOperatingFeature");
-
 }  // namespace
 
 HeaterController::HeaterController(const uint8_t *node_id, const bool *initialized, RadioDriver *const *radio,
@@ -497,6 +482,21 @@ bool HeaterController::read_dhw_status(const std::string &device_id, uint8_t max
          this->hub_.status_read(device_id, request, 0, max_tries);
 }
 
+namespace {
+
+/// Room for one step of a target as text ("70").
+constexpr size_t STEP_TEXT_SIZE = 16;
+
+/// The label of a write in the logs and the execute operation: the row's name in words ("hot water target"), and
+/// " off" when a flag is switched off.
+std::string write_action_label(const char *row_name, bool flag_off) {
+  std::string action(row_name);
+  std::ranges::replace(action, '_', ' ');
+  return flag_off ? action + " off" : action;
+}
+
+}  // namespace
+
 bool HeaterController::write_value(const std::string &device_id, DeviceReading reading, float value) {
   const DeviceReadingRow *first = find_device_reading(reading);
   if (first == nullptr)
@@ -506,29 +506,54 @@ bool HeaterController::write_value(const std::string &device_id, DeviceReading r
   if (dev == nullptr)
     return false;
   const DeviceReadingRow *row = device_reading_row(*dev, reading);
-  if (row == nullptr || !row->write) {
+  if (row == nullptr || !device_can_have_reading(*dev, *row) || !row->write) {
     ESP_LOGW(detail::TAG, "Device %s has no way to write %s", device_id.c_str(), name);
     return false;
   }
-  // A value the row refuses is never sent: the range and the register's rule are the row's.
-  const ValueWritePlan plan = plan_value_write(*row, value);
+  // A value the row refuses is never sent: the guard, the range, the steps and the register's rule are the row's.
+  const ValueWritePlan plan = plan_value_write(*dev, *row, value);
+  if (plan.refusal == ValueWriteRefusal::GUARD && row->write->guard) {
+    const DeviceReadingRow *guarded = find_device_reading(row->write->guard->reading);
+    ESP_LOGW(detail::TAG, "%s for device %s refused: the heater's %s (0x%04X) does not allow it", name,
+             device_id.c_str(), guarded != nullptr ? guarded->name : "reading",
+             static_cast<unsigned>(std::max(0, reading_wire(*dev, row->write->guard->reading))));
+    return false;
+  }
+  if (plan.refusal == ValueWriteRefusal::OFF_STEP) {
+    std::string accepted_steps;
+    for (const float step : value_write_steps(*row)) {
+      char text[STEP_TEXT_SIZE];
+      snprintf(text, sizeof(text), "%.0f", static_cast<double>(step));
+      accepted_steps += (accepted_steps.empty() ? "" : ", ") + std::string(text);
+    }
+    ESP_LOGW(detail::TAG, "Device %s: %s %.1f rejected (the heater accepts %s C)", device_id.c_str(), name,
+             static_cast<double>(value), accepted_steps.c_str());
+    return false;
+  }
   if (plan.refusal != ValueWriteRefusal::NONE) {
     ESP_LOGW(detail::TAG, "Device %s: %s %.1f rejected (the value is outside what the device takes)", device_id.c_str(),
              name, static_cast<double>(value));
     return false;
   }
+  // The before-write goes first. The heater has been seen to ignore it, and a missed ack is not fatal either: the
+  // target below is what changes the state (ADR 0081).
+  if (plan.before && !this->write_dhw_register_(device_id, plan.before->fn, plan.before->value)) {
+    ESP_LOGW(detail::TAG, "Device %s: %s write not acknowledged, sending %s anyway", device_id.c_str(),
+             device_register_name(plan.before->fn), name);
+  }
   bool accepted = false;
   if (plan.register_fn) {
     accepted = this->send_heating_command(device_id, *plan.register_fn, plan.register_value);
+  } else if (plan.functional_parameter) {
+    accepted = this->execute_functional_parameter_(device_id, write_action_label(name, value == 0.0F).c_str(),
+                                                   *plan.functional_parameter, plan.functional_word);
   } else {
-    // The label of the operation is the row's name in words ("hot water target").
-    std::string action(name);
-    std::ranges::replace(action, '_', ' ');
     const uint16_t main_parameter = plan.main_parameter;
-    accepted =
-        this->execute_dhw_(device_id, action.c_str(), [this, main_parameter](IoFrame &request, const IoDevice &d) {
-          return create_execute_heating_main_parameter(request, this->node_id_, d.node_id, d.low_power, main_parameter);
-        });
+    accepted = this->execute_dhw_(device_id, write_action_label(name, false).c_str(),
+                                  [this, main_parameter](IoFrame &request, const IoDevice &d) {
+                                    return create_execute_heating_main_parameter(request, this->node_id_, d.node_id,
+                                                                                 d.low_power, main_parameter);
+                                  });
   }
   if (!accepted)
     return false;
@@ -536,13 +561,25 @@ bool HeaterController::write_value(const std::string &device_id, DeviceReading r
   return true;
 }
 
+bool HeaterController::execute_functional_parameter_(const std::string &device_id, const char *action, uint8_t fp,
+                                                     uint16_t word) {
+  // Only FP16 has a frame builder; a row that names another parameter is a table fault, never sent.
+  if (fp != DHW_FP_OPERATING_MODE) {
+    ESP_LOGE(detail::TAG, "Device %s: %s names functional parameter %u, which the hub cannot send", device_id.c_str(),
+             action, static_cast<unsigned>(fp));
+    return false;
+  }
+  return this->execute_dhw_(device_id, action, [this, word](IoFrame &request, const IoDevice &d) {
+    return create_execute_heating_with_fp16(request, this->node_id_, d.node_id, d.low_power, MAIN_PARAMETER_KEEP, word);
+  });
+}
+
 void HeaterController::read_back_(const std::string &device_id, const DeviceReadingRow &row) {
   // The entity shows what the heater holds, not what was sent: the row's read side is read again. A miss does not
   // undo the write.
   if (const auto *source = std::get_if<RegisterSource>(&row.source)) {
     this->read_dhw_reading(device_id, source->fn, EXCHANGE_RETRY_COUNT);
-  } else if (std::holds_alternative<StatusMainParameterSource>(row.source) ||
-             std::holds_alternative<StatusFunctionalParameterSource>(row.source)) {
+  } else if (reading_is_from_status_reply(row)) {
     this->read_dhw_status(device_id, EXCHANGE_RETRY_COUNT);
   }
 }
@@ -554,6 +591,12 @@ bool HeaterController::set_water_heater_target(const std::string &device_id, flo
 HeatingCardRange HeaterController::water_heater_target_range(const std::string &device_id) const {
   const IoDevice *dev = this->registry_.get(device_id);
   return dev != nullptr ? device_temperature_range(*dev) : HeatingCardRange{NAN, NAN};
+}
+
+std::optional<float> HeaterController::water_heater_target_step(const std::string &device_id) const {
+  const IoDevice *dev = this->registry_.get(device_id);
+  const DeviceReadingRow *row = dev != nullptr ? device_reading_row(*dev, DeviceReading::HOT_WATER_TARGET) : nullptr;
+  return row != nullptr ? value_write_step(*row) : std::nullopt;
 }
 
 bool HeaterController::execute_dhw_(const std::string &device_id, const char *action,
@@ -595,55 +638,19 @@ bool HeaterController::set_water_heater_mode(const std::string &device_id, DhwMo
     return false;
   // The heater chooses its own target in AUTO and holds its manual one otherwise, so the target changes
   // with the mode: read it now rather than at the next poll. A miss here does not undo the write.
-  this->read_dhw_status(device_id, EXCHANGE_RETRY_COUNT);
-  return true;
-}
-
-bool HeaterController::set_dhw_operating_mode_(const std::string &device_id, DhwOperatingFeature which, bool on) {
-  const DhwOperatingFeatureNames &names = DHW_OPERATING_FEATURE_NAMES[static_cast<size_t>(which)];
-  const DhwOperatingFeatureWire &wire = dhw_operating_feature_wire(which);
-  const IoDevice *dev = this->water_heater_for_write_(device_id, names.feature);
-  if (dev == nullptr)
-    return false;
-  // Once FP15 has been read the heater says what it supports; before that the write is allowed to try.
-  const int capabilities = reading_wire(*dev, DeviceReading::HOT_WATER_CAPABILITIES);
-  if (capabilities >= 0 && (static_cast<uint16_t>(capabilities) & wire.capability) == 0) {
-    ESP_LOGW(detail::TAG, "%s for device %s refused: the heater does not report it as supported (FP15 0x%04X)",
-             names.feature, device_id.c_str(), static_cast<unsigned>(capabilities));
-    return false;
-  }
-
-  if (on) {
-    // The duration goes first (ADR 0081). The heater has been seen to ignore it, and a missed ack is not
-    // fatal either: the FP16 EXECUTE below is what switches the mode.
-    if (!this->write_dhw_register_(device_id, wire.duration_register, static_cast<float>(wire.start_duration))) {
-      ESP_LOGW(detail::TAG, "Device %s: %s write not acknowledged, sending the mode anyway", device_id.c_str(),
-               names.duration);
-    }
-  }
-
-  const uint16_t word = on ? wire.on_word : DHW_OPERATING_MODE_OFF;
-  // The off word ends boost and away alike.
-  const bool accepted =
-      this->execute_dhw_(device_id, on ? names.feature : "hot water boost and away off",
-                         [this, word](IoFrame &request, const IoDevice &d) {
-                           return create_execute_heating_with_fp16(request, this->node_id_, d.node_id, d.low_power,
-                                                                   MAIN_PARAMETER_KEEP, word);
-                         });
-  if (!accepted)
-    return false;
-  // The entity shows what FP16 reports, never the command: read it at once. A miss does not undo the write,
-  // and the poll execute_dhw_() moved reads it again.
-  this->read_dhw_status(device_id, EXCHANGE_RETRY_COUNT);
+  const IoDevice *dev = this->registry_.get(device_id);
+  const DeviceReadingRow *target = dev != nullptr ? device_reading_row(*dev, DeviceReading::HOT_WATER_TARGET) : nullptr;
+  if (target != nullptr)
+    this->read_back_(device_id, *target);
   return true;
 }
 
 bool HeaterController::set_water_heater_boost(const std::string &device_id, bool on) {
-  return this->set_dhw_operating_mode_(device_id, DhwOperatingFeature::BOOST, on);
+  return this->write_value(device_id, DeviceReading::HOT_WATER_BOOST, on ? 1.0F : 0.0F);
 }
 
 bool HeaterController::set_water_heater_away(const std::string &device_id, bool on) {
-  return this->set_dhw_operating_mode_(device_id, DhwOperatingFeature::AWAY, on);
+  return this->write_value(device_id, DeviceReading::HOT_WATER_AWAY, on ? 1.0F : 0.0F);
 }
 
 // === Regular polls ===
@@ -933,7 +940,10 @@ bool HeaterController::poll_dhw_(const std::string &device_id) {
       return current != nullptr ? device_poll_reads(*current, policy) : HeaterPollList{};
     };
 
-    bool ok = this->read_dhw_status(device_id, max_tries);
+    // The status read answers the readings that are a status reply's parameters; a heater whose readings are all
+    // registers has none to ask for.
+    const IoDevice *polled = this->registry_.get(device_id);
+    bool ok = polled != nullptr && (!device_has_status_reading(*polled) || this->read_dhw_status(device_id, max_tries));
     for (const DeviceRegister fn : reads_of(ReadingPoll::EVERY_POLL)) {
       if (!ok)
         break;

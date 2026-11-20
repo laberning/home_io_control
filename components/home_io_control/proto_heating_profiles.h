@@ -472,6 +472,16 @@ struct HeaterPollList {
 /// @return The registers, possibly none.
 HeaterPollList device_poll_reads(const IoDevice &dev, ReadingPoll policy);
 
+/// @brief Does one of the readings a device has take its value from a status reply?
+/// @details True when a row the device's capabilities select (device_reading_row()) has a status source: the main
+///          parameter, a functional parameter or the battery byte. A device whose rows all read from registers has
+///          no use for a status read, and its poll sends none (a water heater whose target, boost and away are
+///          registers). Whether a device kind answers a status read at all is another question
+///          (DeviceFeature::NO_STATUS_READ).
+/// @param dev The device record (its capabilities).
+/// @return true when the device's poll must send a status read to have its readings.
+[[nodiscard]] bool device_has_status_reading(const IoDevice &dev);
+
 /// @brief May a register of the table be read from or written to this device?
 /// @details The one gate for every register frame the hub sends to a device: a register of the water heater's family
 ///          goes only to a water heater (device_feature::WATER_HEATER), a register of the heater's family only to a

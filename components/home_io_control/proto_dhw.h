@@ -24,7 +24,9 @@
 /// display follows both (issue #198). No reply to either is in the corpus yet.
 ///
 /// Boost and away travel in the operating-mode word, functional parameter 16, not in a register (ADR 0081): one
-/// EXECUTE with the main parameter MAIN_PARAMETER_KEEP and one of three fixed FP16 values. The heater reports its
+/// EXECUTE with the main parameter MAIN_PARAMETER_KEEP and one of three fixed FP16 values. The rows of
+/// DeviceReading::HOT_WATER_BOOST and HOT_WATER_AWAY (proto_device_readings.cpp) hold the words, the duration
+/// registers and the FP15 bits of the Atlantic Calypso. The heater reports its
 /// capabilities (FP15) and the current word (FP16) in the status read DHW_STATUS_FPI1 / DHW_STATUS_FPI2 (corpus
 /// tests/corpus/captures/probe/atlantic_calypso_probe_status_fp_high.yaml). The registers
 /// DeviceRegister::DHW_BOOST_DURATION and DHW_AWAY_DURATION hold the boost and away durations; a write of a duration
@@ -84,29 +86,10 @@ static constexpr uint16_t DHW_CAPABILITY_AWAY = 1U << 2U;
 /// @brief FP15 bit 3: the heater supports boost (relaunch).
 static constexpr uint16_t DHW_CAPABILITY_BOOST = 1U << 3U;
 
-/// @brief The two features the operating-mode word switches; dhw_operating_feature_wire() holds their wire facts.
-enum class DhwOperatingFeature : uint8_t {
-  BOOST,  ///< Relaunch.
-  AWAY,   ///< Absence (holiday).
-};
-
 /// @brief Lowest bit of the boost (relaunch) field of FP16: bits 8-9.
 static constexpr uint8_t DHW_FP16_BOOST_SHIFT = 8;
 /// @brief Lowest bit of the away (absence) field of FP16: bits 10-11.
 static constexpr uint8_t DHW_FP16_AWAY_SHIFT = 10;
-
-/// @brief The wire facts of one DhwOperatingFeature: what FP15, FP16 and the duration registers say about it.
-struct DhwOperatingFeatureWire {
-  uint16_t capability;               ///< FP15 bit that says the heater supports it (DHW_CAPABILITY_*).
-  uint16_t on_word;                  ///< FP16 that starts it and ends the other (DHW_OPERATING_MODE_*_ON).
-  DeviceRegister duration_register;  ///< Register that holds its duration.
-  uint8_t start_duration;            ///< Duration a start writes before the FP16 EXECUTE.
-};
-
-/// @brief The wire facts of `which`: the one place each feature's FP15 bit, FP16 field and duration live.
-/// @param which Boost or away.
-/// @return Its row.
-const DhwOperatingFeatureWire &dhw_operating_feature_wire(DhwOperatingFeature which);
 
 // === Value shapes ===
 

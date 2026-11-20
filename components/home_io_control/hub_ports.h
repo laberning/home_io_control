@@ -27,6 +27,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace esphome {
@@ -257,6 +258,13 @@ class HubHeatingPort {
   /// @param device_id Hexadecimal node ID string.
   /// @return The range; NaN at both ends for an unknown device.
   [[nodiscard]] virtual HeatingCardRange water_heater_target_range(const std::string &device_id) const = 0;
+
+  /// @brief The step a water heater's card offers its target in, for a heater that takes only steps.
+  /// @details The step of the heater's target row (ADR 0110): the row's own step, or the distance of the knots of the
+  ///          register the target is written to when they are evenly spaced.
+  /// @param device_id Hexadecimal node ID string.
+  /// @return The step in degrees; nullopt for a target that takes any value and for an unknown device.
+  [[nodiscard]] virtual std::optional<float> water_heater_target_step(const std::string &device_id) const = 0;
 
   /// @brief Set a water heater's operating mode.
   /// @param device_id Hexadecimal node ID string.

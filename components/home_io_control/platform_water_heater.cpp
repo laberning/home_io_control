@@ -36,8 +36,9 @@ constexpr WaterHeaterModeMapping WATER_HEATER_MODE_MAP[] = {
 };
 static_assert(WATER_HEATER_MODE_MAP[0].dhw == DhwMode::AUTO, "the fallback in water_heater_mode_for() is row 0");
 
-/// @brief UI target step: every target the heater has shown is a whole degree (issue #198). The main
-/// parameter resolves far finer.
+/// @brief UI target step of a heater whose target takes any value: every target the Atlantic Calypso has shown is a
+/// whole degree (issue #198). The main parameter resolves far finer. A heater that takes only steps says its own
+/// (HubHeatingPort::water_heater_target_step()).
 constexpr float WATER_HEATER_TARGET_STEP_C = 1.0F;
 
 }  // namespace
@@ -86,15 +87,17 @@ water_heater::WaterHeaterTraits IOHomeWaterHeater::traits() {
   traits.add_feature_flags(
       water_heater::WATER_HEATER_SUPPORTS_CURRENT_TEMPERATURE | water_heater::WATER_HEATER_SUPPORTS_TARGET_TEMPERATURE |
       water_heater::WATER_HEATER_SUPPORTS_OPERATION_MODE | water_heater::WATER_HEATER_SUPPORTS_AWAY_MODE);
-  // The range is a fact of the heater's model, the range of its target row (ADR 0110).
+  // The range and the step are facts of the heater's model, those of its target row (ADR 0110).
+  float step_c = WATER_HEATER_TARGET_STEP_C;
   if (this->heating_port_ != nullptr) {
     const HeatingCardRange range = this->heating_port_->water_heater_target_range(this->device_id_);
     if (!std::isnan(range.min_c) && !std::isnan(range.max_c)) {
       traits.set_min_temperature(range.min_c);
       traits.set_max_temperature(range.max_c);
     }
+    step_c = this->heating_port_->water_heater_target_step(this->device_id_).value_or(WATER_HEATER_TARGET_STEP_C);
   }
-  traits.set_target_temperature_step(WATER_HEATER_TARGET_STEP_C);
+  traits.set_target_temperature_step(step_c);
   traits.set_supported_modes({water_heater::WATER_HEATER_MODE_HEAT_PUMP, water_heater::WATER_HEATER_MODE_ECO,
                               water_heater::WATER_HEATER_MODE_PERFORMANCE});
   return traits;

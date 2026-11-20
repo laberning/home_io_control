@@ -5,26 +5,8 @@
 
 #include "proto_dhw.h"
 
-#include <iterator>
-
 namespace esphome {
 namespace home_io_control {
-
-namespace {
-
-/// One row per DhwOperatingFeature, in its order.
-constexpr DhwOperatingFeatureWire DHW_OPERATING_FEATURES[] = {
-    {DHW_CAPABILITY_BOOST, DHW_OPERATING_MODE_BOOST_ON, DeviceRegister::DHW_BOOST_DURATION, DHW_BOOST_START_DURATION},
-    {DHW_CAPABILITY_AWAY, DHW_OPERATING_MODE_AWAY_ON, DeviceRegister::DHW_AWAY_DURATION, DHW_AWAY_UNTIL_TURNED_OFF},
-};
-static_assert(std::size(DHW_OPERATING_FEATURES) == static_cast<size_t>(DhwOperatingFeature::AWAY) + 1,
-              "one row per DhwOperatingFeature");
-
-}  // namespace
-
-const DhwOperatingFeatureWire &dhw_operating_feature_wire(DhwOperatingFeature which) {
-  return DHW_OPERATING_FEATURES[static_cast<size_t>(which)];
-}
 
 const char *dhw_heating_source_name(int heat_pump, int element) {
   if (heat_pump < 0 || element < 0)

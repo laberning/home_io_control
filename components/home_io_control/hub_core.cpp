@@ -453,7 +453,7 @@ std::string IOHomeControlComponent::device_reading_key(const std::string &device
 void IOHomeControlComponent::set_device_reading_poll_interval(const std::string &device_id, DeviceReading reading,
                                                               uint32_t interval_ms) {
   const IoDevice *dev = this->get_device(device_id);
-  const DeviceReadingRow *row = find_device_reading(reading, this->reading_table_);
+  const DeviceReadingRow *row = find_device_reading(reading);
   if (dev == nullptr || row == nullptr || !reading_is_scheduled(*row))
     return;
   const bool data_object = std::holds_alternative<DataObjectSource>(row->source);

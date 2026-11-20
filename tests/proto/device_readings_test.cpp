@@ -808,6 +808,15 @@ TEST(DeviceReadings, ACoversReadingsNeedNoCapabilityAndTheScheduledOnesDropTheir
     EXPECT_FALSE(reading_is_scheduled(*find_device_reading(reading))) << "a status reply answers it";
 }
 
+TEST(DeviceReadings, AStatusReplyAnswersItsMainParameterItsFunctionalParametersAndItsBatteryByte) {
+  for (const DeviceReading reading : {DeviceReading::HOT_WATER_TARGET, DeviceReading::HOT_WATER_CAPABILITIES,
+                                      DeviceReading::HOT_WATER_BOOST, DeviceReading::BATTERY_STATE})
+    EXPECT_TRUE(reading_is_from_status_reply(*find_device_reading(reading))) << find_device_reading(reading)->name;
+  for (const DeviceReading reading :
+       {DeviceReading::HOT_WATER_MODE, DeviceReading::BATTERY_LEVEL, DeviceReading::BATTERY_LOW, DeviceReading::RAIN})
+    EXPECT_FALSE(reading_is_from_status_reply(*find_device_reading(reading))) << find_device_reading(reading)->name;
+}
+
 TEST(DeviceReadings, OnlyAnEventOrLimitationReadingIsScheduledWithoutACapability) {
   // device_can_have_reading() lets a row without a capability onto any device: that is right only for a cover's
   // readings, which a cover's own YAML key declares. A data-object reading needs its capability, so a row that forgot

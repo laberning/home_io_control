@@ -50,6 +50,12 @@ constexpr DeviceReadingRow ROW_20_62 = target_row(RANGE_20_62, {20.0F, 62.0F});
 constexpr DeviceReadingRow ROW_20_70 = target_row(RANGE_20_70, {20.0F, 70.0F});
 constexpr DeviceReadingRow TEST_TABLE[] = {ROW_20_62, ROW_20_70};
 
+/// A water heater with no reading yet, for a write whose guard is none or unread.
+const IoDevice &heater() {
+  static const IoDevice dev = test::water_heater_record();
+  return dev;
+}
+
 /// A water heater record carrying exactly the given capability next to the water heater's own.
 IoDevice heater_with(DeviceFeatures extra) {
   IoDevice dev = test::water_heater_record();
@@ -234,34 +240,34 @@ TEST(DeviceValueWrite, TheSameWordIsAnotherTemperatureOnAnotherRowsRange) {
 }
 
 TEST(DeviceValueWrite, FiftyFourDegreesOnTheTwentyToSeventyRowEncodesAsEightEightHundred) {
-  const ValueWritePlan plan = plan_value_write(ROW_20_70, 54.0F);
+  const ValueWritePlan plan = plan_value_write(heater(), ROW_20_70, 54.0F);
   ASSERT_EQ(plan.refusal, ValueWriteRefusal::NONE);
   EXPECT_TRUE(plan.is_execute());
   EXPECT_EQ(plan.main_parameter, 0x8800);
 }
 
 TEST(DeviceValueWrite, TheEndsOfTheRowsRangeEncodeAndAValueBeyondThemIsRefusedNotClamped) {
-  EXPECT_EQ(plan_value_write(ROW_20_70, 20.0F).main_parameter, 0x0000);
-  EXPECT_EQ(plan_value_write(ROW_20_70, 70.0F).main_parameter, 0xC800);
-  EXPECT_EQ(plan_value_write(ROW_20_70, 70.1F).refusal, ValueWriteRefusal::OUT_OF_RANGE);
-  EXPECT_EQ(plan_value_write(ROW_20_70, 19.9F).refusal, ValueWriteRefusal::OUT_OF_RANGE);
-  EXPECT_EQ(plan_value_write(ROW_20_62, 70.0F).refusal, ValueWriteRefusal::OUT_OF_RANGE)
+  EXPECT_EQ(plan_value_write(heater(), ROW_20_70, 20.0F).main_parameter, 0x0000);
+  EXPECT_EQ(plan_value_write(heater(), ROW_20_70, 70.0F).main_parameter, 0xC800);
+  EXPECT_EQ(plan_value_write(heater(), ROW_20_70, 70.1F).refusal, ValueWriteRefusal::OUT_OF_RANGE);
+  EXPECT_EQ(plan_value_write(heater(), ROW_20_70, 19.9F).refusal, ValueWriteRefusal::OUT_OF_RANGE);
+  EXPECT_EQ(plan_value_write(heater(), ROW_20_62, 70.0F).refusal, ValueWriteRefusal::OUT_OF_RANGE)
       << "70 degrees is outside the 20..62 row";
-  EXPECT_EQ(plan_value_write(ROW_20_70, NAN).refusal, ValueWriteRefusal::UNENCODABLE);
+  EXPECT_EQ(plan_value_write(heater(), ROW_20_70, NAN).refusal, ValueWriteRefusal::UNENCODABLE);
 }
 
 TEST(DeviceValueWrite, AMainParameterWriteOnARowWithoutARangeCannotBeEncoded) {
   DeviceReadingRow row = ROW_20_70;
   row.source = StatusMainParameterSource{.form = StatusValueForm::TEMPERATURE};
-  EXPECT_EQ(plan_value_write(row, 54.0F).refusal, ValueWriteRefusal::UNENCODABLE);
+  EXPECT_EQ(plan_value_write(heater(), row, 54.0F).refusal, ValueWriteRefusal::UNENCODABLE);
 }
 
 TEST(DeviceValueWrite, TheCalypsosProductionRowEncodesLikeTheCaptures) {
   const DeviceReadingRow *row = find_device_reading(DeviceReading::HOT_WATER_TARGET);
   ASSERT_NE(row, nullptr);
-  EXPECT_EQ(plan_value_write(*row, 54.0F).main_parameter, 0xA1E8);
-  EXPECT_EQ(plan_value_write(*row, 62.0F).main_parameter, 0xC800);
-  EXPECT_EQ(plan_value_write(*row, 62.5F).refusal, ValueWriteRefusal::OUT_OF_RANGE);
+  EXPECT_EQ(plan_value_write(heater(), *row, 54.0F).main_parameter, 0xA1E8);
+  EXPECT_EQ(plan_value_write(heater(), *row, 62.0F).main_parameter, 0xC800);
+  EXPECT_EQ(plan_value_write(heater(), *row, 62.5F).refusal, ValueWriteRefusal::OUT_OF_RANGE);
 }
 
 TEST(DeviceValueWrite, ADevicesTemperatureRangeIsTheRangeOfItsTargetRow) {
@@ -282,30 +288,31 @@ TEST(DeviceValueWrite, ARegisterWriteIsJudgedByTheRegistersOwnRule) {
   const DeviceReadingRow *mode = find_device_reading(DeviceReading::HOT_WATER_MODE);
   ASSERT_NE(mode, nullptr);
   for (const DhwMode value : {DhwMode::AUTO, DhwMode::MANUAL_ECO_ON, DhwMode::MANUAL_ECO_OFF}) {
-    const ValueWritePlan plan = plan_value_write(*mode, static_cast<float>(value));
+    const ValueWritePlan plan = plan_value_write(heater(), *mode, static_cast<float>(value));
     ASSERT_EQ(plan.refusal, ValueWriteRefusal::NONE);
     EXPECT_FALSE(plan.is_execute());
     EXPECT_EQ(plan.register_fn, DeviceRegister::DHW_MODE);
     EXPECT_FLOAT_EQ(plan.register_value, static_cast<float>(value));
   }
-  EXPECT_EQ(plan_value_write(*mode, 3.0F).refusal, ValueWriteRefusal::REGISTER_RULE)
+  EXPECT_EQ(plan_value_write(heater(), *mode, 3.0F).refusal, ValueWriteRefusal::REGISTER_RULE)
       << "a mode the heater has never shown, by the register's rule";
-  EXPECT_EQ(plan_value_write(*mode, 1.5F).refusal, ValueWriteRefusal::REGISTER_RULE);
-  EXPECT_EQ(plan_value_write(*mode, NAN).refusal, ValueWriteRefusal::REGISTER_RULE);
+  EXPECT_EQ(plan_value_write(heater(), *mode, 1.5F).refusal, ValueWriteRefusal::REGISTER_RULE);
+  EXPECT_EQ(plan_value_write(heater(), *mode, NAN).refusal, ValueWriteRefusal::REGISTER_RULE);
 }
 
 TEST(DeviceValueWrite, ARowWithoutAWriteSideIsRefused) {
   const DeviceReadingRow *energy = find_device_reading(DeviceReading::HOT_WATER_ENERGY);
   ASSERT_NE(energy, nullptr);
   EXPECT_FALSE(energy->write.has_value());
-  EXPECT_EQ(plan_value_write(*energy, 1.0F).refusal, ValueWriteRefusal::NO_WRITE_SIDE);
+  EXPECT_EQ(plan_value_write(heater(), *energy, 1.0F).refusal, ValueWriteRefusal::NO_WRITE_SIDE);
 }
 
 TEST(DeviceValueWrite, OnlyTheRowsThatSayHowAreWritable) {
   for (const DeviceReadingRow &row : device_readings()) {
     if (!row.write)
       continue;
-    EXPECT_TRUE(row.reading == DeviceReading::HOT_WATER_MODE || row.reading == DeviceReading::HOT_WATER_TARGET)
+    EXPECT_TRUE(row.reading == DeviceReading::HOT_WATER_MODE || row.reading == DeviceReading::HOT_WATER_TARGET ||
+                row.reading == DeviceReading::HOT_WATER_BOOST || row.reading == DeviceReading::HOT_WATER_AWAY)
         << row.name << ": a write side is a deliberate addition";
   }
 }

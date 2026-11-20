@@ -686,6 +686,13 @@ HeaterPollList device_poll_reads(const IoDevice &dev, ReadingPoll policy) {
   return reads;
 }
 
+bool device_has_status_reading(const IoDevice &dev) {
+  return std::ranges::any_of(device_readings(), [&dev](const DeviceReadingRow &row) {
+    return reading_is_from_status_reply(row) && device_has_reading_capability(dev, row) &&
+           device_reading_row(dev, row.reading) == &row;
+  });
+}
+
 // === Heater writes ===
 
 namespace {
@@ -916,9 +923,8 @@ HeatingCardRange device_temperature_range(const IoDevice &dev) {
   if (has_feature(dev.features, device_feature::WATER_HEATER)) {
     // A water heater's range is a fact of its model: the row of its target reading that its capabilities select.
     const DeviceReadingRow *row = device_reading_row(dev, DeviceReading::HOT_WATER_TARGET);
-    const auto *source = row != nullptr ? std::get_if<StatusMainParameterSource>(&row->source) : nullptr;
-    if (source != nullptr && source->range)
-      return {source->range->min, source->range->max};
+    if (const std::optional<ValueRange> range = row != nullptr ? value_write_range(*row) : std::nullopt)
+      return {range->min, range->max};
   }
   const HeatingProfile *profile = find_heating_profile(dev);
   return profile != nullptr ? main_parameter_range(*profile, dev.temperature_range_min_c, dev.temperature_range_max_c)

@@ -698,6 +698,10 @@ class IOHomeControlComponent : public Component,
   [[nodiscard]] HeatingCardRange water_heater_target_range(const std::string &device_id) const override {
     return this->heater_controller_.water_heater_target_range(device_id);
   }
+  /// @brief The step a water heater's target is offered in. @see HeaterController::water_heater_target_step()
+  [[nodiscard]] std::optional<float> water_heater_target_step(const std::string &device_id) const override {
+    return this->heater_controller_.water_heater_target_step(device_id);
+  }
   /// @brief Set a water heater's operating mode. @see HeaterController::set_water_heater_mode()
   bool set_water_heater_mode(const std::string &device_id, DhwMode mode) override {
     return this->heater_controller_.set_water_heater_mode(device_id, mode);
@@ -1399,9 +1403,6 @@ class IOHomeControlComponent : public Component,
     bool in_flight{false};  ///< A data-object read of it is queued or running in the transfer reader (ADR 0108).
   };
   std::vector<DeviceReadingPoll> device_reading_polls_;  ///< Every reading with a schedule entry.
-  /// The reading table the hub looks scheduled readings up in: the production table, which a test replaces
-  /// (together with TransferReader::set_recipes()) to give the hub a data-object row.
-  std::span<const DeviceReadingRow> reading_table_{device_readings()};
   OperationQueue op_queue_;
   /// Per-attempt pairing telemetry. PairingEngine records into it and, during an attempt, attaches it
   /// to ExchangeEngine as its TransmitObserver.

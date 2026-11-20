@@ -193,12 +193,12 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .source = RegisterSource{.fn = DeviceRegister::DHW_WATER_TEMPERATURE},
      .reading = DeviceReading::HOT_WATER_TEMPERATURE,
      .poll = ReadingPoll::EVERY_POLL,
-     .feature = DeviceFeature::WATER_HEATER},
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_CALYPSO},
     {.name = "hot_water_mode",
      .source = RegisterSource{.fn = DeviceRegister::DHW_MODE},
      .reading = DeviceReading::HOT_WATER_MODE,
      .poll = ReadingPoll::EVERY_POLL,
-     .feature = DeviceFeature::WATER_HEATER,
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_CALYPSO,
      .value_name = dhw_mode_name,
      .write = ValueWrite{RegisterWrite{DeviceRegister::DHW_MODE}}},
     // The target is the main parameter of the status reply, over the range of the heater's model: the row a device's
@@ -215,44 +215,47 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
                               .part = RegisterPart{.first = 0, .length = 1, .codec = ValueCodec::ANY_NONZERO}},
      .reading = DeviceReading::HOT_WATER_HEATING,
      .poll = ReadingPoll::EVERY_POLL,
-     .feature = DeviceFeature::WATER_HEATER},
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_CALYPSO},
     {.name = "hot_water_electric_backup",
      .source = RegisterSource{.fn = DeviceRegister::DHW_HEATING,
                               .part = RegisterPart{.first = 2, .length = 1, .codec = ValueCodec::ANY_NONZERO}},
      .reading = DeviceReading::HOT_WATER_ELECTRIC_BACKUP,
      .poll = ReadingPoll::EVERY_POLL,
-     .feature = DeviceFeature::WATER_HEATER},
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_CALYPSO},
     {.name = "hot_water_heat_pump",
      .source = RegisterSource{.fn = DeviceRegister::DHW_HEATING,
                               .part = RegisterPart{.first = 3, .length = 2, .codec = ValueCodec::ANY_NONZERO}},
      .reading = DeviceReading::HOT_WATER_HEAT_PUMP,
      .poll = ReadingPoll::EVERY_POLL,
-     .feature = DeviceFeature::WATER_HEATER},
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_CALYPSO},
     {.name = "hot_water_boost_duration",
      .source = RegisterSource{.fn = DeviceRegister::DHW_BOOST_DURATION},
      .reading = DeviceReading::HOT_WATER_BOOST_DURATION,
      .poll = ReadingPoll::EVERY_POLL,
-     .feature = DeviceFeature::WATER_HEATER},
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_CALYPSO},
     {.name = "hot_water_away_duration",
      .source = RegisterSource{.fn = DeviceRegister::DHW_AWAY_DURATION},
      .reading = DeviceReading::HOT_WATER_AWAY_DURATION,
      .poll = ReadingPoll::EVERY_POLL,
-     .feature = DeviceFeature::WATER_HEATER},
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_CALYPSO},
     {.name = "hot_water_energy",
      .source = RegisterSource{.fn = DeviceRegister::DHW_ENERGY},
      .reading = DeviceReading::HOT_WATER_ENERGY,
      .poll = ReadingPoll::EVERY_POLL,
-     .feature = DeviceFeature::WATER_HEATER},
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_CALYPSO},
     {.name = "hot_water_brand",
      .source = RegisterSource{.fn = DeviceRegister::DHW_BRAND},
      .reading = DeviceReading::HOT_WATER_BRAND,
      .poll = ReadingPoll::ONCE_AFTER_BOOT,
-     .feature = DeviceFeature::WATER_HEATER},
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_CALYPSO},
     {.name = "hot_water_capabilities",
      .source = StatusFunctionalParameterSource{.fp = DHW_FP_CAPABILITIES, .form = StatusParameterForm::WORD},
      .reading = DeviceReading::HOT_WATER_CAPABILITIES,
      .poll = ReadingPoll::NOT_POLLED,
-     .feature = DeviceFeature::WATER_HEATER},
+     .feature = DeviceFeature::HOT_WATER_BOOST_FP16},
+    // Boost and away are two fields of the operating-mode word, FP16, on the Atlantic Calypso: one EXECUTE sets the
+    // whole word (the off word ends both), FP15 says which the heater supports, and the duration register is written
+    // first (ADR 0081, ADR 0110). The words and durations are the heater's row data.
     {.name = "hot_water_boost",
      .source = StatusFunctionalParameterSource{.fp = DHW_FP_OPERATING_MODE,
                                                .form = StatusParameterForm::FIELD_EQUALS,
@@ -260,7 +263,15 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
                                                .equals = STATUS_FIELD_ON},
      .reading = DeviceReading::HOT_WATER_BOOST,
      .poll = ReadingPoll::NOT_POLLED,
-     .feature = DeviceFeature::WATER_HEATER},
+     .feature = DeviceFeature::HOT_WATER_BOOST_FP16,
+     .write = ValueWrite{.target = FunctionalParameterWrite{.fp = DHW_FP_OPERATING_MODE,
+                                                            .on_word = DHW_OPERATING_MODE_BOOST_ON,
+                                                            .off_word = DHW_OPERATING_MODE_OFF},
+                         .guard = WriteGuard{.reading = DeviceReading::HOT_WATER_CAPABILITIES,
+                                             .test = WriteGuardTest::HAS_BIT,
+                                             .value = DHW_CAPABILITY_BOOST},
+                         .before = FixedRegisterWrite{.fn = DeviceRegister::DHW_BOOST_DURATION,
+                                                      .value = DHW_BOOST_START_DURATION}}},
     {.name = "hot_water_away",
      .source = StatusFunctionalParameterSource{.fp = DHW_FP_OPERATING_MODE,
                                                .form = StatusParameterForm::FIELD_EQUALS,
@@ -268,7 +279,15 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
                                                .equals = STATUS_FIELD_ON},
      .reading = DeviceReading::HOT_WATER_AWAY,
      .poll = ReadingPoll::NOT_POLLED,
-     .feature = DeviceFeature::WATER_HEATER},
+     .feature = DeviceFeature::HOT_WATER_AWAY_FP16,
+     .write = ValueWrite{.target = FunctionalParameterWrite{.fp = DHW_FP_OPERATING_MODE,
+                                                            .on_word = DHW_OPERATING_MODE_AWAY_ON,
+                                                            .off_word = DHW_OPERATING_MODE_OFF},
+                         .guard = WriteGuard{.reading = DeviceReading::HOT_WATER_CAPABILITIES,
+                                             .test = WriteGuardTest::HAS_BIT,
+                                             .value = DHW_CAPABILITY_AWAY},
+                         .before = FixedRegisterWrite{.fn = DeviceRegister::DHW_AWAY_DURATION,
+                                                      .value = DHW_AWAY_UNTIL_TURNED_OFF}}},
     // A cover's readings. A YAML key of the cover declares each (the poll interval of the three read on a schedule,
     // `battery:` for the two of the status reply), so none needs a capability of the kind. The three read on a schedule
     // drop their value after repeated misses.
@@ -345,9 +364,14 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .stale = ReadingStale::DROP},
 };
 
+/// The rows every lookup walks: DEVICE_READINGS, or the rows of a ScopedReadingTable.
+// The seam of ScopedReadingTable: a test gives a device rows production does not have, and production never changes it.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables): the seam named above
+std::span<const DeviceReadingRow> active_table = DEVICE_READINGS;
+
 /// Run `visit` on every row whose source is the register `fn`, whole or a part of it, in table order.
 template<class Visit> void for_each_register_reading(DeviceRegister fn, Visit visit) {
-  for (const DeviceReadingRow &row : DEVICE_READINGS) {
+  for (const DeviceReadingRow &row : active_table) {
     const auto *source = std::get_if<RegisterSource>(&row.source);
     if (source != nullptr && source->fn == fn)
       visit(row, *source);
@@ -373,7 +397,7 @@ std::optional<float> remaining_time_of_active_run(const IoDevice &dev) {
   const int state = register_wire(dev, DeviceRegister::TEMPORARY_STATE);
   if (state < 0)
     return std::nullopt;
-  for (const DeviceReadingRow &row : DEVICE_READINGS) {
+  for (const DeviceReadingRow &row : active_table) {
     const auto *source = std::get_if<RegisterSource>(&row.source);
     if (source != nullptr && source->only_while && source->only_while->fn == DeviceRegister::TEMPORARY_STATE &&
         std::cmp_equal(source->only_while->value, state))
@@ -449,10 +473,10 @@ const DeviceReadingRow *find_device_reading(DeviceReading reading, std::span<con
 }
 
 const DeviceReadingRow *find_device_reading(DeviceReading reading) {
-  return find_device_reading(reading, DEVICE_READINGS);
+  return find_device_reading(reading, active_table);
 }
 
-std::span<const DeviceReadingRow> device_readings() { return DEVICE_READINGS; }
+std::span<const DeviceReadingRow> device_readings() { return active_table; }
 
 size_t device_reading_row_matches(const IoDevice &dev, DeviceReading reading, std::span<const DeviceReadingRow> table) {
   const auto rows = static_cast<size_t>(std::ranges::count(table, reading, &DeviceReadingRow::reading));
@@ -476,7 +500,7 @@ const DeviceReadingRow *device_reading_row(const IoDevice &dev, DeviceReading re
 }
 
 const DeviceReadingRow *device_reading_row(const IoDevice &dev, DeviceReading reading) {
-  return device_reading_row(dev, reading, DEVICE_READINGS);
+  return device_reading_row(dev, reading, active_table);
 }
 
 std::optional<float> reading_value(const IoDevice &dev, DeviceReading reading,
@@ -500,7 +524,7 @@ std::optional<float> reading_value(const IoDevice &dev, DeviceReading reading,
 }
 
 std::optional<float> reading_value(const IoDevice &dev, DeviceReading reading) {
-  return reading_value(dev, reading, DEVICE_READINGS);
+  return reading_value(dev, reading, active_table);
 }
 
 std::optional<float> decode_data_object_reading(const DataObjectSource &source, std::span<const uint8_t> data) {
@@ -574,7 +598,7 @@ float decode_status_parameter(const StatusFunctionalParameterSource &source, uin
 
 size_t store_status_parameter_readings(IoDevice &dev, const IoFrame &reply) {
   size_t stored = 0;
-  for (const DeviceReadingRow &row : DEVICE_READINGS) {
+  for (const DeviceReadingRow &row : active_table) {
     const auto *source = std::get_if<StatusFunctionalParameterSource>(&row.source);
     uint16_t word = 0;
     if (source == nullptr || !decode_status_functional_parameter(reply, source->fp, word))
@@ -609,7 +633,7 @@ std::optional<DeviceRegister> reading_register(DeviceReading reading) {
 }
 
 const DeviceReadingRow *find_register_reading(DeviceRegister fn) {
-  for (const DeviceReadingRow &row : DEVICE_READINGS) {
+  for (const DeviceReadingRow &row : active_table) {
     const auto *source = std::get_if<RegisterSource>(&row.source);
     if (source != nullptr && source->fn == fn)
       return &row;
@@ -625,6 +649,12 @@ std::optional<float> register_value(const IoDevice &dev, DeviceRegister fn) {
 bool reading_is_scheduled(const DeviceReadingRow &row) {
   return std::holds_alternative<DataObjectSource>(row.source) || std::holds_alternative<EventSource>(row.source) ||
          std::holds_alternative<LimitationSource>(row.source);
+}
+
+bool reading_is_from_status_reply(const DeviceReadingRow &row) {
+  return std::holds_alternative<StatusMainParameterSource>(row.source) ||
+         std::holds_alternative<StatusFunctionalParameterSource>(row.source) ||
+         std::holds_alternative<StatusBatterySource>(row.source);
 }
 
 bool device_can_have_reading(const IoDevice &dev, const DeviceReadingRow &row) {
@@ -687,19 +717,163 @@ StatusStore store_status_main_parameter(IoDevice &dev, DeviceReading reading, st
   return {value, !before || *before != *value};
 }
 
-ValueWritePlan plan_value_write(const DeviceReadingRow &row, float value) {
+namespace {
+
+/// Two values are the same step when they differ by less than this: no step of a target is finer than a thousandth of a
+/// degree.
+constexpr float STEP_MATCH_TOLERANCE = 0.001F;
+
+/// @brief The steps of a stepped target: the knots of a scaled register, or an even grid over a main-parameter range.
+struct TargetSteps {
+  // NOLINTBEGIN(readability-redundant-member-init): g++'s -Wmissing-field-initializers wants the member initializer
+  // before a designated initializer may leave the field out.
+  std::span<const ValueScaleKnot> knots{};  ///< The steps of a register target, in natural units.
+  // NOLINTEND(readability-redundant-member-init)
+  float first{0.0F};    ///< Grid: the lowest step.
+  float last{0.0F};     ///< Grid: the highest step.
+  float spacing{0.0F};  ///< Grid: the distance between two steps; 0 for a knot list.
+
+  /// @return The lowest step.
+  [[nodiscard]] float lowest() const {
+    return this->knots.empty() ? this->first : static_cast<float>(this->knots.front().natural);
+  }
+  /// @return The highest step.
+  [[nodiscard]] float highest() const {
+    return this->knots.empty() ? this->last : static_cast<float>(this->knots.back().natural);
+  }
+  /// @return The highest step that does not exceed `value` (`value` lies from the lowest to the highest step).
+  [[nodiscard]] float at_or_below(float value) const {
+    if (this->knots.empty())
+      return this->first + (std::floor(((value - this->first) / this->spacing) + STEP_MATCH_TOLERANCE) * this->spacing);
+    auto below = static_cast<float>(this->knots.front().natural);
+    for (const ValueScaleKnot &knot : this->knots) {
+      if (static_cast<float>(knot.natural) <= value + STEP_MATCH_TOLERANCE)
+        below = static_cast<float>(knot.natural);
+    }
+    return below;
+  }
+  /// @return The lowest step that is not below `value` (`value` lies from the lowest to the highest step).
+  [[nodiscard]] float at_or_above(float value) const {
+    const float below = this->at_or_below(value);
+    if (std::fabs(below - value) < STEP_MATCH_TOLERANCE)
+      return below;
+    if (this->knots.empty())
+      return below + this->spacing;
+    for (const ValueScaleKnot &knot : this->knots) {
+      if (static_cast<float>(knot.natural) > below)
+        return static_cast<float>(knot.natural);
+    }
+    return below;
+  }
+};
+
+/// The steps a write side's target takes, or nullopt when it takes any value.
+std::optional<TargetSteps> target_steps(const DeviceReadingRow &row, const ValueWrite &write) {
+  if (const auto *target = std::get_if<RegisterWrite>(&write.target)) {
+    const std::optional<ValueForm> form = device_register_form(target->fn);
+    if (!form || form->codec != ValueCodec::SCALED_BYTE || form->scale.size() < 2)
+      return std::nullopt;
+    return TargetSteps{.knots = form->scale};
+  }
+  const auto *source = std::get_if<StatusMainParameterSource>(&row.source);
+  if (std::holds_alternative<MainParameterWrite>(write.target) && source != nullptr && source->range &&
+      write.rounding.step && *write.rounding.step > 0.0F)
+    return TargetSteps{.first = source->range->min, .last = source->range->max, .spacing = *write.rounding.step};
+  return std::nullopt;
+}
+
+/// What a value becomes under the rounding policy, or the refusal that stops it.
+/// @param steps The steps of the target.
+/// @param rounding The policy.
+/// @param value The value asked for.
+/// @param[out] rounded The value to write.
+/// @return NONE when `rounded` is to be written, else the reason it is not.
+ValueWriteRefusal round_to_step(const TargetSteps &steps, RoundingPolicy policy, float value, float &rounded) {
+  if (!std::isfinite(value))
+    return ValueWriteRefusal::UNENCODABLE;
+  if (value < steps.lowest() - STEP_MATCH_TOLERANCE || value > steps.highest() + STEP_MATCH_TOLERANCE)
+    return ValueWriteRefusal::OUT_OF_RANGE;
+  const float below = steps.at_or_below(value);
+  const float above = steps.at_or_above(value);
+  if (std::fabs(below - value) < STEP_MATCH_TOLERANCE) {
+    rounded = below;
+    return ValueWriteRefusal::NONE;
+  }
+  switch (policy) {
+    case RoundingPolicy::EXACT:
+      return ValueWriteRefusal::OFF_STEP;
+    case RoundingPolicy::DOWN:
+      rounded = below;
+      break;
+    case RoundingPolicy::UP:
+      rounded = above;
+      break;
+    case RoundingPolicy::NEAREST:
+      // Halfway between two steps the higher one, as std::round() takes a half.
+      rounded = (value - below) < (above - value) ? below : above;
+      break;
+  }
+  return ValueWriteRefusal::NONE;
+}
+
+/// Whether the device's reading lets the guard's write through: a reading that has not been read does.
+bool guard_allows(const IoDevice &dev, const WriteGuard &guard) {
+  const int wire = reading_wire(dev, guard.reading);
+  if (wire < 0)
+    return true;
+  switch (guard.test) {
+    case WriteGuardTest::EQUALS:
+      return std::cmp_equal(wire, guard.value);
+    case WriteGuardTest::HAS_BIT:
+      return (static_cast<uint16_t>(wire) & guard.value) == guard.value;
+  }
+  return false;
+}
+
+}  // namespace
+
+ValueWritePlan plan_value_write(const IoDevice &dev, const DeviceReadingRow &row, float value) {
   if (!row.write)
     return {};
+  const ValueWrite &write = *row.write;
   ValueWritePlan plan;
-  if (const auto *target = std::get_if<RegisterWrite>(&row.write->target)) {
+  if (write.guard && !guard_allows(dev, *write.guard)) {
+    plan.refusal = ValueWriteRefusal::GUARD;
+    return plan;
+  }
+  // A value between the steps of a stepped target is rounded or refused before anything judges it.
+  float written = value;
+  if (const std::optional<TargetSteps> steps = target_steps(row, write)) {
+    const ValueWriteRefusal refusal = round_to_step(*steps, write.rounding.policy, value, written);
+    if (refusal != ValueWriteRefusal::NONE) {
+      plan.refusal = refusal;
+      return plan;
+    }
+  }
+  if (const auto *target = std::get_if<RegisterWrite>(&write.target)) {
     // The register's own row judges and encodes the value (ADR 0105), so a value the register refuses never leaves.
-    if (!heating_write_accepts(target->fn, value)) {
+    if (!heating_write_accepts(target->fn, written)) {
       plan.refusal = ValueWriteRefusal::REGISTER_RULE;
       return plan;
     }
     plan.refusal = ValueWriteRefusal::NONE;
     plan.register_fn = target->fn;
-    plan.register_value = value;
+    plan.register_value = written;
+    plan.before = write.before;
+    return plan;
+  }
+  if (const auto *target = std::get_if<FunctionalParameterWrite>(&write.target)) {
+    // A flag: 1 sets the on word, 0 the off word.
+    if (written != 0.0F && written != 1.0F) {
+      plan.refusal = ValueWriteRefusal::UNENCODABLE;
+      return plan;
+    }
+    plan.refusal = ValueWriteRefusal::NONE;
+    plan.functional_parameter = target->fp;
+    plan.functional_word = written == 1.0F ? target->on_word : target->off_word;
+    // The word that switches the flag off ends what the before-write set up, so it goes with the on word only.
+    if (written == 1.0F)
+      plan.before = write.before;
     return plan;
   }
   // A main parameter is encoded over the range its row's read side decodes over.
@@ -708,9 +882,10 @@ ValueWritePlan plan_value_write(const DeviceReadingRow &row, float value) {
     plan.refusal = ValueWriteRefusal::UNENCODABLE;
     return plan;
   }
-  switch (encode_temperature_target({source->range->min, source->range->max}, value, plan.main_parameter)) {
+  switch (encode_temperature_target({source->range->min, source->range->max}, written, plan.main_parameter)) {
     case HeatingRefusal::NONE:
       plan.refusal = ValueWriteRefusal::NONE;
+      plan.before = write.before;
       break;
     case HeatingRefusal::OUT_OF_RANGE:
       plan.refusal = ValueWriteRefusal::OUT_OF_RANGE;
@@ -721,6 +896,64 @@ ValueWritePlan plan_value_write(const DeviceReadingRow &row, float value) {
   }
   return plan;
 }
+
+std::optional<ValueRange> value_write_range(const DeviceReadingRow &row) {
+  if (!row.write)
+    return std::nullopt;
+  if (const auto *target = std::get_if<RegisterWrite>(&row.write->target)) {
+    const std::optional<ValueForm> form = device_register_form(target->fn);
+    if (form && form->codec == ValueCodec::SCALED_BYTE && form->scale.size() >= 2) {
+      return ValueRange{static_cast<float>(form->scale.front().natural),
+                        static_cast<float>(form->scale.back().natural)};
+    }
+    return heating_write_range(target->fn);
+  }
+  const auto *source = std::get_if<StatusMainParameterSource>(&row.source);
+  if (std::holds_alternative<MainParameterWrite>(row.write->target) && source != nullptr)
+    return source->range;
+  return std::nullopt;
+}
+
+std::optional<float> value_write_step(const DeviceReadingRow &row) {
+  if (!row.write)
+    return std::nullopt;
+  const std::optional<TargetSteps> steps = target_steps(row, *row.write);
+  if (!steps)
+    return std::nullopt;
+  if (steps->knots.empty())
+    return steps->spacing;
+  // Knots that are not all the same distance apart have no single step to offer.
+  const float spacing = static_cast<float>(steps->knots[1].natural) - static_cast<float>(steps->knots[0].natural);
+  for (size_t i = 2; i < steps->knots.size(); ++i) {
+    const float gap = static_cast<float>(steps->knots[i].natural) - static_cast<float>(steps->knots[i - 1].natural);
+    if (std::fabs(gap - spacing) >= STEP_MATCH_TOLERANCE)
+      return std::nullopt;
+  }
+  return spacing;
+}
+
+std::vector<float> value_write_steps(const DeviceReadingRow &row) {
+  std::vector<float> values;
+  if (!row.write)
+    return values;
+  const std::optional<TargetSteps> steps = target_steps(row, *row.write);
+  if (!steps)
+    return values;
+  if (!steps->knots.empty()) {
+    for (const ValueScaleKnot &knot : steps->knots)
+      values.push_back(static_cast<float>(knot.natural));
+    return values;
+  }
+  for (size_t i = 0; steps->first + (static_cast<float>(i) * steps->spacing) <= steps->last + STEP_MATCH_TOLERANCE; ++i)
+    values.push_back(steps->first + (static_cast<float>(i) * steps->spacing));
+  return values;
+}
+
+ScopedReadingTable::ScopedReadingTable(std::span<const DeviceReadingRow> rows) : previous_(active_table) {
+  active_table = rows;
+}
+
+ScopedReadingTable::~ScopedReadingTable() { active_table = previous_; }
 
 bool store_register_reply(IoDevice &dev, DeviceRegister fn, std::span<const uint8_t> value_bytes) {
   bool stored = false;
@@ -767,7 +1000,7 @@ bool heating_register_due(DeviceRegister fn, const IoDevice &dev) {
 
 bool clear_readings_read_only_while(DeviceRegister written, IoDevice &dev) {
   bool cleared = false;
-  for (const DeviceReadingRow &row : DEVICE_READINGS) {
+  for (const DeviceReadingRow &row : active_table) {
     const auto *source = std::get_if<RegisterSource>(&row.source);
     if (source != nullptr && source->only_while && source->only_while->fn == written &&
         reading_value(dev, row.reading)) {

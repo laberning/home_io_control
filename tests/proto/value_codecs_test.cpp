@@ -147,6 +147,7 @@ TEST(ValueCodecs, EveryCodecReadsAsManyBytesAsItsEncodingHolds) {
       {ValueCodec::HUNDREDTHS_S16, 2},
       {ValueCodec::BOUNDED_U16, 2},
       {ValueCodec::SCALED_U16, 2},
+      {ValueCodec::SCALED_BYTE, 1},
       {ValueCodec::U16_BE, 2},
       {ValueCodec::FIRST_BYTE_OF_PAIR, 2},
       {ValueCodec::TENTHS_S16_BE, 2},
@@ -350,6 +351,51 @@ TEST(ValueCodecsScaled, AValueOutsideTheScaleIsRefused) {
   for (const float value : {-0.1F, 100.1F, NAN, INFINITY, -INFINITY})
     EXPECT_TRUE(encode(scaled(), value).empty()) << value;
   EXPECT_TRUE(encode({.codec = ValueCodec::SCALED_U16, .max_value = 1000}, 5.0F).empty()) << "a form with no scale";
+}
+
+// === The scaled byte form ===
+
+namespace {
+
+/// A register that counts showers: 2, 3 and 4 stand for 50, 60 and 70 degrees; counts 0 and 1 mean no step.
+constexpr ValueScaleKnot SHOWER_SCALE[] = {{50, 2}, {60, 3}, {70, 4}};
+static_assert(value_scale_rises(SHOWER_SCALE));
+
+ValueForm showers() { return {.codec = ValueCodec::SCALED_BYTE, .max_value = 4, .scale = SHOWER_SCALE}; }
+
+}  // namespace
+
+TEST(ValueCodecsScaledByte, ADegreeValueOnAKnotEncodesAsItsCountAndDecodesBack) {
+  const struct {
+    float celsius;
+    uint8_t count;
+  } steps[] = {{50.0F, 2}, {60.0F, 3}, {70.0F, 4}};
+  for (const auto &step : steps) {
+    EXPECT_EQ(encode(showers(), step.celsius), std::vector<uint8_t>{step.count}) << step.celsius;
+    const std::vector<uint8_t> bytes = {step.count};
+    ASSERT_TRUE(decode_value(showers(), bytes).has_value()) << static_cast<int>(step.count);
+    EXPECT_FLOAT_EQ(*decode_value(showers(), bytes), step.celsius);
+  }
+}
+
+TEST(ValueCodecsScaledByte, ACountOutsideTheKnotsIsNoValue) {
+  for (const uint8_t count : {uint8_t{0}, uint8_t{1}, uint8_t{5}, uint8_t{255}}) {
+    const std::vector<uint8_t> bytes = {count};
+    EXPECT_FALSE(decode_value(showers(), bytes).has_value()) << static_cast<int>(count);
+  }
+  EXPECT_FALSE(decode_value(showers(), std::span<const uint8_t>{}).has_value()) << "an empty reply";
+}
+
+TEST(ValueCodecsScaledByte, AValueOutsideTheScaleOrOnAFormWithoutOneIsRefused) {
+  for (const float celsius : {49.9F, 70.1F, NAN, INFINITY})
+    EXPECT_TRUE(encode(showers(), celsius).empty()) << celsius;
+  EXPECT_TRUE(encode({.codec = ValueCodec::SCALED_BYTE, .max_value = 4}, 60.0F).empty()) << "no scale";
+}
+
+TEST(ValueCodecsScaledByte, AScaleWhoseCountsDoNotFitAByteIsNeverWritten) {
+  constexpr ValueScaleKnot WIDE[] = {{0, 0}, {100, 1000}};
+  EXPECT_TRUE(encode({.codec = ValueCodec::SCALED_BYTE, .max_value = 1000, .scale = WIDE}, 100.0F).empty());
+  EXPECT_EQ(encode({.codec = ValueCodec::SCALED_BYTE, .max_value = 255, .scale = WIDE}, 0.0F), std::vector<uint8_t>{0});
 }
 
 TEST(ValueCodecs, AWordReadBigEndianHasItsFirstByteMostSignificant) {

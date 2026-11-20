@@ -95,8 +95,9 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
   void control(const water_heater::WaterHeaterCall &call) override;
 
  protected:
-  /// @brief Current and target temperature, the three modes, and the target range of the heater's model at a 1 C
-  /// step (HubHeatingPort::water_heater_target_range()).
+  /// @brief Current and target temperature, the three modes, and the target range of the heater's model with its
+  /// step: the step its target row says, else 1 C (HubHeatingPort::water_heater_target_range() and
+  /// water_heater_target_step()).
   water_heater::WaterHeaterTraits traits() override;
 
   /// @brief Inbound device-update hook: fold the device's readings into the entity and publish when a shown field

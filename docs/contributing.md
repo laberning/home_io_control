@@ -251,12 +251,40 @@ by name. A function name that was retired stays in `DEPRECATED_HEATING_FUNCTIONS
 `encode_value()` case beside the `decode_value()` one, with a test in `tests/proto/value_codecs_test.cpp`.
 
 A row can also say how its value is written (`DeviceReadingRow::write`,
-[ADR 0110](adr/0110-a-device-values-row-says-how-it-is-written-too.md)): a `RegisterWrite` names the register,
-whose row judges and encodes the value, and a `MainParameterWrite` sends the value as the main parameter of an
-EXECUTE over the range of the row's own status source. Add a write side only where the hub writes the value; the
-read side's form encodes it, so a range or a scale is stated once. `plan_value_write()` turns a value into the
-write without sending anything, and `HeaterController::write_value()` sends it and reads the row's read side
-again.
+[ADR 0110](adr/0110-a-device-values-row-says-how-it-is-written-too.md)). Its target is one of three:
+a `RegisterWrite` names the register, whose row judges and encodes the value; a `MainParameterWrite` sends the
+value as the main parameter of an EXECUTE over the range of the row's own status source; a
+`FunctionalParameterWrite` sends an EXECUTE that keeps the main parameter and sets one functional parameter to a
+fixed word, the on word for a flag of 1 and the off word for 0. Three optional parts say more: a `guard` (another
+reading equals a number or has bits set; a guard whose reading has been read and fails refuses the write, one not
+read yet lets it try), a `before` (a fixed register write sent first; a failure is logged and the target is sent
+anyway, and for a flag it goes with the on word only) and a `rounding` (what a value between the steps of a target
+becomes: `EXACT`, the default, refuses it, `NEAREST`, `DOWN` and `UP` pick a step). Add a write side only where
+the hub writes the value; the read side's form encodes it, so a range or a scale is stated once.
+`plan_value_write()` turns a value into the write without sending anything, and
+`HeaterController::write_value()` sends it and reads the row's read side again.
+
+The rows that read a water heater's water temperature, mode, heating state, durations, energy and brand are gated by
+the one member of the group `HOT_WATER_REGISTER_MAP`, and the row of the capability word (FP15) by the boost member,
+so a model with other registers carries another member and its poll reads none of the Calypso's registers and sends
+no status read unless one of its rows reads from a status reply.
+
+A water heater model chooses how boost and away are written by its member of the capability groups
+`HOT_WATER_BOOST` and `HOT_WATER_AWAY`. A model that switches them with an operating-mode word has rows with a
+`FunctionalParameterWrite`, a guard on the capability bits it reports and a `before` that writes the duration. A
+model that keeps each as a flag register has rows whose source is that register and whose write is a
+`RegisterWrite` of it; the register's row in `proto_heating.cpp` holds the codec, `BINARY` for a flag. In both
+cases the entity shows what the read-back says, and `set_water_heater_boost()` and `set_water_heater_away()` name
+no register and no word.
+
+A target that takes only steps is a register whose codec is `SCALED_BYTE`: one byte that counts steps, with the
+knots that map each count to degrees. The row of the target reads the register that holds the temperature, writes
+the count register with a `RegisterWrite`, and may carry a `guard` (a target that is written in manual mode only
+guards on the mode reading) and a `rounding`. The steps of a register target are the knots of its scale; a
+main-parameter target takes a `step` of its own in the rounding. The card follows the row: its range is the first
+to the last step, and its step is the distance of the steps (`value_write_step()`), or 1 °C for a target that takes
+any value. A heater whose readings are all registers is polled without a status read: the poll asks for one only
+when a row the device selects reads from a status reply (`device_has_status_reading()`).
 
 A water heater model with a target range of its own is one more row of the reading `HOT_WATER_TARGET`, not
 new controller or card code:
@@ -278,6 +306,12 @@ new controller or card code:
 The device's card range, the status decode and the target write follow the selected row. A status parameter
 field that reads on when it equals a given value (`FIELD_EQUALS`) takes the value from its row, so a model that
 reports boost as another field value is a row too.
+
+The write side is tested on rows the production table does not have: `ScopedReadingTable` and
+`ScopedRegisterTable` replace the reading and register tables for the length of a test (the hub follows the
+reading table too, so a hub test of a data-object row uses the same scope), so a model no hardware has
+confirmed can still be tested through the real controller (`tests/support/stepped_water_heater_rows.h` is such a
+shape, used by `tests/hub/heater_controller_stepped_test.cpp` and `tests/proto/value_write_side_test.cpp`).
 
 Tests sit on the lowest stage that fits. The codec and the lookup are tested without a radio. The
 schedule and the value store are tested on the hub with a reading table and recipe table of the test's

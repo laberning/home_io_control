@@ -182,7 +182,6 @@ class TestableHubComponent : public IOHomeControlComponent {
   using IOHomeControlComponent::background_radio_allowed_;
   using IOHomeControlComponent::transfer_reader_;
   using IOHomeControlComponent::device_reading_poll_policy_;
-  using IOHomeControlComponent::reading_table_;
   using IOHomeControlComponent::apply_device_reading_answer_;
   using IOHomeControlComponent::device_reading_key;
   using IOHomeControlComponent::act_on_foreign_frame_;

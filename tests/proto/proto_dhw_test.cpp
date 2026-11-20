@@ -83,12 +83,14 @@ TEST(ProtoDhw, ModeWriteRefusesAValueTheHeaterHasNeverShown) {
 TEST(ProtoDhw, TheDurationWritesAreFamilyZeroSetsOfTheBoostAndAwayRegisters) {
   uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {0};
   // What a start writes, as literals: boost one, away 255 (until turned off), each to its own register.
-  const DhwOperatingFeatureWire &boost = dhw_operating_feature_wire(DhwOperatingFeature::BOOST);
-  EXPECT_EQ(boost.duration_register, DeviceRegister::DHW_BOOST_DURATION);
-  EXPECT_EQ(boost.start_duration, 1);
-  const DhwOperatingFeatureWire &away = dhw_operating_feature_wire(DhwOperatingFeature::AWAY);
-  EXPECT_EQ(away.duration_register, DeviceRegister::DHW_AWAY_DURATION);
-  EXPECT_EQ(away.start_duration, 255);
+  const ValueWrite &boost = *find_device_reading(DeviceReading::HOT_WATER_BOOST)->write;
+  ASSERT_TRUE(boost.before.has_value());
+  EXPECT_EQ(boost.before->fn, DeviceRegister::DHW_BOOST_DURATION);
+  EXPECT_EQ(boost.before->value, 1.0F);
+  const ValueWrite &away = *find_device_reading(DeviceReading::HOT_WATER_AWAY)->write;
+  ASSERT_TRUE(away.before.has_value());
+  EXPECT_EQ(away.before->fn, DeviceRegister::DHW_AWAY_DURATION);
+  EXPECT_EQ(away.before->value, 255.0F);
   ASSERT_EQ(encode_heating_write(DeviceRegister::DHW_BOOST_DURATION, 1.0F, out), 5U);
   EXPECT_EQ(payload_of(out, 5), (std::vector<uint8_t>{0x0C, 0x61, 0x00, 0x00, 0x01}))
       << "boost: the value read during a boost started on the display";
@@ -401,14 +403,21 @@ TEST(ProtoDhw, OperatingStatusReadsCapabilitiesAndTheTwoFields) {
 
 TEST(ProtoDhw, EachFeaturesOnWordSetsItsOwnFieldAndEndsTheOther) {
   // The on words and the fields they are read from must agree: a word sent to start a feature reads back as
-  // that feature on and the other off.
-  for (const DhwOperatingFeature which : {DhwOperatingFeature::BOOST, DhwOperatingFeature::AWAY}) {
-    const IoDevice dev = stored_from(operating_reply(dhw_operating_feature_wire(which).on_word));
-    EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_BOOST), which == DhwOperatingFeature::BOOST ? 1 : 0);
-    EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_AWAY), which == DhwOperatingFeature::AWAY ? 1 : 0);
+  // that feature on and the other off. The words are the data of the feature's write side.
+  for (const DeviceReading which : {DeviceReading::HOT_WATER_BOOST, DeviceReading::HOT_WATER_AWAY}) {
+    const ValueWrite &write = *find_device_reading(which)->write;
+    const auto &target = std::get<FunctionalParameterWrite>(write.target);
+    EXPECT_EQ(target.fp, DHW_FP_OPERATING_MODE);
+    const IoDevice dev = stored_from(operating_reply(target.on_word));
+    EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_BOOST), which == DeviceReading::HOT_WATER_BOOST ? 1 : 0);
+    EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_AWAY), which == DeviceReading::HOT_WATER_AWAY ? 1 : 0);
+    EXPECT_EQ(target.off_word, DHW_OPERATING_MODE_OFF) << "the off word ends both";
+    const IoDevice off = stored_from(operating_reply(target.off_word));
+    EXPECT_EQ(reading_wire(off, DeviceReading::HOT_WATER_BOOST), 0);
+    EXPECT_EQ(reading_wire(off, DeviceReading::HOT_WATER_AWAY), 0);
   }
-  EXPECT_EQ(dhw_operating_feature_wire(DhwOperatingFeature::BOOST).capability, DHW_CAPABILITY_BOOST);
-  EXPECT_EQ(dhw_operating_feature_wire(DhwOperatingFeature::AWAY).capability, DHW_CAPABILITY_AWAY);
+  EXPECT_EQ(find_device_reading(DeviceReading::HOT_WATER_BOOST)->write->guard->value, DHW_CAPABILITY_BOOST);
+  EXPECT_EQ(find_device_reading(DeviceReading::HOT_WATER_AWAY)->write->guard->value, DHW_CAPABILITY_AWAY);
 }
 
 TEST(ProtoDhw, OnlyAFieldValueOfOneIsOn) {

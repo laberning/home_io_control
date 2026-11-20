@@ -92,6 +92,28 @@ uint16_t scaled_raw_from_natural(std::span<const ValueScaleKnot> scale, float na
   return static_cast<uint16_t>(static_cast<float>(lo.raw) + std::round(steps));
 }
 
+/// Whether a scale takes the value: it has a scale to map over and the value lies from its first to its last knot.
+bool scale_holds(const ValueForm &form, float value) {
+  return form.scale.size() >= 2 && std::isfinite(value) && value >= static_cast<float>(form.scale.front().natural) &&
+         value <= static_cast<float>(form.scale.back().natural);
+}
+
+/// Encode a value of a scaled codec into one or two bytes; 0 when the scale refuses it or the count does not fit.
+size_t encode_scaled(const ValueForm &form, float value, std::span<uint8_t> out) {
+  if (!scale_holds(form, value))
+    return 0;
+  const uint16_t raw = scaled_raw_from_natural(form.scale, value);
+  if (form.codec == ValueCodec::SCALED_BYTE) {
+    // A scale whose register values exceed a byte cannot be written to one.
+    if (raw > VALUE_BYTE_MAX)
+      return 0;
+    out[0] = static_cast<uint8_t>(raw);
+    return 1;
+  }
+  put_little_endian_u16(raw, out);
+  return 2;
+}
+
 }  // namespace
 
 bool value_is_bounded_integer(float value, uint16_t max_value) {
@@ -118,6 +140,7 @@ size_t value_codec_length(ValueCodec codec) {
       return 4;
     case ValueCodec::BINARY:
     case ValueCodec::BOUNDED_BYTE:
+    case ValueCodec::SCALED_BYTE:
     case ValueCodec::ANY_NONZERO:
       return 1;
   }
@@ -161,6 +184,14 @@ std::optional<float> decode_value(const ValueForm &form, std::span<const uint8_t
         return std::nullopt;
       return scaled_natural_from_raw(form.scale, raw);
     }
+
+    case ValueCodec::SCALED_BYTE:
+      // The knots are the same as for SCALED_U16; only the register is one byte wide. It counts steps, and the first
+      // knot need not be at 0: a count below the first or above the last knot is no step of the scale.
+      if (bytes[0] > max_value || form.scale.size() < 2 || bytes[0] < form.scale.front().raw ||
+          bytes[0] > form.scale.back().raw)
+        return std::nullopt;
+      return scaled_natural_from_raw(form.scale, bytes[0]);
 
     case ValueCodec::U16_BE:
       // Most significant byte first, unlike every little-endian word above.
@@ -246,11 +277,8 @@ size_t encode_value(const ValueForm &form, float value, std::span<uint8_t> out) 
       return 2;
 
     case ValueCodec::SCALED_U16:
-      if (form.scale.size() < 2 || !std::isfinite(value) || value < static_cast<float>(form.scale.front().natural) ||
-          value > static_cast<float>(form.scale.back().natural))
-        return 0;
-      put_little_endian_u16(scaled_raw_from_natural(form.scale, value), out);
-      return 2;
+    case ValueCodec::SCALED_BYTE:
+      return encode_scaled(form, value, out);
 
     case ValueCodec::U16_BE:
       if (!value_is_bounded_integer(value, UINT16_MAX))
