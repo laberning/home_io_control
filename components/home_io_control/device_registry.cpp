@@ -55,6 +55,13 @@ void DeviceRegistry::put(const std::string &device_id, IoDevice device) {
     device.invert_override = existing->second.invert_override;
     device.dimmable = existing->second.dimmable;
     device.model = existing->second.model;
+    device.optimistic_state = existing->second.optimistic_state;
+    device.travel_speed = existing->second.travel_speed;
+    // Either side may know the device sleeps: the YAML's `low_power: true`, or the discovery flags the key-holder path
+    // reads. Neither may switch the other's true off, or a sleeping device loses its long wake-up until the next boot.
+    device.low_power = device.low_power || existing->second.low_power;
+    device.temperature_range_min_c = existing->second.temperature_range_min_c;
+    device.temperature_range_max_c = existing->second.temperature_range_max_c;
     device.reading_values = existing->second.reading_values;
   }
   resolve_device_features(device);

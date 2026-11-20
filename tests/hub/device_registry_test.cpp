@@ -181,6 +181,68 @@ TEST(DeviceRegistry, PutKeepsTheYamlOverridesOfTheRecordItReplaces) {
   EXPECT_TRUE(has_feature(dev->features, device_feature::LEVELS));
 }
 
+TEST(DeviceRegistry, PutKeepsTheCoverPreferencesOfTheRecordItReplaces) {
+  // A cover hands `optimistic_state:` and its travel speed over once at setup (the speed may change later from its
+  // switch or select); a re-pair builds a fresh record, which must not fall back to the defaults until the next boot.
+  DeviceRegistry reg;
+  reg.add("AABBCC", {.type = DeviceType::ROLLER_SHUTTER,
+                     .subtype = 0,
+                     .optimistic_state = false,
+                     .travel_speed = TravelSpeed::SILENT});
+  IoDevice paired{};
+  paired.type = DeviceType::ROLLER_SHUTTER;
+  paired.subtype = 0;
+  reg.put("AABBCC", paired);
+  const IoDevice *dev = reg.get("AABBCC");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FALSE(dev->optimistic_state);
+  EXPECT_EQ(dev->travel_speed, TravelSpeed::SILENT);
+}
+
+TEST(DeviceRegistry, PutKeepsLowPowerWhenEitherRecordSaysSo) {
+  // `low_power: true` from the YAML must survive a re-pair, whose fresh record leaves it false; a re-pair whose
+  // discovery reported a low-power device keeps that too. Neither side can switch the other's true off.
+  DeviceRegistry reg;
+  reg.add("AABBCC", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0, .low_power = true});
+  IoDevice paired{};
+  paired.type = DeviceType::ROLLER_SHUTTER;
+  reg.put("AABBCC", paired);
+  ASSERT_NE(reg.get("AABBCC"), nullptr);
+  EXPECT_TRUE(reg.get("AABBCC")->low_power) << "the YAML declaration survives the re-pair";
+
+  reg.add("DDEEFF", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0});
+  IoDevice discovered{};
+  discovered.type = DeviceType::ROLLER_SHUTTER;
+  discovered.low_power = true;
+  reg.put("DDEEFF", discovered);
+  ASSERT_NE(reg.get("DDEEFF"), nullptr);
+  EXPECT_TRUE(reg.get("DDEEFF")->low_power) << "a low-power device found by discovery stays low-power";
+
+  reg.add("112233", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0});
+  reg.put("112233", paired);
+  ASSERT_NE(reg.get("112233"), nullptr);
+  EXPECT_FALSE(reg.get("112233")->low_power) << "neither side says low power";
+}
+
+TEST(DeviceRegistry, PutKeepsTheTemperatureRangeOfTheRecordItReplaces) {
+  // The climate entity hands the YAML `min_temperature:` / `max_temperature:` over once at setup; a re-pair builds a
+  // fresh record, which must not fall back to the default range until the next boot.
+  DeviceRegistry reg;
+  reg.add("AABBCC", {.type = DeviceType::HEATING_TEMPERATURE_INTERFACE, .subtype = 0});
+  IoDevice *declared = reg.get("AABBCC");
+  ASSERT_NE(declared, nullptr);
+  declared->temperature_range_min_c = 5.0F;
+  declared->temperature_range_max_c = 30.0F;
+  IoDevice paired{};
+  paired.type = DeviceType::HEATING_TEMPERATURE_INTERFACE;
+  paired.subtype = 0;
+  reg.put("AABBCC", paired);
+  const IoDevice *dev = reg.get("AABBCC");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_FLOAT_EQ(dev->temperature_range_min_c, 5.0F);
+  EXPECT_FLOAT_EQ(dev->temperature_range_max_c, 30.0F);
+}
+
 TEST(DeviceRegistry, PutKeepsTheWholeReadingStoreOfTheRecordItReplaces) {
   DeviceRegistry reg;
   reg.add("AABBCC", {.type = DeviceType::ELECTRICAL_HEATER, .subtype = 1, .model = DeviceModel::TOWEL_DRYER});
