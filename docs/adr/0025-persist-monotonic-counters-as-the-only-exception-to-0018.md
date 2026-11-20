@@ -1,7 +1,7 @@
 # ADR 0025: Monotonic counters are the one thing the hub persists
 <!-- doxygen-label: adr0025 -->
 
-**Status:** Accepted · **Recorded:** 2026-08
+**Status:** Accepted, amended by [ADR 0114](0114-a-one-way-counter-resumes-from-its-persisted-value-across-the-wrap.md) · **Recorded:** 2026-08
 
 ## Context
 

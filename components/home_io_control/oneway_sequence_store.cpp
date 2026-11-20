@@ -15,7 +15,7 @@ namespace {
 
 constexpr const char *const TAG = "home_io_control.oneway_seq";
 
-/// FNV-1 parameters, matching the hash ESPHome uses for its own preference keys.
+/// 32-bit FNV offset basis and prime (the same for FNV-1 and FNV-1a; preference_key() uses FNV-1a).
 constexpr uint32_t FNV1_OFFSET_BASIS = 2166136261U;
 constexpr uint32_t FNV1_PRIME = 16777619U;
 
@@ -26,8 +26,9 @@ constexpr uint32_t FNV1_PRIME = 16777619U;
 /// it belongs to, because that is what the receiving device tracks. An index- or name-derived key
 /// would silently hand an identity somebody else's counter after a reorder or a rename.
 uint32_t preference_key(const uint8_t node_id[NODE_ID_SIZE]) {
-  // FNV-1 over the three address bytes, with a fixed prefix so this component's keys cannot
-  // collide with an entity's.
+  // FNV-1a (XOR, then multiply) over the three address bytes, with a fixed prefix so this
+  // component's keys cannot collide with an entity's. The value is persisted state: changing the
+  // derivation resets every user's counter (pinned by a unit test).
   uint32_t hash = FNV1_OFFSET_BASIS;
   hash = (hash ^ static_cast<uint8_t>('1')) * FNV1_PRIME;
   hash = (hash ^ static_cast<uint8_t>('W')) * FNV1_PRIME;
@@ -56,17 +57,14 @@ void OneWaySequenceStore::add_identity(const uint8_t node_id[NODE_ID_SIZE], uint
   memcpy(counter.node_id, node_id, NODE_ID_SIZE);
   counter.pref = global_preferences->make_preference<uint16_t>(preference_key(node_id));
 
+  // Forward is always safe, backward never is, so a YAML edit can push a desynced counter ahead, which is
+  // what `initial_sequence` is for, but can never drag a live one back into replay territory, also not after
+  // a wrap past 65535 (resolve_boot_sequence, ADR 0114).
+  // seed() is the deliberate way to go back.
   uint16_t persisted = 0;
-  if (counter.pref.load(&persisted)) {
-    // Resume from whichever is *higher*. Forward is always safe, backward never is, so a YAML
-    // edit can push a desynced counter ahead — which is what `initial_sequence` is for — but can
-    // never drag a live one back into replay territory. seed() is the deliberate way to go back.
-    // Plain numeric comparison, not ring arithmetic: as a config escape hatch, predictable beats
-    // clever, and a user who needs to cross the wrap point should use seed().
-    counter.next = persisted > initial_sequence ? persisted : initial_sequence;
-  } else {
-    counter.next = initial_sequence;
-  }
+  const bool has_persisted = counter.pref.load(&persisted);
+  counter.next =
+      resolve_boot_sequence(has_persisted ? std::optional<uint16_t>(persisted) : std::nullopt, initial_sequence);
   // Nothing is reserved yet: the first next() call writes before it hands anything out.
   counter.reserved = counter.next;
 

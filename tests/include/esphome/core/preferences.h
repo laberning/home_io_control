@@ -10,6 +10,9 @@
 /// host test and then silently lose its writes on real hardware — which, for the rolling 1W
 /// sequence counter, is the exact failure the counter exists to prevent.
 ///
+/// Failure injection (test_preferences::faults()) lets a test make `save()` or `sync()` fail, so the
+/// code's refuse-on-failure branches run on the host.
+///
 /// So: `save()` stages, `sync()` commits, and simulate_reboot() drops whatever was staged but
 /// never committed. Signatures mirror esphome/core/preference_backend.h; keep them in step.
 
@@ -31,8 +34,16 @@ std::map<uint32_t, std::vector<uint8_t>> &committed();
 std::map<uint32_t, std::vector<uint8_t>> &staged();
 /// Drop staged-but-unsynced writes, keeping committed ones — a power cut.
 void simulate_reboot();
-/// Wipe both stores — a virgin board.
+/// Wipe both stores and clear every injected fault — a virgin board.
 void wipe();
+
+/// Failure injection: what a worn or full flash does to a write. Both default to off and are cleared by wipe().
+struct Faults {
+  bool fail_save{false};  ///< save() reports failure and stages nothing (the staging area is full).
+  bool fail_sync{false};  ///< sync() reports failure, commits nothing and drops the staged writes, as ESP32's does.
+};
+/// The faults currently injected. A test sets a member; wipe() resets them.
+Faults &faults();
 
 }  // namespace test_preferences
 
@@ -44,7 +55,7 @@ class ESPPreferenceObject {
   explicit ESPPreferenceObject(uint32_t key) : key_(key), valid_(true) {}
 
   template<typename T> bool save(const T *src) {
-    if (!this->valid_)
+    if (!this->valid_ || test_preferences::faults().fail_save)
       return false;
     std::vector<uint8_t> blob(sizeof(T));
     std::memcpy(blob.data(), src, sizeof(T));
@@ -82,6 +93,11 @@ class ESPPreferences {
     return ESPPreferenceObject(type);
   }
   bool sync() {
+    if (test_preferences::faults().fail_sync) {
+      // ESP32's sync() clears its pending writes whether or not they reached NVS.
+      test_preferences::staged().clear();
+      return false;
+    }
     for (auto &entry : test_preferences::staged())
       test_preferences::committed()[entry.first] = entry.second;
     test_preferences::staged().clear();

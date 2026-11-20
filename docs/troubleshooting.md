@@ -165,8 +165,8 @@ durably reserved, because reusing one is unrecoverable. This is a storage failur
    anything at or below it. If your counter fell behind — a replaced board, a restored backup — every
    command is silently dropped. **Remedy:** raise `initial_sequence:` above the value in the sensor
    and reflash. Move it in *small* steps: devices accept a forward jump only within a window whose
-   size is not measured, so overshooting fails exactly like undershooting. A value below the
-   counter the hub already holds changes nothing.
+   size is not measured, so overshooting fails exactly like undershooting. A value at or
+   below the counter the hub already holds, or 32768 or more above it, changes nothing.
 5. **Wrong burst shape.** A solar or battery receiver sleeps between listening windows and needs
    the long wake-up copy: set `low_power: true`. An awake VELUX receiver ignores a frame that
    arrives behind the long wake-up ([ADR 0041](adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)):

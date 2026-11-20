@@ -204,6 +204,24 @@ TEST_F(OneWaySendCommandTest, AnIdentityRegisteredWithoutSetupTransmitsNothing) 
   EXPECT_TRUE(recorder.frames.empty());
 }
 
+TEST_F(OneWaySendCommandTest, AFailedFlashWriteTransmitsNothing) {
+  // The store refuses a sequence it could not reserve durably; the transmitter must then put nothing on air, for a
+  // command and for a position alike, because a frame signed with an unreserved sequence risks a replay.
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 500));
+  transmitter.setup();
+  esphome::test_preferences::faults().fail_sync = true;
+
+  EXPECT_FALSE(transmitter.send_command("awning", CoverCommand::STOP));
+  EXPECT_FALSE(transmitter.send_position("awning", 50));
+  EXPECT_TRUE(recorder.frames.empty()) << "no copy may be offered to the radio";
+
+  esphome::test_preferences::faults() = {};
+  ASSERT_TRUE(transmitter.send_command("awning", CoverCommand::STOP));
+  EXPECT_EQ(recorder.sequences()[0], 500) << "the refused attempts consumed no sequence";
+}
+
 TEST_F(OneWaySendCommandTest, SequencesSurviveAReboot) {
   BurstRecorder recorder;
   {

@@ -27,6 +27,7 @@
 #include "esphome/core/preferences.h"
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 namespace esphome {
@@ -52,9 +53,38 @@ static constexpr uint16_t ONEWAY_SEQUENCE_STRIDE = 8;
 /// acceptance window. Eight is far past plausible; the point is headroom, not precision.
 static constexpr uint16_t ONEWAY_SEQUENCE_REBOOT_HEADROOM = 8;
 
+/// Half the 16-bit sequence range: the largest forward step (exclusive) `initial_sequence` may make at boot.
+static constexpr uint16_t ONEWAY_SEQUENCE_HALF_RING = 0x8000;
+
 static_assert(ONEWAY_SEQUENCE_STRIDE * ONEWAY_SEQUENCE_REBOOT_HEADROOM < ONEWAY_SEQUENCE_ACCEPTANCE_WINDOW,
               "the stride must let many unclean reboots in a row still land inside a device's "
               "acceptance window — a larger stride buys fewer flash writes and pays in silent desync");
+
+// === Boot rule ===
+
+/// @brief Where a one-way counter resumes at boot (ADR 0114).
+///
+/// `initial_sequence` (the YAML value) wins when nothing is persisted, or when it is above the persisted value by
+/// less than half the 16-bit range: `persisted < initial_sequence < persisted + 0x8000`, compared as plain numbers.
+/// In every other case the persisted value stands. Forward is the only direction YAML can move a counter.
+///
+/// The comparison is deliberately not ring arithmetic. On the ring a small `initial_sequence` is "ahead" of every
+/// persisted value more than half the range above it, so the default `initial_sequence: 0` would reset any counter
+/// past 32768 at the next boot. As plain numbers it never can; and a counter that has wrapped past 65535 to a small
+/// value is not dragged back to an `initial_sequence` half the range or more above it.
+/// \todo A wrapped counter below `initial_sequence` (by less than half the range) still jumps forward to it once at
+/// the next boot, outside any measured acceptance window. Telling that apart from a deliberate YAML edit needs
+/// state the store does not keep yet.
+/// @param persisted The persisted counter, or `std::nullopt` when nothing is persisted for the identity.
+/// @param initial_sequence The identity's configured start value.
+/// @return The value the counter starts from.
+constexpr uint16_t resolve_boot_sequence(std::optional<uint16_t> persisted, uint16_t initial_sequence) {
+  if (!persisted.has_value())
+    return initial_sequence;
+  const bool above = initial_sequence > *persisted;
+  const bool within_half = initial_sequence - *persisted < ONEWAY_SEQUENCE_HALF_RING;
+  return (above && within_half) ? initial_sequence : *persisted;
+}
 
 // === The store ===
 
@@ -72,11 +102,12 @@ class OneWaySequenceStore {
  public:
   /// @brief Register a controller identity and load its persisted counter.
   ///
-  /// Call once per identity at setup. With nothing persisted the counter starts at
-  /// `initial_sequence`; otherwise it resumes from whichever of the two is *higher*. That keeps
-  /// `initial_sequence` usable as the day-one remedy for a desynced device — raise it, reflash,
-  /// and the counter jumps ahead — while making it structurally unable to drag a live counter
-  /// backwards into replay territory. Use seed() when moving backwards is what you actually mean.
+  /// Call once per identity at setup. The start value is chosen by resolve_boot_sequence() (ADR 0114):
+  /// `initial_sequence` when nothing is persisted or when it is above the persisted value by less than half
+  /// the 16-bit range, the persisted value otherwise. That keeps `initial_sequence` usable as the day-one
+  /// remedy for a desynced device — raise it, reflash, and the counter jumps ahead — while making it
+  /// structurally unable to drag a live counter backwards into replay territory, including a counter that
+  /// has wrapped past 65535. Use seed() when moving backwards is what you actually mean.
   /// @param node_id 3-byte source address this identity transmits as.
   /// @param initial_sequence Value to start from when nothing is persisted, or to jump forward to.
   void add_identity(const uint8_t node_id[NODE_ID_SIZE], uint16_t initial_sequence);

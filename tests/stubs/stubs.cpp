@@ -44,9 +44,15 @@ std::map<uint32_t, std::vector<uint8_t>> &staged() {
 
 void simulate_reboot() { staged().clear(); }
 
+Faults &faults() {
+  static Faults injected;
+  return injected;
+}
+
 void wipe() {
   staged().clear();
   committed().clear();
+  faults() = Faults{};
 }
 
 }  // namespace test_preferences

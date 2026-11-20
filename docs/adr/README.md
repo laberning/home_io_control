@@ -100,6 +100,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0018](0018-yaml-is-the-source-of-truth-hub-persists-nothing.md) | YAML is the only source of truth | The hub persists nothing; pairing ends in paste-and-reflash |
 | [0019](0019-declare-what-the-protocol-cannot-report.md) | Declare, don't guess | Undetectable capabilities are YAML options, not inferences |
 | [0025](0025-persist-monotonic-counters-as-the-only-exception-to-0018.md) | Counters are the one exception to 0018 | 1W's rolling sequence cannot be re-derived, so it is persisted — and nothing else is |
+| [0114](0114-a-one-way-counter-resumes-from-its-persisted-value-across-the-wrap.md) | A one-way counter resumes from its persisted value across the wrap (amends 0025) | At boot `initial_sequence:` wins only when nothing is persisted or it is above the persisted value by less than 32768 (plain numbers, not the ring), so neither a wrapped nor a high counter is sent back; no resync action exists yet |
 | [0027](0027-controller-identities-replace-node-addressing-for-1w.md) | Controller identities for 1W | 1W is class-addressed, so the sending identity replaces node addressing |
 | [0036](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md) | Hub entities come from hub-block flags, never a platform entry | Discover & Pair joins its siblings behind `discover_and_pair_button:`; the old `button:` platform is a config error that names the flag |
 | [0052](0052-device-types-follow-the-io-node-type-and-subtype-table.md) | Device types follow the IO node-type and subtype table | A 16-bit `DeviceType` and one (type, subtype) table drive names, entity class, platform and behaviour flags; six YAML names change and the old ones fail with the replacement |
@@ -270,6 +271,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0111: Nothing is logged while the hub waits for a reply it provoked](0111-nothing-is-logged-while-the-hub-waits-for-a-reply-it-provoked.md)
 - [ADR 0112: A frame's RSSI is its own or unknown](0112-a-frames-rssi-is-its-own-or-unknown.md)
 - [ADR 0113: `enrollment_with_mac` is rejected on the SX1276](0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)
+- [ADR 0114: A one-way counter resumes from its persisted value across the wrap](0114-a-one-way-counter-resumes-from-its-persisted-value-across-the-wrap.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

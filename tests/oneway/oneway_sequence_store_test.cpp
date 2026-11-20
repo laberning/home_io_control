@@ -250,3 +250,167 @@ TEST_F(OneWaySequenceStoreTest, PeekDoesNotConsumeASequence) {
   EXPECT_EQ(peeked, 77);
   EXPECT_EQ(take(store, NODE_A), 77) << "peek() is for diagnostics; it must not reserve anything";
 }
+
+// ========================================================================================
+// Boot rule: initial_sequence against the persisted value (ADR 0114)
+// ========================================================================================
+
+TEST(OneWayBootSequenceRuleTest, InitialSequenceWinsWhenNothingIsPersisted) {
+  EXPECT_EQ(resolve_boot_sequence(std::nullopt, 0), 0);
+  EXPECT_EQ(resolve_boot_sequence(std::nullopt, 40000), 40000);
+}
+
+TEST(OneWayBootSequenceRuleTest, InitialSequenceWinsOnlyWhenAboveByLessThanHalfTheRange) {
+  EXPECT_EQ(resolve_boot_sequence(1000, 1001), 1001) << "one above is ahead";
+  EXPECT_EQ(resolve_boot_sequence(1000, 1000 + 0x7FFF), 1000 + 0x7FFF) << "just under half the range is still ahead";
+  EXPECT_EQ(resolve_boot_sequence(1000, 1000 + 0x8000), 1000) << "exactly half the range is not ahead";
+  EXPECT_EQ(resolve_boot_sequence(1000, 1000), 1000) << "equal changes nothing";
+  EXPECT_EQ(resolve_boot_sequence(1000, 999), 1000) << "behind never wins";
+  EXPECT_EQ(resolve_boot_sequence(1000, 0), 1000);
+}
+
+TEST(OneWayBootSequenceRuleTest, TheDefaultInitialSequenceNeverResetsAHighCounter) {
+  // On the 16-bit ring 0 is "ahead" of every value above 0x8000; a ring comparison would reset such a counter to the
+  // default initial_sequence 0 at every boot and replay numbers the device has seen.
+  for (const uint16_t persisted : {0x8000, 0x8001, 40000, 0xFFF0, 0xFFFF})
+    EXPECT_EQ(resolve_boot_sequence(persisted, 0), persisted) << "persisted " << persisted;
+}
+
+TEST(OneWayBootSequenceRuleTest, TheResultIsNeverBehindThePersistedValueForAnyInitialSequence) {
+  // Exhaustive over initial_sequence, for persisted values across the range. The result is always one of the two
+  // inputs, and only a value 1..0x7FFF above the persisted one replaces it.
+  for (const uint16_t persisted : {0x0000, 0x0001, 0x000A, 0x7FFF, 0x8000, 0xFFF0, 0xFFFF}) {
+    for (uint32_t initial = 0; initial <= 0xFFFF; initial++) {
+      const auto initial_sequence = static_cast<uint16_t>(initial);
+      const bool replaces = initial > persisted && initial - persisted <= 0x7FFF;
+      const uint16_t result = resolve_boot_sequence(persisted, initial_sequence);
+      ASSERT_EQ(result, replaces ? initial_sequence : persisted) << "persisted " << persisted << " initial " << initial;
+      ASSERT_GE(result, persisted) << "the counter never moves back at boot";
+    }
+  }
+}
+
+TEST_F(OneWaySequenceStoreTest, ACounterThatWrappedResumesFromItsPersistedValueForAnyBehindInitialSequence) {
+  // Run an identity across 65535 -> 0, reboot, and register it again with each initial_sequence. Only a value above
+  // the small post-wrap counter by less than half the range moves it (forward); everything else leaves it alone.
+  {
+    OneWaySequenceStore store;
+    store.add_identity(NODE_A, 0);
+    ASSERT_TRUE(store.seed(NODE_A, 0xFFFA));
+    for (int i = 0; i < 10; i++)
+      take(store, NODE_A);  // 0xFFFA .. 0xFFFF, 0 .. 3: the counter has wrapped.
+  }
+  esphome::test_preferences::simulate_reboot();
+
+  // The persisted value is the end of the reserved block, 10, which is ahead of everything handed out.
+  constexpr uint16_t PERSISTED_AFTER_WRAP = 10;
+  for (uint32_t initial = 0; initial <= 0xFFFF; initial += 7) {
+    // The reboot must not change flash: every iteration starts from the same persisted block end.
+    OneWaySequenceStore rebooted;
+    rebooted.add_identity(NODE_A, static_cast<uint16_t>(initial));
+    uint16_t resumed = 0;
+    ASSERT_TRUE(rebooted.peek(NODE_A, resumed));
+    const bool above_by_less_than_half = initial > PERSISTED_AFTER_WRAP && initial - PERSISTED_AFTER_WRAP < 0x8000;
+    EXPECT_EQ(resumed, above_by_less_than_half ? initial : PERSISTED_AFTER_WRAP) << "initial " << initial;
+    // Independent of the rule's formula: none of the ten numbers sent around the wrap comes back.
+    EXPECT_FALSE(resumed >= 0xFFFA || resumed <= 3) << "initial " << initial << " resumed at a sent number";
+  }
+}
+
+TEST_F(OneWaySequenceStoreTest, AReservationBlockThatStraddlesTheWrapSurvivesAReboot) {
+  // The last numbers sent are 0xFFFA and 0xFFFB, but the reservation persisted before them already wrapped to 2.
+  // At boot the persisted value is plainly *below* the numbers sent, so no initial_sequence may pull the counter
+  // back to them; every listed value must resume at 2, seven steps past the last number sent.
+  {
+    OneWaySequenceStore store;
+    store.add_identity(NODE_A, 0);
+    ASSERT_TRUE(store.seed(NODE_A, 0xFFFA));
+    ASSERT_EQ(take(store, NODE_A), 0xFFFA);
+    ASSERT_EQ(take(store, NODE_A), 0xFFFB);
+  }
+  esphome::test_preferences::simulate_reboot();
+
+  for (const uint16_t initial : {0x0000, 0x0001, 0x0002, 0xEA60, 0xFFFA, 0xFFFB, 0xFFFC, 0xFFFF}) {
+    // peek(), not next(): a reservation here would change flash for the following iterations.
+    OneWaySequenceStore rebooted;
+    rebooted.add_identity(NODE_A, initial);
+    uint16_t resumed = 0;
+    ASSERT_TRUE(rebooted.peek(NODE_A, resumed));
+    EXPECT_EQ(resumed, 2) << "initial " << initial;
+  }
+}
+
+TEST_F(OneWaySequenceStoreTest, AConfiguredValueFarBehindAWrappedCounterNeverReplaysEarlierNumbers) {
+  // The reported fault in one case: initial_sequence 60000, counter wrapped to a small value.
+  {
+    OneWaySequenceStore store;
+    store.add_identity(NODE_A, 60000);
+    ASSERT_TRUE(store.seed(NODE_A, 0xFFFE));
+    for (int i = 0; i < 5; i++)
+      take(store, NODE_A);  // 0xFFFE, 0xFFFF, 0, 1, 2
+  }
+  esphome::test_preferences::simulate_reboot();
+
+  OneWaySequenceStore rebooted;
+  rebooted.add_identity(NODE_A, 60000);
+  const uint16_t value = take(rebooted, NODE_A);
+  EXPECT_LT(value, 100) << "the counter carries on past the wrap instead of restarting at 60000";
+  EXPECT_GE(value, 3) << "and it never repeats a number already handed out";
+}
+
+// ========================================================================================
+// Storage key
+// ========================================================================================
+
+TEST_F(OneWaySequenceStoreTest, TheStorageKeyOfAKnownAddressIsPinned) {
+  // The counter must follow the address it belongs to across builds and releases: a changed key derivation
+  // would start every user's counter from initial_sequence again and replay numbers the device has seen.
+  // 0x409AE91F is the FNV-1a hash over '1', 'W' and the three address bytes A1 B2 C3 (see preference_key()).
+  OneWaySequenceStore store;
+  store.add_identity(NODE_A, 0);
+  ASSERT_TRUE(store.seed(NODE_A, 0x1234));
+
+  const auto &durable = esphome::test_preferences::committed();
+  ASSERT_EQ(durable.size(), 1U);
+  EXPECT_EQ(durable.begin()->first, 0x409AE91FU);
+}
+
+// ========================================================================================
+// A failed flash write refuses the sequence
+// ========================================================================================
+
+TEST_F(OneWaySequenceStoreTest, AFailedCommitRefusesToHandOutASequence) {
+  OneWaySequenceStore store;
+  store.add_identity(NODE_A, 300);
+  esphome::test_preferences::faults().fail_sync = true;
+
+  uint16_t value = 0xFFFF;
+  EXPECT_FALSE(store.next(NODE_A, value)) << "a reservation that did not reach flash must not be handed out";
+  EXPECT_EQ(value, 0xFFFF) << "a refused call must not write to the caller's output";
+  EXPECT_FALSE(store.seed(NODE_A, 500)) << "seed() reports a failed write too";
+  uint16_t peeked = 0;
+  ASSERT_TRUE(store.peek(NODE_A, peeked));
+  EXPECT_EQ(peeked, 300) << "a failed seed() must not move the counter";
+}
+
+TEST_F(OneWaySequenceStoreTest, AFailedStagedWriteRefusesToHandOutASequence) {
+  OneWaySequenceStore store;
+  store.add_identity(NODE_A, 300);
+  esphome::test_preferences::faults().fail_save = true;
+
+  uint16_t value = 0xFFFF;
+  EXPECT_FALSE(store.next(NODE_A, value));
+  EXPECT_EQ(value, 0xFFFF);
+}
+
+TEST_F(OneWaySequenceStoreTest, TheStoreRecoversOnceFlashWorksAgainWithoutSkippingOrRepeating) {
+  OneWaySequenceStore store;
+  store.add_identity(NODE_A, 300);
+  esphome::test_preferences::faults().fail_sync = true;
+  uint16_t value = 0;
+  ASSERT_FALSE(store.next(NODE_A, value));
+
+  esphome::test_preferences::faults() = {};
+  EXPECT_EQ(take(store, NODE_A), 300) << "nothing was handed out during the failure, so nothing is lost";
+  EXPECT_EQ(take(store, NODE_A), 301);
+}
