@@ -102,12 +102,14 @@ the same set of keys. Platform-specific options are documented on each platform'
 - `io_subtype` (Optional): The device's subtype, `0`–`63`.
 - `io_model` (Optional): The product model, for products that report the same type and subtype but
   need different handling. The radio does not carry the model, so the hub cannot learn it: you
-  declare it, together with `io_device_type` and `io_subtype`. Three models exist, all under
+  declare it, together with `io_device_type` and `io_subtype`. Four models exist. Three sit under
   `io_device_type: electrical_heater`. With `io_subtype: 1`: `towel_dryer`, for an
   [Atlantic Adelis](../devices/atlantic-adelis.md) towel dryer, and `heater_with_light`, for a heater
   with a [night light](climate.md#heaters-with-a-night-light) such as the Sauter Hekla. With
   `io_subtype: 0`: `pilot_wire_interface`, for an
-  [interface for pilot-wire heaters](../heating.md#level-heaters-and-pilot-wire-interfaces). A model the declared kind does not
+  [interface for pilot-wire heaters](../heating.md#level-heaters-and-pilot-wire-interfaces). The fourth sits under
+  `io_device_type: domestic_hot_water` with `io_subtype: 0`: `explorer_v4`, for an
+  [Atlantic Explorer V4](../devices/atlantic-explorer-v4.md) water heater. A model the declared kind does not
   offer, or `io_model` without both other keys, fails when the config is built. The models of each
   kind are listed in [Node types and subtypes](../supported-devices.md#node-types-and-subtypes).
 - `status_poll_interval` (Optional): Follow-up poll cadence while movement is expected. See the
