@@ -433,7 +433,8 @@ std::optional<float> battery_low_of(const IoDevice &dev) {
 namespace {
 
 /// The codec a reading's value is read with: a register's or its part's, a data object's, a flag's for a field of a
-/// status parameter. NONE for a value that is worked out or a main parameter, which are numbers.
+/// status parameter or a main parameter that equals a value. NONE for a value that is worked out and for a level or a
+/// temperature in the main parameter, which are numbers.
 ValueCodec reading_codec(const DeviceReadingRow &row) {
   return std::visit(Overloaded{
                         [](const RegisterSource &source) {
@@ -441,7 +442,10 @@ ValueCodec reading_codec(const DeviceReadingRow &row) {
                         },
                         [](const DataObjectSource &source) { return source.codec; },
                         [](const DerivedSource &source) { return source.codec; },
-                        [](const StatusMainParameterSource &) { return ValueCodec::NONE; },
+                        // A main parameter that equals a value is a flag, a level or a temperature a number.
+                        [](const StatusMainParameterSource &source) {
+                          return source.form == StatusValueForm::EQUALS ? ValueCodec::BINARY : ValueCodec::NONE;
+                        },
                         // A field of a functional parameter is a flag, and the whole word a number.
                         [](const StatusFunctionalParameterSource &source) {
                           return source.form == StatusParameterForm::FIELD_EQUALS ? ValueCodec::BINARY
@@ -586,6 +590,8 @@ std::optional<float> decode_status_reading(const DeviceReadingRow &row, std::spa
       // no whole tenth would otherwise round outside the range and a write of that setpoint would be refused.
       return std::clamp(std::round(celsius * VALUE_TENTHS_PER_UNIT) / VALUE_TENTHS_PER_UNIT, range_min_c, range_max_c);
     }
+    case StatusValueForm::EQUALS:
+      return word == source->equals ? 1.0F : 0.0F;
   }
   return std::nullopt;
 }

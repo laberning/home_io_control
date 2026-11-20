@@ -13,8 +13,8 @@
 ///  - RegisterSource: one private register of a heater or a water heater, decoded with a ValueCodec
 ///    (proto_value_codecs.h), or one slice of it with a codec of its own; optionally only while another register
 ///    holds a value;
-///  - StatusMainParameterSource: the main parameter of a status reply, as a heating level or a temperature (over the
-///    device's range, or a range of the row's own);
+///  - StatusMainParameterSource: the main parameter of a status reply, as a heating level, a temperature (over the
+///    device's range, or a range of the row's own) or a flag that is on for one given value;
 ///  - StatusFunctionalParameterSource: one of the functional parameters FP9-FP16 of a status reply, as the whole word
 ///    or one two-bit field of it that equals a given value;
 ///  - DerivedSource: a value worked out from other readings (the minutes left of whichever run is active), with the
@@ -157,6 +157,7 @@ enum class StatusValueForm : uint8_t {
   LEVEL,        ///< The low byte, when the high byte is the prefix of the heater's profile (a heating level or an
                 ///< alias): HeatingProfile::mp_prefix.
   TEMPERATURE,  ///< A temperature encoded over the device's range (IoDevice::temperature_range_min_c and `_max_c`).
+  EQUALS,       ///< A flag: 1 when the main parameter is StatusMainParameterSource::equals, 0 for any other value.
 };
 
 /// @brief A reading that is the main parameter of a status reply of a heater commanded with an EXECUTE.
@@ -170,6 +171,7 @@ struct StatusMainParameterSource {
   /// the device's range applies (device_temperature_range(): the YAML range or a profile's fixed one). The write side
   /// of the row (MainParameterWrite) encodes over the same range.
   std::optional<ValueRange> range = std::nullopt;
+  uint16_t equals{0};  ///< StatusValueForm::EQUALS: the main parameter that reads as 1.
 };
 
 /// @brief How a functional parameter of a status reply becomes a reading.
@@ -482,15 +484,16 @@ std::optional<float> decode_event_reading(const EventSource &source, const IoFra
 ///          a level is the low byte when the high byte is `level_prefix`, a temperature is the main parameter decoded
 ///          over the range and rounded to tenths of a degree (a step of the scale is under a thousandth of a degree,
 ///          so 20 C would read 19.9998 unrounded) and clamped into the range, so a range end that is no whole tenth
-///          stays a setpoint the range accepts.
+///          stays a setpoint the range accepts, and a flag is 1 when the main parameter is the row's `equals` and 0
+///          otherwise.
 /// @param row A row with a StatusMainParameterSource (the row device_reading_row() selects for the device).
 /// @param main_parameter The two bytes of the main parameter as the status reply carries them.
 /// @param level_prefix High byte of a level or alias (HeatingProfile::mp_prefix, HEATING_LEVEL_MP_PREFIX).
 /// @param range_min_c Lower end of the device's temperature encoding range (device_temperature_range()); a row with a
 ///        range of its own (StatusMainParameterSource::range) uses that one.
 /// @param range_max_c Upper end of it.
-/// @return The value (a level's low byte, degrees Celsius), or nullopt when `row` is not a status row, the
-///         bytes are too few or the main parameter is not the kind of value the reading is.
+/// @return The value (a level's low byte, degrees Celsius, or a flag), or nullopt when `row` is not a status row,
+///         the bytes are too few or the main parameter is not the kind of value the reading is.
 std::optional<float> decode_status_reading(const DeviceReadingRow &row, std::span<const uint8_t> main_parameter,
                                            uint8_t level_prefix, float range_min_c, float range_max_c);
 

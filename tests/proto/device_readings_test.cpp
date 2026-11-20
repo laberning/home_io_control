@@ -478,6 +478,23 @@ TEST(DeviceReadings, AStatusMainParameterIsDecodedByItsForm) {
   EXPECT_FALSE(decode_status_reading(DeviceReading::HEATING_LEVEL, short_bytes, 0xFC, -40.0F, 80.0F));
 }
 
+TEST(DeviceReadings, AMainParameterThatEqualsTheRowsValueIsAFlag) {
+  const DeviceReadingRow row{.name = "hot_water_away",
+                             .source = StatusMainParameterSource{.form = StatusValueForm::EQUALS, .equals = 0x0000},
+                             .reading = DeviceReading::HOT_WATER_AWAY,
+                             .poll = ReadingPoll::NOT_POLLED};
+  const auto decode = [&row](uint8_t high, uint8_t low) {
+    const std::array<uint8_t, 2> bytes = {high, low};
+    return decode_status_reading(row, bytes, 0, 20.0F, 70.0F);
+  };
+  EXPECT_EQ(decode(0x00, 0x00), 1.0F);
+  EXPECT_EQ(decode(0x88, 0x00), 0.0F) << "a target is not the value";
+  EXPECT_EQ(decode(0x00, 0x01), 0.0F) << "the whole word must match";
+  const std::array<uint8_t, 1> short_bytes = {0x00};
+  EXPECT_FALSE(decode_status_reading(row, short_bytes, 0, 20.0F, 70.0F));
+  EXPECT_EQ(reading_value_kind(row), ReadingValueKind::FLAG);
+}
+
 TEST(DeviceReadings, ARowNamesItsCapabilityWhereAnEntityAsksForItAndElseTheProfileReadsIt) {
   // WHEN_ASKED needs an entity to ask, and an entity asks through a capability.
   for (const DeviceReadingRow &row : device_readings()) {
