@@ -1,0 +1,50 @@
+id: unenrolled_window_opener_oneway_stop_low_power_burst_sx1276
+description: >
+  This project's own hub sending one 1W STOP burst from an identity no device has enrolled (node 4B7A95,
+  class window_opener, manufacturer somfy), captured on the air with an SDR on all three channels, not taken from the
+  hub's TX log. Board: Heltec WiFi LoRa 32 V2 (sx1276). Shape: `low_power: true`: the wake-up preamble and the low-power flag on copy 1, three short copies. The build used the public corpus key as its system key, so
+  every MAC verifies under it and the bytes are exactly what was on the air. Measured: 4 copies, all on channel 2
+  (868.95 MHz); preambles 266.8, 10.2, 10.2, 10.2 ms; gap from the end of one copy to the start of the
+  next 47.0, 46.5, 46.8 ms (the code waits ONEWAY_BURST_INTERVAL_MS = 40 ms plus the busy check
+  and transmit setup).
+source:
+  device: "Own hub (Heltec WiFi LoRa 32 V2), 1W STOP to an unenrolled window_opener-class address, SDR on-air capture"
+  captured_with: sx1276
+  firmware: "main c327036 + lab-only identities"
+  date: 2026-11-20
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: tx
+    t_ms: 0
+    freq: 868950000
+    hex: "F6 20 00 01 3F 4B 7A 95 00 01 43 D2 00 00 00 00 08 9E 57 DA 4C B4 76"
+    crc: absent
+    note: "copy 1 of 4, channel 2; preamble 266.8 ms on air, carrier 274.6 ms, low-power flag set"
+  - dir: tx
+    t_ms: 321
+    freq: 868950000
+    hex: "F6 00 00 01 3F 4B 7A 95 00 01 43 D2 00 00 00 00 08 9E 57 DA 4C B4 76"
+    crc: absent
+    note: "copy 2 of 4, channel 2; preamble 10.2 ms on air, carrier 17.7 ms, no low-power flag"
+  - dir: tx
+    t_ms: 385
+    freq: 868950000
+    hex: "F6 00 00 01 3F 4B 7A 95 00 01 43 D2 00 00 00 00 08 9E 57 DA 4C B4 76"
+    crc: absent
+    note: "copy 3 of 4, channel 2; preamble 10.2 ms on air, carrier 17.7 ms, no low-power flag"
+  - dir: tx
+    t_ms: 449
+    freq: 868950000
+    hex: "F6 00 00 01 3F 4B 7A 95 00 01 43 D2 00 00 00 00 08 9E 57 DA 4C B4 76"
+    crc: absent
+    note: "copy 4 of 4, channel 2; preamble 10.2 ms on air, carrier 17.7 ms, no low-power flag"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+  oneway:
+    intent: STOP

@@ -124,7 +124,7 @@ Every command goes out as one burst. Most of the burst is fixed; two settings ch
 | Fixed for every identity | Value |
 |---|---|
 | Copies per command | 4, all with the same sequence and signature: a device counts one sequence as one command |
-| Gap between copies | 40 ms |
+| Gap between copies | 40 ms of waiting; on the air the next copy starts about 47 ms (SX1276) to 50 ms (SX1262, LR1121) after the previous one ends, because the channel check and the transmit setup come on top |
 | Channel | 868.95 MHz (channel 2) |
 | Wake-up preamble, where a copy has one | 1024 bytes: about 213 ms on an SX1262 or LR1121, about 267 ms on an SX1276 |
 | Channel check | Before every copy the radio listens for up to 25 ms and sends anyway after that |
@@ -140,9 +140,13 @@ burst runs the hub sends and receives nothing else, so one command holds the rad
 | Short preamble on all four copies | `low_power: false`, or unset with `manufacturer: velux` | about 0.2 s | about 0.2 s |
 | Wake-up on the first copy, short on the other three | `low_power: true` | about 0.4 s | about 0.45 s |
 
-The SX1276 figures for the first two shapes are measured (issue #74); the others follow from the
-preamble lengths and the fixed gap. An enrollment sends two bursts (Somfy) or six (VELUX), so it
-holds the radio for about that many times longer.
+The copies, gaps, channel and preamble lengths in the first table and the durations in this one
+are measured on the air: each shape, sent by an SX1276, an SX1262 and an LR1121 board and
+captured with an SDR on all three channels, is in
+`tests/corpus/captures/oneway/unenrolled_window_opener_oneway_stop_{somfy_default,low_power,short}_burst_{sx1276,sx1262,lr1121}.yaml`
+(the SX1276 durations of the first two shapes also in issue #74). Only the first copy of a
+`low_power: true` burst carries the low-power flag. An enrollment sends two bursts (Somfy) or six
+(VELUX), so it holds the radio for about that many times longer.
 
 ## Enrolling this hub as a controller
 
