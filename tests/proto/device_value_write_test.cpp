@@ -3,15 +3,17 @@
 /// the row a device's capabilities select, a main-parameter target over the range of its row, a register write judged
 /// by the register's rule, and the status-parameter form "field equals N".
 ///
-/// The production table has one row of a water heater's target; the rows a second heater model needs (the Atlantic
-/// Explorer V4's 20..70 degrees) are rows of a test table here, gated by capabilities that production gives other
-/// meanings, so the selection and the write are tested without a production row that no hardware has confirmed.
+/// The mechanism is tested on rows of a test table, gated by capabilities that production gives other meanings, so the
+/// selection and the write do not move when a production row changes. The production rows of the Atlantic Explorer V4
+/// (its 20..70 degree target, its boost field and its away in the main parameter) are tested with its captured
+/// values at the end.
 
 #include "proto_device_features.h"
 #include "proto_device_readings.h"
 #include "proto_device_types.h"
 #include "proto_dhw.h"
 #include "device_table_walk.h"
+#include "payload_frame.h"
 #include "test_helpers.h"
 
 #include <gtest/gtest.h>
@@ -156,12 +158,18 @@ TEST(FeatureGroups, EveryReadingWithSeveralRowsIsGatedByTheMembersOfOneGroup) {
   }
 }
 
-TEST(FeatureGroups, TheProductionWaterHeaterTargetIsOneRowGatedByAMemberOfItsGroup) {
-  const DeviceReadingRow *row = find_device_reading(DeviceReading::HOT_WATER_TARGET);
-  ASSERT_NE(row, nullptr);
-  ASSERT_TRUE(row->feature.has_value());
-  EXPECT_EQ(*row->feature, DeviceFeature::HOT_WATER_TARGET_20_62);
-  EXPECT_EQ(group_member_count(*row->feature, FEATURE_GROUPS[0]), 1u);
+TEST(FeatureGroups, EveryProductionWaterHeaterTargetRowIsGatedByAMemberOfItsGroup) {
+  size_t rows = 0;
+  for (const DeviceReadingRow &row : device_readings()) {
+    if (row.reading != DeviceReading::HOT_WATER_TARGET)
+      continue;
+    rows++;
+    ASSERT_TRUE(row.feature.has_value()) << row.name;
+    EXPECT_EQ(group_member_count(*row.feature, FEATURE_GROUPS[0]), 1u) << row.name;
+  }
+  EXPECT_EQ(rows, 2u) << "the Calypso's and the Explorer V4's";
+  EXPECT_EQ(find_device_reading(DeviceReading::HOT_WATER_TARGET)->feature, DeviceFeature::HOT_WATER_TARGET_20_62)
+      << "the first row is the Calypso's";
 }
 
 TEST(FeatureGroups, ADeviceThatLosesTheBaseLosesTheGroupsMemberToo) {
@@ -352,4 +360,162 @@ TEST(StatusParameterForm, TheCalypsosBoostAndAwayRowsAreFieldsEqualToOne) {
     EXPECT_EQ(source->form, StatusParameterForm::FIELD_EQUALS);
     EXPECT_EQ(source->equals, 1) << row->name;
   }
+}
+
+TEST(StatusParameterForm, AReplyStoresABoostThroughTheRowTheDeviceSelectsOnly) {
+  // Two models read boost from the same field of FP16, one as field 1, the other as field 2: each device keeps the
+  // value of its own row, never the other model's.
+  constexpr auto boost_row = [](DeviceFeature feature, uint8_t equals) {
+    return DeviceReadingRow{.name = "hot_water_boost",
+                            .source = StatusFunctionalParameterSource{.fp = DHW_FP_OPERATING_MODE,
+                                                                      .form = StatusParameterForm::FIELD_EQUALS,
+                                                                      .shift = DHW_FP16_BOOST_SHIFT,
+                                                                      .equals = equals},
+                            .reading = DeviceReading::HOT_WATER_BOOST,
+                            .poll = ReadingPoll::NOT_POLLED,
+                            .feature = feature};
+  };
+  const DeviceReadingRow rows[] = {boost_row(RANGE_20_62, 1), boost_row(RANGE_20_70, 2)};
+  const ScopedReadingTable table{rows};
+  // A status reply with FPI1 00 / FPI2 01: flags, b1, MP, FPI1, FPI2, FP16 = 4A00.
+  const IoFrame reply = test::make_payload_frame(CMD_PRIVATE_RESP, {0x05, 0x00, 0x88, 0x00, 0x00, 0x01, 0x4A, 0x00});
+
+  IoDevice first = heater_with(RANGE_20_62);
+  EXPECT_EQ(store_status_parameter_readings(first, reply), 1u);
+  EXPECT_EQ(reading_wire(first, DeviceReading::HOT_WATER_BOOST), 0) << "4A00 is field 2, not this row's 1";
+
+  IoDevice second = heater_with(RANGE_20_70);
+  EXPECT_EQ(store_status_parameter_readings(second, reply), 1u);
+  EXPECT_EQ(reading_wire(second, DeviceReading::HOT_WATER_BOOST), 1);
+
+  IoDevice neither = heater_with(DeviceFeatures{});
+  EXPECT_EQ(store_status_parameter_readings(neither, reply), 0u) << "no row applies, so nothing is stored";
+  EXPECT_EQ(reading_wire(neither, DeviceReading::HOT_WATER_BOOST), -1);
+}
+
+// === The Atlantic Explorer V4 (pull request #246) ===
+
+namespace {
+
+/// An Atlantic Explorer V4's record, its capabilities as the hub resolves them for the model.
+IoDevice explorer_v4() {
+  IoDevice dev;
+  test::set_kind(dev, DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::EXPLORER_V4);
+  return dev;
+}
+
+/// The row of a reading the device selects; fails the test when there is none.
+const DeviceReadingRow &selected_row(const IoDevice &dev, DeviceReading reading) {
+  const DeviceReadingRow *row = device_reading_row(dev, reading);
+  EXPECT_NE(row, nullptr);
+  static const DeviceReadingRow none{};
+  return row != nullptr ? *row : none;
+}
+
+/// A status reply with FPI1 00 / FPI2 03: flags, b1, MP, FPI1, FPI2, FP15 (boost and away supported), FP16.
+IoFrame explorer_reply(uint16_t mp, uint16_t fp16) {
+  return test::make_payload_frame(
+      CMD_PRIVATE_RESP, {0x05, 0x00, static_cast<uint8_t>(mp >> 8), static_cast<uint8_t>(mp & 0xFF), 0x00, 0x03, 0x00,
+                         0x0C, static_cast<uint8_t>(fp16 >> 8), static_cast<uint8_t>(fp16 & 0xFF)});
+}
+
+}  // namespace
+
+TEST(ExplorerV4, ItsModelSelectsItsOwnRowOfTargetBoostAndAway) {
+  const IoDevice dev = explorer_v4();
+  EXPECT_STREQ(selected_row(dev, DeviceReading::HOT_WATER_TARGET).name, "hot_water_target_20_70");
+  EXPECT_STREQ(selected_row(dev, DeviceReading::HOT_WATER_BOOST).name, "hot_water_boost_fp16_inverted");
+  EXPECT_STREQ(selected_row(dev, DeviceReading::HOT_WATER_AWAY).name, "hot_water_away_main_parameter");
+  // Its registers and its capability word are the Calypso's.
+  EXPECT_TRUE(has_feature(dev.features, DeviceFeature::HOT_WATER_REGISTERS_CALYPSO));
+  EXPECT_TRUE(has_feature(dev.features, DeviceFeature::HOT_WATER_OPERATING_MODE_WORD));
+
+  const IoDevice calypso = test::water_heater_record();
+  EXPECT_STREQ(selected_row(calypso, DeviceReading::HOT_WATER_TARGET).name, "hot_water_target");
+  EXPECT_STREQ(selected_row(calypso, DeviceReading::HOT_WATER_BOOST).name, "hot_water_boost");
+  EXPECT_STREQ(selected_row(calypso, DeviceReading::HOT_WATER_AWAY).name, "hot_water_away");
+}
+
+TEST(ExplorerV4, ItsTargetDecodesTheCapturedMainParametersOverTwentyToSeventy) {
+  const IoDevice dev = explorer_v4();
+  const struct {
+    uint8_t high;
+    uint8_t low;
+    float celsius;
+  } captured[] = {{0x7C, 0x00, 51.0F}, {0x8C, 0x00, 55.0F}, {0x94, 0x00, 57.0F}, {0x9C, 0x00, 59.0F}};
+  const HeatingCardRange range = device_temperature_range(dev);
+  EXPECT_FLOAT_EQ(range.min_c, 20.0F);
+  EXPECT_FLOAT_EQ(range.max_c, 70.0F);
+  for (const auto &c : captured) {
+    const uint8_t bytes[] = {c.high, c.low};
+    const auto value =
+        decode_status_reading(selected_row(dev, DeviceReading::HOT_WATER_TARGET), bytes, 0, range.min_c, range.max_c);
+    ASSERT_TRUE(value.has_value());
+    EXPECT_FLOAT_EQ(*value, c.celsius) << std::hex << ((c.high << 8) | c.low);
+  }
+}
+
+TEST(ExplorerV4, ItsTargetIsWrittenInWholeDegreesOnly) {
+  const IoDevice dev = explorer_v4();
+  const DeviceReadingRow &row = selected_row(dev, DeviceReading::HOT_WATER_TARGET);
+  const ValueWritePlan plan = plan_value_write(dev, row, 54.0F);
+  ASSERT_EQ(plan.refusal, ValueWriteRefusal::NONE);
+  EXPECT_TRUE(plan.is_execute());
+  EXPECT_EQ(plan.main_parameter, 0x8800) << "54 C, which the heater answered with code 0";
+  EXPECT_EQ(plan_value_write(dev, row, 70.0F).main_parameter, 0xC800);
+  EXPECT_EQ(plan_value_write(dev, row, 54.5F).refusal, ValueWriteRefusal::OFF_STEP)
+      << "a target the heater would round and answer with code 10 is not sent";
+  EXPECT_EQ(plan_value_write(dev, row, 71.0F).refusal, ValueWriteRefusal::OUT_OF_RANGE);
+  EXPECT_EQ(value_write_step(row), 1.0F);
+}
+
+TEST(ExplorerV4, ItsBoostReadsFortyNineHundredAsOffAndFourAHundredAsOn) {
+  IoDevice dev = explorer_v4();
+  store_status_parameter_readings(dev, explorer_reply(0x8800, 0x4900));
+  EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_BOOST), 0);
+  store_status_parameter_readings(dev, explorer_reply(0xA800, 0x4A00));
+  EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_BOOST), 1);
+
+  // The Calypso reads the same words the other way round.
+  IoDevice calypso = test::water_heater_record();
+  store_status_parameter_readings(calypso, explorer_reply(0xA1E8, 0x4900));
+  EXPECT_EQ(reading_wire(calypso, DeviceReading::HOT_WATER_BOOST), 1);
+  store_status_parameter_readings(calypso, explorer_reply(0xA1E8, 0x4A00));
+  EXPECT_EQ(reading_wire(calypso, DeviceReading::HOT_WATER_BOOST), 0);
+}
+
+TEST(ExplorerV4, ItsBoostAndAwayAreWrittenWithTheCalypsosWords) {
+  const IoDevice dev = explorer_v4();
+  const DeviceReadingRow &boost = selected_row(dev, DeviceReading::HOT_WATER_BOOST);
+  const DeviceReadingRow &away = selected_row(dev, DeviceReading::HOT_WATER_AWAY);
+  const ValueWritePlan boost_on = plan_value_write(dev, boost, 1.0F);
+  ASSERT_EQ(boost_on.refusal, ValueWriteRefusal::NONE);
+  EXPECT_EQ(boost_on.functional_word, 0x4900);
+  ASSERT_TRUE(boost_on.before.has_value());
+  EXPECT_EQ(boost_on.before->fn, DeviceRegister::DHW_BOOST_DURATION);
+  EXPECT_EQ(plan_value_write(dev, boost, 0.0F).functional_word, 0x4A00);
+  const ValueWritePlan away_on = plan_value_write(dev, away, 1.0F);
+  ASSERT_EQ(away_on.refusal, ValueWriteRefusal::NONE);
+  EXPECT_EQ(away_on.functional_word, 0x4600);
+  ASSERT_TRUE(away_on.before.has_value());
+  EXPECT_EQ(away_on.before->fn, DeviceRegister::DHW_AWAY_DURATION);
+  EXPECT_EQ(plan_value_write(dev, away, 0.0F).functional_word, 0x4A00);
+}
+
+TEST(ExplorerV4, ItsAwayIsReadFromTheMainParameterAndNotFromFp16) {
+  IoDevice dev = explorer_v4();
+  const uint8_t away[] = {0x00, 0x00};
+  const uint8_t target[] = {0x88, 0x00};
+  EXPECT_EQ(store_status_main_parameter(dev, DeviceReading::HOT_WATER_AWAY, away, 0).value, 1.0F);
+  EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_AWAY), 1);
+  EXPECT_EQ(store_status_main_parameter(dev, DeviceReading::HOT_WATER_AWAY, target, 0).value, 0.0F);
+  EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_AWAY), 0);
+  // Its FP16 says nothing of away: the Calypso's away word does not store into it.
+  store_status_parameter_readings(dev, explorer_reply(0x8800, 0x4600));
+  EXPECT_EQ(reading_wire(dev, DeviceReading::HOT_WATER_AWAY), 0);
+
+  // The Calypso's away row reads FP16, so its main parameter stores no away.
+  IoDevice calypso = test::water_heater_record();
+  EXPECT_FALSE(store_status_main_parameter(calypso, DeviceReading::HOT_WATER_AWAY, away, 0).value.has_value());
+  EXPECT_EQ(reading_wire(calypso, DeviceReading::HOT_WATER_AWAY), -1);
 }

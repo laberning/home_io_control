@@ -210,6 +210,17 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .poll = ReadingPoll::NOT_POLLED,
      .feature = DeviceFeature::HOT_WATER_TARGET_20_62,
      .write = ValueWrite{MainParameterWrite{}}},
+    // The Atlantic Explorer V4's target: the same main parameter over 20..70 C, in whole degrees, as it answers a
+    // target it has to round with result code 10.
+    {.name = "hot_water_target_20_70",
+     .source = StatusMainParameterSource{.form = StatusValueForm::TEMPERATURE,
+                                         .range = ValueRange{DHW_TARGET_MIN_C, DHW_EXPLORER_V4_TARGET_MAX_C}},
+     .reading = DeviceReading::HOT_WATER_TARGET,
+     .poll = ReadingPoll::NOT_POLLED,
+     .feature = DeviceFeature::HOT_WATER_TARGET_20_70,
+     .write =
+         ValueWrite{.target = MainParameterWrite{},
+                    .rounding = ValueRounding{.policy = RoundingPolicy::EXACT, .step = DHW_EXPLORER_V4_TARGET_STEP_C}}},
     {.name = "hot_water_heating",
      .source = RegisterSource{.fn = DeviceRegister::DHW_HEATING,
                               .part = RegisterPart{.first = 0, .length = 1, .codec = ValueCodec::ANY_NONZERO}},
@@ -272,6 +283,24 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
                                              .value = DHW_CAPABILITY_BOOST},
                          .before = FixedRegisterWrite{.fn = DeviceRegister::DHW_BOOST_DURATION,
                                                       .value = DHW_BOOST_START_DURATION}}},
+    // The Atlantic Explorer V4 takes the Calypso's words, but its boost field reads 2 during a boost (4A00) and 1 at
+    // rest (4900).
+    {.name = "hot_water_boost_fp16_inverted",
+     .source = StatusFunctionalParameterSource{.fp = DHW_FP_OPERATING_MODE,
+                                               .form = StatusParameterForm::FIELD_EQUALS,
+                                               .shift = DHW_FP16_BOOST_SHIFT,
+                                               .equals = DHW_EXPLORER_V4_BOOST_FIELD},
+     .reading = DeviceReading::HOT_WATER_BOOST,
+     .poll = ReadingPoll::NOT_POLLED,
+     .feature = DeviceFeature::HOT_WATER_BOOST_FP16_INVERTED,
+     .write = ValueWrite{.target = FunctionalParameterWrite{.fp = DHW_FP_OPERATING_MODE,
+                                                            .on_word = DHW_OPERATING_MODE_BOOST_ON,
+                                                            .off_word = DHW_OPERATING_MODE_OFF},
+                         .guard = WriteGuard{.reading = DeviceReading::HOT_WATER_CAPABILITIES,
+                                             .test = WriteGuardTest::HAS_BIT,
+                                             .value = DHW_CAPABILITY_BOOST},
+                         .before = FixedRegisterWrite{.fn = DeviceRegister::DHW_BOOST_DURATION,
+                                                      .value = DHW_BOOST_START_DURATION}}},
     {.name = "hot_water_away",
      .source = StatusFunctionalParameterSource{.fp = DHW_FP_OPERATING_MODE,
                                                .form = StatusParameterForm::FIELD_EQUALS,
@@ -280,6 +309,22 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .reading = DeviceReading::HOT_WATER_AWAY,
      .poll = ReadingPoll::NOT_POLLED,
      .feature = DeviceFeature::HOT_WATER_AWAY_FP16,
+     .write = ValueWrite{.target = FunctionalParameterWrite{.fp = DHW_FP_OPERATING_MODE,
+                                                            .on_word = DHW_OPERATING_MODE_AWAY_ON,
+                                                            .off_word = DHW_OPERATING_MODE_OFF},
+                         .guard = WriteGuard{.reading = DeviceReading::HOT_WATER_CAPABILITIES,
+                                             .test = WriteGuardTest::HAS_BIT,
+                                             .value = DHW_CAPABILITY_AWAY},
+                         .before = FixedRegisterWrite{.fn = DeviceRegister::DHW_AWAY_DURATION,
+                                                      .value = DHW_AWAY_UNTIL_TURNED_OFF}}},
+    // The Atlantic Explorer V4 takes the Calypso's words, but keeps FP16 at 4900 while away: its main parameter, 0000
+    // then, is the only sign.
+    {.name = "hot_water_away_main_parameter",
+     .source =
+         StatusMainParameterSource{.form = StatusValueForm::EQUALS, .equals = DHW_EXPLORER_V4_AWAY_MAIN_PARAMETER},
+     .reading = DeviceReading::HOT_WATER_AWAY,
+     .poll = ReadingPoll::NOT_POLLED,
+     .feature = DeviceFeature::HOT_WATER_AWAY_MAIN_PARAMETER,
      .write = ValueWrite{.target = FunctionalParameterWrite{.fp = DHW_FP_OPERATING_MODE,
                                                             .on_word = DHW_OPERATING_MODE_AWAY_ON,
                                                             .off_word = DHW_OPERATING_MODE_OFF},
@@ -433,7 +478,8 @@ std::optional<float> battery_low_of(const IoDevice &dev) {
 namespace {
 
 /// The codec a reading's value is read with: a register's or its part's, a data object's, a flag's for a field of a
-/// status parameter. NONE for a value that is worked out or a main parameter, which are numbers.
+/// status parameter or a main parameter that equals a value. NONE for a value that is worked out and for a level or a
+/// temperature in the main parameter, which are numbers.
 ValueCodec reading_codec(const DeviceReadingRow &row) {
   return std::visit(Overloaded{
                         [](const RegisterSource &source) {
@@ -441,7 +487,10 @@ ValueCodec reading_codec(const DeviceReadingRow &row) {
                         },
                         [](const DataObjectSource &source) { return source.codec; },
                         [](const DerivedSource &source) { return source.codec; },
-                        [](const StatusMainParameterSource &) { return ValueCodec::NONE; },
+                        // A main parameter that equals a value is a flag, a level or a temperature a number.
+                        [](const StatusMainParameterSource &source) {
+                          return source.form == StatusValueForm::EQUALS ? ValueCodec::BINARY : ValueCodec::NONE;
+                        },
                         // A field of a functional parameter is a flag, and the whole word a number.
                         [](const StatusFunctionalParameterSource &source) {
                           return source.form == StatusParameterForm::FIELD_EQUALS ? ValueCodec::BINARY
@@ -586,6 +635,8 @@ std::optional<float> decode_status_reading(const DeviceReadingRow &row, std::spa
       // no whole tenth would otherwise round outside the range and a write of that setpoint would be refused.
       return std::clamp(std::round(celsius * VALUE_TENTHS_PER_UNIT) / VALUE_TENTHS_PER_UNIT, range_min_c, range_max_c);
     }
+    case StatusValueForm::EQUALS:
+      return word == source->equals ? 1.0F : 0.0F;
   }
   return std::nullopt;
 }
@@ -601,7 +652,9 @@ size_t store_status_parameter_readings(IoDevice &dev, const IoFrame &reply) {
   for (const DeviceReadingRow &row : active_table) {
     const auto *source = std::get_if<StatusFunctionalParameterSource>(&row.source);
     uint16_t word = 0;
-    if (source == nullptr || !decode_status_functional_parameter(reply, source->fp, word))
+    // Several rows may play one part of a reading: only the one the device selects decodes its value.
+    if (source == nullptr || device_reading_row(dev, row.reading) != &row ||
+        !decode_status_functional_parameter(reply, source->fp, word))
       continue;
     store_reading(dev, row.reading, decode_status_parameter(*source, word));
     stored++;

@@ -622,7 +622,8 @@ void apply_register_heater_status_reply(const std::string &id, IoDevice &dev, co
                                         bool trust_position);
 
 /// @brief Apply a water heater's status reply: its main parameter is the target temperature; the operating-mode
-/// read (FP15, FP16) adds its capabilities and the boost and away state.
+/// read (FP15, FP16) adds its capabilities and the boost and away state. A heater whose away row reads the main
+/// parameter (an Atlantic Explorer V4) takes its away state from there instead.
 ///
 /// A water heater has no position, no movement and no battery: the cover parts of the status path (the
 /// stopped flag, target/current position, the follow-up window, the moving evidence, the last-command

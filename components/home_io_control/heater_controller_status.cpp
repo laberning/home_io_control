@@ -76,11 +76,17 @@ void apply_register_heater_status_reply(const std::string &id, IoDevice &dev, co
 void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame &frame, bool trust_position) {
   if (!trust_position)
     return;
+  const std::span<const uint8_t> main_parameter(frame.data + STATUS_MP_FP_MAIN_PARAMETER_OFFSET,
+                                                STATUS_MAIN_PARAMETER_SIZE);
   // The operating-mode words (FP15, FP16) come with the main parameter in the poll's status read; a reply without them
-  // (the answer to a plain status read) leaves boost, away and the capabilities as they were.
+  // (the answer to a plain status read) leaves boost and the capabilities as they were. Away is read from FP16 too,
+  // or from the main parameter where the heater's row reads it there (an Atlantic Explorer V4).
   const int boost_before = reading_wire(dev, DeviceReading::HOT_WATER_BOOST);
   const int away_before = reading_wire(dev, DeviceReading::HOT_WATER_AWAY);
-  if (store_status_parameter_readings(dev, frame) > 0 &&
+  const size_t parameters = store_status_parameter_readings(dev, frame);
+  const bool away_in_main_parameter =
+      store_status_main_parameter(dev, DeviceReading::HOT_WATER_AWAY, main_parameter, 0).value.has_value();
+  if ((parameters > 0 || away_in_main_parameter) &&
       (reading_wire(dev, DeviceReading::HOT_WATER_BOOST) != boost_before ||
        reading_wire(dev, DeviceReading::HOT_WATER_AWAY) != away_before)) {
     ESP_LOGI(detail::TAG, "Device %s: hot water boost %s, away %s (FP15 0x%04X)", id.c_str(),
@@ -89,8 +95,6 @@ void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame 
              static_cast<unsigned>(std::max(0, reading_wire(dev, DeviceReading::HOT_WATER_CAPABILITIES))));
   }
 
-  const std::span<const uint8_t> main_parameter(frame.data + STATUS_MP_FP_MAIN_PARAMETER_OFFSET,
-                                                STATUS_MAIN_PARAMETER_SIZE);
   // A water heater's main parameter is its target, over the range of the heater's model (the row its capabilities
   // select): no level prefix applies.
   if (const StatusStore target = store_status_main_parameter(dev, DeviceReading::HOT_WATER_TARGET, main_parameter, 0);

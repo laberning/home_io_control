@@ -144,6 +144,17 @@ enum class DeviceFeature : uint8_t {
   /// a group: it gates the row of DeviceReading::HOT_WATER_CAPABILITIES, which the write guards of the FP16 boost and
   /// away rows read, so a model whose boost or away row differs from the Calypso's still reads FP15.
   HOT_WATER_OPERATING_MODE_WORD,
+  /// A water heater whose target temperature is the main parameter of its status reply over 20 to 70 degrees, in whole
+  /// degrees (the Atlantic Explorer V4, pull request #246). A member of the group HOT_WATER_TARGET.
+  HOT_WATER_TARGET_20_70,
+  /// A water heater whose boost is written as on the Calypso (HOT_WATER_BOOST_FP16) but whose FP16 boost field reads 2
+  /// during a boost: 4A00 then, 4900 at rest (the Atlantic Explorer V4, pull request #246). A member of the group
+  /// HOT_WATER_BOOST.
+  HOT_WATER_BOOST_FP16_INVERTED,
+  /// A water heater whose away mode is written as on the Calypso (HOT_WATER_AWAY_FP16) but read from the main
+  /// parameter of its status reply, which is 0000 while away; its FP16 stays 4900 (the Atlantic Explorer V4, pull
+  /// request #246). A member of the group HOT_WATER_AWAY.
+  HOT_WATER_AWAY_MAIN_PARAMETER,
   COUNT,  ///< Not a capability: the number of capabilities, for the storage check of DeviceFeatures.
 };
 
@@ -215,13 +226,16 @@ struct FeatureGroup {
 };
 
 /// @brief The members of the group HOT_WATER_TARGET: which target range a water heater has.
-inline constexpr DeviceFeature HOT_WATER_TARGET_MEMBERS[] = {DeviceFeature::HOT_WATER_TARGET_20_62};
+inline constexpr DeviceFeature HOT_WATER_TARGET_MEMBERS[] = {DeviceFeature::HOT_WATER_TARGET_20_62,
+                                                             DeviceFeature::HOT_WATER_TARGET_20_70};
 
 /// @brief The members of the group HOT_WATER_BOOST: how a water heater's boost is read and written.
-inline constexpr DeviceFeature HOT_WATER_BOOST_MEMBERS[] = {DeviceFeature::HOT_WATER_BOOST_FP16};
+inline constexpr DeviceFeature HOT_WATER_BOOST_MEMBERS[] = {DeviceFeature::HOT_WATER_BOOST_FP16,
+                                                            DeviceFeature::HOT_WATER_BOOST_FP16_INVERTED};
 
 /// @brief The members of the group HOT_WATER_AWAY: how a water heater's away mode is read and written.
-inline constexpr DeviceFeature HOT_WATER_AWAY_MEMBERS[] = {DeviceFeature::HOT_WATER_AWAY_FP16};
+inline constexpr DeviceFeature HOT_WATER_AWAY_MEMBERS[] = {DeviceFeature::HOT_WATER_AWAY_FP16,
+                                                           DeviceFeature::HOT_WATER_AWAY_MAIN_PARAMETER};
 
 /// @brief The members of the group HOT_WATER_REGISTER_MAP: which registers a water heater keeps its readings in.
 inline constexpr DeviceFeature HOT_WATER_REGISTER_MAP_MEMBERS[] = {DeviceFeature::HOT_WATER_REGISTERS_CALYPSO};
