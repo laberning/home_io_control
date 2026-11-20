@@ -229,15 +229,19 @@ struct OneWayFrameInfo {
   uint8_t originator{0};                     ///< Command originator byte (e.g., ORIGINATOR_USER_REMOTE).
   uint8_t acei_level{0};                     ///< ACEI priority level (0–7).
   char intent[ONEWAY_INTENT_BUFFER_SIZE]{};  ///< Human-readable command intent (e.g., "CLOSE").
-  uint8_t main0{0};     ///< Raw first main byte (has_intent only); feeds oneway_intent_to_target().
-  uint8_t main1{0};     ///< Raw second main byte (has_intent only); feeds oneway_intent_to_target().
-  uint8_t data_len{0};  ///< Raw data length (for commands without decoded intent).
+  uint8_t main0{0};          ///< Raw first main byte (has_intent only); feeds oneway_intent_to_target().
+  uint8_t main1{0};          ///< Raw second main byte (has_intent only); feeds oneway_intent_to_target().
+  uint8_t data_len{0};       ///< Raw data length (for commands without decoded intent).
+  bool has_sequence{false};  ///< True if the rolling sequence was read (execute frames long enough to hold one).
+  uint16_t sequence{0};      ///< The sender's rolling sequence; every copy of one press carries the same value.
 };
 
 /// @brief Decode a parsed 1W frame into a structured OneWayFrameInfo.
 ///
 /// Extracts target device type from the broadcast address. For execute/activate-mode
-/// commands, also decodes originator, ACEI priority, and position/command intent.
+/// commands, also decodes originator, ACEI priority, and position/command intent. An execute frame
+/// also yields its rolling sequence, read from the two bytes in front of the 6-byte MAC at the end of
+/// the payload (a remote's frame carries 6 or 8 parameter bytes, so the end, not a fixed offset, locates it).
 /// @param frame Parsed IoFrame with CTRL0_PROTOCOL_1W set.
 /// @return Populated OneWayFrameInfo.
 OneWayFrameInfo decode_1w_frame(const IoFrame &frame);

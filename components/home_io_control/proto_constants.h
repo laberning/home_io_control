@@ -971,6 +971,12 @@ static constexpr uint8_t ACEI_LEVEL_AUTO_DEFAULT = 7;       ///< Default automat
 /// @return Null-terminated string such as "user_default" or "protection_sensor".
 const char *acei_level_name(uint8_t level);
 
+/// Rolling sequence width of a 1W execute frame; big-endian on the wire, never part of the signed span.
+/// The sequence sits directly in front of the HMAC_SIZE-byte MAC that ends the payload, so a decoder finds
+/// it from the payload's end (`data_len - ONEWAY_SEQUENCE_SIZE - HMAC_SIZE`), however many parameter bytes
+/// the sender put in front.
+static constexpr uint8_t ONEWAY_SEQUENCE_SIZE = 2;
+
 /// @brief ACEI byte for a 1W CMD_EXECUTE frame — the Somfy-shaped default.
 ///
 /// Level 2 (user_high), extended-info bit set. The 2W EXECUTE_ACEI (proto_commands.cpp) pins

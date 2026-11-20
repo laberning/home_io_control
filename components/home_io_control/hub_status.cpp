@@ -860,8 +860,8 @@ void IOHomeControlComponent::handle_oneway_frame_(const IoFrame &frame, uint32_t
   this->oneway_key_adoption_.record_observed_class(info);
   this->oneway_key_adoption_.try_adopt(frame);
 
-  // 1W remotes repeat each command 4× at 40ms intervals across channels, and a held button keeps
-  // resending: one logical press per remote+command+intent reaches the steps below.
+  // 1W remotes repeat each command 4× at 40ms intervals across channels: one logical press per
+  // remote and rolling sequence (or, without one, per remote+command+intent) reaches the steps below.
   if (!this->oneway_receiver_.is_new_press(frame, info, now))
     return;
 

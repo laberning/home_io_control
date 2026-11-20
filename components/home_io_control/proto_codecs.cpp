@@ -380,6 +380,15 @@ OneWayFrameInfo decode_1w_frame(const IoFrame &frame) {
     decode_1w_main_intent(frame.data[2], frame.data[3], info.intent, sizeof(info.intent));
   }
 
+  // The execute payload ends with sequence(2) + MAC(6) behind a parameter block whose length varies by
+  // sender, so the sequence is located from the end.
+  constexpr uint8_t trailer = ONEWAY_SEQUENCE_SIZE + HMAC_SIZE;
+  if (frame.cmd == CMD_EXECUTE && frame.data_len >= ONEWAY_EXECUTE_MIN_DATA_LEN + trailer) {
+    const uint8_t at = frame.data_len - trailer;
+    info.has_sequence = true;
+    info.sequence = static_cast<uint16_t>((frame.data[at] << BITS_PER_BYTE) | frame.data[at + 1]);
+  }
+
   return info;
 }
 

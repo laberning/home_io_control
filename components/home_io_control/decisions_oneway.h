@@ -35,6 +35,14 @@ namespace decisions {
 /// first of them.
 /// Intent-bearing frames keep ignoring the destination: they fire sender events and optimistic
 /// state, where one press must stay one press.
+///
+/// An execute frame also carries the sender's rolling sequence, and every copy of one press shares it
+/// while the next press counts up. Where both frames have it and go to the same destination, the
+/// sequence tells a repeat from a new press exactly, so two quick presses of one button are two
+/// presses. Across destinations the intent key above still decides: a sensor that sends one trigger
+/// to several device classes gives each class frame its own sequence (corpus captures
+/// wind_sensor_oneway_horizontal_awning_sx1276 and wind_sensor_oneway_unnamed_target_sx1276, one
+/// burst of node 540B83), and that sweep is still one press.
 struct OneWayDedupState {
   std::string src_id;           ///< Source node ID of the last processed frame; empty before the first.
   uint8_t cmd{0};               ///< Command byte.
@@ -42,10 +50,17 @@ struct OneWayDedupState {
   uint8_t main0{0};             ///< First main byte — what distinguishes a move from a stop.
   uint8_t main1{0};             ///< Second main byte.
   uint32_t timestamp{0};        ///< millis() when the frame was processed.
-  uint8_t dst[NODE_ID_SIZE]{};  ///< Destination address; compared only when `has_intent` is false.
+  uint8_t dst[NODE_ID_SIZE]{};  ///< Destination address; compared for frames without intent and for the sequence rule.
+  bool has_sequence{false};     ///< Whether the rolling sequence was decoded (execute frames only).
+  uint16_t sequence{0};         ///< Rolling sequence; the same in every copy of one press.
 };
 
 /// Decide whether an incoming 1W frame repeats the previous one inside the burst window.
+///
+/// When both frames carry a rolling sequence and go to the same destination, they are the same press
+/// exactly when the sequences are equal (and the frame is inside the window); a different sequence is
+/// a new press however soon it comes. Any other pair is compared by the key described at
+/// OneWayDedupState.
 ///
 /// @param last     State recorded for the previously processed 1W frame.
 /// @param incoming Candidate frame's key fields, with `timestamp` set to now.
@@ -55,9 +70,15 @@ inline bool is_duplicate_1w_frame(const OneWayDedupState &last, const OneWayDedu
   // `last.src_id` is empty until the first 1W frame is processed, so a real frame never matches it.
   if (last.src_id != incoming.src_id || last.cmd != incoming.cmd || last.has_intent != incoming.has_intent)
     return false;
+  const bool same_dst = std::memcmp(last.dst, incoming.dst, NODE_ID_SIZE) == 0;
+  if (last.has_sequence && incoming.has_sequence && same_dst) {
+    if (last.sequence != incoming.sequence)
+      return false;
+    return (incoming.timestamp - last.timestamp) < window_ms;
+  }
   if (incoming.has_intent && (last.main0 != incoming.main0 || last.main1 != incoming.main1))
     return false;
-  if (!incoming.has_intent && std::memcmp(last.dst, incoming.dst, NODE_ID_SIZE) != 0)
+  if (!incoming.has_intent && !same_dst)
     return false;
   // Unsigned arithmetic makes this correct across the millis() wrap.
   return (incoming.timestamp - last.timestamp) < window_ms;

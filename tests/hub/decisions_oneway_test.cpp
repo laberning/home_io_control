@@ -25,6 +25,14 @@ decisions::OneWayDedupState dedup_state(const char *src, uint8_t cmd, bool has_i
   return state;
 }
 
+decisions::OneWayDedupState sequenced_state(const char *src, uint8_t main0, uint16_t sequence, uint32_t timestamp,
+                                            const uint8_t dst[NODE_ID_SIZE] = BROADCAST_DISCOVER_ALT) {
+  decisions::OneWayDedupState state = dedup_state(src, CMD_EXECUTE, true, main0, timestamp, dst);
+  state.has_sequence = true;
+  state.sequence = sequence;
+  return state;
+}
+
 constexpr uint8_t ROLLER_SHUTTER_CLASS[NODE_ID_SIZE] = {0x00, 0x00, 0xBF};
 constexpr uint8_t AWNING_CLASS[NODE_ID_SIZE] = {0x00, 0x00, 0xFF};
 constexpr uint8_t VENETIAN_BLIND_CLASS[NODE_ID_SIZE] = {0x00, 0x00, 0x7F};
@@ -32,6 +40,49 @@ constexpr uint8_t VENETIAN_BLIND_CLASS[NODE_ID_SIZE] = {0x00, 0x00, 0x7F};
 constexpr uint32_t DEDUP_WINDOW_MS = 2000;
 
 }  // namespace
+
+TEST(Decisions, OneWayDedupSameSequenceInsideWindowIsARepeat) {
+  const auto last = sequenced_state("AABBCC", 0xC8, 0x1F44, 1000);
+  EXPECT_TRUE(decisions::is_duplicate_1w_frame(last, sequenced_state("AABBCC", 0xC8, 0x1F44, 1040), DEDUP_WINDOW_MS));
+}
+
+TEST(Decisions, OneWayDedupNewSequenceIsANewPressInsideTheWindow) {
+  const auto last = sequenced_state("AABBCC", 0xC8, 0x1F44, 1000);
+  EXPECT_FALSE(decisions::is_duplicate_1w_frame(last, sequenced_state("AABBCC", 0xC8, 0x1F47, 1200), DEDUP_WINDOW_MS))
+      << "same sender, command and intent 200 ms apart, but a new rolling sequence";
+}
+
+TEST(Decisions, OneWayDedupSameSequenceAfterTheWindowIsNew) {
+  const auto last = sequenced_state("AABBCC", 0xC8, 0x1F44, 1000);
+  EXPECT_FALSE(decisions::is_duplicate_1w_frame(last, sequenced_state("AABBCC", 0xC8, 0x1F44, 3000), DEDUP_WINDOW_MS));
+}
+
+TEST(Decisions, OneWayDedupSequenceRuleSurvivesTheMillisWrap) {
+  const uint32_t before_wrap = UINT32_MAX - 10;
+  const auto last = sequenced_state("AABBCC", 0xC8, 0x1F44, before_wrap);
+  EXPECT_TRUE(decisions::is_duplicate_1w_frame(last, sequenced_state("AABBCC", 0xC8, 0x1F44, before_wrap + 50),
+                                               DEDUP_WINDOW_MS));
+}
+
+TEST(Decisions, OneWayDedupOneSidedSequenceFallsBackToTheKey) {
+  const auto last = sequenced_state("AABBCC", 0xC8, 0x1F44, 1000);
+  const auto incoming = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 1100);
+  EXPECT_TRUE(decisions::is_duplicate_1w_frame(last, incoming, DEDUP_WINDOW_MS));
+}
+
+TEST(Decisions, OneWayDedupOneTriggerSweptAcrossClassesIsOnePress) {
+  // A sensor sends one trigger to several device classes, each class frame with its own sequence
+  // (corpus: node 540B83, 0x6050 to 00043F and 0x6052 to 00047F in one burst).
+  constexpr uint8_t HORIZONTAL_AWNING_CLASS[NODE_ID_SIZE] = {0x00, 0x04, 0x3F};
+  constexpr uint8_t SECOND_CLASS[NODE_ID_SIZE] = {0x00, 0x04, 0x7F};
+  const auto last = sequenced_state("540B83", 0xD1, 0x6050, 1000, HORIZONTAL_AWNING_CLASS);
+  EXPECT_TRUE(decisions::is_duplicate_1w_frame(last, sequenced_state("540B83", 0xD1, 0x6052, 1100, SECOND_CLASS),
+                                               DEDUP_WINDOW_MS))
+      << "a new sequence to another class with the same intent is the same trigger";
+  EXPECT_FALSE(decisions::is_duplicate_1w_frame(last, sequenced_state("540B83", 0xD2, 0x6052, 1100, SECOND_CLASS),
+                                                DEDUP_WINDOW_MS))
+      << "a different intent stays a new press";
+}
 
 TEST(Decisions, OneWayDedupFirstFrameIsNeverADuplicate) {
   const decisions::OneWayDedupState nothing_seen_yet{};

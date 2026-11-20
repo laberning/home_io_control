@@ -58,6 +58,8 @@ bool OneWayReceiver::is_new_press(const IoFrame &frame, const OneWayFrameInfo &i
   decisions::OneWayDedupState incoming{
       node_id_to_string(frame.src), frame.cmd, info.has_intent, info.main0, info.main1, now};
   memcpy(incoming.dst, frame.dst, NODE_ID_SIZE);
+  incoming.has_sequence = info.has_sequence;
+  incoming.sequence = info.sequence;
   if (decisions::is_duplicate_1w_frame(this->last_press_, incoming, ONEWAY_DEDUP_WINDOW_MS))
     return false;
   this->last_press_ = incoming;

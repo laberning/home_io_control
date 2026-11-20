@@ -29,6 +29,31 @@ IoFrame execute_frame(uint8_t main0, const uint8_t *src = REMOTE_ID, const uint8
   return f;
 }
 
+/// A remote's execute frame as it goes on air: 6 parameters, the rolling sequence, then a 6-byte MAC
+/// (a placeholder, nothing here checks it).
+IoFrame execute_frame_with_sequence(uint8_t main0, uint16_t sequence, const uint8_t *dst = ROLLER_CLASS) {
+  IoFrame f{};
+  init_frame(f, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
+  set_dst(f, dst);
+  set_src(f, REMOTE_ID);
+  const uint8_t payload[14] = {ORIGINATOR_USER_REMOTE,
+                               0x41,
+                               main0,
+                               0x00,
+                               0x00,
+                               0x00,
+                               static_cast<uint8_t>(sequence >> 8),
+                               static_cast<uint8_t>(sequence & 0xFF),
+                               0xA1,
+                               0xA2,
+                               0xA3,
+                               0xA4,
+                               0xA5,
+                               0xA6};
+  set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
+  return f;
+}
+
 /// A frame without a decodable intent, sent to a device class (one step of a class sweep).
 IoFrame sweep_frame(const uint8_t *dst) {
   IoFrame f{};
@@ -189,6 +214,93 @@ TEST(OneWayReceiver, ADroppedRepeatDoesNotMoveTheWindow) {
 
   // A held button resends for longer than the window; the window counts from the logged press.
   EXPECT_TRUE(new_press(rx, frame, T0 + ONEWAY_DEDUP_WINDOW_MS));
+}
+
+TEST(OneWayReceiver, TheDecoderReadsTheSequenceOnlyFromAFrameLongEnoughToHoldOne) {
+  const OneWayFrameInfo with = decode_1w_frame(execute_frame_with_sequence(MOVE_CLOSE, 0xABCD));
+  EXPECT_TRUE(with.has_sequence);
+  EXPECT_EQ(with.sequence, 0xABCD);
+
+  EXPECT_FALSE(decode_1w_frame(execute_frame(MOVE_CLOSE)).has_sequence);
+  EXPECT_FALSE(decode_1w_frame(sweep_frame(ROLLER_CLASS)).has_sequence);
+}
+
+TEST(OneWayReceiver, TwoQuickPressesOfTheSameButtonAreTwoPresses) {
+  OneWayReceiver rx;
+  EXPECT_TRUE(new_press(rx, execute_frame_with_sequence(MOVE_CLOSE, 0x1F44), T0));
+
+  EXPECT_TRUE(new_press(rx, execute_frame_with_sequence(MOVE_CLOSE, 0x1F47), T0 + 200))
+      << "a new rolling sequence is a new press, however soon it comes";
+}
+
+TEST(OneWayReceiver, TheCopiesOfOnePressAreOnePress) {
+  OneWayReceiver rx;
+  const IoFrame copy = execute_frame_with_sequence(MOVE_CLOSE, 0x1F44);
+  ASSERT_TRUE(new_press(rx, copy, T0));
+
+  EXPECT_FALSE(new_press(rx, copy, T0 + 40));
+  EXPECT_FALSE(new_press(rx, copy, T0 + 80));
+  EXPECT_FALSE(new_press(rx, copy, T0 + 120));
+}
+
+TEST(OneWayReceiver, CopiesHandledLateAfterAnExchangeAreStillOnePress) {
+  // Two copies are heard inside an exchange and kept; the hub handles them with their heard time when
+  // the exchange ends, and the last copies arrive live after that.
+  OneWayReceiver rx;
+  const IoFrame copy = execute_frame_with_sequence(MOVE_CLOSE, 0x1F44);
+  rx.keep_overheard(copy, T0, -80);
+  rx.keep_overheard(copy, T0 + 40, -80);
+
+  int presses = 0;
+  KeptOneWayFrame kept;
+  while (rx.pop_kept(kept))
+    presses += new_press(rx, kept.frame, kept.heard_ms) ? 1 : 0;
+  presses += new_press(rx, copy, T0 + 80) ? 1 : 0;
+  presses += new_press(rx, copy, T0 + 120) ? 1 : 0;
+
+  EXPECT_EQ(presses, 1);
+}
+
+TEST(OneWayReceiver, TwoPressesKeptInsideAnExchangeAreTwoPresses) {
+  // Both presses fall inside one exchange; each is handled with its own heard time once it ends.
+  OneWayReceiver rx;
+  rx.keep_overheard(execute_frame_with_sequence(MOVE_CLOSE, 0x1F44), T0, -80);
+  rx.keep_overheard(execute_frame_with_sequence(MOVE_CLOSE, 0x1F44), T0 + 40, -80);
+  rx.keep_overheard(execute_frame_with_sequence(MOVE_CLOSE, 0x1F47), T0 + 300, -80);
+  rx.keep_overheard(execute_frame_with_sequence(MOVE_CLOSE, 0x1F47), T0 + 340, -80);
+
+  int presses = 0;
+  KeptOneWayFrame kept;
+  while (rx.pop_kept(kept))
+    presses += new_press(rx, kept.frame, kept.heard_ms) ? 1 : 0;
+
+  EXPECT_EQ(presses, 2);
+}
+
+TEST(OneWayReceiver, TheSameSequenceAfterTheWindowIsNew) {
+  OneWayReceiver rx;
+  const IoFrame copy = execute_frame_with_sequence(MOVE_CLOSE, 0x1F44);
+  ASSERT_TRUE(new_press(rx, copy, T0));
+
+  EXPECT_TRUE(new_press(rx, copy, T0 + ONEWAY_DEDUP_WINDOW_MS));
+}
+
+TEST(OneWayReceiver, OneTriggerSweptAcrossClassesIsOnePress) {
+  // Each class frame of a sweep has its own sequence; the copies of both follow.
+  OneWayReceiver rx;
+  ASSERT_TRUE(new_press(rx, execute_frame_with_sequence(MOVE_CLOSE, 0x6050, ROLLER_CLASS), T0));
+
+  EXPECT_FALSE(new_press(rx, execute_frame_with_sequence(MOVE_CLOSE, 0x6052, AWNING_CLASS), T0 + 100));
+  EXPECT_FALSE(new_press(rx, execute_frame_with_sequence(MOVE_CLOSE, 0x6050, ROLLER_CLASS), T0 + 140));
+  EXPECT_FALSE(new_press(rx, execute_frame_with_sequence(MOVE_CLOSE, 0x6052, AWNING_CLASS), T0 + 240));
+}
+
+TEST(OneWayReceiver, AFrameWithoutASequenceKeepsTheTimeRule) {
+  OneWayReceiver rx;
+  ASSERT_TRUE(new_press(rx, execute_frame_with_sequence(MOVE_CLOSE, 0x1F44), T0));
+
+  EXPECT_FALSE(new_press(rx, execute_frame(MOVE_CLOSE), T0 + 100))
+      << "a frame that has no readable sequence cannot prove a new press";
 }
 
 // ============================================================================

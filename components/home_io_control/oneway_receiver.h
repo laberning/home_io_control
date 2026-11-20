@@ -37,9 +37,12 @@ static constexpr uint32_t ONEWAY_QUIET_PERIOD_MS = 700;
 /// without meaningfully affecting normal operation.
 static constexpr uint32_t ONEWAY_POLL_DEFER_CAP_MS = 5000;
 /// Suppress a repeated 1W log/poll for the same remote *and the same intent* within this window.
-/// Wide on purpose: it collapses both the 4×/40ms reliability burst and a held button into one
-/// logical press. A *different* intent from the same remote (a stop after a move) is not a
-/// duplicate and passes through immediately — see decisions::is_duplicate_1w_frame().
+/// Wide on purpose: it collapses the 4×/40ms reliability burst into one logical press. A frame that
+/// carries a rolling sequence to the same destination is a repeat only when the sequence is the same,
+/// so two quick presses are two; any other frame (a private beacon, a discovery sweep, one trigger
+/// swept across device classes) is a repeat when sender, command, intent or destination and time
+/// match. A *different* intent from the same remote (a stop after a move) is not a duplicate and
+/// passes through immediately — see decisions::is_duplicate_1w_frame().
 static constexpr uint32_t ONEWAY_DEDUP_WINDOW_MS = 2000;
 
 /// How many 1W frames heard inside the hub's own exchanges are kept for the remote handling. A remote
@@ -96,7 +99,8 @@ class OneWayReceiver {
   /// The duplicate filter. A repeat of the previous press inside ONEWAY_DEDUP_WINDOW_MS is dropped;
   /// anything else becomes the new reference.
   ///
-  /// The key includes the decoded intent bytes, so a stop right after a move is a new press; for a
+  /// Frames with a rolling sequence are compared by it (see decisions::is_duplicate_1w_frame()). Otherwise the
+  /// key includes the decoded intent bytes, so a stop right after a move is a new press; for a
   /// frame without a decoded intent it includes the destination, so each class of a multi-class sweep
   /// is kept (see decisions::OneWayDedupState).
   /// @param frame The overheard frame.

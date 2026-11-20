@@ -196,6 +196,8 @@ If nothing appears, check the ESPHome DEBUG log (`logger: level: DEBUG`) for one
 
 **Not every button press fires the event.** Only frames decoded as `CMD_EXECUTE` or `CMD_ACTIVATE_MODE` carry a command intent (`OPEN`/`CLOSE`/`STOP`/etc.); other 1W traffic from the same remote — for example a `WRITE_PRIVATE(0x20)` frame, which some remotes send as part of the same button press — is still DEBUG-logged but never fires the event, because there is nothing decodable to put in `intent`. If you only ever see `WRITE_PRIVATE` lines and never an `EXECUTE` line for a press that should have moved something, the `EXECUTE` frame itself was likely never received (radio timing/contention), not silently dropped by this component.
 
+**Each press is one event.** A remote sends every press several times, and the hub counts the copies as one press by the rolling number each copy carries, so two quick presses of the same button fire two events, even 200 ms apart. A held button on a Somfy Smoove sends a command when you press it and a stop when you release it, and fires two events (for example `OPEN`, then `STOP`); in `tests/corpus/captures/oneway/somfy_smoove_oneway_hold_to_dim_sx1276.yaml` the stream of `WRITE_PRIVATE` frames between the two carries no command and fires nothing. Frames without a rolling number, such as those `WRITE_PRIVATE` frames, count as one press when sender, command, destination and the next two seconds match. A sensor that sends one trigger to several device classes gives each class its own rolling number; within two seconds those frames still fire one event, because they carry the same command.
+
 ### Example automation
 
 ```yaml

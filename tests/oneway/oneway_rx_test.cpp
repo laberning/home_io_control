@@ -54,6 +54,31 @@ IoFrame make_1w_execute(uint8_t main0, uint8_t main1 = 0x00) {
   return f;
 }
 
+/// Build a remote's 1W execute frame as it goes on air: 6 parameters, the rolling sequence, then a
+/// placeholder 6-byte MAC (nothing on this path checks it).
+IoFrame make_1w_execute_with_sequence(uint8_t main0, uint16_t sequence) {
+  IoFrame f{};
+  init_frame(f, /*is_2w=*/false, /*start=*/true, /*end=*/true, /*low_power=*/false);
+  set_dst(f, BROADCAST_ROLLER);
+  set_src(f, REMOTE_ID);
+  const uint8_t payload[14] = {ORIGINATOR_USER_REMOTE,
+                               0x41,
+                               main0,
+                               0x00,
+                               0x00,
+                               0x00,
+                               static_cast<uint8_t>(sequence >> 8),
+                               static_cast<uint8_t>(sequence & 0xFF),
+                               0xA1,
+                               0xA2,
+                               0xA3,
+                               0xA4,
+                               0xA5,
+                               0xA6};
+  set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
+  return f;
+}
+
 /// Build a 1W frame with a command that carries no decodable intent (e.g. write-private).
 IoFrame make_1w_non_intent_frame() {
   IoFrame f{};
@@ -549,8 +574,8 @@ TEST(OnewayRx, StopAfterMoveInsideDedupWindowClearsTargetAndPollsImmediately) {
 }
 
 TEST(OnewayRx, RepeatedIdenticalIntentIsStillCollapsed) {
-  // The change to the dedup key must not weaken the burst suppression it exists for: a held
-  // button resends the same intent and must still read as one press.
+  // The intent in the dedup key must not weaken the burst suppression it exists for: copies of the
+  // same intent without a readable sequence still read as one press.
   esphome::api::APIServer api_server;
   esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
@@ -564,5 +589,40 @@ TEST(OnewayRx, RepeatedIdenticalIntentIsStillCollapsed) {
   for (int i = 0; i < 8; i++)
     comp.process_received_packet_(pkt);
 
-  EXPECT_EQ(api_server.events_.size(), 1u) << "a held button is one logical press, not eight";
+  EXPECT_EQ(api_server.events_.size(), 1u) << "eight copies without a sequence are one logical press";
+}
+
+TEST(OnewayRx, TwoQuickPressesOfTheSameButtonFireTwoEventsAndTwoFollowUps) {
+  esphome::test_clock::ManualClock clock;
+  const uint32_t t0 = esphome::test_clock::peek_ms();
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  api_server.reset();
+
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_component(comp, radio);
+  comp.add_exposed_sender(node_id_to_string(REMOTE_ID));
+  comp.add_device("112233", {DeviceType::ROLLER_SHUTTER, 0});
+  comp.add_linked_remote(node_id_to_string(REMOTE_ID), "112233");
+
+  // Each press arrives as two copies sharing its rolling sequence; the second press counts up.
+  constexpr uint32_t SECOND_PRESS_MS = 200;
+  const RadioRxPacket first = make_rx_packet(make_1w_execute_with_sequence(0xC8, 0x1F44));
+  const RadioRxPacket second = make_rx_packet(make_1w_execute_with_sequence(0xC8, 0x1F47));
+  comp.process_received_packet_(first);
+  esphome::test_clock::advance_ms(40);
+  comp.process_received_packet_(first);
+  esphome::test_clock::advance_ms(SECOND_PRESS_MS - 40);
+  comp.process_received_packet_(second);
+  esphome::test_clock::advance_ms(40);
+  comp.process_received_packet_(second);
+
+  EXPECT_EQ(api_server.events_.size(), 2u) << "two presses 200 ms apart are two sender events";
+
+  // The second press's follow-up re-arms the linked device's poll from its own time.
+  const uint32_t delay = REMOTE_ACTIVITY_STATUS_POLL_DELAY_MS;
+  EXPECT_EQ(esphome::test_scheduler::run_until(t0 + delay), 0u)
+      << "the second press must have moved the poll out; a dropped press leaves it at the first";
+  EXPECT_EQ(esphome::test_scheduler::run_until(t0 + SECOND_PRESS_MS + delay), 1u);
 }
