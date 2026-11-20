@@ -10,6 +10,7 @@ Indexed by what you see, not by which subsystem is responsible.
 | Discover & Pair never finds the device | [The device is never found](#the-device-is-never-found) |
 | Pairing succeeded, but the device will not move | [Pairing succeeds but nothing moves](#pairing-succeeds-but-nothing-moves) |
 | The cover shows no position, or a stale one | [Position is unknown or state is stale](#position-is-unknown-or-state-is-stale) |
+| Commands from Home Assistant arrive late, or several at once | [Commands arrive late or in bursts](#commands-arrive-late-or-in-bursts) |
 | `stop` does nothing while the device is moving | [Commands are ignored mid-motion](#commands-are-ignored-mid-motion) |
 | A 1W button press does nothing | [1W commands do nothing](#1w-commands-do-nothing) |
 | The log says `home_io_control is marked FAILED`, `Radio setup failed:`, `Radio failed after setup:` or `Radio stopped responding:`, or an Active Issue sensor shows `RADIO_STOPPED_RESPONDING` | [The radio does not start](#the-radio-does-not-start) |
@@ -100,6 +101,21 @@ Pairing reported `paired`, the entity exists, and commands do nothing.
   polling after an earlier press — see
   [When a press is missed](configuration/remotes.md#when-a-press-is-missed).
 - [Diagnostic entities](diagnostic-entities.md) explains what each companion sensor reports.
+
+## Commands arrive late or in bursts
+
+A command from Home Assistant reaches the hub late, or several identical commands arrive within a
+few milliseconds: the log shows the same line, such as `optimistic stop`, several times in a row.
+The usual cause is the ESP32's Wi-Fi power saving holding back network traffic, not the radio. Turn
+it off in your YAML:
+
+```yaml
+wifi:
+  power_save_mode: none
+```
+
+With that, every command on a reporter's Heltec V4.3 went on air within about 50 ms of arriving
+([issue #196](https://github.com/laberning/home_io_control/issues/196)).
 
 ## Commands are ignored mid-motion
 

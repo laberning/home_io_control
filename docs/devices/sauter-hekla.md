@@ -22,7 +22,7 @@ the night light. Three heaters that were already paired with a Sauter Cozytouch 
 | Off, Heat, Auto and the presets | ⚠️ Not confirmed on a Hekla yet |
 | Target set in `auto` (temporary override) | ⚠️ Experimental: no Hekla has confirmed it |
 | Level the heater applies (`heating_level:` sensor) | ❌ Not available: the hub reads no level from a Hekla, so a `heating_level:` block on it is a configuration error and has to be removed |
-| Occupancy detection: switch (`occupancy_detection:`) and sensor (`occupancy:`) | ⚠️ Experimental: the registers were read and the setting switched in the Cozytouch app, but no one has used the Home Assistant entities yet. What the sensor shows with the detection off is not confirmed |
+| Occupancy detection: switch (`occupancy_detection:`) and sensor (`occupancy:`) | ✅ Confirmed: the switch turns the detection on and off, and the sensor shows presence whether the detection is on or off. With the detection on, the heater goes to its comfort temperature when it sees someone and back to eco a few minutes after it sees no one; with it off, it ignores presence |
 | Energy total (`energy:` sensor) | ⚠️ Experimental: not tested on a Hekla; a Sauter Tahual's total equals its display ([Energy sensor](../configuration/climate.md#energy-sensor)) |
 
 ## Modes in Home Assistant
@@ -60,9 +60,9 @@ climate:
     system_key: !secret cozytouch_key
     night_light:
       name: "Kids' room night light"
-    occupancy_detection:      # optional, experimental
+    occupancy_detection:      # optional
       name: "Kids' room occupancy detection"
-    occupancy:                # optional, experimental
+    occupancy:                # optional
       name: "Kids' room occupancy"
 ```
 
@@ -76,6 +76,9 @@ described in [Occupancy detection](../configuration/climate.md#occupancy-detecti
 - **A change made in the Cozytouch app shows at the next poll**, every `status_poll_interval`, or
   shortly after the hub hears the Cozytouch command the heater. A change made on the heater's panel
   shows at the next poll.
+- **A change made in Home Assistant reaches the Cozytouch app late.** The app shows it the next time
+  the Cozytouch reads the heater, which can take tens of minutes; the hub cannot change that
+  (issue #222).
 - **The panel has four brightness levels.** It writes 100, 1000, 2000 and 10000 to the brightness
   register, which Home Assistant shows as 3 %, 33 %, 66 % and 100 %, the percentages the Cozytouch app
   shows. The app's slider snaps to the heater's levels; once it produced 3000, which Home Assistant
@@ -92,6 +95,8 @@ SX1262 driver:
   (`0x0110`: 0 with nobody in the room, 1 while someone walks around the heater), in the issue thread.
 - The reporter's confirmation of pairing, target, room temperature, the window sensor and switching
   and dimming the night light, in the issue thread.
+- The reporter's confirmation of the occupancy switch and sensor in Home Assistant, including the
+  sensor with the detection off and how the heater acts on presence, in the issue thread.
 
 ## See also
 

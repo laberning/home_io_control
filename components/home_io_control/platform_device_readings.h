@@ -97,9 +97,8 @@ class IOHomeDeviceReadingSensor : public sensor::Sensor, public Component, publi
 ///       tests/corpus/captures/exchange/atlantic_agilia_exchange_status_read.yaml), but no report has opened a window
 ///       yet ([issue #165](https://github.com/laberning/home_io_control/issues/165)).
 /// \todo Experimental: the central-heating mode is read on one Atlantic Adelis mixed unit over four panel
-///       toggles (issue #243); confirm on a second unit. The occupancy is read on a Sauter Hekla with the
-///       detection on (issue #222); what it shows with the detection off is not confirmed, and no other heater
-///       has answered it yet.
+///       toggles (issue #243); confirm on a second unit. The occupancy is confirmed on a Sauter Hekla, with
+///       the detection on and off (issue #222); no other heater has answered it yet.
 class IOHomeDeviceReadingBinarySensor : public binary_sensor::BinarySensor,
                                         public Component,
                                         public DeviceReadingCompanion {

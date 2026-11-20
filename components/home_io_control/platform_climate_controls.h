@@ -37,8 +37,9 @@ namespace home_io_control {
 /// (set_reading(), DeviceReading::OPEN_WINDOW_DETECTION or OCCUPANCY_DETECTION) and writes the register that
 /// reading is (reading_register()). A write sends the register and reads it back; the switch shows what the heater
 /// answered, so it has no state until the first read (the boot poll) and never shows a command the heater did not
-/// confirm. A change made from the vendor app or on the heater shows at the next poll. The generated switches restore
-/// nothing and the open-window one is disabled by default, in the config entity category.
+/// confirm. A change made from the vendor app or on the heater shows at the next poll, or soon after the hub hears the
+/// vendor's controller write it. The generated switches restore nothing and the open-window one is disabled by default,
+/// in the config entity category.
 class IOHomeHeaterSettingSwitch : public switch_::Switch, public Component, public DeviceReadingCompanion {
  public:
   /// @brief Subscribe to the device's updates and publish what is already known.

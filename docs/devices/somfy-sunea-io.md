@@ -17,7 +17,7 @@ the project's reference actuator; the shutter variants come from field reports.
 | Identify (jog) | ✅ Confirmed |
 | Discover & Pair | ✅ Confirmed |
 | Driven by a linked 1W Smoove remote | ✅ Confirmed |
-| Open, close, stop from a [1W controller identity](../configuration/oneway-transmit.md) | 📣 Reported, including STOP during travel (issue #196) |
+| Open, close, stop from a [1W controller identity](../configuration/oneway-transmit.md) | 📣 Reported, including STOP during travel; Open extends and Close retracts the awning (issue #196) |
 
 ## Onboarding route that worked
 
@@ -54,6 +54,8 @@ For a roller-shutter variant use `io_device_type: "roller_shutter"` and drop `in
   [Radio tuning](../configuration/tuning.md).
 - **Solar variants need `low_power: true`.** The Sunea itself is mains-powered, but the RS100 and
   Oximo solar motors in the same catalogue are not — see [Somfy RS100](somfy-rs100.md).
+- **A status read while the motor runs is sometimes missed.** In the reported cases the next
+  poll caught up, so the position in Home Assistant lagged by one poll (issue #196).
 - **A wrong system key produces an error reply, not silence.** Captured deliberately, and useful
   when diagnosing: silence means the device never heard you, an error reply means it did.
 
@@ -62,6 +64,10 @@ For a roller-shutter variant use `io_device_type: "roller_shutter"` and drop `in
 31 corpus captures on the maintainer's own hardware, node `30E1F2` ("Patio Awning"). They cover
 every control command, position feedback, name get/set, identify, favorite, force-open, LBT
 contention, a wrong-key error, and ten probe scenarios, on SX1276, SX1262 and LR1121.
+
+A reporter's Heltec V4.3 with its board package delivered every two-way command in two logged
+sessions, including stop during travel, and missed 3 of 14 status reads, all while the motor ran
+(issue #196).
 
 The shutter variants rest on issue #65. A horizontal awning pair and an IO Vertical awning are
 also captured.

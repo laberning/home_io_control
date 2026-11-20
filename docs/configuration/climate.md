@@ -284,8 +284,9 @@ leaves the sensor without a state; the hub logs that once and stops asking until
 
 Some electric heaters notice when someone is in the room and lower their temperature while the room is
 empty. Two optional blocks show that in Home Assistant: a switch that turns the detection on or off,
-and a binary sensor that is on while the heater sees someone. Both were read and switched on a Sauter
-Hekla ([issue #222](https://github.com/laberning/home_io_control/issues/222)).
+and a binary sensor that is on while the heater sees someone. Both are confirmed on a Sauter Hekla
+([issue #222](https://github.com/laberning/home_io_control/issues/222)): with the detection on, the Hekla goes
+to its comfort temperature when it sees someone and back to eco a few minutes after it sees no one.
 
 ```yaml
 climate:
@@ -304,10 +305,12 @@ climate:
 - **The switch** shows the heater's setting, register `0x0101`, from a reply only: it has no state
   until the heater has answered, and it never shows a restored guess. Switching it writes the register
   and reads it back, so the switch shows what the heater holds. A change made in the vendor app or on
-  the heater shows at the next poll. It belongs to the config entity category.
+  the heater shows at the next poll, or soon after the hub hears the vendor's controller write it.
+  It belongs to the config entity category.
 - **The sensor** shows register `0x0110` as the heater reports it: on while it sees someone, off while
-  it does not, and no state until the heater has answered or when it answers without a value. What it
-  shows while the detection is off is not confirmed: only "detection off, nobody there" was seen.
+  it does not, and no state until the heater has answered or when it answers without a value. On a
+  Hekla it shows presence whether the detection is on or off; with the detection off, the heater
+  ignores it.
 - Each block costs one register read per poll, and an entry without it reads nothing extra. A heater
   that answers a read without a value leaves that entity without a state; the hub logs that once and
   stops asking for that register until the next boot.
