@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0106 -->
 
-**Status:** Accepted, amends [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md), [ADR 0103](0103-every-heater-value-is-a-reading-kept-by-reading.md), [ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md), [ADR 0105](0105-every-device-value-write-is-judged-by-one-rule-per-register.md) and [ADR 0068](0068-a-domestic-hot-water-device-is-a-water-heater.md) · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0110](0110-a-device-values-row-says-how-it-is-written-too.md); amends [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md), [ADR 0103](0103-every-heater-value-is-a-reading-kept-by-reading.md), [ADR 0104](0104-a-heaters-poll-reads-what-its-reading-rows-select.md), [ADR 0105](0105-every-device-value-write-is-judged-by-one-rule-per-register.md) and [ADR 0068](0068-a-domestic-hot-water-device-is-a-water-heater.md) · **Recorded:** 2026-11
 
 Builds on [ADR 0068](0068-a-domestic-hot-water-device-is-a-water-heater.md) (a domestic hot water device is a water
 heater), [ADR 0081](0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md) (boost and away travel in

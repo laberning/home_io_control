@@ -694,6 +694,10 @@ class IOHomeControlComponent : public Component,
   bool set_water_heater_target(const std::string &device_id, float celsius) override {
     return this->heater_controller_.set_water_heater_target(device_id, celsius);
   }
+  /// @brief The range a water heater's target is encoded over. @see HeaterController::water_heater_target_range()
+  [[nodiscard]] HeatingCardRange water_heater_target_range(const std::string &device_id) const override {
+    return this->heater_controller_.water_heater_target_range(device_id);
+  }
   /// @brief Set a water heater's operating mode. @see HeaterController::set_water_heater_mode()
   bool set_water_heater_mode(const std::string &device_id, DhwMode mode) override {
     return this->heater_controller_.set_water_heater_mode(device_id, mode);

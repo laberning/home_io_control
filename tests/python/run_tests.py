@@ -787,11 +787,15 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
     # A key belongs to one platform: the heater's `energy:` and the water heater's are two rows of two platforms.
     platform_keys = [(entry["platform"], entry["key"]) for entry in keyed.values()]
     assert len(platform_keys) == len(set(platform_keys)), platform_keys
+    water_heater_features = set().union(*(f for f in v.DEVICE_FEATURES.values() if "WATER_HEATER" in f))
+    water_heater_features -= set().union(*(f for f in v.DEVICE_FEATURES.values() if "WATER_HEATER" not in f))
     for name, entry in v.DEVICE_READINGS.items():
         assert entry["feature"] in v.FEATURES or entry["feature"] is None, name
         assert entry["platform"] in ("climate", "water_heater", "sensor", "cover"), name
         assert (entry["platform"] == "sensor") == (entry["source"] == "data_object"), name
-        assert (entry["platform"] == "water_heater") == (entry["feature"] == "WATER_HEATER"), name
+        # The water heater's capability, or one only water heater kinds carry (a member of a capability group built on
+        # it, such as HOT_WATER_TARGET_20_62), so a model's own member needs no edit here.
+        assert (entry["platform"] == "water_heater") == (entry["feature"] in water_heater_features), name
         # A cover's reading is declared by a key of the cover, not by a capability of its kind.
         assert (entry["platform"] == "cover") == ("opt_in_key" in entry), name
         if "opt_in_key" in entry:

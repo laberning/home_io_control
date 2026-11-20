@@ -73,7 +73,7 @@ inline WaterHeaterValues water_heater_values(const IoDevice &dev) {
   const auto number = [&dev](DeviceReading reading) { return reading_value(dev, reading).value_or(NAN); };
   const auto wire = [&dev](DeviceReading reading) { return reading_wire(dev, reading); };
   return {.water_c = number(DeviceReading::HOT_WATER_TEMPERATURE),
-          .target_c = number(DeviceReading::STATUS_SETPOINT),
+          .target_c = number(DeviceReading::HOT_WATER_TARGET),
           .mode = wire(DeviceReading::HOT_WATER_MODE),
           .heating = wire(DeviceReading::HOT_WATER_HEATING),
           .element = wire(DeviceReading::HOT_WATER_ELECTRIC_BACKUP),
@@ -98,7 +98,7 @@ inline void store_water_heater_values(IoDevice &dev, const WaterHeaterValues &v)
   };
   const auto wire = [&dev](DeviceReading reading, int value) { store_wire(dev, reading, value); };
   number(DeviceReading::HOT_WATER_TEMPERATURE, v.water_c);
-  number(DeviceReading::STATUS_SETPOINT, v.target_c);
+  number(DeviceReading::HOT_WATER_TARGET, v.target_c);
   wire(DeviceReading::HOT_WATER_MODE, v.mode);
   wire(DeviceReading::HOT_WATER_HEATING, v.heating);
   wire(DeviceReading::HOT_WATER_ELECTRIC_BACKUP, v.element);

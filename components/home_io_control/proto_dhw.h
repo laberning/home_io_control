@@ -10,7 +10,9 @@
 /// (proto_heating.h, DeviceRegister::DHW_*), and what the hub keeps of them are readings
 /// (proto_device_readings.h). What is here is what a register cannot carry.
 ///
-/// Its target temperature is the main parameter of a status reply, on the ordinary relative scale (0..0xC800) over
+/// Its target temperature is the main parameter of a status reply, on the ordinary relative scale (0..0xC800) over a
+/// range that is a fact of the heater's model: the range of its target row (DeviceReading::HOT_WATER_TARGET in
+/// proto_device_readings.h, selected by a capability of the group HOT_WATER_TARGET, ADR 0110). The Calypso's row is
 /// DHW_TARGET_MIN_C..DHW_TARGET_MAX_C. Three replies pin it: 54 C reads `A1E8`, 62 C reads `C800`, and AUTO reads
 /// `BE7A` = 60.0 C.
 ///
@@ -48,10 +50,11 @@ static constexpr uint8_t DHW_AWAY_UNTIL_TURNED_OFF = 255;
 
 // === Target temperature ===
 
-/// @brief Lower end of the target-temperature scale: main parameter 0 is 20 C.
+/// @brief Lower end of the Atlantic Calypso's target scale (the row with DeviceFeature::HOT_WATER_TARGET_20_62):
+/// main parameter 0 is 20 C.
 static constexpr float DHW_TARGET_MIN_C = 20.0F;
-/// @brief Upper end of the target-temperature scale: main parameter 0xC800 is 62 C, the highest target the
-/// Calypso's display offers.
+/// @brief Upper end of the Atlantic Calypso's target scale: main parameter 0xC800 is 62 C, the highest target its
+/// display offers.
 static constexpr float DHW_TARGET_MAX_C = 62.0F;
 
 // === Operating mode (functional parameters 15 and 16) ===

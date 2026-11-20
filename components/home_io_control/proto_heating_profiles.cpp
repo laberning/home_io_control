@@ -913,8 +913,13 @@ HeatingCardRange heating_card_range(const HeatingProfile &profile, float yaml_mi
 }
 
 HeatingCardRange device_temperature_range(const IoDevice &dev) {
-  if (has_feature(dev.features, device_feature::WATER_HEATER))
-    return {DHW_TARGET_MIN_C, DHW_TARGET_MAX_C};
+  if (has_feature(dev.features, device_feature::WATER_HEATER)) {
+    // A water heater's range is a fact of its model: the row of its target reading that its capabilities select.
+    const DeviceReadingRow *row = device_reading_row(dev, DeviceReading::HOT_WATER_TARGET);
+    const auto *source = row != nullptr ? std::get_if<StatusMainParameterSource>(&row->source) : nullptr;
+    if (source != nullptr && source->range)
+      return {source->range->min, source->range->max};
+  }
   const HeatingProfile *profile = find_heating_profile(dev);
   return profile != nullptr ? main_parameter_range(*profile, dev.temperature_range_min_c, dev.temperature_range_max_c)
                             : HeatingCardRange{dev.temperature_range_min_c, dev.temperature_range_max_c};

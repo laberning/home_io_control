@@ -289,18 +289,36 @@ class HeaterController {
 
   // === Water heater (device_feature::WATER_HEATER) ===
 
-  /// @brief Set a water heater's target temperature.
+  /// @brief Write a value of a water heater through the write side of the row its capabilities select (ADR 0110).
   ///
-  /// A main-parameter-only EXECUTE with the target on the relative scale over DHW_TARGET_MIN_C..
-  /// DHW_TARGET_MAX_C (encode_temperature_target(), device_temperature_range()), through the bare execute operation
-  /// without the cover's movement bookkeeping. The settle poll that follows reads the target back from the status
-  /// reply. Gated on device_feature::WATER_HEATER. The heater's display follows the target (issue #198).
+  /// The row of `reading` that device_reading_row() selects says how the value is written and plan_value_write()
+  /// judges it: a register write goes through send_heating_command() (the register's rule, ADR 0105), a
+  /// main-parameter EXECUTE through the bare operation without the cover's movement bookkeeping, over the row's range.
+  /// A value the row refuses is logged and never sent. After an accepted write the row's read side is read again
+  /// (read_back_()), so the entity shows what the heater then holds; a missed read-back does not undo the write. The
+  /// next poll moves to HEATING_POST_WRITE_POLL_DELAY_MS from now. Gated on device_feature::WATER_HEATER.
+  /// @param device_id Target device ID (hex string).
+  /// @param reading The reading to write (DeviceReading::HOT_WATER_TARGET, HOT_WATER_MODE).
+  /// @param value The value in the reading's natural units (degrees, a mode number).
+  /// @return true only if the device accepted the write.
+  bool write_value(const std::string &device_id, DeviceReading reading, float value);
+
+  /// @brief Set a water heater's target temperature: write_value() of DeviceReading::HOT_WATER_TARGET.
+  ///
+  /// A main-parameter-only EXECUTE with the target on the relative scale over the range of the heater's target row
+  /// (device_temperature_range()). The status is read back from the reply. The heater's display follows the target
+  /// (issue #198).
   /// @param device_id Target device ID (hex string).
   /// @param celsius Target in degrees Celsius; a value outside the heater's range is refused, not clamped.
   /// @return true when the device accepted the command.
   bool set_water_heater_target(const std::string &device_id, float celsius);
 
-  /// @brief Set a water heater's operating mode: a write of DeviceRegister::DHW_MODE.
+  /// @brief The range a water heater's target is encoded over, which is the range its card offers.
+  /// @param device_id Target device ID (hex string).
+  /// @return The range of the heater's target row; NaN at both ends for an unknown device.
+  [[nodiscard]] HeatingCardRange water_heater_target_range(const std::string &device_id) const;
+
+  /// @brief Set a water heater's operating mode: write_value() of DeviceReading::HOT_WATER_MODE.
   ///
   /// The register is read back at once, so the entity shows what the heater then holds, and so is the
   /// target (the status read of the poll), which the mode decides. The next poll moves to
@@ -409,6 +427,12 @@ class HeaterController {
   /// @param value The value, as the register's row takes it.
   /// @return true only if the device acknowledged the write; a missed read-back does not change that.
   bool write_dhw_register_(const std::string &device_id, DeviceRegister fn, float value);
+
+  /// @brief Read a row's read side again after a write of its value.
+  /// @param device_id Target device ID.
+  /// @param row The row that was written: a register source is read from its register, a status source by the status
+  ///        read. Any other source kind reads nothing.
+  void read_back_(const std::string &device_id, const DeviceReadingRow &row);
 
   /// @brief Switch a water heater's boost or away through the operating-mode word (ADR 0081).
   ///

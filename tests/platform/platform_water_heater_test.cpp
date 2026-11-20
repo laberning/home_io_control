@@ -143,6 +143,16 @@ TEST(PlatformWaterHeater, TraitsOfferTheReadingsTheThreeModesAndTheHeatersRange)
   EXPECT_FALSE(traits.supports_mode(WATER_HEATER_MODE_OFF));
 }
 
+TEST(PlatformWaterHeater, TheCardsRangeFollowsTheRangeOfTheHeatersTargetRow) {
+  MockHubWaterHeater hub;
+  hub.water_heater_range = {20.0F, 70.0F};  // a model whose target row is wider than the Calypso's
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+  const WaterHeaterTraits traits = entity.get_traits();
+  EXPECT_FLOAT_EQ(traits.get_min_temperature(), 20.0F);
+  EXPECT_FLOAT_EQ(traits.get_max_temperature(), 70.0F);
+}
+
 TEST(PlatformWaterHeater, SetupRegistersTheDeviceAsAWaterHeater) {
   MockHubWaterHeater hub;
   IOHomeWaterHeater entity;

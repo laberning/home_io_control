@@ -64,6 +64,7 @@ const std::map<std::string, DeviceFeature> CPP_FEATURES = {
     {"NO_STATUS_READ", device_feature::NO_STATUS_READ},
     {"HEAT_PUMP_ENERGY", device_feature::HEAT_PUMP_ENERGY},
     {"HEAT_PUMP_OUTDOOR_TEMPERATURE", device_feature::HEAT_PUMP_OUTDOOR_TEMPERATURE},
+    {"HOT_WATER_TARGET_20_62", device_feature::HOT_WATER_TARGET_20_62},
 };
 
 /// The names of the capabilities in a set.
@@ -304,6 +305,18 @@ static_assert(std::size(SOURCE_KIND_NAMES) == std::variant_size_v<ReadingSource>
 constexpr DeviceReading COVER_READINGS[] = {DeviceReading::RAIN, DeviceReading::SUN_LEVEL, DeviceReading::BATTERY_LEVEL,
                                             DeviceReading::BATTERY_STATE, DeviceReading::BATTERY_LOW};
 
+/// Is a capability the water heater's own: its base capability or a member of a group built on it?
+bool is_water_heater_feature(std::optional<DeviceFeature> feature) {
+  if (!feature)
+    return false;
+  if (*feature == DeviceFeature::WATER_HEATER)
+    return true;
+  return std::ranges::any_of(FEATURE_GROUPS, [feature](const FeatureGroup &group) {
+    return group.base == DeviceFeature::WATER_HEATER &&
+           std::ranges::find(group.members, *feature) != group.members.end();
+  });
+}
+
 /// The upper-case name of a register or reading, as the Python mirror writes it.
 std::string upper(std::string name) {
   std::ranges::transform(name, name.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
@@ -385,10 +398,9 @@ TEST(DeviceFeaturesSync, EveryDeviceReadingIsMirroredWithItsCapabilitySourceAndR
     // heater's, every other the climate entity's.
     const bool data_object = std::holds_alternative<DataObjectSource>(row.source);
     const bool cover_reading = std::ranges::find(COVER_READINGS, row.reading) != std::end(COVER_READINGS);
-    const std::string platform = data_object ? "sensor"
-                                 : cover_reading
-                                     ? "cover"
-                                     : (row.feature == DeviceFeature::WATER_HEATER ? "water_heater" : "climate");
+    const std::string platform = data_object     ? "sensor"
+                                 : cover_reading ? "cover"
+                                                 : (is_water_heater_feature(row.feature) ? "water_heater" : "climate");
     EXPECT_EQ(test::quoted_strings_of(field_text(entry, "platform")), std::vector<std::string>{platform}) << name;
   }
   EXPECT_EQ(python.size(), device_readings().size()) << "DEVICE_READINGS names a reading the C++ table does not have";

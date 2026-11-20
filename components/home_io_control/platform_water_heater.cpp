@@ -86,8 +86,14 @@ water_heater::WaterHeaterTraits IOHomeWaterHeater::traits() {
   traits.add_feature_flags(
       water_heater::WATER_HEATER_SUPPORTS_CURRENT_TEMPERATURE | water_heater::WATER_HEATER_SUPPORTS_TARGET_TEMPERATURE |
       water_heater::WATER_HEATER_SUPPORTS_OPERATION_MODE | water_heater::WATER_HEATER_SUPPORTS_AWAY_MODE);
-  traits.set_min_temperature(DHW_TARGET_MIN_C);
-  traits.set_max_temperature(DHW_TARGET_MAX_C);
+  // The range is a fact of the heater's model, the range of its target row (ADR 0110).
+  if (this->heating_port_ != nullptr) {
+    const HeatingCardRange range = this->heating_port_->water_heater_target_range(this->device_id_);
+    if (!std::isnan(range.min_c) && !std::isnan(range.max_c)) {
+      traits.set_min_temperature(range.min_c);
+      traits.set_max_temperature(range.max_c);
+    }
+  }
   traits.set_target_temperature_step(WATER_HEATER_TARGET_STEP_C);
   traits.set_supported_modes({water_heater::WATER_HEATER_MODE_HEAT_PUMP, water_heater::WATER_HEATER_MODE_ECO,
                               water_heater::WATER_HEATER_MODE_PERFORMANCE});
@@ -144,7 +150,7 @@ bool IOHomeWaterHeater::holds_automatic_mode_() const {
 
 bool IOHomeWaterHeater::sync_from_readings_(const IoDevice &dev) {
   const float water_c = reading_value(dev, DeviceReading::HOT_WATER_TEMPERATURE).value_or(NAN);
-  const float target_c = reading_value(dev, DeviceReading::STATUS_SETPOINT).value_or(NAN);
+  const float target_c = reading_value(dev, DeviceReading::HOT_WATER_TARGET).value_or(NAN);
   const int mode_wire = reading_wire(dev, DeviceReading::HOT_WATER_MODE);
   const int away = reading_wire(dev, DeviceReading::HOT_WATER_AWAY);
   bool changed = false;
@@ -184,8 +190,11 @@ void IOHomeWaterHeater::on_device_update_(const IoDevice &dev) {
 void IOHomeWaterHeater::dump_config() {
   LOG_WATER_HEATER("", "IO-Homecontrol Water Heater", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
-  ESP_LOGCONFIG(TAG, "  Target temperature range: %.0f-%.0f C", static_cast<double>(DHW_TARGET_MIN_C),
-                static_cast<double>(DHW_TARGET_MAX_C));
+  if (this->heating_port_ != nullptr) {
+    const HeatingCardRange range = this->heating_port_->water_heater_target_range(this->device_id_);
+    ESP_LOGCONFIG(TAG, "  Target temperature range: %.0f-%.0f C", static_cast<double>(range.min_c),
+                  static_cast<double>(range.max_c));
+  }
   this->log_poll_interval_config_(TAG, heater_poll_interval_ms);
   ESP_LOGCONFIG(TAG, "  Status: readings, target, mode and away mode confirmed on hardware");
 }

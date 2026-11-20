@@ -188,7 +188,7 @@ TEST(HubDhw, AStatusReplyChangesOnlyTheWaterHeaterReadings) {
   EXPECT_EQ(battery_state_of(*dev), BatteryState::NOT_REPORTED);
   EXPECT_TRUE(std::isnan(test::number_read(*dev, DeviceReading::SETPOINT)))
       << "the heater readings are a radiator's, never touched";
-  EXPECT_FLOAT_EQ(test::number_read(*dev, DeviceReading::STATUS_SETPOINT), 54.0F)
+  EXPECT_FLOAT_EQ(test::number_read(*dev, DeviceReading::HOT_WATER_TARGET), 54.0F)
       << "a water heater's target is the setpoint its status reply reports";
   EXPECT_FALSE(reading_value(*dev, DeviceReading::HEATING_LEVEL).has_value());
   EXPECT_EQ(comp.poll_policy_.get_next_update("ABC123"), 0u) << "no follow-up poll for a 'moving' report";

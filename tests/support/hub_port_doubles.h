@@ -245,6 +245,9 @@ class HeatingPortDouble : public HubHeatingPort {
     this->device_readings.emplace_back(device_id, reading);
   }
 
+  [[nodiscard]] HeatingCardRange water_heater_target_range(const std::string &) const override {
+    return this->water_heater_range;
+  }
   bool set_water_heater_target(const std::string &, float celsius) override {
     this->water_heater_targets.push_back(celsius);
     return this->write_result;
@@ -270,6 +273,8 @@ class HeatingPortDouble : public HubHeatingPort {
   std::vector<std::pair<float, float>> temperature_ranges;             ///< (min, max) pairs set.
   std::vector<std::pair<std::string, DeviceReading>> device_readings;  ///< (device, reading) asked to be read.
   std::vector<float> water_heater_targets;
+  /// The range the card offers; the Calypso's, which is the range of its target row.
+  HeatingCardRange water_heater_range{DHW_TARGET_MIN_C, DHW_TARGET_MAX_C};
   std::vector<DhwMode> water_heater_modes;
   std::vector<bool> water_heater_boosts;
   std::vector<bool> water_heater_aways;

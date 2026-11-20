@@ -56,7 +56,7 @@ template<size_t N> IoDevice status_stored_from(const uint8_t (&bytes)[N]) {
 }
 
 template<size_t N> float target_of(const uint8_t (&bytes)[N]) {
-  return test::number_read(status_stored_from(bytes), DeviceReading::STATUS_SETPOINT);
+  return test::number_read(status_stored_from(bytes), DeviceReading::HOT_WATER_TARGET);
 }
 
 }  // namespace
@@ -157,7 +157,7 @@ TEST(CorpusDhw, TheOperatingStatusReadReportsCapabilitiesAndBothFieldsOffAtRest)
       {status_stored_from(corpus::atlantic_calypso_probe_status_fp_high_frame2_bytes), 62.0F, "manual, ECO off"},
   };
   for (const auto &c : cases) {
-    EXPECT_FLOAT_EQ(test::number_read(c.stored, DeviceReading::STATUS_SETPOINT), c.target_c)
+    EXPECT_FLOAT_EQ(test::number_read(c.stored, DeviceReading::HOT_WATER_TARGET), c.target_c)
         << "the main parameter stays in place: " << c.display;
     EXPECT_EQ(reading_wire(c.stored, DeviceReading::HOT_WATER_CAPABILITIES), DHW_CAPABILITY_AWAY | DHW_CAPABILITY_BOOST)
         << "FP15 000C: " << c.display;

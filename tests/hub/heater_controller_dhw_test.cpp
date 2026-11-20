@@ -62,6 +62,55 @@ TEST(HeaterController, TheTargetIsAMainParameterOnlyExecuteThroughTheBareOperati
   EXPECT_EQ(fx.timers[0].delay_ms, HEATING_POST_WRITE_POLL_DELAY_MS) << "the heating state is read again soon";
 }
 
+TEST(HeaterController, TheTargetIsReadBackByTheStatusReadOfItsRowAndAMissedReadDoesNotFailTheWrite) {
+  HeaterControllerFixture fx;
+  make_water_heater(fx);
+
+  EXPECT_TRUE(fx.controller.set_water_heater_target("ABC123", 54.0F));
+  ASSERT_EQ(fx.status_reads.size(), 1u) << "the row's read side is the status reply";
+  EXPECT_EQ(fx.status_reads[0].request.data[0], PRIVATE_STATUS_MP_FP);
+
+  HeaterControllerFixture missed;
+  make_water_heater(missed);
+  missed.status_read_result = false;
+  EXPECT_TRUE(missed.controller.set_water_heater_target("ABC123", 54.0F)) << "the write was accepted";
+}
+
+TEST(HeaterController, AValueWriteOfAReadingWithNoWriteSideIsRefusedWithoutAFrame) {
+  HeaterControllerFixture fx;
+  make_water_heater(fx);
+  EXPECT_FALSE(fx.controller.write_value("ABC123", DeviceReading::HOT_WATER_ENERGY, 1.0F));
+  EXPECT_TRUE(fx.radio.get_sent_data().empty());
+  EXPECT_TRUE(fx.executes.empty());
+}
+
+TEST(HeaterController, AValueWriteToADeviceThatIsNoWaterHeaterIsRefusedWithoutAFrame) {
+  HeaterControllerFixture fx;
+  make_cover(fx);
+  EXPECT_FALSE(fx.controller.write_value("ABC123", DeviceReading::HOT_WATER_TARGET, 54.0F));
+  EXPECT_FALSE(fx.controller.set_water_heater_mode("ABC123", DhwMode::AUTO));
+  EXPECT_TRUE(fx.radio.get_sent_data().empty());
+  EXPECT_TRUE(fx.executes.empty());
+}
+
+TEST(HeaterController, ABadModeValueIsJudgedByTheRegistersRuleBeforeAnyFrame) {
+  HeaterControllerFixture fx;
+  make_water_heater(fx);
+  EXPECT_FALSE(fx.controller.write_value("ABC123", DeviceReading::HOT_WATER_MODE, 3.0F));
+  EXPECT_TRUE(fx.radio.get_sent_data().empty());
+}
+
+TEST(HeaterController, TheCardRangeOfAWaterHeaterIsTheRangeOfItsTargetRow) {
+  HeaterControllerFixture fx;
+  const IoDevice *dev = make_water_heater(fx);
+  const HeatingCardRange range = fx.controller.water_heater_target_range("ABC123");
+  const HeatingCardRange row_range = device_temperature_range(*dev);
+  EXPECT_FLOAT_EQ(range.min_c, row_range.min_c);
+  EXPECT_FLOAT_EQ(range.max_c, row_range.max_c);
+  EXPECT_FLOAT_EQ(range.max_c, DHW_TARGET_MAX_C) << "the Calypso's row";
+  EXPECT_TRUE(std::isnan(fx.controller.water_heater_target_range("FFFFFF").min_c)) << "an unknown device has none";
+}
+
 TEST(HeaterController, ARefusedTargetExecuteMovesNoPoll) {
   HeaterControllerFixture fx;
   make_water_heater(fx);

@@ -327,7 +327,7 @@ namespace {
 std::optional<float> target_of(const IoFrame &reply) {
   IoDevice dev = test::water_heater_record();
   test::apply_status_reply(dev, reply);
-  return reading_value(dev, DeviceReading::STATUS_SETPOINT);
+  return reading_value(dev, DeviceReading::HOT_WATER_TARGET);
 }
 
 }  // namespace
@@ -357,7 +357,7 @@ TEST(ProtoDhw, EveryEncodedTargetDecodesBackWithinATenth) {
     uint16_t mp = 0;
     ASSERT_EQ(encode_temperature_target(range, t, mp), HeatingRefusal::NONE) << t;
     const uint8_t bytes[] = {static_cast<uint8_t>(mp >> 8), static_cast<uint8_t>(mp & 0xFF)};
-    const auto back = decode_status_reading(DeviceReading::STATUS_SETPOINT, bytes, 0, range.min_c, range.max_c);
+    const auto back = decode_status_reading(DeviceReading::HOT_WATER_TARGET, bytes, 0, range.min_c, range.max_c);
     ASSERT_TRUE(back.has_value()) << t;
     EXPECT_NEAR(*back, t, 0.05F) << t;
   }

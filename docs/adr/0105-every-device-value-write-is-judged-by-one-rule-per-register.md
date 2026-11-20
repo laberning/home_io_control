@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0105 -->
 
-**Status:** Accepted, amends [ADR 0054](0054-heaters-are-read-back-over-the-private-register-protocol.md), [ADR 0057](0057-temperature-setpoints-travel-in-the-main-parameter.md) and [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md); amended by [ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0054](0054-heaters-are-read-back-over-the-private-register-protocol.md), [ADR 0057](0057-temperature-setpoints-travel-in-the-main-parameter.md) and [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md); amended by [ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md) and [ADR 0110](0110-a-device-values-row-says-how-it-is-written-too.md) · **Recorded:** 2026-11
 
 Builds on [ADR 0101](0101-device-readings-are-one-named-table-with-sources-and-one-codec-vocabulary.md) (the shared
 codecs) and [ADR 0054](0054-heaters-are-read-back-over-the-private-register-protocol.md) (one register table drives

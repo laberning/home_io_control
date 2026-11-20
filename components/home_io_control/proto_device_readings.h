@@ -13,9 +13,10 @@
 ///  - RegisterSource: one private register of a heater or a water heater, decoded with a ValueCodec
 ///    (proto_value_codecs.h), or one slice of it with a codec of its own; optionally only while another register
 ///    holds a value;
-///  - StatusMainParameterSource: the main parameter of a status reply, as a heating level or a temperature;
+///  - StatusMainParameterSource: the main parameter of a status reply, as a heating level or a temperature (over the
+///    device's range, or a range of the row's own);
 ///  - StatusFunctionalParameterSource: one of the functional parameters FP9-FP16 of a status reply, as the whole word
-///    or one two-bit field of it;
+///    or one two-bit field of it that equals a given value;
 ///  - DerivedSource: a value worked out from other readings (the minutes left of whichever run is active), with the
 ///    registers it needs polled;
 ///  - DataObjectSource: a slice of a device's data object, read on a schedule through a transfer recipe
@@ -27,6 +28,12 @@
 ///
 /// A reading that is read on a schedule (data object, event, limitation) also says what its value becomes when the
 /// reads keep missing (ReadingStale).
+///
+/// A row can also say how its value is written (DeviceReadingRow::write, ValueWrite): a register write, judged by
+/// the register's own rule, or a main-parameter EXECUTE over the row's range (ADR 0110). The write side shares the
+/// read side's form, so a range or a scale exists once. Several rows may play the same part of one reading (a water
+/// heater's target, whose range differs by model); the device's capabilities select exactly one of them
+/// (device_reading_row()), and every such row is gated by a member of one capability group (FeatureGroup).
 ///
 /// Every value but a derived one is kept in the device record, by reading (DeviceReadingValues), since a read takes
 /// seconds and answers later than the poll that asked, and a status reply answers without being asked for. What the
@@ -87,9 +94,11 @@ enum class DeviceReading : uint8_t {
   NIGHT_LIGHT_BRIGHTNESS,      ///< The night light's brightness register as a percentage, 0-100.
   HEATING_LEVEL,               ///< The heating level, or setpoint alias, a heater's status reply reports (low byte).
   STATUS_SETPOINT,             ///< The setpoint a status reply reports, degrees, rounded to tenths: a temperature
-                               ///< heater's setpoint, a water heater's target.
+                               ///< heater's setpoint.
   HOT_WATER_TEMPERATURE,       ///< A water heater's water temperature, degrees.
   HOT_WATER_MODE,              ///< A water heater's operating mode (DhwMode).
+  HOT_WATER_TARGET,            ///< A water heater's target temperature, degrees, from the main parameter of its status
+                               ///< reply; the row the device's capabilities select holds its range.
   HOT_WATER_HEATING,           ///< The water heater heats at all (heat pump, element or both).
   HOT_WATER_ELECTRIC_BACKUP,   ///< The water heater's electric element runs.
   HOT_WATER_HEAT_PUMP,         ///< The water heater's heat pump runs.
@@ -154,13 +163,17 @@ enum class StatusValueForm : uint8_t {
 ///          status read (DeviceFeature::NO_STATUS_READ) never gets one.
 struct StatusMainParameterSource {
   StatusValueForm form;  ///< What the main parameter means for this reading.
+  /// StatusValueForm::TEMPERATURE: the range the temperature is encoded over, a product fact of the row. Without it
+  /// the device's range applies (device_temperature_range(): the YAML range or a profile's fixed one). The write side
+  /// of the row (MainParameterWrite) encodes over the same range.
+  std::optional<ValueRange> range = std::nullopt;
 };
 
 /// @brief How a functional parameter of a status reply becomes a reading.
 enum class StatusParameterForm : uint8_t {
-  WORD,      ///< The whole 16-bit value.
-  FIELD_ON,  ///< A two-bit field of the value, shifted by StatusFunctionalParameterSource::shift: 1 when the field
-             ///< reads 1 (on), 0 for any other value (keep, off).
+  WORD,          ///< The whole 16-bit value.
+  FIELD_EQUALS,  ///< A two-bit field of the value, shifted by StatusFunctionalParameterSource::shift: 1 when the field
+                 ///< equals StatusFunctionalParameterSource::equals, 0 for any other value.
 };
 
 /// @brief A reading that is one of the functional parameters FP9-FP16 of a status reply.
@@ -169,7 +182,8 @@ enum class StatusParameterForm : uint8_t {
 struct StatusFunctionalParameterSource {
   uint8_t fp;                ///< The functional parameter, 9-16.
   StatusParameterForm form;  ///< What the value means for this reading.
-  uint8_t shift{0};          ///< FIELD_ON: lowest bit of the field.
+  uint8_t shift{0};          ///< FIELD_EQUALS: lowest bit of the field.
+  uint8_t equals{0};         ///< FIELD_EQUALS: the value of the field (0-3) that reads as 1.
 };
 
 /// @brief A reading worked out from other readings of the same device.
@@ -267,6 +281,27 @@ enum class CardUse : uint8_t {
   TARGET_TEMPERATURE,   ///< The card's target and its bounds (HeatingFeatures::target_temperature).
 };
 
+/// @brief A write target that sets a private register; the register's row judges and encodes the value (ADR 0105).
+struct RegisterWrite {
+  DeviceRegister fn;  ///< The register written.
+};
+
+/// @brief A write target that sends the value as the main parameter of an EXECUTE.
+/// @details The value is encoded over the range of the row's read side (StatusMainParameterSource::range), the same
+///          range that decodes the status reply, and a value outside it is refused, never clamped.
+struct MainParameterWrite {};
+
+/// @brief Where a written value goes. A further kind is a further alternative with its branch in plan_value_write().
+using ValueWriteTarget = std::variant<RegisterWrite, MainParameterWrite>;
+
+/// @brief How a reading's value is written (ADR 0110).
+/// @details The target is the one part this struct holds so far; a guard, a write sent before and a rounding policy
+///          come with ADR 0110's other parts. The value is encoded by the form of the row's read side, never by a
+///          copy of it. After a write the hub reads the row's read side again.
+struct ValueWrite {
+  ValueWriteTarget target;  ///< Where the value goes.
+};
+
 /// @brief One row of the reading table.
 struct DeviceReadingRow {
   const char *name;       ///< Lower-case name for logs; its upper-case form is the key of the codegen mirror.
@@ -283,6 +318,7 @@ struct DeviceReadingRow {
   CardUse card{CardUse::NONE};  ///< The role the climate card gives the reading; read by heating_profile_reads().
   ReadingStale stale{ReadingStale::KEEP};  ///< What a scheduled reading's value becomes after repeated misses; the
                                            ///< other kinds never consult it.
+  std::optional<ValueWrite> write = std::nullopt;  ///< How the value is written; none for a reading the hub only reads.
 };
 
 /// @brief What kind of number a reading is.
@@ -314,6 +350,32 @@ const DeviceReadingRow *find_device_reading(DeviceReading reading, std::span<con
 
 /// @brief Every reading, in table order, for code that checks the whole table.
 std::span<const DeviceReadingRow> device_readings();
+
+/// @brief How many rows of a reading a device's capabilities select.
+/// @details A reading with one row has that row (its capability, if any, says whether a device may have the reading,
+///          device_can_have_reading()). A reading with several rows plays one part for devices that differ by model
+///          (a water heater's target range): a row applies when the device has its capability. Exactly one must, which
+///          the capability groups guarantee for every kind of the type table.
+/// @param dev The device record (its resolved features).
+/// @param reading The reading.
+/// @param table The rows to look in.
+/// @return The number of selected rows; 0 when the table has no row of the reading or no row applies.
+[[nodiscard]] size_t device_reading_row_matches(const IoDevice &dev, DeviceReading reading,
+                                                std::span<const DeviceReadingRow> table);
+
+/// @brief The row of a reading that a device's capabilities select, from a table of the caller's.
+/// @param dev The device record (its resolved features).
+/// @param reading The reading.
+/// @param table The rows to look in.
+/// @return The row, or nullptr when no row or more than one applies (device_reading_row_matches() is not 1).
+[[nodiscard]] const DeviceReadingRow *device_reading_row(const IoDevice &dev, DeviceReading reading,
+                                                         std::span<const DeviceReadingRow> table);
+
+/// @brief The row of a reading that a device's capabilities select.
+/// @param dev The device record (its resolved features).
+/// @param reading The reading.
+/// @return The row, or nullptr when no row or more than one applies.
+[[nodiscard]] const DeviceReadingRow *device_reading_row(const IoDevice &dev, DeviceReading reading);
 
 /// @brief The current value of a reading for a device, wherever its source keeps it.
 /// @details A derived reading is worked out from other readings; every other kind is the value the device record
@@ -364,15 +426,35 @@ std::optional<float> decode_event_reading(const EventSource &source, const IoFra
 ///          over the range and rounded to tenths of a degree (a step of the scale is under a thousandth of a degree,
 ///          so 20 C would read 19.9998 unrounded) and clamped into the range, so a range end that is no whole tenth
 ///          stays a setpoint the range accepts.
-/// @param reading A reading with a StatusMainParameterSource (DeviceReading::HEATING_LEVEL or STATUS_SETPOINT).
+/// @param row A row with a StatusMainParameterSource (the row device_reading_row() selects for the device).
 /// @param main_parameter The two bytes of the main parameter as the status reply carries them.
 /// @param level_prefix High byte of a level or alias (HeatingProfile::mp_prefix, HEATING_LEVEL_MP_PREFIX).
-/// @param range_min_c Lower end of the device's temperature encoding range (device_temperature_range()).
+/// @param range_min_c Lower end of the device's temperature encoding range (device_temperature_range()); a row with a
+///        range of its own (StatusMainParameterSource::range) uses that one.
 /// @param range_max_c Upper end of it.
-/// @return The value (a level's low byte, degrees Celsius), or nullopt when `reading` is not a status reading, the
+/// @return The value (a level's low byte, degrees Celsius), or nullopt when `row` is not a status row, the
 ///         bytes are too few or the main parameter is not the kind of value the reading is.
+std::optional<float> decode_status_reading(const DeviceReadingRow &row, std::span<const uint8_t> main_parameter,
+                                           uint8_t level_prefix, float range_min_c, float range_max_c);
+
+/// @brief decode_status_reading() for the first row of a reading, for a reading that has one row.
+/// @param reading A reading with a StatusMainParameterSource row.
+/// @param main_parameter The two bytes of the main parameter.
+/// @param level_prefix High byte of a level or alias.
+/// @param range_min_c Lower end of the device's temperature encoding range.
+/// @param range_max_c Upper end of it.
+/// @return The value, or nullopt as for the row overload and when the reading has no row.
 std::optional<float> decode_status_reading(DeviceReading reading, std::span<const uint8_t> main_parameter,
                                            uint8_t level_prefix, float range_min_c, float range_max_c);
+
+/// @brief The value a functional parameter's word gives for a status parameter reading.
+/// @details The whole word for StatusParameterForm::WORD; for FIELD_EQUALS 1 when the two-bit field at the source's
+///          shift equals the source's `equals` and 0 for any other value, so a heater that reports "boost" as field 1
+///          and one that reports it as field 2 differ by a row's number, not by code.
+/// @param source The reading's functional parameter and form.
+/// @param word The 16-bit value of the functional parameter.
+/// @return The reading's value.
+[[nodiscard]] float decode_status_parameter(const StatusFunctionalParameterSource &source, uint16_t word);
 
 /// @brief Store the readings that are functional parameters of a status reply.
 /// @details Each reading with a StatusFunctionalParameterSource whose parameter the reply carries
@@ -390,8 +472,9 @@ struct StatusStore {
 };
 
 /// @brief Decode a status reply's main parameter for a status reading and store it.
-/// @details The range is the device's (device_temperature_range()). A main parameter that is none of this reading
-///          stores nothing and leaves the reading as it was: the caller decides whether that clears it.
+/// @details The row is the one the device's capabilities select (device_reading_row()), the range its own or the
+///          device's (device_temperature_range()). A main parameter that is none of this reading stores nothing and
+///          leaves the reading as it was: the caller decides whether that clears it.
 /// @param dev The device record.
 /// @param reading A reading with a StatusMainParameterSource.
 /// @param main_parameter The two bytes of the main parameter.
@@ -462,6 +545,36 @@ int register_wire(const IoDevice &dev, DeviceRegister fn);
 /// @param fn The register, or none.
 /// @return The value, or -1 when it has none or there is no register.
 int register_wire(const IoDevice &dev, std::optional<DeviceRegister> fn);
+
+// === The write side ===
+
+/// @brief Why a value is not written.
+enum class ValueWriteRefusal : uint8_t {
+  NONE,           ///< The value is written.
+  NO_WRITE_SIDE,  ///< The row says no way to write its value.
+  OUT_OF_RANGE,   ///< A finite value outside the range the main parameter is encoded over; never clamped.
+  UNENCODABLE,    ///< A value that is not a number, or a row whose read side gives no range to encode over.
+  REGISTER_RULE,  ///< The register's own rule refuses the value (heating_write_accepts()).
+};
+
+/// @brief What writing a value to a reading is: nothing, a register write or a main-parameter EXECUTE.
+struct ValueWritePlan {
+  ValueWriteRefusal refusal{ValueWriteRefusal::NO_WRITE_SIDE};  ///< NONE when the value is to be sent.
+  std::optional<DeviceRegister> register_fn;                    ///< Set for a register write: the register.
+  float register_value{0.0F};                                   ///< The value the register's row encodes.
+  uint16_t main_parameter{0};                                   ///< Set for an EXECUTE: the encoded main parameter.
+
+  /// @return true when the plan sends a main-parameter EXECUTE (no register, no refusal).
+  [[nodiscard]] bool is_execute() const { return this->refusal == ValueWriteRefusal::NONE && !this->register_fn; }
+};
+
+/// @brief Plan the write of a value through a row's write side, without sending anything.
+/// @details A register write is judged by the register's rule (heating_write_accepts(), ADR 0105); an EXECUTE is
+///          encoded over the range of the row's read side and a value outside it is refused (ADR 0110).
+/// @param row The row of the reading, as device_reading_row() selected it.
+/// @param value The value in the reading's natural units (degrees, a mode number).
+/// @return The plan; refusal is NONE when the value is to be sent.
+[[nodiscard]] ValueWritePlan plan_value_write(const DeviceReadingRow &row, float value);
 
 // === The store door ===
 

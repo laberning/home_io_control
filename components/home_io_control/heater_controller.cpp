@@ -24,10 +24,12 @@
 
 #include "esphome/core/log.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <iterator>
 #include <optional>
+#include <string>
 #include <variant>
 
 namespace esphome {
@@ -495,24 +497,63 @@ bool HeaterController::read_dhw_status(const std::string &device_id, uint8_t max
          this->hub_.status_read(device_id, request, 0, max_tries);
 }
 
-bool HeaterController::set_water_heater_target(const std::string &device_id, float celsius) {
-  const IoDevice *dev = this->registry_.get(device_id);
+bool HeaterController::write_value(const std::string &device_id, DeviceReading reading, float value) {
+  const DeviceReadingRow *first = find_device_reading(reading);
+  if (first == nullptr)
+    return false;  // not a reading of the table: nothing says how to write it
+  const char *name = first->name;
+  const IoDevice *dev = this->water_heater_for_write_(device_id, name);
   if (dev == nullptr)
     return false;
-  uint16_t main_parameter = 0;
-  // The range is the device's (device_temperature_range()), the rule every temperature heater's target follows: a
-  // target outside it is refused, never sent as an end of the range.
-  const HeatingCardRange range = device_temperature_range(*dev);
-  if (encode_temperature_target(range, celsius, main_parameter) != HeatingRefusal::NONE) {
-    ESP_LOGW(detail::TAG, "Hot water target %.1f C for device %s rejected: outside %.0f-%.0f C",
-             static_cast<double>(celsius), device_id.c_str(), static_cast<double>(range.min_c),
-             static_cast<double>(range.max_c));
+  const DeviceReadingRow *row = device_reading_row(*dev, reading);
+  if (row == nullptr || !row->write) {
+    ESP_LOGW(detail::TAG, "Device %s has no way to write %s", device_id.c_str(), name);
     return false;
   }
-  // The settle poll the execute operation arms reads the target back.
-  return this->execute_dhw_(device_id, "hot water target", [this, main_parameter](IoFrame &request, const IoDevice &d) {
-    return create_execute_heating_main_parameter(request, this->node_id_, d.node_id, d.low_power, main_parameter);
-  });
+  // A value the row refuses is never sent: the range and the register's rule are the row's.
+  const ValueWritePlan plan = plan_value_write(*row, value);
+  if (plan.refusal != ValueWriteRefusal::NONE) {
+    ESP_LOGW(detail::TAG, "Device %s: %s %.1f rejected (the value is outside what the device takes)", device_id.c_str(),
+             name, static_cast<double>(value));
+    return false;
+  }
+  bool accepted = false;
+  if (plan.register_fn) {
+    accepted = this->send_heating_command(device_id, *plan.register_fn, plan.register_value);
+  } else {
+    // The label of the operation is the row's name in words ("hot water target").
+    std::string action(name);
+    std::ranges::replace(action, '_', ' ');
+    const uint16_t main_parameter = plan.main_parameter;
+    accepted =
+        this->execute_dhw_(device_id, action.c_str(), [this, main_parameter](IoFrame &request, const IoDevice &d) {
+          return create_execute_heating_main_parameter(request, this->node_id_, d.node_id, d.low_power, main_parameter);
+        });
+  }
+  if (!accepted)
+    return false;
+  this->read_back_(device_id, *row);
+  return true;
+}
+
+void HeaterController::read_back_(const std::string &device_id, const DeviceReadingRow &row) {
+  // The entity shows what the heater holds, not what was sent: the row's read side is read again. A miss does not
+  // undo the write.
+  if (const auto *source = std::get_if<RegisterSource>(&row.source)) {
+    this->read_dhw_reading(device_id, source->fn, EXCHANGE_RETRY_COUNT);
+  } else if (std::holds_alternative<StatusMainParameterSource>(row.source) ||
+             std::holds_alternative<StatusFunctionalParameterSource>(row.source)) {
+    this->read_dhw_status(device_id, EXCHANGE_RETRY_COUNT);
+  }
+}
+
+bool HeaterController::set_water_heater_target(const std::string &device_id, float celsius) {
+  return this->write_value(device_id, DeviceReading::HOT_WATER_TARGET, celsius);
+}
+
+HeatingCardRange HeaterController::water_heater_target_range(const std::string &device_id) const {
+  const IoDevice *dev = this->registry_.get(device_id);
+  return dev != nullptr ? device_temperature_range(*dev) : HeatingCardRange{NAN, NAN};
 }
 
 bool HeaterController::execute_dhw_(const std::string &device_id, const char *action,
@@ -550,7 +591,7 @@ bool HeaterController::write_dhw_register_(const std::string &device_id, DeviceR
 }
 
 bool HeaterController::set_water_heater_mode(const std::string &device_id, DhwMode mode) {
-  if (!this->write_dhw_register_(device_id, DeviceRegister::DHW_MODE, static_cast<float>(mode)))
+  if (!this->write_value(device_id, DeviceReading::HOT_WATER_MODE, static_cast<float>(mode)))
     return false;
   // The heater chooses its own target in AUTO and holds its manual one otherwise, so the target changes
   // with the mode: read it now rather than at the next poll. A miss here does not undo the write.

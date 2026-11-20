@@ -514,7 +514,7 @@ TEST(DeviceReadings, AReadingsValueKindFollowsItsCodecOrNames) {
                              : source->part    ? source->part->codec
                                                : device_register_codec(source->fn);
     const bool flag = codec == ValueCodec::BINARY || codec == ValueCodec::ANY_NONZERO ||
-                      (parameter != nullptr && parameter->form == StatusParameterForm::FIELD_ON) ||
+                      (parameter != nullptr && parameter->form == StatusParameterForm::FIELD_EQUALS) ||
                       (derived != nullptr && derived->codec == ValueCodec::BINARY) ||
                       std::holds_alternative<LimitationSource>(row.source);
     EXPECT_EQ(reading_value_kind(row), flag ? ReadingValueKind::FLAG : ReadingValueKind::NUMBER) << row.name;

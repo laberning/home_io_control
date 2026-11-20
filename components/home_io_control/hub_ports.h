@@ -252,6 +252,12 @@ class HubHeatingPort {
   /// @return True when the device accepted it.
   virtual bool set_water_heater_target(const std::string &device_id, float celsius) = 0;
 
+  /// @brief The range a water heater's target is encoded over, which its card offers.
+  /// @details The range of the heater's target row (ADR 0110), a fact of its model.
+  /// @param device_id Hexadecimal node ID string.
+  /// @return The range; NaN at both ends for an unknown device.
+  [[nodiscard]] virtual HeatingCardRange water_heater_target_range(const std::string &device_id) const = 0;
+
   /// @brief Set a water heater's operating mode.
   /// @param device_id Hexadecimal node ID string.
   /// @param mode Mode to select.

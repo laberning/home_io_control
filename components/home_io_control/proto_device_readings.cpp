@@ -33,9 +33,10 @@ constexpr DeviceRegister RUN_REMAINING_REGISTERS[] = {DeviceRegister::BOOST_REMA
 /// Low byte of a 16-bit main parameter.
 constexpr uint16_t STATUS_VALUE_LOW_BYTE_MASK = 0xFF;
 
-/// A two-bit field of a functional parameter and its value for "on" (0 keep, 1 on, 2 off).
+/// A two-bit field of a functional parameter (a water heater's FP16 holds 0 keep, 1 on and 2 off in each).
 constexpr uint16_t STATUS_FIELD_MASK = 0x3;
-constexpr uint16_t STATUS_FIELD_ON = 1;
+/// The field value that reads "on" in a water heater's operating-mode word (ADR 0081).
+constexpr uint8_t STATUS_FIELD_ON = 1;
 
 std::optional<float> remaining_time_of_active_run(const IoDevice &dev);
 std::optional<float> battery_low_of(const IoDevice &dev);
@@ -198,7 +199,17 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .reading = DeviceReading::HOT_WATER_MODE,
      .poll = ReadingPoll::EVERY_POLL,
      .feature = DeviceFeature::WATER_HEATER,
-     .value_name = dhw_mode_name},
+     .value_name = dhw_mode_name,
+     .write = ValueWrite{RegisterWrite{DeviceRegister::DHW_MODE}}},
+    // The target is the main parameter of the status reply, over the range of the heater's model: the row a device's
+    // capability selects holds it, and the write encodes over the same range. This row is the Atlantic Calypso's.
+    {.name = "hot_water_target",
+     .source = StatusMainParameterSource{.form = StatusValueForm::TEMPERATURE,
+                                         .range = ValueRange{DHW_TARGET_MIN_C, DHW_TARGET_MAX_C}},
+     .reading = DeviceReading::HOT_WATER_TARGET,
+     .poll = ReadingPoll::NOT_POLLED,
+     .feature = DeviceFeature::HOT_WATER_TARGET_20_62,
+     .write = ValueWrite{MainParameterWrite{}}},
     {.name = "hot_water_heating",
      .source = RegisterSource{.fn = DeviceRegister::DHW_HEATING,
                               .part = RegisterPart{.first = 0, .length = 1, .codec = ValueCodec::ANY_NONZERO}},
@@ -243,16 +254,18 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
      .poll = ReadingPoll::NOT_POLLED,
      .feature = DeviceFeature::WATER_HEATER},
     {.name = "hot_water_boost",
-     .source =
-         StatusFunctionalParameterSource{
-             .fp = DHW_FP_OPERATING_MODE, .form = StatusParameterForm::FIELD_ON, .shift = DHW_FP16_BOOST_SHIFT},
+     .source = StatusFunctionalParameterSource{.fp = DHW_FP_OPERATING_MODE,
+                                               .form = StatusParameterForm::FIELD_EQUALS,
+                                               .shift = DHW_FP16_BOOST_SHIFT,
+                                               .equals = STATUS_FIELD_ON},
      .reading = DeviceReading::HOT_WATER_BOOST,
      .poll = ReadingPoll::NOT_POLLED,
      .feature = DeviceFeature::WATER_HEATER},
     {.name = "hot_water_away",
-     .source =
-         StatusFunctionalParameterSource{
-             .fp = DHW_FP_OPERATING_MODE, .form = StatusParameterForm::FIELD_ON, .shift = DHW_FP16_AWAY_SHIFT},
+     .source = StatusFunctionalParameterSource{.fp = DHW_FP_OPERATING_MODE,
+                                               .form = StatusParameterForm::FIELD_EQUALS,
+                                               .shift = DHW_FP16_AWAY_SHIFT,
+                                               .equals = STATUS_FIELD_ON},
      .reading = DeviceReading::HOT_WATER_AWAY,
      .poll = ReadingPoll::NOT_POLLED,
      .feature = DeviceFeature::WATER_HEATER},
@@ -407,7 +420,8 @@ ValueCodec reading_codec(const DeviceReadingRow &row) {
                         [](const StatusMainParameterSource &) { return ValueCodec::NONE; },
                         // A field of a functional parameter is a flag, and the whole word a number.
                         [](const StatusFunctionalParameterSource &source) {
-                          return source.form == StatusParameterForm::FIELD_ON ? ValueCodec::BINARY : ValueCodec::NONE;
+                          return source.form == StatusParameterForm::FIELD_EQUALS ? ValueCodec::BINARY
+                                                                                  : ValueCodec::NONE;
                         },
                         [](const EventSource &source) { return source.form.codec; },
                         // A limitation reply is the rain flag.
@@ -439,6 +453,31 @@ const DeviceReadingRow *find_device_reading(DeviceReading reading) {
 }
 
 std::span<const DeviceReadingRow> device_readings() { return DEVICE_READINGS; }
+
+size_t device_reading_row_matches(const IoDevice &dev, DeviceReading reading, std::span<const DeviceReadingRow> table) {
+  const auto rows = static_cast<size_t>(std::ranges::count(table, reading, &DeviceReadingRow::reading));
+  // A reading with one row has it, whatever the device: the row's capability only says whether a device may have it.
+  if (rows <= 1)
+    return rows;
+  return static_cast<size_t>(std::ranges::count_if(table, [&dev, reading](const DeviceReadingRow &row) {
+    return row.reading == reading && device_can_have_reading(dev, row);
+  }));
+}
+
+const DeviceReadingRow *device_reading_row(const IoDevice &dev, DeviceReading reading,
+                                           std::span<const DeviceReadingRow> table) {
+  if (device_reading_row_matches(dev, reading, table) != 1)
+    return nullptr;
+  const auto row = std::ranges::find_if(table, [&dev, reading](const DeviceReadingRow &candidate) {
+    return candidate.reading == reading && device_can_have_reading(dev, candidate);
+  });
+  // A reading with one row whose capability the device lacks has no match above, so the single row is taken here.
+  return row != table.end() ? &*row : find_device_reading(reading, table);
+}
+
+const DeviceReadingRow *device_reading_row(const IoDevice &dev, DeviceReading reading) {
+  return device_reading_row(dev, reading, DEVICE_READINGS);
+}
 
 std::optional<float> reading_value(const IoDevice &dev, DeviceReading reading,
                                    std::span<const DeviceReadingRow> table) {
@@ -494,10 +533,21 @@ BatteryState battery_state_of(const IoDevice &dev) {
 std::optional<float> decode_status_reading(DeviceReading reading, std::span<const uint8_t> main_parameter,
                                            uint8_t level_prefix, float range_min_c, float range_max_c) {
   const DeviceReadingRow *row = find_device_reading(reading);
-  const auto *source = row != nullptr ? std::get_if<StatusMainParameterSource>(&row->source) : nullptr;
+  return row != nullptr ? decode_status_reading(*row, main_parameter, level_prefix, range_min_c, range_max_c)
+                        : std::nullopt;
+}
+
+std::optional<float> decode_status_reading(const DeviceReadingRow &row, std::span<const uint8_t> main_parameter,
+                                           uint8_t level_prefix, float range_min_c, float range_max_c) {
+  const auto *source = std::get_if<StatusMainParameterSource>(&row.source);
   const std::optional<float> decoded = decode_value(ValueCodec::U16_BE, main_parameter);
   if (source == nullptr || !decoded)
     return std::nullopt;
+  // A row with a range of its own is encoded over it, not over the device's.
+  if (source->range) {
+    range_min_c = source->range->min;
+    range_max_c = source->range->max;
+  }
   const auto word = static_cast<uint16_t>(*decoded);
   switch (source->form) {
     case StatusValueForm::LEVEL:
@@ -516,6 +566,12 @@ std::optional<float> decode_status_reading(DeviceReading reading, std::span<cons
   return std::nullopt;
 }
 
+float decode_status_parameter(const StatusFunctionalParameterSource &source, uint16_t word) {
+  if (source.form == StatusParameterForm::FIELD_EQUALS)
+    return ((word >> source.shift) & STATUS_FIELD_MASK) == source.equals ? 1.0F : 0.0F;
+  return static_cast<float>(word);
+}
+
 size_t store_status_parameter_readings(IoDevice &dev, const IoFrame &reply) {
   size_t stored = 0;
   for (const DeviceReadingRow &row : DEVICE_READINGS) {
@@ -523,10 +579,7 @@ size_t store_status_parameter_readings(IoDevice &dev, const IoFrame &reply) {
     uint16_t word = 0;
     if (source == nullptr || !decode_status_functional_parameter(reply, source->fp, word))
       continue;
-    auto value = static_cast<float>(word);
-    if (source->form == StatusParameterForm::FIELD_ON)
-      value = ((word >> source->shift) & STATUS_FIELD_MASK) == STATUS_FIELD_ON ? 1.0F : 0.0F;
-    store_reading(dev, row.reading, value);
+    store_reading(dev, row.reading, decode_status_parameter(*source, word));
     stored++;
   }
   return stored;
@@ -621,14 +674,52 @@ bool reading_asked(const IoDevice &dev, DeviceReading reading) {
 
 StatusStore store_status_main_parameter(IoDevice &dev, DeviceReading reading, std::span<const uint8_t> main_parameter,
                                         uint8_t level_prefix) {
+  const DeviceReadingRow *row = device_reading_row(dev, reading);
+  if (row == nullptr)
+    return {};
   const HeatingCardRange range = device_temperature_range(dev);
   const std::optional<float> value =
-      decode_status_reading(reading, main_parameter, level_prefix, range.min_c, range.max_c);
+      decode_status_reading(*row, main_parameter, level_prefix, range.min_c, range.max_c);
   if (!value)
     return {};
   const std::optional<float> before = reading_value(dev, reading);
   store_reading(dev, reading, *value);
   return {value, !before || *before != *value};
+}
+
+ValueWritePlan plan_value_write(const DeviceReadingRow &row, float value) {
+  if (!row.write)
+    return {};
+  ValueWritePlan plan;
+  if (const auto *target = std::get_if<RegisterWrite>(&row.write->target)) {
+    // The register's own row judges and encodes the value (ADR 0105), so a value the register refuses never leaves.
+    if (!heating_write_accepts(target->fn, value)) {
+      plan.refusal = ValueWriteRefusal::REGISTER_RULE;
+      return plan;
+    }
+    plan.refusal = ValueWriteRefusal::NONE;
+    plan.register_fn = target->fn;
+    plan.register_value = value;
+    return plan;
+  }
+  // A main parameter is encoded over the range its row's read side decodes over.
+  const auto *source = std::get_if<StatusMainParameterSource>(&row.source);
+  if (source == nullptr || !source->range) {
+    plan.refusal = ValueWriteRefusal::UNENCODABLE;
+    return plan;
+  }
+  switch (encode_temperature_target({source->range->min, source->range->max}, value, plan.main_parameter)) {
+    case HeatingRefusal::NONE:
+      plan.refusal = ValueWriteRefusal::NONE;
+      break;
+    case HeatingRefusal::OUT_OF_RANGE:
+      plan.refusal = ValueWriteRefusal::OUT_OF_RANGE;
+      break;
+    default:
+      plan.refusal = ValueWriteRefusal::UNENCODABLE;
+      break;
+  }
+  return plan;
 }
 
 bool store_register_reply(IoDevice &dev, DeviceRegister fn, std::span<const uint8_t> value_bytes) {

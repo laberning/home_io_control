@@ -91,8 +91,9 @@ void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame 
 
   const std::span<const uint8_t> main_parameter(frame.data + STATUS_MP_FP_MAIN_PARAMETER_OFFSET,
                                                 STATUS_MAIN_PARAMETER_SIZE);
-  // A water heater's main parameter is its target, over the range the heater has: no level prefix applies.
-  if (const StatusStore target = store_status_main_parameter(dev, DeviceReading::STATUS_SETPOINT, main_parameter, 0);
+  // A water heater's main parameter is its target, over the range of the heater's model (the row its capabilities
+  // select): no level prefix applies.
+  if (const StatusStore target = store_status_main_parameter(dev, DeviceReading::HOT_WATER_TARGET, main_parameter, 0);
       target.value) {
     if (target.changed)
       ESP_LOGI(detail::TAG, "Device %s: hot water target %.1f C", id.c_str(), static_cast<double>(*target.value));
@@ -101,7 +102,7 @@ void apply_dhw_status_reply(const std::string &id, IoDevice &dev, const IoFrame 
   // An alias or an out-of-range value is not a target temperature: it is logged and the target shows unknown.
   ESP_LOGD(detail::TAG, "Device %s: status main parameter 0x%02X%02X is not a hot water target", id.c_str(),
            main_parameter[0], main_parameter[1]);
-  clear_reading(dev, DeviceReading::STATUS_SETPOINT);
+  clear_reading(dev, DeviceReading::HOT_WATER_TARGET);
 }
 
 }  // namespace home_io_control

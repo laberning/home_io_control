@@ -277,6 +277,7 @@ FEATURES = (
     "NO_STATUS_READ",
     "HEAT_PUMP_ENERGY",
     "HEAT_PUMP_OUTDOOR_TEMPERATURE",
+    "HOT_WATER_TARGET_20_62",
 )
 
 # Python's mirror of the table of named device readings (proto_device_readings.cpp), by the enumerator name of
@@ -340,6 +341,7 @@ DEVICE_READINGS = {
     "HOT_WATER_AWAY_DURATION": {"feature": "WATER_HEATER", "source": "register", "platform": "water_heater", "registers": ("DHW_AWAY_DURATION",), "key": None, "entity": None},
     "HOT_WATER_ENERGY": {"feature": "WATER_HEATER", "source": "register", "platform": "water_heater", "registers": ("DHW_ENERGY",), "key": "energy", "entity": "sensor", "unit": "kWh", "accuracy": 3, "device_class": "energy", "state_class": "total_increasing"},
     "HOT_WATER_BRAND": {"feature": "WATER_HEATER", "source": "register", "platform": "water_heater", "registers": ("DHW_BRAND",), "key": None, "entity": None},
+    "HOT_WATER_TARGET": {"feature": "HOT_WATER_TARGET_20_62", "source": "status", "platform": "water_heater", "registers": (), "key": None, "entity": None},
     "HOT_WATER_CAPABILITIES": {"feature": "WATER_HEATER", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
     "HOT_WATER_BOOST": {"feature": "WATER_HEATER", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
     "HOT_WATER_AWAY": {"feature": "WATER_HEATER", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
@@ -418,7 +420,7 @@ DEVICE_FEATURES = {
     "sliding_window": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
     "sliding_window/1": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
     "bioclimatic_pergola": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
-    "domestic_hot_water": frozenset({"WATER_HEATER"}),
+    "domestic_hot_water": frozenset({"WATER_HEATER", "HOT_WATER_TARGET_20_62"}),
     "electrical_heater": frozenset({"REPORTS_HEATING_LEVEL"}),
     "electrical_heater/1": frozenset({"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}),
     "electrical_heater/1/towel_dryer": frozenset({"CENTRAL_HEATING_MODE", "ENERGY_METER", "RUN_TIMERS", "REPORTS_HEATING_LEVEL"}),

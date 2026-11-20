@@ -144,8 +144,9 @@ you meet them. The structure behind them is described in the
 [ADR 0102](adr/0102-a-device-without-a-main-entity-is-declared-by-a-sensor-entry-and-its-data-object-readings-run-on-a-schedule.md),
 [ADR 0104](adr/0104-a-heaters-poll-reads-what-its-reading-rows-select.md),
 [ADR 0105](adr/0105-every-device-value-write-is-judged-by-one-rule-per-register.md),
-[ADR 0106](adr/0106-a-water-heaters-values-are-readings-of-the-same-table.md) and
-[ADR 0107](adr/0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md).
+[ADR 0106](adr/0106-a-water-heaters-values-are-readings-of-the-same-table.md),
+[ADR 0107](adr/0107-a-covers-periodic-readings-and-battery-state-are-reading-rows-on-one-schedule.md) and
+[ADR 0110](adr/0110-a-device-values-row-says-how-it-is-written-too.md).
 
 1. **Find where the value lives.** A heater reports it as a private register; some devices keep it in
    a data object. Read the objects with the [`read_object` probe](diagnostic-probes.md#reading-a-device-object).
@@ -234,7 +235,7 @@ a read-only one. The family also decides which devices the register is sent to (
 A register that holds several facts in different bytes has no codec of its own: each fact is a reading whose
 `RegisterSource` names a `part` (the first byte, the length and a codec, `ANY_NONZERO` for a flag that
 is on when any byte of the slice is), and one read of the register stores them all. The rest is the
-same. A reading that a status reply carries is never polled: the heating level and the status setpoint
+same. A reading that a status reply carries is never polled: the heating level, the status setpoint and a water heater's target
 are a `StatusMainParameterSource`, and a functional parameter (FP9-FP16, the whole word or one two-bit
 field of it) is a `StatusFunctionalParameterSource`.
 
@@ -248,6 +249,35 @@ its own, the scale. Every caller asks `heating_write_accepts()` and states a ran
 by name. A function name that was retired stays in `DEPRECATED_HEATING_FUNCTIONS` while it still works
 ([ADR 0109](adr/0109-an-action-function-is-retired-in-two-stages.md)). A new value shape is an
 `encode_value()` case beside the `decode_value()` one, with a test in `tests/proto/value_codecs_test.cpp`.
+
+A row can also say how its value is written (`DeviceReadingRow::write`,
+[ADR 0110](adr/0110-a-device-values-row-says-how-it-is-written-too.md)): a `RegisterWrite` names the register,
+whose row judges and encodes the value, and a `MainParameterWrite` sends the value as the main parameter of an
+EXECUTE over the range of the row's own status source. Add a write side only where the hub writes the value; the
+read side's form encodes it, so a range or a scale is stated once. `plan_value_write()` turns a value into the
+write without sending anything, and `HeaterController::write_value()` sends it and reads the row's read side
+again.
+
+A water heater model with a target range of its own is one more row of the reading `HOT_WATER_TARGET`, not
+new controller or card code:
+
+1. Add a member to the capability group `HOT_WATER_TARGET` in `proto_device_features.h`: a `DeviceFeature`
+   enumerator such as `HOT_WATER_TARGET_20_70`, its entry in the group's members, and its name in `FEATURES` in
+   `hub_validators.py`.
+2. Add the row to `proto_device_readings.cpp`, after the Calypso's: a name of its own (such as
+   `hot_water_target_20_70`), a `StatusMainParameterSource` with the model's `range`, the member as its capability
+   and `ValueWrite{MainParameterWrite{}}`. Mirror it in `DEVICE_READINGS` in `hub_validators.py` under that name in
+   capitals, with the member as its `feature`.
+3. Give the model's row in the type table (`proto_device_types.cpp`) `WATER_HEATER` and that member, and its
+   mirror entry in `DEVICE_FEATURES`. Every kind with `WATER_HEATER` carries exactly one member of the group,
+   and the rows of a reading with several rows are gated by members of one group; the group test in
+   `tests/proto/device_value_write_test.cpp` fails otherwise.
+4. Pin the range with the model's captured status replies: the test decodes the captured main parameters and
+   encodes one target with the new row, as that file does with a test row.
+
+The device's card range, the status decode and the target write follow the selected row. A status parameter
+field that reads on when it equals a given value (`FIELD_EQUALS`) takes the value from its row, so a model that
+reports boost as another field value is a row too.
 
 Tests sit on the lowest stage that fits. The codec and the lookup are tested without a radio. The
 schedule and the value store are tested on the hub with a reading table and recipe table of the test's

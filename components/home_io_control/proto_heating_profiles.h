@@ -704,9 +704,10 @@ struct HeatingCardRange {
 HeatingCardRange heating_card_range(const HeatingProfile &profile, float yaml_min_c, float yaml_max_c);
 
 /// @brief The range a device encodes its temperature main parameter over.
-/// @details The one answer every encode and decode of a status temperature asks: a water heater's fixed range
-///          (DHW_TARGET_MIN_C to DHW_TARGET_MAX_C), the fixed range of a heater profile that has one, otherwise the
-///          range the YAML declared for the device (IoDevice::temperature_range_min_c and `_max_c`).
+/// @details The one answer every encode and decode of a status temperature asks: a water heater's target range (the
+///          range of the row of DeviceReading::HOT_WATER_TARGET its capabilities select), the fixed range of a heater
+///          profile that has one, otherwise the range the YAML declared for the device
+///          (IoDevice::temperature_range_min_c and `_max_c`).
 /// @param dev The device record.
 /// @return The range.
 HeatingCardRange device_temperature_range(const IoDevice &dev);

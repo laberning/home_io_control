@@ -11,11 +11,16 @@
 /// A capability says *whether* a device can do something; how it is commanded stays in the command
 /// builders and the profile tables.
 ///
-/// This leaf header includes only the standard headers `<cstdint>` and `<limits>`: IoDevice (proto_device_model.h)
-/// carries a DeviceFeatures set, and so does every row of the table in proto_device_types.h.
+/// Capabilities that are alternatives for one concern (which target range a water heater has) form a
+/// FeatureGroup: a base capability and the members, exactly one of which every kind with the base carries (ADR 0110).
+///
+/// This leaf header includes only the standard headers `<cstddef>`, `<cstdint>`, `<limits>` and `<span>`: IoDevice
+/// (proto_device_model.h) carries a DeviceFeatures set, and so does every row of the table in proto_device_types.h.
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 
 namespace esphome {
 namespace home_io_control {
@@ -116,6 +121,10 @@ enum class DeviceFeature : uint8_t {
   /// \todo Experimental: read on one Atlantic Alfea Duo Extensa A.I. (issue #244) between 11.4 and 14.7 degrees;
   ///       a value below zero has not been seen yet.
   HEAT_PUMP_OUTDOOR_TEMPERATURE,
+  /// A water heater whose target temperature is the main parameter of its status reply over 20 to 62 degrees
+  /// (the Atlantic Calypso Connecté, issue #198). A member of the group HOT_WATER_TARGET: the row of the
+  /// reading DeviceReading::HOT_WATER_TARGET that it selects holds the range (proto_device_readings.cpp).
+  HOT_WATER_TARGET_20_62,
   COUNT,  ///< Not a capability: the number of capabilities, for the storage check of DeviceFeatures.
 };
 
@@ -172,6 +181,38 @@ class DeviceFeatures {
 /// @brief The set of two capabilities.
 constexpr DeviceFeatures operator|(DeviceFeature lhs, DeviceFeature rhs) {
   return DeviceFeatures{lhs} | DeviceFeatures{rhs};
+}
+
+/// @brief A set of capabilities that are alternatives for one concern of a kind that has the base capability (ADR
+/// 0110).
+/// @details Every kind with `base`, a model row included, carries exactly one of `members`. The members are the only
+///          capabilities that may gate the rows of a reading that has several rows, so the rows a device's
+///          capabilities select number exactly one (device_reading_row()). A new alternative is one more enumerator,
+///          one more member here and the rows that carry it.
+struct FeatureGroup {
+  const char *name;                        ///< Name for logs and failure messages.
+  DeviceFeature base;                      ///< The capability a kind needs for the concern to apply to it.
+  std::span<const DeviceFeature> members;  ///< The alternatives, mutually exclusive.
+};
+
+/// @brief The members of the group HOT_WATER_TARGET: which target range a water heater has.
+inline constexpr DeviceFeature HOT_WATER_TARGET_MEMBERS[] = {DeviceFeature::HOT_WATER_TARGET_20_62};
+
+/// @brief Every capability group.
+inline constexpr FeatureGroup FEATURE_GROUPS[] = {
+    {.name = "HOT_WATER_TARGET", .base = DeviceFeature::WATER_HEATER, .members = HOT_WATER_TARGET_MEMBERS},
+};
+
+/// @brief How many members of a group a capability set holds.
+/// @param set A capability set.
+/// @param group The group.
+/// @return The number of the group's members in `set`: 1 for a well-formed kind with the group's base, 0 for a kind
+///         without the base.
+[[nodiscard]] constexpr size_t group_member_count(DeviceFeatures set, const FeatureGroup &group) {
+  size_t count = 0;
+  for (const DeviceFeature member : group.members)
+    count += set.contains(member) ? 1U : 0U;
+  return count;
 }
 
 /// @brief True when `set` holds every capability of `feature`.

@@ -308,6 +308,13 @@ void resolve_device_features(IoDevice &dev) {
   // register probes) keeps none of it, so its frames stay what they were before that path existed.
   if (entity_class != DeviceCapabilityClass::WATER_HEATER)
     features = features.without(device_feature::WATER_HEATER);
+  // A capability group applies only with its base: a kind that lost the base drops the group's member too.
+  for (const FeatureGroup &group : FEATURE_GROUPS) {
+    if (!has_feature(features, group.base)) {
+      for (const DeviceFeature member : group.members)
+        features = features.without(member);
+    }
+  }
   dev.features = features;
   dev.inverted = dev.invert_override.value_or(has_feature(features, device_feature::INVERTED));
 }
