@@ -491,7 +491,7 @@ TEST(Sx1262DeviceErrorDecoder, TinyBufferStaysNulTerminatedWithoutOverflow) {
 }
 
 // ============================================================================
-// TX timeout: the chip state is read before standby
+// TX timeout: the chip state is read before standby, then the receiver runs again
 // ============================================================================
 
 TEST(Sx1262StatusDecoder, NamesTheChipModeAndCommandStatus) {
@@ -506,7 +506,7 @@ TEST(Sx1262StatusDecoder, NamesTheChipModeAndCommandStatus) {
   EXPECT_EQ(sx1262_command_status(0x2 << 4), 0u);
 }
 
-TEST(RadioSX1262Tx, TimeoutReadsChipStatusAndErrorsBeforeStandby) {
+TEST(RadioSX1262Tx, TimeoutReadsChipStateBeforeStandbyThenReceivesAgain) {
   ScriptedSpi spi;
   MockPin rst, dio1, busy(false);
   TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, TCXO_CODE_1_8V);
@@ -522,7 +522,7 @@ TEST(RadioSX1262Tx, TimeoutReadsChipStatusAndErrorsBeforeStandby) {
 
   // The order after SetTx: GetStatus, GetDeviceErrors, then SetStandby, so the log shows the state
   // the transmission left the chip in rather than the one standby puts it in.
-  int set_tx = -1, status = -1, errors = -1, standby = -1;
+  int set_tx = -1, status = -1, errors = -1, standby = -1, set_rx = -1;
   const auto &txs = spi.transactions();
   for (size_t i = before_tx; i < txs.size(); i++) {
     if (txs[i].empty())
@@ -536,9 +536,12 @@ TEST(RadioSX1262Tx, TimeoutReadsChipStatusAndErrorsBeforeStandby) {
       errors = idx;
     else if (errors >= 0 && standby < 0 && txs[i][0] == SX1262_SET_STANDBY)
       standby = idx;
+    else if (standby >= 0 && txs[i][0] == SX1262_SET_RX)
+      set_rx = idx;
   }
   ASSERT_GE(set_tx, 0);
   EXPECT_GT(status, set_tx) << "GetStatus must follow the timed-out SetTx";
   EXPECT_GT(errors, status) << "GetDeviceErrors must follow GetStatus";
-  EXPECT_GT(standby, errors) << "standby comes last, after the chip state is read";
+  EXPECT_GT(standby, errors) << "standby follows, after the chip state is read";
+  EXPECT_GT(set_rx, standby) << "a failed send still ends with the receiver running (send_packet() contract)";
 }

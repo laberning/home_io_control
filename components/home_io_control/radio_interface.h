@@ -199,6 +199,10 @@ class RadioDriver {
   /// driver first measures the energy on `tx_config.freq_hz` itself — retuning there if the
   /// receiver is elsewhere — and reports CHANNEL_BUSY instead of sending when it is at or above
   /// the threshold.
+  ///
+  /// Whatever the result, the receiver is running when it returns: the hub keeps listening and its
+  /// next clear-channel check needs a live level. A transmission that failed must not leave the
+  /// chip in standby or transmit.
   /// @return SENT, CHANNEL_BUSY (with the measured level) or FAILED.
   virtual TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) = 0;
 

@@ -889,7 +889,7 @@ TEST(RadioLR1121, PreambleDurationsConvertAtEightBitsPerByte) {
 }
 
 // ============================================================================
-// TX timeout: the chip state is read before standby
+// TX timeout: the chip state is read before standby, then the receiver runs again
 // ============================================================================
 
 TEST(Lr1121StatusDecoder, NamesTheChipMode) {
@@ -901,7 +901,7 @@ TEST(Lr1121StatusDecoder, NamesTheChipMode) {
   EXPECT_STREQ(lr1121_chip_mode_name((0x2 << 4) | (0x5 << 1)), "TX") << "the reset-cause bits are not part of the mode";
 }
 
-TEST(RadioLR1121, TxTimeoutReadsStatusAndErrorsBeforeStandby) {
+TEST(RadioLR1121, TxTimeoutReadsChipStateBeforeStandbyThenReceivesAgain) {
   const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
   ScriptedSpi spi;
   MockPin rst, irq, busy(false);
@@ -918,7 +918,7 @@ TEST(RadioLR1121, TxTimeoutReadsStatusAndErrorsBeforeStandby) {
     const auto &tx = spi.transactions()[i];
     return tx.size() >= 2 ? (tx[0] << 8) | tx[1] : -1;
   };
-  int set_tx = -1, status = -1, errors = -1, standby = -1;
+  int set_tx = -1, status = -1, errors = -1, standby = -1, set_rx = -1;
   for (size_t i = 0; i < spi.transactions().size(); i++) {
     const int op = opcode_at(i);
     const int idx = static_cast<int>(i);
@@ -930,9 +930,12 @@ TEST(RadioLR1121, TxTimeoutReadsStatusAndErrorsBeforeStandby) {
       errors = idx;
     else if (errors >= 0 && standby < 0 && op == LR1121_CMD_SET_STANDBY)
       standby = idx;
+    else if (standby >= 0 && op == LR1121_CMD_SET_RX)
+      set_rx = idx;
   }
   ASSERT_GE(set_tx, 0);
   EXPECT_GT(status, set_tx) << "GetStatus must follow the timed-out SetTx";
   EXPECT_GT(errors, status) << "GetErrors must follow GetStatus";
-  EXPECT_GT(standby, errors) << "standby comes last, after the chip state is read";
+  EXPECT_GT(standby, errors) << "standby follows, after the chip state is read";
+  EXPECT_GT(set_rx, standby) << "a failed send still ends with the receiver running (send_packet() contract)";
 }

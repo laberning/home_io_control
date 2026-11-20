@@ -70,11 +70,14 @@ static constexpr uint8_t REG_PAYLOAD_LENGTH = 0x32;  ///< Max payload length
 static constexpr uint8_t REG_FIFO_THRESH = 0x35;     ///< FIFO threshold for TX start condition
 static constexpr uint8_t REG_IRQ_FLAGS1 = 0x3E;      ///< IRQ flags: mode ready, preamble detect, etc.
 static constexpr uint8_t REG_IRQ_FLAGS2 = 0x3F;      ///< IRQ flags: FIFO full/empty, payload ready, CRC ok
-static constexpr uint8_t REG_DIO_MAPPING1 = 0x40;    ///< DIO0-DIO3 pin mapping
-static constexpr uint8_t REG_DIO_MAPPING2 = 0x41;    ///< DIO4-DIO5 pin mapping
-static constexpr uint8_t REG_VERSION = 0x42;         ///< Chip version (should read 0x12 for SX1276)
-static constexpr uint8_t REG_PLLHOP = 0x44;          ///< PLL hop: fast frequency change without standby
-static constexpr uint8_t REG_IMAGE_CAL = 0x3B;       ///< Image calibration
+/// RegIrqFlags2 FifoOverrun bit. Writing it clears the flag and empties the FIFO (datasheet,
+/// RegIrqFlags2).
+static constexpr uint8_t IRQ2_FIFO_OVERRUN = 0x10;
+static constexpr uint8_t REG_DIO_MAPPING1 = 0x40;  ///< DIO0-DIO3 pin mapping
+static constexpr uint8_t REG_DIO_MAPPING2 = 0x41;  ///< DIO4-DIO5 pin mapping
+static constexpr uint8_t REG_VERSION = 0x42;       ///< Chip version (should read 0x12 for SX1276)
+static constexpr uint8_t REG_PLLHOP = 0x44;        ///< PLL hop: fast frequency change without standby
+static constexpr uint8_t REG_IMAGE_CAL = 0x3B;     ///< Image calibration
 
 // SX1276 operating modes (bits [2:0] of REG_OP_MODE)
 static constexpr uint8_t MODE_SLEEP = 0x00;
@@ -141,7 +144,8 @@ class RadioSX1276 : public RadioDriver {
   /// @param data Pointer to payload bytes.
   /// @param len Payload length.
   /// @param tx_config Transmission config (frequency, preamble).
-  /// @return true if transmit succeeded.
+  /// @return SENT, CHANNEL_BUSY or FAILED (no PacketSent within the air time plus guard). The chip
+  /// is in Rx on return in every case.
   TxResult send_packet(const uint8_t *data, uint8_t len, const RadioTxConfig &tx_config) override;
   /// @brief Blocking wait for a packet with timeout.
   /// @param packet Output: received packet (freq, len, data).
@@ -253,6 +257,11 @@ class RadioSX1276 : public RadioDriver {
   void configure_radio_();
   /// Run image calibration routine (required after reset).
   void run_image_cal_();
+  /// End every transmission, sent or timed out, in Rx with the short RX preamble restored. The
+  /// idle hop only retunes (FastHop), so a chip left outside Rx would never receive again, and its
+  /// RSSI register would keep the last level forever, which can make every clear-channel check
+  /// read busy (issue #228).
+  void return_to_rx_after_tx_();
   /// Wait until FIFO payload is ready (polling for TX/RX readiness).
   /// @param timeout_ms How long to wait.
   /// @param saw_dio0 Output: true if DIO0 fired.

@@ -881,12 +881,10 @@ TEST(RadioSX1262Fem, ProfileSetDrivesModePinAcrossTheFullLifecycle) {
 
     // --- TX + timeout: before_tx_arm() drives the mode pin to its TX-active level immediately
     // before SetTx. This host harness can never inject a TX_DONE IRQ, so send_packet() also
-    // always runs its timeout branch, which calls set_mode_standby() directly — never
-    // rearm_rx_after_tx_()/set_mode_rx(). One call therefore exercises both "TX drives the mode
-    // pin to its TX-active level" and "a TX timeout leaves it at the idle level again"
-    // (radio_soft_phy_driver_base.cpp's send_packet() timeout branches), the latter being exactly
-    // the case fem_set_rx_mode_() is hooked into set_mode_standby() for — without it a timed-out
-    // TX would strand a board in its TX-active FEM state indefinitely.
+    // always runs its timeout branch (end_timed_out_tx_(): standby, then back to RX). One call
+    // therefore exercises both "TX drives the mode pin to its TX-active level" and "a TX timeout
+    // leaves it at the idle level again": without that a timed-out TX would strand a board in its
+    // TX-active FEM state indefinitely.
     const uint8_t frame[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
     RadioTxConfig cfg;
     cfg.freq_hz = FREQ_CH2;
@@ -916,8 +914,7 @@ TEST(RadioSX1262Fem, ProfileSetDrivesModePinAcrossTheFullLifecycle) {
     }
     EXPECT_TRUE(workaround_seen) << "the TX modulation-quality erratum workaround must still run";
 
-    EXPECT_EQ(mode.writes().back().first, !tx_active_level)
-        << "a TX timeout (set_mode_standby(), never rearm_rx_after_tx_()) must leave the mode pin at its idle level";
+    EXPECT_EQ(mode.writes().back().first, !tx_active_level) << "a TX timeout must leave the mode pin at its idle level";
 
     // --- RX: set_mode_rx() drives the mode pin to its idle level before SetRx. ---
     const size_t writes_before_rx = mode.writes().size();

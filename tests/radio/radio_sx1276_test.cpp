@@ -7,6 +7,7 @@
 #include "stubs/radio_test_common.h"
 
 #include <functional>
+#include <initializer_list>
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <deque>
@@ -71,8 +72,15 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
       this->rx_fifo_.push_back(data[i]);
   }
 
-  // Bytes written to REG_FIFO by the driver (TX path), in order.
+  // Bytes written to REG_FIFO by the driver (TX path), in order, after any stale bytes seeded with
+  // seed_stale_fifo() that the driver did not clear.
   const std::vector<uint8_t> &tx_fifo() const { return this->tx_fifo_; }
+
+  // Leave bytes in the FIFO the way a reception cut short by a switch from Rx to standby does: the
+  // chip shares one FIFO between both directions, so they sit in front of whatever is loaded next.
+  void seed_stale_fifo(std::initializer_list<uint8_t> bytes) {
+    this->tx_fifo_.insert(this->tx_fifo_.end(), bytes.begin(), bytes.end());
+  }
 
   // Ordered log of (register, value) for every write_register_()-style value write.
   // FIFO writes are excluded — those go to tx_fifo() instead.
@@ -109,6 +117,8 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
  private:
   static constexpr uint8_t kRegFifo = 0x00;
   static constexpr uint8_t kRegIrqFlags2 = 0x3F;
+  static constexpr uint8_t kIrq2FifoOverrun = 0x10;
+  static constexpr uint8_t kIrq2WriteToClear = kIrq2FifoOverrun | 0x01;  // FifoOverrun, LowBat
 
   void set_addr_(uint8_t first_byte) {
     this->have_addr_ = true;
@@ -121,8 +131,17 @@ class RegisterModelSpi : public esphome::home_io_control::SpiAccess {
       this->tx_fifo_.push_back(value);
       return;
     }
-    this->regs_[this->addr_] = value;
     this->write_log_.emplace_back(this->addr_, value);
+    if (this->addr_ == kRegIrqFlags2) {
+      // Write-1-to-clear flags (FifoOverrun, LowBat); writing FifoOverrun also empties the FIFO.
+      this->regs_[kRegIrqFlags2] &= static_cast<uint8_t>(~(value & kIrq2WriteToClear));
+      if ((value & kIrq2FifoOverrun) != 0) {
+        this->tx_fifo_.clear();
+        this->rx_fifo_.clear();
+      }
+      return;
+    }
+    this->regs_[this->addr_] = value;
   }
 
   uint8_t handle_read_byte_() {
@@ -441,8 +460,16 @@ TEST(RadioSX1276, SendPacketWritesPreambleFrequencyAndFifoBeforeTxWait) {
   TxResult result = radio.send_packet(payload, sizeof(payload), cfg);
   EXPECT_FALSE(result.sent()) << "TX-done wait times out in a synchronous host test by design";
 
-  EXPECT_EQ(spi.get_reg(REG_PREAMBLE_MSB), (cfg.preamble_len >> 8) & 0xFF);
-  EXPECT_EQ(spi.get_reg(REG_PREAMBLE_LSB), cfg.preamble_len & 0xFF);
+  // Read from the write log: the timed-out send restores the short RX preamble afterwards.
+  const auto first_write = [&](uint8_t reg) -> int {
+    for (const auto &entry : spi.write_log()) {
+      if (entry.first == reg)
+        return entry.second;
+    }
+    return -1;
+  };
+  EXPECT_EQ(first_write(REG_PREAMBLE_MSB), (cfg.preamble_len >> 8) & 0xFF);
+  EXPECT_EQ(first_write(REG_PREAMBLE_LSB), cfg.preamble_len & 0xFF);
   uint64_t const frf = ((uint64_t) cfg.freq_hz << 19) / FXOSC;
   EXPECT_EQ(spi.get_reg(REG_FRF_MSB), (uint8_t) ((frf >> 16) & 0xFF));
   EXPECT_EQ(spi.get_reg(REG_FRF_MID), (uint8_t) ((frf >> 8) & 0xFF));
@@ -474,6 +501,46 @@ TEST(RadioSX1276, TxDoneWaitGivesUpOneGuardAfterTheFrameShouldHaveEnded) {
     EXPECT_LE(elapsed, tx_done_timeout_ms(air_ms * 1000) + 2)
         << "a chip that never reports TX-done costs one guard past the air time (preamble " << preamble << ")";
   }
+}
+
+TEST(RadioSX1276, TxTimeoutLeavesTheReceiverRunningWithTheShortPreamble) {
+  // Issue #228: a timed-out send used to leave the chip in standby with the wake-up preamble still
+  // programmed. The idle hop only retunes, so nothing was received again, and the RSSI register
+  // kept its last level, so a level at the busy limit made every later send report a busy channel.
+  esphome::test_clock::ManualClock clock;
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  const uint8_t payload[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = LONG_PREAMBLE;
+
+  ASSERT_EQ(radio.send_packet(payload, sizeof(payload), cfg).status, TxResult::Status::FAILED)
+      << "the host harness never raises DIO0, so the send times out";
+
+  EXPECT_EQ(spi.get_reg(REG_OP_MODE) & MODE_MASK, MODE_RX) << "a failed send must end in Rx";
+  EXPECT_EQ(spi.get_reg(REG_PREAMBLE_MSB), 0x00);
+  EXPECT_EQ(spi.get_reg(REG_PREAMBLE_LSB), 0x08) << "the wake-up preamble must not outlive its transmission";
+}
+
+TEST(RadioSX1276, SendPacketEmptiesTheFifoBeforeLoadingTheFrame) {
+  // Leaving Rx for standby keeps the FIFO, so bytes of a reception cut short would precede the
+  // frame and the packet engine would read its length from the wrong byte.
+  esphome::test_clock::ManualClock clock;
+  RegisterModelSpi spi;
+  MockPin rst, dio0, dio4(false);
+  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
+  spi.seed_stale_fifo({0x4C, 0x00, 0x68});
+  const uint8_t payload[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
+  RadioTxConfig cfg;
+  cfg.freq_hz = FREQ_CH2;
+  cfg.preamble_len = SHORT_PREAMBLE;
+
+  (void) radio.send_packet(payload, sizeof(payload), cfg);
+
+  ASSERT_EQ(spi.tx_fifo().size(), sizeof(payload)) << "only the frame may be in the FIFO when Tx starts";
+  EXPECT_TRUE(std::equal(spi.tx_fifo().begin(), spi.tx_fifo().end(), payload));
 }
 
 namespace {

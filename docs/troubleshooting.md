@@ -322,6 +322,19 @@ tells you where to look:
 - **A named device error** such as `PLL_LOCK_ERR` or `PA_RAMP_ERR`: the chip could not lock its
   frequency or ramp its amplifier. Check `tcxo_voltage` and the supply.
 
+On an SX1276 board the line itself carries the chip state:
+`TX timeout after N ms — DIO0 never fired (RegOpMode 0x.., RegIrqFlags1 0x.., RegIrqFlags2 0x..)`.
+
+- **`RegIrqFlags2` has bit `0x08` (PacketSent) set**: the transmission finished, but DIO0 never
+  reached the ESP32. Check the `dio0_pin` wiring.
+- **`RegIrqFlags2` has bit `0x40` (FifoEmpty) clear**: part of the frame never left the radio.
+  `RegIrqFlags1` shows whether the radio was ready to send: bit `0x20` (TxReady) and bit `0x10`
+  (PllLock) should both be set. If either is clear, the radio could not start the transmission,
+  which points at the supply. Post the log in an issue either way.
+
+Whatever the radio, the hub goes back to receiving after a timeout, so one timeout costs that copy
+and nothing more.
+
 Lowering `tx_power` by a few steps is a quick test: if the timeouts stop, the supply cannot deliver
 the transmit burst.
 

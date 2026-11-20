@@ -297,6 +297,12 @@ TxResult RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioT
   log_frame("TX", data, len, tx_config.freq_hz, tx_config.preamble_len);
 #endif
   this->set_mode_standby();
+  // The receiver and the transmitter share one FIFO, and neither Rx to standby nor standby to Tx
+  // clears it (datasheet Table 28). A reception cut short by this switch, such as a frame that
+  // started during the clear-channel readings, would leave its bytes in front of ours, and the
+  // packet engine would take our frame's length from the wrong byte. Setting FifoOverrun empties
+  // the FIFO.
+  this->write_register_(REG_IRQ_FLAGS2, IRQ2_FIFO_OVERRUN);
   this->write_register_(REG_PREAMBLE_MSB, tx_config.preamble_len >> 8);
   this->write_register_(REG_PREAMBLE_LSB, tx_config.preamble_len & 0xFF);
   this->change_frequency(tx_config.freq_hz);
@@ -318,20 +324,30 @@ TxResult RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioT
   uint32_t const start = millis();
   while (!this->is_dio_fired()) {
     if (millis() - start > timeout_ms) {
-      ESP_LOGE(TAG, "TX timeout after %" PRIu32 " ms — DIO0 never fired (RegOpMode 0x%02X, RegIrqFlags2 0x%02X)",
-               timeout_ms, this->read_register_(REG_OP_MODE), this->read_register_(REG_IRQ_FLAGS2));
-      this->set_mode_standby();
+      // Read before leaving Tx: RegIrqFlags1 says whether the chip was ready to send (ModeReady,
+      // TxReady, PllLock), RegIrqFlags2 how far it got (FifoEmpty, FifoLevel, PacketSent).
+      ESP_LOGE(TAG,
+               "TX timeout after %" PRIu32
+               " ms — DIO0 never fired (RegOpMode 0x%02X, RegIrqFlags1 0x%02X, RegIrqFlags2 0x%02X)",
+               timeout_ms, this->read_register_(REG_OP_MODE), this->read_register_(REG_IRQ_FLAGS1),
+               this->read_register_(REG_IRQ_FLAGS2));
+      this->return_to_rx_after_tx_();
       return TxResult::failed();
     }
     App.feed_wdt();
     delayMicroseconds(100);
   }
 
-  // Reset preamble to short for RX
-  this->write_register_(REG_PREAMBLE_MSB, 0x00);
+  this->return_to_rx_after_tx_();
+  return TxResult::ok();
+}
+
+void RadioSX1276::return_to_rx_after_tx_() {
+  // Straight from Tx to Rx, as fast as possible for an immediate reply. Leaving Tx clears the FIFO
+  // (datasheet Table 28), so after a timeout the frame that never finished is gone too.
+  this->write_register_(REG_PREAMBLE_MSB, 0x00);  // RX preamble: 8 bytes
   this->write_register_(REG_PREAMBLE_LSB, 0x08);
   this->set_mode_rx();
-  return TxResult::ok();
 }
 
 bool RadioSX1276::poll_until_payload_ready_(uint32_t timeout_ms, bool &saw_dio0, uint8_t &irq1, uint8_t &irq2) {
@@ -420,8 +436,8 @@ bool RadioSX1276::check_for_packet(RadioRxPacket &packet) {
     return packet.len > 0;
   }
   this->fill_capture_info_(false, irq1, irq2, rssi, nullptr, 0, nullptr, 0);
-  if ((irq2 & 0x10) != 0) {  // FifoOverrun — clear it
-    this->write_register_(REG_IRQ_FLAGS2, 0x10);
+  if ((irq2 & IRQ2_FIFO_OVERRUN) != 0) {  // clear it, and the FIFO with it
+    this->write_register_(REG_IRQ_FLAGS2, IRQ2_FIFO_OVERRUN);
   }
   return false;
 }

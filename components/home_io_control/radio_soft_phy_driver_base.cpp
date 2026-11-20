@@ -279,6 +279,14 @@ void SoftPhyDriverBase::rearm_rx_after_tx_() {
   this->set_mode_rx();
 }
 
+void SoftPhyDriverBase::end_timed_out_tx_() {
+  // No TxDone, so the chip may still be in Tx: stop it first (this also returns a front-end module
+  // to its receive level), then re-arm exactly as after a sent frame, stale-buffer handling
+  // included. send_packet() promises a running receiver on every return.
+  this->set_mode_standby();
+  this->rearm_rx_after_tx_();
+}
+
 void SoftPhyDriverBase::build_gfsk_packet_params(const SoftPhyPacketParams &p, uint8_t out[GFSK_PACKET_PARAMS_LEN]) {
   // The SetPacketParams preamble field is bit-denominated on both chips (sx126x's
   // preamble_len_in_bits / lr11xx's pbl_len_in_bit), but preamble_bytes arrives in bytes, matching
@@ -540,7 +548,7 @@ TxResult SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const 
                  "0x%08" PRIX32,
                  timeout_ms, air_time_us, tx_irq);
         this->log_tx_timeout_state(tx_irq);
-        this->set_mode_standby();
+        this->end_timed_out_tx_();
         return TxResult::failed();
       }
       App.feed_wdt();
@@ -560,7 +568,7 @@ TxResult SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const 
     if (millis() - start > timeout_ms) {
       ESP_LOGE(TAG, "TX timeout after %" PRIu32 " ms — no TX_DONE IRQ (last_irq=0x%08" PRIX32 ")", timeout_ms, tx_irq);
       this->log_tx_timeout_state(tx_irq);
-      this->set_mode_standby();
+      this->end_timed_out_tx_();
       return TxResult::failed();
     }
   }

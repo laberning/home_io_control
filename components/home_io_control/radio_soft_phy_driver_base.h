@@ -345,6 +345,9 @@ class SoftPhyDriverBase : public RadioDriver {
   /// Minimal path back into RX immediately after a transmission — see the definition for why this
   /// is deliberately not @ref reset_rx_state_.
   void rearm_rx_after_tx_();
+  /// End a transmission whose TxDone never came: standby, then rearm_rx_after_tx_(), so the
+  /// receiver runs again as RadioDriver::send_packet() promises.
+  void end_timed_out_tx_();
 
   /// @brief The GFSK SetPacketParams fields both software-PHY chips program identically.
   ///
