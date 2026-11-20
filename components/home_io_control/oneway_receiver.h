@@ -52,7 +52,7 @@ static constexpr size_t ONEWAY_KEPT_FRAMES_MAX = 4;
 struct KeptOneWayFrame {
   IoFrame frame{};       ///< The parsed frame.
   uint32_t heard_ms{0};  ///< millis() when the exchange wait heard it.
-  int16_t rssi_dbm{0};   ///< RSSI of the capture, in dBm.
+  int16_t rssi_dbm{0};   ///< RSSI of the capture, in dBm, or RSSI_UNKNOWN_DBM.
 };
 
 /// @brief Receive-side state of the 1W frames the hub overhears.
@@ -90,7 +90,7 @@ class OneWayReceiver {
   /// before "Discover & Pair" is pressed would be invisible to the pairing advisor.
   /// @param frame Parsed frame with the CTRL0 1W bit set.
   /// @param now millis() at which the frame was seen.
-  /// @param rssi_dbm RSSI of the capture, in dBm.
+  /// @param rssi_dbm RSSI of the capture, in dBm, or RSSI_UNKNOWN_DBM.
   void note_frame(const IoFrame &frame, uint32_t now, int16_t rssi_dbm);
 
   /// The duplicate filter. A repeat of the previous press inside ONEWAY_DEDUP_WINDOW_MS is dropped;
@@ -110,7 +110,7 @@ class OneWayReceiver {
   /// oldest is dropped with a debug line.
   /// @param frame Parsed frame heard during an exchange wait.
   /// @param now millis() when it was heard.
-  /// @param rssi_dbm RSSI of the capture, in dBm.
+  /// @param rssi_dbm RSSI of the capture, in dBm, or RSSI_UNKNOWN_DBM.
   void keep_overheard(const IoFrame &frame, uint32_t now, int16_t rssi_dbm);
 
   /// Take the oldest kept frame out of the store. Call until it returns false to drain; neither

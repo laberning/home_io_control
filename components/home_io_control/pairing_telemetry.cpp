@@ -4,6 +4,7 @@
 
 #include "pairing_telemetry.h"
 
+#include "log_helpers.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "proto_device_kinds.h"
@@ -202,19 +203,20 @@ void PairingTelemetry::log_summary() const {
       // A seeded pre-window sighting (record_recent_one_way_sighting()): millis_offset is a
       // placeholder (recorded at the start of this attempt, not when the frame actually arrived),
       // so label it instead of implying a live in-window capture.
-      ESP_LOGI(TAG, "  [pre-window] %s cmd=0x%02X src=%s rssi=%d", event_kind_name(event.kind), event.cmd,
-               node_id_to_string(event.src_node).c_str(), event.rssi);
+      ESP_LOGI(TAG, "  [pre-window] %s cmd=0x%02X src=%s rssi=%s", event_kind_name(event.kind), event.cmd,
+               node_id_to_string(event.src_node).c_str(), detail::format_rssi_dbm(event.rssi).c_str());
     } else if (event.kind == PairingTelemetryEventKind::RX || event.kind == PairingTelemetryEventKind::RX_REJECT) {
-      ESP_LOGI(TAG, "  [%4" PRIu32 " ms] %s cmd=0x%02X src=%s rssi=%d", event.millis_offset,
-               event_kind_name(event.kind), event.cmd, node_id_to_string(event.src_node).c_str(), event.rssi);
+      ESP_LOGI(TAG, "  [%4" PRIu32 " ms] %s cmd=0x%02X src=%s rssi=%s", event.millis_offset,
+               event_kind_name(event.kind), event.cmd, node_id_to_string(event.src_node).c_str(),
+               detail::format_rssi_dbm(event.rssi).c_str());
     } else if (event.kind == PairingTelemetryEventKind::TX) {
       ESP_LOGI(TAG, "  [%4" PRIu32 " ms] %s cmd=0x%02X", event.millis_offset, event_kind_name(event.kind), event.cmd);
     } else if (event.kind == PairingTelemetryEventKind::PHASE) {
       ESP_LOGI(TAG, "  [%4" PRIu32 " ms] %s -> %s", event.millis_offset, event_kind_name(event.kind),
                pairing_stage_name(static_cast<pairing::PairingState>(event.aux)));
     } else {
-      ESP_LOGI(TAG, "  [%4" PRIu32 " ms] %s aux=%u rssi=%d", event.millis_offset, event_kind_name(event.kind),
-               event.aux, event.rssi);
+      ESP_LOGI(TAG, "  [%4" PRIu32 " ms] %s aux=%u rssi=%s", event.millis_offset, event_kind_name(event.kind),
+               event.aux, detail::format_rssi_dbm(event.rssi).c_str());
     }
   }
   if (this->has_paired_device_) {

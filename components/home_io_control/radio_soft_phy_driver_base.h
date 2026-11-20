@@ -466,6 +466,31 @@ class SoftPhyDriverBase : public RadioDriver {
   virtual void fill_capture_info(bool blocking_wait, uint32_t irq_status, uint8_t rx_offset, uint8_t reported_len,
                                  const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) = 0;
 
+  /// Take the level of the frame whose sync word was just noticed. Called as the first action of
+  /// `try_early_completion_()`, before any buffer read, so the level is taken while the frame is
+  /// (normally) still on air. A driver whose packet status is not the frame's own until the chip's
+  /// end of packet takes a live level here; the default does nothing, for a chip that latches its
+  /// packet status at sync.
+  virtual void sample_level_at_sync() {}
+  /// Take the channel's level once the early path has the whole frame, before the teardown. A
+  /// driver that sampled at sync takes the floor here, to tell a frame noticed in flight from one
+  /// noticed after it ended. Called only for a frame received inside a wait
+  /// (`EarlyCompletionPath::IN_WAIT`): outside a wait the next frame of a burst can already be on
+  /// air, so the channel's level after the frame is not its floor. The default does nothing.
+  virtual void sample_level_after_frame() {}
+  /// Which receive path `try_early_completion_()` took the frame on.
+  enum class EarlyCompletionPath : uint8_t {
+    NONE,     ///< Not completing early: the capture is filled after RX_DONE.
+    IN_WAIT,  ///< Inside `wait_for_packet()`: the caller expects a frame, typically the reply to the
+              ///< hub's own transmission, and `sample_level_after_frame()` runs.
+    IDLE,     ///< Inside `check_for_packet()`: any frame on the channel; `sample_level_after_frame()`
+              ///< does not run.
+  };
+  /// The path of the capture being filled: `NONE` for one filled after RX_DONE, otherwise the path
+  /// `try_early_completion_()` took. Lets @ref fill_capture_info choose between the level sampled at
+  /// sync (with or without the check against the floor) and the packet status.
+  [[nodiscard]] EarlyCompletionPath early_completion_path_() const { return this->early_completion_path_state_; }
+
   /// @brief Hook run immediately before every `SetTx`. No-op by default; LR1121 overrides this to
   /// apply its high-ACP TX-quality workaround, which Semtech's own reference applies unconditionally
   /// before every SetRx/SetTx.
@@ -532,10 +557,11 @@ class SoftPhyDriverBase : public RadioDriver {
   /// Finish a reception on the frame's own air time rather than on the chip's fixed-length
   /// RX_DONE. Returns true only when a CRC-valid frame was recovered.
   bool try_early_completion_(RadioRxPacket &packet, uint32_t sync_us, uint32_t irq_status, uint32_t start_ms,
-                             uint32_t timeout_ms);
+                             uint32_t timeout_ms, EarlyCompletionPath path);
   /// Finalize receive: read the packet if RX_DONE is set, otherwise record failure.
   bool finalize_receive_(RadioRxPacket &packet, uint32_t irq);
 
+  EarlyCompletionPath early_completion_path_state_{EarlyCompletionPath::NONE};  ///< See @ref early_completion_path_.
   uint16_t response_preamble_;
   uint16_t post_tx_settle_us_;
   uint32_t busy_timeout_ms_;

@@ -90,6 +90,59 @@ TEST(HubStatus, RssiEmaConvergesToStableSignal) {
   EXPECT_EQ(device_rssi_ema_dbm(*dev), -64) << "a stable signal must converge exactly, with no truncation dead zone";
 }
 
+TEST(HubStatus, RxWithUnknownRssiKeepsTheLastValueAndTheEma) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  comp.add_device("054E17");
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  set_cmd(f, CMD_ERROR_RESP);
+
+  radio.set_last_capture_rssi(-60);
+  comp.update_device_status_(f);
+  ASSERT_EQ(dev->last_rssi_dbm, -60);
+  const int16_t ema_before = dev->rssi_ema_scaled;
+
+  radio.set_last_capture_rssi_unknown();
+  dev->last_seen_ms = 0;
+  comp.update_device_status_(f);
+
+  EXPECT_NE(dev->last_seen_ms, 0u) << "the frame still proves the device is alive";
+  EXPECT_EQ(dev->last_rssi_dbm, -60) << "an unknown level is no sample";
+  EXPECT_EQ(dev->rssi_ema_scaled, ema_before);
+}
+
+TEST(HubStatus, FirstSampleUnknownLeavesTheRssiUnknown) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  comp.radio_ = &radio;
+  comp.add_device("054E17");
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  uint8_t src[3] = {0x05, 0x4E, 0x17};
+  uint8_t dst[3] = {0xC0, 0xFF, 0xEE};
+  set_src(f, src);
+  set_dst(f, dst);
+  set_cmd(f, CMD_ERROR_RESP);
+
+  radio.set_last_capture_rssi_unknown();
+  comp.update_device_status_(f);
+
+  EXPECT_EQ(dev->last_rssi_dbm, RSSI_UNKNOWN_DBM);
+  EXPECT_EQ(dev->rssi_ema_scaled, RSSI_UNKNOWN_DBM);
+}
+
 TEST(HubStatus, RxWithInvalidCaptureUpdatesLastSeenButNotRssi) {
   TestableHubComponent comp;
   MockRadio radio;

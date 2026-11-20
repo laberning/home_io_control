@@ -12,6 +12,7 @@
 #include "decisions_exchange.h"
 #include "decisions_attempts.h"
 #include "log_frame.h"
+#include "log_helpers.h"
 #include "proto_commands.h"
 #include "proto_constants.h"
 #include "proto_crypto.h"
@@ -86,21 +87,21 @@ void ExchangeEngine::record_debug(const char *stage, uint8_t tries, bool saw_cha
   this->debug_.capture_packet_status = capture.packet_status;
   this->debug_.capture_reported_len = capture.reported_len;
   this->debug_.capture_frame_len = capture.frame_len;
-  this->debug_.capture_rssi_dbm = capture.rssi_dbm;
+  this->debug_.capture_rssi_dbm = capture.rssi_or_unknown();
 }
 
 int render_exchange_debug(char *buf, size_t buf_size, const char *device_id, const ExchangeEngine::DebugInfo &d) {
   return snprintf(buf, buf_size,
                   "device=%s cmd=%s(0x%02X) stage=%s tries=%u max_tries=%u saw_challenge=%u cap_valid=%u "
                   "cap_rx_done=%u cap_crc_err=%u cap_freq=%" PRIu32
-                  " cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%d belief=%s "
+                  " cap_irq=0x%04X cap_pkt=0x%02X cap_reported_len=%u cap_frame_len=%u cap_rssi=%s belief=%s "
                   "last_preamble=%u final_waits=%u final_rx_ignored=%u final_rx_failed=%u final_rx_irq=0x%04X",
                   device_id, command_name(d.request_cmd), d.request_cmd, d.stage, d.tries, d.max_tries,
                   // Rendered as 0/1: these are flags in a field list, not prose, and a caller greps them.
                   static_cast<unsigned>(d.saw_challenge), static_cast<unsigned>(d.capture_valid),
                   static_cast<unsigned>(d.capture_rx_done), static_cast<unsigned>(d.capture_crc_error),
                   d.capture_freq_hz, d.capture_irq_status, d.capture_packet_status, d.capture_reported_len,
-                  d.capture_frame_len, d.capture_rssi_dbm,
+                  d.capture_frame_len, detail::format_rssi_dbm(d.capture_rssi_dbm).c_str(),
                   d.wake_belief_use == ExchangeEngine::WakeBeliefUse::APPLIED
                       ? decisions::wake_belief_name(d.wake_belief)
                       : ExchangeEngine::wake_belief_use_name(d.wake_belief_use),
@@ -893,7 +894,7 @@ decisions::ChannelAccessStatus ExchangeEngine::transmit_request_(const IoFrame &
 void ExchangeEngine::report_overheard_(const IoFrame &frame, const RadioRxPacket &packet) {
   if (this->overheard_frame_observer_ == nullptr)
     return;
-  const int16_t rssi_dbm = (*this->radio_ptr_)->get_last_capture().rssi_dbm;
+  const int16_t rssi_dbm = (*this->radio_ptr_)->get_last_capture().rssi_or_unknown();
   this->overheard_frame_observer_->on_overheard_frame(frame, packet, rssi_dbm, millis());
 }
 
@@ -1110,7 +1111,7 @@ uint8_t ExchangeEngine::collect_broadcast_responses(const IoFrame &request, uint
       return ReplyDisposition::IGNORE;
 
     BroadcastReplyInfo info{};
-    info.rssi_dbm = radio->get_last_capture().rssi_dbm;
+    info.rssi_dbm = radio->get_last_capture().rssi_or_unknown();
     info.rx_freq_hz = pkt.freq_hz;
     info.after_tx_ms = millis() - tx_done_ms;
     on_reply(*parsed, info);

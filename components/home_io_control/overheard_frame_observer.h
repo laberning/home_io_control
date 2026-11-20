@@ -32,8 +32,9 @@ class OverheardFrameObserver {
   /// both arrive here.
   /// @param frame    The parsed frame.
   /// @param packet   The raw packet it came from (frequency, length, bytes).
-  /// @param rssi_dbm RSSI of that reception, in dBm, as the radio reported it for this packet. The
-  ///                 observer needs no radio access of its own to get it.
+  /// @param rssi_dbm RSSI of that reception, in dBm, as the radio reported it for this packet, or
+  ///                 RSSI_UNKNOWN_DBM when the radio had no level of the frame's own. The observer
+  ///                 needs no radio access of its own to get it.
   /// @param now      millis() when the wait heard it.
   virtual void on_overheard_frame(const IoFrame &frame, const RadioRxPacket &packet, int16_t rssi_dbm,
                                   uint32_t now) = 0;

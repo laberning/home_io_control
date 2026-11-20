@@ -10,6 +10,7 @@
 #include "log_frame.h"
 #include "proto_crypto.h"
 #include "proto_frame.h"
+#include "proto_rssi.h"
 #include "proto_sizes.h"
 #include "radio_interface.h"
 
@@ -46,6 +47,14 @@ inline std::string format_name_and_hex(const char *name, uint8_t value) {
   std::array<char, NAME_AND_HEX_BUFFER_SIZE> buffer{};
   std::snprintf(buffer.data(), buffer.size(), "%s(0x%02X)", name, value);
   return std::string(buffer.data());
+}
+
+/// @brief Format an RSSI for a log line or report: "-48" in dBm, or "n/a" for RSSI_UNKNOWN_DBM.
+///
+/// An unknown level is one the radio could not take from the frame itself (see
+/// RadioCaptureInfo::rssi_or_unknown()); printing the raw sentinel would show a meaningless number.
+inline std::string format_rssi_dbm(int16_t rssi_dbm) {
+  return rssi_dbm == RSSI_UNKNOWN_DBM ? std::string("n/a") : std::to_string(rssi_dbm);
 }
 
 // ============================================================================

@@ -7,6 +7,7 @@
 #include "decisions_oneway.h"
 #include "proto_constants.h"
 #include "proto_device_types.h"
+#include "proto_rssi.h"
 #include "proto_timing.h"
 
 #include <cstdio>
@@ -232,9 +233,14 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
                node_id_to_string(advice.subject_node).c_str());
       return std::string(buf);
     case PairingAdviceCode::CHANNEL_BUSY_LBT_DELAYED:
-      snprintf(buf, sizeof(buf),
-               "Channel busy (device %s beaconing at %d dBm); discovery TX was delayed by listen-before-talk.",
-               node_id_to_string(advice.subject_node).c_str(), advice.rssi);
+      // An unknown level is no sample: the message then names the device without a level.
+      {
+        const std::string level =
+            advice.rssi == RSSI_UNKNOWN_DBM ? std::string() : " at " + std::to_string(advice.rssi) + " dBm";
+        snprintf(buf, sizeof(buf),
+                 "Channel busy (device %s beaconing%s); discovery TX was delayed by listen-before-talk.",
+                 node_id_to_string(advice.subject_node).c_str(), level.c_str());
+      }
       return std::string(buf);
     case PairingAdviceCode::FOREIGN_CONTROLLER_PAIRING:
       snprintf(buf, sizeof(buf), "Another controller is pairing device %s right now.",

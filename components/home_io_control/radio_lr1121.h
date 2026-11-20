@@ -107,6 +107,12 @@ static constexpr uint32_t LR1121_IRQ_DIO_ENABLE_MASK = LR1121_IRQ_TX_DONE | LR11
 
 static constexpr uint8_t LR1121_DEVICE_TYPE = 0x03;  ///< cross-checked against RadioLib and the datasheet
 
+/// How far (dB) the level read at sync must stand above the channel floor read after the frame for
+/// the early-path RSSI to count as the frame's own. A live read taken after the frame ended on air
+/// is the floor itself and fails this; a frame within this margin of the floor is not decodable
+/// anyway. Chip-specific (GetRssiInst behaviour) and not user-tunable.
+static constexpr int16_t LR1121_LATE_NOTICE_MARGIN_DB = 6;
+
 // GetErrors bit masks — Semtech's SWTL001 `lr11xx_system_errors_e`. Bits 8+ are undocumented there.
 static constexpr uint16_t LR1121_ERR_LF_RC_CALIB = 0x0001;    ///< Low-frequency RC oscillator calibration failed.
 static constexpr uint16_t LR1121_ERR_HF_RC_CALIB = 0x0002;    ///< High-frequency RC oscillator calibration failed.
@@ -406,10 +412,30 @@ class RadioLR1121 : public SoftPhyDriverBase {
   void clear_errors_();
   /// @copydoc SoftPhyDriverBase::fill_capture_info
   ///
+  /// RSSI: after RX_DONE, GetPktStatus's rssi_sync is the frame's own. On the early-completion path
+  /// the chip has not reached its end of packet, GetPktStatus still holds the previous reception's
+  /// status, and the RSSI is the live level taken at sync (see @ref sample_level_at_sync). For a
+  /// frame received inside a wait it is unknown when that level is not at least
+  /// `LR1121_LATE_NOTICE_MARGIN_DB` above the floor taken after the frame (the sync was noticed
+  /// after the frame ended). For a frame completed outside a wait no floor is taken, so the level
+  /// at sync stands.
+  ///
   /// Note: RadioCaptureInfo::irq_status is uint16_t; the 32-bit IRQ word is mapped down by
   /// taking bits [2..10] and shifting right by 2.
   void fill_capture_info(bool blocking_wait, uint32_t irq_status, uint8_t rx_offset, uint8_t reported_len,
                          const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) override;
+
+  /// @copydoc SoftPhyDriverBase::sample_level_at_sync
+  ///
+  /// GetRssiInst right after the sync is noticed. Measured on a bench: a foreign frame reads its own
+  /// level, an Izymo reply -49..-52 dBm, and a frame noticed after its end the noise floor.
+  void sample_level_at_sync() override;
+  /// @copydoc SoftPhyDriverBase::sample_level_after_frame
+  ///
+  /// GetRssiInst once the early path holds the frame: the channel's floor, the reference for
+  /// "was the level at sync taken while the frame was on air". Not called outside a wait, where
+  /// the channel after the frame may already carry the next frame of a burst.
+  void sample_level_after_frame() override;
 
   /// IRQ pin (DIO9) ISR — sets dio_fired flag. Runs in interrupt context.
   static void gpio_intr(RadioLR1121 *arg);
@@ -486,9 +512,11 @@ class RadioLR1121 : public SoftPhyDriverBase {
   /// keeps it instead of attaching it a second time.
   bool irq_interrupt_attached_{false};
   uint8_t tx_power_;
-  uint8_t tcxo_voltage_code_;  ///< TCXO_VOLTAGE_OPTIONS code from YAML (1_6V=0x00 .. 3_3V=0x07); the chip's
-                               ///< SetTcxoMode voltage code directly. TCXO_VOLTAGE_NONE means no TCXO (bare crystal).
-  uint8_t last_stat1_{0};      ///< Most recent Stat1 byte (diagnostics).
+  uint8_t tcxo_voltage_code_;    ///< TCXO_VOLTAGE_OPTIONS code from YAML (1_6V=0x00 .. 3_3V=0x07); the chip's
+                                 ///< SetTcxoMode voltage code directly. TCXO_VOLTAGE_NONE means no TCXO (bare crystal).
+  uint8_t last_stat1_{0};        ///< Most recent Stat1 byte (diagnostics).
+  uint8_t rssi_at_sync_raw_{0};  ///< Raw GetRssiInst taken by sample_level_at_sync() for the early-path frame.
+  uint8_t rssi_floor_raw_{0};    ///< Raw GetRssiInst taken by sample_level_after_frame().
   LR1121RxBandwidth rx_bandwidth_{LR1121RxBandwidth::BW_117_3_KHZ};  ///< Runtime-tunable RX bandwidth.
 };
 

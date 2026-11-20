@@ -290,21 +290,23 @@ class RadioSX1276 : public RadioDriver {
   /// restarted, mode or channel changed, sync flag gone).
   void clear_rssi_latch_();
   /// The raw RSSI register value for the capture of the frame being delivered: the level latched
-  /// at sync, or a live read when the sync word was never seen in flight.
-  uint8_t capture_rssi_raw_();
+  /// at sync, or nullopt (unknown) when the sync word was never seen in flight, since a read after
+  /// the frame has ended is the noise floor.
+  std::optional<uint8_t> capture_rssi_raw_();
   /// Populate last_capture_ from raw telemetry.
   /// Note: `crc_error` is never set on this driver — in IoHomeOn mode the hardware
   /// silently drops frames with a bad CRC before they reach the FIFO.
   /// @param blocking_wait if this was a blocking receive.
   /// @param irq1 IRQ flags 1.
   /// @param irq2 IRQ flags 2.
-  /// @param rssi Raw REG_RSSI_VALUE of the frame (level at sync-word detection, see capture_rssi_raw_()).
+  /// @param rssi Raw REG_RSSI_VALUE of the frame (level at sync-word detection, see capture_rssi_raw_()), or
+  ///   nullopt when unknown.
   /// @param raw Pointer to raw bytes (may be nullptr).
   /// @param raw_len Length of raw buffer.
   /// @param frame Pointer to parsed frame bytes (may be nullptr).
   /// @param frame_len Length of parsed frame.
-  void fill_capture_info_(bool blocking_wait, uint8_t irq1, uint8_t irq2, uint8_t rssi, const uint8_t *raw,
-                          uint8_t raw_len, const uint8_t *frame, uint8_t frame_len);
+  void fill_capture_info_(bool blocking_wait, uint8_t irq1, uint8_t irq2, std::optional<uint8_t> rssi,
+                          const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len);
 
   /// DIO0 ISR — sets dio_fired flag. Runs in interrupt context.
   static void gpio_intr(RadioSX1276 *arg);

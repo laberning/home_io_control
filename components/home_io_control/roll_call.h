@@ -43,7 +43,7 @@ struct ScanResponder {
   uint8_t src[NODE_ID_SIZE];  ///< Responder's node ID; also the dedup key.
   DeviceType type;            ///< Decoded device type.
   uint8_t subtype;            ///< Decoded device subtype.
-  int16_t rssi_dbm;           ///< RSSI of the reply that produced this entry.
+  int16_t rssi_dbm;           ///< RSSI of the reply that produced this entry, or RSSI_UNKNOWN_DBM.
   uint8_t manufacturer;       ///< Raw manufacturer ID; name via manufacturer_name().
   uint8_t flags;              ///< Multi Information Byte; decode with DISCOVERY_FLAGS_* masks.
   bool has_extended;          ///< Whether manufacturer/flags above are present.
@@ -152,7 +152,7 @@ enum class ScanAddResult : uint8_t {
 /// @param count In: entries already present. Out: updated count.
 /// @param capacity Maximum entries `responders` can hold.
 /// @param frame Reply frame to decode and store.
-/// @param rssi_dbm RSSI of that reply.
+/// @param rssi_dbm RSSI of that reply, or RSSI_UNKNOWN_DBM.
 /// @param key_slot The key slot of the sweep the reply arrived in.
 /// @param entry Out: the newly recorded entry (ADDED), the already-recorded entry with the same
 ///        `src` (DUPLICATE), or nullptr (FULL) — lets a caller read back the stored

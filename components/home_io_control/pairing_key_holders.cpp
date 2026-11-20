@@ -132,7 +132,7 @@ bool KeyHolderSearch::probe_heater_at_next_address_(const pairing::PairingContex
       engine_.send_and_receive(request, response, FREQ_CH2, ExchangeOptions{}.with_key(key).on_fixed_channel()) ==
           ExchangeOutcome::SUCCESS_WITH_RESPONSE &&
       decode_heating_reply(response, DeviceRegister::MAX_SETPOINT, max_setpoint_c);
-  const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
+  const int16_t rssi = radio_()->get_last_capture().rssi_or_unknown();
   if (!answered) {
     ESP_LOGI(TAG, "Heater probe: %s did not answer; looking for devices with a roll-call instead", heater_id.c_str());
     return false;

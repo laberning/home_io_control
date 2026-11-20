@@ -534,6 +534,28 @@ class OffsetProbeRadioSX1262 : public RadioSX1262 {
   using RadioSX1262::RadioSX1262;
 };
 
+TEST(RadioSX1262, EarlyPathKeepsThePacketStatusRssiAndTakesNoLiveLevel) {
+  // The SX1262 latches its packet status at sync, so the early path needs no live read: its RSSI
+  // is the packet status's rssi_sync and is always known.
+  ScriptedSpi spi;
+  MockPin rst, dio1, busy(false);
+  test::EarlyRxSoftPhy<RadioSX1262> radio(&spi, &rst, &dio1, &busy, 0, 0);
+  radio.set_rx_buffer(uart_packed_on_air_bytes(kRs100Challenge));
+  radio.set_irq_sequence({SX1262_IRQ_SYNC_WORD_VALID});
+  radio.mark_dio_fired_from_isr();
+  spi.queue_responses({0x00, 0x00, 0x00});            // ClearIrqStatus (opcode + 2 parameter bytes) comes first
+  spi.queue_responses({0x00, 0x00, 0x00, 76, 0x00});  // GetPacketStatus: [status, rssi_sync, rssi_avg]
+
+  RadioRxPacket packet{};
+  ASSERT_TRUE(radio.check_for_packet(packet));
+  ASSERT_FALSE(radio.fallback_used()) << "the frame must complete on the early path";
+
+  EXPECT_TRUE(radio.get_last_capture().rssi_known);
+  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -38);
+  for (const auto &tx : spi.transactions())
+    EXPECT_FALSE(!tx.empty() && tx[0] == SX1262_GET_RSSI_INST) << "no live RSSI read on the SX1262 early path";
+}
+
 TEST(SoftPhy, RawBytesForFrameCoversFrameAndCrcCells) {
   // 15 protocol bytes + 2 CRC = 17 UART cells = 170 bits = 22 raw bytes.
   EXPECT_EQ(soft_phy_raw_bytes_for_frame(15), 22);

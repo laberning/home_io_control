@@ -919,7 +919,7 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
   }
 
   if ((frame.ctrl0 & CTRL0_PROTOCOL_1W) != 0) {
-    this->handle_oneway_frame_(frame, millis(), this->radio_->get_last_capture().rssi_dbm);
+    this->handle_oneway_frame_(frame, millis(), this->radio_->get_last_capture().rssi_or_unknown());
     return;
   }
 

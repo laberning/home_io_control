@@ -741,7 +741,7 @@ TEST(RadioSX1276, WaitForPacketSuccessViaIrqPath) {
   const auto &capture = radio.get_last_capture();
   EXPECT_TRUE(capture.rx_done);
   EXPECT_FALSE(capture.crc_error) << "IoHomeOn filters bad-CRC frames in hardware before RxDone";
-  EXPECT_EQ(capture.rssi_dbm, -50);
+  EXPECT_FALSE(capture.rssi_known) << "no sync word was seen in flight, so the frame's own level was never taken";
 }
 
 TEST(RadioSX1276, WaitForPacketTimesOutWithNoActivity) {
@@ -1126,10 +1126,11 @@ TEST(RadioSX1276, BlockingCaptureReportsTheLevelSeenAtSync) {
   RadioRxPacket packet{};
   ASSERT_TRUE(radio.wait_for_packet(packet, 100));
 
+  EXPECT_TRUE(radio.get_last_capture().rssi_known);
   EXPECT_EQ(radio.get_last_capture().rssi_dbm, -42) << "the end-of-frame read would report -84";
 }
 
-TEST(RadioSX1276, BlockingCaptureFallsBackToTheLiveReadWithoutASyncSighting) {
+TEST(RadioSX1276, BlockingCaptureHasNoRssiWithoutASyncSighting) {
   RegisterModelSpi spi;
   MockPin rst, dio0, dio4(false);
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
@@ -1141,7 +1142,9 @@ TEST(RadioSX1276, BlockingCaptureFallsBackToTheLiveReadWithoutASyncSighting) {
   RadioRxPacket packet{};
   ASSERT_TRUE(radio.wait_for_packet(packet, 100));
 
-  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -50);
+  // The register now reads the channel after the frame, which is not the frame's level.
+  EXPECT_FALSE(radio.get_last_capture().rssi_known);
+  EXPECT_EQ(radio.get_last_capture().rssi_or_unknown(), RSSI_UNKNOWN_DBM);
 }
 
 TEST(RadioSX1276, IdleCaptureReportsTheLevelLatchedByTheHopGate) {
@@ -1164,7 +1167,7 @@ TEST(RadioSX1276, IdleCaptureReportsTheLevelLatchedByTheHopGate) {
   EXPECT_EQ(radio.get_last_capture().rssi_dbm, -42);
 }
 
-TEST(RadioSX1276, IdleCaptureFallsBackToTheLiveReadWhenSyncWasNeverSeen) {
+TEST(RadioSX1276, IdleCaptureHasNoRssiWhenSyncWasNeverSeen) {
   RegisterModelSpi spi;
   MockPin rst, dio0, dio4(false);
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
@@ -1176,7 +1179,7 @@ TEST(RadioSX1276, IdleCaptureFallsBackToTheLiveReadWhenSyncWasNeverSeen) {
 
   RadioRxPacket packet{};
   ASSERT_TRUE(radio.check_for_packet(packet));
-  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -84);
+  EXPECT_FALSE(radio.get_last_capture().rssi_known) << "-84 dBm is the floor after the frame, not its level";
 }
 
 TEST(RadioSX1276, ALatchedLevelNeverLeaksIntoTheNextCapture) {
@@ -1201,7 +1204,8 @@ TEST(RadioSX1276, ALatchedLevelNeverLeaksIntoTheNextCapture) {
   radio.mark_dio_fired_from_isr();
   ASSERT_TRUE(radio.check_for_packet(packet));
 
-  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -60);
+  EXPECT_FALSE(radio.get_last_capture().rssi_known)
+      << "the stale -42 dBm must not be reported for this frame, and no sync was seen to take its own";
 }
 
 TEST(RadioSX1276, ALatchedLevelDoesNotSurviveARetune) {
@@ -1222,7 +1226,8 @@ TEST(RadioSX1276, ALatchedLevelDoesNotSurviveARetune) {
 
   RadioRxPacket packet{};
   ASSERT_TRUE(radio.check_for_packet(packet));
-  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -60);
+  EXPECT_FALSE(radio.get_last_capture().rssi_known)
+      << "the stale -42 dBm must not be reported for this frame, and no sync was seen to take its own";
 }
 
 TEST(RadioSX1276, ALatchedLevelDoesNotSurviveTheSyncFlagGoing) {
@@ -1243,7 +1248,8 @@ TEST(RadioSX1276, ALatchedLevelDoesNotSurviveTheSyncFlagGoing) {
 
   RadioRxPacket packet{};
   ASSERT_TRUE(radio.check_for_packet(packet));
-  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -60);
+  EXPECT_FALSE(radio.get_last_capture().rssi_known)
+      << "the stale -42 dBm must not be reported for this frame, and no sync was seen to take its own";
 }
 
 TEST(RadioSX1276, ABlockingWaitForgetsTheLevelOfAFrameTheChipDropped) {
@@ -1263,7 +1269,8 @@ TEST(RadioSX1276, ABlockingWaitForgetsTheLevelOfAFrameTheChipDropped) {
 
   RadioRxPacket packet{};
   ASSERT_TRUE(radio.wait_for_packet(packet, 100));
-  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -60) << "the dropped frame's -42 dBm must not be reported";
+  EXPECT_FALSE(radio.get_last_capture().rssi_known)
+      << "the dropped frame's -42 dBm must not be reported, and the -60 dBm after this frame is not its own level";
 }
 
 TEST(RadioSX1276, ALatchedLevelDoesNotSurviveAnRxRestart) {
@@ -1284,7 +1291,8 @@ TEST(RadioSX1276, ALatchedLevelDoesNotSurviveAnRxRestart) {
 
   RadioRxPacket packet{};
   ASSERT_TRUE(radio.check_for_packet(packet));
-  EXPECT_EQ(radio.get_last_capture().rssi_dbm, -60);
+  EXPECT_FALSE(radio.get_last_capture().rssi_known)
+      << "the stale -42 dBm must not be reported for this frame, and no sync was seen to take its own";
 }
 
 TEST(RadioSX1276, ReadRssiStaysALiveReadAfterASyncLatch) {

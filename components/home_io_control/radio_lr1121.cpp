@@ -230,18 +230,30 @@ void RadioLR1121::clear_irq_status(uint32_t irq_mask) {
 
 void RadioLR1121::fill_capture_info(bool blocking_wait, uint32_t irq_status, uint8_t rx_offset, uint8_t reported_len,
                                     const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) {
-  // GetPktStatus (0x0204), not GetRssiInst (0x0205): the latter is a live, instantaneous RSSI
-  // read unrelated to any specific frame, whereas GetPktStatus is atomically tied to the
-  // last-received packet — the reported RSSI must reflect the frame that was actually received,
-  // not the channel's state whenever this function happens to run. Mirrors
-  // RadioSX1262::fill_capture_info()'s use of its own GetPacketStatus. byte[0] is rssi_sync
-  // (RSSI at sync-word detection), matching the sync-not-avg field SX1262 uses
-  // (packet_status[1] there).
+  // After RX_DONE, GetPktStatus (0x0204) is atomically tied to the packet just received: byte[0]
+  // is rssi_sync (RSSI at sync-word detection), matching the sync-not-avg field SX1262 uses
+  // (packet_status[1] there). On the early-completion path the chip has not reached its own end of
+  // packet, so GetPktStatus still holds the previous reception's status (bench: 72 of 89
+  // consecutive reads identical) and the level sampled at sync stands in for it instead.
   uint8_t pkt_status[4] = {0};
   this->read_command_(LR1121_CMD_GET_PKT_STATUS, nullptr, 0, pkt_status, sizeof(pkt_status));
 
-  this->populate_capture_base_(blocking_wait, this->current_freq_, this->raw_rssi_to_dbm_(pkt_status[0]), raw, raw_len,
-                               frame, frame_len);
+  int16_t rssi_dbm = 0;
+  bool rssi_known = true;
+  if (this->early_completion_path_() != EarlyCompletionPath::NONE) {
+    rssi_dbm = this->raw_rssi_to_dbm_(this->rssi_at_sync_raw_);
+    // Inside a wait: unknown unless the level at sync stands clear of the floor read after the frame,
+    // since a sync noticed after the frame ended reads the floor both times. Idle: no floor was
+    // read (the next frame of a one-way burst makes it equal the frame's own level), so the level
+    // at sync stands.
+    if (this->early_completion_path_() == EarlyCompletionPath::IN_WAIT)
+      rssi_known = rssi_dbm >= this->raw_rssi_to_dbm_(this->rssi_floor_raw_) + LR1121_LATE_NOTICE_MARGIN_DB;
+  } else {
+    rssi_dbm = this->raw_rssi_to_dbm_(pkt_status[0]);
+  }
+
+  this->populate_capture_base_(blocking_wait, this->current_freq_, rssi_dbm, raw, raw_len, frame, frame_len,
+                               rssi_known);
   this->last_capture_.rx_done = (irq_status & LR1121_IRQ_RX_DONE) != 0;
   this->last_capture_.crc_error = (irq_status & LR1121_IRQ_CRC_ERR) != 0;
   // RadioCaptureInfo::irq_status is uint16_t; map the 32-bit word down by taking bits [2..10]
@@ -257,6 +269,10 @@ uint8_t RadioLR1121::read_rssi_raw_byte() {
   this->read_command_(LR1121_CMD_GET_RSSI_INST, nullptr, 0, &raw, 1);
   return raw;
 }
+
+void RadioLR1121::sample_level_at_sync() { this->rssi_at_sync_raw_ = this->read_rssi_raw_byte(); }
+
+void RadioLR1121::sample_level_after_frame() { this->rssi_floor_raw_ = this->read_rssi_raw_byte(); }
 
 void RadioLR1121::get_rx_buffer_status(uint8_t &reported_len, uint8_t &rx_offset) {
   // GetRxBufferStatus response layout mirrors SX1262: [length, offset].

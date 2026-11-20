@@ -10,6 +10,7 @@
 /// without knowing the hardware details.
 
 #include "proto_frame.h"
+#include "proto_rssi.h"
 #include "proto_timing.h"
 #include "tuning_config.h"
 #include <algorithm>
@@ -163,7 +164,8 @@ struct RadioCaptureInfo {
                               ///< CRC failures — see the concrete driver's capture documentation.
   uint32_t timestamp_ms{0};   ///< Timestamp of capture (millis).
   uint32_t freq_hz{0};        ///< RF frequency of capture (Hz).
-  int16_t rssi_dbm{0};        ///< Received signal strength (dBm): the level at sync-word detection.
+  int16_t rssi_dbm{0};        ///< Received signal strength (dBm) of this frame; meaningful only when rssi_known.
+  bool rssi_known{true};      ///< False when the driver could not take this frame's own level (see rssi_or_unknown()).
   uint16_t irq_status{0};     ///< Raw IRQ status register value.
   uint8_t irq_flags1{0};      ///< IRQ flags group 1 (chip-specific).
   uint8_t irq_flags2{0};      ///< IRQ flags group 2 (chip-specific, includes CRC flag).
@@ -177,6 +179,12 @@ struct RadioCaptureInfo {
   uint8_t frame_len{0};       ///< Number of valid bytes in frame[].
   uint8_t raw[RADIO_PACKET_BUFFER_SIZE]{};    ///< Raw radio buffer bytes.
   uint8_t frame[RADIO_PACKET_BUFFER_SIZE]{};  ///< Parsed protocol frame bytes.
+
+  /// The frame's signal strength for a consumer that stores or prints it: the level of the frame
+  /// itself, taken while it was on air, or `RSSI_UNKNOWN_DBM`. A reading that belongs to another
+  /// reception or to the channel's noise floor is never reported as the frame's level, so a value
+  /// from here can be trusted and an unknown one is skipped or shown as "n/a".
+  [[nodiscard]] int16_t rssi_or_unknown() const { return this->rssi_known ? this->rssi_dbm : RSSI_UNKNOWN_DBM; }
 };
 
 /// Abstract radio driver for IO-Homecontrol.
@@ -488,19 +496,21 @@ class RadioDriver {
   /// must be set by the derived driver after calling this helper.
   /// @param blocking_wait if this was a blocking receive.
   /// @param freq_hz RF frequency of the capture.
-  /// @param rssi_dbm Received signal strength.
+  /// @param rssi_dbm Received signal strength of this frame, or ignored when `rssi_known` is false.
   /// @param raw Pointer to raw bytes (may be nullptr).
   /// @param raw_len Length of raw buffer.
   /// @param frame Pointer to parsed frame bytes (may be nullptr).
   /// @param frame_len Length of parsed frame.
+  /// @param rssi_known False when the driver has no level of the frame's own (the capture then reports unknown).
   void populate_capture_base_(bool blocking_wait, uint32_t freq_hz, int16_t rssi_dbm, const uint8_t *raw,
-                              uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) {
+                              uint8_t raw_len, const uint8_t *frame, uint8_t frame_len, bool rssi_known = true) {
     this->last_capture_ = RadioCaptureInfo{};
     this->last_capture_.valid = true;
     this->last_capture_.blocking_wait = blocking_wait;
     this->last_capture_.timestamp_ms = millis();
     this->last_capture_.freq_hz = freq_hz;
     this->last_capture_.rssi_dbm = rssi_dbm;
+    this->last_capture_.rssi_known = rssi_known;
     if (raw != nullptr && raw_len > 0) {
       this->last_capture_.raw_len = std::min(raw_len, (uint8_t) sizeof(this->last_capture_.raw));
       memcpy(this->last_capture_.raw, raw, this->last_capture_.raw_len);

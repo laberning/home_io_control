@@ -55,7 +55,7 @@ enum class PairingAdviceCode : uint8_t {
 struct PairingAdvice {
   PairingAdviceCode code{PairingAdviceCode::NONE};
   uint8_t subject_node[NODE_ID_SIZE]{};  ///< Node the advice is about; zero if not applicable.
-  int16_t rssi{0};                       ///< RSSI associated with the observation; zero if not applicable.
+  int16_t rssi{0};                       ///< RSSI of the observation (RSSI_UNKNOWN_DBM: no sample); zero if n/a.
   bool has_result_code{false};           ///< True when result_code carries the device's CMD_ERROR_RESP byte.
   uint8_t result_code{0};                ///< CMD_ERROR_RESP byte the advice is about.
   bool answered_as_controller{false};    ///< True when the device answered discovery as a remote controller.

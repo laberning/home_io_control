@@ -350,6 +350,10 @@ class MockRadio : public esphome::home_io_control::RadioDriver {
   void set_last_capture_rssi(int16_t rssi_dbm) {
     this->populate_capture_base_(false, 0, rssi_dbm, nullptr, 0, nullptr, 0);
   }
+  /// Stage a valid capture whose RSSI is unknown (the driver could not take the frame's own level).
+  void set_last_capture_rssi_unknown() {
+    this->populate_capture_base_(false, 0, 0, nullptr, 0, nullptr, 0, /*rssi_known=*/false);
+  }
   /// Emulate the real drivers' capture lifecycle: every wait_for_packet() clears the capture
   /// before listening, and a delivered frame populates it. Off by default because most tests stage
   /// a capture directly via set_last_capture_rssi() and would simply have it wiped; on for tests

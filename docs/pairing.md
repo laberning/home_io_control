@@ -211,7 +211,9 @@ holds its system key. Responders are grouped into a `Known:` section (already in
 it would be empty. Each line names the device as `<type>, <subtype>` (for example
 `electrical heater, with adjustable setpoint`, or `subtype N` when the subtype has no name; the
 [node types table](supported-devices.md#node-types-and-subtypes) lists them). A responder whose type
-no platform drives yet gets `not supported yet` in place of the block.
+no platform drives yet gets `not supported yet` in place of the block. A reply whose signal strength
+the radio could not take from the frame itself shows `rssi=n/a`
+([ADR 0112](adr/0112-a-frames-rssi-is-its-own-or-unknown.md)).
 
 ```
 Roll-call: 2 devices detected (1 known, 1 unknown)

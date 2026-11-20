@@ -12,6 +12,7 @@
 #include "proto_device_features.h"
 #include "proto_device_kinds.h"
 #include "proto_heating.h"
+#include "proto_rssi.h"
 #include "proto_sizes.h"
 
 #include <cstddef>
@@ -201,11 +202,6 @@ static constexpr uint8_t DEVICE_SUBTYPE_MASK = 0x3F;
 /// Matches POS_UNKNOWN (0xD4 = 212 decimal) for easy debugging.
 static constexpr float UNKNOWN_POSITION = 212.0F;
 static constexpr uint8_t DEVICE_NAME_BUFFER_SIZE = 32;  ///< Device name storage including null terminator
-
-/// @brief Sentinel value meaning "no RSSI sample recorded yet" for `last_rssi_dbm`/`rssi_ema_scaled`.
-/// A real RSSI reading from these radios is always well above `INT16_MIN` — and so is any real
-/// `rssi_ema_scaled` fixed-point value.
-static constexpr int16_t RSSI_UNKNOWN_DBM = INT16_MIN;
 
 /// @brief EMA weight denominator and fixed-point scale for `IoDevice::rssi_ema_scaled`.
 /// One constant serves both roles by construction: the update `S += x − round(S/N)` blends each

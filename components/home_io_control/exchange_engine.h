@@ -219,7 +219,7 @@ class ExchangeEngine {
   /// reconstruct either on its own (its own `millis()` taken before the call would include the
   /// transmit itself — hundreds of milliseconds behind a wake-up preamble — and skew latency figures).
   struct BroadcastReplyInfo {
-    int16_t rssi_dbm{0};      ///< RSSI of this reply (from the radio's last capture).
+    int16_t rssi_dbm{0};      ///< RSSI of this reply (from the radio's last capture), or RSSI_UNKNOWN_DBM.
     uint32_t rx_freq_hz{0};   ///< Channel the reply was received on (RadioRxPacket::freq_hz).
     uint32_t after_tx_ms{0};  ///< Milliseconds from the request's transmit completing to this reply's delivery.
   };

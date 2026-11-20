@@ -125,7 +125,7 @@ decisions::PairingDiscoveryDisposition PairingEngine::wait_for_discovery_respons
           return ReplyDisposition::IGNORE;
         const bool accepted = decisions::classify_pairing_discovery_response(*parsed, node_id_) ==
                               decisions::PairingDiscoveryDisposition::ACCEPT;
-        this->record_discovery_rx_telemetry_(*parsed, accepted, radio_()->get_last_capture().rssi_dbm);
+        this->record_discovery_rx_telemetry_(*parsed, accepted, radio_()->get_last_capture().rssi_or_unknown());
         return accepted ? ReplyDisposition::ACCEPT : ReplyDisposition::IGNORE;
       });
 
@@ -160,7 +160,7 @@ bool PairingEngine::wait_for_key_challenge_(uint32_t timeout_ms, RadioRxPacket &
         saw_traffic = true;
         if (parsed == nullptr)
           return ReplyDisposition::IGNORE;
-        const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
+        const int16_t rssi = radio_()->get_last_capture().rssi_or_unknown();
         if (decisions::is_direct_key_confirm(*parsed, device_node_id, node_id_)) {
           this->telemetry_.record_rx(*parsed, rssi);
           return ReplyDisposition::ACCEPT;
@@ -206,7 +206,7 @@ decisions::PairingDiscoverConfirmDisposition PairingEngine::wait_for_discover_co
       engine_.listen(spec, context.packet, context.rx, [&](const IoFrame *parsed, const RadioRxPacket & /*packet*/) {
         if (parsed == nullptr)
           return ReplyDisposition::IGNORE;
-        const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
+        const int16_t rssi = radio_()->get_last_capture().rssi_or_unknown();
         disposition = decisions::classify_pairing_discover_confirm_reply(*parsed, context.device.node_id, node_id_);
         if (disposition == decisions::PairingDiscoverConfirmDisposition::IGNORE) {
           this->telemetry_.record_rx_reject(*parsed, rssi);
@@ -262,7 +262,7 @@ decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(p
         if (disposition == decisions::PairingKeyConfirmDisposition::IGNORE)
           return ReplyDisposition::IGNORE;
 
-        const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
+        const int16_t rssi = radio_()->get_last_capture().rssi_or_unknown();
         if (disposition == decisions::PairingKeyConfirmDisposition::REFUSE) {
           this->telemetry_.record_rx_reject(*parsed, rssi);
           if (parsed->cmd == CMD_ERROR_RESP) {
@@ -665,7 +665,7 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   // frame-log helpers (log_frame()/log_component_capture()) already mask both commands.
   const uint8_t challenge_len = context.rx.data_len;
   const uint32_t challenge_freq_hz = context.packet.freq_hz;
-  const int challenge_rssi_dbm = radio_()->get_last_capture().rssi_dbm;
+  const int16_t challenge_rssi_dbm = radio_()->get_last_capture().rssi_or_unknown();
 
   // Try 1 is the key transfer. Fast-turnaround radios catch the 0x33 through the standard exchange
   // wait inside it and make no further try. Slow-turnaround radios miss it while re-entering RX, so on
@@ -675,18 +675,18 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   // seen in the field, a refusal of a second key the device did not need).
   bool key_ok = false;
   const uint8_t tries = radio_()->has_fast_tx_rx_turnaround() ? 1 : PAIRING_KEY_INIT_RESENDS + 1;
-  engine_.run_attempts(ExchangeEngine::fixed_attempts(tries, EXCHANGE_RETRY_DELAY_MS),
-                       [&](uint8_t try_number, uint16_t /*window_ms*/) {
-                         if (try_number == 1) {
-                           key_ok = transfer_key_and_wait_confirm_(context);
-                           quiet_window.release();
-                           ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u freq=%" PRIu32 " rssi=%d",
-                                    challenge_len, challenge_freq_hz, challenge_rssi_dbm);
-                         } else {
-                           key_ok = resend_key_init_(context, try_number - 1);
-                         }
-                         return key_ok || context.key_refused ? AttemptVerdict::DONE : AttemptVerdict::AGAIN;
-                       });
+  engine_.run_attempts(
+      ExchangeEngine::fixed_attempts(tries, EXCHANGE_RETRY_DELAY_MS), [&](uint8_t try_number, uint16_t /*window_ms*/) {
+        if (try_number == 1) {
+          key_ok = transfer_key_and_wait_confirm_(context);
+          quiet_window.release();
+          ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u freq=%" PRIu32 " rssi=%s", challenge_len,
+                   challenge_freq_hz, detail::format_rssi_dbm(challenge_rssi_dbm).c_str());
+        } else {
+          key_ok = resend_key_init_(context, try_number - 1);
+        }
+        return key_ok || context.key_refused ? AttemptVerdict::DONE : AttemptVerdict::AGAIN;
+      });
   if (!key_ok) {
     ESP_LOGW(TAG, "Key exchange failed");
     return false;

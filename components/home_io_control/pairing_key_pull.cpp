@@ -63,7 +63,7 @@ bool KeyPull::wait_for_pulled_key_(pairing::PairingContext &context, uint32_t wi
         const auto disposition = decisions::classify_key_pull_reply(*parsed, context.device.node_id, node_id_);
         if (disposition == decisions::PairingKeyPullReplyDisposition::IGNORE)
           return ReplyDisposition::IGNORE;
-        const int16_t rssi = radio_()->get_last_capture().rssi_dbm;
+        const int16_t rssi = radio_()->get_last_capture().rssi_or_unknown();
         if (disposition == decisions::PairingKeyPullReplyDisposition::KEY) {
           this->telemetry_.record_rx(*parsed, rssi);
           return ReplyDisposition::ACCEPT;

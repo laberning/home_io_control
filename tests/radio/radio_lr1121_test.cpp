@@ -620,11 +620,166 @@ TEST(RadioLR1121, ReadRxPacketReportsRssiFromPktStatusNotLiveRssiInst) {
 
   EXPECT_EQ(radio.get_last_capture().rssi_dbm, -38)
       << "must report rssi_sync from GetPktStatus, not a live GetRssiInst read";
+  EXPECT_TRUE(radio.get_last_capture().rssi_known) << "the RxDone path's packet status is the frame's own";
   EXPECT_EQ(radio.get_last_capture().packet_status, 0x02) << "packet_status must come from GetPktStatus's status byte";
   EXPECT_GE(spi.find_opcode(LR1121_CMD_GET_PKT_STATUS), 0) << "GetPktStatus (0x0204) must be issued for a completed RX";
   EXPECT_LT(spi.find_opcode(LR1121_CMD_GET_RSSI_INST), 0)
       << "GetRssiInst (0x0205) must not be used for packet-capture RSSI — it samples RSSI live, "
          "well after the frame already ended";
+}
+
+// ============================================================================
+// Early-completion RSSI: the frame is taken before the chip's own end of packet, so GetPktStatus
+// still holds the previous reception's status and the level sampled at sync stands in for it.
+// ============================================================================
+
+namespace {
+
+/// Everything one early-completed reception puts on the SPI bus, in order: the live level at sync,
+/// the floor after the frame, then GetPktStatus (stale on this path).
+struct EarlyRssiScenario {
+  uint8_t raw_at_sync;
+  uint8_t raw_floor;
+  uint8_t stale_pkt_status_raw;
+};
+
+/// The early-path fixture, recording how many SPI transactions had run when the early path first
+/// read the RX buffer, so a test can place the live level read relative to the buffer reads.
+class BufferReadOrderLR1121 : public test::EarlyRxSoftPhy<RadioLR1121> {
+ public:
+  BufferReadOrderLR1121(ScriptedSpi *spi, MockPin *rst, MockPin *irq, MockPin *busy)
+      : test::EarlyRxSoftPhy<RadioLR1121>(spi, rst, irq, busy, 0, 0x07), spi_(spi) {}
+  /// SPI transactions issued before the first read_rx_buffer() call; SIZE_MAX if none happened.
+  size_t spi_transactions_before_first_buffer_read{SIZE_MAX};
+
+ protected:
+  void read_rx_buffer(uint8_t offset, uint8_t *data, uint8_t len) override {
+    if (this->spi_transactions_before_first_buffer_read == SIZE_MAX)
+      this->spi_transactions_before_first_buffer_read = this->spi_->transactions().size();
+    test::EarlyRxSoftPhy<RadioLR1121>::read_rx_buffer(offset, data, len);
+  }
+
+ private:
+  ScriptedSpi *spi_;
+};
+
+/// Where the early-completed frame is received: inside a wait (the reply to our own TX) or idle.
+enum class EarlyReceive { IN_WAIT, IDLE };
+
+/// Runs one early-completed reception on a scripted LR1121 and returns the capture.
+/// @param first_buffer_read Out (optional): SPI transactions issued before the first buffer read.
+/// @param receive Whether the frame is taken by wait_for_packet() or check_for_packet(). The floor
+///   read after the frame happens only inside a wait, so the idle script has no floor response.
+RadioCaptureInfo early_capture(const EarlyRssiScenario &scenario, ScriptedSpi &spi, size_t *first_buffer_read = nullptr,
+                               EarlyReceive receive = EarlyReceive::IN_WAIT) {
+  const uint8_t frame[] = {0x0E, 0x00, 0xD1, 0xD4, 0xFF, 0x8C, 0x08, 0x3C, 0x3C, 0x45, 0x51, 0x6F, 0xFE, 0x59, 0x80};
+  uint8_t encoded[64] = {0};
+  uint8_t encoded_len = encode_frame_with_crc(frame, sizeof(frame), encoded, sizeof(encoded));
+  EXPECT_GT(encoded_len, 0u);
+
+  MockPin rst, irq, busy(false);
+  BufferReadOrderLR1121 radio(&spi, &rst, &irq, &busy);
+  radio.set_rx_buffer(std::vector<uint8_t>(encoded, encoded + encoded_len));
+  radio.set_irq_sequence({LR1121_IRQ_SYNC_WORD_VALID});
+  radio.mark_dio_fired_from_isr();
+
+  spi.queue_responses({0x00, scenario.raw_at_sync});  // GetRssiInst at sync
+  if (receive == EarlyReceive::IN_WAIT)
+    spi.queue_responses({0x00, scenario.raw_floor});                             // GetRssiInst after the frame
+  spi.queue_responses({0x00, scenario.stale_pkt_status_raw, 0x00, 0x00, 0x00});  // GetPktStatus
+
+  RadioRxPacket packet{};
+  bool const received =
+      receive == EarlyReceive::IN_WAIT ? radio.wait_for_packet(packet, 20000) : radio.check_for_packet(packet);
+  EXPECT_TRUE(received) << "the scripted frame must complete on the early path";
+  EXPECT_FALSE(radio.fallback_used());
+  if (first_buffer_read != nullptr)
+    *first_buffer_read = radio.spi_transactions_before_first_buffer_read;
+  return radio.get_last_capture();
+}
+
+}  // namespace
+
+TEST(RadioLR1121, EarlyPathReportsTheLiveLevelAtSyncNotTheStalePacketStatus) {
+  // The previous reception's packet status says -100 dBm (200); the frame itself read -49 dBm (98)
+  // at sync against a -105 dBm floor.
+  ScriptedSpi spi;
+  RadioCaptureInfo const capture = early_capture({98, 210, 200}, spi);
+
+  EXPECT_TRUE(capture.rssi_known);
+  EXPECT_EQ(capture.rssi_dbm, -49) << "the early path must report the level read at sync, not GetPktStatus";
+  EXPECT_EQ(capture.rssi_or_unknown(), -49);
+}
+
+TEST(RadioLR1121, EarlyPathTakesTheLiveLevelBeforeAnyBufferReadAndTheFloorAfterTheFrame) {
+  ScriptedSpi spi;
+  size_t first_buffer_read = SIZE_MAX;
+  (void) early_capture({98, 210, 200}, spi, &first_buffer_read);
+
+  std::vector<size_t> rssi_reads;
+  size_t pkt_status_at = spi.transactions().size();
+  for (size_t i = 0; i < spi.transactions().size(); i++) {
+    const auto &tx = spi.transactions()[i];
+    if (tx.size() < 2)
+      continue;
+    const uint16_t opcode = static_cast<uint16_t>((tx[0] << 8) | tx[1]);
+    if (opcode == LR1121_CMD_GET_RSSI_INST)
+      rssi_reads.push_back(i);
+    else if (opcode == LR1121_CMD_GET_PKT_STATUS)
+      pkt_status_at = i;
+  }
+  ASSERT_EQ(rssi_reads.size(), 2u) << "one live read at sync and one for the floor after the frame";
+  ASSERT_NE(first_buffer_read, SIZE_MAX) << "the early path must have read the RX buffer";
+  EXPECT_LT(rssi_reads[0], first_buffer_read) << "the level at sync must be taken before the first buffer read";
+  EXPECT_GE(rssi_reads[1], first_buffer_read) << "the floor is taken once the frame has been read";
+  EXPECT_LT(rssi_reads[0], rssi_reads[1]);
+  EXPECT_LT(rssi_reads[1], pkt_status_at);
+}
+
+TEST(RadioLR1121, EarlyPathFrameNoticedAfterItsEndHasNoRssi) {
+  // Sync noticed after the frame ended: the live read is the noise floor, the same as the floor
+  // read after the frame. It must not be reported as the frame's level.
+  ScriptedSpi spi;
+  RadioCaptureInfo const capture = early_capture({210, 210, 96}, spi);
+
+  EXPECT_FALSE(capture.rssi_known);
+  EXPECT_EQ(capture.rssi_or_unknown(), RSSI_UNKNOWN_DBM);
+}
+
+TEST(RadioLR1121, IdleEarlyPathFrameKeepsTheLevelAtSyncWhateverTheChannelReadsAfterwards) {
+  // Outside a wait the next copy of a one-way burst can already be on air after the frame, so a
+  // floor read would equal the frame's own level. No floor is read; the level at sync stands.
+  ScriptedSpi spi;
+  RadioCaptureInfo const capture = early_capture({98, 98, 200}, spi, nullptr, EarlyReceive::IDLE);
+
+  EXPECT_TRUE(capture.rssi_known);
+  EXPECT_EQ(capture.rssi_dbm, -49) << "the idle path reports the level at sync, not the stale packet status";
+  size_t rssi_reads = 0;
+  for (const auto &tx : spi.transactions())
+    if (tx.size() >= 2 && static_cast<uint16_t>((tx[0] << 8) | tx[1]) == LR1121_CMD_GET_RSSI_INST)
+      rssi_reads++;
+  EXPECT_EQ(rssi_reads, 1u) << "only the read at sync: nothing is read after an idle-path frame";
+}
+
+TEST(RadioLR1121, WaitEarlyPathFrameWithTheFloorAsLevelIsUnknownWhereTheIdlePathKeepsIt) {
+  ScriptedSpi wait_spi;
+  EXPECT_FALSE(early_capture({98, 98, 200}, wait_spi, nullptr, EarlyReceive::IN_WAIT).rssi_known);
+  ScriptedSpi idle_spi;
+  EXPECT_TRUE(early_capture({98, 98, 200}, idle_spi, nullptr, EarlyReceive::IDLE).rssi_known);
+}
+
+TEST(RadioLR1121, EarlyPathRssiNeedsTheLateNoticeMarginAboveTheFloor) {
+  static_assert(LR1121_LATE_NOTICE_MARGIN_DB == 6, "the boundary cases below are written for 6 dB");
+  ScriptedSpi at_margin_spi;
+  // -50 dBm against a -56 dBm floor: exactly the margin.
+  RadioCaptureInfo const at_margin = early_capture({100, 112, 0}, at_margin_spi);
+  EXPECT_TRUE(at_margin.rssi_known);
+  EXPECT_EQ(at_margin.rssi_dbm, -50);
+
+  ScriptedSpi below_margin_spi;
+  // -50 dBm against a -55 dBm floor: 1 dB short of the margin.
+  RadioCaptureInfo const below_margin = early_capture({100, 110, 0}, below_margin_spi);
+  EXPECT_FALSE(below_margin.rssi_known);
 }
 
 // ============================================================================

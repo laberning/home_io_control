@@ -1491,6 +1491,22 @@ TEST(HubManagement, ScanPairedDevicesCarriesInversionAndRssiIntoTheReport) {
       << "an inverted cover type must carry its inversion into the ready-to-paste YAML";
 }
 
+TEST(HubManagement, ScanPairedDevicesReportsAnUnknownRssiAsNotAvailable) {
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  radio.set_last_capture_rssi_unknown();
+
+  const uint8_t payload[] = {0x04, 0x00, 0x30, 0xE1, 0xF2, 0x02, 0xCC, 0xFC, 0x03};
+  const uint8_t src[3] = {0x30, 0xE1, 0xF2};
+  radio.queue_rx(frame_to_packet(build_spe_response(src, component.node_id_, payload, sizeof(payload))));
+
+  const auto result = component.management_actions_.scan_paired_devices();
+  ASSERT_TRUE(result.success);
+  EXPECT_NE(result.message.find("rssi=n/a"), std::string::npos) << result.message;
+  EXPECT_EQ(result.message.find("rssi=-"), std::string::npos);
+}
+
 TEST(HubManagement, ScanPairedDevicesMixedKnownAndUnknownBothClassified) {
   TestableManagementComponent component;
   MockRadio radio;

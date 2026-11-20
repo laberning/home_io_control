@@ -72,9 +72,10 @@ void RadioSX1276::run_image_cal_() {
 
 void IRAM_ATTR RadioSX1276::gpio_intr(RadioSX1276 *arg) { arg->mark_dio_fired_from_isr(); }
 
-void RadioSX1276::fill_capture_info_(bool blocking_wait, uint8_t irq1, uint8_t irq2, uint8_t rssi, const uint8_t *raw,
-                                     uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) {
-  this->populate_capture_base_(blocking_wait, this->current_freq_, -(int16_t) rssi / 2, raw, raw_len, frame, frame_len);
+void RadioSX1276::fill_capture_info_(bool blocking_wait, uint8_t irq1, uint8_t irq2, std::optional<uint8_t> rssi,
+                                     const uint8_t *raw, uint8_t raw_len, const uint8_t *frame, uint8_t frame_len) {
+  this->populate_capture_base_(blocking_wait, this->current_freq_, rssi.has_value() ? -(int16_t) *rssi / 2 : 0, raw,
+                               raw_len, frame, frame_len, rssi.has_value());
   this->last_capture_.rx_done = (irq2 & 0x04) != 0;
   this->last_capture_.irq_flags1 = irq1;
   this->last_capture_.irq_flags2 = irq2;
@@ -114,12 +115,12 @@ void RadioSX1276::latch_rssi_at_sync_() {
 
 void RadioSX1276::clear_rssi_latch_() { this->rssi_latched_ = false; }
 
-uint8_t RadioSX1276::capture_rssi_raw_() {
+std::optional<uint8_t> RadioSX1276::capture_rssi_raw_() {
   // RegRssiValue is live: it follows the channel, so once the frame has ended it reads the noise
   // floor. On a bench V2 receiving a dimmer the level was -42 dBm at sync and mid-frame but -84 dBm
   // at PayloadReady. Without a sighting of the sync word in flight (DIO0 fired before any poll
-  // saw it) the end-of-frame read is all there is.
-  return this->rssi_latched_ ? this->rssi_at_sync_raw_ : this->read_register_(REG_RSSI_VALUE);
+  // saw it) the frame's own level was never taken, so it is reported as unknown.
+  return this->rssi_latched_ ? std::optional<uint8_t>(this->rssi_at_sync_raw_) : std::nullopt;
 }
 
 bool RadioSX1276::is_sync_detected() {
@@ -403,7 +404,7 @@ bool RadioSX1276::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
   if (!this->poll_until_payload_ready_(timeout_ms, saw_dio0, irq1, irq2))
     return false;
 
-  uint8_t const rssi = this->capture_rssi_raw_();
+  std::optional<uint8_t> const rssi = this->capture_rssi_raw_();
   if ((irq2 & 0x04) == 0) {
     this->fill_capture_info_(true, irq1, irq2, rssi, nullptr, 0, nullptr, 0);
     return false;
@@ -427,7 +428,7 @@ bool RadioSX1276::check_for_packet(RadioRxPacket &packet) {
 
   uint8_t const irq1 = this->read_register_(REG_IRQ_FLAGS1);
   uint8_t const irq2 = this->read_register_(REG_IRQ_FLAGS2);
-  uint8_t const rssi = this->capture_rssi_raw_();
+  std::optional<uint8_t> const rssi = this->capture_rssi_raw_();
   if ((irq2 & 0x04) != 0) {
     this->clear_rssi_latch_();  // consumed: the next frame gets its own level
     // The frame the preamble announced has arrived. The idle hop may not have read SyncAddressMatch

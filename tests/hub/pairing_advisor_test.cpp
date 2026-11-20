@@ -37,6 +37,20 @@ const uint8_t DEVICE_SRC[NODE_ID_SIZE] = {0x44, 0x55, 0x66};
 // ONE_WAY_PAIRING_TRAFFIC
 // ============================================================================
 
+TEST(PairingAdvisor, ChannelBusyMessageOmitsTheLevelWhenItIsUnknown) {
+  PairingAdvice advice{};
+  advice.code = PairingAdviceCode::CHANNEL_BUSY_LBT_DELAYED;
+  memcpy(advice.subject_node, DEVICE_SRC, NODE_ID_SIZE);
+
+  advice.rssi = -48;
+  EXPECT_NE(pairing_advice_message(advice).find("beaconing at -48 dBm"), std::string::npos);
+
+  advice.rssi = RSSI_UNKNOWN_DBM;
+  const std::string message = pairing_advice_message(advice);
+  EXPECT_NE(message.find("beaconing);"), std::string::npos) << message;
+  EXPECT_EQ(message.find("dBm"), std::string::npos) << "an unknown level is no sample and is not printed";
+}
+
 TEST(PairingAdvisor, OneWayPairingTraffic_Cmd0x20_IssueTwentySevenFrameShape) {
   // F5 00 00 00 3F 2F 9A 98 20 ... — CTRL0 bit5=1 (1W), dst=00003F, cmd=0x20 (WRITE_PRIVATE).
   PairingTelemetry telemetry;

@@ -153,7 +153,7 @@ bool SoftPhyDriverBase::resolve_sync_race_(uint32_t start, uint32_t timeout_ms, 
   // lands near the end of a dwell or linger loses the frame mid-reception.
   timeout_ms = std::max(timeout_ms, (millis() - start) + SOFT_PHY_POST_SYNC_GRACE_MS);
 
-  if (this->try_early_completion_(packet, sync_us, irq, start, timeout_ms)) {
+  if (this->try_early_completion_(packet, sync_us, irq, start, timeout_ms, EarlyCompletionPath::IN_WAIT)) {
     early_completed = true;
     return true;
   }
@@ -190,13 +190,17 @@ bool SoftPhyDriverBase::resolve_sync_race_(uint32_t start, uint32_t timeout_ms, 
 /// the original RX_DONE path, which re-reads the full buffer from scratch. A wrong guess here
 /// costs some latency; it can never cost a frame.
 bool SoftPhyDriverBase::try_early_completion_(RadioRxPacket &packet, uint32_t sync_us, uint32_t irq_status,
-                                              uint32_t start_ms, uint32_t timeout_ms) {
+                                              uint32_t start_ms, uint32_t timeout_ms, EarlyCompletionPath path) {
   int16_t const base = this->early_rx_read_offset();
   if (base < 0)
     return false;  // chip does not expose its data buffer mid-reception
   if (timeout_ms < SOFT_PHY_EARLY_MIN_WINDOW_MS)
     return false;  // no room left in this window to receive a whole frame either way
   auto const offset = (uint8_t) base;
+
+  // First action after the sync is noticed, before the stage-1 wait and any buffer read: the later
+  // this runs, the likelier the frame has ended on air and a live level reads the noise floor.
+  this->sample_level_at_sync();
 
   // Stage 1: ten bits of air time is all it takes to learn how long the frame will be.
   if (!wait_for_air_time(sync_us, SOFT_PHY_EARLY_HEADER_RAW_BYTES, start_ms, timeout_ms))
@@ -226,9 +230,13 @@ bool SoftPhyDriverBase::try_early_completion_(RadioRxPacket &packet, uint32_t sy
   memcpy(packet.data, probe.decoded + probe.frame_start, probe.frame_len);
   packet.len = probe.frame_len;
   packet.freq_hz = this->current_freq_;
-  // Reading packet status this early is still sound: the RSSI a driver reports from it is latched
-  // at sync-word detection, which by definition has already happened.
+  // The chip may not have reached its own end of packet, so a driver's packet status can still be
+  // the previous reception's: it reports the level sampled at sync instead (see fill_capture_info()).
+  if (path == EarlyCompletionPath::IN_WAIT)
+    this->sample_level_after_frame();
+  this->early_completion_path_state_ = path;
   this->fill_capture_info(true, irq_status, offset, read_len, raw, read_len, packet.data, packet.len);
+  this->early_completion_path_state_ = EarlyCompletionPath::NONE;
 
 #ifdef IOHOME_FRAME_LOG
   frame_log_line(FrameLogLevel::DEBUG, TAG, "Early RX: frame_len=%u raw_len=%u air_us=%" PRIu32, frame_len, read_len,
@@ -484,8 +492,8 @@ bool SoftPhyDriverBase::check_for_packet(RadioRxPacket &packet) {
     // instead of whatever fraction survived this call, and can't retune under a frame whose RX_DONE
     // hasn't been read yet. The success path does not need this: try_early_completion_() already
     // clears the holdoff itself via reset_rx_state_() once the frame is fully recovered.
-    bool const completed =
-        this->try_early_completion_(packet, sync_us, irq, start_ms, this->idle_rx_completion_budget_ms());
+    bool const completed = this->try_early_completion_(packet, sync_us, irq, start_ms,
+                                                       this->idle_rx_completion_budget_ms(), EarlyCompletionPath::IDLE);
     if (!completed)
       this->note_reception_in_progress_();
     return completed;

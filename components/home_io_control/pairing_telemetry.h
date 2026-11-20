@@ -53,6 +53,7 @@ struct PairingTelemetryEvent {
   uint8_t dst_node[NODE_ID_SIZE]{};  ///< Destination node ID (RX/RX_REJECT only); zero otherwise.
   int16_t rssi{0};                   ///< RSSI in dBm (RX/RX_REJECT/LBT_DEFER, including a seeded
                                      ///< pre-window RX — see PairingTelemetry::record_recent_one_way_sighting());
+                                     ///< RSSI_UNKNOWN_DBM when the radio had no level of the frame's own;
                                      ///< zero otherwise.
   uint8_t aux{0};                    ///< Kind-specific extra byte: PHASE -> pairing::PairingState value; LBT_DEFER ->
                                      ///< retry number reached; RX -> 1 if this is a seeded pre-window sighting rather
@@ -72,7 +73,7 @@ struct RecentOneWayPairingSighting {
   uint8_t src[NODE_ID_SIZE]{};  ///< Sender node ID.
   uint8_t dst[NODE_ID_SIZE]{};  ///< Destination node ID (the 1W broadcast address, in practice).
   uint8_t cmd{0};               ///< Frame command byte.
-  int16_t rssi{0};              ///< RSSI in dBm at the time it was overheard.
+  int16_t rssi{0};              ///< RSSI in dBm at the time it was overheard, or RSSI_UNKNOWN_DBM.
   uint32_t seen_ms{0};          ///< millis() the frame was seen; 0 if none seen since boot.
 };
 
@@ -115,13 +116,13 @@ class PairingTelemetry : public TransmitObserver {
   /// @param frame Parsed frame (cmd, src, dst, and the 1W protocol bit are recorded — `dst` and
   ///               the 1W bit feed PairingAdvisor's ONE_WAY_PAIRING_TRAFFIC and
   ///               FOREIGN_CONTROLLER_PAIRING detection, see pairing_advisor.h).
-  /// @param rssi RSSI in dBm.
+  /// @param rssi RSSI in dBm, or RSSI_UNKNOWN_DBM.
   void record_rx(const IoFrame &frame, int16_t rssi);
   /// Record that we received a frame that parsed but was rejected by a classifier.
   /// @param frame Parsed frame (cmd, src, dst, and the 1W protocol bit are recorded — `dst` and
   ///               the 1W bit feed PairingAdvisor's ONE_WAY_PAIRING_TRAFFIC and
   ///               FOREIGN_CONTROLLER_PAIRING detection, see pairing_advisor.h).
-  /// @param rssi RSSI in dBm.
+  /// @param rssi RSSI in dBm, or RSSI_UNKNOWN_DBM.
   void record_rx_reject(const IoFrame &frame, int16_t rssi);
   /// Record a listen-before-talk defer (channel busy).
   /// @param rssi RSSI in dBm that triggered the defer.

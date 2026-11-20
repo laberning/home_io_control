@@ -583,6 +583,18 @@ TEST(Exchange, DebugLineRendersEveryFieldADiagnosisNeeds) {
       << "the final_rx_* fields are what separates a reply lost on this side from one never sent";
 }
 
+TEST(Exchange, DebugLinePrintsNaForAnUnknownRssi) {
+  ExchangeEngine::DebugInfo d;
+  d.stage = "failed";
+  d.capture_valid = true;
+  d.capture_rssi_dbm = RSSI_UNKNOWN_DBM;
+
+  char buf[EXCHANGE_DEBUG_LINE_SIZE];
+  ASSERT_GT(render_exchange_debug(buf, sizeof(buf), "DA88B6", d), 0);
+
+  EXPECT_NE(std::string(buf).find("cap_rssi=n/a "), std::string::npos) << buf;
+}
+
 // --- Final-wait reception counters -------------------------------------------
 // The cap_* fields keep the first informative reception, which in an authenticated exchange is the
 // device's challenge, and every re-arm inside the final wait clears the capture. So what the final

@@ -273,7 +273,8 @@ inline void log_rejected_operation(const std::string &device_id, const IoDevice 
 /// touches the RSSI fields when `radio` is non-null and its last capture is valid (real drivers
 /// always populate a valid capture before a frame is handed off, but tests calling this path
 /// directly without a radio, or without exercising RX through it, must not crash or fabricate
-/// an RSSI).
+/// an RSSI), and only when that capture's RSSI is known: an unknown level (ADR 0112) is no
+/// sample, so the last value and the EMA keep the previous one.
 /// @param dev Device that sent the frame.
 /// @param radio Radio driver to read the last capture from; may be nullptr.
 inline void update_link_health(IoDevice &dev, RadioDriver *radio) {
@@ -283,6 +284,10 @@ inline void update_link_health(IoDevice &dev, RadioDriver *radio) {
 
   const RadioCaptureInfo &capture = radio->get_last_capture();
   if (!capture.valid)
+    return;
+
+  // A frame whose own level is unknown is no sample: the last value and the EMA stay as they were.
+  if (!capture.rssi_known)
     return;
 
   dev.last_rssi_dbm = capture.rssi_dbm;

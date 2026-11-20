@@ -177,6 +177,28 @@ TEST(HubKeyPullReport, IsEmptyWhenNothingAnswered) {
   EXPECT_TRUE(build_hub_key_pull_report(info, state, registry).empty());
 }
 
+TEST(RollCallResponder, UnknownRssiIsShownAsNotAvailable) {
+  ScanState state{};
+  const uint8_t src[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};
+  add_reply(state, src, 0x0D, 0x01);
+  const RollCallReplyKeys keys{nullptr, nullptr, false};
+
+  EXPECT_NE(format_roll_call_responder(state.responders[0], "B6BDFC", nullptr, keys, RollCallKeyDisplay::HIDDEN)
+                .find(" rssi=-60dBm"),
+            std::string::npos);
+
+  state.responders[0].rssi_dbm = RSSI_UNKNOWN_DBM;
+  const std::string line =
+      format_roll_call_responder(state.responders[0], "B6BDFC", nullptr, keys, RollCallKeyDisplay::HIDDEN);
+  EXPECT_NE(line.find(" rssi=n/a"), std::string::npos) << line;
+  EXPECT_EQ(line.find("dBm"), std::string::npos) << "the sentinel must never print as a level";
+}
+
+TEST(RollCallResponder, FormatRssiPrintsLevelOrNotAvailable) {
+  EXPECT_EQ(detail::format_rssi_dbm(-48), "-48");
+  EXPECT_EQ(detail::format_rssi_dbm(RSSI_UNKNOWN_DBM), "n/a");
+}
+
 TEST(RollCallResponder, DisplayModesDecideWhereTheKeyAppears) {
   ScanState state{};
   const uint8_t src[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};

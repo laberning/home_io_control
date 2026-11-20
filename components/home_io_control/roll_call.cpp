@@ -88,11 +88,11 @@ void record_roll_call_reply(ScanState &state, const RollCallAttemptContext &ctx,
   const char *power_save = (entry != nullptr && entry->has_extended)
                                ? power_save_mode_name(discovery_power_save_mode(entry->flags))
                                : "unknown";
-  ESP_LOGD(detail::TAG,
-           "Roll-call reply src=%s pass=%s attempt=%u tx=%" PRIu32 " rx=%" PRIu32 " +%" PRIu32
-           "ms rssi=%d power_save=%s",
-           node_id_to_string(frame.src).c_str(), power_save_mode_name(ctx.pass->power_save_mode), ctx.attempt,
-           ctx.tx_freq_hz, info.rx_freq_hz, info.after_tx_ms, info.rssi_dbm, power_save);
+  ESP_LOGD(
+      detail::TAG,
+      "Roll-call reply src=%s pass=%s attempt=%u tx=%" PRIu32 " rx=%" PRIu32 " +%" PRIu32 "ms rssi=%s power_save=%s",
+      node_id_to_string(frame.src).c_str(), power_save_mode_name(ctx.pass->power_save_mode), ctx.attempt,
+      ctx.tx_freq_hz, info.rx_freq_hz, info.after_tx_ms, detail::format_rssi_dbm(info.rssi_dbm).c_str(), power_save);
 }
 
 /// @brief Transmit one roll-call attempt and collect its replies into `state`.
@@ -226,7 +226,8 @@ std::string format_roll_call_responder(const ScanResponder &responder, const std
                      format_device_ids(responder.type, responder.subtype) + ")";
   if (key != nullptr)
     line += " key=" + detail::format_key_check_value(key);
-  line += " rssi=" + std::to_string(responder.rssi_dbm) + "dBm";
+  line += responder.rssi_dbm == RSSI_UNKNOWN_DBM ? std::string(" rssi=n/a")
+                                                 : " rssi=" + std::to_string(responder.rssi_dbm) + "dBm";
   uint8_t power_save = 0;
   if (responder.has_extended) {
     uint8_t const att = discovery_att_class(responder.flags);
