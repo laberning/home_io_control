@@ -198,7 +198,7 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // heater's, so the heating payloads must not be sent to them: no climate class. The heat pump keeps its
     // values in a data object and is never sent a status read (issue #244).
     {DeviceType::HEAT_PUMP, 1, NO_MODEL, "heat pump (Atlantic)", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME,
-     device_feature::HEAT_PUMP_ENERGY | device_feature::NO_STATUS_READ},
+     device_feature::HEAT_PUMP_ENERGY | device_feature::HEAT_PUMP_OUTDOOR_TEMPERATURE | device_feature::NO_STATUS_READ},
     {DeviceType::HEAT_PUMP, 2, NO_MODEL, "boiler (Atlantic)", CAP_NONE, EXPERIMENTAL | STANDALONE_NAME, NO_FEATURES},
 
     {DeviceType::INTRUSION_ALARM, 0, NO_MODEL, "intrusion_alarm", DeviceCapabilityClass::SENSOR, YAML_SELECTABLE,

@@ -167,7 +167,8 @@ you meet them. The structure behind them is described in the
    also says what its value becomes after repeated misses (`ReadingStale`): kept, as a counter is, or
    dropped, as a state is. Value shapes that exist are in `proto_value_codecs.h`;
    a counter that starts with a marker byte (`80` then a big-endian number, `81 FF FF` for "no value")
-   is `MARKED_U16_BE`. A new shape is one codec enumerator, one case in `decode_value()` and its test
+   is `MARKED_U16_BE`, and signed tenths of a degree behind the same marker are `MARKED_TENTHS_S16_BE`.
+   A new shape is one codec enumerator, one case in `decode_value()` and its test
    in `tests/proto/value_codecs_test.cpp`. A reading whose values have names (a level, a mode) gives the
    row a `value_name` function, which the entity that shows it publishes instead of the number;
    `reading_value_kind()` then says the reading is named, a flag when its codec is a flag, and a number

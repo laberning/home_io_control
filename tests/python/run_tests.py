@@ -782,6 +782,7 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
         "electric_backup_running",
         "heating_energy",
         "hot_water_energy",
+        "outdoor_temperature",
     }
     # A key belongs to one platform: the heater's `energy:` and the water heater's are two rows of two platforms.
     platform_keys = [(entry["platform"], entry["key"]) for entry in keyed.values()]
@@ -831,7 +832,11 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
         "electric_backup_running",
     }
     # The data-object readings in production are the Atlantic heat pump's (issue #244).
-    assert {str(key) for key in pc.reading_keys_schema(pc.SENSOR_PLATFORM)} == {"heating_energy", "hot_water_energy"}
+    assert {str(key) for key in pc.reading_keys_schema(pc.SENSOR_PLATFORM)} == {
+        "heating_energy",
+        "hot_water_energy",
+        "outdoor_temperature",
+    }
     # The companions are the window sensor and the detection switch, named and IDed from the mirror.
     companions = {
         name: entry

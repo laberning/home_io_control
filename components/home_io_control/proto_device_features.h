@@ -109,6 +109,12 @@ enum class DeviceFeature : uint8_t {
   /// entry's `heating_energy:` and `hot_water_energy:` keys.
   /// \todo Experimental: read on one Atlantic Alfea Duo Extensa A.I. (issue #244); confirm on a second model.
   HEAT_PUMP_ENERGY,
+  /// An Atlantic heat pump that keeps the outdoor temperature its sensor measures, in tenths of a degree, in an entry
+  /// of its data object (TRANSFER_RECIPE_ATLANTIC_HEAT_PUMP, offset 0x019B). Gates the `sensor:` entry's
+  /// `outdoor_temperature:` key.
+  /// \todo Experimental: read on one Atlantic Alfea Duo Extensa A.I. (issue #244) between 11.4 and 14.7 degrees;
+  ///       a value below zero has not been seen yet.
+  HEAT_PUMP_OUTDOOR_TEMPERATURE,
   COUNT,  ///< Not a capability: the number of capabilities, for the storage check of DeviceFeatures.
 };
 

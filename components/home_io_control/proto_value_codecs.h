@@ -46,9 +46,12 @@ enum class ValueCodec : uint8_t {
                        ///< shown in kWh. Read only: it is never encoded.
   ANY_NONZERO,         ///< A flag over the bytes handed in: 1 when any of them is non-zero, 0 when all are zero.
                        ///< Read only: it is never encoded.
+  MARKED_TENTHS_S16_BE,  ///< Three bytes: a value marker, then signed 16-bit tenths of a unit, most significant byte
+                         ///< first (a temperature entry of a data object, `80 00 77` = 11.9). Any other marker is
+                         ///< the no-value pattern, as for MARKED_U16_BE. Read only: it is never encoded.
 };
 
-/// @brief The leading byte of a MARKED_U16_BE value that carries a number.
+/// @brief The leading byte of a MARKED_U16_BE or MARKED_TENTHS_S16_BE value that carries a number.
 constexpr uint8_t VALUE_MARKER_PRESENT = 0x80;
 
 /// @brief Scale of the tenths codecs: the wire value is round(unit * this).

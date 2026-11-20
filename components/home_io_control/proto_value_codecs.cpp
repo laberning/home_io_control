@@ -112,6 +112,7 @@ size_t value_codec_length(ValueCodec codec) {
     case ValueCodec::TENTHS_S16_BE:
       return 2;
     case ValueCodec::MARKED_U16_BE:
+    case ValueCodec::MARKED_TENTHS_S16_BE:
       return 3;
     case ValueCodec::THOUSANDTHS_U32_BE:
       return 4;
@@ -178,6 +179,12 @@ std::optional<float> decode_value(const ValueForm &form, std::span<const uint8_t
     case ValueCodec::TENTHS_S16_BE:
       return static_cast<float>(static_cast<int16_t>(read_u16_be(bytes.data()))) / VALUE_TENTHS_PER_UNIT;
 
+    case ValueCodec::MARKED_TENTHS_S16_BE:
+      // The marker as for MARKED_U16_BE, then a signed word of tenths.
+      if (bytes[0] != VALUE_MARKER_PRESENT)
+        return std::nullopt;
+      return static_cast<float>(static_cast<int16_t>(read_u16_be(bytes.data() + 1))) / VALUE_TENTHS_PER_UNIT;
+
     case ValueCodec::THOUSANDTHS_U32_BE:
       return static_cast<float>(big_endian_u32(bytes)) / VALUE_THOUSANDTHS_PER_UNIT;
 
@@ -195,7 +202,8 @@ size_t encode_value(const ValueForm &form, float value, std::span<uint8_t> out) 
   // NONE, a pair with a limit of its own and the read-only forms carry no value a write may send.
   if (form.codec == ValueCodec::NONE || form.codec == ValueCodec::FIRST_BYTE_OF_PAIR ||
       form.codec == ValueCodec::TENTHS_S16_BE || form.codec == ValueCodec::THOUSANDTHS_U32_BE ||
-      form.codec == ValueCodec::ANY_NONZERO || out.size() < value_codec_length(form.codec))
+      form.codec == ValueCodec::ANY_NONZERO || form.codec == ValueCodec::MARKED_TENTHS_S16_BE ||
+      out.size() < value_codec_length(form.codec))
     return 0;
 
   switch (form.codec) {
@@ -264,6 +272,7 @@ size_t encode_value(const ValueForm &form, float value, std::span<uint8_t> out) 
     case ValueCodec::TENTHS_S16_BE:
     case ValueCodec::THOUSANDTHS_U32_BE:
     case ValueCodec::ANY_NONZERO:
+    case ValueCodec::MARKED_TENTHS_S16_BE:
       break;
   }
   return 0;
