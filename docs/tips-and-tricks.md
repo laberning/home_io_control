@@ -65,6 +65,52 @@ cover:
 The position is an estimate. A press on the physical remote moves the device without telling Home
 Assistant, so the estimate drifts until the next full open or close re-synchronises it.
 
+## Following the wall remote with a time-based cover
+
+The cover above does not see a press on the physical remote. If the hub hears the remote, it can
+tell Home Assistant, and an automation can pass the press to the cover so its estimate follows the
+wall switch.
+
+Add the remote's node ID to `exposed_senders`; [Sender events](configuration/remotes.md#sender-events-remote-buttons-and-sensors)
+shows how to find the ID and what the event carries. The automation below follows one remote:
+
+```yaml
+home_io_control:
+  exposed_senders: ["9D6085"]
+```
+
+Then create an automation that reacts to the sender event and calls the matching cover service.
+Replace the remote ID and the cover entity:
+
+```yaml
+alias: "Roof window follows its wall switch"
+mode: queued
+triggers:
+  - trigger: event
+    event_type: esphome.home_io_control_sender_event
+    event_data:
+      remote_id: "9D6085"
+conditions:
+  - condition: template
+    value_template: "{{ trigger.event.data.intent in ['OPEN', 'CLOSE', 'STOP'] }}"
+actions:
+  - action: >
+      {{ {'OPEN': 'cover.open_cover',
+          'CLOSE': 'cover.close_cover',
+          'STOP': 'cover.stop_cover'}[trigger.event.data.intent] }}
+    target:
+      entity_id: cover.roof_window
+```
+
+For several windows, make one automation per remote.
+
+**The command goes out a second time.** The cover's open, close and stop actions press the
+generated 1W buttons, so the hub transmits the command the remote already sent. The device sees
+the same command twice, once from the remote and once from the hub's identity, which must have
+enrolled with it. The path also runs through Home Assistant, so the estimate starts a moment after
+the real move and does not work while the API is disconnected. A user first described this approach in
+[issue #74](https://github.com/laberning/home_io_control/issues/74).
+
 ## Quieting frame warnings in the log
 
 The hub logs a line when it receives a frame it did not act on, for example a command it does not

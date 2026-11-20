@@ -70,7 +70,8 @@ using OneWayCommandReportFn = std::function<void(const OneWayCommandReport &repo
 /// @ingroup hioc_hub
 uint16_t oneway_copy_preamble_bytes(OneWayCopyShape shape, uint16_t start_preamble_bytes);
 
-/// @brief Render the preamble bytes each copy of a burst will use, e.g. `"1024/32/32/32"`.
+/// @brief Render the preamble bytes each copy of a burst will use, e.g. `"1024/48/48/48"` (a 10 ms start preamble is 48
+/// bytes on an SX1262 or LR1121, 38 on an SX1276).
 ///
 /// Built from oneway_burst_copy_shape() and oneway_copy_preamble_bytes() — the exact functions
 /// send_burst() itself calls per copy — so the TX log line can never disagree with what actually
@@ -126,8 +127,9 @@ class OneWayTransmitter {
   /// the frame with that identity's key, and bursts it.
   ///
   /// **Addresses a device class, not a device.** Every device of `io_device_type` in range that
-  /// holds the signing key acts on it — that is what 1W is, not a limitation to work around. Two
-  /// devices of one class are separable only if they can be given separate identities.
+  /// has enrolled this identity acts on it, and only those: a device ignores a frame from a source
+  /// it was not taught, however well it is signed. Two devices of one class are separable only if
+  /// they can be given separate identities.
   /// @param controller_id YAML handle of the controller identity to transmit as.
   /// @param cmd Named command (STOP, FAVORITE, VENT). CoverCommand::FORCE_OPEN has no 1W
   ///        encoding and cannot be built — see create_1w_execute_command() (proto_commands.h).
@@ -165,11 +167,13 @@ class OneWayTransmitter {
   ///
   /// **It blocks for the whole burst**, feeding the watchdog in the gaps. The three inter-copy
   /// gaps alone are 3 * ONEWAY_BURST_INTERVAL_MS = ~120 ms of pure delay; how much airtime the
-  /// four copies themselves add depends on `power_class`: `LEGACY_LONG` puts `LONG_PREAMBLE` on
-  /// every copy, ≈1.0–1.2 s per burst total (measured on SX1276, issue #74's logs: ~1.2 s);
-  /// `ALWAYS_ALIVE` puts the live `start_preamble_ms` on every copy, ≈200 ms per burst
-  /// (measured on SX1276, issue #74); `LOW_POWER` sits between the two (one long copy,
-  /// three normal). Per ADR 0013 all radio work happens on the ESPHome loop and the operation
+  /// four copies themselves add depends on `power_class` and on the radio, because the same
+  /// `LONG_PREAMBLE` byte count lasts about 213 ms on an SX1262 or LR1121 and about 267 ms on an
+  /// SX1276: `LEGACY_LONG` puts it on every copy, ≈1.0 s per burst on an SX1262 or LR1121 and ≈1.2 s
+  /// on an SX1276 (the latter measured in issue #74's logs); `ALWAYS_ALIVE` puts the live
+  /// `start_preamble_ms` on every copy, ≈200 ms per burst (measured on SX1276, issue #74);
+  /// `LOW_POWER` sits between the two (one long copy, three normal), ≈0.4 s on an SX1262 or LR1121
+  /// and ≈0.45 s on an SX1276. Per ADR 0013 all radio work happens on the ESPHome loop and the operation
   /// queue is the concurrency model; an authenticated 2W exchange already blocks far longer than
   /// this. Scheduling the repeats through a timeout would add a second concurrency model and would
   /// let a queued 2W exchange interleave between copies of one command.
@@ -190,8 +194,8 @@ class OneWayTransmitter {
   /// manufacturer expects (`resolve_oneway_wire_profile()`, ADR 0032).
   ///
   /// **`EnrollGesture::SOMFY`** (somfy / unset / any unprofiled vendor): `0x39` (remove,
-  /// self-directed) then `0x30` (add) — the 1W handshake real remotes send, both to the identity's own
-  /// `io_device_type`, one burst each, matched by a real Smoove capture landing the two 128 ms apart
+  /// self-directed) then `0x30` (add) — the 1W handshake real remotes send, both to the all-devices
+  /// address, one burst each, matched by a real Smoove capture landing the two 128 ms apart
   /// (`tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`).
   ///
   /// **`EnrollGesture::VELUX_KLI`** (manufacturer velux): `0x39` to the all-devices address, then
@@ -209,10 +213,10 @@ class OneWayTransmitter {
   /// both use the no-MAC form; a real Izymo has separately accepted the MAC-bearing form too.
   ///
   /// **Blocks for the whole gesture** feeding the watchdog in the gaps. The VELUX path is 6 bursts
-  /// (`0x39` + 3-class `0x30` sweep + STOP + DOWN); with the identity's power class unset (legacy),
-  /// each burst carries `LONG_PREAMBLE` on every copy, ≈6–7 s total (SX1276 logs in issue #74
-  /// measured ~7.4 s, ~10.6 s with `enrollment_with_mac: true`); ~1.2 s with `low_power: false`
-  /// (ADR 0038, measured on SX1276 in issue #74). This is a user-initiated,
+  /// (`0x39` + 3-class `0x30` sweep + STOP + DOWN); with `LEGACY_LONG` each burst carries
+  /// `LONG_PREAMBLE` on every copy, ≈6–7 s total (SX1276 logs in issue #74 measured ~7.4 s, ~10.6 s
+  /// with `enrollment_with_mac: true`); ~1.2 s with `low_power: false` (ADR 0038, measured on
+  /// SX1276 in issue #74). This is a user-initiated,
   /// once-per-device action, the same shape as the pairing button (`pairing_discovery_wait_ms` →
   /// 5000).
   /// @param controller_id YAML handle of the controller identity to register.
@@ -222,8 +226,8 @@ class OneWayTransmitter {
   ///         partial STOP/DOWN after a good sweep, only logs and does not flip this.
   bool send_enrollment(const std::string &controller_id);
 
-  /// @brief Un-register this identity from every device of its class currently in association
-  /// mode (CMD 0x39) alone — also the prelude send_enrollment() fires before its own `0x30`.
+  /// @brief Un-register this identity from every device currently in association mode, addressed
+  /// to the all-devices address (CMD 0x39) alone — also the prelude send_enrollment() fires before its own `0x30`.
   ///
   /// Reachable directly through the explicitly-named `oneway_remove_controller` native API
   /// action, for un-enrolling without immediately re-enrolling.

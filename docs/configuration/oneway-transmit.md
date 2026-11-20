@@ -5,24 +5,26 @@ The hub can act as a **1W controller** — the kind of thing a wall remote is �
 transmitting. This is off unless you configure it, and it signs with a key you already hold: the
 same authorisation as any 2W command this component sends.
 
-> **⚠️ Read this before configuring: a device only obeys a controller it has been taught.**
-> Real-hardware testing established that 1W actuators keep a **table of registered controllers**.
-> A frame that is correctly built, correctly addressed and signed with a key the device accepts is
-> still ignored if this hub's source address is not in that table. **Enrollment (below) is what
-> registers it** — do that first, for every identity, before expecting any command to move a device.
+> [!WARNING]
+> A device only obeys a controller it has been taught. Real-hardware testing established that 1W
+> actuators keep a **table of registered controllers**. A frame that is correctly built, correctly
+> addressed and signed with a key the device accepts is still ignored if this hub's source address
+> is not in that table. Enrollment (below) is what registers it: do that first, for every identity,
+> before expecting any command to move a device.
 
 ## What 1W is, and what it is not
 
 Everything about this feature follows from two properties of the protocol:
 
 - **A 1W command addresses a device *class*, not a device.** There is no unicast form. A command
-  sent as a `roller_shutter` identity reaches every roller shutter in range that holds the signing
-  key. That is what 1W *is*, not a limitation to design around.
+  sent as a `roller_shutter` identity reaches every roller shutter in range, and every one of them
+  that has enrolled this identity acts on it. To control two shutters separately, give each its own
+  identity and enroll each identity in only one of them.
 - **Nothing replies.** No acknowledgement, no status, no error. A command a device ignored is
   indistinguishable on the radio from one it obeyed.
 
 The second one shapes the whole feature. There is no failure you can be notified about, so the
-"Last 1W Command" sensor and the section below are the diagnostic tools.
+"Last 1W Command" sensor and the [troubleshooting ladder](../troubleshooting.md#1w-commands-do-nothing) are the diagnostic tools.
 
 ## Controller identities
 
@@ -63,17 +65,33 @@ home_io_control:
 | `id` | yes | Handle the generated entities are named and ID'd from. |
 | `io_device_type` | yes | The device class this identity commands — see the [named device types table](../supported-devices.md#named-device-types) for the full list. |
 | `node_id` | no | Source address to transmit as. **Derived from your hub's `node_id` and this `id` when omitted**, deterministically at *compile* time — a derived address takes part in the same collision checks as an explicit one (a clash fails the build), and is printed at boot marked `(derived)`, since nothing in your YAML shows it otherwise. Asking you to invent a 3-byte radio address instead would be an unanswerable question: nothing tells you which addresses are safe, and colliding with a real remote in range silently desyncs both transmitters' counters. |
-| `system_key` | no | Network key for this identity. **Defaults to the hub's own** — every new identity works fine with the default. Only set this to a recovered key when reusing an existing, already-registered identity (see [Recovering a 1W controller key](#recovering-a-1w-controller-key)). |
-| `initial_sequence` | no | Seeds the rolling counter. The day-one remedy for a desynced device — see troubleshooting. |
+| `system_key` | no | Network key for this identity. **Defaults to the hub's own** — every new identity works fine with the default. Only set this to a recovered key when reusing an existing, already-registered identity (see "Recovering a 1W controller key" below). |
+| `initial_sequence` | no | Seeds the rolling counter, from 0 to 65535 (default 0). It only ever moves the counter forward: raise it and reflash when a device has stopped accepting commands because its own count ran ahead; a value below the counter the hub already holds changes nothing. A device accepts a forward jump only within a window whose size is not measured, so move in small steps. See [1W commands do nothing](../troubleshooting.md#1w-commands-do-nothing). |
 | `commands` | no | Which buttons to generate: `open`, `close`, `stop`, `vent`, `favorite`. `open`, `close` and `stop` match captured presses of a real Somfy remote. `vent` is not backed by any capture. `favorite` is extrapolated from the 2W encoding and contradicted by this project's own capture of a real My-button press, which encodes it differently; on a real dimmer it changes the brightness to an unverified target. Treat `vent` and `favorite` as untested. |
-| `manufacturer` | conditional | The manufacturer ID byte an enrollment frame carries on air — a named value such as `somfy`, or a raw integer; see the [named manufacturers table](../supported-devices.md#named-manufacturers) for the full list. **Required whenever `enrollment: true` is set** — the build fails otherwise, rather than silently broadcasting `0`. Also selects the **1W wire profile** (see "Matching your remote's vendor" below): `velux` sends `CMD_EXECUTE` frames with a different priority byte than `somfy`. Find the value in a [key recovery](#recovering-a-1w-controller-key) report for this network, or in the device's own documentation. |
-| `execute_broadcast` | no | `typed` (default) addresses your `io_device_type` class; `all` addresses the all-devices broadcast, which is what a handheld cover remote of either vendor sends for open/close/stop. Set `all` to mimic a real remote. |
+| `manufacturer` | conditional | The manufacturer ID byte an enrollment frame carries on air — a named value such as `somfy`, or a raw integer; see the [named manufacturers table](../supported-devices.md#named-manufacturers) for the full list. **Required whenever `enrollment: true` is set** — the build fails otherwise, rather than silently broadcasting `0`. Also selects the **1W wire profile** (see "Matching your remote's vendor" below): `velux` sends `CMD_EXECUTE` frames with a different priority byte than `somfy`. Find the value in a key recovery report for this network (see "Recovering a 1W controller key" below), or in the device's own documentation. |
+| `execute_broadcast` | no | `typed` (default) addresses your `io_device_type` class; `all` addresses the all-devices broadcast, which is what a handheld cover remote of either vendor sends for open/close/stop. Set `all` to mimic a real remote. With `all` the frame carries no class at all, so `io_device_type` does not decide which devices are reached; it still decides the default of `invert_position` and the name in the "Last 1W Command" sensor. |
 | `execute_acei` | no | Raw override of the priority byte (payload[1]) in a 1W `CMD_EXECUTE` frame, e.g. `0x61`. Must be `1`–`0xFF` — `0x00` is rejected, since `0` is the sentinel for "not overridden". Normally left unset — it is derived from `manufacturer`. Use it only for a vendor this project has no profile for. |
 | `enrollment` | no | Build flag (default `false`) for this identity's **"Enroll 1W Controller"** button — see "Enrolling this hub as a controller" below. |
 | `enrollment_with_mac` | no | Whether the `0x30` half of the enroll button's press carries a trailing MAC (default `false`, meaning **no MAC at all** — there is no in-band form for this frame, see below). Real hardware disagrees on this byte: most captures this project holds carry no MAC (the default), but a real Somfy Izymo has separately been shown to accept the MAC-bearing form too. Untested manufacturers may need either — try flipping this before assuming enrollment doesn't work at all. |
-| `enrollment_classes` | no | Which device classes a **VELUX** enrollment `0x30` sweep targets, as a list of `io_device_type` names (max 3). Unset → the profile default `[roller_shutter, vertical_exterior_awning, dual_roller_shutter]`, the exterior-shading set a KLI 310/313 uses. **Interior blinds need it set**: a KLI 312 uses `[vertical_interior_blind, interior_venetian_blind]`. To find the classes for your product, see "Finding your enrollment classes" below. **Ignored by the Somfy gesture**, which sends both bursts to the all-devices address `00003F` (issue #147). See "Enrolling this hub as a controller" below. |
-| `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). `false` sends every copy at the short, live `start_preamble_ms` tuning value — for a mains-powered receiver. `true` sends one long ~213 ms wake-up copy first, then short repeats — for a solar or battery receiver. Leave it unset and the shape follows `manufacturer:` ([ADR 0041](../adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)): `velux` gets the short preamble, every other vendor gets the long one on all four copies. Your boot log prints which you got, and marks it `(from profile)` when it came from the vendor rather than from this key. Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. |
+| `enrollment_classes` | no | Which device classes a **VELUX** enrollment `0x30` sweep targets, as a list of one to three `io_device_type` names, each at most once and none `unknown`. Unset → the profile default `[roller_shutter, vertical_exterior_awning, dual_roller_shutter]`, the exterior-shading set a KLI 310/313 uses. **Interior blinds need it set**: a KLI 312 uses `[vertical_interior_blind, interior_venetian_blind]`. To find the classes for your product, see "Finding your enrollment classes" below. **Ignored by the Somfy gesture**, which sends both bursts to the all-devices address `00003F` (issue #147), and ignored without `enrollment: true`; the build warns in both cases. See "Enrolling this hub as a controller" below. |
+| `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). `false` sends every copy at the short, live `start_preamble_ms` tuning value — for a mains-powered receiver. `true` sends one long wake-up copy first (about 213 ms on an SX1262 or LR1121, about 267 ms on an SX1276), then short repeats — for a solar or battery receiver. Leave it unset and the shape follows `manufacturer:` ([ADR 0041](../adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)): `velux` gets the short preamble, every other vendor gets the long wake-up on all four copies. Your boot log prints which you got, and marks it `(from profile)` when it came from the vendor rather than from this key. Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. The section "What one command puts on the air" below gives the time each shape takes. |
 | `invert_position` | no | Whether open, close and every position are mirrored on the wire (`0` ↔ `100`). Leave it unset and the device kind decides: a kind whose wire polarity is inverted, such as `horizontal_awning`, is mirrored, exactly as a 2W cover of that kind is, so the generated Open button opens the awning. Set `false` if your receiver turns out to follow the other polarity, or `true` to mirror a kind that is not inverted by default. Your boot log prints `inverted=yes (from kind)`, `inverted=yes (configured)` or `inverted=no`. With `execute_broadcast: all` the mirrored frame reaches every receiver of the broadcast, so the build warns when an inverted kind is combined with it and no explicit `invert_position`. STOP, favorite and vent are never mirrored. |
+
+## What the build checks
+
+A build stops with an error when an identity shares its source address with another identity, the
+hub, a linked remote or a device's `io_device_id`, when an `id` repeats, or when `enrollment: true`
+has no `manufacturer:`.
+It continues with a warning, which names the identity, when a configuration is legal but likely
+wrong:
+
+| Warning | What it means |
+|---|---|
+| `manufacturer` has no 1W wire profile | An identity that transmits uses a vendor other than Somfy or VELUX, so it sends the Somfy priority byte `0x43`. Set `execute_acei:` if that is wrong for the device. |
+| `enrollment_with_mac: true` on `radio_type: sx1276` | The MAC-bearing `0x30` takes about twice as long per burst on an SX1276, and no VELUX capture carries it. Leave it `false` unless your device needs it. |
+| VELUX interior blind with `enrollment: true` and no `enrollment_classes:` | The default sweep covers exterior shading and probably misses the blind; see "Finding your enrollment classes" below. |
+| Inverted device kind with `execute_broadcast: all` and no `invert_position:` | Open and Close are mirrored for every receiver of the broadcast, including devices of other kinds. Set `invert_position` explicitly. |
+| `enrollment_classes:` without `manufacturer: velux` and `enrollment: true` | Only the VELUX enrollment gesture reads the list, so it is ignored here. |
 
 ## Matching your remote's vendor
 
@@ -86,8 +104,9 @@ transmits — one with `commands:` or `enrollment: true` — the build also logs
 
 To mimic a handheld remote, also set `execute_broadcast: all` — real remotes broadcast open/close/
 stop to every device, not to one class. The boot log prints the resolved `acei` and `broadcast`
-for each identity; frame-log a press of your real remote and compare `cmd 0x00 payload[1]` and the
-destination address to confirm.
+for each identity; log a press of your real remote at DEBUG level and compare its
+`rx 1W remote ... EXECUTE(0x00)` line: `priority=user_high` is `0x43`, `priority=user_default` is
+`0x61`, and `dst-class=all` is the all-devices address.
 
 The VELUX profile is verified against KLI-class remotes for exterior shading (awnings, screens,
 roller shutters such as the SML) and interior blinds (KLI 312). A VELUX window-opener or KLR-class remote
@@ -97,6 +116,33 @@ There is no 1W `force_open` button, because no 1W frame is known to carry that m
 sometimes labelled "force open", `0x64`, moves a real device to an ordinary 50% position when sent
 as a command. The hub's force-open (`force_open_device`) is a separate, 2W, per-device action — see
 [Home Assistant actions](actions.md).
+
+## What one command puts on the air
+
+Every command goes out as one burst. Most of the burst is fixed; two settings change its shape.
+
+| Fixed for every identity | Value |
+|---|---|
+| Copies per command | 4, all with the same sequence and signature: a device counts one sequence as one command |
+| Gap between copies | 40 ms |
+| Channel | 868.95 MHz (channel 2) |
+| Wake-up preamble, where a copy has one | 1024 bytes: about 213 ms on an SX1262 or LR1121, about 267 ms on an SX1276 |
+| Channel check | Before every copy the radio listens for up to 25 ms and sends anyway after that |
+
+Nothing in your YAML changes these. The two things you can set are the shape, with `low_power:`
+([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)), and the length of the
+short preamble, with [`start_preamble_ms`](tuning.md#start_preamble_ms) (default 10 ms). While a
+burst runs the hub sends and receives nothing else, so one command holds the radio for:
+
+| Shape | You get it with | SX1262, LR1121 | SX1276 |
+|---|---|---|---|
+| Wake-up on all four copies | `low_power:` unset with any `manufacturer:` but `velux` | about 1.0 s | about 1.2 s |
+| Short preamble on all four copies | `low_power: false`, or unset with `manufacturer: velux` | about 0.2 s | about 0.2 s |
+| Wake-up on the first copy, short on the other three | `low_power: true` | about 0.4 s | about 0.45 s |
+
+The SX1276 figures for the first two shapes are measured (issue #74); the others follow from the
+preamble lengths and the fixed gap. An enrollment sends two bursts (Somfy) or six (VELUX), so it
+holds the radio for about that many times longer.
 
 ## Enrolling this hub as a controller
 
@@ -128,14 +174,15 @@ not a protocol problem.
 
 The press sends two bursts back to back — `0x39` (self-directed; carries only this identity's own
 address, so it can only ever clear its own prior entry, never a different controller's),
-immediately followed by `0x30` (the credential itself), about 4 copies each. With the Somfy default
+immediately followed by `0x30` (the credential itself), 4 copies each. With the Somfy default
 (`low_power` unset) every copy carries the long wake-up preamble, so a burst takes about a second
-and the whole press about two seconds on air; with `low_power: false` it is a fraction of that.
+(1.2 s on an SX1276) and the whole press about two seconds (2.4 s); with `low_power: false` the
+press takes about 0.4 s.
 Press Enroll soon after the receiver confirms its association mode, not at the end of its window.
 This is the documented 1W pairing handshake (a real Somfy Smoove remote does exactly this,
 corpus-captured), not two independent actions. For Somfy, both bursts go to the all-devices address
 `00003F`, like a real Somfy remote, so the `io_device_type` you configured does not decide whether
-the receiver is reached; it only addresses the identity's commands. There is no "learn window" on
+the receiver is reached; it addresses only the identity's commands. There is no "learn window" on
 the hub's side beyond that, because the device owns its own timeout and there is nothing further to
 wait for. **Only one device should be in association mode at a time**: the frames reach every
 device in range that is currently listening for them, so a second actuator in learn mode nearby
@@ -154,7 +201,7 @@ the Enroll button emits the KLI gesture instead
 2. `0x30` add-controller **swept across the identity's enrollment classes** under one sequence. The
    actuator presumably filters by its own class, so only the matching frame registers the hub. The default is the
    exterior-shading set `roller_shutter`, `vertical_exterior_awning`, `dual_roller_shutter`. Interior blinds use other
-   classes — set `enrollment_classes:`, see below.
+   classes: set `enrollment_classes:`, see "Finding your enrollment classes" below.
 3. A STOP then a DOWN command to the all-devices address — the KLI manual's "then press STOP then
    DOWN" registration-completion step.
 
@@ -177,7 +224,9 @@ a control that drives only that product.
 Set `io_device_type:` to whatever the device actually is (it drives the control-frame destination).
 The enroll gesture ignores `io_device_type` and uses the enrollment classes. At the short preamble —
 which `manufacturer: velux` gives you by default — the Enroll button blocks for about 1.2 seconds;
-at the long one it takes about 7 seconds (both measured on SX1276).
+with `low_power: true` for about 2.5 seconds; at the long wake-up on every copy it takes about 6
+seconds on an SX1262 or LR1121 and about 7 on an SX1276 (the short and long figures measured on an
+SX1276).
 
 ```yaml
 oneway_controllers:
@@ -212,18 +261,18 @@ rx 1W remote 084374 dst-class=interior_venetian_blind: DISCOVER_ALT_REQ(0x2E) ..
 
 Set `enrollment_classes:` to the classes those lines target (here `[vertical_interior_blind, interior_venetian_blind]`). If
 they are `roller_shutter`, `vertical_exterior_awning` and `dual_roller_shutter`, the default already fits and you can leave
-the key unset. The build warns when a `vertical_interior_blind` or `interior_venetian_blind` identity enrolls with
+the key unset. The build warns when a VELUX `vertical_interior_blind` or `interior_venetian_blind` identity enrolls with
 the default classes, because that combination is unlikely to fit.
 
-> **⚠️ Pressing Enroll can physically move a cover.** Step 3 is a real STOP then a real DOWN
-> broadcast, but a 1W receiver only acts on frames from a controller already in its own table — the
-> hub transmits under this identity's own address, never a remote's — so only a product that holds
-> this identity as a registered controller reacts, including one that has *just* registered it via
-> the sweep in step 2. That closing movement is the success signal: if nothing moves, nothing
-> registered — **unless the cover is already fully closed**, in which case the DOWN has nothing
+> [!WARNING]
+> Pressing Enroll can physically move a cover. Step 3 is a real STOP then a real DOWN broadcast,
+> but a 1W receiver only acts on frames from a controller already in its own table — the hub
+> transmits under this identity's own address, never a remote's — so only a product that holds this
+> identity as a registered controller reacts, including one that has registered it a moment earlier
+> through the sweep in step 2. That closing movement is the success signal: if nothing moves,
+> nothing registered, unless the cover is already fully closed, in which case the DOWN has nothing
 > visible to do. The ready sequence returns the product to where it started, so start from a partly
-> open position, or check with Open afterwards. This is the KLI registration gesture, not a side
-> effect to fix, but it is worth knowing before you press the button.
+> open position, or check with Open afterwards. This is the KLI registration gesture itself.
 
 > **VELUX 1W enrollment is confirmed** on a mains-powered SML roller shutter (SX1276, `low_power: false`,
 > default classes) and on KLI 312 interior blinds (SX1262, `low_power: true`,
@@ -237,22 +286,25 @@ the default classes, because that combination is unlikely to fit.
 the real safety interlock here, stronger than any software confirmation could be — it is why this
 feature has no separate arming switch the way the (irreversible) LR1121 bootloader rewrite does.
 
-**Un-enrolling without re-enrolling** is reached through its own explicitly-named action — the
-Enroll button's `0x39` above always re-registers via the `0x30` that follows it, so this is the
-path when you want the removal without the re-add:
+### Un-enrolling without re-enrolling
+
+The Enroll button's `0x39` always re-registers the identity through the `0x30` that follows it. To
+remove the identity without adding it again, call the [`oneway_remove_controller`](actions.md#oneway_remove_controller)
+action:
 
 ```yaml
-- action: esphome.<device_name>_oneway_remove_controller
-  data:
-    controller_id: velux_windows
+action: esphome.<device_name>_oneway_remove_controller
+data:
+  controller_id: velux_windows
 ```
 
 This sends `0x39` alone, nothing else. It carries only this identity's own source address, so it
 cannot remove a different remote's registration — the same property that makes the Enroll button's
 `0x39` prelude safe to send automatically.
 
-> **⚠️ Put the receiver in its programming mode first.** Press the receiver's PROG button, then
-> call `oneway_remove_controller` inside its association window. On a Somfy Izymo dimmer the light
+> [!WARNING]
+> Put the receiver in its programming mode first. Press the receiver's PROG button, then call
+> `oneway_remove_controller` inside its association window. On a Somfy Izymo dimmer the light
 > blinks during the remove and then ignores the controller (corpus capture
 > `somfy_izymo_dimmer_enrollment_remove_controller_in_prog_window_sx1276`); sent with no window
 > open, the action changes nothing and the hub keeps controlling the dimmer. The Izymo is the only
@@ -265,9 +317,10 @@ permanently — the same reasoning as removing `recover_oneway_key: true` after 
 
 ## Recovering a 1W controller key
 
-> **⚠️ Receive-only, but it recovers a real secret.** This feature never transmits anything. It
+> [!WARNING]
+> This feature is receive-only, but it recovers a real secret. It never transmits anything. It
 > listens for a frame a 1W remote broadcasts during its key-copy gesture and decrypts it. The
-> decryption needs no secret of its own — see the security note below — so treat the recovered key
+> decryption needs no secret of its own (see the security note below), so treat the recovered key
 > exactly as you would treat your `system_key`. Recover a key only from a remote or network you own
 > or are authorized to access — see the project [Disclaimer](../../README.md#disclaimer--license).
 
@@ -277,10 +330,9 @@ controller" broadcast, which is what a 1W remote sends while its **remote-to-rem
 is active in order to hand its network key to a new remote.
 
 **For controlling a device, you almost never need this.** A device accepts whichever key arrives
-during its own association-mode window — enrolling this hub as a controller (see
-[Enrolling this hub as a controller](#enrolling-this-hub-as-a-controller) above) works just as
-well with a freshly generated key as with a recovered one, so there
-is nothing to gain from recovering a key just to enroll with it. Recover a key only when you
+during its own association-mode window — enrolling this hub as a controller (see "Enrolling this
+hub as a controller" above) works as well with a freshly generated key as with a recovered one, so
+there is nothing to gain from recovering a key only to enroll with it. Recover a key only when you
 specifically need to **become** an existing, already-registered identity rather than add a new one:
 
 - **Replacing a remote that is gone for good** (lost, broken, retired), so the hub can take over
@@ -332,12 +384,12 @@ The report tells you the **MAC status**, which is your on-the-spot evidence that
 is correct:
 
 - **`MAC VERIFIED`** — the frame carried an authenticator and it checked out *under the key that
-  was just recovered*. This is the strongest confirmation available without commanding a device.
+  was recovered a moment ago*. This is the strongest confirmation available without commanding a device.
 - **`MAC FAILED`** — the authenticator did not check out. The key is probably wrong (a marginal
   reception is the usual cause). Re-arm and repeat the gesture closer to the hub.
 - **`MAC not present`** — the frame carried no authenticator to check. Not an error; real hardware
   frequently omits it. The key may still be correct — enroll with it (see
-  [Enrolling this hub as a controller](#enrolling-this-hub-as-a-controller)) and confirm by
+  "Enrolling this hub as a controller" above) and confirm by
   commanding the device.
 
 Two fields in the emitted block deserve a note:
@@ -389,14 +441,15 @@ For anything other than the generated buttons there is an action
 ([ADR 0006](../adr/0006-management-actions-as-native-api-actions.md)):
 
 ```yaml
-- action: esphome.<device_name>_oneway_set_position
-  data:
-    controller_id: velux_windows
-    position: "40"
+action: esphome.<device_name>_oneway_set_position
+data:
+  controller_id: velux_windows
+  position: "40"
 ```
 
 `position` runs 0 (fully open) to 100 (fully closed) and is passed as a string, like every argument
-on this component's action surface. It is the position you mean: for an identity of an inverted kind
+on this component's action surface; [`oneway_set_position`](actions.md#oneway_set_position) lists
+the fields and the result event. It is the position you mean: for an identity of an inverted kind
 (see `invert_position`) the hub mirrors it on the wire, and the "Last 1W Command" sensor still
 names what you asked for.
 

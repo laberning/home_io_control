@@ -151,7 +151,7 @@ durably reserved, because reusing one is unrecoverable. This is a storage failur
    did not react until the hub's own address was actually enrolled into them. **Enroll this
    identity first**, following the two-sided gesture exactly (durations matter), before working
    through the rest of this list.
-2. **Key mismatch.** The identity's `system_key` no longer matches what this address enrolled with
+2. **Key mismatch.** The identity's `system_key` differs from the one this address enrolled with
    — most often because `system_key` was changed after enrollment, or an identity meant to reuse an
    existing network's key (see
    [Recovering a 1W controller key](configuration/oneway-transmit.md#recovering-a-1w-controller-key))
@@ -159,12 +159,35 @@ durably reserved, because reusing one is unrecoverable. This is a storage failur
    with that key. Re-run enrollment for this identity after any `system_key` change.
 3. **Wrong device class.** `io_device_type` selects the broadcast address. A shutter will not act
    on a command addressed to the awning class. Compare against the class you see in overheard 1W
-   traffic from the real remote.
+   traffic from the real remote. With `execute_broadcast: all` the command carries no class, so
+   this step cannot be the cause; go to step 7.
 4. **Desynced counter.** The device remembers the highest sequence it accepted from you and rejects
    anything at or below it. If your counter fell behind — a replaced board, a restored backup — every
    command is silently dropped. **Remedy:** raise `initial_sequence:` above the value in the sensor
-   and reflash. Move it in *small* steps: devices accept a forward jump only within a window
-   (~1000), so overshooting fails exactly like undershooting.
+   and reflash. Move it in *small* steps: devices accept a forward jump only within a window whose
+   size is not measured, so overshooting fails exactly like undershooting. A value below the
+   counter the hub already holds changes nothing.
+5. **Wrong burst shape.** A solar or battery receiver sleeps between listening windows and needs
+   the long wake-up copy: set `low_power: true`. An awake VELUX receiver ignores a frame that
+   arrives behind the long wake-up ([ADR 0041](adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)):
+   for a mains-powered one set `low_power: false`, or leave it unset with `manufacturer: velux`. The TX line in the log lists the preamble of each copy, for
+   example `preamble 1024/48/48/48` for the wake-up on the first copy only, and the boot log names
+   the shape the identity resolved to. The wake-up length itself is fixed. How long a burst takes
+   per shape is in [Sending 1W commands](configuration/oneway-transmit.md#what-one-command-puts-on-the-air).
+6. **Wrong manufacturer profile.** `manufacturer:` selects the priority byte of every open, close
+   and stop frame: `0x43` for Somfy, `0x61` for VELUX. Press your real remote with DEBUG logging
+   on: its `rx 1W remote ... EXECUTE(0x00)` line ends in `priority=user_high` for `0x43` and
+   `priority=user_default` for `0x61`. Compare that with the `acei` the boot log prints for the
+   identity. If they differ, fix `manufacturer:`, or set `execute_acei:` for a vendor this
+   component has no profile for.
+7. **Class address or all-devices address.** A handheld remote sends open, close and stop to the
+   all-devices address. If your real remote's `EXECUTE(0x00)` lines show `dst-class=all`, set
+   `execute_broadcast: all` on the identity; with the default `typed` the hub sends to the class of
+   `io_device_type` instead.
+8. **Open and Close swapped.** Some kinds move the other way round on the wire, for example a
+   horizontal awning. The boot log shows `inverted=yes (from kind)`, `inverted=yes (configured)` or
+   `inverted=no` for each identity. Set `invert_position: true` or `false` to match what the
+   device does.
 
 
 ## A tuning plan

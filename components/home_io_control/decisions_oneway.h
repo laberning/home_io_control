@@ -101,7 +101,8 @@ inline bool is_duplicate_1w_frame(const OneWayDedupState &last, const OneWayDedu
 /// even own — 1W broadcasts carry no ownership marker, so the activity could be a neighbour's.
 ///
 /// The hold re-arms on every 1W frame received while it is already active, so a real burst from one
-/// remote (~160 ms, well under `quiet_ms`) never gets cut short mid-transmission. Left unchecked
+/// remote (up to about 1.2 s with wake-up preambles, its copies well under `quiet_ms` apart) never gets
+/// cut short mid-transmission. Left unchecked
 /// that re-arming has no cap: sustained sub-`quiet_ms` 1W traffic from any source — including a
 /// neighbour's, since these broadcasts carry no ownership marker — would hold background polls back
 /// indefinitely. @p max_defer_ms bounds that: once that much time has passed since the burst

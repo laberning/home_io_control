@@ -26,14 +26,16 @@ namespace home_io_control {
 
 /// Hold queued background polls back for this long after any 1W frame, so a poll the hub itself
 /// scheduled does not occupy the (half-duplex) radio while the remote is still transmitting.
-/// Comfortably longer than the ~160ms reliability burst; short enough to barely shift poll timing
+/// Comfortably longer than the gap between two copies of one burst, even with a wake-up preamble on
+/// every copy (about 0.3 s); short enough to barely shift poll timing
 /// otherwise. Only background polls yield — see decisions::defer_background_poll_for_1w_activity().
 static constexpr uint32_t ONEWAY_QUIET_PERIOD_MS = 700;
 /// Hard cap on how long sustained 1W traffic may hold a background poll back in total, measured
 /// from the start of the burst rather than the most recent frame. ONEWAY_QUIET_PERIOD_MS re-arms on
 /// every frame, so without this cap traffic arriving faster than the quiet period apart — a stuck
 /// remote, a chatty neighbour's sensor — could starve background polls, and therefore device state
-/// freshness, indefinitely. Comfortably above a legitimate ~160ms burst; bounds the worst case
+/// freshness, indefinitely. Comfortably above a legitimate burst, which lasts up to about 1.2 s when every
+/// copy carries a wake-up preamble; bounds the worst case
 /// without meaningfully affecting normal operation.
 static constexpr uint32_t ONEWAY_POLL_DEFER_CAP_MS = 5000;
 /// Suppress a repeated 1W log/poll for the same remote *and the same intent* within this window.

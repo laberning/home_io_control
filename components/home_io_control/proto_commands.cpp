@@ -197,7 +197,7 @@ constexpr uint8_t ONEWAY_EXECUTE_PARAMS_SIZE = 6;
 // ONEWAY_EXECUTE_ACEI (the Somfy-shaped default) and ONEWAY_EXECUTE_ACEI_VELUX live in
 // proto_constants.h so oneway_controller.h's resolve_oneway_wire_profile() can name them without
 // the protocol layer depending on the controller layer. build_1w_execute() takes the ACEI as a
-// parameter now, defaulting to ONEWAY_EXECUTE_ACEI.
+// parameter, defaulting to ONEWAY_EXECUTE_ACEI.
 // ONEWAY_SEQUENCE_SIZE (the rolling sequence's width) lives in proto_constants.h so decode_1w_frame() reads
 // the same layout this builder writes.
 /// 1W execute MAC span: the command byte followed by all ONEWAY_EXECUTE_PARAMS_SIZE parameter

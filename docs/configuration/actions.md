@@ -2,7 +2,7 @@
 <!-- doxygen-label: cfg_actions -->
 
 Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control
-exposes six **hub-level actions** through ESPHome's native API. These are one-off and advanced
+exposes eight **hub-level actions** through ESPHome's native API. These are one-off and advanced
 operations that would clutter the entity UI if they were always-visible buttons, so most are only
 reachable from Developer Tools or an automation — `scan_paired_devices` is the exception, with an
 optional one-tap button.
@@ -14,7 +14,8 @@ optional one-tap button.
 | [`identify_device_for`](#identify_device_for) ⚠️ *experimental* | Identifies for a number of seconds you choose, or stops a running identify with `0` (the stop is confirmed on a VELUX roof-window actuator). | No — no readback exists for a jog |
 | [`force_open_device`](#force_open_device) ⚠️ *experimental* | Requests a fully-open move at elevated protocol priority, intended to override wind/rain soft locks. | No — the outcome is asynchronous |
 | [`scan_paired_devices`](../pairing.md) | Broadcasts a roll-call and reports every already-paired device that answers — no target `device_id`, no arguments at all. Also reachable as a one-tap button via `scan_paired_devices_button: true`. | No — nothing here is read back either |
-| [`oneway_set_position`](oneway-transmit.md) | Sends a numeric position as a configured 1W controller identity. Takes `controller_id` and `position`, not a `device_id` — 1W addresses a device class. | No — 1W has no reply at all |
+| [`oneway_set_position`](#oneway_set_position) | Sends a numeric position as a configured 1W controller identity. Takes `controller_id` and `position`, not a `device_id` — 1W addresses a device class. | No — 1W has no reply at all |
+| [`oneway_remove_controller`](#oneway_remove_controller) | Removes a configured 1W controller identity from the receivers that are in their programming mode. Takes `controller_id`. | No — 1W has no reply at all |
 | [`heating_control`](climate.md) ⚠️ *experimental* | Sends one heating/climate function (`CMD_WRITE_PRIVATE` 0x20) to a climate device. Takes `device_id`, `function`, `value`. | No — an acknowledged write is not a readback; `read_window_open` reports the sensor in the `message`, the `read_paired_devices` / `read_setpoint_block` reads are logged |
 
 Two more actions, `probe_device` and `probe_sweep`, exist behind a separate opt-in
@@ -51,7 +52,7 @@ sequence:
       device_id: "FEEB1E"
 ```
 
-Every action except `scan_paired_devices` takes `device_id`: the 6-hex-character IO-Homecontrol device ID — the same value you set as `io_device_id` in the entity's YAML, and the same ID the pairing log prints. This is the protocol-level actuator ID, **not** the Home Assistant entity ID. `scan_paired_devices` takes no `data:` at all — it isn't aimed at one device.
+Every action except `scan_paired_devices` and the two `oneway_` actions takes `device_id`: the 6-hex-character IO-Homecontrol device ID — the same value you set as `io_device_id` in the entity's YAML, and the same ID the pairing log prints. This is the protocol-level actuator ID, **not** the Home Assistant entity ID. `scan_paired_devices` takes no `data:` at all — it isn't aimed at one device. The two `oneway_` actions take `controller_id`, the `id` of a 1W controller identity, because 1W addresses a device class and no single device.
 
 ## Result events
 
@@ -60,7 +61,7 @@ Every action fires the same Home Assistant event, `esphome.home_io_control_actio
 | Field | When present | Meaning |
 |---|---|---|
 | `action` | always | Action name, e.g. `rename_device`. |
-| `device_id` | always | Target device ID — **empty** for `scan_paired_devices`, which has no single target. |
+| `device_id` | always | Target device ID — **empty** for `scan_paired_devices`, which has no single target. For the two `oneway_` actions it holds the `controller_id` you sent. |
 | `success` | always | Whether the action succeeded. For `scan_paired_devices`, `true` whenever the broadcast went out — a scan that heard nothing back is a successful scan, not a failure. |
 | `verified` | always | Whether a follow-up readback confirmed the result — see the table above for which actions can ever set this `true`. |
 | `message` | always | Human-readable outcome summary. For `scan_paired_devices` this is the full multi-line report, not a one-line summary. |
@@ -143,8 +144,53 @@ data:
   device_id: "FEEB1E"
 ```
 
+## `oneway_set_position`
+
+Fields: `controller_id` (required), `position` (required — a whole number from `0`, fully open, to `100`, fully closed, passed as a string).
+
+Sends the position as the 1W controller identity `controller_id`, with the same four-copy burst as a generated button ([Sending 1W commands](oneway-transmit.md#numeric-positions)). An identity of an inverted device kind mirrors the value on the wire, and the "Last 1W Command" sensor still names what you asked for. A `controller_id` that no identity carries, or a `position` that is not a whole number from 0 to 100, is refused before anything is sent, and the result message says which.
+
+```yaml
+action: esphome.hioc_heltec_v2_oneway_set_position
+data:
+  controller_id: velux_windows
+  position: "40"
+```
+
+The result event reports only that the command was **queued** and never `verified`, because nothing downstream can show that a device moved:
+
+```yaml
+action: oneway_set_position
+device_id: velux_windows
+success: true
+verified: false
+message: 1W position command queued
+```
+
+## `oneway_remove_controller`
+
+Fields: `controller_id` (required).
+
+Sends one `0x39` remove-controller burst as the 1W controller identity `controller_id`, nothing else. It carries only that identity's own address, so it cannot remove another controller's registration. A receiver acts on it only while its own programming mode is open; see [Un-enrolling without re-enrolling](oneway-transmit.md#un-enrolling-without-re-enrolling) for the steps.
+
+```yaml
+action: esphome.hioc_heltec_v2_oneway_remove_controller
+data:
+  controller_id: velux_windows
+```
+
+The result event reports that the burst was **queued**, never that a device forgot the identity:
+
+```yaml
+action: oneway_remove_controller
+device_id: velux_windows
+success: true
+verified: false
+message: 1W remove-controller (0x39) queued
+```
+
 ## See also
 
 - [Pairing](../pairing.md) — `scan_paired_devices` and the Discover & Pair button
 - [Heating and climate](climate.md) — `heating_control`
-- [Sending 1W commands](oneway-transmit.md) — `oneway_set_position`
+- [Sending 1W commands](oneway-transmit.md) — the 1W identities that `oneway_set_position` and `oneway_remove_controller` use

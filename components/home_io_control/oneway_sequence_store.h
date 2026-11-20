@@ -34,10 +34,10 @@ namespace home_io_control {
 
 // === Sequence-safety bounds ===
 
-/// How far ahead of its stored high-water mark a device will still accept a jump. 1000 is the
-/// assumed acceptance window (not measured on hardware), and it is the ceiling every
-/// forward skip in this file has to stay under: a jump past it fails exactly like a stale
-/// counter, and just as silently.
+/// How far ahead of its stored high-water mark a device is assumed to accept a jump. 1000 is an
+/// assumption, not a value measured on hardware, and it is the ceiling every forward skip in this
+/// file has to stay under: a jump past the real window fails exactly like a stale counter, and
+/// just as silently.
 static constexpr uint16_t ONEWAY_SEQUENCE_ACCEPTANCE_WINDOW = 1000;
 
 /// How many sequences one flash write reserves.
@@ -97,7 +97,7 @@ class OneWaySequenceStore {
   ///
   /// Unlike add_identity(), this *may* move the counter backwards, which is the whole point —
   /// re-seed from a sequence observed on air, or from a user's estimate, when a counter has
-  /// desynced from the device. Today's documented remedy for a desynced counter is
+  /// desynced from the device. The documented remedy for a desynced counter is
   /// `initial_sequence:` (docs/troubleshooting.md, "1W commands do nothing"), which goes through
   /// add_identity() at boot instead.
   /// @param node_id Identity's 3-byte source address.

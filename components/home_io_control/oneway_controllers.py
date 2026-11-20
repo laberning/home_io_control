@@ -123,9 +123,10 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         cv.Required(CONF_IO_DEVICE_TYPE): validate_device_type,
         # Seeds this identity's rolling counter on first use. This is the escape hatch for a
         # device that has stopped accepting commands because its stored counter ran ahead of
-        # ours: bump this and reflash. Devices accept a forward jump only within a window (~1000
-        # in the one documented receiver implementation), so a value that is too far ahead fails
-        # exactly like one that is too far behind, and just as silently — move it in small steps.
+        # ours: bump this and reflash. Devices accept a forward jump only within a window whose size
+        # is not measured (the store assumes 1000, oneway_sequence_store.h), so a value that is too
+        # far ahead fails exactly like one that is too far behind, and just as silently — move it
+        # in small steps. It only ever moves the counter forward.
         cv.Optional(CONF_INITIAL_SEQUENCE, default=0): cv.int_range(min=0, max=0xFFFF),
         # Which command buttons to generate. Validated against the known set rather than taken
         # as free text: a typo would otherwise produce a silently missing button, and 1W gives no
@@ -149,7 +150,8 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # The device classes a VELUX enrollment 0x30 sweep targets. Unset -> the manufacturer
         # profile default ({roller_shutter, vertical_exterior_awning, dual_roller_shutter} for velux).
         # Set it to narrow the sweep, e.g. [vertical_exterior_awning], once you know which class
-        # your actuator listens on. Ignored by the somfy gesture (which always uses io_device_type).
+        # your actuator listens on. Ignored by the somfy gesture (which sends to the all-devices
+        # address).
         # Max 3 -- the C++ side is a fixed array.
         # `unknown` (0x00) is rejected: it is the C++ "not overridden" sentinel
         # (effective_enrollment_classes()), so [unknown] would silently expand back to the full
@@ -167,14 +169,14 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         cv.Optional(CONF_EXECUTE_ACEI): cv.All(cv.hex_int, cv.int_range(min=1, max=0xFF)),
         # "all" -> address the all-devices broadcast 00 00 3F for CMD_EXECUTE (what a handheld
         # cover remote of either vendor does); "typed" (default) -> the per-class address from
-        # io_device_type (current behaviour). Not a vendor axis -- see ADR 0031.
+        # io_device_type. Not a vendor axis -- see ADR 0031.
         cv.Optional(CONF_EXECUTE_BROADCAST, default="typed"): cv.one_of(
             "typed", "all", lower=True
         ),
         # Tri-state, unlike the per-device 2W low_power (ADR 0029): no default here, because unset
-        # and false mean different things for a 1W identity. Unset = every burst keeps the
-        # legacy shape (LONG_PREAMBLE on every copy, CTRL1 0x00) -- byte- and
-        # timing-identical to the hardware-validated Somfy path. false = every copy uses the live
+        # and false mean different things for a 1W identity. Unset = the manufacturer profile decides
+        # (ADR 0041): velux gets the short shape below, every other vendor LONG_PREAMBLE on every
+        # copy with CTRL1 0x00, the hardware-validated Somfy path. false = every copy uses the live
         # `start_preamble_ms` tuning value instead, CTRL1 0x00 -- the ADR 0029 shape, for a
         # mains-powered receiver. true = copy 1 gets LONG_PREAMBLE + CTRL1_LOW_POWER, copies 2-4 the
         # normal preamble -- a wake-up copy for a solar/battery receiver. Applies to every 1W TX of
@@ -387,8 +389,8 @@ def _enrollment_manufacturer_problem(resolved):
 
     manufacturer becomes required, not silently 0, whenever enrollment: true actually puts this
     byte on the air in a CMD_ONEWAY_ADD_CONTROLLER frame -- 1W gives no error a wrong value would
-    ever surface as, so the mistake has to be caught here instead. Everywhere else it is
-    genuinely unused today, so defaulting to 0 there is harmless.
+    ever surface as, so the mistake has to be caught here instead. Without it the manufacturer
+    only selects the wire profile (0 selects the Somfy-shaped one), so defaulting to 0 is harmless.
     """
     if resolved.identity[CONF_ENROLLMENT] and not resolved.manufacturer_explicit:
         return (

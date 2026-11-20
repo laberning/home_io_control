@@ -101,10 +101,10 @@ inline OneWayCopyShape oneway_burst_copy_shape(OneWayPowerClass power_class, uin
 /// device IDs are held elsewhere in this component.
 /// @ingroup hioc_protocol
 struct OneWayControllerIdentity {
-  std::string id;                                  ///< YAML handle entities reference.
-  uint8_t node_id[NODE_ID_SIZE]{};                 ///< Source address we transmit as (configured or derived).
-  uint8_t system_key[AES_KEY_SIZE]{};              ///< Network key for this identity; may differ per identity.
-  uint8_t manufacturer{0};                         ///< Manufacturer ID; unused until the enrollment phase.
+  std::string id;                      ///< YAML handle entities reference.
+  uint8_t node_id[NODE_ID_SIZE]{};     ///< Source address we transmit as (configured or derived).
+  uint8_t system_key[AES_KEY_SIZE]{};  ///< Network key for this identity; may differ per identity.
+  uint8_t manufacturer{0};             ///< Manufacturer ID: sent in an enrollment frame, and selects the wire profile.
   DeviceType io_device_type{DeviceType::UNKNOWN};  ///< Device class this identity commands.
   uint16_t initial_sequence{0};                    ///< Seed for this identity's rolling counter on first use.
   bool node_id_derived{false};                     ///< True when `node_id` was derived rather than configured.
@@ -116,7 +116,7 @@ struct OneWayControllerIdentity {
   uint8_t execute_acei{0};
   /// When true (`execute_broadcast: all`), 1W EXECUTE frames go to the all-devices address
   /// `00 00 3F` regardless of `io_device_type` — what a handheld cover remote of either vendor
-  /// does. false = the typed per-class destination (current default). Not a vendor axis; see
+  /// does. false = the typed per-class destination (the default). Not a vendor axis; see
   /// ADR 0031.
   bool execute_broadcast_all{false};
   /// Override for the device classes a VELUX enrollment `0x30` sweep targets (`enrollment_classes:`).
@@ -124,7 +124,7 @@ struct OneWayControllerIdentity {
   /// (`resolve_oneway_wire_profile()`), which only fits exterior shading; a KLI 312 interior blind
   /// needs `{VERTICAL_INTERIOR_BLIND, INTERIOR_VENETIAN_BLIND}` here. `UNKNOWN` entries are skipped when the sweep
   /// runs, so a one- or two-class override is expressed by leaving the rest `UNKNOWN`. Ignored by the Somfy enrollment
-  /// gesture, which always uses `io_device_type`. See ADR 0032.
+  /// gesture, which sends to the all-devices address. See ADR 0032.
   std::array<DeviceType, 3> enrollment_classes{DeviceType::UNKNOWN, DeviceType::UNKNOWN, DeviceType::UNKNOWN};
   /// `low_power:` exactly as configured, or **empty when the key is absent** — in which case the
   /// shape comes from the manufacturer profile (ADR 0041). Never read this directly to transmit;
@@ -153,8 +153,8 @@ struct OneWayControllerIdentity {
 
 /// @brief Which 1W enrollment gesture a manufacturer's actuators expect.
 ///
-/// SOMFY: one `0x30` add-controller burst to the identity's own `io_device_type` (the shape this
-/// project has hardware-validated). VELUX_KLI: a `0x39` clear to the all-devices address, then a
+/// SOMFY: a `0x39` clear then one `0x30` add-controller burst, both to the all-devices address (the
+/// shape this project has hardware-validated). VELUX_KLI: a `0x39` clear to the all-devices address, then a
 /// `0x30` burst to **each** class in `OneWayWireProfile::enrollment_classes`, then a STOP+DOWN
 /// EXECUTE follow-up — the gesture a real KLI remote produces (issue #74 capture +
 /// the KLI manual), confirmed on a VELUX SML roller shutter and on KLI 312
@@ -170,7 +170,7 @@ struct OneWayWireProfile {
   bool profile_is_a_guess;       ///< true when `manufacturer` matched no known 1W wire profile.
   EnrollGesture enroll_gesture;  ///< Which enrollment gesture this manufacturer's actuators expect.
   /// Device classes a VELUX_KLI `0x30` sweep targets, `UNKNOWN` entries skipped. All-`UNKNOWN` for
-  /// SOMFY, whose `0x30` goes to the identity's own `io_device_type` instead.
+  /// SOMFY, whose `0x39` and `0x30` go to the all-devices address instead.
   std::array<DeviceType, 3> enrollment_classes;
   /// Burst shape for an identity that does not set `low_power:` at all. Per ADR 0041: VELUX gets
   /// `ALWAYS_ALIVE`, because an awake VELUX receiver does not accept a frame behind the 1024-byte
@@ -194,7 +194,7 @@ struct OneWayWireProfileRow {
   OneWayWireProfile profile;  ///< Its wire profile; never a guess.
 };
 
-/// The historical Somfy-shaped profile (`ONEWAY_EXECUTE_ACEI`, `EnrollGesture::SOMFY`). It is also what
+/// The Somfy-shaped profile (`ONEWAY_EXECUTE_ACEI`, `EnrollGesture::SOMFY`). It is also what
 /// an unset or unprofiled manufacturer transmits with.
 static constexpr OneWayWireProfile SOMFY_WIRE_PROFILE{ONEWAY_EXECUTE_ACEI,
                                                       /*profile_is_a_guess=*/false,
@@ -219,7 +219,7 @@ static constexpr uint8_t UNSET_MANUFACTURER = 0x00;
 /// @brief Resolve an identity's 1W wire profile from its manufacturer byte.
 ///
 /// Pure. A manufacturer with a row in ONEWAY_WIRE_PROFILES gets it; an unset manufacturer (0x00) gets
-/// the Somfy profile, the historical default. Any other explicitly-set manufacturer returns the Somfy
+/// the Somfy profile. Any other explicitly-set manufacturer returns the Somfy
 /// profile with `profile_is_a_guess=true` so the Python schema can warn (`oneway_controllers.py`
 /// `validate_oneway_controllers()`).
 /// @param manufacturer The identity's manufacturer byte (`MANUFACTURER_*`, or a raw value).

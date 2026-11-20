@@ -194,8 +194,8 @@ bool OneWayTransmitter::send_velux_kli_enrollment_(const OneWayControllerIdentit
   // The gesture a real KLI 310/313 PROG press produces (issue #74 capture + the KLI
   // manual):
   //   0x39 -> 00 00 3F  (clear self, to the all-devices address like the Somfy gesture's)
-  //   0x30 -> each of {roller_shutter, vertical_exterior_awning, dual_roller_shutter} under one sequence
-  //           (the class sweep)
+  //   0x30 -> each class in effective_enrollment_classes() (the profile's exterior-shading set unless
+  //           `enrollment_classes:` overrides it) under one sequence (the class sweep)
   //   EXECUTE STOP, then EXECUTE DOWN, both -> 00 00 3F at the VELUX ACEI  (registration completion)
   const bool removed = this->send_(
       identity.id,

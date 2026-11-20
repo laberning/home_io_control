@@ -147,7 +147,7 @@ your device may differ.
 | `cold_broadcast_reply_preamble_ms` | both | `20` | 1.5–70 ms | Preamble duration for the key-extraction responder's discovery reply (0x29) — the one reply a hopping peer has to catch cold. |
 | `key_extraction_type_word` | both | `0x0080` | `0x0000`–`0xFFFF` | Device type the key-extraction responder's discovery reply (0x29) claims, as the reply's two type bytes. Applies to an open search only. See below. |
 | `key_extraction_multi_info` | both | `0xDD` | `0x00`–`0xFF` | The key-extraction responder's discovery reply (0x29) flags byte: reply speed and whether the device sleeps. See below. |
-| `start_preamble_ms` | both | `10` | 1.5–70 ms | Preamble duration for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the long wake-up burst. Low-power devices lead with [`low_power_wake_ms`](#low_power_wake_ms) unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs a 1W `oneway_controllers:` identity's non-wake-up copies when its own `low_power:` is `false` or `true` (unset keeps 1W on `LONG_PREAMBLE` — see [Sending 1W commands](oneway-transmit.md)). |
+| `start_preamble_ms` | both | `10` | 1.5–70 ms | Preamble duration for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the long wake-up burst. Low-power devices lead with [`low_power_wake_ms`](#low_power_wake_ms) unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs the short copies of a 1W `oneway_controllers:` identity; see [Sending 1W commands](oneway-transmit.md#what-one-command-puts-on-the-air). |
 | `low_power_wake_ms` | both | `600` | 300–1000 ms | Wake-up preamble duration on a directed start frame to a `low_power:` device believed at rest. See below. |
 | `pairing_discovery_preamble_ms` | both | follows `start_preamble_ms` | 1.5–300 ms | Preamble duration on the discovery broadcast itself. See [`pairing_discovery_preamble_ms`](#pairing_discovery_preamble_ms). |
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the wake-up preamble. See below. |
@@ -219,7 +219,7 @@ that print `preamble=` show the programmed bytes the radio was given.
 | Reply to a broadcast discovery | [`cold_broadcast_reply_preamble_ms`](#cold_broadcast_reply_preamble_ms) | 20 ms | 96 bytes | 77 bytes |
 | Discovery | [`pairing_discovery_preamble_ms`](#pairing_discovery_preamble_ms) | follows the start | 48 bytes | 38 bytes |
 
-One-way bursts keep their own wake-up preamble of 1024 bytes; their other copies follow
+One-way bursts keep their own wake-up preamble of 1024 bytes (about 213 ms on an SX1262 or LR1121, about 267 ms on an SX1276); their other copies follow
 `start_preamble_ms` ([Sending 1W commands](oneway-transmit.md)).
 
 The keys that set bytes (`low_power_wake_preamble`, `normal_start_preamble`,
@@ -469,9 +469,10 @@ milliseconds and in the bytes your radio was given.
 Setting this key yourself overrides the default, **including a value below it** — useful if you are
 bisecting a reception problem and want to see where your own device stops answering.
 
-The same value governs a 1W identity's non-wake-up copies once its own `low_power:` is set to
-`false` or `true` — see [Sending 1W commands](oneway-transmit.md). Left unset, an identity keeps
-`LONG_PREAMBLE` on every copy regardless of this setting.
+The same value governs the short copies of a 1W identity: every copy with `low_power: false`, the
+three after the wake-up with `low_power: true`. With `low_power:` unset it depends on the
+manufacturer: `velux` gets short copies, every other vendor keeps the long wake-up on all four
+copies and this value does not apply. See [Sending 1W commands](oneway-transmit.md#what-one-command-puts-on-the-air).
 
 Sized independently of `response_preamble_ms` (that knob is a TX→RX turnaround property;
 this is a cold-peer property). Drop it toward the 1.5 ms floor only if a start frame is still not

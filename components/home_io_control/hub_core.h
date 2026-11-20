@@ -372,7 +372,7 @@ class IOHomeControlComponent : public Component,
   /// obeyed. The "Last 1W Command" diagnostic reports what was *transmitted*, which is the only
   /// half of that the hub can know.
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
-  /// @param cmd Named command (STOP, FAVORITE, VENT, FORCE_OPEN); PARTIAL and PEDESTRIAN have no 1W
+  /// @param cmd Named command (STOP, FAVORITE, VENT); FORCE_OPEN, PARTIAL and PEDESTRIAN have no 1W
   ///        encoding and are not transmitted.
   void send_oneway_command(const std::string &controller_id, CoverCommand cmd) {
     this->op_queue_.enqueue_oneway_command(controller_id, cmd);

@@ -83,9 +83,9 @@ CONF_ENROLLMENT_WITH_MAC = "enrollment_with_mac"
 # See resolve_oneway_wire_profile() / effective_enrollment_classes() (oneway_controller.h), ADR 0032.
 CONF_ENROLLMENT_CLASSES = "enrollment_classes"
 # Same YAML key as platform_common.py's per-device 2W low_power (ADR 0029), tri-state here: unset
-# keeps every 1W burst in the legacy shape (LONG_PREAMBLE on every copy, CTRL1 0x00); `false`/`true`
-# opt an identity into the ADR 0038 shapes instead. One definition, shared: platform_common.py
-# imports this constant rather than keeping its own copy. See ONEWAY_CONTROLLER_SCHEMA's own
+# lets the manufacturer profile pick the shape (ADR 0041: velux the short one, any other vendor
+# LONG_PREAMBLE on every copy with CTRL1 0x00); `false`/`true` force one of the ADR 0038 shapes.
+# One definition, shared: platform_common.py imports this constant rather than keeping its own copy. See ONEWAY_CONTROLLER_SCHEMA's own
 # comment on this key for the full tri-state semantics, and ADR 0038.
 CONF_LOW_POWER = "low_power"
 # Shared by the cover platform (2W display inversion) and the 1W controller identity (wire

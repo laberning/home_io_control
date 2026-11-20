@@ -278,8 +278,8 @@ bool create_private_function(IoFrame &f, const uint8_t *own, const uint8_t *dst,
 ///        caller's identity/sequence store owns incrementing and persisting this, not this
 ///        builder — see the section note above.
 /// @param controller_key 16-byte key held by the transmitting controller identity: the hub's own
-///        `system_key` for its own network, or a foreign key adopted via CMD 0x30 (Phase 3A "key
-///        adoption") when transmitting as an adopted identity.
+///        `system_key` for its own network, or a foreign key recovered from a 1W remote's CMD 0x30
+///        key copy when transmitting as that identity.
 /// @param acei ACEI byte to place at payload[1] — `ONEWAY_EXECUTE_ACEI` (Somfy-shaped) by
 ///        default, `ONEWAY_EXECUTE_ACEI_VELUX` for a VELUX identity. Resolved per identity by
 ///        oneway_controller.h's effective_execute_acei(); this builder just writes it.
@@ -344,8 +344,8 @@ bool create_1w_execute_position(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Dev
 ///        caller's identity/sequence store owns incrementing and persisting this, not this
 ///        builder — see the section note above.
 /// @param controller_key 16-byte key held by the transmitting controller identity: the hub's own
-///        `system_key` for its own network, or a foreign key adopted via CMD 0x30 (Phase 3A "key
-///        adoption") when transmitting as an adopted identity.
+///        `system_key` for its own network, or a foreign key recovered from a 1W remote's CMD 0x30
+///        key copy when transmitting as that identity.
 /// @param acei ACEI byte for payload[1] — see create_1w_execute_position().
 /// @param broadcast_all Address `00 00 3F` instead of the typed class — see
 ///        create_1w_execute_position().
@@ -370,7 +370,8 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
 
 /// @brief Build a 1W add-controller frame (CMD 0x30) that registers this identity as a controller
 /// on every device of `target_type` currently in association mode — a physical 2 s PROG hold on
-/// the receiver, which only the device's owner can trigger (see ADR 0026).
+/// the receiver, which only the device's owner can trigger (see ADR 0026). `DeviceType::UNKNOWN`
+/// addresses every device (the Somfy gesture); a class addresses that class (the VELUX sweep).
 ///
 /// The payload wraps `controller_key` for transmission rather than sending it in the clear:
 /// `enc_key = crypto::crypt_1w_key(src, controller_key)`, the same self-inverse primitive
@@ -397,8 +398,8 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
 /// trailer exists at all — this is why `with_mac` is a parameter, not a fixed choice.** The
 /// published known-answer vector
 /// (tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml,
-/// `with_mac=true`, 35 bytes) is what `with_mac` defaults to,
-/// for compatibility with that vector's own pinning tests. Most real hardware captures instead
+/// `with_mac=true`, 35 bytes) is the shape `with_mac` defaults to, which the tests pinned to that
+/// vector rely on. Most real hardware captures instead
 /// show 29 bytes with **no trailer at all** — see
 /// `tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`. **The enroll
 /// button calls this with `with_mac=false`** to match that shape, but this is a preference rather than a hardware
@@ -421,7 +422,7 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
 /// @param controller_key 16-byte key this identity registers itself with — normally the hub's own
 ///        `system_key`, wrapped here for transmission, never sent in the clear.
 /// @param with_mac True to append the out-of-length MAC trailer (the published vector's shape,
-///        and this parameter's default for backward compatibility); false to omit it entirely
+///        and this parameter's default); false to omit it entirely
 ///        (the shape most real hardware captures this project holds actually use, and what the
 ///        enroll button passes). Real hardware has been shown to accept both — see the
 ///        `@warning` above.
@@ -431,7 +432,8 @@ bool create_1w_add_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devic
                               uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE], bool with_mac = true);
 
 /// @brief Build a 1W remove-controller frame (CMD 0x39) that un-registers this identity from every
-/// device of `target_type` currently in association mode — the un-enroll counterpart to
+/// device of `target_type` currently in association mode (`DeviceType::UNKNOWN`, which every caller
+/// passes, addresses every device) — the un-enroll counterpart to
 /// create_1w_add_controller(), and (the `0x39` → `0x30` flow real remotes send)
 /// also the prelude OneWayTransmitter::send_enrollment() fires immediately before it.
 ///
