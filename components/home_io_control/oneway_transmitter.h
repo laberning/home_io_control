@@ -210,13 +210,13 @@ class OneWayTransmitter {
   ///
   /// **The `0x30`'s MAC trailer** is configurable via `enrollment_with_mac:` (default `false`, no
   /// MAC — see create_1w_add_controller()'s `@warning`). Real VELUX (#74) and real Somfy captures
-  /// both use the no-MAC form; a real Izymo has separately accepted the MAC-bearing form too.
+  /// both use the no-MAC form, and no real device has been shown to accept the MAC-bearing one. The option needs an
+  /// SX1262 or LR1121: the SX1276 cannot send the trailer, so the build rejects it there (ADR 0113).
   ///
   /// **Blocks for the whole gesture** feeding the watchdog in the gaps. The VELUX path is 6 bursts
   /// (`0x39` + 3-class `0x30` sweep + STOP + DOWN); with `LEGACY_LONG` each burst carries
-  /// `LONG_PREAMBLE` on every copy, ≈6–7 s total (SX1276 logs in issue #74 measured ~7.4 s, ~10.6 s
-  /// with `enrollment_with_mac: true`); ~1.2 s with `low_power: false` (ADR 0038, measured on
-  /// SX1276 in issue #74). This is a user-initiated,
+  /// `LONG_PREAMBLE` on every copy, ≈6–7 s total (SX1276 logs in issue #74 measured ~7.4 s); ~1.2 s with
+  /// `low_power: false` (ADR 0038, measured on SX1276 in issue #74). This is a user-initiated,
   /// once-per-device action, the same shape as the pairing button (`pairing_discovery_wait_ms` →
   /// 5000).
   /// @param controller_id YAML handle of the controller identity to register.

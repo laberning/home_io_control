@@ -1,0 +1,15 @@
+# expect-error: the SX1276 cannot send the MAC trailer
+# covers: oneway_controllers.validate_oneway_controllers
+# The SX1276 packet engine ends the frame at its declared length, so the 35-byte add-controller frame never goes
+# out whole (ADR 0113).
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: remote
+      io_device_type: vertical_exterior_awning
+      manufacturer: somfy
+      enrollment: true
+      enrollment_with_mac: true

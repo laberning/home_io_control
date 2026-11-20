@@ -402,9 +402,9 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
 /// vector rely on. Most real hardware captures instead
 /// show 29 bytes with **no trailer at all** — see
 /// `tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`. **The enroll
-/// button calls this with `with_mac=false`** to match that shape, but this is a preference rather than a hardware
-/// requirement: a real Somfy Izymo dimmer has separately been shown to accept the `with_mac=true` form as well,
-/// enrolling successfully and remaining controllable afterward — both shapes are safe to send.
+/// button calls this with `with_mac=false`** to match that shape. No real device has been shown to accept the
+/// `with_mac=true` form: the one enrollment sent with it (a Somfy Izymo dimmer, which enrolled) went out through an
+/// SX1276, whose packet engine sends only the declared 29 bytes, so the dimmer received the no-MAC form (ADR 0113).
 ///
 /// @warning The key-wrap IV comes from `src`, not the destination: a broadcast destination carries
 /// no identity, and `src` is the only value that reproduces the published frame this builder is
@@ -424,8 +424,8 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
 /// @param with_mac True to append the out-of-length MAC trailer (the published vector's shape,
 ///        and this parameter's default); false to omit it entirely
 ///        (the shape most real hardware captures this project holds actually use, and what the
-///        enroll button passes). Real hardware has been shown to accept both — see the
-///        `@warning` above.
+///        enroll button passes). No real device has been shown to accept the trailer — see
+///        the `@warning` above.
 /// @return true on success; false if crypto::crypt_1w_key() fails, or (when `with_mac` is true)
 ///         crypto::create_1w_hmac() fails — no partially-populated frame is left behind on failure.
 bool create_1w_add_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, uint8_t manufacturer,

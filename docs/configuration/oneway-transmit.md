@@ -72,7 +72,7 @@ home_io_control:
 | `execute_broadcast` | no | `typed` (default) addresses your `io_device_type` class; `all` addresses the all-devices broadcast, which is what a handheld cover remote of either vendor sends for open/close/stop. Set `all` to mimic a real remote. With `all` the frame carries no class at all, so `io_device_type` does not decide which devices are reached; it still decides the default of `invert_position` and the name in the "Last 1W Command" sensor. |
 | `execute_acei` | no | Raw override of the priority byte (payload[1]) in a 1W `CMD_EXECUTE` frame, e.g. `0x61`. Must be `1`–`0xFF` — `0x00` is rejected, since `0` is the sentinel for "not overridden". Normally left unset — it is derived from `manufacturer`. Use it only for a vendor this project has no profile for. |
 | `enrollment` | no | Build flag (default `false`) for this identity's **"Enroll 1W Controller"** button — see "Enrolling this hub as a controller" below. |
-| `enrollment_with_mac` | no | Whether the `0x30` half of the enroll button's press carries a trailing MAC (default `false`, meaning **no MAC at all** — there is no in-band form for this frame, see below). Real hardware disagrees on this byte: most captures this project holds carry no MAC (the default), but a real Somfy Izymo has separately been shown to accept the MAC-bearing form too. Untested manufacturers may need either — try flipping this before assuming enrollment doesn't work at all. |
+| `enrollment_with_mac` | no | Whether the `0x30` half of the enroll button's press carries a trailing MAC (default `false`, meaning **no MAC at all** — there is no in-band form for this frame, see below). Real hardware disagrees on this byte: most captures this project holds carry no MAC (the default), and no real device has been shown to accept the MAC-bearing form yet. Untested manufacturers may need either — try flipping this before assuming enrollment doesn't work at all. **Needs an SX1262 or LR1121 board**: the SX1276 cannot send the trailer, so the build fails with `radio_type: sx1276` ([ADR 0113](../adr/0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)). |
 | `enrollment_classes` | no | Which device classes a **VELUX** enrollment `0x30` sweep targets, as a list of one to three `io_device_type` names, each at most once and none `unknown`. Unset → the profile default `[roller_shutter, vertical_exterior_awning, dual_roller_shutter]`, the exterior-shading set a KLI 310/313 uses. **Interior blinds need it set**: a KLI 312 uses `[vertical_interior_blind, interior_venetian_blind]`. To find the classes for your product, see "Finding your enrollment classes" below. **Ignored by the Somfy gesture**, which sends both bursts to the all-devices address `00003F` (issue #147), and ignored without `enrollment: true`; the build warns in both cases. See "Enrolling this hub as a controller" below. |
 | `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). `false` sends every copy at the short, live `start_preamble_ms` tuning value — for a mains-powered receiver. `true` sends one long wake-up copy first (about 213 ms on an SX1262 or LR1121, about 267 ms on an SX1276), then short repeats — for a solar or battery receiver. Leave it unset and the shape follows `manufacturer:` ([ADR 0041](../adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)): `velux` gets the short preamble, every other vendor gets the long wake-up on all four copies. Your boot log prints which you got, and marks it `(from profile)` when it came from the vendor rather than from this key. Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. The section "What one command puts on the air" below gives the time each shape takes. |
 | `invert_position` | no | Whether open, close and every position are mirrored on the wire (`0` ↔ `100`). Leave it unset and the device kind decides: a kind whose wire polarity is inverted, such as `horizontal_awning`, is mirrored, exactly as a 2W cover of that kind is, so the generated Open button opens the awning. Set `false` if your receiver turns out to follow the other polarity, or `true` to mirror a kind that is not inverted by default. Your boot log prints `inverted=yes (from kind)`, `inverted=yes (configured)` or `inverted=no`. With `execute_broadcast: all` the mirrored frame reaches every receiver of the broadcast, so the build warns when an inverted kind is combined with it and no explicit `invert_position`. STOP, favorite and vent are never mirrored. |
@@ -81,14 +81,14 @@ home_io_control:
 
 A build stops with an error when an identity shares its source address with another identity, the
 hub, a linked remote or a device's `io_device_id`, when an `id` repeats, or when `enrollment: true`
-has no `manufacturer:`.
+has no `manufacturer:`, or when `enrollment_with_mac: true` is set with `radio_type: sx1276`
+([ADR 0113](../adr/0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)).
 It continues with a warning, which names the identity, when a configuration is legal but likely
 wrong:
 
 | Warning | What it means |
 |---|---|
 | `manufacturer` has no 1W wire profile | An identity that transmits uses a vendor other than Somfy or VELUX, so it sends the Somfy priority byte `0x43`. Set `execute_acei:` if that is wrong for the device. |
-| `enrollment_with_mac: true` on `radio_type: sx1276` | The MAC-bearing `0x30` takes about twice as long per burst on an SX1276, and no VELUX capture carries it. Leave it `false` unless your device needs it. |
 | VELUX interior blind with `enrollment: true` and no `enrollment_classes:` | The default sweep covers exterior shading and probably misses the blind; see "Finding your enrollment classes" below. |
 | Inverted device kind with `execute_broadcast: all` and no `invert_position:` | Open and Close are mirrored for every receiver of the broadcast, including devices of other kinds. Set `invert_position` explicitly. |
 | `enrollment_classes:` without `manufacturer: velux` and `enrollment: true` | Only the VELUX enrollment gesture reads the list, so it is ignored here. |
@@ -189,7 +189,8 @@ device in range that is currently listening for them, so a second actuator in le
 would be taught too.
 
 The `0x30` half's MAC trailer is controlled by `enrollment_with_mac:` (default `false`, no MAC at
-all) — see the option table above if enrollment doesn't take with the default shape.
+all) — see the option table above if enrollment doesn't take with the default shape. The option needs an
+SX1262 or LR1121 board ([ADR 0113](../adr/0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)).
 
 ### VELUX (`manufacturer: velux`) uses a different gesture
 

@@ -6,8 +6,11 @@ description: >
   capture this project holds uses (see that vector's sibling capture,
   somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml). Companion to that capture: this one
   pins the other side of create_1w_add_controller()'s `with_mac` parameter against real hardware.
-  A factory-reset Izymo dimmer accepted this frame during enrollment and remained controllable
-  (open/close) afterward, so both shapes are confirmed safe to send.
+  The frame is the hub's TX log view of what it handed to the radio. On the air the SX1276 cannot send the
+  trailer (its packet engine ends the frame at the declared 29 bytes), which is why the option is rejected
+  for that radio (ADR 0113). A factory-reset Izymo dimmer enrolled from this send and remained
+  controllable (open/close) afterward, but what it received was the declared 29-byte frame without the
+  trailer, so this capture pins the builder's MAC-trailer bytes, not a device's acceptance of them.
 source:
   device: "Somfy Izymo dimmer, 1W add-controller enrollment (own hub, MAC-trailer variant)"
   captured_with: sx1276
@@ -22,7 +25,7 @@ frames:
     freq: 868950000
     hex: "FC 00 00 01 BF 7F 84 A2 30 A1 AD F7 2F 58 DA 78 59 6A 33 6C 44 25 B1 B8 9F 02 01 00 60 F0 01 C0 F5 15 59"
     crc: absent
-    note: "cmd=ONEWAY_ADD_CONTROLLER(0x30) -- 35 bytes on air, with_mac=true's out-of-length MAC trailer present"
+    note: "cmd=ONEWAY_ADD_CONTROLLER(0x30) -- 35 bytes in the hub TX log (the SX1276 cannot send the trailer on the air, ADR 0113), with_mac=true's out-of-length MAC trailer present"
 expect:
   frames:
     - {cmd: 0x30, start: true, end: true, protocol: 1w}

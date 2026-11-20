@@ -660,16 +660,16 @@ TEST(OneWayEnrollment, AddControllerReproducesRealHardwareCapture) {
 
 TEST(OneWayEnrollment, AddControllerWithMacReproducesRealHardwareCapture) {
   // Companion to AddControllerReproducesRealHardwareCapture above: that one pins the no-MAC
-  // shape against a real Somfy Smoove; this one pins the MAC-trailer shape against a real Somfy
-  // Izymo dimmer, so with_mac's default can never silently flip to true without this test
-  // catching the mismatch. Both shapes are confirmed accepted by real hardware — see
+  // shape against a real Somfy Smoove; this one pins the MAC-trailer shape against the hub's own
+  // logged send to a Somfy Izymo dimmer, so the with_mac=true bytes can never silently change
+  // without this test catching the mismatch. No device has been shown to accept the trailer — see
   // create_1w_add_controller()'s `@warning` (proto_commands.h).
   const auto *capture = corpus_test::capture_by_id("somfy_izymo_dimmer_enrollment_add_controller_with_mac_sx1276");
   ASSERT_NE(capture, nullptr) << "corpus capture not found — was it renamed?";
   ASSERT_EQ(capture->frame_count, 1);
   const IoFrame expected = corpus_test::parse_capture_frame(capture->frames[0]);
   ASSERT_EQ(expected.cmd, CMD_ONEWAY_ADD_CONTROLLER);
-  ASSERT_TRUE(expected.has_mac) << "this specific real capture carries the out-of-length MAC trailer — see its "
+  ASSERT_TRUE(expected.has_mac) << "this capture carries the out-of-length MAC trailer — see its "
                                    "own description";
 
   const uint8_t src[NODE_ID_SIZE] = {0x7F, 0x84, 0xA2};

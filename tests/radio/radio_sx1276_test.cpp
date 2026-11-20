@@ -552,7 +552,9 @@ TEST(RadioSX1276, SendsEachOneWayFrameSizeBehindTheWakeUpAndTheStartPreamble) {
 
 TEST(RadioSX1276, TheLengthItsPacketEngineTakesFromTheFirstByteOfTheMacFrameIsTheDeclaredOne) {
   // The 35-byte add-controller frame carries six bytes after its declared 29. In variable-length mode the packet
-  // engine reads the length from the frame's first byte, so it is told 29.
+  // engine reads the length from the frame's first byte, so it is told 29 and cannot send the trailer after its own
+  // CRC. That is why `enrollment_with_mac: true` is rejected for this radio at build time (ADR 0113); the driver
+  // loads all 35 bytes only because it is handed them, and no configuration that builds does that on an SX1276.
   RegisterModelSpi spi;
   MockPin rst, dio0, dio4(false);
   RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);

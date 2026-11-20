@@ -399,20 +399,24 @@ def oneway_warning_for_an_unprofiled_manufacturer_needs_an_explicit_vendor_that_
 
 
 @case()
-def oneway_warning_for_enrollment_with_mac_applies_to_sx1276_only():
+def oneway_enrollment_with_mac_is_rejected_on_sx1276_only():
     from esphome.components.home_io_control import hub_names as n
     from esphome.components.home_io_control import oneway_controllers as o
 
     enrolling = {n.CONF_ENROLLMENT: True, n.CONF_ENROLLMENT_WITH_MAC: True}
-    assert o._warn_enrollment_with_mac_on_sx1276(_resolved_oneway(radio_type="sx1276", **enrolling)) == (
-        "home_io_control: oneway_controllers 'remote' has enrollment_with_mac: true on "
-        "radio_type: sx1276, where the MAC-bearing 0x30 has been measured to take about "
-        "twice as long per burst. No VELUX capture carries this MAC either. Consider "
-        "leaving it false unless your hardware specifically needs the MAC-bearing form."
-    )
-    assert o._warn_enrollment_with_mac_on_sx1276(_resolved_oneway(radio_type="sx1262", **enrolling)) is None
-    assert o._warn_enrollment_with_mac_on_sx1276(
+    problem = o._enrollment_with_mac_problem(_resolved_oneway(radio_type="sx1276", **enrolling))
+    assert problem is not None
+    assert "oneway_controllers id 'remote'" in problem
+    assert "SX1276 cannot send the MAC trailer" in problem
+    assert "SX1262 or LR1121" in problem
+    for radio in ("sx1262", "lr1121"):
+        assert o._enrollment_with_mac_problem(_resolved_oneway(radio_type=radio, **enrolling)) is None
+    assert o._enrollment_with_mac_problem(
         _resolved_oneway(radio_type="sx1276", **{n.CONF_ENROLLMENT: True})
+    ) is None
+    # Without enrollment: true no 0x30 is ever built, so the flag is inert and not rejected.
+    assert o._enrollment_with_mac_problem(
+        _resolved_oneway(radio_type="sx1276", **{n.CONF_ENROLLMENT_WITH_MAC: True})
     ) is None
 
 

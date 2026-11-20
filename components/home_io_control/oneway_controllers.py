@@ -139,13 +139,11 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         cv.Optional(CONF_ENROLLMENT, default=False): cv.boolean,
         # Whether the enroll button's 0x30 carries a 6-byte MAC trailer. Real hardware disagrees:
         # most captures this project holds carry no MAC at all (default here, matching real Somfy
-        # traffic), but a real Izymo has separately been shown to accept the MAC-bearing form too
-        # (the published documentation vector's own shape) -- see create_1w_add_controller()'s
-        # @warning (proto_commands.h). Untested manufacturers (e.g. Velux) may require one shape
-        # or the other; this exists so trying the other one needs a YAML edit, not a code change.
-        # No VELUX capture this project holds carries the MAC trailer, and on sx1276 a MAC-bearing
-        # 0x30 has been measured to take about twice as long per burst -- see
-        # validate_oneway_controllers()'s warning below.
+        # traffic), while the published documentation vector carries it, and no real device has
+        # been shown to accept it -- see create_1w_add_controller()'s @warning (proto_commands.h).
+        # Untested manufacturers (e.g. Velux) may require one shape or the other; this exists so
+        # trying the other one needs a YAML edit, not a code change. The SX1276 cannot send the
+        # trailer, so _enrollment_with_mac_problem() rejects it there (ADR 0113).
         cv.Optional(CONF_ENROLLMENT_WITH_MAC, default=False): cv.boolean,
         # The device classes a VELUX enrollment 0x30 sweep targets. Unset -> the manufacturer
         # profile default ({roller_shutter, vertical_exterior_awning, dual_roller_shutter} for velux).
@@ -401,6 +399,25 @@ def _enrollment_manufacturer_problem(resolved):
     return None
 
 
+def _enrollment_with_mac_problem(resolved):
+    """Error text when `enrollment_with_mac: true` meets `radio_type: sx1276`, else None.
+
+    The SX1276 sends through its packet engine, which takes the frame length from the frame's own
+    first byte and appends its own CRC, so the six trailer bytes after the declared length never go
+    out as part of the packet and every copy ends in a transmit timeout (ADR 0113). The SX1262 and
+    LR1121 send a raw byte stream and are unaffected.
+    """
+    identity = resolved.identity
+    if identity[CONF_ENROLLMENT] and identity[CONF_ENROLLMENT_WITH_MAC] and resolved.radio_type == "sx1276":
+        return (
+            f"oneway_controllers id '{resolved.identity_id}' has enrollment_with_mac: true on "
+            "radio_type: sx1276, but the SX1276 cannot send the MAC trailer: its packet engine "
+            "ends the frame at its declared length and every copy would time out. Set "
+            "enrollment_with_mac: false, or use an SX1262 or LR1121 board (ADR 0113)."
+        )
+    return None
+
+
 # === Warning rules ===
 # Each rule takes a _ResolvedIdentity and returns the warning text or None. A warning, not
 # cv.Invalid, because each flags a legal config that still transmits.
@@ -422,21 +439,6 @@ def _warn_unprofiled_manufacturer(resolved):
             f"0x{identity[CONF_MANUFACTURER]:02X}, which has no "
             "1W wire profile -- using the Somfy-shaped defaults (ACEI 0x43). Set execute_acei: "
             "explicitly if that is wrong for your device."
-        )
-    return None
-
-
-def _warn_enrollment_with_mac_on_sx1276(resolved):
-    """enrollment_with_mac: true on sx1276 has been measured to roughly double the 0x30 burst's
-    airtime, and no VELUX capture this project holds carries the MAC at all. Other radios and
-    vendors are unaffected."""
-    identity = resolved.identity
-    if identity[CONF_ENROLLMENT] and identity[CONF_ENROLLMENT_WITH_MAC] and resolved.radio_type == "sx1276":
-        return (
-            f"home_io_control: oneway_controllers '{resolved.identity_id}' has enrollment_with_mac: true on "
-            "radio_type: sx1276, where the MAC-bearing 0x30 has been measured to take about "
-            "twice as long per burst. No VELUX capture carries this MAC either. Consider "
-            "leaving it false unless your hardware specifically needs the MAC-bearing form."
         )
     return None
 
@@ -513,7 +515,6 @@ def _warn_inert_enrollment_classes(resolved):
 # In the order the warnings are logged.
 _WARNING_RULES = (
     _warn_unprofiled_manufacturer,
-    _warn_enrollment_with_mac_on_sx1276,
     _warn_velux_interior_blind_default_sweep,
     _warn_inverted_kind_broadcast_all,
     _warn_inert_enrollment_classes,
@@ -579,7 +580,7 @@ def validate_oneway_controllers(config):
 
         resolved = _resolve_identity_defaults(identity, config)
         _reject_collisions(resolved, seen_node_ids)
-        problem = _enrollment_manufacturer_problem(resolved)
+        problem = _enrollment_manufacturer_problem(resolved) or _enrollment_with_mac_problem(resolved)
         if problem:
             raise cv.Invalid(problem)
         for rule in _WARNING_RULES:
