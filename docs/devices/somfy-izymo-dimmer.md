@@ -44,11 +44,11 @@ the wire says whether a light device supports intermediate positions.
 - **The alternate discovery command draws no response.** A `0x2E` broadcast is not answered by this
   device, which is consistent with every other device in the corpus.
 - **A 1W Smoove remote can be enrolled onto it**, and so can the hub's own 1W identity with the default
-  enrollment frame, which carries no MAC. Whether the dimmer accepts the MAC-bearing form is untested: the
-  hub that tried it ran an SX1276, which sends only the frame without the MAC
-  ([ADR 0113](../adr/0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)). If your own enrollment does not
-  take, `enrollment_with_mac` is the option to flip on an SX1262 or LR1121 board — see
-  [Sending 1W commands](../configuration/oneway-transmit.md).
+  enrollment frame, which carries no MAC. A bench run on a Somfy Izymo did not take the MAC-bearing form
+  (`enrollment_with_mac`, SX1262 board; the SX1276 cannot send it, see
+  [ADR 0113](../adr/0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)). Pressing Enroll for an
+  identity the dimmer already knows takes it off instead; see
+  [Sending 1W commands](../configuration/oneway-transmit.md#enrolling-this-hub-as-a-controller).
 - **Removing an enrolled 1W controller needs the PROG window.** The `oneway_remove_controller`
   action takes effect only when you press PROG first: the light blinks and then ignores that
   controller. Sent with no window open, it changes nothing.

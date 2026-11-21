@@ -75,7 +75,7 @@ home_io_control:
 | `execute_broadcast` | no | `typed` (default) addresses your `io_device_type` class; `all` addresses the all-devices broadcast, which is what a handheld cover remote of either vendor sends for open/close/stop. Set `all` to mimic a real remote. With `all` the frame carries no class at all, so `io_device_type` does not decide which devices are reached; it still decides the default of `invert_position` and the name in the "Last 1W Command" sensor. |
 | `execute_acei` | no | Raw override of the priority byte (payload[1]) in a 1W `CMD_EXECUTE` frame, e.g. `0x61`. Must be `1`–`0xFF` — `0x00` is rejected, since `0` is the sentinel for "not overridden". Normally left unset — it is derived from `manufacturer`. Use it only for a vendor this project has no profile for. |
 | `enrollment` | no | Build flag (default `false`) for this identity's **"Enroll 1W Controller"** button — see "Enrolling this hub as a controller" below. |
-| `enrollment_with_mac` | no | Whether the `0x30` half of the enroll button's press carries a trailing MAC (default `false`, meaning **no MAC at all** — there is no in-band form for this frame, see below). Real hardware disagrees on this byte: most captures this project holds carry no MAC (the default), and no real device has been shown to accept the MAC-bearing form yet. Untested manufacturers may need either — try flipping this before assuming enrollment doesn't work at all. **Needs an SX1262 or LR1121 board**: the SX1276 cannot send the trailer, so the build fails with `radio_type: sx1276` ([ADR 0113](../adr/0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)). |
+| `enrollment_with_mac` | no | Whether the `0x30` half of the enroll button's press carries a trailing MAC (default `false`, meaning **no MAC at all** — there is no in-band form for this frame, see below). Real hardware disagrees on this byte: most captures this project holds carry no MAC (the default), and a bench run on a Somfy Izymo did not take the MAC-bearing form. Untested manufacturers may need either. **Needs an SX1262 or LR1121 board**: the SX1276 cannot send the trailer, so the build fails with `radio_type: sx1276` ([ADR 0113](../adr/0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)). |
 | `enrollment_classes` | no | Which device classes a **VELUX** enrollment `0x30` sweep targets, as a list of one to three `io_device_type` names, each at most once and none `unknown`. Unset → the profile default `[roller_shutter, vertical_exterior_awning, dual_roller_shutter]`, the exterior-shading set a KLI 310/313 uses. **Interior blinds need it set**: a KLI 312 uses `[vertical_interior_blind, interior_venetian_blind]`. To find the classes for your product, see "Finding your enrollment classes" below. **Ignored by the Somfy gesture**, which sends both bursts to the all-devices address `00003F` (issue #147), and ignored without `enrollment: true`; the build warns in both cases. See "Enrolling this hub as a controller" below. |
 | `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). `false` sends every copy at the short, live `start_preamble_ms` tuning value — for a mains-powered receiver. `true` sends one wake-up copy first, which lasts [`low_power_wake_ms`](tuning.md#low_power_wake_ms) (default 515 ms, the same on every radio; [ADR 0115](../adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md), [ADR 0118](../adr/0118-the-wake-up-preamble-defaults-to-515-ms.md)), then short repeats — for a solar or battery receiver. Leave it unset and the shape follows `manufacturer:` ([ADR 0041](../adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)): `velux` gets the short preamble (the `false` shape), every other vendor, `somfy` and an unset `manufacturer:` included, gets the `true` shape: one wake-up copy, then three short ones ([ADR 0119](../adr/0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md)). Your boot log prints which you got, and marks it `(from profile)` when it came from the vendor rather than from this key. Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. The section "What one command puts on the air" below gives the time each shape takes. |
 | `invert_position` | no | Whether open, close and every position are mirrored on the wire (`0` ↔ `100`). Leave it unset and the device kind decides: a kind whose wire polarity is inverted, such as `horizontal_awning`, is mirrored, exactly as a 2W cover of that kind is, so the generated Open button opens the awning. Set `false` if your receiver turns out to follow the other polarity, or `true` to mirror a kind that is not inverted by default. Your boot log prints `inverted=yes (from kind)`, `inverted=yes (configured)` or `inverted=no`. With `execute_broadcast: all` the mirrored frame reaches every receiver of the broadcast, so the build warns when an inverted kind is combined with it and no explicit `invert_position`. STOP, favorite and vent are never mirrored. |
@@ -195,9 +195,9 @@ hub — not the other way around, and not a long hold on the hub's entity (there
 press is a press). Getting the two halves' timing backwards is the most common failure mode here,
 not a protocol problem.
 
-The press sends two bursts back to back — `0x39` (self-directed; carries only this identity's own
-address, so it can only ever clear its own prior entry, never a different controller's),
-immediately followed by `0x30` (the credential itself), 4 copies each. With the Somfy default
+The press sends two bursts back to back — `0x39` (remove; carries only this identity's own
+address, so it can never touch a different controller's entry), immediately followed by `0x30`
+(the credential itself), 4 copies each. With the Somfy default
 (`low_power` unset) the first copy of each burst carries the wake-up preamble, so a burst takes about 0.72 s
 and the whole press about 1.5 s; with `low_power: false` the press takes about 0.4 s.
 Press Enroll soon after the receiver confirms its association mode, not at the end of its window.
@@ -211,8 +211,22 @@ device in range that is currently listening for them, so a second actuator in le
 would be taught too.
 
 The `0x30` half's MAC trailer is controlled by `enrollment_with_mac:` (default `false`, no MAC at
-all) — see the option table above if enrollment doesn't take with the default shape. The option needs an
-SX1262 or LR1121 board ([ADR 0113](../adr/0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)).
+all). The option needs an SX1262 or LR1121 board ([ADR 0113](../adr/0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)).
+A bench run on a Somfy Izymo did not take the MAC-bearing form, so flipping it is not a cure for an
+enrollment that does not take.
+
+**Pressing Enroll for an identity the receiver already knows removes it.** A bench run on a Somfy
+Izymo showed that one PROG window takes one change: the first remove (`0x39`) or add (`0x30`) from a
+controller the device already knows takes that controller off, and the window is spent. The Somfy
+gesture sends the remove first, so on an identity that is already enrolled the press un-enrolls it
+instead of enrolling it again. An identity the device does not know is paired normally: the add
+pairs it, and the device then follows the sequence numbers from that add. A remove from an
+unknown controller changes nothing. Enrolling again is therefore no cure for a desynced counter on
+this device. Give the identity a new address (a new `node_id:`, or a new `id:` when the address is
+derived) and enroll that fresh, as the `initial_sequence` guidance above says for a counter that
+has wrapped. The run also left one identity that had been removed twice unpairable in three later
+windows, for a reason that is not known. How VELUX receivers handle an identity they already know is
+not confirmed.
 
 ### VELUX (`manufacturer: velux`) uses a different gesture
 
@@ -310,8 +324,8 @@ feature has no separate arming switch the way the (irreversible) LR1121 bootload
 
 ### Un-enrolling without re-enrolling
 
-The Enroll button's `0x39` always re-registers the identity through the `0x30` that follows it. To
-remove the identity without adding it again, call the [`oneway_remove_controller`](actions.md#oneway_remove_controller)
+The Enroll button follows its `0x39` with a `0x30`, which pairs the identity on a receiver that
+does not know it. To send the remove alone, call the [`oneway_remove_controller`](actions.md#oneway_remove_controller)
 action:
 
 ```yaml
@@ -321,8 +335,7 @@ data:
 ```
 
 This sends `0x39` alone, nothing else. It carries only this identity's own source address, so it
-cannot remove a different remote's registration — the same property that makes the Enroll button's
-`0x39` prelude safe to send automatically.
+cannot remove a different remote's registration, and neither can the Enroll button's `0x39`.
 
 > [!WARNING]
 > Put the receiver in its programming mode first. Press the receiver's PROG button, then call

@@ -233,7 +233,7 @@ class OneWayTransmitter {
   ///
   /// **The `0x30`'s MAC trailer** is configurable via `enrollment_with_mac:` (default `false`, no
   /// MAC — see create_1w_add_controller()'s `@warning`). Real VELUX (#74) and real Somfy captures
-  /// both use the no-MAC form, and no real device has been shown to accept the MAC-bearing one. The option needs an
+  /// both use the no-MAC form, and a bench run on a Somfy Izymo did not take the MAC-bearing one. The option needs an
   /// SX1262 or LR1121: the SX1276 cannot send the trailer, so the build rejects it there (ADR 0113).
   ///
   /// **Blocks for the whole gesture** feeding the watchdog in the gaps. The VELUX path is 6 bursts
@@ -281,6 +281,9 @@ class OneWayTransmitter {
 
   /// send_enrollment()'s two gestures, split so each stays simple. The dispatcher resolves the
   /// identity once and hands it down.
+  /// \todo How the Somfy gesture treats an identity the receiver already knows is a decision still
+  /// open: on a Somfy Izymo the leading `0x39` takes a known identity off and spends the PROG
+  /// window, so pressing Enroll again un-enrolls it.
   bool send_somfy_enrollment_(const OneWayControllerIdentity &identity);
   bool send_velux_kli_enrollment_(const OneWayControllerIdentity &identity);
 

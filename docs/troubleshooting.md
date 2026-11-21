@@ -174,6 +174,9 @@ durably reserved, because reusing one is unrecoverable. This is a storage failur
    give it a new address (a new `node_id:`, or a new `id:` when the address is derived) and enroll
    it again ([ADR 0120](adr/0120-a-one-way-counter-that-wraps-is-lost-to-a-somfy-receiver.md)). A value at or
    below the counter the hub already holds, or 32768 or more above it, changes nothing.
+   Pressing Enroll again for the same identity is not a remedy: a bench run on a Somfy Izymo showed
+   that it takes an already-enrolled identity off
+   ([details](configuration/oneway-transmit.md#enrolling-this-hub-as-a-controller)).
 5. **Wrong burst shape.** A solar or battery receiver sleeps between listening windows and needs
    the long wake-up copy: leave `low_power:` unset for `somfy`, or set `low_power: true`. An awake VELUX receiver ignores a frame that
    arrives behind the long wake-up ([ADR 0041](adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)):

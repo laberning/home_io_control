@@ -183,11 +183,12 @@ bool OneWayTransmitter::send_somfy_enrollment_(const OneWayControllerIdentity &i
   // class adds nothing, and a class the receiver does not count itself in (a patio roof that is a
   // horizontal awning, not an awning) would never be reached. The identity's `io_device_type` still
   // addresses its commands.
-  // `0x39` here carries only this
-  // identity's own `src` address, so on the wire it can only mean "clear my own prior entry
-  // before I re-register" -- it cannot name or displace a different controller. Sending it right
-  // before `0x30` clears a stale slot from an earlier enrollment attempt under this identity,
-  // which a bare `0x30` re-add is not guaranteed to overwrite.
+  // `0x39` here carries only this identity's own `src` address, so it cannot name or displace a
+  // different controller. A bench run on a Somfy Izymo showed that a receiver which already knows
+  // the identity takes it off on the `0x39` and spends its PROG window on that change, so the
+  // `0x30` that follows is not taken; on an identity the receiver does not know the `0x39` changes
+  // nothing and the `0x30` pairs it.
+  // The handling of an already-enrolled identity is an open decision (\todo on the declaration).
   const bool removed = this->send_(
       identity.id,
       [](IoFrame &frame, const OneWayControllerIdentity &id, uint16_t sequence) {
