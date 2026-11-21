@@ -199,16 +199,13 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         cv.Optional(CONF_EXECUTE_BROADCAST, default="typed"): cv.one_of(
             "typed", "all", lower=True
         ),
-        # Tri-state, unlike the per-device 2W low_power (ADR 0029): no default here, because unset
-        # and false mean different things for a 1W identity. Unset = the manufacturer profile decides
-        # (ADR 0041, ADR 0119): velux gets the `false` shape below, every other vendor the `true` shape.
-        # false = every copy uses the live `start_preamble_ms` tuning value, CTRL1 0x00 -- the ADR 0029
-        # shape, for a mains-powered receiver. true = copy 1 gets a `low_power_wake_ms` wake-up (ADR 0115) +
-        # CTRL1_LOW_POWER, copies 2-4 the normal preamble -- a wake-up copy for a solar/battery receiver.
-        # Applies to every 1W TX of the identity: commands, positions, both enrollment gestures,
-        # un-enrollment. See ADR 0038.
+        # Unset and false are the same: four short copies, every copy on the live `start_preamble_ms`
+        # tuning value with CTRL1 0x00, for every manufacturer (ADR 0122). true = copy 1 gets a
+        # `low_power_wake_ms` wake-up (ADR 0115) + CTRL1_LOW_POWER, copies 2-4 the normal preamble --
+        # the wake-up copy a solar/battery receiver needs. Applies to every 1W TX of the identity:
+        # commands, positions, both enrollment gestures, un-enrollment. See ADR 0038.
         cv.Optional(CONF_LOW_POWER): cv.boolean,
-        # Tri-state like low_power: unset = the device kind decides (an inverted kind such as a
+        # Tri-state: unset = the device kind decides (an inverted kind such as a
         # horizontal awning mirrors OPEN/CLOSE/position on the wire, as the 2W cover does);
         # true/false force it. Resolved in C++ by effective_inverted().
         cv.Optional(CONF_INVERT_POSITION): cv.boolean,
@@ -278,21 +275,14 @@ def _enrollment_classes_initialiser(identity):
     return f"{{{entries}}}"
 
 
-def _power_class_override_expression(identity):
-    """Map `low_power:` to the C++ `std::optional<OneWayPowerClass>` the identity stores.
+def _power_class_expression(identity):
+    """Map `low_power:` to the C++ `OneWayPowerClass` the identity stores.
 
-    Tri-state, and the three states are emitted as three distinct values rather than collapsed
-    here: unset -> `{}` (empty optional), `false` -> ALWAYS_ALIVE, `true` -> LOW_POWER.
-
-    An unset key deliberately does **not** pick a shape at codegen time. Resolving it needs the
-    manufacturer profile, which lives in C++ (`resolve_oneway_wire_profile()`), and splitting that
-    lookup across two languages is how the ACEI and enrollment-class defaults would drift from this
-    one. `effective_power_class()` is the single resolver. See ADR 0041, and ADR 0038 for the
-    shapes themselves.
+    `true` -> LOW_POWER (one wake-up copy with the low-power flag, then short copies); unset and
+    `false` -> ALWAYS_ALIVE (four short copies), for every manufacturer. See ADR 0122 for the
+    default and ADR 0038 for the shapes.
     """
-    if CONF_LOW_POWER not in identity:
-        return "{}"
-    name = "LOW_POWER" if identity[CONF_LOW_POWER] else "ALWAYS_ALIVE"
+    name = "LOW_POWER" if identity.get(CONF_LOW_POWER, False) else "ALWAYS_ALIVE"
     return f"esphome::home_io_control::OneWayPowerClass::{name}"
 
 
@@ -328,7 +318,7 @@ def oneway_controller_expression(identity, hub_node_id):
             f".execute_broadcast_all = "
             f"{'true' if identity[CONF_EXECUTE_BROADCAST] == 'all' else 'false'}",
             f".enrollment_classes = {_enrollment_classes_initialiser(identity)}",
-            f".power_class_override = {_power_class_override_expression(identity)}",
+            f".power_class = {_power_class_expression(identity)}",
             f".invert_override = {_invert_override_expression(identity)}",
         ]
     )

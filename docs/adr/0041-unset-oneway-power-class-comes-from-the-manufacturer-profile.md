@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0041 -->
 
-**Status:** Accepted, partly superseded by [ADR 0119](0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md) · **Recorded:** 2026-09
+**Status:** Superseded by [ADR 0122](0122-an-unset-one-way-low-power-sends-four-short-copies.md); earlier partly superseded by [ADR 0119](0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md) · **Recorded:** 2026-09
 
 ## Context
 

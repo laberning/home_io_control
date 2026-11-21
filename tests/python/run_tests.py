@@ -354,6 +354,37 @@ def oneway_invert_position_is_tri_state_in_codegen_and_warns_for_inverted_broadc
     assert warnings_for(identity("vertical_exterior_awning", "all")) == []
 
 
+@case()
+def oneway_low_power_codegen_unset_and_false_are_four_short_copies_true_is_the_wake_up_shape():
+    """`low_power:` unset and `false` both emit ALWAYS_ALIVE, `true` emits LOW_POWER, whatever the
+    manufacturer (ADR 0122)."""
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+    from esphome.components.home_io_control.hub_validators import DEVICE_TYPE_OPTIONS
+
+    def expression(manufacturer, **extra):
+        identity = {
+            "id": "remote",
+            n.CONF_NODE_ID: "A11CE0",
+            n.CONF_SYSTEM_KEY: "00112233445566778899AABBCCDDEEFF",
+            n.CONF_MANUFACTURER: manufacturer,
+            n.CONF_IO_DEVICE_TYPE: DEVICE_TYPE_OPTIONS["roller_shutter"],
+            n.CONF_INITIAL_SEQUENCE: 0,
+            n.CONF_EXECUTE_BROADCAST: "typed",
+            n.CONF_ENROLLMENT: False,
+            n.CONF_COMMANDS: ["open"],
+        }
+        identity.update(extra)
+        return str(o.oneway_controller_expression(identity, "C0FFEE"))
+
+    always = ".power_class = esphome::home_io_control::OneWayPowerClass::ALWAYS_ALIVE"
+    low = ".power_class = esphome::home_io_control::OneWayPowerClass::LOW_POWER"
+    for manufacturer in (0x00, 0x01, 0x02, 0x7E):  # unset, VELUX, Somfy, one with no profile
+        assert always in expression(manufacturer)
+        assert always in expression(manufacturer, **{n.CONF_LOW_POWER: False})
+        assert low in expression(manufacturer, **{n.CONF_LOW_POWER: True})
+
+
 def _resolved_oneway(kind="horizontal_awning", radio_type="sx1262", manufacturer_explicit=True, **extra):
     """A `_ResolvedIdentity` for the one-way warning-rule cases, with the schema defaults filled."""
     from esphome.components.home_io_control import hub_names as n

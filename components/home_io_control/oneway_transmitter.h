@@ -197,11 +197,11 @@ class OneWayTransmitter {
   /// setup, 6 to 13 ms on air, three such gaps per burst (measured; see ONEWAY_BURST_REPEATS). The copies' own
   /// airtime depends on `power_class`: `ALWAYS_ALIVE` puts the live `start_preamble_ms` on every copy, about 0.1 s per
   /// burst; `LOW_POWER` adds one wake-up copy of `low_power_wake_ms` in front of three normal ones,
-  /// about 0.6 s with the default 515 ms wake-up on every radio (ADR 0115, ADR 0118, ADR 0119).
-  /// A busy channel adds up to 25 ms per copy. Per ADR 0013 all radio work happens
-  /// on the ESPHome loop and the operation queue is the concurrency model; an authenticated 2W exchange already blocks
-  /// far longer than this. Scheduling the repeats through a timeout would add a second concurrency model and would let
-  /// a queued 2W exchange interleave between copies of one command.
+  /// about 0.6 s with the default 515 ms wake-up on every radio (ADR 0115, ADR 0118). `ALWAYS_ALIVE` is the default for
+  /// an unset or `false` `low_power:` of every manufacturer (ADR 0122). A busy channel adds up to 25 ms per copy. Per
+  /// ADR 0013 all radio work happens on the ESPHome loop and the operation queue is the concurrency model; an
+  /// authenticated 2W exchange already blocks far longer than this. Scheduling the repeats through a timeout would add
+  /// a second concurrency model and would let a queued 2W exchange interleave between copies of one command.
   /// @param frame Signed 1W frame to send.
   /// @param power_class Which preamble/CTRL1 shape each copy gets (ADR 0038).
   /// @param intent_label Optional label for the TX log line when the frame's own decoded intent
@@ -237,7 +237,7 @@ class OneWayTransmitter {
   ///
   /// **Blocks for the whole gesture**, feeding the watchdog before each copy. The VELUX path is 6 bursts
   /// (`0x39` + 3-class `0x30` sweep + STOP + DOWN), sent back to back; with `low_power: true` each burst
-  /// carries the wake-up copy, ≈0.6 s per burst and ≈3.6 s in all; ≈0.6 s with `low_power: false`
+  /// carries the wake-up copy, ≈0.6 s per burst and ≈3.6 s in all; ≈0.6 s with `low_power:` unset or `false`
   /// (ADR 0038). Both are send_burst()'s per-burst figures times six. This is a
   /// user-initiated, once-per-device action, the same shape as the pairing button (`pairing_discovery_wait_ms` → 5000).
   /// @param controller_id YAML handle of the controller identity to register.

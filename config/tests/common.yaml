@@ -86,12 +86,10 @@ home_io_control:
       commands: [stop]
       enrollment: true
       enrollment_classes: [vertical_exterior_awning, roller_shutter]
-      # ADR 0041: low_power: is deliberately absent here, so this identity exercises the
-      # profile-resolution path -- codegen emits an empty optional and effective_power_class()
-      # turns it into ALWAYS_ALIVE because manufacturer: is velux. Setting it explicitly would
-      # bypass exactly the behaviour this manifest should be covering. The explicit branches are
+      # ADR 0122: low_power: is deliberately absent here, so this identity exercises the unset
+      # default -- codegen emits ALWAYS_ALIVE whatever the manufacturer. The explicit true branch is
       # covered by adopted_neighbour_net (low_power: true) and, through the real transmitter, by
-      # oneway_send_command_test.cpp, which drives all three shapes.
+      # oneway_send_command_test.cpp, which drives both shapes.
     - id: adopted_neighbour_net
       node_id: A11CE0
       system_key: FEDCBA98765432100123456789ABCDEF

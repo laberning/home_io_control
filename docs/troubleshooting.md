@@ -178,13 +178,11 @@ durably reserved, because reusing one is unrecoverable. This is a storage failur
    that it takes an already-enrolled identity off
    ([details](configuration/oneway-transmit.md#enrolling-this-hub-as-a-controller)).
 5. **Wrong burst shape.** A solar or battery receiver sleeps between listening windows and needs
-   the long wake-up copy: leave `low_power:` unset for `somfy`, or set `low_power: true`. An awake VELUX receiver ignores a frame that
-   arrives behind the long wake-up ([ADR 0041](adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)):
-   for a mains-powered one set `low_power: false`, or leave it unset with `manufacturer: velux`
-   (every other manufacturer gets one wake-up copy and three short ones when `low_power:` is unset,
-   [ADR 0119](adr/0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md)). The TX line in the log lists the preamble of each copy in milliseconds, for
+   the long wake-up copy: set `low_power: true`. Unset `low_power:` sends four short copies for every manufacturer
+   ([ADR 0122](adr/0122-an-unset-one-way-low-power-sends-four-short-copies.md)), which a mains-powered receiver obeys and a sleeping one misses. If a battery or solar device stopped obeying after an update and its identity leaves `low_power:` unset, set `low_power: true`: before this default an unset key gave every manufacturer but VELUX the wake-up copy. An awake VELUX receiver ignores a frame that
+   arrives behind the long wake-up, so a mains-powered one keeps `low_power:` unset or `false`. The TX line in the log lists the preamble of each copy in milliseconds, for
    example `preamble 515/10/10/10 ms` for the wake-up on the first copy only, and the boot log names
-   the shape the identity resolved to. The wake-up length of a `low_power: true` identity is
+   the shape the identity uses. The wake-up length of a `low_power: true` identity is
    [`low_power_wake_ms`](configuration/tuning.md#low_power_wake_ms). How long a burst takes
    per shape is in [Sending 1W commands](configuration/oneway-transmit.md#what-one-command-puts-on-the-air).
 6. **Wrong manufacturer profile.** `manufacturer:` selects the priority byte of every open, close

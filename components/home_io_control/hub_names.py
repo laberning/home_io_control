@@ -85,11 +85,10 @@ CONF_ENROLLMENT_WITH_MAC = "enrollment_with_mac"
 # profile's list (velux: {roller_shutter, vertical_exterior_awning, dual_roller_shutter}). Ignored by the somfy gesture.
 # See resolve_oneway_wire_profile() / effective_enrollment_classes() (oneway_controller.h), ADR 0032.
 CONF_ENROLLMENT_CLASSES = "enrollment_classes"
-# Same YAML key as platform_common.py's per-device 2W low_power (ADR 0029), tri-state here: unset
-# lets the manufacturer profile pick the shape (ADR 0041, ADR 0119: velux the `false` shape, any other
-# vendor the `true` shape); `false`/`true` force one of the ADR 0038 shapes.
-# One definition, shared: platform_common.py imports this constant rather than keeping its own copy. See ONEWAY_CONTROLLER_SCHEMA's own
-# comment on this key for the full tri-state semantics, and ADR 0038.
+# Same YAML key as platform_common.py's per-device 2W low_power (ADR 0029). On a 1W identity unset
+# and `false` give four short copies for every manufacturer, `true` the wake-up copy first (ADR 0122,
+# shapes in ADR 0038). One definition, shared: platform_common.py imports this constant rather than
+# keeping its own copy. See ONEWAY_CONTROLLER_SCHEMA's own comment on this key.
 CONF_LOW_POWER = "low_power"
 # Shared by the cover platform (2W display inversion) and the 1W controller identity (wire
 # mirroring of OPEN/CLOSE/position). Defined here because platform modules and hub modules both

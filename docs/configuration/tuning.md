@@ -220,7 +220,7 @@ that print `preamble=` show the programmed bytes the radio was given; the one-wa
 | Discovery | [`pairing_discovery_preamble_ms`](#pairing_discovery_preamble_ms) | follows the start | 48 bytes | 38 bytes |
 
 The wake-up copy of a one-way burst to a `low_power: true` identity lasts `low_power_wake_ms` too, and its other copies follow
-`start_preamble_ms` ([Sending 1W commands](oneway-transmit.md#what-one-command-puts-on-the-air), [ADR 0115](../adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md)). Only the long-on-every-copy shape of an unset `low_power:` keeps a fixed 1024 bytes per copy.
+`start_preamble_ms` ([Sending 1W commands](oneway-transmit.md#what-one-command-puts-on-the-air), [ADR 0115](../adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md)).
 
 The keys that set bytes (`low_power_wake_preamble`, `normal_start_preamble`,
 `sx1262_response_preamble`, `sx1276_response_preamble`, `lr1121_response_preamble`,
@@ -470,9 +470,8 @@ Setting this key yourself overrides the default, **including a value below it** 
 bisecting a reception problem and want to see where your own device stops answering.
 
 The same value governs the short copies of a 1W identity: every copy with `low_power: false`, the
-three after the wake-up with `low_power: true`. With `low_power:` unset it depends on the
-manufacturer: `velux` gets short copies, every other vendor the wake-up copy followed by three short copies
-([ADR 0119](../adr/0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md)). See [Sending 1W commands](oneway-transmit.md#what-one-command-puts-on-the-air).
+three after the wake-up with `low_power: true`. With `low_power:` unset every copy is short, for every
+manufacturer ([ADR 0122](../adr/0122-an-unset-one-way-low-power-sends-four-short-copies.md)); a battery or solar device needs `low_power: true`. See [Sending 1W commands](oneway-transmit.md#what-one-command-puts-on-the-air).
 
 Sized independently of `response_preamble_ms` (that knob is a TX→RX turnaround property;
 this is a cold-peer property). Drop it toward the 1.5 ms floor only if a start frame is still not

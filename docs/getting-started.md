@@ -265,8 +265,8 @@ These entities are generated at compile time, so a type learned later over the r
 
 A few additional options worth knowing about:
 
-- **`low_power: true`** — set this on a solar or battery actuator. Leaving it off on such a device
-  is a common reason a hub pairs successfully and then hears nothing back.
+- **`low_power: true`** — set this on a solar or battery actuator, over two-way and over one-way.
+  Leaving it off on such a device is a common reason a hub pairs successfully and then hears nothing back.
 - **`invert_position: true`** — if open and closed come out backwards.
 - **`travel_speed:`** — `silent` moves at the manufacturer app's quieter, slower speed and `fast`
   asks for the fast profile; without the key the cover moves at the motor's own speed, as its wall

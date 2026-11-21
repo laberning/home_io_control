@@ -37,14 +37,12 @@ namespace home_io_control {
 /// @brief Which preamble/CTRL1 shape a 1W identity's bursts actually go out with.
 ///
 /// Every enumerator is a real on-air shape, so a value of this type is always transmittable —
-/// "not configured" is *not* one of them. That state lives in
-/// `OneWayControllerIdentity::power_class_override`, an empty optional, and is resolved to one of
-/// these by effective_power_class() before any of it reaches the transmitter. Keeping the two
-/// apart is what lets oneway_burst_copy_shape() switch exhaustively with no unreachable case.
+/// "not configured" is *not* one of them, so oneway_burst_copy_shape() switches exhaustively with
+/// no unreachable case.
 ///
-/// See ADR 0038 for the shapes and ADR 0041 and ADR 0119 for how an unset key resolves.
+/// See ADR 0038 for the shapes and ADR 0122 for the default.
 enum class OneWayPowerClass : uint8_t {
-  ALWAYS_ALIVE,  ///< `low_power: false`: normal start preamble on every copy, CTRL1 0x00.
+  ALWAYS_ALIVE,  ///< `low_power:` unset or `false`: normal start preamble on every copy, CTRL1 0x00.
   LOW_POWER,     ///< `low_power: true`: copy 1 a `low_power_wake_ms` wake-up + CTRL1_LOW_POWER, repeats normal.
 };
 
@@ -78,7 +76,7 @@ struct OneWayCopyShape {
 /// the wake-up shape on copy 0 alone — what a real remote's GEAR/EXECUTE burst does, and the
 /// mirror of how `ExchangeEngine` (ADR 0029) already picks a 2W start frame's preamble from the
 /// target's own low-power declaration.
-/// @param power_class The identity's resolved power class, from effective_power_class().
+/// @param power_class The identity's resolved power class, from OneWayControllerIdentity::power_class.
 /// @param copy_index 0-based position of this copy within the burst.
 /// @return The preamble and CTRL1 shape for that copy.
 inline OneWayCopyShape oneway_burst_copy_shape(OneWayPowerClass power_class, uint8_t copy_index) {
@@ -121,18 +119,15 @@ struct OneWayControllerIdentity {
   /// runs, so a one- or two-class override is expressed by leaving the rest `UNKNOWN`. Ignored by the Somfy enrollment
   /// gesture, which sends to the all-devices address. See ADR 0032.
   std::array<DeviceType, 3> enrollment_classes{DeviceType::UNKNOWN, DeviceType::UNKNOWN, DeviceType::UNKNOWN};
-  /// `low_power:` exactly as configured, or **empty when the key is absent** — in which case the
-  /// shape comes from the manufacturer profile (ADR 0041). Never read this directly to transmit;
-  /// call effective_power_class(), which is the only place the two cases are collapsed.
-  ///
-  /// Whatever it resolves to applies to every 1W TX of the identity -- commands, positions,
-  /// enrollment (both gestures), un-enrollment. Last field: codegen emits a designated initialiser
-  /// in declaration order. See ADR 0038 for the shapes themselves.
-  std::optional<OneWayPowerClass> power_class_override;
+  /// Burst shape of every 1W TX of the identity -- commands, positions, enrollment (both gestures),
+  /// un-enrollment: `low_power: true` is LOW_POWER; unset and `false` are ALWAYS_ALIVE, whatever the
+  /// manufacturer (ADR 0122). A battery or solar receiver needs `true`. Declared before
+  /// `invert_override` because codegen emits a designated initialiser in declaration order. See
+  /// ADR 0038 for the shapes themselves.
+  OneWayPowerClass power_class{OneWayPowerClass::ALWAYS_ALIVE};
   /// `invert_position:` exactly as configured, or **empty when the key is absent** — in which case
   /// the device kind decides (`INVERTED` capability). Never read this directly to transmit;
-  /// call effective_inverted(). Declared after `power_class_override` because codegen emits a
-  /// designated initialiser in declaration order.
+  /// call effective_inverted().
   std::optional<bool> invert_override;
 
   /// @brief Enrollment / typed-class destination address for this identity.
@@ -167,12 +162,6 @@ struct OneWayWireProfile {
   /// Device classes a VELUX_KLI `0x30` sweep targets, `UNKNOWN` entries skipped. All-`UNKNOWN` for
   /// SOMFY, whose `0x39` and `0x30` go to the all-devices address instead.
   std::array<DeviceType, 3> enrollment_classes;
-  /// Burst shape for an identity that does not set `low_power:` at all. VELUX gets `ALWAYS_ALIVE`
-  /// (ADR 0041): an awake VELUX receiver does not accept a frame behind a long wake-up preamble and
-  /// 1W has no acknowledgement to reveal that. Every other manufacturer, recognised or not, gets
-  /// `LOW_POWER` (ADR 0119): one wake-up copy in front of three short ones still wakes a battery
-  /// receiver and is obeyed as reliably as any other shape by a mains Somfy receiver.
-  OneWayPowerClass default_power_class;
 };
 
 /// The default `0x30` sweep for `manufacturer: velux`: the exterior-shading classes a KLI 310/313
@@ -194,8 +183,7 @@ struct OneWayWireProfileRow {
 static constexpr OneWayWireProfile SOMFY_WIRE_PROFILE{ONEWAY_EXECUTE_ACEI,
                                                       /*profile_is_a_guess=*/false,
                                                       EnrollGesture::SOMFY,
-                                                      {DeviceType::UNKNOWN, DeviceType::UNKNOWN, DeviceType::UNKNOWN},
-                                                      OneWayPowerClass::LOW_POWER};
+                                                      {DeviceType::UNKNOWN, DeviceType::UNKNOWN, DeviceType::UNKNOWN}};
 
 /// The 1W wire profiles this project knows, one row per manufacturer. The YAML codegen warns for a
 /// manufacturer without a row (`ONEWAY_WIRE_PROFILE_MANUFACTURER_NAMES` in hub_validators.py);
@@ -204,8 +192,7 @@ static constexpr OneWayWireProfile SOMFY_WIRE_PROFILE{ONEWAY_EXECUTE_ACEI,
 static constexpr std::array<OneWayWireProfileRow, 2> ONEWAY_WIRE_PROFILES{{
     {MANUFACTURER_SOMFY, SOMFY_WIRE_PROFILE},
     {MANUFACTURER_VELUX,
-     {ONEWAY_EXECUTE_ACEI_VELUX, /*profile_is_a_guess=*/false, EnrollGesture::VELUX_KLI, VELUX_KLI_ENROLLMENT_CLASSES,
-      OneWayPowerClass::ALWAYS_ALIVE}},
+     {ONEWAY_EXECUTE_ACEI_VELUX, /*profile_is_a_guess=*/false, EnrollGesture::VELUX_KLI, VELUX_KLI_ENROLLMENT_CLASSES}},
 }};
 
 /// Manufacturer byte of an identity that sets none; it transmits with the Somfy profile.
@@ -252,24 +239,6 @@ inline uint8_t effective_execute_acei(const OneWayControllerIdentity &identity) 
 /// @param identity The controller identity.
 /// @return true when `execute_acei:` was set (non-zero) and overrides the manufacturer profile default.
 inline bool has_execute_acei_override(const OneWayControllerIdentity &identity) { return identity.execute_acei != 0; }
-
-/// @brief The burst shape this identity actually transmits with.
-///
-/// The one place an absent `low_power:` is turned into a real shape, and therefore the only
-/// function the transmitter and the boot log may ask. An explicit `low_power:` always wins; with
-/// the key absent the manufacturer profile decides (ADR 0041).
-/// @param identity The controller identity.
-/// @return `power_class_override` when set, else the manufacturer profile's `default_power_class`.
-inline OneWayPowerClass effective_power_class(const OneWayControllerIdentity &identity) {
-  return identity.power_class_override.value_or(resolve_oneway_wire_profile(identity.manufacturer).default_power_class);
-}
-
-/// @brief Whether this identity's burst shape comes from an explicit `low_power:` rather than the profile.
-/// @param identity The controller identity.
-/// @return true when `low_power:` was set in YAML and overrides the manufacturer profile default.
-inline bool has_power_class_override(const OneWayControllerIdentity &identity) {
-  return identity.power_class_override.has_value();
-}
 
 /// @brief Whether this identity's OPEN/CLOSE/position values are mirrored on the wire.
 ///

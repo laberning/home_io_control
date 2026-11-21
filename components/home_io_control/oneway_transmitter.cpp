@@ -84,7 +84,7 @@ bool OneWayTransmitter::send_(const std::string &controller_id,
   }
 
   const bool transmitted =
-      this->send_burst(frame, effective_power_class(*identity), explicit_intent[0] != '\0' ? explicit_intent : nullptr);
+      this->send_burst(frame, identity->power_class, explicit_intent[0] != '\0' ? explicit_intent : nullptr);
 
   const OneWayFrameInfo decoded = decode_1w_frame(frame);
 
@@ -285,7 +285,7 @@ bool OneWayTransmitter::send_enroll_sweep_(const OneWayControllerIdentity &ident
                identity.id.c_str());
       continue;
     }
-    if (this->send_burst(frame, effective_power_class(identity)))
+    if (this->send_burst(frame, identity.power_class))
       any_transmitted = true;
   }
 

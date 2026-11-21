@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0119 -->
 
-**Status:** Accepted, supersedes the Somfy and unknown-manufacturer rows of
+**Status:** Accepted, default superseded by [ADR 0122](0122-an-unset-one-way-low-power-sends-four-short-copies.md); supersedes the Somfy and unknown-manufacturer rows of
 [ADR 0041](0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md) and amends
 [ADR 0038](0038-oneway-bursts-follow-the-identity-power-class.md) and
 [ADR 0115](0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md) · **Recorded:** 2026-11

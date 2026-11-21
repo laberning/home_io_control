@@ -69,7 +69,7 @@ class HubOneWayCover : public ::testing::Test {
     std::memcpy(identity.node_id, IDENTITY_NODE, NODE_ID_SIZE);
     std::memset(identity.system_key, 0x11, AES_KEY_SIZE);
     identity.io_device_type = type;
-    identity.power_class_override = OneWayPowerClass::ALWAYS_ALIVE;
+    identity.power_class = OneWayPowerClass::ALWAYS_ALIVE;
     identity.invert_override = invert;
     hub.add_oneway_controller(identity);
     hub.setup();

@@ -65,14 +65,14 @@ class OneWayDispatch : public ::testing::Test {
   void TearDown() override { esphome::test_preferences::wipe(); }
 
   /// Register the identity (its power class as given) and open its sequence counter.
-  void add_identity(std::optional<OneWayPowerClass> power_class) {
+  void add_identity(OneWayPowerClass power_class) {
     OneWayControllerIdentity identity{};
     identity.id = CONTROLLER;
     std::memcpy(identity.node_id, CONTROLLER_NODE, NODE_ID_SIZE);
     std::memset(identity.system_key, 0x11, AES_KEY_SIZE);
     identity.io_device_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
     identity.initial_sequence = FIRST_SEQUENCE;
-    identity.power_class_override = power_class;
+    identity.power_class = power_class;
     hub.add_oneway_controller(identity);
     hub.oneway_transmitter().setup();
   }
@@ -181,8 +181,15 @@ TEST_F(OneWayDispatch, AnUnenrollmentIsOneRemoveBurst) {
   EXPECT_FALSE(hub.busy_);
 }
 
-TEST_F(OneWayDispatch, AnIdentityWithoutLowPowerSetBurstsOneWakeUpCopyThenThreeShortOnes) {
-  add_identity(std::nullopt);  // unset: the manufacturer profile decides; no manufacturer means the Somfy shape
+TEST_F(OneWayDispatch, AnIdentityWithoutLowPowerSetBurstsFourShortCopies) {
+  OneWayControllerIdentity identity{};  // no `low_power:` in YAML: the default-initialised class
+  identity.id = CONTROLLER;
+  std::memcpy(identity.node_id, CONTROLLER_NODE, NODE_ID_SIZE);
+  std::memset(identity.system_key, 0x11, AES_KEY_SIZE);
+  identity.io_device_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
+  identity.initial_sequence = FIRST_SEQUENCE;
+  hub.add_oneway_controller(identity);
+  hub.oneway_transmitter().setup();
   hub.send_oneway_command(CONTROLLER, CoverCommand::STOP);
 
   hub.loop();
@@ -191,7 +198,7 @@ TEST_F(OneWayDispatch, AnIdentityWithoutLowPowerSetBurstsOneWakeUpCopyThenThreeS
   ASSERT_TRUE(create_1w_execute_command(expected, CONTROLLER_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING,
                                         CoverCommand::STOP, FIRST_SEQUENCE, key()));
   ASSERT_EQ(radio.get_send_count(), ONEWAY_BURST_REPEATS);
-  expect_burst(0, expected, OneWayPowerClass::LOW_POWER);
+  expect_burst(0, expected, OneWayPowerClass::ALWAYS_ALIVE);
 }
 
 TEST_F(OneWayDispatch, AnIdentityWithLowPowerFalseBurstsTheStartPreambleOnEveryCopyWithoutTheFlag) {

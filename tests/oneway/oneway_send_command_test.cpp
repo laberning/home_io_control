@@ -1006,7 +1006,7 @@ TEST_F(OneWaySendCommandTest, EveryEntryPointHonoursTheIdentitysPowerClassOnEver
       BurstRecorder recorder;
       OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
       OneWayControllerIdentity id = make_identity("id", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1);
-      id.power_class_override = power_class;
+      id.power_class = power_class;
       entry.configure_identity(id);
       transmitter.add_identity(id);
       transmitter.setup();

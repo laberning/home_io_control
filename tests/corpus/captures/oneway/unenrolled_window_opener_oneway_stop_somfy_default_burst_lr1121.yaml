@@ -2,7 +2,7 @@ id: unenrolled_window_opener_oneway_stop_somfy_default_burst_lr1121
 description: >
   This project's own hub sending one 1W STOP burst from an identity no device has enrolled (node 4B7A94,
   class window_opener, manufacturer somfy), captured on the air with an SDR on all three channels, not taken from the
-  hub's TX log. Board: LilyGO T3-S3 LR1121 (lr1121). Shape: the Somfy profile's default shape (no `low_power:` set): the wake-up preamble on every copy. The build used the public corpus key as its system key, so
+  hub's TX log. Board: LilyGO T3-S3 LR1121 (lr1121). Shape: the long shape the measured build gave a Somfy identity without `low_power:`, the wake-up preamble on every copy; the hub does not send this shape any more (ADR 0119, ADR 0122). The build used the public corpus key as its system key, so
   every MAC verifies under it and the bytes are exactly what was on the air. Measured: 4 copies, all on channel 2
   (868.95 MHz); preambles 213.4, 213.4, 213.4, 213.4 ms; gap from the end of one copy to the start of the
   next 50.6, 50.2, 50.4 ms (the measured build waited 40 ms between copies, on top of the busy check

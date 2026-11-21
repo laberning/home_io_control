@@ -1,8 +1,10 @@
 #include "oneway_controller.h"
 #include "proto_codecs.h"
+#include "proto_timing.h"
 
 #include "test_helpers.h"
 
+#include <array>
 #include <cstring>
 
 using namespace esphome::home_io_control;
@@ -200,17 +202,6 @@ TEST(OneWayController, EffectiveEnrollmentClassesPrefersTheOverride) {
 // Per-identity power class (ADR 0038): oneway_burst_copy_shape() / oneway_power_class_name()
 // ============================================================================
 
-TEST(OneWayController, UnsetPowerClassIsAnEmptyOptionalNotAShape) {
-  const OneWayControllerIdentity id{};
-  EXPECT_FALSE(id.power_class_override.has_value())
-      << "an absent low_power: must stay unresolved on the identity -- resolving it needs the manufacturer profile";
-  EXPECT_FALSE(has_power_class_override(id));
-}
-
-// ============================================================================
-// Unset low_power: resolves from the manufacturer profile (ADR 0041)
-// ============================================================================
-
 /// Helper: an identity carrying nothing but a manufacturer byte, i.e. no `low_power:` in YAML.
 static OneWayControllerIdentity identity_for_manufacturer(uint8_t manufacturer) {
   OneWayControllerIdentity id{};
@@ -218,59 +209,36 @@ static OneWayControllerIdentity identity_for_manufacturer(uint8_t manufacturer) 
   return id;
 }
 
-TEST(OneWayController, UnsetVeluxResolvesToAlwaysAlive) {
-  // The reason this ADR exists: an awake VELUX receiver does not accept a frame behind the
-  // long wake-up preamble, and 1W has no acknowledgement that would reveal the loss.
-  EXPECT_EQ(effective_power_class(identity_for_manufacturer(MANUFACTURER_VELUX)), OneWayPowerClass::ALWAYS_ALIVE);
-}
+/// The manufacturers the default must not depend on: VELUX, Somfy, none set, and one with no profile.
+static const std::array<uint8_t, 4> MANUFACTURERS{MANUFACTURER_VELUX, MANUFACTURER_SOMFY, 0x00, 0x7E};
 
-TEST(OneWayController, UnsetSomfyResolvesToLowPower) {
-  // ADR 0119: one wake-up copy in front of three short ones, which a mains Somfy receiver obeys as
-  // reliably as any shape and a battery receiver still needs.
-  EXPECT_EQ(effective_power_class(identity_for_manufacturer(MANUFACTURER_SOMFY)), OneWayPowerClass::LOW_POWER);
-  EXPECT_EQ(effective_power_class(identity_for_manufacturer(0x00)), OneWayPowerClass::LOW_POWER);
-}
-
-TEST(OneWayController, UnsetUnknownManufacturerResolvesToLowPower) {
-  const OneWayControllerIdentity id = identity_for_manufacturer(0x7E);
-  ASSERT_TRUE(resolve_oneway_wire_profile(id.manufacturer).profile_is_a_guess);
-  EXPECT_EQ(effective_power_class(id), OneWayPowerClass::LOW_POWER);
-}
-
-TEST(OneWayController, UnsetSomfyBurstIsOneFlaggedWakeCopyThenThreeShortOnes) {
-  const OneWayPowerClass resolved = effective_power_class(identity_for_manufacturer(MANUFACTURER_SOMFY));
-  const OneWayCopyShape first = oneway_burst_copy_shape(resolved, 0);
-  EXPECT_EQ(first.preamble, OneWayPreamble::WAKE);
-  EXPECT_TRUE(first.low_power_flag);
-  for (uint8_t copy = 1; copy < 4; copy++) {
-    const OneWayCopyShape shape = oneway_burst_copy_shape(resolved, copy);
-    EXPECT_EQ(shape.preamble, OneWayPreamble::NORMAL) << "copy " << static_cast<int>(copy);
-    EXPECT_FALSE(shape.low_power_flag) << "copy " << static_cast<int>(copy);
-  }
-}
-
-TEST(OneWayController, ExplicitLowPowerAlwaysWinsOverTheProfile) {
-  for (const uint8_t manufacturer : {MANUFACTURER_VELUX, MANUFACTURER_SOMFY, static_cast<uint8_t>(0x7E)}) {
-    for (const OneWayPowerClass chosen : {OneWayPowerClass::ALWAYS_ALIVE, OneWayPowerClass::LOW_POWER}) {
-      SCOPED_TRACE(std::string(oneway_power_class_name(chosen)) + " on manufacturer 0x" +
-                   std::to_string(static_cast<int>(manufacturer)));
-      OneWayControllerIdentity id = identity_for_manufacturer(manufacturer);
-      id.power_class_override = chosen;
-      EXPECT_TRUE(has_power_class_override(id));
-      EXPECT_EQ(effective_power_class(id), chosen);
+TEST(OneWayController, UnsetPowerClassIsFourShortCopiesForEveryManufacturer) {
+  // ADR 0122: the default no longer follows the manufacturer's profile.
+  for (const uint8_t manufacturer : MANUFACTURERS) {
+    SCOPED_TRACE("manufacturer 0x" + std::to_string(static_cast<int>(manufacturer)));
+    const OneWayControllerIdentity id = identity_for_manufacturer(manufacturer);
+    EXPECT_EQ(id.power_class, OneWayPowerClass::ALWAYS_ALIVE);
+    for (uint8_t copy = 0; copy < ONEWAY_BURST_REPEATS; copy++) {
+      const OneWayCopyShape shape = oneway_burst_copy_shape(id.power_class, copy);
+      EXPECT_EQ(shape.preamble, OneWayPreamble::NORMAL) << "copy " << static_cast<int>(copy);
+      EXPECT_FALSE(shape.low_power_flag) << "copy " << static_cast<int>(copy);
     }
   }
 }
 
-TEST(OneWayController, EveryProfileDefaultIsATransmittableShape) {
-  // effective_power_class() feeds oneway_burst_copy_shape() directly, so a profile default that
-  // is not one of the two real shapes would be a latent unreachable-case bug.
-  for (const uint8_t manufacturer :
-       {MANUFACTURER_VELUX, MANUFACTURER_SOMFY, static_cast<uint8_t>(0x00), static_cast<uint8_t>(0x7E)}) {
-    const OneWayPowerClass resolved = resolve_oneway_wire_profile(manufacturer).default_power_class;
-    const bool is_real_shape = resolved == OneWayPowerClass::ALWAYS_ALIVE || resolved == OneWayPowerClass::LOW_POWER;
-    EXPECT_TRUE(is_real_shape) << "manufacturer 0x" << std::hex << static_cast<int>(manufacturer)
-                               << " has a profile default that is not a transmittable shape";
+TEST(OneWayController, LowPowerTrueIsOneFlaggedWakeCopyThenShortOnesForEveryManufacturer) {
+  for (const uint8_t manufacturer : MANUFACTURERS) {
+    SCOPED_TRACE("manufacturer 0x" + std::to_string(static_cast<int>(manufacturer)));
+    OneWayControllerIdentity id = identity_for_manufacturer(manufacturer);
+    id.power_class = OneWayPowerClass::LOW_POWER;
+    const OneWayCopyShape first = oneway_burst_copy_shape(id.power_class, 0);
+    EXPECT_EQ(first.preamble, OneWayPreamble::WAKE);
+    EXPECT_TRUE(first.low_power_flag);
+    for (uint8_t copy = 1; copy < ONEWAY_BURST_REPEATS; copy++) {
+      const OneWayCopyShape shape = oneway_burst_copy_shape(id.power_class, copy);
+      EXPECT_EQ(shape.preamble, OneWayPreamble::NORMAL) << "copy " << static_cast<int>(copy);
+      EXPECT_FALSE(shape.low_power_flag) << "copy " << static_cast<int>(copy);
+    }
   }
 }
 
