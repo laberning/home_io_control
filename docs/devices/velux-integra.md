@@ -8,8 +8,8 @@ and hubs that make good key sources, the wired bridges, and the products control
 
 | Device | Status |
 |---|---|
-| INTEGRA roof-window actuator | ✅ Confirmed — open, close, position, ventilation. A second installation of five type 4/1 windows (factory name "Window operator") answers keyed roll-calls and commands under a key copied from a KLR 100, reported with another controller (issue #242) |
-| KLR 100 two-way control pad | 📣 Reported as a key-extraction source — with System settings, Copy system open, the pad answers an addressed key request and proves the key; reported with another controller, not yet with this hub (issue #242) |
+| INTEGRA roof-window actuator | ✅ Confirmed — open, close, position, ventilation. On a second installation, an ESP32-S3-Zero with an RFM95 detected all five type 4/1 windows (factory name "Window operator") in one keyed roll-call and read their positions. One window completed moves in both directions (issue #242) |
+| KLR 100 two-way control pad | 📣 Reported as a key-extraction source — with System settings, Copy system open, the pad answers an addressed key request and proves the key; reported with another controller, not yet with this hub (issue #242). The ESP32-S3/RFM95 also received a discovery response from the pad in Copy system |
 | KLR 200 two-way control pad | ✅ Confirmed as a key-extraction source |
 | KLR 300 two-way control pad | ✅ Confirmed as a key-extraction source (one community tester) |
 | KLF 200 gateway | ✅ Key extraction succeeded (one reporter) — use **SEARCH FOR PRODUCTS**, and repeat it while armed if it finds nothing |
@@ -298,6 +298,11 @@ with the long preamble ignored and the short one answered; a set-position ack; a
 polls that go unanswered while it moves).
 One more capture holds five type 4/1 windows answering keyed roll-calls, received with another controller's
 receiver (issue #242).
+
+On the same installation, the ESP32-S3-Zero/RFM95 read position and limitation status from all five windows.
+One moved from 39% open to 31% and back to 39%, with a stopped report at each target. In a separate
+discovery-only check, the KLR 100 answered as a remote controller when Copy system was running.
+The test ended before key transfer. [ESP hardware report and log excerpts](https://github.com/laberning/home_io_control/issues/242#issuecomment-7052044227).
 
 Field reports: #17 (SML discovery), #74 (SML roller shutter, KLI 312 blind and FSC pleated blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
 screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #230 (SML two-way pairing, shutters queued on one KUX 110), #242 (KLR 100 Copy system, five type 4/1 windows).
