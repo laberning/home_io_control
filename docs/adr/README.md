@@ -147,6 +147,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0012](0012-key-extraction-responder-for-owned-devices.md) | Key-extraction responder | Emulate a device so a user's own hub hands over its credentials |
 | [0022](0022-unauthenticated-status-frames-are-never-applied.md) | Unauthenticated status frames are never applied | Drop the merge rather than pay a challenge or an attacker-triggerable poll |
 | [0026](0026-1w-enrollment-is-required-and-safety-comes-from-a-physical-interlock.md) | 1W enrollment needs no arming switch | The receiver's own physical PROG hold is the interlock, and even a successful enrollment only adds a controller, never displaces one |
+| [0123](0123-a-prog-window-takes-one-pair-or-unpair-and-enroll-keeps-remove-then-add.md) | A PROG window takes one pair or one unpair, and Enroll keeps remove-then-add (amends 0026) | On a Somfy Izymo one programming window takes one change: an unknown controller's add pairs it, a known controller's remove or add removes it; Enroll keeps remove-then-add as a real remote sends it |
 
 ### Testing
 
@@ -286,6 +287,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0119: Somfy one-way bursts lead with one wake-up copy, and no preamble is set in bytes](0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md)
 - [ADR 0120: A one-way counter that wraps is lost to a Somfy receiver](0120-a-one-way-counter-that-wraps-is-lost-to-a-somfy-receiver.md)
 - [ADR 0121: One-way copies go out back to back](0121-one-way-copies-go-out-back-to-back.md)
+- [ADR 0123: A PROG window takes one pair or one unpair, and Enroll keeps remove-then-add](0123-a-prog-window-takes-one-pair-or-unpair-and-enroll-keeps-remove-then-add.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

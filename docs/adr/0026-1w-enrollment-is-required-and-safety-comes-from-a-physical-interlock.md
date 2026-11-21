@@ -1,7 +1,7 @@
 # ADR 0026: 1W enrollment is required, and its safety comes from a physical interlock
 <!-- doxygen-label: adr0026 -->
 
-**Status:** Accepted · **Recorded:** 2026-08
+**Status:** Accepted, amended by [ADR 0123](0123-a-prog-window-takes-one-pair-or-unpair-and-enroll-keeps-remove-then-add.md) · **Recorded:** 2026-08
 
 ## Context
 
