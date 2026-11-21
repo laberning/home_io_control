@@ -598,7 +598,7 @@ TEST(DeviceTypesTableModels, AModelRowKeepsTheIdentityOfTheRowAboveIt) {
     EXPECT_EQ(has_feature(model.features, device_feature::NIGHT_LIGHT), polls(DeviceRegister::NIGHT_LIGHT))
         << model.name;
   });
-  EXPECT_EQ(rows, 4u);
+  EXPECT_EQ(rows, 5u);
 }
 
 TEST(DeviceTypesTable, OnlyTheTowelDryerRowHasTheCentralHeatingModeBit) {

@@ -266,6 +266,14 @@ class HubHeatingPort {
   /// @return The step in degrees; nullopt for a target that takes any value and for an unknown device.
   [[nodiscard]] virtual std::optional<float> water_heater_target_step(const std::string &device_id) const = 0;
 
+  /// @brief The name a water heater's mode row gives a mode, which says whether the heater has it.
+  /// @details The value name of the heater's row of DeviceReading::HOT_WATER_MODE (ADR 0110): the card offers the
+  ///          modes it names and maps each to an ESPHome mode by its name.
+  /// @param device_id Hexadecimal node ID string.
+  /// @param mode The mode.
+  /// @return The name; nullptr for a mode the heater lacks and for an unknown device.
+  [[nodiscard]] virtual const char *water_heater_mode_name(const std::string &device_id, DhwMode mode) const = 0;
+
   /// @brief Set a water heater's operating mode.
   /// @param device_id Hexadecimal node ID string.
   /// @param mode Mode to select.

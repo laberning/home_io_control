@@ -28,5 +28,17 @@ const char *dhw_mode_name(uint8_t value) {
   return nullptr;
 }
 
+const char *dhw_electric_mode_name(uint8_t value) {
+  switch (static_cast<DhwMode>(value)) {
+    case DhwMode::AUTO:
+      return "auto";
+    case DhwMode::MANUAL_ECO_OFF:
+      return "manual electric";
+    case DhwMode::MANUAL_ECO_ON:
+      break;
+  }
+  return nullptr;
+}
+
 }  // namespace home_io_control
 }  // namespace esphome

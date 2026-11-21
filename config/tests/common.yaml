@@ -296,3 +296,21 @@ water_heater:
     io_model: explorer_v4
     boost:
       name: "Test Explorer V4 Boost"
+  # An electric storage water heater (a Sauter Guelma connecte) reports the same type and subtype; its state is all
+  # registers, with a target in shower counts and flag registers for boost and away (ADR 0110).
+  - platform: home_io_control
+    name: "Test Electric Water Heater"
+    io_device_id: "FEEB2D"
+    io_device_type: "domestic_hot_water"
+    io_subtype: 0
+    io_model: electric_water_heater
+    energy:
+      name: "Test Electric Water Heater Energy"
+    heating_power:
+      name: "Test Electric Water Heater Power"
+    showers_available:
+      name: "Test Electric Water Heater Showers Available"
+    showers_target:
+      name: "Test Electric Water Heater Showers Target"
+    boost:
+      name: "Test Electric Water Heater Boost"

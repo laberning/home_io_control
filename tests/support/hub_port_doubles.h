@@ -252,6 +252,10 @@ class HeatingPortDouble : public HubHeatingPort {
   [[nodiscard]] std::optional<float> water_heater_target_step(const std::string &) const override {
     return this->water_heater_step;
   }
+  [[nodiscard]] const char *water_heater_mode_name(const std::string &, DhwMode mode) const override {
+    return this->water_heater_mode_names != nullptr ? this->water_heater_mode_names(static_cast<uint8_t>(mode))
+                                                    : nullptr;
+  }
   bool set_water_heater_target(const std::string &, float celsius) override {
     this->water_heater_targets.push_back(celsius);
     return this->write_result;
@@ -281,6 +285,8 @@ class HeatingPortDouble : public HubHeatingPort {
   HeatingCardRange water_heater_range{DHW_TARGET_MIN_C, DHW_TARGET_MAX_C};
   /// The step the card offers, from the heater's target row; none for a target that takes any value, as the Calypso's.
   std::optional<float> water_heater_step{std::nullopt};
+  /// The names of the heater's mode row; the Calypso's.
+  const char *(*water_heater_mode_names)(uint8_t value) = dhw_mode_name;
   std::vector<DhwMode> water_heater_modes;
   std::vector<bool> water_heater_boosts;
   std::vector<bool> water_heater_aways;

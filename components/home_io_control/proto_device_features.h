@@ -155,6 +155,22 @@ enum class DeviceFeature : uint8_t {
   /// parameter of its status reply, which is 0000 while away; its FP16 stays 4900 (the Atlantic Explorer V4, pull
   /// request #246). A member of the group HOT_WATER_AWAY.
   HOT_WATER_AWAY_MAIN_PARAMETER,
+  /// A water heater that keeps its water temperature, operating mode and energy counter in the Calypso's registers but
+  /// the rest of its state in registers of its own: the temperature it heats to, its shower counts, its heating power,
+  /// and boost and absence as flags (the Sauter Guelma connecte, an electric storage heater, pull request #248). Its
+  /// status reply carries nothing (main parameter 0, FP15 and FP16 FFFF), so none of its rows reads one. A member of
+  /// the group HOT_WATER_REGISTER_MAP.
+  HOT_WATER_REGISTERS_GUELMA,
+  /// A water heater whose target is a shower count written to a register in manual mode only, 2, 3 or 4 for 50, 60
+  /// and 70 degrees, and read from the register of the temperature it heats to (the Sauter Guelma connecte). A member
+  /// of the group HOT_WATER_TARGET.
+  HOT_WATER_TARGET_SHOWER_STEPS,
+  /// A water heater whose boost is a flag register, written and read directly (the Sauter Guelma connecte). A member
+  /// of the group HOT_WATER_BOOST.
+  HOT_WATER_BOOST_FLAG,
+  /// A water heater whose away mode is a flag register, written and read directly (the Sauter Guelma connecte). A
+  /// member of the group HOT_WATER_AWAY.
+  HOT_WATER_AWAY_FLAG,
   COUNT,  ///< Not a capability: the number of capabilities, for the storage check of DeviceFeatures.
 };
 
@@ -227,18 +243,22 @@ struct FeatureGroup {
 
 /// @brief The members of the group HOT_WATER_TARGET: which target range a water heater has.
 inline constexpr DeviceFeature HOT_WATER_TARGET_MEMBERS[] = {DeviceFeature::HOT_WATER_TARGET_20_62,
-                                                             DeviceFeature::HOT_WATER_TARGET_20_70};
+                                                             DeviceFeature::HOT_WATER_TARGET_20_70,
+                                                             DeviceFeature::HOT_WATER_TARGET_SHOWER_STEPS};
 
 /// @brief The members of the group HOT_WATER_BOOST: how a water heater's boost is read and written.
 inline constexpr DeviceFeature HOT_WATER_BOOST_MEMBERS[] = {DeviceFeature::HOT_WATER_BOOST_FP16,
-                                                            DeviceFeature::HOT_WATER_BOOST_FP16_INVERTED};
+                                                            DeviceFeature::HOT_WATER_BOOST_FP16_INVERTED,
+                                                            DeviceFeature::HOT_WATER_BOOST_FLAG};
 
 /// @brief The members of the group HOT_WATER_AWAY: how a water heater's away mode is read and written.
 inline constexpr DeviceFeature HOT_WATER_AWAY_MEMBERS[] = {DeviceFeature::HOT_WATER_AWAY_FP16,
-                                                           DeviceFeature::HOT_WATER_AWAY_MAIN_PARAMETER};
+                                                           DeviceFeature::HOT_WATER_AWAY_MAIN_PARAMETER,
+                                                           DeviceFeature::HOT_WATER_AWAY_FLAG};
 
 /// @brief The members of the group HOT_WATER_REGISTER_MAP: which registers a water heater keeps its readings in.
-inline constexpr DeviceFeature HOT_WATER_REGISTER_MAP_MEMBERS[] = {DeviceFeature::HOT_WATER_REGISTERS_CALYPSO};
+inline constexpr DeviceFeature HOT_WATER_REGISTER_MAP_MEMBERS[] = {DeviceFeature::HOT_WATER_REGISTERS_CALYPSO,
+                                                                   DeviceFeature::HOT_WATER_REGISTERS_GUELMA};
 
 /// @brief Every capability group.
 inline constexpr FeatureGroup FEATURE_GROUPS[] = {

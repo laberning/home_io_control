@@ -13,6 +13,7 @@
 
 #include <cinttypes>
 #include <cmath>
+#include <cstring>
 
 namespace esphome {
 namespace home_io_control {
@@ -21,20 +22,25 @@ static const char *const TAG = "home_io_control.water_heater";
 
 namespace {
 
-/// @brief Heater mode <-> ESPHome mode. The single place this correspondence is defined (ADR 0090): each heater
-/// mode takes the ESPHome mode whose Home Assistant meaning matches what heats and how. Automatic adapts to
-/// consumption and uses the element as needed (energy saving: eco), manual ECO on heats with the heat pump only
-/// (heat_pump), manual ECO off lets the element assist (performance).
+/// @brief Heater mode name <-> ESPHome mode. The single place this correspondence is defined (ADR 0090): each mode a
+/// heater's mode row names takes the ESPHome mode whose Home Assistant meaning matches what heats and how. Automatic
+/// adapts to consumption and uses the element as needed (energy saving: eco), manual ECO on heats with the heat pump
+/// only (heat_pump), manual ECO off lets the element assist the heat pump (performance), and the manual mode of an
+/// electric storage heater heats with its element alone (electric). The heater's row says which names it has
+/// (HubHeatingPort::water_heater_mode_name()), so a heater is offered only its own modes.
 struct WaterHeaterModeMapping {
-  DhwMode dhw;
+  const char *name;
   water_heater::WaterHeaterMode mode;
 };
 constexpr WaterHeaterModeMapping WATER_HEATER_MODE_MAP[] = {
-    {DhwMode::AUTO, water_heater::WATER_HEATER_MODE_ECO},
-    {DhwMode::MANUAL_ECO_ON, water_heater::WATER_HEATER_MODE_HEAT_PUMP},
-    {DhwMode::MANUAL_ECO_OFF, water_heater::WATER_HEATER_MODE_PERFORMANCE},
+    {"auto", water_heater::WATER_HEATER_MODE_ECO},
+    {"manual eco on", water_heater::WATER_HEATER_MODE_HEAT_PUMP},
+    {"manual eco off", water_heater::WATER_HEATER_MODE_PERFORMANCE},
+    {"manual electric", water_heater::WATER_HEATER_MODE_ELECTRIC},
 };
-static_assert(WATER_HEATER_MODE_MAP[0].dhw == DhwMode::AUTO, "the fallback in water_heater_mode_for() is row 0");
+
+/// The modes a mode register can hold, in the order the card lists them.
+constexpr DhwMode DHW_MODES[] = {DhwMode::AUTO, DhwMode::MANUAL_ECO_ON, DhwMode::MANUAL_ECO_OFF};
 
 /// @brief UI target step of a heater whose target takes any value: every target the Atlantic Calypso has shown is a
 /// whole degree (issue #198). The main parameter resolves far finer. A heater that takes only steps says its own
@@ -43,19 +49,20 @@ constexpr float WATER_HEATER_TARGET_STEP_C = 1.0F;
 
 }  // namespace
 
-water_heater::WaterHeaterMode water_heater_mode_for(DhwMode mode) {
+std::optional<water_heater::WaterHeaterMode> water_heater_mode_named(const char *name) {
+  if (name == nullptr)
+    return std::nullopt;
   for (const auto &mapping : WATER_HEATER_MODE_MAP) {
-    if (mapping.dhw == mode)
+    if (std::strcmp(mapping.name, name) == 0)
       return mapping.mode;
   }
-  // The mode register accepts no other value; a caller passing one gets the automatic row's mode.
-  return WATER_HEATER_MODE_MAP[0].mode;
+  return std::nullopt;
 }
 
-bool dhw_mode_for(water_heater::WaterHeaterMode mode, DhwMode &out) {
-  for (const auto &mapping : WATER_HEATER_MODE_MAP) {
-    if (mapping.mode == mode) {
-      out = mapping.dhw;
+bool dhw_mode_for(water_heater::WaterHeaterMode mode, const DhwModeNames &names, DhwMode &out) {
+  for (const DhwMode dhw : DHW_MODES) {
+    if (water_heater_mode_named(names(dhw)) == mode) {
+      out = dhw;
       return true;
     }
   }
@@ -98,8 +105,13 @@ water_heater::WaterHeaterTraits IOHomeWaterHeater::traits() {
     step_c = this->heating_port_->water_heater_target_step(this->device_id_).value_or(WATER_HEATER_TARGET_STEP_C);
   }
   traits.set_target_temperature_step(step_c);
-  traits.set_supported_modes({water_heater::WATER_HEATER_MODE_HEAT_PUMP, water_heater::WATER_HEATER_MODE_ECO,
-                              water_heater::WATER_HEATER_MODE_PERFORMANCE});
+  // The modes the heater's mode row names, and no other.
+  water_heater::WaterHeaterModeMask modes;
+  for (const DhwMode dhw : DHW_MODES) {
+    if (const auto mode = water_heater_mode_named(this->mode_name_(dhw)))
+      modes.insert(*mode);
+  }
+  traits.set_supported_modes(modes);
   return traits;
 }
 
@@ -110,7 +122,7 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
 
   if (call.get_mode().has_value()) {
     DhwMode mode = DhwMode::AUTO;
-    if (!dhw_mode_for(*call.get_mode(), mode)) {
+    if (!dhw_mode_for(*call.get_mode(), [this](DhwMode m) { return this->mode_name_(m); }, mode)) {
       // ESPHome drops a mode the traits do not list before control(); this guards a direct caller.
       ESP_LOGW(TAG, "Device %s: mode %" PRIu32 " is not one this heater offers", this->device_id_.c_str(),
                static_cast<uint32_t>(*call.get_mode()));
@@ -148,7 +160,13 @@ void IOHomeWaterHeater::control(const water_heater::WaterHeaterCall &call) {
 
 bool IOHomeWaterHeater::holds_automatic_mode_() const {
   DhwMode heater_mode = DhwMode::MANUAL_ECO_ON;
-  return dhw_mode_for(this->mode_, heater_mode) && heater_mode == DhwMode::AUTO;
+  return dhw_mode_for(
+             this->mode_, [this](DhwMode m) { return this->mode_name_(m); }, heater_mode) &&
+         heater_mode == DhwMode::AUTO;
+}
+
+const char *IOHomeWaterHeater::mode_name_(DhwMode mode) const {
+  return this->heating_port_ != nullptr ? this->heating_port_->water_heater_mode_name(this->device_id_, mode) : nullptr;
 }
 
 bool IOHomeWaterHeater::sync_from_readings_(const IoDevice &dev) {
@@ -170,10 +188,12 @@ bool IOHomeWaterHeater::sync_from_readings_(const IoDevice &dev) {
     this->set_target_temperature_(target);
     changed = true;
   }
-  if (mode_wire >= 0) {
-    const water_heater::WaterHeaterMode mode = water_heater_mode_for(static_cast<DhwMode>(mode_wire));
-    if (mode != this->mode_) {
-      this->set_mode_(mode);
+  // The mode is named by the heater's own mode row; a value it does not name is left as shown.
+  const DeviceReadingRow *mode_row = device_reading_row(dev, DeviceReading::HOT_WATER_MODE);
+  if (mode_wire >= 0 && mode_row != nullptr && mode_row->value_name != nullptr) {
+    const auto mode = water_heater_mode_named(mode_row->value_name(static_cast<uint8_t>(mode_wire)));
+    if (mode && *mode != this->mode_) {
+      this->set_mode_(*mode);
       changed = true;
     }
   }

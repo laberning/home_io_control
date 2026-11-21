@@ -35,6 +35,7 @@ class WaterHeaterModeSet {
     for (const WaterHeaterMode mode : modes)
       this->mask_ |= 1U << static_cast<uint32_t>(mode);
   }
+  void insert(WaterHeaterMode mode) { this->mask_ |= 1U << static_cast<uint32_t>(mode); }
   size_t count(WaterHeaterMode mode) const { return (this->mask_ >> static_cast<uint32_t>(mode)) & 1U; }
   bool empty() const { return this->mask_ == 0; }
 

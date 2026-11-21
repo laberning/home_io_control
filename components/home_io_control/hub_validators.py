@@ -285,6 +285,10 @@ FEATURES = (
     "HOT_WATER_TARGET_20_70",
     "HOT_WATER_BOOST_FP16_INVERTED",
     "HOT_WATER_AWAY_MAIN_PARAMETER",
+    "HOT_WATER_REGISTERS_GUELMA",
+    "HOT_WATER_TARGET_SHOWER_STEPS",
+    "HOT_WATER_BOOST_FLAG",
+    "HOT_WATER_AWAY_FLAG",
 )
 
 # Python's mirror of the table of named device readings (proto_device_readings.cpp), by the enumerator name of
@@ -355,6 +359,15 @@ DEVICE_READINGS = {
     "HOT_WATER_BOOST_FP16_INVERTED": {"feature": "HOT_WATER_BOOST_FP16_INVERTED", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
     "HOT_WATER_AWAY": {"feature": "HOT_WATER_AWAY_FP16", "source": "status_parameter", "platform": "water_heater", "registers": (), "key": None, "entity": None},
     "HOT_WATER_AWAY_MAIN_PARAMETER": {"feature": "HOT_WATER_AWAY_MAIN_PARAMETER", "source": "status", "platform": "water_heater", "registers": (), "key": None, "entity": None},
+    "HOT_WATER_TEMPERATURE_GUELMA": {"feature": "HOT_WATER_REGISTERS_GUELMA", "source": "register", "platform": "water_heater", "registers": ("DHW_WATER_TEMPERATURE",), "key": None, "entity": None},
+    "HOT_WATER_MODE_GUELMA": {"feature": "HOT_WATER_REGISTERS_GUELMA", "source": "register", "platform": "water_heater", "registers": ("DHW_MODE",), "key": None, "entity": None},
+    "HOT_WATER_TARGET_SHOWER_STEPS": {"feature": "HOT_WATER_TARGET_SHOWER_STEPS", "source": "register", "platform": "water_heater", "registers": ("DHW_ACTIVE_TARGET",), "key": None, "entity": None},
+    "HOT_WATER_BOOST_FLAG": {"feature": "HOT_WATER_BOOST_FLAG", "source": "register", "platform": "water_heater", "registers": ("DHW_BOOST_FLAG",), "key": None, "entity": None},
+    "HOT_WATER_AWAY_FLAG": {"feature": "HOT_WATER_AWAY_FLAG", "source": "register", "platform": "water_heater", "registers": ("DHW_AWAY_FLAG",), "key": None, "entity": None},
+    "HOT_WATER_SHOWERS_AVAILABLE": {"feature": "HOT_WATER_REGISTERS_GUELMA", "source": "register", "platform": "water_heater", "registers": ("DHW_SHOWERS_AVAILABLE",), "key": "showers_available", "entity": "sensor", "accuracy": 0, "state_class": "measurement"},
+    "HOT_WATER_SHOWERS_TARGET": {"feature": "HOT_WATER_REGISTERS_GUELMA", "source": "register", "platform": "water_heater", "registers": ("DHW_TARGET_SHOWERS",), "key": "showers_target", "entity": "sensor", "accuracy": 0, "state_class": "measurement"},
+    "HOT_WATER_HEATING_POWER": {"feature": "HOT_WATER_REGISTERS_GUELMA", "source": "register", "platform": "water_heater", "registers": ("DHW_HEATING_POWER",), "key": "heating_power", "entity": "sensor", "unit": "W", "accuracy": 0, "device_class": "power", "state_class": "measurement"},
+    "HOT_WATER_ENERGY_GUELMA": {"feature": "HOT_WATER_REGISTERS_GUELMA", "source": "register", "platform": "water_heater", "registers": ("DHW_ENERGY",), "key": "energy", "entity": "sensor", "unit": "kWh", "accuracy": 3, "device_class": "energy", "state_class": "total_increasing"},
     "RAIN": {"feature": None, "source": "limitation", "platform": "cover", "registers": (), "key": None, "opt_in_key": "rain_sensor_poll_interval", "min_interval_ms": MIN_READING_POLL_INTERVAL_MS, "entity": "binary_sensor", "device_class": "moisture", "companion": "Rain sensor", "companion_id": "rain_sensor"},
     "SUN_LEVEL": {"feature": None, "source": "event", "platform": "cover", "registers": (), "key": None, "opt_in_key": "sun_level_poll_interval", "min_interval_ms": MIN_READING_POLL_INTERVAL_MS, "entity": "sensor", "unit": "lx", "accuracy": 0, "device_class": "illuminance", "state_class": "measurement", "icon": "mdi:white-balance-sunny", "companion": "Sun level", "companion_id": "sun_level_sensor"},
     "BATTERY_LEVEL": {"feature": None, "source": "event", "platform": "cover", "registers": (), "key": None, "opt_in_key": "battery_level_poll_interval", "min_interval_ms": MIN_READING_POLL_INTERVAL_MS, "entity": "sensor", "unit": "%", "accuracy": 0, "device_class": "battery", "state_class": "measurement", "companion": "Battery level", "companion_id": "battery_level_sensor"},
@@ -369,6 +382,7 @@ DEVICE_READINGS = {
 READING_FEATURE_HINTS = {
     "WATER_HEATER": "a domestic hot water heater: set io_device_type: domestic_hot_water",
     "HOT_WATER_REGISTERS_CALYPSO": "a domestic hot water heater with the Atlantic Calypso register map: set io_device_type: domestic_hot_water",
+    "HOT_WATER_REGISTERS_GUELMA": "an electric storage water heater: set io_device_type: domestic_hot_water, io_subtype: 0 and io_model: electric_water_heater",
     "CENTRAL_HEATING_MODE": "a towel dryer: set io_device_type: electrical_heater, io_subtype: 1 and io_model: towel_dryer",
     "OCCUPANCY": "a heater with occupancy detection: set io_device_type: electrical_heater, io_subtype: 1 and either no io_model (a radiator) or io_model: heater_with_light",
     "ENERGY_METER": "a heater that counts its energy: set io_device_type: electrical_heater, io_subtype: 1 and either no io_model (a radiator), io_model: towel_dryer or io_model: heater_with_light",
@@ -393,6 +407,7 @@ DEVICE_MODEL_OPTIONS = {
     "heater_with_light": 2,
     "pilot_wire_interface": 3,
     "explorer_v4": 4,
+    "electric_water_heater": 5,
 }
 
 # The capabilities of each row whose type has a YAML name, keyed "<name>" for subtype 0,
@@ -434,6 +449,7 @@ DEVICE_FEATURES = {
     "bioclimatic_pergola": frozenset({"LEVELS", "FAVORITE", "EXTENDED_POSITION_FRAME"}),
     "domestic_hot_water": frozenset({"WATER_HEATER", "HOT_WATER_TARGET_20_62", "HOT_WATER_BOOST_FP16", "HOT_WATER_AWAY_FP16", "HOT_WATER_REGISTERS_CALYPSO", "HOT_WATER_OPERATING_MODE_WORD"}),
     "domestic_hot_water/0/explorer_v4": frozenset({"WATER_HEATER", "HOT_WATER_TARGET_20_70", "HOT_WATER_BOOST_FP16_INVERTED", "HOT_WATER_AWAY_MAIN_PARAMETER", "HOT_WATER_REGISTERS_CALYPSO", "HOT_WATER_OPERATING_MODE_WORD"}),
+    "domestic_hot_water/0/electric_water_heater": frozenset({"WATER_HEATER", "HOT_WATER_TARGET_SHOWER_STEPS", "HOT_WATER_BOOST_FLAG", "HOT_WATER_AWAY_FLAG", "HOT_WATER_REGISTERS_GUELMA"}),
     "electrical_heater": frozenset({"REPORTS_HEATING_LEVEL"}),
     "electrical_heater/1": frozenset({"WINDOW_COMPANIONS", "OCCUPANCY", "ENERGY_METER"}),
     "electrical_heater/1/towel_dryer": frozenset({"CENTRAL_HEATING_MODE", "ENERGY_METER", "RUN_TIMERS", "REPORTS_HEATING_LEVEL"}),

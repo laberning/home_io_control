@@ -333,6 +333,68 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
                                              .value = DHW_CAPABILITY_AWAY},
                          .before = FixedRegisterWrite{.fn = DeviceRegister::DHW_AWAY_DURATION,
                                                       .value = DHW_AWAY_UNTIL_TURNED_OFF}}},
+    // A Sauter Guelma connecte, an electric storage water heater (pull request #248): its status reply carries nothing,
+    // so every row is a register and its poll sends no status read (ADR 0110). It shares the Calypso's water
+    // temperature, mode and energy registers, under rows of its own. Its mode register holds 0 in automatic mode and 2
+    // in manual mode, where only the element heats; it has no mode 1.
+    {.name = "hot_water_temperature_guelma",
+     .source = RegisterSource{.fn = DeviceRegister::DHW_WATER_TEMPERATURE},
+     .reading = DeviceReading::HOT_WATER_TEMPERATURE,
+     .poll = ReadingPoll::EVERY_POLL,
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_GUELMA},
+    {.name = "hot_water_mode_guelma",
+     .source = RegisterSource{.fn = DeviceRegister::DHW_MODE},
+     .reading = DeviceReading::HOT_WATER_MODE,
+     .poll = ReadingPoll::EVERY_POLL,
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_GUELMA,
+     .value_name = dhw_electric_mode_name,
+     .write = ValueWrite{RegisterWrite{DeviceRegister::DHW_MODE}}},
+    // The target is read from the temperature it heats to and written as a shower count, in manual mode only: in
+    // automatic mode the heater picks its own, and the count register would change the manual setting behind it. A
+    // target between two steps is refused (the default EXACT rounding), never rounded.
+    {.name = "hot_water_target_shower_steps",
+     .source = RegisterSource{.fn = DeviceRegister::DHW_ACTIVE_TARGET},
+     .reading = DeviceReading::HOT_WATER_TARGET,
+     .poll = ReadingPoll::EVERY_POLL,
+     .feature = DeviceFeature::HOT_WATER_TARGET_SHOWER_STEPS,
+     .write = ValueWrite{.target = RegisterWrite{DeviceRegister::DHW_MANUAL_SHOWERS},
+                         .guard = WriteGuard{.reading = DeviceReading::HOT_WATER_MODE,
+                                             .test = WriteGuardTest::EQUALS,
+                                             .value = static_cast<uint16_t>(DhwMode::MANUAL_ECO_OFF)}}},
+    // Boost and absence are flag registers, written and read directly. The heater refuses a boost in absence: the flag
+    // reads 0 back, which the entity shows.
+    {.name = "hot_water_boost_flag",
+     .source = RegisterSource{.fn = DeviceRegister::DHW_BOOST_FLAG},
+     .reading = DeviceReading::HOT_WATER_BOOST,
+     .poll = ReadingPoll::EVERY_POLL,
+     .feature = DeviceFeature::HOT_WATER_BOOST_FLAG,
+     .write = ValueWrite{RegisterWrite{DeviceRegister::DHW_BOOST_FLAG}}},
+    {.name = "hot_water_away_flag",
+     .source = RegisterSource{.fn = DeviceRegister::DHW_AWAY_FLAG},
+     .reading = DeviceReading::HOT_WATER_AWAY,
+     .poll = ReadingPoll::EVERY_POLL,
+     .feature = DeviceFeature::HOT_WATER_AWAY_FLAG,
+     .write = ValueWrite{RegisterWrite{DeviceRegister::DHW_AWAY_FLAG}}},
+    {.name = "hot_water_showers_available",
+     .source = RegisterSource{.fn = DeviceRegister::DHW_SHOWERS_AVAILABLE},
+     .reading = DeviceReading::HOT_WATER_SHOWERS_AVAILABLE,
+     .poll = ReadingPoll::EVERY_POLL,
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_GUELMA},
+    {.name = "hot_water_showers_target",
+     .source = RegisterSource{.fn = DeviceRegister::DHW_TARGET_SHOWERS},
+     .reading = DeviceReading::HOT_WATER_SHOWERS_TARGET,
+     .poll = ReadingPoll::EVERY_POLL,
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_GUELMA},
+    {.name = "hot_water_heating_power",
+     .source = RegisterSource{.fn = DeviceRegister::DHW_HEATING_POWER},
+     .reading = DeviceReading::HOT_WATER_HEATING_POWER,
+     .poll = ReadingPoll::EVERY_POLL,
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_GUELMA},
+    {.name = "hot_water_energy_guelma",
+     .source = RegisterSource{.fn = DeviceRegister::DHW_ENERGY},
+     .reading = DeviceReading::HOT_WATER_ENERGY,
+     .poll = ReadingPoll::EVERY_POLL,
+     .feature = DeviceFeature::HOT_WATER_REGISTERS_GUELMA},
     // A cover's readings. A YAML key of the cover declares each (the poll interval of the three read on a schedule,
     // `battery:` for the two of the status reply), so none needs a capability of the kind. The three read on a schedule
     // drop their value after repeated misses.
@@ -885,7 +947,10 @@ bool guard_allows(const IoDevice &dev, const WriteGuard &guard) {
 
 }  // namespace
 
-ValueWritePlan plan_value_write(const IoDevice &dev, const DeviceReadingRow &row, float value) {
+namespace {
+
+/// plan_value_write() before the value names are judged.
+ValueWritePlan plan_value_write_of_row(const IoDevice &dev, const DeviceReadingRow &row, float value) {
   if (!row.write)
     return {};
   const ValueWrite &write = *row.write;
@@ -946,6 +1011,20 @@ ValueWritePlan plan_value_write(const IoDevice &dev, const DeviceReadingRow &row
     default:
       plan.refusal = ValueWriteRefusal::UNENCODABLE;
       break;
+  }
+  return plan;
+}
+
+}  // namespace
+
+ValueWritePlan plan_value_write(const IoDevice &dev, const DeviceReadingRow &row, float value) {
+  ValueWritePlan plan = plan_value_write_of_row(dev, row, value);
+  // A named reading takes only the values its row names, after every other rule has accepted it: a heater's mode row
+  // names the modes that heater has.
+  if (plan.refusal == ValueWriteRefusal::NONE && row.value_name != nullptr &&
+      (!value_is_bounded_integer(value, UINT8_MAX) || row.value_name(static_cast<uint8_t>(value)) == nullptr)) {
+    plan = ValueWritePlan{};
+    plan.refusal = ValueWriteRefusal::UNNAMED;
   }
   return plan;
 }

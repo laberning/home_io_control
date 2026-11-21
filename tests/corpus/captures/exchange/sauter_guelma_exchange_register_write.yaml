@@ -1,0 +1,41 @@
+id: sauter_guelma_exchange_register_write
+description: >
+  The acknowledgements a Sauter Guelma connecte 80 L electric storage water heater sends to register writes
+  `0C 61 00 <index> <value>`. Each echoes the header and the value, and its display followed each write. Only the
+  answers were logged. The node IDs are remapped.
+source:
+  device: "Sauter Guelma connecte 80 L electric storage water heater"
+  captured_with: sx1262
+  firmware: "guelma-water-heater branch, diagnostic_probes: true"
+  date: 2026-11-18
+  origin: own-hardware
+  issue: null
+node_map:
+  hub: "C0FFEE"
+  device: "A1B2C3"
+key: unknown
+frames:
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 61 00 06 02"
+    crc: absent
+    note: "mode write, the display goes to manual"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 61 00 52 01"
+    crc: absent
+    note: "boost flag write, the display starts a boost"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 61 00 52 00"
+    crc: absent
+    note: "boost flag write, the display ends the boost"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 61 00 53 01"
+    crc: absent
+    note: "absence flag write, the display goes to absence"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 61 00 53 00"
+    crc: absent
+    note: "absence flag write, the display leaves absence"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 61 00 48 03"
+    crc: absent
+    note: "manual showers write, the display goes to three showers"

@@ -80,16 +80,19 @@ TEST(HeatingWriteRule, TheWaterHeaterRegistersFollowTheSameRule) {
 }
 
 TEST(HeatingWriteRule, OnlyTheModeRegisterHasAHoleInTheWholeNumbersItAccepts) {
-  // A register with no refusal predicate and no range takes one unbroken run of whole numbers from 0.
+  // A register with no refusal predicate and no range takes one unbroken run of whole numbers: from 0, or from the
+  // first knot of its scale (a water heater's shower count, shown as 50 to 70 degrees).
   for (const DeviceRegister fn : all_functions()) {
     if (!device_register_is_writable(fn) || heating_write_range(fn).has_value())
       continue;
+    bool started = false;
     bool ended = false;
     bool hole = false;
     for (int whole = 0; whole <= 300; whole++) {
       const bool accepted = heating_write_accepts(fn, static_cast<float>(whole));
       hole = hole || (accepted && ended);
-      ended = ended || !accepted;
+      started = started || accepted;
+      ended = ended || (started && !accepted);
     }
     EXPECT_EQ(hole, fn == DeviceRegister::OPERATING_MODE) << device_register_name(fn);
   }

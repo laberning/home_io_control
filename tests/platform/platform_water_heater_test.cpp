@@ -104,21 +104,39 @@ void publish(MockHubWaterHeater &hub, const test::WaterHeaterValues &readings) {
 
 // === Mode mapping ===
 
-TEST(PlatformWaterHeater, TheThreeHeaterModesMapBothWays) {
-  EXPECT_EQ(water_heater_mode_for(DhwMode::AUTO), WATER_HEATER_MODE_ECO);
-  EXPECT_EQ(water_heater_mode_for(DhwMode::MANUAL_ECO_ON), WATER_HEATER_MODE_HEAT_PUMP);
-  EXPECT_EQ(water_heater_mode_for(DhwMode::MANUAL_ECO_OFF), WATER_HEATER_MODE_PERFORMANCE);
+TEST(PlatformWaterHeater, EachModeNameMapsToTheEsphomeModeOfWhatHeats) {
+  EXPECT_EQ(water_heater_mode_named("auto"), WATER_HEATER_MODE_ECO);
+  EXPECT_EQ(water_heater_mode_named("manual eco on"), WATER_HEATER_MODE_HEAT_PUMP);
+  EXPECT_EQ(water_heater_mode_named("manual eco off"), WATER_HEATER_MODE_PERFORMANCE);
+  EXPECT_EQ(water_heater_mode_named("manual electric"), WATER_HEATER_MODE_ELECTRIC);
+  EXPECT_FALSE(water_heater_mode_named(nullptr).has_value());
+  EXPECT_FALSE(water_heater_mode_named("off").has_value());
+}
+
+TEST(PlatformWaterHeater, TheThreeModesOfAHeatPumpHeaterMapBothWays) {
+  const DhwModeNames names = [](DhwMode m) { return dhw_mode_name(static_cast<uint8_t>(m)); };
   for (const DhwMode mode : {DhwMode::AUTO, DhwMode::MANUAL_ECO_ON, DhwMode::MANUAL_ECO_OFF}) {
     DhwMode back = DhwMode::AUTO;
-    ASSERT_TRUE(dhw_mode_for(water_heater_mode_for(mode), back));
+    ASSERT_TRUE(dhw_mode_for(*water_heater_mode_named(names(mode)), names, back));
     EXPECT_EQ(back, mode);
   }
   DhwMode untouched = DhwMode::MANUAL_ECO_ON;
   for (const WaterHeaterMode mode :
        {WATER_HEATER_MODE_OFF, WATER_HEATER_MODE_ELECTRIC, WATER_HEATER_MODE_HIGH_DEMAND, WATER_HEATER_MODE_GAS}) {
-    EXPECT_FALSE(dhw_mode_for(mode, untouched)) << static_cast<unsigned>(mode);
+    EXPECT_FALSE(dhw_mode_for(mode, names, untouched)) << static_cast<unsigned>(mode);
   }
   EXPECT_EQ(untouched, DhwMode::MANUAL_ECO_ON);
+}
+
+TEST(PlatformWaterHeater, AnElectricStorageHeaterHasEcoAndElectricOnly) {
+  const DhwModeNames names = [](DhwMode m) { return dhw_electric_mode_name(static_cast<uint8_t>(m)); };
+  DhwMode out = DhwMode::MANUAL_ECO_ON;
+  ASSERT_TRUE(dhw_mode_for(WATER_HEATER_MODE_ECO, names, out));
+  EXPECT_EQ(out, DhwMode::AUTO);
+  ASSERT_TRUE(dhw_mode_for(WATER_HEATER_MODE_ELECTRIC, names, out));
+  EXPECT_EQ(out, DhwMode::MANUAL_ECO_OFF);
+  EXPECT_FALSE(dhw_mode_for(WATER_HEATER_MODE_HEAT_PUMP, names, out)) << "it has no heat pump";
+  EXPECT_FALSE(dhw_mode_for(WATER_HEATER_MODE_PERFORMANCE, names, out));
 }
 
 // === Traits and setup ===
@@ -141,6 +159,38 @@ TEST(PlatformWaterHeater, TraitsOfferTheReadingsTheThreeModesAndTheHeatersRange)
   EXPECT_TRUE(traits.supports_mode(WATER_HEATER_MODE_ECO));
   EXPECT_TRUE(traits.supports_mode(WATER_HEATER_MODE_PERFORMANCE));
   EXPECT_FALSE(traits.supports_mode(WATER_HEATER_MODE_OFF));
+}
+
+TEST(PlatformWaterHeater, AnElectricStorageHeatersCardOffersEcoAndElectricOnly) {
+  MockHubWaterHeater hub;
+  hub.water_heater_mode_names = dhw_electric_mode_name;  // the names of its mode row
+  IOHomeWaterHeater entity;
+  bind_water_heater(entity, hub);
+  const WaterHeaterTraits traits = entity.get_traits();
+  EXPECT_TRUE(traits.supports_mode(WATER_HEATER_MODE_ECO));
+  EXPECT_TRUE(traits.supports_mode(WATER_HEATER_MODE_ELECTRIC));
+  EXPECT_FALSE(traits.supports_mode(WATER_HEATER_MODE_HEAT_PUMP)) << "it has no heat pump";
+  EXPECT_FALSE(traits.supports_mode(WATER_HEATER_MODE_PERFORMANCE));
+}
+
+TEST(PlatformWaterHeater, AnElectricStorageHeatersManualModeIsShownAndWrittenAsElectric) {
+  MockHubWaterHeater hub;
+  hub.water_heater_mode_names = dhw_electric_mode_name;
+  IOHomeWaterHeater entity;
+  entity.set_device_model(DeviceModel::ELECTRIC_WATER_HEATER);
+  bind_water_heater(entity, hub);
+
+  test::WaterHeaterValues readings;
+  readings.water_c = 39.8F;
+  readings.mode = static_cast<int16_t>(DhwMode::MANUAL_ECO_OFF);
+  publish(hub, readings);
+  EXPECT_EQ(entity.get_mode(), WATER_HEATER_MODE_ELECTRIC);
+
+  auto call = entity.make_call();
+  call.set_mode(WATER_HEATER_MODE_ECO);
+  call.perform();
+  ASSERT_EQ(hub.water_heater_modes.size(), 1u);
+  EXPECT_EQ(hub.water_heater_modes[0], DhwMode::AUTO);
 }
 
 TEST(PlatformWaterHeater, TheCardsRangeFollowsTheRangeOfTheHeatersTargetRow) {

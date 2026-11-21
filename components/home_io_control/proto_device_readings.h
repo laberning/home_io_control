@@ -120,6 +120,9 @@ enum class DeviceReading : uint8_t {
   HEAT_PUMP_HEATING_ENERGY,    ///< The energy an Atlantic heat pump has counted for heating, whole kWh.
   HEAT_PUMP_HOT_WATER_ENERGY,  ///< The energy an Atlantic heat pump has counted for hot water, whole kWh.
   HEAT_PUMP_OUTDOOR_TEMPERATURE,  ///< The outdoor temperature an Atlantic heat pump measures, degrees.
+  HOT_WATER_HEATING_POWER,        ///< The power an electric storage water heater draws now, watts.
+  HOT_WATER_SHOWERS_AVAILABLE,    ///< The showers of hot water an electric storage water heater holds now.
+  HOT_WATER_SHOWERS_TARGET,       ///< The showers an electric storage water heater heats for.
   COUNT,                          ///< Number of readings; not a reading.
 };
 
@@ -623,6 +626,7 @@ enum class ValueWriteRefusal : uint8_t {
   REGISTER_RULE,  ///< The register's own rule refuses the value (heating_write_accepts()).
   OFF_STEP,       ///< A value between the steps of a stepped target under RoundingPolicy::EXACT.
   GUARD,          ///< The guard's reading has been read and fails the guard.
+  UNNAMED,        ///< A named reading's value that the row's value names do not name (a mode the heater lacks).
 };
 
 /// @brief What writing a value to a reading is: nothing, a register write, or an EXECUTE.

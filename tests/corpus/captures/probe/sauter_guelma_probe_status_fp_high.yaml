@@ -1,0 +1,25 @@
+id: sauter_guelma_probe_status_fp_high
+description: >
+  A Sauter Guelma connecte 80 L electric storage water heater answering the status probes. The main parameter reads 0
+  and FP15 and FP16 read FFFF in every display state, so its status reply holds no target and no operating-mode word.
+  The node IDs are remapped.
+source:
+  device: "Sauter Guelma connecte 80 L electric storage water heater"
+  captured_with: sx1262
+  firmware: "guelma-water-heater branch, diagnostic_probes: true"
+  date: 2026-11-18
+  origin: own-hardware
+  issue: null
+node_map:
+  hub: "C0FFEE"
+  device: "A1B2C3"
+key: unknown
+frames:
+  - dir: rx
+    hex: "94 00 C0 FF EE A1 B2 C3 04 04 00 00 00 00 43 00 00 FF FF FF FF"
+    crc: absent
+    note: "status_fp_high index 43, the same answer in AUTO, manual and absence"
+  - dir: rx
+    hex: "8E 00 C0 FF EE A1 B2 C3 04 2C 00 00 00 00 00"
+    crc: absent
+    note: "status_mp_fp, display AUTO"

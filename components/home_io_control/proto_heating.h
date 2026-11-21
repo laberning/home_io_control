@@ -168,6 +168,26 @@ enum class DeviceRegister : uint8_t {
                            ///< total to the kWh, and rose while the heat pump ran.
   DHW_BRAND,               ///< Family 0x00, register 0x07, read-only: one ASCII letter naming the brand (`41` =
                            ///< 'A' on the Calypso).
+  DHW_HEATING_POWER,       ///< Family 0x00, register 0x32, read-only: the power an electric storage water heater
+                           ///< draws now, watts, 16-bit big-endian: 0 at rest, 1000, 1500 and 2250 on a Sauter
+                           ///< Guelma, which an energy meter on its supply confirmed (corpus
+                           ///< `sauter_guelma_exchange_register_read`).
+  DHW_SHOWERS_AVAILABLE,   ///< Family 0x00, register 0x46, read-only: the showers of hot water a Sauter Guelma
+                           ///< holds now, one byte; the steady showers of its display.
+  DHW_MANUAL_SHOWERS,      ///< Family 0x00, register 0x48, read/write: the showers a Sauter Guelma heats for in
+                           ///< manual mode, one byte from 2 to 4, which its display shows as 50, 60 and 70 C.
+                           ///< Writing 3 set the display to three showers (ADR 0110: the target written in steps).
+  DHW_ACTIVE_TARGET,       ///< Family 0x00, register 0x49, read-only: the temperature a Sauter Guelma heats to,
+                           ///< signed big-endian tenths of a degree: 42.0 and 61.0 in automatic mode, 50.0, 60.0
+                           ///< and 70.0 for 2, 3 and 4 showers in manual mode, 7.0 in absence.
+  DHW_TARGET_SHOWERS,      ///< Family 0x00, register 0x4A, read-only: the showers a Sauter Guelma heats for, one
+                           ///< byte, 0 in absence; the showers that blink on its display are this less the
+                           ///< available ones.
+  DHW_BOOST_FLAG,          ///< Family 0x00, register 0x52, read/write: a Sauter Guelma's boost, 0 or 1. Writing 1
+                           ///< starts a boost and 0 ends it; the heater ends it by itself too, and refuses one in
+                           ///< absence (the flag reads 0 back).
+  DHW_AWAY_FLAG,           ///< Family 0x00, register 0x53, read/write: a Sauter Guelma's absence, 0 or 1, written
+                           ///< and read as the boost flag is.
   COUNT,                   ///< Not a function: the number of registers, for a table or loop over all of them.
 };
 

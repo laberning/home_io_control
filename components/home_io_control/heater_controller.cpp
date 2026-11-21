@@ -599,6 +599,12 @@ std::optional<float> HeaterController::water_heater_target_step(const std::strin
   return row != nullptr ? value_write_step(*row) : std::nullopt;
 }
 
+const char *HeaterController::water_heater_mode_name(const std::string &device_id, DhwMode mode) const {
+  const IoDevice *dev = this->registry_.get(device_id);
+  const DeviceReadingRow *row = dev != nullptr ? device_reading_row(*dev, DeviceReading::HOT_WATER_MODE) : nullptr;
+  return row != nullptr && row->value_name != nullptr ? row->value_name(static_cast<uint8_t>(mode)) : nullptr;
+}
+
 bool HeaterController::execute_dhw_(const std::string &device_id, const char *action,
                                     const HeaterExecuteBuildFn &build) {
   // The bare execute operation and not the cover-shaped funnel: a water heater never moves, so the

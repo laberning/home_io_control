@@ -167,7 +167,7 @@ TEST(FeatureGroups, EveryProductionWaterHeaterTargetRowIsGatedByAMemberOfItsGrou
     ASSERT_TRUE(row.feature.has_value()) << row.name;
     EXPECT_EQ(group_member_count(*row.feature, FEATURE_GROUPS[0]), 1u) << row.name;
   }
-  EXPECT_EQ(rows, 2u) << "the Calypso's and the Explorer V4's";
+  EXPECT_EQ(rows, 3u) << "the Calypso's, the Explorer V4's and the Sauter Guelma's";
   EXPECT_EQ(find_device_reading(DeviceReading::HOT_WATER_TARGET)->feature, DeviceFeature::HOT_WATER_TARGET_20_62)
       << "the first row is the Calypso's";
 }

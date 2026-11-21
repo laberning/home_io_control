@@ -294,7 +294,7 @@ struct StopCandidate {
 ///          A value that is stored is no longer absent; a reading found absent holds no value. Every reading read
 ///          through reading_value() is held here, whichever source filled it.
 struct DeviceReadingValues {
-  static constexpr size_t SLOTS = 48;  ///< Number of readings the store can hold.
+  static constexpr size_t SLOTS = 52;  ///< Number of readings the store can hold.
 
   /// @brief Keep a value; the slot is no longer absent. A NaN is a value too (a sensor the device reports as faulty).
   void store(size_t slot, float value) {
