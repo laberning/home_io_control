@@ -39,7 +39,7 @@ static constexpr uint32_t ONEWAY_QUIET_PERIOD_MS = 700;
 /// without meaningfully affecting normal operation.
 static constexpr uint32_t ONEWAY_POLL_DEFER_CAP_MS = 5000;
 /// Suppress a repeated 1W log/poll for the same remote *and the same intent* within this window.
-/// Wide on purpose: it collapses the 4×/40ms reliability burst into one logical press. A frame that
+/// Wide on purpose: it collapses the 4× reliability burst into one logical press. A frame that
 /// carries a rolling sequence to the same destination is a repeat only when the sequence is the same,
 /// so two quick presses are two; any other frame (a private beacon, a discovery sweep, one trigger
 /// swept across device classes) is a repeat when sender, command, intent or destination and time

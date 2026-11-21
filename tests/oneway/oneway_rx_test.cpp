@@ -267,7 +267,7 @@ TEST(OnewayRx, RemoteButtonEvent_BurstOfFourYieldsOneEvent) {
   IoFrame frame = make_1w_execute(0xC8, 0x00);
   RadioRxPacket pkt = make_rx_packet(frame);
 
-  // 1W remotes repeat each command 4x at 40ms intervals; the existing dedup window (2s)
+  // 1W remotes repeat each command 4x, a few milliseconds apart; the existing dedup window (2s)
   // collapses this into a single logical press, so the event must fire only once.
   for (int i = 0; i < 4; i++)
     comp.process_received_packet_(pkt);

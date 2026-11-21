@@ -243,7 +243,7 @@ TEST(Exchange, LbtFailedSendIsNotRetried) {
 // A one-way burst through the real send path. Every copy opens a session (CTRL0 START), so every copy gets the
 // listen-before-talk check of a fixed-channel sender: up to LBT_MAX_RETRIES checks LBT_RETRY_DELAY_MS apart, then
 // the copy goes out regardless. A busy channel delays a copy by at most the sum of its checks and never drops it;
-// the gap of the burst (ONEWAY_BURST_INTERVAL_MS) comes on top.
+// the burst itself adds no wait between copies.
 // ============================================================================
 
 namespace {
@@ -310,9 +310,8 @@ TEST(OneWayBurstSendPath, ABusyChannelBeforeTheSecondCopyDelaysThatCopyOnceAndLo
   EXPECT_EQ(rig.comp.exchange_engine_.counters().lbt_retries, 1u);
   ASSERT_EQ(rig.observer.lbt_defers.size(), 1u);
   EXPECT_EQ(rig.observer.lbt_defers[0], -50);
-  // gap, gap + one back-off before copy 2's second check, gap: the back-off sits inside the second copy's wait.
-  const std::vector<uint32_t> expected_delays = {ONEWAY_BURST_INTERVAL_MS, LBT_RETRY_DELAY_MS, ONEWAY_BURST_INTERVAL_MS,
-                                                 ONEWAY_BURST_INTERVAL_MS};
+  // No wait between copies: the only delay is the one back-off before copy 2's second check.
+  const std::vector<uint32_t> expected_delays = {LBT_RETRY_DELAY_MS};
   EXPECT_EQ(esphome::test_hal::recorded_delays(), expected_delays);
   for (const auto &tx_config : rig.radio.get_tx_configs())
     EXPECT_TRUE(tx_config.cca_threshold_dbm.has_value()) << "the copy that went out after the back-off was checked";
@@ -330,9 +329,8 @@ TEST(OneWayBurstSendPath, AChannelThatStaysBusyDelaysEachCopyByAllItsChecksThenS
   ASSERT_EQ(rig.radio.get_tx_configs().size(), ONEWAY_BURST_REPEATS);
   for (const auto &tx_config : rig.radio.get_tx_configs())
     EXPECT_FALSE(tx_config.cca_threshold_dbm.has_value()) << "the send after the last check is not checked again";
-  // At most 25 ms per copy on top of the three gaps of the burst.
-  EXPECT_EQ(total_delay_ms(), (ONEWAY_BURST_REPEATS - 1) * ONEWAY_BURST_INTERVAL_MS +
-                                  ONEWAY_BURST_REPEATS * checks_per_copy * LBT_RETRY_DELAY_MS);
+  // At most 25 ms per copy, and nothing between copies.
+  EXPECT_EQ(total_delay_ms(), ONEWAY_BURST_REPEATS * checks_per_copy * LBT_RETRY_DELAY_MS);
 }
 
 TEST(OneWayBurstSendPath, ACopyTheRadioFailsIsNotRetriedAndTheNextCopyStillGoesOut) {

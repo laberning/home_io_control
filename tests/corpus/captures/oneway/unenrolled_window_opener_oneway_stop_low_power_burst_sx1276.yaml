@@ -5,7 +5,7 @@ description: >
   hub's TX log. Board: Heltec WiFi LoRa 32 V2 (sx1276). Shape: `low_power: true`: the wake-up preamble and the low-power flag on copy 1, three short copies. The build used the public corpus key as its system key, so
   every MAC verifies under it and the bytes are exactly what was on the air. Measured: 4 copies, all on channel 2
   (868.95 MHz); preambles 266.8, 10.2, 10.2, 10.2 ms; gap from the end of one copy to the start of the
-  next 47.0, 46.5, 46.8 ms (the code waits ONEWAY_BURST_INTERVAL_MS = 40 ms plus the busy check
+  next 47.0, 46.5, 46.8 ms (the measured build waited 40 ms between copies, on top of the busy check
   and transmit setup).
 source:
   device: "Own hub (Heltec WiFi LoRa 32 V2), 1W STOP to an unenrolled window_opener-class address, SDR on-air capture"

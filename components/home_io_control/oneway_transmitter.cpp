@@ -332,12 +332,9 @@ bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_
 
   uint8_t sent = 0;
   for (uint8_t copy = 0; copy < ONEWAY_BURST_REPEATS; copy++) {
-    if (copy > 0) {
-      // The gap is part of the protocol, so it is taken before the copy rather than after the
-      // last one — a trailing delay would hold the loop for nothing.
-      App.feed_wdt();
-      delay(ONEWAY_BURST_INTERVAL_MS);
-    }
+    // No wait between copies, as a real remote sends them; only the channel check inside
+    // transmit_ (ADR 0096) can delay one. The watchdog is fed per copy, as the burst blocks.
+    App.feed_wdt();
     // The transmitter owns CTRL1's low-power bit and the preamble, per copy -- the frame builders
     // always hand back ctrl1=0 (proto_commands.cpp), and this clears the bit unconditionally on a
     // NORMAL-shaped copy too, whatever the builder produced. Everything else about the copy

@@ -24,7 +24,7 @@ namespace decisions {
 
 /// @brief Key fields of the last processed 1W frame, used to collapse a remote's repeat burst.
 ///
-/// 1W remotes repeat each command 4× at ~40ms intervals for reliability, and a held button keeps
+/// 1W remotes repeat each command 4×, a few milliseconds apart, for reliability, and a held button keeps
 /// resending, so one logical press arrives as many identical frames. The key deliberately includes
 /// the decoded intent bytes and not just the command byte: a move and a stop are *both*
 /// CMD_EXECUTE and differ only in `main0`, so a command-only key silently discards a stop that

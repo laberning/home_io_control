@@ -97,7 +97,7 @@ TEST(Decisions, OneWayDedupSuppressesIdenticalRepeatInsideWindow) {
   const auto repeat = dedup_state("AABBCC", CMD_EXECUTE, true, 0xC8, 1040);
 
   EXPECT_TRUE(decisions::is_duplicate_1w_frame(last, repeat, DEDUP_WINDOW_MS))
-      << "the 4x/40ms reliability burst must collapse into one logical press";
+      << "the 4x reliability burst must collapse into one logical press";
 }
 
 TEST(Decisions, OneWayDedupAllowsIdenticalRepeatAfterWindow) {

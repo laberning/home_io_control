@@ -5,7 +5,7 @@ description: >
   hub's TX log. Board: LilyGO T3-S3 LR1121 (lr1121). Shape: the Somfy profile's default shape (no `low_power:` set): the wake-up preamble on every copy. The build used the public corpus key as its system key, so
   every MAC verifies under it and the bytes are exactly what was on the air. Measured: 4 copies, all on channel 2
   (868.95 MHz); preambles 213.4, 213.4, 213.4, 213.4 ms; gap from the end of one copy to the start of the
-  next 50.6, 50.2, 50.4 ms (the code waits ONEWAY_BURST_INTERVAL_MS = 40 ms plus the busy check
+  next 50.6, 50.2, 50.4 ms (the measured build waited 40 ms between copies, on top of the busy check
   and transmit setup).
 source:
   device: "Own hub (LilyGO T3-S3 LR1121), 1W STOP to an unenrolled window_opener-class address, SDR on-air capture"

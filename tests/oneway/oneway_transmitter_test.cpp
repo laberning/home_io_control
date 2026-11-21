@@ -119,23 +119,10 @@ TEST_F(OneWayTransmitterTest, EveryCopyIsByteIdenticalExceptCtrl1) {
   }
 }
 
-TEST_F(OneWayTransmitterTest, SpacesCopiesByTheProtocolInterval) {
-  TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
-
-  transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER);
-
-  const auto &delays = esphome::test_hal::recorded_delays();
-  ASSERT_EQ(delays.size(), static_cast<size_t>(ONEWAY_BURST_REPEATS - 1))
-      << "gaps go between copies, so there is one fewer of them than there are frames — a "
-         "trailing delay would hold the loop for nothing";
-  for (const uint32_t gap : delays)
-    EXPECT_EQ(gap, ONEWAY_BURST_INTERVAL_MS) << "the inter-copy gap is a protocol value, not a tunable";
-}
-
-TEST_F(OneWayTransmitterTest, GapCountIsUnchangedAcrossEveryPowerClass) {
-  // The power class changes preamble/CTRL1 per copy, never the cadence -- pin the gap count for
-  // both classes so a future change cannot collapse it for one of them.
+TEST_F(OneWayTransmitterTest, SendsTheCopiesBackToBackWithoutAWaitBetweenThem) {
+  // A real remote sends its copies 4 to 7 ms apart (corpus somfy_smoove_oneway_short_press_on_air),
+  // so the burst inserts no delay of its own; only the channel check of the transmit path can wait.
+  // Pinned for both power classes, so neither can regain a gap.
   for (const OneWayPowerClass power_class : {OneWayPowerClass::ALWAYS_ALIVE, OneWayPowerClass::LOW_POWER}) {
     esphome::test_hal::reset_delays();
     TransmitRecorder recorder;
@@ -143,8 +130,8 @@ TEST_F(OneWayTransmitterTest, GapCountIsUnchangedAcrossEveryPowerClass) {
 
     transmitter.send_burst(make_stop_frame(), power_class);
 
-    EXPECT_EQ(esphome::test_hal::recorded_delays().size(), static_cast<size_t>(ONEWAY_BURST_REPEATS - 1))
-        << "power class " << static_cast<int>(power_class);
+    EXPECT_EQ(recorder.sent.size(), ONEWAY_BURST_REPEATS) << "power class " << static_cast<int>(power_class);
+    EXPECT_TRUE(esphome::test_hal::recorded_delays().empty()) << "power class " << static_cast<int>(power_class);
   }
 }
 
@@ -202,16 +189,16 @@ TEST_F(OneWayTransmitterTest, ReportsFailureWhenNothingGetsOut) {
   EXPECT_EQ(recorder.attempts, ONEWAY_BURST_REPEATS);
 }
 
-TEST_F(OneWayTransmitterTest, KeepsItsCadenceWhenEveryCopyIsRefused) {
-  // The gaps go before each copy after the first, so refused copies do not shorten the burst.
+TEST_F(OneWayTransmitterTest, StillTriesEveryCopyWhenEveryCopyIsRefused) {
+  // Refused copies do not shorten the burst, and a refusal adds no wait of its own.
   TransmitRecorder recorder;
   recorder.default_result = false;
   OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
-  transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER);
+  EXPECT_FALSE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER));
 
-  EXPECT_EQ(esphome::test_hal::recorded_delays().size(), static_cast<size_t>(ONEWAY_BURST_REPEATS - 1))
-      << "the cadence must not collapse when transmits fail";
+  EXPECT_EQ(recorder.attempts, ONEWAY_BURST_REPEATS);
+  EXPECT_TRUE(esphome::test_hal::recorded_delays().empty());
 }
 
 // ============================================================================

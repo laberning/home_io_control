@@ -133,7 +133,7 @@ Every command goes out as one burst. Most of the burst is fixed; two settings ch
 | Fixed for every identity | Value |
 |---|---|
 | Copies per command | 4, all with the same sequence and signature: a device counts one sequence as one command |
-| Gap between copies | 40 ms of waiting; on the air the next copy starts about 47 ms (SX1276) to 50 ms (SX1262, LR1121) after the previous one ends, because the channel check and the transmit setup come on top |
+| Gap between copies | No deliberate wait: the next copy starts 6 to 13 ms after the previous one ends (about 7 ms on the SX1276, about 10 ms on the SX1262 and LR1121), the time of the channel check and the transmit setup, measured on the air. A real remote sends its copies 4 to 7 ms apart (`tests/corpus/captures/oneway/somfy_smoove_oneway_short_press_on_air.yaml`) |
 | Channel | 868.95 MHz (channel 2) |
 | Wake-up preamble, where a copy has one | `low_power: true`: `low_power_wake_ms`, 515 ms by default on every radio ([ADR 0115](../adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md), [ADR 0118](../adr/0118-the-wake-up-preamble-defaults-to-515-ms.md)) |
 | Channel check | Before every copy the radio listens for up to 25 ms and sends anyway after that |
@@ -147,23 +147,22 @@ burst runs the hub sends and receives nothing else, so one command holds the rad
 
 | Shape | You get it with | SX1262, LR1121 | SX1276 |
 |---|---|---|---|
-| Wake-up on the first copy, short on the other three | `low_power: true`, or unset with any `manufacturer:` but `velux` | about 0.72 s | about 0.72 s |
-| Short preamble on all four copies | `low_power: false`, or unset with `manufacturer: velux` | about 0.2 s | about 0.2 s |
+| Wake-up on the first copy, short on the other three | `low_power: true`, or unset with any `manufacturer:` but `velux` | about 0.6 s | about 0.6 s |
+| Short preamble on all four copies | `low_power: false`, or unset with `manufacturer: velux` | about 0.1 s | about 0.1 s |
 
 On the one-way channel the EU rules allow 3.6 s of transmission an hour. The transmitter is on for
-about 0.58 s of a command in the first shape and about 0.07 s in the second (the gaps between copies
-do not count), so about six commands of the first shape fit in an hour, or about fifty of the second. A Somfy Izymo dimmer obeyed 50 of 50 commands in
-each shape on an SX1276, two SX1262 and an LR1121 board, so a mains-powered Somfy receiver does not
+about 0.58 s of a command in the first shape and about 0.07 s in the second (the short gaps between
+copies do not count), so about six commands of the first shape fit in an hour, or about fifty of the second. A Somfy Izymo dimmer obeyed 50 of 50 commands in
+each shape, copies back to back, on an SX1276, two SX1262 and an LR1121 board ([ADR 0121](../adr/0121-one-way-copies-go-out-back-to-back.md)), so a mains-powered Somfy receiver does not
 need the wake-up copy; a battery-powered one does, and `low_power: false` is for the receiver you know
 is mains-powered ([ADR 0119](../adr/0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md)).
 
-The copies, gaps, channel and preamble lengths in the first table and the durations in this one
-come from the air: each shape, sent by an SX1276, an SX1262 and an LR1121 board and captured with
-an SDR on all three channels, is in
-`tests/corpus/captures/oneway/unenrolled_window_opener_oneway_stop_{low_power,short}_burst_{sx1276,sx1262,lr1121}.yaml`
-(the SX1276 duration of the short shape also in issue #74). The `low_power` captures there carry a
-1024-byte wake-up (about 213 ms, 267 ms on the SX1276), so the `low_power: true` figures above are their
-copies and gaps with the 515 ms wake-up in its place. Only the first copy of a
+The copies, channel and preamble lengths in the first table come from the air: each shape, sent by
+an SX1276, an SX1262 and an LR1121 board and captured with an SDR on all three channels, is in
+`tests/corpus/captures/oneway/unenrolled_window_opener_oneway_stop_{low_power,short}_burst_{sx1276,sx1262,lr1121}.yaml`.
+The hub that sent those captures waited 40 ms between copies and used a 1024-byte wake-up (about
+213 ms, 267 ms on the SX1276). The gaps and the 515 ms wake-up of the current hub were measured with
+the same SDR set-up on all four boards; they are not in the corpus. Only the first copy of a
 `low_power: true` burst carries the low-power flag. An enrollment sends two bursts (Somfy) or six
 (VELUX), so it holds the radio for about that many times longer.
 
@@ -198,8 +197,8 @@ not a protocol problem.
 The press sends two bursts back to back — `0x39` (remove; carries only this identity's own
 address, so it can never touch a different controller's entry), immediately followed by `0x30`
 (the credential itself), 4 copies each. With the Somfy default
-(`low_power` unset) the first copy of each burst carries the wake-up preamble, so a burst takes about 0.72 s
-and the whole press about 1.5 s; with `low_power: false` the press takes about 0.4 s.
+(`low_power` unset) the first copy of each burst carries the wake-up preamble, so a burst takes about 0.6 s
+and the whole press about 1.2 s; with `low_power: false` the press takes about 0.2 s.
 Press Enroll soon after the receiver confirms its association mode, not at the end of its window.
 This is the documented 1W pairing handshake (a real Somfy Smoove remote does exactly this,
 corpus-captured), not two independent actions. For Somfy, both bursts go to the all-devices address
@@ -260,9 +259,8 @@ a control that drives only that product.
 
 Set `io_device_type:` to whatever the device actually is (it drives the control-frame destination).
 The enroll gesture ignores `io_device_type` and uses the enrollment classes. At the short preamble —
-which `manufacturer: velux` gives you by default — the Enroll button blocks for about 1.2 seconds;
-with `low_power: true` for about 4.3 seconds (six bursts of about 0.72 s). The short figure was
-measured on an SX1276.
+which `manufacturer: velux` gives you by default — the Enroll button blocks for about 0.6 seconds;
+with `low_power: true` for about 3.6 seconds (six bursts of about 0.6 s).
 
 ```yaml
 oneway_controllers:

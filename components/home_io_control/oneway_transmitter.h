@@ -176,7 +176,7 @@ class OneWayTransmitter {
 
   /// @brief Transmit one already-built, already-signed 1W frame as a burst.
   ///
-  /// Sends the frame ONEWAY_BURST_REPEATS times, ONEWAY_BURST_INTERVAL_MS apart, on FREQ_CH2.
+  /// Sends the frame ONEWAY_BURST_REPEATS times, back to back, on FREQ_CH2.
   /// `power_class` decides each copy's preamble and CTRL1 via oneway_burst_copy_shape() (ADR 0038);
   /// a required parameter, never defaulted — a default here would silently reintroduce a
   /// hard-coded preamble at a new call site, exactly the mistake ADR 0029 records.
@@ -191,12 +191,14 @@ class OneWayTransmitter {
   /// is safe because the 1W MAC span covers only cmd+data (never CTRL1) and the CRC is computed
   /// per transmission by the driver, so neither authenticates or depends on CTRL1.
   ///
-  /// **It blocks for the whole burst**, feeding the watchdog in the gaps. The three inter-copy
-  /// gaps alone are 3 * ONEWAY_BURST_INTERVAL_MS = ~120 ms of pure delay; how much airtime the
-  /// four copies themselves add depends on `power_class`: `ALWAYS_ALIVE` puts the live
-  /// `start_preamble_ms` on every copy, ≈200 ms per burst (measured on SX1276, issue #74);
-  /// `LOW_POWER` adds one wake-up copy of `low_power_wake_ms` in front of three normal ones, ≈0.72 s
-  /// with the default 515 ms wake-up on every radio (ADR 0115, ADR 0118, ADR 0119). Per ADR 0013 all radio work happens
+  /// **It blocks for the whole burst**, feeding the watchdog before each copy. There is no wait between copies, as a
+  /// real remote sends them (4 to 7 ms apart, corpus somfy_smoove_oneway_short_press_on_air); a copy follows the
+  /// previous one after the channel check of the transmit path (ADR 0096) and the radio's transmit
+  /// setup, 6 to 13 ms on air, three such gaps per burst (measured; see ONEWAY_BURST_REPEATS). The copies' own
+  /// airtime depends on `power_class`: `ALWAYS_ALIVE` puts the live `start_preamble_ms` on every copy, about 0.1 s per
+  /// burst; `LOW_POWER` adds one wake-up copy of `low_power_wake_ms` in front of three normal ones,
+  /// about 0.6 s with the default 515 ms wake-up on every radio (ADR 0115, ADR 0118, ADR 0119).
+  /// A busy channel adds up to 25 ms per copy. Per ADR 0013 all radio work happens
   /// on the ESPHome loop and the operation queue is the concurrency model; an authenticated 2W exchange already blocks
   /// far longer than this. Scheduling the repeats through a timeout would add a second concurrency model and would let
   /// a queued 2W exchange interleave between copies of one command.
@@ -236,12 +238,11 @@ class OneWayTransmitter {
   /// both use the no-MAC form, and a bench run on a Somfy Izymo did not take the MAC-bearing one. The option needs an
   /// SX1262 or LR1121: the SX1276 cannot send the trailer, so the build rejects it there (ADR 0113).
   ///
-  /// **Blocks for the whole gesture** feeding the watchdog in the gaps. The VELUX path is 6 bursts
-  /// (`0x39` + 3-class `0x30` sweep + STOP + DOWN); with `low_power: true` each burst carries
-  /// the wake-up copy, ≈0.72 s per burst and ≈4.3 s in all; ~1.2 s with
-  /// `low_power: false` (ADR 0038, measured on SX1276 in issue #74). This is a user-initiated,
-  /// once-per-device action, the same shape as the pairing button (`pairing_discovery_wait_ms` →
-  /// 5000).
+  /// **Blocks for the whole gesture**, feeding the watchdog before each copy. The VELUX path is 6 bursts
+  /// (`0x39` + 3-class `0x30` sweep + STOP + DOWN), sent back to back; with `low_power: true` each burst
+  /// carries the wake-up copy, ≈0.6 s per burst and ≈3.6 s in all; ≈0.6 s with `low_power: false`
+  /// (ADR 0038). Both are send_burst()'s per-burst figures times six. This is a
+  /// user-initiated, once-per-device action, the same shape as the pairing button (`pairing_discovery_wait_ms` → 5000).
   /// @param controller_id YAML handle of the controller identity to register.
   /// @return true if the credential frame(s) that actually register this identity reached the
   ///         radio — the `0x30` (SOMFY) or the sweep (VELUX_KLI). The VELUX STOP+DOWN follow-up is

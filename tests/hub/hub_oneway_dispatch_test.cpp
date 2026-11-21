@@ -346,13 +346,18 @@ TEST_F(OneWayDispatchPolls, AUserCommandDoesNotWaitForTheQuietPeriodOfTheHubsOwn
 
 TEST_F(OneWayDispatchPolls, TheQuietPeriodCountsFromTheEndOfTheHubsOwnBurst) {
   // The activity is stamped when the burst has ended, so the quiet period counts from the last copy.
+  // The copies follow each other without a wait, so a busy channel is what makes the burst take
+  // time here: every check before every copy backs off, and start and end of the burst differ.
+  radio.set_rssi_default(-50);
   hub.send_oneway_command(CONTROLLER, CoverCommand::STOP);
   const uint32_t before = esphome::millis();
 
   hub.loop();
 
   const uint32_t burst_ms = esphome::millis() - before;
-  EXPECT_GE(burst_ms, (ONEWAY_BURST_REPEATS - 1) * ONEWAY_BURST_INTERVAL_MS) << "the copies are spaced by the gap";
+  ASSERT_GT(burst_ms, 0u)
+      << "the channel-check back-offs must make the burst take time, or the test cannot tell end from start";
+  radio.set_rssi_default(-100);
   ASSERT_TRUE(hub.op_queue_.enqueue_request_status(POLLED_DEVICE));
   esphome::test_clock::advance_ms(ONEWAY_QUIET_PERIOD_MS - 1);
   EXPECT_TRUE(hub.defer_background_poll_()) << "measured from the end of the burst, not from its start";

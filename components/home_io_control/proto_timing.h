@@ -337,30 +337,20 @@ static constexpr uint16_t EXCHANGE_TOTAL_BUDGET_MS = 2500;
 /// A 1W command is fire-and-forget: nothing replies, so there is no acknowledgement to retry on
 /// and no way to learn a frame was missed. Repetition *is* the reliability mechanism — real
 /// remotes send the same frame four times, and a receiving device treats the set as one command
-/// because all four carry the same sequence. These are protocol values shared by every 1W
-/// transmitter, not radio tuning: they do not vary by chip and must not be moved into a driver or
+/// because all four carry the same sequence. The copy count is a protocol value shared by every 1W
+/// transmitter, not radio tuning: it does not vary by chip and must not be moved into a driver or
 /// a TuningConfig field.
 ///
-/// Both values are assumed, not measured on this project's hardware: four copies, 40 ms apart.
-/// Receive-side timestamps of consecutive copies in a capture log can show a smaller gap (roughly
-/// 25 ms), which is not a contradiction: they measure when the receiver heard each copy, not the
-/// configured gap. Do not "correct" 40 down to 25 on the strength of them.
+/// There is no deliberate wait between the copies: a real remote sends them back to back, 4 to 7 ms
+/// apart (tests/corpus/captures/oneway/somfy_smoove_oneway_short_press_on_air.yaml), and each copy
+/// of this project's burst follows the previous one after only the channel check of the transmit
+/// path (ADR 0096) and the radio's transmit setup: 6 to 13 ms on air, measured with an SDR on an SX1276
+/// (about 7 ms), two SX1262 and an LR1121 board (about 10 ms) (ADR 0121).
 ///
-/// Erring long would in any case be the safe direction — a device needs only one of the four
-/// copies to land, so a wider spacing costs nothing and leaves more room on a shared band.
-///
-/// The resulting burst duration — see ONEWAY_BURST_INTERVAL_MS's own comment and send_burst()'s
-/// doxygen (oneway_transmitter.h) for what it decomposes into per power class — is what
-/// ONEWAY_QUIET_PERIOD_MS (oneway_receiver.h) is sized against when it holds background polls
-/// back during 1W activity.
+/// The burst duration — see send_burst()'s doxygen (oneway_transmitter.h) for what it decomposes
+/// into per power class — is what ONEWAY_QUIET_PERIOD_MS (oneway_receiver.h) is sized against when
+/// it holds background polls back during 1W activity.
 static constexpr uint8_t ONEWAY_BURST_REPEATS = 4;  ///< Copies of each 1W command sent per press.
-/// Gap between those copies. Three gaps between four copies is 3 * 40 = 120 ms of pure *delay*,
-/// fixed regardless of the identity's power class. What that adds up to on the wire depends on
-/// each copy's own airtime, which is a per-identity, per-copy choice (`OneWayPowerClass`,
-/// oneway_controller.h; ADR 0038): a burst with one wake-up copy runs about 0.72 s with the default
-/// wake-up, one with the short preamble on every copy about 0.2 s. send_burst()'s doxygen
-/// (oneway_transmitter.h) has both real shapes.
-static constexpr uint32_t ONEWAY_BURST_INTERVAL_MS = 40;
 
 /// How long a status reply that named the rain sensor as the last commander stays usable as
 /// evidence that rain protection is active (see decisions::is_rain_limited(), rule b). It is the

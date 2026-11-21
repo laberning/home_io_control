@@ -509,7 +509,7 @@ and the pairing frames after it, and the low-power pass of the
 [Scan Paired Devices](../pairing.md#scan-paired-devices) roll-call, use the same setting. Pairing
 discovery without the low-power flag keeps its own preamble. The wake-up copy of a one-way command to a
 `low_power: true` identity lasts this value as well, so changing it also changes how long that copy
-is on the air and how long a one-way command holds the radio (about 0.72 s at the default).
+is on the air and how long a one-way command holds the radio (about 0.6 s at the default).
 
 #### `low_power_wake_belief`
 
