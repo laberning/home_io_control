@@ -73,11 +73,12 @@ TEST(HeatingWritePin, ARegisterThatIsReadOnlyNeverEncodesAWrite) {
 
 TEST(HeatingWritePin, TheWritableRegistersAreExactlyTheListedOnes) {
   const std::vector<DeviceRegister> writable = {
-      DeviceRegister::COMFORT_SETPOINT,      DeviceRegister::OPERATING_MODE, DeviceRegister::PRESENCE,
-      DeviceRegister::OPEN_WINDOW_DETECTION, DeviceRegister::TOWEL_MODE,     DeviceRegister::TEMPORARY_STATE,
-      DeviceRegister::DEROGATED_SETPOINT,    DeviceRegister::NIGHT_LIGHT,    DeviceRegister::NIGHT_LIGHT_BRIGHTNESS,
-      DeviceRegister::OCCUPANCY_DETECTION,   DeviceRegister::DHW_MODE,       DeviceRegister::DHW_BOOST_DURATION,
-      DeviceRegister::DHW_AWAY_DURATION,
+      DeviceRegister::COMFORT_SETPOINT,      DeviceRegister::OPERATING_MODE,     DeviceRegister::PRESENCE,
+      DeviceRegister::OPEN_WINDOW_DETECTION, DeviceRegister::TOWEL_MODE,         DeviceRegister::TEMPORARY_STATE,
+      DeviceRegister::DEROGATED_SETPOINT,    DeviceRegister::NIGHT_LIGHT,        DeviceRegister::NIGHT_LIGHT_BRIGHTNESS,
+      DeviceRegister::OCCUPANCY_DETECTION,   DeviceRegister::DHW_MODE,           DeviceRegister::DHW_BOOST_DURATION,
+      DeviceRegister::DHW_AWAY_DURATION,     DeviceRegister::DHW_MANUAL_SHOWERS, DeviceRegister::DHW_BOOST_FLAG,
+      DeviceRegister::DHW_AWAY_FLAG,
   };
   size_t count = 0;
   for (uint8_t i = 0; i < static_cast<uint8_t>(DeviceRegister::COUNT); i++) {
@@ -423,6 +424,13 @@ TEST(HeatingRegisterPin, EveryRegisterKeepsItsNumberItsLabelAndItsPlaceInTheActi
       {DeviceRegister::DHW_AWAY_DURATION, D, 0x05, "dhw_away_duration", false},
       {DeviceRegister::DHW_ENERGY, D, 0x04, "dhw_energy", false},
       {DeviceRegister::DHW_BRAND, D, 0x07, "dhw_brand", false},
+      {DeviceRegister::DHW_HEATING_POWER, D, 0x32, "dhw_heating_power", false},
+      {DeviceRegister::DHW_SHOWERS_AVAILABLE, D, 0x46, "dhw_showers_available", false},
+      {DeviceRegister::DHW_MANUAL_SHOWERS, D, 0x48, "dhw_manual_showers", false},
+      {DeviceRegister::DHW_ACTIVE_TARGET, D, 0x49, "dhw_active_target", false},
+      {DeviceRegister::DHW_TARGET_SHOWERS, D, 0x4A, "dhw_target_showers", false},
+      {DeviceRegister::DHW_BOOST_FLAG, D, 0x52, "dhw_boost_flag", false},
+      {DeviceRegister::DHW_AWAY_FLAG, D, 0x53, "dhw_away_flag", false},
   };
   EXPECT_EQ(facts.size(), static_cast<size_t>(DeviceRegister::COUNT)) << "a register is missing from the pin";
   for (const RegisterFact &f : facts) {

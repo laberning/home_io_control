@@ -65,6 +65,13 @@ static constexpr float DHW_EXPLORER_V4_TARGET_MAX_C = 70.0F;
 /// @brief Step of the Atlantic Explorer V4's target: it answers a target between two whole degrees with result code
 /// 10 and rounds it, so the hub sends whole degrees only.
 static constexpr float DHW_EXPLORER_V4_TARGET_STEP_C = 1.0F;
+/// @brief Highest count of a Sauter Guelma's manual shower register (DeviceRegister::DHW_MANUAL_SHOWERS): 4 showers.
+/// It reports its range, 2 to 4, in register 0x42 (corpus `sauter_guelma_exchange_register_read`).
+static constexpr uint16_t DHW_MANUAL_SHOWERS_MAX = 4;
+/// @brief A Sauter Guelma's manual shower counts and the temperatures its display shows for them: 2, 3 and 4 showers
+/// for 50, 60 and 70 C, read back in register 0x49 after each was set. These are its target's only steps.
+inline constexpr ValueScaleKnot DHW_MANUAL_SHOWER_KNOTS[] = {{50, 2}, {60, 3}, {70, DHW_MANUAL_SHOWERS_MAX}};
+static_assert(value_scale_rises(DHW_MANUAL_SHOWER_KNOTS));
 
 // === Operating mode (functional parameters 15 and 16) ===
 
@@ -125,6 +132,13 @@ const char *dhw_heating_source_name(int heat_pump, int element);
 /// @param value The register's value.
 /// @return The name, or nullptr for a value the heater has not been seen reporting.
 const char *dhw_mode_name(uint8_t value);
+
+/// @brief The name of a mode of an electric storage water heater's mode register, which has no mode with ECO on.
+/// @details "auto" for DhwMode::AUTO and "manual electric" for DhwMode::MANUAL_ECO_OFF, which is what a Sauter Guelma
+///          holds in manual mode, where only its element heats. The card offers the modes this names.
+/// @param value Raw register byte.
+/// @return Null-terminated name; nullptr for DhwMode::MANUAL_ECO_ON and any other value.
+const char *dhw_electric_mode_name(uint8_t value);
 
 }  // namespace home_io_control
 }  // namespace esphome

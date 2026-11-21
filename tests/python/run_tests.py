@@ -813,6 +813,38 @@ def the_water_heaters_reading_keys_need_a_water_heater_and_are_not_a_heaters():
 
 
 @case()
+def an_electric_storage_water_heater_takes_its_own_keys_and_the_energy_but_not_the_heat_pumps():
+    """`heating_power:`, `showers_available:` and `showers_target:` pass on `io_model: electric_water_heater` and are
+    refused without it, with the model to declare; `energy:` passes on both models, and the heat pump's running
+    sensors are refused on the electric model."""
+    import esphome.config_validation as cv
+    from esphome.components.home_io_control import hub_validators as v
+    from esphome.components.home_io_control import platform_common as pc
+
+    calypso = {"io_device_type": v.DEVICE_TYPE_OPTIONS["domestic_hot_water"]}
+    guelma = {**calypso, "io_subtype": 0, "io_model": "electric_water_heater"}
+    for key in ("heating_power", "showers_available", "showers_target", "energy"):
+        cfg = {**guelma, key: {}}
+        assert pc.validate_reading_keys(cfg, platform=pc.WATER_HEATER_PLATFORM) is cfg, key
+    cfg = {**calypso, "energy": {}}
+    assert pc.validate_reading_keys(cfg, platform=pc.WATER_HEATER_PLATFORM) is cfg
+    for key in ("heating_power", "showers_available", "showers_target"):
+        try:
+            pc.validate_reading_keys({**calypso, key: {}}, platform=pc.WATER_HEATER_PLATFORM)
+        except cv.Invalid as err:
+            assert "io_model: electric_water_heater" in str(err), str(err)
+        else:
+            raise AssertionError(f"accepted {key} without the electric model")
+    for key in ("heat_pump_running", "electric_backup_running"):
+        try:
+            pc.validate_reading_keys({**guelma, key: {}}, platform=pc.WATER_HEATER_PLATFORM)
+        except cv.Invalid:
+            pass
+        else:
+            raise AssertionError(f"accepted {key} on the electric model")
+
+
+@case()
 def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
     """The reading mirror drives the climate keys: each reading with a key has an entity kind, a capability the
     features list knows and a hint to give where the capability is missing, and the schema offers exactly those keys;
@@ -835,10 +867,20 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
         "heating_energy",
         "hot_water_energy",
         "outdoor_temperature",
+        "heating_power",
+        "showers_available",
+        "showers_target",
     }
-    # A key belongs to one platform: the heater's `energy:` and the water heater's are two rows of two platforms.
-    platform_keys = [(entry["platform"], entry["key"]) for entry in keyed.values()]
-    assert len(platform_keys) == len(set(platform_keys)), platform_keys
+    # A key belongs to one platform: the heater's `energy:` and the water heater's are two rows of two platforms. Two
+    # rows of one platform share a key only as the rows of one reading for two models (a water heater's energy, read
+    # under the Calypso's register map and the Guelma's), so they build the same entity.
+    by_platform_key = {}
+    for name, entry in keyed.items():
+        by_platform_key.setdefault((entry["platform"], entry["key"]), []).append(entry)
+    for platform_key, entries in by_platform_key.items():
+        entity = [{k: e[k] for k in e if k not in ("feature", "registers")} for e in entries]
+        assert all(e == entity[0] for e in entity), platform_key
+        assert len({e["feature"] for e in entries}) == len(entries), platform_key
     water_heater_features = set().union(*(f for f in v.DEVICE_FEATURES.values() if "WATER_HEATER" in f))
     water_heater_features -= set().union(*(f for f in v.DEVICE_FEATURES.values() if "WATER_HEATER" not in f))
     for name, entry in v.DEVICE_READINGS.items():
@@ -886,6 +928,9 @@ def every_reading_with_a_key_builds_its_entity_and_names_what_to_declare():
         "energy",
         "heat_pump_running",
         "electric_backup_running",
+        "heating_power",
+        "showers_available",
+        "showers_target",
     }
     # The data-object readings in production are the Atlantic heat pump's (issue #244).
     assert {str(key) for key in pc.reading_keys_schema(pc.SENSOR_PLATFORM)} == {
@@ -1578,7 +1623,11 @@ def a_model_row_is_offered_only_by_its_kind_and_replaces_its_word():
     assert towel == 1
     assert v.device_models(t["electrical_heater"], 1) == ["heater_with_light", "towel_dryer"]
     assert v.device_models(t["electrical_heater"], 0) == ["pilot_wire_interface"]
-    assert v.device_models(t["domestic_hot_water"], 0) == ["explorer_v4"]
+    assert v.device_models(t["domestic_hot_water"], 0) == ["electric_water_heater", "explorer_v4"]
+    electric = v.DEVICE_MODEL_OPTIONS["electric_water_heater"]
+    assert v.device_features(t["domestic_hot_water"], 0, electric) == {
+        "WATER_HEATER", "HOT_WATER_TARGET_SHOWER_STEPS", "HOT_WATER_BOOST_FLAG", "HOT_WATER_AWAY_FLAG",
+        "HOT_WATER_REGISTERS_GUELMA"}
     explorer = v.DEVICE_MODEL_OPTIONS["explorer_v4"]
     assert v.device_features(t["domestic_hot_water"], 0, explorer) == {
         "WATER_HEATER", "HOT_WATER_TARGET_20_70", "HOT_WATER_BOOST_FP16_INVERTED", "HOT_WATER_AWAY_MAIN_PARAMETER",

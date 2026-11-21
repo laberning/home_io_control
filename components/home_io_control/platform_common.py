@@ -602,11 +602,21 @@ _READING_ENTITY_CREATORS = {
 
 def _reading_keys(platform):
     """[(reading name, mirror entry)] of every reading a main entity of `platform` declares by a YAML key, in table
-    order."""
+    order, one per key. A reading whose rows differ by model (a water heater's energy) has one entry per row under the
+    same key; the first is the one named after the reading's enumerator, and it stands for the key."""
+    keys = {}
+    for name, entry in DEVICE_READINGS.items():
+        if entry["key"] is not None and entry["platform"] == platform:
+            keys.setdefault(entry["key"], (name, entry))
+    return list(keys.values())
+
+
+def _reading_key_features(platform, key):
+    """The capabilities of every row of `platform` declared by `key`: a device with any of them has the reading."""
     return [
-        (name, entry)
-        for name, entry in DEVICE_READINGS.items()
-        if entry["key"] is not None and entry["platform"] == platform
+        entry["feature"]
+        for entry in DEVICE_READINGS.values()
+        if entry["key"] == key and entry["platform"] == platform
     ]
 
 
@@ -688,7 +698,9 @@ def validate_reading_keys(config, platform):
     for _, entry in _reading_keys(platform):
         key = entry["key"]
         feature = entry["feature"]
-        if key not in config or declared_has_feature(config, feature):
+        if key not in config or any(
+            declared_has_feature(config, row_feature) for row_feature in _reading_key_features(platform, key)
+        ):
             continue
         remove_hint = READING_REMOVE_HINTS.get(feature)
         if remove_hint is not None and type_offers_feature(config.get(CONF_DEVICE_TYPE), feature):

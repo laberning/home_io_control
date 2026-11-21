@@ -1,0 +1,146 @@
+id: sauter_guelma_exchange_register_read
+description: >
+  A Sauter Guelma connecte 80 L electric storage water heater (type 51 subtype 0) answering `register_00` reads
+  `0C 60 00 <index>` in automatic mode, manual mode, absence and boost, at rest and while heating. Each answer is
+  CMD_WRITE_PRIVATE_ACK (0x21) echoing the four header bytes, then the value, big-endian; only the answers were
+  logged. The node IDs are remapped. What each frame shows, with what the display said, is in its note.
+source:
+  device: "Sauter Guelma connecte 80 L electric storage water heater"
+  captured_with: sx1262
+  firmware: "guelma-water-heater branch, diagnostic_probes: true"
+  date: 2026-11-18
+  origin: own-hardware
+  issue: null
+node_map:
+  hub: "C0FFEE"
+  device: "A1B2C3"
+key: unknown
+frames:
+  - dir: rx
+    hex: "8E 00 C0 FF EE A1 B2 C3 21 0C 60 00 17 01 8E"
+    crc: absent
+    note: "water 39.8 C"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 06 00"
+    crc: absent
+    note: "mode, display AUTO"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 06 02"
+    crc: absent
+    note: "mode, display manual"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 35 04"
+    crc: absent
+    note: "state, display AUTO"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 35 03"
+    crc: absent
+    note: "state, display AUTO with a boost"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 35 02"
+    crc: absent
+    note: "state, display manual"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 35 00"
+    crc: absent
+    note: "state, display absence"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 52 00"
+    crc: absent
+    note: "boost flag at rest"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 52 01"
+    crc: absent
+    note: "boost flag during a boost"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 53 00"
+    crc: absent
+    note: "absence flag at rest"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 53 01"
+    crc: absent
+    note: "absence flag in absence"
+  - dir: rx
+    hex: "8E 00 C0 FF EE A1 B2 C3 21 0C 60 00 49 01 A4"
+    crc: absent
+    note: "target 42.0 C, AUTO with one shower"
+  - dir: rx
+    hex: "8E 00 C0 FF EE A1 B2 C3 21 0C 60 00 49 01 F4"
+    crc: absent
+    note: "target 50.0 C, manual with two showers"
+  - dir: rx
+    hex: "8E 00 C0 FF EE A1 B2 C3 21 0C 60 00 49 02 BC"
+    crc: absent
+    note: "target 70.0 C, manual with four showers"
+  - dir: rx
+    hex: "8E 00 C0 FF EE A1 B2 C3 21 0C 60 00 49 00 46"
+    crc: absent
+    note: "target 7.0 C, absence"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 4A 02"
+    crc: absent
+    note: "showers aimed for, two lit on the display"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 4A 00"
+    crc: absent
+    note: "showers aimed for, absence"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 46 01"
+    crc: absent
+    note: "showers available, one steady on the display"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 46 02"
+    crc: absent
+    note: "showers available, two steady on the display"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 48 04"
+    crc: absent
+    note: "manual showers, four set on the display"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 48 02"
+    crc: absent
+    note: "manual showers, two set on the display"
+  - dir: rx
+    hex: "8E 00 C0 FF EE A1 B2 C3 21 0C 60 00 32 00 00"
+    crc: absent
+    note: "heating power at rest"
+  - dir: rx
+    hex: "8E 00 C0 FF EE A1 B2 C3 21 0C 60 00 32 03 E8"
+    crc: absent
+    note: "heating power 1000 W"
+  - dir: rx
+    hex: "8E 00 C0 FF EE A1 B2 C3 21 0C 60 00 32 05 DC"
+    crc: absent
+    note: "heating power 1500 W"
+  - dir: rx
+    hex: "90 00 C0 FF EE A1 B2 C3 21 0C 60 00 04 00 EA 94 74"
+    crc: absent
+    note: "energy 15 373 428 Wh"
+  - dir: rx
+    hex: "90 00 C0 FF EE A1 B2 C3 21 0C 60 00 41 01 F4 02 BC"
+    crc: absent
+    note: "range of the target, 50.0 to 70.0 C"
+  - dir: rx
+    hex: "90 00 C0 FF EE A1 B2 C3 21 0C 60 00 42 00 02 00 04"
+    crc: absent
+    note: "range of the manual showers, 2 to 4"
+  - dir: rx
+    hex: "94 00 C0 FF EE A1 B2 C3 21 0C 60 00 40 47 55 45 4C 4D 41 20 20"
+    crc: absent
+    note: "model name GUELMA"
+  - dir: rx
+    hex: "8D 00 C0 FF EE A1 B2 C3 21 0C 60 00 07 53"
+    crc: absent
+    note: "brand letter S"
+  - dir: rx
+    hex: "8C 00 C0 FF EE A1 B2 C3 21 0C 60 00 00"
+    crc: absent
+    note: "no boost duration on this model"
+  - dir: rx
+    hex: "8C 00 C0 FF EE A1 B2 C3 21 0C 60 00 05"
+    crc: absent
+    note: "no away duration on this model"
+  - dir: rx
+    hex: "8C 00 C0 FF EE A1 B2 C3 21 0C 60 00 21"
+    crc: absent
+    note: "no heating state on this model"

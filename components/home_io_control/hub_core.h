@@ -727,6 +727,10 @@ class IOHomeControlComponent : public Component,
   [[nodiscard]] std::optional<float> water_heater_target_step(const std::string &device_id) const override {
     return this->heater_controller_.water_heater_target_step(device_id);
   }
+  /// @brief The name a water heater's mode row gives a mode. @see HeaterController::water_heater_mode_name()
+  [[nodiscard]] const char *water_heater_mode_name(const std::string &device_id, DhwMode mode) const override {
+    return this->heater_controller_.water_heater_mode_name(device_id, mode);
+  }
   /// @brief Set a water heater's operating mode. @see HeaterController::set_water_heater_mode()
   bool set_water_heater_mode(const std::string &device_id, DhwMode mode) override {
     return this->heater_controller_.set_water_heater_mode(device_id, mode);

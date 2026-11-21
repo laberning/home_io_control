@@ -216,8 +216,9 @@ TEST(DeviceReadings, EveryReadingHasARowAndEveryRowAUniqueName) {
 
 TEST(DeviceReadings, ARegisterIsOneReadingOrAllPartsAndThePartsDoNotOverlap) {
   // A register with one value of its own is one reading; a register that holds several facts is only ever read by
-  // parts, each of its own bytes.
-  std::set<DeviceRegister> whole;
+  // parts, each of its own bytes. Two models may read the same register for the same reading, each under a row of its
+  // own (a water heater's mode, ADR 0110): the value lands in the reading's one slot either way.
+  std::map<DeviceRegister, DeviceReading> whole;
   std::map<DeviceRegister, std::vector<RegisterPart>> parts;
   for (const DeviceReadingRow &row : device_readings()) {
     const auto *source = std::get_if<RegisterSource>(&row.source);
@@ -227,7 +228,8 @@ TEST(DeviceReadings, ARegisterIsOneReadingOrAllPartsAndThePartsDoNotOverlap) {
       EXPECT_GT(source->part->length, 0) << row.name;
       parts[source->fn].push_back(*source->part);
     } else {
-      EXPECT_TRUE(whole.insert(source->fn).second) << row.name << ": the register's value is read twice";
+      const auto [it, inserted] = whole.emplace(source->fn, row.reading);
+      EXPECT_TRUE(inserted || it->second == row.reading) << row.name << ": the register's value is two readings";
     }
   }
   for (const auto &[fn, slices] : parts) {
@@ -299,16 +301,20 @@ TEST(DeviceReadings, EveryKeptRegisterIsTheSourceOfExactlyOneRowOrOnlyOfParts) {
     ASSERT_STRNE(device_register_name(fn), "unknown") << i << " has no descriptor row";
     float value = 0.0F;
     const bool decodes = device_register_is_readable(fn) && decode_heating_reply(reply_with_one(fn), fn, value);
-    size_t whole_rows = 0;
+    // The rows of several models may read one register for the same reading; it is still one reading.
+    std::set<DeviceReading> whole_readings;
     size_t part_rows = 0;
     for (const DeviceReadingRow &row : device_readings()) {
       const auto *source = std::get_if<RegisterSource>(&row.source);
       if (source == nullptr || source->fn != fn)
         continue;
-      (source->part ? part_rows : whole_rows)++;
+      if (source->part)
+        part_rows++;
+      else
+        whole_readings.insert(row.reading);
     }
     const bool kept = decodes && fn != DeviceRegister::ECO_SETBACK;
-    EXPECT_EQ(whole_rows, kept ? 1u : 0u) << device_register_name(fn);
+    EXPECT_EQ(whole_readings.size(), kept ? 1u : 0u) << device_register_name(fn);
     if (part_rows > 0) {
       EXPECT_FALSE(decodes) << device_register_name(fn) << ": a register with parts has no value of its own";
     }
@@ -367,8 +373,8 @@ TEST(DeviceReadings, TheHubKeepsEveryRegisterItReadsAndTheRowsThatReadThem) {
       kept.insert(source->fn);
     }
   }
-  EXPECT_EQ(kept.size(), 30u) << "registers the hub keeps";
-  EXPECT_EQ(rows, 32u) << "rows with a register source";
+  EXPECT_EQ(kept.size(), 36u) << "registers the hub keeps";
+  EXPECT_EQ(rows, 41u) << "rows with a register source";
   EXPECT_EQ(std::ranges::count_if(device_readings(),
                                   [](const DeviceReadingRow &row) {
                                     const auto *source = std::get_if<RegisterSource>(&row.source);

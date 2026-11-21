@@ -330,6 +330,13 @@ class HeaterController {
   ///         unknown device, and the card then offers its own fine step.
   [[nodiscard]] std::optional<float> water_heater_target_step(const std::string &device_id) const;
 
+  /// @brief The name a water heater's mode row gives a mode: the modes the heater has are the ones it names.
+  /// @param device_id Target device ID (hex string).
+  /// @param mode The mode.
+  /// @return The value name of the heater's row of DeviceReading::HOT_WATER_MODE; nullptr for a mode it does not name,
+  ///         a row without names and an unknown device.
+  [[nodiscard]] const char *water_heater_mode_name(const std::string &device_id, DhwMode mode) const;
+
   /// @brief Set a water heater's operating mode: write_value() of DeviceReading::HOT_WATER_MODE.
   ///
   /// The register is read back at once, so the entity shows what the heater then holds, and so is the

@@ -185,3 +185,111 @@ TEST(CorpusDhw, TargetEncoderReproducesTheCapturedMainParameters) {
   EXPECT_EQ(mp, (corpus::atlantic_calypso_probe_status_mp_fp_frame1_bytes[11] << 8) |
                     corpus::atlantic_calypso_probe_status_mp_fp_frame1_bytes[12]);
 }
+
+// === A Sauter Guelma connecte, an electric storage water heater (pull request #248) ===
+
+namespace {
+
+/// The payload a register write encodes to, from its value.
+std::vector<uint8_t> encoded_write(DeviceRegister fn, float value) {
+  uint8_t out[PRIVATE_REGISTER_PAYLOAD_MAX_SIZE] = {};
+  return std::vector<uint8_t>(out, out + encode_heating_write(fn, value, out));
+}
+
+/// The four header bytes and the value of a captured acknowledgement: `0C 61 00 <register> <value>`.
+template<size_t N> std::vector<uint8_t> acknowledged_payload(const uint8_t (&bytes)[N]) {
+  const IoFrame frame = corpus_test::frame_of(bytes);
+  return std::vector<uint8_t>(frame.data, frame.data + frame.data_len);
+}
+
+}  // namespace
+
+TEST(CorpusGuelma, ItsWaterTemperatureModeAndEnergyAreTheCalypsosRegisters) {
+  EXPECT_FLOAT_EQ(
+      number_of(corpus::sauter_guelma_exchange_register_read_frame0_bytes, DeviceRegister::DHW_WATER_TEMPERATURE),
+      39.8F)
+      << "two value bytes only, where the Calypso sends six";
+  EXPECT_EQ(wire_of(corpus::sauter_guelma_exchange_register_read_frame1_bytes, DeviceRegister::DHW_MODE),
+            static_cast<int>(DhwMode::AUTO));
+  EXPECT_EQ(wire_of(corpus::sauter_guelma_exchange_register_read_frame2_bytes, DeviceRegister::DHW_MODE),
+            static_cast<int>(DhwMode::MANUAL_ECO_OFF))
+      << "manual: the element heats";
+  EXPECT_NEAR(number_of(corpus::sauter_guelma_exchange_register_read_frame24_bytes, DeviceRegister::DHW_ENERGY),
+              15373.428F, 0.01F);
+  EXPECT_STREQ(dhw_electric_mode_name(0), "auto");
+  EXPECT_STREQ(dhw_electric_mode_name(2), "manual electric");
+  EXPECT_EQ(dhw_electric_mode_name(1), nullptr) << "it has no heat pump";
+}
+
+TEST(CorpusGuelma, BoostAndAbsenceAreFlagRegisters) {
+  EXPECT_EQ(wire_of(corpus::sauter_guelma_exchange_register_read_frame7_bytes, DeviceRegister::DHW_BOOST_FLAG), 0);
+  EXPECT_EQ(wire_of(corpus::sauter_guelma_exchange_register_read_frame8_bytes, DeviceRegister::DHW_BOOST_FLAG), 1);
+  EXPECT_EQ(wire_of(corpus::sauter_guelma_exchange_register_read_frame9_bytes, DeviceRegister::DHW_AWAY_FLAG), 0);
+  EXPECT_EQ(wire_of(corpus::sauter_guelma_exchange_register_read_frame10_bytes, DeviceRegister::DHW_AWAY_FLAG), 1);
+}
+
+TEST(CorpusGuelma, TheTargetIsTheTemperatureItHeatsTo) {
+  const struct {
+    float target_c;
+    const char *display;
+  } expected[] = {{42.0F, "AUTO with one shower"},
+                  {50.0F, "manual with two showers"},
+                  {70.0F, "manual with four showers"},
+                  {7.0F, "absence"}};
+  const float read[] = {
+      number_of(corpus::sauter_guelma_exchange_register_read_frame11_bytes, DeviceRegister::DHW_ACTIVE_TARGET),
+      number_of(corpus::sauter_guelma_exchange_register_read_frame12_bytes, DeviceRegister::DHW_ACTIVE_TARGET),
+      number_of(corpus::sauter_guelma_exchange_register_read_frame13_bytes, DeviceRegister::DHW_ACTIVE_TARGET),
+      number_of(corpus::sauter_guelma_exchange_register_read_frame14_bytes, DeviceRegister::DHW_ACTIVE_TARGET)};
+  for (size_t i = 0; i < std::size(expected); i++)
+    EXPECT_FLOAT_EQ(read[i], expected[i].target_c) << expected[i].display;
+}
+
+TEST(CorpusGuelma, ItsShowersAndHeatingPowerAreNumbers) {
+  EXPECT_EQ(wire_of(corpus::sauter_guelma_exchange_register_read_frame15_bytes, DeviceRegister::DHW_TARGET_SHOWERS), 2);
+  EXPECT_EQ(wire_of(corpus::sauter_guelma_exchange_register_read_frame16_bytes, DeviceRegister::DHW_TARGET_SHOWERS), 0)
+      << "absence";
+  EXPECT_EQ(wire_of(corpus::sauter_guelma_exchange_register_read_frame17_bytes, DeviceRegister::DHW_SHOWERS_AVAILABLE),
+            1);
+  EXPECT_EQ(wire_of(corpus::sauter_guelma_exchange_register_read_frame18_bytes, DeviceRegister::DHW_SHOWERS_AVAILABLE),
+            2);
+  EXPECT_FLOAT_EQ(
+      number_of(corpus::sauter_guelma_exchange_register_read_frame21_bytes, DeviceRegister::DHW_HEATING_POWER), 0.0F);
+  EXPECT_FLOAT_EQ(
+      number_of(corpus::sauter_guelma_exchange_register_read_frame22_bytes, DeviceRegister::DHW_HEATING_POWER),
+      1000.0F);
+  EXPECT_FLOAT_EQ(
+      number_of(corpus::sauter_guelma_exchange_register_read_frame23_bytes, DeviceRegister::DHW_HEATING_POWER),
+      1500.0F);
+}
+
+TEST(CorpusGuelma, EachWriteTheHeaterAcknowledgedIsTheWriteTheHubEncodes) {
+  EXPECT_EQ(encoded_write(DeviceRegister::DHW_MODE, static_cast<float>(DhwMode::MANUAL_ECO_OFF)),
+            acknowledged_payload(corpus::sauter_guelma_exchange_register_write_frame0_bytes));
+  EXPECT_EQ(encoded_write(DeviceRegister::DHW_BOOST_FLAG, 1.0F),
+            acknowledged_payload(corpus::sauter_guelma_exchange_register_write_frame1_bytes));
+  EXPECT_EQ(encoded_write(DeviceRegister::DHW_BOOST_FLAG, 0.0F),
+            acknowledged_payload(corpus::sauter_guelma_exchange_register_write_frame2_bytes));
+  EXPECT_EQ(encoded_write(DeviceRegister::DHW_AWAY_FLAG, 1.0F),
+            acknowledged_payload(corpus::sauter_guelma_exchange_register_write_frame3_bytes));
+  EXPECT_EQ(encoded_write(DeviceRegister::DHW_AWAY_FLAG, 0.0F),
+            acknowledged_payload(corpus::sauter_guelma_exchange_register_write_frame4_bytes));
+  EXPECT_EQ(encoded_write(DeviceRegister::DHW_MANUAL_SHOWERS, 60.0F),
+            acknowledged_payload(corpus::sauter_guelma_exchange_register_write_frame5_bytes))
+      << "60 C is three showers";
+}
+
+TEST(CorpusGuelma, ItsStatusReplyCarriesNothingToRead) {
+  const IoFrame frame = corpus_test::frame_of(corpus::sauter_guelma_probe_status_fp_high_frame0_bytes);
+  uint16_t fp15 = 0;
+  uint16_t fp16 = 0;
+  ASSERT_TRUE(decode_status_functional_parameter(frame, DHW_FP_CAPABILITIES, fp15));
+  ASSERT_TRUE(decode_status_functional_parameter(frame, DHW_FP_OPERATING_MODE, fp16));
+  EXPECT_EQ(fp15, 0xFFFF);
+  EXPECT_EQ(fp16, 0xFFFF);
+  IoDevice dev;
+  dev.type = DeviceType::DOMESTIC_HOT_WATER;
+  dev.model = DeviceModel::ELECTRIC_WATER_HEATER;
+  dev.features = device_features(dev.type, 0, dev.model);
+  EXPECT_FALSE(device_has_status_reading(dev)) << "so its poll sends no status read";
+}

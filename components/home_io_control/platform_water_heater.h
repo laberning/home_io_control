@@ -5,18 +5,20 @@
 /// @ingroup hioc_platforms
 ///
 /// Maps a domestic hot water heater (device_feature::WATER_HEATER, proto_dhw.h) onto an ESPHome
-/// `water_heater`: water temperature, target temperature and operating mode. The heater's three modes map
-/// to ESPHome's as follows (ADR 0068):
+/// `water_heater`: water temperature, target temperature and operating mode. The heater's mode row names the modes
+/// it has (its `value_name`, ADR 0110), and each name maps to an ESPHome mode (ADR 0068, ADR 0090):
 ///
-/// | Heater (register 0x0006) | ESPHome mode  |
-/// |--------------------------|---------------|
-/// | 0 automatic              | ECO           |
-/// | 1 manual, ECO on         | HEAT_PUMP     |
-/// | 2 manual, ECO off        | PERFORMANCE   |
+/// | Name (register 0x0006) | Heat pump heaters | Electric storage heaters | ESPHome mode |
+/// |------------------------|-------------------|--------------------------|--------------|
+/// | `auto`                 | 0                 | 0                        | ECO          |
+/// | `manual eco on`        | 1                 | (none)                   | HEAT_PUMP    |
+/// | `manual eco off`       | 2                 | (none)                   | PERFORMANCE  |
+/// | `manual electric`      | (none)            | 2                        | ELECTRIC     |
 ///
 /// Each heater mode takes the ESPHome mode whose Home Assistant meaning fits what heats: automatic adapts to
 /// consumption and uses the element as needed (energy saving), manual ECO on heats with the heat pump only,
-/// manual ECO off lets the element assist.
+/// manual ECO off lets the element assist, and the manual mode of an electric storage heater heats with its element.
+/// The card offers only the modes the heater's row names.
 ///
 /// OFF is not offered: no heater has been seen reporting an off state.
 ///
@@ -55,19 +57,26 @@
 #include "proto_device_readings.h"
 #include "proto_dhw.h"
 
+#include <functional>
+#include <optional>
+
 namespace esphome {
 namespace home_io_control {
 
-/// @brief ESPHome water heater mode for a heater mode.
-/// @param mode Mode as register 0x0006 holds it.
-/// @return The mapped ESPHome mode (see the file comment).
-water_heater::WaterHeaterMode water_heater_mode_for(DhwMode mode);
+/// @brief The names a heater's mode row gives its modes: nullptr for a mode the heater lacks.
+using DhwModeNames = std::function<const char *(DhwMode)>;
 
-/// @brief Heater mode for an ESPHome water heater mode.
+/// @brief ESPHome water heater mode for the name a heater's mode row gives a mode.
+/// @param name The mode's name (dhw_mode_name(), dhw_electric_mode_name()), or nullptr.
+/// @return The mapped ESPHome mode (see the file comment); nullopt for nullptr and a name the map lacks.
+std::optional<water_heater::WaterHeaterMode> water_heater_mode_named(const char *name);
+
+/// @brief Heater mode for an ESPHome water heater mode, among the modes a heater's row names.
 /// @param mode ESPHome mode.
+/// @param names The names of the heater's modes.
 /// @param[out] out The heater mode; untouched when false is returned.
-/// @return false for a mode the heater does not offer (OFF, ELECTRIC, HIGH_DEMAND, GAS).
-bool dhw_mode_for(water_heater::WaterHeaterMode mode, DhwMode &out);
+/// @return false for a mode none of the heater's named modes maps to.
+bool dhw_mode_for(water_heater::WaterHeaterMode mode, const DhwModeNames &names, DhwMode &out);
 
 /// @brief Water heater entity for a domestic hot water heater.
 /// @ingroup hioc_platforms
@@ -112,6 +121,9 @@ class IOHomeWaterHeater : public water_heater::WaterHeater, public Component, pu
 
   /// @brief True when the mode shown is the one the heater's automatic mode maps to.
   [[nodiscard]] bool holds_automatic_mode_() const;
+
+  /// @brief The name the heater's mode row gives a mode (HubHeatingPort::water_heater_mode_name()).
+  [[nodiscard]] const char *mode_name_(DhwMode mode) const;
 
   bool observed_{false};  ///< True once a reading has been folded in.
 };
