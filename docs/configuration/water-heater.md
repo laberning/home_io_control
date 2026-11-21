@@ -5,6 +5,9 @@
 > The water heater platform is confirmed on two heaters, an
 > [Atlantic Calypso Connecté](../devices/atlantic-calypso.md) and an
 > [Atlantic Explorer V4](../devices/atlantic-explorer-v4.md): readings, target, mode, boost and away.
+> An electric storage water heater, the [Sauter Guelma connecté](../devices/sauter-guelma.md), is declared
+> with `io_model: electric_water_heater`; see
+> [Electric storage water heaters](#electric-storage-water-heaters).
 > The Calypso takes only its own fixed targets; see
 > [Choosing a target](../devices/atlantic-calypso.md#choosing-a-calypso-target).
 
@@ -52,12 +55,14 @@ water_heater:
   card the heater's 20 to 70 °C target scale, reads its boost field the other way round (2 while a
   boost runs, where a Calypso reports 1) and reads away from its target, which drops to `0000` while
   away. Without it the card shows 46 °C while the display shows 51 °C, the switch shows a boost while
-  none runs, and away never shows.
+  none runs, and away never shows. `electric_water_heater` for an electric storage water heater such as
+  the [Sauter Guelma connecté](../devices/sauter-guelma.md), with `io_subtype: 0`; see
+  [Electric storage water heaters](#electric-storage-water-heaters).
 - `energy` (Optional): A sensor of the energy the heater has used since it was installed, in kWh,
   with `device_class: energy` and `state_class: total_increasing`, so it fits the energy dashboard.
   Takes every [sensor](https://esphome.io/components/sensor/) option.
 - `heat_pump_running` (Optional): A binary sensor, `device_class: running`, on while the heat pump
-  runs. Takes every [binary sensor](https://esphome.io/components/binary_sensor/) option.
+  runs. Not on an electric storage heater, nor are `electric_backup_running` and `heating_source`. Takes every [binary sensor](https://esphome.io/components/binary_sensor/) option.
 - `electric_backup_running` (Optional): A binary sensor, `device_class: running`, on while the
   electric element heats.
 - `heating_source` (Optional): A text sensor that says what heats the water: `heat pump`,
@@ -121,8 +126,28 @@ a target of 62 °C, which the card shows, and its own target again afterwards.
   no write for it; the log names the refusal. Until the first poll has read the capability word, a write
   is tried.
 
+## Electric storage water heaters
+
+An electric storage water heater heats with its element alone and keeps its whole state in registers, so its
+status reply is never read. `io_model: electric_water_heater` declares one; it is confirmed on a
+[Sauter Guelma connecté](../devices/sauter-guelma.md) 80 L
+([pull request #248](https://github.com/laberning/home_io_control/pull/248)).
+
+- **Modes:** `eco` is the heater's automatic mode and `electric` its manual mode. The card offers no other.
+- **Target:** the temperature the heater heats to. In manual mode the card offers 50, 60 and 70 °C, the
+  heater's 2, 3 and 4 showers, and a target is written as its shower count. A target between them is refused,
+  and so is a target in automatic mode, where the heater chooses its own.
+- **Boost and away** are flags the heater keeps, written directly and shown from the value read back. The heater
+  refuses a boost during an absence, and the switch then shows it off.
+- `energy` reads the same counter as on a heat-pump heater. Three more optional sensors take every
+  [sensor](https://esphome.io/components/sensor/) option:
+  - `heating_power`: the power the element draws now, in W, `device_class: power`.
+  - `showers_available`: the showers of hot water the heater holds now (the steady showers of its display).
+  - `showers_target`: the showers it heats for; 0 in absence.
+
 ## See also
 
 - [Atlantic Calypso Connecté](../devices/atlantic-calypso.md)
 - [Atlantic Explorer V4](../devices/atlantic-explorer-v4.md)
+- [Sauter Guelma connecté](../devices/sauter-guelma.md)
 - [Supported devices](../supported-devices.md)

@@ -47,7 +47,8 @@ do when yours is not there.
   been exercised against real hardware yet; if you own one, try it and report back.
 - **Water heaters (experimental)** — a `water_heater:` entity reads an Atlantic Calypso Connecté's
   water temperature, target, mode and energy, and sets the target and the mode; a boost switch is
-  experimental. An Atlantic Explorer V4 is declared with `io_model: explorer_v4`.
+  experimental. An Atlantic Explorer V4 is declared with `io_model: explorer_v4`, and an electric storage
+  water heater such as the Sauter Guelma connecté with `io_model: electric_water_heater`.
 
 ## Installation
 

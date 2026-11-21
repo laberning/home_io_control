@@ -85,6 +85,7 @@ Which kind your product is:
 | [Thermor Interface Cozytouch for pilot-wire heaters](devices/thermor-pilot-wire-interface.md) | Pilot-wire interface |
 | [Atlantic Calypso Connecté](devices/atlantic-calypso.md) | Heat-pump water heater |
 | [Atlantic Explorer V4](devices/atlantic-explorer-v4.md) | Heat-pump water heater, declared with `io_model: explorer_v4` |
+| [Sauter Guelma connecté](devices/sauter-guelma.md) | Electric storage water heater, declared with `io_model: electric_water_heater` |
 
 The card of each kind, keyed by the three keys of your entry. The section of the kind has the detail.
 
@@ -258,6 +259,9 @@ is the Home Assistant mode that describes what heats. The targets in the table a
   `heat pump and electric backup` or `idle`.
 - An Explorer V4 has the same three modes and is declared with `io_model: explorer_v4`. Its target scale
   runs to 70 °C, and in manual with ECO on it keeps at most 55 °C.
+- An electric storage water heater has no heat pump, so its card offers two modes: `eco` (AUTO) and
+  `electric` (manual, where only the element heats). See
+  [Electric storage water heaters](configuration/water-heater.md#electric-storage-water-heaters).
 
 All three modes, the target, boost and away are confirmed on one Calypso (issue #198) and on one
 Explorer V4. That manual ECO on heats with the heat pump alone comes from the Calypso's manual and has

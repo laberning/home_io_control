@@ -267,6 +267,10 @@ the hub writes the value; the read side's form encodes it, so a range or a scale
 The rows that read a water heater's water temperature, mode, heating state, durations, energy and brand are gated by
 the one member of the group `HOT_WATER_REGISTER_MAP`, so a model with other registers carries another member and its
 poll reads none of the Calypso's registers and sends no status read unless one of its rows reads from a status reply.
+A water heater model's modes are the names its mode row gives its values (`value_name`): the card offers the
+ESPHome mode each name maps to (`WATER_HEATER_MODE_MAP` in `platform_water_heater.cpp`) and no other, and a write
+of a value the row does not name is refused (`ValueWriteRefusal::UNNAMED`). An electric storage heater's row names
+`auto` and `manual electric`, so its card offers `eco` and `electric`.
 The row of the capability word (FP15) is gated by `HOT_WATER_OPERATING_MODE_WORD`, a plain capability outside the
 groups: the guards of the operating-mode word's boost and away writes read FP15, so every model that switches either
 through that word carries it, whatever its boost and away members are.
