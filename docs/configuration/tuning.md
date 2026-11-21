@@ -148,7 +148,7 @@ your device may differ.
 | `key_extraction_type_word` | both | `0x0080` | `0x0000`–`0xFFFF` | Device type the key-extraction responder's discovery reply (0x29) claims, as the reply's two type bytes. Applies to an open search only. See below. |
 | `key_extraction_multi_info` | both | `0xDD` | `0x00`–`0xFF` | The key-extraction responder's discovery reply (0x29) flags byte: reply speed and whether the device sleeps. See below. |
 | `start_preamble_ms` | both | `10` | 1.5–70 ms | Preamble duration for a directed *start* frame to a device **not** declared `low_power:` — an always-alive receiver that does not need the long wake-up burst. Low-power devices lead with [`low_power_wake_ms`](#low_power_wake_ms) unless [`low_power_wake_belief`](#low_power_wake_belief) believes them awake. Also governs the short copies of a 1W `oneway_controllers:` identity; see [Sending 1W commands](oneway-transmit.md#what-one-command-puts-on-the-air). |
-| `low_power_wake_ms` | both | `600` | 300–1000 ms | Wake-up preamble duration on a directed start frame to a `low_power:` device believed at rest. See below. |
+| `low_power_wake_ms` | both | `515` | 300–1000 ms | Wake-up preamble duration on a directed start frame to a `low_power:` device believed at rest. See below. |
 | `pairing_discovery_preamble_ms` | both | follows `start_preamble_ms` | 1.5–300 ms | Preamble duration on the discovery broadcast itself. See [`pairing_discovery_preamble_ms`](#pairing_discovery_preamble_ms). |
 | `low_power_wake_belief` | both | `true` | `true` / `false` | Diagnostic switch. On, a `low_power:` device that was recently moving or heard from gets the short start preamble on its first try; off, every try uses the wake-up preamble. See below. |
 | `lbt_rssi_threshold_dbm` | both | not set (learned) | -95 to -70 dBm | RSSI on a channel at or above which it counts as busy. Not set: the hub learns the limit from how quiet the channels are on your board. See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
@@ -213,7 +213,7 @@ that print `preamble=` show the programmed bytes the radio was given; the one-wa
 
 | Preamble | Key | Default | On SX1262 / LR1121 | On SX1276 |
 |---|---|---|---|---|
-| Wake-up for a resting `low_power:` device | [`low_power_wake_ms`](#low_power_wake_ms) | 600 ms | 2880 bytes | 2304 bytes |
+| Wake-up for a resting `low_power:` device | [`low_power_wake_ms`](#low_power_wake_ms) | 515 ms | 2472 bytes | 1978 bytes |
 | Start of a request to any other device | [`start_preamble_ms`](#start_preamble_ms) | 10 ms | 48 bytes | 38 bytes |
 | Reply inside a session | [`response_preamble_ms`](#response_preamble_ms) | 3.5 ms | 17 bytes | 13 bytes |
 | Reply to a broadcast discovery | [`cold_broadcast_reply_preamble_ms`](#cold_broadcast_reply_preamble_ms) | 20 ms | 96 bytes | 77 bytes |
@@ -313,7 +313,7 @@ effect as that value.
 Wall-clock ceiling on one whole exchange, including retries. `exchange_start_response_wait_ms` and
 `exchange_response_wait_ms` set how long each try waits; this caps how long *all* of them together
 may run, so a try only starts if it can finish inside the budget. The time already spent, the gap
-before the try, the try's own transmission (about 610 ms with the default 600 ms wake-up preamble,
+before the try, the try's own transmission (about 525 ms with the default 515 ms wake-up preamble,
 [ADR 0044](../adr/0044-chip-neutral-transmit-intent-wake-level-idle-scanning-and-air-time.md)), the
 window the try then listens (about 10 ms of channel check and hop around each transmit are counted too),
 and, when the device has already challenged in this exchange, the wait for its final reply and the
@@ -323,9 +323,9 @@ That last part matters for a mains device that challenges.
 
 A `low_power:` target is the exception: its three tries behind the wake-up preamble always run, whatever
 a busy channel or timing jitter added to the earlier ones, so its exchange is bounded by that count and
-not by the budget (about 3.5 s at the default
+not by the budget (about 3.2 s at the default
 [`low_power_wake_ms`](#low_power_wake_ms), a little more on a busy channel, and up to about
-4.9 s when the device challenges every try and never sends its final reply)
+4.6 s when the device challenges every try and never sends its final reply)
 ([ADR 0095](../adr/0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md)).
 
 The budget also sets how often a status read that decides where a cover ended up is repeated: the
@@ -482,8 +482,11 @@ live tuning knob, bisecting the right value needs no rebuild.
 #### `low_power_wake_ms`
 
 The wake-up preamble, in milliseconds, on a directed start frame to a `low_power:` device believed at rest.
-The default is 600 ms, the same on every board. A VELUX KLI 110 remote sends about 600 ms of wake-up,
-and with about 600 ms all eight commands to two resting VELUX SSL shutters landed on the first try
+The default is 515 ms, the same on every board ([ADR 0118](../adr/0118-the-wake-up-preamble-defaults-to-515-ms.md)):
+it stays above the 427 ms that resting battery devices needed, and a mains one-way receiver (a Somfy Izymo
+dimmer) obeys a `low_power: true` command with it, where it ignored a wake-up copy of 560 ms and longer.
+A VELUX KLI 110 remote sends about 600 ms of wake-up, and with about 600 ms all eight commands to two
+resting VELUX SSL shutters landed on the first try
 ([pull request #240](https://github.com/laberning/home_io_control/pull/240)). A resting VELUX SSL solar
 roller shutter answered a wake-up of about 213 ms on only about half the tries, which suggests it
 listens less often than every 213 ms; a longer preamble spans more of its sleep cycle. Reporters with a
@@ -491,13 +494,13 @@ resting SSL saw 12 of 16 tries answered at 427 ms
 ([issue #151](https://github.com/laberning/home_io_control/issues/151)), against 8 of 17 at 213 ms
 ([issue #114](https://github.com/laberning/home_io_control/issues/114)). Compare how often a try
 at rest is answered (`Try N answered … preamble=`); lower it toward `300` for a shorter wake-up, or
-raise it toward `1000` if a device still needs more. A shorter value than 600 ms is untested on a
-resting SSL; reports of what works are welcome.
+raise it toward `1000` if a device still needs more. A resting SSL has been tested at 600 ms and
+above, not at 515 ms; set `600` if its commands need a second press. Reports of what works are welcome.
 
-A longer preamble makes every try at rest longer: at 600 ms a try takes about 1.2 s. A `low_power:`
-target keeps its three tries anyway, so a silent device holds the hub for about 3.5 s instead of the
+A longer preamble makes every try at rest longer: at 515 ms a try takes about 1.1 s. A `low_power:`
+target keeps its three tries anyway, so a silent device holds the hub for about 3.2 s instead of the
 2.5 s of [`exchange_total_budget_ms`](#exchange_total_budget_ms), and ESPHome may log that the
-component took a long time. One wake-up to a resting device uses about 17 % of the hour that the EU
+component took a long time. One wake-up to a resting device uses about 14 % of the hour that the EU
 duty cycle allows on the request channel, which the hub does not
 enforce
 ([ADR 0095](../adr/0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md)). The
@@ -506,7 +509,7 @@ and the pairing frames after it, and the low-power pass of the
 [Scan Paired Devices](../pairing.md#scan-paired-devices) roll-call, use the same setting. Pairing
 discovery without the low-power flag keeps its own preamble. The wake-up copy of a one-way command to a
 `low_power: true` identity lasts this value as well, so changing it also changes how long that copy
-is on the air and how long a one-way command holds the radio (about 0.8 s at the default).
+is on the air and how long a one-way command holds the radio (about 0.72 s at the default).
 
 #### `low_power_wake_belief`
 

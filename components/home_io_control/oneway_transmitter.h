@@ -105,11 +105,11 @@ struct OneWayCopyPreamble {
 OneWayCopyPreamble oneway_copy_preamble(OneWayCopyShape shape, OneWayPowerClass power_class,
                                         const OneWayPreambleRules &rules);
 
-/// @brief Render the preamble duration of each copy of a burst in milliseconds, e.g. `"600/10/10/10"`.
+/// @brief Render the preamble duration of each copy of a burst in milliseconds, e.g. `"515/10/10/10"`.
 ///
 /// Milliseconds rather than programmed bytes, so a report reads the same on every board (a byte is
 /// 8 or 10 bit periods depending on the radio). Rounded to a tenth of a millisecond, with the decimal
-/// left out of a whole value (`"600/3.5/3.5/3.5"`, `"213.3/213.3/213.3/213.3"`). Built from
+/// left out of a whole value (`"515/3.5/3.5/3.5"`, `"213.3/213.3/213.3/213.3"`). Built from
 /// oneway_burst_copy_shape() and oneway_copy_preamble() -- the exact functions send_burst() itself
 /// calls per copy -- so the TX log line can never disagree with what went on air. Pure and
 /// free-standing so it is unit-testable: the host ESP_LOG stub discards its arguments, so a
@@ -214,11 +214,11 @@ class OneWayTransmitter {
   /// on an SX1276: `LEGACY_LONG` puts it on every copy, ≈1.0 s per burst on an SX1262 or LR1121 and
   /// ≈1.2 s on an SX1276 (the latter measured in issue #74's logs); `ALWAYS_ALIVE` puts the live
   /// `start_preamble_ms` on every copy, ≈200 ms per burst (measured on SX1276, issue #74);
-  /// `LOW_POWER` sits between the two (one wake-up copy of `low_power_wake_ms`, three normal), ≈0.8 s
-  /// with the default 600 ms wake-up on every radio (ADR 0115). Per ADR 0013 all radio work happens on the ESPHome loop
-  /// and the operation queue is the concurrency model; an authenticated 2W exchange already blocks far longer than
-  /// this. Scheduling the repeats through a timeout would add a second concurrency model and would
-  /// let a queued 2W exchange interleave between copies of one command.
+  /// `LOW_POWER` sits between the two (one wake-up copy of `low_power_wake_ms`, three normal), ≈0.72 s
+  /// with the default 515 ms wake-up on every radio (ADR 0115, ADR 0118). Per ADR 0013 all radio work happens on the
+  /// ESPHome loop and the operation queue is the concurrency model; an authenticated 2W exchange already blocks far
+  /// longer than this. Scheduling the repeats through a timeout would add a second concurrency model and would let a
+  /// queued 2W exchange interleave between copies of one command.
   /// @param frame Signed 1W frame to send.
   /// @param power_class Which preamble/CTRL1 shape each copy gets (ADR 0038).
   /// @param intent_label Optional label for the TX log line when the frame's own decoded intent

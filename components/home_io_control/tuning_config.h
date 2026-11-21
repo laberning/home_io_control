@@ -500,7 +500,7 @@ std::string tuning_config_snapshot(const TuningConfig &cfg);
 std::string tuning_config_full_snapshot(const TuningConfig &cfg);
 
 /// @brief Format a numeric tuning value for the log and the snapshot: whole numbers without a
-/// fraction (`600`), fractional ones as written (`3.5`).
+/// fraction (`515`), fractional ones as written (`3.5`).
 /// @param value The value.
 /// @return Its shortest decimal form.
 std::string format_tuning_number(float value);

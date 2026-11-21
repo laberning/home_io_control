@@ -223,7 +223,7 @@ TEST(Exchange, EveryFrameKindCarriesTheSameDurationOnATenBitRadioAsOnARawStreamR
   };
   const Kind kinds[] = {
       {"start frame to a mains target", &normal, 48, 38, START_PREAMBLE_MS},
-      {"start frame to a low-power target", &wake, 2880, 2304, LOW_POWER_WAKE_MS},
+      {"start frame to a low-power target", &wake, 2472, 1978, LOW_POWER_WAKE_MS},
       {"continuation frame", &continuation, 17, 13, RESPONSE_PREAMBLE_MS},
   };
   for (const Kind &kind : kinds) {

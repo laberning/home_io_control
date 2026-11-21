@@ -342,7 +342,7 @@ static constexpr size_t NUMBER_STR_SIZE = 32;
 
 std::string format_tuning_number(float value) {
   char buf[NUMBER_STR_SIZE];
-  // %g prints 600 as "600" and 3.5 as "3.5": whole numbers stay as short as the integer fields
+  // %g prints 515 as "515" and 3.5 as "3.5": whole numbers stay as short as the integer fields
   // always printed, a fractional duration keeps its fraction.
   snprintf(buf, sizeof(buf), "%g", static_cast<double>(value));
   return buf;

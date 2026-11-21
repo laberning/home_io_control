@@ -112,7 +112,7 @@ TEST(Exchange, SettlingReadToASilentLowPowerTargetListensTheLowPowerWindowOnEver
 }
 
 TEST(Exchange, ASettlingReadToASilentLowPowerTargetRunsThreeWakeUpAttemptsPastTheBudgetAtTheDefaultWakeUp) {
-  // ADR 0095, ADR 0097: at the 600 ms default one wake-up attempt and its window take a little over
+  // ADR 0095, ADR 0097: at the 515 ms default one wake-up attempt and its window take a little over
   // a second, so three of them run past the 2500 ms budget, and the exchange ends after the third.
   PlanRig rig;
   ASSERT_EQ(mock_preamble_bytes(rig.tuning.low_power_wake_ms), MOCK_WAKE_PREAMBLE);
@@ -120,7 +120,7 @@ TEST(Exchange, ASettlingReadToASilentLowPowerTargetRunsThreeWakeUpAttemptsPastTh
 
   EXPECT_EQ(rig.radio.get_send_count(), LOW_POWER_SETTLING_ATTEMPTS);
   EXPECT_GT(blocked_ms, rig.tuning.exchange_total_budget_ms) << "the exchange does run past the budget";
-  EXPECT_LT(blocked_ms, 3600u) << "about 3.5 s, the three attempts and nothing more";
+  EXPECT_LT(blocked_ms, 3400u) << "about 3.2 s, the three attempts and nothing more";
 }
 
 TEST(Exchange, ACommandToASilentLowPowerTargetKeepsThreeAttemptsAtEveryWakeUpLength) {

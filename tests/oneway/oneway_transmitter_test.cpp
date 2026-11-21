@@ -284,7 +284,7 @@ TEST_F(OneWayTransmitterTest, LowPowerCopiesLastTheSameTimeOnEveryRadioWhateverT
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER));
 
   ASSERT_EQ(recorder.sent.size(), ONEWAY_BURST_REPEATS);
-  EXPECT_EQ(recorder.sent[0].preamble, 2304) << "600 ms at 10 bit periods per byte";
+  EXPECT_EQ(recorder.sent[0].preamble, 1978) << "515 ms at 10 bit periods per byte";
   EXPECT_EQ(recorder.sent[0].preamble, ten_bit.preamble_bytes_for_ms(LOW_POWER_WAKE_MS));
   for (size_t i = 1; i < recorder.sent.size(); i++)
     EXPECT_EQ(recorder.sent[i].preamble, 38) << "10 ms at 10 bit periods per byte, copy " << i;
@@ -295,7 +295,7 @@ TEST_F(OneWayTransmitterTest, LowPowerWakeUpFollowsTheWakeSettingOnTheNextComman
   OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER));
-  EXPECT_EQ(recorder.sent[0].preamble, mock_preamble_bytes(600)) << "the default is 600 ms";
+  EXPECT_EQ(recorder.sent[0].preamble, mock_preamble_bytes(515)) << "the default is 515 ms";
 
   tuning_.low_power_wake_ms = 1000;
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER));
@@ -409,12 +409,12 @@ TEST(FormatOnewayPreambleList, AlwaysAliveIsFourNormalCopies) {
 }
 
 TEST(FormatOnewayPreambleList, LowPowerIsOneWakeUpThenNormalCopiesTheSameOnEveryRadio) {
-  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LOW_POWER, raw_stream_rules()), "600/10/10/10");
+  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LOW_POWER, raw_stream_rules()), "515/10/10/10");
   TenBitPreambleRadio ten_bit;
   const OneWayPreambleRules rules{START_PREAMBLE_MS, LOW_POWER_WAKE_MS,
                                   [&ten_bit](float ms) { return ten_bit.preamble_bytes_for_ms(ms); },
                                   [&ten_bit](uint16_t bytes) { return ten_bit.preamble_ms_for_bytes(bytes); }};
-  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LOW_POWER, rules), "600/10/10/10");
+  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LOW_POWER, rules), "515/10/10/10");
 }
 
 TEST(FormatOnewayPreambleList, ReflectsTheLiveSettings) {
@@ -424,5 +424,5 @@ TEST(FormatOnewayPreambleList, ReflectsTheLiveSettings) {
 
 TEST(FormatOnewayPreambleList, KeepsTheHalfMillisecondStepOfTheStartPreamble) {
   // start_preamble_ms moves in 0.5 ms steps; the log must not round 3.5 ms to 4.
-  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LOW_POWER, raw_stream_rules(3.5f)), "600/3.5/3.5/3.5");
+  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LOW_POWER, raw_stream_rules(3.5f)), "515/3.5/3.5/3.5");
 }

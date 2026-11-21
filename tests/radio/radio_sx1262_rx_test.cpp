@@ -1091,7 +1091,7 @@ TEST(RadioSX1262, PreambleDurationsConvertAtEightBitsPerByte) {
   TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
   EXPECT_EQ(radio.preamble_bits_per_byte(), 8);
   EXPECT_EQ(radio.preamble_bytes_for_ms(START_PREAMBLE_MS), 48);
-  EXPECT_EQ(radio.preamble_bytes_for_ms(LOW_POWER_WAKE_MS), 2880);
+  EXPECT_EQ(radio.preamble_bytes_for_ms(LOW_POWER_WAKE_MS), 2472);
   EXPECT_EQ(radio.response_preamble(), MOCK_RESPONSE_PREAMBLE) << "the 3.5 ms default before any tuning is applied";
   TuningConfig tuning;
   tuning.response_preamble_ms = 10.0F;

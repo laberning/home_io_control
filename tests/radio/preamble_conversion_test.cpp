@@ -80,7 +80,7 @@ TEST(PreambleConversion, DefaultsGiveTheExpectedBytesOnEachCoder) {
     uint16_t ten_bit_bytes;     // SX1276
   };
   const Row rows[] = {
-      {"wake-up", LOW_POWER_WAKE_MS, 2880, 2304},
+      {"wake-up", LOW_POWER_WAKE_MS, 2472, 1978},
       {"start", START_PREAMBLE_MS, 48, 38},
       {"response", RESPONSE_PREAMBLE_MS, 17, 13},
       {"cold broadcast reply", COLD_BROADCAST_REPLY_PREAMBLE_MS, 96, 77},

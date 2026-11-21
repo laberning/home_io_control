@@ -27,7 +27,7 @@ TEST(TuningConfig, DefaultsMatchPlan) {
   EXPECT_EQ(cfg.response_preamble_ms, 3.5F) << "inside a session: longer of the two validated durations";
   EXPECT_EQ(cfg.cold_broadcast_reply_preamble_ms, 20.0F) << "sized for the key-extraction responder's 0x29 broadcast";
   EXPECT_EQ(cfg.start_preamble_ms, 10.0F) << "directed start frame to a non-low-power target";
-  EXPECT_EQ(cfg.low_power_wake_ms, 600.0F) << "wake-up for a resting battery device";
+  EXPECT_EQ(cfg.low_power_wake_ms, 515.0F) << "wake-up for a resting battery device, ADR 0118";
   EXPECT_FALSE(cfg.pairing_discovery_preamble_set) << "discovery follows the start preamble";
   EXPECT_EQ(cfg.legacy_preamble_bytes.start, 0) << "no deprecated byte key given";
   EXPECT_FALSE(cfg.lbt_force_when_busy) << "a request is never forced onto a busy channel by default";

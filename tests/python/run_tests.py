@@ -1701,7 +1701,7 @@ def preamble_durations_take_fractional_milliseconds_inside_their_range():
         t.CONF_START_PREAMBLE_MS: (1.5, 70, 0.5),
         t.CONF_COLD_BROADCAST_REPLY_PREAMBLE_MS: (1.5, 70, 0.5),
         t.CONF_PAIRING_DISCOVERY_PREAMBLE_MS: (1.5, 300, 0.5),
-        t.CONF_LOW_POWER_WAKE_MS: (300, 1000, 10),
+        t.CONF_LOW_POWER_WAKE_MS: (300, 1000, 5),
     }
     for key, (low, high, step) in expected.items():
         assert t._NUMBER_PARAMS[key] == (low, high, step, "ms"), (key, t._NUMBER_PARAMS[key])

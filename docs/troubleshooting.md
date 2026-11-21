@@ -171,7 +171,7 @@ durably reserved, because reusing one is unrecoverable. This is a storage failur
    the long wake-up copy: set `low_power: true`. An awake VELUX receiver ignores a frame that
    arrives behind the long wake-up ([ADR 0041](adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)):
    for a mains-powered one set `low_power: false`, or leave it unset with `manufacturer: velux`. The TX line in the log lists the preamble of each copy in milliseconds, for
-   example `preamble 600/10/10/10 ms` for the wake-up on the first copy only, and the boot log names
+   example `preamble 515/10/10/10 ms` for the wake-up on the first copy only, and the boot log names
    the shape the identity resolved to. The wake-up length of a `low_power: true` identity is
    [`low_power_wake_ms`](configuration/tuning.md#low_power_wake_ms). How long a burst takes
    per shape is in [Sending 1W commands](configuration/oneway-transmit.md#what-one-command-puts-on-the-air).

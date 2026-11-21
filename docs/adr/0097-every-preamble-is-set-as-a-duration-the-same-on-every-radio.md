@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0097 -->
 
-**Status:** Accepted, amended by [ADR 0115](0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md), amends [ADR 0042](0042-start-preamble-default-comes-from-the-radio-driver.md) and [ADR 0095](0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md) · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0115](0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md) and [ADR 0118](0118-the-wake-up-preamble-defaults-to-515-ms.md), amends [ADR 0042](0042-start-preamble-default-comes-from-the-radio-driver.md) and [ADR 0095](0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md) · **Recorded:** 2026-11
 
 ## Context
 

@@ -311,14 +311,17 @@ _NUMBER_PARAMS = {
     # #27/#87's precedent); nothing calls for raising it further.
     CONF_PAIRING_DISCOVERY_PREAMBLE_MS: (1.5, 300, 0.5, "ms"),
     # The wake-up preamble on a directed start frame to a `low_power` target believed at rest. The
-    # default is LOW_POWER_WAKE_MS (600, proto_timing.h, ADR 0097): a VELUX KLI 110 remote sends about
-    # 600 ms of wake-up, and a resting VELUX SSL solar roller shutter answered every try at that
-    # length. The floor 300 ms is at least LONG_PREAMBLE bytes on every radio (1152 bytes on the
-    # SX1276), which keeps every value a wake-up burst for tx_wake_for(); the ceiling 1000 ms is
+    # default is LOW_POWER_WAKE_MS (515, proto_timing.h, ADR 0118): a resting VELUX SSL solar roller
+    # shutter answered every try at about 600 ms (the KLI 110 remote's own wake-up) and 12 of 16 at
+    # 427 ms, while a mains one-way receiver ignored a wake-up copy of 560 ms and longer. The floor
+    # 300 ms is at least LONG_PREAMBLE bytes on every radio (1152 bytes on the SX1276), which keeps
+    # every value a wake-up burst for tx_wake_for(); the ceiling 1000 ms is
     # about four seconds of air for the three attempts. A low-power target keeps its three attempts
     # whatever their length costs: the exchange is bounded by that count, not by
     # exchange_total_budget_ms (ADR 0095).
-    CONF_LOW_POWER_WAKE_MS: (300, 1000, 10, "ms"),
+    # Step 5 ms keeps the 515 ms default on the number entity's step
+    # (tests/sync/preamble_wake_sync_test.cpp checks it).
+    CONF_LOW_POWER_WAKE_MS: (300, 1000, 5, "ms"),
     CONF_LBT_RSSI_THRESHOLD_DBM: (-95, -70, 1, "dBm"),
     # Ceilings are generous because the right value is a property of the target device, not of
     # the radio: measured RS100 solar reply latencies reach ~3 s (see RESPONSE_START_WAIT_MS).

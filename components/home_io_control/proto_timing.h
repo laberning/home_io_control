@@ -49,11 +49,14 @@ static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes: legacy one-way
 static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol's nominal length of a continuation preamble
 
 /// Default for `TuningConfig::low_power_wake_ms`: the 2W wake-up in front of a directed start frame
-/// to a low-power receiver believed at rest. A VELUX KLI 110 remote sends about 600 ms of wake-up,
-/// and with about 600 ms all eight commands to two resting VELUX SSL shutters landed on the first
-/// try, where 427 ms answered 12 of 16 and the 213 ms of LONG_PREAMBLE about half (ADR 0095,
-/// ADR 0097). The same duration is 2880 bytes on a raw-stream radio and 2304 on the SX1276.
-static constexpr float LOW_POWER_WAKE_MS = 600.0F;
+/// to a low-power receiver believed at rest, and the wake-up copy of a one-way `low_power: true`
+/// burst (ADR 0115). 515 ms is above the 427 ms that resting battery devices needed (ADR 0095) and
+/// at the top of the wake-ups a mains one-way receiver obeyed behind a short copy train: it ignored
+/// 560 ms and longer (ADR 0118). A VELUX KLI 110 remote sends about 600 ms of wake-up, with which
+/// all eight commands to two resting VELUX SSL shutters landed on the first try, where 427 ms
+/// answered 12 of 16 and the 213 ms of LONG_PREAMBLE about half; a device that needs more raises the
+/// setting (ADR 0097). The same duration is 2472 bytes on a raw-stream radio and 1978 on the SX1276.
+static constexpr float LOW_POWER_WAKE_MS = 515.0F;
 
 /// Default for `TuningConfig::cold_broadcast_reply_preamble_ms` — preamble for a *broadcast* reply
 /// to a frame the peer caught via a rotating/hopping listen (currently: only the key-extraction
@@ -194,7 +197,7 @@ static constexpr uint16_t LOW_POWER_SHORT_LEAD_WINDOW_MS = 100;
 /// and 4375 ms (a stalled key extraction). 550 ms sits about 1.5 times above the 95th percentile and
 /// below every slower sample, so one attempt's window covers a reply that arrives late without
 /// waiting for the outliers. Three such attempts behind the default LOW_POWER_WAKE_MS take
-/// about 3.5 s, so a low-power plan runs past EXCHANGE_TOTAL_BUDGET_MS
+/// about 3.2 s, so a low-power plan runs past EXCHANGE_TOTAL_BUDGET_MS
 /// (decisions::AttemptPlan::bounded_by_attempts, ADR 0095).
 static constexpr uint16_t LOW_POWER_RESPONSE_WAIT_MS = 550;
 /// How long an attempt listens for a mains device's reply when another attempt follows it, after

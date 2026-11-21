@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0115 -->
 
-**Status:** Accepted, amends [ADR 0097](0097-every-preamble-is-set-as-a-duration-the-same-on-every-radio.md) and [ADR 0038](0038-oneway-bursts-follow-the-identity-power-class.md) · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0118](0118-the-wake-up-preamble-defaults-to-515-ms.md), amends [ADR 0097](0097-every-preamble-is-set-as-a-duration-the-same-on-every-radio.md) and [ADR 0038](0038-oneway-bursts-follow-the-identity-power-class.md) · **Recorded:** 2026-11
 
 Amends ADR 0097 (every preamble is a duration, except the one-way wake-up) and ADR 0038 (one-way bursts follow the
 identity's power class), and corrects passages of ADRs 0026, 0027, 0031, 0032 and 0086 that no longer match the

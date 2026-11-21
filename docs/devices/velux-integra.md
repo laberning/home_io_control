@@ -189,11 +189,12 @@ moves the window to its predefined air-exchange opening rather than fully open.
   `low_power_wake_belief` on: with it off, every `stop` goes out with the long preamble and never
   lands mid-travel. The boot log states it (`Low-power wake belief: on`). At rest the SSL answers
   only the wake-up preamble, and not on every try: about half the tries at about 213 ms, about three
-  in four at 427 ms, and all of eight with about 600 ms, the default
+  in four at 427 ms, and all of eight with about 600 ms
   ([issue #114](https://github.com/laberning/home_io_control/issues/114),
   [issue #151](https://github.com/laberning/home_io_control/issues/151)). The hub makes three
-  attempts, so a silent shutter holds it for about 3.5 s. If commands to a resting shutter still
-  often need a second press, try a longer
+  attempts, so a silent shutter holds it for about 3.2 s. The default wake-up is 515 ms
+  ([ADR 0118](../adr/0118-the-wake-up-preamble-defaults-to-515-ms.md)); if commands to a resting shutter
+  still often need a second press, try `600` or longer in
   [`low_power_wake_ms`](../configuration/tuning.md#low_power_wake_ms). There is no
   such result for the MSU solar awning screen, so expect a mid-travel `stop` to do nothing there
   and use the product's own wall remote.

@@ -44,7 +44,7 @@ std::string format_oneway_preamble_list(OneWayPowerClass power_class, const OneW
     if (copy > 0)
       out += '/';
     // Tenths of a millisecond: `start_preamble_ms` moves in 0.5 ms steps, and a whole-ms rounding
-    // would log 3.5 ms as 4. A whole value prints without a decimal ("600/10/10/10").
+    // would log 3.5 ms as 4. A whole value prints without a decimal ("515/10/10/10").
     const auto tenths =
         static_cast<int32_t>(std::lround(oneway_copy_preamble(shape, power_class, rules).ms * TENTHS_PER_MS));
     out += std::to_string(tenths / TENTHS_PER_MS);
