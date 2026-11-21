@@ -333,7 +333,7 @@ constexpr DeviceReadingRow DEVICE_READINGS[] = {
                                              .value = DHW_CAPABILITY_AWAY},
                          .before = FixedRegisterWrite{.fn = DeviceRegister::DHW_AWAY_DURATION,
                                                       .value = DHW_AWAY_UNTIL_TURNED_OFF}}},
-    // A Sauter Guelma connecte, an electric storage water heater (pull request #248): its status reply carries nothing,
+    // A Sauter Guelma connecte, an electric storage water heater (issue #247): its status reply carries nothing,
     // so every row is a register and its poll sends no status read (ADR 0110). It shares the Calypso's water
     // temperature, mode and energy registers, under rows of its own. Its mode register holds 0 in automatic mode and 2
     // in manual mode, where only the element heats; it has no mode 1.

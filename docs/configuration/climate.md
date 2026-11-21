@@ -52,9 +52,10 @@ The keys every entity platform shares (`name`, `io_device_id`, `io_device_type`,
   on a Sauter Hekla. Accepted on a radiator or `io_model: heater_with_light` only. See the section
   "Occupancy detection" below.
 - `occupancy` (Optional): A binary sensor, on while the heater sees someone in the room. Experimental,
-  except on a Sauter Hekla. Accepted on the same kinds. See the section "Occupancy detection" below.
+  except on a Sauter Hekla and a Thermor EMOTION 3 H. Accepted on the same kinds. See the section
+  "Occupancy detection" below.
 - `energy` (Optional): A sensor with the energy the heater has used, in kWh, for the energy dashboard.
-  Confirmed on a Sauter Tahual, experimental on other heaters. Accepted on a radiator,
+  Confirmed on a Sauter Tahual and a Sauter Hekla, experimental on other heaters. Accepted on a radiator,
   `io_model: towel_dryer` or `io_model: heater_with_light` only. See the section "Energy sensor" below.
 - `remaining_time` (Optional): A sensor with the minutes left of the boost or drying run in progress.
   Experimental. Accepted on `io_model: towel_dryer` only. See the section "Boost and drying times" below.
@@ -287,6 +288,9 @@ empty. Two optional blocks show that in Home Assistant: a switch that turns the 
 and a binary sensor that is on while the heater sees someone. Both are confirmed on a Sauter Hekla
 ([issue #222](https://github.com/laberning/home_io_control/issues/222)): with the detection on, the Hekla goes
 to its comfort temperature when it sees someone and back to eco a few minutes after it sees no one.
+The binary sensor is also confirmed on two Thermor EMOTION 3 H radiators
+([issue #228](https://github.com/laberning/home_io_control/issues/228)). Their detection lasts only a short
+time, sometimes a single poll, so a short visit between two polls can be missed.
 
 ```yaml
 climate:
@@ -323,9 +327,9 @@ climate:
   sensor reads.
 
 > [!NOTE]
-> Experimental on a radiator: the Hekla is the only heater that has answered both registers. An AGILIA
-> IO or a Thermor EMOTION 3 H may answer them differently, or not at all. Please report your heater's
-> result.
+> The switch is experimental on a radiator: the Hekla is the only heater that has answered both registers.
+> A Thermor EMOTION 3 H answers the presence register; its switch has not been tried. An AGILIA IO may
+> answer them differently, or not at all. Please report your heater's result.
 
 ## Energy sensor
 
@@ -333,7 +337,8 @@ Many electric heaters count the energy they have used, in whole kilowatt-hours, 
 their display. The optional `energy:` block shows that counter in Home Assistant, so the heater
 appears in the energy dashboard. The total matches the display of two Sauter Tahual radiators
 ([pull request 238](https://github.com/laberning/home_io_control/pull/238), corpus capture
-`sauter_tahual_probe_energy_register`).
+`sauter_tahual_probe_energy_register`) and reads correctly on three Sauter Hekla heaters
+([issue #222](https://github.com/laberning/home_io_control/issues/222)).
 
 ```yaml
 climate:
@@ -361,10 +366,10 @@ climate:
   helper.
 
 > [!NOTE]
-> Experimental except on a Sauter Tahual. Two Thermor EMOTION 3 H radiators
+> Experimental except on a Sauter Tahual and a Sauter Hekla. Two Thermor EMOTION 3 H radiators
 > ([issue #228](https://github.com/laberning/home_io_control/issues/228)) and two Atlantic Adelis towel
 > dryers ([issue #202](https://github.com/laberning/home_io_control/issues/202)) answer the register, but
-> nobody has compared their total with the display, and a Sauter Hekla has not been tried. A vendor app
+> nobody has compared their total with the display. A vendor app
 > may show a different total than the heater's own counter. Please compare yours and report the result.
 
 ## Boost and drying times

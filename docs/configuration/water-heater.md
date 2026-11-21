@@ -6,8 +6,8 @@
 > [Atlantic Calypso Connecté](../devices/atlantic-calypso.md) and an
 > [Atlantic Explorer V4](../devices/atlantic-explorer-v4.md): readings, target, mode, boost and away.
 > An electric storage water heater, the [Sauter Guelma connecté](../devices/sauter-guelma.md), is declared
-> with `io_model: electric_water_heater`; see
-> [Electric storage water heaters](#electric-storage-water-heaters).
+> with `io_model: electric_water_heater`; its modes, target and sensors are in the section on electric storage
+> water heaters below.
 > The Calypso takes only its own fixed targets; see
 > [Choosing a target](../devices/atlantic-calypso.md#choosing-a-calypso-target).
 
@@ -56,13 +56,14 @@ water_heater:
   boost runs, where a Calypso reports 1) and reads away from its target, which drops to `0000` while
   away. Without it the card shows 46 °C while the display shows 51 °C, the switch shows a boost while
   none runs, and away never shows. `electric_water_heater` for an electric storage water heater such as
-  the [Sauter Guelma connecté](../devices/sauter-guelma.md), with `io_subtype: 0`; see
-  [Electric storage water heaters](#electric-storage-water-heaters).
+  the [Sauter Guelma connecté](../devices/sauter-guelma.md), with `io_subtype: 0`, described in the section
+  on electric storage water heaters below.
 - `energy` (Optional): A sensor of the energy the heater has used since it was installed, in kWh,
   with `device_class: energy` and `state_class: total_increasing`, so it fits the energy dashboard.
   Takes every [sensor](https://esphome.io/components/sensor/) option.
 - `heat_pump_running` (Optional): A binary sensor, `device_class: running`, on while the heat pump
-  runs. Not on an electric storage heater, nor are `electric_backup_running` and `heating_source`. Takes every [binary sensor](https://esphome.io/components/binary_sensor/) option.
+  runs. Not on an electric storage heater, nor are `electric_backup_running` and `heating_source`.
+  Takes every [binary sensor](https://esphome.io/components/binary_sensor/) option.
 - `electric_backup_running` (Optional): A binary sensor, `device_class: running`, on while the
   electric element heats.
 - `heating_source` (Optional): A text sensor that says what heats the water: `heat pump`,
@@ -131,7 +132,7 @@ a target of 62 °C, which the card shows, and its own target again afterwards.
 An electric storage water heater heats with its element alone and keeps its whole state in registers, so its
 status reply is never read. `io_model: electric_water_heater` declares one; it is confirmed on a
 [Sauter Guelma connecté](../devices/sauter-guelma.md) 80 L
-([pull request #248](https://github.com/laberning/home_io_control/pull/248)).
+([issue #247](https://github.com/laberning/home_io_control/issues/247)).
 
 - **Modes:** `eco` is the heater's automatic mode and `electric` its manual mode. The card offers no other.
 - **Target:** the temperature the heater heats to, shown in every mode (7 °C in absence). In manual mode the

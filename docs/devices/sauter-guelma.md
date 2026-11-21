@@ -4,7 +4,7 @@
 An electric storage water heater sold by Sauter (Atlantic group). It speaks io-homecontrol two-way and reports
 the same node type as a heat-pump water heater, so it is declared with `io_model: electric_water_heater`. One
 80 L unit is reported on an SX1262 board
-([pull request #248](https://github.com/laberning/home_io_control/pull/248)); see
+([issue #247](https://github.com/laberning/home_io_control/issues/247)); see
 [Electric storage water heaters](../configuration/water-heater.md#electric-storage-water-heaters) for the options.
 
 ```yaml

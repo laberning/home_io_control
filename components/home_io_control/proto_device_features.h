@@ -157,7 +157,7 @@ enum class DeviceFeature : uint8_t {
   HOT_WATER_AWAY_MAIN_PARAMETER,
   /// A water heater that keeps its water temperature, operating mode and energy counter in the Calypso's registers but
   /// the rest of its state in registers of its own: the temperature it heats to, its shower counts, its heating power,
-  /// and boost and absence as flags (the Sauter Guelma connecte, an electric storage heater, pull request #248). Its
+  /// and boost and absence as flags (the Sauter Guelma connecte, an electric storage heater, issue #247). Its
   /// status reply carries nothing (main parameter 0, FP15 and FP16 FFFF), so none of its rows reads one. A member of
   /// the group HOT_WATER_REGISTER_MAP.
   HOT_WATER_REGISTERS_GUELMA,

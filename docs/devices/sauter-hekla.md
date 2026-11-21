@@ -23,7 +23,7 @@ the night light. Three heaters that were already paired with a Sauter Cozytouch 
 | Target set in `auto` (temporary override) | ⚠️ Experimental: no Hekla has confirmed it |
 | Level the heater applies (`heating_level:` sensor) | ❌ Not available: the hub reads no level from a Hekla, so a `heating_level:` block on it is a configuration error and has to be removed |
 | Occupancy detection: switch (`occupancy_detection:`) and sensor (`occupancy:`) | ✅ Confirmed: the switch turns the detection on and off, and the sensor shows presence whether the detection is on or off. With the detection on, the heater goes to its comfort temperature when it sees someone and back to eco a few minutes after it sees no one; with it off, it ignores presence |
-| Energy total (`energy:` sensor) | ⚠️ Experimental: not tested on a Hekla; a Sauter Tahual's total equals its display ([Energy sensor](../configuration/climate.md#energy-sensor)) |
+| Energy total (`energy:` sensor) | ✅ Confirmed: the total reads correctly on three Heklas ([issue #222](https://github.com/laberning/home_io_control/issues/222)); see [Energy sensor](../configuration/climate.md#energy-sensor) |
 
 ## Modes in Home Assistant
 

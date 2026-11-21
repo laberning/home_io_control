@@ -1,7 +1,7 @@
 /// @file heater_controller_guelma_test.cpp
 /// @brief HeaterController on the production rows of a Sauter Guelma connecte (io_model: electric_water_heater): an
 /// electric storage water heater whose state is all registers, whose target is a shower count written in manual mode
-/// only, and whose boost and absence are flag registers (pull request #248).
+/// only, and whose boost and absence are flag registers (issue #247).
 ///
 /// The replies are the heater's own, from the corpus captures `sauter_guelma_exchange_register_read` and
 /// `_register_write`; the frames sent are checked byte for byte.

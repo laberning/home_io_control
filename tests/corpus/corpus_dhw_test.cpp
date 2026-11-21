@@ -186,7 +186,7 @@ TEST(CorpusDhw, TargetEncoderReproducesTheCapturedMainParameters) {
                     corpus::atlantic_calypso_probe_status_mp_fp_frame1_bytes[12]);
 }
 
-// === A Sauter Guelma connecte, an electric storage water heater (pull request #248) ===
+// === A Sauter Guelma connecte, an electric storage water heater (issue #247) ===
 
 namespace {
 

@@ -9,8 +9,8 @@ source:
   captured_with: sx1262
   firmware: "guelma-water-heater branch, diagnostic_probes: true"
   date: 2026-11-18
-  origin: own-hardware
-  issue: null
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/247"
 node_map:
   hub: "C0FFEE"
   device: "A1B2C3"

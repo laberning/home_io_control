@@ -127,9 +127,10 @@ The display words below are the AGILIA IO's, from its
 - The entry also gets a `Window` sensor and an `Open Window Detection` switch, and a Sauter Hekla a
   night light; see [Companion entities](configuration/climate.md#companion-entities-of-a-heater). An
   optional switch and sensor show the heater's
-  [occupancy detection](configuration/climate.md#occupancy-detection) (confirmed on a Sauter Hekla),
-  and an optional [energy sensor](configuration/climate.md#energy-sensor) shows the heater's energy total (confirmed on a
-  Sauter Tahual).
+  [occupancy detection](configuration/climate.md#occupancy-detection) (confirmed on a Sauter Hekla;
+  the sensor also on a Thermor EMOTION 3 H), and an optional
+  [energy sensor](configuration/climate.md#energy-sensor) shows the heater's energy total (confirmed on
+  a Sauter Tahual and a Sauter Hekla).
 
 Target, the three modes, both presets, the room temperature and `heating` / `idle` are confirmed on
 three AGILIA IO radiators, each read back (issue #165). The target and the room temperature are

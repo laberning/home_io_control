@@ -241,7 +241,7 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
      device_feature::WATER_HEATER | device_feature::HOT_WATER_TARGET_20_70 |
          device_feature::HOT_WATER_BOOST_FP16_INVERTED | device_feature::HOT_WATER_AWAY_MAIN_PARAMETER |
          device_feature::HOT_WATER_REGISTERS_CALYPSO | device_feature::HOT_WATER_OPERATING_MODE_WORD},
-    // A Sauter Guelma connecte, an electric storage water heater, reports the same 51/0 (pull request #248), so it is a
+    // A Sauter Guelma connecte, an electric storage water heater, reports the same 51/0 (issue #247), so it is a
     // model row: the YAML declares it (`io_model: electric_water_heater`). Its status reply carries nothing, so its
     // rows are all registers and its poll sends no status read: the temperature it heats to, a target in shower counts
     // in manual mode only, and boost and absence as flag registers.
