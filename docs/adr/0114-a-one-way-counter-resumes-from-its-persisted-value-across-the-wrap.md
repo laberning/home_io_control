@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0114 -->
 
-**Status:** Accepted, amends [ADR 0025](0025-persist-monotonic-counters-as-the-only-exception-to-0018.md) · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0120](0120-a-one-way-counter-that-wraps-is-lost-to-a-somfy-receiver.md), amends [ADR 0025](0025-persist-monotonic-counters-as-the-only-exception-to-0018.md) · **Recorded:** 2026-11
 
 Amends [ADR 0025](0025-persist-monotonic-counters-as-the-only-exception-to-0018.md) (monotonic counters are the one
 thing the hub persists): the rule for choosing between `initial_sequence:` and the persisted value at boot, and the

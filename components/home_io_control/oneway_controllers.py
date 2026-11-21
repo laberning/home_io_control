@@ -154,10 +154,10 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         cv.Required(CONF_IO_DEVICE_TYPE): validate_device_type,
         # Seeds this identity's rolling counter on first use. This is the escape hatch for a
         # device that has stopped accepting commands because its stored counter ran ahead of
-        # ours: bump this and reflash. Devices accept a forward jump only within a window whose size
-        # is not measured (the store assumes 1000, oneway_sequence_store.h), so a value that is too
-        # far ahead fails exactly like one that is too far behind, and just as silently — move it
-        # in small steps. It only ever moves the counter forward.
+        # ours: bump this and reflash. A Somfy Izymo obeys any higher number (measured up to +32000)
+        # but never a step across the 16-bit wrap, so a value that is too low fails silently, and
+        # other receivers are not measured: prefer small steps. It only ever moves the counter
+        # forward.
         cv.Optional(CONF_INITIAL_SEQUENCE, default=0): cv.int_range(min=0, max=0xFFFF),
         # Which command buttons to generate. Validated against the known set rather than taken
         # as free text: a typo would otherwise produce a silently missing button, and 1W gives no

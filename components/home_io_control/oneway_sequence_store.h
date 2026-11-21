@@ -13,8 +13,8 @@
 ///
 /// The failure is asymmetric, and every rule below follows from it:
 ///
-/// - **Skipping sequences is safe.** A device accepts a forward jump within its acceptance
-///   window, so a counter that runs ahead costs nothing.
+/// - **Skipping sequences is safe.** A device accepts a forward jump (a Somfy receiver any higher
+///   number, ADR 0120), so a counter that runs ahead by a little costs nothing.
 /// - **Reusing one is not.** The device rejects it as a replay.
 /// - **Falling behind is unrecoverable without intervention.** Every later command is rejected
 ///   too, permanently, and *silently* — 1W emits no error, so a hub with a stale counter keeps
@@ -35,11 +35,17 @@ namespace home_io_control {
 
 // === Sequence-safety bounds ===
 
-/// How far ahead of its stored high-water mark a device is assumed to accept a jump. 1000 is an
-/// assumption, not a value measured on hardware, and it is the ceiling every forward skip in this
-/// file has to stay under: a jump past the real window fails exactly like a stale counter, and
-/// just as silently.
-static constexpr uint16_t ONEWAY_SEQUENCE_ACCEPTANCE_WINDOW = 1000;
+/// The hub's own ceiling for every automatic forward skip in this file: stride times reboot headroom must stay
+/// below it (see the static_assert). It is a deliberately small bound, not a device's window.
+///
+/// The measured rule, from a bench run on one Somfy Izymo: the device obeys a one-way command
+/// with any higher sequence number, compared as a plain number (tested up to +32000), and ignores
+/// the same number, a lower one and any step across the 16-bit wrap (65535 to 0). So a forward
+/// jump is not limited by a window on that device, and an identity whose counter wraps is lost
+/// to it (ADR 0120). Other receivers (VELUX in particular) are not measured; the small bound keeps
+/// the hub's own skips safe if one of them accepts only a short step ahead.
+/// \todo Measure a VELUX receiver.
+static constexpr uint16_t ONEWAY_SEQUENCE_MAX_AUTOMATIC_SKIP = 100;
 
 /// How many sequences one flash write reserves.
 ///
@@ -49,16 +55,16 @@ static constexpr uint16_t ONEWAY_SEQUENCE_ACCEPTANCE_WINDOW = 1000;
 /// the bound, and raise it only if that bound still holds.
 static constexpr uint16_t ONEWAY_SEQUENCE_STRIDE = 8;
 
-/// How many consecutive unclean reboots the stride must survive while staying inside a device's
-/// acceptance window. Eight is far past plausible; the point is headroom, not precision.
+/// How many consecutive unclean reboots the stride must survive while staying below
+/// `ONEWAY_SEQUENCE_MAX_AUTOMATIC_SKIP`. Eight is far past plausible; the point is headroom, not precision.
 static constexpr uint16_t ONEWAY_SEQUENCE_REBOOT_HEADROOM = 8;
 
 /// Half the 16-bit sequence range: the largest forward step (exclusive) `initial_sequence` may make at boot.
 static constexpr uint16_t ONEWAY_SEQUENCE_HALF_RING = 0x8000;
 
-static_assert(ONEWAY_SEQUENCE_STRIDE * ONEWAY_SEQUENCE_REBOOT_HEADROOM < ONEWAY_SEQUENCE_ACCEPTANCE_WINDOW,
-              "the stride must let many unclean reboots in a row still land inside a device's "
-              "acceptance window — a larger stride buys fewer flash writes and pays in silent desync");
+static_assert(ONEWAY_SEQUENCE_STRIDE * ONEWAY_SEQUENCE_REBOOT_HEADROOM < ONEWAY_SEQUENCE_MAX_AUTOMATIC_SKIP,
+              "the stride must let many unclean reboots in a row still stay below the hub's skip "
+              "ceiling — a larger stride buys fewer flash writes and risks silent desync on a strict receiver");
 
 // === Boot rule ===
 
@@ -73,8 +79,8 @@ static_assert(ONEWAY_SEQUENCE_STRIDE * ONEWAY_SEQUENCE_REBOOT_HEADROOM < ONEWAY_
 /// past 32768 at the next boot. As plain numbers it never can; and a counter that has wrapped past 65535 to a small
 /// value is not dragged back to an `initial_sequence` half the range or more above it.
 /// \todo A wrapped counter below `initial_sequence` (by less than half the range) still jumps forward to it once at
-/// the next boot, outside any measured acceptance window. Telling that apart from a deliberate YAML edit needs
-/// state the store does not keep yet.
+/// the next boot. A Somfy receiver ignores every number after a wrap anyway (ADR 0120); other receivers are not
+/// measured. Telling such a wrapped counter apart from a deliberate YAML edit needs state the store does not keep yet.
 /// @param persisted The persisted counter, or `std::nullopt` when nothing is persisted for the identity.
 /// @param initial_sequence The identity's configured start value.
 /// @return The value the counter starts from.

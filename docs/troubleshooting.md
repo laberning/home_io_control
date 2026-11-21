@@ -164,8 +164,12 @@ durably reserved, because reusing one is unrecoverable. This is a storage failur
 4. **Desynced counter.** The device remembers the highest sequence it accepted from you and rejects
    anything at or below it. If your counter fell behind — a replaced board, a restored backup — every
    command is silently dropped. **Remedy:** raise `initial_sequence:` above the value in the sensor
-   and reflash. Move it in *small* steps: devices accept a forward jump only within a window whose
-   size is not measured, so overshooting fails exactly like undershooting. A value at or
+   and reflash. A bench run on a Somfy Izymo showed that it obeys any higher number, compared as a
+   plain number (jumps up to 32000 tested), so a large forward step is fine there; other receivers
+   are not measured, so prefer small steps. The same run showed that the Izymo ignores every step
+   across the 16-bit wrap (65535 to 0), so an identity whose counter wraps is lost to that device:
+   give it a new address (a new `node_id:`, or a new `id:` when the address is derived) and enroll
+   it again ([ADR 0120](adr/0120-a-one-way-counter-that-wraps-is-lost-to-a-somfy-receiver.md)). A value at or
    below the counter the hub already holds, or 32768 or more above it, changes nothing.
 5. **Wrong burst shape.** A solar or battery receiver sleeps between listening windows and needs
    the long wake-up copy: set `low_power: true`. An awake VELUX receiver ignores a frame that

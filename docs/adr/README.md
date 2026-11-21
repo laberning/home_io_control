@@ -105,6 +105,7 @@ Numbers are stable identifiers, not a reading order. Grouped by theme:
 | [0019](0019-declare-what-the-protocol-cannot-report.md) | Declare, don't guess | Undetectable capabilities are YAML options, not inferences |
 | [0025](0025-persist-monotonic-counters-as-the-only-exception-to-0018.md) | Counters are the one exception to 0018 | 1W's rolling sequence cannot be re-derived, so it is persisted — and nothing else is |
 | [0114](0114-a-one-way-counter-resumes-from-its-persisted-value-across-the-wrap.md) | A one-way counter resumes from its persisted value across the wrap (amends 0025) | At boot `initial_sequence:` wins only when nothing is persisted or it is above the persisted value by less than 32768 (plain numbers, not the ring), so neither a wrapped nor a high counter is sent back; no resync action exists yet |
+| [0120](0120-a-one-way-counter-that-wraps-is-lost-to-a-somfy-receiver.md) | A one-way counter that wraps is lost to a Somfy receiver (amends 0114) | Bench on an Izymo: any higher number is obeyed (up to +32000 tried), the same, lower and across-the-wrap numbers are ignored; a wrapped identity needs a new address; the hub's own skips stay under 100; VELUX not measured |
 | [0027](0027-controller-identities-replace-node-addressing-for-1w.md) | Controller identities for 1W | 1W is class-addressed, so the sending identity replaces node addressing |
 | [0036](0036-hub-entities-come-from-hub-block-flags-never-a-platform-entry.md) | Hub entities come from hub-block flags, never a platform entry | Discover & Pair joins its siblings behind `discover_and_pair_button:`; the old `button:` platform is a config error that names the flag |
 | [0052](0052-device-types-follow-the-io-node-type-and-subtype-table.md) | Device types follow the IO node-type and subtype table | A 16-bit `DeviceType` and one (type, subtype) table drive names, entity class, platform and behaviour flags; six YAML names change and the old ones fail with the replacement |
@@ -280,6 +281,7 @@ Every record, in number order (the tables above group them by theme).
 - [ADR 0116: A one-way identity names the devices it drives](0116-a-one-way-identity-names-the-devices-it-drives.md)
 - [ADR 0117: A one-way controller can show an assumed-state cover](0117-a-one-way-controller-can-show-an-assumed-state-cover.md)
 - [ADR 0118: The wake-up preamble defaults to 515 ms](0118-the-wake-up-preamble-defaults-to-515-ms.md)
+- [ADR 0120: A one-way counter that wraps is lost to a Somfy receiver](0120-a-one-way-counter-that-wraps-is-lost-to-a-somfy-receiver.md)
 <!-- /doxygen-subpages -->
 
 ## Writing a new one

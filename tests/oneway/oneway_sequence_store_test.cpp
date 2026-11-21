@@ -126,7 +126,7 @@ TEST_F(OneWaySequenceStoreTest, ARebootSkipsAtMostOneStride) {
   const uint16_t after = take(rebooted, NODE_A);
   EXPECT_LE(after - last_handed_out, ONEWAY_SEQUENCE_STRIDE)
       << "the forward skip is what a reboot costs, and it must stay bounded by the stride — an "
-         "unbounded skip walks outside the device's acceptance window and desyncs just as badly";
+         "unbounded skip can walk past what a strict receiver accepts and desync just as badly";
 }
 
 TEST_F(OneWaySequenceStoreTest, AnUnsyncedWriteWouldNotSurviveAReboot) {
