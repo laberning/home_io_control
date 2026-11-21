@@ -220,27 +220,38 @@ static OneWayControllerIdentity identity_for_manufacturer(uint8_t manufacturer) 
 
 TEST(OneWayController, UnsetVeluxResolvesToAlwaysAlive) {
   // The reason this ADR exists: an awake VELUX receiver does not accept a frame behind the
-  // 1024-byte preamble, and 1W has no acknowledgement that would reveal the loss.
+  // long wake-up preamble, and 1W has no acknowledgement that would reveal the loss.
   EXPECT_EQ(effective_power_class(identity_for_manufacturer(MANUFACTURER_VELUX)), OneWayPowerClass::ALWAYS_ALIVE);
 }
 
-TEST(OneWayController, UnsetSomfyKeepsLegacyLong) {
-  // Somfy's on-air bytes must not move without a regression run on Somfy hardware.
-  EXPECT_EQ(effective_power_class(identity_for_manufacturer(MANUFACTURER_SOMFY)), OneWayPowerClass::LEGACY_LONG);
-  EXPECT_EQ(effective_power_class(identity_for_manufacturer(0x00)), OneWayPowerClass::LEGACY_LONG);
+TEST(OneWayController, UnsetSomfyResolvesToLowPower) {
+  // ADR 0119: one wake-up copy in front of three short ones, which a mains Somfy receiver obeys as
+  // reliably as any shape and a battery receiver still needs.
+  EXPECT_EQ(effective_power_class(identity_for_manufacturer(MANUFACTURER_SOMFY)), OneWayPowerClass::LOW_POWER);
+  EXPECT_EQ(effective_power_class(identity_for_manufacturer(0x00)), OneWayPowerClass::LOW_POWER);
 }
 
-TEST(OneWayController, UnsetUnknownManufacturerKeepsLegacyLong) {
-  // A profile nobody has measured must never silently acquire a shape nobody tested for it.
+TEST(OneWayController, UnsetUnknownManufacturerResolvesToLowPower) {
   const OneWayControllerIdentity id = identity_for_manufacturer(0x7E);
   ASSERT_TRUE(resolve_oneway_wire_profile(id.manufacturer).profile_is_a_guess);
-  EXPECT_EQ(effective_power_class(id), OneWayPowerClass::LEGACY_LONG);
+  EXPECT_EQ(effective_power_class(id), OneWayPowerClass::LOW_POWER);
+}
+
+TEST(OneWayController, UnsetSomfyBurstIsOneFlaggedWakeCopyThenThreeShortOnes) {
+  const OneWayPowerClass resolved = effective_power_class(identity_for_manufacturer(MANUFACTURER_SOMFY));
+  const OneWayCopyShape first = oneway_burst_copy_shape(resolved, 0);
+  EXPECT_EQ(first.preamble, OneWayPreamble::WAKE);
+  EXPECT_TRUE(first.low_power_flag);
+  for (uint8_t copy = 1; copy < 4; copy++) {
+    const OneWayCopyShape shape = oneway_burst_copy_shape(resolved, copy);
+    EXPECT_EQ(shape.preamble, OneWayPreamble::NORMAL) << "copy " << static_cast<int>(copy);
+    EXPECT_FALSE(shape.low_power_flag) << "copy " << static_cast<int>(copy);
+  }
 }
 
 TEST(OneWayController, ExplicitLowPowerAlwaysWinsOverTheProfile) {
   for (const uint8_t manufacturer : {MANUFACTURER_VELUX, MANUFACTURER_SOMFY, static_cast<uint8_t>(0x7E)}) {
-    for (const OneWayPowerClass chosen :
-         {OneWayPowerClass::LEGACY_LONG, OneWayPowerClass::ALWAYS_ALIVE, OneWayPowerClass::LOW_POWER}) {
+    for (const OneWayPowerClass chosen : {OneWayPowerClass::ALWAYS_ALIVE, OneWayPowerClass::LOW_POWER}) {
       SCOPED_TRACE(std::string(oneway_power_class_name(chosen)) + " on manufacturer 0x" +
                    std::to_string(static_cast<int>(manufacturer)));
       OneWayControllerIdentity id = identity_for_manufacturer(manufacturer);
@@ -253,22 +264,13 @@ TEST(OneWayController, ExplicitLowPowerAlwaysWinsOverTheProfile) {
 
 TEST(OneWayController, EveryProfileDefaultIsATransmittableShape) {
   // effective_power_class() feeds oneway_burst_copy_shape() directly, so a profile default that
-  // is not one of the three real shapes would be a latent unreachable-case bug.
+  // is not one of the two real shapes would be a latent unreachable-case bug.
   for (const uint8_t manufacturer :
        {MANUFACTURER_VELUX, MANUFACTURER_SOMFY, static_cast<uint8_t>(0x00), static_cast<uint8_t>(0x7E)}) {
     const OneWayPowerClass resolved = resolve_oneway_wire_profile(manufacturer).default_power_class;
-    const bool is_real_shape = resolved == OneWayPowerClass::LEGACY_LONG ||
-                               resolved == OneWayPowerClass::ALWAYS_ALIVE || resolved == OneWayPowerClass::LOW_POWER;
+    const bool is_real_shape = resolved == OneWayPowerClass::ALWAYS_ALIVE || resolved == OneWayPowerClass::LOW_POWER;
     EXPECT_TRUE(is_real_shape) << "manufacturer 0x" << std::hex << static_cast<int>(manufacturer)
                                << " has a profile default that is not a transmittable shape";
-  }
-}
-
-TEST(OneWayController, LegacyLongIsWakeOnEveryCopy) {
-  for (uint8_t copy = 0; copy < 4; copy++) {
-    const OneWayCopyShape shape = oneway_burst_copy_shape(OneWayPowerClass::LEGACY_LONG, copy);
-    EXPECT_EQ(shape.preamble, OneWayPreamble::WAKE) << "copy " << static_cast<int>(copy);
-    EXPECT_FALSE(shape.low_power_flag) << "copy " << static_cast<int>(copy) << " -- unset never sets CTRL1_LOW_POWER";
   }
 }
 
@@ -293,7 +295,6 @@ TEST(OneWayController, LowPowerWakesOnlyOnCopyZero) {
 }
 
 TEST(OneWayController, PowerClassNamesEveryValue) {
-  EXPECT_STREQ(oneway_power_class_name(OneWayPowerClass::LEGACY_LONG), "legacy long");
   EXPECT_STREQ(oneway_power_class_name(OneWayPowerClass::ALWAYS_ALIVE), "always-alive");
   EXPECT_STREQ(oneway_power_class_name(OneWayPowerClass::LOW_POWER), "low-power");
 }

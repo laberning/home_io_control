@@ -42,9 +42,8 @@ namespace home_io_control {
 /// these by effective_power_class() before any of it reaches the transmitter. Keeping the two
 /// apart is what lets oneway_burst_copy_shape() switch exhaustively with no unreachable case.
 ///
-/// See ADR 0038 for the shapes and ADR 0041 for how an unset key resolves.
+/// See ADR 0038 for the shapes and ADR 0041 and ADR 0119 for how an unset key resolves.
 enum class OneWayPowerClass : uint8_t {
-  LEGACY_LONG,   ///< LONG_PREAMBLE on every copy, CTRL1 0x00 everywhere.
   ALWAYS_ALIVE,  ///< `low_power: false`: normal start preamble on every copy, CTRL1 0x00.
   LOW_POWER,     ///< `low_power: true`: copy 1 a `low_power_wake_ms` wake-up + CTRL1_LOW_POWER, repeats normal.
 };
@@ -56,7 +55,7 @@ const char *oneway_power_class_name(OneWayPowerClass power_class);
 
 /// @brief Which wake-up shape one copy of a 1W burst gets.
 enum class OneWayPreamble : uint8_t {
-  WAKE,    ///< The wake-up preamble (`low_power_wake_ms`, or `LONG_PREAMBLE` bytes for `LEGACY_LONG`).
+  WAKE,    ///< The wake-up preamble (`low_power_wake_ms`).
   NORMAL,  ///< The runtime-tunable `start_preamble_ms`, CTRL1's low-power bit clear.
 };
 
@@ -74,8 +73,8 @@ struct OneWayCopyShape {
 /// @brief Resolve which preamble/CTRL1 shape one copy of a burst gets, from the identity's power
 /// class and the copy's position in the burst.
 ///
-/// Pure: no radio, no tuning, testable on its own. Implements the table in ADR 0038 — `LEGACY_LONG`
-/// and `ALWAYS_ALIVE` are uniform across every copy; only `LOW_POWER` varies by position, putting
+/// Pure: no radio, no tuning, testable on its own. Implements the table in ADR 0038 — `ALWAYS_ALIVE`
+/// is uniform across every copy; only `LOW_POWER` varies by position, putting
 /// the wake-up shape on copy 0 alone — what a real remote's GEAR/EXECUTE burst does, and the
 /// mirror of how `ExchangeEngine` (ADR 0029) already picks a 2W start frame's preamble from the
 /// target's own low-power declaration.
@@ -84,14 +83,12 @@ struct OneWayCopyShape {
 /// @return The preamble and CTRL1 shape for that copy.
 inline OneWayCopyShape oneway_burst_copy_shape(OneWayPowerClass power_class, uint8_t copy_index) {
   switch (power_class) {
-    case OneWayPowerClass::ALWAYS_ALIVE:
-      return {OneWayPreamble::NORMAL, /*low_power_flag=*/false};
     case OneWayPowerClass::LOW_POWER:
       return copy_index == 0 ? OneWayCopyShape{OneWayPreamble::WAKE, /*low_power_flag=*/true}
                              : OneWayCopyShape{OneWayPreamble::NORMAL, /*low_power_flag=*/false};
-    case OneWayPowerClass::LEGACY_LONG:
+    case OneWayPowerClass::ALWAYS_ALIVE:
     default:
-      return {OneWayPreamble::WAKE, /*low_power_flag=*/false};
+      return {OneWayPreamble::NORMAL, /*low_power_flag=*/false};
   }
 }
 
@@ -172,11 +169,11 @@ struct OneWayWireProfile {
   /// Device classes a VELUX_KLI `0x30` sweep targets, `UNKNOWN` entries skipped. All-`UNKNOWN` for
   /// SOMFY, whose `0x39` and `0x30` go to the all-devices address instead.
   std::array<DeviceType, 3> enrollment_classes;
-  /// Burst shape for an identity that does not set `low_power:` at all. Per ADR 0041: VELUX gets
-  /// `ALWAYS_ALIVE`, because an awake VELUX receiver does not accept a frame behind the 1024-byte
-  /// preamble and 1W has no acknowledgement to reveal that. Every other manufacturer — and every
-  /// unrecognised one — keeps `LEGACY_LONG`, so a profile nobody has measured never silently
-  /// acquires a shape nobody tested for it.
+  /// Burst shape for an identity that does not set `low_power:` at all. VELUX gets `ALWAYS_ALIVE`
+  /// (ADR 0041): an awake VELUX receiver does not accept a frame behind a long wake-up preamble and
+  /// 1W has no acknowledgement to reveal that. Every other manufacturer, recognised or not, gets
+  /// `LOW_POWER` (ADR 0119): one wake-up copy in front of three short ones still wakes a battery
+  /// receiver and is obeyed as reliably as any other shape by a mains Somfy receiver.
   OneWayPowerClass default_power_class;
 };
 
@@ -200,7 +197,7 @@ static constexpr OneWayWireProfile SOMFY_WIRE_PROFILE{ONEWAY_EXECUTE_ACEI,
                                                       /*profile_is_a_guess=*/false,
                                                       EnrollGesture::SOMFY,
                                                       {DeviceType::UNKNOWN, DeviceType::UNKNOWN, DeviceType::UNKNOWN},
-                                                      OneWayPowerClass::LEGACY_LONG};
+                                                      OneWayPowerClass::LOW_POWER};
 
 /// The 1W wire profiles this project knows, one row per manufacturer. The YAML codegen warns for a
 /// manufacturer without a row (`ONEWAY_WIRE_PROFILE_MANUFACTURER_NAMES` in hub_validators.py);

@@ -248,9 +248,10 @@ uint32_t sx1276_air_time_us(uint16_t preamble_len, uint8_t frame_len = 15) {
 /// The SX1276 sends every preamble byte as a 10-bit cell, so its estimate is the shared 868 model
 /// with 10 bits per preamble byte, not the software PHY's 8.
 TEST(RadioSX1276, TxAirTimeCountsTenBitsPerPreambleByte) {
-  EXPECT_EQ(sx1276_air_time_us(LONG_PREAMBLE), io868_tx_air_time_us(LONG_PREAMBLE, 15, SX1276_PREAMBLE_BITS_PER_BYTE));
-  EXPECT_GT(sx1276_air_time_us(LONG_PREAMBLE),
-            io868_tx_air_time_us(LONG_PREAMBLE, 15, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
+  EXPECT_EQ(sx1276_air_time_us(TEST_LONG_PREAMBLE_BYTES),
+            io868_tx_air_time_us(TEST_LONG_PREAMBLE_BYTES, 15, SX1276_PREAMBLE_BITS_PER_BYTE));
+  EXPECT_GT(sx1276_air_time_us(TEST_LONG_PREAMBLE_BYTES),
+            io868_tx_air_time_us(TEST_LONG_PREAMBLE_BYTES, 15, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
 }
 
 /// Measured bursts: 32 and 80 preamble bytes occupied 332 and 812 preamble bits, so 48 more bytes
@@ -519,7 +520,7 @@ TEST(RadioSX1276, SendsEachOneWayFrameSizeBehindTheWakeUpAndTheStartPreamble) {
   const uint16_t start_preamble = probe.preamble_bytes_for_ms(START_PREAMBLE_MS);
 
   for (const auto &frame : frames) {
-    for (const uint16_t preamble : {LONG_PREAMBLE, start_preamble}) {
+    for (const uint16_t preamble : {TEST_LONG_PREAMBLE_BYTES, start_preamble}) {
       SCOPED_TRACE(oneway_wire::case_name(frame, preamble));
       RegisterModelSpi spi;
       MockPin rst, dio0, dio4(false);
@@ -527,7 +528,7 @@ TEST(RadioSX1276, SendsEachOneWayFrameSizeBehindTheWakeUpAndTheStartPreamble) {
       RadioTxConfig cfg;
       cfg.freq_hz = FREQ_CH2;
       cfg.preamble_len = preamble;
-      cfg.wake = preamble >= LONG_PREAMBLE ? TxWake::LONG : TxWake::SHORT;
+      cfg.wake = preamble >= TEST_LONG_PREAMBLE_BYTES ? TxWake::LONG : TxWake::SHORT;
       const uint8_t len = static_cast<uint8_t>(frame.bytes.size());
 
       (void) radio.send_packet(frame.bytes.data(), len, cfg);  // times out in a host test, see above
@@ -572,7 +573,7 @@ TEST(RadioSX1276, TxDoneWaitGivesUpOneGuardAfterTheFrameShouldHaveEnded) {
   // ManualClock is safe: the wait loop's delayMicroseconds() step advances it on every pass, and the
   // register model reflects every mode write, so no poll can spin without time advancing.
   esphome::test_clock::ManualClock clock;
-  for (uint16_t preamble : {SHORT_PREAMBLE, LONG_PREAMBLE}) {
+  for (uint16_t preamble : {SHORT_PREAMBLE, TEST_LONG_PREAMBLE_BYTES}) {
     RegisterModelSpi spi;
     MockPin rst, dio0, dio4(false);
     RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
@@ -603,7 +604,7 @@ TEST(RadioSX1276, TxTimeoutLeavesTheReceiverRunningWithTheShortPreamble) {
   const uint8_t payload[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
   RadioTxConfig cfg;
   cfg.freq_hz = FREQ_CH2;
-  cfg.preamble_len = LONG_PREAMBLE;
+  cfg.preamble_len = TEST_LONG_PREAMBLE_BYTES;
 
   ASSERT_EQ(radio.send_packet(payload, sizeof(payload), cfg).status, TxResult::Status::FAILED)
       << "the host harness never raises DIO0, so the send times out";
@@ -645,7 +646,7 @@ TEST(RadioSX1276, TxTimeoutAfterAChipResetConfiguresItAgainBeforeReceiving) {
   const uint8_t payload[] = {0xC8, 0x00, 0xAA, 0xBB, 0xCC, 0xC0, 0xFF, 0xEE, 0x31};
   RadioTxConfig cfg;
   cfg.freq_hz = FREQ_CH1;
-  cfg.preamble_len = LONG_PREAMBLE;
+  cfg.preamble_len = TEST_LONG_PREAMBLE_BYTES;
 
   EXPECT_FALSE(radio.send_packet(payload, sizeof(payload), cfg).sent());
 
@@ -980,7 +981,7 @@ bool saw_receiver_restart(const RegisterModelSpi &spi) {
 }  // namespace
 
 TEST(RadioSX1276, ReceptionInProgressHoldsWhileAFreshPreambleIsComing) {
-  // A start preamble is up to LONG_PREAMBLE long and its sync word comes at the end: the hop must
+  // A start preamble is up to TEST_LONG_PREAMBLE_BYTES long and its sync word comes at the end: the hop must
   // stay on the channel for it, or the frame is caught only if the hop happens to be back here
   // when the sync word arrives.
   esphome::test_clock::ManualClock clock;

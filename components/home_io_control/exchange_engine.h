@@ -320,7 +320,7 @@ class ExchangeEngine {
   /// (ChannelAccess::FREE_CHANNEL, ADR 0096).
   /// @param frame    Frame to transmit.
   /// @param freq     RF frequency in Hz.
-  /// @param preamble Preamble length in programmed bytes (e.g. `LONG_PREAMBLE`, `SHORT_PREAMBLE`, or a
+  /// @param preamble Preamble length in programmed bytes (e.g. `SHORT_PREAMBLE`, or a
   ///        tuning-configured duration converted with preamble_bytes_for_ms()).
   /// @return true if the radio accepted the packet; false otherwise.
   bool transmit_frame(const IoFrame &frame, uint32_t freq, uint16_t preamble);

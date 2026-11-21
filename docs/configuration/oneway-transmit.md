@@ -77,7 +77,7 @@ home_io_control:
 | `enrollment` | no | Build flag (default `false`) for this identity's **"Enroll 1W Controller"** button — see "Enrolling this hub as a controller" below. |
 | `enrollment_with_mac` | no | Whether the `0x30` half of the enroll button's press carries a trailing MAC (default `false`, meaning **no MAC at all** — there is no in-band form for this frame, see below). Real hardware disagrees on this byte: most captures this project holds carry no MAC (the default), and no real device has been shown to accept the MAC-bearing form yet. Untested manufacturers may need either — try flipping this before assuming enrollment doesn't work at all. **Needs an SX1262 or LR1121 board**: the SX1276 cannot send the trailer, so the build fails with `radio_type: sx1276` ([ADR 0113](../adr/0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)). |
 | `enrollment_classes` | no | Which device classes a **VELUX** enrollment `0x30` sweep targets, as a list of one to three `io_device_type` names, each at most once and none `unknown`. Unset → the profile default `[roller_shutter, vertical_exterior_awning, dual_roller_shutter]`, the exterior-shading set a KLI 310/313 uses. **Interior blinds need it set**: a KLI 312 uses `[vertical_interior_blind, interior_venetian_blind]`. To find the classes for your product, see "Finding your enrollment classes" below. **Ignored by the Somfy gesture**, which sends both bursts to the all-devices address `00003F` (issue #147), and ignored without `enrollment: true`; the build warns in both cases. See "Enrolling this hub as a controller" below. |
-| `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). `false` sends every copy at the short, live `start_preamble_ms` tuning value — for a mains-powered receiver. `true` sends one wake-up copy first, which lasts [`low_power_wake_ms`](tuning.md#low_power_wake_ms) (default 515 ms, the same on every radio; [ADR 0115](../adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md), [ADR 0118](../adr/0118-the-wake-up-preamble-defaults-to-515-ms.md)), then short repeats — for a solar or battery receiver. Leave it unset and the shape follows `manufacturer:` ([ADR 0041](../adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)): `velux` gets the short preamble, every other vendor gets the long wake-up on all four copies. Your boot log prints which you got, and marks it `(from profile)` when it came from the vendor rather than from this key. Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. The section "What one command puts on the air" below gives the time each shape takes. |
+| `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). `false` sends every copy at the short, live `start_preamble_ms` tuning value — for a mains-powered receiver. `true` sends one wake-up copy first, which lasts [`low_power_wake_ms`](tuning.md#low_power_wake_ms) (default 515 ms, the same on every radio; [ADR 0115](../adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md), [ADR 0118](../adr/0118-the-wake-up-preamble-defaults-to-515-ms.md)), then short repeats — for a solar or battery receiver. Leave it unset and the shape follows `manufacturer:` ([ADR 0041](../adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)): `velux` gets the short preamble (the `false` shape), every other vendor, `somfy` and an unset `manufacturer:` included, gets the `true` shape: one wake-up copy, then three short ones ([ADR 0119](../adr/0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md)). Your boot log prints which you got, and marks it `(from profile)` when it came from the vendor rather than from this key. Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. The section "What one command puts on the air" below gives the time each shape takes. |
 | `invert_position` | no | Whether open, close and every position are mirrored on the wire (`0` ↔ `100`). Leave it unset and the device kind decides: a kind whose wire polarity is inverted, such as `horizontal_awning`, is mirrored, exactly as a 2W cover of that kind is, so the generated Open button opens the awning. Set `false` if your receiver turns out to follow the other polarity, or `true` to mirror a kind that is not inverted by default. Your boot log prints `inverted=yes (from kind)`, `inverted=yes (configured)` or `inverted=no`. With `execute_broadcast: all` the mirrored frame reaches every receiver of the broadcast, so the build warns when an inverted kind is combined with it and no explicit `invert_position`. STOP, favorite and vent are never mirrored. |
 | `drives` | no | The devices, by `io_device_id`, that follow this identity's commands: a list of covers or lights declared in the same configuration. After each command the hub transmits as this identity, every listed device shows the commanded state at once and is read a moment later. See [Following a device the identity drives](#following-a-device-the-identity-drives). |
 | `cover` | no | The name of a cover entity for this identity, for a cover kind only (a shutter, awning, blind, window, door or gate; the build fails for a light or any other kind). It sends the identity's open, close and stop and shows the state the hub assumes ([ADR 0117](../adr/0117-a-one-way-controller-can-show-an-assumed-state-cover.md)). Its ID is `<identity_id>_cover`. See [A cover for the identity](#a-cover-for-the-identity). |
@@ -135,7 +135,7 @@ Every command goes out as one burst. Most of the burst is fixed; two settings ch
 | Copies per command | 4, all with the same sequence and signature: a device counts one sequence as one command |
 | Gap between copies | 40 ms of waiting; on the air the next copy starts about 47 ms (SX1276) to 50 ms (SX1262, LR1121) after the previous one ends, because the channel check and the transmit setup come on top |
 | Channel | 868.95 MHz (channel 2) |
-| Wake-up preamble, where a copy has one | `low_power: true`: `low_power_wake_ms`, 515 ms by default on every radio ([ADR 0115](../adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md), [ADR 0118](../adr/0118-the-wake-up-preamble-defaults-to-515-ms.md)). The long-on-every-copy shape of an unset `low_power:` keeps a fixed 1024 bytes per copy: about 213 ms on an SX1262 or LR1121, about 267 ms on an SX1276 |
+| Wake-up preamble, where a copy has one | `low_power: true`: `low_power_wake_ms`, 515 ms by default on every radio ([ADR 0115](../adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md), [ADR 0118](../adr/0118-the-wake-up-preamble-defaults-to-515-ms.md)) |
 | Channel check | Before every copy the radio listens for up to 25 ms and sends anyway after that |
 
 Nothing in your YAML changes these. The things you can set are the shape, with `low_power:`
@@ -147,17 +147,23 @@ burst runs the hub sends and receives nothing else, so one command holds the rad
 
 | Shape | You get it with | SX1262, LR1121 | SX1276 |
 |---|---|---|---|
-| Wake-up on all four copies | `low_power:` unset with any `manufacturer:` but `velux` | about 1.0 s | about 1.2 s |
+| Wake-up on the first copy, short on the other three | `low_power: true`, or unset with any `manufacturer:` but `velux` | about 0.72 s | about 0.72 s |
 | Short preamble on all four copies | `low_power: false`, or unset with `manufacturer: velux` | about 0.2 s | about 0.2 s |
-| Wake-up on the first copy, short on the other three | `low_power: true` | about 0.72 s | about 0.72 s |
+
+On the one-way channel the EU rules allow 3.6 s of transmission an hour. The transmitter is on for
+about 0.58 s of a command in the first shape and about 0.07 s in the second (the gaps between copies
+do not count), so about six commands of the first shape fit in an hour, or about fifty of the second. A Somfy Izymo dimmer obeyed 50 of 50 commands in
+each shape on an SX1276, two SX1262 and an LR1121 board, so a mains-powered Somfy receiver does not
+need the wake-up copy; a battery-powered one does, and `low_power: false` is for the receiver you know
+is mains-powered ([ADR 0119](../adr/0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md)).
 
 The copies, gaps, channel and preamble lengths in the first table and the durations in this one
 come from the air: each shape, sent by an SX1276, an SX1262 and an LR1121 board and captured with
 an SDR on all three channels, is in
-`tests/corpus/captures/oneway/unenrolled_window_opener_oneway_stop_{somfy_default,low_power,short}_burst_{sx1276,sx1262,lr1121}.yaml`
-(the SX1276 durations of the first two shapes also in issue #74). The `low_power` captures there
-carry a 1024-byte wake-up (about 213 ms, 267 ms on the SX1276), so the `low_power: true` duration
-above is their copies and gaps with the 515 ms wake-up in its place. Only the first copy of a
+`tests/corpus/captures/oneway/unenrolled_window_opener_oneway_stop_{low_power,short}_burst_{sx1276,sx1262,lr1121}.yaml`
+(the SX1276 duration of the short shape also in issue #74). The `low_power` captures there carry a
+1024-byte wake-up (about 213 ms, 267 ms on the SX1276), so the `low_power: true` figures above are their
+copies and gaps with the 515 ms wake-up in its place. Only the first copy of a
 `low_power: true` burst carries the low-power flag. An enrollment sends two bursts (Somfy) or six
 (VELUX), so it holds the radio for about that many times longer.
 
@@ -192,9 +198,8 @@ not a protocol problem.
 The press sends two bursts back to back — `0x39` (self-directed; carries only this identity's own
 address, so it can only ever clear its own prior entry, never a different controller's),
 immediately followed by `0x30` (the credential itself), 4 copies each. With the Somfy default
-(`low_power` unset) every copy carries the long wake-up preamble, so a burst takes about a second
-(1.2 s on an SX1276) and the whole press about two seconds (2.4 s); with `low_power: false` the
-press takes about 0.4 s.
+(`low_power` unset) the first copy of each burst carries the wake-up preamble, so a burst takes about 0.72 s
+and the whole press about 1.5 s; with `low_power: false` the press takes about 0.4 s.
 Press Enroll soon after the receiver confirms its association mode, not at the end of its window.
 This is the documented 1W pairing handshake (a real Somfy Smoove remote does exactly this,
 corpus-captured), not two independent actions. For Somfy, both bursts go to the all-devices address
@@ -242,9 +247,8 @@ a control that drives only that product.
 Set `io_device_type:` to whatever the device actually is (it drives the control-frame destination).
 The enroll gesture ignores `io_device_type` and uses the enrollment classes. At the short preamble —
 which `manufacturer: velux` gives you by default — the Enroll button blocks for about 1.2 seconds;
-with `low_power: true` for about 5 seconds; at the long wake-up on every copy it takes about 6
-seconds on an SX1262 or LR1121 and about 7 on an SX1276 (the short and long figures measured on an
-SX1276).
+with `low_power: true` for about 4.3 seconds (six bursts of about 0.72 s). The short figure was
+measured on an SX1276.
 
 ```yaml
 oneway_controllers:

@@ -63,12 +63,12 @@ TEST(Exchange, TransmitObserverSeesSentFrameWithItsTxShape) {
 
   IoFrame request{};
   create_execute_position(request, comp.node_id_, test::DST_ID, false, 100);
-  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(request, FREQ_CH3, LONG_PREAMBLE));
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(request, FREQ_CH3, TEST_LONG_PREAMBLE_BYTES));
 
   ASSERT_EQ(observer.sent.size(), 1u);
   EXPECT_EQ(observer.sent[0].cmd, request.cmd);
   EXPECT_EQ(observer.sent[0].config.freq_hz, FREQ_CH3);
-  EXPECT_EQ(observer.sent[0].config.preamble_len, LONG_PREAMBLE);
+  EXPECT_EQ(observer.sent[0].config.preamble_len, TEST_LONG_PREAMBLE_BYTES);
   // The length the observer is told is the one the radio was handed.
   ASSERT_EQ(radio.get_sent_data().size(), 1u);
   EXPECT_EQ(observer.sent[0].wire_len, radio.get_sent_data()[0].size());
@@ -142,14 +142,44 @@ TEST(Exchange, TransmitFrameStampsTheWakeLevel) {
   IoFrame continuation = start;
   continuation.ctrl0 &= static_cast<uint8_t>(~CTRL0_START);
 
-  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(start, FREQ_CH2, LONG_PREAMBLE));
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(start, FREQ_CH2, MOCK_WAKE_PREAMBLE));
   ASSERT_TRUE(comp.exchange_engine_.transmit_frame(start, FREQ_CH2, MOCK_START_PREAMBLE));
-  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(continuation, FREQ_CH2, LONG_PREAMBLE));
+  ASSERT_TRUE(comp.exchange_engine_.transmit_frame(continuation, FREQ_CH2, MOCK_WAKE_PREAMBLE));
 
   ASSERT_EQ(radio.get_tx_configs().size(), 3u);
   EXPECT_EQ(radio.get_tx_configs()[0].wake, TxWake::LONG);
   EXPECT_EQ(radio.get_tx_configs()[1].wake, TxWake::SHORT);
   EXPECT_EQ(radio.get_tx_configs()[2].wake, TxWake::NONE);
+}
+
+TEST(Exchange, TransmitFrameLabelsAWakeUpFromItsDurationOnEveryRadio) {
+  // 1024 programmed bytes last 213 ms on a raw-stream radio and 267 ms on a 10-bit radio: neither is
+  // a wake-up. 1440 raw-stream bytes and 1152 ten-bit bytes both last 300 ms, the threshold.
+  struct Row {
+    bool ten_bit;
+    uint16_t bytes;
+    TxWake expected;
+  };
+  const Row rows[] = {
+      {false, 1024, TxWake::SHORT}, {true, 1024, TxWake::SHORT}, {false, 1439, TxWake::SHORT},
+      {true, 1151, TxWake::SHORT},  {false, 1440, TxWake::LONG}, {true, 1152, TxWake::LONG},
+  };
+  for (const Row &row : rows) {
+    SCOPED_TRACE(::testing::Message() << (row.ten_bit ? "10" : "8") << " bit periods per byte, " << row.bytes
+                                      << " bytes");
+    TestableComponent comp;
+    MockRadio raw_stream;
+    TenBitPreambleRadio ten_bit;
+    MockRadio &radio = row.ten_bit ? static_cast<MockRadio &>(ten_bit) : raw_stream;
+    wire_observer_rig(comp, radio);
+    IoFrame start{};
+    create_execute_position(start, comp.node_id_, test::DST_ID, false, 100);
+
+    ASSERT_TRUE(comp.exchange_engine_.transmit_frame(start, FREQ_CH2, row.bytes));
+
+    ASSERT_EQ(radio.get_tx_configs().size(), 1u);
+    EXPECT_EQ(radio.get_tx_configs()[0].wake, row.expected);
+  }
 }
 
 // ============================================================================
@@ -220,7 +250,7 @@ namespace {
 
 /// A 1W STOP burst through the hub's engine: the transmitter is wired as the hub wires it.
 struct OneWayBurstRig {
-  OneWayBurstRig() : transmitter(make_transmit(), &comp.tuning_, make_preamble_bytes(), make_preamble_ms()) {
+  OneWayBurstRig() : transmitter(make_transmit(), &comp.tuning_, make_preamble_bytes()) {
     wire_observer_rig(comp, radio);
     comp.exchange_engine_.set_transmit_observer(&observer);
     radio.set_rssi_default(-120);
@@ -236,10 +266,6 @@ struct OneWayBurstRig {
   }
   OneWayPreambleBytesFn make_preamble_bytes() {
     return [this](float ms) { return comp.exchange_engine_.preamble_bytes_for_ms(ms); };
-  }
-
-  OneWayPreambleMsFn make_preamble_ms() {
-    return [this](uint16_t bytes) { return comp.exchange_engine_.preamble_ms_for_bytes(bytes); };
   }
 
   TestableComponent comp;

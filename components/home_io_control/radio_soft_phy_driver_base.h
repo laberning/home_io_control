@@ -585,7 +585,7 @@ class SoftPhyDriverBase : public RadioDriver {
   /// after @ref SOFT_PHY_PREAMBLE_HOLD_MS in a blocking listen, which bounds a false detection on
   /// noise.
   ///
-  /// The idle hop renews instead of ending at the slice: a wake-up preamble (~218 ms) is far longer
+  /// The idle hop renews instead of ending at the slice: a wake-up preamble (hundreds of ms) is far longer
   /// than the slice, and leaving costs about 8 ms away from the channel, an interval in which the
   /// sync word of every copy of a fixed-length preamble lands at the same phase. On the LR1121 that
   /// phase is the end of the slice or the gap, so it lost most long copies; restarting RX on the

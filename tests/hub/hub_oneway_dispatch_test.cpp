@@ -101,15 +101,13 @@ class OneWayDispatch : public ::testing::Test {
     ASSERT_GE(configs.size(), first_send + ONEWAY_BURST_REPEATS);
     for (uint8_t copy = 0; copy < ONEWAY_BURST_REPEATS; copy++) {
       const size_t index = first_send + copy;
-      const bool wake_copy =
-          power_class == OneWayPowerClass::LEGACY_LONG || (power_class == OneWayPowerClass::LOW_POWER && copy == 0);
-      const bool flagged = power_class == OneWayPowerClass::LOW_POWER && copy == 0;
+      const bool wake_copy = power_class == OneWayPowerClass::LOW_POWER && copy == 0;
+      const bool flagged = wake_copy;
       SCOPED_TRACE("copy " + std::to_string(copy) + " of the burst at send " + std::to_string(first_send));
       EXPECT_EQ(configs[index].freq_hz, FREQ_CH2) << "one-way commands go out on channel 2";
       EXPECT_EQ(configs[index].wake, wake_copy ? TxWake::LONG : TxWake::SHORT);
-      // A LOW_POWER wake-up lasts low_power_wake_ms; only the legacy shape keeps LONG_PREAMBLE bytes (ADR 0115).
-      const uint16_t wake_preamble = power_class == OneWayPowerClass::LEGACY_LONG ? LONG_PREAMBLE : MOCK_WAKE_PREAMBLE;
-      EXPECT_EQ(configs[index].preamble_len, wake_copy ? wake_preamble : TUNED_START_PREAMBLE);
+      // A LOW_POWER wake-up lasts low_power_wake_ms (ADR 0115).
+      EXPECT_EQ(configs[index].preamble_len, wake_copy ? MOCK_WAKE_PREAMBLE : TUNED_START_PREAMBLE);
       EXPECT_EQ(sent[index], wire_bytes(frame, flagged));
     }
   }
@@ -184,8 +182,8 @@ TEST_F(OneWayDispatch, AnUnenrollmentIsOneRemoveBurst) {
   EXPECT_FALSE(hub.busy_);
 }
 
-TEST_F(OneWayDispatch, AnIdentityWithoutLowPowerSetBurstsTheLongWakeUpOnEveryCopy) {
-  add_identity(std::nullopt);  // unset: the manufacturer profile decides; no manufacturer means legacy long
+TEST_F(OneWayDispatch, AnIdentityWithoutLowPowerSetBurstsOneWakeUpCopyThenThreeShortOnes) {
+  add_identity(std::nullopt);  // unset: the manufacturer profile decides; no manufacturer means the Somfy shape
   hub.send_oneway_command(CONTROLLER, CoverCommand::STOP);
 
   hub.loop();
@@ -194,7 +192,7 @@ TEST_F(OneWayDispatch, AnIdentityWithoutLowPowerSetBurstsTheLongWakeUpOnEveryCop
   ASSERT_TRUE(create_1w_execute_command(expected, CONTROLLER_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING,
                                         CoverCommand::STOP, FIRST_SEQUENCE, key()));
   ASSERT_EQ(radio.get_send_count(), ONEWAY_BURST_REPEATS);
-  expect_burst(0, expected, OneWayPowerClass::LEGACY_LONG);
+  expect_burst(0, expected, OneWayPowerClass::LOW_POWER);
 }
 
 TEST_F(OneWayDispatch, AnIdentityWithLowPowerFalseBurstsTheStartPreambleOnEveryCopyWithoutTheFlag) {

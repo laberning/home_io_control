@@ -279,8 +279,8 @@ _NUMBER_PARAMS = {
     # Every preamble is a duration, the same on every radio (ADR 0097); each driver converts it to
     # programmed bytes. The floor 1.5 ms is about SHORT_PREAMBLE (8 bytes, 1.7 ms on a raw-stream
     # radio): the lowest value that leaves the peer's detector anything to lock on to. The ceiling
-    # 70 ms is about 256 bytes on the radio that sends 10 bit periods per byte, and below LONG_PREAMBLE
-    # bytes on every radio (preamble_wake_sync_test.cpp pins that, so the value can never be taken
+    # 70 ms is about 256 bytes on the radio that sends 10 bit periods per byte, and below
+    # WAKE_PREAMBLE_MIN_MS on every radio (preamble_wake_sync_test.cpp pins that, so the value can never be taken
     # for a wake-up burst). Step 0.5 ms puts the 3.5 ms default on the number entity's grid.
     CONF_RESPONSE_PREAMBLE_MS: (1.5, 70, 0.5, "ms"),
     CONF_SX1262_POST_TX_SETTLE_US: (0, 2000, 10, "µs"),
@@ -305,7 +305,7 @@ _NUMBER_PARAMS = {
     # sensible default.
     CONF_START_PREAMBLE_MS: (1.5, 70, 0.5, "ms"),
     # Floor is the response preamble's 1.5 ms. The ceiling 300 ms reaches the wake-up burst
-    # (LONG_PREAMBLE bytes, 213 ms on a raw-stream radio and 267 ms on the SX1276) on every radio:
+    # (WAKE_PREAMBLE_MIN_MS, proto_timing.h) on every radio:
     # an explicit opt-in to a wake-up discovery, which this one knob can reach and the others cannot.
     # It exists to let a stuck pairing attempt go *shorter* than the long wake-up burst (issue
     # #27/#87's precedent); nothing calls for raising it further.
@@ -314,7 +314,7 @@ _NUMBER_PARAMS = {
     # default is LOW_POWER_WAKE_MS (515, proto_timing.h, ADR 0118): a resting VELUX SSL solar roller
     # shutter answered every try at about 600 ms (the KLI 110 remote's own wake-up) and 12 of 16 at
     # 427 ms, while a mains one-way receiver ignored a wake-up copy of 560 ms and longer. The floor
-    # 300 ms is at least LONG_PREAMBLE bytes on every radio (1152 bytes on the SX1276), which keeps
+    # 300 ms is WAKE_PREAMBLE_MIN_MS, which keeps
     # every value a wake-up burst for tx_wake_for(); the ceiling 1000 ms is
     # about four seconds of air for the three attempts. A low-power target keeps its three attempts
     # whatever their length costs: the exchange is bounded by that count, not by

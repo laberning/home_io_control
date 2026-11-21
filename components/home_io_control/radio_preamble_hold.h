@@ -10,22 +10,21 @@
 ///
 /// - A detection with no frame behind it (noise, a strong transmitter on the adjacent channel)
 ///   must not park the receiver for long, so a hold lasts one short slice.
-/// - A wake-up preamble is far longer than any slice (about 218 ms), so when a slice ends the
+/// - A wake-up preamble is far longer than any slice (at least WAKE_PREAMBLE_MIN_MS), so when a slice ends the
 ///   receiver stays on the channel anyway if the preamble is still on air: the driver restarts
 ///   RX there, which discards the stale detection, and keeps holding if the preamble is detected
 ///   again within a few milliseconds. Leaving instead puts the receiver away for several dwells,
 ///   and a preamble of fixed length puts its sync word at the same phase of that cycle on every
 ///   copy, so a chip that is away at that phase loses all of them.
 ///
-/// No renew starts once the run of holds on one channel reaches a chain limit that covers the
-/// longest preamble, so a detector that keeps firing on noise costs the scan about that long (the
+/// No renew starts once the run of holds on one channel reaches a chain limit
+/// (IDLE_PREAMBLE_HOLD_CHAIN_MS), so a detector that keeps firing on noise costs the scan about that long (the
 /// limit plus at most one re-detection wait and one slice).
 /// PreambleHold is that state machine and nothing else: it reads no clock and touches no chip. The
 /// driver passes the time, the chip's "preamble seen" reading and its RX restart, so one rule serves
 /// every driver and is tested without a radio.
 
 #include "proto_timing.h"
-#include "radio_soft_phy.h"
 
 #include <cstdint>
 
@@ -33,12 +32,16 @@ namespace esphome {
 namespace home_io_control {
 
 /// Bound on a run of renewed idle preamble holds on one channel, in milliseconds: no renew starts
-/// once the run is this old. A wake-up preamble (LONG_PREAMBLE) lasts about 213-218 ms on air
-/// before its sync word; this covers it with margin. A detector that keeps firing on noise costs
-/// the idle scan at most this plus the last renew's re-detection wait and slice per channel visit.
+/// once the run is this old. It covers a preamble up to the wake-up threshold, WAKE_PREAMBLE_MIN_MS
+/// (checked below), the same duration on every radio. A longer wake-up outlasts the run; the hop
+/// then leaves the channel and holds again when it next finds the preamble there. A detector that
+/// keeps firing on noise costs the idle scan at most this plus the last renew's re-detection wait
+/// and slice per channel visit.
+/// \todo The default wake-up (LOW_POWER_WAKE_MS) and a remote's wake-up of about 600 ms outlast this
+/// run; whether a longer run catches their frames more often needs a bench run.
 static constexpr uint32_t IDLE_PREAMBLE_HOLD_CHAIN_MS = 300;
-static_assert(IDLE_PREAMBLE_HOLD_CHAIN_MS * SOFT_PHY_US_PER_MS > soft_phy_air_time_us(LONG_PREAMBLE),
-              "the hold chain must outlast the longest start preamble");
+static_assert(static_cast<float>(IDLE_PREAMBLE_HOLD_CHAIN_MS) >= WAKE_PREAMBLE_MIN_MS,
+              "the hold chain must cover a preamble up to the wake-up threshold");
 
 /// @brief The three durations of a PreambleHold, in milliseconds.
 struct PreambleHoldTiming {

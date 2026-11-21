@@ -349,7 +349,7 @@ TEST(HubCore, LBT_ChannelClear_TransmitsImmediately) {
   radio.set_rssi_default(-100);  // below the default threshold
 
   IoFrame frame = make_simple_frame();
-  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
+  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, TEST_LONG_PREAMBLE_BYTES));
   EXPECT_EQ(radio.get_send_count(), 1) << "should transmit once when channel is clear";
 }
 
@@ -366,7 +366,7 @@ TEST(HubCore, LBT_ChannelBusy_BacksOffThenTransmits) {
   radio.set_rssi_default(-100);
 
   IoFrame frame = make_simple_frame();
-  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
+  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, TEST_LONG_PREAMBLE_BYTES));
   EXPECT_EQ(radio.get_send_count(), 1) << "should still transmit after backoff";
 }
 
@@ -380,7 +380,7 @@ TEST(HubCore, LBT_ChannelBusyAllRetries_TransmitsAnyway) {
   radio.set_rssi_default(-50);
 
   IoFrame frame = make_simple_frame();
-  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
+  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, TEST_LONG_PREAMBLE_BYTES));
   EXPECT_EQ(radio.get_send_count(), 1) << "should transmit even if channel stays busy";
 }
 
@@ -394,7 +394,7 @@ TEST(HubCore, LBT_ExactThreshold_IsConsideredClear) {
   radio.set_rssi_default(CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM);
 
   IoFrame frame = make_simple_frame();
-  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
+  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, TEST_LONG_PREAMBLE_BYTES));
   // The threshold is NOT below itself, so it retries all LBT_MAX_RETRIES times then transmits
   EXPECT_EQ(radio.get_send_count(), 1);
 }
@@ -408,7 +408,7 @@ TEST(HubCore, LBT_JustBelowThreshold_TransmitsImmediately) {
   radio.set_rssi_default(CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM - 1);  // just below threshold
 
   IoFrame frame = make_simple_frame();
-  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
+  EXPECT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, TEST_LONG_PREAMBLE_BYTES));
   EXPECT_EQ(radio.get_send_count(), 1);
 }
 
@@ -420,7 +420,7 @@ TEST(HubCore, LBT_ReadsTheChannelItTransmitsOn) {
   radio.change_frequency(FREQ_CH1);  // where an idle hop left the receiver
 
   IoFrame frame = make_simple_frame();
-  ASSERT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, LONG_PREAMBLE));
+  ASSERT_TRUE(comp.transmit_frame_(frame, FREQ_CH2, TEST_LONG_PREAMBLE_BYTES));
   ASSERT_FALSE(radio.rssi_read_freqs().empty());
   EXPECT_EQ(radio.rssi_read_freqs().front(), FREQ_CH2)
       << "listen-before-talk must measure the channel the frame goes out on, not where an idle hop left the receiver";
@@ -432,9 +432,8 @@ TEST(HubCore, LBT_ReadsTheChannelItTransmitsOn) {
 
 TEST(HubCore, OneWaySendReadsTheHubsLiveTuningForAnAlwaysAliveIdentity) {
   // oneway_transmitter_'s constructor takes `&tuning_` (hub_core.h); this proves the wiring
-  // actually reaches the radio, not just that it compiles. LEGACY_LONG wouldn't touch the tuning
-  // value at all (every copy is LONG_PREAMBLE), so ALWAYS_ALIVE is the class that can tell the
-  // hub's tuning apart from some other value.
+  // actually reaches the radio, not just that it compiles. ALWAYS_ALIVE puts the start preamble on
+  // every copy, so it is the class that can tell the hub's tuning apart from some other value.
   LBTTestableComponent comp;
   comp.initialized_ = true;
   MockRadio radio;

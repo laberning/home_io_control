@@ -135,8 +135,7 @@ class IOHomeControlComponent : public Component,
         // reboot.
         oneway_transmitter_([this](const IoFrame &frame, uint32_t freq,
                                    uint16_t preamble) { return this->transmit_frame_(frame, freq, preamble); },
-                            &tuning_, [this](float ms) { return this->exchange_engine_.preamble_bytes_for_ms(ms); },
-                            [this](uint16_t bytes) { return this->exchange_engine_.preamble_ms_for_bytes(bytes); }),
+                            &tuning_, [this](float ms) { return this->exchange_engine_.preamble_bytes_for_ms(ms); }),
         // set_timeout() is protected on the real ESPHome Component (only public in the host stub),
         // so a lambda defined here — with protected access — is the one legitimate caller. See
         // oneway_key_adoption.h's NamedTimeoutFn.
@@ -880,7 +879,7 @@ class IOHomeControlComponent : public Component,
   /// Transmit a raw IoFrame on the current frequency with given preamble length.
   /// @param frame IoFrame to transmit.
   /// @param freq RF frequency in Hz.
-  /// @param preamble Preamble length in bytes (e.g. `LONG_PREAMBLE`, `SHORT_PREAMBLE`, or a
+  /// @param preamble Preamble length in bytes (e.g. `SHORT_PREAMBLE`, or a
   ///        tuning-configured duration such as `start_preamble_ms`, converted to bytes).
   bool transmit_frame_(const IoFrame &frame, uint32_t freq, uint16_t preamble);
   /// Main request/response exchange with retry and automatic authentication. Every exchange ends

@@ -9,13 +9,11 @@ namespace home_io_control {
 
 const char *oneway_power_class_name(OneWayPowerClass power_class) {
   switch (power_class) {
-    case OneWayPowerClass::ALWAYS_ALIVE:
-      return "always-alive";
     case OneWayPowerClass::LOW_POWER:
       return "low-power";
-    case OneWayPowerClass::LEGACY_LONG:
+    case OneWayPowerClass::ALWAYS_ALIVE:
     default:
-      return "legacy long";
+      return "always-alive";
   }
 }
 

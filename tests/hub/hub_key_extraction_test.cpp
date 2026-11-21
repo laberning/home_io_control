@@ -174,13 +174,13 @@ TEST(HubKeyExtraction, ThrowawayIdGenerationFallsBackWhenEveryCandidateCollides)
 // ========================================================================================
 // Preamble regression: the discovery reply (0x29, the sole start=true device-role reply) must use
 // the tunable `cold_broadcast_reply_preamble` field, not the driver's chip-tuned
-// response_preamble() and not a fixed LONG_PREAMBLE/SHORT_PREAMBLE constant. Every other
+// response_preamble() and not a fixed TEST_LONG_PREAMBLE_BYTES/SHORT_PREAMBLE constant. Every other
 // device-role reply (0x2D, 0x3C, 0x33, 0x37, 0x3D — all start=false) keeps response_preamble()
 // unchanged; see the companion test below.
 //
 // Hardware-confirmed 2026-08-02: two fixed-constant choices both broke real exchanges — a flat
 // SHORT_PREAMBLE(8) was too short for a hopping receiver to reliably catch from a
-// slower-turnaround chip, and a flat LONG_PREAMBLE(1024) on every reply blocked the main loop
+// slower-turnaround chip, and a flat TEST_LONG_PREAMBLE_BYTES(1024) on every reply blocked the main loop
 // long enough to blow through the hub's tight per-try wait windows on both chips. That is exactly
 // why 0x29 needs its own field instead of reusing response_preamble(): MOCK_RESPONSE_PREAMBLE ==
 // SHORT_PREAMBLE(8), so response_preamble() on SX1262/LR1121 already equals the value hardware
@@ -206,7 +206,7 @@ TEST(HubKeyExtraction, DiscoveryReplyUsesColdBroadcastPreambleNotFixedShortConst
     EXPECT_NE(tx_config.preamble_len, radio.response_preamble())
         << "cold_broadcast_reply_preamble's default must not silently collapse back onto "
            "response_preamble() (it is SX1262's default that was hardware-confirmed too short)";
-    EXPECT_NE(tx_config.preamble_len, LONG_PREAMBLE);
+    EXPECT_NE(tx_config.preamble_len, TEST_LONG_PREAMBLE_BYTES);
   }
 }
 

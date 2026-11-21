@@ -1,29 +1,28 @@
 /// @file preamble_wake_sync_test.cpp
 /// @brief Guards the wake-up rule against a preamble tunable that could reach it by accident.
 ///
-/// tx_wake_for() (proto_timing.h) calls a START frame's preamble a wake-up burst once its
-/// programmed length reaches LONG_PREAMBLE bytes. A preamble is set as a duration (ADR 0097) and a
-/// driver turns it into bytes with its own bits per preamble byte (8 on the software-PHY radios, 10
-/// on the SX1276), so the same duration is a different byte count per radio. This test parses
-/// tuning.py's _NUMBER_PARAMS at runtime (Python stays the single source of truth) and pins, for
-/// both coders:
+/// tx_wake_for() (proto_timing.h) calls a START frame's preamble a wake-up burst once its duration
+/// reaches WAKE_PREAMBLE_MIN_MS. The exchange engine takes that duration from the driver's own
+/// conversion of the programmed bytes (RadioDriver::preamble_ms_for_bytes()), whose bits per
+/// preamble byte are 8 on the software-PHY radios and 10 on the SX1276 (ADR 0097). This test parses
+/// tuning.py's _NUMBER_PARAMS at runtime (Python stays the single source of truth) and pins:
 ///   - every preamble duration tunable except the wake-up and the discovery one has a ceiling below
-///     LONG_PREAMBLE bytes on every radio, so its frames are never treated as a wake-up burst;
-///   - `low_power_wake_ms`'s floor is at least LONG_PREAMBLE bytes on every radio, so it is always
-///     a wake-up burst;
-///   - `pairing_discovery_preamble_ms`'s ceiling reaches LONG_PREAMBLE bytes on every radio, its
-///     only wake-up values (it has no default of its own: discovery follows the start preamble);
+///     WAKE_PREAMBLE_MIN_MS, so its frames are never treated as a wake-up burst;
+///   - `low_power_wake_ms`'s floor is WAKE_PREAMBLE_MIN_MS, so it is always a wake-up burst, also
+///     after a round trip through either coder's byte count;
+///   - `pairing_discovery_preamble_ms`'s ceiling reaches WAKE_PREAMBLE_MIN_MS, its only wake-up
+///     value (it has no default of its own: discovery follows the start preamble);
 ///   - `low_power_wake_ms`'s default, LOW_POWER_WAKE_MS, is a value its YAML range accepts, on its
 ///     step.
 /// A new preamble tunable or a raised ceiling fails here, which forces a decision about its wake
 /// level.
 
-#include "oneway_transmitter.h"
 #include "proto_timing.h"
 #include "tuning_config.h"
 #include "support/python_dict_parser.h"
 
 #include <cmath>
+#include <cstdint>
 #include <string>
 
 using namespace esphome::home_io_control;
@@ -38,8 +37,13 @@ constexpr const char *kWakePreamble = "CONF_LOW_POWER_WAKE_MS";
 constexpr double kFewestBitsPerByte = 8.0;
 constexpr double kMostBitsPerByte = 10.0;
 
-/// Programmed bytes of `ms` at the protocol line rate (38400 bps).
-double bytes_at(double ms, double bits_per_byte) { return ms * 38.4 / bits_per_byte; }
+/// Programmed bytes of `ms` at the protocol line rate (38400 bps), as a driver rounds them.
+uint16_t bytes_at(double ms, double bits_per_byte) {
+  return static_cast<uint16_t>(std::lround(ms * 38.4 / bits_per_byte));
+}
+
+/// The duration a driver reports for `bytes`: what the exchange engine compares with the threshold.
+float ms_at(uint16_t bytes, double bits_per_byte) { return static_cast<float>(bytes * bits_per_byte / 38.4); }
 
 bool is_preamble_knob(const std::string &key) {
   return key.find("PREAMBLE") != std::string::npos || key == kWakePreamble;
@@ -56,15 +60,14 @@ TEST(PreambleWakeSync, OnlyTheWakeAndDiscoveryPreamblesCanReachTheWakeBurst) {
     preamble_params++;
     EXPECT_EQ(range.unit, "ms") << key << " is set as a duration";
     if (key == kDiscoveryPreamble) {
-      // Its only wake-up values are the top of its range, on either coder.
-      EXPECT_GE(bytes_at(range.max, kMostBitsPerByte), LONG_PREAMBLE) << key;
+      // Its only wake-up value is the top of its range.
+      EXPECT_GE(range.max, WAKE_PREAMBLE_MIN_MS) << key;
     } else if (key == kWakePreamble) {
-      // The resting receiver's wake-up burst: every value it can take is a wake-up on either
-      // coder, so tx_wake_for() labels it LONG whatever the user sets.
-      EXPECT_GE(bytes_at(range.min, kMostBitsPerByte), LONG_PREAMBLE) << key;
+      // The resting receiver's wake-up burst: every value it can take is a wake-up, so
+      // tx_wake_for() labels it LONG whatever the user sets.
+      EXPECT_GE(range.min, WAKE_PREAMBLE_MIN_MS) << key;
     } else {
-      EXPECT_LT(bytes_at(range.max, kFewestBitsPerByte), LONG_PREAMBLE)
-          << key << " can reach the wake-up burst; decide its wake level";
+      EXPECT_LT(range.max, WAKE_PREAMBLE_MIN_MS) << key << " can reach the wake-up burst; decide its wake level";
     }
   }
   // Response, cold broadcast reply, start, pairing discovery, low-power wake-up.
@@ -72,26 +75,20 @@ TEST(PreambleWakeSync, OnlyTheWakeAndDiscoveryPreamblesCanReachTheWakeBurst) {
   EXPECT_EQ(params.count(kDiscoveryPreamble), 1u);
 }
 
-TEST(PreambleWakeSync, EveryOneWayWakeUpCopyIsLabelledAWakeUpAtTheSettingsFloorOnEveryRadio) {
-  // ADR 0115: the one-way wake-up copy lasts `low_power_wake_ms`; at its floor it must still be
-  // labelled a wake-up (TxWake::LONG) for the radio, on the 8 and the 10 bit-period coders.
+TEST(PreambleWakeSync, TheWakeSettingsFloorIsLabelledAWakeUpAfterEitherCodersRounding) {
+  // ADR 0115, ADR 0119: at its floor the wake-up must still be labelled a wake-up (TxWake::LONG)
+  // once the engine has turned the programmed bytes back into a duration, on the 8 and the 10 bit
+  // period coders. The floor is on the threshold, so a rounding down would lose the label.
   const auto params = test::parse_python_range_dict(kTuningPy, "_NUMBER_PARAMS");
   ASSERT_EQ(params.count(kWakePreamble), 1u);
-  const float floor_ms = static_cast<float>(params.at(kWakePreamble).min);
+  const double floor_ms = params.at(kWakePreamble).min;
+  EXPECT_EQ(floor_ms, static_cast<double>(WAKE_PREAMBLE_MIN_MS));
   for (const double bits_per_byte : {kFewestBitsPerByte, kMostBitsPerByte}) {
     SCOPED_TRACE(bits_per_byte);
-    const OneWayPreambleRules rules{
-        START_PREAMBLE_MS, floor_ms,
-        [bits_per_byte](float ms) { return static_cast<uint16_t>(std::lround(bytes_at(ms, bits_per_byte))); },
-        [bits_per_byte](uint16_t bytes) { return static_cast<float>(bytes * bits_per_byte / 38.4); }};
-    const OneWayCopyShape wake = oneway_burst_copy_shape(OneWayPowerClass::LOW_POWER, 0);
-    ASSERT_EQ(wake.preamble, OneWayPreamble::WAKE);
-    EXPECT_EQ(tx_wake_for(true, oneway_copy_preamble(wake, OneWayPowerClass::LOW_POWER, rules).bytes), TxWake::LONG);
-    const OneWayCopyShape legacy = oneway_burst_copy_shape(OneWayPowerClass::LEGACY_LONG, 3);
-    EXPECT_EQ(tx_wake_for(true, oneway_copy_preamble(legacy, OneWayPowerClass::LEGACY_LONG, rules).bytes),
-              TxWake::LONG);
-    const OneWayCopyShape normal = oneway_burst_copy_shape(OneWayPowerClass::LOW_POWER, 1);
-    EXPECT_EQ(tx_wake_for(true, oneway_copy_preamble(normal, OneWayPowerClass::LOW_POWER, rules).bytes), TxWake::SHORT);
+    const uint16_t bytes = bytes_at(floor_ms, bits_per_byte);
+    EXPECT_EQ(tx_wake_for(true, ms_at(bytes, bits_per_byte)), TxWake::LONG) << bytes << " bytes";
+    const uint16_t start_bytes = bytes_at(START_PREAMBLE_MS, bits_per_byte);
+    EXPECT_EQ(tx_wake_for(true, ms_at(start_bytes, bits_per_byte)), TxWake::SHORT) << start_bytes << " bytes";
   }
 }
 

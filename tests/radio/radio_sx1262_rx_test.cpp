@@ -353,7 +353,7 @@ TEST(RadioSX1262, UartDecodeFixedStride) {
 
 // ============================================================================
 // Preamble unit regression: SetPacketParams' PreambleLength field is bit-denominated on this
-// chip, but every caller passes a byte count (LONG_PREAMBLE, SHORT_PREAMBLE, response_preamble()).
+// chip, but every caller passes a byte count (TEST_LONG_PREAMBLE_BYTES, SHORT_PREAMBLE, response_preamble()).
 // set_packet_params_() must convert.
 // ============================================================================
 
@@ -403,7 +403,7 @@ TEST(RadioSX1262, SendPacketSetsPacketParamsPreambleInBits) {
 
   RadioTxConfig cfg;
   cfg.freq_hz = FREQ_CH2;
-  cfg.preamble_len = LONG_PREAMBLE;
+  cfg.preamble_len = TEST_LONG_PREAMBLE_BYTES;
   // As in the LR1121 TX test: send_packet reliably times out waiting for TX_DONE in a
   // synchronous host test, but SetPacketParams/WriteBuffer are both issued before that wait.
   radio.send_packet(frame, sizeof(frame), cfg);
@@ -429,16 +429,16 @@ TEST(RadioSX1262, SendPacketSetsPacketParamsPreambleInBits) {
   const auto &pp = spi.transactions()[packet_params_idx];
   ASSERT_EQ(pp.size(), 10u) << "opcode(1) + 9 packet-param bytes";
   const uint16_t preamble_field = (static_cast<uint16_t>(pp[1]) << 8) | pp[2];
-  EXPECT_EQ(preamble_field, static_cast<uint16_t>(LONG_PREAMBLE * 8))
-      << "SetPacketParams' PreambleLength is in bits: LONG_PREAMBLE (" << LONG_PREAMBLE
-      << " bytes) must reach the chip as " << (LONG_PREAMBLE * 8) << " bits, not " << LONG_PREAMBLE
-      << " bits (an 8x-too-short on-air preamble)";
+  EXPECT_EQ(preamble_field, static_cast<uint16_t>(TEST_LONG_PREAMBLE_BYTES * 8))
+      << "SetPacketParams' PreambleLength is in bits: TEST_LONG_PREAMBLE_BYTES (" << TEST_LONG_PREAMBLE_BYTES
+      << " bytes) must reach the chip as " << (TEST_LONG_PREAMBLE_BYTES * 8) << " bits, not "
+      << TEST_LONG_PREAMBLE_BYTES << " bits (an 8x-too-short on-air preamble)";
 
   // Pin every one of the nine payload bytes so a zeroed or transposed field in the shared
   // build_gfsk_packet_params fails here instead of silently reaching the radio. pp[0] is the
   // opcode; pp[1..9] are packet-param bytes 0..8.
-  EXPECT_EQ(pp[1], static_cast<uint8_t>((LONG_PREAMBLE * 8) >> 8)) << "byte 0: preamble length MSB (bits)";
-  EXPECT_EQ(pp[2], static_cast<uint8_t>(LONG_PREAMBLE * 8)) << "byte 1: preamble length LSB (bits)";
+  EXPECT_EQ(pp[1], static_cast<uint8_t>((TEST_LONG_PREAMBLE_BYTES * 8) >> 8)) << "byte 0: preamble length MSB (bits)";
+  EXPECT_EQ(pp[2], static_cast<uint8_t>(TEST_LONG_PREAMBLE_BYTES * 8)) << "byte 1: preamble length LSB (bits)";
   EXPECT_EQ(pp[3], SX1262_PREAMBLE_DETECTOR_16_BIT) << "byte 2: preamble detector = 16 bits (0x05)";
   EXPECT_EQ(SX1262_PREAMBLE_DETECTOR_16_BIT, 0x05) << "the SX126x code for a 16-bit detector";
   EXPECT_EQ(pp[4], 0x18) << "byte 3: sync-word length = 24 bits (SX1262_SYNC_WORD_PARAM_24_BITS)";
@@ -607,8 +607,9 @@ TEST(RadioSX1262, TxAirTimeIsTheIo868Model) {
   MockPin rst, dio1, busy(false);
   TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, 0);
   RadioTxConfig cfg{};
-  cfg.preamble_len = LONG_PREAMBLE;
-  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
+  cfg.preamble_len = TEST_LONG_PREAMBLE_BYTES;
+  EXPECT_EQ(radio.tx_air_time_us(13, cfg),
+            io868_tx_air_time_us(TEST_LONG_PREAMBLE_BYTES, 13, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
   cfg.preamble_len = SHORT_PREAMBLE;
   EXPECT_EQ(radio.tx_air_time_us(20, cfg), io868_tx_air_time_us(SHORT_PREAMBLE, 20, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
 }

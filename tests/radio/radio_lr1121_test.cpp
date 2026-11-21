@@ -835,7 +835,7 @@ TEST(RadioLR1121, SendsEachOneWayFrameSizeBehindTheWakeUpAndTheStartPreamble) {
       ScriptedSpi spi;
       MockPin rst, irq, busy(false);
       TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, 0x07);
-      const uint16_t preamble = wake ? LONG_PREAMBLE : radio.preamble_bytes_for_ms(START_PREAMBLE_MS);
+      const uint16_t preamble = wake ? TEST_LONG_PREAMBLE_BYTES : radio.preamble_bytes_for_ms(START_PREAMBLE_MS);
       SCOPED_TRACE(oneway_wire::case_name(frame, preamble));
       RadioTxConfig cfg;
       cfg.freq_hz = FREQ_CH2;
@@ -1080,8 +1080,9 @@ TEST(RadioLR1121, TxAirTimeIsTheIo868Model) {
   MockPin rst, irq, busy(false);
   TestableRadioLR1121 radio(&spi, &rst, &irq, &busy, 17, TCXO_YAML_CODE_3_3V);
   RadioTxConfig cfg{};
-  cfg.preamble_len = LONG_PREAMBLE;
-  EXPECT_EQ(radio.tx_air_time_us(13, cfg), io868_tx_air_time_us(LONG_PREAMBLE, 13, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
+  cfg.preamble_len = TEST_LONG_PREAMBLE_BYTES;
+  EXPECT_EQ(radio.tx_air_time_us(13, cfg),
+            io868_tx_air_time_us(TEST_LONG_PREAMBLE_BYTES, 13, SOFT_PHY_PREAMBLE_BITS_PER_BYTE));
 }
 
 TEST(RadioLR1121, PreambleDurationsConvertAtEightBitsPerByte) {

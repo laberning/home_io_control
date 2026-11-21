@@ -626,7 +626,7 @@ TEST(RadioSX1262Tx, SendsEachOneWayFrameSizeBehindTheWakeUpAndTheStartPreamble) 
       MockPin rst, dio1, busy(false);
       TestableRadioSX1262 radio(&spi, &rst, &dio1, &busy, 0, TCXO_CODE_1_8V);
       ASSERT_TRUE(radio.init());
-      const uint16_t preamble = wake ? LONG_PREAMBLE : radio.preamble_bytes_for_ms(START_PREAMBLE_MS);
+      const uint16_t preamble = wake ? TEST_LONG_PREAMBLE_BYTES : radio.preamble_bytes_for_ms(START_PREAMBLE_MS);
       SCOPED_TRACE(oneway_wire::case_name(frame, preamble));
       RadioTxConfig cfg;
       cfg.freq_hz = FREQ_CH2;

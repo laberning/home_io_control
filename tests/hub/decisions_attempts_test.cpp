@@ -292,7 +292,7 @@ TEST(Decisions, WakeBeliefStampEqualToNowIsFresh) {
 
 TEST(Decisions, LowPowerTryPreambleFollowsThePlanTable) {
   constexpr uint16_t SHORT = 32;
-  constexpr uint16_t WAKE = LONG_PREAMBLE;
+  constexpr uint16_t WAKE = TEST_LONG_PREAMBLE_BYTES;
   struct Row {
     decisions::WakeBelief belief;
     uint16_t plan[EXCHANGE_RETRY_COUNT];
@@ -311,9 +311,10 @@ TEST(Decisions, LowPowerTryPreambleFollowsThePlanTable) {
 
 TEST(Decisions, LowPowerTryPreambleClampsTheTryIndex) {
   constexpr uint16_t SHORT = 32;
-  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 0, SHORT, LONG_PREAMBLE), SHORT)
+  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 0, SHORT, TEST_LONG_PREAMBLE_BYTES), SHORT)
       << "try 0 is treated as try 1";
-  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 4, SHORT, LONG_PREAMBLE), LONG_PREAMBLE)
+  EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 4, SHORT, TEST_LONG_PREAMBLE_BYTES),
+            TEST_LONG_PREAMBLE_BYTES)
       << "try 4 is treated as the last try (wake-up for AWAKE)";
 }
 
@@ -321,7 +322,7 @@ TEST(Decisions, LowPowerTryPreambleUsesTheTunedPreambles) {
   EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 1, 48, 2048), 48)
       << "the short preamble is the caller's tuned value, not a fixed constant";
   EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::AWAKE, 2, 48, 2048), 2048)
-      << "the wake-up preamble is the caller's tuned value, not LONG_PREAMBLE";
+      << "the wake-up preamble is the caller's tuned value, not TEST_LONG_PREAMBLE_BYTES";
   EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::ASLEEP, 1, 48, 2048), 2048);
 }
 
@@ -403,8 +404,9 @@ TEST(Decisions, UnknownSendsTheWakeUpPreambleOnEveryTryOfAnExchangeWithoutALead)
   // The lead of an unknown state is an attempt of the plan, not a preamble rule: a single try, or a
   // count of tries, keeps the preamble a resting receiver hears.
   for (uint8_t try_index = 1; try_index <= EXCHANGE_RETRY_COUNT; try_index++)
-    EXPECT_EQ(decisions::low_power_try_preamble(decisions::WakeBelief::UNKNOWN, try_index, 32, LONG_PREAMBLE),
-              LONG_PREAMBLE);
+    EXPECT_EQ(
+        decisions::low_power_try_preamble(decisions::WakeBelief::UNKNOWN, try_index, 32, TEST_LONG_PREAMBLE_BYTES),
+        TEST_LONG_PREAMBLE_BYTES);
   EXPECT_STREQ(decisions::wake_belief_name(decisions::WakeBelief::UNKNOWN), "unknown");
 }
 

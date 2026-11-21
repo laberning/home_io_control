@@ -202,13 +202,15 @@ int16_t ExchangeEngine::busy_limit_dbm() const {
 
 namespace {
 
-/// The RadioTxConfig for `frame` on `freq` with `preamble`: the one place a transmission's shape
-/// (channel, preamble, wake-up level) is decided, for transmit_frame() and for the budget estimate.
-RadioTxConfig tx_config_for(const IoFrame &frame, uint32_t freq, uint16_t preamble) {
+/// The RadioTxConfig for `frame` on `freq` with `preamble` programmed bytes: the one place a
+/// transmission's shape (channel, preamble, wake-up level) is decided, for transmit_frame() and for
+/// the budget estimate. The wake-up level comes from the preamble's duration on `radio` (ADR 0119),
+/// so the same duration gets the same label on every radio.
+RadioTxConfig tx_config_for(const RadioDriver &radio, const IoFrame &frame, uint32_t freq, uint16_t preamble) {
   RadioTxConfig tx_config{};
   tx_config.freq_hz = freq;
   tx_config.preamble_len = preamble;
-  tx_config.wake = tx_wake_for(is_start(frame), preamble);
+  tx_config.wake = tx_wake_for(is_start(frame), radio.preamble_ms_for_bytes(preamble));
   return tx_config;
 }
 
@@ -243,7 +245,7 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
   // of send_and_receive() do not come through here for their check: they take a free channel
   // (transmit_with_channel_access_(), ADR 0096).
   const uint8_t lbt_checks = is_start(frame) ? LBT_MAX_RETRIES : 0;
-  RadioTxConfig tx_config = tx_config_for(frame, freq, preamble);
+  RadioTxConfig tx_config = tx_config_for(*radio, frame, freq, preamble);
   TxResult result;
   for (uint8_t lbt = 0;; lbt++) {
     if (lbt < lbt_checks) {
@@ -329,7 +331,7 @@ ExchangeEngine::RequestTransmit ExchangeEngine::transmit_with_channel_access_(co
   uint32_t freq = low_power ? own_freq : decisions::request_channel(previous_freq, this->draw_random_());
   const uint32_t begin_ms = millis();
   for (uint8_t busy_checks = 0;; busy_checks++) {
-    RadioTxConfig tx_config = tx_config_for(frame, freq, preamble);
+    RadioTxConfig tx_config = tx_config_for(*radio, frame, freq, preamble);
     const TxResult result = this->check_channel_and_send_(buf, len, tx_config);
     if (result.status != TxResult::Status::CHANNEL_BUSY) {
       const bool sent = this->conclude_send_(frame, tx_config, len, result);
@@ -359,7 +361,7 @@ ExchangeEngine::RequestTransmit ExchangeEngine::transmit_with_channel_access_(co
       levels[i] = radio->measure_channel_level(decisions::REQUEST_CHANNELS[i]);
   }
   const uint32_t forced_freq = decisions::forced_send_channel(low_power, own_freq, levels);
-  const RadioTxConfig tx_config = tx_config_for(frame, forced_freq, preamble);
+  const RadioTxConfig tx_config = tx_config_for(*radio, frame, forced_freq, preamble);
   ESP_LOGW(TAG, "Channel busy for %" PRIu32 " ms: sending cmd=0x%02X on %" PRIu32 " Hz anyway (lbt_force_when_busy)",
            millis() - begin_ms, frame.cmd, forced_freq);
   const bool sent = this->conclude_send_(frame, tx_config, len, radio->send_packet(buf, len, tx_config));
@@ -378,7 +380,8 @@ uint32_t ExchangeEngine::tx_time_ms(const IoFrame &frame, uint32_t freq, uint16_
   uint8_t const len = serialize(frame, buf, sizeof(buf));
   if (len == 0)
     return 0;
-  uint32_t const tx_us = (*this->radio_ptr_)->tx_air_time_us(len, tx_config_for(frame, freq, preamble));
+  const RadioDriver &radio = **this->radio_ptr_;
+  uint32_t const tx_us = radio.tx_air_time_us(len, tx_config_for(radio, frame, freq, preamble));
   return (tx_us + US_PER_MS - 1) / US_PER_MS;
 }
 

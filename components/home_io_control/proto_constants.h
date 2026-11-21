@@ -1056,7 +1056,7 @@ static constexpr uint32_t ATT_CLASS_5MS_TURNAROUND_MS = 5;
 /// @brief Power save mode values from the Multi Information Byte.
 ///
 /// Extracted from `flags & DISCOVERY_FLAGS_POWER_SAVE_MASK`.
-/// Devices in low-power mode require long preamble (1024 bytes) to wake their receiver.
+/// Devices in low-power mode require the long wake-up preamble (`low_power_wake_ms`) to wake their receiver.
 /// @{
 static constexpr uint8_t POWER_SAVE_ALWAYS_ALIVE = 0;  ///< Device is always listening — short preamble works.
 static constexpr uint8_t POWER_SAVE_LOW_POWER = 1;     ///< Device sleeps — needs long preamble to wake.

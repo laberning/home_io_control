@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0038 -->
 
-**Status:** Accepted, amended by [ADR 0115](0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md) · **Recorded:** 2026-09
+**Status:** Accepted, amended by [ADR 0115](0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md) and [ADR 0119](0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md) · **Recorded:** 2026-09
 
 ## Context
 

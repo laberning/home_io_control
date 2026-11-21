@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0041 -->
 
-**Status:** Accepted · **Recorded:** 2026-09
+**Status:** Accepted, partly superseded by [ADR 0119](0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md) · **Recorded:** 2026-09
 
 ## Context
 

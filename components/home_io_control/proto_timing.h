@@ -42,11 +42,17 @@ static constexpr uint32_t DISCOVERY_SLOT_MS = 41;
 /// `response_preamble()`, since both sides are already on the same channel; SHORT_PREAMBLE is the
 /// protocol's nominal length of that preamble. The exchange engine derives all of this from the
 /// frame (exchange_engine.cpp). The wake-up copy of a one-way `low_power: true` burst lasts the same
-/// wake-up duration, `low_power_wake_ms` (default LOW_POWER_WAKE_MS, ADR 0115); `LONG_PREAMBLE` is the fixed per-copy
-/// length of the legacy long-on-every-copy shape and the programmed length from which a preamble counts as a wake-up
-/// (is_wake_preamble()).
-static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes: legacy one-way wake-up copy and the wake threshold
-static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol's nominal length of a continuation preamble
+/// wake-up duration, `low_power_wake_ms` (default LOW_POWER_WAKE_MS, ADR 0115); the duration from which a preamble
+/// counts as a wake-up is WAKE_PREAMBLE_MIN_MS (is_wake_preamble_ms()).
+static constexpr uint16_t SHORT_PREAMBLE = 8;  ///< Protocol's nominal length of a continuation preamble
+
+/// The duration from which a preamble counts as a wake-up for a duty-cycled receiver (ADR 0119). Our
+/// own threshold, not a protocol value: it is the floor of `low_power_wake_ms`, so every wake-up
+/// setting is above it, and it lies above the ceiling of every other preamble setting except
+/// `pairing_discovery_preamble_ms`, whose ceiling is the same 300 ms. It is a duration so the same
+/// preamble gets the same label on every radio; the caller converts programmed bytes with the
+/// driver's own conversion first.
+static constexpr float WAKE_PREAMBLE_MIN_MS = 300.0F;
 
 /// Default for `TuningConfig::low_power_wake_ms`: the 2W wake-up in front of a directed start frame
 /// to a low-power receiver believed at rest, and the wake-up copy of a one-way `low_power: true`
@@ -54,7 +60,7 @@ static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol's nominal length 
 /// at the top of the wake-ups a mains one-way receiver obeyed behind a short copy train: it ignored
 /// 560 ms and longer (ADR 0118). A VELUX KLI 110 remote sends about 600 ms of wake-up, with which
 /// all eight commands to two resting VELUX SSL shutters landed on the first try, where 427 ms
-/// answered 12 of 16 and the 213 ms of LONG_PREAMBLE about half; a device that needs more raises the
+/// answered 12 of 16 and 213 ms about half; a device that needs more raises the
 /// setting (ADR 0097). The same duration is 2472 bytes on a raw-stream radio and 1978 on the SX1276.
 static constexpr float LOW_POWER_WAKE_MS = 515.0F;
 
@@ -104,21 +110,23 @@ enum class TxWake : uint8_t {
   LONG,   ///< The receiver may be duty-cycling.
 };
 
-/// True when a preamble this long (in programmed bytes) is the wake-up burst for a duty-cycled
-/// receiver. Every preamble duration tunable except `low_power_wake_ms` and
-/// `pairing_discovery_preamble_ms` is capped well below `LONG_PREAMBLE` on every radio, and the
-/// wake-up floor is above it on every radio, so only a real wake-up burst reaches the threshold.
-/// The discovery preamble has no compiled default: it follows `start_preamble_ms` (see
-/// `effective_discovery_preamble_ms()` in tuning_config.h).
-constexpr bool is_wake_preamble(uint16_t len) { return len >= LONG_PREAMBLE; }
+/// True when a preamble of this duration is the wake-up burst for a duty-cycled receiver: it lasts
+/// at least WAKE_PREAMBLE_MIN_MS. Every preamble duration tunable except `low_power_wake_ms` and
+/// `pairing_discovery_preamble_ms` is capped below the threshold on every radio, and the wake-up
+/// floor is at it, so only a real wake-up burst reaches it. The discovery preamble has no compiled
+/// default: it follows `start_preamble_ms` (see `effective_discovery_preamble_ms()` in tuning_config.h).
+/// @param ms Preamble duration in milliseconds, as the active radio's preamble_ms_for_bytes() gives it.
+constexpr bool is_wake_preamble_ms(float ms) { return ms >= WAKE_PREAMBLE_MIN_MS; }
 
 /// The wake-up level of a frame, from the two facts that decide it: whether it starts an exchange
 /// (a continuation reaches a receiver that is already listening) and whether its preamble is the
 /// wake-up burst.
-constexpr TxWake tx_wake_for(bool start, uint16_t preamble) {
+/// @param start True when the frame opens an exchange.
+/// @param preamble_ms Preamble duration in milliseconds.
+constexpr TxWake tx_wake_for(bool start, float preamble_ms) {
   if (!start)
     return TxWake::NONE;
-  return is_wake_preamble(preamble) ? TxWake::LONG : TxWake::SHORT;
+  return is_wake_preamble_ms(preamble_ms) ? TxWake::LONG : TxWake::SHORT;
 }
 
 /// Preamble/sync linger extension for a rotating listen (`ListenSpec::linger_dwell_ms`): how much
@@ -349,8 +357,8 @@ static constexpr uint8_t ONEWAY_BURST_REPEATS = 4;  ///< Copies of each 1W comma
 /// Gap between those copies. Three gaps between four copies is 3 * 40 = 120 ms of pure *delay*,
 /// fixed regardless of the identity's power class. What that adds up to on the wire depends on
 /// each copy's own airtime, which is a per-identity, per-copy choice (`OneWayPowerClass`,
-/// oneway_controller.h; ADR 0038): a burst with the long preamble on every copy runs well over a
-/// second, one with the short preamble on every copy a few hundred ms. send_burst()'s doxygen
+/// oneway_controller.h; ADR 0038): a burst with one wake-up copy runs about 0.72 s with the default
+/// wake-up, one with the short preamble on every copy about 0.2 s. send_burst()'s doxygen
 /// (oneway_transmitter.h) has both real shapes.
 static constexpr uint32_t ONEWAY_BURST_INTERVAL_MS = 40;
 

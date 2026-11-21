@@ -253,7 +253,7 @@ void KeyExtractionResponder::send_reply_(const IoFrame &frame) {
   // as every other in-exchange reply in this codebase. The one start-flagged reply, the 0x29, goes
   // out through schedule_discover_reply_() instead.
   //
-  // Do NOT widen this to a flat LONG_PREAMBLE(1024) for every reply: hardware-confirmed
+  // Do NOT widen this to a flat wake-up preamble (about 213 ms) for every reply: hardware-confirmed
   // 2026-08-02, that blocked the main loop long enough to blow through the hub's tight per-try
   // wait windows and broke both directions.
   const uint16_t preamble = (*this->radio_)->response_preamble();
@@ -301,7 +301,7 @@ void KeyExtractionResponder::schedule_discover_reply_(const IoFrame &search, con
     if (this->key_extraction_ctx_.state != pairing_responder::ResponderState::SENT_DISCOVER_RESP)
       return;
     // The one reply a hopping/scanning peer has to catch cold, so `cold_broadcast_reply_preamble_ms`:
-    // long enough for that, much shorter than LONG_PREAMBLE so the loop is not blocked.
+    // long enough for that, much shorter than a wake-up so the loop is not blocked.
     this->transmit_(this->pending_discover_resp_, freq,
                     (*this->radio_)->preamble_bytes_for_ms(this->tuning_->cold_broadcast_reply_preamble_ms));
   });

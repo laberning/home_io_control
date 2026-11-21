@@ -175,9 +175,11 @@ durably reserved, because reusing one is unrecoverable. This is a storage failur
    it again ([ADR 0120](adr/0120-a-one-way-counter-that-wraps-is-lost-to-a-somfy-receiver.md)). A value at or
    below the counter the hub already holds, or 32768 or more above it, changes nothing.
 5. **Wrong burst shape.** A solar or battery receiver sleeps between listening windows and needs
-   the long wake-up copy: set `low_power: true`. An awake VELUX receiver ignores a frame that
+   the long wake-up copy: leave `low_power:` unset for `somfy`, or set `low_power: true`. An awake VELUX receiver ignores a frame that
    arrives behind the long wake-up ([ADR 0041](adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)):
-   for a mains-powered one set `low_power: false`, or leave it unset with `manufacturer: velux`. The TX line in the log lists the preamble of each copy in milliseconds, for
+   for a mains-powered one set `low_power: false`, or leave it unset with `manufacturer: velux`
+   (every other manufacturer gets one wake-up copy and three short ones when `low_power:` is unset,
+   [ADR 0119](adr/0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md)). The TX line in the log lists the preamble of each copy in milliseconds, for
    example `preamble 515/10/10/10 ms` for the wake-up on the first copy only, and the boot log names
    the shape the identity resolved to. The wake-up length of a `low_power: true` identity is
    [`low_power_wake_ms`](configuration/tuning.md#low_power_wake_ms). How long a burst takes

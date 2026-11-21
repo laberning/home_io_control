@@ -9,7 +9,6 @@
 /// handles CRC and packet framing specific to the IO-Homecontrol protocol.
 
 #include "radio_interface.h"
-#include "proto_timing.h"  // LONG_PREAMBLE
 #include "radio_preamble_hold.h"
 #include "radio_soft_phy.h"  // io868_tx_air_time_us(), soft_phy_air_time_us()
 #include "esphome/core/hal.h"

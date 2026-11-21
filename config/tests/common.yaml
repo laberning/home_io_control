@@ -109,7 +109,7 @@ home_io_control:
       enrollment: true
       # enrollment_with_mac: true is rejected on this SX1276 board (ADR 0113); the SX1262 test config covers it.
       # ADR 0038: low_power: true exercises the LOW_POWER codegen branch -- the wake-up-copy shape
-      # for a solar/battery receiver. awning_remote (unset) already covers the LEGACY_LONG default.
+      # for a solar/battery receiver. awning_remote (unset) covers the profile default, the same shape.
       low_power: true
 
 # At least one entity of each type is needed to ensure all platform code compiles

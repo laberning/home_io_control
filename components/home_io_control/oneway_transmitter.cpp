@@ -27,14 +27,10 @@ constexpr int32_t TENTHS_PER_MS = 10;
 
 }  // namespace
 
-OneWayCopyPreamble oneway_copy_preamble(OneWayCopyShape shape, OneWayPowerClass power_class,
-                                        const OneWayPreambleRules &rules) {
-  if (shape.preamble == OneWayPreamble::NORMAL)
-    return {rules.bytes_for_ms(rules.start_ms), rules.start_ms};
-  if (power_class == OneWayPowerClass::LOW_POWER)
+OneWayCopyPreamble oneway_copy_preamble(OneWayCopyShape shape, const OneWayPreambleRules &rules) {
+  if (shape.preamble == OneWayPreamble::WAKE)
     return {rules.bytes_for_ms(rules.wake_ms), rules.wake_ms};
-  // LEGACY_LONG keeps a fixed programmed length, so its air time differs per radio (ADR 0115).
-  return {LONG_PREAMBLE, rules.ms_for_bytes(LONG_PREAMBLE)};
+  return {rules.bytes_for_ms(rules.start_ms), rules.start_ms};
 }
 
 std::string format_oneway_preamble_list(OneWayPowerClass power_class, const OneWayPreambleRules &rules) {
@@ -45,8 +41,7 @@ std::string format_oneway_preamble_list(OneWayPowerClass power_class, const OneW
       out += '/';
     // Tenths of a millisecond: `start_preamble_ms` moves in 0.5 ms steps, and a whole-ms rounding
     // would log 3.5 ms as 4. A whole value prints without a decimal ("515/10/10/10").
-    const auto tenths =
-        static_cast<int32_t>(std::lround(oneway_copy_preamble(shape, power_class, rules).ms * TENTHS_PER_MS));
+    const auto tenths = static_cast<int32_t>(std::lround(oneway_copy_preamble(shape, rules).ms * TENTHS_PER_MS));
     out += std::to_string(tenths / TENTHS_PER_MS);
     if (tenths % TENTHS_PER_MS != 0) {
       out += '.';
@@ -324,7 +319,7 @@ bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_
   // Built from the same oneway_burst_copy_shape() the transmit loop below calls, so this can never
   // claim a preamble shape the burst does not actually send.
   const OneWayPreambleRules rules{this->tuning_->start_preamble_ms, this->tuning_->low_power_wake_ms,
-                                  this->preamble_bytes_, this->preamble_ms_};
+                                  this->preamble_bytes_};
   const std::string preambles = format_oneway_preamble_list(power_class, rules);
   if (info.has_intent || intent_label != nullptr) {
     ESP_LOGI(TAG, "1W tx: from %s to %s intent %s (%ux, preamble %s ms)", node_id_to_string(frame.src).c_str(), target,
@@ -353,7 +348,7 @@ bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_
     } else {
       copy_frame.ctrl1 &= static_cast<uint8_t>(~CTRL1_LOW_POWER);
     }
-    const OneWayCopyPreamble preamble = oneway_copy_preamble(shape, power_class, rules);
+    const OneWayCopyPreamble preamble = oneway_copy_preamble(shape, rules);
     if (this->transmit_(copy_frame, FREQ_CH2, preamble.bytes)) {
       sent++;
     }

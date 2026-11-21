@@ -311,7 +311,7 @@ void SoftPhyDriverBase::end_timed_out_tx_(bool chip_reset) {
 void SoftPhyDriverBase::build_gfsk_packet_params(const SoftPhyPacketParams &p, uint8_t out[GFSK_PACKET_PARAMS_LEN]) {
   // The SetPacketParams preamble field is bit-denominated on both chips (sx126x's
   // preamble_len_in_bits / lr11xx's pbl_len_in_bit), but preamble_bytes arrives in bytes, matching
-  // every other layer in this codebase (LONG_PREAMBLE, SHORT_PREAMBLE, the tuning defaults, the
+  // every other layer in this codebase (SHORT_PREAMBLE, the tuning defaults, the
   // SX1276's byte-wide RegPreambleMsb/Lsb). Convert here, once, at the last step before the wire —
   // this is the conversion the 63e2502 fix had to patch separately in each driver.
   const uint16_t preamble_bits = p.preamble_bytes * 8;

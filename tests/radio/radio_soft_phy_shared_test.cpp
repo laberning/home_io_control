@@ -1068,7 +1068,7 @@ TEST(TxDoneTimeout, IsTheAirTimeInWholeMillisecondsPlusTheGuard) {
 TYPED_TEST(SoftPhyDriver, TxDoneWaitGivesUpOneGuardAfterTheFrameShouldHaveEnded) {
   // ManualClock is safe: the wait loop's delayMicroseconds() step advances it on every pass.
   esphome::test_clock::ManualClock clock;
-  for (uint16_t preamble : {SHORT_PREAMBLE, LONG_PREAMBLE}) {
+  for (uint16_t preamble : {SHORT_PREAMBLE, TEST_LONG_PREAMBLE_BYTES}) {
     MockSpi spi;
     MockPin rst, dio1, busy(false);
     typename TestFixture::Testable radio(&spi, &rst, &dio1, &busy, TypeParam::kTxPower, TypeParam::kTcxo);

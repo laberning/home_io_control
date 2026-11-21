@@ -1514,9 +1514,9 @@ TEST(PairingHelpers, DiscoverConfirm_FramingFollowsPowerClassAndMode) {
   const uint8_t device_bytes[NODE_ID_SIZE] = {test::DST_ID[0], test::DST_ID[1], test::DST_ID[2]};
   const Case cases[] = {
       {DiscoverConfirmMode::SEND, false, 0x00, MOCK_START_PREAMBLE},
-      {DiscoverConfirmMode::SEND, true, CTRL1_LOW_POWER, LONG_PREAMBLE},
+      {DiscoverConfirmMode::SEND, true, CTRL1_LOW_POWER, TEST_LONG_PREAMBLE_BYTES},
       {DiscoverConfirmMode::SEND_WITH_ACK, false, CTRL1_ACK, MOCK_START_PREAMBLE},
-      {DiscoverConfirmMode::SEND_WITH_ACK, true, CTRL1_LOW_POWER, LONG_PREAMBLE},
+      {DiscoverConfirmMode::SEND_WITH_ACK, true, CTRL1_LOW_POWER, TEST_LONG_PREAMBLE_BYTES},
   };
   for (const Case &c : cases) {
     SCOPED_TRACE(::testing::Message() << "mode=" << static_cast<int>(c.mode) << " low_power=" << c.low_power);
@@ -1526,10 +1526,10 @@ TEST(PairingHelpers, DiscoverConfirm_FramingFollowsPowerClassAndMode) {
     comp.radio_ = &radio;
     memcpy(comp.node_id_, test::OWN_ID, NODE_ID_SIZE);
     comp.tuning_.pairing_discover_confirm = c.mode;
-    // Tuned to the knob's ceiling, LONG_PREAMBLE, the one wake-up value it can take: with the default
+    // Tuned to the knob's ceiling, TEST_LONG_PREAMBLE_BYTES, the one wake-up value it can take: with the default
     // (the start preamble) the cap would shorten the low-power 0x2C to a start preamble, and this case
     // pins the power-class framing itself. The low-power 0x2C's wake-up preamble is capped to it.
-    comp.tuning_.pairing_discovery_preamble_ms = mock_preamble_ms(LONG_PREAMBLE);
+    comp.tuning_.pairing_discovery_preamble_ms = mock_preamble_ms(TEST_LONG_PREAMBLE_BYTES);
     comp.tuning_.pairing_discovery_preamble_set = true;
 
     pairing::PairingContext context;
@@ -1777,7 +1777,7 @@ TEST(PairingHelpers, DiscoveryAndPairingStartFramesFollowTheDriverStartPreamble)
 }
 
 TEST(PairingHelpers, TunedDiscoveryPreambleWinsOverTheStartPreamble) {
-  for (const uint16_t tuned : {static_cast<uint16_t>(24), LONG_PREAMBLE}) {
+  for (const uint16_t tuned : {static_cast<uint16_t>(24), TEST_LONG_PREAMBLE_BYTES}) {
     TestableComponent comp;
     MockRadio radio;
     comp.tuning_.start_preamble_ms = mock_preamble_ms(48);

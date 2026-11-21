@@ -204,12 +204,12 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         ),
         # Tri-state, unlike the per-device 2W low_power (ADR 0029): no default here, because unset
         # and false mean different things for a 1W identity. Unset = the manufacturer profile decides
-        # (ADR 0041): velux gets the short shape below, every other vendor LONG_PREAMBLE on every
-        # copy with CTRL1 0x00, the hardware-validated Somfy path. false = every copy uses the live
-        # `start_preamble_ms` tuning value instead, CTRL1 0x00 -- the ADR 0029 shape, for a
-        # mains-powered receiver. true = copy 1 gets a `low_power_wake_ms` wake-up (ADR 0115) +
-        # CTRL1_LOW_POWER, copies 2-4 the normal preamble -- a wake-up copy for a solar/battery receiver. Applies to every 1W TX of
-        # the identity: commands, positions, both enrollment gestures, un-enrollment. See ADR 0038.
+        # (ADR 0041, ADR 0119): velux gets the `false` shape below, every other vendor the `true` shape.
+        # false = every copy uses the live `start_preamble_ms` tuning value, CTRL1 0x00 -- the ADR 0029
+        # shape, for a mains-powered receiver. true = copy 1 gets a `low_power_wake_ms` wake-up (ADR 0115) +
+        # CTRL1_LOW_POWER, copies 2-4 the normal preamble -- a wake-up copy for a solar/battery receiver.
+        # Applies to every 1W TX of the identity: commands, positions, both enrollment gestures,
+        # un-enrollment. See ADR 0038.
         cv.Optional(CONF_LOW_POWER): cv.boolean,
         # Tri-state like low_power: unset = the device kind decides (an inverted kind such as a
         # horizontal awning mirrors OPEN/CLOSE/position on the wire, as the 2W cover does);

@@ -471,8 +471,8 @@ bisecting a reception problem and want to see where your own device stops answer
 
 The same value governs the short copies of a 1W identity: every copy with `low_power: false`, the
 three after the wake-up with `low_power: true`. With `low_power:` unset it depends on the
-manufacturer: `velux` gets short copies, every other vendor keeps the long wake-up on all four
-copies and this value does not apply. See [Sending 1W commands](oneway-transmit.md#what-one-command-puts-on-the-air).
+manufacturer: `velux` gets short copies, every other vendor the wake-up copy followed by three short copies
+([ADR 0119](../adr/0119-somfy-one-way-bursts-lead-with-one-wake-up-copy.md)). See [Sending 1W commands](oneway-transmit.md#what-one-command-puts-on-the-air).
 
 Sized independently of `response_preamble_ms` (that knob is a TX→RX turnaround property;
 this is a cold-peer property). Drop it toward the 1.5 ms floor only if a start frame is still not
