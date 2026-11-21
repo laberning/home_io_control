@@ -14,6 +14,7 @@
 #include <cinttypes>
 #include <cmath>
 #include <cstring>
+#include <variant>
 
 namespace esphome {
 namespace home_io_control {
@@ -179,11 +180,15 @@ bool IOHomeWaterHeater::sync_from_readings_(const IoDevice &dev) {
     this->set_current_temperature(water_c);
     changed = true;
   }
-  // A target that is not a temperature (an alias the heater has not been seen sending) shows as unknown, and
-  // so does the target in automatic mode (the heater chooses its own) and while away (the heater reports a
-  // main parameter of 0 then, which would read as 20 degrees but is no target).
+  // A target that is not a temperature (an alias the heater has not been seen sending) shows as unknown. A target
+  // read from a status reply's main parameter does too in automatic mode (the heater chooses its own and its display
+  // shows none) and while away (the main parameter is 0 then, which would read as 20 degrees but is no target). A
+  // target read from a register is the temperature the heater heats to in every mode (an electric storage heater's
+  // 42 C in automatic mode, 7 C in absence), so it is always shown; a target set then is still not sent.
+  const DeviceReadingRow *target_row = device_reading_row(dev, DeviceReading::HOT_WATER_TARGET);
+  const bool heats_to = target_row != nullptr && std::holds_alternative<RegisterSource>(target_row->source);
   const bool automatic = mode_wire == static_cast<int>(DhwMode::AUTO);
-  const float target = (automatic || away == 1) ? NAN : target_c;
+  const float target = (!heats_to && (automatic || away == 1)) ? NAN : target_c;
   if (detail::reading_changed(this->target_temperature_, target)) {
     this->set_target_temperature_(target);
     changed = true;

@@ -53,7 +53,8 @@ Each register read and write above was checked on the heater, and the frames are
 
 In manual mode the heater heats to 50, 60 or 70 °C for 2, 3 or 4 showers, so the card offers those three targets
 and nothing between them. A target is written as its shower count. In automatic mode and in absence the heater
-chooses its own target, so the card shows none, and a target set in Home Assistant is not sent; the log says so.
+chooses its own target. The card still shows the temperature the heater heats to (42 or 61 °C in AUTO, 7 °C in
+absence), but a target set in Home Assistant then is not sent; the log says so.
 
 The heater refuses a boost during an absence: the flag reads back off, and the switch shows it off. End the
 absence first.

@@ -134,9 +134,10 @@ status reply is never read. `io_model: electric_water_heater` declares one; it i
 ([pull request #248](https://github.com/laberning/home_io_control/pull/248)).
 
 - **Modes:** `eco` is the heater's automatic mode and `electric` its manual mode. The card offers no other.
-- **Target:** the temperature the heater heats to. In manual mode the card offers 50, 60 and 70 °C, the
-  heater's 2, 3 and 4 showers, and a target is written as its shower count. A target between them is refused,
-  and so is a target in automatic mode, where the heater chooses its own.
+- **Target:** the temperature the heater heats to, shown in every mode (7 °C in absence). In manual mode the
+  card offers 50, 60 and 70 °C, the heater's 2, 3 and 4 showers, and a target is written as its shower count. A
+  target between them is refused, and so is a target in automatic mode or in absence, where the heater chooses
+  its own.
 - **Boost and away** are flags the heater keeps, written directly and shown from the value read back. The heater
   refuses a boost during an absence, and the switch then shows it off.
 - `energy` reads the same counter as on a heat-pump heater. Three more optional sensors take every

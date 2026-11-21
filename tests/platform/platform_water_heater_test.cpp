@@ -193,6 +193,32 @@ TEST(PlatformWaterHeater, AnElectricStorageHeatersManualModeIsShownAndWrittenAsE
   EXPECT_EQ(hub.water_heater_modes[0], DhwMode::AUTO);
 }
 
+TEST(PlatformWaterHeater, AnElectricStorageHeaterShowsTheTemperatureItHeatsToInEveryMode) {
+  MockHubWaterHeater hub;
+  hub.water_heater_mode_names = dhw_electric_mode_name;
+  IOHomeWaterHeater entity;
+  entity.set_device_model(DeviceModel::ELECTRIC_WATER_HEATER);
+  bind_water_heater(entity, hub);
+
+  test::WaterHeaterValues readings;
+  readings.water_c = 39.8F;
+  readings.target_c = 42.0F;
+  readings.mode = static_cast<int16_t>(DhwMode::AUTO);
+  publish(hub, readings);
+  EXPECT_FLOAT_EQ(entity.get_target_temperature(), 42.0F) << "automatic mode: the target the heater chose";
+
+  readings.target_c = 7.0F;
+  readings.away = 1;
+  publish(hub, readings);
+  EXPECT_FLOAT_EQ(entity.get_target_temperature(), 7.0F) << "absence: frost protection";
+
+  readings.away = 0;
+  readings.target_c = 60.0F;
+  readings.mode = static_cast<int16_t>(DhwMode::MANUAL_ECO_OFF);
+  publish(hub, readings);
+  EXPECT_FLOAT_EQ(entity.get_target_temperature(), 60.0F);
+}
+
 TEST(PlatformWaterHeater, TheCardsRangeFollowsTheRangeOfTheHeatersTargetRow) {
   MockHubWaterHeater hub;
   hub.water_heater_range = {20.0F, 70.0F};  // a model whose target row is wider than the Calypso's
