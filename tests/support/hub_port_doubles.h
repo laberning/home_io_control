@@ -317,6 +317,13 @@ class ControlPortDouble : public HubControlPort {
     this->oneway_report_callbacks.push_back(std::move(callback));
   }
 
+  void add_oneway_press_callback(std::vector<std::string> senders, OneWayPressFn callback) override {
+    this->oneway_press_subscriptions.push_back({std::move(senders), std::move(callback)});
+  }
+  [[nodiscard]] bool oneway_identity_inverted(const std::string &controller_id) const override {
+    return this->inverted_oneway_identities.count(controller_id) != 0;
+  }
+
   [[nodiscard]] const std::string &last_device_event() const override { return this->device_event; }
   void set_device_event_callback(std::function<void()> cb) override { this->device_event_callback = std::move(cb); }
 
@@ -326,6 +333,16 @@ class ControlPortDouble : public HubControlPort {
   void set_bootloader_rewrite_allowed(bool allowed) override { this->bootloader_rewrite_allowed = allowed; }
 #endif
 #endif
+
+  /// Deliver a remote's press to the subscribers that listed its sender, as the hub does after its duplicate filter.
+  void press_oneway_remote(const std::string &sender, const OneWayFrameInfo &press) const {
+    for (const auto &subscription : this->oneway_press_subscriptions) {
+      for (const auto &listed : subscription.senders) {
+        if (listed == sender)
+          subscription.callback(press);
+      }
+    }
+  }
 
   /// Deliver a one-way report to every subscriber, as the hub does after each command attempt.
   void report_oneway_command(const OneWayCommandReport &report) const {
@@ -348,6 +365,13 @@ class ControlPortDouble : public HubControlPort {
   std::vector<std::pair<std::string, OneWayButtonAction>> oneway_actions;  ///< (controller, action), in order.
   std::vector<std::string> oneway_enrollments;
   std::vector<OneWayCommandReportFn> oneway_report_callbacks;
+  /// One press subscription: the senders it listed and its callback.
+  struct OnewayPressSubscription {
+    std::vector<std::string> senders;
+    OneWayPressFn callback;
+  };
+  std::vector<OnewayPressSubscription> oneway_press_subscriptions;
+  std::set<std::string> inverted_oneway_identities;  ///< Handles oneway_identity_inverted() answers true for.
 };
 
 }  // namespace test

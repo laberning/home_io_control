@@ -264,3 +264,65 @@ TEST(DecisionsOneWay, OwnCommandIsFollowedOnlyWhenItReachedTheRadioAndCarriesACo
   EXPECT_FALSE(decisions::follows_own_oneway_command(true, false)) << "an enrollment frame carries no command";
   EXPECT_FALSE(decisions::follows_own_oneway_command(false, false));
 }
+
+// ============================================================================
+// The state an assumed-state cover of a one-way controller shows (ADR 0117)
+// ============================================================================
+
+namespace {
+
+/// A decoded frame as a receiver reads it: main byte @p main0 (wire value), with a command.
+OneWayFrameInfo frame_with_main(uint8_t main0, bool has_intent = true) {
+  OneWayFrameInfo info{};
+  info.has_intent = has_intent;
+  info.main0 = main0;
+  return info;
+}
+
+}  // namespace
+
+TEST(DecisionsOneWay, EveryIntentShowsItsOwnEndStateWhateverCameBefore) {
+  EXPECT_EQ(decisions::oneway_cover_state_after(decisions::OneWayCoverIntent::OPEN), decisions::OneWayCoverState::OPEN);
+  EXPECT_EQ(decisions::oneway_cover_state_after(decisions::OneWayCoverIntent::CLOSE),
+            decisions::OneWayCoverState::CLOSED);
+  EXPECT_EQ(decisions::oneway_cover_state_after(decisions::OneWayCoverIntent::STOP),
+            decisions::OneWayCoverState::STOPPED)
+      << "a stop leaves the position unknown, it is neither end";
+}
+
+TEST(DecisionsOneWay, ACoverReadsOpenCloseAndStopFromTheWireValues) {
+  EXPECT_EQ(decisions::oneway_cover_intent_from_frame(frame_with_main(0x00), false),
+            decisions::OneWayCoverIntent::OPEN);
+  EXPECT_EQ(decisions::oneway_cover_intent_from_frame(frame_with_main(0xC8), false),
+            decisions::OneWayCoverIntent::CLOSE);
+  EXPECT_EQ(decisions::oneway_cover_intent_from_frame(frame_with_main(POS_STOP), false),
+            decisions::OneWayCoverIntent::STOP);
+}
+
+TEST(DecisionsOneWay, ACoverTreatsAPositionAsItsNearerEnd) {
+  // Wire value = percent * 2: 0x28 = 20 %, 0x8C = 70 %.
+  EXPECT_EQ(decisions::oneway_cover_intent_from_frame(frame_with_main(0x28), false),
+            decisions::OneWayCoverIntent::OPEN);
+  EXPECT_EQ(decisions::oneway_cover_intent_from_frame(frame_with_main(0x8C), false),
+            decisions::OneWayCoverIntent::CLOSE);
+}
+
+TEST(DecisionsOneWay, AnInvertedIdentitysWireValuesAreMirroredButItsStopIsNot) {
+  EXPECT_EQ(decisions::oneway_cover_intent_from_frame(frame_with_main(0x00), true), decisions::OneWayCoverIntent::CLOSE)
+      << "wire 0 is closed on an inverted kind";
+  EXPECT_EQ(decisions::oneway_cover_intent_from_frame(frame_with_main(0xC8), true), decisions::OneWayCoverIntent::OPEN);
+  EXPECT_EQ(decisions::oneway_cover_intent_from_frame(frame_with_main(0x28), true), decisions::OneWayCoverIntent::CLOSE)
+      << "20 % on the wire is 80 % for the user";
+  EXPECT_EQ(decisions::oneway_cover_intent_from_frame(frame_with_main(POS_STOP), true),
+            decisions::OneWayCoverIntent::STOP);
+}
+
+TEST(DecisionsOneWay, AFrameThatSaysNothingACoverCanShowChangesNothing) {
+  for (const uint8_t named : {POS_FAVORITE, POS_UNKNOWN, POS_SECURED_TARGET, POS_DEFAULT, POS_FORCE_OPEN}) {
+    EXPECT_FALSE(decisions::oneway_cover_intent_from_frame(frame_with_main(named), false).has_value())
+        << "named or unresolved main byte 0x" << std::hex << int(named);
+  }
+  EXPECT_FALSE(
+      decisions::oneway_cover_intent_from_frame(frame_with_main(0x00, /*has_intent=*/false), false).has_value())
+      << "a frame without a command, whatever its main byte holds";
+}

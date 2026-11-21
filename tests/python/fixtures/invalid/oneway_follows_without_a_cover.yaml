@@ -1,0 +1,13 @@
+# expect-error: has follows: but no cover:
+# covers: oneway_controllers.validate_oneway_controllers
+# follows: lists the remotes that move the cover's shown state; without cover: there is nothing to move.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: awning_remote
+      io_device_type: vertical_exterior_awning
+      commands: [open, close, stop]
+      follows: [9D6085]

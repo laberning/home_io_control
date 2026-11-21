@@ -445,6 +445,20 @@ class IOHomeControlComponent : public Component,
     this->oneway_report_callbacks_.push_back(std::move(callback));
   }
 
+  /// @brief Subscribe to the presses of given one-way remotes (HubControlPort).
+  /// @param senders Source addresses of the remotes.
+  /// @param callback Invoked for each de-duplicated press of one of them.
+  void add_oneway_press_callback(std::vector<std::string> senders, OneWayPressFn callback) override {
+    this->oneway_press_subscriptions_.push_back({std::move(senders), std::move(callback)});
+  }
+
+  /// @brief Whether the identity mirrors open and close on the wire (HubControlPort).
+  /// @param controller_id Handle from `oneway_controllers:`.
+  [[nodiscard]] bool oneway_identity_inverted(const std::string &controller_id) const override {
+    const OneWayControllerIdentity *identity = this->oneway_transmitter_.identities().get(controller_id);
+    return identity != nullptr && effective_inverted(*identity);
+  }
+
   /// @return The 1W transmit collaborator, for diagnostics and the sequence-resync path.
   [[nodiscard]] OneWayTransmitter &oneway_transmitter() { return this->oneway_transmitter_; }
 
@@ -1068,6 +1082,11 @@ class IOHomeControlComponent : public Component,
   /// follows_own_oneway_command()). Fires no sender event: that event reports other controllers.
   /// @param report What the transmitter did, from its report callback.
   void follow_own_oneway_command_(const OneWayCommandReport &report);
+  /// Deliver a de-duplicated press to the subscribers of its sender (add_oneway_press_callback()). Nothing is
+  /// transmitted. A frame without a command is not a press a subscriber can use and is not delivered.
+  /// @param info Already-decoded 1W frame info (see decode_1w_frame()).
+  /// @param src_id Source node ID of the frame as a hexadecimal string.
+  void notify_oneway_press_subscribers_(const OneWayFrameInfo &info, const std::string &src_id);
   /// Fire the sender HA event for a decoded 1W frame, if the sender is exposed.
   /// DEBUG-logs the reason when it does not fire (API disconnected / sender not exposed) so a
   /// live log capture can distinguish "never reached this check" from "reached it and skipped".
@@ -1471,6 +1490,13 @@ class IOHomeControlComponent : public Component,
 #endif
   /// Subscribers to the per-command 1W report; one per "Last 1W Command" sensor.
   std::vector<OneWayCommandReportFn> oneway_report_callbacks_;
+  /// One subscriber to the presses of a set of remotes (add_oneway_press_callback()).
+  struct OneWayPressSubscription {
+    std::vector<std::string> senders;  ///< Source addresses the subscriber wants.
+    OneWayPressFn callback;            ///< Invoked once per press of one of them.
+  };
+  /// Subscribers to remote presses; one per one-way cover that lists `follows:` senders.
+  std::vector<OneWayPressSubscription> oneway_press_subscriptions_;
 };
 
 // ----------------------------------------------------------------------------

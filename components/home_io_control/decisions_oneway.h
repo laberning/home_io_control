@@ -1,17 +1,19 @@
 #pragma once
 
 /// @file decisions_oneway.h
-/// @brief Pure rules for one-way (1W) remote frames: burst de-duplication, background-poll deferral and the
-/// pairing-gesture shape.
+/// @brief Pure rules for one-way (1W) remote frames: burst de-duplication, background-poll deferral, the
+/// pairing-gesture shape and the state an assumed-state cover shows.
 /// @ingroup hioc_hub
 ///
 /// Inline, stateless helpers, testable without radio hardware or timing.
 
+#include "proto_codecs.h"
 #include "proto_constants.h"
 #include "proto_frame.h"
 
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
 
 namespace esphome {
@@ -172,6 +174,69 @@ inline bool is_one_way_pairing_gesture(bool oneway, const uint8_t dst[NODE_ID_SI
 /// @param has_intent   The frame that went out decoded to a command (OneWayFrameInfo::has_intent).
 [[nodiscard]] inline bool follows_own_oneway_command(bool transmitted, bool has_intent) {
   return transmitted && has_intent;
+}
+
+// == Assumed-state cover of a one-way controller (ADR 0117) ==
+
+/// Percent scale of a one-way position (0 = open, 100 = closed) and its midpoint: a position above it is nearer the
+/// closed end.
+static constexpr float ONEWAY_COVER_FULL_PERCENT = 100.0F;
+static constexpr float ONEWAY_COVER_MIDPOINT_PERCENT = 50.0F;
+
+/// What a command or a press asks of a cover, as the user means it (after the identity's inversion).
+enum class OneWayCoverIntent : uint8_t {
+  OPEN,   ///< Go fully open.
+  CLOSE,  ///< Go fully closed.
+  STOP,   ///< Stop where it is.
+};
+
+/// What an assumed-state cover shows. A one-way cover has no read, so this is what the hub believes from the
+/// commands and presses it knows of, not what the device did.
+enum class OneWayCoverState : uint8_t {
+  OPEN,     ///< Last heard to open.
+  CLOSED,   ///< Last heard to close.
+  STOPPED,  ///< Last heard to stop: somewhere between the ends, the position unknown.
+};
+
+/// The state an assumed-state cover shows after a command or a press.
+///
+/// There is no travel time, so a move shows its end state at once and no "moving" phase exists; the rule needs
+/// no earlier state, because every intent names its own result.
+/// @param intent What the command or the press asked for.
+[[nodiscard]] inline OneWayCoverState oneway_cover_state_after(OneWayCoverIntent intent) {
+  switch (intent) {
+    case OneWayCoverIntent::OPEN:
+      return OneWayCoverState::OPEN;
+    case OneWayCoverIntent::CLOSE:
+      return OneWayCoverState::CLOSED;
+    case OneWayCoverIntent::STOP:
+    default:
+      return OneWayCoverState::STOPPED;
+  }
+}
+
+/// What a decoded one-way frame asks of a cover, or nothing when it says nothing a cover can show.
+///
+/// A stop is a stop. A position is treated as its nearer end. A named position (favourite, ventilation, ...), an
+/// unknown value, the wire value that 50 % shares with the force-open alias (oneway_intent_to_target() resolves none)
+/// and a frame without a command change nothing.
+///
+/// The main byte is a wire value. An inverted identity's kind has wire 0 = closed, so its position is mirrored
+/// here; a stop needs no mirror.
+/// @param info    The frame, from decode_1w_frame(): the hub's own transmission or a remote's press.
+/// @param inverted Whether the identity's open/close are mirrored on the wire (effective_inverted()).
+/// @return The intent, or an empty optional when the frame changes nothing.
+[[nodiscard]] inline std::optional<OneWayCoverIntent> oneway_cover_intent_from_frame(const OneWayFrameInfo &info,
+                                                                                     bool inverted) {
+  if (!info.has_intent)
+    return std::nullopt;
+  if (info.main0 == POS_STOP)
+    return OneWayCoverIntent::STOP;
+  const std::optional<float> wire_percent = oneway_intent_to_target(info.main0, info.main1);
+  if (!wire_percent.has_value())
+    return std::nullopt;
+  const float user_percent = inverted ? ONEWAY_COVER_FULL_PERCENT - *wire_percent : *wire_percent;
+  return user_percent > ONEWAY_COVER_MIDPOINT_PERCENT ? OneWayCoverIntent::CLOSE : OneWayCoverIntent::OPEN;
 }
 
 }  // namespace decisions

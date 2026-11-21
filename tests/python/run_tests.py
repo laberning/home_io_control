@@ -523,6 +523,54 @@ def oneway_identity_resolves_defaults_and_declares_entity_ids():
     assert identity[n.CONF_BUTTON_IDS]["open"].id == "remote_open"
     assert identity[n.CONF_LAST_COMMAND_SENSOR_ID].id == "remote_last_1w_command"
     assert identity[n.CONF_ENROLL_BUTTON_ID].id == "remote_enroll"
+    assert n.CONF_COVER_ENTITY_ID not in identity, "an identity without cover: declares no cover"
+
+    identity[n.CONF_COVER] = "Awning"
+    o._inject_identity_entity_ids(identity)
+    assert identity[n.CONF_COVER_ENTITY_ID].id == "remote_cover", "declared at validation, not in to_code()"
+    assert identity[n.CONF_COVER_ENTITY_ID].is_declaration
+
+
+@case("oneway_controllers._no_duplicate_followed_remotes")
+def followed_remotes_reject_repeats():
+    from esphome.components.home_io_control import oneway_controllers as o
+
+    assert o._no_duplicate_followed_remotes(["9D6085", "AABBCC"]) == ["9D6085", "AABBCC"]
+    expect_invalid(o._no_duplicate_followed_remotes, ["9D6085", "9D6085"], "follows has '9D6085' more than once")
+
+
+@case()
+def oneway_cover_needs_a_cover_kind_and_follows_needs_a_cover():
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+
+    awning = {n.CONF_COVER: "Awning", n.CONF_FOLLOWS: ["9D6085"]}
+    assert o._cover_problem(_resolved_oneway("vertical_exterior_awning", **awning)) is None
+    assert o._cover_problem(_resolved_oneway("horizontal_awning", **awning)) is None
+    assert o._cover_problem(_resolved_oneway("garage_opener", **awning)) is None, "a named position of its own is enough"
+    assert o._cover_problem(_resolved_oneway("light", **{n.CONF_FOLLOWS: []})) is None, "no cover: asks for nothing"
+    assert o._cover_problem(_resolved_oneway(**{n.CONF_FOLLOWS: []})) is None
+
+    problem = o._cover_problem(_resolved_oneway("light", **awning))
+    assert problem.startswith("oneway_controllers id 'remote' has cover: but its io_device_type 'light' is not a cover kind")
+    assert "has cover: but its io_device_type '0x7f'" in o._cover_problem(
+        _resolved_oneway(**{n.CONF_IO_DEVICE_TYPE: 0x7F, n.CONF_COVER: "Awning"})
+    ), "a raw node type has no capabilities and no cover"
+    assert "has follows: but no cover:" in o._cover_problem(
+        _resolved_oneway("vertical_exterior_awning", **{n.CONF_FOLLOWS: ["9D6085"]})
+    )
+
+
+@case()
+def oneway_cover_kind_is_decided_by_a_named_position_capability():
+    from esphome.components.home_io_control import hub_validators as v
+
+    # Every kind a two-way cover gives a device class is a cover kind here too, so a new cover row without a named
+    # position fails this test instead of silently refusing `cover:` on its one-way identity.
+    for kind in (*v.DEFAULT_COVER_DEVICE_CLASS, "bioclimatic_pergola"):
+        assert v.kind_is_cover(v.DEVICE_TYPE_OPTIONS[kind]), kind
+    for kind in ("light", "lock", "on_off_switch", "electrical_heater", "exterior_heating", "domestic_hot_water"):
+        assert not v.kind_is_cover(v.DEVICE_TYPE_OPTIONS[kind]), kind
 
 
 @case()

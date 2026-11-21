@@ -1,0 +1,14 @@
+# expect-error: follows has '9D6085' more than once
+# covers: oneway_controllers._no_duplicate_followed_remotes
+# A repeated remote would apply each of its presses twice.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: awning_remote
+      io_device_type: vertical_exterior_awning
+      commands: [open, close, stop]
+      cover: "Awning"
+      follows: [9D6085, 9d6085]

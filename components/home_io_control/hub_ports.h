@@ -29,9 +29,14 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace esphome {
 namespace home_io_control {
+
+/// @brief Invoked for one press of a remote the hub heard: the frame decoded as a receiver reads it, with wire
+/// values (an inverted kind's mirrored position included).
+using OneWayPressFn = std::function<void(const OneWayFrameInfo &press)>;
 
 /// @brief What a device-bound entity or companion needs from the hub: register its device, read the
 /// device record, follow its updates, queue radio work for it and set its poll intervals.
@@ -352,6 +357,21 @@ class HubControlPort {
   /// @brief Subscribe to the report that follows every one-way command attempt, successful or not.
   /// @param callback Called for every attempt of every identity; a subscriber filters for its own.
   virtual void add_oneway_command_report_callback(OneWayCommandReportFn callback) = 0;
+
+  /// @brief Subscribe to the presses of given one-way remotes that the hub hears.
+  ///
+  /// One call per logical press, after the hub's duplicate filter: the repeats of one burst arrive once, and two
+  /// quick presses of one button arrive twice. Only a frame that carries a command is delivered. The hub sends
+  /// nothing for a press; it is a report of what was heard. A remote that is not listed is never delivered.
+  /// @param senders Source addresses of the remotes, as six upper-case hexadecimal characters.
+  /// @param callback Called for each press of a listed sender.
+  virtual void add_oneway_press_callback(std::vector<std::string> senders, OneWayPressFn callback) = 0;
+
+  /// @brief Whether a one-way identity mirrors open and close on the wire (effective_inverted()): the way to read
+  /// the wire values of its commands and of the presses of its remotes as the user means them.
+  /// @param controller_id Handle of the identity.
+  /// @return true for an inverted identity; false for any other, including an unknown handle.
+  [[nodiscard]] virtual bool oneway_identity_inverted(const std::string &controller_id) const = 0;
 
   // === Device events ===
 

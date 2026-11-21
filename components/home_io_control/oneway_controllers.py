@@ -16,6 +16,7 @@ import esphome.config_validation as cv
 import esphome.final_validate as fv
 # Aliased so they cannot be mistaken for this package's own platform modules (see hub_names.py).
 from esphome.components import button as button_component
+from esphome.components import cover as cover_component
 from esphome.components import text_sensor as text_sensor_component
 from esphome.const import (
     CONF_ID,
@@ -28,6 +29,8 @@ from esphome.core import ID
 from .hub_names import (
     CONF_BUTTON_IDS,
     CONF_COMMANDS,
+    CONF_COVER,
+    CONF_COVER_ENTITY_ID,
     CONF_DRIVES,
     CONF_ENROLLMENT,
     CONF_ENROLLMENT_CLASSES,
@@ -35,6 +38,7 @@ from .hub_names import (
     CONF_ENROLL_BUTTON_ID,
     CONF_EXECUTE_ACEI,
     CONF_EXECUTE_BROADCAST,
+    CONF_FOLLOWS,
     CONF_INITIAL_SEQUENCE,
     CONF_INVERT_POSITION,
     CONF_IO_DEVICE_ID,
@@ -49,6 +53,7 @@ from .hub_names import (
     CONF_RADIO_TYPE,
     CONF_SYSTEM_KEY,
     IOHomeOneWayCommandButton,
+    IOHomeOneWayCover,
     IOHomeOneWayEnrollButton,
     IOHomeOneWayLastCommandTextSensor,
     OneWayButtonAction,
@@ -60,6 +65,8 @@ from .hub_validators import (
     MANUFACTURER_OPTIONS,
     ONEWAY_WIRE_PROFILE_MANUFACTURERS,
     device_features,
+    device_type_name,
+    kind_is_cover,
     validate_device_id,
     validate_device_type,
     validate_manufacturer,
@@ -117,6 +124,16 @@ def _no_duplicate_driven_devices(value):
                 f"drives has '{device_id}' more than once; list each device a single time"
             )
         seen.add(device_id)
+    return value
+
+
+def _no_duplicate_followed_remotes(value):
+    """Reject a repeated sender in `follows:` -- the cover would apply each of its presses twice."""
+    seen = set()
+    for sender in value:
+        if sender in seen:
+            raise cv.Invalid(f"follows has '{sender}' more than once; list each remote a single time")
+        seen.add(sender)
     return value
 
 
@@ -204,6 +221,15 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # checked at final validation, which sees the device entries.
         cv.Optional(CONF_DRIVES, default=[]): cv.All(
             cv.ensure_list(validate_device_id), _no_duplicate_driven_devices
+        ),
+        # An assumed-state cover entity for this identity, named by the value (ADR 0117): open, close and stop
+        # as the identity's own commands, and a state that follows them. Only for a cover kind
+        # (_cover_problem()). The ID follows `<identity_id>_cover`.
+        cv.Optional(CONF_COVER): cv.string_strict,
+        # The sender addresses of the real remotes whose presses the cover follows, as `linked_remotes:` lists them
+        # for a two-way cover. Never every remote of the class: a neighbour's would move the state. Needs `cover:`.
+        cv.Optional(CONF_FOLLOWS, default=[]): cv.All(
+            cv.ensure_list(validate_node_id), _no_duplicate_followed_remotes
         ),
     }
 )
@@ -445,6 +471,28 @@ def _enrollment_with_mac_problem(resolved):
     return None
 
 
+def _cover_problem(resolved):
+    """Error text when `cover:` or `follows:` cannot work on this identity, else None.
+
+    The cover shows the state of a cover, so the identity's kind must be one (a named position is the capability
+    every cover row has; kind_is_cover()). `follows:` without a cover has no entity to follow for.
+    """
+    identity = resolved.identity
+    if CONF_COVER in identity and not kind_is_cover(identity[CONF_IO_DEVICE_TYPE]):
+        kind = device_type_name(identity[CONF_IO_DEVICE_TYPE]) or hex(identity[CONF_IO_DEVICE_TYPE])
+        return (
+            f"oneway_controllers id '{resolved.identity_id}' has cover: but its io_device_type '{kind}' is not a "
+            "cover kind, so open, close and stop mean nothing to it. Remove cover:, or set the io_device_type "
+            "of the shutter, awning, blind, window or gate it controls."
+        )
+    if identity.get(CONF_FOLLOWS) and CONF_COVER not in identity:
+        return (
+            f"oneway_controllers id '{resolved.identity_id}' has follows: but no cover:. follows: lists the "
+            "remotes whose presses move the cover's shown state; without cover: there is nothing to move."
+        )
+    return None
+
+
 # === Warning rules ===
 # Each rule takes a _ResolvedIdentity and returns the warning text or None. A warning, not
 # cv.Invalid, because each flags a legal config that still transmits.
@@ -574,6 +622,12 @@ def _inject_identity_entity_ids(identity):
             is_declaration=True,
             type=IOHomeOneWayEnrollButton,
         )
+    if CONF_COVER in identity:
+        identity[CONF_COVER_ENTITY_ID] = ID(
+            f"{identity_id}_cover",
+            is_declaration=True,
+            type=IOHomeOneWayCover,
+        )
 
 
 def validate_oneway_controllers(config):
@@ -607,7 +661,11 @@ def validate_oneway_controllers(config):
 
         resolved = _resolve_identity_defaults(identity, config)
         _reject_collisions(resolved, seen_node_ids)
-        problem = _enrollment_manufacturer_problem(resolved) or _enrollment_with_mac_problem(resolved)
+        problem = (
+            _enrollment_manufacturer_problem(resolved)
+            or _enrollment_with_mac_problem(resolved)
+            or _cover_problem(resolved)
+        )
         if problem:
             raise cv.Invalid(problem)
         for rule in _WARNING_RULES:
@@ -745,6 +803,20 @@ async def create_oneway_controller_entities(identity, var):
     await cg.register_component(sensor, sensor_config)
     cg.add(sensor.set_parent(var))
     cg.add(sensor.set_controller_id(identity[CONF_ID]))
+
+    if CONF_COVER in identity:
+        cover_config = cover_component.cover_schema(IOHomeOneWayCover).extend(cv.COMPONENT_SCHEMA)(
+            {
+                CONF_ID: identity[CONF_COVER_ENTITY_ID],
+                CONF_NAME: identity[CONF_COVER],
+            }
+        )
+        cover_entity = await cover_component.new_cover(cover_config)
+        await cg.register_component(cover_entity, cover_config)
+        cg.add(cover_entity.set_parent(var))
+        cg.add(cover_entity.set_controller_id(identity[CONF_ID]))
+        for sender in identity[CONF_FOLLOWS]:
+            cg.add(cover_entity.add_follow(sender))
 
     if identity[CONF_ENROLLMENT]:
         # entity_category: config, not a switch behind an arming flag: the receiver's own 2s PROG

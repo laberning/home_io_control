@@ -1,19 +1,22 @@
 #pragma once
 
 /// @file platform_oneway_entities.h
-/// @brief The per-identity 1W entities: command buttons, the enrollment button, and the
-/// "Last 1W Command" diagnostic text sensor.
+/// @brief The per-identity 1W entities: command buttons, the enrollment button, the "Last 1W Command" diagnostic
+/// text sensor and the optional assumed-state cover.
 /// @ingroup hioc_platforms
 ///
-/// All three are created from the hub's `oneway_controllers:` block, never declared as a
-/// `button:` / `text_sensor:` platform entry — for the shared reason, see HubBoundEntity in
+/// All of them are created from the hub's `oneway_controllers:` block, never declared as a
+/// `button:` / `text_sensor:` / `cover:` platform entry — for the shared reason, see HubBoundEntity in
 /// platform_entity_base.h.
 ///
-/// All three scope themselves to one identity via OneWayControllerBound (parent + controller_id_).
+/// Each scopes itself to one identity via OneWayControllerBound (parent + controller_id_).
 
 #include <string>
+#include <vector>
 
+#include "decisions_oneway.h"
 #include "esphome/components/button/button.h"
+#include "esphome/components/cover/cover.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
 #include "oneway_controller.h"
@@ -106,6 +109,51 @@ class IOHomeOneWayLastCommandTextSensor : public text_sensor::TextSensor,
   /// @brief Get setup priority so the parent hub is available first.
   /// @return setup_priority::DATA.
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+};
+
+/// @brief Cover entity of a one-way controller identity: open, close and stop, with the state the hub assumes.
+///
+/// A one-way-only cover has no device address and no read (ADR 0027), so this entity shows what the hub knows of: its
+/// identity's own commands that reached the radio, and the presses of the remotes listed under `follows:` that the
+/// hub hears (ADR 0117). Both are applied by the pure rule of decisions::oneway_cover_state_after(); there is no
+/// position and no travel time, so a move shows its end state at once. A command that did not reach the radio, a
+/// frame without a command, a named position and the press of a remote that is not listed change nothing.
+///
+/// The state is an assumption. It is wrong after a press the hub did not hear and after a command the device
+/// ignored (out of range, a desynced counter, a rain or wind sensor's lock), and the hub cannot tell. The state is
+/// not persisted (ADR 0018): ESPHome's cover shows open until the first command or press, and assumed state keeps
+/// open and close usable in Home Assistant whatever it shows.
+/// @ingroup hioc_platforms
+class IOHomeOneWayCover : public cover::Cover, public Component, public OneWayControllerBound {
+ public:
+  /// @brief Subscribe to the identity's own command reports and, when senders are listed, to their presses.
+  void setup() override;
+
+  /// @brief Dump the cover's configuration to the log.
+  void dump_config() override;
+
+  /// @brief Get setup priority so the parent hub is available first.
+  /// @return setup_priority::DATA.
+  [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
+
+  /// @brief Open, close and stop, no position, assumed state.
+  [[nodiscard]] cover::CoverTraits get_traits() override;
+
+  /// @brief Add a remote whose presses the cover follows (YAML `follows:`).
+  /// @param sender_id Source address, six upper-case hexadecimal characters.
+  void add_follow(const std::string &sender_id) { this->follows_.push_back(sender_id); }
+
+ protected:
+  /// @brief Queue the command Home Assistant asked for as the identity's own. The state changes when the command's
+  /// report says it reached the radio, not here.
+  /// @param call The requested operation: stop, or a position of fully open or fully closed.
+  void control(const cover::CoverCall &call) override;
+
+  /// @brief Show what a frame asks of the cover, if it asks for anything.
+  /// @param wire The frame, with wire values: the identity's own transmission or a followed remote's press.
+  void apply_frame_(const OneWayFrameInfo &wire);
+
+  std::vector<std::string> follows_;  ///< Remotes whose presses move the state.
 };
 
 }  // namespace home_io_control

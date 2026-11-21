@@ -1,0 +1,13 @@
+# expect-error: has cover: but its io_device_type 'light' is not a cover kind
+# covers: oneway_controllers.validate_oneway_controllers
+# A light has no open, close or stop for a cover entity to send.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: lamp
+      io_device_type: light
+      commands: [stop]
+      cover: "Lamp"

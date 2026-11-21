@@ -41,14 +41,15 @@ cover:
 - Hub-level entities — the key-extraction and 1W key recovery switches, the LR1121 firmware
   controls, tuning numbers and selects, the Scan Paired Devices button, the Discover & Pair button
   and its "Last Pairing Result" sensor (see [Discover & Pair](pairing.md#discover--pair)), and each
-  1W identity's command buttons — do not take `device_id:` and always appear on the hub's own
+  1W identity's command buttons and cover — do not take `device_id:` and always appear on the hub's own
   ESPHome device.
 
 ## Composing a slider from 1W buttons
 
-There is no 1W cover entity: 1W support gives you buttons and the `oneway_set_position` action.
-ESPHome's `time_based` cover platform turns those buttons into a position slider, estimating the
-position from travel time:
+A one-way identity can show an [assumed-state cover](configuration/oneway-transmit.md#a-cover-for-the-identity)
+with open, close and stop, which also follows your wall remote without an automation. It has no slider.
+For a position slider, ESPHome's `time_based` cover platform turns the generated buttons and the
+`oneway_set_position` action into one, estimating the position from travel time:
 
 ```yaml
 cover:
@@ -67,7 +68,9 @@ Assistant, so the estimate drifts until the next full open or close re-synchroni
 
 ## Following the wall remote with a time-based cover
 
-The cover above does not see a press on the physical remote. If the hub hears the remote, it can
+The cover above does not see a press on the physical remote. If open, close and stop are enough, list the
+remote under `follows:` of the [identity's own cover](configuration/oneway-transmit.md#a-cover-for-the-identity)
+instead: it needs no automation and does not send the command a second time. To keep the slider, read on. If the hub hears the remote, it can
 tell Home Assistant, and an automation can pass the press to the cover so its estimate follows the
 wall switch.
 

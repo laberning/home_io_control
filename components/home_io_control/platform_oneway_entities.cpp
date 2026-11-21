@@ -1,5 +1,5 @@
 /// @file platform_oneway_entities.cpp
-/// @brief The per-identity 1W entities: command buttons, enrollment button, last-command sensor.
+/// @brief The per-identity 1W entities: command buttons, enrollment button, last-command sensor, cover.
 /// @ingroup hioc_platforms
 
 #include "platform_oneway_entities.h"
@@ -52,6 +52,67 @@ void IOHomeOneWayLastCommandTextSensor::setup() {
 void IOHomeOneWayLastCommandTextSensor::dump_config() {
   ESP_LOGCONFIG("home_io_control.text_sensor", "IO-Homecontrol Last 1W Command Sensor");
   ESP_LOGCONFIG("home_io_control.text_sensor", "  Controller: %s", this->controller_id_.c_str());
+}
+
+// === IOHomeOneWayCover ===
+
+void IOHomeOneWayCover::setup() {
+  if (this->control_port_ == nullptr)
+    return;
+  this->control_port_->add_oneway_command_report_callback([this](const OneWayCommandReport &report) {
+    // Every cover sees every report; each keeps only its own identity's. A burst that never reached the radio
+    // changes nothing, and neither does enrollment traffic (its frames carry no intent).
+    if (report.controller_id != this->controller_id_ ||
+        !decisions::follows_own_oneway_command(report.transmitted, report.wire.has_intent))
+      return;
+    this->apply_frame_(report.wire);
+  });
+  if (!this->follows_.empty()) {
+    this->control_port_->add_oneway_press_callback(this->follows_,
+                                                   [this](const OneWayFrameInfo &press) { this->apply_frame_(press); });
+  }
+}
+
+void IOHomeOneWayCover::dump_config() {
+  ESP_LOGCONFIG("home_io_control.cover", "IO-Homecontrol 1W Cover");
+  ESP_LOGCONFIG("home_io_control.cover", "  Controller: %s", this->controller_id_.c_str());
+  for (const auto &sender : this->follows_)
+    ESP_LOGCONFIG("home_io_control.cover", "  Follows: %s", sender.c_str());
+}
+
+cover::CoverTraits IOHomeOneWayCover::get_traits() {
+  auto traits = cover::CoverTraits();
+  traits.set_supports_position(false);
+  traits.set_supports_stop(true);
+  traits.set_is_assumed_state(
+      true);  // No read exists: the shown state is what the hub heard, never what the device did
+  return traits;
+}
+
+void IOHomeOneWayCover::control(const cover::CoverCall &call) {
+  if (call.get_stop()) {
+    this->control_port_->send_oneway_action(this->controller_id_, OneWayButtonAction::STOP);
+    return;
+  }
+  const auto &position = call.get_position();
+  if (!position.has_value())
+    return;
+  this->control_port_->send_oneway_action(
+      this->controller_id_, *position == cover::COVER_OPEN ? OneWayButtonAction::OPEN : OneWayButtonAction::CLOSE);
+}
+
+void IOHomeOneWayCover::apply_frame_(const OneWayFrameInfo &wire) {
+  const auto intent = decisions::oneway_cover_intent_from_frame(
+      wire, this->control_port_->oneway_identity_inverted(this->controller_id_));
+  if (!intent.has_value())
+    return;
+  // A stop leaves the cover somewhere between the ends. Home Assistant's position-less cover has no such state,
+  // so it shows open, as it does for a two-way cover that is not fully closed.
+  this->position = decisions::oneway_cover_state_after(*intent) == decisions::OneWayCoverState::CLOSED
+                       ? cover::COVER_CLOSED
+                       : cover::COVER_OPEN;
+  this->current_operation = cover::COVER_OPERATION_IDLE;
+  this->publish_state();
 }
 
 }  // namespace home_io_control

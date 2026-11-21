@@ -16,6 +16,7 @@ from esphome.components import spi
 # the package object, the slot ESPHome's loader binds `esphome.components.home_io_control.switch`
 # into when it imports our platform file, so whichever import ran last would silently win.
 from esphome.components import button as button_component
+from esphome.components import cover as cover_component
 from esphome.components import switch as switch_component
 from esphome.components import text_sensor as text_sensor_component
 
@@ -95,10 +96,15 @@ CONF_LOW_POWER = "low_power"
 # mirroring of OPEN/CLOSE/position). Defined here because platform modules and hub modules both
 # import from this leaf, and the yaml-emitter sync check resolves hub key constants from it.
 CONF_INVERT_POSITION = "invert_position"
+# A 1W identity's assumed-state cover entity (ADR 0117): `cover:` is its name, `follows:` the remotes whose presses
+# move its state.
+CONF_COVER = "cover"
+CONF_FOLLOWS = "follows"
 # Injected at schema time, never user-supplied: the generated buttons' IDs and the identity's
 # diagnostic sensor ID (ADR 0009).
 CONF_BUTTON_IDS = "button_ids"
 CONF_LAST_COMMAND_SENSOR_ID = "last_command_sensor_id"
+CONF_COVER_ENTITY_ID = "cover_entity_id"
 # Only present when enrollment: true (ADR 0009 -- an ID created late in to_code() is silently
 # dropped at runtime).
 CONF_ENROLL_BUTTON_ID = "_enroll_button_id"
@@ -201,6 +207,11 @@ IOHomeOneWayCommandButton = home_io_control_ns.class_(
 )
 IOHomeOneWayLastCommandTextSensor = home_io_control_ns.class_(
     "IOHomeOneWayLastCommandTextSensor", text_sensor_component.TextSensor, cg.Component
+)
+# Generated 1W cover (platform_oneway_entities.h), one per identity with `cover:`; created from the hub block like the
+# buttons above, not from a `cover:` platform entry (its schema is the device-bound one).
+IOHomeOneWayCover = home_io_control_ns.class_(
+    "IOHomeOneWayCover", cover_component.Cover, cg.Component
 )
 # Generated 1W enrollment button (platform_oneway_entities.h), one per identity with
 # `enrollment: true`. Same "created from the hub block, never a `button:` entry" reasoning as

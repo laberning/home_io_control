@@ -59,6 +59,8 @@ home_io_control:
       enrollment: true                                  # generates the "Enroll 1W Controller" button
       enrollment_with_mac: false                        # optional -- see the table below
       drives: [FEEB1E]                                  # optional -- devices that follow this identity's commands
+      cover: "Roof Window"                              # optional -- a cover entity with an assumed state
+      follows: [9D6085]                                 # optional -- remotes whose presses move that cover
 ```
 
 | Key | Required | Meaning |
@@ -78,6 +80,8 @@ home_io_control:
 | `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). `false` sends every copy at the short, live `start_preamble_ms` tuning value — for a mains-powered receiver. `true` sends one wake-up copy first, which lasts [`low_power_wake_ms`](tuning.md#low_power_wake_ms) (default 600 ms, the same on every radio; [ADR 0115](../adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md)), then short repeats — for a solar or battery receiver. Leave it unset and the shape follows `manufacturer:` ([ADR 0041](../adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)): `velux` gets the short preamble, every other vendor gets the long wake-up on all four copies. Your boot log prints which you got, and marks it `(from profile)` when it came from the vendor rather than from this key. Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. The section "What one command puts on the air" below gives the time each shape takes. |
 | `invert_position` | no | Whether open, close and every position are mirrored on the wire (`0` ↔ `100`). Leave it unset and the device kind decides: a kind whose wire polarity is inverted, such as `horizontal_awning`, is mirrored, exactly as a 2W cover of that kind is, so the generated Open button opens the awning. Set `false` if your receiver turns out to follow the other polarity, or `true` to mirror a kind that is not inverted by default. Your boot log prints `inverted=yes (from kind)`, `inverted=yes (configured)` or `inverted=no`. With `execute_broadcast: all` the mirrored frame reaches every receiver of the broadcast, so the build warns when an inverted kind is combined with it and no explicit `invert_position`. STOP, favorite and vent are never mirrored. |
 | `drives` | no | The devices, by `io_device_id`, that follow this identity's commands: a list of covers or lights declared in the same configuration. After each command the hub transmits as this identity, every listed device shows the commanded state at once and is read a moment later. See [Following a device the identity drives](#following-a-device-the-identity-drives). |
+| `cover` | no | The name of a cover entity for this identity, for a cover kind only (a shutter, awning, blind, window, door or gate; the build fails for a light or any other kind). It sends the identity's open, close and stop and shows the state the hub assumes ([ADR 0117](../adr/0117-a-one-way-controller-can-show-an-assumed-state-cover.md)). Its ID is `<identity_id>_cover`. See [A cover for the identity](#a-cover-for-the-identity). |
+| `follows` | no | The source addresses of the real remotes whose presses the cover follows, a list of six hexadecimal characters each. Needs `cover`. A remote that is not listed never moves the state. |
 
 ## What the build checks
 
@@ -495,9 +499,62 @@ target:
 The cover shows stopped at once and reads the motor straight after the burst. The cover's own stop
 is unchanged: this does not reroute `cover.stop` over 1W.
 
+## A cover for the identity
+
+An identity of a cover kind can show up in Home Assistant as one cover: one card with the usual open,
+close and stop arrows, usable in scenes and voice assistants. Name it with `cover:`
+([ADR 0117](../adr/0117-a-one-way-controller-can-show-an-assumed-state-cover.md)):
+
+```yaml
+home_io_control:
+  oneway_controllers:
+    - id: patio_awning
+      io_device_type: vertical_exterior_awning
+      manufacturer: somfy
+      commands: [open, close, stop]
+      cover: "Patio Awning"
+      follows: [9D6085]   # the wall remote of this awning; see below
+```
+
+The entity sends the same one-way commands as the identity's buttons, one sequence each, and keeps the
+buttons you list under `commands:`. It has no position slider: a one-way device never reports one.
+
+**What the cover shows.** The hub has no reply to read, so the cover shows what it heard of, and Home
+Assistant marks it as an assumed state (both arrows stay usable whatever it shows):
+
+- **Open or close** from the cover or the identity's own buttons shows open or closed as soon as the
+  burst has gone out. The hub does not model the travel, so there is no opening or closing phase.
+- **Stop** shows the cover as open, because Home Assistant has no "stopped half-way" state for a
+  cover without a position; it is anything but fully closed.
+- **A command that did not reach the radio** changes nothing.
+- **A position** sent with [`oneway_set_position`](actions.md#oneway_set_position) shows its nearer
+  end. A favorite, a ventilation position and a position of exactly 50 % change nothing.
+- **A remote listed under `follows:`** moves the state the same way when the hub hears it, and the hub
+  sends nothing for it, so the device sees one command, not two. Each press counts once however often
+  the remote repeats it. A remote that is not listed never moves the state, so a neighbour's remote
+  of the same kind cannot. Find a remote's address with
+  [sender events](remotes.md#sender-events-remote-buttons-and-sensors).
+- **An inverted kind** such as a horizontal awning, or an identity with `invert_position`, needs
+  nothing more: "open" means open for you, for commands and for the remote's presses alike.
+
+**The state is an assumption, and it is wrong when:**
+
+- the hub did not hear a press of the real remote (it was out of range, or the hub was busy with a
+  radio exchange);
+- the device ignored a command: it is out of range, its counter has desynced, or a rain or wind sensor
+  holds a priority lock on it, in which case the device ignores a one-way command without any sign;
+- the motor was stopped or moved by hand, or by a remote you did not list.
+
+The hub cannot tell any of these apart from a command the device obeyed. Pressing the cover again
+re-sends the command and puts the shown state back in line with what you last asked for.
+
+**After a reboot** the hub does not remember the state: it persists nothing but the counters
+([ADR 0018](../adr/0018-yaml-is-the-source-of-truth-hub-persists-nothing.md)). ESPHome's cover shows
+open until the first command or press arrives, whatever the awning really does.
+
 ## Continuous control
 
-There is no 1W cover entity, so a slider has to be composed from the generated buttons —
+A one-way cover entity has no slider. To get one, compose it from the generated buttons —
 [Composing a slider from 1W buttons](../tips-and-tricks.md#composing-a-slider-from-1w-buttons)
 shows how.
 

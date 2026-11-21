@@ -883,6 +883,16 @@ void IOHomeControlComponent::handle_oneway_frame_(const IoFrame &frame, uint32_t
   detail::log_1w_remote_frame(info, linked);
   this->maybe_fire_sender_event_(info, linked != nullptr && !linked->empty(), src_id);
   this->follow_linked_remote_press_(info, src_id);
+  this->notify_oneway_press_subscribers_(info, src_id);
+}
+
+void IOHomeControlComponent::notify_oneway_press_subscribers_(const OneWayFrameInfo &info, const std::string &src_id) {
+  if (!info.has_intent)
+    return;
+  for (const auto &subscription : this->oneway_press_subscriptions_) {
+    if (std::find(subscription.senders.begin(), subscription.senders.end(), src_id) != subscription.senders.end())
+      subscription.callback(info);
+  }
 }
 
 void IOHomeControlComponent::on_overheard_frame(const IoFrame &frame, const RadioRxPacket & /*packet*/,

@@ -534,6 +534,15 @@ def device_features(device_type, subtype=0, model=0):
     return base
 
 
+def kind_is_cover(device_type):
+    """True when the node type is a cover kind: it has a named position (favourite, ventilation, partial or
+    pedestrian), the capability every shutter, awning, blind, window, door and gate row carries and no light,
+    heater or sensor row does. Decided from ``device_features()`` like every capability question, never from a type
+    number."""
+    features = device_features(device_type)
+    return any(feature in features for feature in NAMED_POSITION_FEATURES.values())
+
+
 def kind_is_experimental(device_type, subtype=0):
     """True when no capture or report has confirmed (io_device_type value, io_subtype) on a real device.
 

@@ -1,6 +1,7 @@
 # expect: valid
 # A derived-address identity and an explicit one with its own key and an enrollment button, and every optional
-# one-way key: execute_acei, enrollment_with_mac, low_power in both values, initial_sequence, invert_position, drives.
+# one-way key: execute_acei, enrollment_with_mac, low_power in both values, initial_sequence, invert_position, drives,
+# cover and follows.
 packages:
   common: !include ../_common.yaml
   board: !include ../../../../config/boards/heltec-v3.yaml
@@ -12,6 +13,13 @@ home_io_control:
       commands: [open, close, stop]
       # The hub follows its own commands on these devices, a cover and a light, like a linked remote's press.
       drives: [A1B2C3, "d4e5f6"]
+    # An assumed-state cover for the identity, following two real remotes (ADR 0117). An inverted kind needs nothing
+    # more: the mirror is read from the kind.
+    - id: patio_cover_remote
+      io_device_type: horizontal_awning
+      commands: [open, close, stop]
+      cover: "Patio"
+      follows: [9D6085, "aabbcc"]
     - id: screen_remote
       node_id: A11CE0
       system_key: FEDCBA98765432100123456789ABCDEF
