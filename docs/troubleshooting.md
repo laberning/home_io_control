@@ -121,15 +121,18 @@ With that, every command on a reporter's Heltec V4.3 went on air within about 50
 
 `open` and `close` work, but `stop` does nothing while the device is travelling.
 
-Some devices answer nothing the hub sends while their motor runs. A stop sent mid-travel never
-arrives, and status polls sent during the move go unanswered too, so the "Exchange Failures" count
-rises during every movement and the position updates only once the device has stopped. VELUX solar
-products behave this way: the MSU awning screen and the SSL roller shutter. Open, close and set
-position from rest work.
+A `low_power:` device that is travelling is awake: it answers only the short start preamble
+and ignores the long wake-up preamble that reaches it at rest. The hub leads with the short
+preamble while it believes the device is awake
+([`low_power_wake_belief`](configuration/tuning.md#low_power_wake_belief),
+[ADR 0040](adr/0040-low-power-start-preamble-follows-the-wake-belief.md)).
 
-To stop such a device mid-travel, use its own 1W remote. The hub can send the same kind of stop
-from a 1W identity once that identity is enrolled in the device; see
-[Sending 1W commands](configuration/oneway-transmit.md).
+- Leave `low_power_wake_belief` on; the boot log states it (`Low-power wake belief: on`). With it
+  off, every `stop` goes out with the wake-up preamble and none lands mid-travel.
+- A mid-travel `stop` does not land on every attempt, so press stop again if the device keeps
+  moving. This is how a VELUX SSL solar roller shutter stops mid-travel.
+- The VELUX MSU solar awning screen has no confirmed mid-travel stop yet; stop it with its own
+  remote (see [VELUX INTEGRA](devices/velux-integra.md)).
 
 ## 1W commands do nothing
 

@@ -469,9 +469,10 @@ One identity can drive several devices, and `drives:` accepts covers and lights.
 the identity's `io_device_type`, so a driven device of another type is read afterwards but does not
 show the commanded state at once; with `execute_broadcast: all` every driven device does.
 
-**Example: stop a moving cover with the one-way STOP button.** Some motors ignore a 2W stop while
-they travel. Enroll an identity on the motor, list the cover under `drives:`, and press the
-identity's STOP button:
+**Example: a cover that follows its one-way identity.** When you command a motor through a one-way
+identity it is enrolled on (its buttons, or an automation that presses them), list the cover under
+`drives:`, so the cover shows each of those commands at once and reads the motor afterwards. Here
+the identity's STOP button stops the awning, and the cover follows:
 
 ```yaml
 home_io_control:
