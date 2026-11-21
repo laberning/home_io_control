@@ -28,6 +28,7 @@ from esphome.core import ID
 from .hub_names import (
     CONF_BUTTON_IDS,
     CONF_COMMANDS,
+    CONF_DRIVES,
     CONF_ENROLLMENT,
     CONF_ENROLLMENT_CLASSES,
     CONF_ENROLLMENT_WITH_MAC,
@@ -59,6 +60,7 @@ from .hub_validators import (
     MANUFACTURER_OPTIONS,
     ONEWAY_WIRE_PROFILE_MANUFACTURERS,
     device_features,
+    validate_device_id,
     validate_device_type,
     validate_manufacturer,
     validate_node_id,
@@ -103,6 +105,18 @@ def _no_duplicate_enrollment_classes(value):
                 "enrollment gesture, so a repeat only wastes ~1 second of it"
             )
         seen.add(entry)
+    return value
+
+
+def _no_duplicate_driven_devices(value):
+    """Reject a repeated device in `drives:` -- the follow-up would run twice for each command."""
+    seen = set()
+    for device_id in value:
+        if device_id in seen:
+            raise cv.Invalid(
+                f"drives has '{device_id}' more than once; list each device a single time"
+            )
+        seen.add(device_id)
     return value
 
 
@@ -184,6 +198,13 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # horizontal awning mirrors OPEN/CLOSE/position on the wire, as the 2W cover does);
         # true/false force it. Resolved in C++ by effective_inverted().
         cv.Optional(CONF_INVERT_POSITION): cv.boolean,
+        # The devices (their io_device_id) this identity also drives: after each command the hub
+        # transmits, they follow it like a press of a linked remote -- the commanded state at once,
+        # then a status read (ADR 0116). Which ids exist and whether their kind can follow is
+        # checked at final validation, which sees the device entries.
+        cv.Optional(CONF_DRIVES, default=[]): cv.All(
+            cv.ensure_list(validate_device_id), _no_duplicate_driven_devices
+        ),
     }
 )
 
@@ -318,6 +339,12 @@ def _reject_node_id_collision(identity_id, node_id, seen_node_ids, derived):
         if derived
         else ""
     )
+    if owner.endswith("linked_remotes"):
+        # The hub does not hear its own transmissions; the link it needs is the identity's own key.
+        hint += (
+            ". To have the hub follow its own commands on a device, list the device under the "
+            "identity's drives: instead"
+        )
     raise cv.Invalid(
         f"oneway_controllers id '{identity_id}' uses node_id {node_id}, which collides with "
         f"{owner}{hint}. Two transmitters sharing an address share a rolling sequence "
@@ -633,6 +660,44 @@ def final_validate_oneway_controller_addresses(config):
         _reject_node_id_collision(
             identity[CONF_ID], identity[CONF_NODE_ID], declared, identity.get(CONF_NODE_ID_DERIVED)
         )
+    return config
+
+
+# The platforms whose entities show the state a one-way command leaves (ADR 0116): a cover's position and a
+# light's level. Nothing else is built or tested to follow one.
+_FOLLOWING_DOMAINS = ("cover", "light")
+
+
+def final_validate_oneway_drives(config):
+    """Check every `drives:` entry against the devices declared in this YAML.
+
+    Final validation, because only it sees the device entries next to `home_io_control:`. An id that
+    no entry declares would never follow anything, silently; a device that is not a cover or a light
+    (a climate, a water heater, a sensor, ...) has no position or level for a one-way command to move.
+    """
+    identities = config.get(CONF_ONEWAY_CONTROLLERS, [])
+    if not any(identity[CONF_DRIVES] for identity in identities):
+        return config
+
+    declared = {
+        entry[CONF_IO_DEVICE_ID]: (domain, entry)
+        for domain, entry, _ in declared_device_entries(fv.full_config.get())
+        if entry.get(CONF_IO_DEVICE_ID)
+    }
+    for identity in identities:
+        for device_id in identity[CONF_DRIVES]:
+            if device_id not in declared:
+                raise cv.Invalid(
+                    f"oneway_controllers id '{identity[CONF_ID]}' drives '{device_id}', which is not "
+                    "an io_device_id declared in this configuration"
+                )
+            domain, entry = declared[device_id]
+            if domain not in _FOLLOWING_DOMAINS:
+                raise cv.Invalid(
+                    f"oneway_controllers id '{identity[CONF_ID]}' drives {domain} "
+                    f"'{entry.get(CONF_NAME) or device_id}', which cannot follow its commands: only a "
+                    "cover or a light shows the state of a one-way command"
+                )
     return config
 
 

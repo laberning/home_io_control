@@ -58,6 +58,7 @@ home_io_control:
       manufacturer: somfy                               # required only because enrollment: true, below
       enrollment: true                                  # generates the "Enroll 1W Controller" button
       enrollment_with_mac: false                        # optional -- see the table below
+      drives: [FEEB1E]                                  # optional -- devices that follow this identity's commands
 ```
 
 | Key | Required | Meaning |
@@ -76,13 +77,17 @@ home_io_control:
 | `enrollment_classes` | no | Which device classes a **VELUX** enrollment `0x30` sweep targets, as a list of one to three `io_device_type` names, each at most once and none `unknown`. Unset → the profile default `[roller_shutter, vertical_exterior_awning, dual_roller_shutter]`, the exterior-shading set a KLI 310/313 uses. **Interior blinds need it set**: a KLI 312 uses `[vertical_interior_blind, interior_venetian_blind]`. To find the classes for your product, see "Finding your enrollment classes" below. **Ignored by the Somfy gesture**, which sends both bursts to the all-devices address `00003F` (issue #147), and ignored without `enrollment: true`; the build warns in both cases. See "Enrolling this hub as a controller" below. |
 | `low_power` | no | The radio preamble every burst of this identity uses ([ADR 0038](../adr/0038-oneway-bursts-follow-the-identity-power-class.md)). `false` sends every copy at the short, live `start_preamble_ms` tuning value — for a mains-powered receiver. `true` sends one wake-up copy first, which lasts [`low_power_wake_ms`](tuning.md#low_power_wake_ms) (default 600 ms, the same on every radio; [ADR 0115](../adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md)), then short repeats — for a solar or battery receiver. Leave it unset and the shape follows `manufacturer:` ([ADR 0041](../adr/0041-unset-oneway-power-class-comes-from-the-manufacturer-profile.md)): `velux` gets the short preamble, every other vendor gets the long wake-up on all four copies. Your boot log prints which you got, and marks it `(from profile)` when it came from the vendor rather than from this key. Applies to every transmit from this identity: commands, positions, both enrollment gestures, and un-enrollment. The section "What one command puts on the air" below gives the time each shape takes. |
 | `invert_position` | no | Whether open, close and every position are mirrored on the wire (`0` ↔ `100`). Leave it unset and the device kind decides: a kind whose wire polarity is inverted, such as `horizontal_awning`, is mirrored, exactly as a 2W cover of that kind is, so the generated Open button opens the awning. Set `false` if your receiver turns out to follow the other polarity, or `true` to mirror a kind that is not inverted by default. Your boot log prints `inverted=yes (from kind)`, `inverted=yes (configured)` or `inverted=no`. With `execute_broadcast: all` the mirrored frame reaches every receiver of the broadcast, so the build warns when an inverted kind is combined with it and no explicit `invert_position`. STOP, favorite and vent are never mirrored. |
+| `drives` | no | The devices, by `io_device_id`, that follow this identity's commands: a list of covers or lights declared in the same configuration. After each command the hub transmits as this identity, every listed device shows the commanded state at once and is read a moment later. See [Following a device the identity drives](#following-a-device-the-identity-drives). |
 
 ## What the build checks
 
 A build stops with an error when an identity shares its source address with another identity, the
 hub, a linked remote or a device's `io_device_id`, when an `id` repeats, or when `enrollment: true`
 has no `manufacturer:`, or when `enrollment_with_mac: true` is set with `radio_type: sx1276`
-([ADR 0113](../adr/0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)).
+([ADR 0113](../adr/0113-enrollment-with-mac-is-rejected-on-the-sx1276.md)). It also stops when
+`drives:` names an `io_device_id` no entry declares, names a device that is not a cover or a light,
+or lists a device twice. An identity's own address under `linked_remotes:` is rejected too; list the
+device under `drives:` instead.
 It continues with a warning, which names the identity, when a configuration is legal but likely
 wrong:
 
@@ -437,6 +442,58 @@ These are created from the `oneway_controllers:` block rather than declared as d
 which keys are present, so a device-bound entry that merely omitted its `io_device_id` could be
 misread as the security-sensitive 1W kind instead of failing validation. Creating these from the
 hub block makes that class of mistake structurally impossible.
+
+## Following a device the identity drives
+
+A device that obeys one of your identities does not know that the hub sent the command, and the hub
+does not hear its own transmission. Without a link, the cover keeps showing its old state until the
+next status read. List the device under `drives:` and the hub treats its own command like a press of
+a [linked remote](remotes.md#linked-remotes) it has just heard
+([ADR 0116](../adr/0116-a-one-way-identity-names-the-devices-it-drives.md)):
+
+- After an open, close, position or stop, each listed device shows the commanded state at once.
+- A status read of each device follows: right away after a stop, otherwise after
+  [`remote_activity_poll_delay_ms`](tuning.md#remote_activity_poll_delay_ms). The read is the only confirmation. Nothing replies to
+  a 1W command, so a device that ignored it, for example while a rain or wind sensor holds its
+  priority lock, shows the commanded state only until the read corrects it.
+- A command that did not reach the radio, and the enrollment frames, change nothing.
+- The state follows what went out on the wire, so an inverted device kind and `invert_position`
+  need no extra setting.
+- The hub fires no [sender event](remotes.md#sender-events-remote-buttons-and-sensors) for its own commands.
+
+One identity can drive several devices, and `drives:` accepts covers and lights. A command addresses
+the identity's `io_device_type`, so a driven device of another type is read afterwards but does not
+show the commanded state at once; with `execute_broadcast: all` every driven device does.
+
+**Example: stop a moving cover with the one-way STOP button.** Some motors ignore a 2W stop while
+they travel. Enroll an identity on the motor, list the cover under `drives:`, and press the
+identity's STOP button:
+
+```yaml
+home_io_control:
+  oneway_controllers:
+    - id: awning_remote
+      io_device_type: vertical_exterior_awning
+      manufacturer: somfy
+      enrollment: true
+      commands: [stop]
+      drives: [FEEB1E]
+
+cover:
+  - platform: home_io_control
+    name: "Awning"
+    io_device_id: "FEEB1E"
+    io_device_type: vertical_exterior_awning
+```
+
+```yaml
+action: button.press
+target:
+  entity_id: button.awning_remote_stop
+```
+
+The cover shows stopped at once and reads the motor straight after the burst. The cover's own stop
+is unchanged: this does not reroute `cover.stop` over 1W.
 
 ## Continuous control
 

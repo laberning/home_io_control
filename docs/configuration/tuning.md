@@ -154,7 +154,7 @@ your device may differ.
 | `lbt_rssi_threshold_dbm` | both | not set (learned) | -95 to -70 dBm | RSSI on a channel at or above which it counts as busy. Not set: the hub learns the limit from how quiet the channels are on your board. See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
 | `lbt_force_when_busy` | both | `false` | `true` / `false` | When every channel stays busy for the whole waiting time, send on the quietest one instead of ending the attempt as "channel busy". See [Channel access](#lbt_rssi_threshold_dbm--lbt_force_when_busy). |
 | `remote_activity_poll_delay_ms` | both | `2000` | 0–120000 ms | Delay from a linked-remote press (not a STOP) to the first status poll of its devices. See below. |
-| `remote_activity_catchup_poll_ms` | both | `0` (off) | 0–600000 ms | Read every device with `linked_remotes` this long after the last exchange that followed a linked-remote press, to catch a press the hub missed. See below. |
+| `remote_activity_catchup_poll_ms` | both | `0` (off) | 0–600000 ms | Read every device with `linked_remotes` or under a one-way identity's `drives:` this long after the last exchange that followed a linked-remote press or a driven identity's command, to catch a press the hub missed. See below. |
 | `pairing_discovery_commands` | both | `["0x28"]` | ordered list of `0x28` / `0x2E` | Which discovery command(s) to send, and in what order. |
 | `pairing_discovery_destination` | both | `auto` | `auto` / `0x00003B` / `0x00003F` / `0x0001BB` / `0x0001BF` / `0x00FFFB` | Address the discovery frames are sent to. The last three are device-class addresses — see below. |
 | `pairing_discovery_payload` | both | `none` | `none` / `0x00` | Optional payload byte (used by the alternate command). |
@@ -659,10 +659,11 @@ someone is at the remotes and needs fewer exchanges, at the cost of a later posi
 
 #### `remote_activity_catchup_poll_ms`
 
-Off at `0`, the default. Otherwise a linked-remote press opens a burst, and every exchange the hub
+Off at `0`, the default. Otherwise a linked-remote press, or a command the hub sends as a one-way identity with
+[`drives:`](oneway-transmit.md#following-a-device-the-identity-drives), opens a burst, and every exchange the hub
 runs while it is open moves its catch-up out to this many milliseconds after that exchange. When
 the catch-up is due, the hub reads every device with `linked_remotes`, by remote id or by
-`class:`, once, and the burst closes. A cover that a missed press set moving answers "moving", and
+`class:`, and every device under a `drives:`, once, and the burst closes. A cover that a missed press set moving answers "moving", and
 the hub then follows it to rest as after any command. A read the device does not answer is repeated
 once, this many milliseconds later; if that read is not answered either, the device waits for the next
 burst

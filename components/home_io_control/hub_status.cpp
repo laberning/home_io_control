@@ -577,13 +577,27 @@ std::vector<std::string> IOHomeControlComponent::resolve_1w_target_devices_(cons
 void IOHomeControlComponent::follow_linked_remote_press_(const OneWayFrameInfo &info, const std::string &src_id) {
   // Id-linked devices plus, for a typed broadcast, class-linked devices — deduplicated so a
   // device linked both ways is only touched once per press.
-  const std::vector<std::string> target_devices = this->resolve_1w_target_devices_(info, src_id);
+  this->follow_press_on_devices_(info, this->resolve_1w_target_devices_(info, src_id));
+}
+
+void IOHomeControlComponent::follow_press_on_devices_(const OneWayFrameInfo &info,
+                                                      const std::vector<std::string> &target_devices) {
   const bool is_stop = this->apply_optimistic_linked_state_(info, target_devices);
   this->schedule_device_polls_(target_devices, is_stop ? 0 : this->tuning_.remote_activity_poll_delay_ms);
   // The polls just scheduled make the radio deaf to a press that starts while they run, so a
   // catch-up read of every linked device follows the burst when it is switched on (ADR 0080).
   if (!target_devices.empty() && this->tuning_.remote_activity_catchup_poll_ms != 0)
     this->poll_policy_.on_linked_remote_activity();
+}
+
+void IOHomeControlComponent::follow_own_oneway_command_(const OneWayCommandReport &report) {
+  if (!decisions::follows_own_oneway_command(report.transmitted, report.wire.has_intent))
+    return;
+  // The identity's address is the source of its own frames, which is how its drives: are keyed. Only
+  // those devices follow: a class-linked remote's devices are not this identity's to move.
+  const std::vector<std::string> *driven = this->registry_.linked_devices(node_id_to_string(report.wire.src));
+  if (driven != nullptr)
+    this->follow_press_on_devices_(report.wire, *driven);
 }
 
 bool IOHomeControlComponent::apply_optimistic_linked_state_(const OneWayFrameInfo &info,

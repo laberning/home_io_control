@@ -503,6 +503,16 @@ lambda: |-
   }
 ```
 
+## Following a one-way identity
+
+A cover can also be driven by one of the hub's [one-way controllers](oneway-transmit.md), for example
+to stop a motor that does not answer a 2W stop while it travels. List the cover's `io_device_id` under
+the identity's `drives:` and the cover shows the state of each command the hub sends as that identity
+at once, then reads the motor, exactly as after a press of a linked remote. The
+[one-way page](oneway-transmit.md#following-a-device-the-identity-drives) has the rules and an
+example that stops a moving cover with the one-way STOP button
+([ADR 0116](../adr/0116-a-one-way-identity-names-the-devices-it-drives.md)).
+
 ## Notes
 
 - The favorite command is one-way only: move to favorite. This component does not expose a sensor for reading the stored favorite position value, and it does not yet expose a save/delete favorite workflow, because no verified controller-side protocol command has been identified.

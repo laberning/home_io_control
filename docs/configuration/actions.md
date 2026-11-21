@@ -148,7 +148,7 @@ data:
 
 Fields: `controller_id` (required), `position` (required — a whole number from `0`, fully open, to `100`, fully closed, passed as a string).
 
-Sends the position as the 1W controller identity `controller_id`, with the same four-copy burst as a generated button ([Sending 1W commands](oneway-transmit.md#numeric-positions)). An identity of an inverted device kind mirrors the value on the wire, and the "Last 1W Command" sensor still names what you asked for. A `controller_id` that no identity carries, or a `position` that is not a whole number from 0 to 100, is refused before anything is sent, and the result message says which.
+Sends the position as the 1W controller identity `controller_id`, with the same four-copy burst as a generated button ([Sending 1W commands](oneway-transmit.md#numeric-positions)). An identity of an inverted device kind mirrors the value on the wire, and the "Last 1W Command" sensor still names what you asked for. The devices the identity lists under [`drives:`](oneway-transmit.md#following-a-device-the-identity-drives) show the position at once and are read afterwards. A `controller_id` that no identity carries, or a `position` that is not a whole number from 0 to 100, is refused before anything is sent, and the result message says which.
 
 ```yaml
 action: esphome.hioc_heltec_v2_oneway_set_position

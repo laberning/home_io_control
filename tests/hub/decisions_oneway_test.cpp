@@ -252,3 +252,15 @@ TEST(Decisions, OverheardTwoWayFrameIsNotKept) {
   init_frame(f, /*is_2w=*/true, /*start=*/true, /*end=*/true, /*low_power=*/false);
   EXPECT_FALSE(decisions::keep_overheard_frame_for_oneway_handling(f));
 }
+
+// ============================================================================
+// The hub's own one-way command — follows_own_oneway_command() (ADR 0116)
+// ============================================================================
+
+TEST(DecisionsOneWay, OwnCommandIsFollowedOnlyWhenItReachedTheRadioAndCarriesACommand) {
+  EXPECT_TRUE(decisions::follows_own_oneway_command(/*transmitted=*/true, /*has_intent=*/true));
+  EXPECT_FALSE(decisions::follows_own_oneway_command(false, true))
+      << "a burst that never left the radio changes nothing";
+  EXPECT_FALSE(decisions::follows_own_oneway_command(true, false)) << "an enrollment frame carries no command";
+  EXPECT_FALSE(decisions::follows_own_oneway_command(false, false));
+}

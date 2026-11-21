@@ -69,6 +69,8 @@ home_io_control:
     - id: awning_remote
       io_device_type: vertical_exterior_awning
       commands: [open, close, stop]
+      # ADR 0116: the hub follows its own commands on a cover and a light, so `drives:` compiles.
+      drives: [FEEB1E, FEEB1F]
     - id: velux_screen_remote
       # ADR 0031: manufacturer: drives the CMD_EXECUTE ACEI byte; execute_broadcast: all mimics a
       # handheld remote; execute_acei: is the raw override. ADR 0032: enrollment: true on a

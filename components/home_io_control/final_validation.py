@@ -10,7 +10,7 @@ import esphome.final_validate as fv
 
 from .hub_names import CONF_IO_DEVICE_ID
 from .hub_validators import declared_device_entries
-from .oneway_controllers import final_validate_oneway_controller_addresses
+from .oneway_controllers import final_validate_oneway_controller_addresses, final_validate_oneway_drives
 
 
 def final_validate_one_main_entity_per_device(config):
@@ -38,4 +38,5 @@ def final_validate_one_main_entity_per_device(config):
 def final_validate(config):
     """Every check across the whole YAML, in the order they are reported."""
     config = final_validate_one_main_entity_per_device(config)
-    return final_validate_oneway_controller_addresses(config)
+    config = final_validate_oneway_controller_addresses(config)
+    return final_validate_oneway_drives(config)

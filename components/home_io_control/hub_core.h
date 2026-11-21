@@ -297,6 +297,16 @@ class IOHomeControlComponent : public Component,
     this->registry_.add_linked_remote(remote_id, device_id);
   }
 
+  /// Declare that a one-way identity drives a registered device (`drives:`, ADR 0116): after each command
+  /// the hub transmits as that identity, the device follows it like a press of a linked remote.
+  /// Stored with the remote links under the identity's own address, which is the source address of its
+  /// frames, so the follow-up finds it through the same lookup as a remote heard on the air.
+  /// @param identity_node_id Node ID of the identity (6 hex characters).
+  /// @param device_id Node ID of the device it drives.
+  void add_oneway_driven_device(const std::string &identity_node_id, const std::string &device_id) {
+    this->registry_.add_linked_remote(identity_node_id, device_id);
+  }
+
   /// Declare that a device class's typed 1W broadcasts (e.g. "all awnings") also apply to
   /// @p device_id, matching how 1W remotes address a device class rather than a single node.
   /// @param type      Device class the broadcast targets.
@@ -1046,6 +1056,18 @@ class IOHomeControlComponent : public Component,
   /// @param info Already-decoded 1W frame info (see decode_1w_frame()).
   /// @param src_id Sender's node ID as a string (already computed by the caller).
   void follow_linked_remote_press_(const OneWayFrameInfo &info, const std::string &src_id);
+  /// The follow-up both a linked remote's press and the hub's own one-way command share: the optimistic state
+  /// of @p target_devices, their status polls (at once after a STOP, otherwise after
+  /// `remote_activity_poll_delay_ms`) and, when switched on, the catch-up burst (ADR 0080).
+  /// @param info Wire values of the frame (see decode_1w_frame()).
+  /// @param target_devices Devices to follow it; none makes this a no-op.
+  void follow_press_on_devices_(const OneWayFrameInfo &info, const std::vector<std::string> &target_devices);
+  /// Follow the hub's own one-way command on the devices its identity drives (`drives:`, ADR 0116): the same
+  /// follow-up as for a linked remote's press, from the wire values of the frame that went out. Does
+  /// nothing for a burst that did not reach the radio or a frame without a command (decisions::
+  /// follows_own_oneway_command()). Fires no sender event: that event reports other controllers.
+  /// @param report What the transmitter did, from its report callback.
+  void follow_own_oneway_command_(const OneWayCommandReport &report);
   /// Fire the sender HA event for a decoded 1W frame, if the sender is exposed.
   /// DEBUG-logs the reason when it does not fire (API disconnected / sender not exposed) so a
   /// live log capture can distinguish "never reached this check" from "reached it and skipped".

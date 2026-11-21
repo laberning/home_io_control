@@ -1,6 +1,6 @@
 # expect: valid
 # A derived-address identity and an explicit one with its own key and an enrollment button, and every optional
-# one-way key: execute_acei, enrollment_with_mac, low_power in both values, initial_sequence, invert_position.
+# one-way key: execute_acei, enrollment_with_mac, low_power in both values, initial_sequence, invert_position, drives.
 packages:
   common: !include ../_common.yaml
   board: !include ../../../../config/boards/heltec-v3.yaml
@@ -10,6 +10,8 @@ home_io_control:
     - id: awning_remote
       io_device_type: vertical_exterior_awning
       commands: [open, close, stop]
+      # The hub follows its own commands on these devices, a cover and a light, like a linked remote's press.
+      drives: [A1B2C3, "d4e5f6"]
     - id: screen_remote
       node_id: A11CE0
       system_key: FEDCBA98765432100123456789ABCDEF
@@ -49,3 +51,16 @@ home_io_control:
       io_device_type: roller_shutter
       commands: [stop]
       low_power: false
+
+cover:
+  - platform: home_io_control
+    name: "Awning"
+    io_device_id: "A1B2C3"
+    io_device_type: vertical_exterior_awning
+
+light:
+  - platform: home_io_control
+    name: "Dimmer"
+    io_device_id: "D4E5F6"
+    io_device_type: light
+    dimmable: true

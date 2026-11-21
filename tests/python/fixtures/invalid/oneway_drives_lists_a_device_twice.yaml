@@ -1,0 +1,19 @@
+# expect-error: drives has 'FEEB1E' more than once
+# covers: oneway_controllers._no_duplicate_driven_devices
+# A repeated device would run the follow-up twice for every command.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: remote
+      io_device_type: vertical_exterior_awning
+      commands: [stop]
+      drives: [FEEB1E, feeb1e]
+
+cover:
+  - platform: home_io_control
+    name: "Awning"
+    io_device_id: "FEEB1E"
+    io_device_type: vertical_exterior_awning

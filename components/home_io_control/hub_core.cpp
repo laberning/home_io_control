@@ -103,6 +103,7 @@ void IOHomeControlComponent::setup() {
   // add_oneway_controller() wiring, which runs before preferences are usable.
   this->oneway_transmitter_.setup();
   this->oneway_transmitter_.set_command_report_callback([this](const OneWayCommandReport &report) {
+    this->follow_own_oneway_command_(report);
     for (const auto &callback : this->oneway_report_callbacks_)
       callback(report);
   });

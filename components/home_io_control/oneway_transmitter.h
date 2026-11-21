@@ -12,6 +12,7 @@
 
 #include "oneway_controller.h"
 #include "oneway_sequence_store.h"
+#include "proto_codecs.h"
 #include "proto_device_kinds.h"
 #include "proto_frame.h"
 #include "tuning_config.h"
@@ -57,6 +58,10 @@ struct OneWayCommandReport {
   uint16_t sequence{0};                         ///< Sequence consumed; meaningless unless sequence_reserved.
   bool sequence_reserved{false};                ///< True if a sequence was consumed (0 is a valid sequence).
   bool transmitted{false};                      ///< True if at least one copy reached the radio.
+  /// The frame that went out, decoded as a receiver would read it (wire values: an inverted kind's
+  /// mirrored position included). `has_intent` is false for enrollment traffic, a failure and a frame
+  /// carrying no command; the hub follows a transmitted report only when it is true (ADR 0116).
+  OneWayFrameInfo wire{};
 };
 
 /// @brief Invoked once per attempted 1W command, successful or not.
@@ -287,9 +292,11 @@ class OneWayTransmitter {
   ///        cannot label a 0x30/0x39, so send_enrollment()/send_unenrollment() pass "ENROLL"/"UNENROLL"
   ///        here; send_position() passes the user's intent because the frame carries the mirrored
   ///        wire value). Empty means "derive from the built frame as usual".
+  /// @param enrollment True for the frames of an enrollment gesture: the report then carries no wire
+  ///        intent, so nothing the hub follows reacts to them.
   bool send_(const std::string &controller_id,
              const std::function<bool(IoFrame &, const OneWayControllerIdentity &, uint16_t)> &build,
-             const char *explicit_intent = "");
+             const char *explicit_intent = "", bool enrollment = false);
 
   /// send_enrollment()'s two gestures, split so each stays simple. The dispatcher resolves the
   /// identity once and hands it down.
@@ -305,7 +312,7 @@ class OneWayTransmitter {
   /// report — success, sweep, or failure — goes through here so a new field on the struct, or a
   /// change to how a field is chosen, lands in exactly one spot.
   void report_attempt_(const std::string &controller_id, const std::string &intent, DeviceType target_type,
-                       uint16_t sequence, bool sequence_reserved, bool transmitted);
+                       uint16_t sequence, bool sequence_reserved, bool transmitted, const OneWayFrameInfo &wire = {});
 
   /// Emit a report for an attempt that never got as far as a frame.
   void report_failure_(const std::string &controller_id, uint16_t sequence, bool sequence_reserved);

@@ -4,7 +4,8 @@
 Two ways to make the hub react to a physical 1W remote or sensor: **linked remotes** keep an
 entity's state fresh when someone presses a wall switch, and **sender events** turn a press into a
 Home Assistant trigger. Both are receive-only — see [Sending 1W commands](oneway-transmit.md) for
-the transmit side.
+the transmit side. The hub's own one-way identities do not use `linked_remotes`: a device follows them
+through [`drives:`](oneway-transmit.md#following-a-device-the-identity-drives).
 
 ## Linked remotes
 

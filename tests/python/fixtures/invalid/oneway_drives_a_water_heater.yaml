@@ -1,0 +1,19 @@
+# expect-error: which cannot follow its commands: only a cover or a light shows the state of a one-way command
+# covers: oneway_controllers.final_validate_oneway_drives
+# Caught at final validation: the named device is a water heater, which has no position or level to move.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: remote
+      io_device_type: vertical_exterior_awning
+      commands: [stop]
+      drives: [FEEB1E]
+
+water_heater:
+  - platform: home_io_control
+    name: "Hot Water"
+    io_device_id: "FEEB1E"
+    io_device_type: domestic_hot_water

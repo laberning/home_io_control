@@ -1,0 +1,19 @@
+# expect-error: drives 'ABCDEF', which is not an io_device_id declared in this configuration
+# covers: oneway_controllers.final_validate_oneway_drives
+# Caught at final validation: no cover, light or other entry declares the device the identity names.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: remote
+      io_device_type: vertical_exterior_awning
+      commands: [stop]
+      drives: [ABCDEF]
+
+cover:
+  - platform: home_io_control
+    name: "Awning"
+    io_device_id: "FEEB1E"
+    io_device_type: vertical_exterior_awning

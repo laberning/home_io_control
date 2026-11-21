@@ -24,6 +24,7 @@ from .hub_names import (
     CONF_DIO1_PIN,
     CONF_DIO4_PIN,
     CONF_DISCOVER_AND_PAIR_BUTTON,
+    CONF_DRIVES,
     CONF_EXPOSED_SENDERS,
     CONF_FEM,
     CONF_FEM_EN_PIN,
@@ -240,6 +241,8 @@ async def to_code(config):
                 oneway_controller_expression(identity, config[CONF_NODE_ID])
             )
         )
+        for device_id in identity[CONF_DRIVES]:
+            cg.add(var.add_oneway_driven_device(identity[CONF_NODE_ID], device_id))
         await create_oneway_controller_entities(identity, var)
 
     if config[CONF_ACCEPT_FOREIGN_PAIRING]:

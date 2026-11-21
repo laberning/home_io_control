@@ -1,0 +1,20 @@
+# expect-error: list the device under the identity's drives: instead
+# covers: oneway_controllers._reject_node_id_collision
+# Caught at final validation: the identity's own address under linked_remotes. The message names the key that
+# makes the hub follow its own commands.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: remote
+      node_id: AB12CD
+      io_device_type: vertical_exterior_awning
+
+cover:
+  - platform: home_io_control
+    name: "Awning"
+    io_device_id: "FEEB1E"
+    io_device_type: vertical_exterior_awning
+    linked_remotes: ["AB12CD"]

@@ -65,6 +65,9 @@ CONF_IO_DEVICE_TYPE = "io_device_type"
 DEVICE_BOUND_DOMAINS = ("cover", "light", "lock", "switch", "fan", "climate", "water_heater", "sensor")
 CONF_INITIAL_SEQUENCE = "initial_sequence"
 CONF_COMMANDS = "commands"
+# The devices a 1W identity drives: the hub follows its own commands on them like a linked remote's press
+# (ADR 0116).
+CONF_DRIVES = "drives"
 # Per-identity 1W wire overrides (ADR 0031). execute_acei: overrides the manufacturer-derived
 # ACEI byte for CMD_EXECUTE; execute_broadcast: all|typed picks the all-devices (00 00 3F) vs
 # typed-class destination — a handheld-remote-vs-class-bound axis, not a vendor axis.

@@ -63,7 +63,7 @@ void OneWayTransmitter::setup() {
 
 bool OneWayTransmitter::send_(const std::string &controller_id,
                               const std::function<bool(IoFrame &, const OneWayControllerIdentity &, uint16_t)> &build,
-                              const char *explicit_intent) {
+                              const char *explicit_intent, bool enrollment) {
   const OneWayControllerIdentity *identity = this->identities_.get(controller_id);
   if (identity == nullptr) {
     ESP_LOGW(TAG, "1W tx: no controller identity '%s'", controller_id.c_str());
@@ -91,28 +91,31 @@ bool OneWayTransmitter::send_(const std::string &controller_id,
   const bool transmitted =
       this->send_burst(frame, effective_power_class(*identity), explicit_intent[0] != '\0' ? explicit_intent : nullptr);
 
+  const OneWayFrameInfo decoded = decode_1w_frame(frame);
+
   // 0x30/0x39 carry no intent decode_1w_frame() can read (it only understands
   // CMD_EXECUTE/CMD_ACTIVATE_MODE payloads) -- send_enrollment() etc. pass the label directly
   // rather than leave the "Last 1W Command" sensor blank on the one feature whose entire
   // diagnostic story is that sensor.
   std::string intent = explicit_intent;
-  if (intent.empty()) {
-    const OneWayFrameInfo info = decode_1w_frame(frame);
-    if (info.has_intent)
-      intent = info.intent;
-  }
+  if (intent.empty() && decoded.has_intent)
+    intent = decoded.intent;
+  // The wire values of what went out, for the hub to follow. An enrollment frame reports none: its
+  // follow-up commands (the VELUX registration STOP and DOWN) belong to the gesture and must not move a
+  // device the hub follows.
+  const OneWayFrameInfo wire = enrollment ? OneWayFrameInfo{} : decoded;
   // Always the identity's own class, never the frame's decoded destination: with
   // `execute_broadcast: all` the wire dst is `00 00 3F` -> DeviceType::UNKNOWN, which would render
   // "unknown" in the sensor (the sensor has no distinct "all" case the way the frame log does via
   // oneway_target_label()). The literal destination is already in the frame log.
   this->report_attempt_(controller_id, intent, identity->io_device_type, sequence, /*sequence_reserved=*/true,
-                        transmitted);
+                        transmitted, wire);
   return transmitted;
 }
 
 void OneWayTransmitter::report_attempt_(const std::string &controller_id, const std::string &intent,
                                         DeviceType target_type, uint16_t sequence, bool sequence_reserved,
-                                        bool transmitted) {
+                                        bool transmitted, const OneWayFrameInfo &wire) {
   if (!this->report_)
     return;
   OneWayCommandReport report{};
@@ -122,6 +125,7 @@ void OneWayTransmitter::report_attempt_(const std::string &controller_id, const 
   report.sequence = sequence;
   report.sequence_reserved = sequence_reserved;
   report.transmitted = transmitted;
+  report.wire = wire;
   this->report_(report);
 }
 
@@ -194,7 +198,7 @@ bool OneWayTransmitter::send_somfy_enrollment_(const OneWayControllerIdentity &i
       [](IoFrame &frame, const OneWayControllerIdentity &id, uint16_t sequence) {
         return create_1w_remove_controller(frame, id.node_id, DeviceType::UNKNOWN, sequence, id.system_key);
       },
-      "UNENROLL");
+      "UNENROLL", /*enrollment=*/true);
   if (!removed) {
     ESP_LOGW(TAG, "1W tx: enrollment's 0x39 prelude did not reach the radio for '%s' -- trying 0x30 anyway",
              identity.id.c_str());
@@ -206,7 +210,7 @@ bool OneWayTransmitter::send_somfy_enrollment_(const OneWayControllerIdentity &i
         return create_1w_add_controller(frame, id.node_id, DeviceType::UNKNOWN, id.manufacturer, sequence,
                                         id.system_key, id.enrollment_with_mac);
       },
-      "ENROLL");
+      "ENROLL", /*enrollment=*/true);
 }
 
 bool OneWayTransmitter::send_velux_kli_enrollment_(const OneWayControllerIdentity &identity) {
@@ -221,7 +225,7 @@ bool OneWayTransmitter::send_velux_kli_enrollment_(const OneWayControllerIdentit
       [](IoFrame &frame, const OneWayControllerIdentity &id, uint16_t sequence) {
         return create_1w_remove_controller(frame, id.node_id, DeviceType::UNKNOWN, sequence, id.system_key);
       },
-      "UNENROLL");
+      "UNENROLL", /*enrollment=*/true);
   if (!removed) {
     ESP_LOGW(TAG, "1W tx: VELUX enrollment's 0x39 prelude did not reach the radio for '%s' -- continuing",
              identity.id.c_str());
@@ -247,7 +251,7 @@ bool OneWayTransmitter::send_velux_kli_enrollment_(const OneWayControllerIdentit
         return create_1w_execute_command(frame, id.node_id, id.io_device_type, CoverCommand::STOP, sequence,
                                          id.system_key, acei, /*broadcast_all=*/true);
       },
-      "ENROLL STOP");
+      "ENROLL STOP", /*enrollment=*/true);
   const bool lowered = this->send_(
       identity.id,
       [acei](IoFrame &frame, const OneWayControllerIdentity &id, uint16_t sequence) {
@@ -256,7 +260,7 @@ bool OneWayTransmitter::send_velux_kli_enrollment_(const OneWayControllerIdentit
         return create_1w_execute_position(frame, id.node_id, id.io_device_type, ONEWAY_POSITION_FULLY_CLOSED, sequence,
                                           id.system_key, acei, /*broadcast_all=*/true);
       },
-      "ENROLL DOWN");
+      "ENROLL DOWN", /*enrollment=*/true);
   if (!stopped || !lowered) {
     ESP_LOGW(TAG, "1W tx: VELUX enrollment's STOP+DOWN follow-up did not fully reach the radio for '%s'",
              identity.id.c_str());
@@ -301,7 +305,7 @@ bool OneWayTransmitter::send_unenrollment(const std::string &controller_id) {
         // All-devices broadcast, like the enrollment prelude: a real remote's 0x39 never names a class.
         return create_1w_remove_controller(frame, identity.node_id, DeviceType::UNKNOWN, sequence, identity.system_key);
       },
-      "UNENROLL");
+      "UNENROLL", /*enrollment=*/true);
 }
 
 bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_class, const char *intent_label) {

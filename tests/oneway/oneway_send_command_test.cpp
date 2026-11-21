@@ -1041,3 +1041,57 @@ TEST_F(OneWaySendCommandTest, EveryEntryPointHonoursTheIdentitysPowerClassOnEver
     }
   }
 }
+
+// ============================================================================
+// The wire intent of a report (ADR 0116): what the hub follows on the devices an identity drives
+// ============================================================================
+
+TEST_F(OneWaySendCommandTest, ReportCarriesTheWireValuesOfAStopAndAPositionAsAReceiverDecodesThem) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1));
+  transmitter.setup();
+  std::vector<OneWayCommandReport> reports;
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &r) { reports.push_back(r); });
+
+  ASSERT_TRUE(transmitter.send_command("awning", CoverCommand::STOP));
+  ASSERT_TRUE(transmitter.send_position("awning", 25));
+
+  ASSERT_EQ(reports.size(), 2u);
+  EXPECT_TRUE(reports[0].wire.has_intent);
+  EXPECT_EQ(reports[0].wire.main0, POS_STOP);
+  EXPECT_EQ(0, memcmp(reports[0].wire.src, OWN_NET_NODE, NODE_ID_SIZE))
+      << "the identity's own address names its drives";
+  EXPECT_TRUE(reports[1].wire.has_intent);
+  EXPECT_EQ(reports[1].wire.main0, 50) << "25 % is wire 50";
+}
+
+TEST_F(OneWaySendCommandTest, ReportCarriesTheMirroredWireValueOfAnInvertedKindNotTheUsersPosition) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
+  transmitter.add_identity(make_identity("patio", OWN_NET_NODE, DeviceType::HORIZONTAL_AWNING, 0x11, 1));
+  transmitter.setup();
+  OneWayCommandReport report{};
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &r) { report = r; });
+
+  ASSERT_TRUE(transmitter.send_position("patio", 100));  // user CLOSE
+
+  EXPECT_EQ(report.intent, "CLOSE") << "the label stays the user's";
+  EXPECT_EQ(report.wire.main0, 0) << "the wire value is what the device decodes";
+}
+
+TEST_F(OneWaySendCommandTest, NoEnrollmentReportCarriesAWireIntentNotEvenTheVeluxStopAndDown) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
+  transmitter.add_identity(make_velux_identity(1));
+  transmitter.setup();
+  std::vector<OneWayCommandReport> reports;
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &r) { reports.push_back(r); });
+
+  ASSERT_TRUE(transmitter.send_enrollment("velux"));
+  ASSERT_TRUE(transmitter.send_unenrollment("velux"));
+
+  ASSERT_EQ(reports.size(), 5u) << "0x39, the sweep, STOP, DOWN, and the standalone 0x39";
+  for (const auto &report : reports)
+    EXPECT_FALSE(report.wire.has_intent) << report.intent << " must not move any device the hub follows";
+}

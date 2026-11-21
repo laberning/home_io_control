@@ -162,6 +162,18 @@ inline bool is_one_way_pairing_gesture(bool oneway, const uint8_t dst[NODE_ID_SI
   return last_1w_activity_ms == 0 || (now - last_1w_activity_ms) >= quiet_ms;
 }
 
+/// Whether the hub's own one-way transmission moves the devices its identity drives (ADR 0116).
+///
+/// Only a burst of which at least one copy reached the radio can have been heard by a device, and only a
+/// frame that carries a command (a move, a position or a stop) says what the device is to do. An enrollment
+/// frame carries none; nothing is followed for it, and nothing for a burst that never left the radio.
+///
+/// @param transmitted  At least one copy of the burst reached the radio.
+/// @param has_intent   The frame that went out decoded to a command (OneWayFrameInfo::has_intent).
+[[nodiscard]] inline bool follows_own_oneway_command(bool transmitted, bool has_intent) {
+  return transmitted && has_intent;
+}
+
 }  // namespace decisions
 }  // namespace home_io_control
 }  // namespace esphome
