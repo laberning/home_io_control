@@ -229,14 +229,26 @@ void IOHomeControlComponent::apply_tuning_to_radio_() {
 /// Runs once, after the radio exists and before the first transmit. Python hands over each legacy
 /// key that applies to the board (`tuning.legacy_preamble_bytes`); the duration it has always lasted
 /// on this radio is the driver's to compute (ADR 0097), so the byte value keeps its meaning and no
-/// chip name appears here. A legacy discovery preamble also marks the discovery preamble as set.
+/// chip name appears here. A legacy wake-up value below WAKE_PREAMBLE_MIN_MS is raised to it, the floor
+/// of `low_power_wake_ms`. A legacy discovery preamble also marks the discovery preamble as set.
 void IOHomeControlComponent::convert_legacy_preamble_bytes_() {
   if (this->radio_ == nullptr)
     return;
   const TuningConfig::LegacyPreambleBytes &legacy = this->tuning_.legacy_preamble_bytes;
   const RadioDriver &radio = *this->radio_;
-  if (legacy.low_power_wake != 0)
-    this->tuning_.low_power_wake_ms = radio.preamble_ms_for_bytes(legacy.low_power_wake);
+  if (legacy.low_power_wake != 0) {
+    // The byte range starts at 1024 bytes, about 213 ms on some radios: below the 300 ms floor of
+    // `low_power_wake_ms`, under which a preamble no longer counts as a wake-up (is_wake_preamble_ms()).
+    // Raise it to the floor so the old key still gives a wake-up burst.
+    const float converted = radio.preamble_ms_for_bytes(legacy.low_power_wake);
+    this->tuning_.low_power_wake_ms = std::max(converted, WAKE_PREAMBLE_MIN_MS);
+    if (converted < WAKE_PREAMBLE_MIN_MS) {
+      ESP_LOGW(detail::TAG,
+               "tuning low_power_wake_preamble: %u bytes are %.0f ms on this radio, shorter than a wake-up; "
+               "raised to %.0f ms",
+               legacy.low_power_wake, static_cast<double>(converted), static_cast<double>(WAKE_PREAMBLE_MIN_MS));
+    }
+  }
   if (legacy.start != 0)
     this->tuning_.start_preamble_ms = radio.preamble_ms_for_bytes(legacy.start);
   if (legacy.response != 0)

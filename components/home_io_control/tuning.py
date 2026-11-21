@@ -490,7 +490,8 @@ def _deprecated_lbt_max_retries(value):
 # The ranges are the byte ranges the keys always had. The byte value is handed to C++ unconverted:
 # only the radio driver knows how long a byte lasts on its coder, so setup() turns it into the
 # duration it has always given on that radio. A response key of another radio is validated and
-# warned about but has no effect, as before.
+# warned about but has no effect, as before. The bottom of the wake-up key's range gives less than
+# WAKE_PREAMBLE_MIN_MS on every radio; setup() raises a converted wake-up to that floor.
 _LEGACY_PREAMBLE_KEYS = {
     "low_power_wake_preamble": (1024, 4096, CONF_LOW_POWER_WAKE_MS, "low_power_wake", None),
     "normal_start_preamble": (8, 256, CONF_START_PREAMBLE_MS, "start", None),

@@ -302,6 +302,30 @@ TEST(TuningRegistry, TheSameLegacyBytesLastLongerOnATenBitRadio) {
   EXPECT_NEAR(comp.tuning_.start_preamble_ms, 8.33F, 0.01F);
 }
 
+TEST(TuningRegistry, ALegacyWakeUpBelowTheFloorIsRaisedToIt) {
+  // 1024 bytes, the bottom of the old key's range, are about 213 ms on a raw byte stream: below the
+  // floor under which a preamble no longer counts as a wake-up.
+  test::TestableHubComponent comp;
+  comp.tuning_.legacy_preamble_bytes.low_power_wake = 1024;
+  MockRadio radio;
+  run_legacy_conversion(comp, radio);
+  EXPECT_EQ(comp.tuning_.low_power_wake_ms, WAKE_PREAMBLE_MIN_MS);
+  EXPECT_TRUE(is_wake_preamble_ms(comp.tuning_.low_power_wake_ms));
+}
+
+TEST(TuningRegistry, ALegacyWakeUpIsComparedWithTheFloorAfterTheRadiosConversion) {
+  // 1200 bytes are 250 ms on a raw byte stream but 312.5 ms on a ten-bit coder: the same byte count
+  // is raised on one radio and kept on the other, so the floor applies to the duration, not the bytes.
+  test::TestableHubComponent comp;
+  comp.tuning_.legacy_preamble_bytes.low_power_wake = 1200;
+  TenBitPreambleRadio ten_bit;
+  run_legacy_conversion(comp, ten_bit);
+  EXPECT_NEAR(comp.tuning_.low_power_wake_ms, 312.5F, 0.01F);
+  MockRadio raw;
+  run_legacy_conversion(comp, raw);
+  EXPECT_EQ(comp.tuning_.low_power_wake_ms, WAKE_PREAMBLE_MIN_MS);
+}
+
 TEST(TuningRegistry, ALegacyKeyOnlyMovesItsOwnDuration) {
   test::TestableHubComponent comp;
   comp.tuning_.legacy_preamble_bytes.start = 24;

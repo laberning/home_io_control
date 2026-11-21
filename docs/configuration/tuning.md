@@ -228,7 +228,9 @@ The keys that set bytes (`low_power_wake_preamble`, `normal_start_preamble`,
 that still sets one compiles and logs one warning naming the key to use instead. The byte value is
 converted to the duration it gives on your board's radio, so the hub sends what it sent before: for
 example `normal_start_preamble: 32` is about 8.3 ms on an SX1276 board and about 6.7 ms on an SX1262
-board. A response key written for another radio than your board's has no effect. Setting a byte key
+board. A `low_power_wake_preamble` value that gives less than 300 ms on your radio, the floor of
+`low_power_wake_ms`, is raised to 300 ms so a sleeping device still gets a wake-up, and the log says
+so. A response key written for another radio than your board's has no effect. Setting a byte key
 and the duration key that replaces it together is an error. Each old key keeps the byte range it had.
 
 With `ui_controls: true` the preamble numbers in Home Assistant show milliseconds. The three
