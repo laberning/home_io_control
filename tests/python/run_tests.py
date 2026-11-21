@@ -310,7 +310,6 @@ def oneway_invert_position_is_tri_state_in_codegen_and_warns_for_inverted_broadc
             n.CONF_MANUFACTURER: 0,
             n.CONF_IO_DEVICE_TYPE: DEVICE_TYPE_OPTIONS[kind],
             n.CONF_INITIAL_SEQUENCE: 0,
-            n.CONF_ENROLLMENT_WITH_MAC: False,
             n.CONF_EXECUTE_BROADCAST: broadcast,
             n.CONF_ENROLLMENT: False,
             n.CONF_COMMANDS: ["open"],
@@ -367,7 +366,6 @@ def _resolved_oneway(kind="horizontal_awning", radio_type="sx1262", manufacturer
         n.CONF_SYSTEM_KEY: "00112233445566778899AABBCCDDEEFF",
         n.CONF_MANUFACTURER: 0,
         n.CONF_IO_DEVICE_TYPE: DEVICE_TYPE_OPTIONS[kind],
-        n.CONF_ENROLLMENT_WITH_MAC: False,
         n.CONF_EXECUTE_BROADCAST: "typed",
         n.CONF_ENROLLMENT: False,
         n.CONF_COMMANDS: ["open"],
@@ -395,28 +393,6 @@ def oneway_warning_for_an_unprofiled_manufacturer_needs_an_explicit_vendor_that_
     ) is None
     assert o._warn_unprofiled_manufacturer(
         _resolved_oneway(**{n.CONF_MANUFACTURER: 0x7F, n.CONF_COMMANDS: []})
-    ) is None
-
-
-@case()
-def oneway_enrollment_with_mac_is_rejected_on_sx1276_only():
-    from esphome.components.home_io_control import hub_names as n
-    from esphome.components.home_io_control import oneway_controllers as o
-
-    enrolling = {n.CONF_ENROLLMENT: True, n.CONF_ENROLLMENT_WITH_MAC: True}
-    problem = o._enrollment_with_mac_problem(_resolved_oneway(radio_type="sx1276", **enrolling))
-    assert problem is not None
-    assert "oneway_controllers id 'remote'" in problem
-    assert "SX1276 cannot send the MAC trailer" in problem
-    assert "SX1262 or LR1121" in problem
-    for radio in ("sx1262", "lr1121"):
-        assert o._enrollment_with_mac_problem(_resolved_oneway(radio_type=radio, **enrolling)) is None
-    assert o._enrollment_with_mac_problem(
-        _resolved_oneway(radio_type="sx1276", **{n.CONF_ENROLLMENT: True})
-    ) is None
-    # Without enrollment: true no 0x30 is ever built, so the flag is inert and not rejected.
-    assert o._enrollment_with_mac_problem(
-        _resolved_oneway(radio_type="sx1276", **{n.CONF_ENROLLMENT_WITH_MAC: True})
     ) is None
 
 

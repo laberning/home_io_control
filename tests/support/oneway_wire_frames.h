@@ -1,11 +1,10 @@
 #pragma once
 
 /// @file oneway_wire_frames.h
-/// @brief The three one-way frame sizes as bytes on the wire, and the air time they take, for the radio driver tests.
+/// @brief The two one-way frame sizes as bytes on the wire, and the air time they take, for the radio driver tests.
 ///
-/// A one-way command is a 23-byte frame, an add-controller frame is 29 bytes, and one with the MAC trailer is
-/// 35 bytes. The driver tests send each of them through their scripted bus, so a size no driver test ever sends
-/// cannot hide a limit in a driver.
+/// A one-way command is a 23-byte frame and an add-controller frame is 29 bytes. The driver tests send each of
+/// them through their scripted bus, so a size no driver test ever sends cannot hide a limit in a driver.
 /// @ingroup hioc_protocol
 
 #include "proto_commands.h"
@@ -30,10 +29,8 @@ struct WireFrame {
 
 /// Serialized wire size of the EXECUTE command frame.
 inline constexpr uint8_t EXECUTE_WIRE_LEN = 23;
-/// Serialized wire size of the add-controller frame without the MAC trailer.
+/// Serialized wire size of the add-controller frame (no MAC trailer).
 inline constexpr uint8_t ADD_WIRE_LEN = 29;
-/// Serialized wire size of the add-controller frame with the six-byte MAC trailer.
-inline constexpr uint8_t ADD_WITH_MAC_WIRE_LEN = 35;
 
 inline std::vector<uint8_t> wire_bytes(const IoFrame &frame) {
   uint8_t buf[FRAME_MAX_WIRE_SIZE] = {0};
@@ -41,21 +38,16 @@ inline std::vector<uint8_t> wire_bytes(const IoFrame &frame) {
   return std::vector<uint8_t>(buf, buf + len);
 }
 
-/// The three frames, built by the production builders.
+/// The two frames, built by the production builders.
 inline std::vector<WireFrame> frames() {
   const uint8_t src[NODE_ID_SIZE] = {0x9D, 0x60, 0x85};
   IoFrame execute{};
   EXPECT_TRUE(create_1w_execute_command(execute, src, DeviceType::VERTICAL_EXTERIOR_AWNING, CoverCommand::STOP, 0x0102,
                                         test::TEST_SYSTEM_KEY));
   IoFrame add{};
-  EXPECT_TRUE(create_1w_add_controller(add, src, DeviceType::UNKNOWN, MANUFACTURER_SOMFY, 0x0102, test::TEST_SYSTEM_KEY,
-                                       /*with_mac=*/false));
-  IoFrame add_with_mac{};
-  EXPECT_TRUE(create_1w_add_controller(add_with_mac, src, DeviceType::UNKNOWN, MANUFACTURER_SOMFY, 0x0102,
-                                       test::TEST_SYSTEM_KEY, /*with_mac=*/true));
-  return {{"execute", wire_bytes(execute)},
-          {"add_controller", wire_bytes(add)},
-          {"add_controller_with_mac", wire_bytes(add_with_mac)}};
+  EXPECT_TRUE(
+      create_1w_add_controller(add, src, DeviceType::UNKNOWN, MANUFACTURER_SOMFY, 0x0102, test::TEST_SYSTEM_KEY));
+  return {{"execute", wire_bytes(execute)}, {"add_controller", wire_bytes(add)}};
 }
 
 /// Name of a test case for gtest output: frame name plus preamble length.

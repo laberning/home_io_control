@@ -105,8 +105,6 @@ struct OneWayControllerIdentity {
   DeviceType io_device_type{DeviceType::UNKNOWN};  ///< Device class this identity commands.
   uint16_t initial_sequence{0};                    ///< Seed for this identity's rolling counter on first use.
   bool node_id_derived{false};                     ///< True when `node_id` was derived rather than configured.
-  bool enrollment_with_mac{
-      false};  ///< Whether the enroll button's 0x30 carries a MAC trailer (`enrollment_with_mac:`).
   /// EXECUTE ACEI override (`execute_acei:`). 0 = "not overridden, use resolve_oneway_wire_profile()";
   /// any non-zero value wins. 0 is a safe sentinel: ACEI_VALID_BIT is bit 0, so a valid ACEI is
   /// always odd — the schema rejects `execute_acei: 0` so this cannot be reached by mistake.

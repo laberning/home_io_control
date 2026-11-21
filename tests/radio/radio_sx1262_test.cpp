@@ -610,15 +610,14 @@ TEST(RadioSX1262Tx, TimeoutAfterAChipResetConfiguresItAgainBeforeReceiving) {
 }
 
 // ============================================================================
-// The one-way frame sizes (23, 29 and 35 bytes) at the wake-up and at the start preamble
+// The one-way frame sizes (23 and 29 bytes) at the wake-up and at the start preamble
 // ============================================================================
 
 TEST(RadioSX1262Tx, SendsEachOneWayFrameSizeBehindTheWakeUpAndTheStartPreamble) {
   const std::vector<oneway_wire::WireFrame> frames = oneway_wire::frames();
-  ASSERT_EQ(frames.size(), 3u);
+  ASSERT_EQ(frames.size(), 2u);
   EXPECT_EQ(frames[0].bytes.size(), oneway_wire::EXECUTE_WIRE_LEN);
   EXPECT_EQ(frames[1].bytes.size(), oneway_wire::ADD_WIRE_LEN);
-  EXPECT_EQ(frames[2].bytes.size(), oneway_wire::ADD_WITH_MAC_WIRE_LEN);
 
   for (const auto &frame : frames) {
     for (const bool wake : {true, false}) {

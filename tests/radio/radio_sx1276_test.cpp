@@ -501,18 +501,16 @@ TEST(RadioSX1276, SendPacketWritesPreambleFrequencyAndFifoBeforeTxWait) {
 }
 
 // ============================================================================
-// The one-way frame sizes (23, 29 and 35 bytes) at the wake-up and at the start preamble
+// The one-way frame sizes (23 and 29 bytes) at the wake-up and at the start preamble
 // ============================================================================
 
 /// What the SX1276 is handed for each one-way frame size: the preamble it programs, the bytes it loads into the
-/// FIFO and the air time it estimates. The 35-byte frame is recorded as the driver loads it today: all 35 bytes
-/// go into the FIFO, while the packet engine takes the frame's length from its first byte, which declares 29.
+/// FIFO and the air time it estimates.
 TEST(RadioSX1276, SendsEachOneWayFrameSizeBehindTheWakeUpAndTheStartPreamble) {
   const std::vector<oneway_wire::WireFrame> frames = oneway_wire::frames();
-  ASSERT_EQ(frames.size(), 3u);
+  ASSERT_EQ(frames.size(), 2u);
   EXPECT_EQ(frames[0].bytes.size(), oneway_wire::EXECUTE_WIRE_LEN);
   EXPECT_EQ(frames[1].bytes.size(), oneway_wire::ADD_WIRE_LEN);
-  EXPECT_EQ(frames[2].bytes.size(), oneway_wire::ADD_WITH_MAC_WIRE_LEN);
 
   RegisterModelSpi probe_spi;
   MockPin probe_rst, probe_dio0, probe_dio4(false);
@@ -549,24 +547,6 @@ TEST(RadioSX1276, SendsEachOneWayFrameSizeBehindTheWakeUpAndTheStartPreamble) {
           << "ten bit periods per preamble byte";
     }
   }
-}
-
-TEST(RadioSX1276, TheLengthItsPacketEngineTakesFromTheFirstByteOfTheMacFrameIsTheDeclaredOne) {
-  // The 35-byte add-controller frame carries six bytes after its declared 29. In variable-length mode the packet
-  // engine reads the length from the frame's first byte, so it is told 29 and cannot send the trailer after its own
-  // CRC. That is why `enrollment_with_mac: true` is rejected for this radio at build time (ADR 0113); the driver
-  // loads all 35 bytes only because it is handed them, and no configuration that builds does that on an SX1276.
-  RegisterModelSpi spi;
-  MockPin rst, dio0, dio4(false);
-  RadioSX1276 radio(&spi, &rst, &dio0, &dio4, 17, 0x80);
-  seed_valid_version(spi);
-  ASSERT_TRUE(radio.init());
-  EXPECT_NE(spi.get_reg(REG_PACKET_CONFIG1) & 0x80, 0) << "PacketFormat = variable length";
-
-  const auto frames = oneway_wire::frames();
-  const auto &with_mac = frames[2].bytes;
-  EXPECT_EQ((with_mac[0] & CTRL0_LENGTH_MASK) + 1, oneway_wire::ADD_WIRE_LEN);
-  EXPECT_EQ(with_mac.size(), oneway_wire::ADD_WITH_MAC_WIRE_LEN);
 }
 
 TEST(RadioSX1276, TxDoneWaitGivesUpOneGuardAfterTheFrameShouldHaveEnded) {

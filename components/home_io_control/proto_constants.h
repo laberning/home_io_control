@@ -136,10 +136,11 @@ static constexpr uint8_t CMD_DISCOVER_ALT_RESP =
 static constexpr uint8_t CMD_ONEWAY_ADD_CONTROLLER =
     0x30;  ///< 1W "add controller" — a 1W device broadcasts this while its key-copy gesture is
            ///< active, handing its network's wrapped system key to whichever controller is
-           ///< listening. Its 20-byte declared payload (enc_key[16] + man_id[1] + data[1] +
-           ///< sequence[2]) plus a genuine 6-byte MAC does not fit inside CTRL0's 5-bit length
-           ///< field together (29 + 6 = 35, unrepresentable in 5 bits), so the MAC rides after
-           ///< the declared length instead, still under the CRC — see IoFrame::has_mac and
+           ///< listening. Its 20-byte declared payload is enc_key[16] + man_id[1] + data[1] +
+           ///< sequence[2]; real remotes send it without a MAC (29 bytes). The published vector
+           ///< adds a 6-byte MAC, which does not fit inside CTRL0's 5-bit length field together
+           ///< with the payload (29 + 6 = 35, unrepresentable in 5 bits), so it rides after the
+           ///< declared length, still under the CRC — see IoFrame::has_mac and
            ///< frame_carries_mac_trailer() (proto_frame.h). Reference:
            ///< tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml.
 static constexpr uint8_t CMD_ONEWAY_REMOVE = 0x39;  ///< 1W "remove controller" (un-pair a 1W remote from a device);

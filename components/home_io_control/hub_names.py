@@ -78,9 +78,8 @@ CONF_EXECUTE_BROADCAST = "execute_broadcast"
 # gate -- adding or removing this line and reflashing is the enrollment feature's entire
 # lifecycle, same shape as accept_foreign_pairing/recover_oneway_key.
 CONF_ENROLLMENT = "enrollment"
-# Whether the "Enroll 1W Controller" button's 0x30 carries a trailing MAC. Only meaningful with
-# enrollment: true -- see ONEWAY_CONTROLLER_SCHEMA's own comment and create_1w_add_controller()'s
-# @warning (proto_commands.h) for why real hardware disagrees on this byte.
+# Removed option (ADR 0124). The name stays so ONEWAY_CONTROLLER_SCHEMA can reject the key with a
+# message that says it was removed.
 CONF_ENROLLMENT_WITH_MAC = "enrollment_with_mac"
 # Override for the device classes a VELUX enrollment 0x30 sweep targets. Unset -> the manufacturer
 # profile's list (velux: {roller_shutter, vertical_exterior_awning, dual_roller_shutter}). Ignored by the somfy gesture.

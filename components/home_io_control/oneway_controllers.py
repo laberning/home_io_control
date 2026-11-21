@@ -168,14 +168,11 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # The build flag for this identity's "Enroll 1W Controller" button. See CONF_ENROLLMENT's
         # own comment for the lifecycle this presence/absence gates.
         cv.Optional(CONF_ENROLLMENT, default=False): cv.boolean,
-        # Whether the enroll button's 0x30 carries a 6-byte MAC trailer. Real hardware disagrees:
-        # most captures this project holds carry no MAC at all (default here, matching real Somfy
-        # traffic), while the published documentation vector carries it, and no real device has
-        # been shown to accept it -- see create_1w_add_controller()'s @warning (proto_commands.h).
-        # Untested manufacturers (e.g. Velux) may require one shape or the other; this exists so
-        # trying the other one needs a YAML edit, not a code change. The SX1276 cannot send the
-        # trailer, so _enrollment_with_mac_problem() rejects it there (ADR 0113).
-        cv.Optional(CONF_ENROLLMENT_WITH_MAC, default=False): cv.boolean,
+        # Removed option: a clear error instead of ESPHome's generic "not a valid option" (ADR 0124).
+        cv.Optional(CONF_ENROLLMENT_WITH_MAC): cv.invalid(
+            "'enrollment_with_mac' was removed (ADR 0124): the enrollment frame is always sent without "
+            "the MAC trailer, like a real remote. Delete this line."
+        ),
         # The device classes a VELUX enrollment 0x30 sweep targets. Unset -> the manufacturer
         # profile default ({roller_shutter, vertical_exterior_awning, dual_roller_shutter} for velux).
         # Set it to narrow the sweep, e.g. [vertical_exterior_awning], once you know which class
@@ -327,7 +324,6 @@ def oneway_controller_expression(identity, hub_node_id):
             f"(0x{identity[CONF_IO_DEVICE_TYPE]:02X})",
             f".initial_sequence = 0x{identity[CONF_INITIAL_SEQUENCE]:04X}",
             f".node_id_derived = {'true' if derived else 'false'}",
-            f".enrollment_with_mac = {'true' if identity[CONF_ENROLLMENT_WITH_MAC] else 'false'}",
             f".execute_acei = 0x{identity.get(CONF_EXECUTE_ACEI, 0):02X}",
             f".execute_broadcast_all = "
             f"{'true' if identity[CONF_EXECUTE_BROADCAST] == 'all' else 'false'}",
@@ -448,25 +444,6 @@ def _enrollment_manufacturer_problem(resolved):
             f"oneway_controllers id '{resolved.identity_id}' has enrollment: true but no manufacturer: "
             "set. Find the value from a key-adoption report for this network (the 'Recover "
             "1W Controller Key' switch prints it), or from the device's own documentation."
-        )
-    return None
-
-
-def _enrollment_with_mac_problem(resolved):
-    """Error text when `enrollment_with_mac: true` meets `radio_type: sx1276`, else None.
-
-    The SX1276 sends through its packet engine, which takes the frame length from the frame's own
-    first byte and appends its own CRC, so the six trailer bytes after the declared length never go
-    out as part of the packet and every copy ends in a transmit timeout (ADR 0113). The SX1262 and
-    LR1121 send a raw byte stream and are unaffected.
-    """
-    identity = resolved.identity
-    if identity[CONF_ENROLLMENT] and identity[CONF_ENROLLMENT_WITH_MAC] and resolved.radio_type == "sx1276":
-        return (
-            f"oneway_controllers id '{resolved.identity_id}' has enrollment_with_mac: true on "
-            "radio_type: sx1276, but the SX1276 cannot send the MAC trailer: its packet engine "
-            "ends the frame at its declared length and every copy would time out. Set "
-            "enrollment_with_mac: false, or use an SX1262 or LR1121 board (ADR 0113)."
         )
     return None
 
@@ -661,11 +638,7 @@ def validate_oneway_controllers(config):
 
         resolved = _resolve_identity_defaults(identity, config)
         _reject_collisions(resolved, seen_node_ids)
-        problem = (
-            _enrollment_manufacturer_problem(resolved)
-            or _enrollment_with_mac_problem(resolved)
-            or _cover_problem(resolved)
-        )
+        problem = _enrollment_manufacturer_problem(resolved) or _cover_problem(resolved)
         if problem:
             raise cv.Invalid(problem)
         for rule in _WARNING_RULES:

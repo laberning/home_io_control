@@ -5,6 +5,9 @@
 #include "proto_timing.h"
 #include "tuning_config.h"
 
+#include "corpus_generated.h"
+#include "corpus_test_helpers.h"
+
 #include "test_helpers.h"
 
 #include <esphome/core/application.h>
@@ -303,9 +306,13 @@ TEST_F(OneWayTransmitterTest, FlaggedCopyStillCarriesAValidMac) {
   // Proves CTRL1 sits outside the 1W add-controller MAC span, on the real decode path rather than
   // a hand-rolled recomputation: the flagged copy 1 of a LOW_POWER burst must decode_1w_add_
   // controller() to a VERIFIED MAC and the correct recovered key, exactly like an unflagged repeat.
-  IoFrame frame{};
-  ASSERT_TRUE(create_1w_add_controller(frame, CONTROLLER_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING, MANUFACTURER_SOMFY,
-                                       0x1234, test::TEST_SYSTEM_KEY, /*with_mac=*/true));
+  // The hub builds no MAC on 0x30 (ADR 0124), so the published add-controller vector, which carries one, is the input.
+  const uint8_t vector_key[AES_KEY_SIZE] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+                                            0x09, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16};
+  const auto *capture = corpus_test::capture_by_id("reference_1w_enrollment_add_controller_kat");
+  ASSERT_NE(capture, nullptr);
+  const IoFrame frame = corpus_test::parse_capture_frame(capture->frames[0]);
+  ASSERT_TRUE(frame.has_mac);
   TransmitRecorder recorder;
   OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
 
@@ -327,9 +334,9 @@ TEST_F(OneWayTransmitterTest, FlaggedCopyStillCarriesAValidMac) {
   EXPECT_EQ(flagged_key.mac_status, OneWayMacStatus::VERIFIED)
       << "the flagged copy's MAC verifies -- CTRL1 is outside its span";
   EXPECT_EQ(unflagged_key.mac_status, OneWayMacStatus::VERIFIED);
-  EXPECT_EQ(0, memcmp(flagged_key.system_key, test::TEST_SYSTEM_KEY, AES_KEY_SIZE))
+  EXPECT_EQ(0, memcmp(flagged_key.system_key, vector_key, AES_KEY_SIZE))
       << "the recovered key matches the one the frame actually wraps";
-  EXPECT_EQ(0, memcmp(unflagged_key.system_key, test::TEST_SYSTEM_KEY, AES_KEY_SIZE));
+  EXPECT_EQ(0, memcmp(unflagged_key.system_key, vector_key, AES_KEY_SIZE));
 }
 
 // ============================================================================

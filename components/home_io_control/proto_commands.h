@@ -378,41 +378,24 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
 /// decode_1w_add_controller() uses to unwrap an overheard 0x30 (crypt_1w_key() is its own
 /// inverse, so this call and that one are literally the same function). The wrap key is the
 /// public TRANSFER_KEY
-/// (proto_constants.h) and the wrap IV derives only from `src` — see crypt_1w_key()'s doxygen for
-/// why that is not a weakness: the receiver decrypts `enc_key` first, then checks this frame's MAC
-/// under the key it just recovered, which is what makes the MAC meaningful (it proves the sender
-/// holds the key it just sent), not the wrap's secrecy.
+/// (proto_constants.h) and the wrap IV derives only from `src`, so the wrap hides nothing from a
+/// listener. That is not a weakness: the physical PROG window is what authorises the enrollment
+/// (ADR 0026).
 ///
 /// Declared payload (20 bytes): `enc_key[16] + manufacturer[1] + data[1]=0x01 + sequence[2]`.
-/// **When `with_mac` is true, the MAC is an out-of-length trailer, not part of the declared
-/// payload** — CTRL0's 5-bit length field cannot express 29 declared bytes plus a 6-byte MAC
-/// together (see `IoFrame::has_mac`, `frame_carries_mac_trailer()` in proto_frame.h), so this
-/// builder sets `f.has_mac = true` and fills `f.mac[]` directly; `serialize()` appends it after
-/// the declared length and folds it into the length it returns, so a caller's CRC (computed over
-/// that return value) covers it automatically. **When present, this is the opposite placement
-/// from create_1w_remove_controller() below, whose MAC sits inside the declared payload** —
-/// copying one builder's shape to make the other is the most likely bug a future edit introduces
-/// here.
 ///
-/// @warning **Real hardware and the published documentation vector disagree on whether the MAC
-/// trailer exists at all — this is why `with_mac` is a parameter, not a fixed choice.** The
+/// The frame carries **no MAC**: real remotes send this 29-byte shape (see
+/// `tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`). The
 /// published known-answer vector
-/// (tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml,
-/// `with_mac=true`, 35 bytes) is the shape `with_mac` defaults to, which the tests pinned to that
-/// vector rely on. Most real hardware captures instead
-/// show 29 bytes with **no trailer at all** — see
-/// `tests/corpus/captures/enrollment/somfy_smoove_enrollment_add_and_remove_controller_sx1276.yaml`. **The enroll
-/// button calls this with `with_mac=false`** to match that shape. No real device has been shown to accept the
-/// `with_mac=true` form: the one enrollment sent with it (a Somfy Izymo dimmer, which enrolled) went out through an
-/// SX1276, whose packet engine sends only the declared 29 bytes, so the dimmer received the no-MAC form (ADR 0113).
+/// (`tests/corpus/captures/enrollment/reference_1w_enrollment_add_controller_kat.yaml`) appends a six-byte
+/// out-of-length MAC after those 29 bytes; the parser still accepts that shape (`IoFrame::has_mac`), this builder
+/// never produces it (ADR 0124).
 ///
-/// @warning The key-wrap IV comes from `src`, not the destination: a broadcast destination carries
-/// no identity, and `src` is the only value that reproduces the published frame this builder is
-/// pinned against. That frame's MAC is genuine and verifies, so a missing trailer on real hardware
-/// is not evidence that the frame is unauthenticated.
 /// @param f IoFrame to populate.
 /// @param src Our 3-byte controller node address (the 1W controller identity's `node_id`) — also
-///        the key-wrap IV's only input, so this must be the identity actually being registered.
+///        the key-wrap IV's only input, so this must be the identity actually being registered. The IV
+///        never comes from the destination: a broadcast destination carries no identity, and `src` is
+///        the only value that reproduces the published vector.
 /// @param target_type Device class to address; encoded via encode_broadcast_address(). Only
 ///        devices of this class currently in association mode react.
 /// @param manufacturer Manufacturer ID byte to advertise (`man_id`); echoed back verbatim by
@@ -421,15 +404,10 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
 ///        identity/sequence store owns incrementing and persisting this, not this builder.
 /// @param controller_key 16-byte key this identity registers itself with — normally the hub's own
 ///        `system_key`, wrapped here for transmission, never sent in the clear.
-/// @param with_mac True to append the out-of-length MAC trailer (the published vector's shape,
-///        and this parameter's default); false to omit it entirely
-///        (the shape most real hardware captures this project holds actually use, and what the
-///        enroll button passes). No real device has been shown to accept the trailer — see
-///        the `@warning` above.
-/// @return true on success; false if crypto::crypt_1w_key() fails, or (when `with_mac` is true)
-///         crypto::create_1w_hmac() fails — no partially-populated frame is left behind on failure.
+/// @return true on success; false if crypto::crypt_1w_key() fails — no partially-populated frame is left behind on
+///         failure.
 bool create_1w_add_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, uint8_t manufacturer,
-                              uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE], bool with_mac = true);
+                              uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]);
 
 /// @brief Build a 1W remove-controller frame (CMD 0x39) that un-registers this identity from every
 /// device of `target_type` currently in association mode (`DeviceType::UNKNOWN`, which every caller
@@ -438,9 +416,8 @@ bool create_1w_add_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devic
 /// also the prelude OneWayTransmitter::send_enrollment() fires immediately before it.
 ///
 /// Declared payload (9 bytes), shape: `data[1]=0x00 +
-/// sequence[2] + mac[6]`. **The MAC sits inside the declared payload here** — the opposite
-/// placement from create_1w_add_controller() above, whose MAC is an out-of-length trailer because
-/// its longer payload has no room left in CTRL0's 5-bit length field. `f.has_mac` stays false.
+/// sequence[2] + mac[6]`. The MAC sits inside the declared payload, so `f.has_mac` stays false (that
+/// flag is for the out-of-length trailer of the published add-controller vector).
 ///
 /// The MAC span is `cmd + data` (2 bytes) — the same "everything before the sequence" shape CMD
 /// 0x00's span follows, though spans are command-specific and do not generalise on their own (see

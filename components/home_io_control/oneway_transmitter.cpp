@@ -204,7 +204,7 @@ bool OneWayTransmitter::send_somfy_enrollment_(const OneWayControllerIdentity &i
       identity.id,
       [](IoFrame &frame, const OneWayControllerIdentity &id, uint16_t sequence) {
         return create_1w_add_controller(frame, id.node_id, DeviceType::UNKNOWN, id.manufacturer, sequence,
-                                        id.system_key, id.enrollment_with_mac);
+                                        id.system_key);
       },
       "ENROLL", /*enrollment=*/true);
 }
@@ -280,7 +280,7 @@ bool OneWayTransmitter::send_enroll_sweep_(const OneWayControllerIdentity &ident
       continue;
     IoFrame frame{};
     if (!create_1w_add_controller(frame, identity.node_id, target_type, identity.manufacturer, sequence,
-                                  identity.system_key, identity.enrollment_with_mac)) {
+                                  identity.system_key)) {
       ESP_LOGW(TAG, "1W tx: could not build a 0x30 for class 0x%02X on '%s'", static_cast<unsigned>(target_type),
                identity.id.c_str());
       continue;

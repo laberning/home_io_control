@@ -162,8 +162,7 @@ TEST_F(OneWayDispatch, AnEnrollmentIsAnUnenrollBurstThenAnAddBurstUnderTheNextSe
   IoFrame remove{};
   ASSERT_TRUE(create_1w_remove_controller(remove, CONTROLLER_NODE, DeviceType::UNKNOWN, FIRST_SEQUENCE, key()));
   IoFrame add{};
-  ASSERT_TRUE(create_1w_add_controller(add, CONTROLLER_NODE, DeviceType::UNKNOWN, 0, FIRST_SEQUENCE + 1, key(),
-                                       /*with_mac=*/false));
+  ASSERT_TRUE(create_1w_add_controller(add, CONTROLLER_NODE, DeviceType::UNKNOWN, 0, FIRST_SEQUENCE + 1, key()));
   expect_burst(0, remove, OneWayPowerClass::LOW_POWER);
   expect_burst(ONEWAY_BURST_REPEATS, add, OneWayPowerClass::LOW_POWER);
   EXPECT_FALSE(hub.busy_);

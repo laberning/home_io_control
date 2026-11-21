@@ -55,13 +55,11 @@ home_io_control:
     ignore_strapping_warning: true
   node_id: C0FFEE
   system_key: 0123456789ABCDEF0123456789ABCDEF
-  # A one-way identity compiles on this chip as well: its enrollment frame carries the MAC trailer, which only the
-  # raw-stream radios (SX1262, LR1121) can transmit.
+  # A one-way identity with an enrollment button compiles on this chip as well.
   oneway_controllers:
     - id: awning_remote
       io_device_type: vertical_exterior_awning
       commands: [open, close, stop]
       manufacturer: somfy
       enrollment: true
-      enrollment_with_mac: true
       low_power: true

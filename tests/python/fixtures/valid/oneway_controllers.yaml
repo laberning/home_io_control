@@ -1,6 +1,6 @@
 # expect: valid
 # A derived-address identity and an explicit one with its own key and an enrollment button, and every optional
-# one-way key: execute_acei, enrollment_with_mac, low_power in both values, initial_sequence, invert_position, drives,
+# one-way key: execute_acei, low_power in both values, initial_sequence, invert_position, drives,
 # cover and follows.
 packages:
   common: !include ../_common.yaml
@@ -48,7 +48,6 @@ home_io_control:
       commands: [open, close, stop]
       manufacturer: somfy
       enrollment: true
-      enrollment_with_mac: true
       execute_acei: 0x43
       low_power: true
       initial_sequence: 1000

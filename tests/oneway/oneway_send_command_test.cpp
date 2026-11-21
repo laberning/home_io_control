@@ -249,8 +249,7 @@ TEST_F(OneWaySendCommandTest, SequencesSurviveAReboot) {
 // Same seam as send_command()/send_position() above -- one sequence per burst, per-identity
 // keys, unknown-identity refusal -- plus properties specific to enrollment: it is two bursts back
 // to back (0x39 self-directed remove, then 0x30 add -- the 1W pairing handshake, see
-// ADR 0026), with_mac=false on the 0x30 half (see create_1w_add_controller()'s
-// @warning, proto_commands.h), and explicit "ENROLL"/"UNENROLL" report labels, since
+// ADR 0026), no MAC trailer on the 0x30 half (ADR 0124), and explicit "ENROLL"/"UNENROLL" report labels, since
 // decode_1w_frame() cannot read an intent out of a 0x30/0x39.
 
 TEST_F(OneWaySendCommandTest, EnrollmentConsumesTwoSequencesOneEach) {
@@ -301,9 +300,8 @@ TEST_F(OneWaySendCommandTest, EnrollmentAndUnenrollmentShareTheCommandSequenceCo
 }
 
 TEST_F(OneWaySendCommandTest, EnrollmentSendsNoMacTrailerOnTheAddHalf) {
-  // with_mac=false: every real hardware capture this project holds carries no MAC trailer, unlike
-  // the published documentation vector create_1w_add_controller() defaults to. The enroll button
-  // is the one caller that transmits to real hardware, so it must not use that default.
+  // Every real hardware capture this project holds carries no MAC trailer, unlike the published
+  // documentation vector (ADR 0124).
   BurstRecorder recorder;
   OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1));
@@ -312,7 +310,7 @@ TEST_F(OneWaySendCommandTest, EnrollmentSendsNoMacTrailerOnTheAddHalf) {
   ASSERT_TRUE(transmitter.send_enrollment("awning"));
 
   const auto &add_frame = recorder.frames[ONEWAY_BURST_REPEATS];
-  EXPECT_FALSE(add_frame.has_mac) << "enrollment must use the no-MAC shape, not the builder's own default";
+  EXPECT_FALSE(add_frame.has_mac) << "enrollment sends the no-MAC shape";
   EXPECT_EQ(add_frame.cmd, CMD_ONEWAY_ADD_CONTROLLER);
 }
 
@@ -350,27 +348,9 @@ TEST_F(OneWaySendCommandTest, EnrollmentMatchesTheBuildersDirectly) {
       << "the 0x39 prelude must match create_1w_remove_controller() at the sequence it actually consumed";
 
   IoFrame expected_add{};
-  ASSERT_TRUE(create_1w_add_controller(expected_add, OWN_NET_NODE, DeviceType::UNKNOWN, 0, 8, key, /*with_mac=*/false));
+  ASSERT_TRUE(create_1w_add_controller(expected_add, OWN_NET_NODE, DeviceType::UNKNOWN, 0, 8, key));
   EXPECT_EQ(0, memcmp(recorder.frames[ONEWAY_BURST_REPEATS].data, expected_add.data, expected_add.data_len))
       << "the 0x30 half must match create_1w_add_controller() at the sequence it actually consumed";
-}
-
-TEST_F(OneWaySendCommandTest, EnrollmentWithMacConfiguredTrueAddsTheTrailer) {
-  // enrollment_with_mac: true -- the YAML escape hatch for hardware that needs the MAC-bearing
-  // 0x30 shape (the published documentation vector's own shape) instead of the no-MAC default.
-  BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
-  OneWayControllerIdentity identity =
-      make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 3);
-  identity.enrollment_with_mac = true;
-  transmitter.add_identity(identity);
-  transmitter.setup();
-
-  ASSERT_TRUE(transmitter.send_enrollment("awning"));
-
-  const auto &add_frame = recorder.frames[ONEWAY_BURST_REPEATS];
-  EXPECT_TRUE(add_frame.has_mac) << "enrollment_with_mac: true must reach create_1w_add_controller()'s with_mac";
-  EXPECT_EQ(add_frame.cmd, CMD_ONEWAY_ADD_CONTROLLER);
 }
 
 // ============================================================================

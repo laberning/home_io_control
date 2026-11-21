@@ -1,0 +1,14 @@
+# expect-error: 'enrollment_with_mac' was removed
+# The option is gone (ADR 0124); a configuration that still sets it gets a message that says so instead of the
+# generic "option not recognised" error.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v2.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: remote
+      io_device_type: vertical_exterior_awning
+      manufacturer: somfy
+      enrollment: true
+      enrollment_with_mac: false

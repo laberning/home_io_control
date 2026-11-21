@@ -572,7 +572,10 @@ TEST(OneWayCommands, PositionAboveHundredIsRejectedWithoutTouchingTheFrame) {
 // key, manufacturer, sequence), which a caller must supply and so are legitimately local
 // constants rather than "expected" bytes.
 
-TEST(OneWayEnrollment, AddControllerReproducesPublishedVector) {
+TEST(OneWayEnrollment, AddControllerReproducesThePublishedVectorUpToItsTrailer) {
+  // The published vector is 35 bytes: the 29 the hub sends plus an out-of-length MAC. The builder
+  // sends no MAC (ADR 0124), so it must reproduce the vector's declared part byte for byte, and
+  // the vector's own trailer stays verified by the crypto function.
   const auto *capture = corpus_test::capture_by_id("reference_1w_enrollment_add_controller_kat");
   ASSERT_NE(capture, nullptr)
       << "corpus capture 'reference_1w_enrollment_add_controller_kat' not found — was it renamed?";
@@ -585,49 +588,36 @@ TEST(OneWayEnrollment, AddControllerReproducesPublishedVector) {
                                        ADD_CONTROLLER_VECTOR_MANUFACTURER, ADD_CONTROLLER_VECTOR_SEQUENCE,
                                        ADD_CONTROLLER_VECTOR_KEY))
       << "building the published 0x30 vector should succeed";
+  EXPECT_FALSE(frame.has_mac) << "the hub's add-controller frame carries no out-of-length trailer";
 
   uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
   uint8_t expected_wire[FRAME_MAX_WIRE_SIZE] = {0};
   const uint8_t len = serialize(frame, wire, sizeof(wire));
   const uint8_t expected_len = serialize(expected, expected_wire, sizeof(expected_wire));
-  ASSERT_EQ(len, expected_len) << "built and published frames must serialize to the same length";
+  ASSERT_EQ(len, FRAME_MIN_SIZE + 20) << "declared length is 9 header + 20 payload bytes, nothing after it";
+  ASSERT_EQ(expected_len, len + HMAC_SIZE) << "the published frame is the same plus its six-byte trailer";
   EXPECT_EQ(0, memcmp(wire, expected_wire, len))
-      << "node ABCDEF, key 0102...1516, seq 0x1234, man 0x02 must reproduce the published frame "
-         "byte-for-byte, including the out-of-length trailer and its MAC";
+      << "node ABCDEF, key 0102...1516, seq 0x1234, man 0x02 must reproduce the published frame's declared part "
+         "byte-for-byte";
+
+  OneWayAdoptedKey adopted{};
+  ASSERT_EQ(decode_1w_add_controller(expected, adopted), OneWayAddControllerDecodeError::NONE);
+  EXPECT_EQ(adopted.mac_status, OneWayMacStatus::VERIFIED) << "the vector's trailer verifies under the recovered key";
+  EXPECT_EQ(0, memcmp(adopted.system_key, ADD_CONTROLLER_VECTOR_KEY, AES_KEY_SIZE));
 }
 
-TEST(OneWayEnrollment, AddControllerCarriesOutOfLengthMacTrailer) {
+TEST(OneWayEnrollment, AddControllerCarriesNoMacTrailer) {
   IoFrame frame{};
   ASSERT_TRUE(create_1w_add_controller(frame, ADD_CONTROLLER_VECTOR_SRC, DeviceType::UNKNOWN,
                                        ADD_CONTROLLER_VECTOR_MANUFACTURER, ADD_CONTROLLER_VECTOR_SEQUENCE,
                                        ADD_CONTROLLER_VECTOR_KEY));
 
-  EXPECT_TRUE(frame.has_mac) << "0x30's MAC does not fit inside CTRL0's 5-bit length field alongside its "
-                                "20-byte payload, so it must ride as the out-of-length trailer";
+  EXPECT_FALSE(frame.has_mac) << "real remotes send the 29-byte add frame";
   EXPECT_EQ(frame_length(frame), FRAME_MIN_SIZE + 20) << "declared length is 9 header + 20 payload bytes only";
 
   uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
   const uint8_t len = serialize(frame, wire, sizeof(wire));
-  EXPECT_EQ(len, FRAME_MIN_SIZE + 20 + HMAC_SIZE) << "serialize() must fold the trailer into the returned length "
-                                                     "so a caller's CRC covers it";
-}
-
-TEST(OneWayEnrollment, AddControllerCanOmitMacTrailer) {
-  // with_mac=false is the shape every real hardware capture this project holds actually uses
-  // (see AddControllerReproducesRealHardwareCapture below) — the published-vector shape above is
-  // the parameter's default, kept for backward compatibility with that vector's own tests, not
-  // evidence either shape is "more correct" than the other.
-  IoFrame frame{};
-  ASSERT_TRUE(create_1w_add_controller(frame, ADD_CONTROLLER_VECTOR_SRC, DeviceType::UNKNOWN,
-                                       ADD_CONTROLLER_VECTOR_MANUFACTURER, ADD_CONTROLLER_VECTOR_SEQUENCE,
-                                       ADD_CONTROLLER_VECTOR_KEY, /*with_mac=*/false));
-
-  EXPECT_FALSE(frame.has_mac) << "with_mac=false must leave no out-of-length trailer";
-  EXPECT_EQ(frame_length(frame), FRAME_MIN_SIZE + 20) << "declared length is unchanged either way";
-
-  uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
-  const uint8_t len = serialize(frame, wire, sizeof(wire));
-  EXPECT_EQ(len, FRAME_MIN_SIZE + 20) << "no trailer folded in when with_mac is false";
+  EXPECT_EQ(len, FRAME_MIN_SIZE + 20) << "nothing is folded in after the declared payload";
 }
 
 TEST(OneWayEnrollment, AddControllerReproducesRealHardwareCapture) {
@@ -635,8 +625,7 @@ TEST(OneWayEnrollment, AddControllerReproducesRealHardwareCapture) {
   // capture was re-keyed (scripts/corpus/ingest.py --rekey) so its enc_key unwraps under
   // test::TEST_SYSTEM_KEY instead of the remote's real key, but every other byte — including the
   // absence of a MAC trailer — is exactly what that remote transmitted. This is the test that
-  // would catch with_mac's default ever silently flipping to false, or vice versa, without
-  // someone updating this capture's own note that it carries no trailer.
+  // would catch the builder ever appending a trailer.
   const auto *capture = corpus_test::capture_by_id("somfy_smoove_enrollment_add_and_remove_controller_sx1276");
   ASSERT_NE(capture, nullptr) << "corpus capture not found — was it renamed?";
   ASSERT_EQ(capture->frame_count, 3) << "expected 2x 0x39 followed by 1x 0x30";
@@ -647,7 +636,7 @@ TEST(OneWayEnrollment, AddControllerReproducesRealHardwareCapture) {
   const uint8_t src[NODE_ID_SIZE] = {0x9D, 0x60, 0x85};
   IoFrame frame{};
   ASSERT_TRUE(create_1w_add_controller(frame, src, DeviceType::UNKNOWN, /*manufacturer=*/0x02, /*sequence=*/0x5E18,
-                                       test::TEST_SYSTEM_KEY, /*with_mac=*/false));
+                                       test::TEST_SYSTEM_KEY));
 
   uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
   uint8_t expected_wire[FRAME_MAX_WIRE_SIZE] = {0};
@@ -658,46 +647,18 @@ TEST(OneWayEnrollment, AddControllerReproducesRealHardwareCapture) {
       << "node 9D6085, corpus key, seq 0x5E18, man 0x02, no MAC must reproduce this real capture byte-for-byte";
 }
 
-TEST(OneWayEnrollment, AddControllerWithMacReproducesRealHardwareCapture) {
-  // Companion to AddControllerReproducesRealHardwareCapture above: that one pins the no-MAC
-  // shape against a real Somfy Smoove; this one pins the MAC-trailer shape against the hub's own
-  // logged send to a Somfy Izymo dimmer, so the with_mac=true bytes can never silently change
-  // without this test catching the mismatch. No device has been shown to accept the trailer — see
-  // create_1w_add_controller()'s `@warning` (proto_commands.h).
-  const auto *capture = corpus_test::capture_by_id("somfy_izymo_dimmer_enrollment_add_controller_with_mac_sx1276");
-  ASSERT_NE(capture, nullptr) << "corpus capture not found — was it renamed?";
-  ASSERT_EQ(capture->frame_count, 1);
-  const IoFrame expected = corpus_test::parse_capture_frame(capture->frames[0]);
-  ASSERT_EQ(expected.cmd, CMD_ONEWAY_ADD_CONTROLLER);
-  ASSERT_TRUE(expected.has_mac) << "this capture carries the out-of-length MAC trailer — see its "
-                                   "own description";
-
-  const uint8_t src[NODE_ID_SIZE] = {0x7F, 0x84, 0xA2};
-  IoFrame frame{};
-  ASSERT_TRUE(create_1w_add_controller(frame, src, DeviceType::LIGHT, /*manufacturer=*/0x02, /*sequence=*/0x0060,
-                                       test::TEST_SYSTEM_KEY, /*with_mac=*/true));
-
-  uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
-  uint8_t expected_wire[FRAME_MAX_WIRE_SIZE] = {0};
-  const uint8_t len = serialize(frame, wire, sizeof(wire));
-  const uint8_t expected_len = serialize(expected, expected_wire, sizeof(expected_wire));
-  ASSERT_EQ(len, expected_len);
-  EXPECT_EQ(0, memcmp(wire, expected_wire, len))
-      << "node 7F84A2, corpus key, seq 0x0060, man 0x02, with MAC must reproduce this real capture byte-for-byte";
-}
-
 TEST(OneWayEnrollment, RemoveControllerKeepsMacInsideDeclaredLength) {
   IoFrame frame{};
   ASSERT_TRUE(create_1w_remove_controller(frame, SOMFY_REMOTE_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING, 1,
                                           test::TEST_SYSTEM_KEY));
 
-  EXPECT_FALSE(frame.has_mac) << "0x39's MAC sits inside the declared payload, unlike 0x30's out-of-length trailer";
+  EXPECT_FALSE(frame.has_mac) << "0x39's MAC sits inside the declared payload";
   EXPECT_EQ(frame.data_len, 9) << "data(1) + sequence(2) + mac(6)";
   EXPECT_EQ(frame_length(frame), FRAME_MIN_SIZE + 9);
 
   uint8_t wire[FRAME_MAX_WIRE_SIZE] = {0};
   const uint8_t len = serialize(frame, wire, sizeof(wire));
-  EXPECT_EQ(len, frame_length(frame)) << "no trailer to fold in, unlike create_1w_add_controller()";
+  EXPECT_EQ(len, frame_length(frame)) << "no trailer to fold in";
 }
 
 TEST(OneWayEnrollment, RemoveControllerReproducesRealHardwareCapture) {
@@ -727,8 +688,9 @@ TEST(OneWayEnrollment, RemoveControllerReproducesRealHardwareCapture) {
 
 TEST(OneWayEnrollment, AddControllerRoundTripsThroughAdoptionDecoder) {
   // Closes the loop with decode_1w_add_controller(): our own 0x30 must decode back to the key we
-  // put in, with a verifying MAC — which would catch a key-wrap IV derived from the wrong node
-  // (e.g. the destination, which this builder's doxygen warns against) just as surely as a hardware test would.
+  // put in — which would catch a key-wrap IV derived from the wrong node (e.g. the destination,
+  // which this builder's doxygen warns against) just as surely as a hardware test would. The frame
+  // has no MAC (ADR 0124), so there is nothing to verify.
   IoFrame frame{};
   ASSERT_TRUE(create_1w_add_controller(frame, SOMFY_REMOTE_SRC, DeviceType::LIGHT, 0x07, 42, test::TEST_SYSTEM_KEY));
 
@@ -740,9 +702,7 @@ TEST(OneWayEnrollment, AddControllerRoundTripsThroughAdoptionDecoder) {
   EXPECT_EQ(adopted.manufacturer, 0x07);
   EXPECT_EQ(0, memcmp(adopted.sender_node, SOMFY_REMOTE_SRC, NODE_ID_SIZE));
   EXPECT_EQ(adopted.sequence, 42);
-  EXPECT_EQ(adopted.mac_status, OneWayMacStatus::VERIFIED)
-      << "a MAC that fails to verify here would mean the key-wrap IV or the MAC span disagrees "
-         "with what the decoder expects";
+  EXPECT_EQ(adopted.mac_status, OneWayMacStatus::NOT_PRESENT) << "the hub's add frame carries no MAC";
 }
 
 TEST(OneWayEnrollment, TheEnrollmentBuildersLeaveCtrl1ZeroForTheBurstToSet) {

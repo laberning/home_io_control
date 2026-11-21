@@ -1,7 +1,7 @@
 # ADR 0032: 1W enrollment follows the gesture the target's `manufacturer:` expects
 <!-- doxygen-label: adr0032 -->
 
-**Status:** Accepted, amended by [ADR 0113](0113-enrollment-with-mac-is-rejected-on-the-sx1276.md) · **Recorded:** 2026-09
+**Status:** Accepted, amended by [ADR 0113](0113-enrollment-with-mac-is-rejected-on-the-sx1276.md) and [ADR 0124](0124-enrollment-with-mac-is-removed.md) (`enrollment_with_mac` is removed; the `0x30` never carries a MAC trailer) · **Recorded:** 2026-09
 
 Note (2026-11): the manufacturer list is now checked against the C++ table by `tests/sync/oneway_wire_profile_sync_test.cpp`; the sentence below about no automated sync check no longer holds.
 

@@ -9,9 +9,8 @@ description: >
 
   1. Real hardware's CMD_ONEWAY_ADD_CONTROLLER (0x30) carries NO out-of-length MAC trailer --
      29 bytes on air, not 35. The published vector (35 bytes, MAC included) and this remote's 29-byte form are both
-     real; no device has yet been shown to accept the 35-byte form (the hub's own MAC-trailer send,
-     somfy_izymo_dimmer_enrollment_add_controller_with_mac_sx1276, went out of an SX1276 as the 29-byte
-     frame, ADR 0113): different implementations chose differently, and this remote picked the no-MAC form. Confirmed twice
+     real; no device has yet been shown to accept the 35-byte form (ADR 0124): different implementations chose
+     differently, and this remote picked the no-MAC form. Confirmed twice
      independently on real captures before this one was re-keyed and committed.
   2. CMD_ONEWAY_REMOVE (0x39)'s MAC span -- unpinned by any vector when
      create_1w_remove_controller() (proto_commands.cpp) was first built -- is `cmd + data` (2

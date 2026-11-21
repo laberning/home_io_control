@@ -290,12 +290,9 @@ constexpr uint8_t ONEWAY_ADD_PAYLOAD_SIZE = AES_KEY_SIZE + 4;     // 20
 /// `data` field of CMD 0x30's payload — every source (the published vector and every real
 /// remote capture) shows 0x01 here; its meaning beyond "add" is undocumented.
 constexpr uint8_t ONEWAY_ADD_DATA_VALUE = 0x01;
-/// CMD 0x30's MAC span: cmd + enc_key only (17 bytes) — verified against the published vector
-/// (create_1w_hmac()'s `@warning`), NOT the whole declared payload.
-constexpr uint8_t ONEWAY_ADD_MAC_SPAN_SIZE = 1 + AES_KEY_SIZE;
 
 /// CMD 0x39 declared-payload layout, data[1] + sequence[2]
-/// + mac[6] = 9 bytes, MAC inside the declared length (unlike CMD 0x30's out-of-length trailer).
+/// + mac[6] = 9 bytes, MAC inside the declared length.
 constexpr uint8_t ONEWAY_REMOVE_DATA_OFFSET = 0;
 constexpr uint8_t ONEWAY_REMOVE_SEQUENCE_OFFSET = 1;
 constexpr uint8_t ONEWAY_REMOVE_MAC_OFFSET = 3;
@@ -469,11 +466,9 @@ bool create_1w_execute_command(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devi
 }
 
 /// Build a 1W add-controller frame (CMD 0x30). See proto_commands.h for the full contract,
-/// including why the MAC is an optional, out-of-length trailer here and not inside the declared
-/// payload, and why `with_mac` exists at all (real hardware omits it; the published vector
-/// doesn't).
+/// including why the frame carries no MAC.
 bool create_1w_add_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], DeviceType target_type, uint8_t manufacturer,
-                              uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE], bool with_mac) {
+                              uint16_t sequence, const uint8_t controller_key[AES_KEY_SIZE]) {
   uint8_t payload[ONEWAY_ADD_PAYLOAD_SIZE] = {0};
 
   // Self-inverse wrap (crypto::crypt_1w_key()'s doxygen) -- the same call decode_1w_add_controller()
@@ -486,34 +481,9 @@ bool create_1w_add_controller(IoFrame &f, const uint8_t src[NODE_ID_SIZE], Devic
   payload[ONEWAY_ADD_SEQUENCE_OFFSET] = static_cast<uint8_t>(sequence >> BITS_PER_BYTE);
   payload[ONEWAY_ADD_SEQUENCE_OFFSET + 1] = static_cast<uint8_t>(sequence);
 
-  // The span is command + enc_key only, copied out of `payload` rather than restated -- see
-  // build_1w_execute()'s comment for why a restatement risks drifting from the wire. Computed
-  // even when with_mac is false so a caller flipping the flag later doesn't also have to
-  // reconsider whether signing itself can fail -- crypto::create_1w_hmac() is still the "sign
-  // before touching f" guard for the whole builder either way.
-  uint8_t mac_span[ONEWAY_ADD_MAC_SPAN_SIZE];
-  mac_span[0] = CMD_ONEWAY_ADD_CONTROLLER;
-  memcpy(&mac_span[1], &payload[ONEWAY_ADD_ENC_KEY_OFFSET], AES_KEY_SIZE);
-
-  uint8_t mac[HMAC_SIZE];
-  // Sign before touching `f`, same rule as build_1w_execute(): 1W is fire-and-forget, so a
-  // half-built frame a caller transmitted anyway would fail silently with nobody to report it.
-  if (!crypto::create_1w_hmac(mac_span, sizeof(mac_span), sequence, controller_key, mac))
-    return false;
-
   init_1w_broadcast_frame(f, src, target_type);
 
-  if (!set_cmd(f, CMD_ONEWAY_ADD_CONTROLLER, payload, sizeof(payload)))
-    return false;
-
-  // The MAC is an out-of-length trailer for this command only (frame_carries_mac_trailer()) --
-  // set after set_cmd() succeeds, since init_frame() above would otherwise reset it right back
-  // off. Left false (real Somfy hardware's own shape) when with_mac is false.
-  if (with_mac) {
-    f.has_mac = true;
-    memcpy(f.mac, mac, HMAC_SIZE);
-  }
-  return true;
+  return set_cmd(f, CMD_ONEWAY_ADD_CONTROLLER, payload, sizeof(payload));
 }
 
 /// Build a 1W remove-controller frame (CMD 0x39). See proto_commands.h for the full contract,

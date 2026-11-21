@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0113 -->
 
-**Status:** Accepted, amends [ADR 0032](0032-oneway-velux-enrollment-gesture.md) · **Recorded:** 2026-11
+**Status:** Superseded by [ADR 0124](0124-enrollment-with-mac-is-removed.md), amends [ADR 0032](0032-oneway-velux-enrollment-gesture.md) · **Recorded:** 2026-11
 
 Narrows [ADR 0032](0032-oneway-velux-enrollment-gesture.md) (one-way enrollment gestures, which honour
 `enrollment_with_mac`) for one radio.

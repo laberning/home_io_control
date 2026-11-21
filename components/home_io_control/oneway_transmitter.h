@@ -233,10 +233,7 @@ class OneWayTransmitter {
   /// are not matched against a VELUX capture
   /// (`tests/corpus/captures/enrollment/synthetic_enrollment_velux_kli_prog_sweep.yaml`).
   ///
-  /// **The `0x30`'s MAC trailer** is configurable via `enrollment_with_mac:` (default `false`, no
-  /// MAC — see create_1w_add_controller()'s `@warning`). Real VELUX (#74) and real Somfy captures
-  /// both use the no-MAC form, and a bench run on a Somfy Izymo did not take the MAC-bearing one. The option needs an
-  /// SX1262 or LR1121: the SX1276 cannot send the trailer, so the build rejects it there (ADR 0113).
+  /// **The `0x30` carries no MAC trailer**, the shape real Somfy and VELUX remotes send (ADR 0124).
   ///
   /// **Blocks for the whole gesture**, feeding the watchdog before each copy. The VELUX path is 6 bursts
   /// (`0x39` + 3-class `0x30` sweep + STOP + DOWN), sent back to back; with `low_power: true` each burst
