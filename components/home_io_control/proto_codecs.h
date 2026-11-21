@@ -487,13 +487,17 @@ bool decode_transfer_block(const IoFrame &f, uint8_t handle, uint16_t chunk, con
 /// maximum) and under rain (93 % minimum), and the limitation status of the KLF 200 API
 /// specification v3.18, section 10.5.4 (issue #98). The originator and remaining-time bytes read
 /// 00 in every reply captured so far, rain included, so their meaning is still an assumption.
-/// A Somfy awning answers with another value in the first byte, which decodes as a non-main
-/// parameter.
+///
+/// Byte 0 is a status byte, not a parameter id (ADR 0125): the request already names the
+/// parameter. It is split like the first byte of an EXECUTE answer (result_code_of(),
+/// execution_state_of()). A VELUX window answers 00 and a Somfy awning 05 (code 0, state 5, the
+/// byte it also sends in its status answers at rest); the result code is 0 in every captured
+/// reply. A non-zero code means the device gave no value.
 struct LimitationStatus {
-  uint8_t parameter_id{0};  ///< data[0]; LIMITATION_PARAM_MP for the main parameter.
-  uint16_t value_raw{0};    ///< data[1..2], big-endian, position coding (STATUS_POS_MAX = 100 %).
-  uint8_t originator{0};    ///< data[3], Command Originator that imposed the limit (ORIGINATOR_*).
-  uint8_t time_raw{0};      ///< data[4], remaining-time code; see limitation_time_seconds().
+  uint8_t status_byte{0};  ///< data[0], raw; split with result_code_of() and execution_state_of().
+  uint16_t value_raw{0};   ///< data[1..2], big-endian, position coding (STATUS_POS_MAX = 100 %).
+  uint8_t originator{0};   ///< data[3], Command Originator that imposed the limit (ORIGINATOR_*).
+  uint8_t time_raw{0};     ///< data[4], remaining-time code; see limitation_time_seconds().
 };
 
 /// @brief Decode a limitation reply (assumed layout, see LimitationStatus).

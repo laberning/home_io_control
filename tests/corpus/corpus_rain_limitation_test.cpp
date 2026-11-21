@@ -2,8 +2,8 @@
 /// @brief The rain decision applied to real limitation replies from the corpus.
 ///
 /// A VELUX INTEGRA window with a wired rain sensor answers the minimum-limitation read with 0 %
-/// dry and 93 % under rain; a Somfy awning answers in a layout whose first data byte is not the
-/// main parameter, so the same rule must call it unknown.
+/// dry and 93 % under rain; a Somfy awning answers with 05 in the first data byte (the status byte,
+/// ADR 0125), and the same rule must call it dry.
 
 #include "corpus_generated.h"
 #include "decisions_status.h"
@@ -31,6 +31,14 @@ std::optional<bool> rain_of(const uint8_t *bytes, size_t len) {
 
 template<size_t N> std::optional<bool> rain_of(const uint8_t (&bytes)[N]) { return rain_of(bytes, N); }
 
+/// One captured frame and its length.
+struct Reply {
+  const uint8_t *bytes;
+  size_t len;
+};
+
+template<size_t N> Reply reply(const uint8_t (&bytes)[N]) { return {bytes, N}; }
+
 }  // namespace
 
 TEST(CorpusRainLimitation, WindowReadsDryThenRainOnTheMinimumLimit) {
@@ -41,9 +49,37 @@ TEST(CorpusRainLimitation, WindowReadsDryThenRainOnTheMinimumLimit) {
       << "the wet minimum limit is the 93 % ventilation position, with originator and time both 00";
 }
 
-TEST(CorpusRainLimitation, SomfyAwningReplyIsUnknownAtEveryPosition) {
+TEST(CorpusRainLimitation, SomfyAwningReadsDryAtEveryPosition) {
   using namespace corpus;
-  EXPECT_EQ(rain_of(somfy_awning_probe_limitation_sx1262_frame1_bytes), std::nullopt);
-  EXPECT_EQ(rain_of(somfy_awning_probe_limitation_sx1262_frame5_bytes), std::nullopt);
-  EXPECT_EQ(rain_of(somfy_awning_probe_limitation_sx1262_frame9_bytes), std::nullopt);
+  // The awning puts 05 in byte 0 of every limitation answer: result code 0, state 5 (ADR 0125). Minimum replies are
+  // frames 1, 5 and 9; the maximum replies (frames 3, 7 and 11) carry 100 %, which is above the rain threshold, so only
+  // the minimum limit is a rain reading and is dry here.
+  EXPECT_EQ(rain_of(somfy_awning_probe_limitation_sx1262_frame1_bytes), false);
+  EXPECT_EQ(rain_of(somfy_awning_probe_limitation_sx1262_frame5_bytes), false);
+  EXPECT_EQ(rain_of(somfy_awning_probe_limitation_sx1262_frame9_bytes), false);
+}
+
+TEST(CorpusRainLimitation, EveryCapturedLimitationReplyHasResultCodeZero) {
+  using namespace corpus;
+  const Reply replies[] = {
+      // every 0x26 frame of both captures
+      reply(somfy_awning_probe_limitation_sx1262_frame1_bytes),
+      reply(somfy_awning_probe_limitation_sx1262_frame3_bytes),
+      reply(somfy_awning_probe_limitation_sx1262_frame5_bytes),
+      reply(somfy_awning_probe_limitation_sx1262_frame7_bytes),
+      reply(somfy_awning_probe_limitation_sx1262_frame9_bytes),
+      reply(somfy_awning_probe_limitation_sx1262_frame11_bytes),
+      reply(velux_window_probe_limitation_rain_sx1262_frame0_bytes),
+      reply(velux_window_probe_limitation_rain_sx1262_frame1_bytes),
+      reply(velux_window_probe_limitation_rain_sx1262_frame2_bytes),
+      reply(velux_window_probe_limitation_rain_sx1262_frame3_bytes),
+  };
+  for (const Reply &captured : replies) {
+    IoFrame frame;
+    ASSERT_TRUE(parse(captured.bytes, static_cast<uint8_t>(captured.len), frame));
+    LimitationStatus status;
+    ASSERT_TRUE(decode_limitation_status(frame, status));
+    EXPECT_EQ(result_code_of(status.status_byte), 0) << "status byte 0x" << std::hex << unsigned{status.status_byte};
+    EXPECT_TRUE(decisions::rain_from_limitation_reply(status).has_value());
+  }
 }

@@ -283,7 +283,8 @@ This is hardware-validated on a VELUX INTEGRA roof-window actuator with a wired 
 #98). The reading is as fresh as the interval and uses transmit time on a shared band, so pick the
 interval with [Polling for rain](../configuration/cover.md#polling-for-rain). VELUX KLF 200 API
 specification v3.18 (section 8.1) describes the same arrangement: a gateway learns of rain only by
-asking the window.
+asking the window. Only a VELUX window is validated for this reading; on another manufacturer's device the
+Rain sensor is experimental.
 
 ### How it relates to Active Issue
 

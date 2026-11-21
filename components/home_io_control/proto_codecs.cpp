@@ -545,7 +545,7 @@ bool decode_transfer_block(const IoFrame &f, uint8_t handle, uint16_t chunk, con
 bool decode_limitation_status(const IoFrame &f, LimitationStatus &out) {
   if (f.cmd != CMD_LIMITATION_STATUS_RESP || f.data_len != LIMITATION_RESP_DATA_SIZE)
     return false;
-  out.parameter_id = f.data[0];
+  out.status_byte = f.data[0];
   out.value_raw = read_u16_be(f.data + 1);
   out.originator = f.data[3];
   out.time_raw = f.data[4];

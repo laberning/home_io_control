@@ -234,7 +234,8 @@ struct EventSource {
 /// @brief A reading that is the answer to a limitation read (CMD_LIMITATION_STATUS_REQ), sent on a schedule.
 /// @details The reply is accepted only inside the exchange that asked and never reaches the status decode, so the
 ///          read cannot move a device's position or target. The row's value is the rain flag the reply's value gives
-///          (decisions::rain_from_limitation_reply()); a reply that says nothing of rain is no value.
+///          (decisions::rain_from_limitation_reply()); a reply with a non-zero result code or a value that is not a
+///          position is no value (ADR 0125).
 struct LimitationSource {
   LimitationType type;  ///< Which limit the hub asks for.
 };

@@ -9,6 +9,7 @@
 #include "proto_commands.h"
 
 #include "corpus_test_helpers.h"
+#include "log_capture.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
@@ -335,14 +336,40 @@ TEST_F(RainPollHub, AnotherCommandAnswerIsAQuietMissThatKeepsTheErrorWarning) {
       << "an answer of another shape is logged at debug only; the one warning stays for an error reply";
 }
 
-TEST_F(RainPollHub, ALimitationReplyForAnotherParameterIsAMiss) {
-  radio.queue_rx(test::make_rx_packet(
-      test::make_limitation_reply(comp.node_id_, DEVICE_NODE_ID, 0xBA00, 0x02, 0x1D, LIMITATION_PARAM_FP_FIRST)));
+namespace {
+/// @return How many logged lines report a limitation answer's non-zero result code.
+size_t result_code_lines(const test::LogCapture &log) {
+  size_t lines = 0;
+  for (const auto &line : log.lines()) {
+    if (line.format.find("limitation read answered with result code") != std::string::npos)
+      lines++;
+  }
+  return lines;
+}
+}  // namespace
+
+TEST_F(RainPollHub, ALimitationReplyWithANonZeroResultCodeIsAMissAndIsLogged) {
+  radio.queue_rx(
+      test::make_rx_packet(test::make_limitation_reply(comp.node_id_, DEVICE_NODE_ID, 0xBA00, 0x02, 0x1D, 0x2D)));
+  const test::LogCapture log;
 
   EXPECT_FALSE(comp.request_device_reading(DEVICE_ID, DeviceReading::RAIN));
 
   EXPECT_EQ(reading_value(device(), DeviceReading::RAIN), NO_VALUE);
   EXPECT_EQ(comp.device_reading_poll_policy_.get_failures(rain_key()), 1u);
+  EXPECT_EQ(result_code_lines(log), 1u) << "the non-zero result code is logged with its name";
+}
+
+TEST_F(RainPollHub, AReplyWithResultCodeZeroAndAnotherStateReadsDry) {
+  // The awning's answer 05 00 00 00 00: result code 0, state 5 (ADR 0125).
+  radio.queue_rx(
+      test::make_rx_packet(test::make_limitation_reply(comp.node_id_, DEVICE_NODE_ID, 0x0000, 0x00, 0x00, 0x05)));
+  const test::LogCapture log;
+
+  ASSERT_TRUE(comp.request_device_reading(DEVICE_ID, DeviceReading::RAIN));
+
+  EXPECT_EQ(reading_value(device(), DeviceReading::RAIN), DRY);
+  EXPECT_EQ(result_code_lines(log), 0u);
 }
 
 // ============================================================================

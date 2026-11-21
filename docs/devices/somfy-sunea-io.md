@@ -56,6 +56,10 @@ For a roller-shutter variant use `io_device_type: "roller_shutter"` and drop `in
   Oximo solar motors in the same catalogue are not — see [Somfy RS100](somfy-rs100.md).
 - **A status read while the motor runs is sometimes missed.** In the reported cases the next
   poll caught up, so the position in Home Assistant lagged by one poll (issue #196).
+- **The Rain sensor reads dry, and a wet reading is experimental.** With `rain_sensor_poll_interval:` set, the awning
+  answers the limitation read and the sensor shows "off". No capture shows the awning under a rain or wind lock, so
+  whether the sensor turns on in that state is unconfirmed. See
+  [Polling for rain](../configuration/cover.md#polling-for-rain).
 - **A wrong system key produces an error reply, not silence.** Captured deliberately, and useful
   when diagnosing: silence means the device never heard you, an error reply means it did.
 

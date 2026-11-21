@@ -23,10 +23,23 @@ TEST(LimitationStatus, DecodesHeardReplyForUnlimitedMinimum) {
   LimitationStatus s;
   ASSERT_TRUE(decode_limitation_status(
       test::make_payload_frame(CMD_LIMITATION_STATUS_RESP, {0x00, 0x00, 0x00, 0x00, 0x00}), s));
-  EXPECT_EQ(s.parameter_id, LIMITATION_PARAM_MP);
+  EXPECT_EQ(s.status_byte, 0x00);
   EXPECT_EQ(s.value_raw, 0x0000);
   EXPECT_EQ(s.originator, ORIGINATOR_LOCAL_USER);
   EXPECT_EQ(s.time_raw, 0x00);
+}
+
+TEST(LimitationStatus, KeepsTheBasicInfoByteRawAndSplitsIt) {
+  // The Somfy awning's answer carries 05 in byte 0: result code 0, execution state 5 (ADR 0125).
+  LimitationStatus s;
+  ASSERT_TRUE(decode_limitation_status(
+      test::make_payload_frame(CMD_LIMITATION_STATUS_RESP, {0x05, 0x00, 0x00, 0x00, 0x00}), s));
+  EXPECT_EQ(s.status_byte, 0x05);
+  EXPECT_EQ(result_code_of(s.status_byte), 0);
+  EXPECT_EQ(execution_state_of(s.status_byte), ExecutionState::DONE);
+  ASSERT_TRUE(decode_limitation_status(
+      test::make_payload_frame(CMD_LIMITATION_STATUS_RESP, {0x2D, 0x00, 0x00, 0x00, 0x00}), s));
+  EXPECT_EQ(result_code_of(s.status_byte), 5);
 }
 
 TEST(LimitationStatus, DecodesHeardReplyForUnlimitedMaximum) {

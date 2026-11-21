@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0050 -->
 
-**Status:** Accepted, amended by [ADR 0064](0064-a-sensor-reading-is-drawn-by-a-re-sent-event-subscription.md) (one retry a minute after an unanswered poll; the schedule class is `PeriodicPollPolicy`) · **Recorded:** 2026-10
+**Status:** Accepted, amended by [ADR 0064](0064-a-sensor-reading-is-drawn-by-a-re-sent-event-subscription.md) (one retry a minute after an unanswered poll; the schedule class is `PeriodicPollPolicy`) and [ADR 0125](0125-byte-0-of-a-limitation-answer-is-a-result-code-and-state.md) (byte 0 of the answer is the status byte) · **Recorded:** 2026-10
 
 ## Context
 

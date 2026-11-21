@@ -152,16 +152,26 @@ TEST(EntityHelpers, DescribeLimitationReplyRendersPredictedRainLayout) {
   // Prediction from the KLF 200 API specification, not a capture.
   EXPECT_EQ(detail::describe_limitation_reply(
                 test::make_payload_frame(CMD_LIMITATION_STATUS_RESP, {0x00, 0xBA, 0x00, 0x02, 0x1D})),
-            "limitation (assumed layout): param=MP value=93% (BA 00) originator=rain_sensor(0x02) time=0x1D (900 s)");
+            "limitation (assumed layout): status=0x00 (code 0, state 0) value=93% (BA 00) originator=rain_sensor(0x02) "
+            "time=0x1D (900 s)");
 }
 
 TEST(EntityHelpers, DescribeLimitationReplyRendersHeardReplies) {
   EXPECT_EQ(detail::describe_limitation_reply(
                 test::make_payload_frame(CMD_LIMITATION_STATUS_RESP, {0x00, 0xC8, 0x00, 0x00, 0x00})),
-            "limitation (assumed layout): param=MP value=100% (C8 00) originator=local_user(0x00) time=0x00 (30 s)");
+            "limitation (assumed layout): status=0x00 (code 0, state 0) value=100% (C8 00) originator=local_user(0x00) "
+            "time=0x00 (30 s)");
   EXPECT_EQ(detail::describe_limitation_reply(
                 test::make_payload_frame(CMD_LIMITATION_STATUS_RESP, {0x00, 0x00, 0x00, 0x00, 0x00})),
-            "limitation (assumed layout): param=MP value=0% (00 00) originator=local_user(0x00) time=0x00 (30 s)");
+            "limitation (assumed layout): status=0x00 (code 0, state 0) value=0% (00 00) originator=local_user(0x00) "
+            "time=0x00 (30 s)");
+}
+
+TEST(EntityHelpers, DescribeLimitationReplyKeepsTheRawStatusByte) {
+  EXPECT_EQ(detail::describe_limitation_reply(
+                test::make_payload_frame(CMD_LIMITATION_STATUS_RESP, {0x05, 0x00, 0x00, 0x00, 0x00})),
+            "limitation (assumed layout): status=0x05 (code 0, state 5) value=0% (00 00) originator=local_user(0x00) "
+            "time=0x00 (30 s)");
 }
 
 TEST(EntityHelpers, DescribeLimitationReplyReportsUnexpectedLength) {

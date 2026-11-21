@@ -236,11 +236,14 @@ static constexpr uint16_t RAIN_MINIMUM_LIMIT_RAW = POSITION_RAW_PER_PERCENT * RA
 }
 
 /// @brief Rain from a decoded limitation reply: the one place that knows which reply fields
-/// decide. Only the main parameter's value counts; originator and remaining time do not.
+/// decide. The value counts when the result code in the status byte is 0, whatever the state
+/// bits (ADR 0125); originator and remaining time do not count.
 /// @param status A decoded CMD_LIMITATION_STATUS_RESP payload.
-/// @return nullopt unless the reply is for the main parameter, else rain_from_minimum_limit().
+/// @return nullopt for a non-zero result code (the device gave no value), else rain_from_minimum_limit().
+/// \todo Experimental for a device other than VELUX: no capture shows a Somfy device under a rain or
+///       wind lock, so a wet reading from one is unconfirmed (a dry one is the measured case).
 [[nodiscard]] inline std::optional<bool> rain_from_limitation_reply(const LimitationStatus &status) {
-  if (status.parameter_id != LIMITATION_PARAM_MP)
+  if (result_code_of(status.status_byte) != 0)
     return std::nullopt;
   return rain_from_minimum_limit(status.value_raw);
 }

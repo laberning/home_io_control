@@ -97,15 +97,14 @@ inline IoFrame make_frame(const uint8_t src[3], const uint8_t dst[3], uint8_t cm
 }
 
 // Build a CMD_LIMITATION_STATUS_RESP from `device` to `dst`, carrying the assumed data layout
-// `[parameter id] [value hi] [value lo] [originator] [time]` (see LimitationStatus in proto_codecs.h).
+// `[status] [value hi] [value lo] [originator] [time]` (see LimitationStatus in proto_codecs.h).
 inline IoFrame make_limitation_reply(const uint8_t dst[3], const uint8_t device[3], uint16_t value_raw,
-                                     uint8_t originator = 0, uint8_t time_raw = 0,
-                                     uint8_t parameter_id = LIMITATION_PARAM_MP) {
+                                     uint8_t originator = 0, uint8_t time_raw = 0, uint8_t status_byte = 0) {
   IoFrame frame{};
   init_frame(frame, true, false, true, false);
   set_dst(frame, dst);
   set_src(frame, device);
-  const uint8_t data[LIMITATION_RESP_DATA_SIZE] = {parameter_id, static_cast<uint8_t>(value_raw >> 8),
+  const uint8_t data[LIMITATION_RESP_DATA_SIZE] = {status_byte, static_cast<uint8_t>(value_raw >> 8),
                                                    static_cast<uint8_t>(value_raw & 0xFF), originator, time_raw};
   set_cmd(frame, CMD_LIMITATION_STATUS_RESP, data, sizeof(data));
   return frame;

@@ -199,8 +199,8 @@ TEST(HubManagement, ProbeDeviceReportsDecodedLimitationReplyBesideRawHex) {
   const auto result = component.management_actions_.probe_device("ABC123", "private_fn", "0x06");
   ASSERT_TRUE(result.success) << result.message;
   EXPECT_EQ(result.response_cmd, CMD_LIMITATION_STATUS_RESP);
-  EXPECT_EQ(result.decoded,
-            "limitation (assumed layout): param=MP value=93% (BA 00) originator=rain_sensor(0x02) time=0x1D (900 s)");
+  EXPECT_EQ(result.decoded, "limitation (assumed layout): status=0x00 (code 0, state 0) value=93% (BA 00) "
+                            "originator=rain_sensor(0x02) time=0x1D (900 s)");
   EXPECT_NE(result.message.find("(LIMITATION_STATUS_RESP) hex="), std::string::npos) << result.message;
   EXPECT_NE(result.message.find("[" + result.decoded + "]"), std::string::npos) << result.message;
 }
@@ -252,7 +252,8 @@ TEST(HubManagement, ProbeSweepAppendsDecodedLimitationToTheIndexLine) {
   const auto result = component.management_actions_.probe_sweep("ABC123", "private_fn", "6", "6");
   ASSERT_TRUE(result.success);
   EXPECT_NE(result.message.find("index=0x06: cmd=0x26 hex="), std::string::npos) << result.message;
-  EXPECT_NE(result.message.find("[limitation (assumed layout): param=MP value=100% (C8 00) "), std::string::npos)
+  EXPECT_NE(result.message.find("[limitation (assumed layout): status=0x00 (code 0, state 0) value=100% (C8 00) "),
+            std::string::npos)
       << result.message;
 }
 
@@ -470,10 +471,12 @@ TEST(HubManagement, ProbeSweepLimitationOverBothIndicesReportsDecodedLines) {
   ASSERT_TRUE(result.success) << result.message;
   EXPECT_NE(result.message.find("2 answered"), std::string::npos) << result.message;
   EXPECT_NE(result.message.find("index=0x00: cmd=0x26 hex="), std::string::npos) << result.message;
-  EXPECT_NE(result.message.find("[limitation (assumed layout): param=MP value=0% (00 00)"), std::string::npos)
+  EXPECT_NE(result.message.find("[limitation (assumed layout): status=0x00 (code 0, state 0) value=0% (00 00)"),
+            std::string::npos)
       << result.message;
   EXPECT_NE(result.message.find("index=0x01: cmd=0x26 hex="), std::string::npos) << result.message;
-  EXPECT_NE(result.message.find("[limitation (assumed layout): param=MP value=100% (C8 00)"), std::string::npos)
+  EXPECT_NE(result.message.find("[limitation (assumed layout): status=0x00 (code 0, state 0) value=100% (C8 00)"),
+            std::string::npos)
       << result.message;
   ASSERT_GE(radio.get_sent_data().size(), 2u);
   EXPECT_EQ(sent_frame_bytes(radio, 0)[9], 0x80);

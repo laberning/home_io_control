@@ -71,9 +71,9 @@ static constexpr uint8_t CMD_LIMITATION_STATUS_REQ =
            ///< under an active limitation. Build it with create_limitation_status_read().
 static constexpr uint8_t CMD_LIMITATION_STATUS_RESP =
     0x26;  ///< Reply to CMD_LIMITATION_STATUS_REQ. Five data bytes, assumed to be
-           ///< `[parameter id] [value hi] [value lo] [originator] [time]`; decode_limitation_status()
-           ///< documents the layout. Captured: the unlimited case (0 % and 100 %) and a rain-limited window (minimum
-           ///< 93 %, with originator and remaining time both 00).
+           ///< `[status] [value hi] [value lo] [originator] [time]` (ADR 0125);
+           ///< decode_limitation_status() documents the layout. Captured: the unlimited case (0 % and 100 %) and a
+           ///< rain-limited window (minimum 93 %, with originator and remaining time both 00).
 
 // Discovery and pairing commands
 static constexpr uint8_t CMD_DISCOVER_REQ = 0x28;   ///< Broadcast discovery request

@@ -177,6 +177,15 @@ inline std::string format_limitation_param(uint8_t parameter_id) {
   return std::string(buffer.data());
 }
 
+/// @brief Render the status byte of a limitation reply: the raw byte with its result code and state.
+/// @return e.g. "0x05 (code 0, state 5)".
+inline std::string format_limitation_status_byte(uint8_t status_byte) {
+  std::array<char, LIMITATION_TEXT_BUFFER_SIZE> buffer{};
+  std::snprintf(buffer.data(), buffer.size(), "0x%02X (code %u, state %u)", status_byte, error_resp_code(status_byte),
+                error_resp_state(status_byte));
+  return std::string(buffer.data());
+}
+
 /// @brief Render a limitation value: a percentage, or the raw selector when it is not a position.
 ///
 /// Values above STATUS_POS_MAX are position selectors (stop, unknown, ...), never percentages, so
@@ -212,10 +221,10 @@ inline std::string format_limitation_time(uint8_t time_raw) {
 }
 
 /// @brief Render a decoded limitation reply on one line, raw bytes beside every decoded value.
-/// @return e.g. "limitation (assumed layout): param=MP value=93% (BA 00) originator=rain_sensor(0x02) time=0x1D (900
-/// s)".
+/// @return e.g. "limitation (assumed layout): status=0x00 (code 0, state 0) value=93% (BA 00)
+/// originator=rain_sensor(0x02) time=0x1D (900 s)".
 inline std::string format_limitation_status(const LimitationStatus &status) {
-  return "limitation (assumed layout): param=" + format_limitation_param(status.parameter_id) +
+  return "limitation (assumed layout): status=" + format_limitation_status_byte(status.status_byte) +
          " value=" + format_limitation_value(status.value_raw) + " originator=" + format_originator(status.originator) +
          " time=" + format_limitation_time(status.time_raw);
 }

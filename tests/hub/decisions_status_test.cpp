@@ -159,7 +159,7 @@ TEST(Decisions, RainFromMinimumLimitValue) {
   }
 }
 
-TEST(Decisions, RainFromLimitationReplyUsesOnlyTheMainParameterValue) {
+TEST(Decisions, RainFromLimitationReplyUsesTheValueWhenTheResultCodeIsZero) {
   LimitationStatus status;
   status.value_raw = 0xBA00;
   status.originator = 0x02;
@@ -173,8 +173,17 @@ TEST(Decisions, RainFromLimitationReplyUsesOnlyTheMainParameterValue) {
   status.value_raw = 0x0000;
   EXPECT_EQ(decisions::rain_from_limitation_reply(status), false);
 
+  status.status_byte = 0x05;  // the awning's byte: code 0, state 5; the state bits do not matter
+  EXPECT_EQ(decisions::rain_from_limitation_reply(status), false);
   status.value_raw = 0xBA00;
-  status.parameter_id = LIMITATION_PARAM_FP_FIRST;  // a functional parameter is not the window's limit
+  EXPECT_EQ(decisions::rain_from_limitation_reply(status), true);
+
+  status.status_byte = 0x2D;  // result code 5: the device gave no value
+  EXPECT_EQ(decisions::rain_from_limitation_reply(status), std::nullopt);
+  status.value_raw = 0x0000;
+  EXPECT_EQ(decisions::rain_from_limitation_reply(status), std::nullopt) << "2D 00 00 00 00 gives no value either";
+  status.status_byte = 0x28;  // a non-zero code with state 0 is no value either
+  status.value_raw = 0x0000;
   EXPECT_EQ(decisions::rain_from_limitation_reply(status), std::nullopt);
 }
 

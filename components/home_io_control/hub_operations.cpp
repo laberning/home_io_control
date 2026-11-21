@@ -634,6 +634,11 @@ const FrameReadingKind LIMITATION_READING_KIND = {
       }
       ESP_LOGD(detail::TAG, "Device %s: %s", device_id.c_str(), detail::describe_limitation_reply(response).c_str());
       detail_text = " (minimum limit " + detail::format_limitation_value(status.value_raw) + ")";
+      const uint8_t code = result_code_of(status.status_byte);
+      if (code != 0) {
+        ESP_LOGD(detail::TAG, "Device %s: limitation read answered with result code %u %s; no rain value",
+                 device_id.c_str(), code, result_code_name(code));
+      }
       const std::optional<bool> rain = decisions::rain_from_limitation_reply(status);
       return rain.has_value() ? std::optional<float>(*rain ? 1.0F : 0.0F) : std::nullopt;
     },
