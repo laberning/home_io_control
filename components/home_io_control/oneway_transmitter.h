@@ -39,6 +39,11 @@ using OneWayTransmitFn = std::function<bool(const IoFrame &frame, uint32_t freq,
 /// (RadioDriver::preamble_bytes_for_ms()); the transmitter has no radio of its own.
 using OneWayPreambleBytesFn = std::function<uint16_t(float ms)>;
 
+/// @brief The inverse of OneWayPreambleBytesFn (RadioDriver::preamble_ms_for_bytes()): how long a
+/// programmed preamble lasts on the active radio. Only the TX log of the legacy shape's fixed
+/// `LONG_PREAMBLE` needs it.
+using OneWayPreambleMsFn = std::function<float(uint16_t bytes)>;
+
 /// @brief What a 1W command attempt did — the only feedback this feature can ever produce.
 ///
 /// 1W has no reply, so nothing here says a device acted; it says what the hub transmitted. That is
@@ -57,32 +62,58 @@ struct OneWayCommandReport {
 /// @brief Invoked once per attempted 1W command, successful or not.
 using OneWayCommandReportFn = std::function<void(const OneWayCommandReport &report)>;
 
-/// @brief Resolve one copy's shape (oneway_burst_copy_shape()) to the actual preamble byte count.
+/// @brief The two preamble durations of a burst and the radio's conversions for them.
 ///
-/// The one place `OneWayPreamble::WAKE` -> `LONG_PREAMBLE` / `OneWayPreamble::NORMAL` ->
-/// the start preamble is written — send_burst(), format_oneway_preamble_list(), and this
-/// header's tests all go through it, so the burst, the TX log line describing it, and anything
-/// asserting on it can never resolve the mapping three different ways.
-/// @param shape A copy's shape, from oneway_burst_copy_shape().
-/// @param start_preamble_bytes The start preamble (`start_preamble_ms`) in bytes on the active radio,
-///        which a `NORMAL`-shaped copy resolves to.
-/// @return The preamble length in bytes this copy transmits with.
+/// Built per burst from the live tuning (never cached), so a change of `start_preamble_ms` or
+/// `low_power_wake_ms` applies to the next command.
 /// @ingroup hioc_hub
-uint16_t oneway_copy_preamble_bytes(OneWayCopyShape shape, uint16_t start_preamble_bytes);
+struct OneWayPreambleRules {
+  float start_ms;                      ///< `start_preamble_ms`: a normal copy.
+  float wake_ms;                       ///< `low_power_wake_ms`: the wake-up copy of a `LOW_POWER` identity.
+  OneWayPreambleBytesFn bytes_for_ms;  ///< Duration to programmed bytes on the active radio.
+  OneWayPreambleMsFn ms_for_bytes;     ///< Programmed bytes to duration on the active radio.
+};
 
-/// @brief Render the preamble bytes each copy of a burst will use, e.g. `"1024/48/48/48"` (a 10 ms start preamble is 48
-/// bytes on an SX1262 or LR1121, 38 on an SX1276).
-///
-/// Built from oneway_burst_copy_shape() and oneway_copy_preamble_bytes() — the exact functions
-/// send_burst() itself calls per copy — so the TX log line can never disagree with what actually
-/// went on air. Pure and free-standing so it is unit-testable: the host ESP_LOG stub discards its
-/// arguments, so a formatter buried in the log call could not be asserted on at all.
-/// @param power_class The identity's power class.
-/// @param start_preamble_bytes The start preamble in bytes on the active radio, which a
-///        `NORMAL`-shaped copy resolves to.
-/// @return Slash-separated preamble byte counts, one per copy, in burst order.
+/// @brief What one copy of a burst transmits with: the programmed length and its duration.
 /// @ingroup hioc_hub
-std::string format_oneway_preamble_list(OneWayPowerClass power_class, uint16_t start_preamble_bytes);
+struct OneWayCopyPreamble {
+  uint16_t bytes;  ///< Programmed preamble length handed to the transmit callback.
+  float ms;        ///< The same preamble as a duration, for the TX log.
+};
+
+/// @brief Resolve one copy's shape (oneway_burst_copy_shape()) to the preamble it transmits with.
+///
+/// The one place the shape-to-preamble mapping is written (ADR 0115): a `NORMAL` copy lasts the
+/// start preamble, the wake-up copy of a `LOW_POWER` identity lasts `low_power_wake_ms`, both through
+/// the radio's own conversion so they last the same on every radio. Only the wake-up copies of the
+/// `LEGACY_LONG` shape keep a fixed programmed length (`LONG_PREAMBLE`), which keeps that shape's
+/// air time per radio unchanged. A duration taken from `low_power_wake_ms` always converts to at
+/// least `LONG_PREAMBLE` bytes (the setting's floor), so every wake-up copy is also labelled a
+/// wake-up (is_wake_preamble()). send_burst(), format_oneway_preamble_list() and the tests all go
+/// through this function, so the burst, its log line and anything asserting on them cannot resolve
+/// the mapping differently.
+/// @param shape A copy's shape, from oneway_burst_copy_shape().
+/// @param power_class The identity's power class the shape came from.
+/// @param rules Current durations and the radio's conversions.
+/// @return The copy's programmed length and duration.
+/// @ingroup hioc_hub
+OneWayCopyPreamble oneway_copy_preamble(OneWayCopyShape shape, OneWayPowerClass power_class,
+                                        const OneWayPreambleRules &rules);
+
+/// @brief Render the preamble duration of each copy of a burst in milliseconds, e.g. `"600/10/10/10"`.
+///
+/// Milliseconds rather than programmed bytes, so a report reads the same on every board (a byte is
+/// 8 or 10 bit periods depending on the radio). Rounded to a tenth of a millisecond, with the decimal
+/// left out of a whole value (`"600/3.5/3.5/3.5"`, `"213.3/213.3/213.3/213.3"`). Built from
+/// oneway_burst_copy_shape() and oneway_copy_preamble() -- the exact functions send_burst() itself
+/// calls per copy -- so the TX log line can never disagree with what went on air. Pure and
+/// free-standing so it is unit-testable: the host ESP_LOG stub discards its arguments, so a
+/// formatter buried in the log call could not be asserted on at all.
+/// @param power_class The identity's power class.
+/// @param rules Current durations and the radio's conversions.
+/// @return Slash-separated durations in ms, one per copy, in burst order.
+/// @ingroup hioc_hub
+std::string format_oneway_preamble_list(OneWayPowerClass power_class, const OneWayPreambleRules &rules);
 
 /// @brief Sends 1W commands as the repeated bursts real remotes send.
 /// @ingroup hioc_hub
@@ -93,10 +124,16 @@ class OneWayTransmitter {
   ///        cached) so a live change to `start_preamble_ms` (the Home Assistant number entity)
   ///        takes effect on the next command without a reboot -- the same pattern `ExchangeEngine`
   ///        already uses for the identical field.
-  /// @param preamble_bytes Converts the start preamble duration to bytes on the active radio; must
-  ///        stay valid for this object's lifetime. The wake-up copy keeps `LONG_PREAMBLE`.
-  OneWayTransmitter(OneWayTransmitFn transmit, const TuningConfig *tuning, OneWayPreambleBytesFn preamble_bytes)
-      : transmit_(std::move(transmit)), preamble_bytes_(std::move(preamble_bytes)), tuning_(tuning) {}
+  /// @param preamble_bytes Converts a preamble duration (`start_preamble_ms`, `low_power_wake_ms`) to
+  ///        bytes on the active radio; must stay valid for this object's lifetime.
+  /// @param preamble_ms The inverse conversion, for the TX log of the legacy shape's fixed
+  ///        `LONG_PREAMBLE` copies; must stay valid for this object's lifetime.
+  OneWayTransmitter(OneWayTransmitFn transmit, const TuningConfig *tuning, OneWayPreambleBytesFn preamble_bytes,
+                    OneWayPreambleMsFn preamble_ms)
+      : transmit_(std::move(transmit)),
+        preamble_bytes_(std::move(preamble_bytes)),
+        preamble_ms_(std::move(preamble_ms)),
+        tuning_(tuning) {}
 
   // === Controller identities ===
 
@@ -167,14 +204,14 @@ class OneWayTransmitter {
   ///
   /// **It blocks for the whole burst**, feeding the watchdog in the gaps. The three inter-copy
   /// gaps alone are 3 * ONEWAY_BURST_INTERVAL_MS = ~120 ms of pure delay; how much airtime the
-  /// four copies themselves add depends on `power_class` and on the radio, because the same
-  /// `LONG_PREAMBLE` byte count lasts about 213 ms on an SX1262 or LR1121 and about 267 ms on an
-  /// SX1276: `LEGACY_LONG` puts it on every copy, ≈1.0 s per burst on an SX1262 or LR1121 and ≈1.2 s
-  /// on an SX1276 (the latter measured in issue #74's logs); `ALWAYS_ALIVE` puts the live
+  /// four copies themselves add depends on `power_class` and, for `LEGACY_LONG`, on the radio, because
+  /// the same `LONG_PREAMBLE` byte count lasts about 213 ms on an SX1262 or LR1121 and about 267 ms
+  /// on an SX1276: `LEGACY_LONG` puts it on every copy, ≈1.0 s per burst on an SX1262 or LR1121 and
+  /// ≈1.2 s on an SX1276 (the latter measured in issue #74's logs); `ALWAYS_ALIVE` puts the live
   /// `start_preamble_ms` on every copy, ≈200 ms per burst (measured on SX1276, issue #74);
-  /// `LOW_POWER` sits between the two (one long copy, three normal), ≈0.4 s on an SX1262 or LR1121
-  /// and ≈0.45 s on an SX1276. Per ADR 0013 all radio work happens on the ESPHome loop and the operation
-  /// queue is the concurrency model; an authenticated 2W exchange already blocks far longer than
+  /// `LOW_POWER` sits between the two (one wake-up copy of `low_power_wake_ms`, three normal), ≈0.8 s
+  /// with the default 600 ms wake-up on every radio (ADR 0115). Per ADR 0013 all radio work happens on the ESPHome loop
+  /// and the operation queue is the concurrency model; an authenticated 2W exchange already blocks far longer than
   /// this. Scheduling the repeats through a timeout would add a second concurrency model and would
   /// let a queued 2W exchange interleave between copies of one command.
   /// @param frame Signed 1W frame to send.
@@ -275,6 +312,7 @@ class OneWayTransmitter {
 
   OneWayTransmitFn transmit_;
   OneWayPreambleBytesFn preamble_bytes_;
+  OneWayPreambleMsFn preamble_ms_;
   OneWayCommandReportFn report_;
   OneWayControllerRegistry identities_;
   OneWaySequenceStore sequences_;

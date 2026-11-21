@@ -131,10 +131,12 @@ class IOHomeControlComponent : public Component,
         // long after construction. It injects the *ability* to transmit rather than a reference
         // to whichever collaborator currently owns the radio. `&tuning_` is read per burst
         // (never cached), same pattern as exchange_engine_ above, so a live change to
-        // `start_preamble_ms` takes effect on the next 1W command without a reboot.
+        // `start_preamble_ms` or `low_power_wake_ms` takes effect on the next 1W command without a
+        // reboot.
         oneway_transmitter_([this](const IoFrame &frame, uint32_t freq,
                                    uint16_t preamble) { return this->transmit_frame_(frame, freq, preamble); },
-                            &tuning_, [this](float ms) { return this->exchange_engine_.preamble_bytes_for_ms(ms); }),
+                            &tuning_, [this](float ms) { return this->exchange_engine_.preamble_bytes_for_ms(ms); },
+                            [this](uint16_t bytes) { return this->exchange_engine_.preamble_ms_for_bytes(bytes); }),
         // set_timeout() is protected on the real ESPHome Component (only public in the host stub),
         // so a lambda defined here — with protected access — is the one legitimate caller. See
         // oneway_key_adoption.h's NamedTimeoutFn.

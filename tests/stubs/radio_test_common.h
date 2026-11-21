@@ -32,6 +32,8 @@ inline uint16_t mock_preamble_bytes_for_ms(float ms) { return mock_preamble_byte
 constexpr float mock_preamble_ms(uint16_t bytes) {
   return static_cast<float>(bytes * 8.0 * 1000.0 / esphome::home_io_control::IO868_LINE_RATE_BPS);
 }
+/// Function form of mock_preamble_ms(), the shape OneWayPreambleMsFn takes.
+inline float mock_preamble_ms_for_bytes(uint16_t bytes) { return mock_preamble_ms(bytes); }
 /// The default durations as programmed bytes on a raw-stream radio: 2880 / 48 / 17 / 96.
 inline constexpr uint16_t MOCK_WAKE_PREAMBLE = mock_preamble_bytes(esphome::home_io_control::LOW_POWER_WAKE_MS);
 inline constexpr uint16_t MOCK_START_PREAMBLE = mock_preamble_bytes(esphome::home_io_control::START_PREAMBLE_MS);

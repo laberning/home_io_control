@@ -89,7 +89,7 @@ class OneWayTransmitterTest : public ::testing::Test {
 
 TEST_F(OneWayTransmitterTest, SendsExactlyFourCopiesOnChannelTwo) {
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   EXPECT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG));
 
@@ -106,7 +106,7 @@ TEST_F(OneWayTransmitterTest, EveryCopyIsByteIdenticalExceptCtrl1) {
   for (const OneWayPowerClass power_class :
        {OneWayPowerClass::LEGACY_LONG, OneWayPowerClass::ALWAYS_ALIVE, OneWayPowerClass::LOW_POWER}) {
     TransmitRecorder recorder;
-    OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+    OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
     transmitter.send_burst(make_stop_frame(), power_class);
 
@@ -122,7 +122,7 @@ TEST_F(OneWayTransmitterTest, EveryCopyIsByteIdenticalExceptCtrl1) {
 
 TEST_F(OneWayTransmitterTest, SpacesCopiesByTheProtocolInterval) {
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG);
 
@@ -141,7 +141,7 @@ TEST_F(OneWayTransmitterTest, GapCountIsUnchangedAcrossEveryPowerClass) {
        {OneWayPowerClass::LEGACY_LONG, OneWayPowerClass::ALWAYS_ALIVE, OneWayPowerClass::LOW_POWER}) {
     esphome::test_hal::reset_delays();
     TransmitRecorder recorder;
-    OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+    OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
     transmitter.send_burst(make_stop_frame(), power_class);
 
@@ -154,7 +154,7 @@ TEST_F(OneWayTransmitterTest, FeedsTheWatchdogDuringTheGaps) {
   // The burst blocks the ESPHome loop by design (ADR 0013). That is well inside the watchdog
   // window, but the feed is what keeps it that way if the interval is ever raised.
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   // The counter is global and monotonic across the suite, so assert on the delta.
   const uint32_t feeds_before = esphome::App.feed_wdt_calls;
@@ -170,7 +170,7 @@ TEST_F(OneWayTransmitterTest, ReportsSuccessWhenOnlyTheFirstCopiesGetOut) {
   TransmitRecorder recorder;
   recorder.results = {true, true};
   recorder.default_result = false;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   EXPECT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG))
       << "a partial burst is still a transmitted command";
@@ -182,7 +182,7 @@ TEST_F(OneWayTransmitterTest, ACopyThatFailsDoesNotKeepALaterCopyFromGoingOut) {
   // The radio refuses copy 2 and takes copy 3 and 4: the burst reports success and the later copies are on air.
   TransmitRecorder recorder;
   recorder.results = {true, false, true, true};
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   EXPECT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER));
 
@@ -196,7 +196,7 @@ TEST_F(OneWayTransmitterTest, ACopyThatFailsDoesNotKeepALaterCopyFromGoingOut) {
 TEST_F(OneWayTransmitterTest, ReportsFailureWhenNothingGetsOut) {
   TransmitRecorder recorder;
   recorder.default_result = false;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   EXPECT_FALSE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG))
       << "with no copy on air there is nothing to claim; 1W gives no other evidence";
@@ -208,7 +208,7 @@ TEST_F(OneWayTransmitterTest, KeepsItsCadenceWhenEveryCopyIsRefused) {
   // The gaps go before each copy after the first, so refused copies do not shorten the burst.
   TransmitRecorder recorder;
   recorder.default_result = false;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG);
 
@@ -222,7 +222,7 @@ TEST_F(OneWayTransmitterTest, KeepsItsCadenceWhenEveryCopyIsRefused) {
 
 TEST_F(OneWayTransmitterTest, LegacyLongBurstSendsTheLongWakeUpOnEveryCopyWithoutTheFlag) {
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG));
 
@@ -241,7 +241,7 @@ TEST_F(OneWayTransmitterTest, AlwaysAliveBurstUsesNormalStartPreambleOnEveryCopy
   // to ALWAYS_ALIVE: preamble and flag.
   tuning_.start_preamble_ms = mock_preamble_ms(32);
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::ALWAYS_ALIVE));
 
@@ -258,12 +258,12 @@ TEST_F(OneWayTransmitterTest, LowPowerBurstWakesOnFirstCopyOnly) {
   // to LOW_POWER: which copy wakes and which don't.
   tuning_.start_preamble_ms = mock_preamble_ms(32);
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER));
 
   ASSERT_EQ(recorder.sent.size(), ONEWAY_BURST_REPEATS);
-  EXPECT_EQ(recorder.sent[0].preamble, LONG_PREAMBLE) << "copy 1 wakes the receiver";
+  EXPECT_EQ(recorder.sent[0].preamble, MOCK_WAKE_PREAMBLE) << "copy 1 wakes the receiver for low_power_wake_ms";
   EXPECT_NE(recorder.sent[0].bytes[1] & CTRL1_LOW_POWER, 0) << "copy 1 sets CTRL1_LOW_POWER";
   for (size_t i = 1; i < recorder.sent.size(); i++) {
     EXPECT_EQ(recorder.sent[i].preamble, 32) << "copy " << i << " is a normal repeat";
@@ -271,26 +271,56 @@ TEST_F(OneWayTransmitterTest, LowPowerBurstWakesOnFirstCopyOnly) {
   }
 }
 
-TEST_F(OneWayTransmitterTest, NormalCopiesConvertTheStartDurationOnTheRadioWhileTheWakeUpStaysLongPreamble) {
-  // The burst's normal copies follow the start preamble duration (ADR 0097): the converter of a
-  // radio that sends 10 bit periods per byte gives fewer programmed bytes for the same 10 ms. The
-  // one-way wake-up is not a duration and stays LONG_PREAMBLE on every radio.
+TEST_F(OneWayTransmitterTest, LowPowerCopiesLastTheSameTimeOnEveryRadioWhateverTheBitsPerByte) {
+  // Both the wake-up copy (`low_power_wake_ms`) and the normal copies (`start_preamble_ms`) go
+  // through the radio's own conversion (ADR 0115): a radio that sends 10 bit periods per byte
+  // programs fewer bytes for the same duration, so the time on air is the same.
   TenBitPreambleRadio ten_bit;
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_,
-                                [&ten_bit](float ms) { return ten_bit.preamble_bytes_for_ms(ms); });
+  OneWayTransmitter transmitter(
+      recorder.fn(), &tuning_, [&ten_bit](float ms) { return ten_bit.preamble_bytes_for_ms(ms); },
+      [&ten_bit](uint16_t bytes) { return ten_bit.preamble_ms_for_bytes(bytes); });
 
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER));
 
   ASSERT_EQ(recorder.sent.size(), ONEWAY_BURST_REPEATS);
-  EXPECT_EQ(recorder.sent[0].preamble, LONG_PREAMBLE);
+  EXPECT_EQ(recorder.sent[0].preamble, 2304) << "600 ms at 10 bit periods per byte";
+  EXPECT_EQ(recorder.sent[0].preamble, ten_bit.preamble_bytes_for_ms(LOW_POWER_WAKE_MS));
   for (size_t i = 1; i < recorder.sent.size(); i++)
     EXPECT_EQ(recorder.sent[i].preamble, 38) << "10 ms at 10 bit periods per byte, copy " << i;
 }
 
+TEST_F(OneWayTransmitterTest, LowPowerWakeUpFollowsTheWakeSettingOnTheNextCommand) {
+  TransmitRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
+
+  ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER));
+  EXPECT_EQ(recorder.sent[0].preamble, mock_preamble_bytes(600)) << "the default is 600 ms";
+
+  tuning_.low_power_wake_ms = 1000;
+  ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LOW_POWER));
+  EXPECT_EQ(recorder.sent[ONEWAY_BURST_REPEATS].preamble, mock_preamble_bytes(1000));
+}
+
+TEST_F(OneWayTransmitterTest, LegacyLongKeepsLongPreambleBytesOnEveryRadioAndIgnoresTheWakeSetting) {
+  // The long-on-every-copy shape keeps its present air time per radio (ADR 0115).
+  tuning_.low_power_wake_ms = 1000;
+  TenBitPreambleRadio ten_bit;
+  TransmitRecorder recorder;
+  OneWayTransmitter transmitter(
+      recorder.fn(), &tuning_, [&ten_bit](float ms) { return ten_bit.preamble_bytes_for_ms(ms); },
+      [&ten_bit](uint16_t bytes) { return ten_bit.preamble_ms_for_bytes(bytes); });
+
+  ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::LEGACY_LONG));
+
+  ASSERT_EQ(recorder.sent.size(), ONEWAY_BURST_REPEATS);
+  for (const auto &sent : recorder.sent)
+    EXPECT_EQ(sent.preamble, LONG_PREAMBLE);
+}
+
 TEST_F(OneWayTransmitterTest, NormalPreambleIsReadLiveFromTuning) {
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   tuning_.start_preamble_ms = mock_preamble_ms(8);
   ASSERT_TRUE(transmitter.send_burst(make_stop_frame(), OneWayPowerClass::ALWAYS_ALIVE));
@@ -308,7 +338,7 @@ TEST_F(OneWayTransmitterTest, TransmitterOwnsTheLowPowerBit) {
   IoFrame frame = make_stop_frame();
   frame.ctrl1 |= CTRL1_LOW_POWER;
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   ASSERT_TRUE(transmitter.send_burst(frame, OneWayPowerClass::ALWAYS_ALIVE));
 
@@ -324,7 +354,7 @@ TEST_F(OneWayTransmitterTest, FlaggedCopyStillCarriesAValidMac) {
   ASSERT_TRUE(create_1w_add_controller(frame, CONTROLLER_SRC, DeviceType::VERTICAL_EXTERIOR_AWNING, MANUFACTURER_SOMFY,
                                        0x1234, test::TEST_SYSTEM_KEY, /*with_mac=*/true));
   TransmitRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
 
   ASSERT_TRUE(transmitter.send_burst(frame, OneWayPowerClass::LOW_POWER));
   ASSERT_EQ(recorder.sent.size(), ONEWAY_BURST_REPEATS);
@@ -353,18 +383,46 @@ TEST_F(OneWayTransmitterTest, FlaggedCopyStillCarriesAValidMac) {
 // format_oneway_preamble_list() -- the pure formatter behind the TX log line
 // ============================================================================
 
-TEST(FormatOnewayPreambleList, LegacyLongIsFourLongCopies) {
-  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LEGACY_LONG, 32), "1024/1024/1024/1024");
+namespace {
+
+/// Rules of a raw-stream radio (8 bit periods per byte) with the default durations.
+OneWayPreambleRules raw_stream_rules(float start_ms = START_PREAMBLE_MS, float wake_ms = LOW_POWER_WAKE_MS) {
+  return {start_ms, wake_ms, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes};
+}
+
+}  // namespace
+
+TEST(FormatOnewayPreambleList, LegacyLongIsFourLongCopiesGivenInMilliseconds) {
+  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LEGACY_LONG, raw_stream_rules()), "213.3/213.3/213.3/213.3");
+}
+
+TEST(FormatOnewayPreambleList, LegacyLongReadsTheRadiosOwnDuration) {
+  TenBitPreambleRadio ten_bit;
+  const OneWayPreambleRules rules{START_PREAMBLE_MS, LOW_POWER_WAKE_MS,
+                                  [&ten_bit](float ms) { return ten_bit.preamble_bytes_for_ms(ms); },
+                                  [&ten_bit](uint16_t bytes) { return ten_bit.preamble_ms_for_bytes(bytes); }};
+  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LEGACY_LONG, rules), "266.7/266.7/266.7/266.7");
 }
 
 TEST(FormatOnewayPreambleList, AlwaysAliveIsFourNormalCopies) {
-  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::ALWAYS_ALIVE, 32), "32/32/32/32");
+  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::ALWAYS_ALIVE, raw_stream_rules()), "10/10/10/10");
 }
 
-TEST(FormatOnewayPreambleList, LowPowerIsOneLongThenNormal) {
-  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LOW_POWER, 32), "1024/32/32/32");
+TEST(FormatOnewayPreambleList, LowPowerIsOneWakeUpThenNormalCopiesTheSameOnEveryRadio) {
+  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LOW_POWER, raw_stream_rules()), "600/10/10/10");
+  TenBitPreambleRadio ten_bit;
+  const OneWayPreambleRules rules{START_PREAMBLE_MS, LOW_POWER_WAKE_MS,
+                                  [&ten_bit](float ms) { return ten_bit.preamble_bytes_for_ms(ms); },
+                                  [&ten_bit](uint16_t bytes) { return ten_bit.preamble_ms_for_bytes(bytes); }};
+  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LOW_POWER, rules), "600/10/10/10");
 }
 
-TEST(FormatOnewayPreambleList, ReflectsTheLiveNormalStartPreambleValue) {
-  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::ALWAYS_ALIVE, 8), "8/8/8/8");
+TEST(FormatOnewayPreambleList, ReflectsTheLiveSettings) {
+  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::ALWAYS_ALIVE, raw_stream_rules(8)), "8/8/8/8");
+  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LOW_POWER, raw_stream_rules(8, 450)), "450/8/8/8");
+}
+
+TEST(FormatOnewayPreambleList, KeepsTheHalfMillisecondStepOfTheStartPreamble) {
+  // start_preamble_ms moves in 0.5 ms steps; the log must not round 3.5 ms to 4.
+  EXPECT_EQ(format_oneway_preamble_list(OneWayPowerClass::LOW_POWER, raw_stream_rules(3.5f)), "600/3.5/3.5/3.5");
 }

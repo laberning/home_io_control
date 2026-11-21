@@ -13,6 +13,8 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+#include <cmath>
+
 namespace esphome {
 namespace home_io_control {
 
@@ -20,19 +22,36 @@ namespace {
 
 constexpr const char *const TAG = "home_io_control.oneway_tx";
 
+/// Tenths per millisecond: the resolution of the TX log's preamble durations.
+constexpr int32_t TENTHS_PER_MS = 10;
+
 }  // namespace
 
-uint16_t oneway_copy_preamble_bytes(OneWayCopyShape shape, uint16_t start_preamble_bytes) {
-  return shape.preamble == OneWayPreamble::WAKE ? LONG_PREAMBLE : start_preamble_bytes;
+OneWayCopyPreamble oneway_copy_preamble(OneWayCopyShape shape, OneWayPowerClass power_class,
+                                        const OneWayPreambleRules &rules) {
+  if (shape.preamble == OneWayPreamble::NORMAL)
+    return {rules.bytes_for_ms(rules.start_ms), rules.start_ms};
+  if (power_class == OneWayPowerClass::LOW_POWER)
+    return {rules.bytes_for_ms(rules.wake_ms), rules.wake_ms};
+  // LEGACY_LONG keeps a fixed programmed length, so its air time differs per radio (ADR 0115).
+  return {LONG_PREAMBLE, rules.ms_for_bytes(LONG_PREAMBLE)};
 }
 
-std::string format_oneway_preamble_list(OneWayPowerClass power_class, uint16_t start_preamble_bytes) {
+std::string format_oneway_preamble_list(OneWayPowerClass power_class, const OneWayPreambleRules &rules) {
   std::string out;
   for (uint8_t copy = 0; copy < ONEWAY_BURST_REPEATS; copy++) {
     const OneWayCopyShape shape = oneway_burst_copy_shape(power_class, copy);
     if (copy > 0)
       out += '/';
-    out += std::to_string(oneway_copy_preamble_bytes(shape, start_preamble_bytes));
+    // Tenths of a millisecond: `start_preamble_ms` moves in 0.5 ms steps, and a whole-ms rounding
+    // would log 3.5 ms as 4. A whole value prints without a decimal ("600/10/10/10").
+    const auto tenths =
+        static_cast<int32_t>(std::lround(oneway_copy_preamble(shape, power_class, rules).ms * TENTHS_PER_MS));
+    out += std::to_string(tenths / TENTHS_PER_MS);
+    if (tenths % TENTHS_PER_MS != 0) {
+      out += '.';
+      out += std::to_string(tenths % TENTHS_PER_MS);
+    }
   }
   return out;
 }
@@ -300,13 +319,14 @@ bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_
   const char *target = oneway_target_label(info);
   // Built from the same oneway_burst_copy_shape() the transmit loop below calls, so this can never
   // claim a preamble shape the burst does not actually send.
-  const uint16_t start_preamble_bytes = this->preamble_bytes_(this->tuning_->start_preamble_ms);
-  const std::string preambles = format_oneway_preamble_list(power_class, start_preamble_bytes);
+  const OneWayPreambleRules rules{this->tuning_->start_preamble_ms, this->tuning_->low_power_wake_ms,
+                                  this->preamble_bytes_, this->preamble_ms_};
+  const std::string preambles = format_oneway_preamble_list(power_class, rules);
   if (info.has_intent || intent_label != nullptr) {
-    ESP_LOGI(TAG, "1W tx: from %s to %s intent %s (%ux, preamble %s)", node_id_to_string(frame.src).c_str(), target,
+    ESP_LOGI(TAG, "1W tx: from %s to %s intent %s (%ux, preamble %s ms)", node_id_to_string(frame.src).c_str(), target,
              intent_label != nullptr ? intent_label : info.intent, ONEWAY_BURST_REPEATS, preambles.c_str());
   } else {
-    ESP_LOGI(TAG, "1W tx: from %s to %s cmd 0x%02X (%ux, preamble %s)", node_id_to_string(frame.src).c_str(), target,
+    ESP_LOGI(TAG, "1W tx: from %s to %s cmd 0x%02X (%ux, preamble %s ms)", node_id_to_string(frame.src).c_str(), target,
              frame.cmd, ONEWAY_BURST_REPEATS, preambles.c_str());
   }
 
@@ -329,8 +349,8 @@ bool OneWayTransmitter::send_burst(const IoFrame &frame, OneWayPowerClass power_
     } else {
       copy_frame.ctrl1 &= static_cast<uint8_t>(~CTRL1_LOW_POWER);
     }
-    const uint16_t preamble = oneway_copy_preamble_bytes(shape, start_preamble_bytes);
-    if (this->transmit_(copy_frame, FREQ_CH2, preamble)) {
+    const OneWayCopyPreamble preamble = oneway_copy_preamble(shape, power_class, rules);
+    if (this->transmit_(copy_frame, FREQ_CH2, preamble.bytes)) {
       sent++;
     }
   }

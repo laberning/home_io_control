@@ -332,6 +332,12 @@ class ExchangeEngine {
   /// @return Preamble length in bytes.
   [[nodiscard]] uint16_t preamble_bytes_for_ms(float ms) const;
 
+  /// How long @p bytes programmed preamble bytes last on the active radio; the inverse of
+  /// preamble_bytes_for_ms(), forwarding to RadioDriver::preamble_ms_for_bytes().
+  /// @param bytes Preamble length in programmed bytes.
+  /// @return Duration in milliseconds.
+  [[nodiscard]] float preamble_ms_for_bytes(uint16_t bytes) const;
+
   /// The start preamble (`start_preamble_ms`) of a directed start frame to a mains target, in bytes.
   [[nodiscard]] uint16_t start_preamble() const;
 

@@ -209,7 +209,7 @@ receiver hears time, not bytes, and the same number of preamble bytes lasts long
 board, which sends each byte as 10 bit periods, than on an SX1262 or LR1121 board, which sends 8.
 Each radio driver converts the duration into its own byte count at 38400 bit/s, so a configuration
 means the same on every board and moving a hub to another board keeps its timing. The log lines
-that print `preamble=` show the programmed bytes the radio was given.
+that print `preamble=` show the programmed bytes the radio was given; the one-way transmit line gives each copy's preamble in milliseconds.
 
 | Preamble | Key | Default | On SX1262 / LR1121 | On SX1276 |
 |---|---|---|---|---|
@@ -219,8 +219,8 @@ that print `preamble=` show the programmed bytes the radio was given.
 | Reply to a broadcast discovery | [`cold_broadcast_reply_preamble_ms`](#cold_broadcast_reply_preamble_ms) | 20 ms | 96 bytes | 77 bytes |
 | Discovery | [`pairing_discovery_preamble_ms`](#pairing_discovery_preamble_ms) | follows the start | 48 bytes | 38 bytes |
 
-One-way bursts keep their own wake-up preamble of 1024 bytes (about 213 ms on an SX1262 or LR1121, about 267 ms on an SX1276); their other copies follow
-`start_preamble_ms` ([Sending 1W commands](oneway-transmit.md)).
+The wake-up copy of a one-way burst to a `low_power: true` identity lasts `low_power_wake_ms` too, and its other copies follow
+`start_preamble_ms` ([Sending 1W commands](oneway-transmit.md#what-one-command-puts-on-the-air), [ADR 0115](../adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md)). Only the long-on-every-copy shape of an unset `low_power:` keeps a fixed 1024 bytes per copy.
 
 The keys that set bytes (`low_power_wake_preamble`, `normal_start_preamble`,
 `sx1262_response_preamble`, `sx1276_response_preamble`, `lr1121_response_preamble`,
@@ -504,7 +504,9 @@ enforce
 discovery with [`pairing_discovery_low_power`](#pairing_discovery_payload--pairing_discovery_low_power)
 and the pairing frames after it, and the low-power pass of the
 [Scan Paired Devices](../pairing.md#scan-paired-devices) roll-call, use the same setting. Pairing
-discovery without the low-power flag and 1W transmits keep their own preambles.
+discovery without the low-power flag keeps its own preamble. The wake-up copy of a one-way command to a
+`low_power: true` identity lasts this value as well, so changing it also changes how long that copy
+is on the air and how long a one-way command holds the radio (about 0.8 s at the default).
 
 #### `low_power_wake_belief`
 

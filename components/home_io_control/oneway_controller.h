@@ -46,7 +46,7 @@ namespace home_io_control {
 enum class OneWayPowerClass : uint8_t {
   LEGACY_LONG,   ///< LONG_PREAMBLE on every copy, CTRL1 0x00 everywhere.
   ALWAYS_ALIVE,  ///< `low_power: false`: normal start preamble on every copy, CTRL1 0x00.
-  LOW_POWER,     ///< `low_power: true`: copy 1 LONG_PREAMBLE + CTRL1_LOW_POWER, repeats normal.
+  LOW_POWER,     ///< `low_power: true`: copy 1 a `low_power_wake_ms` wake-up + CTRL1_LOW_POWER, repeats normal.
 };
 
 /// @brief Human-readable name for a OneWayPowerClass, as it appears in the boot log.
@@ -56,7 +56,7 @@ const char *oneway_power_class_name(OneWayPowerClass power_class);
 
 /// @brief Which wake-up shape one copy of a 1W burst gets.
 enum class OneWayPreamble : uint8_t {
-  WAKE,    ///< The long wake-up preamble (`LONG_PREAMBLE`), paired with `CTRL1_LOW_POWER` set.
+  WAKE,    ///< The wake-up preamble (`low_power_wake_ms`, or `LONG_PREAMBLE` bytes for `LEGACY_LONG`).
   NORMAL,  ///< The runtime-tunable `start_preamble_ms`, CTRL1's low-power bit clear.
 };
 

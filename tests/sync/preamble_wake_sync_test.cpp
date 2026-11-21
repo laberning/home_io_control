@@ -18,6 +18,7 @@
 /// A new preamble tunable or a raised ceiling fails here, which forces a decision about its wake
 /// level.
 
+#include "oneway_transmitter.h"
 #include "proto_timing.h"
 #include "tuning_config.h"
 #include "support/python_dict_parser.h"
@@ -69,6 +70,29 @@ TEST(PreambleWakeSync, OnlyTheWakeAndDiscoveryPreamblesCanReachTheWakeBurst) {
   // Response, cold broadcast reply, start, pairing discovery, low-power wake-up.
   EXPECT_EQ(preamble_params, 5);
   EXPECT_EQ(params.count(kDiscoveryPreamble), 1u);
+}
+
+TEST(PreambleWakeSync, EveryOneWayWakeUpCopyIsLabelledAWakeUpAtTheSettingsFloorOnEveryRadio) {
+  // ADR 0115: the one-way wake-up copy lasts `low_power_wake_ms`; at its floor it must still be
+  // labelled a wake-up (TxWake::LONG) for the radio, on the 8 and the 10 bit-period coders.
+  const auto params = test::parse_python_range_dict(kTuningPy, "_NUMBER_PARAMS");
+  ASSERT_EQ(params.count(kWakePreamble), 1u);
+  const float floor_ms = static_cast<float>(params.at(kWakePreamble).min);
+  for (const double bits_per_byte : {kFewestBitsPerByte, kMostBitsPerByte}) {
+    SCOPED_TRACE(bits_per_byte);
+    const OneWayPreambleRules rules{
+        START_PREAMBLE_MS, floor_ms,
+        [bits_per_byte](float ms) { return static_cast<uint16_t>(std::lround(bytes_at(ms, bits_per_byte))); },
+        [bits_per_byte](uint16_t bytes) { return static_cast<float>(bytes * bits_per_byte / 38.4); }};
+    const OneWayCopyShape wake = oneway_burst_copy_shape(OneWayPowerClass::LOW_POWER, 0);
+    ASSERT_EQ(wake.preamble, OneWayPreamble::WAKE);
+    EXPECT_EQ(tx_wake_for(true, oneway_copy_preamble(wake, OneWayPowerClass::LOW_POWER, rules).bytes), TxWake::LONG);
+    const OneWayCopyShape legacy = oneway_burst_copy_shape(OneWayPowerClass::LEGACY_LONG, 3);
+    EXPECT_EQ(tx_wake_for(true, oneway_copy_preamble(legacy, OneWayPowerClass::LEGACY_LONG, rules).bytes),
+              TxWake::LONG);
+    const OneWayCopyShape normal = oneway_burst_copy_shape(OneWayPowerClass::LOW_POWER, 1);
+    EXPECT_EQ(tx_wake_for(true, oneway_copy_preamble(normal, OneWayPowerClass::LOW_POWER, rules).bytes), TxWake::SHORT);
+  }
 }
 
 TEST(PreambleWakeSync, ParserReadsSignedRangesAndUnits) {

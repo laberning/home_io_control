@@ -41,9 +41,11 @@ static constexpr uint32_t DISCOVERY_SLOT_MS = 41;
 /// frame (a reply, our challenge or challenge answer, a status-update ACK) uses the radio driver's
 /// `response_preamble()`, since both sides are already on the same channel; SHORT_PREAMBLE is the
 /// protocol's nominal length of that preamble. The exchange engine derives all of this from the
-/// frame (exchange_engine.cpp). One-way bursts are not set as durations: they keep
-/// `LONG_PREAMBLE` as their wake-up.
-static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes: wake-up burst of a one-way low-power copy
+/// frame (exchange_engine.cpp). The wake-up copy of a one-way `low_power: true` burst lasts the same
+/// wake-up duration, `low_power_wake_ms` (default LOW_POWER_WAKE_MS, ADR 0115); `LONG_PREAMBLE` is the fixed per-copy
+/// length of the legacy long-on-every-copy shape and the programmed length from which a preamble counts as a wake-up
+/// (is_wake_preamble()).
+static constexpr uint16_t LONG_PREAMBLE = 1024;  ///< 1024 bytes: legacy one-way wake-up copy and the wake threshold
 static constexpr uint16_t SHORT_PREAMBLE = 8;    ///< Protocol's nominal length of a continuation preamble
 
 /// Default for `TuningConfig::low_power_wake_ms`: the 2W wake-up in front of a directed start frame

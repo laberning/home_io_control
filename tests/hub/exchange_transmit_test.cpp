@@ -220,7 +220,7 @@ namespace {
 
 /// A 1W STOP burst through the hub's engine: the transmitter is wired as the hub wires it.
 struct OneWayBurstRig {
-  OneWayBurstRig() : transmitter(make_transmit(), &comp.tuning_, make_preamble_bytes()) {
+  OneWayBurstRig() : transmitter(make_transmit(), &comp.tuning_, make_preamble_bytes(), make_preamble_ms()) {
     wire_observer_rig(comp, radio);
     comp.exchange_engine_.set_transmit_observer(&observer);
     radio.set_rssi_default(-120);
@@ -236,6 +236,10 @@ struct OneWayBurstRig {
   }
   OneWayPreambleBytesFn make_preamble_bytes() {
     return [this](float ms) { return comp.exchange_engine_.preamble_bytes_for_ms(ms); };
+  }
+
+  OneWayPreambleMsFn make_preamble_ms() {
+    return [this](uint16_t bytes) { return comp.exchange_engine_.preamble_ms_for_bytes(bytes); };
   }
 
   TestableComponent comp;
@@ -326,7 +330,8 @@ TEST(OneWayBurstSendPath, ABurstOfWakeUpCopiesIsStampedWithTheLongWakeLevelAndTh
 
   ASSERT_EQ(rig.radio.get_tx_configs().size(), ONEWAY_BURST_REPEATS);
   EXPECT_EQ(rig.radio.get_tx_configs()[0].wake, TxWake::LONG);
-  EXPECT_EQ(rig.radio.get_tx_configs()[0].preamble_len, LONG_PREAMBLE);
+  EXPECT_EQ(rig.radio.get_tx_configs()[0].preamble_len, rig.comp.exchange_engine_.wake_preamble())
+      << "the wake-up copy lasts low_power_wake_ms through the radio's conversion";
   for (size_t copy = 1; copy < ONEWAY_BURST_REPEATS; copy++)
     EXPECT_EQ(rig.radio.get_tx_configs()[copy].wake, TxWake::SHORT) << "copy " << copy;
 }

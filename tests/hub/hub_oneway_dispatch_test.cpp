@@ -107,7 +107,9 @@ class OneWayDispatch : public ::testing::Test {
       SCOPED_TRACE("copy " + std::to_string(copy) + " of the burst at send " + std::to_string(first_send));
       EXPECT_EQ(configs[index].freq_hz, FREQ_CH2) << "one-way commands go out on channel 2";
       EXPECT_EQ(configs[index].wake, wake_copy ? TxWake::LONG : TxWake::SHORT);
-      EXPECT_EQ(configs[index].preamble_len, wake_copy ? LONG_PREAMBLE : TUNED_START_PREAMBLE);
+      // A LOW_POWER wake-up lasts low_power_wake_ms; only the legacy shape keeps LONG_PREAMBLE bytes (ADR 0115).
+      const uint16_t wake_preamble = power_class == OneWayPowerClass::LEGACY_LONG ? LONG_PREAMBLE : MOCK_WAKE_PREAMBLE;
+      EXPECT_EQ(configs[index].preamble_len, wake_copy ? wake_preamble : TUNED_START_PREAMBLE);
       EXPECT_EQ(sent[index], wire_bytes(frame, flagged));
     }
   }

@@ -804,6 +804,10 @@ uint16_t ExchangeEngine::preamble_bytes_for_ms(float ms) const {
   return (*this->radio_ptr_)->preamble_bytes_for_ms(ms);
 }
 
+float ExchangeEngine::preamble_ms_for_bytes(uint16_t bytes) const {
+  return (*this->radio_ptr_)->preamble_ms_for_bytes(bytes);
+}
+
 uint16_t ExchangeEngine::start_preamble() const {
   return this->preamble_bytes_for_ms(this->tuning_->start_preamble_ms);
 }

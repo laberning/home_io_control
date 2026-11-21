@@ -93,7 +93,7 @@ TEST_F(OneWaySendCommandTest, OneCommandConsumesExactlyOneSequence) {
   // The rule the whole burst design rests on: a device treats one sequence as one command, so
   // four copies bearing four sequences would be four commands, three of them rejected as replays.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 500));
   transmitter.setup();
 
@@ -107,7 +107,7 @@ TEST_F(OneWaySendCommandTest, OneCommandConsumesExactlyOneSequence) {
 
 TEST_F(OneWaySendCommandTest, ConsecutiveCommandsNeverReuseASequence) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 500));
   transmitter.setup();
 
@@ -125,7 +125,7 @@ TEST_F(OneWaySendCommandTest, ConsecutiveCommandsNeverReuseASequence) {
 
 TEST_F(OneWaySendCommandTest, InterleavedIdentitiesKeepSeparateSequences) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("own", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 100));
   transmitter.add_identity(make_identity("adopted", ADOPTED_NET_NODE, DeviceType::ROLLER_SHUTTER, 0x22, 900));
   transmitter.setup();
@@ -145,7 +145,7 @@ TEST_F(OneWaySendCommandTest, EachIdentitySignsWithItsOwnKey) {
   // The reason per-identity keys exist: an adopted foreign network's key has to coexist with the
   // hub's own. If the transmitter used one key for both, adoption would achieve nothing.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("own", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 7));
   transmitter.add_identity(make_identity("adopted", ADOPTED_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x22, 7));
   transmitter.setup();
@@ -170,7 +170,7 @@ TEST_F(OneWaySendCommandTest, EachIdentitySignsWithItsOwnKey) {
 
 TEST_F(OneWaySendCommandTest, CommandsAddressTheIdentitysDeviceClass) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("light", OWN_NET_NODE, DeviceType::LIGHT, 0x11));
   transmitter.setup();
 
@@ -184,7 +184,7 @@ TEST_F(OneWaySendCommandTest, CommandsAddressTheIdentitysDeviceClass) {
 
 TEST_F(OneWaySendCommandTest, AnUnknownIdentityTransmitsNothing) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11));
   transmitter.setup();
 
@@ -197,7 +197,7 @@ TEST_F(OneWaySendCommandTest, AnIdentityRegisteredWithoutSetupTransmitsNothing) 
   // setup() is what opens the counters. Without it there is no reserved sequence, and a frame
   // signed with an unreserved one is exactly the replay risk the store exists to prevent.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11));
 
   EXPECT_FALSE(transmitter.send_command("awning", CoverCommand::STOP));
@@ -208,7 +208,7 @@ TEST_F(OneWaySendCommandTest, AFailedFlashWriteTransmitsNothing) {
   // The store refuses a sequence it could not reserve durably; the transmitter must then put nothing on air, for a
   // command and for a position alike, because a frame signed with an unreserved sequence risks a replay.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 500));
   transmitter.setup();
   esphome::test_preferences::faults().fail_sync = true;
@@ -225,7 +225,7 @@ TEST_F(OneWaySendCommandTest, AFailedFlashWriteTransmitsNothing) {
 TEST_F(OneWaySendCommandTest, SequencesSurviveAReboot) {
   BurstRecorder recorder;
   {
-    OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+    OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
     transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 300));
     transmitter.setup();
     ASSERT_TRUE(transmitter.send_command("awning", CoverCommand::STOP));
@@ -234,7 +234,7 @@ TEST_F(OneWaySendCommandTest, SequencesSurviveAReboot) {
   esphome::test_preferences::simulate_reboot();
 
   BurstRecorder after_reboot;
-  OneWayTransmitter rebooted(after_reboot.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter rebooted(after_reboot.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   rebooted.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 300));
   rebooted.setup();
   ASSERT_TRUE(rebooted.send_command("awning", CoverCommand::STOP));
@@ -255,7 +255,7 @@ TEST_F(OneWaySendCommandTest, SequencesSurviveAReboot) {
 
 TEST_F(OneWaySendCommandTest, EnrollmentConsumesTwoSequencesOneEach) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 500));
   transmitter.setup();
 
@@ -279,7 +279,7 @@ TEST_F(OneWaySendCommandTest, EnrollmentConsumesTwoSequencesOneEach) {
 
 TEST_F(OneWaySendCommandTest, EnrollmentAndUnenrollmentShareTheCommandSequenceCounter) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 500));
   transmitter.setup();
 
@@ -305,7 +305,7 @@ TEST_F(OneWaySendCommandTest, EnrollmentSendsNoMacTrailerOnTheAddHalf) {
   // the published documentation vector create_1w_add_controller() defaults to. The enroll button
   // is the one caller that transmits to real hardware, so it must not use that default.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1));
   transmitter.setup();
 
@@ -320,7 +320,7 @@ TEST_F(OneWaySendCommandTest, EnrollmentSendsRemoveThenAddBackToBack) {
   // The 1W pairing handshake (ADR 0026): 0x39 then 0x30, both
   // from the same identity, one burst each, no gap beyond the bursts' own airtime.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1));
   transmitter.setup();
 
@@ -335,7 +335,7 @@ TEST_F(OneWaySendCommandTest, EnrollmentSendsRemoveThenAddBackToBack) {
 
 TEST_F(OneWaySendCommandTest, EnrollmentMatchesTheBuildersDirectly) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 7));
   transmitter.setup();
 
@@ -359,7 +359,7 @@ TEST_F(OneWaySendCommandTest, EnrollmentWithMacConfiguredTrueAddsTheTrailer) {
   // enrollment_with_mac: true -- the YAML escape hatch for hardware that needs the MAC-bearing
   // 0x30 shape (the published documentation vector's own shape) instead of the no-MAC default.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   OneWayControllerIdentity identity =
       make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 3);
   identity.enrollment_with_mac = true;
@@ -397,7 +397,7 @@ uint16_t remove_seq(const IoFrame &f) { return static_cast<uint16_t>((f.data[1] 
 
 TEST_F(OneWaySendCommandTest, VeluxEnrollmentSweepsThreeClassesThenStopsAndCloses) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_velux_identity(10));
   transmitter.setup();
 
@@ -434,7 +434,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentSweepsThreeClassesThenStopsAndClose
 
 TEST_F(OneWaySendCommandTest, VeluxEnrollmentConsumesFourSequencesOneEachExceptTheSharedSweep) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_velux_identity(10));
   transmitter.setup();
 
@@ -451,7 +451,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentConsumesFourSequencesOneEachExceptT
 
 TEST_F(OneWaySendCommandTest, VeluxEnrollmentClassesOverrideNarrowsTheSweep) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   OneWayControllerIdentity identity = make_velux_identity(1);
   identity.enrollment_classes = {DeviceType::VERTICAL_EXTERIOR_AWNING, DeviceType::UNKNOWN, DeviceType::UNKNOWN};
   transmitter.add_identity(identity);
@@ -468,7 +468,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentClassesOverrideNarrowsTheSweep) {
 
 TEST_F(OneWaySendCommandTest, VeluxEnrollmentReportsLabelEachLeg) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_velux_identity(1));
   transmitter.setup();
 
@@ -488,7 +488,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentReportsLabelEachLeg) {
 
 TEST_F(OneWaySendCommandTest, SomfyManufacturerStillUsesTheUnchangedTwoFrameGesture) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   OneWayControllerIdentity identity =
       make_identity("somfy", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 5);
   identity.manufacturer = MANUFACTURER_SOMFY;
@@ -512,7 +512,7 @@ TEST_F(OneWaySendCommandTest, SomfyEnrollmentIgnoresTheIdentitysDeviceType) {
   for (const DeviceType type :
        {DeviceType::VERTICAL_EXTERIOR_AWNING, DeviceType::HORIZONTAL_AWNING, DeviceType::ROLLER_SHUTTER}) {
     BurstRecorder recorder;
-    OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+    OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
     OneWayControllerIdentity identity = make_identity("somfy", OWN_NET_NODE, type, 0x11, 5);
     identity.manufacturer = MANUFACTURER_SOMFY;
     transmitter.add_identity(identity);
@@ -526,7 +526,7 @@ TEST_F(OneWaySendCommandTest, SomfyEnrollmentIgnoresTheIdentitysDeviceType) {
 
 TEST_F(OneWaySendCommandTest, UnenrollmentBroadcastsItsRemove) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 5));
   transmitter.setup();
 
@@ -542,7 +542,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentReproducesTheSyntheticGoldenGesture
   // the no-MAC 0x30 form, the shared sweep sequence, the ACEI, and all four 1W MACs in one test --
   // the strongest check available for a path with no hardware confirmation.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   OneWayControllerIdentity identity{};
   identity.id = "golden";
   const uint8_t src[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
@@ -574,7 +574,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentSkipsStopAndDownWhenTheSweepTransmi
   // A failed sweep must NOT be followed by a real DOWN broadcast to every 1W device on the network.
   BurstRecorder recorder;
   recorder.transmit_result = false;  // the radio never accepts a copy
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_velux_identity(1));
   transmitter.setup();
 
@@ -603,7 +603,7 @@ std::vector<bool> refuse_burst(size_t first_copy) {
 TEST_F(OneWaySendCommandTest, SomfyEnrollmentStillAddsTheControllerWhenTheRemovePreludeIsRefused) {
   BurstRecorder recorder;
   recorder.results = refuse_burst(0);  // the whole 0x39 burst; the 0x30 burst after it is taken
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 5));
   transmitter.setup();
   std::vector<OneWayCommandReport> reports;
@@ -627,7 +627,7 @@ TEST_F(OneWaySendCommandTest, SomfyEnrollmentReportsFailureWhenTheAddIsRefusedEv
   BurstRecorder recorder;
   recorder.results = std::vector<bool>(ONEWAY_BURST_REPEATS, true);  // the 0x39 burst goes out
   recorder.transmit_result = false;                                  // the 0x30 burst does not
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 5));
   transmitter.setup();
 
@@ -637,7 +637,7 @@ TEST_F(OneWaySendCommandTest, SomfyEnrollmentReportsFailureWhenTheAddIsRefusedEv
 TEST_F(OneWaySendCommandTest, VeluxEnrollmentStillSweepsAndCompletesWhenTheRemovePreludeIsRefused) {
   BurstRecorder recorder;
   recorder.results = refuse_burst(0);
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_velux_identity(1));
   transmitter.setup();
 
@@ -656,7 +656,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentCountsTheSweepAsSentWhenOnlyOneClas
   // The sweep's second class (burst 2 of the gesture) never reaches the radio; the others do.
   BurstRecorder recorder;
   recorder.results = refuse_burst(2 * ONEWAY_BURST_REPEATS);
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_velux_identity(1));
   transmitter.setup();
   std::vector<OneWayCommandReport> reports;
@@ -675,7 +675,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentCountsTheSweepAsSentWhenOnlyOneClas
 TEST_F(OneWaySendCommandTest, ACommandWithoutAWireEncodingReportsReservedNotSentAndSpendsItsSequence) {
   // FORCE_OPEN has no 1W encoding, so the frame cannot be built once the sequence is reserved.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 40));
   transmitter.setup();
   std::vector<OneWayCommandReport> reports;
@@ -695,7 +695,7 @@ TEST_F(OneWaySendCommandTest, ACommandWithoutAWireEncodingReportsReservedNotSent
 
 TEST_F(OneWaySendCommandTest, AnOutOfRangePositionReportsReservedNotSent) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 40));
   transmitter.setup();
   std::vector<OneWayCommandReport> reports;
@@ -711,7 +711,7 @@ TEST_F(OneWaySendCommandTest, AnOutOfRangePositionReportsReservedNotSent) {
 
 TEST_F(OneWaySendCommandTest, UnenrollmentBuildsARemoveControllerFrame) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 9));
   transmitter.setup();
 
@@ -723,7 +723,7 @@ TEST_F(OneWaySendCommandTest, UnenrollmentBuildsARemoveControllerFrame) {
 
 TEST_F(OneWaySendCommandTest, AnUnknownIdentityEnrollsAndUnenrollsNothing) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11));
   transmitter.setup();
 
@@ -743,7 +743,7 @@ TEST_F(OneWaySendCommandTest, ReportsCarryExplicitEnrollUnenrollLabels) {
   // CMD_EXECUTE/CMD_ACTIVATE_MODE), so without an explicit label the "Last 1W Command" sensor
   // would show a blank intent for the one feature whose whole diagnostic story is that sensor.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1));
   transmitter.setup();
 
@@ -765,7 +765,7 @@ TEST_F(OneWaySendCommandTest, ReportsCarryExplicitEnrollUnenrollLabels) {
 
 TEST_F(OneWaySendCommandTest, PositionsAreEncodedAsTheBuilderWould) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1));
   transmitter.setup();
 
@@ -794,7 +794,7 @@ struct InversionProbe {
 
 InversionProbe send_user_position(OneWayControllerIdentity identity, uint8_t user_position, TuningConfig &tuning) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   identity.id = "id";
   transmitter.add_identity(identity);
   transmitter.setup();
@@ -843,7 +843,7 @@ TEST_F(OneWaySendCommandTest, NonInvertedKindIsNotMirrored) {
 
 TEST_F(OneWaySendCommandTest, InvertedKindLeavesNamedCommandsAlone) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("id", OWN_NET_NODE, DeviceType::HORIZONTAL_AWNING, 0x11, 1));
   transmitter.setup();
   ASSERT_TRUE(transmitter.send_command("id", CoverCommand::STOP));
@@ -854,7 +854,7 @@ TEST_F(OneWaySendCommandTest, InvertedKindLeavesNamedCommandsAlone) {
 
 TEST_F(OneWaySendCommandTest, InvertedKindMirrorRefusesOutOfRangeInsteadOfWrapping) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("id", OWN_NET_NODE, DeviceType::HORIZONTAL_AWNING, 0x11, 1));
   transmitter.setup();
   EXPECT_FALSE(transmitter.send_position("id", 101));
@@ -864,7 +864,7 @@ TEST_F(OneWaySendCommandTest, InvertedKindMirrorRefusesOutOfRangeInsteadOfWrappi
 TEST_F(OneWaySendCommandTest, VeluxEnrollmentDownStaysRawOnAnInvertedIdentity) {
   // The STOP+DOWN follow-up is a gesture a real remote produces, not a user position.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   auto id = make_velux_identity(1);
   id.io_device_type = DeviceType::HORIZONTAL_AWNING;
   id.invert_override = true;
@@ -880,7 +880,7 @@ TEST_F(OneWaySendCommandTest, VeluxEnrollmentDownStaysRawOnAnInvertedIdentity) {
 
 TEST_F(OneWaySendCommandTest, VeluxIdentityEmitsLevel3Acei) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   OneWayControllerIdentity id = make_identity("velux", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1);
   id.manufacturer = MANUFACTURER_VELUX;
   transmitter.add_identity(id);
@@ -894,7 +894,7 @@ TEST_F(OneWaySendCommandTest, IdentityWithoutManufacturerStillEmitsTheSomfyAcei)
   // The back-compat promise: an identity that never set manufacturer: is byte-for-byte what it
   // was before ADR 0031.
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   transmitter.add_identity(make_identity("plain", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1));
   transmitter.setup();
 
@@ -904,7 +904,7 @@ TEST_F(OneWaySendCommandTest, IdentityWithoutManufacturerStillEmitsTheSomfyAcei)
 
 TEST_F(OneWaySendCommandTest, ExecuteAceiOverrideBeatsTheProfile) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   OneWayControllerIdentity id = make_identity("odd", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1);
   id.manufacturer = MANUFACTURER_VELUX;
   id.execute_acei = 0x55;
@@ -917,7 +917,7 @@ TEST_F(OneWaySendCommandTest, ExecuteAceiOverrideBeatsTheProfile) {
 
 TEST_F(OneWaySendCommandTest, ExecuteBroadcastAllTargetsAllDevicesRegardlessOfClass) {
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   OneWayControllerIdentity id = make_identity("blind", OWN_NET_NODE, DeviceType::VERTICAL_INTERIOR_BLIND, 0x11, 1);
   id.manufacturer = MANUFACTURER_VELUX;
   id.execute_broadcast_all = true;
@@ -945,7 +945,7 @@ TEST_F(OneWaySendCommandTest, ExecuteBroadcastAllDoesNotDegradeTheReportToUnknow
   // still name the identity's class, or the "Last 1W Command" sensor and the TX log read
   // "STOP -> unknown".
   BurstRecorder recorder;
-  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
   OneWayControllerIdentity id = make_identity("blind", OWN_NET_NODE, DeviceType::VERTICAL_INTERIOR_BLIND, 0x11, 1);
   id.execute_broadcast_all = true;
   transmitter.add_identity(id);
@@ -969,11 +969,11 @@ namespace {
 
 /// Asserts every burst in `frames`/`preambles` (grouped into ONEWAY_BURST_REPEATS-sized runs)
 /// carries the preamble and CTRL1_LOW_POWER shape `power_class` implies, via the same
-/// oneway_copy_preamble_bytes() send_burst() itself resolves each copy through. One helper reused
+/// oneway_copy_preamble() send_burst() itself resolves each copy through. One helper reused
 /// by every entry point below, so a call site that forgot to thread the identity's power class
 /// through to send_burst() shows up as a failure here instead of only in oneway_transmitter_test.cpp.
 void expect_bursts_match_power_class(const std::vector<IoFrame> &frames, const std::vector<uint16_t> &preambles,
-                                     OneWayPowerClass power_class, uint16_t normal_start_preamble) {
+                                     OneWayPowerClass power_class, const OneWayPreambleRules &rules) {
   ASSERT_EQ(frames.size(), preambles.size());
   ASSERT_GT(frames.size(), 0u);
   ASSERT_EQ(frames.size() % ONEWAY_BURST_REPEATS, 0u) << "every burst is a fixed-size run of copies";
@@ -981,7 +981,7 @@ void expect_bursts_match_power_class(const std::vector<IoFrame> &frames, const s
     for (uint8_t copy = 0; copy < ONEWAY_BURST_REPEATS; copy++) {
       const size_t i = burst * ONEWAY_BURST_REPEATS + copy;
       const OneWayCopyShape shape = oneway_burst_copy_shape(power_class, copy);
-      EXPECT_EQ(preambles[i], oneway_copy_preamble_bytes(shape, normal_start_preamble))
+      EXPECT_EQ(preambles[i], oneway_copy_preamble(shape, power_class, rules).bytes)
           << "burst " << burst << " copy " << static_cast<int>(copy);
       EXPECT_EQ((frames[i].ctrl1 & CTRL1_LOW_POWER) != 0, shape.low_power_flag)
           << "burst " << burst << " copy " << static_cast<int>(copy);
@@ -1026,7 +1026,7 @@ TEST_F(OneWaySendCommandTest, EveryEntryPointHonoursTheIdentitysPowerClassOnEver
       SCOPED_TRACE(entry.name + " / " + oneway_power_class_name(power_class));
 
       BurstRecorder recorder;
-      OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+      OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms, mock_preamble_ms_for_bytes);
       OneWayControllerIdentity id = make_identity("id", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1);
       id.power_class_override = power_class;
       entry.configure_identity(id);
@@ -1035,7 +1035,9 @@ TEST_F(OneWaySendCommandTest, EveryEntryPointHonoursTheIdentitysPowerClassOnEver
 
       ASSERT_TRUE(entry.action(transmitter, "id"));
       ASSERT_EQ(recorder.frames.size(), entry.expected_burst_count * ONEWAY_BURST_REPEATS);
-      expect_bursts_match_power_class(recorder.frames, recorder.preambles, power_class, 32);
+      expect_bursts_match_power_class(recorder.frames, recorder.preambles, power_class,
+                                      {tuning_.start_preamble_ms, tuning_.low_power_wake_ms, mock_preamble_bytes_for_ms,
+                                       mock_preamble_ms_for_bytes});
     }
   }
 }
