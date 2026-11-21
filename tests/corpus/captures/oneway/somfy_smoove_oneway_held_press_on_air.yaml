@@ -1,0 +1,229 @@
+id: somfy_smoove_oneway_held_press_on_air
+description: >
+  The remote's UP button held for about 2.5 s, captured on the air with an SDR. It starts like a short press, then
+  sends one CMD_WRITE_PRIVATE(0x20) frame every 250 ms while the button is down, each with a new sequence and four
+  copies back to back (13.2 ms preamble each), and closes with an EXECUTE followed by one more
+  CMD_WRITE_PRIVATE(0x20) frame. All on channel 2 (868.95 MHz); no low-power flag, no long wake-up preamble. Some
+  copies were not decoded and are missing here. Every MAC was re-keyed to the public corpus key before the first
+  commit.
+source:
+  device: "Somfy Smoove io remote (node 9D6085), paired to a Somfy Sunea io awning (powered off for the capture)"
+  captured_with: other
+  firmware: "SDR on-air capture, all three channels"
+  date: 2026-11-21
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F8 00 00 01 BF 9D 60 85 00 01 43 00 00 80 D3 00 00 61 C6 A5 86 DB 57 BC 90"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 28
+    freq: 868950000
+    hex: "F6 00 00 00 3F 9D 60 85 00 01 43 00 00 00 00 61 C6 BD 57 A3 97 72 4F"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 54
+    freq: 868950000
+    hex: "F6 00 00 00 3F 9D 60 85 00 01 43 00 00 00 00 61 C6 BD 57 A3 97 72 4F"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 105
+    freq: 868950000
+    hex: "F6 00 00 00 3F 9D 60 85 00 01 43 00 00 00 00 61 C6 BD 57 A3 97 72 4F"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 161
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 0C 00 00 61 C7 19 9D 67 63 A4 53"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 189
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 0C 00 00 61 C7 19 9D 67 63 A4 53"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 214
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 0C 00 00 61 C7 19 9D 67 63 A4 53"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 504
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 02 00 61 C8 AB F1 E1 F3 74 96"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 675
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 03 00 61 C9 B9 20 6C FE 78 A3"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 729
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 03 00 61 C9 B9 20 6C FE 78 A3"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 754
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 03 00 61 C9 B9 20 6C FE 78 A3"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 925
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 04 00 61 CA AE 97 4D D6 28 ED"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 951
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 04 00 61 CA AE 97 4D D6 28 ED"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 1004
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 04 00 61 CA AE 97 4D D6 28 ED"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 1175
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 05 00 61 CB 09 54 F8 95 25 68"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 1229
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 05 00 61 CB 09 54 F8 95 25 68"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 1254
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 05 00 61 CB 09 54 F8 95 25 68"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 1503
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 06 00 61 CC 81 96 18 97 34 09"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 1728
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 07 00 61 CD 52 CC 7B D0 9F 45"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 1753
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 07 00 61 CD 52 CC 7B D0 9F 45"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 1978
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 08 00 61 CE 5C 9F 7D 44 4E 9D"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 2003
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 08 00 61 CE 5C 9F 7D 44 4E 9D"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 2253
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 09 00 61 CF B2 E6 30 62 9D 95"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 2475
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 0A 00 61 D0 D5 3D 75 63 CE 94"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 2500
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 0A 00 61 D0 D5 3D 75 63 CE 94"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 2534
+    freq: 868950000
+    hex: "F8 00 00 01 BF 9D 60 85 00 01 43 D2 00 80 D2 00 00 61 D1 2E 6B 29 29 E9 72"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 2559
+    freq: 868950000
+    hex: "F8 00 00 01 BF 9D 60 85 00 01 43 D2 00 80 D2 00 00 61 D1 2E 6B 29 29 E9 72"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 2609
+    freq: 868950000
+    hex: "F8 00 00 01 BF 9D 60 85 00 01 43 D2 00 80 D2 00 00 61 D1 2E 6B 29 29 E9 72"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 2638
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 FF 00 61 D2 6D 63 D3 17 DD CB"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 2713
+    freq: 868950000
+    hex: "F8 00 00 00 3F 9D 60 85 20 02 FF 01 43 00 05 FF 00 61 D2 6D 63 D3 17 DD CB"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+expect:
+  frames:
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x00, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}

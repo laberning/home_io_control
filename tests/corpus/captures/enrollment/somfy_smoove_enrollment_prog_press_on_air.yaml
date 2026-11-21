@@ -1,0 +1,81 @@
+id: somfy_smoove_enrollment_prog_press_on_air
+description: >
+  A short press of the remote's PROG button, captured on the air with an SDR: CMD_ONEWAY_REMOVE_CONTROLLER (0x39)
+  and CMD_ONEWAY_ADD_CONTROLLER (0x30) to all devices, then CMD_WRITE_PRIVATE (0x20) frames; every frame sent four
+  times back to back with a 13.2 ms preamble, on channel 2 (868.95 MHz), no low-power flag. The add's wrapped key and
+  every MAC were re-keyed to the public corpus key before the first commit; some copies were not decoded and are
+  missing here.
+source:
+  device: "Somfy Smoove io remote (node 9D6085), paired to a Somfy Sunea io awning (powered off for the capture)"
+  captured_with: other
+  firmware: "SDR on-air capture, all three channels"
+  date: 2026-11-21
+  origin: own-hardware
+  issue: null
+key: corpus
+frames:
+  - dir: rx
+    t_ms: 0
+    freq: 868950000
+    hex: "F1 00 00 00 3F 9D 60 85 39 00 61 D3 BF A7 D2 A1 ED FB"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 50
+    freq: 868950000
+    hex: "F1 00 00 00 3F 9D 60 85 39 00 61 D3 BF A7 D2 A1 ED FB"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 74
+    freq: 868950000
+    hex: "F1 00 00 00 3F 9D 60 85 39 00 61 D3 BF A7 D2 A1 ED FB"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 131
+    freq: 868950000
+    hex: "FC 00 00 00 3F 9D 60 85 30 6E 31 FA 3C 53 52 84 FF 08 20 67 CA 24 74 D9 3D 02 01 61 D4"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 160
+    freq: 868950000
+    hex: "FC 00 00 00 3F 9D 60 85 30 6E 31 FA 3C 53 52 84 FF 08 20 67 CA 24 74 D9 3D 02 01 61 D4"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 189
+    freq: 868950000
+    hex: "FC 00 00 00 3F 9D 60 85 30 6E 31 FA 3C 53 52 84 FF 08 20 67 CA 24 74 D9 3D 02 01 61 D4"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 290
+    freq: 868950000
+    hex: "F5 00 00 00 3F 9D 60 85 20 02 03 0C 00 00 61 D5 C5 A1 48 39 F8 A5"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 372
+    freq: 868950000
+    hex: "F5 00 00 00 3F 9D 60 85 20 02 03 05 FF 00 61 D6 04 CD 8C 4C 80 3D"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+  - dir: rx
+    t_ms: 396
+    freq: 868950000
+    hex: "F5 00 00 00 3F 9D 60 85 20 02 03 05 FF 00 61 D6 04 CD 8C 4C 80 3D"
+    crc: absent
+    note: "preamble 13.2 ms on air"
+expect:
+  frames:
+    - {cmd: 0x39, start: true, end: true, protocol: 1w}
+    - {cmd: 0x39, start: true, end: true, protocol: 1w}
+    - {cmd: 0x39, start: true, end: true, protocol: 1w}
+    - {cmd: 0x30, start: true, end: true, protocol: 1w}
+    - {cmd: 0x30, start: true, end: true, protocol: 1w}
+    - {cmd: 0x30, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
+    - {cmd: 0x20, start: true, end: true, protocol: 1w}
