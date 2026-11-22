@@ -55,6 +55,7 @@ constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_POSITION = "oneway_set_positi
 constexpr const char *MANAGEMENT_ACTION_ONEWAY_REMOVE_CONTROLLER = "oneway_remove_controller";
 constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_SEQUENCE = "oneway_set_sequence";
 constexpr const char *MANAGEMENT_ACTION_HEATING_CONTROL = "heating_control";
+constexpr const char *MANAGEMENT_ACTION_PAIR_DEVICE = "pair_device";
 /// Until when the retired `heating_control` function names work (ADR 0109).
 constexpr const char *HEATING_DEPRECATION_END = "January 2027";
 constexpr const char *MANAGEMENT_RESULT_EVENT = "esphome.home_io_control_action_result";
@@ -373,6 +374,10 @@ void ManagementActions::register_actions() {
        [this](const api::ExecuteServiceRequest &r) {
          this->api_heating_control(r.args[0].string_.str(), r.args[1].string_.str(), r.args[2].string_.str());
        }},
+      {MANAGEMENT_ACTION_PAIR_DEVICE,
+       {"device_id"},
+       false,  // a real user feature, gated by documentation not by diagnostic_probes:
+       [this](const api::ExecuteServiceRequest &r) { this->api_pair_device(r.args[0].string_.str()); }},
       {MANAGEMENT_ACTION_PROBE_DEVICE,
        {"device_id", "probe", "index"},
        true,
@@ -819,6 +824,26 @@ void ManagementActions::api_oneway_set_sequence(const std::string &controller_id
                       " replaces it at the next boot unless you lower initial_sequence in the YAML";
   }
   publish_result(result);
+}
+
+void ManagementActions::api_pair_device(const std::string &device_id) { publish_result(pair_device(device_id)); }
+
+ManagementActionResult ManagementActions::pair_device(const std::string &device_id) {
+  ManagementActionResult result;
+  auto *dev = resolve_device_(MANAGEMENT_ACTION_PAIR_DEVICE, device_id, result);
+  if (dev == nullptr)
+    return result;
+
+  if (dev->registered_by_pairing) {
+    result.message = "device was registered by an earlier pairing and no entity declares it; add its YAML entry first";
+    return result;
+  }
+
+  result.success = hub_->pair_declared_device(result.device_id);
+  result.message = result.success ? "device confirmed the key"
+                                  : "no key confirm: was the device's pairing window open? The log has the step it "
+                                    "stopped at";
+  return result;
 }
 
 /// @brief Collect the keys to sweep: the hub key, then each per-device key that differs from it and

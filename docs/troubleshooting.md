@@ -56,8 +56,10 @@ What to try, in order:
    [VELUX INTEGRA](devices/velux-integra.md#ssl-solar-roller-shutter).
 4. **If a two-way hub already controls it** — a Somfy TaHoma, Connexoon or Connectivity Kit, a
    VELUX KLF 200, KLR 100, KLR 200, KLR 300 or KIG 300 — use [key extraction](key-extraction.md). It is the route that
-   works for a claimed device. A 1W-only wall switch or remote does not qualify; see
-   [Key extraction](key-extraction.md) for why.
+   brings a whole claimed installation over at once. A 1W-only wall switch or remote does not
+   qualify; see [Key extraction](key-extraction.md) for why. To take one claimed device over
+   without involving the hub that holds it, write its entity by hand as above and pair it by
+   address instead: [Pairing a device by address](pairing.md#pairing-a-device-by-address).
 5. **Only then, tune discovery.** [Radio tuning](configuration/tuning.md) covers the parameters,
    and [A tuning plan](#a-tuning-plan) below is the order to change them in.
 

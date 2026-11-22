@@ -672,6 +672,11 @@ class IOHomeControlComponent : public Component,
   /// Discover and pair a device that is in pairing mode.
   /// @return true if pairing completed successfully; false otherwise.
   bool discover_and_pair();
+  /// Pair a device the YAML declares, by address, with no discovery. See
+  /// PairingEngine::pair_declared_device().
+  /// @param device_id Target device ID.
+  /// @return true if the device confirmed the key; false otherwise.
+  bool pair_declared_device(const std::string &device_id);
   /// Send an arbitrary IO position (0-100) to a light entity. Internally mapped to the shared
   /// execute path; a binary light sends the two extremes through queue_set_light_state(), a dimmable
   /// one anything in between through queue_set_light_position().

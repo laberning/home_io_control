@@ -1,7 +1,7 @@
 # Pairing
 <!-- doxygen-label: pairing -->
 
-Getting a device onto your hub. There are four routes, and picking the right one first saves more
+Getting a device onto your hub. There are five routes, and picking the right one first saves more
 time than anything else on this page.
 
 ## Which route should I use?
@@ -11,6 +11,7 @@ time than anything else on this page.
 | A two-way hub controls the device today: a TaHoma, Connexoon, Connectivity Kit, KLF 200, KLR 100, KLR 200, KLR 300, KIG 300 or similar | [Key extraction](key-extraction.md), then [Scan Paired Devices](scan-paired-devices.md) |
 | The device is new or factory reset, or only wall remotes have ever driven it | Discover & Pair, on this page |
 | The device is a connected radiator or towel dryer of the Atlantic group | Discover & Pair from the device's own menu; see [Devices that hand over their own key](#devices-that-hand-over-their-own-key) |
+| A two-way hub holds the device, you would rather not take that hub's key, and you can open the device's own pairing window | [Pairing a device by address](#pairing-a-device-by-address) |
 | The device only takes one-way commands, or never answers Discover & Pair while a 1W remote still drives it | [1W enrollment](configuration/oneway-transmit.md#enrolling-this-hub-as-a-controller) |
 
 ```mermaid
@@ -38,6 +39,10 @@ that qualify. See [Key extraction](key-extraction.md).
 
 **Discover & Pair** is the route for a device that is genuinely unclaimed: new, or factory reset,
 with no hub holding its key.
+
+**Pairing a device by address** is the route for a claimed device when you would rather not involve
+the hub that holds it. It skips discovery, so it needs the device's ID in your YAML and its pairing
+window open. See [Pairing a device by address](#pairing-a-device-by-address).
 
 **1W enrollment** is the route for a device that takes only one-way commands, such as a VELUX
 interior blind behind a KLI remote. The hub joins the device as one more remote: you get open, close
@@ -110,7 +115,30 @@ wake-up burst takes it through
 **If the device never answers**, read
 [The device is never found](troubleshooting.md#the-device-is-never-found) before touching
 [Radio tuning](configuration/tuning.md). A device that already belongs to a hub has nothing left
-to answer a discovery with, and no tuning changes that; key extraction does.
+to answer a discovery with, and no tuning changes that; key extraction does, and so does pairing it
+by address.
+
+## Pairing a device by address
+
+A device that already holds a hub's key answers no discovery, so Discover & Pair never finds it.
+The rest of the flow needs no discovery: the `0x31` key init, the device's `0x3C` challenge, the
+`0x32` key transfer and its `0x33` confirm are all addressed to one device. The
+[`pair_device`](configuration/actions.md#pair_device) action runs that exchange on its own, aimed
+at a device your YAML declares.
+
+It needs the device's ID in your YAML, and its pairing window open by the gesture its own manual
+describes. Write the entity by hand the way
+[The device is never found](troubleshooting.md#the-device-is-never-found) describes when discovery
+is no help: turn on the `io_capture` log tag, operate the device from the hub or remote that drives
+it today, and read the `src=`/`dst=` of its frames.
+
+Afterwards the device holds this hub's key, or the entity's own
+[`system_key:`](configuration/index.md) when it declares one, and the hub that held it before no
+longer controls it. Its one-way remotes keep working, since those are a separate stack, and nothing
+is reset.
+
+Nothing in this route is broadcast, so devices that share a circuit can be done one after another:
+open the window, then call the action once per device ID.
 
 ## Devices that hand over their own key
 
