@@ -481,3 +481,68 @@ TEST(HubOperations, AVerticalInteriorBlindHasNoTilt) {
   EXPECT_FALSE(comp.set_device_tilt("ABC123", 50));
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
+
+// ========================================================================================
+// set_favorite_position tests
+// ========================================================================================
+
+TEST(HubOperations, SetFavoritePositionSendsTheSelectorAndThePositionToStore) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  comp.set_favorite_position("ABC123", 50);
+
+  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, POS_FAVORITE, 0x00, 0x64, 0x00, 0x00, 0x00}));
+}
+
+TEST(HubOperations, SetFavoritePositionIsRefusedForADeviceWithoutAFavorite) {
+  // A garage opener answers the favourite selector with RESULT_PARAMETER_UNKNOWN (issue #163).
+  TestableComponent comp;
+  MockRadio radio;
+  make_garage(comp, radio);
+
+  EXPECT_FALSE(comp.set_favorite_position("ABC123", 50));
+  EXPECT_FALSE(comp.queue_set_favorite_position("ABC123", 50));
+  EXPECT_TRUE(radio.get_sent_data().empty()) << "a device without a favourite is refused before transmitting";
+}
+
+TEST(HubOperations, SetFavoritePositionDoesNotMarkTheCoverAsTravelling) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+  IoFrame resp = build_status_response(comp.node_id_);
+  uint8_t raw[64];
+  const uint8_t raw_len = serialize(resp, raw, sizeof(raw));
+  RadioRxPacket pkt{};
+  pkt.len = raw_len;
+  memcpy(pkt.data, raw, raw_len);
+  radio.queue_rx(pkt);
+
+  ASSERT_TRUE(comp.set_favorite_position("ABC123", 25));
+
+  const auto *dev = comp.get_device("ABC123");
+  ASSERT_NE(dev, nullptr);
+  EXPECT_TRUE(dev->optimistic.empty()) << "no entity predicted this write, so no prediction is left behind";
+}
+
+TEST(HubOperations, QueuedFavoritePositionReachesTheWireThroughTheDispatch) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  ASSERT_TRUE(comp.queue_set_favorite_position("ABC123", 100));
+  EXPECT_TRUE(radio.get_sent_data().empty()) << "queued, not sent, until loop() dispatches it";
+  comp.process_pending_operation_();
+
+  EXPECT_EQ(first_sent_payload(radio), (std::vector<uint8_t>{0x01, 0x63, POS_FAVORITE, 0x00, 0xC8, 0x00, 0x00, 0x00}));
+}
+
+TEST(HubOperations, QueuedFavoritePositionIsRefusedForAnUnknownDevice) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup_cover_component(comp, radio);
+
+  EXPECT_FALSE(comp.queue_set_favorite_position("FFFFFF", 50));
+  EXPECT_TRUE(radio.get_sent_data().empty());
+}

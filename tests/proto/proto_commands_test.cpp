@@ -6,6 +6,7 @@
 #include "test_helpers.h"
 
 #include <cstring>
+#include <vector>
 
 using namespace esphome::home_io_control;
 
@@ -666,6 +667,37 @@ TEST(ProtoCommands, CreateExecuteCommandFavorite) {
   EXPECT_EQ(frame.data[3], 0x00) << "favorite modifier should be 0x00";
   EXPECT_EQ(frame.data[4], 0x00);
   EXPECT_EQ(frame.data[5], 0x00);
+}
+
+TEST(ProtoCommands, CreateSetStoredPositionWritesTheFavoriteSelectorAndThePosition) {
+  IoFrame frame{};
+  ASSERT_TRUE(create_set_stored_position(frame, test::OWN_ID, test::DST_ID, false, 50))
+      << "create_set_stored_position() should succeed for a position in range";
+  EXPECT_EQ(frame.cmd, CMD_SET_STORED_POSITION);
+  // The selector and the position as a Somfy RS100 IO took them, at this component's EXECUTE_ACEI.
+  EXPECT_EQ(std::vector<uint8_t>(frame.data, frame.data + frame.data_len),
+            (std::vector<uint8_t>{ORIGINATOR_USER_REMOTE, 0x63, POS_FAVORITE, 0x00, 0x64, 0x00, 0x00, 0x00}));
+}
+
+TEST(ProtoCommands, CreateSetStoredPositionRefusesAPositionAboveAHundred) {
+  IoFrame frame{};
+  // POS_STOP (0xD2) is the value that matters: position_main_parameter() maps it to the stop main
+  // parameter, which an unguarded builder would store as the device's favorite position.
+  EXPECT_FALSE(create_set_stored_position(frame, test::OWN_ID, test::DST_ID, false, POS_STOP));
+  EXPECT_FALSE(create_set_stored_position(frame, test::OWN_ID, test::DST_ID, false, 101));
+}
+
+TEST(ProtoCommands, CreateSetStoredPositionStoresBothEndsOfTheScale) {
+  IoFrame open_frame{};
+  ASSERT_TRUE(create_set_stored_position(open_frame, test::OWN_ID, test::DST_ID, false, 0));
+  EXPECT_EQ(open_frame.data[4], 0x00) << "fully open stores main parameter 0x0000";
+  EXPECT_EQ(open_frame.data[5], 0x00);
+
+  IoFrame closed_frame{};
+  ASSERT_TRUE(create_set_stored_position(closed_frame, test::OWN_ID, test::DST_ID, true, 100));
+  EXPECT_EQ(closed_frame.data[4], 0xC8) << "fully closed stores main parameter 0xC800, as a close command does";
+  EXPECT_EQ(closed_frame.data[5], 0x00);
+  EXPECT_NE(closed_frame.ctrl1 & CTRL1_LOW_POWER, 0) << "low_power must reach the frame, as in every other builder";
 }
 
 // Experimental named positions (no public source): the bytes are POS_FAVORITE plus a modifier.

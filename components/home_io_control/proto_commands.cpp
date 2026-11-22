@@ -128,6 +128,11 @@ constexpr uint8_t EXECUTE_POSITION_PROFILE = 0x06;
 constexpr uint8_t EXECUTE_PROFILE_SILENT = 0x05;
 /// Short payload length for special execute commands such as stop/favorite.
 constexpr size_t EXECUTE_SPECIAL_PAYLOAD_SIZE = 6;
+/// CMD_SET_STORED_POSITION payload length.
+constexpr size_t SET_STORED_POSITION_PAYLOAD_SIZE = 8;
+/// Names the stored position that a CMD_SET_STORED_POSITION write targets, as the main parameter
+/// that recalls it: POS_FAVORITE for the "My" position.
+constexpr uint16_t SET_STORED_POSITION_SELECTOR = main_parameter_of(POS_FAVORITE);
 /// Mask for the low byte of a 16-bit main parameter.
 constexpr uint16_t MAIN_PARAMETER_LOW_BYTE_MASK = 0xFF;
 /// Length of an EXECUTE payload with one functional parameter of the second bitmap: originator, ACEI,
@@ -353,6 +358,25 @@ bool create_execute_command(IoFrame &f, const uint8_t *own, const uint8_t *dst, 
   const uint8_t payload[EXECUTE_SPECIAL_PAYLOAD_SIZE] = {EXECUTE_ORIGINATOR, EXECUTE_ACEI, main_byte,
                                                          modifier_byte,      0x00,         0x00};
   return set_cmd(f, CMD_EXECUTE, payload, sizeof(payload));
+}
+
+bool create_set_stored_position(IoFrame &f, const uint8_t *own, const uint8_t *dst, bool low_power, uint8_t position) {
+  // position_main_parameter() maps POS_STOP to the stop main parameter, so an unguarded value of
+  // 0xD2 would store "stop" as the device's favorite position.
+  if (position > POSITION_PERCENT_MAX)
+    return false;
+  const uint16_t stored = position_main_parameter(position);
+  init_request(f, own, dst, low_power);
+  const uint8_t payload[SET_STORED_POSITION_PAYLOAD_SIZE] = {
+      EXECUTE_ORIGINATOR,
+      EXECUTE_ACEI,
+      static_cast<uint8_t>(SET_STORED_POSITION_SELECTOR >> BITS_PER_BYTE),
+      static_cast<uint8_t>(SET_STORED_POSITION_SELECTOR & MAIN_PARAMETER_LOW_BYTE_MASK),
+      static_cast<uint8_t>(stored >> BITS_PER_BYTE),
+      static_cast<uint8_t>(stored & MAIN_PARAMETER_LOW_BYTE_MASK),
+      0x00,
+      0x00};
+  return set_cmd(f, CMD_SET_STORED_POSITION, payload, sizeof(payload));
 }
 
 /// Build a force-open execute frame (0x00): an ordinary position command to the device's

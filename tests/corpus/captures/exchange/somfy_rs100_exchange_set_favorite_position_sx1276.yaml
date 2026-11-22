@@ -1,0 +1,49 @@
+id: somfy_rs100_exchange_set_favorite_position_sx1276
+description: >
+  A set_favorite_position write to a mains RS100 IO (0x0A, position 76 %, main parameter 0x9800)
+  and the private2_short read of the stored position that follows it. The write is answered with
+  the main parameter it carried, the read with 0x97FA, six units lower, so the answer acknowledges
+  the request and the motor stores its own rounding of it. Writes of 0x7800 and 0x6E00 rounded the
+  same way, while a value the motor had itself reported was stored unchanged.
+  The motor challenged the write first; the challenge pair is not kept here, the reply followed the
+  answered challenge. Only the first frame of each exchange has a t_ms, the replies were logged
+  without one.
+source:
+  device: "Somfy RS100 IO roller shutter, mains powered (node A70429)"
+  captured_with: sx1276
+  firmware: "LilyGO T-Beam v1.2, set_favorite_position branch with IOHOME_FRAME_LOG"
+  date: 2026-11-22
+  origin: own-hardware
+  issue: null
+key: unknown
+frames:
+  - dir: tx
+    freq: 869850000
+    t_ms: 0
+    hex: "50 00 A7 04 29 BA 11 AD 0A 01 63 D8 00 98 00 00 00"
+    crc: absent
+    note: >
+      cmd=SET_STORED_POSITION(0x0A); originator 0x01, ACEI 0x63, the POS_FAVORITE selector D8 00,
+      then 0x9800 as the position to store
+  - dir: rx
+    freq: 869850000
+    hex: "8D 00 BA 11 AD A7 04 29 0D 05 98 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D); 05 then the 0x9800 the write carried"
+  - dir: tx
+    freq: 869850000
+    t_ms: 7000
+    hex: "4C 00 A7 04 29 BA 11 AD 0C D8 00 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2(0x0C), short form, index 0: read the position the D8 00 selector holds"
+  - dir: rx
+    freq: 869850000
+    hex: "8D 00 BA 11 AD A7 04 29 0D 05 97 FA 00 00"
+    crc: absent
+    note: "cmd=PRIVATE2_RESP(0x0D); 0x97FA, 75.99 %, the value the motor stored"
+expect:
+  frames:
+    - {cmd: 0x0A, start: true, end: false, protocol: 2w}
+    - {cmd: 0x0D, start: false, end: true, protocol: 2w}
+    - {cmd: 0x0C, start: true, end: false, protocol: 2w}
+    - {cmd: 0x0D, start: false, end: true, protocol: 2w}

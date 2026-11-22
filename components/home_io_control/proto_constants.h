@@ -36,7 +36,8 @@ static constexpr uint8_t CMD_SET_STORED_POSITION =
            ///< stored-position selector, then the position to store. Requires authentication.
            ///< Answered with CMD_PRIVATE2_RESP (0x0D) carrying the main parameter the request asked
            ///< for, so only a CMD_PRIVATE2 read says what the device kept, which it may round onto a
-           ///< grid of its own.
+           ///< grid of its own. Built by create_set_stored_position(), confirmed on a mains Somfy
+           ///< RS100 IO, corpus `somfy_rs100_exchange_set_favorite_position_sx1276`.
 static constexpr uint8_t CMD_PRIVATE2 =
     0x0C;  ///< Reads the stored position that CMD_EXECUTE's POS_FAVORITE/POS_VENT_MODIFIER selector
            ///< recalls. The request carries that selector with the execution prefix stripped. Two
