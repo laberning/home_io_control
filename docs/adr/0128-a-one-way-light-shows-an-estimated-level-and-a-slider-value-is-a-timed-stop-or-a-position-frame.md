@@ -30,17 +30,19 @@ is obeyed, with the level reached at once (already there and at rest at the firs
   0127, with on as open and off as close: it moves over the fade time, ends at the commanded end and freezes on a
   stop. A position frame sets the light's estimate to its level at once, as the Izymo does; a cover's estimate keeps
   travelling (ADR 0127). Home Assistant transitions stay off (length 0): the fade shown is the device's own, and
-  a transition asked for anyway sends only its end value.
+  a transition asked for anyway sends only its end value, as on every light of this component.
 - **A slider value is one of two ways**, chosen by `set_position:` on the identity, valid only with the durations, the
   same for a light and a cover:
   - `timed` (the default): the hub sends on or open towards the value, or off or close, and one stop when the
     estimate reaches the value. The stop is scheduled from the moment the command's report says it reached the radio,
-    so the delay starts when the fade or the motor does. A value at an end sends the plain command and no stop, so the
-    end stop re-anchors the estimate.
+    so the delay starts when the fade or the motor does. Every queued one-way command carries a ticket that its
+    report returns, so the entity knows the report of its own command whatever else the identity sends around it. A
+    value at an end sends the plain command and no stop, so the end stop re-anchors the estimate.
   - `frame`: one position frame carrying the value, mirrored for an inverted kind as `oneway_set_position` does, and
     no stop.
 - **No stale stop.** A new value, a stop, or a followed remote's press cancels a pending stop; a new value is planned
-  again from the current estimate, and a reversal sends the opposite command.
+  again from the current estimate, and a reversal sends the opposite command. A command of the identity from
+  elsewhere cancels a stop already armed and leaves a value that still waits for the report of its own command.
 - **One rule.** The choice of command and the stop delay are one pure function of estimate, requested value,
   durations and way, shared by the light and the cover.
 

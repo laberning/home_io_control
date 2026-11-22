@@ -72,12 +72,14 @@ void OneWaySlider::send_plan_(const decisions::OneWaySliderPlan &plan, float lev
   using Send = decisions::OneWaySliderPlan::Send;
   switch (plan.send) {
     case Send::OPEN:
-    case Send::CLOSE:
+    case Send::CLOSE: {
+      const uint32_t ticket =
+          this->queue_action(plan.send == Send::OPEN ? OneWayButtonAction::OPEN : OneWayButtonAction::CLOSE);
       // The stop is armed by this command's report and timed from the estimate then, when the run has begun.
       if (plan.stop_after_ms.has_value())
-        this->pending_value_ = PendingValue{std::clamp(level, 0.0F, 1.0F), plan.send == Send::OPEN};
-      this->queue_action(plan.send == Send::OPEN ? OneWayButtonAction::OPEN : OneWayButtonAction::CLOSE);
+        this->pending_value_ = PendingValue{std::clamp(level, 0.0F, 1.0F), plan.send == Send::OPEN, ticket};
       break;
+    }
     case Send::STOP:
       this->queue_action(OneWayButtonAction::STOP);
       break;
@@ -95,27 +97,20 @@ void OneWaySlider::cancel() {
   this->cancel_stop_();
 }
 
-void OneWaySlider::queue_action(OneWayButtonAction action) {
-  ++this->unreported_;
-  this->port_->send_oneway_action(this->controller_id_, action);
+uint32_t OneWaySlider::queue_action(OneWayButtonAction action) {
+  return this->port_->send_oneway_action(this->controller_id_, action);
 }
 
-void OneWaySlider::queue_position(uint8_t position) {
-  ++this->unreported_;
-  this->port_->send_oneway_position(this->controller_id_, position);
+uint32_t OneWaySlider::queue_position(uint8_t position) {
+  return this->port_->send_oneway_position(this->controller_id_, position);
 }
 
 void OneWaySlider::on_own_report(const OneWayCommandReport &report) {
-  // One report per queued command, in queue order: the report that brings the count to zero is the one of the latest
-  // command, the one a pending timed value was planned for. An earlier command's report leaves the plan alone. A
-  // command queued elsewhere (a button, an action) counts here too, so it can take the latest's place: then the stop is
-  // lost and the run goes on to an end (the far one, when the way back was sent from the foreign report), which never
-  // stops the device at a value nobody asked for.
+  // The report of the pending value's own command, told by its ticket, is the one that arms the stop. Any other report
+  // (a button, an action, an earlier value) leaves the pending value waiting for its own.
   std::optional<PendingValue> pending;
-  if (this->unreported_ <= 1)
+  if (this->pending_value_.has_value() && report.ticket == this->pending_value_->ticket)
     pending = std::exchange(this->pending_value_, std::nullopt);
-  if (this->unreported_ > 0)
-    --this->unreported_;
   // A burst that never reached the radio changes nothing, and neither does enrollment traffic (no intent).
   if (!decisions::follows_own_oneway_command(report.transmitted, report.wire.has_intent))
     return;
@@ -124,9 +119,8 @@ void OneWaySlider::on_own_report(const OneWayCommandReport &report) {
   const auto intent = this->apply_frame_(report.wire);
   if (!pending.has_value() || !intent.has_value() || intent->kind != decisions::TravelIntent::Kind::GO_TO)
     return;
-  // A run the other way is not the value's command but one from elsewhere in its place: the value is dropped.
   const bool rising = intent->level >= 1.0F;
-  if (rising != pending->rising)
+  if (rising != pending->rising)  // the frame that went out is not the command that was queued: nothing to time
     return;
   // Timed from the estimate as the run begins, by the same rule that chose the command.
   const auto plan = decisions::plan_oneway_slider(this->travel_->estimate(), this->travel_->rates(), millis(),
@@ -154,8 +148,8 @@ void IOHomeOneWayCover::setup() {
       [this]() { this->cancel_timeout(STOP_TIMEOUT); },
       [this](const OneWayFrameInfo &wire) { return this->apply_frame_(wire); });
   this->control_port_->add_oneway_command_report_callback([this](const OneWayCommandReport &report) {
-    // Every cover sees every report; each keeps only its own identity's. The slider counts it, and a burst that never
-    // reached the radio changes nothing, and neither does enrollment traffic (its frames carry no intent).
+    // Every cover sees every report; each keeps only its own identity's. A burst that never reached the radio changes
+    // nothing, and neither does enrollment traffic (its frames carry no intent).
     if (report.controller_id == this->controller_id_)
       this->slider_.on_own_report(report);
   });

@@ -57,6 +57,9 @@ struct OneWayCommandReport {
   /// mirrored position included). `has_intent` is false for enrollment traffic, a failure and a frame
   /// carrying no command; the hub follows a transmitted report only when it is true (ADR 0116).
   OneWayFrameInfo wire{};
+  /// Ticket the queue gave the command (never 0), so the caller that queued it recognises its own report; 0 for a
+  /// report of enrollment traffic or of a command sent without one.
+  uint32_t ticket{0};
 };
 
 /// @brief Invoked once per attempted 1W command, successful or not.
@@ -174,9 +177,10 @@ class OneWayTransmitter {
   /// @param controller_id YAML handle of the controller identity to transmit as.
   /// @param cmd Named command (STOP, FAVORITE, VENT). CoverCommand::FORCE_OPEN has no 1W
   ///        encoding and cannot be built — see create_1w_execute_command() (proto_commands.h).
+  /// @param ticket Carried by the command's report (OneWayCommandReport::ticket); 0 for none.
   /// @return true if at least one copy reached the radio; false if the identity is unknown, the
   ///         sequence could not be reserved, or the frame could not be built.
-  bool send_command(const std::string &controller_id, CoverCommand cmd);
+  bool send_command(const std::string &controller_id, CoverCommand cmd, uint32_t ticket = 0);
 
   /// @brief Send a numeric position as the identity's controller.
   ///
@@ -186,8 +190,9 @@ class OneWayTransmitter {
   /// user's intent (OPEN stays OPEN).
   /// @param controller_id YAML handle of the controller identity to transmit as.
   /// @param position Target position 0–100 (0 = fully open, 100 = fully closed), before any mirroring.
+  /// @param ticket Carried by the command's report (OneWayCommandReport::ticket); 0 for none.
   /// @return true if at least one copy reached the radio.
-  bool send_position(const std::string &controller_id, uint8_t position);
+  bool send_position(const std::string &controller_id, uint8_t position, uint32_t ticket = 0);
 
   /// @brief Transmit one already-built, already-signed 1W frame as a burst.
   ///
@@ -288,9 +293,10 @@ class OneWayTransmitter {
   ///        wire value). Empty means "derive from the built frame as usual".
   /// @param enrollment True for the frames of an enrollment gesture: the report then carries no wire
   ///        intent, so nothing the hub follows reacts to them.
+  /// @param ticket Carried by the report of this attempt, failure included.
   bool send_(const std::string &controller_id,
              const std::function<bool(IoFrame &, const OneWayControllerIdentity &, uint16_t)> &build,
-             const char *explicit_intent = "", bool enrollment = false);
+             const char *explicit_intent = "", bool enrollment = false, uint32_t ticket = 0);
 
   /// send_enrollment()'s two gestures, split so each stays simple. The dispatcher resolves the
   /// identity once and hands it down.
@@ -309,10 +315,12 @@ class OneWayTransmitter {
   /// report — success, sweep, or failure — goes through here so a new field on the struct, or a
   /// change to how a field is chosen, lands in exactly one spot.
   void report_attempt_(const std::string &controller_id, const std::string &intent, DeviceType target_type,
-                       uint16_t sequence, bool sequence_reserved, bool transmitted, const OneWayFrameInfo &wire = {});
+                       uint16_t sequence, bool sequence_reserved, bool transmitted, const OneWayFrameInfo &wire = {},
+                       uint32_t ticket = 0);
 
   /// Emit a report for an attempt that never got as far as a frame.
-  void report_failure_(const std::string &controller_id, uint16_t sequence, bool sequence_reserved);
+  void report_failure_(const std::string &controller_id, uint16_t sequence, bool sequence_reserved,
+                       uint32_t ticket = 0);
 
   OneWayTransmitFn transmit_;
   OneWayPreambleBytesFn preamble_bytes_;

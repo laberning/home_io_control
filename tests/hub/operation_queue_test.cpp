@@ -9,6 +9,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
 #include <string>
 
 using namespace esphome::home_io_control;
@@ -389,6 +390,40 @@ TEST(OperationQueue, RepeatedOneWayCommandsAreNeitherCoalescedNorDeduplicated) {
   q.enqueue_oneway_position("awning_remote", 50);
 
   EXPECT_EQ(q.size(), 3u) << "every 1W press must survive as its own operation";
+}
+
+TEST(OperationQueue, EveryOneWayCommandAndPositionGetsItsOwnNonZeroTicketThatTheOperationCarries) {
+  OperationQueue q;
+  const uint32_t first = q.enqueue_oneway_command("awning_remote", CoverCommand::STOP);
+  const uint32_t second = q.enqueue_oneway_position("awning_remote", 50);
+  const uint32_t third = q.enqueue_oneway_command("other_remote", CoverCommand::STOP);
+
+  EXPECT_NE(first, 0u);
+  EXPECT_NE(second, 0u);
+  EXPECT_NE(third, 0u);
+  EXPECT_NE(first, second);
+  EXPECT_NE(second, third);
+  EXPECT_NE(first, third);
+  ASSERT_EQ(q.size(), 3u);
+  EXPECT_EQ(q[0].ticket, first);
+  EXPECT_EQ(q[1].ticket, second);
+  EXPECT_EQ(q[2].ticket, third);
+}
+
+TEST(OperationQueue, TheOneWayTicketCountsUpAndSkipsZeroWhenItWraps) {
+  EXPECT_EQ(OperationQueue::oneway_ticket_after(0), 1u) << "the first ticket after a boot";
+  EXPECT_EQ(OperationQueue::oneway_ticket_after(41), 42u);
+  EXPECT_EQ(OperationQueue::oneway_ticket_after(UINT32_MAX), 1u) << "0 means no ticket on a report";
+}
+
+TEST(OperationQueue, OtherOperationsCarryNoTicket) {
+  OperationQueue q;
+  q.enqueue_request_status("DEV");
+  q.enqueue_oneway_enroll("awning_remote");
+
+  ASSERT_EQ(q.size(), 2u);
+  EXPECT_EQ(q[0].ticket, 0u);
+  EXPECT_EQ(q[1].ticket, 0u) << "enrollment traffic is not a command a caller waits for";
 }
 
 TEST(OperationQueue, AOneWayCommandDoesNotDropADeviceStatusPoll) {

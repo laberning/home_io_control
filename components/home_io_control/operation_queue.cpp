@@ -77,16 +77,33 @@ void OperationQueue::enqueue_device_command(const std::string &device_id, CoverC
   push_control_(std::move(op));
 }
 
-void OperationQueue::enqueue_oneway_command(const std::string &controller_id, CoverCommand cmd) {
+uint32_t OperationQueue::oneway_ticket_after(uint32_t last) {
+  const uint32_t next = last + 1U;
+  return next == 0U ? 1U : next;
+}
+
+uint32_t OperationQueue::next_oneway_ticket_() {
+  this->last_oneway_ticket_ = oneway_ticket_after(this->last_oneway_ticket_);
+  return this->last_oneway_ticket_;
+}
+
+uint32_t OperationQueue::enqueue_oneway_command(const std::string &controller_id, CoverCommand cmd) {
   PendingOperation op{};
   op.type = PendingOperationType::ONEWAY_COMMAND;
   op.device_id = controller_id;
   op.command = cmd;
+  op.ticket = this->next_oneway_ticket_();
+  const uint32_t ticket = op.ticket;
   push_control_(std::move(op));
+  return ticket;
 }
 
-void OperationQueue::enqueue_oneway_position(const std::string &controller_id, uint8_t position) {
-  push_control_({PendingOperationType::ONEWAY_POSITION, controller_id, position});
+uint32_t OperationQueue::enqueue_oneway_position(const std::string &controller_id, uint8_t position) {
+  PendingOperation op{PendingOperationType::ONEWAY_POSITION, controller_id, position};
+  op.ticket = this->next_oneway_ticket_();
+  const uint32_t ticket = op.ticket;
+  push_control_(std::move(op));
+  return ticket;
 }
 
 void OperationQueue::enqueue_oneway_enroll(const std::string &controller_id) {

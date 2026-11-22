@@ -68,11 +68,11 @@ bool OneWayTransmitter::seed_sequence(const std::string &controller_id, uint16_t
 
 bool OneWayTransmitter::send_(const std::string &controller_id,
                               const std::function<bool(IoFrame &, const OneWayControllerIdentity &, uint16_t)> &build,
-                              const char *explicit_intent, bool enrollment) {
+                              const char *explicit_intent, bool enrollment, uint32_t ticket) {
   const OneWayControllerIdentity *identity = this->identities_.get(controller_id);
   if (identity == nullptr) {
     ESP_LOGW(TAG, "1W tx: no controller identity '%s'", controller_id.c_str());
-    this->report_failure_(controller_id, 0, /*sequence_reserved=*/false);
+    this->report_failure_(controller_id, 0, /*sequence_reserved=*/false, ticket);
     return false;
   }
 
@@ -80,7 +80,7 @@ bool OneWayTransmitter::send_(const std::string &controller_id,
   uint16_t sequence = 0;
   if (!this->sequences_.next(identity->node_id, sequence)) {
     // The store logs why; it refuses rather than risk reusing a sequence.
-    this->report_failure_(controller_id, 0, /*sequence_reserved=*/false);
+    this->report_failure_(controller_id, 0, /*sequence_reserved=*/false, ticket);
     return false;
   }
 
@@ -89,7 +89,7 @@ bool OneWayTransmitter::send_(const std::string &controller_id,
     // The sequence is spent either way. Skipping one is free; reusing it is not, so it is not
     // returned to the store.
     ESP_LOGW(TAG, "1W tx: could not build a frame for '%s'", controller_id.c_str());
-    this->report_failure_(controller_id, sequence, /*sequence_reserved=*/true);
+    this->report_failure_(controller_id, sequence, /*sequence_reserved=*/true, ticket);
     return false;
   }
 
@@ -114,13 +114,13 @@ bool OneWayTransmitter::send_(const std::string &controller_id,
   // "unknown" in the sensor (the sensor has no distinct "all" case the way the frame log does via
   // oneway_target_label()). The literal destination is already in the frame log.
   this->report_attempt_(controller_id, intent, identity->io_device_type, sequence, /*sequence_reserved=*/true,
-                        transmitted, wire);
+                        transmitted, wire, ticket);
   return transmitted;
 }
 
 void OneWayTransmitter::report_attempt_(const std::string &controller_id, const std::string &intent,
                                         DeviceType target_type, uint16_t sequence, bool sequence_reserved,
-                                        bool transmitted, const OneWayFrameInfo &wire) {
+                                        bool transmitted, const OneWayFrameInfo &wire, uint32_t ticket) {
   if (!this->report_)
     return;
   OneWayCommandReport report{};
@@ -131,22 +131,28 @@ void OneWayTransmitter::report_attempt_(const std::string &controller_id, const 
   report.sequence_reserved = sequence_reserved;
   report.transmitted = transmitted;
   report.wire = wire;
+  report.ticket = ticket;
   this->report_(report);
 }
 
-void OneWayTransmitter::report_failure_(const std::string &controller_id, uint16_t sequence, bool sequence_reserved) {
-  this->report_attempt_(controller_id, "", DeviceType::UNKNOWN, sequence, sequence_reserved, /*transmitted=*/false);
+void OneWayTransmitter::report_failure_(const std::string &controller_id, uint16_t sequence, bool sequence_reserved,
+                                        uint32_t ticket) {
+  this->report_attempt_(controller_id, "", DeviceType::UNKNOWN, sequence, sequence_reserved, /*transmitted=*/false, {},
+                        ticket);
 }
 
-bool OneWayTransmitter::send_command(const std::string &controller_id, CoverCommand cmd) {
-  return this->send_(controller_id, [cmd](IoFrame &frame, const OneWayControllerIdentity &identity, uint16_t sequence) {
-    return create_1w_execute_command(frame, identity.node_id, identity.io_device_type, cmd, sequence,
-                                     identity.system_key, effective_execute_acei(identity),
-                                     identity.execute_broadcast_all);
-  });
+bool OneWayTransmitter::send_command(const std::string &controller_id, CoverCommand cmd, uint32_t ticket) {
+  return this->send_(
+      controller_id,
+      [cmd](IoFrame &frame, const OneWayControllerIdentity &identity, uint16_t sequence) {
+        return create_1w_execute_command(frame, identity.node_id, identity.io_device_type, cmd, sequence,
+                                         identity.system_key, effective_execute_acei(identity),
+                                         identity.execute_broadcast_all);
+      },
+      "", /*enrollment=*/false, ticket);
 }
 
-bool OneWayTransmitter::send_position(const std::string &controller_id, uint8_t position) {
+bool OneWayTransmitter::send_position(const std::string &controller_id, uint8_t position, uint32_t ticket) {
   // The caller's position is the user's (0 = open). An inverted kind wants wire 0 = closed, so the
   // value is mirrored here and only here. The intent label is computed from the user position
   // before mirroring, because decoding the built frame would report CLOSE for a user OPEN.
@@ -169,7 +175,7 @@ bool OneWayTransmitter::send_position(const std::string &controller_id, uint8_t 
                                           identity.system_key, effective_execute_acei(identity),
                                           identity.execute_broadcast_all);
       },
-      intent);
+      intent, /*enrollment=*/false, ticket);
 }
 
 bool OneWayTransmitter::send_enrollment(const std::string &controller_id) {

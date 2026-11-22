@@ -184,13 +184,12 @@ class OneWayTravel {
 /// The rule that turns a value into commands is decisions::plan_oneway_slider(); this holds what the entity has to
 /// remember around it. A timed value is sent as open or close, and the stop is armed from the report of that command,
 /// so that its delay counts from when the motor or the fade began. The entity gives it the commands it queues and the
-/// reports of its identity, and the stop, the count of commands without a report and the pending value live here, once
-/// for the cover and the light.
+/// reports of its identity, and the stop and the pending value live here, once for the cover and the light.
 ///
-/// The queue reports each command once, in order, so the report that brings the count of unreported commands to zero
-/// is the one of the entity's latest command, the one a pending value was planned for. A command queued elsewhere
-/// (a button, an action) counts here too and can take the latest's place: then the stop is lost and the run goes on to
-/// an end, which never stops the device at a value nobody asked for. A stop is never sent out of time.
+/// Every queued command has a ticket that its report returns, so the slider knows the report of the value's own
+/// command whatever else of the identity is queued around it (a button, an action, an earlier value): only that report
+/// arms the stop. Any other report moves the estimate and cancels a stop already armed, and leaves a value that still
+/// waits for its own report alone. A stop is never sent out of time.
 /// @ingroup hioc_platforms
 class OneWaySlider {
  public:
@@ -234,15 +233,17 @@ class OneWaySlider {
   /// @brief Cancel the pending stop of a timed value, scheduled or not yet armed.
   void cancel();
 
-  /// @brief Queue one of the identity's commands and count it (see the class description).
-  void queue_action(OneWayButtonAction action);
+  /// @brief Queue one of the identity's commands.
+  /// @return Its ticket (see the class description).
+  uint32_t queue_action(OneWayButtonAction action);
 
-  /// @brief Queue a position frame and count it.
+  /// @brief Queue a position frame.
   /// @param position The user's position, 0 open (on) to 100 closed (off).
-  void queue_position(uint8_t position);
+  /// @return Its ticket.
+  uint32_t queue_position(uint8_t position);
 
-  /// @brief Handle the report of one of the identity's own commands: count it, show it on the entity if it reached the
-  /// radio, and arm the stop of a timed value if this is its command.
+  /// @brief Handle the report of one of the identity's own commands: show it on the entity if it reached the radio,
+  /// and arm the stop of a timed value if this is the report of its command.
   void on_own_report(const OneWayCommandReport &report);
 
  private:
@@ -253,6 +254,7 @@ class OneWaySlider {
   struct PendingValue {
     float target{0.0F};  ///< The level asked for, 0..1.
     bool rising{false};  ///< Whether the command sent for it opens (on), else closes (off).
+    uint32_t ticket{0};  ///< Ticket of that command; its report is the one that arms the stop.
   };
 
   HubControlPort *port_{nullptr};
@@ -264,8 +266,6 @@ class OneWaySlider {
   decisions::OneWaySliderWay way_{decisions::OneWaySliderWay::TIMED};
   /// The latest timed value while its command waits for its report; the report arms the stop.
   std::optional<PendingValue> pending_value_;
-  /// Commands queued whose report has not come.
-  uint32_t unreported_{0};
 };
 
 /// @brief Cover entity of a one-way controller identity: open, close and stop, with the state the hub assumes.

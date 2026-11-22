@@ -78,9 +78,12 @@ class OneWayLightTest : public ::testing::Test {
     light.write_state(&request);
   }
 
-  /// Report the last queued command as having reached the radio, with wire value @p main0.
-  void reached_radio(uint8_t main0) {
-    hub.report_oneway_command(sent(main0));
+  /// Report the oldest queued command not yet reported (the queue reports in order) as sent with wire value @p main0;
+  /// @p transmitted false for a burst that never reached the radio.
+  void reached_radio(uint8_t main0, bool transmitted = true) {
+    OneWayCommandReport report = sent(main0, transmitted);
+    report.ticket = hub.next_unreported_oneway_ticket();
+    hub.report_oneway_command(report);
     echo();
   }
 
@@ -356,7 +359,7 @@ TEST_F(OneWayLightTest, ACommandThatDidNotReachTheRadioSchedulesNoStopAndChanges
   start(true, true);
   ask(0.5F);
 
-  hub.report_oneway_command(sent(WIRE_ON, /*transmitted=*/false));
+  reached_radio(WIRE_ON, /*transmitted=*/false);
   pass(60000);
 
   EXPECT_EQ(hub.oneway_actions.size(), 1u);
@@ -365,16 +368,19 @@ TEST_F(OneWayLightTest, ACommandThatDidNotReachTheRadioSchedulesNoStopAndChanges
 
 TEST_F(OneWayLightTest, AnotherCommandsReportDoesNotArmTheStopOfAValueItWasNotSentFor) {
   start(true, true);
-  ask(0.5F);  // on, queued
+  hub.send_oneway_action(IDENTITY, OneWayButtonAction::CLOSE);  // an "off" button press queued just before the value
+  ask(0.5F);                                                    // on, queued
 
-  reached_radio(WIRE_OFF);  // an earlier "off" button press reports first
+  reached_radio(WIRE_OFF);  // the button's report comes first
   pass(1000);
-  EXPECT_EQ(hub.oneway_actions.size(), 1u) << "a stop planned for a rise is not armed by a fall";
+  EXPECT_EQ(hub.oneway_actions.size(), 2u) << "the button's report arms no stop";
   reached_radio(WIRE_ON);  // then the value's own command
-  pass(60000);
+  pass(9999);
+  EXPECT_EQ(hub.oneway_actions.size(), 2u);
+  pass(1);
 
-  EXPECT_EQ(hub.oneway_actions.size(), 1u) << "the stop is lost, the fade runs to its end; never a stop out of time";
-  EXPECT_FLOAT_EQ(shown(), 1.0F);
+  ASSERT_EQ(hub.oneway_actions.size(), 3u) << "half of the 20 s rise after the value's own report";
+  EXPECT_EQ(hub.oneway_actions[2].second, OneWayButtonAction::STOP);
 }
 
 TEST_F(OneWayLightTest, TwoValuesQueuedTheSameWayStopOnceAtTheLatestTimedFromWhenTheFadeBegan) {
@@ -443,24 +449,82 @@ TEST_F(OneWayLightTest, AFadeThatPassedTheValueWhileItsCommandWaitedTurnsBackAnd
   EXPECT_EQ(hub.oneway_actions.size(), 4u);
 }
 
-TEST_F(OneWayLightTest, AForeignCommandThatTakesTheValuesPlaceLosesTheStopOfTheWayBackButNeverSendsAStaleOne) {
+TEST_F(OneWayLightTest, AForeignCommandQueuedJustBeforeAValueDoesNotLoseTheStopOfTheWayBack) {
   start(true, true);
   ask(0.9F);
   reached_radio(WIRE_ON);
   pass(10000);  // at 0.5, rising
 
-  // A button of the identity queued just before the value: its report comes first and takes the value's place.
+  hub.send_oneway_action(IDENTITY, OneWayButtonAction::OPEN);  // a button of the identity, queued just before the value
   ask(0.55F);
   pass(1500);              // at 0.575
-  reached_radio(WIRE_ON);  // the button's report finds the value behind: the way back is queued
+  reached_radio(WIRE_ON);  // the button's report: moves the estimate, leaves the value waiting
+  EXPECT_EQ(hub.oneway_actions.size(), 3u);
+  reached_radio(WIRE_ON);  // the value's own report finds the value behind: the way back is queued
+  ASSERT_EQ(hub.oneway_actions.size(), 4u);
+  EXPECT_EQ(hub.oneway_actions[3].second, OneWayButtonAction::CLOSE);
+  pass(500);  // at 0.6 when the way back reaches the radio
+  reached_radio(WIRE_OFF);
+  pass(499);
+  EXPECT_EQ(hub.oneway_actions.size(), 4u);
+  pass(1);
+
+  ASSERT_EQ(hub.oneway_actions.size(), 5u) << "0.05 of a 10 s fall, armed by the way back's own report";
+  EXPECT_EQ(hub.oneway_actions[4].second, OneWayButtonAction::STOP);
+  pass(60000);
+  EXPECT_EQ(hub.oneway_actions.size(), 5u) << "one stop, never one out of time";
+}
+
+TEST_F(OneWayLightTest, AForeignCommandQueuedJustAfterTheWayBackLeavesTheWayBacksStop) {
+  start(true, true);
+  ask(0.9F);
+  reached_radio(WIRE_ON);
+  pass(10000);  // at 0.5, rising
+
+  ask(0.55F);
+  pass(1500);              // at 0.575
+  reached_radio(WIRE_ON);  // the value's report finds the value behind: the way back is queued, its stop pending
   ASSERT_EQ(hub.oneway_actions.size(), 3u);
-  EXPECT_EQ(hub.oneway_actions[2].second, OneWayButtonAction::CLOSE);
-  reached_radio(WIRE_ON);   // the value's own command, read as the way back's place: a rise, so the value is dropped
-  reached_radio(WIRE_OFF);  // the way back
+  hub.send_oneway_action(IDENTITY, OneWayButtonAction::OPEN);  // a button, queued behind the way back
+  reached_radio(WIRE_OFF);                                     // the way back's report arms its stop
+  pass(100);
+  reached_radio(WIRE_ON);  // the button's report comes last: it cancels the stop that was armed
   pass(60000);
 
-  EXPECT_EQ(hub.oneway_actions.size(), 3u) << "the stop is lost and the fade runs to an end; never a stop out of time";
-  EXPECT_FLOAT_EQ(shown(), 0.0F);
+  EXPECT_EQ(hub.oneway_actions.size(), 4u) << "the button was the last command: no stop of the value follows it";
+}
+
+TEST_F(OneWayLightTest, AForeignCommandQueuedJustBeforeTheWayBackStillLetsTheWayBackStopAtTheValue) {
+  start(true, true);
+  ask(0.9F);
+  reached_radio(WIRE_ON);
+  pass(10000);  // at 0.5, rising
+
+  ask(0.55F);
+  pass(1500);                                                  // at 0.575
+  hub.send_oneway_action(IDENTITY, OneWayButtonAction::OPEN);  // a button, queued behind the value, before the way back
+  reached_radio(WIRE_ON);  // the value's report finds the value behind: the way back is queued after the button
+  ASSERT_EQ(hub.oneway_actions.size(), 4u);
+  EXPECT_EQ(hub.oneway_actions[3].second, OneWayButtonAction::CLOSE);
+  reached_radio(WIRE_ON);   // the button's report: moves the estimate, leaves the way back waiting
+  reached_radio(WIRE_OFF);  // the way back's own report arms its stop
+  pass(60000);
+
+  ASSERT_EQ(hub.oneway_actions.size(), 5u) << "the last queued command wins and stops at the value";
+  EXPECT_EQ(hub.oneway_actions[4].second, OneWayButtonAction::STOP);
+}
+
+TEST_F(OneWayLightTest, AStopQueuedElsewhereBeforeAValueDoesNotLoseTheValuesStop) {
+  start(true, true);
+  hub.send_oneway_action(IDENTITY, OneWayButtonAction::STOP);  // an `oneway_*` action just before the value
+  ask(0.5F);
+
+  reached_radio(POS_STOP);
+  reached_radio(WIRE_ON);
+  pass(10000);
+
+  ASSERT_EQ(hub.oneway_actions.size(), 3u);
+  EXPECT_EQ(hub.oneway_actions[2].second, OneWayButtonAction::STOP);
 }
 
 TEST_F(OneWayLightTest, AFadeThatReachedTheValueWhileItsCommandWaitedStopsAtOnce) {

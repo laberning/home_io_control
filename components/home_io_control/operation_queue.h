@@ -58,6 +58,9 @@ struct PendingOperation {
   uint8_t tilt{0};                           ///< Tilt value for SET_POSITION_AND_TILT (0–100).
   CoverCommand command{CoverCommand::STOP};  ///< Named command for DEVICE_COMMAND operations.
   uint8_t reading{0};                        ///< Number of the reading (DeviceReading) for REQUEST_DEVICE_READING.
+  /// Ticket of a ONEWAY_COMMAND or ONEWAY_POSITION (never 0), returned to the caller at enqueue and carried by the
+  /// operation's OneWayCommandReport; 0 for every other operation.
+  uint32_t ticket{0};
 };
 
 /// @brief Serialized pending-operation queue with coalescing, deduplication, and two-band ordering.
@@ -124,12 +127,15 @@ class OperationQueue {
   /// like a lost frame to a device tracking the counter.
   /// @param controller_id Controller-identity handle (see PendingOperation::device_id).
   /// @param cmd Named command to send.
-  void enqueue_oneway_command(const std::string &controller_id, CoverCommand cmd);
+  /// @return The operation's ticket: a number that is never 0 and differs from that of the last 2^32 - 2 one-way
+  ///         commands and positions queued, so the caller recognises the report of its own command.
+  uint32_t enqueue_oneway_command(const std::string &controller_id, CoverCommand cmd);
 
   /// Enqueue a 1W numeric position for a controller identity.
   /// @param controller_id Controller-identity handle (see PendingOperation::device_id).
   /// @param position Target position 0–100.
-  void enqueue_oneway_position(const std::string &controller_id, uint8_t position);
+  /// @return The operation's ticket, as enqueue_oneway_command().
+  uint32_t enqueue_oneway_position(const std::string &controller_id, uint8_t position);
 
   /// Enqueue a 1W enrollment (add-controller) for a controller identity. Same no-coalesce,
   /// no-dedup contract as the other 1W ops, for the same reason.
@@ -190,8 +196,15 @@ class OperationQueue {
   /// transmitting; a user command must never be held back for it.
   [[nodiscard]] static bool is_background_op(PendingOperationType t);
 
+  /// The one-way ticket handed out after @p last: one more, skipping 0 when the counter wraps, because 0 means "no
+  /// ticket" on a OneWayCommandReport.
+  [[nodiscard]] static uint32_t oneway_ticket_after(uint32_t last);
+
  private:
   std::deque<PendingOperation> queue_;
+  uint32_t last_oneway_ticket_{0};  ///< Ticket given to the latest one-way command or position.
+  /// Hand out the next one-way ticket (oneway_ticket_after() the latest).
+  uint32_t next_oneway_ticket_();
   /// Insert a control operation before the first background entry; also drops any queued
   /// REQUEST_STATUS for the same device since the incoming command supersedes it.
   void push_control_(PendingOperation op);

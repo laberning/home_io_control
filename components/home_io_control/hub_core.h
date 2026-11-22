@@ -385,16 +385,18 @@ class IOHomeControlComponent : public Component,
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
   /// @param cmd Named command (STOP, FAVORITE, VENT); FORCE_OPEN, PARTIAL and PEDESTRIAN have no 1W
   ///        encoding and are not transmitted.
-  void send_oneway_command(const std::string &controller_id, CoverCommand cmd) {
-    this->op_queue_.enqueue_oneway_command(controller_id, cmd);
+  /// @return The ticket of the queued command, carried by its OneWayCommandReport.
+  uint32_t send_oneway_command(const std::string &controller_id, CoverCommand cmd) {
+    return this->op_queue_.enqueue_oneway_command(controller_id, cmd);
   }
 
   /// @brief Queue a 1W numeric position, sent as the given controller identity.
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
   /// @param position Target position 0–100 (0 = fully open, 100 = fully closed), as the user means it;
   ///        the transmitter mirrors it on the wire for an inverted identity (effective_inverted()).
-  void send_oneway_position(const std::string &controller_id, uint8_t position) override {
-    this->op_queue_.enqueue_oneway_position(controller_id, position);
+  /// @return The ticket of the queued position, carried by its OneWayCommandReport.
+  uint32_t send_oneway_position(const std::string &controller_id, uint8_t position) override {
+    return this->op_queue_.enqueue_oneway_position(controller_id, position);
   }
 
   /// @brief Queue whichever of position/command a generated button's action resolves to.
@@ -404,13 +406,12 @@ class IOHomeControlComponent : public Component,
   /// should have to know that twice.
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
   /// @param action Button action to send.
-  void send_oneway_action(const std::string &controller_id, OneWayButtonAction action) override {
+  /// @return The ticket of the queued operation, carried by its OneWayCommandReport.
+  uint32_t send_oneway_action(const std::string &controller_id, OneWayButtonAction action) override {
     const OneWayActionEncoding encoding = encode_oneway_action(action);
-    if (encoding.is_position) {
-      this->send_oneway_position(controller_id, encoding.position);
-    } else {
-      this->send_oneway_command(controller_id, encoding.command);
-    }
+    if (encoding.is_position)
+      return this->send_oneway_position(controller_id, encoding.position);
+    return this->send_oneway_command(controller_id, encoding.command);
   }
 
   /// @brief Queue a 1W enrollment for the given controller identity — the enroll button's press
@@ -1291,11 +1292,13 @@ class IOHomeControlComponent : public Component,
   /// acknowledgement to report, and success here would only mean "bytes left the radio".
   /// @param controller_id Controller-identity handle.
   /// @param cmd Named command to send.
-  void execute_oneway_command_(const std::string &controller_id, CoverCommand cmd);
+  /// @param ticket The operation's ticket, carried by the report.
+  void execute_oneway_command_(const std::string &controller_id, CoverCommand cmd, uint32_t ticket);
   /// Send a queued 1W numeric position. See execute_oneway_command_().
   /// @param controller_id Controller-identity handle.
   /// @param position Target position 0–100.
-  void execute_oneway_position_(const std::string &controller_id, uint8_t position);
+  /// @param ticket The operation's ticket, carried by the report.
+  void execute_oneway_position_(const std::string &controller_id, uint8_t position, uint32_t ticket);
   /// Send a queued 1W enrollment (add-controller). See execute_oneway_command_().
   /// @param controller_id Controller-identity handle.
   void execute_oneway_enroll_(const std::string &controller_id);

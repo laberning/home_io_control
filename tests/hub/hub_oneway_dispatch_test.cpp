@@ -279,6 +279,32 @@ TEST_F(OneWayDispatch, EveryCallbackRegisteredWithTheHubGetsTheReportOfACarriedO
   EXPECT_EQ(second[0].intent, "STOP");
 }
 
+TEST_F(OneWayDispatch, EachQueuedCommandReportsTheTicketItsEnqueueReturned) {
+  hub.set_node_id("C0FFEE");
+  hub.set_system_key("00112233445566778899AABBCCDDEEFF");
+  hub.set_radio_type("not_a_chip");
+  add_identity(OneWayPowerClass::ALWAYS_ALIVE);
+  std::vector<OneWayCommandReport> reports;
+  hub.add_oneway_command_report_callback([&](const OneWayCommandReport &r) { reports.push_back(r); });
+  hub.setup();
+  hub.initialized_ = true;
+  hub.radio_ = &radio;
+  const uint32_t stop = hub.send_oneway_command(CONTROLLER, CoverCommand::STOP);
+  const uint32_t open = hub.send_oneway_action(CONTROLLER, OneWayButtonAction::OPEN);
+  const uint32_t position = hub.send_oneway_position(CONTROLLER, 30);
+
+  hub.loop();
+  hub.loop();
+  hub.loop();
+
+  ASSERT_EQ(reports.size(), 3u);
+  EXPECT_EQ(reports[0].ticket, stop);
+  EXPECT_EQ(reports[1].ticket, open);
+  EXPECT_EQ(reports[2].ticket, position);
+  EXPECT_NE(stop, 0u);
+  EXPECT_NE(open, stop);
+}
+
 TEST_F(OneWayDispatch, AnUnknownIdentityIsReportedAsNotTransmittedAndLeavesTheHubIdle) {
   hub.set_node_id("C0FFEE");
   hub.set_system_key("00112233445566778899AABBCCDDEEFF");

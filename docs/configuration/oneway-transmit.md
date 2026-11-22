@@ -634,9 +634,11 @@ A value reaches the device in one of two ways, chosen with `set_position:`:
   radio, so the stop lands when the cover is where you asked. A value of 0 or 100 % sends the plain close or open and
   no stop, so the end stop of the motor corrects the estimate. A new value, a stop and the press of a followed remote
   cancel a stop that is still waiting, so a stale stop is never sent, and a new value is worked out from the position
-  reached so far; a value the cover has to go back for sends the opposite command. If a run that is already going
-  passes the value before the command reaches the radio, the hub sends a stop or the way back instead. The stop
-  goes out as a burst of four copies, and it waits behind any command still in the queue, so the cover stops a little
+  reached so far; a value the cover has to go back for sends the opposite command. A button or action of the same
+  identity queued just before a value does not cost it its stop: the hub tells the report of the value's own command
+  from the others. One queued after the value is the last command and wins: it cancels the value's stop. If a run
+  that is already going passes the value before the command reaches the radio, the hub sends a stop or the way back
+  instead. The stop goes out as a burst of four copies, and it waits behind any command still in the queue, so the cover stops a little
   past the value; the shown position freezes when the burst is out and includes that lag. **A stop the motor misses
   runs the cover to its end**, while Home Assistant shows it stopped at the value: the hub cannot tell. The shown
   position stays wrong until the next run to an end.
@@ -705,9 +707,11 @@ freezes the level where it is. The level updates about once a second while it fa
   starts counting when the command has reached the radio, so the stop lands when the fade is where you asked. A value
   at an end sends the plain on or off and no stop; the end stop of the device then corrects the estimate. A new
   value, a stop and the press of a followed remote cancel a stop that is still waiting, so a stale stop is never
-  sent, and a new value is worked out from the level reached so far. If a fade that is already running passes the
-  value before the command reaches the radio, the hub sends a stop or the way back instead. The stop goes out as a
-  burst, so the level lands slightly past the value, and a stop the device misses runs the fade to its end.
+  sent, and a new value is worked out from the level reached so far. A button or action of the same identity queued
+  just before a value does not cost it its stop: the hub tells the report of the value's own command from the
+  others. One queued after the value is the last command and wins: it cancels the value's stop. If a fade
+  that is already running passes the value before the command reaches the radio, the hub sends a stop or the way back
+  instead. The stop goes out as a burst, so the level lands slightly past the value, and a stop the device misses runs the fade to its end.
 - **`frame`** sends one position frame with the level, and no stop. The device is expected to go to the level at
   once, and the light shows it at once. Full and off fade like on and off.
 

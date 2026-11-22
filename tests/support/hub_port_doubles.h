@@ -313,11 +313,20 @@ class ControlPortDouble : public HubControlPort {
     this->oneway_key_adoption_armed_callback = std::move(cb);
   }
 
-  void send_oneway_action(const std::string &controller_id, OneWayButtonAction action) override {
+  uint32_t send_oneway_action(const std::string &controller_id, OneWayButtonAction action) override {
     this->oneway_actions.emplace_back(controller_id, action);
+    return this->take_oneway_ticket_();
   }
-  void send_oneway_position(const std::string &controller_id, uint8_t position) override {
+  uint32_t send_oneway_position(const std::string &controller_id, uint8_t position) override {
     this->oneway_positions.emplace_back(controller_id, position);
+    return this->take_oneway_ticket_();
+  }
+  /// The ticket of the oldest queued one-way operation that has not been reported yet (the real queue reports in
+  /// order), or 0 when none waits: a command sent by something this double did not see.
+  uint32_t next_unreported_oneway_ticket() {
+    return this->reported_oneway_tickets < this->oneway_tickets.size()
+               ? this->oneway_tickets[this->reported_oneway_tickets++]
+               : 0;
   }
   void send_oneway_enroll(const std::string &controller_id) override {
     this->oneway_enrollments.push_back(controller_id);
@@ -371,6 +380,13 @@ class ControlPortDouble : public HubControlPort {
   std::function<void()> device_event_callback;
   std::function<void(bool)> key_extraction_armed_callback;
   std::function<void(bool)> oneway_key_adoption_armed_callback;
+  /// A ticket that is never 0 and differs per queued operation, as the real queue hands out.
+  uint32_t take_oneway_ticket_() {
+    this->oneway_tickets.push_back(static_cast<uint32_t>(this->oneway_tickets.size()) + 1U);
+    return this->oneway_tickets.back();
+  }
+  std::vector<uint32_t> oneway_tickets;  ///< Ticket handed out for each queued action or position, in order.
+  size_t reported_oneway_tickets{0};     ///< How many of oneway_tickets next_unreported_oneway_ticket() has given out.
   std::vector<std::pair<std::string, OneWayButtonAction>> oneway_actions;  ///< (controller, action), in order.
   std::vector<std::pair<std::string, uint8_t>> oneway_positions;  ///< (controller, position percent), in order.
   std::vector<std::string> oneway_enrollments;

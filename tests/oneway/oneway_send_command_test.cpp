@@ -1044,6 +1044,29 @@ TEST_F(OneWaySendCommandTest, ReportCarriesTheWireValuesOfAStopAndAPositionAsARe
   EXPECT_EQ(reports[1].wire.main0, 50) << "25 % is wire 50";
 }
 
+TEST_F(OneWaySendCommandTest, ReportCarriesTheTicketOfTheCommandAndZeroWithoutOneOrForEnrollment) {
+  BurstRecorder recorder;
+  OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);
+  transmitter.add_identity(make_identity("awning", OWN_NET_NODE, DeviceType::VERTICAL_EXTERIOR_AWNING, 0x11, 1));
+  transmitter.setup();
+  std::vector<OneWayCommandReport> reports;
+  transmitter.set_command_report_callback([&](const OneWayCommandReport &r) { reports.push_back(r); });
+
+  ASSERT_TRUE(transmitter.send_command("awning", CoverCommand::STOP, 17));
+  ASSERT_TRUE(transmitter.send_position("awning", 25, 18));
+  ASSERT_TRUE(transmitter.send_command("awning", CoverCommand::STOP));
+  EXPECT_FALSE(transmitter.send_command("typo", CoverCommand::STOP, 19));
+  ASSERT_TRUE(transmitter.send_enrollment("awning"));
+
+  ASSERT_GE(reports.size(), 5u);
+  EXPECT_EQ(reports[0].ticket, 17u);
+  EXPECT_EQ(reports[1].ticket, 18u);
+  EXPECT_EQ(reports[2].ticket, 0u);
+  EXPECT_EQ(reports[3].ticket, 19u) << "a failed attempt still reports the ticket, so its caller can drop its value";
+  for (size_t i = 4; i < reports.size(); ++i)
+    EXPECT_EQ(reports[i].ticket, 0u) << "enrollment report " << i;
+}
+
 TEST_F(OneWaySendCommandTest, ReportCarriesTheMirroredWireValueOfAnInvertedKindNotTheUsersPosition) {
   BurstRecorder recorder;
   OneWayTransmitter transmitter(recorder.fn(), &tuning_, mock_preamble_bytes_for_ms);

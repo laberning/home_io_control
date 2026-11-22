@@ -244,8 +244,13 @@ class OneWayTimedCoverTest : public OneWayCoverTest {
     cover.control(call);
   }
 
-  /// Report the last queued command as having reached the radio, with wire value @p main0.
-  void reached_radio(uint8_t main0) { hub.report_oneway_command(sent(IDENTITY, main0)); }
+  /// Report the oldest queued command not yet reported (the queue reports in order) as sent with wire value @p main0;
+  /// @p transmitted false for a burst that never reached the radio.
+  void reached_radio(uint8_t main0, bool transmitted = true) {
+    OneWayCommandReport report = sent(IDENTITY, main0, transmitted);
+    report.ticket = hub.next_unreported_oneway_ticket();
+    hub.report_oneway_command(report);
+  }
 
   /// A remote's press, heard by the hub.
   void press(uint8_t main0) { hub.press_oneway_remote(FOLLOWED_REMOTE, wire_frame(main0)); }
@@ -567,7 +572,7 @@ TEST_F(OneWayTimedCoverTest, ACommandThatDidNotReachTheRadioSchedulesNoStopAndCh
   start_timed();
   ask(0.5F);
 
-  hub.report_oneway_command(sent(IDENTITY, WIRE_CLOSED, /*transmitted=*/false));
+  reached_radio(WIRE_CLOSED, /*transmitted=*/false);
   pass(60000);
 
   EXPECT_EQ(hub.oneway_actions.size(), 1u);
@@ -606,6 +611,77 @@ TEST_F(OneWayTimedCoverTest, ARunThatPassedTheValueWhileItsCommandWaitedTurnsBac
 
   ASSERT_EQ(hub.oneway_actions.size(), 3u) << "the way back, not a run to closed";
   EXPECT_EQ(hub.oneway_actions[2].second, OneWayButtonAction::OPEN);
+}
+
+TEST_F(OneWayTimedCoverTest, AForeignCommandQueuedJustBeforeAValueDoesNotLoseItsStop) {
+  start_timed();
+  hub.send_oneway_action(IDENTITY, OneWayButtonAction::OPEN);  // a button of the identity, queued just before the value
+  ask(0.5F);
+
+  reached_radio(WIRE_OPEN);  // the button's report arms no stop
+  pass(1000);
+  EXPECT_EQ(hub.oneway_actions.size(), 2u);
+  reached_radio(WIRE_CLOSED);  // the value's own report
+  pass(4999);
+  EXPECT_EQ(hub.oneway_actions.size(), 2u);
+  pass(1);
+
+  ASSERT_EQ(hub.oneway_actions.size(), 3u) << "half of the 10 s fall, counted from the value's own report";
+  EXPECT_EQ(hub.oneway_actions[2].second, OneWayButtonAction::STOP);
+}
+
+TEST_F(OneWayTimedCoverTest, AForeignCommandQueuedJustAfterAValueIsTheLastCommandAndWins) {
+  start_timed();
+  ask(0.5F);
+  hub.send_oneway_action(IDENTITY, OneWayButtonAction::CLOSE);  // a button of the identity, queued just after the value
+
+  reached_radio(WIRE_CLOSED);  // the value's own report arms its stop
+  pass(100);
+  reached_radio(WIRE_CLOSED);  // the button's report comes last and cancels it
+  pass(120000);
+
+  EXPECT_EQ(hub.oneway_actions.size(), 2u) << "the last queued command wins: the cover closes fully, no stop follows";
+}
+
+TEST_F(OneWayTimedCoverTest, AForeignCommandQueuedJustBeforeAValueDoesNotLoseTheStopOfTheWayBack) {
+  start_timed();
+  ask(0.1F);
+  reached_radio(WIRE_CLOSED);
+  pass(5000);  // at 0.5, falling
+
+  hub.send_oneway_action(IDENTITY, OneWayButtonAction::CLOSE);  // a button, just before the value
+  ask(0.45F);
+  pass(1000);                  // at 0.4 when the burst goes out
+  reached_radio(WIRE_CLOSED);  // the button's report leaves the value waiting
+  reached_radio(WIRE_CLOSED);  // the value's report finds the value behind: the way back is queued
+  ASSERT_EQ(hub.oneway_actions.size(), 4u);
+  EXPECT_EQ(hub.oneway_actions[3].second, OneWayButtonAction::OPEN);
+  reached_radio(WIRE_OPEN);  // the way back's own report arms its stop, 0.05 of a 20 s rise
+  pass(999);
+  EXPECT_EQ(hub.oneway_actions.size(), 4u);
+  pass(1);
+
+  ASSERT_EQ(hub.oneway_actions.size(), 5u);
+  EXPECT_EQ(hub.oneway_actions[4].second, OneWayButtonAction::STOP);
+}
+
+TEST_F(OneWayTimedCoverTest, AForeignCommandQueuedJustAfterTheWayBackLeavesTheWayBacksStop) {
+  start_timed();
+  ask(0.1F);
+  reached_radio(WIRE_CLOSED);
+  pass(5000);  // at 0.5, falling
+
+  ask(0.45F);
+  pass(1000);                  // at 0.4
+  reached_radio(WIRE_CLOSED);  // the value's report finds the value behind: the way back is queued
+  ASSERT_EQ(hub.oneway_actions.size(), 3u);
+  hub.send_oneway_action(IDENTITY, OneWayButtonAction::CLOSE);  // a button, queued behind the way back
+  reached_radio(WIRE_OPEN);                                     // the way back's report arms its stop
+  pass(100);
+  reached_radio(WIRE_CLOSED);  // the button's report comes last and cancels the stop that was armed
+  pass(120000);
+
+  EXPECT_EQ(hub.oneway_actions.size(), 4u) << "the button was the last command: no stop follows it";
 }
 
 TEST_F(OneWayTimedCoverTest, ThePlanIsInTheUsersDirectionForAnInvertedIdentity) {
