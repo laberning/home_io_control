@@ -162,18 +162,90 @@ TEST(LightWriteGate, ATransitionStepClearsTheExpectedEchoSoItCannotSwallowALater
   EXPECT_TRUE(writes_to_device(gate, state));
 }
 
-// === The order that stays open ===
+// === A value that waits to be written ===
 
-TEST(LightWriteGate, AValueStillWaitingToBeWrittenWhenAReadingIsPublishedIsReplacedByTheReading) {
-  // The user's value is on the LightState and waits for the light's loop; a reading published before that loop
-  // overwrites it, and the one write that follows reads as the echo. A value from Home Assistant's API waits like this
-  // whenever a component that publishes runs after the API in the same pass: the call moves the LightState's loop to
-  // the end of the pass, but ESPHome does not keep the order of the others fixed, so the hub can come after the API.
-  // The component cannot see a waiting write without LightState::set_external_state(), so the value is lost (see
-  // LightWriteGate).
+TEST(LightValueWaiting, IsSeenFromAShownValueThatDiffersFromTheLastSeenOne) {
+  EXPECT_FALSE(is_value_waiting(std::nullopt, true, 0.5F)) << "nothing is known before the first sight";
+  EXPECT_FALSE(is_value_waiting(LightShown{true, 0.5F}, true, 0.5F));
+  EXPECT_TRUE(is_value_waiting(LightShown{true, 0.5F}, false, 0.5F));
+  EXPECT_TRUE(is_value_waiting(LightShown{true, 0.5F}, true, 0.6F));
+}
+
+TEST(LightWriteGate, AReadingPublishedWhileAnInstantValueWaitsIsDroppedAndTheValueIsSent) {
+  // The API sets a value; a component that publishes runs before the light's loop. The reading must not replace it.
   LightWriteGate gate;
   esphome::light::LightState state;
-  user_sets(state, true, 0.5F);
+  gate.publish(&state, true, 0.4F);
+  ASSERT_FALSE(writes_to_device(gate, state));
+  user_sets(state, true, 0.9F);
+
+  gate.publish(&state, true, 0.3F);
+
+  EXPECT_FLOAT_EQ(state.current_values.get_brightness(), 0.9F) << "the reading did not replace the value";
+  EXPECT_TRUE(writes_to_device(gate, state)) << "the value goes to the device";
+}
+
+TEST(LightWriteGate, AReadingPublishedWhileATransitionCallWaitsIsDroppedAndItsEndIsSent) {
+  LightWriteGate gate;
+  esphome::light::LightState state;
+  gate.publish(&state, true, 0.4F);
+  ASSERT_FALSE(writes_to_device(gate, state));
+  auto call = state.make_call();  // a transition: the shown values are set, the transformer starts in the next loop
+  call.set_state(true);
+  call.set_brightness(0.9F);
+  call.set_transition_length(2000);
+  call.perform();
+  ASSERT_FALSE(state.is_transformer_active());
+
+  gate.publish(&state, true, 0.3F);
+
+  // A call of the gate would make the change instant and drop the transformer (set_immediately_()).
+  EXPECT_FALSE(state.next_write_) << "the reading did not end the transition call";
+  EXPECT_FLOAT_EQ(state.remote_values.get_brightness(), 0.9F);
+
+  state.test_transformer_active_ = true;  // the light's loops: a step of the transition, not sent
+  state.current_values.set_brightness(0.6F);
+  state.next_write_ = true;
+  EXPECT_FALSE(writes_to_device(gate, state));
+  state.test_transformer_active_ = false;  // the transition's end, written once
+  state.current_values.set_brightness(0.9F);
+  state.next_write_ = true;
+  EXPECT_TRUE(writes_to_device(gate, state)) << "the transition's end value goes to the device";
+}
+
+TEST(LightWriteGate, ADroppedReadingIsShownWithTheNextOneOnceTheValueHasBeenWritten) {
+  LightWriteGate gate;
+  esphome::light::LightState state;
+  gate.publish(&state, true, 0.4F);
+  ASSERT_FALSE(writes_to_device(gate, state));
+  user_sets(state, true, 0.9F);
+  gate.publish(&state, true, 0.3F);
+  ASSERT_TRUE(writes_to_device(gate, state));
+
+  gate.publish(&state, true, 0.3F);
+
+  EXPECT_FLOAT_EQ(state.current_values.get_brightness(), 0.3F);
+  EXPECT_FALSE(writes_to_device(gate, state)) << "the shown reading causes no command";
+}
+
+TEST(LightWriteGate, NothingIsDroppedBeforeTheGateHasSeenTheLight) {
+  LightWriteGate gate;
+  esphome::light::LightState state;
+  user_sets(state, true, 0.5F);  // a value waits, but the gate knows nothing of the light yet
+
+  gate.publish(&state, true, 0.3F);
+
+  EXPECT_FLOAT_EQ(state.current_values.get_brightness(), 0.3F);
+}
+
+TEST(LightWriteGate, ACallThatRepeatsTheShownValueInTheSameMomentIsNotSeenAsWaiting) {
+  // The case that stays open: the call changes nothing the gate can compare, so a reading published before its write
+  // replaces it, and the write reads as the echo (see LightWriteGate; LightState::set_external_state() closes it).
+  LightWriteGate gate;
+  esphome::light::LightState state;
+  gate.publish(&state, true, 0.4F);
+  ASSERT_FALSE(writes_to_device(gate, state));
+  user_sets(state, true, 0.4F);
 
   gate.publish(&state, true, 0.3F);
 

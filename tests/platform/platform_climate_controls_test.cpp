@@ -842,6 +842,32 @@ TEST(PlatformHeaterNightLight, AReadingPublishedTwiceIsNeverWritten) {
   EXPECT_TRUE(rig.hub.writes.empty());
 }
 
+TEST(PlatformHeaterNightLight, AReadingThatArrivesWhileAValueWaitsIsDroppedAndTheNextOneIsShown) {
+  NightLightRig rig;
+  rig.state.set_test_output(&rig.light);
+  rig.hub.heater_holds(DeviceRegister::NIGHT_LIGHT, 1.0F);
+  rig.hub.heater_holds(DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, 66.0F);
+  rig.deliver(1, 66.0F);
+
+  auto call = rig.state.make_call();  // a value waits for the light's loop,
+  call.set_state(true);
+  call.set_brightness(0.9F);
+  call.perform();
+  rig.hub.deliver([](IoDevice &r) {  // a reading arrives before it
+    test::store_reading(r, DeviceReading::NIGHT_LIGHT, 1);
+    test::store_reading(r, DeviceReading::NIGHT_LIGHT_BRIGHTNESS, 50.0F);
+  });
+  EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.9F) << "the reading did not replace the value";
+  rig.state.loop();
+  EXPECT_FALSE(rig.hub.writes.empty()) << "the value is written to the heater";
+
+  rig.hub.deliver([](IoDevice &r) {  // the next reading
+    test::store_reading(r, DeviceReading::NIGHT_LIGHT, 1);
+    test::store_reading(r, DeviceReading::NIGHT_LIGHT_BRIGHTNESS, 50.0F);
+  });
+  EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.5F) << "the heater's level is shown again";
+}
+
 TEST(PlatformHeaterNightLight, ATransitionWritesOnlyItsEndAndTheNextReadingIsShownAfterIt) {
   NightLightRig rig;
   rig.state.set_test_output(&rig.light);

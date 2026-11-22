@@ -87,12 +87,14 @@ class HubOneWayLight : public ::testing::Test {
     light.write_state(&state);  // the boot-time restore write, swallowed
   }
 
-  /// Home Assistant asks for @p brightness; the hub then carries out the queued burst on the mock radio.
+  /// Home Assistant asks for @p brightness; the hub then carries out the queued burst on the mock radio. The write is
+  /// made on a request of its own; the light's shown (remote) values are the asked ones, as a call sets them at once.
   void ask(float brightness) {
     esphome::light::LightState request;
     request.set_current_on(brightness > 0.0F);
     request.set_current_brightness(brightness);
     light.write_state(&request);
+    state.remote_values = request.remote_values;
     hub.loop();
     echo();
   }

@@ -346,6 +346,26 @@ TEST(PlatformLight, AValueAfterAReadingAndBeforeTheLightsLoopIsSent) {
   EXPECT_EQ(rig.hub.last_light_position(), 50);
 }
 
+TEST(PlatformLight, AReadingThatArrivesWhileAValueWaitsIsDroppedAndTheNextOneIsShown) {
+  DimmableLightRig rig;
+  rig.report(75.0F);  // brightness 0.25 is published
+  rig.state.loop();
+
+  rig.user_sets(0.9F);  // a value waits for the light's loop,
+  rig.report(70.0F);    // a reading arrives before it
+  EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.9F) << "the reading did not replace the value";
+  rig.state.loop();
+  ASSERT_EQ(rig.hub.queued_light_positions().size(), 1u) << "the value goes to the device";
+  EXPECT_EQ(rig.hub.last_light_position(), 10);
+
+  rig.report(10.0F);  // the next reading
+  EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.9F);
+  rig.report(20.0F);
+  EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.8F) << "the device's level is shown again";
+  rig.state.loop();
+  EXPECT_EQ(rig.hub.queued_light_positions().size(), 1u) << "and causes no command";
+}
+
 TEST(PlatformLight, ATransitionSendsOnlyItsEndAndTheNextReadingIsShownAfterIt) {
   DimmableLightRig rig;
 

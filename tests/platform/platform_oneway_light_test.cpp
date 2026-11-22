@@ -65,13 +65,16 @@ class OneWayLightTest : public ::testing::Test {
     light.write_state(&state);  // LightState::setup()'s boot-time restore write; swallowed
   }
 
-  /// What Home Assistant asks for: on at @p brightness, or off; @p in_transition for a step of a transition.
+  /// What Home Assistant asks for: on at @p brightness, or off; @p in_transition for a step of a transition. The write
+  /// is made on a request of its own, so the light shows nothing new until its estimate is published; the shown
+  /// (remote) values are the asked ones, as a call sets them at once, and the gate sees them.
   void ask(float brightness, bool in_transition = false) {
     esphome::light::LightState request;
     request.set_current_on(brightness > 0.0F);
     request.set_current_brightness(brightness);
     request.test_transformer_active_ = in_transition;
     light.write_state(&request);
+    state.remote_values = request.remote_values;
   }
 
   /// Report the oldest queued command not yet reported (the queue reports in order) as sent with wire value @p main0;
@@ -273,14 +276,14 @@ TEST_F(OneWayLightTest, ATransitionOnTheLightStateSendsOnlyItsEndAsOneCommand) {
   ASSERT_EQ(hub.oneway_actions.size(), 1u);
 }
 
-TEST_F(OneWayLightTest, AButtonsReportBetweenAValueAndTheLightsLoopLosesTheValue) {
-  // The order that stays open, as a bench run met it on every try: during a fade, Home Assistant presses a button of
-  // the identity and sets a slider value right after it. The API's loop queues the button's command and sets the value
-  // on the LightState; the hub's loop, later in the same pass, sends the command, and its report publishes the level
-  // over the value; the LightState's loop then writes that level, which the gate takes for the echo. Neither a command
-  // nor a stop follows for the value. ESPHome does not keep its loop order fixed (a component that turns its loop off
-  // swaps the last active one into its place), so the hub can run between the API and the LightState. The component
-  // cannot see a waiting write; LightState::set_external_state(), which refuses while one waits, closes this.
+TEST_F(OneWayLightTest, AButtonsReportBetweenAValueAndTheLightsLoopLeavesTheValueToBeSent) {
+  // The bench case: during a fade, Home Assistant presses a button of the identity and sets a slider value right
+  // after it. The API's loop queues the button's command and sets the value on the LightState; the hub's loop, later
+  // in the same pass, sends the command, and its report would publish the level over the value. The gate sees the value
+  // waiting (the light shows something else than it last saw), drops the reading, and the LightState's loop writes the
+  // value, which goes to the device as the way to it. ESPHome does not keep its loop order fixed (a component that
+  // turns its loop off swaps the last active one into its place), so the hub can run between the API and the
+  // LightState.
   start(true, true);
   user_sets(1.0F);
   echo();
@@ -293,10 +296,25 @@ TEST_F(OneWayLightTest, AButtonsReportBetweenAValueAndTheLightsLoopLosesTheValue
   user_sets(0.5F);          // then the value
   reached_radio(WIRE_ON);   // the hub's loop: the button's command and its report; then the LightState's loop
 
-  EXPECT_FLOAT_EQ(shown(), 0.25F) << "the level replaced the value";
-  pass(ON_MS);
-  ASSERT_EQ(hub.oneway_actions.size(), 1u) << "only the button's command went out: the value sent nothing, no stop";
+  EXPECT_FLOAT_EQ(shown(), 0.5F) << "the reading did not replace the value";
+  ASSERT_EQ(hub.oneway_actions.size(), 2u) << "the button's command and the value's own";
   EXPECT_EQ(hub.oneway_actions[0].second, OneWayButtonAction::OPEN);
+  EXPECT_EQ(hub.oneway_actions[1].second, OneWayButtonAction::OPEN) << "the value is above the level: on, then a stop";
+}
+
+TEST_F(OneWayLightTest, AReadingDroppedForAWaitingValueIsShownAtTheNextPublish) {
+  start(true, true);
+  user_sets(1.0F);
+  echo();
+  reached_radio(WIRE_ON);
+  pass(5000);
+  user_sets(0.9F);         // a value waits for the light's loop,
+  reached_radio(WIRE_ON);  // a report publishes over it: dropped, and the value is written
+  ASSERT_FLOAT_EQ(shown(), 0.9F);
+
+  pass(1000);  // the estimate's next publish
+
+  EXPECT_NE(shown(), 0.9F) << "the level the light has reached is shown again";
 }
 
 // === With fade times, the timed way ===

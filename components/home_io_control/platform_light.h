@@ -49,6 +49,27 @@ struct LightReading {
   return !on || !published.brightness.has_value() || *published.brightness == brightness;
 }
 
+/// @brief The on/off and brightness a LightState shows (its remote values), as the gate last saw them.
+/// @ingroup hioc_platforms
+struct LightShown {
+  bool on{false};          ///< Whether the light shows on.
+  float brightness{1.0F};  ///< The brightness it shows, 0.0-1.0.
+};
+
+/// @brief Whether a call has set values on the LightState that its write has not yet handed to the output.
+///
+/// ESPHome sets the shown values (remote_values) in the call itself, for an instant value and for a transition alike,
+/// and the output's write follows on the light's next loop. A call whose write has not come therefore shows as a
+/// difference between what the light shows now and what the gate last saw it show.
+/// @ingroup hioc_platforms
+/// @param seen What the gate last saw the light show; nullopt before the first write or publish.
+/// @param on Whether the LightState shows on now.
+/// @param brightness The brightness it shows now.
+/// @return true when the light shows something else than the gate last saw. Nothing is known before the first sight.
+[[nodiscard]] inline bool is_value_waiting(const std::optional<LightShown> &seen, bool on, float brightness) {
+  return seen.has_value() && (seen->on != on || seen->brightness != brightness);
+}
+
 /// @brief The one rule for what a light output does with the writes ESPHome makes on its LightState.
 /// @ingroup hioc_platforms
 ///
@@ -60,11 +81,15 @@ struct LightReading {
 ///
 /// The echo is recognised by the values it carries, not by a flag: a flag swallows the next write whatever
 /// it says, and a user value that arrives between the publish and the light's loop would be lost.
-/// \todo A reading published while a user value still waits to be written replaces that value, and the write
-/// that follows reads as the echo. A value from Home Assistant's API waits like this when the hub's loop runs after
-/// the API's in the same pass (ESPHome does not keep its loop order fixed); a one-way button of the light's identity
-/// pressed together with a slider value loses the value that way, as its report publishes the level. Without
-/// LightState::set_external_state() the component cannot see a waiting write; ESPHome 2026.11 offers it.
+///
+/// A reading that arrives while a user value still waits for its write is dropped, so the value is sent. The gate
+/// sees the waiting value because ESPHome sets the light's shown values in the call itself: the gate keeps what it
+/// last saw the light show (at every should_send() and after its own call), and a publish that finds something else
+/// shown knows a call is pending. The dropped reading is shown at the next one: a one-way light publishes its
+/// estimate about once a second during a fade, the two-way lights publish at their next poll.
+/// \todo A call that repeats exactly the values the light shows, in the same moment as a publish, is not seen as
+/// waiting: its write reads as the echo. LightState::set_external_state() (ESPHome 2026.11) refuses a reading while a
+/// write is pending and would replace this bookkeeping; the component supports older versions until it is adopted.
 class LightWriteGate {
  public:
   /// @brief Show a device's light state on its LightState, expecting the write that follows.
@@ -72,17 +97,22 @@ class LightWriteGate {
   /// Publishes `on` (and `brightness`, when given) only when the LightState does not already show it, and
   /// remembers it as the expected echo. The change is instant, whatever the light's default_transition_length.
   /// Publishes nothing while a transition runs: a call would end the transition and drop its end value; the next
-  /// reading after the transition's end is shown.
+  /// reading after the transition's end is shown. Publishes nothing either while a user value waits to be written
+  /// (see is_value_waiting()): the value is sent, and the next reading is shown.
   /// @param state The LightState to update.
   /// @param on Whether the device reports the light on.
   /// @param brightness The device's brightness, 0.0-1.0; nullopt for an on/off light.
   void publish(light::LightState *state, bool on, std::optional<float> brightness) {
     if (state->is_transformer_active())
       return;
+    if (is_value_waiting(this->seen_, state->remote_values.is_on(), state->remote_values.get_brightness()))
+      return;
     if (state->current_values.is_on() == on && state->remote_values.is_on() == on &&
         (!brightness.has_value() || (state->current_values.get_brightness() == *brightness &&
-                                     state->remote_values.get_brightness() == *brightness)))
+                                     state->remote_values.get_brightness() == *brightness))) {
+      this->see_(state);
       return;
+    }
     this->expected_echo_ = LightReading{on, brightness};
     auto call = state->make_call();
     call.set_state(on);
@@ -93,6 +123,7 @@ class LightWriteGate {
     call.set_transition_length(0);
     call.set_save(false);
     call.perform();
+    this->see_(state);
   }
 
   /// @brief Swallow the next write whatever it says.
@@ -103,12 +134,15 @@ class LightWriteGate {
 
   /// @brief Decide whether the write_state() being made goes to the device; call it first in write_state().
   ///
+  /// Also records what the light shows, so a later publish can tell a waiting value from one it has seen.
+  ///
   /// False while a transition runs (only its end, written once it is over, is sent), once for the boot write,
   /// and for the write that echoes the published reading. The expected echo is cleared by every call, so it
   /// swallows at most one write.
   /// @param state The LightState being written.
   /// @return true when the values go to the device.
   [[nodiscard]] bool should_send(const light::LightState *state) {
+    this->see_(state);
     const std::optional<LightReading> echo = std::exchange(this->expected_echo_, std::nullopt);
     if (state->is_transformer_active())
       return false;
@@ -120,6 +154,12 @@ class LightWriteGate {
   }
 
  private:
+  /// Remember what the LightState shows now (its remote values, which a call sets at once).
+  void see_(const light::LightState *state) {
+    this->seen_ = LightShown{state->remote_values.is_on(), state->remote_values.get_brightness()};
+  }
+
+  std::optional<LightShown> seen_;             ///< What the light last showed to the gate; none before the first sight.
   std::optional<LightReading> expected_echo_;  ///< Set by publish(); the write it causes is not sent.
   bool boot_write_pending_{false};             ///< Set by swallow_boot_write().
 };

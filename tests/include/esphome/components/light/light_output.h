@@ -88,7 +88,10 @@ class LightState {
     *out *= this->test_gamma_scale_;
   }
   float test_gamma_scale_{1.0f};
-  void set_current_on(bool on) { current_values.set(on); }
+  void set_current_on(bool on) {
+    current_values.set(on);
+    remote_values.set(on);
+  }
   void set_current_brightness(float b) {
     current_values.set_brightness(b);
     remote_values.set_brightness(b);
@@ -127,11 +130,19 @@ inline void Call::perform() {
     // Like the real LightState: the call's target becomes the remote values at once (and, with no
     // transition, the current values too).
     state_->remote_values.set(target_);
-    state_->set_current_on(target_);
     if (has_brightness_)
-      state_->set_current_brightness(brightness_);
-    state_->next_write_ = true;
-    state_->test_last_transition_ms_ = transition_length_.value_or(state_->default_transition_length_);
+      state_->remote_values.set_brightness(brightness_);
+    // An instant call sets the current values too and leaves one pending write (set_immediately_()). A call with a
+    // transition leaves both to the transformer (start_transition_()): it moves the current values in later loops and
+    // writes each step with is_transformer_active() true, which a test stands in for with test_transformer_active_.
+    const uint32_t length = transition_length_.value_or(state_->default_transition_length_);
+    if (length == 0) {
+      state_->set_current_on(target_);
+      if (has_brightness_)
+        state_->set_current_brightness(brightness_);
+      state_->next_write_ = true;
+    }
+    state_->test_last_transition_ms_ = length;
   }
 }
 
