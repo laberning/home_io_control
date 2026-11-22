@@ -247,11 +247,12 @@ clean-test-cache:
 # loop keeps `make check` runnable without network access.
 #
 # CI splits the compile across two parallel jobs (the `test-compile` matrix in ci.yml), one per
-# group below. The groups are balanced by measured compile time (~5 min each on a cold runner);
-# the two FEM configs share a group so the second compiles warm. Every other
+# group below. The groups are balanced by the compile time each config takes in the CI job log;
+# a new config joins the group that finishes sooner. The two FEM configs share a group so the
+# second compiles warm. Every other
 # config/tests/test-*.yaml must be in exactly one group — firmware-test-groups-check fails
 # otherwise, so a new config can never silently drop out of CI.
-FIRMWARE_TEST_GROUP_1 := test-esp32-arduino.yaml test-esp32-esp-idf-tuning.yaml
+FIRMWARE_TEST_GROUP_1 := test-esp32-arduino.yaml test-esp32-esp-idf-tuning.yaml test-esp32-lr1121.yaml
 FIRMWARE_TEST_GROUP_2 := test-esp32-esp-idf.yaml test-esp32-sx1262-fem-xy16p35.yaml test-esp32-sx1262-fem.yaml
 FIRMWARE_TEST_EXCLUDED := test-esp32-lr1121-fwupdate.yaml
 

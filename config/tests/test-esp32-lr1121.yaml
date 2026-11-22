@@ -1,0 +1,54 @@
+# Compile test for the LR1121 radio on an ESP32-S3, without network access.
+#
+# The LR1121 firmware-update config (test-esp32-lr1121-fwupdate.yaml) downloads its images at
+# build time, so `make firmware-test` and CI skip it. This config gives the LR1121 path a build in
+# every `make firmware-test`: the `radio_type: lr1121` validation, the LR1121 driver on the
+# ESP32-S3 target and a one-way identity on this chip.
+substitutions:
+  device_name: test-lr1121
+
+esphome:
+  name: ${device_name}
+  merge_warnings: false
+
+esp32:
+  variant: esp32s3
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: "test-ssid"
+  password: "test12345"
+
+api:
+
+spi:
+  clk_pin: 5
+  mosi_pin: 6
+  miso_pin: 3
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+home_io_control:
+  cs_pin: 7
+  rst_pin: 8
+  busy_pin: 34
+  dio1_pin: 33
+  radio_type: lr1121
+  node_id: C0FFEE
+  system_key: 0123456789ABCDEF0123456789ABCDEF
+  # A one-way identity compiles on this chip too: the always-alive shape (`low_power: false`), a fixed EXECUTE
+  # ACEI and an inverted position.
+  oneway_controllers:
+    - id: shutter_remote
+      io_device_type: roller_shutter
+      commands: [open, close, stop]
+      low_power: false
+      execute_acei: 0x43
+      invert_position: true

@@ -7,8 +7,9 @@
 # by exactly that gap (uint32_t is `long` on Xtensa, so `%u` format specifiers broke).
 #
 # NOTE: this config downloads two firmware images from GitHub at build time and is therefore the
-# one test config that needs network access. `make firmware-test` skips it for that reason; build
-# it explicitly with:
+# one test config that needs network access. `make firmware-test` skips it for that reason and
+# compiles the offline test-esp32-lr1121.yaml for the LR1121 radio instead; build this one
+# explicitly with:
 #   docker compose run --rm esphome compile /config/tests/test-esp32-lr1121-fwupdate.yaml
 substitutions:
   device_name: test_lr1121_fwupdate
@@ -49,15 +50,6 @@ home_io_control:
   radio_type: lr1121
   node_id: C0FFEE
   system_key: 0123456789ABCDEF0123456789ABCDEF
-  # A one-way identity compiles on this chip too: the always-alive shape (`low_power: false`), a fixed EXECUTE
-  # ACEI and an inverted position.
-  oneway_controllers:
-    - id: shutter_remote
-      io_device_type: roller_shutter
-      commands: [open, close, stop]
-      low_power: false
-      execute_acei: 0x43
-      invert_position: true
   lr1121_firmware_update:
     source: github://Lora-net/radio_firmware_images/lr1121/transceiver/lr1121_transceiver_0104.bin
     bootloader:
