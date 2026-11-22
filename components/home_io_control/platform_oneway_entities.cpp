@@ -4,6 +4,9 @@
 
 #include "platform_oneway_entities.h"
 
+#include <cinttypes>
+
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #include "proto_device_kinds.h"
 
@@ -78,15 +81,32 @@ void IOHomeOneWayCover::dump_config() {
   ESP_LOGCONFIG("home_io_control.cover", "  Controller: %s", this->controller_id_.c_str());
   for (const auto &sender : this->follows_)
     ESP_LOGCONFIG("home_io_control.cover", "  Follows: %s", sender.c_str());
+  if (this->has_durations_) {
+    ESP_LOGCONFIG("home_io_control.cover", "  Open duration: %" PRIu32 " ms", this->rates_.rise_ms);
+    ESP_LOGCONFIG("home_io_control.cover", "  Close duration: %" PRIu32 " ms", this->rates_.fall_ms);
+  }
 }
 
 cover::CoverTraits IOHomeOneWayCover::get_traits() {
   auto traits = cover::CoverTraits();
-  traits.set_supports_position(false);
+  traits.set_supports_position(this->has_durations_);
   traits.set_supports_stop(true);
   traits.set_is_assumed_state(
       true);  // No read exists: the shown state is what the hub heard, never what the device did
   return traits;
+}
+
+void IOHomeOneWayCover::loop() {
+  if (!this->has_durations_)
+    return;
+  const uint32_t now = millis();
+  // Settle an arrived run so that its end stays put however long the cover then idles.
+  const auto direction = decisions::travel_direction_at(this->estimate_, this->rates_, now);
+  if (direction == decisions::TravelDirection::IDLE)
+    this->estimate_ = decisions::travel_settled(this->estimate_, this->rates_, now);
+  if (decisions::travel_publish_due(direction, this->published_direction_, this->last_publish_ms_, now,
+                                    decisions::TRAVEL_PUBLISH_INTERVAL_MS))
+    this->publish_estimate_(now);
 }
 
 void IOHomeOneWayCover::control(const cover::CoverCall &call) {
@@ -97,13 +117,21 @@ void IOHomeOneWayCover::control(const cover::CoverCall &call) {
   const auto &position = call.get_position();
   if (!position.has_value())
     return;
-  this->control_port_->send_oneway_action(
-      this->controller_id_, *position == cover::COVER_OPEN ? OneWayButtonAction::OPEN : OneWayButtonAction::CLOSE);
+  // A slider value goes to its nearer end: the device is only sent open, close and stop here.
+  this->control_port_->send_oneway_action(this->controller_id_, *position >= decisions::ONEWAY_COVER_NEARER_END_LEVEL
+                                                                    ? OneWayButtonAction::OPEN
+                                                                    : OneWayButtonAction::CLOSE);
 }
 
 void IOHomeOneWayCover::apply_frame_(const OneWayFrameInfo &wire) {
-  const auto intent = decisions::oneway_cover_intent_from_frame(
-      wire, this->control_port_->oneway_identity_inverted(this->controller_id_));
+  const bool inverted = this->control_port_->oneway_identity_inverted(this->controller_id_);
+  if (this->has_durations_) {
+    const auto intent = decisions::oneway_cover_travel_intent_from_frame(wire, inverted);
+    if (intent.has_value())
+      this->apply_travel_intent_(*intent);
+    return;
+  }
+  const auto intent = decisions::oneway_cover_intent_from_frame(wire, inverted);
   if (!intent.has_value())
     return;
   // A stop leaves the cover somewhere between the ends. Home Assistant's position-less cover has no such state,
@@ -112,6 +140,31 @@ void IOHomeOneWayCover::apply_frame_(const OneWayFrameInfo &wire) {
                        ? cover::COVER_CLOSED
                        : cover::COVER_OPEN;
   this->current_operation = cover::COVER_OPERATION_IDLE;
+  this->publish_state();
+}
+
+void IOHomeOneWayCover::apply_travel_intent_(const decisions::TravelIntent &intent) {
+  const uint32_t now = millis();
+  this->estimate_ = decisions::travel_after(this->estimate_, this->rates_, intent, now);
+  this->publish_estimate_(now);
+}
+
+void IOHomeOneWayCover::publish_estimate_(uint32_t now) {
+  this->published_direction_ = decisions::travel_direction_at(this->estimate_, this->rates_, now);
+  this->position = decisions::travel_level_at(this->estimate_, this->rates_, now);
+  switch (this->published_direction_) {
+    case decisions::TravelDirection::UP:
+      this->current_operation = cover::COVER_OPERATION_OPENING;
+      break;
+    case decisions::TravelDirection::DOWN:
+      this->current_operation = cover::COVER_OPERATION_CLOSING;
+      break;
+    case decisions::TravelDirection::IDLE:
+    default:
+      this->current_operation = cover::COVER_OPERATION_IDLE;
+      break;
+  }
+  this->last_publish_ms_ = now;
   this->publish_state();
 }
 

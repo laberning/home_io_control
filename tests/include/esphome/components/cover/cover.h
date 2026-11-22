@@ -40,7 +40,8 @@ class Cover {
   float position{COVER_OPEN};  // the real class starts open
   float tilt{0.0f};
   CoverOperation current_operation{COVER_OPERATION_IDLE};
-  void publish_state() {}  // no-op
+  void publish_state() { this->publish_count++; }
+  int publish_count{0};  ///< Test stub only: how often publish_state() ran.
 };
 
 class CoverCall {

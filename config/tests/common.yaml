@@ -74,6 +74,9 @@ home_io_control:
       # ADR 0117: an assumed-state cover for the identity, following the presses of one real remote.
       cover: "Awning Remote"
       follows: [9D6085]
+      # ADR 0127: travel times give the cover an estimated position, so `set_travel_durations()` compiles.
+      open_duration: 30s
+      close_duration: 28s
     - id: velux_screen_remote
       # ADR 0031: manufacturer: drives the CMD_EXECUTE ACEI byte; execute_broadcast: all mimics a
       # handheld remote; execute_acei: is the raw override. ADR 0032: enrollment: true on a

@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0117 -->
 
-**Status:** Accepted · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0127](0127-a-one-way-cover-shows-a-position-from-its-travel-time.md) · **Recorded:** 2026-11
 
 Builds on [ADR 0116](0116-a-one-way-identity-names-the-devices-it-drives.md) (the hub follows its own one-way
 command) and [ADR 0080](0080-linked-remote-activity-is-followed-by-an-opt-in-catch-up-read.md) (a listed remote's press

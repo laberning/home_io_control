@@ -47,9 +47,10 @@ cover:
 ## Composing a slider from 1W buttons
 
 A one-way identity can show an [assumed-state cover](configuration/oneway-transmit.md#a-cover-for-the-identity)
-with open, close and stop, which also follows your wall remote without an automation. It has no slider.
-For a position slider, ESPHome's `time_based` cover platform turns the generated buttons and the
-`oneway_set_position` action into one, estimating the position from travel time:
+with open, close and stop, which also follows your wall remote without an automation. With
+`open_duration:` and `close_duration:` it also [shows a position from the travel time](configuration/oneway-transmit.md#a-position-from-the-travel-time),
+but its slider goes to the nearer end. For a slider that moves to a percentage, ESPHome's `time_based` cover platform
+turns the generated buttons and the `oneway_set_position` action into one, estimating the position from travel time:
 
 ```yaml
 cover:

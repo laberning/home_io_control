@@ -1,0 +1,14 @@
+# expect-error: sets only one of open_duration: and close_duration:
+# covers: oneway_controllers.validate_oneway_controllers
+# The cover needs the time of a run each way to estimate a position.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: awning_remote
+      io_device_type: vertical_exterior_awning
+      commands: [open, close, stop]
+      cover: "Awning"
+      open_duration: 24s

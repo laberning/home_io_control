@@ -30,6 +30,7 @@ from .hub_names import (
     CONF_BUTTON_IDS,
     CONF_COMMANDS,
     CONF_COVER,
+    CONF_CLOSE_DURATION,
     CONF_COVER_ENTITY_ID,
     CONF_DRIVES,
     CONF_ENROLLMENT,
@@ -50,6 +51,7 @@ from .hub_names import (
     CONF_NODE_ID,
     CONF_NODE_ID_DERIVED,
     CONF_ONEWAY_CONTROLLERS,
+    CONF_OPEN_DURATION,
     CONF_RADIO_TYPE,
     CONF_SYSTEM_KEY,
     IOHomeOneWayCommandButton,
@@ -225,6 +227,11 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         cv.Optional(CONF_FOLLOWS, default=[]): cv.All(
             cv.ensure_list(validate_node_id), _no_duplicate_followed_remotes
         ),
+        # How long the cover takes for a full run each way (ADR 0127). With both, the cover estimates a position from
+        # the commands and presses it follows; with neither it shows open or closed only. Both or neither, and only
+        # with `cover:` (_cover_problem()). Typed in: nothing tells the hub when a one-way cover reaches its end.
+        cv.Optional(CONF_OPEN_DURATION): cv.positive_not_null_time_period,
+        cv.Optional(CONF_CLOSE_DURATION): cv.positive_not_null_time_period,
     }
 )
 
@@ -456,6 +463,19 @@ def _cover_problem(resolved):
         return (
             f"oneway_controllers id '{resolved.identity_id}' has follows: but no cover:. follows: lists the "
             "remotes whose presses move the cover's shown state; without cover: there is nothing to move."
+        )
+    has_open = CONF_OPEN_DURATION in identity
+    if has_open != (CONF_CLOSE_DURATION in identity):
+        missing = CONF_CLOSE_DURATION if has_open else CONF_OPEN_DURATION
+        return (
+            f"oneway_controllers id '{resolved.identity_id}' sets only one of open_duration: and close_duration:, "
+            f"{missing}: is missing. The cover estimates its position from the time a full run takes each way, so "
+            "it needs both. Set both, or neither."
+        )
+    if has_open and CONF_COVER not in identity:
+        return (
+            f"oneway_controllers id '{resolved.identity_id}' has open_duration: and close_duration: but no cover:. "
+            "They give the cover its travel times; without cover: there is nothing to estimate a position for."
         )
     return None
 
@@ -780,6 +800,13 @@ async def create_oneway_controller_entities(identity, var):
         cg.add(cover_entity.set_controller_id(identity[CONF_ID]))
         for sender in identity[CONF_FOLLOWS]:
             cg.add(cover_entity.add_follow(sender))
+        if CONF_OPEN_DURATION in identity:
+            cg.add(
+                cover_entity.set_travel_durations(
+                    identity[CONF_OPEN_DURATION].total_milliseconds,
+                    identity[CONF_CLOSE_DURATION].total_milliseconds,
+                )
+            )
 
     if identity[CONF_ENROLLMENT]:
         # entity_category: config, not a switch behind an arming flag: the receiver's own 2s PROG

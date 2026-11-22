@@ -20,6 +20,14 @@ home_io_control:
       commands: [open, close, stop]
       cover: "Patio"
       follows: [9D6085, "aabbcc"]
+    # The same cover with its travel times, so that it estimates a position (ADR 0127).
+    - id: patio_timed_remote
+      io_device_type: vertical_exterior_awning
+      commands: [open, close, stop]
+      cover: "Patio Timed"
+      follows: [9D6085]
+      open_duration: 24s
+      close_duration: 22.5s
     - id: screen_remote
       node_id: A11CE0
       system_key: FEDCBA98765432100123456789ABCDEF

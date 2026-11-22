@@ -60,6 +60,8 @@ home_io_control:
       drives: [FEEB1E]                                  # optional -- devices that follow this identity's commands
       cover: "Roof Window"                              # optional -- a cover entity with an assumed state
       follows: [9D6085]                                 # optional -- remotes whose presses move that cover
+      open_duration: 30s                                # optional, with close_duration -- the cover shows a position
+      close_duration: 28s
 ```
 
 | Key | Required | Meaning |
@@ -80,6 +82,7 @@ home_io_control:
 | `drives` | no | The devices, by `io_device_id`, that follow this identity's commands: a list of covers or lights declared in the same configuration. After each command the hub transmits as this identity, every listed device shows the commanded state at once and is read a moment later. See [Following a device the identity drives](#following-a-device-the-identity-drives). |
 | `cover` | no | The name of a cover entity for this identity, for a cover kind only (a shutter, awning, blind, window, door or gate; the build fails for a light or any other kind). It sends the identity's open, close and stop and shows the state the hub assumes ([ADR 0117](../adr/0117-a-one-way-controller-can-show-an-assumed-state-cover.md)). Its ID is `<identity_id>_cover`. See [A cover for the identity](#a-cover-for-the-identity). |
 | `follows` | no | The source addresses of the real remotes whose presses the cover follows, a list of six hexadecimal characters each. Needs `cover`. A remote that is not listed never moves the state. |
+| `open_duration`, `close_duration` | no | How long the cover takes for a full run from closed to open and from open to closed, for example `30s`. Set both or neither, each above zero, and only with `cover`. With them the cover shows an estimated position and shows opening or closing while it moves ([ADR 0127](../adr/0127-a-one-way-cover-shows-a-position-from-its-travel-time.md)). See [A position from the travel time](#a-position-from-the-travel-time). Time a full run once with a stopwatch and type it in. |
 
 ## What the build checks
 
@@ -530,7 +533,9 @@ home_io_control:
 ```
 
 The entity sends the same one-way commands as the identity's buttons, one sequence each, and keeps the
-buttons you list under `commands:`. It has no position slider: a one-way device never reports one.
+buttons you list under `commands:`. A one-way device never reports a position, so the cover shows one
+only when you give it the travel times; see [A position from the travel time](#a-position-from-the-travel-time).
+The rest of this section describes the cover without them.
 
 **What the cover shows.** The hub has no reply to read, so the cover shows what it heard of, and Home
 Assistant marks it as an assumed state (both arrows stay usable whatever it shows):
@@ -565,10 +570,54 @@ re-sends the command and puts the shown state back in line with what you last as
 ([ADR 0018](../adr/0018-yaml-is-the-source-of-truth-hub-persists-nothing.md)). ESPHome's cover shows
 open until the first command or press arrives, whatever the awning really does.
 
+### A position from the travel time
+
+Add `open_duration:` and `close_duration:` to the identity and the cover shows where it is: the hub
+works the position out from the time a full run takes and from the commands and presses it knows of
+([ADR 0127](../adr/0127-a-one-way-cover-shows-a-position-from-its-travel-time.md)). Home Assistant shows
+the percentage, and "opening" or "closing" while the cover moves. The position updates about once a
+second and again when the cover starts, stops, turns around or arrives. It follows the wall remote of a
+`follows:` entry the same way.
+
+```yaml
+home_io_control:
+  oneway_controllers:
+    - id: patio_awning
+      io_device_type: vertical_exterior_awning
+      manufacturer: somfy
+      commands: [open, close, stop]
+      cover: "Patio Awning"
+      follows: [9D6085]
+      open_duration: 30s    # full run from closed to open
+      close_duration: 28s   # full run from open to closed
+```
+
+What moves the position:
+
+- **Open and close** start a run towards that end at the matching speed. A run that lasts the whole
+  duration ends at the end, whatever the position was before.
+- **Stop**, sent by the hub or heard from a followed remote, freezes the position where it is, and the
+  cover shows it idle.
+- **A position** sent with [`oneway_set_position`](actions.md#oneway_set_position) or heard from a
+  followed remote makes the position travel to that percentage and stop there. The hub assumes the
+  device does the same, which no device on record has confirmed.
+- **A favorite or ventilation press** changes nothing: the hub does not know where that position is.
+- **A command that did not reach the radio** changes nothing.
+
+**The position is an estimate, and it is wrong when** the hub missed a press of the real remote, the
+device ignored a command, a favorite or ventilation press moved the cover, the motor was stopped or
+moved by hand, or the hub rebooted. The hub cannot tell any of these from a correct run. A full run to
+an end corrects the position: send open or close and let it finish. After a reboot the cover shows fully
+open and idle; the position is not stored.
+
+The slider of Home Assistant does not move the cover to a percentage: a value goes out as open or close,
+whichever end it is nearer, and 50 % opens. To get a slider that does, compose it from the generated buttons: see
+[Composing a slider from 1W buttons](../tips-and-tricks.md#composing-a-slider-from-1w-buttons).
+
 ## Continuous control
 
-A one-way cover entity has no slider. To get one, compose it from the generated buttons —
-[Composing a slider from 1W buttons](../tips-and-tricks.md#composing-a-slider-from-1w-buttons)
+Without travel times a one-way cover entity has no position. To get a slider, compose one from the
+generated buttons: [Composing a slider from 1W buttons](../tips-and-tricks.md#composing-a-slider-from-1w-buttons)
 shows how.
 
 ## Numeric positions

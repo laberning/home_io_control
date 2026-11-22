@@ -98,6 +98,9 @@ CONF_INVERT_POSITION = "invert_position"
 # move its state.
 CONF_COVER = "cover"
 CONF_FOLLOWS = "follows"
+# The time a full run of that cover takes each way (ADR 0127); both or neither, and only with `cover:`.
+CONF_OPEN_DURATION = "open_duration"
+CONF_CLOSE_DURATION = "close_duration"
 # Injected at schema time, never user-supplied: the generated buttons' IDs and the identity's
 # diagnostic sensor ID (ADR 0009).
 CONF_BUTTON_IDS = "button_ids"

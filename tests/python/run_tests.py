@@ -569,6 +569,26 @@ def oneway_cover_needs_a_cover_kind_and_follows_needs_a_cover():
 
 
 @case()
+def oneway_travel_durations_need_both_keys_and_a_cover():
+    from datetime import timedelta
+
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+
+    durations = {n.CONF_OPEN_DURATION: timedelta(seconds=24), n.CONF_CLOSE_DURATION: timedelta(seconds=22)}
+    cover = {n.CONF_COVER: "Awning"}
+    assert o._cover_problem(_resolved_oneway("vertical_exterior_awning", **cover, **durations)) is None
+    assert o._cover_problem(_resolved_oneway("vertical_exterior_awning", **cover)) is None, "no durations is the plain cover"
+    assert o._cover_problem(_resolved_oneway("vertical_exterior_awning")) is None
+
+    only_open = {n.CONF_OPEN_DURATION: timedelta(seconds=24)}
+    assert "close_duration: is missing" in o._cover_problem(_resolved_oneway("vertical_exterior_awning", **cover, **only_open))
+    only_close = {n.CONF_CLOSE_DURATION: timedelta(seconds=22)}
+    assert "open_duration: is missing" in o._cover_problem(_resolved_oneway("vertical_exterior_awning", **cover, **only_close))
+    assert "but no cover:" in o._cover_problem(_resolved_oneway("vertical_exterior_awning", **durations))
+
+
+@case()
 def oneway_cover_kind_is_decided_by_a_named_position_capability():
     from esphome.components.home_io_control import hub_validators as v
 

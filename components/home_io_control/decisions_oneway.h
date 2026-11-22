@@ -12,6 +12,7 @@
 #include "oneway_sequence_store.h"
 #include "proto_frame.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <optional>
@@ -177,12 +178,135 @@ inline bool is_one_way_pairing_gesture(bool oneway, const uint8_t dst[NODE_ID_SI
   return transmitted && has_intent;
 }
 
+// == Travel estimate of a one-way device (ADR 0127) ==
+
+/// How often a moving estimate is published, in milliseconds.
+static constexpr uint32_t TRAVEL_PUBLISH_INTERVAL_MS = 1000;
+
+/// How long a full run takes in each direction, the only thing a one-way device lets the hub know about its speed.
+///
+/// "Rise" is a run from level 0 to level 1 and "fall" the reverse; the owner decides what the level means (a cover's
+/// openness, a lamp's brightness). The two differ because a motor runs faster one way, and a fade need not be
+/// symmetric. A zero duration is treated as an instant run, never a division by zero.
+struct TravelRates {
+  uint32_t rise_ms{0};  ///< Time to run from level 0 to level 1.
+  uint32_t fall_ms{0};  ///< Time to run from level 1 to level 0.
+};
+
+/// What the hub asks of an estimate. A kind is added here when a device obeys a new intent (an instant jump).
+struct TravelIntent {
+  /// The kinds of intent.
+  enum class Kind : uint8_t {
+    STOP,   ///< Freeze where the estimate is.
+    GO_TO,  ///< Travel to `level` at the run rate and stop there.
+  };
+  Kind kind{Kind::STOP};  ///< What is asked.
+  float level{0.0F};      ///< The level to travel to (GO_TO only), 0..1.
+
+  /// A stop.
+  [[nodiscard]] static constexpr TravelIntent stop() { return {Kind::STOP, 0.0F}; }
+  /// Travel to @p target, clamped to 0..1; 1.0 and 0.0 are the two ends.
+  [[nodiscard]] static constexpr TravelIntent go_to(float target) {
+    return {Kind::GO_TO, std::clamp(target, 0.0F, 1.0F)};
+  }
+};
+
+/// The direction an estimate is running in at some moment. Not named RISING/FALLING: the Arduino core defines those
+/// as macros.
+enum class TravelDirection : uint8_t {
+  IDLE,  ///< Not moving: stopped, or arrived.
+  UP,    ///< Level going up.
+  DOWN,  ///< Level going down.
+};
+
+/// The hub's belief about a one-way device: a level it was at, and where it set out to go from there.
+///
+/// Plain data with no clock inside, so it is a function of (estimate, intent, time): the owner keeps one and feeds it
+/// the times of the commands and presses it learns of. The level moves linearly at the TravelRates rate and is never
+/// published by the device, so it is an estimate that every error keeps until the next run to an end.
+/// The owner chooses where it starts (a cover starts fully open, ADR 0127); the default is idle at level 0.
+struct TravelEstimate {
+  float level{0.0F};       ///< Level 0..1 at `updated_ms`.
+  float target{0.0F};      ///< Where the run set out for; equals `level` when idle.
+  uint32_t updated_ms{0};  ///< millis() at which `level` held.
+};
+
+/// The level at @p now: the estimate's level moved towards its target at the rate of that direction, and no further
+/// than the target.
+[[nodiscard]] inline float travel_level_at(const TravelEstimate &estimate, const TravelRates &rates, uint32_t now) {
+  // Unsigned subtraction keeps the elapsed time right across the millis() wrap.
+  const uint32_t elapsed = now - estimate.updated_ms;
+  if (estimate.target > estimate.level) {
+    if (rates.rise_ms == 0)
+      return estimate.target;
+    const float level = estimate.level + (static_cast<float>(elapsed) / static_cast<float>(rates.rise_ms));
+    return level > estimate.target ? estimate.target : level;
+  }
+  if (estimate.target < estimate.level) {
+    if (rates.fall_ms == 0)
+      return estimate.target;
+    const float level = estimate.level - (static_cast<float>(elapsed) / static_cast<float>(rates.fall_ms));
+    return level < estimate.target ? estimate.target : level;
+  }
+  return estimate.level;
+}
+
+/// The direction the estimate runs in at @p now: IDLE once it has arrived.
+[[nodiscard]] inline TravelDirection travel_direction_at(const TravelEstimate &estimate, const TravelRates &rates,
+                                                         uint32_t now) {
+  const float level = travel_level_at(estimate, rates, now);
+  if (level < estimate.target)
+    return TravelDirection::UP;
+  if (level > estimate.target)
+    return TravelDirection::DOWN;
+  return TravelDirection::IDLE;
+}
+
+/// The estimate as it stands at @p now: its level moved to now, and idle when the run has arrived.
+///
+/// A run that lasts a whole duration ends at its end stop whatever the level was before, because the level stops at
+/// the target. The owner settles an arrived run, so that the elapsed time never has to span more than one run.
+[[nodiscard]] inline TravelEstimate travel_settled(const TravelEstimate &estimate, const TravelRates &rates,
+                                                   uint32_t now) {
+  const float level = travel_level_at(estimate, rates, now);
+  if (level == estimate.target)
+    return {level, level, now};
+  return {level, estimate.target, now};
+}
+
+/// The estimate after the hub learns of an intent at @p now.
+[[nodiscard]] inline TravelEstimate travel_after(const TravelEstimate &estimate, const TravelRates &rates,
+                                                 const TravelIntent &intent, uint32_t now) {
+  const float level = travel_level_at(estimate, rates, now);
+  if (intent.kind == TravelIntent::Kind::GO_TO)
+    return {level, intent.level, now};
+  return {level, level, now};
+}
+
+/// Whether a running estimate is due to be published again: its direction changed or it ended since the last publish,
+/// or a second has passed while it moves. Idle and unchanged is never due.
+/// @param moving_now       The estimate's direction now.
+/// @param published        The direction at the last publish.
+/// @param last_publish_ms  millis() of the last publish.
+/// @param now              Current millis().
+/// @param interval_ms      Publish period while moving.
+[[nodiscard]] inline bool travel_publish_due(TravelDirection moving_now, TravelDirection published,
+                                             uint32_t last_publish_ms, uint32_t now, uint32_t interval_ms) {
+  if (moving_now != published)
+    return true;
+  return moving_now != TravelDirection::IDLE && (now - last_publish_ms) >= interval_ms;
+}
+
 // == Assumed-state cover of a one-way controller (ADR 0117) ==
 
 /// Percent scale of a one-way position (0 = open, 100 = closed) and its midpoint: a position above it is nearer the
 /// closed end.
 static constexpr float ONEWAY_COVER_FULL_PERCENT = 100.0F;
 static constexpr float ONEWAY_COVER_MIDPOINT_PERCENT = 50.0F;
+/// The same midpoint as a level on the cover scale (1.0 open): a level from it up is nearer the open end, as a
+/// position at the midpoint opens in oneway_cover_intent_from_frame().
+static constexpr float ONEWAY_COVER_NEARER_END_LEVEL =
+    1.0F - (ONEWAY_COVER_MIDPOINT_PERCENT / ONEWAY_COVER_FULL_PERCENT);
 
 /// What a command or a press asks of a cover, as the user means it (after the identity's inversion).
 enum class OneWayCoverIntent : uint8_t {
@@ -238,6 +362,27 @@ enum class OneWayCoverState : uint8_t {
     return std::nullopt;
   const float user_percent = inverted ? ONEWAY_COVER_FULL_PERCENT - *wire_percent : *wire_percent;
   return user_percent > ONEWAY_COVER_MIDPOINT_PERCENT ? OneWayCoverIntent::CLOSE : OneWayCoverIntent::OPEN;
+}
+
+/// What a decoded one-way frame asks of a cover that knows its travel times: a stop, or a position to travel to.
+///
+/// Same inputs and same "says nothing" cases as oneway_cover_intent_from_frame(), but a position keeps its percentage
+/// instead of snapping to the nearer end. The wire mirror of an inverted identity is undone first, so the level is
+/// the user's: 1.0 fully open, 0.0 fully closed (the ESPHome cover scale).
+/// @param info     The frame, from decode_1w_frame(): the hub's own transmission or a remote's press.
+/// @param inverted Whether the identity's open/close are mirrored on the wire (effective_inverted()).
+/// @return The intent, or an empty optional when the frame changes nothing.
+[[nodiscard]] inline std::optional<TravelIntent> oneway_cover_travel_intent_from_frame(const OneWayFrameInfo &info,
+                                                                                       bool inverted) {
+  if (!info.has_intent)
+    return std::nullopt;
+  if (info.main0 == POS_STOP)
+    return TravelIntent::stop();
+  const std::optional<float> wire_percent = oneway_intent_to_target(info.main0, info.main1);
+  if (!wire_percent.has_value())
+    return std::nullopt;
+  const float user_percent = inverted ? ONEWAY_COVER_FULL_PERCENT - *wire_percent : *wire_percent;
+  return TravelIntent::go_to(1.0F - (user_percent / ONEWAY_COVER_FULL_PERCENT));
 }
 
 // == Setting a controller identity's next sequence ==

@@ -360,3 +360,158 @@ TEST(DecisionsOneWay, ASetValueBelowInitialSequenceIsNotKeptAtBoot) {
   EXPECT_TRUE(decisions::decide_sequence_set(40000, 10, true, 40000).kept_at_boot)
       << "half the range or more below initial_sequence, the stored value stands";
 }
+
+// ============================================================================
+// Travel estimate (ADR 0127): a pure function of (estimate, intent, time)
+// ============================================================================
+
+namespace {
+
+using decisions::TravelDirection;
+using decisions::TravelEstimate;
+using decisions::TravelIntent;
+using decisions::TravelRates;
+
+constexpr TravelRates RATES{20000, 10000};  // 20 s to rise from 0 to 1, 10 s to fall: unequal on purpose
+constexpr uint32_t T0 = 1000;
+
+/// An idle estimate at @p level.
+TravelEstimate idle_at(float level) { return {level, level, T0}; }
+
+}  // namespace
+
+TEST(DecisionsTravel, ARunToTheTopRisesAtTheRiseRateAndEndsIdleAtTheEnd) {
+  const TravelEstimate run = decisions::travel_after(idle_at(0.0F), RATES, TravelIntent::go_to(1.0F), T0);
+
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(run, RATES, T0 + 10000), 0.5F);
+  EXPECT_EQ(decisions::travel_direction_at(run, RATES, T0 + 10000), TravelDirection::UP);
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(run, RATES, T0 + 20000), 1.0F);
+  EXPECT_EQ(decisions::travel_direction_at(run, RATES, T0 + 20000), TravelDirection::IDLE);
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(run, RATES, T0 + 60000), 1.0F) << "never beyond the end stop";
+}
+
+TEST(DecisionsTravel, ARunToTheBottomFallsAtTheFallRate) {
+  const TravelEstimate run = decisions::travel_after(idle_at(1.0F), RATES, TravelIntent::go_to(0.0F), T0);
+
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(run, RATES, T0 + 5000), 0.5F);
+  EXPECT_EQ(decisions::travel_direction_at(run, RATES, T0 + 5000), TravelDirection::DOWN);
+  EXPECT_EQ(decisions::travel_direction_at(run, RATES, T0 + 10000), TravelDirection::IDLE);
+}
+
+TEST(DecisionsTravel, AStopFreezesTheEstimateWhereItIs) {
+  const TravelEstimate run = decisions::travel_after(idle_at(0.0F), RATES, TravelIntent::go_to(1.0F), T0);
+
+  const TravelEstimate stopped = decisions::travel_after(run, RATES, TravelIntent::stop(), T0 + 5000);
+
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(stopped, RATES, T0 + 5000), 0.25F);
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(stopped, RATES, T0 + 50000), 0.25F) << "it stays there";
+  EXPECT_EQ(decisions::travel_direction_at(stopped, RATES, T0 + 50000), TravelDirection::IDLE);
+}
+
+TEST(DecisionsTravel, AReversalMidWayTurnsAroundFromTheLevelReached) {
+  const TravelEstimate up = decisions::travel_after(idle_at(0.0F), RATES, TravelIntent::go_to(1.0F), T0);
+
+  const TravelEstimate down = decisions::travel_after(up, RATES, TravelIntent::go_to(0.0F), T0 + 10000);  // at 0.5
+
+  EXPECT_EQ(decisions::travel_direction_at(down, RATES, T0 + 10000), TravelDirection::DOWN);
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(down, RATES, T0 + 12000), 0.3F) << "falls at the fall rate, not the rise";
+}
+
+TEST(DecisionsTravel, GoToAPercentageTravelsThereAndStopsThere) {
+  const TravelEstimate run = decisions::travel_after(idle_at(1.0F), RATES, TravelIntent::go_to(0.4F), T0);
+
+  EXPECT_EQ(decisions::travel_direction_at(run, RATES, T0 + 3000), TravelDirection::DOWN);
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(run, RATES, T0 + 3000), 0.7F);
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(run, RATES, T0 + 6000), 0.4F);
+  EXPECT_EQ(decisions::travel_direction_at(run, RATES, T0 + 6000), TravelDirection::IDLE);
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(run, RATES, T0 + 30000), 0.4F) << "it does not run on to the end";
+}
+
+TEST(DecisionsTravel, AFullRunEndsAtTheEndStopWhateverTheEstimateWasBefore) {
+  // The estimate thought the cover was at 0.8, but a missed press left it at the bottom. A full close run still
+  // ends at the bottom, and the estimate then agrees with the cover again.
+  const TravelEstimate run = decisions::travel_after(idle_at(0.8F), RATES, TravelIntent::go_to(0.0F), T0);
+
+  const TravelEstimate arrived = decisions::travel_settled(run, RATES, T0 + 10000);
+
+  EXPECT_FLOAT_EQ(arrived.level, 0.0F);
+  EXPECT_FLOAT_EQ(arrived.target, 0.0F);
+  EXPECT_EQ(decisions::travel_direction_at(arrived, RATES, T0 + 10000), TravelDirection::IDLE);
+}
+
+TEST(DecisionsTravel, AGoToTheLevelItAlreadyHasStaysIdle) {
+  const TravelEstimate same = decisions::travel_after(idle_at(0.5F), RATES, TravelIntent::go_to(0.5F), T0);
+
+  EXPECT_EQ(decisions::travel_direction_at(same, RATES, T0 + 1000), TravelDirection::IDLE);
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(same, RATES, T0 + 1000), 0.5F);
+}
+
+TEST(DecisionsTravel, ALevelOutsideTheScaleIsClampedToTheEnds) {
+  EXPECT_FLOAT_EQ(TravelIntent::go_to(1.7F).level, 1.0F);
+  EXPECT_FLOAT_EQ(TravelIntent::go_to(-0.2F).level, 0.0F);
+}
+
+TEST(DecisionsTravel, ARunAcrossTheMillisWrapKeepsItsElapsedTime) {
+  constexpr uint32_t START = 0xFFFFF000U;  // 4096 ms before the wrap
+  const TravelEstimate run = decisions::travel_after(idle_at(0.0F), RATES, TravelIntent::go_to(1.0F), START);
+
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(run, RATES, START + 10000U), 0.5F) << "10 s, 5.9 s of them after the wrap";
+  EXPECT_EQ(decisions::travel_direction_at(run, RATES, START + 20000U), TravelDirection::IDLE);
+}
+
+TEST(DecisionsTravel, ASettledEndStaysPutHoweverLongTheCoverThenIdles) {
+  const TravelEstimate run = decisions::travel_after(idle_at(0.0F), RATES, TravelIntent::go_to(1.0F), T0);
+  const TravelEstimate arrived = decisions::travel_settled(run, RATES, T0 + 20000);
+
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(arrived, RATES, T0 + 20000 + 0x80000000U), 1.0F);
+}
+
+TEST(DecisionsTravel, AZeroDurationIsAnInstantRunNotADivisionByZero) {
+  const TravelRates instant{0, 0};
+  const TravelEstimate up = decisions::travel_after(idle_at(0.0F), instant, TravelIntent::go_to(1.0F), T0);
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(up, instant, T0), 1.0F);
+  const TravelEstimate down = decisions::travel_after(idle_at(1.0F), instant, TravelIntent::go_to(0.0F), T0);
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(down, instant, T0), 0.0F);
+}
+
+TEST(DecisionsTravel, ARunIsPublishedWhenItsDirectionChangesAndOnceASecondWhileItMoves) {
+  using decisions::travel_publish_due;
+  constexpr uint32_t INTERVAL = decisions::TRAVEL_PUBLISH_INTERVAL_MS;
+
+  EXPECT_FALSE(travel_publish_due(TravelDirection::IDLE, TravelDirection::IDLE, 0, 500000, INTERVAL))
+      << "idle and unchanged is never due";
+  EXPECT_TRUE(travel_publish_due(TravelDirection::UP, TravelDirection::IDLE, 100, 100, INTERVAL)) << "a start";
+  EXPECT_TRUE(travel_publish_due(TravelDirection::IDLE, TravelDirection::UP, 100, 100, INTERVAL)) << "the end";
+  EXPECT_TRUE(travel_publish_due(TravelDirection::DOWN, TravelDirection::UP, 100, 100, INTERVAL)) << "a reversal";
+  EXPECT_FALSE(travel_publish_due(TravelDirection::UP, TravelDirection::UP, 100, 100 + INTERVAL - 1, INTERVAL));
+  EXPECT_TRUE(travel_publish_due(TravelDirection::UP, TravelDirection::UP, 100, 100 + INTERVAL, INTERVAL));
+  EXPECT_TRUE(travel_publish_due(TravelDirection::UP, TravelDirection::UP, 0xFFFFFF00U, 0x100U + 700U, INTERVAL))
+      << "the second counts across the millis() wrap";
+}
+
+TEST(DecisionsOneWay, ACoverWithTravelTimesKeepsAPositionFrameAsItsPercentage) {
+  const auto closed = decisions::oneway_cover_travel_intent_from_frame(frame_with_main(0xC8), false);
+  ASSERT_TRUE(closed.has_value());
+  EXPECT_EQ(closed->kind, TravelIntent::Kind::GO_TO);
+  EXPECT_FLOAT_EQ(closed->level, 0.0F);
+  EXPECT_FLOAT_EQ(decisions::oneway_cover_travel_intent_from_frame(frame_with_main(0x00), false)->level, 1.0F);
+  EXPECT_FLOAT_EQ(decisions::oneway_cover_travel_intent_from_frame(frame_with_main(0x8C), false)->level, 0.3F)
+      << "70 % closed is 30 % open";
+  EXPECT_FLOAT_EQ(decisions::oneway_cover_travel_intent_from_frame(frame_with_main(0x28), false)->level, 0.8F);
+}
+
+TEST(DecisionsOneWay, ATravelIntentUndoesTheMirrorOfAnInvertedIdentity) {
+  EXPECT_FLOAT_EQ(decisions::oneway_cover_travel_intent_from_frame(frame_with_main(0x00), true)->level, 0.0F)
+      << "wire 0 is closed on an inverted kind";
+  EXPECT_FLOAT_EQ(decisions::oneway_cover_travel_intent_from_frame(frame_with_main(0x8C), true)->level, 0.7F);
+}
+
+TEST(DecisionsOneWay, ATravelIntentIsAStopAndNamedPositionsAndSilentFramesChangeNothing) {
+  const auto stop = decisions::oneway_cover_travel_intent_from_frame(frame_with_main(POS_STOP), false);
+  ASSERT_TRUE(stop.has_value());
+  EXPECT_EQ(stop->kind, TravelIntent::Kind::STOP);
+  for (const uint8_t named : {POS_FAVORITE, POS_UNKNOWN, POS_SECURED_TARGET, POS_DEFAULT, POS_FORCE_OPEN})
+    EXPECT_FALSE(decisions::oneway_cover_travel_intent_from_frame(frame_with_main(named), false).has_value());
+  EXPECT_FALSE(
+      decisions::oneway_cover_travel_intent_from_frame(frame_with_main(0x00, /*has_intent=*/false), false).has_value());
+}

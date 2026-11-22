@@ -201,3 +201,190 @@ TEST_F(OneWayCoverTest, AnInvertedIdentityReadsRemotePressesAndOwnCommandsAsTheU
   hub.report_oneway_command(sent(IDENTITY, POS_STOP));
   EXPECT_EQ(cover.position, COVER_OPEN) << "a stop is not mirrored";
 }
+
+// ============================================================================
+// With travel times (ADR 0127)
+// ============================================================================
+
+namespace {
+
+constexpr uint32_t OPEN_MS = 20000;
+constexpr uint32_t CLOSE_MS = 10000;
+
+class OneWayTimedCoverTest : public OneWayCoverTest {
+ protected:
+  void start_timed() {
+    cover.set_travel_durations(OPEN_MS, CLOSE_MS);
+    start();
+  }
+
+  /// Let @p ms pass and run the entity's loop once, as ESPHome does.
+  void pass(uint32_t ms) {
+    esphome::test_clock::advance_ms(ms);
+    cover.loop();
+  }
+
+  esphome::test_clock::ManualClock clock;
+};
+
+}  // namespace
+
+TEST_F(OneWayTimedCoverTest, ItOffersAPositionOnlyWithTravelTimes) {
+  EXPECT_FALSE(cover.get_traits().get_supports_position());
+
+  cover.set_travel_durations(OPEN_MS, CLOSE_MS);
+
+  EXPECT_TRUE(cover.get_traits().get_supports_position());
+  EXPECT_TRUE(cover.get_traits().get_is_assumed_state());
+}
+
+TEST_F(OneWayTimedCoverTest, ACloseShowsClosingWhileThePositionFallsAndEndsClosedAndIdle) {
+  start_timed();
+
+  hub.report_oneway_command(sent(IDENTITY, WIRE_CLOSED));
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING);
+  EXPECT_FLOAT_EQ(cover.position, 1.0F);
+
+  pass(5000);
+  EXPECT_FLOAT_EQ(cover.position, 0.5F);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING);
+
+  pass(5000);
+  EXPECT_FLOAT_EQ(cover.position, COVER_CLOSED);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+}
+
+TEST_F(OneWayTimedCoverTest, ItPublishesAboutOnceASecondWhileMovingAndOnTheStartAndTheEnd) {
+  start_timed();
+  const int before = cover.publish_count;
+  hub.report_oneway_command(sent(IDENTITY, WIRE_CLOSED));
+  EXPECT_EQ(cover.publish_count, before + 1) << "the start";
+
+  for (int i = 0; i < 9; ++i)
+    pass(100);
+  EXPECT_EQ(cover.publish_count, before + 1) << "less than a second since the start";
+  pass(100);
+  EXPECT_EQ(cover.publish_count, before + 2) << "a second after the start";
+
+  pass(9000);
+  EXPECT_EQ(cover.publish_count, before + 3) << "the end of the run, not a publish per pass";
+  pass(30000);
+  EXPECT_EQ(cover.publish_count, before + 3) << "idle publishes nothing";
+}
+
+TEST_F(OneWayTimedCoverTest, AStopHeardMidRunFreezesThePositionAndShowsIdle) {
+  start_timed();
+  hub.report_oneway_command(sent(IDENTITY, WIRE_CLOSED));
+  pass(3000);
+
+  hub.press_oneway_remote(FOLLOWED_REMOTE, wire_frame(POS_STOP));
+
+  EXPECT_FLOAT_EQ(cover.position, 0.7F);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+  pass(20000);
+  EXPECT_FLOAT_EQ(cover.position, 0.7F);
+}
+
+TEST_F(OneWayTimedCoverTest, AReversalPublishesTheChangeOfDirectionAtOnce) {
+  start_timed();
+  hub.report_oneway_command(sent(IDENTITY, WIRE_CLOSED));
+  pass(4000);  // 0.6
+  const int before = cover.publish_count;
+
+  hub.press_oneway_remote(FOLLOWED_REMOTE, wire_frame(WIRE_OPEN));
+
+  EXPECT_EQ(cover.publish_count, before + 1);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING);
+  pass(2000);
+  EXPECT_FLOAT_EQ(cover.position, 0.7F) << "20 s for a full opening run: 2 s is 0.1";
+}
+
+TEST_F(OneWayTimedCoverTest, AFullRunEndsAtTheEndStopWhateverTheEstimateWasBefore) {
+  start_timed();
+  hub.report_oneway_command(sent(IDENTITY, WIRE_CLOSED));
+  pass(4000);
+  hub.press_oneway_remote(FOLLOWED_REMOTE, wire_frame(POS_STOP));  // 0.6, and say the cover really sat at 0.1
+
+  hub.press_oneway_remote(FOLLOWED_REMOTE, wire_frame(WIRE_CLOSED));
+  pass(CLOSE_MS);
+
+  EXPECT_FLOAT_EQ(cover.position, COVER_CLOSED);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+}
+
+TEST_F(OneWayTimedCoverTest, APositionFrameTravelsToItsPercentageAndStopsThereWhetherOwnOrHeard) {
+  start_timed();
+
+  hub.report_oneway_command(sent(IDENTITY, 0x8C));  // 70 % closed
+  pass(10000);
+  EXPECT_FLOAT_EQ(cover.position, 0.3F) << "reached in 7 s and held";
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+
+  hub.press_oneway_remote(FOLLOWED_REMOTE, wire_frame(0x28));  // 20 % closed, so 0.8 open
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING);
+  pass(10000);
+  EXPECT_FLOAT_EQ(cover.position, 0.8F);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+}
+
+TEST_F(OneWayTimedCoverTest, AnInvertedIdentityEstimatesTheUsersDirection) {
+  hub.inverted_oneway_identities.insert(IDENTITY);
+  start_timed();
+
+  hub.press_oneway_remote(FOLLOWED_REMOTE, wire_frame(WIRE_OPEN));  // wire 0 is closed here
+
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING);
+}
+
+TEST_F(OneWayTimedCoverTest, AFavoriteOrAnUnlistedRemoteOrAFailedSendChangesNothing) {
+  start_timed();
+  hub.report_oneway_command(sent(IDENTITY, WIRE_CLOSED));
+  pass(3000);
+  const int before = cover.publish_count;
+
+  hub.press_oneway_remote(FOLLOWED_REMOTE, wire_frame(POS_FAVORITE));
+  hub.press_oneway_remote(OTHER_REMOTE, wire_frame(POS_STOP));
+  hub.report_oneway_command(sent(IDENTITY, WIRE_OPEN, /*transmitted=*/false));
+
+  EXPECT_EQ(cover.publish_count, before);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING) << "still running down as before";
+  pass(2000);
+  EXPECT_FLOAT_EQ(cover.position, 0.5F);
+}
+
+TEST_F(OneWayTimedCoverTest, ARunAcrossTheMillisWrapStillArrives) {
+  start_timed();
+  esphome::test_clock::set_ms(0xFFFFF000U);
+  hub.report_oneway_command(sent(IDENTITY, WIRE_CLOSED));
+
+  pass(10000);
+
+  EXPECT_FLOAT_EQ(cover.position, COVER_CLOSED);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+}
+
+TEST_F(OneWayTimedCoverTest, ASliderValueIsSentAsItsNearerEndUntilThePositionCanBeSent) {
+  start_timed();
+
+  CoverCall low(&cover);
+  low.set_position(0.3F);
+  cover.control(low);
+  CoverCall high(&cover);
+  high.set_position(0.5F);
+  cover.control(high);
+
+  ASSERT_EQ(hub.oneway_actions.size(), 2u);
+  EXPECT_EQ(hub.oneway_actions[0].second, OneWayButtonAction::CLOSE);
+  EXPECT_EQ(hub.oneway_actions[1].second, OneWayButtonAction::OPEN);
+}
+
+TEST_F(OneWayTimedCoverTest, WithoutTravelTimesTheLoopDoesNothingAndTheStateIsUnchanged) {
+  start();
+  hub.report_oneway_command(sent(IDENTITY, WIRE_CLOSED));
+  const int before = cover.publish_count;
+
+  pass(5000);
+
+  EXPECT_EQ(cover.publish_count, before);
+  EXPECT_EQ(cover.position, COVER_CLOSED);
+}

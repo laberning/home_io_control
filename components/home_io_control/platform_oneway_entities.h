@@ -115,9 +115,14 @@ class IOHomeOneWayLastCommandTextSensor : public text_sensor::TextSensor,
 ///
 /// A one-way-only cover has no device address and no read (ADR 0027), so this entity shows what the hub knows of: its
 /// identity's own commands that reached the radio, and the presses of the remotes listed under `follows:` that the
-/// hub hears (ADR 0117). Both are applied by the pure rule of decisions::oneway_cover_state_after(); there is no
-/// position and no travel time, so a move shows its end state at once. A command that did not reach the radio, a
+/// hub hears (ADR 0117). Both are applied by the pure rule of decisions::oneway_cover_state_after(); without travel
+/// times there is no position, so a move shows its end state at once. A command that did not reach the radio, a
 /// frame without a command, a named position and the press of a remote that is not listed change nothing.
+///
+/// With `open_duration:` and `close_duration:` (set_travel_durations(), ADR 0127) the same inputs drive a
+/// decisions::TravelEstimate instead: the cover reports a position, shows opening or closing while the estimate
+/// moves, and a position frame travels to its percentage and stops there. A run to an end corrects every earlier
+/// error. The estimate is not persisted: after a boot the cover is fully open and idle.
 ///
 /// The state is an assumption. It is wrong after a press the hub did not hear and after a command the device
 /// ignored (out of range, a desynced counter, a rain or wind sensor's lock), and the hub cannot tell. The state is
@@ -136,8 +141,22 @@ class IOHomeOneWayCover : public cover::Cover, public Component, public OneWayCo
   /// @return setup_priority::DATA.
   [[nodiscard]] float get_setup_priority() const override { return setup_priority::DATA; }
 
-  /// @brief Open, close and stop, no position, assumed state.
+  /// @brief Open, close and stop and assumed state; with travel durations also a position.
   [[nodiscard]] cover::CoverTraits get_traits() override;
+
+  /// @brief Publish the moving position about once a second and the end of a run (travel durations only).
+  void loop() override;
+
+  /// @brief Give the cover its travel times (YAML `open_duration:` and `close_duration:`, ADR 0127).
+  ///
+  /// With them the cover estimates a position from the commands and presses it follows; without them it shows only
+  /// open or closed.
+  /// @param open_ms  Time a full run from closed to open takes.
+  /// @param close_ms Time a full run from open to closed takes.
+  void set_travel_durations(uint32_t open_ms, uint32_t close_ms) {
+    this->rates_ = {open_ms, close_ms};
+    this->has_durations_ = true;
+  }
 
   /// @brief Add a remote whose presses the cover follows (YAML `follows:`).
   /// @param sender_id Source address, six upper-case hexadecimal characters.
@@ -146,14 +165,27 @@ class IOHomeOneWayCover : public cover::Cover, public Component, public OneWayCo
  protected:
   /// @brief Queue the command Home Assistant asked for as the identity's own. The state changes when the command's
   /// report says it reached the radio, not here.
-  /// @param call The requested operation: stop, or a position of fully open or fully closed.
+  /// @param call The requested operation: stop, or a position. A position is sent as open or close, whichever end
+  /// it is nearer (decisions::ONEWAY_COVER_NEARER_END_LEVEL); only a cover with travel times offers values between.
   void control(const cover::CoverCall &call) override;
 
   /// @brief Show what a frame asks of the cover, if it asks for anything.
   /// @param wire The frame, with wire values: the identity's own transmission or a followed remote's press.
   void apply_frame_(const OneWayFrameInfo &wire);
 
+  /// @brief Move the estimate by an intent and publish it.
+  void apply_travel_intent_(const decisions::TravelIntent &intent);
+
+  /// @brief Show the estimate at `now` and remember what was published.
+  void publish_estimate_(uint32_t now);
+
   std::vector<std::string> follows_;  ///< Remotes whose presses move the state.
+  bool has_durations_{false};         ///< Whether the travel times are set, so a position is estimated.
+  decisions::TravelRates rates_;      ///< Time of a full run each way (opening rises, closing falls).
+  /// Where the cover is believed to be; fully open and idle at boot, like ESPHome's cover (ADR 0127).
+  decisions::TravelEstimate estimate_{cover::COVER_OPEN, cover::COVER_OPEN, 0};
+  decisions::TravelDirection published_direction_{decisions::TravelDirection::IDLE};  ///< Direction last published.
+  uint32_t last_publish_ms_{0};                                                       ///< millis() of the last publish.
 };
 
 }  // namespace home_io_control

@@ -185,3 +185,20 @@ TEST_F(HubOneWayCover, AnIdentityThatIsNotInvertedOrUnknownReportsNoInversion) {
   EXPECT_FALSE(hub.oneway_identity_inverted(IDENTITY));
   EXPECT_FALSE(hub.oneway_identity_inverted("no_such_identity"));
 }
+
+TEST_F(HubOneWayCover, ATimedCoverEstimatesItsPositionFromItsOwnCommandAndAFollowedPress) {
+  cover.set_travel_durations(20000, 10000);
+  start(DeviceType::VERTICAL_EXTERIOR_AWNING);
+
+  press(close_call());  // the real transmitter reports the burst
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING);
+  esphome::test_clock::advance_ms(4000);
+  cover.loop();
+  EXPECT_FLOAT_EQ(cover.position, 0.6F);
+
+  hear_press(REMOTE_NODE, 0, 0x3000);  // the wall remote opens it again
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_OPENING);
+  esphome::test_clock::advance_ms(2000);
+  cover.loop();
+  EXPECT_FLOAT_EQ(cover.position, 0.7F);
+}
