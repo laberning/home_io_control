@@ -13,9 +13,9 @@ installation's identity. Everything else attaches to it.
 | This page | The `home_io_control:` hub block, and the options every entity shares |
 | [Covers](cover.md) | `cover:` — shutters, blinds, awnings, openers, curtains |
 | [Lights, locks and switches](light-lock-switch.md) | `light:`, `lock:`, `switch:` |
-| [Heating and climate](climate.md) | `climate:` — experimental |
-| [Exterior heating](fan.md) | `fan:` — experimental |
-| [Water heaters](water-heater.md) | `water_heater:` — domestic hot water heaters, experimental |
+| [Heating and climate](climate.md) | `climate:` — electric radiators, towel dryers and pilot-wire interfaces; thermostats and generic heat pumps, untested on hardware |
+| [Exterior heating](fan.md) | `fan:` — terrace and patio heaters, untested on hardware |
+| [Water heaters](water-heater.md) | `water_heater:` — domestic hot water heaters |
 | [Sensor-only devices](sensor.md) | `sensor:` — devices that only keep values to read, such as a heat pump's energy counters |
 | [Home Assistant actions](actions.md) | Hub-level actions such as `rename_device` and `scan_paired_devices` |
 | [Linked remotes and sender events](remotes.md) | `linked_remotes:`, `exposed_senders:` |
@@ -24,8 +24,7 @@ installation's identity. Everything else attaches to it.
 
 ## The `home_io_control:` hub block
 
-One per board. It owns the radio and the installation's identity, and every cover, light, lock,
-switch and button entity attaches to it.
+One per board. It owns the radio and the installation's identity, and every entity attaches to it.
 
 The pins below are for a Heltec WiFi LoRa 32 (V3) and its SX1262 — take the ones for your own board
 from [Hardware](../hardware.md#all-supported-boards). Which pin keys you need depends on the radio
@@ -68,7 +67,7 @@ home_io_control:
 - `tuning` (Optional): Diagnostics block for pairing/radio parameters. See [Radio tuning](tuning.md).
 - `accept_foreign_pairing` (Optional, default: `false`): Adds a "Recover System Key" switch entity for pulling a device's system key from another controller. See [Key extraction](../key-extraction.md).
 - `scan_paired_devices_button` (Optional, default: `false`): Adds a "Scan Paired Devices" button entity — a one-tap trigger for the `scan_paired_devices` action. See
-  [Scan Paired Devices](../pairing.md#scan-paired-devices).
+  [Scan Paired Devices](../scan-paired-devices.md).
 - `discover_and_pair_button` (Optional, default: `false`): Adds a "Discover & Pair" button entity that starts discovery and pairing, plus its companion "Last Pairing Result" diagnostic sensor. See
   [Discover & Pair](../pairing.md#discover--pair).
 - `diagnostic_probes` (Optional, default: `false`): Enables the `probe_device`/`probe_sweep` actions for sending opcodes this project hasn't fully decoded yet. See
@@ -76,8 +75,8 @@ home_io_control:
 
 ## Options every entity shares
 
-`cover:`, `light:`, `lock:` and `switch:` all bind an entity to one device on the hub, so they take
-the same set of keys. Platform-specific options are documented on each platform's own page.
+Every entity platform binds an entity to one device on the hub, so they all take the same set of
+keys. Platform-specific options are documented on each platform's own page.
 
 - `name` (Required): The entity's name in Home Assistant. ESPHome's device-name idiom (`name: ""`,
   or the literal `name: None`) is supported, but an entity using it must also declare an explicit
@@ -93,10 +92,10 @@ the same set of keys. Platform-specific options are documented on each platform'
   Declaring it is what enables type-specific behaviour such as the Favorite Position button
   (not on garage openers), automatic direction inversion and the open/close-only cover of a
   subtype 58 opener; see [Covers that only open and close](cover.md#covers-that-only-open-and-close). The full list of names is in
-  [Supported devices](../supported-devices.md). A declared type is authoritative: the hub may
+  [Device types and manufacturers](../device-types.md). A declared type is authoritative: the hub may
   learn a type from the radio when none is declared, but never overwrites a declared one.
   A kind that no capture or report has confirmed on a real device is marked "(experimental)" in
-  [Node types and subtypes](../supported-devices.md#node-types-and-subtypes); declaring one logs a
+  [Node types and subtypes](../device-types.md#node-types-and-subtypes); declaring one logs a
   warning when the config is built that links to
   [Reporting unsupported devices](../contributing.md#reporting-unsupported-devices).
 - `io_subtype` (Optional): The device's subtype, `0`–`63`.
@@ -112,7 +111,7 @@ the same set of keys. Platform-specific options are documented on each platform'
   [Atlantic Explorer V4](../devices/atlantic-explorer-v4.md) water heater, and `electric_water_heater`, for an
   electric storage water heater such as the [Sauter Guelma connecté](../devices/sauter-guelma.md). A model the declared kind does not
   offer, or `io_model` without both other keys, fails when the config is built. The models of each
-  kind are listed in [Node types and subtypes](../supported-devices.md#node-types-and-subtypes).
+  kind are listed in [Node types and subtypes](../device-types.md#node-types-and-subtypes).
 - `status_poll_interval` (Optional): Follow-up poll cadence while movement is expected. See the
   note below.
 - `low_power` (Optional): Marks a battery or solar device, which changes how the hub addresses it
@@ -126,7 +125,7 @@ the same set of keys. Platform-specific options are documented on each platform'
   own. A key equal to the hub's changes nothing. Devices without the option keep using the hub key.
   Keep the key in `secrets.yaml` like the hub's (example below). Scan Paired Devices calls each
   distinct key in turn and prints the key's check value next to every device that answered under
-  it; see [Pairing](../pairing.md#scan-paired-devices).
+  it; see [Scan Paired Devices](../scan-paired-devices.md).
 
 The example below gives one radiator its own key:
 

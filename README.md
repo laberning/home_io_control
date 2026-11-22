@@ -6,10 +6,11 @@
 [![GitHub](https://img.shields.io/github/license/laberning/home_io_control)](https://github.com/laberning/home_io_control/blob/main/LICENSE)
 ![GitHub Repo stars](https://img.shields.io/github/stars/laberning/home_io_control)
 
-Home IO Control is an [ESPHome](https://esphome.io/) component that speaks IO-Homecontrol.
+Home IO Control is an [ESPHome](https://esphome.io/) component that speaks IO-Homecontrol, the
+868 MHz radio protocol of Somfy, VELUX, SIMU, Atlantic, Thermor, Sauter and other manufacturers.
 Flash an ESP32 with a LoRa radio and it talks to your devices directly — locally, over the air,
-with no vendor gateway and no cloud. Covers, lights and buttons appear in Home Assistant as native
-entities, with real position feedback from two-way devices.
+with no vendor gateway and no cloud. Shutters, awnings, windows, lights, heaters and water heaters
+appear in Home Assistant as native entities, with the state the device itself reports.
 
 ## What you need
 
@@ -22,33 +23,37 @@ do when yours is not there.
 
 ## Features
 
-- **Cover control** — open, close, stop, and set position (0–100%) for shutters, blinds, awnings,
-  window and garage openers, curtain tracks, and related position-based devices.
-- **Real position feedback** from the device, over the 2W protocol.
-- **Tilt control** for venetian-style blinds, exposed automatically for tilt-capable device types.
-- **Light control**, binary or dimmable.
-- **Favorite / My and ventilation buttons**, generated automatically for the device types that
-  support them (not for garage openers, which refuse the favorite command). Garage openers get a
-  Partial Position button and gate openers an experimental Pedestrian Position button, both
-  disabled by default.
-- **Open/close-only covers** for subtype 58 garage openers, gate openers and swinging shutters:
-  open, close and stop, no position slider.
-- **Device discovery and pairing** from a Home Assistant button, with a machine-readable
-  "Last Pairing Result" diagnostic and a plain-language advisor when an attempt fails.
-- **Key extraction from an existing installation** — emulate an unpaired device so your current
-  hub hands over its `node_id`/`system_key`. No sniffing hardware, no device reset.
-- **1W remote and sensor events** — overheard remote presses and wind/rain sensor triggers fire
-  Home Assistant events for sender IDs you opt in.
-- **Sending 1W commands**, so the hub can drive devices that only listen for a remote.
-- **LR1121 radio-firmware flashing**, opt-in, including a bootloader rewrite behind an arming
-  switch.
-- **Three radio chips supported** — SX1276, SX1262 and LR1121, all validated on real devices.
-- **Experimental support for locks, switches and climate/heating devices.** None of these has
-  been exercised against real hardware yet; if you own one, try it and report back.
-- **Water heaters (experimental)** — a `water_heater:` entity reads an Atlantic Calypso Connecté's
-  water temperature, target, mode and energy, and sets the target and the mode; a boost switch is
-  experimental. An Atlantic Explorer V4 is declared with `io_model: explorer_v4`, and an electric storage
-  water heater such as the Sauter Guelma connecté with `io_model: electric_water_heater`.
+What it controls:
+
+- **Covers** — shutters, blinds, awnings, pergolas, curtain tracks, and window, garage and gate
+  openers. Open, close, stop and a position from 0 to 100 %, with the real position reported by the
+  device, tilt on venetian-style blinds, and buttons for the favorite and ventilation positions
+  where the device has them. See [Covers](docs/configuration/cover.md).
+- **Lights and switches** — on/off, or dimmable. See
+  [Lights, locks and switches](docs/configuration/light-lock-switch.md).
+- **Heaters and water heaters** — electric radiators, towel dryers, pilot-wire interfaces and
+  water heaters of the Atlantic group: target temperature, modes, boost, and readings such as room
+  temperature and energy. See
+  [Heaters and water heaters in Home Assistant](docs/heating.md).
+- **Locks, exterior heating and thermostats** are implemented and waiting for a first report from
+  real hardware. If you own one, try it and
+  [report back](docs/contributing.md#reporting-unsupported-devices).
+
+How a device gets onto the hub:
+
+- **Discover & Pair** from a Home Assistant button, with a plain-language advisor when an attempt
+  fails. See [Pairing](docs/pairing.md).
+- **Key extraction** from a hub you already own, so every device stays paired as it is and the
+  vendor hub keeps working alongside. See [Key extraction](docs/key-extraction.md).
+- **One-way (1W) control** for devices that only listen for a remote: the hub enrolls as one more
+  remote. See [Sending 1W commands](docs/configuration/oneway-transmit.md).
+
+And around that:
+
+- **Remote and sensor events** — presses of your wall remotes and wind or rain sensor triggers keep
+  entity state fresh and can fire Home Assistant automations. See
+  [Linked remotes and sender events](docs/configuration/remotes.md).
+- **Three radio chips** — SX1276, SX1262 and LR1121, all validated on real devices.
 
 ## Installation
 

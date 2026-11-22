@@ -8,11 +8,11 @@ preset and target does on the heater, is on
 [Heaters and water heaters in Home Assistant](../heating.md).
 
 > [!NOTE]
-> The platform is experimental. The [Atlantic AGILIA IO](../devices/atlantic-agilia-io.md) radiator, the
+> Confirmed on hardware: the [Atlantic AGILIA IO](../devices/atlantic-agilia-io.md) radiator, the
 > [Atlantic Adelis](../devices/atlantic-adelis.md) towel dryer, the [Sauter Hekla](../devices/sauter-hekla.md),
-> the Thermor EMOTION 3 H and a [Thermor pilot-wire interface](../devices/thermor-pilot-wire-interface.md)
-> are confirmed on hardware; the heating temperature interface and the heat pump have not run on
-> hardware yet. **If you own a heater, please try it and report what
+> the Thermor EMOTION 3 H and a [Thermor pilot-wire interface](../devices/thermor-pilot-wire-interface.md).
+> Untested: the heating temperature interface and the generic heat pump, which have not run on
+> hardware yet. **If you own a heater that is not on this list, please try it and report what
 > happens** on the [issue tracker](https://github.com/laberning/home_io_control/issues): success,
 > silence, or a wrong setpoint are all useful.
 

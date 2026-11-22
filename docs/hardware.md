@@ -37,8 +37,7 @@ home_io_control:
 
 `clk_pin`, `mosi_pin` and `miso_pin` belong to ESPHome's own `spi:` bus, not to
 `home_io_control:` — the hub block takes only the pins that go to the radio chip itself. None of
-the V3's pins is a strapping pin, so this board needs no `ignore_strapping_warning:` anywhere; the
-boards that do are called out under [Board notes](#board-notes).
+the V3's pins is a strapping pin, so this board needs no `ignore_strapping_warning:` anywhere.
 
 If you already own a different board from the table below, use it — nothing here is exclusive to
 the V3.
@@ -52,39 +51,81 @@ which brings in the board package for you.
 
 The V3 stays the recommendation for a first build for one reason: that same front-end module also
 amplifies transmission, so `tx_power` on a V4.3 means something different from `tx_power`
-everywhere else. Its board package ships `tx_power: 1` rather than the usual `17`, and raising it
-can put you over your region's 868 MHz limit. Leave it alone unless you have read
-[Front-end module (FEM) support](#front-end-module-fem-support) and can measure the result.
+everywhere else. Read [Front-end module (FEM) support](#front-end-module-fem-support) before you
+choose it.
 
 ## All supported boards
 
-The table lists board mappings that are known to be plausible for this component. `Confirmed`
-means they were tested in this repo. `Reported to work` means someone running the board says it
-works, but it has not been tested here. `Untested` means the GPIO mapping was taken from vendor
-documentation and still needs real IO-Homecontrol validation here. `Driver implemented, untested`
-means chip-driver code exists and compiles for the target but has never run against real silicon —
-treat every timing/register value as a starting point, not a validated default, until it clears
-hardware bring-up.
+Three tables, by how much is known about each board. Every row gives the pins for ESPHome's `spi:`
+bus and for the `home_io_control:` block.
 
-| Board | Radio | Status | `spi:` pins | `home_io_control:` pins | Notes |
-|-------|-------|--------|-------------|-------------------------|-------|
-| Heltec WiFi LoRa32 v2 | SX1276 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | matches [heltec-wifi-lora-32-v2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2.yaml), the SX1276 cover example with OLED status display |
-| Heltec WiFi LoRa32 V3 / V3.2 | SX1262 | ✅ Confirmed to work | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `tcxo_voltage: 1_8V`; matches [heltec-wifi-lora-32-v3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3.yaml), the SX1262 cover example with OLED status display |
-| Heltec Wireless Stick Lite V3.1 | SX1262 | ✅ Confirmed to work | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `tcxo_voltage: 1_8V`; same pins as the V3 |
-| Heltec Wireless Paper V1.2 | SX1262 | 📣 Reported to work (1W) | Not reported | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | ESP32-S3 with an e-paper display. Use `tcxo_voltage: 1_8V`. One user enrolls two VELUX roof windows over 1W with it (issue #249); two-way use is not reported yet, and the display driver is the reporter's own and not part of this project |
-| LilyGO T3-S3 SX1262 | SX1262 | Untested | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 33`, `busy_pin: 34` | should have the same mapping on v1.2 and v1.3 |
-| LilyGO T3-S3 SX1276 | SX1276 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio0_pin: 9` | |
-| LilyGO T3-S3 LR1121 | LR1121 | ✅ Confirmed to work | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 36`, `busy_pin: 34` | same T3-S3 silkscreen/form factor, but a different radio chip. Use `tcxo_voltage: 3_0V`; `dio1_pin` carries the LR1121's DIO9 interrupt line. Matches [t3s3-lr1121.yaml](https://github.com/laberning/home_io_control/blob/main/config/t3s3-lr1121.yaml) |
-| LilyGO T-ETH-Elite (ESP32-S3) + LoRa shield SX1276 | SX1276 | 📣 Reported to work | `clk_pin: 10`, `mosi_pin: 11`, `miso_pin: 9` | `cs_pin: 40`, `rst_pin: 46`, `dio0_pin: 8` | Ethernet board (W5500 on its own SPI bus, configured in ESPHome's `ethernet:` block). The SD card slot shares the radio's SPI bus with chip select GPIO12: drive it high with a `gpio` output so the card stays off the bus. GPIO46 is a strapping pin, so `rst_pin` needs `ignore_strapping_warning: true`. Key extraction from a VELUX KLF 200 worked on this board (issue #195) |
-| LilyGO LoRa32 V1.3 SX1276 | SX1276 | 📣 Reported to work | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | |
-| LilyGO T3 V1.6.1 (TTGO LoRa32 V2.1) SX1276 | SX1276 | 📣 Reported to work | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 23`, `dio0_pin: 26` | Same pins as the Heltec V2 except `rst_pin: 23`. Three users report it working: one with VELUX SSL solar roller shutters, one with VELUX roof windows including position and the rain sensor (issue #225), one with Thermor EMOTION 3 H radiators (issue #228). Its OLED sits on I2C SDA 21 / SCL 22 with no reset pin according to LilyGO's pinout, so the Heltec example's display block (SDA 4 / SCL 15 / reset 16) leaves it dark until you change the pins |
-| LilyGO T-Beam 1W SX1262 | SX1262 | Untested | `clk_pin: 13`, `mosi_pin: 11`, `miso_pin: 12` | `cs_pin: 15`, `rst_pin: 3`, `dio1_pin: 1`, `busy_pin: 38` | Use `fem: xy16p35`, `vfem_pin: 40` ("LDO EN"), `fem_pa_pin: 21` ("LoRa Ctrl") — per LilyGO's own T-Beam 1W SX1262 docs and schematic; see [Front-end module (FEM) support](#front-end-module-fem-support) below. TCXO control voltage not yet confirmed; do not build from this row until a board package ships |
-| Heltec WiFi LoRa32 V4.2 | SX1262 | 📣 Reported to work (1W) | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `tcxo_voltage: 1_8V`, `fem: gc1109`; see [Front-end module (FEM) support](#front-end-module-fem-support) below; matches [heltec-wifi-lora-32-v4-2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-2.yaml). One user enrolls and drives a VELUX FSC solar pleated blind over 1W with it (issue #74); two-way use is not reported yet |
-| Heltec WiFi LoRa32 V4.3 | SX1262 | ✅ Confirmed to work | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | Use `tcxo_voltage: 1_8V`, `fem: kct8103l`; also covers the `heltec_v4_r8` variant; see [Front-end module (FEM) support](#front-end-module-fem-support) below; matches [heltec-wifi-lora-32-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-3.yaml) |
-| ESP32 DevKit + XL1262-P01 module (LLCC68, hand-wired) | LLCC68, as `sx1262` | 📣 Reported to work (1W) | `clk_pin: 18`, `mosi_pin: 23`, `miso_pin: 19` (the reporter's wiring) | `cs_pin: 26`, `rst_pin: 25`, `dio1_pin: 32`, `busy_pin: 27` | The LLCC68 is a reduced SX1262 that keeps the GFSK modem this project uses, so `radio_type: sx1262` drives it. The module has a plain crystal: set `tcxo_voltage: none` and widen the receive filter to 156.2 kHz with [`sx1262_rx_bandwidth`](configuration/tuning.md#sx1262_rx_bandwidth), without which it heard no remote. Keep DIO1 off GPIO12, a strapping pin. A hand-wired DIO1 needs a sound joint: with it broken, frames still go out but each copy runs into the TX timeout, see [The log shows a TX timeout](troubleshooting.md#the-log-shows-a-tx-timeout). One user recovers the key of a VELUX KLI 310 remote, enrolls a VELUX roller shutter and drives it over 1W with it (issue #177); two-way use is not reported yet |
-| ESP32-S3-Zero + RFM95 module (hand-wired) | SX1276 | 📣 Reported to work | `clk_pin: 6`, `mosi_pin: 7`, `miso_pin: 8` (the reporter's wiring) | `cs_pin: 9`, `rst_pin: 10`, `dio0_pin: 11` | 868 MHz RFM95 on the default `pa_pin: BOOST`, run at 10 dBm. One user polls five VELUX roof windows and moves one of them with it ([issue #242](https://github.com/laberning/home_io_control/issues/242)) |
-| Custom ESP32-S3 board + DX-LR30-900M22SP module | SX1262 | 📣 Reported to work | `clk_pin: 12`, `mosi_pin: 11`, `miso_pin: 13` (the reporter's board) | `cs_pin: 10`, `rst_pin: 15`, `dio1_pin: 14`, `busy_pin: 9` | The reporter runs it with `tcxo_voltage: none`. One user switches a Somfy Izymo on/off receiver with it, and its state follows a linked Somfy io remote ([issue #57](https://github.com/laberning/home_io_control/issues/57)) |
-| Any other ESP32 + SX1276/SX1262/LR1121 | Any | Untested | Board-specific | Board-specific | Use the chip pinout and set the appropriate `sx1276`, `sx1262`, or `lr1121` `radio_type` |
+### Boards tested in this project
+
+These boards have run against real IO-Homecontrol devices here. The Heltec V2, V3, V4.3 and the
+LilyGO T3-S3 LR1121 are the boards the project is developed on.
+
+| Board | Radio | `spi:` pins | `home_io_control:` pins | Settings and example config |
+|-------|-------|-------------|-------------------------|-----------------------------|
+| Heltec WiFi LoRa32 v2 | SX1276 | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | [heltec-wifi-lora-32-v2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v2.yaml), a cover example with OLED status display |
+| Heltec WiFi LoRa32 V3 / V3.2 | SX1262 | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | `tcxo_voltage: 1_8V`. [heltec-wifi-lora-32-v3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v3.yaml), a cover example with OLED status display |
+| Heltec Wireless Stick Lite V3.1 | SX1262 | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | `tcxo_voltage: 1_8V`. Same pins as the V3 |
+| Heltec WiFi LoRa32 V4.3 | SX1262 | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | `tcxo_voltage: 1_8V`, `fem: kct8103l` and the FEM pins; also covers the `heltec_v4_r8` variant. [heltec-wifi-lora-32-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-3.yaml) |
+| LilyGO T3-S3 SX1276 | SX1276 | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio0_pin: 9` | |
+| LilyGO T3-S3 LR1121 | LR1121 | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 36`, `busy_pin: 34` | `tcxo_voltage: 3_0V`; `dio1_pin` carries the LR1121's DIO9 interrupt line. The same silkscreen and form factor as the other T3-S3 boards, with a different radio chip. [t3s3-lr1121.yaml](https://github.com/laberning/home_io_control/blob/main/config/t3s3-lr1121.yaml) |
+
+### Boards reported by users
+
+Someone running the board says it works. It has not been tested here.
+
+| Board | Radio | `spi:` pins | `home_io_control:` pins | Settings | Report |
+|-------|-------|-------------|-------------------------|----------|--------|
+| Heltec WiFi LoRa32 V4.2 | SX1262 | `clk_pin: 9`, `mosi_pin: 10`, `miso_pin: 11` | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | `tcxo_voltage: 1_8V`, `fem: gc1109` and the FEM pins. [heltec-wifi-lora-32-v4-2.yaml](https://github.com/laberning/home_io_control/blob/main/config/heltec-wifi-lora-32-v4-2.yaml) | 1W only: a VELUX FSC solar pleated blind (issue #74) |
+| Heltec Wireless Paper V1.2 | SX1262 | Not reported | `cs_pin: 8`, `rst_pin: 12`, `dio1_pin: 14`, `busy_pin: 13` | `tcxo_voltage: 1_8V` | 1W only: two VELUX roof windows (issue #249) |
+| LilyGO T-ETH-Elite (ESP32-S3) + LoRa shield SX1276 | SX1276 | `clk_pin: 10`, `mosi_pin: 11`, `miso_pin: 9` | `cs_pin: 40`, `rst_pin: 46`, `dio0_pin: 8` | See the notes below | Key extraction from a VELUX KLF 200 (issue #195) |
+| LilyGO LoRa32 V1.3 SX1276 | SX1276 | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 14`, `dio0_pin: 26` | | |
+| LilyGO T3 V1.6.1 (TTGO LoRa32 V2.1) SX1276 | SX1276 | `clk_pin: 5`, `mosi_pin: 27`, `miso_pin: 19` | `cs_pin: 18`, `rst_pin: 23`, `dio0_pin: 26` | Same pins as the Heltec V2 except `rst_pin: 23` | Three users: VELUX SSL shutters, VELUX roof windows (issue #225), Thermor radiators (issue #228) |
+| ESP32 DevKit + XL1262-P01 module (LLCC68, hand-wired) | LLCC68, as `sx1262` | `clk_pin: 18`, `mosi_pin: 23`, `miso_pin: 19` (the reporter's wiring) | `cs_pin: 26`, `rst_pin: 25`, `dio1_pin: 32`, `busy_pin: 27` | `tcxo_voltage: none`, `sx1262_rx_bandwidth: 156.2`; see the notes below | 1W only: a VELUX roller shutter (issue #177) |
+| ESP32-S3-Zero + RFM95 module (hand-wired) | SX1276 | `clk_pin: 6`, `mosi_pin: 7`, `miso_pin: 8` (the reporter's wiring) | `cs_pin: 9`, `rst_pin: 10`, `dio0_pin: 11` | Default `pa_pin: BOOST`, run at 10 dBm | Five VELUX roof windows polled, one moved ([issue #242](https://github.com/laberning/home_io_control/issues/242)) |
+| Custom ESP32-S3 board + DX-LR30-900M22SP module | SX1262 | `clk_pin: 12`, `mosi_pin: 11`, `miso_pin: 13` (the reporter's board) | `cs_pin: 10`, `rst_pin: 15`, `dio1_pin: 14`, `busy_pin: 9` | `tcxo_voltage: none` | A Somfy Izymo on/off receiver, following a linked Somfy io remote ([issue #57](https://github.com/laberning/home_io_control/issues/57)) |
+
+"1W only" means the reporter drives the device one-way; two-way use of that board is not reported
+yet. Notes on single boards:
+
+- **Heltec WiFi LoRa32 V4.2:** its front-end module is a different part from the V4.3's, wired the
+  other way round, so the V4.3 result does not carry over. Prefer the V3 or the V4.3 for a two-way
+  setup until a report lands.
+- **Heltec Wireless Paper V1.2:** an ESP32-S3 with an e-paper display. The display driver is the
+  reporter's own and not part of this project.
+- **LilyGO T-ETH-Elite:** an Ethernet board, with a W5500 on its own SPI bus that ESPHome's
+  `ethernet:` block configures. The SD card slot shares the radio's SPI bus with chip select
+  GPIO12: drive it high with a `gpio` output so the card stays off the bus. GPIO46 is a strapping
+  pin, so `rst_pin` needs `ignore_strapping_warning: true`.
+- **LilyGO T3 V1.6.1:** its OLED sits on I2C SDA 21 / SCL 22 with no reset pin according to
+  LilyGO's pinout, so the Heltec example's display block (SDA 4 / SCL 15 / reset 16) leaves it dark
+  until you change the pins.
+- **XL1262-P01 module:** the LLCC68 is a reduced SX1262 that keeps the GFSK modem this project
+  uses, so `radio_type: sx1262` drives it. The module has a plain crystal: set
+  `tcxo_voltage: none` and widen the receive filter to 156.2 kHz with
+  [`sx1262_rx_bandwidth`](configuration/tuning.md#sx1262_rx_bandwidth), without which it heard no
+  remote. Keep DIO1 off GPIO12, a strapping pin. A hand-wired DIO1 needs a sound joint: with it
+  broken, frames still go out but each copy runs into the TX timeout, see
+  [The log shows a TX timeout](troubleshooting.md#the-log-shows-a-tx-timeout). The reporter
+  recovers the key of a VELUX KLI 310 remote, enrolls a VELUX roller shutter and drives it over 1W.
+
+### Untested pin mappings
+
+The GPIO mapping comes from vendor documentation and still needs a run against a real
+IO-Homecontrol device.
+
+| Board | Radio | `spi:` pins | `home_io_control:` pins | Notes |
+|-------|-------|-------------|-------------------------|-------|
+| LilyGO T3-S3 SX1262 | SX1262 | `clk_pin: 5`, `mosi_pin: 6`, `miso_pin: 3` | `cs_pin: 7`, `rst_pin: 8`, `dio1_pin: 33`, `busy_pin: 34` | Should have the same mapping on v1.2 and v1.3 |
+| LilyGO T-Beam 1W SX1262 | SX1262 | `clk_pin: 13`, `mosi_pin: 11`, `miso_pin: 12` | `cs_pin: 15`, `rst_pin: 3`, `dio1_pin: 1`, `busy_pin: 38` | `fem: xy16p35`, `vfem_pin: 40` ("LDO EN"), `fem_pa_pin: 21` ("LoRa Ctrl"), per LilyGO's own T-Beam 1W SX1262 docs and schematic. The TCXO control voltage is not yet confirmed: do not build from this row until a board package ships |
+| Any other ESP32 + SX1276/SX1262/LR1121 | Any | Board-specific | Board-specific | Use the chip pinout and set the matching `radio_type` |
+
+**V2 / V3 clones** (non-Heltec boards with the same silkscreen and pin map) are common and
+generally work if the SPI and radio pins match the corresponding row above. Treat them as untested
+until confirmed.
 
 GPIO5 (`clk_pin` on the classic-ESP32 boards above) and GPIO3 (`miso_pin` on the ESP32-S3 T3-S3
 boards) are hardware strapping pins. ESPHome refuses to reuse a strapping pin as a plain GPIO
@@ -99,6 +140,20 @@ bus and radio pins from a package under
 [config/boards/](https://github.com/laberning/home_io_control/tree/main/config/boards). To reuse
 one, copy the matching `config/boards/*.yaml` alongside it or inline the pins from the table above
 — see [Working configs in this repo](configuration/index.md#working-configs-in-this-repo).
+
+## Radio pin requirements
+
+Which pins the `home_io_control:` block needs depends on the radio chip, not on the board:
+
+| Radio | Required hub pins | Optional hub pins | Typical extra setting |
+| --- | --- | --- | --- |
+| SX1276 | `cs_pin`, `rst_pin`, `dio0_pin` | `dio4_pin` | `radio_type: sx1276`, `pa_pin: BOOST` |
+| SX1262 | `cs_pin`, `rst_pin`, `dio1_pin`, `busy_pin` | `fem_en_pin`, `vfem_pin`, `fem_pa_pin`, `fem` | `radio_type: sx1262`, `tcxo_voltage: 1_8V` |
+| LR1121 | `cs_pin`, `rst_pin`, `dio1_pin`, `busy_pin` | — | `radio_type: lr1121`, `tcxo_voltage: 3_0V` |
+
+All three chips are validated on real devices, and `radio_type` must always be set: there is no
+chip auto-detection, so a mis-wired or ambiguous chip can never be driven with the wrong SPI
+command set.
 
 ## Front-end module (FEM) support
 
@@ -127,19 +182,21 @@ the V3 pin block boots normally, but its front-end module is never switched, so 
 listens through an unpowered amplifier. Replies go missing and listen-before-talk reads the channel
 as busy (issue #196). On a V4.3, use
 [heltec-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/boards/heltec-v4-3.yaml)
-as it is, including its `tx_power: 1`.
+as it is.
 
-**Radiated power:** each FEM's PA turns `tx_power` into much more antenna-port power than a bare
-SX1262 would produce — roughly +11 dB (GC1109) / +13 dB (KCT8103L) at low drive, uncertain by
-several dB without a real measurement; roughly +14 dB (XY16P35), from LilyGO's own measured
-figures, a sparser but more directly-measured evidence base than the other two.
+**Radiated power: keep `tx_power: 1` on a V4 board.** Each FEM's PA turns `tx_power` into much more
+antenna-port power than a bare SX1262 would produce — roughly +11 dB (GC1109) / +13 dB (KCT8103L)
+at low drive, uncertain by several dB without a real measurement; roughly +14 dB (XY16P35), from
+LilyGO's own measured figures, a sparser but more directly-measured evidence base than the other
+two.
 [heltec-v4-2.yaml](https://github.com/laberning/home_io_control/blob/main/config/boards/heltec-v4-2.yaml)
 and [heltec-v4-3.yaml](https://github.com/laberning/home_io_control/blob/main/config/boards/heltec-v4-3.yaml)
-ship `tx_power: 1`, not the SX1262 default of `17` — raising it without a spectrum analyser risks
-exceeding your region's 868 MHz SRD limit. The driver logs its own estimate (and uncertainty) at
-boot and repeats it in the config dump that `esphome logs` requests on connect, so you can read it
-without catching the boot itself. The schema warns once `tx_power` would put the estimate over
-+14 dBm — above `3` on a GC1109, above `1` on a KCT8103L, above `0` on an XY16P35.
+ship `tx_power: 1`, not the SX1262 default of `17`. Raising it without a spectrum analyser risks
+exceeding your region's 868 MHz SRD limit, whatever your radio range. The driver logs its own
+estimate (and uncertainty) at boot and repeats it in the config dump that `esphome logs` requests
+on connect, so you can read it without catching the boot itself. The schema warns once `tx_power`
+would put the estimate over +14 dBm — above `3` on a GC1109, above `1` on a KCT8103L, above `0` on
+an XY16P35.
 
 **Received signal strength:** each FEM's low-noise amplifier raises every RSSI reading the radio
 takes. The driver subtracts the amplifier's gain, so RSSI, the [Link Health](diagnostic-entities.md#link-health)
@@ -192,39 +249,6 @@ home_io_control:
   fem_pa_pin: 5
   tx_power: 1
 ```
-
-The V4.3 is validated against real IO-Homecontrol hardware; the V4.2 has one 1W field report — see
-[Board notes](#board-notes). Keep `tx_power: 1` on both, whatever your radio range, and read
-[Radiated power](#front-end-module-fem-support) before raising it.
-
-## Radio pin requirements
-
-Which pins the `home_io_control:` block needs depends on the radio chip, not on the board:
-
-| Radio | Required hub pins | Optional hub pins | Typical extra setting |
-| --- | --- | --- | --- |
-| SX1276 | `cs_pin`, `rst_pin`, `dio0_pin` | `dio4_pin` | `radio_type: sx1276`, `pa_pin: BOOST` |
-| SX1262 | `cs_pin`, `rst_pin`, `dio1_pin`, `busy_pin` | `fem_en_pin`, `vfem_pin`, `fem_pa_pin`, `fem` | `radio_type: sx1262`, `tcxo_voltage: 1_8V` |
-| LR1121 | `cs_pin`, `rst_pin`, `dio1_pin`, `busy_pin` | — | `radio_type: lr1121`, `tcxo_voltage: 3_0V` |
-
-All three chips are validated on real devices, and `radio_type` must always be set: there is no
-chip auto-detection, so a mis-wired or ambiguous chip can never be driven with the wrong SPI
-command set.
-
-## Board notes
-
-- **Heltec LoRa32 v2** (SX1276), **Heltec WiFi LoRa32 V3/V3.2** (SX1262), **Heltec WiFi LoRa32
-  V4.3** (SX1262 + KCT8103L FEM) and **LilyGO T3-S3 LR1121** (LR1121) are the boards this project
-  is developed on. The V4.3's FEM makes `tx_power` mean something different from every other board
-  here: keep the `tx_power: 1` its board package ships and read
-  [Front-end module (FEM) support](#front-end-module-fem-support) above before changing it.
-- **Heltec V4.2** (`fem: gc1109`) has one field report: a user enrolls and drives a VELUX solar
-  pleated blind over 1W with it (issue #74). Two-way use is not reported yet. Its FEM is a
-  different part, wired the other way round from the V4.3's, so the V4.3 result does not carry
-  over; prefer the V3 or the V4.3 for a two-way setup until a report lands.
-- **V2 / V3 clones** (non-Heltec boards with the same silkscreen and pin map) are common and
-  generally work if the SPI and radio pins match the corresponding row above — treat them as
-  `Untested` until confirmed.
 
 ## See also
 

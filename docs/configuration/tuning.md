@@ -507,7 +507,7 @@ enforce
 ([ADR 0095](../adr/0095-a-resting-battery-device-gets-a-2048-byte-wake-up-and-three-attempts.md)). The
 discovery with [`pairing_discovery_low_power`](#pairing_discovery_payload--pairing_discovery_low_power)
 and the pairing frames after it, and the low-power pass of the
-[Scan Paired Devices](../pairing.md#scan-paired-devices) roll-call, use the same setting. Pairing
+[Scan Paired Devices](../scan-paired-devices.md) roll-call, use the same setting. Pairing
 discovery without the low-power flag keeps its own preamble. The wake-up copy of a one-way command to a
 `low_power: true` identity lasts this value as well, so changing it also changes how long that copy
 is on the air and how long a one-way command holds the radio (about 0.6 s at the default).
@@ -813,7 +813,7 @@ its wake belief (see [`low_power_wake_belief`](#low_power_wake_belief)).
 
 How long to wait for a response after each discovery transmit, and an initial settle before the
 first transmit. `pairing_discovery_wait_ms` also sets the per-attempt listen window for the
-`scan_paired_devices` action (see [Scan Paired Devices](../pairing.md#scan-paired-devices)); at the
+`scan_paired_devices` action (see [Scan Paired Devices](../scan-paired-devices.md)); at the
 default `scan_power_classes: both` that action makes six attempts (three channels, times two power
 classes), so its total runtime is roughly 6x this value — 3x with
 [`scan_power_classes`](#scan_power_classes) narrowed to one class.
@@ -835,7 +835,7 @@ occasional transient decode failures.
 #### `scan_power_classes`
 
 Which device power classes the `scan_paired_devices` roll-call calls (see
-[Scan Paired Devices](../pairing.md#scan-paired-devices)):
+[Scan Paired Devices](../scan-paired-devices.md)):
 
 - **`both`** (default): a low-power pass (long wake-up preamble, all three channels) followed by
   the always-alive pass (short preamble, the two channels not used for that transmit) — six

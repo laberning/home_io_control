@@ -47,7 +47,7 @@ water_heater:
 
 - `io_device_type` (**Required**): `domestic_hot_water`. The platform sends its reads and writes only
   to a kind that is read as a water heater, so the build refuses an entry without the key or with
-  another kind. The kind is experimental, and the build warns about it.
+  another kind.
 - `status_poll_interval` (Optional): How often the heater is read. Default 5 minutes, minimum 60 s.
 - `io_model` (Optional): `explorer_v4` for an
   [Atlantic Explorer V4](../devices/atlantic-explorer-v4.md), with `io_subtype: 0`. It reports the same

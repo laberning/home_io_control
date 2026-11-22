@@ -8,6 +8,7 @@ Indexed by what you see, not by which subsystem is responsible.
 | What you see | Go to |
 |---|---|
 | Discover & Pair never finds the device | [The device is never found](#the-device-is-never-found) |
+| Scan Paired Devices does not list a device you expect | [A device is missing from the scan](#a-device-is-missing-from-the-scan) |
 | Pairing succeeded, but the device will not move | [Pairing succeeds but nothing moves](#pairing-succeeds-but-nothing-moves) |
 | The cover shows no position, or a stale one | [Position is unknown or state is stale](#position-is-unknown-or-state-is-stale) |
 | Commands from Home Assistant arrive late, or several at once | [Commands arrive late or in bursts](#commands-arrive-late-or-in-bursts) |
@@ -28,7 +29,7 @@ Two causes account for most reports, and neither is fixed by radio tuning:
 - **The device already holds a key.** A device paired to a two-way hub has nothing left to answer a
   discovery with (issues #98, #103). The key can also be this hub's own: an attempt that ended in
   `key_exchange_failed` may still have left the key on the device, which then stops answering
-  discovery (issue #161). Run [Scan Paired Devices](pairing.md#scan-paired-devices) before you
+  discovery (issue #161). Run [Scan Paired Devices](scan-paired-devices.md) before you
   retry or reset anything.
 - **The gesture missed.** The device was not in pairing mode when the hub asked, or a different
   device was. For some products the right gesture is not the obvious one: a SIMU motor paired only
@@ -39,7 +40,7 @@ What to try, in order:
 
 1. **Check the advisor codes** in the "Last Pairing Result" sensor, and the WARN lines in the log.
    `1w_traffic` means a remote's PROG gesture was heard and no device answered. It says nothing
-   about the device's state on its own; the advisor table lists what to check. `rf_silent` means
+   about the device's state on its own; the advisor codes list what to check. `rf_silent` means
    nothing was heard during the attempt. It points at the antenna or the pins only if the rest of
    the log shows no IO-Homecontrol traffic at all. See
    [Pairing](pairing.md#diagnosing-a-failed-pairing-attempt).
@@ -54,11 +55,37 @@ What to try, in order:
    right after its motor-side reset; see
    [VELUX INTEGRA](devices/velux-integra.md#ssl-solar-roller-shutter).
 4. **If a two-way hub already controls it** — a Somfy TaHoma, Connexoon or Connectivity Kit, a
-   VELUX KLF200, KLR200 or KIG300 — use [key extraction](key-extraction.md). It is the route that
+   VELUX KLF 200, KLR 100, KLR 200, KLR 300 or KIG 300 — use [key extraction](key-extraction.md). It is the route that
    works for a claimed device. A 1W-only wall switch or remote does not qualify; see
    [Key extraction](key-extraction.md) for why.
 5. **Only then, tune discovery.** [Radio tuning](configuration/tuning.md) covers the parameters,
    and [A tuning plan](#a-tuning-plan) below is the order to change them in.
+
+## A device is missing from the scan
+
+Scan Paired Devices lists some devices of an installation and not the one you expect.
+
+**Press the button again first.** Paired devices duty-cycle across the three radio channels on
+their own schedule, so one scan can miss a device. A repeat press has no side effects.
+
+**If the device never turns up, write its entity by hand.** All you need is its `io_device_id`.
+Turn on frame logging:
+
+```yaml
+esphome:
+  build_flags:
+    - -DIOHOME_FRAME_LOG
+
+logger:
+  level: DEBUG
+```
+
+Reflash, then operate the device from its existing hub or remote while watching the log. Each
+logged frame ends in its raw bytes: pairs three to five are the destination address and pairs six
+to eight are the sender, so in `4B 20 30 E1 F2 C0 FF EE 03` the device is `30E1F2` and the
+controller talking to it is `C0FFEE`. Your device is whichever address is not your own hub's. Then
+pick `io_device_type` from [Named device types](device-types.md#named-device-types) to match
+what the device actually is.
 
 ## Pairing succeeds but nothing moves
 

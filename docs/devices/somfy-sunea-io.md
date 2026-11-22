@@ -15,6 +15,7 @@ the project's reference actuator; the shutter variants come from field reports.
 | Force open | ✅ Confirmed to move the device |
 | Read and write the stored device name | ✅ Confirmed |
 | Identify (jog) | ✅ Confirmed |
+| Status read at the end of the reported travel time | ✅ Confirmed (corpus `somfy_awning_statuspoll_close_with_remaining_time_predicted_end_read_sx1262`); see [Covers](../configuration/cover.md) |
 | Discover & Pair | ✅ Confirmed |
 | Driven by a linked 1W Smoove remote | ✅ Confirmed |
 | Open, close, stop from a [1W controller identity](../configuration/oneway-transmit.md) | 📣 Reported, including STOP during travel; Open extends and Close retracts the awning (issue #196) |

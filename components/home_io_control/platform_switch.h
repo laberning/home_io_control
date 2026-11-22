@@ -1,18 +1,14 @@
 #pragma once
 
 /// @file platform_switch.h
-/// @brief Experimental binary switch entity for IO‑Homecontrol devices.
+/// @brief Binary switch entity for IO‑Homecontrol devices.
 /// @ingroup hioc_platforms
 ///
 /// Provides a minimal on/off switch representation. Position < 50 is treated as on.
-/// This platform is experimental and not yet validated on real hardware.
-/// @todo Validate end-to-end behavior with physical IO-Homecontrol switch devices,
-///       including passive state updates, startup state restoration, and any vendor-specific
-///       position encodings that do not map cleanly to binary on/off semantics.
-///
-/// @warning This platform has not been tested with physical IO‑Homecontrol switch devices.
-///          Behavior is inferred from the protocol specification and may be incomplete.
-///          Use with caution and verify with actual hardware before production deployment.
+/// One field report covers it: a Somfy Izymo on/off receiver (type 15, subtype 2) switches on and off
+/// and follows a linked remote (issue #57). No capture of a switch is in the corpus.
+/// @todo Confirm with a capture of a physical switch: startup state restoration and any
+///       vendor-specific position encodings that do not map cleanly to binary on/off semantics.
 
 #include "esphome/core/component.h"
 #include "esphome/components/switch/switch.h"

@@ -88,7 +88,7 @@ cover:
       - "class:vertical_exterior_awning"
 ```
 
-`<device_type>` accepts the same named values as `io_device_type` — see the [named device types table](../supported-devices.md#named-device-types) for the full list (e.g. `vertical_exterior_awning`, `roller_shutter`, `interior_venetian_blind`) — or a raw hex ID such as `class:0x14` for a type without a named alias yet. Bare node-ID entries, named `class:` entries, and raw-hex `class:` entries can all be mixed freely in the same list, and a device linked both ways (by ID and by class) is only updated once per press — the class form is purely a convenience for "any remote that presses this device's type," it does not change how bare node IDs behave.
+`<device_type>` accepts the same named values as `io_device_type` — see the [named device types table](../device-types.md#named-device-types) for the full list (e.g. `vertical_exterior_awning`, `roller_shutter`, `interior_venetian_blind`) — or a raw hex ID such as `class:0x14` for a type without a named alias yet. Bare node-ID entries, named `class:` entries, and raw-hex `class:` entries can all be mixed freely in the same list, and a device linked both ways (by ID and by class) is only updated once per press — the class form is purely a convenience for "any remote that presses this device's type," it does not change how bare node IDs behave.
 
 ### Optimistic state
 
@@ -220,4 +220,4 @@ automation:
 
 - [Sending 1W commands](oneway-transmit.md) — the transmit side
 - [Covers](cover.md) — `optimistic_state` on a per-cover basis
-- [Named device types](../supported-devices.md#named-device-types) — what `class:` accepts
+- [Named device types](../device-types.md#named-device-types) — what `class:` accepts

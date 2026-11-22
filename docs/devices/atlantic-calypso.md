@@ -79,8 +79,7 @@ water_heater:
 ```
 
 `io_device_type: domestic_hot_water` is required on this platform. Discover & Pair and Scan Paired
-Devices print a `water_heater:` block with it. The build warns that the kind is experimental: one
-heater of one brand has been read so far.
+Devices print a `water_heater:` block with it.
 
 ## What each value is
 

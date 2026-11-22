@@ -1,5 +1,5 @@
 /// @file platform_switch.cpp
-/// @brief Experimental binary switch entity for IO-Homecontrol devices.
+/// @brief Binary switch entity for IO-Homecontrol devices.
 /// @ingroup hioc_platforms
 
 #include "platform_switch.h"
@@ -38,7 +38,6 @@ void IOHomeSwitch::dump_config() {
   LOG_SWITCH("", "IO-Homecontrol Binary Switch", this);
   ESP_LOGCONFIG(TAG, "  Device ID: %s", this->device_id_.c_str());
   this->log_poll_interval_config_(TAG);
-  ESP_LOGCONFIG(TAG, "  Status: experimental and untested");
 }
 
 }  // namespace home_io_control

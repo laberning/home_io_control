@@ -100,5 +100,6 @@ V1.6.1 with the SX1276 driver:
 
 - [Heaters and water heaters in Home Assistant](../heating.md)
 - [Heating and climate](../configuration/climate.md)
-- [Thermor EMOTION 3 H and the other heaters](../supported-devices.md#heating-and-hot-water)
+- [Thermor EMOTION 3 H](thermor-emotion-3h.md) — a radiator that hands over the installation key
+- [The other heaters](../supported-devices.md#heating-and-hot-water)
 - [Supported devices](../supported-devices.md)

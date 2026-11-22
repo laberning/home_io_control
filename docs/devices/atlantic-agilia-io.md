@@ -111,8 +111,7 @@ every radiator its own entry with its own `system_key:`.
 
 The [Sauter Hekla](sauter-hekla.md), an electric heater from the same group, pairs and works the same
 way from a different menu, and adds a night light. The Thermor EMOTION 3 H pairs from the same menu as
-the AGILIA IO and is set up like it; its row is in
-[Heating and hot water](../supported-devices.md#heating-and-hot-water).
+the AGILIA IO and is set up like it; see [Thermor EMOTION 3 H](thermor-emotion-3h.md).
 
 ## Known quirks
 
