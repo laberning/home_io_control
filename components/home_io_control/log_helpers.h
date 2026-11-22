@@ -49,12 +49,15 @@ inline std::string format_name_and_hex(const char *name, uint8_t value) {
   return std::string(buffer.data());
 }
 
-/// @brief Format an RSSI for a log line or report: "-48" in dBm, or "n/a" for RSSI_UNKNOWN_DBM.
+/// @brief Format an RSSI for a log line or report: "-48" in dBm ("-48dBm" with a unit), or "n/a" for
+/// RSSI_UNKNOWN_DBM.
 ///
 /// An unknown level is one the radio could not take from the frame itself (see
 /// RadioCaptureInfo::rssi_or_unknown()); printing the raw sentinel would show a meaningless number.
-inline std::string format_rssi_dbm(int16_t rssi_dbm) {
-  return rssi_dbm == RSSI_UNKNOWN_DBM ? std::string("n/a") : std::to_string(rssi_dbm);
+/// @param rssi_dbm The level in dBm, or RSSI_UNKNOWN_DBM.
+/// @param unit Appended to a known level only ("dBm" in a report a user reads), so "n/a" never carries a unit.
+inline std::string format_rssi_dbm(int16_t rssi_dbm, const char *unit = "") {
+  return rssi_dbm == RSSI_UNKNOWN_DBM ? std::string("n/a") : std::to_string(rssi_dbm) + unit;
 }
 
 // ============================================================================

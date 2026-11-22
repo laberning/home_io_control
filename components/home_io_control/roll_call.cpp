@@ -226,8 +226,7 @@ std::string format_roll_call_responder(const ScanResponder &responder, const std
                      format_device_ids(responder.type, responder.subtype) + ")";
   if (key != nullptr)
     line += " key=" + detail::format_key_check_value(key);
-  line += responder.rssi_dbm == RSSI_UNKNOWN_DBM ? std::string(" rssi=n/a")
-                                                 : " rssi=" + std::to_string(responder.rssi_dbm) + "dBm";
+  line += " rssi=" + detail::format_rssi_dbm(responder.rssi_dbm, "dBm");
   uint8_t power_save = 0;
   if (responder.has_extended) {
     uint8_t const att = discovery_att_class(responder.flags);

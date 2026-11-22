@@ -197,6 +197,8 @@ TEST(RollCallResponder, UnknownRssiIsShownAsNotAvailable) {
 TEST(RollCallResponder, FormatRssiPrintsLevelOrNotAvailable) {
   EXPECT_EQ(detail::format_rssi_dbm(-48), "-48");
   EXPECT_EQ(detail::format_rssi_dbm(RSSI_UNKNOWN_DBM), "n/a");
+  EXPECT_EQ(detail::format_rssi_dbm(-48, "dBm"), "-48dBm") << "a unit follows a known level";
+  EXPECT_EQ(detail::format_rssi_dbm(RSSI_UNKNOWN_DBM, "dBm"), "n/a") << "an unknown level never carries a unit";
 }
 
 TEST(RollCallResponder, DisplayModesDecideWhereTheKeyAppears) {
