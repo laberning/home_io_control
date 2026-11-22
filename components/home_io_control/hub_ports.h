@@ -358,6 +358,12 @@ class HubControlPort {
   /// @param action Button action to send.
   virtual void send_oneway_action(const std::string &controller_id, OneWayButtonAction action) = 0;
 
+  /// @brief Queue a one-way position frame, sent as the given controller identity.
+  /// @param controller_id Handle of the identity.
+  /// @param position Target position 0-100 (0 fully open or on, 100 fully closed or off), as the user means it; the
+  ///        transmitter mirrors it on the wire for an inverted identity.
+  virtual void send_oneway_position(const std::string &controller_id, uint8_t position) = 0;
+
   /// @brief Queue a one-way enrollment of the given controller identity.
   /// @param controller_id Handle of the identity.
   virtual void send_oneway_enroll(const std::string &controller_id) = 0;

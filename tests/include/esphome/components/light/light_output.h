@@ -89,6 +89,11 @@ class LightState {
     remote_values.set_brightness(b);
   }
 
+  // Mirrors the real LightState::is_transformer_active(): true while a transition or flash writes its intermediate
+  // values. test_transformer_active_ lets a test stand in for a transition in progress.
+  bool is_transformer_active() const { return this->test_transformer_active_; }
+  bool test_transformer_active_{false};
+
   Call make_call() { return Call(this); }
 };
 

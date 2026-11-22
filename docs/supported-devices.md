@@ -60,7 +60,7 @@ match.
 | **Dexxo Smart io 800 garage door opener** | `garage_opener`, subtype 58 | 📣 Reported | Key extraction from a TaHoma Switch | Open, close, stop, built-in light. Issue #244. [Garage and gate openers](devices/somfy-garage-gate-openers.md) |
 | **Elixo 3S io swing gate opener** | `gate_opener`, subtype 58 | 📣 Reported | Key extraction from a TaHoma Switch | Open, close, stop, light output. Issue #244. [Garage and gate openers](devices/somfy-garage-gate-openers.md) |
 | **Izymo IO dimmer** | `light` | ✅ Confirmed | Discover & Pair | `dimmable: true`. Corpus captures on all three radios. [Somfy Izymo IO dimmer](devices/somfy-izymo-dimmer.md) |
-| **Izymo IO dimmer, driven over 1W** | `light`, 1W | ✅ Confirmed | 1W enrollment | On and off; brightness not confirmed. [Somfy Izymo IO dimmer](devices/somfy-izymo-dimmer.md) |
+| **Izymo IO dimmer, driven over 1W** | `light`, 1W | ✅ Confirmed | 1W enrollment | On and off confirmed; the one-way light entity with `dimmable: true` confirmed in both slider ways (`timed`, `frame`), 50 of 50 each, read back over two-way. [Somfy Izymo IO dimmer](devices/somfy-izymo-dimmer.md) |
 | **Izymo io on/off receiver** | `on_off_switch`, subtype 2 | 📣 Reported | Discover & Pair | Switches on and off, follows a linked Situo 1 io Pure II. SX1262 module, [issue #57](https://github.com/laberning/home_io_control/issues/57) |
 | **White LED Receiver io** (4-output LED dimmer) | `light` | ✅ Confirmed | Discover & Pair, once per output | `dimmable: true`. Issues #119, #143. [Somfy White LED Receiver io](devices/somfy-white-led-receiver.md) |
 

@@ -316,6 +316,9 @@ class ControlPortDouble : public HubControlPort {
   void send_oneway_action(const std::string &controller_id, OneWayButtonAction action) override {
     this->oneway_actions.emplace_back(controller_id, action);
   }
+  void send_oneway_position(const std::string &controller_id, uint8_t position) override {
+    this->oneway_positions.emplace_back(controller_id, position);
+  }
   void send_oneway_enroll(const std::string &controller_id) override {
     this->oneway_enrollments.push_back(controller_id);
   }
@@ -369,6 +372,7 @@ class ControlPortDouble : public HubControlPort {
   std::function<void(bool)> key_extraction_armed_callback;
   std::function<void(bool)> oneway_key_adoption_armed_callback;
   std::vector<std::pair<std::string, OneWayButtonAction>> oneway_actions;  ///< (controller, action), in order.
+  std::vector<std::pair<std::string, uint8_t>> oneway_positions;  ///< (controller, position percent), in order.
   std::vector<std::string> oneway_enrollments;
   std::vector<OneWayCommandReportFn> oneway_report_callbacks;
   /// One press subscription: the senders it listed and its callback.

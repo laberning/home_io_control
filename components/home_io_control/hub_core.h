@@ -393,7 +393,7 @@ class IOHomeControlComponent : public Component,
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
   /// @param position Target position 0–100 (0 = fully open, 100 = fully closed), as the user means it;
   ///        the transmitter mirrors it on the wire for an inverted identity (effective_inverted()).
-  void send_oneway_position(const std::string &controller_id, uint8_t position) {
+  void send_oneway_position(const std::string &controller_id, uint8_t position) override {
     this->op_queue_.enqueue_oneway_position(controller_id, position);
   }
 

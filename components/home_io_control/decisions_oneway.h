@@ -2,7 +2,8 @@
 
 /// @file decisions_oneway.h
 /// @brief Pure rules for one-way (1W) remote frames: burst de-duplication, background-poll deferral, the
-/// pairing-gesture shape and the state an assumed-state cover shows.
+/// pairing-gesture shape, the state an assumed-state cover shows, the estimate of a one-way run and the command a
+/// slider value becomes.
 /// @ingroup hioc_hub
 ///
 /// Inline, stateless helpers, testable without radio hardware or timing.
@@ -13,6 +14,7 @@
 #include "proto_frame.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <optional>
@@ -193,12 +195,13 @@ struct TravelRates {
   uint32_t fall_ms{0};  ///< Time to run from level 1 to level 0.
 };
 
-/// What the hub asks of an estimate. A kind is added here when a device obeys a new intent (an instant jump).
+/// What the hub asks of an estimate. A kind is added here when a device obeys a new intent.
 struct TravelIntent {
   /// The kinds of intent.
   enum class Kind : uint8_t {
-    STOP,   ///< Freeze where the estimate is.
-    GO_TO,  ///< Travel to `level` at the run rate and stop there.
+    STOP,     ///< Freeze where the estimate is.
+    GO_TO,    ///< Travel to `level` at the run rate and stop there.
+    JUMP_TO,  ///< Be at `level` at once, as a dimmer does that obeys a position frame (ADR 0128).
   };
   Kind kind{Kind::STOP};  ///< What is asked.
   float level{0.0F};      ///< The level to travel to (GO_TO only), 0..1.
@@ -208,6 +211,10 @@ struct TravelIntent {
   /// Travel to @p target, clamped to 0..1; 1.0 and 0.0 are the two ends.
   [[nodiscard]] static constexpr TravelIntent go_to(float target) {
     return {Kind::GO_TO, std::clamp(target, 0.0F, 1.0F)};
+  }
+  /// Be at @p target at once, clamped to 0..1.
+  [[nodiscard]] static constexpr TravelIntent jump_to(float target) {
+    return {Kind::JUMP_TO, std::clamp(target, 0.0F, 1.0F)};
   }
 };
 
@@ -278,9 +285,15 @@ struct TravelEstimate {
 [[nodiscard]] inline TravelEstimate travel_after(const TravelEstimate &estimate, const TravelRates &rates,
                                                  const TravelIntent &intent, uint32_t now) {
   const float level = travel_level_at(estimate, rates, now);
-  if (intent.kind == TravelIntent::Kind::GO_TO)
-    return {level, intent.level, now};
-  return {level, level, now};
+  switch (intent.kind) {
+    case TravelIntent::Kind::GO_TO:
+      return {level, intent.level, now};
+    case TravelIntent::Kind::JUMP_TO:
+      return {intent.level, intent.level, now};
+    case TravelIntent::Kind::STOP:
+    default:
+      return {level, level, now};
+  }
 }
 
 /// Whether a running estimate is due to be published again: its direction changed or it ended since the last publish,
@@ -383,6 +396,91 @@ enum class OneWayCoverState : uint8_t {
     return std::nullopt;
   const float user_percent = inverted ? ONEWAY_COVER_FULL_PERCENT - *wire_percent : *wire_percent;
   return TravelIntent::go_to(1.0F - (user_percent / ONEWAY_COVER_FULL_PERCENT));
+}
+
+/// What a decoded one-way frame asks of a light that knows its fade times: a stop, a fade to an end, or a level.
+///
+/// The on and off commands are the position frames at the two ends, and a dimmer fades to them, so an end travels
+/// like a cover's. A position between the ends sets the level at once, as a Somfy Izymo dimmer does on a bench run
+/// (ADR 0128), so it jumps. Same inputs and same "says nothing" cases as oneway_cover_travel_intent_from_frame(),
+/// whose level scale it keeps: 1.0 is the open (on) end.
+/// @param info     The frame, from decode_1w_frame(): the hub's own transmission or a remote's press.
+/// @param inverted Whether the identity's open/close are mirrored on the wire (effective_inverted()).
+/// @return The intent, or an empty optional when the frame changes nothing.
+[[nodiscard]] inline std::optional<TravelIntent> oneway_light_travel_intent_from_frame(const OneWayFrameInfo &info,
+                                                                                       bool inverted) {
+  const std::optional<TravelIntent> intent = oneway_cover_travel_intent_from_frame(info, inverted);
+  if (intent.has_value() && intent->kind == TravelIntent::Kind::GO_TO && intent->level > 0.0F && intent->level < 1.0F)
+    return TravelIntent::jump_to(intent->level);
+  return intent;
+}
+
+// == A slider value as one-way commands (ADR 0128) ==
+
+/// How a slider value reaches a one-way device that has no "set level" every device obeys.
+enum class OneWaySliderWay : uint8_t {
+  TIMED,  ///< Open or close towards the value, then one stop when the estimate reaches it.
+  FRAME,  ///< One position frame carrying the value.
+};
+
+/// What to send for a slider value, and when to stop afterwards.
+struct OneWaySliderPlan {
+  /// The one command to send now.
+  enum class Send : uint8_t {
+    NOTHING,   ///< The estimate is already there and at rest.
+    OPEN,      ///< Open (on): run towards level 1.
+    CLOSE,     ///< Close (off): run towards level 0.
+    STOP,      ///< Stop where it is: the estimate is moving and the value is where it is now.
+    POSITION,  ///< A position frame carrying `position_percent`.
+  };
+  Send send{Send::NOTHING};               ///< What to send now.
+  uint8_t position_percent{0};            ///< POSITION only: the user's scale, 0 fully open (on), 100 closed (off).
+  std::optional<uint32_t> stop_after_ms;  ///< TIMED only: send one stop this long after the command reached the radio.
+};
+
+/// The command a slider value becomes, from the estimate as it is now.
+///
+/// TIMED sends open or close towards the value and the stop that ends the run where the estimate reaches it, after the
+/// time the rest of the run takes at the rate of its direction. A value at an end sends the plain command and no stop:
+/// the device stops at its end stop by itself, which also re-anchors the estimate. A value the estimate is already at
+/// sends a stop if it is moving (the user asks it to stay) and nothing if it is at rest. FRAME sends one position
+/// frame, whatever the estimate is. The rule is for lights and covers alike; the level scale is the estimate's, 1.0
+/// open (on), and the position is the user's, which the transmitter mirrors for an inverted identity.
+/// @param estimate  The estimate, which owns the clock of @p now.
+/// @param rates     Time of a full run each way (rise opens, fall closes).
+/// @param now       Current millis().
+/// @param requested The level the user asked for, 0..1; clamped.
+/// @param way       How a value that is not an end is reached.
+[[nodiscard]] inline OneWaySliderPlan plan_oneway_slider(const TravelEstimate &estimate, const TravelRates &rates,
+                                                         uint32_t now, float requested, OneWaySliderWay way) {
+  const float target = std::clamp(requested, 0.0F, 1.0F);
+  OneWaySliderPlan plan;
+  if (way == OneWaySliderWay::FRAME) {
+    plan.send = OneWaySliderPlan::Send::POSITION;
+    plan.position_percent = static_cast<uint8_t>(std::lround((1.0F - target) * ONEWAY_COVER_FULL_PERCENT));
+    return plan;
+  }
+  if (target >= 1.0F) {
+    plan.send = OneWaySliderPlan::Send::OPEN;
+    return plan;
+  }
+  if (target <= 0.0F) {
+    plan.send = OneWaySliderPlan::Send::CLOSE;
+    return plan;
+  }
+  const float level = travel_level_at(estimate, rates, now);
+  const bool rising = target > level;
+  const uint32_t run_ms = rising ? rates.rise_ms : rates.fall_ms;
+  const auto stop_after_ms = static_cast<uint32_t>(std::lround(std::fabs(target - level) * static_cast<float>(run_ms)));
+  if (stop_after_ms == 0) {
+    // Nothing left to run: ask for a stop only while it is still moving, so the fade does not carry on past the value.
+    if (travel_direction_at(estimate, rates, now) != TravelDirection::IDLE)
+      plan.send = OneWaySliderPlan::Send::STOP;
+    return plan;
+  }
+  plan.send = rising ? OneWaySliderPlan::Send::OPEN : OneWaySliderPlan::Send::CLOSE;
+  plan.stop_after_ms = stop_after_ms;
+  return plan;
 }
 
 // == Setting a controller identity's next sequence ==

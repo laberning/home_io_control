@@ -1,0 +1,13 @@
+# expect-error: has light: but its io_device_type 'vertical_exterior_awning' is not a light kind
+# covers: oneway_controllers.validate_oneway_controllers
+# An awning has no on and off for a light entity to send.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: remote
+      io_device_type: vertical_exterior_awning
+      commands: [stop]
+      light: "Awning"

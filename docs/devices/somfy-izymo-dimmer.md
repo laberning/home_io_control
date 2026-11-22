@@ -15,7 +15,7 @@ platform is validated against.
 | Being driven by a linked 1W remote | ✅ Confirmed with a Somfy Smoove |
 | Enrolling the hub's 1W identity, and removing it inside the PROG window | ✅ Confirmed (corpus `somfy_izymo_dimmer_enrollment_remove_controller_in_prog_window_sx1276`) |
 | On / off over 1W | ✅ Confirmed — 50 of 50 commands obeyed in each burst shape on four boards, checked by a two-way read |
-| Brightness over 1W | Not confirmed |
+| Brightness over 1W | ✅ Confirmed — the one-way light entity set on, off and 25, 50 and 75 % ten times each in each way, 50 of 50, checked by a two-way read; `frame` exact, `timed` 2 points brighter (the stop burst's lag). The fade is linear, about 4.7 s each way. See [A light for the identity](../configuration/oneway-transmit.md#a-light-for-the-identity) |
 | Favorite / My position | ❌ The device answers the probe, but nothing useful is decoded |
 
 All three radios are confirmed against this device: SX1276, SX1262 and LR1121 each have their own

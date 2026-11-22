@@ -21,7 +21,6 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import binary_sensor, sensor, switch, text_sensor
 from esphome.const import (
-    CONF_DEFAULT_TRANSITION_LENGTH,
     CONF_DISABLED_BY_DEFAULT,
     CONF_ID,
     CONF_NAME,
@@ -405,16 +404,6 @@ def deprecated_key(key, replacement):
         return config
 
     return validator
-
-
-# ESPHome's light_schema() defaults to a 1 s transition, which fades a brightness change client-side by
-# calling write_state() repeatedly over that window. Here each write_state() is a radio exchange (about
-# 300 ms), so a fade becomes a stream of superseding commands, and each device reply can restart it: on real
-# hardware (the Izymo dimmer) it looped indefinitely. Every brightness light of this component extends its
-# schema with this, so changes apply at once unless the YAML asks for a fade.
-INSTANT_LIGHT_TRANSITION = {
-    cv.Optional(CONF_DEFAULT_TRANSITION_LENGTH, default="0s"): cv.positive_time_period_milliseconds
-}
 
 
 def declared_features(config):

@@ -1,6 +1,6 @@
 /// @file device_features_sync_test.cpp
 /// @brief Verifies that the Python mirror of the device capabilities (hub_validators.py `FEATURES`,
-///        `DEVICE_FEATURES`, `EXPERIMENTAL_KINDS`, `NAMED_POSITION_FEATURES`, `DEVICE_MODEL_OPTIONS`)
+///        `DEVICE_FEATURES`, `EXPERIMENTAL_KINDS`, `LIGHT_KINDS`, `NAMED_POSITION_FEATURES`, `DEVICE_MODEL_OPTIONS`)
 ///        agrees with the C++ node-type table by capability name and row for row (model rows
 ///        included), and that the mirror `DEVICE_READINGS` lists every named device reading with the capability,
 ///        source kind and polled registers of the C++ table (proto_device_readings.cpp), preventing C++/Python
@@ -247,6 +247,22 @@ TEST(DeviceFeaturesSync, TheExperimentalKindsAreTheCppRowsWithTheExperimentalFla
   test::for_each_table_row([&](const DeviceTypeInfo &row) {
     const std::string name = python_type_name(type_values, row.type);
     if (!name.empty() && device_is_experimental(row.type, row.subtype))
+      cpp.insert(row_key(name, row.subtype));
+  });
+  EXPECT_EQ(python, cpp);
+}
+
+TEST(DeviceFeaturesSync, TheLightKindsAreTheCppRowsOfTheLightCapabilityClass) {
+  const auto type_values = test::parse_python_uint8_dict(VALIDATORS, "DEVICE_TYPE_OPTIONS");
+  const auto python_list = test::parse_python_string_collection(VALIDATORS, "LIGHT_KINDS");
+  ASSERT_FALSE(python_list.empty()) << "LIGHT_KINDS not parsed from hub_validators.py";
+  const NameSet python(python_list.begin(), python_list.end());
+  EXPECT_EQ(python.size(), python_list.size()) << "LIGHT_KINDS lists a kind twice";
+
+  NameSet cpp;
+  test::for_each_table_row([&](const DeviceTypeInfo &row) {
+    const std::string name = python_type_name(type_values, row.type);
+    if (!name.empty() && device_capability_class(row.type, row.subtype) == DeviceCapabilityClass::LIGHT)
       cpp.insert(row_key(name, row.subtype));
   });
   EXPECT_EQ(python, cpp);

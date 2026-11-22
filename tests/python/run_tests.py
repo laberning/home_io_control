@@ -563,8 +563,16 @@ def oneway_cover_needs_a_cover_kind_and_follows_needs_a_cover():
     assert "has cover: but its io_device_type '0x7f'" in o._cover_problem(
         _resolved_oneway(**{n.CONF_IO_DEVICE_TYPE: 0x7F, n.CONF_COVER: "Awning"})
     ), "a raw node type has no capabilities and no cover"
-    assert "has follows: but no cover:" in o._cover_problem(
+
+    assert "has follows: but neither cover: nor light:" in o._entity_problem(
         _resolved_oneway("vertical_exterior_awning", **{n.CONF_FOLLOWS: ["9D6085"]})
+    )
+    assert o._entity_problem(_resolved_oneway("vertical_exterior_awning", **awning)) is None
+    assert o._entity_problem(_resolved_oneway("light", **{n.CONF_LIGHT: "Lamp", n.CONF_FOLLOWS: ["9D6085"]})) is None, (
+        "a light takes follows: too"
+    )
+    assert "has both cover: and light:" in o._entity_problem(
+        _resolved_oneway("vertical_exterior_awning", **awning, **{n.CONF_LIGHT: "Lamp"})
     )
 
 
@@ -586,6 +594,78 @@ def oneway_travel_durations_need_both_keys_and_a_cover():
     only_close = {n.CONF_CLOSE_DURATION: timedelta(seconds=22)}
     assert "open_duration: is missing" in o._cover_problem(_resolved_oneway("vertical_exterior_awning", **cover, **only_close))
     assert "but no cover:" in o._cover_problem(_resolved_oneway("vertical_exterior_awning", **durations))
+
+
+@case()
+def oneway_light_needs_a_light_kind_and_its_keys_need_the_light():
+    from datetime import timedelta
+
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+
+    fades = {n.CONF_ON_DURATION: timedelta(seconds=5), n.CONF_OFF_DURATION: timedelta(seconds=5)}
+    light = {n.CONF_LIGHT: "Lamp"}
+    dimmable = {n.CONF_DIMMABLE: True}
+    assert o._entity_problem(_resolved_oneway("light", **light)) is None, "a binary light"
+    assert o._entity_problem(_resolved_oneway("light", **light, **dimmable)) is None, "a slider with no fade times"
+    assert o._entity_problem(_resolved_oneway("light", **light, **dimmable, **fades)) is None
+    assert o._entity_problem(
+        _resolved_oneway("light", **light, **dimmable, **fades, **{n.CONF_SET_POSITION: "frame"})
+    ) is None
+    assert o._entity_problem(_resolved_oneway("light")) is None, "no light: asks for nothing"
+
+    assert "has light: but its io_device_type 'vertical_exterior_awning' is not a light kind" in o._entity_problem(
+        _resolved_oneway("vertical_exterior_awning", **light)
+    )
+    for key, value in ((n.CONF_DIMMABLE, True), (n.CONF_ON_DURATION, timedelta(seconds=5)), (n.CONF_OFF_DURATION, timedelta(seconds=5))):
+        assert f"has {key}: but no light:" in o._entity_problem(_resolved_oneway("light", **{key: value}))
+    assert "off_duration: is missing" in o._entity_problem(
+        _resolved_oneway("light", **light, **dimmable, **{n.CONF_ON_DURATION: timedelta(seconds=5)})
+    )
+    assert "on_duration: is missing" in o._entity_problem(
+        _resolved_oneway("light", **light, **dimmable, **{n.CONF_OFF_DURATION: timedelta(seconds=5)})
+    )
+    assert "is not dimmable" in o._entity_problem(_resolved_oneway("light", **light, **fades))
+    assert "has set_position: but no fade times" in o._entity_problem(
+        _resolved_oneway("light", **light, **dimmable, **{n.CONF_SET_POSITION: "timed"})
+    )
+    assert "has set_position: but no fade times" in o._entity_problem(
+        _resolved_oneway("vertical_exterior_awning", **{n.CONF_COVER: "Awning", n.CONF_SET_POSITION: "timed"})
+    ), "the cover's slider comes with its own change"
+
+
+@case()
+def oneway_light_entity_id_is_declared_at_validation_time():
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+
+    identity = {
+        "id": "lamp",
+        n.CONF_COMMANDS: ["open"],
+        n.CONF_ENROLLMENT: False,
+        n.CONF_LIGHT: "Lamp",
+    }
+    o._inject_identity_entity_ids(identity)
+    assert identity[n.CONF_LIGHT_ENTITY_ID].id == "lamp_light", "declared at validation, not in to_code()"
+    assert identity[n.CONF_LIGHT_ENTITY_ID].is_declaration
+    assert identity[n.CONF_LIGHT_STATE_ID].id == "lamp_light_state", "the LightState beside it is a component too"
+    assert identity[n.CONF_LIGHT_STATE_ID].is_declaration
+    assert n.CONF_LIGHT_GAMMA_TABLE_ID not in identity, "a binary light has no gamma table"
+
+    identity = {**identity, n.CONF_DIMMABLE: True}
+    o._inject_identity_entity_ids(identity)
+    assert identity[n.CONF_LIGHT_GAMMA_TABLE_ID].id == "lamp_light_gamma_table", "a brightness light's gamma table"
+    assert identity[n.CONF_LIGHT_GAMMA_TABLE_ID].is_declaration
+
+
+@case()
+def oneway_light_kind_is_decided_by_the_light_capability_class():
+    from esphome.components.home_io_control import hub_validators as v
+
+    assert v.kind_is_light(v.DEVICE_TYPE_OPTIONS["light"])
+    for kind in (*v.DEFAULT_COVER_DEVICE_CLASS, "lock", "on_off_switch", "electrical_heater", "exterior_heating"):
+        assert not v.kind_is_light(v.DEVICE_TYPE_OPTIONS[kind]), kind
+    assert not v.kind_is_light(0x7F), "a raw node type is no named light kind"
 
 
 @case()

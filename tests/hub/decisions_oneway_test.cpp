@@ -515,3 +515,139 @@ TEST(DecisionsOneWay, ATravelIntentIsAStopAndNamedPositionsAndSilentFramesChange
   EXPECT_FALSE(
       decisions::oneway_cover_travel_intent_from_frame(frame_with_main(0x00, /*has_intent=*/false), false).has_value());
 }
+
+// ============================================================================
+// A light's frames (ADR 0128): an end fades, a level in between is there at once
+// ============================================================================
+
+TEST(DecisionsTravel, AJumpIsAtItsLevelAtOnceWhateverTheEstimateWasDoing) {
+  const TravelEstimate run = decisions::travel_after(idle_at(0.0F), RATES, TravelIntent::go_to(1.0F), T0);
+
+  const TravelEstimate jumped = decisions::travel_after(run, RATES, TravelIntent::jump_to(0.25F), T0 + 2000);
+
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(jumped, RATES, T0 + 2000), 0.25F);
+  EXPECT_EQ(decisions::travel_direction_at(jumped, RATES, T0 + 2000), TravelDirection::IDLE);
+  EXPECT_FLOAT_EQ(decisions::travel_level_at(jumped, RATES, T0 + 90000), 0.25F) << "and stays there";
+  EXPECT_FLOAT_EQ(TravelIntent::jump_to(1.7F).level, 1.0F) << "clamped like go_to()";
+}
+
+TEST(DecisionsOneWay, ALightFadesToAnEndAndJumpsToALevelBetweenTheEnds) {
+  const auto on = decisions::oneway_light_travel_intent_from_frame(frame_with_main(0x00), false);
+  const auto off = decisions::oneway_light_travel_intent_from_frame(frame_with_main(0xC8), false);
+  ASSERT_TRUE(on.has_value());
+  ASSERT_TRUE(off.has_value());
+  EXPECT_EQ(on->kind, TravelIntent::Kind::GO_TO);
+  EXPECT_FLOAT_EQ(on->level, 1.0F);
+  EXPECT_EQ(off->kind, TravelIntent::Kind::GO_TO);
+  EXPECT_FLOAT_EQ(off->level, 0.0F);
+
+  const auto quarter = decisions::oneway_light_travel_intent_from_frame(frame_with_main(0x96), false);  // 75 % wire
+  ASSERT_TRUE(quarter.has_value());
+  EXPECT_EQ(quarter->kind, TravelIntent::Kind::JUMP_TO);
+  EXPECT_FLOAT_EQ(quarter->level, 0.25F) << "wire 0 is full brightness, so 75 on the wire is 25 % bright";
+  EXPECT_EQ(decisions::oneway_cover_travel_intent_from_frame(frame_with_main(0x96), false)->kind,
+            TravelIntent::Kind::GO_TO)
+      << "the cover keeps travelling to the same frame";
+}
+
+TEST(DecisionsOneWay, ALightReadsAStopAndSilentFramesLikeACoverAndMirrorsAnInvertedIdentity) {
+  EXPECT_EQ(decisions::oneway_light_travel_intent_from_frame(frame_with_main(POS_STOP), false)->kind,
+            TravelIntent::Kind::STOP);
+  EXPECT_FALSE(decisions::oneway_light_travel_intent_from_frame(frame_with_main(POS_FAVORITE), false).has_value());
+  EXPECT_FALSE(
+      decisions::oneway_light_travel_intent_from_frame(frame_with_main(0x00, /*has_intent=*/false), false).has_value());
+  EXPECT_FLOAT_EQ(decisions::oneway_light_travel_intent_from_frame(frame_with_main(0x96), true)->level, 0.75F);
+}
+
+// ============================================================================
+// plan_oneway_slider(): a slider value as commands (ADR 0128)
+// ============================================================================
+
+namespace {
+
+using decisions::OneWaySliderPlan;
+using decisions::OneWaySliderWay;
+using Send = decisions::OneWaySliderPlan::Send;
+
+/// Plan for @p requested from an estimate that was idle at @p level at T0, asked @p after_ms later.
+OneWaySliderPlan plan_from_rest(float level, float requested, OneWaySliderWay way, uint32_t after_ms = 0) {
+  return decisions::plan_oneway_slider(idle_at(level), RATES, T0 + after_ms, requested, way);
+}
+
+}  // namespace
+
+TEST(DecisionsSlider, ATimedValueAboveTheEstimateOpensAndStopsAfterTheRestOfTheRiseTime) {
+  const OneWaySliderPlan plan = plan_from_rest(0.2F, 0.7F, OneWaySliderWay::TIMED);
+
+  EXPECT_EQ(plan.send, Send::OPEN);
+  ASSERT_TRUE(plan.stop_after_ms.has_value());
+  EXPECT_EQ(*plan.stop_after_ms, 10000u) << "half the scale at 20 s for the full rise";
+}
+
+TEST(DecisionsSlider, ATimedValueBelowTheEstimateClosesAndStopsAfterTheRestOfTheFallTime) {
+  const OneWaySliderPlan plan = plan_from_rest(0.9F, 0.4F, OneWaySliderWay::TIMED);
+
+  EXPECT_EQ(plan.send, Send::CLOSE);
+  ASSERT_TRUE(plan.stop_after_ms.has_value());
+  EXPECT_EQ(*plan.stop_after_ms, 5000u) << "half the scale at 10 s for the full fall";
+}
+
+TEST(DecisionsSlider, AValueAtAnEndSendsThePlainCommandAndNoStop) {
+  const OneWaySliderPlan full = plan_from_rest(0.3F, 1.0F, OneWaySliderWay::TIMED);
+  const OneWaySliderPlan off = plan_from_rest(0.3F, 0.0F, OneWaySliderWay::TIMED);
+
+  EXPECT_EQ(full.send, Send::OPEN);
+  EXPECT_FALSE(full.stop_after_ms.has_value()) << "the end stop re-anchors the estimate";
+  EXPECT_EQ(off.send, Send::CLOSE);
+  EXPECT_FALSE(off.stop_after_ms.has_value());
+  EXPECT_EQ(plan_from_rest(0.3F, 3.0F, OneWaySliderWay::TIMED).send, Send::OPEN) << "clamped";
+}
+
+TEST(DecisionsSlider, ARetargetMidFadeIsPlannedFromTheLevelReachedSoFar) {
+  // Opening from 0 since T0; after 5 s the estimate is at 0.25. A new value 0.5 needs 5 s more.
+  const TravelEstimate rising = decisions::travel_after(idle_at(0.0F), RATES, TravelIntent::go_to(1.0F), T0);
+
+  const OneWaySliderPlan plan = decisions::plan_oneway_slider(rising, RATES, T0 + 5000, 0.5F, OneWaySliderWay::TIMED);
+
+  EXPECT_EQ(plan.send, Send::OPEN);
+  EXPECT_EQ(plan.stop_after_ms.value_or(0), 5000u);
+}
+
+TEST(DecisionsSlider, AReversalMidFadeSendsTheOppositeCommandWithTheFallTimeOfTheDistance) {
+  const TravelEstimate rising = decisions::travel_after(idle_at(0.0F), RATES, TravelIntent::go_to(1.0F), T0);
+
+  const OneWaySliderPlan plan = decisions::plan_oneway_slider(rising, RATES, T0 + 10000, 0.3F, OneWaySliderWay::TIMED);
+
+  EXPECT_EQ(plan.send, Send::CLOSE) << "at 0.5 and rising, a lower value turns around";
+  EXPECT_EQ(plan.stop_after_ms.value_or(0), 2000u) << "0.2 of the scale at 10 s for the full fall";
+}
+
+TEST(DecisionsSlider, TheValueTheEstimateIsAlreadyAtSendsNothingAtRestAndAStopWhileMoving) {
+  EXPECT_EQ(plan_from_rest(0.5F, 0.5F, OneWaySliderWay::TIMED).send, Send::NOTHING);
+
+  const TravelEstimate rising = decisions::travel_after(idle_at(0.0F), RATES, TravelIntent::go_to(1.0F), T0);
+  const OneWaySliderPlan plan = decisions::plan_oneway_slider(rising, RATES, T0 + 10000, 0.5F, OneWaySliderWay::TIMED);
+  EXPECT_EQ(plan.send, Send::STOP) << "asked to stay where it is while it fades past";
+  EXPECT_FALSE(plan.stop_after_ms.has_value()) << "the stop goes out now, not later";
+}
+
+TEST(DecisionsSlider, AFrameValueIsOnePositionFrameOnTheUsersScaleWithNoStop) {
+  const OneWaySliderPlan plan = plan_from_rest(0.0F, 0.25F, OneWaySliderWay::FRAME);
+
+  EXPECT_EQ(plan.send, Send::POSITION);
+  EXPECT_EQ(plan.position_percent, 75) << "0 is full brightness and 100 is off";
+  EXPECT_FALSE(plan.stop_after_ms.has_value());
+  EXPECT_EQ(plan_from_rest(0.4F, 1.0F, OneWaySliderWay::FRAME).position_percent, 0);
+  EXPECT_EQ(plan_from_rest(0.4F, 0.0F, OneWaySliderWay::FRAME).position_percent, 100);
+  EXPECT_EQ(plan_from_rest(0.4F, 0.4F, OneWaySliderWay::FRAME).send, Send::POSITION) << "sent whatever the estimate is";
+}
+
+TEST(DecisionsSlider, APlanAcrossTheMillisWrapUsesTheElapsedTime) {
+  const TravelEstimate rising = decisions::travel_after(idle_at(0.0F), RATES, TravelIntent::go_to(1.0F), 0xFFFFF000U);
+
+  const OneWaySliderPlan plan =
+      decisions::plan_oneway_slider(rising, RATES, 0xFFFFF000U + 8000U, 0.6F, OneWaySliderWay::TIMED);
+
+  EXPECT_EQ(plan.send, Send::OPEN);
+  EXPECT_EQ(plan.stop_after_ms.value_or(0), 4000u) << "at 0.4 after 8 s; 0.2 more takes 4 s";
+}

@@ -17,10 +17,12 @@ import esphome.final_validate as fv
 # Aliased so they cannot be mistaken for this package's own platform modules (see hub_names.py).
 from esphome.components import button as button_component
 from esphome.components import cover as cover_component
+from esphome.components import light as light_component
 from esphome.components import text_sensor as text_sensor_component
 from esphome.const import (
     CONF_ID,
     CONF_NAME,
+    CONF_OUTPUT_ID,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
 )
@@ -32,6 +34,7 @@ from .hub_names import (
     CONF_COVER,
     CONF_CLOSE_DURATION,
     CONF_COVER_ENTITY_ID,
+    CONF_DIMMABLE,
     CONF_DRIVES,
     CONF_ENROLLMENT,
     CONF_ENROLLMENT_CLASSES,
@@ -45,23 +48,33 @@ from .hub_names import (
     CONF_IO_DEVICE_ID,
     CONF_IO_DEVICE_TYPE,
     CONF_LAST_COMMAND_SENSOR_ID,
+    CONF_LIGHT,
+    CONF_LIGHT_ENTITY_ID,
+    CONF_LIGHT_GAMMA_TABLE_ID,
+    CONF_LIGHT_STATE_ID,
     CONF_LINKED_REMOTES,
     CONF_LOW_POWER,
     CONF_MANUFACTURER,
     CONF_NODE_ID,
     CONF_NODE_ID_DERIVED,
     CONF_ONEWAY_CONTROLLERS,
+    CONF_OFF_DURATION,
+    CONF_ON_DURATION,
     CONF_OPEN_DURATION,
     CONF_RADIO_TYPE,
+    CONF_SET_POSITION,
     CONF_SYSTEM_KEY,
     IOHomeOneWayCommandButton,
     IOHomeOneWayCover,
     IOHomeOneWayEnrollButton,
     IOHomeOneWayLastCommandTextSensor,
+    IOHomeOneWayLight,
     OneWayButtonAction,
+    OneWaySliderWay,
 )
 from .hub_validators import (
     DEVICE_TYPE_MAX,
+    INSTANT_LIGHT_TRANSITION,
     declared_device_entries,
     DEVICE_TYPE_OPTIONS,
     MANUFACTURER_OPTIONS,
@@ -69,6 +82,7 @@ from .hub_validators import (
     device_features,
     device_type_name,
     kind_is_cover,
+    kind_is_light,
     validate_device_id,
     validate_device_type,
     validate_manufacturer,
@@ -222,8 +236,9 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # as the identity's own commands, and a state that follows them. Only for a cover kind
         # (_cover_problem()). The ID follows `<identity_id>_cover`.
         cv.Optional(CONF_COVER): cv.string_strict,
-        # The sender addresses of the real remotes whose presses the cover follows, as `linked_remotes:` lists them
-        # for a two-way cover. Never every remote of the class: a neighbour's would move the state. Needs `cover:`.
+        # The sender addresses of the real remotes whose presses the cover or light follows, as `linked_remotes:` lists
+        # them for a two-way cover. Never every remote of the class: a neighbour's would move the state. Needs
+        # `cover:` or `light:`.
         cv.Optional(CONF_FOLLOWS, default=[]): cv.All(
             cv.ensure_list(validate_node_id), _no_duplicate_followed_remotes
         ),
@@ -232,6 +247,18 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # with `cover:` (_cover_problem()). Typed in: nothing tells the hub when a one-way cover reaches its end.
         cv.Optional(CONF_OPEN_DURATION): cv.positive_not_null_time_period,
         cv.Optional(CONF_CLOSE_DURATION): cv.positive_not_null_time_period,
+        # An assumed-state light entity for this identity, named by the value (ADR 0128): on, off and, with
+        # `dimmable:`, a brightness slider, over the identity's own commands. Only for a light kind (_light_problem()),
+        # and not together with `cover:`. The ID follows `<identity_id>_light`.
+        cv.Optional(CONF_LIGHT): cv.string_strict,
+        # The light gets a brightness slider, as `dimmable:` does on the two-way light. Needs `light:`.
+        cv.Optional(CONF_DIMMABLE): cv.boolean,
+        # How long the light fades from off to full and back (ADR 0128); both or neither, and only with `dimmable:`.
+        cv.Optional(CONF_ON_DURATION): cv.positive_not_null_time_period,
+        cv.Optional(CONF_OFF_DURATION): cv.positive_not_null_time_period,
+        # How the light's slider value reaches the device (ADR 0128), only with its fade times: "timed" (default) sends
+        # on or off and a stop when the estimate reaches the value; "frame" sends one position frame.
+        cv.Optional(CONF_SET_POSITION): cv.one_of("timed", "frame", lower=True),
     }
 )
 
@@ -446,10 +473,10 @@ def _enrollment_manufacturer_problem(resolved):
 
 
 def _cover_problem(resolved):
-    """Error text when `cover:` or `follows:` cannot work on this identity, else None.
+    """Error text when `cover:` cannot work on this identity, else None.
 
     The cover shows the state of a cover, so the identity's kind must be one (a named position is the capability
-    every cover row has; kind_is_cover()). `follows:` without a cover has no entity to follow for.
+    every cover row has; kind_is_cover()). The travel times are both or neither, and need the cover.
     """
     identity = resolved.identity
     if CONF_COVER in identity and not kind_is_cover(identity[CONF_IO_DEVICE_TYPE]):
@@ -458,11 +485,6 @@ def _cover_problem(resolved):
             f"oneway_controllers id '{resolved.identity_id}' has cover: but its io_device_type '{kind}' is not a "
             "cover kind, so open, close and stop mean nothing to it. Remove cover:, or set the io_device_type "
             "of the shutter, awning, blind, window or gate it controls."
-        )
-    if identity.get(CONF_FOLLOWS) and CONF_COVER not in identity:
-        return (
-            f"oneway_controllers id '{resolved.identity_id}' has follows: but no cover:. follows: lists the "
-            "remotes whose presses move the cover's shown state; without cover: there is nothing to move."
         )
     has_open = CONF_OPEN_DURATION in identity
     if has_open != (CONF_CLOSE_DURATION in identity):
@@ -476,6 +498,68 @@ def _cover_problem(resolved):
         return (
             f"oneway_controllers id '{resolved.identity_id}' has open_duration: and close_duration: but no cover:. "
             "They give the cover its travel times; without cover: there is nothing to estimate a position for."
+        )
+    return None
+
+
+def _light_problem(resolved):
+    """Error text when `light:` or one of its keys cannot work on this identity, else None.
+
+    The light shows the state of a light, so the identity's kind must be one (kind_is_light()). The fade times and
+    `dimmable:` belong to the light; the fade times are both or neither and give the slider something to estimate.
+    """
+    identity = resolved.identity
+    handle = f"oneway_controllers id '{resolved.identity_id}'"
+    if CONF_LIGHT in identity and not kind_is_light(identity[CONF_IO_DEVICE_TYPE]):
+        kind = device_type_name(identity[CONF_IO_DEVICE_TYPE]) or hex(identity[CONF_IO_DEVICE_TYPE])
+        return (
+            f"{handle} has light: but its io_device_type '{kind}' is not a light kind, so on and off mean nothing "
+            "to it. Remove light:, or set the io_device_type of the light it controls."
+        )
+    if CONF_LIGHT not in identity:
+        for key in (CONF_DIMMABLE, CONF_ON_DURATION, CONF_OFF_DURATION):
+            if key in identity:
+                return f"{handle} has {key}: but no light:. It is a key of the light; without light: there is nothing to apply it to."
+        return None
+    has_on = CONF_ON_DURATION in identity
+    if has_on != (CONF_OFF_DURATION in identity):
+        missing = CONF_OFF_DURATION if has_on else CONF_ON_DURATION
+        return (
+            f"{handle} sets only one of on_duration: and off_duration:, {missing}: is missing. The light estimates "
+            "its level from the time a full fade takes each way, so it needs both. Set both, or neither."
+        )
+    if has_on and not identity.get(CONF_DIMMABLE):
+        return (
+            f"{handle} has on_duration: and off_duration: but is not dimmable. A fade time estimates a brightness "
+            "level, which a light without a slider does not show. Set dimmable: true, or remove them."
+        )
+    return None
+
+
+def _entity_problem(resolved):
+    """Error text when the identity's `cover:` or `light:` entity cannot work, else None.
+
+    The two entities exclude each other (an identity is one device). `follows:` lists the remotes whose presses move
+    the entity's state, so it needs one. `set_position:` says how the light's slider value reaches the device, which
+    needs the fade times that make a value possible (ADR 0128).
+    """
+    identity = resolved.identity
+    handle = f"oneway_controllers id '{resolved.identity_id}'"
+    if CONF_COVER in identity and CONF_LIGHT in identity:
+        return f"{handle} has both cover: and light:. An identity is one device: keep the entity it is."
+    problem = _cover_problem(resolved) or _light_problem(resolved)
+    if problem:
+        return problem
+    if identity.get(CONF_FOLLOWS) and CONF_COVER not in identity and CONF_LIGHT not in identity:
+        return (
+            f"{handle} has follows: but neither cover: nor light:. follows: lists the remotes whose presses move "
+            "the entity's shown state; without one there is nothing to move."
+        )
+    if CONF_SET_POSITION in identity and CONF_ON_DURATION not in identity:
+        return (
+            f"{handle} has set_position: but no fade times on a light. It says how the light's slider value reaches "
+            "the device, which needs the time a full fade takes: set light:, dimmable: true, on_duration: and "
+            "off_duration:."
         )
     return None
 
@@ -615,6 +699,23 @@ def _inject_identity_entity_ids(identity):
             is_declaration=True,
             type=IOHomeOneWayCover,
         )
+    if CONF_LIGHT in identity:
+        identity[CONF_LIGHT_ENTITY_ID] = ID(
+            f"{identity_id}_light",
+            is_declaration=True,
+            type=IOHomeOneWayLight,
+        )
+        identity[CONF_LIGHT_STATE_ID] = ID(
+            f"{identity_id}_light_state",
+            is_declaration=True,
+            type=light_component.LightState,
+        )
+        if identity.get(CONF_DIMMABLE):
+            identity[CONF_LIGHT_GAMMA_TABLE_ID] = ID(
+                f"{identity_id}_light_gamma_table",
+                is_declaration=True,
+                type=light_component.GammaTable,
+            )
 
 
 def validate_oneway_controllers(config):
@@ -648,7 +749,7 @@ def validate_oneway_controllers(config):
 
         resolved = _resolve_identity_defaults(identity, config)
         _reject_collisions(resolved, seen_node_ids)
-        problem = _enrollment_manufacturer_problem(resolved) or _cover_problem(resolved)
+        problem = _enrollment_manufacturer_problem(resolved) or _entity_problem(resolved)
         if problem:
             raise cv.Invalid(problem)
         for rule in _WARNING_RULES:
@@ -807,6 +908,41 @@ async def create_oneway_controller_entities(identity, var):
                     identity[CONF_CLOSE_DURATION].total_milliseconds,
                 )
             )
+
+    if CONF_LIGHT in identity:
+        light_type = light_component.LightType.BRIGHTNESS_ONLY if identity.get(CONF_DIMMABLE) else light_component.LightType.BINARY
+        light_values = {
+            CONF_ID: identity[CONF_LIGHT_STATE_ID],
+            CONF_OUTPUT_ID: identity[CONF_LIGHT_ENTITY_ID],
+            CONF_NAME: identity[CONF_LIGHT],
+        }
+        light_schema = light_component.light_schema(IOHomeOneWayLight, light_type).extend(cv.COMPONENT_SCHEMA)
+        if identity.get(CONF_DIMMABLE):
+            # The device fades by itself; an ESPHome transition would send a stream of commands, so the default is
+            # the two-way light's.
+            light_schema = light_schema.extend(INSTANT_LIGHT_TRANSITION)
+            # A brightness light gets a gamma table whose ID the pipeline would generate for a `light:` entry; this
+            # one is built here, so it passes the ID declared at validation. The output ignores gamma (it sends the
+            # linear value).
+            light_values[light_component.CONF_GAMMA_TABLE_ID] = identity[CONF_LIGHT_GAMMA_TABLE_ID]
+        light_config = light_schema(light_values)
+        light_entity = cg.new_Pvariable(light_config[CONF_OUTPUT_ID])
+        await cg.register_component(light_entity, light_config)
+        await light_component.register_light(light_entity, light_config)
+        cg.add(light_entity.set_parent(var))
+        cg.add(light_entity.set_controller_id(identity[CONF_ID]))
+        cg.add(light_entity.set_dimmable(bool(identity.get(CONF_DIMMABLE))))
+        for sender in identity[CONF_FOLLOWS]:
+            cg.add(light_entity.add_follow(sender))
+        if CONF_ON_DURATION in identity:
+            cg.add(
+                light_entity.set_fade_durations(
+                    identity[CONF_ON_DURATION].total_milliseconds,
+                    identity[CONF_OFF_DURATION].total_milliseconds,
+                )
+            )
+        if CONF_SET_POSITION in identity:
+            cg.add(light_entity.set_slider_way(getattr(OneWaySliderWay, identity[CONF_SET_POSITION].upper())))
 
     if identity[CONF_ENROLLMENT]:
         # entity_category: config, not a switch behind an arming flag: the receiver's own 2s PROG

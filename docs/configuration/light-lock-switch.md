@@ -13,6 +13,10 @@ warning if a device answers a command with a result code that says one of its pa
 
 ## Lights
 
+For a light that only listens for a remote (a one-way identity), see
+[A light for the identity](oneway-transmit.md#a-light-for-the-identity). The rest of this section covers the
+two-way light platform.
+
 Use the light platform for IO-Homecontrol light devices. It defaults to binary on/off; set
 `dimmable: true` for brightness control on devices that support intermediate positions.
 

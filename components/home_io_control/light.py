@@ -12,8 +12,9 @@ from esphome.components import light
 from esphome.const import CONF_OUTPUT_ID
 
 from . import home_io_control_ns
+from .hub_names import CONF_DIMMABLE
+from .hub_validators import INSTANT_LIGHT_TRANSITION
 from .platform_common import (
-    INSTANT_LIGHT_TRANSITION,
     create_companion_sensors,
     inject_companion_sensor_ids,
     platform_schema_extension,
@@ -28,9 +29,8 @@ DEPENDENCIES = ["home_io_control"]
 
 IOHomeLight = home_io_control_ns.class_("IOHomeLight", light.LightOutput, cg.Component)
 
-# Opt-in: the protocol gives no machine-readable "is this dimmable" signal (DISCOVER_RESP's
-# subtype byte is manufacturer-opaque), so this defaults to false/binary rather than guessing.
-CONF_DIMMABLE = "dimmable"
+# `dimmable:` (CONF_DIMMABLE, hub_names.py) is an opt-in: the protocol gives no machine-readable "is this dimmable"
+# signal (DISCOVER_RESP's subtype byte is manufacturer-opaque), so it defaults to false/binary rather than guessing.
 
 
 def _inject_companion_ids(config):

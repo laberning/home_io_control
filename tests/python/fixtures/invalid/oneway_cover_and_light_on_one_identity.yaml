@@ -1,0 +1,14 @@
+# expect-error: has both cover: and light:
+# covers: oneway_controllers.validate_oneway_controllers
+# An identity is one device, so it shows one entity.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: remote
+      io_device_type: vertical_exterior_awning
+      commands: [stop]
+      cover: "Awning"
+      light: "Lamp"

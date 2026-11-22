@@ -111,6 +111,12 @@ ROWS = (
         "LightOutput",
         methods=("setup_state", "write_state", "get_traits"),
     ),
+    Row(
+        "components/light/light_output.h",
+        "components/light/light_state.h",
+        "LightState",
+        methods=("is_transformer_active",),
+    ),
     Row("components/switch/switch.h", "components/switch/switch.h", "Switch", methods=("write_state", "publish_state")),
     Row(
         "components/binary_sensor/binary_sensor.h",

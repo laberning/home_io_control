@@ -26,9 +26,9 @@ from esphome.const import (
 )
 
 from . import home_io_control_ns
+from .hub_validators import INSTANT_LIGHT_TRANSITION
 from .platform_common import (
     CLIMATE_PLATFORM,
-    INSTANT_LIGHT_TRANSITION,
     declared_has_feature,
     create_companion_sensors,
     inherit_esphome_device,

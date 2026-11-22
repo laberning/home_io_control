@@ -17,6 +17,7 @@ from esphome.components import spi
 # into when it imports our platform file, so whichever import ran last would silently win.
 from esphome.components import button as button_component
 from esphome.components import cover as cover_component
+from esphome.components import light as light_component
 from esphome.components import switch as switch_component
 from esphome.components import text_sensor as text_sensor_component
 
@@ -101,11 +102,24 @@ CONF_FOLLOWS = "follows"
 # The time a full run of that cover takes each way (ADR 0127); both or neither, and only with `cover:`.
 CONF_OPEN_DURATION = "open_duration"
 CONF_CLOSE_DURATION = "close_duration"
+# A 1W identity's assumed-state light entity (ADR 0128): `light:` is its name, `dimmable:` gives it a brightness slider
+# (also the key of the two-way light platform), `on_duration:` / `off_duration:` the fade time each way, and
+# `set_position:` how a slider value reaches the device ("timed" or "frame").
+CONF_LIGHT = "light"
+CONF_DIMMABLE = "dimmable"
+CONF_ON_DURATION = "on_duration"
+CONF_OFF_DURATION = "off_duration"
+CONF_SET_POSITION = "set_position"
 # Injected at schema time, never user-supplied: the generated buttons' IDs and the identity's
 # diagnostic sensor ID (ADR 0009).
 CONF_BUTTON_IDS = "button_ids"
 CONF_LAST_COMMAND_SENSOR_ID = "last_command_sensor_id"
 CONF_COVER_ENTITY_ID = "cover_entity_id"
+CONF_LIGHT_ENTITY_ID = "light_entity_id"
+# The light output has a LightState beside it, a component too, which ESPHome sizes from the IDs declared at validation.
+CONF_LIGHT_STATE_ID = "light_state_id"
+# A brightness light also names the gamma table the light core builds (unused: the output sends the linear value).
+CONF_LIGHT_GAMMA_TABLE_ID = "light_gamma_table_id"
 # Only present when enrollment: true (ADR 0009 -- an ID created late in to_code() is silently
 # dropped at runtime).
 CONF_ENROLL_BUTTON_ID = "_enroll_button_id"
@@ -214,6 +228,13 @@ IOHomeOneWayLastCommandTextSensor = home_io_control_ns.class_(
 IOHomeOneWayCover = home_io_control_ns.class_(
     "IOHomeOneWayCover", cover_component.Cover, cg.Component
 )
+# Generated 1W light (platform_oneway_entities.h), one per identity with `light:`; created from the hub block like the
+# cover above.
+IOHomeOneWayLight = home_io_control_ns.class_(
+    "IOHomeOneWayLight", light_component.LightOutput, cg.Component
+)
+# The pure slider rule lives in namespace `decisions` (decisions_oneway.h).
+OneWaySliderWay = home_io_control_ns.namespace("decisions").enum("OneWaySliderWay", is_class=True)
 # Generated 1W enrollment button (platform_oneway_entities.h), one per identity with
 # `enrollment: true`. Same "created from the hub block, never a `button:` entry" reasoning as
 # IOHomeOneWayCommandButton above -- see that class's comment.

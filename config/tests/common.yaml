@@ -77,6 +77,22 @@ home_io_control:
       # ADR 0127: travel times give the cover an estimated position, so `set_travel_durations()` compiles.
       open_duration: 30s
       close_duration: 28s
+    # ADR 0128: an assumed-state light for a one-way identity of a light kind, with a slider, fade times and the frame
+    # way, so that `set_fade_durations()` and `set_slider_way()` compile; it follows the same remote as the cover.
+    - id: lamp_remote
+      io_device_type: light
+      commands: [open, close, stop]
+      light: "Lamp Remote"
+      dimmable: true
+      follows: [9D6085]
+      on_duration: 4.7s
+      off_duration: 4.7s
+      set_position: frame
+    # The same light without a slider: on and off only (the binary light type).
+    - id: lamp_switch_remote
+      io_device_type: light
+      commands: [open, close]
+      light: "Lamp Switch Remote"
     - id: velux_screen_remote
       # ADR 0031: manufacturer: drives the CMD_EXECUTE ACEI byte; execute_broadcast: all mimics a
       # handheld remote; execute_acei: is the raw override. ADR 0032: enrollment: true on a

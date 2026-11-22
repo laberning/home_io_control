@@ -62,6 +62,14 @@ home_io_control:
       follows: [9D6085]                                 # optional -- remotes whose presses move that cover
       open_duration: 30s                                # optional, with close_duration -- the cover shows a position
       close_duration: 28s
+    - id: hall_lamp
+      io_device_type: light
+      commands: [open, close, stop]
+      light: "Hall Lamp"                                # optional -- a light entity with an assumed level
+      dimmable: true                                    # optional -- a brightness slider
+      on_duration: 4.7s                                 # optional, with off_duration -- the light shows its fade
+      off_duration: 4.7s
+      set_position: timed                               # optional -- how a slider value is sent: timed or frame
 ```
 
 | Key | Required | Meaning |
@@ -81,7 +89,11 @@ home_io_control:
 | `invert_position` | no | Whether open, close and every position are mirrored on the wire (`0` ↔ `100`). Leave it unset and the device kind decides: a kind whose wire polarity is inverted, such as `horizontal_awning`, is mirrored, exactly as a 2W cover of that kind is, so the generated Open button opens the awning. Set `false` if your receiver turns out to follow the other polarity, or `true` to mirror a kind that is not inverted by default. Your boot log prints `inverted=yes (from kind)`, `inverted=yes (configured)` or `inverted=no`. With `execute_broadcast: all` the mirrored frame reaches every receiver of the broadcast, so the build warns when an inverted kind is combined with it and no explicit `invert_position`. STOP, favorite and vent are never mirrored. |
 | `drives` | no | The devices, by `io_device_id`, that follow this identity's commands: a list of covers or lights declared in the same configuration. After each command the hub transmits as this identity, every listed device shows the commanded state at once and is read a moment later. See [Following a device the identity drives](#following-a-device-the-identity-drives). |
 | `cover` | no | The name of a cover entity for this identity, for a cover kind only (a shutter, awning, blind, window, door or gate; the build fails for a light or any other kind). It sends the identity's open, close and stop and shows the state the hub assumes ([ADR 0117](../adr/0117-a-one-way-controller-can-show-an-assumed-state-cover.md)). Its ID is `<identity_id>_cover`. See [A cover for the identity](#a-cover-for-the-identity). |
-| `follows` | no | The source addresses of the real remotes whose presses the cover follows, a list of six hexadecimal characters each. Needs `cover`. A remote that is not listed never moves the state. |
+| `follows` | no | The source addresses of the real remotes whose presses the cover or the light follows, a list of six hexadecimal characters each. Needs `cover` or `light`. A remote that is not listed never moves the state. |
+| `light` | no | The name of a light entity for this identity, for a light kind only (the build fails for any other kind, and for an identity that also has `cover`). It sends the identity's open (on) and close (off) and shows the level the hub assumes ([ADR 0128](../adr/0128-a-one-way-light-shows-an-estimated-level-and-a-slider-value-is-a-timed-stop-or-a-position-frame.md)). Its ID is `<identity_id>_light`. See [A light for the identity](#a-light-for-the-identity). |
+| `dimmable` | no | Gives the light a brightness slider, as `dimmable` does on the two-way light. Only with `light`. |
+| `on_duration`, `off_duration` | no | How long the light takes to fade from off to full and from full to off, for example `4.7s`. Set both or neither, each above zero, and only with `dimmable: true`. With them the light shows an estimated level while it fades, and a slider value reaches the device. |
+| `set_position` | no | How a slider value reaches the device: `timed` (default) or `frame`. Only with `on_duration` and `off_duration`. See [A light for the identity](#a-light-for-the-identity). |
 | `open_duration`, `close_duration` | no | How long the cover takes for a full run from closed to open and from open to closed, for example `30s`. Set both or neither, each above zero, and only with `cover`. With them the cover shows an estimated position and shows opening or closing while it moves ([ADR 0127](../adr/0127-a-one-way-cover-shows-a-position-from-its-travel-time.md)). See [A position from the travel time](#a-position-from-the-travel-time). Time a full run once with a stopwatch and type it in. |
 
 ## What the build checks
@@ -613,6 +625,64 @@ open and idle; the position is not stored.
 The slider of Home Assistant does not move the cover to a percentage: a value goes out as open or close,
 whichever end it is nearer, and 50 % opens. To get a slider that does, compose it from the generated buttons: see
 [Composing a slider from 1W buttons](../tips-and-tricks.md#composing-a-slider-from-1w-buttons).
+
+## A light for the identity
+
+An identity of a light kind can show up in Home Assistant as one light: on and off, and with
+`dimmable: true` a brightness slider, usable in scenes and voice assistants. Name it with `light:`
+([ADR 0128](../adr/0128-a-one-way-light-shows-an-estimated-level-and-a-slider-value-is-a-timed-stop-or-a-position-frame.md)):
+
+```yaml
+home_io_control:
+  oneway_controllers:
+    - id: hall_lamp
+      io_device_type: light
+      manufacturer: somfy
+      commands: [open, close, stop]
+      light: "Hall Lamp"
+      dimmable: true
+      follows: [9D6085]   # the wall remote of this lamp
+      on_duration: 4.7s   # full fade from off to full
+      off_duration: 4.7s  # full fade from full to off
+```
+
+The light sends the same one-way commands as the identity's buttons, one sequence each: on is the identity's
+open and off is its close. It shows what the hub heard of, like [the cover](#a-cover-for-the-identity), and
+follows the presses of the remotes under `follows:` the same way. Without `dimmable:` it is an on and off light;
+with `dimmable:` and no durations a slider value goes out as on or off, whichever end it is nearer.
+
+**A dimmer fades, so the level is an estimate.** Home Assistant's transition stays off (length 0): the device
+fades by itself, and the light shows that fade. A transition you ask for anyway, for example in a scene, sends only
+its end value. With `on_duration:` and `off_duration:` the hub works the level out from the time a full fade takes,
+as the cover does from its travel time ([A position from the travel time](#a-position-from-the-travel-time)): on
+starts a fade towards full, off a fade towards off, and a stop, sent by the hub or heard from a followed remote,
+freezes the level where it is. The level updates about once a second while it fades. Time a full fade once and type it in.
+
+**A slider value** reaches the device in one of two ways, chosen with `set_position:`:
+
+- **`timed`** (default) sends on or off towards the value and, when the estimate reaches it, one stop. The hub
+  starts counting when the command has reached the radio, so the stop lands when the fade is where you asked. A value
+  at an end sends the plain on or off and no stop; the end stop of the device then corrects the estimate. A new
+  value, a stop and the press of a followed remote cancel a stop that is still waiting, so a stale stop is never
+  sent, and a new value is worked out from the level reached so far. If a fade that is already running passes the
+  value before the command reaches the radio, the hub sends a stop or the way back instead. The stop goes out as a
+  burst, so the level lands slightly past the value, and a stop the device misses runs the fade to its end.
+- **`frame`** sends one position frame with the level, and no stop. The device is expected to go to the level at
+  once, and the light shows it at once. Full and off fade like on and off.
+
+A bench run on a Somfy Izymo dimmer, with each step read back over two-way, measured a linear fade of about
+4.7 s from off to full and the same back; a one-way stop during a fade froze the level, four of four within 1 % of
+the level a linear fade predicts for the moment the stop went out; and a one-way position frame was obeyed, with
+the level reached at once. The light entity was then run on that dimmer, each result read back over two-way: in each
+way, on, off and the levels 25, 50 and 75 % ten times each, 50 of 50 as asked. With `frame` the dimmer reached
+each level exactly; with `timed` it landed 2 points brighter every time (73, 48 and 23 on the device's scale for 25,
+50 and 75 %), the lag of the stop burst ([Somfy Izymo IO dimmer](../devices/somfy-izymo-dimmer.md)). A device
+that ignores a position frame does nothing with `set_position: frame`: try the `timed` way there.
+
+**The level is an assumption, and it is wrong when** the hub missed a press of the real remote, the device
+ignored a command, the lamp was dimmed by hand or by a remote you did not list, or the hub rebooted. The hub cannot
+tell any of these from a correct fade. A full on or off corrects the level: send it and let it finish. After a reboot
+the light shows off; nothing is stored.
 
 ## Continuous control
 

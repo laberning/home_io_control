@@ -8,7 +8,7 @@
 ## tables, and the validators for node IDs, system keys, device IDs, linked remotes and
 ## status-poll intervals that the hub schema and the platform modules share.
 ##
-## DEVICE_TYPE_OPTIONS, DEVICE_MODEL_OPTIONS, DEVICE_FEATURES (with FEATURES, EXPERIMENTAL_KINDS and
+## DEVICE_TYPE_OPTIONS, DEVICE_MODEL_OPTIONS, DEVICE_FEATURES (with FEATURES, EXPERIMENTAL_KINDS, LIGHT_KINDS and
 ## NAMED_POSITION_FEATURES), DEVICE_READINGS (with READING_FEATURE_HINTS and READING_REMOVE_HINTS), MANUFACTURER_OPTIONS, PA_PIN_OPTIONS, TCXO_VOLTAGE_OPTIONS and
 ## FEM_TX_POWER_MAX_QUIET mirror C++ tables; the ``tests/sync/`` host tests and
 ## ``make yaml-emitter-sync`` read them from this file by name.
@@ -19,6 +19,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_CS_PIN,
+    CONF_DEFAULT_TRANSITION_LENGTH,
     CONF_DEVICE_ID,
     CONF_ID,
     CONF_NAME,
@@ -473,6 +474,17 @@ EXPERIMENTAL_KINDS = frozenset(
     }
 )
 
+# The rows whose capability class is LIGHT (DeviceCapabilityClass in proto_device_kinds.h), keyed like
+# EXPERIMENTAL_KINDS. A one-way identity of such a kind may show a light (ADR 0128); kind_is_light() reads it.
+LIGHT_KINDS = frozenset(
+    {
+        "light",
+        "light/1",
+        "light/2",
+        "light/58",
+    }
+)
+
 # The named positions (proto_device_types.h NAMED_POSITIONS), keyed by the CoverCommand name
 # cover_command_name() returns, with the capability a device needs for each. Each companion button of
 # cover.py is created from the capability here.
@@ -555,6 +567,22 @@ def kind_is_cover(device_type):
     number."""
     features = device_features(device_type)
     return any(feature in features for feature in NAMED_POSITION_FEATURES.values())
+
+
+def kind_is_light(device_type):
+    """True when the node type is a light kind: its row's capability class is LIGHT. Read from LIGHT_KINDS, the mirror
+    of the C++ class, never from a type number; a one-way identity names no subtype, so the type's own row decides."""
+    return device_type_name(device_type) in LIGHT_KINDS
+
+
+# ESPHome's light_schema() defaults to a 1 s transition, which fades a brightness change client-side by
+# calling write_state() repeatedly over that window. Here each write_state() is a radio exchange (about
+# 300 ms), so a fade becomes a stream of superseding commands, and each device reply can restart it: on real
+# hardware (the Izymo dimmer) it looped indefinitely. Every brightness light of this component extends its
+# schema with this, so changes apply at once unless the YAML asks for a fade.
+INSTANT_LIGHT_TRANSITION = {
+    cv.Optional(CONF_DEFAULT_TRANSITION_LENGTH, default="0s"): cv.positive_time_period_milliseconds
+}
 
 
 def kind_is_experimental(device_type, subtype=0):
