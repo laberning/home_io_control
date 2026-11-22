@@ -5,8 +5,11 @@
 #include "esphome/core/component.h"
 
 #include "test_helpers.h"
+#include "log_capture.h"
+#include "oneway_controller.h"
 #include "stubs/radio_test_common.h"
 
+#include <algorithm>
 #include <cstring>
 
 using namespace esphome::home_io_control;
@@ -193,6 +196,58 @@ TEST(HubCore, DumpConfigAsksTheRadioForFrontEndBeforeChipDiagnostics) {
   EXPECT_EQ(radio->sections[1], "debug");
   delete comp.radio_;
   comp.radio_ = nullptr;
+}
+
+namespace {
+/// @return How many recorded config lines use @p format.
+size_t config_lines_with(const test::LogCapture &log, const std::string &format) {
+  return static_cast<size_t>(std::count_if(log.lines().begin(), log.lines().end(), [&format](const auto &line) {
+    return line.level == 'C' && line.format == format;
+  }));
+}
+
+/// Configures a light identity at node 4B7AB3, the address the `drives:` links below are keyed by.
+void add_kitchen_identity(TestableHubComponent &comp) {
+  OneWayControllerIdentity identity{};
+  identity.id = "kitchen_1w";
+  const uint8_t node[NODE_ID_SIZE] = {0x4B, 0x7A, 0xB3};
+  std::memcpy(identity.node_id, node, NODE_ID_SIZE);
+  identity.io_device_type = DeviceType::LIGHT;
+  comp.add_oneway_controller(identity);
+}
+}  // namespace
+
+// A `drives:` link shares the registry's remote map with the real remote links (ADR 0116). The boot log lists it
+// under its identity, not as a linked remote, so a reader does not take the identity for a physical remote.
+TEST(HubCore, DumpConfigListsADrivenDeviceUnderItsIdentityNotAsALinkedRemote) {
+  TestableHubComponent comp;
+  add_kitchen_identity(comp);
+  comp.add_device("DBD50E");
+  comp.add_device("30E1F2");
+  comp.add_oneway_driven_device("4B7AB3", "DBD50E");
+  comp.add_linked_remote("A1B2C3", "30E1F2");
+
+  test::LogCapture log;
+  comp.dump_config();
+
+  EXPECT_EQ(config_lines_with(log, "      drives device %s"), 1u) << "the driven device is listed under its identity";
+  EXPECT_EQ(config_lines_with(log, "    - remote %s -> device %s"), 1u)
+      << "only the real remote is listed as a linked remote";
+  EXPECT_EQ(config_lines_with(log, "  Linked Remotes: %zu"), 1u);
+}
+
+TEST(HubCore, DumpConfigPrintsNoLinkedRemotesSectionWhenOnlyIdentitiesDriveDevices) {
+  TestableHubComponent comp;
+  add_kitchen_identity(comp);
+  comp.add_device("DBD50E");
+  comp.add_oneway_driven_device("4B7AB3", "DBD50E");
+
+  test::LogCapture log;
+  comp.dump_config();
+
+  EXPECT_EQ(config_lines_with(log, "  Linked Remotes: %zu"), 0u);
+  EXPECT_EQ(config_lines_with(log, "    - remote %s -> device %s"), 0u);
+  EXPECT_EQ(config_lines_with(log, "      drives device %s"), 1u);
 }
 
 TEST(HubCore, DumpConfigStillDumpsSectionsOfARadioThatFailedAfterSetup) {

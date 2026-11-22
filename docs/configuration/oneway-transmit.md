@@ -497,6 +497,9 @@ One identity can drive several devices, and `drives:` accepts covers and lights.
 the identity's `io_device_type`, so a driven device of another type is read afterwards but does not
 show the commanded state at once; with `execute_broadcast: all` every driven device does.
 
+The boot log lists each driven device under its identity in the 1W Controllers section. Its Linked
+Remotes section counts only the real remotes you list under `linked_remotes:`.
+
 **Example: a cover that follows its one-way identity.** When you command a motor through a one-way
 identity it is enrolled on (its buttons, or an automation that presses them), list the cover under
 `drives:`, so the cover shows each of those commands at once and reads the motor afterwards. Here

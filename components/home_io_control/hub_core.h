@@ -1373,6 +1373,21 @@ class IOHomeControlComponent : public Component,
   /// ACEI / broadcast (ADR 0031). Factored out of dump_config() to keep its cognitive complexity
   /// under the clang-tidy threshold.
   void dump_oneway_controllers_config_() const;
+  /// @brief Emit the devices one identity drives (`drives:`, ADR 0116) under its 1W Controllers entry.
+  /// @param identity The identity whose address keys its `drives:` links in the registry.
+  void dump_oneway_driven_devices_(const OneWayControllerIdentity &identity) const;
+  /// @brief Emit the Linked Remotes section of the config dump: the real remotes from
+  /// `linked_remotes:` and the devices each one is linked to. `drives:` links share the registry's
+  /// remote map but are left out here; dump_oneway_driven_devices_() lists them.
+  void dump_linked_remotes_config_() const;
+  /// @brief Whether @p node_id is the address of a configured one-way identity.
+  ///
+  /// The registry stores a `drives:` link under the identity's address, next to the real remote
+  /// links (ADR 0116); the config dump uses this to list each kind in its own section. An identity's
+  /// address can never also be a linked remote: the YAML validation rejects that collision.
+  /// @param node_id A 6-hex-character node ID, as the registry keys it.
+  /// @return true when a `oneway_controllers:` entry has that address.
+  [[nodiscard]] bool is_oneway_identity_address_(const std::string &node_id) const;
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
   // --- LR1121 firmware update: thin forwarders to the Lr1121FirmwareUpdateController collaborator

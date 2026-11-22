@@ -758,13 +758,7 @@ void IOHomeControlComponent::dump_config() {
   ESP_LOGCONFIG(detail::TAG, "  Low-power wake belief: %s",
                 this->tuning_.low_power_wake_belief ? "on" : "off (tuning: low_power_wake_belief: false)");
   ESP_LOGCONFIG(detail::TAG, "  Devices: %zu", this->registry_.size());
-  if (this->registry_.linked_remote_count() > 0) {
-    ESP_LOGCONFIG(detail::TAG, "  Linked Remotes: %zu", this->registry_.linked_remote_count());
-    this->registry_.for_each_linked_remote([](const std::string &remote_id, const std::vector<std::string> &devices) {
-      for (const auto &device_id : devices)
-        ESP_LOGCONFIG("home_io_control", "    - remote %s -> device %s", remote_id.c_str(), device_id.c_str());
-    });
-  }
+  this->dump_linked_remotes_config_();
 
   this->dump_oneway_controllers_config_();
 
@@ -783,6 +777,43 @@ void IOHomeControlComponent::dump_config() {
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
   this->dump_lr1121_firmware_update_debug_();
 #endif
+}
+
+void IOHomeControlComponent::dump_linked_remotes_config_() const {
+  // A `drives:` link is stored with the remote links under the identity's own address (ADR 0116), but it is
+  // not a remote: it is listed under its identity in the 1W Controllers section instead.
+  size_t remote_count = 0;
+  this->registry_.for_each_linked_remote(
+      [this, &remote_count](const std::string &remote_id, const std::vector<std::string> & /*devices*/) {
+        if (!this->is_oneway_identity_address_(remote_id))
+          ++remote_count;
+      });
+  if (remote_count > 0) {
+    ESP_LOGCONFIG(detail::TAG, "  Linked Remotes: %zu", remote_count);
+    this->registry_.for_each_linked_remote(
+        [this](const std::string &remote_id, const std::vector<std::string> &devices) {
+          if (this->is_oneway_identity_address_(remote_id))
+            return;
+          for (const auto &device_id : devices)
+            ESP_LOGCONFIG(detail::TAG, "    - remote %s -> device %s", remote_id.c_str(), device_id.c_str());
+        });
+  }
+}
+
+bool IOHomeControlComponent::is_oneway_identity_address_(const std::string &node_id) const {
+  for (const auto &identity : this->oneway_controllers().all()) {
+    if (node_id_to_string(identity.node_id) == node_id)
+      return true;
+  }
+  return false;
+}
+
+void IOHomeControlComponent::dump_oneway_driven_devices_(const OneWayControllerIdentity &identity) const {
+  const std::vector<std::string> *driven = this->registry_.linked_devices(node_id_to_string(identity.node_id));
+  if (driven == nullptr)
+    return;
+  for (const auto &device_id : *driven)
+    ESP_LOGCONFIG(detail::TAG, "      drives device %s", device_id.c_str());
 }
 
 void IOHomeControlComponent::dump_oneway_controllers_config_() const {
@@ -806,6 +837,8 @@ void IOHomeControlComponent::dump_oneway_controllers_config_() const {
         oneway_power_class_name(identity.power_class));
     // Whether open/close are mirrored on the wire, and who decided: the kind or `invert_position:`.
     ESP_LOGCONFIG(detail::TAG, "      inverted=%s", oneway_inverted_label(identity));
+    // The devices this identity drives (`drives:`, ADR 0116): each is read after the identity's own commands.
+    this->dump_oneway_driven_devices_(identity);
 
     // The VELUX enrollment gesture ignores io_device_type and sweeps a fixed class set instead —
     // the most surprising resolved value on the identity, so print it (ADR 0032).
