@@ -1634,6 +1634,28 @@ def cover_gets_its_kinds_default_device_class():
 
 
 @case()
+def oneway_cover_gets_its_kinds_default_device_class():
+    """A one-way identity's cover gets the class of the identity's kind from the same table as a two-way cover;
+    an explicit `device_class:` wins (even ""), and a kind with no default gets none."""
+    from esphome.const import CONF_DEVICE_CLASS
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+    from esphome.components.home_io_control import hub_validators as v
+
+    def device_class(kind, **extra):
+        identity = {n.CONF_IO_DEVICE_TYPE: v.DEVICE_TYPE_OPTIONS[kind], **extra}
+        return o._cover_device_class(identity).get(CONF_DEVICE_CLASS)
+
+    assert device_class("horizontal_awning") == v.DEFAULT_COVER_DEVICE_CLASS["horizontal_awning"]
+    assert device_class("roller_shutter") == "shutter"
+    assert device_class("roller_shutter", device_class="blind") == "blind", "an explicit class wins"
+    assert device_class("roller_shutter", device_class="") == "", "an explicit empty class is kept"
+    assert device_class("bioclimatic_pergola") is None, "a kind with no default gets none"
+    for kind, expected in v.DEFAULT_COVER_DEVICE_CLASS.items():
+        assert device_class(kind) == expected, kind
+
+
+@case()
 def every_key_holding_a_secret_is_masked_in_the_config_dump():
     """Every system_key the component accepts (hub, device-bound entity, 1W controller) is marked
     cv.sensitive, so `esphome config` and the dashboard mask it. ESPHome's substring fallback that

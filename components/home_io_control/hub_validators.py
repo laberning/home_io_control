@@ -246,6 +246,15 @@ DEFAULT_COVER_DEVICE_CLASS = {
     "vertical_exterior_awning": DEVICE_CLASS_AWNING,
 }
 
+
+def default_cover_device_class(device_type):
+    """The Home Assistant device class a cover of @p device_type gets when it sets no `device_class:`, or None.
+
+    One rule for the two-way cover (cover.py) and the one-way cover of an identity (oneway_controllers.py).
+    """
+    return DEFAULT_COVER_DEVICE_CLASS.get(device_type_name(device_type))
+
+
 # === Device capabilities ===
 #
 # Python's mirror of the capability set each node-type table row carries (proto_device_features.h,

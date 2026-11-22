@@ -20,6 +20,7 @@ from esphome.components import cover as cover_component
 from esphome.components import light as light_component
 from esphome.components import text_sensor as text_sensor_component
 from esphome.const import (
+    CONF_DEVICE_CLASS,
     CONF_ID,
     CONF_NAME,
     CONF_OUTPUT_ID,
@@ -76,6 +77,7 @@ from .hub_validators import (
     DEVICE_TYPE_MAX,
     INSTANT_LIGHT_TRANSITION,
     declared_device_entries,
+    default_cover_device_class,
     DEVICE_TYPE_OPTIONS,
     MANUFACTURER_OPTIONS,
     ONEWAY_WIRE_PROFILE_MANUFACTURERS,
@@ -236,6 +238,9 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # as the identity's own commands, and a state that follows them. Only for a cover kind
         # (_cover_problem()). The ID follows `<identity_id>_cover`.
         cv.Optional(CONF_COVER): cv.string_strict,
+        # The cover's Home Assistant device class, as on a two-way cover; unset, the kind's default
+        # (default_cover_device_class()), and "" keeps none. Needs `cover:`.
+        cv.Optional(CONF_DEVICE_CLASS): cv.one_of(*cover_component.DEVICE_CLASSES, lower=True),
         # The sender addresses of the real remotes whose presses the cover or light follows, as `linked_remotes:` lists
         # them for a two-way cover. Never every remote of the class: a neighbour's would move the state. Needs
         # `cover:` or `light:`.
@@ -551,6 +556,8 @@ def _entity_problem(resolved):
     problem = _cover_problem(resolved) or _light_problem(resolved)
     if problem:
         return problem
+    if CONF_DEVICE_CLASS in identity and CONF_COVER not in identity:
+        return f"{handle} has device_class: but no cover:. It is the cover's Home Assistant class; set cover: too."
     if identity.get(CONF_FOLLOWS) and CONF_COVER not in identity and CONF_LIGHT not in identity:
         return (
             f"{handle} has follows: but neither cover: nor light:. follows: lists the remotes whose presses move "
@@ -892,6 +899,15 @@ def _named_kind(device_type):
     return None if name == "unknown" else name
 
 
+def _cover_device_class(identity):
+    """The `device_class:` entry of the identity's cover: the explicit value, "" included, else the kind's default
+    (the same table as a two-way cover), else none."""
+    if CONF_DEVICE_CLASS in identity:
+        return {CONF_DEVICE_CLASS: identity[CONF_DEVICE_CLASS]}
+    default = default_cover_device_class(identity[CONF_IO_DEVICE_TYPE])
+    return {CONF_DEVICE_CLASS: default} if default is not None else {}
+
+
 async def create_oneway_controller_entities(identity, var):
     """Create one identity's command buttons and its "Last 1W Command" diagnostic sensor.
 
@@ -942,6 +958,7 @@ async def create_oneway_controller_entities(identity, var):
             {
                 CONF_ID: identity[CONF_COVER_ENTITY_ID],
                 CONF_NAME: identity[CONF_COVER],
+                **_cover_device_class(identity),
             }
         )
         cover_entity = await cover_component.new_cover(cover_config)

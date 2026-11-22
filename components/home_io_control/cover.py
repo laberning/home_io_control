@@ -24,9 +24,8 @@ from esphome.const import (
 from . import home_io_control_ns
 from .hub_names import CONF_INVERT_POSITION
 from .hub_validators import (
-    DEFAULT_COVER_DEVICE_CLASS,
     NAMED_POSITION_FEATURES,
-    device_type_name,
+    default_cover_device_class,
     reading_poll_interval_schema,
     validate_status_refresh_interval,
 )
@@ -114,7 +113,7 @@ def _default_device_class(config):
     """Give a cover that declares io_device_type and sets no `device_class:` the kind's Home
     Assistant class; an explicit value, including "", is kept."""
     if CONF_DEVICE_CLASS not in config and CONF_DEVICE_TYPE in config:
-        default = DEFAULT_COVER_DEVICE_CLASS.get(device_type_name(config[CONF_DEVICE_TYPE]))
+        default = default_cover_device_class(config[CONF_DEVICE_TYPE])
         if default is not None:
             config[CONF_DEVICE_CLASS] = default
     return config

@@ -1,0 +1,13 @@
+# expect-error: has device_class: but no cover:
+# covers: oneway_controllers.validate_oneway_controllers
+# The class belongs to the identity's cover; without the cover there is nothing to class.
+packages:
+  common: !include ../_common.yaml
+  board: !include ../../../../config/boards/heltec-v3.yaml
+
+home_io_control:
+  oneway_controllers:
+    - id: remote
+      io_device_type: horizontal_awning
+      commands: [stop]
+      device_class: awning

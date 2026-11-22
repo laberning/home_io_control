@@ -90,6 +90,7 @@ home_io_control:
 | `invert_position` | no | Whether open, close and every position are mirrored on the wire (`0` ↔ `100`). Leave it unset and the device kind decides: a kind whose wire polarity is inverted, such as `horizontal_awning`, is mirrored, exactly as a 2W cover of that kind is, so the generated Open button opens the awning. Set `false` if your receiver turns out to follow the other polarity, or `true` to mirror a kind that is not inverted by default. Your boot log prints `inverted=yes (from kind)`, `inverted=yes (configured)` or `inverted=no`. With `execute_broadcast: all` the mirrored frame reaches every receiver of the broadcast, so the build warns when an inverted kind is combined with it and no explicit `invert_position`. STOP, favorite and vent are never mirrored. |
 | `drives` | no | The devices, by `io_device_id`, that follow this identity's commands: a list of covers or lights declared in the same configuration. After each command the hub transmits as this identity, every listed device shows the commanded state at once and is read a moment later. See [Following a device the identity drives](#following-a-device-the-identity-drives). |
 | `cover` | no | The name of a cover entity for this identity, for a cover kind only (a shutter, awning, blind, window, door or gate; the build fails for a light or any other kind). It sends the identity's open, close and stop and shows the state the hub assumes ([ADR 0117](../adr/0117-a-one-way-controller-can-show-an-assumed-state-cover.md)). Its ID is `<identity_id>_cover`. See [A cover for the identity](#a-cover-for-the-identity). |
+| `device_class` | no | The cover's Home Assistant device class, as on a two-way cover. Unset, the cover gets its kind's class; `""` gives none. Only together with `cover`. |
 | `follows` | no | The source addresses of the real remotes whose presses the cover or the light follows, a list of six hexadecimal characters each. Needs `cover` or `light`. A remote that is not listed never moves the state. |
 | `light` | no | The name of a light entity for this identity, for a light kind only (the build fails for any other kind, and for an identity that also has `cover`). It sends the identity's open (on) and close (off) and shows the level the hub assumes ([ADR 0128](../adr/0128-a-one-way-light-shows-an-estimated-level-and-a-slider-value-is-a-timed-stop-or-a-position-frame.md)). Its ID is `<identity_id>_light`. See [A light for the identity](#a-light-for-the-identity). |
 | `dimmable` | no | Gives the light a brightness slider, as `dimmable` does on the two-way light. Only with `light`. |
@@ -553,6 +554,10 @@ The entity sends the same one-way commands as the identity's buttons, one sequen
 buttons you list under `commands:`. A one-way device never reports a position, so the cover shows one
 only when you give it the travel times; see [A position from the travel time](#a-position-from-the-travel-time).
 The rest of this section describes the cover without them.
+
+The cover gets the Home Assistant device class of its kind, as a two-way cover does
+([Home Assistant device class](cover.md#home-assistant-device-class)); set `device_class:` on the
+identity to choose another one, or `""` for none.
 
 **What the cover shows.** The hub has no reply to read, so the cover shows what it heard of, and Home
 Assistant marks it as an assumed state (both arrows stay usable whatever it shows):
