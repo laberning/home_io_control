@@ -852,7 +852,44 @@ def final_validate_oneway_drives(config):
                     f"'{entry.get(CONF_NAME) or device_id}', which cannot follow its commands: only a "
                     "cover or a light shows the state of a one-way command"
                 )
+            _warn_if_driven_type_differs(identity, device_id, entry)
     return config
+
+
+def _warn_if_driven_type_differs(identity, device_id, entry):
+    """Warn when a typed identity drives a device whose declared type is another one.
+
+    A typed command addresses the identity's `io_device_type`, so the hub does not move the shown state of a driven
+    device of another type at once; it shows the device's state only after the read that follows (ADR 0116).
+    Legal and sometimes wanted, so a warning and not an error. Only a mismatch the build can see is judged: an
+    identity that broadcasts to all reaches every type, the hub moves a device at once when either type is
+    `unknown`, and a device without a declared type, or with a raw type that has no name, is left alone.
+    """
+    if identity[CONF_EXECUTE_BROADCAST] == "all":
+        return
+    identity_kind = _named_kind(identity[CONF_IO_DEVICE_TYPE])
+    device_kind = _named_kind(entry.get(CONF_IO_DEVICE_TYPE))
+    if identity_kind is None or device_kind is None or device_kind == identity_kind:
+        return
+    name = entry.get(CONF_NAME) or device_id
+    _LOGGER.warning(
+        "oneway_controllers id '%s' addresses %s devices but drives '%s', a %s: '%s' shows the identity's commands "
+        "only after the read that follows. Set execute_broadcast: all, or io_device_type: %s on the identity",
+        identity[CONF_ID],
+        identity_kind,
+        name,
+        device_kind,
+        name,
+        device_kind,
+    )
+
+
+def _named_kind(device_type):
+    """The io_device_type name of a declared type, or None when none is declared, it is `unknown` or it has no name."""
+    if device_type is None:
+        return None
+    name = device_type_name(device_type)
+    return None if name == "unknown" else name
 
 
 async def create_oneway_controller_entities(identity, var):

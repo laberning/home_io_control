@@ -22,6 +22,8 @@ Three parts:
 
 import ast
 import asyncio
+import contextlib
+import logging
 import os
 import subprocess
 import sys
@@ -75,6 +77,23 @@ def expect_invalid(fn, value, fragment):
         assert fragment in str(err), f"expected {fragment!r} in {str(err)!r}"
         return
     raise AssertionError(f"{fn.__name__}({value!r}) was accepted; expected rejection containing {fragment!r}")
+
+
+@contextlib.contextmanager
+def logged_messages(logger):
+    """Collect the messages `logger` logs inside the `with` block, formatted, in order."""
+    messages = []
+
+    class Collect(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+
+    handler = Collect()
+    logger.addHandler(handler)
+    try:
+        yield messages
+    finally:
+        logger.removeHandler(handler)
 
 
 # =============================================================================================
@@ -296,8 +315,6 @@ def oneway_invert_position_is_tri_state_in_codegen_and_warns_for_inverted_broadc
     """`invert_position:` is emitted as an empty optional when absent (the kind decides in C++),
     as true/false when present; an inverted kind on `execute_broadcast: all` without the key logs
     one warning, and setting the key (or a non-inverted kind) logs none."""
-    import logging
-
     from esphome.components.home_io_control import hub_names as n
     from esphome.components.home_io_control import oneway_controllers as o
     from esphome.components.home_io_control.hub_validators import DEVICE_TYPE_OPTIONS
@@ -324,18 +341,8 @@ def oneway_invert_position_is_tri_state_in_codegen_and_warns_for_inverted_broadc
     assert ".invert_override = true" in expression(**{n.CONF_INVERT_POSITION: True})
     assert ".invert_override = false" in expression(**{n.CONF_INVERT_POSITION: False})
 
-    class Capture(logging.Handler):
-        def __init__(self):
-            super().__init__()
-            self.messages = []
-
-        def emit(self, record):
-            self.messages.append(record.getMessage())
-
     def warnings_for(entry):
-        capture = Capture()
-        o._LOGGER.addHandler(capture)
-        try:
+        with logged_messages(o._LOGGER) as messages:
             o.validate_oneway_controllers(
                 {
                     n.CONF_NODE_ID: "C0FFEE",
@@ -344,14 +351,54 @@ def oneway_invert_position_is_tri_state_in_codegen_and_warns_for_inverted_broadc
                     n.CONF_ONEWAY_CONTROLLERS: [entry],
                 }
             )
-        finally:
-            o._LOGGER.removeHandler(capture)
-        return [m for m in capture.messages if "mirrored" in m]
+        return [m for m in messages if "mirrored" in m]
 
     assert len(warnings_for(identity("horizontal_awning", "all"))) == 1
     assert warnings_for(identity("horizontal_awning", "all", **{n.CONF_INVERT_POSITION: False})) == []
     assert warnings_for(identity("horizontal_awning", "typed")) == []
     assert warnings_for(identity("vertical_exterior_awning", "all")) == []
+
+
+@case()
+def oneway_drives_warns_when_a_typed_identity_drives_a_device_of_another_type():
+    """A typed identity that drives a cover or a light of another declared type logs one warning naming both types
+    and both remedies; the same type, `execute_broadcast: all`, a device without a declared type and the `unknown`
+    type on either side log none, as the hub moves those devices at once."""
+    from esphome import final_validate as fv
+    from esphome.components.home_io_control import hub_names as n
+    from esphome.components.home_io_control import oneway_controllers as o
+    from esphome.components.home_io_control.hub_validators import DEVICE_TYPE_OPTIONS
+
+    def warnings_for(identity_kind, broadcast, device_kind, domain="cover"):
+        device = {"platform": "home_io_control", "name": "Patio", n.CONF_IO_DEVICE_ID: "30E1F2"}
+        if device_kind is not None:
+            device[n.CONF_IO_DEVICE_TYPE] = DEVICE_TYPE_OPTIONS[device_kind]
+        identity = {
+            "id": "patio_1w",
+            n.CONF_IO_DEVICE_TYPE: DEVICE_TYPE_OPTIONS[identity_kind],
+            n.CONF_EXECUTE_BROADCAST: broadcast,
+            n.CONF_DRIVES: ["30E1F2"],
+        }
+        token = fv.full_config.set({domain: [device]})
+        try:
+            with logged_messages(o._LOGGER) as messages:
+                o.final_validate_oneway_drives({n.CONF_ONEWAY_CONTROLLERS: [identity]})
+        finally:
+            fv.full_config.reset(token)
+        return [m for m in messages if "after the read that follows" in m]
+
+    messages = warnings_for("roller_shutter", "typed", "horizontal_awning")
+    assert messages == [
+        "oneway_controllers id 'patio_1w' addresses roller_shutter devices but drives 'Patio', a horizontal_awning: "
+        "'Patio' shows the identity's commands only after the read that follows. Set execute_broadcast: all, or "
+        "io_device_type: horizontal_awning on the identity"
+    ], messages
+    assert len(warnings_for("roller_shutter", "typed", "light", domain="light")) == 1, "a driven light is judged too"
+    assert warnings_for("horizontal_awning", "typed", "horizontal_awning") == []
+    assert warnings_for("roller_shutter", "all", "horizontal_awning") == []
+    assert warnings_for("roller_shutter", "typed", None) == []
+    assert warnings_for("roller_shutter", "typed", "unknown") == []
+    assert warnings_for("unknown", "typed", "horizontal_awning") == []
 
 
 @case()
@@ -1775,8 +1822,6 @@ def experimental_kinds_are_marked_in_the_mirror_and_warned_about_once_at_config_
     EXPERIMENTAL_KINDS, apart from the capabilities; declaring one logs one warning that names the kind
     and the reporting page, and a confirmed kind, a declared kind of a confirmed type and a config with
     no kind log nothing."""
-    import logging
-
     from esphome.components.home_io_control import hub_validators as v
     from esphome.components.home_io_control import platform_common as p
 
@@ -1794,22 +1839,10 @@ def experimental_kinds_are_marked_in_the_mirror_and_warned_about_once_at_config_
     for unflagged in ("interior_venetian_blind", "vertical_interior_blind", "dual_roller_shutter"):
         assert not v.kind_is_experimental(t[unflagged]), f"{unflagged}: its behaviour is experimental, not its identity"
 
-    class Capture(logging.Handler):
-        def __init__(self):
-            super().__init__()
-            self.messages = []
-
-        def emit(self, record):
-            self.messages.append(record.getMessage())
-
     def warnings_for(config):
-        capture = Capture()
-        p._LOGGER.addHandler(capture)
-        try:
+        with logged_messages(p._LOGGER) as messages:
             assert p.warn_if_experimental_kind(config) is config, "a post-validator returns its config"
-        finally:
-            p._LOGGER.removeHandler(capture)
-        return capture.messages
+        return messages
 
     messages = warnings_for({"io_device_type": t["swinging_shutter"], "io_subtype": 58})
     assert len(messages) == 1, messages
@@ -1828,33 +1861,19 @@ def lbt_max_retries_is_accepted_with_a_warning_and_generates_no_code():
     """`lbt_max_retries` is retired (ADR 0096): the tuning block still accepts it within its old range
     and logs one warning naming the replacement key; a value outside the range is still reported,
     and the key never reaches the generated tuning assignments."""
-    import logging
-
     import esphome.config_validation as cv
     from esphome.components.home_io_control import tuning as t
 
-    class Capture(logging.Handler):
-        def __init__(self):
-            super().__init__()
-            self.messages = []
-
-        def emit(self, record):
-            self.messages.append(record.getMessage())
-
-    capture = Capture()
-    t._LOGGER.addHandler(capture)
-    try:
+    with logged_messages(t._LOGGER) as messages:
         assert t.TUNING_SCHEMA({t.CONF_LBT_MAX_RETRIES: 3})[t.CONF_LBT_MAX_RETRIES] == 3
         try:
             t.TUNING_SCHEMA({t.CONF_LBT_MAX_RETRIES: 11})
             raise AssertionError("an out-of-range lbt_max_retries was accepted")
         except cv.Invalid:
             pass
-    finally:
-        t._LOGGER.removeHandler(capture)
-    assert len(capture.messages) == 1, capture.messages
-    assert "'lbt_max_retries:' is deprecated and has no effect" in capture.messages[0]
-    assert "lbt_force_when_busy: true" in capture.messages[0]
+    assert len(messages) == 1, messages
+    assert "'lbt_max_retries:' is deprecated and has no effect" in messages[0]
+    assert "lbt_force_when_busy: true" in messages[0]
     assert t.CONF_LBT_MAX_RETRIES not in t._NUMBER_PARAMS, "a deprecated key must not get a number entity"
     assert t.CONF_LBT_FORCE_WHEN_BUSY in t._BOOL_PARAMS, "the replacement key is a plain boolean tuning key"
 
@@ -1892,18 +1911,8 @@ def deprecated_preamble_byte_keys_warn_once_and_reach_codegen_unconverted():
     """Each old byte key is accepted within its old range, warns once naming its replacement, and
     is handed to C++ as bytes (setup() converts it for the radio); a response key of another radio
     is accepted and warned about but never emitted."""
-    import logging
-
     import esphome.config_validation as cv
     from esphome.components.home_io_control import tuning as t
-
-    class Capture(logging.Handler):
-        def __init__(self):
-            super().__init__()
-            self.messages = []
-
-        def emit(self, record):
-            self.messages.append(record.getMessage())
 
     legacy = {
         "low_power_wake_preamble": (2048, "low_power_wake_ms"),
@@ -1916,15 +1925,11 @@ def deprecated_preamble_byte_keys_warn_once_and_reach_codegen_unconverted():
     }
     assert set(legacy) == set(t._LEGACY_PREAMBLE_KEYS), "every deprecated key is covered here"
     for old_key, (value, new_key) in legacy.items():
-        capture = Capture()
-        t._LOGGER.addHandler(capture)
-        try:
+        with logged_messages(t._LOGGER) as messages:
             assert t.TUNING_SCHEMA({old_key: value})[old_key] == value
-        finally:
-            t._LOGGER.removeHandler(capture)
-        assert len(capture.messages) == 1, (old_key, capture.messages)
-        assert f"'{old_key}:' is deprecated" in capture.messages[0]
-        assert f"'{new_key}:'" in capture.messages[0], capture.messages[0]
+        assert len(messages) == 1, (old_key, messages)
+        assert f"'{old_key}:' is deprecated" in messages[0]
+        assert f"'{new_key}:'" in messages[0], messages[0]
         low, high = t._LEGACY_PREAMBLE_KEYS[old_key][:2]
         try:
             t.TUNING_SCHEMA({old_key: high + 1})
@@ -1971,30 +1976,16 @@ def silent_key_still_works_and_warns_once_with_the_exact_travel_speed_replacemen
     """`silent:` is deprecated: a cover that declares it is still valid and logs one warning that
     gives the travel_speed: value matching its boolean (false is fast, not default) and says the
     switch becomes a select. A cover without the key logs nothing."""
-    import logging
-
     from esphome.components.home_io_control import cover as c
     from esphome.components.home_io_control import platform_common as p
     from esphome.core import ID
 
-    class Capture(logging.Handler):
-        def __init__(self):
-            super().__init__()
-            self.messages = []
-
-        def emit(self, record):
-            self.messages.append(record.getMessage())
-
     validator = p.deprecated_key(c.CONF_SILENT, c._silent_replacement)
 
     def warnings_for(config):
-        capture = Capture()
-        p._LOGGER.addHandler(capture)
-        try:
+        with logged_messages(p._LOGGER) as messages:
             assert validator(config) is config, "a warn-only validator returns its config unchanged"
-        finally:
-            p._LOGGER.removeHandler(capture)
-        return capture.messages
+        return messages
 
     def cover(**keys):
         return {"name": "Kitchen", "id": ID("kitchen", is_declaration=True), **keys}

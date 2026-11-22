@@ -495,7 +495,8 @@ a [linked remote](remotes.md#linked-remotes) it has just heard
 
 One identity can drive several devices, and `drives:` accepts covers and lights. A command addresses
 the identity's `io_device_type`, so a driven device of another type is read afterwards but does not
-show the commanded state at once; with `execute_broadcast: all` every driven device does.
+show the commanded state at once; with `execute_broadcast: all` every driven device does. The
+build warns when a typed identity drives a device whose `io_device_type` is another one.
 
 The boot log lists each driven device under its identity in the 1W Controllers section. Its Linked
 Remotes section counts only the real remotes you list under `linked_remotes:`.
