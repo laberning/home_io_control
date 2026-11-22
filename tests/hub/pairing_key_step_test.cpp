@@ -169,6 +169,68 @@ TEST(PairingKeyStep, AtlanticFlowWithAForcedPushEndsRefusedWithPullAdvice) {
 }
 
 // ============================================================================
+// Which key the transfer carries
+// ============================================================================
+
+namespace {
+
+/// Not challenge_frame()'s: recovering the pushed key needs these exact bytes.
+constexpr uint8_t PUSH_CHALLENGE[HMAC_SIZE] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+
+constexpr uint8_t DEVICE_OWN_KEY[AES_KEY_SIZE] = {0x5E, 0x11, 0xA7, 0x04, 0x29, 0xC3, 0x8B, 0x62,
+                                                  0xD0, 0x4F, 0x96, 0x1A, 0x7C, 0xE5, 0x38, 0xB4};
+
+/// The device's side of the exchange: a challenge, then the confirm.
+void queue_push_answers(MockRadio &radio, const uint8_t own[NODE_ID_SIZE]) {
+  radio.queue_rx(to_packet(device_frame(own, CMD_CHALLENGE_REQ, PUSH_CHALLENGE, HMAC_SIZE)));
+  radio.queue_rx(to_packet(device_frame(own, CMD_KEY_CONFIRM, nullptr, 0)));
+}
+
+/// The key the one CMD_KEY_TRANSFER we sent carries.
+std::vector<uint8_t> pushed_key(const MockRadio &radio) {
+  const std::vector<IoFrame> transfers = sent_frames_of(radio, CMD_KEY_TRANSFER);
+  if (transfers.size() != 1 || transfers[0].data_len != AES_KEY_SIZE)
+    return {};
+  uint8_t recovered[AES_KEY_SIZE]{};
+  if (!recover_system_key_from_transfer(transfers[0].data, PUSH_CHALLENGE, recovered))
+    return {};
+  return {recovered, recovered + AES_KEY_SIZE};
+}
+
+}  // namespace
+
+TEST(PairingKeyStep, TheTransferCarriesTheHubKeyForADeviceWithNoKeyOfItsOwn) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  pairing::PairingContext context = context_for_device();
+  queue_push_answers(radio, comp.node_id_);
+
+  ASSERT_TRUE(comp.pairing_engine_.run_key_exchange_phase_(context));
+  EXPECT_EQ(pushed_key(radio), std::vector<uint8_t>(test::TEST_SYSTEM_KEY, test::TEST_SYSTEM_KEY + AES_KEY_SIZE));
+}
+
+TEST(PairingKeyStep, TheTransferCarriesTheKeyRegisteredForTheDevice) {
+  TestableComponent comp;
+  MockRadio radio;
+  setup(comp, radio);
+  DeviceConfig cfg{};
+  cfg.has_system_key = true;
+  memcpy(cfg.system_key, DEVICE_OWN_KEY, AES_KEY_SIZE);
+  comp.registry_.add(node_id_to_string(DEVICE_ID), cfg);
+  comp.exchange_engine_.set_device_key_provider([&comp](const uint8_t *node) -> const uint8_t * {
+    const IoDevice *dev = comp.registry_.get(node_id_to_string(node));
+    return dev != nullptr && dev->has_system_key ? dev->system_key : nullptr;
+  });
+
+  pairing::PairingContext context = context_for_device();
+  queue_push_answers(radio, comp.node_id_);
+
+  ASSERT_TRUE(comp.pairing_engine_.run_key_exchange_phase_(context));
+  EXPECT_EQ(pushed_key(radio), std::vector<uint8_t>(DEVICE_OWN_KEY, DEVICE_OWN_KEY + AES_KEY_SIZE));
+}
+
+// ============================================================================
 // Quiet windows of the pairing steps (ADR 0111)
 // ============================================================================
 

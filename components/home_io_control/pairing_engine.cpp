@@ -341,8 +341,8 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
 /// discarding it.
 bool PairingEngine::transfer_key_and_wait_confirm_(pairing::PairingContext &context) {
   enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::TX_KEY_TRANSFER, 1, true);
-  if (!create_key_transfer(context.req, context.key_init, context.device.node_id, node_id_, system_key_,
-                           context.rx.data)) {
+  if (!create_key_transfer(context.req, context.key_init, context.device.node_id, node_id_,
+                           engine_.key_for(context.device.node_id), context.rx.data)) {
     return false;
   }
 
