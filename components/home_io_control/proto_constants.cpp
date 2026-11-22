@@ -17,6 +17,8 @@ const char *command_name(uint8_t cmd) {
       return "PRIVATE";
     case CMD_PRIVATE_RESP:
       return "PRIVATE_RESP";
+    case CMD_SET_STORED_POSITION:
+      return "SET_STORED_POSITION";
     case CMD_PRIVATE2:
       return "PRIVATE2";
     case CMD_PRIVATE2_RESP:

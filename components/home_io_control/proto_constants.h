@@ -30,14 +30,27 @@ static constexpr uint8_t CMD_EXECUTE = 0x00;        ///< Set position/open/close
 static constexpr uint8_t CMD_ACTIVATE_MODE = 0x01;  ///< Activate device mode (scene, ventilation) — requires auth
 static constexpr uint8_t CMD_PRIVATE = 0x03;        ///< Get device status — no authentication needed
 static constexpr uint8_t CMD_PRIVATE_RESP = 0x04;   ///< Response to 0x00 and 0x03 (contains position data)
+static constexpr uint8_t CMD_SET_STORED_POSITION =
+    0x0A;  ///< Writes the favorite position that POS_FAVORITE recalls, called "My" on a Somfy motor. Eight payload
+           ///< bytes `<originator> <ACEI> D8 <modifier> <MP hi> <MP lo> 00 00`: CMD_EXECUTE's
+           ///< stored-position selector, then the position to store. Requires authentication.
+           ///< Answered with CMD_PRIVATE2_RESP (0x0D) carrying the main parameter the request asked
+           ///< for, so only a CMD_PRIVATE2 read says what the device kept, which it may round onto a
+           ///< grid of its own.
 static constexpr uint8_t CMD_PRIVATE2 =
-    0x0C;  ///< Content otherwise undecoded by the wire parser. Its request payload matches
-           ///< CMD_EXECUTE's POS_FAVORITE/POS_VENT_MODIFIER stored-position selector with the
-           ///< execution prefix stripped, so it reads like a stored-position readback rather
-           ///< than a live telemetry poll — see the somfy_rs100_* / somfy_oximo40_* captures and
-           ///< multi_somfy_probe_private2_{long_form,short_form}.yaml for real request/response
-           ///< pairs. Not handled by any dispatch path in this codebase.
-static constexpr uint8_t CMD_PRIVATE2_RESP = 0x0D;  ///< Response to CMD_PRIVATE2. See CMD_PRIVATE2's comment.
+    0x0C;  ///< Reads the stored position that CMD_EXECUTE's POS_FAVORITE/POS_VENT_MODIFIER selector
+           ///< recalls. The request carries that selector with the execution prefix stripped. Two
+           ///< request shapes are captured (create_private2_read()) and are not interchangeable:
+           ///< only the short one draws a position from every device tried. Sent by the `private2`
+           ///< and `private2_short` diagnostic probes. No dispatch path decodes the reply.
+static constexpr uint8_t CMD_PRIVATE2_RESP =
+    0x0D;  ///< Answers CMD_PRIVATE2 and CMD_SET_STORED_POSITION: the request's own payload with the
+           ///< two selector bytes replaced by a position on the main-parameter scale, behind a leading
+           ///< 0x05. The short read's `D8 <modifier> 00 00` comes back as `05 <MP hi> <MP lo> 00 00`,
+           ///< the long read's `D4 00 80 D8 <modifier> 00` as `05 D4 00 80 <MP hi> <MP lo> 00`.
+           ///< POS_UNKNOWN (0xD4) in the position's high byte means no position is stored. A leading
+           ///< 0x6D in place of the 0x05 marks an answer that carries no position. What that byte
+           ///< means is unknown.
 
 // Priority-level and private register commands
 static constexpr uint8_t CMD_PRIORITY_LEVEL_REQ =
