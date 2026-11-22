@@ -9,6 +9,7 @@
 
 #include "proto_codecs.h"
 #include "proto_constants.h"
+#include "oneway_sequence_store.h"
 #include "proto_frame.h"
 
 #include <cstdint>
@@ -237,6 +238,43 @@ enum class OneWayCoverState : uint8_t {
     return std::nullopt;
   const float user_percent = inverted ? ONEWAY_COVER_FULL_PERCENT - *wire_percent : *wire_percent;
   return user_percent > ONEWAY_COVER_MIDPOINT_PERCENT ? OneWayCoverIntent::CLOSE : OneWayCoverIntent::OPEN;
+}
+
+// == Setting a controller identity's next sequence ==
+
+/// @brief Outcome of asking to set an identity's next rolling sequence (see decide_sequence_set()).
+struct SequenceSetDecision {
+  bool accepted{false};              ///< Whether the new value may be written.
+  uint32_t commands_before_wrap{0};  ///< Commands the identity can send from the requested value before it wraps.
+  bool kept_at_boot{true};           ///< Whether the next boot resumes from the value, not from `initial_sequence`.
+};
+
+/// Decide whether an identity's next sequence may be set to `requested`.
+///
+/// A receiver obeys a command whose sequence is above the one it remembers and ignores one that is
+/// not, and it never accepts one across the wrap from 65535 to 0. So a value above the current
+/// one is always safe to set, and any value at or below it is refused unless the caller asked for
+/// a lower one explicitly: a device that is in step would then ignore every command until the
+/// counter passes its old number again.
+///
+/// The boot rule (resolve_boot_sequence(), ADR 0114) still applies to the written value: when the
+/// identity's `initial_sequence` is above it by less than half the range, the next boot jumps
+/// forward to `initial_sequence` before any command is sent, so the caller warns about it.
+///
+/// @param current Sequence the identity would send next.
+/// @param requested Sequence the caller wants it to send next.
+/// @param allow_lower Whether a value that is not above `current` is acceptable.
+/// @param initial_sequence The identity's configured `initial_sequence`.
+/// @return `accepted`, how many commands fit from `requested` up to and including 65535 (a wrapped
+///         identity is lost on a receiver that refuses the wrap, so the caller reports it), and
+///         whether a reboot keeps `requested`.
+[[nodiscard]] inline SequenceSetDecision decide_sequence_set(uint16_t current, uint16_t requested, bool allow_lower,
+                                                             uint16_t initial_sequence) {
+  SequenceSetDecision decision;
+  decision.accepted = requested > current || allow_lower;
+  decision.commands_before_wrap = static_cast<uint32_t>(ONEWAY_SEQUENCE_MAX) - requested + 1;
+  decision.kept_at_boot = resolve_boot_sequence(requested, initial_sequence) == requested;
+  return decision;
 }
 
 }  // namespace decisions

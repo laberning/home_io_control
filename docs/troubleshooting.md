@@ -193,14 +193,22 @@ durably reserved, because reusing one is unrecoverable. This is a storage failur
    this step cannot be the cause; go to step 7.
 4. **Desynced counter.** The device remembers the highest sequence it accepted from you and rejects
    anything at or below it. If your counter fell behind — a replaced board, a restored backup — every
-   command is silently dropped. **Remedy:** raise `initial_sequence:` above the value in the sensor
-   and reflash. A bench run on a Somfy Izymo showed that it obeys any higher number, compared as a
+   command is silently dropped. **Remedy:** call the
+   [`oneway_set_sequence`](configuration/actions.md#oneway_set_sequence) action with a `sequence`
+   above the last number the device obeyed, then press the identity's button; no reflash is needed.
+   That number is in the sensor, or, after a board replacement, in the sensor's history in Home
+   Assistant. The action refuses a number that is not above the current one unless you pass
+   `allow_lower: "true"`; do that only to undo a step that went too far, because a device that is
+   in step ignores a lower number until the counter passes its old one again.
+   `initial_sequence:` is the YAML form of the same step and needs a reflash; at boot a value at or
+   below the counter the hub already holds, or 32768 or more above it, changes nothing. A bench run on a
+   Somfy Izymo showed that it obeys any higher number, compared as a
    plain number (jumps up to 32000 tested), so a large forward step is fine there; other receivers
    are not measured, so prefer small steps. The same run showed that the Izymo ignores every step
    across the 16-bit wrap (65535 to 0), so an identity whose counter wraps is lost to that device:
    give it a new address (a new `node_id:`, or a new `id:` when the address is derived) and enroll
-   it again ([ADR 0120](adr/0120-a-one-way-counter-that-wraps-is-lost-to-a-somfy-receiver.md)). A value at or
-   below the counter the hub already holds, or 32768 or more above it, changes nothing.
+   it again ([ADR 0120](adr/0120-a-one-way-counter-that-wraps-is-lost-to-a-somfy-receiver.md)); the
+   action cannot bring a wrapped identity back.
    Pressing Enroll again for the same identity is not a remedy: a bench run on a Somfy Izymo showed
    that it takes an already-enrolled identity off
    ([details](configuration/oneway-transmit.md#enrolling-this-hub-as-a-controller)).

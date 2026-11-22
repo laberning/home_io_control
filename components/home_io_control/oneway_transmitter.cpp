@@ -56,6 +56,16 @@ void OneWayTransmitter::setup() {
     this->sequences_.add_identity(identity.node_id, identity.initial_sequence);
 }
 
+bool OneWayTransmitter::peek_sequence(const std::string &controller_id, uint16_t &out) const {
+  const OneWayControllerIdentity *identity = this->identities_.get(controller_id);
+  return identity != nullptr && this->sequences_.peek(identity->node_id, out);
+}
+
+bool OneWayTransmitter::seed_sequence(const std::string &controller_id, uint16_t value) {
+  const OneWayControllerIdentity *identity = this->identities_.get(controller_id);
+  return identity != nullptr && this->sequences_.seed(identity->node_id, value);
+}
+
 bool OneWayTransmitter::send_(const std::string &controller_id,
                               const std::function<bool(IoFrame &, const OneWayControllerIdentity &, uint16_t)> &build,
                               const char *explicit_intent, bool enrollment) {

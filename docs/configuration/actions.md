@@ -15,6 +15,7 @@ optional one-tap button.
 | [`force_open_device`](#force_open_device) ⚠️ *experimental* | Requests a fully-open move at elevated protocol priority, intended to override wind/rain soft locks. | No — the outcome is asynchronous |
 | [`scan_paired_devices`](../pairing.md) | Broadcasts a roll-call and reports every already-paired device that answers — no target `device_id`, no arguments at all. Also reachable as a one-tap button via `scan_paired_devices_button: true`. | No — nothing here is read back either |
 | [`oneway_set_position`](#oneway_set_position) | Sends a numeric position as a configured 1W controller identity. Takes `controller_id` and `position`, not a `device_id` — 1W addresses a device class. | No — 1W has no reply at all |
+| [`oneway_set_sequence`](#oneway_set_sequence) | Sets the rolling number a 1W controller identity's next command carries, so a device that stopped reacting works again without a reflash. Takes `controller_id`, `sequence` and `allow_lower`. Sends nothing. | No — 1W has no reply at all |
 | [`oneway_remove_controller`](#oneway_remove_controller) | Removes a configured 1W controller identity from the receivers that are in their programming mode. Takes `controller_id`. | No — 1W has no reply at all |
 | [`heating_control`](climate.md) ⚠️ *experimental* | Sends one heating/climate function (`CMD_WRITE_PRIVATE` 0x20) to a climate device. Takes `device_id`, `function`, `value`. | No — an acknowledged write is not a readback; `read_window_open` reports the sensor in the `message`, the `read_paired_devices` / `read_setpoint_block` reads are logged |
 
@@ -167,6 +168,34 @@ verified: false
 message: 1W position command queued
 ```
 
+## `oneway_set_sequence`
+
+Fields: `controller_id`, `sequence` (a whole number from `0` to `65535`, passed as a string) and `allow_lower` (`"true"` or `"false"`; an empty value counts as `"false"`). Home Assistant requires every field, so pass `allow_lower: "false"` for an ordinary step forward.
+
+Sets the number the next command of the 1W controller identity `controller_id` carries, and stores it in flash before the action reports success, so it survives a reboot. Use it when a device ignores every command from the identity because the identity's counter fell behind the number the device remembers, for example after a board replacement or a flash erase. Read the number the hub sent last in the "Last 1W Command" sensor and set a higher one. After a board replacement the sensor shows the new board's numbers: take the last number the old board sent from the sensor's history in Home Assistant, or pick a generously higher number when that history is gone. A Somfy Izymo obeys any higher number ([ADR 0120](../adr/0120-a-one-way-counter-that-wraps-is-lost-to-a-somfy-receiver.md)), so one larger step is enough there.
+
+The action sends nothing. Press the identity's own button afterwards: that command is the test.
+
+A `sequence` that is not above the identity's current number is refused, and the result message names the current number. A device that is in step ignores a lower number, so moving backwards would stop it from reacting until the counter passes its old number again. Set `allow_lower: "true"` only when you mean it, for example to undo a step that went too far. A lower number lasts across a reboot only while it is not below the identity's `initial_sequence:`: otherwise the next boot jumps forward to `initial_sequence:` again ([ADR 0114](../adr/0114-a-one-way-counter-resumes-from-its-persisted-value-across-the-wrap.md)), and the result message says so. Lower `initial_sequence:` in the YAML as well in that case. A `controller_id` that no identity carries, a `sequence` that is not a whole number from 0 to 65535 and an `allow_lower` other than `"true"` or `"false"` (in any letter case) are refused with a reason.
+
+```yaml
+action: esphome.hioc_heltec_v2_oneway_set_sequence
+data:
+  controller_id: velux_windows
+  sequence: "4000"
+  allow_lower: "false"
+```
+
+The result event names the old and the new number and how many commands are left before the counter wraps. A wrapped identity is lost on a Somfy receiver, which ignores every step across 65535 to 0, so a low count is the sign to give the identity a new address and enroll it again ([1W commands do nothing](../troubleshooting.md#1w-commands-do-nothing), step 4):
+
+```yaml
+action: oneway_set_sequence
+device_id: velux_windows
+success: true
+verified: false
+message: next sequence changed from 1237 to 4000; 61536 commands left before the counter wraps (a wrapped identity is lost on a Somfy receiver)
+```
+
 ## `oneway_remove_controller`
 
 Fields: `controller_id` (required).
@@ -193,4 +222,4 @@ message: 1W remove-controller (0x39) queued
 
 - [Pairing](../pairing.md) — `scan_paired_devices` and the Discover & Pair button
 - [Heating and climate](climate.md) — `heating_control`
-- [Sending 1W commands](oneway-transmit.md) — the 1W identities that `oneway_set_position` and `oneway_remove_controller` use
+- [Sending 1W commands](oneway-transmit.md) — the 1W identities that `oneway_set_position`, `oneway_set_sequence` and `oneway_remove_controller` use

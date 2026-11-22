@@ -477,7 +477,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlyEightServicesByDefault
   setup_component(component, radio);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 8u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 9u);
   for (const auto &service : esphome::api::global_api_server->user_services_) {
     const auto name = service->encode_list_service_response().name.str();
     EXPECT_NE(name, "probe_device");
@@ -537,8 +537,19 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlyEightServicesByDefault
   EXPECT_EQ(oneway_remove_controller_response.args[0].name.str(), "controller_id");
   EXPECT_EQ(oneway_remove_controller_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 
-  const auto heating_control_response =
+  const auto oneway_set_sequence_response =
       esphome::api::global_api_server->user_services_[7]->encode_list_service_response();
+  EXPECT_EQ(oneway_set_sequence_response.name.str(), "oneway_set_sequence");
+  EXPECT_EQ(oneway_set_sequence_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
+  ASSERT_EQ(oneway_set_sequence_response.args.size(), 3u);
+  EXPECT_EQ(oneway_set_sequence_response.args[0].name.str(), "controller_id");
+  EXPECT_EQ(oneway_set_sequence_response.args[1].name.str(), "sequence");
+  EXPECT_EQ(oneway_set_sequence_response.args[2].name.str(), "allow_lower");
+  for (const auto &arg : oneway_set_sequence_response.args)
+    EXPECT_EQ(arg.type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+
+  const auto heating_control_response =
+      esphome::api::global_api_server->user_services_[8]->encode_list_service_response();
   EXPECT_EQ(heating_control_response.name.str(), "heating_control");
   EXPECT_EQ(heating_control_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(heating_control_response.args.size(), 3u);
@@ -550,7 +561,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlyEightServicesByDefault
   EXPECT_EQ(heating_control_response.args[2].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersAllTenServicesWhenDiagnosticProbesEnabled) {
+TEST(HubManagement, RegisterManagementActionsRegistersAllElevenServicesWhenDiagnosticProbesEnabled) {
   esphome::api::APIServer api_server;
   esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
@@ -561,9 +572,9 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllTenServicesWhenDiagnost
   component.set_diagnostic_probes_enabled(true);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 10u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 11u);
 
-  const auto probe_device_response = esphome::api::global_api_server->user_services_[8]->encode_list_service_response();
+  const auto probe_device_response = esphome::api::global_api_server->user_services_[9]->encode_list_service_response();
   EXPECT_EQ(probe_device_response.name.str(), "probe_device");
   EXPECT_EQ(probe_device_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_device_response.args.size(), 3u);
@@ -574,7 +585,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllTenServicesWhenDiagnost
   EXPECT_EQ(probe_device_response.args[2].name.str(), "index");
   EXPECT_EQ(probe_device_response.args[2].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 
-  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[9]->encode_list_service_response();
+  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[10]->encode_list_service_response();
   EXPECT_EQ(probe_sweep_response.name.str(), "probe_sweep");
   EXPECT_EQ(probe_sweep_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_sweep_response.args.size(), 4u);
@@ -774,7 +785,7 @@ TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 8u);
+  ASSERT_EQ(api_server.user_services_.size(), 9u);
 
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
   radio.queue_rx(frame_to_packet(make_get_name_response(component.node_id_, "Patio Awning")));
@@ -1767,7 +1778,7 @@ TEST(HubManagement, ScanPairedDevicesZeroArgDispatchExecutes) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 8u);
+  ASSERT_EQ(api_server.user_services_.size(), 9u);
 
   const auto response = api_server.user_services_[4]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "scan_paired_devices");
@@ -1835,7 +1846,7 @@ TEST(HubManagement, OneWaySetPositionActionIsRegisteredWithBothArguments) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 8u);
+  ASSERT_EQ(api_server.user_services_.size(), 9u);
 
   const auto response = api_server.user_services_[5]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "oneway_set_position");
@@ -1971,4 +1982,237 @@ TEST(HubManagement, OneWayRemoveControllerQueuesForAKnownIdentity) {
   EXPECT_EQ(component.op_queue_.front().type, PendingOperationType::ONEWAY_UNENROLL);
   EXPECT_EQ(component.op_queue_.front().device_id, "awning_remote")
       << "device_id carries the controller-identity handle for 1W ops";
+}
+
+// === oneway_set_sequence ===
+
+namespace {
+
+const uint8_t SEQUENCE_CONTROLLER_NODE[NODE_ID_SIZE] = {0x11, 0x22, 0x33};
+
+/// A management component with one open 1W identity whose counter starts at `initial_sequence`.
+void add_sequence_identity(TestableManagementComponent &component, uint16_t initial_sequence) {
+  OneWayControllerIdentity identity{};
+  identity.id = "awning_remote";
+  memcpy(identity.node_id, SEQUENCE_CONTROLLER_NODE, NODE_ID_SIZE);
+  memset(identity.system_key, 0x11, AES_KEY_SIZE);
+  identity.io_device_type = DeviceType::VERTICAL_EXTERIOR_AWNING;
+  identity.initial_sequence = initial_sequence;
+  component.add_oneway_controller(identity);
+  component.oneway_transmitter().setup();
+}
+
+uint16_t next_sequence(TestableManagementComponent &component) {
+  uint16_t value = 0;
+  EXPECT_TRUE(component.oneway_transmitter().peek_sequence("awning_remote", value));
+  return value;
+}
+
+/// Run the action and return the one result event it published.
+std::map<std::string, std::string> run_set_sequence(TestableManagementComponent &component,
+                                                    esphome::api::APIServer &api_server, const std::string &id,
+                                                    const std::string &sequence, const std::string &allow_lower) {
+  api_server.reset();
+  component.management_actions_.api_oneway_set_sequence(id, sequence, allow_lower);
+  EXPECT_EQ(api_server.events_.size(), 1u);
+  const auto &data = api_server.events_.front().data;
+  EXPECT_EQ(data.at("action"), "oneway_set_sequence");
+  return {data.begin(), data.end()};
+}
+
+}  // namespace
+
+TEST(HubManagement, OneWaySetSequenceMovesTheCounterForwardAndNamesTheWrapMargin) {
+  esphome::test_preferences::wipe();
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_sequence_identity(component, 100);
+
+  const auto result = run_set_sequence(component, api_server, "awning_remote", "65000", "");
+
+  EXPECT_EQ(result.at("success"), "true");
+  EXPECT_EQ(result.at("device_id"), "awning_remote");
+  EXPECT_NE(result.at("message").find("from 100 to 65000"), std::string::npos) << result.at("message");
+  EXPECT_NE(result.at("message").find("536 commands left"), std::string::npos) << result.at("message");
+  EXPECT_EQ(result.at("message").find("initial_sequence"), std::string::npos) << result.at("message");
+  EXPECT_EQ(next_sequence(component), 65000);
+  EXPECT_TRUE(radio.get_sent_data().empty()) << "the action sends nothing";
+  EXPECT_TRUE(component.op_queue_.empty());
+}
+
+TEST(HubManagement, OneWaySetSequenceRefusesANumberNotAboveTheCurrentOneAndNamesIt) {
+  esphome::test_preferences::wipe();
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_sequence_identity(component, 500);
+
+  for (const char *value : {"499", "500"}) {
+    const auto result = run_set_sequence(component, api_server, "awning_remote", value, "false");
+    EXPECT_EQ(result.at("success"), "false") << value;
+    EXPECT_NE(result.at("message").find("current 500"), std::string::npos) << result.at("message");
+  }
+  EXPECT_EQ(next_sequence(component), 500) << "a refusal changes nothing";
+}
+
+TEST(HubManagement, OneWaySetSequenceMovesBackwardsOnlyWithAllowLower) {
+  esphome::test_preferences::wipe();
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_sequence_identity(component, 500);
+
+  const auto result = run_set_sequence(component, api_server, "awning_remote", "10", "true");
+
+  EXPECT_EQ(result.at("success"), "true");
+  EXPECT_EQ(next_sequence(component), 10);
+}
+
+TEST(HubManagement, OneWaySetSequenceReadsAllowLowerAsHomeAssistantSendsIt) {
+  esphome::test_preferences::wipe();
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_sequence_identity(component, 500);
+
+  // Home Assistant passes an unquoted YAML boolean as "True" / "False".
+  auto result = run_set_sequence(component, api_server, "awning_remote", "400", "False");
+  EXPECT_EQ(result.at("success"), "false") << result.at("message");
+  EXPECT_NE(result.at("message").find("current 500"), std::string::npos) << result.at("message");
+  result = run_set_sequence(component, api_server, "awning_remote", " 400 ", " True ");
+  EXPECT_EQ(result.at("success"), "true") << result.at("message");
+  EXPECT_EQ(next_sequence(component), 400);
+}
+
+TEST(HubManagement, OneWaySetSequenceWarnsWhenInitialSequenceWouldReplaceTheValueAtBoot) {
+  esphome::test_preferences::wipe();
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    add_sequence_identity(component, 500);
+
+    const auto result = run_set_sequence(component, api_server, "awning_remote", "10", "true");
+    EXPECT_EQ(result.at("success"), "true");
+    EXPECT_NE(result.at("message").find("initial_sequence 500 replaces it at the next boot"), std::string::npos)
+        << result.at("message");
+  }
+
+  // The warning is true: the boot rule jumps forward to initial_sequence again.
+  TestableManagementComponent rebooted;
+  MockRadio radio;
+  setup_component(rebooted, radio);
+  add_sequence_identity(rebooted, 500);
+  EXPECT_EQ(next_sequence(rebooted), 500);
+  esphome::test_preferences::wipe();
+}
+
+TEST(HubManagement, OneWaySetSequenceFailsWithAReasonOnBadInput) {
+  esphome::test_preferences::wipe();
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_sequence_identity(component, 500);
+
+  struct Case {
+    const char *id;
+    const char *sequence;
+    const char *allow_lower;
+    const char *reason;
+  };
+  const Case cases[] = {
+      {"nope", "600", "", "no oneway_controllers identity"},  {"awning_remote", "65536", "", "between 0 and 65535"},
+      {"awning_remote", "-1", "", "between 0 and 65535"},     {"awning_remote", "12.5", "", "between 0 and 65535"},
+      {"awning_remote", "abc", "", "between 0 and 65535"},    {"awning_remote", "", "", "between 0 and 65535"},
+      {"awning_remote", "600", "yes", "allow_lower must be"},
+  };
+  for (const Case &c : cases) {
+    const auto result = run_set_sequence(component, api_server, c.id, c.sequence, c.allow_lower);
+    EXPECT_EQ(result.at("success"), "false") << c.sequence << " / " << c.allow_lower;
+    EXPECT_NE(result.at("message").find(c.reason), std::string::npos) << result.at("message");
+  }
+  EXPECT_EQ(next_sequence(component), 500);
+}
+
+TEST(HubManagement, OneWaySetSequenceAcceptsTheLimitsOfTheRange) {
+  esphome::test_preferences::wipe();
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  TestableManagementComponent component;
+  MockRadio radio;
+  setup_component(component, radio);
+  add_sequence_identity(component, 500);
+
+  auto result = run_set_sequence(component, api_server, "awning_remote", "65535", "");
+  EXPECT_EQ(result.at("success"), "true");
+  EXPECT_NE(result.at("message").find("1 commands left"), std::string::npos) << result.at("message");
+  result = run_set_sequence(component, api_server, "awning_remote", "0", "true");
+  EXPECT_EQ(result.at("success"), "true");
+  EXPECT_EQ(next_sequence(component), 0);
+}
+
+TEST(HubManagement, OneWaySetSequenceIsPersistedBeforeSuccessAndSurvivesAReboot) {
+  esphome::test_preferences::wipe();
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  {
+    TestableManagementComponent component;
+    MockRadio radio;
+    setup_component(component, radio);
+    add_sequence_identity(component, 100);
+
+    // A write that cannot be persisted is reported as a failure, not success.
+    esphome::test_preferences::faults().fail_sync = true;
+    auto result = run_set_sequence(component, api_server, "awning_remote", "700", "");
+    esphome::test_preferences::faults() = {};
+    EXPECT_EQ(result.at("success"), "false");
+    EXPECT_NE(result.at("message").find("persist"), std::string::npos) << result.at("message");
+    EXPECT_EQ(next_sequence(component), 100) << "a failed write leaves the counter where it was";
+
+    result = run_set_sequence(component, api_server, "awning_remote", "700", "");
+    EXPECT_EQ(result.at("success"), "true");
+  }
+
+  // Reboot: a new component opens the counters again; YAML still says 100.
+  TestableManagementComponent rebooted;
+  MockRadio radio;
+  setup_component(rebooted, radio);
+  add_sequence_identity(rebooted, 100);
+  EXPECT_EQ(next_sequence(rebooted), 700);
+  esphome::test_preferences::wipe();
+}
+
+TEST(HubManagement, TheCommandAfterOneWaySetSequenceCarriesTheNewNumber) {
+  esphome::test_preferences::wipe();
+  esphome::api::APIServer api_server;
+  esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
+  TestableManagementComponent component;
+  MockRadio radio;
+  radio.set_rssi_default(-100);
+  setup_component(component, radio);
+  add_sequence_identity(component, 100);
+  run_set_sequence(component, api_server, "awning_remote", "4242", "");
+
+  ASSERT_TRUE(component.oneway_transmitter().send_command("awning_remote", CoverCommand::STOP));
+
+  ASSERT_FALSE(radio.get_sent_data().empty());
+  IoFrame frame{};
+  const auto &bytes = radio.get_sent_data().front();
+  ASSERT_TRUE(parse(bytes.data(), static_cast<uint8_t>(bytes.size()), frame));
+  EXPECT_EQ(static_cast<uint16_t>((frame.data[6] << 8) | frame.data[7]), 4242);
+  EXPECT_EQ(next_sequence(component), 4243);
+  esphome::test_preferences::wipe();
 }

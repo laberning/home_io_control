@@ -158,6 +158,20 @@ class ManagementActions {
   /// @param controller_id Controller-identity handle from `oneway_controllers:`.
   void api_oneway_remove_controller(const std::string &controller_id);
 
+  /// @brief Native API callback: set the sequence a controller identity's next command carries.
+  ///
+  /// Recovers an identity whose counter fell behind the number its device remembers (a replaced
+  /// board, an erased flash) without a reflash. Sends nothing: the next button press is the probe.
+  /// A value not above the current one is refused unless `allow_lower` is "true", because a
+  /// device in step ignores a lower number. The result names the old and the new number and the
+  /// commands left before the counter wraps (ADR 0120).
+  /// @param controller_id Controller-identity handle from `oneway_controllers:`.
+  /// @param sequence New next sequence, 0-65535 as a decimal string.
+  /// @param allow_lower "true" to accept a value that is not above the current one; "false" or empty otherwise
+  ///        (any letter case, since Home Assistant sends an unquoted YAML boolean as "True").
+  void api_oneway_set_sequence(const std::string &controller_id, const std::string &sequence,
+                               const std::string &allow_lower);
+
   /// @brief Broadcast a roll-call and report every device that answers.
   ///
   /// Not a discovery mechanism for new devices: only devices that already hold this hub's

@@ -140,6 +140,21 @@ class OneWayTransmitter {
   /// @return The configured controller identities.
   [[nodiscard]] const OneWayControllerRegistry &identities() const { return this->identities_; }
 
+  /// @brief The sequence the identity's next command will carry, without reserving it.
+  /// @param controller_id YAML handle of the controller identity.
+  /// @param out Output: the next sequence.
+  /// @return false if the identity is unknown.
+  [[nodiscard]] bool peek_sequence(const std::string &controller_id, uint16_t &out) const;
+
+  /// @brief Set the sequence the identity's next command will carry and persist it.
+  ///
+  /// May move the counter in either direction; the caller decides whether that is wise
+  /// (decisions::decide_sequence_set()). Sends nothing.
+  /// @param controller_id YAML handle of the controller identity.
+  /// @param value Next sequence to hand out.
+  /// @return false if the identity is unknown or the value could not be persisted.
+  [[nodiscard]] bool seed_sequence(const std::string &controller_id, uint16_t value);
+
   /// @brief Register the callback that receives a report after every command attempt.
   /// @param callback Invoked once per logical command, including failed ones — a command that
   ///        never left the hub is exactly the case a user needs to see, and 1W will not tell them.

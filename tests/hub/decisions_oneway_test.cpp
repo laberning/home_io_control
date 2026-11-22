@@ -326,3 +326,37 @@ TEST(DecisionsOneWay, AFrameThatSaysNothingACoverCanShowChangesNothing) {
       decisions::oneway_cover_intent_from_frame(frame_with_main(0x00, /*has_intent=*/false), false).has_value())
       << "a frame without a command, whatever its main byte holds";
 }
+
+// === Setting an identity's next sequence ===
+
+TEST(DecisionsOneWay, ASequenceAboveTheCurrentOneIsAcceptedWithoutAllowLower) {
+  const auto decision = decisions::decide_sequence_set(100, 101, false, 0);
+  EXPECT_TRUE(decision.accepted);
+  EXPECT_EQ(decision.commands_before_wrap, 65536u - 101u);
+}
+
+TEST(DecisionsOneWay, ASequenceEqualToOrBelowTheCurrentOneIsRefusedWithoutAllowLower) {
+  EXPECT_FALSE(decisions::decide_sequence_set(100, 100, false, 0).accepted) << "a replay of the number in step";
+  EXPECT_FALSE(decisions::decide_sequence_set(100, 99, false, 0).accepted);
+  EXPECT_FALSE(decisions::decide_sequence_set(65535, 0, false, 0).accepted) << "going across the wrap is lower, too";
+}
+
+TEST(DecisionsOneWay, AllowLowerAcceptsEqualAndLowerValues) {
+  EXPECT_TRUE(decisions::decide_sequence_set(100, 100, true, 0).accepted);
+  EXPECT_TRUE(decisions::decide_sequence_set(100, 0, true, 0).accepted);
+}
+
+TEST(DecisionsOneWay, TheCommandsLeftBeforeTheWrapCountUpToAndIncluding65535) {
+  EXPECT_EQ(decisions::decide_sequence_set(0, 65535, false, 0).commands_before_wrap, 1u);
+  EXPECT_EQ(decisions::decide_sequence_set(5, 0, true, 0).commands_before_wrap, 65536u);
+  EXPECT_EQ(decisions::decide_sequence_set(0, 1237, false, 0).commands_before_wrap, 64299u);
+}
+
+TEST(DecisionsOneWay, ASetValueBelowInitialSequenceIsNotKeptAtBoot) {
+  EXPECT_TRUE(decisions::decide_sequence_set(500, 4000, false, 0).kept_at_boot);
+  EXPECT_TRUE(decisions::decide_sequence_set(500, 500, true, 500).kept_at_boot) << "equal is kept";
+  EXPECT_FALSE(decisions::decide_sequence_set(500, 10, true, 500).kept_at_boot)
+      << "the next boot jumps forward to initial_sequence";
+  EXPECT_TRUE(decisions::decide_sequence_set(40000, 10, true, 40000).kept_at_boot)
+      << "half the range or more below initial_sequence, the stored value stands";
+}

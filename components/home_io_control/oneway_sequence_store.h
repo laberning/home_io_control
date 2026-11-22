@@ -62,6 +62,9 @@ static constexpr uint16_t ONEWAY_SEQUENCE_REBOOT_HEADROOM = 8;
 /// Half the 16-bit sequence range: the largest forward step (exclusive) `initial_sequence` may make at boot.
 static constexpr uint16_t ONEWAY_SEQUENCE_HALF_RING = 0x8000;
 
+/// Largest sequence number; the counter wraps to 0 after it.
+static constexpr uint16_t ONEWAY_SEQUENCE_MAX = 0xFFFF;
+
 static_assert(ONEWAY_SEQUENCE_STRIDE * ONEWAY_SEQUENCE_REBOOT_HEADROOM < ONEWAY_SEQUENCE_MAX_AUTOMATIC_SKIP,
               "the stride must let many unclean reboots in a row still stay below the hub's skip "
               "ceiling — a larger stride buys fewer flash writes and risks silent desync on a strict receiver");
@@ -134,9 +137,8 @@ class OneWaySequenceStore {
   ///
   /// Unlike add_identity(), this *may* move the counter backwards, which is the whole point —
   /// re-seed from a sequence observed on air, or from a user's estimate, when a counter has
-  /// desynced from the device. The documented remedy for a desynced counter is
-  /// `initial_sequence:` (docs/troubleshooting.md, "1W commands do nothing"), which goes through
-  /// add_identity() at boot instead.
+  /// desynced from the device. The native API action `oneway_set_sequence` reaches it through the
+  /// transmitter; `initial_sequence:` is the YAML form and goes through add_identity() at boot instead.
   /// @param node_id Identity's 3-byte source address.
   /// @param value Next sequence to hand out.
   /// @return false if the address is not registered or the write could not be persisted.

@@ -10,6 +10,7 @@
 
 #include "management_actions.h"
 
+#include "decisions_oneway.h"
 #include "entity_helpers.h"
 #include "hub_core.h"
 #include "log_helpers.h"
@@ -52,6 +53,7 @@ constexpr const char *MANAGEMENT_ACTION_FORCE_OPEN_DEVICE = "force_open_device";
 constexpr const char *MANAGEMENT_ACTION_SCAN_PAIRED_DEVICES = "scan_paired_devices";
 constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_POSITION = "oneway_set_position";
 constexpr const char *MANAGEMENT_ACTION_ONEWAY_REMOVE_CONTROLLER = "oneway_remove_controller";
+constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_SEQUENCE = "oneway_set_sequence";
 constexpr const char *MANAGEMENT_ACTION_HEATING_CONTROL = "heating_control";
 /// Until when the retired `heating_control` function names work (ADR 0109).
 constexpr const char *HEATING_DEPRECATION_END = "January 2027";
@@ -359,6 +361,12 @@ void ManagementActions::register_actions() {
        {"controller_id"},
        false,
        [this](const api::ExecuteServiceRequest &r) { this->api_oneway_remove_controller(r.args[0].string_.str()); }},
+      {MANAGEMENT_ACTION_ONEWAY_SET_SEQUENCE,
+       {"controller_id", "sequence", "allow_lower"},
+       false,
+       [this](const api::ExecuteServiceRequest &r) {
+         this->api_oneway_set_sequence(r.args[0].string_.str(), r.args[1].string_.str(), r.args[2].string_.str());
+       }},
       {MANAGEMENT_ACTION_HEATING_CONTROL,
        {"device_id", "function", "value"},
        false,  // a real user feature, gated by documentation not by diagnostic_probes:
@@ -749,6 +757,67 @@ void ManagementActions::api_oneway_remove_controller(const std::string &controll
   // "Queued", not "removed": 1W has no reply, so nothing here can ever confirm a device actually
   // forgot this identity — same framing as every other 1W action result.
   result.message = "1W remove-controller (0x39) queued";
+  publish_result(result);
+}
+
+void ManagementActions::api_oneway_set_sequence(const std::string &controller_id, const std::string &sequence,
+                                                const std::string &allow_lower) {
+  // device_id carries the controller-identity handle, same convention as api_oneway_set_position().
+  ManagementActionResult result = make_management_result(MANAGEMENT_ACTION_ONEWAY_SET_SEQUENCE, controller_id);
+  OneWayTransmitter &transmitter = hub_->oneway_transmitter();
+
+  const OneWayControllerIdentity *identity = transmitter.identities().get(controller_id);
+  uint16_t current = 0;
+  if (identity == nullptr || !transmitter.peek_sequence(controller_id, current)) {
+    result.message = "no oneway_controllers identity with that id";
+    publish_result(result);
+    return;
+  }
+
+  // Reject anything unparseable: a value that silently became 0 would put the counter far behind a
+  // device that is in step, and every later command would be ignored.
+  uint16_t requested = 0;
+  if (!parse_whole_number_argument(sequence, ONEWAY_SEQUENCE_MAX, requested)) {
+    result.message = "sequence must be a whole number between 0 and 65535";
+    publish_result(result);
+    return;
+  }
+
+  // Case-insensitive: Home Assistant turns an unquoted YAML `true` into the string "True". An empty
+  // allow_lower counts as "false".
+  const std::string flag = normalize_lower_argument(allow_lower);
+  if (!flag.empty() && flag != "true" && flag != "false") {
+    result.message = R"(allow_lower must be "true" or "false")";
+    publish_result(result);
+    return;
+  }
+
+  const decisions::SequenceSetDecision decision =
+      decisions::decide_sequence_set(current, requested, flag == "true", identity->initial_sequence);
+  if (!decision.accepted) {
+    result.message = "sequence " + std::to_string(requested) + " is not above the current " + std::to_string(current) +
+                     R"(; a device in step would ignore it. Set allow_lower to "true" to move backwards)";
+    publish_result(result);
+    return;
+  }
+
+  // seed() persists before it returns, so success is never reported for a value a reboot would lose.
+  if (!transmitter.seed_sequence(controller_id, requested)) {
+    result.message = "could not persist the new sequence";
+    publish_result(result);
+    return;
+  }
+
+  result.success = true;
+  // Nothing is transmitted: 1W has no reply, so the user's next button press is the probe.
+  result.message = "next sequence changed from " + std::to_string(current) + " to " + std::to_string(requested) + "; " +
+                   std::to_string(decision.commands_before_wrap) +
+                   " commands left before the counter wraps (a wrapped identity is lost on a Somfy receiver)";
+  if (!decision.kept_at_boot) {
+    // The boot rule (ADR 0114) would silently undo a deliberate step back at the next reboot.
+    result.message += "; initial_sequence " + std::to_string(identity->initial_sequence) +
+                      " replaces it at the next boot unless you lower initial_sequence in the YAML";
+  }
   publish_result(result);
 }
 

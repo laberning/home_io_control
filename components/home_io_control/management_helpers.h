@@ -83,10 +83,11 @@ inline std::string normalize_device_id_argument(const std::string &device_id) {
 /// ignored) and refuses everything else (empty, signs, decimals, text, values above `max_value`)
 /// rather than coercing it: an atoi()-style default would turn a typo into a real command.
 /// @param text Argument text.
+/// @tparam T Unsigned integer type of the result (`uint8_t`, `uint16_t`).
 /// @param max_value Largest accepted value.
 /// @param value_out Parsed value on success; untouched on refusal.
 /// @return true when `text` is a whole number in range.
-inline bool parse_whole_number_argument(const std::string &text, uint8_t max_value, uint8_t &value_out) {
+template<typename T> inline bool parse_whole_number_argument(const std::string &text, T max_value, T &value_out) {
   const std::string trimmed = trim_ascii_whitespace(text);
   if (trimmed.empty() || trimmed.find_first_not_of("0123456789") != std::string::npos)
     return false;
@@ -95,7 +96,7 @@ inline bool parse_whole_number_argument(const std::string &text, uint8_t max_val
   const unsigned long parsed = std::strtoul(trimmed.c_str(), nullptr, 10);
   if (parsed > max_value)
     return false;
-  value_out = static_cast<uint8_t>(parsed);
+  value_out = static_cast<T>(parsed);
   return true;
 }
 
