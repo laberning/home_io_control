@@ -60,7 +60,7 @@ exterior) or the construction (roller) that distinguishes the type.
   `vertical_exterior_awning`, `dual_roller_shutter` and `exterior_venetian_blind`. The retired names
   fail validation with the replacement in the message. `electrical_heater` (52) and
   `sliding_window` (27) are new selectable names. The
-  [node types table](../supported-devices.md#node-types-and-subtypes) lists every name.
+  [node types table](../device-types.md#node-types-and-subtypes) lists every name.
 - `io_device_type` accepts a raw value up to 1023.
 
 ## Consequences

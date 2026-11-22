@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0068 -->
 
-**Status:** Accepted, amended by [ADR 0081](0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md), [ADR 0090](0090-a-water-heaters-modes-are-chosen-by-what-heats.md), [ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md) and [ADR 0110](0110-a-device-values-row-says-how-it-is-written-too.md) · **Recorded:** 2026-11
+**Status:** Accepted, amended by [ADR 0081](0081-a-water-heaters-boost-and-away-travel-in-the-operating-mode-word.md), [ADR 0090](0090-a-water-heaters-modes-are-chosen-by-what-heats.md), [ADR 0106](0106-a-water-heaters-values-are-readings-of-the-same-table.md), [ADR 0110](0110-a-device-values-row-says-how-it-is-written-too.md) and [ADR 0126](0126-water-heaters-and-the-micromodule-switch-are-not-experimental.md) (row 51/0 is not experimental) · **Recorded:** 2026-11
 
 Builds on [ADR 0059](0059-device-capabilities-come-from-the-type-table.md) (capabilities come from the
 type table) and [ADR 0067](0067-a-model-below-the-subtype-for-products-that-share-a-wire-type.md)

@@ -49,8 +49,8 @@ Use the lock platform for IO-Homecontrol lock devices that should appear in Home
 native ESPHome locks.
 
 > [!NOTE]
-> This platform is experimental. It has not been exercised against a real IO-Homecontrol lock, so
-> treat its behaviour as unproven and report what you find.
+> This platform is untested: no report from a real IO-Homecontrol lock exists, so treat its
+> behaviour as unproven and report what you find.
 
 ```yaml
 lock:
@@ -78,8 +78,9 @@ lock:
 Use the switch platform for binary on/off IO-Homecontrol switch devices.
 
 > [!NOTE]
-> This platform is experimental and limited to binary on/off semantics. It has not been exercised
-> against real hardware.
+> One report covers this platform: a Somfy Izymo on/off receiver, which pairs as an `on_off_switch`
+> of subtype 2, switches on and off and follows a linked Somfy io remote (issue #57). The platform is
+> limited to binary on/off.
 
 ```yaml
 switch:

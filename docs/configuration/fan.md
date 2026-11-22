@@ -55,4 +55,4 @@ saved state at boot; the first status poll decides what it shows.
 ## See also
 
 - [Heating and climate](climate.md) — electrical heaters with a setpoint or heating levels
-- [Supported devices](../supported-devices.md) — the node-type table
+- [Device types and manufacturers](../device-types.md#node-types-and-subtypes) — the node-type table

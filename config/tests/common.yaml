@@ -270,7 +270,7 @@ sensor:
     update_interval: 1h
 
 water_heater:
-  # Experimental water heater platform: a domestic hot water heater read over its family-0x00 registers,
+  # Water heater platform: a domestic hot water heater read over its family-0x00 registers,
   # with every opt-in companion (ADR 0068).
   - platform: home_io_control
     name: "Test Hot Water"

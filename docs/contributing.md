@@ -128,8 +128,10 @@ make before pairing:
 | `## See also` | The configuration page and related devices |
 
 Register the page as above: a label `dev_<vendor>_<product>`, and a parent bullet in the "Device
-pages" block of [Supported devices](supported-devices.md). Then shorten the device's row there to its
-status, at most two sentences and a link to the page.
+pages" block of [Supported devices](supported-devices.md). Then shorten the device's row there to
+one line: type, a status from the legend, the route, and a note of at most two sentences with the
+issue or corpus id and a link to the page. A device without a page of its own goes on a family page
+(the Somfy garage and gate openers share one) rather than into a long row.
 
 ## Adding a device reading
 
@@ -213,7 +215,8 @@ you meet them. The structure behind them is described in the
    it is new), put it on the rows of the type table (`proto_device_types.cpp`) that have it and add its
    name to `FEATURES` in `hub_validators.py`. A kind that answers no status read also carries
    `NO_STATUS_READ`, so the hub never polls it for one. A kind that no table row names yet gets its
-   row, and its row in the node type table of [Supported devices](supported-devices.md), which
+   row, and its row in the node type table of
+   [Device types and manufacturers](device-types.md#node-types-and-subtypes), which
    `tests/sync/docs_node_type_table_sync_test.cpp` checks.
 6. **Add the corpus capture.** Frames of the exchange that carries the value, with a provenance note,
    go under `tests/corpus/` as described in the

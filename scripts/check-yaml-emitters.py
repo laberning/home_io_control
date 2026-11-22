@@ -52,7 +52,7 @@ ONEWAY_KEY_ADOPTION_CPP = COMPONENT_DIR / "oneway_key_adoption.cpp"
 KEY_EXTRACTION_RESPONDER_CPP = COMPONENT_DIR / "key_extraction_responder.cpp"
 DEVICE_YAML_SNIPPET_CPP = COMPONENT_DIR / "device_yaml_snippet.cpp"
 
-DOCS_MD = REPO_ROOT / "docs" / "supported-devices.md"
+DOCS_MD = REPO_ROOT / "docs" / "device-types.md"
 
 # esphome.const names used as bare schema-key arguments in the files above that are not local
 # `CONF_X = "..."` string constants (so _string_constants() below cannot resolve them from any
@@ -433,7 +433,7 @@ DOCS_TABLES = [
     DocsTable(
         "DEVICE_TYPE_OPTIONS -> docs \"Named device types\" table",
         "DEVICE_TYPE_OPTIONS",
-        "### Named device types",
+        "## Named device types",
         # "unknown" is the schema's absent-type sentinel (0x00), not a real device class a user
         # would pick from a table of named types -- deliberately not listed there.
         exclude={"unknown"},
@@ -441,7 +441,7 @@ DOCS_TABLES = [
     DocsTable(
         "MANUFACTURER_OPTIONS -> docs \"Named manufacturers\" table",
         "MANUFACTURER_OPTIONS",
-        "### Named manufacturers",
+        "## Named manufacturers",
     ),
 ]
 

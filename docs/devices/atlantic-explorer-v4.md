@@ -66,8 +66,7 @@ water_heater:
 ```
 
 Discover & Pair and Scan Paired Devices print a `water_heater:` block without `io_model`, because the
-heater reports nothing that tells it from a Calypso. Add `io_model: explorer_v4` by hand. The build
-warns that the kind is experimental.
+heater reports nothing that tells it from a Calypso. Add `io_model: explorer_v4` by hand.
 
 ## Known quirks
 

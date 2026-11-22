@@ -1,5 +1,5 @@
 /// @file docs_node_type_table_sync_test.cpp
-/// @brief Verifies that the node-type table in docs/supported-devices.md ("Node types and
+/// @brief Verifies that the node-type table in docs/device-types.md ("Node types and
 ///        subtypes") agrees with the C++ table (proto_device_types.cpp): every type value, its
 ///        name, its named subtypes (subtype 0 only where models sit below it), the models below a
 ///        subtype ("(io_model: a / b)"), and "(experimental)" on exactly the subtypes whose row
@@ -27,7 +27,7 @@ using namespace esphome::home_io_control;
 
 namespace {
 
-constexpr const char *DOCS_PAGE = "docs/supported-devices.md";
+constexpr const char *DOCS_PAGE = "docs/device-types.md";
 constexpr const char *TABLE_HEADER = "| Type | Name | Named subtypes | Support |";
 constexpr const char *EXPERIMENTAL_SUFFIX = " (experimental)";
 constexpr const char *MODELS_PREFIX = " (io_model: ";

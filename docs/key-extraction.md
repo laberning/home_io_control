@@ -2,10 +2,10 @@
 <!-- doxygen-label: key_extraction -->
 
 **Key extraction is the route to take when you already own a working IO-Homecontrol hub** — a
-Somfy TaHoma, Connexoon or Connectivity Kit, a VELUX KLF200, KLR200, KLR300 or KIG300, and similar. The
+Somfy TaHoma, Connexoon or Connectivity Kit, a VELUX KLF 200, KLR 100, KLR 200, KLR 300 or KIG 300, and similar. The
 component emulates an unpaired device so that hub pairs *to it* and hands over its
 `node_id`/`system_key`. Your devices never leave their paired state, and once you hold the key,
-[Scan Paired Devices](pairing.md#scan-paired-devices) lists every one of them at once.
+[Scan Paired Devices](scan-paired-devices.md) lists every one of them at once.
 
 It is also the answer when Discover & Pair finds nothing. A device that already holds a hub's key
 has nothing left to respond to a discovery with, so tuning discovery parameters cannot help.
@@ -13,8 +13,8 @@ has nothing left to respond to a discovery with, so tuning discovery parameters 
 **This needs a hub that runs its own "add a device" wizard.** A 1W-only wall switch or remote — a
 VELUX KLI, a Somfy Smoove — never runs one, has no key-exchange role to answer, and is not a valid
 target for this feature. If the only control in the installation is one of those, this is not your
-route; see [Supported devices](supported-devices.md) for the hubs confirmed to work as an
-extraction source.
+route; see [Hubs you can take a key from](supported-devices.md#hubs-you-can-take-a-key-from) for
+the hubs confirmed to work as an extraction source.
 
 > **⚠️ Use only on a hub and network you own or are authorized to modify** — see the project
 > [Disclaimer](../README.md#disclaimer--license).
@@ -65,7 +65,7 @@ The switch always boots off (`restore_mode: ALWAYS_OFF`), so a reboot can never 
 7. Copy the printed `node_id`/`system_key` into your YAML, replacing the values you made up, and
    reflash.
 8. Press **Scan Paired Devices**, or call the `scan_paired_devices` action — see
-   [Pairing](pairing.md#scan-paired-devices). Every device that trusts the recovered key answers
+   [Scan Paired Devices](scan-paired-devices.md). Every device that trusts the recovered key answers
    with a ready-to-paste snippet, so nothing has to be paired.
 
 ## Known limitations
@@ -89,4 +89,4 @@ The switch always boots off (`restore_mode: ALWAYS_OFF`), so a reboot can never 
 ## See also
 
 - [Pairing](pairing.md) — Discover & Pair, and Scan Paired Devices once you hold the key
-- [Supported devices](supported-devices.md) — which hubs are confirmed as extraction sources
+- [Hubs you can take a key from](supported-devices.md#hubs-you-can-take-a-key-from) — which hubs are confirmed as extraction sources

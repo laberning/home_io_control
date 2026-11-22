@@ -9,10 +9,12 @@ and hubs that make good key sources, the wired bridges, and the products control
 | Device | Status |
 |---|---|
 | INTEGRA roof-window actuator | ✅ Confirmed — open, close, position, ventilation. A second installation of five type 4/1 windows (factory name "Window operator") answers keyed roll-calls and commands under a key copied from a KLR 100, reported with another controller (issue #242) |
+| INTEGRA roller shutter, mains-wired | 📣 Reported — a 230 V installation of two window actuators and their shutters, driven alongside two KLR 200s (issue #57) |
+| INTEGRA CVP roof window (060090) behind a KLI 311 wall switch, 1W enrollment | 📣 Reported — the windows moved on Enroll (two windows, Heltec Wireless Paper V1.2, SX1262, issue #249); commands afterwards not reported yet. Discover & Pair got no answer (`rf_silent`) |
 | KLR 100 two-way control pad | 📣 Reported as a key-extraction source — with System settings, Copy system open, the pad answers an addressed key request and proves the key; reported with another controller, not yet with this hub (issue #242) |
 | KLR 200 two-way control pad | ✅ Confirmed as a key-extraction source |
 | KLR 300 two-way control pad | ✅ Confirmed as a key-extraction source (one community tester) |
-| KLF 200 gateway | ✅ Key extraction succeeded (one reporter) — use **SEARCH FOR PRODUCTS**, and repeat it while armed if it finds nothing |
+| KLF 200 gateway | 📣 Reported as a key-extraction source (one reporter) — use **SEARCH FOR PRODUCTS**, and repeat it while armed if it finds nothing |
 | KIG 300 hub | ⚠️ Partial — one extraction succeeded, one stalled |
 | Devices behind an extracted key | ✅ Confirmed, with `low_power: true` |
 | MSU 100100 solar awning screen | ⚠️ Partial — open and close work; `stop` has no effect while it moves |
@@ -231,7 +233,8 @@ moves the window to its predefined air-exchange opening rather than fully open.
   Open afterwards. The enrollment classes must match the remote: the default fits a KLI
   310/313 (exterior shading, e.g. an SML roller shutter), while a KLI 312 interior blind needs
   `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`. The remote's own `0x2E` log lines after Gear name
-  the classes. Confirmed in issue #74 (see
+  the classes: a KLI 312's name exactly these two, reported from a log with no corpus capture.
+  Confirmed in issue #74 (see
   [Sending 1W commands](../configuration/oneway-transmit.md)).
 - **The KUX 110 powers the products; each KLI pairs with each product directly.** It feeds 24 V DC
   to mains-powered products such as SML roller shutters, and the io-homecontrol receiver that the
@@ -245,6 +248,24 @@ moves the window to its predefined air-exchange opening rather than fully open.
   that KLI drives, and each of them then registers whatever control is enrolled next. For one Home
   Assistant cover per product, enroll one identity per product and press Gear on a control that
   drives only that product.
+- **An FSC solar pleated blind (PK10) takes one new control after a reset.** Reset the blind, pair
+  its KLI, press Gear on the KLI for 1 s, wait for the ready sequence (about 45 s) to end, then
+  Enroll: the KLI first, then the hub. Discover & Pair got no answer, not even after a factory reset.
+  A command a few seconds after a stop was sometimes ignored while the motor went back to sleep; the
+  reporter cured it with a longer wake-up copy. With `low_power: true` the hub's wake-up copy lasts
+  [`low_power_wake_ms`](../configuration/tuning.md#low_power_wake_ms), 515 ms by default, which you
+  can raise ([ADR 0115](../adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md)).
+  Reported on a Heltec V4.2 (issue #74).
+- **A CVP roof window behind a KLI 311 enrolls after a Gear press of about 1 s.** Hold Gear on the
+  KLI 311, wait until the window stops moving, then press Enroll, with `manufacturer: velux`,
+  `io_device_type: window_opener` and `enrollment: true`. Enrollment worked at a greater distance
+  than control did. Whether a window answers a second enrollment is not known (issue #249).
+- **A type 4/1 window ends an identify by itself.** The
+  [identify actions](../configuration/actions.md#identify_device) end with the default (the
+  device's own time, done about 26 s after the request) and with a bounded time, and stop with
+  `seconds: 0`. The reporter ran these with their own controller rather than this component, the
+  default and the stop once each (issue #241). The window marking reported is GGL-P08, a marking
+  rather than a confirmed commercial model.
 - **VELUX uses a different 1W enrollment gesture from Somfy**, and a different priority byte on
   `CMD_EXECUTE`. Set `manufacturer: velux` on any 1W identity aimed at these devices — see
   [Sending 1W commands](../configuration/oneway-transmit.md).
@@ -324,10 +345,10 @@ One more capture holds five type 4/1 windows answering keyed roll-calls, receive
 receiver (issue #242).
 
 Field reports: #17 (SML discovery), #74 (SML roller shutter, KLI 312 blind and FSC pleated blind 1W enrollment), #80 (KLR 200 extraction), #87 (roll-call preamble), #95 (MSU
-screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #230 (SML two-way pairing, shutters queued on one KUX 110), #240 (two SSL shutters behind a KLR 200 key), #242 (KLR 100 Copy system, five type 4/1 windows).
+screen stop), #98 (INTEGRA probes), #112 and #114 (SSL solar roller shutter), #195 (KLF 200 extraction), #205 (roof window travel speed), #57 (mains-wired roller shutters), #230 (SML two-way pairing, shutters queued on one KUX 110), #240 (two SSL shutters behind a KLR 200 key), #241 (identify on a type 4/1 window), #242 (KLR 100 Copy system, five type 4/1 windows), #249 (CVP roof windows behind a KLI 311).
 
 ## See also
 
 - [Key extraction](../key-extraction.md)
-- [Scan Paired Devices](../pairing.md#scan-paired-devices)
+- [Scan Paired Devices](../scan-paired-devices.md)
 - [Troubleshooting](../troubleshooting.md#commands-are-ignored-mid-motion)

@@ -2,7 +2,7 @@
 ## @brief ESPHome binary switch platform schema and code generation.
 ## @ingroup hioc_codegen
 ##
-## Defines the experimental on/off switch integration and wires it to the shared hub.
+## Defines the on/off switch integration and wires it to the shared hub.
 ## Shared device-binding logic lives in platform_common.py; only switch-specific entity
 ## construction/registration stays here. The hub-level "Recover System Key" (key extraction)
 ## switch is unrelated to this platform — it has no device to bind to, so it is not exposed

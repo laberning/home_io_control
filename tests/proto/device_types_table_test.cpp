@@ -472,11 +472,9 @@ TEST(DeviceTypesTableExperimental, ExactlyTheRowsNoCaptureOrReportConfirmsAreFla
       {DeviceType::LIGHT, 2},
       {DeviceType::LOCK, 1},
       {DeviceType::LOCK, 2},
-      {DeviceType::ON_OFF_SWITCH, 2},
       {DeviceType::HEAT_PUMP, 2},
       {DeviceType::SWINGING_SHUTTER, SUBTYPE_MAIN_PARAMETER_ONLY},
       {DeviceType::SLIDING_WINDOW, 1},
-      {DeviceType::DOMESTIC_HOT_WATER, 0},
       {DeviceType::REMOTE_CONTROLLER, 2},
       {DeviceType::REMOTE_CONTROLLER, 3},
       {DeviceType::REMOTE_CONTROLLER, 4},
@@ -490,15 +488,22 @@ TEST(DeviceTypesTableExperimental, ExactlyTheRowsNoCaptureOrReportConfirmsAreFla
   EXPECT_EQ(flagged, expected);
 }
 
-TEST(DeviceTypesTableExperimental, AnExperimentalTypeRowFlagsOnlyItself) {
-  // The water heater row is the one experimental type row. Its marker names that row: a subtype without
-  // a row of its own takes the type's capabilities but not the marker (the Python mirror drops it on the
-  // same fallback, device_features_sync_test.cpp).
-  EXPECT_TRUE(device_is_experimental(DeviceType::DOMESTIC_HOT_WATER, 0));
-  EXPECT_FALSE(device_is_experimental(DeviceType::DOMESTIC_HOT_WATER, 1));
-  EXPECT_FALSE(device_is_experimental(DeviceType::DOMESTIC_HOT_WATER, SUBTYPE_MAIN_PARAMETER_ONLY));
-  EXPECT_TRUE(
-      has_feature(device_features(DeviceType::DOMESTIC_HOT_WATER, 1, DeviceModel::NONE), device_feature::WATER_HEATER));
+TEST(DeviceTypesTableExperimental, NoTypeRowIsFlagged) {
+  // A type row (subtype 0) is a confirmed identity; only subtype rows carry the marker. Model rows
+  // are rows of their own that the plain walk does not visit, so the water heater models
+  // (explorer_v4, electric_water_heater) are checked by the second walk.
+  test::for_each_table_row([](const DeviceTypeInfo &row) {
+    if (row.subtype == 0) {
+      EXPECT_EQ(row.flags & device_type_flags::EXPERIMENTAL, 0) << row.name;
+    }
+  });
+  test::for_each_model_row([](const DeviceTypeInfo &row) {
+    if (row.subtype == 0) {
+      EXPECT_EQ(row.flags & device_type_flags::EXPERIMENTAL, 0) << row.name;
+    }
+  });
+  EXPECT_FALSE(device_is_experimental(DeviceType::DOMESTIC_HOT_WATER, 0)) << "confirmed by issues #198 and #247";
+  EXPECT_FALSE(device_is_experimental(DeviceType::ON_OFF_SWITCH, 2)) << "the micromodule is reported by issue #57";
 }
 
 TEST(DeviceTypesTableExperimental, TheLookupFlagsOnlyAnExactRow) {

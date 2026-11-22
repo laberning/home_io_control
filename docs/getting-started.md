@@ -164,12 +164,16 @@ before you change any settings, and give each attempt one PROG press: pressing P
 device is still in pairing mode can close the window the first press opened. Pair one device at a
 time.
 
+A connected radiator of the Atlantic group pairs from the connectivity menu on its display and
+hands over a key of its own. The log then prints a block that includes that key; see
+[Devices that hand over their own key](pairing.md#devices-that-hand-over-their-own-key).
+
 [Pairing](pairing.md) has the full walkthrough and a decision tree.
 
 ### Route B — a hub already controls it
 
-For a device controlled today by a Somfy TaHoma, Connexoon or Connectivity Kit, a VELUX KLF200,
-KLR200 or KIG300, or similar.
+For a device controlled today by a Somfy TaHoma, Connexoon or Connectivity Kit, a VELUX KLF 200,
+KLR 100, KLR 200, KLR 300 or KIG 300, or similar.
 
 **Discover & Pair cannot reach these devices at all**, however carefully you time it. You have two
 ways forward.
@@ -191,24 +195,8 @@ duty-cycle across the three radio channels on their own schedule, so the hub swe
 once per power class, on every scan — and one can still be missed. A repeat press has no side
 effects.
 
-**If a device never turns up, you can still write its entity by hand.** All you need is its
-`io_device_id`. Turn on frame logging:
-
-```yaml
-esphome:
-  build_flags:
-    - -DIOHOME_FRAME_LOG
-
-logger:
-  level: DEBUG
-```
-
-Reflash, then operate the device from its existing hub or remote while watching the log. Each
-logged frame ends in its raw bytes: pairs three to five are the destination address and pairs six
-to eight are the sender, so in `4B 20 30 E1 F2 C0 FF EE 03` the device is `30E1F2` and the
-controller talking to it is `C0FFEE`. Your device is whichever address is not your own hub's. Then
-pick `io_device_type` from [Named device types](supported-devices.md#named-device-types) to match
-what the device actually is.
+**If a device never turns up**, you can still write its entity by hand; see
+[A device is missing from the scan](troubleshooting.md#a-device-is-missing-from-the-scan).
 
 [Key extraction](key-extraction.md) covers this route in detail.
 
@@ -221,8 +209,8 @@ its local remote, so register that again before starting Route A.
 
 ### Route C — a 1W-only device
 
-The hub joins the device as one more remote. You get open, close and stop buttons, but no position
-feedback, because a 1W device never answers.
+The hub joins the device as one more remote. You get open, close and stop buttons, and a cover card
+if you name one, but no position feedback, because a 1W device never answers.
 
 1. Add a `oneway_controllers:` entry with `enrollment: true`.
 2. Put the device into its learn mode with a remote it already obeys. The gesture depends on the
@@ -230,54 +218,39 @@ feedback, because a 1W device never answers.
 3. Press **Enroll 1W Controller** in Home Assistant.
 
 [Sending 1W commands](configuration/oneway-transmit.md#enrolling-this-hub-as-a-controller) has
-the YAML, the gesture per vendor, and how to tell that it worked. Skip step 4 below: a 1W device
-has no `cover:` entry.
+the YAML, the gesture per vendor, and how to tell that it worked.
+[A cover for the identity](configuration/oneway-transmit.md#a-cover-for-the-identity) shows it as
+one cover card. Skip step 4 below: a 1W device is configured in the hub block, not as an entity of
+its own.
 
 ## 4. Add your devices to the YAML
 
-Routes A and B leave you with the same three values per device, printed in the log. Add one entity
-per device, on the platform that matches what it is: `cover:` for shutters, blinds, awnings and
-window openers, or `light:`, `lock:`, `switch:` and `climate:` for the rest.
-
-This example is a cover — see [Configuration](configuration/index.md) for the other platforms:
+Routes A and B end the same way: the log prints one ready-to-paste block per device, on the
+platform that matches what the device is. A shutter or awning gets a `cover:` block:
 
 ```yaml
 cover:
   - platform: home_io_control
     name: "Patio Awning"
-    io_device_id: "FEEB1E"      # from the log
-    io_device_type: "vertical_exterior_awning"    # from the log
-    io_subtype: 0               # from the log
+    io_device_id: "FEEB1E"
+    io_device_type: "vertical_exterior_awning"
+    io_subtype: 0
 ```
 
-Take `io_device_type` from the log rather than guessing — it is what the device reports itself to
-be, and it may not be the class you expected. [Named device types](supported-devices.md#named-device-types)
-lists every value the option accepts. If the log printed a raw numeric type such as `0x11`, keep
-that exact value.
+Paste each block into your YAML and give it a name. A light prints a `light:` block, a radiator a
+`climate:` block, and so on; [Configuration](configuration/index.md) has a page per platform.
 
-Declaring `io_device_type` is worth doing even though it is optional. It is what enables
-type-specific behaviour: a `vertical_exterior_awning` gets a `Patio Awning Favorite Position` button, a
-`window_opener` also gets a Ventilation Position button, and families such as horizontal awnings
-get their direction inverted automatically. A garage opener gets no Favorite Position button but a Partial Position one, a gate opener gets an experimental Pedestrian Position button (both disabled by default), and
-an opener of subtype 58 is an open/close/stop cover without a slider (see
-[Covers that only open and close](configuration/cover.md#covers-that-only-open-and-close)).
-These entities are generated at compile time, so a type learned later over the radio cannot add them.
+Keep `io_device_type` and `io_subtype` as the log printed them, including a raw numeric type such as
+`0x11`. They are what the device reports itself to be, and they decide what the entity offers: a
+`window_opener` gets a Ventilation Position button, a horizontal awning gets its direction inverted.
+These choices are made when the firmware is built, so a type learned later over the radio cannot
+add them. [Device types](device-types.md#named-device-types) lists every value.
 
-A few additional options worth knowing about:
+Two options are worth knowing from the start:
 
-- **`low_power: true`** — set this on a solar or battery actuator, over two-way and over one-way.
-  Leaving it off on such a device is a common reason a hub pairs successfully and then hears nothing back.
+- **`low_power: true`** — set this on a solar or battery actuator. Leaving it off on such a device
+  is a common reason a hub pairs successfully and then hears nothing back.
 - **`invert_position: true`** — if open and closed come out backwards.
-- **`travel_speed:`** — `silent` moves at the manufacturer app's quieter, slower speed and `fast`
-  asks for the fast profile; without the key the cover moves at the motor's own speed, as its wall
-  control pad moves it (`default`). Only kinds that take a travel-speed parameter accept it; config validation
-  says so for the others, among them garage openers, interior venetian blinds and dual roller
-  shutters. See [Travel speed](configuration/cover.md#travel-speed).
-- **`rain_sensor_poll_interval: 15min`** — on a VELUX window with a wired rain sensor, adds a Rain
-  sensor binary sensor; see [Polling for rain](configuration/cover.md#polling-for-rain).
-- **`status_refresh_interval: 5min`** — reads a cover at rest once it has reported nothing for
-  that long, so a change the hub did not hear (another controller, a rain closure) shows up; see
-  [Refreshing the status at rest](configuration/cover.md#refreshing-the-status-at-rest).
 
 The rest are in [Covers](configuration/cover.md), and on each platform's own page.
 
@@ -286,7 +259,7 @@ Reflash with the updated YAML.
 ## 5. Check it works
 
 Your devices appear in Home Assistant as native entities. Operate one — open a cover, toggle a
-light, unlock a lock.
+light, set a radiator's target.
 
 What success looks like: the entity responds immediately (that is the optimistic state), the device
 itself moves or switches, and a second or two later the entity settles to what the device actually

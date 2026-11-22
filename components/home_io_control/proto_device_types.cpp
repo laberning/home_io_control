@@ -103,15 +103,14 @@ constexpr size_t TYPE_HEX_BUFFER_SIZE = 24;  ///< "unknown type 0x3FF" plus marg
 /// platform (ventilation point, heating interface) is a statement about the device, not a promise.
 ///
 /// Rows that no capture or report has confirmed yet carry device_type_flags::EXPERIMENTAL: the 6/1,
-/// 6/2, 9/1, 9/2, 15/2, 22/2, 24/58, 27/1 and 1023/2..5 subtype rows. Discovery and pairing
+/// 6/2, 9/1, 9/2, 22/2, 24/58, 27/1 and 1023/2..5 subtype rows. Discovery and pairing
 /// log them as experimental and the codegen warns when a config declares one. The flag leaves with the
 /// \todo that names a row once a capture or a reporter confirms it. Rows 1, 10 and 13 are not flagged:
-/// their changed behaviour is experimental, their identity is not. The 51/0 type row is the one type row
-/// that carries the flag: one heater of one brand has been read, its writes are unconfirmed, and the flag
-/// is what makes the codegen warn a user of any other water heater. The flag names its row only: a
-/// subtype without a row of its own does not inherit it (device_is_experimental(), and the Python mirror).
+/// their changed behaviour is experimental, their identity is not. No type row (subtype 0) carries the
+/// flag. The flag names its row only: a subtype without a row of its own does not inherit it
+/// (device_is_experimental(), and the Python mirror).
 /// \todo Confirm 6/1 and 6/2 accept the brightness EXECUTE on a real device.
-/// \todo Confirm the 15/2, 9/1, 9/2, 22/2, 24/58, 27/1 and 1023/2..5 subtype rows against a capture.
+/// \todo Confirm the 9/1, 9/2, 22/2, 24/58, 27/1 and 1023/2..5 subtype rows against a capture.
 constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::UNKNOWN, 0, NO_MODEL, "unknown", CAP_NONE, YAML_SELECTABLE, NO_FEATURES},
 
@@ -169,7 +168,7 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
      SELECTABLE_PLATFORM, device_feature::TEMPERATURE_RANGE},
 
     {DeviceType::ON_OFF_SWITCH, 0, NO_MODEL, "on_off_switch", CAP_SWITCH, SELECTABLE_PLATFORM, BINARY_COMMAND},
-    {DeviceType::ON_OFF_SWITCH, 2, NO_MODEL, "micromodule", CAP_SWITCH, EXPERIMENTAL_SUBTYPE_PLATFORM, BINARY_COMMAND},
+    {DeviceType::ON_OFF_SWITCH, 2, NO_MODEL, "micromodule", CAP_SWITCH, HAS_PLATFORM, BINARY_COMMAND},
 
     {DeviceType::HORIZONTAL_AWNING, 0, NO_MODEL, "horizontal_awning", CAP_COVER, SELECTABLE_PLATFORM, COVER | INVERTED},
     {DeviceType::HORIZONTAL_AWNING, 1, NO_MODEL, "rail-guided pergola", CAP_COVER, SUBTYPE_PLATFORM, COVER | INVERTED},
@@ -223,12 +222,9 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     {DeviceType::SIREN, 0, NO_MODEL, "siren", CAP_NONE, 0, NO_FEATURES},
 
     // A domestic hot water heater: readings and mode in family-0x00 registers, the target in the status
-    // main parameter (proto_dhw.h, registers in proto_heating.h). Read on one Atlantic Calypso Connecte (issue #198);
-    // its writes are unconfirmed.
-    // \todo Confirm on a real heater that the target EXECUTE and the mode write take effect, then drop
-    //       EXPERIMENTAL.
-    {DeviceType::DOMESTIC_HOT_WATER, 0, NO_MODEL, "domestic_hot_water", CAP_WATER_HEATER,
-     SELECTABLE_PLATFORM | EXPERIMENTAL,
+    // main parameter (proto_dhw.h, registers in proto_heating.h). Readings, target, mode, boost and away are
+    // confirmed on an Atlantic Calypso Connecte (issue #198).
+    {DeviceType::DOMESTIC_HOT_WATER, 0, NO_MODEL, "domestic_hot_water", CAP_WATER_HEATER, SELECTABLE_PLATFORM,
      device_feature::WATER_HEATER | device_feature::HOT_WATER_TARGET_20_62 | device_feature::HOT_WATER_BOOST_FP16 |
          device_feature::HOT_WATER_AWAY_FP16 | device_feature::HOT_WATER_REGISTERS_CALYPSO |
          device_feature::HOT_WATER_OPERATING_MODE_WORD},
@@ -236,8 +232,7 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // model row: the YAML declares it (`io_model: explorer_v4`). It answers the Calypso's registers and operating-mode
     // word, but its target runs to 70 C, its boost field reads the other way round and it shows away in the main
     // parameter only.
-    {DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::EXPLORER_V4, "explorer_v4", CAP_WATER_HEATER,
-     SELECTABLE_PLATFORM | EXPERIMENTAL,
+    {DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::EXPLORER_V4, "explorer_v4", CAP_WATER_HEATER, SELECTABLE_PLATFORM,
      device_feature::WATER_HEATER | device_feature::HOT_WATER_TARGET_20_70 |
          device_feature::HOT_WATER_BOOST_FP16_INVERTED | device_feature::HOT_WATER_AWAY_MAIN_PARAMETER |
          device_feature::HOT_WATER_REGISTERS_CALYPSO | device_feature::HOT_WATER_OPERATING_MODE_WORD},
@@ -246,7 +241,7 @@ constexpr DeviceTypeInfo DEVICE_TYPE_TABLE[] = {
     // rows are all registers and its poll sends no status read: the temperature it heats to, a target in shower counts
     // in manual mode only, and boost and absence as flag registers.
     {DeviceType::DOMESTIC_HOT_WATER, 0, DeviceModel::ELECTRIC_WATER_HEATER, "electric_water_heater", CAP_WATER_HEATER,
-     SELECTABLE_PLATFORM | EXPERIMENTAL,
+     SELECTABLE_PLATFORM,
      device_feature::WATER_HEATER | device_feature::HOT_WATER_TARGET_SHOWER_STEPS |
          device_feature::HOT_WATER_BOOST_FLAG | device_feature::HOT_WATER_AWAY_FLAG |
          device_feature::HOT_WATER_REGISTERS_GUELMA},

@@ -6,7 +6,8 @@ Everything about Home IO Control, from a first flash to the protocol internals.
 ## How it works
 
 IO-Homecontrol is the 868 MHz radio protocol behind the motorised shutters, blinds, awnings and
-window openers sold by Somfy, VELUX and other manufacturers. Home IO Control turns an ESP32 with a
+window openers of Somfy, VELUX and SIMU, and behind the connected radiators and water heaters of
+Atlantic, Thermor and Sauter. Home IO Control turns an ESP32 with a
 LoRa radio into a controller for it: your devices appear in Home Assistant as native entities, with
 no vendor hub in between.
 
@@ -30,7 +31,7 @@ identity, plus one entity per device.
 
 ## Getting it working
 
-From a board in hand to a moving blind, and the two ways of getting a device onto the hub.
+From a board in hand to a moving blind, and the ways of getting a device onto the hub.
 
 <!-- doxygen-subpages -->
 - [Getting started](getting-started.md)
@@ -38,15 +39,17 @@ From a board in hand to a moving blind, and the two ways of getting a device ont
 - [Supported devices](supported-devices.md)
 - [Pairing](pairing.md)
 - [Key extraction](key-extraction.md)
+- [Scan Paired Devices](scan-paired-devices.md)
 <!-- /doxygen-subpages -->
 
 ## Reference
 
-Every YAML key, what a heater's card offers, what the companion sensors report, and the small things
+Every YAML key, the device type names, what a heater's card offers, what the companion sensors report, and the small things
 that make the result nicer to live with.
 
 <!-- doxygen-subpages -->
 - [Configuration reference](configuration/index.md)
+- [Device types and manufacturers](device-types.md)
 - [Heaters and water heaters in Home Assistant](heating.md)
 - [Diagnostic entities](diagnostic-entities.md)
 - [Tips and tricks](tips-and-tricks.md)

@@ -1,27 +1,33 @@
 # Supported devices
 <!-- doxygen-label: supported_devices -->
 
-Which IO-Homecontrol devices this project has been run against, what worked, and what the evidence
-for each entry is. If your device is not listed, that usually means nobody has reported it yet
-rather than that it fails — see [Getting your device added](#getting-your-device-added).
+Which IO-Homecontrol devices this project has been run against and how each one got onto the hub.
+If your device is not listed, that usually means nobody has reported it yet rather than that it
+fails — see [Getting your device added](#getting-your-device-added).
 
-## How to read this table
-
-Every row carries its evidence, so you can judge how much weight to put on it. The status words
-mean:
+## How to read the tables
 
 | Status | Meaning |
 |---|---|
 | ✅ **Confirmed** | Worked end to end on real hardware. |
-| ⚠️ **Partial** | Some operations work and others reproducibly do not. The row says which. |
+| ⚠️ **Partial** | Some operations work and others reproducibly do not. The notes say which. |
 | 📣 **Reported** | A field report says it works. Not reproduced here, and no capture in the corpus. |
 | 🔍 **Traffic captured only** | Frames from this device are decoded in the corpus, but this project has never controlled it. |
 | ❌ **Unsupported** | Tried and failed. The cause is either understood or under investigation. |
 
-"Corpus captures" are golden-frame recordings in
+"Not recorded" in the Route column means the report does not say how the device got onto the hub.
+
+**Route** is how the device got onto the hub: [Discover & Pair](pairing.md),
+[key extraction](key-extraction.md) from a hub that already controls it, or
+[1W enrollment](configuration/oneway-transmit.md#enrolling-this-hub-as-a-controller) for a device
+driven one-way. **Type** is the `io_device_type` to declare; the names are on
+[Device types and manufacturers](device-types.md).
+
+The notes name the evidence. "Corpus" entries are golden-frame recordings in
 [tests/corpus/captures/](https://github.com/laberning/home_io_control/tree/main/tests/corpus/captures) —
-real RF frames, replayed by the test suite. A row backed by captures is the
-strongest kind of evidence here.
+real RF frames, replayed by the test suite, and the strongest kind of evidence here. Issue numbers
+refer to the project's [issue tracker](https://github.com/laberning/home_io_control/issues). Where a
+device has a page of its own, the details, the working YAML and the quirks are there.
 
 A device's absence is not a verdict. The protocol is the same across the alliance's members, so an
 unlisted cover-like actuator has a good chance of working with `io_device_type` set to the closest
@@ -29,38 +35,36 @@ match.
 
 ## Device matrix
 
-### Somfy — actuators
+### Somfy
 
-| Device | Type | Status | Route that worked | Key config | Evidence |
-|---|---|---|---|---|---|
-| **Sunea IO awning motor** | `vertical_exterior_awning` | ✅ Confirmed | Discover & Pair | `io_device_type: vertical_exterior_awning` | 31 corpus captures, across all three radios. Open, close and stop from a `horizontal_awning` 1W controller identity are reported to work, including STOP during travel, with Open extending and Close retracting the awning, issue #196. On a reporter's Heltec V4.3 with its board package, every two-way command in two logged sessions was delivered and stop worked during travel; 3 of 14 status reads while the motor ran were missed, and the next read caught up (issue #196). The read at the end of its reported travel time is confirmed on it (corpus `somfy_awning_statuspoll_close_with_remaining_time_predicted_end_read_sx1262`), see [Cover](configuration/cover.md). The Rain sensor (`rain_sensor_poll_interval:`) reads dry on it; a wet reading is experimental, because no capture shows a Somfy device under a rain or wind lock |
-| **Sunea IO 70/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — |  |
-| **Sunea IO 40/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — |  |
-| **Sunilus IO 50/12** | `roller_shutter` | ✅ Confirmed | Discover & Pair | — | corpus `somfy_sunilus_pairing_key_transfer_rejected_error` |
-| **Sonesse 40 io** (interior blind motor) | `vertical_interior_blind` | 📣 Reported — two-way commands and status reads, with no failed or unconfirmed exchange in a logged session | Discover & Pair | — | Heltec V4.3 / SX1262 with its board package, issue #196 |
-| **OXIMO io roller shutter motor** | `roller_shutter` | ✅ Confirmed — open, close, stop, position | 2W pairing | — | Two motors on one Heltec V2 / SX1276 hub, issue #178 |
-| **OXIMO 50 io roller shutter motor** (wired) | `roller_shutter` | ✅ Confirmed — open, close, stop, position | 2W pairing | — | Heltec V2 / SX1276, issue #178. Advertises a 5 ms turnaround and drops the exchange when the hub answers its challenge even 5 ms late |
-| **Izymo IO dimmer** | `light` | ✅ Confirmed, including dimming | Discover & Pair, including repeated reset-and-repair cycles | `dimmable: true` | 39 corpus captures; the `light:` platform's hardware validation |
-| **Izymo IO dimmer, driven over 1W** | `light`, 1W | ✅ Confirmed — enrollment of the hub's 1W identity without the MAC trailer, and removal inside the PROG window | 1W enrollment: hold PROG on the dimmer, then press Enroll; to remove the identity press PROG and call [`oneway_remove_controller`](configuration/actions.md#oneway_remove_controller) | `manufacturer: somfy`, `enrollment: true`; the enrollment frame carries no MAC trailer ([ADR 0124](adr/0124-enrollment-with-mac-is-removed.md)). Pressing Enroll for an identity the dimmer already knows removes it | Corpus `somfy_izymo_dimmer_enrollment_remove_controller_in_prog_window_sx1276`. On/off commands: 50 of 50 obeyed in each burst shape on four boards, checked by a two-way read; unset `low_power:` sends the short shape ([ADR 0122](adr/0122-an-unset-one-way-low-power-sends-four-short-copies.md)). Brightness over 1W is not confirmed; see [the device page](devices/somfy-izymo-dimmer.md) |
-| **J406 IO shutter motor** | `exterior_venetian_blind` | ✅ Confirmed | Discover & Pair | `io_device_type: exterior_venetian_blind` (enumerates as `0x11`) | Corpus `somfy_j406_discovery_1w_overheard`, "J406io Protect" is the same, works too |
-| **MAESTRIA+ IO** | `roller_shutter` | ✅ Confirmed | **Key extraction** — Discover & Pair did not succeed | `accept_foreign_pairing: true` | on a Heltec V3.2 / SX1262 |
-| **Horizontal awning** (two units) | `horizontal_awning` | ✅ Confirmed | Discover & Pair | Direction inversion is applied automatically for this family | Corpus `somfy_awning_discovery_spe_paired_rollcall` |
-| **IO patio-roof motor** (logs as a "Somfy IO motor", behaves as a horizontal awning) | `horizontal_awning`, 1W | ✅ Confirmed — enrollment (the roof moved on Enroll); commands afterwards not reported | 1W enrollment: hold PROG on the existing Situo 1 until the roof jogs, then press Enroll. Two-way Discover & Pair got no answer | `manufacturer: somfy`, `execute_broadcast: all`, `enrollment: true` | SX1276 board, issue #147. The full Somfy enrollment gesture goes to `00003F` |
-| **Pergola io motor** | `horizontal_awning` | ✅ Confirmed | Discover & Pair, after a single PROG hold on its Situo | — | Heltec V3 / SX1262, issue #121. For the kit's LED lighting see [Pairing a pergola kit](devices/somfy-white-led-receiver.md#pairing-a-pergola-kit) |
-| **Bioclimatic pergola louvers** (TaHoma: "Pergola louver IO") | `bioclimatic_pergola` (`0x1D`) | ✅ Confirmed — position, open, close, stop | **Key extraction** | `io_device_type: bioclimatic_pergola`; `sx1262_rx_bandwidth: 156.2` on SX1262 | Heltec V3 / SX1262, PR #157. At 58.6 kHz about one reply in four is missed. Stops about 1 % off target; reports no position after a STOP. Corpus `somfy_pergola_louver_probe_get_info2_sx1262`, `somfy_pergola_louver_exchange_open_close_position_stop_sx1262` |
-| **White LED Receiver io** (4-output LED dimmer, logs as `LightVar_Wh_io`) | `light` | ✅ Confirmed, including dimming | Discover & Pair once per output: hold PROG about 2 s on the Situo channel for that output, then press Discover & Pair | `dimmable: true`; `sx1262_rx_bandwidth: 156.2` on SX1262 | Each output is a separate device. Heltec V3 / SX1262, issues #119, #143. Step-by-step: [Somfy White LED Receiver io](devices/somfy-white-led-receiver.md) |
-| **Sunea SCR 40 io** | — | ✅ Confirmed — open, close, position | Discover & Pair | — | Pergola kit, alongside a White LED Receiver io; keeps working at `sx1262_rx_bandwidth: 156.2`. Heltec V3 / SX1262, issue #143 |
-| **Awning actuator (IO Vertical)** | `vertical_exterior_awning` | ✅ Confirmed for discovery | Discover & Pair | — | Corpus `somfy_awning_discovery_lab_response` |
-| **RS100 IO / RS100 Solar** | `vertical_exterior_awning` / `roller_shutter` | ⚠️ Partial — often pairs first try; the key exchange can stall and need a retry. One RS100 Solar io answered discovery but no two-way frame after it and runs on 1W (issue #187) | Discover & Pair; retry if the key exchange stalls | `low_power: true` | 7 corpus captures including both a success and a key-transfer stall. An RS100 Solar io also answers sun level and battery percentage requests (experimental sensors, the sun level in lux with an estimated scale, issue #156; corpus `somfy_rs100_probe_subscribe_event_*`), see [Sun level and battery level](configuration/cover.md#sun-level-and-battery-level) |
-| **MOTO 1000 io garage drive** (sold by Wisniowski) | `garage_opener` | 📣 Reported — Discover & Pair, status, linked remotes, open, close, STOP and Partial Position work, first try, also from rest; the opener refuses percent positions and the favorite position | Discover & Pair | `io_device_type: garage_opener`, `low_power: true` | Heltec V3 / SX1262, issue #163. The cover shows open, close and stop and no slider (declare `io_subtype: 58`). The regular position frame and a 50 % position are refused with `PARAMETER_UNKNOWN` (corpus `wisniowski_moto1000_exchange_execute_parameter_unknown`, `wisniowski_moto1000_exchange_execute_partial_position_refused`); garage openers get the shorter frame, and no Favorite Position button. The Partial Position button (disabled by default) moves the door to the partial position stored in the drive, from closed or open, not from a door stopped mid-travel; see [details](configuration/cover.md#partial-and-pedestrian-position-buttons). After a partial move the drive keeps reporting "moving" for about half a minute. Keep `response_preamble_ms` at its default (3.5) or lower: the drive ignores a command whose authentication answer arrives late, as it did behind 6.7 ms ([troubleshooting](troubleshooting.md#a-tuning-plan)). The reporter's confirmed runs used 1.7 ms (8 bytes on the SX1262); 3.5 ms is not yet tested on this drive, so if commands stop working, set it to `1.7` |
-| **Exterior venetian blinds** (ten units, model not given) | `exterior_venetian_blind` | 📣 Reported — open, close, stop, position and tilt | Key extraction from a TaHoma Switch, which keeps working alongside | `io_device_type: exterior_venetian_blind`; their Somfy io remotes and a Situo 1 io Pure II as `linked_remotes` | LilyGO T3 V2.1 / SX1276, issue #244 |
-| **Elixo 3S io swing gate opener** | `gate_opener`, subtype 58 | 📣 Reported — open, close and stop, and its built-in light output on and off; the Pedestrian Position button is not reported | Key extraction from a TaHoma Switch | `io_device_type: gate_opener`, `io_subtype: 58`; the light output as a `light:` entry with `io_subtype: 58`; KeyGo io buttons as `linked_remotes` | LilyGO T3 V2.1 / SX1276, issue #244 |
-| **Dexxo Smart io 800 garage door opener** | `garage_opener`, subtype 58 | 📣 Reported — open, close and stop, and its built-in light on and off | Key extraction from a TaHoma Switch | `io_device_type: garage_opener`, `io_subtype: 58`; the light as a `light:` entry with `io_subtype: 58`; KeyGo io buttons as `linked_remotes` | LilyGO T3 V2.1 / SX1276, issue #244 |
-| **Oximo 40 Solar tubular motor** | `roller_shutter` | 🔍 Traffic captured only | — | `low_power: true` | Corpus `somfy_oximo40_statuspoll_sx1262`, issue #45 |
-| **Sunea IO screen** | `vertical_exterior_awning` | 🔍 Traffic captured only | — | — | Corpus `somfy_awning_exchange_priority_level_sx1276` — a directed priority-level query from a real TaHoma Switch |
-| **Tilt-capable blind/shutter** | tilt-capable cover | ✅ Confirmed for tilt control | — | — | 8 corpus captures |
-| **Combined wind/rain protection station** | sensor (1W) | ✅ Confirmed for listening | Overheard; no pairing involved | `exposed_senders:` / `linked_remotes:` | 2 corpus captures |
-| **Eolis 3D WireFree IO wind sensor** | sensor (1W) | 📣 Reported — listen-only | Overheard; no pairing involved | `exposed_senders:` / `linked_remotes:` | A standalone wind sensor, distinct from the combined station above; links directly to its awning motor. |
+| Device | Type | Status | Route | Notes |
+|---|---|---|---|---|
+| **Sunea IO awning motor** | `vertical_exterior_awning` | ✅ Confirmed | Discover & Pair | 31 corpus captures, all three radios. [Somfy Sunea IO](devices/somfy-sunea-io.md) |
+| **Sunea IO 70/17**, **Sunea IO 40/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | [Somfy Sunea IO](devices/somfy-sunea-io.md) |
+| **MAESTRIA+ IO** | `roller_shutter` | ✅ Confirmed | Key extraction; Discover & Pair did not succeed | Heltec V3.2 / SX1262. [Somfy Sunea IO](devices/somfy-sunea-io.md) |
+| **Sunea IO screen** | `vertical_exterior_awning` | 🔍 Traffic captured only | — | Corpus `somfy_awning_exchange_priority_level_sx1276`, a query from a TaHoma Switch |
+| **Awning actuator (IO Vertical)** | `vertical_exterior_awning` | ✅ Confirmed | Discover & Pair | Discovery only. Corpus `somfy_awning_discovery_lab_response` |
+| **Horizontal awning** (two units) | `horizontal_awning` | ✅ Confirmed | Discover & Pair | Direction is inverted automatically. Corpus `somfy_awning_discovery_spe_paired_rollcall` |
+| **Sunilus IO 50/12** | `roller_shutter` | ✅ Confirmed | Discover & Pair | Corpus `somfy_sunilus_pairing_key_transfer_rejected_error` |
+| **OXIMO io**, **OXIMO 50 io** (wired) roller shutter motors | `roller_shutter` | ✅ Confirmed | Two-way pairing | Open, close, stop, position. Two motors on one Heltec V2 / SX1276 hub, issue #178. The OXIMO 50 io advertises a 5 ms turnaround and drops the exchange when the hub answers its challenge even 5 ms late |
+| **Oximo 40 Solar tubular motor** | `roller_shutter` | 🔍 Traffic captured only | — | `low_power: true`. Corpus `somfy_oximo40_statuspoll_sx1262`, issue #45 |
+| **RS100 IO / RS100 Solar** | `vertical_exterior_awning` / `roller_shutter` | ⚠️ Partial | Discover & Pair; retry if the key exchange stalls | `low_power: true`. One motor runs on 1W only (issue #187). [Somfy RS100 IO](devices/somfy-rs100.md) |
+| **Sonesse 40 io** (interior blind motor) | `vertical_interior_blind` | 📣 Reported | Discover & Pair | Commands and status reads without a failed exchange in a logged session. Heltec V4.3, issue #196 |
+| **J406 IO shutter motor**, also "J406io Protect" | `exterior_venetian_blind` | ✅ Confirmed | Discover & Pair | Enumerates as `0x11`. Corpus `somfy_j406_discovery_1w_overheard` |
+| **Exterior venetian blinds** (ten units, model not given) | `exterior_venetian_blind` | 📣 Reported | Key extraction from a TaHoma Switch | Open, close, stop, position and tilt; their Somfy io remotes and a Situo 1 io Pure II as `linked_remotes`. LilyGO T3 V2.1 / SX1276, issue #244 |
+| **Pergola io motor** | `horizontal_awning` | ✅ Confirmed | Discover & Pair | Issue #121. [Somfy pergola](devices/somfy-pergola.md) |
+| **Bioclimatic pergola louvers** | `bioclimatic_pergola` | ✅ Confirmed | Key extraction | `sx1262_rx_bandwidth: 156.2` on SX1262. Pull request #157. [Somfy pergola](devices/somfy-pergola.md) |
+| **Sunea SCR 40 io** | not reported | ✅ Confirmed | Discover & Pair | Open, close, position. Issue #143. [Somfy pergola](devices/somfy-pergola.md) |
+| **IO patio-roof motor** | `horizontal_awning`, 1W | ✅ Confirmed | 1W enrollment; Discover & Pair got no answer | Enrollment only; commands afterwards not reported. Issue #147. [Somfy pergola](devices/somfy-pergola.md) |
+| **MOTO 1000 io garage drive** (sold by Wisniowski) | `garage_opener`, subtype 58 | 📣 Reported | Discover & Pair | Open, close, stop, Partial Position; no percent positions. Issue #163. [Garage and gate openers](devices/somfy-garage-gate-openers.md) |
+| **Dexxo Smart io 800 garage door opener** | `garage_opener`, subtype 58 | 📣 Reported | Key extraction from a TaHoma Switch | Open, close, stop, built-in light. Issue #244. [Garage and gate openers](devices/somfy-garage-gate-openers.md) |
+| **Elixo 3S io swing gate opener** | `gate_opener`, subtype 58 | 📣 Reported | Key extraction from a TaHoma Switch | Open, close, stop, light output. Issue #244. [Garage and gate openers](devices/somfy-garage-gate-openers.md) |
+| **Izymo IO dimmer** | `light` | ✅ Confirmed | Discover & Pair | `dimmable: true`. Corpus captures on all three radios. [Somfy Izymo IO dimmer](devices/somfy-izymo-dimmer.md) |
+| **Izymo IO dimmer, driven over 1W** | `light`, 1W | ✅ Confirmed | 1W enrollment | On and off; brightness not confirmed. [Somfy Izymo IO dimmer](devices/somfy-izymo-dimmer.md) |
+| **Izymo io on/off receiver** | `on_off_switch`, subtype 2 | 📣 Reported | Discover & Pair | Switches on and off, follows a linked Situo 1 io Pure II. SX1262 module, [issue #57](https://github.com/laberning/home_io_control/issues/57) |
+| **White LED Receiver io** (4-output LED dimmer) | `light` | ✅ Confirmed | Discover & Pair, once per output | `dimmable: true`. Issues #119, #143. [Somfy White LED Receiver io](devices/somfy-white-led-receiver.md) |
+
+Tilt control is confirmed on a tilt-capable Somfy blind, with 8 corpus captures.
 
 Somfy motors are also sold under other brands. The two awnings this project was originally built
 for carry a "Heim & Haus" badge over a Somfy Sunea IO motor, so match your motor to a row by what
@@ -68,192 +72,105 @@ is inside the tube rather than by the name on the awning.
 
 `low_power: true` on the solar Somfy motors is a reasoned starting point rather than a confirmed
 setting: the option is meant for battery and solar actuators, and it is confirmed on VELUX hardware
-through issue #87, but no RS100 or Oximo report has confirmed it yet.
-
-Over 1W the same applies: a battery or solar one-way device needs `low_power: true`. Without it the hub sends four short copies for every manufacturer, which a mains-powered receiver obeys and a sleeping one misses ([ADR 0122](adr/0122-an-unset-one-way-low-power-sends-four-short-copies.md), [Sending 1W commands](configuration/oneway-transmit.md#what-one-command-puts-on-the-air)).
-
-### Somfy — hubs and remotes
-
-These are useful as key-extraction sources or as senders you can listen to, not as things this
-project controls.
-
-| Device | Role | Status | Evidence |
-|---|---|---|---|
-| **Smoove IO wall switch** | 1W remote | ✅ Confirmed for listening, and for re-pairing a reset Izymo | 8 corpus captures |
-| **TaHoma Switch** | Third-party hub | ✅ Confirmed as a key-extraction source | Corpus `somfy_tahoma_pairing_key_extraction_success_sx1276` |
-| **Connectivity Kit** | Third-party hub | ⚠️ Partial — extraction stalled | Corpus `somfy_connectivity_kit_pairing_key_extraction_stall` |
-| **Smoove IO remote** | 1W remote | ✅ Confirmed for listening | Corpus `somfy_smoove_enrollment_monitor_sx1276`; issue #27 |
-| **Situo 1 io** | 1W remote | ✅ Confirmed for listening | Its PROG hold decodes as an io add-controller frame to `00003F`, followed by two `0x20` frames; it opens the motor's 1W learning window (issue #147) |
-| **Situo 5 io Pure II** | 1W remote | ✅ Confirmed for listening | Its PROG hold and its EXECUTE frames both decode, and a Somfy awning paired from that gesture |
-| **KeyGo io** (4-button remote) | 1W remote | 📣 Reported for listening — every press is heard, each button with its own sender address; buttons work as `linked_remotes` of a gate opener and a garage door opener | issue #244 |
+through issue #87, but no RS100 or Oximo report has compared it against `false` on the same motor.
+Over 1W the same applies: a battery or solar one-way device needs `low_power: true`. Without it the
+hub sends four short copies, which a mains-powered receiver obeys and a sleeping one misses
+([ADR 0122](adr/0122-an-unset-one-way-low-power-sends-four-short-copies.md),
+[Sending 1W commands](configuration/oneway-transmit.md#what-one-command-puts-on-the-air)).
 
 ### VELUX
 
-| Device | Type | Status | Route that worked | Key config | Evidence |
-|---|---|---|---|---|---|
-| **KLR 200 two-way control pad** | Third-party hub | ✅ Confirmed as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | succeeded end to end on the first attempt, including the node verification round that follows it; corpus `velux_klr200_pairing_key_extraction_success` |
-| **KLR 300 two-way control pad** | Third-party hub | ✅ Confirmed as a key-extraction source | Key extraction: start the KLR 300's own "search for new products" while the hub is armed | `accept_foreign_pairing: true` | One community tester on an SX1276 board, first attempt; the node verification round that follows also ran. Corpus `velux_klr300_pairing_key_extraction_success` and `velux_klr300_discovery_rollcall_node_verification` |
-| **KLR 100 two-way control pad** | Third-party hub | 📣 Reported as a key-extraction source | Key extraction | `accept_foreign_pairing: true` | Its "Register product" gesture opens the extraction window the same way the KLR 200's does; issue #87. In System settings, Copy system, the pad also answers an addressed key request and proves the key it handed over; reported with another controller, not yet with this hub (issue #242) |
-| **KIG 300 hub** | Third-party hub | ⚠️ Partial — one extraction succeeded, one stalled | Key extraction | `accept_foreign_pairing: true` | 4 corpus captures |
-| **INTEGRA roof-window actuator** | `window_opener` | ✅ Confirmed | — | `io_device_type: window_opener`, which adds the Ventilation Position button; `rain_sensor_poll_interval:` adds a Rain sensor for a wired rain sensor | 5 corpus captures (probe replies, a dry and a rain-limited limitation read, and private-function sweeps dry and in the rain state); issue #98. A second installation, five type 4/1 windows with the factory name "Window operator" driven under a key copied from a KLR 100, is reported with another controller (issue #242; one corpus capture of the roll-call). On a type 4/1 window the [identify actions](configuration/actions.md#identify_device) end by themselves with the default (the device's own time, done about 26 s after the request) and with a bounded time, and stop with `seconds: 0`; the reporter ran these with their own controller rather than this component, the default and the stop once each (issue #241); the window marking reported is GGL-P08, a marking rather than a confirmed commercial model |
-| **INTEGRA roller shutter, mains-wired** | `roller_shutter` | 📣 Reported | — | — | A 230 V installation — two window actuators and their shutters, driven alongside two KLR 200s; issue #57. Mains power is what separates this from the solar rows below |
-| **Devices behind an extracted KLR200 key** | Mixed | ✅ Confirmed | Key extraction, then `scan_paired_devices` | **`low_power: true`** on the affected devices | `scan_paired_devices` runs a low-power pass built to reach sleeping devices without any YAML declaration; `low_power: true` is still needed for directed commands once they are registered |
-| **MSU 100100 5070WL solar awning screen** | `vertical_exterior_awning` | ⚠️ Partial — open and close work; `stop` has no effect while it moves | — | `low_power: true` | Nothing the hub sends gets an answer while the motor runs; stop it mid-travel with its own remote — see [VELUX INTEGRA](devices/velux-integra.md) |
-| **SSL solar roller shutter** | `roller_shutter` | ⚠️ Partial — Discover & Pair, open, close, position and status; `stop` reaches it mid-travel, but not on every attempt | Discover & Pair right after a motor-side reset; or, where a KLR 200 runs the house, register the shutter there from its KLI and use the KLR 200's key (issue #240) | No tuning needed; `pairing_discovery_destination: "0x00003F"` and `pairing_discovery_ack_capable: true` complete the confirmed setup but are not known to be required; `low_power: true` on the device entry | The reset removes the wall remote, so register it again afterwards. Press stop again if the shutter keeps moving, or use that remote. Step-by-step: [VELUX INTEGRA](devices/velux-integra.md#ssl-solar-roller-shutter) |
-| **INTEGRA SOLAR blinds** | `vertical_interior_blind` | 📣 Reported | — | `low_power: true` | Named as a canonical low-power case; no capture |
-| **KLI 313 remote** (ships with the SML roller shutter) | 1W remote | 🔍 Traffic captured only | — | — | 3 corpus captures |
-| **KLI 310 universal wall remote** | 1W remote | 🔍 Traffic captured only | — | — | Corpus `velux_kli310_discovery_alt_sweep` |
-| **KLI 312 interior-blind remote** | 1W remote | 🔍 Traffic reported only | — | — | Gear `0x2E` goes to `vertical_interior_blind` and `interior_venetian_blind`; no corpus capture |
-| **INTEGRA CVP roof window (060090), behind a KLI 311 wall switch** | `window_opener`, 1W | 📣 Reported — enrollment (the windows moved on Enroll, two windows, SX1262, issue #249); commands afterwards not reported yet. Discover & Pair got no answer (`rf_silent`) | 1W enrollment: hold Gear on the KLI 311 for about 1 s, wait until the window stops moving, then press Enroll | `manufacturer: velux`, `io_device_type: window_opener`, `enrollment: true` | Heltec Wireless Paper V1.2 / SX1262, issue #249. Enrollment also worked at a greater distance than control did. Whether a window answers a second enrollment is not known |
-| **KUX 100 / PK03 / PK04 wired bridge** | Bridge | 🔍 Traffic captured only | — | — | 3 corpus captures of KLR200 ↔ KUX100 traffic |
-| **KLF 200** | Third-party hub | ✅ Key extraction succeeded (one reporter) | Key extraction: arm the hub, then press **SEARCH FOR PRODUCTS** in the KLF 200 web interface (Products page). Repeat the search while the switch is still armed if the first one ends with "No product was found" | `accept_foreign_pairing: true` | LilyGO T-ETH-Elite with the SX1276 LoRa shield; repeat SEARCH FOR PRODUCTS while the switch is armed: it took several searches for the one reporter, and the earlier ones ended with "No product was found". With the extracted key, Scan Paired Devices found all of the reporter's motors. **COPY PRODUCTS** with Discover & Pair gets no answer at all; issue #195 |
-| **SML electric roller shutter** | `roller_shutter`, 1W or two-way | 1W: ✅ Confirmed — enrollment, open, close, stop (SX1276). Two-way: 📣 Reported — Discover & Pair, open, close, stop mid-travel, set position, position and status (SX1262, issue #230) | 1W: Gear on the existing KLI 310, then Enroll. Two-way: Gear on the shutter's own KLI 310, then one press of Discover & Pair while the shutter jogs | 1W: `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `low_power: false`. Two-way: `pairing_discovery_preamble_ms: 7` is enough; `pairing_discovery_ack_capable` is not needed (Discover & Pair found nothing in issue #17 with a discovery preamble of about 213 ms) | Mains-fed, e.g. through a KUX 110. Shutters on one KUX 110 run one at a time; see [SML electric roller shutter](devices/velux-integra.md#sml-electric-roller-shutter) |
-| **Interior blinds behind a KLI 312** | `interior_venetian_blind`, 1W | ✅ Confirmed — enrollment, open, close, stop (SX1262) | 1W enrollment: Gear on the existing KLI 312, then Enroll | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`, `low_power: true` |  |
-| **FSC solar pleated blind** (PK10) | 1W | 📣 Reported — enrollment, open, close, stop (Heltec V4.2, issue #74). Discover & Pair got no answer, not even after a factory reset | 1W enrollment: reset the blind, pair its KLI, press Gear on the KLI for 1 s, wait for the ready sequence (about 45 s) to end, then Enroll. After a reset the blind took only one new control: the KLI first, then the hub | `manufacturer: velux`, `execute_broadcast: all`, `enrollment: true`, `enrollment_classes: [vertical_interior_blind, interior_venetian_blind]`, `low_power: true` | Solar: a command a few seconds after a stop was sometimes ignored while the motor went back to sleep; the reporter cured it with a longer wake-up copy; with `low_power: true` the hub's wake-up copy lasts [`low_power_wake_ms`](configuration/tuning.md#low_power_wake_ms), 515 ms by default, which you can raise ([what one command puts on the air](configuration/oneway-transmit.md#what-one-command-puts-on-the-air), [ADR 0115](adr/0115-a-low-power-one-way-wake-up-lasts-the-hubs-wake-up-duration.md)) |
+All VELUX rows are described on [VELUX INTEGRA and the KLR/KLF/KUX family](devices/velux-integra.md).
+
+| Device | Type | Status | Route | Notes |
+|---|---|---|---|---|
+| **INTEGRA roof-window actuator** | `window_opener` | ✅ Confirmed | Not recorded | Adds a Ventilation Position button; `rain_sensor_poll_interval:` adds a Rain sensor. 5 corpus captures, issues #98, #242 |
+| **INTEGRA roller shutter, mains-wired** | `roller_shutter` | 📣 Reported | Not recorded | A 230 V installation, driven alongside two KLR 200s. Issue #57 |
+| **SSL solar roller shutter** | `roller_shutter` | ⚠️ Partial | Discover & Pair right after a motor-side reset, or the key of a KLR 200 | `low_power: true`. `stop` reaches it mid-travel, but not on every attempt. [SSL solar roller shutter](devices/velux-integra.md#ssl-solar-roller-shutter), issue #240 |
+| **MSU 100100 5070WL solar awning screen** | `vertical_exterior_awning` | ⚠️ Partial | Not recorded | `low_power: true`. Open and close work; `stop` has no effect while it moves |
+| **INTEGRA SOLAR blinds** | `vertical_interior_blind` | 📣 Reported | Not recorded | `low_power: true`. No capture |
+| **SML electric roller shutter** | `roller_shutter`, 1W or two-way | ✅ Confirmed over 1W (SX1276); 📣 Reported two-way (SX1262) | 1W enrollment, or Discover & Pair after Gear on its KLI 310 | [SML electric roller shutter](devices/velux-integra.md#sml-electric-roller-shutter), issues #17, #230 |
+| **Interior blinds behind a KLI 312** | `interior_venetian_blind`, 1W | ✅ Confirmed | 1W enrollment | Open, close, stop (SX1262). `low_power: true` and two `enrollment_classes` |
+| **FSC solar pleated blind** (PK10) | 1W | 📣 Reported | 1W enrollment; Discover & Pair got no answer | Open, close, stop. Heltec V4.2, issue #74 |
+| **INTEGRA CVP roof window (060090)** behind a KLI 311 | `window_opener`, 1W | 📣 Reported | 1W enrollment; Discover & Pair got no answer | Enrollment only; commands afterwards not reported. Issue #249 |
+| **KUX 100 / PK03 / PK04 wired bridge** | Bridge | 🔍 Traffic captured only | — | 3 corpus captures of KLR 200 ↔ KUX 100 traffic |
+
+Devices behind an extracted VELUX key are often solar or battery powered. Scan Paired Devices
+reaches them without any setting; a directed command needs `low_power: true` on the device's entry.
 
 ### SIMU
 
-| Device | Type | Status | Route that worked | Key config | Evidence |
-|---|---|---|---|---|---|
-| **T3.5 E BHz DC solar tubular motor** (Autosun 2 BHz) | `roller_shutter` | ✅ Confirmed on 6 motors — Discover & Pair, open, close, live position, device name | Discover & Pair: hold PROG on the BHz transmitter that already controls the motor, release it at the first jog, then press Discover & Pair. A three-jog gesture also worked; see [the device page](devices/simu-t35-bhz.md#pairing-a-simu-shutter-motor) | `low_power: true` | Reports its name as `T3.5EBHZ DC`. Heltec V3 / SX1262, issues #138, #149. Step-by-step: [SIMU T3.5 E BHz DC](devices/simu-t35-bhz.md) |
-| **BHz wall transmitter** (1 channel) | 1W remote | ✅ Confirmed for listening | — | — | Its PROG press decodes as an io add-controller frame and opens the motor's two-way pairing window |
+| Device | Type | Status | Route | Notes |
+|---|---|---|---|---|
+| **T3.5 E BHz DC solar tubular motor** (Autosun 2 BHz) | `roller_shutter` | ✅ Confirmed | Discover & Pair after PROG on its BHz transmitter | `low_power: true`. Six motors, issues #138, #149. [SIMU T3.5 E BHz DC](devices/simu-t35-bhz.md) |
 
 SIMU also sells a **T3.5 EHz DC**, without the B. That motor uses SIMU-Hz at 433 MHz, not
 io-homecontrol, so this project cannot control it. Check the motor label or its box for "E BHz"
 before pairing; the [device page](devices/simu-t35-bhz.md#check-the-motor-first) has the details.
 
-### Other vendors
-
-| Device | Status | Evidence |
-|---|---|---|
-| **Freebox Delta** (Free, home-automation hub) | ✅ Confirmed as a key source, and the devices stay shared with it — open "Share your network" ("Partager votre réseau") in the Freebox app, then press Discover & Pair with `pairing_key_transfer: pull` and Recover System Key off. The Freebox hands over its key but never answers the hub's challenge; the devices that hold the key prove it by answering a roll-call, and the hub prints it. With that key, Home Assistant opens, closes and stops the shutters and reads their status, and a move started from the Freebox app shows up in Home Assistant at the end of travel. Arming key extraction instead draws a confirm only with `key_extraction_multi_info: 0xDC`, and the Freebox sends no key that way ([key-extraction tuning](configuration/tuning.md#key_extraction_type_word-and-key_extraction_multi_info)) | SX1276 board, issue #215: seven of the reporter's devices answered the roll-call under the pulled key; open, close, stop and status of the reporter's shutters work alongside the Freebox, and so do open and close of a Somfy gate |
-| **Honeywell, Hörmann, Assa Abloy, Niko, WindowMaster, Renson, CIAT, Secuyou, Overkiz, Atlantic Group** | Untested — these are names the schema accepts, not devices anyone has reported | Only `somfy` and `velux` have a verified 1W wire profile |
-
 ### Heating and hot water
 
-Electric heaters, towel dryers, water heaters and heat pumps of the Atlantic group (Atlantic, Thermor, Sauter).
-What each one's card offers in Home Assistant is on
+Electric heaters, towel dryers, water heaters and heat pumps of the Atlantic group (Atlantic,
+Thermor, Sauter). What each one's card offers in Home Assistant is on
 [Heaters and water heaters in Home Assistant](heating.md).
 
-| Device | Status | Evidence |
+| Device | Kind | Status | Route | Notes |
+|---|---|---|---|---|
+| **Atlantic AGILIA IO** (electric radiator, display model) | Radiator with a setpoint | ✅ Confirmed | Discover & Pair from the radiator's menu | Three radiators, issue #165. [Atlantic AGILIA IO](devices/atlantic-agilia-io.md) |
+| **Thermor EMOTION 3 H** (electric radiator) | Radiator with a setpoint | ✅ Confirmed | Discover & Pair from the radiator's menu | Two radiators, issue #228. Set a target in `heat`. [Thermor EMOTION 3 H](devices/thermor-emotion-3h.md) |
+| **Sauter Hekla** (electric heater with a night light) | `io_model: heater_with_light` | ✅ Confirmed | Discover & Pair from the heater's menu | Three heaters, alongside a Cozytouch, issue #222. [Sauter Hekla](devices/sauter-hekla.md) |
+| **Sauter Tahual** (electric radiator) | Radiator with a setpoint | ⚠️ Partial | Not recorded | Reports `0x34/1`, so it is declared like the AGILIA IO, with no `io_model`. Only the energy total is reported, read by the contributor's own build of the `energy:` sensor and equal to the display on two radiators ([pull request 238](https://github.com/laberning/home_io_control/pull/238), corpus `sauter_tahual_probe_energy_register`). See [Energy sensor](configuration/climate.md#energy-sensor) |
+| **Atlantic Adelis** (towel dryer, "ADELIS 2 DIGIT" and "ADELIS 2 M") | `io_model: towel_dryer` | ✅ Confirmed | Discover & Pair from the dryer's menu | Three units, issues #202, #243. [Atlantic Adelis](devices/atlantic-adelis.md) |
+| **Thermor Interface Cozytouch for pilot-wire heaters** (ref. 450 251) | `io_model: pilot_wire_interface` | ✅ Confirmed | The key of its Cozytouch installation; it cannot be paired on its own | All six orders work; no level is reported back. `low_power: true`. Issue #228. [Thermor Interface Cozytouch](devices/thermor-pilot-wire-interface.md) |
+| **Atlantic Tatou Pilotage Intelligent Connecté** (electric radiator) | — | ❌ Unsupported | Discover & Pair gets no answer | Its key has not been retrieved. Try the experimental [`pairing_discovery_send_channels: all`](configuration/tuning.md#pairing_discovery_send_channels). SX1276 board, issue #199 |
+| **Atlantic Alfea Duo Extensa A.I.** (air-to-water heat pump) | `sensor:` entry | ⚠️ Partial | The key of the installation it belongs to | Reads the heating and hot-water energy counters and, experimentally, the outdoor temperature, alongside the installation's TaHoma; writes nothing. Issue #244. [Atlantic Alfea heat pump](devices/atlantic-heat-pump.md) |
+| **Atlantic Calypso Connecté** (heat-pump water heater) | Water heater | ✅ Confirmed | Discover & Pair | Readings, target, mode, boost and away; takes only its own fixed targets. Issue #198. [Atlantic Calypso Connecté](devices/atlantic-calypso.md) |
+| **Atlantic Explorer V4** (heat-pump water heater) | `io_model: explorer_v4` | ✅ Confirmed | Pairing | Readings, target, mode, boost and away. Pull request #246. [Atlantic Explorer V4](devices/atlantic-explorer-v4.md) |
+| **Sauter Guelma connecté** (electric storage water heater, 80 L) | `io_model: electric_water_heater` | ✅ Confirmed | Not recorded | One heater, issue #247. [Sauter Guelma connecté](devices/sauter-guelma.md) |
+
+### Hubs you can take a key from
+
+A vendor hub you already own hands its installation key to this component, and keeps working
+alongside it. [Key extraction](key-extraction.md) describes the procedure.
+
+| Hub | Status | What to press on the hub | Notes |
+|---|---|---|---|
+| **Somfy TaHoma Switch** | ✅ Confirmed | Its "add a device" wizard | Corpus `somfy_tahoma_pairing_key_extraction_success_sx1276` |
+| **Somfy Connectivity Kit** | ⚠️ Partial | Its "add a device" wizard | The extraction stalled. Corpus `somfy_connectivity_kit_pairing_key_extraction_stall` |
+| **VELUX KLR 200 control pad** | ✅ Confirmed | "Register product" | First attempt, including the node verification round. Corpus `velux_klr200_pairing_key_extraction_success` |
+| **VELUX KLR 300 control pad** | ✅ Confirmed | "Search for new products" | One tester on an SX1276 board, first attempt. Corpus `velux_klr300_pairing_key_extraction_success` |
+| **VELUX KLR 100 control pad** | 📣 Reported | "Register product" | Issue #87. Its Copy system answers a key request too, reported with another controller (issue #242) |
+| **VELUX KLF 200 gateway** | 📣 Reported | **SEARCH FOR PRODUCTS**, repeated while the switch is armed | One reporter, LilyGO T-ETH-Elite / SX1276, issue #195. COPY PRODUCTS is not a route |
+| **VELUX KIG 300 hub** | ⚠️ Partial | Not recorded | One extraction succeeded, one stalled. 4 corpus captures |
+| **Freebox Delta** | ✅ Confirmed | "Share your network" in the Freebox app | Uses Discover & Pair with `pairing_key_transfer: pull`, not the Recover System Key switch. Issue #215. [Freebox Delta](devices/freebox-delta.md) |
+
+The connected radiators of the Atlantic group need no hub for this: each hands over its key from
+its own menu; see [Devices that hand over their own key](pairing.md#devices-that-hand-over-their-own-key).
+
+### Remotes and sensors you can listen to
+
+One-way senders the hub overhears. Add one to an entity's `linked_remotes:` to keep its state fresh,
+or to `exposed_senders:` to fire Home Assistant events; see
+[Linked remotes and sender events](configuration/remotes.md).
+
+| Device | Status | Notes |
 |---|---|---|
-| **Atlantic AGILIA IO** (electric radiator, display model) | ✅ Confirmed on three radiators — Discover & Pair; target temperature, modes, room temperature and heating / idle, each read back. A target set while its program runs is experimental. Step-by-step: [Atlantic AGILIA IO](devices/atlantic-agilia-io.md) | Heltec V3 / SX1262, issue #165; corpus `atlantic_agilia_*` (pairing, roll-call, register reads and writes) |
-| **Atlantic Adelis** (towel dryer, "ADELIS 2 DIGIT" and the mixed "ADELIS 2 M") | ✅ Confirmed on three units, two ADELIS 2 DIGIT and one ADELIS 2 M — target, mode, boost and drying are set from Home Assistant and read back; its entry needs `io_model: towel_dryer`. A target set while its program runs is a temporary override in an eco period and the new comfort temperature in a comfort period. The level sensor is experimental. On the ADELIS 2 M the central-heating mode keeps the element off, so the card shows idle; the experimental `central_heating_mode:` sensor shows that mode. The experimental `energy:` sensor shows its energy total, answered by two units and not yet compared with the display, and the experimental `remaining_time:`, `boost_duration:` and `drying_duration:` sensors show the minutes left of a boost or drying run and the durations set. Step-by-step: [Atlantic Adelis](devices/atlantic-adelis.md) | SX1276 board, issue #202; SX1262 board, issue #243; corpus `atlantic_adelis_*` (register reads, status reads) |
-| **Sauter Hekla** (electric heater with a night light) | ✅ Confirmed on three heaters paired with a Sauter Cozytouch — target, room temperature and the window sensor work, and the Cozytouch keeps working alongside. The night light reads, switches and dims (`io_model: heater_with_light`). The `occupancy_detection:` switch and `occupancy:` sensor show and switch the heater's occupancy detection (confirmed). The `energy:` sensor reads the heater's total correctly (confirmed). The hub reads no heating level from a Hekla, so a `heating_level:` block on it is a configuration error. Step-by-step: [Sauter Hekla](devices/sauter-hekla.md) | Heltec V3 / SX1262, issue #222; corpus `sauter_hekla_exchange_night_light_brightness_levels_sx1262` |
-| **Sauter Tahual** (electric radiator) | ⚠️ Partial — the energy total equals the display on two radiators, read by the contributor's own build of the `energy:` sensor. The radiator reports `0x34/1`, so it is declared like the [Atlantic AGILIA IO](devices/atlantic-agilia-io.md) (no `io_model`); its other functions are not reported yet. See [Energy sensor](configuration/climate.md#energy-sensor) | SX1262 board, [pull request 238](https://github.com/laberning/home_io_control/pull/238); corpus `sauter_tahual_probe_energy_register` |
-| **Thermor EMOTION 3 H** (electric radiator, Atlantic group) | ✅ Confirmed on two radiators — Discover & Pair from "Paramètres" → "Connectivité" → "Connexion" pulls the radiator's key, as on the AGILIA IO. Both radiators hand over the same key, the one of their Cozytouch installation. It reports `0x34/1` and is set up like the [Atlantic AGILIA IO](devices/atlantic-agilia-io.md). Setpoint writes are confirmed on the display. The experimental `energy:` sensor shows the energy total, which both radiators answer and nobody has compared with the display. The `occupancy:` sensor shows presence on both radiators (confirmed); a detection lasts only a short time, so a short visit between two polls can be missed. A target set while the heater runs its program is refused in `auto` and in PROG: the write is acknowledged and the register reads back 0, so set a target in `heat` for now (issue #228). Its frost-protection value is 7.0 °C: a target of 8.0 °C is answered with 7.0 °C, the value the radiator keeps, and the Cozytouch cannot set 8.0 °C either | LilyGO T3 V1.6.1 / SX1276, issue #228 |
-| **Thermor Interface Cozytouch for pilot-wire heaters** (ref. 450 251, `0x34/0`) | ✅ Confirmed with limits — all six pilot-wire orders work with the key of the Cozytouch installation; the interface cannot be paired on its own and reports no level back. Its entry needs `io_model: pilot_wire_interface` and `low_power: true`. Step-by-step: [Thermor Interface Cozytouch](devices/thermor-pilot-wire-interface.md) | LilyGO T3 V1.6.1 / SX1276, issue #228; corpus `thermor_pilot_wire_interface_exchange_heating_level_execute` |
-| **Atlantic Tatou Pilotage Intelligent Connecté** (electric radiator) | ❌ Does not pair yet — Discover & Pair gets no answer from the radiator, and its key has not been retrieved. The experimental [`pairing_discovery_send_channels: all`](configuration/tuning.md#pairing_discovery_send_channels) sends the discovery on all three channels and is the setting to try | SX1276 board, issue #199 |
-| **Atlantic Alfea Duo Extensa A.I.** (air-to-water heat pump) | ⚠️ Partial — a `sensor:` entry reads the heating and hot-water energy counters and, experimentally, the outdoor temperature, alongside the installation's TaHoma; nothing is written. Step-by-step: [Atlantic Alfea heat pump](devices/atlantic-heat-pump.md) | LilyGO T3 V2.1 / SX1276, issue #244; corpus `atlantic_alfea_probe_*` (counter and outdoor temperature reads) |
-| **Atlantic Calypso Connecté** (heat-pump water heater) | ⚠️ Partial — a `water_heater:` entity reads the water temperature, target, mode, what heats and the energy, and sets the target, the mode, a boost and the away mode. The heater takes only its own fixed targets. Step-by-step: [Atlantic Calypso Connecté](devices/atlantic-calypso.md) | SX1276 board, issue #198; corpus `atlantic_calypso_*` (register reads, status reads) |
-| **Atlantic Explorer V4** (heat-pump water heater, `0x33/0`) | ⚠️ Partial — the Calypso's `water_heater:` entity, declared with `io_model: explorer_v4`: target from 20 to 70 °C in whole degrees, boost and away read as this heater reports them. Readings, target, mode, boost and away confirmed. Step-by-step: [Atlantic Explorer V4](devices/atlantic-explorer-v4.md) | Heltec WiFi LoRa 32 V2 / SX1276, pull request #246 |
-| **Sauter Guelma connecté** (electric storage water heater, 80 L, `0x33/0`) | ⚠️ Partial — a `water_heater:` entity declared with `io_model: electric_water_heater` reads the water temperature, the temperature it heats to, the mode, boost and absence, and optionally the showers and the heating power; it sets the mode (eco or electric), a boost, the absence, and in manual mode a target of 50, 60 or 70 °C. Its registers and writes are confirmed on one heater. Step-by-step: [Sauter Guelma connecté](devices/sauter-guelma.md) | Heltec V3 / SX1262, issue #247; corpus `sauter_guelma_*` (register reads and writes, status reads) |
+| **Somfy Smoove IO wall switch and remote** | ✅ Confirmed | Also re-pairs a reset Izymo. 8 corpus captures, corpus `somfy_smoove_enrollment_monitor_sx1276`, issue #27 |
+| **Somfy Situo 1 io** | ✅ Confirmed | Its PROG hold decodes as an add-controller frame to `00003F` followed by two `0x20` frames, and opens the motor's 1W learning window (issue #147) |
+| **Somfy Situo 5 io Pure II** | ✅ Confirmed | Its PROG hold and EXECUTE frames decode, and a Somfy awning paired from that gesture |
+| **Somfy KeyGo io** (4-button remote) | 📣 Reported | Each button has its own sender address. Issue #244 |
+| **Somfy combined wind/rain protection station** | ✅ Confirmed | 2 corpus captures |
+| **Somfy Eolis 3D WireFree IO wind sensor** | 📣 Reported | A standalone wind sensor that links directly to its awning motor |
+| **SIMU BHz wall transmitter** (1 channel) | ✅ Confirmed | Its PROG press decodes as an add-controller frame and opens the motor's two-way pairing window |
+| **VELUX KLI 310 universal wall remote** | 🔍 Traffic captured only | Corpus `velux_kli310_discovery_alt_sweep` |
+| **VELUX KLI 313 remote** (ships with the SML roller shutter) | 🔍 Traffic captured only | 3 corpus captures |
+| **VELUX KLI 312 interior-blind remote** | 📣 Reported | Its Gear press is reported from a log; no corpus capture |
 
-## Naming reference
+### Other manufacturers
 
-### Named device types
-
-Both `io_device_type` and the `class:<device_type>` form of `linked_remotes` accept these named
-values:
-
-| Name | Hex ID | Name | Hex ID |
-|---|---|---|---|
-| `interior_venetian_blind` | `0x01` | `horizontal_awning` | `0x10` |
-| `roller_shutter` | `0x02` | `exterior_venetian_blind` | `0x11` |
-| `vertical_exterior_awning` | `0x03` | `louvre_blind` | `0x12` |
-| `window_opener` | `0x04` | `curtain_track` | `0x13` |
-| `garage_opener` | `0x05` | `exterior_heating` | `0x15` |
-| `light` | `0x06` | `intrusion_alarm` | `0x17` |
-| `gate_opener` | `0x07` | `swinging_shutter` | `0x18` |
-| `rolling_door_opener` | `0x08` | `sliding_window` | `0x1B` |
-| `lock` | `0x09` | `bioclimatic_pergola` | `0x1D` |
-| `vertical_interior_blind` | `0x0A` | `heat_pump` | `0x16` |
-| `dual_roller_shutter` | `0x0D` | `electrical_heater` | `0x34` |
-| `heating_temperature_interface` | `0x0E` | `domestic_hot_water` | `0x33` |
-| `on_off_switch` | `0x0F` | | |
-
-A device type not in this table can still be declared as a raw hex ID, in either place:
-`io_device_type: 0x14` or `linked_remotes: ["class:0x14"]`. Named and raw-hex entries can be mixed
-freely within the same `linked_remotes` list.
-
-**Finding your device's type:** the surest way is to pair it through Home Assistant and check the
-"Last Pairing Result" diagnostic sensor — its `type=` field reports the device's actual type name,
-e.g. `type=vertical_exterior_awning`. If you already know what the device is (say, a Somfy awning), use the matching
-name from the table above.
-
-### Node types and subtypes
-
-Discovery, Scan Paired Devices and the pairing log name a device as `<type>, <subtype>` followed by
-the wire values, for example `electrical heater, with adjustable setpoint (0x34/1)`; a subtype
-without a name prints as `subtype N`. A subtype the table does not list behaves like its type. Subtype 58 means "main parameter only" on
-every type: such a device takes position commands without the functional-parameter block. The component also reads it as "no intermediate positions", which the VELUX specification does not say; it rests on the garage opener of issue #163. A gate opener of subtype 58 is reported to open, close and stop (issue #244); a swinging shutter of subtype 58 is experimental. A cover of such a kind shows open, close and stop, and no slider; see [Covers that only open and close](configuration/cover.md#covers-that-only-open-and-close).
-
-A subtype can list the product models below it as `(io_model: name)`. Products of one model report the
-same type and subtype as the rest but need different handling, and the radio does not say which one a
-device is, so you declare it with [`io_model`](configuration/index.md#options-every-entity-shares).
-
-Types marked "not supported yet" are recognised and named, but no platform drives them, so
-discovery reports them and prints no YAML. Subtype names that have not been confirmed on a real
-device are marked experimental; declaring one in YAML logs a warning when the config is built.
-
-| Type | Name | Named subtypes | Support |
-|---|---|---|---|
-| `0x01` | interior venetian blind | | Cover with tilt; short position frame, no `silent:` or `travel_speed:` (experimental, [details](configuration/cover.md#interior-venetian-blinds-and-dual-roller-shutters)) |
-| `0x02` | roller shutter | 1 with adjustable slats, 2 with projection | Cover |
-| `0x03` | vertical exterior awning | | Cover |
-| `0x04` | window opener | 1 with integrated rain sensor | Cover, with a ventilation position |
-| `0x05` | garage opener | 58 open/close only | Cover: percent positions on subtype 0, open / close / stop only on subtype 58; no favorite position (issue #163); Partial Position button |
-| `0x06` | light | 1 dimmable RGB (experimental), 2 tunable white (experimental), 58 on/off only | Light; subtypes 1 and 2 control brightness only (experimental) |
-| `0x07` | gate opener | 58 open/close only | Cover; subtype 58 shows open / close / stop only (issue #244); Pedestrian Position button (experimental) |
-| `0x08` | rolling door opener | | Cover |
-| `0x09` | lock | 1 window lock (experimental), 2 car controller (experimental) | Lock (experimental); subtype 2 not supported yet |
-| `0x0A` | vertical interior blind | | Cover without tilt (experimental) |
-| `0x0B` | secure configuration device | | Not supported yet |
-| `0x0C` | beacon | | Not supported yet |
-| `0x0D` | dual roller shutter | | Cover; short position frame, no `silent:` or `travel_speed:` (experimental, [details](configuration/cover.md#interior-venetian-blinds-and-dual-roller-shutters)) |
-| `0x0E` | heating temperature interface | | Climate with a setpoint, off / heat / auto and comfort / eco / secured presets (experimental, untested); see [Thermostats and heat pumps](heating.md#thermostats-and-heat-pumps) |
-| `0x0F` | on off switch | 2 micromodule (experimental) | Switch (experimental) |
-| `0x10` | horizontal awning | 1 rail-guided pergola | Cover, direction inverted |
-| `0x11` | exterior venetian blind | | Cover with tilt |
-| `0x12` | louvre blind | | Cover with tilt |
-| `0x13` | curtain track | | Cover |
-| `0x14` | ventilation point | 1 air inlet, 2 air transfer, 3 air outlet | Not supported yet |
-| `0x15` | exterior heating | 58 on/off only | Fan, a heat level of 0–100 % (subtype 58: on/off), experimental and unconfirmed on hardware; see [Exterior heating](configuration/fan.md) |
-| `0x16` | heat pump | 1 heat pump (Atlantic), 2 boiler (Atlantic) (experimental) | Climate for subtype 0 with a setpoint, off / heat and comfort / eco / setback / halted presets (experimental, untested); subtype 1 reads its heating and hot-water energy counters and its outdoor temperature through a `sensor:` entry, confirmed on one installation ([Atlantic Alfea heat pump](devices/atlantic-heat-pump.md), issue #244); subtype 2 is not supported yet |
-| `0x17` | intrusion alarm | | Not supported yet |
-| `0x18` | swinging shutter | 1 with independent leaves, 58 open/close only (experimental) | Cover; subtype 58 shows open / close / stop only (experimental) |
-| `0x1B` | sliding window | 1 with lock (experimental) | Cover |
-| `0x1C` | zone control | | Not supported yet |
-| `0x1D` | bioclimatic pergola | | Cover |
-| `0x1E` | siren | | Not supported yet |
-| `0x33` | domestic hot water | 0 domestic hot water (io_model: electric_water_heater / explorer_v4) (experimental) | Water heater (experimental): water temperature, target, mode and energy read on an [Atlantic Calypso Connecté](devices/atlantic-calypso.md) (issue #198); target, mode, boost and away writes confirmed; see [Water heaters](configuration/water-heater.md). An [Atlantic Explorer V4](devices/atlantic-explorer-v4.md) reports the same type and subtype and is declared with `io_model: explorer_v4`; its readings, target, mode, boost and away are confirmed. A [Sauter Guelma connecté](devices/sauter-guelma.md), an electric storage water heater, is declared with `io_model: electric_water_heater`: its readings and its mode, boost, absence and shower count writes are confirmed |
-| `0x34` | electrical heater | 0 electrical heater (io_model: pilot_wire_interface), 1 with adjustable setpoint (io_model: heater_with_light / towel_dryer) | Climate: subtype 1 over private registers with read-back, confirmed on the [Atlantic AGILIA IO](devices/atlantic-agilia-io.md), with a Window sensor and an Open Window Detection switch (both experimental). An [Atlantic Adelis](devices/atlantic-adelis.md) towel dryer reports the same type and subtype (issue #202) and is declared with `io_model: towel_dryer`, which gives it its own modes, boost and drying (confirmed), an optional `heating_level:` sensor with the comfort or eco level of PROG (experimental), an optional `central_heating_mode:` binary sensor for a mixed unit (experimental), optional `remaining_time:`, `boost_duration:` and `drying_duration:` sensors with the boost and drying times in minutes (experimental) and no window entities. A Sauter Hekla with a night light reports it too (issue #222); `io_model: heater_with_light` adds a dimmable night light (confirmed). A radiator and a heater with a light can also declare an `occupancy_detection:` switch and an `occupancy:` binary sensor (both confirmed on the Sauter Hekla, the binary sensor also on a Thermor EMOTION 3 H; experimental on other heaters). A radiator, a towel dryer and a heater with a light can declare an `energy:` sensor with the heater's own energy total (confirmed on a Sauter Tahual and a Sauter Hekla, experimental elsewhere). The plain heater (subtype 0) with heating levels, confirmed on a Thermor pilot-wire interface that reports no level back (issue #228): `io_model: pilot_wire_interface` offers Away, Eco, Comfort, Comfort -1, Comfort -2 and Off and no boost, since the interface ignores one. Without the model the heater also offers Boost, untested. An optional `heating_level:` sensor shows the level a plain heater or a towel dryer reports, including `secured`, which is not a preset; the hub reads no level from a radiator, a heater with a light or a pilot-wire interface, so the key is rejected on them |
-| `0x35` | heat recovery ventilation | | Not supported yet |
-| `0xFF` | central house control | | Not supported yet |
-| `0x3F0` | test and evaluation | | Not supported yet |
-| `0x3FF` | remote controller | 2 Keygo (experimental), 3 Izymo (experimental), 4 public frame (experimental), 5 V500 (experimental) | Not supported yet; see [pairing](pairing.md) for devices that answer discovery as a remote controller |
-
-### Named manufacturers
-
-The `manufacturer` key on a 1W `oneway_controllers:` identity accepts these named values, the
-IO-Homecontrol alliance's own manufacturer IDs:
-
-| Name | Hex ID | 1W profile | Name | Hex ID | 1W profile |
-|---|---|---|---|---|---|
-| `velux` | `0x01` | ✅ | `window_master` | `0x07` | — |
-| `somfy` | `0x02` | ✅ | `renson` | `0x08` | — |
-| `honeywell` | `0x03` | — | `ciat` | `0x09` | — |
-| `hormann` | `0x04` | — | `secuyou` | `0x0A` | — |
-| `assa_abloy` | `0x05` | — | `overkiz` | `0x0B` | — |
-| `niko` | `0x06` | — | `atlantic_group` | `0x0C` | — |
-
-A manufacturer not in this table can still be declared as a raw hex ID, e.g. `manufacturer: 0x0D`.
-
-**1W profile** marks the two vendors this project has a verified 1W `CMD_EXECUTE` wire profile for
-(the priority byte — `somfy` `0x43`, `velux` `0x61`). Any other value — named or raw — transmits
-with the `somfy`-shaped byte and, if it is an explicitly-set manufacturer on a transmitting
-identity, logs a build-time warning. Use `execute_acei:` to pin the byte yourself for an unprofiled
-vendor.
+Honeywell, Hörmann, Assa Abloy, Niko, WindowMaster, Renson, CIAT, Secuyou and Overkiz are names the
+schema accepts, not devices anyone has reported. Only `somfy` and `velux` have a verified 1W wire
+profile; see [Named manufacturers](device-types.md#named-manufacturers).
 
 ## Device pages
 
@@ -262,18 +179,22 @@ These devices have enough evidence behind them to be worth a page of their own.
 <!-- doxygen-subpages -->
 - [Somfy Izymo IO dimmer](devices/somfy-izymo-dimmer.md)
 - [Somfy Sunea IO](devices/somfy-sunea-io.md)
-- [VELUX INTEGRA and the KLR/KLF/KUX family](devices/velux-integra.md)
 - [Somfy RS100 IO](devices/somfy-rs100.md)
 - [Somfy White LED Receiver io](devices/somfy-white-led-receiver.md)
+- [Somfy pergola and patio-roof motors](devices/somfy-pergola.md)
+- [Somfy garage and gate openers](devices/somfy-garage-gate-openers.md)
+- [VELUX INTEGRA and the KLR/KLF/KUX family](devices/velux-integra.md)
 - [SIMU T3.5 E BHz DC solar shutter motor](devices/simu-t35-bhz.md)
 - [Atlantic AGILIA IO electric radiator](devices/atlantic-agilia-io.md)
+- [Thermor EMOTION 3 H electric radiator](devices/thermor-emotion-3h.md)
 - [Atlantic Adelis towel dryer](devices/atlantic-adelis.md)
+- [Sauter Hekla electric heater](devices/sauter-hekla.md)
+- [Thermor Interface Cozytouch for pilot-wire heaters](devices/thermor-pilot-wire-interface.md)
 - [Atlantic Calypso Connecté water heater](devices/atlantic-calypso.md)
 - [Atlantic Explorer V4 water heater](devices/atlantic-explorer-v4.md)
 - [Sauter Guelma connecté water heater](devices/sauter-guelma.md)
 - [Atlantic Alfea heat pump](devices/atlantic-heat-pump.md)
-- [Sauter Hekla electric heater](devices/sauter-hekla.md)
-- [Thermor Interface Cozytouch for pilot-wire heaters](devices/thermor-pilot-wire-interface.md)
+- [Freebox Delta](devices/freebox-delta.md)
 <!-- /doxygen-subpages -->
 
 ## Getting your device added
@@ -301,3 +222,4 @@ or you have a capture for a 🔍 row — that is worth an issue too. It is how r
 - [Getting started](getting-started.md) — the whole path from a board to a working entity
 - [Pairing](pairing.md) — Discover & Pair, for a device no hub has claimed
 - [Key extraction](key-extraction.md) — the route when a hub already controls it
+- [Device types and manufacturers](device-types.md) — the names `io_device_type` accepts

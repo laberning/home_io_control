@@ -13,6 +13,9 @@ platform is validated against.
 | Status readback after a command | ✅ Confirmed |
 | Discover & Pair | ✅ Confirmed, repeatedly, including after factory resets |
 | Being driven by a linked 1W remote | ✅ Confirmed with a Somfy Smoove |
+| Enrolling the hub's 1W identity, and removing it inside the PROG window | ✅ Confirmed (corpus `somfy_izymo_dimmer_enrollment_remove_controller_in_prog_window_sx1276`) |
+| On / off over 1W | ✅ Confirmed — 50 of 50 commands obeyed in each burst shape on four boards, checked by a two-way read |
+| Brightness over 1W | Not confirmed |
 | Favorite / My position | ❌ The device answers the probe, but nothing useful is decoded |
 
 All three radios are confirmed against this device: SX1276, SX1262 and LR1121 each have their own
@@ -47,6 +50,10 @@ the wire says whether a light device supports intermediate positions.
   enrollment frame, which carries no MAC ([ADR 0124](../adr/0124-enrollment-with-mac-is-removed.md)). Pressing Enroll for an
   identity the dimmer already knows takes it off instead; see
   [Sending 1W commands](../configuration/oneway-transmit.md#enrolling-this-hub-as-a-controller).
+- **1W enrollment is a PROG hold, then Enroll.** Hold PROG on the dimmer, then press Enroll, with
+  `manufacturer: somfy` and `enrollment: true` on the identity. With `low_power:` unset the hub sends
+  the short burst shape the dimmer obeys
+  ([ADR 0122](../adr/0122-an-unset-one-way-low-power-sends-four-short-copies.md)).
 - **Removing an enrolled 1W controller needs the PROG window.** The `oneway_remove_controller`
   action takes effect only when you press PROG first: the light blinks and then ignores that
   controller. Sent with no window open, it changes nothing.
