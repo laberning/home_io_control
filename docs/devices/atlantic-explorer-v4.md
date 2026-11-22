@@ -95,8 +95,10 @@ If you own this heater, these answers help:
 
 Read and commanded on one Atlantic Explorer V4 with its display read beside the log: the four targets
 above, the 54 °C target written as `8800`, boost started on the display and from Home Assistant, and
-away from Home Assistant, each on and off
-([pull request #246](https://github.com/laberning/home_io_control/pull/246)).
+away from Home Assistant, each on and off. A target changed from 50 to 53 °C from Home Assistant
+showed on the card right after the write
+([pull request #252](https://github.com/laberning/home_io_control/pull/252), on the frames tested in
+[pull request #246](https://github.com/laberning/home_io_control/pull/246)).
 
 A second unit, an Explorer V4 200 L coil model, was paired from new with `io_model: explorer_v4` set.
 It reads the water temperature and the target, takes a target from Home Assistant, and the away mode
