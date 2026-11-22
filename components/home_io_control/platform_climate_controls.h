@@ -95,14 +95,14 @@ class IOHomeHeaterNightLight : public light::LightOutput, public Component, publ
   ///
   /// LightState::setup() applies its restore_mode through a real write_state() right after this call;
   /// on a radio-controlled light that would switch the heater's light at every reboot. The poll is the
-  /// source of truth, so that one write is suppressed.
+  /// source of truth, so the gate swallows that one write.
   /// @param state The LightState this output belongs to.
   void setup_state(light::LightState *state) override {
     this->state_ = state;
-    this->suppress_write_ = true;
+    this->gate_.swallow_boot_write();
   }
 
-  /// @brief Send the requested state to the heater and read it back.
+  /// @brief Send the requested state to the heater and read it back (see LightWriteGate::should_send()).
   /// @param state The LightState holding the requested values.
   void write_state(light::LightState *state) override;
 
@@ -120,9 +120,8 @@ class IOHomeHeaterNightLight : public light::LightOutput, public Component, publ
   bool write_register_(DeviceRegister fn, float value, const char *unit = "");
 
   light::LightState *state_{nullptr};
-  /// Swallows the write_state() that LightState::make_call().perform() causes for a state this entity
-  /// publishes itself (and the boot-time restore, see setup_state()).
-  bool suppress_write_{false};
+  /// Publishes the heater's light and decides which writes go to the heater (echo, boot restore, transition).
+  LightWriteGate gate_;
   /// True while write_state() runs its writes and read-backs: the device updates they cause are not
   /// published one by one (a half-updated reading would flash a stale brightness), but once at the end.
   bool writing_{false};

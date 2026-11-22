@@ -709,7 +709,10 @@ freezes the level where it is. The level updates about once a second while it fa
   value, a stop and the press of a followed remote cancel a stop that is still waiting, so a stale stop is never
   sent, and a new value is worked out from the level reached so far. A button or action of the same identity queued
   just before a value does not cost it its stop: the hub tells the report of the value's own command from the
-  others. One queued after the value is the last command and wins: it cancels the value's stop. If a fade
+  others. One queued after the value is the last command and wins: it cancels the value's stop. A button pressed in
+  the same moment as a value can cost the value itself: when the hub sends the button's command before the light has
+  handed the value on, the level that command reports replaces the value, and nothing goes out for it, so send the
+  value a moment after the button. If a fade
   that is already running passes the value before the command reaches the radio, the hub sends a stop or the way back
   instead. The stop goes out as a burst, so the level lands slightly past the value, and a stop the device misses runs the fade to its end.
 - **`frame`** sends one position frame with the level, and no stop. The device is expected to go to the level at

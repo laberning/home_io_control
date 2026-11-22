@@ -71,7 +71,7 @@ void IOHomeHeaterNightLight::on_device_update_(const IoDevice &dev) {
   const std::optional<float> percent = reading_value(dev, DeviceReading::NIGHT_LIGHT_BRIGHTNESS);
   const float brightness = percent && *percent > 0.0F ? *percent / static_cast<float>(HEATING_NIGHT_LIGHT_PERCENT_MAX)
                                                       : this->state_->remote_values.get_brightness();
-  publish_light_reading(this->state_, on, brightness, this->suppress_write_);
+  this->gate_.publish(this->state_, on, brightness);
 }
 
 bool IOHomeHeaterNightLight::write_register_(DeviceRegister fn, float value, const char *unit) {
@@ -83,10 +83,8 @@ bool IOHomeHeaterNightLight::write_register_(DeviceRegister fn, float value, con
 }
 
 void IOHomeHeaterNightLight::write_state(light::LightState *state) {
-  if (this->suppress_write_) {
-    this->suppress_write_ = false;
+  if (!this->gate_.should_send(state))
     return;
-  }
   if (this->heating_port_ == nullptr || this->device_port_ == nullptr)
     return;
 

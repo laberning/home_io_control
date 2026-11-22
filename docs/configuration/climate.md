@@ -216,7 +216,8 @@ on a Hekla (issue #222).
   heater that has no night light answers these reads empty; the rest of its poll still counts as
   good.
 - The light changes at once: `default_transition_length` is 0 s, because each step of a fade would
-  be a radio command.
+  be a radio command. A transition you ask for anyway, for example in a scene, sends only its end value to the
+  heater, and the light shows the heater's level again once that has been sent.
 
 ## Heating level sensor
 

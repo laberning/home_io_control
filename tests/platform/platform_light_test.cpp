@@ -281,3 +281,110 @@ TEST(PlatformLight, DimmableDeviceUpdateSetsHABrightness) {
   hub.trigger_device_update("ABC123", dev);
   EXPECT_FALSE(light.state_->current_values.is_on()) << "position 100 should be off";
 }
+
+// ========================================================================================
+// IOHomeLight: the writes the light's loop makes after a published reading
+// ========================================================================================
+
+namespace {
+
+/// A dimmable light with its LightState bound as the loop's output, boot write already swallowed.
+struct DimmableLightRig {
+  MockHubLight hub;
+  TestableLight light;
+  esphome::light::LightState state;
+
+  DimmableLightRig() {
+    light.set_parent(&hub);
+    light.set_device_id("ABC123");
+    light.set_dimmable(true);
+    light.setup_state(&state);
+    light.setup();
+    state.set_test_output(&light);
+    light.write_state(&state);  // LightState::setup()'s restore write
+  }
+
+  /// The device reports IO position @p position, settled.
+  void report(float position) {
+    IoDevice dev{};
+    dev.position = position;
+    dev.is_stopped = true;
+    hub.trigger_device_update("ABC123", dev);
+  }
+
+  /// A call on the LightState, as Home Assistant's API makes it.
+  void user_sets(float brightness) {
+    auto call = state.make_call();
+    call.set_state(brightness > 0.0F);
+    call.set_brightness(brightness);
+    call.perform();
+  }
+};
+
+}  // namespace
+
+TEST(PlatformLight, AReadingIsNeverSentBackAsACommandAlsoWhenPublishedTwice) {
+  DimmableLightRig rig;
+
+  rig.report(75.0F);
+  rig.report(75.0F);
+  rig.state.loop();
+  rig.state.loop();
+
+  EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.25F);
+  EXPECT_TRUE(rig.hub.queued_light_positions().empty());
+}
+
+TEST(PlatformLight, AValueAfterAReadingAndBeforeTheLightsLoopIsSent) {
+  DimmableLightRig rig;
+
+  rig.report(75.0F);  // brightness 0.25 is published; its write waits
+  rig.user_sets(0.5F);
+  rig.state.loop();
+
+  ASSERT_EQ(rig.hub.queued_light_positions().size(), 1u);
+  EXPECT_EQ(rig.hub.last_light_position(), 50);
+}
+
+TEST(PlatformLight, ATransitionSendsOnlyItsEndAndTheNextReadingIsShownAfterIt) {
+  DimmableLightRig rig;
+
+  rig.state.test_transformer_active_ = true;
+  rig.user_sets(0.2F);
+  rig.state.loop();
+  rig.user_sets(0.4F);
+  rig.state.loop();
+  EXPECT_TRUE(rig.hub.queued_light_positions().empty()) << "a step of a transition is not a command";
+  rig.report(10.0F);
+  EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.4F) << "no reading is shown during the transition";
+
+  rig.state.test_transformer_active_ = false;
+  rig.user_sets(0.6F);
+  rig.state.loop();
+  ASSERT_EQ(rig.hub.queued_light_positions().size(), 1u);
+  EXPECT_EQ(rig.hub.last_light_position(), 40);
+
+  rig.report(30.0F);
+  EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.7F);
+  rig.state.loop();
+  EXPECT_EQ(rig.hub.queued_light_positions().size(), 1u);
+}
+
+TEST(PlatformLight, TheBootWriteOfTheLightsLoopIsSwallowedOnceWhetherBinaryOrDimmable) {
+  MockHubLight hub;
+  TestableLight light;
+  light.set_parent(&hub);
+  light.set_device_id("ABC123");
+  esphome::light::LightState state;
+  light.setup_state(&state);
+  light.setup();
+  state.set_test_output(&light);
+
+  state.make_call().set_state(false).perform();  // restore_mode at boot, written by the loop
+  state.loop();
+  EXPECT_TRUE(hub.queued_light_ops().empty());
+
+  state.make_call().set_state(true).perform();
+  state.loop();
+  EXPECT_EQ(hub.queued_light_ops().size(), 1u);
+}

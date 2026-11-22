@@ -806,3 +806,60 @@ TEST(PlatformDeviceReadingBinarySensor, PublishesOnlyAChangedState) {
   hub.deliver([](IoDevice &r) { test::clear_reading(r, DeviceRegister::PRESENCE); });
   EXPECT_EQ(sensor.publish_count, after_setup + 2) << "losing the state publishes nothing";
 }
+
+TEST(PlatformHeaterNightLight, AValueAfterAPublishedReadingAndBeforeTheLightsLoopIsWritten) {
+  NightLightRig rig;
+  rig.state.set_test_output(&rig.light);
+  rig.hub.deliver([](IoDevice &r) {
+    test::store_reading(r, DeviceReading::NIGHT_LIGHT, 1);
+    test::store_reading(r, DeviceReading::NIGHT_LIGHT_BRIGHTNESS, 66.0F);
+  });  // shown on at 66 %, its write waits
+  ASSERT_TRUE(rig.state.current_values.is_on());
+
+  auto call = rig.state.make_call();
+  call.set_state(false);
+  call.perform();
+  rig.state.loop();
+
+  ASSERT_EQ(rig.hub.writes.size(), 1u) << "the user's off is not taken for the echo of the reading";
+  EXPECT_EQ(rig.hub.writes[0].fn, DeviceRegister::NIGHT_LIGHT);
+  EXPECT_FLOAT_EQ(rig.hub.writes[0].value, 0.0F);
+}
+
+TEST(PlatformHeaterNightLight, AReadingPublishedTwiceIsNeverWritten) {
+  NightLightRig rig;
+  rig.state.set_test_output(&rig.light);
+  const auto reading = [](IoDevice &r) {
+    test::store_reading(r, DeviceReading::NIGHT_LIGHT, 1);
+    test::store_reading(r, DeviceReading::NIGHT_LIGHT_BRIGHTNESS, 66.0F);
+  };
+
+  rig.hub.deliver(reading);
+  rig.hub.deliver(reading);
+  rig.state.loop();
+  rig.state.loop();
+
+  EXPECT_TRUE(rig.hub.writes.empty());
+}
+
+TEST(PlatformHeaterNightLight, ATransitionWritesOnlyItsEndAndTheNextReadingIsShownAfterIt) {
+  NightLightRig rig;
+  rig.state.set_test_output(&rig.light);
+  rig.hub.heater_holds(DeviceRegister::NIGHT_LIGHT, 1.0F);
+  rig.hub.heater_holds(DeviceRegister::NIGHT_LIGHT_BRIGHTNESS, 66.0F);
+
+  rig.state.test_transformer_active_ = true;
+  rig.request(true, 0.2F);
+  rig.request(true, 0.4F);
+  EXPECT_TRUE(rig.hub.writes.empty()) << "a step of a transition is not written";
+  rig.hub.deliver([](IoDevice &r) {
+    test::store_reading(r, DeviceReading::NIGHT_LIGHT, 0);
+    test::store_reading(r, DeviceReading::NIGHT_LIGHT_BRIGHTNESS, 100.0F);
+  });
+  EXPECT_TRUE(rig.state.current_values.is_on()) << "no reading is shown during the transition";
+
+  rig.state.test_transformer_active_ = false;
+  rig.request(true, 0.66F);
+  EXPECT_FALSE(rig.hub.writes.empty());
+  EXPECT_FLOAT_EQ(rig.state.current_values.get_brightness(), 0.66F) << "the heater's level is shown after the end";
+}

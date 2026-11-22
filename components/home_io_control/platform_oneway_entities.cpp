@@ -311,13 +311,9 @@ void IOHomeOneWayLight::loop() {
 }
 
 void IOHomeOneWayLight::write_state(light::LightState *state) {
-  if (this->suppress_write_) {
-    this->suppress_write_ = false;
-    return;
-  }
   // A transition Home Assistant asks for (a scene's `transition:`) writes every loop on its way; each write would be a
-  // one-way burst and a rolling sequence. Only its end, written once the transition is over, is sent.
-  if (state->is_transformer_active())
+  // one-way burst and a rolling sequence. The gate lets only its end, written once the transition is over, through.
+  if (!this->gate_.should_send(state))
     return;
   float level = 0.0F;
   if (this->dimmable_) {
@@ -360,8 +356,7 @@ std::optional<decisions::TravelIntent> IOHomeOneWayLight::apply_frame_(const One
 void IOHomeOneWayLight::show_(float level) {
   if (this->state_ == nullptr)
     return;
-  publish_light_reading(this->state_, level > 0.0F, this->dimmable_ ? std::optional<float>(level) : std::nullopt,
-                        this->suppress_write_);
+  this->gate_.publish(this->state_, level > 0.0F, this->dimmable_ ? std::optional<float>(level) : std::nullopt);
 }
 
 void IOHomeOneWayLight::publish_estimate_(uint32_t now) {

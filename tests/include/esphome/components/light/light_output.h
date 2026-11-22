@@ -43,6 +43,10 @@ class Call {
     has_brightness_ = true;
     return *this;
   }
+  Call &set_transition_length(uint32_t length_ms) {
+    transition_length_ = length_ms;
+    return *this;
+  }
   Call &set_save(bool save) {
     save_ = save;
     return *this;
@@ -52,6 +56,7 @@ class Call {
   bool target_;
   float brightness_{1.0f};
   bool has_brightness_{false};
+  std::optional<uint32_t> transition_length_;
   bool save_;
 };
 
@@ -95,6 +100,26 @@ class LightState {
   bool test_transformer_active_{false};
 
   Call make_call() { return Call(this); }
+
+  // Mirrors the real set_default_transition_length(): a call that names no transition length takes this one.
+  // test_last_transition_ms_ records the length the last performed call ran with (0 is an instant change).
+  void set_default_transition_length(uint32_t length_ms) { this->default_transition_length_ = length_ms; }
+  uint32_t default_transition_length_{0};
+  uint32_t test_last_transition_ms_{0};
+
+  // Mirrors the real LightState::loop(): a performed call leaves one pending write, and the light's next loop
+  // hands the LightState to its output (write_if_pending_()), reading the values it holds at that moment. A
+  // test binds the output with set_test_output(); the real LightState::setup() does that with its own.
+  void set_test_output(LightOutput *output) { this->test_output_ = output; }
+  void loop() {
+    if (!this->next_write_)
+      return;
+    this->next_write_ = false;
+    if (this->test_output_ != nullptr)
+      this->test_output_->write_state(this);
+  }
+  bool next_write_{false};
+  LightOutput *test_output_{nullptr};
 };
 
 inline void Call::perform() {
@@ -105,6 +130,8 @@ inline void Call::perform() {
     state_->set_current_on(target_);
     if (has_brightness_)
       state_->set_current_brightness(brightness_);
+    state_->next_write_ = true;
+    state_->test_last_transition_ms_ = transition_length_.value_or(state_->default_transition_length_);
   }
 }
 

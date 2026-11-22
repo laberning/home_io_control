@@ -115,7 +115,7 @@ ROWS = (
         "components/light/light_output.h",
         "components/light/light_state.h",
         "LightState",
-        methods=("is_transformer_active",),
+        methods=("is_transformer_active", "loop", "set_default_transition_length"),
     ),
     Row("components/switch/switch.h", "components/switch/switch.h", "Switch", methods=("write_state", "publish_state")),
     Row(

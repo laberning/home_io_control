@@ -45,11 +45,6 @@ class LightHub : public IOHomeControlComponent {
   void lift_setup_failure() { this->failed_ = false; }
 };
 
-class TestableLight : public IOHomeOneWayLight {
- public:
-  using IOHomeOneWayLight::suppress_write_;
-};
-
 class HubOneWayLight : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -88,6 +83,7 @@ class HubOneWayLight : public ::testing::Test {
     light.add_follow(REMOTE);
     light.setup();
     light.setup_state(&state);
+    state.set_test_output(&light);
     light.write_state(&state);  // the boot-time restore write, swallowed
   }
 
@@ -110,11 +106,8 @@ class HubOneWayLight : public ::testing::Test {
     echo();
   }
 
-  /// ESPHome re-enters write_state() while it applies a published level; the host stub does not.
-  void echo() {
-    if (light.suppress_write_)
-      light.write_state(&state);
-  }
+  /// The light's own loop: ESPHome writes what a published level left pending.
+  void echo() { state.loop(); }
 
   /// One press of the remote: a 1W execute carrying the wire position @p wire_percent, as the hub hears it.
   void hear_press(uint8_t wire_percent, uint16_t sequence) {
@@ -145,7 +138,7 @@ class HubOneWayLight : public ::testing::Test {
   esphome::test_clock::ManualClock clock;
   LightHub hub;
   MockRadio radio;
-  TestableLight light;
+  IOHomeOneWayLight light;
   esphome::light::LightState state;
 };
 

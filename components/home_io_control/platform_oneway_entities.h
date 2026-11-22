@@ -399,11 +399,11 @@ class IOHomeOneWayLight : public light::LightOutput, public Component, public On
   light::LightTraits get_traits() override;
 
   /// @brief Keep the LightState to publish the level on. ESPHome applies its restore mode right after this call as a
-  /// write_state(), which would send a command at boot, so that first write is swallowed.
+  /// write_state(), which would send a command at boot, so the gate swallows that first write.
   /// @param state The light's state object.
   void setup_state(light::LightState *state) override {
     this->state_ = state;
-    this->suppress_write_ = true;
+    this->gate_.swallow_boot_write();
   }
 
   /// @brief Queue the commands Home Assistant's new on, off or brightness value asks for, as described above. The level
@@ -452,8 +452,8 @@ class IOHomeOneWayLight : public light::LightOutput, public Component, public On
   bool dimmable_{false};               ///< Whether the slider is offered.
   OneWayTravel travel_;                ///< The level, once the fade times are set (on rises, off falls).
   OneWaySlider slider_;                ///< What a slider value becomes, and its timed stop.
-  /// Guard so that publishing the level does not echo back as a new command (LightState re-enters write_state()).
-  bool suppress_write_{false};
+  /// Publishes the level and decides which writes become commands (echo, boot write, transition).
+  LightWriteGate gate_;
 };
 
 }  // namespace home_io_control

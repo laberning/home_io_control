@@ -46,11 +46,6 @@ OneWayCommandReport sent(uint8_t main0, bool transmitted = true, const char *ide
   return report;
 }
 
-class TestableLight : public IOHomeOneWayLight {
- public:
-  using IOHomeOneWayLight::suppress_write_;
-};
-
 class OneWayLightTest : public ::testing::Test {
  protected:
   void TearDown() override { esphome::test_scheduler::clear(); }
@@ -66,6 +61,7 @@ class OneWayLightTest : public ::testing::Test {
     light.add_follow(FOLLOWED_REMOTE);
     light.setup();
     light.setup_state(&state);
+    state.set_test_output(&light);
     light.write_state(&state);  // LightState::setup()'s boot-time restore write; swallowed
   }
 
@@ -93,11 +89,26 @@ class OneWayLightTest : public ::testing::Test {
     echo();
   }
 
-  /// Real ESPHome re-enters write_state() while it applies a published level; the host stub does not, so this does
-  /// it for the publishes that arm the guard. The guard must swallow it: a command here would be an echo.
-  void echo() {
-    if (light.suppress_write_)
-      light.write_state(&state);
+  /// The light's own loop: ESPHome writes what a published level left pending. The gate must swallow that write: a
+  /// command here would be an echo.
+  void echo() { state.loop(); }
+
+  /// What Home Assistant's API does: a call on the light's own LightState, applied at once and written by its next
+  /// loop.
+  void user_sets(float brightness) {
+    auto call = state.make_call();
+    call.set_state(brightness > 0.0F);
+    call.set_brightness(brightness);
+    call.perform();
+  }
+
+  /// A press of the identity's open button: the hub queues its command like any other of the identity.
+  void press_identity_button() { hub.send_oneway_action(IDENTITY, OneWayButtonAction::OPEN); }
+
+  /// Let @p ms pass and run the one-way light's loop, but not the LightState's: a published level waits for its write.
+  void publish_after(uint32_t ms) {
+    esphome::test_scheduler::run_until(esphome::millis() + ms);
+    light.loop();
   }
 
   /// Let @p ms pass, firing what is due and running the loop once, as ESPHome does.
@@ -113,7 +124,7 @@ class OneWayLightTest : public ::testing::Test {
 
   esphome::test_clock::ManualClock clock;
   test::ControlPortDouble hub;
-  TestableLight light;
+  IOHomeOneWayLight light;
   esphome::light::LightState state;
 };
 
@@ -201,6 +212,91 @@ TEST_F(OneWayLightTest, PublishingTheLevelIsNotSentBackAsACommand) {
 
   EXPECT_TRUE(state.current_values.is_on());
   EXPECT_TRUE(hub.oneway_actions.empty());
+}
+
+// A level published before Home Assistant's value reaches the LightState (the once-a-second level of a fade, or a
+// report the hub's loop handled earlier in the pass): the value that follows is told from the level's echo and sent.
+TEST_F(OneWayLightTest, AValueRightAfterAPublishAndBeforeTheLightsLoopIsSent) {
+  start(true, true);
+  hub.report_oneway_command(sent(WIRE_ON));
+  hub.oneway_actions.clear();
+  publish_after(5000);  // the level is published, its write is pending
+  ASSERT_FLOAT_EQ(shown(), 0.25F);
+
+  user_sets(0.8F);
+  state.loop();
+
+  ASSERT_EQ(hub.oneway_actions.size(), 1u) << "the user's value goes out, it is not taken for the echo";
+  EXPECT_EQ(hub.oneway_actions[0].second, OneWayButtonAction::OPEN);
+}
+
+TEST_F(OneWayLightTest, AReadingPublishedTwiceCausesNoCommand) {
+  start(true, true);
+  reached_radio(WIRE_ON);
+  hub.oneway_actions.clear();
+
+  publish_after(5000);
+  publish_after(1000);
+  state.loop();
+  state.loop();
+
+  EXPECT_TRUE(hub.oneway_actions.empty());
+}
+
+TEST_F(OneWayLightTest, NoLevelIsPublishedWhileATransitionRunsAndTheNextOneAfterItsEndIsShown) {
+  start(true, true);
+  reached_radio(WIRE_ON);
+
+  state.test_transformer_active_ = true;
+  pass(5000);
+  EXPECT_FLOAT_EQ(shown(), 0.0F) << "a published level would end the transition and drop its end value";
+
+  state.test_transformer_active_ = false;
+  pass(1000);
+  EXPECT_NEAR(shown(), 0.3F, 1e-4F);
+  EXPECT_TRUE(hub.oneway_actions.empty());
+}
+
+TEST_F(OneWayLightTest, ATransitionOnTheLightStateSendsOnlyItsEndAsOneCommand) {
+  start(true, true);
+
+  state.test_transformer_active_ = true;
+  user_sets(0.2F);
+  state.loop();
+  user_sets(0.4F);
+  state.loop();
+  EXPECT_TRUE(hub.oneway_actions.empty());
+
+  state.test_transformer_active_ = false;
+  user_sets(0.6F);
+  state.loop();
+  ASSERT_EQ(hub.oneway_actions.size(), 1u);
+}
+
+TEST_F(OneWayLightTest, AButtonsReportBetweenAValueAndTheLightsLoopLosesTheValue) {
+  // The order that stays open, as a bench run met it on every try: during a fade, Home Assistant presses a button of
+  // the identity and sets a slider value right after it. The API's loop queues the button's command and sets the value
+  // on the LightState; the hub's loop, later in the same pass, sends the command, and its report publishes the level
+  // over the value; the LightState's loop then writes that level, which the gate takes for the echo. Neither a command
+  // nor a stop follows for the value. ESPHome does not keep its loop order fixed (a component that turns its loop off
+  // swaps the last active one into its place), so the hub can run between the API and the LightState. The component
+  // cannot see a waiting write; LightState::set_external_state(), which refuses while one waits, closes this.
+  start(true, true);
+  user_sets(1.0F);
+  echo();
+  reached_radio(WIRE_ON);
+  pass(5000);
+  ASSERT_FLOAT_EQ(shown(), 0.25F);
+  hub.oneway_actions.clear();
+
+  press_identity_button();  // the API's loop: the button first,
+  user_sets(0.5F);          // then the value
+  reached_radio(WIRE_ON);   // the hub's loop: the button's command and its report; then the LightState's loop
+
+  EXPECT_FLOAT_EQ(shown(), 0.25F) << "the level replaced the value";
+  pass(ON_MS);
+  ASSERT_EQ(hub.oneway_actions.size(), 1u) << "only the button's command went out: the value sent nothing, no stop";
+  EXPECT_EQ(hub.oneway_actions[0].second, OneWayButtonAction::OPEN);
 }
 
 // === With fade times, the timed way ===

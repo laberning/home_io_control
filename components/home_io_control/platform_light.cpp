@@ -29,10 +29,8 @@ light::LightTraits IOHomeLight::get_traits() {
 }
 
 void IOHomeLight::write_state(light::LightState *state) {
-  if (this->suppress_write_) {
-    this->suppress_write_ = false;
+  if (!this->gate_.should_send(state))
     return;
-  }
 
   if (this->dimmable_) {
     float brightness = 0.0F;
@@ -67,14 +65,13 @@ void IOHomeLight::on_device_update_(const IoDevice &dev) {
     // Same inverted 0-100 IO position field as the binary path, just read as a continuous value
     // instead of collapsed at the <50 threshold.
     const float brightness = detail::fraction_from_io(dev.position, /*invert=*/false);
-    publish_light_reading(this->state_, brightness > 0.0F, brightness, this->suppress_write_);
+    this->gate_.publish(this->state_, brightness > 0.0F, brightness);
     return;
   }
 
   // Binary endpoints report on/off via the shared 0-100 position field.
   // Position < 50 is treated as "on", >= 50 as "off".
-  publish_light_reading(this->state_, dev.position < detail::BINARY_ENTITY_ON_POSITION_THRESHOLD, std::nullopt,
-                        this->suppress_write_);
+  this->gate_.publish(this->state_, dev.position < detail::BINARY_ENTITY_ON_POSITION_THRESHOLD, std::nullopt);
 }
 
 void IOHomeLight::dump_config() {
