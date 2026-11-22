@@ -110,6 +110,8 @@ from issue #202, on an SX1276 board:
 - [Register 0x0137, the temperature in force, in a comfort period and in an eco period](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_temperature_in_force.yaml)
 - [The status read in a comfort period, twice, and in an eco period](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_status_mp_fp_programme.yaml)
 - [Two status reads, one with the comfort setpoint and the eco setback](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_status_mp_fp.yaml)
+- [Registers 0x0103, 0x011D, 0x012A and 0x0137 while a temporary override holds](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_temporary_override_held.yaml)
+- [The mode and temperature registers in the frost-free and the summer setting](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/atlantic_adelis_probe_frost_free_and_summer.yaml)
 
 ## See also
 

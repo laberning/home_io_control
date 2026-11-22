@@ -1,0 +1,49 @@
+id: atlantic_adelis_probe_temporary_override_held
+description: >
+  An Atlantic Adelis 2 Digit towel dryer (node BD684B) in PROG while a temporary override is in force,
+  answering `register_01` reads on the reporter's SX1276 hub C0FFEE (issue #202, comment of 2026-11-15).
+  The reporter had forced the eco temperature on the display, which held 16.5 C as an override; a target
+  set from Home Assistant earlier in an eco period had gone to the comfort setpoint. Each answer is CMD_WRITE_PRIVATE_ACK (0x21) echoing the four header bytes, then a 16-bit
+  little-endian value in tenths of a degree.
+
+  Register 0x011D, the override, holds A5 00 = 16.5 C, where the idle sweeps in
+  tests/corpus/captures/probe/atlantic_adelis_probe_register_01_sweep.yaml read 00 00. The temperature in
+  force (registers 0x012A and 0x0137) equals it, while the comfort setpoint (register 0x0103) keeps the
+  value the target write left there, AF 00 = 17.5 C. Only the answers were logged (stage=probe_rx).
+
+  Community capture: no system key; the replies carry no authenticated bytes.
+source:
+  device: "Atlantic Adelis 2 Digit electric towel dryer (node BD684B, display name ADELIS 2 DIGIT)"
+  captured_with: sx1276
+  firmware: "main around 2026-11-15 with the register_01 probe, diagnostic_probes: true"
+  date: 2026-11-15
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/202"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 03 AF 00"
+    crc: absent
+    note: "register 0x0103 (19:09:12), comfort setpoint: AF 00 = 17.5 C"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 1D A5 00"
+    crc: absent
+    note: "register 0x011D (19:09:48), the temporary override: A5 00 = 16.5 C"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 2A A5 00"
+    crc: absent
+    note: "register 0x012A (19:12:33), the temperature in force: A5 00 = 16.5 C"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 37 A5 00"
+    crc: absent
+    note: "register 0x0137 (19:12:59), the towel dryer's temperature in force: A5 00 = 16.5 C"
+expect:
+  frames:
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

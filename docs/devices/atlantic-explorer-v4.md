@@ -6,14 +6,14 @@ two-way and reports the same node type, subtype, name and brand as the
 [Atlantic Calypso Connecté](atlantic-calypso.md), so the hub reads and sets the same things: water
 temperature, target, mode, what is heating, energy, boost and away. Its target scale and the way it
 reports boost and away differ, which is why it is declared with `io_model: explorer_v4`.
-One unit is reported on a Heltec WiFi LoRa 32 V2 (SX1276); see
+Two units are reported, one on a Heltec WiFi LoRa 32 V2 (SX1276); see
 [Water heaters](../configuration/water-heater.md) for the options.
 
 ## What works
 
 | Capability | Status |
 |---|---|
-| Pairing | ✅ One unit paired; it answers authenticated reads and writes |
+| Pairing | ✅ Two units paired; both answer authenticated reads and writes. The second, a 200 L coil model, was paired from new |
 | Water temperature | ✅ Read |
 | Target temperature | ✅ Read: 51, 55, 57 and 59 °C match the display |
 | Mode read-back (automatic / manual ECO on / manual ECO off) | ✅ Read |
@@ -37,8 +37,9 @@ heats in each mode, and why the card shows no target in `eco`.
 
 The target scale runs from 20 to 70 °C, where the Calypso's runs to 62 °C. The heater keeps whole
 degrees, so the card offers whole degrees only. In manual with ECO on it keeps at most 55 °C, and a
-higher target comes back as 55 °C. In manual with ECO off it kept 59, 60 and 62 °C. The card shows the
-target the heater kept, read back right after the write.
+higher target comes back as 55 °C, on the second unit too. In manual with ECO off it kept 59, 60 and
+62 °C, and the second unit kept 62 °C. The card shows the target the heater kept, read back right
+after the write.
 
 The heater answers a target it has to round with result code 10 ("parameter incoherence adjustment").
 The hub sends whole degrees only, so the card never gets that answer; a target with a fraction, from an
@@ -96,6 +97,11 @@ Read and commanded on one Atlantic Explorer V4 with its display read beside the 
 above, the 54 °C target written as `8800`, boost started on the display and from Home Assistant, and
 away from Home Assistant, each on and off
 ([pull request #246](https://github.com/laberning/home_io_control/pull/246)).
+
+A second unit, an Explorer V4 200 L coil model, was paired from new with `io_model: explorer_v4` set.
+It reads the water temperature and the target, takes a target from Home Assistant, and the away mode
+works. A 70 °C target in `heat_pump` (manual with ECO on) came back as 55 °C, and a 62 °C target
+stayed ([issue #198](https://github.com/laberning/home_io_control/issues/198)).
 
 The model is three rows of the device readings table, selected by its capabilities
 ([ADR 0110](../adr/0110-a-device-values-row-says-how-it-is-written-too.md)).

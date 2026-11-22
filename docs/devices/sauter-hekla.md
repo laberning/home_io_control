@@ -91,8 +91,7 @@ From [issue #222](https://github.com/laberning/home_io_control/issues/222), on a
 SX1262 driver:
 
 - [The panel's four night-light brightness levels, overheard by the hub](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/exchange/sauter_hekla_exchange_night_light_brightness_levels_sx1262.yaml)
-- The reporter's register reads of occupancy detection (`0x0101`: 0 off, 1 on) and detected presence
-  (`0x0110`: 0 with nobody in the room, 1 while someone walks around the heater), in the issue thread.
+- [The register reads of occupancy detection (`0x0101`: 0 off, 1 on) and detected presence (`0x0110`: 0 with nobody in the room, 1 while someone walks around the heater)](https://github.com/laberning/home_io_control/blob/main/tests/corpus/captures/probe/sauter_hekla_probe_occupancy_reads_sx1262.yaml)
 - The reporter's confirmation of pairing, target, room temperature, the window sensor and switching
   and dimming the night light, in the issue thread.
 - The reporter's confirmation of the occupancy switch and sensor in Home Assistant, including the

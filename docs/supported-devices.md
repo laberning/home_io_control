@@ -125,7 +125,7 @@ Thermor, Sauter). What each one's card offers in Home Assistant is on
 | **Atlantic Tatou Pilotage Intelligent Connecté** (electric radiator) | — | ❌ Unsupported | Discover & Pair gets no answer | Its key has not been retrieved. Try the experimental [`pairing_discovery_send_channels: all`](configuration/tuning.md#pairing_discovery_send_channels). SX1276 board, issue #199 |
 | **Atlantic Alfea Duo Extensa A.I.** (air-to-water heat pump) | `sensor:` entry | ⚠️ Partial | The key of the installation it belongs to | Reads the heating and hot-water energy counters and, experimentally, the outdoor temperature, alongside the installation's TaHoma; writes nothing. Issue #244. [Atlantic Alfea heat pump](devices/atlantic-heat-pump.md) |
 | **Atlantic Calypso Connecté** (heat-pump water heater) | Water heater | ✅ Confirmed | Discover & Pair | Readings, target, mode, boost and away; takes only its own fixed targets. Issue #198. [Atlantic Calypso Connecté](devices/atlantic-calypso.md) |
-| **Atlantic Explorer V4** (heat-pump water heater) | `io_model: explorer_v4` | ✅ Confirmed | Pairing | Readings, target, mode, boost and away. Pull request #246. [Atlantic Explorer V4](devices/atlantic-explorer-v4.md) |
+| **Atlantic Explorer V4** (heat-pump water heater) | `io_model: explorer_v4` | ✅ Confirmed | Pairing | Readings, target, mode, boost and away on two units. Pull request #246 and issue #198. [Atlantic Explorer V4](devices/atlantic-explorer-v4.md) |
 | **Sauter Guelma connecté** (electric storage water heater, 80 L) | `io_model: electric_water_heater` | ✅ Confirmed | Not recorded | One heater, issue #247. [Sauter Guelma connecté](devices/sauter-guelma.md) |
 
 ### Hubs you can take a key from

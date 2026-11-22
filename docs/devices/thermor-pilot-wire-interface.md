@@ -84,6 +84,10 @@ with it, and in an earlier run without it the interface answered only on the fif
 - **Every command ends unconfirmed.** The interface never sends the closing reply of an exchange, so
   the hub logs each command as accepted without a closing reply, and the Unconfirmed Exchanges
   counter rises. The heater's level changes each time all the same.
+- **Status reads mostly go unanswered.** The interface answered about one status read in a hundred, and
+  each try sends a long wake-up. The reads tell the hub nothing, because the status carries no level, so
+  set a long `status_poll_interval` on the entry, such as `30min`, to spare the air time. The interval
+  does not delay commands (issue #228).
 - **A command is sometimes not heard.** Now and then the interface does not answer at all and the card
   keeps the previous state. Send the command again; a command can take two or three sends.
 - **Comfort -1 and Comfort -2 can take a few minutes** to show on the heater's display.

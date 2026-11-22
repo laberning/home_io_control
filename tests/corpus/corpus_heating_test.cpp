@@ -321,3 +321,23 @@ TEST(CorpusHeating, TheDurationsAreTheFirstByteOfRegisters0x013BAnd0x013DAndTheT
       corpus_test::value_of(atlantic_adelis_probe_register_01_sweep_frame29_bytes, DeviceRegister::DRYING_DURATION),
       120.0F);
 }
+
+// === Occupancy reads of a Sauter Hekla (issue #222) ===
+
+TEST(CorpusHeating, TheHeklaReportsWhoIsInTheRoomInRegister0110WhileTheDetectionIsOn) {
+  using corpus_test::value_of;
+  EXPECT_FLOAT_EQ(
+      value_of(corpus::sauter_hekla_probe_occupancy_reads_sx1262_frame0_bytes, DeviceRegister::OCCUPANCY_DETECTION),
+      1.0F)
+      << "the detection is on";
+  EXPECT_FLOAT_EQ(
+      value_of(corpus::sauter_hekla_probe_occupancy_reads_sx1262_frame3_bytes, DeviceRegister::OCCUPANCY_DETECTION),
+      0.0F)
+      << "the detection is off";
+  EXPECT_FLOAT_EQ(value_of(corpus::sauter_hekla_probe_occupancy_reads_sx1262_frame1_bytes, DeviceRegister::PRESENCE),
+                  0.0F)
+      << "nobody in the room";
+  EXPECT_FLOAT_EQ(value_of(corpus::sauter_hekla_probe_occupancy_reads_sx1262_frame2_bytes, DeviceRegister::PRESENCE),
+                  1.0F)
+      << "the room is occupied";
+}

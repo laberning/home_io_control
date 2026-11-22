@@ -1,0 +1,61 @@
+id: atlantic_adelis_probe_frost_free_and_summer
+description: >
+  An Atlantic Adelis 2 Digit towel dryer (node BD684B) answering `register_01` reads of the mode and the
+  temperature registers on the reporter's SX1276 hub C0FFEE (issue #202, comment of 2026-11-16), once with
+  the display in its frost-free setting (one step below the 12 C floor) and once in its summer setting (one
+  step further; the display reads "Ete Chauffe suspendue", comment of 2026-11-17). Each answer is CMD_WRITE_PRIVATE_ACK (0x21) echoing
+  the four header bytes, then the value.
+
+  Both settings read register 0x0136 = 03, the MANUEL mode, so the dryer has no fourth mode to select. The
+  temperature registers hold the setting as an ordinary setpoint, in tenths of a degree little-endian:
+  46 00 is 7.0 C in frost-free and 00 00 is 0.0 C in summer. Only the answers were logged
+  (stage=probe_rx).
+
+  Community capture: no system key; the replies carry no authenticated bytes.
+source:
+  device: "Atlantic Adelis 2 Digit electric towel dryer (node BD684B, display name ADELIS 2 DIGIT)"
+  captured_with: sx1276
+  firmware: "main around 2026-11-16 with the register_01 probe, diagnostic_probes: true"
+  date: 2026-11-16
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/202"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 03 46 00"
+    crc: absent
+    note: "register 0x0103 (22:11:16), frost-free: comfort setpoint 46 00 = 7.0 C"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 36 03"
+    crc: absent
+    note: "register 0x0136 (22:12:35), frost-free: mode 03 = MANUEL"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 37 46 00"
+    crc: absent
+    note: "register 0x0137 (22:12:35), frost-free: temperature in force 46 00 = 7.0 C"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 03 00 00"
+    crc: absent
+    note: "register 0x0103 (22:17:54), summer: comfort setpoint 00 00 = 0.0 C"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 C0 FF EE BD 68 4B 21 0C 60 01 36 03"
+    crc: absent
+    note: "register 0x0136 (22:18:53), summer: mode 03 = MANUEL"
+  - dir: rx
+    freq: 868950000
+    hex: "8E 00 C0 FF EE BD 68 4B 21 0C 60 01 37 00 00"
+    crc: absent
+    note: "register 0x0137 (22:18:53), summer: temperature in force 00 00 = 0.0 C"
+expect:
+  frames:
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

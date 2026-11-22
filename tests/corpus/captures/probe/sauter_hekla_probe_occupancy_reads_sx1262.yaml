@@ -1,0 +1,46 @@
+id: sauter_hekla_probe_occupancy_reads_sx1262
+description: >
+  A Sauter Hekla electric heater (type 52 subtype 1, node B7880C) answering `register_01` reads of its
+  occupancy registers on the reporter's SX1262 hub (issue #222, comment of 2026-11-17). Each answer is
+  CMD_WRITE_PRIVATE_ACK (0x21) echoing the four header bytes, then one byte. Register 0x0101, the
+  occupancy detection, reads 01 with the detection on and 00 in an earlier sweep with it off (the last
+  frame). Register 0x0110, whether the heater sees someone, reads 00 with the detection on and nobody in
+  the room, and 01 in a sweep eight minutes later with the reporter walking around the heater. Only the
+  answers were logged (stage=probe_rx).
+
+  Community capture: no system key; the replies carry no authenticated bytes.
+source:
+  device: "Sauter Hekla electric heater with occupancy detection"
+  captured_with: sx1262
+  firmware: "Heltec WiFi LoRa32 V3, main with the register_01 probe, diagnostic_probes: true"
+  date: 2026-11-17
+  origin: github-issue
+  issue: "https://github.com/laberning/home_io_control/issues/222"
+key: unknown
+frames:
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 A1 B2 C9 B7 88 0C 21 0C 60 01 01 01"
+    crc: absent
+    note: "register 0x0101 (19:47:52), occupancy detection: 01 = on"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 A1 B2 C9 B7 88 0C 21 0C 60 01 10 00"
+    crc: absent
+    note: "register 0x0110 (19:47:52), nobody in the room: 00"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 A1 B2 C9 B7 88 0C 21 0C 60 01 10 01"
+    crc: absent
+    note: "register 0x0110 (19:56:08), room occupied: 01"
+  - dir: rx
+    freq: 868950000
+    hex: "8D 00 A1 B2 C9 B7 88 0C 21 0C 60 01 01 00"
+    crc: absent
+    note: "register 0x0101 (19:46:29), occupancy detection: 00 = off"
+expect:
+  frames:
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}
+    - {cmd: 0x21, start: false, end: true, protocol: 2w}

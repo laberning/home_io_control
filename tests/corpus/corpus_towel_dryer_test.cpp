@@ -106,6 +106,49 @@ TEST(CorpusTowelDryer, Register0137HoldsTheTemperatureInForceAndTheSetbackIsInTe
       << "both units hold the same setback";
 }
 
+TEST(CorpusTowelDryer, ATemporaryOverrideIsHeldInRegister011DAndTheComfortSetpointKeepsItsOwnValue) {
+  using corpus_test::value_of;
+  EXPECT_FLOAT_EQ(
+      value_of(corpus::atlantic_adelis_probe_temporary_override_held_frame1_bytes, DeviceRegister::DEROGATED_SETPOINT),
+      16.5F)
+      << "the override the display showed";
+  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_temporary_override_held_frame2_bytes,
+                           DeviceRegister::TEMPERATURE_IN_FORCE),
+                  16.5F);
+  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_temporary_override_held_frame3_bytes,
+                           DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE),
+                  16.5F)
+      << "the temperature in force follows the override";
+  EXPECT_FLOAT_EQ(
+      value_of(corpus::atlantic_adelis_probe_temporary_override_held_frame0_bytes, DeviceRegister::COMFORT_SETPOINT),
+      17.5F)
+      << "the comfort setpoint is not the temperature in force while an override holds";
+  EXPECT_FLOAT_EQ(
+      value_of(corpus::atlantic_adelis_probe_register_01_sweep_frame61_bytes, DeviceRegister::DEROGATED_SETPOINT), 0.0F)
+      << "an idle dryer reads 0 there";
+}
+
+TEST(CorpusTowelDryer, FrostFreeAndSummerAreTheManualModeAtTheirOwnSetpoints) {
+  using corpus_test::value_of;
+  EXPECT_EQ(shown_mode(corpus::atlantic_adelis_probe_frost_free_and_summer_frame1_bytes), HeatingHvacMode::HEAT)
+      << "frost-free";
+  EXPECT_EQ(shown_mode(corpus::atlantic_adelis_probe_frost_free_and_summer_frame4_bytes), HeatingHvacMode::HEAT)
+      << "summer";
+  EXPECT_FLOAT_EQ(
+      value_of(corpus::atlantic_adelis_probe_frost_free_and_summer_frame0_bytes, DeviceRegister::COMFORT_SETPOINT),
+      7.0F);
+  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_frost_free_and_summer_frame2_bytes,
+                           DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE),
+                  7.0F);
+  EXPECT_FLOAT_EQ(
+      value_of(corpus::atlantic_adelis_probe_frost_free_and_summer_frame3_bytes, DeviceRegister::COMFORT_SETPOINT),
+      0.0F);
+  EXPECT_FLOAT_EQ(value_of(corpus::atlantic_adelis_probe_frost_free_and_summer_frame5_bytes,
+                           DeviceRegister::TOWEL_TEMPERATURE_IN_FORCE),
+                  0.0F)
+      << "summer is a setpoint of 0 C, below the 7 C the hub offers";
+}
+
 /// A towel dryer record that has folded in one captured status reply.
 template<size_t N> IoDevice device_after_status(const uint8_t (&bytes)[N]) {
   IoDevice dev;
