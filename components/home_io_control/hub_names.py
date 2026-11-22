@@ -104,7 +104,7 @@ CONF_OPEN_DURATION = "open_duration"
 CONF_CLOSE_DURATION = "close_duration"
 # A 1W identity's assumed-state light entity (ADR 0128): `light:` is its name, `dimmable:` gives it a brightness slider
 # (also the key of the two-way light platform), `on_duration:` / `off_duration:` the fade time each way, and
-# `set_position:` how a slider value reaches the device ("timed" or "frame").
+# `set_position:` how a slider value reaches the device ("timed" or "frame"; also a cover's with its travel times).
 CONF_LIGHT = "light"
 CONF_DIMMABLE = "dimmable"
 CONF_ON_DURATION = "on_duration"

@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0127 -->
 
-**Status:** Accepted, amends [ADR 0117](0117-a-one-way-controller-can-show-an-assumed-state-cover.md) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0117](0117-a-one-way-controller-can-show-an-assumed-state-cover.md); amended by [ADR 0128](0128-a-one-way-light-shows-an-estimated-level-and-a-slider-value-is-a-timed-stop-or-a-position-frame.md) (the cover's slider) · **Recorded:** 2026-11
 
 Stays within [ADR 0018](0018-yaml-is-the-source-of-truth-hub-persists-nothing.md) and
 [ADR 0025](0025-persist-monotonic-counters-as-the-only-exception-to-0018.md): the hub persists its counters and

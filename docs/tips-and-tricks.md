@@ -48,9 +48,12 @@ cover:
 
 A one-way identity can show an [assumed-state cover](configuration/oneway-transmit.md#a-cover-for-the-identity)
 with open, close and stop, which also follows your wall remote without an automation. With
-`open_duration:` and `close_duration:` it also [shows a position from the travel time](configuration/oneway-transmit.md#a-position-from-the-travel-time),
-but its slider goes to the nearer end. For a slider that moves to a percentage, ESPHome's `time_based` cover platform
-turns the generated buttons and the `oneway_set_position` action into one, estimating the position from travel time:
+`open_duration:` and `close_duration:` it also [shows a position from the travel time](configuration/oneway-transmit.md#a-position-from-the-travel-time)
+and its slider [moves it to a percentage](configuration/oneway-transmit.md#a-slider-value-on-the-cover) with a timed stop.
+ESPHome's `time_based` cover platform is still the better choice when one cover has to send more than one identity's
+own open, close and stop, for example several identities moved together, or a script of yours around each command:
+its open, close and stop are any ESPHome actions, here the generated buttons. It does not follow the wall remote by
+itself (see [the next section](#following-the-wall-remote-with-a-time-based-cover)):
 
 ```yaml
 cover:

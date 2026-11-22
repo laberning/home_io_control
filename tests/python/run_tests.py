@@ -629,9 +629,23 @@ def oneway_light_needs_a_light_kind_and_its_keys_need_the_light():
     assert "has set_position: but no fade times" in o._entity_problem(
         _resolved_oneway("light", **light, **dimmable, **{n.CONF_SET_POSITION: "timed"})
     )
-    assert "has set_position: but no fade times" in o._entity_problem(
+    assert "has set_position: but no travel times on a cover" in o._entity_problem(
         _resolved_oneway("vertical_exterior_awning", **{n.CONF_COVER: "Awning", n.CONF_SET_POSITION: "timed"})
-    ), "the cover's slider comes with its own change"
+    )
+    assert o._entity_problem(
+        _resolved_oneway(
+            "vertical_exterior_awning",
+            **{
+                n.CONF_COVER: "Awning",
+                n.CONF_SET_POSITION: "frame",
+                n.CONF_OPEN_DURATION: timedelta(seconds=20),
+                n.CONF_CLOSE_DURATION: timedelta(seconds=20),
+            },
+        )
+    ) is None, "a cover's slider way with its travel times"
+    assert "has set_position: but neither cover: nor light:" in o._entity_problem(
+        _resolved_oneway("vertical_exterior_awning", **{n.CONF_SET_POSITION: "timed"})
+    )
 
 
 @case()

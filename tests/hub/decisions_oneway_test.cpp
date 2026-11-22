@@ -592,6 +592,17 @@ TEST(DecisionsSlider, ATimedValueBelowTheEstimateClosesAndStopsAfterTheRestOfThe
   EXPECT_EQ(*plan.stop_after_ms, 5000u) << "half the scale at 10 s for the full fall";
 }
 
+TEST(DecisionsSlider, ACoverThatStartsOpenClosesWithTheCloseTimeToAValueAndOpensBackWithTheOpenTime) {
+  // A cover is open at boot (level 1.0); its open time is the rise, its close time the fall.
+  const OneWaySliderPlan close = plan_from_rest(1.0F, 0.25F, OneWaySliderWay::TIMED);
+  const OneWaySliderPlan reopen = plan_from_rest(0.25F, 0.75F, OneWaySliderWay::TIMED);
+
+  EXPECT_EQ(close.send, Send::CLOSE);
+  EXPECT_EQ(close.stop_after_ms.value_or(0), 7500u) << "0.75 of the scale at 10 s for the full close";
+  EXPECT_EQ(reopen.send, Send::OPEN);
+  EXPECT_EQ(reopen.stop_after_ms.value_or(0), 10000u) << "half the scale at 20 s for the full open";
+}
+
 TEST(DecisionsSlider, AValueAtAnEndSendsThePlainCommandAndNoStop) {
   const OneWaySliderPlan full = plan_from_rest(0.3F, 1.0F, OneWaySliderWay::TIMED);
   const OneWaySliderPlan off = plan_from_rest(0.3F, 0.0F, OneWaySliderWay::TIMED);

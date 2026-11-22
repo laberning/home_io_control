@@ -18,7 +18,8 @@ the project's reference actuator; the shutter variants come from field reports.
 | Status read at the end of the reported travel time | ✅ Confirmed (corpus `somfy_awning_statuspoll_close_with_remaining_time_predicted_end_read_sx1262`); see [Covers](../configuration/cover.md) |
 | Discover & Pair | ✅ Confirmed |
 | Driven by a linked 1W Smoove remote | ✅ Confirmed |
-| Open, close, stop from a [1W controller identity](../configuration/oneway-transmit.md) | 📣 Reported, including STOP during travel; Open extends and Close retracts the awning (issue #196) |
+| Open, close, stop from a [1W controller identity](../configuration/oneway-transmit.md) | ✅ Confirmed on a bench run (one-way identity paired with PROG, each command read back over two-way), including STOP during travel; Open extends and Close retracts the awning (issue #196) |
+| Moving to a percentage over 1W, from the [one-way cover's slider](../configuration/oneway-transmit.md#a-slider-value-on-the-cover) | ✅ Confirmed on a bench run: `set_position: timed` (open, close, then a stop when the travel time says so) landed at 50 and 51 % for a 50 % value; `set_position: frame` (one position frame) moved it to 50 % |
 
 ## Onboarding route that worked
 

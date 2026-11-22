@@ -11,6 +11,7 @@
 #include "hub_core.h"
 #include "oneway_controller.h"
 #include "platform_oneway_entities.h"
+#include "proto_codecs.h"
 #include "proto_commands.h"
 #include "proto_frame.h"
 
@@ -36,6 +37,9 @@ constexpr uint8_t OTHER_NODE[NODE_ID_SIZE] = {0xAA, 0xBB, 0xCC};
 constexpr uint8_t SENDER_KEY[AES_KEY_SIZE] = {0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
                                               0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22};
 
+constexpr uint32_t OPEN_MS = 20000;
+constexpr uint32_t CLOSE_MS = 10000;
+
 class CoverHub : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::initialized_;
@@ -60,10 +64,15 @@ class HubOneWayCover : public ::testing::Test {
     hub.set_system_key("00112233445566778899AABBCCDDEEFF");
     hub.set_radio_type("not_a_chip");  // setup() wires the transmitter's report, then stops at the radio
   }
-  void TearDown() override { esphome::test_preferences::wipe(); }
+  void TearDown() override {
+    esphome::test_scheduler::clear();
+    esphome::test_preferences::wipe();
+  }
 
-  /// Register the identity as a controller of `type`, run setup() and wire the cover to the real hub.
-  void start(DeviceType type, std::optional<bool> invert = std::nullopt) {
+  /// Register the identity as a controller of `type`, run setup() and wire the cover to the real hub. With
+  /// @p way the cover has travel times (20 s to open, 10 s to close) and that slider way.
+  void start(DeviceType type, std::optional<bool> invert = std::nullopt,
+             std::optional<decisions::OneWaySliderWay> way = std::nullopt) {
     OneWayControllerIdentity identity{};
     identity.id = IDENTITY;
     std::memcpy(identity.node_id, IDENTITY_NODE, NODE_ID_SIZE);
@@ -79,8 +88,31 @@ class HubOneWayCover : public ::testing::Test {
     cover.set_parent(&hub);
     cover.set_controller_id(IDENTITY);
     cover.add_follow(REMOTE);
+    if (way.has_value()) {
+      cover.set_travel_durations(OPEN_MS, CLOSE_MS);
+      cover.set_slider_way(*way);
+    }
     cover.setup();
   }
+
+  /// Let @p ms pass: timers fire, the cover publishes, and a stop that was queued goes out.
+  void pass(uint32_t ms) {
+    esphome::test_scheduler::run_until(esphome::millis() + ms);
+    cover.loop();
+    hub.loop();
+  }
+
+  /// The decoded frame of the first copy of burst number @p burst.
+  OneWayFrameInfo burst_frame(size_t burst) const {
+    const auto &sent = radio.get_sent_data();
+    const size_t index = burst * ONEWAY_BURST_REPEATS;
+    EXPECT_GT(sent.size(), index);
+    IoFrame frame{};
+    EXPECT_TRUE(parse(sent.at(index).data(), static_cast<uint8_t>(sent.at(index).size()), frame));
+    return decode_1w_frame(frame);
+  }
+
+  [[nodiscard]] size_t bursts() const { return radio.get_send_count() / ONEWAY_BURST_REPEATS; }
 
   /// One press of the remote at @p src: a 1W execute carrying the wire position @p wire_percent, as the hub hears it.
   void hear_press(const uint8_t src[NODE_ID_SIZE], uint8_t wire_percent, uint16_t sequence) {
@@ -201,4 +233,92 @@ TEST_F(HubOneWayCover, ATimedCoverEstimatesItsPositionFromItsOwnCommandAndAFollo
   esphome::test_clock::advance_ms(2000);
   cover.loop();
   EXPECT_FLOAT_EQ(cover.position, 0.7F);
+}
+
+// === A slider value with travel times (ADR 0128) ===
+
+TEST_F(HubOneWayCover, ATimedValueGoesOutAsCloseThenOneStopAtTheValueAndThePositionFreezesThere) {
+  start(DeviceType::VERTICAL_EXTERIOR_AWNING, std::nullopt, decisions::OneWaySliderWay::TIMED);
+  CoverCall call(&cover);
+  call.set_position(0.5F);
+
+  press(call);
+
+  ASSERT_EQ(bursts(), 1u);
+  EXPECT_EQ(burst_frame(0).main0, 0xC8) << "close is the position frame at 100 % closed (wire 200)";
+  pass(CLOSE_MS / 2 - 1);
+  EXPECT_EQ(bursts(), 1u) << "no stop before half of the 10 s fall has run";
+  pass(1);
+
+  ASSERT_EQ(bursts(), 2u) << "exactly one stop";
+  EXPECT_EQ(burst_frame(1).main0, POS_STOP);
+  EXPECT_NEAR(cover.position, 0.5F, 0.1F) << "frozen near the value; the burst itself takes a little of the fall";
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+  pass(60000);
+  EXPECT_EQ(bursts(), 2u);
+}
+
+TEST_F(HubOneWayCover, AFrameValueGoesOutAsOnePositionFrameAndTheCoverTravelsToIt) {
+  start(DeviceType::VERTICAL_EXTERIOR_AWNING, std::nullopt, decisions::OneWaySliderWay::FRAME);
+  CoverCall call(&cover);
+  call.set_position(0.25F);
+
+  press(call);
+
+  ASSERT_EQ(bursts(), 1u);
+  EXPECT_EQ(burst_frame(0).main0, 0x96) << "75 % closed on the wire, doubled into the main byte";
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING) << "a cover travels to a position frame";
+  pass(CLOSE_MS);
+  EXPECT_EQ(bursts(), 1u) << "no stop follows a position frame";
+  EXPECT_NEAR(cover.position, 0.25F, 0.01F);
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_IDLE);
+}
+
+TEST_F(HubOneWayCover, AFollowedRemotesPressDuringATimedRunTakesOverAndNoStaleStopGoesOut) {
+  start(DeviceType::VERTICAL_EXTERIOR_AWNING, std::nullopt, decisions::OneWaySliderWay::TIMED);
+  CoverCall call(&cover);
+  call.set_position(0.2F);
+  press(call);
+  ASSERT_EQ(bursts(), 1u);
+  pass(2000);
+
+  hear_press(REMOTE_NODE, 0, 0x3000);  // the wall remote opens it again
+  pass(120000);
+
+  EXPECT_EQ(bursts(), 1u) << "the stop planned for 0.2 would be stale";
+  EXPECT_FLOAT_EQ(cover.position, COVER_OPEN);
+}
+
+TEST_F(HubOneWayCover, AnInvertedKindsSliderValueIsMirroredOnTheWireAndShownAsTheUsersValue) {
+  start(DeviceType::HORIZONTAL_AWNING, std::nullopt, decisions::OneWaySliderWay::FRAME);
+  ASSERT_TRUE(hub.oneway_identity_inverted(IDENTITY));
+  CoverCall call(&cover);
+  call.set_position(0.25F);
+
+  press(call);
+
+  ASSERT_EQ(bursts(), 1u);
+  EXPECT_EQ(burst_frame(0).main0, 0x32) << "75 % closed for the user is wire 25 on an inverted kind, doubled";
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING);
+  pass(CLOSE_MS);
+  EXPECT_NEAR(cover.position, 0.25F, 0.01F);
+}
+
+TEST_F(HubOneWayCover, AnInvertedKindsTimedValueClosesOnTheMirroredWireValueAndStopsOnce) {
+  start(DeviceType::HORIZONTAL_AWNING, std::nullopt, decisions::OneWaySliderWay::TIMED);
+  CoverCall call(&cover);
+  call.set_position(0.5F);
+
+  press(call);
+
+  ASSERT_EQ(bursts(), 1u);
+  EXPECT_EQ(burst_frame(0).main0, 0x00) << "the user's close is wire 0 on an inverted kind";
+  EXPECT_EQ(cover.current_operation, COVER_OPERATION_CLOSING);
+  pass(CLOSE_MS / 2);
+
+  ASSERT_EQ(bursts(), 2u) << "exactly one stop, half of the fall later";
+  EXPECT_EQ(burst_frame(1).main0, POS_STOP);
+  EXPECT_NEAR(cover.position, 0.5F, 0.1F);
+  pass(60000);
+  EXPECT_EQ(bursts(), 2u);
 }

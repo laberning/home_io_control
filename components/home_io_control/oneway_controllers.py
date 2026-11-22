@@ -256,8 +256,9 @@ ONEWAY_CONTROLLER_SCHEMA = cv.Schema(
         # How long the light fades from off to full and back (ADR 0128); both or neither, and only with `dimmable:`.
         cv.Optional(CONF_ON_DURATION): cv.positive_not_null_time_period,
         cv.Optional(CONF_OFF_DURATION): cv.positive_not_null_time_period,
-        # How the light's slider value reaches the device (ADR 0128), only with its fade times: "timed" (default) sends
-        # on or off and a stop when the estimate reaches the value; "frame" sends one position frame.
+        # How the slider value of the light or the cover reaches the device (ADR 0128), only with its fade or travel
+        # times: "timed" (default) sends on/open or off/close and a stop when the estimate reaches the value; "frame"
+        # sends one position frame.
         cv.Optional(CONF_SET_POSITION): cv.one_of("timed", "frame", lower=True),
     }
 )
@@ -540,8 +541,8 @@ def _entity_problem(resolved):
     """Error text when the identity's `cover:` or `light:` entity cannot work, else None.
 
     The two entities exclude each other (an identity is one device). `follows:` lists the remotes whose presses move
-    the entity's state, so it needs one. `set_position:` says how the light's slider value reaches the device, which
-    needs the fade times that make a value possible (ADR 0128).
+    the entity's state, so it needs one. `set_position:` says how the entity's slider value reaches the device, which
+    needs the fade or travel times that make a value possible (ADR 0128).
     """
     identity = resolved.identity
     handle = f"oneway_controllers id '{resolved.identity_id}'"
@@ -555,12 +556,23 @@ def _entity_problem(resolved):
             f"{handle} has follows: but neither cover: nor light:. follows: lists the remotes whose presses move "
             "the entity's shown state; without one there is nothing to move."
         )
-    if CONF_SET_POSITION in identity and CONF_ON_DURATION not in identity:
-        return (
-            f"{handle} has set_position: but no fade times on a light. It says how the light's slider value reaches "
-            "the device, which needs the time a full fade takes: set light:, dimmable: true, on_duration: and "
-            "off_duration:."
-        )
+    if CONF_SET_POSITION in identity:
+        if CONF_LIGHT in identity and CONF_ON_DURATION not in identity:
+            return (
+                f"{handle} has set_position: but no fade times on a light. It says how the light's slider value "
+                "reaches the device, which needs the time a full fade takes: set light:, dimmable: true, on_duration: "
+                "and off_duration:."
+            )
+        if CONF_COVER in identity and CONF_OPEN_DURATION not in identity:
+            return (
+                f"{handle} has set_position: but no travel times on a cover. It says how the cover's slider value "
+                "reaches the device, which needs the time a full run takes: set open_duration: and close_duration:."
+            )
+        if CONF_COVER not in identity and CONF_LIGHT not in identity:
+            return (
+                f"{handle} has set_position: but neither cover: nor light:. It says how an entity's slider value "
+                "reaches the device; without one there is no slider."
+            )
     return None
 
 
@@ -908,6 +920,8 @@ async def create_oneway_controller_entities(identity, var):
                     identity[CONF_CLOSE_DURATION].total_milliseconds,
                 )
             )
+        if CONF_SET_POSITION in identity:
+            cg.add(cover_entity.set_slider_way(getattr(OneWaySliderWay, identity[CONF_SET_POSITION].upper())))
 
     if CONF_LIGHT in identity:
         light_type = light_component.LightType.BRIGHTNESS_ONLY if identity.get(CONF_DIMMABLE) else light_component.LightType.BINARY

@@ -59,22 +59,112 @@ void IOHomeOneWayLastCommandTextSensor::dump_config() {
   ESP_LOGCONFIG("home_io_control.text_sensor", "  Controller: %s", this->controller_id_.c_str());
 }
 
+// === OneWaySlider ===
+
+void OneWaySlider::ask(float level) {
+  this->cancel();
+  this->send_plan_(
+      decisions::plan_oneway_slider(this->travel_->estimate(), this->travel_->rates(), millis(), level, this->way_),
+      level);
+}
+
+void OneWaySlider::send_plan_(const decisions::OneWaySliderPlan &plan, float level) {
+  using Send = decisions::OneWaySliderPlan::Send;
+  switch (plan.send) {
+    case Send::OPEN:
+    case Send::CLOSE:
+      // The stop is armed by this command's report and timed from the estimate then, when the run has begun.
+      if (plan.stop_after_ms.has_value())
+        this->pending_value_ = PendingValue{std::clamp(level, 0.0F, 1.0F), plan.send == Send::OPEN};
+      this->queue_action(plan.send == Send::OPEN ? OneWayButtonAction::OPEN : OneWayButtonAction::CLOSE);
+      break;
+    case Send::STOP:
+      this->queue_action(OneWayButtonAction::STOP);
+      break;
+    case Send::POSITION:
+      this->queue_position(plan.position_percent);
+      break;
+    case Send::NOTHING:
+    default:
+      break;
+  }
+}
+
+void OneWaySlider::cancel() {
+  this->pending_value_.reset();
+  this->cancel_stop_();
+}
+
+void OneWaySlider::queue_action(OneWayButtonAction action) {
+  ++this->unreported_;
+  this->port_->send_oneway_action(this->controller_id_, action);
+}
+
+void OneWaySlider::queue_position(uint8_t position) {
+  ++this->unreported_;
+  this->port_->send_oneway_position(this->controller_id_, position);
+}
+
+void OneWaySlider::on_own_report(const OneWayCommandReport &report) {
+  // One report per queued command, in queue order: the report that brings the count to zero is the one of the latest
+  // command, the one a pending timed value was planned for. An earlier command's report leaves the plan alone. A
+  // command queued elsewhere (a button, an action) counts here too, so it can take the latest's place: then the stop is
+  // lost and the run goes on to an end (the far one, when the way back was sent from the foreign report), which never
+  // stops the device at a value nobody asked for.
+  std::optional<PendingValue> pending;
+  if (this->unreported_ <= 1)
+    pending = std::exchange(this->pending_value_, std::nullopt);
+  if (this->unreported_ > 0)
+    --this->unreported_;
+  // A burst that never reached the radio changes nothing, and neither does enrollment traffic (no intent).
+  if (!decisions::follows_own_oneway_command(report.transmitted, report.wire.has_intent))
+    return;
+  // Any command of the identity supersedes a stop already armed; the latest command of a timed value arms its own.
+  this->cancel_stop_();
+  const auto intent = this->apply_frame_(report.wire);
+  if (!pending.has_value() || !intent.has_value() || intent->kind != decisions::TravelIntent::Kind::GO_TO)
+    return;
+  // A run the other way is not the value's command but one from elsewhere in its place: the value is dropped.
+  const bool rising = intent->level >= 1.0F;
+  if (rising != pending->rising)
+    return;
+  // Timed from the estimate as the run begins, by the same rule that chose the command.
+  const auto plan = decisions::plan_oneway_slider(this->travel_->estimate(), this->travel_->rates(), millis(),
+                                                  pending->target, decisions::OneWaySliderWay::TIMED);
+  const auto sent = rising ? decisions::OneWaySliderPlan::Send::OPEN : decisions::OneWaySliderPlan::Send::CLOSE;
+  if (plan.send == sent && plan.stop_after_ms.has_value()) {
+    this->arm_stop_(*plan.stop_after_ms, [this]() { this->queue_action(OneWayButtonAction::STOP); });
+    return;
+  }
+  // A run already going passed the value while the command waited for the radio: send what the rule asks for from
+  // here, a stop at the value or the way back, whose own report then arms its stop.
+  this->send_plan_(plan, pending->target);
+}
+
 // === IOHomeOneWayCover ===
 
 void IOHomeOneWayCover::setup() {
   if (this->control_port_ == nullptr)
     return;
+  this->slider_.attach(
+      *this->control_port_, this->controller_id_, this->travel_,
+      [this](uint32_t delay_ms, std::function<void()> stop) {
+        this->set_timeout(STOP_TIMEOUT, delay_ms, std::move(stop));
+      },
+      [this]() { this->cancel_timeout(STOP_TIMEOUT); },
+      [this](const OneWayFrameInfo &wire) { return this->apply_frame_(wire); });
   this->control_port_->add_oneway_command_report_callback([this](const OneWayCommandReport &report) {
-    // Every cover sees every report; each keeps only its own identity's. A burst that never reached the radio
-    // changes nothing, and neither does enrollment traffic (its frames carry no intent).
-    if (report.controller_id != this->controller_id_ ||
-        !decisions::follows_own_oneway_command(report.transmitted, report.wire.has_intent))
-      return;
-    this->apply_frame_(report.wire);
+    // Every cover sees every report; each keeps only its own identity's. The slider counts it, and a burst that never
+    // reached the radio changes nothing, and neither does enrollment traffic (its frames carry no intent).
+    if (report.controller_id == this->controller_id_)
+      this->slider_.on_own_report(report);
   });
   if (!this->follows_.empty()) {
-    this->control_port_->add_oneway_press_callback(this->follows_,
-                                                   [this](const OneWayFrameInfo &press) { this->apply_frame_(press); });
+    this->control_port_->add_oneway_press_callback(this->follows_, [this](const OneWayFrameInfo &press) {
+      // A remote's press supersedes the stop that was planned for a value of ours.
+      this->slider_.cancel();
+      this->apply_frame_(press);
+    });
   }
 }
 
@@ -86,6 +176,8 @@ void IOHomeOneWayCover::dump_config() {
   if (this->travel_.configured()) {
     ESP_LOGCONFIG("home_io_control.cover", "  Open duration: %" PRIu32 " ms", this->travel_.rates().rise_ms);
     ESP_LOGCONFIG("home_io_control.cover", "  Close duration: %" PRIu32 " ms", this->travel_.rates().fall_ms);
+    ESP_LOGCONFIG("home_io_control.cover", "  Set position: %s",
+                  this->slider_.way() == decisions::OneWaySliderWay::FRAME ? "frame" : "timed");
   }
 }
 
@@ -108,29 +200,34 @@ void IOHomeOneWayCover::loop() {
 
 void IOHomeOneWayCover::control(const cover::CoverCall &call) {
   if (call.get_stop()) {
-    this->control_port_->send_oneway_action(this->controller_id_, OneWayButtonAction::STOP);
+    // A stop supersedes the stop that was planned for a value.
+    this->slider_.cancel();
+    this->slider_.queue_action(OneWayButtonAction::STOP);
     return;
   }
   const auto &position = call.get_position();
   if (!position.has_value())
     return;
-  // A slider value goes to its nearer end: the device is only sent open, close and stop here.
-  this->control_port_->send_oneway_action(this->controller_id_, *position >= decisions::ONEWAY_COVER_NEARER_END_LEVEL
-                                                                    ? OneWayButtonAction::OPEN
-                                                                    : OneWayButtonAction::CLOSE);
+  if (this->travel_.configured()) {
+    this->slider_.ask(*position);
+    return;
+  }
+  // Without travel times a slider value goes to its nearer end: the device is only sent open, close and stop here.
+  this->slider_.queue_action(*position >= decisions::ONEWAY_COVER_NEARER_END_LEVEL ? OneWayButtonAction::OPEN
+                                                                                   : OneWayButtonAction::CLOSE);
 }
 
-void IOHomeOneWayCover::apply_frame_(const OneWayFrameInfo &wire) {
+std::optional<decisions::TravelIntent> IOHomeOneWayCover::apply_frame_(const OneWayFrameInfo &wire) {
   const bool inverted = this->control_port_->oneway_identity_inverted(this->controller_id_);
   if (this->travel_.configured()) {
     const auto intent = decisions::oneway_cover_travel_intent_from_frame(wire, inverted);
     if (intent.has_value())
       this->apply_travel_intent_(*intent);
-    return;
+    return intent;
   }
   const auto intent = decisions::oneway_cover_intent_from_frame(wire, inverted);
   if (!intent.has_value())
-    return;
+    return std::nullopt;
   // A stop leaves the cover somewhere between the ends. Home Assistant's position-less cover has no such state,
   // so it shows open, as it does for a two-way cover that is not fully closed.
   this->position = decisions::oneway_cover_state_after(*intent) == decisions::OneWayCoverState::CLOSED
@@ -138,6 +235,7 @@ void IOHomeOneWayCover::apply_frame_(const OneWayFrameInfo &wire) {
                        : cover::COVER_OPEN;
   this->current_operation = cover::COVER_OPERATION_IDLE;
   this->publish_state();
+  return std::nullopt;
 }
 
 void IOHomeOneWayCover::apply_travel_intent_(const decisions::TravelIntent &intent) {
@@ -170,15 +268,22 @@ void IOHomeOneWayCover::publish_estimate_(uint32_t now) {
 void IOHomeOneWayLight::setup() {
   if (this->control_port_ == nullptr)
     return;
+  this->slider_.attach(
+      *this->control_port_, this->controller_id_, this->travel_,
+      [this](uint32_t delay_ms, std::function<void()> stop) {
+        this->set_timeout(STOP_TIMEOUT, delay_ms, std::move(stop));
+      },
+      [this]() { this->cancel_timeout(STOP_TIMEOUT); },
+      [this](const OneWayFrameInfo &wire) { return this->apply_frame_(wire); });
   this->control_port_->add_oneway_command_report_callback([this](const OneWayCommandReport &report) {
     // Every light sees every report; each keeps only its own identity's.
     if (report.controller_id == this->controller_id_)
-      this->on_own_report_(report);
+      this->slider_.on_own_report(report);
   });
   if (!this->follows_.empty()) {
     this->control_port_->add_oneway_press_callback(this->follows_, [this](const OneWayFrameInfo &press) {
       // A remote's press supersedes the stop that was planned for a value of ours.
-      this->cancel_stop_();
+      this->slider_.cancel();
       this->apply_frame_(press);
     });
   }
@@ -193,7 +298,7 @@ void IOHomeOneWayLight::dump_config() {
     ESP_LOGCONFIG("home_io_control.light", "  On duration: %" PRIu32 " ms", this->travel_.rates().rise_ms);
     ESP_LOGCONFIG("home_io_control.light", "  Off duration: %" PRIu32 " ms", this->travel_.rates().fall_ms);
     ESP_LOGCONFIG("home_io_control.light", "  Set position: %s",
-                  this->slider_way_ == decisions::OneWaySliderWay::FRAME ? "frame" : "timed");
+                  this->slider_.way() == decisions::OneWaySliderWay::FRAME ? "frame" : "timed");
   }
 }
 
@@ -230,76 +335,14 @@ void IOHomeOneWayLight::write_state(light::LightState *state) {
     level = on ? 1.0F : 0.0F;
   }
 
-  // A new value supersedes a stop that was planned for the one before.
-  this->cancel_stop_();
   if (!this->travel_.configured()) {
     // No fade times: only the ends can be sent.
-    this->queue_action_(level >= decisions::ONEWAY_COVER_NEARER_END_LEVEL ? OneWayButtonAction::OPEN
-                                                                          : OneWayButtonAction::CLOSE);
+    this->slider_.cancel();
+    this->slider_.queue_action(level >= decisions::ONEWAY_COVER_NEARER_END_LEVEL ? OneWayButtonAction::OPEN
+                                                                                 : OneWayButtonAction::CLOSE);
     return;
   }
-
-  this->send_plan_(decisions::plan_oneway_slider(this->travel_.estimate(), this->travel_.rates(), millis(), level,
-                                                 this->slider_way_),
-                   level);
-}
-
-void IOHomeOneWayLight::send_plan_(const decisions::OneWaySliderPlan &plan, float level) {
-  using Send = decisions::OneWaySliderPlan::Send;
-  switch (plan.send) {
-    case Send::OPEN:
-    case Send::CLOSE:
-      // The stop is armed by this command's report and timed from the estimate then, when the fade has begun.
-      if (plan.stop_after_ms.has_value())
-        this->pending_value_ = PendingValue{std::clamp(level, 0.0F, 1.0F), plan.send == Send::OPEN};
-      this->queue_action_(plan.send == Send::OPEN ? OneWayButtonAction::OPEN : OneWayButtonAction::CLOSE);
-      break;
-    case Send::STOP:
-      this->queue_action_(OneWayButtonAction::STOP);
-      break;
-    case Send::POSITION:
-      this->queue_position_(plan.position_percent);
-      break;
-    case Send::NOTHING:
-    default:
-      break;
-  }
-}
-
-void IOHomeOneWayLight::on_own_report_(const OneWayCommandReport &report) {
-  // One report per queued command, in queue order: the report that brings the count to zero is the one of this light's
-  // latest command, the one a pending timed value was planned for. An earlier command's report leaves the plan alone.
-  // A command queued elsewhere (a button, an action) counts here too, so it can take the latest's place: then the stop
-  // is lost and the fade runs to an end (the far one, when the way back was sent from the foreign report), which never
-  // stops the device at a value nobody asked for.
-  std::optional<PendingValue> pending;
-  if (this->unreported_ <= 1)
-    pending = std::exchange(this->pending_value_, std::nullopt);
-  if (this->unreported_ > 0)
-    --this->unreported_;
-  // A burst that never reached the radio changes nothing, and neither does enrollment traffic (no intent).
-  if (!decisions::follows_own_oneway_command(report.transmitted, report.wire.has_intent))
-    return;
-  // Any command of the identity supersedes a stop already armed; the latest command of a timed value arms its own.
-  this->cancel_timeout(STOP_TIMEOUT);
-  const auto intent = this->apply_frame_(report.wire);
-  if (!pending.has_value() || !intent.has_value() || intent->kind != decisions::TravelIntent::Kind::GO_TO)
-    return;
-  // A fade the other way is not the value's command but one from elsewhere in its place: the value is dropped.
-  const bool rising = intent->level >= 1.0F;
-  if (rising != pending->rising)
-    return;
-  // Timed from the estimate as the fade begins, by the same rule that chose the command.
-  const auto plan = decisions::plan_oneway_slider(this->travel_.estimate(), this->travel_.rates(), millis(),
-                                                  pending->target, decisions::OneWaySliderWay::TIMED);
-  const auto sent = rising ? decisions::OneWaySliderPlan::Send::OPEN : decisions::OneWaySliderPlan::Send::CLOSE;
-  if (plan.send == sent && plan.stop_after_ms.has_value()) {
-    this->set_timeout(STOP_TIMEOUT, *plan.stop_after_ms, [this]() { this->queue_action_(OneWayButtonAction::STOP); });
-    return;
-  }
-  // A fade already running passed the value while the command waited for the radio: send what the rule asks for from
-  // here, a stop at the value or the way back, whose own report then arms its stop.
-  this->send_plan_(plan, pending->target);
+  this->slider_.ask(level);
 }
 
 std::optional<decisions::TravelIntent> IOHomeOneWayLight::apply_frame_(const OneWayFrameInfo &wire) {
@@ -330,21 +373,6 @@ void IOHomeOneWayLight::show_(float level) {
 void IOHomeOneWayLight::publish_estimate_(uint32_t now) {
   this->show_(this->travel_.level(now));
   this->travel_.mark_published(now);
-}
-
-void IOHomeOneWayLight::cancel_stop_() {
-  this->pending_value_.reset();
-  this->cancel_timeout(STOP_TIMEOUT);
-}
-
-void IOHomeOneWayLight::queue_action_(OneWayButtonAction action) {
-  ++this->unreported_;
-  this->control_port_->send_oneway_action(this->controller_id_, action);
-}
-
-void IOHomeOneWayLight::queue_position_(uint8_t position) {
-  ++this->unreported_;
-  this->control_port_->send_oneway_position(this->controller_id_, position);
 }
 
 }  // namespace home_io_control

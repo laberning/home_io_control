@@ -62,6 +62,7 @@ home_io_control:
       follows: [9D6085]                                 # optional -- remotes whose presses move that cover
       open_duration: 30s                                # optional, with close_duration -- the cover shows a position
       close_duration: 28s
+      set_position: timed                               # optional -- how a slider value is sent: timed or frame
     - id: hall_lamp
       io_device_type: light
       commands: [open, close, stop]
@@ -93,7 +94,7 @@ home_io_control:
 | `light` | no | The name of a light entity for this identity, for a light kind only (the build fails for any other kind, and for an identity that also has `cover`). It sends the identity's open (on) and close (off) and shows the level the hub assumes ([ADR 0128](../adr/0128-a-one-way-light-shows-an-estimated-level-and-a-slider-value-is-a-timed-stop-or-a-position-frame.md)). Its ID is `<identity_id>_light`. See [A light for the identity](#a-light-for-the-identity). |
 | `dimmable` | no | Gives the light a brightness slider, as `dimmable` does on the two-way light. Only with `light`. |
 | `on_duration`, `off_duration` | no | How long the light takes to fade from off to full and from full to off, for example `4.7s`. Set both or neither, each above zero, and only with `dimmable: true`. With them the light shows an estimated level while it fades, and a slider value reaches the device. |
-| `set_position` | no | How a slider value reaches the device: `timed` (default) or `frame`. Only with `on_duration` and `off_duration`. See [A light for the identity](#a-light-for-the-identity). |
+| `set_position` | no | How a slider value reaches the device: `timed` (default) or `frame`. Only with `open_duration` and `close_duration` on a cover, or with `on_duration` and `off_duration` on a light. See [A slider value on the cover](#a-slider-value-on-the-cover) and [A light for the identity](#a-light-for-the-identity). |
 | `open_duration`, `close_duration` | no | How long the cover takes for a full run from closed to open and from open to closed, for example `30s`. Set both or neither, each above zero, and only with `cover`. With them the cover shows an estimated position and shows opening or closing while it moves ([ADR 0127](../adr/0127-a-one-way-cover-shows-a-position-from-its-travel-time.md)). See [A position from the travel time](#a-position-from-the-travel-time). Time a full run once with a stopwatch and type it in. |
 
 ## What the build checks
@@ -622,9 +623,49 @@ moved by hand, or the hub rebooted. The hub cannot tell any of these from a corr
 an end corrects the position: send open or close and let it finish. After a reboot the cover shows fully
 open and idle; the position is not stored.
 
-The slider of Home Assistant does not move the cover to a percentage: a value goes out as open or close,
-whichever end it is nearer, and 50 % opens. To get a slider that does, compose it from the generated buttons: see
-[Composing a slider from 1W buttons](../tips-and-tricks.md#composing-a-slider-from-1w-buttons).
+### A slider value on the cover
+
+With travel times the cover's slider moves it to a percentage, usable in scenes and automations
+([ADR 0128](../adr/0128-a-one-way-light-shows-an-estimated-level-and-a-slider-value-is-a-timed-stop-or-a-position-frame.md)).
+A value reaches the device in one of two ways, chosen with `set_position:`:
+
+- **`timed`** (default) sends open or close towards the value and, when the estimate reaches it, one stop. It needs
+  only what every one-way cover obeys: open, close and stop. The hub starts counting when the command has reached the
+  radio, so the stop lands when the cover is where you asked. A value of 0 or 100 % sends the plain close or open and
+  no stop, so the end stop of the motor corrects the estimate. A new value, a stop and the press of a followed remote
+  cancel a stop that is still waiting, so a stale stop is never sent, and a new value is worked out from the position
+  reached so far; a value the cover has to go back for sends the opposite command. If a run that is already going
+  passes the value before the command reaches the radio, the hub sends a stop or the way back instead. The stop
+  goes out as a burst of four copies, and it waits behind any command still in the queue, so the cover stops a little
+  past the value; the shown position freezes when the burst is out and includes that lag. **A stop the motor misses
+  runs the cover to its end**, while Home Assistant shows it stopped at the value: the hub cannot tell. The shown
+  position stays wrong until the next run to an end.
+- **`frame`** sends one position frame with the percentage, and no stop. A device that ignores a position frame does
+  nothing with `set_position: frame`, so try `timed` first on a cover nobody has tried it on. The cover shows the position travelling to the value at the travel rate, like any position it hears,
+  and a value of 0 or 100 % is the same frame as open or close.
+
+```yaml
+home_io_control:
+  oneway_controllers:
+    - id: patio_awning
+      io_device_type: vertical_exterior_awning
+      commands: [open, close, stop]
+      cover: "Patio Awning"
+      open_duration: 30s
+      close_duration: 28s
+      set_position: timed   # or frame
+```
+
+A bench run on a Somfy Sunea io awning, with each result read back over two-way, moved it to 50 % both ways. With
+`timed` (35.5 s open, 38 s close) the stop went on the air 19.1 s after the close, and the awning rested at 50 and 51 %
+in three runs. With `frame` one position frame moved it to 50 %. See [Somfy Sunea IO](../devices/somfy-sunea-io.md).
+
+`set_position:` without `open_duration:` and `close_duration:` is a configuration error: without travel times there
+is nothing to work a stop out from. Without them the slider has no values between the ends and a value goes out as
+open or close, whichever end it is nearer, and 50 % opens. The `time_based` recipe in
+[Composing a slider from 1W buttons](../tips-and-tricks.md#composing-a-slider-from-1w-buttons) is still the better
+choice when one cover has to send more than one identity's own open, close and stop, for example several identities
+moved together, or a script of yours around each command: its actions are any ESPHome actions.
 
 ## A light for the identity
 
@@ -686,9 +727,10 @@ the light shows off; nothing is stored.
 
 ## Continuous control
 
-Without travel times a one-way cover entity has no position. To get a slider, compose one from the
-generated buttons: [Composing a slider from 1W buttons](../tips-and-tricks.md#composing-a-slider-from-1w-buttons)
-shows how.
+A cover with travel times has a slider ([A slider value on the cover](#a-slider-value-on-the-cover)), and a
+dimmable light has one ([A light for the identity](#a-light-for-the-identity)). Without travel times a one-way cover
+entity has no position. To get a slider there, compose one from the generated buttons:
+[Composing a slider from 1W buttons](../tips-and-tricks.md#composing-a-slider-from-1w-buttons) shows how.
 
 ## Numeric positions
 

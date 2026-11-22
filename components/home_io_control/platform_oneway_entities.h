@@ -11,8 +11,10 @@
 ///
 /// Each scopes itself to one identity via OneWayControllerBound (parent + controller_id_).
 
+#include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "decisions_oneway.h"
@@ -176,6 +178,96 @@ class OneWayTravel {
   uint32_t last_publish_ms_{0};                                                       ///< millis() of the last publish.
 };
 
+/// @brief The slider of a one-way cover or light: a level the user asks for, sent as commands, with the one timed
+/// stop that ends a run at its value (ADR 0128).
+///
+/// The rule that turns a value into commands is decisions::plan_oneway_slider(); this holds what the entity has to
+/// remember around it. A timed value is sent as open or close, and the stop is armed from the report of that command,
+/// so that its delay counts from when the motor or the fade began. The entity gives it the commands it queues and the
+/// reports of its identity, and the stop, the count of commands without a report and the pending value live here, once
+/// for the cover and the light.
+///
+/// The queue reports each command once, in order, so the report that brings the count of unreported commands to zero
+/// is the one of the entity's latest command, the one a pending value was planned for. A command queued elsewhere
+/// (a button, an action) counts here too and can take the latest's place: then the stop is lost and the run goes on to
+/// an end, which never stops the device at a value nobody asked for. A stop is never sent out of time.
+/// @ingroup hioc_platforms
+class OneWaySlider {
+ public:
+  /// @brief Applies a frame of the identity to the entity's estimate and display, and returns the intent that moved
+  /// the estimate (empty when the entity has no travel times or the frame carried none).
+  using ApplyFrameFn = std::function<std::optional<decisions::TravelIntent>(const OneWayFrameInfo &)>;
+
+  /// @brief Schedules the one stop @p delay_ms from now, replacing a stop already scheduled; ESPHome's `set_timeout()`
+  /// of the entity under a fixed name, which is protected on a Component.
+  using ArmStopFn = std::function<void(uint32_t delay_ms, std::function<void()> stop)>;
+  /// @brief Cancels the scheduled stop; the entity's `cancel_timeout()` under the same name.
+  using CancelStopFn = std::function<void()>;
+
+  /// @brief Wire the slider to its entity and identity; call from the entity's setup(), once the hub port is set.
+  /// @param port          The hub's control port.
+  /// @param controller_id The identity the commands are sent as.
+  /// @param travel        The entity's estimate, read to plan a value.
+  /// @param arm_stop      Schedules the stop on the entity's scheduler.
+  /// @param cancel_stop   Cancels it.
+  /// @param apply_frame   Shows a frame of the identity's report on the entity.
+  void attach(HubControlPort &port, const std::string &controller_id, const OneWayTravel &travel, ArmStopFn arm_stop,
+              CancelStopFn cancel_stop, ApplyFrameFn apply_frame) {
+    this->port_ = &port;
+    this->controller_id_ = controller_id;
+    this->travel_ = &travel;
+    this->arm_stop_ = std::move(arm_stop);
+    this->cancel_stop_ = std::move(cancel_stop);
+    this->apply_frame_ = std::move(apply_frame);
+  }
+
+  /// @brief Choose how a value that is not an end reaches the device (YAML `set_position:`); `timed` by default.
+  void set_way(decisions::OneWaySliderWay way) { this->way_ = way; }
+  /// @brief How a value that is not an end reaches the device.
+  [[nodiscard]] decisions::OneWaySliderWay way() const { return this->way_; }
+
+  /// @brief Send what a new value asks for, from the estimate as it is now. Supersedes a stop planned for the value
+  /// before it.
+  /// @param level The level asked for, 0..1 (1.0 open or on).
+  void ask(float level);
+
+  /// @brief Cancel the pending stop of a timed value, scheduled or not yet armed.
+  void cancel();
+
+  /// @brief Queue one of the identity's commands and count it (see the class description).
+  void queue_action(OneWayButtonAction action);
+
+  /// @brief Queue a position frame and count it.
+  /// @param position The user's position, 0 open (on) to 100 closed (off).
+  void queue_position(uint8_t position);
+
+  /// @brief Handle the report of one of the identity's own commands: count it, show it on the entity if it reached the
+  /// radio, and arm the stop of a timed value if this is its command.
+  void on_own_report(const OneWayCommandReport &report);
+
+ private:
+  /// @brief Queue what a plan asks for, and keep a timed value until its command's report arms the stop.
+  void send_plan_(const decisions::OneWaySliderPlan &plan, float level);
+
+  /// A timed value whose command waits for its report: the level asked for and the way the command runs.
+  struct PendingValue {
+    float target{0.0F};  ///< The level asked for, 0..1.
+    bool rising{false};  ///< Whether the command sent for it opens (on), else closes (off).
+  };
+
+  HubControlPort *port_{nullptr};
+  std::string controller_id_;
+  const OneWayTravel *travel_{nullptr};
+  ArmStopFn arm_stop_;
+  CancelStopFn cancel_stop_;
+  ApplyFrameFn apply_frame_;
+  decisions::OneWaySliderWay way_{decisions::OneWaySliderWay::TIMED};
+  /// The latest timed value while its command waits for its report; the report arms the stop.
+  std::optional<PendingValue> pending_value_;
+  /// Commands queued whose report has not come.
+  uint32_t unreported_{0};
+};
+
 /// @brief Cover entity of a one-way controller identity: open, close and stop, with the state the hub assumes.
 ///
 /// A one-way-only cover has no device address and no read (ADR 0027), so this entity shows what the hub knows of: its
@@ -188,6 +280,14 @@ class OneWayTravel {
 /// decisions::TravelEstimate instead: the cover reports a position, shows opening or closing while the estimate
 /// moves, and a position frame travels to its percentage and stops there. A run to an end corrects every earlier
 /// error. The estimate is not persisted: after a boot the cover is fully open and idle.
+///
+/// A slider value then becomes commands by decisions::plan_oneway_slider() through an OneWaySlider, the way chosen by
+/// set_slider_way(): `timed` sends open or close and, when the estimate reaches the value, one stop that the slider
+/// schedules from the report of the command, so that the delay starts when the motor does; `frame` sends one position
+/// frame, which the cover then travels to at the travel rate like any position it hears. A value at an end is a plain
+/// open or close with no stop, so the end stop re-anchors the estimate. A new value, a stop sent or heard and a
+/// followed remote's press cancel a pending stop, so a stale stop is never sent. Without travel times a slider
+/// value goes to its nearer end.
 ///
 /// The state is an assumption. It is wrong after a press the hub did not hear and after a command the device
 /// ignored (out of range, a desynced counter, a rain or wind sensor's lock), and the hub cannot tell. The state is
@@ -223,20 +323,29 @@ class IOHomeOneWayCover : public cover::Cover, public Component, public OneWayCo
     this->travel_.configure({open_ms, close_ms}, cover::COVER_OPEN);
   }
 
+  /// @brief Choose how a slider value reaches the device (YAML `set_position:`); `timed` by default.
+  /// @param way The way.
+  void set_slider_way(decisions::OneWaySliderWay way) { this->slider_.set_way(way); }
+
   /// @brief Add a remote whose presses the cover follows (YAML `follows:`).
   /// @param sender_id Source address, six upper-case hexadecimal characters.
   void add_follow(const std::string &sender_id) { this->follows_.push_back(sender_id); }
 
  protected:
-  /// @brief Queue the command Home Assistant asked for as the identity's own. The state changes when the command's
+  /// @brief Name of the timeout that sends the stop of a timed slider value.
+  static constexpr const char *STOP_TIMEOUT = "oneway_cover_stop";
+
+  /// @brief Queue the commands Home Assistant asked for as the identity's own. The state changes when a command's
   /// report says it reached the radio, not here.
-  /// @param call The requested operation: stop, or a position. A position is sent as open or close, whichever end
-  /// it is nearer (decisions::ONEWAY_COVER_NEARER_END_LEVEL); only a cover with travel times offers values between.
+  /// @param call The requested operation: stop, or a position. With travel times a position goes through the slider as
+  /// described above; without them it is sent as open or close, whichever end it is nearer
+  /// (decisions::ONEWAY_COVER_NEARER_END_LEVEL).
   void control(const cover::CoverCall &call) override;
 
   /// @brief Show what a frame asks of the cover, if it asks for anything.
   /// @param wire The frame, with wire values: the identity's own transmission or a followed remote's press.
-  void apply_frame_(const OneWayFrameInfo &wire);
+  /// @return The intent that moved the estimate, when the cover has travel times and the frame carried one.
+  std::optional<decisions::TravelIntent> apply_frame_(const OneWayFrameInfo &wire);
 
   /// @brief Move the estimate by an intent and publish it.
   void apply_travel_intent_(const decisions::TravelIntent &intent);
@@ -247,6 +356,7 @@ class IOHomeOneWayCover : public cover::Cover, public Component, public OneWayCo
   std::vector<std::string> follows_;  ///< Remotes whose presses move the state.
   /// Where the cover is believed to be, once the travel times are set (opening rises, closing falls).
   OneWayTravel travel_;
+  OneWaySlider slider_;  ///< What a slider value becomes, and its timed stop.
 };
 
 /// @brief Light entity of a one-way controller identity: on and off, and with `dimmable:` a brightness slider, with the
@@ -262,9 +372,9 @@ class IOHomeOneWayCover : public cover::Cover, public Component, public OneWayCo
 /// decisions::plan_oneway_slider(), the way chosen by set_slider_way(): `timed` sends on or off and, when the estimate
 /// reaches the value, one stop that this entity schedules from the report of the command, so that the delay starts
 /// when the fade does (if a fade already running passed the value while the command waited, the report sends a stop
-/// or the way back instead); `frame` sends one position frame. A new value, a stop sent or heard and a followed
-/// remote's press cancel a pending stop, so a stale stop is never sent. Without fade times the light is on or off only:
-/// a slider value goes to its nearer end.
+/// or the way back instead; see OneWaySlider); `frame` sends one position frame. A new value, a stop sent or heard and
+/// a followed remote's press cancel a pending stop, so a stale stop is never sent. Without fade times the light is on
+/// or off only: a slider value goes to its nearer end.
 ///
 /// ESPHome's transition stays 0: the device fades by itself, and the fade shown is the estimate of it; a transition
 /// asked for anyway sends only its end. The level is an assumption, wrong after a press the hub did not hear or a
@@ -315,7 +425,7 @@ class IOHomeOneWayLight : public light::LightOutput, public Component, public On
 
   /// @brief Choose how a slider value reaches the device (YAML `set_position:`); `timed` by default.
   /// @param way The way.
-  void set_slider_way(decisions::OneWaySliderWay way) { this->slider_way_ = way; }
+  void set_slider_way(decisions::OneWaySliderWay way) { this->slider_.set_way(way); }
 
   /// @brief Add a remote whose presses the light follows (YAML `follows:`).
   /// @param sender_id Source address, six upper-case hexadecimal characters.
@@ -324,10 +434,6 @@ class IOHomeOneWayLight : public light::LightOutput, public Component, public On
  protected:
   /// @brief Name of the timeout that sends the stop of a timed slider value.
   static constexpr const char *STOP_TIMEOUT = "oneway_light_stop";
-
-  /// @brief Handle the report of one of the identity's own commands: change the shown level if it reached the radio and
-  /// arm the stop of a timed slider value if this is its command.
-  void on_own_report_(const OneWayCommandReport &report);
 
   /// @brief Show what a frame asks of the light, if it asks for anything.
   /// @param wire The frame, with wire values: the identity's own transmission or a followed remote's press.
@@ -341,37 +447,11 @@ class IOHomeOneWayLight : public light::LightOutput, public Component, public On
   /// @brief Show the estimate at `now` and remember what was published.
   void publish_estimate_(uint32_t now);
 
-  /// @brief Queue what a slider plan asks for, and keep a timed value until its command's report arms the stop.
-  /// @param plan  The plan from decisions::plan_oneway_slider().
-  /// @param level The level the plan is for, 0..1.
-  void send_plan_(const decisions::OneWaySliderPlan &plan, float level);
-
-  /// @brief Cancel the pending stop of a timed slider value, scheduled or not yet armed.
-  void cancel_stop_();
-
-  /// @brief Queue one of the identity's commands and count it as this light's (see unreported_).
-  /// @param action The command.
-  void queue_action_(OneWayButtonAction action);
-
-  /// @brief Queue a position frame and count it as this light's (see unreported_).
-  /// @param position The user's position, 0 full (on) to 100 off.
-  void queue_position_(uint8_t position);
-
   std::vector<std::string> follows_;   ///< Remotes whose presses move the state.
   light::LightState *state_{nullptr};  ///< Where the level is published; null until ESPHome sets the light up.
   bool dimmable_{false};               ///< Whether the slider is offered.
   OneWayTravel travel_;                ///< The level, once the fade times are set (on rises, off falls).
-  decisions::OneWaySliderWay slider_way_{decisions::OneWaySliderWay::TIMED};  ///< How a slider value is sent.
-  /// A timed slider value whose command waits for its report: the level asked for and the way the command runs.
-  struct PendingValue {
-    float target{0.0F};  ///< The level asked for, 0..1.
-    bool rising{false};  ///< Whether the command sent for it is on (open), else off (close).
-  };
-  /// The latest timed slider value while its command waits for its report; the report arms the stop.
-  std::optional<PendingValue> pending_value_;
-  /// Commands this light queued whose report has not come. The queue reports each command once, in order, so the
-  /// report that brings this to zero is the one of the light's latest command.
-  uint32_t unreported_{0};
+  OneWaySlider slider_;                ///< What a slider value becomes, and its timed stop.
   /// Guard so that publishing the level does not echo back as a new command (LightState re-enters write_state()).
   bool suppress_write_{false};
 };

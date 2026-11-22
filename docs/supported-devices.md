@@ -39,7 +39,7 @@ match.
 
 | Device | Type | Status | Route | Notes |
 |---|---|---|---|---|
-| **Sunea IO awning motor** | `vertical_exterior_awning` | ✅ Confirmed | Discover & Pair | 31 corpus captures, all three radios. [Somfy Sunea IO](devices/somfy-sunea-io.md) |
+| **Sunea IO awning motor** | `vertical_exterior_awning` | ✅ Confirmed | Discover & Pair | 31 corpus captures, all three radios. Over 1W: open, close, stop and the one-way cover's slider (timed stop and position frame) confirmed on a bench run. [Somfy Sunea IO](devices/somfy-sunea-io.md) |
 | **Sunea IO 70/17**, **Sunea IO 40/17** | `roller_shutter` | ✅ Confirmed | Discover & Pair | [Somfy Sunea IO](devices/somfy-sunea-io.md) |
 | **MAESTRIA+ IO** | `roller_shutter` | ✅ Confirmed | Key extraction; Discover & Pair did not succeed | Heltec V3.2 / SX1262. [Somfy Sunea IO](devices/somfy-sunea-io.md) |
 | **Sunea IO screen** | `vertical_exterior_awning` | 🔍 Traffic captured only | — | Corpus `somfy_awning_exchange_priority_level_sx1276`, a query from a TaHoma Switch |

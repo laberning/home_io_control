@@ -28,6 +28,14 @@ home_io_control:
       follows: [9D6085]
       open_duration: 24s
       close_duration: 22.5s
+    # The same cover's slider with a position frame instead of the timed stop (ADR 0128).
+    - id: patio_frame_remote
+      io_device_type: vertical_exterior_awning
+      commands: [open, close, stop]
+      cover: "Patio Frame"
+      open_duration: 24s
+      close_duration: 22.5s
+      set_position: frame
     # A light for the identity (ADR 0128): a binary one, and a dimmable one with fade times and each slider way.
     - id: lamp_binary_remote
       io_device_type: light

@@ -77,6 +77,8 @@ home_io_control:
       # ADR 0127: travel times give the cover an estimated position, so `set_travel_durations()` compiles.
       open_duration: 30s
       close_duration: 28s
+      # ADR 0128: the cover's slider value as one position frame, so that `set_slider_way()` compiles on a cover.
+      set_position: frame
     # ADR 0128: an assumed-state light for a one-way identity of a light kind, with a slider, fade times and the frame
     # way, so that `set_fade_durations()` and `set_slider_way()` compile; it follows the same remote as the cover.
     - id: lamp_remote
