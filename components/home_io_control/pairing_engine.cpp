@@ -341,8 +341,8 @@ bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
 /// discarding it.
 bool PairingEngine::transfer_key_and_wait_confirm_(pairing::PairingContext &context) {
   enter_pairing_state(engine_, telemetry_, context, pairing::PairingState::TX_KEY_TRANSFER, 1, true);
-  if (!create_key_transfer(context.req, context.key_init, context.device.node_id, node_id_, system_key_,
-                           context.rx.data)) {
+  if (!create_key_transfer(context.req, context.key_init, context.device.node_id, node_id_,
+                           engine_.key_for(context.device.node_id), context.rx.data)) {
     return false;
   }
 
@@ -721,7 +721,7 @@ void PairingEngine::finalize_pairing_configuration_(pairing::PairingContext &con
 /// On success the device is added to the registry and a YAML snippet is printed to the log.
 /// The hub's thin wrapper manages the busy_ flag before and after this call.
 bool PairingEngine::discover_and_pair() {
-  begin_attempt_();
+  begin_attempt_("Starting device discovery...");
   pairing::PairingContext context;
 
   // Phase 1: Discovery
@@ -763,7 +763,46 @@ bool PairingEngine::discover_and_pair() {
   return true;
 }
 
-void PairingEngine::begin_attempt_() {
+bool PairingEngine::pair_declared_device(const std::string &device_id) {
+  const IoDevice *declared = registry_.get_declared(device_id);
+  if (declared == nullptr) {
+    ESP_LOGW(TAG,
+             "Pair %s: no entity of the YAML declares it. Only a declared device can be paired by "
+             "address, since its kind and power class come from its entry.",
+             device_id.c_str());
+    return false;
+  }
+
+  if (tuning_->pairing_key_transfer == KeyTransferMode::PULL || device_hands_out_key(declared->type)) {
+    ESP_LOGW(TAG, "Pair %s: the key transfer direction is pull, which this path does not run; use Discover & Pair",
+             device_id.c_str());
+    return false;
+  }
+
+  begin_attempt_("Pairing a declared device by address, without discovery...");
+  pairing::PairingContext context;
+  context.device = *declared;
+  context.device_id = device_id;
+  context.discovery_metadata_complete = true;
+  context.discovery_low_power = declared->low_power;
+
+  ESP_LOGI(TAG, "Pairing %s (%s) directly; it must have its pairing window open", device_id.c_str(),
+           format_device_kind(context.device.type, context.device.subtype).c_str());
+
+  if (!run_push_key_step_(context)) {
+    this->finish_pairing_attempt_(context.key_refused ? PairingOutcome::KEY_TRANSFER_REFUSED
+                                                      : PairingOutcome::KEY_EXCHANGE_FAILED);
+    return false;
+  }
+
+  finalize_pairing_configuration_(context);
+  register_paired_device_(context);
+  ESP_LOGI(TAG, "Device %s took the key and is paired to this hub", device_id.c_str());
+  complete_paired_(context);
+  return true;
+}
+
+void PairingEngine::begin_attempt_(const char *opening) {
   this->telemetry_.begin();
   this->engine_.set_transmit_observer(&this->telemetry_);
 
@@ -777,7 +816,7 @@ void PairingEngine::begin_attempt_() {
     this->telemetry_.record_recent_one_way_sighting(this->recent_oneway_sighting_);
   }
 
-  ESP_LOGI(TAG, "Starting device discovery...");
+  ESP_LOGI(TAG, "%s", opening);
   ESP_LOGI(TAG, "%s", tuning_config_full_snapshot(*tuning_).c_str());
 }
 

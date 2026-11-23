@@ -172,6 +172,16 @@ class ManagementActions {
   void api_oneway_set_sequence(const std::string &controller_id, const std::string &sequence,
                                const std::string &allow_lower);
 
+  /// @brief Native API callback: pair one device the YAML declares, addressed by its node ID.
+  /// @param device_id Target device ID.
+  void api_pair_device(const std::string &device_id);
+
+  /// @brief Pair one device the YAML declares, with no discovery.
+  /// See PairingEngine::pair_declared_device().
+  /// @param device_id Target device ID.
+  /// @return Result of the key exchange.
+  ManagementActionResult pair_device(const std::string &device_id);
+
   /// @brief Broadcast a roll-call and report every device that answers.
   ///
   /// Not a discovery mechanism for new devices: only devices that already hold this hub's

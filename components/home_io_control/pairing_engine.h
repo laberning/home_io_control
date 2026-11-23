@@ -113,6 +113,13 @@ class PairingEngine {
   /// @return true if all three phases completed successfully; false otherwise.
   bool discover_and_pair();
 
+  /// Run the key-exchange phase alone, directed at a device the YAML declares, pushing the key the
+  /// exchange engine authenticates it with. Needs the device's pairing window open, as
+  /// discover_and_pair() does: outside it the key transfer is ignored.
+  /// @param device_id Hexadecimal node ID of a device declared in the YAML.
+  /// @return true when the device confirmed the key.
+  bool pair_declared_device(const std::string &device_id);
+
   /// Extract node ID, device type, and subtype from a CMD_DISCOVER_RESP frame.
   /// @return The decoded extended discovery fields (manufacturer / Multi Information Byte / length
   ///         flags), so a caller can read the self-reported power class without decoding twice.
@@ -268,7 +275,8 @@ class PairingEngine {
 
   /// Open the attempt: reset telemetry, attach it to the exchange engine, seed it with a recent 1W
   /// pairing gesture, and log the tuning snapshot.
-  void begin_attempt_();
+  /// @param opening First log line of the attempt; the tuning snapshot follows it.
+  void begin_attempt_(const char *opening);
 
   /// Register the paired device in the registry (until reboot unless the YAML declares it) and record it
   /// in telemetry.

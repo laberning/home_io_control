@@ -3,8 +3,9 @@
 /// @ingroup hioc_hub
 ///
 /// All pairing implementation lives in pairing_engine.cpp. This file provides
-/// only the IOHomeControlComponent::discover_and_pair() implementation which
-/// manages the hub's busy_ flag and delegates to pairing_engine_.
+/// only the IOHomeControlComponent::discover_and_pair() and
+/// IOHomeControlComponent::pair_declared_device() implementations, which manage
+/// the hub's busy_ flag and delegate to pairing_engine_.
 
 #include "hub_pairing.h"
 #include "hub_internal.h"
@@ -29,6 +30,20 @@ bool IOHomeControlComponent::discover_and_pair() {
   this->last_pairing_end_ms_ = std::max<uint32_t>(millis(), 1);
   // Only fire once an attempt actually ran (telemetry was populated) — not on the early-return
   // guard above, which would otherwise republish stale telemetry from a previous attempt.
+  if (this->pairing_result_callback_)
+    this->pairing_result_callback_();
+  return ok;
+}
+
+/// Holds busy_ and stamps the attempt around PairingEngine::pair_declared_device(),
+/// as discover_and_pair() does.
+bool IOHomeControlComponent::pair_declared_device(const std::string &device_id) {
+  if (!this->initialized_)
+    return false;
+  this->busy_ = true;
+  bool const ok = this->pairing_engine_.pair_declared_device(device_id);
+  this->busy_ = false;
+  this->last_pairing_end_ms_ = std::max<uint32_t>(millis(), 1);
   if (this->pairing_result_callback_)
     this->pairing_result_callback_();
   return ok;

@@ -2,7 +2,7 @@
 <!-- doxygen-label: cfg_actions -->
 
 Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control
-exposes eight **hub-level actions** through ESPHome's native API. These are one-off and advanced
+exposes ten **hub-level actions** through ESPHome's native API. These are one-off and advanced
 operations that would clutter the entity UI if they were always-visible buttons, so most are only
 reachable from Developer Tools or an automation — `scan_paired_devices` is the exception, with an
 optional one-tap button.
@@ -18,6 +18,7 @@ optional one-tap button.
 | [`oneway_set_sequence`](#oneway_set_sequence) | Sets the rolling number a 1W controller identity's next command carries, so a device that stopped reacting works again without a reflash. Takes `controller_id`, `sequence` and `allow_lower`. Sends nothing. | No — 1W has no reply at all |
 | [`oneway_remove_controller`](#oneway_remove_controller) | Removes a configured 1W controller identity from the receivers that are in their programming mode. Takes `controller_id`. | No — 1W has no reply at all |
 | [`heating_control`](climate.md) ⚠️ *experimental* | Sends one heating/climate function (`CMD_WRITE_PRIVATE` 0x20) to a climate device. Takes `device_id`, `function`, `value`. | No — an acknowledged write is not a readback; `read_window_open` reports the sensor in the `message`, the `read_paired_devices` / `read_setpoint_block` reads are logged |
+| [`pair_device`](#pair_device) | Pairs one device your YAML already declares, addressed by its ID, with no discovery broadcast. Takes `device_id`. | No — the `0x33` confirm is the device's own, and nothing reads a key back out of a device |
 
 Two more actions, `probe_device` and `probe_sweep`, exist behind a separate opt-in
 (`diagnostic_probes: true`) for sending opcodes this project hasn't fully decoded yet — see
@@ -218,8 +219,44 @@ verified: false
 message: 1W remove-controller (0x39) queued
 ```
 
+## `pair_device`
+
+Fields: `device_id` (required).
+
+Pairs one device your YAML already declares, addressed by its ID, with the key exchange alone and
+no discovery.
+
+This is the route for a device **another two-way hub still holds**. Discover & Pair cannot reach
+one: discovery is the only broadcast in the flow, and a device that holds a controller's key
+answers nothing (see
+[The device is never found](../troubleshooting.md#the-device-is-never-found)). A declared entity
+already carries the address, kind and power class a discovery answer would have reported. The key
+pushed is the one the hub authenticates that device with, so the entity's own
+[`system_key:`](index.md) when it declares one and the hub's otherwise.
+
+> [!IMPORTANT]
+> **The device's pairing window still has to be open**, by the gesture its own manual describes,
+> the same timing Discover & Pair needs. Outside it the device ignores the key transfer and the
+> action reports no confirm. Nothing here can open that window.
+
+A device no entity declares is refused before anything is sent, which also keeps the action from
+being aimed at an address that is not yours. So is a device an earlier pairing registered: add its
+YAML entry first. The action always pushes, so it also refuses when the key transfer direction is
+pull, which needs the discovery answer this skips: pair such a device with Discover & Pair, which
+reaches it anyway, since a device that hands out its own key is one that answers discovery.
+
+```yaml
+action: esphome.hioc_heltec_v2_pair_device
+data:
+  device_id: "FEEB1E"
+```
+
+Success means the device sent its `0x33` key confirm. Nothing reads a key back out of a device, so
+the result is never `verified`. The "Last Pairing Result" sensor reports the attempt as it does for
+Discover & Pair.
+
 ## See also
 
-- [Pairing](../pairing.md) — `scan_paired_devices` and the Discover & Pair button
+- [Pairing](../pairing.md) — `scan_paired_devices`, `pair_device` and the Discover & Pair button
 - [Heating and climate](climate.md) — `heating_control`
 - [Sending 1W commands](oneway-transmit.md) — the 1W identities that `oneway_set_position`, `oneway_set_sequence` and `oneway_remove_controller` use
