@@ -36,17 +36,20 @@ bool IOHomeControlComponent::discover_and_pair() {
 }
 
 /// Holds busy_ and stamps the attempt around PairingEngine::pair_declared_device(),
-/// as discover_and_pair() does.
-bool IOHomeControlComponent::pair_declared_device(const std::string &device_id) {
+/// as discover_and_pair() does. A request refused before anything was sent stamps and publishes
+/// nothing, so "Last Pairing Result" keeps the previous attempt's telemetry.
+DeclaredPairingResult IOHomeControlComponent::pair_declared_device(const std::string &device_id) {
   if (!this->initialized_)
-    return false;
+    return {.refusal = "hub is not initialized"};
   this->busy_ = true;
-  bool const ok = this->pairing_engine_.pair_declared_device(device_id);
+  const DeclaredPairingResult result = this->pairing_engine_.pair_declared_device(device_id);
   this->busy_ = false;
+  if (!result.attempted())
+    return result;
   this->last_pairing_end_ms_ = std::max<uint32_t>(millis(), 1);
   if (this->pairing_result_callback_)
     this->pairing_result_callback_();
-  return ok;
+  return result;
 }
 
 }  // namespace home_io_control

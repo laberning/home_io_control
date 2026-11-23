@@ -830,19 +830,18 @@ void ManagementActions::api_pair_device(const std::string &device_id) { publish_
 
 ManagementActionResult ManagementActions::pair_device(const std::string &device_id) {
   ManagementActionResult result;
-  auto *dev = resolve_device_(MANAGEMENT_ACTION_PAIR_DEVICE, device_id, result);
-  if (dev == nullptr)
+  if (resolve_device_(MANAGEMENT_ACTION_PAIR_DEVICE, device_id, result) == nullptr)
     return result;
 
-  if (dev->registered_by_pairing) {
-    result.message = "device was registered by an earlier pairing and no entity declares it; add its YAML entry first";
+  const DeclaredPairingResult pairing = hub_->pair_declared_device(result.device_id);
+  result.success = pairing.confirmed;
+  if (!pairing.attempted()) {
+    result.message = pairing.refusal;
     return result;
   }
-
-  result.success = hub_->pair_declared_device(result.device_id);
-  result.message = result.success ? "device confirmed the key"
-                                  : "no key confirm: was the device's pairing window open? The log has the step it "
-                                    "stopped at";
+  result.message = pairing.confirmed ? "device confirmed the key"
+                                     : "no key confirm: was the device's pairing window open? The log has the step it "
+                                       "stopped at";
   return result;
 }
 

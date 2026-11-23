@@ -83,6 +83,18 @@ inline constexpr uint8_t PAIRING_KEY_INIT_RESENDS = 2;
 inline constexpr uint32_t PAIRING_RECENT_ONE_WAY_SIGHTING_WINDOW_MS = 15000;
 ///@}
 
+/// Outcome of PairingEngine::pair_declared_device(): a refusal before anything was sent, or the
+/// result of the attempt that ran.
+struct DeclaredPairingResult {
+  /// Why the request was refused before anything was sent; nullptr when an attempt ran.
+  const char *refusal = nullptr;
+  /// True when the device confirmed the key (its `0x33`). Never true on a refusal.
+  bool confirmed = false;
+
+  /// @return true when a pairing attempt ran, so the attempt telemetry is fresh.
+  [[nodiscard]] bool attempted() const { return this->refusal == nullptr; }
+};
+
 /// Owns and drives all three phases of the IO-Homecontrol device pairing flow.
 ///
 /// Constructed once by IOHomeControlComponent; collaborators (radio, exchange engine,
@@ -117,8 +129,9 @@ class PairingEngine {
   /// exchange engine authenticates it with. Needs the device's pairing window open, as
   /// discover_and_pair() does: outside it the key transfer is ignored.
   /// @param device_id Hexadecimal node ID of a device declared in the YAML.
-  /// @return true when the device confirmed the key.
-  bool pair_declared_device(const std::string &device_id);
+  /// @return Whether the device confirmed the key, or why the request was refused before anything
+  ///         was sent (then no attempt ran and the telemetry still holds the previous one).
+  DeclaredPairingResult pair_declared_device(const std::string &device_id);
 
   /// Extract node ID, device type, and subtype from a CMD_DISCOVER_RESP frame.
   /// @return The decoded extended discovery fields (manufacturer / Multi Information Byte / length

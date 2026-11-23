@@ -232,12 +232,16 @@ answers nothing (see
 [The device is never found](../troubleshooting.md#the-device-is-never-found)). A declared entity
 already carries the address, kind and power class a discovery answer would have reported. The key
 pushed is the one the hub authenticates that device with, so the entity's own
-[`system_key:`](index.md) when it declares one and the hub's otherwise.
+[`system_key:`](index.md) when it declares one and the hub's otherwise. The route and its limits
+are recorded in [ADR 0129](../adr/0129-a-declared-device-can-be-paired-by-address-without-discovery.md).
 
-> [!IMPORTANT]
-> **The device's pairing window still has to be open**, by the gesture its own manual describes,
-> the same timing Discover & Pair needs. Outside it the device ignores the key transfer and the
-> action reports no confirm. Nothing here can open that window.
+> [!WARNING]
+> **The hub that held the device loses it.** The device now holds this hub's key, and nothing in
+> this route can give it back. Do not use the action on a device you still need on that hub.
+
+The device's pairing window still has to be open, by the gesture its own manual describes, the
+same timing Discover & Pair needs. Outside it the device ignores the key transfer and the action
+reports no confirm. Nothing here can open that window.
 
 A device no entity declares is refused before anything is sent, which also keeps the action from
 being aimed at an address that is not yours. So is a device an earlier pairing registered: add its
@@ -253,7 +257,8 @@ data:
 
 Success means the device sent its `0x33` key confirm. Nothing reads a key back out of a device, so
 the result is never `verified`. The "Last Pairing Result" sensor reports the attempt as it does for
-Discover & Pair.
+Discover & Pair. A request refused before anything is sent is no attempt, so the sensor keeps the
+previous result.
 
 ## See also
 

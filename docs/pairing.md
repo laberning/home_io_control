@@ -17,6 +17,8 @@ time than anything else on this page.
 ```mermaid
 flowchart TD
     A[Do you have a working<br/>two-way IO-Homecontrol hub today?<br/>TaHoma, KLF 200, KLR 200,<br/>Connexoon, KIG 300… — not just<br/>a 1W wall switch or remote] -->|Yes| B[Use key extraction]
+    B --> K{Would you rather not<br/>take that hub's key, and can<br/>you open the device's<br/>pairing window?}
+    K -->|Yes| L[Pair it by address]
     A -->|No| C[Has a two-way hub ever<br/>controlled the device?]
     C -->|No — it is new, or only ever<br/>driven by 1W remotes<br/>or wall switches| D[Use Discover &amp; Pair]
     C -->|Yes, a hub I<br/>no longer have| E[Factory reset it as its<br/>manual describes, then<br/>register its local remote<br/>again, if it has one]
@@ -132,10 +134,12 @@ describes. Write the entity by hand the way
 is no help: turn on the `io_capture` log tag, operate the device from the hub or remote that drives
 it today, and read the `src=`/`dst=` of its frames.
 
-Afterwards the device holds this hub's key, or the entity's own
-[`system_key:`](configuration/index.md) when it declares one, and the hub that held it before no
-longer controls it. Its one-way remotes keep working, since those are a separate stack, and nothing
-is reset.
+> [!WARNING]
+> **The hub that held the device loses it.** Afterwards the device holds this hub's key, or the
+> entity's own [`system_key:`](configuration/index.md) when it declares one, and nothing in this
+> route can give it back. Do not use it on a device you still need on that hub.
+
+The device's one-way remotes keep working, since those are a separate stack, and nothing is reset.
 
 Nothing in this route is broadcast, so devices that share a circuit can be done one after another:
 open the window, then call the action once per device ID.

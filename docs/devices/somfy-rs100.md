@@ -26,6 +26,13 @@ worked; the corpus holds a successful retry and a stalled transfer side by side.
 If it will not pair after several attempts and the motor has ever belonged to a hub you still own,
 switch to [key extraction](../key-extraction.md).
 
+**A motor a TaHoma holds can also be paired by address.** One RS100 io that held a TaHoma's key
+answered no discovery, with its learn window open or not. It took a key pushed directly to its
+address in its power-cycle learn window and obeyed authenticated commands afterwards (pull request
+#257). Declare the motor in your YAML and run
+[Pairing a device by address](../pairing.md#pairing-a-device-by-address); the TaHoma loses the
+motor. This is confirmed on that one unit.
+
 **If the motor answers discovery but nothing after it**, retries won't help. One RS100 Solar io
 answered every discovery and then ignored every frame addressed to it, through key retries,
 longer and shorter preambles and a cleared low-power flag, while an identical motor next to it

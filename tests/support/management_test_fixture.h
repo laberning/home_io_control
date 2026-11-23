@@ -24,6 +24,7 @@ using namespace esphome::home_io_control;
 class TestableManagementComponent : public IOHomeControlComponent {
  public:
   using IOHomeControlComponent::initialized_;
+  using IOHomeControlComponent::last_pairing_end_ms_;
   using IOHomeControlComponent::node_id_;
   using IOHomeControlComponent::management_actions_;
   using IOHomeControlComponent::op_queue_;

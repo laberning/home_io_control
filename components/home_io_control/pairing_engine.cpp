@@ -763,20 +763,20 @@ bool PairingEngine::discover_and_pair() {
   return true;
 }
 
-bool PairingEngine::pair_declared_device(const std::string &device_id) {
+DeclaredPairingResult PairingEngine::pair_declared_device(const std::string &device_id) {
   const IoDevice *declared = registry_.get_declared(device_id);
   if (declared == nullptr) {
-    ESP_LOGW(TAG,
-             "Pair %s: no entity of the YAML declares it. Only a declared device can be paired by "
-             "address, since its kind and power class come from its entry.",
+    ESP_LOGW(TAG, "Pair %s: no entity of the YAML declares it, so there is no kind or power class to address it with",
              device_id.c_str());
-    return false;
+    return {.refusal = "no entity of the YAML declares this device; add its entry first, since its kind and power "
+                       "class come from it"};
   }
 
   if (tuning_->pairing_key_transfer == KeyTransferMode::PULL || device_hands_out_key(declared->type)) {
     ESP_LOGW(TAG, "Pair %s: the key transfer direction is pull, which this path does not run; use Discover & Pair",
              device_id.c_str());
-    return false;
+    return {.refusal =
+                "the key transfer direction is pull, which pairing by address does not run; use Discover & Pair"};
   }
 
   begin_attempt_("Pairing a declared device by address, without discovery...");
@@ -792,14 +792,14 @@ bool PairingEngine::pair_declared_device(const std::string &device_id) {
   if (!run_push_key_step_(context)) {
     this->finish_pairing_attempt_(context.key_refused ? PairingOutcome::KEY_TRANSFER_REFUSED
                                                       : PairingOutcome::KEY_EXCHANGE_FAILED);
-    return false;
+    return {};
   }
 
   finalize_pairing_configuration_(context);
   register_paired_device_(context);
   ESP_LOGI(TAG, "Device %s took the key and is paired to this hub", device_id.c_str());
   complete_paired_(context);
-  return true;
+  return {.confirmed = true};
 }
 
 void PairingEngine::begin_attempt_(const char *opening) {

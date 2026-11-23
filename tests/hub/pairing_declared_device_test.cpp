@@ -68,7 +68,7 @@ TEST(PairingDeclaredDevice, AnUndeclaredDeviceIsRefusedBeforeAnythingIsSent) {
   MockRadio radio;
   setup(comp, radio);
 
-  EXPECT_FALSE(comp.pairing_engine_.pair_declared_device(node_id_to_string(DEVICE_ID)));
+  EXPECT_FALSE(comp.pairing_engine_.pair_declared_device(node_id_to_string(DEVICE_ID)).attempted());
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
@@ -81,7 +81,7 @@ TEST(PairingDeclaredDevice, APairingRegisteredDeviceIsNotDeclaredAndIsRefused) {
   paired.registered_by_pairing = true;
   comp.registry_.put(node_id_to_string(DEVICE_ID), paired);
 
-  EXPECT_FALSE(comp.pairing_engine_.pair_declared_device(node_id_to_string(DEVICE_ID)));
+  EXPECT_FALSE(comp.pairing_engine_.pair_declared_device(node_id_to_string(DEVICE_ID)).attempted());
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
@@ -92,7 +92,7 @@ TEST(PairingDeclaredDevice, APullDirectionIsRefusedRatherThanSilentlyPushed) {
   declare_device(comp);
   comp.tuning_.pairing_key_transfer = KeyTransferMode::PULL;
 
-  EXPECT_FALSE(comp.pairing_engine_.pair_declared_device(node_id_to_string(DEVICE_ID)));
+  EXPECT_FALSE(comp.pairing_engine_.pair_declared_device(node_id_to_string(DEVICE_ID)).attempted());
   EXPECT_TRUE(radio.get_sent_data().empty());
 }
 
@@ -103,7 +103,9 @@ TEST(PairingDeclaredDevice, TheKeyExchangeRunsDirectedWithNoDiscoveryBroadcast) 
   declare_device(comp);
   queue_device_answers(radio, comp.node_id_);
 
-  EXPECT_TRUE(comp.pairing_engine_.pair_declared_device(node_id_to_string(DEVICE_ID)));
+  const DeclaredPairingResult result = comp.pairing_engine_.pair_declared_device(node_id_to_string(DEVICE_ID));
+  EXPECT_TRUE(result.attempted());
+  EXPECT_TRUE(result.confirmed);
 
   const std::vector<uint8_t> commands = sent_commands(radio);
   EXPECT_EQ(std::count(commands.begin(), commands.end(), CMD_DISCOVER_REQ), 0);
