@@ -156,7 +156,7 @@ KeyPull::Result KeyPull::prove_pulled_key_(pairing::PairingContext &context, con
   ExchangeEngine::ChallengeResult proof = ExchangeEngine::ChallengeResult::NO_ANSWER;
   uint8_t challenges = 0;
   engine_.run_attempts(
-      ExchangeEngine::fixed_attempts(EXCHANGE_RETRY_COUNT, EXCHANGE_RETRY_DELAY_MS),
+      ExchangeEngine::fixed_attempts(EXCHANGE_RETRY_COUNT, engine_.retry_gap_ms()),
       [&](uint8_t try_number, uint16_t /*window_ms*/) {
         challenges = try_number;
         const uint16_t challenge_preamble = try_number == 1 ? radio_()->response_preamble() : repeat_preamble;

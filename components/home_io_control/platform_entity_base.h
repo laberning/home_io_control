@@ -88,7 +88,8 @@ class DeviceBoundEntity {
   /// @brief Mark this device as a low-power / duty-cycled receiver. Directed frames to it then set
   /// CTRL1_LOW_POWER and use the long wake-up preamble; an always-alive device (the default) gets
   /// neither. Radio property of the device, shared by all four platforms.
-  /// @param low_power True for a battery/solar or otherwise sleeping receiver; default false.
+  /// @param low_power True for a battery/solar or otherwise sleeping receiver. Not called when the YAML
+  ///        declares none: the device then takes the band's default (DeviceConfig::low_power).
   void set_low_power(bool low_power) { this->low_power_ = low_power; }
   /// @brief Give this device a system key of its own (`system_key:` in YAML).
   /// @details Every exchange with the device then uses this key instead of the hub's. The key is
@@ -240,7 +241,7 @@ class DeviceBoundEntity {
   DeviceModel model_{DeviceModel::NONE};
   uint32_t status_poll_interval_ms_{0};
   std::vector<ScheduledReading> scheduled_readings_;  ///< The readings the YAML declared to be read on a schedule.
-  bool low_power_{false};
+  std::optional<bool> low_power_;  ///< Set only when the YAML declares `low_power:`; empty takes the band's default.
   bool has_system_key_{false};
   uint8_t system_key_[AES_KEY_SIZE]{};  ///< Key material: never logged.
 };

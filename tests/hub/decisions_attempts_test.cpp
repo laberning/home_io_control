@@ -1,5 +1,7 @@
 #include "decisions_attempts.h"
+#include "decisions_exchange.h"
 
+#include "test_bands.h"
 #include "test_helpers.h"
 
 using namespace esphome::home_io_control;
@@ -427,10 +429,11 @@ constexpr uint32_t LOW_POWER_TX_MS = 240;  // the same poll behind the 1024-byte
 
 TEST(AttemptPlan, SettlingReadOfAMainsTargetListensShortOnEveryAttemptButTheLast) {
   const TuningConfig tuning;  // 200 ms early window, 400 ms start window, 2500 ms budget
-  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, MAINS_TX_MS);
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, IO_868_BAND, MAINS_TX_MS);
 
   EXPECT_EQ(plan.gap_ms, 0) << "silent attempts follow each other";
-  EXPECT_EQ(plan.window_ms, tuning.exchange_start_response_wait_ms) << "the last attempt listens the whole window";
+  EXPECT_EQ(plan.window_ms, decisions::start_reply_window_ms(tuning, IO_868_BAND))
+      << "the last attempt listens the whole window";
   EXPECT_EQ(plan.early_window_ms, tuning.exchange_early_response_wait_ms);
   EXPECT_EQ(plan.max_attempts, EXCHANGE_MAX_ATTEMPTS)
       << "8 x (12 + 10 + 200) + (12 + 10 + 400) = 2198 ms: nine fit with room to spare";
@@ -444,16 +447,18 @@ TEST(AttemptPlan, EarlyWindowIsTheLargestValueThatKeepsNineAttemptsAtTheDefaultB
   // 250 ms does not.
   TuningConfig tuning;
   tuning.exchange_early_response_wait_ms = 250;
-  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::COMMAND, false, tuning, MAINS_TX_MS).max_attempts, 8);
+  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::COMMAND, false, tuning, IO_868_BAND, MAINS_TX_MS).max_attempts,
+            8);
   tuning.exchange_early_response_wait_ms = EXCHANGE_EARLY_RESPONSE_WAIT_MS;
-  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::COMMAND, false, tuning, MAINS_TX_MS).max_attempts, 9);
+  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::COMMAND, false, tuning, IO_868_BAND, MAINS_TX_MS).max_attempts,
+            9);
 }
 
 TEST(AttemptPlan, EarlyWindowAboveTheStartWindowIsCappedToIt) {
   TuningConfig tuning;
   tuning.exchange_early_response_wait_ms = 1000;
-  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, MAINS_TX_MS);
-  EXPECT_EQ(plan.early_window_ms, tuning.exchange_start_response_wait_ms);
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, IO_868_BAND, MAINS_TX_MS);
+  EXPECT_EQ(plan.early_window_ms, decisions::start_reply_window_ms(tuning, IO_868_BAND));
   EXPECT_EQ(plan.max_attempts, 5) << "5 x (12 + 10 + 400) = 2110 ms; a sixth would end at 2532 ms";
 }
 
@@ -482,7 +487,7 @@ TEST(AttemptPlan, EarlyAttemptsOfAPlanWithoutAnEarlyWindowListenTheWholeWindow) 
 
 TEST(AttemptPlan, SettlingReadOfALowPowerTargetListensTheLowPowerWindowThreeTimes) {
   const TuningConfig tuning;
-  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LOW_POWER_TX_MS);
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, IO_868_BAND, LOW_POWER_TX_MS);
 
   EXPECT_EQ(plan.gap_ms, 0);
   EXPECT_EQ(plan.window_ms, LOW_POWER_RESPONSE_WAIT_MS) << "not the tuned start window";
@@ -495,19 +500,23 @@ TEST(AttemptPlan, SettlingReadOfALowPowerTargetListensTheLowPowerWindowThreeTime
 TEST(AttemptPlan, SettlingReadIsCappedWhateverTheBudget) {
   TuningConfig tuning;
   tuning.exchange_total_budget_ms = 12000;  // the highest the YAML accepts
-  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, MAINS_TX_MS).max_attempts,
-            EXCHANGE_MAX_ATTEMPTS);
-  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LOW_POWER_TX_MS).max_attempts,
-            LOW_POWER_SETTLING_ATTEMPTS);
+  EXPECT_EQ(
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, IO_868_BAND, MAINS_TX_MS).max_attempts,
+      EXCHANGE_MAX_ATTEMPTS);
+  EXPECT_EQ(
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, IO_868_BAND, LOW_POWER_TX_MS).max_attempts,
+      LOW_POWER_SETTLING_ATTEMPTS);
 }
 
 TEST(AttemptPlan, ABudgetBelowOneAttemptStillAllowsOne) {
   TuningConfig tuning;
   tuning.exchange_total_budget_ms = 300;
-  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, MAINS_TX_MS).max_attempts, 1);
+  EXPECT_EQ(
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, IO_868_BAND, MAINS_TX_MS).max_attempts, 1);
   tuning.exchange_total_budget_ms = 0;
-  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LOW_POWER_TX_MS).max_attempts,
-            LOW_POWER_SETTLING_ATTEMPTS)
+  EXPECT_EQ(
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, IO_868_BAND, LOW_POWER_TX_MS).max_attempts,
+      LOW_POWER_SETTLING_ATTEMPTS)
       << "a zero budget is no limit the plan can honour; the engine's guard still applies";
 }
 
@@ -515,34 +524,36 @@ TEST(AttemptPlan, LongerWindowFitsFewerAttempts) {
   TuningConfig tuning;
   tuning.exchange_start_response_wait_ms = 1000;
   // 200 ms early, 1000 ms last: 1 + (2499 - 1022) / 222 = 7.
-  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, MAINS_TX_MS).max_attempts, 7);
+  EXPECT_EQ(
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, IO_868_BAND, MAINS_TX_MS).max_attempts, 7);
 }
 
 TEST(AttemptPlan, ProgressReadIsASingleAttempt) {
   const TuningConfig tuning;
   for (const bool low_power : {false, true}) {
-    const auto plan = decisions::attempt_plan(decisions::ReadKind::PROGRESS, low_power, tuning, MAINS_TX_MS);
+    const auto plan =
+        decisions::attempt_plan(decisions::ReadKind::PROGRESS, low_power, tuning, IO_868_BAND, MAINS_TX_MS);
     EXPECT_EQ(plan.max_attempts, SCHEDULED_POLL_MAX_TRIES);
     EXPECT_EQ(plan.gap_ms, EXCHANGE_RETRY_DELAY_MS);
-    EXPECT_EQ(plan.window_ms, tuning.exchange_start_response_wait_ms);
+    EXPECT_EQ(plan.window_ms, decisions::start_reply_window_ms(tuning, IO_868_BAND));
   }
 }
 
 TEST(AttemptPlan, CommandToAMainsTargetTakesTheGaplessPlanWithTheEarlyWindow) {
   const TuningConfig tuning;
-  const auto plan = decisions::attempt_plan(decisions::ReadKind::COMMAND, false, tuning, MAINS_TX_MS);
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::COMMAND, false, tuning, IO_868_BAND, MAINS_TX_MS);
   EXPECT_EQ(plan.max_attempts, EXCHANGE_MAX_ATTEMPTS);
   EXPECT_EQ(plan.gap_ms, 0);
   EXPECT_EQ(plan.early_window_ms, tuning.exchange_early_response_wait_ms);
-  EXPECT_EQ(plan.window_ms, tuning.exchange_start_response_wait_ms);
+  EXPECT_EQ(plan.window_ms, decisions::start_reply_window_ms(tuning, IO_868_BAND));
 }
 
 TEST(AttemptPlan, CommandToALowPowerTargetKeepsTodaysThreeAttemptsWithTheRetryGap) {
   const TuningConfig tuning;
-  const auto plan = decisions::attempt_plan(decisions::ReadKind::COMMAND, true, tuning, LOW_POWER_TX_MS);
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::COMMAND, true, tuning, IO_868_BAND, LOW_POWER_TX_MS);
   EXPECT_EQ(plan.max_attempts, EXCHANGE_RETRY_COUNT);
   EXPECT_EQ(plan.gap_ms, EXCHANGE_RETRY_DELAY_MS);
-  EXPECT_EQ(plan.window_ms, tuning.exchange_start_response_wait_ms);
+  EXPECT_EQ(plan.window_ms, decisions::start_reply_window_ms(tuning, IO_868_BAND));
   EXPECT_EQ(plan.early_window_ms, 0) << "a low-power target keeps one window for every attempt";
 }
 
@@ -576,7 +587,7 @@ TEST(AttemptPlan, ALowPowerSettlingReadKeepsThreeAttemptsAtEveryWakeUpLength) {
   const TuningConfig tuning;
   for (const auto &row : WAKE_TX_MS_BY_PREAMBLE) {
     SCOPED_TRACE(::testing::Message() << "wake-up preamble " << row[0] << " B, " << row[1] << " ms on air");
-    const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, row[1]);
+    const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, IO_868_BAND, row[1]);
     EXPECT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS);
     EXPECT_TRUE(plan.bounded_by_attempts);
     EXPECT_FALSE(decisions::obeys_time_budget(plan));
@@ -589,7 +600,7 @@ TEST(AttemptPlan, ALowPowerCommandKeepsThreeAttemptsAtEveryWakeUpLength) {
   const TuningConfig tuning;
   for (const auto &row : WAKE_TX_MS_BY_PREAMBLE) {
     SCOPED_TRACE(::testing::Message() << "wake-up preamble " << row[0] << " B, " << row[1] << " ms on air");
-    const auto plan = decisions::attempt_plan(decisions::ReadKind::COMMAND, true, tuning, row[1]);
+    const auto plan = decisions::attempt_plan(decisions::ReadKind::COMMAND, true, tuning, IO_868_BAND, row[1]);
     EXPECT_EQ(plan.max_attempts, EXCHANGE_RETRY_COUNT);
     EXPECT_TRUE(plan.bounded_by_attempts);
     EXPECT_EQ(attempts_the_guard_starts(plan, tuning.exchange_total_budget_ms, row[1]), EXCHANGE_RETRY_COUNT);
@@ -600,7 +611,7 @@ TEST(AttemptPlan, ALowPowerPlanKeepsAllItsAttemptsAtAUserBudgetOfOneSecond) {
   TuningConfig tuning;
   tuning.exchange_total_budget_ms = 1000;
   for (const auto kind : {decisions::ReadKind::SETTLING, decisions::ReadKind::COMMAND}) {
-    const auto plan = decisions::attempt_plan(kind, true, tuning, 432);
+    const auto plan = decisions::attempt_plan(kind, true, tuning, IO_868_BAND, 432);
     EXPECT_EQ(attempts_the_guard_starts(plan, tuning.exchange_total_budget_ms, 432), plan.max_attempts)
         << "kind=" << static_cast<int>(kind);
   }
@@ -609,10 +620,11 @@ TEST(AttemptPlan, ALowPowerPlanKeepsAllItsAttemptsAtAUserBudgetOfOneSecond) {
 TEST(AttemptPlan, MainsAndProgressPlansObeyTheTimeBudget) {
   const TuningConfig tuning;
   for (const auto kind : {decisions::ReadKind::PROGRESS, decisions::ReadKind::SETTLING, decisions::ReadKind::COMMAND})
-    EXPECT_TRUE(decisions::obeys_time_budget(decisions::attempt_plan(kind, false, tuning, 432)));
-  EXPECT_TRUE(decisions::obeys_time_budget(decisions::attempt_plan(decisions::ReadKind::PROGRESS, true, tuning, 432)))
+    EXPECT_TRUE(decisions::obeys_time_budget(decisions::attempt_plan(kind, false, tuning, IO_868_BAND, 432)));
+  EXPECT_TRUE(decisions::obeys_time_budget(
+      decisions::attempt_plan(decisions::ReadKind::PROGRESS, true, tuning, IO_868_BAND, 432)))
       << "a mid-travel look is one attempt";
-  EXPECT_TRUE(decisions::obeys_time_budget(decisions::attempt_plan_for_tries(EXCHANGE_RETRY_COUNT, 400)));
+  EXPECT_TRUE(decisions::obeys_time_budget(decisions::attempt_plan_for_tries(EXCHANGE_RETRY_COUNT, 400, IO_868_BAND)));
 }
 
 TEST(AttemptPlan, ALowPowerPlanNeverHasMoreAttemptsThanTheThreeWakeUpsAndTheLead) {
@@ -622,7 +634,7 @@ TEST(AttemptPlan, ALowPowerPlanNeverHasMoreAttemptsThanTheThreeWakeUpsAndTheLead
     tuning.exchange_total_budget_ms = budget_ms;
     for (const auto kind : {decisions::ReadKind::SETTLING, decisions::ReadKind::COMMAND}) {
       for (const bool lead : {false, true}) {
-        const auto plan = decisions::attempt_plan(kind, true, tuning, 432, 0, lead);
+        const auto plan = decisions::attempt_plan(kind, true, tuning, IO_868_BAND, 432, 0, lead);
         EXPECT_LE(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS + 1u) << "budget=" << budget_ms;
         EXPECT_LE(plan.max_attempts, EXCHANGE_MAX_ATTEMPTS);
       }
@@ -632,10 +644,12 @@ TEST(AttemptPlan, ALowPowerPlanNeverHasMoreAttemptsThanTheThreeWakeUpsAndTheLead
 
 TEST(AttemptPlan, ExplicitLastWindowReplacesTheTunedStartWindow) {
   const TuningConfig tuning;
-  const auto mains = decisions::attempt_plan(decisions::ReadKind::COMMAND, false, tuning, MAINS_TX_MS, 500);
+  const auto mains =
+      decisions::attempt_plan(decisions::ReadKind::COMMAND, false, tuning, IO_868_BAND, MAINS_TX_MS, 500);
   EXPECT_EQ(mains.window_ms, 500);
   EXPECT_EQ(mains.early_window_ms, tuning.exchange_early_response_wait_ms);
-  const auto low_power = decisions::attempt_plan(decisions::ReadKind::COMMAND, true, tuning, LOW_POWER_TX_MS, 500);
+  const auto low_power =
+      decisions::attempt_plan(decisions::ReadKind::COMMAND, true, tuning, IO_868_BAND, LOW_POWER_TX_MS, 500);
   EXPECT_EQ(low_power.window_ms, 500);
   EXPECT_EQ(low_power.max_attempts, EXCHANGE_RETRY_COUNT);
 }
@@ -660,10 +674,10 @@ TEST(AttemptPlan, RepeatSafeCommandsAreEverythingButAStoredPositionExecute) {
 }
 
 TEST(AttemptPlan, PlanForTriesClampsToOneAndTheDefaultCount) {
-  EXPECT_EQ(decisions::attempt_plan_for_tries(0, 400).max_attempts, 1);
-  EXPECT_EQ(decisions::attempt_plan_for_tries(2, 400).max_attempts, 2);
-  EXPECT_EQ(decisions::attempt_plan_for_tries(9, 400).max_attempts, EXCHANGE_RETRY_COUNT);
-  EXPECT_EQ(decisions::attempt_plan_for_tries(2, 450).window_ms, 450);
+  EXPECT_EQ(decisions::attempt_plan_for_tries(0, 400, IO_868_BAND).max_attempts, 1);
+  EXPECT_EQ(decisions::attempt_plan_for_tries(2, 400, IO_868_BAND).max_attempts, 2);
+  EXPECT_EQ(decisions::attempt_plan_for_tries(9, 400, IO_868_BAND).max_attempts, EXCHANGE_RETRY_COUNT);
+  EXPECT_EQ(decisions::attempt_plan_for_tries(2, 450, IO_868_BAND).window_ms, 450);
 }
 // ========================================================================================
 // Short lead of a settling read to a low-power receiver in an unknown state (ADR 0079)
@@ -676,7 +690,7 @@ constexpr uint32_t LEAD_WAKE_TX_MS =
 
 TEST(Decisions, ASettlingReadToAnUnknownLowPowerTargetLeadsWithOneShortAttempt) {
   TuningConfig tuning;
-  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LEAD_WAKE_TX_MS,
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, IO_868_BAND, LEAD_WAKE_TX_MS,
                                             /*last_window_ms=*/0, /*with_short_lead=*/true);
   EXPECT_TRUE(plan.short_lead);
   EXPECT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS + 1u);
@@ -689,8 +703,10 @@ TEST(Decisions, ALeadPlanKeepsItsLeadAndEveryWakeUpAttemptWhateverTheBudget) {
   for (const uint32_t budget_ms : {600u, 1000u, 2400u, 2500u, 12000u}) {
     TuningConfig tuning;
     tuning.exchange_total_budget_ms = budget_ms;
-    const auto without = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LEAD_WAKE_TX_MS);
-    const auto with = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, LEAD_WAKE_TX_MS, 0, true);
+    const auto without =
+        decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, IO_868_BAND, LEAD_WAKE_TX_MS);
+    const auto with =
+        decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, IO_868_BAND, LEAD_WAKE_TX_MS, 0, true);
 
     EXPECT_TRUE(with.short_lead);
     EXPECT_EQ(with.max_attempts, without.max_attempts + 1u) << "no wake-up attempt is dropped; budget=" << budget_ms;
@@ -703,11 +719,14 @@ TEST(Decisions, NoLeadForAnotherKindOfRead) {
   TuningConfig tuning;
   tuning.exchange_total_budget_ms = EXCHANGE_TOTAL_BUDGET_MS;
   EXPECT_FALSE(
-      decisions::attempt_plan(decisions::ReadKind::PROGRESS, true, tuning, LEAD_WAKE_TX_MS, 0, true).short_lead);
+      decisions::attempt_plan(decisions::ReadKind::PROGRESS, true, tuning, IO_868_BAND, LEAD_WAKE_TX_MS, 0, true)
+          .short_lead);
   EXPECT_FALSE(
-      decisions::attempt_plan(decisions::ReadKind::COMMAND, true, tuning, LEAD_WAKE_TX_MS, 0, true).short_lead);
+      decisions::attempt_plan(decisions::ReadKind::COMMAND, true, tuning, IO_868_BAND, LEAD_WAKE_TX_MS, 0, true)
+          .short_lead);
   EXPECT_FALSE(
-      decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, LEAD_WAKE_TX_MS, 0, true).short_lead);
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, IO_868_BAND, LEAD_WAKE_TX_MS, 0, true)
+          .short_lead);
 }
 
 TEST(AttemptPlan, NoReadKindPowerClassTuningOrTryCountGivesAPlanOutsideTheAttemptBounds) {
@@ -717,7 +736,8 @@ TEST(AttemptPlan, NoReadKindPowerClassTuningOrTryCountGivesAPlanOutsideTheAttemp
     return plan.max_attempts >= 1 && plan.max_attempts <= EXCHANGE_MAX_ATTEMPTS;
   };
   for (unsigned tries = 0; tries <= UINT8_MAX; tries++)
-    ASSERT_TRUE(in_bounds(decisions::attempt_plan_for_tries(static_cast<uint8_t>(tries), 400))) << "tries=" << tries;
+    ASSERT_TRUE(in_bounds(decisions::attempt_plan_for_tries(static_cast<uint8_t>(tries), 400, IO_868_BAND)))
+        << "tries=" << tries;
 
   const decisions::ReadKind kinds[] = {decisions::ReadKind::PROGRESS, decisions::ReadKind::SETTLING,
                                        decisions::ReadKind::COMMAND};
@@ -734,7 +754,7 @@ TEST(AttemptPlan, NoReadKindPowerClassTuningOrTryCountGivesAPlanOutsideTheAttemp
                   tuning.exchange_total_budget_ms = budget_ms;
                   tuning.exchange_early_response_wait_ms = early_ms;
                   tuning.exchange_start_response_wait_ms = start_ms;
-                  const auto plan = decisions::attempt_plan(kind, low_power, tuning, tx_ms, last_ms, lead);
+                  const auto plan = decisions::attempt_plan(kind, low_power, tuning, IO_868_BAND, tx_ms, last_ms, lead);
                   ASSERT_TRUE(in_bounds(plan))
                       << "kind=" << static_cast<int>(kind) << " low_power=" << low_power << " budget=" << budget_ms
                       << " early=" << early_ms << " start=" << start_ms << " tx=" << tx_ms << " last=" << last_ms
@@ -747,4 +767,105 @@ TEST(AttemptPlan, NoReadKindPowerClassTuningOrTryCountGivesAPlanOutsideTheAttemp
       }
     }
   }
+}
+
+// ============================================================================
+// The band gives the windows and the gap (ADR 0132). The second band is invented
+// (tests/support/test_bands.h): 80 ms start window, 70 ms low-power window, 45 ms gap.
+// ============================================================================
+
+TEST(AttemptPlan, TheStartReplyWindowIsTheBandsUnlessTheTuningKeyIsSet) {
+  TuningConfig tuning;
+  const IoBand band = test_bands::second_band();
+  EXPECT_EQ(decisions::start_reply_window_ms(tuning, band), 80);
+  EXPECT_EQ(decisions::start_reply_window_ms(tuning, IO_868_BAND), RESPONSE_START_WAIT_MS);
+  tuning.exchange_start_response_wait_ms = 900;
+  EXPECT_EQ(decisions::start_reply_window_ms(tuning, band), 900) << "a set key replaces the band's window";
+  EXPECT_EQ(decisions::start_reply_window_ms(tuning, IO_868_BAND), 900);
+}
+
+TEST(AttemptPlan, ASettlingReadOfALowPowerTargetOnAnotherBandTakesTheBandsWindowAndHasNoGap) {
+  const TuningConfig tuning;
+  const IoBand band = test_bands::second_band();
+  const auto plan = decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, band, LOW_POWER_TX_MS);
+
+  EXPECT_EQ(plan.max_attempts, LOW_POWER_SETTLING_ATTEMPTS);
+  EXPECT_EQ(plan.window_ms, 70);
+  EXPECT_EQ(plan.gap_ms, 0);
+  EXPECT_TRUE(plan.bounded_by_attempts);
+  EXPECT_EQ(plan.window_for_attempt(2, plan.max_attempts), 70);
+}
+
+TEST(AttemptPlan, ACommandToALowPowerTargetOnAnotherBandTakesTheBandsStartWindowAndGap) {
+  const TuningConfig tuning;
+  const auto plan =
+      decisions::attempt_plan(decisions::ReadKind::COMMAND, true, tuning, test_bands::second_band(), LOW_POWER_TX_MS);
+
+  EXPECT_EQ(plan.max_attempts, EXCHANGE_RETRY_COUNT);
+  EXPECT_EQ(plan.window_ms, 80);
+  EXPECT_EQ(plan.gap_ms, 45);
+  EXPECT_TRUE(plan.bounded_by_attempts);
+}
+
+TEST(AttemptPlan, AProgressPollOnAnotherBandIsOneAttemptOfTheBandsStartWindow) {
+  const TuningConfig tuning;
+  const auto plan =
+      decisions::attempt_plan(decisions::ReadKind::PROGRESS, false, tuning, test_bands::second_band(), MAINS_TX_MS);
+
+  EXPECT_EQ(plan.max_attempts, 1);
+  EXPECT_EQ(plan.window_ms, 80);
+}
+
+TEST(AttemptPlan, ASettlingReadOfAMainsTargetOnAnotherBandListensTheBandsStartWindowLast) {
+  const TuningConfig tuning;
+  const auto plan =
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, false, tuning, test_bands::second_band(), MAINS_TX_MS);
+
+  EXPECT_EQ(plan.window_ms, 80);
+  EXPECT_EQ(plan.early_window_ms, 80) << "the early window never exceeds the last one";
+  EXPECT_EQ(plan.gap_ms, 0);
+}
+
+TEST(AttemptPlan, TheTuningKeyReplacesTheStartWindowOnAnotherBandAndNotTheLowPowerWindow) {
+  TuningConfig tuning;
+  tuning.exchange_start_response_wait_ms = 90;
+  const IoBand band = test_bands::second_band();
+
+  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::COMMAND, true, tuning, band, LOW_POWER_TX_MS).window_ms, 90);
+  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::PROGRESS, false, tuning, band, MAINS_TX_MS).window_ms, 90);
+  EXPECT_EQ(decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, band, LOW_POWER_TX_MS).window_ms, 70)
+      << "the low-power window is the band's alone";
+}
+
+TEST(AttemptPlan, TheShortLeadNeverListensLongerThanTheBandsLowPowerWindow) {
+  const TuningConfig tuning;
+  const auto lead868 =
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, IO_868_BAND, LEAD_WAKE_TX_MS, 0, true);
+  EXPECT_EQ(lead868.window_for_attempt(1, lead868.max_attempts), LOW_POWER_SHORT_LEAD_WINDOW_MS) << "868 MHz as before";
+
+  IoBand short_window = test_bands::second_band();
+  short_window.low_power_reply_window_ms = 40;
+  const auto lead =
+      decisions::attempt_plan(decisions::ReadKind::SETTLING, true, tuning, short_window, LEAD_WAKE_TX_MS, 0, true);
+  EXPECT_EQ(lead.window_for_attempt(1, lead.max_attempts), 40);
+  EXPECT_EQ(lead.window_for_attempt(2, lead.max_attempts), 40);
+}
+
+TEST(AttemptPlan, APlanForANumberOfTriesTakesTheBandsGap) {
+  const auto plan = decisions::attempt_plan_for_tries(2, 450, test_bands::second_band());
+  EXPECT_EQ(plan.gap_ms, 45);
+  EXPECT_EQ(plan.window_ms, 450);
+  EXPECT_EQ(decisions::attempt_plan_for_tries(2, 450, IO_868_BAND).gap_ms, EXCHANGE_RETRY_DELAY_MS);
+}
+
+TEST(DecisionsExchange, AnAnswerIsLateOnlyAboveTheBandsThreshold) {
+  const IoBand band = test_bands::second_band();  // 40 ms
+  EXPECT_FALSE(decisions::answer_is_late(39000, band));
+  EXPECT_FALSE(decisions::answer_is_late(40000, band)) << "at the threshold is not above it";
+  EXPECT_TRUE(decisions::answer_is_late(40001, band));
+}
+
+TEST(DecisionsExchange, ABandWithAThresholdOfZeroNeverReportsALateAnswer) {
+  EXPECT_FALSE(decisions::answer_is_late(4000000, IO_868_BAND));
+  EXPECT_FALSE(decisions::answer_is_late(0xFFFFFFFFu, IO_868_BAND));
 }

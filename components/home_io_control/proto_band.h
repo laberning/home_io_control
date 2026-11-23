@@ -2,7 +2,8 @@
 
 /// @file proto_band.h
 /// @brief The band a radio carries the protocol on: the air frequency of the three channels, the
-/// channels a wake-up request may use, and the busy limit used before a quiet level is known.
+/// channels a wake-up request may use, the busy limit used before a quiet level is known, and the
+/// timing and default of a receiver on that band (reply windows, retry gap, low-power default).
 /// @ingroup hioc_protocol
 ///
 /// The protocol names its three channels by their 868 MHz frequencies (FREQ_CH1..3 in
@@ -84,10 +85,34 @@ struct IoBand {
   ChannelSet wake_up_channels = ChannelSet::only(FREQ_CH2);
   /// The RSSI at or above which a channel counts as busy while the board's quiet level is not known.
   int16_t busy_limit_until_quiet_level_dbm = CHANNEL_LIMIT_UNTIL_QUIET_LEVEL_DBM;
+  /// How long a start frame listens for the first reply, in ms (the `exchange_start_response_wait_ms`
+  /// key overrides it). See RESPONSE_START_WAIT_MS for the measurements behind the 868 MHz value.
+  uint16_t start_reply_window_ms = static_cast<uint16_t>(RESPONSE_START_WAIT_MS);
+  /// How long a read listens for a low-power receiver's reply, in ms (LOW_POWER_RESPONSE_WAIT_MS).
+  uint16_t low_power_reply_window_ms = LOW_POWER_RESPONSE_WAIT_MS;
+  /// The wait before each try after the first, in ms (EXCHANGE_RETRY_DELAY_MS).
+  uint16_t retry_gap_ms = static_cast<uint16_t>(EXCHANGE_RETRY_DELAY_MS);
+  /// Whether a device that does not declare `low_power` counts as battery-powered on this band.
+  bool low_power_by_default = false;
+  /// The time after a challenge beyond which the answer to it is reported as late, in ms; 0 reports
+  /// none. A late answer means the receiver may already have stopped listening for it.
+  uint16_t late_answer_warn_ms = 0;
+
+  /// The frequency a channel really goes out on: the air frequency of @p channel_hz (a channel's
+  /// identity, one of IO_CHANNELS), or @p channel_hz itself when it is no channel. Every line that
+  /// prints a frequency prints this one.
+  [[nodiscard]] constexpr uint32_t air_hz_of(uint32_t channel_hz) const {
+    for (size_t i = 0; i < IO_CHANNELS.size(); i++) {
+      if (IO_CHANNELS[i] == channel_hz)
+        return this->air_hz[i];
+    }
+    return channel_hz;
+  }
 };
 
 /// The 868 MHz band: the channels at their own frequencies, a wake-up request on channel 2 only, and
-/// the fixed limit of ADR 0096. The default every driver returns from RadioDriver::band().
+/// the fixed limit of ADR 0096, today's timing (proto_timing.h), no low-power default and no late-answer
+/// warning. The default every driver returns from RadioDriver::band().
 static constexpr IoBand IO_868_BAND{};
 
 }  // namespace home_io_control

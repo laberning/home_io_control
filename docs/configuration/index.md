@@ -116,7 +116,10 @@ keys. Platform-specific options are documented on each platform's own page.
   note below.
 - `low_power` (Optional): Marks a battery or solar device, which changes how the hub addresses it
   on the radio. Set this on solar and battery actuators; leaving it off on such a device is a
-  common cause of a hub that pairs but then hears nothing back.
+  common cause of a hub that pairs but then hears nothing back. Left out, the device is
+  mains-powered on the 868 MHz band; a radio on a band whose devices all sleep gives it the
+  low-power class instead, and writing `low_power: false` keeps a mains device mains-powered there.
+  The boot log says for each device where its value comes from.
 - `linked_remotes` (Optional): 1W remotes or device classes whose presses should update this
   entity's state. See [Linked remotes and sender events](remotes.md).
 - `system_key` (Optional): A 32-character hex key this one device keeps of its own. Every exchange

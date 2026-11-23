@@ -224,6 +224,83 @@ TEST(DeviceRegistry, PutKeepsLowPowerWhenEitherRecordSaysSo) {
   EXPECT_FALSE(reg.get("112233")->low_power) << "neither side says low power";
 }
 
+// The band's low-power default (ADR 0132): a device that declares no `low_power:` takes it, a declared value stands.
+
+TEST(DeviceRegistry, ADeviceThatDeclaresNoLowPowerTakesTheBandsDefault) {
+  DeviceRegistry reg;
+  reg.set_low_power_default(true);
+  reg.add("AABBCC", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0});
+  ASSERT_NE(reg.get("AABBCC"), nullptr);
+  EXPECT_TRUE(reg.get("AABBCC")->low_power);
+  EXPECT_EQ(reg.low_power_source("AABBCC"), LowPowerSource::BAND_DEFAULT);
+
+  DeviceRegistry mains_band;  // the 868 MHz default: not low-power
+  mains_band.add("AABBCC", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0});
+  EXPECT_FALSE(mains_band.get("AABBCC")->low_power);
+  EXPECT_EQ(mains_band.low_power_source("AABBCC"), LowPowerSource::BAND_DEFAULT);
+}
+
+TEST(DeviceRegistry, ADeclaredLowPowerFalseStandsAgainstABandThatDefaultsToLowPower) {
+  DeviceRegistry reg;
+  reg.set_low_power_default(true);
+  reg.add("AABBCC", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0, .low_power = false});
+  EXPECT_FALSE(reg.get("AABBCC")->low_power);
+  EXPECT_EQ(reg.low_power_source("AABBCC"), LowPowerSource::DECLARED);
+}
+
+TEST(DeviceRegistry, ADeclaredLowPowerTrueStandsOnABandThatDoesNotDefaultToIt) {
+  DeviceRegistry reg;
+  reg.add("AABBCC", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0, .low_power = true});
+  EXPECT_TRUE(reg.get("AABBCC")->low_power);
+  EXPECT_EQ(reg.low_power_source("AABBCC"), LowPowerSource::DECLARED);
+}
+
+TEST(DeviceRegistry, ADeviceRegisteredBeforeTheDefaultWasSetKeepsItsValue) {
+  DeviceRegistry reg;
+  reg.add("AABBCC", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0});
+  reg.set_low_power_default(true);
+  EXPECT_FALSE(reg.get("AABBCC")->low_power);
+}
+
+TEST(DeviceRegistry, APairedDeviceWithoutAStoredRecordTakesTheBandsDefaultAndDiscoveryStillSetsIt) {
+  DeviceRegistry reg;
+  reg.set_low_power_default(true);
+  IoDevice paired{};
+  paired.type = DeviceType::ROLLER_SHUTTER;
+  reg.put("AABBCC", paired);
+  EXPECT_TRUE(reg.get("AABBCC")->low_power) << "no record: the band's default is added";
+
+  DeviceRegistry mains_band;
+  mains_band.put("AABBCC", paired);
+  EXPECT_FALSE(mains_band.get("AABBCC")->low_power) << "a default of false adds nothing";
+  IoDevice discovered = paired;
+  discovered.low_power = true;
+  mains_band.put("DDEEFF", discovered);
+  EXPECT_TRUE(mains_band.get("DDEEFF")->low_power) << "a discovery that reports a low-power device still sets it";
+}
+
+TEST(DeviceRegistry, AnUndeclaredDeviceThatDiscoveryReportsLowPowerIsNoLongerOnTheBandsDefault) {
+  DeviceRegistry reg;
+  reg.add("AABBCC", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0});
+  IoDevice discovered{};
+  discovered.type = DeviceType::ROLLER_SHUTTER;
+  discovered.low_power = true;
+  reg.put("AABBCC", discovered);
+  EXPECT_TRUE(reg.get("AABBCC")->low_power);
+  EXPECT_EQ(reg.low_power_source("AABBCC"), LowPowerSource::DECLARED);
+}
+
+TEST(DeviceRegistry, ARePairKeepsADeclaredFalseOnABandThatDefaultsToLowPower) {
+  DeviceRegistry reg;
+  reg.set_low_power_default(true);
+  reg.add("AABBCC", {.type = DeviceType::ROLLER_SHUTTER, .subtype = 0, .low_power = false});
+  IoDevice paired{};
+  paired.type = DeviceType::ROLLER_SHUTTER;
+  reg.put("AABBCC", paired);
+  EXPECT_FALSE(reg.get("AABBCC")->low_power)
+      << "the declaration is the record's: the default is added only without one";
+}
+
 TEST(DeviceRegistry, PutKeepsTheTemperatureRangeOfTheRecordItReplaces) {
   // The climate entity hands the YAML `min_temperature:` / `max_temperature:` over once at setup; a re-pair builds a
   // fresh record, which must not fall back to the default range until the next boot.

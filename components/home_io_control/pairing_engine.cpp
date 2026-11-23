@@ -246,7 +246,8 @@ decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(p
       engine_.listen(spec, context.packet, context.resp, [&](const IoFrame *parsed, const RadioRxPacket &packet) {
         saw_any = true;
         if (parsed == nullptr) {
-          ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, packet.len, packet.freq_hz);
+          ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, packet.len,
+                   engine_.band().air_hz_of(packet.freq_hz));
           ESP_LOGD(TAG, "Key confirm wait: parse failed");
           return ReplyDisposition::IGNORE;
         }
@@ -255,7 +256,8 @@ decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(p
         // and the 0x3D, and some receivers drop a late answer (issue #163). The caller reports it after the
         // confirm wait (ADR 0111).
         if (after_challenge || disposition != decisions::PairingKeyConfirmDisposition::CHALLENGE) {
-          ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, packet.len, packet.freq_hz);
+          ESP_LOGD(TAG, "Key confirm wait: got %u bytes on freq=%" PRIu32, packet.len,
+                   engine_.band().air_hz_of(packet.freq_hz));
           ESP_LOGD(TAG, "Key confirm wait: parsed cmd=0x%02X src=%02X%02X%02X dst=%02X%02X%02X", parsed->cmd,
                    parsed->src[0], parsed->src[1], parsed->src[2], parsed->dst[0], parsed->dst[1], parsed->dst[2]);
         }
@@ -298,7 +300,7 @@ decisions::PairingKeyConfirmDisposition PairingEngine::listen_for_key_confirm_(p
 /// (drivers whose TX waveform needs more lock-on margin return a longer preamble). Retries up to
 /// EXCHANGE_RETRY_COUNT times on timeout.
 bool PairingEngine::wait_for_key_confirm_(pairing::PairingContext &context) {
-  const ExchangeEngine::AttemptRun run = ExchangeEngine::fixed_attempts(EXCHANGE_RETRY_COUNT, EXCHANGE_RETRY_DELAY_MS);
+  const ExchangeEngine::AttemptRun run = ExchangeEngine::fixed_attempts(EXCHANGE_RETRY_COUNT, engine_.retry_gap_ms());
   return engine_.run_attempts(run, [&](uint8_t try_number, uint16_t /*window_ms*/) {
     // Quiet window (ADR 0111): from before the 0x32 to the end of the wait for its confirm and, when the device
     // challenges, on across the 0x3D and the second wait. Nothing is printed between the challenge and the answer
@@ -548,8 +550,8 @@ pairing::DiscoverConfirmResult PairingEngine::run_discover_confirm_step_(pairing
 
     if (disposition == decisions::PairingDiscoverConfirmDisposition::ACK) {
       ESP_LOGI(TAG, "Discover confirm: 0x2D from %s on freq=%" PRIu32 " after %" PRIu32 " ms (try %u/%u)",
-               context.device_id.c_str(), context.packet.freq_hz, millis() - wait_start_ms, try_index,
-               PAIRING_DISCOVER_CONFIRM_TRIES);
+               context.device_id.c_str(), engine_.band().air_hz_of(context.packet.freq_hz), millis() - wait_start_ms,
+               try_index, PAIRING_DISCOVER_CONFIRM_TRIES);
       result = pairing::DiscoverConfirmResult::ACKED;
       return AttemptVerdict::DONE;
     }
@@ -676,12 +678,12 @@ bool PairingEngine::run_key_exchange_phase_(pairing::PairingContext &context) {
   bool key_ok = false;
   const uint8_t tries = radio_()->has_fast_tx_rx_turnaround() ? 1 : PAIRING_KEY_INIT_RESENDS + 1;
   engine_.run_attempts(
-      ExchangeEngine::fixed_attempts(tries, EXCHANGE_RETRY_DELAY_MS), [&](uint8_t try_number, uint16_t /*window_ms*/) {
+      ExchangeEngine::fixed_attempts(tries, engine_.retry_gap_ms()), [&](uint8_t try_number, uint16_t /*window_ms*/) {
         if (try_number == 1) {
           key_ok = transfer_key_and_wait_confirm_(context);
           quiet_window.release();
           ESP_LOGI(TAG, "Challenge (0x3C) received: data_len=%u freq=%" PRIu32 " rssi=%s", challenge_len,
-                   challenge_freq_hz, detail::format_rssi_dbm(challenge_rssi_dbm).c_str());
+                   engine_.band().air_hz_of(challenge_freq_hz), detail::format_rssi_dbm(challenge_rssi_dbm).c_str());
         } else {
           key_ok = resend_key_init_(context, try_number - 1);
         }
@@ -957,7 +959,7 @@ void PairingEngine::complete_paired_(pairing::PairingContext &context) {
 
 bool PairingEngine::run_push_key_step_(pairing::PairingContext &context) {
   bool exchanged = false;
-  engine_.run_attempts(ExchangeEngine::fixed_attempts(tuning_->pairing_key_exchange_retries, EXCHANGE_RETRY_DELAY_MS),
+  engine_.run_attempts(ExchangeEngine::fixed_attempts(tuning_->pairing_key_exchange_retries, engine_.retry_gap_ms()),
                        [&](uint8_t try_number, uint16_t /*window_ms*/) {
                          if (try_number > 1) {
                            ESP_LOGI(TAG, "Retrying key exchange (attempt %u/%u)...", try_number,

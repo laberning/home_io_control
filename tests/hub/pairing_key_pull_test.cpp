@@ -11,6 +11,7 @@
 #include "proto_frame.h"
 
 #include "esp_random.h"
+#include "test_bands.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 #include "support/hold_seam.h"
@@ -298,6 +299,22 @@ TEST(PairingKeyPull, ALowPowerDeviceIsAskedThreeTimesWithTheRetryGap) {
   ASSERT_EQ(times.size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
   EXPECT_EQ(times[1] - times[0], PAIRING_KEY_REPLY_TIMEOUT_MS + EXCHANGE_RETRY_DELAY_MS)
       << "one reply window and the retry gap between tries";
+}
+
+TEST(PairingKeyPull, TheRetryGapOfTheKeyPullIsTheBandsOwn) {
+  esphome::test_clock::ManualClock clock;
+  RngGuard rng;
+  MockRadio radio;
+  radio.set_band(test_bands::second_band());  // invented: 45 ms gap
+  KeyPullRig rig(radio);
+  pairing::PairingContext context = context_for_device();
+  context.discovery_low_power = true;
+
+  EXPECT_EQ(rig.key_pull.pull(context), KeyPull::Result::FAILED);
+
+  const auto &times = radio.send_times_ms();
+  ASSERT_EQ(times.size(), static_cast<size_t>(EXCHANGE_RETRY_COUNT));
+  EXPECT_EQ(times[1] - times[0], PAIRING_KEY_REPLY_TIMEOUT_MS + 45) << "one reply window and the band's gap";
 }
 
 TEST(PairingKeyPull, TheKeyPullNeverRunsPastTheExchangeBudget) {

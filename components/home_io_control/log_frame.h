@@ -301,6 +301,13 @@ inline uint32_t frame_log_release_count() { return frame_log_hold_state().releas
 #endif
 
 #ifdef IOHOME_FRAME_LOG
+/// @brief Log one frame on the wire with its channel, preamble, command and redacted bytes.
+/// @param prefix   "TX" or "RX".
+/// @param data     The frame's bytes.
+/// @param len      Length of @p data.
+/// @param freq     The air frequency in Hz the frame went out or came in on (IoBand::air_hz_of() of the
+///                 channel), which is what the line prints.
+/// @param preamble Preamble length of a transmission in bytes; 0 omits it from the line.
 inline void log_frame(const char *prefix, const uint8_t *data, uint8_t len, uint32_t freq, uint16_t preamble = 0) {
   char hex[FRAME_LOG_HEX_BUFFER_SIZE];
   render_frame_hex_redacted(data, len, hex, sizeof(hex));

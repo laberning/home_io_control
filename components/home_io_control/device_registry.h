@@ -15,6 +15,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -38,11 +39,19 @@ struct DeviceConfig {
   bool dimmable{false};         ///< YAML `dimmable: true` of a light.
   bool optimistic_state{true};  ///< Whether `apply_optimistic_target`/`apply_optimistic_stop` may fire.
   TravelSpeed travel_speed{TravelSpeed::MOTOR_DEFAULT};  ///< Speed profile of position moves.
-  bool low_power{false};               ///< Target is a low-power / duty-cycled receiver: directed frames set
-                                       ///< CTRL1_LOW_POWER and use the long wake-up preamble.
+  /// YAML `low_power:` when declared (a declared `false` stands); empty when the device declares none and the
+  /// band's default applies (DeviceRegistry::set_low_power_default()). The target is a low-power / duty-cycled
+  /// receiver when true: directed frames set CTRL1_LOW_POWER and use the long wake-up preamble.
+  std::optional<bool> low_power = std::nullopt;
   bool battery_entities{false};        ///< `battery: true` declared: the battery entities exist for this device.
   bool has_system_key{false};          ///< `system_key:` declared: the device keeps a key of its own.
   uint8_t system_key[AES_KEY_SIZE]{};  ///< That key; meaningful only when `has_system_key`. Never logged.
+};
+
+/// Where a registered device's `low_power` value comes from.
+enum class LowPowerSource : uint8_t {
+  DECLARED,      ///< The device's YAML declares `low_power:` (true or false).
+  BAND_DEFAULT,  ///< The YAML declares none: the radio's band decides (IoBand::low_power_by_default).
 };
 
 /// Owns the per-hub device table, update callbacks, and linked-remote associations.
@@ -53,6 +62,18 @@ struct DeviceConfig {
 /// @ingroup hioc_hub
 class DeviceRegistry {
  public:
+  /// Set the `low_power` value of a device that declares none: the band's default
+  /// (IoBand::low_power_by_default). The hub sets it right after it builds the radio, before any entity
+  /// registers its device; devices already registered keep the value they have.
+  /// @param low_power_by_default The radio's band default.
+  void set_low_power_default(bool low_power_by_default) { this->low_power_default_ = low_power_by_default; }
+
+  /// Where the `low_power` value of @p device_id comes from.
+  /// @return DECLARED for an unknown device, and for a device that is not registered from YAML.
+  [[nodiscard]] LowPowerSource low_power_source(const std::string &device_id) const {
+    return this->low_power_from_band_.count(device_id) != 0 ? LowPowerSource::BAND_DEFAULT : LowPowerSource::DECLARED;
+  }
+
   /// Register a device by ID with default metadata (UNKNOWN type, subtype 0, no overrides).
   /// No-op when @p device_id is already registered.  Warns and returns when the hex string is invalid.
   /// @param device_id Hexadecimal node ID string (e.g. "ABC123").
@@ -71,7 +92,8 @@ class DeviceRegistry {
   /// `optimistic_state:`, the travel speed, the temperature range of `min_temperature:` / `max_temperature:`) and its
   /// reading store (IoDevice::reading_values: the values, which readings the YAML asks for, which the device does not
   /// have) to the new one, so a re-pair does not blank the card, stop a reading entity or fall back to a default.
-  /// `low_power` stays set when either record has it (the YAML's declaration or the new record's discovery flags).
+  /// `low_power` stays set when either record has it (the YAML's declaration or the new record's discovery flags);
+  /// with no record stored under the ID, the band's default is added to the discovery flags.
   /// The new record's features are resolved before it is stored.
   /// @param device_id Hexadecimal node ID string.
   /// @param device    Fully-built device to store.
@@ -219,6 +241,9 @@ class DeviceRegistry {
 
  private:
   std::map<std::string, IoDevice> devices_;
+  bool low_power_default_{false};  ///< Band default for a device that declares no `low_power:`.
+  /// Devices whose `low_power` value is the band default, not a declaration (low_power_source()).
+  std::set<std::string> low_power_from_band_;
   std::vector<DeviceUpdateCallback> callbacks_;
   std::map<std::string, std::vector<std::string>> linked_remotes_;
   std::map<DeviceType, std::vector<std::string>> linked_remote_classes_;

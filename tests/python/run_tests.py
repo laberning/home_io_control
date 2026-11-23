@@ -1879,6 +1879,42 @@ def experimental_kinds_are_marked_in_the_mirror_and_warned_about_once_at_config_
 
 
 @case()
+def a_device_that_declares_no_low_power_emits_no_low_power_setter():
+    """`low_power:` is optional: an undeclared device leaves the hub to apply the band's default (ADR 0132),
+    so codegen emits `set_low_power()` only when the YAML wrote the key, a written `false` included."""
+    import asyncio
+
+    from esphome import codegen as cg
+    from esphome.components.home_io_control import platform_common as pc
+
+    class Recorder:
+        """Records the names of the setters called on it; every call returns a harmless value."""
+
+        def __init__(self):
+            self.calls = []
+
+        def __getattr__(self, name):
+            def call(*args):
+                self.calls.append((name, args))
+
+            return call
+
+    def emitted(config):
+        recorder = Recorder()
+        original_add = cg.add
+        cg.add = lambda expression: None
+        try:
+            asyncio.run(pc.wire_device_binding(recorder, recorder, {pc.CONF_IO_DEVICE_ID: "ABC123", **config}))
+        finally:
+            cg.add = original_add
+        return [name for name, _ in recorder.calls]
+
+    assert "set_low_power" not in emitted({})
+    assert "set_low_power" in emitted({pc.CONF_LOW_POWER: False})
+    assert "set_low_power" in emitted({pc.CONF_LOW_POWER: True})
+
+
+@case()
 def lbt_max_retries_is_accepted_with_a_warning_and_generates_no_code():
     """`lbt_max_retries` is retired (ADR 0096): the tuning block still accepts it within its old range
     and logs one warning naming the replacement key; a value outside the range is still reported,

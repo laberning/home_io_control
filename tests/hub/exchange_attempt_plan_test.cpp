@@ -216,7 +216,8 @@ TEST(Exchange, CommandToASilentMainsTargetMakesNineAttemptsListeningShortOnAllBu
   ASSERT_EQ(waits.size(), static_cast<size_t>(EXCHANGE_MAX_ATTEMPTS));
   for (size_t i = 0; i + 1 < waits.size(); i++)
     EXPECT_EQ(waits[i], rig.tuning.exchange_early_response_wait_ms) << "attempt " << i + 1;
-  EXPECT_EQ(waits.back(), rig.tuning.exchange_start_response_wait_ms) << "the last attempt listens the whole window";
+  EXPECT_EQ(waits.back(), decisions::start_reply_window_ms(rig.tuning, IO_868_BAND))
+      << "the last attempt listens the whole window";
   EXPECT_LT(esphome::test_clock::peek_ms() - start, rig.tuning.exchange_total_budget_ms);
 }
 
@@ -400,7 +401,7 @@ TEST(Exchange, UnconfirmedExecuteOnItsLastAllowedTryIsNotWaitedForAResend) {
 
   EXPECT_EQ(rig.radio.get_send_count(), 2) << "request, 0x3D; no re-send on a one-try exchange";
   EXPECT_LT(esphome::test_clock::peek_ms() - start,
-            rig.tuning.exchange_start_response_wait_ms + rig.tuning.exchange_response_wait_ms)
+            decisions::start_reply_window_ms(rig.tuning, IO_868_BAND) + rig.tuning.exchange_response_wait_ms)
       << "the exchange ends with the final wait, not after the re-send gap";
 }
 
@@ -424,8 +425,9 @@ TEST(Exchange, ALowPowerWakeUpExchangeKeepsAllItsAttemptsWhenABusyChannelDelaysE
     PlanRig rig;
     make_channels_always_busy_but_forced(rig);
     const uint32_t gap_ms = kind == decisions::ReadKind::COMMAND ? EXCHANGE_RETRY_DELAY_MS : 0;
-    const uint32_t window_ms =
-        kind == decisions::ReadKind::COMMAND ? rig.tuning.exchange_start_response_wait_ms : LOW_POWER_RESPONSE_WAIT_MS;
+    const uint32_t window_ms = kind == decisions::ReadKind::COMMAND
+                                   ? decisions::start_reply_window_ms(rig.tuning, IO_868_BAND)
+                                   : LOW_POWER_RESPONSE_WAIT_MS;
     rig.tuning.exchange_total_budget_ms =
         silent_attempts_bound_ms(rig, LOW_POWER_SETTLING_ATTEMPTS, gap_ms, window_ms, true) + 1;
 

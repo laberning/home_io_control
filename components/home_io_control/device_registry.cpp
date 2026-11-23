@@ -37,7 +37,9 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
   dev.dimmable = cfg.dimmable;
   dev.optimistic_state = cfg.optimistic_state;
   dev.travel_speed = cfg.travel_speed;
-  dev.low_power = cfg.low_power;
+  dev.low_power = cfg.low_power.value_or(low_power_default_);
+  if (!cfg.low_power.has_value())
+    low_power_from_band_.insert(device_id);
   dev.has_system_key = cfg.has_system_key;
   if (cfg.has_system_key)
     memcpy(dev.system_key, cfg.system_key, AES_KEY_SIZE);
@@ -50,6 +52,7 @@ void DeviceRegistry::add(const std::string &device_id, const DeviceConfig &cfg) 
 
 void DeviceRegistry::put(const std::string &device_id, IoDevice device) {
   const auto existing = devices_.find(device_id);
+  const bool discovered_low_power = device.low_power;  // before the YAML record and the band add theirs
   if (existing != devices_.end()) {
     device.entity_class = existing->second.entity_class;
     device.invert_override = existing->second.invert_override;
@@ -63,7 +66,13 @@ void DeviceRegistry::put(const std::string &device_id, IoDevice device) {
     device.temperature_range_min_c = existing->second.temperature_range_min_c;
     device.temperature_range_max_c = existing->second.temperature_range_max_c;
     device.reading_values = existing->second.reading_values;
+  } else {
+    // A device no YAML block declares: the discovery flags decide, and where they say nothing the band does.
+    device.low_power = device.low_power || low_power_default_;
   }
+  // A device that discovery reported as low-power is no longer on the band's default.
+  if (discovered_low_power)
+    low_power_from_band_.erase(device_id);
   resolve_device_features(device);
   devices_[device_id] = device;
 }

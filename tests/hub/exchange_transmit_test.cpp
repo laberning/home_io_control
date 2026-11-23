@@ -9,6 +9,7 @@
 #include "proto_commands.h"
 #include "proto_crypto.h"
 
+#include "test_bands.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
 
@@ -737,23 +738,9 @@ TEST(ChannelAccess, ALowPowerRequestSendsOnChannel2OnceItClears) {
   EXPECT_EQ(rig.sent_channels(), (Channels{FREQ_CH2}));
 }
 
-namespace {
-
-/// A second band for the engine tests: invented air frequencies, every channel may wake a low-power
-/// receiver, a looser fallback busy limit.
-IoBand second_band() {
-  IoBand band;
-  band.air_hz = {2450000000U, 2410000000U, 2475000000U};  // CH2, CH1, CH3
-  band.wake_up_channels = ChannelSet::all();
-  band.busy_limit_until_quiet_level_dbm = -70;
-  return band;
-}
-
-}  // namespace
-
 TEST(ChannelAccess, ALowPowerRequestOnABandThatWakesOnEveryChannelDrawsAmongThemAndLeavesABusyOne) {
   AccessRig rig;
-  rig.radio.set_band(second_band());
+  rig.radio.set_band(test_bands::second_band());
   rig.random_values = {1, 0};  // first channel: CH1 of CH2/CH1/CH3; then the back-off
   rig.radio.set_channel_rssi(FREQ_CH1, -50);
 
@@ -768,7 +755,7 @@ TEST(ChannelAccess, ALowPowerRequestOnABandThatWakesOnEveryChannelDrawsAmongThem
 TEST(ChannelAccess, ALowPowerRequestOnABandThatWakesOnEveryChannelCanTakeAnyOfThem) {
   for (const uint32_t random : {0u, 1u, 2u}) {
     AccessRig rig;
-    rig.radio.set_band(second_band());
+    rig.radio.set_band(test_bands::second_band());
     rig.random_values = {random};
     rig.run(true, ExchangeOptions{1});
     ASSERT_EQ(rig.sent_channels().size(), 1u);
@@ -779,8 +766,8 @@ TEST(ChannelAccess, ALowPowerRequestOnABandThatWakesOnEveryChannelCanTakeAnyOfTh
 TEST(ChannelAccess, AChannelInsideTheGuardOfTheFrequencyToAvoidIsNeverDrawn) {
   for (const uint32_t random : {0u, 1u, 2u, 3u}) {
     AccessRig rig;
-    rig.radio.set_band(second_band());
-    rig.engine.set_avoid_frequency_provider([]() -> uint32_t { return 2450000000U; });  // on CH2
+    rig.radio.set_band(test_bands::second_band());
+    rig.engine.set_avoid_frequency_provider([]() -> uint32_t { return test_bands::SECOND_BAND_CH2_HZ; });  // on CH2
     rig.random_values = {random};
     rig.run(false, ExchangeOptions{1});
     ASSERT_EQ(rig.sent_channels().size(), 1u);
@@ -790,8 +777,8 @@ TEST(ChannelAccess, AChannelInsideTheGuardOfTheFrequencyToAvoidIsNeverDrawn) {
 
 TEST(ChannelAccess, AForcedSendStaysInsideTheChannelsOfTheRequest) {
   AccessRig rig;
-  rig.radio.set_band(second_band());
-  rig.engine.set_avoid_frequency_provider([]() -> uint32_t { return 2475000000U; });  // on CH3
+  rig.radio.set_band(test_bands::second_band());
+  rig.engine.set_avoid_frequency_provider([]() -> uint32_t { return test_bands::SECOND_BAND_CH3_HZ; });  // on CH3
   rig.tuning.lbt_force_when_busy = true;
   rig.radio.set_channel_rssi(FREQ_CH2, -50);
   rig.radio.set_channel_rssi(FREQ_CH1, -60);
@@ -808,7 +795,7 @@ TEST(ChannelAccess, AForcedSendStaysInsideTheChannelsOfTheRequest) {
 TEST(ChannelAccess, TheBusyLimitWithoutAQuietLevelIsTheBandsOwn) {
   AccessRig rig;
   EXPECT_EQ(rig.engine.busy_limit_dbm(), -85);
-  rig.radio.set_band(second_band());
+  rig.radio.set_band(test_bands::second_band());
   EXPECT_EQ(rig.engine.busy_limit_dbm(), -70);
   rig.tuning.lbt_rssi_threshold_dbm = -95;
   EXPECT_EQ(rig.engine.busy_limit_dbm(), -95) << "the user's setting still overrides the band";

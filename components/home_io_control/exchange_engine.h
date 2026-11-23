@@ -146,6 +146,14 @@ class ExchangeEngine {
   /// @return How the run ended; see @ref AttemptRunResult.
   AttemptRunResult run_attempts(const AttemptRun &run, const TryHandler &on_try);
 
+  /// The band the radio is on (RadioDriver::band()): the one description every rule that depends on
+  /// the band reads.
+  [[nodiscard]] const IoBand &band() const { return (*this->radio_ptr_)->band(); }
+
+  /// The wait before each try after the first, from the band: the gap of the loops that run their
+  /// own tries (pairing, the key pull) and of a gapped attempt plan.
+  [[nodiscard]] uint16_t retry_gap_ms() const { return this->band().retry_gap_ms; }
+
   /// The radio's estimate of how long transmitting `frame` on `freq` with `preamble` takes, in
   /// whole milliseconds rounded up; 0 for a frame that does not serialize (it is never sent).
   [[nodiscard]] uint32_t tx_time_ms(const IoFrame &frame, uint32_t freq, uint16_t preamble) const;
@@ -157,7 +165,8 @@ class ExchangeEngine {
   /// @param request        The request that will be sent (its size sets the transmit estimate).
   /// @param freq           RF channel the request goes out on (Hz).
   /// @param preamble       Preamble the request is sent with, in bytes.
-  /// @param last_window_ms Listen time of the last attempt, or 0 for `exchange_start_response_wait_ms`.
+  /// @param last_window_ms Listen time of the last attempt, or 0 for the start reply window
+  /// (decisions::start_reply_window_ms()).
   /// @param with_short_lead True when the plan leads with a short attempt (decisions::attempt_plan()).
   [[nodiscard]] decisions::AttemptPlan plan_attempts(decisions::ReadKind kind, bool low_power, const IoFrame &request,
                                                      uint32_t freq, uint16_t preamble, uint16_t last_window_ms = 0,

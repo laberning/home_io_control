@@ -82,7 +82,7 @@ void ExchangeEngine::record_debug(const char *stage, uint8_t tries, bool saw_cha
   this->debug_.capture_valid = capture.valid;
   this->debug_.capture_rx_done = capture.rx_done;
   this->debug_.capture_crc_error = capture.crc_error;
-  this->debug_.capture_freq_hz = capture.freq_hz;
+  this->debug_.capture_freq_hz = this->band().air_hz_of(capture.freq_hz);
   this->debug_.capture_irq_status = capture.irq_status;
   this->debug_.capture_packet_status = capture.packet_status;
   this->debug_.capture_reported_len = capture.reported_len;
@@ -185,7 +185,8 @@ void ExchangeEngine::note_idle_reading_() {
     ESP_LOGW(TAG,
              "Channel %" PRIu32 " Hz idles at %d dBm, close to the highest limit this hub uses (%d dBm); free "
              "channels may be hard to find here. Set lbt_rssi_threshold_dbm to choose the limit yourself.",
-             report.little_margin->freq_hz, report.little_margin->level_dbm, BUSY_LIMIT_CEILING_DBM);
+             this->band().air_hz_of(report.little_margin->freq_hz), report.little_margin->level_dbm,
+             BUSY_LIMIT_CEILING_DBM);
   }
 }
 
@@ -194,7 +195,7 @@ int16_t ExchangeEngine::busy_limit_dbm() const {
     return *this->tuning_->lbt_rssi_threshold_dbm;
   const std::optional<ChannelLevel> quiet = this->quiet_level_.board_quiet_level();
   return decisions::busy_limit_dbm(quiet.has_value() ? std::optional<int16_t>(quiet->level_dbm) : std::nullopt,
-                                   (*this->radio_ptr_)->band().busy_limit_until_quiet_level_dbm);
+                                   this->band().busy_limit_until_quiet_level_dbm);
 }
 
 // ============================================================================
@@ -257,8 +258,8 @@ bool ExchangeEngine::transmit_frame(const IoFrame &frame, uint32_t freq, uint16_
     result = radio->send_packet(buf, len, tx_config);
     if (result.status != TxResult::Status::CHANNEL_BUSY)
       break;
-    ESP_LOGD(TAG, "LBT: channel busy (RSSI %d dBm on %" PRIu32 " Hz), retry %u/%u", result.cca_level_dbm, freq, lbt + 1,
-             lbt_checks);
+    ESP_LOGD(TAG, "LBT: channel busy (RSSI %d dBm on %" PRIu32 " Hz), retry %u/%u", result.cca_level_dbm,
+             this->band().air_hz_of(freq), lbt + 1, lbt_checks);
     this->note_busy_check_(result.cca_level_dbm);
     delay(LBT_RETRY_DELAY_MS);
   }
@@ -339,8 +340,8 @@ ExchangeEngine::RequestTransmit ExchangeEngine::transmit_with_channel_access_(co
       const bool sent = this->conclude_send_(frame, tx_config, len, result);
       return {sent ? decisions::ChannelAccessStatus::SENT : decisions::ChannelAccessStatus::FAILED, freq};
     }
-    ESP_LOGD(TAG, "Channel busy (RSSI %d dBm on %" PRIu32 " Hz), check %u", result.cca_level_dbm, freq,
-             busy_checks + 1);
+    ESP_LOGD(TAG, "Channel busy (RSSI %d dBm on %" PRIu32 " Hz), check %u", result.cca_level_dbm,
+             this->band().air_hz_of(freq), busy_checks + 1);
     this->note_busy_check_(result.cca_level_dbm);
     const std::optional<uint32_t> backoff_ms =
         decisions::next_backoff_ms(millis() - begin_ms, busy_checks, low_power, this->draw_random_());
@@ -366,14 +367,14 @@ ExchangeEngine::RequestTransmit ExchangeEngine::transmit_with_channel_access_(co
   const uint32_t forced_freq = decisions::forced_send_channel(channels, levels);
   const RadioTxConfig tx_config = tx_config_for(*radio, frame, forced_freq, preamble);
   ESP_LOGW(TAG, "Channel busy for %" PRIu32 " ms: sending cmd=0x%02X on %" PRIu32 " Hz anyway (lbt_force_when_busy)",
-           millis() - begin_ms, frame.cmd, forced_freq);
+           millis() - begin_ms, frame.cmd, this->band().air_hz_of(forced_freq));
   const bool sent = this->conclude_send_(frame, tx_config, len, radio->send_packet(buf, len, tx_config));
   return {sent ? decisions::ChannelAccessStatus::SENT_FORCED : decisions::ChannelAccessStatus::FAILED, forced_freq};
 }
 
 ChannelSet ExchangeEngine::request_channels_(bool low_power) const {
   const uint32_t avoid_hz = this->avoid_frequency_provider_ ? this->avoid_frequency_provider_() : 0;
-  return decisions::request_channels(low_power, (*this->radio_ptr_)->band(), avoid_hz);
+  return decisions::request_channels(low_power, this->band(), avoid_hz);
 }
 
 uint32_t ExchangeEngine::draw_request_channel_(const ChannelSet &channels, uint32_t avoid_freq) const {
@@ -404,9 +405,9 @@ decisions::AttemptPlan ExchangeEngine::plan_for_(const IoFrame &request, uint32_
   if (!attempts.planned) {
     // Never below 1 (a caller passing 0 must not silently transmit nothing) and never above
     // EXCHANGE_RETRY_COUNT: a caller that wants more attempts passes a read kind.
-    const uint16_t window_ms =
-        is_start(request) ? this->tuning_->exchange_start_response_wait_ms : this->tuning_->exchange_response_wait_ms;
-    decisions::AttemptPlan counted = decisions::attempt_plan_for_tries(attempts.max_tries, window_ms);
+    const uint16_t window_ms = is_start(request) ? decisions::start_reply_window_ms(*this->tuning_, this->band())
+                                                 : this->tuning_->exchange_response_wait_ms;
+    decisions::AttemptPlan counted = decisions::attempt_plan_for_tries(attempts.max_tries, window_ms, this->band());
     // A low-power target keeps the tries the caller named behind the wake-up (ADR 0095).
     counted.bounded_by_attempts = is_start(request) && (request.ctrl1 & CTRL1_LOW_POWER) != 0;
     return counted;
@@ -426,8 +427,8 @@ decisions::AttemptPlan ExchangeEngine::plan_for_(const IoFrame &request, uint32_
 decisions::AttemptPlan ExchangeEngine::plan_attempts(decisions::ReadKind kind, bool low_power, const IoFrame &request,
                                                      uint32_t freq, uint16_t preamble, uint16_t last_window_ms,
                                                      bool with_short_lead) const {
-  return decisions::attempt_plan(kind, low_power, *this->tuning_, this->tx_time_ms(request, freq, preamble),
-                                 last_window_ms, with_short_lead);
+  return decisions::attempt_plan(kind, low_power, *this->tuning_, this->band(),
+                                 this->tx_time_ms(request, freq, preamble), last_window_ms, with_short_lead);
 }
 
 bool ExchangeEngine::begin_try_(uint8_t tries_started, uint32_t elapsed_ms, uint32_t gap_ms, uint32_t window_ms,
@@ -534,13 +535,13 @@ const char *inbound_stage_name(exchange::InboundAuthState state) {
 /// transmits noise this layer can't decode needs the RX bandwidth or framing looked at. Redacted
 /// through the same helper as every other frame log, so an unparsable frame can't leak key material
 /// by being unrecognisable (see ADR 0011).
-void log_unparsable_frame(const char *stage, int tries, const RadioRxPacket &packet) {
+void log_unparsable_frame(const char *stage, int tries, const RadioRxPacket &packet, const IoBand &band) {
   // The *fact* that a frame failed to parse stays unconditional — it is a real fault worth
   // surfacing to someone who never enables a debug flag. The raw bytes only help someone already
   // debugging the PHY, and a noisy channel can produce several of these a minute, so they sit
   // behind the frame-log flag with the rest of that detail.
   ESP_LOGW(TAG, "%s try=%d: %u bytes did not parse as a frame on %" PRIu32 " Hz", stage, tries, packet.len,
-           packet.freq_hz);
+           band.air_hz_of(packet.freq_hz));
 #ifdef IOHOME_FRAME_LOG
   char hex[FRAME_LOG_HEX_BUFFER_SIZE];
   render_frame_hex_redacted(packet.data, packet.len, hex, sizeof(hex));
@@ -572,8 +573,10 @@ void format_try_age(const exchange::OutboundExchangeContext &ctx, char (&buf)[TR
 }
 
 /// Print the `Auth challenge` line of a try. Its values are kept in `ctx` so that the line can follow the final
-/// wait instead of delaying the reply that wait listens for (ADR 0111).
-void log_auth_challenge(const IoFrame &request, const exchange::OutboundExchangeContext &ctx) {
+/// wait instead of delaying the reply that wait listens for (ADR 0111). A band whose receivers stop listening soon
+/// after a challenge sets a threshold, and an answer past it is reported on a line of its own after the `Auth
+/// challenge` line (IoBand::late_answer_warn_ms).
+void log_auth_challenge(const IoFrame &request, const exchange::OutboundExchangeContext &ctx, const IoBand &band) {
   char age[TRY_AGE_BUFFER_SIZE];
   format_try_age(ctx, age);
   ESP_LOGI(TAG,
@@ -581,6 +584,10 @@ void log_auth_challenge(const IoFrame &request, const exchange::OutboundExchange
            " req_cmd=0x%02X req_len=%u preamble=%u age_ms=%s answer_us=%" PRIu32,
            ctx.try_index, ctx.first_response_ms - ctx.try_start_ms, request.cmd, request.data_len, ctx.request_preamble,
            age, ctx.answer_us);
+  if (decisions::answer_is_late(ctx.answer_us, band)) {
+    ESP_LOGW(TAG, "Auth challenge try=%d answered late: answer_us=%" PRIu32 " is above the band's %u ms", ctx.try_index,
+             ctx.answer_us, band.late_answer_warn_ms);
+  }
 }
 
 /// True for a start frame addressed to a duty-cycled receiver — the only frame that has a wake-up
@@ -903,7 +910,7 @@ decisions::ChannelAccessStatus ExchangeEngine::transmit_request_(const IoFrame &
     this->counters_.channel_busy_attempts++;
     ESP_LOGI(TAG,
              "Try %d ended: channel busy for cmd=%s(0x%02X), nothing sent, last checked %" PRIu32 " Hz preamble=%u",
-             ctx.try_index, command_name(request.cmd), request.cmd, sent.freq_hz, preamble);
+             ctx.try_index, command_name(request.cmd), request.cmd, this->band().air_hz_of(sent.freq_hz), preamble);
   } else if (sent.status == decisions::ChannelAccessStatus::FAILED) {
     ctx.state = exchange::OutboundExchangeState::FAILED;
     this->record_debug("tx_request_failed", ctx.try_index, false);
@@ -938,7 +945,7 @@ decisions::ExchangeFirstResponseDisposition ExchangeEngine::wait_for_first_respo
       frame_log_flush();
       this->record_debug("first_parse_fail", ctx.try_index, false);
       this->counters_.parse_failures++;
-      log_unparsable_frame("Unparsable first response", ctx.try_index, pkt);
+      log_unparsable_frame("Unparsable first response", ctx.try_index, pkt, this->band());
       return ReplyDisposition::IGNORE;
     }
     disp = decisions::classify_exchange_first_response(request, *parsed);
@@ -996,7 +1003,7 @@ bool ExchangeEngine::handle_authentication_(const IoFrame &request, uint32_t fre
   if (!answered) {
     // No final wait follows, so the quiet window ends here.
     frame_log_release();
-    log_auth_challenge(request, ctx);
+    log_auth_challenge(request, ctx, this->band());
     ctx.state = exchange::OutboundExchangeState::FAILED;
     this->record_debug("auth_response_failed", ctx.try_index, true);
     return false;
@@ -1068,7 +1075,7 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
       frame_log_flush();
       this->record_debug("final_parse_fail", ctx.try_index, true);
       this->counters_.parse_failures++;
-      log_unparsable_frame("Unparsable final response", ctx.try_index, pkt);
+      log_unparsable_frame("Unparsable final response", ctx.try_index, pkt, this->band());
       return ReplyDisposition::IGNORE;
     }
     if (is_valid_final_response(*parsed, request))
@@ -1082,7 +1089,7 @@ decisions::ExchangeFinalResponseDisposition ExchangeEngine::wait_for_final_respo
 
   // The quiet window ends with the wait: the held frame-log lines, then the line the challenge deferred.
   frame_log_release();
-  log_auth_challenge(request, ctx);
+  log_auth_challenge(request, ctx, this->band());
 
   this->note_final_wait_(stats);
   if (outcome == ListenOutcome::ACCEPTED)
@@ -1354,7 +1361,7 @@ ExchangeEngine::ChallengeResult ExchangeEngine::challenge_sender(const IoFrame &
     // shows what the wait heard when the answer never came; its held frame-log lines print first.
     if (parsed == nullptr) {
       frame_log_flush();
-      log_unparsable_frame("Unparsable challenge answer", 1, pkt);
+      log_unparsable_frame("Unparsable challenge answer", 1, pkt, this->band());
       return ReplyDisposition::IGNORE;
     }
     if (decisions::classify_challenge_answer(*parsed, request.src, this->node_id_) ==

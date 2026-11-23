@@ -59,8 +59,13 @@ static constexpr TuningNumberParam NUMBER_PARAMS[] = {
                                                    : std::numeric_limits<float>::quiet_NaN();
      },
      [](TuningConfig &t, float v) { t.lbt_rssi_threshold_dbm = static_cast<int16_t>(v); }, false},
+    // NaN while unset, like the busy limit: the band gives the window then, and the number entity
+    // shows no value instead of a window nobody set.
     {"exchange_start_response_wait_ms",
-     [](const TuningConfig &t) { return static_cast<float>(t.exchange_start_response_wait_ms); },
+     [](const TuningConfig &t) {
+       return t.exchange_start_response_wait_ms.has_value() ? static_cast<float>(*t.exchange_start_response_wait_ms)
+                                                            : std::numeric_limits<float>::quiet_NaN();
+     },
      [](TuningConfig &t, float v) { t.exchange_start_response_wait_ms = static_cast<uint16_t>(v); }, false},
     {"exchange_early_response_wait_ms",
      [](const TuningConfig &t) { return static_cast<float>(t.exchange_early_response_wait_ms); },

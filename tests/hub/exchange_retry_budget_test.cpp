@@ -402,7 +402,7 @@ TEST(Exchange, ATryThatWouldEndAtTheBudgetIsNotStarted) {
   const uint32_t tail_ms = defaults.exchange_response_wait_ms + answer_tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS;
   const auto edge =
       static_cast<uint16_t>(third_check_ms + EXCHANGE_RETRY_DELAY_MS + tx_ms + EXCHANGE_ATTEMPT_OVERHEAD_MS +
-                            defaults.exchange_start_response_wait_ms + tail_ms);
+                            decisions::start_reply_window_ms(defaults, IO_868_BAND) + tail_ms);
   const char *stage = nullptr;
   EXPECT_EQ(run_challenged_status_poll(edge, nullptr, &stage), 4);
   EXPECT_STREQ(stage, "retry_budget_exhausted");

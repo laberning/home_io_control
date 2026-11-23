@@ -119,6 +119,9 @@ void IOHomeControlComponent::setup() {
     this->mark_failed(LOG_STR("Radio driver setup failed (see 'Radio setup failed' in the config dump)"));
     return;
   }
+  // Entities register their devices after this setup() (hub priority HARDWARE), so a device that declares no
+  // `low_power:` finds the band's default already in place.
+  this->registry_.set_low_power_default(this->radio_->band().low_power_by_default);
 
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
   // Boot-time bootloader-version excursion — deliberately before
@@ -757,7 +760,14 @@ void IOHomeControlComponent::dump_config() {
   // per-try preamble order (ADR 0040) without anyone having to share their tuning YAML.
   ESP_LOGCONFIG(detail::TAG, "  Low-power wake belief: %s",
                 this->tuning_.low_power_wake_belief ? "on" : "off (tuning: low_power_wake_belief: false)");
+  // The window a start frame listens for its reply: the band's, or the user's `exchange_start_response_wait_ms`.
+  const IoBand &band = this->radio_ != nullptr ? this->radio_->band() : IO_868_BAND;
+  ESP_LOGCONFIG(detail::TAG, "  Start reply window: %u ms (%s)",
+                static_cast<unsigned>(decisions::start_reply_window_ms(this->tuning_, band)),
+                this->tuning_.exchange_start_response_wait_ms.has_value() ? "tuning: exchange_start_response_wait_ms"
+                                                                          : "the radio's band");
   ESP_LOGCONFIG(detail::TAG, "  Devices: %zu", this->registry_.size());
+  this->dump_device_power_class_config_();
   this->dump_linked_remotes_config_();
 
   this->dump_oneway_controllers_config_();
@@ -777,6 +787,17 @@ void IOHomeControlComponent::dump_config() {
 #ifdef IOHOME_LR1121_FIRMWARE_UPDATE
   this->dump_lr1121_firmware_update_debug_();
 #endif
+}
+
+void IOHomeControlComponent::dump_device_power_class_config_() {
+  // Which devices count as low-power and why: a declared `low_power:` stands, otherwise the radio's band decides.
+  for (const auto &entry : this->registry_) {
+    if (entry.second.registered_by_pairing)
+      continue;
+    ESP_LOGCONFIG(detail::TAG, "    %s low_power: %s (%s)", entry.first.c_str(), entry.second.low_power ? "yes" : "no",
+                  this->registry_.low_power_source(entry.first) == LowPowerSource::DECLARED ? "declared in YAML"
+                                                                                            : "band default");
+  }
 }
 
 void IOHomeControlComponent::dump_linked_remotes_config_() const {

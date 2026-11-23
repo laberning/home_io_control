@@ -8,9 +8,12 @@
 #include "log_capture.h"
 #include "oneway_controller.h"
 #include "stubs/radio_test_common.h"
+#include "test_bands.h"
 
 #include <algorithm>
 #include <cstring>
+#include <string>
+#include <vector>
 
 using namespace esphome::home_io_control;
 using test::make_rx_packet;
@@ -248,6 +251,45 @@ TEST(HubCore, DumpConfigPrintsNoLinkedRemotesSectionWhenOnlyIdentitiesDriveDevic
   EXPECT_EQ(config_lines_with(log, "  Linked Remotes: %zu"), 0u);
   EXPECT_EQ(config_lines_with(log, "    - remote %s -> device %s"), 0u);
   EXPECT_EQ(config_lines_with(log, "      drives device %s"), 1u);
+}
+
+// The boot log names the start reply window in effect and, per device, where its `low_power` value comes from
+// (ADR 0132). The band is invented (tests/support/test_bands.h).
+TEST(HubCore, DumpConfigNamesTheStartReplyWindowAndWhereEachDevicesLowPowerComesFrom) {
+  TestableHubComponent comp;
+  MockRadio radio;
+  IoBand band = test_bands::second_band();
+  band.low_power_by_default = false;  // setup() hands the default to the registry; this test does not run it
+  radio.set_band(band);
+  comp.radio_ = &radio;
+  DeviceConfig declared{};
+  declared.low_power = true;
+  comp.add_device("AABBCC", declared);
+  comp.add_device("DDEEFF", DeviceConfig{});
+
+  {
+    test::LogCapture log(/*with_text=*/true);
+    comp.dump_config();
+    std::vector<std::string> lines;
+    for (const auto &line : log.lines()) {
+      if (line.level == 'C')
+        lines.push_back(line.text);
+    }
+    const auto has = [&lines](const std::string &text) {
+      return std::find(lines.begin(), lines.end(), text) != lines.end();
+    };
+    EXPECT_TRUE(has("  Start reply window: 80 ms (the radio's band)"));
+    EXPECT_TRUE(has("    AABBCC low_power: yes (declared in YAML)"));
+    EXPECT_TRUE(has("    DDEEFF low_power: no (band default)"));
+  }
+
+  comp.tuning_.exchange_start_response_wait_ms = 900;
+  test::LogCapture log(/*with_text=*/true);
+  comp.dump_config();
+  EXPECT_TRUE(std::any_of(log.lines().begin(), log.lines().end(), [](const auto &line) {
+    return line.text == "  Start reply window: 900 ms (tuning: exchange_start_response_wait_ms)";
+  }));
+  comp.radio_ = nullptr;
 }
 
 TEST(HubCore, DumpConfigStillDumpsSectionsOfARadioThatFailedAfterSetup) {

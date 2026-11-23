@@ -7,6 +7,7 @@
 ///
 /// Inline, stateless helpers, testable without radio hardware or timing.
 
+#include "proto_band.h"
 #include "proto_codecs.h"
 #include "proto_constants.h"
 #include "proto_frame.h"
@@ -185,6 +186,19 @@ inline bool is_broadcast_reply_for(const IoFrame &frame, uint8_t expected_cmd, c
 /// @param radio_failed The driver latched a failure after setup.
 /// @return true to hold the continuous-loop request; false to release it.
 constexpr bool wants_continuous_loop(bool radio_ready, bool radio_failed) { return radio_ready && !radio_failed; }
+
+// == Challenge answer ==
+
+/// Whether the answer to a challenge left too late: later than the band's threshold
+/// (IoBand::late_answer_warn_ms) after the challenge was accepted. A threshold of 0 never reports.
+///
+/// @param answer_us Microseconds from the challenge being accepted until the answer was on air and
+///                  the radio back in receive (OutboundExchangeContext::answer_us).
+/// @param band      The band the radio is on.
+[[nodiscard]] constexpr bool answer_is_late(uint32_t answer_us, const IoBand &band) {
+  constexpr uint32_t us_per_ms = 1000;
+  return band.late_answer_warn_ms != 0 && answer_us > static_cast<uint32_t>(band.late_answer_warn_ms) * us_per_ms;
+}
 
 }  // namespace decisions
 }  // namespace home_io_control

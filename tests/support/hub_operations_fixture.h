@@ -151,7 +151,7 @@ inline size_t planned_settling_attempts(TestableComponent &comp) {
   IoFrame request{};
   EXPECT_TRUE(create_get_status(request, comp.node_id_, dev->node_id, dev->low_power));
   const ExchangeEngine &engine = comp.exchange_engine_;
-  return decisions::attempt_plan(decisions::ReadKind::SETTLING, dev->low_power, comp.tuning_,
+  return decisions::attempt_plan(decisions::ReadKind::SETTLING, dev->low_power, comp.tuning_, engine.band(),
                                  engine.tx_time_ms(request, FREQ_CH2, engine.request_preamble_for(request)))
       .max_attempts;
 }

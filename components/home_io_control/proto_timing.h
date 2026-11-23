@@ -164,14 +164,16 @@ static constexpr int32_t RESPONSE_WAIT_MS = 500;  ///< Wait for response to non-
 ///
 /// 400 ms sits comfortably above every directly measured reply while keeping a failed exchange
 /// inside EXCHANGE_TOTAL_BUDGET_MS, so a dead device does not block the ESPHome loop past its own
-/// warning threshold (ADR 0013). Raise `exchange_start_response_wait_ms` from YAML if a device ever
-/// genuinely answers late — but check `wait_ms` in the logs first, since a fast-or-never device is a
-/// turnaround problem that a longer window cannot fix.
+/// warning threshold (ADR 0013). This is the start window of IO_868_BAND (proto_band.h), which the
+/// attempt plans read through the radio's band. Set `exchange_start_response_wait_ms` in YAML to replace it if a device
+/// ever genuinely answers late — but check `wait_ms` in the logs first, since a fast-or-never device is a turnaround
+/// problem that a longer window cannot fix.
 static constexpr int32_t RESPONSE_START_WAIT_MS = 400;
 
 static constexpr int32_t RESPONSE_AUTH_WAIT_MS =
-    RESPONSE_WAIT_MS;                                    ///< Wait for final response after challenge response
-static constexpr int32_t EXCHANGE_RETRY_DELAY_MS = 250;  ///< Gap between retries within one HA command
+    RESPONSE_WAIT_MS;  ///< Wait for final response after challenge response
+static constexpr int32_t EXCHANGE_RETRY_DELAY_MS =
+    250;  ///< Gap between retries within one HA command; IO_868_BAND's gap
 /// Attempts per exchange for every caller that has not asked for an attempt plan
 /// (decisions::attempt_plan()): a command that is not repeat-safe (decisions::is_repeat_safe_command()),
 /// heater registers, management actions and the pairing loops. It is also the ceiling of the
@@ -206,7 +208,8 @@ static constexpr uint16_t LOW_POWER_SHORT_LEAD_WINDOW_MS = 100;
 /// below every slower sample, so one attempt's window covers a reply that arrives late without
 /// waiting for the outliers. Three such attempts behind the default LOW_POWER_WAKE_MS take
 /// about 3.2 s, so a low-power plan runs past EXCHANGE_TOTAL_BUDGET_MS
-/// (decisions::AttemptPlan::bounded_by_attempts, ADR 0095).
+/// (decisions::AttemptPlan::bounded_by_attempts, ADR 0095). This is the low-power window of IO_868_BAND
+/// (proto_band.h), which the attempt plans read through the radio's band.
 static constexpr uint16_t LOW_POWER_RESPONSE_WAIT_MS = 550;
 /// How long an attempt listens for a mains device's reply when another attempt follows it, after
 /// the end of its own transmission.

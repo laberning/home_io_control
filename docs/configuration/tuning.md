@@ -137,8 +137,8 @@ your device may differ.
 | `sx1276_rx_bandwidth` | SX1276 | `41.7` | `20.8` / `41.7` / `62.5` / `83.3` / `125.0` (kHz) | Receiver bandwidth (single-sideband, so `41.7` spans 83.4 kHz); wider tolerates LO offset, narrower rejects more noise. |
 | `sx1276_discovery_hop_slice_ms` | SX1276 | `5` | 5–200 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
 | `sx1262_discovery_hop_slice_ms` | SX1262 | `7` | 0–500 ms | Per-channel dwell for any hopping listen — discovery and the `scan_paired_devices` roll-call alike. |
-| `exchange_start_response_wait_ms` | both | `400` | 200–4000 ms | How long to listen for a reply to a *start* frame (the first frame of a command). |
-| `exchange_early_response_wait_ms` | both | `200` | 150–1000 ms | How long every attempt but the last listens when a mains device is asked more than once. The last attempt listens `exchange_start_response_wait_ms`. |
+| `exchange_start_response_wait_ms` | both | unset (the radio's band gives `400` ms on 868 MHz) | 200–4000 ms | Overrides how long to listen for a reply to a *start* frame (the first frame of a command). Unset, the radio's band decides, and the number entity shows no value. |
+| `exchange_early_response_wait_ms` | both | `200` | 150–1000 ms | How long every attempt but the last listens when a mains device is asked more than once. The last attempt listens the start reply window (the band's, or `exchange_start_response_wait_ms` when set). |
 | `exchange_response_wait_ms` | both | `500` | 200–4000 ms | How long to listen for a reply to a continuation frame, and for the post-auth final response. |
 | `exchange_total_budget_ms` | both | `2500` | 500–12000 ms | Wall-clock ceiling on one whole exchange, including retries. |
 | `lr1121_rx_bandwidth` | LR1121 | `117.3` | `39.0` / `46.9` / `58.6` / `78.2` / `117.3` / `156.2` / `187.2` (kHz) | Receiver bandwidth (double-sideband). `117.3` is validated on real LR1121 hardware. |
@@ -271,15 +271,18 @@ longer settle.
 
 #### `exchange_start_response_wait_ms` / `exchange_response_wait_ms`
 
-How long the hub listens for a device's reply before giving up on a try. Raise
-`exchange_start_response_wait_ms` when a device ignores commands but is known to be in range and
-correctly paired.
+How long the hub listens for a device's reply before giving up on a try. The radio's band gives
+the start window (`400` ms on 868 MHz) and, for a `low_power` device, the low-power window, so a
+band with other reply times needs no setting. `exchange_start_response_wait_ms` is an override: leave
+it out to use the band's window, and set it only to replace that window for start frames, for example
+when a device ignores commands but is known to be in range and correctly paired. It changes nothing
+else, and the boot log shows the window in effect (`Start reply window`).
 
 *Observations:* for this device class, reply latency is fast-or-never rather than variably slow —
 a device answers within a few milliseconds of the carrier dropping, or it does not answer at all.
 A failure therefore shows up as no frame received rather than as a late arrival, so raising this
 value cannot fix a device that genuinely fails to respond; check `wait_ms` in the logs first. The
-`400` ms default sits comfortably above every directly measured reply from this device class while
+`400` ms of the 868 MHz band sits comfortably above every directly measured reply from this device class while
 keeping a failed exchange inside `exchange_total_budget_ms`. Raise it only for a device you have
 confirmed genuinely answers late.
 
@@ -293,7 +296,7 @@ a stubborn device; lower it if slow failures are worse for you than missed comma
 #### `exchange_early_response_wait_ms`
 
 A mains-powered device answers within tens of milliseconds or not at all, so a command or a status
-read that gets no answer does not need to wait the whole `exchange_start_response_wait_ms` before it
+read that gets no answer does not need to wait the whole start window before it
 is sent again. The hub sends such a request again without a gap: every attempt but the last listens
 `exchange_early_response_wait_ms`, and the last listens the whole start window, so a device that
 answers late still gets one full-length listen. With the defaults that is up to nine attempts about
@@ -307,8 +310,8 @@ attempts with a gap, because a second copy can stop what the first started
 36 to 42 ms after the start of the hub's transmission and a Sunea awning answered its status reads
 within 33 to 49 ms. `200` is twice the slowest of the corpus replies.
 Raise it for a mains device whose `wait_ms` in the `Try N answered` log line exceeds it; fewer attempts
-fit the budget the higher it goes, and a value above `exchange_start_response_wait_ms` has the same
-effect as that value.
+fit the budget the higher it goes, and a value above the start window has the same
+effect as that window.
 
 #### `exchange_total_budget_ms`
 

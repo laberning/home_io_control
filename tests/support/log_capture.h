@@ -22,9 +22,14 @@ class LogCapture : public esphome::host_log_stub::Recorder {
     char level{};        ///< 'E', 'W', 'I', 'D', 'V' or 'C'.
     std::string tag;     ///< The line's tag.
     std::string format;  ///< The format string, arguments not filled in.
+    std::string text{};  ///< The formatted line; empty unless the capture was made with text.
   };
 
-  LogCapture() : previous_(esphome::host_log_stub::recorder()) { esphome::host_log_stub::recorder() = this; }
+  /// @param with_text True to format every line too, so a test can read a value it prints. The
+  ///                  arguments of every logged line are then evaluated, which a plain capture avoids.
+  explicit LogCapture(bool with_text = false) : with_text_(with_text), previous_(esphome::host_log_stub::recorder()) {
+    esphome::host_log_stub::recorder() = this;
+  }
   ~LogCapture() override { esphome::host_log_stub::recorder() = previous_; }
   LogCapture(const LogCapture &) = delete;
   LogCapture &operator=(const LogCapture &) = delete;
@@ -32,7 +37,14 @@ class LogCapture : public esphome::host_log_stub::Recorder {
   LogCapture &operator=(LogCapture &&) = delete;
 
   void record(char level, const char *tag, const char *format) override {
-    lines_.push_back({level, tag != nullptr ? tag : "", format != nullptr ? format : ""});
+    lines_.push_back({level, tag != nullptr ? tag : "", format != nullptr ? format : "", {}});
+  }
+
+  [[nodiscard]] bool wants_text() const override { return with_text_; }
+
+  void record_text(char /*level*/, const char * /*tag*/, const char *text) override {
+    if (!lines_.empty())
+      lines_.back().text = text;
   }
 
   /// @return The lines recorded so far, in order.
@@ -49,6 +61,7 @@ class LogCapture : public esphome::host_log_stub::Recorder {
   void clear() { lines_.clear(); }
 
  private:
+  bool with_text_;
   esphome::host_log_stub::Recorder *previous_;
   std::vector<Line> lines_;
 };

@@ -293,7 +293,7 @@ TxResult RadioSX1276::send_packet(const uint8_t *data, uint8_t len, const RadioT
   if (auto busy = this->channel_busy_level_(tx_config))
     return TxResult::channel_busy(*busy);
 #ifdef IOHOME_FRAME_LOG
-  log_frame("TX", data, len, tx_config.freq_hz, tx_config.preamble_len);
+  log_frame("TX", data, len, this->band().air_hz_of(tx_config.freq_hz), tx_config.preamble_len);
 #endif
   this->set_mode_standby();
   // The receiver and the transmitter share one FIFO, and neither Rx to standby nor standby to Tx
@@ -416,7 +416,7 @@ bool RadioSX1276::wait_for_packet(RadioRxPacket &packet, uint32_t timeout_ms) {
   this->fill_capture_info_(true, irq1, irq2, rssi, packet.data, packet.len, packet.data, packet.len);
 #ifdef IOHOME_FRAME_LOG
   if (packet.len > 0)
-    log_frame("RX", packet.data, packet.len, this->current_freq_);
+    log_frame("RX", packet.data, packet.len, this->band().air_hz_of(this->current_freq_));
 #endif
   return packet.len > 0;
 }
@@ -439,7 +439,7 @@ bool RadioSX1276::check_for_packet(RadioRxPacket &packet) {
     this->fill_capture_info_(false, irq1, irq2, rssi, packet.data, packet.len, packet.data, packet.len);
 #ifdef IOHOME_FRAME_LOG
     if (packet.len > 0)
-      log_frame("RX", packet.data, packet.len, this->current_freq_);
+      log_frame("RX", packet.data, packet.len, this->band().air_hz_of(this->current_freq_));
 #endif
     return packet.len > 0;
   }

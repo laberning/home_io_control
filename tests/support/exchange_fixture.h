@@ -73,7 +73,7 @@ inline decisions::AttemptPlan expected_plan(const ExchangeEngine &engine, const 
                                             decisions::ReadKind kind, const IoFrame &request,
                                             bool with_short_lead = false) {
   const bool low_power = (request.ctrl1 & CTRL1_LOW_POWER) != 0;
-  return decisions::attempt_plan(kind, low_power, tuning,
+  return decisions::attempt_plan(kind, low_power, tuning, engine.band(),
                                  engine.tx_time_ms(request, FREQ_CH2, engine.request_preamble_for(request)), 0,
                                  with_short_lead);
 }

@@ -560,7 +560,8 @@ TEST(Exchange, ResponseWindowDefaultsComeFromTheProtocolConstants) {
   // both windows only need to clear a few tens of milliseconds and their relative order carries
   // no meaning worth pinning.
   TuningConfig tuning;
-  EXPECT_EQ(tuning.exchange_start_response_wait_ms, RESPONSE_START_WAIT_MS);
+  EXPECT_FALSE(tuning.exchange_start_response_wait_ms.has_value()) << "unset: the band gives the window";
+  EXPECT_EQ(decisions::start_reply_window_ms(tuning, IO_868_BAND), RESPONSE_START_WAIT_MS);
   EXPECT_EQ(tuning.exchange_response_wait_ms, RESPONSE_WAIT_MS);
   EXPECT_EQ(tuning.exchange_total_budget_ms, EXCHANGE_TOTAL_BUDGET_MS);
 }

@@ -241,7 +241,7 @@ bool SoftPhyDriverBase::try_early_completion_(RadioRxPacket &packet, uint32_t sy
 #ifdef IOHOME_FRAME_LOG
   frame_log_line(FrameLogLevel::DEBUG, TAG, "Early RX: frame_len=%u raw_len=%u air_us=%" PRIu32, frame_len, read_len,
                  (uint32_t) (micros() - sync_us));
-  log_frame("RX", packet.data, packet.len, this->current_freq_);
+  log_frame("RX", packet.data, packet.len, this->band().air_hz_of(this->current_freq_));
 #endif
 
   // The reception this latch refers to is being torn down deliberately, so drop it rather than
@@ -431,7 +431,7 @@ bool SoftPhyDriverBase::read_rx_packet(RadioRxPacket &packet, bool blocking_wait
 
 #ifdef IOHOME_FRAME_LOG
   if (packet.len > 0)
-    log_frame("RX", packet.data, packet.len, this->current_freq_);
+    log_frame("RX", packet.data, packet.len, this->band().air_hz_of(this->current_freq_));
 #endif
   this->reset_rx_state_();
   return packet.len > 0;
@@ -518,7 +518,7 @@ TxResult SoftPhyDriverBase::send_packet(const uint8_t *data, uint8_t len, const 
     return TxResult::channel_busy(*busy);
 
 #ifdef IOHOME_FRAME_LOG
-  log_frame("TX", data, len, tx_config.freq_hz, tx_config.preamble_len);
+  log_frame("TX", data, len, this->band().air_hz_of(tx_config.freq_hz), tx_config.preamble_len);
 #endif
 
   this->set_mode_standby();

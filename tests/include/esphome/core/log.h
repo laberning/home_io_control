@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdarg>
+#include <cstdio>
 
 // x is the archetype (printf/scanf), y the 1-based index of the format string, z the index of the
 // first argument to check against it. The archetype must come from the caller, not be hardcoded
@@ -41,7 +42,9 @@
 // installs a `host_log_stub::Recorder` (tests/support/log_capture.h). Each log macro then records
 // its level, tag and format string; the arguments stay unevaluated, as above, so recording changes
 // nothing about what a logged expression does. Without a recorder installed a line costs one
-// pointer check.
+// pointer check. A recorder that overrides wants_text() to return true (LogCapture's text mode, for a
+// test that has to read a value a line prints) also gets each line formatted: only then are the
+// arguments evaluated, so every other test keeps them unevaluated.
 namespace esphome {
 namespace host_log_stub {
 inline void sink(const char *, const char *, ...) ESPHOME_ATTRIBUTE_FORMAT(printf, 2, 3);
@@ -55,6 +58,10 @@ class Recorder {
   /// @param tag The line's tag.
   /// @param format The line's format string, unformatted.
   virtual void record(char level, const char *tag, const char *format) = 0;
+  /// Whether the recorder wants each line formatted too (and so its arguments evaluated).
+  [[nodiscard]] virtual bool wants_text() const { return false; }
+  /// The formatted line, delivered after record() when wants_text() is true.
+  virtual void record_text(char /*level*/, const char * /*tag*/, const char * /*text*/) {}
 };
 
 /// The installed recorder, or nullptr.
@@ -68,6 +75,24 @@ inline void record(char level, const char *tag, const char *format) {
   if (Recorder *installed = recorder())
     installed->record(level, tag, format);
 }
+
+/// Whether the installed recorder wants formatted lines.
+inline bool wants_text() {
+  Recorder *installed = recorder();
+  return installed != nullptr && installed->wants_text();
+}
+
+/// Format one line and hand it to the installed recorder; reached only when wants_text() is true.
+inline void record_text(char level, const char *tag, const char *format, ...) ESPHOME_ATTRIBUTE_FORMAT(printf, 3, 4);
+inline void record_text(char level, const char *tag, const char *format, ...) {
+  char text[512];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(text, sizeof(text), format, args);
+  va_end(args);
+  if (Recorder *installed = recorder())
+    installed->record_text(level, tag, text);
+}
 }  // namespace host_log_stub
 }  // namespace esphome
 
@@ -76,6 +101,8 @@ inline void record(char level, const char *tag, const char *format) {
     ::esphome::host_log_stub::record(level, tag, format); \
     if (false) \
       ::esphome::host_log_stub::sink(tag, format __VA_OPT__(, ) __VA_ARGS__); \
+    if (::esphome::host_log_stub::wants_text()) \
+      ::esphome::host_log_stub::record_text(level, tag, format __VA_OPT__(, ) __VA_ARGS__); \
   } while (0)
 
 #define ESP_LOGI(tag, ...) IOHOME_HOST_LOG_STUB('I', tag, __VA_ARGS__)

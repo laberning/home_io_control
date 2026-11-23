@@ -1407,6 +1407,9 @@ class IOHomeControlComponent : public Component,
   /// @brief Emit the devices one identity drives (`drives:`, ADR 0116) under its 1W Controllers entry.
   /// @param identity The identity whose address keys its `drives:` links in the registry.
   void dump_oneway_driven_devices_(const OneWayControllerIdentity &identity) const;
+  /// @brief Emit, for each device the YAML declares, whether it counts as low-power and where that value comes
+  /// from (its own `low_power:` or the radio's band default).
+  void dump_device_power_class_config_();
   /// @brief Emit the Linked Remotes section of the config dump: the real remotes from
   /// `linked_remotes:` and the devices each one is linked to. `drives:` links share the registry's
   /// remote map but are left out here; dump_oneway_driven_devices_() lists them.

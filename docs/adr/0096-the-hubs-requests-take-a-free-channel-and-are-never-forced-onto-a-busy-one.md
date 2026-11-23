@@ -2,7 +2,7 @@
 
 <!-- doxygen-label: adr0096 -->
 
-**Status:** Accepted, amends [ADR 0045](0045-listen-before-talk-is-part-of-sending.md), amended by [ADR 0132](0132-the-channels-of-a-request-are-a-set-the-band-and-the-hubs-wifi-narrow.md) (the channels of a request are a set) · **Recorded:** 2026-11
+**Status:** Accepted, amends [ADR 0045](0045-listen-before-talk-is-part-of-sending.md), amended by [ADR 0132](0132-a-radio-describes-its-band-and-the-hubs-rules-read-it.md) (the band describes the channels a request may use) · **Recorded:** 2026-11
 
 ## Context
 

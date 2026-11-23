@@ -71,7 +71,7 @@ inline constexpr uint32_t PAIRING_DISCOVER_CONFIRM_ACK_TIMEOUT_MS = 1500;  ///< 
 /// one retry covers a lost frame, and the check runs only on an attempt that is already failing.
 inline constexpr uint8_t PAIRING_KEY_VERIFY_MAX_TRIES = 2;
 /// Re-sends of the key-init (0x31) after a missed 0x33 on a slow-turnaround radio, each after
-/// EXCHANGE_RETRY_DELAY_MS.
+/// the band's retry gap (ExchangeEngine::retry_gap_ms()).
 inline constexpr uint8_t PAIRING_KEY_INIT_RESENDS = 2;
 /// How recent a RecentOneWayPairingSighting has to be, relative to discover_and_pair() starting,
 /// to still count as evidence for this attempt. Generous relative to the doc's "a few seconds"

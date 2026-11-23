@@ -7,6 +7,7 @@
 ///
 /// Inline, stateless helpers, testable without radio hardware or timing.
 
+#include "proto_band.h"
 #include "proto_constants.h"
 #include "proto_device_model.h"
 #include "proto_frame.h"
@@ -114,17 +115,20 @@ enum class ReadKind : uint8_t {
 /// by ExchangeEngine::send_and_receive().
 struct AttemptPlan {
   uint8_t max_attempts{EXCHANGE_RETRY_COUNT};  ///< Most transmissions of the request, `[1, EXCHANGE_MAX_ATTEMPTS]`.
-  uint16_t gap_ms{EXCHANGE_RETRY_DELAY_MS};    ///< Wait before each attempt after the first; 0 for none.
-  uint16_t window_ms{RESPONSE_START_WAIT_MS};  ///< How long the last attempt listens for the first reply.
+  uint16_t gap_ms{0};     ///< Wait before each attempt after the first; 0 for none. The band's gap for a gapped plan.
+  uint16_t window_ms{0};  ///< How long the last attempt listens for the first reply; set by the plan builders.
   /// How long every attempt before the last listens; 0 means the same as @ref window_ms. A mains
   /// target answers within tens of milliseconds or not at all, so the early attempts need not wait
   /// the whole window: the last one does, to still catch a device that answers late.
   uint16_t early_window_ms{0};
   /// True when the first attempt is a short lead to a low-power receiver in an unknown state
   /// (WakeBelief::UNKNOWN): the short start preamble, a brief window of its own
-  /// (LOW_POWER_SHORT_LEAD_WINDOW_MS), and the wake-up attempts after it. A moving receiver hears
+  /// (@ref short_lead_window_ms), and the wake-up attempts after it. A moving receiver hears
   /// the short one and a resting one the wake-up. It counts in @ref max_attempts.
   bool short_lead{false};
+  /// How long the short lead listens: LOW_POWER_SHORT_LEAD_WINDOW_MS, or the band's low-power reply
+  /// window when that is shorter, so the lead never listens longer than a full attempt.
+  uint16_t short_lead_window_ms{LOW_POWER_SHORT_LEAD_WINDOW_MS};
   /// True when the caller asked for the read to treat the receiver's state as unknown
   /// (AttemptRequest::with_state_unknown()). The exchange engine resolves the wake belief with it on
   /// sending too, so the plan and the tries agree (wake_belief()).
@@ -140,7 +144,7 @@ struct AttemptPlan {
   /// @return How long that attempt listens for the first reply.
   [[nodiscard]] uint16_t window_for_attempt(uint8_t attempt, uint8_t attempts) const {
     if (short_lead && attempt == 1)
-      return LOW_POWER_SHORT_LEAD_WINDOW_MS;
+      return this->short_lead_window_ms;
     return (attempt < attempts && early_window_ms != 0) ? early_window_ms : window_ms;
   }
 };
@@ -194,13 +198,24 @@ struct AttemptPlan {
   return static_cast<uint8_t>(std::max<uint32_t>(1, std::min<uint32_t>(fitting, cap)));
 }
 
+/// @brief The reply window of a start frame: the `exchange_start_response_wait_ms` key when the user
+/// set it, otherwise the band's own (IoBand::start_reply_window_ms). The one place this is decided;
+/// the key replaces this window and no other.
+/// @param tuning The hub's tuning.
+/// @param band   The band the radio is on (RadioDriver::band()).
+[[nodiscard]] inline uint16_t start_reply_window_ms(const TuningConfig &tuning, const IoBand &band) {
+  return tuning.exchange_start_response_wait_ms.value_or(band.start_reply_window_ms);
+}
+
 /// @brief The plan for a caller that names only a number of attempts: that many (at least one, at
-/// most EXCHANGE_RETRY_COUNT), the default gap, and @p window_ms.
+/// most EXCHANGE_RETRY_COUNT), the band's gap, and @p window_ms.
 /// @param max_tries Attempts the caller asks for.
 /// @param window_ms First-reply window of every attempt.
-[[nodiscard]] inline AttemptPlan attempt_plan_for_tries(uint8_t max_tries, uint16_t window_ms) {
+/// @param band      The band the radio is on; gives the gap between attempts.
+[[nodiscard]] inline AttemptPlan attempt_plan_for_tries(uint8_t max_tries, uint16_t window_ms, const IoBand &band) {
   AttemptPlan plan;
   plan.max_attempts = std::max<uint8_t>(1, std::min<uint8_t>(max_tries, EXCHANGE_RETRY_COUNT));
+  plan.gap_ms = band.retry_gap_ms;
   plan.window_ms = window_ms;
   return plan;
 }
@@ -213,7 +228,7 @@ struct AttemptPlan {
 /// `exchange_early_response_wait_ms` (a mains device answers within tens of milliseconds or not at
 /// all) and the last listens the whole window, so how many fit is attempts_that_fit(), capped at
 /// EXCHANGE_MAX_ATTEMPTS. A settling read of a low-power device makes LOW_POWER_SETTLING_ATTEMPTS
-/// attempts of LOW_POWER_RESPONSE_WAIT_MS each, whatever the budget: such a plan is
+/// attempts of the band's low-power reply window each, whatever the budget: such a plan is
 /// bounded by its attempt count and runs past the budget when they do not fit
 /// (AttemptPlan::bounded_by_attempts, ADR 0095, amending ADR 0073). For every
 /// other target the plan is the rule the engine's guard applies at run time, so a plan never
@@ -221,26 +236,29 @@ struct AttemptPlan {
 /// costs more (the final reply window), so the guard can still stop such a plan early.
 ///
 /// PROGRESS and a COMMAND to a low-power device keep today's shapes: one attempt, and
-/// EXCHANGE_RETRY_COUNT attempts with the default gap, both with the tuned start window; the
+/// EXCHANGE_RETRY_COUNT attempts with the band's gap, both with the start reply window
+/// (start_reply_window_ms()); the
 /// command's attempts are bounded by their count too (ADR 0095).
 ///
 /// @param kind           What the request is for.
 /// @param low_power      The target is a low-power receiver (YAML `low_power`, CTRL1 low-power bit).
 /// @param tuning         Reply windows and exchange budget.
+/// @param band           The band the radio is on: gap between attempts, low-power reply window, and the
+///                       start reply window the tuning key may override.
 /// @param attempt_tx_ms  One attempt's transmit time as the radio estimates it (long wake-up
 ///                       preamble for a low-power target); sizes a gapless mains plan's attempt count.
 /// @param last_window_ms Listen time of the last attempt of a mains target, or of every attempt of a
-///                       gapped plan; 0 for the tuned start window.
+///                       gapped plan; 0 for start_reply_window_ms().
 /// @param with_short_lead Set to lead a settling read of a low-power target with one short attempt
 ///                       (the receiver's state is unknown, see WakeBelief::UNKNOWN). The lead is added to the wake-up
 ///                       attempts, which are the same as without it, and the plan counts it in
 ///                       AttemptPlan::max_attempts. No lead for any other read.
 [[nodiscard]] inline AttemptPlan attempt_plan(ReadKind kind, bool low_power, const TuningConfig &tuning,
-                                              uint32_t attempt_tx_ms, uint16_t last_window_ms = 0,
+                                              const IoBand &band, uint32_t attempt_tx_ms, uint16_t last_window_ms = 0,
                                               bool with_short_lead = false) {
   AttemptPlan plan =
       attempt_plan_for_tries(kind == ReadKind::PROGRESS ? SCHEDULED_POLL_MAX_TRIES : EXCHANGE_RETRY_COUNT,
-                             last_window_ms != 0 ? last_window_ms : tuning.exchange_start_response_wait_ms);
+                             last_window_ms != 0 ? last_window_ms : start_reply_window_ms(tuning, band), band);
   if (kind == ReadKind::PROGRESS)
     return plan;
   if (kind == ReadKind::COMMAND && low_power) {
@@ -249,11 +267,12 @@ struct AttemptPlan {
   }
   plan.gap_ms = 0;
   if (low_power) {
-    plan.window_ms = LOW_POWER_RESPONSE_WAIT_MS;
+    plan.window_ms = band.low_power_reply_window_ms;
     plan.max_attempts = LOW_POWER_SETTLING_ATTEMPTS;
     plan.bounded_by_attempts = true;  // the wake-up attempts all run (ADR 0095)
     if (with_short_lead) {
       plan.short_lead = true;
+      plan.short_lead_window_ms = std::min(LOW_POWER_SHORT_LEAD_WINDOW_MS, band.low_power_reply_window_ms);
       plan.max_attempts++;
     }
     return plan;

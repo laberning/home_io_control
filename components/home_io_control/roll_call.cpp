@@ -68,6 +68,7 @@ struct RollCallAttemptContext {
   uint8_t attempt;      ///< Global attempt number (1-based, across all passes).
   uint32_t tx_freq_hz;  ///< Channel this attempt transmitted the request on.
   uint8_t key_slot;     ///< Key slot of the sweep this attempt belongs to.
+  const IoBand &band;   ///< The band the radio is on: the lines print the air frequency.
 };
 
 /// @brief Record one accepted roll-call reply into the scan state, and log it.
@@ -88,11 +89,12 @@ void record_roll_call_reply(ScanState &state, const RollCallAttemptContext &ctx,
   const char *power_save = (entry != nullptr && entry->has_extended)
                                ? power_save_mode_name(discovery_power_save_mode(entry->flags))
                                : "unknown";
-  ESP_LOGD(
-      detail::TAG,
-      "Roll-call reply src=%s pass=%s attempt=%u tx=%" PRIu32 " rx=%" PRIu32 " +%" PRIu32 "ms rssi=%s power_save=%s",
-      node_id_to_string(frame.src).c_str(), power_save_mode_name(ctx.pass->power_save_mode), ctx.attempt,
-      ctx.tx_freq_hz, info.rx_freq_hz, info.after_tx_ms, detail::format_rssi_dbm(info.rssi_dbm).c_str(), power_save);
+  ESP_LOGD(detail::TAG,
+           "Roll-call reply src=%s pass=%s attempt=%u tx=%" PRIu32 " rx=%" PRIu32 " +%" PRIu32
+           "ms rssi=%s power_save=%s",
+           node_id_to_string(frame.src).c_str(), power_save_mode_name(ctx.pass->power_save_mode), ctx.attempt,
+           ctx.band.air_hz_of(ctx.tx_freq_hz), ctx.band.air_hz_of(info.rx_freq_hz), info.after_tx_ms,
+           detail::format_rssi_dbm(info.rssi_dbm).c_str(), power_save);
 }
 
 /// @brief Transmit one roll-call attempt and collect its replies into `state`.
@@ -113,7 +115,7 @@ RollCallAttemptResult run_roll_call_attempt(ExchangeEngine &engine, const uint8_
   }
 
   const uint8_t before = state.count;
-  RollCallAttemptContext ctx{&pass, attempt, tx_freq_hz, key_slot};
+  RollCallAttemptContext ctx{&pass, attempt, tx_freq_hz, key_slot, engine.band()};
   const uint8_t heard = engine.collect_broadcast_responses(
       request, tx_freq_hz, CMD_DISCOVER_SPE_RESP, tuning.pairing_discovery_wait_ms,
       [&state, &ctx](const IoFrame &frame, const ExchangeEngine::BroadcastReplyInfo &info) {
@@ -128,8 +130,9 @@ RollCallAttemptResult run_roll_call_attempt(ExchangeEngine &engine, const uint8_
   const uint8_t new_count = state.count - before;
   ESP_LOGD(detail::TAG,
            "Roll-call attempt %u/%u (pass=%s, ctrl1=0x%02X, tx %" PRIu32 " Hz, %u ms window): %u repl%s heard, %u new",
-           attempt, total_attempts, power_save_mode_name(pass.power_save_mode), request.ctrl1, tx_freq_hz,
-           tuning.pairing_discovery_wait_ms, heard, heard == 1 ? "y" : "ies", new_count);
+           attempt, total_attempts, power_save_mode_name(pass.power_save_mode), request.ctrl1,
+           engine.band().air_hz_of(tx_freq_hz), tuning.pairing_discovery_wait_ms, heard, heard == 1 ? "y" : "ies",
+           new_count);
   return RollCallAttemptResult::OK;
 }
 

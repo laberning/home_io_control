@@ -309,7 +309,7 @@ void KeyExtractionResponder::schedule_discover_reply_(const IoFrame &search, con
   this->key_extraction_hold_deadline_ms_ = millis() + delay_ms + KEY_EXTRACTION_MID_ATTEMPT_TIMEOUT_MS;
   ESP_LOGD(detail::TAG,
            "Key extraction: discovery answer in slot %" PRIu32 " of %" PRIu32 " (%" PRIu32 " ms) on %" PRIu32 " Hz",
-           slot, slots, delay_ms, freq);
+           slot, slots, delay_ms, (*this->radio_)->band().air_hz_of(freq));
 }
 
 void KeyExtractionResponder::set_configured_type_() {
