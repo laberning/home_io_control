@@ -1,5 +1,5 @@
 /// @file log_frame_hold_test.cpp
-/// @brief Tests for FrameLogBuffer (log_frame.h): frame-log lines held while the hub answers a
+/// @brief Tests for FrameLogBuffer (log_frame.h): frame-log and driver lines held while the hub answers a
 /// device's challenge, printed in order afterwards (issue #163).
 
 #include "log_frame.h"
@@ -86,12 +86,44 @@ TEST_F(FrameLogHold, OverflowIsCountedNotPrintedInsideTheWindow) {
 }
 
 TEST_F(FrameLogHold, LongLineIsTruncatedNotOverrun) {
-  const std::string long_line(FRAME_LOG_LINE_SIZE + 50, 'x');
+  const std::string long_line(HELD_LOG_LINE_SIZE + 50, 'x');
   buffer_.hold();
   buffer_.write(FrameLogLevel::INFO, "io_frame", long_line.c_str());
   buffer_.release();
   ASSERT_EQ(g_printed.size(), 1u);
-  EXPECT_EQ(g_printed[0].text.size(), FRAME_LOG_LINE_SIZE - 1);
+  EXPECT_EQ(g_printed[0].text.size(), HELD_LOG_LINE_SIZE - 1);
+}
+
+// The buffer is a plain class, so these tests run in a build without IOHOME_FRAME_LOG and IOHOME_HELD_LOG: a driver
+// that holds its own lines (the bridge's message trace) gets the same buffer.
+TEST_F(FrameLogHold, DriverLineOfFullTraceLengthIsKeptWhole) {
+  const std::string trace_line(319, 't');
+  buffer_.hold();
+  buffer_.write(FrameLogLevel::DEBUG, "bridle", trace_line.c_str());
+  EXPECT_TRUE(g_printed.empty());
+  buffer_.release();
+  ASSERT_EQ(g_printed.size(), 1u);
+  EXPECT_EQ(g_printed[0].text, trace_line) << "a 319-character line plus the terminator is a 320-byte line";
+  EXPECT_EQ(g_printed[0].tag, "bridle");
+}
+
+TEST_F(FrameLogHold, LinesPastTheCapacityKeepTheFirstOnesInOrderAndReportTheCount) {
+  buffer_.hold();
+  for (size_t i = 0; i < FRAME_LOG_HELD_LINES + 3; i++)
+    buffer_.write(FrameLogLevel::DEBUG, "bridle", ("line " + std::to_string(i)).c_str());
+  buffer_.release();
+  ASSERT_EQ(g_printed.size(), FRAME_LOG_HELD_LINES + 1);
+  for (size_t i = 0; i < FRAME_LOG_HELD_LINES; i++)
+    EXPECT_EQ(g_printed[i].text, "line " + std::to_string(i));
+  EXPECT_NE(g_printed.back().text.find("3 frame-log lines not printed"), std::string::npos) << g_printed.back().text;
+}
+
+TEST(FrameLogHeldLimits, AFrameLogLineFitsAndTheDefaultCapacityIsTwelve) {
+  static_assert(FRAME_LOG_LINE_SIZE <= HELD_LOG_LINE_SIZE);
+  EXPECT_GE(HELD_LOG_LINE_SIZE, 320u);
+  // The host build does not set IOHOME_HELD_LOG_LINES (log_frame.h defines it to the default when unset, so an
+  // #ifndef here would always be false), so this reads the default.
+  EXPECT_EQ(FRAME_LOG_HELD_LINES, 12u);
 }
 
 TEST_F(FrameLogHold, ReleaseWithoutHoldIsHarmless) {
