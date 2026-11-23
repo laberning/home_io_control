@@ -246,16 +246,17 @@ TEST(PairingTelemetry, ResultStringDoesNotTruncateWorstCaseFields) {
   telemetry.set_paired_device(node_id, DeviceType::HEATING_TEMPERATURE_INTERFACE);  // longest type name
   const std::string advice = "1w_traffic,channel_busy,foreign_controller";          // all three advice codes
   telemetry.set_advice_codes(advice);
+  telemetry.set_proven_key_check_value("ABCDEF");  // the last field; truncation would cut it first
 
   const std::string result = telemetry.result_sensor_string();
 
   EXPECT_EQ(telemetry.discovery_attempts(), 0xFFu);
   EXPECT_EQ(telemetry.lbt_retries(), 0xFFu);
   EXPECT_EQ(telemetry.heard_count(), 65535u) << "heard_count_ (uint16_t) should saturate, not wrap";
-  ASSERT_GE(result.size(), advice.size() + 8) << "sanity: result string should contain the advice field";
-  EXPECT_EQ(result.substr(result.size() - advice.size()), advice)
-      << "the rendered string must not be truncated before the trailing advice= value: " << result;
-  EXPECT_NE(result.find("advice=" + advice), std::string::npos) << "full result: " << result;
+  const std::string tail = "advice=" + advice + "; check=ABCDEF";
+  ASSERT_GE(result.size(), tail.size()) << "sanity: result string should contain the advice and check fields";
+  EXPECT_EQ(result.substr(result.size() - tail.size()), tail)
+      << "the rendered string must not be truncated before the trailing check= value: " << result;
 }
 
 TEST(PairingTelemetry, TruncatedIsReportedEvenWhenHeardCountDoesNotExceedEventCount) {
@@ -312,6 +313,20 @@ TEST(PairingTelemetry, ResultStringUsesPlaceholdersWhenNoDevicePaired) {
   EXPECT_NE(result.find("outcome=no_response"), std::string::npos) << result;
   EXPECT_NE(result.find("node=-"), std::string::npos) << result;
   EXPECT_NE(result.find("type=-"), std::string::npos) << result;
+  EXPECT_EQ(result.substr(result.size() - 9), "; check=-") << "no proven key: the last field is check=-: " << result;
+}
+
+TEST(PairingTelemetry, ResultStringEndsWithTheProvenKeyCheckValueAndBeginClearsIt) {
+  PairingTelemetry telemetry;
+  telemetry.begin();
+  telemetry.set_proven_key_check_value("A1B2C3");
+  telemetry.set_outcome(PairingOutcome::KEY_RECEIVED);
+
+  const std::string result = telemetry.result_sensor_string();
+  EXPECT_EQ(result.substr(result.size() - 14), "; check=A1B2C3") << result;
+
+  telemetry.begin();
+  EXPECT_EQ(telemetry.result_sensor_string().substr(telemetry.result_sensor_string().size() - 9), "; check=-");
 }
 
 // ============================================================================

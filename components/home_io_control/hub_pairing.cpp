@@ -3,9 +3,8 @@
 /// @ingroup hioc_hub
 ///
 /// All pairing implementation lives in pairing_engine.cpp. This file provides
-/// only the IOHomeControlComponent::discover_and_pair() and
-/// IOHomeControlComponent::pair_declared_device() implementations, which manage
-/// the hub's busy_ flag and delegate to pairing_engine_.
+/// only the IOHomeControlComponent::discover_and_pair(), pair_declared_device() and pull_key_from()
+/// implementations, which manage the hub's busy_ flag and delegate to pairing_engine_.
 
 #include "hub_pairing.h"
 #include "hub_internal.h"
@@ -26,12 +25,9 @@ bool IOHomeControlComponent::discover_and_pair() {
   this->busy_ = true;
   bool const ok = this->pairing_engine_.discover_and_pair();
   this->busy_ = false;
-  // Never 0, so "no attempt yet" stays distinguishable (see queue_discover_and_pair()).
-  this->last_pairing_end_ms_ = std::max<uint32_t>(millis(), 1);
-  // Only fire once an attempt actually ran (telemetry was populated) — not on the early-return
-  // guard above, which would otherwise republish stale telemetry from a previous attempt.
-  if (this->pairing_result_callback_)
-    this->pairing_result_callback_();
+  // Only once an attempt actually ran (telemetry was populated) — not on the early-return guard
+  // above, which would otherwise republish stale telemetry from a previous attempt.
+  this->note_pairing_attempt_ended_();
   return ok;
 }
 
@@ -46,10 +42,29 @@ DeclaredPairingResult IOHomeControlComponent::pair_declared_device(const std::st
   this->busy_ = false;
   if (!result.attempted())
     return result;
+  this->note_pairing_attempt_ended_();
+  return result;
+}
+
+/// Holds busy_ and stamps the attempt around PairingEngine::pull_key_from(), as pair_declared_device() does:
+/// a refused request stamps and publishes nothing.
+PullKeyResult IOHomeControlComponent::pull_key_from(const uint8_t controller[NODE_ID_SIZE]) {
+  if (!this->initialized_)
+    return PullKeyResult::refused("hub is not initialized");
+  this->busy_ = true;
+  PullKeyResult result = this->pairing_engine_.pull_key_from(controller);
+  this->busy_ = false;
+  if (!result.attempted())
+    return result;
+  this->note_pairing_attempt_ended_();
+  return result;
+}
+
+void IOHomeControlComponent::note_pairing_attempt_ended_() {
+  // Never 0, so "no attempt yet" stays distinguishable (see queue_discover_and_pair()).
   this->last_pairing_end_ms_ = std::max<uint32_t>(millis(), 1);
   if (this->pairing_result_callback_)
     this->pairing_result_callback_();
-  return result;
 }
 
 }  // namespace home_io_control

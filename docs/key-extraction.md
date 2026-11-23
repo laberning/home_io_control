@@ -68,6 +68,21 @@ The switch always boots off (`restore_mode: ALWAYS_OFF`), so a reboot can never 
    [Scan Paired Devices](scan-paired-devices.md). Every device that trusts the recovered key answers
    with a ready-to-paste snippet, so nothing has to be paired.
 
+## Pulling the key from a controller you name
+
+Key extraction needs a hub that runs its own "add a device" wizard. A controller that instead
+shares its key from a mode you start on it, a remote's "copy system" function for one, can be asked
+for the key directly. Call the [`pull_key`](configuration/actions.md#pull_key) action with the
+controller's node ID. The hub sends no discovery and asks that one node for its key. A key it
+proves is printed once in the device log with its check value, and nothing is registered.
+
+The node ID is not on the controller's label. Press a button on the controller and read it from
+the device log: the hub names every controller it overhears with `Heard a request from`, each one
+at most once in ten minutes.
+
+This route is confirmed on hardware only for nodes that hand over their key when asked. A remote in
+its key-sharing mode is untested.
+
 ## Known limitations
 
 - **The recovered key is not verified for you.** Nothing reads it back, so control a device with
@@ -88,5 +103,6 @@ The switch always boots off (`restore_mode: ALWAYS_OFF`), so a reboot can never 
 
 ## See also
 
+- [Home Assistant actions](configuration/actions.md#pull_key) — `pull_key`, the pull from a controller you name
 - [Pairing](pairing.md) — Discover & Pair, and Scan Paired Devices once you hold the key
 - [Hubs you can take a key from](supported-devices.md#hubs-you-can-take-a-key-from) — which hubs are confirmed as extraction sources

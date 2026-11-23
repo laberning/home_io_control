@@ -224,6 +224,8 @@ struct PulledKeyReportInfo {
   const uint8_t *hub_key;         ///< The hub's own key.
   bool proven_by_sender{true};    ///< true: the sender proved the key with its 0x3D; false: only the
                                   ///< responders prove it (the report is then built only with responders).
+  bool searched{true};            ///< true: a search for the devices that hold the key was made (a roll-call or
+                                  ///< the heater probe); false: none was, so the report makes no claim about one.
 };
 
 /// @brief Build the report for a pull that returned the hub's own key from a node no platform drives.
@@ -239,7 +241,8 @@ struct PulledKeyReportInfo {
 std::string build_hub_key_pull_report(const PulledKeyReportInfo &info, const ScanState &state,
                                       DeviceRegistry &registry);
 
-/// @brief Build the one report a proven key pull prints after looking for the devices that hold the key.
+/// @brief Build the one report a proven key pull prints, normally after looking for the devices that hold the key
+/// (PulledKeyReportInfo::searched; a pull that stops at the proof reports no search).
 ///
 /// One DO-NOT-SHARE banner frames the whole report (device log only; it carries the key). Each
 /// responder gets its summary line and a paste-ready block with `system_key:` added

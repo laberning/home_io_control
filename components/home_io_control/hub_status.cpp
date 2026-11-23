@@ -910,6 +910,44 @@ void IOHomeControlComponent::drain_overheard_oneway_frames_() {
     this->handle_oneway_frame_(kept.frame, kept.heard_ms, kept.rssi_dbm);
 }
 
+void IOHomeControlComponent::log_heard_controller_(const IoFrame &frame) {
+  const std::string src_id = node_id_to_string(frame.src);
+  if (!decisions::names_foreign_controller(frame, this->node_id_, this->registry_.get(src_id) != nullptr))
+    return;
+  if (!this->heard_sources_.should_log(frame.src, millis()))
+    return;
+  ESP_LOGI(detail::TAG, "Heard a request from %s: %s(0x%02X) to %s", src_id.c_str(), command_name(frame.cmd), frame.cmd,
+           node_id_to_string(frame.dst).c_str());
+}
+
+void IOHomeControlComponent::handle_overheard_status_(const IoFrame &frame, uint8_t len) {
+  const std::string src_id = node_id_to_string(frame.src);
+  IoDevice *dev = this->get_device(src_id);
+  if (dev == nullptr) {
+    // Not from a device of ours: an ignored frame that stamps nothing; log_frame_issue() warns only when it is
+    // addressed to this hub or a registered device.
+    detail::log_frame_issue(this, this->node_id_, "rx", "unauthenticated_status_ignored", frame, len);
+    return;
+  }
+  detail::update_link_health(*dev, this->radio_);
+  const std::string dst_id = node_id_to_string(frame.dst);
+  // A reply addressed to us reaches this point only outside an exchange (a late reply after the exchange gave up), so
+  // it has its own wording and stays at DEBUG.
+  const bool to_us = memcmp(frame.dst, this->node_id_, NODE_ID_SIZE) == 0;
+  const uint32_t now = millis();
+  if (!to_us && decisions::names_overheard_status(dev->last_overheard_named_ms, now)) {
+    dev->last_overheard_named_ms = now != 0 ? now : 1;  // 0 means "never named"
+    ESP_LOGI(
+        detail::TAG,
+        "Device %s answered another controller (%s): %s(0x%02X) not applied, only this hub's own reads set its state",
+        src_id.c_str(), dst_id.c_str(), command_name(frame.cmd), frame.cmd);
+    return;
+  }
+  ESP_LOGD(detail::TAG, "rx %s cmd=%s(0x%02X) src=%s dst=%s len=%u data_len=%u not applied",
+           to_us ? "unsolicited_status" : "overheard_status", command_name(frame.cmd), frame.cmd, src_id.c_str(),
+           dst_id.c_str(), len, frame.data_len);
+}
+
 void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packet) {
   IoFrame frame;
   if (!parse(packet.data, packet.len, frame)) {
@@ -946,6 +984,10 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     this->handle_oneway_frame_(frame, millis(), this->radio_->get_last_capture().rssi_or_unknown());
     return;
   }
+
+  // A request overheard on air: name its sender, so a user can press a button on a controller and read its node ID
+  // for the pull_key action (ADR 0130). Each source at most once per HeardSourceLog::INTERVAL_MS.
+  this->log_heard_controller_(frame);
 
   // Limitation reads between other parties (a KLF 200 polling a window) are only rendered, so a
   // passive monitor's log shows what they asked and answered. Nothing is applied -- the sender's
@@ -987,8 +1029,9 @@ void IOHomeControlComponent::process_received_packet_(const RadioRxPacket &packe
     // controller sharing a device, or an attacker who knows the device's node ID -- node IDs
     // travel in the clear, see README.md's "Reporting Unsupported Devices"). Nothing here proves
     // the frame's source currently holds the system key, so its content is never applied -- see
-    // ADR 0022. State goes stale until this hub's own next authenticated poll corrects it.
-    detail::log_frame_issue(this, this->node_id_, "rx", "unauthenticated_status_ignored", frame, packet.len);
+    // ADR 0022. Only the sender's link health is stamped (ADR 0131); state stays as it is until this hub's
+    // own next authenticated poll corrects it.
+    this->handle_overheard_status_(frame, packet.len);
     return;
   }
 

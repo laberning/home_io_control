@@ -101,7 +101,12 @@ rather than everyday values, which is why they are disabled by default.
   timestamp: it resets to about 0 on every frame, including replies to the hub's own polls, and
   counts up while the device is quiet, republished once a minute so it keeps advancing in Home
   Assistant between frames. The hub has no wall-clock source, which is why this is not a
-  `timestamp`-class sensor. Unavailable until the first frame.
+  `timestamp`-class sensor. Unavailable until the first frame. A status frame the device sends to
+  another controller counts as a frame from the device, and so does its signal strength. Where a
+  second two-way controller shares the device, Last Contact and RSSI follow the device's real
+  activity. The hub sets no state from such a frame, and the log says once in ten minutes that the
+  device answered another controller
+  ([ADR 0131](adr/0131-an-overheard-status-frame-stamps-link-health-and-nothing-else.md)).
 - **Exchange Failures** (count): cumulative outbound exchanges to this device (position, tilt,
   status and name requests) that received no valid response. Zero is a real, always-published
   value here. A rising count on an otherwise-working device points at a marginal link — weak

@@ -95,6 +95,42 @@ struct DeclaredPairingResult {
   [[nodiscard]] bool attempted() const { return this->refusal == nullptr; }
 };
 
+/// @brief How a standalone key pull (PairingEngine::pull_key_from()) ended.
+enum class PullKeyOutcome : uint8_t {
+  PROVEN,    ///< The controller sent a key that differs from the hub's and it is proven: by the controller's own
+             ///< 0x3D, or by devices that answered a roll-call under it (PullKeyResult::searched).
+  OWN_KEY,   ///< The controller sent the hub's own key: it already shares this hub's key.
+  REFUSED,   ///< The controller answered the key request with CMD_ERROR_RESP.
+  UNPROVEN,  ///< The controller sent a key nobody proved; it is not printed.
+  SILENT,    ///< The controller sent no key.
+};
+
+/// Outcome of PairingEngine::pull_key_from(): a refusal before anything was sent, or the result of the
+/// attempt that ran.
+struct PullKeyResult {
+  /// Why the request was refused before anything was sent; nullptr when an attempt ran.
+  const char *refusal = nullptr;
+  PullKeyOutcome outcome{PullKeyOutcome::SILENT};  ///< How the pull ended (only meaningful when attempted()).
+  bool has_refusal_code{false};                    ///< True when `refusal_code` holds a CMD_ERROR_RESP byte.
+  uint8_t refusal_code{0};                         ///< The controller's refusal code, for REFUSED.
+  bool searched{false};                            ///< True when a search for the devices that hold the key ran.
+  /// For a PROVEN key: its check value (six hex digits), which names the key without revealing it, for the event.
+  std::string check_value;
+  std::string advice;      ///< The pairing advisor's text for the attempt; no key material.
+  std::string log_report;  ///< For a PROVEN key with no search: the device-log report that carries the key.
+
+  /// @param why The refusal text.
+  /// @return A result for a request refused before anything was sent.
+  [[nodiscard]] static PullKeyResult refused(const char *why) {
+    PullKeyResult result;
+    result.refusal = why;
+    return result;
+  }
+
+  /// @return true when a pull ran, so the attempt telemetry is fresh.
+  [[nodiscard]] bool attempted() const { return this->refusal == nullptr; }
+};
+
 /// Owns and drives all three phases of the IO-Homecontrol device pairing flow.
 ///
 /// Constructed once by IOHomeControlComponent; collaborators (radio, exchange engine,
@@ -132,6 +168,22 @@ class PairingEngine {
   /// @return Whether the device confirmed the key, or why the request was refused before anything
   ///         was sent (then no attempt ran and the telemetry still holds the previous one).
   DeclaredPairingResult pair_declared_device(const std::string &device_id);
+
+  /// Pull the key from the controller with the given node ID, with no discovery: the part of Discover & Pair
+  /// after discovery, addressed to a node the user names (ADR 0130).
+  ///
+  /// Runs KeyPull::pull() against a context built from the id (kind remote controller, not low-power). A key the
+  /// controller proves with its 0x3D ends the attempt: nothing is registered and nothing more is sent, and the
+  /// report carries the device-log text with the key (once). A key it does not prove goes through the key-holder
+  /// search under it (register_pulled_key_devices_(), as in Discover & Pair, ADR 0071): devices that answer prove
+  /// it, are reported and are registered until reboot, and a key nobody proves is never printed. The attempt is
+  /// recorded in the pairing telemetry and advice, so Last Pairing Result shows it. The pulled key is wiped
+  /// before this returns.
+  /// @param controller Node ID of the controller (NODE_ID_SIZE bytes).
+  /// @return The outcome with its advice, or the refusal when the id is the hub's own (nothing sent, the telemetry
+  ///         still holds the previous attempt).
+  /// \todo Confirm on a real remote in its key-sharing mode (2.4 GHz VELUX remote: "Copy system").
+  PullKeyResult pull_key_from(const uint8_t controller[NODE_ID_SIZE]);
 
   /// Extract node ID, device type, and subtype from a CMD_DISCOVER_RESP frame.
   /// @return The decoded extended discovery fields (manufacturer / Multi Information Byte / length
@@ -306,7 +358,8 @@ class PairingEngine {
   void complete_paired_(pairing::PairingContext &context);
 
   /// Record the final outcome, detach telemetry from the exchange engine, and log the
-  /// end-of-attempt summary. Called once at every discover_and_pair() exit point.
+  /// end-of-attempt summary and the advisor's lines (kept in `last_advice_text_`). Called once at every attempt's
+  /// exit point.
   /// @param outcome Final disposition of this attempt.
   void finish_pairing_attempt_(PairingOutcome outcome);
 
@@ -331,8 +384,9 @@ class PairingEngine {
   DeviceRegistry &registry_;
   PairingTelemetry &telemetry_;
   const RecentOneWayPairingSighting &recent_oneway_sighting_;
-  KeyPull key_pull_;             ///< Pulls a key out of a device that hands out its own.
-  KeyHolderSearch key_holders_;  ///< Finds and registers the devices that hold a pulled or returned key.
+  std::string last_advice_text_;  ///< The advisor's messages for the last finished attempt, joined by a space.
+  KeyPull key_pull_;              ///< Pulls a key out of a device that hands out its own.
+  KeyHolderSearch key_holders_;   ///< Finds and registers the devices that hold a pulled or returned key.
 };
 
 }  // namespace home_io_control

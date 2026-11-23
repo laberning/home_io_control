@@ -56,6 +56,7 @@ constexpr const char *MANAGEMENT_ACTION_ONEWAY_REMOVE_CONTROLLER = "oneway_remov
 constexpr const char *MANAGEMENT_ACTION_ONEWAY_SET_SEQUENCE = "oneway_set_sequence";
 constexpr const char *MANAGEMENT_ACTION_HEATING_CONTROL = "heating_control";
 constexpr const char *MANAGEMENT_ACTION_PAIR_DEVICE = "pair_device";
+constexpr const char *MANAGEMENT_ACTION_PULL_KEY = "pull_key";
 /// Until when the retired `heating_control` function names work (ADR 0109).
 constexpr const char *HEATING_DEPRECATION_END = "January 2027";
 constexpr const char *MANAGEMENT_RESULT_EVENT = "esphome.home_io_control_action_result";
@@ -378,6 +379,10 @@ void ManagementActions::register_actions() {
        {"device_id"},
        false,  // a real user feature, gated by documentation not by diagnostic_probes:
        [this](const api::ExecuteServiceRequest &r) { this->api_pair_device(r.args[0].string_.str()); }},
+      {MANAGEMENT_ACTION_PULL_KEY,
+       {"controller_id"},
+       false,  // a real user feature, gated by documentation not by diagnostic_probes:
+       [this](const api::ExecuteServiceRequest &r) { this->api_pull_key(r.args[0].string_.str()); }},
       {MANAGEMENT_ACTION_PROBE_DEVICE,
        {"device_id", "probe", "index"},
        true,
@@ -842,6 +847,50 @@ ManagementActionResult ManagementActions::pair_device(const std::string &device_
   result.message = pairing.confirmed ? "device confirmed the key"
                                      : "no key confirm: was the device's pairing window open? The log has the step it "
                                        "stopped at";
+  return result;
+}
+
+void ManagementActions::api_pull_key(const std::string &controller_id) { publish_result(pull_key(controller_id)); }
+
+ManagementActionResult ManagementActions::pull_key(const std::string &controller_id) {
+  ManagementActionResult result;
+  uint8_t controller[NODE_ID_SIZE]{};
+  if (!parse_management_node_id(MANAGEMENT_ACTION_PULL_KEY, controller_id, "controller", *initialized_, result,
+                                controller)) {
+    return result;
+  }
+
+  const PullKeyResult pulled = hub_->pull_key_from(controller);
+  if (!pulled.attempted()) {
+    result.message = pulled.refusal;
+    return result;
+  }
+  result.has_result_code = pulled.has_refusal_code;
+  result.result_code = pulled.refusal_code;
+  switch (pulled.outcome) {
+    case PullKeyOutcome::PROVEN:
+      result.success = true;
+      result.verified = true;  // proven by the controller's own 0x3D, or by devices answering under the key
+      result.message = std::string(pulled.searched ? "key received and proven by the devices that answered under it"
+                                                   : "key received and proven by the controller") +
+                       " (key check value " + pulled.check_value + "); it is printed in the device log, not here. ";
+      result.log_message = pulled.log_report;
+      break;
+    case PullKeyOutcome::OWN_KEY:
+      result.success = true;
+      result.message = "the controller already shares this hub's key. ";
+      break;
+    case PullKeyOutcome::REFUSED:
+      result.message = "the controller refused the key request. ";
+      break;
+    case PullKeyOutcome::UNPROVEN:
+      result.message = "the controller sent a key nobody proved, so it was not used and is not printed. ";
+      break;
+    case PullKeyOutcome::SILENT:
+      result.message = "the controller sent no key. ";
+      break;
+  }
+  result.message += pulled.advice;
   return result;
 }
 

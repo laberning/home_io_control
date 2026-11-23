@@ -12,6 +12,7 @@ time than anything else on this page.
 | The device is new or factory reset, or only wall remotes have ever driven it | Discover & Pair, on this page |
 | The device is a connected radiator or towel dryer of the Atlantic group | Discover & Pair from the device's own menu; see [Devices that hand over their own key](#devices-that-hand-over-their-own-key) |
 | A two-way hub holds the device, you would rather not take that hub's key, and you can open the device's own pairing window | [Pairing a device by address](#pairing-a-device-by-address) |
+| A two-way remote shares its key when you start a mode on it, and you know its node ID | [`pull_key`](configuration/actions.md#pull_key) |
 | The device only takes one-way commands, or never answers Discover & Pair while a 1W remote still drives it | [1W enrollment](configuration/oneway-transmit.md#enrolling-this-hub-as-a-controller) |
 
 ```mermaid
@@ -175,6 +176,11 @@ installation all hand over that installation's key.
 A [Freebox Delta](devices/freebox-delta.md) hands over its installation's key the same way, with
 `pairing_key_transfer: pull` and "Share your network" open in the Freebox app.
 
+A controller that shares its key only from a mode you start on it, and does not answer discovery in
+that mode, is asked directly with the [`pull_key`](configuration/actions.md#pull_key) action and
+its node ID. The log names every controller the hub overhears (`Heard a request from`), so pressing
+a button on the controller shows its ID.
+
 ## Diagnosing a failed pairing attempt
 
 `discover_and_pair_button: true` also creates a companion **"Last Pairing Result"** diagnostic text
@@ -182,7 +188,7 @@ sensor alongside the button. It updates after every attempt with a frozen, machi
 summary:
 
 ```
-v1; outcome=paired; phase=complete; node=30E1F2; type=vertical_exterior_awning; attempts=1; lbt=0; dur_ms=842; heard=3; advice=none
+v1; outcome=paired; phase=complete; node=30E1F2; type=vertical_exterior_awning; attempts=1; lbt=0; dur_ms=842; heard=3; advice=none; check=-
 ```
 
 | Field | Meaning |
@@ -195,6 +201,7 @@ v1; outcome=paired; phase=complete; node=30E1F2; type=vertical_exterior_awning; 
 | `dur_ms` | Attempt duration in milliseconds. |
 | `heard` | Total RX events seen, including ones the pairing classifiers rejected and a 1W gesture overheard just before the window opened. |
 | `advice` | Comma-separated advisor codes, described below, or `none`. |
+| `check` | The six-hex-digit check value of a key this attempt pulled and proved (a controller's own proof, or devices that answered under it), or `-`. Never the key itself. |
 
 | `outcome` | Meaning |
 |---|---|
@@ -293,6 +300,24 @@ The log prints the key once. Put it into the `system_key:` of the entity that co
 The hub pulled, the device sent the hub's own key, it has no platform of its own, and no device that holds the key answered.
 
 The device that pairs is not always the one to control: an Atlantic radiator's heater sits at the next address. Press [Scan Paired Devices](scan-paired-devices.md), and again if nothing answers; it prints the YAML block of each device that holds the key.
+
+#### `pull_key_proven`
+
+The [`pull_key`](configuration/actions.md#pull_key) action pulled a different key and the controller proved it holds it.
+
+The key is in the device log, printed once, not in this result. Put it into the `system_key:` of the entity of each device the controller operates. No search for devices was made.
+
+#### `pull_key_own_key`
+
+The `pull_key` action pulled the hub's own key: the controller already shares this hub's key. Add its devices by their IDs with the hub's `system_key:`.
+
+#### `pull_key_refused`
+
+The controller answered the `pull_key` request with an error; the message names the code. Start the controller's key-sharing mode and run the action again within its window.
+
+#### `pull_key_unanswered`
+
+The controller sent no key to the `pull_key` request. Check the node ID by pressing a button on the controller and reading it from the log, start its key-sharing mode, and run the action again within its window.
 
 #### `rf_silent`
 

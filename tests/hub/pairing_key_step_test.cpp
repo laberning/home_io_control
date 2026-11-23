@@ -601,6 +601,8 @@ TEST(PairingKeyPullFlow, LastPairingResultCarriesNoKey) {
   EXPECT_EQ(result.find(key_hex(OTHER_KEY)), std::string::npos) << result;
   EXPECT_NE(result.find("outcome=paired"), std::string::npos) << result;
   EXPECT_NE(result.find("node=B6BDFB"), std::string::npos) << "node= stays the discovered node: " << result;
+  const std::string tail = "; check=" + detail::format_key_check_value(OTHER_KEY);
+  EXPECT_EQ(result.substr(result.size() - tail.size()), tail) << "a proven pulled key: " << result;
 }
 
 TEST(PairingKeyPullFlow, NoResponderEndsAsKeyReceivedAndRegistersNothing) {
@@ -613,7 +615,10 @@ TEST(PairingKeyPullFlow, NoResponderEndsAsKeyReceivedAndRegistersNothing) {
   EXPECT_FALSE(comp.discover_and_pair());
 
   EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::KEY_RECEIVED);
-  EXPECT_NE(comp.pairing_telemetry().result_sensor_string().find("pulled_key_received"), std::string::npos);
+  const std::string result = comp.pairing_telemetry().result_sensor_string();
+  EXPECT_NE(result.find("pulled_key_received"), std::string::npos);
+  const std::string tail = "; check=" + detail::format_key_check_value(OTHER_KEY);
+  EXPECT_EQ(result.substr(result.size() - tail.size()), tail) << result;
   EXPECT_EQ(comp.get_device("B6BDFC"), nullptr);
   EXPECT_EQ(comp.get_device("B6BDFB"), nullptr);
 }
@@ -636,7 +641,10 @@ TEST(PairingKeyPullFlow, AnUnprovenKeyIsProvenByADeviceThatAnswersTheRollCall) {
   ASSERT_TRUE(heater->has_system_key);
   EXPECT_EQ(0, memcmp(heater->system_key, OTHER_KEY, AES_KEY_SIZE));
   EXPECT_EQ(comp.pairing_telemetry().outcome(), PairingOutcome::PAIRED);
-  EXPECT_EQ(comp.pairing_telemetry().result_sensor_string().find(key_hex(OTHER_KEY)), std::string::npos);
+  const std::string result = comp.pairing_telemetry().result_sensor_string();
+  EXPECT_EQ(result.find(key_hex(OTHER_KEY)), std::string::npos);
+  const std::string tail = "; check=" + detail::format_key_check_value(OTHER_KEY);
+  EXPECT_EQ(result.substr(result.size() - tail.size()), tail) << "a device's answer proved the key: " << result;
   EXPECT_EQ(0, memcmp(comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE)) << "the hub key is never replaced";
 }
 
@@ -654,6 +662,7 @@ TEST(PairingKeyPullFlow, AnUnprovenKeyWithNoDeviceAnsweringFailsAndRegistersNoth
   const std::string result = comp.pairing_telemetry().result_sensor_string();
   EXPECT_NE(result.find("key_pull_unproven"), std::string::npos) << result;
   EXPECT_EQ(result.find(key_hex(OTHER_KEY)), std::string::npos) << result;
+  EXPECT_EQ(result.substr(result.size() - 9), "; check=-") << "nothing proved the key: " << result;
   EXPECT_EQ(comp.get_device("B6BDFC"), nullptr);
   EXPECT_EQ(comp.get_device("B6BDFB"), nullptr);
 }
@@ -1101,4 +1110,186 @@ TEST(PairingKeyAdvice, ReceivedKeySaysHowToUseIt) {
   EXPECT_NE(message.find("system_key:"), std::string::npos);
   EXPECT_NE(message.find("found no device"), std::string::npos);
   EXPECT_NE(message.find("Scan Paired Devices"), std::string::npos);
+}
+
+// ============================================================================
+// Standalone key pull by node id (PairingEngine::pull_key_from(), ADR 0130)
+// ============================================================================
+
+namespace {
+
+/// Sends before a standalone pull's roll-call: the 0x38 and the three unanswered 0x3C. There is no heater probe,
+/// since nothing was discovered, so the first 0x2A follows at once.
+constexpr int SENDS_BEFORE_PULL_ROLL_CALL = 4;
+
+/// The rig for the standalone pull: a hub with a scripted radio, pulling from DEVICE_ID.
+struct PullKeyRig {
+  PullKeyRig() { setup(comp, radio); }
+
+  PullKeyResult pull() { return comp.pairing_engine_.pull_key_from(DEVICE_ID); }
+
+  RngGuard rng;
+  TestableComponent comp;
+  MockRadio radio;
+};
+
+}  // namespace
+
+TEST(PullKeyFromEngine, AProvenKeyEndsTheAttemptWithNoDiscoveryAndNoSearch) {
+  PullKeyRig rig;
+  const IoFrame reply = pulled_key_frame(rig.comp.node_id_, OTHER_KEY);
+  rig.radio.queue_rx(to_packet(reply));
+  rig.radio.queue_rx(to_packet(proof_frame(rig.comp.node_id_, reply, OTHER_KEY)));
+
+  const PullKeyResult result = rig.pull();
+
+  ASSERT_TRUE(result.attempted());
+  EXPECT_EQ(result.outcome, PullKeyOutcome::PROVEN);
+  EXPECT_FALSE(result.searched);
+  EXPECT_EQ(result.check_value, detail::format_key_check_value(OTHER_KEY));
+  EXPECT_EQ(sent_commands(rig.radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER, CMD_CHALLENGE_REQ}))
+      << "no discovery, and nothing sent after the proof";
+  EXPECT_NE(result.log_report.find(key_hex(OTHER_KEY)), std::string::npos) << "the device log gets the key once";
+  EXPECT_NE(result.log_report.find(detail::format_key_check_value(OTHER_KEY)), std::string::npos);
+  EXPECT_NE(result.log_report.find("No search for devices was made"), std::string::npos);
+  EXPECT_EQ(result.log_report.find("A roll-call under that key found no device"), std::string::npos)
+      << "the report does not claim a roll-call that was not made";
+  EXPECT_EQ(result.advice.find(key_hex(OTHER_KEY)), std::string::npos) << "the advice carries no key";
+  EXPECT_NE(result.advice.find("proved"), std::string::npos) << result.advice;
+  EXPECT_EQ(rig.comp.registry_.size(), 0u) << "nothing is registered";
+  EXPECT_EQ(0, memcmp(rig.comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE)) << "the hub key is never replaced";
+}
+
+TEST(PullKeyFromEngine, TheLastPairingResultCarriesNoKeyAndTheAdviceCode) {
+  PullKeyRig rig;
+  const IoFrame reply = pulled_key_frame(rig.comp.node_id_, OTHER_KEY);
+  rig.radio.queue_rx(to_packet(reply));
+  rig.radio.queue_rx(to_packet(proof_frame(rig.comp.node_id_, reply, OTHER_KEY)));
+
+  rig.pull();
+
+  const std::string summary = rig.comp.pairing_telemetry().result_sensor_string();
+  EXPECT_EQ(summary.find(key_hex(OTHER_KEY)), std::string::npos) << summary;
+  EXPECT_NE(summary.find("outcome=key_received"), std::string::npos) << summary;
+  EXPECT_NE(summary.find("pull_key_proven"), std::string::npos) << summary;
+}
+
+TEST(PullKeyFromEngine, HoldsTheFrameLogAcrossTheRequestAndTheProof) {
+  PullKeyRig rig;
+  test::HoldSeam seam(rig.radio);
+  const IoFrame reply = pulled_key_frame(rig.comp.node_id_, OTHER_KEY);
+  rig.radio.queue_rx(to_packet(reply));
+  rig.radio.queue_rx(to_packet(proof_frame(rig.comp.node_id_, reply, OTHER_KEY)));
+
+  ASSERT_EQ(rig.pull().outcome, PullKeyOutcome::PROVEN);
+
+  EXPECT_TRUE(seam.held_at_every_send_and_delivery()) << "ADR 0111: nothing is logged while the hub waits";
+  EXPECT_TRUE(test::frame_log_released());
+}
+
+TEST(PullKeyFromEngine, TheHubsOwnKeyIsReportedAsAlreadyShared) {
+  PullKeyRig rig;
+  rig.radio.queue_rx(to_packet(pulled_key_frame(rig.comp.node_id_, rig.comp.system_key_)));
+
+  const PullKeyResult result = rig.pull();
+
+  EXPECT_EQ(result.outcome, PullKeyOutcome::OWN_KEY);
+  EXPECT_TRUE(result.log_report.empty());
+  EXPECT_EQ(sent_commands(rig.radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER}));
+  EXPECT_NE(result.advice.find("already shares this hub's key"), std::string::npos) << result.advice;
+  EXPECT_EQ(rig.comp.pairing_telemetry().outcome(), PairingOutcome::HUB_KEY_RETURNED);
+}
+
+TEST(PullKeyFromEngine, ARefusalCarriesTheControllersCodeAndSendsNoSecondRequest) {
+  PullKeyRig rig;
+  rig.radio.queue_rx(to_packet(error_frame(rig.comp.node_id_, RESULT_COMMAND_UNKNOWN)));
+
+  const PullKeyResult result = rig.pull();
+
+  EXPECT_EQ(result.outcome, PullKeyOutcome::REFUSED);
+  EXPECT_TRUE(result.has_refusal_code);
+  EXPECT_EQ(result.refusal_code, RESULT_COMMAND_UNKNOWN);
+  EXPECT_EQ(sent_commands(rig.radio), (std::vector<uint8_t>{CMD_LAUNCH_KEY_TRANSFER})) << "a refusal ends the tries";
+  EXPECT_EQ(rig.comp.pairing_telemetry().outcome(), PairingOutcome::KEY_TRANSFER_REFUSED);
+  EXPECT_NE(result.advice.find("key-sharing mode"), std::string::npos) << result.advice;
+}
+
+TEST(PullKeyFromEngine, ASilentControllerIsReportedAsNoKeyAndNothingIsSearched) {
+  PullKeyRig rig;
+
+  const PullKeyResult result = rig.pull();
+
+  EXPECT_EQ(result.outcome, PullKeyOutcome::SILENT);
+  EXPECT_FALSE(result.has_refusal_code);
+  const std::vector<uint8_t> cmds = sent_commands(rig.radio);
+  EXPECT_EQ(std::count(cmds.begin(), cmds.end(), CMD_LAUNCH_KEY_TRANSFER), static_cast<long>(cmds.size()))
+      << "only 0x38 tries: no discovery, no roll-call";
+  EXPECT_EQ(rig.comp.pairing_telemetry().outcome(), PairingOutcome::KEY_EXCHANGE_FAILED);
+  EXPECT_NE(rig.comp.pairing_telemetry().result_sensor_string().find("pull_key_unanswered"), std::string::npos);
+  EXPECT_TRUE(test::frame_log_released());
+}
+
+TEST(PullKeyFromEngine, AWrongProofIsNotProvenAndNotSearched) {
+  PullKeyRig rig;
+  const IoFrame reply = pulled_key_frame(rig.comp.node_id_, OTHER_KEY);
+  rig.radio.queue_rx(to_packet(reply));
+  rig.radio.queue_rx(
+      to_packet(proof_frame(rig.comp.node_id_, reply, rig.comp.system_key_)));  // signed with another key
+
+  const PullKeyResult result = rig.pull();
+
+  EXPECT_EQ(result.outcome, PullKeyOutcome::UNPROVEN);
+  EXPECT_FALSE(result.searched) << "a 0x3D that does not match is final";
+  EXPECT_TRUE(sent_frames_of(rig.radio, CMD_DISCOVER_SPE_REQ).empty());
+  EXPECT_TRUE(result.log_report.empty()) << "the key is not printed";
+}
+
+TEST(PullKeyFromEngine, AnUnprovenKeyIsProvenByADeviceThatAnswersTheRollCall) {
+  // ADR 0071: the same key-holder search as Discover & Pair, and only for a key the controller did not prove.
+  PullKeyRig rig;
+  rig.radio.queue_rx(to_packet(pulled_key_frame(rig.comp.node_id_, OTHER_KEY)));
+  queue_rx_after_sends(rig.radio, SENDS_BEFORE_PULL_ROLL_CALL, heater_roll_call_reply(rig.comp.node_id_));
+
+  const PullKeyResult result = rig.pull();
+
+  EXPECT_EQ(result.outcome, PullKeyOutcome::PROVEN);
+  EXPECT_TRUE(result.searched);
+  EXPECT_EQ(result.check_value, detail::format_key_check_value(OTHER_KEY)) << "proven by the devices that answered";
+  EXPECT_TRUE(result.log_report.empty()) << "the search printed the report; the result adds none";
+  const IoDevice *heater = rig.comp.get_device("B6BDFC");
+  ASSERT_NE(heater, nullptr);
+  ASSERT_TRUE(heater->has_system_key);
+  EXPECT_EQ(0, memcmp(heater->system_key, OTHER_KEY, AES_KEY_SIZE));
+  EXPECT_EQ(rig.comp.pairing_telemetry().outcome(), PairingOutcome::PAIRED);
+  EXPECT_EQ(result.advice.find(key_hex(OTHER_KEY)), std::string::npos);
+  EXPECT_EQ(rig.comp.pairing_telemetry().result_sensor_string().find(key_hex(OTHER_KEY)), std::string::npos);
+  EXPECT_EQ(0, memcmp(rig.comp.system_key_, test::TEST_SYSTEM_KEY, AES_KEY_SIZE));
+}
+
+TEST(PullKeyFromEngine, AnUnprovenKeyNobodyAnswersUnderIsNotPrintedAndRegistersNothing) {
+  PullKeyRig rig;
+  rig.radio.queue_rx(to_packet(pulled_key_frame(rig.comp.node_id_, OTHER_KEY)));
+
+  const PullKeyResult result = rig.pull();
+
+  EXPECT_EQ(result.outcome, PullKeyOutcome::UNPROVEN);
+  EXPECT_TRUE(result.searched);
+  EXPECT_TRUE(result.check_value.empty()) << "an unproven key gets no check value in the result";
+  EXPECT_EQ(sent_frames_of(rig.radio, CMD_DISCOVER_SPE_REQ).size(), 6u) << "one roll-call sweep under the key";
+  EXPECT_TRUE(result.log_report.empty());
+  EXPECT_EQ(rig.comp.registry_.size(), 0u);
+  EXPECT_EQ(rig.comp.pairing_telemetry().outcome(), PairingOutcome::KEY_EXCHANGE_FAILED);
+  EXPECT_NE(result.advice.find("did not prove"), std::string::npos) << result.advice;
+  EXPECT_EQ(result.advice.find(key_hex(OTHER_KEY)), std::string::npos);
+}
+
+TEST(PullKeyFromEngine, TheHubsOwnNodeIdIsRefusedBeforeAnythingIsSent) {
+  PullKeyRig rig;
+
+  const PullKeyResult result = rig.comp.pairing_engine_.pull_key_from(rig.comp.node_id_);
+
+  EXPECT_FALSE(result.attempted());
+  ASSERT_NE(result.refusal, nullptr);
+  EXPECT_TRUE(rig.radio.get_sent_data().empty());
+  EXPECT_EQ(rig.comp.pairing_telemetry().outcome(), PairingOutcome::NONE) << "no attempt was recorded";
 }

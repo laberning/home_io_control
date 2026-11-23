@@ -384,3 +384,68 @@ TEST(DecisionsStatus, AFrozenCountBacksOffExceptWhileTheCoverWaits) {
   EXPECT_TRUE(backs_off_frozen_count(ExecutionState::EXECUTING));
   EXPECT_TRUE(backs_off_frozen_count(ExecutionState::UNDEFINED));
 }
+
+// === Overheard sources: each one named at most once per interval ===
+
+TEST(DecisionsHeardSourceLog, EachSourceIsNamedOncePerIntervalAndANewOneReplacesTheOldest) {
+  decisions::HeardSourceLog log;
+  const uint8_t ids[5][3] = {{1, 0, 0}, {2, 0, 0}, {3, 0, 0}, {4, 0, 0}, {5, 0, 0}};
+  EXPECT_TRUE(log.should_log(ids[0], 1000)) << "first sight";
+  EXPECT_FALSE(log.should_log(ids[0], 2000)) << "the same source again within the interval";
+  EXPECT_TRUE(log.should_log(ids[1], 2000)) << "another source is named at once";
+  EXPECT_FALSE(log.should_log(ids[0], 3000)) << "two alternating sources do not defeat the limit";
+  EXPECT_FALSE(log.should_log(ids[0], 1000 + decisions::HeardSourceLog::INTERVAL_MS - 1));
+  EXPECT_TRUE(log.should_log(ids[0], 1000 + decisions::HeardSourceLog::INTERVAL_MS)) << "after the interval";
+  for (int i = 1; i < 4; i++)
+    EXPECT_TRUE(log.should_log(ids[i + 1], 1000 + decisions::HeardSourceLog::INTERVAL_MS + i));
+  // Five sources, four slots: the one named longest ago (ids[1], at 2000) made room for ids[4].
+  EXPECT_TRUE(log.should_log(ids[1], 1000 + decisions::HeardSourceLog::INTERVAL_MS + 10));
+  EXPECT_FALSE(log.should_log(ids[4], 1000 + decisions::HeardSourceLog::INTERVAL_MS + 11));
+}
+
+TEST(DecisionsHeardSourceLog, ADeviceIsNamedWhenNeverNamedAndOncePerIntervalAfterwards) {
+  using decisions::names_overheard_status;
+  constexpr uint32_t INTERVAL = decisions::HeardSourceLog::INTERVAL_MS;
+  EXPECT_TRUE(names_overheard_status(0, 5000)) << "0 = never named";
+  EXPECT_TRUE(names_overheard_status(0, 0));
+  EXPECT_FALSE(names_overheard_status(5000, 5000));
+  EXPECT_FALSE(names_overheard_status(5000, 5000 + INTERVAL - 1));
+  EXPECT_TRUE(names_overheard_status(5000, 5000 + INTERVAL));
+}
+
+TEST(DecisionsHeardSourceLog, ADevicesIntervalSurvivesAWrapOfTheMillisecondCounter) {
+  using decisions::names_overheard_status;
+  constexpr uint32_t INTERVAL = decisions::HeardSourceLog::INTERVAL_MS;
+  const uint32_t before_wrap = UINT32_MAX - 1000;
+  EXPECT_FALSE(names_overheard_status(before_wrap, before_wrap + INTERVAL - 1)) << "across the wrap";
+  EXPECT_TRUE(names_overheard_status(before_wrap, before_wrap + INTERVAL));
+}
+
+TEST(DecisionsHeardSourceLog, TheIntervalSurvivesAWrapOfTheMillisecondCounter) {
+  decisions::HeardSourceLog log;
+  const uint8_t id[3] = {9, 9, 9};
+  const uint32_t before_wrap = 0xFFFFFF00u;
+  EXPECT_TRUE(log.should_log(id, before_wrap));
+  EXPECT_FALSE(log.should_log(id, before_wrap + 1000)) << "1 s later, counter wrapped to a small value";
+  EXPECT_FALSE(log.should_log(id, before_wrap + decisions::HeardSourceLog::INTERVAL_MS - 1));
+  EXPECT_TRUE(log.should_log(id, before_wrap + decisions::HeardSourceLog::INTERVAL_MS));
+}
+
+TEST(DecisionsHeardSourceLog, OnlyARequestFromAForeignNodeNamesAController) {
+  const uint8_t own[3] = {0xC0, 0xFF, 0xEE};
+  const uint8_t foreign[3] = {0x43, 0x44, 0xE3};
+  const uint8_t device[3] = {0x05, 0x4E, 0x17};
+  auto frame = [&](const uint8_t src[3], bool start, bool end) {
+    IoFrame f{};
+    init_frame(f, /*is_2w=*/true, start, end, /*low_power=*/false);
+    set_src(f, src);
+    set_dst(f, device);
+    return f;
+  };
+  EXPECT_TRUE(decisions::names_foreign_controller(frame(foreign, true, false), own, false)) << "a foreign request";
+  EXPECT_FALSE(decisions::names_foreign_controller(frame(foreign, false, true), own, false)) << "a reply";
+  EXPECT_FALSE(decisions::names_foreign_controller(frame(foreign, true, true), own, false)) << "a single frame";
+  EXPECT_FALSE(decisions::names_foreign_controller(frame(foreign, false, false), own, false)) << "a continuation";
+  EXPECT_FALSE(decisions::names_foreign_controller(frame(own, true, false), own, false)) << "our own request";
+  EXPECT_FALSE(decisions::names_foreign_controller(frame(foreign, true, false), own, true)) << "a registered device";
+}

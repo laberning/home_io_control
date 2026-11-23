@@ -121,7 +121,31 @@ void append_foreign_controller_advice(const uint8_t own_node_id[NODE_ID_SIZE], c
   }
 }
 
-/// Key-step advice: only for attempts that did not pair and got as far as discovering a device.
+/// Key-step advice for the standalone pull (`pull_key`): proven, the hub's own key, refused, or unanswered. A key
+/// the controller did not prove but devices did (a roll-call under it) is advised like the same case in a pairing
+/// attempt; a pairing that registered devices needs no advice.
+/// @param add Adds one piece of advice about the discovered node and returns it.
+template<typename AddAdvice> void append_standalone_pull_advice(const PairingTelemetry &telemetry, AddAdvice &add) {
+  switch (telemetry.outcome()) {
+    case PairingOutcome::KEY_RECEIVED:
+      add(telemetry.key_pull_unproven() ? PairingAdviceCode::PULLED_KEY_RECEIVED : PairingAdviceCode::PULL_KEY_PROVEN);
+      break;
+    case PairingOutcome::HUB_KEY_RETURNED:
+      add(PairingAdviceCode::PULL_KEY_OWN_KEY);
+      break;
+    case PairingOutcome::KEY_TRANSFER_REFUSED:
+      add(PairingAdviceCode::PULL_KEY_REFUSED);
+      break;
+    case PairingOutcome::KEY_EXCHANGE_FAILED:
+      add(telemetry.key_pull_unproven() ? PairingAdviceCode::KEY_PULL_UNPROVEN
+                                        : PairingAdviceCode::PULL_KEY_UNANSWERED);
+      break;
+    default:
+      break;
+  }
+}
+
+/// Key-step advice: only for attempts that did not pair and got as far as discovering a device (or naming one).
 /// A pull gets its own three codes: a proven key received (how to use it), refused (the device does
 /// not hand out its key), or answered with a key it did not prove. For a push, "command unknown", or a failed push to a
 /// device that answered discovery as a remote controller, points at the pull direction; any other refusal is reported
@@ -139,6 +163,10 @@ void append_key_step_advice(const PairingTelemetry &telemetry, PairingAdvice out
     return advice;
   };
   const PairingOutcome outcome = telemetry.outcome();
+  if (telemetry.key_pull_only()) {
+    append_standalone_pull_advice(telemetry, add);
+    return;
+  }
   if (outcome == PairingOutcome::KEY_RECEIVED) {
     add(PairingAdviceCode::PULLED_KEY_RECEIVED);
     return;
@@ -208,6 +236,14 @@ const char *pairing_advice_code_name(PairingAdviceCode code) {
       return "key_pull_unproven";
     case PairingAdviceCode::PULLED_KEY_RECEIVED:
       return "pulled_key_received";
+    case PairingAdviceCode::PULL_KEY_PROVEN:
+      return "pull_key_proven";
+    case PairingAdviceCode::PULL_KEY_OWN_KEY:
+      return "pull_key_own_key";
+    case PairingAdviceCode::PULL_KEY_REFUSED:
+      return "pull_key_refused";
+    case PairingAdviceCode::PULL_KEY_UNANSWERED:
+      return "pull_key_unanswered";
     case PairingAdviceCode::HUB_KEY_NO_RESPONDER:
       return "hub_key_no_responder";
     case PairingAdviceCode::NONE:
@@ -292,6 +328,32 @@ std::string pairing_advice_message(const PairingAdvice &advice) {
                "run Scan "
                "Paired Devices: the log prints its config block. Each device of this kind keeps its own key, so "
                "pull each one and compare the key check values.",
+               node_id_to_string(advice.subject_node).c_str());
+      return std::string(buf);
+    case PairingAdviceCode::PULL_KEY_PROVEN:
+      snprintf(buf, sizeof(buf),
+               "Controller %s handed over its key and proved it holds it (printed in the device log, not here). "
+               "Put it into the `system_key:` of the entity of each device that controller operates, keep it in "
+               "secrets.yaml, flash, and add the devices by their ids. No search for devices was made.",
+               node_id_to_string(advice.subject_node).c_str());
+      return std::string(buf);
+    case PairingAdviceCode::PULL_KEY_OWN_KEY:
+      snprintf(buf, sizeof(buf),
+               "Controller %s already shares this hub's key. Add its devices by id with the hub's `system_key:`.",
+               node_id_to_string(advice.subject_node).c_str());
+      return std::string(buf);
+    case PairingAdviceCode::PULL_KEY_REFUSED:
+      snprintf(buf, sizeof(buf),
+               "Controller %s answered the key request with 0x%02X %s. Start the controller's key-sharing mode "
+               "first and run the action again within its window.",
+               node_id_to_string(advice.subject_node).c_str(), advice.result_code,
+               command_result_name(advice.result_code));
+      return std::string(buf);
+    case PairingAdviceCode::PULL_KEY_UNANSWERED:
+      snprintf(buf, sizeof(buf),
+               "Controller %s sent no key. Start the controller's key-sharing mode first and run the action again "
+               "within its window; check the id by pressing a button on the controller and reading the controller "
+               "id in the log.",
                node_id_to_string(advice.subject_node).c_str());
       return std::string(buf);
     case PairingAdviceCode::HUB_KEY_NO_RESPONDER:

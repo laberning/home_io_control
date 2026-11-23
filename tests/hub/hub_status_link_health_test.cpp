@@ -11,6 +11,7 @@
 #include "corpus_test_helpers.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
+#include "log_capture.h"
 
 using namespace esphome::home_io_control;
 using test::make_rx_packet;
@@ -324,4 +325,129 @@ TEST(HubStatus, UnauthenticatedForeignStatusUpdateDoesNotUpdateDeviceState) {
   ASSERT_NE(dev, nullptr);
   EXPECT_EQ(dev->position, UNKNOWN_POSITION) << "unauthenticated foreign status update must not set position";
   EXPECT_TRUE(dev->is_stopped) << "unauthenticated foreign status update must not change is_stopped from its default";
+}
+
+// ========================================================================================
+// ADR 0131: an overheard status frame stamps link health and nothing else
+// ========================================================================================
+
+namespace {
+
+/// A status reply (0x04 with a moving-to-100% payload) from @p src to @p dst.
+RadioRxPacket overheard_status_packet(const uint8_t src[3], const uint8_t dst[3]) {
+  IoFrame f{};
+  init_frame(f, true, true, false, false);
+  set_src(f, src);
+  set_dst(f, dst);
+  uint8_t payload[8] = {test::STATUS_BYTE_MOVING, 0x00, 0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00};
+  set_cmd(f, CMD_PRIVATE_RESP, payload, sizeof(payload));
+  return make_rx_packet(f);
+}
+
+const uint8_t OVERHEARD_DEVICE[3] = {0x05, 0x4E, 0x17};
+const uint8_t OTHER_CONTROLLER[3] = {0x43, 0x44, 0xE3};
+
+}  // namespace
+
+TEST(HubStatus, AStatusFrameToAnotherControllerStampsLinkHealthAndChangesNothingElse) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  radio.set_last_capture_rssi(-71);
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+  ASSERT_EQ(dev->last_seen_ms, 0u);
+
+  comp.process_received_packet_(overheard_status_packet(OVERHEARD_DEVICE, OTHER_CONTROLLER));
+
+  EXPECT_NE(dev->last_seen_ms, 0u) << "the frame is evidence the device is on air";
+  EXPECT_EQ(dev->last_rssi_dbm, -71);
+  EXPECT_EQ(device_rssi_ema_dbm(*dev), -71);
+  EXPECT_EQ(dev->position, UNKNOWN_POSITION) << "the claimed position is not applied";
+  EXPECT_TRUE(dev->is_stopped) << "the claimed movement is not applied";
+  EXPECT_TRUE(comp.op_queue_.empty()) << "nothing is scheduled";
+}
+
+TEST(HubStatus, AStatusFrameFromAnUnregisteredNodeStampsNoDevice) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  const uint8_t stranger[3] = {0xAB, 0xCD, 0xEF};
+
+  comp.process_received_packet_(overheard_status_packet(stranger, OTHER_CONTROLLER));
+
+  EXPECT_EQ(comp.get_device("054E17")->last_seen_ms, 0u) << "a neighbour's frame touches none of our devices";
+  EXPECT_EQ(comp.get_device("ABCDEF"), nullptr);
+}
+
+TEST(HubStatus, AStatusReplyToUsOutsideAnExchangeStampsLinkHealthQuietly) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  esphome::test_clock::ManualClock clock;
+  test::LogCapture log;
+  auto *dev = comp.get_device("054E17");
+  ASSERT_NE(dev, nullptr);
+
+  comp.process_received_packet_(overheard_status_packet(OVERHEARD_DEVICE, comp.node_id_));
+
+  EXPECT_NE(dev->last_seen_ms, 0u);
+  EXPECT_EQ(dev->position, UNKNOWN_POSITION);
+  EXPECT_EQ(log.count('I'), 0u) << "a late reply to us is DEBUG only";
+  EXPECT_EQ(log.count('W'), 0u);
+}
+
+TEST(HubStatus, SixDevicesPolledInTurnByAnotherControllerAreEachNamedOncePerInterval) {
+  // A second controller (a KLF 200) polling more devices than HeardSourceLog has slots must not make the log
+  // repeat any device before the interval is over.
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  const char *const ids[] = {"054E17", "054E18", "054E19", "054E1A", "054E1B", "054E1C"};
+  uint8_t nodes[6][3];
+  for (size_t i = 0; i < 6; i++) {
+    if (i > 0)
+      comp.add_device(ids[i]);
+    nodes[i][0] = 0x05;
+    nodes[i][1] = 0x4E;
+    nodes[i][2] = static_cast<uint8_t>(i == 0 ? 0x17 : 0x17 + i);
+  }
+  esphome::test_clock::ManualClock clock;
+  test::LogCapture log;
+
+  for (int round = 0; round < 5; round++) {
+    for (const auto &node : nodes) {
+      comp.process_received_packet_(overheard_status_packet(node, OTHER_CONTROLLER));
+      esphome::test_clock::advance_ms(10000);
+    }
+  }
+  EXPECT_EQ(log.count('I'), 6u) << "one INFO line per device in the first ten minutes, however they take turns";
+
+  log.clear();
+  esphome::test_clock::advance_ms(decisions::HeardSourceLog::INTERVAL_MS);
+  for (const auto &node : nodes)
+    comp.process_received_packet_(overheard_status_packet(node, OTHER_CONTROLLER));
+  EXPECT_EQ(log.count('I'), 6u) << "each device is named again after the interval";
+}
+
+TEST(HubStatus, ADeviceAnsweringAnotherControllerIsLoggedAtInfoOncePerInterval) {
+  RxTestableComponent comp;
+  MockRadio radio;
+  setup_rx_test_component(comp, radio);
+  esphome::test_clock::ManualClock clock;
+  test::LogCapture log;
+
+  comp.process_received_packet_(overheard_status_packet(OVERHEARD_DEVICE, OTHER_CONTROLLER));
+  EXPECT_EQ(log.count('I'), 1u) << "first answer heard";
+
+  log.clear();
+  esphome::test_clock::advance_ms(5000);
+  comp.process_received_packet_(overheard_status_packet(OVERHEARD_DEVICE, OTHER_CONTROLLER));
+  EXPECT_EQ(log.count('I'), 0u) << "the same device again inside the interval";
+  EXPECT_GE(log.count('D'), 1u) << "DEBUG instead";
+
+  log.clear();
+  esphome::test_clock::advance_ms(decisions::HeardSourceLog::INTERVAL_MS);
+  comp.process_received_packet_(overheard_status_packet(OVERHEARD_DEVICE, OTHER_CONTROLLER));
+  EXPECT_EQ(log.count('I'), 1u) << "named again after the interval";
 }

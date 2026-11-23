@@ -15,6 +15,7 @@
 #include "corpus_test_helpers.h"
 #include "test_helpers.h"
 #include "stubs/radio_test_common.h"
+#include "log_capture.h"
 
 using namespace esphome::home_io_control;
 using test::encode_device_metadata;
@@ -1249,4 +1250,77 @@ TEST(HubStatus, StatusUpdateMinimumLengthFrameStillApplied) {
   EXPECT_FLOAT_EQ(dev->target, 100.0f) << "a minimum-length 0x71 must still decode its target";
   EXPECT_FLOAT_EQ(dev->position, 100.0f) << "a minimum-length 0x71 must still decode its position";
   EXPECT_TRUE(dev->is_stopped) << "the originator length guard must not tighten branch acceptance";
+}
+
+// === A request overheard from an unknown controller is named in the log ===
+
+namespace {
+
+/// A 2W request (first frame of an exchange) from @p src to @p dst.
+RadioRxPacket request_packet(const uint8_t src[3], const uint8_t dst[3], uint8_t cmd = CMD_GET_NAME) {
+  IoFrame f{};
+  init_frame(f, true, true, false, false);
+  set_src(f, src);
+  set_dst(f, dst);
+  set_cmd(f, cmd);
+  return test::make_rx_packet(f);
+}
+
+}  // namespace
+
+TEST(HubStatus, ARequestFromAnUnknownControllerIsNamedOncePerInterval) {
+  test::RxTestableComponent comp;
+  MockRadio radio;
+  test::setup_rx_test_component(comp, radio);
+  esphome::test_clock::ManualClock clock;
+  test::LogCapture log;
+  const uint8_t controller[3] = {0x43, 0x44, 0xE3};
+  const uint8_t other_controller[3] = {0x43, 0x44, 0xE4};
+  const uint8_t device[3] = {0x05, 0x4E, 0x17};
+
+  comp.process_received_packet_(request_packet(controller, device));
+  EXPECT_EQ(log.count('I'), 1u) << "first sight of a controller";
+
+  log.clear();
+  esphome::test_clock::advance_ms(1000);
+  comp.process_received_packet_(request_packet(controller, device));
+  EXPECT_EQ(log.count('I'), 0u) << "the same controller inside the interval";
+  comp.process_received_packet_(request_packet(other_controller, device));
+  EXPECT_EQ(log.count('I'), 1u) << "another controller is named at once";
+
+  log.clear();
+  esphome::test_clock::advance_ms(decisions::HeardSourceLog::INTERVAL_MS);
+  comp.process_received_packet_(request_packet(controller, device));
+  EXPECT_EQ(log.count('I'), 1u) << "named again after the interval";
+}
+
+TEST(HubStatus, ARequestFromOurOwnNodeOrARegisteredDeviceIsNotNamed) {
+  test::RxTestableComponent comp;
+  MockRadio radio;
+  test::setup_rx_test_component(comp, radio);
+  esphome::test_clock::ManualClock clock;
+  test::LogCapture log;
+  const uint8_t device[3] = {0x05, 0x4E, 0x17};
+  const uint8_t controller[3] = {0x43, 0x44, 0xE3};
+
+  comp.process_received_packet_(request_packet(comp.node_id_, device));
+  comp.process_received_packet_(request_packet(device, controller));
+  EXPECT_EQ(log.count('I'), 0u) << "neither the hub nor a registered device is a foreign controller";
+}
+
+TEST(HubStatus, AReplyFromAnUnknownNodeIsNotNamedAsAController) {
+  test::RxTestableComponent comp;
+  MockRadio radio;
+  test::setup_rx_test_component(comp, radio);
+  esphome::test_clock::ManualClock clock;
+  test::LogCapture log;
+  IoFrame f{};
+  init_frame(f, true, false, true, false);
+  const uint8_t src[3] = {0x43, 0x44, 0xE3};
+  const uint8_t dst[3] = {0x05, 0x4E, 0x17};
+  set_src(f, src);
+  set_dst(f, dst);
+  set_cmd(f, CMD_GET_NAME);
+  comp.process_received_packet_(test::make_rx_packet(f));
+  EXPECT_EQ(log.count('I'), 0u) << "only the first frame of an exchange is a request";
 }

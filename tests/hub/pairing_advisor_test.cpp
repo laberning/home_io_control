@@ -473,3 +473,86 @@ TEST(PairingAdvisor, NoneAdviceMessageIsEmpty) {
   advice.code = PairingAdviceCode::NONE;
   EXPECT_TRUE(pairing_advice_message(advice).empty());
 }
+
+// ============================================================================
+// The standalone key pull (pull_key): its own advice codes
+// ============================================================================
+
+namespace {
+
+/// Telemetry of a finished standalone pull from DEVICE_SRC that ended as `outcome`.
+PairingTelemetry standalone_pull(PairingOutcome outcome, bool unproven = false) {
+  PairingTelemetry telemetry;
+  telemetry.begin();
+  telemetry.set_key_pull_only();
+  telemetry.set_key_pull_attempted();
+  telemetry.set_discovered_device(DEVICE_SRC, DeviceType::REMOTE_CONTROLLER);
+  if (unproven)
+    telemetry.set_key_pull_unproven();
+  telemetry.set_outcome(outcome);
+  return telemetry;
+}
+
+/// The key-step advice of `telemetry`: the last entry, as the three RF passes come first.
+PairingAdvice last_advice(const PairingTelemetry &telemetry) {
+  PairingAdvice out[PAIRING_ADVICE_MAX];
+  const uint8_t count = analyze_pairing_telemetry(telemetry, OWN_ID, out);
+  EXPECT_GE(count, 1u);
+  return count == 0 ? PairingAdvice{} : out[count - 1];
+}
+
+}  // namespace
+
+TEST(PairingAdvisorStandalonePull, ProvenKeySaysWhereItGoesAndThatNoSearchWasMade) {
+  const PairingAdvice advice = last_advice(standalone_pull(PairingOutcome::KEY_RECEIVED));
+  EXPECT_EQ(advice.code, PairingAdviceCode::PULL_KEY_PROVEN);
+  EXPECT_STREQ(pairing_advice_code_name(advice.code), "pull_key_proven");
+  const std::string message = pairing_advice_message(advice);
+  EXPECT_NE(message.find("system_key:"), std::string::npos);
+  EXPECT_NE(message.find("No search for devices was made"), std::string::npos);
+  EXPECT_NE(message.find("445566"), std::string::npos) << "names the controller";
+}
+
+TEST(PairingAdvisorStandalonePull, AKeyProvenOnlyByAnswersGetsThePairingAdviceNotTheNoSearchOne) {
+  const PairingAdvice advice = last_advice(standalone_pull(PairingOutcome::KEY_RECEIVED, /*unproven=*/true));
+  EXPECT_EQ(advice.code, PairingAdviceCode::PULLED_KEY_RECEIVED);
+  EXPECT_EQ(pairing_advice_message(advice).find("No search for devices was made"), std::string::npos);
+}
+
+TEST(PairingAdvisorStandalonePull, OwnKeyIsReportedAsAlreadyShared) {
+  const PairingAdvice advice = last_advice(standalone_pull(PairingOutcome::HUB_KEY_RETURNED));
+  EXPECT_EQ(advice.code, PairingAdviceCode::PULL_KEY_OWN_KEY);
+  EXPECT_STREQ(pairing_advice_code_name(advice.code), "pull_key_own_key");
+  EXPECT_NE(pairing_advice_message(advice).find("already shares this hub's key"), std::string::npos);
+}
+
+TEST(PairingAdvisorStandalonePull, ARefusalNamesTheCodeAndSaysToStartTheControllersMode) {
+  PairingTelemetry telemetry = standalone_pull(PairingOutcome::KEY_TRANSFER_REFUSED);
+  telemetry.set_key_refusal(RESULT_COMMAND_UNKNOWN);
+  const PairingAdvice advice = last_advice(telemetry);
+  EXPECT_EQ(advice.code, PairingAdviceCode::PULL_KEY_REFUSED);
+  EXPECT_STREQ(pairing_advice_code_name(advice.code), "pull_key_refused");
+  EXPECT_TRUE(advice.has_result_code);
+  EXPECT_NE(pairing_advice_message(advice).find("key-sharing mode"), std::string::npos);
+}
+
+TEST(PairingAdvisorStandalonePull, SilenceSaysToCheckTheIdAndStartTheMode) {
+  const PairingAdvice advice = last_advice(standalone_pull(PairingOutcome::KEY_EXCHANGE_FAILED));
+  EXPECT_EQ(advice.code, PairingAdviceCode::PULL_KEY_UNANSWERED);
+  EXPECT_STREQ(pairing_advice_code_name(advice.code), "pull_key_unanswered");
+  EXPECT_NE(pairing_advice_message(advice).find("controller id in the log"), std::string::npos);
+}
+
+TEST(PairingAdvisorStandalonePull, AKeyNobodyProvedKeepsTheSharedUnprovenAdvice) {
+  const PairingAdvice advice = last_advice(standalone_pull(PairingOutcome::KEY_EXCHANGE_FAILED, /*unproven=*/true));
+  EXPECT_EQ(advice.code, PairingAdviceCode::KEY_PULL_UNPROVEN);
+}
+
+TEST(PairingAdvisorStandalonePull, APairingThatRegisteredDevicesNeedsNoKeyAdvice) {
+  PairingAdvice out[PAIRING_ADVICE_MAX];
+  const uint8_t count = analyze_pairing_telemetry(standalone_pull(PairingOutcome::PAIRED, true), OWN_ID, out);
+  for (uint8_t i = 0; i < count; i++) {
+    EXPECT_NE(out[i].code, PairingAdviceCode::PULL_KEY_PROVEN);
+    EXPECT_NE(out[i].code, PairingAdviceCode::PULLED_KEY_RECEIVED);
+  }
+}

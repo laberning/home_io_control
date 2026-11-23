@@ -802,6 +802,75 @@ DeclaredPairingResult PairingEngine::pair_declared_device(const std::string &dev
   return {.confirmed = true};
 }
 
+PullKeyResult PairingEngine::pull_key_from(const uint8_t controller[NODE_ID_SIZE]) {
+  if (memcmp(controller, node_id_, NODE_ID_SIZE) == 0) {
+    ESP_LOGW(TAG, "Key pull: %s is this hub's own node ID", node_id_to_string(controller).c_str());
+    return PullKeyResult::refused("that is this hub's own node ID; give the ID of the controller to pull the key from");
+  }
+
+  begin_attempt_("Pulling a key from a controller by its node ID, without discovery...");
+  this->telemetry_.set_key_pull_only();
+  this->telemetry_.set_key_pull_attempted();
+
+  pairing::PairingContext context;
+  memcpy(context.device.node_id, controller, NODE_ID_SIZE);
+  context.device.type = DeviceType::REMOTE_CONTROLLER;
+  context.device_id = node_id_to_string(controller);
+  this->telemetry_.set_discovered_device(controller, context.device.type);
+
+  PullKeyResult result;
+  switch (key_pull_.pull(context)) {
+    case KeyPull::Result::OTHER_KEY: {
+      // The controller proved the key itself: the device log gets it once, with its banner; the event and the
+      // pairing summary keep to the check value. No search, nothing registered, nothing more sent.
+      const ScanState none{};
+      const PulledKeyReportInfo info{context.device_id,  context.device.type, context.device.subtype,
+                                     context.pulled_key, system_key_,         /*proven_by_sender=*/true,
+                                     /*searched=*/false};
+      result.outcome = PullKeyOutcome::PROVEN;
+      result.check_value = detail::format_key_check_value(context.pulled_key);
+      this->telemetry_.set_proven_key_check_value(result.check_value);
+      result.log_report = build_pulled_key_report(info, none, registry_);
+      memset(context.pulled_key, 0, AES_KEY_SIZE);
+      context.has_pulled_key = false;
+      this->finish_pairing_attempt_(PairingOutcome::KEY_RECEIVED);
+      result.advice = this->last_advice_text_;
+      return result;
+    }
+    case KeyPull::Result::UNPROVEN: {
+      // Only devices that answer under the key can prove it, as in Discover & Pair. The search wipes the key
+      // and ends the attempt: KEY_EXCHANGE_FAILED when nobody answered, otherwise paired or key received.
+      result.searched = true;
+      const std::string check_value = detail::format_key_check_value(context.pulled_key);
+      this->register_pulled_key_devices_(context, /*key_proven=*/false);
+      const bool proven = this->telemetry_.outcome() != PairingOutcome::KEY_EXCHANGE_FAILED;
+      result.outcome = proven ? PullKeyOutcome::PROVEN : PullKeyOutcome::UNPROVEN;
+      if (proven)
+        result.check_value = check_value;
+      break;
+    }
+    case KeyPull::Result::OUR_KEY:
+      result.outcome = PullKeyOutcome::OWN_KEY;
+      this->finish_pairing_attempt_(PairingOutcome::HUB_KEY_RETURNED);
+      result.advice = this->last_advice_text_;
+      return result;
+    case KeyPull::Result::FAILED:
+      if (context.key_refused) {
+        result.outcome = PullKeyOutcome::REFUSED;
+        result.has_refusal_code = true;
+        result.refusal_code = context.key_refusal_code;
+        this->finish_pairing_attempt_(PairingOutcome::KEY_TRANSFER_REFUSED);
+      } else {
+        result.outcome = this->telemetry_.key_pull_unproven() ? PullKeyOutcome::UNPROVEN : PullKeyOutcome::SILENT;
+        this->finish_pairing_attempt_(PairingOutcome::KEY_EXCHANGE_FAILED);
+      }
+      result.advice = this->last_advice_text_;
+      return result;
+  }
+  result.advice = this->last_advice_text_;
+  return result;
+}
+
 void PairingEngine::begin_attempt_(const char *opening) {
   this->telemetry_.begin();
   this->engine_.set_transmit_observer(&this->telemetry_);
@@ -985,6 +1054,8 @@ bool PairingEngine::run_pull_and_finish_(pairing::PairingContext &context, bool 
 bool PairingEngine::register_pulled_key_devices_(pairing::PairingContext &context, bool key_proven) {
   const KeyHolderSearch::Result found =
       this->key_holders_.search_and_register(context, context.pulled_key, /*device_key=*/true, key_proven);
+  if (key_proven || found.answered > 0)
+    this->telemetry_.set_proven_key_check_value(detail::format_key_check_value(context.pulled_key));
   memset(context.pulled_key, 0, AES_KEY_SIZE);
   context.has_pulled_key = false;
   if (!key_proven && found.answered == 0) {
@@ -1009,11 +1080,16 @@ void PairingEngine::finish_pairing_attempt_(PairingOutcome outcome) {
   advisor::PairingAdvice advice[advisor::PAIRING_ADVICE_MAX];
   const uint8_t advice_count = advisor::analyze_pairing_telemetry(this->telemetry_, this->node_id_, advice);
   std::string advice_codes;
+  this->last_advice_text_.clear();
   for (uint8_t i = 0; i < advice_count; i++) {
-    ESP_LOGW(TAG, "Pairing advisor: %s", advisor::pairing_advice_message(advice[i]).c_str());
-    if (!advice_codes.empty())
+    const std::string message = advisor::pairing_advice_message(advice[i]);
+    ESP_LOGW(TAG, "Pairing advisor: %s", message.c_str());
+    if (!advice_codes.empty()) {
       advice_codes += ',';
+      this->last_advice_text_ += ' ';
+    }
     advice_codes += advisor::pairing_advice_code_name(advice[i].code);
+    this->last_advice_text_ += message;
   }
   this->telemetry_.set_advice_codes(advice_codes);
 }

@@ -150,6 +150,20 @@ TEST(PulledKeyReport, ADeviceAnEarlierPairingRegisteredStillGetsItsBlock) {
   EXPECT_NE(report.find("io_device_id: \"B6BDFC\""), std::string::npos) << report;
 }
 
+TEST(PulledKeyReport, AReportOfAPullThatMadeNoSearchSaysSoAndStillGivesTheKeyOnce) {
+  ScanState state{};
+  DeviceRegistry registry;
+  PulledKeyReportInfo info = report_info();
+  info.searched = false;
+
+  const std::string report = build_pulled_key_report(info, state, registry);
+
+  EXPECT_NE(report.find("No search for devices was made"), std::string::npos) << report;
+  EXPECT_EQ(report.find("roll-call"), std::string::npos) << "no claim about a roll-call that did not run";
+  EXPECT_EQ(count_of(report, detail::format_key_hex(PULLED_KEY)), 1u);
+  EXPECT_EQ(count_of(report, "DO NOT SHARE"), 1u);
+}
+
 TEST(HubKeyPullReport, ListsTheResponderBlocksWithoutAKeyOrABanner) {
   ScanState state{};
   const uint8_t heater[NODE_ID_SIZE] = {0xB6, 0xBD, 0xFC};

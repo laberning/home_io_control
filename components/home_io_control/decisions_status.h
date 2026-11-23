@@ -2,7 +2,8 @@
 
 /// @file decisions_status.h
 /// @brief Pure rules about device status: overheard commands, rain limitation, execution state, stopped reports,
-/// status-update acknowledgement order, poll timer ids and the heater model check.
+/// status-update acknowledgement order, which overheard sources to name in the log, poll timer ids and the heater
+/// model check.
 /// @ingroup hioc_hub
 ///
 /// Inline, stateless helpers, testable without radio hardware or timing.
@@ -17,6 +18,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 #include <string>
 
@@ -32,6 +34,85 @@ namespace decisions {
 /// than a list of reads, so an unknown command counts as a read.
 inline bool overheard_command_writes(uint8_t cmd) {
   return cmd == CMD_EXECUTE || cmd == CMD_ACTIVATE_MODE || cmd == CMD_WRITE_PRIVATE;
+}
+
+// == Overheard sources ==
+
+/// True for an overheard frame whose sender log_heard_controller_() names as a controller: a two-way request (the
+/// first frame of an exchange that continues: START set, END clear) from a node that is neither this hub nor a
+/// registered device. A reply, a single-frame exchange or one of our own devices' frames names no controller.
+/// @param frame The parsed two-way frame.
+/// @param own_node_id This hub's node ID.
+/// @param src_registered Whether the frame's source is a registered device.
+inline bool names_foreign_controller(const IoFrame &frame, const uint8_t own_node_id[NODE_ID_SIZE],
+                                     bool src_registered) {
+  return is_start(frame) && !is_end(frame) && !src_registered && std::memcmp(frame.src, own_node_id, NODE_ID_SIZE) != 0;
+}
+
+/// Which overheard request sources to name in the log, so a user can read a controller's node ID without the log
+/// repeating a busy neighbour on every frame: each of the last SLOTS sources is named at most once per INTERVAL_MS.
+/// It serves only requests from unknown controllers. With more than SLOTS sources taking turns, a new one replaces
+/// the one named longest ago, so a source can be named again before INTERVAL_MS has passed. A registered device's
+/// overheard status frame is not counted here: that rule is kept on its record (names_overheard_status()). Pure:
+/// the caller passes the clock, and the interval is measured with unsigned subtraction, so a wrap of the
+/// millisecond counter changes nothing.
+class HeardSourceLog {
+ public:
+  /// How long a source stays quiet in the log after it was named (ms).
+  static constexpr uint32_t INTERVAL_MS = 600000;
+  /// Sources remembered at once; a new one replaces the one named longest ago.
+  static constexpr size_t SLOTS = 4;
+
+  /// True when @p node_id should be named now (and records that it was), false while it was named within
+  /// INTERVAL_MS.
+  bool should_log(const uint8_t node_id[NODE_ID_SIZE], uint32_t now_ms) {
+    Slot *target = nullptr;
+    for (Slot &slot : this->slots_) {
+      if (slot.used && std::memcmp(slot.node_id, node_id, NODE_ID_SIZE) == 0) {
+        if (now_ms - slot.logged_ms < INTERVAL_MS)
+          return false;
+        target = &slot;
+        break;
+      }
+    }
+    if (target == nullptr) {
+      // A free slot, else the one named longest ago.
+      target = &this->slots_[0];
+      for (Slot &slot : this->slots_) {
+        if (!slot.used) {
+          target = &slot;
+          break;
+        }
+        if (now_ms - slot.logged_ms > now_ms - target->logged_ms)
+          target = &slot;
+      }
+    }
+    std::memcpy(target->node_id, node_id, NODE_ID_SIZE);
+    target->logged_ms = now_ms;
+    target->used = true;
+    return true;
+  }
+
+ private:
+  /// One remembered source.
+  struct Slot {
+    uint8_t node_id[NODE_ID_SIZE]{};  ///< The source's node ID.
+    uint32_t logged_ms{0};            ///< When it was last named.
+    bool used{false};                 ///< The slot holds a source.
+  };
+  Slot slots_[SLOTS]{};
+};
+
+/// Whether a registered device's overheard status frame (an answer to another controller) is named in the log now:
+/// at most once per HeardSourceLog::INTERVAL_MS for each device, however many devices another controller polls. The
+/// last time is kept on the device record (IoDevice::last_overheard_named_ms), so it scales with the registry.
+/// Unsigned subtraction keeps it correct across a wrap of the millisecond counter.
+/// @param last_named_ms millis() of the last INFO line for this device, 0 = never.
+/// @param now_ms Current millis().
+/// @return True when the frame is named at INFO now (the caller then stamps @p now_ms, as 1 when that is 0), false
+///         for DEBUG.
+inline bool names_overheard_status(uint32_t last_named_ms, uint32_t now_ms) {
+  return last_named_ms == 0 || now_ms - last_named_ms >= HeardSourceLog::INTERVAL_MS;
 }
 
 // == Passive RX handling ==

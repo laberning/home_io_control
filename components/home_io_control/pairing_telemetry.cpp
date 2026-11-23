@@ -26,7 +26,8 @@ const char *const TAG = "home_io_control.pairing";
 /// phase=wait_discover_response (25) + type=heating_temperature_interface (29) + all three
 /// advice codes ("1w_traffic,channel_busy,foreign_controller", 44) + saturated counters
 /// (attempts=255, lbt=255, dur_ms=4294967295, heard=65535) measures ~189 chars; 256 leaves
-/// headroom for future advice codes without silently truncating this frozen contract.
+/// headroom for future advice codes without silently truncating this frozen contract. The trailing
+/// `; check=XXXXXX` adds 14 more (about 203 in all).
 constexpr size_t RESULT_SENSOR_STRING_BUFFER_SIZE = 256;
 
 /// Saturation ceiling for the uint8_t retry/attempt counters — a real pairing attempt never
@@ -95,10 +96,12 @@ void PairingTelemetry::begin() {
   this->key_refusal_code_ = 0;
   this->key_pull_attempted_ = false;
   this->key_pull_unproven_ = false;
+  this->key_pull_only_ = false;
   this->has_discovered_device_ = false;
   memset(this->discovered_node_id_, 0, sizeof(this->discovered_node_id_));
   this->discovered_node_type_ = DeviceType::UNKNOWN;
   this->advice_codes_.clear();
+  this->proven_key_check_value_.clear();
 }
 
 void PairingTelemetry::record_(PairingTelemetryEventKind kind, uint8_t cmd, const uint8_t *src, const uint8_t *dst,
@@ -230,10 +233,13 @@ std::string PairingTelemetry::result_sensor_string() const {
   const std::string node = this->has_paired_device_ ? node_id_to_string(this->paired_node_id_) : "-";
   const std::string type = this->has_paired_device_ ? device_type_name(this->paired_device_type_) : "-";
   const std::string advice = this->advice_codes_.empty() ? "none" : this->advice_codes_;
+  const std::string check = this->proven_key_check_value_.empty() ? "-" : this->proven_key_check_value_;
   snprintf(buf, sizeof(buf),
-           "v1; outcome=%s; phase=%s; node=%s; type=%s; attempts=%u; lbt=%u; dur_ms=%" PRIu32 "; heard=%u; advice=%s",
+           "v1; outcome=%s; phase=%s; node=%s; type=%s; attempts=%u; lbt=%u; dur_ms=%" PRIu32
+           "; heard=%u; advice=%s; check=%s",
            outcome_name(this->outcome_), pairing_stage_name(this->phase_), node.c_str(), type.c_str(),
-           this->discovery_attempts_, this->lbt_retries_, this->duration_ms(), this->heard_count_, advice.c_str());
+           this->discovery_attempts_, this->lbt_retries_, this->duration_ms(), this->heard_count_, advice.c_str(),
+           check.c_str());
   return std::string(buf);
 }
 

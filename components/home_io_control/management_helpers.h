@@ -148,6 +148,33 @@ inline bool apply_error_response(const IoFrame &response, ManagementActionResult
   return true;
 }
 
+/// @brief Shared start of every action that takes a node ID: normalise it, then refuse an uninitialised hub and an ID
+/// that is not six hexadecimal digits.
+///
+/// Replaces `result` with the action name and the normalised ID; on a refusal sets `result.message` to a stable
+/// string and returns false (callers return `result` at once, so nothing is sent).
+/// @param action Action name to record on `result`.
+/// @param node_id Requested node ID (hex string, case-insensitive, as received from HA).
+/// @param noun What the ID names ("device", "controller"), for the refusal text.
+/// @param initialized The hub's initialized flag.
+/// @param result Populated with the action name and normalised ID, plus the refusal message.
+/// @param[out] parsed The ID's NODE_ID_SIZE bytes when this returns true.
+/// @return true when the hub is initialised and the ID parsed.
+inline bool parse_management_node_id(const char *action, const std::string &node_id, const char *noun, bool initialized,
+                                     ManagementActionResult &result, uint8_t parsed[NODE_ID_SIZE]) {
+  const std::string normalized_id = normalize_device_id_argument(node_id);
+  result = make_management_result(action, normalized_id);
+  if (!initialized) {
+    result.message = "hub is not initialized";
+    return false;
+  }
+  if (!hex_to_bytes(normalized_id, parsed, NODE_ID_SIZE)) {
+    result.message = std::string(noun) + " ID must be exactly 6 hexadecimal characters";
+    return false;
+  }
+  return true;
+}
+
 /// @brief Shared preamble for every device-addressed action: validate the hub and device ID,
 /// then resolve the target device.
 ///
@@ -164,21 +191,11 @@ inline bool apply_error_response(const IoFrame &response, ManagementActionResult
 /// @return Pointer to the resolved device, or nullptr if any validation step failed.
 inline IoDevice *resolve_management_device(const char *action, const std::string &device_id, bool initialized,
                                            DeviceRegistry &registry, ManagementActionResult &result) {
-  const std::string normalized_device_id = normalize_device_id_argument(device_id);
-  result = make_management_result(action, normalized_device_id);
-
-  if (!initialized) {
-    result.message = "hub is not initialized";
-    return nullptr;
-  }
-
   uint8_t parsed_device_id[NODE_ID_SIZE]{};
-  if (!hex_to_bytes(normalized_device_id, parsed_device_id, NODE_ID_SIZE)) {
-    result.message = "device ID must be exactly 6 hexadecimal characters";
+  if (!parse_management_node_id(action, device_id, "device", initialized, result, parsed_device_id))
     return nullptr;
-  }
 
-  auto *dev = registry.get(normalized_device_id);
+  auto *dev = registry.get(result.device_id);
   if (dev == nullptr) {
     result.message = "device is not registered on this hub";
     return nullptr;

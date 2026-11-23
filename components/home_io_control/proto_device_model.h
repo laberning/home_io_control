@@ -415,6 +415,9 @@ struct IoDevice {
                                               ///< stable signal instead of stalling up to RSSI_EMA_SCALE−1 dBm
                                               ///< away. RSSI_UNKNOWN_DBM before the first sample.
   uint32_t last_seen_ms{0};  ///< millis() of the last frame received from this device (any command), 0 = never.
+  uint32_t last_overheard_named_ms{
+      0};  ///< millis() of the last INFO line saying this device answered another controller, 0 = never
+           ///< (decisions::names_overheard_status()). Runtime only, never persisted.
   uint32_t last_moving_evidence_ms{
       0};  ///< millis() of the last sign this device is travelling (see
            ///< note_moving_evidence(), clear_moving_evidence()), 0 = never. Hub-side belief, not observation.

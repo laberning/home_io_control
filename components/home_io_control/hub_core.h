@@ -41,6 +41,7 @@
 #include "hub_exchange.h"
 #include "decisions_oneway.h"
 #include "decisions_attempts.h"
+#include "decisions_status.h"
 #include "hub_pairing.h"
 #include "device_registry.h"
 #include "status_poll_policy.h"
@@ -677,6 +678,11 @@ class IOHomeControlComponent : public Component,
   /// @param device_id Target device ID.
   /// @return The refusal before anything was sent, or whether the device confirmed the key.
   DeclaredPairingResult pair_declared_device(const std::string &device_id);
+  /// Pull the key from the controller with the given node ID, with no discovery. See PairingEngine::pull_key_from().
+  /// Holds the busy flag, stamps the pairing end and fires the pairing-result callback, as discover_and_pair() does.
+  /// @param controller Node ID of the controller (NODE_ID_SIZE bytes).
+  /// @return The refusal before anything was sent, or how the pull ended.
+  PullKeyResult pull_key_from(const uint8_t controller[NODE_ID_SIZE]);
   /// Send an arbitrary IO position (0-100) to a light entity. Internally mapped to the shared
   /// execute path; a binary light sends the two extremes through queue_set_light_state(), a dimmable
   /// one anything in between through queue_set_light_position().
@@ -1046,6 +1052,26 @@ class IOHomeControlComponent : public Component,
   /// @param cmd Command of the heard frame.
   void act_on_foreign_frame_(const std::string &device_id, ForeignFrameKind kind, const std::string &controller,
                              uint8_t cmd);
+  /// Record that a pairing attempt ran (discover_and_pair(), pair_declared_device(), pull_key_from()): stamp
+  /// `last_pairing_end_ms_` (never 0) and fire the pairing-result callback, so "Last Pairing Result" republishes.
+  /// Not called for a request refused before anything was sent.
+  void note_pairing_attempt_ended_();
+  /// Log the node ID of the sender of an overheard request (not one of ours, not our own): how a user
+  /// reads a controller's ID for the `pull_key` action. Each source at most once per
+  /// decisions::HeardSourceLog::INTERVAL_MS, so a neighbour's controller polling its devices does not fill the log.
+  /// @param frame The parsed frame.
+  void log_heard_controller_(const IoFrame &frame);
+  /// Handle a status frame (CMD_PRIVATE_RESP, or a CMD_STATUS_UPDATE not addressed to us) that one of our devices
+  /// sent to another controller, or a CMD_PRIVATE_RESP to us outside an exchange (ADR 0131). Its content is never
+  /// applied (ADR 0022), but the frame is real evidence the device is on air, so it stamps link health (last contact,
+  /// signal strength) and nothing else. Logged at INFO once per device per decisions::HeardSourceLog::INTERVAL_MS,
+  /// otherwise at DEBUG: where a second two-way controller shares a device this happens on every poll, so it is
+  /// normal traffic rather than a fault. A reply to us is logged at DEBUG only. A frame from a node that is not
+  /// registered is a frame issue (detail::log_frame_issue(): DEBUG, a warning only when it is addressed to this hub or
+  /// to a registered device).
+  /// @param frame The parsed frame.
+  /// @param len Serialized length, for the DEBUG line.
+  void handle_overheard_status_(const IoFrame &frame, uint8_t len);
   /// Hand a registered device's challenge (0x3C) to another controller to act_on_foreign_frame_().
   /// A challenge addressed to this hub, from an unregistered node, or a 0x3D is left alone.
   /// @param frame An exchange-internal frame (is_exchange_internal_command()).
@@ -1461,6 +1487,7 @@ class IOHomeControlComponent : public Component,
   /// False by default so a build that didn't opt in via `diagnostic_probes: true` never sends an
   /// undecoded probe opcode. See set_diagnostic_probes_enabled().
   bool diagnostic_probes_enabled_{false};
+  decisions::HeardSourceLog heard_sources_;  ///< Which overheard request sources log_heard_controller_() names.
   StatusPollPolicy poll_policy_;
   PeriodicPollPolicy status_refresh_policy_;       ///< Schedule of the opt-in status refresh at rest.
   PeriodicPollPolicy device_reading_poll_policy_;  ///< Schedule of the scheduled readings, by device_reading_key().

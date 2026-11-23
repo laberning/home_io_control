@@ -182,6 +182,22 @@ class ManagementActions {
   /// @return Result of the key exchange.
   ManagementActionResult pair_device(const std::string &device_id);
 
+  /// @brief Native API callback: pull the key from a controller named by its node ID.
+  /// @param controller_id Node ID of the controller, 6 hex digits.
+  void api_pull_key(const std::string &controller_id);
+
+  /// @brief Pull the system key from a controller and prove it (the `pull_key` action, ADR 0130).
+  ///
+  /// The part of Discover & Pair after discovery, addressed to the controller the user names: see
+  /// PairingEngine::pull_key_from(). Refused before anything is sent for an uninitialised hub, an ID that is not
+  /// six hex digits and the hub's own ID; a refused action reports no pairing attempt. `success` and `verified`
+  /// are true for a proven key (a key shared as the hub's own is `success` only). The event and the result carry the
+  /// key check value and the advice, never the key: a proven key is printed in the device log, once, through
+  /// `log_message`.
+  /// @param controller_id Node ID of the controller, 6 hex digits (case-insensitive).
+  /// @return Structured result; `message` says what happened and what to do next, without key material.
+  ManagementActionResult pull_key(const std::string &controller_id);
+
   /// @brief Broadcast a roll-call and report every device that answers.
   ///
   /// Not a discovery mechanism for new devices: only devices that already hold this hub's

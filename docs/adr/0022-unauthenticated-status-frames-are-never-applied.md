@@ -1,7 +1,7 @@
 # ADR 0022: Unauthenticated status frames are never applied to device state
 <!-- doxygen-label: adr0022 -->
 
-**Status:** Accepted · **Recorded:** 2026-08
+**Status:** Accepted, amended by [ADR 0131](0131-an-overheard-status-frame-stamps-link-health-and-nothing-else.md) (an overheard status frame stamps link health) · **Recorded:** 2026-08
 
 ## Context
 

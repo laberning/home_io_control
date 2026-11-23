@@ -2,7 +2,7 @@
 <!-- doxygen-label: cfg_actions -->
 
 Beyond the entities generated from your `cover:`/`light:`/`lock:`/`switch:` YAML, Home IO Control
-exposes ten **hub-level actions** through ESPHome's native API. These are one-off and advanced
+exposes eleven **hub-level actions** through ESPHome's native API. These are one-off and advanced
 operations that would clutter the entity UI if they were always-visible buttons, so most are only
 reachable from Developer Tools or an automation — `scan_paired_devices` is the exception, with an
 optional one-tap button.
@@ -19,6 +19,7 @@ optional one-tap button.
 | [`oneway_remove_controller`](#oneway_remove_controller) | Removes a configured 1W controller identity from the receivers that are in their programming mode. Takes `controller_id`. | No — 1W has no reply at all |
 | [`heating_control`](climate.md) ⚠️ *experimental* | Sends one heating/climate function (`CMD_WRITE_PRIVATE` 0x20) to a climate device. Takes `device_id`, `function`, `value`. | No — an acknowledged write is not a readback; `read_window_open` reports the sensor in the `message`, the `read_paired_devices` / `read_setpoint_block` reads are logged |
 | [`pair_device`](#pair_device) | Pairs one device your YAML already declares, addressed by its ID, with no discovery broadcast. Takes `device_id`. | No — the `0x33` confirm is the device's own, and nothing reads a key back out of a device |
+| [`pull_key`](#pull_key) | Asks a controller you name by its node ID for its system key and proves it, with no discovery broadcast. Takes `controller_id`. | Yes, for a key the controller or the devices under it proved |
 
 Two more actions, `probe_device` and `probe_sweep`, exist behind a separate opt-in
 (`diagnostic_probes: true`) for sending opcodes this project hasn't fully decoded yet — see
@@ -259,6 +260,63 @@ Success means the device sent its `0x33` key confirm. Nothing reads a key back o
 the result is never `verified`. The "Last Pairing Result" sensor reports the attempt as it does for
 Discover & Pair. A request refused before anything is sent is no attempt, so the sensor keeps the
 previous result.
+
+## `pull_key`
+
+Fields: `controller_id` (required).
+
+Asks the controller with that node ID for the system key it holds and checks that it holds it. This
+is the part of [Discover & Pair](../pairing.md) that follows discovery, aimed at a node you name,
+so no discovery broadcast goes out. It is the route for a controller that shares its key only when
+you start a mode on it and does not answer a discovery in that mode. The route and its limits are
+recorded in [ADR 0130](../adr/0130-a-controllers-key-can-be-pulled-by-its-node-id-without-discovery.md).
+
+To read the controller's node ID, press a button on it. The device log names every controller the
+hub overhears, each one at most once in ten minutes:
+
+```text
+Heard a request from 4A2F19: ... to ...
+```
+
+Start the controller's key-sharing mode, then run the action within that mode's window.
+
+```yaml
+action: esphome.hioc_heltec_v2_pull_key
+data:
+  controller_id: "4A2F19"
+```
+
+The result is one of:
+
+- **Proven.** The controller sent a key that differs from the hub's and proved it holds it. The key
+  is printed once in the device log with its check value, and the result and the Home Assistant
+  event carry the check value and the advice, never the key. Nothing is registered and nothing more
+  is sent. Put the key into the `system_key:` of each device that controller operates, kept in
+  `secrets.yaml`.
+- **Already this hub's key.** The controller already shares the key of this hub. The result is a
+  success, not `verified`.
+- **Refused.** The controller answered with an error, and the result carries its code. Most often
+  the controller is not in its key-sharing mode.
+- **Not proven.** The controller sent a key but did not prove it holds it. The hub then does what
+  Discover & Pair does: a roll-call under that key. Devices that answer prove the key, the report
+  lists them, and they are registered until the next reboot. If none answers, the key is not
+  printed and must not be used.
+- **No key.** The controller sent nothing. Check the node ID and the key-sharing mode.
+
+The action refuses before anything is sent when the hub is not initialised, when `controller_id` is
+not six hexadecimal digits and when it is this hub's own ID. A refused action is no attempt: "Last
+Pairing Result" keeps the previous result. Any other outcome is reported there as for Discover &
+Pair, with advice codes of its own: `pull_key_proven`, `pull_key_own_key`, `pull_key_refused`,
+`pull_key_unanswered`
+([advisor codes](../pairing.md#advisor-codes)).
+
+> [!NOTE]
+> The route is confirmed on hardware only for nodes that hand over their key when asked, such as an
+> Atlantic AGILIA IO radiator in its pairing mode. A remote in its key-sharing mode, a 2.4 GHz
+> VELUX remote's "Copy system" for one, is untested.
+
+See [Key extraction](../key-extraction.md#pulling-the-key-from-a-controller-you-name) for how this
+fits the other routes to a key.
 
 ## See also
 

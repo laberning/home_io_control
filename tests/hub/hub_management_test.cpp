@@ -464,7 +464,7 @@ TEST(HubManagement, ApiForceOpenDevicePublishesManagementResultEvent) {
   EXPECT_EQ(event.data.count("result_code"), 0u) << "force-open's result is asynchronous, no result_code yet";
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersOnlyTenServicesByDefault) {
+TEST(HubManagement, RegisterManagementActionsRegistersOnlyElevenServicesByDefault) {
   // diagnostic_probes_enabled_ defaults to false (no set_diagnostic_probes_enabled() call), so
   // probe_device/probe_sweep must not appear in the action list at all -- this is what keeps a
   // default build's Home Assistant action list clean, not just what refuses at call time.
@@ -477,7 +477,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlyTenServicesByDefault) 
   setup_component(component, radio);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 10u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 11u);
   for (const auto &service : esphome::api::global_api_server->user_services_) {
     const auto name = service->encode_list_service_response().name.str();
     EXPECT_NE(name, "probe_device");
@@ -566,9 +566,16 @@ TEST(HubManagement, RegisterManagementActionsRegistersOnlyTenServicesByDefault) 
   ASSERT_EQ(pair_device_response.args.size(), 1u);
   EXPECT_EQ(pair_device_response.args[0].name.str(), "device_id");
   EXPECT_EQ(pair_device_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
+
+  const auto pull_key_response = esphome::api::global_api_server->user_services_[10]->encode_list_service_response();
+  EXPECT_EQ(pull_key_response.name.str(), "pull_key");
+  EXPECT_EQ(pull_key_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
+  ASSERT_EQ(pull_key_response.args.size(), 1u);
+  EXPECT_EQ(pull_key_response.args[0].name.str(), "controller_id");
+  EXPECT_EQ(pull_key_response.args[0].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 }
 
-TEST(HubManagement, RegisterManagementActionsRegistersAllTwelveServicesWhenDiagnosticProbesEnabled) {
+TEST(HubManagement, RegisterManagementActionsRegistersAllThirteenServicesWhenDiagnosticProbesEnabled) {
   esphome::api::APIServer api_server;
   esphome::api::ScopedGlobalApiServer scoped_api_server(api_server);
   api_server.reset();
@@ -579,10 +586,10 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllTwelveServicesWhenDiagn
   component.set_diagnostic_probes_enabled(true);
   component.register_management_actions_();
 
-  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 12u);
+  ASSERT_EQ(esphome::api::global_api_server->user_services_.size(), 13u);
 
   const auto probe_device_response =
-      esphome::api::global_api_server->user_services_[10]->encode_list_service_response();
+      esphome::api::global_api_server->user_services_[11]->encode_list_service_response();
   EXPECT_EQ(probe_device_response.name.str(), "probe_device");
   EXPECT_EQ(probe_device_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_device_response.args.size(), 3u);
@@ -593,7 +600,7 @@ TEST(HubManagement, RegisterManagementActionsRegistersAllTwelveServicesWhenDiagn
   EXPECT_EQ(probe_device_response.args[2].name.str(), "index");
   EXPECT_EQ(probe_device_response.args[2].type, esphome::api::enums::SERVICE_ARG_TYPE_STRING);
 
-  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[11]->encode_list_service_response();
+  const auto probe_sweep_response = esphome::api::global_api_server->user_services_[12]->encode_list_service_response();
   EXPECT_EQ(probe_sweep_response.name.str(), "probe_sweep");
   EXPECT_EQ(probe_sweep_response.supports_response, esphome::api::enums::SUPPORTS_RESPONSE_NONE);
   ASSERT_EQ(probe_sweep_response.args.size(), 4u);
@@ -793,7 +800,7 @@ TEST(HubManagement, RegisteredRenameActionExecutesComponentHandler) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 10u);
+  ASSERT_EQ(api_server.user_services_.size(), 11u);
 
   radio.queue_rx(frame_to_packet(make_set_name_response(component.node_id_)));
   radio.queue_rx(frame_to_packet(make_get_name_response(component.node_id_, "Patio Awning")));
@@ -1786,7 +1793,7 @@ TEST(HubManagement, ScanPairedDevicesZeroArgDispatchExecutes) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 10u);
+  ASSERT_EQ(api_server.user_services_.size(), 11u);
 
   const auto response = api_server.user_services_[4]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "scan_paired_devices");
@@ -1854,7 +1861,7 @@ TEST(HubManagement, OneWaySetPositionActionIsRegisteredWithBothArguments) {
   MockRadio radio;
   setup_component(component, radio);
   component.register_management_actions_();
-  ASSERT_EQ(api_server.user_services_.size(), 10u);
+  ASSERT_EQ(api_server.user_services_.size(), 11u);
 
   const auto response = api_server.user_services_[5]->encode_list_service_response();
   EXPECT_EQ(response.name.str(), "oneway_set_position");

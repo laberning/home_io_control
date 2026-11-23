@@ -274,10 +274,11 @@ std::string build_pulled_key_report(const PulledKeyReportInfo &info, const ScanS
   report += "Anyone with this key can control every device that holds it. Keep it in secrets.yaml and write\n"
             "`system_key: !secret ...` in the entity of each device.\n";
   if (state.count == 0) {
-    report += "A roll-call under that key found no device. Put this key into the system_key: of the entity that\n"
-              "controls the device:\n"
-              "    system_key: \"" +
-              key_hex + "\"\n";
+    report += info.searched ? "A roll-call under that key found no device. Put this key into the system_key: of the "
+                              "entity that\ncontrols the device:\n"
+                            : "No search for devices was made. Put this key into the system_key: of the entity of each "
+                              "device\nthat controller operates:\n";
+    report += "    system_key: \"" + key_hex + "\"\n";
   } else {
     report += std::to_string(state.count) + " device" + (state.count == 1 ? " that holds" : "s that hold") +
               " it answered. Paste a block per device:\n";

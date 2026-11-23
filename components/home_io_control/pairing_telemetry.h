@@ -167,9 +167,16 @@ class PairingTelemetry : public TransmitObserver {
   void set_discovered_device(const uint8_t node_id[NODE_ID_SIZE], DeviceType node_type);
   /// Record that this attempt pulled the key (0x38) instead of pushing it (0x31/0x32).
   void set_key_pull_attempted() { this->key_pull_attempted_ = true; }
+  /// Record that this attempt is the standalone key pull (`pull_key`: no discovery, a node the user named), so the
+  /// advice speaks of the controller to pull from rather than a device in pairing mode.
+  void set_key_pull_only() { this->key_pull_only_ = true; }
   /// Record that a pulled key could not be verified: the device sent a 0x32, but no 0x3D that
   /// verifies under the key it carries.
   void set_key_pull_unproven() { this->key_pull_unproven_ = true; }
+  /// Record the check value of the key this attempt pulled and proved (the controller's own 0x3D, or devices that
+  /// answered under it), for the `check=` field of the result string. Never the key itself.
+  /// @param check_value Six hex digits, as detail::format_key_check_value() renders them.
+  void set_proven_key_check_value(const std::string &check_value) { this->proven_key_check_value_ = check_value; }
 
   /// Seed telemetry with a 1W pairing-gesture frame observed shortly before this attempt began.
   /// Recorded as an RX event with its real RSSI, marked seeded (PairingTelemetryEvent::aux = 1) so
@@ -219,6 +226,8 @@ class PairingTelemetry : public TransmitObserver {
   [[nodiscard]] uint8_t key_refusal_code() const { return this->key_refusal_code_; }
   /// @return true if this attempt pulled the key instead of pushing it.
   [[nodiscard]] bool key_pull_attempted() const { return this->key_pull_attempted_; }
+  /// @return true if this attempt was the standalone key pull.
+  [[nodiscard]] bool key_pull_only() const { return this->key_pull_only_; }
   /// @return true if this attempt's pull received a key that the device did not prove.
   [[nodiscard]] bool key_pull_unproven() const { return this->key_pull_unproven_; }
   /// @return true if discovery accepted a device this attempt.
@@ -240,7 +249,8 @@ class PairingTelemetry : public TransmitObserver {
   /// UI only line-wraps this sensor's long value at whitespace, so a fields-only-separated-by-`;`
   /// string renders as one unbroken, unreadable line):
   /// `v1; outcome=<...>; phase=<...>; node=<XXXXXX|->; type=<...|->; attempts=<n>; lbt=<n>; dur_ms=<n>; heard=<n>; `
-  /// `advice=<comma-separated codes|none>`
+  /// `advice=<comma-separated codes|none>; check=<XXXXXX|->`
+  /// `check` is the six-hex-digit check value of a proven pulled key, `-` when the attempt proved none.
   /// @return The formatted result string.
   [[nodiscard]] std::string result_sensor_string() const;
 
@@ -268,10 +278,12 @@ class PairingTelemetry : public TransmitObserver {
   uint8_t key_refusal_code_{0};
   bool key_pull_attempted_{false};
   bool key_pull_unproven_{false};
+  bool key_pull_only_{false};
   bool has_discovered_device_{false};
   uint8_t discovered_node_id_[NODE_ID_SIZE]{};
   DeviceType discovered_node_type_{DeviceType::UNKNOWN};
   std::string advice_codes_;
+  std::string proven_key_check_value_;  ///< Check value of the proven pulled key; empty = none.
 };
 
 }  // namespace home_io_control
